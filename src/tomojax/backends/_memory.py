@@ -166,7 +166,7 @@ def estimate_views_per_batch_info(
     """Estimate views-per-batch and report whether a fallback was required.
 
     ``fallback_batch`` lets user-facing CLIs choose a stricter fallback while the
-    legacy integer API keeps its previous small-batch fallback behavior.
+    integer estimate keeps a conservative small-batch default.
     """
     n_views_i = max(1, int(n_views))
     nx, ny, nz = map(int, grid_nxyz)

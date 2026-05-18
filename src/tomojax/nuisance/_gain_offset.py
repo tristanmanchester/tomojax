@@ -36,7 +36,7 @@ class GainOffsetModel:
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-serializable nuisance payload."""
         return {
-            "schema": "tomojax.gain_offset_model.v1",
+            "schema": "tomojax.gain_offset_model",
             "gain": [float(value) for value in self.gain],
             "offset": [float(value) for value in self.offset],
         }

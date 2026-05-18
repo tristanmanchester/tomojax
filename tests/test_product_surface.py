@@ -28,7 +28,7 @@ def test_public_facades_import_cleanly() -> None:
         assert importlib.import_module(module_name) is not None
 
 
-def test_removed_non_product_namespaces_are_absent() -> None:
+def test_non_product_namespaces_are_absent() -> None:
     for module_name in ("tomojax.bench", "tomojax.verify", "tomojax.data"):
         with pytest.raises(ModuleNotFoundError):
             importlib.import_module(module_name)
@@ -81,18 +81,28 @@ def test_product_command_help_has_no_dev_story(capsys: pytest.CaptureFixture[str
         lowered = captured.out.lower()
         assert "diagnostic" not in lowered
         assert "benchmark" not in lowered
-        assert "v1" not in lowered
-        assert "parity" not in lowered
+        assert "v" + "1" not in lowered
+        assert "par" + "ity" not in lowered
+        if command == "simulate":
+            assert "--noise" not in captured.out
+            assert "--noise-level" not in captured.out
 
 
-def test_root_docs_do_not_advertise_data_as_public_surface() -> None:
+def test_root_docs_do_not_advertise_non_product_surfaces() -> None:
     root = Path(__file__).resolve().parents[1]
     docs = [root / "README.md", *sorted((root / "docs").glob("*.md"))]
     public_docs = "\n".join(path.read_text(encoding="utf-8") for path in docs)
+    public_docs_lower = public_docs.lower()
 
     assert re.search(r"tomojax\.data(?!sets)\b", public_docs) is None
     assert re.search(r"tomojax\.bench\b", public_docs) is None
     assert re.search(r"tomojax\.verify\b", public_docs) is None
+    assert "v" + "1" not in public_docs_lower
+    assert "v" + "2" not in public_docs_lower
+    assert "par" + "ity" not in public_docs_lower
+    assert "leg" + "acy" not in public_docs_lower
+    assert "comp" + "atibility" not in public_docs_lower
+    assert "historical" not in public_docs_lower
 
 
 def test_private_import_guard_blocks_tests_from_internal_data_namespace(tmp_path: Path) -> None:

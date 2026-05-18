@@ -44,11 +44,11 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911
     if command == "recon":
         from tomojax.cli import recon
 
-        return _run_sysargv_cli(recon.main, "tomojax recon", _with_data_alias(tail))
+        return _run_sysargv_cli(recon.main, "tomojax recon", tail)
     if command == "align":
         from tomojax.cli import align
 
-        return _run_sysargv_cli(align.main, "tomojax align", _with_data_alias(tail))
+        return _run_sysargv_cli(align.main, "tomojax align", tail)
     if command == "simulate":
         from tomojax.cli import simulate
 
@@ -75,20 +75,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "  tomojax inspect scan.nxs\n"
         "  tomojax ingest ./projections --angles angles.csv --du 0.65 --dv 0.65 --out scan.nxs\n"
         "  tomojax preprocess raw.nxs corrected.nxs\n"
-        "  tomojax recon corrected.nxs --out recon.nxs\n"
-        "  tomojax align corrected.nxs --out aligned.nxs --mode cor\n"
+        "  tomojax recon --data corrected.nxs --out recon.nxs\n"
+        "  tomojax align --data corrected.nxs --out aligned.nxs --mode cor\n"
     )
     return parser
-
-
-def _with_data_alias(argv: list[str]) -> list[str]:
-    """Allow `tomojax recon scan.nxs --out ...` as shorthand for `--data scan.nxs`."""
-    if not argv:
-        return argv
-    first = argv[0]
-    if first.startswith("-") or "--data" in argv:
-        return argv
-    return ["--data", first, *argv[1:]]
 
 
 def _run_positional_cli(

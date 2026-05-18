@@ -243,14 +243,11 @@ def build_align_cli_run_plan(
             schedule=command.schedule,
             optimise_dofs=optimise_dofs,
             freeze_dofs=freeze_dofs,
-            geometry_dofs=(),
-            geometry=geom,
             gauge_policy=cast("GaugePolicy", command.gauge_policy),
             opt_method=command.opt_method,
             outer_iters=command.outer_iters,
             early_stop=command.early_stop,
         )
-        geometry_dofs = resolved_schedule.active_geometry_dofs
         schedule_metadata: dict[str, object] | None = resolved_schedule.to_dict()
     except ValueError as exc:
         parser.error(str(exc))
@@ -296,7 +293,6 @@ def build_align_cli_run_plan(
         schedule=command.schedule,
         optimise_dofs=optimise_dofs,
         freeze_dofs=freeze_dofs,
-        geometry_dofs=(),
         bounds=() if command.bounds is None else command.bounds,
         gauge_policy=cast(
             "GaugePolicy | Literal['anchor-mean', 'prior-required', 'diagnose-only']",
@@ -346,7 +342,7 @@ def build_align_cli_run_plan(
         parser.error("--checkpoint-every must be an integer >= 1")
 
     run_levels = levels
-    if run_levels is None and (command.schedule is not None or bool(geometry_dofs)):
+    if run_levels is None and command.schedule is not None:
         run_levels = [1]
 
     expected_checkpoint_metadata = checkpoint_metadata(
@@ -401,7 +397,6 @@ def build_align_cli_run_plan(
         projections=projections,
         cfg=cfg,
         gather_dtype=gather_dtype,
-        geometry_dofs=tuple(geometry_dofs),
         schedule_metadata=schedule_metadata,
         checkpoint_path=checkpoint_path,
         checkpoint_every=None if checkpoint_every is None else int(checkpoint_every),

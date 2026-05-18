@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from tomojax.core.backend_policy import normalize_projector_backend
 
-from ._geometry.geometry_blocks import normalize_geometry_dofs
 from ._model.diagnostics import GaugePolicy
 from ._model.dofs import (
     ScopedAlignmentDofs,
@@ -32,7 +31,6 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from tomojax.core.backend_policy import ProjectorBackendInput
-    from tomojax.core.geometry.base import Geometry
     from tomojax.recon.types import Regulariser
 
     from ._model.dofs import DofBounds
@@ -73,17 +71,12 @@ def _active_dofs_for_cfg(cfg: AlignConfig) -> tuple[str, ...]:
 
 def _active_geometry_dofs_for_cfg(
     cfg: AlignConfig,
-    geometry: Geometry | None = None,
 ) -> tuple[str, ...]:
-    return _scoped_dofs_for_cfg(cfg, geometry=geometry).active_geometry_dofs
+    return _scoped_dofs_for_cfg(cfg).active_geometry_dofs
 
 
-def _scoped_dofs_for_cfg(
-    cfg: AlignConfig,
-    *,
-    geometry: Geometry | None = None,
-) -> ScopedAlignmentDofs:
-    resolved = _resolved_schedule_for_cfg(cfg, geometry=geometry)
+def _scoped_dofs_for_cfg(cfg: AlignConfig) -> ScopedAlignmentDofs:
+    resolved = _resolved_schedule_for_cfg(cfg)
     return ScopedAlignmentDofs(
         active_pose_dofs=resolved.active_pose_dofs,
         active_geometry_dofs=resolved.active_geometry_dofs,
@@ -100,23 +93,16 @@ def _scoped_dofs_for_cfg(
                 "detector_roll_deg",
                 "axis_rot_x_deg",
                 "axis_rot_y_deg",
-                "tilt_deg",
             }
         ),
     )
 
 
-def _resolved_schedule_for_cfg(
-    cfg: AlignConfig,
-    *,
-    geometry: Geometry | None = None,
-) -> ResolvedAlignmentSchedule:
+def _resolved_schedule_for_cfg(cfg: AlignConfig) -> ResolvedAlignmentSchedule:
     return resolve_alignment_schedule(
         schedule=cfg.schedule,
         optimise_dofs=cfg.optimise_dofs,
         freeze_dofs=cfg.freeze_dofs,
-        geometry_dofs=cfg.geometry_dofs,
-        geometry=geometry,
         gauge_policy=cast("GaugePolicy", cfg.gauge_policy),
         gauge_priors=cfg.gauge_priors,
         opt_method=cfg.opt_method,
@@ -165,7 +151,6 @@ class AlignConfig:
     schedule: str | AlignmentSchedule | None = None
     optimise_dofs: tuple[str, ...] | None = None
     freeze_dofs: tuple[str, ...] = field(default_factory=tuple)
-    geometry_dofs: tuple[str, ...] = field(default_factory=tuple)
     bounds: DofBounds | str | Mapping[str, object] = field(default_factory=tuple)
     gauge_policy: GaugePolicyInput = "reject"
     gauge_priors: Mapping[str, object] | None = None
@@ -273,10 +258,6 @@ class AlignConfig:
 
     def _normalize_dof_options(self) -> None:
         self.freeze_dofs = normalize_alignment_dofs(self.freeze_dofs, option_name="freeze_dofs")
-        self.geometry_dofs = normalize_geometry_dofs(
-            self.geometry_dofs,
-            geometry=None,
-        )
 
     def _normalize_gauge_options(self) -> None:
         self.gauge_policy = cast(

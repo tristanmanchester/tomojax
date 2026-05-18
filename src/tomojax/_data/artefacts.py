@@ -101,29 +101,14 @@ _RNG_OFFSETS = {
 }
 
 
-def artefacts_from_legacy_noise(noise: str, noise_level: float) -> SimulationArtefacts:
-    """Map the legacy ``noise`` / ``noise_level`` pair to artefact config."""
-    level = float(noise_level)
-    if level <= 0.0:
-        return SimulationArtefacts()
-    if noise == "gaussian":
-        return SimulationArtefacts(gaussian_sigma=level)
-    if noise == "poisson":
-        return SimulationArtefacts(poisson_scale=level)
-    return SimulationArtefacts()
-
-
 def normalise_simulation_artefacts(
     artefacts: SimulationArtefacts | None,
-    *,
-    noise: str,
-    noise_level: float,
 ) -> SimulationArtefacts:
-    """Return explicit artefacts, or legacy noise mapped into artefact fields."""
+    """Return validated explicit artefacts or the disabled default."""
     if artefacts is not None:
         validate_simulation_artefacts(artefacts)
         return artefacts
-    return artefacts_from_legacy_noise(noise, noise_level)
+    return SimulationArtefacts()
 
 
 def validate_simulation_artefacts(artefacts: SimulationArtefacts | None) -> None:

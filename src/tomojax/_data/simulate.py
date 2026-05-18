@@ -52,8 +52,6 @@ class SimMetadata(TypedDict, total=False):
     """Simulation provenance metadata."""
 
     seed: int
-    noise: str
-    noise_level: float
     artefacts: ArtefactMetadata
 
 
@@ -103,8 +101,6 @@ class SimConfig:
     min_value: float = 0.1
     max_value: float = 1.0
     max_rot_deg: float = 180.0
-    noise: str = "none"  # none|poisson|gaussian
-    noise_level: float = 0.0  # gaussian sigma or poisson scale
     artefacts: SimulationArtefacts | None = None
     seed: int = 0
     lamino_thickness_ratio: float = 0.2
@@ -244,11 +240,7 @@ def simulate(cfg: SimConfig) -> SimulatedData:
             projs.append(p)
         proj = jnp.stack(projs, axis=0)
 
-    artefacts = normalise_simulation_artefacts(
-        cfg.artefacts,
-        noise=cfg.noise,
-        noise_level=cfg.noise_level,
-    )
+    artefacts = normalise_simulation_artefacts(cfg.artefacts)
     artefact_metadata: ArtefactMetadata | None = None
     if artefacts.has_enabled():
         proj, artefact_metadata = apply_simulation_artefacts(
@@ -257,11 +249,7 @@ def simulate(cfg: SimConfig) -> SimulatedData:
             seed=cfg.seed,
         )
 
-    meta: SimMetadata = {
-        "seed": cfg.seed,
-        "noise": cfg.noise,
-        "noise_level": cfg.noise_level,
-    }
+    meta: SimMetadata = {"seed": cfg.seed}
     if artefact_metadata is not None:
         meta["artefacts"] = artefact_metadata
 

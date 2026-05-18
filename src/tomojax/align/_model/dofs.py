@@ -16,7 +16,6 @@ GEOMETRY_DOF_NAMES = (
     "detector_roll_deg",
     "axis_rot_x_deg",
     "axis_rot_y_deg",
-    "tilt_deg",
 )
 GEOMETRY_DOF_INDEX = {name: idx for idx, name in enumerate(GEOMETRY_DOF_NAMES)}
 ALL_ALIGNMENT_DOF_NAMES = DOF_NAMES + GEOMETRY_DOF_NAMES
@@ -27,7 +26,6 @@ _ANGULAR_SETUP_DOF_NAMES = {
     "detector_roll_deg",
     "axis_rot_x_deg",
     "axis_rot_y_deg",
-    "tilt_deg",
 }
 
 
@@ -87,18 +85,10 @@ def normalize_dofs(
     return tuple(names)
 
 
-def _tilt_alias_for_geometry(geometry: object | None) -> str:
-    if geometry is None:
-        return "tilt_deg"
-    tilt_about = getattr(geometry, "tilt_about", "x")
-    return "axis_rot_y_deg" if str(tilt_about) == "z" else "axis_rot_x_deg"
-
-
 def normalize_alignment_dofs(
     value: str | Iterable[str] | None,
     *,
     option_name: str = "dofs",
-    geometry: object | None = None,
 ) -> tuple[str, ...]:
     """Normalize public alignment DOFs across pose and geometry scopes."""
     names: list[str] = []
@@ -108,9 +98,7 @@ def normalize_alignment_dofs(
         name = str(raw).strip().lower()
         if not name:
             continue
-        if name == "tilt_deg":
-            name = _tilt_alias_for_geometry(geometry)
-        if name not in ALL_ALIGNMENT_DOF_INDEX and name != "tilt_deg":
+        if name not in ALL_ALIGNMENT_DOF_INDEX:
             raise ValueError(
                 f"Unknown alignment DOF for {option_name}: {name!r}; valid DOFs: {valid}"
             )
@@ -125,44 +113,17 @@ def resolve_scoped_alignment_dofs(
     *,
     optimise_dofs: str | Iterable[str] | None = None,
     freeze_dofs: str | Iterable[str] | None = None,
-    geometry_dofs: str | Iterable[str] | None = None,
-    geometry: object | None = None,
 ) -> ScopedAlignmentDofs:
     """Resolve effective active/frozen alignment DOFs into pose and geometry scopes."""
     optimise = (
         None
         if optimise_dofs is None
-        else normalize_alignment_dofs(
-            optimise_dofs,
-            option_name="optimise_dofs",
-            geometry=geometry,
-        )
+        else normalize_alignment_dofs(optimise_dofs, option_name="optimise_dofs")
     )
-    legacy_geometry = normalize_alignment_dofs(
-        geometry_dofs,
-        option_name="geometry_dofs",
-        geometry=geometry,
-    )
-    for name in legacy_geometry:
-        if name in DOF_INDEX:
-            raise ValueError(
-                f"Pose DOF {name!r} is not valid for geometry_dofs; "
-                f"valid geometry DOFs: {', '.join(GEOMETRY_DOF_NAMES)}"
-            )
-    freeze = normalize_alignment_dofs(
-        freeze_dofs,
-        option_name="freeze_dofs",
-        geometry=geometry,
-    )
+    freeze = normalize_alignment_dofs(freeze_dofs, option_name="freeze_dofs")
     frozen = set(freeze)
 
-    if optimise is None:
-        # ``geometry_dofs`` is a legacy setup-calibration surface.  When it is
-        # present without explicit pose DOFs it should not silently activate the
-        # default pose-only alignment mask.
-        base = legacy_geometry if legacy_geometry else DOF_NAMES
-    else:
-        base = optimise + tuple(name for name in legacy_geometry if name not in optimise)
+    base = DOF_NAMES if optimise is None else optimise
 
     active: list[str] = []
     seen: set[str] = set()
@@ -208,14 +169,11 @@ def _validate_bound_name(
     raw_name: object,
     *,
     option_name: str,
-    geometry: object | None = None,
 ) -> str:
     name = str(raw_name).strip().lower()
     valid = ", ".join(ALL_ALIGNMENT_DOF_NAMES)
     if not name:
         raise ValueError(f"Missing alignment DOF name for {option_name}; valid DOFs: {valid}")
-    if name == "tilt_deg" and geometry is not None:
-        name = _tilt_alias_for_geometry(geometry)
     if name not in ALL_ALIGNMENT_DOF_INDEX:
         raise ValueError(f"Unknown alignment DOF for {option_name}: {name!r}; valid DOFs: {valid}")
     return name
@@ -312,7 +270,6 @@ def normalize_bounds(
     value: object,
     *,
     option_name: str = "bounds",
-    geometry: object | None = None,
 ) -> DofBounds:
     """Normalize finite per-DOF bounds from CLI/config/Python inputs.
 
@@ -321,7 +278,7 @@ def normalize_bounds(
     """
     parsed: dict[str, tuple[float, float]] = {}
     for raw_name, raw_pair in _iter_bound_items(value, option_name=option_name):
-        name = _validate_bound_name(raw_name, option_name=option_name, geometry=geometry)
+        name = _validate_bound_name(raw_name, option_name=option_name)
         if name in parsed:
             raise ValueError(f"Duplicate alignment bounds for {option_name}: {name!r}")
         parsed[name] = _parse_bound_pair(raw_pair, option_name=option_name, dof_name=name)

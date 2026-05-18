@@ -12,7 +12,7 @@ uv run tomojax simulate \
   --n-views 64 \
   --phantom random_shapes
 
-uv run tomojax recon synthetic_scan.nxs --out synthetic_recon.nxs
+uv run tomojax recon --data synthetic_scan.nxs --out synthetic_recon.nxs
 ```
 
 The equivalent public-Python path is kept in
@@ -20,7 +20,5 @@ The equivalent public-Python path is kept in
 It imports only from package facades such as `tomojax.geometry`,
 `tomojax.forward`, and `tomojax.recon`.
 
-Historical synthetic gates that fixed the volume to truth, swept hard geometry
-cases, or generated article diagnostics were removed from the product spine and
-kept in the development archive. They are useful research evidence, but they are
-not part of the supported user workflow.
+Supported synthetic workflows should use the CLI command or public Python
+facades shown here.

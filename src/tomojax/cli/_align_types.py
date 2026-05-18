@@ -39,7 +39,6 @@ class AlignCliRunPlan:
     projections: jnp.ndarray
     cfg: AlignConfig
     gather_dtype: str
-    geometry_dofs: tuple[str, ...]
     schedule_metadata: dict[str, object] | None
     checkpoint_path: str | None
     checkpoint_every: int | None

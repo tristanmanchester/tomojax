@@ -145,17 +145,6 @@ DOF_SPECS: dict[str, DofSpec] = {
         upper=_deg(60.0),
         gauge_group="rotation_axis_direction",
     ),
-    "tilt_deg": DofSpec(
-        name="tilt_deg",
-        scope="setup",
-        state_attr="tilt_rad",
-        unit="rad",
-        display_unit="deg",
-        scale=ParameterScale(scale=_deg(1.0)),
-        lower=_deg(-90.0),
-        upper=_deg(90.0),
-        gauge_group="rotation_axis_direction",
-    ),
 }
 
 
@@ -166,37 +155,12 @@ def _bounds_overrides_for_active_dofs(
 ) -> dict[str, tuple[float, float]]:
     active = set(dofs)
     overrides: dict[str, tuple[float, float]] = {}
-    tilt_bound: tuple[float, float] | None = None
 
     for name, lower, upper in bounds:
         pair = (lower, upper)
-        if name == "tilt_deg" and name not in active:
-            tilt_bound = pair
-            continue
         if name in active:
             overrides[name] = pair
 
-    if tilt_bound is None:
-        return overrides
-
-    if "tilt_deg" in active:
-        target = "tilt_deg"
-    else:
-        concrete_targets = tuple(
-            name for name in ("axis_rot_x_deg", "axis_rot_y_deg") if name in active
-        )
-        if len(concrete_targets) == 0:
-            return overrides
-        if len(concrete_targets) > 1:
-            raise ValueError(
-                "Ambiguous tilt_deg alignment bound: active setup DOFs include both "
-                "axis_rot_x_deg and axis_rot_y_deg; use a concrete bound name"
-            )
-        target = concrete_targets[0]
-
-    if target in overrides:
-        raise ValueError(f"Duplicate alignment bounds after resolving tilt_deg alias: {target!r}")
-    overrides[target] = tilt_bound
     return overrides
 
 
@@ -226,11 +190,9 @@ class ActiveParameterView:
     def from_dofs(
         cls,
         values: str | Iterable[str] | None,
-        *,
-        geometry: object | None = None,
     ) -> ActiveParameterView:
         """Build an active parameter view from public DOF selections."""
-        names = normalize_alignment_dofs(values, option_name="active_dofs", geometry=geometry)
+        names = normalize_alignment_dofs(values, option_name="active_dofs")
         return cls(ordered_dofs(names))
 
     def __post_init__(self) -> None:

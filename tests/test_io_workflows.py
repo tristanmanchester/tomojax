@@ -14,6 +14,7 @@ from tomojax.io import (
     convert_dataset,
     flat_dark_to_absorption,
     load_dataset,
+    load_nxtomo,
     load_real_laminography_input,
     load_tiff_stack,
     save_dataset,
@@ -86,6 +87,33 @@ def test_dataset_roundtrips_npz_and_converts_to_nxtomo(tmp_path: Path) -> None:
     np.testing.assert_allclose(loaded_npz.projections, dataset.projections)
     np.testing.assert_allclose(loaded_nxs.projections, dataset.projections)
     assert validate_dataset(nxs_path)["issues"] == []
+
+
+def test_nxtomo_loader_does_not_synthesize_grid_from_volume_only(tmp_path: Path) -> None:
+    path = tmp_path / "missing_grid.nxs"
+    with h5py.File(path, "w") as handle:
+        entry = handle.create_group("entry")
+        entry.attrs["definition"] = "NXtomo"
+        detector = entry.create_group("instrument").create_group("detector")
+        detector.create_dataset("data", data=np.zeros((2, 3, 4), dtype=np.float32))
+        detector.create_dataset("image_key", data=np.zeros((2,), dtype=np.int32))
+        sample = entry.create_group("sample")
+        sample.create_dataset("name", data="fixture")
+        transformations = sample.create_group("transformations")
+        rotation_angle = transformations.create_dataset(
+            "rotation_angle",
+            data=np.asarray([0.0, 90.0], dtype=np.float32),
+        )
+        rotation_angle.attrs["units"] = "degree"
+        tomojax = entry.create_group("processing").create_group("tomojax")
+        tomojax.create_dataset("volume", data=np.zeros((5, 6, 7), dtype=np.float32))
+
+    loaded = load_nxtomo(str(path))
+
+    assert loaded.volume is not None
+    assert loaded.grid is None
+    assert loaded.disk_volume_axes_order == "unknown"
+    assert loaded.volume_axes_source == "heuristic"
 
 
 def test_load_tiff_stack_requires_explicit_angles_and_sorts_files(tmp_path: Path) -> None:

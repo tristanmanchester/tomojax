@@ -143,6 +143,7 @@ def test_recon_cli_routes_tiny_workflow(monkeypatch: pytest.MonkeyPatch, tmp_pat
         main(
             [
                 "recon",
+                "--data",
                 str(scan),
                 "--out",
                 str(recon),
@@ -258,6 +259,7 @@ def test_align_cli_mode_cor_writes_alignment_outputs(
         main(
             [
                 "align",
+                "--data",
                 str(scan),
                 "--out",
                 str(aligned),

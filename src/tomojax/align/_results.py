@@ -168,16 +168,10 @@ def record_reconstruction_info(
     if isinstance(losses, Iterable):
         try:
             lhist = list(losses)
-            if lhist:
-                loss_alias_only = bool(info_rec.get("loss_alias_only", False))
-                if not loss_alias_only:
-                    stat["recon_loss_first"] = float(lhist[0])
-                    stat["recon_loss_last"] = float(lhist[-1])
-                    stat["recon_loss_min"] = float(min(lhist))
-                if recon_algo == "fista" and not loss_alias_only:
-                    stat["fista_first"] = float(lhist[0])
-                    stat["fista_last"] = float(lhist[-1])
-                    stat["fista_min"] = float(min(lhist))
+            if lhist and bool(info_rec.get("iteration_loss_computed", True)):
+                stat["recon_loss_first"] = float(lhist[0])
+                stat["recon_loss_last"] = float(lhist[-1])
+                stat["recon_loss_min"] = float(min(lhist))
         except (TypeError, ValueError, OverflowError) as exc:
             _record_stat_conversion_error(stat, "loss", exc)
     if recon_algo == "spdhg":

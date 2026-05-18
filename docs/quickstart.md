@@ -1,9 +1,9 @@
-# TomoJAX v2 Quickstart
+# TomoJAX Quickstart
 
-TomoJAX v2 is published around one public CLI, `tomojax`, and public Python
-facades under `tomojax.*`. The normal workflow is to inspect data, optionally
-preprocess or ingest it into the standard dataset contract, reconstruct, and run
-alignment only through the supported CLI/profile path.
+TomoJAX is published around one public CLI, `tomojax`, and public Python facades
+under `tomojax.*`. The normal workflow is to inspect data, optionally preprocess
+or ingest it into the standard dataset contract, reconstruct, and run alignment
+through the supported CLI/profile path.
 
 ## Install and check the CLI
 
@@ -44,20 +44,19 @@ uv run tomojax ingest ./projections \
 ## Reconstruct
 
 ```bash
-uv run tomojax recon corrected.nxs --out recon.nxs
+uv run tomojax recon --data corrected.nxs --out recon.nxs
 ```
 
 ## Align and reconstruct
 
 ```bash
-uv run tomojax align corrected.nxs \
+uv run tomojax align --data corrected.nxs \
   --out aligned.nxs \
   --mode cor
 ```
 
-Alignment is intentionally routed through the product command and its public
-profile/schedule API. Removed developer gates, article runners, and benchmark
-harnesses are not part of the shipped quickstart.
+Alignment is routed through the product command and its public profile/schedule
+API.
 
 ## Synthetic smoke workflow
 
@@ -69,7 +68,7 @@ uv run tomojax simulate \
   --n-views 64 \
   --phantom random_shapes
 
-uv run tomojax recon synthetic_scan.nxs --out synthetic_recon.nxs
+uv run tomojax recon --data synthetic_scan.nxs --out synthetic_recon.nxs
 ```
 
 For a minimal public-Python example, see

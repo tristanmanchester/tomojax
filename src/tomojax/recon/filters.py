@@ -12,7 +12,7 @@ _FILTER_CACHE_CAP = 8
 
 
 def _normalize_filter_name(name: str | None) -> str:
-    """Canonicalize filter aliases and preserve the default ramp fallback."""
+    """Normalize filter names and preserve the default ramp fallback."""
     normalized = str(name or "").strip().lower()
     return normalized or "ramp"
 
@@ -53,11 +53,11 @@ def get_filter_np(name: str, n: int, du: float) -> np.ndarray:
     if key in _FILTER_CACHE:
         _FILTER_CACHE.move_to_end(key)
         return _FILTER_CACHE[key]
-    if filter_name in ("ramp", "ram-lak", "ramlak"):
+    if filter_name == "ramp":
         H = _ramp_filter_np(n, du)
-    elif filter_name in ("shepp", "shepp-logan", "shepplogan"):
+    elif filter_name == "shepp-logan":
         H = _shepp_logan_filter_np(n, du)
-    elif filter_name in ("hann", "hanning"):
+    elif filter_name == "hann":
         H = _hann_filter_np(n, du)
     else:
         raise ValueError(f"Unknown filter {name}")

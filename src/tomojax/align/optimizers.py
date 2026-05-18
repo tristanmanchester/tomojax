@@ -499,19 +499,17 @@ def run_pose_lbfgs(  # noqa: PLR0915
             motion_coeffs=motion_coeffs_in,
             loss=loss_before_value,
             accepted=False,
-            stats=_stats_with_aliases(
-                {
-                    "lbfgs_backend": "optax",
-                    "lbfgs_success": False,
-                    "lbfgs_accepted": False,
-                    "lbfgs_fallback_to_gd": False,
-                    "lbfgs_message": message,
-                    "lbfgs_failure_reason": message,
-                    "lbfgs_initial_loss": loss_before_value,
-                    "lbfgs_final_loss": loss_before_value,
-                    "lbfgs_best_loss": None,
-                }
-            ),
+            stats={
+                "lbfgs_backend": "optax",
+                "lbfgs_success": False,
+                "lbfgs_accepted": False,
+                "lbfgs_fallback_to_gd": False,
+                "lbfgs_message": message,
+                "lbfgs_failure_reason": message,
+                "lbfgs_initial_loss": loss_before_value,
+                "lbfgs_final_loss": loss_before_value,
+                "lbfgs_best_loss": None,
+            },
         )
 
     active_cols_jnp, bounds_transform = context.active_bound_transform(int(params5_in.shape[0]))
@@ -527,19 +525,17 @@ def run_pose_lbfgs(  # noqa: PLR0915
         eval_count: int = 0,
         best_value: float = math.inf,
     ) -> PoseLbfgsResult:
-        stats = _stats_with_aliases(
-            {
-                "lbfgs_backend": "optax",
-                "lbfgs_success": False,
-                "lbfgs_accepted": False,
-                "lbfgs_fallback_to_gd": True,
-                "lbfgs_message": message,
-                "lbfgs_nfev": int(eval_count),
-                "lbfgs_initial_loss": initial_loss,
-                "lbfgs_final_loss": loss_before_value,
-                "lbfgs_best_loss": best_value if math.isfinite(best_value) else None,
-            }
-        )
+        stats: OptimizerStats = {
+            "lbfgs_backend": "optax",
+            "lbfgs_success": False,
+            "lbfgs_accepted": False,
+            "lbfgs_fallback_to_gd": True,
+            "lbfgs_message": message,
+            "lbfgs_nfev": int(eval_count),
+            "lbfgs_initial_loss": initial_loss,
+            "lbfgs_final_loss": loss_before_value,
+            "lbfgs_best_loss": best_value if math.isfinite(best_value) else None,
+        }
         return PoseLbfgsResult(
             params5=params5_in,
             motion_coeffs=motion_coeffs_in,
@@ -656,19 +652,8 @@ def run_pose_lbfgs(  # noqa: PLR0915
         motion_coeffs=candidate_coeffs,
         loss=final_loss,
         accepted=bool(accepted),
-        stats=_stats_with_aliases(stats),
+        stats=stats,
     )
-
-
-def _stats_with_aliases(stats: OptimizerStats) -> OptimizerStats:
-    out: dict[str, Any] = dict(stats)
-    out.setdefault("optimizer", "lbfgs")
-    out.setdefault("optimizer_backend", out.get("lbfgs_backend", "optax"))
-    out.setdefault("optimizer_accepted", out.get("lbfgs_accepted"))
-    out.setdefault("optimizer_initial_loss", out.get("lbfgs_initial_loss"))
-    out.setdefault("optimizer_final_loss", out.get("lbfgs_final_loss"))
-    out.setdefault("optimizer_best_loss", out.get("lbfgs_best_loss"))
-    return out
 
 
 @dataclass(frozen=True)
@@ -777,32 +762,31 @@ def run_active_validation_lm(  # noqa: PLR0915
         else 0.0
     )
     stats = {
-        "optimizer": "validation_lm",
-        "optimizer_backend": "streamed_normals",
-        "optimizer_accepted": bool(accepted),
-        "optimizer_success": bool(accepted),
-        "optimizer_initial_loss": initial_loss,
-        "optimizer_final_loss": float(final_loss),
-        "optimizer_best_loss": float(best_loss),
-        "optimizer_damping": float(damping),
-        "optimizer_solve_method": solve_method,
-        "optimizer_candidate_scales": [float(v) for v in cfg.step_scales],
-        "optimizer_candidate_losses": candidate_losses,
-        "optimizer_predicted_reductions": predicted_reductions,
-        "optimizer_selected_scale": float(best_scale),
-        "optimizer_actual_reduction": float(actual_reduction),
-        "optimizer_predicted_reduction": float(predicted_reduction),
-        "optimizer_lm_ratio": (
+        "validation_lm_backend": "streamed_normals",
+        "validation_lm_accepted": bool(accepted),
+        "validation_lm_success": bool(accepted),
+        "validation_lm_initial_loss": initial_loss,
+        "validation_lm_final_loss": float(final_loss),
+        "validation_lm_best_loss": float(best_loss),
+        "validation_lm_damping": float(damping),
+        "validation_lm_solve_method": solve_method,
+        "validation_lm_candidate_scales": [float(v) for v in cfg.step_scales],
+        "validation_lm_candidate_losses": candidate_losses,
+        "validation_lm_predicted_reductions": predicted_reductions,
+        "validation_lm_selected_scale": float(best_scale),
+        "validation_lm_actual_reduction": float(actual_reduction),
+        "validation_lm_predicted_reduction": float(predicted_reduction),
+        "validation_lm_ratio": (
             float(actual_reduction / predicted_reduction)
             if abs(predicted_reduction) > 1e-12
             else None
         ),
-        "optimizer_condition_number": condition,
-        "optimizer_singular_values": sv_list,
+        "validation_lm_condition_number": condition,
+        "validation_lm_singular_values": sv_list,
         **optimizer_step_stats(view=view, before=state, after=final_state, grad_whitened=g),
     }
     if not accepted:
-        stats["optimizer_failure_reason"] = "no candidate validation-LM step reduced loss"
+        stats["validation_lm_failure_reason"] = "no candidate validation-LM step reduced loss"
     return ActiveOptimizerResult(
         state=final_state,
         loss=float(final_loss),
@@ -862,12 +846,11 @@ def run_active_lbfgs(  # noqa: PLR0915
             loss=initial_loss,
             accepted=False,
             stats={
-                "optimizer": "lbfgs",
-                "optimizer_backend": "optax",
-                "optimizer_accepted": False,
-                "optimizer_initial_loss": initial_loss if math.isfinite(initial_loss) else None,
-                "optimizer_final_loss": None,
-                "optimizer_failure_reason": "non-finite initial objective/gradient",
+                "active_lbfgs_backend": "optax",
+                "active_lbfgs_accepted": False,
+                "active_lbfgs_initial_loss": initial_loss if math.isfinite(initial_loss) else None,
+                "active_lbfgs_final_loss": None,
+                "active_lbfgs_failure_reason": "non-finite initial objective/gradient",
             },
         )
 
@@ -926,17 +909,16 @@ def run_active_lbfgs(  # noqa: PLR0915
     else:
         _, z_grad = objective_value_and_grad_fn(view.pack(state))
     stats = {
-        "optimizer": "lbfgs",
-        "optimizer_backend": "optax",
-        "optimizer_accepted": bool(accepted),
-        "optimizer_success": bool(success),
-        "optimizer_initial_loss": initial_loss,
-        "optimizer_final_loss": final_loss,
-        "optimizer_best_loss": best_loss,
-        "optimizer_nit": int(nit),
-        "optimizer_initial_grad_norm": initial_grad_norm,
-        "optimizer_final_grad_norm": last_grad_norm,
-        "optimizer_last_step_norm": last_step_norm,
+        "active_lbfgs_backend": "optax",
+        "active_lbfgs_accepted": bool(accepted),
+        "active_lbfgs_success": bool(success),
+        "active_lbfgs_initial_loss": initial_loss,
+        "active_lbfgs_final_loss": final_loss,
+        "active_lbfgs_best_loss": best_loss,
+        "active_lbfgs_nit": int(nit),
+        "active_lbfgs_initial_grad_norm": initial_grad_norm,
+        "active_lbfgs_final_grad_norm": last_grad_norm,
+        "active_lbfgs_last_step_norm": last_step_norm,
         **optimizer_step_stats(view=view, before=state, after=final_state, grad_whitened=z_grad),
     }
     return ActiveOptimizerResult(

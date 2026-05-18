@@ -2,14 +2,14 @@
 
 TomoJAX is a compact tomography and laminography toolbox for projection IO, preprocessing, reconstruction, and alignment.
 
-The supported command-line surface is the grouped `tomojax` command:
+The command-line surface is the grouped `tomojax` command:
 
 ```bash
 tomojax inspect scan.nxs
 tomojax ingest ./projections --angles angles.csv --du 0.65 --dv 0.65 --out scan.nxs
 tomojax preprocess raw.nxs corrected.nxs
-tomojax recon corrected.nxs --out recon.nxs
-tomojax align corrected.nxs --out aligned.nxs --mode cor
+tomojax recon --data corrected.nxs --out recon.nxs
+tomojax align --data corrected.nxs --out aligned.nxs --mode cor
 tomojax simulate --out synthetic.nxs --nx 64 --ny 64 --nz 64 --nu 64 --nv 64 --n-views 64
 ```
 
@@ -17,7 +17,7 @@ tomojax simulate --out synthetic.nxs --nx 64 --ny 64 --nz 64 --nu 64 --nv 64 --n
 
 ## Public package surface
 
-The product-facing imports are:
+Use these package facades:
 
 - `tomojax.io` for projection payloads, NXtomo IO, validation, preprocessing, and quicklooks.
 - `tomojax.geometry` for geometry metadata, axes, calibration state, and field-of-view helpers.
@@ -26,7 +26,7 @@ The product-facing imports are:
 - `tomojax.align` for `AlignConfig`, `align`, and `align_multires`.
 - `tomojax.datasets` for deterministic synthetic datasets.
 
-Historical benchmark harnesses, development logs, v1-parity gates, diagnostic runners, article artifact builders, and one-off scripts have been removed from the publishable tree. The retained tests prove the supported public API, CLI routing, import boundaries, IO/preprocessing workflows, deterministic simulation contracts, and tiny numerical reconstruction workflows.
+The tests cover the public API, CLI routing, import boundaries, IO/preprocessing workflows, deterministic simulation contracts, and tiny numerical reconstruction workflows.
 
 ## Workflow docs
 
@@ -43,4 +43,4 @@ just surface-check
 just check
 ```
 
-`just surface-check` is the bounded product feedback loop. It checks formatting/lint configuration, private-import guardrails, and the retained product tests.
+`just surface-check` is the bounded product feedback loop. It checks formatting/lint configuration, private-import guardrails, and product tests.

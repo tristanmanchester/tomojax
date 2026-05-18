@@ -3,32 +3,23 @@ from __future__ import annotations
 import numpy as np
 
 from ._io_nxtomo import load_nxtomo, save_nxtomo
-from ._io_types import DatasetValue, LoadedDataset, LoadedNXTomo, NXTomoMetadata
+from ._io_types import LoadedDataset, LoadedNXTomo, NXTomoMetadata
 
 
 def save_npz(
     path: str,
     projections: np.ndarray,
     *,
-    metadata: NXTomoMetadata | None = None,
-    **meta: DatasetValue,
+    metadata: NXTomoMetadata,
 ) -> None:
     """Write a typed TomoJAX payload to compressed NPZ.
 
-    ``metadata`` is the preferred contract and mirrors ``save_nxtomo``. Extra
-    keyword metadata is retained as a compatibility path for older callers and
-    overrides fields derived from ``metadata`` when both are supplied.
+    ``metadata`` mirrors the required ``save_nxtomo`` persistence contract.
     """
-    payload: LoadedDataset = {}
-    if metadata is not None:
-        payload.update(
-            LoadedNXTomo(
-                projections=np.asarray(projections),
-                metadata=metadata,
-            ).to_dataset_dict()
-        )
-    payload.update(meta)
-    payload["projections"] = np.asarray(projections)
+    payload: LoadedDataset = LoadedNXTomo(
+        projections=np.asarray(projections),
+        metadata=metadata,
+    ).to_dataset_dict()
     np.savez_compressed(path, **payload)
 
 
@@ -60,6 +51,6 @@ def convert(in_path: str, out_path: str) -> None:
         )
     elif in_path.endswith((".nxs", ".h5", ".hdf5")) and out_path.endswith(".npz"):
         data = load_nxtomo(in_path)
-        save_npz(out_path, **data.to_dataset_dict())
+        save_npz(out_path, data.projections, metadata=data.copy_metadata())
     else:
         raise ValueError("Unsupported conversion. Use .npz <-> .nxs/.h5/.hdf5")

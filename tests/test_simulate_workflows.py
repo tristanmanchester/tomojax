@@ -11,6 +11,7 @@ from tomojax.datasets import (
     SimConfig,
     SimulationArtefacts,
     make_phantom,
+    random_cubes_spheres,
     simulate,
     simulate_to_file,
 )
@@ -121,6 +122,32 @@ def test_simulation_artefact_metadata_exists_and_is_deterministic(
     assert first["simulation_artefacts"]["dead_pixel_count"] == 1
     np.testing.assert_allclose(np.asarray(first["projections"]), np.asarray(second["projections"]))
     assert bool(jnp.any(first["projections"] == -1.0))
+    assert "noise" not in first["meta"]
+    assert "noise_level" not in first["meta"]
+
+
+def test_random_shapes_uses_current_center_biased_placement_only() -> None:
+    first = random_cubes_spheres(16, 16, 16, n_cubes=2, n_spheres=2, seed=3)
+    second = random_cubes_spheres(16, 16, 16, n_cubes=2, n_spheres=2, seed=3)
+
+    assert first.shape == (16, 16, 16)
+    np.testing.assert_allclose(first, second)
+    with pytest.raises(TypeError, match="placement"):
+        random_cubes_spheres(16, 16, 16, placement="old")  # type: ignore[call-arg]
+
+
+def test_sim_config_no_longer_accepts_noise_shorthand() -> None:
+    with pytest.raises(TypeError, match="noise"):
+        SimConfig(  # type: ignore[call-arg]
+            nx=2,
+            ny=2,
+            nz=2,
+            nu=2,
+            nv=2,
+            n_views=2,
+            noise="gaussian",
+            noise_level=0.1,
+        )
 
 
 def test_simulate_to_file_writes_loadable_dataset(

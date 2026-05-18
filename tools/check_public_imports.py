@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 ALLOW_PRIVATE_MARKER = "check-public-imports: allow-private"
 DEFAULT_SCAN_PATHS = [Path("src/tomojax"), Path("tests"), Path("examples")]
 ALIGNMENT_FACADE_REASON = "nested alignment namespace must be reached through tomojax.align.api"
-LEGACY_ALIGN_NAMESPACES = (
+BLOCKED_ALIGNMENT_NAMESPACES = (
     "tomojax.align._geometry",
     "tomojax.align._model",
     "tomojax.align._objectives",
@@ -25,10 +25,10 @@ LEGACY_ALIGN_NAMESPACES = (
     "tomojax.align.objectives",
     "tomojax.align.pipeline",
 )
-LEGACY_PUBLIC_SURFACE_RULES = (
+PRODUCT_BOUNDARY_IMPORT_RULES = (
     (
         "tomojax.data",
-        "removed data namespace must be reached through tomojax.io or tomojax.datasets",
+        "data namespace must be reached through tomojax.io or tomojax.datasets",
     ),
     (
         "tomojax._data",
@@ -69,7 +69,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Reject imports of tomojax.<owner>._private modules from outside tomojax.<owner>. "
-            "Also reject removed or private TomoJAX namespaces from product-facing modules. "
+            "Also reject private TomoJAX namespaces from product-facing modules. "
             "Tests may allow a specific white-box import with "
             f"'# {ALLOW_PRIVATE_MARKER}'."
         )
@@ -121,15 +121,15 @@ def find_violations(paths: Iterable[Path], root: Path) -> list[Violation]:
             for imported_module in imported_modules:
                 if product_surface_import_is_allowed(importing_module, imported_module):
                     continue
-                legacy_reason = legacy_public_surface_reason(imported_module, importing_module)
-                if legacy_reason is not None:
+                boundary_reason = product_boundary_reason(imported_module, importing_module)
+                if boundary_reason is not None:
                     violations.append(
                         Violation(
                             path=path,
                             line=node.lineno,
                             imported_module=imported_module,
                             importing_module=importing_module,
-                            reason=legacy_reason,
+                            reason=boundary_reason,
                         )
                     )
                     continue
@@ -208,19 +208,19 @@ def module_is_inside_owner(module: str, owner: str) -> bool:
     return module == f"tomojax.{owner}" or module.startswith(f"tomojax.{owner}.")
 
 
-def legacy_public_surface_reason(imported_module: str, importing_module: str) -> str | None:
-    """Return a violation reason for old namespaces leaking into product surfaces."""
+def product_boundary_reason(imported_module: str, importing_module: str) -> str | None:
+    """Return a violation reason for imports outside product-facing boundaries."""
     if not is_product_surface_module(importing_module):
         return None
-    for namespace, reason in LEGACY_PUBLIC_SURFACE_RULES:
+    for namespace, reason in PRODUCT_BOUNDARY_IMPORT_RULES:
         if module_matches_namespace(imported_module, namespace):
             return reason
     if importing_module.startswith("tomojax.cli.") and module_matches_namespace(
         imported_module, "tomojax.bench"
     ):
         return "production CLI modules must not import benchmark helpers"
-    for legacy_align_namespace in LEGACY_ALIGN_NAMESPACES:
-        if module_matches_namespace(imported_module, legacy_align_namespace):
+    for blocked_align_namespace in BLOCKED_ALIGNMENT_NAMESPACES:
+        if module_matches_namespace(imported_module, blocked_align_namespace):
             return ALIGNMENT_FACADE_REASON
     return None
 
@@ -236,7 +236,7 @@ def is_product_surface_module(module: str) -> bool:
 
 
 def product_surface_import_is_allowed(importing_module: str, imported_module: str) -> bool:
-    """Return whether a product-surface import has a narrow transitional exception."""
+    """Return whether a product-surface import has a narrow explicit exception."""
     return any(
         importing_module == allowed_importer
         and (imported_module == allowed_import or imported_module.startswith(f"{allowed_import}."))

@@ -398,7 +398,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--volume-axes",
         choices=["zyx", "xyz"],
         default=DISK_VOLUME_AXES,
-        help="On-disk axis order for saved volumes (default: zyx for viewer compatibility).",
+        help="On-disk axis order for saved volumes (default: zyx for viewer convention).",
     )
     p.add_argument(
         "--progress",

@@ -1,4 +1,4 @@
-"""Alignment checkpoint metadata, persistence, and compatibility validation."""
+"""Alignment checkpoint metadata, persistence, and validation."""
 
 from __future__ import annotations
 
@@ -17,30 +17,6 @@ from tomojax.io import normalize_json as _normalize_json
 
 CHECKPOINT_KIND = "tomojax.align.checkpoint"
 SCHEMA_VERSION = 1
-_ALIGN_CONFIG_COMPAT_DEFAULTS = {
-    "recon_algo": "fista",
-    "recon_positivity": True,
-    "spdhg_seed": 0,
-    "lbfgs_maxiter": 20,
-    "lbfgs_ftol": 1e-6,
-    "lbfgs_gtol": 1e-5,
-    "lbfgs_maxls": 20,
-    "lbfgs_memory_size": 10,
-    "gauge_fix": "mean_translation",
-    "schedule": None,
-    "gauge_policy": "reject",
-    "gauge_priors": None,
-}
-_ALIGN_CLI_COMPAT_DEFAULTS = {
-    "recon_algo": "fista",
-    "spdhg_seed": 0,
-    "recon_positivity": True,
-    "gauge_fix": "mean_translation",
-    "schedule": None,
-    "gauge_policy": "reject",
-    "optimise_dofs": [],
-    "freeze_dofs": [],
-}
 
 
 class CheckpointError(RuntimeError):
@@ -96,7 +72,7 @@ class AlignmentCheckpoint:
 
 @dataclass(frozen=True, slots=True)
 class AlignmentProjectionIdentity:
-    """Projection stack identity fields used for resume compatibility."""
+    """Projection stack identity fields used for resume validation."""
 
     shape: tuple[int, ...] | list[int]
     dtype: str
@@ -173,19 +149,8 @@ def _normalize_json_object(value: Mapping[str, Any] | None) -> dict[str, Any]:
     return dict(normalized)
 
 
-def _normalize_checkpoint_compare_value(key: str, value: Any) -> Any:
-    normalized = normalize_json(value)
-    if key == "config" and isinstance(normalized, Mapping):
-        with_defaults = dict(normalized)
-        for default_key, default_value in _ALIGN_CONFIG_COMPAT_DEFAULTS.items():
-            with_defaults.setdefault(default_key, default_value)
-        return with_defaults
-    if key == "cli_options" and isinstance(normalized, Mapping):
-        with_defaults = dict(normalized)
-        for default_key, default_value in _ALIGN_CLI_COMPAT_DEFAULTS.items():
-            with_defaults.setdefault(default_key, default_value)
-        return with_defaults
-    return normalized
+def _normalize_checkpoint_compare_value(value: Any) -> Any:
+    return normalize_json(value)
 
 
 def build_alignment_checkpoint_metadata_from_input(
@@ -229,74 +194,6 @@ def build_alignment_checkpoint_metadata_from_input(
     # Keep persisted metadata strict JSON.
     json.dumps(metadata, allow_nan=False, sort_keys=True)
     return metadata
-
-
-def build_alignment_checkpoint_metadata(
-    *,
-    projections_shape: tuple[int, ...] | list[int],
-    projections_dtype: str,
-    geometry_type: str,
-    geometry_meta: Mapping[str, Any] | None,
-    reconstruction_grid: Mapping[str, Any],
-    detector: Mapping[str, Any],
-    state_grid: Mapping[str, Any],
-    state_detector: Mapping[str, Any],
-    levels: list[int] | None,
-    level_index: int,
-    level_factor: int,
-    completed_outer_iters_in_level: int,
-    global_outer_iters_completed: int,
-    config: Any,
-    cli_options: Mapping[str, Any] | None = None,
-    prev_factor: int | None = None,
-    current_inner_iteration: int = 0,
-    L_prev: float | None = None,
-    small_impr_streak: int = 0,
-    elapsed_offset: float = 0.0,
-    random_state: Mapping[str, Any] | None = None,
-    schedule_metadata: Mapping[str, Any] | None = None,
-    schedule_state: Mapping[str, Any] | None = None,
-    geometry_calibration_state: Mapping[str, Any] | None = None,
-    level_complete: bool = False,
-    run_complete: bool = False,
-) -> CheckpointMetadata:
-    """Compatibility wrapper for the legacy wide metadata-builder signature."""
-    return build_alignment_checkpoint_metadata_from_input(
-        AlignmentCheckpointMetadataInput(
-            projection=AlignmentProjectionIdentity(
-                shape=projections_shape,
-                dtype=projections_dtype,
-            ),
-            geometry=AlignmentCheckpointGeometrySnapshot(
-                geometry_type=geometry_type,
-                geometry_meta=geometry_meta,
-                reconstruction_grid=reconstruction_grid,
-                detector=detector,
-                state_grid=state_grid,
-                state_detector=state_detector,
-                geometry_calibration_state=geometry_calibration_state,
-            ),
-            progress=AlignmentCheckpointProgress(
-                levels=levels,
-                level_index=level_index,
-                level_factor=level_factor,
-                completed_outer_iters_in_level=completed_outer_iters_in_level,
-                global_outer_iters_completed=global_outer_iters_completed,
-                prev_factor=prev_factor,
-                current_inner_iteration=current_inner_iteration,
-                L_prev=L_prev,
-                small_impr_streak=small_impr_streak,
-                elapsed_offset=elapsed_offset,
-                level_complete=level_complete,
-                run_complete=run_complete,
-            ),
-            config=config,
-            cli_options=cli_options,
-            random_state=random_state,
-            schedule_metadata=schedule_metadata,
-            schedule_state=schedule_state,
-        )
-    )
 
 
 def save_alignment_checkpoint(
@@ -452,8 +349,8 @@ def validate_alignment_checkpoint(
     ):
         if key not in expected:
             continue
-        actual_value = _normalize_checkpoint_compare_value(key, metadata.get(key))
-        expected_value = _normalize_checkpoint_compare_value(key, expected.get(key))
+        actual_value = _normalize_checkpoint_compare_value(metadata.get(key))
+        expected_value = _normalize_checkpoint_compare_value(expected.get(key))
         if actual_value != expected_value:
             raise CheckpointError(
                 f"incompatible checkpoint: {key.replace('_', ' ')} "

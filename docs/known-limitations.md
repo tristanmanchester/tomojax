@@ -7,12 +7,10 @@ The shipped package focuses on the public CLI/API workflows listed in
 - Broad, truth-free laminography alignment remains a research area rather than a
   broad product claim.
 - Detector-centre/COR alignment is exposed through the product CLI/profile path;
-  fixed-truth and scan-specific diagnostic gates are archived separately.
+  fixed-truth and scan-specific diagnostics are not product workflows.
 - Object-frame drift recovery, nuisance fitting as a headline workflow, and
   combined bad-view/jump handling are not promoted as public product workflows.
 - Pallas paths remain implementation/backend support rather than the default
-  correctness claim. Reference/JAX paths are the retained baseline for the
-  public smoke tests.
-- The retained test suite is intentionally small. It proves import boundaries,
-  CLI shape, and a CPU reconstruction smoke workflow rather than preserving the
-  historical benchmark matrix.
+  correctness claim. Reference/JAX paths are the baseline for public smoke tests.
+- The test suite is intentionally small. It proves import boundaries, CLI shape,
+  and a CPU reconstruction smoke workflow.

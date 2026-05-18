@@ -176,7 +176,6 @@ def _build_alignment_manifest_payload_from_result(
         "active_dofs": active_dofs,
         "active_pose_dofs": active_pose_dofs,
         "active_geometry_dofs": active_geometry_dofs,
-        "geometry_dofs": list(plan.geometry_dofs),
         "geometry_calibration_state": geometry_calibration_state,
         "alignment_params_shape": list(params5_np.shape),
         "alignment_gauge": gauge_metadata,

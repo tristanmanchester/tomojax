@@ -350,7 +350,7 @@ def _optimize_setup_geometry_bilevel_for_level(
 ) -> SetupStageResult:
     _validate_setup_stage_execution_contract(stage)
     base = BaseGeometryArrays.from_geometry(geometry, detector, level_factor=int(factor))
-    active_view = ActiveParameterView.from_dofs(active_geometry_dofs, geometry=geometry)
+    active_view = ActiveParameterView.from_dofs(active_geometry_dofs)
     alignment_state = state.replace(
         setup=state.setup.replace(nominal_axis_unit=base.nominal_axis_unit),
         pose=PoseState(

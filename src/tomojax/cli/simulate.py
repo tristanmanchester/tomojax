@@ -25,7 +25,6 @@ if TYPE_CHECKING:
 GeometryName = Literal["parallel", "lamino"]
 TiltAxis = Literal["x", "z"]
 PhantomName = Literal["shepp", "cube", "sphere", "blobs", "random_shapes", "lamino_disk"]
-NoiseName = Literal["none", "gaussian", "poisson"]
 TransferGuardName = Literal["off", "log", "disallow"]
 IntensityDriftModeName = Literal["none", "linear", "sinusoidal"]
 
@@ -121,8 +120,6 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0.2,
         help="Relative slab thickness (0-1) used by the lamino disk phantom",
     )
-    _ = parser.add_argument("--noise", choices=["none", "gaussian", "poisson"], default="none")
-    _ = parser.add_argument("--noise-level", type=float, default=0.0)
     _ = parser.add_argument("--poisson-scale", type=float, default=0.0)
     _ = parser.add_argument("--gaussian-sigma", type=float, default=0.0)
     _ = parser.add_argument("--dead-pixel-fraction", type=float, default=0.0)
@@ -176,8 +173,6 @@ def _parse_command(argv: Sequence[str] | None) -> SimulateCommand:
         tilt_about=cast("TiltAxis", args.tilt_about),
         rotation_deg=rotation_deg,
         phantom=cast("PhantomName", args.phantom),
-        noise=cast("NoiseName", args.noise),
-        noise_level=cast("float", args.noise_level),
         seed=cast("int", args.seed),
         artefacts=artefacts,
         single_size=cast("float", args.single_size),
@@ -228,11 +223,6 @@ def _build_artefacts(
     validate_simulation_artefacts(artefacts)
     if not artefacts.has_enabled():
         return None
-    if cast("NoiseName", args.noise) != "none" and cast("float", args.noise_level) > 0.0:
-        logging.warning(
-            "Ignoring shorthand --noise/--noise-level because explicit artefact "
-            "options were supplied"
-        )
     return artefacts
 
 

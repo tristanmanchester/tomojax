@@ -170,7 +170,6 @@ type LossParamEmitter = Callable[[AlignmentLossSpec], dict[str, float]]
 class LossKindEntry:
     build: LossBuilder
     allowed_params: frozenset[str]
-    aliases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,13 +311,12 @@ def _build_poisson(_: Mapping[str, float]) -> AlignmentLossSpec:
 
 _LOSS_KIND_REGISTRY: dict[str, LossKindEntry] = {
     "l2": LossKindEntry(_build_l2, frozenset()),
-    "l2_otsu": LossKindEntry(_build_l2_otsu, frozenset({"temp"}), aliases=("l2-otsu", "otsu-l2")),
+    "l2_otsu": LossKindEntry(_build_l2_otsu, frozenset({"temp"})),
     "pwls": LossKindEntry(_build_pwls, frozenset({"a", "b"})),
-    "edge_l2": LossKindEntry(_build_edge_l2, frozenset(), aliases=("edge_aware_l2",)),
+    "edge_l2": LossKindEntry(_build_edge_l2, frozenset()),
     "charbonnier": LossKindEntry(
         _robust_builder("charbonnier"),
         frozenset({"eps", "delta", "c", "nu", "sigma", "alpha"}),
-        aliases=("charb",),
     ),
     "huber": LossKindEntry(
         _robust_builder("huber"),
@@ -327,84 +325,60 @@ _LOSS_KIND_REGISTRY: dict[str, LossKindEntry] = {
     "cauchy": LossKindEntry(
         _robust_builder("cauchy"),
         frozenset({"eps", "delta", "c", "nu", "sigma", "alpha"}),
-        aliases=("lorentzian",),
     ),
     "welsch": LossKindEntry(
         _robust_builder("welsch"),
         frozenset({"eps", "delta", "c", "nu", "sigma", "alpha"}),
-        aliases=("leclerc",),
     ),
     "student_t": LossKindEntry(
         _robust_builder("student_t"),
         frozenset({"eps", "delta", "c", "nu", "sigma", "alpha"}),
-        aliases=("student-t",),
     ),
     "barron": LossKindEntry(
         _robust_builder("barron"),
         frozenset({"eps", "delta", "c", "nu", "sigma", "alpha"}),
-        aliases=("robust_general",),
     ),
     "correntropy": LossKindEntry(
         _robust_builder("correntropy"),
         frozenset({"eps", "delta", "c", "nu", "sigma", "alpha"}),
-        aliases=("mcc",),
     ),
-    "zncc": LossKindEntry(
-        _correlation_builder("zncc"), frozenset({"eps", "beta"}), aliases=("ncc",)
-    ),
+    "zncc": LossKindEntry(_correlation_builder("zncc"), frozenset({"eps", "beta"})),
     "phasecorr": LossKindEntry(
         _correlation_builder("phasecorr"),
         frozenset({"eps", "beta"}),
-        aliases=("phase_corr_soft",),
     ),
     "fft_mag": LossKindEntry(
         _correlation_builder("fft_mag"),
         frozenset({"eps", "beta"}),
-        aliases=("fftmag",),
     ),
     "ssim": LossKindEntry(_build_ssim, frozenset({"K1", "K2", "window"})),
     "ms_ssim": LossKindEntry(
         _build_ms_ssim,
         frozenset({"K1", "K2", "window", "levels"}),
-        aliases=("ms-ssim", "msssim"),
     ),
     "ssim_otsu": LossKindEntry(_build_ssim_otsu, frozenset({"K1", "K2", "window"})),
     "tversky": LossKindEntry(
         _build_tversky,
         frozenset({"temp", "alpha", "beta", "gamma"}),
-        aliases=("focal_tversky",),
     ),
-    "grad_l1": LossKindEntry(_gradient_builder("grad_l1"), frozenset({"eps"}), aliases=("gdl",)),
+    "grad_l1": LossKindEntry(_gradient_builder("grad_l1"), frozenset({"eps"})),
     "ngf": LossKindEntry(_gradient_builder("ngf"), frozenset({"eps"})),
-    "grad_orient": LossKindEntry(
-        _gradient_builder("grad_orient"), frozenset({"eps"}), aliases=("go",)
-    ),
+    "grad_orient": LossKindEntry(_gradient_builder("grad_orient"), frozenset({"eps"})),
     "chamfer_edge": LossKindEntry(
         _gradient_builder("chamfer_edge"),
         frozenset({"eps"}),
-        aliases=("chamfer",),
     ),
-    "mi": LossKindEntry(
-        _build_mi, frozenset({"bins", "bw_x", "bw_y", "alpha"}), aliases=("mi_kde",)
-    ),
-    "nmi": LossKindEntry(
-        _build_nmi, frozenset({"bins", "bw_x", "bw_y", "alpha"}), aliases=("nmi_kde",)
-    ),
+    "mi": LossKindEntry(_build_mi, frozenset({"bins", "bw_x", "bw_y", "alpha"})),
+    "nmi": LossKindEntry(_build_nmi, frozenset({"bins", "bw_x", "bw_y", "alpha"})),
     "renyi_mi": LossKindEntry(
         _build_renyi_mi,
         frozenset({"bins", "bw_x", "bw_y", "alpha"}),
-        aliases=("tsallis_mi",),
     ),
-    "swd": LossKindEntry(
-        _build_swd, frozenset({"n_samples", "p"}), aliases=("sliced_wasserstein",)
-    ),
+    "swd": LossKindEntry(_build_swd, frozenset({"n_samples", "p"})),
     "mind": LossKindEntry(_build_mind, frozenset()),
-    "poisson": LossKindEntry(_build_poisson, frozenset(), aliases=("poisson_nll",)),
+    "poisson": LossKindEntry(_build_poisson, frozenset()),
 }
 
-_LOSS_ALIASES: dict[str, str] = {
-    alias: canonical for canonical, entry in _LOSS_KIND_REGISTRY.items() for alias in entry.aliases
-}
 _SETUP_VALIDATION_LM_LOSSES = frozenset({"l2", "l2_otsu", "pwls", "edge_l2"})
 
 
@@ -550,9 +524,8 @@ _LOSS_SPEC_DESCRIPTORS: tuple[LossSpecDescriptor, ...] = (
 
 
 def canonicalize_loss_kind(kind: str) -> str:
-    """Normalize a user-facing loss kind or alias."""
-    normalized = str(kind).strip().lower()
-    return _LOSS_ALIASES.get(normalized, normalized)
+    """Normalize a user-facing loss kind."""
+    return str(kind).strip().lower()
 
 
 def loss_spec_name(spec: AlignmentLossSpec) -> str:

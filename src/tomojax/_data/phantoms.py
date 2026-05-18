@@ -210,20 +210,17 @@ def _sample_random_sphere_params(
     min_value: float,
     max_value: float,
     use_inscribed_fov: bool,
-    placement: str,
     radial_exponent: float,
     rng: np.random.Generator,
 ) -> np.ndarray:
-    """Sample sphere parameters while preserving the legacy RNG sequence."""
-    cx0, cy0 = nx / 2.0, ny / 2.0
-    fov_r = min(nx, ny) / 2.0 if use_inscribed_fov else float("inf")
+    """Sample center-biased sphere parameters."""
     params: list[tuple[float, float, float, float, float]] = []
 
     for _ in range(max(0, int(n_spheres))):
         radius = float(rng.uniform(min_size / 2.0, max_size / 2.0))
         if radius > nz / 2.0:
             continue
-        if placement == "center_biased_sphere":
+        if use_inscribed_fov:
             center = _sample_center_biased_sphere(
                 nx,
                 ny,
@@ -235,15 +232,6 @@ def _sample_random_sphere_params(
             if center is None:
                 continue
             cx, cy, cz = center
-        elif use_inscribed_fov:
-            rmax = fov_r - radius
-            if rmax <= 1:
-                continue
-            r = rng.uniform(0, rmax)
-            th = rng.uniform(0, 2 * np.pi)
-            cx = cx0 + r * np.cos(th)
-            cy = cy0 + r * np.sin(th)
-            cz = float(rng.uniform(radius, nz - radius))
         else:
             if radius > nx / 2.0 or radius > ny / 2.0:
                 continue
@@ -329,7 +317,6 @@ def random_cubes_spheres(
     max_value: float = 1.0,
     max_rot_degrees: float = 180.0,
     use_inscribed_fov: bool = True,
-    placement: str = "legacy",
     radial_exponent: float = 0.75,
     seed: int = 0,
 ) -> np.ndarray:
@@ -337,22 +324,15 @@ def random_cubes_spheres(
 
     Ensures objects fit within FOV if `use_inscribed_fov=True`.
     """
-    if placement not in {"legacy", "center_biased_sphere"}:
-        msg = "placement must be 'legacy' or 'center_biased_sphere'"
-        raise ValueError(msg)
-
     vol = np.zeros((nx, ny, nz), dtype=np.float32)
     rng = np.random.default_rng(seed)
-
-    cx0, cy0 = nx / 2.0, ny / 2.0
-    fov_r = min(nx, ny) / 2.0 if use_inscribed_fov else float("inf")
 
     # Cubes
     for _ in range(max(0, int(n_cubes))):
         size = float(rng.uniform(min_size, max_size))
         if size > nz:
             continue
-        if placement == "center_biased_sphere":
+        if use_inscribed_fov:
             margin = size * np.sqrt(3) / 2.0
             center = _sample_center_biased_sphere(
                 nx,
@@ -365,16 +345,6 @@ def random_cubes_spheres(
             if center is None:
                 continue
             cx, cy, cz = center
-        elif use_inscribed_fov:
-            max_xy_extent = size * np.sqrt(3) / 2.0
-            rmax = fov_r - max_xy_extent
-            if rmax <= 1:
-                continue
-            r = rng.uniform(0, rmax)
-            th = rng.uniform(0, 2 * np.pi)
-            cx = cx0 + r * np.cos(th)
-            cy = cy0 + r * np.sin(th)
-            cz = float(rng.uniform(size / 2.0, nz - size / 2.0))
         else:
             margin = size * np.sqrt(3) / 2.0
             if margin > nx / 2.0 or margin > ny / 2.0 or margin > nz / 2.0:
@@ -396,7 +366,6 @@ def random_cubes_spheres(
         min_value=min_value,
         max_value=max_value,
         use_inscribed_fov=use_inscribed_fov,
-        placement=placement,
         radial_exponent=radial_exponent,
         rng=rng,
     )
@@ -457,38 +426,3 @@ def lamino_disk(
     if vmax > 0:
         vol = vol / vmax
     return vol.astype(np.float32)
-
-
-def lamino_disk_legacy(
-    nx: int,
-    ny: int,
-    nz: int,
-    *,
-    thickness_ratio: float = 0.2,
-    seed: int = 0,
-    n_cubes: int = 8,
-    n_spheres: int = 7,
-    min_size: int = 4,
-    max_size: int = 32,
-    min_value: float = 0.1,
-    max_value: float = 1.0,
-    max_rot_degrees: float = 180.0,
-    tilt_deg: float = 30.0,
-    tilt_about: str = "x",
-) -> np.ndarray:
-    """Compatibility wrapper for callers that still pass ignored tilt options."""
-    del tilt_deg, tilt_about
-    return lamino_disk(
-        nx,
-        ny,
-        nz,
-        thickness_ratio=thickness_ratio,
-        seed=seed,
-        n_cubes=n_cubes,
-        n_spheres=n_spheres,
-        min_size=min_size,
-        max_size=max_size,
-        min_value=min_value,
-        max_value=max_value,
-        max_rot_degrees=max_rot_degrees,
-    )

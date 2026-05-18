@@ -236,7 +236,6 @@ def _run_setup_geometry_stage(
         cfg,
         schedule=None,
         optimise_dofs=stage.active_geometry_dofs,
-        geometry_dofs=(),
         outer_iters=int(stage.maxiter),
         early_stop=bool(stage.early_stop),
     )
@@ -367,7 +366,6 @@ def _run_pose_alignment_stage(
         cfg,
         schedule=None,
         optimise_dofs=stage.active_pose_dofs,
-        geometry_dofs=(),
         opt_method=str(pose_optimizer),
         outer_iters=int(stage.maxiter),
         recon_iters=recon_iters,

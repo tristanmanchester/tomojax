@@ -44,7 +44,7 @@ class BackgroundOffsetModel:
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-serializable background payload."""
         return {
-            "schema": "tomojax.background_offset_model.v1",
+            "schema": "tomojax.background_offset_model",
             "basis": "constant_plus_vertical_gradient",
             "constant": [float(value) for value in self.constant],
             "vertical_gradient": [float(value) for value in self.vertical_gradient],

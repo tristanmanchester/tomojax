@@ -346,7 +346,7 @@ def _retry_info_after_nonfinite_core(
         "actual_backend": "jax",
         "requested_backend": str(getattr(cfg, "projector_backend", "jax")),
         "regulariser": str(getattr(cfg, "regulariser", "")),
-        "loss_alias_only": not bool(quality_policy.compute_iteration_loss),
+        "iteration_loss_computed": bool(quality_policy.compute_iteration_loss),
         "data_loss_computed": bool(quality_policy.compute_final_data_loss),
         "regulariser_value_computed": bool(quality_policy.compute_final_regulariser_value),
         "quality_policy": quality_policy.to_dict(),
@@ -367,7 +367,7 @@ def _public_fista_info_after_core_bypass(
         "actual_backend": "jax",
         "requested_backend": str(getattr(cfg, "projector_backend", "jax")),
         "regulariser": str(getattr(cfg, "regulariser", "")),
-        "loss_alias_only": not bool(quality_policy.compute_iteration_loss),
+        "iteration_loss_computed": bool(quality_policy.compute_iteration_loss),
         "data_loss_computed": bool(quality_policy.compute_final_data_loss),
         "regulariser_value_computed": bool(quality_policy.compute_final_regulariser_value),
         "quality_policy": quality_policy.to_dict(),
@@ -580,7 +580,7 @@ def _run_reconstruction_step(
         )
         info = {
             "loss": loss,
-            "loss_alias_only": not bool(quality_policy.compute_iteration_loss),
+            "iteration_loss_computed": bool(quality_policy.compute_iteration_loss),
             "effective_iters": int(effective_iters),
             "early_stop": False,
             "regulariser": "huber_tv",

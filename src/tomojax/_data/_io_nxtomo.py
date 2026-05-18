@@ -279,10 +279,6 @@ def load_nxtomo(path: str) -> LoadedNXTomo:
                     )
             disk_axes = attr_norm or infer_disk_axes(volume_raw.shape, grid_hint)
             source = "attr" if attr_norm else "heuristic"
-            if disk_axes is None and source == "heuristic":
-                # Preserve legacy behavior for old files that omitted both the
-                # explicit volume axis attribute and grid metadata.
-                disk_axes = INTERNAL_VOLUME_AXES
             volume_np = np.asarray(volume_raw)
             disk_order: str
             if disk_axes == DISK_VOLUME_AXES:
@@ -299,10 +295,10 @@ def load_nxtomo(path: str) -> LoadedNXTomo:
             elif disk_axes == INTERNAL_VOLUME_AXES:
                 if source == "heuristic":
                     _axes_log_warning(
-                        "load_nxtomo: assuming legacy xyz disk volume order for %s",
+                        "load_nxtomo: inferred disk volume axes xyz for %s",
                         path,
                     )
-                disk_order = INTERNAL_VOLUME_AXES if source == "attr" else "xyz_legacy"
+                disk_order = INTERNAL_VOLUME_AXES
             elif disk_axes is None:
                 disk_order = "unknown"
                 _axes_log_warning(
@@ -317,24 +313,6 @@ def load_nxtomo(path: str) -> LoadedNXTomo:
             out["volume_axes_order"] = INTERNAL_VOLUME_AXES
             out["disk_volume_axes_order"] = disk_order
             out["volume_axes_source"] = source
-
-        # Grid fallback from volume if grid meta missing
-        if "grid" not in out and volume_raw is not None and "volume" in out:
-            vol = out["volume"]
-            nx, ny, nz = int(vol.shape[0]), int(vol.shape[1]), int(vol.shape[2])
-            _axes_log_warning(
-                "load_nxtomo: missing grid metadata for %s; "
-                "synthesizing unit grid from loaded volume shape",
-                path,
-            )
-            out["grid"] = {
-                "nx": nx,
-                "ny": ny,
-                "nz": nz,
-                "vx": 1.0,
-                "vy": 1.0,
-                "vz": 1.0,
-            }
     return LoadedNXTomo.from_dataset(out)
 
 

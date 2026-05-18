@@ -423,8 +423,6 @@ def resolve_alignment_schedule(
     schedule: str | AlignmentSchedule | None = None,
     optimise_dofs: str | Iterable[str] | None = None,
     freeze_dofs: str | Iterable[str] | None = None,
-    geometry_dofs: str | Iterable[str] | None = None,
-    geometry: object | None = None,
     gauge_policy: GaugePolicy = "reject",
     gauge_priors: Mapping[str, object] | None = None,
     opt_method: str = "gn",
@@ -435,10 +433,9 @@ def resolve_alignment_schedule(
     frozen = normalize_alignment_dofs(
         freeze_dofs,
         option_name="freeze_dofs",
-        geometry=geometry,
     )
-    if schedule is not None and (optimise_dofs is not None or geometry_dofs):
-        raise ValueError("schedule and explicit optimise_dofs/geometry_dofs are mutually exclusive")
+    if schedule is not None and optimise_dofs is not None:
+        raise ValueError("schedule and explicit optimise_dofs are mutually exclusive")
 
     source: ScheduleSource
     if isinstance(schedule, AlignmentSchedule):
@@ -451,8 +448,6 @@ def resolve_alignment_schedule(
         scoped = resolve_scoped_alignment_dofs(
             optimise_dofs=optimise_dofs,
             freeze_dofs=frozen,
-            geometry_dofs=geometry_dofs,
-            geometry=geometry,
         )
         if optimise_dofs is None:
             source = "default"
@@ -520,7 +515,6 @@ def resolve_alignment_schedule(
     requested = normalize_alignment_dofs(
         base_schedule.active_dofs,
         option_name="schedule active_dofs",
-        geometry=geometry,
     )
     top_level_decision = validate_active_gauge_policy(
         requested,
@@ -536,7 +530,6 @@ def resolve_alignment_schedule(
             for name in normalize_alignment_dofs(
                 stage.active_dofs,
                 option_name=f"schedule stage {stage.name} active_dofs",
-                geometry=geometry,
             )
             if name not in frozen_set
         )
@@ -545,7 +538,6 @@ def resolve_alignment_schedule(
         scoped_stage = resolve_scoped_alignment_dofs(
             optimise_dofs=active,
             freeze_dofs=(),
-            geometry=geometry,
         )
         decision = validate_active_gauge_policy(
             active,

@@ -40,8 +40,6 @@ GEOMETRY_BLOCKS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 def normalize_geometry_dofs(
     values: Iterable[str] | None,
-    *,
-    geometry: Geometry | None = None,
 ) -> tuple[str, ...]:
     """Normalize detector/instrument geometry DOF names for staged alignment."""
     if values is None:
@@ -49,18 +47,12 @@ def normalize_geometry_dofs(
     names = normalize_alignment_dofs(
         values,
         option_name="geometry_dofs",
-        geometry=geometry,
     )
     invalid = [name for name in names if name not in GEOMETRY_DOFS]
     if invalid:
         allowed = ", ".join(GEOMETRY_DOFS)
         raise ValueError(f"Unknown geometry DOF {invalid[0]!r}; expected one of: {allowed}")
     return names
-
-
-def _tilt_alias_for_geometry(geometry: Geometry | None) -> str:
-    tilt_about = getattr(geometry, "tilt_about", "x")
-    return "axis_rot_y_deg" if str(tilt_about) == "z" else "axis_rot_x_deg"
 
 
 @dataclass(frozen=True)
@@ -84,7 +76,7 @@ class GeometryCalibrationState:
     ) -> GeometryCalibrationState:
         """Create native-resolution calibration state from a geometry."""
         geometry_inputs = geometry_inputs_from_geometry(geometry)
-        active = normalize_geometry_dofs(active_geometry_dofs, geometry=geometry)
+        active = normalize_geometry_dofs(active_geometry_dofs)
         nominal = tuple(float(v) for v in nominal_axis_unit_from_inputs(geometry_inputs))
         roll = float(geometry_inputs.get("detector_roll_deg", 0.0))
         state = cls(

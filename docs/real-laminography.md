@@ -7,7 +7,7 @@ reconstruction.
 ```bash
 uv run tomojax inspect /path/to/scan.nxs
 uv run tomojax validate /path/to/scan.nxs
-uv run tomojax align /path/to/scan.nxs \
+uv run tomojax align --data /path/to/scan.nxs \
   --mode cor \
   --out aligned.nxs
 ```
@@ -23,7 +23,4 @@ uv run tomojax ingest ./projections \
   --out scan.nxs
 ```
 
-The previous staged laminography runners, publication-artifact builders, and
-scan-specific report generators were removed from the shipped package. The
-retained product claim is the clean CLI/API path above, not a hidden one-off
-script.
+The product claim is the CLI/API path above.

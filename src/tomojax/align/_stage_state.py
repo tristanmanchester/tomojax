@@ -367,7 +367,7 @@ def _build_multires_context(
 ) -> MultiresContext:
     cfg = cfg if cfg is not None else AlignConfig()
     observer_fn = adapt_observer_callback(observer) if observer is not None else None
-    resolved_schedule = _resolved_schedule_for_cfg(cfg, geometry=geometry)
+    resolved_schedule = _resolved_schedule_for_cfg(cfg)
     setup_base = BaseGeometryArrays.from_geometry(geometry, detector)
     setup_alignment_state = alignment_state_from_checkpoint(
         resume_state.geometry_calibration_state if resume_state is not None else None,
