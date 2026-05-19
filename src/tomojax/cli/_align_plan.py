@@ -376,7 +376,8 @@ def build_align_cli_run_plan(
         parser.error("--checkpoint-every must be an integer >= 1")
 
     run_levels = levels
-    if run_levels is None and command.schedule is not None:
+    has_geometry_dofs = bool(schedule_metadata.get("active_geometry_dofs", ()))
+    if run_levels is None and (command.schedule is not None or has_geometry_dofs):
         run_levels = [1]
 
     expected_checkpoint_metadata = checkpoint_metadata(
