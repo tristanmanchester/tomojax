@@ -89,6 +89,16 @@ class AlignmentSchedule:
                     f"{stage.optimizer!r}; setup/bilevel stages currently support only "
                     "'validation_lm'"
                 )
+            if stage.objective_kind == "fixed_volume" and stage.optimizer not in {
+                "gd",
+                "gn",
+                "lbfgs",
+            }:
+                raise ValueError(
+                    f"fixed_volume stage {stage.name!r} uses unsupported optimizer "
+                    f"{stage.optimizer!r}; fixed_volume stages currently support only "
+                    "'gd', 'gn', or 'lbfgs'"
+                )
         return self
 
     @property

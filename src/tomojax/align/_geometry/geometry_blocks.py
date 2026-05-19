@@ -420,11 +420,8 @@ def _theta_span_from_geometry(geometry: Geometry) -> float | None:
     deltas = np.diff(sorted_thetas)
     wrap_delta = float(sorted_thetas[0] + 360.0 - sorted_thetas[-1])
     circular_deltas = np.concatenate([deltas, np.asarray([wrap_delta], dtype=np.float32)])
-    largest_gap_index = int(np.argmax(circular_deltas))
-    largest_gap = float(circular_deltas[largest_gap_index])
+    largest_gap = float(np.max(circular_deltas))
     span = 360.0 - largest_gap
-    if largest_gap_index == int(circular_deltas.size - 1):
-        span += float(np.median(circular_deltas))
     return min(span, 360.0)
 
 

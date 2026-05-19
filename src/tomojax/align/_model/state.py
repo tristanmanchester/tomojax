@@ -84,8 +84,13 @@ class SetupGeometryState:
     def axis_unit_lab(self) -> jnp.ndarray:
         """Return the realised lab-frame rotation-axis unit vector."""
         deg = self.degrees_dict()
-        return axis_unit_from_rotations(
+        nominal = axis_unit_from_rotations(
             self.nominal_axis_unit,
+            axis_rot_x_deg=deg["tilt_deg"],
+            axis_rot_y_deg=0.0,
+        )
+        return axis_unit_from_rotations(
+            nominal,
             axis_rot_x_deg=deg["axis_rot_x_deg"],
             axis_rot_y_deg=deg["axis_rot_y_deg"],
         )
