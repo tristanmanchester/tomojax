@@ -225,8 +225,7 @@ def _json_safe(value: object) -> object:
         return [_json_safe(item) for item in object_list(cast("object", value.tolist()))]
     if isinstance(value, dict):
         return {
-            key: _json_safe(item)
-            for key, item in object_mapping(cast("object", value)).items()
+            key: _json_safe(item) for key, item in object_mapping(cast("object", value)).items()
         }
     if isinstance(value, list | tuple):
         return [_json_safe(item) for item in object_list(cast("object", value))]

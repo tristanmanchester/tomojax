@@ -142,9 +142,7 @@ def summarize_angles(angles_deg: NDArray[np.float64]) -> dict[str, float | int |
     angles_deg = numpy_float64_array(angles_deg)
     out: dict[str, float | int | bool] = {
         "start_deg": (
-            scalar_float(cast("object", angles_deg[0]))
-            if scalar_int(angles_deg.size) > 0
-            else 0.0
+            scalar_float(cast("object", angles_deg[0])) if scalar_int(angles_deg.size) > 0 else 0.0
         ),
         "count": scalar_int(angles_deg.size),
         "endpoint": False,
