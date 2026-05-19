@@ -93,9 +93,7 @@ class NXTomoMetadata:
             source_type=None if source_type is None else str(source_type),
             source_probe=None if source_probe is None else str(source_probe),
             volume_axes_order=(
-                DISK_VOLUME_AXES
-                if volume_axes_order is None
-                else str(volume_axes_order)
+                DISK_VOLUME_AXES if volume_axes_order is None else str(volume_axes_order)
             ),
         )
 
