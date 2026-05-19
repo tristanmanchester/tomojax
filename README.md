@@ -1,15 +1,15 @@
 # TomoJAX
 
-TomoJAX is a compact tomography and laminography toolbox for projection IO,
-preprocessing, reconstruction, and alignment.
+TomoJAX is a tomography and laminography toolbox for loading projection data,
+preprocessing detector images, reconstructing volumes, and correcting geometry.
 
 <img src="images/tomojax-phantom94-orthoslices.png" width="900" alt="Orthogonal slices through the PHANTOM94 synthetic tomography volume used for TomoJAX validation.">
 
-TomoJAX works with synthetic and real projection data. It provides a grouped CLI
-for loading projection stacks, applying detector corrections, reconstructing
-volumes, aligning geometry, and writing verification artifacts.
+It works with synthetic examples and real scan data. The grouped CLI covers the
+usual workflow: inspect a dataset, ingest projections, apply dark/flat
+correction, reconstruct a volume, and run alignment.
 
-The command-line surface is the grouped `tomojax` command:
+The top-level command is `tomojax`:
 
 ```bash
 tomojax inspect scan.nxs
@@ -20,27 +20,25 @@ tomojax align --data corrected.nxs --out aligned.nxs --mode cor
 tomojax simulate --out synthetic.nxs --nx 64 --ny 64 --nz 64 --nu 64 --nv 64 --n-views 64
 ```
 
-`tomojax preprocess` writes reconstruction-ready absorption/log-attenuation
-projections by default. Use `--transmission` only when you intentionally need
-normalized transmission output.
+`tomojax preprocess` writes absorption/log-attenuation projections by default.
+Use `--transmission` when you need normalized transmission output instead.
 
 ## Examples
 
-These examples show the two main validation paths: controlled synthetic
-misalignment studies with known truth, and reconstruction/alignment outputs
-that can be compared visually.
+These examples use a synthetic phantom so the expected volume is known. Real
+scan reports use the same layout, but rely on visual inspection and projection
+losses instead of ground-truth metrics.
 
 | Synthetic misalignment set | Alignment before and after |
 | --- | --- |
 | <img src="images/tomojax-canonical-misalignment-grid.png" width="360" alt="Grid of canonical PHANTOM94 tomography misalignment scenarios."> | <img src="images/tomojax-alignment-before-after.png" width="420" alt="Before and after reconstruction slices for a detector centre and detector roll alignment scenario."> |
 
-The older animated examples remain in `images/` for external links and profile
-README references, but the project README focuses on the current v2 validation
-examples.
+Older animated examples remain in `images/` so existing external links keep
+working.
 
-## Public package surface
+## Python modules
 
-Use these package facades:
+Most users should import from these modules:
 
 - `tomojax.io` for projection payloads, NXtomo IO, validation,
   preprocessing, and quicklooks.
@@ -51,13 +49,13 @@ Use these package facades:
 - `tomojax.align` for `AlignConfig`, `align`, and `align_multires`.
 - `tomojax.datasets` for deterministic synthetic datasets.
 
-The tests cover the public API, CLI routing, import boundaries,
-IO/preprocessing workflows, deterministic simulation contracts, and tiny
-numerical reconstruction workflows.
+The tests cover the public API, CLI routing, import boundaries, IO and
+preprocessing, deterministic simulation, and small numerical reconstruction
+cases.
 
 ## Workflow docs
 
-Start with the workflow guide that matches the data you want to process.
+Start with the guide that matches your data.
 
 - [`docs/quickstart.md`](docs/quickstart.md)
 - [`docs/synthetic-tomography.md`](docs/synthetic-tomography.md)
@@ -67,12 +65,12 @@ Start with the workflow guide that matches the data you want to process.
 
 ## Development checks
 
-Run the bounded product checks before sending changes for review.
+Run these checks before sending changes for review.
 
 ```bash
 just surface-check
 just check
 ```
 
-`just surface-check` is the bounded product feedback loop. It checks
-formatting/lint configuration, private-import guardrails, and product tests.
+`just surface-check` checks formatting and lint configuration, private-import
+guardrails, and product tests.
