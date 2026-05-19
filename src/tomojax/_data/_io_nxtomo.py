@@ -310,7 +310,9 @@ def load_nxtomo(path: str) -> LoadedNXTomo:
                 volume_np = np.asarray(transpose_volume(volume_np, disk_axes, INTERNAL_VOLUME_AXES))
                 disk_order = disk_axes
             out["volume"] = volume_np
-            out["volume_axes_order"] = INTERNAL_VOLUME_AXES
+            out["volume_axes_order"] = (
+                "unknown" if disk_order == "unknown" else INTERNAL_VOLUME_AXES
+            )
             out["disk_volume_axes_order"] = disk_order
             out["volume_axes_source"] = source
     return LoadedNXTomo.from_dataset(out)

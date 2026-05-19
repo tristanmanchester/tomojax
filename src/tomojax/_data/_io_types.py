@@ -69,6 +69,10 @@ class NXTomoMetadata:
                 source_probe = source_info.get("probe")
 
         geometry_type = data.get("geometry_type")
+        volume_axes_order = data.get("volume_axes_order")
+        disk_volume_axes_order = data.get("disk_volume_axes_order")
+        if disk_volume_axes_order in {"xyz", "xzy", "yxz", "yzx", "zxy", "zyx", "unknown"}:
+            volume_axes_order = disk_volume_axes_order
         return cls(
             thetas_deg=data.get("thetas_deg"),
             image_key=data.get("image_key"),
@@ -90,8 +94,8 @@ class NXTomoMetadata:
             source_probe=None if source_probe is None else str(source_probe),
             volume_axes_order=(
                 DISK_VOLUME_AXES
-                if data.get("volume_axes_order") is None
-                else str(data.get("volume_axes_order"))
+                if volume_axes_order is None
+                else str(volume_axes_order)
             ),
         )
 

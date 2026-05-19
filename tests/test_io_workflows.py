@@ -112,8 +112,29 @@ def test_nxtomo_loader_does_not_synthesize_grid_from_volume_only(tmp_path: Path)
 
     assert loaded.volume is not None
     assert loaded.grid is None
+    assert loaded.volume_axes_order == "unknown"
     assert loaded.disk_volume_axes_order == "unknown"
     assert loaded.volume_axes_source == "heuristic"
+
+
+def test_copy_metadata_preserves_disk_volume_axes_order(tmp_path: Path) -> None:
+    original_path = tmp_path / "original.nxs"
+    resaved_path = tmp_path / "resaved.nxs"
+    dataset = make_projection_dataset()
+    dataset.volume = np.arange(2 * 3 * 4, dtype=np.float32).reshape(2, 3, 4)
+
+    save_dataset(original_path, dataset)
+    loaded = load_nxtomo(str(original_path))
+    assert loaded.disk_volume_axes_order == "zyx"
+
+    save_projection_payload(
+        resaved_path,
+        projections=loaded.projections,
+        metadata=loaded.copy_metadata(),
+    )
+
+    resaved = load_nxtomo(str(resaved_path))
+    assert resaved.disk_volume_axes_order == "zyx"
 
 
 def test_load_tiff_stack_requires_explicit_angles_and_sorts_files(tmp_path: Path) -> None:
