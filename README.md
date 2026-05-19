@@ -1,12 +1,13 @@
 # TomoJAX
 
-TomoJAX is a compact tomography and laminography toolbox for projection IO, preprocessing, reconstruction, and alignment.
+TomoJAX is a compact tomography and laminography toolbox for projection IO,
+preprocessing, reconstruction, and alignment.
 
-#### Alignment demonstration
-<img src="images/montage_scroll.gif" width="1000">
+<img src="images/tomojax-phantom94-orthoslices.png" width="900" alt="Orthogonal slices through the PHANTOM94 synthetic tomography volume used for TomoJAX validation.">
 
-Left to right: ground truth phantom, naive reconstructions with simulated
-misalignment/noise, and aligned reconstructions.
+TomoJAX works with synthetic and real projection data. It provides a grouped CLI
+for loading projection stacks, applying detector corrections, reconstructing
+volumes, aligning geometry, and writing verification artifacts.
 
 The command-line surface is the grouped `tomojax` command:
 
@@ -19,22 +20,44 @@ tomojax align --data corrected.nxs --out aligned.nxs --mode cor
 tomojax simulate --out synthetic.nxs --nx 64 --ny 64 --nz 64 --nu 64 --nv 64 --n-views 64
 ```
 
-`tomojax preprocess` writes reconstruction-ready absorption/log-attenuation projections by default. Use `--transmission` only when you intentionally need normalized transmission output.
+`tomojax preprocess` writes reconstruction-ready absorption/log-attenuation
+projections by default. Use `--transmission` only when you intentionally need
+normalized transmission output.
+
+## Examples
+
+The article visual pack shows the two main validation paths: controlled
+synthetic misalignment studies with known truth, and reconstruction/alignment
+outputs that can be compared visually.
+
+| Synthetic misalignment set | Alignment before and after |
+| --- | --- |
+| <img src="images/tomojax-canonical-misalignment-grid.png" width="360" alt="Grid of canonical PHANTOM94 tomography misalignment scenarios."> | <img src="images/tomojax-alignment-before-after.png" width="420" alt="Before and after reconstruction slices for a detector centre and detector roll alignment scenario."> |
+
+The older animated examples remain in `images/` for external links and profile
+README references, but the project README focuses on the current v2 article
+examples.
 
 ## Public package surface
 
 Use these package facades:
 
-- `tomojax.io` for projection payloads, NXtomo IO, validation, preprocessing, and quicklooks.
-- `tomojax.geometry` for geometry metadata, axes, calibration state, and field-of-view helpers.
+- `tomojax.io` for projection payloads, NXtomo IO, validation,
+  preprocessing, and quicklooks.
+- `tomojax.geometry` for geometry metadata, axes, calibration state, and
+  field-of-view helpers.
 - `tomojax.forward` for differentiable forward projection and residual helpers.
 - `tomojax.recon` for FBP, FISTA-TV, and SPDHG-TV reconstruction.
 - `tomojax.align` for `AlignConfig`, `align`, and `align_multires`.
 - `tomojax.datasets` for deterministic synthetic datasets.
 
-The tests cover the public API, CLI routing, import boundaries, IO/preprocessing workflows, deterministic simulation contracts, and tiny numerical reconstruction workflows.
+The tests cover the public API, CLI routing, import boundaries,
+IO/preprocessing workflows, deterministic simulation contracts, and tiny
+numerical reconstruction workflows.
 
 ## Workflow docs
+
+Start with the workflow guide that matches the data you want to process.
 
 - [`docs/quickstart.md`](docs/quickstart.md)
 - [`docs/synthetic-tomography.md`](docs/synthetic-tomography.md)
@@ -44,41 +67,12 @@ The tests cover the public API, CLI routing, import boundaries, IO/preprocessing
 
 ## Development checks
 
+Run the bounded product checks before sending changes for review.
+
 ```bash
 just surface-check
 just check
 ```
 
-`just surface-check` is the bounded product feedback loop. It checks formatting/lint configuration, private-import guardrails, and product tests.
-
-## Visual Examples
-
-### Basic Projector Workflow
-
-| Phantom | Projections | Sinogram | Reconstruction |
-|---------|-------------|----------|----------------|
-| <img src="images/phantom_slice.png" width="200"><br><img src="images/phantom_volume.png" width="200"> | <img src="images/projections.gif" width="200"> | <img src="images/sinogram.png" width="200"> | <img src="images/recon_slice.png" width="200"><br><img src="images/recon_volume.png" width="200"> |
-| Top: slice<br>Bottom: volume projection | Animated over the scan | Angle vs detector | Top: slice<br>Bottom: volume projection |
-
-### Alignment And Reconstruction Workflow
-
-#### Misaligned Input Data
-
-| Clean Misaligned Projections | Noisy Misaligned Projections |
-|------------------------------|------------------------------|
-| <img src="images/spin_projections_misaligned.gif" width="300"> | <img src="images/spin_projections_noisy.gif" width="300"> |
-| Random rigid-body misalignments | Same misalignments plus noise |
-
-#### Sinogram Analysis
-
-| Clean Misaligned Sinogram | Noisy Misaligned Sinogram |
-|---------------------------|---------------------------|
-| <img src="images/misaligned_sinogram.png" width="300"> | <img src="images/noisy_sinogram.png" width="300"> |
-| View-to-view inconsistencies | Inconsistencies plus noise artifacts |
-
-#### Multi-Resolution Alignment Process
-
-| Clean Data Alignment | Noisy Data Alignment |
-|---------------------|---------------------|
-| <img src="images/alignment_process_misaligned.gif" width="300"> | <img src="images/alignment_process_noisy.gif" width="300"> |
-| Coarse-to-fine resolution refinement | Robust alignment despite noise |
+`just surface-check` is the bounded product feedback loop. It checks
+formatting/lint configuration, private-import guardrails, and product tests.
