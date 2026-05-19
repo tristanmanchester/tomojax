@@ -250,8 +250,8 @@ def _loss_barron(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndar
         return 0.5 * jnp.sum(x2)
     if abs(a) < 1e-6:
         return jnp.sum(jnp.log1p(0.5 * x2))
-    beta = a - 2.0
-    return (1.0 / a) * jnp.sum(jnp.power(1.0 + x2 / (abs(beta) + 1e-8), a / 2.0) - 1.0)
+    beta = abs(a - 2.0)
+    return (beta / a) * jnp.sum(jnp.power(1.0 + x2 / (beta + 1e-8), a / 2.0) - 1.0)
 
 
 def _loss_correntropy(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarray:

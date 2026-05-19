@@ -92,8 +92,8 @@ def align_u_to_v(u: np.ndarray, v: np.ndarray) -> np.ndarray:
     """Return a rotation matrix mapping unit vector ``u`` to unit vector ``v``."""
     u = np.asarray(u, dtype=np.float64)
     v = np.asarray(v, dtype=np.float64)
-    u = u / (np.linalg.norm(u) + 1e-12)
-    v = v / (np.linalg.norm(v) + 1e-12)
+    u = u / max(float(np.linalg.norm(u)), 1e-12)
+    v = v / max(float(np.linalg.norm(v)), 1e-12)
     c = float(np.dot(u, v))
     if c > 1.0 - 1e-12:
         return np.eye(3, dtype=np.float64)
