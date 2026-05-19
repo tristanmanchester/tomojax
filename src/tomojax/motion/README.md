@@ -29,4 +29,5 @@ alignment orchestration, reconstruction solvers, datasets, or CLI modules.
 
 ## Tests
 
-Covered by `tests/test_phasecorr.py` and `tests/test_object_motion_trace.py`.
+Not yet covered by dedicated product tests. Phase-correlation and object-motion
+contracts are exercised indirectly through simulation and alignment workflows.
