@@ -69,6 +69,8 @@ from tomojax.align.pipeline import (
     AlignConfig,
     AlignMultiresResumeState,
     AlignResumeState,
+    OuterStat,
+    OuterStatValue,
     align,
     align_multires,
 )
@@ -105,6 +107,8 @@ __all__ = [
     "L2OtsuLossSpec",
     "LossAdapter",
     "LossScheduleEntry",
+    "OuterStat",
+    "OuterStatValue",
     "PWLSLossSpec",
     "PoseState",
     "QualityTier",

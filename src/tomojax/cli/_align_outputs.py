@@ -7,6 +7,7 @@ from typing import Any, cast
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax._typed_arrays import jax_float32_array, numpy_float32_array, object_mapping
 from tomojax.align.api import (
     profile_policy_from_config,
     save_alignment_params_csv,
@@ -25,12 +26,12 @@ def _apply_alignment_output_mask(plan: AlignCliRunPlan, x: jnp.ndarray) -> jnp.n
         return x
     try:
         m_xy = cylindrical_mask_xy(plan.recon_grid, plan.detector)
-        m = jnp.asarray(m_xy, dtype=x.dtype)[:, :, None]
+        m = jax_float32_array(m_xy).astype(x.dtype)[:, :, None]
         return x * m
     except Exception:
         m_xy = cylindrical_mask_xy(plan.recon_grid, plan.detector)
-        m = np.asarray(m_xy, dtype=np.float32)[:, :, None]
-        return jnp.asarray(np.asarray(x) * m)
+        m = numpy_float32_array(m_xy)[:, :, None]
+        return jax_float32_array(np.asarray(x) * m)
 
 
 def _alignment_gauge_metadata(
@@ -61,8 +62,9 @@ def _write_alignment_result_volume(
     save_meta.align_params = params5_np
     save_meta.align_gauge = gauge_metadata
     if isinstance(geometry_calibration_state, dict):
+        calibration_state = object_mapping(cast("object", geometry_calibration_state))
         calibration_patch = build_calibrated_geometry_metadata_patch(
-            calibration_state=geometry_calibration_state,
+            calibration_state=calibration_state,
             detector=plan.detector.to_dict(),
             geometry_meta=save_meta.geometry_meta or {},
         )

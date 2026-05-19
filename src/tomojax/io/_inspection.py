@@ -6,12 +6,31 @@ from collections.abc import Iterator
 import json
 import math
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 import h5py
-import imageio.v3 as iio
 import numpy as np
+from numpy.typing import NDArray
 
+from tomojax._typed_arrays import (
+    any_true,
+    finite_values_float64,
+    linspace_indices,
+    max_float,
+    min_float,
+    numpy_array,
+    numpy_float32_array,
+    numpy_float64_array,
+    numpy_int64_array,
+    object_list,
+    object_mapping,
+    scalar_float,
+    scalar_int,
+    sum_float64,
+    true_count,
+    unique_int_count_map,
+    write_image,
+)
 from tomojax.recon.quicklook import scale_to_uint8
 
 type PathLike = str | Path
@@ -81,19 +100,82 @@ class AlignmentReport(TypedDict):
     gauge_fix_found: bool
 
 
+class AnglesReport(TypedDict):
+    """Angle metadata discovery report."""
+
+    found: bool
+    path: str | None
+    count: int | None
+    units: str | None
+    min_deg: float | None
+    max_deg: float | None
+    coverage_deg: float | None
+
+
+class GeometryReport(TypedDict):
+    """Persisted geometry metadata discovery report."""
+
+    found: bool
+    type: str | None
+    meta_found: bool
+    meta_keys: list[str]
+
+
+class FlatsDarksReport(TypedDict):
+    """Flat/dark frame discovery report."""
+
+    image_key_found: bool
+    image_key_path: str | None
+    image_key_counts: dict[str, int]
+    sample_count: int
+    flats_present: bool
+    darks_present: bool
+    flat_count: int
+    dark_count: int
+
+
+class PreprocessReport(TypedDict):
+    """Preprocessing metadata discovery report."""
+
+    found: bool
+    output_domain: str | None
+    formula: str | None
+    epsilon: str | None
+    clip_min: str | None
+    paths: dict[str, str]
+    overrides: dict[str, str | None]
+    crop_bounds: dict[str, object] | None
+
+
+class WorkingSetEstimate(TypedDict):
+    """Memory estimate for a reconstruction mode."""
+
+    estimated_working_set_bytes: int
+
+
+class MemoryEstimatesReport(TypedDict):
+    """Heuristic memory estimate report."""
+
+    feasible: bool
+    reconstruction_grid_shape: list[int] | None
+    input_projection_bytes: int | None
+    modes: dict[str, WorkingSetEstimate]
+    notes: str
+
+
 class InspectionReport(TypedDict):
     """Top-level dataset inspection report."""
 
     schema_version: int
     input_path: str
     projection: ProjectionReport
-    angles: dict[str, Any]
-    geometry: dict[str, Any]
+    angles: AnglesReport
+    geometry: GeometryReport
     detector_metadata: DetectorMetadataReport
-    flats_darks: dict[str, Any]
-    preprocess: dict[str, Any]
+    flats_darks: FlatsDarksReport
+    preprocess: PreprocessReport
     alignment: AlignmentReport
-    memory_estimates: dict[str, Any]
+    memory_estimates: MemoryEstimatesReport
 
 
 _PROJECTION_PATHS = (
@@ -115,11 +197,12 @@ def _attr_to_str(value: object, default: str | None = None) -> str | None:
         if isinstance(value, bytes):
             return value.decode("utf-8", errors="ignore")
         if isinstance(value, np.ndarray):
-            if value.shape == ():
-                return _attr_to_str(value.item(), default)
-            if value.size >= 1:
-                return _attr_to_str(value.flat[0], default)
-        return str(value)
+            array = numpy_array(cast("object", value))
+            if array.shape == ():
+                return _attr_to_str(cast("object", array.item()), default)
+            if array.size >= 1:
+                return _attr_to_str(cast("object", array.flat[0]), default)
+        return str(cast("object", value))
     except (TypeError, UnicodeDecodeError, ValueError):
         return default
 
@@ -129,21 +212,24 @@ def _json_attr_to_mapping(value: object) -> dict[str, Any] | None:
     if not text:
         return None
     try:
-        parsed = json.loads(text)
+        parsed = cast("object", json.loads(text))
     except (json.JSONDecodeError, TypeError):
         return None
-    return parsed if isinstance(parsed, dict) else None
+    return object_mapping(cast("object", parsed)) if isinstance(parsed, dict) else None
 
 
 def _json_safe(value: object) -> object:
     if isinstance(value, np.generic):
-        return value.item()
+        return cast("object", value.item())
     if isinstance(value, np.ndarray):
-        return [_json_safe(v) for v in value.tolist()]
+        return [_json_safe(item) for item in object_list(cast("object", value.tolist()))]
     if isinstance(value, dict):
-        return {str(k): _json_safe(v) for k, v in value.items()}
+        return {
+            key: _json_safe(item)
+            for key, item in object_mapping(cast("object", value)).items()
+        }
     if isinstance(value, list | tuple):
-        return [_json_safe(v) for v in value]
+        return [_json_safe(item) for item in object_list(cast("object", value))]
     return value
 
 
@@ -160,7 +246,7 @@ def _find_projection_dataset(file: h5py.File) -> tuple[str | None, h5py.Dataset 
     return None, None
 
 
-def _iter_view_blocks(dataset: h5py.Dataset) -> Iterator[np.ndarray]:
+def _iter_view_blocks(dataset: h5py.Dataset) -> Iterator[NDArray[np.float64]]:
     n_views = int(dataset.shape[0])
     block = 1
     if dataset.ndim == 3:
@@ -168,22 +254,24 @@ def _iter_view_blocks(dataset: h5py.Dataset) -> Iterator[np.ndarray]:
         block = max(1, min(n_views, _DEFAULT_MAX_EXACT_STATS_ELEMENTS // plane_elements))
     for start in range(0, n_views, block):
         stop = min(n_views, start + block)
-        yield np.asarray(dataset[start:stop])
+        yield numpy_float64_array(dataset[start:stop])
 
 
-def _sample_projection_values(dataset: h5py.Dataset) -> np.ndarray:
+def _sample_projection_values(dataset: h5py.Dataset) -> NDArray[np.float64]:
     total = int(dataset.size or 0)
     if total <= _MAX_PERCENTILE_SAMPLE_ELEMENTS:
-        return np.asarray(dataset[...]).ravel()
+        return numpy_float64_array(dataset[...]).ravel()
 
     n_views = int(dataset.shape[0])
     plane_elements = max(1, total // max(1, n_views))
     n_sample_views = max(1, min(n_views, _MAX_PERCENTILE_SAMPLE_ELEMENTS // plane_elements))
-    view_indices = np.linspace(0, n_views - 1, num=n_sample_views, dtype=np.int64)
-    samples = [np.asarray(dataset[int(i)]).ravel() for i in view_indices]
+    view_indices = linspace_indices(0, n_views - 1, num=n_sample_views)
+    samples: list[NDArray[np.float64]] = [
+        numpy_float64_array(dataset[index]).ravel() for index in view_indices
+    ]
     if not samples:
-        return np.asarray([], dtype=dataset.dtype)
-    return np.concatenate(samples)
+        return np.asarray([], dtype=np.float64)
+    return cast("NDArray[np.float64]", np.concatenate(samples))
 
 
 def _projection_stats(dataset: h5py.Dataset) -> tuple[ProjectionStatsReport, NonfiniteReport]:
@@ -196,20 +284,20 @@ def _projection_stats(dataset: h5py.Dataset) -> tuple[ProjectionStatsReport, Non
     neginf_count = 0
 
     for block in _iter_view_blocks(dataset):
-        arr = np.asarray(block)
-        nan_count += int(np.isnan(arr).sum())
-        posinf_count += int(np.isposinf(arr).sum())
-        neginf_count += int(np.isneginf(arr).sum())
+        arr = numpy_float64_array(block)
+        nan_count += true_count(np.isnan(arr))
+        posinf_count += true_count(np.isposinf(arr))
+        neginf_count += true_count(np.isneginf(arr))
         finite = np.isfinite(arr)
-        if np.any(finite):
-            values = arr[finite].astype(np.float64, copy=False)
+        if any_true(finite):
+            values = finite_values_float64(arr, finite)
             finite_count += int(values.size)
-            finite_sum += float(values.sum(dtype=np.float64))
-            finite_min = min(finite_min, float(values.min()))
-            finite_max = max(finite_max, float(values.max()))
+            finite_sum += sum_float64(values)
+            finite_min = min(finite_min, min_float(values))
+            finite_max = max(finite_max, max_float(values))
 
     sample = _sample_projection_values(dataset)
-    sample_finite = sample[np.isfinite(sample)].astype(np.float64, copy=False)
+    sample_finite = finite_values_float64(sample, np.isfinite(sample))
     if finite_count == 0 or sample_finite.size == 0:
         stats: ProjectionStatsReport = {
             "min": None,
@@ -220,13 +308,16 @@ def _projection_stats(dataset: h5py.Dataset) -> tuple[ProjectionStatsReport, Non
             "max": None,
         }
     else:
-        p01, p50, p99 = np.percentile(sample_finite, [1.0, 50.0, 99.0])
+        percentiles = numpy_float64_array(np.percentile(sample_finite, [1.0, 50.0, 99.0]))
+        p01 = scalar_float(cast("object", percentiles[0]))
+        p50 = scalar_float(cast("object", percentiles[1]))
+        p99 = scalar_float(cast("object", percentiles[2]))
         stats = {
             "min": float(finite_min),
-            "p01": float(p01),
+            "p01": p01,
             "mean": float(finite_sum / finite_count),
-            "p50": float(p50),
-            "p99": float(p99),
+            "p50": p50,
+            "p99": p99,
             "max": float(finite_max),
         }
 
@@ -276,13 +367,13 @@ def _projection_report(path: str | None, dataset: h5py.Dataset | None) -> Projec
         "dtype": str(dataset.dtype),
         "n_views": n_views,
         "detector_shape": {"nv": nv, "nu": nu},
-        "storage_bytes": int(dataset.size * dataset.dtype.itemsize),
+        "storage_bytes": int(int(dataset.size or 0) * dataset.dtype.itemsize),
         "stats": stats,
         "nonfinite": nonfinite,
     }
 
 
-def _angles_report(file: h5py.File) -> dict[str, Any]:
+def _angles_report(file: h5py.File) -> AnglesReport:
     dataset = _dataset_at(file, _ANGLE_PATH)
     if dataset is None:
         return {
@@ -295,14 +386,14 @@ def _angles_report(file: h5py.File) -> dict[str, Any]:
             "coverage_deg": None,
         }
 
-    values = np.asarray(dataset[...], dtype=np.float64).ravel()
+    values = numpy_float64_array(dataset[...]).ravel()
     finite = values[np.isfinite(values)]
     units = _attr_to_str(dataset.attrs.get("units"))
     if finite.size == 0:
         min_deg = max_deg = coverage_deg = None
     else:
-        min_deg = float(finite.min())
-        max_deg = float(finite.max())
+        min_deg = scalar_float(cast("object", finite.min()))
+        max_deg = scalar_float(cast("object", finite.max()))
         coverage_deg = float(max_deg - min_deg)
     return {
         "found": True,
@@ -315,7 +406,7 @@ def _angles_report(file: h5py.File) -> dict[str, Any]:
     }
 
 
-def _geometry_report(file: h5py.File) -> dict[str, Any]:
+def _geometry_report(file: h5py.File) -> GeometryReport:
     geom = file.get("/entry/geometry")
     found = isinstance(geom, h5py.Group) and "type" in geom.attrs
     meta = None
@@ -357,7 +448,7 @@ def _detector_metadata_report(file: h5py.File) -> DetectorMetadataReport:
     }
 
 
-def _flats_darks_report(file: h5py.File) -> dict[str, Any]:
+def _flats_darks_report(file: h5py.File) -> FlatsDarksReport:
     dataset = _dataset_at(file, _IMAGE_KEY_PATH)
     if dataset is None:
         return {
@@ -370,9 +461,8 @@ def _flats_darks_report(file: h5py.File) -> dict[str, Any]:
             "flat_count": 0,
             "dark_count": 0,
         }
-    keys = np.asarray(dataset[...], dtype=np.int64).ravel()
-    unique, counts = np.unique(keys, return_counts=True)
-    count_map = {str(int(k)): int(v) for k, v in zip(unique, counts, strict=True)}
+    keys = numpy_int64_array(dataset[...]).ravel()
+    count_map = unique_int_count_map(keys)
     sample_count = int(count_map.get("0", 0))
     flat_count = int(count_map.get("1", 0))
     dark_count = int(count_map.get("2", 0))
@@ -388,7 +478,7 @@ def _flats_darks_report(file: h5py.File) -> dict[str, Any]:
     }
 
 
-def _preprocess_report(file: h5py.File) -> dict[str, Any]:
+def _preprocess_report(file: h5py.File) -> PreprocessReport:
     group = file.get("/entry/processing/tomojax/preprocess")
     if not isinstance(group, h5py.Group):
         return {
@@ -402,7 +492,7 @@ def _preprocess_report(file: h5py.File) -> dict[str, Any]:
             "crop_bounds": None,
         }
     attrs = group.attrs
-    paths: dict[str, Any] = {}
+    paths: dict[str, str] = {}
     for key in (
         "input_path",
         "data_path",
@@ -473,7 +563,11 @@ def _grid_shape_from_metadata(file: h5py.File, projection: ProjectionReport) -> 
     )
     if grid is not None:
         try:
-            return [int(grid["nx"]), int(grid["ny"]), int(grid["nz"])]
+            return [
+                scalar_int(cast("object", grid["nx"])),
+                scalar_int(cast("object", grid["ny"])),
+                scalar_int(cast("object", grid["nz"])),
+            ]
         except (KeyError, TypeError, ValueError):
             pass
 
@@ -486,7 +580,7 @@ def _grid_shape_from_metadata(file: h5py.File, projection: ProjectionReport) -> 
     return None
 
 
-def _memory_estimates(file: h5py.File, projection: ProjectionReport) -> dict[str, Any]:
+def _memory_estimates(file: h5py.File, projection: ProjectionReport) -> MemoryEstimatesReport:
     if not projection.get("found"):
         return {
             "feasible": False,
@@ -509,7 +603,7 @@ def _memory_estimates(file: h5py.File, projection: ProjectionReport) -> dict[str
 
     voxels = int(grid_shape[0]) * int(grid_shape[1]) * int(grid_shape[2])
     volume_bytes = voxels * np.dtype(np.float32).itemsize
-    modes = {
+    modes: dict[str, WorkingSetEstimate] = {
         "fbp_fp32": {
             "estimated_working_set_bytes": int(projection_bytes + 2 * volume_bytes),
         },
@@ -662,7 +756,7 @@ def format_inspection_report(report: InspectionReport) -> str:
         lines.append("Preprocess output: not found")
 
     if alignment["found"]:
-        parts = []
+        parts: list[str] = []
         if alignment["params_found"]:
             parts.append(f"params shape={alignment['params_shape']}")
         if alignment["angle_offset_found"]:
@@ -702,9 +796,9 @@ def save_projection_quicklook(input_path: PathLike, output_path: PathLike) -> Pa
             raise ValueError(
                 f"projection dataset must be 3D (n_views, nv, nu), got {dataset.shape}"
             )
-        central = np.asarray(dataset[int(dataset.shape[0]) // 2])
+        central = numpy_float32_array(dataset[int(dataset.shape[0]) // 2])
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    iio.imwrite(out_path, scale_to_uint8(central))
+    write_image(out_path, scale_to_uint8(central))
     return out_path
 
 

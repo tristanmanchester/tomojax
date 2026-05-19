@@ -6,6 +6,8 @@ from pathlib import Path
 import h5py
 import numpy as np
 
+from tomojax._typed_arrays import numpy_float32_array, shape1, shape3
+
 type PathLike = str | Path
 
 _PROJECTIONS_PATH = "entry/imaging/data"
@@ -40,8 +42,8 @@ def load_real_laminography_input(
     """
     input_path = Path(path)
     with h5py.File(input_path, "r") as handle:
-        projections = np.asarray(handle[_PROJECTIONS_PATH], dtype=np.float32)
-        thetas = np.asarray(handle[_THETAS_PATH], dtype=np.float32)
+        projections = numpy_float32_array(handle[_PROJECTIONS_PATH])
+        thetas = numpy_float32_array(handle[_THETAS_PATH])
 
     if projections.ndim != 3:
         raise ValueError(
@@ -49,9 +51,11 @@ def load_real_laminography_input(
         )
     if thetas.ndim != 1:
         raise ValueError(f"{_THETAS_PATH} must be a 1D angle array; got shape {thetas.shape}")
-    if int(projections.shape[0]) != int(thetas.shape[0]):
+    projection_count = shape3(projections)[0]
+    theta_count = shape1(thetas)[0]
+    if projection_count != theta_count:
         raise ValueError(
-            f"projection count {projections.shape[0]} does not match angle count {thetas.shape[0]}"
+            f"projection count {projection_count} does not match angle count {theta_count}"
         )
 
     if transpose_detector:

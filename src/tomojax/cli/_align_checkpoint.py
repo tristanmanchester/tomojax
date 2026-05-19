@@ -4,8 +4,8 @@ import logging
 from typing import cast
 
 import jax.numpy as jnp
-import numpy as np
 
+from tomojax._typed_arrays import jax_float32_array, object_list, object_mapping
 from tomojax.align.api import (
     AlignConfig,
     AlignmentCheckpointGeometrySnapshot,
@@ -40,9 +40,7 @@ def metadata_float(value: object, default: float = 0.0) -> float:
 
 
 def metadata_list(value: object) -> list[object]:
-    if isinstance(value, list | tuple):
-        return list(value)
-    return []
+    return object_list(value)
 
 
 def metadata_json_list(value: object) -> list[JsonValue]:
@@ -173,12 +171,12 @@ def resume_state_from_checkpoint(
         prev_factor_value = metadata.get("prev_factor")
         geometry_calibration_state = metadata.get("geometry_calibration_state")
         return AlignMultiresResumeState(
-            x=jnp.asarray(checkpoint.x, dtype=np.float32),
-            params5=jnp.asarray(checkpoint.params5, dtype=np.float32),
+            x=jax_float32_array(checkpoint.x),
+            params5=jax_float32_array(checkpoint.params5),
             motion_coeffs=(
                 None
                 if checkpoint.motion_coeffs is None
-                else jnp.asarray(checkpoint.motion_coeffs, dtype=np.float32)
+                else jax_float32_array(checkpoint.motion_coeffs)
             ),
             level_index=int(metadata.get("level_index", 0)),
             level_factor=int(metadata.get("level_factor", 1)),
@@ -193,7 +191,7 @@ def resume_state_from_checkpoint(
             level_complete=bool(metadata.get("level_complete", False)),
             run_complete=bool(metadata.get("run_complete", False)),
             geometry_calibration_state=(
-                dict(geometry_calibration_state)
+                object_mapping(cast("object", geometry_calibration_state))
                 if isinstance(geometry_calibration_state, dict)
                 else None
             ),
@@ -209,12 +207,12 @@ def resume_state_from_checkpoint(
             ),
         )
     return AlignResumeState(
-        x=jnp.asarray(checkpoint.x, dtype=np.float32),
-        params5=jnp.asarray(checkpoint.params5, dtype=np.float32),
+        x=jax_float32_array(checkpoint.x),
+        params5=jax_float32_array(checkpoint.params5),
         motion_coeffs=(
             None
             if checkpoint.motion_coeffs is None
-            else jnp.asarray(checkpoint.motion_coeffs, dtype=np.float32)
+            else jax_float32_array(checkpoint.motion_coeffs)
         ),
         start_outer_iter=int(metadata.get("completed_outer_iters_in_level", 0)),
         loss=list(checkpoint.loss_history),

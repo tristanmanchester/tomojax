@@ -214,7 +214,7 @@ def spdhg_tv(  # noqa: PLR0915
     config: SPDHGConfig | None = None,
     callback: LossCallback | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
-) -> tuple[jnp.ndarray, dict]:
+) -> tuple[jnp.ndarray, dict[str, object]]:
     """SPDHG (stochastic Chambolle-Pock) with weighted L2 data term and TV-like regularization.
 
     If ``callback`` is provided, it fires on the first logged objective sample and
@@ -495,7 +495,7 @@ def spdhg_tv(  # noqa: PLR0915
             ),
         )
 
-    info = {
+    info: dict[str, object] = {
         "loss": [float(v) for v in list(losses_f)],
         "tau": float(tau),
         "sigma_data": float(sigma_data_eff),

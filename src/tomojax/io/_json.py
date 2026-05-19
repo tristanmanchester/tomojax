@@ -101,7 +101,7 @@ def read_json_object(path: Path) -> dict[str, JsonValue]:
     """Read a JSON file that must contain an object."""
     if not path.exists():
         raise FileNotFoundError(path)
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = cast("object", json.loads(path.read_text(encoding="utf-8")))
     if not isinstance(data, dict):
         raise ValueError(f"expected JSON object in {path}")
     return cast("dict[str, JsonValue]", data)
@@ -113,7 +113,10 @@ def write_json_object(path: Path, payload: object) -> None:
     if not isinstance(normalized, dict):
         raise ValueError("JSON object payload must normalize to a mapping")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(normalized, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _ = path.write_text(
+        json.dumps(normalized, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _is_argparse_namespace(value: object) -> bool:

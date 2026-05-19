@@ -8,9 +8,15 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-import jax.numpy as jnp
 import numpy as np
 
+from tomojax._typed_arrays import (
+    float_list,
+    jax_float32_array,
+    object_list,
+    object_mapping,
+    update_jax_config,
+)
 from tomojax.align.api import (
     AlignConfig,
     AlignMultiresResumeState,
@@ -49,7 +55,14 @@ from ._align_command import (
 from ._align_types import AlignCliExecutionResult, AlignCliRunPlan
 
 if TYPE_CHECKING:
-    from tomojax.align.api import FallbackPolicy, GaugeFixMode, GaugePolicy, QualityTier
+    from tomojax.align.api import (
+        FallbackPolicy,
+        GaugeFixMode,
+        GaugePolicy,
+        OuterStat,
+        OuterStatValue,
+        QualityTier,
+    )
     from tomojax.recon.types import Regulariser
 
 
@@ -61,8 +74,6 @@ def init_jax_compilation_cache() -> None:
     - ${XDG_CACHE_HOME:-~/.cache}/tomojax/jax_cache
     """
     try:
-        import jax
-
         cache_dir_text = os.environ.get("TOMOJAX_JAX_CACHE_DIR")
         if cache_dir_text:
             cache_dir = Path(cache_dir_text)
@@ -70,10 +81,10 @@ def init_jax_compilation_cache() -> None:
             base = Path(os.environ.get("XDG_CACHE_HOME", "~/.cache")).expanduser()
             cache_dir = base / "tomojax" / "jax_cache"
         cache_dir.mkdir(parents=True, exist_ok=True)
-        jax.config.update("jax_compilation_cache_dir", str(cache_dir))
-        jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
-        jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
-        jax.config.update(
+        update_jax_config("jax_compilation_cache_dir", str(cache_dir))
+        update_jax_config("jax_persistent_cache_min_entry_size_bytes", -1)
+        update_jax_config("jax_persistent_cache_min_compile_time_secs", 0)
+        update_jax_config(
             "jax_persistent_cache_enable_xla_caches",
             "xla_gpu_per_fusion_autotune_cache_dir",
         )
@@ -151,6 +162,29 @@ def _schedule_for_public_mode(mode: AlignmentMode, *, align_profile: str) -> str
     if mode == "max":
         return "setup_safe"
     return "setup_safe"
+
+
+def _outer_stat_value(value: object) -> OuterStatValue:
+    if value is None or isinstance(value, bool | int | float | str):
+        return value
+    if isinstance(value, list | tuple):
+        return object_list(cast("object", value))
+    if isinstance(value, dict):
+        return object_mapping(cast("object", value))
+    return str(value)
+
+
+def _outer_stats_from_runtime(value: object) -> list[OuterStat]:
+    if not isinstance(value, list | tuple):
+        return []
+    out: list[OuterStat] = []
+    for item in object_list(cast("object", value)):
+        if isinstance(item, dict):
+            stat: OuterStat = {}
+            for key, stat_value in object_mapping(cast("object", item)).items():
+                stat[key] = _outer_stat_value(stat_value)
+            out.append(stat)
+    return out
 
 
 def build_align_cli_run_plan(
@@ -237,7 +271,7 @@ def build_align_cli_run_plan(
         grid_override=initial_grid_override,
         apply_saved_alignment=False,
     )
-    projections = jnp.asarray(meta.projections, dtype=np.float32)
+    projections = jax_float32_array(meta.projections)
     try:
         resolved_schedule = resolve_alignment_schedule(
             schedule=command.schedule,
@@ -450,17 +484,13 @@ def execute_alignment_plan(
     if plan.checkpoint_path is not None:
         motion_coeffs = info_dict.get("motion_coeffs")
         motion_coeffs_array = (
-            jnp.asarray(motion_coeffs, dtype=np.float32)
+            jax_float32_array(cast("object", motion_coeffs))
             if isinstance(motion_coeffs, np.ndarray)
             else None
         )
-        outer_stats_raw = info_dict.get("outer_stats", [])
-        if not isinstance(outer_stats_raw, list):
-            outer_stats_raw = []
+        outer_stats_raw = object_list(cast("object", info_dict.get("outer_stats", [])))
         completed_outer_iters = info_dict.get("completed_outer_iters", len(outer_stats_raw))
-        loss_raw = info_dict.get("loss", [])
-        if not isinstance(loss_raw, list):
-            loss_raw = []
+        loss_raw = object_list(cast("object", info_dict.get("loss", [])))
         l_value = info_dict.get("L")
         small_impr_streak = info_dict.get("small_impr_streak", 0)
         wall_time_total = info_dict.get("wall_time_total", 0.0)
@@ -470,8 +500,8 @@ def execute_alignment_plan(
                 params5=params5,
                 motion_coeffs=motion_coeffs_array,
                 start_outer_iter=metadata_int(completed_outer_iters, len(outer_stats_raw)),
-                loss=list(loss_raw),
-                outer_stats=[dict(stat) for stat in outer_stats_raw if isinstance(stat, dict)],
+                loss=float_list(loss_raw),
+                outer_stats=_outer_stats_from_runtime(outer_stats_raw),
                 L=float(l_value) if isinstance(l_value, int | float) else None,
                 small_impr_streak=metadata_int(small_impr_streak, 0),
                 elapsed_offset=metadata_float(wall_time_total, 0.0),

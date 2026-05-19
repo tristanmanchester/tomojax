@@ -551,7 +551,7 @@ def fista_tv(  # noqa: PLR0915
     config: FistaConfig | None = None,
     callback: LossCallback | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
-) -> tuple[jnp.ndarray, dict]:
+) -> tuple[jnp.ndarray, dict[str, object]]:
     """Run FISTA with TV regularization using an explicit solver configuration.
 
     If ``callback`` is provided, it fires on the first recorded loss sample and on
@@ -781,7 +781,7 @@ def fista_tv(  # noqa: PLR0915
             ),
         )
 
-    info = {
+    info: dict[str, object] = {
         "loss": [float(v) for v in list(loss_arr)],
         "L": L,
         "effective_iters": int(iters_done),
