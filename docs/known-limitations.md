@@ -13,4 +13,5 @@ The shipped package focuses on the public CLI/API workflows listed in
 - Pallas paths remain implementation/backend support rather than the default
   correctness claim. Reference/JAX paths are the baseline for public smoke tests.
 - The test suite is intentionally small. It proves import boundaries, CLI shape,
-  and a CPU reconstruction smoke workflow.
+  a CPU reconstruction smoke workflow, and numerical correctness of select math
+  primitives (loss kernels, geometry transforms).

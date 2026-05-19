@@ -265,11 +265,7 @@ def grid_from_detector_fov_slices(
     info = compute_roi(grid, detector, crop_y_to_u=crop_y_to_u, match_parity=True)
     side_max = min(int(info.nx_roi), int(info.ny_roi))
     side = _choose_shared_side(side_max, int(grid.nx), int(grid.ny))
-    if (
-        int(grid.nx) == int(grid.ny)
-        and int(grid.nx) <= side
-        and int(grid.nz) <= int(info.nz_roi)
-    ):
+    if int(grid.nx) == int(grid.ny) and int(grid.nx) <= side and int(grid.nz) <= int(info.nz_roi):
         return grid
     return Grid(
         nx=min(int(grid.nx), side),
