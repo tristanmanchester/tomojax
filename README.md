@@ -26,16 +26,16 @@ normalized transmission output.
 
 ## Examples
 
-The article visual pack shows the two main validation paths: controlled
-synthetic misalignment studies with known truth, and reconstruction/alignment
-outputs that can be compared visually.
+These examples show the two main validation paths: controlled synthetic
+misalignment studies with known truth, and reconstruction/alignment outputs
+that can be compared visually.
 
 | Synthetic misalignment set | Alignment before and after |
 | --- | --- |
 | <img src="images/tomojax-canonical-misalignment-grid.png" width="360" alt="Grid of canonical PHANTOM94 tomography misalignment scenarios."> | <img src="images/tomojax-alignment-before-after.png" width="420" alt="Before and after reconstruction slices for a detector centre and detector roll alignment scenario."> |
 
 The older animated examples remain in `images/` for external links and profile
-README references, but the project README focuses on the current v2 article
+README references, but the project README focuses on the current v2 validation
 examples.
 
 ## Public package surface

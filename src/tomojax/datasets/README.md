@@ -21,7 +21,7 @@ loaders used by examples and tests.
 - sidecar metadata loaders for generated datasets
 
 Historical synthetic benchmark manifests, synthetic128 spec loaders, recovery
-criteria tables, and article artifact writers are not part of the product
+criteria tables, and publication artifact writers are not part of the product
 facade. They were moved to the development archive.
 
 ## Dependency policy
