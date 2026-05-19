@@ -96,11 +96,7 @@ def _json_native(value: Any) -> Any:
     except (TypeError, ValueError):
         return value
 
-    if arr.shape == ():
-        native = value if arr.dtype == object else _json_native(arr.item())
-    else:
-        native = _json_native(arr.tolist())
-    return native
+    return _json_native(arr.item()) if arr.shape == () else _json_native(arr.tolist())
 
 
 def alignment_params_payload(

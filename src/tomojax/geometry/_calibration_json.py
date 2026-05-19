@@ -19,6 +19,15 @@ def normalize_json(value: Any) -> JsonValue:
         return value if math.isfinite(value) else str(value)
     if isinstance(value, Path):
         return str(value)
+    try:
+        import numpy as np
+    except ImportError:  # pragma: no cover - numpy is a project dependency
+        np = None
+    if np is not None:
+        if isinstance(value, np.generic):
+            return normalize_json(value.item())
+        if isinstance(value, np.ndarray):
+            return normalize_json(value.tolist())
     if is_dataclass(value) and not isinstance(value, type):
         return normalize_json(asdict(value))
     if isinstance(value, Mapping):

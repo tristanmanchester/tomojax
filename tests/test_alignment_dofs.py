@@ -20,6 +20,7 @@ from tomojax.align._model.dofs import (
 # check-public-imports: allow-private
 from tomojax.align._model.schedules import resolve_alignment_schedule
 from tomojax.align.api import AlignConfig
+from tomojax.align.io.params_export import alignment_params_payload
 from tomojax.cli._align_command import build_parser
 from tomojax.cli._align_plan import build_align_cli_run_plan
 from tomojax.core.geometry import Detector, Grid
@@ -113,3 +114,17 @@ def test_cli_pose_only_dofs_stay_single_resolution(monkeypatch: pytest.MonkeyPat
     )
 
     assert plan.run_levels is None
+
+
+def test_alignment_params_export_unwraps_object_dtype_scalars() -> None:
+    payload = alignment_params_payload(
+        np.zeros((1, 5), dtype=np.float32),
+        du=1.0,
+        dv=1.0,
+        gauge_metadata={
+            "mode": np.array("mean_translation", dtype=object),
+            "note": np.array(None, dtype=object),
+        },
+    )
+
+    assert payload["gauge_fix"] == {"mode": "mean_translation", "note": None}
