@@ -3,9 +3,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from tomojax.core.geometry import Detector, Grid
+# check-public-imports: allow-private
 from tomojax.core.geometry.transforms import align_u_to_v
-from tomojax.geometry import cylindrical_mask_xy, grid_from_detector_fov_slices
+from tomojax.geometry import Detector, Grid, cylindrical_mask_xy, grid_from_detector_fov_slices
 
 # check-public-imports: allow-private
 from tomojax.geometry._axis_geometry import _align_ez_to_axis

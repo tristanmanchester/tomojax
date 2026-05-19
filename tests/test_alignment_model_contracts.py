@@ -14,7 +14,7 @@ from tomojax.align._model.schedules import AlignmentSchedule, AlignmentStage
 
 # check-public-imports: allow-private
 from tomojax.align._model.state import SetupGeometryState
-from tomojax.core.geometry import Detector, Grid, ParallelGeometry
+from tomojax.geometry import Detector, Grid, ParallelGeometry
 
 
 @pytest.mark.parametrize("optimizer", ["adam", "validation_lm"])

@@ -20,10 +20,16 @@ from tomojax.align._model.dofs import (
 # check-public-imports: allow-private
 from tomojax.align._model.schedules import resolve_alignment_schedule
 from tomojax.align.api import AlignConfig
+
+# check-public-imports: allow-private
 from tomojax.align.io.params_export import alignment_params_payload
+
+# check-public-imports: allow-private
 from tomojax.cli._align_command import build_parser
+
+# check-public-imports: allow-private
 from tomojax.cli._align_plan import build_align_cli_run_plan
-from tomojax.core.geometry import Detector, Grid
+from tomojax.geometry import Detector, Grid
 from tomojax.io import ProjectionDataset
 
 
