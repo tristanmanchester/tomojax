@@ -22,6 +22,9 @@ from tomojax.io import (
     validate_dataset,
 )
 
+# check-public-imports: allow-private
+from tomojax.io._inspection import _projection_stats
+
 from ._helpers import make_projection_dataset, write_projection_dataset
 
 
@@ -198,6 +201,31 @@ def test_validate_dataset_reports_invalid_image_key_values(tmp_path: Path) -> No
     issues = validate_dataset(path)["issues"]
 
     assert "image_key values must be in {0, 1, 2, 3}; found 99 (1 frame)" in issues
+
+
+def test_projection_stats_keep_exact_stats_when_percentile_sample_has_no_finite_values(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "large_projection.nxs"
+    with h5py.File(path, "w") as handle:
+        dataset = handle.create_dataset(
+            "data",
+            shape=(2, 1024, 1024),
+            dtype=np.float32,
+        )
+        dataset[0] = np.nan
+        dataset[1] = np.full((1024, 1024), 7.0, dtype=np.float32)
+
+    with h5py.File(path, "r") as handle:
+        stats, nonfinite = _projection_stats(handle["data"])
+
+    assert stats["min"] == 7.0
+    assert stats["mean"] == 7.0
+    assert stats["max"] == 7.0
+    assert stats["p01"] is None
+    assert stats["p50"] is None
+    assert stats["p99"] is None
+    assert nonfinite["nan_count"] == 1024 * 1024
 
 
 def test_contrast_helpers_roundtrip_flat_dark_absorption() -> None:

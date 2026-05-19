@@ -297,7 +297,7 @@ def _projection_stats(dataset: h5py.Dataset) -> tuple[ProjectionStatsReport, Non
 
     sample = _sample_projection_values(dataset)
     sample_finite = finite_values_float64(sample, np.isfinite(sample))
-    if finite_count == 0 or sample_finite.size == 0:
+    if finite_count == 0:
         stats: ProjectionStatsReport = {
             "min": None,
             "p01": None,
@@ -307,10 +307,15 @@ def _projection_stats(dataset: h5py.Dataset) -> tuple[ProjectionStatsReport, Non
             "max": None,
         }
     else:
-        percentiles = numpy_float64_array(np.percentile(sample_finite, [1.0, 50.0, 99.0]))
-        p01 = scalar_float(cast("object", percentiles[0]))
-        p50 = scalar_float(cast("object", percentiles[1]))
-        p99 = scalar_float(cast("object", percentiles[2]))
+        if sample_finite.size == 0:
+            p01 = None
+            p50 = None
+            p99 = None
+        else:
+            percentiles = numpy_float64_array(np.percentile(sample_finite, [1.0, 50.0, 99.0]))
+            p01 = scalar_float(cast("object", percentiles[0]))
+            p50 = scalar_float(cast("object", percentiles[1]))
+            p99 = scalar_float(cast("object", percentiles[2]))
         stats = {
             "min": float(finite_min),
             "p01": p01,
