@@ -145,6 +145,40 @@ def test_validate_dataset_reports_schema_failures(tmp_path: Path) -> None:
     assert validate_dataset(invalid)["issues"] == ["Missing /entry"]
 
 
+def test_validate_dataset_reports_scalar_axis_datasets(tmp_path: Path) -> None:
+    path = tmp_path / "scalar_axes.nxs"
+    write_projection_dataset(path)
+    with h5py.File(path, "a") as handle:
+        detector = handle["entry/instrument/detector"]
+        del detector["image_key"]
+        detector.create_dataset("image_key", data=np.asarray(0, dtype=np.int32))
+        transformations = handle["entry/sample/transformations"]
+        del transformations["rotation_angle"]
+        rotation_angle = transformations.create_dataset(
+            "rotation_angle",
+            data=np.asarray(0.0, dtype=np.float32),
+        )
+        rotation_angle.attrs["units"] = "degree"
+
+    issues = validate_dataset(path)["issues"]
+
+    assert "instrument/detector/image_key must be 1D (n_views,)" in issues
+    assert "rotation_angle must be 1D (n_views,)" in issues
+
+
+def test_validate_dataset_reports_invalid_image_key_values(tmp_path: Path) -> None:
+    path = tmp_path / "invalid_image_key.nxs"
+    write_projection_dataset(path)
+    with h5py.File(path, "a") as handle:
+        detector = handle["entry/instrument/detector"]
+        del detector["image_key"]
+        detector.create_dataset("image_key", data=np.asarray([0, 99], dtype=np.int32))
+
+    issues = validate_dataset(path)["issues"]
+
+    assert "image_key values must be in {0, 1, 2, 3}; found 99 (1 frame)" in issues
+
+
 def test_contrast_helpers_roundtrip_flat_dark_absorption() -> None:
     projections = np.asarray([[[5.0]], [[9.0]]], dtype=np.float32)
     flats = np.asarray([[[11.0]]], dtype=np.float32)

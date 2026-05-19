@@ -349,15 +349,28 @@ def validate_nxtomo(path: str) -> ValidationReport:
                 ik = e["instrument/detector/image_key"]
                 if ik.ndim != 1:
                     report["issues"].append("instrument/detector/image_key must be 1D (n_views,)")
-                if n_views is not None and ik.shape[0] != n_views:
+                elif n_views is not None and ik.shape[0] != n_views:
                     report["issues"].append("image_key length must match #views in detector/data")
                 if ik.dtype.kind not in {"i", "u"}:
                     report["issues"].append("image_key must use integer dtype")
+                elif ik.ndim == 1:
+                    invalid_values, invalid_counts = np.unique(
+                        ik[~np.isin(ik, np.asarray([0, 1, 2, 3], dtype=ik.dtype))],
+                        return_counts=True,
+                    )
+                    if invalid_values.size > 0:
+                        formatted = ", ".join(
+                            f"{int(value)} ({int(count)} frame{'s' if int(count) != 1 else ''})"
+                            for value, count in zip(invalid_values, invalid_counts, strict=True)
+                        )
+                        report["issues"].append(
+                            "image_key values must be in {0, 1, 2, 3}; found " + formatted
+                        )
             if "sample/transformations/rotation_angle" in e:
                 ang = e["sample/transformations/rotation_angle"]
                 if ang.ndim != 1:
                     report["issues"].append("rotation_angle must be 1D (n_views,)")
-                if n_views is not None and ang.shape[0] != n_views:
+                elif n_views is not None and ang.shape[0] != n_views:
                     report["issues"].append(
                         "rotation_angle length must match #views in detector/data"
                     )
