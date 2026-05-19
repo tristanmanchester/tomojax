@@ -24,7 +24,7 @@ import math
 
 import numpy as np
 
-from tomojax.core.geometry.base import Detector, Grid
+from tomojax.core.geometry.base import Detector, Grid, _grid_volume_origin
 
 
 @dataclass(frozen=True)
@@ -243,8 +243,9 @@ def cylindrical_mask_xy(grid: Grid, detector: Detector) -> np.ndarray:
     info = compute_roi(grid, detector)
     nx, ny = int(grid.nx), int(grid.ny)
     vx, vy = float(grid.vx), float(grid.vy)
-    x = (np.arange(nx, dtype=np.float32) - (nx / 2.0 - 0.5)) * vx
-    y = (np.arange(ny, dtype=np.float32) - (ny / 2.0 - 0.5)) * vy
+    origin = _grid_volume_origin(grid)
+    x = np.arange(nx, dtype=np.float32) * vx + np.float32(origin[0])
+    y = np.arange(ny, dtype=np.float32) * vy + np.float32(origin[1])
     x_grid, y_grid = np.meshgrid(x, y, indexing="ij")
     return (info.r_u * info.r_u + 1e-6) >= (x_grid * x_grid + y_grid * y_grid)
 
@@ -264,6 +265,12 @@ def grid_from_detector_fov_slices(
     info = compute_roi(grid, detector, crop_y_to_u=crop_y_to_u, match_parity=True)
     side_max = min(int(info.nx_roi), int(info.ny_roi))
     side = _choose_shared_side(side_max, int(grid.nx), int(grid.ny))
+    if (
+        int(grid.nx) == int(grid.ny)
+        and int(grid.nx) <= side
+        and int(grid.nz) <= int(info.nz_roi)
+    ):
+        return grid
     return Grid(
         nx=min(int(grid.nx), side),
         ny=min(int(grid.ny), side),
