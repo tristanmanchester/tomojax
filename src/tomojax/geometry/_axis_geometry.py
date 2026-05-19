@@ -160,7 +160,12 @@ def _align_ez_to_axis(axis_unit: jnp.ndarray) -> jnp.ndarray:
         )
 
     def near_parallel() -> jnp.ndarray:
-        return jnp.diag(jnp.asarray([1.0, -1.0, -1.0], dtype=jnp.float32))
+        helper = jnp.asarray([0.0, 1.0, 0.0], dtype=jnp.float32)
+        x_axis = jnp.cross(helper, axis)
+        x_axis = x_axis / jnp.maximum(jnp.linalg.norm(x_axis), jnp.float32(1e-8))
+        y_axis = jnp.cross(axis, x_axis)
+        y_axis = y_axis / jnp.maximum(jnp.linalg.norm(y_axis), jnp.float32(1e-8))
+        return jnp.stack((x_axis, y_axis, axis), axis=1)
 
     return jax.lax.cond(
         cos_theta > jnp.float32(-1.0 + 1e-6),
