@@ -320,7 +320,11 @@ def _projector_kernel_cached(
         iz0,
     )
     if unroll is None:
-        acc, _, _, _ = jax.lax.fori_loop(0, n_steps, body, init)
+        tile_steps = jnp.minimum(
+            jnp.max(jnp.where(in_detector, n_steps_ray, 0)),
+            jnp.asarray(n_steps, dtype=jnp.int32),
+        )
+        acc, _, _, _ = jax.lax.fori_loop(0, tile_steps, body, init)
     else:
         acc, _, _, _ = jax.lax.fori_loop(0, n_steps, body, init, unroll=unroll)
     out_ref[...] = acc.astype(jnp.float32)
