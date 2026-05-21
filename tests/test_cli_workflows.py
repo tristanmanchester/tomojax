@@ -291,3 +291,69 @@ def test_align_cli_mode_cor_writes_alignment_outputs(
     assert loaded.align_params is not None
     assert loaded.align_params.shape == (2, 5)
     assert manifest.stat().st_size > 0
+
+
+def test_align_cli_geometry_dofs_route_to_multires_without_explicit_levels(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    align_cli_main = importlib.import_module("tomojax.cli._align_main")
+    align_cli_plan = importlib.import_module("tomojax.cli._align_plan")
+    scan = tmp_path / "scan.nxs"
+    aligned = tmp_path / "aligned.nxs"
+    write_projection_dataset(scan)
+    calls: list[tuple[list[int], tuple[str, ...], tuple[str, ...]]] = []
+
+    def fake_align_multires(
+        geom,
+        recon_grid,
+        recon_detector,
+        projections,
+        *,
+        factors,
+        cfg,
+        resume_state=None,
+        checkpoint_callback=None,
+    ):
+        del geom, recon_detector, projections, resume_state, checkpoint_callback
+        calls.append((list(factors), tuple(cfg.optimise_dofs or ()), tuple(cfg.freeze_dofs or ())))
+        x = jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
+        params5 = jnp.zeros((2, 5), dtype=jnp.float32)
+        return (
+            x,
+            params5,
+            {"loss": [0.0], "outer_stats": [], "active_geometry_dofs": ["det_u_px"]},
+        )
+
+    monkeypatch.setattr(align_cli_main, "setup_logging", lambda: None)
+    monkeypatch.setattr(align_cli_main, "log_jax_env", lambda: None)
+    monkeypatch.setattr(align_cli_main, "init_jax_compilation_cache", lambda: None)
+    monkeypatch.setattr(align_cli_plan, "align_multires", fake_align_multires)
+
+    assert (
+        main(
+            [
+                "align",
+                "--data",
+                str(scan),
+                "--out",
+                str(aligned),
+                "--optimise-dofs",
+                "det_u_px",
+                "--roi",
+                "off",
+                "--grid",
+                "4",
+                "4",
+                "2",
+                "--outer-iters",
+                "1",
+                "--recon-iters",
+                "1",
+                "--views-per-batch",
+                "1",
+            ]
+        )
+        == 0
+    )
+
+    assert calls == [([1], ("det_u_px",), ())]
