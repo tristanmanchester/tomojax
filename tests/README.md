@@ -13,5 +13,5 @@ Current coverage:
 - NXtomo `image_key` sample/flat/dark splitting and TIFF stack preprocessing produce the expected absorption or transmission output;
 - FBP and FISTA reconstruction smoke tests produce finite tiny volumes;
 - deterministic synthetic phantoms, simulation metadata, artefact metadata, and loadable synthetic outputs keep their public contracts;
-- product CLI smoke tests cover `inspect`, `validate`, `ingest`, `preprocess`, `convert`, `recon`, `simulate`, and cheap `align --mode cor` routing;
+- product CLI smoke tests cover `inspect`, `validate`, `ingest`, `preprocess`, `convert`, `recon`, `simulate`, cheap `align --mode cor` routing, and `align --optimise-dofs` geometry-DOF routing to multires;
 - numerical correctness of select internal math primitives: Barron loss kernel and geometry rotation helpers.
