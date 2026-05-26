@@ -7,8 +7,8 @@ from contextlib import contextmanager
 import sys
 from typing import TYPE_CHECKING
 
-from tomojax.cli.api import product_command_names
 from tomojax.cli._jax_allocator import configure_jax_allocator_defaults
+from tomojax.cli.api import product_command_names
 
 configure_jax_allocator_defaults()
 
