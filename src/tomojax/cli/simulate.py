@@ -9,6 +9,10 @@ import os
 import sys
 from typing import TYPE_CHECKING, Literal, cast
 
+from tomojax.cli._jax_allocator import configure_jax_allocator_defaults
+
+configure_jax_allocator_defaults()
+
 from tomojax.core import log_jax_env, setup_logging
 from tomojax.datasets import (
     SimConfig,

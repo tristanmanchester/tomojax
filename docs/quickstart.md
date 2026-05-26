@@ -49,14 +49,27 @@ uv run tomojax recon --data corrected.nxs --out recon.nxs
 
 ## Align and reconstruct
 
+Use `pose` mode when the sample moves between projections. This is the default
+alignment mode and optimizes per-projection 5-DOF pose corrections.
+
 ```bash
 uv run tomojax align --data corrected.nxs \
   --out aligned.nxs \
+  --mode pose
+```
+
+Use `cor` mode when the detector centre or centre of rotation is the dominant
+problem:
+
+```bash
+uv run tomojax align --data corrected.nxs \
+  --out aligned_cor.nxs \
   --mode cor
 ```
 
-Alignment is routed through the product command and its public profile/schedule
-API.
+Alignment is routed through the product command and its public profile and
+schedule API. For a decision guide, see
+[`alignment-guide.md`](alignment-guide.md).
 
 ## Synthetic smoke workflow
 
@@ -73,3 +86,10 @@ uv run tomojax recon --data synthetic_scan.nxs --out synthetic_recon.nxs
 
 For a minimal public-Python example, see
 [`examples/simulate_and_reconstruct.py`](../examples/simulate_and_reconstruct.py).
+
+## Next steps
+
+After you can inspect, validate, reconstruct, and align a small dataset, use
+[`real-laminography.md`](real-laminography.md) for scan data and
+[`support-matrix.md`](support-matrix.md) to check which workflows are supported
+product entrypoints.

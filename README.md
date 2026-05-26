@@ -2,8 +2,8 @@
 
 TomoJAX turns tomography and laminography projection data into reconstructed
 volumes. It loads NeXus/HDF5 or TIFF stacks, applies dark/flat correction,
-reconstructs with FBP or TV solvers, and can estimate detector-centre/COR
-alignment from the data.
+reconstructs with FBP or TV solvers, and can estimate per-projection pose or
+detector-centre/COR alignment from the data.
 
 <img src="images/tomojax-phantom94-orthoslices.png" width="900" alt="Orthogonal slices through the PHANTOM94 synthetic tomography volume used for TomoJAX validation.">
 
@@ -36,6 +36,7 @@ and easy to test on synthetic data.
 | Convert a TIFF stack into a TomoJAX dataset | `tomojax ingest ./projections --angles angles.csv --du 0.65 --dv 0.65 --out scan.nxs` |
 | Apply dark/flat correction | `tomojax preprocess raw.nxs corrected.nxs` |
 | Reconstruct a volume | `tomojax recon --data corrected.nxs --out recon.nxs` |
+| Correct per-projection sample motion | `tomojax align --data corrected.nxs --out aligned.nxs --mode pose` |
 | Correct detector-centre/COR geometry | `tomojax align --data corrected.nxs --out aligned.nxs --mode cor` |
 | Generate a synthetic test scan | `tomojax simulate --out synthetic.nxs --nx 64 --ny 64 --nz 64 --nu 64 --nv 64 --n-views 64` |
 
@@ -112,19 +113,32 @@ working.
 
 ## Alignment
 
-TomoJAX exposes detector-centre/COR alignment through the public CLI. Start with
-`--mode cor`; broader pose and laminography workflows are still documented as
-limited product claims.
+TomoJAX exposes 5-DOF per-projection pose alignment and detector-centre/COR
+alignment through the public CLI. Start with `--mode pose` when the sample
+moves during acquisition, and use `--mode cor` when you need a detector-centre
+or centre-of-rotation correction.
 
 ```bash
 uv run tomojax align \
   --data corrected.nxs \
   --out aligned.nxs \
-  --mode cor
+  --mode pose
 ```
 
 The aligned dataset stores the reconstruction and alignment metadata together,
 so you can inspect it later with `tomojax inspect aligned.nxs`.
+
+Mixed setup and pose correction is an expert workflow because setup and pose
+parameters can share gauge ambiguity. Use an explicit gauge policy when you run
+that path:
+
+```bash
+uv run tomojax align \
+  --data corrected.nxs \
+  --out aligned_auto.nxs \
+  --mode auto \
+  --gauge-policy anchor_mean
+```
 
 ## Python API
 
@@ -148,6 +162,7 @@ cases.
 Start with the guide that matches your data and the support level you need.
 
 - [`docs/quickstart.md`](docs/quickstart.md)
+- [`docs/alignment-guide.md`](docs/alignment-guide.md)
 - [`docs/synthetic-tomography.md`](docs/synthetic-tomography.md)
 - [`docs/real-laminography.md`](docs/real-laminography.md)
 - [`docs/support-matrix.md`](docs/support-matrix.md)
@@ -157,10 +172,12 @@ Start with the guide that matches your data and the support level you need.
 
 The stable product path covers dataset inspection, validation, TIFF ingest,
 NX/HDF5 preprocessing, reconstruction, synthetic data generation, and
-detector-centre/COR alignment. Broader truth-free laminography alignment,
-object-frame drift recovery, nuisance fitting, and bad-view handling are still
-research workflows. See [`docs/known-limitations.md`](docs/known-limitations.md)
-before making stronger claims about a scan.
+5-DOF pose alignment, detector-centre/COR alignment, and expert mixed setup and
+pose alignment with explicit gauge policy. Object-frame drift recovery,
+nuisance fitting, abrupt-jump handling, bad-view handling, and detector-v
+reference-shift recovery are still research or diagnostic workflows. See
+[`docs/known-limitations.md`](docs/known-limitations.md) before making stronger
+claims about a scan.
 
 ## Development checks
 

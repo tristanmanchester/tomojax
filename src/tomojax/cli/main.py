@@ -8,6 +8,9 @@ import sys
 from typing import TYPE_CHECKING
 
 from tomojax.cli.api import product_command_names
+from tomojax.cli._jax_allocator import configure_jax_allocator_defaults
+
+configure_jax_allocator_defaults()
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Sequence

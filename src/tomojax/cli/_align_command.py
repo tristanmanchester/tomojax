@@ -121,11 +121,11 @@ def build_parser() -> argparse.ArgumentParser:
     _ = p.add_argument(
         "--mode",
         choices=["cor", "pose", "auto", "max"],
-        default="auto",
+        default="pose",
         help=(
-            "High-level alignment mode. cor solves detector centre; pose solves "
-            "per-view motion; auto runs the default setup+pose workflow; max "
-            "uses the slower reference-quality posture."
+            "High-level alignment mode. pose solves per-view 5-DOF motion "
+            "(default); cor solves detector centre; auto runs the expert "
+            "setup+pose workflow; max uses the slower reference-quality posture."
         ),
     )
     _ = p.add_argument(
@@ -322,7 +322,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="reject",
         help=(
             "Policy for gauge-coupled direct/expert DOF sets. Public presets carry "
-            "their own stage policies; direct mixed setup+pose defaults to reject."
+            "their own stage policies; direct mixed setup+pose defaults to reject. "
+            "Use anchor_mean for reconstruction-quality mixed correction."
         ),
     )
     _ = p.add_argument(
