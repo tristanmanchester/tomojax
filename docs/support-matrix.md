@@ -1,7 +1,6 @@
 # TomoJAX Support Matrix
 
-This matrix describes the public product workflows. Use these entries when you
-describe supported TomoJAX behavior in docs, examples, and issue responses.
+Supported workflows and their CLI entrypoints.
 
 | Workflow | Status | Supported entrypoint |
 |---|---|---|
@@ -15,25 +14,23 @@ describe supported TomoJAX behavior in docs, examples, and issue responses.
 | Detector-centre/COR alignment | Supported | `tomojax align --data corrected.nxs --mode cor --out aligned.nxs` |
 | Expert mixed setup and pose alignment | Supported with explicit gauge policy | `tomojax align --data corrected.nxs --mode auto --gauge-policy anchor_mean --out aligned.nxs` |
 | Deterministic synthetic dataset generation | Supported | `tomojax simulate --out synthetic_scan.nxs ...` |
-| Public Python reconstruction smoke path | Supported | `tomojax.geometry`, `tomojax.forward`, `tomojax.recon` facades |
+| Python API reconstruction | Supported | `tomojax.geometry`, `tomojax.forward`, `tomojax.recon` |
 
-## Claiming rules
+## Scope
 
-Only the workflows in the table above are supported product entrypoints.
-Describe workflows outside the matrix as research or expert diagnostics unless
-they are promoted into the public CLI, public API, examples, and tests.
+Workflows outside the table above are research or expert diagnostics.
 
 ## Alignment interpretation
 
-Alignment can improve reconstruction quality without proving that every
-recovered parameter is physically calibrated. This distinction matters when a
-pose-only run absorbs setup error.
+Alignment can improve reconstruction quality without every recovered parameter
+being physically calibrated. This matters when a pose-only run absorbs setup
+error.
 
 - Use `--mode pose` as the first-line correction for per-projection sample
   motion.
 - Use `--mode cor` when you need a detector-centre or centre-of-rotation
   correction that is physically interpretable.
-- Use `--mode auto` with `--gauge-policy anchor_mean` only when you deliberately
-  combine setup and pose correction.
-- Don't present detector-v or sample-elevation reference shifts as normal
-  recoverable alignment targets.
+- Use `--mode auto` with `--gauge-policy anchor_mean` for combined setup and
+  pose correction.
+- Detector-v and sample-elevation reference shifts are not reliably
+  recoverable.

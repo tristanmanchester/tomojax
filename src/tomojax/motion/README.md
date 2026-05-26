@@ -2,9 +2,8 @@
 
 ## Purpose
 
-`tomojax.motion` owns motion-estimation primitives used to initialize or
-regularize alignment, plus typed object-frame motion traces used by synthetic
-benchmarks and future object-motion solvers.
+`tomojax.motion` provides motion-estimation primitives for alignment
+initialization and regularization, plus typed object-frame motion traces.
 
 ## Public API
 
@@ -15,19 +14,16 @@ benchmarks and future object-motion solvers.
 
 ## Dependencies
 
-This module may depend on JAX numerical primitives. It must not depend on
-alignment orchestration, reconstruction solvers, datasets, or CLI modules.
+JAX only. Must not depend on alignment, reconstruction, datasets, or CLI.
 
 ## Invariants
 
 - Public imports go through `tomojax.motion`, not private `_phasecorr`.
-- Phase-correlation shifts use the half-open wrapped interval convention for
-  even detector dimensions.
-- The implementation remains vectorizable with `jax.vmap`.
-- Object-motion traces are one-dimensional per-view arrays with matching view
-  counts.
+- Phase-correlation shifts use half-open wrapped intervals for even detector
+  dimensions.
+- Vectorizable with `jax.vmap`.
+- Object-motion traces are 1D per-view arrays with matching view counts.
 
 ## Tests
 
-Not yet covered by dedicated product tests. Phase-correlation and object-motion
-contracts are exercised indirectly through simulation and alignment workflows.
+Exercised indirectly through simulation and alignment workflow tests.

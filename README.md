@@ -7,18 +7,15 @@ detector-centre/COR alignment from the data.
 
 <img src="images/tomojax-phantom94-orthoslices.png" width="900" alt="Orthogonal slices through the PHANTOM94 synthetic tomography volume used for TomoJAX validation.">
 
-Use it when you have projections plus approximate geometry and want a clean
-command-line path from raw detector frames to a reconstruction you can inspect,
-save, and reproduce.
+Use it when you have projections and approximate geometry and want to go from
+raw detector frames to a reproducible reconstruction.
 
 ## What comes out
 
-TomoJAX writes `.nxs` datasets that keep the projections, reconstructed volume,
+TomoJAX writes `.nxs` datasets that keep projections, reconstructed volume,
 geometry metadata, preprocessing provenance, and alignment metadata together.
-That makes a run easier to inspect later and easier to move between CLI tools,
-Python scripts, and reports.
 
-The same workflow works in three common starting points:
+Three common starting points:
 
 - raw NeXus/HDF5 scans with sample, flat, and dark frames;
 - TIFF projection stacks with an angle sidecar;
@@ -26,13 +23,12 @@ The same workflow works in three common starting points:
 
 ## What you can do
 
-TomoJAX focuses on a small set of workflows that are useful for real scan data
-and easy to test on synthetic data.
+Supported workflows:
 
 | Task | Command |
 | --- | --- |
 | Inspect a scan | `tomojax inspect scan.nxs` |
-| Validate the dataset contract | `tomojax validate scan.nxs` |
+| Validate a dataset | `tomojax validate scan.nxs` |
 | Convert a TIFF stack into a TomoJAX dataset | `tomojax ingest ./projections --angles angles.csv --du 0.65 --dv 0.65 --out scan.nxs` |
 | Apply dark/flat correction | `tomojax preprocess raw.nxs corrected.nxs` |
 | Reconstruct a volume | `tomojax recon --data corrected.nxs --out recon.nxs` |
@@ -45,8 +41,7 @@ Use `--transmission` when you need normalized transmission output instead.
 
 ## Get started
 
-From a checkout, install the CPU development environment and check that the CLI
-is available.
+Install the CPU development environment and check the CLI.
 
 ```bash
 uv sync --extra cpu --dev
@@ -100,23 +95,18 @@ Then preprocess or reconstruct the resulting `.nxs` dataset.
 
 ## Examples
 
-These examples use a synthetic phantom so the expected volume is known. Real
-scan reports use the same layout, but rely on visual inspection and projection
-losses instead of ground-truth metrics.
+These use a synthetic phantom so the expected volume is known.
 
 | Synthetic misalignment set | Alignment before and after |
 | --- | --- |
 | <img src="images/tomojax-canonical-misalignment-grid.png" width="360" alt="Grid of canonical PHANTOM94 tomography misalignment scenarios."> | <img src="images/tomojax-alignment-before-after.png" width="420" alt="Before and after reconstruction slices for a detector centre and detector roll alignment scenario."> |
 
-Older animated examples remain in `images/` so existing external links keep
-working.
+Older animated examples remain in `images/`.
 
 ## Alignment
 
-TomoJAX exposes 5-DOF per-projection pose alignment and detector-centre/COR
-alignment through the public CLI. Start with `--mode pose` when the sample
-moves during acquisition, and use `--mode cor` when you need a detector-centre
-or centre-of-rotation correction.
+Start with `--mode pose` when the sample moves during acquisition, and use
+`--mode cor` when you need a detector-centre or centre-of-rotation correction.
 
 ```bash
 uv run tomojax align \
@@ -128,9 +118,8 @@ uv run tomojax align \
 The aligned dataset stores the reconstruction and alignment metadata together,
 so you can inspect it later with `tomojax inspect aligned.nxs`.
 
-Mixed setup and pose correction is an expert workflow because setup and pose
-parameters can share gauge ambiguity. Use an explicit gauge policy when you run
-that path:
+Mixed setup and pose correction requires an explicit gauge policy because setup
+and pose parameters can share gauge ambiguity:
 
 ```bash
 uv run tomojax align \
@@ -142,10 +131,10 @@ uv run tomojax align \
 
 ## Python API
 
-Most users should import from these modules:
+Main modules:
 
-- `tomojax.io` for projection payloads, NXtomo IO, validation,
-  preprocessing, and quicklooks.
+- `tomojax.io` for loading/saving datasets, NXtomo validation, preprocessing,
+  and quicklooks.
 - `tomojax.geometry` for geometry metadata, axes, calibration state, and
   field-of-view helpers.
 - `tomojax.forward` for differentiable forward projection and residual helpers.
@@ -153,13 +142,12 @@ Most users should import from these modules:
 - `tomojax.align` for `AlignConfig`, `align`, and `align_multires`.
 - `tomojax.datasets` for deterministic synthetic datasets.
 
-The tests cover the public API, CLI routing, import boundaries, IO and
-preprocessing, deterministic simulation, and small numerical reconstruction
-cases.
+Tests cover CLI routing, IO and preprocessing, deterministic simulation, and
+numerical reconstruction cases.
 
 ## Workflow docs
 
-Start with the guide that matches your data and the support level you need.
+Start with the guide that matches your data.
 
 - [`docs/quickstart.md`](docs/quickstart.md)
 - [`docs/alignment-guide.md`](docs/alignment-guide.md)
@@ -170,23 +158,20 @@ Start with the guide that matches your data and the support level you need.
 
 ## Current scope
 
-The stable product path covers dataset inspection, validation, TIFF ingest,
-NX/HDF5 preprocessing, reconstruction, synthetic data generation, and
-5-DOF pose alignment, detector-centre/COR alignment, and expert mixed setup and
-pose alignment with explicit gauge policy. Object-frame drift recovery,
-nuisance fitting, abrupt-jump handling, bad-view handling, and detector-v
-reference-shift recovery are still research or diagnostic workflows. See
-[`docs/known-limitations.md`](docs/known-limitations.md) before making stronger
-claims about a scan.
+Covers dataset inspection, validation, TIFF ingest, NX/HDF5 preprocessing,
+reconstruction, synthetic data generation, 5-DOF pose alignment,
+detector-centre/COR alignment, and mixed setup and pose alignment. Object-frame
+drift recovery, nuisance fitting, abrupt-jump handling, bad-view handling, and
+detector-v reference-shift recovery are research or diagnostic workflows. See
+[`docs/known-limitations.md`](docs/known-limitations.md) for details.
 
 ## Development checks
 
-Run these checks before sending changes for review.
+Run before submitting changes.
 
 ```bash
 just surface-check
 just check
 ```
 
-`just surface-check` checks formatting and lint configuration, private-import
-guardrails, and product tests.
+`just surface-check` runs formatting, lint, import guardrails, and tests.

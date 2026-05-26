@@ -1,9 +1,8 @@
 # tomojax.geometry
 
-`tomojax.geometry` owns public geometry metadata, setup/pose state, gauge
-canonicalisation, calibration-derived detector/axis primitives, and detector
-field-of-view helpers shared by datasets, CLI entrypoints, reconstruction, and
-alignment.
+`tomojax.geometry` provides geometry metadata, setup/pose state, gauge
+canonicalisation, detector/axis calibration primitives, and field-of-view
+helpers.
 
 ## Public API
 
@@ -20,6 +19,4 @@ alignment.
 
 ## Dependency policy
 
-Product code imports geometry through `tomojax.geometry`. Private geometry
-implementation files and `tomojax.core.geometry` remain implementation details
-except where an owning package deliberately wraps them.
+Import through `tomojax.geometry`, not private implementation files.

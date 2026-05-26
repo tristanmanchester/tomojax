@@ -1,6 +1,6 @@
 # tomojax.recon
 
-`tomojax.recon` owns the supported reconstruction routines:
+`tomojax.recon` provides reconstruction routines:
 
 - `fbp`
 - `fista_tv`
