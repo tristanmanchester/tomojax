@@ -1,9 +1,7 @@
 # tomojax.datasets
 
-`tomojax.datasets` owns deterministic synthetic generation for the supported
-`tomojax simulate` workflow. It exposes the simulation config/results,
-validated simulation artefact settings, simple procedural phantoms, and sidecar
-loaders used by examples and tests.
+`tomojax.datasets` provides deterministic synthetic data generation for the
+`tomojax simulate` workflow.
 
 ## Public API
 
@@ -20,12 +18,6 @@ loaders used by examples and tests.
   `random_cubes_spheres`, and `lamino_disk`
 - sidecar metadata loaders for generated datasets
 
-Historical synthetic benchmark manifests, synthetic128 spec loaders, recovery
-criteria tables, and publication artifact writers are not part of the product
-facade. They were moved to the development archive.
-
 ## Dependency policy
 
-This package may depend on low-level retained data-generation helpers and public
-geometry/forward/IO surfaces. Product code should import from
-`tomojax.datasets`, not from historical benchmark modules.
+Import from `tomojax.datasets`, not internal data-generation helpers.

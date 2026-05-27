@@ -526,6 +526,7 @@ def _seed_translation_params(
         projector_unroll=int(cfg.projector_unroll),
         checkpoint_projector=cfg.checkpoint_projector,
         gather_dtype=cfg.gather_dtype,
+        positivity=bool(cfg.recon_positivity),
         recon_rel_tol=cfg.recon_rel_tol,
         recon_patience=(int(cfg.recon_patience) if cfg.recon_patience is not None else 0),
     )

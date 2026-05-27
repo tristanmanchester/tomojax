@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
+import gc
 import logging
 
+import jax
 import jax.numpy as jnp
 
 from tomojax.core.geometry.base import Detector, Geometry, Grid
@@ -190,7 +192,20 @@ def _run_multires_levels(
         )
         if state.final_observer_action == "stop_run":
             break
+        _release_completed_level_accelerator_state(state)
     return state
+
+
+def _release_completed_level_accelerator_state(state: MultiresRunState) -> None:
+    """Drop per-level JAX executable/cache state before compiling the next level."""
+    if state.x_init is not None:
+        jax.block_until_ready(state.x_init)
+    if state.params5 is not None:
+        jax.block_until_ready(state.params5)
+    gc.collect()
+    clear_caches = getattr(jax, "clear_caches", None)
+    if callable(clear_caches):
+        clear_caches()
 
 
 def align_multires(

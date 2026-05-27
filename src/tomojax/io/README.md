@@ -1,8 +1,6 @@
 # tomojax.io
 
-`tomojax.io` is the product facade for measured projection data. It owns dataset
-loading/saving, NXtomo validation, TIFF/NX preprocessing, inspection reports,
-quicklooks, and metadata conversion helpers used by the CLI.
+`tomojax.io` handles dataset loading/saving, NXtomo validation, TIFF/NX
+preprocessing, inspection reports, quicklooks, and metadata conversion.
 
-Use this package rather than importing lower-level `tomojax._data` helpers from
-product code.
+Import from here, not from `tomojax._data`.

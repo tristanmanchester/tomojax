@@ -2,13 +2,12 @@
 
 ## Purpose
 
-`tomojax.forward` owns differentiable projection, projection-domain residuals,
-and geometry-parameter reductions for the v2 core ray path.
+`tomojax.forward` provides differentiable projection, projection-domain
+residuals, and geometry-parameter reductions.
 
-The supported v2 projector family is `core_trilinear_ray`: v2 `GeometryState`
-is adapted to core `Grid`, `Detector`, detector grids, and per-view 4x4
-`T_all`, then projected with `tomojax.core.projector.forward_project_view_T`.
-The old rotate-and-sum approximation is not an operational v2 path.
+The projector adapts `GeometryState` to core `Grid`, `Detector`, detector
+grids, and per-view 4x4 `T_all`, then projects with
+`tomojax.core.projector.forward_project_view_T`.
 
 ## Public API
 
@@ -32,48 +31,33 @@ The old rotate-and-sum approximation is not an operational v2 path.
 
 ## Dependencies
 
-Allowed future dependencies:
+Allowed: `tomojax.core`, `tomojax.geometry`, `tomojax.motion`,
+`tomojax.nuisance`, `tomojax.backends`.
 
-- `tomojax.core`
-- `tomojax.geometry`
-- `tomojax.motion`
-- `tomojax.nuisance`
-- `tomojax.backends`
-
-Forbidden dependencies:
-
-- private implementation files from other deep modules
-- reconstruction or alignment solver orchestration
-- Pallas fast paths as default behavior without JAX-reference equivalence tests
+Forbidden: private files from other modules, reconstruction/alignment
+orchestration, Pallas fast paths without JAX-reference equivalence tests.
 
 ## Invariants
 
-- `core_trilinear_ray` is the single supported v2 operator family.
-- Projection residuals must support masks and robust whitening.
-- Backend fast paths must report provenance and compare against the reference
-  path.
-- Supported parallel-tomography DOFs are nominal theta, theta scale, theta
-  offset, per-view alpha/beta/phi residuals, detector u/v shift, detector roll,
-  axis x/y tilt, and per-view dx/dz.
-- Detector roll uses a calibrated detector-grid transform: roll is applied
-  around the zero-centre detector plane, while detector centre offsets remain
-  independent.
-- Axis rotations use the core rotation-axis pose convention: acquisition
-  metadata supplies the nominal parallel-tomography or parallel-laminography
-  axis, x/y setup rotations apply corrections on top of it, and `T_all` is
-  built with `axis_pose_stack`.
-- Alpha/beta pose rotations are composed after the nominal axis/theta pose in
-  object coordinates, matching the sidecar geometry wrapper convention.
-- Parallel laminography is represented as a tilted nominal rotation axis for
-  the same `core_trilinear_ray` operator. Object drift is an explicit
-  unsupported state until its core convention mapping is defined.
-- Residual filters are projection-domain JAX reference policies. The current
-  public policies are `raw`, `lowpass_gaussian`, and
+- Projection residuals support masks and robust whitening.
+- Backend fast paths report provenance and compare against the reference path.
+- Supported DOFs: nominal theta, theta scale/offset, per-view alpha/beta/phi
+  residuals, detector u/v shift, detector roll, axis x/y tilt, per-view dx/dz.
+- Detector roll applies around the zero-centre detector plane; detector centre
+  offsets are independent.
+- Axis rotations use the core rotation-axis pose convention: nominal axis from
+  acquisition metadata, x/y setup corrections on top, `T_all` built with
+  `axis_pose_stack`.
+- Alpha/beta pose rotations compose after nominal axis/theta in object
+  coordinates.
+- Parallel laminography uses a tilted nominal rotation axis with the same
+  projector.
+- Residual filter policies: `raw`, `lowpass_gaussian`,
   `bandpass_difference_of_gaussians`.
 
 ## Tests
 
-- `tests/test_v2_module_skeleton.py` verifies this facade exists and imports.
-- `tests/test_forward_reference.py` covers the v2-to-core adapter, supported
-  detector/theta shifts, detector roll, axis tilt, alpha/beta pose rotations,
-  parallel laminography nominal-axis mapping, and robust residual contracts.
+- `tests/test_v2_module_skeleton.py` verifies the module imports.
+- `tests/test_forward_reference.py` covers the core adapter, detector/theta
+  shifts, detector roll, axis tilt, alpha/beta pose rotations, laminography
+  axis mapping, and residual contracts.

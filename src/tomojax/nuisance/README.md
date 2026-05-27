@@ -2,13 +2,13 @@
 
 ## Purpose
 
-`tomojax.nuisance` will own acquisition-state effects that alter measured
-projections without being geometry or object motion: gain/offset, backgrounds,
-masks, robust noise scales, stripe bias, bad frames, and related provenance.
+`tomojax.nuisance` handles acquisition-state effects that alter projections
+without being geometry or motion: gain/offset, backgrounds, masks, noise
+scales, stripe bias, and bad frames.
 
-The first Phase 8 public primitives are per-view gain/offset fitting and a
-low-frequency background offset model. They model acquisition drift so geometry
-does not need to absorb flat-field-like projection changes.
+Current primitives are per-view gain/offset fitting and a low-frequency
+background offset model. These model acquisition drift so geometry does not
+need to absorb flat-field-like changes.
 
 ## Public API
 
@@ -19,28 +19,19 @@ does not need to absorb flat-field-like projection changes.
 
 ## Dependencies
 
-Allowed dependencies:
+Allowed: `tomojax.core`, `tomojax.io`, JAX arrays.
 
-- `tomojax.core`
-- `tomojax.io`
-- JAX arrays
-
-Forbidden dependencies:
-
-- private implementation files from other deep modules
-- old generic utility modules
-- solver or projector implementations
+Forbidden: private files from other modules, solvers, projectors.
 
 ## Invariants
 
 - Nuisance state is separate from setup geometry and per-view pose.
-- Public APIs must be typed before export.
-- Artifact/provenance records must identify any nuisance correction applied.
+- Public APIs must be typed.
+- Provenance records must identify any nuisance correction applied.
 
 ## Tests
 
-- `tests/test_v2_module_skeleton.py` verifies this skeleton facade exists and
-  imports.
+- `tests/test_v2_module_skeleton.py` verifies the module imports.
 - `tests/test_nuisance_gain_offset.py` verifies masked per-view fitting,
   identity application, and residual reduction for synthetic drift.
 - `tests/test_nuisance_background.py` verifies masked constant plus

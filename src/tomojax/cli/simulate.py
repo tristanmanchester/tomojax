@@ -9,15 +9,19 @@ import os
 import sys
 from typing import TYPE_CHECKING, Literal, cast
 
-from tomojax.core import log_jax_env, setup_logging
-from tomojax.datasets import (
+from tomojax.cli._jax_allocator import configure_jax_allocator_defaults
+
+configure_jax_allocator_defaults()
+
+from tomojax.core import log_jax_env, setup_logging  # noqa: E402
+from tomojax.datasets import (  # noqa: E402
     SimConfig,
     SimulationArtefacts,
     simulate_to_file,
     validate_simulation_artefacts,
 )
 
-from ._runtime import transfer_guard_context
+from ._runtime import transfer_guard_context  # noqa: E402
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

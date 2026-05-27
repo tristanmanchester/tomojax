@@ -361,14 +361,13 @@ def _run_pose_alignment_stage(
 ) -> StageLoopState:
     pose_optimizer = _pose_stage_optimizer_or_raise(stage)
     pose_gauge_fix = "mean_translation" if stage.gauge_policy == "anchor_mean" else cfg.gauge_fix
-    recon_iters = 0 if stage.objective_kind == "fixed_volume" else int(cfg.recon_iters)
     cfg_stage = replace(
         cfg,
         schedule=None,
         optimise_dofs=stage.active_pose_dofs,
         opt_method=str(pose_optimizer),
         outer_iters=int(stage.maxiter),
-        recon_iters=recon_iters,
+        recon_iters=int(cfg.recon_iters),
         early_stop=bool(stage.early_stop),
         recon_L=None,
         loss=active_loss_spec,

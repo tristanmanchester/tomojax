@@ -1,9 +1,7 @@
 # tomojax.backends
 
-`tomojax.backends` owns runtime backend policy, memory-budget heuristics, and
-accelerator capability probes. Optional accelerator implementations stay behind
-this boundary so reconstruction and alignment code do not import experimental
-backend modules directly.
+`tomojax.backends` handles runtime backend selection, memory-budget heuristics,
+and accelerator capability probes.
 
 ## Public API
 

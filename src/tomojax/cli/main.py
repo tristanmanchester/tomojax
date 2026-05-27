@@ -7,7 +7,10 @@ from contextlib import contextmanager
 import sys
 from typing import TYPE_CHECKING
 
+from tomojax.cli._jax_allocator import configure_jax_allocator_defaults
 from tomojax.cli.api import product_command_names
+
+configure_jax_allocator_defaults()
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Sequence

@@ -154,7 +154,7 @@ class AlignConfig:
     bounds: DofBounds | str | Mapping[str, object] = field(default_factory=tuple)
     gauge_policy: GaugePolicyInput = "reject"
     gauge_priors: Mapping[str, object] | None = None
-    pose_model: PoseModelInput = "spline"
+    pose_model: PoseModelInput = "per_view"
     knot_spacing: int = 8
     degree: int = 3
     gauge_fix: GaugeFixMode = "mean_translation"

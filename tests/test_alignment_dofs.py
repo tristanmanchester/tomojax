@@ -18,7 +18,7 @@ from tomojax.align._model.dofs import (
 )
 
 # check-public-imports: allow-private
-from tomojax.align._model.schedules import resolve_alignment_schedule
+from tomojax.align._model.schedules import GaugePolicyError, resolve_alignment_schedule
 from tomojax.align.api import AlignConfig
 
 # check-public-imports: allow-private
@@ -120,6 +120,26 @@ def test_cli_pose_only_dofs_stay_single_resolution(monkeypatch: pytest.MonkeyPat
     )
 
     assert plan.run_levels is None
+
+
+def test_cli_alignment_defaults_to_per_view_pose() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["--data", "input.nxs", "--out", "aligned.nxs"])
+
+    assert args.mode == "pose"
+    assert args.pose_model == "per_view"
+
+
+def test_align_config_defaults_to_per_view_pose_model() -> None:
+    assert AlignConfig().pose_model == "per_view"
+
+
+def test_direct_mixed_dofs_explain_gauge_policy() -> None:
+    with pytest.raises(GaugePolicyError, match="--gauge-policy anchor_mean"):
+        resolve_alignment_schedule(
+            optimise_dofs=("alpha", "det_u_px"),
+            gauge_policy="reject",
+        )
 
 
 def test_alignment_params_export_unwraps_object_dtype_scalars() -> None:

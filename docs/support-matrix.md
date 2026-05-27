@@ -1,6 +1,6 @@
 # TomoJAX Support Matrix
 
-This matrix describes the product spine.
+Supported workflows and their CLI entrypoints.
 
 | Workflow | Status | Supported entrypoint |
 |---|---|---|
@@ -10,13 +10,27 @@ This matrix describes the product spine.
 | NX/HDF5 preprocessing | Supported | `tomojax preprocess raw.nxs corrected.nxs` |
 | TIFF flat/dark preprocessing | Supported | `tomojax preprocess ./projections corrected.nxs --format tiff-stack --flats ./flats --darks ./darks --angles angles.csv` |
 | Reconstruction from corrected projections | Supported | `tomojax recon --data corrected.nxs --out recon.nxs` |
+| Per-projection 5-DOF pose alignment | Supported | `tomojax align --data corrected.nxs --mode pose --out aligned.nxs` |
 | Detector-centre/COR alignment | Supported | `tomojax align --data corrected.nxs --mode cor --out aligned.nxs` |
+| Expert mixed setup and pose alignment | Supported with explicit gauge policy | `tomojax align --data corrected.nxs --mode auto --gauge-policy anchor_mean --out aligned.nxs` |
 | Deterministic synthetic dataset generation | Supported | `tomojax simulate --out synthetic_scan.nxs ...` |
-| Public Python reconstruction smoke path | Supported | `tomojax.geometry`, `tomojax.forward`, `tomojax.recon` facades |
+| Python API reconstruction | Supported | `tomojax.geometry`, `tomojax.forward`, `tomojax.recon` |
 
-## Claiming Rules
+## Scope
 
-Only the workflows in the table above should be described as supported product
-entrypoints. Workflows outside the matrix should not be presented as
-user-facing workflows unless they are promoted into the public CLI, public API,
-examples, and tests.
+Workflows outside the table above are research or expert diagnostics.
+
+## Alignment interpretation
+
+Alignment can improve reconstruction quality without every recovered parameter
+being physically calibrated. This matters when a pose-only run absorbs setup
+error.
+
+- Use `--mode pose` as the first-line correction for per-projection sample
+  motion.
+- Use `--mode cor` when you need a detector-centre or centre-of-rotation
+  correction that is physically interpretable.
+- Use `--mode auto` with `--gauge-policy anchor_mean` for combined setup and
+  pose correction.
+- Detector-v and sample-elevation reference shifts are not reliably
+  recoverable.

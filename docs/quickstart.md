@@ -1,9 +1,7 @@
 # TomoJAX Quickstart
 
-TomoJAX is published around one public CLI, `tomojax`, and public Python facades
-under `tomojax.*`. The normal workflow is to inspect data, optionally preprocess
-or ingest it into the standard dataset contract, reconstruct, and run alignment
-through the supported CLI/profile path.
+The typical workflow is: inspect data, preprocess or ingest it, reconstruct,
+and optionally run alignment.
 
 ## Install and check the CLI
 
@@ -12,8 +10,7 @@ uv sync --extra cpu --dev
 uv run tomojax --help
 ```
 
-For CUDA hosts, install the CUDA extra instead of the CPU extra and ensure JAX
-can see the selected device:
+For CUDA hosts, use the CUDA extra instead:
 
 ```bash
 uv sync --extra cuda12 --dev
@@ -31,7 +28,7 @@ uv run tomojax validate /path/to/scan.nxs
 uv run tomojax preprocess raw.nxs corrected.nxs
 ```
 
-For TIFF projection stacks, ingest into the standard dataset contract first:
+For TIFF projection stacks, ingest into NXtomo format first:
 
 ```bash
 uv run tomojax ingest ./projections \
@@ -49,16 +46,28 @@ uv run tomojax recon --data corrected.nxs --out recon.nxs
 
 ## Align and reconstruct
 
+Use `pose` mode when the sample moves between projections. This is the default
+alignment mode and optimizes per-projection 5-DOF pose corrections.
+
 ```bash
 uv run tomojax align --data corrected.nxs \
   --out aligned.nxs \
+  --mode pose
+```
+
+Use `cor` mode when the detector centre or centre of rotation is the dominant
+problem:
+
+```bash
+uv run tomojax align --data corrected.nxs \
+  --out aligned_cor.nxs \
   --mode cor
 ```
 
-Alignment is routed through the product command and its public profile/schedule
-API.
+For help choosing between modes, see
+[`alignment-guide.md`](alignment-guide.md).
 
-## Synthetic smoke workflow
+## Synthetic test workflow
 
 ```bash
 uv run tomojax simulate \
@@ -71,5 +80,11 @@ uv run tomojax simulate \
 uv run tomojax recon --data synthetic_scan.nxs --out synthetic_recon.nxs
 ```
 
-For a minimal public-Python example, see
+For a Python example, see
 [`examples/simulate_and_reconstruct.py`](../examples/simulate_and_reconstruct.py).
+
+## Next steps
+
+After you can inspect, validate, reconstruct, and align a small dataset, see
+[`real-laminography.md`](real-laminography.md) for real scan data and
+[`support-matrix.md`](support-matrix.md) for a list of supported workflows.

@@ -471,7 +471,12 @@ def resolve_alignment_schedule(
             # discovery remains validation-LM and pose remains fixed-volume.
             if gauge_policy == "reject":
                 raise GaugePolicyError(
-                    "Direct mixed setup+pose DOFs require an explicit expert gauge_policy"
+                    "Direct mixed setup+pose DOFs require an explicit expert "
+                    "gauge_policy. For reconstruction-quality correction, pass "
+                    "gauge_policy='anchor_mean' in Python or "
+                    "--gauge-policy anchor_mean on the CLI. Use "
+                    "gauge_policy='prior_required' only when you provide "
+                    "physical setup priors."
                 )
             validate_active_gauge_policy(
                 scoped.active_dofs,

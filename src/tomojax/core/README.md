@@ -2,10 +2,8 @@
 
 ## Purpose
 
-`tomojax.core` owns small runtime primitives that are shared across numerical
-modules and command surfaces. The current Milestone 0 public surface is limited
-to logging/progress helpers migrated out of the forbidden `tomojax.utils`
-namespace.
+`tomojax.core` provides shared runtime primitives: logging, progress reporting,
+and formatting helpers.
 
 ## Public API
 
@@ -16,15 +14,14 @@ namespace.
 
 ## Dependencies
 
-This module may use the Python standard library and optional JAX/tqdm probes. It
-must not depend on alignment, reconstruction, datasets, backend policy, or CLI
-modules.
+Standard library and optional JAX/tqdm only. Must not depend on alignment,
+reconstruction, datasets, backends, or CLI.
 
 ## Invariants
 
 - Public imports go through `tomojax.core`, not private `_logging`.
 - Progress reporting is opt-in via `TOMOJAX_PROGRESS`.
-- Missing optional dependencies must not prevent normal execution.
+- Missing optional dependencies must not prevent execution.
 
 ## Tests
 

@@ -441,6 +441,7 @@ def _run_reconstruction_step(
             gather_dtype=gather,
             grad_mode=gm,
             tv_prox_iters=int(cfg.tv_prox_iters),
+            positivity=bool(cfg.recon_positivity),
             recon_rel_tol=cfg.recon_rel_tol,
             recon_patience=(int(cfg.recon_patience) if cfg.recon_patience is not None else 0),
         )
@@ -546,6 +547,7 @@ def _run_reconstruction_step(
             regulariser="huber_tv",
             huber_delta=float(cfg.huber_delta),
             L=1.0,
+            positivity=bool(cfg.recon_positivity),
             checkpoint_projector=bool(cfg.checkpoint_projector),
             projector_unroll=int(cfg.projector_unroll),
             gather_dtype=str(cfg.gather_dtype),

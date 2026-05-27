@@ -69,7 +69,7 @@ def alignment_profile_policy(value: AlignmentProfileInput) -> AlignmentProfilePo
         recon_algo="fista",
         views_per_batch=0,
         checkpoint_projector=True,
-        pose_model="spline",
+        pose_model="per_view",
         quality_tier="fast",
         fallback_policy="fallback",
     )
