@@ -120,6 +120,36 @@ def test_nxtomo_loader_does_not_synthesize_grid_from_volume_only(tmp_path: Path)
     assert loaded.volume_axes_source == "heuristic"
 
 
+def test_saving_unknown_axis_volume_reports_actionable_error(tmp_path: Path) -> None:
+    path = tmp_path / "missing_axes.nxs"
+    out_path = tmp_path / "out.nxs"
+    with h5py.File(path, "w") as handle:
+        entry = handle.create_group("entry")
+        entry.attrs["definition"] = "NXtomo"
+        detector = entry.create_group("instrument").create_group("detector")
+        detector.create_dataset("data", data=np.zeros((2, 3, 4), dtype=np.float32))
+        detector.create_dataset("image_key", data=np.zeros((2,), dtype=np.int32))
+        sample = entry.create_group("sample")
+        sample.create_dataset("name", data="fixture")
+        transformations = sample.create_group("transformations")
+        rotation_angle = transformations.create_dataset(
+            "rotation_angle",
+            data=np.asarray([0.0, 90.0], dtype=np.float32),
+        )
+        rotation_angle.attrs["units"] = "degree"
+        tomojax = entry.create_group("processing").create_group("tomojax")
+        tomojax.create_dataset("volume", data=np.zeros((5, 6, 7), dtype=np.float32))
+
+    loaded = load_nxtomo(str(path))
+
+    with pytest.raises(ValueError, match="Set metadata.volume_axes_order before saving"):
+        save_projection_payload(
+            out_path,
+            projections=loaded.projections,
+            metadata=loaded.copy_metadata(),
+        )
+
+
 def test_copy_metadata_preserves_disk_volume_axes_order(tmp_path: Path) -> None:
     original_path = tmp_path / "original.nxs"
     resaved_path = tmp_path / "resaved.nxs"

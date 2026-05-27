@@ -64,13 +64,6 @@ def save_nxtomo(
     geometry_type_norm = _normalize_geometry_type(meta.geometry_type)
 
     disk_axes = meta.volume_axes_order.lower()
-    try:
-        axes_to_perm(INTERNAL_VOLUME_AXES, disk_axes)
-    except ValueError as exc:  # pragma: no cover - defensive
-        raise ValueError(
-            "metadata.volume_axes_order must be a permutation of 'xyz', "
-            f"got {meta.volume_axes_order!r}"
-        ) from exc
 
     with h5py.File(path, mode) as f:
         entry = _ensure_group(f, "entry", "NXentry")
@@ -161,6 +154,19 @@ def save_nxtomo(
 
         # Optional GT / reconstructed volume and TomoJAX metadata
         if meta.volume is not None:
+            if disk_axes == "unknown":
+                raise ValueError(
+                    "Cannot save volume with unknown axis orientation. "
+                    "The loaded file lacks axis metadata. "
+                    "Set metadata.volume_axes_order before saving."
+                )
+            try:
+                axes_to_perm(INTERNAL_VOLUME_AXES, disk_axes)
+            except ValueError as exc:  # pragma: no cover - defensive
+                raise ValueError(
+                    "metadata.volume_axes_order must be a permutation of 'xyz', "
+                    f"got {meta.volume_axes_order!r}"
+                ) from exc
             processing = _ensure_group(entry, "processing", "NXprocess")
             tj = _ensure_group(processing, "tomojax", "NXcollection")
             vol_data = np.asarray(meta.volume)
