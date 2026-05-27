@@ -71,7 +71,15 @@ class NXTomoMetadata:
         geometry_type = data.get("geometry_type")
         volume_axes_order = data.get("volume_axes_order")
         disk_volume_axes_order = data.get("disk_volume_axes_order")
-        if disk_volume_axes_order in {"xyz", "xzy", "yxz", "yzx", "zxy", "zyx", "unknown"}:
+        if volume_axes_order is None and disk_volume_axes_order in {
+            "xyz",
+            "xzy",
+            "yxz",
+            "yzx",
+            "zxy",
+            "zyx",
+            "unknown",
+        }:
             volume_axes_order = disk_volume_axes_order
         return cls(
             thetas_deg=data.get("thetas_deg"),

@@ -170,6 +170,21 @@ def test_copy_metadata_preserves_disk_volume_axes_order(tmp_path: Path) -> None:
     assert resaved.disk_volume_axes_order == "zyx"
 
 
+def test_copy_metadata_preserves_user_volume_axes_order_change(tmp_path: Path) -> None:
+    original_path = tmp_path / "original.nxs"
+    dataset = make_projection_dataset()
+    dataset.volume = np.arange(2 * 3 * 4, dtype=np.float32).reshape(2, 3, 4)
+
+    save_dataset(original_path, dataset)
+    loaded = load_nxtomo(str(original_path))
+    assert loaded.disk_volume_axes_order == "zyx"
+
+    loaded.metadata.volume_axes_order = "xyz"
+    copied = loaded.copy_metadata()
+
+    assert copied.volume_axes_order == "xyz"
+
+
 def test_load_tiff_stack_requires_explicit_angles_and_sorts_files(tmp_path: Path) -> None:
     stack_dir = tmp_path / "tiffs"
     stack_dir.mkdir()
