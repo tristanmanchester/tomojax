@@ -405,7 +405,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--resume",
         default=None,
         metavar="PATH",
-        help="Resume alignment from a checkpoint. Defaults future checkpoint writes to this path.",
+        help=(
+            "Resume alignment from a checkpoint. Restores optimise_dofs, freeze_dofs,"
+            " and schedule from the checkpoint unless those options are set explicitly."
+            " Defaults future checkpoint writes to this path."
+        ),
     )
     # Data term / similarity
     _ = p.add_argument(
