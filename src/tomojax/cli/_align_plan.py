@@ -24,6 +24,7 @@ from tomojax.align.api import (
     CheckpointError,
     align,
     align_multires,
+    load_alignment_checkpoint,
     normalize_alignment_profile,
     profile_policy_from_config,
     resolve_alignment_schedule,
@@ -187,11 +188,57 @@ def _outer_stats_from_runtime(value: object) -> list[OuterStat]:
     return out
 
 
+def _restore_resume_schedule_options(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    *,
+    configured_keys: set[str],
+) -> list[str]:
+    resume_path = cast("str | None", getattr(args, "resume", None))
+    if resume_path is None:
+        return []
+    try:
+        checkpoint = load_alignment_checkpoint(resume_path)
+    except CheckpointError as exc:
+        raise SystemExit(f"tomojax align: {exc}") from exc
+    cli_options = checkpoint.metadata.get("cli_options")
+    if not isinstance(cli_options, dict):
+        return []
+    cli_options = cast("dict[str, object]", cli_options)
+
+    restored_keys: list[str] = []
+    for key in ("optimise_dofs", "freeze_dofs", "schedule"):
+        if key in configured_keys or key not in cli_options:
+            continue
+        value = cli_options[key]
+        if key in {"optimise_dofs", "freeze_dofs"}:
+            if value is None:
+                setattr(args, key, None)
+            elif isinstance(value, list):
+                setattr(args, key, [str(item) for item in object_list(cast("object", value))])
+            else:
+                parser.error(f"checkpoint cli option {key!r} must be a list or null")
+        elif value is None or isinstance(value, str):
+            setattr(args, key, value)
+        else:
+            parser.error("checkpoint cli option 'schedule' must be a string or null")
+        restored_keys.append(key)
+    return restored_keys
+
+
 def build_align_cli_run_plan(
     parser: argparse.ArgumentParser,
     args: argparse.Namespace,
     config_metadata: dict[str, Any],
 ) -> AlignCliRunPlan:
+    configured_keys = set(cast("list[str]", config_metadata.get("explicit_cli_keys", []))) | set(
+        cast("dict[str, object]", config_metadata.get("config_file_values", {})).keys()
+    )
+    restored_keys = _restore_resume_schedule_options(parser, args, configured_keys=configured_keys)
+    effective_options = config_metadata.get("effective_options")
+    if isinstance(effective_options, dict):
+        for key in restored_keys:
+            effective_options[key] = getattr(args, key)
     loss_config, loss_params = parse_loss_config(args, parser)
     optimise_dofs, freeze_dofs = parse_dof_args(args, parser)
     level_args = cast("list[int] | None", args.levels)
@@ -206,9 +253,6 @@ def build_align_cli_run_plan(
         args.align_profile = normalize_alignment_profile(cast("str", args.align_profile))
     except ValueError as exc:
         parser.error(str(exc))
-    configured_keys = set(cast("list[str]", config_metadata.get("explicit_cli_keys", []))) | set(
-        cast("dict[str, object]", config_metadata.get("config_file_values", {})).keys()
-    )
     if (
         cast("str", args.mode) == "max"
         and "align_profile" not in configured_keys

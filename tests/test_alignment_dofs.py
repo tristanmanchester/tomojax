@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -19,10 +21,13 @@ from tomojax.align._model.dofs import (
 
 # check-public-imports: allow-private
 from tomojax.align._model.schedules import GaugePolicyError, resolve_alignment_schedule
-from tomojax.align.api import AlignConfig
+from tomojax.align.api import AlignConfig, save_alignment_checkpoint
 
 # check-public-imports: allow-private
 from tomojax.align.io.params_export import alignment_params_payload
+
+# check-public-imports: allow-private
+from tomojax.cli._align_checkpoint import checkpoint_metadata
 
 # check-public-imports: allow-private
 from tomojax.cli._align_command import build_parser
@@ -96,6 +101,78 @@ def test_cli_geometry_dofs_route_to_multires(monkeypatch: pytest.MonkeyPatch) ->
 
     assert plan.run_levels == [1]
     assert plan.cfg.optimise_dofs == ("det_u_px",)
+
+
+def test_cli_resume_restores_geometry_dofs_from_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    parser = build_parser()
+    checkpoint_path = tmp_path / "align.ckpt"
+    dataset = ProjectionDataset(
+        projections=np.zeros((3, 4, 5), dtype=np.float32),
+        angles_deg=np.asarray([0.0, 90.0, 180.0], dtype=np.float32),
+        detector=Detector(nu=5, nv=4, du=1.0, dv=1.0),
+        grid=Grid(nx=5, ny=5, nz=4, vx=1.0, vy=1.0, vz=1.0),
+    )
+
+    def load_dataset(_: object) -> ProjectionDataset:
+        return dataset
+
+    monkeypatch.setattr("tomojax.cli._align_plan.load_projection_payload", load_dataset)
+    initial_args = parser.parse_args(
+        [
+            "--data",
+            "input.nxs",
+            "--checkpoint",
+            str(checkpoint_path),
+            "--optimise-dofs",
+            "det_u_px",
+        ]
+    )
+    initial_plan = build_align_cli_run_plan(
+        parser,
+        initial_args,
+        {"explicit_cli_keys": [], "config_file_values": {}},
+    )
+    save_alignment_checkpoint(
+        checkpoint_path,
+        x=np.zeros((5, 5, 4), dtype=np.float32),
+        params5=np.zeros((3, 5), dtype=np.float32),
+        metadata=checkpoint_metadata(
+            meta=initial_plan.meta,
+            projections=initial_plan.projections,
+            cfg=initial_plan.cfg,
+            command=initial_plan.command,
+            recon_grid=initial_plan.recon_grid,
+            detector=initial_plan.detector,
+            state_grid=initial_plan.recon_grid,
+            state_detector=initial_plan.detector,
+            gather_dtype=initial_plan.gather_dtype,
+            levels=initial_plan.run_levels,
+            level_index=0,
+            level_factor=1,
+            completed_outer_iters_in_level=0,
+            global_outer_iters_completed=0,
+            prev_factor=None,
+            L_prev=None,
+            small_impr_streak=0,
+            elapsed_offset=0.0,
+            level_complete=False,
+            run_complete=False,
+            schedule_metadata=initial_plan.schedule_metadata,
+        ),
+    )
+
+    resume_args = parser.parse_args(["--data", "input.nxs", "--resume", str(checkpoint_path)])
+    resume_plan = build_align_cli_run_plan(
+        parser,
+        resume_args,
+        {"explicit_cli_keys": [], "config_file_values": {}, "effective_options": vars(resume_args)},
+    )
+
+    assert resume_plan.run_levels == [1]
+    assert resume_plan.cfg.optimise_dofs == ("det_u_px",)
 
 
 def test_cli_pose_only_dofs_stay_single_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
