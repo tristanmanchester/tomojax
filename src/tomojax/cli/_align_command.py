@@ -19,7 +19,7 @@ from tomojax.align.api import (
 )
 from tomojax.geometry import DISK_VOLUME_AXES
 
-type AlignmentMode = Literal["cor", "pose", "auto", "max"]
+type AlignmentMode = Literal["cor", "pose", "auto", "max", "cor_then_pose"]
 
 
 _PUBLIC_HELP_OPTIONS = frozenset(
@@ -36,6 +36,10 @@ _PUBLIC_HELP_OPTIONS = frozenset(
         "--roi",
         "--grid",
         "--volume-axes",
+        "--levels",
+        "--log-summary",
+        "--views-per-batch",
+        "--print-plan-json",
         "--checkpoint",
         "--checkpoint-every",
         "--resume",
@@ -111,7 +115,9 @@ def _alignment_quality_argument(value: str) -> str:
     try:
         return normalize_alignment_profile(value)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError("quality must be 'fast' or 'reference'") from exc
+        raise argparse.ArgumentTypeError(
+            "quality must be 'fast' or 'reference' (aliases: lightning, normal, full, tortoise)"
+        ) from exc
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -120,12 +126,13 @@ def build_parser() -> argparse.ArgumentParser:
     _ = p.add_argument("--data", help="Input .nxs")
     _ = p.add_argument(
         "--mode",
-        choices=["cor", "pose", "auto", "max"],
+        choices=["cor", "pose", "auto", "max", "cor_then_pose"],
         default="pose",
         help=(
             "High-level alignment mode. pose solves per-view 5-DOF motion "
-            "(default); cor solves detector centre; auto runs the expert "
-            "setup+pose workflow; max uses the slower reference-quality posture."
+            "(default); cor solves detector centre; cor_then_pose runs detector "
+            "centre then full 5-DOF pose; auto is the same robust setup+pose "
+            "workflow; max uses the slower reference-quality posture."
         ),
     )
     _ = p.add_argument(
@@ -134,7 +141,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=_alignment_quality_argument,
         default="lightning",
         metavar="{fast,reference}",
-        help="Execution quality posture: fast (default) or reference.",
+        help="Execution quality posture: fast (default) or reference. Aliases: normal, full.",
     )
     _ = p.add_argument(
         "--align-profile",
@@ -552,6 +559,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=DISK_VOLUME_AXES,
         help="On-disk axis order for saved volumes (default: zyx for viewer convention).",
     )
+    _ = p.add_argument(
+        "--print-plan-json",
+        action="store_true",
+        help="Print the resolved alignment plan as JSON and exit before compute.",
+    )
     _hide_expert_alignment_help(p)
     return p
 
@@ -619,6 +631,7 @@ class AlignCommand:
     optimise_dofs: list[str]
     freeze_dofs: list[str]
     schedule: str | None
+    print_plan_json: bool
     checkpoint: str | None
     checkpoint_every: int | None
     resume: str | None
@@ -682,6 +695,7 @@ def align_command_from_args(args: argparse.Namespace) -> AlignCommand:
         optimise_dofs=list(cast("list[str] | None", args.optimise_dofs) or []),
         freeze_dofs=list(cast("list[str] | None", args.freeze_dofs) or []),
         schedule=cast("str | None", args.schedule),
+        print_plan_json=cast("bool", args.print_plan_json),
         checkpoint=cast("str | None", args.checkpoint),
         checkpoint_every=cast("int | None", args.checkpoint_every),
         resume=cast("str | None", args.resume),

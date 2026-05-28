@@ -20,6 +20,7 @@ PRODUCT_COMMANDS: tuple[CliCommand, ...] = (
     CliCommand("ingest", "Build a standard dataset from raw inputs."),
     CliCommand("convert", "Convert supported dataset formats."),
     CliCommand("recon", "Reconstruct a volume from a dataset."),
+    CliCommand("slices", "Extract labelled reconstruction slice PNGs."),
     CliCommand("align", "Run product alignment and reconstruction."),
     CliCommand("simulate", "Generate deterministic synthetic datasets."),
 )

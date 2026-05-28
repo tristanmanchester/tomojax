@@ -104,3 +104,115 @@ def projection_com_det_u_seed(
         amplitude_px=amplitude,
         status="ok",
     )
+
+
+def projection_pair_det_u_seed(
+    projections: jnp.ndarray,
+    geometry: Geometry,
+    *,
+    max_pair_angle_error_deg: float = 2.0,
+) -> DetectorCenterSeed:
+    """Estimate detector-u centre from mirrored 0/180 projection pairs.
+
+    For parallel-beam data, projections separated by 180 degrees should match
+    after reversing detector-u. A detector-centre error appears as half the
+    measured residual horizontal lag, with opposite sign in TomoJAX's
+    detector-centre convention.
+    """
+    y = np.asarray(projections, dtype=np.float32)
+    if y.ndim != 3:
+        return DetectorCenterSeed(
+            det_u_px=0.0,
+            intercept_px=0.0,
+            amplitude_px=0.0,
+            status="invalid_projection_shape",
+        )
+    n_views, _nv, nu = y.shape
+    if n_views < 2 or nu < 4:
+        return DetectorCenterSeed(
+            det_u_px=0.0,
+            intercept_px=0.0,
+            amplitude_px=0.0,
+            status="insufficient_projection_pairs",
+        )
+
+    theta = np.asarray(geometry.thetas_deg, dtype=np.float32).reshape(-1)
+    if theta.size != n_views:
+        return DetectorCenterSeed(
+            det_u_px=0.0,
+            intercept_px=0.0,
+            amplitude_px=0.0,
+            status="angle_projection_count_mismatch",
+        )
+
+    max_err = float(max_pair_angle_error_deg)
+    pair_estimates: list[float] = []
+    pair_lags: list[float] = []
+    used: set[tuple[int, int]] = set()
+    for i, angle in enumerate(theta):
+        target = (float(angle) + 180.0) % 360.0
+        diffs = np.abs(((theta - target + 180.0) % 360.0) - 180.0)
+        j = int(np.argmin(diffs))
+        if i == j or float(diffs[j]) > max_err:
+            continue
+        key = (min(i, j), max(i, j))
+        if key in used:
+            continue
+        used.add(key)
+        lag = _mirrored_projection_lag_px(y[i], y[j])
+        if not np.isfinite(lag):
+            continue
+        pair_lags.append(float(lag))
+        pair_estimates.append(float(-0.5 * lag))
+
+    if not pair_estimates:
+        return DetectorCenterSeed(
+            det_u_px=0.0,
+            intercept_px=0.0,
+            amplitude_px=0.0,
+            status="no_usable_opposite_angle_pairs",
+        )
+
+    estimates = np.asarray(pair_estimates, dtype=np.float32)
+    lags = np.asarray(pair_lags, dtype=np.float32)
+    det_u = float(np.median(estimates))
+    return DetectorCenterSeed(
+        det_u_px=det_u,
+        intercept_px=det_u,
+        amplitude_px=float(np.median(np.abs(lags))),
+        status=f"ok_pairs={int(estimates.size)}",
+    )
+
+
+def _mirrored_projection_lag_px(a: np.ndarray, b: np.ndarray) -> float:
+    """Return subpixel u-lag after mirroring the second projection."""
+    profile_a = _projection_u_profile(a)
+    profile_b = _projection_u_profile(np.flip(b, axis=1))
+    if profile_a.size != profile_b.size or profile_a.size < 4:
+        return float("nan")
+    corr = np.correlate(profile_a, profile_b, mode="full")
+    peak = int(np.argmax(corr))
+    lag = float(peak - (profile_a.size - 1))
+    if 0 < peak < corr.size - 1:
+        y0, y1, y2 = float(corr[peak - 1]), float(corr[peak]), float(corr[peak + 1])
+        denom = y0 - 2.0 * y1 + y2
+        if abs(denom) > 1e-12:
+            lag += 0.5 * (y0 - y2) / denom
+    return lag
+
+
+def _projection_u_profile(image: np.ndarray) -> np.ndarray:
+    img = np.asarray(image, dtype=np.float32)
+    finite = np.isfinite(img)
+    if not bool(np.any(finite)):
+        return np.zeros((int(img.shape[1]),), dtype=np.float32)
+    safe = np.where(finite, img, np.nanmedian(img[finite]))
+    lo, hi = np.percentile(safe, [1.0, 99.0])
+    clipped = np.clip(safe, lo, hi)
+    profile = np.sum(clipped - np.median(clipped), axis=0)
+    profile = profile.astype(np.float32, copy=False)
+    profile -= float(np.mean(profile))
+    scale = float(np.std(profile))
+    if scale <= 1e-6 or not np.isfinite(scale):
+        return np.zeros_like(profile, dtype=np.float32)
+    return profile / scale

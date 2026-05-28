@@ -211,6 +211,12 @@ def test_align_config_defaults_to_per_view_pose_model() -> None:
     assert AlignConfig().pose_model == "per_view"
 
 
+def test_fast_alignment_profile_defaults_to_chunked_pose_updates() -> None:
+    cfg = AlignConfig(align_profile="lightning")
+
+    assert cfg.views_per_batch == 1
+
+
 def test_direct_mixed_dofs_explain_gauge_policy() -> None:
     with pytest.raises(GaugePolicyError, match="--gauge-policy anchor_mean"):
         resolve_alignment_schedule(

@@ -227,14 +227,13 @@ def _build_gn_update_batch(ctx: _PoseObjectiveContext) -> Callable[..., object]:
 
         residual = f(p5_i)
         current_loss = jnp.float32(0.5) * jnp.vdot(residual, residual).real
-        _, vjp = jax.vjp(f, p5_i)
-        gradient = vjp(residual)[0]
         eye5 = jnp.eye(5, dtype=jnp.float32)
 
         def jvp_col(v: jnp.ndarray) -> jnp.ndarray:
             return jax.jvp(f, (p5_i,), (v,))[1]
 
         cols = jax.vmap(jvp_col)(eye5)
+        gradient = cols @ residual
         hessian = cols @ cols.T
         lam = jnp.float32(ctx.cfg.gn_damping)
         active = ctx.active_mask.astype(hessian.dtype)

@@ -166,7 +166,7 @@ def _build_alignment_runtime_context(
     active_loss_name = loss_spec_name(active_loss_spec)
     loss_adapter = build_loss_adapter(active_loss_spec, projections)
     loss_mask = getattr(loss_adapter.state, "mask", None)
-    chunk_size = int(cfg.views_per_batch) if int(cfg.views_per_batch) > 0 else n_views
+    chunk_size = max(1, int(cfg.views_per_batch))
     chunk_size = min(chunk_size, n_views)
     nv = int(projections.shape[1])
     nu = int(projections.shape[2])

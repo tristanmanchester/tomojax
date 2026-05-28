@@ -10,6 +10,9 @@ from tomojax.align._geometry.geometry_applier import setup_axis_unit
 from tomojax.align._geometry.geometry_blocks import _theta_span_from_geometry
 
 # check-public-imports: allow-private
+from tomojax.align._geometry.initializers import projection_pair_det_u_seed
+
+# check-public-imports: allow-private
 from tomojax.align._model.schedules import AlignmentSchedule, AlignmentStage
 
 # check-public-imports: allow-private
@@ -49,3 +52,25 @@ def test_theta_span_uses_sampled_geometric_coverage() -> None:
     )
 
     assert _theta_span_from_geometry(geometry) == pytest.approx(247.5)
+
+
+def test_projection_pair_detector_center_seed_uses_tomojax_sign_convention() -> None:
+    grid = Grid(nx=32, ny=32, nz=16, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=32, nv=16, du=1.0, dv=1.0)
+    geometry = ParallelGeometry(
+        grid=grid,
+        detector=detector,
+        thetas_deg=np.asarray([0.0, 180.0], dtype=np.float32),
+    )
+    u = np.arange(detector.nu, dtype=np.float32)
+    base_profile = np.exp(-0.5 * ((u - 13.0) / 2.5) ** 2)
+    base_profile += 0.4 * np.exp(-0.5 * ((u - 22.0) / 1.8) ** 2)
+    first = np.tile(base_profile[None, :], (detector.nv, 1))
+    mirrored_second = np.roll(first, shift=6, axis=1)
+    second = np.flip(mirrored_second, axis=1)
+    projections = np.stack([first, second], axis=0).astype(np.float32)
+
+    seed = projection_pair_det_u_seed(projections, geometry)
+
+    assert seed.status == "ok_pairs=1"
+    assert seed.det_u_px == pytest.approx(3.0, abs=0.25)

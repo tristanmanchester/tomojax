@@ -40,9 +40,12 @@ def normalize_alignment_profile(value: AlignmentProfileInput) -> AlignmentProfil
     profile = str(value).strip().lower().replace("-", "_")
     if profile in {"fast", "lightning"}:
         return "lightning"
-    if profile in {"reference", "tortoise"}:
+    if profile in {"reference", "tortoise", "normal", "full"}:
         return "tortoise"
-    raise ValueError("align_profile must be one of 'fast' or 'reference'")
+    raise ValueError(
+        "align_profile must be one of 'fast' or 'reference' "
+        "(aliases: lightning, normal, full, tortoise)"
+    )
 
 
 def alignment_profile_policy(value: AlignmentProfileInput) -> AlignmentProfilePolicy:
@@ -67,7 +70,7 @@ def alignment_profile_policy(value: AlignmentProfileInput) -> AlignmentProfilePo
         gather_dtype="auto",
         regulariser="huber_tv",
         recon_algo="fista",
-        views_per_batch=0,
+        views_per_batch=1,
         checkpoint_projector=True,
         pose_model="per_view",
         quality_tier="fast",

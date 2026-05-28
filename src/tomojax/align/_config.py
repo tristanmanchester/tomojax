@@ -130,7 +130,7 @@ class AlignConfig:
     lr_rot: float = 1e-3  # radians
     lr_trans: float = 1e-1  # world units
     # Memory/throughput knobs
-    views_per_batch: int = 0  # 0 means use the whole view stack when memory allows
+    views_per_batch: int = 1
     projector_unroll: int = 1
     checkpoint_projector: bool = True
     gather_dtype: str = "auto"

@@ -160,9 +160,18 @@ def _schedule_for_public_mode(mode: AlignmentMode, *, align_profile: str) -> str
         return "cor"
     if mode == "pose":
         return "lightning_pose" if align_profile == "lightning" else "tortoise_pose"
-    if mode == "max":
+    if mode == "cor_then_pose":
+        return "cor_then_pose"
+    if mode in {"auto", "max"}:
         return "setup_safe"
     return "setup_safe"
+
+
+def _default_levels_for_public_mode(mode: AlignmentMode) -> list[int]:
+    """Return the implicit multires pyramid for product modes."""
+    if mode in {"auto", "max", "cor_then_pose"}:
+        return [4, 2, 1]
+    return [1]
 
 
 def _outer_stat_value(value: object) -> OuterStatValue:
@@ -245,10 +254,6 @@ def build_align_cli_run_plan(
     levels = (
         [int(v) for v in level_args] if level_args is not None and len(level_args) > 0 else None
     )
-    try:
-        validate_loss_schedule_levels(loss_config, levels if levels is not None else [1])
-    except ValueError as exc:
-        parser.error(str(exc))
     try:
         args.align_profile = normalize_alignment_profile(cast("str", args.align_profile))
     except ValueError as exc:
@@ -422,7 +427,11 @@ def build_align_cli_run_plan(
     run_levels = levels
     has_geometry_dofs = bool(schedule_metadata.get("active_geometry_dofs", ()))
     if run_levels is None and (command.schedule is not None or has_geometry_dofs):
-        run_levels = [1]
+        run_levels = _default_levels_for_public_mode(command.mode)
+    try:
+        validate_loss_schedule_levels(loss_config, run_levels if run_levels is not None else [1])
+    except ValueError as exc:
+        parser.error(str(exc))
 
     expected_checkpoint_metadata = checkpoint_metadata(
         meta=meta,

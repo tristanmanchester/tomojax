@@ -10,6 +10,7 @@ Supported workflows and their CLI entrypoints.
 | NX/HDF5 preprocessing | Supported | `tomojax preprocess raw.nxs corrected.nxs` |
 | TIFF flat/dark preprocessing | Supported | `tomojax preprocess ./projections corrected.nxs --format tiff-stack --flats ./flats --darks ./darks --angles angles.csv` |
 | Reconstruction from corrected projections | Supported | `tomojax recon --data corrected.nxs --out recon.nxs` |
+| Labelled reconstruction slice extraction | Supported | `tomojax slices --data recon.nxs --out quicklooks` |
 | Per-projection 5-DOF pose alignment | Supported | `tomojax align --data corrected.nxs --mode pose --out aligned.nxs` |
 | Detector-centre/COR alignment | Supported | `tomojax align --data corrected.nxs --mode cor --out aligned.nxs` |
 | Expert mixed setup and pose alignment | Supported with explicit gauge policy | `tomojax align --data corrected.nxs --mode auto --gauge-policy anchor_mean --out aligned.nxs` |

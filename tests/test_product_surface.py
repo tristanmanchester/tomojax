@@ -45,6 +45,7 @@ def test_cli_catalog_is_product_only(capsys: pytest.CaptureFixture[str]) -> None
         "ingest",
         "convert",
         "recon",
+        "slices",
         "align",
         "simulate",
     )
@@ -70,6 +71,7 @@ def test_product_command_help_has_no_dev_story(capsys: pytest.CaptureFixture[str
         "ingest",
         "convert",
         "recon",
+        "slices",
         "align",
         "simulate",
     ):

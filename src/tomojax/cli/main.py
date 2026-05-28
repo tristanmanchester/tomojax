@@ -48,6 +48,10 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911
         from tomojax.cli import recon
 
         return _run_sysargv_cli(recon.main, "tomojax recon", tail)
+    if command == "slices":
+        from tomojax.cli import slices
+
+        return _run_positional_cli(slices.main, "tomojax slices", tail)
     if command == "align":
         from tomojax.cli import align
 
@@ -79,6 +83,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "  tomojax ingest ./projections --angles angles.csv --du 0.65 --dv 0.65 --out scan.nxs\n"
         "  tomojax preprocess raw.nxs corrected.nxs\n"
         "  tomojax recon --data corrected.nxs --out recon.nxs\n"
+        "  tomojax slices --data recon.nxs --out quicklooks\n"
         "  tomojax align --data corrected.nxs --out aligned.nxs --mode cor\n"
     )
     return parser

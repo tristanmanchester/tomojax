@@ -54,6 +54,7 @@ from tomojax.recon.spdhg_tv import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from tomojax.io import JsonValue
     from tomojax.recon.types import Regulariser
 
 type ViewsPerBatch = int | Literal["auto"]
@@ -101,6 +102,9 @@ class ReconCommand:
     progress: bool
     transfer_guard: ReconTransferGuardMode
     mask_vol: ReconMaskMode
+    apply_saved_alignment: bool
+    det_u_px: float | None
+    det_v_px: float | None
 
 
 def _parse_views_per_batch(value: str) -> int | str:
@@ -121,6 +125,16 @@ def _positive_float(value: str) -> float:
         raise argparse.ArgumentTypeError("value must be a positive float") from exc
     if not np.isfinite(parsed) or parsed <= 0.0:
         raise argparse.ArgumentTypeError("value must be a positive float")
+    return parsed
+
+
+def _finite_float(value: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("value must be a finite float") from exc
+    if not np.isfinite(parsed):
+        raise argparse.ArgumentTypeError("value must be a finite float")
     return parsed
 
 
@@ -401,6 +415,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="On-disk axis order for saved volumes (default: zyx for viewer convention).",
     )
     p.add_argument(
+        "--det-u-px",
+        type=_finite_float,
+        default=None,
+        help="Override detector centre u offset in detector pixels for COR sweeps.",
+    )
+    p.add_argument(
+        "--det-v-px",
+        type=_finite_float,
+        default=None,
+        help="Override detector centre v offset in detector pixels for COR sweeps.",
+    )
+    p.add_argument(
         "--progress",
         action="store_true",
         help="Show progress bars if tqdm is available",
@@ -423,6 +449,20 @@ def _build_parser() -> argparse.ArgumentParser:
             "off (default), cyl for cylindrical x-y mask broadcast along z."
         ),
     )
+    saved = p.add_mutually_exclusive_group()
+    saved.add_argument(
+        "--apply-saved-alignment",
+        dest="apply_saved_alignment",
+        action="store_true",
+        help="Apply saved per-view alignment parameters from the input metadata.",
+    )
+    saved.add_argument(
+        "--ignore-saved-alignment",
+        dest="apply_saved_alignment",
+        action="store_false",
+        help="Ignore saved per-view alignment parameters from the input metadata (default).",
+    )
+    p.set_defaults(apply_saved_alignment=False)
     return p
 
 
@@ -467,9 +507,64 @@ def _parse_command(
             progress=cast("bool", args.progress),
             transfer_guard=cast("ReconTransferGuardMode", args.transfer_guard),
             mask_vol=cast("ReconMaskMode", args.mask_vol),
+            apply_saved_alignment=cast("bool", args.apply_saved_alignment),
+            det_u_px=cast("float | None", args.det_u_px),
+            det_v_px=cast("float | None", args.det_v_px),
         ),
         config_metadata,
     )
+
+
+def _apply_detector_center_override(
+    detector: Detector,
+    geometry_meta: dict[str, object],
+    *,
+    det_u_px: float | None,
+    det_v_px: float | None,
+) -> tuple[Detector, dict[str, JsonValue]]:
+    """Apply CLI detector-centre overrides specified in detector pixels."""
+    requested: dict[str, JsonValue] = {"det_u_px": det_u_px, "det_v_px": det_v_px}
+    if det_u_px is None and det_v_px is None:
+        u_px = float(detector.det_center[0]) / float(detector.du)
+        v_px = float(detector.det_center[1]) / float(detector.dv)
+        metadata_override: dict[str, JsonValue] = {
+            "source": "metadata",
+            "requested_px": requested,
+            "effective_px": {"det_u_px": u_px, "det_v_px": v_px},
+            "effective_world": {
+                "det_u": float(detector.det_center[0]),
+                "det_v": float(detector.det_center[1]),
+            },
+        }
+        return detector, metadata_override
+    u_px = float(detector.det_center[0]) / float(detector.du)
+    v_px = float(detector.det_center[1]) / float(detector.dv)
+    if det_u_px is not None:
+        u_px = float(det_u_px)
+    if det_v_px is not None:
+        v_px = float(det_v_px)
+    updated = replace(
+        detector,
+        det_center=(u_px * float(detector.du), v_px * float(detector.dv)),
+    )
+    detector_meta = dict(cast("dict[str, object]", geometry_meta.get("detector", {})))
+    detector_meta["det_center"] = [float(updated.det_center[0]), float(updated.det_center[1])]
+    geometry_meta["detector"] = detector_meta
+    override: dict[str, JsonValue] = {
+        "source": "cli_override",
+        "requested_px": requested,
+        "effective_px": {"det_u_px": u_px, "det_v_px": v_px},
+        "effective_world": {
+            "det_u": float(updated.det_center[0]),
+            "det_v": float(updated.det_center[1]),
+        },
+    }
+    logging.info(
+        "Applying detector centre override: det_u_px=%.3f det_v_px=%.3f",
+        u_px,
+        v_px,
+    )
+    return updated, override
 
 
 def _run_reconstruction(command: ReconCommand, config_metadata: dict[str, ConfigValue]) -> None:  # noqa: PLR0912, PLR0915
@@ -487,8 +582,22 @@ def _run_reconstruction(command: ReconCommand, config_metadata: dict[str, Config
     grid, detector, geom = build_geometry_from_dataset_metadata(
         geometry_meta,
         grid_override=initial_grid_override,
-        apply_saved_alignment=False,
+        apply_saved_alignment=bool(command.apply_saved_alignment),
     )
+    detector, detector_center_override = _apply_detector_center_override(
+        detector,
+        geometry_meta,
+        det_u_px=command.det_u_px,
+        det_v_px=command.det_v_px,
+    )
+    if command.det_u_px is not None or command.det_v_px is not None:
+        grid, detector, geom = build_geometry_from_dataset_metadata(
+            geometry_meta,
+            grid_override=initial_grid_override,
+            apply_saved_alignment=bool(command.apply_saved_alignment),
+        )
+    if command.apply_saved_alignment and meta.align_params is not None:
+        logging.info("Applying saved per-view alignment parameters from input metadata")
     proj = _jnp_float32_array(meta.projections)
     det_grid = detector_grid_from_geometry_inputs(detector, geometry_meta)
     if det_grid is not None:
@@ -524,7 +633,7 @@ def _run_reconstruction(command: ReconCommand, config_metadata: dict[str, Config
         _, _, geom = build_geometry_from_dataset_metadata(
             geometry_meta,
             grid_override=recon_grid,
-            apply_saved_alignment=False,
+            apply_saved_alignment=bool(command.apply_saved_alignment),
         )
 
     # Prepare optional volume mask
@@ -708,6 +817,9 @@ def _run_reconstruction(command: ReconCommand, config_metadata: dict[str, Config
     volume_np = np.asarray(vol)
     save_meta = meta.copy_metadata()
     save_meta.grid = recon_grid.to_dict()
+    save_meta.detector = detector
+    save_meta.geometry_meta = dict(save_meta.geometry_meta or {})
+    save_meta.geometry_meta["detector_center_override"] = detector_center_override
     save_meta.volume = volume_np
     save_meta.frame = str(command.frame)
     save_meta.volume_axes_order = str(command.volume_axes)
@@ -740,6 +852,7 @@ def _run_reconstruction(command: ReconCommand, config_metadata: dict[str, Config
                 "input_projection_shape": list(meta.projections.shape),
                 "reconstruction_grid": recon_grid.to_dict(),
                 "detector": detector.to_dict(),
+                "detector_center_override": detector_center_override,
                 "detector_roll_deg": geometry_meta.get("detector_roll_deg"),
                 "detector_grid_replayed": det_grid is not None,
                 "roi": {
@@ -755,6 +868,7 @@ def _run_reconstruction(command: ReconCommand, config_metadata: dict[str, Config
                 "checkpoint_projector": bool(command.checkpoint_projector),
                 "transfer_guard": str(command.transfer_guard),
                 "mask_vol": str(command.mask_vol),
+                "apply_saved_alignment": bool(command.apply_saved_alignment),
                 "mask_applied": vol_mask is not None,
                 "volume_shape": list(volume_np.shape),
                 "volume_axes": str(command.volume_axes),

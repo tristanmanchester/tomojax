@@ -35,6 +35,7 @@ Supported workflows:
 | Convert a TIFF stack into a TomoJAX dataset | `tomojax ingest ./projections --angles angles.csv --du 0.65 --dv 0.65 --out scan.nxs` |
 | Apply dark/flat correction | `tomojax preprocess raw.nxs corrected.nxs` |
 | Reconstruct a volume | `tomojax recon --data corrected.nxs --out recon.nxs` |
+| Extract labelled PNG slices from a reconstruction | `tomojax slices --data recon.nxs --out quicklooks` |
 | Correct per-projection sample motion | `tomojax align --data corrected.nxs --out aligned.nxs --mode pose` |
 | Correct detector-centre/COR geometry | `tomojax align --data corrected.nxs --out aligned.nxs --mode cor` |
 | Generate a synthetic test scan | `tomojax simulate --out synthetic.nxs --nx 64 --ny 64 --nz 64 --nu 64 --nv 64 --n-views 64` |
@@ -162,10 +163,11 @@ Start with the guide that matches your data.
 ## Current scope
 
 Covers dataset inspection, validation, TIFF ingest, NX/HDF5 preprocessing,
-reconstruction, synthetic data generation, 5-DOF pose alignment,
-detector-centre/COR alignment, and mixed setup and pose alignment. Object-frame
-drift recovery, nuisance fitting, abrupt-jump handling, bad-view handling, and
-detector-v reference-shift recovery are research or diagnostic workflows. See
+reconstruction, labelled slice extraction, synthetic data generation, 5-DOF pose
+alignment, detector-centre/COR alignment, and mixed setup and pose alignment.
+Object-frame drift recovery, nuisance fitting, abrupt-jump handling, bad-view
+handling, and detector-v reference-shift recovery are research or diagnostic
+workflows. See
 [`docs/known-limitations.md`](docs/known-limitations.md) for details.
 
 ## Development checks

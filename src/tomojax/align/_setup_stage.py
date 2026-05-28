@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import math
+import time
 from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 
+from ._geometry.detector_center import projection_pair_det_u_seed
 from ._geometry.geometry_applier import (
     BaseGeometryArrays,
     apply_setup_to_detector_grid,
@@ -90,6 +93,7 @@ def _run_setup_validation_objective(
     init_x: jnp.ndarray | None,
     factor: int,
 ) -> SetupValidationObjectiveResult:
+    stage_start = time.monotonic()
     z_current = active_view.pack(setup_state)
     total_loss = jnp.asarray(0.0, dtype=jnp.float32)
     total_grad = jnp.zeros_like(z_current)
@@ -97,6 +101,12 @@ def _run_setup_validation_objective(
     residual_count = 0
     fold_cache: list[FoldEvaluation] = []
     for fold in range(folds.n_folds):
+        logging.info(
+            "Setup validation-LM fold %d/%d: reconstructing train fold for DOFs=%s",
+            fold + 1,
+            folds.n_folds,
+            ",".join(active_view.dofs),
+        )
         train_idx = folds.train_idx[fold]
         train_mask = folds.train_mask[fold]
         val_idx = folds.val_idx[fold]
@@ -135,6 +145,14 @@ def _run_setup_validation_objective(
         total_hess = total_hess + normals.hess
         residual_count += int(normals.residual_count)
         fold_cache.append((fold, fold_volume, val_idx, val_mask, fold_recon_info))
+        logging.info(
+            "Setup validation-LM fold %d/%d: residuals=%d cumulative_loss=%.6g elapsed=%.1fs",
+            fold + 1,
+            folds.n_folds,
+            residual_count,
+            float(total_loss),
+            time.monotonic() - stage_start,
+        )
 
     def score_candidate(z_candidate: jnp.ndarray) -> float:
         score = jnp.asarray(0.0, dtype=jnp.float32)
@@ -168,6 +186,13 @@ def _run_setup_validation_objective(
         bounds=cfg.bounds,
         cfg=ValidationLmConfig(damping=max(float(cfg.gn_damping), 1e-6)),
     )
+    logging.info(
+        "Setup validation-LM candidates: loss %.6g -> %.6g accepted=%s elapsed=%.1fs",
+        float(total_loss),
+        float(opt_result.loss),
+        bool(opt_result.accepted),
+        time.monotonic() - stage_start,
+    )
     return SetupValidationObjectiveResult(
         opt_result=opt_result,
         total_loss=float(total_loss),
@@ -188,6 +213,7 @@ def _build_geometry_stage_stat(
     stage: ResolvedAlignmentStage | None,
     outer_idx: int,
     init_x: jnp.ndarray | None,
+    seed_diagnostics: dict[str, object] | None = None,
 ) -> OuterStat:
     opt_result = objective_result.opt_result
     stat = dict(opt_result.stats)
@@ -249,6 +275,8 @@ def _build_geometry_stage_stat(
             "active_gradient_mode": "validation_residual_jvp",
         }
     )
+    if seed_diagnostics is not None and outer_idx == 1:
+        stat.update(seed_diagnostics)
     return stat
 
 
@@ -331,6 +359,40 @@ def _validate_setup_stage_execution_contract(stage: ResolvedAlignmentStage | Non
         )
 
 
+def _detector_center_seed_diagnostics(
+    *,
+    geometry: Geometry,
+    projections: jnp.ndarray,
+    setup_state: AlignmentState,
+    active_view: ActiveParameterView,
+    schedule_name: str | None,
+    stage: ResolvedAlignmentStage | None,
+) -> dict[str, object] | None:
+    """Return COR seed diagnostics when a detector-u-only setup stage can be seeded."""
+    stage_name = stage.name if stage is not None else schedule_name
+    if tuple(active_view.dofs) != ("det_u_px",):
+        return None
+    if stage_name != "cor" and schedule_name != "cor":
+        return None
+    current = float(setup_state.setup.det_u_px)
+    if abs(current) > 1e-6:
+        return None
+    seed = projection_pair_det_u_seed(projections, geometry)
+    if not str(seed.status).startswith("ok"):
+        return {
+            "detector_center_seed_status": seed.status,
+            "detector_center_seed_method": "opposite_angle_projection_pair",
+            "detector_center_seed_applied": False,
+        }
+    return {
+        "detector_center_seed_status": seed.status,
+        "detector_center_seed_method": "opposite_angle_projection_pair",
+        "detector_center_seed_applied": True,
+        "detector_center_seed_det_u_px": float(seed.det_u_px),
+        "detector_center_seed_pair_lag_px": float(seed.amplitude_px),
+    }
+
+
 def _optimize_setup_geometry_bilevel_for_level(
     *,
     geometry: Geometry,
@@ -385,10 +447,41 @@ def _optimize_setup_geometry_bilevel_for_level(
     )
 
     setup_state = alignment_state
+    seed_diagnostics = _detector_center_seed_diagnostics(
+        geometry=geometry,
+        projections=projections,
+        setup_state=setup_state,
+        active_view=active_view,
+        schedule_name=schedule_name,
+        stage=stage,
+    )
+    if seed_diagnostics is not None and bool(seed_diagnostics.get("detector_center_seed_applied")):
+        logging.info(
+            "Setup detector-centre seed: det_u_px=%.3f from %s",
+            float(seed_diagnostics["detector_center_seed_det_u_px"]),
+            seed_diagnostics.get("detector_center_seed_method"),
+        )
+        setup_state = setup_state.replace(
+            setup=setup_state.setup.replace(
+                det_u_px=jnp.asarray(
+                    float(seed_diagnostics["detector_center_seed_det_u_px"]),
+                    dtype=jnp.float32,
+                )
+            )
+        )
     setup_stats: list[OuterStat] = []
     last_loss = math.inf
     outer_limit = max(1, int(stage.maxiter if stage is not None else cfg.outer_iters))
     for outer_idx in range(1, outer_limit + 1):
+        stage_name = stage.name if stage is not None else (schedule_name or "setup")
+        logging.info(
+            "Setup stage %s outer %d/%d level=%d DOFs=%s",
+            stage_name,
+            outer_idx,
+            outer_limit,
+            int(factor),
+            ",".join(active_view.dofs),
+        )
         objective_result = _run_setup_validation_objective(
             geometry=geometry,
             grid=grid,
@@ -418,8 +511,19 @@ def _optimize_setup_geometry_bilevel_for_level(
             stage=stage,
             outer_idx=outer_idx,
             init_x=init_x,
+            seed_diagnostics=seed_diagnostics,
         )
         setup_stats.append(stat)
+        logging.info(
+            "Setup stage %s outer %d/%d: loss %.6g -> %.6g accepted=%s step_norm=%.3g",
+            stage_name,
+            outer_idx,
+            outer_limit,
+            float(stat.get("geometry_loss_before", math.nan)),
+            float(stat.get("geometry_loss_after", math.nan)),
+            bool(stat.get("geometry_accepted", False)),
+            float(stat.get("geometry_step_norm", 0.0) or 0.0),
+        )
         if bool(cfg.early_stop) and outer_idx > 1:
             prev = float(setup_stats[-2].get("geometry_loss_after", math.inf))
             impr = (prev - last_loss) / max(abs(prev), 1e-6)

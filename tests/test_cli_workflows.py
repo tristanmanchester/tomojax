@@ -4,6 +4,7 @@ import importlib
 import json
 from pathlib import Path
 
+import imageio.v3 as iio
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -11,7 +12,9 @@ import pytest
 from tomojax.cli.main import main
 import tomojax.cli.recon as recon_cli
 import tomojax.cli.simulate as simulate_cli
-from tomojax.io import load_dataset, save_dataset
+from tomojax.geometry import Detector
+from tomojax.io import load_dataset, save_dataset, save_projection_payload
+from tomojax.recon.quicklook import scale_to_uint8
 
 from ._helpers import (
     make_projection_dataset,
@@ -164,6 +167,177 @@ def test_recon_cli_routes_tiny_workflow(monkeypatch: pytest.MonkeyPatch, tmp_pat
     loaded = load_dataset(recon)
     assert loaded.volume is not None
     assert loaded.volume.shape == (4, 4, 2)
+
+
+def test_recon_cli_accepts_detector_center_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    scan = tmp_path / "scan.nxs"
+    recon = tmp_path / "recon.nxs"
+    write_projection_dataset(scan)
+    captured: dict[str, object] = {}
+
+    def fake_run(command: object, config_metadata: dict[str, object]) -> None:
+        del config_metadata
+        captured["det_u_px"] = command.det_u_px
+        captured["det_v_px"] = command.det_v_px
+        dataset = load_dataset(command.data)
+        dataset.volume = np.zeros((4, 4, 2), dtype=np.float32)
+        save_dataset(command.out, dataset)
+
+    monkeypatch.setattr(recon_cli, "_run_reconstruction", fake_run)
+
+    assert (
+        main(
+            [
+                "recon",
+                "--data",
+                str(scan),
+                "--out",
+                str(recon),
+                "--det-u-px",
+                "6",
+                "--det-v-px",
+                "-1.5",
+            ]
+        )
+        == 0
+    )
+
+    assert captured == {"det_u_px": 6.0, "det_v_px": -1.5}
+
+
+def test_recon_cli_rejects_nonfinite_detector_center_override(tmp_path: Path) -> None:
+    scan = tmp_path / "scan.nxs"
+    recon = tmp_path / "recon.nxs"
+    write_projection_dataset(scan)
+
+    with pytest.raises(SystemExit) as exc:
+        main(["recon", "--data", str(scan), "--out", str(recon), "--det-u-px", "nan"])
+
+    assert exc.value.code == 2
+
+
+def test_recon_detector_center_override_records_effective_pixels() -> None:
+    detector = Detector(nu=8, nv=8, du=0.5, dv=2.0, det_center=(1.0, -2.0))
+    geometry_meta: dict[str, object] = {"detector": detector.to_dict()}
+
+    updated, provenance = recon_cli._apply_detector_center_override(
+        detector,
+        geometry_meta,
+        det_u_px=6.0,
+        det_v_px=None,
+    )
+
+    assert updated.det_center == pytest.approx((3.0, -2.0))
+    assert provenance["source"] == "cli_override"
+    assert provenance["requested_px"] == {"det_u_px": 6.0, "det_v_px": None}
+    assert provenance["effective_px"] == {"det_u_px": 6.0, "det_v_px": -1.0}
+    assert provenance["effective_world"] == {"det_u": 3.0, "det_v": -2.0}
+    assert geometry_meta["detector"]["det_center"] == [3.0, -2.0]
+
+
+def test_slices_cli_extracts_labelled_planes_without_full_cli_recon(tmp_path: Path) -> None:
+    path = tmp_path / "recon.nxs"
+    out_dir = tmp_path / "slices"
+    dataset = make_projection_dataset()
+    dataset.volume = np.arange(4 * 4 * 2, dtype=np.float32).reshape(4, 4, 2)
+    save_dataset(path, dataset)
+
+    assert main(["slices", "--data", str(path), "--out", str(out_dir), "--prefix", "demo"]) == 0
+
+    assert (out_dir / "demo_z0001.png").is_file()
+    assert (out_dir / "demo_y0002.png").is_file()
+    assert (out_dir / "demo_x0002.png").is_file()
+    summary = json.loads((out_dir / "demo_slices.json").read_text(encoding="utf-8"))
+    assert summary["saved_axes"] == "zyx"
+    assert summary["slices"]["z"]["display_axes"] == "yx"
+
+
+def test_slices_cli_extracts_requested_planes_with_xyz_disk_axes(tmp_path: Path) -> None:
+    path = tmp_path / "recon.nxs"
+    out_dir = tmp_path / "slices"
+    volume = np.zeros((3, 4, 5), dtype=np.float32)
+    for x in range(volume.shape[0]):
+        for y in range(volume.shape[1]):
+            for z in range(volume.shape[2]):
+                volume[x, y, z] = (100 * x) + (10 * y) + z
+    dataset = make_projection_dataset()
+    dataset.volume = volume
+    metadata = dataset.to_nxtomo_metadata()
+    metadata.volume_axes_order = "xyz"
+    save_projection_payload(path, projections=dataset.projections, metadata=metadata)
+
+    assert (
+        main(
+            [
+                "slices",
+                "--data",
+                str(path),
+                "--out",
+                str(out_dir),
+                "--prefix",
+                "demo",
+                "--z",
+                "2",
+                "--y",
+                "1",
+                "--x",
+                "2",
+                "--lower-percentile",
+                "0",
+                "--upper-percentile",
+                "100",
+            ]
+        )
+        == 0
+    )
+
+    z_image = iio.imread(out_dir / "demo_z0002.png")
+    y_image = iio.imread(out_dir / "demo_y0001.png")
+    x_image = iio.imread(out_dir / "demo_x0002.png")
+    np.testing.assert_array_equal(
+        z_image,
+        scale_to_uint8(volume[:, :, 2].T, lower_percentile=0, upper_percentile=100),
+    )
+    np.testing.assert_array_equal(
+        y_image,
+        scale_to_uint8(volume[:, 1, :].T, lower_percentile=0, upper_percentile=100),
+    )
+    np.testing.assert_array_equal(
+        x_image,
+        scale_to_uint8(volume[2, :, :].T, lower_percentile=0, upper_percentile=100),
+    )
+
+
+def test_slices_cli_requires_force_to_overwrite(tmp_path: Path) -> None:
+    path = tmp_path / "recon.nxs"
+    out_dir = tmp_path / "slices"
+    dataset = make_projection_dataset()
+    dataset.volume = np.arange(4 * 4 * 2, dtype=np.float32).reshape(4, 4, 2)
+    save_dataset(path, dataset)
+
+    assert main(["slices", "--data", str(path), "--out", str(out_dir), "--prefix", "demo"]) == 0
+    with pytest.raises(SystemExit) as exc:
+        main(["slices", "--data", str(path), "--out", str(out_dir), "--prefix", "demo"])
+
+    assert exc.value.code == 2
+    assert (
+        main(["slices", "--data", str(path), "--out", str(out_dir), "--prefix", "demo", "--force"])
+        == 0
+    )
+
+
+def test_slices_cli_reports_missing_file_without_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["slices", "--data", str(tmp_path / "missing.nxs"), "--out", str(tmp_path)])
+
+    assert exc.value.code == 2
+    captured = capsys.readouterr()
+    assert "could not read" in captured.err
+    assert "Traceback" not in captured.err
 
 
 def test_simulate_cli_routes_loadable_synthetic_dataset(
@@ -357,3 +531,129 @@ def test_align_cli_geometry_dofs_route_to_multires_without_explicit_levels(
     )
 
     assert calls == [([1], ("det_u_px",), ())]
+
+
+def test_align_cli_cor_then_pose_defaults_to_full_pyramid_and_accepts_normal_quality(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    align_cli_main = importlib.import_module("tomojax.cli._align_main")
+    align_cli_plan = importlib.import_module("tomojax.cli._align_plan")
+    scan = tmp_path / "scan.nxs"
+    aligned = tmp_path / "aligned.nxs"
+    write_projection_dataset(scan)
+    calls: list[tuple[list[int], str, str]] = []
+
+    def fake_align_multires(
+        geom,
+        recon_grid,
+        recon_detector,
+        projections,
+        *,
+        factors,
+        cfg,
+        resume_state=None,
+        checkpoint_callback=None,
+    ):
+        del geom, recon_detector, resume_state, checkpoint_callback
+        calls.append((list(factors), cfg.schedule, cfg.align_profile))
+        x = jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
+        params5 = jnp.zeros((int(projections.shape[0]), 5), dtype=jnp.float32)
+        return x, params5, {"loss": [0.0], "outer_stats": [], "active_dofs": []}
+
+    monkeypatch.setattr(align_cli_main, "setup_logging", lambda: None)
+    monkeypatch.setattr(align_cli_main, "log_jax_env", lambda: None)
+    monkeypatch.setattr(align_cli_main, "init_jax_compilation_cache", lambda: None)
+    monkeypatch.setattr(align_cli_plan, "align_multires", fake_align_multires)
+
+    assert (
+        main(
+            [
+                "align",
+                "--data",
+                str(scan),
+                "--out",
+                str(aligned),
+                "--mode",
+                "cor_then_pose",
+                "--quality",
+                "normal",
+                "--roi",
+                "off",
+                "--grid",
+                "4",
+                "4",
+                "2",
+                "--outer-iters",
+                "1",
+                "--recon-iters",
+                "1",
+            ]
+        )
+        == 0
+    )
+
+    assert calls == [([4, 2, 1], "cor_then_pose", "tortoise")]
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_schedule", "expected_levels"),
+    [
+        ("auto", "setup_safe", [4, 2, 1]),
+        ("max", "setup_safe", [4, 2, 1]),
+        ("cor_then_pose", "cor_then_pose", [4, 2, 1]),
+    ],
+)
+def test_align_cli_print_plan_json_reports_effective_public_plan(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    mode: str,
+    expected_schedule: str,
+    expected_levels: list[int],
+) -> None:
+    align_cli_main = importlib.import_module("tomojax.cli._align_main")
+    scan = tmp_path / "scan.nxs"
+    aligned = tmp_path / "aligned.nxs"
+    write_projection_dataset(scan)
+
+    monkeypatch.setattr(align_cli_main, "setup_logging", lambda: None)
+    monkeypatch.setattr(align_cli_main, "log_jax_env", lambda: None)
+    monkeypatch.setattr(align_cli_main, "init_jax_compilation_cache", lambda: None)
+
+    assert (
+        main(
+            [
+                "align",
+                "--data",
+                str(scan),
+                "--out",
+                str(aligned),
+                "--mode",
+                mode,
+                "--quality",
+                "normal",
+                "--roi",
+                "off",
+                "--grid",
+                "4",
+                "4",
+                "2",
+                "--outer-iters",
+                "1",
+                "--recon-iters",
+                "1",
+                "--loss-schedule",
+                "4:phasecorr,2:ssim,1:l2_otsu",
+                "--print-plan-json",
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schedule"] == expected_schedule
+    assert payload["levels"] == expected_levels
+    assert payload["output_path"] == str(aligned)
+    assert [stage["stage_name"] for stage in payload["stages"]][:2] == (
+        ["cor", "pose_polish"] if mode == "cor_then_pose" else ["cor", "detector_roll"]
+    )

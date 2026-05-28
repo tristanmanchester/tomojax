@@ -590,7 +590,7 @@ def _run_reconstruction_step(
             "data_loss_computed": bool(quality_policy.compute_final_data_loss),
             "regulariser_value_computed": bool(quality_policy.compute_final_regulariser_value),
             "quality_policy": quality_policy.to_dict(),
-            "L": float(L_core / 1.2),
+            "L": float(L_core),
             "requested_backend": requested_backend,
             "actual_backend": actual_backend,
             "fallback_reason": fallback_reason,
