@@ -5,7 +5,10 @@ volumes. It loads NeXus/HDF5 or TIFF stacks, applies dark/flat correction,
 reconstructs with FBP or TV solvers, and can estimate per-projection pose or
 detector-centre/COR alignment from the data.
 
-<img src="images/tomojax-phantom94-orthoslices.png" width="900" alt="Orthogonal slices through the PHANTOM94 synthetic tomography volume used for TomoJAX validation.">
+| Laminography data alignment | Per-projection pose adjustments |
+| --- | --- |
+| <img src="images/figure_minimal_original_cor_full.png" width="650" alt="Laminography data from the DIAD beam line showing a layer of 100 µm ruby spheres"> | <img src="images/projection_pose_corrections_3d_zoomed.png" width="420" alt="The per-projection pose adjustments applied by TomoJAX to align the data"> |
+
 
 Use it when you have projections and approximate geometry and want to go from
 raw detector frames to a reproducible reconstruction.
