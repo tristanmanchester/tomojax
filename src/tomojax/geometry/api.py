@@ -7,6 +7,7 @@ from tomojax.core.geometry import (
     LaminographyGeometry,
     ParallelGeometry,
     RotationAxisGeometry,
+    grid_volume_origin,
     normalize_axis_unit,
 )
 from tomojax.core.geometry.views import stack_view_poses
@@ -37,15 +38,23 @@ from tomojax.geometry._axis_geometry import (
     default_active_axis_dofs,
     nominal_axis_unit_from_inputs,
 )
-from tomojax.geometry._calibration_conventions import ConventionAudit, ConventionEvidence
-from tomojax.geometry._calibration_gauge import GaugeValidationError, validate_calibration_gauges
-from tomojax.geometry._calibration_manifest import (
+from tomojax.geometry._calibration import (
+    CalibratedGeometryMetadataPatch,
+    CalibrationState,
+    CalibrationVariable,
+    CandidateScore,
+    ConventionAudit,
+    ConventionEvidence,
+    DetectorPixelScale,
+    DetectorPixelValue,
+    GaugeValidationError,
+    GeometryCalibrationPatch,
+    MetricSpec,
+    ObjectiveCard,
     build_calibrated_geometry_metadata_patch,
     build_calibration_manifest,
+    validate_calibration_gauges,
 )
-from tomojax.geometry._calibration_objectives import CandidateScore, MetricSpec, ObjectiveCard
-from tomojax.geometry._calibration_state import CalibrationState, CalibrationVariable
-from tomojax.geometry._calibration_units import DetectorPixelScale, DetectorPixelValue
 from tomojax.geometry._detector_grid import (
     detector_grid_from_calibration,
     detector_grid_from_center_offset,
@@ -101,6 +110,7 @@ __all__ = [
     "TOMO_ROTATION_PLANE_AXES",
     "VOLUME_AXES_ATTR",
     "AcquisitionParameters",
+    "CalibratedGeometryMetadataPatch",
     "CalibrationState",
     "CalibrationVariable",
     "CandidateScore",
@@ -114,6 +124,7 @@ __all__ = [
     "GaugeTransfer",
     "GaugeValidationError",
     "Geometry",
+    "GeometryCalibrationPatch",
     "GeometryState",
     "Grid",
     "LaminographyGeometry",
@@ -146,6 +157,7 @@ __all__ = [
     "grid_from_detector_fov",
     "grid_from_detector_fov_cube",
     "grid_from_detector_fov_slices",
+    "grid_volume_origin",
     "infer_disk_axes",
     "is_shape_xyz",
     "is_shape_zyx",

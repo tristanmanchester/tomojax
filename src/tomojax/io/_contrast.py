@@ -38,11 +38,13 @@ def _ensure_array(x: ArrayLike, *, backend: Any | None = None) -> Any:
     if backend is None:
         backend = _array_backend(x)
     if backend is _jnp:
-        assert _jnp is not None
-        arr = _jnp.asarray(x)
+        jnp_backend = _jnp
+        if jnp_backend is None:
+            raise RuntimeError("JAX array backend selected but jax.numpy is unavailable")
+        arr = jnp_backend.asarray(x)
         dtype = _np.dtype(arr.dtype)
         if not _np.issubdtype(dtype, _np.floating):
-            arr = _jnp.asarray(arr, dtype=_jnp.float32)
+            arr = jnp_backend.asarray(arr, dtype=jnp_backend.float32)
         return arr
     arr = _np.asarray(x)
     if not _np.issubdtype(arr.dtype, _np.floating):

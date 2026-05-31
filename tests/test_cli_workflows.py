@@ -113,6 +113,52 @@ def test_preprocess_cli_handles_tiff_stack_workflow(tmp_path: Path) -> None:
     np.testing.assert_allclose(dataset.projections[:, 0, 0], -np.log([0.4, 0.8]), rtol=1e-6)
 
 
+@pytest.mark.parametrize(
+    ("omitted_flag", "expected"),
+    [
+        ("--flats", "requires --flats and --darks"),
+        ("--darks", "requires --flats and --darks"),
+        ("--angles", "requires --angles"),
+    ],
+)
+def test_preprocess_cli_tiff_stack_requires_sidecars(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    omitted_flag: str,
+    expected: str,
+) -> None:
+    projections = tmp_path / "projections"
+    flats = tmp_path / "flats"
+    darks = tmp_path / "darks"
+    angles = tmp_path / "angles.csv"
+    out_path = tmp_path / "corrected.nxs"
+    write_tiff_stack(projections, [5.0, 9.0])
+    write_tiff_stack(flats, [11.0])
+    write_tiff_stack(darks, [1.0])
+    write_angle_csv(angles, [0.0, 90.0])
+
+    args = [
+        "preprocess",
+        str(projections),
+        str(out_path),
+        "--format",
+        "tiff-stack",
+        "--flats",
+        str(flats),
+        "--darks",
+        str(darks),
+        "--angles",
+        str(angles),
+    ]
+    index = args.index(omitted_flag)
+    del args[index : index + 2]
+
+    assert main(args) == 2
+    captured = capsys.readouterr()
+    assert expected in captured.err
+    assert not out_path.exists()
+
+
 def test_convert_cli_roundtrips_nxtomo_to_npz(tmp_path: Path) -> None:
     nxs_path = tmp_path / "scan.nxs"
     npz_path = tmp_path / "scan.npz"
@@ -169,6 +215,102 @@ def test_recon_cli_routes_tiny_workflow(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert loaded.volume.shape == (4, 4, 2)
 
 
+def test_main_formats_expected_subcommand_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    scan = tmp_path / "scan.nxs"
+    recon = tmp_path / "recon.nxs"
+    write_projection_dataset(scan)
+
+    def fail_expected(command: object, config_metadata: dict[str, object]) -> None:
+        del command, config_metadata
+        raise ValueError("bad detector metadata")
+
+    monkeypatch.setattr(recon_cli, "_run_reconstruction", fail_expected)
+
+    assert main(["recon", "--data", str(scan), "--out", str(recon)]) == 1
+    captured = capsys.readouterr()
+    assert captured.err == "ERROR: recon: bad detector metadata\n"
+
+
+def test_main_does_not_swallow_programmer_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    scan = tmp_path / "scan.nxs"
+    recon = tmp_path / "recon.nxs"
+    write_projection_dataset(scan)
+
+    def fail_programmer(command: object, config_metadata: dict[str, object]) -> None:
+        del command, config_metadata
+        raise TypeError("wrong internal call shape")
+
+    monkeypatch.setattr(recon_cli, "_run_reconstruction", fail_programmer)
+
+    with pytest.raises(TypeError, match="wrong internal call shape"):
+        main(["recon", "--data", str(scan), "--out", str(recon)])
+
+
+def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> None:
+    scan = tmp_path / "scan.nxs"
+    recon = tmp_path / "recon.nxs"
+    manifest = tmp_path / "recon-manifest.json"
+    write_projection_dataset(scan)
+
+    assert (
+        main(
+            [
+                "recon",
+                "--data",
+                str(scan),
+                "--out",
+                str(recon),
+                "--algo",
+                "fbp",
+                "--roi",
+                "off",
+                "--grid",
+                "4",
+                "4",
+                "2",
+                "--views-per-batch",
+                "1",
+                "--no-checkpoint-projector",
+                "--save-manifest",
+                str(manifest),
+            ]
+        )
+        == 0
+    )
+
+    loaded = load_dataset(recon)
+    assert loaded.volume is not None
+    assert loaded.volume.shape == (4, 4, 2)
+    assert np.isfinite(loaded.volume).all()
+    assert loaded.grid is not None
+    assert loaded.grid.nx == 4
+    assert loaded.grid.ny == 4
+    assert loaded.grid.nz == 2
+    assert loaded.detector is not None
+
+    metadata = loaded.copy_metadata()
+    assert metadata.frame == "sample"
+    assert metadata.volume_axes_order == "zyx"
+    assert loaded.geometry_metadata["detector_center_override"]["source"] == "metadata"
+
+    resolved = json.loads(manifest.read_text(encoding="utf-8"))["resolved_config"]
+    assert resolved["algorithm"] == "fbp"
+    assert resolved["algorithm_config"]["filter"] == "ramp"
+    assert resolved["reconstruction_grid"]["nx"] == 4
+    assert resolved["reconstruction_grid"]["ny"] == 4
+    assert resolved["reconstruction_grid"]["nz"] == 2
+    assert resolved["roi"] == {
+        "requested": "off",
+        "is_parallel": True,
+        "grid_changed": False,
+    }
+    assert resolved["volume_shape"] == [4, 4, 2]
+
+
 def test_recon_cli_accepts_detector_center_override(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -219,10 +361,13 @@ def test_recon_cli_rejects_nonfinite_detector_center_override(tmp_path: Path) ->
 
 
 def test_recon_detector_center_override_records_effective_pixels() -> None:
+    # check-public-imports: allow-private
+    from tomojax.cli._recon_plan import _apply_detector_center_override
+
     detector = Detector(nu=8, nv=8, du=0.5, dv=2.0, det_center=(1.0, -2.0))
     geometry_meta: dict[str, object] = {"detector": detector.to_dict()}
 
-    updated, provenance = recon_cli._apply_detector_center_override(
+    updated, provenance = _apply_detector_center_override(
         detector,
         geometry_meta,
         det_u_px=6.0,
@@ -399,8 +544,8 @@ def test_simulate_cli_routes_loadable_synthetic_dataset(
 def test_align_cli_mode_cor_writes_alignment_outputs(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    align_cli_main = importlib.import_module("tomojax.cli._align_main")
-    align_cli_plan = importlib.import_module("tomojax.cli._align_plan")
+    align_cli_main = importlib.import_module("tomojax.cli.align.main")
+    align_cli_plan = importlib.import_module("tomojax.cli.align.plan")
     scan = tmp_path / "scan.nxs"
     aligned = tmp_path / "aligned.nxs"
     manifest = tmp_path / "align.json"
@@ -414,12 +559,12 @@ def test_align_cli_mode_cor_writes_alignment_outputs(
         projections,
         *,
         factors,
-        cfg,
+        config,
         resume_state=None,
         checkpoint_callback=None,
     ):
         del geom, recon_detector, resume_state, checkpoint_callback
-        calls.append((tuple(projections.shape), list(factors), cfg.schedule))
+        calls.append((tuple(projections.shape), list(factors), config.schedule))
         x = jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
         params5 = jnp.zeros((int(projections.shape[0]), 5), dtype=jnp.float32)
         return x, params5, {"loss": [0.0], "outer_stats": [], "active_dofs": ["det_u"]}
@@ -470,8 +615,8 @@ def test_align_cli_mode_cor_writes_alignment_outputs(
 def test_align_cli_geometry_dofs_route_to_multires_without_explicit_levels(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    align_cli_main = importlib.import_module("tomojax.cli._align_main")
-    align_cli_plan = importlib.import_module("tomojax.cli._align_plan")
+    align_cli_main = importlib.import_module("tomojax.cli.align.main")
+    align_cli_plan = importlib.import_module("tomojax.cli.align.plan")
     scan = tmp_path / "scan.nxs"
     aligned = tmp_path / "aligned.nxs"
     write_projection_dataset(scan)
@@ -484,12 +629,14 @@ def test_align_cli_geometry_dofs_route_to_multires_without_explicit_levels(
         projections,
         *,
         factors,
-        cfg,
+        config,
         resume_state=None,
         checkpoint_callback=None,
     ):
         del geom, recon_detector, projections, resume_state, checkpoint_callback
-        calls.append((list(factors), tuple(cfg.optimise_dofs or ()), tuple(cfg.freeze_dofs or ())))
+        calls.append(
+            (list(factors), tuple(config.optimise_dofs or ()), tuple(config.freeze_dofs or ()))
+        )
         x = jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
         params5 = jnp.zeros((2, 5), dtype=jnp.float32)
         return (
@@ -536,8 +683,8 @@ def test_align_cli_geometry_dofs_route_to_multires_without_explicit_levels(
 def test_align_cli_cor_then_pose_defaults_to_full_pyramid_and_accepts_normal_quality(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    align_cli_main = importlib.import_module("tomojax.cli._align_main")
-    align_cli_plan = importlib.import_module("tomojax.cli._align_plan")
+    align_cli_main = importlib.import_module("tomojax.cli.align.main")
+    align_cli_plan = importlib.import_module("tomojax.cli.align.plan")
     scan = tmp_path / "scan.nxs"
     aligned = tmp_path / "aligned.nxs"
     write_projection_dataset(scan)
@@ -550,12 +697,12 @@ def test_align_cli_cor_then_pose_defaults_to_full_pyramid_and_accepts_normal_qua
         projections,
         *,
         factors,
-        cfg,
+        config,
         resume_state=None,
         checkpoint_callback=None,
     ):
         del geom, recon_detector, resume_state, checkpoint_callback
-        calls.append((list(factors), cfg.schedule, cfg.align_profile))
+        calls.append((list(factors), config.schedule, config.align_profile))
         x = jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
         params5 = jnp.zeros((int(projections.shape[0]), 5), dtype=jnp.float32)
         return x, params5, {"loss": [0.0], "outer_stats": [], "active_dofs": []}
@@ -611,7 +758,7 @@ def test_align_cli_print_plan_json_reports_effective_public_plan(
     expected_schedule: str,
     expected_levels: list[int],
 ) -> None:
-    align_cli_main = importlib.import_module("tomojax.cli._align_main")
+    align_cli_main = importlib.import_module("tomojax.cli.align.main")
     scan = tmp_path / "scan.nxs"
     aligned = tmp_path / "aligned.nxs"
     write_projection_dataset(scan)

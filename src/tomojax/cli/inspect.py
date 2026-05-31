@@ -9,7 +9,7 @@ from pathlib import Path
 import sys
 from typing import TYPE_CHECKING, cast
 
-from tomojax.io import (
+from tomojax.io.api import (
     format_inspection_report,
     inspect_dataset,
     save_projection_quicklook,
@@ -72,12 +72,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"ERROR: not a file: {path}", file=sys.stderr)
         return 2
 
-    try:
-        report = inspect_dataset(path)
-    except Exception as exc:
-        print(f"ERROR: could not inspect {path}: {exc}", file=sys.stderr)
-        return 1
-
+    report = inspect_dataset(path)
     print(format_inspection_report(report))
 
     if command.json_path is not None:
@@ -89,14 +84,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
     if command.quicklook_path is not None:
-        try:
-            _ = save_projection_quicklook(path, command.quicklook_path)
-        except Exception as exc:
-            print(
-                f"ERROR: could not write quicklook {command.quicklook_path}: {exc}",
-                file=sys.stderr,
-            )
-            return 1
+        _ = save_projection_quicklook(path, command.quicklook_path)
 
     return 0
 

@@ -1,4 +1,4 @@
-"""Typed v2 geometry state containers."""
+"""Typed geometry state containers."""
 # pyright: reportAny=false
 
 from __future__ import annotations

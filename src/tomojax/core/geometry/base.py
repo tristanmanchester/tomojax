@@ -110,7 +110,7 @@ class Grid:
         return d
 
 
-def _grid_volume_origin(grid: Grid) -> Vec3:
+def grid_volume_origin(grid: Grid) -> Vec3:
     """Return the physical centre of voxel (0, 0, 0) for a grid."""
     if grid.vol_origin is not None:
         return grid.vol_origin
@@ -163,7 +163,7 @@ def _parallel_detector_rays(
     du, dv = float(detector.du), float(detector.dv)
     cx, cz = float(detector.det_center[0]), float(detector.det_center[1])
 
-    y0 = _grid_volume_origin(grid)[1]
+    y0 = grid_volume_origin(grid)[1]
 
     def origin_fn(u: int, v: int) -> Vec3:
         x = (u - (nu / 2.0 - 0.5)) * du + cx

@@ -5,21 +5,26 @@
 
 from __future__ import annotations
 
-import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import h5py
 import imageio.v3 as iio
 import numpy as np
 
-from tomojax._data.io_hdf5 import NXTomoMetadata, save_nxtomo
-from tomojax._data.preprocess import (
+from tomojax._data import (
+    NXTomoMetadata,
+    save_nxtomo,
+)
+from tomojax.io._contrast import flat_dark_to_absorption, flat_dark_to_transmission
+from tomojax.io._preprocess_impl import (
     PreprocessConfig,
     PreprocessResult,
     preprocess_nxtomo,
+    validate_preprocess_numeric_config,
+    write_preprocess_provenance,
 )
-from tomojax.io._contrast import flat_dark_to_absorption, flat_dark_to_transmission
+from tomojax.io._tiff import TIFF_SUFFIXES, tiff_files
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -29,18 +34,40 @@ if TYPE_CHECKING:
 
 type PathLike = str | Path
 
-_TIFF_SUFFIXES = {".tif", ".tiff"}
-_OUTPUT_DTYPES = {"float32": np.float32, "float64": np.float64}
+_TIFF_SUFFIXES = TIFF_SUFFIXES
+
+
+@dataclass(frozen=True)
+class _TiffPreprocessInput:
+    projections: np.ndarray
+    flats: np.ndarray
+    darks: np.ndarray
+    angles: np.ndarray
+    projection_files: list[Path]
+    flat_files: list[Path]
+    dark_files: list[Path]
+    raw_projection_shape: list[int]
+    crop_bounds: tuple[int, int, int, int] | None
+
+
+@dataclass(frozen=True)
+class _CorrectedTiffFrames:
+    output: np.ndarray
+    flat_mean64: np.ndarray
+    dark_mean64: np.ndarray
+    warning_counts: dict[str, int]
+    output_dtype: np.dtype
+    output_domain: str
 
 
 def preprocess_tiff_stack(
     projections_path: PathLike,
+    *,
     flats_path: PathLike,
     darks_path: PathLike,
     angles_path: PathLike,
     output_path: PathLike,
     config: PreprocessConfig | None = None,
-    *,
     detector: Detector | DetectorDict | None = None,
     grid: Grid | GridDict | None = None,
     geometry_type: str = "parallel",
@@ -54,6 +81,78 @@ def preprocess_tiff_stack(
     """
     cfg = config or PreprocessConfig()
     output_dtype, output_domain = _validate_public_preprocess_config(cfg)
+    inputs = _load_tiff_preprocess_input(
+        projections_path=projections_path,
+        flats_path=flats_path,
+        darks_path=darks_path,
+        angles_path=angles_path,
+        config=cfg,
+    )
+    corrected = _correct_tiff_frames(
+        inputs,
+        config=cfg,
+        output_dtype=output_dtype,
+        output_domain=output_domain,
+    )
+    metadata = _metadata_from_tiff_inputs(
+        inputs,
+        corrected,
+        detector=detector,
+        grid=grid,
+        geometry_type=geometry_type,
+        geometry_metadata=geometry_metadata,
+        sample_name=sample_name,
+    )
+    output_path = Path(output_path)
+    save_nxtomo(str(output_path), corrected.output, metadata=metadata)
+
+    provenance = _build_tiff_preprocess_provenance(
+        inputs,
+        corrected,
+        projections_path=projections_path,
+        flats_path=flats_path,
+        darks_path=darks_path,
+        angles_path=angles_path,
+        config=cfg,
+    )
+    write_preprocess_provenance(
+        output_path,
+        provenance=provenance,
+        flat_mean=corrected.flat_mean64.astype(output_dtype, copy=False),
+        dark_mean=corrected.dark_mean64.astype(output_dtype, copy=False),
+    )
+    return _result_from_tiff_output(inputs, corrected, provenance=provenance)
+
+
+def _result_from_tiff_output(
+    inputs: _TiffPreprocessInput,
+    corrected: _CorrectedTiffFrames,
+    *,
+    provenance: dict[str, Any],
+) -> PreprocessResult:
+    return PreprocessResult(
+        sample_count=int(corrected.output.shape[0]),
+        flat_count=int(inputs.flats.shape[0]),
+        dark_count=int(inputs.darks.shape[0]),
+        output_shape=(
+            int(corrected.output.shape[0]),
+            int(corrected.output.shape[1]),
+            int(corrected.output.shape[2]),
+        ),
+        output_domain=corrected.output_domain,
+        warning_counts=corrected.warning_counts,
+        provenance=provenance,
+    )
+
+
+def _load_tiff_preprocess_input(
+    *,
+    projections_path: PathLike,
+    flats_path: PathLike,
+    darks_path: PathLike,
+    angles_path: PathLike,
+    config: PreprocessConfig,
+) -> _TiffPreprocessInput:
     projections, projection_files = _load_tiff_stack(projections_path)
     flats, flat_files = _load_tiff_stack(flats_path)
     darks, dark_files = _load_tiff_stack(darks_path)
@@ -68,7 +167,7 @@ def preprocess_tiff_stack(
 
     raw_shape = [int(v) for v in projections.shape]
     crop_bounds = _parse_crop_spec(
-        cfg.crop,
+        config.crop,
         nv=int(projections.shape[1]),
         nu=int(projections.shape[2]),
     )
@@ -84,32 +183,51 @@ def preprocess_tiff_stack(
             f"angles length {angles.shape[0]} does not match projection count "
             f"{projections.shape[0]}"
         )
-
-    flat_mean64 = flats.mean(axis=0, dtype=np.float64)
-    dark_mean64 = darks.mean(axis=0, dtype=np.float64)
-    denominator_raw = flat_mean64 - dark_mean64
-    transmission_raw = (projections.astype(np.float64, copy=False) - dark_mean64) / np.maximum(
-        denominator_raw, float(cfg.epsilon)
+    return _TiffPreprocessInput(
+        projections=projections,
+        flats=flats,
+        darks=darks,
+        angles=angles,
+        projection_files=projection_files,
+        flat_files=flat_files,
+        dark_files=dark_files,
+        raw_projection_shape=raw_shape,
+        crop_bounds=crop_bounds,
     )
+
+
+def _correct_tiff_frames(
+    inputs: _TiffPreprocessInput,
+    *,
+    config: PreprocessConfig,
+    output_dtype: np.dtype,
+    output_domain: str,
+) -> _CorrectedTiffFrames:
+    flat_mean64 = inputs.flats.mean(axis=0, dtype=np.float64)
+    dark_mean64 = inputs.darks.mean(axis=0, dtype=np.float64)
+    denominator_raw = flat_mean64 - dark_mean64
+    transmission_raw = (
+        inputs.projections.astype(np.float64, copy=False) - dark_mean64
+    ) / np.maximum(denominator_raw, float(config.epsilon))
     warning_counts = {
         "nonpositive_flat_denominator": int(np.count_nonzero(denominator_raw <= 0.0)),
         "nonpositive_transmission": int(np.count_nonzero(transmission_raw <= 0.0)),
     }
     if output_domain == "absorption":
         corrected = flat_dark_to_absorption(
-            projections,
-            flats,
-            darks,
-            min_intensity=float(cfg.epsilon),
-            transmission_min=max(float(cfg.epsilon), float(cfg.clip_min or cfg.epsilon)),
+            inputs.projections,
+            inputs.flats,
+            inputs.darks,
+            min_intensity=float(config.epsilon),
+            transmission_min=max(float(config.epsilon), float(config.clip_min or config.epsilon)),
         )
     else:
         corrected = flat_dark_to_transmission(
-            projections,
-            flats,
-            darks,
-            denominator_min=float(cfg.epsilon),
-            clip_min=None if cfg.clip_min is None else float(cfg.clip_min),
+            inputs.projections,
+            inputs.flats,
+            inputs.darks,
+            denominator_min=float(config.epsilon),
+            clip_min=None if config.clip_min is None else float(config.clip_min),
         )
     nonfinite = int(np.count_nonzero(~np.isfinite(corrected)))
     warning_counts["nonfinite_output"] = nonfinite
@@ -117,11 +235,30 @@ def preprocess_tiff_stack(
         np.nan_to_num(np.asarray(corrected), nan=0.0, posinf=0.0, neginf=0.0),
         dtype=output_dtype,
     )
+    return _CorrectedTiffFrames(
+        output=output,
+        flat_mean64=flat_mean64,
+        dark_mean64=dark_mean64,
+        warning_counts=warning_counts,
+        output_dtype=output_dtype,
+        output_domain=output_domain,
+    )
 
-    nv, nu = (int(v) for v in output.shape[1:])
-    metadata = NXTomoMetadata(
-        thetas_deg=np.asarray(angles, dtype=np.float32),
-        image_key=np.zeros((int(output.shape[0]),), dtype=np.int32),
+
+def _metadata_from_tiff_inputs(
+    inputs: _TiffPreprocessInput,
+    corrected: _CorrectedTiffFrames,
+    *,
+    detector: Detector | DetectorDict | None,
+    grid: Grid | GridDict | None,
+    geometry_type: str,
+    geometry_metadata: Mapping[str, Any] | None,
+    sample_name: str,
+) -> NXTomoMetadata:
+    nv, nu = (int(v) for v in corrected.output.shape[1:])
+    return NXTomoMetadata(
+        thetas_deg=np.asarray(inputs.angles, dtype=np.float32),
+        image_key=np.zeros((int(corrected.output.shape[0]),), dtype=np.int32),
         detector=_detector_metadata(detector, nv=nv, nu=nu),
         grid=grid,
         geometry_type=str(geometry_type),
@@ -131,35 +268,45 @@ def preprocess_tiff_stack(
         source_type="tiff_stack",
         source_probe="x-ray",
     )
-    output_path = Path(output_path)
-    save_nxtomo(str(output_path), output, metadata=metadata)
 
-    provenance: dict[str, Any] = {
+
+def _build_tiff_preprocess_provenance(
+    inputs: _TiffPreprocessInput,
+    corrected: _CorrectedTiffFrames,
+    *,
+    projections_path: PathLike,
+    flats_path: PathLike,
+    darks_path: PathLike,
+    angles_path: PathLike,
+    config: PreprocessConfig,
+) -> dict[str, Any]:
+    output = corrected.output
+    return {
         "schema_version": 1,
         "input_format": "tiff_stack",
         "projection_path": str(projections_path),
         "flat_path": str(flats_path),
         "dark_path": str(darks_path),
         "angles_path": str(angles_path),
-        "projection_file_count": len(projection_files),
-        "flat_file_count": len(flat_files),
-        "dark_file_count": len(dark_files),
+        "projection_file_count": len(inputs.projection_files),
+        "flat_file_count": len(inputs.flat_files),
+        "dark_file_count": len(inputs.dark_files),
         "frame_counts": {
             "sample": int(output.shape[0]),
-            "flat": int(flats.shape[0]),
-            "dark": int(darks.shape[0]),
+            "flat": int(inputs.flats.shape[0]),
+            "dark": int(inputs.darks.shape[0]),
         },
         "processing_frame_counts": {
             "candidate_sample": int(output.shape[0]),
             "final_sample": int(output.shape[0]),
-            "flat": int(flats.shape[0]),
-            "dark": int(darks.shape[0]),
+            "flat": int(inputs.flats.shape[0]),
+            "dark": int(inputs.darks.shape[0]),
         },
-        "output_domain": output_domain,
+        "output_domain": corrected.output_domain,
         "output_domain_policy": "absorption is the default reconstruction-ready domain",
-        "epsilon": float(cfg.epsilon),
-        "clip_min": None if cfg.clip_min is None else float(cfg.clip_min),
-        "output_dtype": str(output_dtype),
+        "epsilon": float(config.epsilon),
+        "clip_min": None if config.clip_min is None else float(config.clip_min),
+        "output_dtype": str(corrected.output_dtype),
         "correction_formula": (
             "transmission=(sample-mean(dark))/max(mean(flat)-mean(dark),epsilon); "
             "absorption=-log(max(transmission,log_min)) when output_domain=absorption"
@@ -170,50 +317,23 @@ def preprocess_tiff_stack(
         "flat_override_used": False,
         "selected_views": list(range(int(output.shape[0]))),
         "rejected_views": [],
-        "crop": cfg.crop,
+        "crop": config.crop,
         "crop_bounds": None
-        if crop_bounds is None
+        if inputs.crop_bounds is None
         else {
-            "y0": int(crop_bounds[0]),
-            "y1": int(crop_bounds[1]),
-            "x0": int(crop_bounds[2]),
-            "x1": int(crop_bounds[3]),
+            "y0": int(inputs.crop_bounds[0]),
+            "y1": int(inputs.crop_bounds[1]),
+            "x0": int(inputs.crop_bounds[2]),
+            "x1": int(inputs.crop_bounds[3]),
         },
-        "original_projection_shape": raw_shape,
+        "original_projection_shape": inputs.raw_projection_shape,
         "final_projection_shape": [int(v) for v in output.shape],
-        "warning_counts": warning_counts,
+        "warning_counts": corrected.warning_counts,
     }
-    _write_preprocess_provenance(
-        output_path,
-        provenance=provenance,
-        flat_mean=flat_mean64.astype(output_dtype, copy=False),
-        dark_mean=dark_mean64.astype(output_dtype, copy=False),
-    )
-    return PreprocessResult(
-        sample_count=int(output.shape[0]),
-        flat_count=int(flats.shape[0]),
-        dark_count=int(darks.shape[0]),
-        output_shape=(int(output.shape[0]), int(output.shape[1]), int(output.shape[2])),
-        output_domain=output_domain,
-        warning_counts=warning_counts,
-        provenance=provenance,
-    )
 
 
 def _validate_public_preprocess_config(config: PreprocessConfig) -> tuple[np.dtype, str]:
-    if config.log is not None:
-        output_domain = "absorption" if config.log else "transmission"
-    else:
-        output_domain = str(config.output_domain).strip().lower()
-    if output_domain not in {"absorption", "transmission"}:
-        raise ValueError("output_domain must be one of: absorption, transmission")
-    if not np.isfinite(config.epsilon) or config.epsilon <= 0:
-        raise ValueError("epsilon must be a positive finite value")
-    if config.clip_min is not None and (not np.isfinite(config.clip_min) or config.clip_min <= 0):
-        raise ValueError("clip_min must be a positive finite value when provided")
-    if config.output_dtype not in _OUTPUT_DTYPES:
-        allowed = ", ".join(sorted(_OUTPUT_DTYPES))
-        raise ValueError(f"output_dtype must be one of: {allowed}")
+    output_dtype, output_domain = validate_preprocess_numeric_config(config)
     if (
         any(
             value is not None
@@ -230,25 +350,11 @@ def _validate_public_preprocess_config(config: PreprocessConfig) -> tuple[np.dty
             "TIFF stack preprocessing does not support NXtomo view-selection options; "
             "curate the TIFF/angle sidecars before preprocessing"
         )
-    return np.dtype(_OUTPUT_DTYPES[config.output_dtype]), output_domain
-
-
-def _tiff_files(path: Path) -> list[Path]:
-    if path.is_file():
-        if path.suffix.lower() not in _TIFF_SUFFIXES:
-            raise ValueError(f"{path} is not a TIFF file")
-        return [path]
-    if path.is_dir():
-        return sorted(
-            file
-            for file in path.iterdir()
-            if file.is_file() and file.suffix.lower() in _TIFF_SUFFIXES
-        )
-    raise FileNotFoundError(path)
+    return output_dtype, output_domain
 
 
 def _load_tiff_stack(path: PathLike) -> tuple[np.ndarray, list[Path]]:
-    files = _tiff_files(Path(path))
+    files = tiff_files(Path(path))
     if not files:
         raise ValueError(f"no TIFF files found under {path}")
     stack = np.stack(
@@ -318,56 +424,6 @@ def _detector_metadata(
     if detector is not None:
         return detector
     return {"nu": int(nu), "nv": int(nv), "du": 1.0, "dv": 1.0, "det_center": [0.0, 0.0]}
-
-
-def _json_safe(value: Any) -> Any:
-    if isinstance(value, np.generic):
-        return value.item()
-    if isinstance(value, np.ndarray):
-        return value.tolist()
-    if isinstance(value, dict):
-        return {str(key): _json_safe(val) for key, val in value.items()}
-    if isinstance(value, list | tuple):
-        return [_json_safe(val) for val in value]
-    return value
-
-
-def _write_preprocess_provenance(
-    output_path: PathLike,
-    *,
-    provenance: dict[str, Any],
-    flat_mean: np.ndarray,
-    dark_mean: np.ndarray,
-) -> None:
-    with h5py.File(output_path, "r+") as file:
-        entry = file.require_group("entry")
-        processing = entry.require_group("processing")
-        processing.attrs["NX_class"] = "NXprocess"
-        tomojax = processing.require_group("tomojax")
-        tomojax.attrs["NX_class"] = "NXcollection"
-        if "preprocess" in tomojax:
-            del tomojax["preprocess"]
-        group = tomojax.create_group("preprocess")
-        group.attrs["NX_class"] = "NXcollection"
-        for key, value in provenance.items():
-            if isinstance(value, dict | list | tuple):
-                group.attrs[key] = json.dumps(_json_safe(value), sort_keys=True)
-            elif value is None:
-                group.attrs[key] = "null"
-            else:
-                group.attrs[key] = value
-        group.create_dataset(
-            "flat_mean",
-            data=np.asarray(flat_mean),
-            chunks=True,
-            compression="lzf",
-        )
-        group.create_dataset(
-            "dark_mean",
-            data=np.asarray(dark_mean),
-            chunks=True,
-            compression="lzf",
-        )
 
 
 __all__ = [

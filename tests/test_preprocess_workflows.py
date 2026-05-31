@@ -23,11 +23,30 @@ def _preprocess_tiff_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     return projections, flats, darks, angles
 
 
+def _remove_detector_metadata(raw_path: Path) -> None:
+    with h5py.File(raw_path, "a") as handle:
+        detector = handle["entry/instrument/detector"]
+        if "detector_meta_json" in detector.attrs:
+            del detector.attrs["detector_meta_json"]
+
+
+def _replace_scalar_dataset(group: h5py.Group, name: str, value: float) -> None:
+    if name in group:
+        del group[name]
+    group.create_dataset(name, data=np.asarray(value, dtype=np.float32))
+
+
 def test_tiff_preprocess_defaults_to_absorption_with_provenance(tmp_path: Path) -> None:
     projections, flats, darks, angles = _preprocess_tiff_fixture(tmp_path)
     out_path = tmp_path / "corrected.nxs"
 
-    result = preprocess_tiff_stack(projections, flats, darks, angles, out_path)
+    result = preprocess_tiff_stack(
+        projections,
+        flats_path=flats,
+        darks_path=darks,
+        angles_path=angles,
+        output_path=out_path,
+    )
 
     assert result.output_domain == "absorption"
     loaded = load_dataset(out_path)
@@ -44,7 +63,14 @@ def test_tiff_preprocess_can_write_transmission(tmp_path: Path) -> None:
     out_path = tmp_path / "transmission.nxs"
     config = PreprocessConfig(output_domain="transmission", output_dtype="float64")
 
-    result = preprocess_tiff_stack(projections, flats, darks, angles, out_path, config)
+    result = preprocess_tiff_stack(
+        projections,
+        flats_path=flats,
+        darks_path=darks,
+        angles_path=angles,
+        output_path=out_path,
+        config=config,
+    )
 
     assert result.output_domain == "transmission"
     loaded = load_dataset(out_path)
@@ -69,6 +95,103 @@ def test_nxtomo_preprocess_splits_image_key_and_preserves_angles(tmp_path: Path)
     assert loaded.detector is not None
     assert loaded.detector.nu == 2
     assert loaded.detector.nv == 2
+
+
+def test_nxtomo_preprocess_defaults_detector_metadata_when_absent(tmp_path: Path) -> None:
+    raw = tmp_path / "raw.nxs"
+    corrected = tmp_path / "corrected.nxs"
+    write_raw_nxtomo(raw)
+    _remove_detector_metadata(raw)
+    with h5py.File(raw, "a") as handle:
+        detector = handle["entry/instrument/detector"]
+        del detector["x_pixel_size"]
+        del detector["y_pixel_size"]
+
+    preprocess_nxtomo(raw, corrected)
+
+    loaded = load_dataset(corrected)
+    assert loaded.detector is not None
+    assert loaded.detector.nu == 2
+    assert loaded.detector.nv == 2
+    assert loaded.detector.du == 1.0
+    assert loaded.detector.dv == 1.0
+    assert loaded.detector.det_center == (0.0, 0.0)
+
+
+def test_nxtomo_preprocess_uses_pixel_size_datasets_without_detector_json(
+    tmp_path: Path,
+) -> None:
+    raw = tmp_path / "raw.nxs"
+    corrected = tmp_path / "corrected.nxs"
+    write_raw_nxtomo(raw)
+    _remove_detector_metadata(raw)
+    with h5py.File(raw, "a") as handle:
+        detector = handle["entry/instrument/detector"]
+        _replace_scalar_dataset(detector, "x_pixel_size", 0.5)
+        _replace_scalar_dataset(detector, "y_pixel_size", 0.75)
+
+    preprocess_nxtomo(raw, corrected)
+
+    loaded = load_dataset(corrected)
+    assert loaded.detector is not None
+    assert loaded.detector.du == 0.5
+    assert loaded.detector.dv == 0.75
+    assert loaded.detector.det_center == (0.0, 0.0)
+
+
+def test_nxtomo_preprocess_prefers_detector_json_over_pixel_size_datasets(
+    tmp_path: Path,
+) -> None:
+    raw = tmp_path / "raw.nxs"
+    corrected = tmp_path / "corrected.nxs"
+    write_raw_nxtomo(raw)
+    with h5py.File(raw, "a") as handle:
+        detector = handle["entry/instrument/detector"]
+        _replace_scalar_dataset(detector, "x_pixel_size", 0.5)
+        _replace_scalar_dataset(detector, "y_pixel_size", 0.75)
+        detector.attrs["detector_meta_json"] = json.dumps(
+            {
+                "nu": 2,
+                "nv": 2,
+                "du": 2.0,
+                "dv": 3.0,
+                "det_center": [4.0, -5.0],
+            }
+        )
+
+    preprocess_nxtomo(raw, corrected)
+
+    loaded = load_dataset(corrected)
+    assert loaded.detector is not None
+    assert loaded.detector.du == 2.0
+    assert loaded.detector.dv == 3.0
+    assert loaded.detector.det_center == (4.0, -5.0)
+
+
+def test_nxtomo_preprocess_shifts_detector_center_after_crop(tmp_path: Path) -> None:
+    raw = tmp_path / "raw.nxs"
+    corrected = tmp_path / "cropped.nxs"
+    write_raw_nxtomo(raw)
+    with h5py.File(raw, "a") as handle:
+        detector = handle["entry/instrument/detector"]
+        detector.attrs["detector_meta_json"] = json.dumps(
+            {
+                "nu": 2,
+                "nv": 2,
+                "du": 2.0,
+                "dv": 3.0,
+                "det_center": [10.0, 20.0],
+            }
+        )
+    config = PreprocessConfig(crop="0:1,0:1")
+
+    preprocess_nxtomo(raw, corrected, config)
+
+    loaded = load_dataset(corrected)
+    assert loaded.detector is not None
+    assert loaded.detector.nu == 1
+    assert loaded.detector.nv == 1
+    assert loaded.detector.det_center == (9.0, 18.5)
 
 
 def test_nxtomo_preprocess_supports_view_selection_crop_and_transmission(tmp_path: Path) -> None:

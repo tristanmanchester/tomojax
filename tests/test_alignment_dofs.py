@@ -5,41 +5,28 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-# check-public-imports: allow-private
-from tomojax.align._geometry.geometry_blocks import normalize_geometry_dofs
-
-# check-public-imports: allow-private
-from tomojax.align._model.dof_specs import ActiveParameterView, dof_spec
-
-# check-public-imports: allow-private
-from tomojax.align._model.dofs import (
-    GEOMETRY_DOF_NAMES,
+from tomojax.align.api import (
+    AlignConfig,
+    GaugePolicyError,
+    alignment_params_payload,
+    dof_spec,
     normalize_alignment_dofs,
     normalize_bounds,
-    resolve_scoped_alignment_dofs,
+    normalize_geometry_dofs,
+    resolve_alignment_schedule,
+    save_alignment_checkpoint,
 )
-
-# check-public-imports: allow-private
-from tomojax.align._model.schedules import GaugePolicyError, resolve_alignment_schedule
-from tomojax.align.api import AlignConfig, save_alignment_checkpoint
-
-# check-public-imports: allow-private
-from tomojax.align.io.params_export import alignment_params_payload
-
-# check-public-imports: allow-private
-from tomojax.cli._align_checkpoint import checkpoint_metadata
-
-# check-public-imports: allow-private
-from tomojax.cli._align_command import build_parser
-
-# check-public-imports: allow-private
-from tomojax.cli._align_plan import build_align_cli_run_plan
+from tomojax.cli.align.checkpoint import (
+    AlignCliCheckpointMetadataContext,
+    initial_checkpoint_metadata,
+)
+from tomojax.cli.align.command import build_parser
+from tomojax.cli.align.plan import build_align_cli_run_plan
 from tomojax.geometry import Detector, Grid
 from tomojax.io import ProjectionDataset
 
 
 def test_setup_dofs_use_canonical_axis_names() -> None:
-    assert "tilt_deg" not in GEOMETRY_DOF_NAMES
     assert normalize_alignment_dofs("axis_rot_x_deg,axis_rot_y_deg") == (
         "axis_rot_x_deg",
         "axis_rot_y_deg",
@@ -55,7 +42,6 @@ def test_tilt_deg_is_not_a_supported_dof() -> None:
         lambda: normalize_alignment_dofs("tilt_deg"),
         lambda: normalize_geometry_dofs(("tilt_deg",)),
         lambda: normalize_bounds("tilt_deg=-1:1"),
-        lambda: ActiveParameterView.from_dofs(("tilt_deg",)),
         lambda: dof_spec("tilt_deg"),
     ):
         with pytest.raises(ValueError, match="tilt_deg"):
@@ -63,7 +49,7 @@ def test_tilt_deg_is_not_a_supported_dof() -> None:
 
 
 def test_setup_geometry_is_selected_by_optimise_dofs() -> None:
-    resolved = resolve_scoped_alignment_dofs(optimise_dofs=("det_u_px", "axis_rot_x_deg"))
+    resolved = resolve_alignment_schedule(optimise_dofs=("det_u_px", "axis_rot_x_deg"))
 
     assert resolved.active_pose_dofs == ()
     assert resolved.active_geometry_dofs == ("det_u_px", "axis_rot_x_deg")
@@ -91,7 +77,7 @@ def test_cli_geometry_dofs_route_to_multires(monkeypatch: pytest.MonkeyPatch) ->
     def load_dataset(_: object) -> ProjectionDataset:
         return dataset
 
-    monkeypatch.setattr("tomojax.cli._align_plan.load_projection_payload", load_dataset)
+    monkeypatch.setattr("tomojax.cli.align.plan.load_projection_payload", load_dataset)
 
     plan = build_align_cli_run_plan(
         parser,
@@ -119,7 +105,7 @@ def test_cli_resume_restores_geometry_dofs_from_checkpoint(
     def load_dataset(_: object) -> ProjectionDataset:
         return dataset
 
-    monkeypatch.setattr("tomojax.cli._align_plan.load_projection_payload", load_dataset)
+    monkeypatch.setattr("tomojax.cli.align.plan.load_projection_payload", load_dataset)
     initial_args = parser.parse_args(
         [
             "--data",
@@ -139,28 +125,18 @@ def test_cli_resume_restores_geometry_dofs_from_checkpoint(
         checkpoint_path,
         x=np.zeros((5, 5, 4), dtype=np.float32),
         params5=np.zeros((3, 5), dtype=np.float32),
-        metadata=checkpoint_metadata(
-            meta=initial_plan.meta,
-            projections=initial_plan.projections,
-            cfg=initial_plan.cfg,
-            command=initial_plan.command,
-            recon_grid=initial_plan.recon_grid,
-            detector=initial_plan.detector,
-            state_grid=initial_plan.recon_grid,
-            state_detector=initial_plan.detector,
-            gather_dtype=initial_plan.gather_dtype,
+        metadata=initial_checkpoint_metadata(
+            context=AlignCliCheckpointMetadataContext(
+                meta=initial_plan.meta,
+                projections=initial_plan.projections,
+                cfg=initial_plan.cfg,
+                command=initial_plan.command,
+                recon_grid=initial_plan.recon_grid,
+                detector=initial_plan.detector,
+                gather_dtype=initial_plan.gather_dtype,
+                schedule_metadata=initial_plan.schedule_metadata,
+            ),
             levels=initial_plan.run_levels,
-            level_index=0,
-            level_factor=1,
-            completed_outer_iters_in_level=0,
-            global_outer_iters_completed=0,
-            prev_factor=None,
-            L_prev=None,
-            small_impr_streak=0,
-            elapsed_offset=0.0,
-            level_complete=False,
-            run_complete=False,
-            schedule_metadata=initial_plan.schedule_metadata,
         ),
     )
 
@@ -188,7 +164,7 @@ def test_cli_pose_only_dofs_stay_single_resolution(monkeypatch: pytest.MonkeyPat
     def load_dataset(_: object) -> ProjectionDataset:
         return dataset
 
-    monkeypatch.setattr("tomojax.cli._align_plan.load_projection_payload", load_dataset)
+    monkeypatch.setattr("tomojax.cli.align.plan.load_projection_payload", load_dataset)
 
     plan = build_align_cli_run_plan(
         parser,

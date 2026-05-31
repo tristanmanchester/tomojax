@@ -13,15 +13,15 @@ and accelerator capability probes.
 - `PallasModuleCapability`
 - `resolve_pallas_module()`
 - `resolve_pallas_callable(...)`
-- `run_command(...)`
-- `check_output_command(...)`
+- `run_resolved_command(...)`
+- `check_output_resolved_command(...)`
 
 ## Invariants
 
 - Public imports go through `tomojax.backends`, not private `_memory` or
   `_subprocesses`.
-- Optional Pallas projector access goes through `resolve_pallas_callable(...)`
-  rather than direct cross-module imports from `tomojax.core.pallas_projector`.
+- Optional Pallas projector access is owned by `tomojax.core.pallas_resolver`;
+  this package re-exports that resolver for backend-facing callers.
 - Subprocess probes resolve executables and run with `shell=False`.
 - Memory estimates are conservative and deterministic when
   `free_bytes_override` is provided.

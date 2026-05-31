@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections import OrderedDict
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import functools
 import math
 from typing import TYPE_CHECKING, Any
@@ -15,7 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core import progress_iter
-from tomojax.core.geometry.base import Detector, Geometry, Grid, _grid_volume_origin
+from tomojax.core.geometry import Detector, Geometry, Grid, grid_volume_origin
 from tomojax.core.geometry.parallel import ParallelGeometry
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import backproject_view_T
@@ -26,14 +25,10 @@ from tomojax.core.validation import (
     validate_projection_stack,
 )
 
-from .filters import get_filter_np
+from .filters import get_rfft_filter_np
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
-
-_RFFT_FILTER_CACHE: OrderedDict[tuple[str, int, float, str], np.ndarray] = OrderedDict()
-_RFFT_FILTER_CACHE_CAP = 8
-_UNSET: Any = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,43 +56,26 @@ def default_fbp_scale(n_views: int) -> float:
     return float(np.pi / float(n_views))
 
 
-def _get_rfft_filter_cached(filter_name: str, nu: int, du: float, dtype: jnp.dtype) -> jnp.ndarray:
-    """Return the one-sided RFFT filter H_r cached by key.
+def _rfft_filter_array(filter_name: str, nu: int, du: float, dtype: jnp.dtype) -> jnp.ndarray:
+    """Return a device array for the host-cached one-sided RFFT filter.
 
     `jax.numpy.fft.rfft` already returns the non-redundant half-spectrum. Its
     interior bins should be multiplied by the one-sided filter values directly;
     doubling those coefficients would incorrectly double-count positive-frequency
     energy during `irfft` reconstruction.
-
-    - Key: (name, nu, du, dtype)
-    - Returns a JAX array of shape (nu//2 + 1,) with dtype matching rows dtype.
     """
-    key = (str(filter_name).lower(), int(nu), float(du), str(dtype))
-    if key in _RFFT_FILTER_CACHE:
-        _RFFT_FILTER_CACHE.move_to_end(key)
-        Hr_np = _RFFT_FILTER_CACHE[key]
-    else:
-        H_np = get_filter_np(filter_name, int(nu), float(du))  # np.float32 length nu
-        n_r = int(nu) // 2 + 1
-        Hr_np = H_np[:n_r].astype(np.float32, copy=False)
-        # Promote to float64 if rows dtype requests it
-        if str(dtype) in ("float64", "complex128"):
-            Hr_np = Hr_np.astype(np.float64, copy=False)
-        _RFFT_FILTER_CACHE[key] = Hr_np
-        if len(_RFFT_FILTER_CACHE) > _RFFT_FILTER_CACHE_CAP:
-            _RFFT_FILTER_CACHE.popitem(last=False)
+    Hr_np = get_rfft_filter_np(filter_name, int(nu), float(du), str(dtype))
     return jnp.asarray(Hr_np, dtype=dtype)
 
 
-def _fft_filter_rows(rows: jnp.ndarray, du: float, filter_name: str) -> jnp.ndarray:
+def _fft_filter_rows(rows: jnp.ndarray, rfft_filter: jnp.ndarray) -> jnp.ndarray:
     """Filter last axis of (..., nu) rows in frequency domain (rfft/irfft)."""
     nu = int(rows.shape[-1])
-    H_r = _get_rfft_filter_cached(filter_name, nu, du, rows.dtype)
     F = jnp.fft.rfft(rows, axis=-1)
-    return jnp.fft.irfft(F * H_r, n=int(nu), axis=-1)
+    return jnp.fft.irfft(F * rfft_filter, n=int(nu), axis=-1)
 
 
-_fft_filter_rows_jit = jax.jit(_fft_filter_rows, static_argnames=("du", "filter_name"))
+_fft_filter_rows_jit = jax.jit(_fft_filter_rows)
 
 
 def _bp_one(
@@ -186,10 +164,10 @@ _bp_batch_sum_jit = jax.jit(
 def _run_parallel_fbp_direct(
     T_all: jnp.ndarray,
     proj: jnp.ndarray,
+    rfft_filter: jnp.ndarray,
     *,
     grid: Grid,
     detector: Detector,
-    filter_name: str,
 ) -> jnp.ndarray:
     """Run parallel-beam FBP with direct voxel-domain backprojection.
 
@@ -199,7 +177,7 @@ def _run_parallel_fbp_direct(
     FBP can use the standard slice-wise parallel-beam backprojection directly.
     """
     n_views, nv, nu = map(int, proj.shape)
-    origin_x, origin_y, origin_z = _grid_volume_origin(grid)
+    origin_x, origin_y, origin_z = grid_volume_origin(grid)
     x = jnp.arange(int(grid.nx), dtype=jnp.float32) * jnp.float32(grid.vx) + jnp.float32(origin_x)
     y = jnp.arange(int(grid.ny), dtype=jnp.float32) * jnp.float32(grid.vy) + jnp.float32(origin_y)
     z = jnp.arange(int(grid.nz), dtype=jnp.float32) * jnp.float32(grid.vz) + jnp.float32(origin_z)
@@ -216,7 +194,7 @@ def _run_parallel_fbp_direct(
     step_weight = jnp.float32(float(grid.vy))
 
     rows = proj.reshape((n_views * nv, nu))
-    rows_f = _fft_filter_rows_jit(rows, du=float(detector.du), filter_name=filter_name)
+    rows_f = _fft_filter_rows_jit(rows, rfft_filter)
     filt = rows_f.reshape((n_views, nv, nu))
 
     def gather2(image: jnp.ndarray, iu: jnp.ndarray, iv: jnp.ndarray) -> jnp.ndarray:
@@ -264,7 +242,7 @@ def _run_parallel_fbp_direct(
 
 _run_parallel_fbp_direct_jit = jax.jit(
     _run_parallel_fbp_direct,
-    static_argnames=("grid", "detector", "filter_name"),
+    static_argnames=("grid", "detector"),
 )
 
 
@@ -397,7 +375,7 @@ def _cached_parallel_fbp_z_integer_pallas_call(
 def supports_parallel_fbp_z_integer(grid: Grid, detector: Detector) -> bool:
     """Return whether the detector rows align with z-slices for direct Pallas FBP."""
     tol = 1e-5
-    origin_z = float(_grid_volume_origin(grid)[2])
+    origin_z = float(grid_volume_origin(grid)[2])
     first = (origin_z - float(detector.det_center[1])) / float(detector.dv)
     first += float(detector.nv) / 2.0 - 0.5
     step = float(grid.vz) / float(detector.dv)
@@ -415,9 +393,10 @@ def run_parallel_fbp_direct_pallas(
     """Run the direct z-parallel Pallas FBP path for integer-aligned detector rows."""
     n_views, nv, nu = map(int, proj.shape)
     rows = proj.reshape((n_views * nv, nu))
-    rows_f = _fft_filter_rows_jit(rows, du=float(detector.du), filter_name=filter_name)
+    rfft_filter = _rfft_filter_array(filter_name, nu, float(detector.du), rows.dtype)
+    rows_f = _fft_filter_rows_jit(rows, rfft_filter)
     filt = rows_f.reshape((n_views, nv, nu))
-    vol_origin = _grid_volume_origin(grid)
+    vol_origin = grid_volume_origin(grid)
     call = _cached_parallel_fbp_z_integer_pallas_call(
         nx=int(grid.nx),
         ny=int(grid.ny),
@@ -481,21 +460,17 @@ def _run_fbp_fast_path(
     T_chunks = T_all.reshape((num_chunks, batch_size, 4, 4))
     y_chunks = proj.reshape((num_chunks, batch_size, nv, nu))
     valid_mask = (jnp.arange(total_views) < n_views).reshape((num_chunks, batch_size, 1, 1))
+    rfft_filter = _rfft_filter_array(filter_name, nu, float(detector.du), proj.dtype)
 
     def scan_chunks(
         T_chunks_in: jnp.ndarray,
         y_chunks_in: jnp.ndarray,
         valid_mask_in: jnp.ndarray,
+        rfft_filter_in: jnp.ndarray,
         det_grid_in: tuple[jnp.ndarray, jnp.ndarray] | None,
     ) -> jnp.ndarray:
         rows = y_chunks_in.reshape((num_chunks, batch_size * nv, nu))
-        rows_f = jax.vmap(
-            lambda chunk_rows: _fft_filter_rows_jit(
-                chunk_rows,
-                du=float(detector.du),
-                filter_name=filter_name,
-            )
-        )(rows)
+        rows_f = jax.vmap(lambda chunk_rows: _fft_filter_rows_jit(chunk_rows, rfft_filter_in))(rows)
         filt_chunks = rows_f.reshape((num_chunks, batch_size, nv, nu))
         filt_chunks = jnp.where(valid_mask_in, filt_chunks, 0.0)
 
@@ -520,7 +495,7 @@ def _run_fbp_fast_path(
         acc, _ = jax.lax.scan(body, init, (T_chunks_in, filt_chunks))
         return acc
 
-    return jax.jit(scan_chunks)(T_chunks, y_chunks, valid_mask, det_grid)
+    return jax.jit(scan_chunks)(T_chunks, y_chunks, valid_mask, rfft_filter, det_grid)
 
 
 def _run_fbp_with_backoff(
@@ -540,6 +515,7 @@ def _run_fbp_with_backoff(
     """Fallback path that retries smaller chunks after OOM without skipping views."""
     n_views, nv, nu = map(int, proj.shape)
     acc = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+    rfft_filter = _rfft_filter_array(filter_name, nu, float(detector.du), proj.dtype)
     b = int(batch_size)
     s = 0
 
@@ -557,11 +533,7 @@ def _run_fbp_with_backoff(
 
             valid_mask = (jnp.arange(b) < cur)[:, None, None]
             rows = y_chunk.reshape((b * nv, nu))
-            rows_f = _fft_filter_rows_jit(
-                rows,
-                du=float(detector.du),
-                filter_name=filter_name,
-            )
+            rows_f = _fft_filter_rows_jit(rows, rfft_filter)
             filt_chunk = rows_f.reshape((b, nv, nu))
             filt_chunk = jnp.where(valid_mask, filt_chunk, 0.0)
             acc = acc + _bp_batch_sum_jit(
@@ -586,6 +558,26 @@ def _run_fbp_with_backoff(
     return acc
 
 
+def _run_fbp_generic_with_oom_fallback(
+    *,
+    fast_path: Callable[[], jnp.ndarray],
+    backoff_path: Callable[[], jnp.ndarray],
+    view_progress: Iterator[int],
+    n_views: int,
+) -> jnp.ndarray:
+    """Run the compiled generic FBP path, falling back after asynchronous OOMs."""
+    try:
+        generic_acc = fast_path()
+        generic_acc.block_until_ready()
+        for _ in range(n_views):
+            next(view_progress, None)
+        return generic_acc
+    except Exception as exc:
+        if not _is_fbp_oom_error(exc):
+            raise
+        return backoff_path()
+
+
 def fbp(
     geometry: Geometry,
     grid: Grid,
@@ -593,12 +585,6 @@ def fbp(
     projections: jnp.ndarray,
     *,
     config: FBPConfig | None = None,
-    filter_name: str | object = _UNSET,
-    scale: float | None | object = _UNSET,
-    views_per_batch: int | object = _UNSET,
-    projector_unroll: int | object = _UNSET,
-    checkpoint_projector: bool | object = _UNSET,
-    gather_dtype: str | object = _UNSET,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
     """Filtered backprojection for parallel-ray geometry using the explicit adjoint.
@@ -607,21 +593,6 @@ def fbp(
     Memory-safe: filters and backprojects per view-batch.
     """
     cfg = FBPConfig() if config is None else config
-    updates: dict[str, object] = {}
-    if filter_name is not _UNSET:
-        updates["filter_name"] = str(filter_name)
-    if scale is not _UNSET:
-        updates["scale"] = None if scale is None else float(scale)
-    if views_per_batch is not _UNSET:
-        updates["views_per_batch"] = int(views_per_batch)
-    if projector_unroll is not _UNSET:
-        updates["projector_unroll"] = int(projector_unroll)
-    if checkpoint_projector is not _UNSET:
-        updates["checkpoint_projector"] = bool(checkpoint_projector)
-    if gather_dtype is not _UNSET:
-        updates["gather_dtype"] = str(gather_dtype)
-    if updates:
-        cfg = replace(cfg, **updates)
 
     validate_grid(grid, "fbp grid")
     n_views, _, _ = validate_projection_stack(
@@ -640,8 +611,8 @@ def fbp(
     view_progress = iter(progress_iter(range(n_views), total=n_views, desc="FBP: views"))
 
     def run_generic_path() -> jnp.ndarray:
-        try:
-            generic_acc = _run_fbp_fast_path(
+        def fast_path() -> jnp.ndarray:
+            return _run_fbp_fast_path(
                 T_all,
                 proj,
                 batch_size=b,
@@ -653,13 +624,8 @@ def fbp(
                 gather_dtype=cfg.gather_dtype,
                 det_grid=det_grid,
             )
-            generic_acc.block_until_ready()
-            for _ in range(n_views):
-                next(view_progress, None)
-            return generic_acc
-        except Exception as exc:
-            if not _is_fbp_oom_error(exc):
-                raise
+
+        def backoff_path() -> jnp.ndarray:
             return _run_fbp_with_backoff(
                 T_all,
                 proj,
@@ -674,14 +640,21 @@ def fbp(
                 view_progress=view_progress,
             )
 
+        return _run_fbp_generic_with_oom_fallback(
+            fast_path=fast_path,
+            backoff_path=backoff_path,
+            view_progress=view_progress,
+            n_views=n_views,
+        )
+
     if _can_use_direct_parallel_fbp(geometry, det_grid):
         try:
             acc = _run_parallel_fbp_direct_jit(
                 T_all,
                 proj,
+                _rfft_filter_array(cfg.filter_name, detector.nu, float(detector.du), proj.dtype),
                 grid=grid,
                 detector=detector,
-                filter_name=cfg.filter_name,
             )
             acc.block_until_ready()
             for _ in range(n_views):

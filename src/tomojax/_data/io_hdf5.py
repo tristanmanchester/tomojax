@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ._io_npz import convert, load_npz, save_npz
+from ._io_npz import load_npz, save_npz
 from ._io_nxtomo import load_nxtomo, save_nxtomo, validate_nxtomo
 from ._io_types import (
     DatasetValue,
@@ -24,7 +24,6 @@ __all__ = [
     "NXTomoMetadata",
     "SourceInfo",
     "ValidationReport",
-    "convert",
     "load_npz",
     "load_nxtomo",
     "save_npz",

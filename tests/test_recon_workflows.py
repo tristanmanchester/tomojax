@@ -8,7 +8,18 @@ import pytest
 
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 from tomojax.io import ProjectionDataset, load_dataset, save_dataset
-from tomojax.recon import FBPConfig, FistaConfig, default_fbp_scale, fbp, fista_tv
+from tomojax.recon import (
+    FBPConfig,
+    FistaConfig,
+    clear_filter_caches,
+    default_fbp_scale,
+    fbp,
+    fista_tv,
+)
+
+# check-public-imports: allow-private
+from tomojax.recon.fbp import _run_fbp_generic_with_oom_fallback
+from tomojax.recon.filters import get_filter_np
 
 
 def _tiny_geometry() -> tuple[Grid, Detector, ParallelGeometry]:
@@ -28,6 +39,19 @@ def test_default_fbp_scale_uses_positive_view_count() -> None:
         default_fbp_scale(0)
 
 
+def test_clear_filter_caches_rebuilds_read_only_filters() -> None:
+    clear_filter_caches()
+    first = get_filter_np("ramp", 4, 1.0)
+    second = get_filter_np("ramp", 4, 1.0)
+    assert first is second
+
+    clear_filter_caches()
+    rebuilt = get_filter_np("ramp", 4, 1.0)
+
+    assert rebuilt is not first
+    assert not rebuilt.flags.writeable
+
+
 @pytest.mark.numerical
 def test_fbp_ramp_filter_smoke_is_finite() -> None:
     grid, detector, geometry = _tiny_geometry()
@@ -45,11 +69,7 @@ def test_fbp_ramp_filter_smoke_is_finite() -> None:
     assert bool(jnp.all(jnp.isfinite(volume)))
 
 
-def test_fbp_generic_fast_path_synchronizes_before_oom_fallback(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    grid, detector, geometry = _tiny_geometry()
-    projections = jnp.ones((4, 4, 4), dtype=jnp.float32)
+def test_fbp_generic_fallback_helper_synchronizes_before_oom_backoff() -> None:
     calls: list[str] = []
 
     class AsyncFailure:
@@ -64,22 +84,17 @@ def test_fbp_generic_fast_path_synchronizes_before_oom_fallback(
     def fake_backoff(*args: object, **kwargs: object) -> jnp.ndarray:
         del args, kwargs
         calls.append("backoff")
-        return jnp.ones((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+        return jnp.ones((2, 2, 2), dtype=jnp.float32)
 
-    monkeypatch.setitem(fbp.__globals__, "_can_use_direct_parallel_fbp", lambda *_: False)
-    monkeypatch.setitem(fbp.__globals__, "_run_fbp_fast_path", fake_fast_path)
-    monkeypatch.setitem(fbp.__globals__, "_run_fbp_with_backoff", fake_backoff)
-
-    volume = fbp(
-        geometry,
-        grid,
-        detector,
-        projections,
-        config=FBPConfig(filter_name="ramp", views_per_batch=4),
+    volume = _run_fbp_generic_with_oom_fallback(
+        fast_path=fake_fast_path,
+        backoff_path=fake_backoff,
+        view_progress=iter(range(4)),
+        n_views=4,
     )
 
     assert calls == ["fast", "backoff"]
-    np.testing.assert_allclose(np.asarray(volume), np.pi / 4.0)
+    np.testing.assert_allclose(np.asarray(volume), 1.0)
 
 
 @pytest.mark.numerical

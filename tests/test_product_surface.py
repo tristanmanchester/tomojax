@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -28,10 +29,38 @@ def test_public_facades_import_cleanly() -> None:
         assert importlib.import_module(module_name) is not None
 
 
+def test_cli_imports_do_not_configure_jax_allocator(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("XLA_PYTHON_CLIENT_PREALLOCATE", "XLA_PYTHON_CLIENT_ALLOCATOR"):
+        monkeypatch.delenv(name, raising=False)
+
+    for module_name in (
+        "tomojax.cli.main",
+        "tomojax.cli.recon",
+        "tomojax.cli.simulate",
+        "tomojax.cli.align",
+    ):
+        module = importlib.import_module(module_name)
+        importlib.reload(module)
+
+    assert "XLA_PYTHON_CLIENT_PREALLOCATE" not in os.environ
+    assert "XLA_PYTHON_CLIENT_ALLOCATOR" not in os.environ
+
+
 def test_non_product_namespaces_are_absent() -> None:
     for module_name in ("tomojax.bench", "tomojax.verify", "tomojax.data"):
         with pytest.raises(ModuleNotFoundError):
             importlib.import_module(module_name)
+
+
+def test_io_root_surface_is_smaller_than_full_api() -> None:
+    import tomojax.io as io_root
+    import tomojax.io.api as io_api
+
+    assert len(io_root.__all__) < len(io_api.__all__)
+    assert "load_dataset" in io_root.__all__
+    assert "preprocess_nxtomo" in io_root.__all__
+    assert "inspect_dataset" not in io_root.__all__
+    assert "flat_dark_to_absorption" not in io_root.__all__
 
 
 def test_cli_catalog_is_product_only(capsys: pytest.CaptureFixture[str]) -> None:

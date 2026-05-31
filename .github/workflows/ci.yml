@@ -33,4 +33,4 @@ jobs:
         run: uv run python tools/check_public_imports.py
 
       - name: Tests
-        run: uv run pytest -q tests
+        run: uv run pytest -q tests --cov

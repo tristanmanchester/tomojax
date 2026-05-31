@@ -6,7 +6,7 @@ from collections.abc import Iterator
 import json
 import math
 from pathlib import Path
-from typing import Any, TypedDict, cast
+from typing import Any, cast
 
 import h5py
 import numpy as np
@@ -19,7 +19,6 @@ from tomojax._typed_arrays import (
     max_float,
     min_float,
     numpy_array,
-    numpy_float32_array,
     numpy_float64_array,
     numpy_int64_array,
     object_list,
@@ -29,153 +28,23 @@ from tomojax._typed_arrays import (
     sum_float64,
     true_count,
     unique_int_count_map,
-    write_image,
 )
-from tomojax.recon.quicklook import scale_to_uint8
+from tomojax.io._inspection_types import (
+    AlignmentReport,
+    AnglesReport,
+    DetectorMetadataReport,
+    FlatsDarksReport,
+    GeometryReport,
+    InspectionReport,
+    MemoryEstimatesReport,
+    NonfiniteReport,
+    PreprocessReport,
+    ProjectionReport,
+    ProjectionStatsReport,
+    WorkingSetEstimate,
+)
 
 type PathLike = str | Path
-
-
-class DetectorShapeReport(TypedDict):
-    """Detector pixel shape in v/u order."""
-
-    nv: int
-    nu: int
-
-
-class ProjectionStatsReport(TypedDict):
-    """Summary statistics for a projection stack."""
-
-    min: float | None
-    p01: float | None
-    mean: float | None
-    p50: float | None
-    p99: float | None
-    max: float | None
-
-
-class NonfiniteReport(TypedDict):
-    """Non-finite value counts for a projection stack."""
-
-    nan_count: int | None
-    posinf_count: int | None
-    neginf_count: int | None
-    inf_count: int | None
-
-
-class ProjectionReport(TypedDict):
-    """Projection dataset discovery and summary report."""
-
-    found: bool
-    path: str | None
-    shape: list[int] | None
-    dtype: str | None
-    n_views: int | None
-    detector_shape: DetectorShapeReport | None
-    storage_bytes: int | None
-    stats: ProjectionStatsReport
-    nonfinite: NonfiniteReport
-
-
-class DetectorMetadataReport(TypedDict):
-    """Detector metadata discovery report."""
-
-    found: bool
-    nu: object
-    nv: object
-    du: object
-    dv: object
-    det_center: object
-
-
-class AlignmentReport(TypedDict):
-    """Persisted alignment metadata discovery report."""
-
-    found: bool
-    params_found: bool
-    params_shape: list[int] | None
-    angle_offset_found: bool
-    angle_offset_shape: list[int] | None
-    misalign_spec_found: bool
-    gauge_fix_found: bool
-
-
-class AnglesReport(TypedDict):
-    """Angle metadata discovery report."""
-
-    found: bool
-    path: str | None
-    count: int | None
-    units: str | None
-    min_deg: float | None
-    max_deg: float | None
-    coverage_deg: float | None
-
-
-class GeometryReport(TypedDict):
-    """Persisted geometry metadata discovery report."""
-
-    found: bool
-    type: str | None
-    meta_found: bool
-    meta_keys: list[str]
-
-
-class FlatsDarksReport(TypedDict):
-    """Flat/dark frame discovery report."""
-
-    image_key_found: bool
-    image_key_path: str | None
-    image_key_counts: dict[str, int]
-    sample_count: int
-    flats_present: bool
-    darks_present: bool
-    flat_count: int
-    dark_count: int
-
-
-class PreprocessReport(TypedDict):
-    """Preprocessing metadata discovery report."""
-
-    found: bool
-    output_domain: str | None
-    formula: str | None
-    epsilon: str | None
-    clip_min: str | None
-    paths: dict[str, str]
-    overrides: dict[str, str | None]
-    crop_bounds: dict[str, object] | None
-
-
-class WorkingSetEstimate(TypedDict):
-    """Memory estimate for a reconstruction mode."""
-
-    estimated_working_set_bytes: int
-
-
-class MemoryEstimatesReport(TypedDict):
-    """Heuristic memory estimate report."""
-
-    feasible: bool
-    reconstruction_grid_shape: list[int] | None
-    input_projection_bytes: int | None
-    modes: dict[str, WorkingSetEstimate]
-    notes: str
-
-
-class InspectionReport(TypedDict):
-    """Top-level dataset inspection report."""
-
-    schema_version: int
-    input_path: str
-    projection: ProjectionReport
-    angles: AnglesReport
-    geometry: GeometryReport
-    detector_metadata: DetectorMetadataReport
-    flats_darks: FlatsDarksReport
-    preprocess: PreprocessReport
-    alignment: AlignmentReport
-    memory_estimates: MemoryEstimatesReport
 
 
 _PROJECTION_PATHS = (
@@ -273,7 +142,8 @@ def _sample_projection_values(dataset: h5py.Dataset) -> NDArray[np.float64]:
     return cast("NDArray[np.float64]", np.concatenate(samples))
 
 
-def _projection_stats(dataset: h5py.Dataset) -> tuple[ProjectionStatsReport, NonfiniteReport]:
+def projection_stats(dataset: h5py.Dataset) -> tuple[ProjectionStatsReport, NonfiniteReport]:
+    """Return finite-value projection statistics and nonfinite counts for an HDF5 dataset."""
     finite_count = 0
     finite_sum = 0.0
     finite_min = math.inf
@@ -362,7 +232,7 @@ def _projection_report(path: str | None, dataset: h5py.Dataset | None) -> Projec
     if dataset.ndim != 3:
         raise ValueError(f"projection dataset must be 3D (n_views, nv, nu), got {dataset.shape}")
 
-    stats, nonfinite = _projection_stats(dataset)
+    stats, nonfinite = projection_stats(dataset)
     n_views, nv, nu = (int(v) for v in dataset.shape)
     return {
         "found": True,
@@ -655,161 +525,20 @@ def inspect_dataset(path: PathLike) -> InspectionReport:
     return inspect_nxtomo(Path(path))
 
 
-def _fmt_value(value: object, *, precision: int = 6) -> str:
-    if value is None:
-        return "not found"
-    if isinstance(value, float):
-        return f"{value:.{precision}g}"
-    return str(value)
-
-
-def _fmt_bool_presence(found: bool) -> str:
-    return "present" if found else "not found"
-
-
-def format_inspection_report(report: InspectionReport) -> str:
-    """Format an inspection report for terminal output."""
-    projection = report["projection"]
-    angles = report["angles"]
-    geometry = report["geometry"]
-    detector_metadata = report["detector_metadata"]
-    flats_darks = report["flats_darks"]
-    preprocess = report["preprocess"]
-    alignment = report["alignment"]
-    memory = report["memory_estimates"]
-
-    lines = [f"TomoJAX inspection: {report['input_path']}"]
-    if projection["found"]:
-        stats = projection["stats"]
-        nonfinite = projection["nonfinite"]
-        lines.extend(
-            [
-                f"Projection shape: {projection['shape']}",
-                f"Dtype: {projection['dtype']}",
-                f"Views: {projection['n_views']}",
-                f"Detector shape: {projection['detector_shape']}",
-                (
-                    "Stats: "
-                    f"min={_fmt_value(stats['min'])}, "
-                    f"p01={_fmt_value(stats['p01'])}, "
-                    f"mean={_fmt_value(stats['mean'])}, "
-                    f"p50={_fmt_value(stats['p50'])}, "
-                    f"p99={_fmt_value(stats['p99'])}, "
-                    f"max={_fmt_value(stats['max'])}"
-                ),
-                (
-                    "NaN/Inf counts: "
-                    f"nan={nonfinite['nan_count']}, "
-                    f"+inf={nonfinite['posinf_count']}, "
-                    f"-inf={nonfinite['neginf_count']}, "
-                    f"inf_total={nonfinite['inf_count']}"
-                ),
-            ]
-        )
-    else:
-        lines.append("Projection shape: not found")
-
-    if angles["found"]:
-        lines.append(
-            "Angle coverage: "
-            f"{_fmt_value(angles['coverage_deg'])} deg "
-            f"(min={_fmt_value(angles['min_deg'])}, "
-            f"max={_fmt_value(angles['max_deg'])}, "
-            f"count={angles['count']}, "
-            f"units={_fmt_value(angles['units'])})"
-        )
-    else:
-        lines.append("Angle coverage: not found")
-
-    lines.append(f"Geometry type: {_fmt_value(geometry['type'])}")
-    lines.append(f"Geometry metadata: {_fmt_bool_presence(bool(geometry['meta_found']))}")
-    if detector_metadata["found"]:
-        lines.append(
-            "Detector metadata: "
-            f"nu={detector_metadata['nu']}, nv={detector_metadata['nv']}, "
-            f"du={detector_metadata['du']}, dv={detector_metadata['dv']}, "
-            f"det_center={detector_metadata['det_center']}"
-        )
-    else:
-        lines.append("Detector metadata: not found")
-
-    if flats_darks["flats_present"] or flats_darks["darks_present"]:
-        lines.append(
-            "Flats/darks: "
-            f"samples={flats_darks['sample_count']}, "
-            f"flats={flats_darks['flat_count']}, "
-            f"darks={flats_darks['dark_count']}, "
-            f"image_key={_fmt_value(flats_darks['image_key_path'])}"
-        )
-    elif flats_darks["image_key_found"]:
-        lines.append(
-            "Flats/darks: not found "
-            f"(image_key={_fmt_value(flats_darks['image_key_path'])}; no flat/dark frames)"
-        )
-    else:
-        lines.append("Flats/darks: not found")
-
-    if preprocess["found"]:
-        lines.append(
-            "Preprocess output: "
-            f"domain={_fmt_value(preprocess['output_domain'])}, "
-            f"epsilon={_fmt_value(preprocess['epsilon'])}, "
-            f"clip_min={_fmt_value(preprocess['clip_min'])}"
-        )
-    else:
-        lines.append("Preprocess output: not found")
-
-    if alignment["found"]:
-        parts: list[str] = []
-        if alignment["params_found"]:
-            parts.append(f"params shape={alignment['params_shape']}")
-        if alignment["angle_offset_found"]:
-            parts.append(f"angle_offset shape={alignment['angle_offset_shape']}")
-        if alignment["misalign_spec_found"]:
-            parts.append("misalign_spec present")
-        if alignment["gauge_fix_found"]:
-            parts.append("gauge_fix present")
-        lines.append(f"Alignment parameters: {', '.join(parts)}")
-    else:
-        lines.append("Alignment parameters: not found")
-
-    if memory["feasible"]:
-        lines.append(
-            "Memory estimates: "
-            f"grid={memory['reconstruction_grid_shape']}, "
-            f"fbp_fp32={memory['modes']['fbp_fp32']['estimated_working_set_bytes']} bytes, "
-            "fista_tv_fp32="
-            f"{memory['modes']['fista_tv_fp32']['estimated_working_set_bytes']} bytes, "
-            f"spdhg_tv_fp32={memory['modes']['spdhg_tv_fp32']['estimated_working_set_bytes']} bytes"
-        )
-    else:
-        lines.append(f"Memory estimates: not found ({memory['notes']})")
-
-    return "\n".join(lines)
-
-
-def save_projection_quicklook(input_path: PathLike, output_path: PathLike) -> Path:
-    """Save a percentile-scaled central projection PNG."""
-    in_path = Path(input_path)
-    out_path = Path(output_path)
-    with h5py.File(in_path, "r") as file:
-        _, dataset = _find_projection_dataset(file)
-        if dataset is None:
-            raise KeyError("Could not find projections dataset under /entry")
-        if dataset.ndim != 3:
-            raise ValueError(
-                f"projection dataset must be 3D (n_views, nv, nu), got {dataset.shape}"
-            )
-        central = numpy_float32_array(dataset[int(dataset.shape[0]) // 2])
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    write_image(out_path, scale_to_uint8(central))
-    return out_path
-
-
 __all__ = [
+    "AlignmentReport",
+    "AnglesReport",
+    "DetectorMetadataReport",
+    "FlatsDarksReport",
+    "GeometryReport",
     "InspectionReport",
-    "format_inspection_report",
+    "MemoryEstimatesReport",
+    "NonfiniteReport",
+    "PreprocessReport",
+    "ProjectionReport",
+    "ProjectionStatsReport",
+    "WorkingSetEstimate",
     "inspect_dataset",
     "inspect_nxtomo",
-    "save_projection_quicklook",
+    "projection_stats",
 ]

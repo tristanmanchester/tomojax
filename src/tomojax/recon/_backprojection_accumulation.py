@@ -11,7 +11,7 @@ import jax.numpy as jnp
 from tomojax.core.projector import sum_backproject_views_T
 
 if TYPE_CHECKING:
-    from tomojax.forward import CoreProjectionGeometry
+    from tomojax.forward.api import CoreProjectionGeometry
 
 
 def sum_backproject_views_chunked(

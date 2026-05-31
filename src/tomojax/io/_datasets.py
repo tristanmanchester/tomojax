@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING, Any, TypedDict, cast
 import imageio.v3 as iio
 import numpy as np
 
-from tomojax._data.geometry_meta import LoadedGeometryMeta, build_geometry_from_meta
-from tomojax._data.io_hdf5 import (
+from tomojax._data import (
+    LoadedGeometryMeta,
     LoadedNXTomo,
     NXTomoMetadata,
-    convert as _convert_dataset,
+    build_geometry_from_meta,
     load_npz,
     load_nxtomo,
     save_npz,
@@ -22,6 +22,7 @@ from tomojax._data.io_hdf5 import (
     validate_nxtomo,
 )
 from tomojax.core.geometry import Detector, Geometry, Grid
+from tomojax.io._tiff import TIFF_SUFFIXES, tiff_files
 
 __all__ = [
     "LoadedNXTomo",
@@ -49,7 +50,7 @@ if TYPE_CHECKING:
 type PathLike = str | Path
 
 _HDF5_SUFFIXES = {".nxs", ".h5", ".hdf5"}
-_TIFF_SUFFIXES = {".tif", ".tiff"}
+_TIFF_SUFFIXES = TIFF_SUFFIXES
 
 
 class ValidationReport(TypedDict):
@@ -93,7 +94,7 @@ def build_geometry_from_dataset_metadata(
 class ProjectionDataset:
     """Standard public in-memory projection dataset.
 
-    This is the clean v2 IO boundary. It contains measured projection data,
+    This is the current IO boundary. It contains measured projection data,
     normalized metadata needed by reconstruction/alignment code, and the
     optional reconstructed volume when a processed container stores one.
     """
@@ -160,8 +161,8 @@ class ProjectionDataset:
         """Return NXtomo metadata for saving this public dataset."""
         if self._metadata is not None:
             metadata = self.copy_metadata()
-            metadata.thetas_deg = np.asarray(self.angles_deg, dtype=np.float32)
-            metadata.volume = None if self.volume is None else np.asarray(self.volume)
+            metadata.thetas_deg = np.array(self.angles_deg, dtype=np.float32, copy=True)
+            metadata.volume = None if self.volume is None else np.array(self.volume, copy=True)
             metadata.grid = self.grid
             metadata.detector = self.detector
             metadata.geometry_type = self.geometry_type
@@ -169,17 +170,17 @@ class ProjectionDataset:
             metadata.angle_offset_deg = (
                 None
                 if self.angle_offset_deg is None
-                else np.asarray(self.angle_offset_deg, dtype=np.float32)
+                else np.array(self.angle_offset_deg, dtype=np.float32, copy=True)
             )
             metadata.align_params = (
-                None if self.align_params is None else np.asarray(self.align_params)
+                None if self.align_params is None else np.array(self.align_params, copy=True)
             )
             metadata.align_gauge = None if self.align_gauge is None else dict(self.align_gauge)
             metadata.sample_name = self.sample_name or metadata.sample_name or "sample"
             return metadata
         return NXTomoMetadata(
-            thetas_deg=np.asarray(self.angles_deg, dtype=np.float32),
-            volume=None if self.volume is None else np.asarray(self.volume),
+            thetas_deg=np.array(self.angles_deg, dtype=np.float32, copy=True),
+            volume=None if self.volume is None else np.array(self.volume, copy=True),
             grid=self.grid,
             detector=self.detector,
             geometry_type=self.geometry_type,
@@ -187,9 +188,11 @@ class ProjectionDataset:
             angle_offset_deg=(
                 None
                 if self.angle_offset_deg is None
-                else np.asarray(self.angle_offset_deg, dtype=np.float32)
+                else np.array(self.angle_offset_deg, dtype=np.float32, copy=True)
             ),
-            align_params=None if self.align_params is None else np.asarray(self.align_params),
+            align_params=(
+                None if self.align_params is None else np.array(self.align_params, copy=True)
+            ),
             align_gauge=None if self.align_gauge is None else dict(self.align_gauge),
             sample_name=self.sample_name or "sample",
         )
@@ -205,8 +208,8 @@ class ProjectionDataset:
                     metadata=self._metadata,
                 ).to_dataset_dict()
             )
-        metadata.thetas_deg = np.asarray(self.angles_deg, dtype=np.float32)
-        metadata.volume = None if self.volume is None else np.asarray(self.volume)
+        metadata.thetas_deg = np.array(self.angles_deg, dtype=np.float32, copy=True)
+        metadata.volume = None if self.volume is None else np.array(self.volume, copy=True)
         metadata.grid = self.grid
         metadata.detector = self.detector
         metadata.geometry_type = self.geometry_type
@@ -214,9 +217,16 @@ class ProjectionDataset:
         metadata.angle_offset_deg = (
             None
             if self.angle_offset_deg is None
-            else np.asarray(self.angle_offset_deg, dtype=np.float32)
+            else np.array(self.angle_offset_deg, dtype=np.float32, copy=True)
         )
-        metadata.align_params = None if self.align_params is None else np.asarray(self.align_params)
+        metadata.align_params = (
+            None
+            if self.align_params is None
+            else np.array(
+                self.align_params,
+                copy=True,
+            )
+        )
         metadata.align_gauge = None if self.align_gauge is None else dict(self.align_gauge)
         metadata.sample_name = self.sample_name or metadata.sample_name or "sample"
         return metadata
@@ -289,9 +299,23 @@ def save_dataset(path: PathLike, dataset: ProjectionDataset) -> None:
 
 def convert_dataset(input_path: PathLike, output_path: PathLike) -> None:
     """Convert between supported TomoJAX dataset container formats."""
-    # Keep the low-level implementation during migration so NPZ/NXtomo edge
-    # cases do not silently change while the public IO facade is introduced.
-    _convert_dataset(str(input_path), str(output_path))
+    in_path = Path(input_path)
+    out_path = Path(output_path)
+    input_suffix = in_path.suffix.lower()
+    output_suffix = out_path.suffix.lower()
+    if input_suffix == ".npz" and output_suffix in _HDF5_SUFFIXES:
+        data = load_npz(str(in_path))
+        save_nxtomo(
+            str(out_path),
+            data.projections,
+            metadata=data.copy_metadata(),
+        )
+        return
+    if input_suffix in _HDF5_SUFFIXES and output_suffix == ".npz":
+        data = load_nxtomo(str(in_path))
+        save_npz(str(out_path), data.projections, metadata=data.copy_metadata())
+        return
+    raise ValueError("Unsupported conversion. Use .npz <-> .nxs/.h5/.hdf5")
 
 
 def load_tiff_stack(
@@ -305,7 +329,7 @@ def load_tiff_stack(
 ) -> ProjectionDataset:
     """Load a TIFF projection stack with explicit angle metadata."""
     input_path = Path(path)
-    files = _tiff_files(input_path)
+    files = tiff_files(input_path)
     if not files:
         raise ValueError(f"no TIFF files found under {input_path}")
 
@@ -394,20 +418,6 @@ def _merge_geometry_metadata_dict(
         value = geometry_metadata.get(key)
         if value is not None:
             payload[key] = value
-
-
-def _tiff_files(path: Path) -> list[Path]:
-    if path.is_file():
-        if path.suffix.lower() not in _TIFF_SUFFIXES:
-            raise ValueError(f"{path} is not a TIFF file")
-        return [path]
-    if path.is_dir():
-        return sorted(
-            file
-            for file in path.iterdir()
-            if file.is_file() and file.suffix.lower() in _TIFF_SUFFIXES
-        )
-    raise FileNotFoundError(path)
 
 
 def _detector_from_mapping(payload: Mapping[str, Any]) -> Detector:

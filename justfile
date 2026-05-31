@@ -20,6 +20,9 @@ imports:
 test:
     uv run pytest -q
 
+test-cov:
+    uv run pytest -q tests --cov
+
 check: format lint typecheck imports test
 
 ci:
@@ -28,10 +31,10 @@ ci:
     uv run basedpyright
     uv run lint-imports --config .importlinter
     uv run python tools/check_public_imports.py
-    uv run pytest -q
+    uv run pytest -q tests --cov
 
 surface-check:
     uv run ruff format --check src tests tools examples
     uv run ruff check src tests tools examples
     uv run python tools/check_public_imports.py
-    uv run pytest -q tests
+    uv run pytest -q tests --cov

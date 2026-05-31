@@ -29,6 +29,12 @@ type DatasetValue = np.ndarray | JsonValue | GridDict | DetectorDict | SourceInf
 type LoadedDataset = dict[str, DatasetValue]
 
 
+def _copy_array_metadata(value: object) -> np.ndarray | None:
+    if value is None:
+        return None
+    return np.array(value, copy=True)
+
+
 @dataclass(slots=True)
 class NXTomoMetadata:
     """Portable metadata bundle for NXtomo persistence."""
@@ -82,17 +88,17 @@ class NXTomoMetadata:
         }:
             volume_axes_order = disk_volume_axes_order
         return cls(
-            thetas_deg=data.get("thetas_deg"),
-            image_key=data.get("image_key"),
+            thetas_deg=_copy_array_metadata(data.get("thetas_deg")),
+            image_key=_copy_array_metadata(data.get("image_key")),
             grid=data.get("grid"),
             detector=data.get("detector"),
             geometry_type="parallel" if geometry_type is None else str(geometry_type),
             geometry_meta=data.get("geometry_meta"),
-            volume=data.get("volume"),
-            align_params=data.get("align_params"),
+            volume=_copy_array_metadata(data.get("volume")),
+            align_params=_copy_array_metadata(data.get("align_params")),
             align_gauge=data.get("align_gauge"),
             geometry_calibration=data.get("geometry_calibration"),
-            angle_offset_deg=data.get("angle_offset_deg"),
+            angle_offset_deg=_copy_array_metadata(data.get("angle_offset_deg")),
             misalign_spec=data.get("misalign_spec"),
             simulation_artefacts=data.get("simulation_artefacts"),
             frame=None if data.get("frame") is None else str(data.get("frame")),

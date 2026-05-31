@@ -4,19 +4,14 @@ import numpy as np
 import pytest
 
 # check-public-imports: allow-private
-from tomojax.align._geometry.geometry_applier import setup_axis_unit
-
-# check-public-imports: allow-private
 from tomojax.align._geometry.geometry_blocks import _theta_span_from_geometry
 
 # check-public-imports: allow-private
 from tomojax.align._geometry.initializers import projection_pair_det_u_seed
 
 # check-public-imports: allow-private
-from tomojax.align._model.schedules import AlignmentSchedule, AlignmentStage
-
-# check-public-imports: allow-private
-from tomojax.align._model.state import SetupGeometryState
+from tomojax.align._stages._reconstruction_stage import _is_oom_error_message
+from tomojax.align.api import AlignmentSchedule, AlignmentStage, SetupGeometryState
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 
 
@@ -41,7 +36,11 @@ def test_fixed_volume_stages_reject_unsupported_optimizers(optimizer: str) -> No
 def test_axis_unit_lab_matches_projection_axis_unit_with_tilt() -> None:
     setup = SetupGeometryState.from_degrees(tilt_deg=5.0)
 
-    np.testing.assert_allclose(setup.axis_unit_lab(), setup_axis_unit(setup), rtol=1e-6)
+    axis = setup.axis_unit_lab()
+
+    assert np.linalg.norm(axis) == pytest.approx(1.0)
+    assert axis[1] == pytest.approx(np.sin(np.deg2rad(5.0)))
+    assert axis[2] == pytest.approx(np.cos(np.deg2rad(5.0)))
 
 
 def test_theta_span_uses_sampled_geometric_coverage() -> None:
@@ -52,6 +51,19 @@ def test_theta_span_uses_sampled_geometric_coverage() -> None:
     )
 
     assert _theta_span_from_geometry(geometry) == pytest.approx(247.5)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "RESOURCE_EXHAUSTED: allocator failed",
+        "resource_exhausted: allocator failed",
+        "out of memory while allocating buffer",
+        "Allocator could not reserve memory",
+    ],
+)
+def test_alignment_reconstruction_oom_detection_is_case_insensitive(message: str) -> None:
+    assert _is_oom_error_message(message)
 
 
 def test_projection_pair_detector_center_seed_uses_tomojax_sign_convention() -> None:

@@ -91,6 +91,7 @@ venv.bak/
 .cache/
 .coverage
 .coverage.*
+coverage.xml
 htmlcov/
 .tox/
 .nox/

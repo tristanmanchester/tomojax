@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import numpy as np
 
-from ._io_nxtomo import load_nxtomo, save_nxtomo
 from ._io_types import LoadedDataset, LoadedNXTomo, NXTomoMetadata
 
 
@@ -38,19 +37,3 @@ def _load_npz_dataset(path: str) -> LoadedDataset:
 def load_npz(path: str) -> LoadedNXTomo:
     """Load a compressed NPZ payload using the same typed shape as NXtomo."""
     return LoadedNXTomo.from_dataset(_load_npz_dataset(path))
-
-
-def convert(in_path: str, out_path: str) -> None:
-    """Convert between .npz and .nxs based on file extension."""
-    if in_path.endswith(".npz") and out_path.endswith((".nxs", ".h5", ".hdf5")):
-        data = load_npz(in_path)
-        save_nxtomo(
-            out_path,
-            data.projections,
-            metadata=data.copy_metadata(),
-        )
-    elif in_path.endswith((".nxs", ".h5", ".hdf5")) and out_path.endswith(".npz"):
-        data = load_nxtomo(in_path)
-        save_npz(out_path, data.projections, metadata=data.copy_metadata())
-    else:
-        raise ValueError("Unsupported conversion. Use .npz <-> .nxs/.h5/.hdf5")

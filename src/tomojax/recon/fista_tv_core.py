@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 
-from tomojax.backends import resolve_pallas_callable
 from tomojax.core.backend_policy import normalize_projector_backend
+from tomojax.core.pallas_resolver import resolve_pallas_callable
 from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
 from tomojax.recon._tv_ops import huber_tv_grad, huber_tv_value, isotropic_tv_value
 

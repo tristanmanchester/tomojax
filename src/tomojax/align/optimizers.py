@@ -104,8 +104,8 @@ class PoseLbfgsTransform:
 
 
 @dataclass(frozen=True)
-class PoseLbfgsLoopResult:
-    """Raw result from the low-level L-BFGS loop."""
+class LbfgsLoopResult:
+    """Raw result from the shared low-level L-BFGS loop."""
 
     z: jnp.ndarray
     best_z: jnp.ndarray | None
@@ -279,14 +279,20 @@ def _build_pose_lbfgs_transform(
     return PoseLbfgsTransform(z0=z0, params_from_z=params_from_z)
 
 
-def _run_pose_lbfgs_optax_loop(  # noqa: PLR0912, PLR0915
+def _run_lbfgs_optax_loop(  # noqa: PLR0911, PLR0912, PLR0915
     *,
     z0: jnp.ndarray,
-    objective_jit: Callable[[jnp.ndarray], jnp.ndarray],
-    cfg: PoseLbfgsConfig,
-    is_expected_failure: Callable[[Exception], bool],
-) -> PoseLbfgsLoopResult:
+    value_fn: Callable[[jnp.ndarray], jnp.ndarray],
+    cfg: PoseLbfgsConfig | ActiveLbfgsConfig,
+    is_expected_failure: Callable[[Exception], bool] | None = None,
+    value_and_grad_fn: Callable[[jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]] | None = None,
+) -> LbfgsLoopResult:
     optax = _optax_module()
+
+    def _never_expected(_exc: Exception) -> bool:
+        return False
+
+    expected_failure = _never_expected if is_expected_failure is None else is_expected_failure
     best_value = math.inf
     best_z: jnp.ndarray | None = None
     eval_count = 0
@@ -309,16 +315,44 @@ def _run_pose_lbfgs_optax_loop(  # noqa: PLR0912, PLR0915
         ),
     )
     opt_state = solver.init(z)
-    value_and_grad = optax.value_and_grad_from_state(objective_jit)
+    value_and_grad = (
+        optax.value_and_grad_from_state(value_fn)
+        if value_and_grad_fn is None
+        else value_and_grad_fn
+    )
+
+    def evaluate(z_value: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        if value_and_grad_fn is None:
+            return value_and_grad(z_value, state=opt_state)
+        return value_and_grad_fn(z_value)
 
     try:
-        initial_value_jax, initial_grad = value_and_grad(z, state=opt_state)
+        initial_value_jax, initial_grad = evaluate(z)
+    except Exception as exc:
+        if expected_failure(exc):
+            return LbfgsLoopResult(
+                z=z,
+                best_z=best_z,
+                best_value=best_value,
+                eval_count=eval_count,
+                total_line_search_steps=total_line_search_steps,
+                initial_value=None,
+                initial_grad_norm=None,
+                success=False,
+                message="initial L-BFGS objective/gradient failed",
+                nit=0,
+                last_grad_norm=math.inf,
+                last_step_norm=0.0,
+                failure_message=f"initial L-BFGS objective/gradient failed: {exc}",
+            )
+        raise
+    try:
         initial_value = float(initial_value_jax)
         initial_grad_norm = float(jnp.linalg.norm(initial_grad))
         record_value(initial_value, z)
     except Exception as exc:
-        if is_expected_failure(exc):
-            return PoseLbfgsLoopResult(
+        if expected_failure(exc):
+            return LbfgsLoopResult(
                 z=z,
                 best_z=best_z,
                 best_value=best_value,
@@ -336,7 +370,7 @@ def _run_pose_lbfgs_optax_loop(  # noqa: PLR0912, PLR0915
         raise
 
     if not math.isfinite(initial_value) or not math.isfinite(initial_grad_norm):
-        return PoseLbfgsLoopResult(
+        return LbfgsLoopResult(
             z=z,
             best_z=best_z,
             best_value=best_value,
@@ -367,11 +401,11 @@ def _run_pose_lbfgs_optax_loop(  # noqa: PLR0912, PLR0915
         for iteration in range(int(cfg.maxiter)):
             if success:
                 break
-            value, grad = value_and_grad(z, state=opt_state)
+            value, grad = evaluate(z)
             value_f = float(value)
             grad_norm = float(jnp.linalg.norm(grad))
             if not math.isfinite(value_f) or not math.isfinite(grad_norm):
-                return PoseLbfgsLoopResult(
+                return LbfgsLoopResult(
                     z=z,
                     best_z=best_z,
                     best_value=best_value,
@@ -400,11 +434,11 @@ def _run_pose_lbfgs_optax_loop(  # noqa: PLR0912, PLR0915
                 z,
                 value=value,
                 grad=grad,
-                value_fn=objective_jit,
+                value_fn=value_fn,
             )
             z_next = optax.apply_updates(z, updates)
             if not bool(jnp.all(jnp.isfinite(z_next))):
-                return PoseLbfgsLoopResult(
+                return LbfgsLoopResult(
                     z=z,
                     best_z=best_z,
                     best_value=best_value,
@@ -444,8 +478,8 @@ def _run_pose_lbfgs_optax_loop(  # noqa: PLR0912, PLR0915
                     success = True
                     message = f"Optax L-BFGS relative objective change {rel_change:.3e} <= ftol"
     except Exception as exc:
-        if is_expected_failure(exc):
-            return PoseLbfgsLoopResult(
+        if expected_failure(exc):
+            return LbfgsLoopResult(
                 z=z,
                 best_z=best_z,
                 best_value=best_value,
@@ -463,7 +497,7 @@ def _run_pose_lbfgs_optax_loop(  # noqa: PLR0912, PLR0915
             )
         raise
 
-    return PoseLbfgsLoopResult(
+    return LbfgsLoopResult(
         z=z,
         best_z=best_z,
         best_value=best_value,
@@ -563,9 +597,9 @@ def run_pose_lbfgs(  # noqa: PLR0915
         return jnp.where(jnp.isfinite(value), value, jnp.asarray(1e30, dtype=value.dtype))
 
     objective_jit = jax.jit(_objective)
-    loop = _run_pose_lbfgs_optax_loop(
+    loop = _run_lbfgs_optax_loop(
         z0=transform.z0,
-        objective_jit=objective_jit,
+        value_fn=objective_jit,
         cfg=cfg,
         is_expected_failure=is_expected_failure,
     )
@@ -795,7 +829,7 @@ def run_active_validation_lm(  # noqa: PLR0915
     )
 
 
-def run_active_lbfgs(  # noqa: PLR0915
+def run_active_lbfgs(
     *,
     state: AlignmentState,
     view: ActiveParameterView,
@@ -835,69 +869,38 @@ def run_active_lbfgs(  # noqa: PLR0915
         grad_u = jnp.where(jnp.isfinite(grad_u), grad_u, jnp.zeros_like(grad_u))
         return value, grad_u
 
-    optax = _optax_module()
-    value_and_grad = _value_and_grad
-    initial_value, initial_grad = value_and_grad(u)
-    initial_loss = float(initial_value)
-    initial_grad_norm = float(jnp.linalg.norm(initial_grad))
-    if not math.isfinite(initial_loss) or not math.isfinite(initial_grad_norm):
+    loop = _run_lbfgs_optax_loop(
+        z0=u,
+        value_fn=_objective,
+        value_and_grad_fn=_value_and_grad,
+        cfg=cfg,
+    )
+    if loop.failure_message is not None:
         return ActiveOptimizerResult(
             state=state,
-            loss=initial_loss,
+            loss=(
+                float(loop.failure_initial_loss)
+                if loop.failure_initial_loss is not None
+                else float("nan")
+            ),
             accepted=False,
             stats={
                 "active_lbfgs_backend": "optax",
+                "active_lbfgs_success": False,
                 "active_lbfgs_accepted": False,
-                "active_lbfgs_initial_loss": initial_loss if math.isfinite(initial_loss) else None,
+                "active_lbfgs_initial_loss": loop.failure_initial_loss,
                 "active_lbfgs_final_loss": None,
-                "active_lbfgs_failure_reason": "non-finite initial objective/gradient",
+                "active_lbfgs_best_loss": (
+                    float(loop.best_value) if math.isfinite(loop.best_value) else None
+                ),
+                "active_lbfgs_nit": int(loop.nit),
+                "active_lbfgs_failure_reason": loop.failure_message,
             },
         )
-
-    solver = optax.lbfgs(
-        memory_size=int(cfg.memory_size),
-        linesearch=optax.scale_by_zoom_linesearch(
-            max_linesearch_steps=int(cfg.maxls),
-            approx_dec_rtol=float(cfg.ftol),
-        ),
-    )
-    opt_state = solver.init(u)
-    best_u = u
-    best_loss = initial_loss
-    last_grad_norm = initial_grad_norm
-    last_step_norm = 0.0
-    nit = 0
-    success = initial_grad_norm <= float(cfg.gtol)
-
-    for iteration in range(int(cfg.maxiter)):
-        if success:
-            break
-        value, grad = value_and_grad(u)
-        value_f = float(value)
-        grad_norm = float(jnp.linalg.norm(grad))
-        if math.isfinite(value_f) and value_f < best_loss:
-            best_loss = value_f
-            best_u = u
-        if grad_norm <= float(cfg.gtol):
-            success = True
-            last_grad_norm = grad_norm
-            break
-        updates, opt_state = solver.update(
-            grad,
-            opt_state,
-            u,
-            value=value,
-            grad=grad,
-            value_fn=_objective,
-        )
-        u_next = optax.apply_updates(u, updates)
-        if not bool(jnp.all(jnp.isfinite(u_next))):
-            break
-        last_step_norm = float(jnp.linalg.norm(u_next - u))
-        last_grad_norm = grad_norm
-        u = u_next
-        nit = iteration + 1
-
+    initial_loss = float(loop.initial_value)
+    initial_grad_norm = float(loop.initial_grad_norm)
+    best_u = loop.best_z if loop.best_z is not None else loop.z
+    best_loss = float(loop.best_value) if math.isfinite(loop.best_value) else initial_loss
     final_state = _state_from_u(best_u)
     final_loss = float(_objective(best_u))
     accepted = math.isfinite(final_loss) and final_loss <= initial_loss
@@ -911,14 +914,14 @@ def run_active_lbfgs(  # noqa: PLR0915
     stats = {
         "active_lbfgs_backend": "optax",
         "active_lbfgs_accepted": bool(accepted),
-        "active_lbfgs_success": bool(success),
+        "active_lbfgs_success": bool(loop.success),
         "active_lbfgs_initial_loss": initial_loss,
         "active_lbfgs_final_loss": final_loss,
         "active_lbfgs_best_loss": best_loss,
-        "active_lbfgs_nit": int(nit),
+        "active_lbfgs_nit": int(loop.nit),
         "active_lbfgs_initial_grad_norm": initial_grad_norm,
-        "active_lbfgs_final_grad_norm": last_grad_norm,
-        "active_lbfgs_last_step_norm": last_step_norm,
+        "active_lbfgs_final_grad_norm": float(loop.last_grad_norm),
+        "active_lbfgs_last_step_norm": float(loop.last_step_norm),
         **optimizer_step_stats(view=view, before=state, after=final_state, grad_whitened=z_grad),
     }
     return ActiveOptimizerResult(

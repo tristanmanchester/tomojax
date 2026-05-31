@@ -3,11 +3,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cache
+import logging
 import math
 import os
 from typing import cast
 
-from tomojax.backends._subprocesses import check_output_command
+from tomojax.backends._subprocesses import check_output_resolved_command
+
+LOG = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -107,8 +110,11 @@ def device_free_memory_bytes() -> int | None:
             free = _free_bytes_from_memory_info(memory_stats())
             if free is not None:
                 return free
-    except Exception:
-        pass
+    except Exception as exc:
+        LOG.debug(
+            "Device memory probe failed; falling back to host available memory: %s",
+            exc,
+        )
     return _host_available_memory_bytes()
 
 
@@ -229,7 +235,13 @@ def estimate_views_per_batch_info(
     cap_default = 8
     try:
         cap_env = int(os.getenv("TOMOJAX_MAX_VIEWS_PER_BATCH", str(cap_default)))
-    except Exception:
+    except Exception as exc:
+        LOG.debug(
+            "Ignoring invalid TOMOJAX_MAX_VIEWS_PER_BATCH value %r; using %d: %s",
+            os.getenv("TOMOJAX_MAX_VIEWS_PER_BATCH"),
+            cap_default,
+            exc,
+        )
         cap_env = cap_default
     # Additional dynamic caps for very large volumes
     if vox >= 512**3:
@@ -277,11 +289,21 @@ def _device_supports_dtype(dtype_name: str) -> bool:
     try:
         import jax  # type: ignore
         import jax.numpy as jnp  # type: ignore
-    except Exception:
+    except Exception as exc:
+        LOG.debug(
+            "Could not import JAX while probing %s support; using fp32 fallback: %s",
+            dtype_name,
+            exc,
+        )
         return False
     try:
         devs = jax.devices("gpu")
-    except Exception:
+    except Exception as exc:
+        LOG.debug(
+            "Could not list GPU devices while probing %s support; using fp32 fallback: %s",
+            dtype_name,
+            exc,
+        )
         return False
     if not devs:
         return False
@@ -294,7 +316,12 @@ def _device_supports_dtype(dtype_name: str) -> bool:
         arr = jnp.ones((1,), dtype=dtype)
         fn(arr).block_until_ready()
         return True
-    except Exception:
+    except Exception as exc:
+        LOG.debug(
+            "JIT probe for %s support failed; using lower-precision fallback chain: %s",
+            dtype_name,
+            exc,
+        )
         return False
 
 
@@ -302,7 +329,7 @@ def _device_supports_dtype(dtype_name: str) -> bool:
 def _gpu_compute_capability() -> tuple[int, int] | None:
     """Return (major, minor) compute capability for the first CUDA device, if available."""
     try:
-        output = check_output_command(  # nosec B603,B607
+        output = check_output_resolved_command(  # nosec B603,B607
             ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"],
             stderr=-3,
             text=True,
@@ -312,8 +339,8 @@ def _gpu_compute_capability() -> tuple[int, int] | None:
         if len(parts) >= 2:
             major, minor = int(parts[0]), int(parts[1])
             return major, minor
-    except Exception:
-        pass
+    except Exception as exc:
+        LOG.debug("CUDA compute capability probe failed; using dtype JIT probe: %s", exc)
     return None
 
 
@@ -326,5 +353,6 @@ def _current_backend() -> str | None:
         if backend:
             return backend
         return os.environ.get("JAX_PLATFORM_NAME")
-    except Exception:
+    except Exception as exc:
+        LOG.debug("JAX backend probe failed; using fp32 gather default: %s", exc)
         return None

@@ -1,4 +1,4 @@
-"""V2 forward projection through the core trilinear ray operator."""
+"""Forward projection through the core trilinear ray operator."""
 # pyright: reportAny=false, reportUnknownArgumentType=false
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
 
@@ -22,20 +22,39 @@ from tomojax.geometry import (
 if TYPE_CHECKING:
     from tomojax.geometry import GeometryState
 
-V2ProjectionOperatorName = Literal["core_trilinear_ray"]
+ProjectionOperatorName = Literal["core_trilinear_ray"]
 
-PROJECTION_OPERATOR: V2ProjectionOperatorName = "core_trilinear_ray"
+PROJECTION_OPERATOR: ProjectionOperatorName = "core_trilinear_ray"
+
+
+@dataclass(frozen=True)
+class ProjectionArrayGeometryInput:
+    """Pose and setup arrays for reference forward projection."""
+
+    theta_rad: jax.Array
+    dx_px: jax.Array
+    dz_px: jax.Array
+    alpha_rad: jax.Array | float = 0.0
+    beta_rad: jax.Array | float = 0.0
+    detector_roll_rad: jax.Array | float = 0.0
+    axis_rot_x_rad: jax.Array | float = 0.0
+    axis_rot_y_rad: jax.Array | float = 0.0
+    nominal_axis_unit: jax.Array | tuple[float, float, float] = (0.0, 0.0, 1.0)
+    acquisition_model: str = "parallel"
+    laminography_tilt_rad: jax.Array | float = 0.0
+    laminography_tilt_about: str = "x"
+    detector_shape: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
 class CoreProjectionGeometry:
-    """Core projector geometry derived from the supported v2 geometry state."""
+    """Core projector geometry derived from the supported geometry state."""
 
     grid: Grid
     detector: Detector
     t_all: jax.Array
     det_grid: tuple[jax.Array, jax.Array]
-    operator: V2ProjectionOperatorName = PROJECTION_OPERATOR
+    operator: ProjectionOperatorName = PROJECTION_OPERATOR
     step_size: float | None = None
     n_steps: int | None = None
     gather_dtype: str = "fp32"
@@ -73,11 +92,7 @@ class CoreProjectionGeometry:
 
 
 def project_parallel_reference(volume: jax.Array, geometry: GeometryState) -> jax.Array:
-    """Project a 3D volume with the core trilinear ray projector.
-
-    The public v2 name is preserved for API continuity, but the implementation
-    is intentionally no longer the old rotate-and-sum approximation.
-    """
+    """Project a 3D volume from a GeometryState with the core trilinear ray projector."""
     vol = jnp.asarray(volume, dtype=jnp.float32)
     if vol.ndim != 3:
         raise ValueError("volume must be 3D")
@@ -91,66 +106,43 @@ def project_parallel_reference(volume: jax.Array, geometry: GeometryState) -> ja
     axis_rot_x = jnp.asarray(geometry.setup.axis_rot_x_rad.value, dtype=jnp.float32)
     axis_rot_y = jnp.asarray(geometry.setup.axis_rot_y_rad.value, dtype=jnp.float32)
     nominal_axis = nominal_axis_unit_from_geometry(geometry)
-    return project_parallel_reference_arrays(
+    return project_parallel_reference_from_input(
         vol,
-        theta_rad=theta,
-        alpha_rad=alpha,
-        beta_rad=beta,
-        dx_px=dx,
-        dz_px=dz,
-        detector_roll_rad=detector_roll,
-        axis_rot_x_rad=axis_rot_x,
-        axis_rot_y_rad=axis_rot_y,
-        nominal_axis_unit=nominal_axis,
-        acquisition_model=geometry.acquisition.model,
-        laminography_tilt_rad=geometry.acquisition.laminography_tilt_rad,
-        laminography_tilt_about=geometry.acquisition.laminography_tilt_about,
+        ProjectionArrayGeometryInput(
+            theta_rad=theta,
+            alpha_rad=alpha,
+            beta_rad=beta,
+            dx_px=dx,
+            dz_px=dz,
+            detector_roll_rad=detector_roll,
+            axis_rot_x_rad=axis_rot_x,
+            axis_rot_y_rad=axis_rot_y,
+            nominal_axis_unit=nominal_axis,
+            acquisition_model=geometry.acquisition.model,
+            laminography_tilt_rad=geometry.acquisition.laminography_tilt_rad,
+            laminography_tilt_about=geometry.acquisition.laminography_tilt_about,
+        ),
     )
 
 
-def project_parallel_reference_arrays(
+def project_parallel_reference_from_input(
     volume: jax.Array,
-    *,
-    theta_rad: jax.Array,
-    dx_px: jax.Array,
-    dz_px: jax.Array,
-    alpha_rad: jax.Array | float = 0.0,
-    beta_rad: jax.Array | float = 0.0,
-    detector_roll_rad: jax.Array | float = 0.0,
-    axis_rot_x_rad: jax.Array | float = 0.0,
-    axis_rot_y_rad: jax.Array | float = 0.0,
-    nominal_axis_unit: jax.Array | tuple[float, float, float] = (0.0, 0.0, 1.0),
-    acquisition_model: str = "parallel",
-    laminography_tilt_rad: jax.Array | float = 0.0,
-    laminography_tilt_about: str = "x",
-    detector_shape: tuple[int, int] | None = None,
+    geometry_input: ProjectionArrayGeometryInput,
 ) -> jax.Array:
-    """Project a volume from supported v2 pose arrays using core trilinear rays."""
+    """Project a volume from supported pose/setup arrays using core trilinear rays."""
     vol = jnp.asarray(volume, dtype=jnp.float32)
     if vol.ndim != 3:
         raise ValueError("volume must be 3D")
-    theta = jnp.asarray(theta_rad, dtype=jnp.float32)
-    alpha = _pose_array_like(alpha_rad, theta, name="alpha_rad")
-    beta = _pose_array_like(beta_rad, theta, name="beta_rad")
-    dx = jnp.asarray(dx_px, dtype=jnp.float32)
-    dz = jnp.asarray(dz_px, dtype=jnp.float32)
+    theta = jnp.asarray(geometry_input.theta_rad, dtype=jnp.float32)
+    _pose_array_like(geometry_input.alpha_rad, theta, name="alpha_rad")
+    _pose_array_like(geometry_input.beta_rad, theta, name="beta_rad")
+    dx = jnp.asarray(geometry_input.dx_px, dtype=jnp.float32)
+    dz = jnp.asarray(geometry_input.dz_px, dtype=jnp.float32)
     if theta.shape != dx.shape or theta.shape != dz.shape:
         raise ValueError("theta_rad, dx_px, and dz_px must have matching shapes")
-    core = core_projection_geometry_from_arrays(
+    core = core_projection_geometry_from_input(
         _volume_shape(vol.shape),
-        theta_rad=theta,
-        alpha_rad=alpha,
-        beta_rad=beta,
-        dx_px=dx,
-        dz_px=dz,
-        detector_roll_rad=detector_roll_rad,
-        axis_rot_x_rad=axis_rot_x_rad,
-        axis_rot_y_rad=axis_rot_y_rad,
-        nominal_axis_unit=nominal_axis_unit,
-        acquisition_model=acquisition_model,
-        laminography_tilt_rad=laminography_tilt_rad,
-        laminography_tilt_about=laminography_tilt_about,
-        detector_shape=detector_shape,
+        geometry_input,
     )
 
     def project_one(t_view: jax.Array) -> jax.Array:
@@ -181,7 +173,7 @@ def core_projection_geometry_from_state(
     step_size: float | None = None,
     n_steps: int | None = None,
 ) -> CoreProjectionGeometry:
-    """Adapt supported v2 geometry state to core Grid/Detector/T_all."""
+    """Adapt a supported geometry state to core Grid/Detector/T_all."""
     theta = jnp.asarray(geometry.theta_total_rad(), dtype=jnp.float32)
     alpha = jnp.asarray(geometry.pose.alpha_rad, dtype=jnp.float32)
     beta = jnp.asarray(geometry.pose.beta_rad, dtype=jnp.float32)
@@ -192,7 +184,7 @@ def core_projection_geometry_from_state(
     axis_rot_x = jnp.asarray(geometry.setup.axis_rot_x_rad.value, dtype=jnp.float32)
     axis_rot_y = jnp.asarray(geometry.setup.axis_rot_y_rad.value, dtype=jnp.float32)
     nominal_axis = nominal_axis_unit_from_geometry(geometry)
-    return core_projection_geometry_from_arrays(
+    return _core_projection_geometry_from_arrays(
         volume_shape,
         theta_rad=theta,
         alpha_rad=alpha,
@@ -215,7 +207,41 @@ def core_projection_geometry_from_state(
     )
 
 
-def core_projection_geometry_from_arrays(
+def core_projection_geometry_from_input(
+    volume_shape: tuple[int, int, int],
+    geometry_input: ProjectionArrayGeometryInput,
+    *,
+    gather_dtype: str = "fp32",
+    checkpoint_projector: bool = True,
+    projector_unroll: int = 1,
+    step_size: float | None = None,
+    n_steps: int | None = None,
+) -> CoreProjectionGeometry:
+    """Adapt grouped pose/setup arrays to core Grid/Detector/T_all geometry."""
+    return _core_projection_geometry_from_arrays(
+        volume_shape,
+        theta_rad=geometry_input.theta_rad,
+        alpha_rad=geometry_input.alpha_rad,
+        beta_rad=geometry_input.beta_rad,
+        dx_px=geometry_input.dx_px,
+        dz_px=geometry_input.dz_px,
+        detector_roll_rad=geometry_input.detector_roll_rad,
+        axis_rot_x_rad=geometry_input.axis_rot_x_rad,
+        axis_rot_y_rad=geometry_input.axis_rot_y_rad,
+        nominal_axis_unit=geometry_input.nominal_axis_unit,
+        acquisition_model=geometry_input.acquisition_model,
+        laminography_tilt_rad=geometry_input.laminography_tilt_rad,
+        laminography_tilt_about=geometry_input.laminography_tilt_about,
+        detector_shape=geometry_input.detector_shape,
+        gather_dtype=gather_dtype,
+        checkpoint_projector=checkpoint_projector,
+        projector_unroll=projector_unroll,
+        step_size=step_size,
+        n_steps=n_steps,
+    )
+
+
+def _core_projection_geometry_from_arrays(
     volume_shape: tuple[int, int, int],
     *,
     theta_rad: jax.Array,
@@ -340,7 +366,7 @@ def _pose_array_like(value: jax.Array | float, theta: jax.Array, *, name: str) -
 
 
 def nominal_axis_unit_from_geometry(geometry: GeometryState) -> jax.Array:
-    """Return the nominal rotation-axis unit vector for a v2 geometry state."""
+    """Return the nominal rotation-axis unit vector for a geometry state."""
     acquisition = geometry.acquisition
     if acquisition.model == "parallel":
         return jnp.asarray([0.0, 0.0, 1.0], dtype=jnp.float32)

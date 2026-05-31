@@ -58,6 +58,49 @@ class FistaScanState(NamedTuple):
     iters_done: jnp.ndarray
 
 
+@dataclass(frozen=True)
+class _FistaConstraints:
+    positivity: bool
+    lower_bound: float | None
+    upper_bound: float | None
+
+
+@dataclass(frozen=True)
+class _FistaRuntime:
+    config: FistaConfig
+    regulariser: Regulariser
+    huber_delta: float
+    constraints: _FistaConstraints
+    x0: jnp.ndarray
+    z0: jnp.ndarray
+    t0: float
+    poses: jnp.ndarray
+    lipschitz: float
+    volume_mask: jnp.ndarray | None
+    detector_grid: tuple[jnp.ndarray, jnp.ndarray] | None
+
+
+@dataclass(frozen=True)
+class _FistaResult:
+    volume: jnp.ndarray
+    losses: jnp.ndarray
+    lipschitz: float
+    effective_iters: int
+    early_stop: bool
+    regulariser: Regulariser
+    huber_delta: float
+
+    def info(self) -> dict[str, object]:
+        return {
+            "loss": [float(v) for v in list(self.losses)],
+            "L": self.lipschitz,
+            "effective_iters": self.effective_iters,
+            "early_stop": self.early_stop,
+            "regulariser": self.regulariser,
+            "huber_delta": self.huber_delta,
+        }
+
+
 def _effective_view_chunk_size(n_views: int, views_per_batch: int | None) -> int:
     requested = (
         int(views_per_batch) if (views_per_batch is not None and int(views_per_batch) > 0) else 1
@@ -541,27 +584,18 @@ def _project_constraints(
     return x
 
 
-def fista_tv(  # noqa: PLR0915
+def _prepare_fista_runtime(
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
     projections: jnp.ndarray,
     *,
-    init_x: jnp.ndarray | None = None,
-    config: FistaConfig | None = None,
-    callback: LossCallback | None = None,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
-) -> tuple[jnp.ndarray, dict[str, object]]:
-    """Run FISTA with TV regularization using an explicit solver configuration.
-
-    If ``callback`` is provided, it fires on the first recorded loss sample and on
-    the final recorded loss sample. The callback arguments are ``(step, loss)``,
-    where ``step`` is the zero-based iteration index that produced ``loss``. When
-    early stopping truncates active iterations, the final callback reports the
-    last active iteration rather than the repeated padded tail entry.
-    """
+    init_x: jnp.ndarray | None,
+    config: FistaConfig | None,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+) -> _FistaRuntime:
     cfg = FistaConfig() if config is None else config
-    vol_mask = cfg.support
+    volume_mask = cfg.support
     regulariser = validate_regulariser(
         cfg.regulariser,
         cfg.huber_delta,
@@ -569,7 +603,13 @@ def fista_tv(  # noqa: PLR0915
     )
     huber_delta = float(cfg.huber_delta)
     positivity, lower_bound, upper_bound = _normalize_constraint_config(cfg)
+    constraints = _FistaConstraints(
+        positivity=positivity,
+        lower_bound=lower_bound,
+        upper_bound=upper_bound,
+    )
     constraints_enabled = positivity or lower_bound is not None or upper_bound is not None
+
     validate_grid(grid, "fista_tv grid")
     n_views, _, _ = validate_projection_stack(
         projections,
@@ -578,7 +618,7 @@ def fista_tv(  # noqa: PLR0915
         context="fista_tv projections",
     )
     validate_optional_broadcastable_shape(
-        vol_mask,
+        volume_mask,
         (grid.nx, grid.ny, grid.nz),
         context="fista_tv support",
         name="support",
@@ -586,29 +626,26 @@ def fista_tv(  # noqa: PLR0915
     )
     if init_x is not None:
         validate_volume(init_x, grid, context="fista_tv init_x", name="init_x")
-    x = (
+
+    x0 = (
         jnp.asarray(init_x, dtype=jnp.float32)
         if init_x is not None
         else jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
     )
     if constraints_enabled:
-        x = _project_constraints(
-            x,
-            positivity=positivity,
-            lower_bound=lower_bound,
-            upper_bound=upper_bound,
+        x0 = _project_constraints(
+            x0,
+            positivity=constraints.positivity,
+            lower_bound=constraints.lower_bound,
+            upper_bound=constraints.upper_bound,
         )
-    z = x
-    t = 1.0
-    # Precompute poses once and thread them through the projector calls to avoid
-    # repeatedly stacking in inner loops.
-    T_all = stack_view_poses(geometry, n_views)
-    validate_pose_stack(T_all, n_views, context="fista_tv geometry")
 
-    L = cfg.L
-    if L is None:
-        # Use streamed gradient in power-method to avoid batched VJP memory spikes
-        L = power_method_L(
+    poses = stack_view_poses(geometry, n_views)
+    validate_pose_stack(poses, n_views, context="fista_tv geometry")
+
+    lipschitz = cfg.L
+    if lipschitz is None:
+        lipschitz = power_method_L(
             geometry,
             grid,
             detector,
@@ -619,14 +656,41 @@ def fista_tv(  # noqa: PLR0915
             checkpoint_projector=cfg.checkpoint_projector,
             gather_dtype=cfg.gather_dtype,
             grad_mode="stream",
-            T_all=T_all,
-            vol_mask=vol_mask,
+            T_all=poses,
+            vol_mask=volume_mask,
             det_grid=det_grid,
         )
     if regulariser == "huber_tv" and float(cfg.lambda_tv) != 0.0:
-        L += float(cfg.lambda_tv) * 12.0 / huber_delta
+        lipschitz += float(cfg.lambda_tv) * 12.0 / huber_delta
 
-    # Precompute jitted loss/grad using the chunked grad_data_term
+    return _FistaRuntime(
+        config=cfg,
+        regulariser=regulariser,
+        huber_delta=huber_delta,
+        constraints=constraints,
+        x0=x0,
+        z0=x0,
+        t0=1.0,
+        poses=poses,
+        lipschitz=float(lipschitz),
+        volume_mask=volume_mask,
+        detector_grid=det_grid,
+    )
+
+
+def _run_fista_scan(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray,
+    runtime: _FistaRuntime,
+) -> _FistaResult:
+    cfg = runtime.config
+    regulariser = runtime.regulariser
+    huber_delta = runtime.huber_delta
+    constraints = runtime.constraints
+    L = runtime.lipschitz
+
     def val_and_grad_fn(z: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         g, v = grad_data_term(
             geometry,
@@ -639,9 +703,9 @@ def fista_tv(  # noqa: PLR0915
             checkpoint_projector=cfg.checkpoint_projector,
             gather_dtype=cfg.gather_dtype,
             grad_mode=cfg.grad_mode,
-            T_all=T_all,
-            vol_mask=vol_mask,
-            det_grid=det_grid,
+            T_all=runtime.poses,
+            vol_mask=runtime.volume_mask,
+            det_grid=runtime.detector_grid,
         )
         if regulariser == "huber_tv" and float(cfg.lambda_tv) != 0.0:
             g = g + jnp.asarray(cfg.lambda_tv, dtype=z.dtype) * huber_tv_grad(z, huber_delta)
@@ -661,9 +725,9 @@ def fista_tv(  # noqa: PLR0915
             checkpoint_projector=cfg.checkpoint_projector,
             gather_dtype=cfg.gather_dtype,
             grad_mode=cfg.grad_mode,
-            T_all=T_all,
-            vol_mask=vol_mask,
-            det_grid=det_grid,
+            T_all=runtime.poses,
+            vol_mask=runtime.volume_mask,
+            det_grid=runtime.detector_grid,
         )
 
     data_value = jax.jit(data_value_fn, donate_argnums=(0,))
@@ -693,17 +757,17 @@ def fista_tv(  # noqa: PLR0915
                 x_new = tv_prox_jit(y, cfg.lambda_tv / L, iters=int(cfg.tv_prox_iters))
             x_new = _project_constraints(
                 x_new,
-                positivity=positivity,
-                lower_bound=lower_bound,
-                upper_bound=upper_bound,
+                positivity=constraints.positivity,
+                lower_bound=constraints.lower_bound,
+                upper_bound=constraints.upper_bound,
             )
             t_new = 0.5 * (1.0 + jnp.sqrt(1.0 + 4.0 * active_state.t * active_state.t))
             z_new = x_new + ((active_state.t - 1.0) / t_new) * (x_new - active_state.x)
             z_new = _project_constraints(
                 z_new,
-                positivity=positivity,
-                lower_bound=lower_bound,
-                upper_bound=upper_bound,
+                positivity=constraints.positivity,
+                lower_bound=constraints.lower_bound,
+                upper_bound=constraints.upper_bound,
             )
             data_loss_val = data_value(x_new)
             reg_value = regulariser_value_fn(x_new)
@@ -744,19 +808,13 @@ def fista_tv(  # noqa: PLR0915
                 loss=skip_state.loss.at[k].set(skip_state.last_obj.astype(jnp.float32))
             )
 
-        new_state = jax.lax.cond(
-            state.done,
-            run_skip,
-            run_active,
-            state,
-        )
-        return new_state, None
+        return jax.lax.cond(state.done, run_skip, run_active, state), None
 
     loss_arr0 = jnp.zeros((int(cfg.iters),), dtype=jnp.float32)
     init_carry = FistaScanState(
-        x=x,
-        z=z,
-        t=t,
+        x=runtime.x0,
+        z=runtime.z0,
+        t=jnp.asarray(runtime.t0, dtype=runtime.x0.dtype),
         loss=loss_arr0,
         prev_obj=jnp.float32(0.0),
         streak=jnp.int32(0),
@@ -766,27 +824,58 @@ def fista_tv(  # noqa: PLR0915
         iters_done=jnp.int32(0),
     )
     carry_final, _ = jax.lax.scan(step, init_carry, jnp.arange(int(cfg.iters)))
-    x_f = carry_final.x
-    loss_arr = carry_final.loss
-    done_flag = carry_final.done
-    iters_done = carry_final.iters_done
+    return _FistaResult(
+        volume=carry_final.x,
+        losses=carry_final.loss,
+        lipschitz=L,
+        effective_iters=int(carry_final.iters_done),
+        early_stop=bool(carry_final.done),
+        regulariser=regulariser,
+        huber_delta=huber_delta,
+    )
 
-    if int(cfg.iters) > 0:
-        final_step = max(int(iters_done) - 1, 0)
-        emit_loss_callback_endpoints(
-            callback,
-            (
-                (0, float(loss_arr[0])),
-                (final_step, float(loss_arr[final_step])),
-            ),
-        )
 
-    info: dict[str, object] = {
-        "loss": [float(v) for v in list(loss_arr)],
-        "L": L,
-        "effective_iters": int(iters_done),
-        "early_stop": bool(done_flag),
-        "regulariser": regulariser,
-        "huber_delta": float(cfg.huber_delta),
-    }
-    return x_f, info
+def _emit_fista_callback(callback: LossCallback | None, result: _FistaResult) -> None:
+    if result.losses.size == 0:
+        return
+    final_step = max(result.effective_iters - 1, 0)
+    emit_loss_callback_endpoints(
+        callback,
+        (
+            (0, float(result.losses[0])),
+            (final_step, float(result.losses[final_step])),
+        ),
+    )
+
+
+def fista_tv(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray,
+    *,
+    init_x: jnp.ndarray | None = None,
+    config: FistaConfig | None = None,
+    callback: LossCallback | None = None,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+) -> tuple[jnp.ndarray, dict[str, object]]:
+    """Run FISTA with TV regularization using an explicit solver configuration.
+
+    If ``callback`` is provided, it fires on the first recorded loss sample and on
+    the final recorded loss sample. The callback arguments are ``(step, loss)``,
+    where ``step`` is the zero-based iteration index that produced ``loss``. When
+    early stopping truncates active iterations, the final callback reports the
+    last active iteration rather than the repeated padded tail entry.
+    """
+    runtime = _prepare_fista_runtime(
+        geometry,
+        grid,
+        detector,
+        projections,
+        init_x=init_x,
+        config=config,
+        det_grid=det_grid,
+    )
+    result = _run_fista_scan(geometry, grid, detector, projections, runtime)
+    _emit_fista_callback(callback, result)
+    return result.volume, result.info()

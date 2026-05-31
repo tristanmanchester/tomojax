@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from contextlib import contextmanager
 import sys
 from typing import TYPE_CHECKING
 
-from tomojax.cli._jax_allocator import configure_jax_allocator_defaults
 from tomojax.cli.api import product_command_names
 
-configure_jax_allocator_defaults()
-
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Sequence
+    from collections.abc import Generator, Sequence
+
+type CliRunner = Callable[[], int]
 
 
 def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911
@@ -27,39 +27,75 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911
     if command == "inspect":
         from tomojax.cli import inspect
 
-        return _run_positional_cli(inspect.main, "tomojax inspect", tail)
+        return _run_command_boundary(
+            "inspect",
+            lambda: _run_positional_cli(inspect.main, "tomojax inspect", tail),
+        )
     if command == "validate":
         from tomojax.cli import validate
 
-        return _run_positional_cli(validate.main, "tomojax validate", tail)
+        return _run_command_boundary(
+            "validate",
+            lambda: _run_positional_cli(validate.main, "tomojax validate", tail),
+        )
     if command == "preprocess":
         from tomojax.cli import preprocess
 
-        return _run_positional_cli(preprocess.main, "tomojax preprocess", tail)
+        return _run_command_boundary(
+            "preprocess",
+            lambda: _run_positional_cli(preprocess.main, "tomojax preprocess", tail),
+        )
     if command == "ingest":
         from tomojax.cli import ingest
 
-        return _run_positional_cli(ingest.main, "tomojax ingest", tail)
+        return _run_command_boundary(
+            "ingest",
+            lambda: _run_positional_cli(ingest.main, "tomojax ingest", tail),
+        )
     if command == "convert":
         from tomojax.cli import convert
 
-        return _run_sysargv_cli(convert.main, "tomojax convert", tail)
+        return _run_command_boundary(
+            "convert",
+            lambda: _run_sysargv_cli(convert.main, "tomojax convert", tail),
+        )
     if command == "recon":
+        from tomojax.cli._jax_allocator import configure_jax_allocator_defaults
+
+        configure_jax_allocator_defaults()
         from tomojax.cli import recon
 
-        return _run_sysargv_cli(recon.main, "tomojax recon", tail)
+        return _run_command_boundary(
+            "recon",
+            lambda: _run_sysargv_cli(recon.main, "tomojax recon", tail),
+        )
     if command == "slices":
         from tomojax.cli import slices
 
-        return _run_positional_cli(slices.main, "tomojax slices", tail)
+        return _run_command_boundary(
+            "slices",
+            lambda: _run_positional_cli(slices.main, "tomojax slices", tail),
+        )
     if command == "align":
+        from tomojax.cli._jax_allocator import configure_jax_allocator_defaults
+
+        configure_jax_allocator_defaults(allocator="platform")
         from tomojax.cli import align
 
-        return _run_sysargv_cli(align.main, "tomojax align", tail)
+        return _run_command_boundary(
+            "align",
+            lambda: _run_sysargv_cli(align.main, "tomojax align", tail),
+        )
     if command == "simulate":
+        from tomojax.cli._jax_allocator import configure_jax_allocator_defaults
+
+        configure_jax_allocator_defaults()
         from tomojax.cli import simulate
 
-        return _run_sysargv_cli(simulate.main, "tomojax simulate", tail)
+        return _run_command_boundary(
+            "simulate",
+            lambda: _run_sysargv_cli(simulate.main, "tomojax simulate", tail),
+        )
     parser = _build_parser()
     parser.error(f"unknown command {command!r}")
     return 2
@@ -102,6 +138,21 @@ def _run_sysargv_cli(command: Callable[[], object], prog: str, argv: list[str]) 
     with _temporary_argv([prog, *argv]):
         _ = command()
     return 0
+
+
+def _run_command_boundary(command_name: str, runner: CliRunner) -> int:
+    """Turn expected user/runtime failures into consistent CLI error exits."""
+    try:
+        return runner()
+    except _expected_cli_errors() as exc:
+        print(f"ERROR: {command_name}: {exc}", file=sys.stderr)
+        return 1
+
+
+def _expected_cli_errors() -> tuple[type[BaseException], ...]:
+    from tomojax.align.api import CheckpointError
+
+    return (OSError, ValueError, CheckpointError)
 
 
 @contextmanager

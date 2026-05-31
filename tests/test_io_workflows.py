@@ -10,20 +10,20 @@ import pytest
 from tomojax.geometry import Detector, Grid
 from tomojax.io import (
     ProjectionDataset,
-    absorption_to_transmission,
     convert_dataset,
-    flat_dark_to_absorption,
     load_dataset,
     load_nxtomo,
-    load_real_laminography_input,
     load_tiff_stack,
     save_dataset,
     save_projection_payload,
     validate_dataset,
 )
-
-# check-public-imports: allow-private
-from tomojax.io._inspection import _projection_stats
+from tomojax.io.api import (
+    absorption_to_transmission,
+    flat_dark_to_absorption,
+    load_real_laminography_input,
+    projection_stats,
+)
 
 from ._helpers import make_projection_dataset, write_projection_dataset
 
@@ -75,6 +75,19 @@ def test_projection_payload_save_load_preserves_metadata_copy(tmp_path: Path) ->
     assert copied.detector == payload.detector
     assert copied.grid == payload.grid
     assert payload.geometry_inputs()["axis_unit_lab"] == [0.0, 0.0, 1.0]
+
+
+def test_json_normalization_reports_array_conversion_failures() -> None:
+    from tomojax.io import normalize_json
+
+    class BrokenArray(np.ndarray):
+        def tolist(self) -> object:
+            raise RuntimeError("tolist failed")
+
+    value = np.asarray([1.0], dtype=np.float32).view(BrokenArray)
+
+    with pytest.raises(TypeError, match="could not normalize NumPy array"):
+        normalize_json(value)
 
 
 def test_dataset_roundtrips_npz_and_converts_to_nxtomo(tmp_path: Path) -> None:
@@ -185,6 +198,52 @@ def test_copy_metadata_preserves_user_volume_axes_order_change(tmp_path: Path) -
     assert copied.volume_axes_order == "xyz"
 
 
+def test_copy_metadata_copies_array_backed_fields(tmp_path: Path) -> None:
+    path = tmp_path / "scan.nxs"
+    dataset = make_projection_dataset()
+    dataset.volume = np.arange(2 * 3 * 4, dtype=np.float32).reshape(2, 3, 4)
+    dataset.align_params = np.ones((2, 5), dtype=np.float32)
+    dataset.angle_offset_deg = np.asarray([0.25, -0.25], dtype=np.float32)
+
+    direct_copy = dataset.copy_metadata()
+    assert not np.shares_memory(direct_copy.thetas_deg, dataset.angles_deg)
+    assert direct_copy.volume is not None
+    assert not np.shares_memory(direct_copy.volume, dataset.volume)
+    assert direct_copy.align_params is not None
+    assert not np.shares_memory(direct_copy.align_params, dataset.align_params)
+    assert direct_copy.angle_offset_deg is not None
+    assert not np.shares_memory(direct_copy.angle_offset_deg, dataset.angle_offset_deg)
+
+    save_dataset(path, dataset)
+    loaded = load_nxtomo(str(path))
+    loaded_copy = loaded.copy_metadata()
+    assert loaded_copy.thetas_deg is not None
+    assert loaded.metadata.thetas_deg is not None
+    assert not np.shares_memory(loaded_copy.thetas_deg, loaded.metadata.thetas_deg)
+    assert loaded_copy.image_key is not None
+    assert loaded.metadata.image_key is not None
+    assert not np.shares_memory(loaded_copy.image_key, loaded.metadata.image_key)
+    assert loaded_copy.volume is not None
+    assert loaded.metadata.volume is not None
+    assert not np.shares_memory(loaded_copy.volume, loaded.metadata.volume)
+    assert loaded_copy.align_params is not None
+    assert loaded.metadata.align_params is not None
+    assert not np.shares_memory(loaded_copy.align_params, loaded.metadata.align_params)
+    assert loaded_copy.angle_offset_deg is not None
+    assert loaded.metadata.angle_offset_deg is not None
+    assert not np.shares_memory(loaded_copy.angle_offset_deg, loaded.metadata.angle_offset_deg)
+
+
+def test_read_json_object_reports_path_for_malformed_json(tmp_path: Path) -> None:
+    from tomojax.io import read_json_object
+
+    path = tmp_path / "bad.json"
+    path.write_text("{not json", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=rf"invalid JSON in {path}"):
+        read_json_object(path)
+
+
 def test_load_tiff_stack_requires_explicit_angles_and_sorts_files(tmp_path: Path) -> None:
     stack_dir = tmp_path / "tiffs"
     stack_dir.mkdir()
@@ -262,7 +321,7 @@ def test_projection_stats_keep_exact_stats_when_percentile_sample_has_no_finite_
         dataset[1] = np.full((1024, 1024), 7.0, dtype=np.float32)
 
     with h5py.File(path, "r") as handle:
-        stats, nonfinite = _projection_stats(handle["data"])
+        stats, nonfinite = projection_stats(handle["data"])
 
     assert stats["min"] == 7.0
     assert stats["mean"] == 7.0

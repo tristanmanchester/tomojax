@@ -31,8 +31,7 @@ Forbidden: private files from other modules, solvers, projectors.
 
 ## Tests
 
-- `tests/test_v2_module_skeleton.py` verifies the module imports.
-- `tests/test_nuisance_gain_offset.py` verifies masked per-view fitting,
-  identity application, and residual reduction for synthetic drift.
-- `tests/test_nuisance_background.py` verifies masked constant plus
-  vertical-gradient background fitting.
+- `tests/test_product_surface.py` verifies the public module import surface.
+- `tests/test_nuisance_models.py` verifies masked per-view gain/offset fitting,
+  identity application, residual reduction for synthetic drift, and masked
+  constant plus vertical-gradient background fitting.

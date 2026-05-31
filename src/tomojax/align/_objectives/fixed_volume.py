@@ -3,19 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import TYPE_CHECKING, Any, Literal
 
 import jax
 import jax.numpy as jnp
 
 from tomojax.align._geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
-from tomojax.backends import resolve_pallas_callable
 from tomojax.core.backend_policy import (
     BackendProvenance,
     ProjectorBackendInput,
     backend_provenance,
     normalize_projector_backend,
 )
+from tomojax.core.pallas_resolver import resolve_pallas_callable
 from tomojax.core.projector import forward_project_view_T
 
 from .loss_adapters import LossAdapter, build_loss_adapter
@@ -31,6 +32,8 @@ DifferentiationMode = Literal["none", "unrolled", "implicit"]
 InnerInitPolicy = Literal[
     "zeros", "current_level_volume", "previous_fold_volume", "previous_stage_volume"
 ]
+
+LOG = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,23 +192,41 @@ def project_stack(
     if n_views == 0:
         return jnp.zeros((0, detector.nv, detector.nu), dtype=jnp.float32)
     if backend == "pallas" and not require_differentiable_projector:
-        pallas_project, _fallback_reason = resolve_pallas_callable(
+        fallback_reason = _pallas_sinogram_fallback_reason(
+            pose_stack=pose_stack,
+            grid=grid,
+            detector=detector,
+            volume=volume,
+            det_grid=det_grid,
+            gather_dtype=gather_dtype,
+        )
+        pallas_project, callable_reason = resolve_pallas_callable(
             "forward_project_views_T_pallas",
             missing_reason="pallas_batched_callable_missing",
         )
-        try:
-            if pallas_project is not None:
+        fallback_reason = fallback_reason or callable_reason
+        if pallas_project is not None and fallback_reason is None:
+            unsupported_exc = _pallas_unsupported_exception_type()
+            try:
+                options = _pallas_projector_options(
+                    gather_dtype=gather_dtype,
+                    det_grid=det_grid,
+                    state_mode="cached",
+                )
                 return pallas_project(
                     pose_stack,
                     grid,
                     detector,
                     volume,
-                    gather_dtype=gather_dtype,
-                    det_grid=det_grid,
-                    state_mode="cached",
+                    options=options,
                 )
-        except Exception:
-            pass
+            except unsupported_exc as exc:
+                fallback_reason = f"{type(exc).__name__}: {exc}"
+        if fallback_reason is not None:
+            LOG.debug(
+                "Falling back to JAX projector after Pallas projection rejection: %s",
+                fallback_reason,
+            )
     b = _chunk_size(n_views, views_per_batch)
     num_chunks = (n_views + b - 1) // b
     vm_project = jax.vmap(
@@ -287,24 +308,42 @@ def project_and_score_stack(
     )
     use_plain_l2_fast_path = loss_adapter.name == "l2" and view_mask is None and loss_mask is None
     if backend == "pallas" and use_plain_l2_fast_path and not require_differentiable_projector:
-        pallas_score, _fallback_reason = resolve_pallas_callable(
+        fallback_reason = _pallas_sinogram_fallback_reason(
+            pose_stack=pose_stack,
+            grid=grid,
+            detector=detector,
+            volume=volume,
+            det_grid=det_grid,
+            gather_dtype=gather_dtype,
+        )
+        pallas_score, callable_reason = resolve_pallas_callable(
             "forward_project_residual_sse_T_pallas",
             missing_reason="pallas_residual_sse_callable_missing",
         )
-        try:
-            if pallas_score is not None:
+        fallback_reason = fallback_reason or callable_reason
+        if pallas_score is not None and fallback_reason is None:
+            unsupported_exc = _pallas_unsupported_exception_type()
+            try:
+                options = _pallas_projector_options(
+                    gather_dtype=gather_dtype,
+                    det_grid=det_grid,
+                    state_mode="cached",
+                )
                 return jnp.float32(0.5) * pallas_score(
                     pose_stack,
                     grid,
                     detector,
                     volume,
                     targets,
-                    gather_dtype=gather_dtype,
-                    det_grid=det_grid,
-                    state_mode="cached",
+                    options=options,
                 )
-        except Exception:
-            pass
+            except unsupported_exc as exc:
+                fallback_reason = f"{type(exc).__name__}: {exc}"
+        if fallback_reason is not None:
+            LOG.debug(
+                "Falling back to JAX projector after Pallas residual scoring rejection: %s",
+                fallback_reason,
+            )
     if num_chunks == 1:
         pred = vm_project(pose_stack)
         if use_plain_l2_fast_path:
@@ -390,6 +429,32 @@ def alignment_projector_backend_provenance(
             fallback_reason="alignment objectives require gradient-safe projector semantics",
             differentiability="gradient_safe",
         )
+    reason = _pallas_sinogram_fallback_reason(
+        pose_stack=pose_stack,
+        grid=grid,
+        detector=detector,
+        volume=volume,
+        det_grid=det_grid,
+        gather_dtype=gather_dtype,
+    )
+    return backend_provenance(
+        requested_backend="pallas",
+        actual_backend=("jax" if reason else "pallas"),
+        api_surface=api_surface,
+        fallback_reason=reason,
+        differentiability="performance_only",
+    )
+
+
+def _pallas_sinogram_fallback_reason(
+    *,
+    pose_stack: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    volume: jnp.ndarray,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray],
+    gather_dtype: str,
+) -> str | None:
     support_fn, reason = resolve_pallas_callable(
         "pallas_projector_sinogram_unsupported_reason",
         missing_reason="pallas_sinogram_support_check_missing",
@@ -401,19 +466,48 @@ def alignment_projector_backend_provenance(
                 grid,
                 detector,
                 volume,
-                gather_dtype=gather_dtype,
-                det_grid=det_grid,
-                state_mode="cached",
+                options=_pallas_projector_options(
+                    gather_dtype=gather_dtype,
+                    det_grid=det_grid,
+                    state_mode="cached",
+                ),
             )
         except Exception as exc:
             reason = f"{type(exc).__name__}: {exc}"
-    return backend_provenance(
-        requested_backend="pallas",
-        actual_backend=("jax" if reason else "pallas"),
-        api_surface=api_surface,
-        fallback_reason=reason,
-        differentiability="performance_only",
+            LOG.debug(
+                "Pallas sinogram support probe failed; falling back to JAX projector: %s",
+                reason,
+            )
+    return reason
+
+
+def _pallas_projector_options(
+    *,
+    gather_dtype: str,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray],
+    state_mode: str,
+) -> object | None:
+    options_cls, _reason = resolve_pallas_callable(
+        "PallasProjectorOptions",
+        missing_reason="pallas_options_missing",
     )
+    if options_cls is None:
+        return None
+    return options_cls(
+        gather_dtype=gather_dtype,
+        det_grid=det_grid,
+        state_mode=state_mode,
+    )
+
+
+def _pallas_unsupported_exception_type() -> type[Exception]:
+    unsupported_exc, _reason = resolve_pallas_callable(
+        "PallasProjectorUnsupported",
+        missing_reason="pallas_unsupported_exception_missing",
+    )
+    if isinstance(unsupported_exc, type) and issubclass(unsupported_exc, Exception):
+        return unsupported_exc
+    return ValueError
 
 
 def _chunk_size(n_views: int, views_per_batch: int | None) -> int:

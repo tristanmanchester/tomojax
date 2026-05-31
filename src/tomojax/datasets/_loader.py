@@ -64,25 +64,25 @@ class SyntheticDatasetSidecars:
 
 
 def load_synthetic_dataset_sidecars(dataset_dir: Path) -> SyntheticDatasetSidecars:
-    """Load manifest-indexed v2 sidecars from a generated synthetic dataset."""
+    """Load manifest-indexed geometry sidecars from a generated synthetic dataset."""
     root = Path(dataset_dir)
     manifest_path = root / "dataset_manifest.json"
     manifest = cast("dict[str, object]", json.loads(manifest_path.read_text(encoding="utf-8")))
     artifacts = _resolve_artifacts(root, manifest)
     nominal_geometry = _read_indexed_geometry(
         artifacts,
-        geometry_key="v2_nominal_geometry_json",
-        pose_key="v2_nominal_pose_params_csv",
+        geometry_key="nominal_geometry_json",
+        pose_key="nominal_pose_params_csv",
     )
     corrupted_geometry = _read_indexed_geometry(
         artifacts,
-        geometry_key="v2_corrupted_geometry_json",
-        pose_key="v2_corrupted_pose_params_csv",
+        geometry_key="corrupted_geometry_json",
+        pose_key="corrupted_pose_params_csv",
     )
     true_geometry = _read_indexed_geometry(
         artifacts,
-        geometry_key="v2_true_geometry_json",
-        pose_key="v2_true_pose_params_csv",
+        geometry_key="true_geometry_json",
+        pose_key="true_pose_params_csv",
     )
     volume = _read_array_metadata(artifacts, "ground_truth_volume_npy")
     projections = _read_array_metadata(artifacts, "projections_npy")

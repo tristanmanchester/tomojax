@@ -12,9 +12,11 @@ grids, and per-view 4x4 `T_all`, then projects with
 ## Public API
 
 - `project_parallel_reference`
-- `project_parallel_reference_arrays`
+- `project_parallel_reference_from_input`
+- `ProjectionArrayGeometryInput`
+- `ProjectionOperatorName`
 - `core_projection_geometry_from_state`
-- `core_projection_geometry_from_arrays`
+- `core_projection_geometry_from_input`
 - `nominal_axis_unit_from_geometry`
 - `CoreProjectionGeometry`
 - `PROJECTION_OPERATOR`
@@ -57,7 +59,6 @@ orchestration, Pallas fast paths without JAX-reference equivalence tests.
 
 ## Tests
 
-- `tests/test_v2_module_skeleton.py` verifies the module imports.
-- `tests/test_forward_reference.py` covers the core adapter, detector/theta
-  shifts, detector roll, axis tilt, alpha/beta pose rotations, laminography
-  axis mapping, and residual contracts.
+- `tests/test_numerical_engines.py` verifies the public grouped-input projection
+  path and core numerical invariants used by reconstruction.
+- `tests/test_product_surface.py` verifies the public module import surface.

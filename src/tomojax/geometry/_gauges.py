@@ -1,4 +1,4 @@
-"""Gauge canonicalisation for v2 geometry state."""
+"""Gauge canonicalisation for geometry state."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""TomoJAX v2 main package.
+"""TomoJAX main package.
 
 Pose-aware projector, reconstruction (FBP/FISTA-TV), and alignment pipelines.
 Install from the repo root and use via `tomojax.*` and `python -m tomojax.cli.*`.

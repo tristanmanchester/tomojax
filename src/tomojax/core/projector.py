@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from collections import OrderedDict
+import functools
+import logging
 import math
 import operator
 
@@ -12,8 +13,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core.pallas_resolver import resolve_pallas_callable
+
 from .backend_policy import ProjectorBackendInput, normalize_projector_backend
-from .geometry.base import Detector, Geometry, Grid, _grid_volume_origin
+from .geometry.base import Detector, Geometry, Grid, grid_volume_origin
 from .validation import (
     validate_detector,
     validate_detector_grid,
@@ -32,16 +35,12 @@ from .validation import (
 # - We compute object_from_world = inv(T_world_from_obj) and sample the volume in the
 #   object frame directly. This makes reconstructed volumes live in the object (sample) frame.
 
-# Cache detector grids keyed by (nu, nv, du, dv, cx, cz)
-_DET_GRID_CACHE: OrderedDict[
-    tuple[int, int, float, float, float, float], tuple[np.ndarray, np.ndarray]
-] = OrderedDict()
-_DET_GRID_CACHE_CAP = 8
+LOG = logging.getLogger(__name__)
 
 
 def _volume_origin(grid: Grid) -> jnp.ndarray:
     """Return the configured location of voxel (0, 0, 0)'s centre."""
-    return jnp.asarray(_grid_volume_origin(grid), dtype=jnp.float32)
+    return jnp.asarray(grid_volume_origin(grid), dtype=jnp.float32)
 
 
 def _interpolation_support_bounds(
@@ -62,8 +61,27 @@ def _interpolation_support_bounds(
     return vol_origin - voxel, upper
 
 
+@functools.lru_cache(maxsize=8)
+def _build_detector_grid_cached(
+    nu: int,
+    nv: int,
+    du: float,
+    dv: float,
+    cx: float,
+    cz: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    # Build on host as NumPy to avoid capturing JAX tracers in global cache under jit
+    u = (np.arange(nu, dtype=np.float32) - (nu / 2.0 - 0.5)) * np.float32(du) + np.float32(cx)
+    v = (np.arange(nv, dtype=np.float32) - (nv / 2.0 - 0.5)) * np.float32(dv) + np.float32(cz)
+    X = np.tile(u, nv)
+    Z = np.repeat(v, nu)
+    X.setflags(write=False)
+    Z.setflags(write=False)
+    return X, Z
+
+
 def _build_detector_grid(det: Detector) -> tuple[np.ndarray, np.ndarray]:
-    key = (
+    return _build_detector_grid_cached(
         int(det.nu),
         int(det.nv),
         float(det.du),
@@ -71,21 +89,20 @@ def _build_detector_grid(det: Detector) -> tuple[np.ndarray, np.ndarray]:
         float(det.det_center[0]),
         float(det.det_center[1]),
     )
-    if key in _DET_GRID_CACHE:
-        _DET_GRID_CACHE.move_to_end(key)
-        return _DET_GRID_CACHE[key]
+
+
+def clear_detector_grid_cache() -> None:
+    """Clear cached host detector coordinate grids."""
+    _build_detector_grid_cached.cache_clear()
+
+
+def _build_detector_grid_device_uncached(det: Detector) -> tuple[jnp.ndarray, jnp.ndarray]:
     nu, nv = int(det.nu), int(det.nv)
-    du, dv = float(det.du), float(det.dv)
-    cx, cz = float(det.det_center[0]), float(det.det_center[1])
-    # Build on host as NumPy to avoid capturing JAX tracers in global cache under jit
-    u = (np.arange(nu, dtype=np.float32) - (nu / 2.0 - 0.5)) * np.float32(du) + np.float32(cx)
-    v = (np.arange(nv, dtype=np.float32) - (nv / 2.0 - 0.5)) * np.float32(dv) + np.float32(cz)
-    X = np.tile(u, nv)
-    Z = np.repeat(v, nu)
-    _DET_GRID_CACHE[key] = (X, Z)
-    if len(_DET_GRID_CACHE) > _DET_GRID_CACHE_CAP:
-        _DET_GRID_CACHE.popitem(last=False)
-    return X, Z
+    du, dv = jnp.float32(float(det.du)), jnp.float32(float(det.dv))
+    cx, cz = jnp.float32(float(det.det_center[0])), jnp.float32(float(det.det_center[1]))
+    u = (jnp.arange(nu, dtype=jnp.float32) - jnp.float32(nu / 2.0 - 0.5)) * du + cx
+    v = (jnp.arange(nv, dtype=jnp.float32) - jnp.float32(nv / 2.0 - 0.5)) * dv + cz
+    return jnp.tile(u, nv), jnp.repeat(v, nu)
 
 
 def get_detector_grid_device(det: Detector) -> tuple[jnp.ndarray, jnp.ndarray]:
@@ -135,10 +152,8 @@ def _resolve_detector_grid(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
 ) -> tuple[jnp.ndarray, jnp.ndarray, int]:
     if det_grid is None:
-        Xr_np, Zr_np = _build_detector_grid(detector)
-        Xr = jnp.asarray(Xr_np, dtype=jnp.float32)
-        Zr = jnp.asarray(Zr_np, dtype=jnp.float32)
-        n_rays = int(Xr_np.shape[0])
+        Xr, Zr = _build_detector_grid_device_uncached(detector)
+        n_rays = int(detector.nu) * int(detector.nv)
     else:
         Xr, Zr = det_grid
         n_rays = int(Xr.shape[0])
@@ -299,6 +314,16 @@ def _trilinear_scatter_add(acc_flat, ray_vals, ix_f, iy_f, iz_f, nx, ny, nz):
     return acc_flat + scatter(ray_vals)[0]
 
 
+def _pallas_unsupported_exception_type() -> type[Exception] | None:
+    unsupported_exc, _reason = resolve_pallas_callable(
+        "PallasProjectorUnsupported",
+        missing_reason="pallas_unsupported_exception_missing",
+    )
+    if isinstance(unsupported_exc, type) and issubclass(unsupported_exc, Exception):
+        return unsupported_exc
+    return None
+
+
 def forward_project_view_T(
     T: jnp.ndarray,
     grid: Grid,
@@ -322,22 +347,44 @@ def forward_project_view_T(
     """
     backend = normalize_projector_backend(projector_backend)
     if backend == "pallas":
-        try:
-            from tomojax.core.pallas_projector import forward_project_view_T_pallas
-
-            return forward_project_view_T_pallas(
-                T,
-                grid,
-                detector,
-                volume,
-                step_size=step_size,
-                n_steps=n_steps,
-                unroll=unroll,
-                gather_dtype=gather_dtype,
-                det_grid=det_grid,
+        pallas_project, fallback_reason = resolve_pallas_callable(
+            "forward_project_view_T_pallas",
+            missing_reason="pallas_single_view_callable_missing",
+        )
+        if pallas_project is not None:
+            unsupported_exc = _pallas_unsupported_exception_type()
+            try:
+                options_cls, _options_reason = resolve_pallas_callable(
+                    "PallasProjectorOptions",
+                    missing_reason="pallas_options_missing",
+                )
+                options = (
+                    options_cls(
+                        step_size=step_size,
+                        n_steps=n_steps,
+                        unroll=unroll,
+                        gather_dtype=gather_dtype,
+                        det_grid=det_grid,
+                    )
+                    if options_cls is not None
+                    else None
+                )
+                return pallas_project(
+                    T,
+                    grid,
+                    detector,
+                    volume,
+                    options=options,
+                )
+            except Exception as exc:
+                if unsupported_exc is None or not isinstance(exc, unsupported_exc):
+                    raise
+                fallback_reason = f"{type(exc).__name__}: {exc}"
+        if fallback_reason is not None:
+            LOG.debug(
+                "Falling back to JAX single-view projector after Pallas rejection: %s",
+                fallback_reason,
             )
-        except Exception:
-            pass
     vol = volume
     nx, ny, nz = validate_volume(vol, grid, context="forward_project_view_T", name="volume")
     validate_detector(detector, "forward_project_view_T")

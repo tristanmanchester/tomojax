@@ -23,18 +23,19 @@ def _normalize_command(cmd: Sequence[str]) -> list[str]:
     return args
 
 
-def run_command(cmd: Sequence[str], **kwargs: Any) -> subprocess.CompletedProcess[Any]:
+def run_resolved_command(cmd: Sequence[str], **kwargs: Any) -> subprocess.CompletedProcess[Any]:
     """Run a resolved command with shell disabled."""
     normalized = _normalize_command(cmd)
     return subprocess.run(normalized, shell=False, **kwargs)  # noqa: PLW1510  # nosec B603
 
 
-def check_output_command(
+def check_output_resolved_command(
     cmd: Sequence[str],
     *,
     stderr: int | None = None,
     text: bool = False,
 ) -> bytes | str:
+    """Run a resolved command and return stdout with shell disabled."""
     normalized = _normalize_command(cmd)
     return subprocess.check_output(  # nosec B603
         normalized,

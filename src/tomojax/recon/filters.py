@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-from collections import OrderedDict
+import functools
 
 import jax.numpy as jnp
 import numpy as np
-
-_FILTER_CACHE: OrderedDict[tuple[str, int, float], np.ndarray] = OrderedDict()
-_FILTER_CACHE_CAP = 8
 
 
 def _normalize_filter_name(name: str | None) -> str:
@@ -42,17 +39,16 @@ def _hann_filter_np(n: int, du: float) -> np.ndarray:
     return (f * w.astype(np.float32, copy=False)).astype(np.float32, copy=False)
 
 
-def get_filter_np(name: str, n: int, du: float) -> np.ndarray:
-    """Host-side filter lookup with a small LRU cache.
-
-    Returns a read-only np.float32 array of length ``n``. Callers that
-    need to mutate filter coefficients must copy the returned array first.
-    """
+@functools.lru_cache(maxsize=16)
+def _build_filter_np(
+    name: str,
+    n: int,
+    du: float,
+    *,
+    one_sided: bool,
+    dtype_name: str,
+) -> np.ndarray:
     filter_name = _normalize_filter_name(name)
-    key = (filter_name, int(n), float(du))
-    if key in _FILTER_CACHE:
-        _FILTER_CACHE.move_to_end(key)
-        return _FILTER_CACHE[key]
     if filter_name == "ramp":
         H = _ramp_filter_np(n, du)
     elif filter_name == "shepp-logan":
@@ -61,14 +57,46 @@ def get_filter_np(name: str, n: int, du: float) -> np.ndarray:
         H = _hann_filter_np(n, du)
     else:
         raise ValueError(f"Unknown filter {name}")
-    H.setflags(write=False)
-    _FILTER_CACHE[key] = H
-    if len(_FILTER_CACHE) > _FILTER_CACHE_CAP:
-        _FILTER_CACHE.popitem(last=False)
-    return H
+    if one_sided:
+        H = H[: int(n) // 2 + 1]
+    dtype = np.float64 if dtype_name in {"float64", "complex128"} else np.float32
+    out = np.asarray(H, dtype=dtype)
+    out.setflags(write=False)
+    return out
+
+
+def get_filter_np(name: str, n: int, du: float) -> np.ndarray:
+    """Host-side filter lookup with a small explicit LRU cache.
+
+    Returns a read-only np.float32 array of length ``n``. Callers that
+    need to mutate filter coefficients must copy the returned array first.
+    """
+    return _build_filter_np(
+        _normalize_filter_name(name),
+        int(n),
+        float(du),
+        one_sided=False,
+        dtype_name="float32",
+    )
+
+
+def get_rfft_filter_np(name: str, n: int, du: float, dtype_name: str) -> np.ndarray:
+    """Return the immutable one-sided RFFT filter for row filtering."""
+    return _build_filter_np(
+        _normalize_filter_name(name),
+        int(n),
+        float(du),
+        one_sided=True,
+        dtype_name=str(dtype_name),
+    )
 
 
 def get_filter(name: str, n: int, du: float) -> jnp.ndarray:
     """JAX array wrapper for cached, host-computed filters."""
     H_np = get_filter_np(name, n, du)
     return jnp.asarray(H_np, dtype=jnp.float32)
+
+
+def clear_filter_caches() -> None:
+    """Clear cached host filter coefficients."""
+    _build_filter_np.cache_clear()

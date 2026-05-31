@@ -13,6 +13,8 @@ from tomojax.io import (
     PreprocessConfig,
     preprocess_nxtomo,
     preprocess_tiff_stack,
+)
+from tomojax.io.api import (
     save_projection_quicklook,
 )
 
@@ -271,33 +273,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     setup_logging()
-    try:
-        if command.input_format == "tiff-stack":
-            tiff_error = _tiff_command_error(command)
-            if tiff_error is not None:
-                print(tiff_error, file=sys.stderr)
-                return 2
-            flats_path = command.flats_path
-            darks_path = command.darks_path
-            angles_sidecar_path = command.angles_sidecar_path
-            assert flats_path is not None
-            assert darks_path is not None
-            assert angles_sidecar_path is not None
-            result = preprocess_tiff_stack(
-                input_path,
-                flats_path,
-                darks_path,
-                angles_sidecar_path,
-                output_path,
-                command.config,
-            )
-        else:
-            result = preprocess_nxtomo(input_path, output_path, command.config)
-        if command.quicklook_path is not None:
-            _ = save_projection_quicklook(output_path, command.quicklook_path)
-    except Exception as exc:
-        print(f"ERROR: could not preprocess {input_path}: {exc}", file=sys.stderr)
-        return 1
+    if command.input_format == "tiff-stack":
+        tiff_error = _tiff_command_error(command)
+        if tiff_error is not None:
+            print(tiff_error, file=sys.stderr)
+            return 2
+        if (
+            command.flats_path is None
+            or command.darks_path is None
+            or command.angles_sidecar_path is None
+        ):
+            raise RuntimeError("validated TIFF-stack command is missing required sidecars")
+        result = preprocess_tiff_stack(
+            input_path,
+            flats_path=command.flats_path,
+            darks_path=command.darks_path,
+            angles_path=command.angles_sidecar_path,
+            output_path=output_path,
+            config=command.config,
+        )
+    else:
+        result = preprocess_nxtomo(input_path, output_path, command.config)
+    if command.quicklook_path is not None:
+        _ = save_projection_quicklook(output_path, command.quicklook_path)
 
     print(
         "Wrote corrected "

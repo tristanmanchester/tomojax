@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from tomojax._data.artefacts import (
+from tomojax.datasets._impl.artefacts import (
     SimulationArtefacts,
     apply_simulation_artefacts,
     validate_simulation_artefacts,
 )
-from tomojax._data.simulate import (
+from tomojax.datasets._impl.simulate import (
     LaminoGeometryMeta,
     SimConfig,
     SimMetadata,

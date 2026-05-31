@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from tomojax._data.phantoms import (
+from tomojax.datasets._impl.phantoms import (
     blobs,
     cube,
     lamino_disk,

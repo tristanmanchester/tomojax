@@ -101,7 +101,10 @@ def read_json_object(path: Path) -> dict[str, JsonValue]:
     """Read a JSON file that must contain an object."""
     if not path.exists():
         raise FileNotFoundError(path)
-    data = cast("object", json.loads(path.read_text(encoding="utf-8")))
+    try:
+        data = cast("object", json.loads(path.read_text(encoding="utf-8")))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid JSON in {path}: {exc.msg}") from exc
     if not isinstance(data, dict):
         raise ValueError(f"expected JSON object in {path}")
     return cast("dict[str, JsonValue]", data)
@@ -138,20 +141,36 @@ _UNHANDLED = _Unhandled()
 def _normalize_array(value: object) -> object:
     try:
         import numpy as np
+    except ImportError:
+        np = None  # type: ignore[assignment]
 
+    if np is not None:
         if isinstance(value, np.generic):
-            return cast("object", value.item())
+            try:
+                return cast("object", value.item())
+            except Exception as exc:
+                raise TypeError(
+                    f"could not normalize NumPy scalar {type(value).__name__} to JSON"
+                ) from exc
         if isinstance(value, np.ndarray):
-            return cast("object", value.tolist())
-    except Exception:
-        pass
+            try:
+                return cast("object", value.tolist())
+            except Exception as exc:
+                raise TypeError(
+                    f"could not normalize NumPy array with shape {value.shape} to JSON"
+                ) from exc
 
     try:
         import jax
+    except ImportError:
+        jax = None  # type: ignore[assignment]
 
-        if isinstance(value, jax.Array):
+    if jax is not None and isinstance(value, jax.Array):
+        try:
             return cast("object", value.tolist())
-    except Exception:
-        pass
+        except Exception as exc:
+            raise TypeError(
+                f"could not normalize JAX array with shape {getattr(value, 'shape', None)} to JSON"
+            ) from exc
 
     return _UNHANDLED

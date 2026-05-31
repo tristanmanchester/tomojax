@@ -3,23 +3,23 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-# check-public-imports: allow-private
-from tomojax.align.io import checkpoint as checkpoint_io
-
-# check-public-imports: allow-private
-from tomojax.align.io.checkpoint import (
+import tomojax.align.api as align_api
+from tomojax.align.api import (
     AlignmentCheckpoint,
     AlignmentCheckpointGeometrySnapshot,
     AlignmentCheckpointMetadataInput,
     AlignmentCheckpointProgress,
     AlignmentProjectionIdentity,
     CheckpointError,
+    ScheduleResumeState,
+    alignment_params_payload,
     build_alignment_checkpoint_metadata_from_input,
+    normalize_schedule_resume_state,
     validate_alignment_checkpoint,
 )
 
 # check-public-imports: allow-private
-from tomojax.align.io.params_export import alignment_params_payload
+from tomojax.cli.align.checkpoint import _schedule_resume_state_from_checkpoint
 
 
 def _metadata_input() -> AlignmentCheckpointMetadataInput:
@@ -48,14 +48,45 @@ def _metadata_input() -> AlignmentCheckpointMetadataInput:
 
 
 def test_checkpoint_metadata_exposes_only_structured_builder() -> None:
-    assert hasattr(checkpoint_io, "build_alignment_checkpoint_metadata_from_input")
-    assert not hasattr(checkpoint_io, "build_alignment_checkpoint_metadata")
+    assert hasattr(align_api, "build_alignment_checkpoint_metadata_from_input")
+    assert not hasattr(align_api, "build_alignment_checkpoint_metadata")
 
     metadata = build_alignment_checkpoint_metadata_from_input(_metadata_input())
 
     assert metadata["checkpoint_kind"] == "tomojax.align.checkpoint"
     assert metadata["projection_shape"] == [5, 6, 7]
     assert metadata["geometry_meta"] == {"tilt_deg": 55.0}
+
+
+def test_checkpoint_schedule_resume_state_uses_public_schema() -> None:
+    schedule_state: ScheduleResumeState = {
+        "stage_index": 2,
+        "stage_name": "calibrate_geometry",
+        "stage_completed": False,
+        "completed_outer_iters_in_stage": 7,
+    }
+    metadata_input = _metadata_input()
+    metadata = build_alignment_checkpoint_metadata_from_input(
+        AlignmentCheckpointMetadataInput(
+            projection=metadata_input.projection,
+            geometry=metadata_input.geometry,
+            progress=metadata_input.progress,
+            config=metadata_input.config,
+            cli_options=metadata_input.cli_options,
+            schedule_state=schedule_state,
+        )
+    )
+
+    assert metadata["schedule_state"] == schedule_state
+    assert normalize_schedule_resume_state(metadata["schedule_state"]) == schedule_state
+
+
+def test_checkpoint_resume_rejects_non_mapping_schedule_state() -> None:
+    metadata = build_alignment_checkpoint_metadata_from_input(_metadata_input())
+    metadata["schedule_state"] = ["stage", "state"]  # type: ignore[typeddict-item]
+
+    with pytest.raises(CheckpointError, match="invalid schedule_state"):
+        _schedule_resume_state_from_checkpoint(metadata)
 
 
 def test_checkpoint_validation_requires_exact_config_defaults() -> None:

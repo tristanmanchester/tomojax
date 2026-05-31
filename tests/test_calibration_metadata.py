@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
-from tomojax.geometry import CalibrationState, CalibrationVariable
+from tomojax.geometry import (
+    CalibrationState,
+    CalibrationVariable,
+    build_calibrated_geometry_metadata_patch,
+)
 
 
 def test_calibration_variable_normalizes_numpy_scalars() -> None:
@@ -39,3 +44,48 @@ def test_calibration_state_normalizes_numpy_arrays() -> None:
     payload = state.to_dict()
 
     assert payload["detector"][0]["value"] == [0.0, 0.0, 1.0]
+
+
+def test_calibrated_geometry_patch_requires_detector_pixel_spacing() -> None:
+    state = CalibrationState(
+        detector=(
+            CalibrationVariable(
+                name="det_u_px",
+                value=2.0,
+                unit="px",
+                status="estimated",
+                frame="detector",
+            ),
+        )
+    )
+
+    with pytest.raises(ValueError, match="requires du, dv"):
+        build_calibrated_geometry_metadata_patch(
+            calibration_state=state,
+            detector={"nu": 4, "nv": 4},
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("status", "learned", "Unknown calibration variable status"),
+        ("frame", "gantry", "Unknown calibration variable frame"),
+    ],
+)
+def test_calibration_variable_from_dict_rejects_unknown_literals(
+    field: str,
+    value: str,
+    message: str,
+) -> None:
+    payload = {
+        "name": "det_u_px",
+        "value": 1.0,
+        "unit": "px",
+        "status": "estimated",
+        "frame": "detector",
+    }
+    payload[field] = value
+
+    with pytest.raises(ValueError, match=message):
+        CalibrationVariable.from_dict(payload)

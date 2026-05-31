@@ -23,11 +23,10 @@ from tomojax.io._datasets import (
     validate_dataset,
     validate_nxtomo,
 )
-from tomojax.io._inspection import (
+from tomojax.io._inspection import inspect_dataset, projection_stats
+from tomojax.io._inspection_format import format_inspection_report
+from tomojax.io._inspection_types import (
     InspectionReport,
-    format_inspection_report,
-    inspect_dataset,
-    save_projection_quicklook,
 )
 from tomojax.io._json import (
     JsonValue,
@@ -50,6 +49,7 @@ from tomojax.io._preprocess import (
     preprocess_nxtomo,
     preprocess_tiff_stack,
 )
+from tomojax.io._quicklook import save_projection_quicklook
 from tomojax.io._real_laminography import RealLaminographyInput, load_real_laminography_input
 
 __all__ = [
@@ -81,6 +81,7 @@ __all__ = [
     "pad_to_multiples",
     "preprocess_nxtomo",
     "preprocess_tiff_stack",
+    "projection_stats",
     "read_json_object",
     "save_dataset",
     "save_nxtomo",

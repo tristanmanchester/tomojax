@@ -50,12 +50,21 @@ class CheckpointMetadata(TypedDict, total=False):
     config: Required[Any]
     cli_options: Required[dict[str, Any]]
     schedule_metadata: Any
-    schedule_state: Any
+    schedule_state: ScheduleResumeState | None
     random_state: dict[str, Any]
     geometry_calibration_state: Any
     level_complete: bool
     run_complete: bool
     has_motion_coeffs: bool
+
+
+class ScheduleResumeState(TypedDict):
+    """Stable multires schedule fields persisted for checkpoint resume."""
+
+    stage_index: int
+    stage_name: str | None
+    stage_completed: bool
+    completed_outer_iters_in_stage: int
 
 
 @dataclass(slots=True)
@@ -120,7 +129,7 @@ class AlignmentCheckpointMetadataInput:
     cli_options: Mapping[str, Any] | None = None
     random_state: Mapping[str, Any] | None = None
     schedule_metadata: Mapping[str, Any] | None = None
-    schedule_state: Mapping[str, Any] | None = None
+    schedule_state: ScheduleResumeState | None = None
 
 
 def _tomojax_version() -> str | None:
@@ -151,6 +160,24 @@ def _normalize_json_object(value: Mapping[str, Any] | None) -> dict[str, Any]:
 
 def _normalize_checkpoint_compare_value(value: Any) -> Any:
     return normalize_json(value)
+
+
+def normalize_schedule_resume_state(
+    schedule_state: Mapping[str, Any] | ScheduleResumeState | None,
+) -> ScheduleResumeState | None:
+    """Normalize checkpoint schedule progress into the persisted resume schema."""
+    if schedule_state is None:
+        return None
+    normalized = _normalize_json_object(schedule_state)
+    stage_name = normalized.get("stage_name")
+    if stage_name is not None and not isinstance(stage_name, str):
+        raise TypeError("checkpoint schedule_state.stage_name must be a string or null")
+    return {
+        "stage_index": int(normalized["stage_index"]),
+        "stage_name": stage_name,
+        "stage_completed": bool(normalized["stage_completed"]),
+        "completed_outer_iters_in_stage": int(normalized["completed_outer_iters_in_stage"]),
+    }
 
 
 def build_alignment_checkpoint_metadata_from_input(
@@ -185,7 +212,7 @@ def build_alignment_checkpoint_metadata_from_input(
         "config": normalize_json(metadata_input.config),
         "cli_options": _normalize_json_object(metadata_input.cli_options),
         "schedule_metadata": normalize_json(metadata_input.schedule_metadata),
-        "schedule_state": normalize_json(metadata_input.schedule_state),
+        "schedule_state": normalize_schedule_resume_state(metadata_input.schedule_state),
         "random_state": _normalize_json_object(metadata_input.random_state or {"alignment": None}),
         "geometry_calibration_state": normalize_json(geometry.geometry_calibration_state),
         "level_complete": bool(progress.level_complete),

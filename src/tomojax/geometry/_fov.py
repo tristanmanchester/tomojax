@@ -24,7 +24,7 @@ import math
 
 import numpy as np
 
-from tomojax.core.geometry.base import Detector, Grid, _grid_volume_origin
+from tomojax.core.geometry import Detector, Grid, grid_volume_origin
 
 
 @dataclass(frozen=True)
@@ -243,7 +243,7 @@ def cylindrical_mask_xy(grid: Grid, detector: Detector) -> np.ndarray:
     info = compute_roi(grid, detector)
     nx, ny = int(grid.nx), int(grid.ny)
     vx, vy = float(grid.vx), float(grid.vy)
-    origin = _grid_volume_origin(grid)
+    origin = grid_volume_origin(grid)
     x = np.arange(nx, dtype=np.float32) * vx + np.float32(origin[0])
     y = np.arange(ny, dtype=np.float32) * vy + np.float32(origin[1])
     x_grid, y_grid = np.meshgrid(x, y, indexing="ij")
