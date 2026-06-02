@@ -64,6 +64,7 @@ def save_nxtomo(
     geometry_type_norm = _normalize_geometry_type(meta.geometry_type)
 
     disk_axes = meta.volume_axes_order.lower()
+    _validate_volume_save_options(meta, disk_axes=disk_axes)
 
     with h5py.File(path, mode) as f:
         entry = _ensure_group(f, "entry", "NXentry")
@@ -196,6 +197,27 @@ def _write_volume_section(
 ) -> None:
     if meta.volume is None:
         return
+    _validate_volume_save_options(meta, disk_axes=disk_axes)
+    processing = _ensure_group(entry, "processing", "NXprocess")
+    tj = _ensure_group(processing, "tomojax", "NXcollection")
+    vol_data = np.asarray(meta.volume)
+    if disk_axes != INTERNAL_VOLUME_AXES:
+        vol_data = np.asarray(transpose_volume(vol_data, INTERNAL_VOLUME_AXES, disk_axes))
+    vol = tj.create_dataset(
+        "volume",
+        data=vol_data,
+        chunks=True,
+        compression=compression,
+    )
+    vol.attrs["long_name"] = "ground_truth_volume"
+    _write_string_attr(tj, VOLUME_AXES_ATTR, disk_axes)
+    if meta.frame is not None:
+        _write_string_attr(tj, "frame", str(meta.frame))
+
+
+def _validate_volume_save_options(meta: NXTomoMetadata, *, disk_axes: str) -> None:
+    if meta.volume is None:
+        return
     if disk_axes == "unknown":
         raise ValueError(
             "Cannot save volume with unknown axis orientation. "
@@ -209,23 +231,9 @@ def _write_volume_section(
             "metadata.volume_axes_order must be a permutation of 'xyz', "
             f"got {meta.volume_axes_order!r}"
         ) from exc
-    processing = _ensure_group(entry, "processing", "NXprocess")
-    tj = _ensure_group(processing, "tomojax", "NXcollection")
     vol_data = np.asarray(meta.volume)
     if vol_data.ndim != 3:
         raise ValueError("volume must be 3D (nx, ny, nz)")
-    if disk_axes != INTERNAL_VOLUME_AXES:
-        vol_data = np.asarray(transpose_volume(vol_data, INTERNAL_VOLUME_AXES, disk_axes))
-    vol = tj.create_dataset(
-        "volume",
-        data=vol_data,
-        chunks=True,
-        compression=compression,
-    )
-    vol.attrs["long_name"] = "ground_truth_volume"
-    _write_string_attr(tj, VOLUME_AXES_ATTR, disk_axes)
-    if meta.frame is not None:
-        _write_string_attr(tj, "frame", str(meta.frame))
 
 
 def _write_tomojax_metadata_sections(

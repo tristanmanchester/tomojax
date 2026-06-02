@@ -163,6 +163,40 @@ def test_saving_unknown_axis_volume_reports_actionable_error(tmp_path: Path) -> 
         )
 
 
+def test_unknown_axis_in_place_save_preserves_existing_volume(tmp_path: Path) -> None:
+    path = tmp_path / "missing_axes.nxs"
+    original_volume = np.arange(5 * 6 * 7, dtype=np.float32).reshape(5, 6, 7)
+    with h5py.File(path, "w") as handle:
+        entry = handle.create_group("entry")
+        entry.attrs["definition"] = "NXtomo"
+        detector = entry.create_group("instrument").create_group("detector")
+        detector.create_dataset("data", data=np.zeros((2, 3, 4), dtype=np.float32))
+        detector.create_dataset("image_key", data=np.zeros((2,), dtype=np.int32))
+        sample = entry.create_group("sample")
+        sample.create_dataset("name", data="fixture")
+        transformations = sample.create_group("transformations")
+        rotation_angle = transformations.create_dataset(
+            "rotation_angle",
+            data=np.asarray([0.0, 90.0], dtype=np.float32),
+        )
+        rotation_angle.attrs["units"] = "degree"
+        tomojax = entry.create_group("processing").create_group("tomojax")
+        tomojax.create_dataset("volume", data=original_volume)
+
+    loaded = load_nxtomo(str(path))
+
+    with pytest.raises(ValueError, match="Set metadata.volume_axes_order before saving"):
+        save_projection_payload(
+            path,
+            projections=loaded.projections,
+            metadata=loaded.copy_metadata(),
+        )
+
+    with h5py.File(path, "r") as handle:
+        saved_volume = handle["entry/processing/tomojax/volume"][:]
+    np.testing.assert_array_equal(saved_volume, original_volume)
+
+
 def test_copy_metadata_preserves_disk_volume_axes_order(tmp_path: Path) -> None:
     original_path = tmp_path / "original.nxs"
     resaved_path = tmp_path / "resaved.nxs"
