@@ -139,6 +139,7 @@ def test_align_multires_executes_cor_then_pose_schedule_with_real_stages() -> No
     assert outer_stats[0]["schedule_stage_active_dofs"] == "det_u_px"
     assert outer_stats[0]["geometry_block"] == "setup_validation_lm"
     assert outer_stats[1]["schedule_stage_active_dofs"] == "alpha,beta,phi,dx,dz"
+    assert outer_stats[1]["fixed_volume_reconstruction_skipped"] is True
     assert outer_stats[1]["recon_actual_backend"] == "jax"
     assert outer_stats[1]["recon_fallback_reason"] is None
 

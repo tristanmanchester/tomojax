@@ -367,7 +367,7 @@ def _run_pose_alignment_stage(
         optimise_dofs=stage.active_pose_dofs,
         opt_method=str(pose_optimizer),
         outer_iters=int(stage.maxiter),
-        recon_iters=int(cfg.recon_iters),
+        recon_iters=0 if stage.objective_kind == "fixed_volume" else int(cfg.recon_iters),
         early_stop=bool(stage.early_stop),
         recon_L=None,
         loss=active_loss_spec,
