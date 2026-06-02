@@ -156,6 +156,20 @@ def _completed_single_resume_state(
     )
 
 
+def _checkpoint_dof_option(
+    parser: argparse.ArgumentParser,
+    value: object,
+    *,
+    key: str,
+) -> list[str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        parser.error(f"checkpoint cli option {key!r} must be a list or null")
+    restored = [str(item) for item in object_list(cast("object", value))]
+    return restored or None
+
+
 def _restore_resume_schedule_options(
     parser: argparse.ArgumentParser,
     args: argparse.Namespace,
@@ -175,22 +189,45 @@ def _restore_resume_schedule_options(
     cli_options = cast("dict[str, object]", cli_options)
 
     restored_keys: list[str] = []
-    for key in ("optimise_dofs", "freeze_dofs", "schedule"):
-        if key in configured_keys or key not in cli_options:
-            continue
-        value = cli_options[key]
-        if key in {"optimise_dofs", "freeze_dofs"}:
-            if value is None:
-                setattr(args, key, None)
-            elif isinstance(value, list):
-                setattr(args, key, [str(item) for item in object_list(cast("object", value))])
-            else:
-                parser.error(f"checkpoint cli option {key!r} must be a list or null")
-        elif value is None or isinstance(value, str):
-            setattr(args, key, value)
-        else:
-            parser.error("checkpoint cli option 'schedule' must be a string or null")
-        restored_keys.append(key)
+    explicit_schedule = "schedule" in configured_keys
+    explicit_optimise_dofs = "optimise_dofs" in configured_keys
+
+    checkpoint_optimise_dofs = (
+        None
+        if "optimise_dofs" not in cli_options
+        else _checkpoint_dof_option(parser, cli_options["optimise_dofs"], key="optimise_dofs")
+    )
+    checkpoint_freeze_dofs = (
+        None
+        if "freeze_dofs" not in cli_options
+        else _checkpoint_dof_option(parser, cli_options["freeze_dofs"], key="freeze_dofs")
+    )
+    checkpoint_schedule = cli_options.get("schedule")
+    if checkpoint_schedule is not None and not isinstance(checkpoint_schedule, str):
+        parser.error("checkpoint cli option 'schedule' must be a string or null")
+
+    restore_schedule = (
+        checkpoint_schedule is not None and not explicit_schedule and not explicit_optimise_dofs
+    )
+    restore_optimise_dofs = (
+        checkpoint_optimise_dofs is not None
+        and "optimise_dofs" not in configured_keys
+        and not explicit_schedule
+        and not restore_schedule
+    )
+    restore_freeze_dofs = (
+        checkpoint_freeze_dofs is not None and "freeze_dofs" not in configured_keys
+    )
+
+    if restore_optimise_dofs:
+        args.optimise_dofs = checkpoint_optimise_dofs
+        restored_keys.append("optimise_dofs")
+    if restore_freeze_dofs:
+        args.freeze_dofs = checkpoint_freeze_dofs
+        restored_keys.append("freeze_dofs")
+    if restore_schedule:
+        args.schedule = checkpoint_schedule
+        restored_keys.append("schedule")
     return restored_keys
 
 

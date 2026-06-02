@@ -151,6 +151,71 @@ def test_cli_resume_restores_geometry_dofs_from_checkpoint(
     assert resume_plan.cfg.optimise_dofs == ("det_u_px",)
 
 
+def test_cli_resume_mode_max_checkpoint_keeps_schedule_without_empty_dofs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    parser = build_parser()
+    checkpoint_path = tmp_path / "align-max.ckpt"
+    dataset = ProjectionDataset(
+        projections=np.zeros((3, 4, 5), dtype=np.float32),
+        angles_deg=np.asarray([0.0, 90.0, 180.0], dtype=np.float32),
+        detector=Detector(nu=5, nv=4, du=1.0, dv=1.0),
+        grid=Grid(nx=5, ny=5, nz=4, vx=1.0, vy=1.0, vz=1.0),
+    )
+
+    def load_dataset(_: object) -> ProjectionDataset:
+        return dataset
+
+    monkeypatch.setattr("tomojax.cli.align.plan.load_projection_payload", load_dataset)
+    initial_args = parser.parse_args(
+        [
+            "--data",
+            "input.nxs",
+            "--checkpoint",
+            str(checkpoint_path),
+            "--mode",
+            "max",
+        ]
+    )
+    initial_plan = build_align_cli_run_plan(
+        parser,
+        initial_args,
+        {"explicit_cli_keys": [], "config_file_values": {}},
+    )
+    save_alignment_checkpoint(
+        checkpoint_path,
+        x=np.zeros((5, 5, 4), dtype=np.float32),
+        params5=np.zeros((3, 5), dtype=np.float32),
+        metadata=initial_checkpoint_metadata(
+            context=AlignCliCheckpointMetadataContext(
+                meta=initial_plan.meta,
+                projections=initial_plan.projections,
+                cfg=initial_plan.cfg,
+                command=initial_plan.command,
+                recon_grid=initial_plan.recon_grid,
+                detector=initial_plan.detector,
+                gather_dtype=initial_plan.gather_dtype,
+                schedule_metadata=initial_plan.schedule_metadata,
+            ),
+            levels=initial_plan.run_levels,
+        ),
+    )
+
+    resume_args = parser.parse_args(
+        ["--data", "input.nxs", "--resume", str(checkpoint_path), "--mode", "max"]
+    )
+    resume_plan = build_align_cli_run_plan(
+        parser,
+        resume_args,
+        {"explicit_cli_keys": [], "config_file_values": {}, "effective_options": vars(resume_args)},
+    )
+
+    assert resume_plan.run_levels == [4, 2, 1]
+    assert resume_plan.cfg.schedule == "setup_safe"
+    assert resume_plan.cfg.optimise_dofs is None
+
+
 def test_cli_pose_only_dofs_stay_single_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
     parser = build_parser()
     args = parser.parse_args(["--data", "input.nxs", "--optimise-dofs", "dx"])
