@@ -31,6 +31,8 @@ error.
   motion.
 - Use `--mode cor` when you need a detector-centre or centre-of-rotation
   correction that is physically interpretable.
+- Use `--mode cor_then_pose` for detector-centre calibration followed by
+  per-view pose refinement.
 - Use `--mode auto` with `--gauge-policy anchor_mean` for combined setup and
   pose correction.
 - Detector-v and sample-elevation reference shifts are not reliably
