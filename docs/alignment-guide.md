@@ -7,14 +7,15 @@ just useful for reconstruction.
 
 ## Choose an alignment mode
 
-`tomojax align` has three modes. Use `pose` for per-projection sample motion,
-`cor` for detector-centre calibration, and `auto` when you need to combine
-setup and pose degrees of freedom.
+`tomojax align` has several modes. Use `pose` for per-projection sample motion,
+`cor` for detector-centre calibration, `cor_then_pose` for detector-centre
+followed by pose correction, and `auto` for the full setup+pose workflow.
 
 | Problem | Recommended mode | Typical command |
 | --- | --- | --- |
 | Sample or object motion changes from projection to projection | `pose` | `tomojax align --data scan.nxs --mode pose --out aligned.nxs` |
 | Detector centre or centre-of-rotation is wrong | `cor` | `tomojax align --data scan.nxs --mode cor --out aligned.nxs` |
+| Detector-centre then per-view pose correction | `cor_then_pose` | `tomojax align --data scan.nxs --mode cor_then_pose --out aligned.nxs` |
 | Mild setup error and pose motion are both plausible | `auto` | `tomojax align --data scan.nxs --mode auto --gauge-policy anchor_mean --out aligned.nxs` |
 | Reference elevation or detector-v shift is uncertain | Inspect manually | `det_v_px` is not a reliably recoverable alignment target. |
 
