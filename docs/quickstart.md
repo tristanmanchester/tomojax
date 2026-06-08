@@ -6,19 +6,18 @@ and optionally run alignment.
 ## Install and check the CLI
 
 ```bash
-uv sync --extra cpu --dev
+uv sync --locked --extra cpu --dev
 uv run tomojax --help
 ```
 
 For CUDA hosts, use the CUDA extra instead:
 
 ```bash
-uv sync --extra cuda12 --dev
-uv run python - <<'PY'
-import jax
-print(jax.default_backend())
-PY
+uv sync --locked --extra cuda12 --dev
+just accelerator-smoke-cuda
 ```
+
+`just accelerator-smoke-cuda` verifies the optional accelerator projector path.
 
 ## Inspect, validate, and preprocess data
 
