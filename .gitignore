@@ -114,6 +114,7 @@ temp/
 # Benchmark data and output
 bench/data/
 bench/out/
+bench/profiles/
 bench/results/
 results/
 .artifacts/
