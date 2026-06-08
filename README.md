@@ -48,19 +48,18 @@ Use `--transmission` when you need normalized transmission output instead.
 Install the CPU development environment and check the CLI.
 
 ```bash
-uv sync --extra cpu --dev
+uv sync --locked --extra cpu --dev
 uv run tomojax --help
 ```
 
 On a Linux CUDA host, use the CUDA extra instead:
 
 ```bash
-uv sync --extra cuda12 --dev
-uv run python - <<'PY'
-import jax
-print(jax.default_backend())
-PY
+uv sync --locked --extra cuda12 --dev
+just accelerator-smoke-cuda
 ```
+
+`just accelerator-smoke-cuda` verifies the optional accelerator projector path.
 
 If you do not have scan data yet, generate a small synthetic dataset and
 reconstruct it:
@@ -175,8 +174,10 @@ workflows. See
 Run before submitting changes.
 
 ```bash
+just ci
 just surface-check
 just check
 ```
 
-`just surface-check` runs formatting, lint, import guardrails, and tests.
+`just ci` is the full local release gate. `just surface-check` runs the faster
+formatting, lint, import guardrail, smoke, and test subset.

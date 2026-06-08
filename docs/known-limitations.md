@@ -25,6 +25,11 @@ workflows or need scan-specific review.
 
 - Pallas paths are optional accelerator backends. Reference/JAX paths are the
   baseline for correctness tests.
+- `just accelerator-smoke` verifies the Pallas projector in interpret mode on
+  CPU and attempts a real Pallas run only when JAX reports a non-CPU backend.
+  Real CUDA coverage therefore depends on the host CUDA/JAX installation, not
+  only this package. Use `just accelerator-smoke-cuda` on CUDA hosts that must
+  prove the real accelerator path is available.
 - The test suite covers import boundaries, CLI routing, CPU reconstruction
   smoke tests, and numerical correctness of loss kernels and geometry
   transforms.

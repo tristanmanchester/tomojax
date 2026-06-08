@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict
 import logging
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
@@ -19,14 +19,14 @@ from tomojax.recon.quicklook import save_quicklook_png
 from ._recon_command import ReconCommand
 
 if TYPE_CHECKING:
-    from tomojax.io import JsonValue
+    from tomojax.io import JsonValue, ProjectionDataset
 
 
 def write_reconstruction_outputs(
     command: ReconCommand,
     *,
     config_metadata: dict[str, ConfigValue],
-    meta: Any,
+    meta: ProjectionDataset,
     geometry_meta: dict[str, object],
     input_grid: Grid,
     recon_grid: Grid,
@@ -90,7 +90,7 @@ def build_reconstruction_manifest(
     command: ReconCommand,
     *,
     config_metadata: dict[str, ConfigValue],
-    meta: Any,
+    meta: ProjectionDataset,
     geometry_meta: dict[str, object],
     input_grid: Grid,
     recon_grid: Grid,

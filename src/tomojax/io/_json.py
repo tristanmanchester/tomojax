@@ -149,15 +149,17 @@ def _normalize_array(value: object) -> object:
             try:
                 return cast("object", value.item())
             except Exception as exc:
+                scalar = cast("object", value)
                 raise TypeError(
-                    f"could not normalize NumPy scalar {type(value).__name__} to JSON"
+                    f"could not normalize NumPy scalar {type(scalar).__name__} to JSON"
                 ) from exc
         if isinstance(value, np.ndarray):
             try:
                 return cast("object", value.tolist())
             except Exception as exc:
+                shape = cast("object", value.shape)
                 raise TypeError(
-                    f"could not normalize NumPy array with shape {value.shape} to JSON"
+                    f"could not normalize NumPy array with shape {shape} to JSON"
                 ) from exc
 
     try:

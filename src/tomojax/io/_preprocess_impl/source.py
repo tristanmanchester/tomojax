@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 import json
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 import h5py
 import numpy as np
+import numpy.typing as npt
 
 from tomojax._data import NXTomoMetadata
 from tomojax.io._json import JsonValue, normalize_json
@@ -17,6 +18,14 @@ if TYPE_CHECKING:
     from tomojax.core.geometry.base import DetectorDict, GridDict
 
 
+class _VisitItemsCapable(Protocol):
+    def visititems(
+        self,
+        func: Callable[[str, h5py.Dataset | h5py.Group], None],
+        /,
+    ) -> None: ...
+
+
 def _attr_to_str(value: object, default: str | None = None) -> str | None:
     if value is None:
         return default
@@ -24,11 +33,15 @@ def _attr_to_str(value: object, default: str | None = None) -> str | None:
         if isinstance(value, bytes):
             return value.decode("utf-8", errors="ignore")
         if isinstance(value, np.ndarray):
-            if value.shape == ():
-                return _attr_to_str(value.item(), default)
-            if value.size >= 1:
-                return _attr_to_str(value.flat[0], default)
-        return str(value)
+            array: npt.NDArray[np.object_] = np.asarray(value, dtype=object)
+            shape = cast("tuple[int, ...]", array.shape)
+            if shape == ():
+                scalar = cast("object", array.item())
+                return _attr_to_str(scalar, default)
+            if array.size >= 1:
+                scalar = cast("object", array.reshape(-1)[0])
+                return _attr_to_str(scalar, default)
+        return str(cast("object", value))
     except Exception:
         return default
 
@@ -38,7 +51,7 @@ def _json_mapping_attr(value: object) -> dict[str, JsonValue] | None:
     if not text:
         return None
     try:
-        payload: object = json.loads(text)
+        payload = cast("object", json.loads(text))
     except json.JSONDecodeError:
         return None
     normalized = normalize_json(payload)
@@ -81,7 +94,7 @@ def _find_unique_image_key(file: h5py.File) -> tuple[str, h5py.Dataset]:
         if isinstance(obj, h5py.Dataset) and name.rsplit("/", 1)[-1] == "image_key":
             matches.append(("/" + name.lstrip("/"), obj))
 
-    cast("Any", file).visititems(visitor)
+    cast("_VisitItemsCapable", file).visititems(visitor)
     if not matches:
         raise KeyError(
             "Could not find image_key dataset at /entry/instrument/detector/image_key "
@@ -114,11 +127,13 @@ def _read_scalar_dataset(group: h5py.Group | None, name: str) -> float | None:
     if not isinstance(dataset, h5py.Dataset):
         return None
     try:
-        return float(np.asarray(dataset[...]).reshape(-1)[0])
+        values: npt.NDArray[np.object_] = np.asarray(dataset[...], dtype=object).reshape(-1)
+        value = cast("object", values[0])
+        if isinstance(value, bool) or not isinstance(value, int | float | str):
+            raise TypeError(f"expected numeric scalar, got {type(value).__name__}")
+        return float(value)
     except (TypeError, ValueError, OverflowError, IndexError) as exc:
-        raise ValueError(
-            f"Could not read scalar detector metadata dataset {cast('Any', dataset).name!r}"
-        ) from exc
+        raise ValueError(f"Could not read scalar detector metadata dataset {name!r}") from exc
 
 
 def _detector_meta_from_raw(
@@ -178,11 +193,14 @@ def _metadata_float(metadata: Mapping[str, object], key: str, *, default: float 
 
 def _detector_center_from_metadata(metadata: Mapping[str, object]) -> tuple[float, float]:
     det_center = metadata.get("det_center")
-    if not isinstance(det_center, list | tuple) or len(det_center) < 2:
+    if not isinstance(det_center, list | tuple):
+        return 0.0, 0.0
+    values = cast("Sequence[object]", det_center)
+    if len(values) < 2:
         return 0.0, 0.0
     return (
-        _metadata_item_float(det_center[0], default=0.0),
-        _metadata_item_float(det_center[1], default=0.0),
+        _metadata_item_float(values[0], default=0.0),
+        _metadata_item_float(values[1], default=0.0),
     )
 
 
@@ -204,8 +222,9 @@ def _source_info(entry: h5py.Group) -> dict[str, str | None]:
         return {}
     out: dict[str, str | None] = {}
     for key in ("name", "type", "probe"):
-        if key in source:
-            out[key] = _attr_to_str(cast("Any", source[key])[()], default=None)
+        dataset = source.get(key)
+        if isinstance(dataset, h5py.Dataset):
+            out[key] = _attr_to_str(np.asarray(dataset[...]), default=None)
     return out
 
 
@@ -234,7 +253,11 @@ def _metadata_from_raw(
     sample = entry.get("sample")
     sample_name = "sample"
     if isinstance(sample, h5py.Group) and "name" in sample:
-        sample_name = _attr_to_str(cast("Any", sample["name"])[()], default="sample") or "sample"
+        sample_dataset = sample.get("name")
+        if isinstance(sample_dataset, h5py.Dataset):
+            sample_name = (
+                _attr_to_str(np.asarray(sample_dataset[...]), default="sample") or "sample"
+            )
 
     return NXTomoMetadata(
         thetas_deg=np.asarray(thetas_deg, dtype=np.float32),

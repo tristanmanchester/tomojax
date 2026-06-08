@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 import numpy as np
 
+from tomojax.io._json import JsonValue
 from tomojax.io._preprocess_impl.config import PreprocessConfig
 
 
@@ -93,11 +94,29 @@ def _combine_view_specs(
     return _parse_view_spec("\n".join(parts), n_views=n_views, label=label)
 
 
+def _array_dim(values: np.ndarray, axis: int) -> int:
+    shape = cast("tuple[int, ...]", values.shape)
+    return int(shape[axis])
+
+
+def _array_int_at(values: np.ndarray, index: int) -> int:
+    value = cast("object", values[index])
+    if isinstance(value, np.integer):
+        return int(cast("int", value))
+    if isinstance(value, bool) or not isinstance(value, int | str):
+        raise TypeError(f"expected integer view index, got {type(value).__name__}")
+    return int(value)
+
+
+def _json_int_list(values: np.ndarray) -> list[JsonValue]:
+    return [cast("JsonValue", _array_int_at(values, i)) for i in range(_array_dim(values, 0))]
+
+
 def _resolve_sample_view_indices(
     *,
     n_sample_views: int,
     config: PreprocessConfig,
-) -> tuple[np.ndarray, dict[str, Any]]:
+) -> tuple[np.ndarray, dict[str, JsonValue]]:
     select = _combine_view_specs(
         config.select_views,
         config.select_views_file,
@@ -118,19 +137,25 @@ def _resolve_sample_view_indices(
 
     explicit_rejected = np.asarray([], dtype=np.int64)
     if reject is not None and reject.size:
-        reject_set = {int(v) for v in reject.tolist()}
-        keep_mask = np.asarray([int(v) not in reject_set for v in candidate], dtype=bool)
+        reject_set = {_array_int_at(reject, i) for i in range(_array_dim(reject, 0))}
+        keep_mask = np.asarray(
+            [
+                _array_int_at(candidate, i) not in reject_set
+                for i in range(_array_dim(candidate, 0))
+            ],
+            dtype=bool,
+        )
         explicit_rejected = candidate[~keep_mask]
         candidate = candidate[keep_mask]
 
     if candidate.size == 0:
         raise ValueError("view selection/rejection removed all sample views")
 
-    meta = {
-        "select_views": None if select is None else select.tolist(),
-        "reject_views": [] if reject is None else reject.tolist(),
-        "explicit_rejected_sample_view_indices": explicit_rejected.tolist(),
-        "candidate_sample_view_indices": candidate.tolist(),
+    meta: dict[str, JsonValue] = {
+        "select_views": None if select is None else _json_int_list(select),
+        "reject_views": [] if reject is None else _json_int_list(reject),
+        "explicit_rejected_sample_view_indices": _json_int_list(explicit_rejected),
+        "candidate_sample_view_indices": _json_int_list(candidate),
     }
     return candidate, meta
 

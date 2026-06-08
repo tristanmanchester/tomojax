@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import jax.numpy as jnp
 
@@ -20,6 +20,9 @@ from tomojax.recon.filters import clear_filter_caches
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
 from tomojax.recon.types import Regulariser
+
+if TYPE_CHECKING:
+    from tomojax.geometry import Detector, Geometry, Grid
 
 type ReconstructionAlgorithm = Literal["fbp", "fista", "spdhg"]
 
@@ -53,9 +56,9 @@ class ReconstructionAlgorithmRequest:
     """Resolved reconstruction inputs for a single solver run."""
 
     options: ReconstructionAlgorithmOptions
-    geometry: Any
-    grid: Any
-    detector: Any
+    geometry: Geometry
+    grid: Grid
+    detector: Detector
     projections: jnp.ndarray
     detector_grid: tuple[jnp.ndarray, jnp.ndarray] | None
     volume_mask: jnp.ndarray | None

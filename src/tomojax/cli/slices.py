@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import h5py
 import imageio.v3 as iio
@@ -14,11 +15,30 @@ import numpy as np
 from tomojax.recon.quicklook import scale_to_uint8
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
 
 _VOLUME_PATH = "/entry/processing/tomojax/volume"
 _AXES_ATTR = "volume_axes_order"
+
+
+@dataclass(frozen=True)
+class SliceCommand:
+    """Typed command plan for labelled reconstruction slice extraction."""
+
+    data: Path
+    out_dir: Path
+    prefix: str
+    z_index: int | None
+    y_index: int | None
+    x_index: int | None
+    force: bool
+    lower_percentile: float
+    upper_percentile: float
+
+
+type SliceRecord = dict[str, int | str]
+type SliceSummary = dict[str, object]
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -98,11 +118,12 @@ def _prepare_slice_outputs(
     x_index: int | None,
     lower_percentile: float,
     upper_percentile: float,
-) -> tuple[dict[str, Any], list[tuple[Path, np.ndarray]]]:
-    outputs: dict[str, Any] = {
+) -> tuple[SliceSummary, list[tuple[Path, np.ndarray]]]:
+    slice_outputs: dict[str, SliceRecord] = {}
+    outputs: SliceSummary = {
         "input_path": str(data_path),
         "volume_path": _VOLUME_PATH,
-        "slices": {},
+        "slices": slice_outputs,
     }
     planned_images: list[tuple[Path, np.ndarray]] = []
     with h5py.File(data_path, "r") as handle:
@@ -133,7 +154,7 @@ def _prepare_slice_outputs(
             )
             out_path = out_dir / f"{prefix}_{axis}{int(index):04d}.png"
             planned_images.append((out_path, image))
-            outputs["slices"][axis] = {
+            slice_outputs[axis] = {
                 "index": int(index),
                 "path": str(out_path),
                 "display_axes": {"z": "yx", "y": "zx", "x": "zy"}[axis],
@@ -145,19 +166,20 @@ def _write_slice_outputs(
     *,
     planned_images: list[tuple[Path, np.ndarray]],
     summary_path: Path,
-    outputs: dict[str, Any],
+    outputs: SliceSummary,
 ) -> None:
     temp_paths: list[tuple[Path, Path]] = []
+    imwrite = cast("Callable[[Path, np.ndarray], None]", iio.imwrite)
     try:
         for out_path, image in planned_images:
             tmp_path = _temporary_path(out_path)
-            iio.imwrite(tmp_path, image)
+            imwrite(tmp_path, image)
             temp_paths.append((tmp_path, out_path))
         summary_tmp = _temporary_path(summary_path)
-        summary_tmp.write_text(json.dumps(outputs, indent=2), encoding="utf-8")
+        _ = summary_tmp.write_text(json.dumps(outputs, indent=2), encoding="utf-8")
         temp_paths.append((summary_tmp, summary_path))
         for tmp_path, out_path in temp_paths:
-            tmp_path.replace(out_path)
+            _ = tmp_path.replace(out_path)
     except OSError:
         for tmp_path, _out_path in temp_paths:
             tmp_path.unlink(missing_ok=True)
@@ -168,35 +190,43 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the slice extraction CLI."""
     parser = _build_parser()
     args = parser.parse_args(argv)
-    data_path = Path(str(args.data))
-    out_dir = Path(str(args.out))
-    prefix = str(args.prefix)
-    summary_path = out_dir / f"{prefix}_slices.json"
+    command = SliceCommand(
+        data=Path(cast("str", args.data)),
+        out_dir=Path(cast("str", args.out)),
+        prefix=cast("str", args.prefix),
+        z_index=cast("int | None", args.z),
+        y_index=cast("int | None", args.y),
+        x_index=cast("int | None", args.x),
+        force=cast("bool", args.force),
+        lower_percentile=float(cast("float", args.lower_percentile)),
+        upper_percentile=float(cast("float", args.upper_percentile)),
+    )
+    summary_path = command.out_dir / f"{command.prefix}_slices.json"
 
     try:
         outputs, planned_images = _prepare_slice_outputs(
-            data_path=data_path,
-            out_dir=out_dir,
-            prefix=prefix,
-            z_index=args.z,
-            y_index=args.y,
-            x_index=args.x,
-            lower_percentile=float(args.lower_percentile),
-            upper_percentile=float(args.upper_percentile),
+            data_path=command.data,
+            out_dir=command.out_dir,
+            prefix=command.prefix,
+            z_index=command.z_index,
+            y_index=command.y_index,
+            x_index=command.x_index,
+            lower_percentile=command.lower_percentile,
+            upper_percentile=command.upper_percentile,
         )
     except OSError as exc:
-        parser.error(f"could not read {data_path}: {exc}")
+        parser.error(f"could not read {command.data}: {exc}")
     except ValueError as exc:
         parser.error(str(exc))
 
     planned_paths = [path for path, _image in planned_images] + [summary_path]
     existing = [path for path in planned_paths if path.exists()]
-    if existing and not bool(args.force):
+    if existing and not command.force:
         rendered = ", ".join(str(path) for path in existing[:5])
         extra = "" if len(existing) <= 5 else f", and {len(existing) - 5} more"
         parser.error(f"output file(s) already exist: {rendered}{extra}; pass --force to overwrite")
 
-    out_dir.mkdir(parents=True, exist_ok=True)
+    command.out_dir.mkdir(parents=True, exist_ok=True)
     try:
         _write_slice_outputs(
             planned_images=planned_images,

@@ -19,9 +19,13 @@ jobs:
           enable-cache: true
           cache-dependency-glob: |
             pyproject.toml
+            uv.lock
 
       - name: Sync dependencies
-        run: uv sync --extra cpu --dev
+        run: uv sync --locked --extra cpu --dev
+
+      - name: Lockfile check
+        run: uv lock --check
 
       - name: Format check
         run: uv run ruff format --check src tests tools examples
@@ -29,8 +33,26 @@ jobs:
       - name: Lint
         run: uv run ruff check src tests tools examples
 
+      - name: Typecheck
+        run: uv run basedpyright
+
       - name: Import boundaries
-        run: uv run python tools/check_public_imports.py
+        run: |
+          uv run lint-imports --config .importlinter
+          uv run python tools/check_public_imports.py
+
+      - name: Package build
+        run: |
+          rm -rf dist
+          uv build
+          uv run twine check dist/*
+          uv run python tools/smoke_installed_wheel.py
+
+      - name: CLI smoke workflow
+        run: uv run python tools/smoke_cli_workflow.py
+
+      - name: Accelerator smoke workflow
+        run: uv run python tools/smoke_accelerator.py
 
       - name: Tests
         run: uv run pytest -q tests --cov

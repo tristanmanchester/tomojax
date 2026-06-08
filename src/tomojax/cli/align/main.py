@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 # ruff: noqa: D100,TC001
+from collections.abc import Mapping
 import json
 import logging
 import os
@@ -9,6 +10,7 @@ from typing import TYPE_CHECKING, cast
 from tomojax.align.api import AlignmentLossSchedule, loss_spec_params, normalize_alignment_profile
 from tomojax.cli.config import parse_args_with_config
 from tomojax.core import log_jax_env, setup_logging
+from tomojax.io import JsonValue, normalize_json
 
 from .checkpoint import make_align_cli_checkpoint_callbacks
 from .command import build_parser
@@ -24,24 +26,16 @@ if TYPE_CHECKING:
     from tomojax.align.api import AlignmentLossConfig, AlignmentLossSpec
 
 
-def _jsonable(value: object) -> object:
-    if isinstance(value, dict):
-        return {str(key): _jsonable(item) for key, item in value.items()}
-    if isinstance(value, list | tuple):
-        return [_jsonable(item) for item in value]
-    return value
-
-
-def _loss_spec_payload(spec: AlignmentLossSpec) -> dict[str, object]:
+def _loss_spec_payload(spec: AlignmentLossSpec) -> dict[str, JsonValue]:
     from tomojax.align.api import loss_spec_name
 
     return {
         "name": loss_spec_name(spec),
-        "params": loss_spec_params(spec),
+        "params": normalize_json(loss_spec_params(spec)),
     }
 
 
-def _loss_config_payload(loss_config: AlignmentLossConfig) -> dict[str, object]:
+def _loss_config_payload(loss_config: AlignmentLossConfig) -> dict[str, JsonValue]:
     if isinstance(loss_config, AlignmentLossSchedule):
         return {
             "default": _loss_spec_payload(loss_config.default),
@@ -60,14 +54,19 @@ def _log_resolved_plan(plan: AlignCliRunPlan) -> None:
     """Emit the effective alignment recipe before any heavy compute starts."""
     command = plan.command
     schedule = plan.schedule_metadata or {}
-    stages = schedule.get("stages")
-    stage_summary = []
+    stages = cast("object", schedule.get("stages"))
+    stage_summary: list[str] = []
     if isinstance(stages, list):
-        for stage in stages:
-            if isinstance(stage, dict):
-                dofs = ",".join(str(item) for item in stage.get("active_dofs", []))
-                stage_name = stage.get("stage_name", stage.get("name"))
-                stage_summary.append(f"{stage_name}[{stage.get('optimizer_kind')}:{dofs}]")
+        for stage in cast("list[object]", stages):
+            if isinstance(stage, Mapping):
+                stage_map = cast("Mapping[str, object]", stage)
+                active_dofs = cast("object", stage_map.get("active_dofs", []))
+                if not isinstance(active_dofs, list | tuple):
+                    active_dofs = []
+                dof_items = cast("list[object] | tuple[object, ...]", active_dofs)
+                dofs = ",".join(str(item) for item in dof_items)
+                stage_name = stage_map.get("stage_name", stage_map.get("name"))
+                stage_summary.append(f"{stage_name}[{stage_map.get('optimizer_kind')}:{dofs}]")
     profile = normalize_alignment_profile(command.align_profile)
     logging.info(
         "Resolved alignment plan: mode=%s quality=%s schedule=%s levels=%s "
@@ -85,20 +84,21 @@ def _log_resolved_plan(plan: AlignCliRunPlan) -> None:
         logging.info("Resolved alignment stages: %s", " -> ".join(stage_summary))
 
 
-def _resolved_plan_payload(plan: AlignCliRunPlan) -> dict[str, object]:
+def _resolved_plan_payload(plan: AlignCliRunPlan) -> dict[str, JsonValue]:
     """Return the structured public plan printed by --print-plan-json."""
     command = plan.command
     schedule = plan.schedule_metadata or {}
-    return {
+    profile_options = cast("object", plan.config_metadata.get("profile_options", {}))
+    payload: dict[str, object] = {
         "mode": command.mode,
         "quality": normalize_alignment_profile(command.align_profile),
         "schedule": command.schedule,
         "levels": plan.run_levels,
         "single_resolution": plan.run_levels is None,
-        "stages": _jsonable(schedule.get("stages", [])),
-        "active_dofs": _jsonable(schedule.get("active_dofs", [])),
-        "active_geometry_dofs": _jsonable(schedule.get("active_geometry_dofs", [])),
-        "active_motion_dofs": _jsonable(schedule.get("active_motion_dofs", [])),
+        "stages": normalize_json(schedule.get("stages", [])),
+        "active_dofs": normalize_json(schedule.get("active_dofs", [])),
+        "active_geometry_dofs": normalize_json(schedule.get("active_geometry_dofs", [])),
+        "active_motion_dofs": normalize_json(schedule.get("active_motion_dofs", [])),
         "loss": _loss_config_payload(plan.loss_config),
         "outer_iters": command.outer_iters,
         "recon_iters": command.recon_iters,
@@ -121,8 +121,9 @@ def _resolved_plan_payload(plan: AlignCliRunPlan) -> dict[str, object]:
         "reconstruction_grid": plan.recon_grid.to_dict(),
         "detector": plan.detector.to_dict(),
         "apply_cyl_mask": plan.apply_cyl_mask,
-        "profile_options": _jsonable(plan.config_metadata.get("profile_options", {})),
+        "profile_options": normalize_json(profile_options),
     }
+    return cast("dict[str, JsonValue]", normalize_json(payload))
 
 
 def main() -> None:

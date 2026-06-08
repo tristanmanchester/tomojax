@@ -3,9 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 from pathlib import Path
-from typing import Any
 
 import numpy as np
+
+from tomojax.io._json import JsonValue
 
 LOG = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ _ANGLE_PATH = "/entry/sample/transformations/rotation_angle"
 _IMAGE_KEY_PATH = "/entry/instrument/detector/image_key"
 
 
-_OUTPUT_DTYPES = {"float32": np.float32, "float64": np.float64}
+_OUTPUT_DTYPES: dict[str, str] = {"float32": "float32", "float64": "float64"}
 
 
 @dataclass(slots=True)
@@ -62,7 +63,7 @@ class PreprocessResult:
     output_shape: tuple[int, int, int]
     output_domain: str
     warning_counts: dict[str, int]
-    provenance: dict[str, Any]
+    provenance: dict[str, JsonValue]
 
 
 def _output_domain_from_config(config: PreprocessConfig) -> str:

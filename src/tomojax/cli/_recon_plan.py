@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import logging
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -12,10 +12,15 @@ import numpy as np
 from tomojax.backends import default_gather_dtype, estimate_views_per_batch_info
 from tomojax.geometry import (
     Detector,
+    Geometry,
     Grid,
     detector_grid_from_geometry_inputs,
 )
-from tomojax.io import build_geometry_from_dataset_metadata, load_projection_payload
+from tomojax.io import (
+    ProjectionDataset,
+    build_geometry_from_dataset_metadata,
+    load_projection_payload,
+)
 from tomojax.recon.api import (
     ReconstructionAlgorithmOptions,
     ReconstructionAlgorithmRequest,
@@ -32,13 +37,13 @@ if TYPE_CHECKING:
 class ReconRuntimePlan:
     """Resolved runtime inputs for one reconstruction execution."""
 
-    meta: Any
+    meta: ProjectionDataset
     geometry_meta: dict[str, object]
     input_grid: Grid
     recon_grid: Grid
     detector: Detector
     detector_center_override: JsonValue
-    geometry: Any
+    geometry: Geometry
     projections: jnp.ndarray
     detector_grid: tuple[jnp.ndarray, jnp.ndarray] | None
     roi_mode: str
@@ -260,7 +265,7 @@ def _apply_detector_center_override(
 def _reconstruction_algorithm_request(
     command: ReconCommand,
     *,
-    geom: Any,
+    geom: Geometry,
     recon_grid: Grid,
     detector: Detector,
     projections: jnp.ndarray,
@@ -275,7 +280,7 @@ def _reconstruction_algorithm_request(
         filter_name=str(command.filter),
         iters=int(command.iters),
         lambda_tv=float(command.lambda_tv),
-        regulariser=cast("Any", str(command.regulariser)),
+        regulariser=command.regulariser,
         huber_delta=float(command.huber_delta),
         lipschitz=float(command.lipschitz) if command.lipschitz is not None else None,
         positivity=bool(command.positivity),
@@ -290,7 +295,7 @@ def _reconstruction_algorithm_request(
         spdhg_sigma_tv=(
             float(command.spdhg_sigma_tv) if command.spdhg_sigma_tv is not None else None
         ),
-        warm_start=cast("Any", str(command.warm_start)),
+        warm_start=command.warm_start,
         checkpoint_projector=bool(command.checkpoint_projector),
         tv_prox_iters=int(command.tv_prox_iters),
     )

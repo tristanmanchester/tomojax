@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 import h5py
 import numpy as np
+import numpy.typing as npt
 
 from tomojax._data import save_nxtomo
+from tomojax.io._json import JsonValue, normalize_json
 from tomojax.io._preprocess_impl.config import (
     _ANGLE_PATH,
     _PROJECTION_PATHS,
@@ -20,6 +23,8 @@ from tomojax.io._preprocess_impl.config import (
     _validate_config,
 )
 from tomojax.io._preprocess_impl.correction import (
+    FloatArray,
+    IntArray,
     _auto_reject_views,
     _coverage_changed,
     _coverage_stats,
@@ -36,6 +41,38 @@ from tomojax.io._preprocess_impl.source import (
 from tomojax.io._preprocess_impl.writer import _write_preprocess_provenance
 
 
+def _metadata_int(metadata: Mapping[str, object], key: str) -> int:
+    value = metadata[key]
+    if not isinstance(value, int):
+        raise TypeError(f"preprocess metadata field {key!r} must be an int")
+    return value
+
+
+def _metadata_str(metadata: Mapping[str, object], key: str) -> str:
+    value = metadata[key]
+    if not isinstance(value, str):
+        raise TypeError(f"preprocess metadata field {key!r} must be a string")
+    return value
+
+
+def _array_dim(values: npt.NDArray[np.generic], axis: int) -> int:
+    shape = cast("tuple[int, ...]", values.shape)
+    return int(shape[axis])
+
+
+def _array_int_at(values: IntArray, index: int) -> int:
+    value = cast("object", values[index])
+    if isinstance(value, np.integer):
+        return int(cast("int", value))
+    if isinstance(value, bool) or not isinstance(value, int | str):
+        raise TypeError(f"expected integer array scalar, got {type(value).__name__}")
+    return int(value)
+
+
+def _json_int_list(values: IntArray) -> list[JsonValue]:
+    return [cast("JsonValue", _array_int_at(values, i)) for i in range(_array_dim(values, 0))]
+
+
 def _entry_group(file: h5py.File) -> h5py.Group:
     entry = file["/entry"]
     if not isinstance(entry, h5py.Group):
@@ -48,11 +85,11 @@ class _RawPreprocessInput:
     frame_path: str
     key_path: str
     angle_path: str
-    frames: np.ndarray
-    angles_all: np.ndarray
-    sample_raw_indices: np.ndarray
-    flat_raw_indices: np.ndarray
-    dark_raw_indices: np.ndarray
+    frames: FloatArray
+    angles_all: npt.NDArray[np.float32]
+    sample_raw_indices: IntArray
+    flat_raw_indices: IntArray
+    dark_raw_indices: IntArray
     raw_frame_counts: dict[str, int]
     crop_bounds: tuple[int, int, int, int] | None
     crop_slices: tuple[int, int, int, int]
@@ -112,7 +149,7 @@ def preprocess_nxtomo(
         output_angles = candidate_angles[auto_keep]
         output_repaired = repair_nonfinite_preprocess_output(output_unrepaired, warning_counts)
         output = np.asarray(output_repaired, dtype=output_dtype)
-        output_image_key = np.zeros((int(output.shape[0]),), dtype=np.int32)
+        output_image_key = np.zeros((_array_dim(output, 0),), dtype=np.int32)
 
         coverage_before = _coverage_stats(raw.angles_all[raw.sample_raw_indices])
         coverage_after = _coverage_stats(output_angles)
@@ -169,11 +206,11 @@ def preprocess_nxtomo(
     )
 
     return PreprocessResult(
-        sample_count=int(output.shape[0]),
-        flat_count=int(correction_meta["flat_count"]),
-        dark_count=int(correction_meta["dark_count"]),
-        output_shape=(int(output.shape[0]), int(output.shape[1]), int(output.shape[2])),
-        output_domain=str(correction_meta["output_domain"]),
+        sample_count=_array_dim(output, 0),
+        flat_count=_metadata_int(correction_meta, "flat_count"),
+        dark_count=_metadata_int(correction_meta, "dark_count"),
+        output_shape=(_array_dim(output, 0), _array_dim(output, 1), _array_dim(output, 2)),
+        output_domain=_metadata_str(correction_meta, "output_domain"),
         warning_counts=dict(warning_counts),
         provenance=provenance,
     )
@@ -199,11 +236,11 @@ def _load_raw_preprocess_input(
         y0, y1, x0, x1 = 0, raw_nv, 0, raw_nu
     else:
         y0, y1, x0, x1 = crop_bounds
-    frames = np.asarray(frame_dataset[:, y0:y1, x0:x1])
+    frames: FloatArray = np.asarray(frame_dataset[:, y0:y1, x0:x1], dtype=np.float64)
     cropped_nv, cropped_nu = int(y1 - y0), int(x1 - x0)
 
     key_path, key_dataset = _resolve_image_key_dataset(file, cfg.image_key_path)
-    image_key = np.asarray(key_dataset[...], dtype=np.int32).reshape(-1)
+    image_key: npt.NDArray[np.int32] = np.asarray(key_dataset[...], dtype=np.int32).reshape(-1)
     if image_key.shape != (n_frames,):
         raise ValueError(
             f"image_key length must match raw frame count ({n_frames}), got {image_key.shape[0]}"
@@ -222,9 +259,12 @@ def _load_raw_preprocess_input(
             f"got {angles_all.shape[0]}"
         )
 
-    sample_raw_indices = np.flatnonzero(image_key == 0)
-    flat_raw_indices = np.flatnonzero(image_key == 1)
-    dark_raw_indices = np.flatnonzero(image_key == 2)
+    sample_mask: npt.NDArray[np.bool_] = np.asarray(image_key == 0, dtype=np.bool_)
+    flat_mask: npt.NDArray[np.bool_] = np.asarray(image_key == 1, dtype=np.bool_)
+    dark_mask: npt.NDArray[np.bool_] = np.asarray(image_key == 2, dtype=np.bool_)
+    sample_raw_indices: IntArray = np.asarray(np.flatnonzero(sample_mask), dtype=np.int64)
+    flat_raw_indices: IntArray = np.asarray(np.flatnonzero(flat_mask), dtype=np.int64)
+    dark_raw_indices: IntArray = np.asarray(np.flatnonzero(dark_mask), dtype=np.int64)
     if sample_raw_indices.size == 0:
         raise ValueError("No sample frames found (image_key==0)")
     return _RawPreprocessInput(
@@ -256,18 +296,18 @@ def _build_preprocess_provenance(
     output: np.ndarray,
     output_dtype: np.dtype,
     output_domain: str,
-    correction_meta: dict[str, Any],
+    correction_meta: Mapping[str, object],
     warning_counts: dict[str, int],
-    view_selection_meta: dict[str, Any],
-    final_sample_indices: np.ndarray,
-    final_raw_sample_indices: np.ndarray,
-    auto_reject_meta: dict[str, Any],
+    view_selection_meta: dict[str, JsonValue],
+    final_sample_indices: IntArray,
+    final_raw_sample_indices: IntArray,
+    auto_reject_meta: dict[str, JsonValue],
     coverage_before: dict[str, float | int | None],
     coverage_after: dict[str, float | int | None],
     optional_meta_found: dict[str, bool],
-) -> dict[str, Any]:
+) -> dict[str, JsonValue]:
     y0, y1, x0, x1 = raw.crop_slices
-    return {
+    payload: dict[str, object] = {
         "schema_version": PREPROCESS_SCHEMA_VERSION,
         "input_path": str(input_path),
         "data_path": raw.frame_path,
@@ -275,12 +315,12 @@ def _build_preprocess_provenance(
         "image_key_path": raw.key_path,
         "frame_counts": raw.raw_frame_counts,
         "processing_frame_counts": {
-            "candidate_sample": int(correction_meta["sample_count"]),
-            "final_sample": int(output.shape[0]),
-            "flat": int(correction_meta["flat_count"]),
-            "dark": int(correction_meta["dark_count"]),
+            "candidate_sample": _metadata_int(correction_meta, "sample_count"),
+            "final_sample": _array_dim(output, 0),
+            "flat": _metadata_int(correction_meta, "flat_count"),
+            "dark": _metadata_int(correction_meta, "dark_count"),
         },
-        "output_domain": correction_meta["output_domain"],
+        "output_domain": _metadata_str(correction_meta, "output_domain"),
         "epsilon": float(cfg.epsilon),
         "clip_min": None if cfg.clip_min is None else float(cfg.clip_min),
         "output_dtype": str(output_dtype),
@@ -300,8 +340,8 @@ def _build_preprocess_provenance(
         "select_views_file": None if cfg.select_views_file is None else str(cfg.select_views_file),
         "reject_views_file": None if cfg.reject_views_file is None else str(cfg.reject_views_file),
         "view_selection": view_selection_meta,
-        "final_sample_view_indices": final_sample_indices.tolist(),
-        "final_raw_frame_indices": final_raw_sample_indices.tolist(),
+        "final_sample_view_indices": _json_int_list(final_sample_indices),
+        "final_raw_frame_indices": _json_int_list(final_raw_sample_indices),
         "auto_reject": auto_reject_meta,
         "crop": cfg.crop,
         "crop_bounds": None
@@ -314,8 +354,16 @@ def _build_preprocess_provenance(
         },
         "original_projection_shape": [int(v) for v in raw.original_shape],
         "cropped_projection_shape": [int(v) for v in raw.cropped_shape],
-        "final_projection_shape": [int(v) for v in output.shape],
+        "final_projection_shape": [
+            _array_dim(output, 0),
+            _array_dim(output, 1),
+            _array_dim(output, 2),
+        ],
         "angular_coverage_before": coverage_before,
         "angular_coverage_after": coverage_after,
         "optional_sample_metadata_filtered": optional_meta_found,
     }
+    normalized = normalize_json(payload)
+    if not isinstance(normalized, dict):
+        raise TypeError("preprocess provenance must normalize to a JSON object")
+    return cast("dict[str, JsonValue]", normalized)

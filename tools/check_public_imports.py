@@ -7,7 +7,7 @@ import ast
 from dataclasses import dataclass
 from pathlib import Path
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -74,7 +74,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"'# {ALLOW_PRIVATE_MARKER}'."
         )
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "paths",
         nargs="*",
         type=Path,
@@ -82,9 +82,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Files or directories to scan.",
     )
     args = parser.parse_args(argv)
+    arg_paths = cast("Sequence[Path]", args.paths)
 
     root = Path.cwd()
-    paths = [path if path.is_absolute() else root / path for path in args.paths]
+    paths = [path if path.is_absolute() else root / path for path in arg_paths]
     violations = find_violations(paths, root)
     if violations:
         for violation in violations:

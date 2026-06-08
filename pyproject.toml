@@ -41,6 +41,7 @@ dev = [
     "pytest>=8,<9",
     "pytest-cov>=7,<8",
     "ruff>=0.11,<0.12",
+    "twine>=6,<7",
 ]
 
 [tool.ruff]
@@ -147,6 +148,7 @@ include = [
     "src/tomojax/motion/api.py",
     "src/tomojax/nuisance/api.py",
     "src/tomojax/recon/api.py",
+    "tools",
 ]
 exclude = [
     "**/__pycache__",
