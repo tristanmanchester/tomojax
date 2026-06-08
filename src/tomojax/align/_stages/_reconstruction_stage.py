@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 import functools
+import hashlib
 import logging
 import time
 from typing import TYPE_CHECKING
@@ -21,7 +22,11 @@ from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.pallas_resolver import resolve_pallas_callable
 from tomojax.core.projector import get_detector_grid_device
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
-from tomojax.recon.fista_tv_core import FistaCoreConfig, fista_tv_core_arrays
+from tomojax.recon.fista_tv_core import (
+    FistaCoreConfig,
+    effective_fista_core_backend,
+    fista_tv_core_arrays,
+)
 from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
 
 if TYPE_CHECKING:
@@ -127,15 +132,25 @@ def _resolve_reconstruction_projector_backend(
     )
     if support_fn is not None:
         try:
-            reason = support_fn(
-                T_all,
-                grid,
-                detector,
-                volume,
-                gather_dtype=gather_dtype,
-                det_grid=det_grid,
-                state_mode="cached",
+            options_cls, options_reason = resolve_pallas_callable(
+                "PallasProjectorOptions",
+                missing_reason="pallas_projector_options_missing",
             )
+            if options_cls is None:
+                reason = options_reason
+            else:
+                options = options_cls(
+                    gather_dtype=gather_dtype,
+                    det_grid=det_grid,
+                    state_mode="cached",
+                )
+                reason = support_fn(
+                    T_all,
+                    grid,
+                    detector,
+                    volume,
+                    options=options,
+                )
         except Exception as exc:
             reason = f"{type(exc).__name__}: {exc}"
     if reason:
@@ -143,7 +158,6 @@ def _resolve_reconstruction_projector_backend(
             raise RuntimeError(reason)
         return "jax", reason
     return "pallas", None
-
 
 def _is_oom_error_message(message: str) -> bool:
     msg = message.lower()
@@ -399,7 +413,7 @@ def _public_fista_info_after_core_bypass(
 
 
 @functools.partial(jax.jit, static_argnames=("grid", "detector", "cfg"))
-def _run_huber_fista_core_jit(
+def _run_huber_fista_core_dynamic_geometry(
     x0: jnp.ndarray,
     T_all: jnp.ndarray,
     det_u: jnp.ndarray | None,
@@ -429,6 +443,82 @@ def _run_huber_fista_core_jit(
         result.regulariser_value,
         result.effective_iters,
     )
+
+
+def _run_huber_fista_core_fixed_geometry(
+    x0: jnp.ndarray,
+    T_all: jnp.ndarray,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+    projections: jnp.ndarray,
+    L_value: jnp.ndarray,
+    *,
+    grid: Grid,
+    detector: Detector,
+    cfg: FistaCoreConfig,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    runner = _cached_huber_fista_core_runner(
+        _array_cache_key(T_all),
+        None if det_grid is None else tuple(_array_cache_key(v) for v in det_grid),
+        grid,
+        detector,
+        cfg,
+    )
+    return runner(x0, projections, L_value)
+
+
+def _array_cache_key(array: jnp.ndarray) -> tuple[tuple[int, ...], str, bytes, str]:
+    arr = np.asarray(array)
+    contiguous = np.ascontiguousarray(arr)
+    data = contiguous.tobytes()
+    digest = hashlib.sha256(data).hexdigest()
+    return tuple(int(v) for v in contiguous.shape), str(contiguous.dtype), data, digest
+
+
+@functools.lru_cache(maxsize=16)
+def _cached_huber_fista_core_runner(
+    T_key: tuple[tuple[int, ...], str, bytes, str],
+    det_grid_key: tuple[tuple[tuple[int, ...], str, bytes, str], ...] | None,
+    grid: Grid,
+    detector: Detector,
+    cfg: FistaCoreConfig,
+) -> object:
+    T_all = _array_from_cache_key(T_key)
+    det_grid = (
+        None
+        if det_grid_key is None
+        else (_array_from_cache_key(det_grid_key[0]), _array_from_cache_key(det_grid_key[1]))
+    )
+
+    def run(
+        x_init: jnp.ndarray,
+        y: jnp.ndarray,
+        L_current: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        result = fista_tv_core_arrays(
+            x0=x_init,
+            T_all=T_all,
+            det_grid=det_grid,
+            projections=y,
+            grid=grid,
+            detector=detector,
+            cfg=cfg,
+            L_override=L_current,
+        )
+        return (
+            result.x,
+            result.loss,
+            result.data_loss,
+            result.regulariser_value,
+            result.effective_iters,
+        )
+
+    return jax.jit(run)
+
+
+def _array_from_cache_key(key: tuple[tuple[int, ...], str, bytes, str]) -> jnp.ndarray:
+    shape, dtype_name, data, _digest = key
+    arr = np.frombuffer(data, dtype=np.dtype(dtype_name)).reshape(shape).copy()
+    return jnp.asarray(arr)
 
 
 def _run_public_fista_reconstruction(
@@ -597,6 +687,7 @@ def _huber_fista_core_info(
     L_core: float,
     quality_policy: object,
     backend_plan: _HuberFistaBackendPlan,
+    effective_backend: str | None = None,
 ) -> dict[str, object]:
     return {
         "loss": loss,
@@ -610,7 +701,7 @@ def _huber_fista_core_info(
         "quality_policy": quality_policy.to_dict(),
         "L": float(L_core),
         "requested_backend": backend_plan.requested_backend,
-        "actual_backend": backend_plan.actual_backend,
+        "actual_backend": effective_backend or backend_plan.actual_backend,
         "fallback_reason": backend_plan.fallback_reason,
         "detector_grid_folded_into_pose": backend_plan.detector_grid_folded_into_pose,
         "detector_grid_fold_reason": backend_plan.detector_grid_fold_reason,
@@ -664,7 +755,21 @@ def _run_huber_fista_core_reconstruction(
         step,
         T_all=_huber_fista_pose_stack(step, n_views=n_views),
     )
-    if backend_plan.actual_backend == "jax" and backend_plan.fallback_reason:
+    is_pose_adjusted = isinstance(step.recon_geometry, PoseAdjustedGeometry)
+    if is_pose_adjusted and backend_plan.actual_backend == "pallas":
+        backend_plan = _HuberFistaBackendPlan(
+            T_all=backend_plan.T_all,
+            requested_backend=backend_plan.requested_backend,
+            actual_backend="jax",
+            fallback_reason="dynamic_geometry_alignment_uses_jax_core",
+            detector_grid_folded_into_pose=backend_plan.detector_grid_folded_into_pose,
+            detector_grid_fold_reason=backend_plan.detector_grid_fold_reason,
+        )
+    if (
+        backend_plan.actual_backend == "jax"
+        and backend_plan.fallback_reason
+        and not is_pose_adjusted
+    ):
         return _run_public_fista_core_bypass(
             step,
             fallback_reason=backend_plan.fallback_reason,
@@ -677,18 +782,48 @@ def _run_huber_fista_core_reconstruction(
         quality_policy=quality_policy,
     )
 
-    det_grid_for_core = None if backend_plan.actual_backend == "pallas" else step.det_grid
-    x_core, loss, _data_loss, _regulariser_value, effective_iters = _run_huber_fista_core_jit(
-        step.x,
-        backend_plan.T_all,
-        None if det_grid_for_core is None else det_grid_for_core[0],
-        None if det_grid_for_core is None else det_grid_for_core[1],
-        step.projections,
-        jnp.asarray(L_core, dtype=jnp.float32),
-        grid=step.grid,
-        detector=step.detector,
-        cfg=core_cfg,
+    det_grid_for_core = (
+        None
+        if backend_plan.actual_backend == "pallas" or backend_plan.detector_grid_folded_into_pose
+        else step.det_grid
     )
+    effective_backend = backend_plan.actual_backend
+    if not is_pose_adjusted:
+        effective_backend = effective_fista_core_backend(
+            core_cfg,
+            T_all=backend_plan.T_all,
+            grid=step.grid,
+            detector=step.detector,
+            volume=step.x,
+            det_grid=det_grid_for_core,
+        )
+    if isinstance(step.recon_geometry, PoseAdjustedGeometry):
+        x_core, loss, _data_loss, _regulariser_value, effective_iters = (
+            _run_huber_fista_core_dynamic_geometry(
+                step.x,
+                backend_plan.T_all,
+                None if det_grid_for_core is None else det_grid_for_core[0],
+                None if det_grid_for_core is None else det_grid_for_core[1],
+                step.projections,
+                jnp.asarray(L_core, dtype=jnp.float32),
+                grid=step.grid,
+                detector=step.detector,
+                cfg=core_cfg,
+            )
+        )
+    else:
+        x_core, loss, _data_loss, _regulariser_value, effective_iters = (
+            _run_huber_fista_core_fixed_geometry(
+                step.x,
+                backend_plan.T_all,
+                det_grid_for_core,
+                step.projections,
+                jnp.asarray(L_core, dtype=jnp.float32),
+                grid=step.grid,
+                detector=step.detector,
+                cfg=core_cfg,
+            )
+        )
     return x_core, _huber_fista_core_info(
         cfg=cfg,
         loss=loss,
@@ -696,6 +831,7 @@ def _run_huber_fista_core_reconstruction(
         L_core=L_core,
         quality_policy=quality_policy,
         backend_plan=backend_plan,
+        effective_backend=effective_backend,
     )
 
 

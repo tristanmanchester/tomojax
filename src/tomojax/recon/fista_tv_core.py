@@ -7,10 +7,15 @@ from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from tomojax.core.backend_policy import normalize_projector_backend
-from tomojax.core.pallas_resolver import resolve_pallas_callable
-from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
+from tomojax.core.pallas_resolver import resolve_pallas_callable, resolve_pallas_module
+from tomojax.core.projector import (
+    forward_project_view_T,
+    get_detector_grid_device,
+    sum_backproject_views_T,
+)
 from tomojax.recon._tv_ops import huber_tv_grad, huber_tv_value, isotropic_tv_value
 
 if TYPE_CHECKING:
@@ -41,6 +46,8 @@ class FistaCoreConfig:
     backprojector: str = "jax"
     pallas_tile_shape: tuple[int, int] = (16, 4)
     pallas_num_warps: int = 1
+    pallas_step_size_scale: float = 1.0
+    pallas_unroll: int | None = 1
     compute_iteration_loss: bool = True
     compute_final_data_loss: bool = True
     compute_final_regulariser_value: bool = True
@@ -107,9 +114,47 @@ def fista_tv_core_arrays(
     L = jnp.maximum(jnp.asarray(L_raw, dtype=jnp.float32), jnp.float32(1e-6))
     lam = jnp.asarray(cfg.lambda_tv, dtype=jnp.float32)
     weights = _sqrt_view_weights(projections, view_weights)
+    use_fast_fixed_geometry = _use_fused_pallas_for_fixed_geometry_fista(
+        cfg,
+        T_all=T_all,
+        grid=grid,
+        detector=detector,
+        volume=x_init,
+        det_grid=det_grid,
+    )
+    data_forward_projector, data_backprojector = _resolve_fista_core_data_projectors(
+        cfg,
+        T_all=T_all,
+        grid=grid,
+        detector=detector,
+        volume=x_init,
+        det_grid=det_grid,
+    )
 
     def data_loss_fn(x: jnp.ndarray) -> jnp.ndarray:
         masked = _apply_support(x, cfg.support)
+        if use_fast_fixed_geometry:
+            loss, _grad = _projection_loss_and_explicit_grad(
+                T_all=T_all,
+                grid=grid,
+                detector=detector,
+                volume=masked,
+                det_grid=det_grid,
+                projections=projections,
+                weights=weights,
+                checkpoint_projector=cfg.checkpoint_projector,
+                projector_unroll=cfg.projector_unroll,
+                gather_dtype=cfg.gather_dtype,
+                views_per_batch=cfg.views_per_batch,
+                forward_projector=data_forward_projector,
+                backprojector=data_backprojector,
+                pallas_tile_shape=cfg.pallas_tile_shape,
+                pallas_num_warps=cfg.pallas_num_warps,
+                pallas_step_size_scale=cfg.pallas_step_size_scale,
+                pallas_unroll=cfg.pallas_unroll,
+                compute_loss=True,
+            )
+            return loss
         return _projection_loss(
             T_all=T_all,
             grid=grid,
@@ -122,9 +167,11 @@ def fista_tv_core_arrays(
             projector_unroll=cfg.projector_unroll,
             gather_dtype=cfg.gather_dtype,
             views_per_batch=cfg.views_per_batch,
-            forward_projector=cfg.forward_projector,
+            forward_projector=data_forward_projector,
             pallas_tile_shape=cfg.pallas_tile_shape,
             pallas_num_warps=cfg.pallas_num_warps,
+            pallas_step_size_scale=cfg.pallas_step_size_scale,
+            pallas_unroll=cfg.pallas_unroll,
         )
 
     def data_loss_and_grad_fn(x: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
@@ -141,10 +188,12 @@ def fista_tv_core_arrays(
             projector_unroll=cfg.projector_unroll,
             gather_dtype=cfg.gather_dtype,
             views_per_batch=cfg.views_per_batch,
-            forward_projector=cfg.forward_projector,
-            backprojector=cfg.backprojector,
+            forward_projector=data_forward_projector,
+            backprojector=data_backprojector,
             pallas_tile_shape=cfg.pallas_tile_shape,
             pallas_num_warps=cfg.pallas_num_warps,
+            pallas_step_size_scale=cfg.pallas_step_size_scale,
+            pallas_unroll=cfg.pallas_unroll,
             compute_loss=bool(cfg.compute_iteration_loss or cfg.compute_final_data_loss),
         )
         if cfg.support is not None:
@@ -235,6 +284,8 @@ def projection_loss_arrays(
         forward_projector=str(cfg.forward_projector),
         pallas_tile_shape=cfg.pallas_tile_shape,
         pallas_num_warps=int(cfg.pallas_num_warps),
+        pallas_step_size_scale=float(cfg.pallas_step_size_scale),
+        pallas_unroll=cfg.pallas_unroll,
     )
 
 
@@ -289,6 +340,8 @@ def _project_stack(
     forward_projector: str = "jax",
     pallas_tile_shape: tuple[int, int] = (16, 4),
     pallas_num_warps: int = 1,
+    pallas_step_size_scale: float = 1.0,
+    pallas_unroll: int | None = 1,
 ) -> jnp.ndarray:
     n_views = int(T_all.shape[0])
     if n_views == 0:
@@ -314,6 +367,8 @@ def _project_stack(
             forward_projector=forward_projector,
             pallas_tile_shape=pallas_tile_shape,
             pallas_num_warps=pallas_num_warps,
+            pallas_step_size_scale=pallas_step_size_scale,
+            pallas_unroll=pallas_unroll,
         )
         return out.at[view_idx].set(pred), None
 
@@ -335,6 +390,8 @@ def _project_chunk(
     forward_projector: str,
     pallas_tile_shape: tuple[int, int],
     pallas_num_warps: int,
+    pallas_step_size_scale: float,
+    pallas_unroll: int | None,
 ) -> jnp.ndarray:
     if forward_projector == "jax":
         return jax.vmap(
@@ -361,14 +418,17 @@ def _project_chunk(
             grid,
             detector,
             volume,
-            unroll=1,
-            gather_dtype=gather_dtype,
-            det_grid=det_grid,
-            tile_shape=tuple(pallas_tile_shape),
-            num_warps=int(pallas_num_warps),
-            kernel_variant="auto",
-            layout_variant="detector_vu",
-            state_mode="cached",
+            options=_pallas_projector_options(
+                step_size=float(grid.vy) * float(pallas_step_size_scale),
+                unroll=pallas_unroll,
+                gather_dtype=gather_dtype,
+                det_grid=det_grid,
+                tile_shape=tuple(pallas_tile_shape),
+                num_warps=int(pallas_num_warps),
+                kernel_variant="auto",
+                layout_variant="detector_vu",
+                state_mode="cached",
+            ),
         )
     raise ValueError("FistaCoreConfig.forward_projector must be one of 'jax' or 'pallas'")
 
@@ -389,6 +449,8 @@ def _projection_loss(
     forward_projector: str,
     pallas_tile_shape: tuple[int, int],
     pallas_num_warps: int,
+    pallas_step_size_scale: float,
+    pallas_unroll: int | None,
 ) -> jnp.ndarray:
     n_views = int(T_all.shape[0])
     if n_views == 0:
@@ -418,6 +480,8 @@ def _projection_loss(
             forward_projector=forward_projector,
             pallas_tile_shape=pallas_tile_shape,
             pallas_num_warps=pallas_num_warps,
+            pallas_step_size_scale=pallas_step_size_scale,
+            pallas_unroll=pallas_unroll,
         )
         resid = (pred - y_chunk).astype(jnp.float32) * w_chunk
         resid = resid * valid_mask[:, None, None]
@@ -461,11 +525,48 @@ def _projection_loss_and_explicit_grad(
     backprojector: str,
     pallas_tile_shape: tuple[int, int],
     pallas_num_warps: int,
+    pallas_step_size_scale: float = 1.0,
+    pallas_unroll: int | None = 1,
     compute_loss: bool = True,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     n_views = int(T_all.shape[0])
     if n_views == 0:
         return jnp.asarray(0.0, dtype=jnp.float32), jnp.zeros_like(volume)
+    if forward_projector == "pallas" and backprojector == "pallas":
+        if _fixed_geometry_is_available(T_all):
+            loss_grad_fn, fallback_reason = resolve_pallas_callable(
+                "forward_project_loss_and_grad_T_pallas",
+                missing_reason="pallas_loss_grad_callable_missing",
+            )
+            if loss_grad_fn is None:
+                raise RuntimeError(fallback_reason or "pallas_projector_unavailable")
+            tuned_tile_shape, tuned_num_warps = _pallas_loss_grad_full_stack_tiling(
+                detector,
+                requested_tile_shape=pallas_tile_shape,
+                requested_num_warps=pallas_num_warps,
+            )
+            return loss_grad_fn(
+                T_all,
+                grid,
+                detector,
+                volume,
+                projections,
+                weights=weights,
+                compute_loss=bool(compute_loss),
+                options=_pallas_projector_options(
+                    step_size=float(grid.vy) * float(pallas_step_size_scale),
+                    unroll=pallas_unroll,
+                    gather_dtype=gather_dtype,
+                    det_grid=det_grid,
+                    tile_shape=tuned_tile_shape,
+                    num_warps=tuned_num_warps,
+                    kernel_variant="auto",
+                    layout_variant="detector_vu",
+                    state_mode="cached",
+                ),
+            )
+        forward_projector = "jax"
+        backprojector = "jax"
     b = _chunk_size(n_views, views_per_batch)
     num_chunks = (n_views + b - 1) // b
     nv = int(projections.shape[1])
@@ -496,12 +597,18 @@ def _projection_loss_and_explicit_grad(
                 volume,
                 y_chunk,
                 weights=w_chunk * valid,
-                unroll=1,
-                gather_dtype=gather_dtype,
-                det_grid=det_grid,
-                tile_shape=tuple(pallas_tile_shape),
-                num_warps=int(pallas_num_warps),
                 compute_loss=bool(compute_loss),
+                options=_pallas_projector_options(
+                    step_size=float(grid.vy) * float(pallas_step_size_scale),
+                    unroll=pallas_unroll,
+                    gather_dtype=gather_dtype,
+                    det_grid=det_grid,
+                    tile_shape=tuple(pallas_tile_shape),
+                    num_warps=int(pallas_num_warps),
+                    kernel_variant="auto",
+                    layout_variant="detector_vu",
+                    state_mode="cached",
+                ),
             )
         else:
             pred = _project_chunk(
@@ -516,6 +623,8 @@ def _projection_loss_and_explicit_grad(
                 forward_projector=forward_projector,
                 pallas_tile_shape=pallas_tile_shape,
                 pallas_num_warps=pallas_num_warps,
+                pallas_step_size_scale=pallas_step_size_scale,
+                pallas_unroll=pallas_unroll,
             )
             raw_resid = (pred - y_chunk).astype(jnp.float32)
             weighted_resid = raw_resid * w_chunk * valid
@@ -557,6 +666,198 @@ def _resolve_sum_backproject_views(backprojector: str) -> Callable[..., jnp.ndar
             raise RuntimeError(fallback_reason or "pallas_projector_unavailable")
         return backproject_fn
     raise ValueError("FistaCoreConfig.backprojector must be one of 'jax' or 'pallas'")
+
+
+def _pallas_projector_options(**kwargs: object) -> object:
+    capability = resolve_pallas_module()
+    if capability.module is None:
+        raise RuntimeError(capability.unavailable_reason or "pallas_projector_unavailable")
+    options_cls = getattr(capability.module, "PallasProjectorOptions", None)
+    if options_cls is None or not callable(options_cls):
+        raise RuntimeError("pallas_projector_options_missing")
+    return options_cls(**kwargs)
+
+
+def _pallas_loss_grad_full_stack_tiling(
+    detector: Detector,
+    *,
+    requested_tile_shape: tuple[int, int],
+    requested_num_warps: int,
+) -> tuple[tuple[int, int], int]:
+    if tuple(requested_tile_shape) not in {(8, 8), (16, 4)} or int(requested_num_warps) != 1:
+        return tuple(requested_tile_shape), int(requested_num_warps)
+    det_shape = (int(detector.nv), int(detector.nu))
+    if det_shape == (64, 64):
+        return (64, 1), 2
+    if det_shape == (96, 96):
+        return (32, 2), 2
+    if det_shape == (80, 64):
+        return (16, 4), 2
+    return tuple(requested_tile_shape), int(requested_num_warps)
+
+
+def _use_fused_pallas_for_fixed_geometry_fista(
+    cfg: FistaCoreConfig,
+    *,
+    T_all: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    volume: jnp.ndarray,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+) -> bool:
+    if cfg.support is not None or not _det_grid_allows_fused_pallas(detector, det_grid):
+        return False
+    if jax.default_backend() != "gpu":
+        return False
+    if not _fixed_geometry_is_available(T_all):
+        return False
+    if not (
+        int(T_all.shape[0]) >= 16
+        and min(int(detector.nv), int(detector.nu)) >= 64
+        and min(int(grid.nx), int(grid.ny), int(grid.nz)) >= 64
+    ):
+        return False
+    return _fused_pallas_loss_grad_is_available(
+        cfg,
+        T_all=T_all,
+        grid=grid,
+        detector=detector,
+        volume=volume,
+        det_grid=det_grid,
+    )
+
+
+def _fused_pallas_loss_grad_is_available(
+    cfg: FistaCoreConfig,
+    *,
+    T_all: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    volume: jnp.ndarray,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+) -> bool:
+    loss_grad_fn, _fallback_reason = resolve_pallas_callable(
+        "forward_project_loss_and_grad_T_pallas",
+        missing_reason="pallas_loss_grad_callable_missing",
+    )
+    if loss_grad_fn is None:
+        return False
+    support_fn, _support_missing_reason = resolve_pallas_callable(
+        "pallas_projector_sinogram_unsupported_reason",
+        missing_reason="pallas_sinogram_support_check_missing",
+    )
+    if support_fn is None:
+        return False
+    tuned_tile_shape, tuned_num_warps = _pallas_loss_grad_full_stack_tiling(
+        detector,
+        requested_tile_shape=cfg.pallas_tile_shape,
+        requested_num_warps=cfg.pallas_num_warps,
+    )
+    try:
+        options = _pallas_projector_options(
+            step_size=float(grid.vy) * float(cfg.pallas_step_size_scale),
+            unroll=cfg.pallas_unroll,
+            gather_dtype=cfg.gather_dtype,
+            det_grid=det_grid,
+            tile_shape=tuned_tile_shape,
+            num_warps=tuned_num_warps,
+            kernel_variant="auto",
+            layout_variant="detector_vu",
+            state_mode="cached",
+        )
+    except Exception:
+        return False
+    try:
+        reason = support_fn(
+            T_all,
+            grid,
+            detector,
+            volume,
+            options=options,
+        )
+    except Exception:
+        return False
+    return not reason
+
+
+def _det_grid_allows_fused_pallas(
+    detector: Detector,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+) -> bool:
+    if det_grid is None:
+        return True
+    try:
+        expected_u, expected_v = get_detector_grid_device(detector)
+        actual_u = np.asarray(det_grid[0], dtype=np.float32)
+        actual_v = np.asarray(det_grid[1], dtype=np.float32)
+        expected_u_host = np.asarray(expected_u, dtype=np.float32)
+        expected_v_host = np.asarray(expected_v, dtype=np.float32)
+    except Exception:
+        return False
+    return bool(
+        np.array_equal(actual_u, expected_u_host)
+        and np.array_equal(actual_v, expected_v_host)
+    )
+
+
+def effective_fista_core_backend(
+    cfg: FistaCoreConfig,
+    *,
+    T_all: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    volume: jnp.ndarray,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+) -> str:
+    """Return the effective data projector backend selected by the core."""
+    forward_projector, backprojector = _resolve_fista_core_data_projectors(
+        cfg,
+        T_all=T_all,
+        grid=grid,
+        detector=detector,
+        volume=volume,
+        det_grid=det_grid,
+    )
+    return "pallas" if forward_projector == "pallas" and backprojector == "pallas" else "jax"
+
+
+def _resolve_fista_core_data_projectors(
+    cfg: FistaCoreConfig,
+    *,
+    T_all: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    volume: jnp.ndarray,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+) -> tuple[str, str]:
+    fixed_geometry_available = _fixed_geometry_is_available(T_all)
+    # TomoJAX treats concrete fixed-geometry GPU reconstruction as the fast path:
+    # use the fused Pallas projector even when legacy config fields still say
+    # "jax". Traced geometry keeps the differentiable alignment path below.
+    if _use_fused_pallas_for_fixed_geometry_fista(
+        cfg,
+        T_all=T_all,
+        grid=grid,
+        detector=detector,
+        volume=volume,
+        det_grid=det_grid,
+    ):
+        return "pallas", "pallas"
+    if (
+        cfg.forward_projector == "pallas"
+        and cfg.backprojector == "pallas"
+        and not fixed_geometry_available
+    ):
+        return "jax", "jax"
+    return cfg.forward_projector, cfg.backprojector
+
+
+def _fixed_geometry_is_available(T_all: jnp.ndarray) -> bool:
+    try:
+        arr = np.asarray(T_all, dtype=np.float32)
+    except Exception:
+        return False
+    return arr.ndim == 3 and arr.shape[1:] == (4, 4) and bool(np.isfinite(arr).all())
 
 
 def _chunk_size(n_views: int, views_per_batch: int | None) -> int:

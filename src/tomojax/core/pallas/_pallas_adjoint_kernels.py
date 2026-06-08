@@ -57,7 +57,9 @@ def _backproject_kernel(
     )
 
     def tload(row: int, col: int):
-        return plt.load(T_ref.at[row, col])
+        return plt.load(
+            T_ref.at[jnp.asarray(row, dtype=jnp.int32), jnp.asarray(col, dtype=jnp.int32)]
+        )
 
     t00, t01, t02, t03 = tload(0, 0), tload(0, 1), tload(0, 2), tload(0, 3)
     t10, t11, t12, t13 = tload(1, 0), tload(1, 1), tload(1, 2), tload(1, 3)
@@ -227,7 +229,13 @@ def _projector_residual_sse_kernel(
     )
 
     def tload(row: int, col: int):
-        return plt.load(T_ref.at[view_idx, row, col])
+        return plt.load(
+            T_ref.at[
+                jnp.asarray(view_idx, dtype=jnp.int32),
+                jnp.asarray(row, dtype=jnp.int32),
+                jnp.asarray(col, dtype=jnp.int32),
+            ]
+        )
 
     t00, t01, t02, t03 = tload(0, 0), tload(0, 1), tload(0, 2), tload(0, 3)
     t10, t11, t12, t13 = tload(1, 0), tload(1, 1), tload(1, 2), tload(1, 3)
@@ -383,7 +391,13 @@ def _projector_loss_grad_kernel(
     )
 
     def tload(row: int, col: int):
-        return plt.load(T_ref.at[view_idx, row, col])
+        return plt.load(
+            T_ref.at[
+                jnp.asarray(view_idx, dtype=jnp.int32),
+                jnp.asarray(row, dtype=jnp.int32),
+                jnp.asarray(col, dtype=jnp.int32),
+            ]
+        )
 
     t00, t01, t02, t03 = tload(0, 0), tload(0, 1), tload(0, 2), tload(0, 3)
     t10, t11, t12, t13 = tload(1, 0), tload(1, 1), tload(1, 2), tload(1, 3)
