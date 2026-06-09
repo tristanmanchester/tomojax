@@ -20,6 +20,17 @@ def normalize_json(value: Any) -> JsonValue:
     if isinstance(value, Path):
         return str(value)
     try:
+        import jax
+    except ImportError:  # pragma: no cover - JAX is a project dependency
+        jax = None  # type: ignore[assignment]
+    if jax is not None and isinstance(value, jax.Array):
+        try:
+            return normalize_json(value.tolist())
+        except Exception as exc:
+            raise TypeError(
+                f"could not normalize JAX array with shape {getattr(value, 'shape', None)} to JSON"
+            ) from exc
+    try:
         import numpy as np
     except ImportError:  # pragma: no cover - numpy is a project dependency
         np = None

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -44,6 +45,36 @@ def test_calibration_state_normalizes_numpy_arrays() -> None:
     payload = state.to_dict()
 
     assert payload["detector"][0]["value"] == [0.0, 0.0, 1.0]
+
+
+def test_calibration_state_normalizes_jax_arrays() -> None:
+    state = CalibrationState(
+        detector=(
+            CalibrationVariable(
+                name="det_u_px",
+                value=jnp.asarray(2.5, dtype=jnp.float32),
+                unit="px",
+                status="estimated",
+                frame="detector",
+            ),
+            CalibrationVariable(
+                name="axis_unit_lab",
+                value=jnp.asarray([0.0, 0.0, 1.0], dtype=jnp.float32),
+                unit="unit",
+                status="estimated",
+                frame="detector",
+            ),
+        )
+    )
+
+    payload = state.to_dict()
+    restored = CalibrationState.from_dict(payload)
+
+    assert payload["detector"][0]["value"] == pytest.approx(2.5)
+    assert isinstance(payload["detector"][0]["value"], float)
+    assert payload["detector"][1]["value"] == [0.0, 0.0, 1.0]
+    assert restored.detector[0].value == pytest.approx(2.5)
+    assert restored.detector[1].value == [0.0, 0.0, 1.0]
 
 
 def test_calibrated_geometry_patch_requires_detector_pixel_spacing() -> None:
