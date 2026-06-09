@@ -72,6 +72,78 @@ def test_public_pallas_entrypoint_uses_single_options_object(
     assert captured["state_mode"] == "cached"
 
 
+def test_public_pallas_stack_entrypoint_accepts_legacy_kwargs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_project(*_args: object, **kwargs: object) -> jnp.ndarray:
+        captured.update(kwargs)
+        return jnp.zeros((1, 2, 2), dtype=jnp.float32)
+
+    monkeypatch.setattr(pallas_api, "_forward_project_views_T_pallas", fake_project)
+
+    result = pallas_api.forward_project_views_T_pallas(
+        jnp.eye(4, dtype=jnp.float32)[None, ...],
+        Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0),
+        Detector(nu=2, nv=2, du=1.0, dv=1.0),
+        jnp.ones((2, 2, 2), dtype=jnp.float32),
+        options=pallas_api.PallasProjectorOptions(gather_dtype="fp32", tile_shape=(4, 4)),
+        unroll=2,
+        gather_dtype="bf16",
+        tile_shape=(1, 2),
+        num_warps=1,
+        state_mode="cached",
+    )
+
+    assert result.shape == (1, 2, 2)
+    assert captured["unroll"] == 2
+    assert captured["gather_dtype"] == "bf16"
+    assert captured["tile_shape"] == (1, 2)
+    assert captured["num_warps"] == 1
+    assert captured["state_mode"] == "cached"
+
+
+def test_public_pallas_loss_grad_entrypoint_accepts_legacy_kwargs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_loss_grad(*_args: object, **kwargs: object) -> tuple[jnp.ndarray, jnp.ndarray]:
+        captured.update(kwargs)
+        return jnp.asarray(0.0, dtype=jnp.float32), jnp.ones((2, 2, 2), dtype=jnp.float32)
+
+    monkeypatch.setattr(pallas_api, "_forward_project_loss_and_grad_T_pallas", fake_loss_grad)
+    weights = jnp.ones((1, 1, 1), dtype=jnp.float32)
+
+    loss, grad = pallas_api.forward_project_loss_and_grad_T_pallas(
+        jnp.eye(4, dtype=jnp.float32)[None, ...],
+        Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0),
+        Detector(nu=2, nv=2, du=1.0, dv=1.0),
+        jnp.ones((2, 2, 2), dtype=jnp.float32),
+        jnp.ones((1, 2, 2), dtype=jnp.float32),
+        weights=weights,
+        compute_loss=False,
+        unroll=3,
+        gather_dtype="fp16",
+        tile_shape=(2, 2),
+        num_warps=2,
+        kernel_variant="generic",
+        layout_variant="detector_uv",
+    )
+
+    assert loss.shape == ()
+    assert grad.shape == (2, 2, 2)
+    assert captured["weights"] is weights
+    assert captured["compute_loss"] is False
+    assert captured["unroll"] == 3
+    assert captured["gather_dtype"] == "fp16"
+    assert captured["tile_shape"] == (2, 2)
+    assert captured["num_warps"] == 2
+    assert captured["kernel_variant"] == "generic"
+    assert captured["layout_variant"] == "detector_uv"
+
+
 def _tiny_projection_case() -> tuple[jnp.ndarray, Grid, Detector, jnp.ndarray]:
     return (
         jnp.eye(4, dtype=jnp.float32),

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -71,6 +71,42 @@ def _opts(options: PallasProjectorOptions | None) -> PallasProjectorOptions:
     return PallasProjectorOptions() if options is None else options
 
 
+def _opts_with_overrides(
+    options: PallasProjectorOptions | None,
+    *,
+    step_size: float | None = None,
+    n_steps: int | None = None,
+    unroll: int | None = None,
+    gather_dtype: str | None = None,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+    interpret: bool | None = None,
+    tile_shape: tuple[int, int] | None = None,
+    num_warps: int | None = None,
+    kernel_variant: str | None = None,
+    layout_variant: str | None = None,
+    state_mode: str | None = None,
+) -> PallasProjectorOptions:
+    changes: dict[str, object] = {
+        name: value
+        for name, value in (
+            ("step_size", step_size),
+            ("n_steps", n_steps),
+            ("unroll", unroll),
+            ("gather_dtype", gather_dtype),
+            ("det_grid", det_grid),
+            ("interpret", interpret),
+            ("tile_shape", tile_shape),
+            ("num_warps", num_warps),
+            ("kernel_variant", kernel_variant),
+            ("layout_variant", layout_variant),
+            ("state_mode", state_mode),
+        )
+        if value is not None
+    }
+    opts = _opts(options)
+    return replace(opts, **changes) if changes else opts
+
+
 def forward_project_view_T_pallas(
     T: jnp.ndarray,
     grid: Grid,
@@ -134,9 +170,33 @@ def forward_project_views_T_pallas(
     volume: jnp.ndarray,
     *,
     options: PallasProjectorOptions | None = None,
+    step_size: float | None = None,
+    n_steps: int | None = None,
+    unroll: int | None = None,
+    gather_dtype: str | None = None,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+    interpret: bool | None = None,
+    tile_shape: tuple[int, int] | None = None,
+    num_warps: int | None = None,
+    kernel_variant: str | None = None,
+    layout_variant: str | None = None,
+    state_mode: str | None = None,
 ) -> jnp.ndarray:
     """Forward project a stack of views using one configured Pallas options object."""
-    opts = _opts(options)
+    opts = _opts_with_overrides(
+        options,
+        step_size=step_size,
+        n_steps=n_steps,
+        unroll=unroll,
+        gather_dtype=gather_dtype,
+        det_grid=det_grid,
+        interpret=interpret,
+        tile_shape=tile_shape,
+        num_warps=num_warps,
+        kernel_variant=kernel_variant,
+        layout_variant=layout_variant,
+        state_mode=state_mode,
+    )
     return _forward_project_views_T_pallas(
         T_stack,
         grid,
@@ -222,9 +282,33 @@ def forward_project_loss_and_grad_T_pallas(
     weights: jnp.ndarray | None = None,
     compute_loss: bool = True,
     options: PallasProjectorOptions | None = None,
+    step_size: float | None = None,
+    n_steps: int | None = None,
+    unroll: int | None = None,
+    gather_dtype: str | None = None,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+    interpret: bool | None = None,
+    tile_shape: tuple[int, int] | None = None,
+    num_warps: int | None = None,
+    kernel_variant: str | None = None,
+    layout_variant: str | None = None,
+    state_mode: str | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     """Return Pallas projection loss/gradient using one shared options object."""
-    opts = _opts(options)
+    opts = _opts_with_overrides(
+        options,
+        step_size=step_size,
+        n_steps=n_steps,
+        unroll=unroll,
+        gather_dtype=gather_dtype,
+        det_grid=det_grid,
+        interpret=interpret,
+        tile_shape=tile_shape,
+        num_warps=num_warps,
+        kernel_variant=kernel_variant,
+        layout_variant=layout_variant,
+        state_mode=state_mode,
+    )
     return _forward_project_loss_and_grad_T_pallas(
         T_all,
         grid,
