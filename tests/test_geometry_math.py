@@ -22,13 +22,16 @@ def test_align_u_to_v_handles_exact_antiparallel_vectors() -> None:
     assert np.linalg.det(rotation) == pytest.approx(1.0)
 
 
-def test_align_ez_to_axis_preserves_near_minus_z_tilt() -> None:
-    tilt_rad = np.deg2rad(0.05)
+@pytest.mark.parametrize("tilt_deg", [0.05, 0.09, 1.0, 5.0])
+def test_align_ez_to_axis_preserves_near_minus_z_tilt(tilt_deg: float) -> None:
+    tilt_rad = np.deg2rad(tilt_deg)
     axis = np.asarray([np.sin(tilt_rad), 0.0, -np.cos(tilt_rad)], dtype=np.float32)
 
     rotation = np.asarray(_align_ez_to_axis(axis))
 
     np.testing.assert_allclose(rotation @ np.asarray([0.0, 0.0, 1.0]), axis, atol=1e-4)
+    np.testing.assert_allclose(rotation.T @ rotation, np.eye(3), atol=1e-5)
+    assert np.linalg.det(rotation) == pytest.approx(1.0, abs=1e-5)
 
 
 def test_grid_from_detector_fov_slices_preserves_grid_when_no_crop_needed() -> None:

@@ -168,7 +168,7 @@ def _align_ez_to_axis(axis_unit: jnp.ndarray) -> jnp.ndarray:
         return jnp.stack((x_axis, y_axis, axis), axis=1)
 
     return jax.lax.cond(
-        cos_theta > jnp.float32(-1.0 + 1e-6),
+        cos_theta > jnp.float32(-1.0 + 1e-2),
         lambda _: aligned(),
         lambda _: near_parallel(),
         operand=None,
