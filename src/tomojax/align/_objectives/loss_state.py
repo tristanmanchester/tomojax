@@ -24,3 +24,4 @@ class LossState:
     bw_y: float | None = None
     dt_edge: jnp.ndarray | None = None
     thr: jnp.ndarray | None = None  # per-view scalar thresholds broadcastable
+    rng_key: jnp.ndarray | None = None

@@ -159,6 +159,7 @@ def _resolve_reconstruction_projector_backend(
         return "jax", reason
     return "pallas", None
 
+
 def _is_oom_error_message(message: str) -> bool:
     msg = message.lower()
     return any(term in msg for term in ("resource_exhausted", "out of memory", "allocator"))

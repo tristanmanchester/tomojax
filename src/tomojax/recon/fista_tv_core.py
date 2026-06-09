@@ -795,8 +795,7 @@ def _det_grid_allows_fused_pallas(
     except Exception:
         return False
     return bool(
-        np.array_equal(actual_u, expected_u_host)
-        and np.array_equal(actual_v, expected_v_host)
+        np.array_equal(actual_u, expected_u_host) and np.array_equal(actual_v, expected_v_host)
     )
 
 

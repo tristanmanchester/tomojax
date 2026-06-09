@@ -66,9 +66,7 @@ def scale_detector(det: Detector, factor: int) -> Detector:
     def _scaled_center(n: int, d: float, center: float, n_coarse: int) -> float:
         pad = (f - (n % f)) % f
         left = pad // 2
-        source_positions = [
-            min(max((f // 2) + j * f - left, 0), n - 1) for j in range(n_coarse)
-        ]
+        source_positions = [min(max((f // 2) + j * f - left, 0), n - 1) for j in range(n_coarse)]
         physical_positions = [
             (source - (n / 2.0 - 0.5)) * d + center for source in source_positions
         ]

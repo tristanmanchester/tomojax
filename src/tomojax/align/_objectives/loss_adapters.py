@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol
 
 import jax
 import jax.numpy as jnp
@@ -60,10 +61,18 @@ from .loss_specs import (
 )
 from .loss_state import LossState
 
-type PerViewLossFn = Callable[
-    [jnp.ndarray, jnp.ndarray, jnp.ndarray | None, jnp.ndarray | None],
-    jnp.ndarray,
-]
+
+class PerViewLossFn(Protocol):
+    def __call__(
+        self,
+        pred_chunk: jnp.ndarray,
+        tar_chunk: jnp.ndarray,
+        mask_chunk: jnp.ndarray | None,
+        view_indices: jnp.ndarray | None = None,
+        rng_key: jnp.ndarray | None = None,
+    ) -> jnp.ndarray: ...
+
+
 type GaussNewtonWeightFn = Callable[[jnp.ndarray, jnp.ndarray | None], jnp.ndarray]
 type LossBuilderFn = Callable[
     [LossState, jnp.ndarray],
@@ -236,10 +245,12 @@ def _build_loss_from_kind(
         tar_chunk: jnp.ndarray,
         mask_chunk: jnp.ndarray | None,
         view_indices: jnp.ndarray | None = None,
+        rng_key: jnp.ndarray | None = None,
     ) -> jnp.ndarray:
         # Vectorized application over batch of views (b, nv, nu)
         if (
-            mask_chunk is None
+            rng_key is None
+            and mask_chunk is None
             and state.mask is None
             and state.dt_edge is None
             and state.bins_x is None
@@ -273,6 +284,8 @@ def _build_loss_from_kind(
             ls.bw_y = state.bw_y
             if state.thr is not None:
                 ls.thr = state.thr[global_idx]
+            if rng_key is not None:
+                ls.rng_key = jax.random.fold_in(rng_key, global_idx)
             return f(a, b, ls)
 
         return jax.vmap(apply_one, in_axes=(0, 0, 0, 0))(

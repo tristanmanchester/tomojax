@@ -17,9 +17,11 @@ from ._pose_context import AlignmentRuntimeContext, _pose_objective_context, _Po
 
 @dataclass(frozen=True)
 class PoseObjectiveBundle:
-    align_loss: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]
-    align_loss_jit: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]
-    loss_and_grad_manual: Callable[[jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]]
+    align_loss: Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray]
+    align_loss_jit: Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray]
+    loss_and_grad_manual: Callable[
+        [jnp.ndarray, jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]
+    ]
     gn_update_all: Callable[[jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]]
 
 
@@ -87,8 +89,12 @@ def _apply_pose_smoothness_gradient(
 
 def _build_pose_align_loss(
     ctx: _PoseObjectiveContext,
-) -> Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]:
-    def align_loss(params5: jnp.ndarray, vol: jnp.ndarray) -> jnp.ndarray:
+) -> Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray]:
+    def align_loss(
+        params5: jnp.ndarray,
+        vol: jnp.ndarray,
+        loss_rng_key: jnp.ndarray,
+    ) -> jnp.ndarray:
         t_aug = ctx.pose_stack @ jax.vmap(se3_from_5d)(params5)
         loss_tot = project_and_score_stack(
             pose_stack=t_aug,
@@ -105,6 +111,7 @@ def _build_pose_align_loss(
             view_indices=jnp.arange(ctx.n_views, dtype=jnp.int32),
             projector_backend=ctx.cfg.projector_backend,
             require_differentiable_projector=True,
+            loss_rng_key=loss_rng_key,
         )
         return _apply_pose_smoothness_loss(params5, loss_tot, ctx.smoothness_weights)
 
@@ -119,6 +126,7 @@ def _build_one_view_value_and_grad_batch(ctx: _PoseObjectiveContext) -> Callable
         masked_vol: jnp.ndarray,
         mask_i: jnp.ndarray,
         view_idx: jnp.ndarray,
+        loss_rng_key: jnp.ndarray,
     ) -> jnp.ndarray:
         t_i = t_nom_i @ se3_from_5d(p5_i)
         pred_i = forward_project_view_T(
@@ -137,13 +145,14 @@ def _build_one_view_value_and_grad_batch(ctx: _PoseObjectiveContext) -> Callable
             y_i[None, ...],
             _objective_loss_mask_arg(ctx, mask_i),
             view_indices=view_indices,
+            rng_key=loss_rng_key,
         )
         return lvec[0]
 
     return jax.jit(
         jax.vmap(
             jax.value_and_grad(_one_view_loss),
-            in_axes=(0, 0, 0, None, 0, 0),
+            in_axes=(0, 0, 0, None, 0, 0, None),
         )
     )
 
@@ -151,9 +160,9 @@ def _build_one_view_value_and_grad_batch(ctx: _PoseObjectiveContext) -> Callable
 def _build_manual_loss_and_grad(
     ctx: _PoseObjectiveContext,
     one_view_val_and_grad_batch: Callable[..., object],
-) -> Callable[[jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]]:
+) -> Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]]:
     def loss_and_grad_manual(
-        params5: jnp.ndarray, vol: jnp.ndarray
+        params5: jnp.ndarray, vol: jnp.ndarray, loss_rng_key: jnp.ndarray
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
         masked_vol = _objective_apply_vol_mask(ctx, vol)
 
@@ -184,6 +193,7 @@ def _build_manual_loss_and_grad(
                 masked_vol,
                 _objective_loss_mask_chunk(ctx, start_shifted),
                 view_idx_chunk,
+                loss_rng_key,
             )
             total = total + jnp.sum(lvec * vmask)
             grad = grad.at[view_idx_chunk].add(g_chunk * vmask[:, None])

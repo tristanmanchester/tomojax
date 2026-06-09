@@ -240,7 +240,9 @@ def _build_alignment_step_contexts(
     motion_ctx: PoseMotionContext,
     motion_model: Any,
     constraint_ctx: PoseConstraintContext,
-    motion_loss_and_grad: Callable[[jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]],
+    motion_loss_and_grad: (
+        Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]] | None
+    ),
 ) -> _AlignmentStepContexts:
     return (
         AlignmentStepOptimizer(opt_mode=opt_mode),
@@ -465,6 +467,7 @@ def _run_align_outer_iteration(
         motion_coeffs_in=state.motion_coeffs,
         vol=state.x,
         loss_hist=state.loss_hist,
+        outer_idx=outer_idx,
     )
     state.loss_hist.append(total_loss)
     stat.update(align_stat)

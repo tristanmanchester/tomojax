@@ -380,7 +380,8 @@ def _loss_swd(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarray
     xr = pred.ravel()
     yr = tar.ravel()
     if n > 0 and n < xr.size:
-        idx = jax.random.choice(jax.random.key(0), xr.size, (n,), replace=False)
+        key = st.rng_key if st.rng_key is not None else jax.random.key(0)
+        idx = jax.random.choice(key, xr.size, (n,), replace=False)
         xr = xr[idx]
         yr = yr[idx]
     xs = jnp.sort(xr)

@@ -273,6 +273,7 @@ def project_and_score_stack(
     view_indices: jnp.ndarray | None = None,
     projector_backend: ProjectorBackendInput = "jax",
     require_differentiable_projector: bool = True,
+    loss_rng_key: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
     """Project and score all views without materialising unnecessary batches."""
     backend = normalize_projector_backend(projector_backend)
@@ -355,6 +356,7 @@ def project_and_score_stack(
             targets,
             loss_mask,
             view_indices=local_indices,
+            rng_key=loss_rng_key,
         )
         return jnp.sum(losses * per_view_weight, dtype=jnp.float32)
 
@@ -377,6 +379,7 @@ def project_and_score_stack(
             y_chunk,
             image_mask,
             view_indices=idx_chunk,
+            rng_key=loss_rng_key,
         )
         return loss_acc + jnp.sum(losses * valid_mask * weight_chunk), None
 
@@ -544,6 +547,7 @@ def score_projection_stack(
     *,
     mask: jnp.ndarray | None = None,
     view_indices: jnp.ndarray | None = None,
+    rng_key: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
     """Score an already-projected stack with an alignment loss adapter."""
     losses = adapter.per_view_loss(
@@ -551,6 +555,7 @@ def score_projection_stack(
         targets,
         getattr(adapter.state, "mask", None),
         view_indices=view_indices,
+        rng_key=rng_key,
     )
     if mask is not None:
         losses = losses * jnp.asarray(mask, dtype=jnp.float32)

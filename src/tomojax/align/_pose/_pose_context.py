@@ -205,13 +205,15 @@ class PoseMotionContext:
 
     def loss_and_grad_for(
         self,
-        align_loss: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray],
-    ) -> Callable[[jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]] | None:
+        align_loss: Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray],
+    ) -> Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]] | None:
         if not self.use_smooth_pose_model:
             return None
 
-        def motion_align_loss(coeffs: jnp.ndarray, vol: jnp.ndarray) -> jnp.ndarray:
-            return align_loss(self.coeffs_to_constrained_params(coeffs), vol)
+        def motion_align_loss(
+            coeffs: jnp.ndarray, vol: jnp.ndarray, loss_rng_key: jnp.ndarray
+        ) -> jnp.ndarray:
+            return align_loss(self.coeffs_to_constrained_params(coeffs), vol, loss_rng_key)
 
         return jax.jit(jax.value_and_grad(motion_align_loss))
 
