@@ -63,11 +63,16 @@ def scale_detector(det: Detector, factor: int) -> Detector:
     nu = math.ceil(det.nu / f)
     nv = math.ceil(det.nv / f)
 
-    def _scaled_center(n: int, d: float, center: float) -> float:
+    def _scaled_center(n: int, d: float, center: float, n_coarse: int) -> float:
         pad = (f - (n % f)) % f
         left = pad // 2
-        first_sample = ((f // 2) - left - (n / 2.0 - 0.5)) * d + center
-        return first_sample + (math.ceil(n / f) / 2.0 - 0.5) * (d * f)
+        source_positions = [
+            min(max((f // 2) + j * f - left, 0), n - 1) for j in range(n_coarse)
+        ]
+        physical_positions = [
+            (source - (n / 2.0 - 0.5)) * d + center for source in source_positions
+        ]
+        return math.fsum(physical_positions) / n_coarse
 
     return Detector(
         nu=nu,
@@ -75,8 +80,8 @@ def scale_detector(det: Detector, factor: int) -> Detector:
         du=det.du * f,
         dv=det.dv * f,
         det_center=(
-            _scaled_center(det.nu, det.du, det.det_center[0]),
-            _scaled_center(det.nv, det.dv, det.det_center[1]),
+            _scaled_center(det.nu, det.du, det.det_center[0], nu),
+            _scaled_center(det.nv, det.dv, det.det_center[1], nv),
         ),
     )
 

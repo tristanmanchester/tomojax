@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from tomojax.core.multires import scale_detector
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 from tomojax.io import ProjectionDataset, load_dataset, save_dataset
 from tomojax.recon import (
@@ -31,6 +32,20 @@ def _tiny_geometry() -> tuple[Grid, Detector, ParallelGeometry]:
         thetas_deg=np.linspace(0.0, 180.0, 4, endpoint=False, dtype=np.float32),
     )
     return grid, detector, geometry
+
+
+def test_scale_detector_odd_sizes_center_matches_clamped_sample_mean() -> None:
+    detector = Detector(nu=9, nv=7, du=1.0, dv=2.0, det_center=(3.0, -4.0))
+
+    scaled = scale_detector(detector, 2)
+
+    expected_u = np.mean([-3.0, -1.0, 1.0, 3.0, 4.0]) + detector.det_center[0]
+    expected_v = np.mean([-4.0, 0.0, 4.0, 6.0]) + detector.det_center[1]
+    assert scaled.nu == 5
+    assert scaled.nv == 4
+    assert scaled.du == pytest.approx(2.0)
+    assert scaled.dv == pytest.approx(4.0)
+    assert scaled.det_center == pytest.approx((expected_u, expected_v))
 
 
 def test_default_fbp_scale_uses_positive_view_count() -> None:
