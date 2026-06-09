@@ -27,6 +27,10 @@ from tomojax.align._objectives.validation_residuals import (
     accumulate_validation_normals,
     score_validation_fixed_volume,
 )
+from tomojax.align._quality_policy import (
+    reconstruction_quality_policy,
+    scaled_reconstruction_iters,
+)
 from tomojax.align.optimizers import ValidationLmConfig, run_active_validation_lm
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 
@@ -243,6 +247,7 @@ def _build_geometry_stage_stat(
             "geometry_max_step": 1.0,
             "geometry_status": "converged" if opt_result.accepted else "underconverged",
             "geometry_outer_idx": int(outer_idx),
+            "quality_tier": str(getattr(cfg, "quality_tier", "")),
             "schedule_name": schedule_name,
             "schedule_stage_index": int(stage.index) if stage is not None else None,
             "schedule_stage_name": stage.name if stage is not None else None,
@@ -266,6 +271,7 @@ def _build_geometry_stage_stat(
             "outer_loss_kind": str(loss_name),
             "recon_sensitivity": "stopped",
             "train_reconstruction_gradient": False,
+            "train_reconstruction_iters": int(fold_recon_cfg.iters),
             "views_per_batch": max(1, int(cfg.views_per_batch)),
             "n_folds": int(folds.n_folds),
             "fold_eval_mode": "stopped_train_recon_validation_lm",
@@ -299,6 +305,7 @@ def _refresh_setup_reconstruction(
         setup_state.setup,
         level_factor=int(factor),
     )
+    quality_policy = reconstruction_quality_policy(str(getattr(cfg, "quality_tier", "fast")))
     x_next, _ = fista_tv(
         geom,
         grid,
@@ -306,7 +313,7 @@ def _refresh_setup_reconstruction(
         projections,
         init_x=init_x,
         config=FistaConfig(
-            iters=max(1, int(cfg.recon_iters)),
+            iters=scaled_reconstruction_iters(cfg.recon_iters, quality_policy),
             lambda_tv=float(cfg.lambda_tv),
             regulariser=cfg.regulariser,
             huber_delta=float(cfg.huber_delta),
@@ -434,8 +441,9 @@ def _optimize_setup_geometry_bilevel_for_level(
             "Setup validation-LM requires a setup-compatible weighted least-squares loss; "
             f"level {int(factor)} stage {stage_name!r} resolved loss {loss_name!r}"
         )
+    quality_policy = reconstruction_quality_policy(str(getattr(cfg, "quality_tier", "fast")))
     fold_recon_cfg = FoldReconstructionConfig(
-        iters=max(1, int(cfg.recon_iters)),
+        iters=scaled_reconstruction_iters(cfg.recon_iters, quality_policy),
         lambda_tv=float(cfg.lambda_tv),
         regulariser=str(cfg.regulariser),
         huber_delta=float(cfg.huber_delta),

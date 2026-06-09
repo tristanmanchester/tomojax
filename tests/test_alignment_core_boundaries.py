@@ -41,6 +41,12 @@ from tomojax.align._objectives.loss_specs import (
 from tomojax.align._observer import _normalize_observer_action, adapt_observer_callback
 
 # check-public-imports: allow-private
+from tomojax.align._quality_policy import (
+    reconstruction_quality_policy,
+    scaled_reconstruction_iters,
+)
+
+# check-public-imports: allow-private
 from tomojax.align._stages._stage_state import _prepare_multires_level_state
 
 # check-public-imports: allow-private
@@ -114,6 +120,14 @@ def test_align_config_normalizes_aliases_and_resolves_stage_dofs() -> None:
     assert cfg.pose_model == "per_view"
     assert _active_dofs_for_cfg(cfg) == ("dz",)
     assert _active_dof_mask_for_cfg(cfg) == (False, False, False, False, True)
+
+
+def test_reconstruction_quality_policy_scales_iteration_budget() -> None:
+    assert scaled_reconstruction_iters(8, reconstruction_quality_policy("proposal")) == 2
+    assert scaled_reconstruction_iters(8, reconstruction_quality_policy("fast")) == 8
+    assert scaled_reconstruction_iters(8, reconstruction_quality_policy("refine")) == 12
+    assert scaled_reconstruction_iters(8, reconstruction_quality_policy("reference")) == 16
+    assert scaled_reconstruction_iters(1, reconstruction_quality_policy("proposal")) == 1
 
 
 def test_loss_specs_round_trip_params_and_scheduled_levels() -> None:

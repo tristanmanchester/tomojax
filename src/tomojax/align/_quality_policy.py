@@ -57,9 +57,17 @@ def reconstruction_quality_policy(value: str) -> ReconstructionQualityPolicy:
     return _POLICIES[normalize_quality_tier(value)]
 
 
+def scaled_reconstruction_iters(
+    recon_iters: int | float,
+    policy: ReconstructionQualityPolicy,
+) -> int:
+    return max(1, int(float(recon_iters) * float(policy.recon_iters_multiplier)))
+
+
 __all__ = [
     "AlignmentQualityTier",
     "ReconstructionQualityPolicy",
     "normalize_quality_tier",
     "reconstruction_quality_policy",
+    "scaled_reconstruction_iters",
 ]

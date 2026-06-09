@@ -14,7 +14,11 @@ import numpy as np
 
 from tomojax.align._geometry.parametrizations import se3_from_5d
 from tomojax.align._objectives.recon_layer import PoseAdjustedGeometry
-from tomojax.align._quality_policy import reconstruction_quality_policy
+from tomojax.align._quality_policy import (
+    ReconstructionQualityPolicy,
+    reconstruction_quality_policy,
+    scaled_reconstruction_iters,
+)
 from tomojax.align._results import record_reconstruction_info as _record_reconstruction_info
 from tomojax.backends import estimate_views_per_batch_info
 from tomojax.core.backend_policy import normalize_projector_backend
@@ -531,8 +535,9 @@ def _run_public_fista_reconstruction(
     grad_mode: str,
 ) -> tuple[jnp.ndarray, Mapping[str, object]]:
     cfg = step.cfg
+    quality_policy = reconstruction_quality_policy(str(getattr(cfg, "quality_tier", "fast")))
     fista_cfg = FistaConfig(
-        iters=cfg.recon_iters,
+        iters=scaled_reconstruction_iters(cfg.recon_iters, quality_policy),
         lambda_tv=cfg.lambda_tv,
         regulariser=cfg.regulariser,
         huber_delta=cfg.huber_delta,
@@ -649,11 +654,11 @@ def _huber_fista_core_config(
     *,
     n_views: int,
     actual_backend: str,
-    quality_policy: object,
+    quality_policy: ReconstructionQualityPolicy,
 ) -> FistaCoreConfig:
     cfg = step.cfg
     return FistaCoreConfig(
-        iters=int(cfg.recon_iters),
+        iters=scaled_reconstruction_iters(cfg.recon_iters, quality_policy),
         lambda_tv=float(cfg.lambda_tv),
         regulariser="huber_tv",
         huber_delta=float(cfg.huber_delta),
@@ -713,8 +718,9 @@ def _run_spdhg_reconstruction(
     step: _ReconstructionStepInputs,
 ) -> tuple[jnp.ndarray, Mapping[str, object]]:
     cfg = step.cfg
+    quality_policy = reconstruction_quality_policy(str(getattr(cfg, "quality_tier", "fast")))
     spdhg_cfg = SPDHGConfig(
-        iters=int(cfg.recon_iters),
+        iters=scaled_reconstruction_iters(cfg.recon_iters, quality_policy),
         lambda_tv=float(cfg.lambda_tv),
         regulariser=cfg.regulariser,
         huber_delta=float(cfg.huber_delta),

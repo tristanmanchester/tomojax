@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import time
+from typing import Any, cast
 
 import jax.numpy as jnp
 
@@ -236,9 +237,11 @@ def _run_setup_geometry_stage(
         cfg,
         schedule=None,
         optimise_dofs=stage.active_geometry_dofs,
+        quality_tier=stage.quality_tier,
         outer_iters=int(stage.maxiter),
         early_stop=bool(stage.early_stop),
     )
+    cfg_stage.quality_tier = cast(Any, stage.quality_tier)
     geometry_start = time.perf_counter()
     setup_result = _optimize_setup_geometry_bilevel_for_level(
         geometry=geometry,
@@ -366,6 +369,7 @@ def _run_pose_alignment_stage(
         schedule=None,
         optimise_dofs=stage.active_pose_dofs,
         opt_method=str(pose_optimizer),
+        quality_tier=stage.quality_tier,
         outer_iters=int(stage.maxiter),
         recon_iters=0 if stage.objective_kind == "fixed_volume" else int(cfg.recon_iters),
         early_stop=bool(stage.early_stop),
@@ -373,6 +377,7 @@ def _run_pose_alignment_stage(
         loss=active_loss_spec,
         gauge_fix=pose_gauge_fix,
     )
+    cfg_stage.quality_tier = cast(Any, stage.quality_tier)
     geometry_for_align, align_kwargs = _pose_stage_geometry_context(
         geometry=geometry,
         grid=grid,
