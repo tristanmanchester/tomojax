@@ -130,9 +130,13 @@ def infer_disk_axes(vol_shape: Sequence[int], grid: GridLike | None) -> str | No
     """
     if len(vol_shape) != 3:
         return None
-    if is_shape_xyz(vol_shape, grid):
+    matches_xyz = is_shape_xyz(vol_shape, grid)
+    matches_zyx = is_shape_zyx(vol_shape, grid)
+    if matches_xyz and matches_zyx:
+        return None
+    if matches_xyz:
         return INTERNAL_VOLUME_AXES
-    if is_shape_zyx(vol_shape, grid):
+    if matches_zyx:
         return DISK_VOLUME_AXES
     # Without grid metadata, inferring axis order from shape alone is unreliable.
     return None

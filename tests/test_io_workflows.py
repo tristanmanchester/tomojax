@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import h5py
@@ -128,6 +129,37 @@ def test_nxtomo_loader_does_not_synthesize_grid_from_volume_only(tmp_path: Path)
 
     assert loaded.volume is not None
     assert loaded.grid is None
+    assert loaded.volume_axes_order == "unknown"
+    assert loaded.disk_volume_axes_order == "unknown"
+    assert loaded.volume_axes_source == "heuristic"
+
+
+def test_nxtomo_loader_marks_equal_xz_volume_axes_ambiguous(tmp_path: Path) -> None:
+    path = tmp_path / "ambiguous_axes.nxs"
+    grid = Grid(nx=5, ny=6, nz=5, vx=1.0, vy=1.0, vz=1.0)
+    with h5py.File(path, "w") as handle:
+        entry = handle.create_group("entry")
+        entry.attrs["definition"] = "NXtomo"
+        entry.attrs["grid_meta_json"] = json.dumps(grid.to_dict())
+        detector = entry.create_group("instrument").create_group("detector")
+        detector.create_dataset("data", data=np.zeros((2, 3, 4), dtype=np.float32))
+        detector.create_dataset("image_key", data=np.zeros((2,), dtype=np.int32))
+        sample = entry.create_group("sample")
+        sample.create_dataset("name", data="fixture")
+        transformations = sample.create_group("transformations")
+        rotation_angle = transformations.create_dataset(
+            "rotation_angle",
+            data=np.asarray([0.0, 90.0], dtype=np.float32),
+        )
+        rotation_angle.attrs["units"] = "degree"
+        tomojax = entry.create_group("processing").create_group("tomojax")
+        tomojax.create_dataset("volume", data=np.zeros((5, 6, 5), dtype=np.float32))
+
+    loaded = load_nxtomo(str(path))
+
+    assert loaded.volume is not None
+    assert loaded.grid == grid.to_dict()
+    assert loaded.volume.shape == (5, 6, 5)
     assert loaded.volume_axes_order == "unknown"
     assert loaded.disk_volume_axes_order == "unknown"
     assert loaded.volume_axes_source == "heuristic"
