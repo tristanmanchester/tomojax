@@ -313,15 +313,16 @@ def test_read_json_object_reports_path_for_malformed_json(tmp_path: Path) -> Non
 def test_load_tiff_stack_requires_explicit_angles_and_sorts_files(tmp_path: Path) -> None:
     stack_dir = tmp_path / "tiffs"
     stack_dir.mkdir()
-    iio.imwrite(stack_dir / "0002.tif", np.full((2, 3), 2.0, dtype=np.float32))
-    iio.imwrite(stack_dir / "0001.tif", np.full((2, 3), 1.0, dtype=np.float32))
+    iio.imwrite(stack_dir / "proj10.tif", np.full((2, 3), 10.0, dtype=np.float32))
+    iio.imwrite(stack_dir / "proj2.tif", np.full((2, 3), 2.0, dtype=np.float32))
+    iio.imwrite(stack_dir / "proj1.tif", np.full((2, 3), 1.0, dtype=np.float32))
 
-    dataset = load_tiff_stack(stack_dir, angles_deg=[0.0, 90.0])
+    dataset = load_tiff_stack(stack_dir, angles_deg=[0.0, 45.0, 90.0])
 
     assert dataset.source_format == "tiff_stack"
-    assert dataset.projections.shape == (2, 2, 3)
-    np.testing.assert_allclose(dataset.projections[:, 0, 0], [1.0, 2.0])
-    np.testing.assert_allclose(dataset.angles_deg, [0.0, 90.0])
+    assert dataset.projections.shape == (3, 2, 3)
+    np.testing.assert_allclose(dataset.projections[:, 0, 0], [1.0, 2.0, 10.0])
+    np.testing.assert_allclose(dataset.angles_deg, [0.0, 45.0, 90.0])
     with pytest.raises(ValueError, match="TIFF inputs require angle metadata"):
         load_dataset(stack_dir)
     with pytest.raises(ValueError, match="does not match projection count"):
