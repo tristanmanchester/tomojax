@@ -86,3 +86,19 @@ def test_projection_pair_detector_center_seed_uses_tomojax_sign_convention() -> 
 
     assert seed.status == "ok_pairs=1"
     assert seed.det_u_px == pytest.approx(3.0, abs=0.25)
+
+
+def test_projection_pair_detector_center_seed_rejects_constant_projections() -> None:
+    grid = Grid(nx=32, ny=32, nz=16, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=32, nv=16, du=1.0, dv=1.0)
+    geometry = ParallelGeometry(
+        grid=grid,
+        detector=detector,
+        thetas_deg=np.asarray([0.0, 180.0], dtype=np.float32),
+    )
+    projections = np.ones((2, detector.nv, detector.nu), dtype=np.float32)
+
+    seed = projection_pair_det_u_seed(projections, geometry)
+
+    assert seed.status == "no_usable_opposite_angle_pairs"
+    assert seed.det_u_px == pytest.approx(0.0)

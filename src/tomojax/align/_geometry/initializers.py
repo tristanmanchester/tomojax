@@ -191,6 +191,8 @@ def _mirrored_projection_lag_px(a: np.ndarray, b: np.ndarray) -> float:
     if profile_a.size != profile_b.size or profile_a.size < 4:
         return float("nan")
     corr = np.correlate(profile_a, profile_b, mode="full")
+    if not bool(np.all(np.isfinite(corr))) or float(np.ptp(corr)) <= 1e-6:
+        return float("nan")
     peak = int(np.argmax(corr))
     lag = float(peak - (profile_a.size - 1))
     if 0 < peak < corr.size - 1:
