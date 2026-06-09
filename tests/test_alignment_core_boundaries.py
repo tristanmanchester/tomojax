@@ -175,9 +175,19 @@ def test_observer_action_adapter_normalizes_bool_and_string_results() -> None:
 
     stop_observer = adapt_observer_callback(lambda _x, _params, _stat: True)
     continue_observer = adapt_observer_callback(lambda _x, _params, _stat: False)
+    jax_stop_observer = adapt_observer_callback(
+        lambda _x, params, _stat: jnp.all(jnp.isfinite(params))
+    )
+    jax_continue_observer = adapt_observer_callback(
+        lambda _x, params, _stat: jnp.any(jnp.isnan(params))
+    )
+    numpy_stop_observer = adapt_observer_callback(lambda _x, _params, _stat: np.bool_(True))
     explicit_observer = adapt_observer_callback(lambda _x, _params, _stat: "stop_run")
     assert stop_observer is not None
     assert continue_observer is not None
+    assert jax_stop_observer is not None
+    assert jax_continue_observer is not None
+    assert numpy_stop_observer is not None
     assert explicit_observer is not None
 
     x = jnp.zeros((1, 1, 1), dtype=jnp.float32)
@@ -186,6 +196,9 @@ def test_observer_action_adapter_normalizes_bool_and_string_results() -> None:
 
     assert stop_observer(x, params, stat) == "stop_run"
     assert continue_observer(x, params, stat) is None
+    assert jax_stop_observer(x, params, stat) == "stop_run"
+    assert jax_continue_observer(x, params, stat) is None
+    assert numpy_stop_observer(x, params, stat) == "stop_run"
     assert explicit_observer(x, params, stat) == "stop_run"
 
     with pytest.raises(ValueError, match="Unsupported observer action"):

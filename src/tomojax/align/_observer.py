@@ -28,6 +28,17 @@ def _normalize_observer_action(
     raise ValueError(f"Unsupported observer action: {action!r}")
 
 
+def _scalar_bool_action(action: object) -> bool | None:
+    if isinstance(action, bool):
+        return action
+
+    dtype = getattr(action, "dtype", None)
+    shape = getattr(action, "shape", None)
+    if dtype is None or str(dtype) != "bool" or shape != ():
+        return None
+    return bool(action)
+
+
 def adapt_observer_callback(
     observer: BoolCompatibleObserverCallback | None,
 ) -> ObserverCallback | None:
@@ -37,11 +48,12 @@ def adapt_observer_callback(
 
     def _wrapped(x: jnp.ndarray, params5: jnp.ndarray, stat: OuterStat) -> ObserverAction | None:
         action = observer(x, params5, stat)
-        if action is None or action is False:
+        if action is None:
             return None
-        if action is True:
-            return "stop_run"
-        return _normalize_observer_action(action)
+        bool_action = _scalar_bool_action(action)
+        if bool_action is not None:
+            return "stop_run" if bool_action else None
+        return _normalize_observer_action(cast("ObserverAction | str | None", action))
 
     return _wrapped
 
