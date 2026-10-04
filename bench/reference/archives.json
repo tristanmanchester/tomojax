@@ -722,6 +722,15 @@
       "archive_sha256": "6b6cbd8a8a86d82da2faf861823d69007c1cf8679ea2c04038e0ca4174394000"
     },
     {
+      "original": "nonnegative-cv-qualification-2026-10-04.json",
+      "archive": "nonnegative-cv-qualification-2026-10-04.json.gz",
+      "original_bytes": 686792,
+      "archive_bytes": 110519,
+      "original_lines": 18479,
+      "sha256": "82979939cbfd76cd2f13198af945eeac1a343a66964700728335d1d3113a04ab",
+      "archive_sha256": "95569b73e88b538d9fbd1d126b673310d61c6da66d3526e0bc19e499a615083d"
+    },
+    {
       "original": "operator-models-rtx4070-laptop.json",
       "archive": "operator-models-rtx4070-laptop.json.gz",
       "original_bytes": 20778,

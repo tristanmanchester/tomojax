@@ -175,6 +175,14 @@ recover five of six cells; noisy anisotropic still fails every call. The 27
 reconstruction cells have unchanged source and are not retimed for this refactor.
 This bounded line is closed, with no new whole-matrix or successful joint target.
 
+The [nonnegative held-out regularization qualification](nonnegative-cv-qualification-2026-10-04.md)
+improves all 24 small controls against the earlier unconstrained Krylov baseline.
+Its projected Newton-CG implementation matches only 22/24 dense solutions and
+requires extreme operator counts in smooth clean controls. That implementation
+is stopped before integration; neither workflow matrix is rerun or rescored.
+The public alignment path already enforces positivity, so the small estimator
+result does not establish improved pose recovery.
+
 The goal applies to the complete scientific workflow and the whole frozen
 comparison matrix. The scheduled reconstruction matrix is every combination of
 `gaussian-v1`, `structured-v1`, `structured-noisy-v1`; parallel, anisotropic

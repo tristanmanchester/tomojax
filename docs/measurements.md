@@ -40,6 +40,11 @@ failed its small-problem quality and storage qualification. Its algebra is
 checked, but it was not integrated or run as a public workflow. The report
 records that distinction and the unperformed comparison cells explicitly.
 
+A later [nonnegative held-out regularization screen](nonnegative-cv-qualification-2026-10-04.md)
+passes its 24-control dense-estimator comparison, but its matrix-free solver
+fails two numerical conformance checks. It is stopped before public integration;
+the record includes all controls, solver work and unperformed workflow cells.
+
 ## Joint volume and pose recovery
 
 The [public free-voxel pilot](public-free-voxel-pilot.md) has six clean/noisy
