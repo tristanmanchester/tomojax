@@ -30,7 +30,8 @@ from ._pallas_config import (
     _validate_public_call,
     pallas_projector_actual_variant_metadata,
 )
-from ._pallas_kernels import _projector_kernel, _trilinear_load_when_tile_active
+from ._pallas_kernels import _projector_kernel, _trilinear_load_active
+from ._pallas_loop import paired_fori_loop, static_fori_loop
 
 
 def prepare_forward_project_view_T_pallas_state(
@@ -299,7 +300,7 @@ def _projector_kernel_cached(
     def body(step_idx, carry):
         acc, ix, iy, iz = carry
         active = step_idx < n_steps_ray
-        sample = _trilinear_load_when_tile_active(
+        sample = _trilinear_load_active(
             volume_ref,
             ix,
             iy,
@@ -328,10 +329,10 @@ def _projector_kernel_cached(
             jnp.max(jnp.where(in_detector, n_steps_ray, 0)),
             jnp.asarray(n_steps, dtype=jnp.int32),
         )
-        acc, _, _, _ = jax.lax.fori_loop(0, tile_steps, body, init)
+        acc, _, _, _ = paired_fori_loop(tile_steps, body, init)
     else:
-        acc, _, _, _ = jax.lax.fori_loop(0, n_steps, body, init, unroll=unroll)
-    out_ref[...] = acc.astype(jnp.float32)
+        acc, _, _, _ = static_fori_loop(n_steps, body, init, unroll=unroll)
+    plt.store(out_ref, acc.astype(jnp.float32), mask=in_detector)
 
 
 def forward_project_view_T_pallas_with_state(

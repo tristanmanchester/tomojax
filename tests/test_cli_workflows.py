@@ -23,6 +23,8 @@ from ._helpers import (
     write_tiff_stack,
 )
 
+pytestmark = pytest.mark.surface
+
 
 def test_inspect_and_validate_cli_on_product_dataset(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -61,6 +63,10 @@ def test_ingest_cli_writes_standard_dataset_from_tiffs(tmp_path: Path) -> None:
                 "0.5",
                 "--dv",
                 "0.75",
+                "--det-center-u",
+                "2.5",
+                "--det-center-v",
+                "-1.5",
                 "--grid",
                 "4",
                 "4",
@@ -75,6 +81,8 @@ def test_ingest_cli_writes_standard_dataset_from_tiffs(tmp_path: Path) -> None:
     assert dataset.detector is not None
     assert dataset.detector.du == pytest.approx(0.5)
     assert dataset.detector.dv == pytest.approx(0.75)
+    # CLI centre offsets are detector pixels; metadata uses physical lengths.
+    assert dataset.detector.det_center == pytest.approx((1.25, -1.125))
     assert dataset.grid is not None
     assert dataset.grid.nz == 2
 

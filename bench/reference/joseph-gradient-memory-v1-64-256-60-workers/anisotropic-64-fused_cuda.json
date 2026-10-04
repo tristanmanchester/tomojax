@@ -1,0 +1,30 @@
+{
+  "case": "anisotropic-64-60",
+  "method": "fused_cuda",
+  "status": "finite",
+  "loss": 57.83818817138672,
+  "volume_gradient_norm": 424.5042419433594,
+  "pose_gradient_norm": 920.7919921875,
+  "component_measurements": {
+    "compile_ms": 432.31538590043783,
+    "first_execution_ms": 2.2528469562530518,
+    "warmup_calls": 154,
+    "warmup_ms": 201.04418508708477,
+    "samples_ms": [
+      0.9159985929727554,
+      1.4539584517478943,
+      1.4088461175560951,
+      1.4912746846675873,
+      1.3410858809947968,
+      1.5713563188910484,
+      1.1614589020609856
+    ],
+    "median_ms": 1.4088461175560951,
+    "compiler_bytes": {
+      "argument_size_in_bytes": 1083152,
+      "output_size_in_bytes": 503580,
+      "temp_size_in_bytes": 1166400,
+      "alias_size_in_bytes": 0
+    }
+  }
+}

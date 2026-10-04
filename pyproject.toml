@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "tomojax"
-version = "0.2.0"
+version = "0.3.0"
 description = "TomoJAX — CT projector, reconstruction, and alignment"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -12,8 +12,8 @@ license = "GPL-3.0-only"
 authors = [{ name = "Tristan Manchester", email = "tristan.manchester@diamond.ac.uk" }]
 dependencies = [
     "h5py>=3.14.0,<4",
-    "imageio>=2.37.3,<3",
-    "jax>=0.10,<0.11",
+    "imageio[tifffile]>=2.37.3,<3",
+    "jax>=0.11.2,<0.12",
     "numpy>=2.3.2,<3",
     "optax>=0.2.5,<0.3",
     "scipy>=1.16.1,<2",
@@ -21,10 +21,13 @@ dependencies = [
 
 [project.optional-dependencies]
 cpu = [
-    "jax>=0.10,<0.11",
+    "jax>=0.11.2,<0.12",
 ]
 cuda12 = [
-    "jax[cuda12]>=0.10,<0.11 ; platform_system == 'Linux'",
+    "jax[cuda12]>=0.11.2,<0.12 ; platform_system == 'Linux'",
+]
+fourier-cuda12 = [
+    "cupy-cuda12x>=14.2,<14.3 ; platform_system == 'Linux'",
 ]
 progress = [
     "tqdm>=4.67.1,<5",
@@ -33,7 +36,19 @@ progress = [
 [project.scripts]
 tomojax = "tomojax.cli.main:main"
 
+[project.urls]
+Repository = "https://github.com/tristanmanchester/tomojax"
+Documentation = "https://github.com/tristanmanchester/tomojax/tree/main/docs"
+Issues = "https://github.com/tristanmanchester/tomojax/issues"
+
 [dependency-groups]
+examples = [
+    "matplotlib>=3.10,<4",
+]
+benchmark = [
+    "astra-toolbox>=2.5,<2.6 ; platform_system == 'Linux'",
+    "cupy-cuda12x>=14.2,<14.3 ; platform_system == 'Linux'",
+]
 dev = [
     "basedpyright>=1.34,<2",
     "import-linter>=2,<3",

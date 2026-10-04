@@ -1,0 +1,13 @@
+{
+  "source_sha256": "eedbdf7ba2c3d70f2894d8688edff6a1e155bf251b0b50c54b2242fd62efa7ea",
+  "files": 242,
+  "source_root": "/home/tristan/Projects/tomojax/.artifacts/public-free-voxel-analytic-v1/source",
+  "ray_integrator": "exact",
+  "gn_coupling": "joint",
+  "gn_jacobian": "autodiff",
+  "change": "Existing analytic JAX pose derivatives instead of physical central stencil. Same runtime implementation, damping, 40 PCG iterations, 64 outer/20 FISTA refresh budgets, fixtures, gates, one cold plus seven warm calls.",
+  "validation": {
+    "runtime": "Same runtime source as coupled run, 597 CPU and 5 CUDA tests passed; independent FP64 derivative diagnostics across six cells",
+    "benchmark_argument": "6 existing fixture/verifier tests and ruff passed"
+  }
+}

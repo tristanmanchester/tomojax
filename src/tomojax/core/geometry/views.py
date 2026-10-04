@@ -18,9 +18,12 @@ def stack_view_poses(
     dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
     """Stack world-from-object poses for the first ``n_views`` views."""
+    from .lamino import LaminographyGeometry
     from .parallel import ParallelGeometry
 
-    if isinstance(geometry, ParallelGeometry):
+    # Subclasses may override pose_for_view (for example to add calibrated
+    # shifts). Only specialize the exact built-in implementation.
+    if type(geometry) is ParallelGeometry:
         thetas = np.asarray(geometry.thetas_deg[: int(n_views)], dtype=np.float32)
         phi = np.deg2rad(thetas).astype(np.float32)
         c = np.cos(phi).astype(np.float32)
@@ -31,6 +34,21 @@ def stack_view_poses(
         poses[:, 1, 0] = s
         poses[:, 1, 1] = c
         poses[:, 2, 2] = 1.0
+        poses[:, 3, 3] = 1.0
+        return jnp.asarray(poses, dtype=dtype)
+
+    if type(geometry) is LaminographyGeometry:
+        from .transforms import align_u_to_v
+
+        angles = np.deg2rad(np.asarray(geometry.thetas_deg[: int(n_views)], dtype=np.float64))
+        rotation = np.zeros((int(n_views), 3, 3), dtype=np.float64)
+        rotation[:, 0, 0] = rotation[:, 1, 1] = np.cos(angles)
+        rotation[:, 1, 0] = np.sin(angles)
+        rotation[:, 0, 1] = -np.sin(angles)
+        rotation[:, 2, 2] = 1.0
+        alignment = align_u_to_v(np.array([0.0, 0.0, 1.0]), geometry._axis_unit())
+        poses = np.zeros((int(n_views), 4, 4), dtype=np.float64)
+        poses[:, :3, :3] = alignment @ rotation
         poses[:, 3, 3] = 1.0
         return jnp.asarray(poses, dtype=dtype)
 

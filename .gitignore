@@ -34,6 +34,15 @@ test_data_real/
 noisy-misaligned/
 noise-misaligned-fbp/
 
+# Keep bulk benchmark JSON out of source reviews; retain compressed evidence.
+/bench/reference/*.json
+!/bench/reference/*summary*.json
+!/bench/reference/*comparison*.json
+!/bench/reference/*source*.json
+!/bench/reference/*audit*.json
+!/bench/reference/*attribution*.json
+!/bench/reference/archives.json
+
 # Python cache and compiled files
 *.pyc
 __pycache__/

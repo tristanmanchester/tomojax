@@ -59,6 +59,8 @@ def _cached_backproject_view_pallas_call(
     layout_variant_id: int,
     unroll: int | None,
     interpret: bool,
+    n_views: int = 1,
+    stacked: bool = False,
 ) -> Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray]:
     kernel = functools.partial(
         _backproject_kernel,
@@ -83,8 +85,12 @@ def _cached_backproject_view_pallas_call(
         tile_u=int(tile_u),
         layout_variant_id=int(layout_variant_id),
         unroll=unroll,
+        interpret=bool(interpret),
+        stacked=stacked,
     )
     grid_shape = (math.ceil(int(nv) / int(tile_v)), math.ceil(int(nu) / int(tile_u)))
+    if stacked:
+        grid_shape = (n_views, *grid_shape)
     return pl.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((int(nx) * int(ny) * int(nz),), jnp.float32),
@@ -98,7 +104,9 @@ def _cached_backproject_view_pallas_call(
         input_output_aliases={2: 0},
         interpret=bool(interpret),
         compiler_params=plt.CompilerParams(num_warps=int(num_warps)),
-        name="tomojax_backproject_view_T_pallas",
+        name="tomojax_backproject_views_T_pallas"
+        if stacked
+        else "tomojax_backproject_view_T_pallas",
     )
 
 
@@ -123,6 +131,41 @@ def backproject_view_T_pallas(
     nv, nu = validate_detector(detector, "backproject_view_T_pallas")
     validate_detector_image(img, detector, context="backproject_view_T_pallas", name="image")
     validate_pose_matrix(T, context="backproject_view_T_pallas")
+    return _backproject_pallas(
+        T,
+        grid,
+        detector,
+        img,
+        step_size=step_size,
+        n_steps=n_steps,
+        unroll=unroll,
+        det_grid=det_grid,
+        interpret=interpret,
+        tile_shape=tile_shape,
+        num_warps=num_warps,
+        layout_variant=layout_variant,
+        stacked=False,
+    )
+
+
+def _backproject_pallas(
+    poses: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    images: jnp.ndarray,
+    *,
+    step_size: float | None,
+    n_steps: int | None,
+    unroll: int | None,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+    interpret: bool,
+    tile_shape: tuple[int, int],
+    num_warps: int,
+    layout_variant: str,
+    stacked: bool,
+) -> jnp.ndarray:
+    nx, ny, nz = grid.nx, grid.ny, grid.nz
+    nv, nu = detector.nv, detector.nu
     _ensure_canonical_detector_grid(detector, det_grid)
     tile_v, tile_u = _safe_detector_tile_shape(
         list(_normalize_tile_shape(tile_shape)),
@@ -162,9 +205,11 @@ def backproject_view_T_pallas(
         layout_variant_id=int(layout_variant_id),
         unroll=unroll,
         interpret=bool(interpret),
+        n_views=int(poses.shape[0]) if stacked else 1,
+        stacked=stacked,
     )
     init = jnp.zeros((int(nx) * int(ny) * int(nz),), dtype=jnp.float32)
-    out = call(jnp.asarray(T, dtype=jnp.float32), img, init)
+    out = call(jnp.asarray(poses, dtype=jnp.float32), images, init)
     return out.reshape((int(nx), int(ny), int(nz)))
 
 
@@ -183,7 +228,7 @@ def sum_backproject_views_T_pallas(
     num_warps: int = 1,
     layout_variant: str = "detector_vu",
 ) -> jnp.ndarray:
-    """Sum one-view Pallas adjoints over a view stack.
+    """Accumulate all views directly into one volume using atomic additions.
 
     This optional backend helper intentionally does not replace the default JAX
     adjoint used by differentiable public paths.
@@ -199,21 +244,18 @@ def sum_backproject_views_T_pallas(
     validate_grid(grid, "sum_backproject_views_T_pallas")
     img = jnp.asarray(images, dtype=jnp.float32)
 
-    def backproject_one(T_i: jnp.ndarray, img_i: jnp.ndarray) -> jnp.ndarray:
-        return backproject_view_T_pallas(
-            T_i,
-            grid,
-            detector,
-            img_i,
-            step_size=step_size,
-            n_steps=n_steps,
-            unroll=unroll,
-            det_grid=det_grid,
-            tile_shape=tile_shape,
-            num_warps=num_warps,
-            layout_variant=layout_variant,
-        )
-
-    if int(n_views) == 1:
-        return backproject_one(T_all[0], img[0])
-    return jnp.sum(jax.vmap(backproject_one)(T_all, img), axis=0, dtype=jnp.float32)
+    return _backproject_pallas(
+        T_all,
+        grid,
+        detector,
+        img,
+        step_size=step_size,
+        n_steps=n_steps,
+        unroll=unroll,
+        det_grid=det_grid,
+        interpret=False,
+        tile_shape=tile_shape,
+        num_warps=num_warps,
+        layout_variant=layout_variant,
+        stacked=True,
+    )

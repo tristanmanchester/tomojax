@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+import math
 from typing import TYPE_CHECKING, TypedDict
 
 if TYPE_CHECKING:
@@ -29,6 +30,7 @@ class AlignInfo(TypedDict):
     quality_tier: str
     fallback_policy: str
     pose_model: str
+    pose_translation_frame: str
     pose_model_variables: int
     per_view_variables: int
     pose_model_basis_shape: list[int]
@@ -63,6 +65,7 @@ class AlignMultiresInfo(TypedDict):
     quality_tier: str
     fallback_policy: str
     pose_model: str
+    pose_translation_frame: str
     pose_model_variables: int | None
     per_view_variables: int | None
     pose_model_basis_shape: list[int] | None
@@ -97,6 +100,8 @@ class AlignResumeState:
     L: float | None = None
     small_impr_streak: int = 0
     elapsed_offset: float = 0.0
+    pose_translation_frame: str = "object"
+    ray_integrator: str = "sampled"
 
 
 @dataclass
@@ -121,6 +126,8 @@ class AlignMultiresResumeState:
     stage_name: str | None = None
     stage_completed: bool = False
     completed_outer_iters_in_stage: int = 0
+    pose_translation_frame: str = "object"
+    ray_integrator: str = "sampled"
 
 
 AlignCheckpointCallback = Callable[[AlignResumeState], None]
@@ -158,8 +165,11 @@ def record_reconstruction_info(
     if recon_algo == "fista":
         try:
             L_meas = float(info_rec.get("L", 0.0))
-            if L_meas > 0.0:
-                L_prev = 1.2 * L_meas
+            if math.isfinite(L_meas) and L_meas > 0.0:
+                # Solvers report the bound actually used, including any
+                # safety margin. Reapplying a factor here on every outer
+                # iteration exponentially shrinks all subsequent voxel steps.
+                L_prev = L_meas
                 stat["L_meas"] = L_meas
                 stat["L_next"] = L_prev
         except (TypeError, ValueError, OverflowError) as exc:

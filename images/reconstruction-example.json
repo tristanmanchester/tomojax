@@ -1,0 +1,57 @@
+{
+  "description": "Matched-model usage example; not independent accuracy evidence.",
+  "metrics": {
+    "size": 64,
+    "views": 90,
+    "iteration_budget": 40,
+    "projector": "joseph_linear",
+    "backend": "pallas",
+    "device_platform": "gpu",
+    "termination": "iteration_limit",
+    "volume_relative_l2": 0.05127157177076562
+  },
+  "geometry": {
+    "type": "parallel",
+    "angle_range_deg": [
+      0,
+      180
+    ],
+    "endpoint": false,
+    "voxel_pitch": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "detector_pitch": [
+      1.0,
+      1.0
+    ]
+  },
+  "display": {
+    "slice_index": 32,
+    "planes": [
+      "xy",
+      "xz"
+    ],
+    "attenuation_range": [
+      -0.1793554723262787,
+      1.1468331813812256
+    ],
+    "absolute_error_range": [
+      0.0,
+      0.15885603427886963
+    ]
+  },
+  "versions": {
+    "tomojax": "0.2.0",
+    "jax": "0.11.2",
+    "jaxlib": "0.11.2",
+    "numpy": "2.4.5",
+    "matplotlib": "3.11.2"
+  },
+  "sources_sha256": {
+    "plot_reconstruction.py": "d32049e4cf85b8889ec2a9c27f75e75ba77a944e27d59cc2e35affcc34c5963a",
+    "simulate_and_reconstruct.py": "210512527cbec0bc8116ec9afb537c14ea5258200ee39906ffdcae1bfb13090a"
+  },
+  "image_sha256": "13088cd29d4332b270d6dd39907f1802a6f4d931487ee96d1bd0f9e2efdbb2cd"
+}

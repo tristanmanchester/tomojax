@@ -9,6 +9,11 @@ from tomojax.forward._filters import (
     apply_residual_filter,
     apply_residual_filter_schedule,
 )
+from tomojax.forward._joseph import (
+    joseph_l2_value_and_grad,
+    joseph_pose_normal_equations,
+    project_joseph,
+)
 from tomojax.forward._projector import (
     PROJECTION_OPERATOR,
     CoreProjectionGeometry,
@@ -44,8 +49,11 @@ __all__ = [
     "apply_residual_filter_schedule",
     "core_projection_geometry_from_input",
     "core_projection_geometry_from_state",
+    "joseph_l2_value_and_grad",
+    "joseph_pose_normal_equations",
     "masked_whitened_residual",
     "nominal_axis_unit_from_geometry",
+    "project_joseph",
     "project_parallel_reference",
     "project_parallel_reference_from_input",
     "pseudo_huber_loss",

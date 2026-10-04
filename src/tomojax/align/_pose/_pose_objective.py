@@ -7,12 +7,14 @@ import jax
 import jax.numpy as jnp
 
 from tomojax.align._config import AlignConfig
-from tomojax.align._geometry.parametrizations import se3_from_5d
+from tomojax.align._geometry.parametrizations import apply_pose_update, apply_pose_updates
 from tomojax.align._objectives.fixed_volume import project_and_score_stack
 from tomojax.core.geometry.base import Detector, Geometry, Grid
 from tomojax.core.projector import forward_project_view_T
 
+from ._coupled_objective import CoupledObjective, build_coupled_objective
 from ._pose_context import AlignmentRuntimeContext, _pose_objective_context, _PoseObjectiveContext
+from ._pose_jacobian import build_pose_prediction_and_columns
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,7 @@ class PoseObjectiveBundle:
         [jnp.ndarray, jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]
     ]
     gn_update_all: Callable[[jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]]
+    coupled: CoupledObjective | None = None
 
 
 def _objective_chunk_schedule(
@@ -95,7 +98,9 @@ def _build_pose_align_loss(
         vol: jnp.ndarray,
         loss_rng_key: jnp.ndarray,
     ) -> jnp.ndarray:
-        t_aug = ctx.pose_stack @ jax.vmap(se3_from_5d)(params5)
+        t_aug = apply_pose_updates(
+            ctx.pose_stack, params5, translation_frame=ctx.cfg.pose_translation_frame
+        )
         loss_tot = project_and_score_stack(
             pose_stack=t_aug,
             grid=ctx.grid,
@@ -112,6 +117,7 @@ def _build_pose_align_loss(
             projector_backend=ctx.cfg.projector_backend,
             require_differentiable_projector=True,
             loss_rng_key=loss_rng_key,
+            ray_integrator=ctx.cfg.ray_integrator,
         )
         return _apply_pose_smoothness_loss(params5, loss_tot, ctx.smoothness_weights)
 
@@ -128,7 +134,7 @@ def _build_one_view_value_and_grad_batch(ctx: _PoseObjectiveContext) -> Callable
         view_idx: jnp.ndarray,
         loss_rng_key: jnp.ndarray,
     ) -> jnp.ndarray:
-        t_i = t_nom_i @ se3_from_5d(p5_i)
+        t_i = apply_pose_update(t_nom_i, p5_i, translation_frame=ctx.cfg.pose_translation_frame)
         pred_i = forward_project_view_T(
             t_i,
             ctx.grid,
@@ -138,6 +144,7 @@ def _build_one_view_value_and_grad_batch(ctx: _PoseObjectiveContext) -> Callable
             unroll=int(ctx.cfg.projector_unroll),
             gather_dtype=ctx.cfg.gather_dtype,
             det_grid=ctx.det_grid,
+            ray_integrator=ctx.cfg.ray_integrator,
         )
         view_indices = jnp.expand_dims(jnp.asarray(view_idx, dtype=jnp.int32), axis=0)
         lvec = ctx.per_view_loss_fn(
@@ -211,40 +218,13 @@ def _build_manual_loss_and_grad(
 
 
 def _build_gn_update_batch(ctx: _PoseObjectiveContext) -> Callable[..., object]:
-    def _pred_flat(t_i: jnp.ndarray, masked_vol: jnp.ndarray) -> jnp.ndarray:
-        return forward_project_view_T(
-            t_i,
-            ctx.grid,
-            ctx.detector,
-            masked_vol,
-            use_checkpoint=ctx.cfg.checkpoint_projector,
-            unroll=int(ctx.cfg.projector_unroll),
-            gather_dtype=ctx.cfg.gather_dtype,
-            det_grid=ctx.det_grid,
-        ).ravel()
+    predict_and_columns = build_pose_prediction_and_columns(ctx)
 
-    def _gn_update_one(
-        p5_i: jnp.ndarray,
-        t_nom_i: jnp.ndarray,
-        y_i: jnp.ndarray,
-        vol: jnp.ndarray,
-        w_i: jnp.ndarray,
-    ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        def f(p5: jnp.ndarray) -> jnp.ndarray:
-            t_i = t_nom_i @ se3_from_5d(p5)
-            residual = _pred_flat(t_i, vol) - y_i.ravel()
-            return w_i.ravel() * residual
-
-        residual = f(p5_i)
+    def _gn_update_one(p5_i, t_nom_i, y_i, vol, w_i):
+        residual, cols = predict_and_columns(p5_i, t_nom_i, vol, y_i, w_i)
         current_loss = jnp.float32(0.5) * jnp.vdot(residual, residual).real
-        eye5 = jnp.eye(5, dtype=jnp.float32)
-
-        def jvp_col(v: jnp.ndarray) -> jnp.ndarray:
-            return jax.jvp(f, (p5_i,), (v,))[1]
-
-        cols = jax.vmap(jvp_col)(eye5)
-        gradient = cols @ residual
-        hessian = cols @ cols.T
+        gradient = jnp.matmul(cols, residual, precision=jax.lax.Precision.HIGHEST)
+        hessian = jnp.matmul(cols, cols.T, precision=jax.lax.Precision.HIGHEST)
         lam = jnp.float32(ctx.cfg.gn_damping)
         active = ctx.active_mask.astype(hessian.dtype)
         inactive = jnp.float32(1.0) - active
@@ -342,4 +322,5 @@ def _build_pose_objective_bundle(
         align_loss_jit=jax.jit(align_loss),
         loss_and_grad_manual=loss_and_grad_manual_jit,
         gn_update_all=_build_gn_update_all(ctx, gn_update_batch),
+        coupled=build_coupled_objective(ctx) if cfg.gn_coupling == "joint" else None,
     )

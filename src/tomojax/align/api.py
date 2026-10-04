@@ -10,7 +10,12 @@ from tomojax.align._geometry.geometry_blocks import (
     normalize_geometry_dofs,
     summarize_geometry_calibration_stats,
 )
-from tomojax.align._geometry.parametrizations import se3_from_5d
+from tomojax.align._geometry.parametrizations import (
+    PoseTranslationFrame,
+    apply_pose_update,
+    apply_pose_updates,
+    se3_from_5d,
+)
 from tomojax.align._model.dof_specs import DofSpec, dof_spec
 from tomojax.align._model.dofs import DofBounds, normalize_alignment_dofs, normalize_bounds
 from tomojax.align._model.gauge import GaugeFixMode
@@ -126,6 +131,7 @@ __all__ = [
     "OuterStatValue",
     "PWLSLossSpec",
     "PoseState",
+    "PoseTranslationFrame",
     "QualityTier",
     "ResolvedAlignmentSchedule",
     "ResolvedAlignmentStage",
@@ -136,6 +142,8 @@ __all__ = [
     "alignment_params_payload",
     "alignment_profile_policy",
     "apply_alignment_state",
+    "apply_pose_update",
+    "apply_pose_updates",
     "build_alignment_checkpoint_metadata_from_input",
     "build_loss_adapter",
     "dof_spec",

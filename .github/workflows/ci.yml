@@ -28,31 +28,46 @@ jobs:
         run: uv lock --check
 
       - name: Format check
-        run: uv run ruff format --check src tests tools examples
+        run: uv run --no-sync ruff format --check src tests tools examples bench
 
       - name: Lint
-        run: uv run ruff check src tests tools examples
+        run: uv run --no-sync ruff check src tests tools examples bench
 
       - name: Typecheck
-        run: uv run basedpyright
+        run: uv run --no-sync basedpyright
 
       - name: Import boundaries
         run: |
-          uv run lint-imports --config .importlinter
-          uv run python tools/check_public_imports.py
+          uv run --no-sync lint-imports --config .importlinter
+          uv run --no-sync python tools/check_public_imports.py
 
       - name: Package build
         run: |
           rm -rf dist
           uv build
-          uv run twine check dist/*
-          uv run python tools/smoke_installed_wheel.py
+          uv run --no-sync twine check dist/*
+          uv run --no-sync python tools/smoke_installed_wheel.py
 
       - name: CLI smoke workflow
-        run: uv run python tools/smoke_cli_workflow.py
+        run: uv run --no-sync python tools/smoke_cli_workflow.py
+
+      - name: Public Python example
+        env:
+          JAX_PLATFORMS: cpu
+        run: uv run --no-sync python examples/simulate_and_reconstruct.py
 
       - name: Accelerator smoke workflow
-        run: uv run python tools/smoke_accelerator.py
+        run: uv run --no-sync python tools/smoke_accelerator.py
 
       - name: Tests
-        run: uv run pytest -q tests --cov
+        run: uv run --no-sync pytest -q tests --cov
+
+      - name: Analytic accuracy benchmarks
+        env:
+          JAX_PLATFORMS: cpu
+        run: |
+          uv run --no-sync python bench/compare_projectors.py --libraries tomojax --sizes 32 --views 30 --repeats 1
+          uv run --no-sync python bench/reconstruction_benchmark.py --sizes 32 --views 60 --repeats 1
+          uv run --no-sync python bench/adjoint_benchmark.py --sizes 16 --repeats 1
+          uv run --no-sync python bench/adjoint_benchmark.py --stack --sizes 16 --batches 2 --repeats 1
+          uv run --no-sync python bench/workflow_benchmark.py --sizes 16 --geometries parallel --methods fista spdhg --repeats 1

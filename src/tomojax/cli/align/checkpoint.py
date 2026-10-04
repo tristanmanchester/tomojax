@@ -244,11 +244,18 @@ def resume_state_from_checkpoint(
     checkpoint = load_alignment_checkpoint(checkpoint_path)
     validate_alignment_checkpoint(checkpoint, expected_metadata)
     metadata = checkpoint.metadata
+    saved_config = cast("object", metadata.get("config", {}))
+    if not isinstance(saved_config, Mapping):
+        raise CheckpointError("corrupt checkpoint: config must be a mapping")
+    translation_frame = str(
+        cast("Mapping[str, object]", saved_config).get("pose_translation_frame", "object")
+    )
     if used_multires:
         schedule_state = _schedule_resume_state_from_checkpoint(metadata)
         prev_factor_value = metadata.get("prev_factor")
         geometry_calibration_state = metadata.get("geometry_calibration_state")
         return AlignMultiresResumeState(
+            pose_translation_frame=translation_frame,
             x=jax_float32_array(checkpoint.x),
             params5=jax_float32_array(checkpoint.params5),
             motion_coeffs=(
@@ -277,8 +284,12 @@ def resume_state_from_checkpoint(
             stage_name=schedule_state["stage_name"],
             stage_completed=schedule_state["stage_completed"],
             completed_outer_iters_in_stage=schedule_state["completed_outer_iters_in_stage"],
+            ray_integrator=str(
+                cast("Mapping[str, object]", saved_config).get("ray_integrator", "sampled")
+            ),
         )
     return AlignResumeState(
+        pose_translation_frame=translation_frame,
         x=jax_float32_array(checkpoint.x),
         params5=jax_float32_array(checkpoint.params5),
         motion_coeffs=(
@@ -292,6 +303,9 @@ def resume_state_from_checkpoint(
         L=metadata.get("L_prev"),
         small_impr_streak=int(metadata.get("small_impr_streak", 0)),
         elapsed_offset=float(metadata.get("elapsed_offset", 0.0)),
+        ray_integrator=str(
+            cast("Mapping[str, object]", saved_config).get("ray_integrator", "sampled")
+        ),
     )
 
 

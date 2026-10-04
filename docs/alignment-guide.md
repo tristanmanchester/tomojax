@@ -1,9 +1,15 @@
 # Alignment guide
 
 TomoJAX alignment estimates geometry or pose corrections while reconstructing
-the volume. Start with the mode that matches your problem, then check the
-output metadata to decide whether the correction is physically meaningful or
-just useful for reconstruction.
+the volume. These are experimental workflows: the current coupled Python path
+passes five of six modest-motion free-voxel cases, with noisy anisotropic
+recovery still failing. That result is not a guarantee for the default CLI
+path or a new scan. See the [complete comparison](public-free-voxel-schur-2026-10-04.md).
+
+Start from corrected absorption data and checked physical geometry, following
+the [real scan guide](real-laminography.md). Save an unaligned reconstruction,
+choose the mode matching your problem, and assess both image quality and
+recovered parameters. Run commands below from an installed checkout.
 
 ## Choose an alignment mode
 
@@ -25,7 +31,7 @@ The default `pose` mode optimizes one 5-DOF pose vector per projection:
 `alpha`, `beta`, `phi`, `dx`, and `dz`. Use this for scans where the sample moved during acquisition.
 
 ```bash
-uv run tomojax align \
+uv run --no-sync tomojax align \
   --data corrected.nxs \
   --mode pose \
   --out aligned.nxs
@@ -35,7 +41,7 @@ Use `--quality reference` for a slower, higher-fidelity solve. Use explicit
 levels when you want a specific coarse-to-fine schedule:
 
 ```bash
-uv run tomojax align \
+uv run --no-sync tomojax align \
   --data corrected.nxs \
   --mode pose \
   --quality reference \
@@ -47,7 +53,7 @@ The aligned dataset stores the reconstruction and recovered parameters.
 Inspect it with:
 
 ```bash
-uv run tomojax inspect aligned.nxs
+uv run --no-sync tomojax inspect aligned.nxs
 ```
 
 ## Correction quality vs physical calibration
@@ -56,8 +62,9 @@ Pose-only correction can absorb some global setup errors and still produce a
 good reconstruction, but that doesn't mean the recovered pose parameters are
 a calibrated description of the machine.
 
-- For the cleanest reconstruction, start with `--mode pose`.
-- For a physically interpretable detector-centre correction, use `--mode cor`.
+- For per-projection motion, use `--mode pose`.
+- To estimate detector-centre correction explicitly, use `--mode cor` and
+  check the estimate against acquisition knowledge.
 - For both setup and pose correction, use `--mode auto` with an explicit gauge
   policy.
 
@@ -67,15 +74,15 @@ Use `cor` mode when the main problem is a detector-u or centre-of-rotation
 offset rather than sample motion.
 
 ```bash
-uv run tomojax align \
+uv run --no-sync tomojax align \
   --data corrected.nxs \
   --mode cor \
   --out aligned.nxs
 ```
 
-Explicit COR correction recovers large detector-u offsets better than relying
-on pose-only correction to absorb them. Use `cor` when you care about
-calibration, and `pose` when you care about per-projection motion.
+COR mode fits detector-u offsets explicitly. Pose-only correction may absorb
+some of that error into sample motion. Neither a lower objective nor a sharper
+image proves that the estimated geometry is physically calibrated.
 
 ## Use mixed setup and pose as expert mode
 
@@ -84,7 +91,7 @@ can represent similar image changes, mixed correction has gauge ambiguity.
 You must choose how to handle that ambiguity.
 
 ```bash
-uv run tomojax align \
+uv run --no-sync tomojax align \
   --data corrected.nxs \
   --mode auto \
   --gauge-policy anchor_mean \
@@ -94,7 +101,7 @@ uv run tomojax align \
 Gauge policies:
 
 - `anchor_mean`: Anchors mean translation so setup and pose don't drift
-  together. Best for reconstruction quality.
+  together; this is a convention, not independent calibration.
 - `prior_required`: Requires physical setup priors.
 - `diagnose_only`: Produces diagnostics without treating the result as a
   calibrated correction.
@@ -107,7 +114,7 @@ vector for every projection. Use a smooth model when you expect the motion to
 change smoothly over the scan.
 
 ```bash
-uv run tomojax align \
+uv run --no-sync tomojax align \
   --data corrected.nxs \
   --mode pose \
   --pose-model spline \
@@ -118,9 +125,79 @@ uv run tomojax align \
 Smooth models reduce degrees of freedom but can hide abrupt jumps or outlier
 views.
 
+## Choose the translation frame in the Python API
+
+Existing pose tables and the CLI use `pose_translation_frame="object"`:
+`T_nominal @ se3_from_5d(params)`. Translations are physical lengths along the
+object's x/z axes. Near a 90-degree view, these two directions project onto
+nearly the same detector direction. This representation cannot express every
+image-plane displacement, even with a well-conditioned object.
+
+Given a geometry, grid, detector, and corrected projection stack, the Python
+API can use two observable image-plane translations at every view:
+
+```python
+from tomojax.align import AlignConfig, align
+from tomojax.align.api import apply_pose_updates, save_alignment_params_json
+from tomojax.geometry import stack_view_poses
+
+config = AlignConfig(pose_translation_frame="detector", gauge_fix="none")
+volume, params, info = align(geometry, grid, detector, projections, config=config)
+poses = apply_pose_updates(
+    stack_view_poses(geometry, len(params)), params,
+    translation_frame=config.pose_translation_frame,
+)
+save_alignment_params_json(
+    "poses.json", params, du=detector.du, dv=detector.dv,
+    translation_frame=config.pose_translation_frame,
+)
+```
+
+In this mode rotations still compose in the object frame. `dx` and `dz` add
+physical lengths along lab x/z after the nominal transform; nominal translation
+along the beam is preserved. Multiply pixel displacements by detector spacing
+before supplying initial parameters. If the detector grid is rolled, these
+remain lab x/z directions rather than rolled sensor-column/row directions.
+
+The mode also applies to `align_multires`, pose smoothness models, reconstruction
+and setup objectives. Checkpoints carry the frame, and resuming with a different
+frame raises an error. Older checkpoints retain object-frame meaning. Pass the
+same `translation_frame` when exporting JSON or CSV; detector-frame CSV output
+adds a frame column.
+
+`gauge_fix="none"` is required for detector-frame poses. Subtracting mean image
+shifts would constrain observable motion and is not a common object-frame
+translation gauge. Joint reconstruction still has a shared rigid-frame
+ambiguity: compare recovered geometry and volume in one consistent object
+frame. The option fixes representation; it does not establish successful
+free-voxel recovery or the performance and robustness targets.
+
+## Gauss–Newton updates at interpolation boundaries
+
+The default Jacobian differentiates within the current interpolation cells.
+Sharp voxel boundaries can make that derivative unsuitable for a pose update.
+The Python API offers symmetric numerical columns and opt-in coupled solves.
+See the [alignment solver reference](alignment-solver.md) for the cost, supported
+constraints, and actual recovery evidence before changing these settings.
+
 ## Known hard cases
 
-The solver handles many noisy pose cases well, but some failure modes remain:
+For voxel-basis data that need accurate line integration, the Python API accepts
+`AlignConfig(ray_integrator="exact")`. This integrates the zero-extended trilinear
+interpolant between voxel-centre planes using two-point Gaussian quadrature.
+It supports rigid parallel-ray poses, including tilted scans, anisotropic voxels,
+shifted detector centres and irregular view angles. Reconstruction, pose loss,
+setup validation and translation seeds use the same selected operator. The
+default remains `"sampled"`; a checkpoint cannot resume with a different choice.
+
+With exact integration, the Huber-FISTA alignment path can use CUDA forward and
+matched adjoint kernels with changing poses. Pose derivatives and acceptance
+scoring use the exact JAX reference on the selected JAX device. The raw exact
+CUDA calls do not provide automatic differentiation; differentiable reconstruction
+layers use the JAX reference. Exact polynomial quadrature does not model detector
+pixel area, beam spectrum or scatter, and does not guarantee joint recovery.
+
+Known failure modes include:
 
 - Abrupt jumps may need jump-aware pose handling.
 - Short bursts of bad views may need robust loss or bad-view detection.
@@ -130,13 +207,15 @@ The solver handles many noisy pose cases well, but some failure modes remain:
 
 ## Evidence from the 128^3 sweep
 
-A 128^3 synthetic sweep tested 32 phantom scenarios. Results:
+Older project material described a 128³ visual sweep. It has no complete
+reproduction record established in the current user guide, so its visual
+ratings are not used as a current recovery claim. Historical images are
+[catalogued separately](../images/README.md#other-historical-assets).
 
-- 25 strong, 5 usable, 1 partial, 1 poor.
-
-The poor case was a detector-v/reference-elevation shift (not reliably
-recoverable). The partial case was an abrupt jump (needs a jump-aware
-workflow).
+Use the [six-cell public comparison](public-free-voxel-schur-2026-10-04.md)
+for quantified free-voxel recovery, cold/warm time, and sampled process GPU
+memory. It retains the failed noisy anisotropic case and does not establish
+large-motion capture or 99% robustness.
 
 ## Next steps
 

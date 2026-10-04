@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, fields
+import functools
 import math
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.operator_norm import estimate_normal_norm
 from tomojax.core.projector import (
     backproject_view_T,
     forward_project_view_T,
@@ -58,6 +61,11 @@ class FistaScanState(NamedTuple):
     iters_done: jnp.ndarray
 
 
+@functools.partial(
+    jax.tree_util.register_dataclass,
+    data_fields=[],
+    meta_fields=["positivity", "lower_bound", "upper_bound"],
+)
 @dataclass(frozen=True)
 class _FistaConstraints:
     positivity: bool
@@ -65,11 +73,12 @@ class _FistaConstraints:
     upper_bound: float | None
 
 
+@jax.tree_util.register_dataclass
 @dataclass(frozen=True)
 class _FistaRuntime:
     config: FistaConfig
-    regulariser: Regulariser
-    huber_delta: float
+    regulariser: Regulariser = field(metadata={"static": True})
+    huber_delta: float = field(metadata={"static": True})
     constraints: _FistaConstraints
     x0: jnp.ndarray
     z0: jnp.ndarray
@@ -87,12 +96,12 @@ class _FistaResult:
     lipschitz: float
     effective_iters: int
     early_stop: bool
-    regulariser: Regulariser
-    huber_delta: float
+    regulariser: Regulariser = field(metadata={"static": True})
+    huber_delta: float = field(metadata={"static": True})
 
     def info(self) -> dict[str, object]:
         return {
-            "loss": [float(v) for v in list(self.losses)],
+            "loss": np.asarray(self.losses).tolist(),
             "L": self.lipschitz,
             "effective_iters": self.effective_iters,
             "early_stop": self.early_stop,
@@ -148,6 +157,14 @@ class FistaConfig:
     positivity: bool = False
     lower_bound: float | None = None
     upper_bound: float | None = None
+    ray_integrator: str = "sampled"
+
+
+jax.tree_util.register_dataclass(
+    FistaConfig,
+    data_fields=["support"],
+    meta_fields=[field.name for field in fields(FistaConfig) if field.name != "support"],
+)
 
 
 def grad_data_term(  # noqa: PLR0915
@@ -162,6 +179,7 @@ def grad_data_term(  # noqa: PLR0915
     checkpoint_projector: bool = True,
     gather_dtype: str = "fp32",
     grad_mode: GradMode = "auto",
+    ray_integrator: str = "sampled",
     T_all: jnp.ndarray | None = None,
     vol_mask: jnp.ndarray | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
@@ -208,6 +226,7 @@ def grad_data_term(  # noqa: PLR0915
             unroll=int(projector_unroll),
             gather_dtype=gather_dtype,
             det_grid=det_grid,
+            ray_integrator=ray_integrator,
         )
         return grad_i if mask_arr is None else grad_i * mask_arr
 
@@ -228,6 +247,7 @@ def grad_data_term(  # noqa: PLR0915
                 unroll=int(projector_unroll),
                 gather_dtype=gather_dtype,
                 det_grid=det_grid,
+                ray_integrator=ray_integrator,
             ),
             in_axes=(0, None),
         )
@@ -261,6 +281,7 @@ def grad_data_term(  # noqa: PLR0915
                 unroll=int(projector_unroll),
                 gather_dtype=gather_dtype,
                 det_grid=det_grid,
+                ray_integrator=ray_integrator,
             )
             if mask_arr is not None:
                 grad_batch = grad_batch * mask_arr
@@ -289,6 +310,7 @@ def grad_data_term(  # noqa: PLR0915
                 unroll=int(projector_unroll),
                 gather_dtype=gather_dtype,
                 det_grid=det_grid,
+                ray_integrator=ray_integrator,
             )
             resid_i = (pred_i - y_i).astype(jnp.float32)
             loss_i = 0.5 * jnp.vdot(resid_i, resid_i).real
@@ -326,6 +348,7 @@ def data_term_value(
     checkpoint_projector: bool = True,
     gather_dtype: str = "fp32",
     grad_mode: GradMode = "auto",
+    ray_integrator: str = "sampled",
     T_all: jnp.ndarray | None = None,
     vol_mask: jnp.ndarray | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
@@ -364,6 +387,7 @@ def data_term_value(
                 unroll=int(projector_unroll),
                 gather_dtype=gather_dtype,
                 det_grid=det_grid,
+                ray_integrator=ray_integrator,
             ),
             in_axes=(0, None),
         )
@@ -411,6 +435,7 @@ def data_term_value(
                 unroll=int(projector_unroll),
                 gather_dtype=gather_dtype,
                 det_grid=det_grid,
+                ray_integrator=ray_integrator,
             )
             resid_i = (pred_i - y_i).astype(jnp.float32)
             loss_i = 0.5 * jnp.vdot(resid_i, resid_i).real
@@ -444,13 +469,14 @@ def power_method_L(
     checkpoint_projector: bool = True,
     gather_dtype: str = "fp32",
     grad_mode: GradMode = "auto",
+    ray_integrator: str = "sampled",
     T_all: jnp.ndarray | None = None,
     vol_mask: jnp.ndarray | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> float:
     """Estimate the Lipschitz constant of the data gradient by power iteration."""
     validate_grid(grid, "power_method_L grid")
-    n_views, nv, nu = validate_projection_shape(
+    n_views, _, _ = validate_projection_shape(
         projections_shape,
         detector,
         geometry=geometry,
@@ -466,38 +492,26 @@ def power_method_L(
     if T_all is None:
         T_all = stack_view_poses(geometry, n_views)
     validate_pose_stack(T_all, n_views, context="power_method_L geometry")
-    zero_proj = jnp.zeros((n_views, nv, nu), dtype=jnp.float32)
-    num_iters = max(1, int(iters))
-
-    def ata_apply(v: jnp.ndarray) -> jnp.ndarray:
-        g, _ = grad_data_term(
-            geometry,
-            grid,
-            detector,
-            zero_proj,
-            v,
-            views_per_batch=views_per_batch,
-            projector_unroll=projector_unroll,
-            checkpoint_projector=checkpoint_projector,
+    batch_size = (
+        1 if grad_mode == "stream" else _effective_view_chunk_size(n_views, views_per_batch)
+    )
+    initial = jnp.ones((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+    return float(
+        estimate_normal_norm(
+            T_all,
+            initial,
+            det_grid,
+            vol_mask,
+            grid=grid,
+            detector=detector,
+            batch_size=batch_size,
+            iters=int(iters),
+            unroll=int(projector_unroll),
+            checkpoint=checkpoint_projector,
             gather_dtype=gather_dtype,
-            grad_mode=grad_mode,
-            T_all=T_all,
-            vol_mask=vol_mask,
-            det_grid=det_grid,
+            ray_integrator=ray_integrator,
         )
-        return g
-
-    def normalize(v: jnp.ndarray) -> jnp.ndarray:
-        return v / (jnp.linalg.norm(v.ravel()) + 1e-12)
-
-    ata_apply_jit = jax.jit(ata_apply)
-    v0 = jnp.ones((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
-    v = normalize(v0)
-    for _ in range(num_iters):
-        v = normalize(ata_apply_jit(v))
-    g = ata_apply_jit(v)
-    L = float(jnp.vdot(v, g).real)
-    return max(L, 1e-6)
+    )
 
 
 def tv_proximal(x: jnp.ndarray, lam_over_L: float, iters: int = 20) -> jnp.ndarray:
@@ -595,6 +609,8 @@ def _prepare_fista_runtime(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
 ) -> _FistaRuntime:
     cfg = FistaConfig() if config is None else config
+    if cfg.ray_integrator not in {"sampled", "exact"}:
+        raise ValueError("ray_integrator must be sampled or exact")
     volume_mask = cfg.support
     regulariser = validate_regulariser(
         cfg.regulariser,
@@ -659,6 +675,7 @@ def _prepare_fista_runtime(
             T_all=poses,
             vol_mask=volume_mask,
             det_grid=det_grid,
+            ray_integrator=cfg.ray_integrator,
         )
     if regulariser == "huber_tv" and float(cfg.lambda_tv) != 0.0:
         lipschitz += float(cfg.lambda_tv) * 12.0 / huber_delta
@@ -678,13 +695,13 @@ def _prepare_fista_runtime(
     )
 
 
+@functools.partial(jax.jit, static_argnames=("grid", "detector"))
 def _run_fista_scan(
-    geometry: Geometry,
     grid: Grid,
     detector: Detector,
     projections: jnp.ndarray,
     runtime: _FistaRuntime,
-) -> _FistaResult:
+) -> FistaScanState:
     cfg = runtime.config
     regulariser = runtime.regulariser
     huber_delta = runtime.huber_delta
@@ -693,7 +710,7 @@ def _run_fista_scan(
 
     def val_and_grad_fn(z: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         g, v = grad_data_term(
-            geometry,
+            None,
             grid,
             detector,
             projections,
@@ -706,6 +723,7 @@ def _run_fista_scan(
             T_all=runtime.poses,
             vol_mask=runtime.volume_mask,
             det_grid=runtime.detector_grid,
+            ray_integrator=cfg.ray_integrator,
         )
         if regulariser == "huber_tv" and float(cfg.lambda_tv) != 0.0:
             g = g + jnp.asarray(cfg.lambda_tv, dtype=z.dtype) * huber_tv_grad(z, huber_delta)
@@ -715,7 +733,7 @@ def _run_fista_scan(
 
     def data_value_fn(x: jnp.ndarray) -> jnp.ndarray:
         return data_term_value(
-            geometry,
+            None,
             grid,
             detector,
             projections,
@@ -728,6 +746,7 @@ def _run_fista_scan(
             T_all=runtime.poses,
             vol_mask=runtime.volume_mask,
             det_grid=runtime.detector_grid,
+            ray_integrator=cfg.ray_integrator,
         )
 
     data_value = jax.jit(data_value_fn, donate_argnums=(0,))
@@ -824,15 +843,7 @@ def _run_fista_scan(
         iters_done=jnp.int32(0),
     )
     carry_final, _ = jax.lax.scan(step, init_carry, jnp.arange(int(cfg.iters)))
-    return _FistaResult(
-        volume=carry_final.x,
-        losses=carry_final.loss,
-        lipschitz=L,
-        effective_iters=int(carry_final.iters_done),
-        early_stop=bool(carry_final.done),
-        regulariser=regulariser,
-        huber_delta=huber_delta,
-    )
+    return carry_final
 
 
 def _emit_fista_callback(callback: LossCallback | None, result: _FistaResult) -> None:
@@ -876,6 +887,15 @@ def fista_tv(
         config=config,
         det_grid=det_grid,
     )
-    result = _run_fista_scan(geometry, grid, detector, projections, runtime)
+    final = _run_fista_scan(grid, detector, projections, runtime)
+    result = _FistaResult(
+        volume=final.x,
+        losses=final.loss,
+        lipschitz=runtime.lipschitz,
+        effective_iters=int(final.iters_done),
+        early_stop=bool(final.done),
+        regulariser=runtime.regulariser,
+        huber_delta=runtime.huber_delta,
+    )
     _emit_fista_callback(callback, result)
     return result.volume, result.info()

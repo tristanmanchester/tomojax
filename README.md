@@ -1,183 +1,97 @@
 # TomoJAX
 
-TomoJAX turns tomography and laminography projection data into reconstructed
-volumes. It loads NeXus/HDF5 or TIFF stacks, applies dark/flat correction,
-reconstructs with FBP or TV solvers, and can estimate per-projection pose or
-detector-centre/COR alignment from the data.
+Reconstruct parallel-beam tomography and laminography data with JAX. TomoJAX
+provides differentiable projectors, iterative reconstruction, experimental
+joint alignment, and a CLI for taking NeXus/HDF5 or TIFF data through correction,
+reconstruction, and slice export.
 
-| Laminography data alignment | Per-projection pose adjustments |
+TomoJAX is an early research library. Its strongest fit is scientists who need
+control over geometry and differentiation in a Python workflow. Built-in
+geometries use **parallel rays**; cone-beam and fan-beam CT are not implemented.
+Alignment needs scan-specific validation. See the
+[support matrix](docs/support-matrix.md) and [known limitations](docs/known-limitations.md)
+before choosing it for an experiment.
+
+![Central xy and xz slices of a synthetic phantom, its CGLS reconstruction, and absolute error, with shared attenuation scales.](images/reconstruction-example.png)
+
+64³ voxels, 90 parallel views, 40 CGLS iterations. This example uses the same
+Joseph model for simulation and reconstruction; it demonstrates the API, not
+independent reconstruction accuracy. [Reproduce the figure](examples/README.md#reproduce-the-readme-figure).
+
+## First reconstruction
+
+You need Git and [uv](https://docs.astral.sh/uv/getting-started/installation/).
+The package currently requires **Python 3.12**; uv can install it. These commands
+install this checkout with CPU dependencies, generate a small scan, and write
+three central slices. No scan data or GPU is required.
+
+```bash
+git clone https://github.com/tristanmanchester/tomojax.git
+cd tomojax
+uv sync --locked --extra cpu --no-dev
+
+uv run --no-sync tomojax simulate --out synthetic.nxs \
+  --nx 32 --ny 32 --nz 32 --nu 32 --nv 32 --n-views 60
+uv run --no-sync tomojax recon --data synthetic.nxs --out recon.nxs \
+  --algo fbp --roi off
+uv run --no-sync tomojax validate recon.nxs
+uv run --no-sync tomojax slices --data recon.nxs --out quicklooks
+```
+
+Open `quicklooks/slice_x0016.png`, `slice_y0016.png`, and `slice_z0016.png`.
+`recon.nxs` contains the projections, volume, and geometry metadata. The PNGs
+are display-scaled previews; use the stored volume for quantitative analysis.
+This CLI example uses FBP; the figure above uses the Python CGLS example.
+
+For CUDA installation, wheel installation, and device checks, see
+[installation](docs/installation.md). For your own scan, start with
+[the quickstart](docs/quickstart.md).
+
+## Choose a workflow
+
+| Task | Start here |
 | --- | --- |
-| <img src="images/figure_minimal_original_cor_full.png" width="650" alt="Laminography data from the DIAD beam line showing a layer of 100 µm ruby spheres"> | <img src="images/projection_pose_corrections_3d_zoomed.png" width="420" alt="The per-projection pose adjustments applied by TomoJAX to align the data"> |
+| Inspect, preprocess, and reconstruct a scan | [Quickstart](docs/quickstart.md) |
+| Supply measured geometry and process TIFF or laminography data | [Real scan guide](docs/real-laminography.md) |
+| Simulate data or use the Python API | [Synthetic workflow](docs/synthetic-tomography.md), [runnable examples](examples/README.md) |
+| Estimate motion or detector-centre corrections | [Alignment guide](docs/alignment-guide.md) — experimental; review recovered geometry |
+| Check supported models and limitations | [Support matrix](docs/support-matrix.md), [limitations](docs/known-limitations.md) |
+| Assess accuracy, speed, and memory | [Measurement guide](docs/measurements.md) |
 
+The CLI provides FBP, FISTA-TV, and SPDHG-TV reconstruction. The Python API also
+provides CGLS, host-output FBP, and an opt-in Fourier inverse for uniform
+parallel scans. CPU paths use JAX; optional Pallas kernels accelerate selected
+operations on CUDA. Volumes use `(x, y, z)` and projections `(view, v, u)` in
+Python. Detector and voxel spacings must use the same physical length unit.
 
-Use it when you have projections and approximate geometry and want to go from
-raw detector frames to a reproducible reconstruction.
+Public modules are `tomojax.io`, `tomojax.geometry`, `tomojax.forward`,
+`tomojax.recon`, `tomojax.align`, and `tomojax.datasets`. Start with the
+[complete projection/reconstruction example](examples/simulate_and_reconstruct.py)
+or browse the [documentation index](docs/README.md).
 
-## What comes out
+## Evidence and current limits
 
-TomoJAX writes `.nxs` datasets that keep projections, reconstructed volume,
-geometry metadata, preprocessing provenance, and alignment metadata together.
+The [frozen reconstruction comparison](docs/system-matrix-2026-10-04.md) covers
+smooth, sharp, and noisy objects across parallel, anisotropic, and tilted scans.
+26 of 27 cells have accepted TomoJAX and external results. Warm performance is
+competitive in some cases; fresh-process startup and harder geometries remain
+substantial gaps. These results do not establish general superiority to ASTRA
+or TIGRE. Published GPU measurements use one RTX 4070 Laptop GPU.
 
-Three common starting points:
+The experimental coupled alignment solver passes five of six modest-motion
+free-voxel cases; noisy anisotropic recovery still fails the fixed rotation
+gate. This is not a demonstrated large-motion or 99% recovery capability.
+The [alignment comparison](docs/public-free-voxel-schur-2026-10-04.md) retains
+failures, cold/warm times, quality, and process GPU memory.
 
-- raw NeXus/HDF5 scans with sample, flat, and dark frames;
-- TIFF projection stacks with an angle sidecar;
-- synthetic datasets for testing reconstruction and alignment settings.
+Historical [DIAD laminography images](images/README.md#historical-real-data-illustrations)
+show qualitative use on real data. Their raw acquisition and full reproduction
+configuration are not bundled, so they are not a reproducible validation set.
 
-## What you can do
+## Development and license
 
-Supported workflows:
+See [CONTRIBUTING.md](CONTRIBUTING.md) for environment setup, engineering
+conventions, tests, and package checks. Changes on this branch are recorded in
+the [changelog](CHANGELOG.md).
 
-| Task | Command |
-| --- | --- |
-| Inspect a scan | `tomojax inspect scan.nxs` |
-| Validate a dataset | `tomojax validate scan.nxs` |
-| Convert a TIFF stack into a TomoJAX dataset | `tomojax ingest ./projections --angles angles.csv --du 0.65 --dv 0.65 --out scan.nxs` |
-| Apply dark/flat correction | `tomojax preprocess raw.nxs corrected.nxs` |
-| Reconstruct a volume | `tomojax recon --data corrected.nxs --out recon.nxs` |
-| Extract labelled PNG slices from a reconstruction | `tomojax slices --data recon.nxs --out quicklooks` |
-| Correct per-projection sample motion | `tomojax align --data corrected.nxs --out aligned.nxs --mode pose` |
-| Correct detector-centre/COR geometry | `tomojax align --data corrected.nxs --out aligned.nxs --mode cor` |
-| Generate a synthetic test scan | `tomojax simulate --out synthetic.nxs --nx 64 --ny 64 --nz 64 --nu 64 --nv 64 --n-views 64` |
-
-`tomojax preprocess` writes absorption/log-attenuation projections by default.
-Use `--transmission` when you need normalized transmission output instead.
-
-## Get started
-
-Install the CPU development environment and check the CLI.
-
-```bash
-uv sync --locked --extra cpu --dev
-uv run tomojax --help
-```
-
-On a Linux CUDA host, use the CUDA extra instead:
-
-```bash
-uv sync --locked --extra cuda12 --dev
-just accelerator-smoke-cuda
-```
-
-`just accelerator-smoke-cuda` verifies the optional accelerator projector path.
-
-If you do not have scan data yet, generate a small synthetic dataset and
-reconstruct it:
-
-```bash
-uv run tomojax simulate \
-  --out synthetic_scan.nxs \
-  --nx 64 --ny 64 --nz 64 \
-  --nu 64 --nv 64 \
-  --n-views 64 \
-  --phantom random_shapes
-
-uv run tomojax recon --data synthetic_scan.nxs --out synthetic_recon.nxs
-```
-
-For a real NX/HDF5 scan, start by inspecting and validating it:
-
-```bash
-uv run tomojax inspect /path/to/scan.nxs
-uv run tomojax validate /path/to/scan.nxs
-uv run tomojax preprocess /path/to/raw.nxs corrected.nxs
-uv run tomojax recon --data corrected.nxs --out recon.nxs
-```
-
-For TIFF projection stacks, ingest the stack first:
-
-```bash
-uv run tomojax ingest ./projections \
-  --angles angles.csv \
-  --du 0.65 \
-  --dv 0.65 \
-  --out scan.nxs
-```
-
-Then preprocess or reconstruct the resulting `.nxs` dataset.
-
-## Examples
-
-These use a synthetic phantom so the expected volume is known.
-
-| Synthetic misalignment set | Alignment before and after |
-| --- | --- |
-| <img src="images/tomojax-canonical-misalignment-grid.png" width="360" alt="Grid of canonical PHANTOM94 tomography misalignment scenarios."> | <img src="images/tomojax-alignment-before-after.png" width="420" alt="Before and after reconstruction slices for a detector centre and detector roll alignment scenario."> |
-
-Older animated examples remain in `images/`.
-
-## Alignment
-
-Start with `--mode pose` when the sample moves during acquisition, and use
-`--mode cor` when you need a detector-centre or centre-of-rotation correction.
-
-```bash
-uv run tomojax align \
-  --data corrected.nxs \
-  --out aligned.nxs \
-  --mode pose
-```
-
-The aligned dataset stores the reconstruction and alignment metadata together,
-so you can inspect it later with `tomojax inspect aligned.nxs`.
-
-Mixed setup and pose correction requires an explicit gauge policy because setup
-and pose parameters can share gauge ambiguity:
-
-```bash
-uv run tomojax align \
-  --data corrected.nxs \
-  --out aligned_auto.nxs \
-  --mode auto \
-  --gauge-policy anchor_mean
-```
-
-## Python API
-
-Main modules:
-
-- `tomojax.io` for loading/saving datasets, NXtomo validation, preprocessing,
-  and quicklooks.
-- `tomojax.geometry` for geometry metadata, axes, calibration state, and
-  field-of-view helpers.
-- `tomojax.forward` for differentiable forward projection and residual helpers.
-- `tomojax.recon` for FBP, FISTA-TV, and SPDHG-TV reconstruction.
-- `tomojax.align` for `AlignConfig`, `align`, and `align_multires`.
-- `tomojax.datasets` for deterministic synthetic datasets.
-
-Tests cover CLI routing, IO and preprocessing, deterministic simulation, and
-numerical reconstruction cases.
-
-## Workflow docs
-
-Start with the guide that matches your data.
-
-- [`docs/quickstart.md`](docs/quickstart.md)
-- [`docs/alignment-guide.md`](docs/alignment-guide.md)
-- [`docs/synthetic-tomography.md`](docs/synthetic-tomography.md)
-- [`docs/real-laminography.md`](docs/real-laminography.md)
-- [`docs/support-matrix.md`](docs/support-matrix.md)
-- [`docs/known-limitations.md`](docs/known-limitations.md)
-
-## Current scope
-
-Covers dataset inspection, validation, TIFF ingest, NX/HDF5 preprocessing,
-reconstruction, labelled slice extraction, synthetic data generation, 5-DOF pose
-alignment, detector-centre/COR alignment, and mixed setup and pose alignment.
-Object-frame drift recovery, nuisance fitting, abrupt-jump handling, bad-view
-handling, and detector-v reference-shift recovery are research or diagnostic
-workflows. See
-[`docs/known-limitations.md`](docs/known-limitations.md) for details.
-
-## Development checks
-
-Run before submitting changes.
-
-```bash
-just ci
-just surface-check
-just check
-```
-
-`just ci` is the full local release gate. `just surface-check` runs the faster
-formatting, lint, import guardrail, smoke, and test subset.
+TomoJAX is licensed under [GPL-3.0-only](LICENSE).

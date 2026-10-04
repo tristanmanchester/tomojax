@@ -76,6 +76,7 @@ def validate_alignment_gauge_feasible(
             )
 
 
+@jax.jit
 def _project_box_zero_mean(
     values: jnp.ndarray,
     lower: jnp.ndarray,

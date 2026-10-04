@@ -5,10 +5,13 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+import pytest
 
 from tomojax.io import PreprocessConfig, load_dataset, preprocess_nxtomo, preprocess_tiff_stack
 
 from ._helpers import write_angle_csv, write_raw_nxtomo, write_tiff_stack
+
+pytestmark = pytest.mark.surface
 
 
 def _preprocess_tiff_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:

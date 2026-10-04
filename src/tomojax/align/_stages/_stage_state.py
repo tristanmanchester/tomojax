@@ -194,6 +194,7 @@ def _emit_level_completion_checkpoint(
     active_geometry_dofs: tuple[str, ...],
     resolved_schedule: object,
     level_stats: list[OuterStat],
+    ray_integrator: str = "sampled",
 ) -> None:
     if checkpoint_callback is None:
         return
@@ -223,6 +224,7 @@ def _emit_level_completion_checkpoint(
             stage=last_stage,
             stage_completed=level_complete,
             completed_outer_iters_in_stage=last_stage_iters,
+            ray_integrator=ray_integrator,
         )
     )
 
@@ -241,6 +243,7 @@ def _emit_run_completion_checkpoint(
     setup_alignment_state: object,
     active_geometry_dofs: tuple[str, ...],
     resolved_schedule: object,
+    ray_integrator: str = "sampled",
 ) -> None:
     if checkpoint_callback is None or params5 is None or not run_complete:
         return
@@ -267,6 +270,7 @@ def _emit_run_completion_checkpoint(
             stage=final_stage,
             stage_completed=True,
             completed_outer_iters_in_stage=0,
+            ray_integrator=ray_integrator,
         )
     )
 
@@ -345,6 +349,8 @@ def _final_align_multires_info(
         "objective_provenance": objective_provenance,
         "backend_provenance": backend_provenance,
         "pose_model": str(cfg.pose_model),
+        "pose_translation_frame": cfg.pose_translation_frame,
+        "ray_integrator": cfg.ray_integrator,
         "pose_model_variables": final_pose_model_variables,
         "per_view_variables": final_per_view_variables,
         "pose_model_basis_shape": final_pose_model_basis_shape,
@@ -375,6 +381,13 @@ def _build_multires_context(
     factors: Iterable[int],
 ) -> MultiresContext:
     cfg = cfg if cfg is not None else AlignConfig()
+    if (
+        resume_state is not None
+        and resume_state.pose_translation_frame != cfg.pose_translation_frame
+    ):
+        raise ValueError("align_multires resume_state pose_translation_frame differs from config")
+    if resume_state is not None and resume_state.ray_integrator != cfg.ray_integrator:
+        raise ValueError("align_multires resume_state ray_integrator differs from config")
     observer_fn = adapt_observer_callback(observer) if observer is not None else None
     resolved_schedule = _resolved_schedule_for_cfg(cfg)
     setup_base = BaseGeometryArrays.from_geometry(geometry, detector)
@@ -384,9 +397,10 @@ def _build_multires_context(
         volume=resume_state.x if resume_state is not None else None,
     )
     setup_alignment_state = setup_alignment_state.replace(
+        pose=setup_alignment_state.pose.replace(translation_frame=cfg.pose_translation_frame),
         setup=setup_alignment_state.setup.replace(
             nominal_axis_unit=setup_base.nominal_axis_unit,
-        )
+        ),
     )
     validate_grid(grid, "align_multires grid")
     validate_projection_stack(
@@ -538,6 +552,7 @@ def _seed_translation_params(
         positivity=bool(cfg.recon_positivity),
         recon_rel_tol=cfg.recon_rel_tol,
         recon_patience=(int(cfg.recon_patience) if cfg.recon_patience is not None else 0),
+        ray_integrator=cfg.ray_integrator,
     )
     x_seed, _ = fista_tv(geometry, grid, detector, projections, init_x=x0, config=seed_cfg)
     transforms = stack_view_poses(geometry, projections.shape[0])
@@ -550,21 +565,34 @@ def _seed_translation_params(
             x_seed,
             use_checkpoint=cfg.checkpoint_projector,
             gather_dtype=cfg.gather_dtype,
+            ray_integrator=cfg.ray_integrator,
         )
 
     preds = jax.vmap(project_seed_view, in_axes=0)(transforms)
-    shift_uv = jax.vmap(phase_corr_shift)(preds, projections)
+    # Correlation returns the shift that aligns its second image to its first.
+    # Pose translations move the predicted object toward the measured image.
+    shift_uv = jax.vmap(phase_corr_shift)(projections, preds)
     shifts = jnp.stack(shift_uv, axis=1).astype(jnp.float32)
     seed_params = (
         jnp.zeros((projections.shape[0], 5), dtype=jnp.float32)
         if params0 is None
         else jnp.asarray(params0, dtype=jnp.float32)
     )
-    if active_mask_tuple[3]:
-        seed_params = seed_params.at[:, 3].set(shifts[:, 0] * jnp.float32(detector.du))
-    if active_mask_tuple[4]:
-        seed_params = seed_params.at[:, 4].set(shifts[:, 1] * jnp.float32(detector.dv))
-    return seed_params
+    pitch = jnp.array([detector.du, detector.dv], dtype=jnp.float32)
+    if cfg.pose_translation_frame == "detector":
+        mapping = jnp.broadcast_to(jnp.eye(2), (projections.shape[0], 2, 2))
+    else:
+        axes = jnp.array([0, 2])
+        mapping = transforms[:, axes, :3][:, :, axes]
+    active = jnp.asarray(active_mask_tuple[3:5], dtype=jnp.bool_)
+    fixed = jnp.where(active, 0.0, seed_params[:, 3:])
+    pixel_mapping = mapping / pitch[None, :, None]
+    residual = shifts - jnp.einsum("nij,nj->ni", pixel_mapping, fixed)
+    # Legacy object translations may lose one observable direction. Discard
+    # near-null singular directions instead of creating enormous seed offsets.
+    inverse = jnp.linalg.pinv(pixel_mapping * active[None, None, :], rtol=1e-3)
+    estimate = jnp.einsum("nij,nj->ni", inverse, residual)
+    return seed_params.at[:, 3:].set(jnp.where(active, estimate, fixed))
 
 
 def _params_for_multires_level(

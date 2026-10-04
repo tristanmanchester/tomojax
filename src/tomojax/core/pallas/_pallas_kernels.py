@@ -15,7 +15,7 @@ from ._pallas_forward_kernels import (
 from ._pallas_sampling import (
     _trilinear_atomic_add,
     _trilinear_load,
-    _trilinear_load_when_tile_active,
+    _trilinear_load_active,
     _trilinear_load_z_integer,
 )
 
@@ -28,6 +28,6 @@ __all__ = [
     "_projector_views_kernel",
     "_trilinear_atomic_add",
     "_trilinear_load",
-    "_trilinear_load_when_tile_active",
+    "_trilinear_load_active",
     "_trilinear_load_z_integer",
 ]

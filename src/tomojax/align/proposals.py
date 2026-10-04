@@ -74,6 +74,7 @@ def score_pose_stack_candidates(
     views_per_batch: int = 0,
     projector_unroll: int = 1,
     checkpoint_projector: bool = True,
+    ray_integrator: str = "sampled",
 ) -> ProposalScoringResult:
     """Score candidate pose stacks without requiring differentiability.
 
@@ -100,6 +101,7 @@ def score_pose_stack_candidates(
             gather_dtype=gather_dtype,
             projector_backend=projector_backend,
             require_differentiable_projector=False,
+            ray_integrator=ray_integrator,
         )
         jax.block_until_ready(score)
         values.append(float(score))
@@ -117,6 +119,7 @@ def score_pose_stack_candidates(
         require_differentiable_projector=False,
         gather_dtype=gather_dtype,
         api_surface="alignment.proposal_scoring",
+        ray_integrator=ray_integrator,
     ).to_dict()
     return ProposalScoringResult(
         best_index=int(best_index),

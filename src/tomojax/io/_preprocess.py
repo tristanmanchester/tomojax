@@ -16,6 +16,7 @@ from tomojax._data import (
     NXTomoMetadata,
     save_nxtomo,
 )
+from tomojax.io._angles import load_angles
 from tomojax.io._contrast import flat_dark_to_absorption, flat_dark_to_transmission
 from tomojax.io._preprocess_impl import (
     PreprocessConfig,
@@ -177,7 +178,7 @@ def _load_tiff_preprocess_input(
         flats = flats[:, y0:y1, x0:x1]
         darks = darks[:, y0:y1, x0:x1]
 
-    angles = _load_angles(angles_path)
+    angles = load_angles(angles_path)
     if angles.shape[0] != projections.shape[0]:
         raise ValueError(
             f"angles length {angles.shape[0]} does not match projection count "
@@ -362,29 +363,6 @@ def _load_tiff_stack(path: PathLike) -> tuple[np.ndarray, list[Path]]:
         axis=0,
     )
     return stack, files
-
-
-def _load_angles(path: PathLike) -> np.ndarray:
-    sidecar = Path(path)
-    if sidecar.suffix.lower() == ".npy":
-        values = np.asarray(np.load(sidecar), dtype=np.float32)
-    else:
-        rows: list[float] = []
-        for line in sidecar.read_text(encoding="utf-8").splitlines():
-            text = line.strip()
-            if not text or text.startswith("#"):
-                continue
-            token = text.split(",", 1)[0].strip()
-            try:
-                rows.append(float(token))
-            except ValueError:
-                if not rows:
-                    continue
-                raise
-        values = np.asarray(rows, dtype=np.float32)
-    if values.ndim != 1:
-        raise ValueError("angle sidecar must be one-dimensional")
-    return values
 
 
 def _parse_crop_spec(crop: str | None, *, nv: int, nu: int) -> tuple[int, int, int, int] | None:

@@ -218,7 +218,9 @@ def _projector_traversal_state(
     R = T[:3, :3]
     t = T[:3, 3]
     Rinv = R.T
-    tinv = -(Rinv @ t)
+    # Geometry must retain FP32 accuracy even when users enable reduced
+    # precision for large matrix products elsewhere in their application.
+    tinv = -jnp.matmul(Rinv, t, precision=jax.lax.Precision.HIGHEST)
     ey_obj = Rinv[:, 1]
     support_lower, support_upper = _interpolation_support_bounds(grid, vol_origin)
 
@@ -307,6 +309,27 @@ def _trilinear_gather(recon_flat, ix_f, iy_f, iz_f, nx, ny, nz):
 
 @jax.jit
 def _trilinear_scatter_add(acc_flat, ray_vals, ix_f, iy_f, iz_f, nx, ny, nz):
+    if acc_flat.dtype == jnp.float32:
+        # Scatter into the existing accumulator. Transposing gather first builds
+        # a dense zero-filled volume at every ray step, then adds that volume.
+        # A single sparse update avoids O(volume_size * n_steps) memory traffic.
+        fx = jnp.floor(ix_f).astype(jnp.int32)
+        fy = jnp.floor(iy_f).astype(jnp.int32)
+        fz = jnp.floor(iz_f).astype(jnp.int32)
+        ox = jnp.asarray([0, 0, 0, 0, 1, 1, 1, 1], dtype=jnp.int32)[:, None]
+        oy = jnp.asarray([0, 0, 1, 1, 0, 0, 1, 1], dtype=jnp.int32)[:, None]
+        oz = jnp.asarray([0, 1, 0, 1, 0, 1, 0, 1], dtype=jnp.int32)[:, None]
+        ix, iy, iz = fx[None, :] + ox, fy[None, :] + oy, fz[None, :] + oz
+        wx, wy, wz = ix_f - fx, iy_f - fy, iz_f - fz
+        weight = (
+            jnp.where(ox == 0, 1.0 - wx, wx)
+            * jnp.where(oy == 0, 1.0 - wy, wy)
+            * jnp.where(oz == 0, 1.0 - wz, wz)
+        )
+        inb = (ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny) & (iz >= 0) & (iz < nz)
+        idx = jnp.where(inb, ix * (ny * nz) + iy * nz + iz, acc_flat.size)
+        return acc_flat.at[idx.ravel()].add((weight * ray_vals).ravel(), mode="drop")
+    # Keep the transpose's per-corner casts for the mixed-precision contract.
     scatter = jax.linear_transpose(
         lambda recon: _trilinear_gather(recon, ix_f, iy_f, iz_f, nx, ny, nz),
         acc_flat,
@@ -337,6 +360,7 @@ def forward_project_view_T(
     gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
     projector_backend: ProjectorBackendInput = "jax",
+    ray_integrator: str = "sampled",
 ) -> jnp.ndarray:
     """Forward project a single view given pose `T` (4x4, row-major).
 
@@ -346,6 +370,16 @@ def forward_project_view_T(
     in the object frame. This avoids a matmul per step and keeps gradients clean.
     """
     backend = normalize_projector_backend(projector_backend)
+    if ray_integrator == "exact":
+        if step_size is not None or n_steps is not None:
+            raise ValueError("exact ray integration does not accept a step size or sample count")
+        from tomojax.core.trilinear import exact_forward
+
+        return exact_forward(
+            jnp.asarray(T)[None], grid, detector, volume, backend=backend, det_grid=det_grid
+        )[0]
+    if ray_integrator != "sampled":
+        raise ValueError("ray_integrator must be 'sampled' or 'exact'")
     if backend == "pallas":
         pallas_project, fallback_reason = resolve_pallas_callable(
             "forward_project_view_T_pallas",
@@ -435,11 +469,11 @@ def _backproject_view_accum_T(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
     img = jnp.asarray(image, dtype=jnp.float32)
-    nx, ny, nz = validate_grid(grid, "backproject_view_T")
+    validate_grid(grid, "backproject_view_T")
     validate_detector_image(img, detector, context="backproject_view_T", name="image")
     validate_detector_grid(det_grid, detector, context="backproject_view_T")
     validate_pose_matrix(T, context="backproject_view_T")
-    ix0, iy0, iz0, dix, diy, diz, n_steps_ray, step_size32, n_steps, _ = _projector_traversal_state(
+    traversal = _projector_traversal_state(
         T,
         grid,
         detector,
@@ -447,27 +481,52 @@ def _backproject_view_accum_T(
         n_steps=n_steps,
         det_grid=det_grid,
     )
-    ray_vals = img.reshape((-1,))
+    return _backproject_rays(
+        img.reshape(-1),
+        traversal[:7],
+        grid,
+        traversal[7],
+        traversal[8],
+        gather_dtype=gather_dtype,
+        unroll=unroll,
+    )
+
+
+def _backproject_rays(
+    ray_vals,
+    traversal,
+    grid,
+    step_size32,
+    n_steps,
+    *,
+    gather_dtype,
+    unroll,
+):
+    """Accumulate a collection of rays into a single volume."""
+    nx, ny, nz = grid.nx, grid.ny, grid.nz
+    ix0, iy0, iz0, dix, diy, diz, n_steps_ray = traversal
 
     def step(carry, step_idx):
         acc_flat, ix, iy, iz = carry
         active = (step_idx < n_steps_ray).astype(jnp.float32)
         step_vals = ray_vals * active * step_size32
         acc_flat = _trilinear_scatter_add(acc_flat, step_vals, ix, iy, iz, nx, ny, nz)
-        return (acc_flat, ix - dix, iy - diy, iz - diz), None
+        return (acc_flat, ix + dix, iy + diy, iz + diz), None
 
     acc_dtype = _resolve_gather_target(gather_dtype)
-    last_step = jnp.int32(max(n_steps - 1, 0))
     init = (
         jnp.zeros((nx * ny * nz,), dtype=acc_dtype),
-        ix0 + dix * last_step.astype(jnp.float32),
-        iy0 + diy * last_step.astype(jnp.float32),
-        iz0 + diz * last_step.astype(jnp.float32),
+        ix0,
+        iy0,
+        iz0,
     )
     carry_final, _ = jax.lax.scan(
         step,
         init,
-        jnp.arange(n_steps - 1, -1, -1, dtype=jnp.int32),
+        # Replay the forward coordinates in the same order. Starting at the far
+        # endpoint and subtracting steps accumulates different fp32 rounding,
+        # so the resulting operator is no longer the discrete transpose.
+        jnp.arange(n_steps, dtype=jnp.int32),
         length=n_steps,
         unroll=unroll or 1,
     )
@@ -485,8 +544,19 @@ def backproject_view_T(
     unroll: int | None = None,
     gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+    ray_integrator: str = "sampled",
 ) -> jnp.ndarray:
     """Backproject one detector image as the explicit adjoint of the configured projector."""
+    if ray_integrator == "exact":
+        if step_size is not None or n_steps is not None:
+            raise ValueError("exact ray integration does not accept a step size or sample count")
+        from tomojax.core.trilinear import exact_adjoint
+
+        return exact_adjoint(
+            jnp.asarray(T)[None], grid, detector, jnp.asarray(image)[None], det_grid=det_grid
+        )
+    if ray_integrator != "sampled":
+        raise ValueError("ray_integrator must be 'sampled' or 'exact'")
     return _backproject_view_accum_T(
         T,
         grid,
@@ -511,8 +581,17 @@ def sum_backproject_views_T(
     unroll: int | None = None,
     gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+    ray_integrator: str = "sampled",
 ) -> jnp.ndarray:
     """Sum explicit mixed-precision adjoints over a fixed chunk."""
+    if ray_integrator == "exact":
+        if step_size is not None or n_steps is not None:
+            raise ValueError("exact ray integration does not accept a step size or sample count")
+        from tomojax.core.trilinear import exact_adjoint
+
+        return exact_adjoint(T_all, grid, detector, images, det_grid=det_grid)
+    if ray_integrator != "sampled":
+        raise ValueError("ray_integrator must be 'sampled' or 'exact'")
     n_views, _, _ = validate_projection_stack(
         images,
         detector,
@@ -538,7 +617,34 @@ def sum_backproject_views_T(
 
     if int(n_views) == 1:
         return backproject_one(T_all[0], img[0])
-    return jnp.sum(jax.vmap(backproject_one)(T_all, img), axis=0, dtype=jnp.float32)
+    if _resolve_gather_target(gather_dtype) != jnp.float32:
+        # Half-precision transposes round each view's accumulation before the
+        # fp32 reduction; combining those accumulators changes that contract.
+        return jnp.sum(jax.vmap(backproject_one)(T_all, img), axis=0, dtype=jnp.float32)
+
+    def traversal_for_view(T):
+        return _projector_traversal_state(
+            T,
+            grid,
+            detector,
+            step_size=step_size,
+            n_steps=n_steps,
+            det_grid=det_grid,
+        )[:7]
+
+    traversal = jax.vmap(traversal_for_view)(T_all)
+    ray_shape = traversal[0].shape
+    flattened = tuple(jnp.broadcast_to(value, ray_shape).reshape(-1) for value in traversal)
+    step = float(grid.vy) if step_size is None else float(step_size)
+    return _backproject_rays(
+        img.reshape(-1),
+        flattened,
+        grid,
+        jnp.float32(step),
+        _resolve_n_steps(grid, step, n_steps),
+        gather_dtype=gather_dtype,
+        unroll=unroll,
+    )
 
 
 def forward_project_view(
@@ -554,6 +660,7 @@ def forward_project_view(
     unroll: int | None = None,
     gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+    ray_integrator: str = "sampled",
     projector_backend: ProjectorBackendInput = "jax",
 ) -> jnp.ndarray:
     """Wrapper that fetches pose from geometry and calls the pose-aware variant.
@@ -574,6 +681,7 @@ def forward_project_view(
         gather_dtype=gather_dtype,
         det_grid=det_grid,
         projector_backend=projector_backend,
+        ray_integrator=ray_integrator,
     )
 
 
@@ -589,6 +697,7 @@ def backproject_view(
     unroll: int | None = None,
     gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+    ray_integrator: str = "sampled",
 ) -> jnp.ndarray:
     """Wrapper that fetches pose and calls the explicit gather-dtype adjoint.
 
@@ -606,4 +715,5 @@ def backproject_view(
         unroll=unroll,
         gather_dtype=gather_dtype,
         det_grid=det_grid,
+        ray_integrator=ray_integrator,
     )

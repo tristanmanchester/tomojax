@@ -104,6 +104,67 @@ class PoseLbfgsTransform:
 
 
 @dataclass(frozen=True)
+class _LbfgsKernels:
+    """Compiled optimizer operations with dynamic objective arguments."""
+
+    init: Callable[..., object]
+    evaluate: Callable[..., tuple[jnp.ndarray, jnp.ndarray]]
+    update: Callable[..., tuple[jnp.ndarray, object]]
+
+    @classmethod
+    def build(
+        cls,
+        value_fn: Callable[..., jnp.ndarray],
+        cfg: PoseLbfgsConfig | ActiveLbfgsConfig,
+        value_and_grad_fn: Callable[..., tuple[jnp.ndarray, jnp.ndarray]] | None = None,
+    ) -> _LbfgsKernels:
+        optax = _optax_module()
+        solver = optax.lbfgs(
+            memory_size=int(cfg.memory_size),
+            linesearch=optax.scale_by_zoom_linesearch(
+                max_linesearch_steps=int(cfg.maxls),
+                approx_dec_rtol=float(cfg.ftol),
+            ),
+        )
+
+        @jax.jit
+        def evaluate(z: jnp.ndarray, state: object, args: tuple) -> tuple[jnp.ndarray, jnp.ndarray]:
+            if value_and_grad_fn is not None:
+                return value_and_grad_fn(z, *args)
+
+            def objective(candidate: jnp.ndarray) -> jnp.ndarray:
+                return value_fn(candidate, *args)
+
+            return optax.value_and_grad_from_state(objective)(z, state=state)
+
+        @jax.jit
+        def update(
+            z: jnp.ndarray, state: object, value: jnp.ndarray, grad: jnp.ndarray, args: tuple
+        ) -> tuple[jnp.ndarray, object]:
+            updates, next_state = solver.update(
+                grad,
+                state,
+                z,
+                value=value,
+                grad=grad,
+                value_fn=lambda candidate: value_fn(candidate, *args),
+            )
+            return optax.apply_updates(z, updates), next_state
+
+        return cls(solver.init, evaluate, update)
+
+
+@dataclass(frozen=True)
+class PreparedPoseLbfgs:
+    """A pose optimization problem reusable as the reconstructed volume changes."""
+
+    config: PoseLbfgsConfig
+    initial_vector: Callable[..., jnp.ndarray]
+    params_from_z: Callable[..., tuple[jnp.ndarray, jnp.ndarray | None]]
+    kernels: _LbfgsKernels
+
+
+@dataclass(frozen=True)
 class LbfgsLoopResult:
     """Raw result from the shared low-level L-BFGS loop."""
 
@@ -279,6 +340,48 @@ def _build_pose_lbfgs_transform(
     return PoseLbfgsTransform(z0=z0, params_from_z=params_from_z)
 
 
+def prepare_pose_lbfgs(
+    *,
+    params5: jnp.ndarray,
+    motion_coeffs: jnp.ndarray | None,
+    context: PoseOptimizationContext,
+    config: PoseLbfgsConfig,
+    objective_fn: Callable[..., jnp.ndarray],
+) -> PreparedPoseLbfgs:
+    """Prepare transforms and compiled operations once per alignment problem.
+
+    Additional objective inputs (volume, random key, etc.) remain dynamic and
+    must be supplied through ``objective_args`` when the problem is solved.
+    """
+    cols, bounds = context.active_bound_transform(int(params5.shape[0]))
+    smooth = context.motion_model is not None and not bounds.has_finite_bounds
+    transform = _build_pose_lbfgs_transform(
+        params5_in=params5,
+        motion_coeffs_in=motion_coeffs,
+        active_cols_jnp=cols,
+        bounds_transform=bounds,
+        context=context,
+        motion_model=context.motion_model,
+        smooth_unbounded_coefficients=smooth,
+    )
+
+    def initial_vector(params: jnp.ndarray, coeffs: jnp.ndarray | None) -> jnp.ndarray:
+        if smooth:
+            if coeffs is None:
+                raise ValueError("L-BFGS requires initialized smooth pose coefficients")
+            return jnp.asarray(coeffs, dtype=jnp.float32)
+        return bounds.to_unconstrained(params[:, cols])
+
+    def objective(z: jnp.ndarray, *args: object) -> jnp.ndarray:
+        candidate, _ = transform.params_from_z(z)
+        value = objective_fn(candidate, *args)
+        return jnp.where(jnp.isfinite(value), value, jnp.asarray(1e30, dtype=value.dtype))
+
+    return PreparedPoseLbfgs(
+        config, initial_vector, transform.params_from_z, _LbfgsKernels.build(objective, config)
+    )
+
+
 def _run_lbfgs_optax_loop(  # noqa: PLR0911, PLR0912, PLR0915
     *,
     z0: jnp.ndarray,
@@ -286,9 +389,9 @@ def _run_lbfgs_optax_loop(  # noqa: PLR0911, PLR0912, PLR0915
     cfg: PoseLbfgsConfig | ActiveLbfgsConfig,
     is_expected_failure: Callable[[Exception], bool] | None = None,
     value_and_grad_fn: Callable[[jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]] | None = None,
+    kernels: _LbfgsKernels | None = None,
+    objective_args: tuple = (),
 ) -> LbfgsLoopResult:
-    optax = _optax_module()
-
     def _never_expected(_exc: Exception) -> bool:
         return False
 
@@ -307,27 +410,12 @@ def _run_lbfgs_optax_loop(  # noqa: PLR0911, PLR0912, PLR0915
             best_value = value_f
             best_z = jnp.asarray(z_value, dtype=jnp.float32)
 
-    solver = optax.lbfgs(
-        memory_size=int(cfg.memory_size),
-        linesearch=optax.scale_by_zoom_linesearch(
-            max_linesearch_steps=int(cfg.maxls),
-            approx_dec_rtol=float(cfg.ftol),
-        ),
-    )
-    opt_state = solver.init(z)
-    value_and_grad = (
-        optax.value_and_grad_from_state(value_fn)
-        if value_and_grad_fn is None
-        else value_and_grad_fn
-    )
-
-    def evaluate(z_value: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-        if value_and_grad_fn is None:
-            return value_and_grad(z_value, state=opt_state)
-        return value_and_grad_fn(z_value)
+    if kernels is None:
+        kernels = _LbfgsKernels.build(value_fn, cfg, value_and_grad_fn)
+    opt_state = kernels.init(z)
 
     try:
-        initial_value_jax, initial_grad = evaluate(z)
+        initial_value_jax, initial_grad = kernels.evaluate(z, opt_state, objective_args)
     except Exception as exc:
         if expected_failure(exc):
             return LbfgsLoopResult(
@@ -401,7 +489,7 @@ def _run_lbfgs_optax_loop(  # noqa: PLR0911, PLR0912, PLR0915
         for iteration in range(int(cfg.maxiter)):
             if success:
                 break
-            value, grad = evaluate(z)
+            value, grad = kernels.evaluate(z, opt_state, objective_args)
             value_f = float(value)
             grad_norm = float(jnp.linalg.norm(grad))
             if not math.isfinite(value_f) or not math.isfinite(grad_norm):
@@ -428,15 +516,7 @@ def _run_lbfgs_optax_loop(  # noqa: PLR0911, PLR0912, PLR0915
                 last_grad_norm = grad_norm
                 break
 
-            updates, opt_state = solver.update(
-                grad,
-                opt_state,
-                z,
-                value=value,
-                grad=grad,
-                value_fn=value_fn,
-            )
-            z_next = optax.apply_updates(z, updates)
+            z_next, opt_state = kernels.update(z, opt_state, value, grad, objective_args)
             if not bool(jnp.all(jnp.isfinite(z_next))):
                 return LbfgsLoopResult(
                     z=z,
@@ -513,7 +593,7 @@ def _run_lbfgs_optax_loop(  # noqa: PLR0911, PLR0912, PLR0915
     )
 
 
-def run_pose_lbfgs(  # noqa: PLR0915
+def run_pose_lbfgs(  # noqa: PLR0912, PLR0915
     *,
     params5_in: jnp.ndarray,
     motion_coeffs_in: jnp.ndarray | None,
@@ -523,6 +603,8 @@ def run_pose_lbfgs(  # noqa: PLR0915
     is_expected_failure: Callable[[Exception], bool],
     cfg: PoseLbfgsConfig,
     context: PoseOptimizationContext,
+    problem: PreparedPoseLbfgs | None = None,
+    objective_args: tuple = (),
 ) -> PoseLbfgsResult:
     """Run Optax L-BFGS on active alignment variables only."""
     active_cols = context.active_cols_np
@@ -545,12 +627,6 @@ def run_pose_lbfgs(  # noqa: PLR0915
                 "lbfgs_best_loss": None,
             },
         )
-
-    active_cols_jnp, bounds_transform = context.active_bound_transform(int(params5_in.shape[0]))
-    motion_model = context.motion_model
-    smooth_unbounded_coefficients = (
-        motion_model is not None and not bounds_transform.has_finite_bounds
-    )
 
     def _failure_result(
         message: str,
@@ -579,15 +655,30 @@ def run_pose_lbfgs(  # noqa: PLR0915
         )
 
     try:
-        transform = _build_pose_lbfgs_transform(
-            params5_in=params5_in,
-            motion_coeffs_in=motion_coeffs_in,
-            active_cols_jnp=active_cols_jnp,
-            bounds_transform=bounds_transform,
-            context=context,
-            motion_model=motion_model,
-            smooth_unbounded_coefficients=smooth_unbounded_coefficients,
-        )
+        if problem is not None:
+            if problem.config != cfg:
+                raise ValueError("prepared L-BFGS problem has a different optimizer configuration")
+            transform = PoseLbfgsTransform(
+                problem.initial_vector(params5_in, motion_coeffs_in),
+                problem.params_from_z,
+            )
+        else:
+            active_cols_jnp, bounds_transform = context.active_bound_transform(
+                int(params5_in.shape[0])
+            )
+            motion_model = context.motion_model
+            smooth_unbounded_coefficients = (
+                motion_model is not None and not bounds_transform.has_finite_bounds
+            )
+            transform = _build_pose_lbfgs_transform(
+                params5_in=params5_in,
+                motion_coeffs_in=motion_coeffs_in,
+                active_cols_jnp=active_cols_jnp,
+                bounds_transform=bounds_transform,
+                context=context,
+                motion_model=motion_model,
+                smooth_unbounded_coefficients=smooth_unbounded_coefficients,
+            )
     except ValueError as exc:
         return _failure_result(str(exc))
 
@@ -596,12 +687,13 @@ def run_pose_lbfgs(  # noqa: PLR0915
         value = objective_fn(candidate)
         return jnp.where(jnp.isfinite(value), value, jnp.asarray(1e30, dtype=value.dtype))
 
-    objective_jit = jax.jit(_objective)
     loop = _run_lbfgs_optax_loop(
         z0=transform.z0,
-        value_fn=objective_jit,
+        value_fn=_objective,
         cfg=cfg,
         is_expected_failure=is_expected_failure,
+        kernels=None if problem is None else problem.kernels,
+        objective_args=objective_args,
     )
     if loop.failure_message is not None:
         return _failure_result(

@@ -109,63 +109,25 @@ def _normalize_num_warps(num_warps: int) -> int:
     return int(value)
 
 
-def _divisors_at_most(value: int, limit: int) -> tuple[int, ...]:
-    limit = max(1, min(int(value), int(limit)))
-    return tuple(candidate for candidate in range(limit, 0, -1) if int(value) % candidate == 0)
-
-
-def _is_power_of_two(value: int) -> bool:
-    value = int(value)
-    return value > 0 and (value & (value - 1)) == 0
-
-
-def _largest_power2_tile_divisors(
-    *,
-    nv: int,
-    nu: int,
-    tile_v: int,
-    tile_u: int,
-) -> list[int]:
-    best = (1, 1)
-    best_area = 1
-    for candidate_v in _divisors_at_most(nv, tile_v):
-        for candidate_u in _divisors_at_most(nu, tile_u):
-            area = int(candidate_v) * int(candidate_u)
-            if _is_power_of_two(area) and area > best_area:
-                best = (int(candidate_v), int(candidate_u))
-                best_area = int(area)
-                break
-    return [best[0], best[1]]
-
-
 def _safe_detector_tile_shape(
     tile_shape: list[int],
     detector: Detector,
     *,
     max_generic_tile_u: int | None = None,
-    allow_remainder_tiles: bool = False,
 ) -> list[int]:
-    """Resolve detector tiles to exact detector divisors for real Pallas lowering."""
-    tile_v = int(tile_shape[0])
-    tile_u = int(tile_shape[1])
+    """Keep power-of-two tiles and mask their tails, including odd detector sizes.
+
+    Requiring exact divisors collapses odd widths/heights to one ray per program,
+    wasting almost every GPU lane. All detector loads and stores mask their tails.
+    """
+    tile_v, tile_u = map(int, tile_shape)
     if max_generic_tile_u is not None:
-        tile_u = min(tile_u, int(max_generic_tile_u))
-    exact = _largest_power2_tile_divisors(
-        nv=int(detector.nv),
-        nu=int(detector.nu),
-        tile_v=tile_v,
-        tile_u=tile_u,
+        tile_u = min(tile_u, max_generic_tile_u)
+    limits = (
+        min(tile_v, 1 << (int(detector.nv) - 1).bit_length()),
+        min(tile_u, 1 << (int(detector.nu) - 1).bit_length()),
     )
-    if int(exact[0]) * int(exact[1]) > 1:
-        return exact
-    if allow_remainder_tiles:
-        remainder_tile_v = max(1, min(int(detector.nv), int(tile_v)))
-        remainder_tile_u = max(1, min(int(detector.nu), int(tile_u)))
-        if _is_power_of_two(remainder_tile_v * remainder_tile_u):
-            return [remainder_tile_v, remainder_tile_u]
-    # JAX Pallas Triton lowering checks load/store tensor sizes are powers of two
-    # (`jax/_src/pallas/triton/lowering.py::_check_tensor_size` in JAX 0.10.0).
-    return exact
+    return [1 << (limit.bit_length() - 1) for limit in limits]
 
 
 def _normalize_kernel_variant(kernel_variant: str) -> str:
@@ -309,8 +271,6 @@ def pallas_projector_actual_sinogram_variant_metadata(
         metadata["tile_shape"],
         detector,
         max_generic_tile_u=8 if metadata["kernel_variant"] == "generic" else None,
-        allow_remainder_tiles=metadata["state_mode"] == "cached"
-        and metadata["layout_variant"] == "detector_vu",
     )
     return metadata
 

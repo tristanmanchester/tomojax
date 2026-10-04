@@ -163,6 +163,7 @@ class StageRuntime:
                     stage=stage,
                     stage_completed=int(state.start_outer_iter) >= int(stage.maxiter),
                     completed_outer_iters_in_stage=int(state.start_outer_iter),
+                    ray_integrator=state.ray_integrator,
                 )
             )
 
@@ -291,6 +292,7 @@ def _build_multires_checkpoint_state(
     stage: ResolvedAlignmentStage,
     stage_completed: bool,
     completed_outer_iters_in_stage: int,
+    ray_integrator: str = "sampled",
 ) -> AlignMultiresResumeState:
     return AlignMultiresResumeState(
         x=x,
@@ -316,4 +318,8 @@ def _build_multires_checkpoint_state(
         stage_name=stage.name,
         stage_completed=bool(stage_completed),
         completed_outer_iters_in_stage=int(completed_outer_iters_in_stage),
+        pose_translation_frame=getattr(
+            getattr(setup_alignment_state, "pose", None), "translation_frame", "object"
+        ),
+        ray_integrator=ray_integrator,
     )

@@ -33,6 +33,7 @@ from tomojax.align._observer import (
 from tomojax.align._profiles import profile_policy_from_config
 from tomojax.align._results import AlignCheckpointCallback, AlignInfo, AlignResumeState
 from tomojax.align._stages._reconstruction_stage import _run_reconstruction_step
+from tomojax.align.optimizers import PoseLbfgsConfig, PoseOptimizationContext, prepare_pose_lbfgs
 from tomojax.core import format_duration, progress_iter
 from tomojax.core.geometry.base import Detector, Geometry, Grid
 from tomojax.core.geometry.views import stack_view_poses
@@ -62,6 +63,7 @@ from ._pose_steps import (
     AlignmentStepOptimizer,
     AlignmentStepSmoothing,
     _run_alignment_step,
+    _run_coupled_alignment_step,
 )
 from ._pose_summary import _format_outer_summary_lines
 
@@ -98,6 +100,10 @@ def _prepare_align_setup(
         context="align projections",
     )
     if resume_state is not None:
+        if resume_state.pose_translation_frame != cfg.pose_translation_frame:
+            raise ValueError("align resume_state pose_translation_frame differs from config")
+        if resume_state.ray_integrator != cfg.ray_integrator:
+            raise ValueError("align resume_state ray_integrator differs from config")
         init_x = resume_state.x
         init_params5 = resume_state.params5
     if init_x is not None:
@@ -233,6 +239,7 @@ def _build_alignment_runtime_context(
 
 def _build_alignment_step_contexts(
     *,
+    cfg: AlignConfig,
     opt_mode: str,
     runtime: AlignmentRuntimeContext,
     objective: PoseObjectiveBundle,
@@ -244,6 +251,28 @@ def _build_alignment_step_contexts(
         Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]] | None
     ),
 ) -> _AlignmentStepContexts:
+    lbfgs_problem = None
+    if opt_mode == "lbfgs" and setup.active_col_indices_np.size:
+        lbfgs_problem = prepare_pose_lbfgs(
+            params5=setup.params5,
+            motion_coeffs=motion_ctx.motion_coeffs,
+            context=PoseOptimizationContext(
+                active_cols=setup.active_col_indices_np,
+                frozen_params5=setup.frozen_params5,
+                bounds_lower=constraint_ctx.bounds_lower,
+                bounds_upper=constraint_ctx.bounds_upper,
+                apply_param_constraints=constraint_ctx.apply_full_constraints,
+                motion_model=motion_model if motion_ctx.use_smooth_pose_model else None,
+            ),
+            config=PoseLbfgsConfig(
+                maxiter=int(cfg.lbfgs_maxiter),
+                ftol=float(cfg.lbfgs_ftol),
+                gtol=float(cfg.lbfgs_gtol),
+                maxls=int(cfg.lbfgs_maxls),
+                memory_size=int(cfg.lbfgs_memory_size),
+            ),
+            objective_fn=objective.align_loss,
+        )
     return (
         AlignmentStepOptimizer(opt_mode=opt_mode),
         AlignmentStepObjective(
@@ -253,6 +282,8 @@ def _build_alignment_step_contexts(
             align_loss_jit=objective.align_loss_jit,
             loss_and_grad_manual=objective.loss_and_grad_manual,
             gn_update_all=objective.gn_update_all,
+            lbfgs_problem=lbfgs_problem,
+            coupled=objective.coupled,
         ),
         AlignmentStepConstraints(
             active_mask=setup.active_mask,
@@ -304,6 +335,8 @@ def _emit_alignment_checkpoint(
     checkpoint_callback: AlignCheckpointCallback | None,
     state: _AlignLoopState,
     wall_start: float,
+    pose_translation_frame: str,
+    ray_integrator: str,
 ) -> None:
     if checkpoint_callback is None:
         return
@@ -318,6 +351,8 @@ def _emit_alignment_checkpoint(
             L=(float(state.l_prev) if state.l_prev is not None else None),
             small_impr_streak=int(state.small_impr_streak),
             elapsed_offset=float(time.perf_counter() - wall_start),
+            pose_translation_frame=pose_translation_frame,
+            ray_integrator=ray_integrator,
         )
     )
 
@@ -336,7 +371,7 @@ def _initial_outer_stat(
         "outer_idx": outer_idx,
         "loss_kind": active_loss_name,
         "recon_algo": recon_algo,
-        "objective_kind": "fixed_volume",
+        "objective_kind": "joint_volume_pose" if cfg.gn_coupling == "joint" else "fixed_volume",
         "objective_provenance": dict(objective_provenance),
         "backend_provenance": dict(backend_provenance),
         "outer_loss_kind": active_loss_name,
@@ -448,27 +483,45 @@ def _run_align_outer_iteration(
         state.outer_stats.append(stat)
         return stat, None
     optimizer, objective, constraints, motion, smoothing, gauge = step_contexts
-    (
-        state.params5,
-        state.motion_coeffs,
-        state.final_gauge_stats,
-        total_loss,
-        rel_impr,
-        align_stat,
-    ) = _run_alignment_step(
-        cfg=cfg,
-        optimizer=optimizer,
-        objective=objective,
-        constraints=constraints,
-        motion=motion,
-        smoothing=smoothing,
-        gauge=gauge,
-        params5_in=state.params5,
-        motion_coeffs_in=state.motion_coeffs,
-        vol=state.x,
-        loss_hist=state.loss_hist,
-        outer_idx=outer_idx,
-    )
+    if objective.coupled is not None:
+        (
+            state.x,
+            state.params5,
+            state.motion_coeffs,
+            state.final_gauge_stats,
+            total_loss,
+            rel_impr,
+            align_stat,
+        ) = _run_coupled_alignment_step(
+            cfg=cfg,
+            objective=objective.coupled,
+            constraints=constraints,
+            gauge=gauge,
+            params5_in=state.params5,
+            vol=state.x,
+        )
+    else:
+        (
+            state.params5,
+            state.motion_coeffs,
+            state.final_gauge_stats,
+            total_loss,
+            rel_impr,
+            align_stat,
+        ) = _run_alignment_step(
+            cfg=cfg,
+            optimizer=optimizer,
+            objective=objective,
+            constraints=constraints,
+            motion=motion,
+            smoothing=smoothing,
+            gauge=gauge,
+            params5_in=state.params5,
+            motion_coeffs_in=state.motion_coeffs,
+            vol=state.x,
+            loss_hist=state.loss_hist,
+            outer_idx=outer_idx,
+        )
     state.loss_hist.append(total_loss)
     stat.update(align_stat)
     stat["outer_time"] = time.perf_counter() - outer_start
@@ -557,6 +610,8 @@ def _final_pose_align_info(
         "quality_tier": str(cfg.quality_tier),
         "fallback_policy": str(cfg.fallback_policy),
         "pose_model": motion_model.name,
+        "pose_translation_frame": cfg.pose_translation_frame,
+        "ray_integrator": cfg.ray_integrator,
         "pose_model_variables": int(motion_model.variable_count),
         "per_view_variables": int(motion_model.per_view_variable_count),
         "pose_model_basis_shape": [
@@ -566,8 +621,8 @@ def _final_pose_align_info(
         "active_dofs": list(motion_model.active_names),
         "active_pose_dofs": list(motion_model.active_names),
         "active_geometry_dofs": [],
-        "objective_kind": "fixed_volume",
-        "objective_kinds": ["fixed_volume"] if outer_stats else [],
+        "objective_kind": "joint_volume_pose" if cfg.gn_coupling == "joint" else "fixed_volume",
+        "objective_kinds": sorted({str(s["objective_kind"]) for s in outer_stats}),
         "objective_provenance": (
             dict(outer_stats[-1].get("objective_provenance", {}))
             if outer_stats and isinstance(outer_stats[-1].get("objective_provenance"), Mapping)
@@ -698,6 +753,7 @@ def align(
     )
 
     step_contexts = _build_alignment_step_contexts(
+        cfg=cfg,
         opt_mode=opt_mode,
         runtime=runtime,
         objective=objective,
@@ -717,6 +773,7 @@ def align(
         projector_backend=cfg.projector_backend,
         require_differentiable_projector=True,
         api_surface="alignment.pose_objective",
+        ray_integrator=cfg.ray_integrator,
         gather_dtype=cfg.gather_dtype,
     ).to_dict()
     profile_policy = profile_policy_from_config(cfg).to_dict()
@@ -761,9 +818,11 @@ def align(
             outer_idx=outer_idx,
         )
         _emit_alignment_checkpoint(
+            pose_translation_frame=cfg.pose_translation_frame,
             checkpoint_callback=checkpoint_callback,
             state=loop_state,
             wall_start=wall_start,
+            ray_integrator=cfg.ray_integrator,
         )
         if should_break:
             break

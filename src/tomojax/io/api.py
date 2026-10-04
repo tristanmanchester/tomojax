@@ -1,5 +1,6 @@
 """Public API for dataset IO and metadata normalization."""
 
+from tomojax.io._angles import load_angles
 from tomojax.io._contrast import (
     absorption_to_transmission,
     flat_dark_to_absorption,
@@ -72,6 +73,7 @@ __all__ = [
     "flat_dark_to_transmission",
     "format_inspection_report",
     "inspect_dataset",
+    "load_angles",
     "load_dataset",
     "load_nxtomo",
     "load_projection_payload",

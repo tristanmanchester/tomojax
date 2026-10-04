@@ -9,6 +9,8 @@ import jax.numpy as jnp
 
 from tomojax.recon._backprojection_accumulation import sum_backproject_views_chunked
 from tomojax.recon._support import VolumeSupportKind, centered_volume_support
+from tomojax.recon.cgls import CGLSConfig, cgls
+from tomojax.recon.cgls_multires import cgls_multires
 from tomojax.recon.fbp import (
     FBPConfig,
     default_fbp_scale,
@@ -16,8 +18,10 @@ from tomojax.recon.fbp import (
     run_parallel_fbp_direct_pallas,
     supports_parallel_fbp_z_integer,
 )
+from tomojax.recon.fbp_host import FBPHostConfig, fbp_host
 from tomojax.recon.filters import clear_filter_caches
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
+from tomojax.recon.fourier import FourierConfig, fourier_reconstruct
 from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
 from tomojax.recon.types import Regulariser
 
@@ -256,8 +260,11 @@ def _spdhg_warm_start(request: ReconstructionAlgorithmRequest) -> jnp.ndarray | 
 
 
 __all__ = [
+    "CGLSConfig",
     "FBPConfig",
+    "FBPHostConfig",
     "FistaConfig",
+    "FourierConfig",
     "ReconstructionAlgorithmOptions",
     "ReconstructionAlgorithmRequest",
     "ReconstructionResult",
@@ -265,10 +272,14 @@ __all__ = [
     "SPDHGConfig",
     "VolumeSupportKind",
     "centered_volume_support",
+    "cgls",
+    "cgls_multires",
     "clear_filter_caches",
     "default_fbp_scale",
     "fbp",
+    "fbp_host",
     "fista_tv",
+    "fourier_reconstruct",
     "run_parallel_fbp_direct_pallas",
     "run_reconstruction_algorithm",
     "spdhg_tv",

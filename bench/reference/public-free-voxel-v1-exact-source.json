@@ -1,0 +1,7 @@
+{
+  "source_sha256": "8f695ca4dd386957086e0583e0d33a9b96321248d23e3d80590861401db07215",
+  "files": 239,
+  "source_root": "/home/tristan/Projects/tomojax/.artifacts/public-free-voxel-exact-v1/source",
+  "change": "Exact trilinear integration in public alignment; corrected step bounds retained; same central GN, gates, fixtures, budgets and seven warm calls",
+  "ray_integrator": "exact"
+}

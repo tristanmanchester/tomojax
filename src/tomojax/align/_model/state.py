@@ -9,6 +9,7 @@ from typing import Any, cast
 import jax
 import jax.numpy as jnp
 
+from tomojax.align._geometry.parametrizations import PoseTranslationFrame
 from tomojax.geometry import CalibrationState, CalibrationVariable, axis_unit_from_rotations
 
 
@@ -140,6 +141,11 @@ class PoseState:
 
     params5: jnp.ndarray
     motion_coeffs: jnp.ndarray | None = None
+    translation_frame: PoseTranslationFrame = "object"
+
+    def __post_init__(self) -> None:
+        if self.translation_frame not in {"object", "detector"}:
+            raise ValueError("pose translation frame must be 'object' or 'detector'")
 
     @classmethod
     def zeros(cls, n_views: int) -> PoseState:
@@ -148,24 +154,27 @@ class PoseState:
 
     def replace(self, **updates: object) -> PoseState:
         """Return a copy with selected pose fields replaced."""
-        values = {"params5": self.params5, "motion_coeffs": self.motion_coeffs}
+        values = {
+            "params5": self.params5,
+            "motion_coeffs": self.motion_coeffs,
+            "translation_frame": self.translation_frame,
+        }
         values.update(updates)
         return PoseState(**values)
 
-    def tree_flatten(self) -> tuple[tuple[jnp.ndarray, jnp.ndarray | None], None]:
+    def tree_flatten(self) -> tuple[tuple[jnp.ndarray, jnp.ndarray | None], PoseTranslationFrame]:
         """Flatten this state for JAX pytree handling."""
-        return (self.params5, self.motion_coeffs), None
+        return (self.params5, self.motion_coeffs), self.translation_frame
 
     @classmethod
     def tree_unflatten(
         cls,
-        aux_data: object,
+        aux_data: PoseTranslationFrame,
         children: tuple[jnp.ndarray, jnp.ndarray | None],
     ) -> PoseState:
         """Rebuild pose state from JAX pytree children."""
-        del aux_data
         params5, motion_coeffs = children
-        return cls(params5=params5, motion_coeffs=motion_coeffs)
+        return cls(params5=params5, motion_coeffs=motion_coeffs, translation_frame=aux_data)
 
 
 @jax.tree_util.register_pytree_node_class

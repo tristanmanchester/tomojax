@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal
 
 import jax
@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 
 from tomojax.align._geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
-from tomojax.align._geometry.parametrizations import se3_from_5d
+from tomojax.align._geometry.parametrizations import PoseTranslationFrame, apply_pose_update
 from tomojax.recon.fista_tv_core import (
     FistaCoreConfig,
     FistaCoreResult,
@@ -31,12 +31,17 @@ class PoseAdjustedGeometry:
 
     geometry: Geometry
     params5: jnp.ndarray
+    translation_frame: PoseTranslationFrame = "object"
 
     def pose_for_view(self, i: int) -> tuple[tuple[jnp.ndarray, ...], ...]:
         """Return the nominal pose composed with the aligned 5-DOF update."""
         T_nom = jnp.asarray(self.geometry.pose_for_view(i), dtype=jnp.float32)
-        T_aligned = se3_from_5d(self.params5[i])
-        return tuple(map(tuple, T_nom @ T_aligned))
+        return tuple(
+            map(
+                tuple,
+                apply_pose_update(T_nom, self.params5[i], translation_frame=self.translation_frame),
+            )
+        )
 
     def rays_for_view(self, i: int) -> object:
         """Return detector rays for the wrapped geometry view."""
@@ -61,6 +66,7 @@ class ReconLayerConfig:
     implicit_cg_iters: int = 32
     implicit_cg_tol: float = 1e-3
     implicit_damping: float = 1e-4
+    ray_integrator: str = "sampled"
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,10 +114,11 @@ class ReconLayer:
             projector_unroll=int(self.config.projector_unroll),
             gather_dtype=str(self.config.gather_dtype),
             views_per_batch=max(1, int(self.config.views_per_batch)),
+            ray_integrator=self.config.ray_integrator,
         )
         y = jnp.asarray(projections, dtype=jnp.float32)
         if self.config.differentiation_mode == "implicit":
-            x = _implicit_reconstruct_arrays(
+            result = _implicit_reconstruct_arrays(
                 x0=x0,
                 T_all=effective.pose_stack,
                 det_grid=effective.det_grid,
@@ -124,18 +131,8 @@ class ReconLayer:
                 cg_tol=float(self.config.implicit_cg_tol),
                 damping=float(self.config.implicit_damping),
             )
-            result = fista_tv_core_arrays(
-                x0=x0,
-                T_all=effective.pose_stack,
-                det_grid=effective.det_grid,
-                projections=y,
-                grid=self.grid,
-                detector=self.detector,
-                cfg=core_cfg,
-                view_weights=view_weights,
-            )
             return ReconLayerResult(
-                x=x,
+                x=result.x,
                 info={
                     **result.info(),
                     "differentiation_mode": self.config.differentiation_mode,
@@ -184,46 +181,40 @@ def _implicit_reconstruct_arrays(
     cg_iters: int,
     cg_tol: float,
     damping: float,
-) -> jnp.ndarray:
+) -> FistaCoreResult:
+    # Solve once. Attach the implicit derivative to the resulting volume while
+    # preserving the diagnostics from that same solve.
+    result = fista_tv_core_arrays(
+        x0=x0,
+        T_all=T_all,
+        det_grid=det_grid,
+        projections=projections,
+        grid=grid,
+        detector=detector,
+        cfg=cfg,
+        view_weights=view_weights,
+    )
     det_u, det_v = det_grid
 
-    def solve_primal(
-        T: jnp.ndarray,
-        u: jnp.ndarray,
-        v: jnp.ndarray,
-        y: jnp.ndarray,
-        x_init: jnp.ndarray,
-    ) -> jnp.ndarray:
-        return fista_tv_core_arrays(
-            x0=x_init,
-            T_all=T,
-            det_grid=(u, v),
-            projections=y,
-            grid=grid,
-            detector=detector,
-            cfg=cfg,
-            view_weights=view_weights,
-        ).x
-
     @jax.custom_vjp
-    def solve(
+    def attach_derivative(
+        x: jnp.ndarray,
         T: jnp.ndarray,
         u: jnp.ndarray,
         v: jnp.ndarray,
         y: jnp.ndarray,
-        x_init: jnp.ndarray,
     ) -> jnp.ndarray:
-        return solve_primal(T, u, v, y, x_init)
+        del T, u, v, y
+        return x
 
     def solve_fwd(
+        x: jnp.ndarray,
         T: jnp.ndarray,
         u: jnp.ndarray,
         v: jnp.ndarray,
         y: jnp.ndarray,
-        x_init: jnp.ndarray,
     ) -> tuple[jnp.ndarray, tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]]:
-        x_star = solve_primal(T, u, v, y, x_init)
-        return x_star, (x_star, T, u, v, y)
+        return x, (x, T, u, v, y)
 
     def solve_bwd(
         res: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray],
@@ -236,6 +227,7 @@ def _implicit_reconstruct_arrays(
             T_arg: jnp.ndarray,
             u_arg: jnp.ndarray,
             v_arg: jnp.ndarray,
+            y_arg: jnp.ndarray,
         ) -> jnp.ndarray:
             return fista_objective_arrays(
                 T_all=T_arg,
@@ -243,7 +235,7 @@ def _implicit_reconstruct_arrays(
                 detector=detector,
                 volume=x,
                 det_grid=(u_arg, v_arg),
-                projections=y,
+                projections=y_arg,
                 cfg=cfg,
                 view_weights=view_weights,
             )
@@ -253,7 +245,7 @@ def _implicit_reconstruct_arrays(
         def hvp(direction: jnp.ndarray) -> jnp.ndarray:
             return (
                 jax.jvp(
-                    lambda x: grad_x(x, T, u, v),
+                    lambda x: grad_x(x, T, u, v, y),
                     (x_star,),
                     (direction,),
                 )[1]
@@ -271,18 +263,19 @@ def _implicit_reconstruct_arrays(
             T_arg: jnp.ndarray,
             u_arg: jnp.ndarray,
             v_arg: jnp.ndarray,
+            y_arg: jnp.ndarray,
         ) -> jnp.ndarray:
-            return grad_x(x_star, T_arg, u_arg, v_arg)
+            return grad_x(x_star, T_arg, u_arg, v_arg, y_arg)
 
-        _, pullback = jax.vjp(stationarity, T, u, v)
-        grad_T, grad_u, grad_v = pullback(adjoint)
+        _, pullback = jax.vjp(stationarity, T, u, v, y)
+        grad_T, grad_u, grad_v, grad_y = pullback(adjoint)
         return (
+            jnp.zeros_like(x_star),
             -grad_T,
             -grad_u,
             -grad_v,
-            jnp.zeros_like(y),
-            jnp.zeros_like(x0),
+            -grad_y,
         )
 
-    solve.defvjp(solve_fwd, solve_bwd)
-    return solve(T_all, det_u, det_v, projections, x0)
+    attach_derivative.defvjp(solve_fwd, solve_bwd)
+    return replace(result, x=attach_derivative(result.x, T_all, det_u, det_v, projections))

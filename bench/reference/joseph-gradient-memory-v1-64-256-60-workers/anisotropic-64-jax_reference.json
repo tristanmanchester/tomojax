@@ -1,0 +1,30 @@
+{
+  "case": "anisotropic-64-60",
+  "method": "jax_reference",
+  "status": "finite",
+  "loss": 57.83819580078125,
+  "volume_gradient_norm": 424.5042419433594,
+  "pose_gradient_norm": 920.7919921875,
+  "component_measurements": {
+    "compile_ms": 597.7596491575241,
+    "first_execution_ms": 28.82468607276678,
+    "warmup_calls": 11,
+    "warmup_ms": 213.89696467667818,
+    "samples_ms": [
+      18.888712860643864,
+      19.32920143008232,
+      19.090999849140644,
+      19.671514630317688,
+      19.760552793741226,
+      19.624866545200348,
+      19.33000423014164
+    ],
+    "median_ms": 19.33000423014164,
+    "compiler_bytes": {
+      "argument_size_in_bytes": 1083152,
+      "output_size_in_bytes": 503580,
+      "temp_size_in_bytes": 896513056,
+      "alias_size_in_bytes": 0
+    }
+  }
+}

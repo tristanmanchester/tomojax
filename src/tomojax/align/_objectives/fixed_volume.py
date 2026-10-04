@@ -96,6 +96,7 @@ class FixedVolumeProjectionObjective(AlignmentObjective):
     gather_dtype: str = "fp32"
     projector_backend: ProjectorBackendInput = "jax"
     require_differentiable_projector: bool = True
+    ray_integrator: str = "sampled"
     kind: ObjectiveKind = "fixed_volume"
 
     @classmethod
@@ -149,6 +150,7 @@ class FixedVolumeProjectionObjective(AlignmentObjective):
             view_indices=jnp.arange(int(self.projections.shape[0]), dtype=jnp.int32),
             projector_backend=self.projector_backend,
             require_differentiable_projector=self.require_differentiable_projector,
+            ray_integrator=self.ray_integrator,
         )
         backend_meta = alignment_projector_backend_provenance(
             pose_stack=effective.pose_stack,
@@ -160,6 +162,7 @@ class FixedVolumeProjectionObjective(AlignmentObjective):
             require_differentiable_projector=self.require_differentiable_projector,
             gather_dtype=self.gather_dtype,
             api_surface="alignment.fixed_volume_objective",
+            ray_integrator=self.ray_integrator,
         )
         return ObjectiveResult(
             value=value,
@@ -185,13 +188,14 @@ def project_stack(
     gather_dtype: str = "fp32",
     projector_backend: ProjectorBackendInput = "jax",
     require_differentiable_projector: bool = True,
+    ray_integrator: str = "sampled",
 ) -> jnp.ndarray:
     """Project all views for a fixed volume in bounded-size batches."""
     backend = normalize_projector_backend(projector_backend)
     n_views = int(pose_stack.shape[0])
     if n_views == 0:
         return jnp.zeros((0, detector.nv, detector.nu), dtype=jnp.float32)
-    if backend == "pallas" and not require_differentiable_projector:
+    if ray_integrator == "sampled" and backend == "pallas" and not require_differentiable_projector:
         fallback_reason = _pallas_sinogram_fallback_reason(
             pose_stack=pose_stack,
             grid=grid,
@@ -239,6 +243,7 @@ def project_stack(
             unroll=int(projector_unroll),
             gather_dtype=gather_dtype,
             det_grid=det_grid,
+            ray_integrator=ray_integrator,
         )
     )
 
@@ -274,6 +279,7 @@ def project_and_score_stack(
     projector_backend: ProjectorBackendInput = "jax",
     require_differentiable_projector: bool = True,
     loss_rng_key: jnp.ndarray | None = None,
+    ray_integrator: str = "sampled",
 ) -> jnp.ndarray:
     """Project and score all views without materialising unnecessary batches."""
     backend = normalize_projector_backend(projector_backend)
@@ -295,6 +301,7 @@ def project_and_score_stack(
             unroll=int(projector_unroll),
             gather_dtype=gather_dtype,
             det_grid=det_grid,
+            ray_integrator=ray_integrator,
         )
     )
     local_indices = (
@@ -308,7 +315,12 @@ def project_and_score_stack(
         else jnp.asarray(view_mask, dtype=jnp.float32).reshape((n_views,))
     )
     use_plain_l2_fast_path = loss_adapter.name == "l2" and view_mask is None and loss_mask is None
-    if backend == "pallas" and use_plain_l2_fast_path and not require_differentiable_projector:
+    if (
+        ray_integrator == "sampled"
+        and backend == "pallas"
+        and use_plain_l2_fast_path
+        and not require_differentiable_projector
+    ):
         fallback_reason = _pallas_sinogram_fallback_reason(
             pose_stack=pose_stack,
             grid=grid,
@@ -414,6 +426,7 @@ def alignment_projector_backend_provenance(
     require_differentiable_projector: bool,
     api_surface: str,
     gather_dtype: str = "fp32",
+    ray_integrator: str = "sampled",
 ) -> BackendProvenance:
     """Report which projector backend is used by an alignment objective."""
     requested = normalize_projector_backend(projector_backend)
@@ -422,6 +435,14 @@ def alignment_projector_backend_provenance(
             requested_backend="jax",
             actual_backend="jax",
             api_surface=api_surface,
+            differentiability="gradient_safe",
+        )
+    if ray_integrator == "exact":
+        return backend_provenance(
+            requested_backend=requested,
+            actual_backend="jax",
+            api_surface=api_surface,
+            fallback_reason="exact alignment scoring uses the differentiable JAX integrator",
             differentiability="gradient_safe",
         )
     if require_differentiable_projector:

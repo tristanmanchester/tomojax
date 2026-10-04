@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from ._pallas_config import _KERNEL_VARIANT_IDS
 
 
-def _trilinear_load_when_tile_active(
+def _trilinear_load_active(
     volume_ref: Any,
     ix: jnp.ndarray,
     iy: jnp.ndarray,
@@ -21,18 +21,10 @@ def _trilinear_load_when_tile_active(
     active: jnp.ndarray,
     kernel_variant_id: int,
 ) -> jnp.ndarray:
-    def do_load(_):
-        if kernel_variant_id == _KERNEL_VARIANT_IDS["z_integer4"]:
-            return _trilinear_load_z_integer(
-                volume_ref,
-                ix,
-                iy,
-                iz,
-                nx=nx,
-                ny=ny,
-                nz=nz,
-            )
-        return _trilinear_load(
+    # The outer ray loop already bounds the tile's active traversal. Mask each
+    # load instead of reducing all lanes and branching again at every sample.
+    if kernel_variant_id == _KERNEL_VARIANT_IDS["z_integer4"]:
+        return _trilinear_load_z_integer(
             volume_ref,
             ix,
             iy,
@@ -40,15 +32,17 @@ def _trilinear_load_when_tile_active(
             nx=nx,
             ny=ny,
             nz=nz,
+            active=active,
         )
-
-    # Pallas/Triton lowering in JAX 0.10.0 supports reduce_max but not reduce_or.
-    tile_active = jnp.max(active.astype(jnp.int32)) != jnp.int32(0)
-    return jax.lax.cond(
-        tile_active,
-        do_load,
-        lambda _: jnp.zeros_like(ix, dtype=jnp.float32),
-        operand=None,
+    return _trilinear_load(
+        volume_ref,
+        ix,
+        iy,
+        iz,
+        nx=nx,
+        ny=ny,
+        nz=nz,
+        active=active,
     )
 
 
@@ -61,6 +55,7 @@ def _trilinear_load(
     nx: int,
     ny: int,
     nz: int,
+    active: jnp.ndarray,
 ) -> jnp.ndarray:
     fx = jnp.floor(ix_f).astype(jnp.int32)
     fy = jnp.floor(iy_f).astype(jnp.int32)
@@ -75,20 +70,19 @@ def _trilinear_load(
     wz0 = jnp.float32(1.0) - wz1
 
     def gather(ix: jnp.ndarray, iy: jnp.ndarray, iz: jnp.ndarray) -> jnp.ndarray:
-        inb = (ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny) & (iz >= 0) & (iz < nz)
+        inb = active & (ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny) & (iz >= 0) & (iz < nz)
         idx = ix * (ny * nz) + iy * nz + iz
-        idx = jnp.clip(idx, 0, (nx * ny * nz) - 1)
+        # Masked lanes never dereference their addresses. Clamping the flattened
+        # index adds work to all eight loads without changing boundary values.
         return plt.load(volume_ref.at[idx], mask=inb, other=0.0)
 
-    c000 = gather(fx, fy, fz) * (wx0 * wy0 * wz0)
-    c001 = gather(fx, fy, cz) * (wx0 * wy0 * wz1)
-    c010 = gather(fx, cy, fz) * (wx0 * wy1 * wz0)
-    c011 = gather(fx, cy, cz) * (wx0 * wy1 * wz1)
-    c100 = gather(cx, fy, fz) * (wx1 * wy0 * wz0)
-    c101 = gather(cx, fy, cz) * (wx1 * wy0 * wz1)
-    c110 = gather(cx, cy, fz) * (wx1 * wy1 * wz0)
-    c111 = gather(cx, cy, cz) * (wx1 * wy1 * wz1)
-    return c000 + c001 + c010 + c011 + c100 + c101 + c110 + c111
+    # Factor the tensor product: apply x/y weights after interpolating in z.
+    # Keep float32 weights and zero extension at every face, edge, and corner.
+    c00 = gather(fx, fy, fz) * wz0 + gather(fx, fy, cz) * wz1
+    c01 = gather(fx, cy, fz) * wz0 + gather(fx, cy, cz) * wz1
+    c10 = gather(cx, fy, fz) * wz0 + gather(cx, fy, cz) * wz1
+    c11 = gather(cx, cy, fz) * wz0 + gather(cx, cy, cz) * wz1
+    return (c00 * wy0 + c01 * wy1) * wx0 + (c10 * wy0 + c11 * wy1) * wx1
 
 
 def _trilinear_load_z_integer(
@@ -100,6 +94,7 @@ def _trilinear_load_z_integer(
     nx: int,
     ny: int,
     nz: int,
+    active: jnp.ndarray,
 ) -> jnp.ndarray:
     fx = jnp.floor(ix_f).astype(jnp.int32)
     fy = jnp.floor(iy_f).astype(jnp.int32)
@@ -112,16 +107,13 @@ def _trilinear_load_z_integer(
     wy0 = jnp.float32(1.0) - wy1
 
     def gather(ix: jnp.ndarray, iy: jnp.ndarray) -> jnp.ndarray:
-        inb = (ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny) & (iz >= 0) & (iz < nz)
+        inb = active & (ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny) & (iz >= 0) & (iz < nz)
         idx = ix * (ny * nz) + iy * nz + iz
-        idx = jnp.clip(idx, 0, (nx * ny * nz) - 1)
         return plt.load(volume_ref.at[idx], mask=inb, other=0.0)
 
-    c00 = gather(fx, fy) * (wx0 * wy0)
-    c01 = gather(fx, cy) * (wx0 * wy1)
-    c10 = gather(cx, fy) * (wx1 * wy0)
-    c11 = gather(cx, cy) * (wx1 * wy1)
-    return c00 + c01 + c10 + c11
+    c0 = gather(fx, fy) * wy0 + gather(fx, cy) * wy1
+    c1 = gather(cx, fy) * wy0 + gather(cx, cy) * wy1
+    return c0 * wx0 + c1 * wx1
 
 
 def _trilinear_atomic_add(
@@ -135,6 +127,7 @@ def _trilinear_atomic_add(
     ny: int,
     nz: int,
     active: jnp.ndarray,
+    interpret: bool = False,
 ) -> None:
     fx = jnp.floor(ix_f).astype(jnp.int32)
     fy = jnp.floor(iy_f).astype(jnp.int32)
@@ -149,10 +142,31 @@ def _trilinear_atomic_add(
     wz0 = jnp.float32(1.0) - wz1
 
     def add(ix: jnp.ndarray, iy: jnp.ndarray, iz: jnp.ndarray, weight: jnp.ndarray) -> None:
-        inb = active & (ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny) & (iz >= 0) & (iz < nz)
+        inb = (
+            active
+            & (weight != 0.0)
+            & (ix >= 0)
+            & (ix < nx)
+            & (iy >= 0)
+            & (iy < ny)
+            & (iz >= 0)
+            & (iz < nz)
+        )
         idx = ix * (ny * nz) + iy * nz + iz
         idx = jnp.clip(idx, 0, (nx * ny * nz) - 1)
-        plt.atomic_add(out_ref, (idx,), ray_vals * weight, mask=inb)
+        if interpret:
+            # The Triton interpreter neither accepts atomic masks nor reduces
+            # repeated indices in a vector atomic. Scalar updates model both
+            # correctly, while CUDA retains the native masked atomic below.
+            indices = idx.ravel()
+            values = jnp.where(inb, ray_vals * weight, 0.0).ravel()
+
+            def scalar_add(i, _):
+                plt.atomic_add(out_ref, (indices[i],), values[i])
+
+            jax.lax.fori_loop(0, indices.size, scalar_add, None)
+        else:
+            plt.atomic_add(out_ref, (idx,), ray_vals * weight, mask=inb)
 
     add(fx, fy, fz, wx0 * wy0 * wz0)
     add(fx, fy, cz, wx0 * wy0 * wz1)

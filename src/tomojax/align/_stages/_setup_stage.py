@@ -145,6 +145,7 @@ def _run_setup_validation_objective(
             projector_unroll=int(cfg.projector_unroll),
             checkpoint_projector=bool(cfg.checkpoint_projector),
             gather_dtype=str(cfg.gather_dtype),
+            ray_integrator=cfg.ray_integrator,
         )
         total_loss = total_loss + normals.loss
         total_grad = total_grad + normals.grad
@@ -179,6 +180,7 @@ def _run_setup_validation_objective(
                 projector_unroll=int(cfg.projector_unroll),
                 checkpoint_projector=bool(cfg.checkpoint_projector),
                 gather_dtype=str(cfg.gather_dtype),
+                ray_integrator=cfg.ray_integrator,
             )
         return float(score)
 
@@ -324,6 +326,7 @@ def _refresh_setup_reconstruction(
             checkpoint_projector=bool(cfg.checkpoint_projector),
             gather_dtype=str(cfg.gather_dtype),
             positivity=bool(cfg.recon_positivity),
+            ray_integrator=cfg.ray_integrator,
         ),
         det_grid=det_grid,
     )
@@ -427,7 +430,8 @@ def _optimize_setup_geometry_bilevel_for_level(
         pose=PoseState(
             jnp.zeros((int(projections.shape[0]), 5), dtype=jnp.float32)
             if init_params5 is None
-            else jnp.asarray(init_params5, dtype=jnp.float32)
+            else jnp.asarray(init_params5, dtype=jnp.float32),
+            translation_frame=cfg.pose_translation_frame,
         ),
         volume=init_x,
     )
@@ -454,6 +458,7 @@ def _optimize_setup_geometry_bilevel_for_level(
         projector_unroll=int(cfg.projector_unroll),
         checkpoint_projector=bool(cfg.checkpoint_projector),
         gather_dtype=str(cfg.gather_dtype),
+        ray_integrator=cfg.ray_integrator,
     )
 
     setup_state = alignment_state

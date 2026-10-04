@@ -1,0 +1,8 @@
+{
+  "verified_archive": ".artifacts/system-matrix/whole-matrix-baseline-v2-source.tar.gz",
+  "files": 234,
+  "driver_digest": "e7953ba74f9e213e6f959187ca94eae6cdf5e8d7242e884444b6523033cc0f80",
+  "portable_source_digest": "e4a7a8abf0c8c7eaa91529809d52846411a3ab5559d7a3c0ddb3ebffd72afedc",
+  "historical_suite_hash_scope": "caller working directory, not isolated source",
+  "explanation": "All 234 benchmark/library Python files and the runner match the retained launch archive byte for byte and reproduce the original driver digest. Per-suite environment.source_tree_sha256 in v2 hashes the caller working tree instead of that snapshot; it is not the executable-source identifier. The immutable raw files are retained."
+}

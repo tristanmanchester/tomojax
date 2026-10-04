@@ -95,6 +95,7 @@ def _cached_loss_grad_pallas_call(
         layout_variant_id=int(layout_variant_id),
         unroll=unroll,
         compute_loss=bool(compute_loss),
+        interpret=bool(interpret),
     )
     grid_shape = (int(n_views), math.ceil(int(nv) / int(tile_v)), math.ceil(int(nu) / int(tile_u)))
     return pl.pallas_call(

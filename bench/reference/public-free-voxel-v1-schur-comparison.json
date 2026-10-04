@@ -1,0 +1,86 @@
+{
+  "source_sha256": "5ff8791482a48008c71a01ae8a0a8a6b57e03b6e9b403eb95eb6b00254696415",
+  "accepted_cells": 5,
+  "accepted_calls": 40,
+  "decision": "stop_pose_elimination_only_variant",
+  "comparisons": [
+    {
+      "case": "parallel-clean",
+      "previous_status": "accepted",
+      "status": "accepted",
+      "accepted_calls": 8,
+      "previous_cold_outer_count": 6,
+      "cold_outer_count": 4,
+      "previous_cold_rotation_rmse_deg": 0.006376377087415503,
+      "cold_rotation_rmse_deg": 0.004061665927034585,
+      "cold_speedup": 1.0893361414708536,
+      "warm_speedup": 1.2252129386435817,
+      "peak_gpu_memory_fraction": 1.1428571428571428
+    },
+    {
+      "case": "parallel-noisy",
+      "previous_status": "accepted",
+      "status": "accepted",
+      "accepted_calls": 8,
+      "previous_cold_outer_count": 6,
+      "cold_outer_count": 4,
+      "previous_cold_rotation_rmse_deg": 0.007589133775240101,
+      "cold_rotation_rmse_deg": 0.008182023829828026,
+      "cold_speedup": 1.1157568003127962,
+      "warm_speedup": 1.2243768721871597,
+      "peak_gpu_memory_fraction": 1.1428571428571428
+    },
+    {
+      "case": "anisotropic-clean",
+      "previous_status": "accepted",
+      "status": "accepted",
+      "accepted_calls": 8,
+      "previous_cold_outer_count": 14,
+      "cold_outer_count": 5,
+      "previous_cold_rotation_rmse_deg": 0.008294334617230701,
+      "cold_rotation_rmse_deg": 0.008559900473503747,
+      "cold_speedup": 1.5020513607233388,
+      "warm_speedup": 1.978928881654362,
+      "peak_gpu_memory_fraction": 1.1428571428571428
+    },
+    {
+      "case": "anisotropic-noisy",
+      "previous_status": "target_not_reached",
+      "status": "target_not_reached",
+      "accepted_calls": 0,
+      "previous_cold_outer_count": 64,
+      "cold_outer_count": 64,
+      "previous_cold_rotation_rmse_deg": 0.016243064041896235,
+      "cold_rotation_rmse_deg": 0.01622681046522646,
+      "cold_speedup": null,
+      "warm_speedup": null,
+      "peak_gpu_memory_fraction": 1.1428571428571428
+    },
+    {
+      "case": "lamino-clean",
+      "previous_status": "accepted",
+      "status": "accepted",
+      "accepted_calls": 8,
+      "previous_cold_outer_count": 45,
+      "cold_outer_count": 13,
+      "previous_cold_rotation_rmse_deg": 0.009772170210445916,
+      "cold_rotation_rmse_deg": 0.00956844744392722,
+      "cold_speedup": 2.4763553217898555,
+      "warm_speedup": 3.541706778622172,
+      "peak_gpu_memory_fraction": 1.1428571428571428
+    },
+    {
+      "case": "lamino-noisy",
+      "previous_status": "accepted",
+      "status": "accepted",
+      "accepted_calls": 8,
+      "previous_cold_outer_count": 55,
+      "cold_outer_count": 17,
+      "previous_cold_rotation_rmse_deg": 0.009876902726580756,
+      "cold_rotation_rmse_deg": 0.009974349225024938,
+      "cold_speedup": 2.4945470078916316,
+      "warm_speedup": 3.0685443840019966,
+      "peak_gpu_memory_fraction": 1.1428571428571428
+    }
+  ]
+}

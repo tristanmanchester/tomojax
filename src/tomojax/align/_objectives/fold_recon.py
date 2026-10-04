@@ -12,6 +12,7 @@ from tomojax.align._geometry.geometry_applier import (
     apply_setup_to_detector_grid,
     materialize_setup_geometry,
 )
+from tomojax.align._objectives.recon_layer import PoseAdjustedGeometry
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 
 if TYPE_CHECKING:
@@ -34,6 +35,7 @@ class FoldReconstructionConfig:
     checkpoint_projector: bool = True
     gather_dtype: str = "fp32"
     L: float | None = None
+    ray_integrator: str = "sampled"
 
 
 def reconstruct_train_fold_nograd(
@@ -63,6 +65,11 @@ def reconstruct_train_fold_nograd(
         state.setup,
         indices=valid_idx,
     )
+    fold_geometry = PoseAdjustedGeometry(
+        fold_geometry,
+        state.pose.params5[jnp.asarray(valid_idx, dtype=jnp.int32)],
+        translation_frame=state.pose.translation_frame,
+    )
     det_grid = apply_setup_to_detector_grid(
         detector,
         state.setup,
@@ -88,6 +95,7 @@ def reconstruct_train_fold_nograd(
             gather_dtype=str(cfg.gather_dtype),
             grad_mode="stream",
             positivity=bool(cfg.positivity),
+            ray_integrator=cfg.ray_integrator,
         ),
         det_grid=det_grid,
     )

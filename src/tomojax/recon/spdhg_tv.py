@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field, fields
+import functools
 from typing import TYPE_CHECKING, NamedTuple
 
 import jax
@@ -11,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.operator_norm import estimate_normal_norm
 from tomojax.core.projector import (
     forward_project_view_T,
     get_detector_grid_device,
@@ -67,6 +69,7 @@ class SPDHGConfig:
     projector_unroll: int = 1
     checkpoint_projector: bool = True
     gather_dtype: str = "fp32"
+    ray_integrator: str = "sampled"
 
     # constraints
     positivity: bool = True
@@ -74,6 +77,13 @@ class SPDHGConfig:
 
     # logging
     log_every: int = 10  # minibatch objective estimator every k steps
+
+
+jax.tree_util.register_dataclass(
+    SPDHGConfig,
+    data_fields=["support"],
+    meta_fields=[field.name for field in fields(SPDHGConfig) if field.name != "support"],
+)
 
 
 class _SPDHGScanState(NamedTuple):
@@ -87,6 +97,7 @@ class _SPDHGScanState(NamedTuple):
     losses: jnp.ndarray
 
 
+@jax.tree_util.register_dataclass
 @dataclass(frozen=True)
 class _SPDHGStepSizes:
     tau: float
@@ -97,19 +108,21 @@ class _SPDHGStepSizes:
     grad_norm: float
 
 
+@jax.tree_util.register_dataclass
 @dataclass(frozen=True)
 class _SPDHGSchedule:
-    views_per_batch: int
-    num_blocks: int
-    selection_prob: float
+    views_per_batch: int = field(metadata={"static": True})
+    num_blocks: int = field(metadata={"static": True})
+    selection_prob: float = field(metadata={"static": True})
     block_ids: jnp.ndarray
 
 
+@jax.tree_util.register_dataclass
 @dataclass(frozen=True)
 class _SPDHGRuntime:
     config: SPDHGConfig
-    regulariser: Regulariser
-    huber_delta: float
+    regulariser: Regulariser = field(metadata={"static": True})
+    huber_delta: float = field(metadata={"static": True})
     y_meas: jnp.ndarray
     weights: jnp.ndarray
     poses: jnp.ndarray
@@ -127,15 +140,15 @@ class _SPDHGResult:
     losses: jnp.ndarray
     step_sizes: _SPDHGStepSizes
     schedule: _SPDHGSchedule
-    regulariser: Regulariser
-    huber_delta: float
+    regulariser: Regulariser = field(metadata={"static": True})
+    huber_delta: float = field(metadata={"static": True})
     lambda_tv: float
 
     def info(self) -> dict[str, object]:
         step_sizes = self.step_sizes
         schedule = self.schedule
         return {
-            "loss": [float(v) for v in list(self.losses)],
+            "loss": np.asarray(self.losses).tolist(),
             "tau": float(step_sizes.tau),
             "sigma_data": float(step_sizes.sigma_data_eff),
             "sigma_data_base": float(step_sizes.sigma_data_base),
@@ -165,6 +178,7 @@ def _estimate_norm_A2(
     projector_unroll: int,
     checkpoint_projector: bool,
     gather_dtype: str,
+    ray_integrator: str = "sampled",
     key: jax.Array | None = None,
     power_iters: int = 20,
     safety: float = 1.05,
@@ -172,81 +186,25 @@ def _estimate_norm_A2(
 ) -> float:
     """Estimate the squared projection-operator norm by power iteration."""
     del geometry
-    n_views, _nv, _nu = projections_shape
-    det_grid = get_detector_grid_device(detector) if det_grid is None else det_grid
-
-    def A_apply(vol: jnp.ndarray, T_chunk: jnp.ndarray) -> jnp.ndarray:
-        vm_project = jax.vmap(
-            lambda T, v: forward_project_view_T(
-                T,
-                grid,
-                detector,
-                v,
-                use_checkpoint=checkpoint_projector,
-                unroll=int(projector_unroll),
-                gather_dtype=gather_dtype,
-                det_grid=det_grid,
-            ),
-            in_axes=(0, None),
-        )
-        return vm_project(T_chunk, vol)
-
-    b = int(max(1, min(views_per_batch, n_views)))
-    m = (n_views + b - 1) // b
-    num_iters = max(1, int(power_iters))
-
-    def AtranA(v: jnp.ndarray) -> jnp.ndarray:
-        # iterate over contiguous blocks with masking of the last chunk
-        def body(
-            g_acc: jnp.ndarray,
-            i: jnp.ndarray,
-        ) -> tuple[jnp.ndarray, None]:
-            i = jnp.int32(i)
-            start = i * jnp.int32(b)
-            remaining = jnp.maximum(0, jnp.int32(n_views) - start)
-            valid = jnp.minimum(jnp.int32(b), remaining)
-            shift = jnp.int32(b) - valid
-            start_shifted = jnp.maximum(0, start - shift)
-
-            T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
-
-            def pred_fun(vol: jnp.ndarray) -> jnp.ndarray:
-                return A_apply(vol, T_chunk)
-
-            proj = pred_fun(v)
-            idx = jnp.arange(b)
-            mask = (idx >= (jnp.int32(b) - valid))[:, None, None]
-            proj = proj * mask  # zero padded rows
-
-            g_chunk = sum_backproject_views_T(
-                T_chunk,
-                grid,
-                detector,
-                proj,
-                unroll=int(projector_unroll),
-                gather_dtype=gather_dtype,
-                det_grid=det_grid,
-            )
-            return g_acc + g_chunk, None
-
-        g0 = jnp.zeros_like(v)
-        g_final, _ = jax.lax.scan(body, g0, jnp.arange(m))
-        return g_final
-
-    def normalize(v: jnp.ndarray) -> jnp.ndarray:
-        return v / (jnp.linalg.norm(v) + 1e-12)
-
-    AtranA_jit = jax.jit(AtranA)
-
+    n_views = projections_shape[0]
     if key is None:
         key = jax.random.key(0)
-    v0 = jax.random.normal(key, (grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
-    v = normalize(v0)
-    for _ in range(num_iters):
-        v = normalize(AtranA_jit(v))
-    Aw = AtranA_jit(v)
-    L = float(jnp.vdot(v, Aw).real) * float(safety**2)  # ~||A||^2 with margin
-    return max(L, 1e-6)
+    initial = jax.random.normal(key, (grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+    norm_squared = estimate_normal_norm(
+        T_all,
+        initial,
+        det_grid,
+        None,
+        grid=grid,
+        detector=detector,
+        batch_size=max(1, min(views_per_batch, n_views)),
+        iters=int(power_iters),
+        unroll=int(projector_unroll),
+        checkpoint=checkpoint_projector,
+        gather_dtype=gather_dtype,
+        ray_integrator=ray_integrator,
+    )
+    return max(float(norm_squared) * float(safety**2), 1e-6)
 
 
 def _proj_pos_support(
@@ -304,6 +262,7 @@ def _resolve_spdhg_step_sizes(
             power_iters=20,
             safety=1.05,
             det_grid=det_grid,
+            ray_integrator=config.ray_integrator,
         )
         data_norm = float(np.sqrt(data_norm_sq))
         rho = 0.99
@@ -490,6 +449,7 @@ def _make_spdhg_project_chunk(
                 unroll=int(cfg.projector_unroll),
                 gather_dtype=cfg.gather_dtype,
                 det_grid=runtime.detector_grid,
+                ray_integrator=cfg.ray_integrator,
             ),
             in_axes=(0, None),
         )
@@ -498,11 +458,12 @@ def _make_spdhg_project_chunk(
     return project_chunk
 
 
+@functools.partial(jax.jit, static_argnames=("grid", "detector"))
 def _run_spdhg_scan(  # noqa: PLR0915
     grid: Grid,
     detector: Detector,
     runtime: _SPDHGRuntime,
-) -> _SPDHGResult:
+) -> _SPDHGScanState:
     cfg = runtime.config
     schedule = runtime.schedule
     step_sizes = runtime.step_sizes
@@ -558,6 +519,7 @@ def _run_spdhg_scan(  # noqa: PLR0915
             unroll=int(cfg.projector_unroll),
             gather_dtype=cfg.gather_dtype,
             det_grid=runtime.detector_grid,
+            ray_integrator=cfg.ray_integrator,
         )
 
         gx, gy, gz = grad3(state.x_bar)
@@ -622,20 +584,8 @@ def _run_spdhg_scan(  # noqa: PLR0915
             losses=losses_new,
         ), None
 
-    final_state, _ = jax.jit(
-        lambda state: jax.lax.scan(one_step, state, jnp.arange(cfg.iters)),
-        donate_argnums=(0,),
-    )(runtime.initial_state)
-
-    return _SPDHGResult(
-        volume=final_state.x,
-        losses=final_state.losses,
-        step_sizes=step_sizes,
-        schedule=schedule,
-        regulariser=runtime.regulariser,
-        huber_delta=runtime.huber_delta,
-        lambda_tv=float(cfg.lambda_tv),
-    )
+    final_state, _ = jax.lax.scan(one_step, runtime.initial_state, jnp.arange(cfg.iters))
+    return final_state
 
 
 def spdhg_tv(
@@ -669,6 +619,15 @@ def spdhg_tv(
         config=config,
         det_grid=det_grid,
     )
-    result = _run_spdhg_scan(grid, detector, runtime)
+    final = _run_spdhg_scan(grid, detector, runtime)
+    result = _SPDHGResult(
+        volume=final.x,
+        losses=final.losses,
+        step_sizes=runtime.step_sizes,
+        schedule=runtime.schedule,
+        regulariser=runtime.regulariser,
+        huber_delta=runtime.huber_delta,
+        lambda_tv=float(runtime.config.lambda_tv),
+    )
     _emit_spdhg_callback(callback, result, runtime.config)
     return result.volume, result.info()

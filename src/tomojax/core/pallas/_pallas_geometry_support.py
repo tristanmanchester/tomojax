@@ -48,35 +48,13 @@ def _supports_z_integer4(
     detector: Detector,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
 ) -> bool:
-    if det_grid is not None:
-        try:
-            _ensure_canonical_detector_grid(detector, det_grid)
-        except PallasProjectorUnsupported:
-            return False
     try:
         T_host = np.asarray(T, dtype=np.float64)
     except Exception:
         return False
-    if T_host.shape != (4, 4) or not np.isfinite(T_host).all():
+    if T_host.shape != (4, 4):
         return False
-
-    t02 = float(T_host[0, 2])
-    t12 = float(T_host[1, 2])
-    t22 = float(T_host[2, 2])
-    t03 = float(T_host[0, 3])
-    t13 = float(T_host[1, 3])
-    t23 = float(T_host[2, 3])
-    tinv_z = -(t02 * t03 + t12 * t13 + t22 * t23)
-    tol = 1e-5
-    if abs(t02) > tol or abs(t12) > tol:
-        return False
-
-    first_z = (-(float(detector.nv) / 2.0 - 0.5)) * float(detector.dv) + float(
-        detector.det_center[1]
-    )
-    iz0 = (t22 * first_z + tinv_z - float(grid_volume_origin(grid)[2])) / float(grid.vz)
-    diz_dv = t22 * float(detector.dv) / float(grid.vz)
-    return abs(iz0 - round(iz0)) <= tol and abs(diz_dv - round(diz_dv)) <= tol
+    return _supports_z_integer4_for_stack(T_host[None], grid, detector, det_grid)
 
 
 def _supports_z_integer4_for_stack(
@@ -100,7 +78,10 @@ def _supports_z_integer4_for_stack(
         return False
 
     tol = 1e-5
-    if np.any(np.abs(T_host[:, 0, 2]) > tol) or np.any(np.abs(T_host[:, 1, 2]) > tol):
+    # A small tilt is not necessarily a small error in voxel coordinates: long
+    # rays through thin slices amplify it. Built-in z-axis rotations have exact
+    # zeros here. Use the generic kernel for any mixing of x/y into object z.
+    if np.any(T_host[:, :2, 2] != 0):
         return False
 
     tinv_z = -(
@@ -113,10 +94,11 @@ def _supports_z_integer4_for_stack(
     )
     iz0 = (T_host[:, 2, 2] * first_z + tinv_z - float(grid_volume_origin(grid)[2])) / float(grid.vz)
     diz_dv = T_host[:, 2, 2] * float(detector.dv) / float(grid.vz)
-    return bool(
-        np.all(np.abs(iz0 - np.round(iz0)) <= tol)
-        and np.all(np.abs(diz_dv - np.round(diz_dv)) <= tol)
-    )
+    # Bound the error over every row, not just the first row and the increment.
+    # A near-integer increment can drift by many tolerances on a tall detector.
+    row_error = np.abs(iz0 - np.round(iz0))
+    row_error += (detector.nv - 1) * np.abs(diz_dv - np.round(diz_dv))
+    return bool(np.all(row_error <= tol))
 
 
 def _supports_parallel_z_rotation_stack(
@@ -141,10 +123,8 @@ def _supports_parallel_z_rotation_stack(
         and np.all(np.abs(T_host[:, 1, 1] - c) <= tol)
         and np.all(np.abs(T_host[:, 0, 2]) <= tol)
         and np.all(np.abs(T_host[:, 1, 2]) <= tol)
-        and np.all(np.abs(T_host[:, 2, 0]) <= tol)
-        and np.all(np.abs(T_host[:, 2, 1]) <= tol)
-        and np.all(np.abs(T_host[:, 2, 2] - 1.0) <= tol)
-        and np.all(np.abs(T_host[:, :3, 3]) <= tol)
+        and np.all(T_host[:, 2, :3] == [0.0, 0.0, 1.0])
+        and np.all(T_host[:, :3, 3] == 0)
         and np.all(np.abs(T_host[:, 3, :3]) <= tol)
         and np.all(np.abs(T_host[:, 3, 3] - 1.0) <= tol)
     )

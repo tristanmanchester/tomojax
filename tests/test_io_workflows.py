@@ -28,6 +28,8 @@ from tomojax.io.api import (
 
 from ._helpers import make_projection_dataset, write_projection_dataset
 
+pytestmark = pytest.mark.surface
+
 
 def test_projection_dataset_roundtrips_nxtomo_with_solver_metadata(tmp_path: Path) -> None:
     path = tmp_path / "scan.nxs"

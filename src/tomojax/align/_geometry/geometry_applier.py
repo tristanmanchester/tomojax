@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -19,7 +18,7 @@ from tomojax.geometry import (
     detector_grid_from_calibration,
 )
 
-from .parametrizations import se3_from_5d
+from .parametrizations import apply_pose_updates
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -214,8 +213,9 @@ def apply_alignment_state(
     setup = state.setup
     axis = _setup_axis_unit_for_base(base, setup)
     setup_pose = axis_pose_stack(base.thetas_deg, axis)
-    pose_delta = jax.vmap(se3_from_5d)(state.pose.params5)
-    pose_stack = setup_pose @ pose_delta
+    pose_stack = apply_pose_updates(
+        setup_pose, state.pose.params5, translation_frame=state.pose.translation_frame
+    )
     det_grid = apply_setup_to_detector_grid(
         base.detector,
         setup,

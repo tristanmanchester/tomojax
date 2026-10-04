@@ -1,0 +1,30 @@
+{
+  "case": "parallel-64-60",
+  "method": "jax_reference",
+  "status": "finite",
+  "loss": 2.876073122024536,
+  "volume_gradient_norm": 50.262428283691406,
+  "pose_gradient_norm": 260.8141174316406,
+  "component_measurements": {
+    "compile_ms": 561.9840510189533,
+    "first_execution_ms": 44.50571071356535,
+    "warmup_calls": 8,
+    "warmup_ms": 223.01378939300776,
+    "samples_ms": [
+      28.147044591605663,
+      28.074064292013645,
+      28.211910277605057,
+      27.917996048927307,
+      27.663826011121273,
+      28.039803728461266,
+      28.146836906671524
+    ],
+    "median_ms": 28.074064292013645,
+    "compiler_bytes": {
+      "argument_size_in_bytes": 2035456,
+      "output_size_in_bytes": 1052444,
+      "temp_size_in_bytes": 1519792408,
+      "alias_size_in_bytes": 0
+    }
+  }
+}

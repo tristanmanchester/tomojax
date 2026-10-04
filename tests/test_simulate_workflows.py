@@ -17,6 +17,8 @@ from tomojax.datasets import (
 )
 from tomojax.io import load_dataset
 
+pytestmark = pytest.mark.surface
+
 
 def _install_fast_public_simulator(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_stack_view_poses(_geometry: object, n_views: int) -> jnp.ndarray:

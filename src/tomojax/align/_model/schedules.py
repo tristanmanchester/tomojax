@@ -18,7 +18,7 @@ from .dofs import (
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
-ObjectiveKind = Literal["fixed_volume", "bilevel_cv", "all_data_bilevel"]
+ObjectiveKind = Literal["fixed_volume", "joint_volume_pose", "bilevel_cv", "all_data_bilevel"]
 OptimizerKind = Literal["lbfgs", "adam", "gd", "gn", "validation_lm"]
 GaugePolicy = Literal["reject", "anchor_mean", "prior_required", "diagnose_only"]
 ScheduleSource = Literal["preset", "direct", "default", "expert"]
@@ -79,6 +79,10 @@ class AlignmentSchedule:
             if not stage.active_dofs:
                 raise ValueError(f"alignment stage {stage.name!r} has no active DOFs")
             stage.active_view()
+            if stage.objective_kind == "joint_volume_pose" and (
+                stage.optimizer != "gn" or any(d in GEOMETRY_DOF_NAMES for d in stage.active_dofs)
+            ):
+                raise ValueError("joint_volume_pose stages require GN and only per-view pose DOFs")
             if stage.name == "expert_coupled" and stage.gauge_policy == "reject":
                 raise ValueError("expert_coupled stages must declare an explicit GaugePolicy")
             if (

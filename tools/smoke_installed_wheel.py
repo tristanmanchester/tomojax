@@ -9,6 +9,8 @@ import subprocess
 import sys
 import tempfile
 
+from _smoke_workflow import verify_workflow_outputs, workflow_steps
+
 
 def _clean_env() -> dict[str, str]:
     env = dict(os.environ)
@@ -79,31 +81,9 @@ def main() -> int:
         )
         _run([str(tomojax), "--help"], cwd=work)
 
-        scan = work / "wheel_synthetic.nxs"
-        _run(
-            [
-                str(tomojax),
-                "simulate",
-                "--out",
-                str(scan),
-                "--nx",
-                "8",
-                "--ny",
-                "8",
-                "--nz",
-                "8",
-                "--nu",
-                "8",
-                "--nv",
-                "8",
-                "--n-views",
-                "8",
-            ],
-            cwd=work,
-        )
-        _run([str(tomojax), "validate", str(scan)], cwd=work)
-        if not scan.exists():
-            raise RuntimeError(f"installed wheel smoke did not create {scan}")
+        for step in workflow_steps(work):
+            _run([str(tomojax), *step], cwd=work)
+        verify_workflow_outputs(work)
     return 0
 
 

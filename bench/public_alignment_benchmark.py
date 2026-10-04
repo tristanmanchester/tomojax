@@ -1,0 +1,414 @@
+"""Public free-voxel alignment pilot; never a restricted object-model fit.
+
+Frozen six-cell development pilot: size 32, 61 irregular views, parallel /
+anisotropic / 30-degree laminography, clean and 0.1-percent RMS Gaussian noise.
+Every voxel is optimized from zero, alongside all five per-view pose parameters.
+The independent data integrator exactly integrates the trilinear truth basis.
+This pilot does not establish the larger-motion 99-percent robustness target.
+"""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import asdict
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+import time
+import traceback
+from typing import Any
+
+import numpy as np
+from scipy.ndimage import gaussian_filter, map_coordinates
+from scipy.spatial.transform import Rotation
+
+from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
+
+SUITE = "public-free-voxel-v1"
+SIZE, VIEWS, SEED = 32, 61, 461
+OUTERS, INNER_ITERS = 64, 20
+IMAGE_GATES = {"parallel": 0.10, "anisotropic": 0.10, "lamino": 0.20}
+
+
+def physical_poses(nominal: np.ndarray, parameters: np.ndarray) -> np.ndarray:
+    """Independent rotations in radians and lab translations in physical units."""
+    result = np.asarray(nominal, dtype=np.float64).copy()
+    rotation = Rotation.from_euler("YXZ", np.asarray(parameters)[:, [1, 0, 2]]).as_matrix()
+    result[:, :3, :3] = result[:, :3, :3] @ rotation
+    result[:, 0, 3] += parameters[:, 3]
+    result[:, 2, 3] += parameters[:, 4]
+    return result
+
+
+def gauge_alignment(actual: np.ndarray, truth: np.ndarray) -> np.ndarray:
+    """Fit only one shared rigid object frame, never independent per-view fixes."""
+    covariance = np.einsum("vji,vjk->ik", actual[:, :3, :3], truth[:, :3, :3])
+    left, _, right = np.linalg.svd(covariance)
+    signs = np.diag([1.0, 1.0, np.linalg.det(left @ right)])
+    rotation = left @ signs @ right
+    matrix = actual[:, [0, 2], :3].reshape(-1, 3)
+    rhs = (truth[:, [0, 2], 3] - actual[:, [0, 2], 3]).ravel()
+    translation, _, rank, _ = np.linalg.lstsq(matrix, rhs, rcond=1e-10)
+    if rank != 3:
+        raise ValueError("scan does not determine a shared object translation gauge")
+    gauge = np.eye(4)
+    gauge[:3, :3], gauge[:3, 3] = rotation, translation
+    return gauge
+
+
+def verify(volume: np.ndarray, parameters: np.ndarray, fixture: dict[str, Any]) -> dict[str, Any]:
+    """Check the full volume and observable poses under one shared object gauge."""
+    grid, detector = fixture["grid"], fixture["detector"]
+    expected = fixture["truth_poses"]
+    actual = physical_poses(fixture["nominal"], parameters)
+    if not np.isfinite(volume).all() or not np.isfinite(actual).all():
+        return {"accepted": False, "finite": False}
+    gauge = gauge_alignment(actual, expected)
+    aligned = actual @ gauge
+
+    def errors(poses: np.ndarray) -> dict[str, float]:
+        relative = poses[:, :3, :3] @ expected[:, :3, :3].transpose(0, 2, 1)
+        angles = np.rad2deg(np.linalg.norm(Rotation.from_matrix(relative).as_rotvec(), axis=1))
+        shifts = (poses[:, [0, 2], 3] - expected[:, [0, 2], 3]) / [detector.du, detector.dv]
+        return {
+            "rotation_rmse_deg": float(np.sqrt(np.mean(angles**2))),
+            "translation_vector_rmse_px": float(np.sqrt(np.mean(np.sum(shifts**2, axis=1)))),
+            "rotation_max_deg": float(angles.max()),
+            "translation_vector_max_px": float(np.linalg.norm(shifts, axis=1).max()),
+        }
+
+    shape = fixture["truth"].shape
+    spacing = np.array([grid.vx, grid.vy, grid.vz])
+    origin = np.array(grid_volume_origin(grid))
+    points = np.indices(shape).reshape(3, -1).T * spacing + origin
+    estimate_points = points @ gauge[:3, :3].T + gauge[:3, 3]
+    indices = ((estimate_points - origin) / spacing).T
+    aligned_volume = map_coordinates(
+        volume, indices, order=1, mode="grid-constant", prefilter=False
+    )
+    reference = fixture["truth"].astype(np.float64).ravel()
+    relative_l2 = float(np.linalg.norm(aligned_volume - reference) / np.linalg.norm(reference))
+    physical = errors(aligned)
+    return dict(
+        finite=True,
+        **physical,
+        raw_pose_errors=errors(actual),
+        volume_relative_l2=relative_l2,
+        object_frame_transform=gauge.tolist(),
+        accepted=bool(
+            relative_l2 <= IMAGE_GATES[fixture["kind"]]
+            and physical["rotation_rmse_deg"] <= 0.01
+            and physical["translation_vector_rmse_px"] <= 0.05
+        ),
+    )
+
+
+def generate_fixture(path: Path, kind: str, noisy: bool) -> None:
+    """Write the frozen random-voxel pilot and independent exact-basis measurements."""
+    from voxel_truth import project_voxel_truth
+
+    from tomojax.core.geometry.lamino import LaminographyGeometry
+    from tomojax.core.geometry.parallel import ParallelGeometry
+
+    anisotropic = kind == "anisotropic"
+    grid = Grid(
+        SIZE,
+        SIZE - 3 if anisotropic else SIZE,
+        SIZE // 2 if anisotropic else SIZE,
+        0.8 if anisotropic else 1.0,
+        1.2 if anisotropic else 1.0,
+        1.4 if anisotropic else 1.0,
+    )
+    detector = Detector(
+        SIZE + 5 if anisotropic else SIZE,
+        grid.nz + 3 if anisotropic else SIZE,
+        grid.vx,
+        grid.vz,
+        (0.27, -0.31) if anisotropic else (0, 0),
+    )
+    rng = np.random.default_rng(SEED)
+    angles = np.arange(VIEWS) * 180 / VIEWS + rng.uniform(-0.3, 0.3, VIEWS)
+    geometry = (
+        LaminographyGeometry(grid, detector, angles, tilt_deg=30)
+        if kind == "lamino"
+        else ParallelGeometry(grid, detector, angles)
+    )
+    nominal = np.asarray([geometry.pose_for_view(i) for i in range(VIEWS)])
+    shape = (grid.nx, grid.ny, grid.nz)
+    field = gaussian_filter(rng.normal(size=shape), sigma=1.8, mode="constant")
+    field = np.exp(0.7 * field / np.std(field))
+    normalized = np.stack(
+        np.meshgrid(*[np.linspace(-1, 1, n) for n in shape], indexing="ij"), axis=-1
+    )
+    support = np.maximum(1 - np.sum((normalized / 0.82) ** 2, axis=-1), 0) ** 2
+    volume = field * support
+    volume = (volume / volume.max()).astype(np.float32)
+    parameters = np.concatenate(
+        [
+            np.deg2rad(rng.uniform(-0.25, 0.25, (VIEWS, 3))),
+            rng.uniform(-0.5, 0.5, (VIEWS, 2)) * [detector.du, detector.dv],
+        ],
+        axis=1,
+    )
+    poses = physical_poses(nominal, parameters)
+    data = project_voxel_truth(volume, poses, grid, detector)
+    sigma = float(0.001 * np.sqrt(np.mean(data.astype(np.float64) ** 2))) if noisy else 0.0
+    data = data + rng.normal(0, sigma, data.shape).astype(np.float32)
+    np.savez(
+        path,
+        kind=kind,
+        noisy=noisy,
+        grid=json.dumps(asdict(grid)),
+        detector=json.dumps(asdict(detector)),
+        angles=angles,
+        nominal=nominal,
+        truth_poses=poses,
+        truth_params=parameters,
+        truth=volume,
+        data=data,
+        noise_sigma=sigma,
+    )
+
+
+def load_fixture(path: Path) -> dict[str, Any]:
+    """Read host arrays and lightweight physical metadata."""
+    with np.load(path) as data:
+        result = {key: data[key] for key in data.files}
+    result["kind"] = str(result["kind"])
+    result["grid"] = Grid(**json.loads(str(result["grid"])))
+    result["detector"] = Detector(**json.loads(str(result["detector"])))
+    return result
+
+
+def one_run(
+    path: Path,
+    ray_integrator: str = "sampled",
+    gn_coupling: str = "fixed_volume",
+    gn_jacobian: str = "central",
+    gn_joint_solver: str = "stacked",
+) -> dict[str, Any]:
+    """Time a public free-voxel solve including all setup and quality checks."""
+    start = time.perf_counter()
+    import jax
+    import jax.numpy as jnp
+
+    from tomojax.align import AlignConfig, align
+    from tomojax.align.api import L2LossSpec
+    from tomojax.geometry import LaminographyGeometry, ParallelGeometry
+
+    fixture = load_fixture(path)
+    g, d = fixture["grid"], fixture["detector"]
+    geometry = (
+        LaminographyGeometry(g, d, fixture["angles"], tilt_deg=30)
+        if fixture["kind"] == "lamino"
+        else ParallelGeometry(g, d, fixture["angles"])
+    )
+    history = []
+
+    def observer(x: Any, parameters: Any, stat: dict[str, Any]) -> str:
+        x, parameters = jax.device_get((x, parameters))
+        quality = verify(x, parameters, fixture)
+        history.append(
+            {
+                "outer": len(history) + 1,
+                "elapsed_verified_ms": (time.perf_counter() - start) * 1000,
+                "quality": quality,
+                "solver_stat": stat,
+            }
+        )
+        return "stop_run" if quality["accepted"] else "continue"
+
+    config = AlignConfig(
+        ray_integrator=ray_integrator,
+        gn_coupling=gn_coupling,
+        gn_joint_solver=gn_joint_solver,
+        pose_translation_frame="detector",
+        gauge_fix="none",
+        projector_backend="pallas",
+        gather_dtype="fp32",
+        gn_jacobian=gn_jacobian,
+        outer_iters=OUTERS,
+        recon_iters=INNER_ITERS,
+        lambda_tv=0,
+        loss=L2LossSpec(),
+        early_stop=False,
+        views_per_batch=1,
+    )
+    volume, parameters, info = align(
+        geometry,
+        g,
+        d,
+        jnp.asarray(fixture["data"]),
+        config=config,
+        init_x=jnp.zeros(fixture["truth"].shape, dtype=jnp.float32),
+        observer=observer,
+    )
+    volume, parameters = jax.device_get((volume, parameters))
+    quality = verify(volume, parameters, fixture)
+    return {
+        "verified_ms": (time.perf_counter() - start) * 1000,
+        "quality": quality,
+        "outer_iterations": len(history),
+        "history": history,
+        "config": asdict(config),
+        "volume_degrees_of_freedom": int(volume.size),
+        "pose_degrees_of_freedom": int(parameters.size),
+        "execution_profile": info.get("execution_profile"),
+        "solver": "public tomojax.align.align",
+    }
+
+
+def worker(args: argparse.Namespace) -> None:
+    """Retain cold and repeated accepted or failed attempts in one isolated process."""
+    from compare_reconstructions import write_result
+
+    payload = {
+        "suite": SUITE,
+        "status": "running",
+        "runs": [],
+        "cold_process_start": args.process_start,
+        "baseline_eligible": False,
+        "repeat_count_requested": args.repeats,
+        "minimum_headline_repeats": 7,
+        "interpretation": "Free-voxel pilot; no claim of 99% success or large-motion coverage",
+    }
+    write_result(args.output, payload)
+    try:
+        for repeat in range(args.repeats + 1):
+            row = one_run(
+                args.fixture,
+                args.ray_integrator,
+                args.gn_coupling,
+                args.gn_jacobian,
+                args.gn_joint_solver,
+            )
+            if repeat == 0:
+                row["fresh_process_verified_ms"] = (time.perf_counter() - args.process_start) * 1000
+            payload["runs"].append(row)
+            write_result(args.output, payload)
+        payload["status"] = (
+            "accepted"
+            if all(r["quality"]["accepted"] for r in payload["runs"])
+            else "target_not_reached"
+        )
+        payload["baseline_eligible"] = payload["status"] == "accepted" and args.repeats >= 7
+        payload["warm_verified_median_ms"] = float(
+            np.median([r["verified_ms"] for r in payload["runs"][1:]])
+        )
+    except Exception:
+        payload["status"] = "execution_failed"
+        payload["error"] = traceback.format_exc()
+    write_result(args.output, payload)
+
+
+def main() -> None:
+    """Run every pilot cell serially and retain process GPU memory measurements."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--worker", action="store_true")
+    parser.add_argument("--fixture", type=Path)
+    parser.add_argument("--process-start", type=float)
+    parser.add_argument("--repeats", type=int, default=7)
+    parser.add_argument("--ray-integrator", choices=("sampled", "exact"), default="sampled")
+    parser.add_argument("--gn-coupling", choices=("fixed_volume", "joint"), default="fixed_volume")
+    parser.add_argument("--gn-jacobian", choices=("central", "autodiff"), default="central")
+    parser.add_argument(
+        "--gn-joint-solver", choices=("stacked", "pose_eliminated"), default="stacked"
+    )
+    args = parser.parse_args()
+    if args.repeats < 1:
+        parser.error("at least one repeated complete call is required")
+    if args.worker:
+        if args.fixture is None or args.process_start is None:
+            parser.error("worker mode requires --fixture and --process-start")
+        worker(args)
+        return
+    from compare_reconstructions import environment, isolated_run, write_result
+
+    args.output.mkdir(parents=True, exist_ok=False)
+    payload = {
+        "suite": SUITE,
+        "ray_integrator": args.ray_integrator,
+        "gn_coupling": args.gn_coupling,
+        "gn_jacobian": args.gn_jacobian,
+        "gn_joint_solver": args.gn_joint_solver,
+        "complete": False,
+        "environment": environment(),
+        "records": [],
+        "scheduled_cells": [
+            {"kind": k, "noisy": n}
+            for k in ("parallel", "anisotropic", "lamino")
+            for n in (False, True)
+        ],
+        "gates": {
+            "rotation_rmse_deg": 0.01,
+            "translation_vector_rmse_px": 0.05,
+            "volume_relative_l2": IMAGE_GATES,
+        },
+        "fixture": {
+            "size": SIZE,
+            "views": VIEWS,
+            "seed": SEED,
+            "noise_relative_rms": 0.001,
+            "motion_rotation_bound_deg": 0.25,
+            "motion_translation_bound_px": 0.5,
+        },
+        "limits": {"outer_iters": OUTERS, "recon_iters": INNER_ITERS, "worker_timeout_s": 1800},
+        "initialization": "zero free voxels and nominal poses",
+        "gauge": "one shared rigid object transform, applied to both poses and volume",
+        "identifiability": (
+            "empirical recovery pilot; joint-noisy-distribution identifiability not established"
+        ),
+    }
+    summary = args.output / "manifest.json"
+    write_result(summary, payload)
+    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    for cell in payload["scheduled_cells"]:
+        name = f"{cell['kind']}-{'noisy' if cell['noisy'] else 'clean'}"
+        fixture = args.output / f"{name}.npz"
+        generate_fixture(fixture, cell["kind"], cell["noisy"])
+        result = args.output / f"{name}.json"
+        command = [
+            sys.executable,
+            __file__,
+            "--worker",
+            "--fixture",
+            str(fixture),
+            "--output",
+            str(result),
+            "--repeats",
+            str(args.repeats),
+            "--ray-integrator",
+            args.ray_integrator,
+            "--gn-coupling",
+            args.gn_coupling,
+            "--gn-jacobian",
+            args.gn_jacobian,
+            "--gn-joint-solver",
+            args.gn_joint_solver,
+            "--process-start",
+            str(time.perf_counter()),
+        ]
+        print("START", name, flush=True)
+        record = isolated_run(command, result, 1800)
+        payload["records"].append(
+            dict(
+                case=name, fixture_sha256=hashlib.sha256(fixture.read_bytes()).hexdigest(), **record
+            )
+        )
+        write_result(summary, payload)
+        print("DONE", name, record["status"], flush=True)
+    payload["source_unchanged"] = (
+        environment()["source_tree_sha256"] == payload["environment"]["source_tree_sha256"]
+    )
+    payload["complete"] = (
+        len(payload["records"]) == len(payload["scheduled_cells"]) and payload["source_unchanged"]
+    )
+    write_result(summary, payload)
+
+
+if __name__ == "__main__":
+    main()

@@ -153,6 +153,8 @@ def _completed_single_resume_state(
         L=info["L"],
         small_impr_streak=int(info["small_impr_streak"]),
         elapsed_offset=float(info["wall_time_total"]),
+        pose_translation_frame=str(info.get("pose_translation_frame", "object")),
+        ray_integrator=str(info.get("ray_integrator", "sampled")),
     )
 
 

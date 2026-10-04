@@ -1,0 +1,379 @@
+{
+  "baseline_revision": "214365a527d675f38efb86f6944e3fbc98cc56e7",
+  "adjoint_before": [
+    {
+      "size": 16,
+      "backend": "gpu",
+      "backproject_ms": 1.3102544471621513,
+      "vjp_relative_error": 1.5828909454285167e-05,
+      "dot_relative_error": 1.290974864787131e-06,
+      "max_abs_error": 5.6490302085876465e-05
+    },
+    {
+      "size": 64,
+      "backend": "gpu",
+      "backproject_ms": 3.723778761923313,
+      "vjp_relative_error": 0.00023794861044734716,
+      "dot_relative_error": 1.1426402124925517e-05,
+      "max_abs_error": 0.0013538002967834473
+    },
+    {
+      "size": 128,
+      "backend": "gpu",
+      "backproject_ms": 7.577083073556423,
+      "vjp_relative_error": 0.0010835867142304778,
+      "dot_relative_error": 6.526789366034791e-05,
+      "max_abs_error": 0.0045163631439208984
+    }
+  ],
+  "adjoint_after": [
+    {
+      "size": 16,
+      "backend": "gpu",
+      "backproject_ms": 1.122310757637024,
+      "vjp_relative_error": 1.2976448715562583e-07,
+      "dot_relative_error": 0.0,
+      "max_abs_error": 4.76837158203125e-07
+    },
+    {
+      "size": 64,
+      "backend": "gpu",
+      "backproject_ms": 2.651877701282501,
+      "vjp_relative_error": 1.3358430805965327e-07,
+      "dot_relative_error": 6.371007721384103e-09,
+      "max_abs_error": 7.152557373046875e-07
+    },
+    {
+      "size": 128,
+      "backend": "gpu",
+      "backproject_ms": 4.055174998939037,
+      "vjp_relative_error": 1.3444676483231888e-07,
+      "dot_relative_error": 6.497550053552459e-09,
+      "max_abs_error": 1.430511474609375e-06
+    }
+  ],
+  "odd_detector_before": {
+    "name": "anisotropic-128-60",
+    "grid": {
+      "nx": 128,
+      "ny": 125,
+      "nz": 64,
+      "vx": 0.8,
+      "vy": 1.2,
+      "vz": 1.4
+    },
+    "detector": {
+      "nu": 133,
+      "nv": 67,
+      "du": 0.8,
+      "dv": 1.4,
+      "det_center": [
+        0.27,
+        -0.31
+      ]
+    },
+    "records": [
+      {
+        "library": "tomojax",
+        "backend": "jax",
+        "scope": "device_resident",
+        "cold_ms": 227.27164067327976,
+        "samples_ms": [
+          14.946997165679932,
+          15.091849491000175,
+          14.90054465830326,
+          15.251760371029377,
+          15.458593145012856,
+          14.831328764557838,
+          15.047584660351276
+        ],
+        "median_ms": 15.047584660351276,
+        "minimum_ms": 14.831328764557838,
+        "analytic_error": {
+          "relative_l2": 0.003006992964716408,
+          "max_abs": 0.14192581176757812
+        },
+        "reference_error": {
+          "relative_l2": 0.0,
+          "max_abs": 0.0
+        }
+      },
+      {
+        "library": "tomojax",
+        "backend": "jax",
+        "scope": "host_to_host",
+        "cold_ms": 17.16539543122053,
+        "samples_ms": [
+          15.017472207546234,
+          15.020904131233692,
+          15.005845576524734,
+          14.942550100386143,
+          17.30858813971281,
+          17.765208147466183,
+          17.623341642320156
+        ],
+        "median_ms": 15.020904131233692,
+        "minimum_ms": 14.942550100386143,
+        "analytic_error": {
+          "relative_l2": 0.003006992964716408,
+          "max_abs": 0.14192581176757812
+        }
+      },
+      {
+        "library": "tomojax",
+        "backend": "pallas",
+        "scope": "device_resident",
+        "cold_ms": 224.6758984401822,
+        "samples_ms": [
+          31.31353296339512,
+          31.50191903114319,
+          31.17448464035988,
+          31.924347393214703,
+          31.752247363328934,
+          31.303848139941692,
+          31.427880749106407
+        ],
+        "median_ms": 31.427880749106407,
+        "minimum_ms": 31.17448464035988,
+        "analytic_error": {
+          "relative_l2": 0.0030069925333928056,
+          "max_abs": 0.14192581176757812
+        },
+        "reference_error": {
+          "relative_l2": 4.6016902434026435e-08,
+          "max_abs": 1.71661376953125e-05
+        }
+      },
+      {
+        "library": "tomojax",
+        "backend": "pallas",
+        "scope": "host_to_host",
+        "cold_ms": 33.0107482150197,
+        "samples_ms": [
+          33.47024600952864,
+          34.51145626604557,
+          33.38772431015968,
+          34.36074033379555,
+          33.67259446531534,
+          33.90457667410374,
+          34.67187099158764
+        ],
+        "median_ms": 33.90457667410374,
+        "minimum_ms": 33.38772431015968,
+        "analytic_error": {
+          "relative_l2": 0.0030069925333928056,
+          "max_abs": 0.14192581176757812
+        }
+      },
+      {
+        "library": "astra",
+        "backend": "cuda3d",
+        "scope": "host_to_host",
+        "cold_ms": 4.431908018887043,
+        "samples_ms": [
+          3.9428845047950745,
+          3.6967331543564796,
+          3.684564493596554,
+          3.68647463619709,
+          3.6903275176882744,
+          3.6471057683229446,
+          3.5837609320878983
+        ],
+        "median_ms": 3.68647463619709,
+        "minimum_ms": 3.5837609320878983,
+        "analytic_error": {
+          "relative_l2": 0.0029543951210992615,
+          "max_abs": 0.14215469360351562
+        }
+      },
+      {
+        "library": "astra",
+        "backend": "cuda3d",
+        "scope": "device_resident",
+        "cold_ms": 2.715546637773514,
+        "samples_ms": [
+          2.264234237372875,
+          2.3845909163355827,
+          2.340802922844887,
+          2.5504278019070625,
+          2.319514751434326,
+          2.3818714544177055,
+          2.271217294037342
+        ],
+        "median_ms": 2.340802922844887,
+        "minimum_ms": 2.264234237372875,
+        "analytic_error": {
+          "relative_l2": 0.0029543951210992615,
+          "max_abs": 0.14215469360351562
+        }
+      },
+      {
+        "library": "tigre",
+        "status": "unsupported_comparison",
+        "reason": "This adapter currently validates only centered isotropic parallel scans"
+      }
+    ]
+  },
+  "odd_detector_after": {
+    "name": "anisotropic-128-60",
+    "grid": {
+      "nx": 128,
+      "ny": 125,
+      "nz": 64,
+      "vx": 0.8,
+      "vy": 1.2,
+      "vz": 1.4
+    },
+    "detector": {
+      "nu": 133,
+      "nv": 67,
+      "du": 0.8,
+      "dv": 1.4,
+      "det_center": [
+        0.27,
+        -0.31
+      ]
+    },
+    "records": [
+      {
+        "library": "tomojax",
+        "backend": "jax",
+        "scope": "device_resident",
+        "cold_ms": 271.3312301784754,
+        "samples_ms": [
+          15.371046029031277,
+          15.097495168447495,
+          15.005283057689667,
+          15.058593824505806,
+          15.152753330767155,
+          15.130956657230854,
+          15.075626783072948
+        ],
+        "median_ms": 15.097495168447495,
+        "minimum_ms": 15.005283057689667,
+        "analytic_error": {
+          "relative_l2": 0.003006992964716408,
+          "max_abs": 0.14192581176757812
+        },
+        "reference_error": {
+          "relative_l2": 0.0,
+          "max_abs": 0.0
+        }
+      },
+      {
+        "library": "tomojax",
+        "backend": "jax",
+        "scope": "host_to_host",
+        "cold_ms": 15.858779661357403,
+        "samples_ms": [
+          14.913272112607956,
+          15.013371594250202,
+          15.010174363851547,
+          15.070472843945026,
+          16.27103704959154,
+          17.32495240867138,
+          16.971942968666553
+        ],
+        "median_ms": 15.070472843945026,
+        "minimum_ms": 14.913272112607956,
+        "analytic_error": {
+          "relative_l2": 0.003006992964716408,
+          "max_abs": 0.14192581176757812
+        }
+      },
+      {
+        "library": "tomojax",
+        "backend": "pallas",
+        "scope": "device_resident",
+        "cold_ms": 251.6145445406437,
+        "samples_ms": [
+          2.3390594869852066,
+          2.4698274210095406,
+          2.354944124817848,
+          2.4611419066786766,
+          2.7881739661097527,
+          2.3147910833358765,
+          2.4991007521748543
+        ],
+        "median_ms": 2.4611419066786766,
+        "minimum_ms": 2.3147910833358765,
+        "analytic_error": {
+          "relative_l2": 0.0030069925333928056,
+          "max_abs": 0.14192581176757812
+        },
+        "reference_error": {
+          "relative_l2": 4.6016902434026435e-08,
+          "max_abs": 1.71661376953125e-05
+        }
+      },
+      {
+        "library": "tomojax",
+        "backend": "pallas",
+        "scope": "host_to_host",
+        "cold_ms": 4.666621796786785,
+        "samples_ms": [
+          2.452850341796875,
+          3.541046753525734,
+          2.471698448061943,
+          2.5713862851262093,
+          2.514938823878765,
+          2.517568878829479,
+          2.52621341496706
+        ],
+        "median_ms": 2.517568878829479,
+        "minimum_ms": 2.452850341796875,
+        "analytic_error": {
+          "relative_l2": 0.0030069925333928056,
+          "max_abs": 0.14192581176757812
+        }
+      },
+      {
+        "library": "astra",
+        "backend": "cuda3d",
+        "scope": "host_to_host",
+        "cold_ms": 4.054714925587177,
+        "samples_ms": [
+          3.7013813853263855,
+          3.7559587508440018,
+          3.779119811952114,
+          3.7394026294350624,
+          3.6812881007790565,
+          3.7416089326143265,
+          3.7480778992176056
+        ],
+        "median_ms": 3.7416089326143265,
+        "minimum_ms": 3.6812881007790565,
+        "analytic_error": {
+          "relative_l2": 0.0029543951210992615,
+          "max_abs": 0.14215469360351562
+        }
+      },
+      {
+        "library": "astra",
+        "backend": "cuda3d",
+        "scope": "device_resident",
+        "cold_ms": 2.581997774541378,
+        "samples_ms": [
+          2.210034057497978,
+          2.310647629201412,
+          2.371230162680149,
+          2.3904796689748764,
+          2.3852530866861343,
+          2.3762742057442665,
+          2.372286282479763
+        ],
+        "median_ms": 2.372286282479763,
+        "minimum_ms": 2.210034057497978,
+        "analytic_error": {
+          "relative_l2": 0.0029543951210992615,
+          "max_abs": 0.14215469360351562
+        }
+      },
+      {
+        "library": "tigre",
+        "status": "unsupported_comparison",
+        "reason": "This adapter currently validates only centered isotropic parallel scans"
+      }
+    ]
+  }
+}

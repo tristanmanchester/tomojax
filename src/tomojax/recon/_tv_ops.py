@@ -81,6 +81,19 @@ def _gradient_norm_sq(u: jnp.ndarray) -> jnp.ndarray:
     return gx * gx + gy * gy + gz * gz
 
 
+def _norm_with_zero_subgradient(squared: jnp.ndarray) -> jnp.ndarray:
+    """Evaluate a norm safely inside the smooth regions of Huber formulas.
+
+    The enclosing gradient/prox is differentiable at zero even though the
+    Euclidean norm alone is not. Mask before sqrt: masking only its result
+    leaves an infinite derivative that can produce NaNs in JVPs and VJPs.
+    Nonzero norms and nonfinite inputs retain their ordinary values.
+    """
+    zero = squared == 0
+    safe = jnp.where(zero, jnp.ones_like(squared), squared)
+    return jnp.where(zero, jnp.zeros_like(squared), jnp.sqrt(safe))
+
+
 def isotropic_tv_value(u: jnp.ndarray, eps: float = 0.0) -> jnp.ndarray:
     """Return isotropic 3D TV using the repo's forward-difference operator."""
     sq = _gradient_norm_sq(u)
@@ -104,7 +117,7 @@ def huber_tv_grad(u: jnp.ndarray, delta: float) -> jnp.ndarray:
     """Return the gradient of isotropic Huber-TV under ``grad3``/``div3``."""
     delta_arr = jnp.asarray(delta, dtype=u.dtype)
     gx, gy, gz = grad3(u)
-    norm = jnp.sqrt(gx * gx + gy * gy + gz * gz)
+    norm = _norm_with_zero_subgradient(gx * gx + gy * gy + gz * gz)
     denom = jnp.maximum(norm, delta_arr)
     qx = gx / denom
     qy = gy / denom
@@ -134,7 +147,7 @@ def prox_huber_tv_conj(
     q2 = p2 * scale
     q3 = p3 * scale
     radius = jnp.maximum(lam_arr, 0.0)
-    norm = jnp.sqrt(q1 * q1 + q2 * q2 + q3 * q3)
+    norm = _norm_with_zero_subgradient(q1 * q1 + q2 * q2 + q3 * q3)
     denom = jnp.maximum(radius, jnp.asarray(jnp.finfo(p1.dtype).eps, dtype=p1.dtype))
     shrink = jnp.maximum(1.0, norm / denom)
     return q1 / shrink, q2 / shrink, q3 / shrink

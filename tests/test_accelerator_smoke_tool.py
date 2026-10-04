@@ -73,7 +73,10 @@ def test_strict_cuda_fails_when_jax_reports_cpu_backend(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import jax
+
     module = _load_smoke_accelerator()
+    monkeypatch.setattr(jax, "default_backend", lambda: "cpu")
     monkeypatch.setenv("TOMOJAX_REQUIRE_CUDA", "1")
     monkeypatch.setattr(
         module,

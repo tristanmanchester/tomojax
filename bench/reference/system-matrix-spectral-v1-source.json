@@ -1,0 +1,20 @@
+{
+  "source_sha256": "308aafea5a2fe11705f7c6a64cc311b02bd5c21f1e79f667309b793b82fd439d",
+  "files": 243,
+  "source_root": "/home/tristan/Projects/tomojax/.artifacts/system-matrix-spectral-v1/source",
+  "change": "Shared positive normal Fourier preconditioner, eight geometry-only data-space adjoint probes, seed zero. Same Joseph operator, fixed coarse-to-fine policy, zero regularization and unconstrained solve. Same 27 cells, quality gates, 1..256 budget search, 180-view batch and seven repeats.",
+  "validation": {
+    "cpu": "614 passed, 13 skipped, 210 deselected",
+    "cuda": "28 selected numerical tests passed",
+    "benchmark": "36 passed",
+    "logs": "/home/tristan/Projects/tomojax/.artifacts/shared-conditioning-20261004"
+  },
+  "fixture_generation_unchanged": [
+    "bench/compare_projectors.py",
+    "bench/physical_case.py",
+    "src/tomojax/core/geometry/base.py",
+    "src/tomojax/core/geometry/parallel.py",
+    "src/tomojax/core/geometry/lamino.py"
+  ],
+  "source_comparison_root": "/home/tristan/Projects/tomojax/.artifacts/system-matrix/corrected-baseline-source"
+}

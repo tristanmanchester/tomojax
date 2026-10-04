@@ -1,0 +1,30 @@
+{
+  "case": "lamino-64-60",
+  "method": "jax_reference",
+  "status": "finite",
+  "loss": 8.270442962646484,
+  "volume_gradient_norm": 151.2081756591797,
+  "pose_gradient_norm": 498.43341064453125,
+  "component_measurements": {
+    "compile_ms": 573.0392821133137,
+    "first_execution_ms": 43.54100115597248,
+    "warmup_calls": 8,
+    "warmup_ms": 216.31258446723223,
+    "samples_ms": [
+      26.71974617987871,
+      27.583966962993145,
+      26.99085883796215,
+      27.433565817773342,
+      27.233757078647614,
+      27.31537912040949,
+      27.079923078417778
+    ],
+    "median_ms": 27.233757078647614,
+    "compiler_bytes": {
+      "argument_size_in_bytes": 2035456,
+      "output_size_in_bytes": 1052444,
+      "temp_size_in_bytes": 1519792408,
+      "alias_size_in_bytes": 0
+    }
+  }
+}

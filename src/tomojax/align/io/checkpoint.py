@@ -17,6 +17,7 @@ from tomojax.io import normalize_json as _normalize_json
 
 CHECKPOINT_KIND = "tomojax.align.checkpoint"
 SCHEMA_VERSION = 1
+MULTIRES_GEOMETRY_VERSION = 2
 
 
 class CheckpointError(RuntimeError):
@@ -38,6 +39,7 @@ class CheckpointMetadata(TypedDict, total=False):
     state_grid: Required[dict[str, Any]]
     state_detector: Required[dict[str, Any]]
     levels: list[int] | None
+    multires_geometry_version: int
     level_index: Required[int]
     level_factor: Required[int]
     completed_outer_iters_in_level: Required[int]
@@ -158,8 +160,21 @@ def _normalize_json_object(value: Mapping[str, Any] | None) -> dict[str, Any]:
     return dict(normalized)
 
 
-def _normalize_checkpoint_compare_value(value: Any) -> Any:
-    return normalize_json(value)
+def _normalize_checkpoint_compare_value(value: Any, *, key: str) -> Any:
+    value = normalize_json(value)
+    if key == "config" and isinstance(value, dict):
+        # These options were added without changing the historical defaults.
+        # Only their absence is equivalent to the explicitly recorded default.
+        value.setdefault("pose_translation_frame", "object")
+        value.setdefault("gn_jacobian", "autodiff")
+        value.setdefault("ray_integrator", "sampled")
+        value.setdefault("gn_difference_step", 1e-3)
+        value.setdefault("gn_coupling", "fixed_volume")
+        value.setdefault("gn_joint_solver", "stacked")
+        value.setdefault("gn_joint_iters", 40)
+        value.setdefault("gn_joint_rtol", 1e-4)
+        value.setdefault("gn_volume_damping", 1e-3)
+    return value
 
 
 def normalize_schedule_resume_state(
@@ -218,6 +233,10 @@ def build_alignment_checkpoint_metadata_from_input(
         "level_complete": bool(progress.level_complete),
         "run_complete": bool(progress.run_complete),
     }
+    if progress.levels is not None and any(f > 1 for f in progress.levels):
+        # Version 1 padded odd detector edges and changed coarse volume bounds.
+        # Reusing those states under the corrected pyramid would move the data.
+        metadata["multires_geometry_version"] = MULTIRES_GEOMETRY_VERSION
     # Keep persisted metadata strict JSON.
     json.dumps(metadata, allow_nan=False, sort_keys=True)
     return metadata
@@ -361,6 +380,14 @@ def validate_alignment_checkpoint(
             f"corrupt checkpoint: unsupported schema version {metadata.get('schema_version')!r}"
         )
 
+    if any(f > 1 for f in metadata.get("levels") or ()) and (
+        metadata.get("multires_geometry_version") != MULTIRES_GEOMETRY_VERSION
+    ):
+        raise CheckpointError(
+            "incompatible checkpoint: multires geometry version differs from the current "
+            "sampling convention; restart this multiresolution run"
+        )
+
     expected = normalize_json(dict(expected_metadata))
     for key in (
         "tomojax_version",
@@ -371,13 +398,14 @@ def validate_alignment_checkpoint(
         "reconstruction_grid",
         "detector",
         "levels",
+        "multires_geometry_version",
         "config",
         "cli_options",
     ):
         if key not in expected:
             continue
-        actual_value = _normalize_checkpoint_compare_value(metadata.get(key))
-        expected_value = _normalize_checkpoint_compare_value(expected.get(key))
+        actual_value = _normalize_checkpoint_compare_value(metadata.get(key), key=key)
+        expected_value = _normalize_checkpoint_compare_value(expected.get(key), key=key)
         if actual_value != expected_value:
             raise CheckpointError(
                 f"incompatible checkpoint: {key.replace('_', ' ')} "

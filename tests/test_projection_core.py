@@ -93,7 +93,7 @@ def test_traced_geometry_is_not_fixed_geometry_for_fast_paths() -> None:
     assert not bool(visible_in_trace(pose_stack))
 
 
-def test_fixed_geometry_core_reports_automatic_pallas_backend(
+def test_fixed_geometry_core_respects_explicit_jax_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(jax, "default_backend", lambda: "gpu")
@@ -113,7 +113,7 @@ def test_fixed_geometry_core_reports_automatic_pallas_backend(
             volume=volume,
             det_grid=None,
         )
-        == "pallas"
+        == "jax"
     )
     assert (
         effective_fista_core_backend(
@@ -124,7 +124,7 @@ def test_fixed_geometry_core_reports_automatic_pallas_backend(
             volume=volume,
             det_grid=canonical_det_grid,
         )
-        == "pallas"
+        == "jax"
     )
     assert (
         effective_fista_core_backend(

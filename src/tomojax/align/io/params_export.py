@@ -105,12 +105,15 @@ def alignment_params_payload(
     du: float,
     dv: float,
     gauge_metadata: dict[str, Any] | None = None,
+    translation_frame: str = "object",
 ) -> dict[str, Any]:
     """Build the JSON payload for exported alignment parameters."""
     du_f, dv_f = _validate_detector_spacing(du=du, dv=dv)
+    _validate_translation_frame(translation_frame)
     payload = {
         "schema": ALIGNMENT_PARAMS_SCHEMA,
         "parameter_order": list(PARAMETER_ORDER),
+        "pose_translation_frame": translation_frame,
         "units": dict(PARAMETER_UNITS),
         "detector_spacing": {"du": du_f, "dv": dv_f},
         "views": alignment_param_records(params5, du=du_f, dv=dv_f),
@@ -118,6 +121,11 @@ def alignment_params_payload(
     if gauge_metadata is not None:
         payload["gauge_fix"] = _json_native(gauge_metadata)
     return payload
+
+
+def _validate_translation_frame(frame: str) -> None:
+    if frame not in {"object", "detector"}:
+        raise ValueError("translation_frame must be 'object' or 'detector'")
 
 
 def _ensure_parent(path: str | Path) -> Path:
@@ -134,6 +142,7 @@ def save_alignment_params_json(
     du: float,
     dv: float,
     gauge_metadata: dict[str, Any] | None = None,
+    translation_frame: str = "object",
 ) -> None:
     """Write per-view alignment parameters as a named JSON sidecar."""
     out_path = _ensure_parent(path)
@@ -142,6 +151,7 @@ def save_alignment_params_json(
         du=du,
         dv=dv,
         gauge_metadata=gauge_metadata,
+        translation_frame=translation_frame,
     )
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
@@ -154,11 +164,20 @@ def save_alignment_params_csv(
     *,
     du: float,
     dv: float,
+    translation_frame: str = "object",
 ) -> None:
-    """Write per-view alignment parameters as a pandas-readable CSV sidecar."""
+    """Write a CSV sidecar, adding an explicit frame column for detector poses."""
+    _validate_translation_frame(translation_frame)
     out_path = _ensure_parent(path)
     records = alignment_param_records(params5, du=du, dv=dv)
     with out_path.open("w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES)
+        fields = CSV_FIELDNAMES + (
+            ("pose_translation_frame",) if translation_frame == "detector" else ()
+        )
+        writer = csv.DictWriter(f, fieldnames=fields)
         writer.writeheader()
-        writer.writerows(records)
+        for record in records:
+            row: dict[str, int | float | str] = dict(record)
+            if translation_frame == "detector":
+                row["pose_translation_frame"] = translation_frame
+            writer.writerow(row)

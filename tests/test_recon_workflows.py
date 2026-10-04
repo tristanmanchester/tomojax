@@ -6,7 +6,6 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tomojax.core.multires import scale_detector
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 from tomojax.io import ProjectionDataset, load_dataset, save_dataset
 from tomojax.recon import (
@@ -32,20 +31,6 @@ def _tiny_geometry() -> tuple[Grid, Detector, ParallelGeometry]:
         thetas_deg=np.linspace(0.0, 180.0, 4, endpoint=False, dtype=np.float32),
     )
     return grid, detector, geometry
-
-
-def test_scale_detector_odd_sizes_center_matches_clamped_sample_mean() -> None:
-    detector = Detector(nu=9, nv=7, du=1.0, dv=2.0, det_center=(3.0, -4.0))
-
-    scaled = scale_detector(detector, 2)
-
-    expected_u = np.mean([-3.0, -1.0, 1.0, 3.0, 4.0]) + detector.det_center[0]
-    expected_v = np.mean([-4.0, 0.0, 4.0, 6.0]) + detector.det_center[1]
-    assert scaled.nu == 5
-    assert scaled.nv == 4
-    assert scaled.du == pytest.approx(2.0)
-    assert scaled.dv == pytest.approx(4.0)
-    assert scaled.det_center == pytest.approx((expected_u, expected_v))
 
 
 def test_default_fbp_scale_uses_positive_view_count() -> None:
@@ -110,6 +95,50 @@ def test_fbp_generic_fallback_helper_synchronizes_before_oom_backoff() -> None:
 
     assert calls == ["fast", "backoff"]
     np.testing.assert_allclose(np.asarray(volume), 1.0)
+
+
+@pytest.mark.parametrize(("fail_call", "expected_batches"), [(1, [4, 2, 2, 2]), (2, [4, 4, 2])])
+def test_fbp_chunk_backoff_preserves_accumulator_and_progress_on_async_oom(
+    monkeypatch, fail_call, expected_batches
+) -> None:
+    import importlib
+
+    module = importlib.import_module("tomojax.recon.fbp")
+    calls = []
+    progress = iter(range(5))
+
+    class AsyncFailure:
+        def __radd__(self, other):
+            return self
+
+        def block_until_ready(self):
+            raise RuntimeError("RESOURCE_EXHAUSTED: asynchronous chunk allocation")
+
+    def backproject(poses, filtered, **kwargs):
+        calls.append(int(poses.shape[0]))
+        if len(calls) == fail_call:
+            return AsyncFailure()
+        return jnp.ones((2, 2, 1), dtype=jnp.float32) * jnp.sum(filtered)
+
+    monkeypatch.setattr(module, "_bp_batch_sum_jit", backproject)
+    result = module._run_fbp_with_backoff(
+        jnp.broadcast_to(jnp.eye(4), (5, 4, 4)),
+        jnp.arange(1, 6, dtype=jnp.float32).reshape(5, 1, 1),
+        batch_size=4,
+        grid=Grid(2, 2, 1, 1.0, 1.0, 1.0),
+        detector=Detector(1, 1, 1.0, 1.0),
+        filter_name="ramp",
+        projector_unroll=1,
+        checkpoint_projector=True,
+        gather_dtype="fp32",
+        det_grid=None,
+        view_progress=progress,
+    )
+    # A one-pixel ramp row is multiplied by h[0] = 1/4. All five views
+    # contribute once, including when an OOM occurs after a successful chunk.
+    np.testing.assert_allclose(result, (1 + 2 + 3 + 4 + 5) / 4)
+    assert calls == expected_batches
+    assert next(progress, None) is None
 
 
 @pytest.mark.numerical

@@ -20,7 +20,8 @@ from ._pallas_config import (
     _prepare_volume_for_pallas_gather,
     _unsupported,
 )
-from ._pallas_kernels import _trilinear_load_when_tile_active
+from ._pallas_kernels import _trilinear_load_active
+from ._pallas_loop import paired_fori_loop, static_fori_loop
 
 
 def _projector_views_kernel_cached(
@@ -67,7 +68,7 @@ def _projector_views_kernel_cached(
     def body(step_idx, carry):
         acc, ix, iy, iz = carry
         active = step_idx < n_steps_ray
-        sample = _trilinear_load_when_tile_active(
+        sample = _trilinear_load_active(
             volume_ref,
             ix,
             iy,
@@ -96,10 +97,12 @@ def _projector_views_kernel_cached(
             jnp.max(jnp.where(in_detector, n_steps_ray, 0)),
             jnp.asarray(n_steps, dtype=jnp.int32),
         )
-        acc, _, _, _ = jax.lax.fori_loop(0, tile_steps, body, init)
+        acc, _, _, _ = paired_fori_loop(tile_steps, body, init)
     else:
-        acc, _, _, _ = jax.lax.fori_loop(0, n_steps, body, init, unroll=unroll)
-    out_ref[...] = jnp.where(in_detector, acc.astype(jnp.float32), 0.0)[jnp.newaxis, :, :]
+        acc, _, _, _ = static_fori_loop(n_steps, body, init, unroll=unroll)
+    plt.store(
+        out_ref, acc.astype(jnp.float32)[jnp.newaxis, :, :], mask=in_detector[jnp.newaxis, :, :]
+    )
 
 
 def _projector_residual_sse_kernel_cached(
@@ -147,7 +150,7 @@ def _projector_residual_sse_kernel_cached(
     def body(step_idx, carry):
         acc, ix, iy, iz = carry
         active = step_idx < n_steps_ray
-        sample = _trilinear_load_when_tile_active(
+        sample = _trilinear_load_active(
             volume_ref,
             ix,
             iy,
@@ -176,9 +179,9 @@ def _projector_residual_sse_kernel_cached(
             jnp.max(jnp.where(in_detector, n_steps_ray, 0)),
             jnp.asarray(n_steps, dtype=jnp.int32),
         )
-        acc, _, _, _ = jax.lax.fori_loop(0, tile_steps, body, init)
+        acc, _, _, _ = paired_fori_loop(tile_steps, body, init)
     else:
-        acc, _, _, _ = jax.lax.fori_loop(0, n_steps, body, init, unroll=unroll)
+        acc, _, _, _ = static_fori_loop(n_steps, body, init, unroll=unroll)
     target = plt.load(target_ref.at[view_idx, det_v, det_u], mask=in_detector, other=0.0)
     residual = jnp.where(in_detector, acc.astype(jnp.float32) - target.astype(jnp.float32), 0.0)
     out_ref[0, 0, 0] = jnp.sum(residual * residual).astype(jnp.float32)

@@ -1,0 +1,30 @@
+{
+  "case": "lamino-64-60",
+  "method": "fused_cuda",
+  "status": "finite",
+  "loss": 8.270442008972168,
+  "volume_gradient_norm": 151.2081756591797,
+  "pose_gradient_norm": 498.43341064453125,
+  "component_measurements": {
+    "compile_ms": 405.214274302125,
+    "first_execution_ms": 2.5271791964769363,
+    "warmup_calls": 123,
+    "warmup_ms": 202.60057598352432,
+    "samples_ms": [
+      1.6011279076337814,
+      2.1492261439561844,
+      1.6391649842262268,
+      1.5792874619364738,
+      1.6259681433439255,
+      1.6171894967556,
+      1.4163460582494736
+    ],
+    "median_ms": 1.6171894967556,
+    "compiler_bytes": {
+      "argument_size_in_bytes": 2035456,
+      "output_size_in_bytes": 1052444,
+      "temp_size_in_bytes": 1112896,
+      "alias_size_in_bytes": 0
+    }
+  }
+}

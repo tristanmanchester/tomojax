@@ -16,8 +16,14 @@ from tomojax.align._model.motion_models import expand_motion_coefficients, fit_m
 from tomojax.align._objectives.loss_specs import loss_is_within_relative_tolerance
 from tomojax.align._observer import OuterStat
 from tomojax.align._results import _set_float_stat
-from tomojax.align.optimizers import PoseLbfgsConfig, PoseOptimizationContext, run_pose_lbfgs
+from tomojax.align.optimizers import (
+    PoseLbfgsConfig,
+    PoseOptimizationContext,
+    PreparedPoseLbfgs,
+    run_pose_lbfgs,
+)
 
+from ._coupled_objective import CoupledObjective
 from ._pose_candidates import (
     GNCandidateContext,
     _evaluate_align_loss,
@@ -42,6 +48,9 @@ class AlignmentStepObjective:
         [jnp.ndarray, jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]
     ]
     gn_update_all: Callable[[jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]]
+
+    lbfgs_problem: PreparedPoseLbfgs | None = None
+    coupled: CoupledObjective | None = None
 
 
 @dataclass(frozen=True)
@@ -255,6 +264,8 @@ def _run_lbfgs_alignment_step(
             maxls=int(cfg.lbfgs_maxls),
             memory_size=int(cfg.lbfgs_memory_size),
         ),
+        problem=objective.lbfgs_problem,
+        objective_args=(vol, loss_rng_key) if objective.lbfgs_problem is not None else (),
         context=PoseOptimizationContext(
             active_cols=constraints.active_col_indices_np,
             frozen_params5=constraints.frozen_params5,
@@ -639,3 +650,86 @@ def _run_alignment_step(
     )
     stat["rel_impr"] = rel_impr
     return params5_out, motion_coeffs_out, gauge_stats, total_loss, rel_impr, stat
+
+
+def _run_coupled_alignment_step(
+    *,
+    cfg: AlignConfig,
+    objective: CoupledObjective,
+    constraints: AlignmentStepConstraints,
+    gauge: AlignmentStepGauge,
+    params5_in: jnp.ndarray,
+    vol: jnp.ndarray,
+) -> tuple:
+    """Accept a constrained volume/pose pair against the true joint objective.
+
+    Damping affects the local increment model only. Neither the line search nor
+    the reported objective adds a prior on the current volume or pose values.
+    """
+    start = time.perf_counter()
+    before = float(objective.loss(params5_in, vol))
+    result = objective.update(params5_in, vol)
+    dx, dp = result.increment
+    volume_out, params_out, after, scale = vol, params5_in, before, 0.0
+    if bool(result.finite) and math.isfinite(before):
+        for trial_scale in (1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.015625):
+            trial_volume = vol + trial_scale * dx
+            if cfg.recon_positivity:
+                trial_volume = jnp.maximum(trial_volume, 0)
+            trial_params, _ = constraints.apply_full_constraints_with_stats(
+                params5_in + trial_scale * dp
+            )
+            value = float(objective.loss(trial_params, trial_volume))
+            improves = loss_is_within_relative_tolerance(before, value, cfg.gn_accept_tol)
+            if math.isfinite(value) and (improves or not cfg.gn_accept_only_improving):
+                volume_out, params_out, after, scale = (
+                    trial_volume,
+                    trial_params,
+                    value,
+                    trial_scale,
+                )
+                break
+    _, gauge_stats = constraints.apply_full_constraints_with_stats(params_out)
+    stat: OuterStat = {
+        "objective_kind": "joint_volume_pose",
+        "step_kind": "gn_joint",
+        "optimizer_kind": "gn_joint",
+        "loss_before": before,
+        "loss_after_step": after,
+        "loss_after": after,
+        "joint_step_scale": scale,
+        "joint_linear_iterations": int(result.iterations),
+        "joint_linear_relative_residual": float(result.relative_residual),
+        "joint_linear_finite": bool(result.finite),
+        "joint_projector_backend": objective.projector_backend,
+        "joint_pose_columns_cached": objective.pose_columns_cached,
+        "backend_provenance": {
+            "requested_backend": cfg.projector_backend,
+            "actual_backend": objective.projector_backend,
+            "status": "selected"
+            if cfg.projector_backend == objective.projector_backend
+            else "fallback",
+            "fallback_reason": None
+            if cfg.projector_backend == objective.projector_backend
+            else "joint normal equations use the matched JAX operator for this geometry/integrator",
+            "api_surface": "alignment.joint_objective",
+            "differentiability": "explicit_volume_transpose",
+            "pose_jacobian_backend": "jax",
+            "eligible_for_speed_claim": cfg.projector_backend == objective.projector_backend,
+        },
+        "objective_provenance": {
+            "outer_loss_source": "AlignmentLossSpec",
+            "outer_loss_kind": "weighted_least_squares_plus_volume_and_pose_regularisation",
+            "inner_data_term": "joint_linearised_volume_pose",
+            "inner_regulariser": "increment_damping",
+            "differentiation_mode": "matrix_free_joint_normal_equations",
+            "initialization_policy": "current_level_volume_and_poses",
+            "validation_split": "none",
+        },
+        "post_constraint_rejected": scale == 0,
+    }
+    _record_gauge_stats(stat, gauge, gauge_stats)
+    rel_impr = _alignment_relative_improvement(stat, loss_before=before, total_loss=after)
+    stat["rel_impr"] = rel_impr
+    stat["align_time"] = time.perf_counter() - start
+    return volume_out, params_out, None, gauge_stats, after, rel_impr, stat

@@ -1,0 +1,24 @@
+{
+  "source_sha256": "5ff8791482a48008c71a01ae8a0a8a6b57e03b6e9b403eb95eb6b00254696415",
+  "files": 243,
+  "source_root": "/home/tristan/Projects/tomojax/.artifacts/public-free-voxel-schur-v1/source",
+  "change": "Exact pose-block elimination; independent blocks without smoothness, block-banded factorization with smoothness. Same central stencil, positive 1e-3 volume/pose damping, 40 inner iterations, 64 outer iterations, 20 FISTA refresh iterations, initialization, fixtures and gates.",
+  "scheduled_cells": [
+    "parallel-clean",
+    "parallel-noisy",
+    "anisotropic-clean",
+    "anisotropic-noisy",
+    "lamino-clean",
+    "lamino-noisy"
+  ],
+  "validation_logs": {
+    "targeted-cpu": "......................................                                   [100%]\n38 passed, 4 deselected in 34.93s\n",
+    "targeted-gpu": "....                                                                     [100%]\n=============================== warnings summary ===============================\ntests/test_coupled_alignment.py: 44 warnings\n  /home/tristan/Projects/tomojax/.venv/lib/python3.12/site-packages/jax/_src/pallas/pallas_call.py:926: DeprecationWarning: The Pallas Triton backend is deprecated and will be removed in a future JAX version. To keep using Pallas on GPU, please migrate to the Mosaic GPU backend. To keep using Triton, switch to the official Triton bindings and jax_triton.\n    return rule(ctx, *in_nodes, compiler_params=compiler_params, **params)\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n4 passed, 12 deselected, 44 warnings in 26.14s\n",
+    "full-cpu": "........................................................................ [ 11%]\n..................................................................s.s.s. [ 23%]\ns.s.s................................................................... [ 34%]\n........................................................................ [ 46%]\n........................................................................ [ 58%]\n........................................................................ [ 69%]\n........................................................................ [ 81%]\n...s.................................................................... [ 92%]\n............................................                             [100%]\n=========================== short test summary info ============================\nSKIPPED [6] tests/test_cgls_regularization.py:71: requires CUDA\nSKIPPED [1] tests/test_pose_recovery_benchmark.py:125: requires CUDA\n613 passed, 7 skipped, 212 deselected in 203.69s (0:03:23)\n",
+    "lint": "All checks passed!\n",
+    "format": "299 files already formatted\n",
+    "types": "0 errors, 0 warnings, 0 notes\n",
+    "import-contracts": "\n\u2554\u2550\u2550\u2557\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6\u2554\u2557 \u2554\u2557      \u2554\u2557\u25c0\u2500\u2500\u2500\u2510\n\u255a\u2563\u2560\u255d\u25c0\u2500\u2500\u2500\u2500\u2500\u2510  \u2554\u255d\u255a\u2557\u2551\u2551\u2500\u2500\u2500\u2500\u25b6\u2554\u255d\u255a\u2557   \u2502\n \u2551\u2551   \u2554\u2550\u2550\u2566\u2550\u2550\u2566\u2569\u2557\u2554\u255d\u2551\u2551  \u2554\u2566\u2550\u2569\u2557\u2554\u255d\u2554\u2550\u2566\u2550\u2550\u2557\n \u2551\u2551\u2554\u2550\u2550\u2563\u2554\u2557\u2551\u2554\u2557\u2551\u2554\u2563\u2551 \u2551\u2551 \u2554\u256c\u2563\u2554\u2557\u2551\u2551 \u2551\u2502\u2551\u2554\u2550\u255d\n\u2554\u2563\u2560\u2563\u2551\u2551\u2551\u255a\u255d\u2551\u255a\u255d\u2551\u2551\u2551\u255a\u2557\u2551\u255a\u2550\u255d\u2551\u2551\u2551\u2551\u2551\u255a\u2557\u2551\u2550\u2563\u2551\n\u255a\u2550\u2550\u2569\u2569\u2569\u2563\u2554\u2550\u2569\u2550\u2550\u2569\u255d\u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2569\u2569\u255d\u255a\u2569\u2550\u2569\u2569\u2550\u2569\u255d\n  \u2514\u2500\u2500\u25b6\u2551\u2551                    \u25b2 \n      \u255a\u255d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\n\n---------\nContracts\n---------\n\nAnalyzed 225 files, 674 dependencies.\n-------------------------------------\n\nLayer direction KEPT\nCLI uses alignment facade instead of nested alignment internals KEPT\nCLI uses geometry facade instead of core geometry internals KEPT\n\nContracts: 3 kept, 0 broken.\n",
+    "public-imports": ""
+  }
+}

@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.align._geometry.parametrizations import se3_from_5d
+from tomojax.align._geometry.parametrizations import apply_pose_updates
 from tomojax.align._objectives.recon_layer import PoseAdjustedGeometry
 from tomojax.align._quality_policy import (
     ReconstructionQualityPolicy,
@@ -23,6 +23,7 @@ from tomojax.align._results import record_reconstruction_info as _record_reconst
 from tomojax.backends import estimate_views_per_batch_info
 from tomojax.core.backend_policy import normalize_projector_backend
 from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.operator_norm import estimate_normal_norm
 from tomojax.core.pallas_resolver import resolve_pallas_callable
 from tomojax.core.projector import get_detector_grid_device
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
@@ -61,22 +62,30 @@ class _HuberFistaBackendPlan:
     detector_grid_fold_reason: str | None
 
 
-def _heuristic_projection_lipschitz(
-    *,
-    n_views: int,
-    grid: Grid,
-    lambda_tv: float,
-    huber_delta: float,
+def _initial_projection_lipschitz(
+    step: _ReconstructionStepInputs,
+    poses: jnp.ndarray,
 ) -> float:
-    min_voxel = max(min(float(grid.vx), float(grid.vy), float(grid.vz)), 1e-6)
-    max_extent = max(
-        float(grid.nx) * float(grid.vx),
-        float(grid.ny) * float(grid.vy),
-        float(grid.nz) * float(grid.vz),
+    cfg = step.cfg
+    projection_l = float(
+        estimate_normal_norm(
+            poses,
+            step.x,
+            step.det_grid,
+            None,
+            grid=step.grid,
+            detector=step.detector,
+            batch_size=max(1, int(cfg.views_per_batch)),
+            iters=1,
+            unroll=int(cfg.projector_unroll),
+            checkpoint=bool(cfg.checkpoint_projector),
+            gather_dtype=str(cfg.gather_dtype),
+            upper_bound=True,
+            ray_integrator=getattr(cfg, "ray_integrator", "sampled"),
+        )
     )
-    projection_l = 1.2 * float(n_views) * max(max_extent / min_voxel, 1.0)
-    regulariser_l = float(lambda_tv) * 12.0 / max(float(huber_delta), 1e-6)
-    return max(projection_l + regulariser_l, 1e-6)
+    regulariser_l = float(cfg.lambda_tv) * 12.0 / float(cfg.huber_delta)
+    return 1.2 * projection_l + regulariser_l
 
 
 def _resolve_auto_views_per_batch(
@@ -252,8 +261,11 @@ def _finite_fraction(value: jnp.ndarray) -> float:
     array = jnp.asarray(value)
     if array.size == 0:
         return 0.0
-    finite_fraction = jnp.mean(jnp.isfinite(array).astype(jnp.float32))
-    return float(jax.device_get(finite_fraction))
+    # A float32 mean of all-True values can round below 1, rejecting a valid
+    # reconstruction. Count failures and divide on the host: zero failures is
+    # exactly 1, and a single failure remains distinguishable on large volumes.
+    failures = jnp.sum(~jnp.isfinite(array), dtype=jnp.float32)
+    return max(0.0, 1.0 - float(jax.device_get(failures)) / array.size)
 
 
 def _reconstruction_step_stat(
@@ -536,12 +548,22 @@ def _run_public_fista_reconstruction(
 ) -> tuple[jnp.ndarray, Mapping[str, object]]:
     cfg = step.cfg
     quality_policy = reconstruction_quality_policy(str(getattr(cfg, "quality_tier", "fast")))
+    # Alignment carries the effective bound used by the previous solve. Public
+    # FISTA accepts a data-term bound and adds smooth-TV curvature itself.
+    # Convert at this boundary, otherwise every fallback counts TV again.
+    data_lipschitz = step.L_prev
+    if data_lipschitz is not None and str(cfg.regulariser) == "huber_tv":
+        data_lipschitz -= float(cfg.lambda_tv) * 12.0 / float(cfg.huber_delta)
+        if data_lipschitz <= 0:
+            # An initial override below the regulariser's bound cannot provide
+            # a usable data bound. Let FISTA estimate it from the operator.
+            data_lipschitz = None
     fista_cfg = FistaConfig(
         iters=scaled_reconstruction_iters(cfg.recon_iters, quality_policy),
         lambda_tv=cfg.lambda_tv,
         regulariser=cfg.regulariser,
         huber_delta=cfg.huber_delta,
-        L=step.L_prev,
+        L=data_lipschitz,
         views_per_batch=views_per_batch,
         projector_unroll=int(projector_unroll),
         checkpoint_projector=cfg.checkpoint_projector,
@@ -551,6 +573,7 @@ def _run_public_fista_reconstruction(
         positivity=bool(cfg.recon_positivity),
         recon_rel_tol=cfg.recon_rel_tol,
         recon_patience=(int(cfg.recon_patience) if cfg.recon_patience is not None else 0),
+        ray_integrator=getattr(cfg, "ray_integrator", "sampled"),
     )
     return fista_tv(
         step.recon_geometry,
@@ -566,7 +589,11 @@ def _run_public_fista_reconstruction(
 def _huber_fista_pose_stack(step: _ReconstructionStepInputs, *, n_views: int) -> jnp.ndarray:
     if isinstance(step.recon_geometry, PoseAdjustedGeometry):
         nominal = stack_view_poses(step.recon_geometry.geometry, n_views)
-        return nominal @ jax.vmap(se3_from_5d)(step.recon_geometry.params5)
+        return apply_pose_updates(
+            nominal,
+            step.recon_geometry.params5,
+            translation_frame=step.recon_geometry.translation_frame,
+        )
     return stack_view_poses(step.recon_geometry, n_views)
 
 
@@ -682,6 +709,7 @@ def _huber_fista_core_config(
         compute_iteration_loss=bool(quality_policy.compute_iteration_loss),
         compute_final_data_loss=bool(quality_policy.compute_final_data_loss),
         compute_final_regulariser_value=bool(quality_policy.compute_final_regulariser_value),
+        ray_integrator=getattr(cfg, "ray_integrator", "sampled"),
     )
 
 
@@ -731,6 +759,7 @@ def _run_spdhg_reconstruction(
         gather_dtype=cfg.gather_dtype,
         positivity=bool(cfg.recon_positivity),
         log_every=1,
+        ray_integrator=getattr(cfg, "ray_integrator", "sampled"),
     )
     return spdhg_tv(
         step.recon_geometry,
@@ -748,22 +777,22 @@ def _run_huber_fista_core_reconstruction(
 ) -> tuple[jnp.ndarray, Mapping[str, object]]:
     cfg = step.cfg
     n_views = int(step.projections.shape[0])
+    poses = _huber_fista_pose_stack(step, n_views=n_views)
     L_core = (
         float(step.L_prev)
         if step.L_prev is not None
-        else _heuristic_projection_lipschitz(
-            n_views=n_views,
-            grid=step.grid,
-            lambda_tv=float(cfg.lambda_tv),
-            huber_delta=float(cfg.huber_delta),
-        )
+        else _initial_projection_lipschitz(step, poses)
     )
     backend_plan = _resolve_huber_fista_backend_plan(
         step,
-        T_all=_huber_fista_pose_stack(step, n_views=n_views),
+        T_all=poses,
     )
     is_pose_adjusted = isinstance(step.recon_geometry, PoseAdjustedGeometry)
-    if is_pose_adjusted and backend_plan.actual_backend == "pallas":
+    if (
+        is_pose_adjusted
+        and backend_plan.actual_backend == "pallas"
+        and getattr(cfg, "ray_integrator", "sampled") == "sampled"
+    ):
         backend_plan = _HuberFistaBackendPlan(
             T_all=backend_plan.T_all,
             requested_backend=backend_plan.requested_backend,
@@ -856,7 +885,11 @@ def _run_reconstruction_step(
     outer_idx: int,
     recon_algo: str,
 ) -> tuple[jnp.ndarray, float | None, OuterStat]:
-    recon_geometry = PoseAdjustedGeometry(geometry=geometry, params5=params5)
+    recon_geometry = PoseAdjustedGeometry(
+        geometry=geometry,
+        params5=params5,
+        translation_frame=getattr(cfg, "pose_translation_frame", "object"),
+    )
     step = _ReconstructionStepInputs(
         recon_geometry=recon_geometry,
         grid=grid,

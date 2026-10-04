@@ -1,0 +1,12 @@
+{
+  "source_sha256": "73a6925946726db21367d405b72593a25e9f16952177220322a62c3bf00e1d07",
+  "files": 242,
+  "source_root": "/home/tristan/Projects/tomojax/.artifacts/public-free-voxel-joint-v1/source",
+  "ray_integrator": "exact",
+  "gn_coupling": "joint",
+  "change": "Coupled constrained free-voxel and pose GN; same exact model, central stencil, damping, gates, fixtures, outer/refresh budgets and seven warm calls; 40 additional PCG iterations per outer with 1e-4 residual tolerance and 1e-3 voxel increment damping",
+  "validation": {
+    "cpu_log": "/home/tristan/Projects/tomojax/.artifacts/public-free-voxel-joint-v1/full-cpu-v2.log",
+    "gpu_log": "/home/tristan/Projects/tomojax/.artifacts/public-free-voxel-joint-v1/gpu.log"
+  }
+}

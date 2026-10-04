@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+import math
 from typing import TYPE_CHECKING, Literal, cast
 
 from tomojax.core.backend_policy import normalize_projector_backend
 
+from ._geometry.parametrizations import PoseTranslationFrame
 from ._model.diagnostics import GaugePolicy
 from ._model.dofs import (
     ScopedAlignmentDofs,
@@ -99,7 +101,7 @@ def _scoped_dofs_for_cfg(cfg: AlignConfig) -> ScopedAlignmentDofs:
 
 
 def _resolved_schedule_for_cfg(cfg: AlignConfig) -> ResolvedAlignmentSchedule:
-    return resolve_alignment_schedule(
+    resolved = resolve_alignment_schedule(
         schedule=cfg.schedule,
         optimise_dofs=cfg.optimise_dofs,
         freeze_dofs=cfg.freeze_dofs,
@@ -109,6 +111,17 @@ def _resolved_schedule_for_cfg(cfg: AlignConfig) -> ResolvedAlignmentSchedule:
         outer_iters=int(cfg.outer_iters),
         early_stop=bool(cfg.early_stop),
     )
+    if cfg.gn_coupling == "joint" and cfg.schedule is None:
+        resolved = replace(
+            resolved,
+            stages=tuple(
+                replace(stage, objective_kind="joint_volume_pose")
+                if stage.active_pose_dofs and not stage.active_geometry_dofs
+                else stage
+                for stage in resolved.stages
+            ),
+        )
+    return resolved
 
 
 @dataclass
@@ -135,12 +148,21 @@ class AlignConfig:
     checkpoint_projector: bool = True
     gather_dtype: str = "auto"
     projector_backend: ProjectorBackendInput = "pallas"
+    ray_integrator: Literal["sampled", "exact"] = field(default="sampled", kw_only=True)
     quality_tier: QualityTier = "fast"
     fallback_policy: FallbackPolicy = "fallback"
     fold_rigid_detector_grid: bool = True
     # Solver and regularization
     opt_method: str = "gn"
     gn_damping: float = 1e-3
+    gn_jacobian: Literal["autodiff", "central"] = field(default="autodiff", kw_only=True)
+    # Central-difference displacement as a fraction of the smallest voxel pitch.
+    gn_difference_step: float = field(default=1e-3, kw_only=True)
+    gn_coupling: Literal["fixed_volume", "joint"] = field(default="fixed_volume", kw_only=True)
+    gn_joint_solver: Literal["stacked", "pose_eliminated"] = field(default="stacked", kw_only=True)
+    gn_joint_iters: int = field(default=40, kw_only=True)
+    gn_joint_rtol: float = field(default=1e-4, kw_only=True)
+    gn_volume_damping: float = field(default=1e-3, kw_only=True)
     lbfgs_maxiter: int = 20
     lbfgs_ftol: float = 1e-6
     lbfgs_gtol: float = 1e-5
@@ -155,6 +177,7 @@ class AlignConfig:
     gauge_policy: GaugePolicyInput = "reject"
     gauge_priors: Mapping[str, object] | None = None
     pose_model: PoseModelInput = "per_view"
+    pose_translation_frame: PoseTranslationFrame = field(default="object", kw_only=True)
     knot_spacing: int = 8
     degree: int = 3
     gauge_fix: GaugeFixMode = "mean_translation"
@@ -178,6 +201,8 @@ class AlignConfig:
     loss: AlignmentLossConfig = field(default_factory=L2OtsuLossSpec)
 
     def __post_init__(self) -> None:
+        if self.ray_integrator not in {"sampled", "exact"}:
+            raise ValueError("ray_integrator must be sampled or exact")
         self._apply_profile_policy()
         self._normalize_reconstruction_options()
         self._normalize_backend_options()
@@ -187,6 +212,11 @@ class AlignConfig:
         self._normalize_gauge_options()
         self._normalize_pose_model_options()
         self._normalize_gauge_fix_options()
+        if self.gn_coupling == "joint":
+            if self.pose_model != "per_view" or self.opt_method != "gn":
+                raise ValueError("joint GN requires opt_method='gn' and pose_model='per_view'")
+            if self.lambda_tv != 0 and self.regulariser != "huber_tv":
+                raise ValueError("joint GN supports Huber-TV or zero volume regularisation")
 
     def _apply_profile_policy(self) -> None:
         self.align_profile = normalize_alignment_profile(self.align_profile)
@@ -232,6 +262,24 @@ class AlignConfig:
         self.opt_method = opt_method
         if self.opt_method not in {"gd", "gn", "lbfgs"}:
             raise ValueError("opt_method must be one of 'gd', 'gn', or 'lbfgs'")
+        if self.gn_jacobian not in {"autodiff", "central"}:
+            raise ValueError("gn_jacobian must be 'autodiff' or 'central'")
+        if not math.isfinite(self.gn_difference_step) or self.gn_difference_step <= 0:
+            raise ValueError("gn_difference_step must be finite and > 0")
+        if self.gn_coupling not in {"fixed_volume", "joint"}:
+            raise ValueError("gn_coupling must be fixed_volume or joint")
+        if self.gn_joint_solver not in {"stacked", "pose_eliminated"}:
+            raise ValueError("gn_joint_solver must be stacked or pose_eliminated")
+        if self.gn_joint_iters < 1 or int(self.gn_joint_iters) != self.gn_joint_iters:
+            raise ValueError("gn_joint_iters must be a positive integer")
+        if not math.isfinite(self.gn_joint_rtol) or not 0 < self.gn_joint_rtol < 1:
+            raise ValueError("gn_joint_rtol must be finite and between zero and one")
+        if not math.isfinite(self.gn_volume_damping) or self.gn_volume_damping <= 0:
+            raise ValueError("gn_volume_damping must be finite and positive")
+        if self.gn_coupling == "joint" and (
+            not math.isfinite(self.gn_damping) or self.gn_damping <= 0
+        ):
+            raise ValueError("joint GN requires finite positive gn_damping")
         if int(self.lbfgs_maxiter) < 1:
             raise ValueError("lbfgs_maxiter must be >= 1")
         if int(self.lbfgs_maxls) < 1:
@@ -273,6 +321,8 @@ class AlignConfig:
         self.bounds = normalize_bounds(self.bounds, option_name="bounds")
 
     def _normalize_pose_model_options(self) -> None:
+        if self.pose_translation_frame not in {"object", "detector"}:
+            raise ValueError("pose_translation_frame must be 'object' or 'detector'")
         pose_model = str(self.pose_model).strip().lower().replace("-", "_")
         self.pose_model = cast("PoseModelInput", pose_model)
         if self.pose_model not in {"per_view", "polynomial", "spline"}:
@@ -287,6 +337,11 @@ class AlignConfig:
 
     def _normalize_gauge_fix_options(self) -> None:
         self.gauge_fix = normalize_gauge_fix(self.gauge_fix)
+        if self.pose_translation_frame == "detector" and self.gauge_fix != "none":
+            raise ValueError(
+                "detector-frame poses require gauge_fix='none': subtracting mean detector "
+                "shifts is not a common object-frame translation gauge"
+            )
         if self.gauge_fix == "mean_translation":
             bounds = cast("DofBounds", self.bounds)
             bounds_lower, bounds_upper = bounds_vectors(bounds)

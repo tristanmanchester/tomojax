@@ -156,6 +156,7 @@ def _run_one_multires_level(
         active_geometry_dofs=context.active_geometry_dofs,
         resolved_schedule=context.resolved_schedule,
         level_stats=stage_result.level_stats,
+        ray_integrator=context.cfg.ray_integrator,
     )
     return next_state
 
@@ -269,6 +270,7 @@ def align_multires(
         setup_alignment_state=state.setup_alignment_state,
         active_geometry_dofs=context.active_geometry_dofs,
         resolved_schedule=context.resolved_schedule,
+        ray_integrator=context.cfg.ray_integrator,
     )
 
     return (

@@ -44,7 +44,7 @@ def _proposal_candidates_for_pose_stage(
     volume: jnp.ndarray,
 ) -> tuple[ProposalCandidate, ...]:
     state = setup_alignment_state.replace(
-        pose=PoseState(params5),
+        pose=PoseState(params5, translation_frame=setup_alignment_state.pose.translation_frame),
         volume=volume,
     )
     baseline = apply_alignment_state(base, state).pose_stack
@@ -68,7 +68,9 @@ def _proposal_candidates_for_pose_stage(
         for sign, label in ((-1.0, "minus"), (1.0, "plus")):
             candidate_params = params5.at[:, col].add(jnp.float32(sign * step))
             candidate_state = setup_alignment_state.replace(
-                pose=PoseState(candidate_params),
+                pose=PoseState(
+                    candidate_params, translation_frame=setup_alignment_state.pose.translation_frame
+                ),
                 volume=volume,
             )
             candidates.append(
@@ -111,7 +113,9 @@ def _apply_pose_proposal_stage(
     )
     effective = apply_alignment_state(
         base,
-        setup_alignment_state.replace(pose=PoseState(params5), volume=x_lvl),
+        setup_alignment_state.replace(
+            pose=PoseState(params5, translation_frame=cfg.pose_translation_frame), volume=x_lvl
+        ),
     )
     adapter = build_loss_adapter(active_loss_spec, projections)
     candidates = _proposal_candidates_for_pose_stage(
@@ -134,6 +138,7 @@ def _apply_pose_proposal_stage(
         views_per_batch=cfg.views_per_batch,
         projector_unroll=cfg.projector_unroll,
         checkpoint_projector=cfg.checkpoint_projector,
+        ray_integrator=cfg.ray_integrator,
     )
     best_params = params5
     if result.improved:
@@ -178,7 +183,7 @@ def _run_proposal_stage(
         params5=state.params5,
     )
     setup_alignment_state = setup_alignment_state.replace(
-        pose=PoseState(params5),
+        pose=PoseState(params5, translation_frame=cfg.pose_translation_frame),
         volume=state.x_lvl,
     )
     proposal_wall_time = time.perf_counter() - proposal_start
@@ -336,6 +341,8 @@ def _pose_stage_resume_state(
             L=resume_state.L,
             small_impr_streak=int(resume_state.small_impr_streak),
             elapsed_offset=float(resume_state.elapsed_offset - global_elapsed_offset),
+            pose_translation_frame=resume_state.pose_translation_frame,
+            ray_integrator=resume_state.ray_integrator,
         ),
         True,
     )
@@ -372,6 +379,7 @@ def _run_pose_alignment_stage(
         quality_tier=stage.quality_tier,
         outer_iters=int(stage.maxiter),
         recon_iters=0 if stage.objective_kind == "fixed_volume" else int(cfg.recon_iters),
+        gn_coupling="joint" if stage.objective_kind == "joint_volume_pose" else "fixed_volume",
         early_stop=bool(stage.early_stop),
         recon_L=None,
         loss=active_loss_spec,
@@ -416,6 +424,7 @@ def _run_pose_alignment_stage(
         pose=PoseState(
             params5,
             info.get("motion_coeffs"),  # type: ignore[arg-type]
+            translation_frame=cfg_stage.pose_translation_frame,
         ),
         volume=x_lvl,
     )
@@ -487,6 +496,8 @@ def _run_multires_level_stages(
         "quality_tier": str(cfg.quality_tier),
         "fallback_policy": str(cfg.fallback_policy),
         "pose_model": str(cfg.pose_model),
+        "pose_translation_frame": cfg.pose_translation_frame,
+        "ray_integrator": cfg.ray_integrator,
         "pose_model_variables": 0,
         "per_view_variables": 0,
         "pose_model_basis_shape": [],

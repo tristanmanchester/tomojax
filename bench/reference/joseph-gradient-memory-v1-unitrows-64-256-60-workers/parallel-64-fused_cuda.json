@@ -1,0 +1,30 @@
+{
+  "case": "parallel-64-60",
+  "method": "fused_cuda",
+  "status": "finite",
+  "loss": 2.876073122024536,
+  "volume_gradient_norm": 50.262428283691406,
+  "pose_gradient_norm": 260.8141174316406,
+  "component_measurements": {
+    "compile_ms": 425.5076916888356,
+    "first_execution_ms": 2.2860076278448105,
+    "warmup_calls": 154,
+    "warmup_ms": 200.59090573340654,
+    "samples_ms": [
+      1.2835534289479256,
+      1.1804578825831413,
+      1.3772901147603989,
+      1.424645073711872,
+      1.3961289077997208,
+      1.2261848896741867,
+      1.3558603823184967
+    ],
+    "median_ms": 1.3558603823184967,
+    "compiler_bytes": {
+      "argument_size_in_bytes": 2035456,
+      "output_size_in_bytes": 1052444,
+      "temp_size_in_bytes": 1113152,
+      "alias_size_in_bytes": 0
+    }
+  }
+}

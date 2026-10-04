@@ -6,10 +6,9 @@ import argparse
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-import numpy as np
-
 from tomojax.geometry import Detector, Grid
 from tomojax.io import load_tiff_stack, save_dataset
+from tomojax.io.api import load_angles
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -78,7 +77,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if output is None:
         parser.error("the following arguments are required: output or --out")
 
-    angles = _load_angles(Path(cast("str", args.angles)))
+    angles = load_angles(Path(cast("str", args.angles)))
     probe = load_tiff_stack(
         cast("str", args.input),
         angles_deg=angles,
@@ -92,8 +91,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         du=float(cast("float", args.du)),
         dv=float(cast("float", args.dv)),
         det_center=(
-            float(cast("float", args.det_center_u)),
-            float(cast("float", args.det_center_v)),
+            float(cast("float", args.det_center_u)) * float(cast("float", args.du)),
+            float(cast("float", args.det_center_v)) * float(cast("float", args.dv)),
         ),
     )
     grid = None
@@ -118,29 +117,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     save_dataset(output, probe)
     print(f"wrote {output} from {probe.projections.shape[0]} TIFF projections")
     return 0
-
-
-def _load_angles(path: Path) -> np.ndarray:
-    suffix = path.suffix.lower()
-    if suffix == ".npy":
-        values = np.asarray(np.load(path), dtype=np.float32)
-    else:
-        rows: list[float] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            text = line.strip()
-            if not text or text.startswith("#"):
-                continue
-            token = text.split(",", 1)[0].strip()
-            try:
-                rows.append(float(token))
-            except ValueError:
-                if not rows:
-                    continue
-                raise
-        values = np.asarray(rows, dtype=np.float32)
-    if values.ndim != 1:
-        raise ValueError("angle sidecar must be one-dimensional")
-    return values
 
 
 if __name__ == "__main__":

@@ -51,6 +51,7 @@ def accumulate_validation_normals(
     projector_unroll: int,
     checkpoint_projector: bool,
     gather_dtype: str,
+    ray_integrator: str = "sampled",
 ) -> ValidationNormalResult:
     """Accumulate validation GN normal equations for one fixed fold volume."""
     if not bool(loss_adapter.supports_setup_validation_lm):
@@ -108,6 +109,7 @@ def accumulate_validation_normals(
                 unroll=int(projector_unroll),
                 gather_dtype=gather_dtype,
                 det_grid=effective.det_grid,
+                ray_integrator=ray_integrator,
             )
 
         pred = jax.vmap(project_one)(T_chunk)
@@ -180,6 +182,7 @@ def score_validation_fixed_volume(
     projector_unroll: int,
     checkpoint_projector: bool,
     gather_dtype: str,
+    ray_integrator: str = "sampled",
 ) -> jnp.ndarray:
     """Score a fixed-volume validation fold without returning normal equations."""
     normals = accumulate_validation_normals(
@@ -198,6 +201,7 @@ def score_validation_fixed_volume(
         projector_unroll=projector_unroll,
         checkpoint_projector=checkpoint_projector,
         gather_dtype=gather_dtype,
+        ray_integrator=ray_integrator,
     )
     return normals.loss
 

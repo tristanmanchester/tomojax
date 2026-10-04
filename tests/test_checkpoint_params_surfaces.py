@@ -21,6 +21,8 @@ from tomojax.align.api import (
 # check-public-imports: allow-private
 from tomojax.cli.align.checkpoint import _schedule_resume_state_from_checkpoint
 
+pytestmark = pytest.mark.surface
+
 
 def _metadata_input() -> AlignmentCheckpointMetadataInput:
     grid = {"nx": 2, "ny": 3, "nz": 4, "vx": 1.0, "vy": 1.0, "vz": 1.0}
@@ -113,3 +115,59 @@ def test_alignment_params_schema_uses_current_identifier() -> None:
     payload = alignment_params_payload(np.zeros((1, 5), dtype=np.float32), du=1.0, dv=1.0)
 
     assert payload["schema"] == "tomojax.alignment_params"
+
+
+def test_legacy_checkpoint_pose_frame_is_object_and_cannot_be_reinterpreted() -> None:
+    metadata = build_alignment_checkpoint_metadata_from_input(_metadata_input())
+    checkpoint = AlignmentCheckpoint(
+        x=np.zeros((2, 3, 4), dtype=np.float32),
+        params5=np.zeros((5, 5), dtype=np.float32),
+        motion_coeffs=None,
+        loss_history=[],
+        outer_stats=[],
+        metadata=metadata,
+    )
+    expected = dict(metadata)
+    expected["config"] = {**metadata["config"], "pose_translation_frame": "object"}
+    expected["config"].update(gn_jacobian="autodiff", gn_difference_step=1e-3)
+    validate_alignment_checkpoint(checkpoint, expected)
+    assert "pose_translation_frame" not in metadata["config"]
+    expected["config"]["pose_translation_frame"] = "detector"
+    with pytest.raises(CheckpointError, match="config"):
+        validate_alignment_checkpoint(checkpoint, expected)
+    expected["config"]["pose_translation_frame"] = "object"
+    expected["config"]["gn_jacobian"] = "central"
+    with pytest.raises(CheckpointError, match="config"):
+        validate_alignment_checkpoint(checkpoint, expected)
+    expected["config"].update(gn_jacobian="autodiff", gn_joint_solver="stacked")
+    validate_alignment_checkpoint(checkpoint, expected)
+    expected["config"]["gn_joint_solver"] = "pose_eliminated"
+    with pytest.raises(CheckpointError, match="config"):
+        validate_alignment_checkpoint(checkpoint, expected)
+
+
+@pytest.mark.parametrize("multires", [False, True])
+def test_legacy_checkpoint_sampling_is_rejected_only_for_multires(multires):
+    metadata = build_alignment_checkpoint_metadata_from_input(_metadata_input())
+    if not multires:
+        metadata["levels"] = None
+        metadata.pop("multires_geometry_version")
+    checkpoint = AlignmentCheckpoint(
+        x=np.zeros((2, 3, 4), dtype=np.float32),
+        params5=np.zeros((5, 5), dtype=np.float32),
+        motion_coeffs=None,
+        loss_history=[],
+        outer_stats=[],
+        metadata=dict(metadata),
+    )
+    validate_alignment_checkpoint(checkpoint, metadata)
+    checkpoint.metadata.pop("multires_geometry_version", None)
+    if multires:
+        with pytest.raises(CheckpointError, match="multires geometry version"):
+            validate_alignment_checkpoint(checkpoint, metadata)
+        # Supplying old metadata as the expected request cannot bypass the
+        # current physical sampling convention.
+        with pytest.raises(CheckpointError, match="multires geometry version"):
+            validate_alignment_checkpoint(checkpoint, checkpoint.metadata)
+    else:
+        validate_alignment_checkpoint(checkpoint, metadata)

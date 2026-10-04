@@ -1,89 +1,68 @@
-# TomoJAX Quickstart
+# Reconstruct your first scan
 
-The typical workflow is: inspect data, preprocess or ingest it, reconstruct,
-and optionally run alignment.
+This guide starts from an installed checkout; follow [installation](installation.md)
+first. If you do not have data yet, run the [synthetic example](../README.md#first-reconstruction).
+Commands use `uv run --no-sync` from the checkout root. Replace example input
+paths with your files and use new output paths.
 
-## Install and check the CLI
-
-```bash
-uv sync --locked --extra cpu --dev
-uv run tomojax --help
-```
-
-For CUDA hosts, use the CUDA extra instead:
+## Inspect the data and geometry
 
 ```bash
-uv sync --locked --extra cuda12 --dev
-just accelerator-smoke-cuda
+uv run --no-sync tomojax inspect scan.nxs
+uv run --no-sync tomojax validate scan.nxs
 ```
 
-`just accelerator-smoke-cuda` verifies the optional accelerator projector path.
+Check the projection count and shape, angles, detector pitch, voxel pitch, and
+geometry type. Validation checks the dataset contract; it cannot prove that
+metadata matches the instrument. Arbitrary HDF5 layouts may need explicit paths
+during preprocessing. See `tomojax preprocess --help`.
 
-## Inspect, validate, and preprocess data
+Reconstruction expects absorption/log-attenuation projections. Raw detector
+intensities, normalized transmission, and already-corrected attenuation are
+different inputs. Establish which you have before preprocessing.
+
+## Correct raw detector frames
+
+For an NXtomo scan containing sample, flat, and dark frames:
 
 ```bash
-uv run tomojax inspect /path/to/scan.nxs
-uv run tomojax validate /path/to/scan.nxs
-uv run tomojax preprocess raw.nxs corrected.nxs
+uv run --no-sync tomojax preprocess raw.nxs corrected.nxs
+uv run --no-sync tomojax inspect corrected.nxs
+uv run --no-sync tomojax validate corrected.nxs
 ```
 
-For TIFF projection stacks, ingest into NXtomo format first:
+By default this applies flat/dark correction and the negative logarithm, then
+writes sample-only absorption projections with preprocessing provenance.
+`--transmission` writes normalized transmission instead and is not the input
+domain expected by the reconstruction commands. Already-corrected absorption
+data should bypass this step; applying the logarithm again changes the data.
+
+For TIFF data, use the [TIFF and measured-geometry instructions](real-laminography.md#prepare-tiff-data).
+`ingest` packages a stack; it does not perform flat/dark correction.
+
+## Reconstruct and inspect slices
+
+For uniformly sampled half-turn parallel data, start with FBP:
 
 ```bash
-uv run tomojax ingest ./projections \
-  --angles angles.csv \
-  --du 0.65 \
-  --dv 0.65 \
-  --out scan.nxs
+uv run --no-sync tomojax recon --data corrected.nxs --out recon.nxs \
+  --algo fbp --roi off --save-manifest recon-manifest.json
+uv run --no-sync tomojax validate recon.nxs
+uv run --no-sync tomojax slices --data recon.nxs --out quicklooks
 ```
 
-## Reconstruct
+`recon.nxs` stores the volume and copies the projections. The manifest records
+reconstruction settings. `quicklooks/` contains labelled PNGs for the three
+central planes and a JSON slice description. PNG contrast is scaled for display;
+read the stored floating-point volume for quantitative work.
 
-```bash
-uv run tomojax recon --data corrected.nxs --out recon.nxs
-```
+`--roi off` preserves the recorded grid. The default is `--roi auto`, which may
+crop to the detector field of view. `--grid NX NY NZ` changes the dimensions but
+keeps the input voxel spacing. Check both field of view and physical units before
+comparing reconstructions.
 
-## Align and reconstruct
-
-Use `pose` mode when the sample moves between projections. This is the default
-alignment mode and optimizes per-projection 5-DOF pose corrections.
-
-```bash
-uv run tomojax align --data corrected.nxs \
-  --out aligned.nxs \
-  --mode pose
-```
-
-Use `cor` mode when the detector centre or centre of rotation is the dominant
-problem:
-
-```bash
-uv run tomojax align --data corrected.nxs \
-  --out aligned_cor.nxs \
-  --mode cor
-```
-
-For help choosing between modes, see
-[`alignment-guide.md`](alignment-guide.md).
-
-## Synthetic test workflow
-
-```bash
-uv run tomojax simulate \
-  --out synthetic_scan.nxs \
-  --nx 64 --ny 64 --nz 64 \
-  --nu 64 --nv 64 \
-  --n-views 64 \
-  --phantom random_shapes
-
-uv run tomojax recon --data synthetic_scan.nxs --out synthetic_recon.nxs
-```
-
-For a Python example, see
-[`examples/simulate_and_reconstruct.py`](../examples/simulate_and_reconstruct.py).
-
-## Next steps
-
-After you can inspect, validate, reconstruct, and align a small dataset, see
-[`real-laminography.md`](real-laminography.md) for real scan data and
-[`support-matrix.md`](support-matrix.md) for a list of supported workflows.
+For tilted or irregular-angle data, start with the iterative workflow in the
+[real scan guide](real-laminography.md#reconstruct-with-the-recorded-geometry).
+If motion remains plausible, use the [alignment guide](alignment-guide.md) after
+checking geometry and preprocessing. A visually sharper aligned image does not
+by itself establish accurate recovered poses.

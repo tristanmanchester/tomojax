@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 import jax.image as jimage
 import jax.numpy as jnp
 
-from .geometry.base import Detector, Grid
+from .geometry.base import Detector, Grid, grid_volume_origin
 from .validation import validate_detector, validate_grid, validate_projection_stack
 
 if TYPE_CHECKING:
@@ -27,50 +27,62 @@ def validate_scale_factor(factor: object) -> int:
 
 
 def scale_grid(grid: Grid, factor: int) -> Grid:
-    """Scale grid for a coarser multires level, tolerating non-divisible dims.
+    """Coarsen the voxel count while preserving every physical volume face.
 
-    - New dims use ceil division to retain coverage when dims aren't divisible.
-    - Voxel sizes are multiplied by the factor to preserve physical extent.
+    Ceil division retains at least one voxel per axis. The spacing scales by
+    the actual count ratio, including odd dimensions. Since ``vol_origin`` is
+    a voxel centre, it must move by half the spacing change to retain the same
+    lower face; keeping it unchanged would translate an explicitly placed grid.
     """
     f = validate_scale_factor(factor)
     validate_grid(grid, "scale_grid grid")
-    nx = math.ceil(grid.nx / f)
-    ny = math.ceil(grid.ny / f)
-    nz = math.ceil(grid.nz / f)
+    if f == 1:
+        return grid
+    shape = (grid.nx, grid.ny, grid.nz)
+    spacing = (grid.vx, grid.vy, grid.vz)
+    coarse_shape = tuple(math.ceil(n / f) for n in shape)
+    coarse_spacing = tuple(
+        v * n / nc for v, n, nc in zip(spacing, shape, coarse_shape, strict=True)
+    )
+    origin = grid_volume_origin(grid)
+    coarse_origin = tuple(
+        o + (vc - v) / 2 for o, v, vc in zip(origin, spacing, coarse_spacing, strict=True)
+    )
     return Grid(
-        nx=nx,
-        ny=ny,
-        nz=nz,
-        vx=grid.vx * f,
-        vy=grid.vy * f,
-        vz=grid.vz * f,
-        vol_origin=grid.vol_origin,
+        nx=coarse_shape[0],
+        ny=coarse_shape[1],
+        nz=coarse_shape[2],
+        vx=coarse_spacing[0],
+        vy=coarse_spacing[1],
+        vz=coarse_spacing[2],
+        vol_origin=coarse_origin,
         vol_center=grid.vol_center,
     )
+
+
+def _decimated_axis(size: int, factor: int) -> tuple[int, int]:
+    """Select a uniformly spaced, in-bounds subset without duplicated padding."""
+    count = math.ceil(size / factor)
+    offset = min(factor // 2, size - 1 - (count - 1) * factor)
+    return count, offset
 
 
 def scale_detector(det: Detector, factor: int) -> Detector:
     """Scale detector for a coarser multires level.
 
-    Supports non-divisible sizes by using ceil(n/f) and increasing pixel size.
-    The projector operates in world units; increasing du/dv by `factor` keeps
-    per-ray spacing consistent with decimated projections. ``bin_projections``
-    selects the center sample from each padded f x f block, so the coarse detector
-    center must shift to keep those coarse rays aligned with the sampled pixels.
+    Keep exactly the rays selected by ``bin_projections``. Spacing increases by
+    ``factor`` and the centre follows the selected first/last pixels. No edge
+    samples are duplicated or assigned fictitious uniformly spaced coordinates.
     """
     f = validate_scale_factor(factor)
     validate_detector(det, "scale_detector detector")
-    nu = math.ceil(det.nu / f)
-    nv = math.ceil(det.nv / f)
+    if f == 1:
+        return det
+    nu, offset_u = _decimated_axis(det.nu, f)
+    nv, offset_v = _decimated_axis(det.nv, f)
 
-    def _scaled_center(n: int, d: float, center: float, n_coarse: int) -> float:
-        pad = (f - (n % f)) % f
-        left = pad // 2
-        source_positions = [min(max((f // 2) + j * f - left, 0), n - 1) for j in range(n_coarse)]
-        physical_positions = [
-            (source - (n / 2.0 - 0.5)) * d + center for source in source_positions
-        ]
-        return math.fsum(physical_positions) / n_coarse
+    def _scaled_center(n: int, d: float, center: float, n_coarse: int, offset: int) -> float:
+        return center + (offset + (n_coarse - 1) * f / 2 - (n - 1) / 2) * d
 
     return Detector(
         nu=nu,
@@ -78,60 +90,38 @@ def scale_detector(det: Detector, factor: int) -> Detector:
         du=det.du * f,
         dv=det.dv * f,
         det_center=(
-            _scaled_center(det.nu, det.du, det.det_center[0], nu),
-            _scaled_center(det.nv, det.dv, det.det_center[1], nv),
+            _scaled_center(det.nu, det.du, det.det_center[0], nu, offset_u),
+            _scaled_center(det.nv, det.dv, det.det_center[1], nv, offset_v),
         ),
     )
 
 
-def _pad_to_multiple_jnp(arr: jnp.ndarray, m_v: int, m_u: int) -> jnp.ndarray:
-    """Symmetrically pad last two dims to multiples of (m_v, m_u) using edge mode."""
-    if m_v <= 1 and m_u <= 1:
-        return arr
-    nv = arr.shape[-2]
-    nu = arr.shape[-1]
-    pad_v = (m_v - (nv % m_v)) % m_v if m_v > 1 else 0
-    pad_u = (m_u - (nu % m_u)) % m_u if m_u > 1 else 0
-    if pad_v == 0 and pad_u == 0:
-        return arr
-    pv0 = pad_v // 2
-    pv1 = pad_v - pv0
-    pu0 = pad_u // 2
-    pu1 = pad_u - pu0
-    pad_width = ((0, 0), (pv0, pv1), (pu0, pu1))
-    return jnp.pad(arr, pad_width, mode="edge")
-
-
 def bin_projections(proj: jnp.ndarray, factor: int) -> jnp.ndarray:
-    """Downsample projections by strided pick with symmetric edge padding.
+    """Decimate projections to uniformly spaced measured rays, without padding.
 
-    Pads to make dims divisible by `factor` (edge mode), then takes one pixel
-    per f x f block using a centered offset (f//2). This preserves per-ray scale
-    better than averaging while tolerating arbitrary input sizes.
+    This is point sampling, not detector-area averaging or an antialias filter.
+    It preserves per-ray amplitude. The coarse solver is an initializer; final
+    reconstruction must use the complete original data to recover fine detail.
     """
     f = validate_scale_factor(factor)
     if f == 1:
         return proj
-    y = _pad_to_multiple_jnp(proj, f, f)
-    v0 = f // 2
-    u0 = f // 2
-    return y[:, v0::f, u0::f]
+    if proj.ndim != 3 or min(proj.shape) < 1:
+        raise ValueError("bin_projections requires a nonempty (view, v, u) array")
+    _, v0 = _decimated_axis(proj.shape[1], f)
+    _, u0 = _decimated_axis(proj.shape[2], f)
+    return proj[:, v0::f, u0::f]
 
 
 def bin_volume(vol: jnp.ndarray, factor: int) -> jnp.ndarray:
-    """Downsample a volume by block averaging with edge padding."""
+    """Resample a volume onto ``scale_grid``'s grid with an antialias filter."""
     f = validate_scale_factor(factor)
     if f == 1:
         return vol
-    nx, ny, nz = vol.shape
-    px = (f - (nx % f)) % f
-    py = (f - (ny % f)) % f
-    pz = (f - (nz % f)) % f
-    if px or py or pz:
-        vol = jnp.pad(vol, ((0, px), (0, py), (0, pz)), mode="edge")
-    nx, ny, nz = vol.shape
-    v = vol.reshape(nx // f, f, ny // f, f, nz // f, f)
-    return v.mean(axis=(1, 3, 5))
+    if vol.ndim != 3 or min(vol.shape) < 1:
+        raise ValueError("bin_volume requires a nonempty (x, y, z) array")
+    shape = tuple(math.ceil(n / f) for n in vol.shape)
+    return jimage.resize(vol, shape, method="linear", antialias=True)
 
 
 def upsample_volume(
