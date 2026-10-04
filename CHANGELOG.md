@@ -45,6 +45,10 @@ accepted pairs in 26/27 cells, and the opt-in free-voxel alignment pilot passes
   or exact elimination of the small pose blocks. Preserve the fixed-volume
   default. The frozen free-voxel pilot passes five of six cells; noisy
   anisotropic recovery still misses the rotation gate.
+- Reuse compiled joint objectives across scans with matching shapes and solver
+  options, while passing each scan's measurements, geometry arrays and weights
+  as inputs. The six-cell comparison shows faster warm calls, with unchanged
+  cold startup, process GPU memory and recovery coverage.
 
 - Stop inflating the reused FISTA step bound by 20% after every alignment
   outer iteration. Preserve the solver's effective bound instead of shrinking

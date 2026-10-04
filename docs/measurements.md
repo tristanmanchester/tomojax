@@ -53,6 +53,7 @@ It is not a test of the larger ±3°/±10-pixel capture range in the stretch goa
 | Exact projector in the same path | 0/6 cells pass | [Exact rerun](public-free-voxel-exact-2026-10-04.md) |
 | Coupled volume/pose step | 5/6 cells pass | [Joint solve](public-free-voxel-joint-2026-10-04.md) |
 | Coupled solve with pose elimination | 5/6 cells pass; faster tilted recovery | [Pose elimination](public-free-voxel-schur-2026-10-04.md) |
+| Same eliminated solve with reusable compiled objectives | 5/6 cells pass; faster warm calls, unchanged cold startup and memory | [Compiled-objective reuse](public-free-voxel-reuse-2026-10-04.md) |
 | Same eliminated solve with fixed default-weight Huber-TV | 0/6 cells pass; rejected screen | [TV screen](public-free-voxel-tv-2026-10-04.md) |
 
 The noisy anisotropic cell still fails the 0.01° rotation gate on the successful
