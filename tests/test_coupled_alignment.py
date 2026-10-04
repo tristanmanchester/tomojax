@@ -24,12 +24,14 @@ def test_joint_schedule_keeps_explicit_fixed_volume_stages():
 
 
 @pytest.mark.numerical
+@pytest.mark.parametrize("scan_variant", [0, 1])
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
 @pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
 def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
-    monkeypatch, stream, backend, solver
+    monkeypatch, stream, backend, solver, scan_variant
 ):
+    from dataclasses import replace
     from pathlib import Path
 
     from tomojax.align import AlignConfig
@@ -53,25 +55,33 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
         monkeypatch.setattr(_coupled_objective, "_POSE_CACHE_BYTES", 0)
     grid = Grid(2, 3, 2, 0.7, 1.1, 1.4, vol_origin=(-0.32, -0.71, -0.53))
     det = Detector(4, 3, 0.65, 0.91, (0.23, -0.17))
-    geometry = LaminographyGeometry(grid, det, [7.2, 49.3, 113.7], tilt_deg=23)
+    # Identical shapes/configuration must accept new scan arrays without
+    # reusing an earlier scan's embedded measurements, poses or weights.
+    angles = np.array([7.2, 49.3, 113.7]) + 0.37 * scan_variant
+    geometry = LaminographyGeometry(grid, det, angles, tilt_deg=23)
     nominal = np.asarray(stack_view_poses(geometry, 3), np.float64)
-    rng = np.random.default_rng(34)
+    rng = np.random.default_rng(34 + scan_variant)
     x = rng.uniform(0.2, 1.3, (2, 3, 2)).astype(np.float32)
+    support = np.ones_like(x)
+    support[0, 0, 0] = 1 - scan_variant
+    x *= support
     p = rng.normal(0, 0.01, (3, 5)).astype(np.float32)
     pose = physical_poses(nominal, p)
     predicted = project_voxel_truth(x, pose, grid, det)
     target = predicted + rng.normal(0, 0.03, predicted.shape)
     target = jnp.asarray(target, jnp.float32)
-    active = np.array([1, 0, 1, 1, 0], np.float32)
+    active = np.array([1 - scan_variant, scan_variant, 1, 1, 0], np.float32)
     cfg = AlignConfig(
         gn_coupling="joint",
         gn_joint_solver=solver,
         gn_joint_iters=100,
         gn_joint_rtol=1e-6,
         gn_damping=0.2,
-        gn_volume_damping=0.2,
+        # Accepted scalar-like options must remain usable in a hashable
+        # program specification, including zero-dimensional NumPy arrays.
+        gn_volume_damping=0.2 if scan_variant == 0 else np.asarray(0.2),
         gn_jacobian="central",
-        gn_difference_step=0.003,
+        gn_difference_step=0.003 if scan_variant == 0 else np.asarray(0.003),
         ray_integrator="exact",
         projector_backend=backend,
         gather_dtype="fp32",
@@ -79,8 +89,8 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
         gauge_fix="none",
         lambda_tv=0,
         loss=PWLSLossSpec(a=0.3, b=0.8),
-        w_rot=0.03,
-        w_trans=0.05,
+        w_rot=0.03 + 0.005 * scan_variant,
+        w_trans=0.05 + 0.003 * scan_variant,
     )
     common = dict(
         grid=grid,
@@ -92,6 +102,7 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
     )
     runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
     ctx = _pose_objective_context(runtime=runtime, **common)
+    ctx = replace(ctx, volume_mask=jnp.asarray(support))
     objective = _coupled_objective.build_coupled_objective(ctx)
     result = objective.update(jnp.asarray(p), jnp.asarray(x))
     assert result.finite
@@ -100,7 +111,7 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
     a = (
         np.column_stack(
             [
-                project_voxel_truth(v.reshape(x.shape), pose, grid, det).ravel()
+                project_voxel_truth(v.reshape(x.shape) * support, pose, grid, det).ravel()
                 for v in np.eye(x.size)
             ]
         )
@@ -124,7 +135,9 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
             )
             / (2 * steps[dof])
         )
-    smooth = np.kron(np.array([[1, -2, 1]]), np.diag(np.array([0.03] * 3 + [0.05] * 2) * active))
+    smooth = np.kron(
+        np.array([[1, -2, 1]]), np.diag(np.array([cfg.w_rot] * 3 + [cfg.w_trans] * 2) * active)
+    )
     h_smooth = 2 * smooth.T @ smooth
     design = np.column_stack([a, j])
     residual = weight * (predicted - np.asarray(target)).ravel()

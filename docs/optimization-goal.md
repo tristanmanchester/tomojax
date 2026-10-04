@@ -162,6 +162,19 @@ subsequently failed its small physical quality/storage qualification despite
 passing independent algebra checks. That variant is stopped before integration;
 no public workflow was timed and no acceptance result changed.
 
+A subsequent physical-gradient GCV screen, recorded in the same report, improves
+20 of 24 small controls but strongly worsens independent sharp tilted data. It
+is also rejected before integration. Comparing only with fully converged least
+squares would hide those failures; early-stopped controls remain in the record.
+
+The [compiled-objective refactor](public-free-voxel-reuse-2026-10-04.md) completes
+paired six-cell public runs, one cold and seven warm calls per revision and cell.
+It removes warm backend compilation and improves all six warm medians, while
+cold time and process GPU memory remain essentially unchanged. Both revisions
+recover five of six cells; noisy anisotropic still fails every call. The 27
+reconstruction cells have unchanged source and are not retimed for this refactor.
+This bounded line is closed, with no new whole-matrix or successful joint target.
+
 The goal applies to the complete scientific workflow and the whole frozen
 comparison matrix. The scheduled reconstruction matrix is every combination of
 `gaussian-v1`, `structured-v1`, `structured-noisy-v1`; parallel, anisotropic

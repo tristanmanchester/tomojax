@@ -140,3 +140,24 @@ The scripts are one-off research artifacts under the ignored `.artifacts/`
 directory. No benchmark framework, public API, library defaults, acceptance
 threshold, or goal denominator changed. The previous 26/27 reconstruction and
 5/6 public alignment outcomes remain authoritative; the stretch goals remain open.
+## Subsequent physical-gradient GCV screen
+
+A separate small experiment used an explicit physical-gradient penalty and a
+direct generalized-eigenvalue solve, without the rejected filtered Krylov basis.
+It selected one weight from the measured data using full-data GCV, with identical
+bounds across tilted, anisotropic and parallel scans. Twenty-four controls covered
+smooth/sharp objects, matched/independent continuous-object data, and clean/noisy
+measurements. Independent dense solves and influence-matrix score checks passed.
+
+The candidate improved image error in only **20/24 controls** against a
+GCV-stopped, unregularized Krylov control. The four regressions were independent
+tilted smooth clean, independent tilted sharp clean/noisy, and matched anisotropic
+sharp clean. In the independent tilted sharp controls, candidate relative L2
+errors were 18.96 and 19.63, versus 1.11 and 1.11 for the early-stopped control.
+Both methods performed poorly there; comparing only with a fully converged,
+overfitted least-squares solution would conceal the candidate's failure.
+
+This variant is rejected without per-case weight retuning or public-workflow
+integration. No frozen acceptance result or timing score changes. The
+[complete screen and sources](../bench/reference/gradient-gcv-qualification-2026-10-04.json.gz)
+retain all successes, failures and selection settings.

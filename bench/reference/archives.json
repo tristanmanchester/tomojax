@@ -335,6 +335,15 @@
       "archive_sha256": "48aba2245bca9d54c75197061b807d65fb9752dadf786fc9d5e825a115a6cfcd"
     },
     {
+      "original": "gradient-gcv-qualification-2026-10-04.json",
+      "archive": "gradient-gcv-qualification-2026-10-04.json.gz",
+      "original_bytes": 66249,
+      "archive_bytes": 15590,
+      "original_lines": 996,
+      "sha256": "58aee82d567ecb6abe68bd9d5ca8d758b04f490399a38a8a253d7d2f917740d1",
+      "archive_sha256": "2f78cd21e60d3dea0797a15b1a45894b1f1e91b6003439470dafd3656cc90e92"
+    },
+    {
       "original": "gvxr-reconstruction-64.json",
       "archive": "gvxr-reconstruction-64.json.gz",
       "original_bytes": 22965,
@@ -749,6 +758,15 @@
       "archive_sha256": "29fa2760362d45cc12805dd16d40c39e4ce5b835644fa6735feb9d92acce598b"
     },
     {
+      "original": "public-free-voxel-reuse-2026-10-04.json",
+      "archive": "public-free-voxel-reuse-2026-10-04.json.gz",
+      "original_bytes": 9265448,
+      "archive_bytes": 553980,
+      "original_lines": 205925,
+      "sha256": "c2be8d5eaf007d7a7dc78007b60bcee8e05e12c54ef2117cedb34cfda710fb5d",
+      "archive_sha256": "50074af8315d1f0754b6ebeb676c95c6f6aabc0be7fc76301673c351c95c96c6"
+    },
+    {
       "original": "public-free-voxel-v1-analytic.json",
       "archive": "public-free-voxel-v1-analytic.json.gz",
       "original_bytes": 7771166,
@@ -1062,6 +1080,15 @@
       "original_lines": 27021,
       "sha256": "627308b5824c3800d4790b5a05155641823a33c60be44ebfa16ae44febcdd508",
       "archive_sha256": "47031128fd0ab30015999ba95f555b92bcb6a887b136e7ab1fb47b9e0c501369"
+    },
+    {
+      "original": "system-node-profile-2026-10-04.json",
+      "archive": "system-node-profile-2026-10-04.json.gz",
+      "original_bytes": 5047960,
+      "archive_bytes": 367924,
+      "original_lines": 124872,
+      "sha256": "f2ed7617e38f520d7bf2b031392b66168f39d7519dcb9e180e4a1f6ee480ef31",
+      "archive_sha256": "ea20ab0350a5d0c336319ba0d2bb81c3692e6e4b9f3b39782b0ba4f6abfeb403"
     },
     {
       "original": "workflows-large-rtx4070-laptop.json",

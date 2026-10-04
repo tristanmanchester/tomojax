@@ -50,6 +50,15 @@ respectively; they are not priors on the recovered object. The returned
 iteration limit does not imply an accurate linear solve. The optional pose
 column cache is capped at 64 MiB; larger scans recompute columns per view.
 
+Repeated joint calls reuse compiled objectives when array shapes and solver
+options match. Measurements, nominal poses, masks, detector coordinates and
+weights remain inputs to each call, so a new scan can reuse a program without
+reusing the previous scan's values. Changing shapes or program options still
+requires compilation; this reuse is separate from the optional JAX persistent
+cache for different processes. The [six-cell reuse comparison](public-free-voxel-reuse-2026-10-04.md)
+measures faster warm calls with unchanged cold startup and process GPU memory;
+noisy anisotropic recovery still fails its rotation gate.
+
 The experimental `gn_joint_solver="pose_eliminated"` factors the pose block
 and runs PCG on the volume Schur system, then back-substitutes poses. It solves
 the same damped linear problem as the default `"stacked"` method, with the

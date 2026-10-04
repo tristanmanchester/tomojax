@@ -4,7 +4,7 @@ All 27 frozen cells were profiled: 46 workflows and 92 cold/warm phases. Each ce
 
 Nsight Systems 2026.5.1 produced readable traces. The earlier 2023.3 profiler returned exit zero after fatal CUDA UUID errors; those incomplete traces were discarded from attribution. The source snapshot matches the retained launch archive.
 
-CUDA active time below is the union of traced kernels, memory operations and whole CUDA graph intervals. Internal graph nodes were not individually traced; these profiles cannot distinguish the graph's projector and adjoint kernels. Summing kernel events alone would incorrectly classify graph execution as idle time. Compilation is cProfile cumulative time in JAX backend_compile_and_load; it can overlap GPU activity, so the columns are not an additive wall-time decomposition.
+In the initial profile, CUDA active time below is the union of traced kernels, memory operations and whole CUDA graph intervals. Internal graph nodes were not individually traced; these profiles cannot distinguish the graph's projector and adjoint kernels. Summing kernel events alone would incorrectly classify graph execution as idle time. Compilation is cProfile cumulative time in JAX backend_compile_and_load; it can overlap GPU activity, so the columns are not an additive wall-time decomposition.
 
 [Raw attribution](../bench/reference/system-matrix-v2-profile-attribution.json) retains all 46 workflows, including failed solves.
 
@@ -41,3 +41,26 @@ CUDA active time below is the union of traced kernels, memory operations and who
 The slow cold ratios and the long tilted solve have different limiting costs. In noisy tilted 64, the instrumented call takes 3603 ms with 1951 ms of backend compilation and 26 ms of CUDA activity. In Gaussian tilted 256, plain CGLS spends about 43.2 seconds executing CUDA work on a warm failed solve; its accepted coarse-to-fine alternative spends about 5.2 seconds executing CUDA work and incurs 5.3 seconds of backend compilation on the cold selected-budget call.
 
 These measurements support reducing general solver setup/compilation and improving convergence across tilted and irregular geometry. They do not justify copy overlap, tile sizes, or gather tuning as the next whole-system change. The failed sharp anisotropic 64 gate still requires a quality improvement; startup changes alone cannot supply it.
+
+## Node-level follow-up
+
+A second diagnostic run traces the kernels inside CUDA graphs. All 46 reconstruction workflows and all six public free-voxel alignment cells completed cold and warm calls: **104 phases covering 33 cells**. The reconstruction source passes the original archive audit; alignment uses the unchanged pose-elimination snapshot and original fixture hashes. All pass/fail patterns are retained, including sharp anisotropic reconstruction and noisy anisotropic alignment failures.
+
+Across the 27 general Joseph CGLS warm calls, backprojection contributes **61–74% of summed kernel time**. The failed smooth tilted 256 solve spends 30.59 of 43.46 wall seconds in backprojection; the accepted multiresolution alternative spends 3.62 of 5.29 seconds there. This supports investigating the adjoint as an iterative-runtime cost. It does not explain the Fourier import cost, supply the missing quality result, or remove cold compilation.
+
+The public alignment path has a separate repeated-call compilation cost. Its coupled objective is built as new JIT closures over each scan. The warm calls still compile for **2.13–2.38 seconds**. The exact adjoint is also the largest GPU cost; the noisy anisotropic warm failure launches it 80,960 times and spends 29.27 seconds in it. Most launches come from single-view reconstruction refreshes. The full kernel catalog and complete quality histories are retained in the [node-level archive](../bench/reference/system-node-profile-2026-10-04.json.gz).
+
+Times in this table are instrumented seconds, not accepted-result benchmark times. Compile time and GPU activity can overlap. The original cold/warm timings and process GPU peaks remain in the [alignment comparison](public-free-voxel-schur-2026-10-04.md) and [reconstruction comparison](system-matrix-2026-10-04.md); no new memory or speedup denominator is inferred from these traces.
+
+| Alignment cell | Cold total / compile s | Warm total / compile s | Warm exact adjoint s | Both calls accepted |
+|---|---:|---:|---:|---|
+| parallel-clean | 19.85 / 12.17 | 7.09 / 2.32 | 1.75 | yes |
+| parallel-noisy | 20.08 / 12.38 | 7.18 / 2.33 | 1.75 | yes |
+| anisotropic-clean | 19.97 / 11.85 | 7.49 / 2.20 | 2.29 | yes |
+| anisotropic-noisy | 61.86 / 11.75 | 49.49 / 2.13 | 29.27 | no |
+| lamino-clean | 29.24 / 12.19 | 12.70 / 2.21 | 5.87 | yes |
+| lamino-noisy | 28.30 / 12.22 | 18.55 / 2.38 | 9.77 | yes |
+
+Instrumented reruns do not reproduce every floating-point trajectory. Compared with the earlier graph-level traces, the largest reconstruction relative-L2 difference is 0.00215; tilted alignment also stops at different outer iterations between calls. The archive retains each value and failure. These observations reinforce using separate uninstrumented, repeated runs to assess any change.
+
+The completed [compiled-objective refactor](public-free-voxel-reuse-2026-10-04.md) passes scan arrays into reusable compiled functions and includes changed-scan controls to detect stale captured arrays. All six warm medians improve; cold time and memory do not, and noisy anisotropic alignment still fails. Reconstruction algorithms are unchanged. This bounded tuning line is closed; it does not close the whole-matrix goal.
