@@ -27,7 +27,8 @@ data = case.analytic + (
 truth = case.volume
 
 
-def err(x):
+def err(x: object) -> float:
+    """Full-volume relative L2 error against the sampled truth."""
     return float(np.linalg.norm(np.asarray(x, np.float64) - truth) / np.linalg.norm(truth))
 
 
