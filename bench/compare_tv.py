@@ -10,11 +10,12 @@ transfers. Override TIGRE's grids with TIGRE_LAMBDAS / TIGRE_ALPHAS.
 """
 
 import os
+from pathlib import Path
 import sys
 import time
 
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
-sys.path.insert(0, "/home/tristan/Projects/tomojax/bench")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from compare_projectors import make_case
 import numpy as np
 

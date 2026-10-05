@@ -206,8 +206,11 @@ def _solve(
                 state.direction, spacing
             )
         valid = jnp.isfinite(denominator) & (denominator > 0)
-        alpha = state.gamma / jnp.where(valid, denominator, 1.0)
-        x = state.x + alpha * state.direction
+        alpha = jnp.where(valid, state.gamma / jnp.where(valid, denominator, 1.0), 0.0)
+        # A finite denominator implies a finite direction, so the update keeps a
+        # finite iterate finite; never retaining the previous one saves a volume.
+        stepped = valid
+        x = jnp.where(valid, state.x + alpha * state.direction, state.x)
         residual = state.residual - alpha * projected
         gradient = adjoint(residual) - penalty_gradient(x)
         gamma_new = jnp.sum(gradient * gradient)
@@ -234,57 +237,56 @@ def _solve(
         periodic_check = ((state.iteration + 1) % 16 == 0) & near_precision
         verify = roundoff | small_global_update | convergence_candidate | periodic_check
 
-        def recompute() -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
+        def recompute(
+            _recurrence: jax.Array, gradient: jax.Array
+        ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
+            # The exact residual always replaces the recurrence residual, so
+            # the branch never holds both sinograms.
             prediction = forward(x)
-            exact_residual = data - prediction
-            exact_gradient = adjoint(exact_residual) - penalty_gradient(x)
-            exact_gamma = jnp.sum(exact_gradient * exact_gradient)
             # A componentwise cancellation estimate keeps a bright, already
             # solved region from setting another region's precision limit.
             # It is an FP32 stagnation diagnostic, never a relaxed tolerance.
-            cancellation = magnitude_adjoint(jnp.abs(data) + jnp.abs(prediction)) + damp2 * jnp.abs(
-                x
-            )
+            cancellation = magnitude_adjoint(
+                (data, prediction), lambda d, p: jnp.abs(d) + jnp.abs(p)
+            ) + damp2 * jnp.abs(x)
             if gradient_damping is not None:
                 cancellation = cancellation + gradient_damping**2 * gradient_normal(
                     jnp.abs(x), spacing, absolute_weights=True
                 )
+            exact_residual = data - prediction
+            exact_gradient = adjoint(exact_residual) - penalty_gradient(x)
+            exact_gamma = jnp.sum(exact_gradient * exact_gradient)
             at_precision = jnp.all(
                 jnp.abs(exact_gradient) <= 8 * jnp.finfo(jnp.float32).eps * cancellation
             )
             gap2 = jnp.sum((exact_gradient - gradient) ** 2)
-            replace = convergence_candidate | roundoff | at_precision | (gap2 > 0.01 * gamma_new)
-            return (
-                jnp.where(replace, exact_residual, residual),
-                jnp.where(replace, exact_gradient, gradient),
-                jnp.where(replace, exact_gamma, gamma_new),
-                replace,
-                roundoff | at_precision,
-            )
+            restart = convergence_candidate | roundoff | at_precision | (gap2 > 0.01 * gamma_new)
+            return exact_residual, exact_gradient, exact_gamma, restart, roundoff | at_precision
 
-        residual, gradient, gamma_new, replaced, roundoff = jax.lax.cond(
-            verify, recompute, lambda: (residual, gradient, gamma_new, jnp.bool_(False), roundoff)
+        residual, gradient, gamma_new, restart, roundoff = jax.lax.cond(
+            verify,
+            recompute,
+            lambda residual, gradient: (residual, gradient, gamma_new, jnp.bool_(False), roundoff),
+            residual,
+            gradient,
         )
         valid &= jnp.isfinite(gamma_new)
-        # A replaced residual invalidates the old conjugate recurrence. If the
+        # A large recurrence drift invalidates the conjugate directions. If the
         # recomputed norm fails the tolerance, continue with a fresh direction.
         direction = jnp.where(
-            replaced, gradient, gradient + (gamma_new / state.gamma) * state.direction
+            restart, gradient, gradient + (gamma_new / state.gamma) * state.direction
         )
-        next_state = _State(
-            state.iteration + 1,
+        # At breakdown, report the last finite iterate and stop.
+        return _State(
+            state.iteration + stepped.astype(jnp.int32),
             x,
             residual,
             direction,
-            gamma_new,
-            jnp.bool_(False),
-            roundoff,
-            replaced,
+            jnp.where(valid, gamma_new, state.gamma),
+            ~valid,
+            jnp.where(valid, roundoff, state.roundoff),
+            jnp.where(valid, verify, state.residual_verified),
             state.residual_recomputations + verify.astype(jnp.int32),
-        )
-        # Do not replace a finite iterate with a broken one at rank breakdown.
-        return jax.lax.cond(
-            valid, lambda: next_state, lambda: state._replace(failed=jnp.bool_(True))
         )
 
     result = jax.lax.while_loop(condition, step, state)

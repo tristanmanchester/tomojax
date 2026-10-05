@@ -58,10 +58,28 @@ variant reaches the public workflow comparison.
 [`bench/compare_tv.py`](../bench/compare_tv.py) reconstructs a 128³ structured
 parallel phantom from 180 views with 3% noise, 50 iterations per library over
 each library's own grid of regularisation weights. TomoJAX FISTA-TV reaches a
-best relative L2 error of 0.077 in 1.28 s warm. TIGRE's FISTA reaches 0.101 in
+best relative L2 error of 0.076 in 1.13 s warm. TIGRE's FISTA reaches 0.101 in
 9.7 s and its ASD-POCS 0.146 in 5.7 s; larger TIGRE FISTA weights diverge.
 Unregularised CGLS is best at 0.138 (10 iterations). TIGRE's timings include
 its host transfers. This is one phantom and noise level, not a general ranking.
+
+## Iterative solver memory
+
+On a 512³ laminography scan with 768 views of 512² pixels (0.8 GB of
+projections) on the 8 GB laptop GPU, with `XLA_PYTHON_CLIENT_MEM_FRACTION=0.95`:
+
+| Solver | Peak GPU memory before | After |
+|---|---|---|
+| CGLS | out of memory | 5.6 GB |
+| FISTA-TV | 7.2 GB | 4.6 GB |
+| SPDHG-TV | out of memory | 4.9 GB |
+
+CGLS keeps about five volumes and three sinograms, FISTA-TV seven volumes and
+SPDHG-TV eight volumes plus its dual sinogram; none stores a sinogram-sized
+temporary for the data gradient. JAX's default allocator limit is 75% of device
+memory, under which this CGLS case still does not fit; the CLI raises the
+limit to 90%. Volumes larger than device memory are not yet supported by the
+iterative solvers.
 
 ## Joint volume and pose recovery
 

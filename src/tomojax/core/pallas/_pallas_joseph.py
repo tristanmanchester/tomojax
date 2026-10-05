@@ -1,8 +1,9 @@
 """CUDA plane sampling and its gather transpose, with no scattered atomics.
 
-The detector is stored internally with v contiguous, matching the volume's
-contiguous z coordinate. The adjoint inverts each plane's affine ray map to
-bound its footprint, then evaluates the same interpolation weights as the forward.
+Rays and gathers traverse detector v fastest, matching the volume's contiguous
+z coordinate, while sinograms keep the library's (view, v, u) layout. The
+adjoint inverts each plane's affine ray map to bound its footprint, then
+evaluates the same interpolation weights as the forward.
 """
 
 from __future__ import annotations
@@ -23,6 +24,9 @@ from ._pallas_plane_sampling import cubic_sample
 if TYPE_CHECKING:
     from tomojax.core.geometry.base import Detector, Grid
 
+_TILE_V = 16
+_SWAP = 32
+
 
 def _fp_kernel(
     coeff_ref: Any,
@@ -38,10 +42,13 @@ def _fp_kernel(
     nv, nu = det_shape
     view = pl.program_id(0)
     tile = pl.program_id(1)
-    p = tile * block + jnp.arange(block, dtype=jnp.int32)
-    u = p // nv
-    v = p % nv
-    valid = p < nv * nu
+    # A tile spans _TILE_V consecutive rows of block // _TILE_V columns: volume
+    # reads along v and sinogram writes along u both cover whole memory sectors.
+    p = jnp.arange(block, dtype=jnp.int32)
+    tiles_v = (nv + _TILE_V - 1) // _TILE_V
+    u = (tile // tiles_v) * (block // _TILE_V) + p // _TILE_V
+    v = (tile % tiles_v) * _TILE_V + p % _TILE_V
+    valid = (u < nu) & (v < nv)
 
     def cf(i):
         return plt.load(coeff_ref.at[view, jnp.int32(i)])
@@ -99,7 +106,9 @@ def _fp_kernel(
     output = jax.lax.fori_loop(
         lower, jnp.maximum(upper, lower), step, jnp.zeros((block,), jnp.float32)
     )
-    plt.store(output_ref.at[0, jnp.arange(block)], output, mask=valid)
+    # Rays run v-fastest for coalesced volume reads; the sinogram itself stays
+    # (v, u), so callers never hold a transposed copy.
+    plt.store(output_ref.at[view, v * nu + u], output, mask=valid)
 
 
 # Jit once per static configuration: every call site then reuses one traced
@@ -119,6 +128,8 @@ def forward_pallas(
     validate_interpolation(interpolation)
     views = coeff.shape[0]
     count = detector.nu * detector.nv
+    if block % _TILE_V:
+        raise ValueError(f"forward block must be a multiple of {_TILE_V}")
     out = pl.pallas_call(
         partial(
             _fp_kernel,
@@ -128,18 +139,22 @@ def forward_pallas(
             interpolation=interpolation,
         ),
         out_shape=jax.ShapeDtypeStruct((views, count), jnp.float32),
-        grid=(views, (count + block - 1) // block),
+        grid=(
+            views,
+            -(-detector.nu // (block // _TILE_V)) * -(-detector.nv // _TILE_V),
+        ),
         in_specs=[pl.no_block_spec, pl.no_block_spec],
-        out_specs=pl.BlockSpec((1, block), lambda view, tile: (view, tile)),
+        out_specs=pl.no_block_spec,
         compiler_params=plt.CompilerParams(num_warps=4),
         interpret=interpret,
     )(coeff, volume)
-    return out.reshape(views, detector.nu, detector.nv).transpose(0, 2, 1)
+    return out.reshape(views, detector.nv, detector.nu)
 
 
 def _bp_kernel(
     coeff_ref: Any,
     images_ref: Any,
+    acc_ref: Any,
     out_ref: Any,
     *,
     shape: tuple[int, int, int],
@@ -209,7 +224,13 @@ def _bp_kernel(
         return jax.lax.fori_loop(0, count_u, gather_u, accum)
 
     output = jax.lax.fori_loop(0, nviews, view_step, jnp.zeros((block,), jnp.float32))
-    plt.store(out_ref, output, mask=valid)
+    _store_sum(out_ref, acc_ref, output, valid)
+
+
+def _store_sum(out_ref: Any, acc_ref: Any, value: jax.Array, valid: jax.Array) -> None:
+    if acc_ref is not None:
+        value = plt.load(acc_ref, mask=valid, other=0.0) + value
+    plt.store(out_ref, value, mask=valid)
 
 
 @partial(
@@ -226,10 +247,20 @@ def adjoint_pallas(
     interpret: bool = False,
     interpolation: str = "linear",
     absolute_weights: bool = False,
+    accumulate: jax.Array | None = None,
 ) -> jax.Array:
-    """Gather weights per voxel; optionally use their magnitudes for error bounds."""
+    """Gather weights per voxel; optionally use their magnitudes for error bounds.
+
+    ``accumulate`` is added to the result in place, so a loop over view batches
+    keeps one volume rather than an accumulator plus a per-batch volume.
+    """
     validate_interpolation(interpolation)
     count = grid.nx * grid.ny * grid.nz
+    operands = [coeff, _swap_detector_axes(images), _has_unit_rows(coeff)]
+    in_specs = [pl.no_block_spec, pl.no_block_spec, pl.no_block_spec]
+    if accumulate is not None:
+        operands.append(accumulate.astype(jnp.float32).reshape(count))
+        in_specs.append(pl.BlockSpec((block,), lambda tile: (tile,)))
     out = pl.pallas_call(
         partial(
             _bp_dispatch_kernel,
@@ -242,15 +273,43 @@ def adjoint_pallas(
         ),
         out_shape=jax.ShapeDtypeStruct((count,), jnp.float32),
         grid=((count + block - 1) // block,),
-        in_specs=[pl.no_block_spec, pl.no_block_spec, pl.no_block_spec],
+        in_specs=in_specs,
         out_specs=pl.BlockSpec((block,), lambda tile: (tile,)),
+        input_output_aliases={3: 0} if accumulate is not None else {},
         # A single warp keeps the footprint maxima within a warp and avoids
         # cross-warp synchronization on every view. Larger explicit tiles retain
         # the original four-warp launch configuration.
         compiler_params=plt.CompilerParams(num_warps=1 if block == 32 else 4),
         interpret=interpret,
-    )(coeff, jnp.transpose(images, (0, 2, 1)), _has_unit_rows(coeff))
+    )(*operands)
     return out.reshape((grid.nx, grid.ny, grid.nz))
+
+
+def _swap_kernel(images_ref: Any, out_ref: Any, *, det_shape: tuple[int, int]) -> None:
+    nv, nu = det_shape
+    view = pl.program_id(0)
+    u = pl.program_id(1) * _SWAP + jnp.arange(_SWAP, dtype=jnp.int32)
+    v = pl.program_id(2) * _SWAP + jnp.arange(_SWAP, dtype=jnp.int32)
+    mask = (v[:, None] < nv) & (u[None, :] < nu)
+    tile = plt.load(images_ref.at[view, v[:, None], u[None, :]], mask=mask, other=0.0)
+    plt.store(out_ref.at[view, u[:, None], v[None, :]], tile.T, mask=mask.T)
+
+
+def _swap_detector_axes(images: jax.Array) -> jax.Array:
+    """Return ``images.transpose(0, 2, 1)`` from an opaque kernel.
+
+    An XLA transpose here lets layout assignment store whole loop-carried
+    sinograms transposed, adding full-size copies around every solver loop.
+    """
+    views, nv, nu = images.shape
+    return pl.pallas_call(
+        partial(_swap_kernel, det_shape=(nv, nu)),
+        out_shape=jax.ShapeDtypeStruct((views, nu, nv), jnp.float32),
+        grid=(views, -(-nu // _SWAP), -(-nv // _SWAP)),
+        in_specs=[pl.no_block_spec],
+        out_specs=pl.no_block_spec,
+        compiler_params=plt.CompilerParams(num_warps=4),
+    )(images)
 
 
 def _has_unit_rows(coeff: jax.Array) -> jax.Array:
@@ -264,6 +323,7 @@ def _has_unit_rows(coeff: jax.Array) -> jax.Array:
 def _bp_unit_rows_kernel(
     coeff_ref,
     images_ref,
+    acc_ref,
     out_ref,
     *,
     shape: tuple[int, int, int],
@@ -340,15 +400,14 @@ def _bp_unit_rows_kernel(
         return jax.lax.fori_loop(0, count_u, gather_u, accum)
 
     result = jax.lax.fori_loop(0, nviews, view_step, jnp.zeros((block,), jnp.float32))
-    plt.store(out_ref, result, mask=valid)
+    _store_sum(out_ref, acc_ref, result, valid)
 
 
 def _bp_dispatch_kernel(
     coeff_ref,
     images_ref,
     unit_rows_ref,
-    out_ref,
-    *,
+    *refs: Any,
     shape,
     det_shape,
     nviews,
@@ -356,10 +415,14 @@ def _bp_dispatch_kernel(
     interpolation="linear",
     absolute_weights=False,
 ) -> None:
+    # With an accumulator, refs is (accumulator, aliased output).
+    acc_ref, out_ref = refs if len(refs) == 2 else (None, refs[0])
+
     def unit_rows():
         _bp_unit_rows_kernel(
             coeff_ref,
             images_ref,
+            acc_ref,
             out_ref,
             shape=shape,
             det_shape=det_shape,
@@ -373,6 +436,7 @@ def _bp_dispatch_kernel(
         _bp_kernel(
             coeff_ref,
             images_ref,
+            acc_ref,
             out_ref,
             shape=shape,
             det_shape=det_shape,

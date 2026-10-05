@@ -62,6 +62,109 @@ def resolve_projector(
     return model, backend
 
 
+class _Batches:
+    """Fixed-size view batches over one pose stack, with matched batch operators."""
+
+    def __init__(
+        self,
+        poses: jax.Array,
+        grid: Grid,
+        detector: Detector,
+        det_grid: tuple[jax.Array, jax.Array] | None,
+        backend: str,
+        batch_size: int,
+        model: str,
+        joseph_interpolation: str,
+        absolute_weights: bool,
+    ) -> None:
+        self.n = int(poses.shape[0])
+        self.size = min(batch_size, self.n)
+        self.count = (self.n + self.size - 1) // self.size
+        self.poses, self.grid, self.detector, self.det_grid = poses, grid, detector, det_grid
+        self.backend, self.model = backend, model
+        self.interpolation, self.absolute_weights = joseph_interpolation, absolute_weights
+        if model == "joseph":
+            from tomojax.core.joseph import plane_coefficients
+
+            self.coefficients = plane_coefficients(poses, grid, detector)
+
+    def select(self, chunk: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
+        start = jnp.minimum(chunk * self.size, self.n - self.size)
+        batch = jax.lax.dynamic_slice(self.poses, (start, 0, 0), (self.size, 4, 4))
+        # The final shifted batch overlaps earlier views. Its adjoint must count
+        # only new views; forward writes the same overlapping values again.
+        valid = start + jnp.arange(self.size) >= chunk * self.size
+        return start, batch, valid
+
+    def images(self, stack: jax.Array, start: jax.Array) -> jax.Array:
+        shape = (self.size, self.detector.nv, self.detector.nu)
+        return jax.lax.dynamic_slice(stack, (start, 0, 0), shape)
+
+    def _coefficients(self, start: jax.Array) -> jax.Array:
+        return jax.lax.dynamic_slice(self.coefficients, (start, 0), (self.size, 14))
+
+    def project(self, volume: jax.Array, start: jax.Array, batch: jax.Array) -> jax.Array:
+        grid, detector = self.grid, self.detector
+        if self.model == "joseph":
+            from tomojax.core.joseph import forward_project_planes
+
+            return forward_project_planes(
+                self._coefficients(start),
+                volume,
+                grid,
+                detector,
+                backend=self.backend,
+                interpolation=self.interpolation,
+            )
+        if self.backend == "pallas":
+            from tomojax.core.pallas.api import (
+                PallasProjectorOptions,
+                forward_project_views_T_pallas,
+            )
+
+            return forward_project_views_T_pallas(
+                batch,
+                grid,
+                detector,
+                volume,
+                options=PallasProjectorOptions(tile_shape=(16, 4), num_warps=1),
+            )
+        return jax.vmap(
+            lambda t: forward_project_view_T(t, grid, detector, volume, det_grid=self.det_grid)
+        )(batch)
+
+    def backproject(
+        self, images: jax.Array, start: jax.Array, batch: jax.Array, output: jax.Array
+    ) -> jax.Array:
+        """Return ``output`` plus the batch transpose; Joseph on CUDA adds in place."""
+        grid, detector = self.grid, self.detector
+        if self.model == "joseph":
+            from tomojax.core.joseph import sum_backproject_planes
+
+            return sum_backproject_planes(
+                self._coefficients(start),
+                images,
+                grid,
+                detector,
+                backend=self.backend,
+                interpolation=self.interpolation,
+                absolute_weights=self.absolute_weights,
+                accumulate=output,
+            )
+        if self.backend == "pallas":
+            from tomojax.core.pallas.api import sum_backproject_views_T_pallas
+
+            update = sum_backproject_views_T_pallas(
+                batch, grid, detector, images, tile_shape=(16, 4), num_warps=1
+            )
+        else:
+            update = sum_backproject_views_T(batch, grid, detector, images, det_grid=self.det_grid)
+        return output + update
+
+    def zeros_volume(self) -> jax.Array:
+        return jnp.zeros((self.grid.nx, self.grid.ny, self.grid.nz), dtype=jnp.float32)
+
+
 def projection_operators(
     poses: jax.Array,
     grid: Grid,
@@ -72,101 +175,100 @@ def projection_operators(
     model: str = "ray",
     joseph_interpolation: str = "linear",
     absolute_weights: bool = False,
-) -> tuple[Callable[[jax.Array], jax.Array], Callable[[jax.Array], jax.Array]]:
+) -> tuple[Callable[[jax.Array], jax.Array], Callable[..., jax.Array]]:
     """Return matched ``(forward, adjoint)`` over all views in fixed-size batches.
 
     ``absolute_weights`` returns ``abs(A).T`` instead of the adjoint, for
-    cancellation bounds with negative interpolation lobes.
+    cancellation bounds with negative interpolation lobes. ``adjoint(stacks,
+    combine)`` applies ``combine`` to batches of several stacks, so a derived
+    sinogram such as ``abs(a) + abs(b)`` is never stored whole; ``accumulate``
+    adds the result to an existing volume, in place for Joseph on CUDA.
     """
-    n = int(poses.shape[0])
-    batch_size = min(batch_size, n)
-    chunks = (n + batch_size - 1) // batch_size
-    if model == "joseph":
-        from tomojax.core.joseph import (
-            forward_project_planes,
-            plane_coefficients,
-            sum_backproject_planes,
-        )
-
-        coefficients = plane_coefficients(poses, grid, detector)
-
-    def select(chunk: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
-        start = jnp.minimum(chunk * batch_size, n - batch_size)
-        batch = jax.lax.dynamic_slice(poses, (start, 0, 0), (batch_size, 4, 4))
-        # The final shifted batch overlaps earlier views. Its adjoint must count
-        # only new views; forward writes the same overlapping values again.
-        valid = start + jnp.arange(batch_size) >= chunk * batch_size
-        return start, batch, valid
+    ops = _Batches(
+        poses,
+        grid,
+        detector,
+        det_grid,
+        backend,
+        batch_size,
+        model,
+        joseph_interpolation,
+        absolute_weights,
+    )
 
     def forward(volume: jax.Array) -> jax.Array:
         def body(chunk: jax.Array, output: jax.Array) -> jax.Array:
-            start, batch, _ = select(chunk)
-            if model == "joseph":
-                coeff = jax.lax.dynamic_slice(coefficients, (start, 0), (batch_size, 14))
-                projected = forward_project_planes(
-                    coeff,
-                    volume,
-                    grid,
-                    detector,
-                    backend=backend,
-                    interpolation=joseph_interpolation,
-                )
-            elif backend == "pallas":
-                from tomojax.core.pallas.api import (
-                    PallasProjectorOptions,
-                    forward_project_views_T_pallas,
-                )
-
-                projected = forward_project_views_T_pallas(
-                    batch,
-                    grid,
-                    detector,
-                    volume,
-                    options=PallasProjectorOptions(tile_shape=(16, 4), num_warps=1),
-                )
-            else:
-                projected = jax.vmap(
-                    lambda t: forward_project_view_T(t, grid, detector, volume, det_grid=det_grid)
-                )(batch)
+            start, batch, _ = ops.select(chunk)
+            projected = ops.project(volume, start, batch)
             return jax.lax.dynamic_update_slice(output, projected, (start, 0, 0))
 
-        return jax.lax.fori_loop(
-            0, chunks, body, jnp.zeros((n, detector.nv, detector.nu), dtype=jnp.float32)
-        )
+        empty = jnp.zeros((ops.n, detector.nv, detector.nu), dtype=jnp.float32)
+        return jax.lax.fori_loop(0, ops.count, body, empty)
 
-    def adjoint(images: jax.Array) -> jax.Array:
+    def adjoint(
+        images: jax.Array | tuple[jax.Array, ...],
+        combine: Callable[..., jax.Array] | None = None,
+        accumulate: jax.Array | None = None,
+    ) -> jax.Array:
+        stacks = (images,) if combine is None else tuple(images)
+        initial = ops.zeros_volume() if accumulate is None else accumulate
+
         def body(chunk: jax.Array, output: jax.Array) -> jax.Array:
-            start, batch, valid = select(chunk)
-            data = jax.lax.dynamic_slice(
-                images, (start, 0, 0), (batch_size, detector.nv, detector.nu)
-            )
+            start, batch, valid = ops.select(chunk)
+            slices = [ops.images(a, start) for a in stacks]
+            data = slices[0] if combine is None else combine(*slices)
             data = jnp.where(valid[:, None, None], data, 0.0)
-            if model == "joseph":
-                coeff = jax.lax.dynamic_slice(coefficients, (start, 0), (batch_size, 14))
-                update = sum_backproject_planes(
-                    coeff,
-                    data,
-                    grid,
-                    detector,
-                    backend=backend,
-                    interpolation=joseph_interpolation,
-                    absolute_weights=absolute_weights,
-                )
-            elif backend == "pallas":
-                from tomojax.core.pallas.api import sum_backproject_views_T_pallas
+            return ops.backproject(data, start, batch, output)
 
-                update = sum_backproject_views_T_pallas(
-                    batch, grid, detector, data, tile_shape=(16, 4), num_warps=1
-                )
-            else:
-                update = sum_backproject_views_T(batch, grid, detector, data, det_grid=det_grid)
-            return output + update
-
-        return jax.lax.fori_loop(
-            0, chunks, body, jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
-        )
+        return jax.lax.fori_loop(0, ops.count, body, initial)
 
     return forward, adjoint
+
+
+def least_squares_operators(
+    poses: jax.Array,
+    grid: Grid,
+    detector: Detector,
+    backend: str,
+    batch_size: int,
+    model: str = "ray",
+    joseph_interpolation: str = "linear",
+) -> tuple[
+    Callable[[jax.Array, jax.Array], tuple[jax.Array, jax.Array]],
+    Callable[[jax.Array, jax.Array], jax.Array],
+]:
+    """Return ``(value_and_gradient, value)`` of ``0.5 ||A x - y||^2``.
+
+    Each view batch is projected, compared with the data and transposed before
+    the next, so no sinogram-sized intermediate is ever stored.
+    """
+    ops = _Batches(
+        poses, grid, detector, None, backend, batch_size, model, joseph_interpolation, False
+    )
+
+    def batch_residual(volume: jax.Array, data: jax.Array, chunk: jax.Array) -> tuple:
+        start, batch, valid = ops.select(chunk)
+        residual = ops.project(volume, start, batch) - ops.images(data, start)
+        return start, batch, jnp.where(valid[:, None, None], residual, 0.0)
+
+    def squared(residual: jax.Array) -> jax.Array:
+        return 0.5 * jnp.vdot(residual, residual).real
+
+    def value_and_gradient(volume: jax.Array, data: jax.Array) -> tuple[jax.Array, jax.Array]:
+        def body(chunk: jax.Array, carry: tuple) -> tuple:
+            value, gradient = carry
+            start, batch, residual = batch_residual(volume, data, chunk)
+            return value + squared(residual), ops.backproject(residual, start, batch, gradient)
+
+        return jax.lax.fori_loop(0, ops.count, body, (jnp.float32(0), ops.zeros_volume()))
+
+    def value(volume: jax.Array, data: jax.Array) -> jax.Array:
+        def body(chunk: jax.Array, total: jax.Array) -> jax.Array:
+            return total + squared(batch_residual(volume, data, chunk)[2])
+
+        return jax.lax.fori_loop(0, ops.count, body, jnp.float32(0))
+
+    return value_and_gradient, value
 
 
 def normal_operator_norm(

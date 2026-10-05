@@ -33,6 +33,7 @@ from ._callbacks import LossCallback, emit_loss_callback_endpoints
 from ._projection import (
     ProjectorBackend,
     ProjectorModel,
+    least_squares_operators,
     normal_operator_norm,
     projection_operators,
     resolve_projector,
@@ -90,9 +91,9 @@ class _FistaRuntime:
     regulariser: Regulariser = field(metadata={"static": True})
     huber_delta: float = field(metadata={"static": True})
     constraints: _FistaConstraints
-    x0: jnp.ndarray
-    z0: jnp.ndarray
-    t0: float
+    # None starts from zeros created inside the compiled solve, so the start
+    # is not a separate argument buffer alongside the iterates.
+    x0: jnp.ndarray | None
     poses: jnp.ndarray
     lipschitz: float
     volume_mask: jnp.ndarray | None
@@ -539,45 +540,31 @@ def power_method_L(
 
 
 def tv_proximal(x: jnp.ndarray, lam_over_L: float, iters: int = 20) -> jnp.ndarray:
-    """Apply the isotropic TV proximal via a PDHG (Chambolle-Pock) update."""
+    """Approximate the isotropic TV proximal by projected gradient on its dual.
+
+    Solve ``min_u 0.5 ||u - x||^2 + lam TV(u)`` through the dual field ``p``
+    with ``|p| <= lam`` pointwise and ``u = x + div p`` (Chambolle 2004), using
+    the guaranteed step ``1 / ||div||^2 = 1 / 12``. Only the three dual
+    components persist between iterations, so the prox holds about four volumes.
+    """
     lam = jnp.asarray(lam_over_L, dtype=x.dtype)
-    tau = jnp.asarray(0.25, dtype=x.dtype)
-    sigma = jnp.asarray(0.25, dtype=x.dtype)
-    theta = jnp.asarray(1.0, dtype=x.dtype)
+    tau = jnp.asarray(1.0 / 12.0, dtype=x.dtype)
     eps = jnp.asarray(jnp.finfo(x.dtype).eps, dtype=x.dtype)
 
     def prox_impl(lam_val: jnp.ndarray) -> jnp.ndarray:
         lam_safe = jnp.maximum(lam_val, eps)
 
         def body(
-            carry: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray],
-            _: object,
-        ) -> tuple[tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray], None]:
-            u, u_bar, p1, p2, p3 = carry
-            gx, gy, gz = grad3(u_bar)
-            p1_n = p1 + sigma * gx
-            p2_n = p2 + sigma * gy
-            p3_n = p3 + sigma * gz
-            norm = jnp.maximum(1.0, jnp.sqrt(p1_n * p1_n + p2_n * p2_n + p3_n * p3_n) / lam_safe)
-            p1_n = p1_n / norm
-            p2_n = p2_n / norm
-            p3_n = p3_n / norm
-            div_p = div3(p1_n, p2_n, p3_n)
-            u_prev = u
-            u_minus = u + tau * div_p
-            u_n = (u_minus + tau * x) / (1.0 + tau)
-            u_bar_n = u_n + theta * (u_n - u_prev)
-            return (u_n, u_bar_n, p1_n, p2_n, p3_n), None
+            p: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray], _: object
+        ) -> tuple[tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray], None]:
+            gx, gy, gz = grad3(x + div3(*p))
+            q1, q2, q3 = p[0] + tau * gx, p[1] + tau * gy, p[2] + tau * gz
+            shrink = jnp.maximum(1.0, jnp.sqrt(q1 * q1 + q2 * q2 + q3 * q3) / lam_safe)
+            return (q1 / shrink, q2 / shrink, q3 / shrink), None
 
-        init = (
-            x,
-            x,
-            jnp.zeros_like(x),
-            jnp.zeros_like(x),
-            jnp.zeros_like(x),
-        )
-        (u, _, _, _, _), _ = jax.lax.scan(body, init, None, length=int(iters))
-        return u
+        zeros = jnp.zeros_like(x)
+        p, _ = jax.lax.scan(body, (zeros, zeros, zeros), None, length=int(iters))
+        return x + div3(*p)
 
     return jax.lax.cond(lam > 0, prox_impl, lambda _: x, lam)
 
@@ -667,12 +654,8 @@ def _prepare_fista_runtime(
     if init_x is not None:
         validate_volume(init_x, grid, context="fista_tv init_x", name="init_x")
 
-    x0 = (
-        jnp.asarray(init_x, dtype=jnp.float32)
-        if init_x is not None
-        else jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
-    )
-    if constraints_enabled:
+    x0 = None if init_x is None else jnp.asarray(init_x, dtype=jnp.float32)
+    if constraints_enabled and x0 is not None:
         x0 = _project_constraints(
             x0,
             positivity=constraints.positivity,
@@ -722,8 +705,6 @@ def _prepare_fista_runtime(
         huber_delta=huber_delta,
         constraints=constraints,
         x0=x0,
-        z0=x0,
-        t0=1.0,
         poses=poses,
         lipschitz=float(lipschitz),
         volume_mask=volume_mask,
@@ -781,21 +762,16 @@ def _data_term(
     mask = None if runtime.volume_mask is None else jnp.asarray(runtime.volume_mask, jnp.float32)
     if runtime.projector is not None:
         model, backend, batch = runtime.projector
-        forward, adjoint = projection_operators(
-            runtime.poses, grid, detector, None, backend, batch, model
+        least_squares, squared_error = least_squares_operators(
+            runtime.poses, grid, detector, backend, batch, model
         )
 
-        def residual(x: jnp.ndarray) -> jnp.ndarray:
-            return forward(x if mask is None else x * mask) - projections
-
         def batched_value_and_grad(z: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-            r = residual(z)
-            g = adjoint(r)
-            return 0.5 * jnp.vdot(r, r).real, g if mask is None else g * mask
+            v, g = least_squares(z if mask is None else z * mask, projections)
+            return v, g if mask is None else g * mask
 
         def batched_value(x: jnp.ndarray) -> jnp.ndarray:
-            r = residual(x)
-            return 0.5 * jnp.vdot(r, r).real
+            return squared_error(x if mask is None else x * mask, projections)
 
     def val_and_grad_fn(z: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         if runtime.projector is not None:
@@ -942,10 +918,18 @@ def _run_fista_scan(
         return jax.lax.cond(state.done, run_skip, run_active, state), None
 
     loss_arr0 = jnp.zeros((int(cfg.iters),), dtype=jnp.float32)
+    x0 = runtime.x0
+    if x0 is None:
+        x0 = _project_constraints(
+            jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32),
+            positivity=constraints.positivity,
+            lower_bound=constraints.lower_bound,
+            upper_bound=constraints.upper_bound,
+        )
     init_carry = FistaScanState(
-        x=runtime.x0,
-        z=runtime.z0,
-        t=jnp.asarray(runtime.t0, dtype=runtime.x0.dtype),
+        x=x0,
+        z=x0,
+        t=jnp.float32(1.0),
         loss=loss_arr0,
         prev_obj=jnp.float32(0.0),
         streak=jnp.int32(0),

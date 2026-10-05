@@ -109,7 +109,8 @@ class _SPDHGScanState(NamedTuple):
     p1: jnp.ndarray
     p2: jnp.ndarray
     p3: jnp.ndarray
-    s: jnp.ndarray
+    # Sum of A_i^T y_i over data blocks; the TV part, -div p, is recomputed.
+    s_data: jnp.ndarray
     losses: jnp.ndarray
 
 
@@ -140,14 +141,16 @@ class _SPDHGRuntime:
     regulariser: Regulariser = field(metadata={"static": True})
     huber_delta: float = field(metadata={"static": True})
     y_meas: jnp.ndarray
-    weights: jnp.ndarray
+    # None means unit weights; no sinogram of ones is stored.
+    weights: jnp.ndarray | None
     poses: jnp.ndarray
     detector_grid: tuple[jnp.ndarray, jnp.ndarray]
     support: jnp.ndarray | None
     lambda_tv: jnp.ndarray
     step_sizes: _SPDHGStepSizes
     schedule: _SPDHGSchedule
-    initial_state: _SPDHGScanState
+    # None starts from zeros created inside the compiled solve.
+    init_x: jnp.ndarray | None
     # (model, backend) for batched operators, or None for the ray reference path.
     projector: tuple[str, str] | None = field(metadata={"static": True})
 
@@ -241,14 +244,16 @@ def _prox_fstar_l2(
     u: jnp.ndarray,
     sigma: float,
     y_meas: jnp.ndarray,
-    w: jnp.ndarray,
+    w: jnp.ndarray | None,
 ) -> jnp.ndarray:
     """Apply the weighted L2 dual proximal.
 
     Elementwise: if w > 0, return ``(u - sigma * y) * w / (sigma + w)``;
-    otherwise return zero for the domain of the conjugate.
+    otherwise return zero for the domain of the conjugate. ``None`` is w = 1.
     """
     sigma = jnp.asarray(sigma, dtype=u.dtype)
+    if w is None:
+        return ((u - sigma * y_meas) / (sigma + 1)).astype(u.dtype)
     denom = sigma + w
     v = (u - sigma * y_meas) * w / jnp.maximum(denom, 1e-12)
     return jnp.where(w > 0, v, 0.0).astype(u.dtype)
@@ -364,19 +369,16 @@ def _initial_spdhg_state(
     *,
     iters: int,
 ) -> _SPDHGScanState:
-    x0 = (
-        jnp.asarray(init_x, dtype=jnp.float32)
-        if init_x is not None
-        else jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
-    )
+    # Called inside the compiled solve: zero states are never input buffers.
+    x0 = init_x if init_x is not None else jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
     return _SPDHGScanState(
         x=x0,
-        x_bar=jnp.array(x0, copy=True),
+        x_bar=x0,
         y_data=jnp.zeros_like(y_meas),
         p1=jnp.zeros_like(x0),
         p2=jnp.zeros_like(x0),
         p3=jnp.zeros_like(x0),
-        s=jnp.zeros_like(x0),
+        s_data=jnp.zeros_like(x0),
         losses=jnp.zeros((iters,), dtype=jnp.float32),
     )
 
@@ -426,9 +428,7 @@ def _prepare_spdhg_runtime(
         validate_volume(init_x, grid, context="spdhg_tv init_x", name="init_x")
 
     y_meas = jnp.asarray(projections, dtype=jnp.float32)
-    weights_arr = (
-        jnp.ones_like(y_meas) if weights is None else jnp.asarray(weights, dtype=jnp.float32)
-    )
+    weights_arr = None if weights is None else jnp.asarray(weights, dtype=jnp.float32)
     poses = stack_view_poses(geometry, n_views)
     validate_pose_stack(poses, n_views, context="spdhg_tv geometry")
     resolved_det_grid = get_detector_grid_device(detector) if det_grid is None else det_grid
@@ -456,7 +456,7 @@ def _prepare_spdhg_runtime(
         lambda_tv=jnp.asarray(cfg.lambda_tv, dtype=jnp.float32),
         step_sizes=step_sizes,
         schedule=_build_spdhg_schedule(n_views, cfg),
-        initial_state=_initial_spdhg_state(grid, y_meas, init_x, iters=cfg.iters),
+        init_x=None if init_x is None else jnp.asarray(init_x, dtype=jnp.float32),
         projector=projector,
     )
 
@@ -534,14 +534,15 @@ def _make_spdhg_backproject_chunk(
 ) -> _SPDHGProjectChunk:
     cfg = runtime.config
 
-    def backproject(T_chunk: jnp.ndarray, images: jnp.ndarray) -> jnp.ndarray:
+    def backproject(T_chunk: jnp.ndarray, images: jnp.ndarray, total: jnp.ndarray) -> jnp.ndarray:
+        """Return ``total`` plus the chunk transpose; CUDA Joseph adds in place."""
         if runtime.projector is not None:
             model, backend = runtime.projector
             _, adjoint = projection_operators(
                 T_chunk, grid, detector, None, backend, T_chunk.shape[0], model
             )
-            return adjoint(images)
-        return sum_backproject_views_T(
+            return adjoint(images, accumulate=total)
+        return total + sum_backproject_views_T(
             T_chunk,
             grid,
             detector,
@@ -587,10 +588,14 @@ def _run_spdhg_scan(  # noqa: PLR0915
             (start_shifted, 0, 0),
             (schedule.views_per_batch, nv, nu),
         )
-        w_chunk = jax.lax.dynamic_slice(
-            runtime.weights,
-            (start_shifted, 0, 0),
-            (schedule.views_per_batch, nv, nu),
+        w_chunk = (
+            None
+            if runtime.weights is None
+            else jax.lax.dynamic_slice(
+                runtime.weights,
+                (start_shifted, 0, 0),
+                (schedule.views_per_batch, nv, nu),
+            )
         )
         y_dual_old = jax.lax.dynamic_slice(
             state.y_data,
@@ -609,7 +614,7 @@ def _run_spdhg_scan(  # noqa: PLR0915
         y_dual_new = row_mask * y_dual_new + (1.0 - row_mask) * y_dual_old
         delta_y = (y_dual_new - y_dual_old) * row_mask
 
-        g_block = backproject_chunk(T_chunk, delta_y)
+        s_data_new = backproject_chunk(T_chunk, delta_y, state.s_data)
 
         gx, gy, gz = grad3(state.x_bar)
         p1_u = state.p1 + step_sizes.sigma_tv * gx
@@ -634,8 +639,9 @@ def _run_spdhg_scan(  # noqa: PLR0915
             p2_new = p2_u / norm
             p3_new = p3_u / norm
 
-        delta_div = div3(p1_new - state.p1, p2_new - state.p2, p3_new - state.p3)
-        s_new = state.s + g_block - delta_div
+        # s = sum_i A_i^T y_i - div p. Recomputing div p from the updated duals,
+        # rather than differencing old and new duals, lets them update in place.
+        s_new = s_data_new - div3(p1_new, p2_new, p3_new)
         x_new = _proj_pos_support(state.x - step_sizes.tau * s_new, cfg.positivity, runtime.support)
         x_bar_candidate = x_new + jnp.asarray(cfg.theta, x_new.dtype) * (x_new - state.x)
         x_bar_new = _proj_pos_support(x_bar_candidate, cfg.positivity, runtime.support)
@@ -648,7 +654,9 @@ def _run_spdhg_scan(  # noqa: PLR0915
         do_log = (cfg.log_every > 0) & ((t + 1) % cfg.log_every == 0)
 
         def log_step() -> jnp.ndarray:
-            resid = (pred - y_chunk) * jnp.sqrt(w_chunk) * row_mask
+            resid = (pred - y_chunk) * row_mask
+            if w_chunk is not None:
+                resid = resid * jnp.sqrt(w_chunk)
             data_est = (
                 0.5
                 * jnp.vdot(resid, resid).real
@@ -669,11 +677,12 @@ def _run_spdhg_scan(  # noqa: PLR0915
             p1=p1_new,
             p2=p2_new,
             p3=p3_new,
-            s=s_new,
+            s_data=s_data_new,
             losses=losses_new,
         ), None
 
-    final_state, _ = jax.lax.scan(one_step, runtime.initial_state, jnp.arange(cfg.iters))
+    initial = _initial_spdhg_state(grid, runtime.y_meas, runtime.init_x, iters=cfg.iters)
+    final_state, _ = jax.lax.scan(one_step, initial, jnp.arange(cfg.iters))
     return final_state
 
 

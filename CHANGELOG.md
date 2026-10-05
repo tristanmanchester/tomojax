@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Cut iterative-solver GPU memory. On a 512-cubed, 768-view laminography scan
+  on an 8 GB GPU, CGLS (previously out of memory) peaks at 5.6 GB, FISTA-TV
+  falls from 7.2 to 4.6 GB and SPDHG-TV (previously out of memory) peaks at
+  4.9 GB. The Joseph CUDA kernels keep sinograms in their (view, v, u) layout,
+  so XLA no longer stores transposed copies of every sinogram around solver
+  loops, and the gather transpose accumulates view batches in place.
+  FISTA-TV computes its data gradient batch by batch without a sinogram-sized
+  temporary, its TV prox runs projected gradient on the dual (Chambolle) with
+  three persistent volumes instead of five, and zero starting states are
+  created inside the compiled solves. CGLS always adopts the recomputed
+  residual and no longer retains a second state for breakdown. SPDHG-TV
+  recomputes the TV divergence instead of differencing dual fields and no
+  longer allocates a sinogram of unit weights. The forward kernel's 8-by-16
+  ray tiles also make laminography projection 18% faster. The CLI sets
+  `XLA_PYTHON_CLIENT_MEM_FRACTION=0.9` unless already set.
+  FISTA-TV on the 128-cubed TV comparison now reaches 0.076 in 1.13 s.
 - Add `bench/compare_tv.py`. On a 128-cubed structured parallel scan with 3%
   noise and 50 iterations, TomoJAX FISTA-TV reaches 0.077 relative error in
   1.28 s; TIGRE's FISTA reaches 0.101 in 9.7 s and ASD-POCS 0.146 in 5.7 s.

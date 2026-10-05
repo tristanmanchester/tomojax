@@ -241,10 +241,14 @@ def sum_backproject_planes(
     backend: str,
     interpolation: str = "linear",
     absolute_weights: bool = False,
+    accumulate: jax.Array | None = None,
 ) -> jax.Array:
-    """Apply the matched transpose, or abs(A).T when estimating cancellation."""
+    """Apply the matched transpose, or abs(A).T when estimating cancellation.
+
+    A given ``accumulate`` volume is added to the result; CUDA adds in place.
+    """
     if backend == "jax":
-        return adjoint_jax(
+        volume = adjoint_jax(
             coefficients,
             images,
             grid,
@@ -252,6 +256,7 @@ def sum_backproject_planes(
             interpolation=interpolation,
             absolute_weights=absolute_weights,
         )
+        return volume if accumulate is None else accumulate + volume
     if backend == "pallas":
         from .pallas._pallas_joseph import adjoint_pallas
 
@@ -262,6 +267,7 @@ def sum_backproject_planes(
             detector,
             interpolation=interpolation,
             absolute_weights=absolute_weights,
+            accumulate=accumulate,
         )
     raise ValueError("Plane projection backend must be 'jax' or 'pallas'")
 
