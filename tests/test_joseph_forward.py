@@ -159,7 +159,7 @@ def test_cgls_rejects_invalid_or_inapplicable_interpolation(interpolation):
             g,
             d,
             np.zeros((len(poses), d.nv, d.nu)),
-            config=CGLSConfig(joseph_interpolation=interpolation),
+            config=CGLSConfig(projector_model="ray", joseph_interpolation=interpolation),
         )
 
 

@@ -114,7 +114,12 @@ def test_cgls_matches_dense_lstsq_with_tail_batches(damping, warm_start):
         data,
         init_x=initial,
         config=CGLSConfig(
-            iters=60, rtol=1e-7, damping=damping, views_per_batch=3, projector_backend="jax"
+            projector_model="ray",
+            iters=60,
+            rtol=1e-7,
+            damping=damping,
+            views_per_batch=3,
+            projector_backend="jax",
         ),
     )
     np.testing.assert_allclose(volume.ravel(), expected, rtol=2e-4, atol=3e-5)
@@ -142,7 +147,12 @@ def test_unattainable_tolerance_stops_at_roundoff_without_diverging():
             detector,
             data,
             config=CGLSConfig(
-                iters=160, rtol=0, damping=0.7, views_per_batch=3, projector_backend="jax"
+                projector_model="ray",
+                iters=160,
+                rtol=0,
+                damping=0.7,
+                views_per_batch=3,
+                projector_backend="jax",
             ),
         )
         np.testing.assert_allclose(volume.ravel(), expected, rtol=2e-4, atol=3e-5)
@@ -183,7 +193,9 @@ def test_changed_data_geometry_and_budget_reuse_compiled_solver():
             grid,
             detector,
             data,
-            config=CGLSConfig(iters=iterations, views_per_batch=3, projector_backend="jax"),
+            config=CGLSConfig(
+                projector_model="ray", iters=iterations, views_per_batch=3, projector_backend="jax"
+            ),
         )
         np.testing.assert_allclose(result.ravel(), truth, rtol=2e-4, atol=2e-5)
         assert info["converged"]
@@ -233,7 +245,12 @@ def test_pallas_cgls_matches_dense_damped_solution():
         detector,
         data,
         config=CGLSConfig(
-            iters=60, rtol=1e-7, damping=damping, views_per_batch=3, projector_backend="pallas"
+            projector_model="ray",
+            iters=60,
+            rtol=1e-7,
+            damping=damping,
+            views_per_batch=3,
+            projector_backend="pallas",
         ),
     )
     np.testing.assert_allclose(actual.ravel(), expected, rtol=3e-4, atol=3e-5)

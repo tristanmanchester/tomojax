@@ -315,6 +315,8 @@ def _refresh_setup_reconstruction(
         projections,
         init_x=init_x,
         config=FistaConfig(
+            projector_model="ray",
+            projector_backend="jax",
             iters=scaled_reconstruction_iters(cfg.recon_iters, quality_policy),
             lambda_tv=float(cfg.lambda_tv),
             regulariser=cfg.regulariser,

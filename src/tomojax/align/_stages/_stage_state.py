@@ -542,6 +542,8 @@ def _seed_translation_params(
     params0: jnp.ndarray | None,
 ) -> jnp.ndarray | None:
     seed_cfg = FistaConfig(
+        projector_model="ray",
+        projector_backend="jax",
         iters=max(3, cfg.recon_iters // 2),
         lambda_tv=cfg.lambda_tv,
         regulariser=cfg.regulariser,

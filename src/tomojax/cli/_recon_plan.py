@@ -170,7 +170,9 @@ def _resolve_gather_dtype(requested: str) -> str:
 
 
 def _default_views_per_batch(algo: str) -> int:
-    return 16 if str(algo).lower() == "spdhg" else 1
+    # SPDHG's batch is its stochastic block size; FISTA's batched operators
+    # launch one projector call per batch.
+    return {"spdhg": 16, "fista": 64}.get(str(algo).lower(), 1)
 
 
 def _resolve_views_per_batch(

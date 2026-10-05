@@ -7,16 +7,20 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-# check-public-imports: allow-private
-from tomojax.core.projector import forward_project_view_T
 from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.recon import FistaConfig, SPDHGConfig, fista_tv, spdhg_tv
+
+# check-public-imports: allow-private
+from tomojax.recon._projection import projection_operators
 
 
 @pytest.mark.numerical
 @pytest.mark.parametrize("tilted", [False, True])
 @pytest.mark.parametrize("solver", ["fista", "spdhg"])
-def test_tv_solver_reduces_residual_and_recovers_phantom(tilted: bool, solver: str) -> None:
+@pytest.mark.parametrize("model", ["joseph", "ray"])
+def test_tv_solver_reduces_residual_and_recovers_phantom(
+    tilted: bool, solver: str, model: str
+) -> None:
     grid = Grid(12, 12, 5, 0.8, 1.1, 1.3)
     detector = Detector(16, 7, 0.8, 1.3)
     angles = np.linspace(0, 180, 16, endpoint=False)
@@ -30,9 +34,7 @@ def test_tv_solver_reduces_residual_and_recovers_phantom(tilted: bool, solver: s
         jnp.arange(12) - 5.5, jnp.arange(12) - 5.5, jnp.arange(5) - 2, indexing="ij"
     )
     truth = jnp.exp(-((x / 2.3) ** 2 + (y / 1.7) ** 2 + (z / 1.5) ** 2) / 2)
-    project = jax.jit(
-        lambda volume: jax.vmap(lambda t: forward_project_view_T(t, grid, detector, volume))(poses)
-    )
+    project = jax.jit(projection_operators(poses, grid, detector, None, "jax", 16, model)[0])
     # These data isolate optimizer convergence. Independent analytic projection
     # and reconstruction checks live in the benchmark and FBP accuracy tests.
     data = project(truth)
@@ -43,7 +45,13 @@ def test_tv_solver_reduces_residual_and_recovers_phantom(tilted: bool, solver: s
             detector,
             data,
             config=FistaConfig(
-                iters=30, lambda_tv=0.001, positivity=True, power_iters=5, views_per_batch=4
+                iters=30,
+                lambda_tv=0.001,
+                positivity=True,
+                power_iters=5,
+                views_per_batch=4,
+                projector_model=model,
+                projector_backend="jax",
             ),
         )
         residual_limit, volume_limit = 0.005, 0.04
@@ -54,7 +62,13 @@ def test_tv_solver_reduces_residual_and_recovers_phantom(tilted: bool, solver: s
             detector,
             data,
             config=SPDHGConfig(
-                iters=100, lambda_tv=0.001, positivity=True, views_per_batch=4, seed=18
+                iters=100,
+                lambda_tv=0.001,
+                positivity=True,
+                views_per_batch=4,
+                seed=18,
+                projector_model=model,
+                projector_backend="jax",
             ),
         )
         residual_limit, volume_limit = 0.03, 0.08

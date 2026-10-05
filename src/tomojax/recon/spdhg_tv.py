@@ -26,6 +26,13 @@ from tomojax.core.validation import (
     validate_projection_stack,
     validate_volume,
 )
+from tomojax.recon._projection import (
+    ProjectorBackend,
+    ProjectorModel,
+    normal_operator_norm,
+    projection_operators,
+    resolve_projector,
+)
 
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
 from ._tv_ops import (
@@ -50,7 +57,14 @@ _SPDHGProjectChunk = Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]
 
 @dataclass
 class SPDHGConfig:
-    """Configuration for stochastic primal-dual TV reconstruction."""
+    """Configuration for stochastic primal-dual TV reconstruction.
+
+    ``projector_model`` and ``projector_backend`` choose the projection operator as
+    in :class:`FistaConfig`: ``"auto"`` uses Joseph plane sampling with Pallas on
+    CUDA unless an explicit detector grid or the exact ray integrator requires
+    the ray-model reference path. ``gather_dtype``, ``projector_unroll`` and
+    ``checkpoint_projector`` apply to the reference path only.
+    """
 
     iters: int = 400
     lambda_tv: float = 5e-3
@@ -70,6 +84,8 @@ class SPDHGConfig:
     checkpoint_projector: bool = True
     gather_dtype: str = "fp32"
     ray_integrator: str = "sampled"
+    projector_model: ProjectorModel = "auto"
+    projector_backend: ProjectorBackend = "auto"
 
     # constraints
     positivity: bool = True
@@ -132,6 +148,8 @@ class _SPDHGRuntime:
     step_sizes: _SPDHGStepSizes
     schedule: _SPDHGSchedule
     initial_state: _SPDHGScanState
+    # (model, backend) for batched operators, or None for the ray reference path.
+    projector: tuple[str, str] | None = field(metadata={"static": True})
 
 
 @dataclass(frozen=True)
@@ -236,6 +254,35 @@ def _prox_fstar_l2(
     return jnp.where(w > 0, v, 0.0).astype(u.dtype)
 
 
+def _batched_projector(config: SPDHGConfig, det_grid: object) -> tuple[str, str] | None:
+    """Choose batched operators, or None for the ray-model reference path."""
+    model, backend = config.projector_model, config.projector_backend
+    if det_grid is not None or config.ray_integrator != "sampled":
+        if model == "joseph" or backend == "pallas":
+            raise ValueError(
+                "spdhg_tv: explicit detector grids and exact integration require "
+                "projector_model='ray' and projector_backend='jax'"
+            )
+        return None
+    model, backend = resolve_projector(model, backend, context="spdhg_tv")
+    return None if (model, backend) == ("ray", "jax") else (model, backend)
+
+
+@functools.partial(jax.jit, static_argnames=("grid", "detector", "projector", "iters"))
+def _batched_norm_squared(
+    poses: jnp.ndarray,
+    *,
+    grid: Grid,
+    detector: Detector,
+    projector: tuple[str, str],
+    iters: int,
+) -> jnp.ndarray:
+    model, backend = projector
+    batch = min(64, int(poses.shape[0]))
+    forward, adjoint = projection_operators(poses, grid, detector, None, backend, batch, model)
+    return normal_operator_norm(forward, adjoint, (grid.nx, grid.ny, grid.nz), iters=iters)
+
+
 def _resolve_spdhg_step_sizes(
     geometry: Geometry,
     grid: Grid,
@@ -244,10 +291,24 @@ def _resolve_spdhg_step_sizes(
     poses: jnp.ndarray,
     config: SPDHGConfig,
     det_grid: tuple[jnp.ndarray, jnp.ndarray],
+    projector: tuple[str, str] | None = None,
 ) -> _SPDHGStepSizes:
     grad_norm = float(np.sqrt(12.0))
-    data_norm: float | None = None
-    if config.tau is None or config.sigma_data is None or config.sigma_tv is None:
+    if config.tau is not None and config.sigma_data is not None and config.sigma_tv is not None:
+        return _SPDHGStepSizes(
+            tau=float(config.tau),
+            sigma_data_base=float(config.sigma_data),
+            sigma_data_eff=float(config.sigma_data),
+            sigma_tv=float(config.sigma_tv),
+            data_norm=None,
+            grad_norm=grad_norm,
+        )
+    if projector is not None:
+        norm_sq = _batched_norm_squared(
+            poses, grid=grid, detector=detector, projector=projector, iters=20
+        )
+        data_norm_sq = max(float(norm_sq) * 1.05**2, 1e-6)
+    else:
         data_norm_sq = _estimate_norm_A2(
             geometry,
             grid,
@@ -264,16 +325,11 @@ def _resolve_spdhg_step_sizes(
             det_grid=det_grid,
             ray_integrator=config.ray_integrator,
         )
-        data_norm = float(np.sqrt(data_norm_sq))
-        rho = 0.99
-        tau = rho / (data_norm + grad_norm)
-        sigma_data_base = rho / max(data_norm, 1e-6)
-        sigma_tv = rho / grad_norm
-    else:
-        tau = float(config.tau)
-        sigma_data_base = float(config.sigma_data)
-        sigma_tv = float(config.sigma_tv)
-
+    data_norm = float(np.sqrt(data_norm_sq))
+    rho = 0.99
+    tau = rho / (data_norm + grad_norm)
+    sigma_data_base = rho / max(data_norm, 1e-6)
+    sigma_tv = rho / grad_norm
     return _SPDHGStepSizes(
         tau=tau,
         sigma_data_base=sigma_data_base,
@@ -376,6 +432,7 @@ def _prepare_spdhg_runtime(
     poses = stack_view_poses(geometry, n_views)
     validate_pose_stack(poses, n_views, context="spdhg_tv geometry")
     resolved_det_grid = get_detector_grid_device(detector) if det_grid is None else det_grid
+    projector = _batched_projector(cfg, det_grid)
     step_sizes = _resolve_spdhg_step_sizes(
         geometry,
         grid,
@@ -384,6 +441,7 @@ def _prepare_spdhg_runtime(
         poses,
         cfg,
         resolved_det_grid,
+        projector,
     )
 
     return _SPDHGRuntime(
@@ -399,6 +457,7 @@ def _prepare_spdhg_runtime(
         step_sizes=step_sizes,
         schedule=_build_spdhg_schedule(n_views, cfg),
         initial_state=_initial_spdhg_state(grid, y_meas, init_x, iters=cfg.iters),
+        projector=projector,
     )
 
 
@@ -437,6 +496,16 @@ def _make_spdhg_project_chunk(
     runtime: _SPDHGRuntime,
 ) -> _SPDHGProjectChunk:
     cfg = runtime.config
+    if runtime.projector is not None:
+        model, backend = runtime.projector
+
+        def project_batched(T_chunk: jnp.ndarray, vol: jnp.ndarray) -> jnp.ndarray:
+            forward, _ = projection_operators(
+                T_chunk, grid, detector, None, backend, T_chunk.shape[0], model
+            )
+            return forward(vol)
+
+        return project_batched
 
     def project_chunk(T_chunk: jnp.ndarray, vol: jnp.ndarray) -> jnp.ndarray:
         vm_project = jax.vmap(
@@ -458,6 +527,34 @@ def _make_spdhg_project_chunk(
     return project_chunk
 
 
+def _make_spdhg_backproject_chunk(
+    grid: Grid,
+    detector: Detector,
+    runtime: _SPDHGRuntime,
+) -> _SPDHGProjectChunk:
+    cfg = runtime.config
+
+    def backproject(T_chunk: jnp.ndarray, images: jnp.ndarray) -> jnp.ndarray:
+        if runtime.projector is not None:
+            model, backend = runtime.projector
+            _, adjoint = projection_operators(
+                T_chunk, grid, detector, None, backend, T_chunk.shape[0], model
+            )
+            return adjoint(images)
+        return sum_backproject_views_T(
+            T_chunk,
+            grid,
+            detector,
+            images,
+            unroll=int(cfg.projector_unroll),
+            gather_dtype=cfg.gather_dtype,
+            det_grid=runtime.detector_grid,
+            ray_integrator=cfg.ray_integrator,
+        )
+
+    return backproject
+
+
 @functools.partial(jax.jit, static_argnames=("grid", "detector"))
 def _run_spdhg_scan(  # noqa: PLR0915
     grid: Grid,
@@ -470,6 +567,7 @@ def _run_spdhg_scan(  # noqa: PLR0915
     nv = runtime.y_meas.shape[1]
     nu = runtime.y_meas.shape[2]
     project_chunk = _make_spdhg_project_chunk(grid, detector, runtime)
+    backproject_chunk = _make_spdhg_backproject_chunk(grid, detector, runtime)
 
     def one_step(state: _SPDHGScanState, t: jnp.ndarray) -> tuple[_SPDHGScanState, None]:
         block = schedule.block_ids[t]
@@ -511,16 +609,7 @@ def _run_spdhg_scan(  # noqa: PLR0915
         y_dual_new = row_mask * y_dual_new + (1.0 - row_mask) * y_dual_old
         delta_y = (y_dual_new - y_dual_old) * row_mask
 
-        g_block = sum_backproject_views_T(
-            T_chunk,
-            grid,
-            detector,
-            delta_y,
-            unroll=int(cfg.projector_unroll),
-            gather_dtype=cfg.gather_dtype,
-            det_grid=runtime.detector_grid,
-            ray_integrator=cfg.ray_integrator,
-        )
+        g_block = backproject_chunk(T_chunk, delta_y)
 
         gx, gy, gz = grad3(state.x_bar)
         p1_u = state.p1 + step_sizes.sigma_tv * gx

@@ -83,6 +83,8 @@ def reconstruct_train_fold_nograd(
         y_fold,
         init_x=init_x,
         config=FistaConfig(
+            projector_model="ray",
+            projector_backend="jax",
             iters=max(1, int(cfg.iters)),
             lambda_tv=float(cfg.lambda_tv),
             regulariser=cfg.regulariser,

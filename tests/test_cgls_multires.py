@@ -50,7 +50,9 @@ def test_multires_recovers_original_fine_system(explicit_coordinates, backend):
         factors=(3, 2, 1),
         iters_per_level=(4, 6, 90),
         init_x=jnp.ones_like(truth) * 0.5,
-        config=CGLSConfig(rtol=1e-7, views_per_batch=3, projector_backend=backend),
+        config=CGLSConfig(
+            projector_model="ray", rtol=1e-7, views_per_batch=3, projector_backend=backend
+        ),
         det_grid=coordinates,
     )
     np.testing.assert_allclose(result, truth, rtol=3e-4, atol=5e-5)
@@ -64,7 +66,7 @@ def test_multires_recovers_original_fine_system(explicit_coordinates, backend):
 def test_single_level_is_the_unmodified_public_solver():
     grid, detector, geometry, initial = problem()
     data = jnp.ones((5, 7, 9))
-    config = CGLSConfig(iters=4, projector_backend="jax")
+    config = CGLSConfig(projector_model="ray", iters=4, projector_backend="jax")
     direct, direct_info = cgls(geometry, grid, detector, data, init_x=initial, config=config)
     result, info = cgls_multires(
         geometry,
@@ -88,7 +90,12 @@ def test_multires_gradient_penalty_solves_the_same_physical_fine_objective():
     grid, detector, geometry, initial = problem()
     data = jnp.asarray(np.random.default_rng(82).normal(size=(5, 7, 9)), jnp.float32)
     config = CGLSConfig(
-        iters=100, rtol=1e-7, damping=0.2, gradient_damping=0.7, projector_backend="jax"
+        projector_model="ray",
+        iters=100,
+        rtol=1e-7,
+        damping=0.2,
+        gradient_damping=0.7,
+        projector_backend="jax",
     )
     expected, _ = cgls(geometry, grid, detector, data, config=config)
     actual, info = cgls_multires(

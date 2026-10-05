@@ -29,6 +29,13 @@ from tomojax.core.validation import (
 )
 
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
+from ._projection import (
+    ProjectorBackend,
+    ProjectorModel,
+    normal_operator_norm,
+    projection_operators,
+    resolve_projector,
+)
 from ._tv_ops import (
     div3,
     grad3,
@@ -39,6 +46,8 @@ from ._tv_ops import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from tomojax.core.geometry.base import Detector, Geometry, Grid
 
     from .types import Regulariser
@@ -87,6 +96,9 @@ class _FistaRuntime:
     lipschitz: float
     volume_mask: jnp.ndarray | None
     detector_grid: tuple[jnp.ndarray, jnp.ndarray] | None
+    # (model, backend, views per batch) for the batched operators, or None for
+    # the ray-model reference path.
+    projector: tuple[str, str, int] | None = field(metadata={"static": True})
 
 
 @dataclass(frozen=True)
@@ -137,14 +149,23 @@ def _view_chunk_schedule(
 
 @dataclass
 class FistaConfig:
-    """Configuration for public FISTA/TV reconstruction."""
+    """Configuration for public FISTA/TV reconstruction.
+
+    ``projector_model`` and ``projector_backend`` choose the projection operator as
+    in :class:`CGLSConfig`; ``"auto"`` uses Joseph plane sampling with Pallas
+    kernels on CUDA. An explicit detector grid or the exact ray integrator uses
+    the ray-model reference path instead, which is the only path honouring
+    ``gather_dtype``, ``projector_unroll``, ``checkpoint_projector`` and
+    ``grad_mode``. ``views_per_batch=None`` uses 64 views per batch with batched
+    operators and one view at a time on the reference path.
+    """
 
     iters: int = 50
     lambda_tv: float = 0.005
     regulariser: Regulariser = "tv"
     huber_delta: float = 1e-2
     L: float | None = None
-    views_per_batch: int | None = 1
+    views_per_batch: int | None = None
     projector_unroll: int = 1
     checkpoint_projector: bool = True
     gather_dtype: str = "fp32"
@@ -158,6 +179,8 @@ class FistaConfig:
     lower_bound: float | None = None
     upper_bound: float | None = None
     ray_integrator: str = "sampled"
+    projector_model: ProjectorModel = "auto"
+    projector_backend: ProjectorBackend = "auto"
 
 
 jax.tree_util.register_dataclass(
@@ -658,8 +681,20 @@ def _prepare_fista_runtime(
 
     poses = stack_view_poses(geometry, n_views)
     validate_pose_stack(poses, n_views, context="fista_tv geometry")
+    projector = _batched_projector(cfg, n_views, det_grid)
 
     lipschitz = cfg.L
+    if lipschitz is None and projector is not None:
+        lipschitz = float(
+            _batched_lipschitz(
+                poses,
+                volume_mask,
+                grid=grid,
+                detector=detector,
+                projector=projector,
+                iters=int(cfg.power_iters),
+            )
+        )
     if lipschitz is None:
         lipschitz = power_method_L(
             geometry,
@@ -692,23 +727,81 @@ def _prepare_fista_runtime(
         lipschitz=float(lipschitz),
         volume_mask=volume_mask,
         detector_grid=det_grid,
+        projector=projector,
     )
 
 
-@functools.partial(jax.jit, static_argnames=("grid", "detector"))
-def _run_fista_scan(
+def _batched_projector(
+    cfg: FistaConfig, n_views: int, det_grid: object
+) -> tuple[str, str, int] | None:
+    """Choose batched operators, or None for the ray-model reference path."""
+    model, backend = cfg.projector_model, cfg.projector_backend
+    if det_grid is not None or cfg.ray_integrator != "sampled":
+        if model == "joseph" or backend == "pallas":
+            raise ValueError(
+                "fista_tv: explicit detector grids and exact integration require "
+                "projector_model='ray' and projector_backend='jax'"
+            )
+        return None
+    model, backend = resolve_projector(model, backend, context="fista_tv")
+    if model == "ray" and backend == "jax":
+        return None
+    requested = 64 if cfg.views_per_batch is None else int(cfg.views_per_batch)
+    return model, backend, max(1, min(requested, n_views))
+
+
+@functools.partial(jax.jit, static_argnames=("grid", "detector", "projector", "iters"))
+def _batched_lipschitz(
+    poses: jnp.ndarray,
+    mask: jnp.ndarray | None,
+    *,
     grid: Grid,
     detector: Detector,
-    projections: jnp.ndarray,
-    runtime: _FistaRuntime,
-) -> FistaScanState:
+    projector: tuple[str, str, int],
+    iters: int,
+) -> jnp.ndarray:
+    model, backend, batch = projector
+    forward, adjoint = projection_operators(poses, grid, detector, None, backend, batch, model)
+    mask = None if mask is None else jnp.asarray(mask, jnp.float32)
+    return normal_operator_norm(
+        forward, adjoint, (grid.nx, grid.ny, grid.nz), iters=iters, mask=mask
+    )
+
+
+def _data_term(
+    grid: Grid, detector: Detector, projections: jnp.ndarray, runtime: _FistaRuntime
+) -> tuple[
+    Callable[[jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]], Callable[[jnp.ndarray], jnp.ndarray]
+]:
+    """Return the data term's value-and-gradient and value functions."""
     cfg = runtime.config
     regulariser = runtime.regulariser
     huber_delta = runtime.huber_delta
-    constraints = runtime.constraints
-    L = runtime.lipschitz
+    mask = None if runtime.volume_mask is None else jnp.asarray(runtime.volume_mask, jnp.float32)
+    if runtime.projector is not None:
+        model, backend, batch = runtime.projector
+        forward, adjoint = projection_operators(
+            runtime.poses, grid, detector, None, backend, batch, model
+        )
+
+        def residual(x: jnp.ndarray) -> jnp.ndarray:
+            return forward(x if mask is None else x * mask) - projections
+
+        def batched_value_and_grad(z: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+            r = residual(z)
+            g = adjoint(r)
+            return 0.5 * jnp.vdot(r, r).real, g if mask is None else g * mask
+
+        def batched_value(x: jnp.ndarray) -> jnp.ndarray:
+            r = residual(x)
+            return 0.5 * jnp.vdot(r, r).real
 
     def val_and_grad_fn(z: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        if runtime.projector is not None:
+            v, g = batched_value_and_grad(z)
+            if regulariser == "huber_tv" and float(cfg.lambda_tv) != 0.0:
+                g = g + jnp.asarray(cfg.lambda_tv, dtype=z.dtype) * huber_tv_grad(z, huber_delta)
+            return v, g
         g, v = grad_data_term(
             None,
             grid,
@@ -729,9 +822,9 @@ def _run_fista_scan(
             g = g + jnp.asarray(cfg.lambda_tv, dtype=z.dtype) * huber_tv_grad(z, huber_delta)
         return v, g
 
-    val_and_grad = jax.jit(val_and_grad_fn, donate_argnums=(0,))
-
     def data_value_fn(x: jnp.ndarray) -> jnp.ndarray:
+        if runtime.projector is not None:
+            return batched_value(x)
         return data_term_value(
             None,
             grid,
@@ -749,6 +842,24 @@ def _run_fista_scan(
             ray_integrator=cfg.ray_integrator,
         )
 
+    return val_and_grad_fn, data_value_fn
+
+
+@functools.partial(jax.jit, static_argnames=("grid", "detector"))
+def _run_fista_scan(
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray,
+    runtime: _FistaRuntime,
+) -> FistaScanState:
+    cfg = runtime.config
+    regulariser = runtime.regulariser
+    huber_delta = runtime.huber_delta
+    constraints = runtime.constraints
+    L = runtime.lipschitz
+
+    val_and_grad_fn, data_value_fn = _data_term(grid, detector, projections, runtime)
+    val_and_grad = jax.jit(val_and_grad_fn, donate_argnums=(0,))
     data_value = jax.jit(data_value_fn, donate_argnums=(0,))
     tv_prox_jit = jax.jit(tv_proximal, static_argnames=("iters",))
 

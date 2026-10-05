@@ -13,7 +13,6 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core.geometry.views import stack_view_poses
-from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
 from tomojax.core.validation import (
     validate_detector_grid,
     validate_grid,
@@ -21,11 +20,10 @@ from tomojax.core.validation import (
     validate_projection_stack,
     validate_volume,
 )
+from tomojax.recon._projection import projection_operators as _operators, resolve_projector
 from tomojax.recon._quadratic import gradient_energy, gradient_normal, regularization_normal
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from tomojax.geometry import Detector, Geometry, Grid
 
 
@@ -61,13 +59,14 @@ class CGLSConfig:
     Both penalties default to zero. Their weights are independent of view count;
     the data term is an unnormalized sum of squared residuals.
 
-    ``projector_model="ray"`` retains the existing trilinear ray marcher.
-    ``"joseph"`` samples voxel-centre planes along the dominant voxel direction,
-    interpolates each plane and uses its matched transpose. Bilinear interpolation
-    is the default; ``joseph_interpolation="cubic"`` selects Keys cubic convolution
-    with a=-1/2 and a 4-by-4 stencil, including negative weights. On CUDA
-    that transpose gathers into voxels without atomic writes. This is a different
-    discretization, selected explicitly; only canonical detector grids are supported.
+    ``projector_model="joseph"`` samples voxel-centre planes along the dominant
+    voxel direction, interpolates each plane and uses its matched transpose. On
+    CUDA that transpose gathers into voxels without atomic writes. Bilinear
+    interpolation is the default; ``joseph_interpolation="cubic"`` selects Keys
+    cubic convolution with a=-1/2 and a 4-by-4 stencil, including negative
+    weights. ``"ray"`` is the trilinear ray marcher, the only model supporting
+    explicit detector grids. ``"auto"`` selects Joseph unless ``det_grid`` is given;
+    both models match analytic line integrals equally well, and Joseph is faster.
     """
 
     iters: int = 50
@@ -76,7 +75,7 @@ class CGLSConfig:
     damping: float = 0.0
     views_per_batch: int = 64
     projector_backend: Literal["auto", "jax", "pallas"] = "auto"
-    projector_model: Literal["ray", "joseph"] = "ray"
+    projector_model: Literal["auto", "ray", "joseph"] = "auto"
     joseph_interpolation: Literal["linear", "cubic"] = "linear"
     gradient_damping: float = 0.0
 
@@ -93,117 +92,11 @@ class _State(NamedTuple):
     residual_recomputations: jax.Array
 
 
-def _validate_model(cfg: CGLSConfig, det_grid: object) -> None:
-    if cfg.projector_model not in {"ray", "joseph"}:
-        raise ValueError("cgls: projector_model must be 'ray' or 'joseph'")
+def _validate_model(cfg: CGLSConfig) -> None:
     if cfg.joseph_interpolation not in {"linear", "cubic"}:
         raise ValueError("cgls: joseph_interpolation must be 'linear' or 'cubic'")
-    if cfg.joseph_interpolation != "linear" and cfg.projector_model != "joseph":
+    if cfg.joseph_interpolation != "linear" and cfg.projector_model == "ray":
         raise ValueError("cgls: cubic interpolation requires projector_model='joseph'")
-    if cfg.projector_model == "joseph" and det_grid is not None:
-        raise ValueError("cgls: Joseph sampling requires the canonical detector grid")
-
-
-def _operators(
-    poses: jax.Array,
-    grid: Grid,
-    detector: Detector,
-    det_grid: tuple[jax.Array, jax.Array] | None,
-    backend: str,
-    batch_size: int,
-    model: str = "ray",
-    joseph_interpolation: str = "linear",
-    absolute_weights: bool = False,
-) -> tuple[Callable[[jax.Array], jax.Array], Callable[[jax.Array], jax.Array]]:
-    n = int(poses.shape[0])
-    batch_size = min(batch_size, n)
-    chunks = (n + batch_size - 1) // batch_size
-    if model == "joseph":
-        from tomojax.core.joseph import (
-            forward_project_planes,
-            plane_coefficients,
-            sum_backproject_planes,
-        )
-
-        coefficients = plane_coefficients(poses, grid, detector)
-
-    def select(chunk: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
-        start = jnp.minimum(chunk * batch_size, n - batch_size)
-        batch = jax.lax.dynamic_slice(poses, (start, 0, 0), (batch_size, 4, 4))
-        # The final shifted batch overlaps earlier views. Its adjoint must count
-        # only new views; forward writes the same overlapping values again.
-        valid = start + jnp.arange(batch_size) >= chunk * batch_size
-        return start, batch, valid
-
-    def forward(volume: jax.Array) -> jax.Array:
-        def body(chunk: jax.Array, output: jax.Array) -> jax.Array:
-            start, batch, _ = select(chunk)
-            if model == "joseph":
-                coeff = jax.lax.dynamic_slice(coefficients, (start, 0), (batch_size, 14))
-                projected = forward_project_planes(
-                    coeff,
-                    volume,
-                    grid,
-                    detector,
-                    backend=backend,
-                    interpolation=joseph_interpolation,
-                )
-            elif backend == "pallas":
-                from tomojax.core.pallas.api import (
-                    PallasProjectorOptions,
-                    forward_project_views_T_pallas,
-                )
-
-                projected = forward_project_views_T_pallas(
-                    batch,
-                    grid,
-                    detector,
-                    volume,
-                    options=PallasProjectorOptions(tile_shape=(16, 4), num_warps=1),
-                )
-            else:
-                projected = jax.vmap(
-                    lambda t: forward_project_view_T(t, grid, detector, volume, det_grid=det_grid)
-                )(batch)
-            return jax.lax.dynamic_update_slice(output, projected, (start, 0, 0))
-
-        return jax.lax.fori_loop(
-            0, chunks, body, jnp.zeros((n, detector.nv, detector.nu), dtype=jnp.float32)
-        )
-
-    def adjoint(images: jax.Array) -> jax.Array:
-        def body(chunk: jax.Array, output: jax.Array) -> jax.Array:
-            start, batch, valid = select(chunk)
-            data = jax.lax.dynamic_slice(
-                images, (start, 0, 0), (batch_size, detector.nv, detector.nu)
-            )
-            data = jnp.where(valid[:, None, None], data, 0.0)
-            if model == "joseph":
-                coeff = jax.lax.dynamic_slice(coefficients, (start, 0), (batch_size, 14))
-                update = sum_backproject_planes(
-                    coeff,
-                    data,
-                    grid,
-                    detector,
-                    backend=backend,
-                    interpolation=joseph_interpolation,
-                    absolute_weights=absolute_weights,
-                )
-            elif backend == "pallas":
-                from tomojax.core.pallas.api import sum_backproject_views_T_pallas
-
-                update = sum_backproject_views_T_pallas(
-                    batch, grid, detector, data, tile_shape=(16, 4), num_warps=1
-                )
-            else:
-                update = sum_backproject_views_T(batch, grid, detector, data, det_grid=det_grid)
-            return output + update
-
-        return jax.lax.fori_loop(
-            0, chunks, body, jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
-        )
-
-    return forward, adjoint
 
 
 def _checked_inputs(
@@ -431,9 +324,10 @@ def cgls(
         value = float(getattr(cfg, name))
         if not math.isfinite(value) or value < 0:
             raise ValueError(f"cgls: {name} must be finite and nonnegative")
-    if cfg.projector_backend not in {"auto", "jax", "pallas"}:
-        raise ValueError("cgls: projector_backend must be 'auto', 'jax' or 'pallas'")
-    _validate_model(cfg, det_grid)
+    _validate_model(cfg)
+    model, backend = resolve_projector(
+        cfg.projector_model, cfg.projector_backend, det_grid=det_grid, context="cgls"
+    )
     _ = validate_grid(grid, "cgls grid")
     n, _, _ = validate_projection_stack(projections, detector, geometry=geometry, context="cgls")
     validate_detector_grid(det_grid, detector, context="cgls")
@@ -443,19 +337,10 @@ def cgls(
     initial = None if init_x is None else _as_float32(init_x)
     poses = stack_view_poses(geometry, n)
     validate_pose_stack(poses, n, context="cgls")
-    if cfg.projector_model == "joseph":
+    if model == "joseph":
         from tomojax.core.joseph import validate_plane_geometry
 
         validate_plane_geometry(poses, grid, detector)
-    cuda = (
-        jax.default_backend() == "gpu"
-        and "cuda" in jax.devices()[0].client.platform_version.lower()
-    )
-    backend = cfg.projector_backend
-    if backend == "auto":
-        backend = "pallas" if cuda and det_grid is None else "jax"
-    if backend == "pallas" and (not cuda or det_grid is not None):
-        raise ValueError("cgls: Pallas requires CUDA and the canonical detector grid")
     result, initial_norm, threshold, inputs_finite = _solve(
         poses,
         data,
@@ -470,7 +355,7 @@ def cgls(
         backend=backend,
         batch_size=batch,
         zero_start=initial is None,
-        model=cfg.projector_model,
+        model=model,
         joseph_interpolation=cfg.joseph_interpolation,
         gradient_damping=jnp.float32(cfg.gradient_damping) if cfg.gradient_damping else None,
     )
@@ -508,10 +393,8 @@ def cgls(
         "initial_normal_residual_norm": float(first_norm),
         "normal_residual_tolerance": float(tolerance),
         "projector_backend": backend,
-        "projector_model": cfg.projector_model,
-        "joseph_interpolation": cfg.joseph_interpolation
-        if cfg.projector_model == "joseph"
-        else None,
+        "projector_model": model,
+        "joseph_interpolation": cfg.joseph_interpolation if model == "joseph" else None,
         "views_per_batch": min(batch, n),
         "damping": float(cfg.damping),
         "gradient_damping": float(cfg.gradient_damping),

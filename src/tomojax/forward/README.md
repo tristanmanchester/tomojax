@@ -37,7 +37,7 @@ grids, and per-view 4x4 `T_all`, then projects with
 ## Plane-sampled projection
 
 `project_joseph(volume, poses, grid, detector, backend="jax")` exposes the same
-default linear Joseph discretization selected by `CGLSConfig(projector_model="joseph")`.
+default linear Joseph discretization the reconstruction solvers use by default.
 Set `interpolation="cubic"` on either Joseph function for Keys cubic convolution
 with parameter -1/2. The 4-by-4 transverse stencil has continuous first
 coordinate derivatives and includes negative weights. It is more expensive and

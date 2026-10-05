@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Run FISTA-TV and SPDHG-TV on the same batched operators as CGLS, and make
+  Joseph plane sampling with Pallas kernels on CUDA the default projector for
+  all three (`projector_model="auto"`). FISTA-TV previously used the JAX ray
+  model one view at a time: 50 iterations on a 64-cubed scan fall from 20 s to
+  0.15-0.19 s, and 40 SPDHG-TV iterations from 1.3 s to 0.05-0.07 s, with equal
+  or lower reconstruction error. Joseph matches analytic line integrals as well
+  as the ray model. Explicit detector grids and the exact ray integrator keep
+  the ray-model path; `projector_model="ray"` restores the previous operator.
+  FISTA's `views_per_batch` now defaults to 64 batched views (CLI default too).
+  Alignment's internal reconstructions keep the ray model of its pose objective.
 - Size alignment's reconstruction batches from free GPU memory by default
   (`views_per_batch=0`, also the CLI default). Both alignment profiles used one
   view per batch, launching a projector call for every view in every

@@ -151,23 +151,27 @@ noisy data. The default schedule is not an automatic image-quality criterion.
 Each new level shape can require compilation. A numerical breakdown at any
 level raises `FloatingPointError`.
 
-Set `CGLSConfig(projector_model="joseph")` in either CGLS API to use bilinear
-voxel-centre plane integration. The matched CUDA transpose gathers into voxels
-without scattered atomic writes; JAX provides an independently differentiated
-reference transpose. `projector_model="ray"` remains the default trilinear ray
-marcher. The models have different sampling conventions and boundary errors, so
-quality must be checked for the intended data. Joseph requires rigid homogeneous
-poses, finite grid/detector placement and canonical detector coordinates. Explicit
-detector grids are rejected. `info["projector_model"]` identifies the selection;
-multiresolution diagnostics retain it per level. The matching public forward API exposes first-order pose differentiation;
-the CGLS solve itself returns host diagnostics and is not a differentiable layer.
+CGLS, FISTA-TV and SPDHG-TV share one projector choice. The default
+`projector_model="auto"` uses bilinear voxel-centre plane integration (Joseph)
+with Pallas kernels on CUDA; its matched CUDA transpose gathers into voxels
+without scattered atomic writes, and JAX provides an independently
+differentiated reference transpose. `projector_model="ray"` selects the
+trilinear ray marcher, which is also used automatically with explicit detector
+grids and, in FISTA and SPDHG, the exact ray integrator. Both models match
+analytic line integrals to the same accuracy; Joseph is several times faster on
+CUDA. Joseph requires rigid homogeneous poses, finite grid/detector placement
+and canonical detector coordinates. `info["projector_model"]` identifies the CGLS
+selection; multiresolution diagnostics retain it per level. The matching public
+forward API exposes first-order pose differentiation; the solvers return host
+diagnostics and are not differentiable layers. Alignment keeps the ray model
+for its internal reconstructions, matching its pose objective.
 
 Set `joseph_interpolation="cubic"` with that model to use Keys cubic convolution
 (a=-1/2) and its matched transpose on either backend. The default is `"linear"`.
 Cubic uses a 4-by-4 transverse stencil, including negative weights, and costs
 more than bilinear sampling. It matches `project_joseph(interpolation="cubic")`;
 select the same interpolation in a reconstruction and its pose objective. This
-option is rejected with the default ray model. It also applies at every level
+option is rejected with `projector_model="ray"`. It also applies at every level
 of `cgls_multires`, with its value retained in each level's diagnostics.
 
 

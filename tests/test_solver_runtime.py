@@ -14,10 +14,14 @@ from tomojax.core.projector import forward_project_view_T
 from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.recon import FistaConfig, SPDHGConfig, fista_tv, spdhg_tv
 
+# check-public-imports: allow-private
+from tomojax.recon._projection import projection_operators
+
 
 @pytest.mark.numerical
 @pytest.mark.parametrize("solver", ["fista", "spdhg"])
-def test_repeated_solver_calls_use_new_arrays(solver):
+@pytest.mark.parametrize("model", ["ray", "joseph"])
+def test_repeated_solver_calls_use_new_arrays(solver, model):
     grid = Grid(2, 3, 2, 0.8, 1.1, 1.3)
     detector = Detector(4, 3, 0.9, 1.2, (0.17, 0.23))
     rng = np.random.default_rng(92)
@@ -28,15 +32,22 @@ def test_repeated_solver_calls_use_new_arrays(solver):
         data = jnp.asarray(rng.normal(size=(3, 3, 4)), dtype=jnp.float32)
         support = jnp.asarray(rng.uniform(0.3, 1.0, size=(2, 3, 2)), dtype=jnp.float32)
 
-        def project(flat, poses=poses):
-            return jax.vmap(
-                lambda t: forward_project_view_T(t, grid, detector, flat.reshape((2, 3, 2)))
-            )(poses).ravel()
+        forward, _ = projection_operators(poses, grid, detector, None, "jax", 3, model)
+
+        def project(flat, forward=forward):
+            return forward(flat.reshape((2, 3, 2))).ravel()
 
         matrix = np.asarray(jax.jacfwd(project)(jnp.zeros(12)))
         if solver == "fista":
             cfg = FistaConfig(
-                iters=1, L=20.0, lambda_tv=0.0, views_per_batch=2, positivity=False, support=support
+                iters=1,
+                L=20.0,
+                lambda_tv=0.0,
+                views_per_batch=2,
+                positivity=False,
+                support=support,
+                projector_model=model,
+                projector_backend="jax",
             )
             actual, _ = fista_tv(geometry, grid, detector, data, config=cfg)
             expected = support.ravel() * (matrix.T @ data.ravel()) / 20.0
@@ -51,6 +62,8 @@ def test_repeated_solver_calls_use_new_arrays(solver):
                 views_per_batch=3,
                 positivity=False,
                 support=support,
+                projector_model=model,
+                projector_backend="jax",
             )
             actual, _ = spdhg_tv(geometry, grid, detector, data, weights=weights, config=cfg)
             dual = 0.2 * data * weights / (0.2 + weights)

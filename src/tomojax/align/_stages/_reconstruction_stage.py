@@ -559,6 +559,8 @@ def _run_public_fista_reconstruction(
             # a usable data bound. Let FISTA estimate it from the operator.
             data_lipschitz = None
     fista_cfg = FistaConfig(
+        projector_model="ray",
+        projector_backend="jax",
         iters=scaled_reconstruction_iters(cfg.recon_iters, quality_policy),
         lambda_tv=cfg.lambda_tv,
         regulariser=cfg.regulariser,
