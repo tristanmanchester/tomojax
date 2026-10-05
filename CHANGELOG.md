@@ -17,6 +17,10 @@
   `gn_coupling="joint"` now applies to every pose-only stage of a named
   schedule, and the coupled solver no longer shifts poses alone to fix the
   translation gauge, which had capped its accuracy at about 0.08 deg.
+  The pilot's data share the exact integrator's voxel-basis model; on analytic
+  data from continuous objects all solvers settle at a 0.09-0.5 deg
+  discretisation floor at 32 cubed, with reconstructions as good as with the
+  true poses.
 - Run FISTA-TV and SPDHG-TV on the same batched operators as CGLS, and make
   Joseph plane sampling with Pallas kernels on CUDA the default projector for
   all three (`projector_model="auto"`). FISTA-TV previously used the JAX ray

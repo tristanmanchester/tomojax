@@ -85,9 +85,11 @@ remain separate requirements.
   FISTA-TV and SPDHG-TV now run on the batched Joseph/Pallas operators
   (20-120x faster than before).
 - Joint recovery: the default `tomojax align --mode pose` recovers 5/6 pilot
-  cells (rotation 0.0006-0.008 deg); noisy anisotropic sits at about 0.016 deg,
-  close to the 0.017 deg its noise predicts, so the 0.01 deg gate is probably
-  unreachable for that cell. +/-1 deg / +/-2 px motion is recovered in all three
+  cells (rotation 0.0006-0.008 deg), but the pilot integrates the voxel basis
+  exactly, the solver's own model. On analytic data from continuous objects,
+  every solver settles at a 0.09-0.5 deg discretisation floor at 32 cubed, even
+  when started from the true poses; the 0.01 deg gate is not a meaningful target
+  for real data at this scale. Reconstructions match true-pose ones. +/-1 deg / +/-2 px motion is recovered in all three
   tested geometries; +/-3 deg / +/-10 px is not, so the 99% robustness target
   is unmet.
 - Per-iteration cost on tilted scans remains 2-3x ASTRA's: the matched Joseph

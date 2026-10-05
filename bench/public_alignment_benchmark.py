@@ -185,6 +185,105 @@ def generate_fixture(
     )
 
 
+def generate_analytic_fixture(
+    path: Path,
+    kind: str,
+    noisy: bool,
+    *,
+    size: int = SIZE,
+    views: int = VIEWS,
+    rotation_deg: float = 0.25,
+    shift_px: float = 0.5,
+    noise: float = 0.001,
+) -> None:
+    """Write a scan of continuous Gaussian blobs with analytic line integrals.
+
+    The voxel-basis pilot integrates the same trilinear basis as the solver's
+    exact integrator, an inverse crime. These data match no discretisation, so
+    pose errors include the model-mismatch floor real data would show.
+    """
+    from compare_projectors import _sample_volume
+
+    from tomojax.core.geometry.lamino import LaminographyGeometry
+    from tomojax.core.geometry.parallel import ParallelGeometry
+
+    anisotropic = kind == "anisotropic"
+    grid = Grid(
+        size,
+        size - 3 if anisotropic else size,
+        size // 2 if anisotropic else size,
+        0.8 if anisotropic else 1.0,
+        1.2 if anisotropic else 1.0,
+        1.4 if anisotropic else 1.0,
+    )
+    detector = Detector(
+        size + 5 if anisotropic else size,
+        grid.nz + 3 if anisotropic else size,
+        grid.vx,
+        grid.vz,
+        (0.27, -0.31) if anisotropic else (0, 0),
+    )
+    rng = np.random.default_rng(SEED)
+    angles = np.arange(views) * 180 / views + rng.uniform(-0.3, 0.3, views)
+    geometry = (
+        LaminographyGeometry(grid, detector, angles, tilt_deg=30)
+        if kind == "lamino"
+        else ParallelGeometry(grid, detector, angles)
+    )
+    nominal = np.asarray([geometry.pose_for_view(i) for i in range(views)])
+    extent = np.array([grid.nx * grid.vx, grid.ny * grid.vy, grid.nz * grid.vz])
+    blobs = [
+        (
+            rng.uniform(0.3, 1.0),
+            rng.uniform(-0.3, 0.3, 3) * extent,
+            1 / (rng.uniform(0.02, 0.07, 3) * extent.min()) ** 2,
+        )
+        for _ in range(24)
+    ]
+    origin = np.asarray(grid_volume_origin(grid))
+    shape = (grid.nx, grid.ny, grid.nz)
+    volume = _sample_volume(shape, np.array([grid.vx, grid.vy, grid.vz]), origin, blobs, [])
+    parameters = np.concatenate(
+        [
+            np.deg2rad(rng.uniform(-rotation_deg, rotation_deg, (views, 3))),
+            rng.uniform(-shift_px, shift_px, (views, 2)) * [detector.du, detector.dv],
+        ],
+        axis=1,
+    )
+    poses = physical_poses(nominal, parameters)
+    u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du + detector.det_center[0]
+    v = (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv + detector.det_center[1]
+    uu, vv = np.meshgrid(u, v)
+    world = np.stack([uu, np.zeros_like(uu), vv], axis=-1)
+    data = np.empty((views, detector.nv, detector.nu), np.float32)
+    for i, pose in enumerate(poses):
+        base, direction = (world - pose[:3, 3]) @ pose[:3, :3], pose[1, :3]
+        values = np.zeros(world.shape[:2])
+        for amplitude, centre, inv_var in blobs:
+            diff = base - centre
+            a = np.sum(direction**2 * inv_var)
+            b = np.sum(diff * direction * inv_var, -1)
+            c = np.sum(diff**2 * inv_var, -1)
+            values += amplitude * np.sqrt(2 * np.pi / a) * np.exp(-0.5 * (c - b * b / a))
+        data[i] = values
+    sigma = float(noise * np.sqrt(np.mean(data.astype(np.float64) ** 2))) if noisy else 0.0
+    data = data + rng.normal(0, sigma, data.shape).astype(np.float32)
+    np.savez(
+        path,
+        kind=kind,
+        noisy=noisy,
+        grid=json.dumps(asdict(grid)),
+        detector=json.dumps(asdict(detector)),
+        angles=angles,
+        nominal=nominal,
+        truth_poses=poses,
+        truth_params=parameters,
+        truth=volume.astype(np.float32),
+        data=data,
+        noise_sigma=sigma,
+    )
+
+
 def load_fixture(path: Path) -> dict[str, Any]:
     """Read host arrays and lightweight physical metadata."""
     with np.load(path) as data:
@@ -347,6 +446,12 @@ def main() -> None:
     )
     parser.add_argument("--size", type=int, default=SIZE, help="Nominal grid size")
     parser.add_argument(
+        "--phantom",
+        choices=("voxel", "analytic"),
+        default="voxel",
+        help="voxel: frozen pilot (exact voxel-basis data); analytic: continuous Gaussian blobs",
+    )
+    parser.add_argument(
         "--factors", type=int, nargs="+", default=[1], help="Coarse-to-fine factors, e.g. 4 2 1"
     )
     parser.add_argument("--views", type=int, default=VIEWS)
@@ -399,6 +504,7 @@ def main() -> None:
             "noise_relative_rms": args.noise,
             "motion_rotation_bound_deg": args.rotation_deg,
             "motion_translation_bound_px": args.shift_px,
+            "phantom": args.phantom,
         },
         "limits": {"outer_iters": OUTERS, "recon_iters": INNER_ITERS, "worker_timeout_s": 1800},
         "initialization": "zero free voxels and nominal poses",
@@ -414,7 +520,8 @@ def main() -> None:
     for cell in payload["scheduled_cells"]:
         name = f"{cell['kind']}-{'noisy' if cell['noisy'] else 'clean'}"
         fixture = args.output / f"{name}.npz"
-        generate_fixture(
+        generate = generate_analytic_fixture if args.phantom == "analytic" else generate_fixture
+        generate(
             fixture,
             cell["kind"],
             cell["noisy"],

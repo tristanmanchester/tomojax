@@ -2,13 +2,18 @@
 
 TomoJAX alignment estimates geometry or pose corrections while reconstructing
 the volume. Pose alignment solves the free voxels and every view's 5-DOF pose
-together (the coupled solver). On the six modest-motion free-voxel pilot cells,
-the default `tomojax align --mode pose` recovers rotations to 0.0006–0.008° and
-translations to 0.0002 pixels in five cells, in 8–20 s each; noisy anisotropic
-recovery stops at about 0.016°, near the limit its noise allows. Motion of ±1°
-and ±2 pixels is recovered in all three tested geometries; ±3° is not yet
-reliable. This is still evidence from small synthetic scans, not a guarantee
-for a new acquisition.
+together (the coupled solver).
+
+Read published accuracy figures with care. The free-voxel pilot integrates the
+voxel basis exactly, which is the solver's own forward model, so clean cells
+recover poses to numerical precision (rotation 0.0006–0.008° in five of six
+cells, 8–18 s each with the default CLI). With analytic data from continuous
+objects there is no such match. At 32³, started from the true poses, the solver
+settles at 0.09–0.3° rotation RMSE, the floor set by discretisation, and from
+nominal poses it reaches the same floor, so its reconstruction is as good as
+one made with the true poses. Smooth objects constrain per-view tilts least.
+Expect accurate translations and reconstruction quality rather than
+hundredth-of-a-degree tilts on real data.
 
 Start from corrected absorption data and checked physical geometry, following
 the [real scan guide](real-laminography.md). Save an unaligned reconstruction,

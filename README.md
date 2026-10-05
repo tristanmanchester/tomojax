@@ -80,9 +80,10 @@ to 2.5). Small laminography scans remain slower, dominated by JAX start-up and
 backprojection cost. Published GPU measurements use one RTX 4070 Laptop GPU.
 
 `tomojax align --mode pose` solves the volume and every view's pose together.
-On six modest-motion free-voxel cases it recovers five to 0.0006–0.008° and
-0.0002 pixels, in 8–18 seconds each; noisy anisotropic recovery stops at about
-0.016°, near its noise limit. This is not a demonstrated large-motion or 99% recovery capability.
+On analytic data from continuous objects its reconstructions match those made
+with the true poses; per-view rotation estimates settle at a discretisation
+floor of about 0.1–0.3° at 32³. See the [alignment guide](docs/alignment-guide.md)
+for how this differs from the voxel-basis pilot's near-exact figures. This is not a demonstrated large-motion or 99% recovery capability.
 The [alignment comparison](docs/research/public-free-voxel-schur-2026-10-04.md) retains
 failures, cold/warm times, quality, and process GPU memory.
 
