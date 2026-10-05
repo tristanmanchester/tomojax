@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add `bench/compare_tv.py`. On a 128-cubed structured parallel scan with 3%
+  noise and 50 iterations, TomoJAX FISTA-TV reaches 0.077 relative error in
+  1.28 s; TIGRE's FISTA reaches 0.101 in 9.7 s and ASD-POCS 0.146 in 5.7 s.
 - Align coarse to fine by default in `tomojax align --mode pose` when the
   reconstruction grid's shortest axis has at least 64 voxels (factors 4, 2, 1
   from 128). A 256-cubed, 361-view laminography alignment takes 22 instead of

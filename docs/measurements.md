@@ -53,6 +53,16 @@ augmented nonnegative and range-preserving preconditioned variants. It retains
 the stationarity-check audit and every fixed-work quality regression; neither
 variant reaches the public workflow comparison.
 
+## TV-regularised reconstruction
+
+[`bench/compare_tv.py`](../bench/compare_tv.py) reconstructs a 128³ structured
+parallel phantom from 180 views with 3% noise, 50 iterations per library over
+each library's own grid of regularisation weights. TomoJAX FISTA-TV reaches a
+best relative L2 error of 0.077 in 1.28 s warm. TIGRE's FISTA reaches 0.101 in
+9.7 s and its ASD-POCS 0.146 in 5.7 s; larger TIGRE FISTA weights diverge.
+Unregularised CGLS is best at 0.138 (10 iterations). TIGRE's timings include
+its host transfers. This is one phantom and noise level, not a general ranking.
+
 ## Joint volume and pose recovery
 
 The [public free-voxel pilot](research/public-free-voxel-pilot.md) has six clean/noisy
