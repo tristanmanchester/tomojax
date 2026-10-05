@@ -5,14 +5,11 @@ import argparse
 from collections.abc import Callable
 from dataclasses import dataclass
 import logging
-import os
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from tomojax._typed_arrays import (
     jax_float32_array,
     object_list,
-    update_jax_config,
 )
 from tomojax.align.api import (
     AlignConfig,
@@ -31,6 +28,7 @@ from tomojax.align.api import (
 )
 from tomojax.cli._reconstruction_region import resolve_reconstruction_region
 from tomojax.cli._runtime import transfer_guard_context
+from tomojax.core.compilation_cache import enable_persistent_compilation_cache
 from tomojax.io import build_geometry_from_dataset_metadata, load_projection_payload
 
 from .checkpoint import (
@@ -90,31 +88,8 @@ class _ResolvedAlignConfig:
 
 
 def init_jax_compilation_cache() -> None:
-    """Enable JAX persistent compilation cache for faster re-runs.
-
-    Directory precedence:
-    - TOMOJAX_JAX_CACHE_DIR if set
-    - ${XDG_CACHE_HOME:-~/.cache}/tomojax/jax_cache
-    """
-    try:
-        cache_dir_text = os.environ.get("TOMOJAX_JAX_CACHE_DIR")
-        if cache_dir_text:
-            cache_dir = Path(cache_dir_text)
-        else:
-            base = Path(os.environ.get("XDG_CACHE_HOME", "~/.cache")).expanduser()
-            cache_dir = base / "tomojax" / "jax_cache"
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        update_jax_config("jax_compilation_cache_dir", str(cache_dir))
-        update_jax_config("jax_persistent_cache_min_entry_size_bytes", -1)
-        update_jax_config("jax_persistent_cache_min_compile_time_secs", 0)
-        update_jax_config(
-            "jax_persistent_cache_enable_xla_caches",
-            "xla_gpu_per_fusion_autotune_cache_dir",
-        )
-        logging.info("JAX compilation cache: %s", cache_dir)
-    except Exception:
-        # Best-effort; skip on any failure silently
-        pass
+    """Enable the persistent JAX compilation cache before alignment compiles."""
+    enable_persistent_compilation_cache()
 
 
 def _schedule_for_public_mode(mode: AlignmentMode, *, align_profile: str) -> str:

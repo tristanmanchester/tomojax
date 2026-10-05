@@ -54,15 +54,15 @@ def test_host_slabs_match_full_physical_reconstruction(kind, depth, backend):
 def test_host_slabs_reuse_compilation_and_bound_device_shapes(monkeypatch):
     module = importlib.import_module("tomojax.recon.fbp_host")
     grid, detector, geometry, data = scan()
-    kernel = module._run_parallel_fbp_streamed
+    kernel = module._run_fbp_streamed
     calls = []
     before = kernel._cache_size()
 
-    def record(poses, projections, ramp, **kwargs):
+    def record(poses, projections, *args, **kwargs):
         calls.append((projections.shape, kwargs["grid"], kwargs["detector"]))
-        return kernel(poses, projections, ramp, **kwargs)
+        return kernel(poses, projections, *args, **kwargs)
 
-    monkeypatch.setattr(module, "_run_parallel_fbp_streamed", record)
+    monkeypatch.setattr(module, "_run_fbp_streamed", record)
     cfg = FBPHostConfig(slices_per_batch=3, views_per_batch=2, backprojector="jax")
     actual = fbp_host(geometry, grid, detector, data, config=cfg)
     assert len(calls) == 4

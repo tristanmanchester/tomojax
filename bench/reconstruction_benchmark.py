@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from compare_projectors import environment, errors, jax_sync, measure
 import jax
@@ -19,11 +20,10 @@ import numpy as np
 
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 from tomojax.recon import FBPConfig, fbp
-from tomojax.recon.fbp import (
-    _rfft_filter_array,
-    _run_parallel_fbp_direct_jit,
-    _run_parallel_fbp_pallas,
-)
+from tomojax.recon.fbp import _rfft_filter_array, _run_fbp_streamed
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def run_case(size: int, n_views: int, repeats: int) -> dict:
@@ -47,13 +47,27 @@ def run_case(size: int, n_views: int, repeats: int) -> dict:
     )
     ramp = _rfft_filter_array("ramp", nu, 1.0, jnp.float32)
     jax.block_until_ready((poses, projections, ramp))
-    kernels = {
-        "jax": lambda y: _run_parallel_fbp_direct_jit(poses, y, ramp, grid=grid, detector=detector)
-    }
-    if jax.default_backend() == "gpu":
-        kernels["pallas"] = lambda y: _run_parallel_fbp_pallas(
-            poses, y, ramp, grid=grid, detector=detector, z_integer=True
+    ones, unused = jnp.ones((n_views,), jnp.float32), jnp.zeros((n_views, 6), jnp.float32)
+
+    def kernel_for(backend: str) -> Callable[[jax.Array], jax.Array]:
+        return lambda y: _run_fbp_streamed(
+            poses,
+            y,
+            ones,
+            unused,
+            ramp,
+            jnp.float32(0),
+            grid=grid,
+            detector=detector,
+            backend=backend,
+            batch_size=n_views,
+            z_integer=backend == "pallas",
+            separable=True,
         )
+
+    kernels = {"jax": kernel_for("jax")}
+    if jax.default_backend() == "gpu":
+        kernels["pallas"] = kernel_for("pallas")
     records = []
     reference = None
     for backend, kernel in kernels.items():

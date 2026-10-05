@@ -70,14 +70,17 @@ results from default CLI behavior and larger-motion targets.
   losses use the differentiable projector. This API does not automatically
   switch the existing alignment pipeline from its trilinear ray model.
 - Built-in geometries use parallel rays. Cone-beam and fan-beam projectors are
-  not provided. Laminography has incomplete angular information; filtered
-  backprojection is an approximate initializer for that geometry.
-- The default FBP angular scale assumes uniformly sampled half-turn data.
-  Nonuniform views need angular quadrature rather than just a scalar scale.
-- Built-in parallel FBP retains filtered tails across the full volume, assuming
-  zero raw attenuation outside the measured detector. This does not recover
-  missing measurements of a truncated object. The generic filtered adjoint,
-  including explicit detector coordinates, retains its supplied detector support.
+  not provided.
+- FBP weights every view exactly for rotation about one fixed axis, at any
+  tilt, arc length or angular spacing. It cannot recover frequencies no view
+  measured: laminography's missing cone reconstructs as zero, so FBP gives
+  elongated features along the rotation axis. Iterative solvers can recover
+  part of the cone only through a bounded volume or a prior.
+- FBP retains filtered tails across the full volume, assuming zero raw
+  attenuation outside the measured detector. This does not recover missing
+  measurements of a truncated object. With explicit detector coordinates
+  (`det_grid`), FBP uses the ray-model adjoint, uniform `pi / n` weights and the
+  supplied detector support.
 - Pallas projector paths are optional accelerator backends. Parallel FBP selects
   Pallas automatically on CUDA; `FBPConfig(backprojector="jax")` selects JAX.
   Reference/JAX paths and independent analytic data both validate correctness.

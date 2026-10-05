@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import math
 import operator
-from pathlib import Path
 from typing import Literal
 
 import jax.numpy as jnp
@@ -15,11 +14,12 @@ from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import validate_grid, validate_projection_stack
 from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
 
+from ._host_arrays import validate_host_arrays
 from .fbp import (
     _parallel_filter_detector,  # pyright: ignore[reportPrivateUsage]
     _rfft_filter_array,  # pyright: ignore[reportPrivateUsage]
-    _run_parallel_fbp_streamed,  # pyright: ignore[reportPrivateUsage]
-    default_fbp_scale,
+    _run_fbp_streamed,  # pyright: ignore[reportPrivateUsage]
+    _view_weights,  # pyright: ignore[reportPrivateUsage]
     supports_parallel_fbp_z_integer,
 )
 
@@ -31,7 +31,7 @@ class FBPHostConfig:
     Both batch sizes are explicit positive limits. The entire input and output
     remain in host storage; only a detector-row slab, output slab and bounded
     filtering workspace reside on the accelerator. Runtime/compiler caches add
-    memory beyond these arrays. The default scale assumes a uniform half turn.
+    memory beyond these arrays. ``scale`` has the same meaning as in :class:`FBPConfig`.
     """
 
     slices_per_batch: int = 16
@@ -39,39 +39,6 @@ class FBPHostConfig:
     filter_name: str = "ramp"
     scale: float | None = None
     backprojector: Literal["auto", "jax", "pallas"] = "auto"
-
-
-def _mapped_storage(array: np.ndarray) -> np.memmap | None:
-    current: object = array
-    while isinstance(current, np.ndarray):
-        if isinstance(current, np.memmap):
-            return current
-        current = current.base
-    return None
-
-
-def _validate_host_arrays(
-    projections: np.ndarray,
-    out: np.ndarray | None,
-    shape: tuple[int, int, int],
-    context: str = "fbp_host",
-) -> np.ndarray:
-    if not isinstance(projections, np.ndarray) or projections.dtype.kind not in "buif":
-        raise TypeError(f"{context}: projections must be a real NumPy array or memmap")
-    if out is None:
-        return np.empty(shape, dtype=np.float32)
-    if not isinstance(out, np.ndarray) or out.shape != shape or out.dtype != np.float32:
-        raise ValueError(f"{context}: out must be a float32 NumPy array with the volume shape")
-    if not out.flags.writeable:
-        raise ValueError(f"{context}: out must be writable")
-    if np.may_share_memory(projections, out):
-        raise ValueError(f"{context}: input and output storage must not overlap")
-    input_map, output_map = _mapped_storage(projections), _mapped_storage(out)
-    if input_map is not None and output_map is not None:
-        source, target = input_map.filename, output_map.filename
-        if source is None or target is None or Path(source).samefile(target):
-            raise ValueError(f"{context}: memory-mapped input and output require separate files")
-    return out
 
 
 def _slab_layout(
@@ -149,13 +116,13 @@ def fbp_host(
     ox, oy, oz = grid_volume_origin(grid)
     if not np.isfinite([ox, oy, oz, *detector.det_center]).all():
         raise ValueError("fbp_host: grid and detector placement must be finite")
-    scale = default_fbp_scale(n_views) if cfg.scale is None else float(cfg.scale)
-    if not math.isfinite(scale):
+    if cfg.scale is not None and not math.isfinite(cfg.scale):
         raise ValueError("fbp_host: scale must be finite")
     if not np.isfinite(np.asarray(geometry.thetas_deg)).all():
         raise ValueError("fbp_host: angles must be finite")
 
     poses = stack_view_poses(geometry, n_views)
+    view_scale = jnp.asarray(_view_weights(poses, cfg.scale)[0])
     cuda = all(
         d.platform == "gpu" and d.client.platform_version.lower().startswith("cuda")
         for d in poses.devices()
@@ -167,7 +134,7 @@ def fbp_host(
     local_grid, local_detector, first, step, integer = _slab_layout(grid, detector, depth)
     rows = local_detector.nv
     ramp = _rfft_filter_array(cfg.filter_name, local_detector.nu, detector.du, jnp.float32)
-    output = _validate_host_arrays(projections, out, shape)
+    output = validate_host_arrays(projections, out, shape)
     for start in range(0, grid.nz, depth):
         v = first + start * step
         v_start = math.floor(v)
@@ -179,19 +146,21 @@ def fbp_host(
         # Local grid/detector metadata stay identical for every slab. Only the
         # fractional row phase changes, passed as a dynamic pose translation.
         local_poses = poses if integer else poses.at[:, 2, 3].set((v - v_start) * detector.dv)
-        volume = _run_parallel_fbp_streamed(
+        volume = _run_fbp_streamed(
             local_poses,
             jnp.asarray(data),
+            view_scale,
+            jnp.zeros((n_views, 6), jnp.float32),
             ramp,
+            jnp.float32(0),
             grid=local_grid,
             detector=local_detector,
             backend=backend,
             batch_size=min(views, n_views),
             z_integer=integer,
+            separable=True,
         )
         count = min(depth, grid.nz - start)
         # The host copy synchronizes before the next slab reuses its buffers.
-        np.multiply(
-            np.asarray(volume)[:, :, :count], scale, out=output[:, :, start : start + count]
-        )
+        output[:, :, start : start + count] = np.asarray(volume)[:, :, :count]
     return output

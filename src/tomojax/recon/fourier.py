@@ -14,7 +14,7 @@ from tomojax.geometry import ParallelGeometry, grid_volume_origin
 
 from ._fourier_backend import FourierPlan
 from ._fourier_grid import sample_projection_rows, uniform_half_turn
-from .fbp_host import _validate_host_arrays  # pyright: ignore[reportPrivateUsage]
+from ._host_arrays import validate_host_arrays
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -91,7 +91,7 @@ def fourier_reconstruct(
     if not np.isfinite([*origin, *detector.det_center]).all():
         raise ValueError("fourier_reconstruct: grid and detector placement must be finite")
     order, flipped, theta0 = uniform_half_turn(np.asarray(geometry.thetas_deg))
-    output = _validate_host_arrays(projections, out, shape, "fourier_reconstruct")
+    output = validate_host_arrays(projections, out, shape, "fourier_reconstruct")
     depth = min(slices, grid.nz)
     host_bytes = 4 * (grid.nx * grid.ny * grid.nz + nviews * detector.nu * grid.nz)
     overlap = cfg.backend == "cupy" and grid.nz > depth and host_bytes >= _HOST_PIPELINE_MIN_BYTES

@@ -108,8 +108,10 @@ Use `corrected-lamino.nxs` as input if you created that file above. The iteratio
 budget and TV weight are illustrative. Inspect residuals and image features,
 and assess sensitivity to regularization before quantitative use. Positivity
 is appropriate only when the object model permits nonnegative attenuation.
-Laminography has missing angular information; FBP is an approximate initializer
-for that geometry, and iterative reconstruction still depends on the object prior.
+Laminography leaves a cone of frequencies around the rotation axis unmeasured.
+FBP reconstructs every measured frequency exactly and leaves the cone empty, which
+elongates features along the axis. Iterative reconstruction can fill part of the
+cone only from the volume bounds or the object prior.
 
 ## Evaluate alignment after reconstruction
 

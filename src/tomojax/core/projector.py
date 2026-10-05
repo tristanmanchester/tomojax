@@ -16,6 +16,7 @@ import numpy as np
 from tomojax.core.pallas_resolver import resolve_pallas_callable
 
 from .backend_policy import ProjectorBackendInput, normalize_projector_backend
+from .compilation_cache import enable_persistent_compilation_cache
 from .geometry.base import Detector, Geometry, Grid, grid_volume_origin
 from .validation import (
     validate_detector,
@@ -36,6 +37,8 @@ from .validation import (
 #   object frame directly. This makes reconstructed volumes live in the object (sample) frame.
 
 LOG = logging.getLogger(__name__)
+
+enable_persistent_compilation_cache()
 
 
 def _volume_origin(grid: Grid) -> jnp.ndarray:

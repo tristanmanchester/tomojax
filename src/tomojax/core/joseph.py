@@ -16,10 +16,13 @@ import jax.numpy as jnp
 import numpy as np
 
 from ._plane_interpolation import cubic_weights_and_derivatives, validate_interpolation
+from .compilation_cache import enable_persistent_compilation_cache
 from .geometry.base import grid_volume_origin
 
 if TYPE_CHECKING:
     from .geometry.base import Detector, Grid
+
+enable_persistent_compilation_cache()
 
 
 def validate_plane_geometry(poses: jax.Array, grid: Grid, detector: Detector) -> None:

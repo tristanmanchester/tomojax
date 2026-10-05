@@ -9,11 +9,10 @@ from threading import Lock
 from typing import Any
 
 import numpy as np
-from scipy.fft import next_fast_len
 
 from tomojax.geometry import grid_volume_origin
 
-from ._fourier_grid import interpolate_numpy, radial_coefficients, transform_grid
+from ._fourier_grid import interpolate_numpy, next_fast_len, radial_coefficients, transform_grid
 
 
 class _Geometry:
@@ -34,7 +33,7 @@ class _Geometry:
         self.xp = xp
         self.grid, self.detector = grid, detector
         self.nviews = nviews
-        self.nfft = max(64, next_fast_len(2 * detector.nu, real=True))
+        self.nfft = max(64, next_fast_len(2 * detector.nu))
         self.shape, self.crop = transform_grid(grid, detector)
         self.flipped = xp.asarray(flipped, dtype=xp.int8)
         self.period_phase = complex(np.exp(2j * np.pi * (detector.nu - 1) / 2))

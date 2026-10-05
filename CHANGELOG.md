@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+- Weight filtered backprojection exactly for every circular parallel-beam
+  scan. `fbp` now fits the rotation axis, arc and angular spacing from the view
+  poses and applies the matching per-view filter: a ramp along u scaled by the
+  sine of the ray-axis angle, divided by how many acquired views measure each
+  frequency. Tilted (laminography) axes, partial or full turns and irregular
+  angles were previously weighted as a uniform untilted half turn. In tests,
+  tilted reconstructions now match the measured-frequency truth to 5% (14% and
+  42% before for full and half turns); uniform untilted half turns are unchanged.
+  An explicit `FBPConfig.scale` keeps the previous uniform weighting.
+- Backproject FBP voxel by voxel with bilinear detector interpolation in every
+  geometry, using the Pallas kernel on CUDA. Laminography and anisotropic FBP
+  previously used the ray-model adjoint, which blurred the result (5% error on
+  a smooth parallel phantom, against 0.1% now). Explicit `det_grid` inputs keep
+  the ray-model path.
+- Start faster. Importing `tomojax.geometry` and `tomojax.recon` no longer loads
+  JAX or SciPy until a JAX-based function is used, so a Fourier reconstruction
+  imports in about 50 ms instead of 450 ms. Compiled JAX programs are cached on
+  disk by default (`TOMOJAX_JAX_CACHE=off` disables, `TOMOJAX_JAX_CACHE_DIR`
+  relocates; an existing JAX cache setting wins). CGLS checks its inputs inside
+  the solve instead of compiling separate programs, cutting a cold 64-cubed
+  laminography call from about 930 ms to 675 ms, or 385 ms with a warm cache.
+
 ## 0.3.0 — 2026-10-04
 
 This release adds matched Joseph/CGLS reconstruction, exact trilinear ray

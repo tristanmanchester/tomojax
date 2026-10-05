@@ -42,7 +42,7 @@ For TIFF data, use the [TIFF and measured-geometry instructions](real-laminograp
 
 ## Reconstruct and inspect slices
 
-For uniformly sampled half-turn parallel data, start with FBP:
+For parallel or laminography data, start with FBP:
 
 ```bash
 uv run --no-sync tomojax recon --data corrected.nxs --out recon.nxs \

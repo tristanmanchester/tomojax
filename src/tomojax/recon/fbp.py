@@ -22,6 +22,7 @@ from tomojax.core.validation import (
     validate_projection_stack,
 )
 
+from ._fbp_weights import fbp_weights
 from .filters import get_fbp_filter_np
 
 if TYPE_CHECKING:
@@ -32,9 +33,16 @@ if TYPE_CHECKING:
 class FBPConfig:
     """Configuration for filtered backprojection.
 
-    ``backprojector='auto'`` uses the voxel-driven Pallas kernel for built-in
-    parallel geometry on CUDA, and JAX otherwise. ``'jax'`` forces the reference;
-    ``'pallas'`` requires a supported CUDA input and never silently changes backend.
+    ``backprojector='auto'`` uses the voxel-driven Pallas kernel on CUDA and JAX
+    otherwise. ``'jax'`` forces the reference; ``'pallas'`` requires CUDA input
+    and never silently changes backend.
+
+    ``scale=None`` weights each view exactly for the scanned arc (see
+    :func:`fbp`). A number instead weights every view by that constant and
+    filters along u only, the convention before exact weights; ``pi / n`` gives
+    the uniform half-turn result. ``views_per_batch``, ``projector_unroll``,
+    ``checkpoint_projector`` and ``gather_dtype`` apply only with an explicit
+    ``det_grid``, which uses the ray-model adjoint.
     """
 
     filter_name: str = "ramp"
@@ -47,12 +55,11 @@ class FBPConfig:
 
 
 def default_fbp_scale(n_views: int) -> float:
-    """Return the default angular weighting for the current parallel-ray FBP.
+    """Return the uniform half-turn angular weight ``pi / n_views``.
 
-    TomoJAX's built-in CT and laminography geometries both use parallel rays,
-    so the discrete filtered backprojection sum should be weighted by the
-    180-degree angular spacing ``pi / n_views``. Callers with custom angular
-    coverage can override this via ``scale=...``.
+    :func:`fbp` derives exact per-view weights by default; this constant is the
+    uniform weight for an untilted half turn and the fallback for scans with too
+    few views to define a rotation.
     """
     if int(n_views) <= 0:
         raise ValueError("n_views must be positive")
@@ -167,109 +174,94 @@ _bp_batch_sum_jit = jax.jit(
 )
 
 
-def _run_parallel_fbp_direct(
-    T_all: jnp.ndarray,
-    proj: jnp.ndarray,
-    rfft_filter: jnp.ndarray,
-    *,
-    grid: Grid,
-    detector: Detector,
+def _bilinear_detector(image: jnp.ndarray, u: jnp.ndarray, v: jnp.ndarray) -> jnp.ndarray:
+    """Sample a (nv, nu) image at fractional pixel coordinates, zero outside."""
+    nv, nu = image.shape
+    iu, iv = jnp.floor(u).astype(jnp.int32), jnp.floor(v).astype(jnp.int32)
+    wu, wv = u - iu.astype(jnp.float32), v - iv.astype(jnp.float32)
+    flat = image.reshape(-1)
+
+    def take(row: jnp.ndarray, col: jnp.ndarray) -> jnp.ndarray:
+        inside = (col >= 0) & (col < nu) & (row >= 0) & (row < nv)
+        index = jnp.clip(row, 0, nv - 1) * nu + jnp.clip(col, 0, nu - 1)
+        return jnp.where(inside, jnp.take(flat, index), 0.0)
+
+    row0 = take(iv, iu) * (1.0 - wu) + take(iv, iu + 1) * wu
+    row1 = take(iv + 1, iu) * (1.0 - wu) + take(iv + 1, iu + 1) * wu
+    return row0 * (1.0 - wv) + row1 * wv
+
+
+def _backproject_voxels_jax(
+    poses: jnp.ndarray, filtered: jnp.ndarray, *, grid: Grid, detector: Detector
 ) -> jnp.ndarray:
-    """Run parallel-beam FBP with direct voxel-domain backprojection.
-
-    The generic adjoint in ``projector.py`` backprojects by walking detector rays
-    through the volume, which is necessary for arbitrary posed ray models.  For
-    ``ParallelGeometry`` every voxel maps to one detector coordinate per view, so
-    FBP can use the standard slice-wise parallel-beam backprojection directly.
-    """
-    n_views, nv, nu = map(int, proj.shape)
-    origin_x, origin_y, origin_z = grid_volume_origin(grid)
-    x = jnp.arange(int(grid.nx), dtype=jnp.float32) * jnp.float32(grid.vx) + jnp.float32(origin_x)
-    y = jnp.arange(int(grid.ny), dtype=jnp.float32) * jnp.float32(grid.vy) + jnp.float32(origin_y)
-    z = jnp.arange(int(grid.nz), dtype=jnp.float32) * jnp.float32(grid.vz) + jnp.float32(origin_z)
-
-    X = x[:, None]
-    Y = y[None, :]
-    Z = z
-    u_offset = jnp.float32(float(detector.nu) / 2.0 - 0.5)
-    v_offset = jnp.float32(float(detector.nv) / 2.0 - 0.5)
-    inv_du = jnp.float32(1.0 / float(detector.du))
-    inv_dv = jnp.float32(1.0 / float(detector.dv))
-    det_cx = jnp.float32(float(detector.det_center[0]))
-    det_cz = jnp.float32(float(detector.det_center[1]))
-
-    rows = proj.reshape((n_views * nv, nu))
-    rows_f = _fft_filter_rows_jit(rows, rfft_filter)
-    filt = rows_f.reshape((n_views, nv, nu))
-
-    def gather2(image: jnp.ndarray, iu: jnp.ndarray, iv: jnp.ndarray) -> jnp.ndarray:
-        iu0 = jnp.floor(iu).astype(jnp.int32)
-        iv0 = jnp.floor(iv).astype(jnp.int32)
-        iu1 = iu0 + 1
-        iv1 = iv0 + 1
-        wu1 = iu - iu0.astype(jnp.float32)
-        wv1 = iv - iv0.astype(jnp.float32)
-        wu0 = jnp.float32(1.0) - wu1
-        wv0 = jnp.float32(1.0) - wv1
-        flat = image.reshape((-1,))
-
-        def take(iv_idx: jnp.ndarray, iu_idx: jnp.ndarray) -> jnp.ndarray:
-            inb = (
-                (iu_idx[:, :, None] >= 0)
-                & (iu_idx[:, :, None] < int(detector.nu))
-                & (iv_idx[None, None, :] >= 0)
-                & (iv_idx[None, None, :] < int(detector.nv))
-            )
-            idx = iv_idx[None, None, :] * int(detector.nu) + iu_idx[:, :, None]
-            values = jnp.take(flat, jnp.clip(idx, 0, int(detector.nu * detector.nv) - 1))
-            return jnp.where(inb, values, jnp.float32(0.0))
-
-        c00 = take(iv0, iu0) * wu0[:, :, None] * wv0[None, None, :]
-        c01 = take(iv1, iu0) * wu0[:, :, None] * wv1[None, None, :]
-        c10 = take(iv0, iu1) * wu1[:, :, None] * wv0[None, None, :]
-        c11 = take(iv1, iu1) * wu1[:, :, None] * wv1[None, None, :]
-        return c00 + c01 + c10 + c11
+    """Sum views at each voxel centre's detector position, for any rigid poses."""
+    ox, oy, oz = grid_volume_origin(grid)
+    x = (jnp.arange(grid.nx, dtype=jnp.float32) * grid.vx + ox)[:, None, None]
+    y = (jnp.arange(grid.ny, dtype=jnp.float32) * grid.vy + oy)[None, :, None]
+    z = (jnp.arange(grid.nz, dtype=jnp.float32) * grid.vz + oz)[None, None, :]
+    cu, cv = detector.det_center
 
     def body(
         accum: jnp.ndarray, inputs: tuple[jnp.ndarray, jnp.ndarray]
     ) -> tuple[jnp.ndarray, None]:
-        T, image = inputs
-        x_world = T[0, 0] * X + T[0, 1] * Y + T[0, 3]
-        z_world = T[2, 2] * Z + T[2, 3]
-        iu = (x_world - det_cx) * inv_du + u_offset
-        iv = (z_world - det_cz) * inv_dv + v_offset
-        return accum + gather2(image, iu, iv), None
+        pose, image = inputs
+        world_x = pose[0, 0] * x + pose[0, 1] * y + pose[0, 2] * z + pose[0, 3]
+        world_z = pose[2, 0] * x + pose[2, 1] * y + pose[2, 2] * z + pose[2, 3]
+        u = (world_x - cu) / detector.du + (detector.nu - 1) / 2.0
+        v = (world_z - cv) / detector.dv + (detector.nv - 1) / 2.0
+        return accum + _bilinear_detector(image, u, v), None
 
-    init = jnp.zeros((int(grid.nx), int(grid.ny), int(grid.nz)), dtype=jnp.float32)
-    acc, _ = jax.lax.scan(body, init, (T_all, filt))
-    return acc
-
-
-_run_parallel_fbp_direct_jit = jax.jit(
-    _run_parallel_fbp_direct,
-    static_argnames=("grid", "detector"),
-)
+    init = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+    return jax.lax.scan(body, init, (poses, filtered))[0]
 
 
-@jax.jit(static_argnames=("grid", "detector", "z_integer"))
-def _run_parallel_fbp_pallas(
-    T_all: jnp.ndarray,
-    proj: jnp.ndarray,
-    rfft_filter: jnp.ndarray,
+def _fft_length(n: int) -> int:
+    """Linear-convolution length matching ``get_fbp_filter_np``'s padding."""
+    return max(64, 1 << (2 * int(n) - 1).bit_length())
+
+
+def _filter_views(
+    rows: jnp.ndarray,
+    view_scale: jnp.ndarray,
+    params: jnp.ndarray,
+    spectrum: jnp.ndarray,
+    arc_length: jnp.ndarray,
     *,
-    grid: Grid,
     detector: Detector,
-    z_integer: bool,
+    separable: bool,
 ) -> jnp.ndarray:
-    from ._fbp_pallas import backproject_filtered_pallas
+    """Apply each view's exact FBP filter to rows already padded to ``detector``.
 
-    return backproject_filtered_pallas(
-        T_all,
-        _fft_filter_rows(proj, rfft_filter),
-        grid=grid,
-        detector=detector,
-        z_integer=z_integer,
+    Separable scans multiply a 1D ramp along u by a per-view scale. Otherwise the
+    redundancy count N depends on both detector frequencies; see ``_fbp_weights``.
+    """
+    if separable:
+        return _fft_filter_rows(rows * view_scale[:, None, None], spectrum)
+    n_u, n_v = 2 * (spectrum.shape[0] - 1), _fft_length(detector.nv)
+    transformed = jnp.fft.rfft2(rows, s=(n_v, n_u))
+    fu = jnp.fft.rfftfreq(n_u, detector.du).astype(jnp.float32)[None, None, :]
+    fv = jnp.fft.fftfreq(n_v, detector.dv).astype(jnp.float32)[None, :, None]
+    t_u, t_v, c_u, c_v, phase, weight = (params[:, i, None, None] for i in range(6))
+    along = t_u * fu + t_v * fv
+    axial = c_u * fu + c_v * fv
+    # A zero ramp coordinate is the limit of nearby frequencies, not a double root.
+    other = jnp.mod(phase - 2 * jnp.arctan2(jnp.where(along == 0, 1e-30, along), axial), 2 * np.pi)
+    count = 1.0 + (other < arc_length).astype(jnp.float32)
+    row_ramp = jnp.abs(t_v) <= 1e-6 * jnp.abs(t_u)
+    window = spectrum / jnp.maximum(jnp.abs(fu[0, 0]), spectrum[0])
+    # A rolled detector needs the ramp along a u-v diagonal; keep the finite-kernel DC term.
+    oblique = jnp.where(
+        (fu == 0) & (fv == 0), jnp.hypot(t_u, t_v) * spectrum[0], jnp.abs(along) * window
     )
+    ramp = jnp.where(row_ramp, jnp.abs(t_u) * spectrum, oblique)
+    filtered = jnp.fft.irfft2(transformed * (ramp * weight / count), s=(n_v, n_u))
+    return filtered[:, : detector.nv, : detector.nu]
+
+
+def _pad_detector(rows: jnp.ndarray, detector: Detector) -> jnp.ndarray:
+    """Zero-extend measured rows symmetrically to the filter detector."""
+    pad_v, pad_u = (detector.nv - rows.shape[1]) // 2, (detector.nu - rows.shape[2]) // 2
+    return jnp.pad(rows, ((0, 0), (pad_v, pad_v), (pad_u, pad_u))) if pad_u or pad_v else rows
 
 
 def _parallel_filter_batch_size(n_views: int, nv: int, n_fft: int) -> int:
@@ -278,17 +270,21 @@ def _parallel_filter_batch_size(n_views: int, nv: int, n_fft: int) -> int:
     return n_views if capacity >= n_views else 1 << (capacity.bit_length() - 1)
 
 
-@jax.jit(static_argnames=("grid", "detector", "backend", "batch_size", "z_integer"))
-def _run_parallel_fbp_streamed(
+@jax.jit(static_argnames=("grid", "detector", "backend", "batch_size", "z_integer", "separable"))
+def _run_fbp_streamed(
     poses: jnp.ndarray,
     projections: jnp.ndarray,
-    rfft_filter: jnp.ndarray,
+    view_scale: jnp.ndarray,
+    params: jnp.ndarray,
+    spectrum: jnp.ndarray,
+    arc_length: jnp.ndarray,
     *,
     grid: Grid,
     detector: Detector,
     backend: str,
     batch_size: int,
     z_integer: bool,
+    separable: bool,
 ) -> jnp.ndarray:
     """Pad, filter and backproject bounded view batches into one accumulator."""
     n, nv, nu = projections.shape
@@ -300,15 +296,24 @@ def _run_parallel_fbp_streamed(
         rows = jax.lax.dynamic_slice(projections, (start, 0, 0), (b, nv, nu))
         # Shift the final fixed-size batch back into range and exclude overlaps.
         valid = start + jnp.arange(b) >= chunk * b
-        rows = _pad_detector_rows(jnp.where(valid[:, None, None], rows, 0.0), detector.nu)
+        rows = _pad_detector(jnp.where(valid[:, None, None], rows, 0.0), detector)
+        filtered = _filter_views(
+            rows,
+            jax.lax.dynamic_slice(view_scale, (start,), (b,)),
+            jax.lax.dynamic_slice(params, (start, 0), (b, params.shape[1])),
+            spectrum,
+            arc_length,
+            detector=detector,
+            separable=separable,
+        )
         if backend == "pallas":
-            update = _run_parallel_fbp_pallas(
-                batch_poses, rows, rfft_filter, grid=grid, detector=detector, z_integer=z_integer
+            from ._fbp_pallas import backproject_filtered_pallas
+
+            update = backproject_filtered_pallas(
+                batch_poses, filtered, grid=grid, detector=detector, z_integer=z_integer
             )
         else:
-            update = _run_parallel_fbp_direct_jit(
-                batch_poses, rows, rfft_filter, grid=grid, detector=detector
-            )
+            update = _backproject_voxels_jax(batch_poses, filtered, grid=grid, detector=detector)
         return accum + update
 
     return jax.lax.fori_loop(
@@ -363,15 +368,19 @@ def run_parallel_fbp_direct_pallas(
     padding = max(0, math.ceil(required_radius - (detector.nu - 1) / 2))
     detector = replace(detector, nu=detector.nu + 2 * padding)
     ramp = _rfft_filter_array(filter_name, detector.nu, float(detector.du), jnp.float32)
-    return _run_parallel_fbp_streamed(
+    return _run_fbp_streamed(
         jnp.asarray(T_all, dtype=jnp.float32),
         jnp.asarray(proj, dtype=jnp.float32),
+        jnp.ones((n_views,), jnp.float32),
+        jnp.zeros((n_views, 6), jnp.float32),
         ramp,
+        jnp.float32(0),
         grid=grid,
         detector=detector,
         backend="pallas",
         batch_size=_parallel_filter_batch_size(n_views, detector.nv, 2 * (ramp.shape[0] - 1)),
         z_integer=True,
+        separable=True,
     )
 
 
@@ -398,6 +407,46 @@ def _parallel_filter_detector(grid: Grid, detector: Detector) -> Detector:
     required_half_width = (math.hypot(rx, ry) + abs(detector.det_center[0])) / detector.du
     padding = max(0, math.ceil(required_half_width - (detector.nu - 1) / 2))
     return replace(detector, nu=detector.nu + 2 * padding) if padding else detector
+
+
+def _filter_detector(grid: Grid, detector: Detector, poses: np.ndarray, *, pad_v: bool) -> Detector:
+    """Extend the detector to every view's projected voxel centres.
+
+    Filtered values are nonzero beyond the measured detector. Padding keeps
+    those tails for voxels projecting outside it, as ``_parallel_filter_detector``
+    does for z-axis scans. Rows need padding only for two-dimensional filters.
+    """
+    origin = np.asarray(grid_volume_origin(grid), dtype=np.float64)
+    far = origin + (np.asarray([grid.nx, grid.ny, grid.nz]) - 1) * [grid.vx, grid.vy, grid.vz]
+    corners = np.array(np.meshgrid(*zip(origin, far, strict=True), indexing="ij")).reshape(3, -1)
+    rows = np.asarray(poses, dtype=np.float64)
+    u = np.einsum("ni,ic->nc", rows[:, 0, :3], corners) + rows[:, 0, 3, None]
+    v = np.einsum("ni,ic->nc", rows[:, 2, :3], corners) + rows[:, 2, 3, None]
+    reach_u = np.max(np.abs(u - detector.det_center[0])) / detector.du
+    reach_v = np.max(np.abs(v - detector.det_center[1])) / detector.dv
+    extra_u = max(0, math.ceil(reach_u - (detector.nu - 1) / 2))
+    extra_v = max(0, math.ceil(reach_v - (detector.nv - 1) / 2)) if pad_v else 0
+    return replace(detector, nu=detector.nu + 2 * extra_u, nv=detector.nv + 2 * extra_v)
+
+
+def _view_weights(
+    poses: jnp.ndarray, scale: float | None
+) -> tuple[np.ndarray, np.ndarray, float, bool]:
+    """Return per-view scales, filter parameters, arc length and separability.
+
+    An explicit ``scale`` keeps the uniform weighting: one constant per view
+    times a ramp along u. Otherwise weights are exact for the fitted circular
+    scan; scans with too few views to define one fall back to ``pi / n``.
+    """
+    n = int(poses.shape[0])
+    if scale is None:
+        try:
+            weights = fbp_weights(np.asarray(poses))
+        except ValueError:
+            scale = default_fbp_scale(n)
+        else:
+            return weights.view_scale, weights.params, weights.arc_length, weights.separable
+    return np.full(n, scale, np.float32), np.zeros((n, 6), np.float32), 0.0, True
 
 
 def _is_fbp_oom_error(exc: Exception) -> bool:
@@ -564,15 +613,19 @@ def fbp(
     config: FBPConfig | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
-    """Filtered backprojection for uniformly sampled parallel-ray geometry.
+    """Filtered backprojection for parallel rays rotating about a fixed axis.
 
     Projections: (n_views, nv, nu) -> attenuation volume (nx, ny, nz).
-    Built-in parallel geometry uses voxel-driven backprojection and retains
-    filtered tails through the full output volume, assuming zero raw attenuation
-    beyond the measured detector. This is not a correction for truncated objects.
-    Other geometries
-    use a physically normalized discrete adjoint. The default angular weight
-    assumes a uniformly sampled half turn; supply ``scale`` for other coverage.
+    The rotation axis, arc and angular spacing are fitted from the view poses,
+    so tilted (laminography) axes, partial or full turns and irregular angles
+    are weighted exactly on every measured frequency. Frequencies no view
+    measures, such as laminography's missing cone, reconstruct as zero.
+
+    Backprojection is voxel-driven with bilinear detector interpolation and
+    retains filtered tails through the full output volume, assuming zero raw
+    attenuation beyond the measured detector. This is not a correction for
+    truncated objects. An explicit ``det_grid`` instead uses the ray-model
+    adjoint with uniform weights.
     """
     cfg = FBPConfig() if config is None else config
     if cfg.backprojector not in ("auto", "jax", "pallas"):
@@ -587,89 +640,108 @@ def fbp(
     )
     validate_detector_grid(det_grid, detector, context="fbp det_grid")
     proj = jnp.asarray(projections, dtype=jnp.float32)
-    direct_parallel = _can_use_direct_parallel_fbp(geometry, det_grid)
-    pallas_eligible = direct_parallel and all(
-        device.platform == "gpu" and device.client.platform_version.lower().startswith("cuda")
-        for device in proj.devices()
-    )
-    if cfg.backprojector == "pallas" and not pallas_eligible:
-        raise ValueError(
-            "Pallas FBP requires CUDA arrays and built-in parallel geometry without det_grid"
-        )
-    if direct_parallel:
-        detector = _parallel_filter_detector(grid, detector)
     # Precompute poses once
     T_all = stack_view_poses(geometry, n_views)
     validate_pose_stack(T_all, n_views, context="fbp geometry")
+    if det_grid is not None:
+        return _fbp_explicit_detector_grid(T_all, proj, grid, detector, cfg, det_grid)
+    cuda = all(
+        device.platform == "gpu" and device.client.platform_version.lower().startswith("cuda")
+        for device in proj.devices()
+    )
+    if cfg.backprojector == "pallas" and not cuda:
+        raise ValueError("Pallas FBP requires CUDA arrays")
+    view_scale, params, arc_length, separable = _view_weights(T_all, cfg.scale)
+    parallel = _can_use_direct_parallel_fbp(geometry, det_grid)
+    if parallel:
+        filter_detector = _parallel_filter_detector(grid, detector)
+    else:
+        filter_detector = _filter_detector(grid, detector, np.asarray(T_all), pad_v=not separable)
+    spectrum = _rfft_filter_array(
+        cfg.filter_name, filter_detector.nu, float(detector.du), proj.dtype
+    )
+    n_fft_v = 1 if separable else _fft_length(filter_detector.nv)
+    batch = _parallel_filter_batch_size(
+        n_views, filter_detector.nv * n_fft_v, 2 * (spectrum.shape[0] - 1)
+    )
+    while True:
+        try:
+            acc = _run_fbp_streamed(
+                T_all,
+                proj,
+                jnp.asarray(view_scale),
+                jnp.asarray(params),
+                spectrum,
+                jnp.float32(arc_length),
+                grid=grid,
+                detector=filter_detector,
+                backend="pallas" if cuda and cfg.backprojector != "jax" else "jax",
+                batch_size=batch,
+                z_integer=parallel and supports_parallel_fbp_z_integer(grid, detector),
+                separable=separable,
+            )
+            # Surface asynchronous allocation failures here, where a retry can use smaller batches.
+            acc.block_until_ready()
+            break
+        except Exception as exc:
+            if batch == 1 or not _is_fbp_oom_error(exc):
+                raise
+            batch //= 2
+    for _ in progress_iter(range(n_views), total=n_views, desc="FBP: views"):
+        pass
+    return acc
+
+
+def _fbp_explicit_detector_grid(
+    T_all: jnp.ndarray,
+    proj: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    cfg: FBPConfig,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray],
+) -> jnp.ndarray:
+    """Backproject with the ray-model adjoint on explicit detector pixel positions.
+
+    Uses a ramp along u with uniform weights, ``pi / n`` unless ``cfg.scale`` is set.
+    """
+    n_views = int(proj.shape[0])
     requested_b = int(cfg.views_per_batch) if int(cfg.views_per_batch) > 0 else n_views
     b = max(1, min(requested_b, n_views))
     view_progress = iter(progress_iter(range(n_views), total=n_views, desc="FBP: views"))
 
-    def run_generic_path() -> jnp.ndarray:
-        generic_proj = _pad_detector_rows(proj, detector.nu)
+    def fast_path() -> jnp.ndarray:
+        return _run_fbp_fast_path(
+            T_all,
+            proj,
+            batch_size=b,
+            grid=grid,
+            detector=detector,
+            filter_name=cfg.filter_name,
+            projector_unroll=cfg.projector_unroll,
+            checkpoint_projector=cfg.checkpoint_projector,
+            gather_dtype=cfg.gather_dtype,
+            det_grid=det_grid,
+        )
 
-        def fast_path() -> jnp.ndarray:
-            return _run_fbp_fast_path(
-                T_all,
-                generic_proj,
-                batch_size=b,
-                grid=grid,
-                detector=detector,
-                filter_name=cfg.filter_name,
-                projector_unroll=cfg.projector_unroll,
-                checkpoint_projector=cfg.checkpoint_projector,
-                gather_dtype=cfg.gather_dtype,
-                det_grid=det_grid,
-            )
-
-        def backoff_path() -> jnp.ndarray:
-            return _run_fbp_with_backoff(
-                T_all,
-                generic_proj,
-                batch_size=b,
-                grid=grid,
-                detector=detector,
-                filter_name=cfg.filter_name,
-                projector_unroll=cfg.projector_unroll,
-                checkpoint_projector=cfg.checkpoint_projector,
-                gather_dtype=cfg.gather_dtype,
-                det_grid=det_grid,
-                view_progress=view_progress,
-            )
-
-        return _run_fbp_generic_with_oom_fallback(
-            fast_path=fast_path,
-            backoff_path=backoff_path,
+    def backoff_path() -> jnp.ndarray:
+        return _run_fbp_with_backoff(
+            T_all,
+            proj,
+            batch_size=b,
+            grid=grid,
+            detector=detector,
+            filter_name=cfg.filter_name,
+            projector_unroll=cfg.projector_unroll,
+            checkpoint_projector=cfg.checkpoint_projector,
+            gather_dtype=cfg.gather_dtype,
+            det_grid=det_grid,
             view_progress=view_progress,
-            n_views=n_views,
         )
 
-    if direct_parallel:
-        rfft_filter = _rfft_filter_array(
-            cfg.filter_name, detector.nu, float(detector.du), proj.dtype
-        )
-        filter_batch = _parallel_filter_batch_size(
-            n_views, detector.nv, 2 * (rfft_filter.shape[0] - 1)
-        )
-        try:
-            acc = _run_parallel_fbp_streamed(
-                T_all,
-                proj,
-                rfft_filter,
-                grid=grid,
-                detector=detector,
-                backend="pallas" if pallas_eligible and cfg.backprojector != "jax" else "jax",
-                batch_size=filter_batch,
-                z_integer=supports_parallel_fbp_z_integer(grid, detector),
-            )
-            acc.block_until_ready()
-            for _ in range(n_views):
-                next(view_progress, None)
-        except Exception as exc:
-            if cfg.backprojector == "pallas" or not _is_fbp_oom_error(exc):
-                raise
-            acc = run_generic_path()
-    else:
-        acc = run_generic_path()
-
+    acc = _run_fbp_generic_with_oom_fallback(
+        fast_path=fast_path,
+        backoff_path=backoff_path,
+        view_progress=view_progress,
+        n_views=n_views,
+    )
     return acc * default_fbp_scale(n_views) if cfg.scale is None else acc * float(cfg.scale)

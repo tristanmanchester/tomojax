@@ -6,9 +6,27 @@ import functools
 import math
 
 import numpy as np
-from scipy.fft import next_fast_len
 
 from tomojax.geometry import Detector, Grid, grid_volume_origin
+
+
+def next_fast_len(target: int) -> int:
+    """Return the smallest 5-smooth length >= ``target``, as ``scipy.fft`` does for real FFTs.
+
+    A local helper keeps SciPy's comparatively slow FFT import off the reconstruction path.
+    """
+    if target <= 6:
+        return max(target, 1)
+    best = 1 << (target - 1).bit_length()
+    power5 = 1
+    while power5 < best:
+        odd = power5
+        while odd < best:
+            # Smallest odd * 2**k reaching the target.
+            best = min(best, odd << (-(-target // odd) - 1).bit_length())
+            odd *= 3
+        power5 *= 5
+    return best
 
 
 def uniform_half_turn(angles: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
@@ -36,7 +54,7 @@ def transform_grid(grid: Grid, detector: Detector) -> tuple[tuple[int, int], tup
         lo = min(0, math.floor((-radius - first) / spacing))
         hi = max(count - 1, math.ceil((radius - first) / spacing))
         support = hi - lo + 1
-        padded = next_fast_len(2 * support, real=True)
+        padded = next_fast_len(2 * support)
         shape.append(padded)
         crop.append(-lo + (padded - support) // 2)
     return (shape[0], shape[1]), (crop[0], crop[1])

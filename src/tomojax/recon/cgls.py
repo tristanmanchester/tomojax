@@ -206,6 +206,18 @@ def _operators(
     return forward, adjoint
 
 
+def _checked_inputs(
+    poses: jax.Array, data: jax.Array, initial: jax.Array | None, grid: Grid
+) -> tuple[jax.Array, jax.Array]:
+    # Check inputs inside the solve: separate eager checks would each compile.
+    if initial is None:
+        initial = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+    finite = (
+        jnp.all(jnp.isfinite(data)) & jnp.all(jnp.isfinite(poses)) & jnp.all(jnp.isfinite(initial))
+    )
+    return initial, finite
+
+
 @partial(
     jax.jit,
     static_argnames=(
@@ -221,7 +233,7 @@ def _operators(
 def _solve(
     poses: jax.Array,
     data: jax.Array,
-    initial: jax.Array,
+    initial: jax.Array | None,
     det_grid: tuple[jax.Array, jax.Array] | None,
     max_iters: jax.Array,
     rtol: jax.Array,
@@ -236,7 +248,7 @@ def _solve(
     model: str = "ray",
     joseph_interpolation: str = "linear",
     gradient_damping: jax.Array | None = None,
-) -> tuple[_State, jax.Array, jax.Array]:
+) -> tuple[_State, jax.Array, jax.Array, jax.Array]:
     # Iteration budgets and changing data/poses are dynamic: budget sweeps and
     # repeated scans reuse the same compiled executable.
     forward, adjoint = _operators(
@@ -257,6 +269,7 @@ def _solve(
             joseph_interpolation,
             absolute_weights=True,
         )
+    initial, inputs_finite = _checked_inputs(poses, data, initial, grid)
     residual = data if zero_start else data - forward(initial)
     damp2 = damping * damping
     spacing = (grid.vx, grid.vy, grid.vz)
@@ -277,7 +290,7 @@ def _solve(
         residual,
         gradient,
         gamma,
-        ~jnp.isfinite(gamma),
+        ~(inputs_finite & jnp.isfinite(gamma)),
         jnp.bool_(False),
         jnp.bool_(True),
         jnp.int32(0),
@@ -382,7 +395,14 @@ def _solve(
         )
 
     result = jax.lax.while_loop(condition, step, state)
-    return result, jnp.sqrt(gamma), threshold
+    return result, jnp.sqrt(gamma), threshold, inputs_finite
+
+
+def _as_float32(array: object) -> jax.Array:
+    # Cast host arrays on the host; a device-side cast would compile a separate program.
+    if isinstance(array, jax.Array):
+        return array if array.dtype == jnp.float32 else array.astype(jnp.float32)
+    return jnp.asarray(np.asarray(array, dtype=np.float32))
 
 
 def cgls(
@@ -414,23 +434,15 @@ def cgls(
     if cfg.projector_backend not in {"auto", "jax", "pallas"}:
         raise ValueError("cgls: projector_backend must be 'auto', 'jax' or 'pallas'")
     _validate_model(cfg, det_grid)
-    shape = validate_grid(grid, "cgls grid")
+    _ = validate_grid(grid, "cgls grid")
     n, _, _ = validate_projection_stack(projections, detector, geometry=geometry, context="cgls")
     validate_detector_grid(det_grid, detector, context="cgls")
     if init_x is not None:
         validate_volume(init_x, grid, context="cgls", name="init_x")
-    data = jnp.asarray(projections, dtype=jnp.float32)
-    initial = (
-        jnp.zeros(shape, dtype=jnp.float32)
-        if init_x is None
-        else jnp.asarray(init_x, dtype=jnp.float32)
-    )
+    data = _as_float32(projections)
+    initial = None if init_x is None else _as_float32(init_x)
     poses = stack_view_poses(geometry, n)
     validate_pose_stack(poses, n, context="cgls")
-    if not bool(
-        jnp.all(jnp.isfinite(data)) & jnp.all(jnp.isfinite(initial)) & jnp.all(jnp.isfinite(poses))
-    ):
-        raise ValueError("cgls: projections, initial volume and poses must be finite")
     if cfg.projector_model == "joseph":
         from tomojax.core.joseph import validate_plane_geometry
 
@@ -444,7 +456,7 @@ def cgls(
         backend = "pallas" if cuda and det_grid is None else "jax"
     if backend == "pallas" and (not cuda or det_grid is not None):
         raise ValueError("cgls: Pallas requires CUDA and the canonical detector grid")
-    result, initial_norm, threshold = _solve(
+    result, initial_norm, threshold, inputs_finite = _solve(
         poses,
         data,
         initial,
@@ -457,14 +469,15 @@ def cgls(
         detector=detector,
         backend=backend,
         batch_size=batch,
-        zero_start=init_x is None,
+        zero_start=initial is None,
         model=cfg.projector_model,
         joseph_interpolation=cfg.joseph_interpolation,
         gradient_damping=jnp.float32(cfg.gradient_damping) if cfg.gradient_damping else None,
     )
-    count, gamma, failed, roundoff, first_norm, tolerance, verified, recomputations = (
+    finite, count, gamma, failed, roundoff, first_norm, tolerance, verified, recomputations = (
         jax.device_get(
             (
+                inputs_finite,
                 result.iteration,
                 result.gamma,
                 result.failed,
@@ -476,6 +489,8 @@ def cgls(
             )
         )
     )
+    if not finite:
+        raise ValueError("cgls: projections, initial volume and poses must be finite")
     converged = bool(not failed and gamma <= tolerance * tolerance)
     info = {
         "effective_iters": int(count),

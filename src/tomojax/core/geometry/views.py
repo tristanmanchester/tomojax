@@ -35,7 +35,8 @@ def stack_view_poses(
         poses[:, 1, 1] = c
         poses[:, 2, 2] = 1.0
         poses[:, 3, 3] = 1.0
-        return jnp.asarray(poses, dtype=dtype)
+        # Convert on the host: a device-side cast would compile a separate program.
+        return jnp.asarray(poses.astype(dtype))
 
     if type(geometry) is LaminographyGeometry:
         from .transforms import align_u_to_v
@@ -50,7 +51,7 @@ def stack_view_poses(
         poses = np.zeros((int(n_views), 4, 4), dtype=np.float64)
         poses[:, :3, :3] = alignment @ rotation
         poses[:, 3, 3] = 1.0
-        return jnp.asarray(poses, dtype=dtype)
+        return jnp.asarray(poses.astype(dtype))
 
     return jnp.stack(
         [jnp.asarray(geometry.pose_for_view(i), dtype=dtype) for i in range(int(n_views))],

@@ -123,11 +123,9 @@ def solve_tomojax(
     case: Any, iterations: int, batch: int, method: str, *, fourier_slices: int = 16
 ) -> tuple[Any, dict]:
     """Run a public TomoJAX solver with unregularized, unconstrained least squares."""
-    import jax.numpy as jnp
     import numpy as np
 
     from tomojax.geometry import LaminographyGeometry, ParallelGeometry
-    from tomojax.recon import CGLSConfig, FBPConfig, FistaConfig, cgls, cgls_multires, fbp, fista_tv
 
     geometry = (
         LaminographyGeometry(case.grid, case.detector, case.angles_deg, tilt_deg=30)
@@ -153,6 +151,11 @@ def solve_tomojax(
             "regulariser": "none",
             "positivity": False,
         }
+    # Import JAX-based solvers only when needed, as a Fourier-only script would.
+    import jax.numpy as jnp
+
+    from tomojax.recon import CGLSConfig, FBPConfig, FistaConfig, cgls, cgls_multires, fbp, fista_tv
+
     if method == "tomojax_fbp_host_pallas":
         from tomojax.recon import FBPHostConfig, fbp_host
 
@@ -395,16 +398,7 @@ def run_worker(args: argparse.Namespace) -> dict[str, Any]:
             "status": "unsupported_comparison",
             "reason": "This adapter is validated only for centred isotropic parallel scans",
         }
-    if (
-        args.method
-        in {
-            "tomojax_fourier_cupy",
-            "tomojax_fbp_pallas",
-            "tomojax_fbp_host_pallas",
-            "tomojax_fbp_joseph_cgls_pallas",
-        }
-        and args.kind == "lamino"
-    ):
+    if args.method in {"tomojax_fourier_cupy", "tomojax_fbp_host_pallas"} and args.kind == "lamino":
         return {
             **record,
             "status": "unsupported_comparison",
