@@ -364,3 +364,29 @@ def test_shift_search_recovers_large_view_shifts(kind):
     actual = _prealign._remove_object_translation(found, rotations, spacing)
     # +/-5 px shifts come within the local solver's sub-pixel reach.
     assert np.sqrt(np.mean((actual - expected) ** 2)) < 0.4
+
+
+@pytest.mark.parametrize("factors", [None, (2, 1)])
+def test_translation_seed_runs_once_at_the_first_level(monkeypatch, factors):
+    # check-public-imports: allow-private
+    from tomojax.align._pose import _pose_loop
+
+    # check-public-imports: allow-private
+    from tomojax.align._stages import _stage_multires
+
+    geometry, grid, detector = _geometry(8, "parallel", np.linspace(0, 180, 6, endpoint=False))
+    data = jnp.zeros((6, detector.nv, detector.nu), jnp.float32)
+    calls = []
+
+    def record(geometry, grid, detector, projections, cfg):
+        calls.append((projections.shape, cfg.seed_translations))
+
+    monkeypatch.setattr(_pose_loop, "seeded_translation_params", record)
+    monkeypatch.setattr(_stage_multires, "seeded_translation_params", record)
+    cfg = AlignConfig(outer_iters=1, recon_iters=1, seed_translations=True, gauge_fix="none")
+    if factors is None:
+        align(geometry, grid, detector, data, config=cfg)
+        assert calls == [((6, 8, 8), True)]
+    else:
+        align_multires(geometry, grid, detector, data, factors=factors, config=cfg)
+        assert calls == [((6, 4, 4), True)]

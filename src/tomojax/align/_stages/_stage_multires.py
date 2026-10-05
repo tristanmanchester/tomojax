@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from tomojax.align._config import AlignConfig
 from tomojax.align._objectives.loss_specs import loss_spec_name, resolve_loss_for_level
 from tomojax.align._observer import ObserverAction, ObserverCallback, OuterStat
+from tomojax.align._prealign import seeded_translation_params
 from tomojax.align._results import (
     AlignMultiresCheckpointCallback,
     AlignMultiresInfo,
@@ -74,6 +75,9 @@ def _run_one_multires_level(
     params0 = (
         resume_state.params5 if resuming_this_level and resume_state is not None else state.params5
     )
+    if params0 is None and level_index == 0:
+        # The first level starts from explicit zero poses, so seed it here.
+        params0 = seeded_translation_params(geometry, grid, detector, projections, context.cfg)
     level_run = _prepare_multires_level_state(
         resume_state=resume_state,
         level_index=level_index,

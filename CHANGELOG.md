@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Cache the pose Jacobian columns of the coupled solver whenever five
+  sinograms fit in a quarter of free device memory (previously a fixed 64 MB)
+  and apply cached columns to all views in single batched contractions. On a
+  256-cubed, 361-view laminography scan the columns were recomputed in every
+  conjugate-gradient iteration, 60% of GPU time; full-resolution
+  `tomojax align --mode pose` now takes 188 s instead of 13.6 minutes
+  (22 minutes this morning) with rotations to 0.0030 deg.
+- Solve each view's 5-by-5 pose block in symmetrically scaled variables and,
+  only where its FP32 Cholesky factor still fails, with Marquardt damping of
+  1e-5 relative to its diagonal. Rotation and translation columns differ in
+  size by orders of magnitude, and unscaled factorisations of weakly
+  determined blocks returned NaN, which rejected whole Gauss-Newton steps.
+- Seed translations at the first coarse-to-fine level, where the shift search
+  previously never ran because that level starts from explicit zero poses.
 - Fix the reconstruction step inside alignment with Joseph integration. Its
   explicit gradient backprojected with the ray model's transpose (2% from the
   Joseph adjoint), and traced poses sent it to the JAX reference operators

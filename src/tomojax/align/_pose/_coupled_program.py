@@ -189,18 +189,24 @@ def _build_program(
         def get_columns(i):
             return cached[i] if cached is not None else columns(i)
 
+        highest = jax.lax.Precision.HIGHEST
+
+        # Cached columns apply to all views in one contraction; otherwise each
+        # view's columns are recomputed inside a sequential map.
         def pose_forward(dp):
+            if cached is not None:
+                return jnp.einsum("nk,nkp->np", dp, cached, precision=highest).reshape(
+                    residual.shape
+                )
             return jax.lax.map(
-                lambda i: jnp.matmul(dp[i], get_columns(i), precision=jax.lax.Precision.HIGHEST),
-                indices,
+                lambda i: jnp.matmul(dp[i], get_columns(i), precision=highest), indices
             ).reshape(residual.shape)
 
         def pose_adjoint(y):
+            if cached is not None:
+                return jnp.einsum("nkp,np->nk", cached, y.reshape(n_views, -1), precision=highest)
             return jax.lax.map(
-                lambda i: jnp.matmul(
-                    get_columns(i), y[i].ravel(), precision=jax.lax.Precision.HIGHEST
-                ),
-                indices,
+                lambda i: jnp.matmul(get_columns(i), y[i].ravel(), precision=highest), indices
             )
 
         reg_grad, reg_hessian = jax.linearize(jax.grad(regularisation), x)
@@ -228,12 +234,13 @@ def _build_program(
         )
         rhs = (-free * gx, -gp)
         if cfg.gn_joint_solver == "pose_eliminated":
-            gram = jax.lax.map(
-                lambda i: jnp.matmul(
-                    get_columns(i), get_columns(i).T, precision=jax.lax.Precision.HIGHEST
-                ),
-                indices,
-            )
+            if cached is not None:
+                gram = jnp.einsum("nkp,nlp->nkl", cached, cached, precision=highest)
+            else:
+                gram = jax.lax.map(
+                    lambda i: jnp.matmul(get_columns(i), get_columns(i).T, precision=highest),
+                    indices,
+                )
             solve_pose = pose_block_solver(
                 gram + cfg.gn_damping * jnp.eye(p.shape[1], dtype=p.dtype),
                 arrays.smoothness * active,
@@ -276,7 +283,11 @@ def _build_program(
             finite = reduced.finite & jnp.isfinite(relative)
             return CoupledLinearResult((dx, dp), reduced.iterations, relative, finite)
 
-        pose_diagonal = jax.lax.map(lambda i: jnp.sum(get_columns(i) ** 2, axis=1), indices)
+        pose_diagonal = (
+            jnp.sum(cached**2, axis=2)
+            if cached is not None
+            else jax.lax.map(lambda i: jnp.sum(get_columns(i) ** 2, axis=1), indices)
+        )
         pose_inverse = 1 / (pose_diagonal + 12 * arrays.smoothness**2 + cfg.gn_damping)
         return solve_coupled_normal(
             normal,

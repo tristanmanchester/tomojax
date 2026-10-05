@@ -20,6 +20,7 @@ import numpy as np
 from tomojax.core.geometry.views import stack_view_poses
 
 if TYPE_CHECKING:
+    from tomojax.align._config import AlignConfig
     from tomojax.geometry import Detector, Geometry, Grid
 
 LOG = logging.getLogger(__name__)
@@ -191,3 +192,37 @@ def translation_params_from_shifts(
     seeded = np.array(params, dtype=np.float32, copy=True)
     seeded[:, 3:] = np.where(mask, estimate, fixed)
     return seeded
+
+
+def seeded_translation_params(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jax.Array | np.ndarray,
+    cfg: AlignConfig,
+) -> jax.Array | None:
+    """Return initial poses with searched translations, or None when not requested.
+
+    Local solvers converge only near the truth; a global shift search first
+    brings large per-view stage shifts within reach.
+    """
+    from tomojax.align._config import _active_dof_mask_for_cfg
+
+    active = _active_dof_mask_for_cfg(cfg)
+    if not cfg.seed_translations or not any(active[3:]):
+        return None
+    n = int(np.shape(projections)[0])
+    shifts = estimate_view_shifts(geometry, grid, detector, projections)
+    params = translation_params_from_shifts(
+        shifts,
+        np.asarray(stack_view_poses(geometry, n), np.float64),
+        np.zeros((n, 5), np.float32),
+        frame=cfg.pose_translation_frame,
+        active=(bool(active[3]), bool(active[4])),
+    )
+    LOG.info(
+        "Seeded translations from a shift search: rms %.3f, max %.3f (physical units)",
+        float(np.sqrt(np.mean(shifts**2))),
+        float(np.max(np.abs(shifts))),
+    )
+    return jnp.asarray(params)

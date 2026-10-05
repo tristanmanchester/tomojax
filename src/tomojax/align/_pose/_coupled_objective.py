@@ -17,9 +17,22 @@ from ._coupled_program import CoupledArrays, CoupledSpec, run_loss, run_update
 from ._pose_context import _PoseObjectiveContext
 from ._pose_jacobian import PoseJacobianOptions
 
-# Large acquisitions recompute per-view columns instead of retaining five
-# complete sinograms. This caps the optional cache, not the acquisition size.
-_POSE_CACHE_BYTES = 64 * 1024**2
+# Recomputing a view's five Jacobian columns costs a derivative projection,
+# and the joint solve applies them in every conjugate-gradient iteration, so
+# cache them whenever five sinograms fit in this share of free device memory.
+# Larger acquisitions recompute them per view instead.
+_POSE_CACHE_FRACTION = 0.25
+# Fallback cap when free device memory cannot be queried.
+_POSE_CACHE_BYTES = 512 * 1024**2
+
+
+def _pose_cache_limit() -> int:
+    from tomojax.backends import device_free_memory_bytes
+
+    if _POSE_CACHE_BYTES <= 0:
+        return 0
+    free = device_free_memory_bytes() if jax.default_backend() == "gpu" else None
+    return _POSE_CACHE_BYTES if free is None else int(_POSE_CACHE_FRACTION * free)
 
 
 @dataclass(frozen=True)
@@ -64,7 +77,7 @@ def build_coupled_objective(ctx: _PoseObjectiveContext) -> CoupledObjective:
         smoothness=ctx.smoothness_weights,
         det_grid=ctx.det_grid,
     )
-    cache_columns = ctx.n_views * ctx.nv * ctx.nu * 5 * 4 <= _POSE_CACHE_BYTES
+    cache_columns = ctx.n_views * ctx.nv * ctx.nu * 5 * 4 <= _pose_cache_limit()
     spec = CoupledSpec(
         grid=ctx.grid,
         detector=ctx.detector,

@@ -8,6 +8,18 @@ import jax
 import jax.numpy as jnp
 from jax.scipy.linalg import solve_triangular
 
+# Relative to each scaled diagonal entry: keeps FP32 block factorisations stable.
+_RELATIVE_DAMPING = 1e-5
+
+
+def _cholesky(blocks: jax.Array) -> jax.Array:
+    """Factor unit-diagonal blocks, damping only those whose FP32 factor fails."""
+    factors = jnp.linalg.cholesky(blocks)
+    eye = jnp.eye(blocks.shape[-1], dtype=blocks.dtype)
+    damped = jnp.linalg.cholesky(blocks + _RELATIVE_DAMPING * eye)
+    failed = ~jnp.all(jnp.isfinite(factors), axis=(-2, -1), keepdims=True)
+    return jnp.where(failed, damped, factors)
+
 
 def _matmul(a: jax.Array, b: jax.Array) -> jax.Array:
     return jnp.matmul(a, b, precision=jax.lax.Precision.HIGHEST)
@@ -25,19 +37,28 @@ def pose_block_solver(
     damping. Frozen DOFs must have zero data columns and smoothness weights.
     With no smoothness, each view is independent. Otherwise D2 couples at most
     two adjacent views: block Cholesky and substitution use O(views * DOFs²)
-    storage, never a dense (views * DOFs)-squared matrix. No extra damping,
-    jitter, or diagonal approximation changes the requested system.
+    storage, never a dense (views * DOFs)-squared matrix.
+
+    The system is solved in symmetrically scaled variables with a unit
+    diagonal, which changes only the conditioning. Rotation and translation
+    columns differ in size by orders of magnitude, and a view can determine
+    some pose combinations only weakly. Where FP32 Cholesky of a block still
+    fails, that block alone is factored with ``_RELATIVE_DAMPING`` added to its
+    unit diagonal (Marquardt damping); every other block is solved exactly.
     """
     n, width, _ = diagonal.shape
+    scale = jax.lax.rsqrt(
+        jnp.maximum(jnp.diagonal(diagonal, axis1=1, axis2=2), jnp.finfo(diagonal.dtype).tiny)
+    )
     if not has_smoothness or n < 3:
-        factors = jnp.linalg.cholesky(diagonal)
+        factors = _cholesky(scale[:, :, None] * diagonal * scale[:, None, :])
 
         def solve(rhs):
             def one(factor, value):
                 y = solve_triangular(factor, value, lower=True)
                 return solve_triangular(factor.T, y, lower=False)
 
-            return jax.vmap(one)(factors, rhs)
+            return scale * jax.vmap(one)(factors, scale * rhs)
 
         return solve
 
@@ -47,8 +68,15 @@ def pose_block_solver(
     second = jnp.zeros(n, diagonal.dtype).at[2:].set(1)
     smooth = jnp.diag(2 * smoothness_weights**2)
     diagonal = diagonal + main[:, None, None] * smooth
-    below_one = first[:, None, None] * smooth
-    below_two = second[:, None, None] * smooth
+    scale = jax.lax.rsqrt(
+        jnp.maximum(jnp.diagonal(diagonal, axis1=1, axis2=2), jnp.finfo(diagonal.dtype).tiny)
+    )
+    diagonal = scale[:, :, None] * diagonal * scale[:, None, :]
+    # Row i couples views i-1 and i-2; scale rows by view i, columns by the other.
+    lag_one = jnp.concatenate((scale[:1], scale[:-1]))
+    lag_two = jnp.concatenate((scale[:2], scale[:-2]))
+    below_one = first[:, None, None] * smooth * scale[:, :, None] * lag_one[:, None, :]
+    below_two = second[:, None, None] * smooth * scale[:, :, None] * lag_two[:, None, :]
     identity = jnp.eye(width, dtype=diagonal.dtype)
     zero = jnp.zeros_like(identity)
 
@@ -57,14 +85,15 @@ def pose_block_solver(
         block, one, two = blocks
         l_two = solve_triangular(prev_two, two.T, lower=True).T
         l_one = solve_triangular(prev_one, (one - _matmul(l_two, prev_sub.T)).T, lower=True).T
-        l_diagonal = jnp.linalg.cholesky(block - _matmul(l_one, l_one.T) - _matmul(l_two, l_two.T))
+        l_diagonal = _cholesky(block - _matmul(l_one, l_one.T) - _matmul(l_two, l_two.T))
         return (prev_one, l_diagonal, l_one), (l_diagonal, l_one, l_two)
 
     _, (factors, first_factors, second_factors) = jax.lax.scan(
         factor_step, (identity, identity, zero), (diagonal, below_one, below_two)
     )
 
-    def solve(rhs):
+    def solve(unscaled_rhs):
+        rhs = scale * unscaled_rhs
         initial = (jnp.zeros_like(rhs[0]), jnp.zeros_like(rhs[0]))
 
         def forward(previous, blocks):
@@ -90,6 +119,9 @@ def pose_block_solver(
             )
             return (next_one_value, x), x
 
-        return jax.lax.scan(backward, initial, (factors, next_one, next_two, y), reverse=True)[1]
+        return (
+            scale
+            * jax.lax.scan(backward, initial, (factors, next_one, next_two, y), reverse=True)[1]
+        )
 
     return solve
