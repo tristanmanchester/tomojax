@@ -101,8 +101,9 @@ remain separate requirements.
   limited by its footprint enumeration. Three Pallas rewrites (compact tiles,
   exact row intervals, a CUDA fixed-point splat) did not help; a CUDA C gather
   with four z voxels per thread sharing one footprint loop is 1.6x faster on
-  laminography and is used from 256 cubed, where structured laminography CGLS
-  now runs at 1.2-1.85x ASTRA's warm speed.
+  laminography and is used from 256 cubed. There, structured laminography
+  FBP-initialised CGLS takes 532 ms warm against 982 ms for ASTRA's fastest
+  accepted CGLS; plain Joseph CGLS takes 1023 ms.
 
 The detailed record below is chronological and retains every experiment.
 
