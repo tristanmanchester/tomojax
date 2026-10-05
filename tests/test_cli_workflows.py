@@ -319,6 +319,24 @@ def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> No
     assert resolved["volume_shape"] == [4, 4, 2]
 
 
+@pytest.mark.parametrize("warm_start", ["none", "fbp"])
+def test_recon_cli_runs_cgls_like_the_python_solver(tmp_path: Path, warm_start: str) -> None:
+    scan = tmp_path / "scan.nxs"
+    recon = tmp_path / "recon.nxs"
+    manifest = tmp_path / "recon-manifest.json"
+    write_projection_dataset(scan)
+    args = ["--roi", "off", "--grid", "4", "4", "2", "--iters", "6", "--warm-start", warm_start]
+    command = ["recon", "--data", str(scan), "--out", str(recon), "--algo", "cgls"]
+    assert main([*command, *args, "--save-manifest", str(manifest)]) == 0
+    loaded = load_dataset(recon)
+    assert loaded.volume is not None
+    assert loaded.volume.shape == (4, 4, 2)
+    resolved = json.loads(manifest.read_text(encoding="utf-8"))["resolved_config"]
+    assert resolved["algorithm"] == "cgls"
+    assert resolved["algorithm_config"]["warm_start"] == warm_start
+    assert 1 <= resolved["algorithm_config"]["effective_iters"] <= 6
+
+
 def test_recon_cli_accepts_detector_center_override(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

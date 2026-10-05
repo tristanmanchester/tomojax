@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
     from tomojax.geometry import Detector, Geometry, Grid
 
-type ReconstructionAlgorithm = Literal["fbp", "fista", "spdhg"]
+type ReconstructionAlgorithm = Literal["fbp", "cgls", "fista", "spdhg"]
 
 
 @dataclass(frozen=True)
@@ -85,6 +85,8 @@ def run_reconstruction_algorithm(request: ReconstructionAlgorithmRequest) -> Rec
     """Run the selected reconstruction algorithm from resolved geometry and projections."""
     if request.options.algorithm == "fbp":
         return _run_fbp_reconstruction(request)
+    if request.options.algorithm == "cgls":
+        return _run_cgls_reconstruction(request)
     if request.options.algorithm == "fista":
         return _run_fista_reconstruction(request)
     return _run_spdhg_reconstruction(request)
@@ -116,6 +118,36 @@ def _run_fbp_reconstruction(request: ReconstructionAlgorithmRequest) -> Reconstr
             "projector_unroll": int(cfg.projector_unroll),
             "checkpoint_projector": bool(cfg.checkpoint_projector),
             "gather_dtype": str(cfg.gather_dtype),
+        },
+    )
+
+
+def _run_cgls_reconstruction(request: ReconstructionAlgorithmRequest) -> ReconstructionResult:
+    """Unregularised least squares; the fastest-converging solver for consistent data."""
+    cfg = CGLSConfig(iters=int(request.options.iters), views_per_batch=int(request.views_per_batch))
+    init_x = _fbp_warm_start(request, nonnegative=False)
+    volume, info = cgls(
+        request.geometry,
+        request.grid,
+        request.detector,
+        request.projections,
+        init_x=init_x,
+        config=cfg,
+        det_grid=request.detector_grid,
+    )
+    if request.volume_mask is not None:
+        volume = volume * request.volume_mask
+    return ReconstructionResult(
+        volume=volume,
+        algorithm_config={
+            "iters": int(cfg.iters),
+            "effective_iters": int(cast("int", info["effective_iters"])),
+            "termination": str(info["termination"]),
+            "views_per_batch": int(cfg.views_per_batch),
+            "projector_model": str(info["projector_model"]),
+            "projector_backend": str(info["projector_backend"]),
+            "warm_start": str(request.options.warm_start),
+            "support": "applied after the solve" if request.volume_mask is not None else None,
         },
     )
 
@@ -201,7 +233,7 @@ def _run_spdhg_reconstruction(request: ReconstructionAlgorithmRequest) -> Recons
         support=request.volume_mask if request.volume_mask is not None else None,
         log_every=1,
     )
-    init_x = _spdhg_warm_start(request)
+    init_x = _fbp_warm_start(request, nonnegative=True)
     volume = spdhg_tv(
         request.geometry,
         request.grid,
@@ -235,7 +267,9 @@ def _run_spdhg_reconstruction(request: ReconstructionAlgorithmRequest) -> Recons
     )
 
 
-def _spdhg_warm_start(request: ReconstructionAlgorithmRequest) -> jnp.ndarray | None:
+def _fbp_warm_start(
+    request: ReconstructionAlgorithmRequest, *, nonnegative: bool
+) -> jnp.ndarray | None:
     if str(request.options.warm_start).lower() != "fbp":
         return None
     warm_start_vpb = (
@@ -258,7 +292,7 @@ def _spdhg_warm_start(request: ReconstructionAlgorithmRequest) -> jnp.ndarray | 
     )
     if request.volume_mask is not None:
         init_x = init_x * request.volume_mask
-    return jnp.maximum(init_x, 0.0)
+    return jnp.maximum(init_x, 0.0) if nonnegative else init_x
 
 
 __all__ = [

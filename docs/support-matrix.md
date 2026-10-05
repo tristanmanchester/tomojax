@@ -11,7 +11,7 @@ experimental. See [installation](installation.md) and [measurement scope](measur
 | TIFF stack ingest | Supported | `tomojax ingest ./tiffs --angles angles.csv --du ... --dv ... --out scan.nxs` |
 | NX/HDF5 preprocessing | Supported | `tomojax preprocess raw.nxs corrected.nxs` |
 | TIFF flat/dark preprocessing | Supported | `tomojax preprocess ./projections corrected.nxs --format tiff-stack --flats ./flats --darks ./darks --angles angles.csv` |
-| FBP, FISTA-TV, SPDHG-TV from corrected projections | Supported | `tomojax recon --data corrected.nxs --out recon.nxs` |
+| FBP, CGLS, FISTA-TV, SPDHG-TV from corrected projections | Supported | `tomojax recon --data corrected.nxs --out recon.nxs --algo fbp\|cgls\|fista\|spdhg` |
 | Labelled reconstruction slice extraction | Supported | `tomojax slices --data recon.nxs --out quicklooks` |
 | Per-projection 5-DOF pose alignment | Experimental | `tomojax align --data corrected.nxs --mode pose --out aligned.nxs` |
 | Detector-centre/COR alignment | Experimental | `tomojax align --data corrected.nxs --mode cor --out aligned.nxs` |
@@ -33,7 +33,7 @@ Workflows outside the table above are research or expert diagnostics.
 | Fourier-slice inverse (opt-in Python API) | `fourier_reconstruct`: uniform unique half-turn parallel scans, offsets/anisotropic spacing/cropped grids; NumPy reference or optional CuPy CUDA; host arrays/memmaps and axial slabs; not differentiable |
 | General posed/laminography filtered adjoint | JAX; approximate initialization for incomplete-angle data |
 | Public FISTA-TV and SPDHG-TV | JAX with matched discrete adjoints; convergence regressions for parallel and tilted scans |
-| Public CGLS (Python API) | Matched FP32 JAX/Pallas operators, scalar damping, optional squared physical voxel differences, nonzero starts; Pallas selected automatically on CUDA with canonical detector grids |
+| Public CGLS (Python API and `tomojax recon --algo cgls`) | Matched FP32 JAX/Pallas operators, scalar damping, optional squared physical voxel differences, nonzero starts; Pallas selected automatically on CUDA with canonical detector grids |
 | Joseph plane model (Python API) | `project_joseph` and the default discretization of CGLS, FISTA-TV and SPDHG-TV; explicit bilinear or Keys cubic interpolation; JAX reference and matched CUDA gather transpose; CUDA first-order volume/pose AD, JVP/VJP and batching; rigid poses and canonical detector grids required |
 | Fused Joseph least squares (Python API) | `joseph_l2_value_and_grad`: raw half squared error plus volume/matrix-pose gradients; CUDA retains residuals and tile reductions without a ray-by-plane tape; existing alignment pipeline retains its trilinear model |
 | Joseph pose normal equations (Python API) | `joseph_pose_normal_equations`: per-view raw loss, directional gradient, Gauss-Newton matrix and residual; 1–16 caller-supplied pose directions; CUDA avoids a full projection Jacobian; caller chooses damping, priors and gauges |

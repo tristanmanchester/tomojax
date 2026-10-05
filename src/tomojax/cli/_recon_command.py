@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 type ViewsPerBatch = int | Literal["auto"]
 type ReconTransferGuardMode = Literal["off", "log", "disallow"]
-type ReconAlgorithm = Literal["fbp", "fista", "spdhg"]
+type ReconAlgorithm = Literal["fbp", "cgls", "fista", "spdhg"]
 type ReconRoiMode = Literal["off", "auto", "cube", "bbox"]
 type ReconMaskMode = Literal["off", "cyl"]
 type ReconFrame = Literal["sample", "lab"]
@@ -116,7 +116,15 @@ def _add_input_options(p: argparse.ArgumentParser) -> None:
 
 
 def _add_algorithm_options(p: argparse.ArgumentParser) -> None:
-    _ = p.add_argument("--algo", choices=["fbp", "fista", "spdhg"], default="fbp")
+    _ = p.add_argument(
+        "--algo",
+        choices=["fbp", "cgls", "fista", "spdhg"],
+        default="fbp",
+        help=(
+            "fbp: filtered backprojection; cgls: unregularised least squares, fastest "
+            "to converge on consistent data; fista/spdhg: TV-regularised"
+        ),
+    )
     _ = p.add_argument("--filter", default="ramp", help="FBP filter: ramp|shepp|hann")
 
 
@@ -125,7 +133,7 @@ def _add_iterative_options(p: argparse.ArgumentParser) -> None:
         "--iters",
         type=int,
         default=50,
-        help="Iterations for iterative algos (FISTA/SPDHG)",
+        help="Iterations for iterative algos (CGLS/FISTA/SPDHG)",
     )
     _ = p.add_argument(
         "--lambda-tv",
@@ -219,7 +227,7 @@ def _add_spdhg_options(p: argparse.ArgumentParser) -> None:
         "--warm-start",
         choices=["none", "fbp"],
         default="none",
-        help="Initialize iterative algo from this method (spdhg only): none|fbp",
+        help="Initialize CGLS or SPDHG from this method: none|fbp",
     )
 
 
