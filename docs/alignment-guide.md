@@ -9,7 +9,7 @@ motion, the default `tomojax align --mode pose` recovers per-view rotations to
 0.0088° (parallel) and 0.0026° (30° laminography) and translations to 0.002
 pixels, in 71 and 90 s on an RTX 4070 Laptop GPU, with volume errors of 0.005
 and 0.048. A 256³, 361-view laminography
-scan recovers to 0.0030° in 22 minutes within 8 GB of GPU memory; bin larger
+scan recovers to 0.0029° in 14 minutes within 8 GB of GPU memory; bin larger
 scans for alignment and reconstruct the full data with the recovered poses. Accuracy depends on
 resolution: at 32³ the same objects leave a 0.1–0.5° rotation floor from
 discretisation, even when started from the true poses, while reconstructions
@@ -107,11 +107,11 @@ uv run --no-sync tomojax recon --data aligned.nxs --apply-saved-alignment \
 ```
 
 On the analytic 256³, 361-view laminography scan, stopping at half resolution
-takes 185 s instead of 22 minutes, with rotations recovered to 0.0051° instead
-of 0.0030°. Laminography leaves a cone of frequencies unmeasured, so the
+takes 185 s instead of 14 minutes, with rotations recovered to 0.0051° instead
+of 0.0029°. Laminography leaves a cone of frequencies unmeasured, so the
 full-resolution solve needs a prior: unregularised CGLS (`--algo cgls`) reaches
 0.27 relative error, positivity-constrained FISTA 0.12 after 100 and 0.091
-after 300 iterations (109 s), against 0.077 for the volume of the full
+after 300 iterations (109 s), against 0.059 for the volume of the full
 alignment. Add TV (`--lambda-tv`) for noisy data.
 
 ## Correction quality vs physical calibration

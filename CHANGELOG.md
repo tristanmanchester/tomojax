@@ -9,7 +9,8 @@
   forward projection. Laminography backprojection is 1.6x and parallel 1.3x
   faster at 256-cubed scale; structured 256-cubed laminography CGLS runs in
   1023 instead of 1372 ms warm and a 512-cubed FISTA-TV solve in 48.7 instead
-  of 63.1 s. It is used for volumes of 2^24 voxels and more, since its start-up
+  of 63.1 s, and a full-resolution 256-cubed laminography alignment 13.6 instead
+  of 22 minutes (rotations to 0.0029 deg). It is used for volumes of 2^24 voxels and more, since its start-up
   costs about 0.3 s per process; `TOMOJAX_CUDA_KERNELS` forces it on (1) or
   off (0).
 - The alignment shift search reprojects, shifts and correlates 32 views at a
