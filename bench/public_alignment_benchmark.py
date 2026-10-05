@@ -188,6 +188,7 @@ def one_run(
     gn_coupling: str = "fixed_volume",
     gn_jacobian: str = "central",
     gn_joint_solver: str = "stacked",
+    views_per_batch: int = 1,
 ) -> dict[str, Any]:
     """Time a public free-voxel solve including all setup and quality checks."""
     start = time.perf_counter()
@@ -234,7 +235,7 @@ def one_run(
         lambda_tv=0,
         loss=L2LossSpec(),
         early_stop=False,
-        views_per_batch=1,
+        views_per_batch=views_per_batch,
     )
     volume, parameters, info = align(
         geometry,
@@ -283,6 +284,7 @@ def worker(args: argparse.Namespace) -> None:
                 args.gn_coupling,
                 args.gn_jacobian,
                 args.gn_joint_solver,
+                args.views_per_batch,
             )
             if repeat == 0:
                 row["fresh_process_verified_ms"] = (time.perf_counter() - args.process_start) * 1000
@@ -317,6 +319,12 @@ def main() -> None:
     parser.add_argument(
         "--gn-joint-solver", choices=("stacked", "pose_eliminated"), default="stacked"
     )
+    parser.add_argument(
+        "--views-per-batch",
+        type=int,
+        default=1,
+        help="Reconstruction views per batch; 0 uses the library's automatic size",
+    )
     args = parser.parse_args()
     if args.repeats < 1:
         parser.error("at least one repeated complete call is required")
@@ -334,6 +342,7 @@ def main() -> None:
         "gn_coupling": args.gn_coupling,
         "gn_jacobian": args.gn_jacobian,
         "gn_joint_solver": args.gn_joint_solver,
+        "views_per_batch": args.views_per_batch,
         "complete": False,
         "environment": environment(),
         "records": [],
@@ -389,6 +398,8 @@ def main() -> None:
             args.gn_jacobian,
             "--gn-joint-solver",
             args.gn_joint_solver,
+            "--views-per-batch",
+            str(args.views_per_batch),
             "--process-start",
             str(time.perf_counter()),
         ]

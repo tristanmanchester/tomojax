@@ -252,10 +252,23 @@ def test_align_config_defaults_to_per_view_pose_model() -> None:
     assert AlignConfig().pose_model == "per_view"
 
 
-def test_fast_alignment_profile_defaults_to_chunked_pose_updates() -> None:
-    cfg = AlignConfig(align_profile="lightning")
+@pytest.mark.parametrize("profile", ["lightning", "tortoise"])
+def test_alignment_profiles_size_reconstruction_batches_automatically(profile: str) -> None:
+    import importlib
 
-    assert cfg.views_per_batch == 1
+    from tomojax.geometry import Detector, Grid
+
+    # check-public-imports: allow-private
+    loop = importlib.import_module("tomojax.align._pose._pose_loop")
+    cfg = AlignConfig(align_profile=profile)
+    assert cfg.views_per_batch == 0
+    grid, detector = Grid(8, 8, 8, 1.0, 1.0, 1.0), Detector(8, 8, 1.0, 1.0)
+    resolved = loop._with_resolved_views_per_batch(cfg, n_views=12, grid=grid, detector=detector)
+    assert 1 <= resolved.views_per_batch <= 12
+    assert cfg.views_per_batch == 0
+    cfg.views_per_batch = 3
+    kept = loop._with_resolved_views_per_batch(cfg, n_views=12, grid=grid, detector=detector)
+    assert kept is cfg and kept.views_per_batch == 3
 
 
 def test_direct_mixed_dofs_explain_gauge_policy() -> None:

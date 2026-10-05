@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+import copy
 from dataclasses import dataclass
 import logging
 import math
@@ -34,6 +35,7 @@ from tomojax.align._profiles import profile_policy_from_config
 from tomojax.align._results import AlignCheckpointCallback, AlignInfo, AlignResumeState
 from tomojax.align._stages._reconstruction_stage import _run_reconstruction_step
 from tomojax.align.optimizers import PoseLbfgsConfig, PoseOptimizationContext, prepare_pose_lbfgs
+from tomojax.backends import estimate_views_per_batch_info
 from tomojax.core import format_duration, progress_iter
 from tomojax.core.geometry.base import Detector, Geometry, Grid
 from tomojax.core.geometry.views import stack_view_poses
@@ -77,6 +79,30 @@ _AlignmentStepContexts = tuple[
 ]
 
 
+def _with_resolved_views_per_batch(
+    cfg: AlignConfig, *, n_views: int, grid: Grid, detector: Detector
+) -> AlignConfig:
+    """Replace ``views_per_batch=0`` with a batch sized from free device memory.
+
+    One view per batch launches a separate projector call for every view in
+    every reconstruction pass. Returns a copy; the caller's config is unchanged.
+    """
+    if int(cfg.views_per_batch) > 0:
+        return cfg
+    estimate = estimate_views_per_batch_info(
+        n_views=n_views,
+        grid_nxyz=(grid.nx, grid.ny, grid.nz),
+        det_nuv=(detector.nv, detector.nu),
+        gather_dtype="fp32" if cfg.gather_dtype == "auto" else str(cfg.gather_dtype),
+        checkpoint_projector=bool(cfg.checkpoint_projector),
+        algo="fista",
+    )
+    resolved = copy.copy(cfg)
+    resolved.views_per_batch = max(1, min(int(estimate.views_per_batch), n_views))
+    logging.info("Alignment views_per_batch: %d (auto)", resolved.views_per_batch)
+    return resolved
+
+
 def _prepare_align_setup(
     geometry: Geometry,
     grid: Grid,
@@ -99,6 +125,7 @@ def _prepare_align_setup(
         geometry=geometry,
         context="align projections",
     )
+    cfg = _with_resolved_views_per_batch(cfg, n_views=n_views, grid=grid, detector=detector)
     if resume_state is not None:
         if resume_state.pose_translation_frame != cfg.pose_translation_frame:
             raise ValueError("align resume_state pose_translation_frame differs from config")

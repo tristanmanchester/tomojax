@@ -75,10 +75,36 @@ def _fp_kernel(
             val, _, _ = cubic_sample(volume_ref, a, k, qb, qc, nb, nc, valid)
         return accum + val * weight
 
-    output = jax.lax.fori_loop(0, na, step, jnp.zeros((block,), jnp.float32))
+    # Planes where a ray's sample lies outside the interpolation support add
+    # exact zeros. Visit only the planes this tile's rays cross; every visited
+    # plane keeps its sample, weights and accumulation order.
+    radius = 1.0 if interpolation == "linear" else 2.0
+    first, last = jnp.zeros((block,), jnp.float32), jnp.full((block,), na - 1.0)
+    for start, slope, size in (
+        ((ub * u + vb * v) + cb, kb, nb),
+        ((uc * u + vc * v) + cc, kc, nc),
+    ):
+        # Keep q = start + slope * k within (-radius, size - 1 + radius).
+        inverse = 1 / jnp.where(slope == 0, 1.0, slope)
+        low, high = (-radius - start) * inverse, (size - 1 + radius - start) * inverse
+        outside = (start <= -radius) | (start >= size - 1 + radius)
+        first = jnp.where(
+            slope == 0, jnp.where(outside, na, first), jnp.maximum(first, jnp.minimum(low, high))
+        )
+        last = jnp.where(
+            slope == 0, jnp.where(outside, -1.0, last), jnp.minimum(last, jnp.maximum(low, high))
+        )
+    lower = jnp.maximum(jnp.floor(jnp.min(jnp.where(valid, first, na))) - 1, 0).astype(jnp.int32)
+    upper = jnp.minimum(jnp.ceil(jnp.max(jnp.where(valid, last, -1.0))) + 2, na).astype(jnp.int32)
+    output = jax.lax.fori_loop(
+        lower, jnp.maximum(upper, lower), step, jnp.zeros((block,), jnp.float32)
+    )
     plt.store(output_ref.at[0, jnp.arange(block)], output, mask=valid)
 
 
+# Jit once per static configuration: every call site then reuses one traced
+# and lowered kernel instead of re-tracing the kernel body.
+@partial(jax.jit, static_argnames=("grid", "detector", "block", "interpret", "interpolation"))
 def forward_pallas(
     coeff: jax.Array,
     volume: jax.Array,
@@ -186,6 +212,10 @@ def _bp_kernel(
     plt.store(out_ref, output, mask=valid)
 
 
+@partial(
+    jax.jit,
+    static_argnames=("grid", "detector", "block", "interpret", "interpolation", "absolute_weights"),
+)
 def adjoint_pallas(
     coeff: jax.Array,
     images: jax.Array,

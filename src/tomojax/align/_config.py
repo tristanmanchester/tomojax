@@ -142,8 +142,9 @@ class AlignConfig:
     # Alignment step sizes
     lr_rot: float = 1e-3  # radians
     lr_trans: float = 1e-1  # world units
-    # Memory/throughput knobs
-    views_per_batch: int = 1
+    # Memory/throughput knobs. views_per_batch=0 sizes reconstruction batches
+    # from free device memory when alignment starts.
+    views_per_batch: int = 0
     projector_unroll: int = 1
     checkpoint_projector: bool = True
     gather_dtype: str = "auto"

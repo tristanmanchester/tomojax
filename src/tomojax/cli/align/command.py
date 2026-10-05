@@ -196,8 +196,8 @@ def _add_reconstruction_options(p: argparse.ArgumentParser) -> None:
     _ = p.add_argument(
         "--views-per-batch",
         type=int,
-        default=1,
-        help="Projection views per inner reconstruction batch/subset (default: 1)",
+        default=0,
+        help="Projection views per inner reconstruction batch; 0 sizes it from free GPU memory",
     )
     _ = p.add_argument(
         "--projector-unroll",

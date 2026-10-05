@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Size alignment's reconstruction batches from free GPU memory by default
+  (`views_per_batch=0`, also the CLI default). Both alignment profiles used one
+  view per batch, launching a projector call for every view in every
+  reconstruction pass. On the six free-voxel alignment cells, warm alignment is
+  1.9-2.3x faster and cold 1.4-2x, with the same accepted cells and unchanged
+  peak GPU memory. An explicit positive value is still honoured.
+- Clip each Joseph forward ray to the planes it crosses. Skipped planes
+  contributed exact zeros, so projections are bitwise unchanged; forward
+  projection is 8-13% faster at 256 cubed in parallel, anisotropic and tilted
+  scans. Trace each Joseph kernel once per configuration instead of at every
+  call site, cutting a CGLS solve's tracing time by about a third.
 - Weight filtered backprojection exactly for every circular parallel-beam
   scan. `fbp` now fits the rotation axis, arc and angular spacing from the view
   poses and applies the matching per-view filter: a ramp along u scaled by the
