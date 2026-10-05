@@ -6,14 +6,18 @@ together (the coupled solver), using Joseph plane sampling as its forward model.
 
 On analytic 128³ scans of continuous objects with 181 views and ±0.25°/±0.5 px
 motion, the default `tomojax align --mode pose` recovers per-view rotations to
-0.0061° (parallel) and 0.0024° (30° laminography) and translations to 0.002
-pixels, in 46 and 93 s on an RTX 4070 Laptop GPU. A 256³, 361-view laminography
-scan recovers to 0.0031° in 44 minutes within 8 GB of GPU memory; bin larger
+0.0088° (parallel) and 0.0026° (30° laminography) and translations to 0.002
+pixels, in 71 and 90 s on an RTX 4070 Laptop GPU, with volume errors of 0.005
+and 0.048. A 256³, 361-view laminography
+scan recovers to 0.0030° in 22 minutes within 8 GB of GPU memory; bin larger
 scans for alignment and reconstruct the full data with the recovered poses. Accuracy depends on
 resolution: at 32³ the same objects leave a 0.1–0.5° rotation floor from
 discretisation, even when started from the true poses, while reconstructions
-still match a true-pose reconstruction. Larger motion (±3°, ±10 px) is not yet
-recovered reliably.
+still match a true-pose reconstruction. Scans of 64³ and larger align coarse to
+fine by default, which halved a 256³ alignment's time and improved its volume.
+At 64³, ±3° and ±10 px motion is recovered in parallel and laminography scans
+(to 0.02°, the discretisation floor at that size), but the anisotropic test scan
+with unequal voxels and an offset detector diverges; ±1° is recovered in all three.
 
 `--ray-integrator exact` integrates the trilinear voxel basis exactly. It is
 10–30× slower. On the free-voxel pilot, whose measurements use that same basis,

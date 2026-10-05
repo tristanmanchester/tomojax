@@ -89,7 +89,7 @@ backprojection cost. Published GPU measurements use one RTX 4070 Laptop GPU.
 
 `tomojax align --mode pose` solves the volume and every view's pose together.
 On analytic 128³ scans of continuous objects it recovers per-view rotations to
-0.002–0.006° in 46–93 s; at coarse resolution, discretisation limits accuracy.
+0.003–0.009° in 70–90 s; at coarse resolution, discretisation limits accuracy.
 See the [alignment guide](docs/alignment-guide.md). This is not a demonstrated large-motion or 99% recovery capability.
 The [alignment comparison](docs/research/public-free-voxel-schur-2026-10-04.md) retains
 failures, cold/warm times, quality, and process GPU memory.

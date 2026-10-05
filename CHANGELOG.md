@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Align coarse to fine by default in `tomojax align --mode pose` when the
+  reconstruction grid's shortest axis has at least 64 voxels (factors 4, 2, 1
+  from 128). A 256-cubed, 361-view laminography alignment takes 22 instead of
+  44 minutes with the same 0.003 deg rotation accuracy and a better volume, and
+  +/-3 deg motion is recovered in 64-cubed laminography where a single level
+  stopped at 0.037 deg.
 - Add `tomojax.align.coupled_pose_config(**overrides)`, the configuration
   `tomojax align --mode pose` runs, for Python callers; `AlignConfig()` keeps
   its older alternating defaults. Add an alignment example and README figure:

@@ -860,3 +860,12 @@ def test_align_cli_coupled_solver_rejects_explicit_conflicts(
     with pytest.raises(SystemExit):
         _pose_plan(monkeypatch, tmp_path, capsys, "--loss", "l2_otsu")
     assert "--pose-solver alternating" in capsys.readouterr().err
+
+
+def test_coupled_pose_alignment_runs_coarse_to_fine_on_large_grids() -> None:
+    from tomojax.cli.align.plan import _coupled_pose_levels  # check-public-imports: allow-private
+    from tomojax.geometry import Grid
+
+    assert _coupled_pose_levels(Grid(32, 32, 32, 1, 1, 1)) == [1]
+    assert _coupled_pose_levels(Grid(64, 64, 64, 1, 1, 1)) == [2, 1]
+    assert _coupled_pose_levels(Grid(256, 256, 128, 1, 1, 1)) == [4, 2, 1]
