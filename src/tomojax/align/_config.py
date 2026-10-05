@@ -21,7 +21,7 @@ from ._model.schedules import (
     ResolvedAlignmentSchedule,
     resolve_alignment_schedule,
 )
-from ._objectives.loss_specs import L2OtsuLossSpec
+from ._objectives.loss_specs import L2LossSpec, L2OtsuLossSpec
 from ._profiles import (
     AlignmentProfileInput,
     FallbackPolicy,
@@ -364,6 +364,29 @@ class AlignConfig:
             )
 
 
+def coupled_pose_config(**overrides: object) -> AlignConfig:
+    """Return the recommended configuration for per-view pose alignment.
+
+    This is what ``tomojax align --mode pose`` runs: each Gauss-Newton step
+    solves the free voxels and every view's 5-DOF pose together, with Joseph
+    plane sampling, an unregularised least-squares fit, fp32 gathers and up to
+    30 early-stopped outer iterations. Pass keyword overrides for any
+    :class:`AlignConfig` field. ``AlignConfig()`` itself keeps the older
+    alternating defaults for compatibility.
+    """
+    settings: dict[str, object] = {
+        "gn_coupling": "joint",
+        "gn_joint_solver": "pose_eliminated",
+        "ray_integrator": "joseph",
+        "gather_dtype": "fp32",
+        "loss": L2LossSpec(),
+        "lambda_tv": 0.0,
+        "outer_iters": 30,
+    }
+    settings.update(overrides)
+    return AlignConfig(**settings)  # type: ignore[arg-type]
+
+
 __all__ = [
     "AlignConfig",
     "_active_dof_mask_for_cfg",
@@ -371,5 +394,6 @@ __all__ = [
     "_active_geometry_dofs_for_cfg",
     "_resolved_schedule_for_cfg",
     "_scoped_dofs_for_cfg",
+    "coupled_pose_config",
     "resolved_schedule_for_config",
 ]

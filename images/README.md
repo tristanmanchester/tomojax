@@ -24,6 +24,15 @@ crop, intensity fit, or display clipping of negative values is used. Follow
 [reproduction instructions](../examples/README.md#reproduce-the-readme-figure)
 to regenerate the image on CPU or CUDA.
 
+## Joint alignment of a misaligned scan
+
+![Central slice of the truth, a nominal-pose CGLS reconstruction, and a jointly aligned reconstruction of a laminography scan with per-view motion.](alignment-example.png)
+
+[alignment-example.png](alignment-example.png) and its [JSON metrics](alignment-example.json)
+come from [the alignment example](../examples/align_misaligned_scan.py): analytic
+data from continuous objects at perturbed poses, so neither reconstruction
+shares the measurement model. All panels share one display range.
+
 ## Historical real-data illustrations
 
 ![Historical DIAD laminography slices showing original, COR-only, and full-correction reconstructions of a layer of ruby spheres.](figure_minimal_original_cor_full.png)

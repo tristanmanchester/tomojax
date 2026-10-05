@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add `tomojax.align.coupled_pose_config(**overrides)`, the configuration
+  `tomojax align --mode pose` runs, for Python callers; `AlignConfig()` keeps
+  its older alternating defaults. Add an alignment example and README figure:
+  a 96-cubed laminography scan with +/-1 deg and +/-2 px per-view motion goes
+  from 0.57 to 0.087 relative error in 35 s, with rotations recovered to
+  0.0026 deg, on analytic data from continuous objects.
 - Add Joseph plane sampling to alignment (`ray_integrator="joseph"` or
   `"joseph_cubic"`, CLI `--ray-integrator`) and make it the coupled pose
   solver's default. Its matched gather transpose replaces the exact

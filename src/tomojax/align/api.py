@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from tomojax.align._config import resolved_schedule_for_config
+from tomojax.align._config import coupled_pose_config, resolved_schedule_for_config
 from tomojax.align._geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
 from tomojax.align._geometry.geometry_blocks import (
     GeometryCalibrationState,
@@ -147,6 +147,7 @@ __all__ = [
     "apply_pose_updates",
     "build_alignment_checkpoint_metadata_from_input",
     "build_loss_adapter",
+    "coupled_pose_config",
     "dof_spec",
     "geometry_with_axis_state",
     "level_detector_grid",

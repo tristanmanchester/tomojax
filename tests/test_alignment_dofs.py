@@ -291,3 +291,17 @@ def test_alignment_params_export_unwraps_object_dtype_scalars() -> None:
     )
 
     assert payload["gauge_fix"] == {"mode": "mean_translation", "note": None}
+
+
+def test_coupled_pose_config_matches_the_cli_pose_solver() -> None:
+    from tomojax.align import coupled_pose_config
+    from tomojax.align.api import L2LossSpec
+
+    cfg = coupled_pose_config(outer_iters=7)
+    assert (cfg.gn_coupling, cfg.gn_joint_solver, cfg.ray_integrator) == (
+        "joint",
+        "pose_eliminated",
+        "joseph",
+    )
+    assert isinstance(cfg.loss, L2LossSpec)
+    assert (cfg.lambda_tv, cfg.gather_dtype, cfg.outer_iters) == (0.0, "fp32", 7)

@@ -1,9 +1,9 @@
 # TomoJAX
 
 Reconstruct parallel-beam tomography and laminography data with JAX. TomoJAX
-provides differentiable projectors, iterative reconstruction, experimental
-joint alignment, and a CLI for taking NeXus/HDF5 or TIFF data through correction,
-reconstruction, and slice export.
+provides differentiable projectors, fast FBP and iterative reconstruction,
+joint volume-and-pose alignment, and a CLI for taking NeXus/HDF5 or TIFF data
+through correction, reconstruction, and slice export.
 
 TomoJAX is an early research library. Its strongest fit is scientists who need
 control over geometry and differentiation in a Python workflow. Built-in
@@ -17,6 +17,14 @@ before choosing it for an experiment.
 64³ voxels, 90 parallel views, 40 CGLS iterations. This example uses the same
 Joseph model for simulation and reconstruction; it demonstrates the API, not
 independent reconstruction accuracy. [Reproduce the figure](examples/README.md#reproduce-the-readme-figure).
+
+![Truth, a nominal-pose reconstruction, and a jointly aligned reconstruction of a laminography scan with random per-view motion.](images/alignment-example.png)
+
+`tomojax align` and `tomojax.align` solve the volume and each view's pose
+together. Here a 96³ laminography scan with ±1° and ±2 px of random per-view
+motion goes from 0.57 to 0.087 relative error, with rotations recovered to
+0.0026°, in 35 s on a laptop GPU. The measurements are analytic integrals of
+continuous objects. [Reproduce it](examples/README.md#align-a-scan-with-per-view-motion).
 
 ## First reconstruction
 

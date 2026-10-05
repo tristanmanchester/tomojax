@@ -50,3 +50,21 @@ ranges, versions, and script/image hashes. Both planes share attenuation and
 absolute-error scales, with no per-panel contrast fitting. Error is measured
 before display and uses the entire volume. The figure includes negative
 reconstruction values rather than clipping them away.
+
+## Align a scan with per-view motion
+
+```bash
+uv sync --locked --extra cuda12 --group examples --no-dev
+uv run --no-sync python examples/align_misaligned_scan.py
+```
+
+[align_misaligned_scan.py](align_misaligned_scan.py) simulates a 96³, 240-view,
+full-turn 30° laminography scan of continuous Gaussian blobs, with analytic
+line integrals at randomly perturbed poses (±1° rotations, ±2 px shifts per
+view) and 0.2% noise. The data match no voxel discretisation. It reconstructs
+once with the nominal poses (CGLS) and once jointly with the poses using
+`tomojax.align.align` and `coupled_pose_config()`, then writes
+`images/alignment-example.png` and its JSON metrics. On an RTX 4070 Laptop GPU
+it recovers rotations to 0.0026° RMS in about 35 s, lowering the volume error
+from 0.57 to 0.087. Pose errors are reported after removing their common
+offset, which only moves the object.
