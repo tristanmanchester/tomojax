@@ -131,9 +131,22 @@ The noisy anisotropic cell still fails the 0.01° rotation gate on the successfu
 five-cell variant, at about 0.016°. The local noise analysis below predicts about
 0.017° from the measurement noise alone, so this gate is probably unreachable for
 that cell at this noise level rather than a solver shortfall. There is no complete successful-recovery baseline for a 20×
-claim, and these runs do not establish 99% robustness. The coupled solver remains
-opt-in. A [local FP64 noise analysis](research/pilot-noise-2026-10-04.md) examines sensitivity;
+claim, and these runs do not establish 99% robustness. The coupled solver is the
+default for `tomojax align --mode pose`. A [local FP64 noise analysis](research/pilot-noise-2026-10-04.md) examines sensitivity;
 it is not a universal bound for constrained or regularized estimators.
+
+On analytic scans of continuous objects (181 views at 128³, 361 at 256³, 30°
+laminography and parallel), fresh CLI processes on the laptop GPU:
+
+| Scan | Motion | Time | Rotation RMSE |
+|---|---|---:|---:|
+| 128³ parallel / laminography | ±0.25°, ±0.5 px | 37 / 41 s | 0.0090 / 0.0026° |
+| 128³ parallel / laminography / anisotropic | ±0.5°, ±8 px | 78 / 43 / 47 s | 0.0076 / 0.0031 / 0.016° |
+| 256³ laminography, full resolution | ±0.25°, ±0.5 px | 188 s | 0.0030° |
+| 256³ laminography, stopped at half resolution | ±0.25°, ±0.5 px | 57 s | 0.0051° |
+| 64³ parallel / laminography | ±0.5°, ±15 px (23% of the detector) | 19 / 32 s | 0.034 / 0.013° |
+
+At 64³ the 0.01–0.03° results are the discretisation floor for that size.
 
 ## Repeated-use startup
 
