@@ -183,6 +183,14 @@ is stopped before integration; neither workflow matrix is rerun or rescored.
 The public alignment path already enforces positivity, so the small estimator
 result does not establish improved pose recovery.
 
+The [subsequent solver qualifications](solver-qualifications-2026-10-05.md)
+reject an augmented nonnegative solver and a range-preserving detector-filter
+preconditioner. An additional continuous stationarity check clarifies the former's
+near-bound failures, but three dense-image disagreements remain. The latter
+preserves null-space selection while worsening seven of 24 fixed-work image
+controls. Both variants stop before public integration; the workflow scores and
+successful-recovery baseline remain unchanged.
+
 The goal applies to the complete scientific workflow and the whole frozen
 comparison matrix. The scheduled reconstruction matrix is every combination of
 `gaussian-v1`, `structured-v1`, `structured-noisy-v1`; parallel, anisotropic

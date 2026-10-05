@@ -920,6 +920,15 @@
       "archive_sha256": "8a2cf4cdf7cc1cf1a533cb97414a40a9e7b1b16df4e66ea772ecf15de76cf042"
     },
     {
+      "original": "solver-qualifications-2026-10-05.json",
+      "archive": "solver-qualifications-2026-10-05.json.gz",
+      "original_bytes": 389044,
+      "archive_bytes": 77665,
+      "original_lines": 10511,
+      "sha256": "c3b86a642c5bd0d65ba6d23be7459630e5f0c14277f8e40f49434ee9411042e9",
+      "archive_sha256": "271665a68312660d941891310c211c3b8ef87934370c0eb74f18ba204bce8c96"
+    },
+    {
       "original": "stable-gaussian-v1-64-128.json",
       "archive": "stable-gaussian-v1-64-128.json.gz",
       "original_bytes": 454413,

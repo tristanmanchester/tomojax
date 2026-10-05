@@ -45,6 +45,11 @@ passes its 24-control dense-estimator comparison, but its matrix-free solver
 fails two numerical conformance checks. It is stopped before public integration;
 the record includes all controls, solver work and unperformed workflow cells.
 
+The [solver follow-up](solver-qualifications-2026-10-05.md) also rejects the
+augmented nonnegative and range-preserving preconditioned variants. It retains
+the stationarity-check audit and every fixed-work quality regression; neither
+variant reaches the public workflow comparison.
+
 ## Joint volume and pose recovery
 
 The [public free-voxel pilot](public-free-voxel-pilot.md) has six clean/noisy

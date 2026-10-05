@@ -91,3 +91,7 @@ At 512³ voxels and 720 views on a 512×512 detector, an explicit FP64 projectio
 All 27 reconstruction and six alignment cells remain in the [raw qualification record](../bench/reference/nonnegative-cv-qualification-2026-10-04.json.gz) as `not_run_failed_matrix_free_qualification`, with null new cold/warm time, quality and GPU-memory fields. Each reconstruction cell retains its existing cold-fastest ASTRA/TIGRE workflow and that same workflow’s memory. The [frozen reconstruction comparison](system-matrix-2026-10-04.md) and [latest public alignment comparison](public-free-voxel-reuse-2026-10-04.md) remain the authoritative performance evidence.
 
 The archive includes all 24 estimator results, all 24 matrix-free trajectories, both failed checker attempts, source and hashes, the predeclared plan and every unperformed workflow cell. Its hashes are in the [archive catalog](../bench/reference/archives.json). No benchmark framework or public API is added. The optimization goal remains open.
+
+The [2026-10-05 follow-up](solver-qualifications-2026-10-05.md) tests an augmented
+nonnegative solver on the same selected estimators and audits its near-bound
+stationarity check. It also fails qualification; no public solver is introduced.
