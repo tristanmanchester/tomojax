@@ -79,9 +79,10 @@ cells with accepted results on both sides, TomoJAX is 2.6 times faster warm
 to 2.5). Small laminography scans remain slower, dominated by JAX start-up and
 backprojection cost. Published GPU measurements use one RTX 4070 Laptop GPU.
 
-The experimental coupled alignment solver passes five of six modest-motion
-free-voxel cases, in 1.5 to 5.5 seconds warm; noisy anisotropic recovery still
-fails the fixed rotation gate. This is not a demonstrated large-motion or 99% recovery capability.
+`tomojax align --mode pose` solves the volume and every view's pose together.
+On six modest-motion free-voxel cases it recovers five to 0.0006–0.008° and
+0.0002 pixels, in 8–18 seconds each; noisy anisotropic recovery stops at about
+0.016°, near its noise limit. This is not a demonstrated large-motion or 99% recovery capability.
 The [alignment comparison](docs/research/public-free-voxel-schur-2026-10-04.md) retains
 failures, cold/warm times, quality, and process GPU memory.
 

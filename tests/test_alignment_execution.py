@@ -245,7 +245,8 @@ def test_align_multires_executes_cor_then_pose_schedule_with_real_stages() -> No
     assert outer_stats[0]["train_reconstruction_iters"] == 2
     assert outer_stats[1]["schedule_stage_active_dofs"] == "alpha,beta,phi,dx,dz"
     assert outer_stats[1]["quality_tier"] == "reference"
-    assert outer_stats[1]["fixed_volume_reconstruction_skipped"] is True
+    # Pose stages alternate with reconstruction instead of reusing a stale volume.
+    assert not outer_stats[1].get("fixed_volume_reconstruction_skipped", False)
     assert outer_stats[1]["recon_actual_backend"] == "jax"
     assert outer_stats[1]["recon_fallback_reason"] is None
 

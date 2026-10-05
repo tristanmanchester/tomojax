@@ -100,6 +100,11 @@ def _scoped_dofs_for_cfg(cfg: AlignConfig) -> ScopedAlignmentDofs:
     )
 
 
+def resolved_schedule_for_config(cfg: AlignConfig) -> ResolvedAlignmentSchedule:
+    """Return the schedule ``cfg`` runs, including coupled pose-stage objectives."""
+    return _resolved_schedule_for_cfg(cfg)
+
+
 def _resolved_schedule_for_cfg(cfg: AlignConfig) -> ResolvedAlignmentSchedule:
     resolved = resolve_alignment_schedule(
         schedule=cfg.schedule,
@@ -111,7 +116,8 @@ def _resolved_schedule_for_cfg(cfg: AlignConfig) -> ResolvedAlignmentSchedule:
         outer_iters=int(cfg.outer_iters),
         early_stop=bool(cfg.early_stop),
     )
-    if cfg.gn_coupling == "joint" and cfg.schedule is None:
+    if cfg.gn_coupling == "joint":
+        # Pose-only stages solve volume and poses together; setup stages keep theirs.
         resolved = replace(
             resolved,
             stages=tuple(
@@ -362,4 +368,5 @@ __all__ = [
     "_active_geometry_dofs_for_cfg",
     "_resolved_schedule_for_cfg",
     "_scoped_dofs_for_cfg",
+    "resolved_schedule_for_config",
 ]

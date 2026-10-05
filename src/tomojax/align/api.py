@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from tomojax.align._config import resolved_schedule_for_config
 from tomojax.align._geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
 from tomojax.align._geometry.geometry_blocks import (
     GeometryCalibrationState,
@@ -163,6 +164,7 @@ __all__ = [
     "resolve_alignment_schedule",
     "resolve_loss_for_level",
     "resolve_profiled_cli_defaults",
+    "resolved_schedule_for_config",
     "save_alignment_checkpoint",
     "save_alignment_params_csv",
     "save_alignment_params_json",

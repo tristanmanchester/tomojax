@@ -1,10 +1,14 @@
 # Alignment guide
 
 TomoJAX alignment estimates geometry or pose corrections while reconstructing
-the volume. These are experimental workflows: the current coupled Python path
-passes five of six modest-motion free-voxel cases, with noisy anisotropic
-recovery still failing. That result is not a guarantee for the default CLI
-path or a new scan. See the [complete comparison](research/public-free-voxel-schur-2026-10-04.md).
+the volume. Pose alignment solves the free voxels and every view's 5-DOF pose
+together (the coupled solver). On the six modest-motion free-voxel pilot cells,
+the default `tomojax align --mode pose` recovers rotations to 0.0006–0.008° and
+translations to 0.0002 pixels in five cells, in 8–20 s each; noisy anisotropic
+recovery stops at about 0.016°, near the limit its noise allows. Motion of ±1°
+and ±2 pixels is recovered in all three tested geometries; ±3° is not yet
+reliable. This is still evidence from small synthetic scans, not a guarantee
+for a new acquisition.
 
 Start from corrected absorption data and checked physical geometry, following
 the [real scan guide](real-laminography.md). Save an unaligned reconstruction,
@@ -29,6 +33,14 @@ followed by pose correction, and `auto` for the full setup+pose workflow.
 
 The default `pose` mode optimizes one 5-DOF pose vector per projection:
 `alpha`, `beta`, `phi`, `dx`, and `dz`. Use this for scans where the sample moved during acquisition.
+
+Each Gauss–Newton step updates the volume and the poses together, using exact
+line integration through the voxel basis and an unregularised least-squares
+fit; up to 30 outer iterations stop early once the fit stops improving.
+`--pose-solver alternating` restores the older scheme that refines poses
+against a reconstruction held fixed between volume updates. It accepts other
+losses, smooth pose models and optimizers, but in the pilot it left rotation
+errors of 0.1–1° that the coupled solver removes.
 
 ```bash
 uv run --no-sync tomojax align \

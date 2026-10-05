@@ -163,6 +163,13 @@ def _prepare_align_setup(
     active_mask = active_mask_bool.astype(jnp.float32)
     bounds_lower, bounds_upper = bounds_vectors(cfg.bounds)
     gauge_fix = normalize_gauge_fix(cfg.gauge_fix)
+    if cfg.gn_coupling == "joint" and gauge_fix != "none":
+        # The coupled step updates volume and poses together; shifting the
+        # poses afterwards without the volume undoes part of each step. Pose
+        # damping keeps the translation gauge bounded, so the solution may
+        # carry a small common object shift instead.
+        logging.info("Coupled alignment leaves the translation gauge to pose damping")
+        gauge_fix = "none"
     gauge_dofs = active_gauge_dofs(mode=gauge_fix, active_mask=active_mask_tuple)
     validate_alignment_gauge_feasible(
         mode=gauge_fix,
@@ -769,7 +776,11 @@ def align(
         params5=params5,
         motion_coeffs=motion_coeffs,
         final_gauge_stats=final_gauge_stats,
-        l_prev=resume_state.L if resume_state is not None else cfg.recon_L,
+        l_prev=(
+            resume_state.L
+            if resume_state is not None and resume_state.L is not None
+            else cfg.recon_L
+        ),
         small_impr_streak=int(resume_state.small_impr_streak) if resume_state is not None else 0,
         loss_hist=list(resume_state.loss) if resume_state is not None else [],
         outer_stats=(

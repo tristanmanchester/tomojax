@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Fix pose alignment through `tomojax align` and `align_multires`. Pose
+  stages skipped reconstruction, so pose-only schedules (the default `pose`
+  mode) optimised against an all-zero volume and returned the nominal poses.
+  Pose stages now alternate with reconstruction again; a supplied `recon_L` is
+  honoured at full resolution.
+- Make the coupled volume-and-pose solver the default for `tomojax align
+  --mode pose` (`--pose-solver coupled`; `alternating` keeps the previous scheme,
+  and remains the default for modes with setup stages). It
+  implies exact ray integration, least squares without TV, fp32 gathers and up
+  to 30 early-stopped outer iterations, and rejects explicitly conflicting
+  options. On the six free-voxel pilot cells the default CLI now recovers five
+  (rotation 0.0006-0.008 deg), where the alternating scheme left 0.1-4 deg.
+  `gn_coupling="joint"` now applies to every pose-only stage of a named
+  schedule, and the coupled solver no longer shifts poses alone to fix the
+  translation gauge, which had capped its accuracy at about 0.08 deg.
 - Run FISTA-TV and SPDHG-TV on the same batched operators as CGLS, and make
   Joseph plane sampling with Pallas kernels on CUDA the default projector for
   all three (`projector_model="auto"`). FISTA-TV previously used the JAX ray

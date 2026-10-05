@@ -812,3 +812,51 @@ def test_align_cli_print_plan_json_reports_effective_public_plan(
     assert [stage["stage_name"] for stage in payload["stages"]][:2] == (
         ["cor", "pose_polish"] if mode == "cor_then_pose" else ["cor", "detector_roll"]
     )
+
+
+def _pose_plan(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    *extra: str,
+) -> dict[str, object]:
+    align_cli_main = importlib.import_module("tomojax.cli.align.main")
+    scan = tmp_path / "scan.nxs"
+    write_projection_dataset(scan)
+    monkeypatch.setattr(align_cli_main, "setup_logging", lambda: None)
+    monkeypatch.setattr(align_cli_main, "log_jax_env", lambda: None)
+    monkeypatch.setattr(align_cli_main, "init_jax_compilation_cache", lambda: None)
+    args = ["align", "--data", str(scan), "--out", str(tmp_path / "out.nxs"), "--mode", "pose"]
+    assert main([*args, "--roi", "off", *extra, "--print-plan-json"]) == 0
+    return json.loads(capsys.readouterr().out)
+
+
+def test_align_cli_pose_mode_defaults_to_the_coupled_solver(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    plan = _pose_plan(monkeypatch, tmp_path, capsys)
+    assert plan["pose_solver"] == "coupled"
+    assert plan["ray_integrator"] == "exact"
+    assert plan["loss"] == {"name": "l2", "params": {}}
+    assert plan["lambda_tv"] == 0.0
+    assert plan["gather_dtype"] == "fp32"
+    assert plan["outer_iters"] == 30
+    assert {stage["objective_kind"] for stage in plan["stages"]} == {"joint_volume_pose"}
+
+
+def test_align_cli_alternating_pose_solver_keeps_previous_defaults(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    plan = _pose_plan(monkeypatch, tmp_path, capsys, "--pose-solver", "alternating")
+    assert plan["pose_solver"] == "alternating"
+    assert plan["loss"]["name"] == "l2_otsu"
+    assert plan["outer_iters"] == 5
+    assert {stage["objective_kind"] for stage in plan["stages"]} == {"fixed_volume"}
+
+
+def test_align_cli_coupled_solver_rejects_explicit_conflicts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit):
+        _pose_plan(monkeypatch, tmp_path, capsys, "--loss", "l2_otsu")
+    assert "--pose-solver alternating" in capsys.readouterr().err

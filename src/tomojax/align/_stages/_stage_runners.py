@@ -378,10 +378,14 @@ def _run_pose_alignment_stage(
         opt_method=str(pose_optimizer),
         quality_tier=stage.quality_tier,
         outer_iters=int(stage.maxiter),
-        recon_iters=0 if stage.objective_kind == "fixed_volume" else int(cfg.recon_iters),
+        # A fixed-volume objective holds the volume fixed during each pose step;
+        # alternation still refreshes it between steps. Skipping reconstruction
+        # left pose-only schedules optimising against an all-zero volume.
+        recon_iters=int(cfg.recon_iters),
         gn_coupling="joint" if stage.objective_kind == "joint_volume_pose" else "fixed_volume",
         early_stop=bool(stage.early_stop),
-        recon_L=None,
+        # A supplied Lipschitz constant describes the full-resolution grid only.
+        recon_L=cfg.recon_L if level_factor == 1 else None,
         loss=active_loss_spec,
         gauge_fix=pose_gauge_fix,
     )

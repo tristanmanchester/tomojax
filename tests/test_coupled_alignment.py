@@ -11,16 +11,21 @@ import pytest
 from tomojax.align._pose._coupled_linear import solve_coupled_normal
 
 
-def test_joint_schedule_keeps_explicit_fixed_volume_stages():
+def test_joint_coupling_selects_the_solver_for_every_pose_stage():
     from tomojax.align import AlignConfig
 
     # check-public-imports: allow-private
     from tomojax.align._config import _resolved_schedule_for_cfg
 
     implicit = _resolved_schedule_for_cfg(AlignConfig(gn_coupling="joint"))
-    explicit = _resolved_schedule_for_cfg(AlignConfig(gn_coupling="joint", schedule="pose_only"))
+    named = _resolved_schedule_for_cfg(AlignConfig(gn_coupling="joint", schedule="lightning_pose"))
+    alternating = _resolved_schedule_for_cfg(AlignConfig(schedule="pose_only"))
     assert implicit.stages[0].objective_kind == "joint_volume_pose"
-    assert explicit.stages[0].objective_kind == "fixed_volume"
+    assert {stage.objective_kind for stage in named.stages} == {"joint_volume_pose"}
+    assert alternating.stages[0].objective_kind == "fixed_volume"
+    # Setup stages keep their own objectives.
+    cor = _resolved_schedule_for_cfg(AlignConfig(gn_coupling="joint", schedule="cor_then_pose"))
+    assert cor.stages[0].objective_kind != "joint_volume_pose"
 
 
 @pytest.mark.numerical

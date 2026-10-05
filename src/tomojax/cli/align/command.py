@@ -30,6 +30,7 @@ _PUBLIC_HELP_OPTIONS = frozenset(
         "--config",
         "--data",
         "--mode",
+        "--pose-solver",
         "--quality",
         "--out",
         "--save-manifest",
@@ -166,7 +167,12 @@ def _add_input_mode_options(p: argparse.ArgumentParser) -> None:
 
 
 def _add_reconstruction_options(p: argparse.ArgumentParser) -> None:
-    _ = p.add_argument("--outer-iters", type=int, default=5)
+    _ = p.add_argument(
+        "--outer-iters",
+        type=int,
+        default=None,
+        help="Outer alignment iterations; default 30 for coupled pose stages, else 5",
+    )
     _ = p.add_argument("--recon-iters", type=int, default=10)
     _ = p.add_argument(
         "--recon-algo",
@@ -263,6 +269,17 @@ def _add_projector_runtime_options(p: argparse.ArgumentParser) -> None:
 
 
 def _add_optimizer_options(p: argparse.ArgumentParser) -> None:
+    _ = p.add_argument(
+        "--pose-solver",
+        choices=["coupled", "alternating"],
+        default=None,
+        help=(
+            "Pose stages: coupled solves free voxels and per-view poses together "
+            "(Gauss-Newton, exact ray integration, least squares, no TV); alternating "
+            "refines poses against a fixed reconstruction between volume updates. "
+            "Default: coupled for --mode pose, alternating for modes with setup stages"
+        ),
+    )
     _ = p.add_argument("--lr-rot", type=float, default=1e-3)
     _ = p.add_argument("--lr-trans", type=float, default=1e-1)
     _ = p.add_argument(
@@ -621,6 +638,7 @@ class AlignCommand:
     roi: str
     grid: list[int] | None
     requested_gather_dtype: str
+    pose_solver: str
     recon_algo: str
     lambda_tv: float
     regulariser: str
@@ -673,6 +691,15 @@ class AlignCommand:
     volume_axes: str
 
 
+def _pose_solver(args: argparse.Namespace) -> str:
+    # The coupled solver is validated for pose-only alignment; setup schedules
+    # keep the alternating solver unless it is requested explicitly.
+    requested = cast("str | None", args.pose_solver)
+    if requested is not None:
+        return requested
+    return "coupled" if cast("str", args.mode) == "pose" else "alternating"
+
+
 def align_command_from_args(args: argparse.Namespace) -> AlignCommand:
     """Snapshot parser/config output into typed alignment command values."""
     return AlignCommand(
@@ -680,11 +707,16 @@ def align_command_from_args(args: argparse.Namespace) -> AlignCommand:
         out=cast("str", args.out),
         mode=cast("AlignmentMode", args.mode),
         align_profile=cast("str", args.align_profile),
-        outer_iters=cast("int", args.outer_iters),
+        outer_iters=(
+            cast("int", args.outer_iters)
+            if cast("int | None", args.outer_iters) is not None
+            else (30 if _pose_solver(args) == "coupled" and cast("str", args.mode) != "cor" else 5)
+        ),
         recon_iters=cast("int", args.recon_iters),
         roi=cast("str", args.roi),
         grid=cast("list[int] | None", args.grid),
         requested_gather_dtype=cast("str", args.gather_dtype),
+        pose_solver=_pose_solver(args),
         recon_algo=cast("str", args.recon_algo),
         lambda_tv=cast("float", args.lambda_tv),
         regulariser=cast("str", args.regulariser),

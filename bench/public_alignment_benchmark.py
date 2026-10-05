@@ -105,8 +105,21 @@ def verify(volume: np.ndarray, parameters: np.ndarray, fixture: dict[str, Any]) 
     )
 
 
-def generate_fixture(path: Path, kind: str, noisy: bool) -> None:
-    """Write the frozen random-voxel pilot and independent exact-basis measurements."""
+def generate_fixture(
+    path: Path,
+    kind: str,
+    noisy: bool,
+    *,
+    size: int = SIZE,
+    views: int = VIEWS,
+    rotation_deg: float = 0.25,
+    shift_px: float = 0.5,
+    noise: float = 0.001,
+) -> None:
+    """Write a random-voxel scan and independent exact-basis measurements.
+
+    Defaults reproduce the frozen pilot; other values define a different suite.
+    """
     from voxel_truth import project_voxel_truth
 
     from tomojax.core.geometry.lamino import LaminographyGeometry
@@ -114,28 +127,28 @@ def generate_fixture(path: Path, kind: str, noisy: bool) -> None:
 
     anisotropic = kind == "anisotropic"
     grid = Grid(
-        SIZE,
-        SIZE - 3 if anisotropic else SIZE,
-        SIZE // 2 if anisotropic else SIZE,
+        size,
+        size - 3 if anisotropic else size,
+        size // 2 if anisotropic else size,
         0.8 if anisotropic else 1.0,
         1.2 if anisotropic else 1.0,
         1.4 if anisotropic else 1.0,
     )
     detector = Detector(
-        SIZE + 5 if anisotropic else SIZE,
-        grid.nz + 3 if anisotropic else SIZE,
+        size + 5 if anisotropic else size,
+        grid.nz + 3 if anisotropic else size,
         grid.vx,
         grid.vz,
         (0.27, -0.31) if anisotropic else (0, 0),
     )
     rng = np.random.default_rng(SEED)
-    angles = np.arange(VIEWS) * 180 / VIEWS + rng.uniform(-0.3, 0.3, VIEWS)
+    angles = np.arange(views) * 180 / views + rng.uniform(-0.3, 0.3, views)
     geometry = (
         LaminographyGeometry(grid, detector, angles, tilt_deg=30)
         if kind == "lamino"
         else ParallelGeometry(grid, detector, angles)
     )
-    nominal = np.asarray([geometry.pose_for_view(i) for i in range(VIEWS)])
+    nominal = np.asarray([geometry.pose_for_view(i) for i in range(views)])
     shape = (grid.nx, grid.ny, grid.nz)
     field = gaussian_filter(rng.normal(size=shape), sigma=1.8, mode="constant")
     field = np.exp(0.7 * field / np.std(field))
@@ -147,14 +160,14 @@ def generate_fixture(path: Path, kind: str, noisy: bool) -> None:
     volume = (volume / volume.max()).astype(np.float32)
     parameters = np.concatenate(
         [
-            np.deg2rad(rng.uniform(-0.25, 0.25, (VIEWS, 3))),
-            rng.uniform(-0.5, 0.5, (VIEWS, 2)) * [detector.du, detector.dv],
+            np.deg2rad(rng.uniform(-rotation_deg, rotation_deg, (views, 3))),
+            rng.uniform(-shift_px, shift_px, (views, 2)) * [detector.du, detector.dv],
         ],
         axis=1,
     )
     poses = physical_poses(nominal, parameters)
     data = project_voxel_truth(volume, poses, grid, detector)
-    sigma = float(0.001 * np.sqrt(np.mean(data.astype(np.float64) ** 2))) if noisy else 0.0
+    sigma = float(noise * np.sqrt(np.mean(data.astype(np.float64) ** 2))) if noisy else 0.0
     data = data + rng.normal(0, sigma, data.shape).astype(np.float32)
     np.savez(
         path,
@@ -189,13 +202,14 @@ def one_run(
     gn_jacobian: str = "central",
     gn_joint_solver: str = "stacked",
     views_per_batch: int = 1,
+    factors: tuple[int, ...] = (1,),
 ) -> dict[str, Any]:
     """Time a public free-voxel solve including all setup and quality checks."""
     start = time.perf_counter()
     import jax
     import jax.numpy as jnp
 
-    from tomojax.align import AlignConfig, align
+    from tomojax.align import AlignConfig, align, align_multires
     from tomojax.align.api import L2LossSpec
     from tomojax.geometry import LaminographyGeometry, ParallelGeometry
 
@@ -237,15 +251,26 @@ def one_run(
         early_stop=False,
         views_per_batch=views_per_batch,
     )
-    volume, parameters, info = align(
-        geometry,
-        g,
-        d,
-        jnp.asarray(fixture["data"]),
-        config=config,
-        init_x=jnp.zeros(fixture["truth"].shape, dtype=jnp.float32),
-        observer=observer,
-    )
+    if factors == (1,):
+        volume, parameters, info = align(
+            geometry,
+            g,
+            d,
+            jnp.asarray(fixture["data"]),
+            config=config,
+            init_x=jnp.zeros(fixture["truth"].shape, dtype=jnp.float32),
+            observer=observer,
+        )
+    else:
+        # Coarser levels have a different grid; acceptance is checked on the final one.
+        volume, parameters, info = align_multires(
+            geometry,
+            g,
+            d,
+            jnp.asarray(fixture["data"]),
+            factors=factors,
+            config=config,
+        )
     volume, parameters = jax.device_get((volume, parameters))
     quality = verify(volume, parameters, fixture)
     return {
@@ -285,6 +310,7 @@ def worker(args: argparse.Namespace) -> None:
                 args.gn_jacobian,
                 args.gn_joint_solver,
                 args.views_per_batch,
+                tuple(args.factors),
             )
             if repeat == 0:
                 row["fresh_process_verified_ms"] = (time.perf_counter() - args.process_start) * 1000
@@ -319,6 +345,15 @@ def main() -> None:
     parser.add_argument(
         "--gn-joint-solver", choices=("stacked", "pose_eliminated"), default="stacked"
     )
+    parser.add_argument("--size", type=int, default=SIZE, help="Nominal grid size")
+    parser.add_argument(
+        "--factors", type=int, nargs="+", default=[1], help="Coarse-to-fine factors, e.g. 4 2 1"
+    )
+    parser.add_argument("--views", type=int, default=VIEWS)
+    parser.add_argument("--rotation-deg", type=float, default=0.25, help="Uniform motion bound")
+    parser.add_argument("--shift-px", type=float, default=0.5, help="Uniform motion bound")
+    parser.add_argument("--noise", type=float, default=0.001, help="Noise std / data RMS")
+    parser.add_argument("--cells", nargs="+", help="Subset such as lamino-noisy; default all six")
     parser.add_argument(
         "--views-per-batch",
         type=int,
@@ -350,6 +385,7 @@ def main() -> None:
             {"kind": k, "noisy": n}
             for k in ("parallel", "anisotropic", "lamino")
             for n in (False, True)
+            if not args.cells or f"{k}-{'noisy' if n else 'clean'}" in args.cells
         ],
         "gates": {
             "rotation_rmse_deg": 0.01,
@@ -357,12 +393,12 @@ def main() -> None:
             "volume_relative_l2": IMAGE_GATES,
         },
         "fixture": {
-            "size": SIZE,
-            "views": VIEWS,
+            "size": args.size,
+            "views": args.views,
             "seed": SEED,
-            "noise_relative_rms": 0.001,
-            "motion_rotation_bound_deg": 0.25,
-            "motion_translation_bound_px": 0.5,
+            "noise_relative_rms": args.noise,
+            "motion_rotation_bound_deg": args.rotation_deg,
+            "motion_translation_bound_px": args.shift_px,
         },
         "limits": {"outer_iters": OUTERS, "recon_iters": INNER_ITERS, "worker_timeout_s": 1800},
         "initialization": "zero free voxels and nominal poses",
@@ -378,7 +414,16 @@ def main() -> None:
     for cell in payload["scheduled_cells"]:
         name = f"{cell['kind']}-{'noisy' if cell['noisy'] else 'clean'}"
         fixture = args.output / f"{name}.npz"
-        generate_fixture(fixture, cell["kind"], cell["noisy"])
+        generate_fixture(
+            fixture,
+            cell["kind"],
+            cell["noisy"],
+            size=args.size,
+            views=args.views,
+            rotation_deg=args.rotation_deg,
+            shift_px=args.shift_px,
+            noise=args.noise,
+        )
         result = args.output / f"{name}.json"
         command = [
             sys.executable,
@@ -400,6 +445,8 @@ def main() -> None:
             args.gn_joint_solver,
             "--views-per-batch",
             str(args.views_per_batch),
+            "--factors",
+            *map(str, args.factors),
             "--process-start",
             str(time.perf_counter()),
         ]

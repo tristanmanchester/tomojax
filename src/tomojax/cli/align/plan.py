@@ -3,7 +3,7 @@ from __future__ import annotations
 # ruff: noqa: D100,D103,TC003
 import argparse
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import logging
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -17,6 +17,7 @@ from tomojax.align.api import (
     AlignMultiresResumeState,
     AlignResumeState,
     CheckpointError,
+    L2LossSpec,
     align,
     align_multires,
     load_alignment_checkpoint,
@@ -24,6 +25,7 @@ from tomojax.align.api import (
     profile_policy_from_config,
     resolve_alignment_schedule,
     resolve_profiled_cli_defaults,
+    resolved_schedule_for_config,
     validate_loss_schedule_levels,
 )
 from tomojax.cli._reconstruction_region import resolve_reconstruction_region
@@ -330,10 +332,51 @@ def _load_alignment_inputs(command: AlignCommand) -> _LoadedAlignInputs:
     )
 
 
+def _coupled_pose_options(
+    parser: argparse.ArgumentParser,
+    command: AlignCommand,
+    parsed: _ParsedAlignOptions,
+    configured_keys: set[str],
+) -> dict[str, Any]:
+    """Return config overrides for coupled pose stages, rejecting explicit conflicts."""
+    if command.pose_solver != "coupled":
+        return {}
+    conflicts = {
+        "loss": not isinstance(parsed.loss_config, L2LossSpec),
+        "gather_dtype": command.requested_gather_dtype not in {"auto", "fp32"},
+        "opt_method": command.opt_method != "gn",
+        "pose_model": command.pose_model not in {"per_view", "per-view"},
+        "lambda_tv": command.lambda_tv != 0 and command.regulariser != "huber_tv",
+    }
+    explicit = sorted(key for key, bad in conflicts.items() if bad and key in configured_keys)
+    if explicit:
+        parser.error(
+            "--pose-solver coupled requires an l2 loss, fp32 gathers, --opt-method gn, "
+            "--pose-model per_view and Huber-TV or zero TV; conflicting: "
+            + ", ".join(f"--{key.replace('_', '-')}" for key in explicit)
+            + ". Use --pose-solver alternating for other combinations."
+        )
+    options: dict[str, Any] = {
+        "gn_coupling": "joint",
+        "gn_joint_solver": "pose_eliminated",
+        "ray_integrator": "exact",
+        "gather_dtype": "fp32",
+        "opt_method": "gn",
+        "pose_model": "per_view",
+    }
+    if "loss" not in configured_keys:
+        options["loss"] = L2LossSpec()
+    if "lambda_tv" not in configured_keys:
+        # Default-weight TV biased coupled pose recovery in the free-voxel pilot.
+        options["lambda_tv"] = 0.0
+    return options
+
+
 def _resolve_schedule_and_config(
     parser: argparse.ArgumentParser,
     command: AlignCommand,
     parsed: _ParsedAlignOptions,
+    configured_keys: set[str] = frozenset(),  # type: ignore[assignment]
 ) -> _ResolvedAlignConfig:
     try:
         resolved_schedule = resolve_alignment_schedule(
@@ -416,6 +459,11 @@ def _resolve_schedule_and_config(
         ),
         mask_vol=command.mask_vol,
     )
+    coupled = _coupled_pose_options(parser, command, parsed, configured_keys)
+    if coupled:
+        cfg = replace(cfg, **coupled)
+        gather_dtype = cfg.gather_dtype
+        schedule_metadata = resolved_schedule_for_config(cfg).to_dict()
     schedule_metadata["profile_policy"] = profile_policy_from_config(cfg).to_dict()
     return _ResolvedAlignConfig(
         cfg=cfg,
@@ -442,7 +490,7 @@ def build_align_cli_run_plan(
     )
     command = align_command_from_args(args)
     inputs = _load_alignment_inputs(command)
-    resolved = _resolve_schedule_and_config(parser, command, parsed)
+    resolved = _resolve_schedule_and_config(parser, command, parsed, configured_keys)
     region = resolve_reconstruction_region(
         inputs.grid,
         inputs.detector,
@@ -508,7 +556,7 @@ def build_align_cli_run_plan(
         command=command,
         cli_args=args,
         config_metadata=config_metadata,
-        loss_config=parsed.loss_config,
+        loss_config=resolved.cfg.loss,
         loss_params=parsed.loss_params,
         levels=parsed.levels,
         run_levels=run_levels,

@@ -68,6 +68,7 @@ It is not a test of the larger ±3°/±10-pixel capture range in the stretch goa
 | Coupled solve with pose elimination | 5/6 cells pass; faster tilted recovery | [Pose elimination](research/public-free-voxel-schur-2026-10-04.md) |
 | Same eliminated solve with reusable compiled objectives | 5/6 cells pass; faster warm calls, unchanged cold startup and memory | [Compiled-objective reuse](research/public-free-voxel-reuse-2026-10-04.md) |
 | Same eliminated solve with fixed default-weight Huber-TV | 0/6 cells pass; rejected screen | [TV screen](research/public-free-voxel-tv-2026-10-04.md) |
+| Default `tomojax align --mode pose` (coupled solver), fresh CLI process per cell | 5/6 cells pass; rotation RMSE 0.0006–0.008°, 8–18 s | Scored with the pilot's own gates via the public CLI |
 | Same eliminated solve with reconstruction batches sized automatically (now the default) | 5/6 cells pass; warm 1.5–5.5 s, 1.9–2.3× faster than one view per batch, same peak memory | [Batching record](../bench/reference/public-free-voxel-batching-2026-10-05.json.gz) (two warm repeats) |
 
 The noisy anisotropic cell still fails the 0.01° rotation gate on the successful
