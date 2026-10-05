@@ -24,6 +24,9 @@ if TYPE_CHECKING:
 
 LOG = logging.getLogger(__name__)
 
+# Views per chunk: correlation spectra are padded to 1.5x the detector size.
+_CHUNK = 32
+
 
 @jax.jit
 def _shift_views(images: jax.Array, shifts: jax.Array) -> jax.Array:
@@ -118,26 +121,38 @@ def estimate_view_shifts(
     coefficients = plane_coefficients(poses, grid, detector)
     backend = "pallas" if jax.default_backend() == "gpu" else "jax"
 
-    def forward(volume: jax.Array) -> jax.Array:
-        return jnp.concatenate(
+    max_u = max(1, int(max_shift_fraction * detector.nu))
+    max_v = max(1, int(max_shift_fraction * detector.nv))
+    chunks = [slice(s, min(s + _CHUNK, n)) for s in range(0, n, _CHUNK)]
+
+    def correlate(volume: jax.Array) -> np.ndarray:
+        # Reproject and correlate a chunk of views at a time.
+        return np.concatenate(
             [
-                forward_project_planes(
-                    coefficients[s : s + 32], volume, grid, detector, backend=backend
+                np.asarray(
+                    _correlation_peaks(
+                        data[c],
+                        forward_project_planes(
+                            coefficients[c], volume, grid, detector, backend=backend
+                        ),
+                        max_u=max_u,
+                        max_v=max_v,
+                    ),
+                    np.float64,
                 )
-                for s in range(0, n, 32)
+                for c in chunks
             ]
         )
 
-    max_u = max(1, int(max_shift_fraction * detector.nu))
-    max_v = max(1, int(max_shift_fraction * detector.nv))
     spacing = (float(detector.du), float(detector.dv))
     shifts = np.zeros((n, 2))
     for iteration in range(int(iters)):
-        corrected = _shift_views(data, jnp.asarray(-shifts, jnp.float32))
-        volume = fbp(geometry, grid, detector, corrected, config=FBPConfig(filter_name="hann"))
-        peaks = np.asarray(
-            _correlation_peaks(data, forward(volume), max_u=max_u, max_v=max_v), np.float64
+        corrected = jnp.concatenate(
+            [_shift_views(data[c], jnp.asarray(-shifts[c], jnp.float32)) for c in chunks]
         )
+        volume = fbp(geometry, grid, detector, corrected, config=FBPConfig(filter_name="hann"))
+        del corrected
+        peaks = correlate(volume)
         updated = _remove_object_translation(peaks, rotations, spacing)
         change = float(np.max(np.abs(updated - shifts)))
         shifts = updated

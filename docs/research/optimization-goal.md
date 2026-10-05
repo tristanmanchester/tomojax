@@ -78,9 +78,14 @@ remain separate requirements.
 ### Summary, 2026-10-05
 
 - Reconstruction: over 26 paired cells, TomoJAX's fastest accepted workflow is
-  2.6x faster warm than the fastest accepted ASTRA or TIGRE workflow (geometric
-  mean; worst 0.75x) and 0.95x cold (worst 0.40x). The 10x target is unmet. See
-  [the latest matrix](system-matrix-2026-10-05.md).
+  2.8x faster warm than the fastest accepted ASTRA workflow (geometric mean;
+  worst 0.59x, a cold-time selection effect) and 1.00x cold (worst 0.44x). The
+  10x target is unmet. See [the latest matrix](system-matrix-2026-10-05-memory.md).
+- Memory: CGLS, FISTA-TV and SPDHG-TV solve 512-cubed laminography on an 8 GB
+  GPU; FBP and FISTA-TV stream projections from host memory, and `fbp_host`
+  reconstructs laminography volumes larger than the GPU (1024 cubed in 37 s).
+- Alignment: a global per-view shift search precedes the coupled solver, so
+  shifts of up to a quarter of the detector are recovered.
 - FBP is exact for any circular parallel scan, including tilted half turns.
   FISTA-TV and SPDHG-TV now run on the batched Joseph/Pallas operators
   (20-120x faster than before).

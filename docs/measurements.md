@@ -12,7 +12,11 @@ complete-workflow timings or establish the gradient cost target.
 
 ## Reconstruction
 
-The [latest comparison](research/system-matrix-2026-10-05.md) reruns the 27-cell
+The [latest comparison](research/system-matrix-2026-10-05-memory.md), after the
+memory and kernel changes, has a cold geometric mean of 1.00 (0.44 to 2.81) and
+warm 2.78 (0.59 to 20.4) against the fastest accepted ASTRA workflow over the
+same 26 cells. The weakest cells remain small laminography scans. The
+[morning comparison](research/system-matrix-2026-10-05.md) reran the 27-cell
 matrix: smooth, sharp and noisy objects with parallel, shifted anisotropic and
 30° tilted geometry at 64, 128 and 256 nominal grid sizes. Each cell pairs
 TomoJAX's fastest accepted workflow with the fastest accepted ASTRA or TIGRE

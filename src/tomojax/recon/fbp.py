@@ -396,10 +396,10 @@ def _fbp_from_host(
 ) -> jnp.ndarray:
     """Stream host projections through the device in fixed-size view batches.
 
-    Only the output volume, one batch and its filtering workspace occupy the
+    Only the output volume, two batches and one filtering workspace occupy the
     device. The final batch is padded with zero-weight views so every batch
-    reuses one compiled step, and the next batch is transferred while the
-    current one runs.
+    reuses one compiled step, and the next batch is read and transferred while
+    the current one runs.
     """
     n = projections.shape[0]
     b = min(batch_size, n)
@@ -423,8 +423,7 @@ def _fbp_from_host(
     pending = batch(0)
     for start in range(0, n, b):
         current = pending
-        if start + b < n:
-            pending = batch(start + b)
+        # Dispatch is asynchronous: read and transfer the next batch while this one runs.
         accum = _fbp_accumulate_batch(
             accum,
             *current,
@@ -436,6 +435,8 @@ def _fbp_from_host(
             separable=separable,
             z_integer=z_integer,
         )
+        if start + b < n:
+            pending = batch(start + b)
     return accum
 
 

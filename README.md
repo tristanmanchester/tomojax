@@ -66,8 +66,11 @@ For CUDA installation, wheel installation, and device checks, see
 | Check supported models and limitations | [Support matrix](docs/support-matrix.md), [limitations](docs/known-limitations.md) |
 | Assess accuracy, speed, and memory | [Measurement guide](docs/measurements.md) |
 
-The CLI provides FBP, FISTA-TV, and SPDHG-TV reconstruction. The Python API also
-provides CGLS, host-output FBP, and an opt-in Fourier inverse for uniform
+The CLI provides FBP, CGLS, FISTA-TV, and SPDHG-TV reconstruction. FBP and
+FISTA-TV stream projections from host memory, so scans larger than the GPU
+need only their volumes on it; `fbp_host` in the Python API also keeps the
+volume on the host. On an 8 GB laptop GPU, a 1024³ laminography FBP from and to
+disk takes 37 s. The Python API adds an opt-in Fourier inverse for uniform
 parallel scans. CPU paths use JAX; optional Pallas kernels accelerate selected
 operations on CUDA. Volumes use `(x, y, z)` and projections `(view, v, u)` in
 Python. Detector and voxel spacings must use the same physical length unit.
@@ -79,17 +82,19 @@ or browse the [documentation index](docs/README.md).
 
 ## Evidence and current limits
 
-The [reconstruction comparison](docs/research/system-matrix-2026-10-05.md) covers
+The [reconstruction comparison](docs/research/system-matrix-2026-10-05-memory.md) covers
 smooth, sharp, and noisy objects across parallel, anisotropic, and tilted scans,
-against the fastest accepted ASTRA or TIGRE workflow in each cell. Over the 26
-cells with accepted results on both sides, TomoJAX is 2.6 times faster warm
-(geometric mean; 0.75 to 20 times) and on par from a fresh process (0.95; 0.40
-to 2.5). Small laminography scans remain slower, dominated by JAX start-up and
+against the fastest accepted ASTRA workflow in each cell (TIGRE was never the
+fastest). Over the 26 cells with accepted results on both sides, TomoJAX is 2.8
+times faster warm (geometric mean; 0.59 to 20 times) and on par from a fresh
+process (1.00; 0.44 to 2.8). Small laminography scans remain slower, dominated by JAX start-up and
 backprojection cost. Published GPU measurements use one RTX 4070 Laptop GPU.
 
 `tomojax align --mode pose` solves the volume and every view's pose together.
 On analytic 128³ scans of continuous objects it recovers per-view rotations to
 0.003–0.009° in 70–90 s; at coarse resolution, discretisation limits accuracy.
+A global shift search first finds per-view stage shifts of up to a quarter of
+the detector.
 See the [alignment guide](docs/alignment-guide.md). This is not a demonstrated large-motion or 99% recovery capability.
 The [alignment comparison](docs/research/public-free-voxel-schur-2026-10-04.md) retains
 failures, cold/warm times, quality, and process GPU memory.

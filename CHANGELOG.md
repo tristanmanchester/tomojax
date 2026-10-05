@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The alignment shift search reprojects, shifts and correlates 32 views at a
+  time, so its padded correlation spectra stay bounded for long scans, and
+  host-streamed FBP reads the next view batch while the current one runs.
 - Stream projections from host memory in FISTA-TV. NumPy or memmap stacks
   larger than 40% of free device memory are read one view batch at a time
   inside the compiled solve (`FistaConfig(stream_projections=...)` forces
