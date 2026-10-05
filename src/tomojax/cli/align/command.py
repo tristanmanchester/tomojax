@@ -435,8 +435,13 @@ def _add_dof_schedule_options(p: argparse.ArgumentParser) -> None:
     )
     _ = p.add_argument(
         "--seed-translations",
-        action="store_true",
-        help="Phase-correlation init for dx,dz at coarsest level",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Search each view's detector shift globally (reconstruct, reproject, "
+            "cross-correlate) before local alignment, extending the translation "
+            "capture range. Default: on for the coupled pose solver, off otherwise"
+        ),
     )
     _ = p.add_argument(
         "--log-summary",
@@ -681,7 +686,7 @@ class AlignCommand:
     pose_model: str
     knot_spacing: int
     degree: int
-    seed_translations: bool
+    seed_translations: bool | None
     log_summary: bool
     log_compact: bool
     recon_l: float | None
@@ -760,7 +765,7 @@ def align_command_from_args(args: argparse.Namespace) -> AlignCommand:
         pose_model=cast("str", args.pose_model),
         knot_spacing=cast("int", args.knot_spacing),
         degree=cast("int", args.degree),
-        seed_translations=cast("bool", args.seed_translations),
+        seed_translations=cast("bool | None", args.seed_translations),
         log_summary=cast("bool", args.log_summary),
         log_compact=cast("bool", args.log_compact),
         recon_l=cast("float | None", args.recon_L),

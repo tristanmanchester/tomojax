@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
 
-import jax
 import jax.numpy as jnp
 
 from tomojax.align._config import AlignConfig, _resolved_schedule_for_cfg
@@ -28,7 +27,6 @@ from tomojax.align._results import (
     AlignMultiresResumeState,
 )
 from tomojax.core.geometry.base import Detector, Geometry, Grid
-from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.multires import (
     bin_projections,
     scale_detector,
@@ -36,10 +34,7 @@ from tomojax.core.multires import (
     upsample_volume,
     validate_scale_factor,
 )
-from tomojax.core.projector import forward_project_view_T
 from tomojax.core.validation import validate_grid, validate_projection_stack
-from tomojax.motion import phase_corr_shift
-from tomojax.recon.fista_tv import FistaConfig, fista_tv
 
 from ._setup_stage import _geometry_calibration_payload
 from ._stage_types import (
@@ -527,96 +522,6 @@ def _level_initial_volume(
         x_init,
         prev_factor // level["factor"],
         (level_grid.nx, level_grid.ny, level_grid.nz),
-    )
-
-
-def _seed_translation_params(
-    *,
-    geometry: Geometry,
-    cfg: AlignConfig,
-    active_mask_tuple: tuple[bool, ...],
-    grid: Grid,
-    detector: Detector,
-    projections: jnp.ndarray,
-    x0: jnp.ndarray | None,
-    params0: jnp.ndarray | None,
-) -> jnp.ndarray | None:
-    seed_cfg = FistaConfig(
-        projector_model="ray",
-        projector_backend="jax",
-        iters=max(3, cfg.recon_iters // 2),
-        lambda_tv=cfg.lambda_tv,
-        regulariser=cfg.regulariser,
-        huber_delta=cfg.huber_delta,
-        projector_unroll=int(cfg.projector_unroll),
-        checkpoint_projector=cfg.checkpoint_projector,
-        gather_dtype=cfg.gather_dtype,
-        positivity=bool(cfg.recon_positivity),
-        recon_rel_tol=cfg.recon_rel_tol,
-        recon_patience=(int(cfg.recon_patience) if cfg.recon_patience is not None else 0),
-        ray_integrator=cfg.ray_integrator,
-    )
-    x_seed, _ = fista_tv(geometry, grid, detector, projections, init_x=x0, config=seed_cfg)
-    transforms = stack_view_poses(geometry, projections.shape[0])
-
-    def project_seed_view(transform: jnp.ndarray) -> jnp.ndarray:
-        return forward_project_view_T(
-            transform,
-            grid,
-            detector,
-            x_seed,
-            use_checkpoint=cfg.checkpoint_projector,
-            gather_dtype=cfg.gather_dtype,
-            ray_integrator=cfg.ray_integrator,
-        )
-
-    preds = jax.vmap(project_seed_view, in_axes=0)(transforms)
-    # Correlation returns the shift that aligns its second image to its first.
-    # Pose translations move the predicted object toward the measured image.
-    shift_uv = jax.vmap(phase_corr_shift)(projections, preds)
-    shifts = jnp.stack(shift_uv, axis=1).astype(jnp.float32)
-    seed_params = (
-        jnp.zeros((projections.shape[0], 5), dtype=jnp.float32)
-        if params0 is None
-        else jnp.asarray(params0, dtype=jnp.float32)
-    )
-    pitch = jnp.array([detector.du, detector.dv], dtype=jnp.float32)
-    if cfg.pose_translation_frame == "detector":
-        mapping = jnp.broadcast_to(jnp.eye(2), (projections.shape[0], 2, 2))
-    else:
-        axes = jnp.array([0, 2])
-        mapping = transforms[:, axes, :3][:, :, axes]
-    active = jnp.asarray(active_mask_tuple[3:5], dtype=jnp.bool_)
-    fixed = jnp.where(active, 0.0, seed_params[:, 3:])
-    pixel_mapping = mapping / pitch[None, :, None]
-    residual = shifts - jnp.einsum("nij,nj->ni", pixel_mapping, fixed)
-    # Legacy object translations may lose one observable direction. Discard
-    # near-null singular directions instead of creating enormous seed offsets.
-    inverse = jnp.linalg.pinv(pixel_mapping * active[None, None, :], rtol=1e-3)
-    estimate = jnp.einsum("nij,nj->ni", inverse, residual)
-    return seed_params.at[:, 3:].set(jnp.where(active, estimate, fixed))
-
-
-def _params_for_multires_level(
-    *,
-    level_index: int,
-    geometry: Geometry,
-    context: MultiresContext,
-    level: MultiresLevel,
-    x0: jnp.ndarray | None,
-    params0: jnp.ndarray | None,
-) -> jnp.ndarray | None:
-    if level_index != 0 or not context.cfg.seed_translations:
-        return params0
-    return _seed_translation_params(
-        geometry=geometry,
-        cfg=context.cfg,
-        active_mask_tuple=context.active_mask_tuple,
-        grid=level["grid"],
-        detector=level["detector"],
-        projections=level["projections"],
-        x0=x0,
-        params0=params0,
     )
 
 

@@ -31,6 +31,7 @@ from tomojax.align._observer import (
     _normalize_observer_action,
     adapt_observer_callback,
 )
+from tomojax.align._prealign import estimate_view_shifts, translation_params_from_shifts
 from tomojax.align._profiles import profile_policy_from_config
 from tomojax.align._results import AlignCheckpointCallback, AlignInfo, AlignResumeState
 from tomojax.align._stages._reconstruction_stage import _run_reconstruction_step
@@ -152,8 +153,26 @@ def _prepare_align_setup(
         if init_params5 is not None
         else jnp.zeros((n_views, 5), dtype=jnp.float32)
     )
-    frozen_params5 = params5
     active_mask_tuple = _active_dof_mask_for_cfg(cfg)
+    if cfg.seed_translations and init_params5 is None and any(active_mask_tuple[3:]):
+        # Local solvers converge only near the truth; a global shift search
+        # first brings large per-view stage shifts within reach.
+        shifts = estimate_view_shifts(geometry, grid, detector, projections)
+        params5 = jnp.asarray(
+            translation_params_from_shifts(
+                shifts,
+                np.asarray(stack_view_poses(geometry, n_views), np.float64),
+                np.asarray(params5),
+                frame=cfg.pose_translation_frame,
+                active=(bool(active_mask_tuple[3]), bool(active_mask_tuple[4])),
+            )
+        )
+        logging.info(
+            "Seeded translations from a shift search: rms %.3f, max %.3f (physical units)",
+            float(np.sqrt(np.mean(shifts**2))),
+            float(np.max(np.abs(shifts))),
+        )
+    frozen_params5 = params5
     active_mask_bool = jnp.asarray(active_mask_tuple, dtype=bool)
     active_col_indices_np = np.asarray(
         [idx for idx, is_active in enumerate(active_mask_tuple) if is_active],

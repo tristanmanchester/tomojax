@@ -370,7 +370,8 @@ def coupled_pose_config(**overrides: object) -> AlignConfig:
     This is what ``tomojax align --mode pose`` runs: each Gauss-Newton step
     solves the free voxels and every view's 5-DOF pose together, with Joseph
     plane sampling, an unregularised least-squares fit, fp32 gathers and up to
-    30 early-stopped outer iterations. Pass keyword overrides for any
+    30 early-stopped outer iterations, after a global search for each view's
+    detector shift. Pass keyword overrides for any
     :class:`AlignConfig` field. ``AlignConfig()`` itself keeps the older
     alternating defaults for compatibility.
     """
@@ -382,6 +383,7 @@ def coupled_pose_config(**overrides: object) -> AlignConfig:
         "loss": L2LossSpec(),
         "lambda_tv": 0.0,
         "outer_iters": 30,
+        "seed_translations": True,
     }
     settings.update(overrides)
     return AlignConfig(**settings)  # type: ignore[arg-type]

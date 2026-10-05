@@ -19,6 +19,17 @@ At 64³, ±3° and ±10 px motion is recovered in parallel and laminography scan
 (to 0.02°, the discretisation floor at that size), but the anisotropic test scan
 with unequal voxels and an offset detector diverges; ±1° is recovered in all three.
 
+Large per-view stage shifts are found first by a global shift search
+(`--seed-translations`, on by default for pose mode, `--no-seed-translations`
+to disable): reconstruct with the current shifts removed, reproject, and move
+each view to its cross-correlation peak, searching up to a quarter of the
+detector. Local solvers alone converge only from shifts of a few pixels. With
+±0.5° tilts and ±15 px shifts (23% of a 64-pixel detector), rotations go from
+7.7–12.6° wrong without the search to 0.012–0.034° with it in parallel and
+laminography scans; at 128³ with ±8 or ±15 px all three geometries reach
+0.003–0.018°, unchanged by the search. Shifts beyond a quarter of the detector,
+which leave the object partly outside the field of view, are not recovered.
+
 `--ray-integrator exact` integrates the trilinear voxel basis exactly. It is
 10–30× slower. On the free-voxel pilot, whose measurements use that same basis,
 it recovers clean cells to numerical precision, an inverse crime rather than

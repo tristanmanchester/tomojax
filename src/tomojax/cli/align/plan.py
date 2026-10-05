@@ -374,6 +374,8 @@ def _coupled_pose_options(
         "gather_dtype": "fp32",
         "opt_method": "gn",
         "pose_model": "per_view",
+        # A global shift search extends the local solver's capture range.
+        "seed_translations": command.seed_translations is not False,
     }
     if "loss" not in configured_keys:
         options["loss"] = L2LossSpec()
@@ -457,7 +459,7 @@ def _resolve_schedule_and_config(
         degree=command.degree,
         gauge_fix=cast("GaugeFixMode", command.gauge_fix),
         loss=parsed.loss_config,
-        seed_translations=command.seed_translations,
+        seed_translations=bool(command.seed_translations),
         log_summary=command.log_summary,
         log_compact=command.log_compact,
         recon_L=command.recon_l,

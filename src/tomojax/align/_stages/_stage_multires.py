@@ -30,7 +30,6 @@ from ._stage_state import (
     _level_initial_volume,
     _levels_to_run,
     _multires_run_is_complete,
-    _params_for_multires_level,
     _prepare_multires_level_state,
     _state_after_multires_level,
 )
@@ -74,14 +73,6 @@ def _run_one_multires_level(
     )
     params0 = (
         resume_state.params5 if resuming_this_level and resume_state is not None else state.params5
-    )
-    params0 = _params_for_multires_level(
-        level_index=level_index,
-        geometry=geometry,
-        context=context,
-        level=level,
-        x0=x0,
-        params0=params0,
     )
     level_run = _prepare_multires_level_state(
         resume_state=resume_state,

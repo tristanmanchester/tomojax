@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Seed pose alignment with a global per-view shift search. Each pass
+  reconstructs with the current shifts removed (FBP), reprojects, and moves
+  every view to its cross-correlation peak, searching up to a quarter of the
+  detector and discarding the shift pattern of a rigid object translation.
+  `--seed-translations` is now on by default for `tomojax align --mode pose`
+  (`--no-seed-translations` disables it), and `coupled_pose_config` enables
+  it; it now also runs in single-resolution alignment, and replaces the
+  previous single phase correlation against a ray-model FISTA reconstruction.
+  On 64-cubed scans with +/-0.5 deg tilts and +/-15 px shifts (23% of the
+  detector), rotation errors fall from 7.7 and 12.6 deg to 0.034 and 0.012 deg
+  in parallel and laminography; 128-cubed results are unchanged.
 - Reconstruct laminography and posed scans larger than device memory with
   FBP. `fbp` given a NumPy array or memmap streams view batches from host
   memory (bitwise-identical to device input), and `fbp_host` now accepts every

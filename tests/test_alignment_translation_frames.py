@@ -11,7 +11,8 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from tomojax.align import AlignConfig, align, align_multires
+# check-public-imports: allow-private
+from tomojax.align import AlignConfig, _prealign, align, align_multires
 
 # check-public-imports: allow-private
 from tomojax.align._objectives import fold_recon
@@ -20,7 +21,7 @@ from tomojax.align._objectives import fold_recon
 from tomojax.align._objectives.recon_layer import PoseAdjustedGeometry
 
 # check-public-imports: allow-private
-from tomojax.align._stages import _stage_state
+from tomojax.align._prealign import estimate_view_shifts, translation_params_from_shifts
 from tomojax.align.api import (
     AlignmentState,
     AlignMultiresResumeState,
@@ -38,6 +39,7 @@ from tomojax.align.api import (
 
 # check-public-imports: allow-private
 from tomojax.core.projector import forward_project_view_T
+from tomojax.forward import project_joseph
 from tomojax.geometry import (
     Detector,
     Grid,
@@ -45,7 +47,6 @@ from tomojax.geometry import (
     ParallelGeometry,
     stack_view_poses,
 )
-from tomojax.motion import phase_corr_shift
 
 
 def _geometry(size, kind, angles):
@@ -317,38 +318,49 @@ def test_detector_pose_exports_carry_their_frame(tmp_path):
 @pytest.mark.parametrize("frame", ["object", "detector"])
 @pytest.mark.parametrize("active", [(True, True), (False, True)])
 @pytest.mark.parametrize("kind", ["parallel", "anisotropic", "lamino"])
-def test_translation_seed_converts_image_motion_without_moving_frozen_dofs(
-    monkeypatch, frame, active, kind
-):
-    geometry, grid, detector = _geometry(12, kind, np.array([17.0, 90.0, 143.0], np.float32))
-    prediction = jnp.asarray(
-        np.random.default_rng(318).normal(size=(detector.nv, detector.nu)), jnp.float32
-    )
-    shifts = np.array([[1, -2], [-1, 1], [2, 0]], np.float32)
-    data = jnp.stack([jnp.roll(prediction, (int(v), int(u)), axis=(0, 1)) for u, v in shifts])
-    # Direct sign check, independent of pose conversion or the initializer.
-    du, dv = phase_corr_shift(prediction, data[0])
-    np.testing.assert_array_equal([du, dv], -shifts[0])
-    monkeypatch.setattr(_stage_state, "fista_tv", lambda *a, **kw: (jnp.zeros((12, 12, 12)), {}))
-    monkeypatch.setattr(_stage_state, "forward_project_view_T", lambda *a, **kw: prediction)
-    params = jnp.zeros((3, 5)).at[:, 3].set(0.4)
-    cfg = AlignConfig(pose_translation_frame=frame, gauge_fix="none", seed_translations=True)
-    actual = _stage_state._seed_translation_params(
-        geometry=geometry,
-        cfg=cfg,
-        active_mask_tuple=(False, False, False, *active),
-        grid=grid,
-        detector=detector,
-        projections=data,
-        x0=None,
-        params0=params,
-    )
-    poses = np.asarray(stack_view_poses(geometry, 3))
-    axes = [0, 2]
+def test_translation_seed_converts_image_motion_without_moving_frozen_dofs(frame, active, kind):
+    geometry, _, detector = _geometry(12, kind, np.array([17.0, 90.0, 143.0], np.float32))
+    shifts = np.array([[1, -2], [-1, 1], [2, 0]], np.float64) * [detector.du, detector.dv]
+    params = np.zeros((3, 5), np.float32)
+    params[:, 3] = 0.4
+    poses = np.asarray(stack_view_poses(geometry, 3), np.float64)
+    actual = translation_params_from_shifts(shifts, poses, params, frame=frame, active=active)
     for i in range(3):
-        basis = np.eye(2) if frame == "detector" else poses[i][axes, :3][:, axes]
-        basis = basis / np.array([detector.du, detector.dv])[:, None]
-        fixed = np.where(active, 0, np.asarray(params[i, 3:]))
+        basis = np.eye(2) if frame == "detector" else poses[i][[0, 2], :3][:, [0, 2]]
+        fixed = np.where(active, 0, params[i, 3:])
         target = shifts[i] - basis @ fixed
         expected = np.linalg.lstsq(basis * np.array(active)[None, :], target, rcond=1e-3)[0]
         np.testing.assert_allclose(actual[i, 3:], np.where(active, expected, fixed), atol=2e-6)
+        # Each seeded translation reproduces its view's detector shift where observable.
+        if all(active) and frame == "detector":
+            moved = apply_pose_update(
+                jnp.asarray(poses[i], jnp.float32),
+                jnp.asarray(actual[i]),
+                translation_frame=frame,
+            )
+            np.testing.assert_allclose(
+                np.asarray(moved)[[0, 2], 3] - poses[i][[0, 2], 3], shifts[i], atol=1e-5
+            )
+
+
+@pytest.mark.parametrize("kind", ["parallel", "lamino"])
+def test_shift_search_recovers_large_view_shifts(kind):
+    angles = np.linspace(0.0, 180.0 if kind == "parallel" else 360.0, 40, endpoint=False)
+    geometry, grid, detector = _geometry(32, kind, angles.astype(np.float32))
+    c = (np.arange(32) - 15.5) / 32
+    x, y, z = np.meshgrid(c, c, c, indexing="ij")
+    volume = np.zeros((32, 32, 32), np.float32)
+    for (cx, cy, cz), r in [((0.1, -0.1, 0.05), 0.12), ((-0.12, 0.08, -0.1), 0.08)]:
+        volume += np.exp(-((x - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2) / (2 * r * r))
+    poses = stack_view_poses(geometry, len(angles))
+    clean = project_joseph(jnp.asarray(volume), poses, grid, detector)
+    rng = np.random.default_rng(4)
+    truth = rng.uniform(-5, 5, (len(angles), 2))
+    data = _prealign._shift_views(clean, jnp.asarray(truth, jnp.float32))
+    found = estimate_view_shifts(geometry, grid, detector, data) / [detector.du, detector.dv]
+    rotations = np.asarray(poses, np.float64)[:, :3, :3]
+    spacing = (detector.du, detector.dv)
+    expected = _prealign._remove_object_translation(truth, rotations, spacing)
+    actual = _prealign._remove_object_translation(found, rotations, spacing)
+    # +/-5 px shifts come within the local solver's sub-pixel reach.
+    assert np.sqrt(np.mean((actual - expected) ** 2)) < 0.4
