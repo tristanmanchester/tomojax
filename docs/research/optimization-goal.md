@@ -75,6 +75,27 @@ remain separate requirements.
 
 ## Status
 
+### Summary, 2026-10-05
+
+- Reconstruction: over 26 paired cells, TomoJAX's fastest accepted workflow is
+  2.6x faster warm than the fastest accepted ASTRA or TIGRE workflow (geometric
+  mean; worst 0.75x) and 0.95x cold (worst 0.40x). The 10x target is unmet. See
+  [the latest matrix](system-matrix-2026-10-05.md).
+- FBP is exact for any circular parallel scan, including tilted half turns.
+  FISTA-TV and SPDHG-TV now run on the batched Joseph/Pallas operators
+  (20-120x faster than before).
+- Joint recovery: the default `tomojax align --mode pose` recovers 5/6 pilot
+  cells (rotation 0.0006-0.008 deg); noisy anisotropic sits at about 0.016 deg,
+  close to the 0.017 deg its noise predicts, so the 0.01 deg gate is probably
+  unreachable for that cell. +/-1 deg / +/-2 px motion is recovered in all three
+  tested geometries; +/-3 deg / +/-10 px is not, so the 99% robustness target
+  is unmet.
+- Per-iteration cost on tilted scans remains 2-3x ASTRA's: the matched Joseph
+  backprojection is limited by its enumeration loop, and three rewrites
+  (compact tiles, exact row intervals, a CUDA fixed-point splat) did not help.
+
+The detailed record below is chronological and retains every experiment.
+
 The [Huber-TV derivative correction](huber-derivatives-2026-10-04.md) removes
 NaNs in flat-region and zero-dual derivatives. All 33 frozen image inputs retain
 bitwise-identical updates with finite corrected derivatives. This is a
