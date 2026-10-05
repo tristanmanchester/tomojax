@@ -12,18 +12,21 @@ complete-workflow timings or establish the gradient cost target.
 
 ## Reconstruction
 
-The [frozen 27-cell matrix](research/system-matrix-2026-10-04.md) crosses smooth, sharp,
-and noisy objects with parallel, shifted anisotropic, and 30° tilted geometry
-at 64, 128, and 256 nominal grid sizes. It reports quality, failures, fresh-process
-and warm time, and sampled peak process GPU memory. Each cell is paired with the
-fastest applicable accepted external workflow, including that workflow's memory.
+The [latest comparison](research/system-matrix-2026-10-05.md) reruns the 27-cell
+matrix: smooth, sharp and noisy objects with parallel, shifted anisotropic and
+30° tilted geometry at 64, 128 and 256 nominal grid sizes. Each cell pairs
+TomoJAX's fastest accepted workflow with the fastest accepted ASTRA or TIGRE
+workflow, reporting quality, failures, fresh-process and warm time and sampled
+peak process GPU memory.
 
-26 cells have accepted TomoJAX and external results. The sharp anisotropic 64
-cell has no accepted result from either side at the tested budgets. The complete
-geometric-mean speed target therefore remains undefined. The worst paired cold
-speed ratio is 0.2133×, or about 4.7 times slower for TomoJAX. Warm wins on a
-subset do not close these gaps. See the [cold-time profile](research/system-profile-2026-10-04.md)
-for setup, compilation, and solve costs.
+26 cells have accepted results on both sides; the sharp anisotropic 64 cell has
+none on either side, so the 27-cell aggregate is undefined. Over the 26 pairs,
+TomoJAX's cold speedup has a geometric mean of 0.95 (0.40 to 2.49) and its warm
+speedup 2.62 (0.75 to 20.5). The weakest cells are small laminography scans,
+where JAX start-up and the per-iteration backprojection cost dominate. The
+[earlier matrix](research/system-matrix-2026-10-04.md) (cold geometric mean 0.57,
+worst 0.21) and its [cold-time profile](research/system-profile-2026-10-04.md)
+remain for comparison.
 
 A [spectral conditioning experiment](research/system-matrix-spectral-2026-10-04.md)
 regressed broad coverage and was rejected. Its results remain available so that
@@ -65,9 +68,12 @@ It is not a test of the larger ±3°/±10-pixel capture range in the stretch goa
 | Coupled solve with pose elimination | 5/6 cells pass; faster tilted recovery | [Pose elimination](research/public-free-voxel-schur-2026-10-04.md) |
 | Same eliminated solve with reusable compiled objectives | 5/6 cells pass; faster warm calls, unchanged cold startup and memory | [Compiled-objective reuse](research/public-free-voxel-reuse-2026-10-04.md) |
 | Same eliminated solve with fixed default-weight Huber-TV | 0/6 cells pass; rejected screen | [TV screen](research/public-free-voxel-tv-2026-10-04.md) |
+| Same eliminated solve with reconstruction batches sized automatically (now the default) | 5/6 cells pass; warm 1.5–5.5 s, 1.9–2.3× faster than one view per batch, same peak memory | [Batching record](../bench/reference/public-free-voxel-batching-2026-10-05.json.gz) (two warm repeats) |
 
 The noisy anisotropic cell still fails the 0.01° rotation gate on the successful
-five-cell variant. There is no complete successful-recovery baseline for a 20×
+five-cell variant, at about 0.016°. The local noise analysis below predicts about
+0.017° from the measurement noise alone, so this gate is probably unreachable for
+that cell at this noise level rather than a solver shortfall. There is no complete successful-recovery baseline for a 20×
 claim, and these runs do not establish 99% robustness. The coupled solver remains
 opt-in. A [local FP64 noise analysis](research/pilot-noise-2026-10-04.md) examines sensitivity;
 it is not a universal bound for constrained or regularized estimators.

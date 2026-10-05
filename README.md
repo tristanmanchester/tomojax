@@ -71,16 +71,17 @@ or browse the [documentation index](docs/README.md).
 
 ## Evidence and current limits
 
-The [frozen reconstruction comparison](docs/research/system-matrix-2026-10-04.md) covers
-smooth, sharp, and noisy objects across parallel, anisotropic, and tilted scans.
-26 of 27 cells have accepted TomoJAX and external results. Warm performance is
-competitive in some cases; fresh-process startup and harder geometries remain
-substantial gaps. These results do not establish general superiority to ASTRA
-or TIGRE. Published GPU measurements use one RTX 4070 Laptop GPU.
+The [reconstruction comparison](docs/research/system-matrix-2026-10-05.md) covers
+smooth, sharp, and noisy objects across parallel, anisotropic, and tilted scans,
+against the fastest accepted ASTRA or TIGRE workflow in each cell. Over the 26
+cells with accepted results on both sides, TomoJAX is 2.6 times faster warm
+(geometric mean; 0.75 to 20 times) and on par from a fresh process (0.95; 0.40
+to 2.5). Small laminography scans remain slower, dominated by JAX start-up and
+backprojection cost. Published GPU measurements use one RTX 4070 Laptop GPU.
 
 The experimental coupled alignment solver passes five of six modest-motion
-free-voxel cases; noisy anisotropic recovery still fails the fixed rotation
-gate. This is not a demonstrated large-motion or 99% recovery capability.
+free-voxel cases, in 1.5 to 5.5 seconds warm; noisy anisotropic recovery still
+fails the fixed rotation gate. This is not a demonstrated large-motion or 99% recovery capability.
 The [alignment comparison](docs/research/public-free-voxel-schur-2026-10-04.md) retains
 failures, cold/warm times, quality, and process GPU memory.
 
