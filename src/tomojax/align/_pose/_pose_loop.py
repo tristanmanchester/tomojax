@@ -90,6 +90,13 @@ def _with_resolved_views_per_batch(
     """
     if int(cfg.views_per_batch) > 0:
         return cfg
+    if cfg.ray_integrator in {"joseph", "joseph_cubic"}:
+        # The plane transpose gathers over the whole volume once per call, so it
+        # needs many views per call; a batch stores only its images.
+        resolved = copy.copy(cfg)
+        resolved.views_per_batch = max(1, min(64, n_views))
+        logging.info("Alignment views_per_batch: %d (auto)", resolved.views_per_batch)
+        return resolved
     estimate = estimate_views_per_batch_info(
         n_views=n_views,
         grid_nxyz=(grid.nx, grid.ny, grid.nz),

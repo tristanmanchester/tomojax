@@ -2,11 +2,11 @@
   "size": 96,
   "views": 240,
   "motion": "uniform +/-1 deg rotations, +/-2 px shifts per view",
-  "nominal_cgls_relative_l2": 0.5733706951141357,
-  "aligned_relative_l2": 0.08660083264112473,
-  "rotation_rmse_deg": 0.00260576861910522,
-  "translation_rmse_px": 0.07466942071914673,
-  "outer_iterations": 14,
-  "alignment_seconds_including_compile": 35.15995169899543,
+  "nominal_cgls_relative_l2": 0.5743820667266846,
+  "aligned_relative_l2": 0.06287116557359695,
+  "rotation_rmse_deg": 0.002742886310443282,
+  "translation_rmse_px": 0.08082373440265656,
+  "outer_iterations": 13,
+  "alignment_seconds_including_compile": 13.552459446000285,
   "device_platform": "gpu"
 }

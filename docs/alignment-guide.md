@@ -7,7 +7,7 @@ together (the coupled solver), using Joseph plane sampling as its forward model.
 On analytic 128³ scans of continuous objects with 181 views and ±0.25°/±0.5 px
 motion, the default `tomojax align --mode pose` recovers per-view rotations to
 0.0088° (parallel) and 0.0026° (30° laminography) and translations to 0.002
-pixels, in 71 and 90 s on an RTX 4070 Laptop GPU, with volume errors of 0.005
+pixels, in 41 and 45 s on an RTX 4070 Laptop GPU, with volume errors of 0.005
 and 0.048. A 256³, 361-view laminography
 scan recovers to 0.0029° in 14 minutes within 8 GB of GPU memory; bin larger
 scans for alignment and reconstruct the full data with the recovered poses. Accuracy depends on

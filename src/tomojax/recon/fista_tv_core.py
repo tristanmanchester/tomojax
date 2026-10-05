@@ -633,6 +633,21 @@ def _projection_loss_and_explicit_grad(
                 else jnp.asarray(0.0, dtype=jnp.float32)
             )
             grad_resid = raw_resid * (w_chunk * w_chunk) * valid
+            if ray_integrator in {"joseph", "joseph_cubic"}:
+                from tomojax.core.joseph import plane_coefficients, sum_backproject_planes
+
+                # The matched plane transpose, accumulated in place; the ray
+                # model's transpose would not be this forward model's adjoint.
+                grad_acc = sum_backproject_planes(
+                    plane_coefficients(T_chunk, grid, detector, det_grid),
+                    grad_resid,
+                    grid,
+                    detector,
+                    backend=backprojector,
+                    interpolation="cubic" if ray_integrator == "joseph_cubic" else "linear",
+                    accumulate=grad_acc,
+                )
+                return (loss_acc + loss_batch, grad_acc), None
             if ray_integrator == "exact":
                 from tomojax.core.trilinear import exact_adjoint
 
@@ -716,8 +731,8 @@ def _resolve_fista_core_data_projectors(
 ) -> tuple[str, str]:
     # Explicit backend requests must not change with benchmark dimensions.
     del grid, detector, volume, det_grid
-    if cfg.ray_integrator == "exact":
-        # Exact CUDA operators consume dynamic poses directly. They expose a
+    if cfg.ray_integrator in {"exact", "joseph", "joseph_cubic"}:
+        # Exact and Joseph CUDA operators consume dynamic poses directly. They expose a
         # matched explicit adjoint, not automatic higher derivatives; use the
         # JAX backend when differentiating this reconstruction core.
         return cfg.forward_projector, cfg.backprojector

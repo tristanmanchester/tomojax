@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Fix the reconstruction step inside alignment with Joseph integration. Its
+  explicit gradient backprojected with the ray model's transpose (2% from the
+  Joseph adjoint), and traced poses sent it to the JAX reference operators
+  instead of the CUDA kernels, which accept dynamic poses. It now uses the
+  matched plane transpose and the CUDA kernels, with 64 views per batch.
+  `tomojax align --mode pose` on analytic 128-cubed scans takes 45 and 41 s
+  instead of 86 and 72 s (laminography, parallel) at unchanged accuracy, and
+  the README example 14 instead of 35 s.
 - Add a CUDA C gather transpose for linear Joseph plane sampling, compiled at
   run time with CuPy (now part of the `cuda12` extra) and launched on XLA's
   stream inside compiled solvers. Each thread loops once over the joint

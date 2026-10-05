@@ -214,3 +214,57 @@ def test_core_projection_geometry_uses_explicit_detector_shape() -> None:
     assert core.provenance()["n_steps"] == 7
     assert core.provenance()["checkpoint_projector"] is False
     assert core.provenance()["projector_unroll"] == 2
+
+
+@pytest.mark.parametrize(
+    ("integrator", "interpolation"), [("joseph", "linear"), ("joseph_cubic", "cubic")]
+)
+@pytest.mark.parametrize("batch", [2, 7])
+def test_joseph_core_gradient_is_the_matched_plane_transpose(integrator, interpolation, batch):
+    # check-public-imports: allow-private
+    from tomojax.core.joseph import (
+        forward_project_planes,
+        plane_coefficients,
+        sum_backproject_planes,
+    )
+    from tomojax.geometry import Detector, Grid, LaminographyGeometry, stack_view_poses
+
+    # check-public-imports: allow-private
+    from tomojax.recon import fista_tv_core
+
+    grid, detector = Grid(6, 5, 4, 0.8, 1.1, 1.3), Detector(7, 5, 0.9, 1.2, (0.1, -0.2))
+    geometry = LaminographyGeometry(grid, detector, np.linspace(0, 360, 9, endpoint=False), 30)
+    poses = stack_view_poses(geometry, 9)
+    rng = np.random.default_rng(3)
+    volume = jnp.asarray(rng.random((6, 5, 4)), jnp.float32)
+    data = jnp.asarray(rng.random((9, 5, 7)), jnp.float32)
+    coeff = plane_coefficients(poses, grid, detector)
+    residual = (
+        forward_project_planes(
+            coeff, volume, grid, detector, backend="jax", interpolation=interpolation
+        )
+        - data
+    )
+    expected = sum_backproject_planes(
+        coeff, residual, grid, detector, backend="jax", interpolation=interpolation
+    )
+    loss, grad = fista_tv_core._projection_loss_and_explicit_grad(
+        T_all=poses,
+        grid=grid,
+        detector=detector,
+        volume=volume,
+        det_grid=None,
+        projections=data,
+        weights=jnp.ones((9, 1, 1)),
+        checkpoint_projector=True,
+        projector_unroll=1,
+        gather_dtype="fp32",
+        views_per_batch=batch,
+        forward_projector="jax",
+        backprojector="jax",
+        pallas_tile_shape=(16, 4),
+        pallas_num_warps=1,
+        ray_integrator=integrator,
+    )
+    np.testing.assert_allclose(grad, expected, rtol=2e-5, atol=2e-6)
+    np.testing.assert_allclose(loss, 0.5 * float(jnp.vdot(residual, residual)), rtol=1e-5)

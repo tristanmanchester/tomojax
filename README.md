@@ -22,8 +22,8 @@ independent reconstruction accuracy. [Reproduce the figure](examples/README.md#r
 
 `tomojax align` and `tomojax.align` solve the volume and each view's pose
 together. Here a 96³ laminography scan with ±1° and ±2 px of random per-view
-motion goes from 0.57 to 0.087 relative error, with rotations recovered to
-0.0026°, in 35 s on a laptop GPU. The measurements are analytic integrals of
+motion goes from 0.57 to 0.063 relative error, with rotations recovered to
+0.0027°, in 14 s on a laptop GPU. The measurements are analytic integrals of
 continuous objects. [Reproduce it](examples/README.md#align-a-scan-with-per-view-motion).
 
 ## First reconstruction
@@ -92,7 +92,7 @@ backprojection cost. Published GPU measurements use one RTX 4070 Laptop GPU.
 
 `tomojax align --mode pose` solves the volume and every view's pose together.
 On analytic 128³ scans of continuous objects it recovers per-view rotations to
-0.003–0.009° in 70–90 s; at coarse resolution, discretisation limits accuracy.
+0.003–0.009° in 40–45 s; at coarse resolution, discretisation limits accuracy.
 A global shift search first finds per-view stage shifts of up to a quarter of
 the detector.
 See the [alignment guide](docs/alignment-guide.md). This is not a demonstrated large-motion or 99% recovery capability.

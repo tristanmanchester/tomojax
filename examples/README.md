@@ -65,6 +65,6 @@ view) and 0.2% noise. The data match no voxel discretisation. It reconstructs
 once with the nominal poses (CGLS) and once jointly with the poses using
 `tomojax.align.align` and `coupled_pose_config()`, then writes
 `images/alignment-example.png` and its JSON metrics. On an RTX 4070 Laptop GPU
-it recovers rotations to 0.0026° RMS in about 35 s, lowering the volume error
-from 0.57 to 0.087. Pose errors are reported after removing their common
+it recovers rotations to 0.0027° RMS in about 14 s, lowering the volume error
+from 0.57 to 0.063. Pose errors are reported after removing their common
 offset, which only moves the object.
