@@ -249,8 +249,9 @@ For voxel-basis data that need accurate line integration, the Python API accepts
 interpolant between voxel-centre planes using two-point Gaussian quadrature.
 It supports rigid parallel-ray poses, including tilted scans, anisotropic voxels,
 shifted detector centres and irregular view angles. Reconstruction, pose loss,
-setup validation and translation seeds use the same selected operator. The
-default remains `"sampled"`; a checkpoint cannot resume with a different choice.
+setup validation and translation seeds use the same selected operator. The CLI
+and `coupled_pose_config` default to `"joseph"`; `AlignConfig()` itself keeps
+`"sampled"`. A checkpoint cannot resume with a different choice.
 
 With exact integration, the Huber-FISTA alignment path can use CUDA forward and
 matched adjoint kernels with changing poses. Pose derivatives and acceptance
@@ -263,7 +264,14 @@ Known failure modes include:
 
 - Abrupt jumps may need jump-aware pose handling.
 - Short bursts of bad views may need robust loss or bad-view detection.
-- Large combined setup and pose errors may need staged initialization.
+- A detector-centre offset combined with per-view motion degrades the volume.
+  With a +3.7 px offset added to ±0.5°/±8 px motion on analytic 128³ scans,
+  `--mode pose` still recovers rotations to 0.006°, but absorbs the offset
+  into per-view shifts and an object translation: after registering out that
+  translation, volume errors are 0.042 (parallel) and 0.108 (laminography)
+  against 0.008 and 0.048 without the offset. `--mode cor_then_pose` misjudges
+  the offset under motion (2.2 and 3.3 px) and leaves 0.23–0.26° rotation
+  errors. Estimating the offset jointly with the poses remains open.
 - Detector-v or sample-elevation reference shifts are physically ambiguous and
   are not reliably recoverable.
 
