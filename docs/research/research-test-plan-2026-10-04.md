@@ -1,6 +1,6 @@
 # Research-informed test plan, 2026-10-04
 
-The user's [literature review](../reports/Tomographic%20alignment%20arXiv%20review.md)
+The user's [literature review](../../reports/Tomographic%20alignment%20arXiv%20review.md)
 and topic notes motivate the experiments below. The objective remains a reliable
 scientific imaging library across the frozen comparison matrix. Published gains
 on bundle adjustment, MRI, or global CT calibration are hypotheses for our
@@ -31,7 +31,7 @@ the same damping, budgets and gates: 40/48 accepted calls, with anisotropic-nois
 failing all eight. That derivative-only variant is stopped. Shared volume
 conditioning now precedes any further pose-elimination or tolerance experiment.
 
-The first [independent dense conditioning screen](../bench/reference/shared-conditioning-dense-2026-10-04.json.gz)
+The first [independent dense conditioning screen](../../bench/reference/shared-conditioning-dense-2026-10-04.json.gz)
 rejects a single-centre impulse Fourier approximation: after making its inverse
 positive, it still worsens conditioning for parallel and tilted geometry.
 An averaged Fourier approximation improves both normal systems in all three

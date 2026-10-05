@@ -51,4 +51,4 @@ Baseline is release commit `776a8c9556b2161a6b4b6a0cea5a8249371cc68a`. The sourc
 
 The environment’s installed distribution metadata still reports 0.2.0 because the development environment was not resynced; workers explicitly import the hashed frozen source snapshots. Source identity, not that stale distribution field, identifies the tested revisions.
 
-The [compressed raw archive](../bench/reference/public-free-voxel-reuse-2026-10-04.json.gz) contains both complete manifests, all 96 call histories, fixture hashes, configurations, source snapshots for changed modules, regression tests and the compilation diagnostic. [The archive catalog](../bench/reference/archives.json) records uncompressed and compressed SHA-256 hashes.
+The [compressed raw archive](../../bench/reference/public-free-voxel-reuse-2026-10-04.json.gz) contains both complete manifests, all 96 call histories, fixture hashes, configurations, source snapshots for changed modules, regression tests and the compilation diagnostic. [The archive catalog](../../bench/reference/archives.json) records uncompressed and compressed SHA-256 hashes.

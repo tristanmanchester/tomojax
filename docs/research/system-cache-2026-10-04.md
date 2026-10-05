@@ -242,8 +242,8 @@ All cold calls and warm repeats begin from zero voxels and nominal poses. The im
 
 Frozen numerical/driver source SHA-256: `5ff8791482a48008c71a01ae8a0a8a6b57e03b6e9b403eb95eb6b00254696415`. The runner verifies it is unchanged. The current checkout differs from that frozen library only in the subsequent IO cleanup; numerical implementation is unchanged. No other GPU job ran concurrently. A brief CPU-only evidence-archive cleanup overlapped early diagnostics; this further limits timing claims from the single-repeat screen.
 
-The retained record contains the launch script, exact environment, fixture hashes, all solve histories and failures, compiler cache keys, cache sizes, and sampled peak process memory. The corresponding source archive is [the pose-elimination snapshot](../bench/reference/public-free-voxel-v1-schur-source.tar.gz).
+The retained record contains the launch script, exact environment, fixture hashes, all solve histories and failures, compiler cache keys, cache sizes, and sampled peak process memory. The corresponding source archive is [the pose-elimination snapshot](../../bench/reference/public-free-voxel-v1-schur-source.tar.gz).
 
-Artifacts: [all runs and launch metadata](../bench/reference/system-cache-2026-10-04.json.gz),
-[derived per-condition summary](../bench/reference/system-cache-2026-10-04-summary.json).
-Read compressed records with the [evidence guide](../bench/reference/README.md).
+Artifacts: [all runs and launch metadata](../../bench/reference/system-cache-2026-10-04.json.gz),
+[derived per-condition summary](../../bench/reference/system-cache-2026-10-04-summary.json).
+Read compressed records with the [evidence guide](../../bench/reference/README.md).

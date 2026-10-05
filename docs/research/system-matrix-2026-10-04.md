@@ -9,8 +9,8 @@ All cases use 180 views and the original versioned physical geometry, phantoms, 
 This corrected protocol loads physical metadata without JAX/Pallas in external workers. Version 1 and older cold ratios included that unrelated startup cost and are superseded for goal scoring. Each raw worker records its loaded solver modules. Source was frozen in an isolated snapshot and verified unchanged after all 297 method records completed.
 
 The per-suite `environment.source_tree_sha256` field mistakenly hashed the
-caller checkout. Use the [source audit](../bench/reference/system-matrix-v2-source-audit.json)
-and [retained launch archive](../bench/reference/system-matrix-v2-source.tar.gz)
+caller checkout. Use the [source audit](../../bench/reference/system-matrix-v2-source-audit.json)
+and [retained launch archive](../../bench/reference/system-matrix-v2-source.tar.gz)
 for executable-source provenance. Every archived benchmark/library file and
 the driver match the isolated snapshot byte for byte and reproduce the
 launch digest. The raw records remain unchanged. Future environment records
@@ -20,7 +20,7 @@ Measurements use the RTX 4070 Laptop GPU (8 GB); full versions and execution env
 
 Whole-matrix cold geometric mean: —. Worst measured accepted-pair cold ratio: 0.21×. An undefined aggregate is not a passing result.
 
-Raw records: [gaussian-v1](../bench/reference/system-matrix-v2-gaussian-v1-64-128-256-180.json.gz), [structured-v1](../bench/reference/system-matrix-v2-structured-v1-64-128-256-180.json.gz), [structured-noisy-v1](../bench/reference/system-matrix-v2-structured-noisy-v1-64-128-256-180.json.gz); [complete score](../bench/reference/system-matrix-v2-summary.json).
+Raw records: [gaussian-v1](../../bench/reference/system-matrix-v2-gaussian-v1-64-128-256-180.json.gz), [structured-v1](../../bench/reference/system-matrix-v2-structured-v1-64-128-256-180.json.gz), [structured-noisy-v1](../../bench/reference/system-matrix-v2-structured-noisy-v1-64-128-256-180.json.gz); [complete score](../../bench/reference/system-matrix-v2-summary.json).
 
 ## Accepted workflows by cell
 

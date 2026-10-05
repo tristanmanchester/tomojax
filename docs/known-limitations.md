@@ -39,7 +39,7 @@ results from default CLI behavior and larger-motion targets.
 - Gradients through regularized reconstruction are finite after the Huber-TV
   correction, but sampled-ray pose derivatives remain local to sampling and
   interpolation branches. A central finite difference across a boundary can
-  disagree with that derivative. See the [retained derivative checks](huber-derivatives-2026-10-04.md),
+  disagree with that derivative. See the [retained derivative checks](research/huber-derivatives-2026-10-04.md),
   including unsuccessful controls; finite gradients alone do not prove reliable
   pose recovery.
 - Large combined setup and pose errors can still need staged initialization,

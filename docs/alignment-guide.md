@@ -4,7 +4,7 @@ TomoJAX alignment estimates geometry or pose corrections while reconstructing
 the volume. These are experimental workflows: the current coupled Python path
 passes five of six modest-motion free-voxel cases, with noisy anisotropic
 recovery still failing. That result is not a guarantee for the default CLI
-path or a new scan. See the [complete comparison](public-free-voxel-schur-2026-10-04.md).
+path or a new scan. See the [complete comparison](research/public-free-voxel-schur-2026-10-04.md).
 
 Start from corrected absorption data and checked physical geometry, following
 the [real scan guide](real-laminography.md). Save an unaligned reconstruction,
@@ -212,7 +212,7 @@ reproduction record established in the current user guide, so its visual
 ratings are not used as a current recovery claim. Historical images are
 [catalogued separately](../images/README.md#other-historical-assets).
 
-Use the [six-cell public comparison](public-free-voxel-schur-2026-10-04.md)
+Use the [six-cell public comparison](research/public-free-voxel-schur-2026-10-04.md)
 for quantified free-voxel recovery, cold/warm time, and sampled process GPU
 memory. It retains the failed noisy anisotropic case and does not establish
 large-motion capture or 99% robustness.

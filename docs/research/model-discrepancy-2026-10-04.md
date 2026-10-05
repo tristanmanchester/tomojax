@@ -253,12 +253,12 @@ sharp cell still has no accepted external or TomoJAX denominator.
 
 ## Evidence and validation
 
-The [complete controls](../bench/reference/model-discrepancy-2026-10-04.json.gz)
+The [complete controls](../../bench/reference/model-discrepancy-2026-10-04.json.gz)
 retain every result, fixture hash, timing, numerical termination, process-memory
 sample count, and the one-off launcher source. The
-[small-matrix calculation](../bench/reference/preconditioner-nullspace-2026-10-04.json.gz)
+[small-matrix calculation](../../bench/reference/preconditioner-nullspace-2026-10-04.json.gz)
 retains its source and independent operator checks. Library/driver source is the
-unchanged [pose-elimination snapshot](../bench/reference/public-free-voxel-v1-schur-source.tar.gz),
+unchanged [pose-elimination snapshot](../../bench/reference/public-free-voxel-v1-schur-source.tar.gz),
 SHA-256 `5ff8791482a48008c71a01ae8a0a8a6b57e03b6e9b403eb95eb6b00254696415`.
 Original fixture generation commands remain in the existing benchmark drivers;
 no benchmark framework or production solver variant was added.

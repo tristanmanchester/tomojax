@@ -4,8 +4,8 @@ This is the historical measurement archive. Start with the
 [measurement guide](measurements.md) for current whole-matrix coverage,
 failed cases, and the distinction between user examples and independent evidence.
 
-The [corrected reconstruction matrix](system-matrix-2026-10-04.md) has 26/27
-accepted TomoJAX/external pairs. The [pose-eliminated public alignment run](public-free-voxel-schur-2026-10-04.md)
+The [corrected reconstruction matrix](research/system-matrix-2026-10-04.md) has 26/27
+accepted TomoJAX/external pairs. The [pose-eliminated public alignment run](research/public-free-voxel-schur-2026-10-04.md)
 passes five of six modest-motion cells; noisy anisotropic recovery still fails.
 The optimization goal remains open. Kernel, Gaussian showcase, and restricted
 object-model timings below do not substitute for those full-workflow gates.
@@ -28,14 +28,14 @@ the corrections described here. They are not measurements of that clean commit.
 Kernel times below are medians of seven synchronized warm calls; the workflow
 section specifies its separate sampling protocol. Raw samples,
 cold calls, errors, and environment metadata are checked in under
-[`bench/reference`](../bench/reference/). Full reproduction commands and geometry
+[`bench/reference`](../bench/reference). Full reproduction commands and geometry
 conventions are in [the benchmark guide](../bench/README.md).
 
 Cold means a fresh worker process, including imports and fixture loading; OS
 file caches and driver caches are not flushed. Thus cold measurements also
 reflect normal cache and first-call variation, not a fully cold machine.
 
-The [metrics and benchmark case inventory](metrics-and-benchmark-cases.md) covers
+The [metrics and benchmark case inventory](research/metrics-and-benchmark-cases.md) covers
 the broader measurement space. The workflow measurements below cover an initial
 subset of that inventory.
 
@@ -201,7 +201,7 @@ The changes address general execution costs:
 The first `gaussian-v1` slice measures 180-view scans at nominal size 64.
 Acceptance is full-volume relative L2 error at most 3% for parallel/anisotropic
 scans and 10% for 30-degree laminography. Independent analytic data and gates
-were fixed in [the optimization goal](optimization-goal.md) before solver tuning.
+were fixed in [the optimization goal](research/optimization-goal.md) before solver tuning.
 These smooth, noise-free phantoms are an initial measurement slice.
 
 Each method starts at zero with no regularization or positivity constraint.
@@ -319,7 +319,7 @@ investigation, without retroactively loosening acceptance.
 
 See [clean records](../bench/reference/reconstruction-structured-64.json.gz),
 [noisy records](../bench/reference/reconstruction-structured-noisy-64.json.gz), and
-[fixed case definitions](optimization-goal.md). Truth-assisted budget selection
+[fixed case definitions](research/optimization-goal.md). Truth-assisted budget selection
 is an offline experiment, not a usable stopping policy for unknown scans.
 Multiple noise seeds, dose-dependent noise, larger sharp cases and real data
 remain uncovered.

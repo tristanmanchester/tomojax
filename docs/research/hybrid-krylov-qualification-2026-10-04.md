@@ -129,7 +129,7 @@ not implemented or run, so these sizes are not recovery evidence.
 
 ## Reproduction and retained evidence
 
-The [compressed qualification record](../bench/reference/hybrid-krylov-qualification-2026-10-04.json.gz)
+The [compressed qualification record](../../bench/reference/hybrid-krylov-qualification-2026-10-04.json.gz)
 contains all 2,304 physical iterate records, all three reference methods,
 the exact prototype and qualification source, algebra checks, storage calculations,
 and every unperformed frozen cell. The existing cold-fastest external workflow
@@ -159,5 +159,5 @@ overfitted least-squares solution would conceal the candidate's failure.
 
 This variant is rejected without per-case weight retuning or public-workflow
 integration. No frozen acceptance result or timing score changes. The
-[complete screen and sources](../bench/reference/gradient-gcv-qualification-2026-10-04.json.gz)
+[complete screen and sources](../../bench/reference/gradient-gcv-qualification-2026-10-04.json.gz)
 retain all successes, failures and selection settings.

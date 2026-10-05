@@ -49,4 +49,4 @@ The next test uses the existing Huber-TV image prior with its existing default w
 
 This diagnostic changes no solver defaults, acceptance gates, fixture arrays or reconstruction-matrix scores. Positivity, image priors, nonlinear initialization error and approximation bias are absent from the local covariance. Agreement with one endpoint does not establish a universal information limit. The whole-pilot successful-recovery baseline and the broader performance goals remain open.
 
-Artifacts: [all results, failed attempts and source](../bench/reference/pilot-noise-2026-10-04.json.gz), [small pose systems for reanalysis](../bench/reference/pilot-noise-2026-10-04-systems.tar.gz).
+Artifacts: [all results, failed attempts and source](../../bench/reference/pilot-noise-2026-10-04.json.gz), [small pose systems for reanalysis](../../bench/reference/pilot-noise-2026-10-04-systems.tar.gz).

@@ -78,6 +78,6 @@ warm attempts; a timeout remains a failure with any completed samples retained.
 Process GPU memory is sampled per PID at requested 10 ms intervals and can miss
 short-lived peaks. Source and fixture hashes accompany the results.
 
-Implementation: [public alignment benchmark](../bench/public_alignment_benchmark.py),
-[independent voxel integrator](../bench/voxel_truth.py). The reconstruction
+Implementation: [public alignment benchmark](../../bench/public_alignment_benchmark.py),
+[independent voxel integrator](../../bench/voxel_truth.py). The reconstruction
 [whole matrix](system-matrix-2026-10-04.md) remains frozen and separate.

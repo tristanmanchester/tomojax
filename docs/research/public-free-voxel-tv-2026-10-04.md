@@ -21,4 +21,4 @@ The prior improves some image errors but biases pose recovery past the gate in e
 
 ## Provenance
 
-The run used the unchanged frozen pose-elimination source snapshot, SHA-256 `5ff8791482a48008c71a01ae8a0a8a6b57e03b6e9b403eb95eb6b00254696415`. The [raw manifest](../bench/reference/public-free-voxel-v1-tv-screen.json.gz) retains every completed call, quality result, configuration, history, fixture hash, source metadata, and the launch/resume scripts. An interrupted anisotropic-noisy worker is retained separately in that manifest; only unfinished cells were restarted. It is not counted among the 12 completed calls.
+The run used the unchanged frozen pose-elimination source snapshot, SHA-256 `5ff8791482a48008c71a01ae8a0a8a6b57e03b6e9b403eb95eb6b00254696415`. The [raw manifest](../../bench/reference/public-free-voxel-v1-tv-screen.json.gz) retains every completed call, quality result, configuration, history, fixture hash, source metadata, and the launch/resume scripts. An interrupted anisotropic-noisy worker is retained separately in that manifest; only unfinished cells were restarted. It is not counted among the 12 completed calls.

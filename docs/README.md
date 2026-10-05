@@ -31,11 +31,9 @@ Import through public module roots or their `api` facades. Files beginning with
 
 ## Research records
 
-The dated reports are measurement records for specific source snapshots. They
-are separate from user instructions and should not be read as current defaults.
-The [measurement guide](measurements.md) identifies the relevant complete
-comparisons, their failed cases, and the retained raw evidence.
-
-The [optimization goal](optimization-goal.md) remains open. The
-[research test plan](research-test-plan-2026-10-04.md) records proposed and completed
-ablations; planned work is not a capability claim.
+[`research/`](research/) holds dated measurement and experiment records for
+specific source snapshots, including rejected approaches and failed cases. They
+are evidence, not user instructions or current defaults. The
+[measurement guide](measurements.md) identifies the relevant complete
+comparisons and the retained raw evidence. The
+[optimization goal](research/optimization-goal.md) remains open.

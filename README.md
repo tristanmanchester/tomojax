@@ -71,7 +71,7 @@ or browse the [documentation index](docs/README.md).
 
 ## Evidence and current limits
 
-The [frozen reconstruction comparison](docs/system-matrix-2026-10-04.md) covers
+The [frozen reconstruction comparison](docs/research/system-matrix-2026-10-04.md) covers
 smooth, sharp, and noisy objects across parallel, anisotropic, and tilted scans.
 26 of 27 cells have accepted TomoJAX and external results. Warm performance is
 competitive in some cases; fresh-process startup and harder geometries remain
@@ -81,7 +81,7 @@ or TIGRE. Published GPU measurements use one RTX 4070 Laptop GPU.
 The experimental coupled alignment solver passes five of six modest-motion
 free-voxel cases; noisy anisotropic recovery still fails the fixed rotation
 gate. This is not a demonstrated large-motion or 99% recovery capability.
-The [alignment comparison](docs/public-free-voxel-schur-2026-10-04.md) retains
+The [alignment comparison](docs/research/public-free-voxel-schur-2026-10-04.md) retains
 failures, cold/warm times, quality, and process GPU memory.
 
 Historical [DIAD laminography images](images/README.md#historical-real-data-illustrations)

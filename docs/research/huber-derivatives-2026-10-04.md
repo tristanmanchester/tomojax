@@ -100,8 +100,8 @@ alignment cells** remain unchanged; the stretch goal remains open.
 Run `JAX_PLATFORMS=cpu uv run --no-sync pytest -q tests/test_huber_differentiation.py`
 for the permanent regressions; use a CUDA-enabled environment without the CPU
 platform override for the same accelerator checks. The
-[compressed evidence](../bench/reference/huber-derivatives-2026-10-04.json.gz)
+[compressed evidence](../../bench/reference/huber-derivatives-2026-10-04.json.gz)
 contains every cell and repeat, original and follow-up pose failures, source
 texts/hashes, and test logs. Original fixture hashes are retained; the full
 input fixtures remain local experiment artifacts. Hashes of both compressed and
-original evidence bytes are in the [archive catalog](../bench/reference/archives.json).
+original evidence bytes are in the [archive catalog](../../bench/reference/archives.json).

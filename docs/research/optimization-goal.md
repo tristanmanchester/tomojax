@@ -269,7 +269,7 @@ half the warm-fastest CuPy/ASTRA workflow's 1262 MiB, but native ASTRA 2D uses
 are only about 2.01x and 1.18x respectively in the latest copy-optimized record.
 The resident-volume alternative has comparable warm time but uses 4250 MiB.
 Evidence and limitations are in
-[the performance report](performance.md). Sampler validation and the initial
+[the performance report](../performance.md). Sampler validation and the initial
 size-64/128 Gaussian, sharp and noisy CGLS comparisons are complete, including the
 fixed multiresolution policy and opt-in Joseph plane model. Controlled profiling
 confirmed that the ray adjoint dominates operator cost; the implemented plane
@@ -303,7 +303,7 @@ cases; these are separate from process VRAM. Nine isolated workers measured
 212 MiB for fused CUDA versus 1236–2260 MiB for JAX reverse AD at size 64, and
 270–398 MiB for fused CUDA at size 256, all with 60 views. These are internal
 derivative comparisons, not complete reconstruction/alignment results. See the
-[differentiation measurements](performance.md#bounded-memory-first-order-joseph-differentiation)
+[differentiation measurements](../performance.md#bounded-memory-first-order-joseph-differentiation)
 for source hashes, all samples, accuracy and limitations.
 
 
@@ -317,7 +317,7 @@ per-view error gates. Cubic passes 4/6 noiseless cases and 0/6 noisy cases; the
 linear noiseless control passes 0/6. Native 128/256 detector cases use padded
 192/384-cubed volumes, not 128/256-cubed reconstruction volumes. None of these
 results establishes successful joint reconstruction/alignment or the 20x
-workflow target. See [cubic and pose controls](performance.md#cubic-plane-interpolation-and-pose-recovery-controls).
+workflow target. See [cubic and pose controls](../performance.md#cubic-plane-interpolation-and-pose-recovery-controls).
 
 The fused per-view pose-normal-equation API passes all 24 numerical component
 cases. Geometric-mean speedups over forming the explicit Jacobian are 4.47x
@@ -341,7 +341,7 @@ a voxel reconstruction. Its frozen 18-case development sweep passes 6/18 cases,
 all parallel; every tilted case fails. A subsequent coupled Gaussian-object
 control passes one tilted case, but assumes the entire object is a Gaussian
 mixture. These preliminary results do not establish general joint recovery or
-the 20x target. See the [joint controls](performance.md#restricted-joint-recovery-controls).
+the 20x target. See the [joint controls](../performance.md#restricted-joint-recovery-controls).
 
 The full-image Gaussian-object control has since completed the same 18-case
 development matrix: all cases pass both cold and one warm run, including at
@@ -374,7 +374,7 @@ pose gates and 0.41% / 1.92% reconstructed-volume errors. It uses nonnegativity
 and a squared physical Laplacian prior, without a fitted Gaussian object model.
 These remain development tests on the fixed nine-Gaussian measurement object;
 general-object robustness and a repeated successful-workflow speed comparison
-are not established. See the [free-voxel controls](performance.md#free-voxel-joint-recovery-development-controls).
+are not established. See the [free-voxel controls](../performance.md#free-voxel-joint-recovery-development-controls).
 
 Extending that free-voxel baseline exposes remaining gaps: the native size-64
 controls fail the pose gate, and size-256 laminography reaches only 177/180

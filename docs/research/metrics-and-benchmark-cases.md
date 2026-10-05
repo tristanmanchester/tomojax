@@ -37,11 +37,11 @@ of every possible scan.
 | Nuisance estimation | Per-view gain/offset; constant plus vertical-gradient backgrounds | Existing primitives, not a complete automatic joint nuisance/alignment workflow |
 | IO and preprocessing | NeXus/HDF5, TIFF, flat/dark correction, selection/rejection, crop, transmission/log output | Public workflow |
 
-Sources: [reconstruction API](../src/tomojax/recon/api.py),
-[multiresolution helper](../src/tomojax/recon/multires.py),
-[FISTA core](../src/tomojax/recon/fista_tv_core.py),
-[alignment configuration](../src/tomojax/align/_config.py), and
-[reconstruction layer](../src/tomojax/align/_objectives/recon_layer.py).
+Sources: [reconstruction API](../../src/tomojax/recon/api.py),
+[multiresolution helper](../../src/tomojax/recon/multires.py),
+[FISTA core](../../src/tomojax/recon/fista_tv_core.py),
+[alignment configuration](../../src/tomojax/align/_config.py), and
+[reconstruction layer](../../src/tomojax/align/_objectives/recon_layer.py).
 
 ## Measurement definitions
 
@@ -166,8 +166,8 @@ do not independently establish physical reconstruction accuracy.
 SPDHG's current loss history contains a minibatch objective estimator at logged
 steps and zero placeholders at unlogged steps. Those zeros are not successful
 zero-loss iterations. Compute a full objective separately for solver comparisons.
-Sources: [SPDHG implementation](../src/tomojax/recon/spdhg_tv.py) and
-[FISTA implementation](../src/tomojax/recon/fista_tv.py).
+Sources: [SPDHG implementation](../../src/tomojax/recon/spdhg_tv.py) and
+[FISTA implementation](../../src/tomojax/recon/fista_tv.py).
 
 ## Multiresolution metrics
 
@@ -236,10 +236,10 @@ precision as well as backend policy. Compare both matched numerical settings
 and complete profiles at matched achieved quality. Some geometry-gradient paths
 explicitly require JAX even when Pallas is requested. Value-only proposal speed
 is not a measurement of pose-gradient or complete alignment speed.
-Sources: [profiles](../src/tomojax/align/_profiles.py),
-[objective backend routing](../src/tomojax/align/_objectives/fixed_volume.py),
-[optimizer diagnostics](../src/tomojax/align/optimizers.py), and
-[quality policies](../src/tomojax/align/_quality_policy.py).
+Sources: [profiles](../../src/tomojax/align/_profiles.py),
+[objective backend routing](../../src/tomojax/align/_objectives/fixed_volume.py),
+[optimizer diagnostics](../../src/tomojax/align/optimizers.py), and
+[quality policies](../../src/tomojax/align/_quality_policy.py).
 
 ## Projector and kernel metrics
 
@@ -275,10 +275,10 @@ The simulator supplies projection-domain artifact injections. Its current
 Poisson option is not by itself a complete photon-counting acquisition model
 with incident counts, flat fields, and logarithmic transformation. Physically
 specified low-dose benchmarks need that data-generation protocol recorded.
-Sources: [artifact implementation](../src/tomojax/datasets/_impl/artefacts.py),
-[preprocessing configuration](../src/tomojax/io/_preprocess_impl/config.py),
-[nuisance API](../src/tomojax/nuisance/api.py), and
-[motion API](../src/tomojax/motion/api.py).
+Sources: [artifact implementation](../../src/tomojax/datasets/_impl/artefacts.py),
+[preprocessing configuration](../../src/tomojax/io/_preprocess_impl/config.py),
+[nuisance API](../../src/tomojax/nuisance/api.py), and
+[motion API](../../src/tomojax/motion/api.py).
 
 ## Workflow and software reliability metrics
 
@@ -329,8 +329,8 @@ Existing phantoms include Shepp–Logan, cube, rotated cube, sphere, blobs,
 random cubes/spheres, and a laminography disk. The new benchmark also generates
 analytic Gaussian ellipsoids. Edge/point/resolution patterns and calibrated
 real-data collections are useful additions, not all existing built-in generators.
-See [datasets API](../src/tomojax/datasets/api.py) and
-[simulation configuration](../src/tomojax/datasets/_impl/simulate.py).
+See [datasets API](../../src/tomojax/datasets/api.py) and
+[simulation configuration](../../src/tomojax/datasets/_impl/simulate.py).
 
 ## Reconstruction settings to cross with the cases
 
@@ -367,7 +367,7 @@ The current DOF registry has five pose parameters and five setup parameters:
 
 Angle-suffixed setup names have radian-valued internal state and degree-facing
 display/configuration conventions; record conversions rather than assuming the
-name determines storage units. Source: [DOF registry](../src/tomojax/align/_model/dof_specs.py).
+name determines storage units. Source: [DOF registry](../../src/tomojax/align/_model/dof_specs.py).
 
 Cross those parameters with these motion/error patterns:
 
@@ -412,7 +412,7 @@ Stage roles are proposal, setup, reconstruction, refine, and verify. Internal
 quality policies also distinguish proposal, fast, refine, verify, final, and
 reference. Do not compare a cheap proposal with a verified final reconstruction
 as if they were equivalent work.
-Source: [schedule definitions and validation](../src/tomojax/align/_model/schedules.py).
+Source: [schedule definitions and validation](../../src/tomojax/align/_model/schedules.py).
 
 ### Objective and optimizer combinations
 
@@ -450,8 +450,8 @@ geometry/volume accuracy. Include per-resolution loss schedules. Likelihood
 losses must receive data in an appropriate domain. Different losses have
 different scales; compare common held-out/physical metrics rather than raw loss
 values across families.
-Sources: [loss registry](../src/tomojax/align/_objectives/loss_specs.py) and
-[loss adapters and optimizer support](../src/tomojax/align/_objectives/loss_adapters.py).
+Sources: [loss registry](../../src/tomojax/align/_objectives/loss_specs.py) and
+[loss adapters and optimizer support](../../src/tomojax/align/_objectives/loss_adapters.py).
 
 ## Execution cases
 
@@ -487,16 +487,16 @@ performance cases. A CPU interpreter does not establish those capabilities.
 
 Relevant existing locations:
 
-- [Projector benchmark](../bench/compare_projectors.py)
-- [FBP benchmark](../bench/reconstruction_benchmark.py)
-- [Adjoint benchmark](../bench/adjoint_benchmark.py)
-- [Public reconstruction/alignment workflow benchmark](../bench/workflow_benchmark.py)
-- [Fixed-quality external solver comparison](../bench/compare_reconstructions.py)
-- [Internal FISTA diagnostic](../bench/fista_projection_benchmark.py)
-- [Reconstruction convergence tests](../tests/test_reconstruction_convergence.py)
-- [Alignment result schema](../src/tomojax/align/_results.py)
-- [Alignment loop timing](../src/tomojax/align/_pose/_pose_loop.py)
-- [Measured performance report](performance.md)
+- [Projector benchmark](../../bench/compare_projectors.py)
+- [FBP benchmark](../../bench/reconstruction_benchmark.py)
+- [Adjoint benchmark](../../bench/adjoint_benchmark.py)
+- [Public reconstruction/alignment workflow benchmark](../../bench/workflow_benchmark.py)
+- [Fixed-quality external solver comparison](../../bench/compare_reconstructions.py)
+- [Internal FISTA diagnostic](../../bench/fista_projection_benchmark.py)
+- [Reconstruction convergence tests](../../tests/test_reconstruction_convergence.py)
+- [Alignment result schema](../../src/tomojax/align/_results.py)
+- [Alignment loop timing](../../src/tomojax/align/_pose/_pose_loop.py)
+- [Measured performance report](../performance.md)
 
 ## Future capability benchmarks
 
@@ -520,7 +520,7 @@ feature is not implied to exist in TomoJAX merely because it is benchmarkable.
 The geometry package already provides `MetricSpec`, `ObjectiveCard`, and
 `CandidateScore` metadata containers. They can describe metric direction,
 validation splits, and candidate results; they do not implement the evaluators
-in this inventory. See [calibration objective metadata](../src/tomojax/geometry/_calibration/objectives.py).
+in this inventory. See [calibration objective metadata](../../src/tomojax/geometry/_calibration/objectives.py).
 
 Store one record per metric, method/configuration, case, seed, backend, and
 hardware/software environment. Include source revision and dirty-state identity,

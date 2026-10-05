@@ -8,7 +8,7 @@ corrects the initial decision to reject it from residual norms alone: tilted
 pose recovery can improve despite a larger normal residual. No solver default,
 volume basis, acceptance gate, or gauge was changed.
 
-[Raw results and diagnostic source](../bench/reference/alignment-accuracy-2026-10-04.json.gz)
+[Raw results and diagnostic source](../../bench/reference/alignment-accuracy-2026-10-04.json.gz)
 include all six cells, both Jacobian implementations, three linear budgets,
 and the independent small dense checks. Terminal states were recaptured through
 public `align` using frozen runtime source

@@ -6,7 +6,7 @@ Nsight Systems 2026.5.1 produced readable traces. The earlier 2023.3 profiler re
 
 In the initial profile, CUDA active time below is the union of traced kernels, memory operations and whole CUDA graph intervals. Internal graph nodes were not individually traced; these profiles cannot distinguish the graph's projector and adjoint kernels. Summing kernel events alone would incorrectly classify graph execution as idle time. Compilation is cProfile cumulative time in JAX backend_compile_and_load; it can overlap GPU activity, so the columns are not an additive wall-time decomposition.
 
-[Raw attribution](../bench/reference/system-matrix-v2-profile-attribution.json) retains all 46 workflows, including failed solves.
+[Raw attribution](../../bench/reference/system-matrix-v2-profile-attribution.json) retains all 46 workflows, including failed solves.
 
 | Suite / cell | Profiled method | Cold total / compile ms | Cold CUDA active ms | Warm total / CUDA active ms | Accepted in profile |
 |---|---|---:|---:|---:|---|
@@ -48,7 +48,7 @@ A second diagnostic run traces the kernels inside CUDA graphs. All 46 reconstruc
 
 Across the 27 general Joseph CGLS warm calls, backprojection contributes **61–74% of summed kernel time**. The failed smooth tilted 256 solve spends 30.59 of 43.46 wall seconds in backprojection; the accepted multiresolution alternative spends 3.62 of 5.29 seconds there. This supports investigating the adjoint as an iterative-runtime cost. It does not explain the Fourier import cost, supply the missing quality result, or remove cold compilation.
 
-The public alignment path has a separate repeated-call compilation cost. Its coupled objective is built as new JIT closures over each scan. The warm calls still compile for **2.13–2.38 seconds**. The exact adjoint is also the largest GPU cost; the noisy anisotropic warm failure launches it 80,960 times and spends 29.27 seconds in it. Most launches come from single-view reconstruction refreshes. The full kernel catalog and complete quality histories are retained in the [node-level archive](../bench/reference/system-node-profile-2026-10-04.json.gz).
+The public alignment path has a separate repeated-call compilation cost. Its coupled objective is built as new JIT closures over each scan. The warm calls still compile for **2.13–2.38 seconds**. The exact adjoint is also the largest GPU cost; the noisy anisotropic warm failure launches it 80,960 times and spends 29.27 seconds in it. Most launches come from single-view reconstruction refreshes. The full kernel catalog and complete quality histories are retained in the [node-level archive](../../bench/reference/system-node-profile-2026-10-04.json.gz).
 
 Times in this table are instrumented seconds, not accepted-result benchmark times. Compile time and GPU activity can overlap. The original cold/warm timings and process GPU peaks remain in the [alignment comparison](public-free-voxel-schur-2026-10-04.md) and [reconstruction comparison](system-matrix-2026-10-04.md); no new memory or speedup denominator is inferred from these traces.
 

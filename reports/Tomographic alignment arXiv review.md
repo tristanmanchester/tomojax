@@ -30,7 +30,7 @@ LAP adds the strongest head-to-head numbers. It solves min ½‖J_x δx + J_w δ
 
 ## Evidence rewrites five details of the variable-projection step
 
-The recommendation in `docs/opus-review-2026-10-04.md` is to solve min‖Aδv + J_θδθ − r‖² with damping by CGLS/LSQR on [A, J_θ], keep only δθ, then refresh with FISTA. The working tree already holds a related coupled step, `src/tomojax/align/_pose/_coupled_objective.py`, which was untracked when this review was written. It solves the stacked normal equations by Jacobi-preconditioned CG (`solve_coupled_normal`) and damps both blocks (`gn_volume_damping`, default 1e-3, validated as strictly positive; `gn_damping` on poses). It masks KKT-active zero voxels and line-searches on both blocks. The papers below were checked against both designs.
+The recommendation in `docs/research/opus-review-2026-10-04.md` is to solve min‖Aδv + J_θδθ − r‖² with damping by CGLS/LSQR on [A, J_θ], keep only δθ, then refresh with FISTA. The working tree already holds a related coupled step, `src/tomojax/align/_pose/_coupled_objective.py`, which was untracked when this review was written. It solves the stacked normal equations by Jacobi-preconditioned CG (`solve_coupled_normal`) and damps both blocks (`gn_volume_damping`, default 1e-3, validated as strictly positive; `gn_damping` on poses). It masks KKT-active zero voxels and line-searches on both blocks. The papers below were checked against both designs.
 
 | ID | Paper | Key point for the step | Verdict on VarPro/Schur |
 |---|---|---|---|

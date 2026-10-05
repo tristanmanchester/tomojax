@@ -23,7 +23,7 @@ A single-centre impulse approximation was rejected: its Fourier spectrum can
 be negative, and flooring it still worsened the independent parallel and tilted
 condition numbers. The averaged approximation and its eight-probe estimate
 improved both the reconstruction and pose-eliminated systems across all three
-geometries and three probe seeds in the [small dense screen](../bench/reference/shared-conditioning-dense-2026-10-04.json.gz).
+geometries and three probe seeds in the [small dense screen](../../bench/reference/shared-conditioning-dense-2026-10-04.json.gz).
 Those tiny problems qualify the implementation; they are not speed evidence.
 
 The archived experimental CGLS integration keeps the original least-squares objective,
@@ -34,7 +34,7 @@ edges per axis, rather than silently imposing a periodic regularizer.
 
 ## Fixed-state pilot and a correction to the first screening decision
 
-The [raw pilot diagnostics](../bench/reference/shared-conditioning-pilot-2026-10-04.json.gz)
+The [raw pilot diagnostics](../../bench/reference/shared-conditioning-pilot-2026-10-04.json.gz)
 compare all six saved public terminal states, four solvers and caps of 40, 160
 and 640 iterations. Both damping values remain 1e-3; columns use the same
 physical central stencil. The positivity active set and linear system are

@@ -1,6 +1,6 @@
 # Numerical and performance benchmarks
 
-The [exact-projector public alignment rerun](../docs/public-free-voxel-exact-2026-10-04.md) retains all 48 calls;
+The [exact-projector public alignment rerun](../docs/research/public-free-voxel-exact-2026-10-04.md) retains all 48 calls;
 all six cells still fail joint acceptance.
 
 
@@ -8,14 +8,14 @@ These development scripts check physical accuracy as well as speed. They are
 not installed in the `tomojax` package. The measured comparison and remaining
 gaps are in [the performance report](../docs/performance.md).
 
-The [complete 27-cell reconstruction score](../docs/system-matrix-2026-10-04.md)
-and [diagnostic attribution](../docs/system-profile-2026-10-04.md) retain failed
+The [complete 27-cell reconstruction score](../docs/research/system-matrix-2026-10-04.md)
+and [diagnostic attribution](../docs/research/system-profile-2026-10-04.md) retain failed
 quality gates. `public_alignment_benchmark.py` separately exercises the actual
 alignment API with independent free voxels; its declared six-cell
-[pilot protocol](../docs/public-free-voxel-pilot.md) does not replace the larger
+[pilot protocol](../docs/research/public-free-voxel-pilot.md) does not replace the larger
 motion/robustness goals. `voxel_truth.py` provides independently integrated
 trilinear voxel-basis data for this pilot.
-The [completed baseline](../docs/public-free-voxel-baseline-2026-10-04.md)
+The [completed baseline](../docs/research/public-free-voxel-baseline-2026-10-04.md)
 reports every failed call, including cold/warm times and peak process GPU memory.
 
 The complete reconstruction comparison loads fixtures through the lightweight
@@ -215,7 +215,7 @@ record includes the old anisotropic-volume failure and excludes it from speedups
 ## Fixed-quality complete reconstruction comparison
 
 The stretch targets and the frozen `gaussian-v1` acceptance thresholds are in
-[the optimization goal](../docs/optimization-goal.md). Run:
+[the optimization goal](../docs/research/optimization-goal.md). Run:
 
 ```bash
 uv run --no-sync python bench/compare_reconstructions.py \

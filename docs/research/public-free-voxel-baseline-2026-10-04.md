@@ -17,11 +17,11 @@ Cold timing starts before worker launch and includes imports, data loading, setu
 | lamino-clean | target_not_reached | 64.565 | 60.909 [60.837, 61.189] | 0.144337 | 0.462657 | 0.004291 | 444 |
 | lamino-noisy | target_not_reached | 65.180 | 60.919 [60.725, 61.159] | 0.144366 | 0.465505 | 0.004295 | 444 |
 
-Quality columns show the cold attempt. The [complete raw record](../bench/reference/public-free-voxel-v1-baseline.json.gz) retains every repeat, per-outer quality check, stopping decision, step bound and actual backend. Image gates are 0.10 parallel/anisotropic and 0.20 tilted; rotation is 0.01° and translation is 0.05 native pixels. Passing image and translation gates does not override a failed rotation gate.
+Quality columns show the cold attempt. The [complete raw record](../../bench/reference/public-free-voxel-v1-baseline.json.gz) retains every repeat, per-outer quality check, stopping decision, step bound and actual backend. Image gates are 0.10 parallel/anisotropic and 0.20 tilted; rotation is 0.01° and translation is 0.05 native pixels. Passing image and translation gates does not override a failed rotation gate.
 
 Both reconstruction and pose evaluation actually ran on **JAX CUDA**. Pallas was requested, but reconstruction reported `dynamic_geometry_alignment_uses_jax_core`; pose objectives required gradient-safe projector semantics. This is GPU execution, not a CPU fallback, and it is not evidence of Pallas performance.
 
-The [launch source archive](../bench/reference/public-free-voxel-v1-baseline-source.tar.gz) and [source digest](../bench/reference/public-free-voxel-v1-baseline-source.json) preserve the code used for these attempts. Its source hash was unchanged at completion. The active checkout has subsequent step-bound corrections; those changes do not retroactively alter this baseline.
+The [launch source archive](../../bench/reference/public-free-voxel-v1-baseline-source.tar.gz) and [source digest](../../bench/reference/public-free-voxel-v1-baseline-source.json) preserve the code used for these attempts. Its source hash was unchanged at completion. The active checkout has subsequent step-bound corrections; those changes do not retroactively alter this baseline.
 
 Histories exposed an effective FISTA bound multiplied by 1.2 at every outer iteration. This eventually suppressed voxel updates. Separate oracle-volume diagnostics also exposed uniform-ray-step integration bias against the independent trilinear-basis data. Fixing either limiter still requires another complete public free-voxel measurement before any recovery-speed claim.
 
@@ -40,4 +40,4 @@ A subsequent frozen diagnostic corrected repeated step-bound inflation, initial 
 | lamino-clean | target_not_reached | 63.202 | 59.494 | 0.121312 | 0.245558 | 0.003167 | 444 |
 | lamino-noisy | target_not_reached | 63.090 | 59.821 | 0.121388 | 0.252345 | 0.003217 | 444 |
 
-The [complete diagnostic record](../bench/reference/public-free-voxel-v1-bound-correction.json.gz) and [frozen source](../bench/reference/public-free-voxel-v1-bound-correction-source.tar.gz) preserve both calls, every outer iteration and backend metadata. This run used JAX CUDA for reconstruction and pose scoring. It does not supply a successful-recovery denominator.
+The [complete diagnostic record](../../bench/reference/public-free-voxel-v1-bound-correction.json.gz) and [frozen source](../../bench/reference/public-free-voxel-v1-bound-correction-source.tar.gz) preserve both calls, every outer iteration and backend metadata. This run used JAX CUDA for reconstruction and pose scoring. It does not supply a successful-recovery denominator.

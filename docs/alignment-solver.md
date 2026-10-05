@@ -3,7 +3,7 @@
 Use this reference when changing `AlignConfig` in Python. For data preparation,
 mode selection, and interpreting recovered parameters, start with the
 [alignment guide](alignment-guide.md). These options are experimental; the
-[public comparison](public-free-voxel-schur-2026-10-04.md) still has a failed cell.
+[public comparison](research/public-free-voxel-schur-2026-10-04.md) still has a failed cell.
 The CLI does not expose every Python solver option described here.
 
 ## Gauss–Newton updates at interpolation boundaries
@@ -55,7 +55,7 @@ options match. Measurements, nominal poses, masks, detector coordinates and
 weights remain inputs to each call, so a new scan can reuse a program without
 reusing the previous scan's values. Changing shapes or program options still
 requires compilation; this reuse is separate from the optional JAX persistent
-cache for different processes. The [six-cell reuse comparison](public-free-voxel-reuse-2026-10-04.md)
+cache for different processes. The [six-cell reuse comparison](research/public-free-voxel-reuse-2026-10-04.md)
 measures faster warm calls with unchanged cold startup and process GPU memory;
 noisy anisotropic recovery still fails its rotation gate.
 
@@ -66,7 +66,7 @@ same joint residual threshold and nonlinear acceptance. Without pose smoothness,
 the factors are independent 5-by-5 blocks; with smoothness, a block-banded
 factorization retains inter-view coupling with storage linear in view count.
 Damping and iteration budgets are unchanged. Independent dense, constrained
-workflow and CUDA checks pass. The [complete public comparison](public-free-voxel-schur-2026-10-04.md)
+workflow and CUDA checks pass. The [complete public comparison](research/public-free-voxel-schur-2026-10-04.md)
 recovers five of six modest-motion clean/noisy cells, with faster accepted
 tilted recovery but the same noisy anisotropic failure as the stacked solve.
 Sampled GPU memory rises from 280 to 320 MiB. The option remains experimental
@@ -75,7 +75,7 @@ and is not the default; it does not establish complete recovery or the 20× goal
 Joint steps report `objective_kind="joint_volume_pose"`, their actual
 projector backend, accepted line-search scale, and linear-solve diagnostics.
 The shared central-difference stencil is unchanged. Recovery and performance
-claims require the complete [free-voxel pilot](public-free-voxel-pilot.md);
+claims require the complete [free-voxel pilot](research/public-free-voxel-pilot.md);
 passing the numerical tests alone does not establish them.
 
 Alignment's `info["L"]` and checkpoint `L` retain the effective FISTA step
