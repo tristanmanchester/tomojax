@@ -38,6 +38,27 @@ from .validation import (
 
 LOG = logging.getLogger(__name__)
 
+_JOSEPH_INTEGRATORS = {"joseph": "linear", "joseph_cubic": "cubic"}
+RAY_INTEGRATORS = ("sampled", "exact", *_JOSEPH_INTEGRATORS)
+
+
+def _joseph_operands(
+    poses: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+    ray_integrator: str,
+) -> tuple[jnp.ndarray, str]:
+    """Plane coefficients and interpolation for the Joseph integrators.
+
+    An explicit ``det_grid`` must be an affine pixel lattice (offset or rolled).
+    """
+    from tomojax.core.joseph import plane_coefficients
+
+    coefficients = plane_coefficients(poses, grid, detector, det_grid)
+    return coefficients, _JOSEPH_INTEGRATORS[ray_integrator]
+
+
 enable_persistent_compilation_cache()
 
 
@@ -350,6 +371,11 @@ def _pallas_unsupported_exception_type() -> type[Exception] | None:
     return None
 
 
+def _cuda_default_device() -> bool:
+    version = jax.devices()[0].client.platform_version.lower()
+    return jax.default_backend() == "gpu" and "cuda" in version
+
+
 def forward_project_view_T(
     T: jnp.ndarray,
     grid: Grid,
@@ -381,8 +407,17 @@ def forward_project_view_T(
         return exact_forward(
             jnp.asarray(T)[None], grid, detector, volume, backend=backend, det_grid=det_grid
         )[0]
+    if ray_integrator in _JOSEPH_INTEGRATORS:
+        from tomojax.core.joseph import forward_project_planes
+
+        coeff, interpolation = _joseph_operands(
+            jnp.asarray(T)[None], grid, detector, det_grid, ray_integrator
+        )
+        return forward_project_planes(
+            coeff, volume, grid, detector, backend=backend, interpolation=interpolation
+        )[0]
     if ray_integrator != "sampled":
-        raise ValueError("ray_integrator must be 'sampled' or 'exact'")
+        raise ValueError(f"ray_integrator must be one of {RAY_INTEGRATORS}")
     if backend == "pallas":
         pallas_project, fallback_reason = resolve_pallas_callable(
             "forward_project_view_T_pallas",
@@ -558,8 +593,17 @@ def backproject_view_T(
         return exact_adjoint(
             jnp.asarray(T)[None], grid, detector, jnp.asarray(image)[None], det_grid=det_grid
         )
+    if ray_integrator in _JOSEPH_INTEGRATORS:
+        return sum_backproject_views_T(
+            jnp.asarray(T)[None],
+            grid,
+            detector,
+            jnp.asarray(image)[None],
+            det_grid=det_grid,
+            ray_integrator=ray_integrator,
+        )
     if ray_integrator != "sampled":
-        raise ValueError("ray_integrator must be 'sampled' or 'exact'")
+        raise ValueError(f"ray_integrator must be one of {RAY_INTEGRATORS}")
     return _backproject_view_accum_T(
         T,
         grid,
@@ -593,8 +637,21 @@ def sum_backproject_views_T(
         from tomojax.core.trilinear import exact_adjoint
 
         return exact_adjoint(T_all, grid, detector, images, det_grid=det_grid)
+    if ray_integrator in _JOSEPH_INTEGRATORS:
+        from tomojax.core.joseph import sum_backproject_planes
+
+        coeff, interpolation = _joseph_operands(T_all, grid, detector, det_grid, ray_integrator)
+        backend = "pallas" if _cuda_default_device() else "jax"
+        return sum_backproject_planes(
+            coeff,
+            jnp.asarray(images, jnp.float32),
+            grid,
+            detector,
+            backend=backend,
+            interpolation=interpolation,
+        )
     if ray_integrator != "sampled":
-        raise ValueError("ray_integrator must be 'sampled' or 'exact'")
+        raise ValueError(f"ray_integrator must be one of {RAY_INTEGRATORS}")
     n_views, _, _ = validate_projection_stack(
         images,
         detector,

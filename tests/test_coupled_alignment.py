@@ -33,8 +33,9 @@ def test_joint_coupling_selects_the_solver_for_every_pose_stage():
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
 @pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("integrator", ["exact", "joseph"])
 def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
-    monkeypatch, stream, backend, solver, scan_variant
+    monkeypatch, stream, backend, solver, scan_variant, integrator
 ):
     from dataclasses import replace
     from pathlib import Path
@@ -54,7 +55,18 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
         pytest.skip("CUDA required")
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "bench"))
     from public_alignment_benchmark import physical_poses
-    from voxel_truth import project_voxel_truth
+    from voxel_truth import project_voxel_truth as project_exact
+
+    from tomojax.forward import project_joseph
+
+    def project_voxel_truth(volume, poses, grid, det):
+        """Independent reference for the selected integrator."""
+        if integrator == "exact":
+            return project_exact(volume, poses, grid, det)
+        projected = project_joseph(
+            jnp.asarray(volume, jnp.float32), jnp.asarray(poses, jnp.float32), grid, det
+        )
+        return np.asarray(projected, np.float64)
 
     if stream:
         monkeypatch.setattr(_coupled_objective, "_POSE_CACHE_BYTES", 0)
@@ -87,7 +99,7 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
         gn_volume_damping=0.2 if scan_variant == 0 else np.asarray(0.2),
         gn_jacobian="central",
         gn_difference_step=0.003 if scan_variant == 0 else np.asarray(0.003),
-        ray_integrator="exact",
+        ray_integrator=integrator,
         projector_backend=backend,
         gather_dtype="fp32",
         pose_translation_frame="detector",

@@ -36,17 +36,21 @@ def build_coupled_objective(ctx: _PoseObjectiveContext) -> CoupledObjective:
         raise ValueError("joint GN requires a least-squares alignment loss")
     if cfg.gather_dtype not in {"fp32", "float32"}:
         raise ValueError("joint GN requires gather_dtype='fp32' for matched linear operators")
-    # Pallas exact integration accepts dynamic rigid poses. The sampled
-    # reference keeps its matched explicit transpose and bounded view loop.
+    # Pallas exact and Joseph integration accept dynamic rigid poses. The
+    # sampled reference keeps its matched explicit transpose and bounded view loop.
     backend = (
         "pallas" if cfg.projector_backend == "pallas" and jax.default_backend() == "gpu" else "jax"
     )
-    if cfg.ray_integrator != "exact":
+    if cfg.ray_integrator not in {"exact", "joseph", "joseph_cubic"}:
         backend = "jax"
     canonical = get_detector_grid_device(ctx.detector)
-    if backend == "pallas" and not all(
-        np.array_equal(np.asarray(a), np.asarray(b))
-        for a, b in zip(ctx.det_grid, canonical, strict=True)
+    if (
+        backend == "pallas"
+        and cfg.ray_integrator == "exact"
+        and not all(
+            np.array_equal(np.asarray(a), np.asarray(b))
+            for a, b in zip(ctx.det_grid, canonical, strict=True)
+        )
     ):
         backend = "jax"
     arrays = CoupledArrays(

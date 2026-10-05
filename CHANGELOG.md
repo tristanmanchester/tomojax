@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add Joseph plane sampling to alignment (`ray_integrator="joseph"` or
+  `"joseph_cubic"`, CLI `--ray-integrator`) and make it the coupled pose
+  solver's default. Its matched gather transpose replaces the exact
+  integrator's atomic scatter: on analytic 128-cubed scans of continuous
+  objects (181 views), `tomojax align --mode pose` recovers parallel and
+  laminography poses to 0.0061 and 0.0024 deg in 46 and 93 s, where exact
+  integration took 588 and 1044 s for 0.0059 and 0.0016 deg. Joseph plane
+  coefficients now accept affine detector grids (calibrated offsets and roll),
+  so the model also serves calibrated detectors.
 - Fix pose alignment through `tomojax align` and `align_multires`. Pose
   stages skipped reconstruction, so pose-only schedules (the default `pose`
   mode) optimised against an all-zero volume and returned the nominal poses.

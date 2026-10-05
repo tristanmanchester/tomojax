@@ -2,18 +2,21 @@
 
 TomoJAX alignment estimates geometry or pose corrections while reconstructing
 the volume. Pose alignment solves the free voxels and every view's 5-DOF pose
-together (the coupled solver).
+together (the coupled solver), using Joseph plane sampling as its forward model.
 
-Read published accuracy figures with care. The free-voxel pilot integrates the
-voxel basis exactly, which is the solver's own forward model, so clean cells
-recover poses to numerical precision (rotation 0.0006–0.008° in five of six
-cells, 8–18 s each with the default CLI). With analytic data from continuous
-objects there is no such match. At 32³, started from the true poses, the solver
-settles at 0.09–0.3° rotation RMSE, the floor set by discretisation, and from
-nominal poses it reaches the same floor, so its reconstruction is as good as
-one made with the true poses. Smooth objects constrain per-view tilts least.
-Expect accurate translations and reconstruction quality rather than
-hundredth-of-a-degree tilts on real data.
+On analytic 128³ scans of continuous objects with 181 views and ±0.25°/±0.5 px
+motion, the default `tomojax align --mode pose` recovers per-view rotations to
+0.0061° (parallel) and 0.0024° (30° laminography) and translations to 0.002
+pixels, in 46 and 93 s on an RTX 4070 Laptop GPU. Accuracy depends on
+resolution: at 32³ the same objects leave a 0.1–0.5° rotation floor from
+discretisation, even when started from the true poses, while reconstructions
+still match a true-pose reconstruction. Larger motion (±3°, ±10 px) is not yet
+recovered reliably.
+
+`--ray-integrator exact` integrates the trilinear voxel basis exactly. It is
+10–30× slower. On the free-voxel pilot, whose measurements use that same basis,
+it recovers clean cells to numerical precision, an inverse crime rather than
+evidence about real data.
 
 Start from corrected absorption data and checked physical geometry, following
 the [real scan guide](real-laminography.md). Save an unaligned reconstruction,
@@ -39,9 +42,9 @@ followed by pose correction, and `auto` for the full setup+pose workflow.
 The default `pose` mode optimizes one 5-DOF pose vector per projection:
 `alpha`, `beta`, `phi`, `dx`, and `dz`. Use this for scans where the sample moved during acquisition.
 
-Each Gauss–Newton step updates the volume and the poses together, using exact
-line integration through the voxel basis and an unregularised least-squares
-fit; up to 30 outer iterations stop early once the fit stops improving.
+Each Gauss–Newton step updates the volume and the poses together, using
+Joseph plane sampling and an unregularised least-squares fit; up to 30 outer
+iterations stop early once the fit stops improving.
 `--pose-solver alternating` restores the older scheme that refines poses
 against a reconstruction held fixed between volume updates. It accepts other
 losses, smooth pose models and optimizers, but in the pilot it left rotation

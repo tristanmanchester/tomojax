@@ -12,6 +12,7 @@ import numpy as np
 from tomojax.core.backend_policy import normalize_projector_backend
 from tomojax.core.pallas_resolver import resolve_pallas_callable, resolve_pallas_module
 from tomojax.core.projector import (
+    RAY_INTEGRATORS,
     forward_project_view_T,
     sum_backproject_views_T,
 )
@@ -55,7 +56,7 @@ class FistaCoreConfig:
     def __post_init__(self) -> None:
         normalize_projector_backend(self.forward_projector)
         normalize_projector_backend(self.backprojector)
-        if self.ray_integrator not in {"sampled", "exact"}:
+        if self.ray_integrator not in RAY_INTEGRATORS:
             raise ValueError("ray_integrator must be 'sampled' or 'exact'")
 
 
@@ -376,6 +377,17 @@ def _project_chunk(
 
         return exact_forward(
             T_chunk, grid, detector, volume, backend=forward_projector, det_grid=det_grid
+        )
+    if ray_integrator in {"joseph", "joseph_cubic"}:
+        from tomojax.core.joseph import forward_project_planes, plane_coefficients
+
+        return forward_project_planes(
+            plane_coefficients(T_chunk, grid, detector, det_grid),
+            volume,
+            grid,
+            detector,
+            backend=forward_projector,
+            interpolation="cubic" if ray_integrator == "joseph_cubic" else "linear",
         )
     if forward_projector == "jax":
         return jax.vmap(

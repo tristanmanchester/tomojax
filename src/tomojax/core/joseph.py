@@ -50,23 +50,38 @@ def select_axis(
     )
 
 
-def plane_coefficients(poses: jax.Array, grid: Grid, detector: Detector) -> jax.Array:
+def plane_coefficients(
+    poses: jax.Array,
+    grid: Grid,
+    detector: Detector,
+    det_grid: tuple[jax.Array, jax.Array] | None = None,
+) -> jax.Array:
     """Prepare a dynamic per-view affine mapping from detector pixels to planes.
 
     Columns are ``axis, ub, vb, kb, cb, uc, vc, kc, cc, ds, inv00, inv01,
     inv10, inv11``. At plane k, q_b = ub*u + vb*v + kb*k + cb, and similarly
     q_c. The inverse 2x2 map bounds the rays that contribute to each voxel.
-    Inputs are rigid world-from-object transforms and canonical detector pixels.
+    Inputs are rigid world-from-object transforms. ``det_grid`` gives flattened
+    world (x, z) pixel positions, u fastest; it must be an affine lattice, such
+    as a calibrated detector offset or roll, and is read from three pixels.
     """
     voxel = jnp.asarray((grid.vx, grid.vy, grid.vz), jnp.float32)
     origin = jnp.asarray(grid_volume_origin(grid), jnp.float32)
-    u0 = detector.det_center[0] - (detector.nu - 1) * detector.du / 2
-    v0 = detector.det_center[1] - (detector.nv - 1) * detector.dv / 2
     rotation = poses[:, :3, :3]
-    base = jnp.sum(
-        rotation * (jnp.asarray([u0, 0.0, v0], jnp.float32)[None, :] - poses[:, :3, 3])[:, :, None],
-        axis=1,
-    )
+    if det_grid is None:
+        u0 = detector.det_center[0] - (detector.nu - 1) * detector.du / 2
+        v0 = detector.det_center[1] - (detector.nv - 1) * detector.dv / 2
+        first = jnp.asarray([u0, 0.0, v0], jnp.float32)
+        u, v = rotation[:, 0, :] * detector.du / voxel, rotation[:, 2, :] * detector.dv / voxel
+    else:
+        xs, zs = (jnp.asarray(a, jnp.float32).ravel() for a in det_grid)
+        nu = detector.nu
+        first = jnp.stack([xs[0], jnp.float32(0), zs[0]])
+        step_u = (xs[1] - xs[0], zs[1] - zs[0]) if nu > 1 else (0.0, 0.0)
+        step_v = (xs[nu] - xs[0], zs[nu] - zs[0]) if detector.nv > 1 else (0.0, 0.0)
+        u = (step_u[0] * rotation[:, 0, :] + step_u[1] * rotation[:, 2, :]) / voxel
+        v = (step_v[0] * rotation[:, 0, :] + step_v[1] * rotation[:, 2, :]) / voxel
+    base = jnp.sum(rotation * (first[None, :] - poses[:, :3, 3])[:, :, None], axis=1)
     base = (base - origin) / voxel
     direction = poses[:, 1, :3] / voxel
     axis = jnp.argmax(jnp.abs(direction), axis=1)
@@ -77,7 +92,6 @@ def plane_coefficients(poses: jax.Array, grid: Grid, detector: Detector) -> jax.
 
     da = take(direction, axis)
     kb, kc = take(direction, b) / da, take(direction, c) / da
-    u, v = rotation[:, 0, :] * detector.du / voxel, rotation[:, 2, :] * detector.dv / voxel
     ub, vb = take(u, b) - kb * take(u, axis), take(v, b) - kb * take(v, axis)
     uc, vc = take(u, c) - kc * take(u, axis), take(v, c) - kc * take(v, axis)
     cb, cc = take(base, b) - kb * take(base, axis), take(base, c) - kc * take(base, axis)

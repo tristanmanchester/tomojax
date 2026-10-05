@@ -5,6 +5,7 @@ import math
 from typing import TYPE_CHECKING, Literal, cast
 
 from tomojax.core.backend_policy import normalize_projector_backend
+from tomojax.core.projector import RAY_INTEGRATORS
 
 from ._geometry.parametrizations import PoseTranslationFrame
 from ._model.diagnostics import GaugePolicy
@@ -155,7 +156,9 @@ class AlignConfig:
     checkpoint_projector: bool = True
     gather_dtype: str = "auto"
     projector_backend: ProjectorBackendInput = "pallas"
-    ray_integrator: Literal["sampled", "exact"] = field(default="sampled", kw_only=True)
+    ray_integrator: Literal["sampled", "exact", "joseph", "joseph_cubic"] = field(
+        default="sampled", kw_only=True
+    )
     quality_tier: QualityTier = "fast"
     fallback_policy: FallbackPolicy = "fallback"
     fold_rigid_detector_grid: bool = True
@@ -208,8 +211,8 @@ class AlignConfig:
     loss: AlignmentLossConfig = field(default_factory=L2OtsuLossSpec)
 
     def __post_init__(self) -> None:
-        if self.ray_integrator not in {"sampled", "exact"}:
-            raise ValueError("ray_integrator must be sampled or exact")
+        if self.ray_integrator not in RAY_INTEGRATORS:
+            raise ValueError(f"ray_integrator must be one of {RAY_INTEGRATORS}")
         self._apply_profile_policy()
         self._normalize_reconstruction_options()
         self._normalize_backend_options()

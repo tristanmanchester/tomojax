@@ -359,7 +359,7 @@ def _coupled_pose_options(
     options: dict[str, Any] = {
         "gn_coupling": "joint",
         "gn_joint_solver": "pose_eliminated",
-        "ray_integrator": "exact",
+        "ray_integrator": command.ray_integrator or "joseph",
         "gather_dtype": "fp32",
         "opt_method": "gn",
         "pose_model": "per_view",
@@ -460,6 +460,8 @@ def _resolve_schedule_and_config(
         mask_vol=command.mask_vol,
     )
     coupled = _coupled_pose_options(parser, command, parsed, configured_keys)
+    if not coupled and command.ray_integrator is not None:
+        coupled = {"ray_integrator": command.ray_integrator}
     if coupled:
         cfg = replace(cfg, **coupled)
         gather_dtype = cfg.gather_dtype

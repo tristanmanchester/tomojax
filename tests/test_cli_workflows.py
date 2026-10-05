@@ -836,7 +836,7 @@ def test_align_cli_pose_mode_defaults_to_the_coupled_solver(
 ) -> None:
     plan = _pose_plan(monkeypatch, tmp_path, capsys)
     assert plan["pose_solver"] == "coupled"
-    assert plan["ray_integrator"] == "exact"
+    assert plan["ray_integrator"] == "joseph"
     assert plan["loss"] == {"name": "l2", "params": {}}
     assert plan["lambda_tv"] == 0.0
     assert plan["gather_dtype"] == "fp32"

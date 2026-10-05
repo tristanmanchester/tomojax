@@ -31,7 +31,7 @@ class PoseJacobianOptions:
     checkpoint: bool
     unroll: int
     gather_dtype: str
-    integrator: Literal["sampled", "exact"]
+    integrator: Literal["sampled", "exact", "joseph", "joseph_cubic"]
     jacobian: Literal["central", "autodiff"]
 
     @classmethod
@@ -45,6 +45,11 @@ class PoseJacobianOptions:
             cfg.ray_integrator,
             cfg.gn_jacobian,
         )
+
+
+def _cuda() -> bool:
+    version = jax.devices()[0].client.platform_version.lower()
+    return jax.default_backend() == "gpu" and "cuda" in version
 
 
 def build_pose_prediction_and_columns(ctx: _PoseObjectiveContext) -> Callable:
@@ -81,6 +86,8 @@ def pose_prediction_and_columns(
         [displacement / radius] * 3 + [displacement] * 2, dtype=jnp.float32
     )
 
+    joseph = options.integrator.startswith("joseph")
+
     def _pred_flat(t_i: jnp.ndarray, masked_vol: jnp.ndarray) -> jnp.ndarray:
         return forward_project_view_T(
             t_i,
@@ -91,6 +98,8 @@ def pose_prediction_and_columns(
             unroll=options.unroll,
             gather_dtype=options.gather_dtype,
             det_grid=det_grid,
+            # Joseph CUDA kernels' pose derivatives avoid a per-plane JAX tape.
+            projector_backend="pallas" if joseph and _cuda() else "jax",
             ray_integrator=options.integrator,
         ).ravel()
 

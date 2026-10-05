@@ -280,6 +280,16 @@ def _add_optimizer_options(p: argparse.ArgumentParser) -> None:
             "Default: coupled for --mode pose, alternating for modes with setup stages"
         ),
     )
+    _ = p.add_argument(
+        "--ray-integrator",
+        choices=["joseph", "joseph_cubic", "exact", "sampled"],
+        default=None,
+        help=(
+            "Forward model: joseph (voxel-centre planes, fastest), joseph_cubic, exact "
+            "(trilinear basis integral) or sampled. Default: joseph for the coupled "
+            "pose solver, sampled otherwise"
+        ),
+    )
     _ = p.add_argument("--lr-rot", type=float, default=1e-3)
     _ = p.add_argument("--lr-trans", type=float, default=1e-1)
     _ = p.add_argument(
@@ -639,6 +649,7 @@ class AlignCommand:
     grid: list[int] | None
     requested_gather_dtype: str
     pose_solver: str
+    ray_integrator: str | None
     recon_algo: str
     lambda_tv: float
     regulariser: str
@@ -717,6 +728,7 @@ def align_command_from_args(args: argparse.Namespace) -> AlignCommand:
         grid=cast("list[int] | None", args.grid),
         requested_gather_dtype=cast("str", args.gather_dtype),
         pose_solver=_pose_solver(args),
+        ray_integrator=cast("str | None", args.ray_integrator),
         recon_algo=cast("str", args.recon_algo),
         lambda_tv=cast("float", args.lambda_tv),
         regulariser=cast("str", args.regulariser),

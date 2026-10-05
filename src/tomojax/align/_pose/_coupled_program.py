@@ -11,6 +11,11 @@ import jax
 import jax.numpy as jnp
 
 from tomojax.align._geometry.parametrizations import apply_pose_updates
+from tomojax.core.joseph import (
+    forward_project_planes,
+    plane_coefficients,
+    sum_backproject_planes,
+)
 from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
 from tomojax.core.trilinear import exact_adjoint, exact_forward
 from tomojax.recon.fista_tv_core import FistaCoreConfig, regulariser_value_arrays
@@ -93,7 +98,18 @@ def _build_program(
             arrays.poses, p, translation_frame=spec.jacobian.translation_frame
         )
 
+    joseph = {"joseph": "linear", "joseph_cubic": "cubic"}.get(spec.jacobian.integrator)
+
     def forward(t, x):
+        if joseph is not None:
+            return forward_project_planes(
+                plane_coefficients(t, spec.grid, spec.detector, arrays.det_grid),
+                mask * x,
+                spec.grid,
+                spec.detector,
+                backend=backend,
+                interpolation=joseph,
+            )
         if spec.jacobian.integrator == "exact":
             return exact_forward(
                 t, spec.grid, spec.detector, mask * x, backend=backend, det_grid=det_grid
@@ -113,6 +129,15 @@ def _build_program(
         )
 
     def adjoint(t, y):
+        if joseph is not None:
+            return mask * sum_backproject_planes(
+                plane_coefficients(t, spec.grid, spec.detector, arrays.det_grid),
+                y,
+                spec.grid,
+                spec.detector,
+                backend=backend,
+                interpolation=joseph,
+            )
         if spec.jacobian.integrator == "exact":
             return mask * exact_adjoint(
                 t, spec.grid, spec.detector, y, backend=backend, det_grid=det_grid

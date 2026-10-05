@@ -14,6 +14,7 @@ import numpy as np
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.operator_norm import estimate_normal_norm
 from tomojax.core.projector import (
+    RAY_INTEGRATORS,
     backproject_view_T,
     forward_project_view_T,
     get_detector_grid_device,
@@ -632,7 +633,7 @@ def _prepare_fista_runtime(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
 ) -> _FistaRuntime:
     cfg = FistaConfig() if config is None else config
-    if cfg.ray_integrator not in {"sampled", "exact"}:
+    if cfg.ray_integrator not in RAY_INTEGRATORS:
         raise ValueError("ray_integrator must be sampled or exact")
     volume_mask = cfg.support
     regulariser = validate_regulariser(
