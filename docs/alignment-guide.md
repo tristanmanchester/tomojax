@@ -138,9 +138,13 @@ uv run --no-sync tomojax align \
   --out aligned.nxs
 ```
 
-COR mode fits detector-u offsets explicitly. Pose-only correction may absorb
-some of that error into sample motion. Neither a lower objective nor a sharper
-image proves that the estimated geometry is physically calibrated.
+COR mode fits detector-u offsets explicitly. It starts from a one-parameter
+search for the offset whose FBP reprojects most consistently, which works for
+laminography and partial arcs, then refines it against held-out views. With a
++3.7 px offset in analytic 128³ scans it recovers 3.693 px (parallel) and
+3.677 px (laminography) in 41 and 84 s. Pose-only correction may absorb some of
+that error into sample motion. Neither a lower objective nor a sharper image
+proves that the estimated geometry is physically calibrated.
 
 ## Use mixed setup and pose as expert mode
 

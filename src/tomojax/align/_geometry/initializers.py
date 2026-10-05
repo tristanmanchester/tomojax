@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     import jax.numpy as jnp
 
     from tomojax.align._objectives.loss_adapters import LossAdapter
-    from tomojax.core.geometry import Geometry
+    from tomojax.core.geometry import Detector, Geometry, Grid
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,3 +218,51 @@ def _projection_u_profile(image: np.ndarray) -> np.ndarray:
     if scale <= 1e-6 or not np.isfinite(scale):
         return np.zeros_like(profile, dtype=np.float32)
     return profile / scale
+
+
+def reprojection_det_u_seed(
+    projections: jnp.ndarray,
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    *,
+    max_fraction: float = 0.25,
+    tolerance_px: float = 0.01,
+) -> DetectorCenterSeed:
+    """Find the detector-u offset whose FBP reprojects most consistently.
+
+    For each candidate offset the projections are shifted back, reconstructed
+    by FBP and reprojected; a consistent offset minimises the relative
+    reprojection residual after a best scalar fit. A coarse scan over
+    ``max_fraction`` of the detector width is refined by golden-section search.
+    Works for any scan geometry, including laminography and partial arcs.
+    """
+    from tomojax.align._prealign import reprojection_residual
+
+    residual = reprojection_residual(geometry, grid, detector, projections)
+    half = max_fraction * detector.nu
+    candidates = np.linspace(-half, half, 25)
+    values = [residual(float(c)) for c in candidates]
+    best = int(np.argmin(values))
+    low = candidates[max(best - 1, 0)]
+    high = candidates[min(best + 1, len(candidates) - 1)]
+    ratio = (np.sqrt(5.0) - 1) / 2
+    left, right = high - ratio * (high - low), low + ratio * (high - low)
+    f_left, f_right = residual(left), residual(right)
+    while high - low > tolerance_px:
+        if f_left < f_right:
+            high, right, f_right = right, left, f_left
+            left = high - ratio * (high - low)
+            f_left = residual(left)
+        else:
+            low, left, f_left = left, right, f_right
+            right = low + ratio * (high - low)
+            f_right = residual(right)
+    shift_px = 0.5 * (low + high)
+    # Data displaced by +s pixels correspond to a detector centre at -s pixels.
+    return DetectorCenterSeed(
+        det_u_px=-shift_px,
+        intercept_px=-shift_px,
+        amplitude_px=float(min(values)),
+        status="ok_reprojection",
+    )

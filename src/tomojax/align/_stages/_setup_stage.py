@@ -8,12 +8,12 @@ from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 
-from tomojax.align._geometry.detector_center import projection_pair_det_u_seed
 from tomojax.align._geometry.geometry_applier import (
     BaseGeometryArrays,
     apply_setup_to_detector_grid,
     materialize_setup_geometry,
 )
+from tomojax.align._geometry.initializers import reprojection_det_u_seed
 from tomojax.align._model.diagnostics import validate_active_gauge_policy
 from tomojax.align._model.dof_specs import ActiveParameterView
 from tomojax.align._model.state import AlignmentState, PoseState, SetupGeometryState
@@ -376,6 +376,9 @@ def _validate_setup_stage_execution_contract(stage: ResolvedAlignmentStage | Non
 def _detector_center_seed_diagnostics(
     *,
     geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    factor: int,
     projections: jnp.ndarray,
     setup_state: AlignmentState,
     active_view: ActiveParameterView,
@@ -391,19 +394,16 @@ def _detector_center_seed_diagnostics(
     current = float(setup_state.setup.det_u_px)
     if abs(current) > 1e-6:
         return None
-    seed = projection_pair_det_u_seed(projections, geometry)
-    if not str(seed.status).startswith("ok"):
-        return {
-            "detector_center_seed_status": seed.status,
-            "detector_center_seed_method": "opposite_angle_projection_pair",
-            "detector_center_seed_applied": False,
-        }
+    # A one-parameter search for the offset whose FBP reprojects most
+    # consistently; unlike opposite-view pairing it suits any scan geometry.
+    seed = reprojection_det_u_seed(projections, geometry, grid, detector)
     return {
         "detector_center_seed_status": seed.status,
-        "detector_center_seed_method": "opposite_angle_projection_pair",
+        "detector_center_seed_method": "fbp_reprojection_residual_search",
         "detector_center_seed_applied": True,
-        "detector_center_seed_det_u_px": float(seed.det_u_px),
-        "detector_center_seed_pair_lag_px": float(seed.amplitude_px),
+        # Level pixels to native pixels.
+        "detector_center_seed_det_u_px": float(seed.det_u_px) * int(factor),
+        "detector_center_seed_residual": float(seed.amplitude_px),
     }
 
 
@@ -466,6 +466,9 @@ def _optimize_setup_geometry_bilevel_for_level(
     setup_state = alignment_state
     seed_diagnostics = _detector_center_seed_diagnostics(
         geometry=geometry,
+        grid=grid,
+        detector=detector,
+        factor=int(factor),
         projections=projections,
         setup_state=setup_state,
         active_view=active_view,

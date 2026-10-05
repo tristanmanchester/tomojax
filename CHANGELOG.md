@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Seed `tomojax align --mode cor` with a search for the detector-u offset
+  whose FBP reprojects most consistently (a coarse scan over a quarter of the
+  detector, then golden section), replacing the opposite-view pairing that
+  needs a parallel half or full turn. All CLI alignment modes now default to
+  Joseph integration. With a +3.7 px offset on analytic 128-cubed scans, COR
+  mode recovers 3.693 and 3.677 px (parallel, laminography) in 41 and 84 s,
+  where it previously reached 3.50 and 3.59 px in about 380 s.
 - Cache the pose Jacobian columns of the coupled solver whenever five
   sinograms fit in a quarter of free device memory (previously a fixed 64 MB)
   and apply cached columns to all views in single batched contractions. On a

@@ -286,8 +286,7 @@ def _add_optimizer_options(p: argparse.ArgumentParser) -> None:
         default=None,
         help=(
             "Forward model: joseph (voxel-centre planes, fastest), joseph_cubic, exact "
-            "(trilinear basis integral) or sampled. Default: joseph for the coupled "
-            "pose solver, sampled otherwise"
+            "(trilinear basis integral) or sampled. Default: joseph"
         ),
     )
     _ = p.add_argument("--lr-rot", type=float, default=1e-3)

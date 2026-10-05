@@ -9,6 +9,7 @@ reprojection. Repeating sharpens the reconstruction and the estimates.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import partial
 import logging
 from typing import TYPE_CHECKING
@@ -161,6 +162,46 @@ def estimate_view_shifts(
         if change <= tolerance_px:
             break
     return shifts * np.asarray(spacing)
+
+
+def reprojection_residual(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jax.Array | np.ndarray,
+) -> Callable[[float], float]:
+    """Return ``shift_px -> relative residual`` of FBP reprojection.
+
+    The views are moved back by a common detector-u shift, reconstructed by FBP
+    and reprojected; the residual after a best scalar amplitude fit is smallest
+    when the shift matches the data.
+    """
+    from tomojax.core.joseph import forward_project_planes, plane_coefficients
+    from tomojax.recon import FBPConfig, fbp
+
+    data = jnp.asarray(projections, dtype=jnp.float32)
+    n = int(data.shape[0])
+    coefficients = plane_coefficients(stack_view_poses(geometry, n), grid, detector)
+    backend = "pallas" if jax.default_backend() == "gpu" else "jax"
+    chunks = [slice(s, min(s + _CHUNK, n)) for s in range(0, n, _CHUNK)]
+    norm = float(jnp.linalg.norm(data))
+
+    def residual(shift_px: float) -> float:
+        offset = jnp.asarray([[-shift_px, 0.0]], jnp.float32)
+        corrected = jnp.concatenate(
+            [_shift_views(data[c], jnp.broadcast_to(offset, (c.stop - c.start, 2))) for c in chunks]
+        )
+        volume = fbp(geometry, grid, detector, corrected, config=FBPConfig(filter_name="hann"))
+        predicted = jnp.concatenate(
+            [
+                forward_project_planes(coefficients[c], volume, grid, detector, backend=backend)
+                for c in chunks
+            ]
+        )
+        scale = jnp.vdot(predicted, corrected) / jnp.maximum(jnp.vdot(predicted, predicted), 1e-30)
+        return float(jnp.linalg.norm(scale * predicted - corrected)) / max(norm, 1e-30)
+
+    return residual
 
 
 def translation_params_from_shifts(

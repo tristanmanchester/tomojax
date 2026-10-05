@@ -390,3 +390,24 @@ def test_translation_seed_runs_once_at_the_first_level(monkeypatch, factors):
     else:
         align_multires(geometry, grid, detector, data, factors=factors, config=cfg)
         assert calls == [((6, 4, 4), True)]
+
+
+@pytest.mark.parametrize("kind", ["parallel", "lamino"])
+def test_reprojection_seed_recovers_a_detector_centre_offset(kind):
+    # check-public-imports: allow-private
+    from tomojax.align._geometry.initializers import reprojection_det_u_seed
+
+    angles = np.linspace(0.0, 180.0 if kind == "parallel" else 360.0, 48, endpoint=False)
+    geometry, grid, detector = _geometry(32, kind, angles.astype(np.float32))
+    c = (np.arange(32) - 15.5) / 32
+    x, y, z = np.meshgrid(c, c, c, indexing="ij")
+    volume = np.zeros((32, 32, 32), np.float32)
+    for (cx, cy, cz), r in [((0.12, -0.08, 0.05), 0.1), ((-0.1, 0.1, -0.08), 0.07)]:
+        volume += np.exp(-((x - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2) / (2 * r * r))
+    poses = stack_view_poses(geometry, len(angles))
+    clean = project_joseph(jnp.asarray(volume), poses, grid, detector)
+    shift = jnp.tile(jnp.asarray([[2.3, 0.0]], jnp.float32), (len(angles), 1))
+    data = _prealign._shift_views(clean, shift)
+    seed = reprojection_det_u_seed(data, geometry, grid, detector)
+    assert seed.status == "ok_reprojection"
+    assert abs(seed.det_u_px + 2.3) < 0.1
