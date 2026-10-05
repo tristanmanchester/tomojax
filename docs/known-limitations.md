@@ -97,8 +97,10 @@ results from default CLI behavior and larger-motion targets.
   refilter every view, so smaller slabs reduce device storage at the cost of
   repeated filtering and transfers; runtime and compiler allocations remain
   additional memory costs.
-- The iterative solvers (CGLS, FISTA-TV, SPDHG-TV) need the volume, a few
-  volume-sized work arrays and the projections on the device.
+- The iterative solvers need the volume and a few volume-sized work arrays on
+  the device. FISTA-TV streams NumPy or memmap projections from host memory
+  when they are large; CGLS and SPDHG-TV also keep projection-sized arrays on
+  the device.
 - Pallas currently uses JAX's deprecated Triton backend. JAX 0.11.2 is tested
   on CPU and an Ada CUDA GPU, with the dependency constrained below 0.12.
   Migration and additional GPU coverage are still required before widening

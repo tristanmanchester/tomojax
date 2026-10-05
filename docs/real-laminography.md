@@ -138,8 +138,9 @@ volume.flush()
 ```
 
 Slabs are sized to the free GPU memory; a 1024³ laminography volume takes
-about 40 s on an 8 GB laptop GPU. The iterative solvers still need the volume
-and projections on the GPU.
+about 40 s on an 8 GB laptop GPU. `tomojax recon --algo fista` streams large
+projection stacks from host memory, so only its working volumes must fit on
+the GPU; CGLS and SPDHG need the projections on the GPU as well.
 
 ## Evaluate alignment after reconstruction
 

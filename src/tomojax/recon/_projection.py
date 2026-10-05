@@ -15,6 +15,7 @@ import jax
 import jax.numpy as jnp
 
 from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
+from tomojax.recon._host_stream import read_views
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -233,6 +234,8 @@ def least_squares_operators(
     batch_size: int,
     model: str = "ray",
     joseph_interpolation: str = "linear",
+    *,
+    stream: bool = False,
 ) -> tuple[
     Callable[[jax.Array, jax.Array], tuple[jax.Array, jax.Array]],
     Callable[[jax.Array, jax.Array], jax.Array],
@@ -240,7 +243,9 @@ def least_squares_operators(
     """Return ``(value_and_gradient, value)`` of ``0.5 ||A x - y||^2``.
 
     Each view batch is projected, compared with the data and transposed before
-    the next, so no sinogram-sized intermediate is ever stored.
+    the next, so no sinogram-sized intermediate is ever stored. With
+    ``stream``, ``y`` is the key of a host array registered with
+    :func:`host_source`, read one batch at a time.
     """
     ops = _Batches(
         poses, grid, detector, None, backend, batch_size, model, joseph_interpolation, False
@@ -248,7 +253,11 @@ def least_squares_operators(
 
     def batch_residual(volume: jax.Array, data: jax.Array, chunk: jax.Array) -> tuple:
         start, batch, valid = ops.select(chunk)
-        residual = ops.project(volume, start, batch) - ops.images(data, start)
+        if stream:
+            measured = read_views(data, start, (ops.size, detector.nv, detector.nu))
+        else:
+            measured = ops.images(data, start)
+        residual = ops.project(volume, start, batch) - measured
         return start, batch, jnp.where(valid[:, None, None], residual, 0.0)
 
     def squared(residual: jax.Array) -> jax.Array:

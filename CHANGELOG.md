@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Stream projections from host memory in FISTA-TV. NumPy or memmap stacks
+  larger than 40% of free device memory are read one view batch at a time
+  inside the compiled solve (`FistaConfig(stream_projections=...)` forces
+  either way), with identical results. A 512-cubed laminography scan with 3072
+  views (3.2 GB) runs on an 8 GB GPU at a 4.3 GB peak; where both fit,
+  streaming costs 4%. `tomojax recon --algo fista` passes host projections.
 - Add `tomojax recon --algo cgls`, optionally FBP-initialised with
   `--warm-start fbp`, so the command line has the fastest-converging
   unregularised solver the Python API already offered. Document aligning a

@@ -30,6 +30,7 @@ from tomojax.core.validation import (
 )
 
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
+from ._host_stream import host_source, should_stream
 from ._projection import (
     ProjectorBackend,
     ProjectorModel,
@@ -101,6 +102,8 @@ class _FistaRuntime:
     # (model, backend, views per batch) for the batched operators, or None for
     # the ray-model reference path.
     projector: tuple[str, str, int] | None = field(metadata={"static": True})
+    # The data argument is then a host_source key, read one batch at a time.
+    stream: bool = field(default=False, metadata={"static": True})
 
 
 @dataclass(frozen=True)
@@ -160,6 +163,11 @@ class FistaConfig:
     ``gather_dtype``, ``projector_unroll``, ``checkpoint_projector`` and
     ``grad_mode``. ``views_per_batch=None`` uses 64 views per batch with batched
     operators and one view at a time on the reference path.
+
+    ``stream_projections`` reads NumPy or memmap projections from host memory
+    one view batch at a time, so they never occupy the device whole. ``None``
+    streams when they would take more than 40% of free device memory; ``True``
+    always streams host arrays. Streaming needs the batched operators.
     """
 
     iters: int = 50
@@ -183,6 +191,7 @@ class FistaConfig:
     ray_integrator: str = "sampled"
     projector_model: ProjectorModel = "auto"
     projector_backend: ProjectorBackend = "auto"
+    stream_projections: bool | None = None
 
 
 jax.tree_util.register_dataclass(
@@ -666,6 +675,14 @@ def _prepare_fista_runtime(
     poses = stack_view_poses(geometry, n_views)
     validate_pose_stack(poses, n_views, context="fista_tv geometry")
     projector = _batched_projector(cfg, n_views, det_grid)
+    on_host = not isinstance(projections, jax.Array)
+    stream = on_host and (
+        bool(cfg.stream_projections)
+        if cfg.stream_projections is not None
+        else should_stream(projections)
+    )
+    if stream and projector is None:
+        raise ValueError("fista_tv: stream_projections requires the batched projection operators")
 
     lipschitz = cfg.L
     if lipschitz is None and projector is not None:
@@ -710,6 +727,7 @@ def _prepare_fista_runtime(
         volume_mask=volume_mask,
         detector_grid=det_grid,
         projector=projector,
+        stream=stream,
     )
 
 
@@ -763,7 +781,7 @@ def _data_term(
     if runtime.projector is not None:
         model, backend, batch = runtime.projector
         least_squares, squared_error = least_squares_operators(
-            runtime.poses, grid, detector, backend, batch, model
+            runtime.poses, grid, detector, backend, batch, model, stream=runtime.stream
         )
 
         def batched_value_and_grad(z: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
@@ -983,7 +1001,12 @@ def fista_tv(
         config=config,
         det_grid=det_grid,
     )
-    final = _run_fista_scan(grid, detector, projections, runtime)
+    if runtime.stream:
+        with host_source(np.asarray(projections)) as key:
+            final = _run_fista_scan(grid, detector, key, runtime)
+            final.x.block_until_ready()
+    else:
+        final = _run_fista_scan(grid, detector, projections, runtime)
     result = _FistaResult(
         volume=final.x,
         losses=final.loss,

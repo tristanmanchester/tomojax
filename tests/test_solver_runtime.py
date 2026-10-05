@@ -147,3 +147,28 @@ def test_positive_normal_bound_dominates_dense_spectrum_for_irregular_geometry(t
     )
     np.testing.assert_allclose(actual, expected, rtol=3e-5)
     assert actual >= np.linalg.svd(matrix, compute_uv=False)[0] ** 2 * (1 - 3e-5)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("batch", [2, 5])
+def test_fista_streams_host_projections_like_device_projections(tmp_path, batch):
+    grid = Grid(5, 4, 3, 0.8, 1.1, 1.3)
+    detector = Detector(6, 4, 0.9, 1.2, (0.17, -0.2))
+    geometry = LaminographyGeometry(grid, detector, np.linspace(0, 360, 7, endpoint=False), 30)
+    data = np.random.default_rng(5).random((7, 4, 6), dtype=np.float32)
+    stored = np.memmap(tmp_path / "views.f32", mode="w+", dtype=np.float32, shape=data.shape)
+    stored[:] = data
+    results = {}
+    for stream, projections in [(False, jnp.asarray(data)), (True, stored)]:
+        config = FistaConfig(
+            iters=4,
+            lambda_tv=0.01,
+            positivity=True,
+            projector_model="joseph",
+            projector_backend="jax",
+            views_per_batch=batch,
+            stream_projections=stream,
+        )
+        results[stream] = fista_tv(geometry, grid, detector, projections, config=config)
+    np.testing.assert_allclose(results[True][0], results[False][0], rtol=1e-6, atol=1e-7)
+    np.testing.assert_allclose(results[True][1]["loss"], results[False][1]["loss"], rtol=1e-5)

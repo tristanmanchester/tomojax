@@ -72,6 +72,13 @@ FBP ran out of memory at 768³. Laminography FBP leaves the missing cone empty,
 so it is a fast first look or initialiser rather than a converged
 reconstruction; see [the reconstruction matrix](research/system-matrix-2026-10-05.md).
 
+FISTA-TV streams large NumPy or memmap projection stacks from host memory one
+view batch at a time. On a 512³ laminography scan with 3072 views (3.2 GB of
+projections, more than fits beside FISTA's working volumes on the 8 GB GPU),
+ten positivity-constrained FISTA-TV iterations peaked at 4.3 GB of GPU memory.
+With 768 views, where both fit, streaming took 67.6 s against 65.0 s for
+device-resident projections.
+
 ## Iterative solver memory
 
 On a 512³ laminography scan with 768 views of 512² pixels (0.8 GB of
