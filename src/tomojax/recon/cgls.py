@@ -294,10 +294,12 @@ def _solve(
 
 
 def _as_float32(array: object) -> jax.Array:
-    # Cast host arrays on the host; a device-side cast would compile a separate program.
+    # Cast host arrays on the host; a device-side cast would compile a separate
+    # program. device_put avoids the transient second device copy that
+    # jnp.asarray makes of a host array.
     if isinstance(array, jax.Array):
         return array if array.dtype == jnp.float32 else array.astype(jnp.float32)
-    return jnp.asarray(np.asarray(array, dtype=np.float32))
+    return jax.device_put(np.asarray(array, dtype=np.float32))
 
 
 def cgls(

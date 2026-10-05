@@ -28,10 +28,11 @@ def _inputs(volume, poses, grid, detector, backend):
     validate_detector(detector, context)
     if not np.isfinite((*grid_volume_origin(grid), *detector.det_center)).all():
         raise ValueError(f"{context}: grid origin and detector centre must be finite")
-    volume = jnp.asarray(volume)
-    poses = jnp.asarray(poses)
     if jnp.iscomplexobj(volume) or jnp.iscomplexobj(poses):
         raise ValueError(f"{context}: volume and poses must be real")
+    # A dtype keeps jnp.asarray from staging a second device copy of a host array.
+    volume = jnp.asarray(volume, dtype=jnp.float32)
+    poses = jnp.asarray(poses, dtype=jnp.float32)
     if poses.ndim != 3 or poses.shape[0] < 1:
         raise ValueError(f"{context}: poses must have nonempty shape (views, 4, 4)")
     validate_pose_stack(poses, poses.shape[0], context=context)

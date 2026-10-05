@@ -26,6 +26,8 @@ from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
 from tomojax.recon.types import Regulariser
 
 if TYPE_CHECKING:
+    import numpy as np
+
     from tomojax.geometry import Detector, Geometry, Grid
 
 type ReconstructionAlgorithm = Literal["fbp", "fista", "spdhg"]
@@ -63,7 +65,7 @@ class ReconstructionAlgorithmRequest:
     geometry: Geometry
     grid: Grid
     detector: Detector
-    projections: jnp.ndarray
+    projections: jnp.ndarray | np.ndarray
     detector_grid: tuple[jnp.ndarray, jnp.ndarray] | None
     volume_mask: jnp.ndarray | None
     views_per_batch: int

@@ -113,6 +113,34 @@ FBP reconstructs every measured frequency exactly and leaves the cone empty, whi
 elongates features along the axis. Iterative reconstruction can fill part of the
 cone only from the volume bounds or the object prior.
 
+## Reconstruct scans larger than GPU memory
+
+`tomojax recon --algo fbp` streams projections from host memory, so only the
+volume must fit on the GPU. When the volume does not fit either, use
+`fbp_host` from Python with memory-mapped input and output:
+
+```python
+import numpy as np
+
+from tomojax.io import load_dataset
+from tomojax.geometry import LaminographyGeometry
+from tomojax.recon import fbp_host
+
+scan = load_dataset("corrected-lamino.nxs")
+grid, detector = scan.grid, scan.detector  # set these if the file lacks them
+tilt = scan.geometry_metadata["tilt_deg"]
+geometry = LaminographyGeometry(grid, detector, scan.angles_deg, tilt_deg=tilt)
+volume = np.lib.format.open_memmap(
+    "volume.npy", mode="w+", dtype=np.float32, shape=(grid.nx, grid.ny, grid.nz)
+)
+fbp_host(geometry, grid, detector, scan.projections, out=volume)
+volume.flush()
+```
+
+Slabs are sized to the free GPU memory; a 1024³ laminography volume takes
+about 40 s on an 8 GB laptop GPU. The iterative solvers still need the volume
+and projections on the GPU.
+
 ## Evaluate alignment after reconstruction
 
 If a geometry-checked, corrected scan still shows motion artifacts, follow the

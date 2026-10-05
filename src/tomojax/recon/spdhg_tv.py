@@ -690,7 +690,7 @@ def spdhg_tv(
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
-    projections: jnp.ndarray,
+    projections: jnp.ndarray | np.ndarray,
     *,
     weights: jnp.ndarray | None = None,  # same shape as projections; 0 for unmeasured
     init_x: jnp.ndarray | None = None,

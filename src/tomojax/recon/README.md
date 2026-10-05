@@ -23,11 +23,15 @@ Direct FBP pads, filters and backprojects one view batch at a time. An internal
 small stacks stay in one batch. This estimate is not a hard process-memory cap:
 input projections, output/accumulator volumes, compiler workspaces and runtime
 caches remain additional costs. The final partial batch counts each view once.
+Given a NumPy array or memmap, `fbp` streams view batches from host memory, so
+only the volume and one batch occupy the device.
 
-`fbp_host` reconstructs built-in parallel geometry from a NumPy array or memmap
-into host memory, processing axial slabs without putting the full projection
-stack or volume on the device. Slabs retain the detector rows needed for linear
-interpolation and the same horizontal filter tails as `fbp`:
+`fbp_host` also keeps the volume in host memory, for scans whose volume does
+not fit on the device. Built-in parallel geometry is processed in axial slabs
+that read only the detector rows they need; laminography and other geometry in
+x-slabs, each streaming every view batch once (filtering is repeated per slab).
+With `slices_per_batch=None`, non-parallel slabs are sized to about half of
+the free device memory, so a volume that fits takes one pass:
 
 ```python
 from tomojax.recon import FBPHostConfig, fbp_host
@@ -41,7 +45,7 @@ volume = fbp_host(
 
 Each slab uses the same compiled shape, including a final partial slab. Smaller
 slabs reduce device storage but increase transfer and dispatch costs. This API
-is not differentiable and rejects tilted/custom geometries and JAX input arrays.
+is not differentiable and rejects JAX input arrays.
 Input and output must not overlap, including separate mappings of the same file.
 Completed slabs are written immediately, so a later exception can leave partial
 output. Callers own memmap flushing. Device workspace and runtime caches remain

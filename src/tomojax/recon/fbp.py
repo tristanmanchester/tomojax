@@ -306,15 +306,15 @@ def _run_fbp_streamed(
             detector=detector,
             separable=separable,
         )
-        if backend == "pallas":
-            from ._fbp_pallas import backproject_filtered_pallas
-
-            update = backproject_filtered_pallas(
-                batch_poses, filtered, grid=grid, detector=detector, z_integer=z_integer
-            )
-        else:
-            update = _backproject_voxels_jax(batch_poses, filtered, grid=grid, detector=detector)
-        return accum + update
+        return _backproject_into(
+            accum,
+            batch_poses,
+            filtered,
+            grid=grid,
+            detector=detector,
+            backend=backend,
+            z_integer=z_integer,
+        )
 
     return jax.lax.fori_loop(
         0,
@@ -322,6 +322,121 @@ def _run_fbp_streamed(
         step,
         jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32),
     )
+
+
+def _backproject_into(
+    accum: jnp.ndarray,
+    poses: jnp.ndarray,
+    filtered: jnp.ndarray,
+    *,
+    grid: Grid,
+    detector: Detector,
+    backend: str,
+    z_integer: bool,
+) -> jnp.ndarray:
+    """Add filtered views to ``accum``; the CUDA kernel adds in place."""
+    if backend == "pallas":
+        from ._fbp_pallas import backproject_filtered_pallas
+
+        return backproject_filtered_pallas(
+            poses, filtered, grid=grid, detector=detector, z_integer=z_integer, accumulate=accum
+        )
+    return accum + _backproject_voxels_jax(poses, filtered, grid=grid, detector=detector)
+
+
+@jax.jit(
+    static_argnames=("grid", "detector", "backend", "separable", "z_integer"),
+    donate_argnums=(0,),
+)
+def _fbp_accumulate_batch(
+    accum: jnp.ndarray,
+    poses: jnp.ndarray,
+    rows: jnp.ndarray,
+    view_scale: jnp.ndarray,
+    params: jnp.ndarray,
+    spectrum: jnp.ndarray,
+    arc_length: jnp.ndarray,
+    *,
+    grid: Grid,
+    detector: Detector,
+    backend: str,
+    separable: bool,
+    z_integer: bool,
+) -> jnp.ndarray:
+    """Filter one batch of views and add its backprojection to ``accum`` in place."""
+    filtered = _filter_views(
+        _pad_detector(rows, detector),
+        view_scale,
+        params,
+        spectrum,
+        arc_length,
+        detector=detector,
+        separable=separable,
+    )
+    return _backproject_into(
+        accum, poses, filtered, grid=grid, detector=detector, backend=backend, z_integer=z_integer
+    )
+
+
+def _fbp_from_host(
+    poses: np.ndarray,
+    projections: np.ndarray,
+    view_scale: np.ndarray,
+    params: np.ndarray,
+    spectrum: jnp.ndarray,
+    arc_length: float,
+    *,
+    grid: Grid,
+    detector: Detector,
+    backend: str,
+    batch_size: int,
+    separable: bool,
+    z_integer: bool = False,
+    check_finite: bool = False,
+) -> jnp.ndarray:
+    """Stream host projections through the device in fixed-size view batches.
+
+    Only the output volume, one batch and its filtering workspace occupy the
+    device. The final batch is padded with zero-weight views so every batch
+    reuses one compiled step, and the next batch is transferred while the
+    current one runs.
+    """
+    n = projections.shape[0]
+    b = min(batch_size, n)
+
+    def batch(start: int) -> tuple[jnp.ndarray, ...]:
+        stop = min(start + b, n)
+        pad = b - (stop - start)
+        rows = np.asarray(projections[start:stop], dtype=np.float32)
+        if check_finite and not np.isfinite(rows).all():
+            raise ValueError("fbp_host: projections must be finite in FP32")
+        arrays = [poses[start:stop], rows, view_scale[start:stop], params[start:stop]]
+        if pad:
+            # Zero-weight views repeat the last pose and contribute nothing.
+            arrays = [
+                np.concatenate([a, np.repeat(a[-1:], pad, axis=0) * (0 if i in (1, 2) else 1)])
+                for i, a in enumerate(arrays)
+            ]
+        return tuple(jax.device_put(np.asarray(a, np.float32)) for a in arrays)
+
+    accum = jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
+    pending = batch(0)
+    for start in range(0, n, b):
+        current = pending
+        if start + b < n:
+            pending = batch(start + b)
+        accum = _fbp_accumulate_batch(
+            accum,
+            *current,
+            spectrum,
+            jnp.float32(arc_length),
+            grid=grid,
+            detector=detector,
+            backend=backend,
+            separable=separable,
+            z_integer=z_integer,
+        )
+    return accum
 
 
 def supports_parallel_fbp_z_integer(grid: Grid, detector: Detector) -> bool:
@@ -608,7 +723,7 @@ def fbp(
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
-    projections: jnp.ndarray,
+    projections: jnp.ndarray | np.ndarray,
     *,
     config: FBPConfig | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
@@ -639,7 +754,9 @@ def fbp(
         context="fbp projections",
     )
     validate_detector_grid(det_grid, detector, context="fbp det_grid")
-    proj = jnp.asarray(projections, dtype=jnp.float32)
+    # Host arrays (including memmaps) stream through the device batch by batch.
+    on_host = not isinstance(projections, jax.Array) and det_grid is None
+    proj = projections if on_host else jnp.asarray(projections, dtype=jnp.float32)
     # Precompute poses once
     T_all = stack_view_poses(geometry, n_views)
     validate_pose_stack(T_all, n_views, context="fbp geometry")
@@ -647,7 +764,7 @@ def fbp(
         return _fbp_explicit_detector_grid(T_all, proj, grid, detector, cfg, det_grid)
     cuda = all(
         device.platform == "gpu" and device.client.platform_version.lower().startswith("cuda")
-        for device in proj.devices()
+        for device in (T_all.devices() if on_host else proj.devices())
     )
     if cfg.backprojector == "pallas" and not cuda:
         raise ValueError("Pallas FBP requires CUDA arrays")
@@ -658,14 +775,33 @@ def fbp(
     else:
         filter_detector = _filter_detector(grid, detector, np.asarray(T_all), pad_v=not separable)
     spectrum = _rfft_filter_array(
-        cfg.filter_name, filter_detector.nu, float(detector.du), proj.dtype
+        cfg.filter_name, filter_detector.nu, float(detector.du), jnp.float32
     )
     n_fft_v = 1 if separable else _fft_length(filter_detector.nv)
     batch = _parallel_filter_batch_size(
         n_views, filter_detector.nv * n_fft_v, 2 * (spectrum.shape[0] - 1)
     )
+    backend = "pallas" if cuda and cfg.backprojector != "jax" else "jax"
+    z_integer = parallel and supports_parallel_fbp_z_integer(grid, detector)
     while True:
         try:
+            if on_host:
+                acc = _fbp_from_host(
+                    np.asarray(T_all, np.float32),
+                    proj,
+                    np.asarray(view_scale, np.float32),
+                    np.asarray(params, np.float32),
+                    spectrum,
+                    float(arc_length),
+                    grid=grid,
+                    detector=filter_detector,
+                    backend=backend,
+                    batch_size=batch,
+                    separable=separable,
+                    z_integer=z_integer,
+                )
+                acc.block_until_ready()
+                break
             acc = _run_fbp_streamed(
                 T_all,
                 proj,
@@ -675,9 +811,9 @@ def fbp(
                 jnp.float32(arc_length),
                 grid=grid,
                 detector=filter_detector,
-                backend="pallas" if cuda and cfg.backprojector != "jax" else "jax",
+                backend=backend,
                 batch_size=batch,
-                z_integer=parallel and supports_parallel_fbp_z_integer(grid, detector),
+                z_integer=z_integer,
                 separable=separable,
             )
             # Surface asynchronous allocation failures here, where a retry can use smaller batches.

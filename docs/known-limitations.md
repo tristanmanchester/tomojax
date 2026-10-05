@@ -92,10 +92,13 @@ results from default CLI behavior and larger-motion targets.
   correction. CUDA requires the optional `fourier-cuda12` extra; the NumPy
   reference is the default. Full projection/output storage stays on the host,
   while FFT plans, slab arrays and allocator caches add device memory.
-- `fbp_host` provides NumPy/memmap output using axial slabs for built-in parallel
-  geometry. It is not differentiable and does not support tilted scans. Smaller
-  slabs reduce device storage but can increase transfer and dispatch costs;
-  runtime and compiler allocations remain additional memory costs.
+- `fbp_host` provides NumPy/memmap output in volume slabs for every geometry
+  `fbp` accepts. It is not differentiable. Laminography slabs each stream and
+  refilter every view, so smaller slabs reduce device storage at the cost of
+  repeated filtering and transfers; runtime and compiler allocations remain
+  additional memory costs.
+- The iterative solvers (CGLS, FISTA-TV, SPDHG-TV) need the volume, a few
+  volume-sized work arrays and the projections on the device.
 - Pallas currently uses JAX's deprecated Triton backend. JAX 0.11.2 is tested
   on CPU and an Ada CUDA GPU, with the dependency constrained below 0.12.
   Migration and additional GPU coverage are still required before widening

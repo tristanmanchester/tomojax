@@ -29,7 +29,7 @@ Workflows outside the table above are research or expert diagnostics.
 |---|---|
 | Forward model and matched adjoint | Parallel rays with rigid poses, anisotropic voxels, and shifted grids/detectors; JAX reference and optional Pallas kernels |
 | Parallel FBP | JAX on CPU/CUDA; Pallas selected automatically on CUDA for built-in `ParallelGeometry` without an explicit detector grid |
-| Host-output parallel FBP | `fbp_host`: NumPy/memmap input and optional FP32 output; axial slabs on JAX CPU/CUDA or Pallas CUDA; built-in `ParallelGeometry` only; not differentiable |
+| Host-output FBP | `fbp_host`: NumPy/memmap input and optional FP32 output for every `fbp` geometry; parallel axial slabs or laminography x-slabs on JAX CPU/CUDA or Pallas CUDA; not differentiable. `fbp` itself streams NumPy/memmap projections batch by batch |
 | Fourier-slice inverse (opt-in Python API) | `fourier_reconstruct`: uniform unique half-turn parallel scans, offsets/anisotropic spacing/cropped grids; NumPy reference or optional CuPy CUDA; host arrays/memmaps and axial slabs; not differentiable |
 | General posed/laminography filtered adjoint | JAX; approximate initialization for incomplete-angle data |
 | Public FISTA-TV and SPDHG-TV | JAX with matched discrete adjoints; convergence regressions for parallel and tilted scans |

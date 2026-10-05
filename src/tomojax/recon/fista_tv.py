@@ -959,7 +959,7 @@ def fista_tv(
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
-    projections: jnp.ndarray,
+    projections: jnp.ndarray | np.ndarray,
     *,
     init_x: jnp.ndarray | None = None,
     config: FistaConfig | None = None,

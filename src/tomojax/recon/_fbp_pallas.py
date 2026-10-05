@@ -16,8 +16,7 @@ from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
 def _backproject_filtered_kernel(
     poses_ref: Any,
     projections_ref: Any,
-    out_ref: Any,
-    *,
+    *refs: Any,
     shape: tuple[int, int, int],
     origin: tuple[float, float, float],
     voxel: tuple[float, float, float],
@@ -28,6 +27,8 @@ def _backproject_filtered_kernel(
     block_size: int,
     z_integer: bool,
 ) -> None:
+    # With an accumulator, refs is (accumulator, aliased output).
+    acc_ref, out_ref = refs if len(refs) == 2 else (None, refs[0])
     nx, ny, nz = shape
     nv, nu = detector_shape
     du, dv = detector_spacing
@@ -71,6 +72,8 @@ def _backproject_filtered_kernel(
         return accum + value
 
     result = jax.lax.fori_loop(0, n_views, body, jnp.zeros((block_size,), dtype=jnp.float32))
+    if acc_ref is not None:
+        result = plt.load(acc_ref, mask=valid, other=0.0) + result
     plt.store(out_ref, result, mask=valid)
 
 
@@ -82,8 +85,12 @@ def _backprojection_call(
     z_integer: bool,
     interpret: bool,
     block_size: int,
+    accumulate: bool = False,
 ) -> Any:
     count = grid.nx * grid.ny * grid.nz
+    in_specs = [pl.no_block_spec, pl.no_block_spec]
+    if accumulate:
+        in_specs.append(pl.BlockSpec((block_size,), lambda block: (block,)))
     return pl.pallas_call(
         functools.partial(
             _backproject_filtered_kernel,
@@ -99,8 +106,9 @@ def _backprojection_call(
         ),
         out_shape=jax.ShapeDtypeStruct((count,), jnp.float32),
         grid=((count + block_size - 1) // block_size,),
-        in_specs=[pl.no_block_spec, pl.no_block_spec],
+        in_specs=in_specs,
         out_specs=pl.BlockSpec((block_size,), lambda block: (block,)),
+        input_output_aliases={2: 0} if accumulate else {},
         compiler_params=plt.CompilerParams(num_warps=4),
         interpret=interpret,
         name="tomojax_fbp_voxel_backprojection",
@@ -116,10 +124,22 @@ def backproject_filtered_pallas(
     z_integer: bool,
     interpret: bool = False,
     block_size: int = 512,
+    accumulate: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
-    """Sum filtered views per voxel, avoiding atomics and intermediate volumes."""
+    """Sum filtered views per voxel, avoiding atomics and intermediate volumes.
+
+    ``accumulate`` is added to the result in place.
+    """
     call = _backprojection_call(
-        grid, detector, int(poses.shape[0]), z_integer, interpret, block_size
+        grid,
+        detector,
+        int(poses.shape[0]),
+        z_integer,
+        interpret,
+        block_size,
+        accumulate is not None,
     )
-    result = call(poses, jnp.transpose(filtered, (0, 2, 1)))
-    return result.reshape((grid.nx, grid.ny, grid.nz))
+    operands = [poses, jnp.transpose(filtered, (0, 2, 1))]
+    if accumulate is not None:
+        operands.append(accumulate.reshape(-1))
+    return call(*operands).reshape((grid.nx, grid.ny, grid.nz))

@@ -44,7 +44,7 @@ class ReconRuntimePlan:
     detector: Detector
     detector_center_override: JsonValue
     geometry: Geometry
-    projections: jnp.ndarray
+    projections: jnp.ndarray | np.ndarray
     detector_grid: tuple[jnp.ndarray, jnp.ndarray] | None
     roi_mode: str
     is_parallel: bool
@@ -82,8 +82,14 @@ def build_recon_runtime_plan(command: ReconCommand) -> ReconRuntimePlan:
     if command.apply_saved_alignment and meta.align_params is not None:
         logging.info("Applying saved per-view alignment parameters from input metadata")
 
-    projections = _jnp_float32_array(meta.projections)
     det_grid = detector_grid_from_geometry_inputs(detector, geometry_meta)
+    # FBP streams host projections through the device in view batches, so a
+    # scan larger than device memory needs only its volume on the device.
+    projections = (
+        np.asarray(meta.projections, dtype=np.float32)
+        if command.algo == "fbp" and det_grid is None
+        else _jnp_float32_array(meta.projections)
+    )
     if det_grid is not None:
         logging.info(
             "Applying saved detector_roll_deg=%s from geometry metadata",
@@ -270,7 +276,7 @@ def _reconstruction_algorithm_request(
     geom: Geometry,
     recon_grid: Grid,
     detector: Detector,
-    projections: jnp.ndarray,
+    projections: jnp.ndarray | np.ndarray,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     volume_mask: jnp.ndarray | None,
     resolved_views_per_batch: int,

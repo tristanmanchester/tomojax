@@ -63,6 +63,15 @@ best relative L2 error of 0.076 in 1.13 s warm. TIGRE's FISTA reaches 0.101 in
 Unregularised CGLS is best at 0.138 (10 iterations). TIGRE's timings include
 its host transfers. This is one phantom and noise level, not a general ranking.
 
+## Scans larger than device memory
+
+`fbp_host` reconstructed a 1024³ laminography scan (30° tilt, 1024 views of
+1024² pixels) from a projection memmap into a volume memmap, 4.3 GB each, in
+37 s on the 8 GB laptop GPU, in two x-slabs. Before streaming, laminography
+FBP ran out of memory at 768³. Laminography FBP leaves the missing cone empty,
+so it is a fast first look or initialiser rather than a converged
+reconstruction; see [the reconstruction matrix](research/system-matrix-2026-10-05.md).
+
 ## Iterative solver memory
 
 On a 512³ laminography scan with 768 views of 512² pixels (0.8 GB of

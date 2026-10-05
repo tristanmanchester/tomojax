@@ -126,11 +126,30 @@ def test_host_slabs_reject_invalid_configuration(field, value):
         fbp_host(geometry, grid, detector, data, config=replace(FBPHostConfig(), **{field: value}))
 
 
-def test_host_slabs_reject_tilted_geometry_and_nonfinite_samples():
+@pytest.mark.parametrize("depth", [None, 1, 4, 20])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+def test_host_slabs_reconstruct_laminography_like_fbp(depth, backend):
+    if backend == "pallas" and jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
     grid, detector, geometry, data = scan()
-    tilted = LaminographyGeometry(grid, detector, geometry.thetas_deg, tilt_deg=30)
-    with pytest.raises(ValueError, match="ParallelGeometry"):
-        fbp_host(tilted, grid, detector, data)
+    angles = np.linspace(0.0, 360.0, 5, endpoint=False) + 7.0
+    tilted = LaminographyGeometry(grid, detector, angles, tilt_deg=30)
+    reference = np.asarray(fbp(tilted, grid, detector, data, config=FBPConfig(backprojector="jax")))
+    actual = fbp_host(
+        tilted,
+        grid,
+        detector,
+        data,
+        config=FBPHostConfig(slices_per_batch=depth, views_per_batch=2, backprojector=backend),
+    )
+    np.testing.assert_allclose(actual, reference, atol=4e-6, rtol=5e-5)
+
+
+@pytest.mark.parametrize("tilted", [False, True])
+def test_host_slabs_reject_nonfinite_samples(tilted):
+    grid, detector, geometry, data = scan()
+    if tilted:
+        geometry = LaminographyGeometry(grid, detector, geometry.thetas_deg, tilt_deg=30)
     data[0, 4, 2] = np.nan
     with pytest.raises(ValueError, match="finite"):
         fbp_host(geometry, grid, detector, data)

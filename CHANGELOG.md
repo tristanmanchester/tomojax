@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Reconstruct laminography and posed scans larger than device memory with
+  FBP. `fbp` given a NumPy array or memmap streams view batches from host
+  memory (bitwise-identical to device input), and `fbp_host` now accepts every
+  geometry `fbp` does, writing x-slabs sized to the free device memory. A
+  1024-cubed, 1024-view laminography FBP from and to memmaps (4.3 GB each) runs
+  in 37 s on an 8 GB GPU, where 768 cubed previously ran out of memory.
+  `tomojax recon --algo fbp` keeps projections on the host. The FBP kernel
+  accumulates view batches in place. `cgls`, `project_joseph` and parallel
+  `fbp_host` no longer make a transient second device copy of NumPy inputs.
 - Cut iterative-solver GPU memory. On a 512-cubed, 768-view laminography scan
   on an 8 GB GPU, CGLS (previously out of memory) peaks at 5.6 GB, FISTA-TV
   falls from 7.2 to 4.6 GB and SPDHG-TV (previously out of memory) peaks at
