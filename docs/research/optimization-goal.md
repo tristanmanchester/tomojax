@@ -97,9 +97,12 @@ remain separate requirements.
   for real data at this scale. Reconstructions match true-pose ones. +/-1 deg / +/-2 px motion is recovered in all three
   tested geometries; +/-3 deg / +/-10 px is not, so the 99% robustness target
   is unmet.
-- Per-iteration cost on tilted scans remains 2-3x ASTRA's: the matched Joseph
-  backprojection is limited by its enumeration loop, and three rewrites
-  (compact tiles, exact row intervals, a CUDA fixed-point splat) did not help.
+- Per-iteration cost on tilted scans: the matched Joseph backprojection is
+  limited by its footprint enumeration. Three Pallas rewrites (compact tiles,
+  exact row intervals, a CUDA fixed-point splat) did not help; a CUDA C gather
+  with four z voxels per thread sharing one footprint loop is 1.6x faster on
+  laminography and is used from 256 cubed, where structured laminography CGLS
+  now runs at 1.2-1.85x ASTRA's warm speed.
 
 The detailed record below is chronological and retains every experiment.
 

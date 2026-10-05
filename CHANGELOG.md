@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add a CUDA C gather transpose for linear Joseph plane sampling, compiled at
+  run time with CuPy (now part of the `cuda12` extra) and launched on XLA's
+  stream inside compiled solvers. Each thread loops once over the joint
+  footprint of four consecutive z voxels, and weights round exactly like the
+  forward projection. Laminography backprojection is 1.6x and parallel 1.3x
+  faster at 256-cubed scale; structured 256-cubed laminography CGLS runs in
+  1023 instead of 1372 ms warm and a 512-cubed FISTA-TV solve in 48.7 instead
+  of 63.1 s. It is used for volumes of 2^24 voxels and more, since its start-up
+  costs about 0.3 s per process; `TOMOJAX_CUDA_KERNELS` forces it on (1) or
+  off (0).
 - The alignment shift search reprojects, shifts and correlates 32 views at a
   time, so its padded correlation spectra stay bounded for long scans, and
   host-streamed FBP reads the next view batch while the current one runs.

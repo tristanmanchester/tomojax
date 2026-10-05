@@ -25,6 +25,8 @@ cpu = [
 ]
 cuda12 = [
     "jax[cuda12]>=0.11.2,<0.12 ; platform_system == 'Linux'",
+    # Compiles TomoJAX's CUDA C kernels at run time; without it Pallas kernels are used.
+    "cupy-cuda12x>=14.2,<14.3 ; platform_system == 'Linux'",
 ]
 fourier-cuda12 = [
     "cupy-cuda12x>=14.2,<14.3 ; platform_system == 'Linux'",

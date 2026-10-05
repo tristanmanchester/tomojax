@@ -1175,6 +1175,7 @@ cpu = [
     { name = "jax" },
 ]
 cuda12 = [
+    { name = "cupy-cuda12x", marker = "sys_platform == 'linux'" },
     { name = "jax", extra = ["cuda12"], marker = "sys_platform == 'linux'" },
 ]
 fourier-cuda12 = [
@@ -1204,6 +1205,7 @@ examples = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cupy-cuda12x", marker = "sys_platform == 'linux' and extra == 'cuda12'", specifier = ">=14.2,<14.3" },
     { name = "cupy-cuda12x", marker = "sys_platform == 'linux' and extra == 'fourier-cuda12'", specifier = ">=14.2,<14.3" },
     { name = "h5py", specifier = ">=3.14.0,<4" },
     { name = "imageio", extras = ["tifffile"], specifier = ">=2.37.3,<3" },

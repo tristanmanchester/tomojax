@@ -37,7 +37,14 @@ tested. The Pallas kernels depend on JAX's deprecated Triton backend, so the
 package constrains JAX below 0.12. Other GPU families are not yet covered by the
 published validation. See [accelerator scope](support-matrix.md#numerical-and-accelerator-scope).
 
-The optional CuPy Fourier inverse needs both extras:
+The `cuda12` extra also installs CuPy, which compiles a CUDA C gather for the
+Joseph transpose at first use (cached on disk). It is used for volumes of 2²⁴
+voxels (256³) and more, where it makes laminography backprojection about 1.6
+times faster; smaller volumes keep the Pallas kernel because the CuPy start-up
+costs about 0.3 s per process. `TOMOJAX_CUDA_KERNELS=1` forces it for every
+size and `0` disables it.
+
+The optional CuPy Fourier inverse also needs its own extra:
 
 ```bash
 uv sync --locked --extra cuda12 --extra fourier-cuda12 --no-dev

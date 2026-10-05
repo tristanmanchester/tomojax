@@ -383,3 +383,31 @@ def test_cubic_cancellation_bound_uses_magnitudes_of_physical_weights(backend):
     # Signed cubic weights cancel and underestimate the bound even for positive
     # data. This difference matters for componentwise FP32 stagnation checks.
     assert np.linalg.norm(a.T @ data.ravel() - expected) > 0.01 * np.linalg.norm(expected)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("nz", [4, 5, 7, 13])
+@pytest.mark.parametrize(
+    ("voxel", "spacing"), [((0.8, 1.1, 1.3), (0.7, 1.2)), ((2.0, 0.4, 1.3), (0.3, 0.5))]
+)
+def test_cuda_gather_matches_reference_transpose_and_accumulates(nz, voxel, spacing):
+    # check-public-imports: allow-private
+    from tomojax.core._cuda_joseph import cuda_gather_available, gather_transpose_cuda
+
+    if not cuda_gather_available():
+        pytest.skip("requires CUDA and CuPy")
+    g, d, poses = problem(voxel, spacing)
+    g = Grid(g.nx, g.ny, nz, *voxel, vol_origin=(-1.7, -0.9, -1.1))
+    coeff = plane_coefficients(jnp.asarray(poses), g, d)
+    rng = np.random.default_rng(nz)
+    images = jnp.asarray(rng.normal(size=(len(poses), d.nv, d.nu)), jnp.float32)
+    start = jnp.asarray(rng.normal(size=(g.nx, g.ny, g.nz)), jnp.float32)
+    expected = adjoint_jax(coeff, images, g, d)
+    swapped = jnp.transpose(images, (0, 2, 1))
+    actual = jax.jit(lambda c, y, x: gather_transpose_cuda(c, y, g, d, x))(coeff, swapped, start)
+    np.testing.assert_allclose(actual - start, expected, rtol=2e-5, atol=2e-5)
+    # The forward projection and this gather are matched transposes.
+    volume = jnp.asarray(rng.normal(size=(g.nx, g.ny, g.nz)), jnp.float32)
+    lhs = float(jnp.vdot(forward_pallas(coeff, volume, g, d), images))
+    rhs = float(jnp.vdot(volume, gather_transpose_cuda(coeff, swapped, g, d)))
+    assert abs(lhs - rhs) <= 1e-5 * max(abs(lhs), 1.0)

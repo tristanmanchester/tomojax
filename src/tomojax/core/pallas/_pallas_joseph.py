@@ -255,6 +255,13 @@ def adjoint_pallas(
     keeps one volume rather than an accumulator plus a per-batch volume.
     """
     validate_interpolation(interpolation)
+    if interpolation == "linear" and not absolute_weights and not interpret and block == 32:
+        from tomojax.core._cuda_joseph import gather_transpose_cuda, use_cuda_gather
+
+        if use_cuda_gather(grid):
+            return gather_transpose_cuda(
+                coeff, _swap_detector_axes(images), grid, detector, accumulate
+            )
     count = grid.nx * grid.ny * grid.nz
     operands = [coeff, _swap_detector_axes(images), _has_unit_rows(coeff)]
     in_specs = [pl.no_block_spec, pl.no_block_spec, pl.no_block_spec]
