@@ -153,8 +153,8 @@ ban-relative-imports = "parents"
 
 [tool.basedpyright]
 include = [
-    "src/tomojax/align/api.py",
-    "src/tomojax/align/__init__.py",
+    "src/tomojax/alignment/api.py",
+    "src/tomojax/alignment/__init__.py",
     "src/tomojax/backends/api.py",
     "src/tomojax/cli",
     "src/tomojax/core/api.py",

@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 # check-public-imports: allow-private
-from tomojax.align._pose._pose_block import pose_block_solver
+from tomojax.alignment._pose._pose_block import pose_block_solver
 
 
 @pytest.mark.numerical
@@ -44,7 +44,7 @@ def test_pose_factorization_matches_dense_second_difference_system(views, smooth
 
 
 def test_joint_solver_configuration_rejects_unknown_selection():
-    from tomojax.align import AlignConfig
+    from tomojax.alignment import AlignConfig
 
     assert AlignConfig().gn_joint_solver == "stacked"
     with pytest.raises(ValueError, match="gn_joint_solver"):

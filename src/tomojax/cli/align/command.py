@@ -8,7 +8,7 @@ from typing import Literal, cast
 
 import numpy as np
 
-from tomojax.align.api import (
+from tomojax.alignment.api import (
     PUBLIC_SCHEDULE_PRESETS,
     AlignmentLossConfig,
     DofBounds,
@@ -18,7 +18,7 @@ from tomojax.align.api import (
     parse_loss_schedule,
     parse_loss_spec,
 )
-from tomojax.geometry import DISK_VOLUME_AXES
+from tomojax.geometry.api import DISK_VOLUME_AXES
 
 type AlignmentMode = Literal["cor", "pose", "auto", "max", "cor_then_pose"]
 

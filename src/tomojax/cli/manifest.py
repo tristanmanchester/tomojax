@@ -9,7 +9,7 @@ import platform
 import sys
 from typing import TYPE_CHECKING, Protocol, cast
 
-from tomojax.io import JsonValue, normalize_json
+from tomojax.io.api import JsonValue, normalize_json
 
 if TYPE_CHECKING:
     import argparse

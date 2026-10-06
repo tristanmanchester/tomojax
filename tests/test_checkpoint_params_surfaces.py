@@ -3,8 +3,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import tomojax.align.api as align_api
-from tomojax.align.api import (
+import tomojax.alignment.api as align_api
+from tomojax.alignment.api import (
     AlignmentCheckpoint,
     AlignmentCheckpointGeometrySnapshot,
     AlignmentCheckpointMetadataInput,
@@ -55,7 +55,7 @@ def test_checkpoint_metadata_exposes_only_structured_builder() -> None:
 
     metadata = build_alignment_checkpoint_metadata_from_input(_metadata_input())
 
-    assert metadata["checkpoint_kind"] == "tomojax.align.checkpoint"
+    assert metadata["checkpoint_kind"] == "tomojax.alignment.checkpoint"
     assert metadata["projection_shape"] == [5, 6, 7]
     assert metadata["geometry_meta"] == {"tilt_deg": 55.0}
 

@@ -7,7 +7,7 @@ from typing import TypedDict
 import numpy as np
 
 from tomojax.core.geometry.base import Detector, DetectorDict, Grid, GridDict
-from tomojax.geometry import DISK_VOLUME_AXES
+from tomojax.geometry.api import DISK_VOLUME_AXES
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 

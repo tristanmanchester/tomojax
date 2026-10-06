@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Literal, cast
 import numpy as np
 
 from tomojax.cli.config import ConfigValue, parse_args_with_config
-from tomojax.geometry import DISK_VOLUME_AXES
+from tomojax.geometry.api import DISK_VOLUME_AXES
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

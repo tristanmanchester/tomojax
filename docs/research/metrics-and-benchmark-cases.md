@@ -40,8 +40,8 @@ of every possible scan.
 Sources: [reconstruction API](../../src/tomojax/recon/api.py),
 [multiresolution helper](../../src/tomojax/recon/multires.py),
 [FISTA core](../../src/tomojax/recon/fista_tv_core.py),
-[alignment configuration](../../src/tomojax/align/_config.py), and
-[reconstruction layer](../../src/tomojax/align/_objectives/recon_layer.py).
+[alignment configuration](../../src/tomojax/alignment/_config.py), and
+[reconstruction layer](../../src/tomojax/alignment/_objectives/recon_layer.py).
 
 ## Measurement definitions
 
@@ -236,10 +236,10 @@ precision as well as backend policy. Compare both matched numerical settings
 and complete profiles at matched achieved quality. Some geometry-gradient paths
 explicitly require JAX even when Pallas is requested. Value-only proposal speed
 is not a measurement of pose-gradient or complete alignment speed.
-Sources: [profiles](../../src/tomojax/align/_profiles.py),
-[objective backend routing](../../src/tomojax/align/_objectives/fixed_volume.py),
-[optimizer diagnostics](../../src/tomojax/align/optimizers.py), and
-[quality policies](../../src/tomojax/align/_quality_policy.py).
+Sources: [profiles](../../src/tomojax/alignment/_profiles.py),
+[objective backend routing](../../src/tomojax/alignment/_objectives/fixed_volume.py),
+[optimizer diagnostics](../../src/tomojax/alignment/optimizers.py), and
+[quality policies](../../src/tomojax/alignment/_quality_policy.py).
 
 ## Projector and kernel metrics
 
@@ -367,7 +367,7 @@ The current DOF registry has five pose parameters and five setup parameters:
 
 Angle-suffixed setup names have radian-valued internal state and degree-facing
 display/configuration conventions; record conversions rather than assuming the
-name determines storage units. Source: [DOF registry](../../src/tomojax/align/_model/dof_specs.py).
+name determines storage units. Source: [DOF registry](../../src/tomojax/alignment/_model/dof_specs.py).
 
 Cross those parameters with these motion/error patterns:
 
@@ -412,7 +412,7 @@ Stage roles are proposal, setup, reconstruction, refine, and verify. Internal
 quality policies also distinguish proposal, fast, refine, verify, final, and
 reference. Do not compare a cheap proposal with a verified final reconstruction
 as if they were equivalent work.
-Source: [schedule definitions and validation](../../src/tomojax/align/_model/schedules.py).
+Source: [schedule definitions and validation](../../src/tomojax/alignment/_model/schedules.py).
 
 ### Objective and optimizer combinations
 
@@ -450,8 +450,8 @@ geometry/volume accuracy. Include per-resolution loss schedules. Likelihood
 losses must receive data in an appropriate domain. Different losses have
 different scales; compare common held-out/physical metrics rather than raw loss
 values across families.
-Sources: [loss registry](../../src/tomojax/align/_objectives/loss_specs.py) and
-[loss adapters and optimizer support](../../src/tomojax/align/_objectives/loss_adapters.py).
+Sources: [loss registry](../../src/tomojax/alignment/_objectives/loss_specs.py) and
+[loss adapters and optimizer support](../../src/tomojax/alignment/_objectives/loss_adapters.py).
 
 ## Execution cases
 
@@ -494,8 +494,8 @@ Relevant existing locations:
 - [Fixed-quality external solver comparison](../../bench/compare_reconstructions.py)
 - [Internal FISTA diagnostic](../../bench/fista_projection_benchmark.py)
 - [Reconstruction convergence tests](../../tests/test_reconstruction_convergence.py)
-- [Alignment result schema](../../src/tomojax/align/_results.py)
-- [Alignment loop timing](../../src/tomojax/align/_pose/_pose_loop.py)
+- [Alignment result schema](../../src/tomojax/alignment/_results.py)
+- [Alignment loop timing](../../src/tomojax/alignment/_pose/_pose_loop.py)
 - [Measured performance report](../performance.md)
 
 ## Future capability benchmarks

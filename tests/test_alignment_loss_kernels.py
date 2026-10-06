@@ -5,13 +5,13 @@ import jax.numpy as jnp
 import pytest
 
 # check-public-imports: allow-private
-from tomojax.align._objectives import fixed_volume
+from tomojax.alignment._objectives import fixed_volume
 
 # check-public-imports: allow-private
-from tomojax.align._objectives.loss_kernels import _loss_barron, _loss_swd
+from tomojax.alignment._objectives.loss_kernels import _loss_barron, _loss_swd
 
 # check-public-imports: allow-private
-from tomojax.align._objectives.loss_state import LossState
+from tomojax.alignment._objectives.loss_state import LossState
 from tomojax.geometry import Detector, Grid
 
 

@@ -509,7 +509,9 @@ extern "C" __global__ void sep_adjoint(
         float Sa = c[a], Sb = c[b], Sc = c[2], DVc = c[11];
         float K = (float)k - Sa;
         float ra0 = c[3 + a] - c[a], rb0 = c[3 + b] - c[b], DUa = c[6 + a], DUb = c[6 + b];
-        float g1 = (float)b0 - 1.f - Sb, g2 = (float)(b0 + TB) - Sb;
+        // The tile's rows inside the volume: a far edge beyond it can project through
+        // infinity when the source is close, giving the wrong column range.
+        float g1 = (float)b0 - 1.f - Sb, g2 = (float)min(b0 + TB, nb) - Sb;
         float u1 = (K * rb0 - g1 * ra0) / (g1 * DUa - K * DUb);
         float u2 = (K * rb0 - g2 * ra0) / (g2 * DUa - K * DUb);
         int ulo_all = max((int)floorf(fminf(u1, u2)) - 1, ab[0]);
@@ -649,8 +651,9 @@ extern "C" __global__ void plane_adjoint(
             float umin = 1e30f, umax = -1e30f, vmin = 1e30f, vmax = -1e30f;
             #pragma unroll
             for (int q = 0; q < 4; ++q) {
-                float pb = q & 1 ? (float)(b0 + PB) : (float)(b0 - 1);
-                float pc = q & 2 ? (float)(c0 + PC) : (float)(c0 - 1);
+                // Corners of the tile's part inside the volume (see sep_adjoint).
+                float pb = q & 1 ? (float)(b0 + nb0) : (float)(b0 - 1);
+                float pc = q & 2 ? (float)(c0 + nc0) : (float)(c0 - 1);
                 float pk = (float)k;
                 float d0 = (a == 0 ? pk : pb) - c[0];
                 float d1 = (a == 1 ? pk : (a == 0 ? pb : pc)) - c[1];

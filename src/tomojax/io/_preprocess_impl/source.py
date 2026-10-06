@@ -288,7 +288,7 @@ def _optional_sample_metadata(
     n_sample_views: int,
     selected_sample_view_indices: np.ndarray,
 ) -> tuple[np.ndarray | None, np.ndarray | None, dict[str, bool]]:
-    align = entry.get("processing/tomojax/align")
+    align = entry.get("processing/tomojax/alignment")
     if not isinstance(align, h5py.Group):
         return None, None, {"align_params": False, "angle_offset_deg": False}
 

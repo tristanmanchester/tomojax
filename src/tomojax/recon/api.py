@@ -84,6 +84,15 @@ class ReconstructionResult:
     algorithm_config: dict[str, object]
 
 
+def default_views_per_batch(algorithm: str) -> int:
+    """Views per device batch an algorithm uses unless told otherwise.
+
+    SPDHG's batch is its stochastic block size; the other solvers' batched
+    operators launch one projector call per batch.
+    """
+    return {"spdhg": 16, "fista": 64, "cgls": 64}.get(str(algorithm).lower(), 1)
+
+
 def run_reconstruction_algorithm(request: ReconstructionAlgorithmRequest) -> ReconstructionResult:
     """Run the selected reconstruction algorithm from resolved geometry and projections."""
     if request.options.algorithm == "fbp":
@@ -366,6 +375,7 @@ __all__ = [
     "cgls_multires",
     "clear_filter_caches",
     "default_fbp_scale",
+    "default_views_per_batch",
     "fbp",
     "fbp_host",
     "fista_tv",

@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tomojax.geometry import (
+from tomojax.geometry.api import (
     CalibrationState,
     CalibrationVariable,
     build_calibrated_geometry_metadata_patch,

@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- **Breaking:** a workflow API at the package root. `tomojax.Scan` holds
+  projections and the geometry that produced them; `tomojax.load` reads
+  TomoJAX datasets and Nikon `.xtekct` scans (applying a saved alignment),
+  `tomojax.reconstruct(scan, method)` runs `fbp` (FDK for cone beams, host
+  slabs when large), `cgls`, `fista` or `spdhg` and rejects options the method
+  does not take, `tomojax.align(scan, mode=...)` returns the scan with its
+  corrections applied, and `tomojax.save` writes scans, reconstructions and
+  alignments. `tomojax.project` and `tomojax.backproject` project any geometry
+  (cone beams included, which had no public projector). `import tomojax` still
+  does not import JAX.
+- **Breaking:** `tomojax.align` (the subpackage) is now `tomojax.alignment`, so
+  the name `tomojax.align` is the function. Alignment modes are `pose`, `cor`,
+  `cor-then-pose` and `full` (formerly `auto`; `max` is `full` at
+  `quality="reference"`), planned by `tomojax.alignment.alignment_plan` for
+  Python and the CLI alike; the cone-beam axis calibration moved from the CLI
+  into the library.
+- **Breaking:** package roots export what users call; implementation helpers
+  moved to each package's `.api` module (`tomojax.recon` 28 names to 22,
+  `tomojax.geometry` 38 to 16, `tomojax.io` 25 to 12). The geometry-level
+  single-resolution `align` and `coupled_pose_config` are in
+  `tomojax.alignment.api`.
+- Fix the CUDA cone-beam transpose for volumes smaller than its 32- or
+  64-voxel tiles: a tile's far edge, close to the source, projected through
+  infinity and dropped detector columns (errors up to 30% at 8-cubed).
+
 - `tomojax preprocess` corrects two lab-CT artefacts in absorption data:
   `--beam-hardening C1,C2,...` maps each value p to `C1 p + C2 p^2 + ...`, and
   `--remove-stripes WIDTH` removes rings by subtracting each detector pixel's
@@ -112,7 +137,7 @@
   `stream_projections` (``None`` streams stacks above 40% of free device memory).
 - Report the detector-u (centre-of-rotation) offset implied by pose
   alignment: `tomojax align` logs it and writes `implied_detector_u_px` to the
-  manifest, and `tomojax.align.api.implied_detector_offset` computes it. Pose
+  manifest, and `tomojax.alignment.api.implied_detector_offset` computes it. Pose
   mode absorbs such an offset exactly into the per-view translations; the
   report separates the constant part from the view-dependent shift of a rigid
   object translation.
@@ -225,7 +250,7 @@
   44 minutes with the same 0.003 deg rotation accuracy and a better volume, and
   +/-3 deg motion is recovered in 64-cubed laminography where a single level
   stopped at 0.037 deg.
-- Add `tomojax.align.coupled_pose_config(**overrides)`, the configuration
+- Add `tomojax.alignment.coupled_pose_config(**overrides)`, the configuration
   `tomojax align --mode pose` runs, for Python callers; `AlignConfig()` keeps
   its older alternating defaults. Add an alignment example and README figure:
   a 96-cubed laminography scan with +/-1 deg and +/-2 px per-view motion goes

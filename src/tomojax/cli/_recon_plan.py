@@ -10,27 +10,21 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.backends import default_gather_dtype, estimate_views_per_batch_info
-from tomojax.geometry import (
-    Detector,
-    Geometry,
-    Grid,
-    detector_grid_from_geometry_inputs,
-)
-from tomojax.io import (
-    ProjectionDataset,
-    build_geometry_from_dataset_metadata,
-    load_projection_payload,
-)
+from tomojax.geometry import Detector, Geometry, Grid
+from tomojax.geometry.api import detector_grid_from_geometry_inputs
+from tomojax.io import ProjectionDataset, build_geometry_from_dataset_metadata
+from tomojax.io.api import load_projection_payload
 from tomojax.recon.api import (
     ReconstructionAlgorithmOptions,
     ReconstructionAlgorithmRequest,
+    default_views_per_batch,
 )
 
 from ._recon_command import ReconCommand
 from ._reconstruction_region import resolve_reconstruction_region, solver_volume_mask
 
 if TYPE_CHECKING:
-    from tomojax.io import JsonValue
+    from tomojax.io.api import JsonValue
 
 
 @dataclass(frozen=True)
@@ -175,12 +169,6 @@ def _resolve_gather_dtype(requested: str) -> str:
     return default_gather_dtype() if value == "auto" else value
 
 
-def _default_views_per_batch(algo: str) -> int:
-    # SPDHG's batch is its stochastic block size; FISTA's batched operators
-    # launch one projector call per batch.
-    return {"spdhg": 16, "fista": 64, "cgls": 64}.get(str(algo).lower(), 1)
-
-
 def _resolve_views_per_batch(
     requested: int | str | None,
     *,
@@ -193,7 +181,7 @@ def _resolve_views_per_batch(
 ) -> tuple[int, str]:
     """Resolve CLI batching after ROI/grid choices are known."""
     if requested is None:
-        return _default_views_per_batch(algo), "default"
+        return default_views_per_batch(algo), "default"
 
     if isinstance(requested, str) and requested.lower() == "auto":
         estimate = estimate_views_per_batch_info(

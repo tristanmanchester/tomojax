@@ -9,7 +9,7 @@ policy, and multiresolution utilities used by higher-level domains.
 
 Higher-level packages should treat `tomojax.core` as the implementation owner for
 the base math and execution contracts. Product-facing APIs are layered in
-`tomojax.geometry`, `tomojax.forward`, `tomojax.recon`, `tomojax.align`, and
+`tomojax.geometry`, `tomojax.forward`, `tomojax.recon`, `tomojax.alignment`, and
 `tomojax.io`.
 
 ## Public API

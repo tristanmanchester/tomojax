@@ -13,14 +13,14 @@ import jax.numpy as jnp
 
 from tomojax.core.geometry import Detector, Grid
 from tomojax.core.projector import forward_project_view_T
-from tomojax.geometry import (
+from tomojax.geometry.api import (
     axis_pose_stack,
     axis_unit_from_rotations,
     detector_grid_from_calibration,
 )
 
 if TYPE_CHECKING:
-    from tomojax.geometry import GeometryState
+    from tomojax.geometry.api import GeometryState
 
 ProjectionOperatorName = Literal["core_trilinear_ray"]
 

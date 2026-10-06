@@ -88,7 +88,7 @@ def plan(args: argparse.Namespace) -> None:
     """Write the grid, nominal and true detector, poses and motion to ``plan.npz``."""
     import jax.numpy as jnp
 
-    from tomojax.align.api import apply_pose_updates
+    from tomojax.alignment.api import apply_pose_updates
     from tomojax.geometry import Detector, Grid, LaminographyGeometry, stack_view_poses
 
     v = args.voxel_mm
@@ -297,7 +297,7 @@ def finish(args: argparse.Namespace) -> None:
 
     from tomojax.forward import project_joseph
     from tomojax.geometry import Detector, Grid
-    from tomojax.io import NXTomoMetadata, save_nxtomo
+    from tomojax.io.api import NXTomoMetadata, save_nxtomo
 
     data = np.load(args.out / "plan.npz")
     rendered = np.load(args.out / "render.npz")

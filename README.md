@@ -21,7 +21,7 @@ independent reconstruction accuracy. [Reproduce the figure](examples/README.md#r
 
 ![Truth, a nominal-pose reconstruction, and a jointly aligned reconstruction of a laminography scan with random per-view motion.](images/alignment-example.png)
 
-`tomojax align` and `tomojax.align` solve the volume and each view's pose
+`tomojax align` and `tomojax.alignment` solve the volume and each view's pose
 together. Here a 96³ laminography scan with ±1° and ±2 px of random per-view
 motion goes from 0.57 to 0.063 relative error, with rotations recovered to
 0.0027°, in 14 s on a laptop GPU. The measurements are analytic integrals of
@@ -70,17 +70,32 @@ For CUDA installation, wheel installation, and device checks, see
 
 The CLI provides FBP, CGLS, FISTA-TV, and SPDHG-TV reconstruction. FBP and
 FISTA-TV stream projections from host memory, so scans larger than the GPU
-need only their volumes on it; `fbp_host` in the Python API also keeps the
-volume on the host. On an 8 GB laptop GPU, a 1024³ laminography FBP from and to
+need only their volumes on it; FBP and FDK reconstruct volumes too large for
+the GPU in slabs on the host. On an 8 GB laptop GPU, a 1024³ laminography FBP from and to
 disk takes 37 s. The Python API adds an opt-in Fourier inverse for uniform
 parallel scans. CPU paths use JAX; optional Pallas kernels accelerate selected
 operations on CUDA. Volumes use `(x, y, z)` and projections `(view, v, u)` in
 Python. Detector and voxel spacings must use the same physical length unit.
 
-Public modules are `tomojax.io`, `tomojax.geometry`, `tomojax.forward`,
-`tomojax.recon`, `tomojax.align`, and `tomojax.datasets`. Start with the
-[complete projection/reconstruction example](examples/simulate_and_reconstruct.py)
-or browse the [documentation index](docs/README.md).
+In Python, a `Scan` holds projections and their geometry, and every
+operation returns a result that carries its geometry:
+
+```python
+import tomojax as tj
+
+scan = tj.load("scan.nxs")                        # or a Nikon .xtekct
+recon = tj.reconstruct(scan)                      # FBP; FDK for cone beams
+recon = tj.reconstruct(scan, "cgls", iterations=50)
+result = tj.align(scan, mode="cor-then-pose")     # result.scan carries the corrections
+tj.save("recon.nxs", tj.reconstruct(result.scan))
+```
+
+`tj.Scan(projections, geometry)` builds a scan from arrays, and
+`tj.project(geometry, volume)` simulates one for any geometry. The building
+blocks behind these are in `tomojax.recon`, `tomojax.alignment`,
+`tomojax.geometry`, `tomojax.io`, `tomojax.forward` and `tomojax.datasets`.
+Start with the [complete example](examples/simulate_and_reconstruct.py) or
+browse the [documentation index](docs/README.md).
 
 ## Evidence and current limits
 

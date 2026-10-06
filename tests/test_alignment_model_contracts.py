@@ -4,14 +4,14 @@ import numpy as np
 import pytest
 
 # check-public-imports: allow-private
-from tomojax.align._geometry.geometry_blocks import _theta_span_from_geometry
+from tomojax.alignment._geometry.geometry_blocks import _theta_span_from_geometry
 
 # check-public-imports: allow-private
-from tomojax.align._geometry.initializers import projection_pair_det_u_seed
+from tomojax.alignment._geometry.initializers import projection_pair_det_u_seed
 
 # check-public-imports: allow-private
-from tomojax.align._stages._reconstruction_stage import _is_oom_error_message
-from tomojax.align.api import AlignmentSchedule, AlignmentStage, SetupGeometryState
+from tomojax.alignment._stages._reconstruction_stage import _is_oom_error_message
+from tomojax.alignment.api import AlignmentSchedule, AlignmentStage, SetupGeometryState
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 
 

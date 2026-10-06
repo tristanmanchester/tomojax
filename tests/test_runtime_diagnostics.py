@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import pytest
 
 # check-public-imports: allow-private
-from tomojax.align._objectives import fixed_volume
+from tomojax.alignment._objectives import fixed_volume
 
 # check-public-imports: allow-private
 from tomojax.backends import _memory, estimate_views_per_batch_info
@@ -85,7 +85,7 @@ def test_pallas_support_probe_logs_debug_before_jax_fallback(
 
     with caplog.at_level(
         logging.DEBUG,
-        logger="tomojax.align._objectives.fixed_volume",
+        logger="tomojax.alignment._objectives.fixed_volume",
     ):
         reason = fixed_volume._pallas_sinogram_fallback_reason(
             pose_stack=jnp.eye(4, dtype=jnp.float32)[None, :, :],

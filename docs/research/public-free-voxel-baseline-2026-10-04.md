@@ -4,7 +4,7 @@ All six scheduled cells completed one fresh-process and seven repeated public al
 
 The [frozen pilot specification](public-free-voxel-pilot.md) defines the independent random-voxel objects, 61 irregular angles, physical motion, noise and unchanged gates. Every voxel and all five per-view pose parameters are optimized from zero volume and nominal geometry. Verification permits one common rigid object frame, applied to both volume and poses; it permits no per-view registration or amplitude fitting.
 
-The run used the public `tomojax.align.align` API, 64 outer iterations, 20 reconstruction iterations per outer step, FP32 sampling, central-difference Gauss–Newton, positivity, and no TV penalty. All unsuccessful calls exhausted the declared outer budget.
+The run used the public `tomojax.alignment.align` API, 64 outer iterations, 20 reconstruction iterations per outer step, FP32 sampling, central-difference Gauss–Newton, positivity, and no TV penalty. All unsuccessful calls exhausted the declared outer budget.
 
 Cold timing starts before worker launch and includes imports, data loading, setup, transfers, compilation and every verification. Warm timing includes the same complete API solve and verification in the initialized process. Independent fixture generation precedes the worker. Per-PID GPU memory was sampled every requested 10 ms across the entire worker; brief allocation peaks can be missed. GPU jobs were serialized. CPU validation and diagnostic jobs ran separately during parts of this queue.
 

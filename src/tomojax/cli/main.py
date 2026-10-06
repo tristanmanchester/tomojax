@@ -158,7 +158,7 @@ def _run_command_boundary(command_name: str, runner: CliRunner) -> int:
 
 
 def _expected_cli_errors() -> tuple[type[BaseException], ...]:
-    from tomojax.align.api import CheckpointError
+    from tomojax.alignment.api import CheckpointError
 
     return (OSError, ValueError, CheckpointError)
 

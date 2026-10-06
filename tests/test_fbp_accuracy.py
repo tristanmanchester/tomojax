@@ -105,7 +105,7 @@ def test_fbp_keeps_filtered_tails_at_shifted_volume_corners(
             expected += view_weight * weight * np.sum(kernel * row, axis=-1)
     assert outside_samples > expected.size
     if backend == "helper":
-        from tomojax.recon import run_parallel_fbp_direct_pallas
+        from tomojax.recon.api import run_parallel_fbp_direct_pallas
 
         poses = np.array([geometry.pose_for_view(i) for i in range(len(angles))], np.float32)
         poses[:, 0, 3] = 2.2

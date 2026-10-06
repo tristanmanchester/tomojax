@@ -8,14 +8,8 @@ import pytest
 
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 from tomojax.io import ProjectionDataset, load_dataset, save_dataset
-from tomojax.recon import (
-    FBPConfig,
-    FistaConfig,
-    clear_filter_caches,
-    default_fbp_scale,
-    fbp,
-    fista_tv,
-)
+from tomojax.recon import FBPConfig, FistaConfig, fbp, fista_tv
+from tomojax.recon.api import clear_filter_caches, default_fbp_scale
 
 # check-public-imports: allow-private
 from tomojax.recon.fbp import _run_fbp_generic_with_oom_fallback

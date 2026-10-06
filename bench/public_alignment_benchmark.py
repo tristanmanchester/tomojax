@@ -308,8 +308,8 @@ def one_run(
     import jax
     import jax.numpy as jnp
 
-    from tomojax.align import AlignConfig, align, align_multires
-    from tomojax.align.api import L2LossSpec
+    from tomojax.alignment import AlignConfig, align_multires
+    from tomojax.alignment.api import L2LossSpec, align
     from tomojax.geometry import LaminographyGeometry, ParallelGeometry
 
     fixture = load_fixture(path)
@@ -381,7 +381,7 @@ def one_run(
         "volume_degrees_of_freedom": int(volume.size),
         "pose_degrees_of_freedom": int(parameters.size),
         "execution_profile": info.get("execution_profile"),
-        "solver": "public tomojax.align.align",
+        "solver": "public tomojax.alignment.align",
     }
 
 

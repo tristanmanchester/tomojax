@@ -8,7 +8,7 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from tomojax.align.api import (
+from tomojax.alignment.api import (
     AlignConfig,
     AlignInfo,
     AlignmentLossConfig,

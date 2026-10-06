@@ -10,13 +10,13 @@ import numpy as np
 import pytest
 
 # check-public-imports: allow-private
-from tomojax.align._geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
+from tomojax.alignment._geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
 
 # check-public-imports: allow-private
-from tomojax.align._model.state import AlignmentState
+from tomojax.alignment._model.state import AlignmentState
 
 # check-public-imports: allow-private
-from tomojax.align._objectives import recon_layer
+from tomojax.alignment._objectives import recon_layer
 
 # check-public-imports: allow-private
 from tomojax.core.projector import forward_project_view_T

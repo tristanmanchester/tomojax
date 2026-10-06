@@ -26,7 +26,7 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from tomojax.align.api import se3_from_5d
+from tomojax.alignment.api import se3_from_5d
 from tomojax.forward import joseph_pose_normal_equations, project_joseph
 from tomojax.geometry import Detector, Grid, grid_volume_origin
 

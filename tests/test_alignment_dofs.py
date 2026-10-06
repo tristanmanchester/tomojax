@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from tomojax.align.api import (
+from tomojax.alignment.api import (
     AlignConfig,
     GaugePolicyError,
     alignment_params_payload,
@@ -259,7 +259,7 @@ def test_alignment_profiles_size_reconstruction_batches_automatically(profile: s
     from tomojax.geometry import Detector, Grid
 
     # check-public-imports: allow-private
-    loop = importlib.import_module("tomojax.align._pose._pose_loop")
+    loop = importlib.import_module("tomojax.alignment._pose._pose_loop")
     cfg = AlignConfig(align_profile=profile)
     assert cfg.views_per_batch == 0
     grid, detector = Grid(8, 8, 8, 1.0, 1.0, 1.0), Detector(8, 8, 1.0, 1.0)
@@ -294,8 +294,7 @@ def test_alignment_params_export_unwraps_object_dtype_scalars() -> None:
 
 
 def test_coupled_pose_config_matches_the_cli_pose_solver() -> None:
-    from tomojax.align import coupled_pose_config
-    from tomojax.align.api import L2LossSpec
+    from tomojax.alignment.api import L2LossSpec, coupled_pose_config
 
     cfg = coupled_pose_config(outer_iters=7)
     assert (cfg.gn_coupling, cfg.gn_joint_solver, cfg.ray_integrator) == (

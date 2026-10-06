@@ -15,8 +15,8 @@ pytestmark = pytest.mark.surface
 def test_public_facades_import_cleanly() -> None:
     modules = (
         "tomojax",
-        "tomojax.align",
-        "tomojax.align.api",
+        "tomojax.alignment",
+        "tomojax.alignment.api",
         "tomojax.backends",
         "tomojax.cli",
         "tomojax.datasets",

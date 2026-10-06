@@ -13,23 +13,24 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 # check-public-imports: allow-private
-from tomojax.align import AlignConfig, _prealign, align, align_multires
+from tomojax.alignment import AlignConfig, _prealign, align_multires
 
 # check-public-imports: allow-private
-from tomojax.align._objectives import fold_recon
+from tomojax.alignment._objectives import fold_recon
 
 # check-public-imports: allow-private
-from tomojax.align._objectives.recon_layer import PoseAdjustedGeometry
+from tomojax.alignment._objectives.recon_layer import PoseAdjustedGeometry
 
 # check-public-imports: allow-private
-from tomojax.align._prealign import estimate_view_shifts, translation_params_from_shifts
-from tomojax.align.api import (
+from tomojax.alignment._prealign import estimate_view_shifts, translation_params_from_shifts
+from tomojax.alignment.api import (
     AlignmentState,
     AlignMultiresResumeState,
     AlignResumeState,
     BaseGeometryArrays,
     L2LossSpec,
     PoseState,
+    align,
     apply_alignment_state,
     apply_pose_update,
     apply_pose_updates,
@@ -372,10 +373,10 @@ def test_shift_search_recovers_large_view_shifts(kind):
 @pytest.mark.parametrize("factors", [None, (2, 1)])
 def test_translation_seed_runs_once_at_the_first_level(monkeypatch, factors):
     # check-public-imports: allow-private
-    from tomojax.align._pose import _pose_loop
+    from tomojax.alignment._pose import _pose_loop
 
     # check-public-imports: allow-private
-    from tomojax.align._stages import _stage_multires
+    from tomojax.alignment._stages import _stage_multires
 
     geometry, grid, detector = _geometry(8, "parallel", np.linspace(0, 180, 6, endpoint=False))
     data = jnp.zeros((6, detector.nv, detector.nu), jnp.float32)
@@ -398,7 +399,7 @@ def test_translation_seed_runs_once_at_the_first_level(monkeypatch, factors):
 @pytest.mark.parametrize("kind", ["parallel", "lamino"])
 def test_reprojection_seed_recovers_a_detector_centre_offset(kind):
     # check-public-imports: allow-private
-    from tomojax.align._geometry.initializers import reprojection_det_u_seed
+    from tomojax.alignment._geometry.initializers import reprojection_det_u_seed
 
     angles = np.linspace(0.0, 180.0 if kind == "parallel" else 360.0, 48, endpoint=False)
     geometry, grid, detector = _geometry(32, kind, angles.astype(np.float32))

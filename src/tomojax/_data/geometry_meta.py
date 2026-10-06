@@ -79,7 +79,7 @@ def _normalize_geometry_type(geometry_type: str | None) -> str:
 class AugmentedGeometry:
     """Geometry wrapper that applies saved per-view 5-DOF alignment params.
 
-    ``translation_frame`` follows `tomojax.align.api.apply_pose_update`: object
+    ``translation_frame`` follows `tomojax.alignment.api.apply_pose_update`: object
     translations compose after the nominal pose; detector translations add to
     its lab translation.
     """

@@ -8,22 +8,23 @@ import imageio.v3 as iio
 import numpy as np
 import pytest
 
-from tomojax.geometry import Detector, Grid, detector_grid_from_geometry_inputs
+from tomojax.geometry import Detector, Grid
+from tomojax.geometry.api import detector_grid_from_geometry_inputs
 from tomojax.io import (
     ProjectionDataset,
-    convert_dataset,
     load_dataset,
-    load_nxtomo,
     load_tiff_stack,
     save_dataset,
-    save_projection_payload,
     validate_dataset,
 )
 from tomojax.io.api import (
     absorption_to_transmission,
+    convert_dataset,
     flat_dark_to_absorption,
+    load_nxtomo,
     load_real_laminography_input,
     projection_stats,
+    save_projection_payload,
 )
 
 from ._helpers import make_projection_dataset, write_projection_dataset
@@ -81,7 +82,7 @@ def test_projection_payload_save_load_preserves_metadata_copy(tmp_path: Path) ->
 
 
 def test_json_normalization_reports_array_conversion_failures() -> None:
-    from tomojax.io import normalize_json
+    from tomojax.io.api import normalize_json
 
     class BrokenArray(np.ndarray):
         def tolist(self) -> object:
@@ -303,7 +304,7 @@ def test_copy_metadata_copies_array_backed_fields(tmp_path: Path) -> None:
 
 
 def test_read_json_object_reports_path_for_malformed_json(tmp_path: Path) -> None:
-    from tomojax.io import read_json_object
+    from tomojax.io.api import read_json_object
 
     path = tmp_path / "bad.json"
     path.write_text("{not json", encoding="utf-8")

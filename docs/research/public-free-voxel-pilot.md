@@ -50,7 +50,7 @@ translations within ±0.5 native pixels. Noisy cells add seeded Gaussian noise
 with standard deviation 0.1% of clean projection RMS. These are modest-motion
 pilot cases; the required ±3°/±10-pixel distribution remains separate and open.
 
-The measured solver is `tomojax.align.align`, starting from zero free voxels
+The measured solver is `tomojax.alignment.align`, starting from zero free voxels
 and nominal poses. It uses 64 outer iterations, 20 reconstruction iterations
 per outer, FP32 gather, a request for Pallas reconstruction, the central Gauss–Newton
 Jacobian, L2 data loss, nonnegative voxels and zero TV weight. All five pose

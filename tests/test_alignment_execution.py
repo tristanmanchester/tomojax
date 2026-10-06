@@ -4,13 +4,14 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tomojax.align import AlignConfig, align, align_multires
+from tomojax.alignment import AlignConfig, align_multires
 
 # check-public-imports: allow-private
-from tomojax.align._objectives.recon_layer import PoseAdjustedGeometry
+from tomojax.alignment._objectives.recon_layer import PoseAdjustedGeometry
 
 # check-public-imports: allow-private
-from tomojax.align._stages import _reconstruction_stage as reconstruction_stage
+from tomojax.alignment._stages import _reconstruction_stage as reconstruction_stage
+from tomojax.alignment.api import align
 
 # check-public-imports: allow-private
 from tomojax.core.projector import forward_project_view_T

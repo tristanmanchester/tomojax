@@ -8,7 +8,7 @@ import h5py
 import numpy as np
 
 from tomojax.core.geometry.base import DetectorDict
-from tomojax.geometry import VOLUME_AXES_ATTR
+from tomojax.geometry.api import VOLUME_AXES_ATTR
 
 from ._io_types import JsonObject, LoadedDataset, SourceInfo
 

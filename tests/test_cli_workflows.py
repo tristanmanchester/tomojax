@@ -12,13 +12,10 @@ import pytest
 from tomojax.cli.main import main
 import tomojax.cli.recon as recon_cli
 import tomojax.cli.simulate as simulate_cli
-from tomojax.geometry import CalibrationState, CalibrationVariable, Detector, stack_view_poses
-from tomojax.io import (
-    build_geometry_from_dataset_metadata,
-    load_dataset,
-    save_dataset,
-    save_projection_payload,
-)
+from tomojax.geometry import Detector, stack_view_poses
+from tomojax.geometry.api import CalibrationState, CalibrationVariable
+from tomojax.io import build_geometry_from_dataset_metadata, load_dataset, save_dataset
+from tomojax.io.api import save_projection_payload
 from tomojax.recon.quicklook import scale_to_uint8
 
 from ._helpers import (

@@ -14,16 +14,16 @@ if TYPE_CHECKING:
 
 ALLOW_PRIVATE_MARKER = "check-public-imports: allow-private"
 DEFAULT_SCAN_PATHS = [Path("src/tomojax"), Path("tests"), Path("examples")]
-ALIGNMENT_FACADE_REASON = "nested alignment namespace must be reached through tomojax.align.api"
+ALIGNMENT_FACADE_REASON = "nested alignment namespace must be reached through tomojax.alignment.api"
 BLOCKED_ALIGNMENT_NAMESPACES = (
-    "tomojax.align._geometry",
-    "tomojax.align._model",
-    "tomojax.align._objectives",
-    "tomojax.align.geometry",
-    "tomojax.align.io",
-    "tomojax.align.model",
-    "tomojax.align.objectives",
-    "tomojax.align.pipeline",
+    "tomojax.alignment._geometry",
+    "tomojax.alignment._model",
+    "tomojax.alignment._objectives",
+    "tomojax.alignment.geometry",
+    "tomojax.alignment.io",
+    "tomojax.alignment.model",
+    "tomojax.alignment.objectives",
+    "tomojax.alignment.pipeline",
 )
 PRODUCT_BOUNDARY_IMPORT_RULES = (
     (

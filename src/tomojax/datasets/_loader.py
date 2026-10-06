@@ -10,7 +10,7 @@ from typing import cast
 
 import numpy as np
 
-from tomojax.geometry import GeometryState, read_geometry_json, read_pose_params_csv
+from tomojax.geometry.api import GeometryState, read_geometry_json, read_pose_params_csv
 from tomojax.motion import ObjectMotionTrace, read_object_motion_csv
 
 

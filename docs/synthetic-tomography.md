@@ -41,10 +41,19 @@ uv run --no-sync python examples/simulate_and_reconstruct.py
 ```
 
 The [complete example](../examples/simulate_and_reconstruct.py) constructs a
-`Grid`, `Detector`, and `ParallelGeometry`, projects a phantom with
-`project_joseph`, then reconstructs it with `cgls`. It reports array shapes,
-full-volume relative L2 error, and the solver's termination reason. An
-`iteration_limit` result means the configured budget ended, not convergence.
+`Grid`, `Detector` and `ParallelGeometry`, simulates a scan with `tj.project`,
+and reconstructs it with `tj.reconstruct(scan, "cgls")`:
+
+```python
+import numpy as np
+import tomojax as tj
+from tomojax.datasets import shepp_logan_3d
+
+grid = tj.Grid(32, 32, 32, 1.0, 1.0, 1.0)
+geometry = tj.ParallelGeometry(grid, tj.Detector(32, 32, 1.0, 1.0), np.linspace(0, 180, 60, endpoint=False))
+scan = tj.Scan(tj.project(geometry, shepp_logan_3d(32, 32, 32)), geometry)
+volume = tj.reconstruct(scan, "cgls", iterations=24).volume
+```
 
 Python volumes use `(x, y, z)` and projections `(view, v, u)`. All spacings use
 one consistent physical length unit; projected values integrate attenuation

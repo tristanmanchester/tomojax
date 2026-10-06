@@ -24,8 +24,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.align import AlignConfig, align
-from tomojax.align.api import L2LossSpec
+from tomojax.alignment import AlignConfig
+from tomojax.alignment.api import L2LossSpec, align
 from tomojax.geometry import LaminographyGeometry, ParallelGeometry
 from tomojax.recon import FistaConfig, SPDHGConfig, fista_tv, spdhg_tv
 

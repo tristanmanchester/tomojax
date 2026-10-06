@@ -334,8 +334,8 @@ def test_cone_projection_is_continuous_as_a_view_turns_through_45_degrees():
 
 @pytest.mark.parametrize("dof", ["alpha", "beta", "phi", "dx", "dz", "dy"])
 def test_cone_pose_alignment_recovers_each_degree_of_freedom(dof):
-    from tomojax.align import AlignConfig, align
-    from tomojax.align.api import L2LossSpec, apply_pose_updates
+    from tomojax.alignment import AlignConfig
+    from tomojax.alignment.api import L2LossSpec, align, apply_pose_updates
 
     n, views = 16, 12
     grid = Grid(n, n, n, 1.0, 1.0, 1.0)
@@ -375,10 +375,10 @@ def test_cone_pose_alignment_recovers_each_degree_of_freedom(dof):
 
 
 def test_parallel_geometry_keeps_dy_inactive_and_cone_geometry_adds_it():
-    from tomojax.align import AlignConfig
+    from tomojax.alignment import AlignConfig
 
     # check-public-imports: allow-private
-    from tomojax.align._pose._pose_loop import _with_beam_translation
+    from tomojax.alignment._pose._pose_loop import _with_beam_translation
     from tomojax.geometry import ParallelGeometry
 
     grid, detector = Grid(4, 4, 4, 1.0, 1.0, 1.0), Detector(6, 6, 1.0, 1.0)
@@ -510,7 +510,7 @@ def test_pose_wrappers_stack_their_own_poses():
     from tomojax._data.geometry_meta import AugmentedGeometry
 
     # check-public-imports: allow-private
-    from tomojax.align._objectives.recon_layer import PoseAdjustedGeometry
+    from tomojax.alignment._objectives.recon_layer import PoseAdjustedGeometry
     from tomojax.geometry import stack_view_poses
 
     geometry, _, _, _ = _scan("turntable", n=8, views=7)
@@ -582,3 +582,27 @@ def test_export_writes_volume_slices_and_raw_files(tmp_path: Path):
     np.testing.assert_array_equal(stored, np.round(volume.transpose(2, 1, 0) * 65535))
     info = json.loads(raw.with_suffix(".json").read_text())
     assert info["shape_zyx"] == [4, 5, 6] and info["voxel_size_xyz"] == [0.5, 0.5, 0.25]
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize(
+    ("n", "nz", "tilt"), [(8, 8, 0.0), (8, 40, 0.0), (12, 12, 5.0), (8, 40, 5.0)]
+)
+def test_cuda_cone_transpose_handles_volumes_smaller_than_a_tile(n, nz, tilt):
+    # The adjoint kernels work in tiles of 32 or 64 voxels; their parts beyond a
+    # small volume, close to the source, project through infinity.
+    if jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    grid = Grid(n, n, nz, 1.0, 1.0, 1.0)
+    detector = Detector(int(1.5 * n), int(1.5 * max(n, nz)), 1.0, 1.0)
+    geometry = ConeGeometry(
+        grid, detector, np.linspace(0, 360, 60, endpoint=False), ConeBeam(3 * n, 4.5 * n),
+        tilt_deg=tilt,
+    )  # fmt: skip
+    coeff = cone_coefficients(
+        jnp.asarray(geometry.poses(), jnp.float32), grid, detector, geometry.beam
+    )
+    y = jnp.asarray(np.random.default_rng(0).random((60, detector.nv, detector.nu)), jnp.float32)
+    expected = cone_backproject(y, coeff, grid, detector, backend="jax")
+    actual = cone_backproject(y, coeff, grid, detector, backend="cuda")
+    assert float(jnp.abs(actual - expected).max() / jnp.abs(expected).max()) < 1e-5

@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax._typed_arrays import jax_float32_array, numpy_float32_array, object_mapping
-from tomojax.align.api import (
+from tomojax.alignment.api import (
     apply_pose_updates,
     implied_detector_offset,
     profile_policy_from_config,
@@ -17,13 +17,9 @@ from tomojax.align.api import (
     save_alignment_params_json,
 )
 from tomojax.cli.manifest import build_manifest, save_manifest
-from tomojax.geometry import (
-    beam_of,
-    build_calibrated_geometry_metadata_patch,
-    cylindrical_mask_xy,
-    stack_view_poses,
-)
-from tomojax.io import JsonValue, save_projection_payload
+from tomojax.geometry import beam_of, cylindrical_mask_xy, stack_view_poses
+from tomojax.geometry.api import build_calibrated_geometry_metadata_patch
+from tomojax.io.api import JsonValue, save_projection_payload
 
 from .checkpoint import metadata_json_list, metadata_json_mapping, metadata_list
 from .types import AlignCliExecutionResult, AlignCliInfo, AlignCliRunPlan

@@ -145,14 +145,12 @@ kernels: 0.17 s forward and 0.29 s transpose. A 1024³ FDK of 1024 views takes
 ## Python
 
 ```python
-from tomojax.io import build_geometry_from_dataset_metadata, load_nikon_xtekct
-from tomojax.recon import calibrate_cone_axis, fdk
+import tomojax as tj
 
-scan = load_nikon_xtekct("scan/part.xtekct")
-_, _, geometry = build_geometry_from_dataset_metadata(scan.geometry_inputs())
-grid, detector = geometry.grid, geometry.detector
-geometry = calibrate_cone_axis(geometry, grid, detector, scan.projections).apply(geometry)
-volume = fdk(geometry, grid, detector, scan.projections)
+scan = tj.load("scan/part.xtekct")
+calibrated = tj.align(scan, mode="cor").scan      # axis offset and detector roll
+recon = tj.reconstruct(calibrated)                # FDK
+tj.save("part-recon.nxs", recon)
 ```
 
 The `tomojax` commands hold the projections and the volume in host memory.

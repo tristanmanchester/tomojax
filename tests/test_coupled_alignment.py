@@ -8,14 +8,14 @@ import numpy as np
 import pytest
 
 # check-public-imports: allow-private
-from tomojax.align._pose._coupled_linear import solve_coupled_normal
+from tomojax.alignment._pose._coupled_linear import solve_coupled_normal
 
 
 def test_joint_coupling_selects_the_solver_for_every_pose_stage():
-    from tomojax.align import AlignConfig
+    from tomojax.alignment import AlignConfig
 
     # check-public-imports: allow-private
-    from tomojax.align._config import _resolved_schedule_for_cfg
+    from tomojax.alignment._config import _resolved_schedule_for_cfg
 
     implicit = _resolved_schedule_for_cfg(AlignConfig(gn_coupling="joint"))
     named = _resolved_schedule_for_cfg(AlignConfig(gn_coupling="joint", schedule="lightning_pose"))
@@ -40,15 +40,15 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
     from dataclasses import replace
     from pathlib import Path
 
-    from tomojax.align import AlignConfig
-    from tomojax.align._pose import _coupled_objective  # check-public-imports: allow-private
+    from tomojax.alignment import AlignConfig
+    from tomojax.alignment._pose import _coupled_objective  # check-public-imports: allow-private
 
     # check-public-imports: allow-private
-    from tomojax.align._pose._pose_context import _pose_objective_context
+    from tomojax.alignment._pose._pose_context import _pose_objective_context
 
     # check-public-imports: allow-private
-    from tomojax.align._pose._pose_loop import _build_alignment_runtime_context
-    from tomojax.align.api import PWLSLossSpec
+    from tomojax.alignment._pose._pose_loop import _build_alignment_runtime_context
+    from tomojax.alignment.api import PWLSLossSpec
     from tomojax.geometry import Detector, Grid, LaminographyGeometry, stack_view_poses
 
     if backend == "pallas" and jax.default_backend() != "gpu":
@@ -250,8 +250,8 @@ def test_coupled_solve_reports_actual_residual_at_budget_and_handles_zero_rhs():
 @pytest.mark.parametrize("integrator", ["sampled", "exact"])
 @pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
 def test_public_joint_huber_constraints_and_resume(integrator, solver):
-    from tomojax.align import AlignConfig, align
-    from tomojax.align.api import L2LossSpec
+    from tomojax.alignment import AlignConfig
+    from tomojax.alignment.api import L2LossSpec, align
     from tomojax.core.projector import forward_project_view_T
     from tomojax.geometry import Detector, Grid, LaminographyGeometry, stack_view_poses
 

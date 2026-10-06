@@ -8,7 +8,7 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 
-from tomojax.geometry import CORE_X_AXIS, CORE_Y_AXIS, CORE_Z_AXIS
+from tomojax.geometry.api import CORE_X_AXIS, CORE_Y_AXIS, CORE_Z_AXIS
 
 VolumeSupportKind = Literal["cylindrical", "spherical"]
 

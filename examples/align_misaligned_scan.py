@@ -2,8 +2,8 @@
 
 The measurements are analytic line integrals of continuous Gaussian blobs at
 perturbed poses, so they match no voxel discretisation. One reconstruction
-uses the nominal geometry; the other is solved jointly with the poses by
-``tomojax.align.align`` and ``coupled_pose_config``.
+uses the nominal geometry; the other comes from ``tomojax.align``, which solves
+the volume jointly with the poses.
 
 Run with ``uv run --no-sync python examples/align_misaligned_scan.py`` (a CUDA
 GPU takes about a minute at the default size).
@@ -18,11 +18,11 @@ import time
 import jax
 import jax.numpy as jnp
 import numpy as np
+from scipy import ndimage
 
-from tomojax.align import align, coupled_pose_config
-from tomojax.align.api import apply_pose_updates
-from tomojax.geometry import Detector, Grid, LaminographyGeometry, stack_view_poses
-from tomojax.recon import CGLSConfig, cgls
+import tomojax as tj
+from tomojax.alignment.api import apply_pose_updates
+from tomojax.geometry import stack_view_poses
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -32,10 +32,10 @@ def misaligned_scan(
 ) -> dict[str, object]:
     """Return a 30-degree laminography scan with random per-view motion."""
     rng = np.random.default_rng(2026)
-    grid = Grid(size, size, size, 1.0, 1.0, 1.0)
-    detector = Detector(size, size, 1.0, 1.0)
+    grid = tj.Grid(size, size, size, 1.0, 1.0, 1.0)
+    detector = tj.Detector(size, size, 1.0, 1.0)
     angles = np.linspace(0.0, 360.0, views, endpoint=False)
-    geometry = LaminographyGeometry(grid, detector, angles, tilt_deg=30)
+    geometry = tj.LaminographyGeometry(grid, detector, angles, tilt_deg=30)
     nominal = stack_view_poses(geometry, views)
     truth_params = np.concatenate(
         [
@@ -45,7 +45,7 @@ def misaligned_scan(
         axis=1,
     ).astype(np.float32)
     poses = np.asarray(
-        apply_pose_updates(nominal, jnp.asarray(truth_params), translation_frame="object"),
+        apply_pose_updates(nominal, jnp.asarray(truth_params), translation_frame="detector"),
         np.float64,
     )
     blobs = [
@@ -91,21 +91,26 @@ def run_example(
     size: int = 96, views: int = 240
 ) -> tuple[dict[str, np.ndarray], dict[str, object]]:
     """Reconstruct with nominal poses and with jointly aligned poses."""
-    scan = misaligned_scan(size, views)
-    geometry, grid, detector = scan["geometry"], scan["grid"], scan["detector"]
-    projections = jnp.asarray(scan["projections"])
-    truth = scan["truth"]
-    nominal, _ = cgls(geometry, grid, detector, projections, config=CGLSConfig(iters=30))
+    data = misaligned_scan(size, views)
+    scan = tj.Scan(data["projections"], data["geometry"])
+    truth = data["truth"]
+    nominal = tj.reconstruct(scan, "cgls", iterations=30).volume
     start = time.perf_counter()
-    aligned, params, info = align(
-        geometry, grid, detector, projections, config=coupled_pose_config()
-    )
-    aligned = np.asarray(jax.device_get(aligned))
+    result = tj.align(scan)
+    aligned = np.asarray(result.volume)
     elapsed = time.perf_counter() - start
-    params = np.asarray(params)
-    # Per-view errors after removing the common offset, which only moves the object.
-    difference = params - scan["truth_params"]
-    difference -= difference.mean(axis=0)
+    info = result.info
+    # Moving the whole object rigidly, and every pose with it, predicts the same
+    # data: compare after removing that motion. A constant rotation is the mean
+    # rotation difference; a rigid shift s moves each view's detector-frame
+    # translations by the rows of its rotation applied to s.
+    difference = result.poses[:, :5] - data["truth_params"]
+    difference[:, :3] -= difference[:, :3].mean(axis=0)
+    rotations = np.asarray(stack_view_poses(scan.geometry, views))[:, :3, :3]
+    basis = np.concatenate([rotations[:, 0, :], rotations[:, 2, :]])
+    shift = np.linalg.lstsq(basis, difference[:, 3:].T.reshape(-1), rcond=None)[0]
+    difference[:, 3:] -= (basis @ shift).reshape(2, -1).T
+    aligned = ndimage.shift(aligned, shift, order=1)
 
     def error(volume: np.ndarray) -> float:
         return float(np.linalg.norm(volume - truth) / np.linalg.norm(truth))
@@ -113,7 +118,8 @@ def run_example(
     metrics = {
         "size": size,
         "views": views,
-        "motion": "uniform +/-1 deg rotations, +/-2 px shifts per view",
+        "motion": "uniform +/-1 deg rotations, +/-2 px detector-frame shifts per view",
+        "rigid_shift_removed_px": [float(v) for v in shift],
         "nominal_cgls_relative_l2": error(np.asarray(nominal)),
         "aligned_relative_l2": error(aligned),
         "rotation_rmse_deg": float(np.rad2deg(np.sqrt(np.mean(difference[:, :3] ** 2)))),

@@ -6,7 +6,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-from tomojax.geometry import (
+from tomojax.geometry.api import (
     DISK_VOLUME_AXES,
     INTERNAL_VOLUME_AXES,
     VOLUME_AXES_ATTR,

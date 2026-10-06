@@ -13,13 +13,14 @@ import numpy as np
 from tomojax.cli.config import ConfigValue
 from tomojax.cli.manifest import build_manifest, save_manifest
 from tomojax.geometry import Detector, Grid
-from tomojax.io import save_projection_payload
+from tomojax.io.api import save_projection_payload
 from tomojax.recon.quicklook import save_quicklook_png
 
 from ._recon_command import ReconCommand
 
 if TYPE_CHECKING:
-    from tomojax.io import JsonValue, ProjectionDataset
+    from tomojax.io import ProjectionDataset
+    from tomojax.io.api import JsonValue
 
 
 def write_reconstruction_outputs(

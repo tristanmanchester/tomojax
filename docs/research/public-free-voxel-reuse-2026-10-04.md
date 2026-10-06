@@ -4,7 +4,7 @@ Reusing the coupled objective removes repeated compilation and reduces warm alig
 
 ## Complete workflow comparison
 
-Both revisions use public `tomojax.align.align` with free voxels, exact projection, central pose differences and pose elimination. Each cell runs in an isolated process with one cold call and seven warm calls. Cold time includes process startup, imports, setup, transfers, compilation and verification. Warm time is the median of seven verified calls. NVIDIA process memory is sampled every 10 ms across the complete worker, so short-lived peaks can be missed.
+Both revisions use public `tomojax.alignment.align` with free voxels, exact projection, central pose differences and pose elimination. Each cell runs in an isolated process with one cold call and seven warm calls. Cold time includes process startup, imports, setup, transfers, compilation and verification. Warm time is the median of seven verified calls. NVIDIA process memory is sampled every 10 ms across the complete worker, so short-lived peaks can be missed.
 
 All six fixture hashes and solver configurations match. The objects, irregular views, positivity constraint, iteration limits and acceptance gates are unchanged from the [public Schur pilot](public-free-voxel-schur-2026-10-04.md). Failed-attempt timings remain in the table but are not accepted-result speedups.
 

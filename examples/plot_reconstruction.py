@@ -23,10 +23,9 @@ def main() -> None:
     parser.add_argument("--size", type=int, default=64)
     parser.add_argument("--views", type=int, default=90)
     parser.add_argument("--iterations", type=int, default=40)
-    parser.add_argument("--backend", choices=("jax", "pallas"), default="jax")
     args = parser.parse_args()
     truth, volume, metrics = reconstruct_example(
-        size=args.size, views=args.views, iterations=args.iterations, backend=args.backend
+        size=args.size, views=args.views, iterations=args.iterations
     )
 
     mid = args.size // 2

@@ -7,7 +7,7 @@ import h5py
 import imageio.v3 as iio
 import numpy as np
 
-from tomojax.align.api import AlignmentSchedule, AlignmentStage
+from tomojax.alignment.api import AlignmentSchedule, AlignmentStage
 from tomojax.geometry import Detector, Grid
 from tomojax.io import ProjectionDataset, save_dataset
 

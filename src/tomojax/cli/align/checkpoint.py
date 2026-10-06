@@ -9,7 +9,7 @@ from typing import cast
 import jax.numpy as jnp
 
 from tomojax._typed_arrays import jax_float32_array, object_list, object_mapping
-from tomojax.align.api import (
+from tomojax.alignment.api import (
     AlignConfig,
     AlignmentCheckpointGeometrySnapshot,
     AlignmentCheckpointMetadataInput,
@@ -28,7 +28,7 @@ from tomojax.align.api import (
     validate_alignment_checkpoint,
 )
 from tomojax.geometry import Detector, Grid
-from tomojax.io import JsonValue, normalize_json
+from tomojax.io.api import JsonValue, normalize_json
 
 from .command import AlignCommand
 from .types import AlignCliCheckpointCallbacks, AlignCliRunPlan

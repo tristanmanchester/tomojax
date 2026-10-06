@@ -12,7 +12,7 @@ import argparse
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
-from tomojax.io import convert_dataset
+from tomojax.io.api import convert_dataset
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

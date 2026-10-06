@@ -1,6 +1,6 @@
 # Opus 5.5 review after the exact-projector rerun
 
-**Recommendation: replace the fixed-volume pose step in `tomojax.align` with a variable-projection (Schur-complement) Gauss–Newton pose step.** Each outer iteration should compute the pose update from the joint linearised (volume, pose) least-squares problem, so the step accounts for how the volume will re-adapt. The existing nonnegative Huber-FISTA volume refresh stays as it is.
+**Recommendation: replace the fixed-volume pose step in `tomojax.alignment` with a variable-projection (Schur-complement) Gauss–Newton pose step.** Each outer iteration should compute the pose update from the joint linearised (volume, pose) least-squares problem, so the step accounts for how the volume will re-adapt. The existing nonnegative Huber-FISTA volume refresh stays as it is.
 
 ## Sources: the user's own messages
 
@@ -35,7 +35,7 @@ I read every outer iteration in `public-free-voxel-v1-exact.json`:
   - Laminography barely moved (0.246 → 0.219), so it is convergence-limited, not bias-limited.
 - **Speeding up kernels would not help.**
   - After the roughly 7.5 s first outer (compilation), each outer costs about 0.61 s: about 0.44 s of Pallas FISTA and 0.18 s of GN.
-  - Iteration count is the limiter. The code confirms the structure: `_run_align_outer_iteration` (`src/tomojax/align/_pose/_pose_loop.py:436`) runs 20 FISTA iterations, then one per-view GN step on a frozen volume (`objective_kind: fixed_volume`).
+  - Iteration count is the limiter. The code confirms the structure: `_run_align_outer_iteration` (`src/tomojax/alignment/_pose/_pose_loop.py:436`) runs 20 FISTA iterations, then one per-view GN step on a frozen volume (`objective_kind: fixed_volume`).
 
 **Why this happens.** The fixed-volume GN uses Jᵀ_θJ_θ as the curvature. That overstates curvature in exactly the directions the free voxels can compensate for. The proper reduced Hessian is the Schur complement:
 

@@ -28,7 +28,7 @@ import numpy as np
 from tomojax.core.geometry import Detector, Grid
 from tomojax.core.projector import sum_backproject_views_T
 from tomojax.datasets import random_cubes_spheres
-from tomojax.geometry import detector_grid_from_calibration
+from tomojax.geometry.api import detector_grid_from_calibration
 from tomojax.recon.fista_tv_core import (
     FistaCoreConfig,
     _project_stack,

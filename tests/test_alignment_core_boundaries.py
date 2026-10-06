@@ -4,29 +4,29 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tomojax.align import AlignConfig
+from tomojax.alignment import AlignConfig
 
 # check-public-imports: allow-private
-from tomojax.align._config import _active_dof_mask_for_cfg, _active_dofs_for_cfg
+from tomojax.alignment._config import _active_dof_mask_for_cfg, _active_dofs_for_cfg
 
 # check-public-imports: allow-private
-from tomojax.align._geometry.parametrizations import compose_R, se3_from_5d
+from tomojax.alignment._geometry.parametrizations import compose_R, se3_from_5d
 
 # check-public-imports: allow-private
-from tomojax.align._model.diagnostics import (
+from tomojax.alignment._model.diagnostics import (
     GaugePolicyError,
     conditioning_diagnostics,
     validate_active_gauge_policy,
 )
 
 # check-public-imports: allow-private
-from tomojax.align._model.schedules import resolve_alignment_schedule
+from tomojax.alignment._model.schedules import resolve_alignment_schedule
 
 # check-public-imports: allow-private
-from tomojax.align._model.state import AlignmentState
+from tomojax.alignment._model.state import AlignmentState
 
 # check-public-imports: allow-private
-from tomojax.align._objectives.loss_specs import (
+from tomojax.alignment._objectives.loss_specs import (
     L2LossSpec,
     L2OtsuLossSpec,
     loss_spec_name,
@@ -38,20 +38,20 @@ from tomojax.align._objectives.loss_specs import (
 )
 
 # check-public-imports: allow-private
-from tomojax.align._observer import _normalize_observer_action, adapt_observer_callback
+from tomojax.alignment._observer import _normalize_observer_action, adapt_observer_callback
 
 # check-public-imports: allow-private
-from tomojax.align._quality_policy import (
+from tomojax.alignment._quality_policy import (
     reconstruction_quality_policy,
     scaled_reconstruction_iters,
 )
 
 # check-public-imports: allow-private
-from tomojax.align._stages._stage_state import _prepare_multires_level_state
+from tomojax.alignment._stages._stage_state import _prepare_multires_level_state
 
 # check-public-imports: allow-private
-from tomojax.align._stages._stage_types import StageRuntime
-from tomojax.align.api import AlignMultiresResumeState, AlignResumeState
+from tomojax.alignment._stages._stage_types import StageRuntime
+from tomojax.alignment.api import AlignMultiresResumeState, AlignResumeState
 
 from ._helpers import cor_then_polish_schedule
 

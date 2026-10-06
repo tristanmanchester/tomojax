@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 # check-public-imports: allow-private
-from tomojax.align.optimizers import PoseLbfgsConfig, _run_lbfgs_optax_loop
+from tomojax.alignment.optimizers import PoseLbfgsConfig, _run_lbfgs_optax_loop
 
 
 @pytest.mark.numerical
@@ -39,7 +39,7 @@ def test_lbfgs_compiled_state_updates_converge_on_quadratic(explicit_gradient):
 @pytest.mark.numerical
 def test_reusable_lbfgs_kernels_consume_new_objective_inputs():
     # check-public-imports: allow-private
-    from tomojax.align.optimizers import _LbfgsKernels
+    from tomojax.alignment.optimizers import _LbfgsKernels
 
     def objective(z, target):
         return 0.5 * jnp.sum((z - target) ** 2)
@@ -65,8 +65,8 @@ def test_reusable_lbfgs_kernels_consume_new_objective_inputs():
 def test_public_lbfgs_reuses_problem_across_volumes_and_motion_models(pose_model, bounded):
     import jax
 
-    from tomojax.align import AlignConfig, align
-    from tomojax.align.api import L2LossSpec
+    from tomojax.alignment import AlignConfig
+    from tomojax.alignment.api import L2LossSpec, align
 
     # check-public-imports: allow-private
     from tomojax.core.projector import forward_project_view_T

@@ -191,8 +191,8 @@ def test_exact_fista_matches_dense_projected_steps(problem, backend):
 def test_public_exact_alignment_scores_its_actual_operator_and_resumes(problem, multires, coupling):
     from dataclasses import replace
 
-    from tomojax.align import AlignConfig, align, align_multires
-    from tomojax.align.api import L2LossSpec, apply_pose_updates
+    from tomojax.alignment import AlignConfig, align_multires
+    from tomojax.alignment.api import L2LossSpec, align, apply_pose_updates
     from tomojax.geometry import ParallelGeometry, stack_view_poses
 
     grid, detector, _, volume, _, oracle = problem

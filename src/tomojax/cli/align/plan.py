@@ -13,7 +13,7 @@ from tomojax._typed_arrays import (
     jax_float32_array,
     object_list,
 )
-from tomojax.align.api import (
+from tomojax.alignment.api import (
     DOF_NAMES,
     POSE_WIDTH,
     AlignConfig,
@@ -38,12 +38,8 @@ from tomojax.cli._reconstruction_region import resolve_reconstruction_region
 from tomojax.cli._runtime import transfer_guard_context
 from tomojax.core.compilation_cache import enable_persistent_compilation_cache
 from tomojax.geometry import Grid
-from tomojax.io import (
-    JsonValue,
-    build_geometry_from_dataset_metadata,
-    load_projection_payload,
-    normalize_json,
-)
+from tomojax.io import build_geometry_from_dataset_metadata
+from tomojax.io.api import JsonValue, load_projection_payload, normalize_json
 
 from .checkpoint import (
     AlignCliCheckpointMetadataContext,
@@ -63,7 +59,7 @@ from .types import AlignCliExecutionResult, AlignCliInfo, AlignCliRunPlan
 if TYPE_CHECKING:
     import jax.numpy as jnp
 
-    from tomojax.align.api import (
+    from tomojax.alignment.api import (
         AlignInfo,
         FallbackPolicy,
         GaugeFixMode,

@@ -122,18 +122,15 @@ volume must fit on the GPU. When the volume does not fit either, use
 ```python
 import numpy as np
 
-from tomojax.io import load_dataset
-from tomojax.geometry import LaminographyGeometry
+import tomojax as tj
 from tomojax.recon import fbp_host
 
-scan = load_dataset("corrected-lamino.nxs")
-grid, detector = scan.grid, scan.detector  # set these if the file lacks them
-tilt = scan.geometry_metadata["tilt_deg"]
-geometry = LaminographyGeometry(grid, detector, scan.angles_deg, tilt_deg=tilt)
+scan = tj.load("corrected-lamino.nxs")
+grid = scan.grid
 volume = np.lib.format.open_memmap(
     "volume.npy", mode="w+", dtype=np.float32, shape=(grid.nx, grid.ny, grid.nz)
 )
-fbp_host(geometry, grid, detector, scan.projections, out=volume)
+fbp_host(scan.geometry, grid, scan.detector, scan.projections, out=volume)
 volume.flush()
 ```
 

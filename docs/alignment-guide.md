@@ -271,11 +271,14 @@ the roll to 0.04°, in about 4 s at 256³; at 64³ the roll is good to about 0.1
 In Python:
 
 ```python
-from tomojax.recon import calibrate_cone_axis
+import tomojax as tj
 
-calibration = calibrate_cone_axis(geometry, grid, detector, projections)
-geometry = calibration.apply(geometry)  # then align poses or reconstruct
+result = tj.align(scan, mode="cor")      # or "cor-then-pose" to align the poses too
+recon = tj.reconstruct(result.scan)      # result.scan carries the calibrated beam
 ```
+
+`tomojax.recon.calibrate_cone_axis` runs the calibration alone on a geometry
+and arrays.
 
 On a 64³ cone scan (120 views, magnification 1.5) with ±0.3° and ±1.5 px of
 random motion in all six parameters, the coupled solver recovers the poses
@@ -287,7 +290,9 @@ parameter in both.
 
 ## Choose the translation frame
 
-`AlignConfig` defaults to `pose_translation_frame="object"`:
+`tomojax.align` and `tomojax align` use detector-frame translations. The
+expert `tomojax.alignment.AlignConfig` defaults to
+`pose_translation_frame="object"`:
 `T_nominal @ se3_from_5d(params)`. Translations are physical lengths along the
 object's x/z axes. Near a 90-degree view, these two directions project onto
 nearly the same detector direction. This representation cannot express every
@@ -305,23 +310,16 @@ recovery is as accurate as object-frame recovery or better in every case.
 records the frame, and `tomojax recon --apply-saved-alignment` applies the poses
 in it.
 
-Given a geometry, grid, detector, and corrected projection stack, the Python
-API can use two observable image-plane translations at every view:
+In Python, `tj.align(scan)` returns these detector-frame poses as
+`result.poses` and applies them in `result.scan`. To export them:
 
 ```python
-from tomojax.align import AlignConfig, align
-from tomojax.align.api import apply_pose_updates, save_alignment_params_json
-from tomojax.geometry import stack_view_poses
+from tomojax.alignment.api import save_alignment_params_json
 
-config = AlignConfig(pose_translation_frame="detector", gauge_fix="none")
-volume, params, info = align(geometry, grid, detector, projections, config=config)
-poses = apply_pose_updates(
-    stack_view_poses(geometry, len(params)), params,
-    translation_frame=config.pose_translation_frame,
-)
+result = tj.align(scan)
 save_alignment_params_json(
-    "poses.json", params, du=detector.du, dv=detector.dv,
-    translation_frame=config.pose_translation_frame,
+    "poses.json", result.poses, du=scan.detector.du, dv=scan.detector.dv,
+    translation_frame="detector",
 )
 ```
 

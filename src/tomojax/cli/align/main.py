@@ -7,10 +7,14 @@ import logging
 import os
 from typing import TYPE_CHECKING, cast
 
-from tomojax.align.api import AlignmentLossSchedule, loss_spec_params, normalize_alignment_profile
+from tomojax.alignment.api import (
+    AlignmentLossSchedule,
+    loss_spec_params,
+    normalize_alignment_profile,
+)
 from tomojax.cli.config import parse_args_with_config
 from tomojax.core import log_jax_env, setup_logging
-from tomojax.io import JsonValue, normalize_json
+from tomojax.io.api import JsonValue, normalize_json
 
 from .checkpoint import make_align_cli_checkpoint_callbacks
 from .command import build_parser
@@ -23,11 +27,11 @@ from .plan import (
 from .types import AlignCliRunPlan
 
 if TYPE_CHECKING:
-    from tomojax.align.api import AlignmentLossConfig, AlignmentLossSpec
+    from tomojax.alignment.api import AlignmentLossConfig, AlignmentLossSpec
 
 
 def _loss_spec_payload(spec: AlignmentLossSpec) -> dict[str, JsonValue]:
-    from tomojax.align.api import loss_spec_name
+    from tomojax.alignment.api import loss_spec_name
 
     return {
         "name": loss_spec_name(spec),
