@@ -310,7 +310,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             config=command.config,
         )
     else:
-        result = preprocess_nxtomo(input_path, output_path, command.config)
+        result = preprocess_nxtomo(input_path, output_path, config=command.config)
     if command.quicklook_path is not None:
         _ = save_projection_quicklook(output_path, command.quicklook_path)
 

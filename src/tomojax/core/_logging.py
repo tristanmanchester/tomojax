@@ -65,13 +65,13 @@ def progress_iter[T](
         if total is None:
             for i, x in enumerate(iterable, 1):
                 if i == 1 or i % 10 == 0:
-                    print(f"{desc} step {i}", flush=True)
+                    logging.getLogger("tomojax").info("%s step %d", desc, i)
                 yield x
         else:
             step = max(1, total // 10)
             for i, x in enumerate(iterable, 1):
                 if i in (1, total) or i % step == 0:
-                    print(f"{desc} {i}/{total}", flush=True)
+                    logging.getLogger("tomojax").info("%s %d/%d", desc, i, total)
                 yield x
 
 

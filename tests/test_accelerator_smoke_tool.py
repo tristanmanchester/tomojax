@@ -49,14 +49,14 @@ def test_strict_cuda_preflight_fails_before_importing_jax(
 
     def guarded_import(
         name: str,
-        globals: Mapping[str, object] | None = None,
-        locals: Mapping[str, object] | None = None,
+        globals_: Mapping[str, object] | None = None,
+        locals_: Mapping[str, object] | None = None,
         fromlist: Sequence[str] = (),
         level: int = 0,
     ) -> object:
         if name == "jax" or name.startswith("jax."):
             raise AssertionError("strict CUDA preflight should return before importing JAX")
-        return cast("object", real_import(name, globals, locals, fromlist, level))
+        return cast("object", real_import(name, globals_, locals_, fromlist, level))
 
     monkeypatch.setattr(builtins, "__import__", guarded_import)
 

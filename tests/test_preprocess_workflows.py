@@ -188,7 +188,7 @@ def test_nxtomo_preprocess_shifts_detector_center_after_crop(tmp_path: Path) -> 
         )
     config = PreprocessConfig(crop="0:1,0:1")
 
-    preprocess_nxtomo(raw, corrected, config)
+    preprocess_nxtomo(raw, corrected, config=config)
 
     loaded = load_dataset(corrected)
     assert loaded.detector is not None
@@ -207,7 +207,7 @@ def test_nxtomo_preprocess_supports_view_selection_crop_and_transmission(tmp_pat
         crop="0:1,0:1",
     )
 
-    result = preprocess_nxtomo(raw, corrected, config)
+    result = preprocess_nxtomo(raw, corrected, config=config)
 
     assert result.output_shape == (1, 1, 1)
     loaded = load_dataset(corrected)

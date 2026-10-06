@@ -68,7 +68,7 @@ def test_free_voxel_fixture_and_verifier_keep_errors_visible(
     monkeypatch.setattr(benchmark, "SIZE", 8)
     monkeypatch.setattr(benchmark, "VIEWS", 7)
     path = tmp_path / "case.npz"
-    benchmark.generate_fixture(path, kind, False)
+    benchmark.generate_fixture(path, kind, noisy=False)
     case = benchmark.load_fixture(path)
     result = benchmark.verify(case["truth"], case["truth_params"], case)
     assert result["accepted"]

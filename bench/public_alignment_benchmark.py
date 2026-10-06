@@ -108,8 +108,8 @@ def verify(volume: np.ndarray, parameters: np.ndarray, fixture: dict[str, Any]) 
 def generate_fixture(
     path: Path,
     kind: str,
-    noisy: bool,
     *,
+    noisy: bool,
     size: int = SIZE,
     views: int = VIEWS,
     rotation_deg: float = 0.25,
@@ -188,8 +188,8 @@ def generate_fixture(
 def generate_analytic_fixture(
     path: Path,
     kind: str,
-    noisy: bool,
     *,
+    noisy: bool,
     size: int = SIZE,
     views: int = VIEWS,
     rotation_deg: float = 0.25,
@@ -524,7 +524,7 @@ def main() -> None:
         generate(
             fixture,
             cell["kind"],
-            cell["noisy"],
+            noisy=cell["noisy"],
             size=args.size,
             views=args.views,
             rotation_deg=args.rotation_deg,

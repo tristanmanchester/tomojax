@@ -234,10 +234,8 @@ def pose_stack_for_setup(
 
 
 def _nominal_axis_unit_from_geometry(geometry: Geometry) -> jnp.ndarray:
-    if isinstance(geometry, RotationAxisGeometry):
+    if isinstance(geometry, RotationAxisGeometry | LaminographyGeometry):
         axis = np.asarray(geometry.axis_unit_lab, dtype=np.float32)
-    elif isinstance(geometry, LaminographyGeometry):
-        axis = np.asarray(geometry._axis_unit(), dtype=np.float32)
     else:
         axis = np.asarray((0.0, 0.0, 1.0), dtype=np.float32)
     norm = float(np.linalg.norm(axis))

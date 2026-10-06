@@ -24,10 +24,10 @@ EXPERT_EPILOG = (
 )
 
 
-def add_output(parser: argparse.ArgumentParser, help: str) -> None:
+def add_output(parser: argparse.ArgumentParser, description: str) -> None:
     """Add ``-o/--output`` (stored as ``out``) and ``--force``."""
     _ = parser.add_argument(
-        "-o", "--output", dest="out", required=True, metavar="OUTPUT", help=help
+        "-o", "--output", dest="out", required=True, metavar="OUTPUT", help=description
     )
     add_force(parser)
 
@@ -39,10 +39,15 @@ def add_force(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def options(parser: argparse.ArgumentParser) -> list[argparse.Action]:
+    """The parser's arguments (argparse has no public way to list them)."""
+    return parser._actions  # noqa: SLF001
+
+
 def hide_expert(parser: argparse.ArgumentParser, public: Iterable[str]) -> None:
     """Keep only ``public`` options (and positionals) in ``--help``; record the others' help."""
     keep = set(public) | {"-h", "--help", "--config", "--config-keys", "-o", "--output", "--force"}
-    for action in parser._actions:
+    for action in options(parser):
         if action.option_strings and set(action.option_strings).isdisjoint(keep):
             if action.help != argparse.SUPPRESS:
                 action.expert_help = action.help  # type: ignore[attr-defined]
@@ -59,7 +64,7 @@ class _ConfigKeys(argparse.Action):
 
     def __call__(self, parser: argparse.ArgumentParser, *_args: object) -> NoReturn:
         entries: dict[str, str] = {}
-        for action in parser._actions:
+        for action in options(parser):
             if not action.option_strings or action.dest in {"help", "config", "out", "force"}:
                 continue
             if isinstance(action, _ConfigKeys):
@@ -129,4 +134,5 @@ __all__ = [
     "check_paths",
     "fail",
     "hide_expert",
+    "options",
 ]

@@ -8,6 +8,8 @@ import sys
 import tomllib
 from typing import TYPE_CHECKING, cast
 
+from tomojax.cli._options import options
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
 
@@ -128,7 +130,7 @@ def _config_actions_by_dest(
     parser: argparse.ArgumentParser,
 ) -> dict[str, argparse.Action]:
     actions: dict[str, argparse.Action] = {}
-    for action in parser._actions:
+    for action in options(parser):
         if action.dest in (argparse.SUPPRESS, "help", "config"):
             continue
         if not action.option_strings:
@@ -142,7 +144,7 @@ def _explicit_cli_dests(
     argv: Sequence[str],
 ) -> set[str]:
     option_to_dest: dict[str, str] = {}
-    for action in parser._actions:
+    for action in options(parser):
         if action.dest in (argparse.SUPPRESS, "help"):
             continue
         for option in action.option_strings:

@@ -80,9 +80,9 @@ def _kernel(
         first.append(jnp.where(moving, jnp.minimum(a, b), jnp.where(inside, -jnp.inf, jnp.inf)))
         last.append(jnp.where(moving, jnp.maximum(a, b), jnp.where(inside, jnp.inf, -jnp.inf)))
     entry = jnp.maximum(jnp.maximum(first[0], first[1]), first[2])
-    exit = jnp.minimum(jnp.minimum(last[0], last[1]), last[2])
-    valid = valid_pixel & jnp.isfinite(entry) & jnp.isfinite(exit) & (exit > entry)
-    entry, exit = jnp.where(valid, entry, 0), jnp.where(valid, exit, 0)
+    t_exit = jnp.minimum(jnp.minimum(last[0], last[1]), last[2])
+    valid = valid_pixel & jnp.isfinite(entry) & jnp.isfinite(t_exit) & (t_exit > entry)
+    entry, t_exit = jnp.where(valid, entry, 0), jnp.where(valid, t_exit, 0)
     crossing, periods = [], []
     for axis in range(3):
         start = q[axis] + d[axis] * entry
@@ -99,7 +99,7 @@ def _kernel(
 
     def body(carry):
         iteration, current, tx, ty, tz, prediction, g0, g1, g2, h0, h1, h2 = carry
-        end = jnp.minimum(exit, jnp.minimum(jnp.minimum(tx, ty), tz))
+        end = jnp.minimum(t_exit, jnp.minimum(jnp.minimum(tx, ty), tz))
         length = jnp.maximum(end - current, 0)
         active = valid & (length > 0)
         gs, hs = [g0, g1, g2], [h0, h1, h2]
@@ -155,7 +155,7 @@ def _kernel(
         return (iteration + 1, end, *crossing, prediction, *gs, *hs)
 
     def condition(carry):
-        return (carry[0] < sum(shape) + 9) & (jnp.max((carry[1] < exit).astype(jnp.int32)) > 0)
+        return (carry[0] < sum(shape) + 9) & (jnp.max((carry[1] < t_exit).astype(jnp.int32)) > 0)
 
     result = jax.lax.while_loop(
         condition, body, (jnp.int32(0), entry, *crossing, zero, zero, zero, zero, zero, zero, zero)

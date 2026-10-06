@@ -41,6 +41,20 @@
   takes `--pixel-size`; `simulate` needs only `-o` (`--size`, `--views`, and
   a cone detector sized to see the whole volume). Alignment quality is `fast`
   or `reference`; the aliases `normal` and `full` are gone.
+- **Breaking:** options are keyword-only throughout the public API:
+  `tomojax.datasets.sphere`, `cube` and `blobs` (`size`, `value`, `seed`,
+  `n_blobs`) and `tomojax.io.preprocess_nxtomo(config=...)`. `Scan.source`
+  (formerly private) is the dataset record a scan was loaded from, and
+  `LaminographyGeometry.axis_unit_lab` gives its rotation axis like
+  `RotationAxisGeometry`'s.
+- Design rules for contributors, and `tests/test_architecture.py` to hold the
+  code to them: the public API is recorded so every change shows in review,
+  CLI options must map to Python keywords, and measures of debt
+  (configuration fields, exported names, CLI flags, long files, lint
+  suppressions, complex functions, type errors outside the type-checked
+  modules) may fall but not rise. Ruff now rejects
+  positional boolean parameters, private member access across objects,
+  `print` in the library, shadowed builtins and commented-out code.
 - Fix the CUDA cone-beam transpose for volumes smaller than its 32- or
   64-voxel tiles: a tile's far edge, close to the source, projected through
   infinity and dropped detector columns (errors up to 30% at 8-cubed).

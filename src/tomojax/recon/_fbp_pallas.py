@@ -82,9 +82,10 @@ def _backprojection_call(
     grid: Grid,
     detector: Detector,
     n_views: int,
+    block_size: int,
+    *,
     z_integer: bool,
     interpret: bool,
-    block_size: int,
     accumulate: bool = False,
 ) -> Any:
     count = grid.nx * grid.ny * grid.nz
@@ -134,10 +135,10 @@ def backproject_filtered_pallas(
         grid,
         detector,
         int(poses.shape[0]),
-        z_integer,
-        interpret,
         block_size,
-        accumulate is not None,
+        z_integer=z_integer,
+        interpret=interpret,
+        accumulate=accumulate is not None,
     )
     operands = [poses, jnp.transpose(filtered, (0, 2, 1))]
     if accumulate is not None:

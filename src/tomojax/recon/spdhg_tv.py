@@ -255,8 +255,9 @@ def _estimate_norm_A2(
 
 def _proj_pos_support(
     x: jnp.ndarray,
-    positivity: bool,
     support: jnp.ndarray | None,
+    *,
+    positivity: bool,
 ) -> jnp.ndarray:
     if support is not None:
         x = x * support
@@ -694,9 +695,11 @@ def _run_spdhg_scan(  # noqa: PLR0915
         # s = sum_i A_i^T y_i - div p. Recomputing div p from the updated duals,
         # rather than differencing old and new duals, lets them update in place.
         s_new = s_data_new - div3(p1_new, p2_new, p3_new)
-        x_new = _proj_pos_support(state.x - step_sizes.tau * s_new, cfg.positivity, runtime.support)
+        x_new = _proj_pos_support(
+            state.x - step_sizes.tau * s_new, runtime.support, positivity=cfg.positivity
+        )
         x_bar_candidate = x_new + jnp.asarray(cfg.theta, x_new.dtype) * (x_new - state.x)
-        x_bar_new = _proj_pos_support(x_bar_candidate, cfg.positivity, runtime.support)
+        x_bar_new = _proj_pos_support(x_bar_candidate, runtime.support, positivity=cfg.positivity)
         y_data_new = store(state, start_shifted, y_dual_new)
 
         do_log = (cfg.log_every > 0) & ((t + 1) % cfg.log_every == 0)

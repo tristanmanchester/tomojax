@@ -81,7 +81,7 @@ def _defaults(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--seed", type=int, default=20261006)
 
 
-# --------------------------------------------------------------------- plan (TomoJAX)
+# ------------------------------------------------------------- the TomoJAX plan
 
 
 def plan(args: argparse.Namespace) -> None:
@@ -270,7 +270,7 @@ def render(args: argparse.Namespace) -> None:
     )
 
 
-# ------------------------------------------------------------------ finish (TomoJAX)
+# ---------------------------------------------------------- the TomoJAX finish
 
 
 def _truth_volume(meshes: Path, grid: Any, table: dict[str, dict[str, float]]) -> np.ndarray:

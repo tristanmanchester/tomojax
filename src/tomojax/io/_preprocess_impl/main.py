@@ -101,6 +101,7 @@ class _RawPreprocessInput:
 def preprocess_nxtomo(
     input_path: str | Path,
     output_path: str | Path,
+    *,
     config: PreprocessConfig | None = None,
 ) -> PreprocessResult:
     """Preprocess raw NXtomo sample/flat/dark frames into corrected projections."""

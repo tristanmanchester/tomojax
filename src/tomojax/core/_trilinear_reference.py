@@ -18,7 +18,7 @@ from tomojax.core.geometry.base import grid_volume_origin
 from tomojax.core.projector import get_detector_grid_device
 
 
-def _interpolate(volume, points, gradient=False):
+def _interpolate(volume, points, *, gradient=False):
     indices = jnp.floor(points).astype(jnp.int32)
     fraction = points - indices
     value = jnp.zeros(points.shape[1], jnp.float32)
@@ -66,9 +66,9 @@ def integrate(pose, grid, detector, volume, det_grid, *, derivatives=False):
     inside = (base >= -1) & (base <= jnp.array(volume.shape)[:, None])
     first = jnp.where(moving, jnp.minimum(lower, upper), jnp.where(inside, -jnp.inf, jnp.inf))
     last = jnp.where(moving, jnp.maximum(lower, upper), jnp.where(inside, jnp.inf, -jnp.inf))
-    entry, exit = jnp.max(first, axis=0), jnp.min(last, axis=0)
-    valid = jnp.isfinite(entry) & jnp.isfinite(exit) & (exit > entry)
-    entry, exit = jnp.where(valid, entry, 0), jnp.where(valid, exit, 0)
+    entry, t_exit = jnp.max(first, axis=0), jnp.min(last, axis=0)
+    valid = jnp.isfinite(entry) & jnp.isfinite(t_exit) & (t_exit > entry)
+    entry, t_exit = jnp.where(valid, entry, 0), jnp.where(valid, t_exit, 0)
     start = base + direction * entry
     next_plane = jnp.where(direction > 0, jnp.floor(start) + 1, jnp.ceil(start) - 1)
     crossing = jnp.where(moving, (next_plane - base) / safe_direction, jnp.inf)
@@ -77,7 +77,7 @@ def integrate(pose, grid, detector, volume, det_grid, *, derivatives=False):
 
     def step(carry, _):
         current, crossing, accumulated, grad_base, grad_direction = carry
-        end = jnp.minimum(exit, jnp.min(crossing, axis=0))
+        end = jnp.minimum(t_exit, jnp.min(crossing, axis=0))
         length = jnp.maximum(end - current, 0)
         for fraction in fractions:
             time = current + fraction * length

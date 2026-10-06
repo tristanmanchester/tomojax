@@ -182,6 +182,7 @@ def _cone_project_poses(
     detector: Detector,
     volume: jnp.ndarray,
     beam: ConeBeam,
+    *,
     differentiable: bool,
 ) -> jnp.ndarray:
     """Cone projections; CUDA kernels unless pose derivatives are needed."""
@@ -215,7 +216,12 @@ def project_stack(
         return jnp.zeros((0, detector.nv, detector.nu), dtype=jnp.float32)
     if beam is not None:
         return _cone_project_poses(
-            pose_stack, grid, detector, volume, beam, require_differentiable_projector
+            pose_stack,
+            grid,
+            detector,
+            volume,
+            beam,
+            differentiable=require_differentiable_projector,
         )
     if ray_integrator == "sampled" and backend == "pallas" and not require_differentiable_projector:
         fallback_reason = _pallas_sinogram_fallback_reason(
@@ -331,7 +337,7 @@ def project_and_score_stack(
         # One batched cone call per chunk, not one launch per view.
         def vm_project(T: jnp.ndarray) -> jnp.ndarray:
             return _cone_project_poses(
-                T, grid, detector, volume, beam, require_differentiable_projector
+                T, grid, detector, volume, beam, differentiable=require_differentiable_projector
             )
 
     local_indices = (

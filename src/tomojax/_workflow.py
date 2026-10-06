@@ -60,7 +60,7 @@ class Scan:
     projections: np.ndarray | jax.Array
     geometry: Geometry
     name: str = "sample"
-    _record: ProjectionDataset | None = field(default=None, repr=False, compare=False)
+    source: ProjectionDataset | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         shape = tuple(self.projections.shape)
@@ -152,7 +152,7 @@ def load(path: str | PathLike[str], *, apply_alignment: bool = True) -> Scan:
 def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
     """Load a reconstruction saved by :func:`save` or ``tomojax recon``."""
     scan = load(path)
-    record = scan._record
+    record = scan.source
     if record is None or record.volume is None:
         raise ValueError(f"{path} holds no reconstructed volume")
     return Reconstruction(
@@ -216,7 +216,7 @@ def _record_of(scan: Scan, *, grid: Grid | None = None) -> ProjectionDataset:
     from tomojax.io import ProjectionDataset
 
     geometry_type, meta, poses, _ = _describe(scan.geometry)
-    source = scan._record
+    source = scan.source
     kept = (
         {}
         if source is None
@@ -251,7 +251,7 @@ def _scan_from_record(record: ProjectionDataset, *, apply_alignment: bool) -> Sc
         projections=record.projections,
         geometry=geometry,
         name=record.sample_name or "sample",
-        _record=record,
+        source=record,
     )
 
 
@@ -260,7 +260,7 @@ def _with_grid(scan: Scan, grid: Grid) -> Scan:
     if grid == scan.grid:
         return scan
     record = _record_of(scan, grid=grid)
-    return replace(_scan_from_record(record, apply_alignment=True), _record=scan._record)
+    return replace(_scan_from_record(record, apply_alignment=True), source=scan.source)
 
 
 # ----------------------------------------------------------------------------- operations
@@ -467,7 +467,7 @@ def align(
     corrected.align_gauge = {"pose_translation_frame": frame}
     aligned = _scan_from_record(corrected, apply_alignment=True)
     return Alignment(
-        scan=replace(aligned, _record=scan._record), volume=volume, poses=poses, info=info
+        scan=replace(aligned, source=scan.source), volume=volume, poses=poses, info=info
     )
 
 

@@ -13,10 +13,6 @@ def _fmt_value(value: object, *, precision: int = 6) -> str:
     return str(value)
 
 
-def _fmt_bool_presence(found: bool) -> str:
-    return "present" if found else "not found"
-
-
 def format_inspection_report(report: InspectionReport) -> str:
     """Format an inspection report for terminal output."""
     projection = report["projection"]
@@ -73,7 +69,7 @@ def format_inspection_report(report: InspectionReport) -> str:
         lines.append("Angle coverage: not found")
 
     lines.append(f"Geometry type: {_fmt_value(geometry['type'])}")
-    lines.append(f"Geometry metadata: {_fmt_bool_presence(bool(geometry['meta_found']))}")
+    lines.append(f"Geometry metadata: {'present' if geometry['meta_found'] else 'not found'}")
     if detector_metadata["found"]:
         lines.append(
             "Detector metadata: "

@@ -35,6 +35,7 @@ You can also run each recipe's commands directly from the [justfile](justfile).
 | `just package` | Build sdist/wheel, check metadata, and run a fresh installed-wheel workflow |
 | `just ci` | Full local gate: static checks, package/workflow checks, example, CPU coverage, and small analytic benchmarks |
 | `just test-cuda` | Require a real CUDA accelerator, then run GPU-marked tests |
+| `just guardrails` | Record an intended change to the public API or the code-health ratchets |
 
 `just check` also formats files before running checks. Use `just ci` when you
 want validation without automatic source edits. Package recipes replace `dist/`;
@@ -62,6 +63,45 @@ import passing is not enough to establish that the wheel works.
   justified, tested, and recorded in the [changelog](CHANGELOG.md).
 - Add regression tests for behavior and correctness bugs. Avoid tests that only
   repeat implementation details or timing thresholds that depend on the host.
+
+## Design rules
+
+TomoJAX should feel like one small, consistent tool. Before adding to its
+surface, check the change against these rules.
+
+- **One vocabulary.** A concept has one name in Python, on the command line and
+  in the docs: `method`, `iterations`, `tv_weight`, `nonnegative`, `mode`,
+  `quality`, `freeze`, `poses`. CLI options are the Python keywords with
+  hyphens. Internal names (profiles, schedules, solver stages) stay internal.
+- **One way to do a thing.** No aliases, no second spelling of an option, no
+  mode that duplicates another with different defaults.
+- **Small interfaces, deep modules.** A function or package should hide much
+  more than it exposes. Prefer computing a setting from the data to adding an
+  option; add a configuration field only with a stated reason. Package roots
+  export what users call; expert helpers live in `.api`.
+- **Options are keyword-only,** after at most the one or two arguments a call is
+  about (`tj.reconstruct(scan, "cgls", iterations=50)`). No positional flags.
+- **Results carry their context.** Return objects that hold the geometry and
+  settings they were made with, not bare arrays plus metadata to keep in sync.
+- **The CLI shape is fixed:** `tomojax <command> INPUT -o OUTPUT`, existing
+  outputs refused without `--force`, exit status 0/1/2. `--help` shows what
+  most runs need; expert settings are `--config` keys.
+
+`tests/test_architecture.py` enforces what can be checked mechanically:
+
+- the public API matches `tests/guardrails/api_surface.txt`, so every change
+  to it shows in review;
+- the measures in `tests/guardrails/ratchets.json` may fall but never rise:
+  configuration fields, exported names, CLI flags, files over 1000 lines, lint
+  suppressions, functions over the complexity limits, type errors in modules
+  CI does not yet type-check, public functions with positional options, and
+  other known debt;
+- CLI options map to Python keywords, and `--help` stays short.
+
+After an intended change, run `just guardrails` and commit the updated
+records with it. When a ratchet falls, lock it in the same way. Do not raise
+a ratchet to make a change pass; fix the change instead, or explain in the
+review why the debt is worth taking on.
 
 ## Documentation and figures
 

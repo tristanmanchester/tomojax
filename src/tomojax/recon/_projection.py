@@ -123,6 +123,7 @@ class _Batches:
         batch_size: int,
         model: str | ConeModel,
         joseph_interpolation: str,
+        *,
         absolute_weights: bool,
     ) -> None:
         self.n = int(poses.shape[0])
@@ -240,6 +241,7 @@ def projection_operators(
     batch_size: int,
     model: str | ConeModel = "ray",
     joseph_interpolation: str = "linear",
+    *,
     absolute_weights: bool = False,
 ) -> tuple[Callable[[jax.Array], jax.Array], Callable[..., jax.Array]]:
     """Return matched ``(forward, adjoint)`` over all views in fixed-size batches.
@@ -259,7 +261,7 @@ def projection_operators(
         batch_size,
         model,
         joseph_interpolation,
-        absolute_weights,
+        absolute_weights=absolute_weights,
     )
 
     def forward(volume: jax.Array) -> jax.Array:
@@ -313,7 +315,15 @@ def least_squares_operators(
     :func:`host_source`, read one batch at a time.
     """
     ops = _Batches(
-        poses, grid, detector, None, backend, batch_size, model, joseph_interpolation, False
+        poses,
+        grid,
+        detector,
+        None,
+        backend,
+        batch_size,
+        model,
+        joseph_interpolation,
+        absolute_weights=False,
     )
 
     def batch_residual(volume: jax.Array, data: jax.Array, chunk: jax.Array) -> tuple:
@@ -396,11 +406,27 @@ def normal_equation_operators(
     from the host. Only volume-sized arrays and one batch are ever on the device.
     """
     ops = _Batches(
-        poses, grid, detector, None, backend, batch_size, model, joseph_interpolation, False
+        poses,
+        grid,
+        detector,
+        None,
+        backend,
+        batch_size,
+        model,
+        joseph_interpolation,
+        absolute_weights=False,
     )
     magnitude = (
         _Batches(
-            poses, grid, detector, None, backend, batch_size, model, joseph_interpolation, True
+            poses,
+            grid,
+            detector,
+            None,
+            backend,
+            batch_size,
+            model,
+            joseph_interpolation,
+            absolute_weights=True,
         )
         if model == "joseph" and joseph_interpolation == "cubic"
         else ops

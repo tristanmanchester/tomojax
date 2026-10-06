@@ -95,6 +95,14 @@ select = [
     "TC",
     "ANN",
     "D",
+    # Shape rules: keyword-only flags, no private reach-ins, no stray prints,
+    # no shadowed builtins, no commented-out code.
+    "FBT001",
+    "FBT002",
+    "SLF",
+    "T20",
+    "A",
+    "ERA",
 ]
 ignore = [
     "ANN401",
@@ -117,6 +125,10 @@ force-sort-within-sections = true
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
+[tool.ruff.lint.flake8-builtins]
+# `filter` names the FBP filter in tj.reconstruct and tomojax recon --filter.
+builtins-ignorelist = ["filter"]
+
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "parents"
 
@@ -132,11 +144,16 @@ ban-relative-imports = "parents"
     "PT011",
     "PT018",
     "TC",
+    "FBT",
+    "SLF",
+    "T20",
 ]
 "examples/**" = [
     "D",
-    "T201",
+    "T20",
 ]
+"{tools,bench}/**" = ["T20"]
+"src/tomojax/cli/**" = ["T20"]
 "src/tomojax/**/_*.py" = [
     "ANN001",
     "ANN202",

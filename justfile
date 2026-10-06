@@ -34,6 +34,9 @@ package:
     uv run --no-sync twine check dist/*
     uv run --no-sync python tools/smoke_installed_wheel.py
 
+guardrails:
+    JAX_PLATFORMS=cpu uv run --no-sync python tools/guardrails.py --write
+
 smoke:
     uv run --no-sync python tools/smoke_cli_workflow.py
 

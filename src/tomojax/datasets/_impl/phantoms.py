@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 
-def sphere(nx: int, ny: int, nz: int, size: float = 0.5, value: float = 1.0) -> np.ndarray:
+def sphere(nx: int, ny: int, nz: int, *, size: float = 0.5, value: float = 1.0) -> np.ndarray:
     """Centered solid sphere in a zero background.
 
     The sphere diameter is ``size * min(nx, ny, nz)`` so that ``size`` matches the
@@ -29,7 +29,7 @@ def sphere(nx: int, ny: int, nz: int, size: float = 0.5, value: float = 1.0) -> 
 
 
 def cube(
-    nx: int, ny: int, nz: int, size: float = 0.5, value: float = 1.0, seed: int | None = None
+    nx: int, ny: int, nz: int, *, size: float = 0.5, value: float = 1.0, seed: int | None = None
 ) -> np.ndarray:
     """Axis-aligned cube in a zero background with side length = size * min(nx,ny,nz).
 
@@ -73,7 +73,7 @@ def rotated_centered_cube(
     return vol.astype(np.float32)
 
 
-def blobs(nx: int, ny: int, nz: int, n_blobs: int = 5, seed: int | None = 0) -> np.ndarray:
+def blobs(nx: int, ny: int, nz: int, *, n_blobs: int = 5, seed: int | None = 0) -> np.ndarray:
     """Random Gaussian blobs normalized to [0, 1]. Deterministic with seed.
 
     Returns float32 array (nx, ny, nz).

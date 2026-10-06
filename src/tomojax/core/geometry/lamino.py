@@ -60,7 +60,9 @@ class LaminographyGeometry:
     def _tilt_matrix(self) -> np.ndarray:
         return laminography_tilt_matrix(self.tilt_deg, self.tilt_about)
 
-    def _axis_unit(self) -> np.ndarray:
+    @property
+    def axis_unit_lab(self) -> np.ndarray:
+        """The rotation axis in the lab frame, a unit vector."""
         return laminography_axis_unit(self.tilt_deg, self.tilt_about)
 
     def pose_for_view(self, i: int) -> PoseMatrix:
@@ -71,7 +73,7 @@ class LaminographyGeometry:
         4x4 poses are suitable for the projector contract (world_from_object).
         """
         theta = float(np.deg2rad(self.thetas_deg[i]))
-        axis = self._axis_unit()
+        axis = self.axis_unit_lab
         ez = np.array([0.0, 0.0, 1.0], dtype=np.float64)
         S = align_u_to_v(ez, axis)
         Rz = rot_axis_angle(ez, theta)[:3, :3]
