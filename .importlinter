@@ -6,7 +6,8 @@ name = Layer direction
 type = layers
 layers =
     tomojax.cli
-    tomojax.align
+    tomojax._workflow
+    tomojax.alignment
     tomojax.datasets
     tomojax.io
     tomojax._data
@@ -24,15 +25,16 @@ type = forbidden
 allow_indirect_imports = True
 source_modules =
     tomojax.cli
+    tomojax._workflow
 forbidden_modules =
-    tomojax.align._geometry
-    tomojax.align._model
-    tomojax.align._objectives
-    tomojax.align.geometry
-    tomojax.align.io
-    tomojax.align.model
-    tomojax.align.objectives
-    tomojax.align.pipeline
+    tomojax.alignment._geometry
+    tomojax.alignment._model
+    tomojax.alignment._objectives
+    tomojax.alignment.geometry
+    tomojax.alignment.io
+    tomojax.alignment.model
+    tomojax.alignment.objectives
+    tomojax.alignment.pipeline
 
 [importlinter:contract:cli-no-core-geometry]
 name = CLI uses geometry facade instead of core geometry internals
@@ -40,5 +42,6 @@ type = forbidden
 allow_indirect_imports = True
 source_modules =
     tomojax.cli
+    tomojax._workflow
 forbidden_modules =
     tomojax.core.geometry

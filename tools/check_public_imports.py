@@ -195,7 +195,8 @@ def private_owner(module: str) -> str | None:
 
     owner = parts[1]
     for part in parts[2:]:
-        if part.startswith("_") and part != "__init__":
+        dunder = part.startswith("__") and part.endswith("__")
+        if part.startswith("_") and not dunder:
             return owner
     return None
 

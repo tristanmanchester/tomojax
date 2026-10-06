@@ -45,7 +45,7 @@ if TYPE_CHECKING:
         ParallelGeometry,
     )
 
-__version__ = "0.3.0"
+from tomojax._version import __version__
 
 _SOURCES = {
     "Alignment": "tomojax._workflow",

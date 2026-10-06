@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, TypedDict, cast
 
+from tomojax._version import __version__
 from tomojax.core.geometry.base import DetectorDict
 from tomojax.geometry._calibration.json import JsonValue, drop_none, normalize_json
 from tomojax.geometry._calibration.state import CalibrationState
@@ -44,20 +45,6 @@ def _timestamp_utc(timestamp: datetime | str | None) -> str:
     return timestamp.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
-def _tomojax_version() -> str | None:
-    try:
-        from importlib import metadata
-
-        return metadata.version("tomojax")
-    except Exception:
-        try:
-            import tomojax
-
-            return getattr(tomojax, "__version__", None)
-        except Exception:
-            return None
-
-
 def build_calibration_manifest(
     *,
     calibration_state: CalibrationState,
@@ -73,7 +60,7 @@ def build_calibration_manifest(
         {
             "schema_version": CALIBRATION_MANIFEST_SCHEMA_VERSION,
             "created_at": _timestamp_utc(timestamp),
-            "tomojax_version": _tomojax_version(),
+            "tomojax_version": __version__,
             "calibration_state": calibration_state.to_dict(),
             "objective_card": objective_card.to_dict() if objective_card is not None else None,
             "convention_audit": convention_audit.to_dict()

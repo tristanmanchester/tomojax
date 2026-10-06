@@ -9,6 +9,7 @@ import platform
 import sys
 from typing import TYPE_CHECKING, Protocol, cast
 
+from tomojax._version import __version__
 from tomojax.io.api import JsonValue, normalize_json
 
 if TYPE_CHECKING:
@@ -40,23 +41,9 @@ def _format_timestamp(timestamp: datetime | str | None) -> str:
     return timestamp.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
-def _tomojax_version() -> str | None:
-    try:
-        from importlib import metadata
-
-        return metadata.version("tomojax")
-    except Exception:
-        try:
-            import tomojax
-
-            return getattr(tomojax, "__version__", None)
-        except Exception:
-            return None
-
-
 def _versions() -> dict[str, JsonValue]:
     versions: dict[str, JsonValue] = {
-        "tomojax": _tomojax_version(),
+        "tomojax": __version__,
         "python": {
             "version": platform.python_version(),
             "implementation": platform.python_implementation(),

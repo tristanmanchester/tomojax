@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import numpy as np
 
+from tomojax._version import __version__
 from tomojax.alignment._geometry.parametrizations import pad_pose_params
 from tomojax.alignment._model.dofs import POSE_WIDTH
 from tomojax.io.api import normalize_json as _normalize_json
@@ -136,20 +137,6 @@ class AlignmentCheckpointMetadataInput:
     schedule_state: ScheduleResumeState | None = None
 
 
-def _tomojax_version() -> str | None:
-    try:
-        from importlib import metadata
-
-        return metadata.version("tomojax")
-    except Exception:
-        try:
-            import tomojax
-
-            return getattr(tomojax, "__version__", None)
-        except Exception:
-            return None
-
-
 def normalize_json(value: Any) -> Any:
     """Convert common runtime objects into deterministic JSON-compatible values."""
     return _normalize_json(value, sort_mapping_keys=True, catch_to_dict_errors=True)
@@ -207,7 +194,7 @@ def build_alignment_checkpoint_metadata_from_input(
     metadata: CheckpointMetadata = {
         "checkpoint_kind": CHECKPOINT_KIND,
         "schema_version": SCHEMA_VERSION,
-        "tomojax_version": _tomojax_version(),
+        "tomojax_version": __version__,
         "projection_shape": [int(v) for v in projection.shape],
         "projection_dtype": str(projection.dtype),
         "geometry_type": str(geometry.geometry_type),
