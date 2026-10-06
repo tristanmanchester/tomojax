@@ -82,9 +82,12 @@ results from default CLI behavior and larger-motion targets.
   [measurements](measurements.md#cone-beam-projection-and-fdk)). Pose
   derivatives come from the JAX reference; the CUDA forward differentiates in
   the volume only, so alignment's Gauss-Newton columns use central differences
-  on CUDA. Cone-beam alignment supports pose stages only: the setup stages
-  (`cor`, `auto`, `max`) and the alternating solver's non-Gauss-Newton
-  optimizers are not validated for cone geometry.
+  on CUDA. Cone-beam setup calibration estimates the axis offset and detector
+  roll (`calibrate_cone_axis`, also `tomojax align --mode cor`) from slab
+  sharpness, which needs in-plane structure at the slab heights and a scan of
+  at least 180 degrees plus the fan angle; it does not estimate detector pitch
+  or yaw, the axis direction, or the source distances. The alternating
+  solver's non-Gauss-Newton optimizers are not validated for cone geometry.
 - FBP weights every view exactly for rotation about one fixed axis, at any
   tilt, arc length or angular spacing. It cannot recover frequencies no view
   measured: laminography's missing cone reconstructs as zero, so FBP gives

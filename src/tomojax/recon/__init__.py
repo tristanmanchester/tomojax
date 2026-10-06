@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from tomojax.recon._support import VolumeSupportKind, centered_volume_support
     from tomojax.recon.cgls import CGLSConfig, cgls
     from tomojax.recon.cgls_multires import cgls_multires
+    from tomojax.recon.cone_axis import ConeAxisCalibration, ConeAxisConfig, calibrate_cone_axis
     from tomojax.recon.fbp import (
         FBPConfig,
         default_fbp_scale,
@@ -33,6 +34,8 @@ if TYPE_CHECKING:
 
 _SOURCES = {
     "CGLSConfig": "cgls",
+    "ConeAxisCalibration": "cone_axis",
+    "ConeAxisConfig": "cone_axis",
     "FBPConfig": "fbp",
     "FBPHostConfig": "fbp_host",
     "FDKConfig": "fdk",
@@ -42,6 +45,7 @@ _SOURCES = {
     "Regulariser": "types",
     "SPDHGConfig": "spdhg_tv",
     "VolumeSupportKind": "_support",
+    "calibrate_cone_axis": "cone_axis",
     "centered_volume_support": "_support",
     "cgls": "cgls",
     "cgls_multires": "cgls_multires",
@@ -61,6 +65,8 @@ _SOURCES = {
 
 __all__ = [
     "CGLSConfig",
+    "ConeAxisCalibration",
+    "ConeAxisConfig",
     "FBPConfig",
     "FBPHostConfig",
     "FDKConfig",
@@ -70,6 +76,7 @@ __all__ = [
     "Regulariser",
     "SPDHGConfig",
     "VolumeSupportKind",
+    "calibrate_cone_axis",
     "centered_volume_support",
     "cgls",
     "cgls_multires",

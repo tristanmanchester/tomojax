@@ -80,8 +80,11 @@ def view_weights(geometry: Geometry, detector: Detector, n_views: int) -> np.nda
     padded = np.concatenate([[sorted_angles[0] - step], sorted_angles, [sorted_angles[-1] + step]])
     measure[order] = 0.5 * (padded[2:] - padded[:-2])
     # Parker weights over the fan angle of each detector column.
+    # Fan angle of each column from the ray through the rotation axis.
     u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du + detector.det_center[0]
-    gamma = np.arctan(u / float(beam.source_to_detector))
+    gamma = np.arctan(u / float(beam.source_to_detector)) - np.arctan(
+        float(beam.axis_offset) / float(beam.source_to_axis)
+    )
     delta = float(np.max(np.abs(gamma)))
     if arc < np.pi + 2 * delta - 1e-6:
         raise ValueError(
@@ -181,6 +184,8 @@ extern "C" __global__ void fdk_backproject(
     bool valid = ix < nx && iy < ny;
     if (!valid) ix = iy = 0;
     int iz0 = 32 * RUN * group + lane;
+    // Steps j holding any of the warp's voxels (fewer for thin slabs); warp-uniform.
+    int runs = min(RUN, (nz - 32 * RUN * group + 31) / 32);
     float acc[RUN];
     #pragma unroll
     for (int j = 0; j < RUN; ++j) acc[j] = 0.f;
@@ -212,6 +217,7 @@ extern "C" __global__ void fdk_backproject(
                 float vstep = 32.f * lam * c[22];
                 #pragma unroll
                 for (int j = 0; j < RUN; ++j) {
+                    if (j >= runs) break;
                     float v = vbase + (float)j * vstep;
                     float fv = floorf(v);
                     int v0 = (int)fv;
@@ -227,6 +233,7 @@ extern "C" __global__ void fdk_backproject(
             }
             #pragma unroll
             for (int j = 0; j < RUN; ++j) {
+                if (j >= runs) break;
                 float d2 = (float)(iz0 + 32 * j) - c[2];
                 float lam = c[16] / (c[13] * d0 + c[14] * d1 + c[15] * d2);
                 float u = c[23] + lam * (c[17] * d0 + c[18] * d1 + c[19] * d2);
@@ -324,6 +331,91 @@ def _fdk_batch(
     return backproject(filtered, coeff, grid, detector, scale, out)
 
 
+@dataclass(frozen=True)
+class _Prepared:
+    """Per-scan FDK weights and filter on the device; see :func:`_prepare`."""
+
+    cuda: bool
+    weights: jax.Array
+    cosine: jax.Array
+    kernel: jax.Array
+    scale: float
+    batch: int
+
+
+def _prepare(geometry: Geometry, detector: Detector, n_views: int, cfg: FDKConfig) -> _Prepared:
+    beam = beam_of(geometry)
+    if beam is None:
+        raise ValueError("fdk needs a cone-beam geometry; use fbp for parallel beams")
+    if cfg.backend not in {"auto", "jax", "cuda"}:
+        raise ValueError("fdk backend must be 'auto', 'jax' or 'cuda'")
+    cuda = use_cuda_cone() if cfg.backend == "auto" else cfg.backend == "cuda"
+    if cuda and not use_cuda_cone():
+        raise ValueError("fdk: the CUDA kernel needs CuPy on a CUDA device")
+    du_iso = float(detector.du) / beam.magnification
+    return _Prepared(
+        cuda=cuda,
+        weights=jnp.asarray(view_weights(geometry, detector, n_views), jnp.float32),
+        cosine=jnp.asarray(_cosine_weights(beam, detector), jnp.float32),
+        kernel=jnp.asarray(get_fbp_filter_np(cfg.filter_name, detector.nu, du_iso, "float32")),
+        scale=1.0 / beam.magnification,
+        batch=max(1, int(cfg.views_per_batch)),
+    )
+
+
+def _device_views(projections: jax.Array | np.ndarray, start: int, stop: int) -> jax.Array:
+    part = projections[start:stop]
+    if isinstance(part, jax.Array):
+        return part.astype(jnp.float32)
+    return jnp.asarray(np.asarray(part, np.float32))
+
+
+_filter_jit = jax.jit(_filter)
+
+
+@partial(jax.jit, static_argnames=("grid", "detector", "scale", "cuda"), donate_argnames=("out",))
+def _backproject_batch(
+    filtered: jax.Array,
+    coeff: jax.Array,
+    out: jax.Array,
+    *,
+    grid: Grid,
+    detector: Detector,
+    scale: float,
+    cuda: bool,
+) -> jax.Array:
+    backproject = _backproject_cuda if cuda else _backproject_jax
+    return backproject(filtered, coeff, grid, detector, scale, out)
+
+
+def _filter_views(prep: _Prepared, projections: jax.Array | np.ndarray, n_views: int) -> jax.Array:
+    """Weighted, ramp-filtered ``(views, nv, nu)`` projections on the device."""
+    parts = []
+    for start in range(0, n_views, prep.batch):
+        stop = min(start + prep.batch, n_views)
+        views = _device_views(projections, start, stop)
+        parts.append(_filter_jit(views, prep.cosine, prep.weights[start:stop], prep.kernel))
+    return jnp.concatenate(parts, axis=0)
+
+
+def _backproject_filtered(
+    geometry: Geometry, grid: Grid, detector: Detector, filtered: jax.Array, prep: _Prepared
+) -> jax.Array:
+    """Backproject filtered projections from :func:`_filter_views` into ``grid``."""
+    beam = beam_of(geometry)
+    assert beam is not None
+    n_views = int(filtered.shape[0])
+    coeff = cone_coefficients(stack_view_poses(geometry, n_views), grid, detector, beam)
+    out = jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
+    for start in range(0, n_views, prep.batch):
+        stop = min(start + prep.batch, n_views)
+        out = _backproject_batch(
+            filtered[start:stop], coeff[start:stop], out,
+            grid=grid, detector=detector, scale=prep.scale, cuda=prep.cuda,
+        )  # fmt: skip
+    return out
+
+
 def fdk(
     geometry: Geometry,
     grid: Grid,
@@ -341,33 +433,19 @@ def fdk(
     beam = beam_of(geometry)
     if beam is None:
         raise ValueError("fdk needs a cone-beam geometry; use fbp for parallel beams")
-    if cfg.backend not in {"auto", "jax", "cuda"}:
-        raise ValueError("fdk backend must be 'auto', 'jax' or 'cuda'")
-    cuda = use_cuda_cone() if cfg.backend == "auto" else cfg.backend == "cuda"
-    if cuda and not use_cuda_cone():
-        raise ValueError("fdk: the CUDA kernel needs CuPy on a CUDA device")
     validate_grid(grid, "fdk grid")
     n_views, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fdk projections"
     )
+    prep = _prepare(geometry, detector, n_views, cfg)
     coeff = cone_coefficients(stack_view_poses(geometry, n_views), grid, detector, beam)
-    weights = jnp.asarray(view_weights(geometry, detector, n_views), jnp.float32)
-    cosine = jnp.asarray(_cosine_weights(beam, detector), jnp.float32)
-    du_iso = float(detector.du) / beam.magnification
-    kernel = jnp.asarray(get_fbp_filter_np(cfg.filter_name, detector.nu, du_iso, "float32"))
     out = jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
-    batch = max(1, int(cfg.views_per_batch))
-    for start in range(0, n_views, batch):
-        stop = min(start + batch, n_views)
-        part = projections[start:stop]
-        views = (
-            part.astype(jnp.float32)
-            if isinstance(part, jax.Array)
-            else jnp.asarray(np.asarray(part, np.float32))
-        )
+    for start in range(0, n_views, prep.batch):
+        stop = min(start + prep.batch, n_views)
         out = _fdk_batch(
-            views, coeff[start:stop], cosine, weights[start:stop], kernel, out,
-            grid=grid, detector=detector, scale=1.0 / beam.magnification, cuda=cuda,
+            _device_views(projections, start, stop), coeff[start:stop], prep.cosine,
+            prep.weights[start:stop], prep.kernel, out,
+            grid=grid, detector=detector, scale=prep.scale, cuda=prep.cuda,
         )  # fmt: skip
     return out
 
@@ -399,33 +477,64 @@ def _slab_rows(
     corners = np.array(
         [[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (zlo, zhi)]
     )
+    # A box projects inside the hull of its projected corners.
     world = np.einsum("nij,kj->nki", poses[:, :3, :3], corners) + poses[:, None, :3, 3]
-    depth = world[..., 1] + float(beam.source_to_axis)
-    v = world[..., 2] * float(beam.source_to_detector) / depth
-    rows = (v - detector.det_center[1]) / detector.dv + (detector.nv - 1) / 2
+    centre, u_dir, v_dir = beam.detector_frame(detector)
+    normal = np.cross(u_dir, v_dir)
+    source = beam.source()
+    ray = world - source
+    hit = source + ray * (((centre - source) @ normal) / (ray @ normal))[..., None]
+    rows = ((hit - centre) @ v_dir) / detector.dv + (detector.nv - 1) / 2
     return max(0, int(np.floor(rows.min())) - 1), min(detector.nv, int(np.ceil(rows.max())) + 2)
 
 
-def _slab_geometry(
-    grid: Grid, detector: Detector, z0: int, z1: int, r0: int, r1: int
-) -> tuple[Grid, Detector]:
-    """Grid of z slices ``[z0, z1)`` and the detector cut to rows ``[r0, r1)``."""
+def _windowable(beam: ConeBeam) -> bool:
+    """Whether a band of detector rows is itself a detector of ``beam`` (no pitch or yaw)."""
+    return float(beam.detector_pitch_deg) == 0.0 and float(beam.detector_yaw_deg) == 0.0
+
+
+def _detector_window(
+    beam: ConeBeam,
+    detector: Detector,
+    r0: int,
+    r1: int,
+    c1: int | None = None,
+    f: int = 1,
+) -> Detector:
+    """Rows ``[r0, r1)`` and columns ``[0, c1)`` of ``detector``, binned ``f x f``.
+
+    The window keeps its place on the rolled detector: its centre moves along
+    the detector's own u and v. Needs :func:`_windowable` beams, whose detector
+    axes stay in the plane of ``det_center``.
+    """
+    from dataclasses import replace
+
+    rows, cols = (r1 - r0) // f, (detector.nu if c1 is None else c1) // f
+    su = ((f * cols - 1) / 2 - (detector.nu - 1) / 2) * detector.du
+    sv = (r0 + (f * rows - 1) / 2 - (detector.nv - 1) / 2) * detector.dv
+    _, u_dir, v_dir = beam.detector_frame(detector)
+    shift = su * u_dir + sv * v_dir
+    return replace(
+        detector,
+        nu=cols,
+        nv=rows,
+        du=detector.du * f,
+        dv=detector.dv * f,
+        det_center=(detector.det_center[0] + shift[0], detector.det_center[1] + shift[2]),
+    )
+
+
+def _slab_grid(grid: Grid, z0: int, z1: int) -> Grid:
+    """Grid of z slices ``[z0, z1)``."""
     from dataclasses import replace
 
     origin = grid_volume_origin(grid)
-    slab = replace(
+    return replace(
         grid,
         nz=z1 - z0,
         vol_origin=(origin[0], origin[1], origin[2] + z0 * grid.vz),
         vol_center=None,
     )
-    shift = ((r0 + r1 - 1) / 2 - (detector.nv - 1) / 2) * detector.dv
-    rows = replace(
-        detector,
-        nv=r1 - r0,
-        det_center=(detector.det_center[0], detector.det_center[1] + shift),
-    )
-    return slab, rows
 
 
 def fdk_host(
@@ -441,8 +550,8 @@ def fdk_host(
 
     Accepts NumPy arrays and memmaps; ``out`` may be a writable ``(nx, ny, nz)``
     FP32 memmap. Each slab filters only the detector rows it projects onto (all
-    rows for a rolled, pitched or yawed detector), so projections and volume can
-    both exceed device memory.
+    rows for a pitched or yawed detector), so projections and volume can both
+    exceed device memory.
     """
     from tomojax.backends import device_free_memory_bytes
 
@@ -463,10 +572,7 @@ def fdk_host(
         depth = max(1, int(free // (3 * max(1, 4 * grid.nx * grid.ny))))
     depth = min(int(depth), grid.nz)
     poses = np.asarray(stack_view_poses(geometry, n_views), np.float64)
-    tilted = any(
-        float(x) != 0.0
-        for x in (beam.detector_roll_deg, beam.detector_pitch_deg, beam.detector_yaw_deg)
-    )
+    windowed = _windowable(beam)
     # Slab copies into ``result`` (slow for memmaps) overlap the next slab's work.
     pending: Future[None] | None = None
 
@@ -476,10 +582,12 @@ def fdk_host(
     with ThreadPoolExecutor(max_workers=1) as writer:
         for z0 in range(0, grid.nz, depth):
             z1 = min(z0 + depth, grid.nz)
-            r0, r1 = (
-                (0, detector.nv) if tilted else _slab_rows(geometry, grid, detector, poses, z0, z1)
-            )
-            slab, rows = _slab_geometry(grid, detector, z0, z1, r0, r1)
+            slab = _slab_grid(grid, z0, z1)
+            if windowed:
+                r0, r1 = _slab_rows(geometry, slab, detector, poses, 0, z1 - z0)
+                rows = _detector_window(beam, detector, r0, r1)
+            else:
+                r0, r1, rows = 0, detector.nv, detector
             volume = fdk(geometry, slab, rows, _RowView(projections, r0, r1), config=cfg.fdk)
             host = np.asarray(volume)
             if pending is not None:

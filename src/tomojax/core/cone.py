@@ -52,12 +52,20 @@ def cone_coefficients(
     poses: jax.Array, grid: Grid, detector: Detector, beam: ConeBeam
 ) -> jax.Array:
     """Return ``(views, 25)`` FP32 per-view coefficients for the cone kernels."""
-    poses = jnp.asarray(poses, jnp.float32)
+    centre, u_dir, v_dir = beam.detector_frame(detector)
+    frame = jnp.asarray(np.stack([centre, u_dir, v_dir, beam.source()]), jnp.float32)
+    return _coefficients(jnp.asarray(poses, jnp.float32), frame, grid=grid, detector=detector)
+
+
+@partial(jax.jit, static_argnames=("grid", "detector"))
+def _coefficients(
+    poses: jax.Array, frame: jax.Array, *, grid: Grid, detector: Detector
+) -> jax.Array:
+    """:func:`cone_coefficients` from the lab detector frame and source (rows of ``frame``)."""
     rot, trans = poses[:, :3, :3], poses[:, :3, 3]
     origin = jnp.asarray(grid_volume_origin(grid), jnp.float32)
     spacing = jnp.asarray([grid.vx, grid.vy, grid.vz], jnp.float32)
-    centre, u_dir, v_dir = (jnp.asarray(x, jnp.float32) for x in beam.detector_frame(detector))
-    source = jnp.asarray(beam.source(), jnp.float32)
+    centre, u_dir, v_dir, source = frame[0], frame[1], frame[2], frame[3]
     corner = (
         centre
         - (detector.nu - 1) / 2 * float(detector.du) * u_dir

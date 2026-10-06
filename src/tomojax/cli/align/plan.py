@@ -7,13 +7,18 @@ from dataclasses import dataclass, replace
 import logging
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+import numpy as np
+
 from tomojax._typed_arrays import (
     jax_float32_array,
     object_list,
 )
 from tomojax.align.api import (
+    DOF_NAMES,
+    POSE_WIDTH,
     AlignConfig,
     AlignmentLossConfig,
+    AlignmentSchedule,
     AlignMultiresResumeState,
     AlignResumeState,
     CheckpointError,
@@ -26,13 +31,19 @@ from tomojax.align.api import (
     resolve_alignment_schedule,
     resolve_profiled_cli_defaults,
     resolved_schedule_for_config,
+    schedule_preset,
     validate_loss_schedule_levels,
 )
 from tomojax.cli._reconstruction_region import resolve_reconstruction_region
 from tomojax.cli._runtime import transfer_guard_context
 from tomojax.core.compilation_cache import enable_persistent_compilation_cache
 from tomojax.geometry import Grid
-from tomojax.io import build_geometry_from_dataset_metadata, load_projection_payload
+from tomojax.io import (
+    JsonValue,
+    build_geometry_from_dataset_metadata,
+    load_projection_payload,
+    normalize_json,
+)
 
 from .checkpoint import (
     AlignCliCheckpointMetadataContext,
@@ -47,7 +58,7 @@ from .command import (
     parse_dof_args,
     parse_loss_config,
 )
-from .types import AlignCliExecutionResult, AlignCliRunPlan
+from .types import AlignCliExecutionResult, AlignCliInfo, AlignCliRunPlan
 
 if TYPE_CHECKING:
     import jax.numpy as jnp
@@ -603,7 +614,121 @@ def build_align_cli_run_plan(
     )
 
 
+_CONE_AXIS_DOFS = frozenset({"det_u_px", "detector_roll_deg"})
+
+
+def _cone_pose_config(cfg: AlignConfig) -> AlignConfig | None:
+    """``cfg`` without its setup stages, or None when only setup stages remain."""
+    if cfg.optimise_dofs is not None:
+        dofs = tuple(name for name in cfg.optimise_dofs if name in DOF_NAMES)
+        return replace(cfg, optimise_dofs=dofs) if dofs else None
+    if cfg.schedule is None:
+        return cfg
+    base = (
+        cfg.schedule
+        if isinstance(cfg.schedule, AlignmentSchedule)
+        else schedule_preset(cfg.schedule)
+    )
+    stages = tuple(
+        stage for stage in base.stages if all(name in DOF_NAMES for name in stage.active_dofs)
+    )
+    if not stages:
+        return None
+    return replace(cfg, schedule=AlignmentSchedule(name=f"{base.name}_poses", stages=stages))
+
+
+def _calibrate_cone_axis(
+    plan: AlignCliRunPlan,
+) -> tuple[AlignCliRunPlan, dict[str, JsonValue] | None, bool]:
+    """Run a cone scan's setup stages as :func:`calibrate_cone_axis`.
+
+    Returns the plan with the calibrated geometry and only its pose stages, the
+    calibration record, and whether any pose stage remains.
+    """
+    from tomojax.geometry import ConeGeometry
+    from tomojax.recon import calibrate_cone_axis
+
+    if not isinstance(plan.geometry, ConeGeometry):
+        return plan, None, True
+    resolved = resolved_schedule_for_config(plan.cfg)
+    setup = set(resolved.active_geometry_dofs)
+    if not setup and resolved.name != "cor_then_pose":
+        return plan, None, True
+    if setup - _CONE_AXIS_DOFS:
+        unsupported = ", ".join(sorted(setup - _CONE_AXIS_DOFS))
+        message = (
+            f"cone-beam alignment calibrates the axis offset and detector roll; it cannot "
+            f"estimate {unsupported}"
+        )
+        if plan.cfg.optimise_dofs is not None:
+            raise ValueError(message)
+        logging.warning("%s, so those setup stages are skipped", message)
+    calibration = calibrate_cone_axis(
+        plan.geometry, plan.recon_grid, plan.detector, plan.projections
+    )
+    geometry = calibration.apply(plan.geometry)
+    logging.info(
+        "Cone-beam axis offset %.4f (%.3f detector px at the axis), detector roll %.4f deg",
+        calibration.axis_offset,
+        calibration.axis_offset * geometry.beam.magnification / float(plan.detector.du),
+        calibration.detector_roll_deg,
+    )
+    record: dict[str, JsonValue] = {
+        "axis_offset": calibration.axis_offset,
+        "detector_roll_deg": calibration.detector_roll_deg,
+        "heights": list(calibration.heights),
+        "slab_offsets": list(calibration.slab_offsets),
+        "cone_beam": normalize_json(geometry.beam.to_dict()),
+    }
+    cfg = _cone_pose_config(plan.cfg)
+    return replace(plan, geometry=geometry, cfg=cfg or plan.cfg), record, cfg is not None
+
+
 def execute_alignment_plan(
+    plan: AlignCliRunPlan,
+    *,
+    single_checkpoint_callback: Callable[..., None],
+    multires_checkpoint_callback: Callable[[AlignMultiresResumeState], None],
+) -> AlignCliExecutionResult:
+    plan, calibration, has_poses = _calibrate_cone_axis(plan)
+    if calibration is None:
+        return _execute_alignment(
+            plan,
+            single_checkpoint_callback=single_checkpoint_callback,
+            multires_checkpoint_callback=multires_checkpoint_callback,
+        )
+    if has_poses:
+        result = _execute_alignment(
+            plan,
+            single_checkpoint_callback=single_checkpoint_callback,
+            multires_checkpoint_callback=multires_checkpoint_callback,
+        )
+        info = cast("AlignCliInfo", {**result.info, "cone_axis_calibration": calibration})
+        return AlignCliExecutionResult(x=result.x, params5=result.params5, info=info)
+    from tomojax.recon import fdk
+
+    n_views = int(plan.projections.shape[0])
+    info = cast(
+        "AlignCliInfo",
+        {
+            "loss": [],
+            "schedule": plan.schedule_metadata,
+            "active_dofs": sorted(_CONE_AXIS_DOFS),
+            "active_pose_dofs": [],
+            "active_geometry_dofs": sorted(_CONE_AXIS_DOFS),
+            "objective_kind": "cone_axis_sharpness",
+            "objective_kinds": ["cone_axis_sharpness"],
+            "cone_axis_calibration": calibration,
+        },
+    )
+    return AlignCliExecutionResult(
+        x=fdk(plan.geometry, plan.recon_grid, plan.detector, plan.projections),
+        params5=jax_float32_array(np.zeros((n_views, POSE_WIDTH), np.float32)),
+        info=info,
+    )
+
+
+def _execute_alignment(
     plan: AlignCliRunPlan,
     *,
     single_checkpoint_callback: Callable[..., None],

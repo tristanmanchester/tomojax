@@ -19,7 +19,13 @@ from tomojax.align._geometry.parametrizations import (
     se3_from_5d,
 )
 from tomojax.align._model.dof_specs import DofSpec, dof_spec
-from tomojax.align._model.dofs import DofBounds, normalize_alignment_dofs, normalize_bounds
+from tomojax.align._model.dofs import (
+    DOF_NAMES,
+    POSE_WIDTH,
+    DofBounds,
+    normalize_alignment_dofs,
+    normalize_bounds,
+)
 from tomojax.align._model.gauge import GaugeFixMode
 from tomojax.align._model.schedules import (
     PUBLIC_SCHEDULE_PRESETS,
@@ -95,6 +101,8 @@ from tomojax.align.pipeline import (
 )
 
 __all__ = [
+    "DOF_NAMES",
+    "POSE_WIDTH",
     "PUBLIC_SCHEDULE_PRESETS",
     "AlignConfig",
     "AlignInfo",

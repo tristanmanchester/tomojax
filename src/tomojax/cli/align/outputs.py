@@ -65,6 +65,7 @@ def _write_alignment_result_volume(
     params5_np: np.ndarray,
     gauge_metadata: dict[str, JsonValue],
     geometry_calibration_state: object,
+    cone_beam: object = None,
 ) -> str:
     save_meta = plan.meta.copy_metadata()
     save_meta.grid = plan.recon_grid.to_dict()
@@ -83,6 +84,9 @@ def _write_alignment_result_volume(
         save_meta.geometry_calibration = {
             "calibration_state": calibration_patch["geometry_calibration"]["calibration_state"]
         }
+    if isinstance(cone_beam, dict):
+        # The calibrated axis offset and detector roll replace the input beam.
+        save_meta.geometry_meta = {**(save_meta.geometry_meta or {}), "cone_beam": cone_beam}
     save_meta.frame = str(plan.meta.sample_name or "sample")
     save_meta.volume_axes_order = plan.command.volume_axes
     save_projection_payload(
@@ -193,6 +197,7 @@ def _build_alignment_manifest_payload_from_result(
         "active_pose_dofs": active_pose_dofs,
         "active_geometry_dofs": active_geometry_dofs,
         "geometry_calibration_state": geometry_calibration_state,
+        "cone_axis_calibration": cast("dict[str, object]", info).get("cone_axis_calibration"),
         "alignment_params_shape": list(params5_np.shape),
         "alignment_gauge": gauge_metadata,
         "volume_shape": list(np.asarray(x).shape),
@@ -269,6 +274,8 @@ def write_alignment_outputs(
     params5_np = np.asarray(execution.params5)
     gauge_metadata = _alignment_gauge_metadata(plan, execution.info)
     geometry_calibration_state = execution.info.get("geometry_calibration_state")
+    cone_axis = cast("dict[str, object]", execution.info).get("cone_axis_calibration")
+    cone_beam = object_mapping(cast("object", cone_axis)).get("cone_beam") if cone_axis else None
     # Modes that report a detector centre already hold the constant u shift there.
     implied_det_u_px = (
         _implied_detector_u_px(plan, params5_np) if plan.command.mode == "pose" else None
@@ -279,6 +286,7 @@ def write_alignment_outputs(
         params5_np=params5_np,
         gauge_metadata=gauge_metadata,
         geometry_calibration_state=geometry_calibration_state,
+        cone_beam=cone_beam,
     )
     _write_alignment_params_exports(
         plan,

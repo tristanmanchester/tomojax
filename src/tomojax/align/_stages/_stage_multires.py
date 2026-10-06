@@ -287,8 +287,10 @@ def align_multires(
     """
     if beam_of(geometry) is not None and _setup_dofs_requested(cfg):
         raise ValueError(
-            "align_multires: setup stages (detector centre, roll, axis) do not yet support "
-            "cone-beam geometry; use pose stages, which estimate dy along the beam"
+            "align_multires: setup stages (detector centre, roll, axis) model parallel "
+            "beams; for cone-beam geometry calibrate the axis offset and detector roll with "
+            "tomojax.recon.calibrate_cone_axis, then run pose stages (which estimate dy along "
+            "the beam)"
         )
     context = _build_multires_context(
         geometry,

@@ -251,10 +251,31 @@ file, applied by `tomojax recon --apply-saved-alignment`).
 Two gauges apply. As in parallel beams, moving the whole volume rigidly and
 every pose with it predicts the same data. In addition a common `dy` for all
 views rescales the image exactly as a larger object would, so the mean `dy`
-is always fixed at zero. A centre-of-rotation offset in a cone beam is a
-lateral offset of the rotation axis, not a detector shift: `cor_then_pose`
-leaves it in the poses as a translation, and the setup stages (`cor`, `auto`,
-`max`) do not yet support cone geometry.
+is always fixed at zero.
+
+A centre-of-rotation offset in a cone beam is a lateral offset of the rotation
+axis, not a detector shift: `ConeBeam.axis_offset` places the axis at
+`x = axis_offset`. On cone data, `--mode cor` calibrates it together with the
+detector roll, and `cor_then_pose`, `auto` and `max` calibrate both before
+their pose stages; the aligned file records the calibrated beam, so
+`tomojax recon` on it uses them. The calibration
+([`calibrate_cone_axis`](../src/tomojax/recon/cone_axis.py)) reconstructs thin
+FDK slabs near the centre, top and bottom of the volume for trial offsets,
+coarse to fine on binned data, and keeps the sharpest; a rolled detector makes
+the sharpest offset change linearly with height, which gives the roll. Axis
+direction stages are skipped for cone data.
+
+On 128³ and 256³ blob scans (360 views, 1% to 5% noise) with offsets of 3.7 to
+11.2 voxels and rolls up to 1.2°, it recovers the offset to 0.08 voxels and
+the roll to 0.04°, in about 4 s at 256³; at 64³ the roll is good to about 0.15°.
+In Python:
+
+```python
+from tomojax.recon import calibrate_cone_axis
+
+calibration = calibrate_cone_axis(geometry, grid, detector, projections)
+geometry = calibration.apply(geometry)  # then align poses or reconstruct
+```
 
 On a 64³ cone scan (120 views, magnification 1.5) with ±0.3° and ±1.5 px of
 random motion in all six parameters, the coupled solver recovers the poses

@@ -44,6 +44,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Cone beam: source to detector distance, in the same units",
     )
+    _ = parser.add_argument(
+        "--axis-offset",
+        type=float,
+        default=0.0,
+        help=(
+            "Cone beam: lateral offset of the rotation axis from the source-detector "
+            "centre line (centre of rotation), in the same units; "
+            "`tomojax align --mode cor` estimates it"
+        ),
+    )
     for angle in ("roll", "pitch", "yaw"):
         _ = parser.add_argument(
             f"--detector-{angle}",
@@ -144,6 +154,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 detector_roll_deg=cast("float", args.detector_roll),
                 detector_pitch_deg=cast("float", args.detector_pitch),
                 detector_yaw_deg=cast("float", args.detector_yaw),
+                axis_offset=cast("float", args.axis_offset),
             )
         except ValueError as exc:
             parser.error(str(exc))

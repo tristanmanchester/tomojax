@@ -15,8 +15,10 @@ from tomojax.geometry import ConeBeam, ConeGeometry, Detector, Grid, grid_volume
 from tomojax.io import build_geometry_from_dataset_metadata, load_dataset, save_dataset
 from tomojax.recon import (
     CGLSConfig,
+    ConeAxisConfig,
     FDKConfig,
     FDKHostConfig,
+    calibrate_cone_axis,
     cgls,
     fbp,
     fbp_host,
@@ -283,6 +285,12 @@ def test_ingest_records_cone_beam_geometry(tmp_path: Path):
     _, _, geometry = build_geometry_from_dataset_metadata(loaded.geometry_inputs())
     assert isinstance(geometry, ConeGeometry)
     assert geometry.beam == ConeBeam(50.0, 80.0, detector_roll_deg=0.5)
+    assert main([*args, "--source-to-detector", "80", "--axis-offset", "1.5"]) == 0
+    _, _, shifted = build_geometry_from_dataset_metadata(
+        load_dataset(tmp_path / "scan.nxs").geometry_inputs()
+    )
+    assert isinstance(shifted, ConeGeometry) and shifted.beam.axis_offset == 1.5
+    np.testing.assert_allclose(shifted.poses()[:, :3, 3], [[1.5, 0.0, 0.0]] * 4)
     with pytest.raises(SystemExit):
         main([*args, "--source-to-detector", "40"])
 
@@ -362,3 +370,78 @@ def test_parallel_geometry_keeps_dy_inactive_and_cone_geometry_adds_it():
     assert _with_beam_translation(five, cone, AlignConfig())[-1]
     frozen = AlignConfig(freeze_dofs=("dy",))
     assert not _with_beam_translation(five, cone, frozen)[-1]
+
+
+def _blob_scan(n: int, views: int, beam: ConeBeam) -> tuple[ConeGeometry, np.ndarray]:
+    """A blob phantom's projections under ``beam``, and the nominal (centred) geometry."""
+    grid = Grid(n, n, n, 1.0, 1.0, 1.0)
+    detector = Detector(int(1.6 * n), int(1.6 * n), 1.0, 1.0)
+    rng = np.random.default_rng(0)
+    axes = np.meshgrid(*(np.arange(n) - (n - 1) / 2,) * 3, indexing="ij")
+    volume = np.zeros((n, n, n), np.float32)
+    for _ in range(40):
+        centre, radius = rng.uniform(-0.35 * n, 0.35 * n, 3), rng.uniform(1.5, 0.06 * n)
+        if np.hypot(centre[0], centre[1]) < 0.4 * n:
+            r2 = sum((a - c) ** 2 for a, c in zip(axes, centre, strict=True))
+            volume += rng.uniform(0.3, 1.0) * np.exp(-r2 / (2 * radius**2)).astype(np.float32)
+    angles = np.linspace(0.0, 360.0, views, endpoint=False)
+    truth = ConeGeometry(grid, detector, angles, beam)
+    coeff = cone_coefficients(jnp.asarray(truth.poses(), jnp.float32), grid, detector, beam)
+    data = np.array(cone_project(jnp.asarray(volume), coeff, grid, detector))
+    data += rng.normal(0, 0.01 * data.std(), data.shape).astype(np.float32)
+    nominal = ConeBeam(beam.source_to_axis, beam.source_to_detector)
+    return ConeGeometry(grid, detector, angles, nominal), data
+
+
+@pytest.mark.gpu
+def test_calibrate_cone_axis_recovers_the_axis_offset_and_detector_roll():
+    if jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    n = 96
+    geometry, data = _blob_scan(n, 240, ConeBeam(3 * n, 4.5 * n, 0.7, axis_offset=-4.3))
+    calibration = calibrate_cone_axis(geometry, geometry.grid, geometry.detector, data)
+    assert abs(calibration.axis_offset + 4.3) < 0.1
+    assert abs(calibration.detector_roll_deg - 0.7) < 0.1
+    calibrated = calibration.apply(geometry)
+    assert calibrated.beam.axis_offset == calibration.axis_offset
+    np.testing.assert_allclose(calibrated.poses()[:, 0, 3], calibration.axis_offset)
+
+
+def test_calibrate_cone_axis_finds_the_offset_with_the_jax_backend():
+    n = 32
+    geometry, data = _blob_scan(n, 60, ConeBeam(3 * n, 4.5 * n, axis_offset=2.4))
+    config = ConeAxisConfig(estimate_roll=False, slices=4, fdk=FDKConfig("hann", "jax", 60))
+    calibration = calibrate_cone_axis(
+        geometry, geometry.grid, geometry.detector, data, config=config
+    )
+    assert abs(calibration.axis_offset - 2.4) < 0.2
+    assert calibration.detector_roll_deg == 0.0 and len(calibration.heights) == 1
+
+
+@pytest.mark.gpu
+def test_align_cor_mode_writes_the_calibrated_cone_beam(tmp_path: Path):
+    if jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    from tomojax.cli.main import main
+    from tomojax.io import ProjectionDataset
+
+    n = 64
+    geometry, data = _blob_scan(n, 180, ConeBeam(3 * n, 4.5 * n, -0.5, axis_offset=3.1))
+    dataset = ProjectionDataset(
+        projections=data,
+        angles_deg=np.asarray(geometry.thetas_deg, np.float32),
+        detector=geometry.detector,
+        grid=geometry.grid,
+        geometry_type="cone",
+        geometry_metadata=geometry.geometry_metadata(),
+    )
+    save_dataset(tmp_path / "scan.nxs", dataset)
+    out = tmp_path / "aligned.nxs"
+    assert (
+        main(["align", "--data", str(tmp_path / "scan.nxs"), "--out", str(out), "--mode", "cor"])
+        == 0
+    )
+    _, _, calibrated = build_geometry_from_dataset_metadata(load_dataset(out).geometry_inputs())
+    assert isinstance(calibrated, ConeGeometry)
+    assert abs(calibrated.beam.axis_offset - 3.1) < 0.15
+    assert abs(calibrated.beam.detector_roll_deg + 0.5) < 0.15

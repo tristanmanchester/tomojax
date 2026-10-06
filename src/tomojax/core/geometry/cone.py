@@ -21,12 +21,15 @@ class ConeBeam:
     """Source and detector placement in the lab frame, shared by every view.
 
     The beam travels along +y. The source sits at ``(0, -source_to_axis, 0)``
-    and the detector plane at ``y = source_to_detector - source_to_axis``, so
-    the rotation axis passes through the origin and the magnification at the
-    axis is ``source_to_detector / source_to_axis``. ``Detector.det_center``
-    offsets the detector within its plane, in physical units. Roll, pitch and
-    yaw rotate the detector about its centre: roll about the beam (y), pitch
-    about detector u (x) and yaw about detector v (z), applied in that order.
+    and the detector plane at ``y = source_to_detector - source_to_axis``; the
+    rotation axis passes through ``(axis_offset, 0, 0)``, so the magnification
+    at the axis is ``source_to_detector / source_to_axis``. ``axis_offset`` is
+    the lab-CT centre-of-rotation offset: the axis's lateral distance from the
+    line through the source and the unshifted detector centre, in physical
+    units. ``Detector.det_center`` offsets the detector within its plane. Roll,
+    pitch and yaw rotate the detector about its centre: roll about the beam
+    (y), pitch about detector u (x) and yaw about detector v (z), applied in
+    that order.
     """
 
     source_to_axis: float
@@ -34,6 +37,7 @@ class ConeBeam:
     detector_roll_deg: float = 0.0
     detector_pitch_deg: float = 0.0
     detector_yaw_deg: float = 0.0
+    axis_offset: float = 0.0
 
     def __post_init__(self) -> None:
         if not (0.0 < float(self.source_to_axis) < float(self.source_to_detector)):
@@ -71,6 +75,7 @@ class ConeBeam:
             "detector_roll_deg": float(self.detector_roll_deg),
             "detector_pitch_deg": float(self.detector_pitch_deg),
             "detector_yaw_deg": float(self.detector_yaw_deg),
+            "axis_offset": float(self.axis_offset),
         }
 
 
@@ -122,6 +127,7 @@ class ConeGeometry:
             rotation = align_u_to_v(np.array([0.0, 0.0, 1.0]), axis) @ rotation
         poses = np.zeros((angles.size, 4, 4))
         poses[:, :3, :3] = rotation
+        poses[:, 0, 3] = float(self.beam.axis_offset)
         poses[:, 3, 3] = 1.0
         return poses
 

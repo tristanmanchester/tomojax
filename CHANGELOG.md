@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Calibrate a cone-beam scan's rotation axis: `ConeBeam.axis_offset` places
+  the axis laterally (the lab-CT centre of rotation; `tomojax ingest
+  --axis-offset`), and `tomojax.recon.calibrate_cone_axis` estimates it with
+  the detector roll from the sharpness of thin FDK slabs at three heights,
+  coarse to fine on binned data. On cone data `tomojax align --mode cor`
+  calibrates both, and `cor_then_pose`, `auto` and `max` calibrate them before
+  their pose stages, saving the calibrated beam. On 128- and 256-cubed blob
+  scans it recovers offsets of up to 11 voxels to 0.08 voxels and rolls of up
+  to 1.2 degrees to 0.04 degrees, in about 4 s at 256-cubed. `fdk_host` now cuts
+  rolled detectors to the rows each slab needs, and the FDK backprojector no
+  longer wastes threads on thin slabs.
 - Add cone-beam (lab CT) geometry: `tomojax.geometry.ConeGeometry` with a
   `ConeBeam` source and flat detector (detector offsets, roll, pitch and yaw;
   turntable, tilted or arbitrary rotation axis; any per-view poses). Rays from
