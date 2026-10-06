@@ -18,18 +18,20 @@ results from default CLI behavior and larger-motion targets.
   with an explicit `--gauge-policy`, such as `anchor_mean`.
 - Detector-v or sample-elevation reference shifts are physically ambiguous
   and not reliably recoverable.
-- The default five-parameter pose update uses object-frame translations:
-  `T_nominal @ se3_from_5d(params)`, with translation `(dx, 0, dz)` in physical
-  units. These are not two independent detector-plane shifts. Near a 90-degree
-  view, their projection onto the detector becomes nearly singular, including
-  for tilted geometry. An asymmetric voxel-object check confirms that a
-  nonzero combination can translate along the beam without changing its image.
-  This representation cannot recover arbitrary detector-plane motion at those
-  views; changing optimizer damping or kernel speed cannot restore the missing
-  degree of freedom. The Python API's explicit
-  `pose_translation_frame="detector", gauge_fix="none"` option supplies two
-  lab detector-plane directions while preserving existing pose-table semantics.
-  See [translation frames](alignment-guide.md#choose-the-translation-frame-in-the-python-api).
+- `AlignConfig`'s default five-parameter pose update uses object-frame
+  translations: `T_nominal @ se3_from_5d(params)`, with translation
+  `(dx, 0, dz)` in physical units. These are not two independent
+  detector-plane shifts. Near a 90-degree view, their projection onto the
+  detector becomes nearly singular, including for tilted geometry. This
+  representation cannot recover arbitrary detector-plane motion, or a constant
+  detector shift such as a centre-of-rotation offset, at those views; changing
+  optimizer damping or kernel speed cannot restore the missing degree of
+  freedom. `tomojax align` defaults to detector-frame translations
+  (`--translation-frame detector`), and the Python API offers the same with
+  `pose_translation_frame="detector", gauge_fix="none"`.
+  See [translation frames](alignment-guide.md#choose-the-translation-frame).
+- A per-view shift with a nonzero mean over the scan cannot be told apart from
+  a detector-centre offset; `--mode cor_then_pose` reports it as the offset.
 - Abrupt jumps and short bursts of bad views need more robust diagnostics or
   specialized workflows.
 - The default autodiff Gauss–Newton Jacobian is one-sided at trilinear voxel
@@ -98,9 +100,12 @@ results from default CLI behavior and larger-motion targets.
   repeated filtering and transfers; runtime and compiler allocations remain
   additional memory costs.
 - The iterative solvers need the volume and a few volume-sized work arrays on
-  the device. FISTA-TV streams NumPy or memmap projections from host memory
-  when they are large; CGLS and SPDHG-TV also keep projection-sized arrays on
-  the device.
+  the device. FISTA-TV, CGLS and SPDHG-TV stream NumPy or memmap projections
+  from host memory when they are large; SPDHG-TV also keeps its sinogram-sized
+  dual variable and any weights there. Streamed CGLS solves the equivalent
+  normal equations, which square the condition number of each step's
+  recurrence; it recomputes the exact gradient periodically, as in-core CGLS
+  recomputes its residual, and streams only with canonical detector grids.
 - Pallas currently uses JAX's deprecated Triton backend. JAX 0.11.2 is tested
   on CPU and an Ada CUDA GPU, with the dependency constrained below 0.12.
   Migration and additional GPU coverage are still required before widening

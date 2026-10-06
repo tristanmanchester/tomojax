@@ -57,6 +57,7 @@ if TYPE_CHECKING:
         FallbackPolicy,
         GaugeFixMode,
         GaugePolicy,
+        PoseTranslationFrame,
         QualityTier,
     )
     from tomojax.geometry import Detector, Geometry, Grid
@@ -99,10 +100,10 @@ def _schedule_for_public_mode(mode: AlignmentMode, *, align_profile: str) -> str
     """Resolve the product-facing alignment mode to an internal schedule."""
     if mode == "cor":
         return "cor"
-    if mode == "pose":
+    if mode in {"pose", "cor_then_pose"}:
+        # cor_then_pose aligns poses, then folds the constant detector shift into
+        # the detector centre (see outputs._fold_detector_offset).
         return "lightning_pose" if align_profile == "lightning" else "tortoise_pose"
-    if mode == "cor_then_pose":
-        return "cor_then_pose"
     if mode in {"auto", "max"}:
         return "setup_safe"
     return "setup_safe"
@@ -120,7 +121,7 @@ def _coupled_pose_levels(grid: Grid) -> list[int]:
 
 def _default_levels_for_public_mode(mode: AlignmentMode) -> list[int]:
     """Return the implicit multires pyramid for product modes."""
-    if mode in {"auto", "max", "cor_then_pose"}:
+    if mode in {"auto", "max"}:
         return [4, 2, 1]
     return [1]
 
@@ -458,6 +459,7 @@ def _resolve_schedule_and_config(
         knot_spacing=command.knot_spacing,
         degree=command.degree,
         gauge_fix=cast("GaugeFixMode", command.gauge_fix),
+        pose_translation_frame=cast("PoseTranslationFrame", command.translation_frame),
         loss=parsed.loss_config,
         seed_translations=bool(command.seed_translations),
         log_summary=command.log_summary,
@@ -532,11 +534,16 @@ def build_align_cli_run_plan(
     if checkpoint_every is not None and int(checkpoint_every) < 1:
         parser.error("--checkpoint-every must be an integer >= 1")
 
+    if command.mode == "cor_then_pose" and command.translation_frame != "detector":
+        parser.error(
+            "--mode cor_then_pose needs --translation-frame detector: only detector-frame "
+            "translations can express a constant detector shift at every view"
+        )
     run_levels = parsed.levels
     has_geometry_dofs = bool(resolved.schedule_metadata.get("active_geometry_dofs", ()))
     coupled_levels = (
         _coupled_pose_levels(recon_grid)
-        if command.mode == "pose" and command.pose_solver == "coupled"
+        if command.mode in {"pose", "cor_then_pose"} and command.pose_solver == "coupled"
         else [1]
     )
     if run_levels is None and len(coupled_levels) > 1:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import replace
 import json
 
 import jax
@@ -32,6 +33,7 @@ from tomojax.align.api import (
     apply_alignment_state,
     apply_pose_update,
     apply_pose_updates,
+    fold_detector_offset,
     save_alignment_params_csv,
     save_alignment_params_json,
     se3_from_5d,
@@ -47,6 +49,7 @@ from tomojax.geometry import (
     ParallelGeometry,
     stack_view_poses,
 )
+from tomojax.io import build_geometry_from_dataset_metadata
 
 
 def _geometry(size, kind, angles):
@@ -411,3 +414,55 @@ def test_reprojection_seed_recovers_a_detector_centre_offset(kind):
     seed = reprojection_det_u_seed(data, geometry, grid, detector)
     assert seed.status == "ok_reprojection"
     assert abs(seed.det_u_px + 2.3) < 0.1
+
+
+@pytest.mark.parametrize("kind", ["parallel", "lamino", "anisotropic"])
+def test_detector_offset_folds_exactly_into_the_detector_centre(kind):
+    angles = np.linspace(0.0, 360.0, 24, endpoint=False)
+    geometry, grid, detector = _geometry(12, kind, angles)
+    nominal = np.asarray(stack_view_poses(geometry, angles.size), np.float64)
+    rng = np.random.default_rng(3)
+    rigid = np.asarray([0.7, -0.4, 0.3])
+    params = np.zeros((angles.size, 5), np.float32)
+    params[:, :3] = rng.normal(0.0, 1e-2, (angles.size, 3))
+    params[:, 3] = -1.5 + nominal[:, 0, :3] @ rigid
+    params[:, 4] = rng.normal(0.0, 0.2, angles.size)
+
+    offset, folded = fold_detector_offset(nominal, params)
+
+    assert offset == pytest.approx(1.5, abs=1e-5)
+    np.testing.assert_allclose(folded[:, 3], nominal[:, 0, :3] @ rigid, atol=1e-5)
+    shifted = replace(
+        detector, det_center=(detector.det_center[0] + offset, detector.det_center[1])
+    )
+    volume = jnp.asarray(rng.random((grid.nx, grid.ny, grid.nz)), jnp.float32)
+    for view in (0, 6, 13):
+        pose = jnp.asarray(nominal[view], jnp.float32)
+        before = apply_pose_update(pose, jnp.asarray(params[view]), translation_frame="detector")
+        after = apply_pose_update(pose, jnp.asarray(folded[view]), translation_frame="detector")
+        expected = forward_project_view_T(before, grid, detector, volume)
+        np.testing.assert_allclose(
+            forward_project_view_T(after, grid, shifted, volume), expected, atol=1e-4
+        )
+
+
+@pytest.mark.parametrize("frame", ["object", "detector"])
+def test_saved_alignment_is_reapplied_in_its_translation_frame(frame):
+    angles = np.linspace(0.0, 360.0, 6, endpoint=False)
+    geometry, grid, detector = _geometry(8, "lamino", angles)
+    params = np.random.default_rng(5).normal(0.0, 0.3, (angles.size, 5)).astype(np.float32)
+    meta = {
+        "detector": detector.to_dict(),
+        "grid": grid.to_dict(),
+        "thetas_deg": angles.astype(np.float32),
+        "geometry_type": "lamino",
+        "tilt_deg": 30.0,
+        "align_params": params,
+        "align_gauge": {"pose_translation_frame": frame},
+    }
+    _, _, saved = build_geometry_from_dataset_metadata(meta, apply_saved_alignment=True)
+    expected = apply_pose_updates(
+        stack_view_poses(geometry, angles.size), jnp.asarray(params), translation_frame=frame
+    )
+    for view in range(angles.size):
+        np.testing.assert_allclose(saved.pose_for_view(view), expected[view], atol=1e-5)

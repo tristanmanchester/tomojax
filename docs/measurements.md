@@ -83,6 +83,12 @@ ten positivity-constrained FISTA-TV iterations peaked at 4.3 GB of GPU memory.
 With 768 views, where both fit, streaming took 67.6 s against 65.0 s for
 device-resident projections.
 
+CGLS and SPDHG-TV stream the same way. On that 3072-view scan, ten streamed
+CGLS iterations took 154 s at 3.2 GB peak, and 192 SPDHG-TV iterations (one
+view block each) took 297 s at 4.3 GB, with SPDHG-TV's 3.2 GB dual variable
+kept in host memory. Streamed SPDHG-TV is bitwise identical to the
+device-resident solver, and streamed CGLS converges to the same solution.
+
 ## Iterative solver memory
 
 On a 512³ laminography scan with 768 views of 512² pixels (0.8 GB of
@@ -116,12 +122,14 @@ It is not a test of the larger ±3°/±10-pixel capture range in the stretch goa
 | Coupled solve with pose elimination | 5/6 cells pass; faster tilted recovery | [Pose elimination](research/public-free-voxel-schur-2026-10-04.md) |
 | Same eliminated solve with reusable compiled objectives | 5/6 cells pass; faster warm calls, unchanged cold startup and memory | [Compiled-objective reuse](research/public-free-voxel-reuse-2026-10-04.md) |
 | Same eliminated solve with fixed default-weight Huber-TV | 0/6 cells pass; rejected screen | [TV screen](research/public-free-voxel-tv-2026-10-04.md) |
-| Default `tomojax align --mode pose` (coupled solver), fresh CLI process per cell | 5/6 cells pass; rotation RMSE 0.0006–0.008°, 8–18 s | Scored with the pilot's own gates via the public CLI |
+| `tomojax align --mode pose --ray-integrator exact` (coupled solver), fresh CLI process per cell | 5/6 cells pass; rotation RMSE 0.0005–0.008° (object-frame translations), 0.0000–0.008° (detector frame, now the default), 8–20 s | Scored with the pilot's own gates via the public CLI |
 | Same eliminated solve with reconstruction batches sized automatically (now the default) | 5/6 cells pass; warm 1.5–5.5 s, 1.9–2.3× faster than one view per batch, same peak memory | [Batching record](../bench/reference/public-free-voxel-batching-2026-10-05.json.gz) (two warm repeats) |
 
 The pilot's measurements integrate the voxel basis exactly, the same model as
 the `exact` integrator, so its near-exact clean recoveries partly reflect an
-inverse crime. On analytic data from continuous Gaussian objects at 32³, every
+inverse crime. With the CLI's default Joseph integrator, a different
+discretization from the data, every cell fails the 0.01° gate at 0.10–0.26°
+on these 32³ objects, while volume errors stay at 0.009–0.085. On analytic data from continuous Gaussian objects at 32³, every
 solver tried (coupled exact, coupled sampled, alternating) misses the 0.01°
 gate, at 0.09–0.5°; started from the true poses, the coupled solver settles at
 the same errors, so they are a model-mismatch floor rather than an
@@ -136,17 +144,23 @@ default for `tomojax align --mode pose`. A [local FP64 noise analysis](research/
 it is not a universal bound for constrained or regularized estimators.
 
 On analytic scans of continuous objects (181 views at 128³, 361 at 256³, 30°
-laminography and parallel), fresh CLI processes on the laptop GPU:
+laminography and parallel), fresh CLI processes on the laptop GPU with the
+default detector-frame translations:
 
 | Scan | Motion | Time | Rotation RMSE |
 |---|---|---:|---:|
-| 128³ parallel / laminography | ±0.25°, ±0.5 px | 37 / 41 s | 0.0090 / 0.0026° |
-| 128³ parallel / laminography / anisotropic | ±0.5°, ±8 px | 78 / 43 / 47 s | 0.0076 / 0.0031 / 0.016° |
-| 256³ laminography, full resolution | ±0.25°, ±0.5 px | 188 s | 0.0030° |
-| 256³ laminography, stopped at half resolution | ±0.25°, ±0.5 px | 57 s | 0.0051° |
-| 64³ parallel / laminography | ±0.5°, ±15 px (23% of the detector) | 19 / 32 s | 0.034 / 0.013° |
+| 128³ parallel / laminography | ±0.25°, ±0.5 px | 50 / 43 s | 0.0085 / 0.0026° |
+| 128³ parallel / laminography / anisotropic | ±0.5°, ±8 px | 33 / 46 / 34 s | 0.0090 / 0.0029 / 0.022° |
+| 256³ laminography, full resolution | ±0.25°, ±0.5 px | 202 s | 0.0030° |
+| 256³ laminography, stopped at half resolution | ±0.25°, ±0.5 px | 55 s | 0.0052° |
+| 64³ parallel / laminography | ±0.5°, ±15 px (23% of the detector) | 19 / 27 s | 0.031 / 0.013° |
 
-At 64³ the 0.01–0.03° results are the discretisation floor for that size.
+At 64³ the 0.01–0.03° results are the discretisation floor for that size. The
+64³ anisotropic scan with ±15 px shifts is not captured (5.0° rotation error)
+with either translation frame. On the ±8 px and ±15 px scans, object-frame
+translations give the same rotation errors to within 0.003°. An earlier record of 0.0076°
+and 0.016° for the ±8 px parallel and anisotropic scans could not be
+reproduced: the code at that commit now gives 0.0087° and 0.022°.
 
 ## Repeated-use startup
 

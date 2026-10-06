@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- Estimate a detector-centre offset together with per-view motion:
+  `tomojax align --mode cor_then_pose` now runs the pose solver and saves the
+  constant part of the recovered detector-u shifts as the detector centre,
+  leaving the per-view motion in the pose table (`auto` and `max` add it to
+  their setup estimate); the Python API adds `fold_detector_offset`. With a +3.7 px offset and ±0.5°/±8 px motion on
+  analytic 128³ scans, rotation errors fall from 0.23–0.26° to 0.005–0.006°,
+  and the offset matches its identifiable value to 0.004 px. On the gVXR chip
+  phantom it recovers a 3.2 px offset to 3.18 px. The previous mode searched
+  for the offset before correcting any motion, which biased it.
+- `tomojax align` now uses detector-frame translations by default
+  (`--translation-frame detector`, with `--gauge-fix none`). Object-frame
+  translations move the sample along its own x and z axes, so at views where
+  its x axis lies along the beam they cannot shift its image horizontally; a
+  constant shift needed 70 px translations near 90° and 270° on the chip
+  phantom, with 0.37 px errors.
+  Detector-frame recovery is as accurate or better on every benchmark tried.
+  `--translation-frame object` restores the previous pose tables.
+- `tomojax recon --apply-saved-alignment` applies saved poses in the
+  translation frame they were estimated in, which `tomojax align` now records
+  with the gauge metadata; files without it are read as object-frame poses.
+- A saved detector roll of zero no longer gives `tomojax recon` an explicit
+  detector grid, which forced FISTA-TV onto the ray-model reference path one
+  view at a time. On the 720-view chip phantom, one iteration took more than
+  400 s; 100 iterations now take 29 s.
+- `tomojax recon` streams host projections for CGLS and SPDHG-TV as well as FBP
+  and FISTA-TV.
 - Stream projections from host memory in CGLS and SPDHG-TV, as FISTA-TV
   already did. Streamed CGLS solves the equivalent normal equations: only
   volume-sized arrays stay on the device, and each residual recomputation

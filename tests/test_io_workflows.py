@@ -8,7 +8,7 @@ import imageio.v3 as iio
 import numpy as np
 import pytest
 
-from tomojax.geometry import Detector, Grid
+from tomojax.geometry import Detector, Grid, detector_grid_from_geometry_inputs
 from tomojax.io import (
     ProjectionDataset,
     convert_dataset,
@@ -448,3 +448,10 @@ def test_real_laminography_loader_rejects_angle_count_mismatch(tmp_path: Path) -
 
     with pytest.raises(ValueError, match="projection count 2 does not match angle count 3"):
         load_real_laminography_input(path)
+
+
+def test_only_a_nonzero_saved_detector_roll_builds_an_explicit_grid() -> None:
+    detector = Detector(4, 3, 1.0, 1.0, (0.5, 0.0))
+    assert detector_grid_from_geometry_inputs(detector, {}) is None
+    assert detector_grid_from_geometry_inputs(detector, {"detector_roll_deg": 0.0}) is None
+    assert detector_grid_from_geometry_inputs(detector, {"detector_roll_deg": 0.5}) is not None

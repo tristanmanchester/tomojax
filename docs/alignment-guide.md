@@ -6,10 +6,10 @@ together (the coupled solver), using Joseph plane sampling as its forward model.
 
 On analytic 128³ scans of continuous objects with 181 views and ±0.25°/±0.5 px
 motion, the default `tomojax align --mode pose` recovers per-view rotations to
-0.0088° (parallel) and 0.0026° (30° laminography) and translations to 0.002
-pixels, in 41 and 45 s on an RTX 4070 Laptop GPU, with volume errors of 0.005
+0.0085° (parallel) and 0.0026° (30° laminography) and translations to 0.002
+pixels, in 50 and 43 s on an RTX 4070 Laptop GPU, with volume errors of 0.006
 and 0.048. A 256³, 361-view laminography
-scan recovers to 0.0030° in 3.1 minutes within 8 GB of GPU memory; bin larger
+scan recovers to 0.0030° in 3.4 minutes within 8 GB of GPU memory; bin larger
 scans for alignment and reconstruct the full data with the recovered poses. Accuracy depends on
 resolution: at 32³ the same objects leave a 0.1–0.5° rotation floor from
 discretisation, even when started from the true poses, while reconstructions
@@ -43,14 +43,14 @@ recovered parameters. Run commands below from an installed checkout.
 ## Choose an alignment mode
 
 `tomojax align` has several modes. Use `pose` for per-projection sample motion,
-`cor` for detector-centre calibration, `cor_then_pose` for detector-centre
-followed by pose correction, and `auto` for the full setup+pose workflow.
+`cor` for detector-centre calibration, `cor_then_pose` for a detector-centre
+offset together with per-view motion, and `auto` for the full setup+pose workflow.
 
 | Problem | Recommended mode | Typical command |
 | --- | --- | --- |
 | Sample or object motion changes from projection to projection | `pose` | `tomojax align --data scan.nxs --mode pose --out aligned.nxs` |
 | Detector centre or centre-of-rotation is wrong | `cor` | `tomojax align --data scan.nxs --mode cor --out aligned.nxs` |
-| Detector-centre then per-view pose correction | `cor_then_pose` | `tomojax align --data scan.nxs --mode cor_then_pose --out aligned.nxs` |
+| Detector-centre offset and per-view motion together | `cor_then_pose` | `tomojax align --data scan.nxs --mode cor_then_pose --out aligned.nxs` |
 | Mild setup error and pose motion are both plausible | `auto` | `tomojax align --data scan.nxs --mode auto --gauge-policy anchor_mean --out aligned.nxs` |
 | Reference elevation or detector-v shift is uncertain | Inspect manually | `det_v_px` is not a reliably recoverable alignment target. |
 
@@ -107,7 +107,7 @@ uv run --no-sync tomojax recon --data aligned.nxs --apply-saved-alignment \
 ```
 
 On the analytic 256³, 361-view laminography scan, stopping at half resolution
-takes 57 s instead of 188 s, with rotations recovered to 0.0051° instead
+takes 55 s instead of 202 s, with rotations recovered to 0.0052° instead
 of 0.0030°. Laminography leaves a cone of frequencies unmeasured, so the
 full-resolution solve needs a prior: unregularised CGLS (`--algo cgls`) reaches
 0.27 relative error, positivity-constrained FISTA 0.12 after 100 and 0.091
@@ -142,9 +142,46 @@ COR mode fits detector-u offsets explicitly. It starts from a one-parameter
 search for the offset whose FBP reprojects most consistently, which works for
 laminography and partial arcs, then refines it against held-out views. With a
 +3.7 px offset in analytic 128³ scans it recovers 3.693 px (parallel) and
-3.677 px (laminography) in 41 and 84 s. Pose-only correction may absorb some of
-that error into sample motion. Neither a lower objective nor a sharper image
-proves that the estimated geometry is physically calibrated.
+3.677 px (laminography) in 41 and 84 s. The search assumes the views are
+otherwise consistent: under per-view motion it misjudges the offset (2.2 and
+3.3 px with ±0.5°/±8 px motion), so use `cor_then_pose` when the sample also
+moves. Neither a lower objective nor a sharper image proves that the estimated
+geometry is physically calibrated.
+
+## Estimate a detector offset together with motion
+
+`cor_then_pose` runs the same solver as `pose` and then reports the constant
+part of the recovered detector-u shifts as the detector centre. With
+detector-frame translations (the CLI default) a detector-u offset is exactly a
+constant `dx`; a rigid object translation instead shifts each view by a
+sinusoid of its angle, so a fit over the scan separates the two. The output
+geometry carries the offset as `det_center`, and the saved `dx` values are the
+remaining per-view motion; both together predict the same data as the
+alignment, so the volume is unchanged. `auto` and `max` add the same constant
+to the detector centre from their setup stage.
+
+```bash
+uv run --no-sync tomojax align \
+  --data corrected.nxs \
+  --mode cor_then_pose \
+  --out aligned.nxs
+```
+
+With a +3.7 px offset added to ±0.5°/±8 px motion on analytic 128³ scans, it
+recovers rotations to 0.005° (parallel) and 0.006° (laminography), with volume
+errors of 0.0007 against a reconstruction with the true geometry. It reports −3.573 px for both: the random per-view shifts happen to have
+a mean of 0.131 px, which no method can tell apart from an offset, so the
+identifiable value is −3.569 px. On the gVXR chip phantom (DIAD-like
+25 keV laminography with phase contrast, blur and noise, a 3.2 px offset,
+about 2 px of per-view shift and 0.1° of tilt) it recovers 3.18 px (identifiable
+3.178 px), rotations to 0.073° and per-view shifts to 0.087 px RMS in 127 s.
+The earlier sequence, a COR search followed by a pose polish, left rotation
+errors of 0.23–0.26° on the analytic scans.
+
+`pose` mode recovers the same poses, but leaves the offset in the per-view
+`dx`; it logs the implied offset and writes it to the manifest as
+`implied_detector_u_px`. In the Python API, `implied_detector_offset` and
+`fold_detector_offset` perform the same separation.
 
 ## Use mixed setup and pose as expert mode
 
@@ -187,13 +224,25 @@ uv run --no-sync tomojax align \
 Smooth models reduce degrees of freedom but can hide abrupt jumps or outlier
 views.
 
-## Choose the translation frame in the Python API
+## Choose the translation frame
 
-Existing pose tables and the CLI use `pose_translation_frame="object"`:
+`AlignConfig` defaults to `pose_translation_frame="object"`:
 `T_nominal @ se3_from_5d(params)`. Translations are physical lengths along the
 object's x/z axes. Near a 90-degree view, these two directions project onto
 nearly the same detector direction. This representation cannot express every
-image-plane displacement, even with a well-conditioned object.
+image-plane displacement, even with a well-conditioned object. A constant
+detector shift, such as a centre-of-rotation offset, needs enormous translations
+near those views: on the chip phantom's 720 views, object-frame `dx` reached
+70 px RMS around 90° and 270°, where the per-view u error rose to 0.37 px
+against 0.06 px with detector-frame translations.
+
+`tomojax align` therefore defaults to `--translation-frame detector`, which also
+leaves the translation gauge unfixed (`--gauge-fix none`). On the six-cell
+free-voxel pilot, the chip phantom and the analytic 128³ scans, detector-frame
+recovery is as accurate as object-frame recovery or better in every case.
+`--translation-frame object` restores the previous tables. The aligned file
+records the frame, and `tomojax recon --apply-saved-alignment` applies the poses
+in it.
 
 Given a geometry, grid, detector, and corrected projection stack, the Python
 API can use two observable image-plane translations at every view:
@@ -264,14 +313,8 @@ Known failure modes include:
 
 - Abrupt jumps may need jump-aware pose handling.
 - Short bursts of bad views may need robust loss or bad-view detection.
-- A detector-centre offset combined with per-view motion degrades the volume.
-  With a +3.7 px offset added to ±0.5°/±8 px motion on analytic 128³ scans,
-  `--mode pose` still recovers rotations to 0.006°, but absorbs the offset
-  into per-view shifts and an object translation: after registering out that
-  translation, volume errors are 0.042 (parallel) and 0.108 (laminography)
-  against 0.008 and 0.048 without the offset. `--mode cor_then_pose` misjudges
-  the offset under motion (2.2 and 3.3 px) and leaves 0.23–0.26° rotation
-  errors. Estimating the offset jointly with the poses remains open.
+- A per-view shift with a nonzero mean over the scan is indistinguishable
+  from a detector-centre offset; `cor_then_pose` assigns it to the offset.
 - Detector-v or sample-elevation reference shifts are physically ambiguous and
   are not reliably recoverable.
 

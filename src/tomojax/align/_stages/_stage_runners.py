@@ -370,7 +370,9 @@ def _run_pose_alignment_stage(
     state: StageLoopState,
 ) -> StageLoopState:
     pose_optimizer = _pose_stage_optimizer_or_raise(stage)
-    pose_gauge_fix = "mean_translation" if stage.gauge_policy == "anchor_mean" else cfg.gauge_fix
+    # Mean subtraction is an object-frame gauge; detector-frame translations need none.
+    anchored = stage.gauge_policy == "anchor_mean" and cfg.pose_translation_frame == "object"
+    pose_gauge_fix = "mean_translation" if anchored else cfg.gauge_fix
     cfg_stage = replace(
         cfg,
         schedule=None,

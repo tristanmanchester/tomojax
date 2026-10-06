@@ -44,6 +44,7 @@ class LoadedGeometryMeta(LoadedGeometryMetaRequired, total=False):
     angle_offset_deg: np.ndarray
     misalign_spec: dict[str, JsonValue]
     align_params: np.ndarray
+    align_gauge: dict[str, JsonValue]
 
 
 GridOverride = Grid | tuple[int, int, int] | list[int] | None
@@ -71,16 +72,24 @@ def _normalize_geometry_type(geometry_type: str | None) -> str:
 
 @dataclass
 class AugmentedGeometry:
-    """Geometry wrapper that applies saved per-view 5-DOF alignment params."""
+    """Geometry wrapper that applies saved per-view 5-DOF alignment params.
+
+    ``translation_frame`` follows `tomojax.align.api.apply_pose_update`: object
+    translations compose after the nominal pose; detector translations add to
+    its lab translation.
+    """
 
     base: Geometry
     align_params: np.ndarray
+    translation_frame: str = "object"
 
     def pose_for_view(self, i: int) -> PoseMatrix:
         """Return nominal pose with saved 5-DOF alignment applied."""
         T_nom = np.asarray(self.base.pose_for_view(i), dtype=np.float32)
         T_delta = _se3_from_5d_np(self.align_params[i])
         T = T_nom @ T_delta
+        if self.translation_frame == "detector":
+            T[:3, 3] = T_nom[:3, 3] + T_delta[:3, 3]
         return tuple(map(tuple, T))
 
     def rays_for_view(self, i: int) -> RayPair:
@@ -332,7 +341,12 @@ def build_geometry_from_meta(
                 "align_params must provide at least 5 columns "
                 f"[alpha, beta, phi, dx, dz], got {align_params.shape[1]}"
             )
-        geom = AugmentedGeometry(base=geom, align_params=align_params[:, :5])
+        frame = str(meta.get("align_gauge", {}).get("pose_translation_frame", "object"))
+        if frame not in {"object", "detector"}:
+            raise ValueError(f"unknown saved pose translation frame {frame!r}")
+        geom = AugmentedGeometry(
+            base=geom, align_params=align_params[:, :5], translation_frame=frame
+        )
 
     return grid, detector, geom
 

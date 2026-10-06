@@ -379,6 +379,52 @@ do not replace their thresholds. Run simulation separately from timed solvers
 to avoid GPU contention.
 
 
+## Multi-material chip-package phantom
+
+[`phantoms/`](phantoms) builds a laminography phantom closer to a real DIAD
+sample: a 1.8 mm chip package with eight materials. A Blender script models a
+glass-epoxy substrate, an internal copper ground plane with clearance rings,
+copper vias and traces, a silicon die, gold bond wires, a silica-filled epoxy
+mold and solder balls of tin-silver-copper, three with gas voids. Every mesh is
+closed and the meshes are disjoint, apart from the die, wires and traces
+nested inside the mold. gVXR traces each mesh's path length; a simulator turns
+these into 25 keV measurements with xraylib attenuation and refraction
+coefficients, Fresnel propagation over 50 mm, a 0.7 px Gaussian detector blur,
+3× supersampled pixel integration, Poisson noise at 20,000 flat-field counts,
+a 1% fixed-pattern gain and 20 noisy flats. It writes static and moving scans
+(720 views at 30° tilt, 344×264 px at 8 µm, a 3.2 px centre-of-rotation offset,
+about 2 px of per-view shift and 0.1° of tilt), each as exact line integrals
+(`-ideal`) and as measured data (`-realistic`). The truth volume, 240×240×88 at
+8 µm, comes from an exact voxeliser that integrates each voxel's z overlap
+along vertical rays; its material masses match the meshes within 0.03–0.9%.
+
+```bash
+# Blender 4.5 LTS from https://download.blender.org/release/Blender4.5/,
+# unpacked under .artifacts/tools/blender
+uv pip install --python .artifacts/gvxr-env/bin/python xraylib==4.3.0
+uv run --no-sync python bench/phantoms/chip_package.py build /tmp/chip
+```
+
+The build runs Blender headless if the meshes are missing, then the TomoJAX
+planning step, the gVXR render in its own environment and the final noise and
+NeXus step; it takes about 12 minutes on the laptop GPU. `summary.json`
+records a projector check: TomoJAX's Joseph projection of the truth volume
+differs from gVXR's line integrals by 6.7% relative L2, from the partial-volume
+error of 20–25 µm copper and gold features on 8 µm voxels.
+
+At these settings the phase-contrast fringe width, √(λz) ≈ 1.6 µm, is a fifth
+of a pixel, so pixel integration and blur average the fringes away; smaller
+pixels or longer distances make them visible. Scattering, harmonics, beam
+drift and partial coherence are not modelled. The laminography missing cone
+removes structure such as the thin ground plane parallel to the plate, so even
+an inverse-crime reconstruction stays about 0.5 relative L2 from the truth;
+score alignment against a reconstruction of the same data with the true
+geometry instead. On the moving realistic scan, `tomojax align --mode
+cor_then_pose` recovers the offset to 3.18 px (3.178 px is identifiable from
+the motion), rotations to 0.073° and shifts to 0.087 px RMS in 127 s; its
+volume differs from the true-geometry reconstruction by 0.048 relative L2,
+against 0.82 without alignment.
+
 ## External direct reconstruction baselines
 
 The same fixed-quality runner also supports single-pass methods:

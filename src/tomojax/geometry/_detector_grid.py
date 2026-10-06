@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
 
@@ -129,12 +129,16 @@ def detector_grid_from_geometry_inputs(
     detector: Detector,
     geometry_inputs: object,
 ) -> tuple[jnp.ndarray, jnp.ndarray] | None:
-    """Return a replay detector grid when saved metadata contains detector roll."""
+    """Return a replay detector grid when saved metadata contains a detector roll.
+
+    A zero roll returns None: the canonical grid is identical, and solvers use
+    their fast batched operators only without an explicit grid.
+    """
     roll = None
     if isinstance(geometry_inputs, dict):
         roll = geometry_inputs.get("detector_roll_deg")
     else:
         roll = getattr(geometry_inputs, "detector_roll_deg", None)
-    if roll is None:
+    if roll is None or float(cast("float", roll)) == 0.0:
         return None
     return detector_grid_from_detector_roll(detector, detector_roll_deg=roll)

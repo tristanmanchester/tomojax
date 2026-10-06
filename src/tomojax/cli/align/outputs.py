@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 # ruff: noqa: D100,D103,TC001,TC002
+from dataclasses import replace
 import logging
 import sys
 from typing import cast
@@ -11,6 +12,7 @@ import numpy as np
 from tomojax._typed_arrays import jax_float32_array, numpy_float32_array, object_mapping
 from tomojax.align.api import (
     apply_pose_updates,
+    fold_detector_offset,
     implied_detector_offset,
     profile_policy_from_config,
     save_alignment_params_csv,
@@ -18,6 +20,8 @@ from tomojax.align.api import (
 )
 from tomojax.cli.manifest import build_manifest, save_manifest
 from tomojax.geometry import (
+    CalibrationState,
+    CalibrationVariable,
     build_calibrated_geometry_metadata_patch,
     cylindrical_mask_xy,
     stack_view_poses,
@@ -52,6 +56,8 @@ def _alignment_gauge_metadata(
         "mode": str(mode),
         "dofs": metadata_json_list(dofs),
         "final": metadata_json_mapping(final),
+        # Saved poses are applied in this frame by `tomojax recon --apply-saved-alignment`.
+        "pose_translation_frame": plan.cfg.pose_translation_frame,
     }
 
 
@@ -104,6 +110,7 @@ def _write_alignment_params_exports(
             du=float(plan.detector.du),
             dv=float(plan.detector.dv),
             gauge_metadata=gauge_metadata,
+            translation_frame=plan.cfg.pose_translation_frame,
         )
         logging.info("Saved alignment parameter JSON to %s", plan.command.save_params_json)
     if plan.command.save_params_csv is not None:
@@ -112,6 +119,7 @@ def _write_alignment_params_exports(
             params5_np,
             du=float(plan.detector.du),
             dv=float(plan.detector.dv),
+            translation_frame=plan.cfg.pose_translation_frame,
         )
         logging.info("Saved alignment parameter CSV to %s", plan.command.save_params_csv)
 
@@ -231,6 +239,10 @@ def _write_alignment_manifest(
     logging.info("Saved reproducibility manifest to %s", plan.command.save_manifest)
 
 
+# Modes that report a detector centre fold the poses' constant u shift into it.
+_FOLDING_MODES = frozenset({"cor_then_pose", "auto", "max"})
+
+
 def _implied_detector_u_px(plan: AlignCliRunPlan, params5_np: np.ndarray) -> float | None:
     """Detector-u offset implied by the recovered translations, in detector pixels."""
     if not np.any(params5_np[:, 3]):
@@ -253,15 +265,58 @@ def _implied_detector_u_px(plan: AlignCliRunPlan, params5_np: np.ndarray) -> flo
     return offset / du
 
 
+def _fold_detector_offset(
+    plan: AlignCliRunPlan, params5_np: np.ndarray, calibration: object
+) -> tuple[np.ndarray, dict[str, JsonValue]]:
+    """Move the poses' constant detector-u shift into the calibrated detector centre."""
+    nominal = np.asarray(stack_view_poses(plan.geometry, len(params5_np)))
+    offset, folded = fold_detector_offset(nominal, params5_np)
+    shift_px = offset / float(plan.detector.du)
+    # Without a setup stage, record only the detector centre: a full default
+    # state would also overwrite the scan's axis with the untilted default.
+    state = (
+        CalibrationState.from_dict(object_mapping(cast("object", calibration)))
+        if isinstance(calibration, dict)
+        else CalibrationState()
+    )
+    det_u = state.variables_by_name().get("det_u_px")
+    total_px = shift_px + (0.0 if det_u is None else float(cast("float", det_u.value)))
+    estimate = CalibrationVariable(
+        name="det_u_px",
+        value=total_px,
+        unit="native_detector_px",
+        status="estimated",
+        frame="detector",
+        gauge="detector_ray_grid_center",
+    )
+    detector = (
+        *(variable for variable in state.detector if variable.name != "det_u_px"),
+        estimate,
+    )
+    logging.info(
+        "Estimated a detector-u (centre-of-rotation) offset of %.3f px together with the "
+        "per-view motion (%.3f px from their constant shift); it is saved as the detector centre",
+        total_px,
+        shift_px,
+    )
+    return folded, replace(state, detector=detector).to_dict()
+
+
 def write_alignment_outputs(
     plan: AlignCliRunPlan,
     execution: AlignCliExecutionResult,
 ) -> None:
     x = _apply_alignment_output_mask(plan, execution.x)
     params5_np = np.asarray(execution.params5)
-    implied_det_u_px = _implied_detector_u_px(plan, params5_np)
     gauge_metadata = _alignment_gauge_metadata(plan, execution.info)
     geometry_calibration_state = execution.info.get("geometry_calibration_state")
+    implied_det_u_px = None
+    if plan.command.mode in _FOLDING_MODES and plan.cfg.pose_translation_frame == "detector":
+        params5_np, geometry_calibration_state = _fold_detector_offset(
+            plan, params5_np, geometry_calibration_state
+        )
+    else:
+        implied_det_u_px = _implied_detector_u_px(plan, params5_np)
     output_frame = _write_alignment_result_volume(
         plan,
         x=x,

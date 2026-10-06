@@ -83,11 +83,11 @@ def build_recon_runtime_plan(command: ReconCommand) -> ReconRuntimePlan:
         logging.info("Applying saved per-view alignment parameters from input metadata")
 
     det_grid = detector_grid_from_geometry_inputs(detector, geometry_meta)
-    # FBP and FISTA stream host projections through the device in view
-    # batches, so a scan larger than device memory needs only its volumes there.
+    # Every solver streams host projections through the device in view batches,
+    # so a scan larger than device memory needs only its volumes there.
     projections = (
         np.asarray(meta.projections, dtype=np.float32)
-        if command.algo in {"fbp", "fista"} and det_grid is None
+        if det_grid is None
         else _jnp_float32_array(meta.projections)
     )
     if det_grid is not None:

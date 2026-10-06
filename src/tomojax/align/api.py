@@ -49,7 +49,7 @@ from tomojax.align._objectives.loss_specs import (
     resolve_loss_for_level,
     validate_loss_schedule_levels,
 )
-from tomojax.align._prealign import implied_detector_offset
+from tomojax.align._prealign import fold_detector_offset, implied_detector_offset
 from tomojax.align._profiles import (
     AlignmentProfile,
     AlignmentProfileInput,
@@ -150,6 +150,7 @@ __all__ = [
     "build_loss_adapter",
     "coupled_pose_config",
     "dof_spec",
+    "fold_detector_offset",
     "geometry_with_axis_state",
     "implied_detector_offset",
     "level_detector_grid",

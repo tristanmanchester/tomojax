@@ -145,9 +145,10 @@ def _add_input_mode_options(p: argparse.ArgumentParser) -> None:
         default="pose",
         help=(
             "High-level alignment mode. pose solves per-view 5-DOF motion "
-            "(default); cor solves detector centre; cor_then_pose runs detector "
-            "centre then full 5-DOF pose; auto is the same robust setup+pose "
-            "workflow; max uses the slower reference-quality posture."
+            "(default); cor solves detector centre; cor_then_pose solves per-view "
+            "motion and reports its constant detector-u shift as the detector centre; "
+            "auto is the robust setup+pose workflow; max uses the slower "
+            "reference-quality posture."
         ),
     )
     _ = p.add_argument(
@@ -416,13 +417,26 @@ def _add_dof_schedule_options(p: argparse.ArgumentParser) -> None:
         help="Polynomial degree or spline degree for smooth pose models",
     )
     _ = p.add_argument(
+        "--translation-frame",
+        choices=["object", "detector"],
+        default="detector",
+        help=(
+            "Frame of the per-view dx,dz translations: detector (default) moves the "
+            "sample along lab x,z, so every view can shift in both detector directions "
+            "and a centre-of-rotation offset is a constant dx; object moves it along "
+            "its own x,z axes, which cannot express horizontal detector shifts at views "
+            "near 90 degrees"
+        ),
+    )
+    _ = p.add_argument(
         "--gauge-fix",
         choices=["mean_translation", "none"],
-        default="mean_translation",
+        default=None,
         help=(
             "Gauge fixing for alignment parameters: mean_translation subtracts the "
-            "scan-wide mean from active dx,dz after updates (default); none preserves "
-            "historical unconstrained traces"
+            "scan-wide mean from active dx,dz after updates (default for object-frame "
+            "translations); none leaves them unconstrained (default and required for "
+            "detector-frame translations)"
         ),
     )
     _ = p.add_argument("--w-rot", type=float, default=1e-3, help="Smoothness weight for rotations")
@@ -668,6 +682,7 @@ class AlignCommand:
     fallback_policy: str
     checkpoint_projector: bool
     mask_vol: str
+    translation_frame: str
     gauge_fix: str
     gauge_policy: str
     opt_method: str
@@ -712,11 +727,12 @@ def _pose_solver(args: argparse.Namespace) -> str:
     requested = cast("str | None", args.pose_solver)
     if requested is not None:
         return requested
-    return "coupled" if cast("str", args.mode) == "pose" else "alternating"
+    return "coupled" if cast("str", args.mode) in {"pose", "cor_then_pose"} else "alternating"
 
 
 def align_command_from_args(args: argparse.Namespace) -> AlignCommand:
     """Snapshot parser/config output into typed alignment command values."""
+    frame = cast("str", args.translation_frame)
     return AlignCommand(
         data=cast("str", args.data),
         out=cast("str", args.out),
@@ -747,7 +763,9 @@ def align_command_from_args(args: argparse.Namespace) -> AlignCommand:
         fallback_policy=cast("str", getattr(args, "fallback_policy", "")),
         checkpoint_projector=cast("bool", args.checkpoint_projector),
         mask_vol=cast("str", args.mask_vol),
-        gauge_fix=cast("str", args.gauge_fix),
+        translation_frame=frame,
+        gauge_fix=cast("str | None", args.gauge_fix)
+        or ("none" if frame == "detector" else "mean_translation"),
         gauge_policy=cast("str", args.gauge_policy),
         opt_method=cast("str", args.opt_method),
         gn_damping=cast("float", args.gn_damping),

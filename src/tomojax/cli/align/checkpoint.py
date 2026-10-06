@@ -95,6 +95,7 @@ def _checkpoint_cli_options(command: AlignCommand, *, gather_dtype: str) -> dict
         "fallback_policy": command.fallback_policy,
         "checkpoint_projector": command.checkpoint_projector,
         "mask_vol": command.mask_vol,
+        "translation_frame": command.translation_frame,
         "gauge_fix": command.gauge_fix,
         "gauge_policy": command.gauge_policy,
         "optimise_dofs": command.optimise_dofs,
