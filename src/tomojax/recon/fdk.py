@@ -17,6 +17,8 @@ from __future__ import annotations
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from functools import cache, partial
+import logging
+import math
 from typing import TYPE_CHECKING, Any
 
 import jax
@@ -34,6 +36,8 @@ from tomojax.recon.filters import get_fbp_filter_np
 if TYPE_CHECKING:
     from tomojax.core.geometry.base import Detector, Geometry, Grid
     from tomojax.core.geometry.cone import ConeBeam
+
+LOG = logging.getLogger(__name__)
 
 _RUN = 8
 _TILE = (8, 2)
@@ -53,8 +57,89 @@ class FDKConfig:
     views_per_batch: int = 64
 
 
+def _fan_angles(beam: ConeBeam, detector: Detector) -> np.ndarray:
+    """Fan angle of each detector column from the ray through the rotation axis."""
+    u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du + detector.det_center[0]
+    return np.arctan(u / float(beam.source_to_detector)) - np.arctan(
+        float(beam.axis_offset) / float(beam.source_to_axis)
+    )
+
+
+def _full_turn_column_weights(beam: ConeBeam, detector: Detector) -> np.ndarray:
+    """``(nu,)`` weights of a full turn: 1/2, or Wang's for an offset detector.
+
+    A full turn measures each ray twice, once from each side, so each column
+    takes half the angular measure. When the detector is offset so that the
+    rotation axis projects off its centre, columns beyond the short side's
+    reach are measured once and weigh 1, and a sin^2 ramp across the overlap
+    (0 at the short edge, 1/2 at the axis, 1 at the mirrored column) keeps the
+    weights of each ray's two measurements summing to one.
+    """
+    gamma = _fan_angles(beam, detector)
+    lo, hi = float(gamma.min()), float(gamma.max())
+    pixel = float(detector.du) / float(beam.source_to_detector)
+    if lo > pixel or hi < -pixel:
+        raise ValueError("FDK needs the rotation axis to project onto the detector")
+    if abs(hi + lo) <= pixel:
+        return np.full(detector.nu, 0.5)
+    side = 1.0 if hi + lo > 0 else -1.0
+    overlap = max(min(-lo, hi), pixel)
+    x = side * gamma
+    ramp = np.sin(np.pi / 4 * (1 + np.clip(x / overlap, -1.0, 1.0))) ** 2
+    return np.where(x >= overlap, 1.0, ramp)
+
+
+def _full_turn(geometry: Geometry, n_views: int) -> bool:
+    thetas = getattr(geometry, "thetas_deg", None)
+    if thetas is None or n_views < 2:
+        return False
+    angles = np.sort(np.deg2rad(np.asarray(thetas, dtype=np.float64)[:n_views]))
+    step = float(np.median(np.diff(angles)))
+    return float(angles[-1] - angles[0]) + step >= 2 * np.pi - 0.5 * step
+
+
+def _virtual_columns(
+    geometry: Geometry, beam: ConeBeam, detector: Detector, n_views: int
+) -> tuple[int, int]:
+    """Columns to add below and above an offset detector, mirroring it about the axis.
+
+    In a full turn an offset detector reconstructs the whole field its long
+    side covers; voxels on the short side then project past the detector, where
+    the filtered rows (zero data, nonzero ramp tail) must still be read.
+    """
+    if not _full_turn(geometry, n_views) or not _windowable(beam):
+        return 0, 0
+    axis = (float(beam.axis_offset) * beam.magnification - float(detector.det_center[0])) / float(
+        detector.du
+    ) + (detector.nu - 1) / 2
+    below, above = axis, detector.nu - 1 - axis
+    if abs(above - below) <= 1.0:
+        return 0, 0
+    pad = min(math.ceil(abs(above - below)), detector.nu)
+    return (pad, 0) if above > below else (0, pad)
+
+
+def _extended(beam: ConeBeam, detector: Detector, pad_lo: int, pad_hi: int) -> Detector:
+    """``detector`` with ``pad_lo`` columns added below u and ``pad_hi`` above."""
+    from dataclasses import replace
+
+    if not (pad_lo or pad_hi):
+        return detector
+    _, u_dir, _ = beam.detector_frame(detector)
+    shift = (pad_hi - pad_lo) / 2 * float(detector.du) * u_dir
+    return replace(
+        detector,
+        nu=detector.nu + pad_lo + pad_hi,
+        det_center=(detector.det_center[0] + shift[0], detector.det_center[1] + shift[2]),
+    )
+
+
 def view_weights(geometry: Geometry, detector: Detector, n_views: int) -> np.ndarray:
-    """Return ``(views, nu)`` FDK angular weights: half steps, or Parker for short scans."""
+    """Return ``(views, nu)`` FDK angular weights.
+
+    Full turns weigh each view by its angular measure, halved (Wang's weights
+    for an offset detector); short scans use Parker weights.
+    """
     beam = beam_of(geometry)
     if beam is None:
         raise ValueError("view_weights needs a cone-beam geometry")
@@ -76,15 +161,20 @@ def view_weights(geometry: Geometry, detector: Detector, n_views: int) -> np.nda
             [sorted_angles[-1:] - 2 * np.pi, sorted_angles, sorted_angles[:1] + 2 * np.pi]
         )
         measure[order] = 0.5 * (wrapped[2:] - wrapped[:-2])
-        return np.repeat(0.5 * measure[:, None], detector.nu, axis=1)
+        return measure[:, None] * _full_turn_column_weights(beam, detector)[None, :]
     padded = np.concatenate([[sorted_angles[0] - step], sorted_angles, [sorted_angles[-1] + step]])
     measure[order] = 0.5 * (padded[2:] - padded[:-2])
     # Parker weights over the fan angle of each detector column.
-    # Fan angle of each column from the ray through the rotation axis.
-    u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du + detector.det_center[0]
-    gamma = np.arctan(u / float(beam.source_to_detector)) - np.arctan(
-        float(beam.axis_offset) / float(beam.source_to_axis)
-    )
+    gamma = _fan_angles(beam, detector)
+    pixel = float(detector.du) / float(beam.source_to_detector)
+    if abs(float(gamma.max() + gamma.min())) > 0.05 * float(gamma.max() - gamma.min()):
+        LOG.warning(
+            "FDK short scan with an offset detector: Parker weights assume the axis "
+            "projects near the detector centre (fan %.2f to %.2f degrees); columns beyond "
+            "the short side are weighted as if their conjugate rays were measured",
+            np.rad2deg(gamma.min() - pixel / 2),
+            np.rad2deg(gamma.max() + pixel / 2),
+        )
     delta = float(np.max(np.abs(gamma)))
     if arc < np.pi + 2 * delta - 1e-6:
         raise ValueError(
@@ -118,13 +208,28 @@ def _cosine_weights(beam: ConeBeam, detector: Detector) -> np.ndarray:
 
 
 def _filter(
-    views: jax.Array, cosine: jax.Array, weights: jax.Array, kernel: jax.Array
+    views: jax.Array,
+    cosine: jax.Array,
+    weights: jax.Array,
+    kernel: jax.Array,
+    pad_lo: int = 0,
+    pad_hi: int = 0,
 ) -> jax.Array:
+    """Weight and ramp-filter rows, keeping ``pad_lo``/``pad_hi`` columns beyond them.
+
+    Filtered rows extend past the data; an offset detector's backprojection
+    needs that tail on its short side (see :func:`_virtual_columns`).
+    """
+    # Angular (Parker, offset-detector) weights vary along the row, so they
+    # apply before the ramp filter, as do the cosine weights.
     n_fft = 2 * (int(kernel.shape[0]) - 1)
-    rows = views * cosine
+    nu = views.shape[-1]
+    rows = views * cosine * weights[:, None, :]
     spectrum = jnp.fft.rfft(rows, n=n_fft, axis=-1) * kernel
-    filtered = jnp.fft.irfft(spectrum, n=n_fft, axis=-1)[..., : views.shape[-1]]
-    return filtered * weights[:, None, :]
+    out = jnp.fft.irfft(spectrum, n=n_fft, axis=-1)
+    if pad_lo:
+        return jnp.concatenate([out[..., n_fft - pad_lo :], out[..., : nu + pad_hi]], axis=-1)
+    return out[..., : nu + pad_hi]
 
 
 def _backproject_jax(
@@ -312,7 +417,11 @@ def _backproject_cuda(
     return call(coeff, jnp.swapaxes(filtered, 1, 2), out)
 
 
-@partial(jax.jit, static_argnames=("grid", "detector", "scale", "cuda"), donate_argnames=("out",))
+@partial(
+    jax.jit,
+    static_argnames=("grid", "detector", "scale", "cuda", "pad_lo", "pad_hi"),
+    donate_argnames=("out",),
+)
 def _fdk_batch(
     views: jax.Array,
     coeff: jax.Array,
@@ -325,8 +434,10 @@ def _fdk_batch(
     detector: Detector,
     scale: float,
     cuda: bool,
+    pad_lo: int,
+    pad_hi: int,
 ) -> jax.Array:
-    filtered = _filter(views, cosine, weights, kernel)
+    filtered = _filter(views, cosine, weights, kernel, pad_lo, pad_hi)
     backproject = _backproject_cuda if cuda else _backproject_jax
     return backproject(filtered, coeff, grid, detector, scale, out)
 
@@ -341,9 +452,28 @@ class _Prepared:
     kernel: jax.Array
     scale: float
     batch: int
+    pad_lo: int = 0
+    pad_hi: int = 0
+
+    def backprojected(self, beam: ConeBeam, detector: Detector) -> Detector:
+        """The detector the filtered rows cover, with its virtual columns."""
+        return _extended(beam, detector, self.pad_lo, self.pad_hi)
 
 
-def _prepare(geometry: Geometry, detector: Detector, n_views: int, cfg: FDKConfig) -> _Prepared:
+def _prepare(
+    geometry: Geometry,
+    detector: Detector,
+    n_views: int,
+    cfg: FDKConfig,
+    columns: Detector | None = None,
+) -> _Prepared:
+    """FDK weights, filter and virtual columns for ``detector``.
+
+    ``columns``, a detector with the same columns (the full detector of a band
+    of rows), sets the per-column angular weights and virtual columns, so every
+    band of a rolled detector gets the same ones.
+    """
+    columns = detector if columns is None else columns
     beam = beam_of(geometry)
     if beam is None:
         raise ValueError("fdk needs a cone-beam geometry; use fbp for parallel beams")
@@ -353,13 +483,18 @@ def _prepare(geometry: Geometry, detector: Detector, n_views: int, cfg: FDKConfi
     if cuda and not use_cuda_cone():
         raise ValueError("fdk: the CUDA kernel needs CuPy on a CUDA device")
     du_iso = float(detector.du) / beam.magnification
+    pad_lo, pad_hi = _virtual_columns(geometry, beam, columns, n_views)
+    # The kernel spans the virtual row too, so its tail does not wrap around.
+    width = detector.nu + pad_lo + pad_hi
     return _Prepared(
         cuda=cuda,
-        weights=jnp.asarray(view_weights(geometry, detector, n_views), jnp.float32),
+        weights=jnp.asarray(view_weights(geometry, columns, n_views), jnp.float32),
         cosine=jnp.asarray(_cosine_weights(beam, detector), jnp.float32),
-        kernel=jnp.asarray(get_fbp_filter_np(cfg.filter_name, detector.nu, du_iso, "float32")),
+        kernel=jnp.asarray(get_fbp_filter_np(cfg.filter_name, width, du_iso, "float32")),
         scale=1.0 / beam.magnification,
         batch=max(1, int(cfg.views_per_batch)),
+        pad_lo=pad_lo,
+        pad_hi=pad_hi,
     )
 
 
@@ -370,7 +505,7 @@ def _device_views(projections: jax.Array | np.ndarray, start: int, stop: int) ->
     return jnp.asarray(np.asarray(part, np.float32))
 
 
-_filter_jit = jax.jit(_filter)
+_filter_jit = jax.jit(_filter, static_argnames=("pad_lo", "pad_hi"))
 
 
 @partial(jax.jit, static_argnames=("grid", "detector", "scale", "cuda"), donate_argnames=("out",))
@@ -394,7 +529,10 @@ def _filter_views(prep: _Prepared, projections: jax.Array | np.ndarray, n_views:
     for start in range(0, n_views, prep.batch):
         stop = min(start + prep.batch, n_views)
         views = _device_views(projections, start, stop)
-        parts.append(_filter_jit(views, prep.cosine, prep.weights[start:stop], prep.kernel))
+        weights = prep.weights[start:stop]
+        parts.append(
+            _filter_jit(views, prep.cosine, weights, prep.kernel, prep.pad_lo, prep.pad_hi)
+        )
     return jnp.concatenate(parts, axis=0)
 
 
@@ -405,6 +543,7 @@ def _backproject_filtered(
     beam = beam_of(geometry)
     assert beam is not None
     n_views = int(filtered.shape[0])
+    detector = prep.backprojected(beam, detector)
     coeff = cone_coefficients(stack_view_poses(geometry, n_views), grid, detector, beam)
     out = jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
     for start in range(0, n_views, prep.batch):
@@ -427,8 +566,22 @@ def fdk(
     """Reconstruct a cone-beam scan with FDK; returns an ``(nx, ny, nz)`` volume.
 
     ``projections`` are ``(views, nv, nu)`` line integrals; NumPy and memmap
-    stacks stream to the device ``views_per_batch`` views at a time.
+    stacks stream to the device ``views_per_batch`` views at a time. Full turns
+    on an offset detector (the axis projecting off its centre) get Wang's
+    weights and reconstruct the field the detector's long side covers.
     """
+    return _fdk(geometry, grid, detector, projections, config=config)
+
+
+def _fdk(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jax.Array | np.ndarray,
+    *,
+    config: FDKConfig | None = None,
+    columns: Detector | None = None,
+) -> jax.Array:
     cfg = FDKConfig() if config is None else config
     beam = beam_of(geometry)
     if beam is None:
@@ -437,15 +590,17 @@ def fdk(
     n_views, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fdk projections"
     )
-    prep = _prepare(geometry, detector, n_views, cfg)
-    coeff = cone_coefficients(stack_view_poses(geometry, n_views), grid, detector, beam)
+    prep = _prepare(geometry, detector, n_views, cfg, columns)
+    virtual = prep.backprojected(beam, detector)
+    coeff = cone_coefficients(stack_view_poses(geometry, n_views), grid, virtual, beam)
     out = jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
     for start in range(0, n_views, prep.batch):
         stop = min(start + prep.batch, n_views)
         out = _fdk_batch(
             _device_views(projections, start, stop), coeff[start:stop], prep.cosine,
             prep.weights[start:stop], prep.kernel, out,
-            grid=grid, detector=detector, scale=prep.scale, cuda=prep.cuda,
+            grid=grid, detector=virtual, scale=prep.scale, cuda=prep.cuda,
+            pad_lo=prep.pad_lo, pad_hi=prep.pad_hi,
         )  # fmt: skip
     return out
 
@@ -588,7 +743,11 @@ def fdk_host(
                 rows = _detector_window(beam, detector, r0, r1)
             else:
                 r0, r1, rows = 0, detector.nv, detector
-            volume = fdk(geometry, slab, rows, _RowView(projections, r0, r1), config=cfg.fdk)
+            # The full detector sets per-column weights, the same for every slab.
+            volume = _fdk(
+                geometry, slab, rows, _RowView(projections, r0, r1), config=cfg.fdk,
+                columns=detector,
+            )  # fmt: skip
             host = np.asarray(volume)
             if pending is not None:
                 pending.result()

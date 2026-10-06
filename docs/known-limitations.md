@@ -73,8 +73,9 @@ results from default CLI behavior and larger-motion targets.
   switch the existing alignment pipeline from its trilinear ray model.
 - Cone-beam scans: FDK assumes a circular source orbit (it is exact only in
   the orbit plane, with cone artefacts growing away from it) and supports full
-  turns and Parker-weighted short scans, but not offset-detector (half-fan)
-  scans. The iterative solvers model any per-view poses exactly. Cone-beam
+  turns, including offset-detector (half-fan) turns with Wang's weights, and
+  Parker-weighted short scans on a centred detector (an offset detector in a
+  short scan logs a warning). The iterative solvers model any per-view poses exactly. Cone-beam
   projection needs the canonical detector grid (no `detector_roll_deg`
   replay grid; detector roll is part of `ConeBeam`). The CUDA kernels need
   CuPy; without it the JAX reference runs, about ten times slower. On CUDA

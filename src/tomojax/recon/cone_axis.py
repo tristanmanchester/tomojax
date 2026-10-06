@@ -124,7 +124,9 @@ def _binned_rows(
 def _fov_mask(geometry: ConeGeometry, grid: Grid, detector: Detector) -> np.ndarray:
     """``(nx, ny)`` mask of the voxels inside the cylinder every view sees."""
     beam = geometry.beam
-    half = detector.nu * detector.du / 2 - abs(float(detector.det_center[0]))
+    # A full turn sees the circle reached by the detector edge farther from the axis.
+    axis = float(beam.axis_offset) * beam.magnification - float(detector.det_center[0])
+    half = detector.nu * detector.du / 2 + abs(axis)
     radius = (
         0.95
         * float(beam.source_to_axis)
@@ -194,7 +196,8 @@ def _prepare_slab(
 
     binned = window(geometry.beam)
     data = _binned_rows(projections, r0, rows, cols, f, max(1, cfg.fdk.views_per_batch))
-    prep = _prepare(geometry, binned, data.shape[0], cfg.fdk)
+    full = _detector_window(geometry.beam, detector, 0, f * (detector.nv // f), f * cols, f)
+    prep = _prepare(geometry, binned, data.shape[0], cfg.fdk, full)
     filtered = _filter_views(prep, data, data.shape[0])
     mask = jnp.asarray(_fov_mask(geometry, slab, detector))
     return _Slab(grid=slab, window=window, filtered=filtered, mask=mask, prep=prep)

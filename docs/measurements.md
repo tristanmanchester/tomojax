@@ -93,6 +93,13 @@ alignment make every view non-separable: TomoJAX then samples each ray along
 its own axis, which costs about 0.46 s per iteration at this size. ASTRA's
 timings do not depend on the geometry.
 
+On the same scan, CGLS with the matched transpose took 3.4 s for 10
+iterations, 6.6 s for 20 and 13.2 s for 40, with volume errors of 0.090, 0.043
+and 0.048. ASTRA's `CGLS3D_CUDA`, whose backprojector is not the transpose of
+its projector, took 2.3, 4.4 and 8.7 s with errors of 0.088, 0.040 and 0.101:
+faster per iteration, but it diverges after about 20 iterations where
+TomoJAX's error stays near its minimum.
+
 `fdk_host` reconstructed a 1024³ scan (1024 views of 1024² pixels, 4.3 GB
 each way) in z-slabs, filtering only the detector rows each slab projects
 onto: 11.7 s with the projections and volume in RAM and 14.3 s from a

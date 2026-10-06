@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- FDK reconstructs full turns on an offset detector (the rotation axis
+  projecting off the detector centre, as lab scanners use to widen the field
+  of view): Wang's weights blend each ray's two measurements and the filtered
+  rows keep their tail past the detector's short side, so a detector covering
+  5.5 columns on one side of the axis reconstructs a 32-cubed phantom as well
+  as a centred detector twice as wide (error 0.071 against 0.075). Angular
+  weights now apply before the ramp filter, as FDK requires; this lowers
+  Parker-weighted short-scan errors (0.114 against 0.075 for a full turn).
 - Calibrate a cone-beam scan's rotation axis: `ConeBeam.axis_offset` places
   the axis laterally (the lab-CT centre of rotation; `tomojax ingest
   --axis-offset`), and `tomojax.recon.calibrate_cone_axis` estimates it with

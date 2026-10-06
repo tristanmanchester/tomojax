@@ -218,6 +218,24 @@ def test_fdk_reconstructs_full_and_short_scans(backend):
 
 
 @pytest.mark.parametrize("backend", ["jax", cuda])
+def test_fdk_reconstructs_a_full_turn_on_an_offset_detector(backend):
+    # The axis projects 5.5 columns from one edge: the far side is measured once
+    # per turn and the near side's filtered tail lies beyond the detector.
+    n = 32
+    grid = Grid(n, n, n, 1.0, 1.0, 1.0)
+    shapes = _ellipsoids(float(n))
+    truth = _voxelise(grid, shapes)
+    angles = np.linspace(0.0, 360.0, 120, endpoint=False)
+    errors = []
+    for detector in (Detector(48, 48, 1.0, 1.0), Detector(32, 48, 1.0, 1.0, (10.0, 0.0))):
+        geometry = ConeGeometry(grid, detector, angles, ConeBeam(96, 144))
+        config = FDKConfig(backend=backend)
+        volume = fdk(geometry, grid, detector, _analytic(shapes, geometry), config=config)
+        errors.append(np.linalg.norm(np.asarray(volume) - truth) / np.linalg.norm(truth))
+    assert errors[1] < 1.05 * errors[0] < 0.1
+
+
+@pytest.mark.parametrize("backend", ["jax", cuda])
 def test_fdk_host_reconstructs_in_slabs_into_a_memmap(backend, tmp_path: Path):
     n = 24
     grid = Grid(n, n - 2, n, 1.0, 1.0, 1.1, vol_center=(0.5, -0.3, 1.5))
@@ -445,3 +463,4 @@ def test_align_cor_mode_writes_the_calibrated_cone_beam(tmp_path: Path):
     assert isinstance(calibrated, ConeGeometry)
     assert abs(calibrated.beam.axis_offset - 3.1) < 0.15
     assert abs(calibrated.beam.detector_roll_deg + 0.5) < 0.15
+
