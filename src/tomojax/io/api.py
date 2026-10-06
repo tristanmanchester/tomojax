@@ -44,6 +44,7 @@ from tomojax.io._nexus_wrangler import (
     summarize_angles,
     volume_chunks,
 )
+from tomojax.io._nikon import load_nikon_xtekct
 from tomojax.io._preprocess import (
     PreprocessConfig,
     PreprocessResult,
@@ -75,6 +76,7 @@ __all__ = [
     "inspect_dataset",
     "load_angles",
     "load_dataset",
+    "load_nikon_xtekct",
     "load_nxtomo",
     "load_projection_payload",
     "load_real_laminography_input",

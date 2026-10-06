@@ -190,13 +190,18 @@ def _grid_from_meta(
             nx = int(detector.nu)
             ny = int(detector.nu)
             nz = int(detector.nv)
+        # A cone beam magnifies the axis plane: one voxel per detector pixel there.
+        beam = meta.get("cone_beam")
+        scale = 1.0
+        if _normalize_geometry_type(meta.get("geometry_type")) == "cone" and isinstance(beam, dict):
+            scale = float(beam["source_to_axis"]) / float(beam["source_to_detector"])
         return Grid(
             nx=nx,
             ny=ny,
             nz=nz,
-            vx=float(detector.du),
-            vy=float(detector.du),
-            vz=float(detector.dv),
+            vx=float(detector.du) * scale,
+            vy=float(detector.du) * scale,
+            vz=float(detector.dv) * scale,
         )
 
     vol_origin = (

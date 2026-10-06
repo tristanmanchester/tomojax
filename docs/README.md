@@ -1,8 +1,9 @@
 # TomoJAX documentation
 
 Start with a small reconstruction, then supply your acquisition's geometry and
-preprocessing details. TomoJAX is an early research library for parallel-ray
-models; consult the support and limitations pages before planning a workflow.
+preprocessing details. TomoJAX is an early research library for parallel-beam,
+laminography and lab cone-beam models; consult the support and limitations
+pages before planning a workflow.
 
 ## Use the library
 
@@ -12,6 +13,7 @@ models; consult the support and limitations pages before planning a workflow.
 | Produce a first volume and inspect slices | [Quickstart](quickstart.md) |
 | Simulate data or call the Python API | [Synthetic tomography](synthetic-tomography.md), [examples](../examples/README.md) |
 | Process TIFF, NeXus, or laminography scans with measured geometry | [Real scan guide](real-laminography.md) |
+| Import, calibrate and reconstruct a lab cone-beam CT scan | [Lab cone-beam CT](lab-ct.md) |
 | Estimate motion or detector-centre corrections | [Alignment guide](alignment-guide.md) |
 | Check geometry, units, algorithms, and GPU scope | [Support matrix](support-matrix.md), [known limitations](known-limitations.md) |
 | Understand the evidence behind accuracy and speed claims | [Measurements](measurements.md) |

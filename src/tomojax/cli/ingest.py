@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from tomojax.geometry import ConeBeam, Detector, Grid
-from tomojax.io import load_tiff_stack, save_dataset
+from tomojax.io import load_nikon_xtekct, load_tiff_stack, save_dataset
 from tomojax.io.api import load_angles
 
 if TYPE_CHECKING:
@@ -16,15 +16,37 @@ if TYPE_CHECKING:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Ingest a TIFF projection stack into a TomoJAX .nxs/.h5/.hdf5 dataset."
+        description=(
+            "Ingest a TIFF projection stack, or a Nikon .xtekct scan, into a TomoJAX "
+            ".nxs/.h5/.hdf5 dataset."
+        )
     )
-    _ = parser.add_argument("input", help="Input TIFF file or directory of TIFF projections")
+    _ = parser.add_argument(
+        "input",
+        help=(
+            "Input TIFF file or directory of TIFF projections, or a Nikon .xtekct file "
+            "(its geometry, angles and projections are read from the scan folder)"
+        ),
+    )
     _ = parser.add_argument("output", nargs="?", help="Output .nxs/.h5/.hdf5 or .npz dataset")
     _ = parser.add_argument("--out", dest="out", default=None, help="Output dataset path")
     _ = parser.add_argument(
         "--angles",
-        required=True,
-        help="Angle sidecar: .npy array or text/CSV file with one angle in degrees per row",
+        default=None,
+        help=(
+            "Angle sidecar: .npy array or text/CSV file with one angle in degrees per row "
+            "(required for TIFF stacks)"
+        ),
+    )
+    _ = parser.add_argument(
+        "--transmission",
+        action="store_true",
+        help="Nikon .xtekct: keep transmission intensities instead of -log(I / WhiteLevel)",
+    )
+    _ = parser.add_argument(
+        "--reverse-angles",
+        action="store_true",
+        help="Nikon .xtekct: negate the stage angles (for a stage turning the other way)",
     )
     _ = parser.add_argument(
         "--geometry",
@@ -106,7 +128,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     if output is None:
         parser.error("the following arguments are required: output or --out")
 
-    angles = load_angles(Path(cast("str", args.angles)))
+    if cast("str", args.input).lower().endswith(".xtekct"):
+        dataset = load_nikon_xtekct(
+            cast("str", args.input),
+            absorption=not cast("bool", args.transmission),
+            reverse_angles=cast("bool", args.reverse_angles),
+        )
+        save_dataset(output, dataset)
+        print(
+            f"wrote {output} from {dataset.projections.shape[0]} Nikon projections; "
+            "calibrate the rotation axis with `tomojax align --mode cor`"
+        )
+        return 0
+    angles_path = cast("str | None", args.angles)
+    if angles_path is None:
+        parser.error("--angles is required for TIFF stacks")
+    angles = load_angles(Path(angles_path))
     probe = load_tiff_stack(
         cast("str", args.input),
         angles_deg=angles,

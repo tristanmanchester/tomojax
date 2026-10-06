@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Import Nikon (X-Tek) lab CT scans: `tomojax ingest scan.xtekct --out
+  scan.nxs` (and `tomojax.io.load_nikon_xtekct`) reads the source and
+  detector distances, detector pixels and offsets, reconstruction volume,
+  white level and angles (from `_ctdata.txt` when present) and converts the
+  projection TIFFs to absorption. The axis offset and detector roll are left
+  to `tomojax align --mode cor`. A [lab cone-beam CT guide](docs/lab-ct.md)
+  covers import, calibration, FDK, iterative reconstruction and motion
+  correction.
+- Cone datasets without a grid now reconstruct one voxel per detector pixel
+  at the rotation axis (the pixel size divided by the magnification) instead
+  of one per pixel at the detector.
 - FDK reconstructs full turns on an offset detector (the rotation axis
   projecting off the detector centre, as lab scanners use to widen the field
   of view): Wang's weights blend each ray's two measurements and the filtered

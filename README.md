@@ -62,6 +62,7 @@ For CUDA installation, wheel installation, and device checks, see
 | --- | --- |
 | Inspect, preprocess, and reconstruct a scan | [Quickstart](docs/quickstart.md) |
 | Supply measured geometry and process TIFF or laminography data | [Real scan guide](docs/real-laminography.md) |
+| Import (including Nikon `.xtekct`), calibrate and reconstruct a lab cone-beam CT scan | [Lab cone-beam CT](docs/lab-ct.md) |
 | Simulate data or use the Python API | [Synthetic workflow](docs/synthetic-tomography.md), [runnable examples](examples/README.md) |
 | Estimate motion or detector-centre corrections | [Alignment guide](docs/alignment-guide.md) — experimental; review recovered geometry |
 | Check supported models and limitations | [Support matrix](docs/support-matrix.md), [limitations](docs/known-limitations.md) |

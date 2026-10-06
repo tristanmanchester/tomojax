@@ -464,3 +464,41 @@ def test_align_cor_mode_writes_the_calibrated_cone_beam(tmp_path: Path):
     assert abs(calibrated.beam.axis_offset - 3.1) < 0.15
     assert abs(calibrated.beam.detector_roll_deg + 0.5) < 0.15
 
+
+def test_ingest_reads_a_nikon_xtekct_scan(tmp_path: Path):
+    import imageio.v3 as iio
+
+    from tomojax.cli.main import main
+
+    n, views = 24, 60
+    grid = Grid(n, n, n, 0.05, 0.05, 0.05)
+    detector = Detector(40, 36, 0.075, 0.075)
+    beam = ConeBeam(12.0, 18.0)
+    angles = np.linspace(0.0, 360.0, views, endpoint=False)
+    geometry = ConeGeometry(grid, detector, angles, beam)
+    shapes = _ellipsoids(n * 0.05)
+    data = _analytic(shapes, geometry)
+    white = 60000.0
+    for i, image in enumerate(np.exp(-data) * white):
+        # Detector images store their top row first.
+        iio.imwrite(tmp_path / f"part_{i + 1:04d}.tif", np.round(image[::-1]).astype(np.uint16))
+    rows = "\n".join(f"{i + 1}\t{angle:.4f}\t0" for i, angle in enumerate(angles))
+    (tmp_path / "part_ctdata.txt").write_text(f"Projection\tAngle(deg)\tUnused\n\n{rows}\n")
+    (tmp_path / "part.xtekct").write_text(
+        "[XTekCT]\nName=part\nInputSeparator=_\nSrcToObject=12.0\nSrcToDetector=18.0\n"
+        "DetectorPixelsX=40\nDetectorPixelsY=36\nDetectorPixelSizeX=0.075\n"
+        "DetectorPixelSizeY=0.075\nDetectorOffsetX=0\nDetectorOffsetY=0\n"
+        f"VoxelsX={n}\nVoxelsY={n}\nVoxelsZ={n}\nVoxelSizeX=0.05\nVoxelSizeY=0.05\n"
+        f"VoxelSizeZ=0.05\nWhiteLevel={white}\nProjections={views}\nInitialAngle=0\n"
+        "AngularStep=99\nObjectOffsetX=0.01\n"
+    )
+    assert main(["ingest", str(tmp_path / "part.xtekct"), str(tmp_path / "part.nxs")]) == 0
+    loaded = load_dataset(tmp_path / "part.nxs")
+    _, _, ingested = build_geometry_from_dataset_metadata(loaded.geometry_inputs())
+    assert isinstance(ingested, ConeGeometry) and ingested.beam == beam
+    assert ingested.detector.du == 0.075 and loaded.grid == grid
+    np.testing.assert_allclose(loaded.angles_deg, angles, atol=1e-4)  # from _ctdata.txt
+    np.testing.assert_allclose(loaded.projections, data, atol=3e-4)
+    volume = fdk(ingested, grid, ingested.detector, loaded.projections)
+    truth = _voxelise(grid, shapes)
+    assert np.linalg.norm(np.asarray(volume) - truth) / np.linalg.norm(truth) < 0.15
