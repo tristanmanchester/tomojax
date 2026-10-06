@@ -10,7 +10,11 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 
 from tomojax.align._geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
-from tomojax.align._geometry.parametrizations import PoseTranslationFrame, apply_pose_update
+from tomojax.align._geometry.parametrizations import (
+    PoseTranslationFrame,
+    apply_pose_update,
+    apply_pose_updates,
+)
 from tomojax.core.geometry.cone import ConeBeam, beam_of
 from tomojax.recon.fista_tv_core import (
     FistaCoreConfig,
@@ -24,6 +28,8 @@ if TYPE_CHECKING:
     from tomojax.core.geometry import Detector, Geometry, Grid
 
 ReconDifferentiationMode = Literal["unrolled", "implicit"]
+
+_apply_updates = jax.jit(apply_pose_updates, static_argnames=("translation_frame",))
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +49,16 @@ class PoseAdjustedGeometry:
                 apply_pose_update(T_nom, self.params5[i], translation_frame=self.translation_frame),
             )
         )
+
+    def stack_poses(self, n_views: int, dtype: jnp.dtype) -> jnp.ndarray:
+        """Return the first ``n_views`` poses, updated in one vectorised step."""
+        from tomojax.core.geometry.views import stack_view_poses
+
+        nominal = stack_view_poses(self.geometry, n_views, dtype=jnp.float32)
+        poses = _apply_updates(
+            nominal, jnp.asarray(self.params5[:n_views]), translation_frame=self.translation_frame
+        )
+        return poses.astype(dtype)
 
     def rays_for_view(self, i: int) -> object:
         """Return detector rays for the wrapped geometry view."""

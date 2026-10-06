@@ -502,3 +502,22 @@ def test_ingest_reads_a_nikon_xtekct_scan(tmp_path: Path):
     volume = fdk(ingested, grid, ingested.detector, loaded.projections)
     truth = _voxelise(grid, shapes)
     assert np.linalg.norm(np.asarray(volume) - truth) / np.linalg.norm(truth) < 0.15
+
+
+def test_pose_wrappers_stack_their_own_poses():
+    # check-public-imports: allow-private
+    from tomojax._data.geometry_meta import AugmentedGeometry
+
+    # check-public-imports: allow-private
+    from tomojax.align._objectives.recon_layer import PoseAdjustedGeometry
+    from tomojax.geometry import stack_view_poses
+
+    geometry, _, _, _ = _scan("turntable", n=8, views=7)
+    params = np.random.default_rng(3).normal(0, 0.05, (7, 6)).astype(np.float32)
+    adjusted = PoseAdjustedGeometry(geometry, jnp.asarray(params), "detector")
+    per_view = np.stack([np.asarray(adjusted.pose_for_view(i), np.float32) for i in range(7)])
+    np.testing.assert_allclose(stack_view_poses(adjusted, 7), per_view, atol=1e-6)
+    # A wrapper forwarding attributes to its base must not take the base's stacking.
+    saved = AugmentedGeometry(geometry, params, "detector")
+    per_view = np.stack([np.asarray(saved.pose_for_view(i), np.float32) for i in range(7)])
+    np.testing.assert_allclose(stack_view_poses(saved, 7), per_view, atol=1e-6)

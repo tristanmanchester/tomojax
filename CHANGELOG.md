@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Cone-beam pose alignment runs about four times faster: the reconstruction
+  step stacked the pose-adjusted views one at a time, which dominated each
+  outer iteration. A 96-cubed-phantom, 240-view `tomojax align --mode
+  cor_then_pose` now takes 44 s instead of 163 s. Geometries can supply a
+  vectorised `stack_poses` for `stack_view_poses`.
 - Import Nikon (X-Tek) lab CT scans: `tomojax ingest scan.xtekct --out
   scan.nxs` (and `tomojax.io.load_nikon_xtekct`) reads the source and
   detector distances, detector pixels and offsets, reconstruction volume,

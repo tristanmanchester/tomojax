@@ -17,7 +17,16 @@ def stack_view_poses(
     *,
     dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
-    """Stack world-from-object poses for the first ``n_views`` views."""
+    """Stack world-from-object poses for the first ``n_views`` views.
+
+    A geometry class may define ``stack_poses(n_views, dtype)`` to build the
+    stack in one vectorised step (looked up on the class, so wrappers that
+    forward attributes to a base geometry do not inherit it).
+    """
+    stack = getattr(type(geometry), "stack_poses", None)
+    if callable(stack):
+        return stack(geometry, int(n_views), dtype)
+
     from .cone import ConeGeometry
     from .lamino import LaminographyGeometry
     from .parallel import ParallelGeometry
