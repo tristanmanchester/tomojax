@@ -4,20 +4,24 @@ from collections.abc import Iterable, Mapping
 from dataclasses import replace
 import gc
 import logging
+from typing import cast
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from tomojax.align._config import AlignConfig
+from tomojax.align._model.state import AlignmentState
 from tomojax.align._objectives.loss_specs import loss_spec_name, resolve_loss_for_level
 from tomojax.align._observer import ObserverAction, ObserverCallback, OuterStat
-from tomojax.align._prealign import seeded_translation_params
+from tomojax.align._prealign import fold_detector_offset, seeded_translation_params
 from tomojax.align._results import (
     AlignMultiresCheckpointCallback,
     AlignMultiresInfo,
     AlignMultiresResumeState,
 )
 from tomojax.core.geometry.base import Detector, Geometry, Grid
+from tomojax.geometry import stack_view_poses
 
 from ._stage_runners import _run_multires_level_stages
 from ._stage_state import (
@@ -35,6 +39,8 @@ from ._stage_state import (
     _state_after_multires_level,
 )
 from ._stage_types import MultiresContext, MultiresLevel, MultiresRunState
+
+LOG = logging.getLogger(__name__)
 
 
 def _run_one_multires_level(
@@ -208,6 +214,49 @@ def _release_completed_level_accelerator_state(state: MultiresRunState) -> None:
         clear_caches()
 
 
+def _fold_detector_offset(
+    state: MultiresRunState,
+    *,
+    context: MultiresContext,
+    geometry: Geometry,
+    detector: Detector,
+) -> tuple[MultiresRunState, tuple[str, ...]]:
+    """Report the poses' constant detector-u shift as the detector centre.
+
+    Detector-frame ``dx`` moves an image along u exactly as a detector-centre
+    offset of opposite sign does, so a schedule that reports the detector
+    centre (``cor_then_pose``, or any schedule estimating ``det_u_px``) takes
+    that constant from the poses. The predicted data are unchanged.
+    """
+    dofs = context.active_geometry_dofs
+    reports_centre = context.resolved_schedule.name == "cor_then_pose" or "det_u_px" in dofs
+    pose_dofs = context.resolved_schedule.active_pose_dofs
+    if (
+        state.params5 is None
+        or not reports_centre
+        or "dx" not in pose_dofs
+        or context.cfg.pose_translation_frame != "detector"
+    ):
+        return state, dofs
+    params5 = np.asarray(state.params5)
+    nominal = np.asarray(stack_view_poses(geometry, len(params5)))
+    offset, folded = fold_detector_offset(nominal, params5)
+    setup_state = cast("AlignmentState", state.setup_alignment_state)
+    det_u_px = float(setup_state.setup.det_u_px) + offset / float(detector.du)
+    LOG.info(
+        "Detector-u (centre-of-rotation) offset %.3f px, estimated with the per-view motion",
+        det_u_px,
+    )
+    setup_state = setup_state.replace(
+        setup=setup_state.setup.replace(det_u_px=det_u_px),
+        pose=setup_state.pose.replace(params5=jnp.asarray(folded)),
+    )
+    folded_state = replace(
+        state, params5=jnp.asarray(folded, jnp.float32), setup_alignment_state=setup_state
+    )
+    return folded_state, dofs if "det_u_px" in dofs else (*dofs, "det_u_px")
+
+
 def align_multires(
     geometry: Geometry,
     grid: Grid,
@@ -240,6 +289,9 @@ def align_multires(
         resume_state=resume_state,
         checkpoint_callback=checkpoint_callback,
     )
+    state, active_geometry_dofs = _fold_detector_offset(
+        state, context=context, geometry=geometry, detector=detector
+    )
     x_final = _final_multires_volume(
         x_init=state.x_init,
         prev_factor=state.prev_factor,
@@ -263,7 +315,7 @@ def align_multires(
         global_outer_stats=state.global_outer_stats,
         global_elapsed_offset=state.global_elapsed_offset,
         setup_alignment_state=state.setup_alignment_state,
-        active_geometry_dofs=context.active_geometry_dofs,
+        active_geometry_dofs=active_geometry_dofs,
         resolved_schedule=context.resolved_schedule,
         ray_integrator=context.cfg.ray_integrator,
     )
@@ -288,7 +340,7 @@ def align_multires(
             final_pose_model_variables=state.final_pose_model_variables,
             final_per_view_variables=state.final_per_view_variables,
             final_pose_model_basis_shape=state.final_pose_model_basis_shape,
-            active_geometry_dofs=context.active_geometry_dofs,
+            active_geometry_dofs=active_geometry_dofs,
             final_gauge_fix=state.final_gauge_fix,
             final_gauge_fix_dofs=state.final_gauge_fix_dofs,
             final_gauge_fix_stats=state.final_gauge_fix_stats,

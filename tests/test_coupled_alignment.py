@@ -24,7 +24,7 @@ def test_joint_coupling_selects_the_solver_for_every_pose_stage():
     assert {stage.objective_kind for stage in named.stages} == {"joint_volume_pose"}
     assert alternating.stages[0].objective_kind == "fixed_volume"
     # Setup stages keep their own objectives.
-    cor = _resolved_schedule_for_cfg(AlignConfig(gn_coupling="joint", schedule="cor_then_pose"))
+    cor = _resolved_schedule_for_cfg(AlignConfig(gn_coupling="joint", schedule="setup_safe"))
     assert cor.stages[0].objective_kind != "joint_volume_pose"
 
 

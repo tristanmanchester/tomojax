@@ -180,8 +180,19 @@ errors of 0.23–0.26° on the analytic scans.
 
 `pose` mode recovers the same poses, but leaves the offset in the per-view
 `dx`; it logs the implied offset and writes it to the manifest as
-`implied_detector_u_px`. In the Python API, `implied_detector_offset` and
-`fold_detector_offset` perform the same separation.
+`implied_detector_u_px`. In the Python API, `align_multires` with
+`AlignConfig(schedule="cor_then_pose", pose_translation_frame="detector",
+gauge_fix="none")` returns the offset as `det_u_px` in
+`info["geometry_calibration_state"]`, and `implied_detector_offset` and
+`fold_detector_offset` perform the separation on any pose table.
+
+Alignment cannot tell where the volume should sit: moving the volume and every
+pose together predicts the same data. The aligned volume keeps roughly the
+position of the nominal reconstruction, so a sample whose motion has a nonzero
+mean over the scan comes out displaced by that mean. On the chip phantom the
+aligned volume sits 1.3 px and 0.08° from the true-geometry reconstruction, close to the
+simulated motion's own mean displacement of 1.1 px. Register volumes before
+comparing them voxel by voxel.
 
 ## Use mixed setup and pose as expert mode
 

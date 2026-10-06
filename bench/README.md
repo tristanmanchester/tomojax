@@ -425,6 +425,12 @@ the motion), rotations to 0.073° and shifts to 0.087 px RMS in 127 s; its
 volume differs from the true-geometry reconstruction by 0.048 relative L2,
 against 0.82 without alignment.
 
+On the exact line integrals of the same moving scan, pose alignment recovers
+rotations to 0.015° and shifts to 0.010 px (volume error 0.0084) in 143 s.
+Noiseless data with phase contrast, blur and pixel integration give 0.073°,
+the same as the noisy measurements: what limits alignment on these data is the
+phase and blur that the projector does not model, not photon noise.
+
 ## External direct reconstruction baselines
 
 The same fixed-quality runner also supports single-pass methods:

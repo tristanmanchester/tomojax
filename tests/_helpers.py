@@ -7,6 +7,7 @@ import h5py
 import imageio.v3 as iio
 import numpy as np
 
+from tomojax.align.api import AlignmentSchedule, AlignmentStage
 from tomojax.geometry import Detector, Grid
 from tomojax.io import ProjectionDataset, save_dataset
 
@@ -90,3 +91,29 @@ def write_raw_nxtomo(path: Path) -> None:
         transformations = sample.create_group("transformations")
         rotation_angle = transformations.create_dataset("rotation_angle", data=angles)
         rotation_angle.attrs["units"] = "degree"
+
+
+def cor_then_polish_schedule() -> AlignmentSchedule:
+    """A setup stage followed by a pose stage, for multi-stage machinery tests."""
+    return AlignmentSchedule(
+        name="cor_then_polish",
+        stages=(
+            AlignmentStage(
+                name="cor",
+                active_dofs=("det_u_px",),
+                objective_kind="bilevel_cv",
+                optimizer="validation_lm",
+                stage_role="setup",
+                quality_tier="reference",
+            ),
+            AlignmentStage(
+                name="pose_polish",
+                active_dofs=("alpha", "beta", "phi", "dx", "dz"),
+                objective_kind="fixed_volume",
+                optimizer="gn",
+                gauge_policy="anchor_mean",
+                stage_role="refine",
+                quality_tier="reference",
+            ),
+        ),
+    )

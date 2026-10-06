@@ -53,6 +53,8 @@ from tomojax.align._stages._stage_state import _prepare_multires_level_state
 from tomojax.align._stages._stage_types import StageRuntime
 from tomojax.align.api import AlignMultiresResumeState, AlignResumeState
 
+from ._helpers import cor_then_polish_schedule
+
 
 def test_pose_parametrization_composes_rotation_and_translation() -> None:
     rotation = compose_R(
@@ -149,7 +151,7 @@ def test_loss_specs_round_trip_params_and_scheduled_levels() -> None:
 
 
 def test_stage_runtime_enriches_resume_stats_with_global_stage_context() -> None:
-    schedule = resolve_alignment_schedule(schedule="cor_then_pose", outer_iters=3)
+    schedule = resolve_alignment_schedule(schedule=cor_then_polish_schedule(), outer_iters=3)
     stage = schedule.stages[1]
     runtime = StageRuntime(
         level_index=1,
@@ -177,7 +179,7 @@ def test_stage_runtime_enriches_resume_stats_with_global_stage_context() -> None
     assert enriched["level_factor"] == 2
     assert enriched["global_outer_idx"] == 8
     assert enriched["global_elapsed_seconds"] == pytest.approx(10.5)
-    assert enriched["schedule_name"] == "cor_then_pose"
+    assert enriched["schedule_name"] == "cor_then_polish"
     assert enriched["schedule_stage_name"] == "pose_polish"
     assert enriched["schedule_stage_active_dofs"] == "alpha,beta,phi,dx,dz"
     assert enriched["gauge_status"] == "ok"
@@ -259,7 +261,7 @@ def test_multires_level_resume_plan_splits_preserved_and_active_stage_history() 
 
 
 def test_stage_runtime_checkpoint_preserves_schedule_resume_fields() -> None:
-    schedule = resolve_alignment_schedule(schedule="cor_then_pose", outer_iters=3)
+    schedule = resolve_alignment_schedule(schedule=cor_then_polish_schedule(), outer_iters=3)
     stage = schedule.stages[1]
     emitted: list[AlignMultiresResumeState] = []
     runtime = StageRuntime(

@@ -6,7 +6,9 @@
   `tomojax align --mode cor_then_pose` now runs the pose solver and saves the
   constant part of the recovered detector-u shifts as the detector centre,
   leaving the per-view motion in the pose table (`auto` and `max` add it to
-  their setup estimate); the Python API adds `fold_detector_offset`. With a +3.7 px offset and ±0.5°/±8 px motion on
+  their setup estimate). The fold runs in `align_multires`, so the Python
+  API's `cor_then_pose` schedule, which requires detector-frame translations,
+  behaves the same; the API also adds `fold_detector_offset`. With a +3.7 px offset and ±0.5°/±8 px motion on
   analytic 128³ scans, rotation errors fall from 0.23–0.26° to 0.005–0.006°,
   and the offset matches its identifiable value to 0.004 px. On the gVXR chip
   phantom it recovers a 3.2 px offset to 3.18 px. The previous mode searched

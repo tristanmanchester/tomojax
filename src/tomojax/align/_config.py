@@ -308,6 +308,12 @@ class AlignConfig:
             self.schedule = self.schedule.strip().lower().replace("-", "_")
             if not self.schedule:
                 self.schedule = None
+        if self.schedule == "cor_then_pose" and self.pose_translation_frame != "detector":
+            raise ValueError(
+                "schedule 'cor_then_pose' needs pose_translation_frame='detector' (and "
+                "gauge_fix='none'): only detector-frame translations express a constant "
+                "detector shift at every view"
+            )
         if self.optimise_dofs is not None:
             self.optimise_dofs = normalize_alignment_dofs(
                 self.optimise_dofs,

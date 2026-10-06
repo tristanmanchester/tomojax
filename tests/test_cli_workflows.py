@@ -9,11 +9,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tomojax.align.api import AlignmentState
 from tomojax.cli.main import main
 import tomojax.cli.recon as recon_cli
 import tomojax.cli.simulate as simulate_cli
-from tomojax.geometry import Detector, stack_view_poses
+from tomojax.geometry import CalibrationState, CalibrationVariable, Detector, stack_view_poses
 from tomojax.io import (
     build_geometry_from_dataset_metadata,
     load_dataset,
@@ -712,15 +711,8 @@ def test_align_cli_geometry_dofs_route_to_multires_without_explicit_levels(
     assert calls == [([1], ("det_u_px",), ())]
 
 
-@pytest.mark.parametrize(
-    ("mode", "setup_px", "kind"), [("cor_then_pose", None, "lamino"), ("auto", 0.25, "parallel")]
-)
-def test_align_cli_saves_the_constant_pose_shift_as_the_detector_centre(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    mode: str,
-    setup_px: float | None,
-    kind: str,
+def test_align_cli_cor_then_pose_saves_the_detector_centre_and_motion(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     align_cli_main = importlib.import_module("tomojax.cli.align.main")
     align_cli_plan = importlib.import_module("tomojax.cli.align.plan")
@@ -732,44 +724,52 @@ def test_align_cli_saves_the_constant_pose_shift_as_the_detector_centre(
         scan,
         projections=np.ones((8, 2, 4), np.float32),
         angles_deg=angles,
-        geometry_type=kind,
-        geometry_metadata={"tilt_deg": 30.0, "tilt_about": "x"} if kind == "lamino" else None,
+        geometry_type="lamino",
+        geometry_metadata={"tilt_deg": 30.0, "tilt_about": "x"},
     ).detector.du
-    offset, motion = 0.3, 0.05 * np.sin(np.deg2rad(3 * angles))
+    offset_px, motion = 0.3, 0.05 * np.sin(np.deg2rad(3 * angles))
     configs = []
 
     def fake_align_multires(geom, recon_grid, recon_detector, projections, *, config, **kwargs):
+        # Returns what align_multires does: motion in the poses, offset in the state.
         del geom, recon_detector
         configs.append((config, kwargs["factors"]))
         x = jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
         params5 = np.zeros((int(projections.shape[0]), 5), np.float32)
-        params5[:, 3] = motion - offset  # a detector offset c shifts images by -c
-        info = {"loss": [0.0], "outer_stats": [], "active_dofs": []}
-        if setup_px is not None:
-            state = AlignmentState.zeros(n_views=len(params5))
-            state = state.replace(setup=state.setup.replace(det_u_px=setup_px))
-            info["geometry_calibration_state"] = state.to_calibration_state(
-                active_dofs=("det_u_px",)
-            ).to_dict()
+        params5[:, 3] = motion
+        det_u = CalibrationVariable(
+            name="det_u_px",
+            value=offset_px,
+            unit="native_detector_px",
+            status="estimated",
+            frame="detector",
+            gauge="detector_ray_grid_center",
+        )
+        info = {
+            "loss": [0.0],
+            "outer_stats": [],
+            "active_dofs": [],
+            "geometry_calibration_state": CalibrationState(detector=(det_u,)).to_dict(),
+        }
         return x, jnp.asarray(params5), info
 
     monkeypatch.setattr(align_cli_main, "setup_logging", lambda: None)
     monkeypatch.setattr(align_cli_main, "log_jax_env", lambda: None)
     monkeypatch.setattr(align_cli_main, "init_jax_compilation_cache", lambda: None)
     monkeypatch.setattr(align_cli_plan, "align_multires", fake_align_multires)
-    args = ["align", "--data", str(scan), "--out", str(aligned), "--mode", mode]
-    extra = ["--roi", "off", "--save-params-json", str(params_json)]
-    assert main([*args, *extra]) == 0
+    args = ["align", "--data", str(scan), "--out", str(aligned), "--mode", "cor_then_pose"]
+    assert main([*args, "--roi", "off", "--save-params-json", str(params_json)]) == 0
 
     ((config, factors),) = configs
+    assert factors == [1]
+    assert config.schedule == "cor_then_pose"
     assert config.pose_translation_frame == "detector"
-    if mode == "cor_then_pose":
-        assert factors == [1]
-        assert config.schedule == "lightning_pose"  # the same schedule as --mode pose
-        assert config.gn_coupling == "joint"
-    expected = offset + (setup_px or 0.0) * du
+    assert config.gn_coupling == "joint"
     saved = load_dataset(aligned)
-    assert saved.detector.det_center[0] == pytest.approx(expected, abs=1e-5)
+    assert saved.detector.det_center[0] == pytest.approx(offset_px * du, abs=1e-6)
+    assert saved.align_gauge["pose_translation_frame"] == "detector"
+    views = json.loads(params_json.read_text())["views"]
+    assert [view["dx_world"] for view in views] == pytest.approx(list(motion), abs=1e-6)
     # Only the detector centre changes; the scan geometry is kept.
     nominal = [
         build_geometry_from_dataset_metadata(load_dataset(path).geometry_inputs())[2]
@@ -778,16 +778,16 @@ def test_align_cli_saves_the_constant_pose_shift_as_the_detector_centre(
     np.testing.assert_allclose(
         stack_view_poses(nominal[1], 8), stack_view_poses(nominal[0], 8), atol=1e-6
     )
-    views = json.loads(params_json.read_text())["views"]
-    assert [view["dx_world"] for view in views] == pytest.approx(list(motion), abs=1e-5)
 
 
-def test_align_cli_cor_then_pose_needs_detector_frame_translations(tmp_path: Path) -> None:
+def test_align_cli_cor_then_pose_needs_detector_frame_translations(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     scan = tmp_path / "scan.nxs"
     write_projection_dataset(scan)
     args = ["align", "--data", str(scan), "--out", str(tmp_path / "out.nxs")]
-    with pytest.raises(SystemExit):
-        main([*args, "--mode", "cor_then_pose", "--translation-frame", "object"])
+    assert main([*args, "--mode", "cor_then_pose", "--translation-frame", "object"]) != 0
+    assert "pose_translation_frame='detector'" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(

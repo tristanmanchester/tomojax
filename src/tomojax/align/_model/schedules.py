@@ -247,31 +247,33 @@ class ResolvedAlignmentSchedule:
         }
 
 
-_PUBLIC_PRESET_STAGES: dict[str, tuple[AlignmentStage, ...]] = {
-    "lightning_pose": (
-        AlignmentStage(
-            name="lightning_pose_proposal",
-            active_dofs=("alpha", "beta", "phi", "dx", "dz"),
-            objective_kind="fixed_volume",
-            optimizer="gn",
-            gauge_policy="anchor_mean",
-            maxiter=1,
-            early_stop=False,
-            stage_role="proposal",
-            differentiability="performance_only",
-            quality_tier="fast",
-        ),
-        AlignmentStage(
-            name="lightning_pose_refine",
-            active_dofs=("alpha", "beta", "phi", "dx", "dz"),
-            objective_kind="fixed_volume",
-            optimizer="gn",
-            gauge_policy="anchor_mean",
-            stage_role="refine",
-            differentiability="gradient_safe",
-            quality_tier="fast",
-        ),
+_LIGHTNING_POSE = (
+    AlignmentStage(
+        name="lightning_pose_proposal",
+        active_dofs=("alpha", "beta", "phi", "dx", "dz"),
+        objective_kind="fixed_volume",
+        optimizer="gn",
+        gauge_policy="anchor_mean",
+        maxiter=1,
+        early_stop=False,
+        stage_role="proposal",
+        differentiability="performance_only",
+        quality_tier="fast",
     ),
+    AlignmentStage(
+        name="lightning_pose_refine",
+        active_dofs=("alpha", "beta", "phi", "dx", "dz"),
+        objective_kind="fixed_volume",
+        optimizer="gn",
+        gauge_policy="anchor_mean",
+        stage_role="refine",
+        differentiability="gradient_safe",
+        quality_tier="fast",
+    ),
+)
+
+_PUBLIC_PRESET_STAGES: dict[str, tuple[AlignmentStage, ...]] = {
+    "lightning_pose": _LIGHTNING_POSE,
     "tortoise_pose": (
         AlignmentStage(
             name="tortoise_pose_refine",
@@ -322,26 +324,9 @@ _PUBLIC_PRESET_STAGES: dict[str, tuple[AlignmentStage, ...]] = {
             quality_tier="reference",
         ),
     ),
-    "cor_then_pose": (
-        AlignmentStage(
-            name="cor",
-            active_dofs=("det_u_px",),
-            objective_kind="bilevel_cv",
-            optimizer="validation_lm",
-            stage_role="setup",
-            differentiability="gradient_safe",
-            quality_tier="reference",
-        ),
-        AlignmentStage(
-            name="pose_polish",
-            active_dofs=("alpha", "beta", "phi", "dx", "dz"),
-            objective_kind="fixed_volume",
-            optimizer="gn",
-            gauge_policy="anchor_mean",
-            stage_role="refine",
-            quality_tier="reference",
-        ),
-    ),
+    # Pose alignment whose constant detector-u shift becomes the detector centre
+    # (folded in align_multires; needs detector-frame translations).
+    "cor_then_pose": _LIGHTNING_POSE,
     "detector_roll": (
         AlignmentStage(
             name="detector_roll",

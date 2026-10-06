@@ -466,3 +466,43 @@ def test_saved_alignment_is_reapplied_in_its_translation_frame(frame):
     )
     for view in range(angles.size):
         np.testing.assert_allclose(saved.pose_for_view(view), expected[view], atol=1e-5)
+
+
+def test_cor_then_pose_reports_the_constant_detector_shift_as_the_centre():
+    angles = np.linspace(0.0, 360.0, 8, endpoint=False).astype(np.float32)
+    geometry, grid, detector = _geometry(12, "parallel", angles)
+    volume = jnp.zeros((grid.nx, grid.ny, grid.nz)).at[3:8, 3:7, 2:9].set(1)
+    volume = volume.at[7:9, 5:7, 4:6].set(0.6)
+    offset, motion = 0.3, 0.1 * np.sin(np.deg2rad(3 * angles))
+    poses = np.asarray(stack_view_poses(geometry, angles.size)).copy()
+    poses[:, 0, 3] += motion - offset  # a detector offset c shifts images by -c
+    data = jax.vmap(lambda t: forward_project_view_T(t, grid, detector, volume))(jnp.asarray(poses))
+    cfg = AlignConfig(
+        schedule="cor_then_pose",
+        freeze_dofs=("alpha", "beta", "phi"),  # isolate the translation split
+        pose_translation_frame="detector",
+        gauge_fix="none",
+        projector_backend="jax",
+        outer_iters=8,
+        recon_iters=1,
+        recon_L=1e12,  # keeps the known volume fixed
+        lambda_tv=0,
+        loss=L2LossSpec(),
+        early_stop=False,
+        gather_dtype="fp32",
+        gn_jacobian="central",
+    )
+    initial = AlignMultiresResumeState(
+        volume, jnp.zeros((angles.size, 5)), pose_translation_frame="detector"
+    )
+    _, params, info = align_multires(
+        geometry, grid, detector, data, config=cfg, factors=(1,), resume_state=initial
+    )
+
+    variables = {v["name"]: v for v in info["geometry_calibration_state"]["detector"]}
+    assert variables["det_u_px"]["value"] == pytest.approx(offset / detector.du, abs=0.01)
+    assert variables["det_u_px"]["status"] == "estimated"
+    np.testing.assert_allclose(params[:, 3], motion, atol=5e-3)
+
+    with pytest.raises(ValueError, match="cor_then_pose"):
+        AlignConfig(schedule="cor_then_pose")

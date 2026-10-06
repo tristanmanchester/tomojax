@@ -16,6 +16,8 @@ from tomojax.align._stages import _reconstruction_stage as reconstruction_stage
 from tomojax.core.projector import forward_project_view_T
 from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 
+from ._helpers import cor_then_polish_schedule
+
 
 @pytest.mark.numerical
 @pytest.mark.parametrize("tilt", [False, True])
@@ -191,7 +193,7 @@ def test_align_multires_public_execution_emits_observer_and_resume_metadata() ->
     assert "detector" in final_state.geometry_calibration_state
 
 
-def test_align_multires_executes_cor_then_pose_schedule_with_real_stages() -> None:
+def test_align_multires_executes_a_setup_then_pose_schedule_with_real_stages() -> None:
     grid = Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0)
     detector = Detector(nu=2, nv=2, du=1.0, dv=1.0)
     geometry = ParallelGeometry(
@@ -208,7 +210,7 @@ def test_align_multires_executes_cor_then_pose_schedule_with_real_stages() -> No
         views_per_batch=1,
         checkpoint_projector=False,
         early_stop=False,
-        schedule="cor_then_pose",
+        schedule=cor_then_polish_schedule(),
         gauge_policy="anchor_mean",
     )
     checkpoint_states = []
