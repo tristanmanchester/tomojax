@@ -54,12 +54,6 @@ def metadata_int(value: object, default: int = 0) -> int:
     return default
 
 
-def metadata_float(value: object, default: float = 0.0) -> float:
-    if isinstance(value, int | float | str):
-        return float(value)
-    return default
-
-
 def metadata_list(value: object) -> list[object]:
     return object_list(value)
 

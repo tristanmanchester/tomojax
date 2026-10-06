@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Literal
 
+from .validation import option_name
+
 type ProjectorBackend = Literal["jax", "pallas"]
 type ProjectorBackendInput = ProjectorBackend | str
 
@@ -34,7 +36,7 @@ class BackendProvenance:
 
 def normalize_projector_backend(value: ProjectorBackendInput) -> ProjectorBackend:
     """Normalize a public projector backend value."""
-    backend = str(value).strip().lower().replace("-", "_")
+    backend = option_name(value)
     if backend in {"jax", "default"}:
         return "jax"
     if backend == "pallas":

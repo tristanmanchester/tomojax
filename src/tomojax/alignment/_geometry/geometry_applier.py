@@ -95,20 +95,6 @@ def apply_setup_to_detector_grid(
     )
 
 
-def setup_axis_unit(setup: SetupGeometryState) -> jnp.ndarray:
-    """Return effective lab-frame axis unit from radian setup rotations."""
-    nominal = axis_unit_from_rotations(
-        setup.nominal_axis_unit,
-        axis_rot_x_deg=jnp.rad2deg(setup.tilt_rad),
-        axis_rot_y_deg=0.0,
-    )
-    return axis_unit_from_rotations(
-        nominal,
-        axis_rot_x_deg=jnp.rad2deg(setup.axis_rot_x_rad),
-        axis_rot_y_deg=jnp.rad2deg(setup.axis_rot_y_rad),
-    )
-
-
 def _laminography_axis_unit_jax(tilt_deg: object, tilt_about: str) -> jnp.ndarray:
     tilt = jnp.deg2rad(jnp.asarray(tilt_deg, dtype=jnp.float32))
     c, s = jnp.cos(tilt), jnp.sin(tilt)

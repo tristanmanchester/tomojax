@@ -7,11 +7,11 @@
     "tomojax.io": 12,
     "tomojax.alignment": 5,
     "tomojax.datasets": 13,
-    "tomojax.geometry.api": 77,
-    "tomojax.recon.api": 26,
-    "tomojax.io.api": 43,
-    "tomojax.alignment.api": 93,
-    "tomojax.datasets.api": 21
+    "tomojax.geometry.api": 43,
+    "tomojax.recon.api": 22,
+    "tomojax.io.api": 34,
+    "tomojax.alignment.api": 79,
+    "tomojax.datasets.api": 15
   },
   "cli_flags": {
     "inspect": 4,
@@ -24,12 +24,11 @@
   },
   "long_files": [
     "src/tomojax/alignment/_stages/_reconstruction_stage.py",
-    "src/tomojax/alignment/optimizers.py",
     "src/tomojax/recon/fista_tv.py"
   ],
   "suppressions": {
     "noqa": 8,
-    "type: ignore": 52,
+    "type: ignore": 50,
     "pyright: ignore": 21
   },
   "complex_functions": [
@@ -95,23 +94,23 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "type_errors": {
-    "reportArgumentType": 375,
+    "reportArgumentType": 365,
     "reportAssignmentType": 3,
-    "reportAttributeAccessIssue": 173,
-    "reportCallIssue": 16,
+    "reportAttributeAccessIssue": 172,
+    "reportCallIssue": 14,
     "reportGeneralTypeIssues": 10,
     "reportIndexIssue": 10,
-    "reportInvalidTypeForm": 2,
+    "reportInvalidTypeForm": 1,
     "reportOperatorIssue": 4,
     "reportOptionalCall": 2,
     "reportOptionalMemberAccess": 8,
     "reportOptionalSubscript": 1,
     "reportPrivateUsage": 104,
     "reportRedeclaration": 1,
-    "reportReturnType": 22,
+    "reportReturnType": 21,
     "reportTypedDictNotRequiredAccess": 5
   },
   "positional_options": [],
   "params5_mentions": 258,
-  "string_normalisers": 13
+  "string_normalisers": 0
 }

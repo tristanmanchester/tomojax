@@ -324,25 +324,3 @@ def active_dofs(
             f"valid DOFs: {', '.join(DOF_NAMES)}"
         )
     return active
-
-
-def active_dof_mask(
-    *,
-    optimise_dofs: str | Iterable[str] | None = None,
-    freeze_dofs: str | Iterable[str] | None = None,
-) -> tuple[bool, ...]:
-    """Build a per-column boolean mask for active alignment DOFs."""
-    active = set(active_dofs(optimise_dofs=optimise_dofs, freeze_dofs=freeze_dofs))
-    return tuple(name in active for name in DOF_NAMES)  # type: ignore[return-value]
-
-
-def active_dof_mask_array(
-    *,
-    optimise_dofs: str | Iterable[str] | None = None,
-    freeze_dofs: str | Iterable[str] | None = None,
-) -> jnp.ndarray:
-    """Build a float32 JAX mask for active alignment DOFs."""
-    return jnp.asarray(
-        active_dof_mask(optimise_dofs=optimise_dofs, freeze_dofs=freeze_dofs),
-        dtype=jnp.float32,
-    )

@@ -110,18 +110,6 @@ def read_json_object(path: Path) -> dict[str, JsonValue]:
     return cast("dict[str, JsonValue]", data)
 
 
-def write_json_object(path: Path, payload: object) -> None:
-    """Write a normalized JSON object with deterministic formatting."""
-    normalized = normalize_json(payload, sort_mapping_keys=True)
-    if not isinstance(normalized, dict):
-        raise ValueError("JSON object payload must normalize to a mapping")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    _ = path.write_text(
-        json.dumps(normalized, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-
-
 def _is_argparse_namespace(value: object) -> bool:
     try:
         import argparse

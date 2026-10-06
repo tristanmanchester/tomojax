@@ -116,11 +116,6 @@ def _build_detector_grid(det: Detector) -> tuple[np.ndarray, np.ndarray]:
     )
 
 
-def clear_detector_grid_cache() -> None:
-    """Clear cached host detector coordinate grids."""
-    _build_detector_grid_cached.cache_clear()
-
-
 def _build_detector_grid_device_uncached(det: Detector) -> tuple[jnp.ndarray, jnp.ndarray]:
     nu, nv = int(det.nu), int(det.nv)
     du, dv = jnp.float32(float(det.du)), jnp.float32(float(det.dv))

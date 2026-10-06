@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, cast
 
+from tomojax.core.validation import option_name
+
 from .diagnostics import GaugeDecision, GaugePolicyError, validate_active_gauge_policy
 from .dof_specs import ActiveParameterView
 from .dofs import (
@@ -408,7 +410,7 @@ def schedule_preset(
     gauge_policy: GaugePolicy | None = None,
 ) -> AlignmentSchedule:
     """Return a named public or expert alignment schedule preset."""
-    key = str(name).strip().lower().replace("-", "_")
+    key = option_name(name)
     if key == "detector_center_2d":
         raise ValueError(
             "Unknown alignment schedule preset 'detector_center_2d'. "
@@ -609,7 +611,7 @@ def resolve_alignment_schedule(
 
 
 def _normalize_pose_optimizer(value: str) -> OptimizerKind:
-    key = str(value).strip().lower().replace("-", "_")
+    key = option_name(value)
     if key in {"lbfgsb", "l_bfgs", "l_bfgs_b"}:
         key = "lbfgs"
     if key not in {"gd", "gn", "lbfgs"}:

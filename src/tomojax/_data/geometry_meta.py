@@ -376,18 +376,3 @@ def build_geometry_from_meta(
         )
 
     return grid, detector, geom
-
-
-def build_nominal_geometry_from_meta(
-    meta: LoadedGeometryMeta,
-    grid_override: GridOverride = None,
-    *,
-    volume_shape: Sequence[int] | None = None,
-) -> tuple[Grid, Detector, Geometry]:
-    """Build geometry without composing any saved alignment metadata."""
-    return build_geometry_from_meta(
-        meta,
-        grid_override=grid_override,
-        apply_saved_alignment=False,
-        volume_shape=volume_shape,
-    )

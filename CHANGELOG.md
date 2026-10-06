@@ -41,6 +41,15 @@
   takes `--pixel-size`; `simulate` needs only `-o` (`--size`, `--views`, and
   a cone detector sized to see the whole volume). Alignment quality is `fast`
   or `reference`; the aliases `normal` and `full` are gone.
+- **Breaking:** the expert `.api` modules drop 67 names nothing used
+  (`tomojax.geometry.api` 77 to 43, `tomojax.alignment.api` 93 to 79,
+  `tomojax.io.api` 43 to 34, `tomojax.recon.api` 26 to 22,
+  `tomojax.datasets.api` 21 to 15), and 1,350 lines of code that nothing
+  called are deleted, among them the geometry CSV and JSON writers
+  (`write_pose_params_csv`, `write_geometry_json`), `build_calibration_manifest`,
+  `canonicalize_geometry_gauges`, `spatial_bin`, `pad_to_multiples` and
+  `run_active_lbfgs`. Option names are normalised in one place
+  (`tomojax.core.validation.option_name`).
 - Alignment reports where the object is unambiguously. Rotating or shifting
   the object, and every pose the opposite way, predicts the same data, and the
   solver could end anywhere along that motion: a 64-cubed cone scan came back

@@ -2,19 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, TypedDict, cast
 
-from tomojax._version import __version__
 from tomojax.core.geometry.base import DetectorDict
-from tomojax.geometry._calibration.json import JsonValue, drop_none, normalize_json
+from tomojax.geometry._calibration.json import JsonValue, normalize_json
 from tomojax.geometry._calibration.state import CalibrationState
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from tomojax.geometry._calibration.conventions import ConventionAudit
-    from tomojax.geometry._calibration.objectives import ObjectiveCard
 
 CALIBRATION_MANIFEST_SCHEMA_VERSION = 1
 
@@ -33,44 +29,6 @@ class CalibratedGeometryMetadataPatch(TypedDict):
     detector: DetectorDict
     geometry_meta: JsonObject
     geometry_calibration: GeometryCalibrationPatch
-
-
-def _timestamp_utc(timestamp: datetime | str | None) -> str:
-    if timestamp is None:
-        timestamp = datetime.now(UTC)
-    if isinstance(timestamp, str):
-        return timestamp
-    if timestamp.tzinfo is None:
-        timestamp = timestamp.replace(tzinfo=UTC)
-    return timestamp.astimezone(UTC).isoformat().replace("+00:00", "Z")
-
-
-def build_calibration_manifest(
-    *,
-    calibration_state: CalibrationState,
-    objective_card: ObjectiveCard | None = None,
-    convention_audit: ConventionAudit | None = None,
-    calibrated_geometry: Mapping[str, object] | None = None,
-    source: Mapping[str, object] | None = None,
-    extra: Mapping[str, object] | None = None,
-    timestamp: datetime | str | None = None,
-) -> dict[str, JsonValue]:
-    """Build a strict JSON-compatible manifest for geometry calibration metadata."""
-    return drop_none(
-        {
-            "schema_version": CALIBRATION_MANIFEST_SCHEMA_VERSION,
-            "created_at": _timestamp_utc(timestamp),
-            "tomojax_version": __version__,
-            "calibration_state": calibration_state.to_dict(),
-            "objective_card": objective_card.to_dict() if objective_card is not None else None,
-            "convention_audit": convention_audit.to_dict()
-            if convention_audit is not None
-            else None,
-            "calibrated_geometry": normalize_json(calibrated_geometry),
-            "source": normalize_json(source),
-            "extra": normalize_json(extra),
-        }
-    )
 
 
 def build_calibrated_geometry_metadata_patch(

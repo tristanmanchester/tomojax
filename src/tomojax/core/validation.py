@@ -13,6 +13,15 @@ if TYPE_CHECKING:
     from .geometry.base import Detector, Geometry, Grid
 
 
+def option_name(value: object, *, separator: str = "_") -> str:
+    """Canonical spelling of a named option: trimmed, lower case, words joined by ``separator``.
+
+    ``"Per-View"``, ``"per_view"`` and ``" per-view "`` all name the same option.
+    """
+    other = "-" if separator == "_" else "_"
+    return str(value).strip().lower().replace(other, separator)
+
+
 def _shape_of(value: Any) -> tuple[int, ...]:
     shape = getattr(value, "shape", None)
     if shape is None:

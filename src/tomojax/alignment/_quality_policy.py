@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Literal, cast
 
+from tomojax.core.validation import option_name
+
 type AlignmentQualityTier = Literal[
     "proposal",
     "fast",
@@ -40,7 +42,7 @@ _POLICIES: dict[AlignmentQualityTier, ReconstructionQualityPolicy] = {
 
 
 def normalize_quality_tier(value: str) -> AlignmentQualityTier:
-    tier = str(value).strip().lower().replace("-", "_")
+    tier = option_name(value)
     if tier in _POLICIES:
         return cast("AlignmentQualityTier", tier)
     if tier == "tortoise":

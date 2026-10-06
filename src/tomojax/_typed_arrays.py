@@ -41,23 +41,11 @@ def numpy_int64_array(value: object) -> Int64Array:
     return cast("Int64Array", np.asarray(value, dtype=np.int64))
 
 
-def finite_mask(value: NDArray[object] | FloatArray | Float32Array | Float64Array) -> BoolArray:
-    """Return a typed finite mask for numeric arrays."""
-    return cast("BoolArray", np.isfinite(value))
-
-
 def object_list(value: object) -> list[object]:
     """Copy a runtime sequence into a typed object list."""
     if isinstance(value, list | tuple):
         return [cast("object", item) for item in value]
     return []
-
-
-def float_list(value: object) -> list[float]:
-    """Copy numeric runtime values into a typed float list."""
-    if not isinstance(value, list | tuple):
-        return []
-    return [float(item) for item in value if isinstance(item, int | float)]
 
 
 def object_mapping(value: object) -> dict[str, object]:
@@ -67,31 +55,11 @@ def object_mapping(value: object) -> dict[str, object]:
     return {str(key): cast("object", item) for key, item in value.items()}
 
 
-def object_mapping_list(value: object) -> list[dict[str, object]]:
-    """Copy a runtime list of mappings into typed string-keyed mappings."""
-    if not isinstance(value, list | tuple):
-        return []
-    return [object_mapping(item) for item in value if isinstance(item, dict)]
-
-
-def update_jax_config(name: str, val: object) -> None:
-    """Update a JAX config option through a typed project boundary."""
-    import jax
-
-    jax.config.update(name, val)
-
-
 def write_image(path: object, image: object) -> None:
     """Write an image through a typed boundary for imageio's broad overloads."""
     import imageio.v3 as iio
 
     iio.imwrite(path, image)
-
-
-def shape2(array: object) -> tuple[int, int]:
-    """Return the last two dimensions as concrete ints."""
-    shape = np.shape(array)
-    return int(shape[-2]), int(shape[-1])
 
 
 def shape1(array: object) -> tuple[int]:
@@ -104,11 +72,6 @@ def shape3(array: object) -> tuple[int, int, int]:
     """Return a three-dimensional shape as concrete ints."""
     shape = np.shape(array)
     return int(shape[0]), int(shape[1]), int(shape[2])
-
-
-def equal_to_int(array: object, value: int) -> BoolArray:
-    """Compare an integer array to a scalar."""
-    return cast("BoolArray", np.equal(array, value))
 
 
 def scalar_int(value: object) -> int:
@@ -154,11 +117,6 @@ def min_float(values: object) -> float:
 def max_float(values: object) -> float:
     """Return the maximum numeric value."""
     return float(np.asarray(values).max())
-
-
-def mean_float32(values: object, axis: object) -> Float32Array:
-    """Mean-reduce values and return float32."""
-    return numpy_float32_array(np.asarray(values).mean(axis=axis, dtype=np.float32))
 
 
 def unique_int_count_map(values: object) -> dict[str, int]:

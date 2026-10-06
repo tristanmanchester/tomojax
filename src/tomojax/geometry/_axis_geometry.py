@@ -11,7 +11,7 @@ import numpy as np
 from tomojax.core.geometry.lamino import laminography_axis_unit
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Mapping
 
 AXIS_DIRECTION_DOFS: tuple[str, ...] = ("axis_rot_x_deg", "axis_rot_y_deg")
 
@@ -38,55 +38,6 @@ def nominal_axis_unit_from_inputs(geometry_inputs: Mapping[str, object]) -> np.n
     return axis / norm
 
 
-def default_active_axis_dofs(geometry_inputs: Mapping[str, object]) -> tuple[str, ...]:
-    """Return the default active axis-direction DOFs for geometry metadata."""
-    if (
-        str(geometry_inputs.get("geometry_type", "parallel")).lower()
-        in {
-            "lamino",
-            "laminography",
-        }
-        and str(geometry_inputs.get("tilt_about", "x")) == "x"
-    ):
-        return ("axis_rot_x_deg",)
-    return AXIS_DIRECTION_DOFS
-
-
-def axis_values_from_rotations(
-    *,
-    active_names: Sequence[str],
-    axis_rot_x_deg: float,
-    axis_rot_y_deg: float,
-) -> jnp.ndarray:
-    """Pack axis rotation values according to active DOF names."""
-    values = []
-    for name in active_names:
-        if name == "axis_rot_x_deg":
-            values.append(float(axis_rot_x_deg))
-        elif name == "axis_rot_y_deg":
-            values.append(float(axis_rot_y_deg))
-    return jnp.asarray(values, dtype=jnp.float32)
-
-
-def axis_rotations_from_active(
-    active_values: jnp.ndarray,
-    *,
-    active_names: Sequence[str],
-    fixed_axis_rot_x_deg: float,
-    fixed_axis_rot_y_deg: float,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """Unpack active axis values into x/y rotation values."""
-    values = jnp.asarray(active_values, dtype=jnp.float32)
-    rot_x = jnp.asarray(fixed_axis_rot_x_deg, dtype=jnp.float32)
-    rot_y = jnp.asarray(fixed_axis_rot_y_deg, dtype=jnp.float32)
-    for idx, name in enumerate(active_names):
-        if name == "axis_rot_x_deg":
-            rot_x = values[idx]
-        elif name == "axis_rot_y_deg":
-            rot_y = values[idx]
-    return rot_x, rot_y
-
-
 def axis_unit_from_rotations(
     nominal_axis_unit: object,
     *,
@@ -109,28 +60,6 @@ def axis_unit_from_rotations(
     )
     candidate = r_y @ (r_x @ axis)
     return candidate / jnp.maximum(jnp.linalg.norm(candidate), jnp.float32(1e-8))
-
-
-def axis_unit_from_active(
-    active_values: jnp.ndarray,
-    *,
-    active_names: Sequence[str],
-    nominal_axis_unit: object,
-    fixed_axis_rot_x_deg: float,
-    fixed_axis_rot_y_deg: float,
-) -> jnp.ndarray:
-    """Return the calibrated axis unit vector from active packed values."""
-    rot_x, rot_y = axis_rotations_from_active(
-        active_values,
-        active_names=active_names,
-        fixed_axis_rot_x_deg=fixed_axis_rot_x_deg,
-        fixed_axis_rot_y_deg=fixed_axis_rot_y_deg,
-    )
-    return axis_unit_from_rotations(
-        nominal_axis_unit,
-        axis_rot_x_deg=rot_x,
-        axis_rot_y_deg=rot_y,
-    )
 
 
 def _skew(v: jnp.ndarray) -> jnp.ndarray:

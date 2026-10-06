@@ -28,6 +28,7 @@ from tomojax.alignment._model.dofs import DOF_NAMES
 from tomojax.alignment._model.schedules import AlignmentSchedule, schedule_preset
 from tomojax.alignment._objectives.loss_specs import L2LossSpec
 from tomojax.alignment._profiles import normalize_alignment_profile, resolve_profiled_cli_defaults
+from tomojax.core.validation import option_name
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -57,7 +58,7 @@ _CONE_AXIS_DOFS = frozenset({"det_u_px", "detector_roll_deg"})
 
 def normalize_mode(mode: str) -> AlignmentMode:
     """Return the canonical mode name; case and ``_`` versus ``-`` do not matter."""
-    name = str(mode).strip().lower().replace("_", "-")
+    name = option_name(mode, separator="-")
     for candidate in MODES:
         if name == candidate:
             return candidate

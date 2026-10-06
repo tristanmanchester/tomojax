@@ -16,7 +16,7 @@ from .dofs import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable
 
     from .state import AlignmentState
 
@@ -333,12 +333,3 @@ def optimizer_step_stats(
         grad = jnp.asarray(grad_whitened, dtype=jnp.float32).reshape(-1)
         stats["grad_norm_whitened"] = float(jnp.linalg.norm(grad))
     return stats
-
-
-def active_view_from_scopes(
-    *,
-    pose_dofs: Sequence[str] = (),
-    setup_dofs: Sequence[str] = (),
-) -> ActiveParameterView:
-    """Build an active parameter view from separate pose and setup scopes."""
-    return ActiveParameterView(ordered_dofs(tuple(pose_dofs) + tuple(setup_dofs)))

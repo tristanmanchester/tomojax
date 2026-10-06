@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Literal, cast
 
+from tomojax.core.validation import option_name
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -37,7 +39,7 @@ class AlignmentProfilePolicy:
 
 def normalize_alignment_profile(value: AlignmentProfileInput) -> AlignmentProfile:
     """Normalize a public alignment profile value."""
-    profile = str(value).strip().lower().replace("-", "_")
+    profile = option_name(value)
     if profile in {"fast", "lightning"}:
         return "lightning"
     if profile in {"reference", "tortoise"}:

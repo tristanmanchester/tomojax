@@ -185,11 +185,6 @@ class ReconLayer:
         )
 
 
-def core_result_to_info(result: FistaCoreResult) -> dict[str, object]:
-    """Convert a FISTA core result into JSON-compatible metadata."""
-    return result.info()
-
-
 def _implicit_reconstruct_arrays(
     *,
     x0: jnp.ndarray,

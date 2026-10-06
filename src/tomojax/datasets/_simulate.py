@@ -8,7 +8,6 @@ from tomojax.datasets._impl.artefacts import (
     validate_simulation_artefacts,
 )
 from tomojax.datasets._impl.simulate import (
-    LaminoGeometryMeta,
     SimConfig,
     SimMetadata,
     SimulatedData,
@@ -18,7 +17,6 @@ from tomojax.datasets._impl.simulate import (
 )
 
 __all__ = [
-    "LaminoGeometryMeta",
     "SimConfig",
     "SimMetadata",
     "SimulatedData",

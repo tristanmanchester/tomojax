@@ -7,17 +7,9 @@ from typing import TYPE_CHECKING, Literal, cast
 
 import jax.numpy as jnp
 
-from tomojax.recon._backprojection_accumulation import sum_backproject_views_chunked
-from tomojax.recon._support import VolumeSupportKind, centered_volume_support
 from tomojax.recon.cgls import CGLSConfig, cgls
 from tomojax.recon.cgls_multires import cgls_multires
-from tomojax.recon.fbp import (
-    FBPConfig,
-    default_fbp_scale,
-    fbp,
-    run_parallel_fbp_direct_pallas,
-    supports_parallel_fbp_z_integer,
-)
+from tomojax.recon.fbp import FBPConfig, default_fbp_scale, fbp, run_parallel_fbp_direct_pallas
 from tomojax.recon.fbp_host import FBPHostConfig, fbp_host
 from tomojax.recon.filters import clear_filter_caches
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
@@ -369,8 +361,6 @@ __all__ = [
     "ReconstructionResult",
     "Regulariser",
     "SPDHGConfig",
-    "VolumeSupportKind",
-    "centered_volume_support",
     "cgls",
     "cgls_multires",
     "clear_filter_caches",
@@ -383,6 +373,4 @@ __all__ = [
     "run_parallel_fbp_direct_pallas",
     "run_reconstruction_algorithm",
     "spdhg_tv",
-    "sum_backproject_views_chunked",
-    "supports_parallel_fbp_z_integer",
 ]

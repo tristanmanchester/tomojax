@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from tomojax.core.backend_policy import normalize_projector_backend
 from tomojax.core.projector import RAY_INTEGRATORS
+from tomojax.core.validation import option_name
 
 from ._geometry.parametrizations import PoseTranslationFrame
 from ._model.diagnostics import GaugePolicy
@@ -241,7 +242,7 @@ class AlignConfig:
             self.fallback_policy = profile_policy.fallback_policy
 
     def _normalize_reconstruction_options(self) -> None:
-        recon_algo = str(self.recon_algo).strip().lower().replace("-", "_")
+        recon_algo = option_name(self.recon_algo)
         if recon_algo in {"fista_tv"}:
             recon_algo = "fista"
         elif recon_algo in {"spdhg_tv"}:
@@ -261,7 +262,7 @@ class AlignConfig:
             raise ValueError("fallback_policy must be one of 'fallback' or 'strict'")
 
     def _normalize_optimizer_options(self) -> None:
-        opt_method = str(self.opt_method).strip().lower().replace("-", "_")
+        opt_method = option_name(self.opt_method)
         if opt_method in {"lbfgsb", "l_bfgs", "l_bfgs_b"}:
             opt_method = "lbfgs"
         self.opt_method = opt_method
@@ -300,7 +301,7 @@ class AlignConfig:
         if self.schedule is not None and self.optimise_dofs is not None:
             raise ValueError("schedule and optimise_dofs are mutually exclusive")
         if isinstance(self.schedule, str):
-            self.schedule = self.schedule.strip().lower().replace("-", "_")
+            self.schedule = option_name(self.schedule)
             if not self.schedule:
                 self.schedule = None
         if self.schedule == "cor_then_pose" and self.pose_translation_frame != "detector":
@@ -320,7 +321,7 @@ class AlignConfig:
     def _normalize_gauge_options(self) -> None:
         self.gauge_policy = cast(
             "GaugePolicyInput",
-            str(self.gauge_policy).strip().lower().replace("-", "_"),
+            option_name(self.gauge_policy),
         )
         if self.gauge_policy not in {"reject", "anchor_mean", "prior_required", "diagnose_only"}:
             raise ValueError(
@@ -333,7 +334,7 @@ class AlignConfig:
     def _normalize_pose_model_options(self) -> None:
         if self.pose_translation_frame not in {"object", "detector"}:
             raise ValueError("pose_translation_frame must be 'object' or 'detector'")
-        pose_model = str(self.pose_model).strip().lower().replace("-", "_")
+        pose_model = option_name(self.pose_model)
         self.pose_model = cast("PoseModelInput", pose_model)
         if self.pose_model not in {"per_view", "polynomial", "spline"}:
             raise ValueError("pose_model must be one of 'per_view', 'polynomial', or 'spline'")

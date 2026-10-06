@@ -5,13 +5,7 @@ from __future__ import annotations
 from tomojax.alignment._config import coupled_pose_config, resolved_schedule_for_config
 from tomojax.alignment._gauge import least_motion_estimate
 from tomojax.alignment._geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
-from tomojax.alignment._geometry.geometry_blocks import (
-    GeometryCalibrationState,
-    geometry_with_axis_state,
-    level_detector_grid,
-    normalize_geometry_dofs,
-    summarize_geometry_calibration_stats,
-)
+from tomojax.alignment._geometry.geometry_blocks import normalize_geometry_dofs
 from tomojax.alignment._geometry.parametrizations import (
     PoseTranslationFrame,
     apply_pose_update,
@@ -21,13 +15,11 @@ from tomojax.alignment._geometry.parametrizations import (
 )
 from tomojax.alignment._model.dof_specs import DofSpec, dof_spec
 from tomojax.alignment._model.dofs import (
-    DOF_NAMES,
     POSE_WIDTH,
     DofBounds,
     normalize_alignment_dofs,
     normalize_bounds,
 )
-from tomojax.alignment._model.gauge import GaugeFixMode
 from tomojax.alignment._model.schedules import (
     PUBLIC_SCHEDULE_PRESETS,
     AlignmentSchedule,
@@ -35,9 +27,7 @@ from tomojax.alignment._model.schedules import (
     GaugePolicy,
     GaugePolicyError,
     ResolvedAlignmentSchedule,
-    ResolvedAlignmentStage,
     resolve_alignment_schedule,
-    schedule_preset,
 )
 from tomojax.alignment._model.state import AlignmentState, PoseState, SetupGeometryState
 from tomojax.alignment._modes import (
@@ -47,14 +37,11 @@ from tomojax.alignment._modes import (
     ConeSetup,
     alignment_plan,
     cone_setup,
-    normalize_mode,
 )
-from tomojax.alignment._objectives.loss_adapters import LossAdapter, build_loss_adapter
 from tomojax.alignment._objectives.loss_specs import (
     AlignmentLossConfig,
     AlignmentLossSchedule,
     AlignmentLossSpec,
-    EdgeL2LossSpec,
     L2LossSpec,
     L2OtsuLossSpec,
     LossScheduleEntry,
@@ -73,7 +60,6 @@ from tomojax.alignment._profiles import (
     AlignmentProfilePolicy,
     FallbackPolicy,
     QualityTier,
-    alignment_profile_policy,
     normalize_alignment_profile,
     profile_policy_from_config,
     resolve_profiled_cli_defaults,
@@ -105,13 +91,11 @@ from tomojax.alignment.pipeline import (
     AlignMultiresResumeState,
     AlignResumeState,
     OuterStat,
-    OuterStatValue,
     align,
     align_multires,
 )
 
 __all__ = [
-    "DOF_NAMES",
     "MODES",
     "POSE_WIDTH",
     "PUBLIC_SCHEDULE_PRESETS",
@@ -142,43 +126,33 @@ __all__ = [
     "ConeSetup",
     "DofBounds",
     "DofSpec",
-    "EdgeL2LossSpec",
     "FallbackPolicy",
-    "GaugeFixMode",
     "GaugePolicy",
     "GaugePolicyError",
-    "GeometryCalibrationState",
     "L2LossSpec",
     "L2OtsuLossSpec",
-    "LossAdapter",
     "LossScheduleEntry",
     "OuterStat",
-    "OuterStatValue",
     "PWLSLossSpec",
     "PoseState",
     "PoseTranslationFrame",
     "QualityTier",
     "ResolvedAlignmentSchedule",
-    "ResolvedAlignmentStage",
     "ScheduleResumeState",
     "SetupGeometryState",
     "align",
     "align_multires",
     "alignment_params_payload",
     "alignment_plan",
-    "alignment_profile_policy",
     "apply_alignment_state",
     "apply_pose_update",
     "apply_pose_updates",
     "build_alignment_checkpoint_metadata_from_input",
-    "build_loss_adapter",
     "cone_setup",
     "coupled_pose_config",
     "dof_spec",
-    "geometry_with_axis_state",
     "implied_detector_offset",
     "least_motion_estimate",
-    "level_detector_grid",
     "load_alignment_checkpoint",
     "loss_spec_name",
     "loss_spec_params",
@@ -186,7 +160,6 @@ __all__ = [
     "normalize_alignment_profile",
     "normalize_bounds",
     "normalize_geometry_dofs",
-    "normalize_mode",
     "normalize_schedule_resume_state",
     "pad_pose_params",
     "parse_loss_schedule",
@@ -199,9 +172,7 @@ __all__ = [
     "save_alignment_checkpoint",
     "save_alignment_params_csv",
     "save_alignment_params_json",
-    "schedule_preset",
     "se3_from_5d",
-    "summarize_geometry_calibration_stats",
     "validate_alignment_checkpoint",
     "validate_loss_schedule_levels",
 ]

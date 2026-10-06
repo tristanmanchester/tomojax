@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: D100,D103
 import argparse
 from dataclasses import dataclass
 import os
@@ -19,6 +18,9 @@ from tomojax.alignment.api import (
     parse_loss_spec,
 )
 from tomojax.cli._options import add_config, add_output, hide_expert
+
+# ruff: noqa: D100,D103
+from tomojax.core.validation import option_name
 from tomojax.geometry.api import DISK_VOLUME_AXES
 
 type AlignmentMode = Literal["cor", "pose", "auto", "max", "cor_then_pose"]
@@ -55,7 +57,7 @@ def public_quality(profile: str) -> str:
 
 
 def _mode_argument(value: str) -> str:
-    key = str(value).strip().lower().replace("_", "-")
+    key = option_name(value, separator="-")
     if key not in _MODES:
         raise argparse.ArgumentTypeError(
             f"mode must be one of pose, cor, cor-then-pose, full; got {value!r}"

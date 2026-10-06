@@ -192,13 +192,3 @@ class Geometry(Protocol):
 
     def pose_for_view(self, i: int) -> PoseMatrix:
         """Returns a 4x4 homogeneous transform world_from_object (row-major)."""
-
-
-class RayGeometry(Geometry, Protocol):
-    """Optional ray-inspection interface implemented by built-in geometries."""
-
-    def rays_for_view(self, i: int) -> RayPair:
-        """Returns (origin_fn, dir_fn) that map detector pixel (u,v) to a ray.
-
-        origin_fn(u,v) -> (x,y,z); dir_fn(u,v) -> (dx,dy,dz) normalized.
-        """

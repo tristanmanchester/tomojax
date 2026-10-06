@@ -81,11 +81,6 @@ def _fft_filter_rows(rows: jnp.ndarray, rfft_filter: jnp.ndarray) -> jnp.ndarray
     return jnp.fft.irfft(F * rfft_filter, n=n_fft, axis=-1)[..., :nu]
 
 
-def _pad_detector_rows(rows: jnp.ndarray, width: int) -> jnp.ndarray:
-    padding = (width - rows.shape[-1]) // 2
-    return jnp.pad(rows, ((0, 0), (0, 0), (padding, padding))) if padding else rows
-
-
 _fft_filter_rows_jit = jax.jit(_fft_filter_rows)
 
 

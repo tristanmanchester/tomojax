@@ -6,7 +6,6 @@ import functools
 import math
 import operator
 
-import jax.numpy as jnp
 import numpy as np
 
 
@@ -80,23 +79,6 @@ def get_filter_np(name: str, n: int, du: float) -> np.ndarray:
         one_sided=False,
         dtype_name="float32",
     )
-
-
-def get_rfft_filter_np(name: str, n: int, du: float, dtype_name: str) -> np.ndarray:
-    """Return the immutable one-sided RFFT filter for row filtering."""
-    return _build_filter_np(
-        _normalize_filter_name(name),
-        int(n),
-        float(du),
-        one_sided=True,
-        dtype_name=str(dtype_name),
-    )
-
-
-def get_filter(name: str, n: int, du: float) -> jnp.ndarray:
-    """JAX array wrapper for cached, host-computed filters."""
-    H_np = get_filter_np(name, n, du)
-    return jnp.asarray(H_np, dtype=jnp.float32)
 
 
 @functools.lru_cache(maxsize=16)

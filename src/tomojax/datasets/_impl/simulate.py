@@ -48,13 +48,6 @@ if TYPE_CHECKING:
     from tomojax.core.geometry.base import DetectorDict, GridDict
 
 
-class LaminoGeometryMeta(TypedDict):
-    """Laminography geometry fields stored with synthetic datasets."""
-
-    tilt_deg: float
-    tilt_about: str
-
-
 class SimMetadata(TypedDict, total=False):
     """Simulation provenance metadata."""
 

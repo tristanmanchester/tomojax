@@ -13,12 +13,10 @@ import numpy as np
 from tomojax.alignment._model.dofs import GEOMETRY_DOF_NAMES, normalize_alignment_dofs
 from tomojax.core.geometry import RotationAxisGeometry
 from tomojax.core.geometry.lamino import LaminographyGeometry
-from tomojax.core.geometry.parallel import ParallelGeometry
 from tomojax.geometry.api import (
     CalibrationState,
     CalibrationVariable,
     axis_unit_from_rotations,
-    detector_grid_from_calibration,
     nominal_axis_unit_from_inputs,
     validate_calibration_gauges,
 )
@@ -26,7 +24,7 @@ from tomojax.geometry.api import (
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
-    from tomojax.core.geometry import Detector, Geometry, Grid
+    from tomojax.core.geometry import Geometry
 
 
 GEOMETRY_DOFS: tuple[str, ...] = GEOMETRY_DOF_NAMES
@@ -221,55 +219,6 @@ def geometry_inputs_from_geometry(geometry: Geometry) -> dict[str, object]:
     if getattr(geometry, "detector_roll_deg", None) is not None:
         payload["detector_roll_deg"] = float(geometry.detector_roll_deg)
     return payload
-
-
-def geometry_with_axis_state(
-    geometry: Geometry,
-    grid: Grid,
-    detector: Detector,
-    state: GeometryCalibrationState,
-) -> Geometry:
-    """Build a geometry object with the axis direction from calibration state."""
-    thetas = np.asarray(geometry.thetas_deg, dtype=np.float32)
-    axis_active = (
-        abs(float(state.axis_rot_x_deg)) > 1e-7
-        or abs(float(state.axis_rot_y_deg)) > 1e-7
-        or isinstance(geometry, RotationAxisGeometry)
-    )
-    if axis_active:
-        return RotationAxisGeometry(
-            grid=grid,
-            detector=detector,
-            thetas_deg=thetas,
-            axis_unit_lab=state.axis_unit_lab(),
-        )
-    if isinstance(geometry, LaminographyGeometry):
-        return LaminographyGeometry(
-            grid=grid,
-            detector=detector,
-            thetas_deg=thetas,
-            tilt_deg=float(geometry.tilt_deg),
-            tilt_about=str(geometry.tilt_about),
-        )
-    return ParallelGeometry(grid=grid, detector=detector, thetas_deg=thetas)
-
-
-def level_detector_grid(
-    detector: Detector,
-    *,
-    state: GeometryCalibrationState,
-    factor: int,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """Return detector grid arrays with level-scaled calibration offsets."""
-    factor_f = float(max(1, int(factor)))
-    return detector_grid_from_calibration(
-        detector,
-        det_u_px=float(detector.det_center[0]) / float(detector.du)
-        + jnp.asarray(state.det_u_px, dtype=jnp.float32) / jnp.float32(factor_f),
-        det_v_px=float(detector.det_center[1]) / float(detector.dv)
-        + jnp.asarray(state.det_v_px, dtype=jnp.float32) / jnp.float32(factor_f),
-        detector_roll_deg=state.detector_roll_deg,
-    )
 
 
 def summarize_geometry_calibration_stats(

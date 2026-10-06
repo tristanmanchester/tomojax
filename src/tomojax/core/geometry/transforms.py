@@ -24,32 +24,6 @@ def exp_so3(w: np.ndarray) -> np.ndarray:
     return np.eye(3) + np.sin(theta) * K + (1.0 - np.cos(theta)) * (K @ K)
 
 
-def exp_se3(xi: np.ndarray) -> np.ndarray:
-    """Exponential map from se(3) twist to SE(3) matrix.
-
-    xi = [wx, wy, wz, vx, vy, vz]
-    """
-    w = np.asarray(xi[:3], dtype=np.float64)
-    v = np.asarray(xi[3:], dtype=np.float64)
-    theta = float(np.linalg.norm(w))
-    R = exp_so3(w)
-    if theta < 1e-12:
-        V = np.eye(3, dtype=np.float64)
-    else:
-        K = hat_so3(w)
-        theta2 = theta * theta
-        V = (
-            np.eye(3)
-            + (1.0 - np.cos(theta)) / theta2 * K
-            + (theta - np.sin(theta)) / (theta2 * theta) * (K @ K)
-        )
-    t = V @ v
-    T = np.eye(4, dtype=np.float64)
-    T[:3, :3] = R
-    T[:3, 3] = t
-    return T
-
-
 def compose(T_a: np.ndarray, T_b: np.ndarray) -> np.ndarray:
     """Compose homogeneous transforms: returns T_a @ T_b."""
     return T_a @ T_b

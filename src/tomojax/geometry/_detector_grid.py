@@ -19,29 +19,6 @@ def zero_center_detector_grid(detector: Detector) -> tuple[jnp.ndarray, jnp.ndar
     return get_detector_grid_device(zero_detector)
 
 
-def offset_detector_grid(
-    base_grid: tuple[jnp.ndarray, jnp.ndarray],
-    *,
-    det_u_px: object = 0.0,
-    det_v_px: object = 0.0,
-    native_du: float,
-    native_dv: float,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """Apply detector/ray-grid centre offsets to a zero-centre detector grid.
-
-    Offsets are supplied in native detector pixels and converted to physical detector
-    coordinates before being added to the flattened ``(u, v)`` grid vectors.
-    """
-    return transform_detector_grid(
-        base_grid,
-        det_u_px=det_u_px,
-        det_v_px=det_v_px,
-        detector_roll_deg=0.0,
-        native_du=native_du,
-        native_dv=native_dv,
-    )
-
-
 def transform_detector_grid(
     base_grid: tuple[jnp.ndarray, jnp.ndarray],
     *,
@@ -70,25 +47,6 @@ def transform_detector_grid(
     u_offset = jnp.asarray(det_u_px, dtype=jnp.float32) * jnp.float32(native_du)
     v_offset = jnp.asarray(det_v_px, dtype=jnp.float32) * jnp.float32(native_dv)
     return Xrot + u_offset, Zrot + v_offset
-
-
-def detector_grid_from_center_offset(
-    detector: Detector,
-    *,
-    det_u_px: object = 0.0,
-    det_v_px: object = 0.0,
-    native_du: float | None = None,
-    native_dv: float | None = None,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """Build a dynamic detector grid from canonical native-pixel centre offsets."""
-    return detector_grid_from_calibration(
-        detector,
-        det_u_px=det_u_px,
-        det_v_px=det_v_px,
-        detector_roll_deg=0.0,
-        native_du=native_du,
-        native_dv=native_dv,
-    )
 
 
 def detector_grid_from_calibration(

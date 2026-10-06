@@ -65,20 +65,3 @@ class DetectorPixelScale:
             "bin_factor_u": float(self.bin_factor_u),
             "bin_factor_v": float(self.bin_factor_v),
         }
-
-
-@dataclass(frozen=True)
-class DetectorPixelValue:
-    """A detector-plane value stored canonically in native detector pixels."""
-
-    axis: DetectorAxis
-    native_px: float
-
-    def report(self, scale: DetectorPixelScale) -> dict[str, float | str]:
-        """Return this value in native, level, and physical units."""
-        return {
-            "axis": self.axis,
-            "native_px": float(self.native_px),
-            "level_px": scale.native_px_to_level_px(self.native_px, self.axis),
-            "physical": scale.native_px_to_physical(self.native_px, self.axis),
-        }

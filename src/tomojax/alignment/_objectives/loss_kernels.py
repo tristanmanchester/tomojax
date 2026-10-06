@@ -390,12 +390,6 @@ def _loss_swd(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarray
     return d * jnp.float32(pred.size)
 
 
-def _gauss_kernel(size: int, sigma: float) -> jnp.ndarray:
-    ax = jnp.arange(-size // 2 + 1.0, size // 2 + 1.0)
-    kernel = jnp.exp(-0.5 * (ax / sigma) ** 2)
-    return kernel / jnp.sum(kernel)
-
-
 def _mind_descriptor(x: jnp.ndarray, st: LossState) -> jnp.ndarray:
     """Simplified MIND features with 4 neighbors and 3x3 patch smoothing."""
     del st

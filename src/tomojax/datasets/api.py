@@ -2,12 +2,6 @@
 
 from __future__ import annotations
 
-from tomojax.datasets._loader import (
-    SyntheticArrayMetadata,
-    SyntheticDatasetConsistency,
-    SyntheticDatasetSidecars,
-    load_synthetic_dataset_sidecars,
-)
 from tomojax.datasets._phantoms import (
     blobs,
     cube,
@@ -18,12 +12,10 @@ from tomojax.datasets._phantoms import (
     sphere,
 )
 from tomojax.datasets._simulate import (
-    LaminoGeometryMeta,
     SimConfig,
     SimMetadata,
     SimulatedData,
     SimulationArtefacts,
-    apply_simulation_artefacts,
     make_phantom,
     simulate,
     simulate_to_file,
@@ -31,19 +23,13 @@ from tomojax.datasets._simulate import (
 )
 
 __all__ = [
-    "LaminoGeometryMeta",
     "SimConfig",
     "SimMetadata",
     "SimulatedData",
     "SimulationArtefacts",
-    "SyntheticArrayMetadata",
-    "SyntheticDatasetConsistency",
-    "SyntheticDatasetSidecars",
-    "apply_simulation_artefacts",
     "blobs",
     "cube",
     "lamino_disk",
-    "load_synthetic_dataset_sidecars",
     "make_phantom",
     "random_cubes_spheres",
     "rotated_centered_cube",

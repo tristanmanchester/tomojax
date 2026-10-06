@@ -8,6 +8,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core.validation import option_name
+
 from .dofs import DOF_INDEX, DOF_NAMES
 
 if TYPE_CHECKING:
@@ -34,7 +36,7 @@ _TRANSLATION_DOFS = ("dx", "dz", "dy")
 
 def normalize_gauge_fix(raw: object) -> GaugeFixMode:
     """Normalize a gauge-fixing mode from API, CLI, or config input."""
-    value = str(raw).strip().lower().replace("-", "_")
+    value = option_name(raw)
     if value in {"off", "false", "disabled", "disable"}:
         value = "none"
     if value not in _VALID_GAUGE_FIXES:
