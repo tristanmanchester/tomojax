@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `tomojax preprocess` corrects two lab-CT artefacts in absorption data:
+  `--beam-hardening C1,C2,...` maps each value p to `C1 p + C2 p^2 + ...`, and
+  `--remove-stripes WIDTH` removes rings by subtracting each detector pixel's
+  constant offset, judged from its values sorted over views against those of
+  its neighbouring columns. Data without such offsets pass unchanged.
 - `tomojax export` writes a reconstruction as 32-bit or scaled 16-bit TIFF
   z-slices, or one raw file, with a JSON sidecar of shape, voxel size and
   scaling, reading one slice at a time. `tomojax recon --algo fbp` on cone

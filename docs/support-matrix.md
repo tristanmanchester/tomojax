@@ -16,6 +16,7 @@ experimental. See [installation](installation.md) and [measurement scope](measur
 | Labelled reconstruction slice extraction | Supported | `tomojax slices --data recon.nxs --out quicklooks` |
 | Per-projection 5-DOF pose alignment | Experimental | `tomojax align --data corrected.nxs --mode pose --out aligned.nxs` |
 | Cone-beam 6-DOF pose alignment (adds `dy` along the beam) | Experimental | `tomojax align --data cone_scan.nxs --mode pose --out aligned.nxs` |
+| Beam-hardening polynomial and ring (detector-pixel offset) correction | Supported | `tomojax preprocess raw.nxs scan.nxs --beam-hardening 1,0.05 --remove-stripes 9` |
 | Volume export as TIFF slices or raw (`uint16` or `float32`) | Supported | `tomojax export --data recon.nxs --out slices/` |
 | Nikon (X-Tek) `.xtekct` scan import | Experimental (tested on synthetic files only) | `tomojax ingest scan/part.xtekct --out part.nxs` |
 | Cone-beam axis-offset (centre of rotation) and detector-roll calibration | Experimental | `tomojax align --data cone_scan.nxs --mode cor --out calibrated.nxs`; `calibrate_cone_axis` in Python |

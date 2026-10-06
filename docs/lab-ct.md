@@ -36,6 +36,14 @@ tomojax preprocess raw.nxs scan.nxs --assume-flat-field 60000 --assume-dark-fiel
 ```
 
 Use one length unit throughout (the pixel sizes and both distances).
+
+`tomojax preprocess` also corrects two lab-CT artefacts in absorption data.
+`--beam-hardening 1,0.05` linearises beam hardening, mapping each value p to
+`p + 0.05 p²` (calibrate the coefficients on a single-material sample).
+`--remove-stripes 9` removes rings: it subtracts each detector pixel's
+constant offset, comparing its values sorted over views with those of its 9
+neighbouring columns, so data without defects pass unchanged (a faint offset
+on a steep gradient can remain).
 `--detector-roll`, `--detector-pitch`, `--detector-yaw` and `--axis-offset`
 take values the scanner reports; `tomojax preprocess` also takes measured flat
 and dark fields (`--flats`, `--darks`). Without an explicit grid, cone
@@ -155,6 +163,6 @@ slab needs.
 ## Limitations
 
 TomoJAX models a circular source orbit (no helical scans) and a flat
-detector. It does not correct beam hardening or scatter, so preprocess the
-projections for those before reconstruction if they matter.
+detector. Beam-hardening correction is a polynomial with given coefficients,
+and scatter is not corrected.
 [Known limitations](known-limitations.md) lists the rest.

@@ -192,7 +192,38 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Detector ROI crop in projection axis order y0:y1,x0:x1",
     )
+    _ = parser.add_argument(
+        "--beam-hardening",
+        type=_coefficients,
+        default=None,
+        metavar="C1,C2,...",
+        help=(
+            "Absorption output: linearise beam hardening, mapping each value p to "
+            "C1*p + C2*p^2 + ... (for example 1,0.05)"
+        ),
+    )
+    _ = parser.add_argument(
+        "--remove-stripes",
+        type=int,
+        default=None,
+        metavar="WIDTH",
+        help=(
+            "Absorption output: remove detector-fixed errors that reconstruct as rings "
+            "(sorting-based stripe removal, median over WIDTH columns; wider than the "
+            "defects, for example 9)"
+        ),
+    )
     return parser
+
+
+def _coefficients(text: str) -> tuple[float, ...]:
+    try:
+        values = tuple(float(part) for part in text.split(",") if part.strip())
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"expected comma-separated numbers, got {text!r}") from exc
+    if not values:
+        raise argparse.ArgumentTypeError("expected at least one coefficient")
+    return values
 
 
 def _optional_str(value: object) -> str | None:
@@ -239,6 +270,8 @@ def _parse_command(argv: Sequence[str] | None) -> PreprocessCommand:
         auto_reject=cast("str", args.auto_reject),
         outlier_z_threshold=cast("float", args.outlier_z_threshold),
         crop=_optional_str(crop),
+        beam_hardening=cast("tuple[float, ...] | None", args.beam_hardening),
+        stripe_width=cast("int | None", args.remove_stripes),
     )
     return PreprocessCommand(
         input_path=Path(cast("str", args.input)),

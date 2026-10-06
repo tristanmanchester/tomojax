@@ -217,3 +217,50 @@ def test_nxtomo_preprocess_supports_view_selection_crop_and_transmission(tmp_pat
         group = handle["entry/processing/tomojax/preprocess"]
         assert json.loads(group.attrs["crop_bounds"]) == {"x0": 0, "x1": 1, "y0": 0, "y1": 1}
         assert json.loads(group.attrs["final_projection_shape"]) == [1, 1, 1]
+
+
+def _write_float_tiffs(directory: Path, images: np.ndarray) -> None:
+    import imageio.v3 as iio
+
+    directory.mkdir(parents=True, exist_ok=True)
+    for i, image in enumerate(images):
+        iio.imwrite(directory / f"p_{i:03d}.tif", image.astype(np.float32))
+
+
+def test_tiff_preprocess_removes_detector_stripes_and_linearises_beam_hardening(
+    tmp_path: Path,
+) -> None:
+    views, nv, nu = 40, 3, 64
+    u = np.arange(nu)[None, None, :]
+    centre = 32 + 12 * np.sin(np.linspace(0, 2 * np.pi, views))[:, None, None]
+    truth = 2.0 * np.maximum(0.0, 1.0 - ((u - centre) / 18.0) ** 2) * np.ones((1, nv, 1))
+    gain = np.ones(nu)
+    gain[[10, 31, 45]] = [0.97, 1.03, 0.98]  # pixels the flats do not describe
+    _write_float_tiffs(tmp_path / "proj", 1000.0 * np.exp(-truth) * gain)
+    _write_float_tiffs(tmp_path / "flats", np.full((1, nv, nu), 1000.0))
+    _write_float_tiffs(tmp_path / "darks", np.zeros((1, nv, nu)))
+    write_angle_csv(tmp_path / "angles.csv", np.linspace(0.0, 360.0, views, endpoint=False))
+
+    def corrected(name: str, **config: object) -> np.ndarray:
+        preprocess_tiff_stack(
+            tmp_path / "proj",
+            flats_path=tmp_path / "flats",
+            darks_path=tmp_path / "darks",
+            angles_path=tmp_path / "angles.csv",
+            output_path=tmp_path / f"{name}.nxs",
+            config=PreprocessConfig(**config),  # type: ignore[arg-type]
+        )
+        return load_dataset(tmp_path / f"{name}.nxs").projections
+
+    plain = corrected("plain")
+    cleaned = corrected("cleaned", stripe_width=9)
+    # Columns 10 and 31 stand out from their neighbours; column 45's offset is
+    # smaller than the gradient across it and stays.
+    error = np.abs(cleaned - truth).max(axis=(0, 1))
+    assert error[[10, 31]].max() < 2e-3
+    assert np.abs(plain - truth).max(axis=(0, 1))[[10, 31]].min() > 0.02
+    assert np.delete(error, [10, 31, 45]).max() < 2e-3
+    hardened = corrected("hardened", beam_hardening=(1.0, 0.05))
+    np.testing.assert_allclose(hardened, plain + 0.05 * plain**2, rtol=1e-5, atol=1e-6)
+    with pytest.raises(ValueError, match="absorption"):
+        corrected("raw", output_domain="transmission", stripe_width=9)

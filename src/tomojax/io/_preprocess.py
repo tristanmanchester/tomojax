@@ -25,6 +25,7 @@ from tomojax.io._preprocess_impl import (
     validate_preprocess_numeric_config,
     write_preprocess_provenance,
 )
+from tomojax.io._preprocess_impl.correction import apply_absorption_corrections
 from tomojax.io._tiff import TIFF_SUFFIXES, tiff_files
 
 if TYPE_CHECKING:
@@ -232,10 +233,9 @@ def _correct_tiff_frames(
         )
     nonfinite = int(np.count_nonzero(~np.isfinite(corrected)))
     warning_counts["nonfinite_output"] = nonfinite
-    output = np.asarray(
-        np.nan_to_num(np.asarray(corrected), nan=0.0, posinf=0.0, neginf=0.0),
-        dtype=output_dtype,
-    )
+    repaired = np.nan_to_num(np.asarray(corrected, np.float64), nan=0.0, posinf=0.0, neginf=0.0)
+    repaired, _ = apply_absorption_corrections(repaired, config, output_domain)
+    output = np.asarray(repaired, dtype=output_dtype)
     return _CorrectedTiffFrames(
         output=output,
         flat_mean64=flat_mean64,
@@ -307,6 +307,10 @@ def _build_tiff_preprocess_provenance(
         "output_domain_policy": "absorption is the default reconstruction-ready domain",
         "epsilon": float(config.epsilon),
         "clip_min": None if config.clip_min is None else float(config.clip_min),
+        "beam_hardening": (
+            None if not config.beam_hardening else [float(c) for c in config.beam_hardening]
+        ),
+        "stripe_width": None if not config.stripe_width else int(config.stripe_width),
         "output_dtype": str(corrected.output_dtype),
         "correction_formula": (
             "transmission=(sample-mean(dark))/max(mean(flat)-mean(dark),epsilon); "

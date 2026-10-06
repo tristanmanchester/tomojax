@@ -202,6 +202,68 @@ def correct_nxtomo_frames(
     )
 
 
+def _sliding_median(values: FloatArray, width: int) -> FloatArray:
+    """Median over ``width`` neighbours along the last axis, edges repeated."""
+    half = width // 2
+    pad = [(0, 0)] * (values.ndim - 1) + [(half, width - 1 - half)]
+    windows = np.lib.stride_tricks.sliding_window_view(np.pad(values, pad, mode="edge"), width, -1)
+    return np.asarray(np.median(windows, axis=-1), dtype=np.float64)
+
+
+def _remove_stripes(projections: FloatArray, width: int) -> FloatArray:
+    """Subtract each detector pixel's constant offset, found by sorting over views.
+
+    A pixel whose gain or offset is miscalibrated adds the same absorption to
+    every view. Each detector row's values are sorted over views, column by
+    column (as in Vo, Atwood and Drakopoulos, 2018), so equal ranks of
+    neighbouring columns compare like with like; a pixel's offset is the
+    median over ranks of its sorted values minus their median over ``width``
+    columns. Only that constant is subtracted, so data without defects pass
+    unchanged; a faint offset on a steep gradient across columns can remain.
+    """
+    views, nv, nu = (_array_dim(projections, axis) for axis in range(3))
+    offsets = np.empty((nv, nu))
+    rows = max(1, int(2e8 // max(1, views * nu * width)))
+    for v0 in range(0, nv, rows):
+        ranked = np.sort(projections[:, v0 : v0 + rows], axis=0)
+        offsets[v0 : v0 + rows] = np.median(ranked - _sliding_median(ranked, width), axis=0)
+    return projections - offsets[None]
+
+
+def apply_absorption_corrections(
+    projections: FloatArray, config: PreprocessConfig, output_domain: str
+) -> tuple[FloatArray, dict[str, JsonValue]]:
+    """Apply ``config``'s beam-hardening polynomial and stripe removal to absorption data.
+
+    ``projections`` are ``(views, nv, nu)``. Beam hardening maps each value p to
+    ``c1 p + c2 p^2 + ...``. Stripe removal (:func:`_remove_stripes`) subtracts
+    each detector pixel's constant offset, judged against ``stripe_width``
+    neighbouring columns: such offsets reconstruct as rings.
+    """
+    meta: dict[str, JsonValue] = {}
+    coefficients = config.beam_hardening
+    width = config.stripe_width
+    if not coefficients and not width:
+        return projections, meta
+    if output_domain != "absorption":
+        raise ValueError("beam-hardening and stripe corrections need absorption output")
+    out = np.asarray(projections, dtype=np.float64)
+    if coefficients:
+        polynomial = np.zeros_like(out)
+        for c in reversed([float(c) for c in coefficients]):
+            polynomial = (polynomial + c) * out
+        out = polynomial
+        meta["beam_hardening"] = [float(c) for c in coefficients]
+    if width:
+        if int(width) < 3:
+            raise ValueError("stripe width must be at least 3 detector columns")
+        before = out
+        out = _remove_stripes(out, int(width))
+        meta["stripe_width"] = int(width)
+        meta["stripe_change_rms"] = float(np.linalg.norm(out - before)) / max(1, out.size) ** 0.5
+    return out.astype(projections.dtype, copy=False), meta
+
+
 def repair_nonfinite_preprocess_output(
     output: FloatArray,
     warning_counts: dict[str, int],

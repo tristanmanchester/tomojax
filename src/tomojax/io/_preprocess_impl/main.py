@@ -28,6 +28,7 @@ from tomojax.io._preprocess_impl.correction import (
     _auto_reject_views,
     _coverage_changed,
     _coverage_stats,
+    apply_absorption_corrections,
     correct_nxtomo_frames,
     repair_nonfinite_preprocess_output,
 )
@@ -148,6 +149,10 @@ def preprocess_nxtomo(
         final_raw_sample_indices = candidate_sample_raw_indices[auto_keep]
         output_angles = candidate_angles[auto_keep]
         output_repaired = repair_nonfinite_preprocess_output(output_unrepaired, warning_counts)
+        output_repaired, absorption_meta = apply_absorption_corrections(
+            output_repaired, cfg, output_domain
+        )
+        correction_meta.update(absorption_meta)
         output = np.asarray(output_repaired, dtype=output_dtype)
         output_image_key = np.zeros((_array_dim(output, 0),), dtype=np.int32)
 
@@ -323,6 +328,10 @@ def _build_preprocess_provenance(
         "output_domain": _metadata_str(correction_meta, "output_domain"),
         "epsilon": float(cfg.epsilon),
         "clip_min": None if cfg.clip_min is None else float(cfg.clip_min),
+        "beam_hardening": (
+            None if not cfg.beam_hardening else [float(c) for c in cfg.beam_hardening]
+        ),
+        "stripe_width": None if not cfg.stripe_width else int(cfg.stripe_width),
         "output_dtype": str(output_dtype),
         "correction_formula": (
             "transmission=(sample-mean(dark))/max(mean(flat)-mean(dark),epsilon); "

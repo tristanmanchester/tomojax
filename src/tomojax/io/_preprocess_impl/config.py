@@ -51,6 +51,12 @@ class PreprocessConfig:
     auto_reject: str = "off"
     outlier_z_threshold: float = 6.0
     crop: str | None = None
+    # Absorption-domain corrections, applied after flat/dark correction:
+    # ``beam_hardening`` (c1, c2, ...) maps each value p to c1 p + c2 p^2 + ...;
+    # ``stripe_width`` removes detector-fixed errors (rings) by sorting-based
+    # stripe removal with a median over that many columns.
+    beam_hardening: tuple[float, ...] | None = None
+    stripe_width: int | None = None
 
 
 @dataclass(slots=True)
