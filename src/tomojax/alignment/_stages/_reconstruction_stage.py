@@ -596,7 +596,7 @@ def _huber_fista_pose_stack(step: _ReconstructionStepInputs, *, n_views: int) ->
         nominal = stack_view_poses(step.recon_geometry.geometry, n_views)
         return apply_pose_updates(
             nominal,
-            step.recon_geometry.params5,
+            step.recon_geometry.pose_params,
             translation_frame=step.recon_geometry.translation_frame,
         )
     return stack_view_poses(step.recon_geometry, n_views)
@@ -883,7 +883,7 @@ def _run_reconstruction_step(
     detector: Detector,
     projections: jnp.ndarray,
     det_grid: tuple[jnp.ndarray, jnp.ndarray],
-    params5: jnp.ndarray,
+    pose_params: jnp.ndarray,
     x: jnp.ndarray,
     cfg: object,
     L_prev: float | None,
@@ -892,7 +892,7 @@ def _run_reconstruction_step(
 ) -> tuple[jnp.ndarray, float | None, OuterStat]:
     recon_geometry = PoseAdjustedGeometry(
         geometry=geometry,
-        params5=params5,
+        pose_params=pose_params,
         translation_frame=getattr(cfg, "pose_translation_frame", "object"),
     )
     step = _ReconstructionStepInputs(

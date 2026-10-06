@@ -84,7 +84,9 @@ def accumulate_validation_normals(
 
     def residual_chunk(z_candidate: jnp.ndarray, i: jnp.ndarray) -> jnp.ndarray:
         state = active_view.unpack(frozen_state, z_candidate)
-        val_state = state.replace(pose=state.pose.replace(params5=state.pose.params5[val_idx]))
+        val_state = state.replace(
+            pose=state.pose.replace(pose_params=state.pose.pose_params[val_idx])
+        )
         effective = apply_alignment_state(val_base, val_state)
         start_shifted, valid_mask, _view_idx = _chunk_schedule(
             i,

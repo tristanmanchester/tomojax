@@ -95,7 +95,7 @@ class AlignMultiresInfo(TypedDict):
 @dataclass
 class AlignResumeState:
     x: jnp.ndarray
-    params5: jnp.ndarray
+    pose_params: jnp.ndarray
     motion_coeffs: jnp.ndarray | None = None
     start_outer_iter: int = 0
     loss: list[float] = field(default_factory=list)
@@ -110,7 +110,7 @@ class AlignResumeState:
 @dataclass
 class AlignMultiresResumeState:
     x: jnp.ndarray
-    params5: jnp.ndarray
+    pose_params: jnp.ndarray
     motion_coeffs: jnp.ndarray | None = None
     level_index: int = 0
     level_factor: int = 1

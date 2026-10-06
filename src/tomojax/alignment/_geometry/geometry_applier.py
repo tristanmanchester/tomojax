@@ -200,7 +200,7 @@ def apply_alignment_state(
     axis = _setup_axis_unit_for_base(base, setup)
     setup_pose = axis_pose_stack(base.thetas_deg, axis)
     pose_stack = apply_pose_updates(
-        setup_pose, state.pose.params5, translation_frame=state.pose.translation_frame
+        setup_pose, state.pose.pose_params, translation_frame=state.pose.translation_frame
     )
     det_grid = apply_setup_to_detector_grid(
         base.detector,

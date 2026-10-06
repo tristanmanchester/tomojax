@@ -140,7 +140,7 @@ class SetupGeometryState:
 class PoseState:
     """Optimizer-time per-view pose state."""
 
-    params5: jnp.ndarray
+    pose_params: jnp.ndarray
     motion_coeffs: jnp.ndarray | None = None
     translation_frame: PoseTranslationFrame = "object"
 
@@ -156,7 +156,7 @@ class PoseState:
     def replace(self, **updates: object) -> PoseState:
         """Return a copy with selected pose fields replaced."""
         values = {
-            "params5": self.params5,
+            "pose_params": self.pose_params,
             "motion_coeffs": self.motion_coeffs,
             "translation_frame": self.translation_frame,
         }
@@ -165,7 +165,7 @@ class PoseState:
 
     def tree_flatten(self) -> tuple[tuple[jnp.ndarray, jnp.ndarray | None], PoseTranslationFrame]:
         """Flatten this state for JAX pytree handling."""
-        return (self.params5, self.motion_coeffs), self.translation_frame
+        return (self.pose_params, self.motion_coeffs), self.translation_frame
 
     @classmethod
     def tree_unflatten(
@@ -174,8 +174,8 @@ class PoseState:
         children: tuple[jnp.ndarray, jnp.ndarray | None],
     ) -> PoseState:
         """Rebuild pose state from JAX pytree children."""
-        params5, motion_coeffs = children
-        return cls(params5=params5, motion_coeffs=motion_coeffs, translation_frame=aux_data)
+        pose_params, motion_coeffs = children
+        return cls(pose_params=pose_params, motion_coeffs=motion_coeffs, translation_frame=aux_data)
 
 
 @jax.tree_util.register_pytree_node_class

@@ -135,15 +135,15 @@ def test_align_multires_public_execution_emits_observer_and_resume_metadata() ->
 
     def observer(
         x: jnp.ndarray,
-        params5: jnp.ndarray,
+        pose_params: jnp.ndarray,
         stat: dict[str, object],
     ) -> str:
         assert x.shape == (2, 2, 2)
-        assert params5.shape == (2, 6)
+        assert pose_params.shape == (2, 6)
         observer_stats.append(dict(stat))
         return "continue"
 
-    x, params5, info = align_multires(
+    x, pose_params, info = align_multires(
         geometry,
         grid,
         detector,
@@ -155,9 +155,9 @@ def test_align_multires_public_execution_emits_observer_and_resume_metadata() ->
     )
 
     assert x.shape == (2, 2, 2)
-    assert params5.shape == (2, 6)
+    assert pose_params.shape == (2, 6)
     assert bool(jnp.all(jnp.isfinite(x)))
-    assert bool(jnp.all(jnp.isfinite(params5)))
+    assert bool(jnp.all(jnp.isfinite(pose_params)))
     assert info["loss"]
     assert info["outer_stats"]
     assert info["observer_action"] == "continue"
@@ -185,7 +185,7 @@ def test_align_multires_public_execution_emits_observer_and_resume_metadata() ->
     assert final_state.stage_name == "direct_pose"
     assert final_state.stage_completed is True
     assert final_state.x.shape == (2, 2, 2)
-    assert final_state.params5.shape == (2, 6)
+    assert final_state.pose_params.shape == (2, 6)
     assert final_state.loss == info["loss"]
     assert final_state.outer_stats == info["outer_stats"]
     assert isinstance(final_state.geometry_calibration_state, dict)
@@ -214,7 +214,7 @@ def test_align_multires_executes_a_setup_then_pose_schedule_with_real_stages() -
     )
     checkpoint_states = []
 
-    x, params5, info = align_multires(
+    x, pose_params, info = align_multires(
         geometry,
         grid,
         detector,
@@ -225,9 +225,9 @@ def test_align_multires_executes_a_setup_then_pose_schedule_with_real_stages() -
     )
 
     assert x.shape == (2, 2, 2)
-    assert params5.shape == (2, 6)
+    assert pose_params.shape == (2, 6)
     assert bool(jnp.all(jnp.isfinite(x)))
-    assert bool(jnp.all(jnp.isfinite(params5)))
+    assert bool(jnp.all(jnp.isfinite(pose_params)))
 
     stages = info["schedule_stages"]
     assert [stage["stage_name"] for stage in stages] == ["cor", "pose_polish"]
@@ -321,7 +321,7 @@ def test_pose_adjusted_pallas_fallback_keeps_folded_detector_grid_out_of_jax_cor
         reconstruction_stage._ReconstructionStepInputs(
             recon_geometry=PoseAdjustedGeometry(
                 geometry=geometry,
-                params5=jnp.zeros((2, 5), dtype=jnp.float32),
+                pose_params=jnp.zeros((2, 5), dtype=jnp.float32),
             ),
             grid=grid,
             detector=detector,

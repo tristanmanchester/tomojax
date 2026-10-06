@@ -56,7 +56,7 @@ class PoseOptimizationContext:
     """Static transform and bounds context for pose L-BFGS variables."""
 
     active_cols: np.ndarray
-    frozen_params5: jnp.ndarray
+    frozen_pose_params: jnp.ndarray
     bounds_lower: jnp.ndarray
     bounds_upper: jnp.ndarray
     apply_param_constraints: Callable[[jnp.ndarray], jnp.ndarray]
@@ -88,7 +88,7 @@ class PoseOptimizationContext:
 class PoseLbfgsResult:
     """Result from pose-only L-BFGS optimization."""
 
-    params5: jnp.ndarray
+    pose_params: jnp.ndarray
     motion_coeffs: jnp.ndarray | None
     loss: float | None
     accepted: bool
@@ -285,7 +285,7 @@ def _softplus_inverse(y: jnp.ndarray) -> jnp.ndarray:
 
 def _build_pose_lbfgs_transform(
     *,
-    params5_in: jnp.ndarray,
+    pose_params_in: jnp.ndarray,
     motion_coeffs_in: jnp.ndarray | None,
     active_cols_jnp: jnp.ndarray,
     bounds_transform: BoundTransform,
@@ -315,12 +315,12 @@ def _build_pose_lbfgs_transform(
 
         return PoseLbfgsTransform(z0=z0, params_from_z=params_from_z)
 
-    z0 = bounds_transform.to_unconstrained(params5_in[:, active_cols_jnp])
+    z0 = bounds_transform.to_unconstrained(pose_params_in[:, active_cols_jnp])
 
     def params_from_z(z_candidate: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray | None]:
         active_values = bounds_transform.from_unconstrained(z_candidate)
         candidate = (
-            jnp.asarray(context.frozen_params5, dtype=jnp.float32)
+            jnp.asarray(context.frozen_pose_params, dtype=jnp.float32)
             .at[:, active_cols_jnp]
             .set(active_values)
         )
@@ -342,7 +342,7 @@ def _build_pose_lbfgs_transform(
 
 def prepare_pose_lbfgs(
     *,
-    params5: jnp.ndarray,
+    pose_params: jnp.ndarray,
     motion_coeffs: jnp.ndarray | None,
     context: PoseOptimizationContext,
     config: PoseLbfgsConfig,
@@ -353,10 +353,10 @@ def prepare_pose_lbfgs(
     Additional objective inputs (volume, random key, etc.) remain dynamic and
     must be supplied through ``objective_args`` when the problem is solved.
     """
-    cols, bounds = context.active_bound_transform(int(params5.shape[0]))
+    cols, bounds = context.active_bound_transform(int(pose_params.shape[0]))
     smooth = context.motion_model is not None and not bounds.has_finite_bounds
     transform = _build_pose_lbfgs_transform(
-        params5_in=params5,
+        pose_params_in=pose_params,
         motion_coeffs_in=motion_coeffs,
         active_cols_jnp=cols,
         bounds_transform=bounds,
@@ -595,7 +595,7 @@ def _run_lbfgs_optax_loop(  # noqa: PLR0911, PLR0912, PLR0915
 
 def run_pose_lbfgs(  # noqa: PLR0912, PLR0915
     *,
-    params5_in: jnp.ndarray,
+    pose_params_in: jnp.ndarray,
     motion_coeffs_in: jnp.ndarray | None,
     loss_before_value: float | None,
     objective_fn: Callable[[jnp.ndarray], jnp.ndarray],
@@ -611,7 +611,7 @@ def run_pose_lbfgs(  # noqa: PLR0912, PLR0915
     if active_cols.size == 0:
         message = "L-BFGS has no active alignment DOFs"
         return PoseLbfgsResult(
-            params5=params5_in,
+            pose_params=pose_params_in,
             motion_coeffs=motion_coeffs_in,
             loss=loss_before_value,
             accepted=False,
@@ -647,7 +647,7 @@ def run_pose_lbfgs(  # noqa: PLR0912, PLR0915
             "lbfgs_best_loss": best_value if math.isfinite(best_value) else None,
         }
         return PoseLbfgsResult(
-            params5=params5_in,
+            pose_params=pose_params_in,
             motion_coeffs=motion_coeffs_in,
             loss=loss_before_value,
             accepted=False,
@@ -659,19 +659,19 @@ def run_pose_lbfgs(  # noqa: PLR0912, PLR0915
             if problem.config != cfg:
                 raise ValueError("prepared L-BFGS problem has a different optimizer configuration")
             transform = PoseLbfgsTransform(
-                problem.initial_vector(params5_in, motion_coeffs_in),
+                problem.initial_vector(pose_params_in, motion_coeffs_in),
                 problem.params_from_z,
             )
         else:
             active_cols_jnp, bounds_transform = context.active_bound_transform(
-                int(params5_in.shape[0])
+                int(pose_params_in.shape[0])
             )
             motion_model = context.motion_model
             smooth_unbounded_coefficients = (
                 motion_model is not None and not bounds_transform.has_finite_bounds
             )
             transform = _build_pose_lbfgs_transform(
-                params5_in=params5_in,
+                pose_params_in=pose_params_in,
                 motion_coeffs_in=motion_coeffs_in,
                 active_cols_jnp=active_cols_jnp,
                 bounds_transform=bounds_transform,
@@ -732,7 +732,7 @@ def run_pose_lbfgs(  # noqa: PLR0912, PLR0915
     baseline = float(loss_before_value) if loss_before_value is not None else initial_value
     accepted = math.isfinite(final_loss) and final_loss < baseline
     if not accepted:
-        candidate_params = params5_in
+        candidate_params = pose_params_in
         candidate_coeffs = motion_coeffs_in
         final_loss = loss_before_value if loss_before_value is not None else math.nan
         result_message = loop.message or "L-BFGS candidate did not reduce the objective"
@@ -741,7 +741,7 @@ def run_pose_lbfgs(  # noqa: PLR0912, PLR0915
         result_message = loop.message
 
     try:
-        dp = candidate_params - params5_in
+        dp = candidate_params - pose_params_in
         rot_mean = float(jnp.mean(jnp.abs(dp[:, :3])))
         trans_mean = float(jnp.mean(jnp.abs(dp[:, 3:])))
     except Exception:
@@ -774,7 +774,7 @@ def run_pose_lbfgs(  # noqa: PLR0912, PLR0915
     if (not accepted) and result_message:
         stats["lbfgs_failure_reason"] = result_message
     return PoseLbfgsResult(
-        params5=candidate_params,
+        pose_params=candidate_params,
         motion_coeffs=candidate_coeffs,
         loss=final_loss,
         accepted=bool(accepted),

@@ -315,7 +315,7 @@ parameter in both.
 `tomojax.align` and `tomojax align` use detector-frame translations. The
 expert `tomojax.alignment.AlignConfig` defaults to
 `pose_translation_frame="object"`:
-`T_nominal @ se3_from_5d(params)`. Translations are physical lengths along the
+`T_nominal @ se3_from_pose_params(params)`. Translations are physical lengths along the
 object's x/z axes. Near a 90-degree view, these two directions project onto
 nearly the same detector direction. This representation cannot express every
 image-plane displacement, even with a well-conditioned object. A constant

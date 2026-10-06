@@ -67,7 +67,7 @@ def reconstruct_train_fold_nograd(
     )
     fold_geometry = PoseAdjustedGeometry(
         fold_geometry,
-        state.pose.params5[jnp.asarray(valid_idx, dtype=jnp.int32)],
+        state.pose.pose_params[jnp.asarray(valid_idx, dtype=jnp.int32)],
         translation_frame=state.pose.translation_frame,
     )
     det_grid = apply_setup_to_detector_grid(

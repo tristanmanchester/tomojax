@@ -19,7 +19,7 @@ from tomojax.alignment._model.dofs import POSE_WIDTH
 from tomojax.io.api import normalize_json as _normalize_json
 
 CHECKPOINT_KIND = "tomojax.alignment.checkpoint"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # 2: pose tables are stored as "pose_params"
 MULTIRES_GEOMETRY_VERSION = 2
 
 
@@ -77,7 +77,7 @@ class AlignmentCheckpoint:
     """Loaded alignment checkpoint arrays and metadata."""
 
     x: np.ndarray
-    params5: np.ndarray
+    pose_params: np.ndarray
     motion_coeffs: np.ndarray | None
     loss_history: list[float]
     outer_stats: list[dict[str, Any]]
@@ -235,7 +235,7 @@ def save_alignment_checkpoint(
     path: str | os.PathLike[str],
     *,
     x: Any,
-    params5: Any,
+    pose_params: Any,
     motion_coeffs: Any | None = None,
     loss_history: list[float] | tuple[float, ...] = (),
     outer_stats: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
@@ -258,7 +258,7 @@ def save_alignment_checkpoint(
         with tmp_path.open("wb") as fh:
             arrays: dict[str, Any] = {
                 "x": np.asarray(x, dtype=np.float32),
-                "params5": np.asarray(params5, dtype=np.float32),
+                "pose_params": np.asarray(pose_params, dtype=np.float32),
                 "loss_history": np.asarray(loss_history, dtype=np.float64),
                 "metadata_json": np.asarray(metadata_json),
                 "outer_stats_json": np.asarray(outer_stats_json),
@@ -297,7 +297,7 @@ def load_alignment_checkpoint(path: str | os.PathLike[str]) -> AlignmentCheckpoi
             files = set(z.files)
             required = {
                 "x",
-                "params5",
+                "pose_params",
                 "loss_history",
                 "metadata_json",
                 "outer_stats_json",
@@ -327,7 +327,7 @@ def load_alignment_checkpoint(path: str | os.PathLike[str]) -> AlignmentCheckpoi
                 motion_coeffs = None
             return AlignmentCheckpoint(
                 x=np.asarray(z["x"], dtype=np.float32),
-                params5=pad_pose_params(z["params5"]),
+                pose_params=pad_pose_params(z["pose_params"]),
                 motion_coeffs=motion_coeffs,
                 loss_history=[float(v) for v in np.asarray(z["loss_history"]).reshape(-1)],
                 outer_stats=[dict(item) for item in outer_stats],
@@ -434,11 +434,11 @@ def validate_alignment_checkpoint(
     expected_params_shape = (int(projection_shape[0]), POSE_WIDTH)
     # Checkpoints written before dy existed hold five columns; loaders pad them.
     legacy_shape = (int(projection_shape[0]), 5)
-    if tuple(checkpoint.params5.shape) not in {expected_params_shape, legacy_shape}:
-        actual_shape = list(checkpoint.params5.shape)
+    if tuple(checkpoint.pose_params.shape) not in {expected_params_shape, legacy_shape}:
+        actual_shape = list(checkpoint.pose_params.shape)
         expected_shape = list(expected_params_shape)
         raise CheckpointError(
-            "corrupt checkpoint: params5 shape "
+            "corrupt checkpoint: pose_params shape "
             f"{actual_shape} does not match expected {expected_shape}"
         )
 

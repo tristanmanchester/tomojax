@@ -82,7 +82,7 @@ def run_case(size: int, kind: str, method: str, args: argparse.Namespace) -> dic
         initial = jnp.asarray(initial)
 
         def call() -> tuple:
-            return align(geometry, grid, detector, data, config=config, init_params5=initial)
+            return align(geometry, grid, detector, data, config=config, init_pose_params=initial)
 
     runs = []
     for repeat in range(args.repeats + 1):

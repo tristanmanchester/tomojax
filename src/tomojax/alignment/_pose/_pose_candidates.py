@@ -55,14 +55,14 @@ def _second_difference_gram(n: int) -> jnp.ndarray:
 
 
 def _smooth_gn_candidate(
-    params5: jnp.ndarray,
+    pose_params: jnp.ndarray,
     smoothness_gram: jnp.ndarray,
     weights: jnp.ndarray,
 ) -> jnp.ndarray:
     """Project a per-view GN candidate through the quadratic curvature prior."""
-    n_views = int(params5.shape[0])
+    n_views = int(pose_params.shape[0])
     if n_views < 3:
-        return params5
+        return pose_params
 
     eye = jnp.eye(n_views, dtype=jnp.float32)
 
@@ -74,11 +74,11 @@ def _smooth_gn_candidate(
             operand=None,
         )
 
-    return jax.vmap(solve_one_dim, in_axes=(1, 0), out_axes=1)(params5, weights)
+    return jax.vmap(solve_one_dim, in_axes=(1, 0), out_axes=1)(pose_params, weights)
 
 
 def _select_gn_candidate(
-    params5_prev: jnp.ndarray,
+    pose_params_prev: jnp.ndarray,
     dp_all: jnp.ndarray,
     *,
     loss_before: float,
@@ -97,12 +97,12 @@ def _select_gn_candidate(
             gn_accept_tol,
         )
 
-    raw_params = context.constrain(params5_prev + dp_all)
+    raw_params = context.constrain(pose_params_prev + dp_all)
     raw_loss = eval_loss(raw_params)
     if _accepts(raw_loss):
         return raw_params, raw_loss
 
-    half_params = context.constrain(params5_prev + jnp.float32(0.5) * dp_all)
+    half_params = context.constrain(pose_params_prev + jnp.float32(0.5) * dp_all)
     half_loss = eval_loss(half_params)
     if _accepts(half_loss):
         return half_params, half_loss
@@ -110,14 +110,14 @@ def _select_gn_candidate(
     base_params = raw_params if raw_loss <= half_loss else half_params
 
     if context.smooth_candidate is None:
-        return params5_prev, loss_before
+        return pose_params_prev, loss_before
 
     smooth_weights = context.active_smoothing_weights()
 
     if not smooth_weights:
-        return params5_prev, loss_before
+        return pose_params_prev, loss_before
 
-    best_params = params5_prev
+    best_params = pose_params_prev
     best_loss = float("inf")
     accepted = False
     for weights in smooth_weights:
@@ -130,7 +130,7 @@ def _select_gn_candidate(
 
     if accepted:
         return best_params, best_loss
-    return params5_prev, loss_before
+    return pose_params_prev, loss_before
 
 
 _EXPECTED_ALIGN_EVAL_FAILURE_SNIPPETS = (

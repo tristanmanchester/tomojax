@@ -434,7 +434,7 @@ def _add_dof_schedule_options(p: argparse.ArgumentParser) -> None:
         choices=["per_view", "polynomial", "spline"],
         default="per_view",
         help=(
-            "Alignment pose parameterization: per_view optimizes one 5-DOF vector per "
+            "Alignment pose parameterization: per_view optimizes one pose vector per "
             "view; polynomial and spline optimize smooth low-dimensional trajectories"
         ),
     )

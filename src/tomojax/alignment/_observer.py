@@ -46,8 +46,10 @@ def adapt_observer_callback(
     if observer is None:
         return None
 
-    def _wrapped(x: jnp.ndarray, params5: jnp.ndarray, stat: OuterStat) -> ObserverAction | None:
-        action = observer(x, params5, stat)
+    def _wrapped(
+        x: jnp.ndarray, pose_params: jnp.ndarray, stat: OuterStat
+    ) -> ObserverAction | None:
+        action = observer(x, pose_params, stat)
         if action is None:
             return None
         bool_action = _scalar_bool_action(action)

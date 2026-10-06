@@ -83,7 +83,9 @@ def _run_one_multires_level(
         resuming_this_level=resuming_this_level,
     )
     params0 = (
-        resume_state.params5 if resuming_this_level and resume_state is not None else state.params5
+        resume_state.pose_params
+        if resuming_this_level and resume_state is not None
+        else state.pose_params
     )
     if params0 is None and level_index == 0:
         # The first level starts from explicit zero poses, so seed it here.
@@ -125,7 +127,7 @@ def _run_one_multires_level(
         level_resume=level_run,
         global_elapsed_offset=state.global_elapsed_offset,
         x_lvl=x0 if x0 is not None else jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32),
-        params5=params0
+        pose_params=params0
         if params0 is not None
         else jnp.zeros((projections.shape[0], POSE_WIDTH), dtype=jnp.float32),
         level_stats=level_stats,
@@ -144,7 +146,7 @@ def _run_one_multires_level(
     _emit_level_completion_checkpoint(
         checkpoint_callback=checkpoint_callback,
         x_lvl=stage_result.x_lvl,
-        params5=stage_result.params5,
+        pose_params=stage_result.pose_params,
         info=info,
         level_index=level_index,
         level_factor=level_factor,
@@ -189,7 +191,9 @@ def _run_multires_levels(
 ) -> MultiresRunState:
     state = _initial_multires_run_state(context=context, resume_state=resume_state)
     if resume_state is not None and resume_state.run_complete:
-        return replace(state, x_init=resume_state.x, params5=resume_state.params5, prev_factor=1)
+        return replace(
+            state, x_init=resume_state.x, pose_params=resume_state.pose_params, prev_factor=1
+        )
     for level_index, level in _levels_to_run(context.levels, resume_state):
         state = _run_one_multires_level(
             geometry=geometry,
@@ -210,8 +214,8 @@ def _release_completed_level_accelerator_state(state: MultiresRunState) -> None:
     """Drop per-level JAX executable/cache state before compiling the next level."""
     if state.x_init is not None:
         jax.block_until_ready(state.x_init)
-    if state.params5 is not None:
-        jax.block_until_ready(state.params5)
+    if state.pose_params is not None:
+        jax.block_until_ready(state.pose_params)
     gc.collect()
     clear_caches = getattr(jax, "clear_caches", None)
     if callable(clear_caches):
@@ -242,7 +246,7 @@ def _fix_gauge(
     estimating ``det_u_px``) also takes the poses' constant u shift into it.
     """
     dofs = context.active_geometry_dofs
-    if state.params5 is None:
+    if state.pose_params is None:
         return state, x_final, None, dofs
     frame = context.cfg.pose_translation_frame
     pose_dofs = context.resolved_schedule.active_pose_dofs
@@ -251,13 +255,13 @@ def _fix_gauge(
     offset = not beam and reports_centre and "dx" in pose_dofs and frame == "detector"
     setup_state = cast("AlignmentState | None", state.setup_alignment_state)
     if setup_state is None:
-        nominal = np.asarray(stack_view_poses(geometry, int(state.params5.shape[0])))
+        nominal = np.asarray(stack_view_poses(geometry, int(state.pose_params.shape[0])))
     else:
         base = BaseGeometryArrays.from_geometry(geometry, detector)
         nominal = np.asarray(pose_stack_for_setup(base, setup_state.setup))
     volume, params, gauge = least_motion_estimate(
         np.asarray(x_final),
-        np.asarray(state.params5),
+        np.asarray(state.pose_params),
         nominal=nominal,
         grid=grid,
         translation_frame=frame,
@@ -280,10 +284,10 @@ def _fix_gauge(
             LOG.info("Detector-u (centre-of-rotation) offset %.3f px", det_u_px)
             setup = setup.replace(det_u_px=det_u_px)
         setup_state = setup_state.replace(
-            setup=setup, pose=setup_state.pose.replace(params5=jnp.asarray(params))
+            setup=setup, pose=setup_state.pose.replace(pose_params=jnp.asarray(params))
         )
     fixed = replace(
-        state, params5=jnp.asarray(params, jnp.float32), setup_alignment_state=setup_state
+        state, pose_params=jnp.asarray(params, jnp.float32), setup_alignment_state=setup_state
     )
     if offset and "det_u_px" not in dofs:
         dofs = (*dofs, "det_u_px")
@@ -338,7 +342,7 @@ def align_multires(
         state, x_final, context=context, geometry=geometry, detector=detector, grid=grid
     )
     run_complete = _multires_run_is_complete(
-        params5=state.params5,
+        pose_params=state.pose_params,
         stopped_by_observer=state.stopped_by_observer,
         resume_state=resume_state,
         last_level_index_processed=state.last_level_index_processed,
@@ -346,7 +350,7 @@ def align_multires(
     )
     _emit_run_completion_checkpoint(
         checkpoint_callback=checkpoint_callback,
-        params5=state.params5,
+        pose_params=state.pose_params,
         run_complete=run_complete,
         x_final=x_final,
         level_count=len(context.levels),
@@ -362,8 +366,8 @@ def align_multires(
 
     return (
         x_final,
-        state.params5
-        if state.params5 is not None
+        state.pose_params
+        if state.pose_params is not None
         else jnp.zeros((projections.shape[0], POSE_WIDTH), jnp.float32),
         _final_align_multires_info(
             loss_hist=state.loss_hist,

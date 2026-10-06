@@ -21,7 +21,7 @@ results from default CLI behavior and larger-motion targets.
 - Detector-v or sample-elevation reference shifts are physically ambiguous
   and not reliably recoverable.
 - `AlignConfig`'s default five-parameter pose update uses object-frame
-  translations: `T_nominal @ se3_from_5d(params)`, with translation
+  translations: `T_nominal @ se3_from_pose_params(params)`, with translation
   `(dx, 0, dz)` in physical units. These are not two independent
   detector-plane shifts. Near a 90-degree view, their projection onto the
   detector becomes nearly singular, including for tilted geometry. This

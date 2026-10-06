@@ -40,11 +40,11 @@ def _proposal_candidates_for_pose_stage(
     stage: ResolvedAlignmentStage,
     base: BaseGeometryArrays,
     setup_alignment_state: object,
-    params5: jnp.ndarray,
+    pose_params: jnp.ndarray,
     volume: jnp.ndarray,
 ) -> tuple[ProposalCandidate, ...]:
     state = setup_alignment_state.replace(
-        pose=PoseState(params5, translation_frame=setup_alignment_state.pose.translation_frame),
+        pose=PoseState(pose_params, translation_frame=setup_alignment_state.pose.translation_frame),
         volume=volume,
     )
     baseline = apply_alignment_state(base, state).pose_stack
@@ -66,7 +66,7 @@ def _proposal_candidates_for_pose_stage(
         if step <= 0.0:
             continue
         for sign, label in ((-1.0, "minus"), (1.0, "plus")):
-            candidate_params = params5.at[:, col].add(jnp.float32(sign * step))
+            candidate_params = pose_params.at[:, col].add(jnp.float32(sign * step))
             candidate_state = setup_alignment_state.replace(
                 pose=PoseState(
                     candidate_params, translation_frame=setup_alignment_state.pose.translation_frame
@@ -99,10 +99,10 @@ def _apply_pose_proposal_stage(
     setup_alignment_state: object,
     level_factor: int,
     x_lvl: jnp.ndarray,
-    params5: jnp.ndarray,
+    pose_params: jnp.ndarray,
 ) -> tuple[jnp.ndarray, dict[str, object]]:
     if not stage.active_pose_dofs:
-        return params5, {
+        return pose_params, {
             "proposal_status": "skipped",
             "proposal_reason": "proposal stage has no active pose DOFs",
         }
@@ -114,7 +114,7 @@ def _apply_pose_proposal_stage(
     effective = apply_alignment_state(
         base,
         setup_alignment_state.replace(
-            pose=PoseState(params5, translation_frame=cfg.pose_translation_frame), volume=x_lvl
+            pose=PoseState(pose_params, translation_frame=cfg.pose_translation_frame), volume=x_lvl
         ),
     )
     adapter = build_loss_adapter(active_loss_spec, projections)
@@ -122,7 +122,7 @@ def _apply_pose_proposal_stage(
         stage=stage,
         base=base,
         setup_alignment_state=setup_alignment_state,
-        params5=params5,
+        pose_params=pose_params,
         volume=x_lvl,
     )
     result = score_pose_stack_candidates(
@@ -140,13 +140,13 @@ def _apply_pose_proposal_stage(
         checkpoint_projector=cfg.checkpoint_projector,
         ray_integrator=cfg.ray_integrator,
     )
-    best_params = params5
+    best_params = pose_params
     if result.improved:
         best_meta = result.candidate_metadata[result.best_index]
         dof = best_meta.get("dof")
         delta = best_meta.get("delta")
         if isinstance(dof, str) and dof in DOF_INDEX and delta is not None:
-            best_params = params5.at[:, DOF_INDEX[dof]].add(jnp.float32(float(delta)))
+            best_params = pose_params.at[:, DOF_INDEX[dof]].add(jnp.float32(float(delta)))
     return best_params, result.to_dict()
 
 
@@ -169,7 +169,7 @@ def _run_proposal_stage(
 ) -> StageLoopState:
     proposal_start = time.perf_counter()
     loss_before = float(level_losses[-1]) if level_losses else None
-    params5, proposal_info = _apply_pose_proposal_stage(
+    pose_params, proposal_info = _apply_pose_proposal_stage(
         geometry=geometry,
         grid=grid,
         detector=detector,
@@ -180,10 +180,10 @@ def _run_proposal_stage(
         setup_alignment_state=setup_alignment_state,
         level_factor=int(level_factor),
         x_lvl=state.x_lvl,
-        params5=state.params5,
+        pose_params=state.pose_params,
     )
     setup_alignment_state = setup_alignment_state.replace(
-        pose=PoseState(params5, translation_frame=cfg.pose_translation_frame),
+        pose=PoseState(pose_params, translation_frame=cfg.pose_translation_frame),
         volume=state.x_lvl,
     )
     proposal_wall_time = time.perf_counter() - proposal_start
@@ -213,7 +213,7 @@ def _run_proposal_stage(
     info["proposal"] = dict(proposal_info)
     return replace(
         state,
-        params5=params5,
+        pose_params=pose_params,
         info=info,
         setup_alignment_state=setup_alignment_state,
         level_wall_time=level_wall_time,
@@ -254,7 +254,7 @@ def _run_setup_geometry_stage(
         detector=detector,
         projections=projections,
         init_x=state.x_lvl,
-        init_params5=state.params5,
+        init_pose_params=state.pose_params,
         state=state.setup_alignment_state,
         active_geometry_dofs=stage.active_geometry_dofs,
         factor=int(level_factor),
@@ -333,7 +333,7 @@ def _pose_stage_resume_state(
     return (
         AlignResumeState(
             x=resume_state.x,
-            params5=resume_state.params5,
+            pose_params=resume_state.pose_params,
             motion_coeffs=resume_state.motion_coeffs,
             start_outer_iter=level_resume.resume_stage_iters,
             loss=list(level_resume.resume_stage_losses),
@@ -406,14 +406,14 @@ def _run_pose_alignment_stage(
         global_elapsed_offset=global_elapsed_offset,
         stage_resume_consumed=state.stage_resume_consumed,
     )
-    x_lvl, params5, info = align(
+    x_lvl, pose_params, info = align(
         geometry_for_align,
         grid,
         detector,
         projections,
         cfg=cfg_stage,
         init_x=state.x_lvl,
-        init_params5=state.params5,
+        init_pose_params=state.pose_params,
         observer=stage_runtime.observer_for_stage(stage, stage_global_start),
         resume_state=align_resume_state,
         checkpoint_callback=stage_runtime.checkpoint_for_stage(
@@ -427,7 +427,7 @@ def _run_pose_alignment_stage(
     )
     setup_alignment_state = state.setup_alignment_state.replace(
         pose=PoseState(
-            params5,
+            pose_params,
             info.get("motion_coeffs"),  # type: ignore[arg-type]
             translation_frame=cfg_stage.pose_translation_frame,
         ),
@@ -449,7 +449,7 @@ def _run_pose_alignment_stage(
     return replace(
         state,
         x_lvl=x_lvl,
-        params5=params5,
+        pose_params=pose_params,
         info=info,
         setup_alignment_state=setup_alignment_state,
         level_wall_time=level_wall_time,
@@ -480,7 +480,7 @@ def _run_multires_level_stages(
     level_resume: LevelResumePlan,
     global_elapsed_offset: float,
     x_lvl: jnp.ndarray,
-    params5: jnp.ndarray,
+    pose_params: jnp.ndarray,
     level_stats: list[OuterStat],
     level_losses: list[float],
     final_gauge_fix: str,
@@ -516,7 +516,7 @@ def _run_multires_level_stages(
     }
     state = StageLoopState(
         x_lvl=x_lvl,
-        params5=params5,
+        pose_params=pose_params,
         info=info,
         setup_alignment_state=setup_alignment_state,
         level_wall_time=0.0,
@@ -603,7 +603,7 @@ def _run_multires_level_stages(
 
     return StageRunResult(
         x_lvl=state.x_lvl,
-        params5=state.params5,
+        pose_params=state.pose_params,
         info=state.info,
         setup_alignment_state=state.setup_alignment_state,
         level_stats=level_stats,

@@ -95,7 +95,7 @@ def test_checkpoint_validation_requires_exact_config_defaults() -> None:
     metadata = build_alignment_checkpoint_metadata_from_input(_metadata_input())
     checkpoint = AlignmentCheckpoint(
         x=np.zeros((2, 3, 4), dtype=np.float32),
-        params5=np.zeros((5, 5), dtype=np.float32),
+        pose_params=np.zeros((5, 5), dtype=np.float32),
         motion_coeffs=None,
         loss_history=[],
         outer_stats=[],
@@ -121,7 +121,7 @@ def test_legacy_checkpoint_pose_frame_is_object_and_cannot_be_reinterpreted() ->
     metadata = build_alignment_checkpoint_metadata_from_input(_metadata_input())
     checkpoint = AlignmentCheckpoint(
         x=np.zeros((2, 3, 4), dtype=np.float32),
-        params5=np.zeros((5, 5), dtype=np.float32),
+        pose_params=np.zeros((5, 5), dtype=np.float32),
         motion_coeffs=None,
         loss_history=[],
         outer_stats=[],
@@ -154,7 +154,7 @@ def test_legacy_checkpoint_sampling_is_rejected_only_for_multires(multires):
         metadata.pop("multires_geometry_version")
     checkpoint = AlignmentCheckpoint(
         x=np.zeros((2, 3, 4), dtype=np.float32),
-        params5=np.zeros((5, 5), dtype=np.float32),
+        pose_params=np.zeros((5, 5), dtype=np.float32),
         motion_coeffs=None,
         loss_history=[],
         outer_stats=[],

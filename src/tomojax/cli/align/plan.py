@@ -133,12 +133,12 @@ def _default_levels_for_public_mode(mode: AlignmentMode) -> list[int]:
 def _completed_single_resume_state(
     *,
     x: jnp.ndarray,
-    params5: jnp.ndarray,
+    pose_params: jnp.ndarray,
     info: AlignInfo,
 ) -> AlignResumeState:
     return AlignResumeState(
         x=x,
-        params5=params5,
+        pose_params=pose_params,
         motion_coeffs=info["motion_coeffs"],
         start_outer_iter=int(info["completed_outer_iters"]),
         loss=list(info["loss"]),
@@ -653,7 +653,7 @@ def execute_alignment_plan(
             multires_checkpoint_callback=multires_checkpoint_callback,
         )
         info = cast("AlignCliInfo", {**result.info, "cone_axis_calibration": calibration})
-        return AlignCliExecutionResult(x=result.x, params5=result.params5, info=info)
+        return AlignCliExecutionResult(x=result.x, pose_params=result.pose_params, info=info)
     from tomojax.recon import fdk
 
     n_views = int(plan.projections.shape[0])
@@ -672,7 +672,7 @@ def execute_alignment_plan(
     )
     return AlignCliExecutionResult(
         x=fdk(plan.geometry, plan.recon_grid, plan.detector, plan.projections),
-        params5=jax_float32_array(np.zeros((n_views, POSE_WIDTH), np.float32)),
+        pose_params=jax_float32_array(np.zeros((n_views, POSE_WIDTH), np.float32)),
         info=info,
     )
 
@@ -686,7 +686,7 @@ def _execute_alignment(
     command = plan.command
     if plan.run_levels is not None and len(plan.run_levels) > 0:
         with transfer_guard_context(command.transfer_guard):
-            x, params5, info = align_multires(
+            x, pose_params, info = align_multires(
                 plan.geometry,
                 plan.recon_grid,
                 plan.detector,
@@ -702,10 +702,10 @@ def _execute_alignment(
                 if plan.checkpoint_path is not None
                 else None,
             )
-        return AlignCliExecutionResult(x=x, params5=params5, info=info)
+        return AlignCliExecutionResult(x=x, pose_params=pose_params, info=info)
 
     with transfer_guard_context(command.transfer_guard):
-        x, params5, info = align(
+        x, pose_params, info = align(
             plan.geometry,
             plan.recon_grid,
             plan.detector,
@@ -722,9 +722,9 @@ def _execute_alignment(
         single_checkpoint_callback(
             _completed_single_resume_state(
                 x=x,
-                params5=params5,
+                pose_params=pose_params,
                 info=info,
             ),
             run_complete=True,
         )
-    return AlignCliExecutionResult(x=x, params5=params5, info=info)
+    return AlignCliExecutionResult(x=x, pose_params=pose_params, info=info)

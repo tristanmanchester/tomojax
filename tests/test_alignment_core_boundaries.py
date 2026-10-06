@@ -10,7 +10,7 @@ from tomojax.alignment import AlignConfig
 from tomojax.alignment._config import _active_dof_mask_for_cfg, _active_dofs_for_cfg
 
 # check-public-imports: allow-private
-from tomojax.alignment._geometry.parametrizations import compose_R, se3_from_5d
+from tomojax.alignment._geometry.parametrizations import compose_R, se3_from_pose_params
 
 # check-public-imports: allow-private
 from tomojax.alignment._model.diagnostics import (
@@ -69,7 +69,7 @@ def test_pose_parametrization_composes_rotation_and_translation() -> None:
         atol=1e-6,
     )
 
-    transform = se3_from_5d(jnp.asarray([0.0, 0.0, 0.0, 2.0, -3.0], dtype=jnp.float32))
+    transform = se3_from_pose_params(jnp.asarray([0.0, 0.0, 0.0, 2.0, -3.0], dtype=jnp.float32))
     np.testing.assert_allclose(np.asarray(transform[:3, 3]), [2.0, 0.0, -3.0])
     np.testing.assert_allclose(np.asarray(transform[3]), [0.0, 0.0, 0.0, 1.0])
 
@@ -223,7 +223,7 @@ def test_observer_action_adapter_normalizes_bool_and_string_results() -> None:
 def test_multires_level_resume_plan_splits_preserved_and_active_stage_history() -> None:
     resume = AlignMultiresResumeState(
         x=jnp.zeros((2, 2, 2), dtype=jnp.float32),
-        params5=jnp.zeros((3, 5), dtype=jnp.float32),
+        pose_params=jnp.zeros((3, 5), dtype=jnp.float32),
         level_index=1,
         level_factor=2,
         completed_outer_iters_in_level=3,
@@ -289,7 +289,7 @@ def test_stage_runtime_checkpoint_preserves_schedule_resume_fields() -> None:
     callback(
         AlignResumeState(
             x=jnp.zeros((2, 2, 2), dtype=jnp.float32),
-            params5=jnp.zeros((2, 5), dtype=jnp.float32),
+            pose_params=jnp.zeros((2, 5), dtype=jnp.float32),
             start_outer_iter=2,
             loss=[4.0, 3.5],
             outer_stats=[{"outer_idx": 1}, {"outer_idx": 2}],

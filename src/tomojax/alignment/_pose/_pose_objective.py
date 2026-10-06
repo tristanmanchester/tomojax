@@ -63,25 +63,25 @@ def _objective_loss_mask_arg(ctx: _PoseObjectiveContext, mask_i: jnp.ndarray) ->
 
 
 def _apply_pose_smoothness_loss(
-    params5: jnp.ndarray,
+    pose_params: jnp.ndarray,
     loss: jnp.ndarray,
     smoothness_weights: jnp.ndarray,
 ) -> jnp.ndarray:
-    if int(params5.shape[0]) < 3:
+    if int(pose_params.shape[0]) < 3:
         return loss
-    d2 = params5[:-2] - 2.0 * params5[1:-1] + params5[2:]
+    d2 = pose_params[:-2] - 2.0 * pose_params[1:-1] + pose_params[2:]
     return loss + jnp.sum((d2 * smoothness_weights) ** 2)
 
 
 def _apply_pose_smoothness_gradient(
-    params5: jnp.ndarray,
+    pose_params: jnp.ndarray,
     total: jnp.ndarray,
     grad: jnp.ndarray,
     smoothness_weights: jnp.ndarray,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
-    if int(params5.shape[0]) < 3:
+    if int(pose_params.shape[0]) < 3:
         return total, grad
-    d2 = params5[:-2] - 2.0 * params5[1:-1] + params5[2:]
+    d2 = pose_params[:-2] - 2.0 * pose_params[1:-1] + pose_params[2:]
     total = total + jnp.sum((d2 * smoothness_weights) ** 2)
     ww = (smoothness_weights**2) * 2.0
     grad = grad.at[1:-1].add(-2.0 * d2 * ww)
@@ -94,12 +94,12 @@ def _build_pose_align_loss(
     ctx: _PoseObjectiveContext,
 ) -> Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray]:
     def align_loss(
-        params5: jnp.ndarray,
+        pose_params: jnp.ndarray,
         vol: jnp.ndarray,
         loss_rng_key: jnp.ndarray,
     ) -> jnp.ndarray:
         t_aug = apply_pose_updates(
-            ctx.pose_stack, params5, translation_frame=ctx.cfg.pose_translation_frame
+            ctx.pose_stack, pose_params, translation_frame=ctx.cfg.pose_translation_frame
         )
         loss_tot = project_and_score_stack(
             pose_stack=t_aug,
@@ -121,7 +121,7 @@ def _build_pose_align_loss(
             ray_integrator=ctx.cfg.ray_integrator,
             beam=ctx.beam,
         )
-        return _apply_pose_smoothness_loss(params5, loss_tot, ctx.smoothness_weights)
+        return _apply_pose_smoothness_loss(pose_params, loss_tot, ctx.smoothness_weights)
 
     return align_loss
 
@@ -172,7 +172,7 @@ def _build_manual_loss_and_grad(
     one_view_val_and_grad_batch: Callable[..., object],
 ) -> Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]]:
     def loss_and_grad_manual(
-        params5: jnp.ndarray, vol: jnp.ndarray, loss_rng_key: jnp.ndarray
+        pose_params: jnp.ndarray, vol: jnp.ndarray, loss_rng_key: jnp.ndarray
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
         masked_vol = _objective_apply_vol_mask(ctx, vol)
 
@@ -182,9 +182,9 @@ def _build_manual_loss_and_grad(
             total, grad = carry
             start_shifted, vmask, view_idx_chunk = _objective_chunk_schedule(ctx, i)
             params_chunk = jax.lax.dynamic_slice(
-                params5,
+                pose_params,
                 (start_shifted, 0),
-                (ctx.chunk_size, params5.shape[1]),
+                (ctx.chunk_size, pose_params.shape[1]),
             )
             t_nom_chunk = jax.lax.dynamic_slice(
                 ctx.pose_stack,
@@ -209,13 +209,13 @@ def _build_manual_loss_and_grad(
             grad = grad.at[view_idx_chunk].add(g_chunk * vmask[:, None])
             return (total, grad), None
 
-        init = (jnp.float32(0.0), jnp.zeros_like(params5))
+        init = (jnp.float32(0.0), jnp.zeros_like(pose_params))
         (total, grad), _ = jax.lax.scan(
             body,
             init,
             jnp.arange(ctx.num_chunks, dtype=jnp.int32),
         )
-        return _apply_pose_smoothness_gradient(params5, total, grad, ctx.smoothness_weights)
+        return _apply_pose_smoothness_gradient(pose_params, total, grad, ctx.smoothness_weights)
 
     return jax.jit(loss_and_grad_manual)
 
@@ -250,7 +250,9 @@ def _build_gn_update_all(
             mask_chunk if ctx.has_loss_mask else None,
         )
 
-    def gn_update_all(params5: jnp.ndarray, vol: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+    def gn_update_all(
+        pose_params: jnp.ndarray, vol: jnp.ndarray
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
         masked_vol = _objective_apply_vol_mask(ctx, vol)
 
         def body(
@@ -259,9 +261,9 @@ def _build_gn_update_all(
             delta_acc, loss_acc = carry
             start_shifted, vmask, view_idx_chunk = _objective_chunk_schedule(ctx, i)
             params_chunk = jax.lax.dynamic_slice(
-                params5,
+                pose_params,
                 (start_shifted, 0),
-                (ctx.chunk_size, params5.shape[1]),
+                (ctx.chunk_size, pose_params.shape[1]),
             )
             t_chunk = jax.lax.dynamic_slice(
                 ctx.pose_stack,
@@ -284,13 +286,15 @@ def _build_gn_update_all(
             loss_acc = loss_acc + jnp.sum(loss_values * vmask)
             return (delta_acc, loss_acc), None
 
-        delta0 = jnp.zeros_like(params5)
+        delta0 = jnp.zeros_like(pose_params)
         (delta_all, current_loss), _ = jax.lax.scan(
             body,
             (delta0, jnp.float32(0.0)),
             jnp.arange(ctx.num_chunks, dtype=jnp.int32),
         )
-        current_loss = _apply_pose_smoothness_loss(params5, current_loss, ctx.smoothness_weights)
+        current_loss = _apply_pose_smoothness_loss(
+            pose_params, current_loss, ctx.smoothness_weights
+        )
         return delta_all, current_loss
 
     return jax.jit(gn_update_all)

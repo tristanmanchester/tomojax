@@ -139,7 +139,7 @@ def _prepare_align_setup(
     *,
     cfg: AlignConfig | None,
     init_x: jnp.ndarray | None,
-    init_params5: jnp.ndarray | None,
+    init_pose_params: jnp.ndarray | None,
     observer: ObserverCallback | None,
     resume_state: AlignResumeState | None,
     anchor_translations: bool = False,
@@ -161,16 +161,16 @@ def _prepare_align_setup(
         if resume_state.ray_integrator != cfg.ray_integrator:
             raise ValueError("align resume_state ray_integrator differs from config")
         init_x = resume_state.x
-        init_params5 = resume_state.params5
+        init_pose_params = resume_state.pose_params
     if init_x is not None:
         validate_volume(init_x, grid, context="align init_x", name="init_x")
-    if init_params5 is not None and np.shape(init_params5) == (n_views, 5):
-        init_params5 = pad_pose_params(init_params5)
+    if init_pose_params is not None and np.shape(init_pose_params) == (n_views, 5):
+        init_pose_params = pad_pose_params(init_pose_params)
     validate_optional_same_shape(
-        init_params5,
+        init_pose_params,
         (n_views, POSE_WIDTH),
-        context="align init_params5",
-        name="init_params5",
+        context="align init_pose_params",
+        name="init_pose_params",
         fix=f"pass one row of {POSE_WIDTH} pose parameters {DOF_NAMES} per projection view.",
     )
     x = (
@@ -178,17 +178,17 @@ def _prepare_align_setup(
         if init_x is not None
         else jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
     )
-    params5 = (
-        jnp.asarray(init_params5, dtype=jnp.float32)
-        if init_params5 is not None
+    pose_params = (
+        jnp.asarray(init_pose_params, dtype=jnp.float32)
+        if init_pose_params is not None
         else jnp.zeros((n_views, POSE_WIDTH), dtype=jnp.float32)
     )
     active_mask_tuple = _active_dof_mask_for_cfg(cfg)
     active_mask_tuple = _with_beam_translation(active_mask_tuple, geometry, cfg)
-    if init_params5 is None:
+    if init_pose_params is None:
         seeded = seeded_translation_params(geometry, grid, detector, projections, cfg)
-        params5 = params5 if seeded is None else seeded
-    frozen_params5 = params5
+        pose_params = pose_params if seeded is None else seeded
+    frozen_pose_params = pose_params
     active_mask_bool = jnp.asarray(active_mask_tuple, dtype=bool)
     active_col_indices_np = np.asarray(
         [idx for idx, is_active in enumerate(active_mask_tuple) if is_active],
@@ -219,8 +219,8 @@ def _prepare_align_setup(
         observer_fn=observer_fn,
         n_views=n_views,
         x=x,
-        params5=params5,
-        frozen_params5=frozen_params5,
+        pose_params=pose_params,
+        frozen_pose_params=frozen_pose_params,
         active_mask_tuple=active_mask_tuple,
         active_mask_bool=active_mask_bool,
         active_col_indices_np=active_col_indices_np,
@@ -326,11 +326,11 @@ def _build_alignment_step_contexts(
     lbfgs_problem = None
     if opt_mode == "lbfgs" and setup.active_col_indices_np.size:
         lbfgs_problem = prepare_pose_lbfgs(
-            params5=setup.params5,
+            pose_params=setup.pose_params,
             motion_coeffs=motion_ctx.motion_coeffs,
             context=PoseOptimizationContext(
                 active_cols=setup.active_col_indices_np,
-                frozen_params5=setup.frozen_params5,
+                frozen_pose_params=setup.frozen_pose_params,
                 bounds_lower=constraint_ctx.bounds_lower,
                 bounds_upper=constraint_ctx.bounds_upper,
                 apply_param_constraints=constraint_ctx.apply_full_constraints,
@@ -360,7 +360,7 @@ def _build_alignment_step_contexts(
         AlignmentStepConstraints(
             active_mask=setup.active_mask,
             active_col_indices_np=setup.active_col_indices_np,
-            frozen_params5=setup.frozen_params5,
+            frozen_pose_params=setup.frozen_pose_params,
             bounds_lower=constraint_ctx.bounds_lower,
             bounds_upper=constraint_ctx.bounds_upper,
             apply_full_constraints=constraint_ctx.apply_full_constraints,
@@ -391,7 +391,7 @@ def _build_alignment_step_contexts(
 @dataclass
 class _AlignLoopState:
     x: jnp.ndarray
-    params5: jnp.ndarray
+    pose_params: jnp.ndarray
     motion_coeffs: jnp.ndarray | None
     final_gauge_stats: dict[str, float | str | list[str]]
     l_prev: float | None
@@ -415,7 +415,7 @@ def _emit_alignment_checkpoint(
     checkpoint_callback(
         AlignResumeState(
             x=state.x,
-            params5=state.params5,
+            pose_params=state.pose_params,
             motion_coeffs=state.motion_coeffs,
             start_outer_iter=len(state.outer_stats),
             loss=list(state.loss_hist),
@@ -462,7 +462,9 @@ def _observer_break_decision(
 ) -> bool:
     if observer_fn is None:
         return False
-    observer_action = _normalize_observer_action(observer_fn(state.x, state.params5, dict(stat)))
+    observer_action = _normalize_observer_action(
+        observer_fn(state.x, state.pose_params, dict(stat))
+    )
     state.observer_action = observer_action
     stat["observer_action"] = observer_action
     stat["observer_stop"] = observer_action != "continue"
@@ -541,7 +543,7 @@ def _run_align_outer_iteration(
         detector=detector,
         projections=projections,
         det_grid=det_grid,
-        params5=state.params5,
+        pose_params=state.pose_params,
         x=state.x,
         cfg=cfg,
         L_prev=state.l_prev,
@@ -558,7 +560,7 @@ def _run_align_outer_iteration(
     if objective.coupled is not None:
         (
             state.x,
-            state.params5,
+            state.pose_params,
             state.motion_coeffs,
             state.final_gauge_stats,
             total_loss,
@@ -569,12 +571,12 @@ def _run_align_outer_iteration(
             objective=objective.coupled,
             constraints=constraints,
             gauge=gauge,
-            params5_in=state.params5,
+            pose_params_in=state.pose_params,
             vol=state.x,
         )
     else:
         (
-            state.params5,
+            state.pose_params,
             state.motion_coeffs,
             state.final_gauge_stats,
             total_loss,
@@ -588,7 +590,7 @@ def _run_align_outer_iteration(
             motion=motion,
             smoothing=smoothing,
             gauge=gauge,
-            params5_in=state.params5,
+            pose_params_in=state.pose_params,
             motion_coeffs_in=state.motion_coeffs,
             vol=state.x,
             loss_hist=state.loss_hist,
@@ -725,16 +727,16 @@ def align(
     *,
     cfg: AlignConfig | None = None,
     init_x: jnp.ndarray | None = None,
-    init_params5: jnp.ndarray | None = None,
+    init_pose_params: jnp.ndarray | None = None,
     observer: ObserverCallback | None = None,
     resume_state: AlignResumeState | None = None,
     checkpoint_callback: AlignCheckpointCallback | None = None,
     det_grid_override: tuple[jnp.ndarray, jnp.ndarray] | None = None,
     anchor_translations: bool = False,
 ) -> tuple[jnp.ndarray, jnp.ndarray, AlignInfo]:
-    """Alternating reconstruction + per-view alignment (5-DOF) on small cases.
+    """Alternating reconstruction + per-view pose alignment on small cases.
 
-    Returns (x, params5, info) with loss history and optional metrics.
+    Returns (x, pose_params, info) with loss history and optional metrics.
     """
     setup = _prepare_align_setup(
         geometry,
@@ -743,7 +745,7 @@ def align(
         projections,
         cfg=cfg,
         init_x=init_x,
-        init_params5=init_params5,
+        init_pose_params=init_pose_params,
         observer=observer,
         resume_state=resume_state,
         anchor_translations=anchor_translations,
@@ -752,12 +754,12 @@ def align(
     observer_fn = setup.observer_fn
     n_views = setup.n_views
     x = setup.x
-    params5 = setup.params5
+    pose_params = setup.pose_params
     active_names = setup.active_names
     active_mask = setup.active_mask
     constraint_ctx = PoseConstraintContext.from_setup(setup)
 
-    params5, initial_gauge_stats = constraint_ctx.apply_full_constraints_with_stats(params5)
+    pose_params, initial_gauge_stats = constraint_ctx.apply_full_constraints_with_stats(pose_params)
     logging.info("Alignment gauge fix: %s", constraint_ctx.description())
     final_gauge_stats = dict(initial_gauge_stats)
 
@@ -766,15 +768,15 @@ def align(
         cfg=cfg,
         n_views=n_views,
         active_names=active_names,
-        params5=params5,
+        pose_params=pose_params,
         resume_state=resume_state,
         constraint_ctx=constraint_ctx,
     )
     motion_model = motion_ctx.motion_model
-    params5 = motion_ctx.params5
+    pose_params = motion_ctx.pose_params
     motion_coeffs = motion_ctx.motion_coeffs
     if motion_ctx.use_smooth_pose_model:
-        _, initial_gauge_stats = constraint_ctx.apply_full_constraints_with_stats(params5)
+        _, initial_gauge_stats = constraint_ctx.apply_full_constraints_with_stats(pose_params)
         final_gauge_stats = dict(initial_gauge_stats)
 
     start_outer_iter = int(resume_state.start_outer_iter) if resume_state is not None else 0
@@ -813,7 +815,7 @@ def align(
     recon_algo = str(cfg.recon_algo)
     loop_state = _AlignLoopState(
         x=x,
-        params5=params5,
+        pose_params=pose_params,
         motion_coeffs=motion_coeffs,
         final_gauge_stats=final_gauge_stats,
         l_prev=(
@@ -918,4 +920,4 @@ def align(
         motion_model=motion_model,
         constraint_ctx=constraint_ctx,
     )
-    return loop_state.x, loop_state.params5, info
+    return loop_state.x, loop_state.pose_params, info

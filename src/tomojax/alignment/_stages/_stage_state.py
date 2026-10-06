@@ -153,14 +153,14 @@ def _final_multires_volume(
 
 def _multires_run_is_complete(
     *,
-    params5: jnp.ndarray | None,
+    pose_params: jnp.ndarray | None,
     stopped_by_observer: bool,
     resume_state: AlignMultiresResumeState | None,
     last_level_index_processed: int,
     level_count: int,
 ) -> bool:
     return (
-        params5 is not None
+        pose_params is not None
         and not stopped_by_observer
         and (
             (resume_state is not None and resume_state.run_complete)
@@ -174,7 +174,7 @@ def _emit_level_completion_checkpoint(
     *,
     checkpoint_callback: AlignMultiresCheckpointCallback | None,
     x_lvl: jnp.ndarray,
-    params5: jnp.ndarray,
+    pose_params: jnp.ndarray,
     info: Mapping[str, object],
     level_index: int,
     level_factor: int,
@@ -200,7 +200,7 @@ def _emit_level_completion_checkpoint(
     checkpoint_callback(
         _build_multires_checkpoint_state(
             x=x_lvl,
-            params5=params5,
+            pose_params=pose_params,
             motion_coeffs=info.get("motion_coeffs"),
             level_index=int(level_index),
             level_factor=int(level_factor),
@@ -227,7 +227,7 @@ def _emit_level_completion_checkpoint(
 def _emit_run_completion_checkpoint(
     *,
     checkpoint_callback: AlignMultiresCheckpointCallback | None,
-    params5: jnp.ndarray | None,
+    pose_params: jnp.ndarray | None,
     run_complete: bool,
     x_final: jnp.ndarray,
     level_count: int,
@@ -240,13 +240,13 @@ def _emit_run_completion_checkpoint(
     resolved_schedule: object,
     ray_integrator: str = "sampled",
 ) -> None:
-    if checkpoint_callback is None or params5 is None or not run_complete:
+    if checkpoint_callback is None or pose_params is None or not run_complete:
         return
     final_stage = resolved_schedule.stages[-1]
     checkpoint_callback(
         _build_multires_checkpoint_state(
             x=x_final,
-            params5=params5,
+            pose_params=pose_params,
             motion_coeffs=None,
             level_index=max(0, level_count - 1),
             level_factor=1,
@@ -456,12 +456,12 @@ def _initial_multires_run_state(
 ) -> MultiresRunState:
     level_complete = resume_state is not None and resume_state.level_complete
     x_init = resume_state.x if level_complete else None
-    params5 = resume_state.params5 if level_complete else None
+    pose_params = resume_state.pose_params if level_complete else None
     prev_factor = int(resume_state.level_factor) if level_complete else None
     final_gauge_fix = normalize_gauge_fix("none")
     return MultiresRunState(
         x_init=x_init,
-        params5=params5,
+        pose_params=pose_params,
         prev_factor=prev_factor,
         loss_hist=list(resume_state.loss) if resume_state is not None else [],
         global_outer_stats=(
@@ -579,7 +579,7 @@ def _state_after_multires_level(
         replace(
             state,
             x_init=stage_result.x_lvl,
-            params5=stage_result.params5,
+            pose_params=stage_result.pose_params,
             prev_factor=level["factor"],
             loss_hist=level_run.loss_before_level + stage_result.level_losses,
             global_outer_stats=level_run.stats_before_level + stage_result.level_stats,

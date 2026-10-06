@@ -19,14 +19,14 @@ type PoseModelName = Literal["per_view", "polynomial", "spline"]
 
 @dataclass(frozen=True)
 class PoseMotionModel:
-    """Low-dimensional linear model for per-view 5-DOF alignment parameters."""
+    """Low-dimensional linear model for per-view pose parameters."""
 
     name: PoseModelName
     basis: jnp.ndarray
     basis_pinv: jnp.ndarray
     active_indices: tuple[int, ...]
     active_names: tuple[str, ...]
-    frozen_params5: jnp.ndarray
+    frozen_pose_params: jnp.ndarray
 
     @property
     def n_views(self) -> int:
@@ -81,7 +81,7 @@ def build_pose_motion_model(
     pose_model: str,
     n_views: int,
     active_dofs: Sequence[str],
-    frozen_params5: jnp.ndarray,
+    frozen_pose_params: jnp.ndarray,
     scan_coordinate: np.ndarray | None = None,
     knot_spacing: int = 8,
     degree: int = 3,
@@ -115,7 +115,7 @@ def build_pose_motion_model(
         basis_pinv=basis_pinv,
         active_indices=active_indices,
         active_names=active_names,
-        frozen_params5=jnp.asarray(frozen_params5, dtype=jnp.float32),
+        frozen_pose_params=jnp.asarray(frozen_pose_params, dtype=jnp.float32),
     )
 
 
@@ -149,18 +149,18 @@ def build_pose_basis(
     raise ValueError(f"Unsupported pose_model: {pose_model!r}")
 
 
-def fit_motion_coefficients(model: PoseMotionModel, params5: jnp.ndarray) -> jnp.ndarray:
+def fit_motion_coefficients(model: PoseMotionModel, pose_params: jnp.ndarray) -> jnp.ndarray:
     """Fit active-DOF model coefficients from an expanded per-view array."""
-    active_params = params5[:, jnp.asarray(model.active_indices, dtype=jnp.int32)]
+    active_params = pose_params[:, jnp.asarray(model.active_indices, dtype=jnp.int32)]
     return model.basis_pinv @ active_params
 
 
 def expand_motion_coefficients(model: PoseMotionModel, coeffs: jnp.ndarray) -> jnp.ndarray:
     """Expand coefficient variables back to a per-view (n_views, 5) array."""
     active_params = model.basis @ coeffs
-    params5 = jnp.asarray(model.frozen_params5, dtype=jnp.float32)
+    pose_params = jnp.asarray(model.frozen_pose_params, dtype=jnp.float32)
     active_indices = jnp.asarray(model.active_indices, dtype=jnp.int32)
-    return params5.at[:, active_indices].set(active_params)
+    return pose_params.at[:, active_indices].set(active_params)
 
 
 def _normalize_pose_model(raw: str) -> PoseModelName:

@@ -114,7 +114,7 @@ def _project_box_zero_mean(
 
 
 def apply_alignment_gauge(
-    params5: jnp.ndarray,
+    pose_params: jnp.ndarray,
     *,
     mode: GaugeFixMode,
     active_mask: Sequence[bool],
@@ -122,7 +122,7 @@ def apply_alignment_gauge(
     bounds_upper: jnp.ndarray,
 ) -> tuple[jnp.ndarray, Mapping[str, jnp.ndarray | str | list[str]]]:
     """Apply the selected alignment gauge and return JAX-friendly stats."""
-    params = jnp.asarray(params5, dtype=jnp.float32)
+    params = jnp.asarray(pose_params, dtype=jnp.float32)
     mode = normalize_gauge_fix(mode)
     active = tuple(bool(v) for v in active_mask)
     gauge_dofs = active_gauge_dofs(mode=mode, active_mask=active)

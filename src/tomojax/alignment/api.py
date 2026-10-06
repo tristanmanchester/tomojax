@@ -11,7 +11,7 @@ from tomojax.alignment._geometry.parametrizations import (
     apply_pose_update,
     apply_pose_updates,
     pad_pose_params,
-    se3_from_5d,
+    se3_from_pose_params,
 )
 from tomojax.alignment._model.dof_specs import DofSpec, dof_spec
 from tomojax.alignment._model.dofs import (
@@ -172,7 +172,7 @@ __all__ = [
     "save_alignment_checkpoint",
     "save_alignment_params_csv",
     "save_alignment_params_json",
-    "se3_from_5d",
+    "se3_from_pose_params",
     "validate_alignment_checkpoint",
     "validate_loss_schedule_levels",
 ]

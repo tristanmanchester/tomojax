@@ -98,7 +98,7 @@ def test_public_lbfgs_reuses_problem_across_volumes_and_motion_models(pose_model
         bounds={"dx": (-0.3, 0.3), "dz": (-0.3, 0.3)} if bounded else (),
     )
     volume, params, info = align(
-        geometry, grid, detector, data, init_x=truth, init_params5=initial, config=cfg
+        geometry, grid, detector, data, init_x=truth, init_pose_params=initial, config=cfg
     )
     assert len(info["outer_stats"]) == 2
     assert bool(jnp.all(jnp.isfinite(volume)))

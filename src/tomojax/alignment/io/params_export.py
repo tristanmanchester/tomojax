@@ -40,11 +40,11 @@ PARAMETER_UNITS = {
 type AlignmentParamRecord = dict[str, int | float]
 
 
-def _normalize_params5(params5: np.ndarray) -> np.ndarray:
+def _normalize_pose_params(pose_params: np.ndarray) -> np.ndarray:
     try:
-        return pad_pose_params(params5)
+        return pad_pose_params(pose_params)
     except ValueError as exc:
-        raise ValueError(f"params5 must have shape (n_views, 5 or 6): {exc}") from None
+        raise ValueError(f"pose_params must have shape (n_views, 5 or 6): {exc}") from None
 
 
 def _validate_detector_spacing(*, du: float, dv: float) -> tuple[float, float]:
@@ -58,13 +58,13 @@ def _validate_detector_spacing(*, du: float, dv: float) -> tuple[float, float]:
 
 
 def alignment_param_records(
-    params5: np.ndarray,
+    pose_params: np.ndarray,
     *,
     du: float,
     dv: float,
 ) -> list[AlignmentParamRecord]:
     """Return per-view named alignment records for JSON/CSV export."""
-    arr = _normalize_params5(params5)
+    arr = _normalize_pose_params(pose_params)
     du_f, dv_f = _validate_detector_spacing(du=du, dv=dv)
 
     records: list[AlignmentParamRecord] = []
@@ -105,7 +105,7 @@ def _json_native(value: Any) -> Any:
 
 
 def alignment_params_payload(
-    params5: np.ndarray,
+    pose_params: np.ndarray,
     *,
     du: float,
     dv: float,
@@ -121,7 +121,7 @@ def alignment_params_payload(
         "pose_translation_frame": translation_frame,
         "units": dict(PARAMETER_UNITS),
         "detector_spacing": {"du": du_f, "dv": dv_f},
-        "views": alignment_param_records(params5, du=du_f, dv=dv_f),
+        "views": alignment_param_records(pose_params, du=du_f, dv=dv_f),
     }
     if gauge_metadata is not None:
         payload["gauge_fix"] = _json_native(gauge_metadata)
@@ -142,7 +142,7 @@ def _ensure_parent(path: str | Path) -> Path:
 
 def save_alignment_params_json(
     path: str | Path,
-    params5: np.ndarray,
+    pose_params: np.ndarray,
     *,
     du: float,
     dv: float,
@@ -152,7 +152,7 @@ def save_alignment_params_json(
     """Write per-view alignment parameters as a named JSON sidecar."""
     out_path = _ensure_parent(path)
     payload = alignment_params_payload(
-        params5,
+        pose_params,
         du=du,
         dv=dv,
         gauge_metadata=gauge_metadata,
@@ -165,7 +165,7 @@ def save_alignment_params_json(
 
 def save_alignment_params_csv(
     path: str | Path,
-    params5: np.ndarray,
+    pose_params: np.ndarray,
     *,
     du: float,
     dv: float,
@@ -174,7 +174,7 @@ def save_alignment_params_csv(
     """Write a CSV sidecar, adding an explicit frame column for detector poses."""
     _validate_translation_frame(translation_frame)
     out_path = _ensure_parent(path)
-    records = alignment_param_records(params5, du=du, dv=dv)
+    records = alignment_param_records(pose_params, du=du, dv=dv)
     with out_path.open("w", encoding="utf-8", newline="") as f:
         fields = CSV_FIELDNAMES + (
             ("pose_translation_frame",) if translation_frame == "detector" else ()

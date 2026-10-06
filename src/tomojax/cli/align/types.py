@@ -56,7 +56,7 @@ class AlignCliExecutionResult:
     """Alignment result returned by the CLI execution helper."""
 
     x: jnp.ndarray
-    params5: jnp.ndarray
+    pose_params: jnp.ndarray
     info: AlignCliInfo
 
 

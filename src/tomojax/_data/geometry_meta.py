@@ -77,7 +77,7 @@ def _normalize_geometry_type(geometry_type: str | None) -> str:
 
 @dataclass
 class AugmentedGeometry:
-    """Geometry wrapper that applies saved per-view 5-DOF alignment params.
+    """Geometry wrapper that applies saved per-view pose corrections.
 
     ``translation_frame`` follows `tomojax.alignment.api.apply_pose_update`: object
     translations compose after the nominal pose; detector translations add to
@@ -89,9 +89,9 @@ class AugmentedGeometry:
     translation_frame: str = "object"
 
     def pose_for_view(self, i: int) -> PoseMatrix:
-        """Return nominal pose with saved 5-DOF alignment applied."""
+        """Return nominal pose with saved pose correction applied."""
         T_nom = np.asarray(self.base.pose_for_view(i), dtype=np.float32)
-        T_delta = _se3_from_5d_np(self.align_params[i])
+        T_delta = _se3_from_pose_params_np(self.align_params[i])
         T = T_nom @ T_delta
         if self.translation_frame == "detector":
             T[:3, 3] = T_nom[:3, 3] + T_delta[:3, 3]
@@ -148,8 +148,8 @@ def _rot_z_np(p: float) -> np.ndarray:
     )
 
 
-def _se3_from_5d_np(params5: np.ndarray) -> np.ndarray:
-    row = np.asarray(params5, dtype=np.float32)
+def _se3_from_pose_params_np(pose_params: np.ndarray) -> np.ndarray:
+    row = np.asarray(pose_params, dtype=np.float32)
     alpha, beta, phi, dx, dz = row[:5]
     dy = row[5] if row.size > 5 else 0.0
     R = _rot_y_np(float(beta)) @ _rot_x_np(float(alpha)) @ _rot_z_np(float(phi))

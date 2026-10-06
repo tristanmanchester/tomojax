@@ -37,7 +37,7 @@ from tomojax.alignment.api import (
     least_motion_estimate,
     save_alignment_params_csv,
     save_alignment_params_json,
-    se3_from_5d,
+    se3_from_pose_params,
 )
 
 # check-public-imports: allow-private
@@ -87,7 +87,7 @@ def test_detector_translation_is_observable_in_every_scheduled_geometry(size, ki
     # Preserve the old, explicitly object-frame convention for existing poses.
     parameters = jnp.tile(jnp.array([0.02, -0.03, 0.01, 0.4, -0.7]), (len(angles), 1))
     expected = np.asarray(nominal, dtype=np.float64) @ np.asarray(
-        jax.vmap(se3_from_5d)(parameters), dtype=np.float64
+        jax.vmap(se3_from_pose_params)(parameters), dtype=np.float64
     )
     np.testing.assert_allclose(apply_pose_updates(nominal, parameters), expected, atol=2e-7)
 
@@ -97,7 +97,9 @@ def test_detector_updates_preserve_nominal_beam_translation_and_object_rotation(
     parameters = jnp.array([0.03, -0.01, 0.05, 0.2, -0.4])
     updated = apply_pose_update(nominal, parameters, translation_frame="detector")
     np.testing.assert_allclose(updated[:3, 3], [4.2, 7, -2.4])
-    np.testing.assert_allclose(updated[:3, :3], (nominal @ se3_from_5d(parameters))[:3, :3])
+    np.testing.assert_allclose(
+        updated[:3, :3], (nominal @ se3_from_pose_params(parameters))[:3, :3]
+    )
 
 
 @pytest.mark.gpu
@@ -141,7 +143,7 @@ def test_state_and_reconstruction_use_the_same_detector_frame(kind):
     leaves, structure = jax.tree_util.tree_flatten(state)
     restored = jax.tree_util.tree_unflatten(structure, leaves)
     assert restored.pose.translation_frame == "detector"
-    assert restored.pose.replace(params5=params / 2).translation_frame == "detector"
+    assert restored.pose.replace(pose_params=params / 2).translation_frame == "detector"
 
 
 def test_translation_frames_are_named():

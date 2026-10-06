@@ -252,7 +252,7 @@ def resume_state_from_checkpoint(
         return AlignMultiresResumeState(
             pose_translation_frame=translation_frame,
             x=jax_float32_array(checkpoint.x),
-            params5=jax_float32_array(pad_pose_params(checkpoint.params5)),
+            pose_params=jax_float32_array(pad_pose_params(checkpoint.pose_params)),
             motion_coeffs=(
                 None
                 if checkpoint.motion_coeffs is None
@@ -286,7 +286,7 @@ def resume_state_from_checkpoint(
     return AlignResumeState(
         pose_translation_frame=translation_frame,
         x=jax_float32_array(checkpoint.x),
-        params5=jax_float32_array(pad_pose_params(checkpoint.params5)),
+        pose_params=jax_float32_array(pad_pose_params(checkpoint.pose_params)),
         motion_coeffs=(
             None
             if checkpoint.motion_coeffs is None
@@ -353,7 +353,7 @@ def make_align_cli_checkpoint_callbacks(plan: AlignCliRunPlan) -> AlignCliCheckp
         save_alignment_checkpoint(
             plan.checkpoint_path,
             x=state.x,
-            params5=state.params5,
+            pose_params=state.pose_params,
             motion_coeffs=state.motion_coeffs,
             loss_history=state.loss,
             outer_stats=state.outer_stats,
@@ -405,7 +405,7 @@ def make_align_cli_checkpoint_callbacks(plan: AlignCliRunPlan) -> AlignCliCheckp
         save_alignment_checkpoint(
             plan.checkpoint_path,
             x=state.x,
-            params5=state.params5,
+            pose_params=state.pose_params,
             motion_coeffs=state.motion_coeffs,
             loss_history=state.loss,
             outer_stats=state.outer_stats,

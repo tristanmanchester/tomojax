@@ -234,7 +234,7 @@ class ActiveParameterView:
         values = jnp.asarray(whitened, dtype=jnp.float32).reshape(-1)
         cursor = 0
         setup_updates: dict[str, jnp.ndarray] = {}
-        params5 = state.pose.params5
+        pose_params = state.pose.pose_params
         for spec in self.specs:
             size = _value_size_for_spec(state, spec)
             chunk = values[cursor : cursor + size]
@@ -247,15 +247,15 @@ class ActiveParameterView:
             else:
                 if spec.pose_index is None:
                     raise ValueError(f"Pose DOF {spec.name!r} is missing pose_index")
-                params5 = params5.at[:, int(spec.pose_index)].set(
-                    physical.reshape((int(params5.shape[0]),))
+                pose_params = pose_params.at[:, int(spec.pose_index)].set(
+                    physical.reshape((int(pose_params.shape[0]),))
                 )
         if cursor != int(values.size):
             raise ValueError(
                 f"Active vector has {int(values.size)} values but {cursor} were consumed"
             )
         setup = state.setup.replace(**setup_updates) if setup_updates else state.setup
-        pose = state.pose.replace(params5=params5)
+        pose = state.pose.replace(pose_params=pose_params)
         return state.replace(setup=setup, pose=pose)
 
     def bounds_whitened(
@@ -304,13 +304,13 @@ def _values_for_spec(state: AlignmentState, spec: DofSpec) -> jnp.ndarray:
         return jnp.asarray(getattr(state.setup, spec.state_attr), dtype=jnp.float32)
     if spec.pose_index is None:
         raise ValueError(f"Pose DOF {spec.name!r} is missing pose_index")
-    return jnp.asarray(state.pose.params5[:, int(spec.pose_index)], dtype=jnp.float32)
+    return jnp.asarray(state.pose.pose_params[:, int(spec.pose_index)], dtype=jnp.float32)
 
 
 def _value_size_for_spec(state: AlignmentState, spec: DofSpec) -> int:
     if spec.is_setup:
         return 1
-    return int(state.pose.params5.shape[0])
+    return int(state.pose.pose_params.shape[0])
 
 
 def optimizer_step_stats(

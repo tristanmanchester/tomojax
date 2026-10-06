@@ -125,7 +125,7 @@ def test_cli_resume_restores_geometry_dofs_from_checkpoint(
     save_alignment_checkpoint(
         checkpoint_path,
         x=np.zeros((5, 5, 4), dtype=np.float32),
-        params5=np.zeros((3, 5), dtype=np.float32),
+        pose_params=np.zeros((3, 5), dtype=np.float32),
         metadata=initial_checkpoint_metadata(
             context=AlignCliCheckpointMetadataContext(
                 meta=initial_plan.meta,
@@ -192,7 +192,7 @@ def test_cli_resume_mode_max_checkpoint_keeps_schedule_without_empty_dofs(
     save_alignment_checkpoint(
         checkpoint_path,
         x=np.zeros((5, 5, 4), dtype=np.float32),
-        params5=np.zeros((3, 5), dtype=np.float32),
+        pose_params=np.zeros((3, 5), dtype=np.float32),
         metadata=initial_checkpoint_metadata(
             context=AlignCliCheckpointMetadataContext(
                 meta=initial_plan.meta,

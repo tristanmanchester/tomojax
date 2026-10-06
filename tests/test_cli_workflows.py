@@ -552,8 +552,8 @@ def test_align_cli_mode_cor_writes_alignment_outputs(
         del geom, recon_detector, resume_state, checkpoint_callback
         calls.append((tuple(projections.shape), list(factors), config.schedule))
         x = jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
-        params5 = jnp.zeros((int(projections.shape[0]), 5), dtype=jnp.float32)
-        return x, params5, {"loss": [0.0], "outer_stats": [], "active_dofs": ["det_u"]}
+        pose_params = jnp.zeros((int(projections.shape[0]), 5), dtype=jnp.float32)
+        return x, pose_params, {"loss": [0.0], "outer_stats": [], "active_dofs": ["det_u"]}
 
     monkeypatch.setattr(align_cli_main, "setup_logging", lambda: None)
     monkeypatch.setattr(align_cli_main, "log_jax_env", lambda: None)
@@ -623,10 +623,10 @@ def test_align_cli_geometry_dofs_route_to_multires_without_explicit_levels(
             (list(factors), tuple(config.optimise_dofs or ()), tuple(config.freeze_dofs or ()))
         )
         x = jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
-        params5 = jnp.zeros((2, 5), dtype=jnp.float32)
+        pose_params = jnp.zeros((2, 5), dtype=jnp.float32)
         return (
             x,
-            params5,
+            pose_params,
             {"loss": [0.0], "outer_stats": [], "active_geometry_dofs": ["det_u_px"]},
         )
 
@@ -688,8 +688,8 @@ def test_align_cli_cor_then_pose_saves_the_detector_centre_and_motion(
         del geom, recon_detector
         configs.append((config, kwargs["factors"]))
         x = jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
-        params5 = np.zeros((int(projections.shape[0]), 5), np.float32)
-        params5[:, 3] = motion
+        pose_params = np.zeros((int(projections.shape[0]), 5), np.float32)
+        pose_params[:, 3] = motion
         det_u = CalibrationVariable(
             name="det_u_px",
             value=offset_px,
@@ -704,7 +704,7 @@ def test_align_cli_cor_then_pose_saves_the_detector_centre_and_motion(
             "active_dofs": [],
             "geometry_calibration_state": CalibrationState(detector=(det_u,)).to_dict(),
         }
-        return x, jnp.asarray(params5), info
+        return x, jnp.asarray(pose_params), info
 
     monkeypatch.setattr(align_cli_main, "setup_logging", lambda: None)
     monkeypatch.setattr(align_cli_main, "log_jax_env", lambda: None)

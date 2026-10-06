@@ -52,8 +52,8 @@ class _AlignSetupState:
     observer_fn: ObserverCallback | None
     n_views: int
     x: jnp.ndarray
-    params5: jnp.ndarray
-    frozen_params5: jnp.ndarray
+    pose_params: jnp.ndarray
+    frozen_pose_params: jnp.ndarray
     active_mask_tuple: tuple[bool, ...]
     active_mask_bool: jnp.ndarray
     active_col_indices_np: np.ndarray
@@ -69,7 +69,7 @@ class _AlignSetupState:
 class PoseConstraintContext:
     active_mask_tuple: tuple[bool, ...]
     active_mask_bool: jnp.ndarray
-    frozen_params5: jnp.ndarray
+    frozen_pose_params: jnp.ndarray
     bounds_lower: jnp.ndarray
     bounds_upper: jnp.ndarray
     gauge_fix: GaugeFixMode
@@ -80,7 +80,7 @@ class PoseConstraintContext:
         return cls(
             active_mask_tuple=setup.active_mask_tuple,
             active_mask_bool=setup.active_mask_bool,
-            frozen_params5=setup.frozen_params5,
+            frozen_pose_params=setup.frozen_pose_params,
             bounds_lower=setup.bounds_lower,
             bounds_upper=setup.bounds_upper,
             gauge_fix=setup.gauge_fix,
@@ -89,7 +89,7 @@ class PoseConstraintContext:
 
     def apply_param_constraints(self, candidate: jnp.ndarray) -> jnp.ndarray:
         clipped = jnp.clip(candidate, self.bounds_lower, self.bounds_upper)
-        return jnp.where(self.active_mask_bool, clipped, self.frozen_params5)
+        return jnp.where(self.active_mask_bool, clipped, self.frozen_pose_params)
 
     def apply_full_constraints(self, candidate: jnp.ndarray) -> jnp.ndarray:
         constrained = self.apply_param_constraints(candidate)
@@ -141,7 +141,7 @@ class PoseMotionContext:
     motion_model: Any
     use_smooth_pose_model: bool
     active_coeff_indices: jnp.ndarray
-    params5: jnp.ndarray
+    pose_params: jnp.ndarray
     motion_coeffs: jnp.ndarray | None
     constraint_ctx: PoseConstraintContext
 
@@ -153,7 +153,7 @@ class PoseMotionContext:
         cfg: AlignConfig,
         n_views: int,
         active_names: tuple[str, ...],
-        params5: jnp.ndarray,
+        pose_params: jnp.ndarray,
         resume_state: AlignResumeState | None,
         constraint_ctx: PoseConstraintContext,
     ) -> PoseMotionContext:
@@ -162,7 +162,7 @@ class PoseMotionContext:
             pose_model=str(cfg.pose_model),
             n_views=n_views,
             active_dofs=active_names,
-            frozen_params5=constraint_ctx.frozen_params5,
+            frozen_pose_params=constraint_ctx.frozen_pose_params,
             scan_coordinate=scan_coordinate,
             knot_spacing=int(cfg.knot_spacing),
             degree=int(cfg.degree),
@@ -170,7 +170,7 @@ class PoseMotionContext:
         use_smooth_pose_model = motion_model.name != "per_view"
         active_coeff_indices = jnp.asarray(motion_model.active_indices, dtype=jnp.int32)
         motion_coeffs = None
-        constrained_params = params5
+        constrained_params = pose_params
         if use_smooth_pose_model:
             motion_coeffs = fit_motion_coefficients(motion_model, constrained_params)
             constrained_params = constraint_ctx.apply_full_constraints(
@@ -193,7 +193,7 @@ class PoseMotionContext:
             motion_model=motion_model,
             use_smooth_pose_model=use_smooth_pose_model,
             active_coeff_indices=active_coeff_indices,
-            params5=constrained_params,
+            pose_params=constrained_params,
             motion_coeffs=motion_coeffs,
             constraint_ctx=constraint_ctx,
         )

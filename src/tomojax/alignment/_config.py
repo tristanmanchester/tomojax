@@ -351,7 +351,7 @@ def coupled_pose_config(**overrides: object) -> AlignConfig:
     """Return the recommended configuration for per-view pose alignment.
 
     This is what ``tomojax align --mode pose`` runs: each Gauss-Newton step
-    solves the free voxels and every view's 5-DOF pose together, with Joseph
+    solves the free voxels and every view's pose together, with Joseph
     plane sampling, an unregularised least-squares fit, fp32 gathers and up to
     30 early-stopped outer iterations, after a global search for each view's
     detector shift. Pass keyword overrides for any

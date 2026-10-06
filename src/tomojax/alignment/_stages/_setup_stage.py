@@ -415,7 +415,7 @@ def _optimize_setup_geometry_bilevel_for_level(
     detector: Detector,
     projections: jnp.ndarray,
     init_x: jnp.ndarray | None,
-    init_params5: jnp.ndarray | None,
+    init_pose_params: jnp.ndarray | None,
     state: AlignmentState,
     active_geometry_dofs: Iterable[str],
     factor: int,
@@ -432,8 +432,8 @@ def _optimize_setup_geometry_bilevel_for_level(
         setup=state.setup.replace(nominal_axis_unit=base.nominal_axis_unit),
         pose=PoseState(
             jnp.zeros((int(projections.shape[0]), POSE_WIDTH), dtype=jnp.float32)
-            if init_params5 is None
-            else jnp.asarray(init_params5, dtype=jnp.float32),
+            if init_pose_params is None
+            else jnp.asarray(init_pose_params, dtype=jnp.float32),
             translation_frame=cfg.pose_translation_frame,
         ),
         volume=init_x,

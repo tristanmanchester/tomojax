@@ -58,7 +58,7 @@ def _write_alignment_result_volume(
     plan: AlignCliRunPlan,
     *,
     x: jnp.ndarray,
-    params5_np: np.ndarray,
+    pose_params_np: np.ndarray,
     gauge_metadata: dict[str, JsonValue],
     geometry_calibration_state: object,
     cone_beam: object = None,
@@ -66,7 +66,7 @@ def _write_alignment_result_volume(
     save_meta = plan.meta.copy_metadata()
     save_meta.grid = plan.recon_grid.to_dict()
     save_meta.volume = np.asarray(x)
-    save_meta.align_params = params5_np
+    save_meta.align_params = pose_params_np
     save_meta.align_gauge = gauge_metadata
     if isinstance(geometry_calibration_state, dict):
         calibration_state = object_mapping(cast("object", geometry_calibration_state))
@@ -97,13 +97,13 @@ def _write_alignment_result_volume(
 def _write_alignment_params_exports(
     plan: AlignCliRunPlan,
     *,
-    params5_np: np.ndarray,
+    pose_params_np: np.ndarray,
     gauge_metadata: dict[str, JsonValue],
 ) -> None:
     if plan.command.save_params_json is not None:
         save_alignment_params_json(
             plan.command.save_params_json,
-            params5_np,
+            pose_params_np,
             du=float(plan.detector.du),
             dv=float(plan.detector.dv),
             gauge_metadata=gauge_metadata,
@@ -113,7 +113,7 @@ def _write_alignment_params_exports(
     if plan.command.save_params_csv is not None:
         save_alignment_params_csv(
             plan.command.save_params_csv,
-            params5_np,
+            pose_params_np,
             du=float(plan.detector.du),
             dv=float(plan.detector.dv),
             translation_frame=plan.cfg.pose_translation_frame,
@@ -126,7 +126,7 @@ def _build_alignment_manifest_payload_from_result(
     execution: AlignCliExecutionResult,
     *,
     x: jnp.ndarray,
-    params5_np: np.ndarray,
+    pose_params_np: np.ndarray,
     gauge_metadata: dict[str, JsonValue],
     geometry_calibration_state: object,
     output_frame: str,
@@ -194,7 +194,7 @@ def _build_alignment_manifest_payload_from_result(
         "active_geometry_dofs": active_geometry_dofs,
         "geometry_calibration_state": geometry_calibration_state,
         "cone_axis_calibration": cast("dict[str, object]", info).get("cone_axis_calibration"),
-        "alignment_params_shape": list(params5_np.shape),
+        "alignment_params_shape": list(pose_params_np.shape),
         "alignment_gauge": gauge_metadata,
         "volume_shape": list(np.asarray(x).shape),
         "volume_axes": command.volume_axes,
@@ -214,7 +214,7 @@ def _write_alignment_manifest(
     execution: AlignCliExecutionResult,
     *,
     x: jnp.ndarray,
-    params5_np: np.ndarray,
+    pose_params_np: np.ndarray,
     gauge_metadata: dict[str, JsonValue],
     geometry_calibration_state: object,
     output_frame: str,
@@ -226,7 +226,7 @@ def _write_alignment_manifest(
         plan,
         execution,
         x=x,
-        params5_np=params5_np,
+        pose_params_np=pose_params_np,
         gauge_metadata=gauge_metadata,
         geometry_calibration_state=geometry_calibration_state,
         output_frame=output_frame,
@@ -237,18 +237,18 @@ def _write_alignment_manifest(
     logging.info("Saved reproducibility manifest to %s", plan.command.save_manifest)
 
 
-def _implied_detector_u_px(plan: AlignCliRunPlan, params5_np: np.ndarray) -> float | None:
+def _implied_detector_u_px(plan: AlignCliRunPlan, pose_params_np: np.ndarray) -> float | None:
     """Detector-u offset implied by the recovered translations, in detector pixels.
 
     Cone beams have none: a lateral object shift is not a detector shift there.
     """
-    if not np.any(params5_np[:, 3]) or beam_of(plan.geometry) is not None:
+    if not np.any(pose_params_np[:, 3]) or beam_of(plan.geometry) is not None:
         return None
-    n_views = len(params5_np)
+    n_views = len(pose_params_np)
     nominal = stack_view_poses(plan.geometry, n_views)
     aligned = apply_pose_updates(
         nominal,
-        jax_float32_array(params5_np),
+        jax_float32_array(pose_params_np),
         translation_frame=plan.cfg.pose_translation_frame,
     )
     offset, residual = implied_detector_offset(np.asarray(nominal), np.asarray(aligned))
@@ -267,33 +267,33 @@ def write_alignment_outputs(
     execution: AlignCliExecutionResult,
 ) -> None:
     x = _apply_alignment_output_mask(plan, execution.x)
-    params5_np = np.asarray(execution.params5)
+    pose_params_np = np.asarray(execution.pose_params)
     gauge_metadata = _alignment_gauge_metadata(plan, execution.info)
     geometry_calibration_state = execution.info.get("geometry_calibration_state")
     cone_axis = cast("dict[str, object]", execution.info).get("cone_axis_calibration")
     cone_beam = object_mapping(cast("object", cone_axis)).get("cone_beam") if cone_axis else None
     # Modes that report a detector centre already hold the constant u shift there.
     implied_det_u_px = (
-        _implied_detector_u_px(plan, params5_np) if plan.command.mode == "pose" else None
+        _implied_detector_u_px(plan, pose_params_np) if plan.command.mode == "pose" else None
     )
     output_frame = _write_alignment_result_volume(
         plan,
         x=x,
-        params5_np=params5_np,
+        pose_params_np=pose_params_np,
         gauge_metadata=gauge_metadata,
         geometry_calibration_state=geometry_calibration_state,
         cone_beam=cone_beam,
     )
     _write_alignment_params_exports(
         plan,
-        params5_np=params5_np,
+        pose_params_np=pose_params_np,
         gauge_metadata=gauge_metadata,
     )
     _write_alignment_manifest(
         plan,
         execution,
         x=x,
-        params5_np=params5_np,
+        pose_params_np=pose_params_np,
         gauge_metadata=gauge_metadata,
         geometry_calibration_state=geometry_calibration_state,
         output_frame=output_frame,

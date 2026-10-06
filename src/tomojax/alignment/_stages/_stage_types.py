@@ -143,7 +143,7 @@ class StageRuntime:
             self.checkpoint_callback(
                 _build_multires_checkpoint_state(
                     x=state.x,
-                    params5=state.params5,
+                    pose_params=state.pose_params,
                     motion_coeffs=state.motion_coeffs,
                     level_index=self.level_index,
                     level_factor=self.level_factor,
@@ -174,7 +174,7 @@ class StageRuntime:
 @dataclass(frozen=True)
 class StageRunResult:
     x_lvl: jnp.ndarray
-    params5: jnp.ndarray
+    pose_params: jnp.ndarray
     info: dict[str, object]
     setup_alignment_state: object
     level_stats: list[OuterStat]
@@ -189,7 +189,7 @@ class StageRunResult:
 @dataclass(frozen=True)
 class StageLoopState:
     x_lvl: jnp.ndarray
-    params5: jnp.ndarray
+    pose_params: jnp.ndarray
     info: dict[str, object]
     setup_alignment_state: object
     level_wall_time: float
@@ -215,7 +215,7 @@ class MultiresContext:
 @dataclass(frozen=True)
 class MultiresRunState:
     x_init: jnp.ndarray | None
-    params5: jnp.ndarray | None
+    pose_params: jnp.ndarray | None
     prev_factor: int | None
     loss_hist: list[float]
     global_outer_stats: list[OuterStat]
@@ -274,7 +274,7 @@ def _pose_stage_optimizer_or_raise(stage: ResolvedAlignmentStage) -> str:
 def _build_multires_checkpoint_state(
     *,
     x: jnp.ndarray,
-    params5: jnp.ndarray,
+    pose_params: jnp.ndarray,
     motion_coeffs: object,
     level_index: int,
     level_factor: int,
@@ -297,7 +297,7 @@ def _build_multires_checkpoint_state(
 ) -> AlignMultiresResumeState:
     return AlignMultiresResumeState(
         x=x,
-        params5=params5,
+        pose_params=pose_params,
         motion_coeffs=motion_coeffs,
         level_index=int(level_index),
         level_factor=int(level_factor),

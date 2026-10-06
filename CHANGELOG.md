@@ -41,6 +41,11 @@
   takes `--pixel-size`; `simulate` needs only `-o` (`--size`, `--views`, and
   a cone detector sized to see the whole volume). Alignment quality is `fast`
   or `reference`; the aliases `normal` and `full` are gone.
+- **Breaking:** per-view pose tables are `pose_params` everywhere (formerly
+  `params5`, though they have six columns): `align(init_pose_params=...)`,
+  `AlignResumeState.pose_params`, `se3_from_pose_params`. Alignment checkpoints
+  store them under that name, as schema version 2; older checkpoints are
+  refused.
 - **Breaking:** the expert `.api` modules drop 67 names nothing used
   (`tomojax.geometry.api` 77 to 43, `tomojax.alignment.api` 93 to 79,
   `tomojax.io.api` 43 to 34, `tomojax.recon.api` 26 to 22,
