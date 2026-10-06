@@ -20,7 +20,12 @@ from tomojax.core.validation import (
     validate_projection_stack,
     validate_volume,
 )
-from tomojax.recon._projection import projection_operators as _operators, resolve_projector
+from tomojax.recon._host_stream import host_source, should_stream
+from tomojax.recon._projection import (
+    normal_equation_operators,
+    projection_operators as _operators,
+    resolve_projector,
+)
 from tomojax.recon._quadratic import gradient_energy, gradient_normal, regularization_normal
 
 if TYPE_CHECKING:
@@ -67,6 +72,12 @@ class CGLSConfig:
     weights. ``"ray"`` is the trilinear ray marcher, the only model supporting
     explicit detector grids. ``"auto"`` selects Joseph unless ``det_grid`` is given;
     both models match analytic line integrals equally well, and Joseph is faster.
+
+    ``stream_projections`` solves the equivalent normal equations with NumPy or
+    memmap projections read from host memory one view batch at a time, so only
+    volume-sized arrays occupy the device; ``None`` streams when the stack would
+    take more than 40% of free device memory. The normal residual then follows
+    a recurrence between recomputations, each of which streams the data once.
     """
 
     iters: int = 50
@@ -78,6 +89,7 @@ class CGLSConfig:
     projector_model: Literal["auto", "ray", "joseph"] = "auto"
     joseph_interpolation: Literal["linear", "cubic"] = "linear"
     gradient_damping: float = 0.0
+    stream_projections: bool | None = None
 
 
 class _State(NamedTuple):
@@ -293,6 +305,138 @@ def _solve(
     return result, jnp.sqrt(gamma), threshold, inputs_finite
 
 
+@partial(
+    jax.jit,
+    static_argnames=("grid", "detector", "backend", "batch_size", "model", "joseph_interpolation"),
+)
+def _solve_streamed(
+    poses: jax.Array,
+    key: jax.Array,
+    initial: jax.Array | None,
+    max_iters: jax.Array,
+    rtol: jax.Array,
+    atol: jax.Array,
+    damping: jax.Array,
+    *,
+    grid: Grid,
+    detector: Detector,
+    backend: str,
+    batch_size: int,
+    model: str,
+    joseph_interpolation: str,
+    gradient_damping: jax.Array | None = None,
+) -> tuple[_State, jax.Array, jax.Array, jax.Array]:
+    """CG on the normal equations with data streamed from a host source.
+
+    In exact arithmetic this is CGLS. The data-space residual is never stored:
+    the normal residual follows the recurrence ``g -= alpha * (A^T A + R) d``,
+    and every recomputation streams the measured views once to replace it with
+    ``A^T (y - A x) - R x``, under the same verification rules as ``_solve``.
+    Only volume-sized arrays and one view batch occupy the device.
+    """
+    normal, exact = normal_equation_operators(
+        poses, grid, detector, backend, batch_size, model, joseph_interpolation
+    )
+    x0 = jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32) if initial is None else initial
+    damp2 = damping * damping
+    spacing = (grid.vx, grid.vy, grid.vz)
+    penalty = partial(
+        regularization_normal, spacing=spacing, damping=damping, gradient_damping=gradient_damping
+    )
+    data_gradient, _ = exact(x0, key)
+    gradient = data_gradient - penalty(x0)
+    gamma = jnp.sum(gradient * gradient)
+    finite = jnp.all(jnp.isfinite(poses)) & jnp.all(jnp.isfinite(x0))
+    threshold = atol + rtol * jnp.sqrt(gamma)
+    # ``residual`` holds the normal residual (gradient) here: no sinogram is kept.
+    state = _State(
+        jnp.int32(0),
+        x0,
+        gradient,
+        gradient,
+        gamma,
+        ~(finite & jnp.isfinite(gamma)),
+        jnp.bool_(False),
+        jnp.bool_(True),
+        jnp.int32(0),
+    )
+
+    def condition(state: _State) -> jax.Array:
+        return (
+            (state.iteration < max_iters)
+            & (state.gamma > threshold * threshold)
+            & ~state.failed
+            & ~state.roundoff
+        )
+
+    def step(state: _State) -> _State:
+        energy, applied = normal(state.direction)
+        applied = applied + penalty(state.direction)
+        direction_norm2 = jnp.sum(state.direction**2)
+        denominator = energy + damp2 * direction_norm2
+        if gradient_damping is not None:
+            denominator = denominator + gradient_damping**2 * gradient_energy(
+                state.direction, spacing
+            )
+        valid = jnp.isfinite(denominator) & (denominator > 0)
+        alpha = jnp.where(valid, state.gamma / jnp.where(valid, denominator, 1.0), 0.0)
+        x = jnp.where(valid, state.x + alpha * state.direction, state.x)
+        gradient = state.residual - alpha * applied
+        gamma_new = jnp.sum(gradient * gradient)
+        roundoff = jnp.all(
+            jnp.abs(alpha * state.direction)
+            <= jnp.finfo(jnp.float32).eps * jnp.maximum(jnp.abs(x), jnp.finfo(jnp.float32).tiny)
+        )
+        small_global_update = alpha * alpha * direction_norm2 <= jnp.finfo(
+            jnp.float32
+        ).eps ** 2 * jnp.sum(x * x)
+        convergence_candidate = gamma_new <= threshold * threshold
+        near_precision = gamma_new <= jnp.finfo(jnp.float32).eps * gamma
+        periodic_check = ((state.iteration + 1) % 16 == 0) & near_precision
+        verify = roundoff | small_global_update | convergence_candidate | periodic_check
+
+        def recompute(recurrence: jax.Array) -> tuple[jax.Array, ...]:
+            data_gradient, cancellation = exact(x, key)
+            exact_gradient = data_gradient - penalty(x)
+            cancellation = cancellation + damp2 * jnp.abs(x)
+            if gradient_damping is not None:
+                cancellation = cancellation + gradient_damping**2 * gradient_normal(
+                    jnp.abs(x), spacing, absolute_weights=True
+                )
+            exact_gamma = jnp.sum(exact_gradient * exact_gradient)
+            at_precision = jnp.all(
+                jnp.abs(exact_gradient) <= 8 * jnp.finfo(jnp.float32).eps * cancellation
+            )
+            gap2 = jnp.sum((exact_gradient - recurrence) ** 2)
+            restart = convergence_candidate | roundoff | at_precision | (gap2 > 0.01 * gamma_new)
+            return exact_gradient, exact_gamma, restart, roundoff | at_precision
+
+        gradient, gamma_new, restart, roundoff = jax.lax.cond(
+            verify,
+            recompute,
+            lambda recurrence: (recurrence, gamma_new, jnp.bool_(False), roundoff),
+            gradient,
+        )
+        valid &= jnp.isfinite(gamma_new)
+        direction = jnp.where(
+            restart, gradient, gradient + (gamma_new / state.gamma) * state.direction
+        )
+        return _State(
+            state.iteration + valid.astype(jnp.int32),
+            x,
+            gradient,
+            direction,
+            jnp.where(valid, gamma_new, state.gamma),
+            ~valid,
+            jnp.where(valid, roundoff, state.roundoff),
+            jnp.where(valid, verify, state.residual_verified),
+            state.residual_recomputations + verify.astype(jnp.int32),
+        )
+
+    result = jax.lax.while_loop(condition, step, state)
+    return result, jnp.sqrt(gamma), threshold, finite
+
+
 def _as_float32(array: object) -> jax.Array:
     # Cast host arrays on the host; a device-side cast would compile a separate
     # program. device_put avoids the transient second device copy that
@@ -337,7 +481,12 @@ def cgls(
     validate_detector_grid(det_grid, detector, context="cgls")
     if init_x is not None:
         validate_volume(init_x, grid, context="cgls", name="init_x")
-    data = _as_float32(projections)
+    stream = not isinstance(projections, jax.Array) and det_grid is None
+    stream &= (
+        bool(cfg.stream_projections)
+        if cfg.stream_projections is not None
+        else should_stream(projections)
+    )
     initial = None if init_x is None else _as_float32(init_x)
     poses = stack_view_poses(geometry, n)
     validate_pose_stack(poses, n, context="cgls")
@@ -345,24 +494,33 @@ def cgls(
         from tomojax.core.joseph import validate_plane_geometry
 
         validate_plane_geometry(poses, grid, detector)
-    result, initial_norm, threshold, inputs_finite = _solve(
-        poses,
-        data,
-        initial,
-        det_grid,
-        jnp.int32(iterations),
-        jnp.float32(cfg.rtol),
-        jnp.float32(cfg.atol),
-        jnp.float32(cfg.damping),
-        grid=grid,
-        detector=detector,
-        backend=backend,
-        batch_size=batch,
-        zero_start=initial is None,
-        model=model,
-        joseph_interpolation=cfg.joseph_interpolation,
-        gradient_damping=jnp.float32(cfg.gradient_damping) if cfg.gradient_damping else None,
-    )
+    budget = (jnp.int32(iterations), jnp.float32(cfg.rtol), jnp.float32(cfg.atol))
+    options = {
+        "grid": grid,
+        "detector": detector,
+        "backend": backend,
+        "batch_size": batch,
+        "model": model,
+        "joseph_interpolation": cfg.joseph_interpolation,
+        "gradient_damping": jnp.float32(cfg.gradient_damping) if cfg.gradient_damping else None,
+    }
+    if stream:
+        with host_source(np.asarray(projections)) as key:
+            result, initial_norm, threshold, inputs_finite = _solve_streamed(
+                poses, key, initial, *budget, jnp.float32(cfg.damping), **options
+            )
+            jax.block_until_ready(result)
+    else:
+        result, initial_norm, threshold, inputs_finite = _solve(
+            poses,
+            _as_float32(projections),
+            initial,
+            det_grid,
+            *budget,
+            jnp.float32(cfg.damping),
+            zero_start=initial is None,
+            **options,
+        )
     finite, count, gamma, failed, roundoff, first_norm, tolerance, verified, recomputations = (
         jax.device_get(
             (
@@ -400,6 +558,7 @@ def cgls(
         "projector_model": model,
         "joseph_interpolation": cfg.joseph_interpolation if model == "joseph" else None,
         "views_per_batch": min(batch, n),
+        "formulation": "streamed_normal_equations" if stream else "cgls",
         "damping": float(cfg.damping),
         "gradient_damping": float(cfg.gradient_damping),
     }

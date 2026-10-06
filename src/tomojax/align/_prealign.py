@@ -267,3 +267,19 @@ def seeded_translation_params(
         float(np.max(np.abs(shifts))),
     )
     return jnp.asarray(params)
+
+
+def implied_detector_offset(nominal: np.ndarray, aligned: np.ndarray) -> tuple[float, float]:
+    """Return the detector-u centre offset implied by recovered poses, and the fit residual.
+
+    A detector-centre (centre-of-rotation) offset displaces every view's image by
+    the same amount along u, while a rigid object translation displaces it by a
+    view-dependent amount. Fitting each view's u displacement of the object origin
+    as ``-offset + (R_i t)_x`` separates the two over the scan. Both returns are
+    physical lengths, with the sign of ``Detector.det_center``.
+    """
+    shift = np.asarray(aligned, np.float64)[:, 0, 3] - np.asarray(nominal, np.float64)[:, 0, 3]
+    design = np.column_stack([-np.ones(len(shift)), np.asarray(nominal, np.float64)[:, 0, :3]])
+    solution, *_ = np.linalg.lstsq(design, shift, rcond=None)
+    residual = shift - design @ solution
+    return float(solution[0]), float(np.sqrt(np.mean(residual**2)))

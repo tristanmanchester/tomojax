@@ -10,12 +10,18 @@ import numpy as np
 
 from tomojax._typed_arrays import jax_float32_array, numpy_float32_array, object_mapping
 from tomojax.align.api import (
+    apply_pose_updates,
+    implied_detector_offset,
     profile_policy_from_config,
     save_alignment_params_csv,
     save_alignment_params_json,
 )
 from tomojax.cli.manifest import build_manifest, save_manifest
-from tomojax.geometry import build_calibrated_geometry_metadata_patch, cylindrical_mask_xy
+from tomojax.geometry import (
+    build_calibrated_geometry_metadata_patch,
+    cylindrical_mask_xy,
+    stack_view_poses,
+)
 from tomojax.io import JsonValue, save_projection_payload
 
 from .checkpoint import metadata_json_list, metadata_json_mapping, metadata_list
@@ -206,6 +212,7 @@ def _write_alignment_manifest(
     gauge_metadata: dict[str, JsonValue],
     geometry_calibration_state: object,
     output_frame: str,
+    implied_det_u_px: float | None = None,
 ) -> None:
     if plan.command.save_manifest is None:
         return
@@ -218,9 +225,32 @@ def _write_alignment_manifest(
         geometry_calibration_state=geometry_calibration_state,
         output_frame=output_frame,
     )
+    payload["implied_detector_u_px"] = implied_det_u_px
     manifest = build_manifest("tomojax align", list(sys.argv), plan.cli_args, payload)
     save_manifest(plan.command.save_manifest, manifest)
     logging.info("Saved reproducibility manifest to %s", plan.command.save_manifest)
+
+
+def _implied_detector_u_px(plan: AlignCliRunPlan, params5_np: np.ndarray) -> float | None:
+    """Detector-u offset implied by the recovered translations, in detector pixels."""
+    if not np.any(params5_np[:, 3]):
+        return None
+    n_views = len(params5_np)
+    nominal = stack_view_poses(plan.geometry, n_views)
+    aligned = apply_pose_updates(
+        nominal,
+        jax_float32_array(params5_np),
+        translation_frame=plan.cfg.pose_translation_frame,
+    )
+    offset, residual = implied_detector_offset(np.asarray(nominal), np.asarray(aligned))
+    du = float(plan.detector.du)
+    logging.info(
+        "Recovered poses imply a detector-u (centre-of-rotation) offset of %.3f px, already "
+        "applied through the per-view translations; residual per-view u motion %.3f px RMS",
+        offset / du,
+        residual / du,
+    )
+    return offset / du
 
 
 def write_alignment_outputs(
@@ -229,6 +259,7 @@ def write_alignment_outputs(
 ) -> None:
     x = _apply_alignment_output_mask(plan, execution.x)
     params5_np = np.asarray(execution.params5)
+    implied_det_u_px = _implied_detector_u_px(plan, params5_np)
     gauge_metadata = _alignment_gauge_metadata(plan, execution.info)
     geometry_calibration_state = execution.info.get("geometry_calibration_state")
     output_frame = _write_alignment_result_volume(
@@ -251,4 +282,5 @@ def write_alignment_outputs(
         gauge_metadata=gauge_metadata,
         geometry_calibration_state=geometry_calibration_state,
         output_frame=output_frame,
+        implied_det_u_px=implied_det_u_px,
     )

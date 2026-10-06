@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field, fields
+import contextlib
+from dataclasses import dataclass, field, fields, replace
 import functools
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -35,6 +36,14 @@ from tomojax.recon._projection import (
 )
 
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
+from ._host_stream import (
+    host_buffer,
+    host_source,
+    read_block,
+    read_views,
+    should_stream,
+    write_block,
+)
 from ._tv_ops import (
     div3,
     grad3,
@@ -64,6 +73,12 @@ class SPDHGConfig:
     CUDA unless an explicit detector grid or the exact ray integrator requires
     the ray-model reference path. ``gather_dtype``, ``projector_unroll`` and
     ``checkpoint_projector`` apply to the reference path only.
+
+    ``stream_projections`` keeps NumPy or memmap projections, any weights and
+    the sinogram-sized dual variable in host memory; each iteration reads and
+    writes only its block of views. ``None`` streams when the projections would
+    take more than 40% of free device memory. Streaming needs the batched
+    operators.
     """
 
     iters: int = 400
@@ -93,6 +108,8 @@ class SPDHGConfig:
 
     # logging
     log_every: int = 10  # minibatch objective estimator every k steps
+
+    stream_projections: bool | None = None
 
 
 jax.tree_util.register_dataclass(
@@ -140,7 +157,8 @@ class _SPDHGRuntime:
     config: SPDHGConfig
     regulariser: Regulariser = field(metadata={"static": True})
     huber_delta: float = field(metadata={"static": True})
-    y_meas: jnp.ndarray
+    # None when streaming: data, weights and duals then live in host memory.
+    y_meas: jnp.ndarray | None
     # None means unit weights; no sinogram of ones is stored.
     weights: jnp.ndarray | None
     poses: jnp.ndarray
@@ -153,6 +171,10 @@ class _SPDHGRuntime:
     init_x: jnp.ndarray | None
     # (model, backend) for batched operators, or None for the ray reference path.
     projector: tuple[str, str] | None = field(metadata={"static": True})
+    data_shape: tuple[int, int, int] = field(metadata={"static": True})
+    weighted: bool = field(default=False, metadata={"static": True})
+    # Host keys (measured views, duals, weights) when streaming.
+    host_keys: jnp.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -292,7 +314,7 @@ def _resolve_spdhg_step_sizes(
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
-    y_meas: jnp.ndarray,
+    data_shape: tuple[int, int, int],
     poses: jnp.ndarray,
     config: SPDHGConfig,
     det_grid: tuple[jnp.ndarray, jnp.ndarray],
@@ -318,7 +340,7 @@ def _resolve_spdhg_step_sizes(
             geometry,
             grid,
             detector,
-            y_meas.shape,
+            data_shape,
             poses,
             views_per_batch=max(1, config.views_per_batch),
             projector_unroll=config.projector_unroll,
@@ -364,7 +386,7 @@ def _build_spdhg_schedule(n_views: int, config: SPDHGConfig) -> _SPDHGSchedule:
 
 def _initial_spdhg_state(
     grid: Grid,
-    y_meas: jnp.ndarray,
+    y_meas: jnp.ndarray | None,
     init_x: jnp.ndarray | None,
     *,
     iters: int,
@@ -374,7 +396,8 @@ def _initial_spdhg_state(
     return _SPDHGScanState(
         x=x0,
         x_bar=x0,
-        y_data=jnp.zeros_like(y_meas),
+        # Streaming keeps the duals on the host; a placeholder stands in here.
+        y_data=jnp.zeros((1, 1, 1), jnp.float32) if y_meas is None else jnp.zeros_like(y_meas),
         p1=jnp.zeros_like(x0),
         p2=jnp.zeros_like(x0),
         p3=jnp.zeros_like(x0),
@@ -427,17 +450,24 @@ def _prepare_spdhg_runtime(
     if init_x is not None:
         validate_volume(init_x, grid, context="spdhg_tv init_x", name="init_x")
 
-    y_meas = jnp.asarray(projections, dtype=jnp.float32)
-    weights_arr = None if weights is None else jnp.asarray(weights, dtype=jnp.float32)
     poses = stack_view_poses(geometry, n_views)
     validate_pose_stack(poses, n_views, context="spdhg_tv geometry")
     resolved_det_grid = get_detector_grid_device(detector) if det_grid is None else det_grid
     projector = _batched_projector(cfg, det_grid)
+    stream = not isinstance(projections, jax.Array) and (
+        bool(cfg.stream_projections)
+        if cfg.stream_projections is not None
+        else should_stream(projections)
+    )
+    if stream and projector is None:
+        raise ValueError("spdhg_tv: stream_projections requires the batched projection operators")
+    y_meas = None if stream else jnp.asarray(projections, dtype=jnp.float32)
+    weights_arr = None if weights is None or stream else jnp.asarray(weights, dtype=jnp.float32)
     step_sizes = _resolve_spdhg_step_sizes(
         geometry,
         grid,
         detector,
-        y_meas,
+        expected_proj_shape,
         poses,
         cfg,
         resolved_det_grid,
@@ -458,6 +488,8 @@ def _prepare_spdhg_runtime(
         schedule=_build_spdhg_schedule(n_views, cfg),
         init_x=None if init_x is None else jnp.asarray(init_x, dtype=jnp.float32),
         projector=projector,
+        data_shape=expected_proj_shape,
+        weighted=weights is not None,
     )
 
 
@@ -565,15 +597,40 @@ def _run_spdhg_scan(  # noqa: PLR0915
     cfg = runtime.config
     schedule = runtime.schedule
     step_sizes = runtime.step_sizes
-    nv = runtime.y_meas.shape[1]
-    nu = runtime.y_meas.shape[2]
+    n_views, nv, nu = runtime.data_shape
+    block_shape = (schedule.views_per_batch, nv, nu)
+    keys = runtime.host_keys
     project_chunk = _make_spdhg_project_chunk(grid, detector, runtime)
     backproject_chunk = _make_spdhg_backproject_chunk(grid, detector, runtime)
+
+    def load(state: _SPDHGScanState, start: jnp.ndarray) -> tuple:
+        # Measured views, weights and duals of one block, from host or device.
+        if keys is not None:
+            weights = read_views(keys[2], start, block_shape) if runtime.weighted else None
+            return (
+                read_views(keys[0], start, block_shape),
+                weights,
+                read_block(keys[1], start, block_shape),
+            )
+        weights = None
+        if runtime.weights is not None:
+            weights = jax.lax.dynamic_slice(runtime.weights, (start, 0, 0), block_shape)
+        return (
+            jax.lax.dynamic_slice(runtime.y_meas, (start, 0, 0), block_shape),
+            weights,
+            jax.lax.dynamic_slice(state.y_data, (start, 0, 0), block_shape),
+        )
+
+    def store(state: _SPDHGScanState, start: jnp.ndarray, duals: jnp.ndarray) -> jnp.ndarray:
+        if keys is not None:
+            write_block(keys[1], start, duals)
+            return state.y_data
+        return jax.lax.dynamic_update_slice(state.y_data, duals, (start, 0, 0))
 
     def one_step(state: _SPDHGScanState, t: jnp.ndarray) -> tuple[_SPDHGScanState, None]:
         block = schedule.block_ids[t]
         start = block * jnp.int32(schedule.views_per_batch)
-        remaining = jnp.maximum(0, jnp.int32(runtime.y_meas.shape[0]) - start)
+        remaining = jnp.maximum(0, jnp.int32(n_views) - start)
         valid = jnp.minimum(jnp.int32(schedule.views_per_batch), remaining)
         shift = jnp.int32(schedule.views_per_batch) - valid
         start_shifted = jnp.maximum(0, start - shift)
@@ -583,25 +640,7 @@ def _run_spdhg_scan(  # noqa: PLR0915
             (start_shifted, 0, 0),
             (schedule.views_per_batch, 4, 4),
         )
-        y_chunk = jax.lax.dynamic_slice(
-            runtime.y_meas,
-            (start_shifted, 0, 0),
-            (schedule.views_per_batch, nv, nu),
-        )
-        w_chunk = (
-            None
-            if runtime.weights is None
-            else jax.lax.dynamic_slice(
-                runtime.weights,
-                (start_shifted, 0, 0),
-                (schedule.views_per_batch, nv, nu),
-            )
-        )
-        y_dual_old = jax.lax.dynamic_slice(
-            state.y_data,
-            (start_shifted, 0, 0),
-            (schedule.views_per_batch, nv, nu),
-        )
+        y_chunk, w_chunk, y_dual_old = load(state, start_shifted)
 
         idx = jnp.arange(schedule.views_per_batch)
         row_mask = (idx >= (jnp.int32(schedule.views_per_batch) - valid))[:, None, None]
@@ -645,11 +684,7 @@ def _run_spdhg_scan(  # noqa: PLR0915
         x_new = _proj_pos_support(state.x - step_sizes.tau * s_new, cfg.positivity, runtime.support)
         x_bar_candidate = x_new + jnp.asarray(cfg.theta, x_new.dtype) * (x_new - state.x)
         x_bar_new = _proj_pos_support(x_bar_candidate, cfg.positivity, runtime.support)
-        y_data_new = jax.lax.dynamic_update_slice(
-            state.y_data,
-            y_dual_new,
-            (start_shifted, 0, 0),
-        )
+        y_data_new = store(state, start_shifted, y_dual_new)
 
         do_log = (cfg.log_every > 0) & ((t + 1) % cfg.log_every == 0)
 
@@ -660,7 +695,7 @@ def _run_spdhg_scan(  # noqa: PLR0915
             data_est = (
                 0.5
                 * jnp.vdot(resid, resid).real
-                * (float(runtime.y_meas.shape[0]) / jnp.maximum(valid.astype(jnp.float32), 1.0))
+                * (float(n_views) / jnp.maximum(valid.astype(jnp.float32), 1.0))
             )
             if runtime.regulariser == "huber_tv":
                 reg_value = huber_tv_value(x_new, runtime.huber_delta)
@@ -717,7 +752,20 @@ def spdhg_tv(
         config=config,
         det_grid=det_grid,
     )
-    final = _run_spdhg_scan(grid, detector, runtime)
+    if runtime.y_meas is None:
+        with contextlib.ExitStack() as stack:
+            keys = [
+                stack.enter_context(host_source(np.asarray(projections))),
+                stack.enter_context(host_buffer(runtime.data_shape)),
+                stack.enter_context(host_source(np.asarray(weights)))
+                if weights is not None
+                else jnp.int32(-1),
+            ]
+            runtime = replace(runtime, host_keys=jnp.stack(keys))
+            final = _run_spdhg_scan(grid, detector, runtime)
+            final.x.block_until_ready()
+    else:
+        final = _run_spdhg_scan(grid, detector, runtime)
     result = _SPDHGResult(
         volume=final.x,
         losses=final.losses,

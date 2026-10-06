@@ -309,3 +309,68 @@ def normal_operator_norm(
     x0 = x0 / jnp.sqrt(jnp.sum((x0 if mask is None else x0 * mask) ** 2) + 1e-30)
     _, norm = jax.lax.fori_loop(0, max(1, iters), step, (x0, jnp.float32(0)))
     return norm
+
+
+def normal_equation_operators(
+    poses: jax.Array,
+    grid: Grid,
+    detector: Detector,
+    backend: str,
+    batch_size: int,
+    model: str = "ray",
+    joseph_interpolation: str = "linear",
+) -> tuple[
+    Callable[[jax.Array], tuple[jax.Array, jax.Array]],
+    Callable[[jax.Array, jax.Array], tuple[jax.Array, jax.Array]],
+]:
+    """Return ``(normal, gradient)`` streaming data from a :func:`host_source` key.
+
+    ``normal(d)`` returns ``(||A d||^2, A^T A d)`` in one pass over view batches,
+    touching no measured data. ``gradient(x, key)`` returns ``A^T (y - A x)`` and
+    the cancellation scale ``|A|^T (|y| + |A x|)``, reading each batch of ``y``
+    from the host. Only volume-sized arrays and one batch are ever on the device.
+    """
+    ops = _Batches(
+        poses, grid, detector, None, backend, batch_size, model, joseph_interpolation, False
+    )
+    magnitude = (
+        _Batches(
+            poses, grid, detector, None, backend, batch_size, model, joseph_interpolation, True
+        )
+        if model == "joseph" and joseph_interpolation == "cubic"
+        else ops
+    )
+    shape = (ops.size, detector.nv, detector.nu)
+
+    def normal(direction: jax.Array) -> tuple[jax.Array, jax.Array]:
+        def body(
+            chunk: jax.Array, carry: tuple[jax.Array, jax.Array]
+        ) -> tuple[jax.Array, jax.Array]:
+            energy, total = carry
+            start, batch, valid = ops.select(chunk)
+            projected = jnp.where(valid[:, None, None], ops.project(direction, start, batch), 0.0)
+            energy = energy + jnp.vdot(projected, projected).real
+            return energy, ops.backproject(projected, start, batch, total)
+
+        return jax.lax.fori_loop(0, ops.count, body, (jnp.float32(0), ops.zeros_volume()))
+
+    def gradient(volume: jax.Array, key: jax.Array) -> tuple[jax.Array, jax.Array]:
+        def body(
+            chunk: jax.Array, carry: tuple[jax.Array, jax.Array]
+        ) -> tuple[jax.Array, jax.Array]:
+            total, scale = carry
+            start, batch, valid = ops.select(chunk)
+            measured = read_views(key, start, shape)
+            predicted = ops.project(volume, start, batch)
+            mask = valid[:, None, None]
+            residual = jnp.where(mask, measured - predicted, 0.0)
+            size = jnp.where(mask, jnp.abs(measured) + jnp.abs(predicted), 0.0)
+            return (
+                ops.backproject(residual, start, batch, total),
+                magnitude.backproject(size, start, batch, scale),
+            )
+
+        zero = ops.zeros_volume()
+        return jax.lax.fori_loop(0, ops.count, body, (zero, zero))
+
+    return normal, gradient

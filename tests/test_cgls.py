@@ -306,3 +306,30 @@ def test_bright_region_does_not_hide_weak_region_updates(backend, model):
     assert info["converged"]
     assert info["normal_residual_is_recomputed"]
     assert info["residual_recomputations"] >= 1
+
+
+@pytest.mark.parametrize("damping", [0.0, 0.3])
+def test_streamed_cgls_solves_the_same_least_squares_problem(tmp_path, damping):
+    grid, detector = Grid(12, 11, 8, 0.8, 1.1, 1.3), Detector(14, 10, 0.9, 1.2, (0.1, -0.2))
+    geometry = LaminographyGeometry(grid, detector, np.linspace(0, 360, 40, endpoint=False), 30)
+    data = np.random.default_rng(0).random((40, 10, 14), dtype=np.float32)
+    stored = np.memmap(tmp_path / "views.f32", mode="w+", dtype=np.float32, shape=data.shape)
+    stored[:] = data
+    results = {}
+    for stream, projections in [(False, jnp.asarray(data)), (True, stored)]:
+        config = CGLSConfig(
+            iters=300, damping=damping, views_per_batch=7, stream_projections=stream
+        )
+        results[stream] = cgls(geometry, grid, detector, projections, config=config)
+    assert results[True][1]["formulation"] == "streamed_normal_equations"
+    assert results[True][1]["converged"] and results[False][1]["converged"]
+    np.testing.assert_allclose(results[True][0], results[False][0], rtol=1e-4, atol=1e-5)
+
+
+def test_streamed_cgls_rejects_nonfinite_views():
+    grid, detector = Grid(6, 6, 4, 1, 1, 1), Detector(8, 6, 1, 1)
+    geometry = LaminographyGeometry(grid, detector, np.linspace(0, 360, 8, endpoint=False), 30)
+    data = np.ones((8, 6, 8), np.float32)
+    data[3, 2, 2] = np.nan
+    with pytest.raises(Exception, match="finite"):
+        cgls(geometry, grid, detector, data, config=CGLSConfig(stream_projections=True))

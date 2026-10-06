@@ -172,3 +172,30 @@ def test_fista_streams_host_projections_like_device_projections(tmp_path, batch)
         results[stream] = fista_tv(geometry, grid, detector, projections, config=config)
     np.testing.assert_allclose(results[True][0], results[False][0], rtol=1e-6, atol=1e-7)
     np.testing.assert_allclose(results[True][1]["loss"], results[False][1]["loss"], rtol=1e-5)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("weighted", [False, True])
+def test_spdhg_streams_data_weights_and_duals_from_host(tmp_path, weighted):
+    grid = Grid(5, 4, 3, 0.8, 1.1, 1.3)
+    detector = Detector(6, 4, 0.9, 1.2, (0.17, -0.2))
+    geometry = LaminographyGeometry(grid, detector, np.linspace(0, 360, 9, endpoint=False), 30)
+    rng = np.random.default_rng(6)
+    data = rng.random((9, 4, 6), dtype=np.float32)
+    weights = rng.uniform(0.5, 1.5, data.shape).astype(np.float32) if weighted else None
+    stored = np.memmap(tmp_path / "views.f32", mode="w+", dtype=np.float32, shape=data.shape)
+    stored[:] = data
+    results = {}
+    for stream, projections in [(False, jnp.asarray(data)), (True, stored)]:
+        config = SPDHGConfig(
+            iters=20,
+            lambda_tv=0.01,
+            views_per_batch=4,
+            projector_model="joseph",
+            projector_backend="jax",
+            stream_projections=stream,
+        )
+        w = None if weights is None else (weights if stream else jnp.asarray(weights))
+        results[stream] = spdhg_tv(geometry, grid, detector, projections, weights=w, config=config)
+    np.testing.assert_allclose(results[True][0], results[False][0], rtol=1e-6, atol=1e-7)
+    np.testing.assert_allclose(results[True][1]["loss"], results[False][1]["loss"], rtol=1e-6)

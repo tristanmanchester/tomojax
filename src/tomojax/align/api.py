@@ -49,6 +49,7 @@ from tomojax.align._objectives.loss_specs import (
     resolve_loss_for_level,
     validate_loss_schedule_levels,
 )
+from tomojax.align._prealign import implied_detector_offset
 from tomojax.align._profiles import (
     AlignmentProfile,
     AlignmentProfileInput,
@@ -150,6 +151,7 @@ __all__ = [
     "coupled_pose_config",
     "dof_spec",
     "geometry_with_axis_state",
+    "implied_detector_offset",
     "level_detector_grid",
     "load_alignment_checkpoint",
     "loss_spec_name",

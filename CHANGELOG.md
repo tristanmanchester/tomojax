@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- Stream projections from host memory in CGLS and SPDHG-TV, as FISTA-TV
+  already did. Streamed CGLS solves the equivalent normal equations: only
+  volume-sized arrays stay on the device, and each residual recomputation
+  reads the views once. Streamed SPDHG-TV keeps the data, any weights and its
+  sinogram-sized dual variable in host memory and moves one block per
+  iteration (bitwise identical to device-resident data). On a 512-cubed,
+  3072-view laminography scan (3.2 GB) on an 8 GB GPU, CGLS peaks at 3.2 GB
+  and SPDHG-TV at 4.3 GB. `CGLSConfig` and `SPDHGConfig` gain
+  `stream_projections` (``None`` streams stacks above 40% of free device memory).
+- Report the detector-u (centre-of-rotation) offset implied by pose
+  alignment: `tomojax align` logs it and writes `implied_detector_u_px` to the
+  manifest, and `tomojax.align.api.implied_detector_offset` computes it. Pose
+  mode absorbs such an offset exactly into the per-view translations; the
+  report separates the constant part from the view-dependent shift of a rigid
+  object translation.
+- Add a gVXR chip-package phantom for laminography (`bench/phantoms`): a
+  Blender script models eight closed, disjoint material meshes (glass-epoxy
+  substrate, copper ground plane, vias and traces, silicon die, gold bond
+  wires, silica-filled mold, voided SAC solder balls), and a simulator turns
+  gVXR path lengths into 25 keV measurements with xraylib attenuation and
+  refraction, Fresnel phase contrast, detector blur, pixel integration,
+  Poisson noise, pixel gain and noisy flats, with per-view motion and a
+  detector offset. An exact mesh voxeliser provides the truth.
 - Seed `tomojax align --mode cor` with a search for the detector-u offset
   whose FBP reprojects most consistently (a coarse scan over a quarter of the
   detector, then golden section), replacing the opposite-view pairing that
