@@ -621,12 +621,7 @@ def _resolve_huber_fista_backend_plan(
     )
     detector_grid_folded_into_pose = False
     detector_grid_fold_reason = None
-    if (
-        actual_backend == "jax"
-        and fallback_reason
-        and requested_backend == "pallas"
-        and bool(getattr(cfg, "fold_rigid_detector_grid", True))
-    ):
+    if actual_backend == "jax" and fallback_reason and requested_backend == "pallas":
         T_folded = _fold_rigid_detector_grid_into_pose_stack(
             T_all,
             step.detector,
