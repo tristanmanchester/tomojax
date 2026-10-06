@@ -13,9 +13,13 @@
   and Parker-weighted short scans. `tomojax simulate --geometry cone` and
   `tomojax ingest --geometry cone --source-to-axis ... --source-to-detector ...`
   create cone datasets, which save and load with their beam. On a 256-cubed,
-  360-view scan with a 384-squared detector, forward projection takes 0.13 s
-  (ASTRA 0.17 s, TIGRE 0.48 s) and FDK 0.25 s (ASTRA 0.32 s, TIGRE 0.51 s) at
-  the same accuracy.
+  360-view scan with a 384-squared detector, forward projection takes 0.12 s
+  (ASTRA 0.17 s, TIGRE 0.48 s), its exact transpose 0.18 s (ASTRA's
+  approximate one 0.075 s) and FDK 0.10 s (ASTRA 0.29 s, TIGRE 0.52 s) at the
+  same accuracy. `fdk_host` reconstructs scans larger than device memory in
+  z-slabs from and into memmaps, filtering only the rows each slab needs: a
+  1024-cubed scan takes 11.7 s in RAM and 14.3 s memmap to memmap (ASTRA
+  20.3 s, TIGRE 30.7 s).
 - Align cone-beam scans in six degrees of freedom: pose tables gain a sixth
   column, `dy` along the beam, which changes cone-beam magnification and
   stays zero for parallel beams. `tomojax align` on cone data estimates it

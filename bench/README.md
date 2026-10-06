@@ -384,7 +384,9 @@ to avoid GPU contention.
 [`compare_cone.py`](compare_cone.py) times TomoJAX's cone-beam projector, its
 exact transpose and FDK against ASTRA (`cone_vec`, `FDK_CUDA`) and TIGRE (`Ax`,
 `Atb`, `fdk`) on one circular scan of five ellipsoids, with errors against
-exact analytic line integrals and the voxelised phantom. TIGRE runs in a child
+exact analytic line integrals and the voxelised phantom, and times both
+projectors again with the rotation axis tilted by `--tilt-deg` (default 0.5°),
+which TomoJAX handles with its general-geometry kernels. TIGRE runs in a child
 process, since it refuses a GPU on which JAX holds memory.
 
 ```bash

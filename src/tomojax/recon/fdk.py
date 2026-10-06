@@ -14,7 +14,8 @@ solvers, which model the cone geometry exactly.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass, field
 from functools import cache, partial
 from typing import TYPE_CHECKING, Any
 
@@ -24,6 +25,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core.cone import cone_coefficients, use_cuda_cone, xla_stream
+from tomojax.core.geometry.base import grid_volume_origin
 from tomojax.core.geometry.cone import beam_of
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import validate_grid, validate_projection_stack
@@ -34,6 +36,7 @@ if TYPE_CHECKING:
     from tomojax.core.geometry.cone import ConeBeam
 
 _RUN = 8
+_TILE = (8, 2)
 
 
 @dataclass(frozen=True)
@@ -160,18 +163,24 @@ def _backproject_jax(
 _SOURCE = r"""
 #define NC 25
 #define RUN 8
-// filtered images (view, u, v); one thread per RUN consecutive z voxels.
+#define TX 8
+#define TY 2
+// filtered images (view, u, v). A warp covers 32 consecutive z voxels of one (x, y)
+// column and each lane steps through RUN of them 32 apart, so a warp's loads from an
+// image column are contiguous. A block holds a TX x TY tile of columns, which read
+// neighbouring detector columns and share them in L1.
 extern "C" __global__ void fdk_backproject(
     const float* __restrict__ coeff, const float* __restrict__ img, float* __restrict__ vol,
     int nviews, int nx, int ny, int nz, int nu, int nv, float scale)
 {
     __shared__ float cf[32 * NC];
-    long run = (long)blockIdx.x * blockDim.x + threadIdx.x;
-    int runs_z = (nz + RUN - 1) / RUN;
-    bool valid = run < (long)nx * ny * runs_z;
-    int ix = valid ? run / ((long)ny * runs_z) : 0;
-    int iy = valid ? (run / runs_z) % ny : 0;
-    int iz0 = valid ? RUN * (int)(run % runs_z) : 0;
+    int lane = threadIdx.x & 31, wid = threadIdx.x >> 5;
+    int groups = (nz + 32 * RUN - 1) / (32 * RUN), tiles_y = (ny + TY - 1) / TY;
+    int tile = blockIdx.x / groups, group = blockIdx.x % groups;
+    int ix = (tile / tiles_y) * TX + wid / TY, iy = (tile % tiles_y) * TY + wid % TY;
+    bool valid = ix < nx && iy < ny;
+    if (!valid) ix = iy = 0;
+    int iz0 = 32 * RUN * group + lane;
     float acc[RUN];
     #pragma unroll
     for (int j = 0; j < RUN; ++j) acc[j] = 0.f;
@@ -186,9 +195,39 @@ extern "C" __global__ void fdk_backproject(
             const float* c = cf + w * NC;
             const float* image = img + (long)(first + w) * nu * nv;
             float d0 = (float)ix - c[0], d1 = (float)iy - c[1];
+            if (c[15] == 0.f && c[19] == 0.f) {
+                // Detector normal and u axis have no z part (turntable views): the
+                // depth factor and column are fixed along the column, v is linear in z.
+                float lam = c[16] / (c[13] * d0 + c[14] * d1);
+                float u = c[23] + lam * (c[17] * d0 + c[18] * d1);
+                float fu = floorf(u);
+                int u0 = (int)fu;
+                bool in0 = u0 >= 0 && u0 < nu, in1 = u0 + 1 >= 0 && u0 + 1 < nu;
+                if (!in0 && !in1) continue;
+                float wu = u - fu, g = lam * scale, gg = g * g;
+                float a0 = in0 ? (1.f - wu) * gg : 0.f, a1 = in1 ? wu * gg : 0.f;
+                const float* col0 = image + (long)max(u0, 0) * nv;
+                const float* col1 = image + (long)min(u0 + 1, nu - 1) * nv;
+                float vbase = c[24] + lam * (c[20] * d0 + c[21] * d1 + c[22] * ((float)iz0 - c[2]));
+                float vstep = 32.f * lam * c[22];
+                #pragma unroll
+                for (int j = 0; j < RUN; ++j) {
+                    float v = vbase + (float)j * vstep;
+                    float fv = floorf(v);
+                    int v0 = (int)fv;
+                    float wv = v - fv;
+                    float s = 0.f;
+                    if (v0 >= 0 && v0 < nv)
+                        s += (1.f - wv) * (a0 * __ldg(col0 + v0) + a1 * __ldg(col1 + v0));
+                    if (v0 + 1 >= 0 && v0 + 1 < nv)
+                        s += wv * (a0 * __ldg(col0 + v0 + 1) + a1 * __ldg(col1 + v0 + 1));
+                    acc[j] += s;
+                }
+                continue;
+            }
             #pragma unroll
             for (int j = 0; j < RUN; ++j) {
-                float d2 = (float)(iz0 + j) - c[2];
+                float d2 = (float)(iz0 + 32 * j) - c[2];
                 float lam = c[16] / (c[13] * d0 + c[14] * d1 + c[15] * d2);
                 float u = c[23] + lam * (c[17] * d0 + c[18] * d1 + c[19] * d2);
                 float v = c[24] + lam * (c[20] * d0 + c[21] * d1 + c[22] * d2);
@@ -212,9 +251,10 @@ extern "C" __global__ void fdk_backproject(
         }
     }
     if (valid) {
-        long base = ((long)ix * ny + iy) * nz + iz0;
+        long base = ((long)ix * ny + iy) * nz;
         #pragma unroll
-        for (int j = 0; j < RUN; ++j) if (iz0 + j < nz) vol[base + j] += acc[j];
+        for (int j = 0; j < RUN; ++j)
+            if (iz0 + 32 * j < nz) vol[base + iz0 + 32 * j] += acc[j];
     }
 }
 """
@@ -237,10 +277,10 @@ def _launch(
         target, initial = cp.asarray(out), cp.asarray(accumulate)
         if target.data.ptr != initial.data.ptr:
             target[...] = initial
-        runs = grid.nx * grid.ny * -(-grid.nz // _RUN)
+        tiles = -(-grid.nx // _TILE[0]) * -(-grid.ny // _TILE[1]) * -(-grid.nz // (32 * _RUN))
         _module().get_function("fdk_backproject")(
-            (-(-runs // 128),),
-            (128,),
+            (tiles,),
+            (32 * _TILE[0] * _TILE[1],),
             (
                 cp.asarray(coeff), cp.asarray(images), target, np.int32(coeff.shape[0]),
                 np.int32(grid.nx), np.int32(grid.ny), np.int32(grid.nz),
@@ -265,7 +305,7 @@ def _backproject_cuda(
     return call(coeff, jnp.swapaxes(filtered, 1, 2), out)
 
 
-@partial(jax.jit, static_argnames=("grid", "detector", "scale", "cuda"))
+@partial(jax.jit, static_argnames=("grid", "detector", "scale", "cuda"), donate_argnames=("out",))
 def _fdk_batch(
     views: jax.Array,
     coeff: jax.Array,
@@ -332,4 +372,138 @@ def fdk(
     return out
 
 
-__all__ = ["FDKConfig", "fdk", "view_weights"]
+@dataclass(frozen=True)
+class FDKHostConfig:
+    """Slab options for :func:`fdk_host`.
+
+    ``slices_per_batch`` z slices are reconstructed per slab; ``None`` sizes slabs
+    to about a third of the free device memory. ``fdk`` holds the filter and backend
+    options.
+    """
+
+    slices_per_batch: int | None = None
+    fdk: FDKConfig = field(default_factory=FDKConfig)
+
+
+def _slab_rows(
+    geometry: Geometry, grid: Grid, detector: Detector, poses: np.ndarray, z0: int, z1: int
+) -> tuple[int, int]:
+    """Detector rows that the z-slab ``[z0, z1)`` projects onto in any view."""
+    beam = beam_of(geometry)
+    assert beam is not None
+    origin = np.asarray(grid_volume_origin(grid))
+    spacing = np.asarray([grid.vx, grid.vy, grid.vz])
+    lo = origin - spacing / 2
+    hi = origin + (np.asarray([grid.nx, grid.ny, grid.nz]) - 0.5) * spacing
+    zlo, zhi = origin[2] + (z0 - 1.5) * grid.vz, origin[2] + (z1 + 0.5) * grid.vz
+    corners = np.array(
+        [[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (zlo, zhi)]
+    )
+    world = np.einsum("nij,kj->nki", poses[:, :3, :3], corners) + poses[:, None, :3, 3]
+    depth = world[..., 1] + float(beam.source_to_axis)
+    v = world[..., 2] * float(beam.source_to_detector) / depth
+    rows = (v - detector.det_center[1]) / detector.dv + (detector.nv - 1) / 2
+    return max(0, int(np.floor(rows.min())) - 1), min(detector.nv, int(np.ceil(rows.max())) + 2)
+
+
+def _slab_geometry(
+    grid: Grid, detector: Detector, z0: int, z1: int, r0: int, r1: int
+) -> tuple[Grid, Detector]:
+    """Grid of z slices ``[z0, z1)`` and the detector cut to rows ``[r0, r1)``."""
+    from dataclasses import replace
+
+    origin = grid_volume_origin(grid)
+    slab = replace(
+        grid,
+        nz=z1 - z0,
+        vol_origin=(origin[0], origin[1], origin[2] + z0 * grid.vz),
+        vol_center=None,
+    )
+    shift = ((r0 + r1 - 1) / 2 - (detector.nv - 1) / 2) * detector.dv
+    rows = replace(
+        detector,
+        nv=r1 - r0,
+        det_center=(detector.det_center[0], detector.det_center[1] + shift),
+    )
+    return slab, rows
+
+
+def fdk_host(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: np.ndarray,
+    *,
+    config: FDKHostConfig | None = None,
+    out: np.ndarray | None = None,
+) -> np.ndarray:
+    """FDK with host input and output, reconstructed in z slabs on the device.
+
+    Accepts NumPy arrays and memmaps; ``out`` may be a writable ``(nx, ny, nz)``
+    FP32 memmap. Each slab filters only the detector rows it projects onto (all
+    rows for a rolled, pitched or yawed detector), so projections and volume can
+    both exceed device memory.
+    """
+    from tomojax.backends import device_free_memory_bytes
+
+    cfg = FDKHostConfig() if config is None else config
+    beam = beam_of(geometry)
+    if beam is None:
+        raise ValueError("fdk_host needs a cone-beam geometry; use fbp_host for parallel beams")
+    n_views, _, _ = validate_projection_stack(
+        projections, detector, geometry=geometry, context="fdk_host projections"
+    )
+    shape = (grid.nx, grid.ny, grid.nz)
+    result = np.empty(shape, np.float32) if out is None else out
+    if tuple(result.shape) != shape:
+        raise ValueError(f"fdk_host out must have shape {shape}")
+    depth = cfg.slices_per_batch
+    if depth is None:
+        free = device_free_memory_bytes() or 2 * 1024**3
+        depth = max(1, int(free // (3 * max(1, 4 * grid.nx * grid.ny))))
+    depth = min(int(depth), grid.nz)
+    poses = np.asarray(stack_view_poses(geometry, n_views), np.float64)
+    tilted = any(
+        float(x) != 0.0
+        for x in (beam.detector_roll_deg, beam.detector_pitch_deg, beam.detector_yaw_deg)
+    )
+    # Slab copies into ``result`` (slow for memmaps) overlap the next slab's work.
+    pending: Future[None] | None = None
+
+    def store(z0: int, z1: int, volume: np.ndarray) -> None:
+        result[:, :, z0:z1] = volume
+
+    with ThreadPoolExecutor(max_workers=1) as writer:
+        for z0 in range(0, grid.nz, depth):
+            z1 = min(z0 + depth, grid.nz)
+            r0, r1 = (
+                (0, detector.nv) if tilted else _slab_rows(geometry, grid, detector, poses, z0, z1)
+            )
+            slab, rows = _slab_geometry(grid, detector, z0, z1, r0, r1)
+            volume = fdk(geometry, slab, rows, _RowView(projections, r0, r1), config=cfg.fdk)
+            host = np.asarray(volume)
+            if pending is not None:
+                pending.result()
+            pending = writer.submit(store, z0, z1, host)
+        if pending is not None:
+            pending.result()
+    return result
+
+
+class _RowView:
+    """Lazy ``projections[:, r0:r1]`` that slices views first, so memmaps stay on disk."""
+
+    def __init__(self, projections: np.ndarray, r0: int, r1: int) -> None:
+        self.projections, self.r0, self.r1 = projections, r0, r1
+        self.shape = (projections.shape[0], r1 - r0, projections.shape[2])
+        self.dtype = np.dtype(np.float32)
+        self.ndim = 3
+
+    def __getitem__(self, views: slice) -> np.ndarray:
+        return np.asarray(self.projections[views, self.r0 : self.r1], np.float32)
+
+    def __len__(self) -> int:
+        return self.shape[0]
+
+
+__all__ = ["FDKConfig", "FDKHostConfig", "fdk", "fdk_host", "view_weights"]

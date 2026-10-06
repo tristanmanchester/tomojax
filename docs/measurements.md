@@ -78,16 +78,26 @@ warm calls on the laptop GPU; ASTRA and TIGRE take host arrays
 
 | Operation | TomoJAX | ASTRA 2.5 | TIGRE |
 |---|---:|---:|---:|
-| Forward projection | 0.130 s (error 0.0060) | 0.170 s (0.0060) | 0.476 s interpolated (0.0062), 1.24 s Siddon (0.0068) |
-| Backprojection | 0.239 s, exact transpose | 0.074 s, approximate transpose | 0.105 s, "matched" |
-| FDK | 0.256 s (error 0.0581) | 0.287 s (0.0581) | 0.512 s (0.0581) |
+| Forward projection | 0.123 s (error 0.0060) | 0.169 s (0.0060) | 0.477 s interpolated (0.0062), 1.24 s Siddon (0.0068) |
+| Backprojection | 0.179 s, exact transpose | 0.075 s, approximate transpose | 0.099 s, "matched" |
+| FDK | 0.098 s (error 0.0581) | 0.285 s (0.0581) | 0.520 s (0.0581) |
+| Forward, axis tilted 0.5° | 0.167 s | 0.170 s | |
+| Backprojection, axis tilted 0.5° | 0.294 s, exact transpose | 0.074 s, approximate transpose | |
 
 TomoJAX's backprojection is the exact transpose of its forward projector,
 which the iterative solvers and gradients rely on; ASTRA's voxel-driven
 backprojector is cheaper but only approximately its transpose. A CGLS
-iteration (one of each) therefore costs about 0.37 s against ASTRA's 0.24 s.
-Views with perturbed poses (alignment) use the general kernels, which take
-about 0.25 s forward and 0.36 s transpose at this size.
+iteration (one of each) therefore costs about 0.30 s against ASTRA's 0.24 s.
+A tilted axis, a rolled or pitched detector, or the per-view poses of
+alignment make every view non-separable: TomoJAX then samples each ray along
+its own axis, which costs about 0.46 s per iteration at this size. ASTRA's
+timings do not depend on the geometry.
+
+`fdk_host` reconstructed a 1024³ scan (1024 views of 1024² pixels, 4.3 GB
+each way) in z-slabs, filtering only the detector rows each slab projects
+onto: 11.7 s with the projections and volume in RAM and 14.3 s from a
+projection memmap into a volume memmap. ASTRA's `FDK_CUDA` took 20.3 s and
+TIGRE's `fdk` 30.7 s from arrays in RAM.
 
 ## Scans larger than device memory
 

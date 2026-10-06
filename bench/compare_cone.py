@@ -4,8 +4,10 @@ r"""Compare cone-beam projection and FDK with ASTRA and TIGRE on one circular sc
 The phantom is five ellipsoids voxelised at 2x2x2 sub-samples; errors compare
 forward projections with exact analytic line integrals and FDK volumes with the
 voxelised phantom. TomoJAX and ASTRA run in this process; TIGRE runs in a child
-process because it refuses a GPU on which JAX holds memory. Times are the best
-of ``--repeats`` warm calls, with host-array inputs for ASTRA and TIGRE.
+process because it refuses a GPU on which JAX holds memory. A second scan with
+the rotation axis tilted by ``--tilt-deg`` times the general-geometry kernels.
+Times are the best of ``--repeats`` warm calls, with host-array inputs for
+ASTRA and TIGRE.
 
     uv run --no-sync python bench/compare_cone.py --size 256 --views 360 \\
         --output bench/results/cone-256.json
@@ -44,12 +46,13 @@ def shapes(extent: float) -> list[tuple[float, np.ndarray, np.ndarray]]:
     return out
 
 
-def setup(size: int, views: int) -> dict[str, Any]:
+def setup(size: int, views: int, tilt_deg: float = 0.5) -> dict[str, Any]:
     """Return the scan description shared by every library."""
     sod = 3.0 * size
     return {
         "size": size,
         "views": views,
+        "tilt_deg": tilt_deg,
         "nu": int(1.5 * size),
         "nv": int(1.5 * size),
         "sod": sod,
@@ -148,6 +151,16 @@ def run_tomojax(
     fp, t_fp = best(lambda: forward(dvol), repeats, sync)
     _, t_bp = best(lambda: adjoint(ddata), repeats, sync)
     rec, t_fdk = best(lambda: fdk(geometry, grid, det, ddata), repeats, sync)
+    # A tilted rotation axis takes the general (non-separable) kernels.
+    tilted = ConeGeometry(
+        grid, det, case["angles"], ConeBeam(case["sod"], case["sdd"]), tilt_deg=case["tilt_deg"]
+    )
+    coeff_t = cone_coefficients(jnp.asarray(tilted.poses(), jnp.float32), grid, det, tilted.beam)
+    forward_t = jax.jit(lambda x: cone_project(x, coeff_t, grid, det))
+    adjoint_t = jax.jit(lambda y: cone_backproject(y, coeff_t, grid, det))
+    _, t_fp_t = best(lambda: forward_t(dvol), repeats, sync)
+    _, t_bp_t = best(lambda: adjoint_t(ddata), repeats, sync)
+    tilt = f"axis tilted {case['tilt_deg']:g} deg"
     return [
         {
             "library": "tomojax",
@@ -162,6 +175,8 @@ def run_tomojax(
             "seconds": t_fdk,
             "error": relative(np.asarray(rec), volume),
         },
+        {"library": "tomojax", "operation": f"forward, {tilt}", "seconds": t_fp_t},
+        {"library": "tomojax", "operation": f"backproject, {tilt}", "seconds": t_bp_t},
     ]
 
 
@@ -184,16 +199,30 @@ def run_astra(
         vectors[k, 6:9] = rot_t @ [1.0, 0.0, 0.0]
         vectors[k, 9:12] = rot_t @ [0.0, 0.0, 1.0]
     proj_geom = astra.create_proj_geom("cone_vec", case["nv"], case["nu"], vectors)
-    projector = astra.create_projector("cuda3d", proj_geom, vol_geom)
     avol = np.ascontiguousarray(volume.transpose(2, 1, 0))
     sino = np.ascontiguousarray(data.transpose(1, 0, 2))
     out = np.empty((case["nv"], views, case["nu"]), np.float32)
     back = np.empty_like(avol)
-    try:
-        _, t_fp = best(lambda: astra.projector3d.direct_FP(projector, avol, out=out), repeats)
-        _, t_bp = best(lambda: astra.projector3d.direct_BP(projector, sino, out=back), repeats)
-    finally:
-        astra.projector3d.delete(projector)
+
+    def time_pair(geom: dict) -> tuple[float, float]:
+        projector = astra.create_projector("cuda3d", geom, vol_geom)
+        try:
+            _, t_fp = best(lambda: astra.projector3d.direct_FP(projector, avol, out=out), repeats)
+            _, t_bp = best(lambda: astra.projector3d.direct_BP(projector, sino, out=back), repeats)
+        finally:
+            astra.projector3d.delete(projector)
+        return t_fp, t_bp
+
+    # Same scan with the rotation axis tilted about x (timings only).
+    tau = np.deg2rad(case["tilt_deg"])
+    tilt_x = np.array(
+        [[1.0, 0.0, 0.0], [0.0, np.cos(tau), np.sin(tau)], [0.0, -np.sin(tau), np.cos(tau)]]
+    )
+    tilted = vectors.copy()
+    for j in range(4):
+        tilted[:, 3 * j : 3 * j + 3] = vectors[:, 3 * j : 3 * j + 3] @ tilt_x.T
+    t_fp_t, t_bp_t = time_pair(astra.create_proj_geom("cone_vec", case["nv"], case["nu"], tilted))
+    t_fp, t_bp = time_pair(proj_geom)
 
     def fdk_call() -> np.ndarray:
         sid = astra.data3d.create("-sino", proj_geom, sino)
@@ -225,6 +254,16 @@ def run_astra(
             "operation": "fdk",
             "seconds": t_fdk,
             "error": relative(rec.transpose(2, 1, 0), volume),
+        },
+        {
+            "library": "astra",
+            "operation": f"forward, axis tilted {case['tilt_deg']:g} deg",
+            "seconds": t_fp_t,
+        },
+        {
+            "library": "astra",
+            "operation": f"backproject, axis tilted {case['tilt_deg']:g} deg",
+            "seconds": t_bp_t,
         },
     ]
 
@@ -281,10 +320,11 @@ def main() -> int:
     parser.add_argument("--size", type=int, default=256)
     parser.add_argument("--views", type=int, default=360)
     parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--tilt-deg", type=float, default=0.5)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--worker", choices=["tigre"], help=argparse.SUPPRESS)
     args = parser.parse_args()
-    case = setup(args.size, args.views)
+    case = setup(args.size, args.views, args.tilt_deg)
     cache = args.output.with_suffix(".case.npz")
     if cache.exists():
         stored = np.load(cache)
@@ -312,7 +352,7 @@ def main() -> int:
     args.output.write_text(json.dumps(summary, indent=2))
     for r in records:
         error = f"  error {r['error']:.4f}" if "error" in r else ""
-        print(f"{r['library']:8s} {r['operation']:50s} {r['seconds']:7.3f} s{error}")
+        print(f"{r['library']:8s} {r['operation']:52s} {r['seconds']:7.3f} s{error}")
     return 0
 
 

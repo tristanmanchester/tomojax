@@ -13,7 +13,16 @@ from scipy.spatial.transform import Rotation
 from tomojax.core.cone import cone_backproject, cone_coefficients, cone_project
 from tomojax.geometry import ConeBeam, ConeGeometry, Detector, Grid, grid_volume_origin
 from tomojax.io import build_geometry_from_dataset_metadata, load_dataset, save_dataset
-from tomojax.recon import CGLSConfig, FDKConfig, cgls, fbp, fbp_host, fdk
+from tomojax.recon import (
+    CGLSConfig,
+    FDKConfig,
+    FDKHostConfig,
+    cgls,
+    fbp,
+    fbp_host,
+    fdk,
+    fdk_host,
+)
 
 cuda = pytest.param("cuda", marks=pytest.mark.gpu)
 
@@ -82,6 +91,9 @@ def _scan(
     if kind == "tilted":
         beam = ConeBeam(2.5 * n, 4.0 * n, 1.5, -2.0, 0.7)
         geometry = ConeGeometry(grid, detector, angles, beam, tilt_deg=20.0)
+    elif kind == "steep":
+        # Rays steeper than 45 degrees in z, sampled along z.
+        geometry = ConeGeometry(grid, detector, angles, ConeBeam(3.0 * n, 4.5 * n), tilt_deg=60.0)
     else:
         geometry = ConeGeometry(grid, detector, angles, ConeBeam(3.0 * n, 4.5 * n))
     poses = geometry.poses()
@@ -93,7 +105,7 @@ def _scan(
     return geometry, grid, detector, poses
 
 
-@pytest.mark.parametrize("kind", ["turntable", "perturbed", "tilted"])
+@pytest.mark.parametrize("kind", ["turntable", "perturbed", "tilted", "steep"])
 @pytest.mark.parametrize("backend", ["jax", cuda])
 def test_cone_projector_has_a_matched_transpose(kind, backend):
     geometry, grid, detector, poses = _scan(kind)
@@ -111,7 +123,7 @@ def test_cone_projector_has_a_matched_transpose(kind, backend):
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("kind", ["turntable", "perturbed", "tilted"])
+@pytest.mark.parametrize("kind", ["turntable", "perturbed", "tilted", "steep"])
 def test_cuda_cone_kernels_agree_with_the_jax_reference(kind):
     if jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
@@ -201,6 +213,30 @@ def test_fdk_reconstructs_full_and_short_scans(backend):
     short = ConeGeometry(grid, detector, np.linspace(0.0, 150.0, 40), beam)
     with pytest.raises(ValueError, match="short scans"):
         fdk(short, grid, detector, np.zeros((40, 48, 48), np.float32))
+
+
+@pytest.mark.parametrize("backend", ["jax", cuda])
+def test_fdk_host_reconstructs_in_slabs_into_a_memmap(backend, tmp_path: Path):
+    n = 24
+    grid = Grid(n, n - 2, n, 1.0, 1.0, 1.1, vol_center=(0.5, -0.3, 1.5))
+    detector = Detector(40, 38, 1.0, 1.0, (0.4, -1.2))
+    angles = np.linspace(0.0, 360.0, 48, endpoint=False)
+    data = np.random.default_rng(0).random((48, detector.nv, detector.nu)).astype(np.float32)
+    config = FDKConfig(backend=backend, views_per_batch=20)
+    for beam in (ConeBeam(72, 108), ConeBeam(72, 108, detector_roll_deg=1.0)):
+        geometry = ConeGeometry(grid, detector, angles, beam)
+        expected = np.asarray(fdk(geometry, grid, detector, data, config=config))
+        scale = np.abs(expected).max()
+        for depth in (5, n):
+            out = np.lib.format.open_memmap(
+                tmp_path / "volume.npy", mode="w+", dtype=np.float32, shape=(n, n - 2, n)
+            )
+            result = fdk_host(
+                geometry, grid, detector, data,
+                config=FDKHostConfig(slices_per_batch=depth, fdk=config), out=out,
+            )  # fmt: skip
+            assert result is out
+            np.testing.assert_allclose(out, expected, atol=2e-5 * scale)
 
 
 def test_fbp_reconstructs_cone_scans_with_fdk_and_parallel_only_paths_refuse_them():
