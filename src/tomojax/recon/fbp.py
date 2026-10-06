@@ -12,6 +12,7 @@ import numpy as np
 
 from tomojax.core import progress_iter
 from tomojax.core.geometry import Detector, Geometry, Grid, grid_volume_origin
+from tomojax.core.geometry.cone import beam_of
 from tomojax.core.geometry.parallel import ParallelGeometry
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import backproject_view_T
@@ -731,6 +732,9 @@ def fbp(
 ) -> jnp.ndarray:
     """Filtered backprojection for parallel rays rotating about a fixed axis.
 
+    Cone-beam geometries are reconstructed with :func:`tomojax.recon.fdk.fdk`
+    using the same filter; ``backprojector="pallas"`` selects its CUDA kernel.
+
     Projections: (n_views, nv, nu) -> attenuation volume (nx, ny, nz).
     The rotation axis, arc and angular spacing are fitted from the view poses,
     so tilted (laminography) axes, partial or full turns and irregular angles
@@ -746,6 +750,20 @@ def fbp(
     cfg = FBPConfig() if config is None else config
     if cfg.backprojector not in ("auto", "jax", "pallas"):
         raise ValueError("FBP backprojector must be 'auto', 'jax', or 'pallas'")
+    if beam_of(geometry) is not None:
+        # Cone beams: FDK, with the same filter and the CUDA kernel for "pallas".
+        if det_grid is not None:
+            raise ValueError("fbp: cone-beam geometry needs the canonical detector grid")
+        from tomojax.recon.fdk import FDKConfig, fdk
+
+        backend = {"auto": "auto", "jax": "jax", "pallas": "cuda"}[cfg.backprojector]
+        return fdk(
+            geometry,
+            grid,
+            detector,
+            projections,
+            config=FDKConfig(filter_name=cfg.filter_name, backend=backend),
+        )
 
     validate_grid(grid, "fbp grid")
     n_views, _, _ = validate_projection_stack(

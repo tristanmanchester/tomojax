@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core.geometry.cone import beam_of
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.operator_norm import estimate_normal_norm
 from tomojax.core.projector import (
@@ -28,10 +29,12 @@ from tomojax.core.validation import (
     validate_volume,
 )
 from tomojax.recon._projection import (
+    ConeModel,
     ProjectorBackend,
     ProjectorModel,
     normal_operator_norm,
     projection_operators,
+    resolve_geometry_projector,
     resolve_projector,
 )
 
@@ -281,9 +284,19 @@ def _prox_fstar_l2(
     return jnp.where(w > 0, v, 0.0).astype(u.dtype)
 
 
-def _batched_projector(config: SPDHGConfig, det_grid: object) -> tuple[str, str] | None:
+def _batched_projector(
+    config: SPDHGConfig, det_grid: object, geometry: object = None
+) -> tuple[str | ConeModel, str] | None:
     """Choose batched operators, or None for the ray-model reference path."""
     model, backend = config.projector_model, config.projector_backend
+    if beam_of(geometry) is not None:
+        if config.ray_integrator == "exact":
+            raise ValueError(
+                "spdhg_tv: cone-beam geometry uses Joseph sampling, not exact integration"
+            )
+        return resolve_geometry_projector(
+            geometry, model, backend, det_grid=det_grid, context="spdhg_tv"
+        )
     if det_grid is not None or config.ray_integrator != "sampled":
         if model == "joseph" or backend == "pallas":
             raise ValueError(
@@ -453,7 +466,7 @@ def _prepare_spdhg_runtime(
     poses = stack_view_poses(geometry, n_views)
     validate_pose_stack(poses, n_views, context="spdhg_tv geometry")
     resolved_det_grid = get_detector_grid_device(detector) if det_grid is None else det_grid
-    projector = _batched_projector(cfg, det_grid)
+    projector = _batched_projector(cfg, det_grid, geometry)
     stream = not isinstance(projections, jax.Array) and (
         bool(cfg.stream_projections)
         if cfg.stream_projections is not None

@@ -71,8 +71,17 @@ results from default CLI behavior and larger-motion targets.
   interpolation cell. The fused loss is unweighted half squared error; other
   losses use the differentiable projector. This API does not automatically
   switch the existing alignment pipeline from its trilinear ray model.
-- Built-in geometries use parallel rays. Cone-beam and fan-beam projectors are
-  not provided.
+- Cone-beam scans: FDK assumes a circular source orbit (it is exact only in
+  the orbit plane, with cone artefacts growing away from it) and supports full
+  turns and Parker-weighted short scans, but not offset-detector (half-fan)
+  scans. The iterative solvers model any per-view poses exactly. Cone-beam
+  projection needs the canonical detector grid (no `detector_roll_deg`
+  replay grid; detector roll is part of `ConeBeam`). The CUDA kernels need
+  CuPy; without it the JAX reference runs, about ten times slower. On CUDA
+  the matched transpose is slower than ASTRA's approximate backprojector (see
+  [measurements](measurements.md#cone-beam-projection-and-fdk)). Pose
+  derivatives come from the JAX reference; the CUDA forward differentiates in
+  the volume only. Alignment does not yet support cone-beam geometry.
 - FBP weights every view exactly for rotation about one fixed axis, at any
   tilt, arc length or angular spacing. It cannot recover frequencies no view
   measured: laminography's missing cone reconstructs as zero, so FBP gives

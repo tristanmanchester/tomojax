@@ -379,6 +379,19 @@ do not replace their thresholds. Run simulation separately from timed solvers
 to avoid GPU contention.
 
 
+## Cone-beam comparison
+
+[`compare_cone.py`](compare_cone.py) times TomoJAX's cone-beam projector, its
+exact transpose and FDK against ASTRA (`cone_vec`, `FDK_CUDA`) and TIGRE (`Ax`,
+`Atb`, `fdk`) on one circular scan of five ellipsoids, with errors against
+exact analytic line integrals and the voxelised phantom. TIGRE runs in a child
+process, since it refuses a GPU on which JAX holds memory.
+
+```bash
+uv run --no-sync python bench/compare_cone.py --size 256 --views 360 \
+  --output bench/results/cone-256.json
+```
+
 ## Multi-material chip-package phantom
 
 [`phantoms/`](phantoms) builds a laminography phantom closer to a real DIAD

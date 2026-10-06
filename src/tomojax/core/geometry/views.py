@@ -18,8 +18,13 @@ def stack_view_poses(
     dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
     """Stack world-from-object poses for the first ``n_views`` views."""
+    from .cone import ConeGeometry
     from .lamino import LaminographyGeometry
     from .parallel import ParallelGeometry
+
+    if type(geometry) is ConeGeometry:
+        thetas = np.asarray(geometry.thetas_deg[: int(n_views)], dtype=np.float64)
+        return jnp.asarray(geometry.poses(thetas).astype(dtype))
 
     # Subclasses may override pose_for_view (for example to add calibrated
     # shifts). Only specialize the exact built-in implementation.

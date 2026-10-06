@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core.geometry.cone import beam_of, require_parallel_beam
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.operator_norm import estimate_normal_norm
 from tomojax.core.projector import (
@@ -32,11 +33,13 @@ from tomojax.core.validation import (
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
 from ._host_stream import host_source, should_stream
 from ._projection import (
+    ConeModel,
     ProjectorBackend,
     ProjectorModel,
     least_squares_operators,
     normal_operator_norm,
     projection_operators,
+    resolve_geometry_projector,
     resolve_projector,
 )
 from ._tv_ops import (
@@ -226,6 +229,7 @@ def grad_data_term(  # noqa: PLR0915
 
     When grad_mode="auto", selects stream if the effective batch is 1, else batched.
     """
+    require_parallel_beam(geometry, "grad_data_term")
     validate_grid(grid, "grad_data_term grid")
     n_views, nv, nu = validate_projection_stack(
         projections,
@@ -388,6 +392,7 @@ def data_term_value(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
     """Compute the data term ``1/2 Σ_i ||A_i x - y_i||^2`` without its gradient."""
+    require_parallel_beam(geometry, "data_term_value")
     validate_grid(grid, "data_term_value grid")
     n_views, nv, nu = validate_projection_stack(
         projections,
@@ -509,6 +514,7 @@ def power_method_L(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> float:
     """Estimate the Lipschitz constant of the data gradient by power iteration."""
+    require_parallel_beam(geometry, "power_method_L")
     validate_grid(grid, "power_method_L grid")
     n_views, _, _ = validate_projection_shape(
         projections_shape,
@@ -674,7 +680,7 @@ def _prepare_fista_runtime(
 
     poses = stack_view_poses(geometry, n_views)
     validate_pose_stack(poses, n_views, context="fista_tv geometry")
-    projector = _batched_projector(cfg, n_views, det_grid)
+    projector = _batched_projector(cfg, n_views, det_grid, geometry)
     on_host = not isinstance(projections, jax.Array)
     stream = on_host and (
         bool(cfg.stream_projections)
@@ -732,10 +738,20 @@ def _prepare_fista_runtime(
 
 
 def _batched_projector(
-    cfg: FistaConfig, n_views: int, det_grid: object
-) -> tuple[str, str, int] | None:
+    cfg: FistaConfig, n_views: int, det_grid: object, geometry: object = None
+) -> tuple[str | ConeModel, str, int] | None:
     """Choose batched operators, or None for the ray-model reference path."""
     model, backend = cfg.projector_model, cfg.projector_backend
+    requested = 64 if cfg.views_per_batch is None else int(cfg.views_per_batch)
+    if beam_of(geometry) is not None:
+        if cfg.ray_integrator == "exact":
+            raise ValueError(
+                "fista_tv: cone-beam geometry uses Joseph sampling, not exact integration"
+            )
+        cone, backend = resolve_geometry_projector(
+            geometry, model, backend, det_grid=det_grid, context="fista_tv"
+        )
+        return cone, backend, max(1, min(requested, n_views))
     if det_grid is not None or cfg.ray_integrator != "sampled":
         if model == "joseph" or backend == "pallas":
             raise ValueError(
@@ -746,7 +762,6 @@ def _batched_projector(
     model, backend = resolve_projector(model, backend, context="fista_tv")
     if model == "ray" and backend == "jax":
         return None
-    requested = 64 if cfg.views_per_batch is None else int(cfg.views_per_batch)
     return model, backend, max(1, min(requested, n_views))
 
 

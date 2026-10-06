@@ -13,7 +13,15 @@ import numpy as np
 from tomojax._data import NXTomoMetadata, save_nxtomo
 from tomojax.backends import default_gather_dtype
 from tomojax.core import progress_iter
-from tomojax.core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
+from tomojax.core.cone import cone_coefficients, cone_project
+from tomojax.core.geometry import (
+    ConeBeam,
+    ConeGeometry,
+    Detector,
+    Grid,
+    LaminographyGeometry,
+    ParallelGeometry,
+)
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import (
     forward_project_view,
@@ -61,9 +69,9 @@ class SimulatedData(TypedDict):
     thetas_deg: np.ndarray
     grid: GridDict
     detector: DetectorDict
-    geometry_type: Literal["parallel", "lamino"]
+    geometry_type: Literal["parallel", "lamino", "cone"]
     volume: jnp.ndarray
-    geometry_meta: LaminoGeometryMeta | None
+    geometry_meta: dict[str, object] | None
     meta: SimMetadata
     simulation_artefacts: ArtefactMetadata | None
 
@@ -84,9 +92,11 @@ class SimConfig:
     vy: float = 1.0
     vz: float = 1.0
     rotation_deg: float | None = None  # total rotation range; defaults by geometry
-    geometry: str = "parallel"  # or "lamino"
-    tilt_deg: float = 30.0  # lamino
+    geometry: str = "parallel"  # "lamino" or "cone"
+    tilt_deg: float = 30.0  # lamino; a cone scan's axis tilt
     tilt_about: str = "x"
+    source_to_axis: float | None = None  # cone: default 3x the largest volume extent
+    source_to_detector: float | None = None  # cone: default 1.5x source_to_axis
     phantom: str = "shepp"
     # single-object phantom parameters (for cube/sphere)
     single_size: float = 0.5  # relative size (cube side or sphere diameter as fraction of min dim)
@@ -183,9 +193,10 @@ def simulate(cfg: SimConfig) -> SimulatedData:
         total_deg = 180.0 if cfg.geometry == "parallel" else 360.0
     thetas = np.linspace(0.0, total_deg, cfg.n_views, endpoint=False).astype(np.float32)
 
-    geometry_meta: LaminoGeometryMeta | None = None
+    geometry_meta: dict[str, object] | None = None
+    beam: ConeBeam | None = None
     if cfg.geometry == "parallel":
-        geometry_type: Literal["parallel", "lamino"] = "parallel"
+        geometry_type: Literal["parallel", "lamino", "cone"] = "parallel"
         geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=thetas)
     elif cfg.geometry == "lamino":
         geometry_type = "lamino"
@@ -200,8 +211,24 @@ def simulate(cfg: SimConfig) -> SimulatedData:
             "tilt_deg": float(cfg.tilt_deg),
             "tilt_about": str(cfg.tilt_about),
         }
+    elif cfg.geometry == "cone":
+        geometry_type = "cone"
+        extent = max(cfg.nx * cfg.vx, cfg.ny * cfg.vy, cfg.nz * cfg.vz)
+        sod = 3.0 * extent if cfg.source_to_axis is None else float(cfg.source_to_axis)
+        sdd = 1.5 * sod if cfg.source_to_detector is None else float(cfg.source_to_detector)
+        beam = ConeBeam(sod, sdd)
+        cone = ConeGeometry(
+            grid=grid,
+            detector=det,
+            thetas_deg=thetas,
+            beam=beam,
+            tilt_deg=cfg.tilt_deg,
+            tilt_about=cfg.tilt_about,
+        )
+        geom = cone
+        geometry_meta = cone.geometry_metadata()
     else:
-        raise ValueError("geometry must be 'parallel' or 'lamino'")
+        raise ValueError("geometry must be 'parallel', 'lamino' or 'cone'")
 
     vol = make_phantom(cfg)
 
@@ -213,7 +240,15 @@ def simulate(cfg: SimConfig) -> SimulatedData:
     det_grid = get_detector_grid_device(det)
 
     use_fast = (cfg.n_views >= 8) and (os.environ.get("TOMOJAX_PROGRESS", "0") != "1")
-    if use_fast:
+    if beam is not None:
+        coefficients = cone_coefficients(T_all, grid, det, beam)
+        proj = jnp.concatenate(
+            [
+                cone_project(vol, coefficients[start : start + 32], grid, det)
+                for start in range(0, cfg.n_views, 32)
+            ]
+        )
+    elif use_fast:
 
         @jax.jit
         def project_all(vol_in: jnp.ndarray) -> jnp.ndarray:

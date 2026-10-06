@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from tomojax.geometry import Detector, Grid
+from tomojax.geometry import ConeBeam, Detector, Grid
 from tomojax.io import load_tiff_stack, save_dataset
 from tomojax.io.api import load_angles
 
@@ -28,10 +28,29 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _ = parser.add_argument(
         "--geometry",
-        choices=["parallel", "lamino"],
+        choices=["parallel", "lamino", "cone"],
         default="parallel",
         help="Acquisition geometry type recorded in metadata",
     )
+    _ = parser.add_argument(
+        "--source-to-axis",
+        type=float,
+        default=None,
+        help="Cone beam: source to rotation axis distance, in detector-pixel-size units",
+    )
+    _ = parser.add_argument(
+        "--source-to-detector",
+        type=float,
+        default=None,
+        help="Cone beam: source to detector distance, in the same units",
+    )
+    for angle in ("roll", "pitch", "yaw"):
+        _ = parser.add_argument(
+            f"--detector-{angle}",
+            type=float,
+            default=0.0,
+            help=f"Cone beam: detector {angle} in degrees (see tomojax.geometry.ConeBeam)",
+        )
     _ = parser.add_argument("--du", type=float, default=1.0, help="Detector pixel size along u")
     _ = parser.add_argument("--dv", type=float, default=1.0, help="Detector pixel size along v")
     _ = parser.add_argument(
@@ -113,6 +132,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     probe.grid = grid
     probe.geometry_type = str(cast("str", args.geometry))
     probe.geometry_metadata = {"ingest_source": "tiff_stack"}
+    if probe.geometry_type == "cone":
+        sod = cast("float | None", args.source_to_axis)
+        sdd = cast("float | None", args.source_to_detector)
+        if sod is None or sdd is None:
+            parser.error("--geometry cone needs --source-to-axis and --source-to-detector")
+        try:
+            beam = ConeBeam(
+                sod,
+                sdd,
+                detector_roll_deg=cast("float", args.detector_roll),
+                detector_pitch_deg=cast("float", args.detector_pitch),
+                detector_yaw_deg=cast("float", args.detector_yaw),
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+        probe.geometry_metadata["cone_beam"] = beam.to_dict()
     probe.sample_name = str(cast("str", args.sample_name))
     save_dataset(output, probe)
     print(f"wrote {output} from {probe.projections.shape[0]} TIFF projections")

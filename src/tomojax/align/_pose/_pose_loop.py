@@ -39,6 +39,7 @@ from tomojax.align.optimizers import PoseLbfgsConfig, PoseOptimizationContext, p
 from tomojax.backends import estimate_views_per_batch_info
 from tomojax.core import format_duration, progress_iter
 from tomojax.core.geometry.base import Detector, Geometry, Grid
+from tomojax.core.geometry.cone import require_parallel_beam
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import get_detector_grid_device
 from tomojax.core.validation import (
@@ -708,6 +709,7 @@ def align(
 
     Returns (x, params5, info) with loss history and optional metrics.
     """
+    require_parallel_beam(geometry, "align")
     setup = _prepare_align_setup(
         geometry,
         grid,

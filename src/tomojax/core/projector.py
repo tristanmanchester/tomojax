@@ -18,6 +18,7 @@ from tomojax.core.pallas_resolver import resolve_pallas_callable
 from .backend_policy import ProjectorBackendInput, normalize_projector_backend
 from .compilation_cache import enable_persistent_compilation_cache
 from .geometry.base import Detector, Geometry, Grid, grid_volume_origin
+from .geometry.cone import beam_of
 from .validation import (
     validate_detector,
     validate_detector_grid,
@@ -727,8 +728,18 @@ def forward_project_view(
 
     The projector uses the supplied ``Grid``/``Detector`` for the standard
     detector-plane ray model; ``geometry.rays_for_view`` is not consumed.
+    Cone-beam geometries use the cone Joseph projector, whose only options are
+    the defaults.
     """
     T = jnp.asarray(geometry.pose_for_view(view_index), dtype=jnp.float32)
+    beam = beam_of(geometry)
+    if beam is not None:
+        from tomojax.core.cone import cone_coefficients, cone_project
+
+        if det_grid is not None or ray_integrator == "exact":
+            raise ValueError("cone-beam projection needs the canonical grid and Joseph sampling")
+        coeff = cone_coefficients(T[None], grid, detector, beam)
+        return cone_project(volume, coeff, grid, detector)[0]
     return forward_project_view_T(
         T,
         grid,
@@ -763,8 +774,17 @@ def backproject_view(
 
     The projector uses the supplied ``Grid``/``Detector`` for the standard
     detector-plane ray model; ``geometry.rays_for_view`` is not consumed.
+    Cone-beam geometries use the transpose of the cone Joseph projector.
     """
     T = jnp.asarray(geometry.pose_for_view(view_index), dtype=jnp.float32)
+    beam = beam_of(geometry)
+    if beam is not None:
+        from tomojax.core.cone import cone_backproject, cone_coefficients
+
+        if det_grid is not None or ray_integrator == "exact":
+            raise ValueError("cone-beam projection needs the canonical grid and Joseph sampling")
+        coeff = cone_coefficients(T[None], grid, detector, beam)
+        return cone_backproject(jnp.asarray(image)[None], coeff, grid, detector)
     return backproject_view_T(
         T,
         grid,

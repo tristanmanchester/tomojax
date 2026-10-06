@@ -5,15 +5,20 @@ all views, processed in fixed-size view batches inside one compiled loop.
 ``"joseph"`` samples voxel-centre planes along each ray's dominant axis and is
 the fastest model on CUDA; ``"ray"`` is the trilinear ray marcher. Both use
 physical units and agree with analytic line integrals to the same accuracy.
+Cone-beam geometries use :class:`ConeModel`, Joseph sampling of rays from the
+source, with CUDA kernels where the parallel models use Pallas.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 import jax
 import jax.numpy as jnp
 
+from tomojax.core.cone import cone_backproject, cone_coefficients, cone_project, use_cuda_cone
+from tomojax.core.geometry.cone import ConeBeam, beam_of
 from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
 from tomojax.recon._host_stream import read_views
 
@@ -63,6 +68,48 @@ def resolve_projector(
     return model, backend
 
 
+@dataclass(frozen=True)
+class ConeModel:
+    """Cone-beam Joseph sampling for the view batches; carries the static beam."""
+
+    beam: ConeBeam
+
+
+def resolve_geometry_projector(
+    geometry: object,
+    model: str,
+    backend: str,
+    *,
+    det_grid: object = None,
+    context: str,
+) -> tuple[str | ConeModel, str]:
+    """Resolve the projector for a geometry: :class:`ConeModel` for cone beams.
+
+    Cone beams use Joseph plane sampling (``model`` must be ``auto`` or
+    ``joseph``) and the canonical detector grid. Their ``pallas`` backend is
+    the CUDA cone kernels, chosen by ``auto`` when CuPy and a CUDA device are
+    available.
+    """
+    beam = beam_of(geometry)
+    if beam is None:
+        return resolve_projector(model, backend, det_grid=det_grid, context=context)
+    if det_grid is not None:
+        raise ValueError(f"{context}: cone-beam geometry needs the canonical detector grid")
+    if model not in {"auto", "joseph"}:
+        raise ValueError(
+            f"{context}: cone-beam geometry uses Joseph plane sampling; "
+            "projector_model must be 'auto' or 'joseph'"
+        )
+    if backend not in {"auto", "jax", "pallas"}:
+        raise ValueError(f"{context}: projector_backend must be 'auto', 'jax' or 'pallas'")
+    cuda = use_cuda_cone()
+    if backend == "auto":
+        backend = "pallas" if cuda else "jax"
+    if backend == "pallas" and not cuda:
+        raise ValueError(f"{context}: the CUDA cone kernels need CuPy on a CUDA device")
+    return ConeModel(beam), backend
+
+
 class _Batches:
     """Fixed-size view batches over one pose stack, with matched batch operators."""
 
@@ -74,7 +121,7 @@ class _Batches:
         det_grid: tuple[jax.Array, jax.Array] | None,
         backend: str,
         batch_size: int,
-        model: str,
+        model: str | ConeModel,
         joseph_interpolation: str,
         absolute_weights: bool,
     ) -> None:
@@ -84,7 +131,11 @@ class _Batches:
         self.poses, self.grid, self.detector, self.det_grid = poses, grid, detector, det_grid
         self.backend, self.model = backend, model
         self.interpolation, self.absolute_weights = joseph_interpolation, absolute_weights
-        if model == "joseph":
+        if isinstance(model, ConeModel):
+            # Cone weights are non-negative, so |A|^T is the transpose itself.
+            self.coefficients = cone_coefficients(poses, grid, detector, model.beam)
+            self.cone_backend = "cuda" if backend == "pallas" else "jax"
+        elif model == "joseph":
             from tomojax.core.joseph import plane_coefficients
 
             self.coefficients = plane_coefficients(poses, grid, detector)
@@ -102,10 +153,15 @@ class _Batches:
         return jax.lax.dynamic_slice(stack, (start, 0, 0), shape)
 
     def _coefficients(self, start: jax.Array) -> jax.Array:
-        return jax.lax.dynamic_slice(self.coefficients, (start, 0), (self.size, 14))
+        width = int(self.coefficients.shape[1])
+        return jax.lax.dynamic_slice(self.coefficients, (start, 0), (self.size, width))
 
     def project(self, volume: jax.Array, start: jax.Array, batch: jax.Array) -> jax.Array:
         grid, detector = self.grid, self.detector
+        if isinstance(self.model, ConeModel):
+            return cone_project(
+                volume, self._coefficients(start), grid, detector, backend=self.cone_backend
+            )
         if self.model == "joseph":
             from tomojax.core.joseph import forward_project_planes
 
@@ -139,6 +195,15 @@ class _Batches:
     ) -> jax.Array:
         """Return ``output`` plus the batch transpose; Joseph on CUDA adds in place."""
         grid, detector = self.grid, self.detector
+        if isinstance(self.model, ConeModel):
+            return cone_backproject(
+                images,
+                self._coefficients(start),
+                grid,
+                detector,
+                backend=self.cone_backend,
+                accumulate=output,
+            )
         if self.model == "joseph":
             from tomojax.core.joseph import sum_backproject_planes
 
@@ -173,7 +238,7 @@ def projection_operators(
     det_grid: tuple[jax.Array, jax.Array] | None,
     backend: str,
     batch_size: int,
-    model: str = "ray",
+    model: str | ConeModel = "ray",
     joseph_interpolation: str = "linear",
     absolute_weights: bool = False,
 ) -> tuple[Callable[[jax.Array], jax.Array], Callable[..., jax.Array]]:
@@ -232,7 +297,7 @@ def least_squares_operators(
     detector: Detector,
     backend: str,
     batch_size: int,
-    model: str = "ray",
+    model: str | ConeModel = "ray",
     joseph_interpolation: str = "linear",
     *,
     stream: bool = False,
@@ -317,7 +382,7 @@ def normal_equation_operators(
     detector: Detector,
     backend: str,
     batch_size: int,
-    model: str = "ray",
+    model: str | ConeModel = "ray",
     joseph_interpolation: str = "linear",
 ) -> tuple[
     Callable[[jax.Array], tuple[jax.Array, jax.Array]],

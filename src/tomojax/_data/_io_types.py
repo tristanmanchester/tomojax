@@ -243,6 +243,9 @@ class LoadedNXTomo:
         tilt_about = geom_meta.get("tilt_about")
         if tilt_about is not None:
             payload["tilt_about"] = str(tilt_about)
+        cone_beam = geom_meta.get("cone_beam")
+        if cone_beam is not None:
+            payload["cone_beam"] = cone_beam
         axis_unit_lab = geom_meta.get("axis_unit_lab")
         if axis_unit_lab is not None:
             payload["axis_unit_lab"] = axis_unit_lab

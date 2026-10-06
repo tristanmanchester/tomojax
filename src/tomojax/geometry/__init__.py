@@ -11,12 +11,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from tomojax.core.geometry import (
+    ConeBeam,
+    ConeGeometry,
     Detector,
     Geometry,
     Grid,
     LaminographyGeometry,
     ParallelGeometry,
     RotationAxisGeometry,
+    beam_of,
     grid_volume_origin,
 )
 
@@ -109,6 +112,8 @@ __all__ = [
     "VOLUME_AXES_ATTR",
     "CalibrationState",
     "CalibrationVariable",
+    "ConeBeam",
+    "ConeGeometry",
     "Detector",
     "Geometry",
     "GeometryState",
@@ -119,6 +124,7 @@ __all__ = [
     "axes_to_perm",
     "axis_pose_stack",
     "axis_unit_from_rotations",
+    "beam_of",
     "build_calibrated_geometry_metadata_patch",
     "build_calibration_manifest",
     "compute_roi",

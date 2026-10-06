@@ -24,6 +24,7 @@ if TYPE_CHECKING:
         supports_parallel_fbp_z_integer,
     )
     from tomojax.recon.fbp_host import FBPHostConfig, fbp_host
+    from tomojax.recon.fdk import FDKConfig, fdk
     from tomojax.recon.filters import clear_filter_caches
     from tomojax.recon.fista_tv import FistaConfig, fista_tv
     from tomojax.recon.fourier import FourierConfig, fourier_reconstruct
@@ -34,6 +35,7 @@ _SOURCES = {
     "CGLSConfig": "cgls",
     "FBPConfig": "fbp",
     "FBPHostConfig": "fbp_host",
+    "FDKConfig": "fdk",
     "FistaConfig": "fista_tv",
     "FourierConfig": "fourier",
     "Regulariser": "types",
@@ -46,6 +48,7 @@ _SOURCES = {
     "default_fbp_scale": "fbp",
     "fbp": "fbp",
     "fbp_host": "fbp_host",
+    "fdk": "fdk",
     "fista_tv": "fista_tv",
     "fourier_reconstruct": "fourier",
     "run_parallel_fbp_direct_pallas": "fbp",
@@ -58,6 +61,7 @@ __all__ = [
     "CGLSConfig",
     "FBPConfig",
     "FBPHostConfig",
+    "FDKConfig",
     "FistaConfig",
     "FourierConfig",
     "Regulariser",
@@ -70,6 +74,7 @@ __all__ = [
     "default_fbp_scale",
     "fbp",
     "fbp_host",
+    "fdk",
     "fista_tv",
     "fourier_reconstruct",
     "run_parallel_fbp_direct_pallas",

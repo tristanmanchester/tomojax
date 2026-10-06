@@ -21,6 +21,7 @@ from tomojax.align._results import (
     AlignMultiresResumeState,
 )
 from tomojax.core.geometry.base import Detector, Geometry, Grid
+from tomojax.core.geometry.cone import require_parallel_beam
 from tomojax.geometry import stack_view_poses
 
 from ._stage_runners import _run_multires_level_stages
@@ -273,6 +274,7 @@ def align_multires(
 
     Carries alignment parameters across levels and downsamples/upsamples volume.
     """
+    require_parallel_beam(geometry, "align_multires")
     context = _build_multires_context(
         geometry,
         grid,

@@ -12,6 +12,7 @@ experimental. See [installation](installation.md) and [measurement scope](measur
 | NX/HDF5 preprocessing | Supported | `tomojax preprocess raw.nxs corrected.nxs` |
 | TIFF flat/dark preprocessing | Supported | `tomojax preprocess ./projections corrected.nxs --format tiff-stack --flats ./flats --darks ./darks --angles angles.csv` |
 | FBP, CGLS, FISTA-TV, SPDHG-TV from corrected projections | Supported | `tomojax recon --data corrected.nxs --out recon.nxs --algo fbp\|cgls\|fista\|spdhg` |
+| Cone-beam (lab CT) scans: FDK and iterative reconstruction | Supported | `tomojax ingest ./tiffs --geometry cone --source-to-axis ... --source-to-detector ... --angles angles.csv --out scan.nxs`, then `tomojax recon` (`--algo fbp` runs FDK) |
 | Labelled reconstruction slice extraction | Supported | `tomojax slices --data recon.nxs --out quicklooks` |
 | Per-projection 5-DOF pose alignment | Experimental | `tomojax align --data corrected.nxs --mode pose --out aligned.nxs` |
 | Detector-centre/COR alignment | Experimental | `tomojax align --data corrected.nxs --mode cor --out aligned.nxs` |
@@ -40,7 +41,7 @@ Workflows outside the table above are research or expert diagnostics.
 | Joseph pose normal equations (Python API) | `joseph_pose_normal_equations`: per-view raw loss, directional gradient, Gauss-Newton matrix and residual; 1–16 caller-supplied pose directions; CUDA avoids a full projection Jacobian; caller chooses damping, priors and gauges |
 | Coarse-to-fine CGLS (Python API) | Optional `cgls_multires` with explicit budgets and a final full-data solve; tested on odd/shifted grids and sharp/noisy phantoms, with known performance regressions |
 | Internal differentiable FISTA core | JAX and explicit Pallas forward/adjoint variants, used by alignment workflows |
-| Cone/fan-beam geometry | Not implemented |
+| Cone-beam geometry | `ConeGeometry`: point source and flat detector with offsets, roll, pitch and yaw, turntable or tilted axis, any per-view poses; Joseph sampling of diverging rays with a matched transpose; JAX reference (differentiable in volume and poses) and CUDA kernels (CuPy); CGLS, FISTA-TV, SPDHG-TV and FDK (full turns, Parker-weighted short scans); `simulate`, `ingest` and saved datasets. Fan beam is a one-row cone detector |
 | Real GPU validation | CUDA on RTX 4070 Laptop (Ada); CPU interpretation is tested separately |
 
 Volumes use `(x, y, z)` array order and projections use `(view, v, u)`. Voxel and

@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, TypedDict
 import numpy as np
 
 from tomojax.core.geometry import (
+    ConeBeam,
+    ConeGeometry,
     Detector,
     Geometry,
     Grid,
@@ -45,6 +47,7 @@ class LoadedGeometryMeta(LoadedGeometryMetaRequired, total=False):
     misalign_spec: dict[str, JsonValue]
     align_params: np.ndarray
     align_gauge: dict[str, JsonValue]
+    cone_beam: dict[str, float]
 
 
 GridOverride = Grid | tuple[int, int, int] | list[int] | None
@@ -65,8 +68,10 @@ def _normalize_geometry_type(geometry_type: str | None) -> str:
         return gtype
     if gtype in {"lamino", "laminography"}:
         return "lamino"
+    if gtype in {"cone", "cone_beam"}:
+        return "cone"
     raise ValueError(
-        f"Unsupported geometry_type {geometry_type!r}; expected 'parallel' or 'lamino'"
+        f"Unsupported geometry_type {geometry_type!r}; expected 'parallel', 'lamino' or 'cone'"
     )
 
 
@@ -262,6 +267,21 @@ def _base_geometry(
     detector: Detector,
     thetas_deg: Sequence[float],
 ) -> Geometry:
+    gtype = _normalize_geometry_type(meta.get("geometry_type"))
+    if gtype == "cone":
+        beam_meta = meta.get("cone_beam")
+        if not isinstance(beam_meta, dict):
+            raise ValueError("cone geometry metadata needs a 'cone_beam' mapping")
+        axis = meta.get("axis_unit_lab")
+        return ConeGeometry(
+            grid=grid,
+            detector=detector,
+            thetas_deg=thetas_deg,
+            beam=ConeBeam(**{str(k): float(v) for k, v in beam_meta.items()}),
+            tilt_deg=float(meta.get("tilt_deg", 0.0)),
+            tilt_about=str(meta.get("tilt_about", "x")),
+            axis_unit=None if axis is None else tuple(float(x) for x in axis),  # type: ignore[arg-type]
+        )
     if meta.get("axis_unit_lab") is not None:
         return RotationAxisGeometry(
             grid=grid,
@@ -270,7 +290,6 @@ def _base_geometry(
             axis_unit_lab=normalize_axis_unit(meta["axis_unit_lab"]),  # type: ignore[arg-type]
         )
 
-    gtype = _normalize_geometry_type(meta.get("geometry_type"))
     if gtype == "parallel":
         return ParallelGeometry(grid=grid, detector=detector, thetas_deg=thetas_deg)
 

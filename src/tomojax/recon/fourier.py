@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
+from tomojax.core.geometry.cone import require_parallel_beam
 from tomojax.core.validation import validate_grid, validate_projection_stack
 from tomojax.geometry import ParallelGeometry, grid_volume_origin
 
@@ -75,6 +76,7 @@ def fourier_reconstruct(
     storage must remain unchanged during the call. This routine is not
     differentiable and does not replace the default FBP reconstruction.
     """
+    require_parallel_beam(geometry, "fourier_reconstruct")
     cfg = FourierConfig() if config is None else config
     slices = operator.index(cfg.slices_per_batch)
     if slices < 1:

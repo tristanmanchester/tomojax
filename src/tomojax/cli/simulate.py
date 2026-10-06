@@ -22,7 +22,7 @@ from ._runtime import transfer_guard_context
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-GeometryName = Literal["parallel", "lamino"]
+GeometryName = Literal["parallel", "lamino", "cone"]
 TiltAxis = Literal["x", "z"]
 PhantomName = Literal["shepp", "cube", "sphere", "blobs", "random_shapes", "lamino_disk"]
 TransferGuardName = Literal["off", "log", "disallow"]
@@ -79,11 +79,30 @@ def _build_parser() -> argparse.ArgumentParser:
         "--rotation-deg",
         type=float,
         default=None,
-        help="Total rotation range in degrees. Defaults: 180 for parallel, 360 for lamino.",
+        help="Total rotation range in degrees. Defaults: 180 for parallel, 360 otherwise.",
     )
-    _ = parser.add_argument("--geometry", choices=["parallel", "lamino"], default="parallel")
-    _ = parser.add_argument("--tilt-deg", type=float, default=30.0)
+    _ = parser.add_argument(
+        "--geometry", choices=["parallel", "lamino", "cone"], default="parallel"
+    )
+    _ = parser.add_argument(
+        "--tilt-deg",
+        type=float,
+        default=None,
+        help="Rotation-axis tilt in degrees. Defaults: 30 for lamino, 0 for cone.",
+    )
     _ = parser.add_argument("--tilt-about", choices=["x", "z"], default="x")
+    _ = parser.add_argument(
+        "--source-to-axis",
+        type=float,
+        default=None,
+        help="Cone beam: source to rotation axis distance (default 3x the volume extent).",
+    )
+    _ = parser.add_argument(
+        "--source-to-detector",
+        type=float,
+        default=None,
+        help="Cone beam: source to detector distance (default 1.5x --source-to-axis).",
+    )
     _ = parser.add_argument(
         "--phantom",
         choices=["shepp", "cube", "sphere", "blobs", "random_shapes", "lamino_disk"],
@@ -161,6 +180,8 @@ def _parse_command(argv: Sequence[str] | None) -> SimulateCommand:
     args = _build_parser().parse_args(argv_list)
     artefacts = _build_artefacts(args, _artefact_options_present(argv_list))
     rotation_deg = cast("float | None", args.rotation_deg)
+    geometry = cast("GeometryName", args.geometry)
+    tilt_deg = cast("float | None", args.tilt_deg)
     config = SimConfig(
         nx=cast("int", args.nx),
         ny=cast("int", args.ny),
@@ -168,9 +189,11 @@ def _parse_command(argv: Sequence[str] | None) -> SimulateCommand:
         nu=cast("int", args.nu),
         nv=cast("int", args.nv),
         n_views=cast("int", args.n_views),
-        geometry=cast("GeometryName", args.geometry),
-        tilt_deg=cast("float", args.tilt_deg),
+        geometry=geometry,
+        tilt_deg=tilt_deg if tilt_deg is not None else (0.0 if geometry == "cone" else 30.0),
         tilt_about=cast("TiltAxis", args.tilt_about),
+        source_to_axis=cast("float | None", args.source_to_axis),
+        source_to_detector=cast("float | None", args.source_to_detector),
         rotation_deg=rotation_deg,
         phantom=cast("PhantomName", args.phantom),
         seed=cast("int", args.seed),

@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.backends import device_free_memory_bytes
+from tomojax.core.geometry.cone import require_parallel_beam
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import validate_grid, validate_projection_stack
 from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
@@ -109,6 +110,7 @@ def fbp_host(
     supported. Filter tails use the same zero-extended measurement model as
     ``fbp``.
     """
+    require_parallel_beam(geometry, "fbp_host")
     cfg = FBPHostConfig() if config is None else config
     slices = None if cfg.slices_per_batch is None else operator.index(cfg.slices_per_batch)
     views = operator.index(cfg.views_per_batch)

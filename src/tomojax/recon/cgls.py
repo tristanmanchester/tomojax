@@ -22,9 +22,10 @@ from tomojax.core.validation import (
 )
 from tomojax.recon._host_stream import host_source, should_stream
 from tomojax.recon._projection import (
+    ConeModel,
     normal_equation_operators,
     projection_operators as _operators,
-    resolve_projector,
+    resolve_geometry_projector,
 )
 from tomojax.recon._quadratic import gradient_energy, gradient_normal, regularization_normal
 
@@ -473,9 +474,11 @@ def cgls(
         if not math.isfinite(value) or value < 0:
             raise ValueError(f"cgls: {name} must be finite and nonnegative")
     _validate_model(cfg)
-    model, backend = resolve_projector(
-        cfg.projector_model, cfg.projector_backend, det_grid=det_grid, context="cgls"
+    model, backend = resolve_geometry_projector(
+        geometry, cfg.projector_model, cfg.projector_backend, det_grid=det_grid, context="cgls"
     )
+    if isinstance(model, ConeModel) and cfg.joseph_interpolation != "linear":
+        raise ValueError("cgls: cone-beam geometry supports joseph_interpolation='linear' only")
     _ = validate_grid(grid, "cgls grid")
     n, _, _ = validate_projection_stack(projections, detector, geometry=geometry, context="cgls")
     validate_detector_grid(det_grid, detector, context="cgls")

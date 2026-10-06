@@ -1,14 +1,15 @@
 # TomoJAX
 
-Reconstruct parallel-beam tomography and laminography data with JAX. TomoJAX
+Reconstruct parallel-beam tomography, laminography and lab cone-beam CT with JAX. TomoJAX
 provides differentiable projectors, fast FBP and iterative reconstruction,
 joint volume-and-pose alignment, and a CLI for taking NeXus/HDF5 or TIFF data
 through correction, reconstruction, and slice export.
 
 TomoJAX is an early research library. Its strongest fit is scientists who need
-control over geometry and differentiation in a Python workflow. Built-in
-geometries use **parallel rays**; cone-beam and fan-beam CT are not implemented.
-Alignment needs scan-specific validation. See the
+control over geometry and differentiation in a Python workflow. Synchrotron
+geometries use parallel rays; lab scans use a point source and flat detector
+(`ConeGeometry`), reconstructed with FDK or the iterative solvers. Alignment
+needs scan-specific validation. See the
 [support matrix](docs/support-matrix.md) and [known limitations](docs/known-limitations.md)
 before choosing it for an experiment.
 

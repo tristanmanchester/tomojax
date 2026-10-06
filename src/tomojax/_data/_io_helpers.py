@@ -68,8 +68,10 @@ def _normalize_geometry_type(geometry_type: str | None) -> str:
         return gtype
     if gtype in {"lamino", "laminography"}:
         return "lamino"
+    if gtype in {"cone", "cone_beam"}:
+        return "cone"
     raise ValueError(
-        f"Unsupported geometry_type {geometry_type!r}; expected 'parallel' or 'lamino'"
+        f"Unsupported geometry_type {geometry_type!r}; expected 'parallel', 'lamino' or 'cone'"
     )
 
 

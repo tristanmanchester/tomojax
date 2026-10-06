@@ -67,6 +67,28 @@ best relative L2 error of 0.076 in 1.13 s warm. TIGRE's FISTA reaches 0.101 in
 Unregularised CGLS is best at 0.138 (10 iterations). TIGRE's timings include
 its host transfers. This is one phantom and noise level, not a general ranking.
 
+## Cone-beam projection and FDK
+
+[`bench/compare_cone.py`](../bench/compare_cone.py) projects five voxelised
+ellipsoids (256³, 2×2×2 sub-samples) on a circular 360-view scan with a
+384² detector at 1.5× magnification, and compares forward projections with
+exact analytic line integrals and FDK volumes with the phantom. Best of three
+warm calls on the laptop GPU; ASTRA and TIGRE take host arrays
+([result](../bench/reference/cone-256-rtx4070-laptop.json.gz)):
+
+| Operation | TomoJAX | ASTRA 2.5 | TIGRE |
+|---|---:|---:|---:|
+| Forward projection | 0.130 s (error 0.0060) | 0.170 s (0.0060) | 0.476 s interpolated (0.0062), 1.24 s Siddon (0.0068) |
+| Backprojection | 0.239 s, exact transpose | 0.074 s, approximate transpose | 0.105 s, "matched" |
+| FDK | 0.256 s (error 0.0581) | 0.287 s (0.0581) | 0.512 s (0.0581) |
+
+TomoJAX's backprojection is the exact transpose of its forward projector,
+which the iterative solvers and gradients rely on; ASTRA's voxel-driven
+backprojector is cheaper but only approximately its transpose. A CGLS
+iteration (one of each) therefore costs about 0.37 s against ASTRA's 0.24 s.
+Views with perturbed poses (alignment) use the general kernels, which take
+about 0.25 s forward and 0.36 s transpose at this size.
+
 ## Scans larger than device memory
 
 `fbp_host` reconstructed a 1024³ laminography scan (30° tilt, 1024 views of

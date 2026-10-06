@@ -414,6 +414,7 @@ def _merge_geometry_metadata_dict(
         "tilt_about",
         "axis_unit_lab",
         "detector_roll_deg",
+        "cone_beam",
     ):
         value = geometry_metadata.get(key)
         if value is not None:
