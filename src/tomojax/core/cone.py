@@ -6,9 +6,11 @@ here the in-plane coordinates follow the ray from the source to its pixel, so
 magnification changes from plane to plane. Line integrals are in physical
 units.
 
-Per-view geometry is a 25-value coefficient row in voxel-index units of the
-object frame (source, detector origin and pixel steps, plane axis, and the
-detector-plane projection used to bound voxel footprints). Rows come from
+Each ray is sampled along its own dominant axis, so a projection changes
+continuously as a pose turns a ray through 45 degrees. Per-view geometry is a
+25-value coefficient row in voxel-index units of the object frame (source,
+detector origin and pixel steps, a separable-view flag, and the detector-plane
+projection used to bound voxel footprints). Rows come from
 world_from_object poses and a :class:`~tomojax.core.geometry.cone.ConeBeam`,
 in JAX, so they are differentiable with respect to the poses.
 
@@ -73,8 +75,15 @@ def cone_coefficients(
     D0 = to_object(corner)
     DU = direction(float(detector.du) * u_dir)
     DV = direction(float(detector.dv) * v_dir)
-    central = to_object(centre) - S
-    axis = jax.lax.stop_gradient(jnp.argmax(jnp.abs(central), axis=1).astype(jnp.float32))
+    # Views of an unperturbed turntable (detector v parallel to z, no ray steeper
+    # than 45 degrees in z) let the CUDA kernels separate columns from z.
+    u = jnp.arange(detector.nu, dtype=jnp.float32)
+    row0 = D0[:, None, :] + u[None, :, None] * DU[:, None, :] - S[:, None, :]
+    rows = jnp.stack([row0, row0 + (detector.nv - 1) * DV[:, None, :]], axis=1)
+    lateral = jnp.min(jnp.maximum(jnp.abs(rows[..., 0]), jnp.abs(rows[..., 1])), axis=(1, 2))
+    steep = jnp.max(jnp.abs(rows[..., 2]), axis=(1, 2))
+    flag = (DV[:, 0] == 0) & (DV[:, 1] == 0) & (DV[:, 2] > 0) & (steep < lateral)
+    axis = jax.lax.stop_gradient(flag.astype(jnp.float32))
     n = jnp.cross(DU, DV)
     h = jnp.sum(n * (D0 - S), axis=1)
     dual_u = jnp.cross(DV, n)
@@ -91,8 +100,9 @@ def cone_coefficients(
 # ----------------------------------------------------------------------------- JAX
 
 
-def _plane_frame(row: jax.Array, grid: Grid) -> dict[str, jax.Array]:
-    a = row[12].astype(jnp.int32)
+def _ray_frame(ray: jax.Array, grid: Grid) -> dict[str, jax.Array]:
+    """Per-ray plane axis a (largest index-space component) and in-plane axes b, c."""
+    a = jnp.argmax(jnp.abs(ray), axis=-1).astype(jnp.int32)
     b = jnp.where(a == 0, 1, 0)
     c = jnp.where(a == 2, 1, 2)
     sizes = jnp.asarray([grid.nx, grid.ny, grid.nz], jnp.int32)
@@ -112,22 +122,26 @@ def _rays(row: jax.Array, detector: Detector) -> jax.Array:
     return pixel - row[0:3]
 
 
-def _path_weight(ray: jax.Array, ra: jax.Array, grid: Grid) -> jax.Array:
+def _component(x: jax.Array, axis: jax.Array) -> jax.Array:
+    return jnp.take_along_axis(x, axis[..., None], axis=-1)[..., 0]
+
+
+def _path_weight(ray: jax.Array, frame: dict[str, jax.Array], grid: Grid) -> jax.Array:
     spacing = jnp.asarray([grid.vx, grid.vy, grid.vz], jnp.float32)
-    return jnp.linalg.norm(ray * spacing, axis=-1) / jnp.abs(ra)
+    ra = _component(ray, frame["a"])
+    return jnp.linalg.norm(ray * spacing, axis=-1) / jnp.maximum(jnp.abs(ra), 1e-12)
 
 
 def _plane_samples(
     row: jax.Array, frame: dict[str, jax.Array], ray: jax.Array, k: jax.Array
-) -> tuple[list[jax.Array], list[jax.Array], jax.Array]:
-    """Flat indices and weights of the four bilinear taps of every ray on plane k."""
-    take = lambda x, i: jnp.take(x, i, axis=-1)  # noqa: E731
-    S = row[0:3]
-    ra, rb, rc = take(ray, frame["a"]), take(ray, frame["b"]), take(ray, frame["c"])
+) -> tuple[list[jax.Array], list[jax.Array]]:
+    """Flat indices and weights of the four bilinear taps of every ray on its plane k."""
+    S = jnp.broadcast_to(row[0:3], ray.shape)
+    ra = _component(ray, frame["a"])
     ra = jnp.where(jnp.abs(ra) < 1e-12, 1e-12, ra)
-    t = (k - take(S, frame["a"])) / ra
-    fb = take(S, frame["b"]) + t * rb
-    fc = take(S, frame["c"]) + t * rc
+    t = (k - _component(S, frame["a"])) / ra
+    fb = _component(S, frame["b"]) + t * _component(ray, frame["b"])
+    fc = _component(S, frame["c"]) + t * _component(ray, frame["c"])
     fl_b, fl_c = jnp.floor(fb), jnp.floor(fc)
     indices, weights = [], []
     for db in (0.0, 1.0):
@@ -142,19 +156,19 @@ def _plane_samples(
             index = k.astype(jnp.int32) * frame["sa"] + jb_i * frame["sb"] + jc_i * frame["sc"]
             indices.append(jnp.where(valid, index, 0))
             weights.append(jnp.where(valid, w, 0.0))
-    return indices, weights, ra
+    return indices, weights
 
 
 def _forward_view_jax(
     volume: jax.Array, row: jax.Array, grid: Grid, detector: Detector
 ) -> jax.Array:
-    frame = _plane_frame(row, grid)
     ray = _rays(row, detector)
+    frame = _ray_frame(jax.lax.stop_gradient(ray), grid)
     flat = volume.reshape(-1)
     planes = max(grid.nx, grid.ny, grid.nz)
 
     def step(total: jax.Array, k: jax.Array) -> tuple[jax.Array, None]:
-        indices, weights, _ = _plane_samples(row, frame, ray, k)
+        indices, weights = _plane_samples(row, frame, ray, k)
         for index, weight in zip(indices, weights, strict=True):
             total = total + flat[index] * weight
         return total, None
@@ -164,8 +178,7 @@ def _forward_view_jax(
         jnp.zeros(ray.shape[:-1], jnp.float32),
         jnp.arange(planes, dtype=jnp.float32),
     )
-    ra = jnp.take(ray, frame["a"], axis=-1)
-    return total * _path_weight(ray, jnp.where(jnp.abs(ra) < 1e-12, 1e-12, ra), grid)
+    return total * _path_weight(ray, frame, grid)
 
 
 def _forward_jax(volume: jax.Array, coeff: jax.Array, grid: Grid, detector: Detector) -> jax.Array:
@@ -176,15 +189,13 @@ def _adjoint_jax(
     images: jax.Array, coeff: jax.Array, grid: Grid, detector: Detector, accumulate: jax.Array
 ) -> jax.Array:
     """Explicit transpose of :func:`_forward_jax`: scatter each plane's taps."""
-    frames = jax.vmap(lambda row: _plane_frame(row, grid))(coeff)
     rays = jax.vmap(lambda row: _rays(row, detector))(coeff)
-    ra = jax.vmap(lambda ray, a: jnp.take(ray, a, axis=-1))(rays, frames["a"])
-    ra = jnp.where(jnp.abs(ra) < 1e-12, 1e-12, ra)
-    values = images * jax.vmap(lambda r, x: _path_weight(r, x, grid))(rays, ra)
+    frames = _ray_frame(rays, grid)
+    values = images * _path_weight(rays, frames, grid)
     flat = accumulate.reshape(-1)
 
     def step(total: jax.Array, k: jax.Array) -> tuple[jax.Array, None]:
-        indices, weights, _ = jax.vmap(lambda row, frame, ray: _plane_samples(row, frame, ray, k))(
+        indices, weights = jax.vmap(lambda row, frame, ray: _plane_samples(row, frame, ray, k))(
             coeff, frames, rays
         )
         for index, weight in zip(indices, weights, strict=True):
@@ -209,30 +220,35 @@ _SOURCE = r"""
 #define RUN 8
 #define SEL(i, x0, x1, x2) ((i) == 0 ? (x0) : ((i) == 1 ? (x1) : (x2)))
 __device__ __forceinline__ float trif(float f, float j) { return fmaxf(1.f - fabsf(f - j), 0.f); }
-__device__ __forceinline__ bool separable(const float* c) {
-    int a = (int)c[12];
-    return a != 2 && c[9 + a] == 0.f && c[9 + (1 - a)] == 0.f && c[11] > 0.f;
+__device__ __forceinline__ bool separable(const float* c) { return c[12] > 0.5f; }
+// The ray's plane axis: its largest index-space component, ties to the lower axis.
+__device__ __forceinline__ int ray_axis(float r0, float r1, float r2) {
+    int a = 0; float m = fabsf(r0);
+    if (fabsf(r1) > m) { a = 1; m = fabsf(r1); }
+    if (fabsf(r2) > m) a = 2;
+    return a;
 }
-__device__ __forceinline__ float path_w(const float* c, int a, float fu, float fv,
+__device__ __forceinline__ void ray_of(const float* c, float fu, float fv,
+                                       float& r0, float& r1, float& r2) {
+    r0 = (c[3] + fu * c[6] + fv * c[9]) - c[0];
+    r1 = (c[4] + fu * c[7] + fv * c[10]) - c[1];
+    r2 = (c[5] + fu * c[8] + fv * c[11]) - c[2];
+}
+__device__ __forceinline__ float path_w(float r0, float r1, float r2, float ra,
                                         float sx, float sy, float sz) {
-    float r0 = (c[3] + fu * c[6] + fv * c[9]) - c[0];
-    float r1 = (c[4] + fu * c[7] + fv * c[10]) - c[1];
-    float r2 = (c[5] + fu * c[8] + fv * c[11]) - c[2];
     float px = r0 * sx, py = r1 * sy, pz = r2 * sz;
-    return sqrtf(px * px + py * py + pz * pz) / fabsf(SEL(a, r0, r1, r2));
+    return sqrtf(px * px + py * py + pz * pz) / fabsf(ra);
 }
 
 // Per-ray Joseph sum for one pixel, any view.
 __device__ float ray_sum(const float* __restrict__ vol, const float* c, float fu, float fv,
                          int nx, int ny, int nz)
 {
-    int a = (int)c[12], b = a == 0 ? 1 : 0, cc = a == 2 ? 1 : 2;
+    float r0, r1, r2; ray_of(c, fu, fv, r0, r1, r2);
+    int a = ray_axis(r0, r1, r2), b = a == 0 ? 1 : 0, cc = a == 2 ? 1 : 2;
     int na = SEL(a, nx, ny, nz), nb = SEL(b, nx, ny, nz), nc = SEL(cc, nx, ny, nz);
     long s0 = (long)ny * nz, s1 = nz;
     long sa = SEL(a, s0, s1, 1L), sb = SEL(b, s0, s1, 1L), sc = SEL(cc, s0, s1, 1L);
-    float r0 = (c[3] + fu * c[6] + fv * c[9]) - c[0];
-    float r1 = (c[4] + fu * c[7] + fv * c[10]) - c[1];
-    float r2 = (c[5] + fu * c[8] + fv * c[11]) - c[2];
     float ra = SEL(a, r0, r1, r2), rb = SEL(b, r0, r1, r2), rc = SEL(cc, r0, r1, r2);
     float Sa = c[a], Sb = c[b], Sc = c[cc];
     float inv = 1.0f / ra;
@@ -265,7 +281,8 @@ __device__ float ray_sum(const float* __restrict__ vol, const float* c, float fu
     return sum;
 }
 
-// grid (u tiles, v tiles, views); out (view, u, v).
+// grid (u tiles, v tiles, views); out (view, u, v). Separable views share one plane
+// axis per detector column (a in {x, y}), so a column's rays share their in-plane row.
 extern "C" __global__ void cone_forward(
     const float* __restrict__ coeff, const float* __restrict__ vol, float* __restrict__ out,
     int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz)
@@ -275,7 +292,6 @@ extern "C" __global__ void cone_forward(
     __shared__ int s_b0[TU], clo[TU], clen[TU];
     int view = blockIdx.z;
     const float* c = coeff + (long)view * NC;
-    int a = (int)c[12];
     int u0 = blockIdx.x * TU, v0 = blockIdx.y * TV, tid = threadIdx.x, v = v0 + tid;
     float fv = (float)v;
     float acc[TU];
@@ -288,41 +304,49 @@ extern "C" __global__ void cone_forward(
                 if (u0 + i < nu) acc[i] = ray_sum(vol, c, (float)(u0 + i), fv, nx, ny, nz);
         }
     } else {
-        int b = 1 - a;
-        int na = a == 0 ? nx : ny, nb = a == 0 ? ny : nx;
-        long sa = a == 0 ? (long)ny * nz : nz, sb = a == 0 ? nz : (long)ny * nz;
-        float Sa = c[a], Sb = c[b], Sc = c[2], DVc = c[11];
-        float inv[TU], rcv[TU];
-        float rb_t = 0.f, inv_t = 0.f, rc0_t = 0.f;
+        float Sc = c[2], DVc = c[11];
+        int ax[TU];
+        float inv[TU], rcv[TU], Sa_[TU];
+        int ax_t = 0;
+        float rb_t = 0.f, inv_t = 0.f, rc0_t = 0.f, Sa_t = 0.f, Sb_t = 0.f;
         #pragma unroll
         for (int i = 0; i < TU; ++i) {
             float fu = (float)min(u0 + i, nu - 1);
-            float ra = (c[3 + a] + fu * c[6 + a]) - c[a];
+            float r0 = (c[3] + fu * c[6]) - c[0], r1 = (c[4] + fu * c[7]) - c[1];
+            int a = fabsf(r1) > fabsf(r0) ? 1 : 0;
+            ax[i] = a;
+            float ra = a == 0 ? r0 : r1;
             inv[i] = 1.0f / ra;
+            Sa_[i] = c[a];
             rcv[i] = ((c[5] + fu * c[8]) + fv * DVc) - Sc;
             if (i == tid) {
-                rb_t = (c[3 + b] + fu * c[6 + b]) - c[b];
-                inv_t = inv[i];
+                ax_t = a; inv_t = inv[i]; Sa_t = c[a]; Sb_t = c[1 - a];
+                rb_t = a == 0 ? r1 : r0;
                 rc0_t = c[5] + fu * c[8];
             }
         }
         int vlast = min(v0 + TV, nv) - 1;
-        for (int k = 0; k < na; ++k) {
-            float K = (float)k - Sa;
+        long sxl = (long)ny * nz;
+        int kmax = max(nx, ny);
+        for (int k = 0; k < kmax; ++k) {
             __syncthreads();
             if (tid < TU) {
-                float t = K * inv_t;
-                float fb = Sb + t * rb_t, fl = floorf(fb);
+                int na = ax_t == 0 ? nx : ny;
+                float t = ((float)k - Sa_t) * inv_t;
+                float fb = Sb_t + t * rb_t, fl = floorf(fb);
                 s_b0[tid] = (int)fl; s_w0[tid] = trif(fb, fl); s_w1[tid] = trif(fb, fl + 1.f);
                 float f1 = Sc + t * ((rc0_t + (float)v0 * DVc) - Sc);
                 float f2 = Sc + t * ((rc0_t + (float)vlast * DVc) - Sc);
                 int lo = (int)floorf(fminf(f1, f2));
-                clo[tid] = lo; clen[tid] = (int)floorf(fmaxf(f1, f2)) + 2 - lo;
+                clo[tid] = lo;
+                clen[tid] = k < na ? (int)floorf(fmaxf(f1, f2)) + 2 - lo : 0;
             }
             __syncthreads();
-            const float* plane = vol + (long)k * sa;
             {
                 int i = tid / (TV / TU), j0 = tid % (TV / TU);
+                int a = ax[i], nb = a == 0 ? ny : nx;
+                long sa = a == 0 ? sxl : (long)nz, sb = a == 0 ? (long)nz : sxl;
+                const float* plane = vol + (long)k * sa;
                 int len = min(clen[i], QLEN), lo = clo[i], b0 = s_b0[i];
                 float w0 = (b0 >= 0 && b0 < nb) ? s_w0[i] : 0.f;
                 float w1 = (b0 + 1 >= 0 && b0 + 1 < nb) ? s_w1[i] : 0.f;
@@ -338,7 +362,8 @@ extern "C" __global__ void cone_forward(
             if (v < nv) {
                 #pragma unroll
                 for (int i = 0; i < TU; ++i) {
-                    float t = K * inv[i];
+                    if (clen[i] == 0) continue;
+                    float t = ((float)k - Sa_[i]) * inv[i];
                     float fc = Sc + t * rcv[i], fl = floorf(fc);
                     int j = (int)fl - clo[i];
                     float w0 = trif(fc, fl), w1 = trif(fc, fl + 1.f);
@@ -346,6 +371,9 @@ extern "C" __global__ void cone_forward(
                         if (j >= 0 && j + 1 < clen[i]) acc[i] += Q[i][j] * w0 + Q[i][j + 1] * w1;
                     } else {
                         // Column range too long for Q: read the two rows directly.
+                        int a = ax[i], nb = a == 0 ? ny : nx;
+                        long sa = a == 0 ? sxl : (long)nz, sb = a == 0 ? (long)nz : sxl;
+                        const float* plane = vol + (long)k * sa;
                         int b0 = s_b0[i], c0 = (int)fl;
                         float wb0 = (b0 >= 0 && b0 < nb) ? s_w0[i] : 0.f;
                         float wb1 = (b0 + 1 >= 0 && b0 + 1 < nb) ? s_w1[i] : 0.f;
@@ -365,8 +393,9 @@ extern "C" __global__ void cone_forward(
         for (int i = 0; i < TU; ++i) {
             int u = u0 + i;
             if (u < nu) {
-                float w = path_w(c, a, (float)u, fv, sx, sy, sz);
-                out[((long)view * nu + u) * nv + v] = acc[i] * w;
+                float r0, r1, r2; ray_of(c, (float)u, fv, r0, r1, r2);
+                float ra = SEL(ray_axis(r0, r1, r2), r0, r1, r2);
+                out[((long)view * nu + u) * nv + v] = acc[i] * path_w(r0, r1, r2, ra, sx, sy, sz);
             }
         }
     }
@@ -380,17 +409,21 @@ extern "C" __global__ void weight_images(
     if (id >= (long)nviews * nu * nv) return;
     int v = id % nv; int u = (id / nv) % nu; int view = id / ((long)nu * nv);
     const float* c = coeff + (long)view * NC;
-    out[id] = img[id] * path_w(c, (int)c[12], (float)u, (float)v, sx, sy, sz);
+    float r0, r1, r2; ray_of(c, (float)u, (float)v, r0, r1, r2);
+    float ra = SEL(ray_axis(r0, r1, r2), r0, r1, r2);
+    out[id] = img[id] * path_w(r0, r1, r2, ra, sx, sy, sz);
 }
 
-// Separable views of plane axis a: grid (z tiles, row tiles, planes). img is path-weighted.
+// Separable views, the columns whose plane axis is a: grid (z tiles, row tiles, planes).
+// img is path-weighted.
 extern "C" __global__ void sep_adjoint(
     const float* __restrict__ coeff, int nviews, int a,
     const float* __restrict__ img, float* __restrict__ vol,
     int nx, int ny, int nz, int nu, int nv)
 {
     __shared__ float R[ULEN][TC + 1];
-    __shared__ float s_fb[ULEN], s_t[ULEN], s_rc0[ULEN];
+    __shared__ float s_fb[ULEN], s_t[ULEN], s_rc0[ULEN], s_f0[ULEN], s_idf[ULEN];
+    __shared__ int s_taps[ULEN];
     __shared__ float cf[NC];
     __shared__ int skip;
     int b = 1 - a;
@@ -406,7 +439,7 @@ extern "C" __global__ void sep_adjoint(
         __syncthreads();
         if (tid < NC) cf[tid] = coeff[(long)w * NC + tid];
         __syncthreads();
-        if (tid == 0) skip = !(separable(cf) && (int)cf[12] == a);
+        if (tid == 0) skip = !separable(cf);
         __syncthreads();
         if (skip) continue;
         const float* c = cf;
@@ -424,23 +457,32 @@ extern "C" __global__ void sep_adjoint(
             __syncthreads();
             for (int i = tid; i < ulen; i += blockDim.x) {
                 float fu = (float)(ulo + i);
-                float ra = (c[3 + a] + fu * c[6 + a]) - c[a];
-                float rb = (c[3 + b] + fu * c[6 + b]) - c[b];
+                float r0 = (c[3] + fu * c[6]) - c[0], r1 = (c[4] + fu * c[7]) - c[1];
+                int col_axis = fabsf(r1) > fabsf(r0) ? 1 : 0;
+                float ra = a == 0 ? r0 : r1, rb = a == 0 ? r1 : r0;
                 float t = K * (1.0f / ra);
-                s_t[i] = t; s_fb[i] = Sb + t * rb; s_rc0[i] = c[5] + fu * c[8];
+                float rc0 = c[5] + fu * c[8];
+                // Columns sampled along the other axis contribute nothing here.
+                s_t[i] = t; s_fb[i] = col_axis == a ? Sb + t * rb : -1e30f; s_rc0[i] = rc0;
+                // z cells rise with v at 1/idf per row: each cell needs at most taps rows.
+                float idf = 1.f / (t * DVc);
+                s_f0[i] = Sc + t * (rc0 - Sc); s_idf[i] = idf;
+                s_taps[i] = col_axis == a ? (int)floorf(2.f * fabsf(idf)) + 2 : 0;
             }
             __syncthreads();
             for (int i = tid / TC, j = tid % TC; i < ulen; i += blockDim.x / TC) {
                 float jcf = (float)(c0 + j);
                 float t = s_t[i], rc0 = s_rc0[i];
-                float f0 = Sc + t * (rc0 - Sc), idf = 1.f / (t * DVc);
-                float x1 = (jcf - 1.f - f0) * idf, x2 = (jcf + 1.f - f0) * idf;
-                int va = max(0, (int)floorf(fminf(x1, x2)));
-                int vb = min(nv - 1, (int)ceilf(fmaxf(x1, x2)));
+                int va = (int)floorf((jcf - 1.f - s_f0[i]) * s_idf[i]);
+                int taps = s_taps[i];   // the same for the whole warp: no divergence
                 const float* col = image + (long)(ulo + i) * nv;
                 float s = 0.f;
-                for (int vv = va; vv <= vb; ++vv)
+                #pragma unroll 4
+                for (int q = 0; q < taps; ++q) {
+                    int vv = va + q;
+                    if (vv < 0 || vv >= nv) continue;
                     s += __ldg(col + vv) * trif(Sc + t * ((rc0 + (float)vv * DVc) - Sc), jcf);
+                }
                 R[i][j] = s;
             }
             __syncthreads();
@@ -459,7 +501,8 @@ extern "C" __global__ void sep_adjoint(
             }
         }
     }
-    if (my_b < nb) {
+    int na = a == 0 ? nx : ny;
+    if (my_b < nb && k < na) {
         int ix = a == 0 ? k : my_b, iy = a == 0 ? my_b : k;
         long base = ((long)ix * ny + iy) * nz + c0 + my_c;
         #pragma unroll
@@ -467,7 +510,8 @@ extern "C" __global__ void sep_adjoint(
     }
 }
 
-// Non-separable views: one thread per RUN z voxels. img is path-weighted.
+// Non-separable views: one thread per RUN z voxels, rays sampled on their own axis.
+// img is path-weighted.
 extern "C" __global__ void general_adjoint(
     const float* __restrict__ coeff, int nviews, const float* __restrict__ img,
     float* __restrict__ vol, int nx, int ny, int nz, int nu, int nv)
@@ -479,6 +523,7 @@ extern "C" __global__ void general_adjoint(
     int ix = valid ? run / ((long)ny * runs_z) : 0;
     int iy = valid ? (run / runs_z) % ny : 0;
     int iz0 = valid ? RUN * (int)(run % runs_z) : 0;
+    float fx = (float)ix, fy = (float)iy;
     float acc[RUN];
     #pragma unroll
     for (int j = 0; j < RUN; ++j) acc[j] = 0.f;
@@ -492,13 +537,10 @@ extern "C" __global__ void general_adjoint(
         for (int w = 0; w < count; ++w) {
             const float* c = cf + w * NC;
             if (separable(c)) continue;
-            int a = (int)c[12], b = a == 0 ? 1 : 0, cc = a == 2 ? 1 : 2;
-            float Sa = c[a], Sb = c[b], Sc = c[cc];
-            float lx = ix - 1.f, hx = ix + 1.f, ly = iy - 1.f, hy = iy + 1.f;
+            // Footprint of every ray that can reach these voxels, on any plane axis:
+            // the box spanning the voxels +-1 in x, y and z.
+            float lx = fx - 1.f, hx = fx + 1.f, ly = fy - 1.f, hy = fy + 1.f;
             float lz = iz0 - 1.f, hz = iz0 + RUN;
-            if (a == 0) { lx = hx = ix; }
-            else if (a == 1) { ly = hy = iy; }
-            else { lz = iz0; hz = iz0 + RUN - 1; }
             float umin = 1e30f, umax = -1e30f, vmin = 1e30f, vmax = -1e30f;
             #pragma unroll
             for (int q = 0; q < 8; ++q) {
@@ -513,32 +555,34 @@ extern "C" __global__ void general_adjoint(
             int u0 = max((int)floorf(umin), 0), u1 = min((int)ceilf(umax), nu - 1);
             int v0 = max((int)floorf(vmin), 0), v1 = min((int)ceilf(vmax), nv - 1);
             const float* image = img + (long)(first + w) * nu * nv;
-            float k = (float)(a == 0 ? ix : iy);
-            float jb = (float)(a == 0 ? iy : ix);
             for (int u = u0; u <= u1; ++u) {
                 for (int v = v0; v <= v1; ++v) {
-                    float fu = (float)u, fv = (float)v;
-                    float r0 = (c[3] + fu * c[6] + fv * c[9]) - c[0];
-                    float r1 = (c[4] + fu * c[7] + fv * c[10]) - c[1];
-                    float r2 = (c[5] + fu * c[8] + fv * c[11]) - c[2];
-                    float ra = SEL(a, r0, r1, r2), rb = SEL(b, r0, r1, r2);
-                    float rc = SEL(cc, r0, r1, r2);
-                    float inv = 1.0f / ra;
+                    float r0, r1, r2; ray_of(c, (float)u, (float)v, r0, r1, r2);
+                    int a = ray_axis(r0, r1, r2);
                     float value = image[(long)u * nv + v];
-                    if (a != 2) {
-                        float t = (k - Sa) * inv;
-                        float wb = trif(Sb + t * rb, jb);
+                    if (a == 0) {
+                        float t = (fx - c[0]) * (1.0f / r0);
+                        float wb = trif(c[1] + t * r1, fy);
                         if (wb == 0.f) continue;
-                        float fc = Sc + t * rc;
+                        float fc = c[2] + t * r2;
+                        #pragma unroll
+                        for (int j = 0; j < RUN; ++j)
+                            acc[j] += value * (wb * trif(fc, (float)(iz0 + j)));
+                    } else if (a == 1) {
+                        float t = (fy - c[1]) * (1.0f / r1);
+                        float wb = trif(c[0] + t * r0, fx);
+                        if (wb == 0.f) continue;
+                        float fc = c[2] + t * r2;
                         #pragma unroll
                         for (int j = 0; j < RUN; ++j)
                             acc[j] += value * (wb * trif(fc, (float)(iz0 + j)));
                     } else {
+                        float inv = 1.0f / r2;
                         #pragma unroll
                         for (int j = 0; j < RUN; ++j) {
-                            float t = ((float)(iz0 + j) - Sa) * inv;
-                            float wb = trif(Sb + t * rb, (float)ix);
-                            acc[j] += value * (wb * trif(Sc + t * rc, (float)iy));
+                            float t = ((float)(iz0 + j) - c[2]) * inv;
+                            float wb = trif(c[0] + t * r0, fx);
+                            acc[j] += value * (wb * trif(c[1] + t * r1, fy));
                         }
                     }
                 }

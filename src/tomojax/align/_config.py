@@ -10,6 +10,7 @@ from tomojax.core.projector import RAY_INTEGRATORS
 from ._geometry.parametrizations import PoseTranslationFrame
 from ._model.diagnostics import GaugePolicy
 from ._model.dofs import (
+    DOF_NAMES,
     ScopedAlignmentDofs,
     bounds_vectors,
     normalize_alignment_dofs,
@@ -64,7 +65,7 @@ type PoseModelInput = Literal[
 ]
 
 
-def _active_dof_mask_for_cfg(cfg: AlignConfig) -> tuple[bool, bool, bool, bool, bool]:
+def _active_dof_mask_for_cfg(cfg: AlignConfig) -> tuple[bool, ...]:
     return _scoped_dofs_for_cfg(cfg).pose_mask
 
 
@@ -83,9 +84,7 @@ def _scoped_dofs_for_cfg(cfg: AlignConfig) -> ScopedAlignmentDofs:
     return ScopedAlignmentDofs(
         active_pose_dofs=resolved.active_pose_dofs,
         active_geometry_dofs=resolved.active_geometry_dofs,
-        frozen_pose_dofs=tuple(
-            name for name in cfg.freeze_dofs if name in {"alpha", "beta", "phi", "dx", "dz"}
-        ),
+        frozen_pose_dofs=tuple(name for name in cfg.freeze_dofs if name in set(DOF_NAMES)),
         frozen_geometry_dofs=tuple(
             name
             for name in cfg.freeze_dofs

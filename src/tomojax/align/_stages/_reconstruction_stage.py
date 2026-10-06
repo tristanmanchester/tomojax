@@ -22,6 +22,7 @@ from tomojax.align._quality_policy import (
 from tomojax.align._results import record_reconstruction_info as _record_reconstruction_info
 from tomojax.backends import estimate_views_per_batch_info
 from tomojax.core.backend_policy import normalize_projector_backend
+from tomojax.core.geometry.cone import beam_of
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.operator_norm import estimate_normal_norm
 from tomojax.core.pallas_resolver import resolve_pallas_callable
@@ -558,9 +559,11 @@ def _run_public_fista_reconstruction(
             # An initial override below the regulariser's bound cannot provide
             # a usable data bound. Let FISTA estimate it from the operator.
             data_lipschitz = None
+    cone = beam_of(step.recon_geometry) is not None
     fista_cfg = FistaConfig(
-        projector_model="ray",
-        projector_backend="jax",
+        # Cone beams use their Joseph operators, on CUDA where available.
+        projector_model="auto" if cone else "ray",
+        projector_backend="auto" if cone else "jax",
         iters=scaled_reconstruction_iters(cfg.recon_iters, quality_policy),
         lambda_tv=cfg.lambda_tv,
         regulariser=cfg.regulariser,
@@ -584,7 +587,7 @@ def _run_public_fista_reconstruction(
         step.projections,
         init_x=step.x,
         config=fista_cfg,
-        det_grid=step.det_grid,
+        det_grid=None if cone else step.det_grid,
     )
 
 
@@ -770,7 +773,7 @@ def _run_spdhg_reconstruction(
         step.projections,
         init_x=step.x,
         config=spdhg_cfg,
-        det_grid=step.det_grid,
+        det_grid=None if beam_of(step.recon_geometry) is not None else step.det_grid,
     )
 
 
@@ -939,7 +942,16 @@ def _run_reconstruction_step(
         )
 
     if recon_algo == "fista":
-        if str(cfg.regulariser) == "huber_tv":
+        if beam_of(step.recon_geometry) is not None:
+            # Cone beams: the public solver, which models diverging rays.
+            x_out, info_rec = _run_public_fista_reconstruction(
+                step,
+                views_per_batch=vpb0,
+                projector_unroll=int(cfg.projector_unroll),
+                gather_dtype=cfg.gather_dtype,
+                grad_mode="auto",
+            )
+        elif str(cfg.regulariser) == "huber_tv":
             x_out, info_rec = _run_huber_fista_core_reconstruction(step)
             if bool(info_rec.get("recon_public_fista_fallback", False)):
                 recon_retry = True

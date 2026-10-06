@@ -280,9 +280,8 @@ def _write_alignment_metadata_section(
             chunks=True,
             compression=compression,
         )
-        dset.attrs["columns"] = np.array(
-            ["alpha", "beta", "phi", "dx", "dz"], dtype=h5py.string_dtype()
-        )
+        names = ["alpha", "beta", "phi", "dx", "dz", "dy"][: int(np.shape(meta.align_params)[1])]
+        dset.attrs["columns"] = np.array(names, dtype=h5py.string_dtype())
     if meta.align_gauge is not None:
         align_grp.attrs["gauge_fix_json"] = json.dumps(meta.align_gauge)
     if meta.angle_offset_deg is not None:

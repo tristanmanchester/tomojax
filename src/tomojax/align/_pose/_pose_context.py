@@ -20,6 +20,7 @@ from tomojax.align._objectives.loss_adapters import LossAdapter
 from tomojax.align._observer import ObserverCallback
 from tomojax.align._results import AlignResumeState
 from tomojax.core.geometry.base import Detector, Geometry, Grid
+from tomojax.core.geometry.cone import ConeBeam
 from tomojax.geometry import cylindrical_mask_xy
 
 
@@ -49,7 +50,7 @@ class _AlignSetupState:
     x: jnp.ndarray
     params5: jnp.ndarray
     frozen_params5: jnp.ndarray
-    active_mask_tuple: tuple[bool, bool, bool, bool, bool]
+    active_mask_tuple: tuple[bool, ...]
     active_mask_bool: jnp.ndarray
     active_col_indices_np: np.ndarray
     active_names: tuple[str, ...]
@@ -62,7 +63,7 @@ class _AlignSetupState:
 
 @dataclass(frozen=True)
 class PoseConstraintContext:
-    active_mask_tuple: tuple[bool, bool, bool, bool, bool]
+    active_mask_tuple: tuple[bool, ...]
     active_mask_bool: jnp.ndarray
     frozen_params5: jnp.ndarray
     bounds_lower: jnp.ndarray
@@ -240,6 +241,7 @@ class AlignmentRuntimeContext:
     chunk_size: int
     num_chunks: int
     empty_loss_mask_chunk: jnp.ndarray
+    beam: ConeBeam | None = None
 
 
 @dataclass(frozen=True)
@@ -263,6 +265,7 @@ class _PoseObjectiveContext:
     loss_mask: jnp.ndarray | None
     has_loss_mask: bool
     empty_loss_mask_chunk: jnp.ndarray
+    beam: ConeBeam | None = None
 
 
 def _pose_objective_context(
@@ -295,4 +298,5 @@ def _pose_objective_context(
         loss_mask=runtime.loss_mask,
         has_loss_mask=runtime.has_loss_mask,
         empty_loss_mask_chunk=runtime.empty_loss_mask_chunk,
+        beam=runtime.beam,
     )

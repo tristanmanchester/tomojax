@@ -23,6 +23,7 @@ from tomojax.align.api import (
     build_alignment_checkpoint_metadata_from_input,
     load_alignment_checkpoint,
     normalize_schedule_resume_state,
+    pad_pose_params,
     save_alignment_checkpoint,
     validate_alignment_checkpoint,
 )
@@ -258,7 +259,7 @@ def resume_state_from_checkpoint(
         return AlignMultiresResumeState(
             pose_translation_frame=translation_frame,
             x=jax_float32_array(checkpoint.x),
-            params5=jax_float32_array(checkpoint.params5),
+            params5=jax_float32_array(pad_pose_params(checkpoint.params5)),
             motion_coeffs=(
                 None
                 if checkpoint.motion_coeffs is None
@@ -292,7 +293,7 @@ def resume_state_from_checkpoint(
     return AlignResumeState(
         pose_translation_frame=translation_frame,
         x=jax_float32_array(checkpoint.x),
-        params5=jax_float32_array(checkpoint.params5),
+        params5=jax_float32_array(pad_pose_params(checkpoint.params5)),
         motion_coeffs=(
             None
             if checkpoint.motion_coeffs is None

@@ -16,6 +16,14 @@
   360-view scan with a 384-squared detector, forward projection takes 0.13 s
   (ASTRA 0.17 s, TIGRE 0.48 s) and FDK 0.25 s (ASTRA 0.32 s, TIGRE 0.51 s) at
   the same accuracy.
+- Align cone-beam scans in six degrees of freedom: pose tables gain a sixth
+  column, `dy` along the beam, which changes cone-beam magnification and
+  stays zero for parallel beams. `tomojax align` on cone data estimates it
+  with the other five parameters, anchoring its mean (a common `dy` is the
+  volume's scale), and `tomojax recon --apply-saved-alignment` replays all six.
+  Five-column tables, sidecars and checkpoints from earlier versions load with
+  `dy = 0`. Cone rays are sampled along their own dominant axis, so
+  projections change continuously as a pose turns a ray through 45 degrees.
 - Estimate a detector-centre offset together with per-view motion:
   `tomojax align --mode cor_then_pose` now runs the pose solver and saves the
   constant part of the recovered detector-u shifts as the detector centre,

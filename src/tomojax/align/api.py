@@ -15,6 +15,7 @@ from tomojax.align._geometry.parametrizations import (
     PoseTranslationFrame,
     apply_pose_update,
     apply_pose_updates,
+    pad_pose_params,
     se3_from_5d,
 )
 from tomojax.align._model.dof_specs import DofSpec, dof_spec
@@ -162,6 +163,7 @@ __all__ = [
     "normalize_bounds",
     "normalize_geometry_dofs",
     "normalize_schedule_resume_state",
+    "pad_pose_params",
     "parse_loss_schedule",
     "parse_loss_spec",
     "profile_policy_from_config",

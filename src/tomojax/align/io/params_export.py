@@ -10,8 +10,10 @@ from typing import Any
 
 import numpy as np
 
+from tomojax.align._geometry.parametrizations import pad_pose_params
+
 ALIGNMENT_PARAMS_SCHEMA = "tomojax.alignment_params"
-PARAMETER_ORDER = ("alpha", "beta", "phi", "dx", "dz")
+PARAMETER_ORDER = ("alpha", "beta", "phi", "dx", "dz", "dy")
 CSV_FIELDNAMES = (
     "view_index",
     "alpha_rad",
@@ -21,6 +23,7 @@ CSV_FIELDNAMES = (
     "dz_world",
     "dx_px",
     "dz_px",
+    "dy_world",
 )
 PARAMETER_UNITS = {
     "alpha": "rad",
@@ -28,6 +31,7 @@ PARAMETER_UNITS = {
     "phi": "rad",
     "dx": "world",
     "dz": "world",
+    "dy": "world",
     "dx_px": "pixel",
     "dz_px": "pixel",
 }
@@ -37,10 +41,10 @@ type AlignmentParamRecord = dict[str, int | float]
 
 
 def _normalize_params5(params5: np.ndarray) -> np.ndarray:
-    arr = np.asarray(params5, dtype=np.float32)
-    if arr.ndim != 2 or arr.shape[1] != 5:
-        raise ValueError(f"params5 must have shape (n_views, 5), got {arr.shape}")
-    return arr
+    try:
+        return pad_pose_params(params5)
+    except ValueError as exc:
+        raise ValueError(f"params5 must have shape (n_views, 5 or 6): {exc}") from None
 
 
 def _validate_detector_spacing(*, du: float, dv: float) -> tuple[float, float]:
@@ -65,7 +69,7 @@ def alignment_param_records(
 
     records: list[AlignmentParamRecord] = []
     for view_index, row in enumerate(arr):
-        alpha, beta, phi, dx, dz = (float(v) for v in row)
+        alpha, beta, phi, dx, dz, dy = (float(v) for v in row)
         records.append(
             {
                 "view_index": int(view_index),
@@ -76,6 +80,7 @@ def alignment_param_records(
                 "dz_world": dz,
                 "dx_px": dx / du_f,
                 "dz_px": dz / dv_f,
+                "dy_world": dy,
             }
         )
     return records

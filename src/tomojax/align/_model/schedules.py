@@ -226,7 +226,7 @@ class ResolvedAlignmentSchedule:
         return tuple(name for name in GEOMETRY_DOF_NAMES if name in active)
 
     @property
-    def pose_mask(self) -> tuple[bool, bool, bool, bool, bool]:
+    def pose_mask(self) -> tuple[bool, ...]:
         """Return a 5-column mask for active pose DOFs."""
         active = set(self.active_pose_dofs)
         return tuple(name in active for name in DOF_NAMES)  # type: ignore[return-value]

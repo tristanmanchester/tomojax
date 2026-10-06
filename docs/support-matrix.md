@@ -15,6 +15,7 @@ experimental. See [installation](installation.md) and [measurement scope](measur
 | Cone-beam (lab CT) scans: FDK and iterative reconstruction | Supported | `tomojax ingest ./tiffs --geometry cone --source-to-axis ... --source-to-detector ... --angles angles.csv --out scan.nxs`, then `tomojax recon` (`--algo fbp` runs FDK) |
 | Labelled reconstruction slice extraction | Supported | `tomojax slices --data recon.nxs --out quicklooks` |
 | Per-projection 5-DOF pose alignment | Experimental | `tomojax align --data corrected.nxs --mode pose --out aligned.nxs` |
+| Cone-beam 6-DOF pose alignment (adds `dy` along the beam) | Experimental | `tomojax align --data cone_scan.nxs --mode pose --out aligned.nxs` |
 | Detector-centre/COR alignment | Experimental | `tomojax align --data corrected.nxs --mode cor --out aligned.nxs` |
 | Detector-centre offset with per-view motion | Experimental | `tomojax align --data corrected.nxs --mode cor_then_pose --out aligned.nxs` |
 | Expert mixed setup and pose alignment | Experimental; explicit gauge policy required | `tomojax align --data corrected.nxs --mode auto --gauge-policy anchor_mean --out aligned.nxs` |

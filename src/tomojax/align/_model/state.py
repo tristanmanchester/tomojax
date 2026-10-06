@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 
 from tomojax.align._geometry.parametrizations import PoseTranslationFrame
+from tomojax.align._model.dofs import POSE_WIDTH
 from tomojax.geometry import CalibrationState, CalibrationVariable, axis_unit_from_rotations
 
 
@@ -150,7 +151,7 @@ class PoseState:
     @classmethod
     def zeros(cls, n_views: int) -> PoseState:
         """Return a zero pose table for the requested number of views."""
-        return cls(jnp.zeros((int(n_views), 5), dtype=jnp.float32))
+        return cls(jnp.zeros((int(n_views), POSE_WIDTH), dtype=jnp.float32))
 
     def replace(self, **updates: object) -> PoseState:
         """Return a copy with selected pose fields replaced."""

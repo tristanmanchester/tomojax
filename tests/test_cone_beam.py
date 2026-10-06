@@ -249,3 +249,80 @@ def test_ingest_records_cone_beam_geometry(tmp_path: Path):
     assert geometry.beam == ConeBeam(50.0, 80.0, detector_roll_deg=0.5)
     with pytest.raises(SystemExit):
         main([*args, "--source-to-detector", "40"])
+
+
+def test_cone_projection_is_continuous_as_a_view_turns_through_45_degrees():
+    n = 16
+    grid = Grid(n, n, n, 1.0, 1.0, 1.0)
+    detector = Detector(26, 24, 1.0, 1.0)
+    beam = ConeBeam(48, 72)
+    x = jnp.asarray(_voxelise(grid, _ellipsoids(float(n)), supersample=2))
+
+    def project(deg: float) -> jax.Array:
+        pose = ConeGeometry(grid, detector, [deg], beam).poses()
+        coeff = cone_coefficients(jnp.asarray(pose, jnp.float32), grid, detector, beam)
+        return cone_project(x, coeff, grid, detector, backend="jax")[0]
+
+    step = 1e-2
+    across = float(jnp.linalg.norm(project(45 + step) - project(45 - step)))
+    elsewhere = float(jnp.linalg.norm(project(40 + step) - project(40 - step)))
+    assert across < 2 * elsewhere
+
+
+@pytest.mark.parametrize("dof", ["alpha", "beta", "phi", "dx", "dz", "dy"])
+def test_cone_pose_alignment_recovers_each_degree_of_freedom(dof):
+    from tomojax.align import AlignConfig, align
+    from tomojax.align.api import L2LossSpec, apply_pose_updates
+
+    n, views = 16, 12
+    grid = Grid(n, n, n, 1.0, 1.0, 1.0)
+    detector = Detector(26, 26, 1.0, 1.0)
+    angles = np.linspace(0, 360, views, endpoint=False)
+    geometry = ConeGeometry(grid, detector, angles, ConeBeam(48, 72))
+    volume = jnp.asarray(_voxelise(grid, _ellipsoids(float(n)), supersample=2))
+    k = ("alpha", "beta", "phi", "dx", "dz", "dy").index(dof)
+    truth = np.zeros((views, 6), np.float32)
+    rng = np.random.default_rng(k)
+    truth[:, k] = rng.uniform(-1, 1, views) * (np.deg2rad(0.3) if k < 3 else 0.6)
+    truth[:, k] -= truth[:, k].mean() if dof == "dy" else 0.0  # a common dy is the scale gauge
+    poses = apply_pose_updates(
+        jnp.asarray(geometry.poses(), jnp.float32), jnp.asarray(truth), translation_frame="detector"
+    )
+    data = cone_project(
+        volume, cone_coefficients(poses, grid, detector, geometry.beam), grid, detector
+    )
+    config = AlignConfig(
+        pose_translation_frame="detector",
+        gauge_fix="none",
+        optimise_dofs=(dof,),
+        outer_iters=4,
+        recon_iters=1,
+        recon_L=1e12,  # keeps the known volume fixed
+        lambda_tv=0,
+        loss=L2LossSpec(),
+        early_stop=False,
+        gather_dtype="fp32",
+        gn_jacobian="central",
+        ray_integrator="joseph",
+        projector_backend="jax",
+    )
+    _, params, _ = align(geometry, grid, detector, data, config=config, init_x=volume)
+    scale = np.rad2deg(1) if k < 3 else 1.0
+    np.testing.assert_allclose(np.asarray(params)[:, k] * scale, truth[:, k] * scale, atol=2e-3)
+
+
+def test_parallel_geometry_keeps_dy_inactive_and_cone_geometry_adds_it():
+    from tomojax.align import AlignConfig
+
+    # check-public-imports: allow-private
+    from tomojax.align._pose._pose_loop import _with_beam_translation
+    from tomojax.geometry import ParallelGeometry
+
+    grid, detector = Grid(4, 4, 4, 1.0, 1.0, 1.0), Detector(6, 6, 1.0, 1.0)
+    cone = ConeGeometry(grid, detector, [0.0, 90.0], ConeBeam(20, 30))
+    parallel = ParallelGeometry(grid, detector, [0.0, 90.0])
+    five = (True, True, True, True, True, False)
+    assert _with_beam_translation(five, parallel, AlignConfig()) == five
+    assert _with_beam_translation(five, cone, AlignConfig())[-1]
+    frozen = AlignConfig(freeze_dofs=("dy",))
+    assert not _with_beam_translation(five, cone, frozen)[-1]

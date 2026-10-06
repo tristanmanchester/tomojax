@@ -247,7 +247,7 @@ def test_public_alignment_and_checkpoint_keep_detector_frame_at_ninety_degrees(
             init_x=volume,
             checkpoint_callback=saved.append,
         )
-    np.testing.assert_allclose(params[:, 3:], truth[:, 3:], atol=3e-3)
+    np.testing.assert_allclose(params[:, 3:5], truth[:, 3:], atol=3e-3)
     np.testing.assert_allclose(params[:, :3], truth[:, :3], atol=5e-5)
     assert info["pose_translation_frame"] == "detector"
     assert saved and all(item.pose_translation_frame == "detector" for item in saved)

@@ -8,7 +8,12 @@ import math
 
 import jax.numpy as jnp
 
-DOF_NAMES = ("alpha", "beta", "phi", "dx", "dz")
+# Columns of a per-view pose table. dy translates along the beam: it changes
+# cone-beam magnification and has no effect on parallel-beam projections.
+DOF_NAMES = ("alpha", "beta", "phi", "dx", "dz", "dy")
+# Pose DOFs optimised when none are named; cone-beam alignment adds dy.
+DEFAULT_POSE_DOFS = ("alpha", "beta", "phi", "dx", "dz")
+POSE_WIDTH = len(DOF_NAMES)
 DOF_INDEX = {name: idx for idx, name in enumerate(DOF_NAMES)}
 GEOMETRY_DOF_NAMES = (
     "det_u_px",
@@ -39,8 +44,8 @@ class ScopedAlignmentDofs:
     frozen_geometry_dofs: tuple[str, ...]
 
     @property
-    def pose_mask(self) -> tuple[bool, bool, bool, bool, bool]:
-        """Return a 5-column mask for active pose DOFs."""
+    def pose_mask(self) -> tuple[bool, ...]:
+        """Return a per-column mask for active pose DOFs."""
         active = set(self.active_pose_dofs)
         return tuple(name in active for name in DOF_NAMES)  # type: ignore[return-value]
 
@@ -123,7 +128,7 @@ def resolve_scoped_alignment_dofs(
     freeze = normalize_alignment_dofs(freeze_dofs, option_name="freeze_dofs")
     frozen = set(freeze)
 
-    base = DOF_NAMES if optimise is None else optimise
+    base = DEFAULT_POSE_DOFS if optimise is None else optimise
 
     active: list[str] = []
     seen: set[str] = set()
@@ -286,7 +291,7 @@ def normalize_bounds(
 
 
 def bounds_vectors(bounds: DofBounds) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """Build 5-column lower/upper bound vectors for normalized per-DOF bounds."""
+    """Build per-column lower/upper bound vectors for normalized per-DOF bounds."""
     lower = jnp.full((len(DOF_NAMES),), -jnp.inf, dtype=jnp.float32)
     upper = jnp.full((len(DOF_NAMES),), jnp.inf, dtype=jnp.float32)
     for name, lo, hi in bounds:
@@ -311,7 +316,7 @@ def active_dofs(
     )
     freeze = normalize_dofs(freeze_dofs, option_name="freeze_dofs")
     frozen = set(freeze)
-    base = DOF_NAMES if optimise is None else optimise
+    base = DEFAULT_POSE_DOFS if optimise is None else optimise
     active = tuple(name for name in base if name not in frozen)
     if not active:
         raise ValueError(
@@ -325,8 +330,8 @@ def active_dof_mask(
     *,
     optimise_dofs: str | Iterable[str] | None = None,
     freeze_dofs: str | Iterable[str] | None = None,
-) -> tuple[bool, bool, bool, bool, bool]:
-    """Build a 5-column boolean mask for active alignment DOFs."""
+) -> tuple[bool, ...]:
+    """Build a per-column boolean mask for active alignment DOFs."""
     active = set(active_dofs(optimise_dofs=optimise_dofs, freeze_dofs=freeze_dofs))
     return tuple(name in active for name in DOF_NAMES)  # type: ignore[return-value]
 

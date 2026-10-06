@@ -29,6 +29,7 @@ _PROPOSAL_STEP_BY_DOF = {
     "phi": 0.02,
     "dx": 1.0,
     "dz": 1.0,
+    "dy": 1.0,
 }
 
 

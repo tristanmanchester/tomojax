@@ -115,9 +115,11 @@ def _build_pose_align_loss(
             gather_dtype=ctx.cfg.gather_dtype,
             view_indices=jnp.arange(ctx.n_views, dtype=jnp.int32),
             projector_backend=ctx.cfg.projector_backend,
-            require_differentiable_projector=True,
+            # Gauss-Newton only evaluates this loss; its pose columns are separate.
+            require_differentiable_projector=ctx.beam is None or ctx.cfg.opt_method != "gn",
             loss_rng_key=loss_rng_key,
             ray_integrator=ctx.cfg.ray_integrator,
+            beam=ctx.beam,
         )
         return _apply_pose_smoothness_loss(params5, loss_tot, ctx.smoothness_weights)
 
@@ -145,6 +147,7 @@ def _build_one_view_value_and_grad_batch(ctx: _PoseObjectiveContext) -> Callable
             gather_dtype=ctx.cfg.gather_dtype,
             det_grid=ctx.det_grid,
             ray_integrator=ctx.cfg.ray_integrator,
+            beam=ctx.beam,
         )
         view_indices = jnp.expand_dims(jnp.asarray(view_idx, dtype=jnp.int32), axis=0)
         lvec = ctx.per_view_loss_fn(

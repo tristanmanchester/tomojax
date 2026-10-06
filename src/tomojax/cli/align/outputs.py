@@ -18,6 +18,7 @@ from tomojax.align.api import (
 )
 from tomojax.cli.manifest import build_manifest, save_manifest
 from tomojax.geometry import (
+    beam_of,
     build_calibrated_geometry_metadata_patch,
     cylindrical_mask_xy,
     stack_view_poses,
@@ -236,8 +237,11 @@ def _write_alignment_manifest(
 
 
 def _implied_detector_u_px(plan: AlignCliRunPlan, params5_np: np.ndarray) -> float | None:
-    """Detector-u offset implied by the recovered translations, in detector pixels."""
-    if not np.any(params5_np[:, 3]):
+    """Detector-u offset implied by the recovered translations, in detector pixels.
+
+    Cone beams have none: a lateral object shift is not a detector shift there.
+    """
+    if not np.any(params5_np[:, 3]) or beam_of(plan.geometry) is not None:
         return None
     n_views = len(params5_np)
     nominal = stack_view_poses(plan.geometry, n_views)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 import math
 from typing import TYPE_CHECKING, Literal
@@ -19,6 +19,7 @@ from ._pose_context import _PoseObjectiveContext
 if TYPE_CHECKING:
     from tomojax.align._config import AlignConfig
     from tomojax.align._geometry.parametrizations import PoseTranslationFrame
+    from tomojax.core.geometry.cone import ConeBeam
     from tomojax.geometry import Detector, Grid
 
 
@@ -33,6 +34,7 @@ class PoseJacobianOptions:
     gather_dtype: str
     integrator: Literal["sampled", "exact", "joseph", "joseph_cubic"]
     jacobian: Literal["central", "autodiff"]
+    beam: ConeBeam | None = None
 
     @classmethod
     def from_config(cls, cfg: AlignConfig) -> PoseJacobianOptions:
@@ -58,7 +60,7 @@ def build_pose_prediction_and_columns(ctx: _PoseObjectiveContext) -> Callable:
         grid=ctx.grid,
         detector=ctx.detector,
         det_grid=ctx.det_grid,
-        options=PoseJacobianOptions.from_config(ctx.cfg),
+        options=replace(PoseJacobianOptions.from_config(ctx.cfg), beam=ctx.beam),
     )
 
 
@@ -82,13 +84,22 @@ def pose_prediction_and_columns(
     radius = 0.5 * math.sqrt(
         (grid.nx * grid.vx) ** 2 + (grid.ny * grid.vy) ** 2 + (grid.nz * grid.vz) ** 2
     )
+    width = int(p5_i.shape[-1])
     difference_steps = jnp.asarray(
-        [displacement / radius] * 3 + [displacement] * 2, dtype=jnp.float32
+        [displacement / radius] * 3 + [displacement] * (width - 3), dtype=jnp.float32
     )
 
     joseph = options.integrator.startswith("joseph")
+    # Cone views use central differences of the CUDA forward, which has no pose
+    # derivative; autodiff columns use the differentiable JAX reference.
+    central = options.jacobian == "central" or (options.beam is not None and _cuda())
+    cone_backend = "jax" if options.beam is not None and not central else "pallas"
 
     def _pred_flat(t_i: jnp.ndarray, masked_vol: jnp.ndarray) -> jnp.ndarray:
+        if options.beam is not None:
+            return forward_project_view_T(
+                t_i, grid, detector, masked_vol, projector_backend=cone_backend, beam=options.beam
+            ).ravel()
         return forward_project_view_T(
             t_i,
             grid,
@@ -108,8 +119,8 @@ def pose_prediction_and_columns(
         return weight.ravel() * (_pred_flat(pose, vol) - target.ravel())
 
     prediction = f(p5_i)
-    directions = jnp.eye(5, dtype=jnp.float32)
-    if options.jacobian == "central":
+    directions = jnp.eye(width, dtype=jnp.float32)
+    if central:
 
         def column(direction, step):
             return (f(p5_i + step * direction) - f(p5_i - step * direction)) / (2 * step)

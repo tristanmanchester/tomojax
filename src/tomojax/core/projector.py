@@ -18,7 +18,7 @@ from tomojax.core.pallas_resolver import resolve_pallas_callable
 from .backend_policy import ProjectorBackendInput, normalize_projector_backend
 from .compilation_cache import enable_persistent_compilation_cache
 from .geometry.base import Detector, Geometry, Grid, grid_volume_origin
-from .geometry.cone import beam_of
+from .geometry.cone import ConeBeam, beam_of
 from .validation import (
     validate_detector,
     validate_detector_grid,
@@ -377,6 +377,35 @@ def _cuda_default_device() -> bool:
     return jax.default_backend() == "gpu" and "cuda" in version
 
 
+def _cone_backend(projector_backend: object) -> str:
+    from tomojax.core.cone import use_cuda_cone
+
+    return "cuda" if projector_backend == "pallas" and use_cuda_cone() else "jax"
+
+
+def _cone_views(
+    poses: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    volume: jnp.ndarray,
+    beam: ConeBeam,
+    projector_backend: object = "jax",
+) -> jnp.ndarray:
+    from tomojax.core.cone import cone_coefficients, cone_project
+
+    coeff = cone_coefficients(poses, grid, detector, beam)
+    return cone_project(volume, coeff, grid, detector, backend=_cone_backend(projector_backend))
+
+
+def _cone_backproject_views(
+    poses: jnp.ndarray, grid: Grid, detector: Detector, images: jnp.ndarray, beam: ConeBeam
+) -> jnp.ndarray:
+    from tomojax.core.cone import cone_backproject, cone_coefficients
+
+    coeff = cone_coefficients(poses, grid, detector, beam)
+    return cone_backproject(images, coeff, grid, detector)
+
+
 def forward_project_view_T(
     T: jnp.ndarray,
     grid: Grid,
@@ -391,6 +420,7 @@ def forward_project_view_T(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
     projector_backend: ProjectorBackendInput = "jax",
     ray_integrator: str = "sampled",
+    beam: ConeBeam | None = None,
 ) -> jnp.ndarray:
     """Forward project a single view given pose `T` (4x4, row-major).
 
@@ -398,7 +428,11 @@ def forward_project_view_T(
     rays in world coordinates and transforms them into object coordinates using
     inv(T), then performs incremental stepping along the beam direction expressed
     in the object frame. This avoids a matmul per step and keeps gradients clean.
+    A ``beam`` selects the cone-beam Joseph projector: ``projector_backend``
+    ``"pallas"`` runs its CUDA kernels, ``"jax"`` the differentiable reference.
     """
+    if beam is not None:
+        return _cone_views(T[None], grid, detector, volume, beam, projector_backend)[0]
     backend = normalize_projector_backend(projector_backend)
     if ray_integrator == "exact":
         if step_size is not None or n_steps is not None:
@@ -584,8 +618,11 @@ def backproject_view_T(
     gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
     ray_integrator: str = "sampled",
+    beam: ConeBeam | None = None,
 ) -> jnp.ndarray:
     """Backproject one detector image as the explicit adjoint of the configured projector."""
+    if beam is not None:
+        return _cone_backproject_views(T[None], grid, detector, jnp.asarray(image)[None], beam)
     if ray_integrator == "exact":
         if step_size is not None or n_steps is not None:
             raise ValueError("exact ray integration does not accept a step size or sample count")
@@ -630,8 +667,11 @@ def sum_backproject_views_T(
     gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
     ray_integrator: str = "sampled",
+    beam: ConeBeam | None = None,
 ) -> jnp.ndarray:
     """Sum explicit mixed-precision adjoints over a fixed chunk."""
+    if beam is not None:
+        return _cone_backproject_views(T_all, grid, detector, images, beam)
     if ray_integrator == "exact":
         if step_size is not None or n_steps is not None:
             raise ValueError("exact ray integration does not accept a step size or sample count")

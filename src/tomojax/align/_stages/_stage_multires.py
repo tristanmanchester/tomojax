@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.align._config import AlignConfig
+from tomojax.align._model.dofs import POSE_WIDTH
 from tomojax.align._model.state import AlignmentState
 from tomojax.align._objectives.loss_specs import loss_spec_name, resolve_loss_for_level
 from tomojax.align._observer import ObserverAction, ObserverCallback, OuterStat
@@ -21,7 +22,7 @@ from tomojax.align._results import (
     AlignMultiresResumeState,
 )
 from tomojax.core.geometry.base import Detector, Geometry, Grid
-from tomojax.core.geometry.cone import require_parallel_beam
+from tomojax.core.geometry.cone import beam_of
 from tomojax.geometry import stack_view_poses
 
 from ._stage_runners import _run_multires_level_stages
@@ -124,7 +125,7 @@ def _run_one_multires_level(
         x_lvl=x0 if x0 is not None else jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32),
         params5=params0
         if params0 is not None
-        else jnp.zeros((projections.shape[0], 5), dtype=jnp.float32),
+        else jnp.zeros((projections.shape[0], POSE_WIDTH), dtype=jnp.float32),
         level_stats=level_stats,
         level_losses=level_losses,
         final_gauge_fix=state.final_gauge_fix,
@@ -215,6 +216,12 @@ def _release_completed_level_accelerator_state(state: MultiresRunState) -> None:
         clear_caches()
 
 
+def _setup_dofs_requested(cfg: AlignConfig | None) -> bool:
+    from tomojax.align._config import _resolved_schedule_for_cfg
+
+    return bool(_resolved_schedule_for_cfg(cfg or AlignConfig()).active_geometry_dofs)
+
+
 def _fold_detector_offset(
     state: MultiresRunState,
     *,
@@ -230,6 +237,10 @@ def _fold_detector_offset(
     that constant from the poses. The predicted data are unchanged.
     """
     dofs = context.active_geometry_dofs
+    if beam_of(geometry) is not None:
+        # In a cone beam a lateral object shift is not a detector shift: a
+        # centre-of-rotation offset stays in the poses as the axis position.
+        return state, dofs
     reports_centre = context.resolved_schedule.name == "cor_then_pose" or "det_u_px" in dofs
     pose_dofs = context.resolved_schedule.active_pose_dofs
     if (
@@ -274,7 +285,11 @@ def align_multires(
 
     Carries alignment parameters across levels and downsamples/upsamples volume.
     """
-    require_parallel_beam(geometry, "align_multires")
+    if beam_of(geometry) is not None and _setup_dofs_requested(cfg):
+        raise ValueError(
+            "align_multires: setup stages (detector centre, roll, axis) do not yet support "
+            "cone-beam geometry; use pose stages, which estimate dy along the beam"
+        )
     context = _build_multires_context(
         geometry,
         grid,
@@ -326,7 +341,7 @@ def align_multires(
         x_final,
         state.params5
         if state.params5 is not None
-        else jnp.zeros((projections.shape[0], 5), jnp.float32),
+        else jnp.zeros((projections.shape[0], POSE_WIDTH), jnp.float32),
         _final_align_multires_info(
             loss_hist=state.loss_hist,
             factors_list=context.factors_list,

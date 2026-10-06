@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.align._config import AlignConfig
+from tomojax.align._model.dofs import POSE_WIDTH
 from tomojax.align._model.motion_models import expand_motion_coefficients, fit_motion_coefficients
 from tomojax.align._objectives.loss_specs import loss_is_within_relative_tolerance
 from tomojax.align._observer import OuterStat
@@ -187,7 +188,7 @@ def _run_gd_alignment_step(
     loss_rng_key: jnp.ndarray,
 ) -> tuple[jnp.ndarray, jnp.ndarray | None, float | None, jnp.ndarray]:
     scales = jnp.array(
-        [cfg.lr_rot, cfg.lr_rot, cfg.lr_rot, cfg.lr_trans, cfg.lr_trans],
+        [cfg.lr_rot] * 3 + [cfg.lr_trans] * (POSE_WIDTH - 3),
         dtype=jnp.float32,
     )
     if motion.use_smooth_pose_model:
@@ -213,7 +214,11 @@ def _run_gd_alignment_step(
         )
         motion_coeffs_out = fit_motion_coefficients(motion.motion_model, params5_out)
         params5_out = motion.coeffs_to_constrained_params(motion_coeffs_out)
-        rms = jnp.zeros((5,), dtype=jnp.float32).at[motion.active_coeff_indices].set(rms_active)
+        rms = (
+            jnp.zeros((POSE_WIDTH,), dtype=jnp.float32)
+            .at[motion.active_coeff_indices]
+            .set(rms_active)
+        )
         return params5_out, motion_coeffs_out, loss_after_value, rms
 
     _, g_params = objective.loss_and_grad_manual(params5_in, vol, loss_rng_key)

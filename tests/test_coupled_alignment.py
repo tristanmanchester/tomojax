@@ -82,12 +82,13 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
     support = np.ones_like(x)
     support[0, 0, 0] = 1 - scan_variant
     x *= support
-    p = rng.normal(0, 0.01, (3, 5)).astype(np.float32)
-    pose = physical_poses(nominal, p)
+    # The sixth column, dy along the beam, is inactive for parallel rays.
+    p = np.concatenate([rng.normal(0, 0.01, (3, 5)), np.zeros((3, 1))], axis=1).astype(np.float32)
+    pose = physical_poses(nominal, p[:, :5])
     predicted = project_voxel_truth(x, pose, grid, det)
     target = predicted + rng.normal(0, 0.03, predicted.shape)
     target = jnp.asarray(target, jnp.float32)
-    active = np.array([1 - scan_variant, scan_variant, 1, 1, 0], np.float32)
+    active = np.array([1 - scan_variant, scan_variant, 1, 1, 0, 0], np.float32)
     cfg = AlignConfig(
         gn_coupling="joint",
         gn_joint_solver=solver,
@@ -136,10 +137,10 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
     )
     displacement = cfg.gn_difference_step * min(grid.vx, grid.vy, grid.vz)
     radius = 0.5 * np.linalg.norm(np.array(x.shape) * [grid.vx, grid.vy, grid.vz])
-    steps = np.array([displacement / radius] * 3 + [displacement] * 2)
+    steps = np.array([displacement / radius] * 3 + [displacement] * 3)
     j = np.zeros((target.size, p.size))
     for i in range(p.size):
-        view, dof = divmod(i, 5)
+        view, dof = divmod(i, 6)
         plus, minus = p.astype(float), p.astype(float)
         plus[view, dof] += steps[dof]
         minus[view, dof] -= steps[dof]
@@ -147,13 +148,13 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
             weight
             * active[dof]
             * (
-                project_voxel_truth(x, physical_poses(nominal, plus), grid, det).ravel()
-                - project_voxel_truth(x, physical_poses(nominal, minus), grid, det).ravel()
+                project_voxel_truth(x, physical_poses(nominal, plus[:, :5]), grid, det).ravel()
+                - project_voxel_truth(x, physical_poses(nominal, minus[:, :5]), grid, det).ravel()
             )
             / (2 * steps[dof])
         )
     smooth = np.kron(
-        np.array([[1, -2, 1]]), np.diag(np.array([cfg.w_rot] * 3 + [cfg.w_trans] * 2) * active)
+        np.array([[1, -2, 1]]), np.diag(np.array([cfg.w_rot] * 3 + [cfg.w_trans] * 3) * active)
     )
     h_smooth = 2 * smooth.T @ smooth
     design = np.column_stack([a, j])

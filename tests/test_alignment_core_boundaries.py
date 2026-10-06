@@ -121,7 +121,7 @@ def test_align_config_normalizes_aliases_and_resolves_stage_dofs() -> None:
     assert cfg.gauge_policy == "anchor_mean"
     assert cfg.pose_model == "per_view"
     assert _active_dofs_for_cfg(cfg) == ("dz",)
-    assert _active_dof_mask_for_cfg(cfg) == (False, False, False, False, True)
+    assert _active_dof_mask_for_cfg(cfg) == (False, False, False, False, True, False)
 
 
 def test_reconstruction_quality_policy_scales_iteration_budget() -> None:

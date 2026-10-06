@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .dofs import DOF_INDEX
+from .dofs import DOF_INDEX, DOF_NAMES
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -29,7 +29,7 @@ class GaugeStats(TypedDict, total=False):
 
 
 _VALID_GAUGE_FIXES = {"mean_translation", "none"}
-_TRANSLATION_DOFS = ("dx", "dz")
+_TRANSLATION_DOFS = ("dx", "dz", "dy")
 
 
 def normalize_gauge_fix(raw: object) -> GaugeFixMode:
@@ -63,8 +63,8 @@ def validate_alignment_gauge_feasible(
         return
     lower = np.asarray(bounds_lower, dtype=np.float64)
     upper = np.asarray(bounds_upper, dtype=np.float64)
-    if lower.shape != (5,) or upper.shape != (5,):
-        raise ValueError("alignment gauge bounds must have shape (5,) for [alpha,beta,phi,dx,dz]")
+    if lower.shape != (len(DOF_NAMES),) or upper.shape != (len(DOF_NAMES),):
+        raise ValueError(f"alignment gauge bounds must have one entry per DOF in {DOF_NAMES}")
     for name in active_gauge_dofs(mode=mode, active_mask=active_mask):
         idx = DOF_INDEX[name]
         lo = float(lower[idx])
@@ -133,6 +133,13 @@ def apply_alignment_gauge(
             idx = DOF_INDEX[name]
             col = _project_box_zero_mean(out[:, idx], bounds_lower[idx], bounds_upper[idx])
             out = out.at[:, idx].set(col)
+    dy = DOF_INDEX["dy"]
+    if active[dy] and "dy" not in gauge_dofs:
+        # In a cone beam a common shift along the beam rescales the object's
+        # image exactly as a larger object would: it is always anchored.
+        col = _project_box_zero_mean(out[:, dy], bounds_lower[dy], bounds_upper[dy])
+        out = out.at[:, dy].set(col)
+        gauge_dofs = (*gauge_dofs, "dy")
 
     stats: Mapping[str, jnp.ndarray | str | list[str]] = {
         "mode": mode,

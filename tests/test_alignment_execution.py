@@ -140,7 +140,7 @@ def test_align_multires_public_execution_emits_observer_and_resume_metadata() ->
         stat: dict[str, object],
     ) -> str:
         assert x.shape == (2, 2, 2)
-        assert params5.shape == (2, 5)
+        assert params5.shape == (2, 6)
         observer_stats.append(dict(stat))
         return "continue"
 
@@ -156,7 +156,7 @@ def test_align_multires_public_execution_emits_observer_and_resume_metadata() ->
     )
 
     assert x.shape == (2, 2, 2)
-    assert params5.shape == (2, 5)
+    assert params5.shape == (2, 6)
     assert bool(jnp.all(jnp.isfinite(x)))
     assert bool(jnp.all(jnp.isfinite(params5)))
     assert info["loss"]
@@ -186,7 +186,7 @@ def test_align_multires_public_execution_emits_observer_and_resume_metadata() ->
     assert final_state.stage_name == "direct_pose"
     assert final_state.stage_completed is True
     assert final_state.x.shape == (2, 2, 2)
-    assert final_state.params5.shape == (2, 5)
+    assert final_state.params5.shape == (2, 6)
     assert final_state.loss == info["loss"]
     assert final_state.outer_stats == info["outer_stats"]
     assert isinstance(final_state.geometry_calibration_state, dict)
@@ -226,7 +226,7 @@ def test_align_multires_executes_a_setup_then_pose_schedule_with_real_stages() -
     )
 
     assert x.shape == (2, 2, 2)
-    assert params5.shape == (2, 5)
+    assert params5.shape == (2, 6)
     assert bool(jnp.all(jnp.isfinite(x)))
     assert bool(jnp.all(jnp.isfinite(params5)))
 

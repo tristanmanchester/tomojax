@@ -18,6 +18,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core.geometry.cone import beam_of
 from tomojax.core.geometry.views import stack_view_poses
 
 if TYPE_CHECKING:
@@ -94,6 +95,25 @@ def _remove_object_translation(
     return residual / np.asarray(spacing)
 
 
+def _reprojector(
+    geometry: Geometry, poses: jax.Array, grid: Grid, detector: Detector
+) -> Callable[[slice, jax.Array], jax.Array]:
+    """Return ``(views, volume) -> projections`` for the geometry's beam."""
+    beam = beam_of(geometry)
+    if beam is not None:
+        from tomojax.core.cone import cone_coefficients, cone_project
+
+        cone = cone_coefficients(poses, grid, detector, beam)
+        return lambda views, volume: cone_project(volume, cone[views], grid, detector)
+    from tomojax.core.joseph import forward_project_planes, plane_coefficients
+
+    coefficients = plane_coefficients(poses, grid, detector)
+    backend = "pallas" if jax.default_backend() == "gpu" else "jax"
+    return lambda views, volume: forward_project_planes(
+        coefficients[views], volume, grid, detector, backend=backend
+    )
+
+
 def estimate_view_shifts(
     geometry: Geometry,
     grid: Grid,
@@ -113,15 +133,13 @@ def estimate_view_shifts(
     shifts produced by one rigid object translation is removed, because the
     reconstruction absorbs it.
     """
-    from tomojax.core.joseph import forward_project_planes, plane_coefficients
     from tomojax.recon import FBPConfig, fbp
 
     data = jnp.asarray(projections, dtype=jnp.float32)
     n = int(data.shape[0])
     poses = stack_view_poses(geometry, n)
     rotations = np.asarray(poses, np.float64)[:, :3, :3]
-    coefficients = plane_coefficients(poses, grid, detector)
-    backend = "pallas" if jax.default_backend() == "gpu" else "jax"
+    reproject = _reprojector(geometry, poses, grid, detector)
 
     max_u = max(1, int(max_shift_fraction * detector.nu))
     max_v = max(1, int(max_shift_fraction * detector.nv))
@@ -134,9 +152,7 @@ def estimate_view_shifts(
                 np.asarray(
                     _correlation_peaks(
                         data[c],
-                        forward_project_planes(
-                            coefficients[c], volume, grid, detector, backend=backend
-                        ),
+                        reproject(c, volume),
                         max_u=max_u,
                         max_v=max_v,
                     ),
@@ -176,13 +192,11 @@ def reprojection_residual(
     and reprojected; the residual after a best scalar amplitude fit is smallest
     when the shift matches the data.
     """
-    from tomojax.core.joseph import forward_project_planes, plane_coefficients
     from tomojax.recon import FBPConfig, fbp
 
     data = jnp.asarray(projections, dtype=jnp.float32)
     n = int(data.shape[0])
-    coefficients = plane_coefficients(stack_view_poses(geometry, n), grid, detector)
-    backend = "pallas" if jax.default_backend() == "gpu" else "jax"
+    reproject = _reprojector(geometry, stack_view_poses(geometry, n), grid, detector)
     chunks = [slice(s, min(s + _CHUNK, n)) for s in range(0, n, _CHUNK)]
     norm = float(jnp.linalg.norm(data))
 
@@ -192,12 +206,7 @@ def reprojection_residual(
             [_shift_views(data[c], jnp.broadcast_to(offset, (c.stop - c.start, 2))) for c in chunks]
         )
         volume = fbp(geometry, grid, detector, corrected, config=FBPConfig(filter_name="hann"))
-        predicted = jnp.concatenate(
-            [
-                forward_project_planes(coefficients[c], volume, grid, detector, backend=backend)
-                for c in chunks
-            ]
-        )
+        predicted = jnp.concatenate([reproject(c, volume) for c in chunks])
         scale = jnp.vdot(predicted, corrected) / jnp.maximum(jnp.vdot(predicted, predicted), 1e-30)
         return float(jnp.linalg.norm(scale * predicted - corrected)) / max(norm, 1e-30)
 
@@ -226,12 +235,12 @@ def translation_params_from_shifts(
     else:
         mapping = poses[:, [0, 2], :3][:, :, [0, 2]]
     mask = np.asarray(active, bool)
-    fixed = np.where(mask, 0.0, params[:, 3:])
+    fixed = np.where(mask, 0.0, params[:, 3:5])
     residual = shifts - np.einsum("nij,nj->ni", mapping, fixed)
     inverse = np.linalg.pinv(mapping * mask[None, None, :], rtol=1e-3)
     estimate = np.einsum("nij,nj->ni", inverse, residual)
     seeded = np.array(params, dtype=np.float32, copy=True)
-    seeded[:, 3:] = np.where(mask, estimate, fixed)
+    seeded[:, 3:5] = np.where(mask, estimate, fixed)
     return seeded
 
 
@@ -250,14 +259,17 @@ def seeded_translation_params(
     from tomojax.align._config import _active_dof_mask_for_cfg
 
     active = _active_dof_mask_for_cfg(cfg)
-    if not cfg.seed_translations or not any(active[3:]):
+    if not cfg.seed_translations or not any(active[3:5]):
         return None
     n = int(np.shape(projections)[0])
     shifts = estimate_view_shifts(geometry, grid, detector, projections)
+    beam = beam_of(geometry)
+    # A cone beam magnifies object shifts near the axis onto the detector.
+    translations = shifts if beam is None else shifts / beam.magnification
     params = translation_params_from_shifts(
-        shifts,
+        translations,
         np.asarray(stack_view_poses(geometry, n), np.float64),
-        np.zeros((n, 5), np.float32),
+        np.zeros((n, len(active)), np.float32),
         frame=cfg.pose_translation_frame,
         active=(bool(active[3]), bool(active[4])),
     )

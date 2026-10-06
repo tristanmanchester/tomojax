@@ -96,6 +96,7 @@ DOF_SPECS: dict[str, DofSpec] = {
     "phi": _pose_spec("phi", DOF_INDEX["phi"], unit="rad", scale=1e-3, gauge="pose_rot"),
     "dx": _pose_spec("dx", DOF_INDEX["dx"], unit="world", scale=1e-1, gauge="pose_translation"),
     "dz": _pose_spec("dz", DOF_INDEX["dz"], unit="world", scale=1e-1, gauge="pose_translation"),
+    "dy": _pose_spec("dy", DOF_INDEX["dy"], unit="world", scale=1e-1, gauge="pose_translation"),
     "det_u_px": DofSpec(
         name="det_u_px",
         scope="setup",

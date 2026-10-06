@@ -16,6 +16,7 @@ from tomojax.align._geometry.geometry_applier import (
 from tomojax.align._geometry.initializers import reprojection_det_u_seed
 from tomojax.align._model.diagnostics import validate_active_gauge_policy
 from tomojax.align._model.dof_specs import ActiveParameterView
+from tomojax.align._model.dofs import POSE_WIDTH
 from tomojax.align._model.state import AlignmentState, PoseState, SetupGeometryState
 from tomojax.align._objectives.fold_recon import (
     FoldReconstructionConfig,
@@ -430,7 +431,7 @@ def _optimize_setup_geometry_bilevel_for_level(
     alignment_state = state.replace(
         setup=state.setup.replace(nominal_axis_unit=base.nominal_axis_unit),
         pose=PoseState(
-            jnp.zeros((int(projections.shape[0]), 5), dtype=jnp.float32)
+            jnp.zeros((int(projections.shape[0]), POSE_WIDTH), dtype=jnp.float32)
             if init_params5 is None
             else jnp.asarray(init_params5, dtype=jnp.float32),
             translation_frame=cfg.pose_translation_frame,

@@ -13,6 +13,8 @@ from uuid import uuid4
 
 import numpy as np
 
+from tomojax.align._geometry.parametrizations import pad_pose_params
+from tomojax.align._model.dofs import POSE_WIDTH
 from tomojax.io import normalize_json as _normalize_json
 
 CHECKPOINT_KIND = "tomojax.align.checkpoint"
@@ -338,7 +340,7 @@ def load_alignment_checkpoint(path: str | os.PathLike[str]) -> AlignmentCheckpoi
                 motion_coeffs = None
             return AlignmentCheckpoint(
                 x=np.asarray(z["x"], dtype=np.float32),
-                params5=np.asarray(z["params5"], dtype=np.float32),
+                params5=pad_pose_params(z["params5"]),
                 motion_coeffs=motion_coeffs,
                 loss_history=[float(v) for v in np.asarray(z["loss_history"]).reshape(-1)],
                 outer_stats=[dict(item) for item in outer_stats],
@@ -442,8 +444,10 @@ def validate_alignment_checkpoint(
         raise CheckpointError(
             "corrupt checkpoint: metadata projection_shape must be a length-3 list"
         )
-    expected_params_shape = (int(projection_shape[0]), 5)
-    if tuple(checkpoint.params5.shape) != expected_params_shape:
+    expected_params_shape = (int(projection_shape[0]), POSE_WIDTH)
+    # Checkpoints written before dy existed hold five columns; loaders pad them.
+    legacy_shape = (int(projection_shape[0]), 5)
+    if tuple(checkpoint.params5.shape) not in {expected_params_shape, legacy_shape}:
         actual_shape = list(checkpoint.params5.shape)
         expected_shape = list(expected_params_shape)
         raise CheckpointError(

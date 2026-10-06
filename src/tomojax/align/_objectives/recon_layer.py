@@ -11,6 +11,7 @@ import jax.scipy as jsp
 
 from tomojax.align._geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
 from tomojax.align._geometry.parametrizations import PoseTranslationFrame, apply_pose_update
+from tomojax.core.geometry.cone import ConeBeam, beam_of
 from tomojax.recon.fista_tv_core import (
     FistaCoreConfig,
     FistaCoreResult,
@@ -46,6 +47,11 @@ class PoseAdjustedGeometry:
     def rays_for_view(self, i: int) -> object:
         """Return detector rays for the wrapped geometry view."""
         return self.geometry.rays_for_view(i)
+
+    @property
+    def beam(self) -> ConeBeam | None:
+        """Return the wrapped geometry's cone beam, if any."""
+        return beam_of(self.geometry)
 
 
 @dataclass(frozen=True, slots=True)

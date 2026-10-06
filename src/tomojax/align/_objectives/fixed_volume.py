@@ -24,6 +24,7 @@ from .loss_adapters import LossAdapter, build_loss_adapter
 if TYPE_CHECKING:
     from tomojax.align._model.state import AlignmentState
     from tomojax.core.geometry import Detector, Grid
+    from tomojax.core.geometry.cone import ConeBeam
 
     from .loss_specs import AlignmentLossSpec
 
@@ -175,6 +176,22 @@ class FixedVolumeProjectionObjective(AlignmentObjective):
         )
 
 
+def _cone_project_poses(
+    poses: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    volume: jnp.ndarray,
+    beam: ConeBeam,
+    differentiable: bool,
+) -> jnp.ndarray:
+    """Cone projections; CUDA kernels unless pose derivatives are needed."""
+    from tomojax.core.cone import cone_coefficients, cone_project, use_cuda_cone
+
+    backend = "cuda" if use_cuda_cone() and not differentiable else "jax"
+    coeff = cone_coefficients(poses, grid, detector, beam)
+    return cone_project(volume, coeff, grid, detector, backend=backend)
+
+
 def project_stack(
     *,
     pose_stack: jnp.ndarray,
@@ -189,12 +206,17 @@ def project_stack(
     projector_backend: ProjectorBackendInput = "jax",
     require_differentiable_projector: bool = True,
     ray_integrator: str = "sampled",
+    beam: ConeBeam | None = None,
 ) -> jnp.ndarray:
     """Project all views for a fixed volume in bounded-size batches."""
     backend = normalize_projector_backend(projector_backend)
     n_views = int(pose_stack.shape[0])
     if n_views == 0:
         return jnp.zeros((0, detector.nv, detector.nu), dtype=jnp.float32)
+    if beam is not None:
+        return _cone_project_poses(
+            pose_stack, grid, detector, volume, beam, require_differentiable_projector
+        )
     if ray_integrator == "sampled" and backend == "pallas" and not require_differentiable_projector:
         fallback_reason = _pallas_sinogram_fallback_reason(
             pose_stack=pose_stack,
@@ -280,6 +302,7 @@ def project_and_score_stack(
     require_differentiable_projector: bool = True,
     loss_rng_key: jnp.ndarray | None = None,
     ray_integrator: str = "sampled",
+    beam: ConeBeam | None = None,
 ) -> jnp.ndarray:
     """Project and score all views without materialising unnecessary batches."""
     backend = normalize_projector_backend(projector_backend)
@@ -304,6 +327,13 @@ def project_and_score_stack(
             ray_integrator=ray_integrator,
         )
     )
+    if beam is not None:
+        # One batched cone call per chunk, not one launch per view.
+        def vm_project(T: jnp.ndarray) -> jnp.ndarray:
+            return _cone_project_poses(
+                T, grid, detector, volume, beam, require_differentiable_projector
+            )
+
     local_indices = (
         jnp.arange(n_views, dtype=jnp.int32)
         if view_indices is None

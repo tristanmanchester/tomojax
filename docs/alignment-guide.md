@@ -58,6 +58,10 @@ offset together with per-view motion, and `auto` for the full setup+pose workflo
 
 The default `pose` mode optimizes one 5-DOF pose vector per projection:
 `alpha`, `beta`, `phi`, `dx`, and `dz`. Use this for scans where the sample moved during acquisition.
+Pose tables carry a sixth column, `dy`, a translation along the beam: it has
+no effect on parallel-beam projections and stays at zero there, and cone-beam
+alignment estimates it (see [cone-beam alignment](#align-cone-beam-scans-in-six-degrees-of-freedom)).
+Five-column tables from earlier versions load with `dy = 0`.
 
 Each Gauss–Newton step updates the volume and the poses together, using
 Joseph plane sampling and an unregularised least-squares fit; up to 30 outer
@@ -234,6 +238,31 @@ uv run --no-sync tomojax align \
 
 Smooth models reduce degrees of freedom but can hide abrupt jumps or outlier
 views.
+
+## Align cone-beam scans in six degrees of freedom
+
+In a cone beam, moving the sample along the beam changes its magnification,
+so `tomojax align` on a cone-beam dataset estimates `dy` with the other five
+pose parameters (`--freeze-dofs dy` keeps it fixed). Everything else is as for
+parallel scans: the coupled solver, translation seeding and saved alignments
+(`dy_world` in the parameter sidecars, a sixth `thetas` column in the aligned
+file, applied by `tomojax recon --apply-saved-alignment`).
+
+Two gauges apply. As in parallel beams, moving the whole volume rigidly and
+every pose with it predicts the same data. In addition a common `dy` for all
+views rescales the image exactly as a larger object would, so the mean `dy`
+is always fixed at zero. A centre-of-rotation offset in a cone beam is a
+lateral offset of the rotation axis, not a detector shift: `cor_then_pose`
+leaves it in the poses as a translation, and the setup stages (`cor`, `auto`,
+`max`) do not yet support cone geometry.
+
+On a 64³ cone scan (120 views, magnification 1.5) with ±0.3° and ±1.5 px of
+random motion in all six parameters, the coupled solver recovers the poses
+exactly when the data come from its own projector. From exact line integrals
+of smooth Gaussian blobs it recovers translations to 0.004–0.07 px and
+rotations to 0.16° RMS (0.13° at 128³), against 0.10° (0.08°) for the same
+objects in a parallel beam; `phi` about the rotation axis is the weakest
+parameter in both.
 
 ## Choose the translation frame
 

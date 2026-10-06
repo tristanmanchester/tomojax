@@ -149,11 +149,13 @@ def _rot_z_np(p: float) -> np.ndarray:
 
 
 def _se3_from_5d_np(params5: np.ndarray) -> np.ndarray:
-    alpha, beta, phi, dx, dz = np.asarray(params5, dtype=np.float32)
+    row = np.asarray(params5, dtype=np.float32)
+    alpha, beta, phi, dx, dz = row[:5]
+    dy = row[5] if row.size > 5 else 0.0
     R = _rot_y_np(float(beta)) @ _rot_x_np(float(alpha)) @ _rot_z_np(float(phi))
     T = np.eye(4, dtype=np.float32)
     T[:3, :3] = R
-    T[:3, 3] = np.array([dx, 0.0, dz], dtype=np.float32)
+    T[:3, 3] = np.array([dx, dy, dz], dtype=np.float32)
     return T
 
 
@@ -330,8 +332,9 @@ def build_geometry_from_meta(
     unless an explicit `grid_override` or `volume_shape` is supplied; both reuse
     detector pixel spacings as voxel spacings. When `apply_saved_alignment` is
     True, any saved `align_params` are composed onto the nominal poses. Saved
-    alignments must provide one row per view and at least five columns ordered
-    as `[alpha, beta, phi, dx, dz]`; extra columns are ignored. Saved
+    alignments must provide one row per view and five columns ordered as
+    `[alpha, beta, phi, dx, dz]`, optionally followed by `dy`; further columns
+    are ignored. Saved
     `angle_offset_deg` is applied unless it is known to have already been baked
     into `thetas_deg`.
     """
@@ -364,7 +367,7 @@ def build_geometry_from_meta(
         if frame not in {"object", "detector"}:
             raise ValueError(f"unknown saved pose translation frame {frame!r}")
         geom = AugmentedGeometry(
-            base=geom, align_params=align_params[:, :5], translation_frame=frame
+            base=geom, align_params=align_params[:, :6], translation_frame=frame
         )
 
     return grid, detector, geom

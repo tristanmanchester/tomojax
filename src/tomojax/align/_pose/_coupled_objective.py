@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.align._model.dofs import POSE_WIDTH
 from tomojax.core.projector import get_detector_grid_device
 
 from ._coupled_linear import CoupledLinearResult
@@ -56,6 +57,11 @@ def build_coupled_objective(ctx: _PoseObjectiveContext) -> CoupledObjective:
     )
     if cfg.ray_integrator not in {"exact", "joseph", "joseph_cubic"}:
         backend = "jax"
+    if ctx.beam is not None:
+        # Cone beams: the CUDA kernels where available ("pallas" names the CUDA path).
+        from tomojax.core.cone import use_cuda_cone
+
+        backend = "pallas" if cfg.projector_backend != "jax" and use_cuda_cone() else "jax"
     canonical = get_detector_grid_device(ctx.detector)
     if (
         backend == "pallas"
@@ -77,12 +83,12 @@ def build_coupled_objective(ctx: _PoseObjectiveContext) -> CoupledObjective:
         smoothness=ctx.smoothness_weights,
         det_grid=ctx.det_grid,
     )
-    cache_columns = ctx.n_views * ctx.nv * ctx.nu * 5 * 4 <= _pose_cache_limit()
+    cache_columns = ctx.n_views * ctx.nv * ctx.nu * POSE_WIDTH * 4 <= _pose_cache_limit()
     spec = CoupledSpec(
         grid=ctx.grid,
         detector=ctx.detector,
         backend=backend,
-        jacobian=PoseJacobianOptions.from_config(cfg),
+        jacobian=replace(PoseJacobianOptions.from_config(cfg), beam=ctx.beam),
         cache_columns=cache_columns,
         regulariser=cfg.regulariser,
         huber_delta=float(cfg.huber_delta),
@@ -94,6 +100,7 @@ def build_coupled_objective(ctx: _PoseObjectiveContext) -> CoupledObjective:
         gn_joint_rtol=float(cfg.gn_joint_rtol),
         gn_joint_iters=int(cfg.gn_joint_iters),
         has_smoothness=bool(cfg.w_rot or cfg.w_trans),
+        beam=ctx.beam,
     )
     return CoupledObjective(
         partial(run_update, arrays, spec=spec),

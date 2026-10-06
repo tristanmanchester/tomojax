@@ -6,6 +6,7 @@ from typing import Literal
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 type PoseTranslationFrame = Literal["object", "detector"]
 
@@ -39,15 +40,26 @@ def compose_R(alpha: jnp.ndarray, beta: jnp.ndarray, phi: jnp.ndarray) -> jnp.nd
 
 
 def se3_from_5d(params5: jnp.ndarray) -> jnp.ndarray:
-    """Build a 4x4 transform from 5-DOF [alpha, beta, phi, dx, dz].
+    """Build a 4x4 transform from ``[alpha, beta, phi, dx, dz]`` or with ``dy`` appended.
 
-    Translations are (dx, 0, dz) in world/object units.
+    Translations are (dx, dy, dz) in world/object units; five values mean dy = 0.
     """
-    alpha, beta, phi, dx, dz = params5
+    alpha, beta, phi, dx, dz = params5[0], params5[1], params5[2], params5[3], params5[4]
+    dy = params5[5] if params5.shape[0] > 5 else jnp.zeros((), params5.dtype)
     R = compose_R(alpha, beta, phi)
     T = jnp.eye(4, dtype=jnp.float32)
     T = T.at[:3, :3].set(R)
-    return T.at[:3, 3].set(jnp.array([dx, 0.0, dz], dtype=jnp.float32))
+    return T.at[:3, 3].set(jnp.stack([dx, dy, dz]).astype(jnp.float32))
+
+
+def pad_pose_params(params: object) -> np.ndarray:
+    """Return an ``(n_views, 6)`` FP32 pose table, adding dy = 0 to five-column tables."""
+    arr = np.asarray(params, dtype=np.float32)
+    if arr.ndim != 2 or arr.shape[1] not in (5, 6):
+        raise ValueError(f"pose parameters must have shape (n_views, 5 or 6), got {arr.shape}")
+    if arr.shape[1] == 5:
+        arr = np.concatenate([arr, np.zeros((arr.shape[0], 1), np.float32)], axis=1)
+    return arr
 
 
 def apply_pose_update(
@@ -59,7 +71,7 @@ def apply_pose_update(
     """Apply object-frame rotation and explicitly framed physical translations.
 
     ``object`` preserves ``nominal @ se3_from_5d(params5)``. ``detector`` adds
-    ``(dx, 0, dz)`` to the nominal lab translation after composing rotations;
+    ``(dx, dy, dz)`` to the nominal lab translation after composing rotations;
     positive dx/dz move the projected object along lab detector x/z. These
     remain physical lengths, not pixels, and detector roll does not rotate
     their lab-frame basis. Beam-direction nominal translation is preserved.

@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 
 from tomojax.align._geometry.parametrizations import apply_pose_updates
+from tomojax.core.cone import cone_backproject, cone_coefficients, cone_project
 from tomojax.core.joseph import (
     forward_project_planes,
     plane_coefficients,
@@ -25,6 +26,7 @@ from ._pose_block import pose_block_solver
 from ._pose_jacobian import PoseJacobianOptions, pose_prediction_and_columns
 
 if TYPE_CHECKING:
+    from tomojax.core.geometry.cone import ConeBeam
     from tomojax.geometry import Detector, Grid
     from tomojax.recon.types import Regulariser
 
@@ -48,6 +50,7 @@ class CoupledSpec:
     gn_joint_rtol: float
     gn_joint_iters: int
     has_smoothness: bool
+    beam: ConeBeam | None = None
 
 
 class CoupledArrays(NamedTuple):
@@ -100,7 +103,12 @@ def _build_program(
 
     joseph = {"joseph": "linear", "joseph_cubic": "cubic"}.get(spec.jacobian.integrator)
 
+    cone_backend = "cuda" if backend == "pallas" else "jax"
+
     def forward(t, x):
+        if spec.beam is not None:
+            coeff = cone_coefficients(t, spec.grid, spec.detector, spec.beam)
+            return cone_project(mask * x, coeff, spec.grid, spec.detector, backend=cone_backend)
         if joseph is not None:
             return forward_project_planes(
                 plane_coefficients(t, spec.grid, spec.detector, arrays.det_grid),
@@ -129,6 +137,9 @@ def _build_program(
         )
 
     def adjoint(t, y):
+        if spec.beam is not None:
+            coeff = cone_coefficients(t, spec.grid, spec.detector, spec.beam)
+            return mask * cone_backproject(y, coeff, spec.grid, spec.detector, backend=cone_backend)
         if joseph is not None:
             return mask * sum_backproject_planes(
                 plane_coefficients(t, spec.grid, spec.detector, arrays.det_grid),

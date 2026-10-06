@@ -12,7 +12,8 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.align._config import AlignConfig, _active_dof_mask_for_cfg, _active_dofs_for_cfg
-from tomojax.align._model.dofs import bounds_vectors
+from tomojax.align._geometry.parametrizations import pad_pose_params
+from tomojax.align._model.dofs import DOF_INDEX, DOF_NAMES, POSE_WIDTH, bounds_vectors
 from tomojax.align._model.gauge import (
     active_gauge_dofs,
     normalize_gauge_fix,
@@ -39,7 +40,7 @@ from tomojax.align.optimizers import PoseLbfgsConfig, PoseOptimizationContext, p
 from tomojax.backends import estimate_views_per_batch_info
 from tomojax.core import format_duration, progress_iter
 from tomojax.core.geometry.base import Detector, Geometry, Grid
-from tomojax.core.geometry.cone import require_parallel_beam
+from tomojax.core.geometry.cone import beam_of
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import get_detector_grid_device
 from tomojax.core.validation import (
@@ -112,6 +113,20 @@ def _with_resolved_views_per_batch(
     return resolved
 
 
+def _with_beam_translation(
+    active: tuple[bool, ...], geometry: object, cfg: AlignConfig
+) -> tuple[bool, ...]:
+    """Add dy (along the beam) to cone-beam alignment that estimates dx and dz.
+
+    A cone beam's magnification makes dy observable; parallel beams leave it
+    inactive. ``freeze_dofs=("dy",)`` keeps it fixed.
+    """
+    dx, dz, dy = (DOF_INDEX[name] for name in ("dx", "dz", "dy"))
+    if beam_of(geometry) is None or "dy" in cfg.freeze_dofs or not (active[dx] and active[dz]):
+        return active
+    return tuple(True if i == dy else value for i, value in enumerate(active))
+
+
 def _prepare_align_setup(
     geometry: Geometry,
     grid: Grid,
@@ -144,12 +159,14 @@ def _prepare_align_setup(
         init_params5 = resume_state.params5
     if init_x is not None:
         validate_volume(init_x, grid, context="align init_x", name="init_x")
+    if init_params5 is not None and np.shape(init_params5) == (n_views, 5):
+        init_params5 = pad_pose_params(init_params5)
     validate_optional_same_shape(
         init_params5,
-        (n_views, 5),
+        (n_views, POSE_WIDTH),
         context="align init_params5",
         name="init_params5",
-        fix="pass one 5-parameter alignment row per projection view.",
+        fix=f"pass one row of {POSE_WIDTH} pose parameters {DOF_NAMES} per projection view.",
     )
     x = (
         jnp.asarray(init_x, dtype=jnp.float32)
@@ -159,9 +176,10 @@ def _prepare_align_setup(
     params5 = (
         jnp.asarray(init_params5, dtype=jnp.float32)
         if init_params5 is not None
-        else jnp.zeros((n_views, 5), dtype=jnp.float32)
+        else jnp.zeros((n_views, POSE_WIDTH), dtype=jnp.float32)
     )
     active_mask_tuple = _active_dof_mask_for_cfg(cfg)
+    active_mask_tuple = _with_beam_translation(active_mask_tuple, geometry, cfg)
     if init_params5 is None:
         seeded = seeded_translation_params(geometry, grid, detector, projections, cfg)
         params5 = params5 if seeded is None else seeded
@@ -227,7 +245,7 @@ def _build_alignment_runtime_context(
 
     smoothness_weights = (
         jnp.array(
-            [cfg.w_rot, cfg.w_rot, cfg.w_rot, cfg.w_trans, cfg.w_trans],
+            [cfg.w_rot] * 3 + [cfg.w_trans] * (POSE_WIDTH - 3),
             dtype=jnp.float32,
         )
         * active_mask
@@ -248,6 +266,7 @@ def _build_alignment_runtime_context(
     nu = int(projections.shape[2])
 
     return AlignmentRuntimeContext(
+        beam=beam_of(geometry),
         pose_stack=pose_stack,
         det_grid=det_grid,
         smoothness_weights=smoothness_weights,
@@ -709,7 +728,6 @@ def align(
 
     Returns (x, params5, info) with loss history and optional metrics.
     """
-    require_parallel_beam(geometry, "align")
     setup = _prepare_align_setup(
         geometry,
         grid,
