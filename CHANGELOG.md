@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `tomojax export` writes a reconstruction as 32-bit or scaled 16-bit TIFF
+  z-slices, or one raw file, with a JSON sidecar of shape, voxel size and
+  scaling, reading one slice at a time. `tomojax recon --algo fbp` on cone
+  data now reconstructs volumes too large for the device in z-slabs on the
+  host (`fdk_host`) instead of failing.
 - Cone-beam pose alignment runs about four times faster: the reconstruction
   step stacked the pose-adjusted views one at a time, which dominated each
   outer iteration. A 96-cubed-phantom, 240-view `tomojax align --mode

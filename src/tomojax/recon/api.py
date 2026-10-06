@@ -75,9 +75,12 @@ class ReconstructionAlgorithmRequest:
 
 @dataclass(frozen=True)
 class ReconstructionResult:
-    """Reconstructed volume plus normalized algorithm metadata."""
+    """Reconstructed volume plus normalized algorithm metadata.
 
-    volume: jnp.ndarray
+    Volumes too large for the device come back as host NumPy arrays.
+    """
+
+    volume: jnp.ndarray | np.ndarray
     algorithm_config: dict[str, object]
 
 
@@ -92,7 +95,58 @@ def run_reconstruction_algorithm(request: ReconstructionAlgorithmRequest) -> Rec
     return _run_spdhg_reconstruction(request)
 
 
+def _host_cone_volume(request: ReconstructionAlgorithmRequest) -> bool:
+    """Whether a cone FDK volume is too large to hold on the device."""
+    from tomojax.backends import device_free_memory_bytes
+    from tomojax.core.geometry.cone import beam_of
+
+    if beam_of(request.geometry) is None or request.detector_grid is not None:
+        return False
+    free = device_free_memory_bytes()
+    grid = request.grid
+    return free is not None and 4 * grid.nx * grid.ny * grid.nz > 0.4 * free
+
+
+def _run_host_fdk(request: ReconstructionAlgorithmRequest) -> ReconstructionResult:
+    """FDK in z-slabs with the volume on the host (see :func:`fdk_host`)."""
+    import logging
+
+    import numpy as np
+
+    from tomojax.recon.fdk import FDKConfig, FDKHostConfig, fdk_host
+
+    grid = request.grid
+    logging.info(
+        "The %dx%dx%d volume exceeds device memory; reconstructing in z-slabs on the host",
+        grid.nx,
+        grid.ny,
+        grid.nz,
+    )
+    fdk_cfg = FDKConfig(
+        filter_name=str(request.options.filter_name), views_per_batch=int(request.views_per_batch)
+    )
+    volume = fdk_host(
+        request.geometry,
+        grid,
+        request.detector,
+        np.asarray(request.projections, np.float32),
+        config=FDKHostConfig(fdk=fdk_cfg),
+    )
+    if request.volume_mask is not None:
+        volume *= np.asarray(request.volume_mask, np.float32)
+    return ReconstructionResult(
+        volume=volume,
+        algorithm_config={
+            "filter": str(fdk_cfg.filter_name),
+            "views_per_batch": int(fdk_cfg.views_per_batch),
+            "host_slabs": True,
+        },
+    )
+
+
 def _run_fbp_reconstruction(request: ReconstructionAlgorithmRequest) -> ReconstructionResult:
+    if _host_cone_volume(request):
+        return _run_host_fdk(request)
     cfg = FBPConfig(
         filter_name=str(request.options.filter_name),
         views_per_batch=int(request.views_per_batch),

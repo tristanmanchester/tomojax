@@ -76,6 +76,13 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911
             "slices",
             lambda: _run_positional_cli(slices.main, "tomojax slices", tail),
         )
+    if command == "export":
+        from tomojax.cli import export
+
+        return _run_command_boundary(
+            "export",
+            lambda: _run_positional_cli(export.main, "tomojax export", tail),
+        )
     if command == "align":
         from tomojax.cli._jax_allocator import configure_jax_allocator_defaults
 
@@ -120,6 +127,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "  tomojax preprocess raw.nxs corrected.nxs\n"
         "  tomojax recon --data corrected.nxs --out recon.nxs\n"
         "  tomojax slices --data recon.nxs --out quicklooks\n"
+        "  tomojax export --data recon.nxs --out recon_tiffs\n"
         "  tomojax align --data corrected.nxs --out aligned.nxs --mode cor\n"
     )
     return parser

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import jax
@@ -521,3 +522,63 @@ def test_pose_wrappers_stack_their_own_poses():
     saved = AugmentedGeometry(geometry, params, "detector")
     per_view = np.stack([np.asarray(saved.pose_for_view(i), np.float32) for i in range(7)])
     np.testing.assert_allclose(stack_view_poses(saved, 7), per_view, atol=1e-6)
+
+
+def test_fbp_reconstructs_volumes_larger_than_the_device_on_the_host(monkeypatch):
+    import tomojax.backends
+    from tomojax.recon.api import (
+        ReconstructionAlgorithmOptions,
+        ReconstructionAlgorithmRequest,
+        run_reconstruction_algorithm,
+    )
+
+    geometry, grid, detector, _ = _scan("turntable", n=16, views=24)
+    data = np.random.default_rng(4).random((24, detector.nv, detector.nu)).astype(np.float32)
+    request = ReconstructionAlgorithmRequest(
+        options=ReconstructionAlgorithmOptions(algorithm="fbp"),
+        geometry=geometry,
+        grid=grid,
+        detector=detector,
+        projections=data,
+        detector_grid=None,
+        volume_mask=None,
+        views_per_batch=8,
+        views_per_batch_mode="auto",
+        gather_dtype="fp32",
+    )
+    on_device = np.asarray(run_reconstruction_algorithm(request).volume)
+    monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: 4096)
+    result = run_reconstruction_algorithm(request)
+    assert isinstance(result.volume, np.ndarray) and result.algorithm_config["host_slabs"]
+    np.testing.assert_allclose(result.volume, on_device, atol=1e-5 * np.abs(on_device).max())
+
+
+def test_export_writes_volume_slices_and_raw_files(tmp_path: Path):
+    import imageio.v3 as iio
+
+    from tomojax.cli.main import main
+    from tomojax.io import ProjectionDataset
+
+    volume = np.random.default_rng(5).random((6, 5, 4)).astype(np.float32)  # (x, y, z)
+    detector = Detector(6, 4, 1.0, 1.0)
+    dataset = ProjectionDataset(
+        projections=np.zeros((2, 4, 6), np.float32),
+        angles_deg=np.asarray([0.0, 90.0], np.float32),
+        volume=volume,
+        detector=detector,
+        grid=Grid(6, 5, 4, 0.5, 0.5, 0.25),
+    )
+    save_dataset(tmp_path / "recon.nxs", dataset)
+    assert (
+        main(["export", "--data", str(tmp_path / "recon.nxs"), "--out", str(tmp_path / "tif")]) == 0
+    )
+    np.testing.assert_array_equal(
+        iio.imread(tmp_path / "tif" / "slice_00002.tif"), volume[:, :, 2].T
+    )
+    raw = tmp_path / "recon.raw"
+    args = ["export", "--data", str(tmp_path / "recon.nxs"), "--out", str(raw), "--format", "raw"]
+    assert main([*args, "--dtype", "uint16", "--range", "0", "1"]) == 0
+    stored = np.fromfile(raw, "<u2").reshape(4, 5, 6)
+    np.testing.assert_array_equal(stored, np.round(volume.transpose(2, 1, 0) * 65535))
+    info = json.loads(raw.with_suffix(".json").read_text())
+    assert info["shape_zyx"] == [4, 5, 6] and info["voxel_size_xyz"] == [0.5, 0.5, 0.25]

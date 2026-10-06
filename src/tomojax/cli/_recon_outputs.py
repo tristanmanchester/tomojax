@@ -40,7 +40,7 @@ def write_reconstruction_outputs(
     gather_dtype: str,
     volume_mask: jnp.ndarray | None,
     algorithm_config: dict[str, object],
-    volume: jnp.ndarray,
+    volume: jnp.ndarray | np.ndarray,
 ) -> None:
     """Persist reconstruction volume, optional preview, and optional manifest."""
     volume_np = np.asarray(volume)

@@ -21,6 +21,7 @@ PRODUCT_COMMANDS: tuple[CliCommand, ...] = (
     CliCommand("convert", "Convert supported dataset formats."),
     CliCommand("recon", "Reconstruct a volume from a dataset."),
     CliCommand("slices", "Extract labelled reconstruction slice PNGs."),
+    CliCommand("export", "Export a reconstruction as TIFF slices or a raw file."),
     CliCommand("align", "Run product alignment and reconstruction."),
     CliCommand("simulate", "Generate deterministic synthetic datasets."),
 )

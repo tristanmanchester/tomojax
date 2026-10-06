@@ -90,6 +90,24 @@ stable as it iterates; ASTRA's CGLS, whose backprojector is approximate,
 diverges after about 20 iterations on the same scan (see
 [measurements](measurements.md#cone-beam-projection-and-fdk)).
 
+When the volume would not fit in device memory, `--algo fbp` reconstructs it
+in z-slabs on the host (`fdk_host`), so a 2000³ volume needs host RAM for the
+projections and the volume but only a few slabs on the GPU.
+
+## Export
+
+Volume viewers and analysis packages read slice stacks or raw volumes:
+
+```bash
+tomojax export --data fdk.nxs --out fdk_slices                # 32-bit TIFF per z slice
+tomojax export --data fdk.nxs --out fdk.raw --format raw --dtype uint16
+```
+
+TIFF slices have y rows and x columns, numbered from the bottom of the volume;
+raw files are little-endian and z-major. A JSON sidecar records the shape, the
+voxel size and, for `uint16`, the value range mapped to 0–65535 (`--range`, by
+default the 0.1 and 99.9 percentiles). The export reads one slice at a time.
+
 ## Correct per-view motion
 
 Sample drift, stage wobble and thermal motion move the sample a little in
@@ -129,9 +147,10 @@ geometry = calibrate_cone_axis(geometry, grid, detector, scan.projections).apply
 volume = fdk(geometry, grid, detector, scan.projections)
 ```
 
-The `tomojax` commands hold the projections and the volume in memory. For
-scans larger than that, `fdk_host` reconstructs in z-slabs from a projection
-memmap into a volume memmap, reading only the detector rows each slab needs.
+The `tomojax` commands hold the projections and the volume in host memory.
+For scans larger than that, `fdk_host` reconstructs in z-slabs from a
+projection memmap into a volume memmap, reading only the detector rows each
+slab needs.
 
 ## Limitations
 
