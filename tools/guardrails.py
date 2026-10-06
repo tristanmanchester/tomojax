@@ -169,8 +169,10 @@ def _type_errors() -> dict[str, int]:
     command = [sys.executable, "-m", "basedpyright", str(SRC), "--outputjson"]
     output = subprocess.run(command, check=False, capture_output=True, text=True).stdout
     counts: dict[str, int] = {}
+    # Missing optional packages (CuPy, ASTRA...) depend on the environment.
+    environmental = {"reportMissingImports", "reportMissingModuleSource"}
     for item in json.loads(output)["generalDiagnostics"]:
-        if item["severity"] == "error":
+        if item["severity"] == "error" and item.get("rule") not in environmental:
             rule = item.get("rule", "other")
             counts[rule] = counts.get(rule, 0) + 1
     return dict(sorted(counts.items()))
