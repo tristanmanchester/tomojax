@@ -295,19 +295,3 @@ def implied_detector_offset(nominal: np.ndarray, aligned: np.ndarray) -> tuple[f
     solution, *_ = np.linalg.lstsq(design, shift, rcond=None)
     residual = shift - design @ solution
     return float(solution[0]), float(np.sqrt(np.mean(residual**2)))
-
-
-def fold_detector_offset(nominal: np.ndarray, params5: np.ndarray) -> tuple[float, np.ndarray]:
-    """Move the detector-u offset implied by detector-frame poses into the detector.
-
-    Detector-frame ``dx`` is a lab-x shift of the object, which moves its image
-    along detector u exactly as a detector-centre offset of opposite sign does.
-    Returns the offset to add to ``Detector.det_center[0]`` and the poses with
-    that constant added to every ``dx``; together they predict the same data.
-    """
-    params = np.array(params5, dtype=np.float64, copy=True)
-    aligned = np.array(nominal, dtype=np.float64, copy=True)
-    aligned[:, 0, 3] += params[:, 3]
-    offset, _ = implied_detector_offset(nominal, aligned)
-    params[:, 3] += offset
-    return offset, params.astype(np.asarray(params5).dtype)

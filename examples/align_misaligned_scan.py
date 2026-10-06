@@ -18,10 +18,9 @@ import time
 import jax
 import jax.numpy as jnp
 import numpy as np
-from scipy import ndimage
 
 import tomojax as tj
-from tomojax.alignment.api import apply_pose_updates
+from tomojax.alignment.api import apply_pose_updates, least_motion_estimate
 from tomojax.geometry import stack_view_poses
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -100,17 +99,19 @@ def run_example(
     aligned = np.asarray(result.volume)
     elapsed = time.perf_counter() - start
     info = result.info
-    # Moving the whole object rigidly, and every pose with it, predicts the same
-    # data: compare after removing that motion. A constant rotation is the mean
-    # rotation difference; a rigid shift s moves each view's detector-frame
-    # translations by the rows of its rotation applied to s.
-    difference = result.poses[:, :5] - data["truth_params"]
-    difference[:, :3] -= difference[:, :3].mean(axis=0)
-    rotations = np.asarray(stack_view_poses(scan.geometry, views))[:, :3, :3]
-    basis = np.concatenate([rotations[:, 0, :], rotations[:, 2, :]])
-    shift = np.linalg.lstsq(basis, difference[:, 3:].T.reshape(-1), rcond=None)[0]
-    difference[:, 3:] -= (basis @ shift).reshape(2, -1).T
-    aligned = ndimage.shift(aligned, shift, order=1)
+    # Moving the object rigidly, and every pose with it, predicts the same data,
+    # so tj.align reports the estimate with the least per-view motion. Compare it
+    # with the same representative of the truth.
+    truth, truth_params = least_motion_estimate(
+        truth,
+        np.pad(data["truth_params"], ((0, 0), (0, 1))),
+        nominal=np.asarray(stack_view_poses(scan.geometry, views)),
+        grid=data["grid"],
+        translation_frame="detector",
+        active=("alpha", "beta", "phi", "dx", "dz"),
+        beam=False,
+    )[:2]
+    difference = result.poses[:, :5] - truth_params[:, :5]
 
     def error(volume: np.ndarray) -> float:
         return float(np.linalg.norm(volume - truth) / np.linalg.norm(truth))
@@ -119,7 +120,7 @@ def run_example(
         "size": size,
         "views": views,
         "motion": "uniform +/-1 deg rotations, +/-2 px detector-frame shifts per view",
-        "rigid_shift_removed_px": [float(v) for v in shift],
+        "removed_rigid_motion": info.get("gauge"),
         "nominal_cgls_relative_l2": error(np.asarray(nominal)),
         "aligned_relative_l2": error(aligned),
         "rotation_rmse_deg": float(np.rad2deg(np.sqrt(np.mean(difference[:, :3] ** 2)))),
@@ -128,7 +129,7 @@ def run_example(
         "alignment_seconds_including_compile": elapsed,
         "device_platform": jax.default_backend(),
     }
-    volumes = {"truth": truth, "nominal": np.asarray(nominal), "aligned": aligned}
+    volumes = {"truth": np.asarray(truth), "nominal": np.asarray(nominal), "aligned": aligned}
     return volumes, metrics
 
 

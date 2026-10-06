@@ -336,7 +336,7 @@ def test_cone_projection_is_continuous_as_a_view_turns_through_45_degrees():
 @pytest.mark.parametrize("dof", ["alpha", "beta", "phi", "dx", "dz", "dy"])
 def test_cone_pose_alignment_recovers_each_degree_of_freedom(dof):
     from tomojax.alignment import AlignConfig
-    from tomojax.alignment.api import L2LossSpec, align, apply_pose_updates
+    from tomojax.alignment.api import L2LossSpec, align, apply_pose_updates, least_motion_estimate
 
     n, views = 16, 12
     grid = Grid(n, n, n, 1.0, 1.0, 1.0)
@@ -357,7 +357,6 @@ def test_cone_pose_alignment_recovers_each_degree_of_freedom(dof):
     )
     config = AlignConfig(
         pose_translation_frame="detector",
-        gauge_fix="none",
         optimise_dofs=(dof,),
         outer_iters=4,
         recon_iters=1,
@@ -371,8 +370,19 @@ def test_cone_pose_alignment_recovers_each_degree_of_freedom(dof):
         projector_backend="jax",
     )
     _, params, _ = align(geometry, grid, detector, data, config=config, init_x=volume)
+    # Alignment reports the least-motion estimate: a common phi or dz is the
+    # object's rotation or position, not motion.
+    expected = least_motion_estimate(
+        np.asarray(volume),
+        truth,
+        nominal=np.asarray(geometry.poses()),
+        grid=grid,
+        translation_frame="detector",
+        active=(dof,),
+        beam=True,
+    )[1]
     scale = np.rad2deg(1) if k < 3 else 1.0
-    np.testing.assert_allclose(np.asarray(params)[:, k] * scale, truth[:, k] * scale, atol=2e-3)
+    np.testing.assert_allclose(np.asarray(params)[:, k] * scale, expected[:, k] * scale, atol=2e-3)
 
 
 def test_parallel_geometry_keeps_dy_inactive_and_cone_geometry_adds_it():

@@ -41,6 +41,19 @@
   takes `--pixel-size`; `simulate` needs only `-o` (`--size`, `--views`, and
   a cone detector sized to see the whole volume). Alignment quality is `fast`
   or `reference`; the aliases `normal` and `full` are gone.
+- Alignment reports where the object is unambiguously. Rotating or shifting
+  the object, and every pose the opposite way, predicts the same data, and the
+  solver could end anywhere along that motion: a 64-cubed cone scan came back
+  shifted a voxel along its axis (volume error 0.26 against the truth) and a
+  half-turn parallel scan with a detector offset three voxels sideways (0.55).
+  `tj.align`, `align_multires` and `tomojax align` now return the estimate
+  with the least per-view motion, moving the volume to match (errors 0.0037
+  and 0.019), and record the motion removed in `info["gauge"]`. The detector
+  centre's share of a constant u shift is found in the same fit, replacing
+  `fold_detector_offset`; `tomojax.alignment.api.least_motion_estimate` moves
+  any volume and pose table, for example a truth, to the same estimate.
+  **Breaking:** the `gauge_fix` setting is gone; setup stages still anchor
+  object-frame translations internally.
 - **Breaking:** options are keyword-only throughout the public API:
   `tomojax.datasets.sphere`, `cube` and `blobs` (`size`, `value`, `seed`,
   `n_blobs`) and `tomojax.io.preprocess_nxtomo(config=...)`. `Scan.source`

@@ -109,7 +109,6 @@ def test_align_config_normalizes_aliases_and_resolves_stage_dofs() -> None:
         projector_backend="jax",
         gather_dtype="FP32",
         gauge_policy="anchor-mean",
-        gauge_fix="none",
         pose_model="per-view",
     )
 

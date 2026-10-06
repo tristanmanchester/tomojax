@@ -30,7 +30,7 @@ results from default CLI behavior and larger-motion targets.
   optimizer damping or kernel speed cannot restore the missing degree of
   freedom. `tomojax align` defaults to detector-frame translations
   (`translation_frame = "detector"`), and the Python API offers the same with
-  `pose_translation_frame="detector", gauge_fix="none"`.
+  `pose_translation_frame="detector"`.
   See [translation frames](alignment-guide.md#choose-the-translation-frame).
 - A per-view shift with a nonzero mean over the scan cannot be told apart from
   a detector-centre offset; `--mode cor-then-pose` reports it as the offset.

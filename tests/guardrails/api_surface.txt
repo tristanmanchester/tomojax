@@ -564,7 +564,6 @@ class tomojax.alignment.AlignConfig(
         pose_model: 'PoseModelInput' = 'per_view',
         knot_spacing: 'int' = 8,
         degree: 'int' = 3,
-        gauge_fix: 'GaugeFixMode' = 'mean_translation',
         seed_translations: 'bool' = False,
         mask_vol: 'str' = 'off',
         log_summary: 'bool' = False,

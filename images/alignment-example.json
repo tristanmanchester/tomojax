@@ -2,16 +2,24 @@
   "size": 96,
   "views": 240,
   "motion": "uniform +/-1 deg rotations, +/-2 px detector-frame shifts per view",
-  "rigid_shift_removed_px": [
-    -0.5263599157333374,
-    0.501995861530304,
-    0.04136252775788307
-  ],
-  "nominal_cgls_relative_l2": 0.6767439246177673,
-  "aligned_relative_l2": 0.09946157783269882,
-  "rotation_rmse_deg": 0.00506666349247098,
-  "translation_rmse_px": 0.0060156709514558315,
+  "removed_rigid_motion": {
+    "rotation_deg": [
+      0.7127006703218891,
+      -0.3043323212599596,
+      -0.3695115778561962
+    ],
+    "shift": [
+      0.5364941111420419,
+      -0.5067538991901028,
+      -0.09144508532110451
+    ],
+    "detector_offset": 0.0
+  },
+  "nominal_cgls_relative_l2": 0.6764291524887085,
+  "aligned_relative_l2": 0.04678880423307419,
+  "rotation_rmse_deg": 0.0022193770855665207,
+  "translation_rmse_px": 0.0005500732222571969,
   "outer_iterations": 43,
-  "alignment_seconds_including_compile": 16.407417449983768,
+  "alignment_seconds_including_compile": 17.631459841999458,
   "device_platform": "gpu"
 }

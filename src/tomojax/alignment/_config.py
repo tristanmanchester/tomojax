@@ -12,11 +12,9 @@ from ._model.diagnostics import GaugePolicy
 from ._model.dofs import (
     DOF_NAMES,
     ScopedAlignmentDofs,
-    bounds_vectors,
     normalize_alignment_dofs,
     normalize_bounds,
 )
-from ._model.gauge import GaugeFixMode, normalize_gauge_fix, validate_alignment_gauge_feasible
 from ._model.schedules import (
     AlignmentSchedule,
     ResolvedAlignmentSchedule,
@@ -189,7 +187,6 @@ class AlignConfig:
     pose_translation_frame: PoseTranslationFrame = field(default="object", kw_only=True)
     knot_spacing: int = 8
     degree: int = 3
-    gauge_fix: GaugeFixMode = "mean_translation"
     seed_translations: bool = False
     # Volume masking before forward projection (modeling for ROI/truncation)
     # Options: "off" (default), "cyl" (cylindrical mask in x-y broadcast along z)
@@ -220,7 +217,6 @@ class AlignConfig:
         self._normalize_dof_options()
         self._normalize_gauge_options()
         self._normalize_pose_model_options()
-        self._normalize_gauge_fix_options()
         if self.gn_coupling == "joint":
             if self.pose_model != "per_view" or self.opt_method != "gn":
                 raise ValueError("joint GN requires opt_method='gn' and pose_model='per_view'")
@@ -309,9 +305,8 @@ class AlignConfig:
                 self.schedule = None
         if self.schedule == "cor_then_pose" and self.pose_translation_frame != "detector":
             raise ValueError(
-                "schedule 'cor_then_pose' needs pose_translation_frame='detector' (and "
-                "gauge_fix='none'): only detector-frame translations express a constant "
-                "detector shift at every view"
+                "schedule 'cor_then_pose' needs pose_translation_frame='detector': only "
+                "detector-frame translations express a constant detector shift at every view"
             )
         if self.optimise_dofs is not None:
             self.optimise_dofs = normalize_alignment_dofs(
@@ -349,24 +344,6 @@ class AlignConfig:
                 raise ValueError("knot_spacing must be >= 1 for spline pose_model")
             if int(self.degree) not in (1, 2, 3):
                 raise ValueError("degree must be one of 1, 2, or 3 for spline pose_model")
-
-    def _normalize_gauge_fix_options(self) -> None:
-        self.gauge_fix = normalize_gauge_fix(self.gauge_fix)
-        if self.pose_translation_frame == "detector" and self.gauge_fix != "none":
-            raise ValueError(
-                "detector-frame poses require gauge_fix='none': subtracting mean detector "
-                "shifts is not a common object-frame translation gauge"
-            )
-        if self.gauge_fix == "mean_translation":
-            bounds = cast("DofBounds", self.bounds)
-            bounds_lower, bounds_upper = bounds_vectors(bounds)
-            active_mask_for_gauge = _active_dof_mask_for_cfg(self)
-            validate_alignment_gauge_feasible(
-                mode=self.gauge_fix,
-                active_mask=active_mask_for_gauge,
-                bounds_lower=bounds_lower,
-                bounds_upper=bounds_upper,
-            )
 
 
 def coupled_pose_config(**overrides: object) -> AlignConfig:

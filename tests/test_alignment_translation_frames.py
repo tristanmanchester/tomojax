@@ -34,7 +34,7 @@ from tomojax.alignment.api import (
     apply_alignment_state,
     apply_pose_update,
     apply_pose_updates,
-    fold_detector_offset,
+    least_motion_estimate,
     save_alignment_params_csv,
     save_alignment_params_json,
     se3_from_5d,
@@ -144,10 +144,8 @@ def test_state_and_reconstruction_use_the_same_detector_frame(kind):
     assert restored.pose.replace(params5=params / 2).translation_frame == "detector"
 
 
-def test_detector_frame_requires_an_explicit_valid_gauge_choice():
-    with pytest.raises(ValueError, match="gauge_fix='none'"):
-        AlignConfig(pose_translation_frame="detector")
-    cfg = AlignConfig(pose_translation_frame="detector", gauge_fix="none")
+def test_translation_frames_are_named():
+    cfg = AlignConfig(pose_translation_frame="detector")
     assert cfg.pose_translation_frame == "detector"
     with pytest.raises(ValueError, match="pose_translation_frame"):
         AlignConfig(pose_translation_frame="pixels")
@@ -170,7 +168,7 @@ def test_resume_cannot_silently_change_translation_frame(multires):
     geometry, grid, detector = _geometry(8, "parallel", np.array([0.0, 90.0], np.float32))
     data = jnp.zeros((2, detector.nv, detector.nu))
     volume, params = jnp.zeros((8, 8, 8)), jnp.zeros((2, 5))
-    cfg = AlignConfig(pose_translation_frame="detector", gauge_fix="none", projector_backend="jax")
+    cfg = AlignConfig(pose_translation_frame="detector", projector_backend="jax")
     if multires:
         resume = AlignMultiresResumeState(volume, params)
         with pytest.raises(ValueError, match="pose_translation_frame differs"):
@@ -211,7 +209,6 @@ def test_public_alignment_and_checkpoint_keep_detector_frame_at_ninety_degrees(
     saved = []
     cfg = AlignConfig(
         pose_translation_frame="detector",
-        gauge_fix="none",
         projector_backend=backend,
         optimise_dofs=("dx", "dz") if motion == "translation" else None,
         outer_iters=8,
@@ -248,8 +245,18 @@ def test_public_alignment_and_checkpoint_keep_detector_frame_at_ninety_degrees(
             init_x=volume,
             checkpoint_callback=saved.append,
         )
-    np.testing.assert_allclose(params[:, 3:5], truth[:, 3:], atol=3e-3)
-    np.testing.assert_allclose(params[:, :3], truth[:, :3], atol=5e-5)
+    # Alignment reports the least-motion estimate of the truth.
+    expected = least_motion_estimate(
+        np.asarray(volume),
+        np.pad(truth, ((0, 0), (0, 1))),
+        nominal=np.asarray(nominal),
+        grid=grid,
+        translation_frame="detector",
+        active=("dx", "dz") if motion == "translation" else ("alpha", "beta", "phi", "dx", "dz"),
+        beam=False,
+    )[1]
+    np.testing.assert_allclose(params[:, 3:5], expected[:, 3:5], atol=3e-3)
+    np.testing.assert_allclose(params[:, :3], expected[:, :3], atol=5e-5)
     assert info["pose_translation_frame"] == "detector"
     assert saved and all(item.pose_translation_frame == "detector" for item in saved)
     if multires:
@@ -387,7 +394,7 @@ def test_translation_seed_runs_once_at_the_first_level(monkeypatch, factors):
 
     monkeypatch.setattr(_pose_loop, "seeded_translation_params", record)
     monkeypatch.setattr(_stage_multires, "seeded_translation_params", record)
-    cfg = AlignConfig(outer_iters=1, recon_iters=1, seed_translations=True, gauge_fix="none")
+    cfg = AlignConfig(outer_iters=1, recon_iters=1, seed_translations=True)
     if factors is None:
         align(geometry, grid, detector, data, config=cfg)
         assert calls == [((6, 8, 8), True)]
@@ -418,33 +425,45 @@ def test_reprojection_seed_recovers_a_detector_centre_offset(kind):
 
 
 @pytest.mark.parametrize("kind", ["parallel", "lamino", "anisotropic"])
-def test_detector_offset_folds_exactly_into_the_detector_centre(kind):
+def test_least_motion_moves_a_constant_u_shift_into_the_detector_centre(kind):
     angles = np.linspace(0.0, 360.0, 24, endpoint=False)
-    geometry, grid, detector = _geometry(12, kind, angles)
+    geometry, grid, detector = _geometry(24, kind, angles)
     nominal = np.asarray(stack_view_poses(geometry, angles.size), np.float64)
     rng = np.random.default_rng(3)
-    rigid = np.asarray([0.7, -0.4, 0.3])
-    params = np.zeros((angles.size, 5), np.float32)
+    params = np.zeros((angles.size, 6), np.float32)
     params[:, :3] = rng.normal(0.0, 1e-2, (angles.size, 3))
-    params[:, 3] = -1.5 + nominal[:, 0, :3] @ rigid
+    params[:, 3] = -1.5 + nominal[:, 0, :3] @ np.asarray([0.7, -0.4, 0.3])
     params[:, 4] = rng.normal(0.0, 0.2, angles.size)
+    # A smooth object well inside the grid, so moving it loses nothing.
+    index = np.indices((grid.nx, grid.ny, grid.nz), np.float64)
+    shape = np.array([grid.nx, grid.ny, grid.nz])[:, None, None, None]
+    volume = np.exp(-0.5 * np.sum(((index - (shape - 1) / 2) / (shape / 8)) ** 2, axis=0))
+    volume = volume.astype(np.float32)
 
-    offset, folded = fold_detector_offset(nominal, params)
-
-    assert offset == pytest.approx(1.5, abs=1e-5)
-    np.testing.assert_allclose(folded[:, 3], nominal[:, 0, :3] @ rigid, atol=1e-5)
-    shifted = replace(
-        detector, det_center=(detector.det_center[0] + offset, detector.det_center[1])
+    moved_volume, moved, gauge = least_motion_estimate(
+        volume,
+        params,
+        nominal=nominal,
+        grid=grid,
+        translation_frame="detector",
+        active=("alpha", "beta", "phi", "dx", "dz"),
+        beam=False,
+        detector_offset=True,
     )
-    volume = jnp.asarray(rng.random((grid.nx, grid.ny, grid.nz)), jnp.float32)
+
+    assert gauge is not None
+    assert gauge.detector_offset == pytest.approx(1.5, abs=0.02)
+    shifted = replace(
+        detector,
+        det_center=(detector.det_center[0] + gauge.detector_offset, detector.det_center[1]),
+    )
     for view in (0, 6, 13):
         pose = jnp.asarray(nominal[view], jnp.float32)
         before = apply_pose_update(pose, jnp.asarray(params[view]), translation_frame="detector")
-        after = apply_pose_update(pose, jnp.asarray(folded[view]), translation_frame="detector")
-        expected = forward_project_view_T(before, grid, detector, volume)
-        np.testing.assert_allclose(
-            forward_project_view_T(after, grid, shifted, volume), expected, atol=1e-4
-        )
+        after = apply_pose_update(pose, jnp.asarray(moved[view]), translation_frame="detector")
+        expected = forward_project_view_T(before, grid, detector, jnp.asarray(volume))
+        actual = forward_project_view_T(after, grid, shifted, jnp.asarray(moved_volume))
+        assert float(jnp.linalg.norm(actual - expected) / jnp.linalg.norm(expected)) < 0.05
 
 
 @pytest.mark.parametrize("frame", ["object", "detector"])
@@ -482,7 +501,6 @@ def test_cor_then_pose_reports_the_constant_detector_shift_as_the_centre():
         schedule="cor_then_pose",
         freeze_dofs=("alpha", "beta", "phi"),  # isolate the translation split
         pose_translation_frame="detector",
-        gauge_fix="none",
         projector_backend="jax",
         outer_iters=8,
         recon_iters=1,

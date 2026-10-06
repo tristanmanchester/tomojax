@@ -180,18 +180,34 @@ errors of 0.23–0.26° on the analytic scans.
 `pose` mode recovers the same poses, but leaves the offset in the per-view
 `dx`; it logs the implied offset and writes it to the manifest as
 `implied_detector_u_px`. In the Python API, `align_multires` with
-`AlignConfig(schedule="cor_then_pose", pose_translation_frame="detector",
-gauge_fix="none")` returns the offset as `det_u_px` in
-`info["geometry_calibration_state"]`, and `implied_detector_offset` and
-`fold_detector_offset` perform the separation on any pose table.
+`AlignConfig(schedule="cor_then_pose", pose_translation_frame="detector")`
+returns the offset as `det_u_px` in `info["geometry_calibration_state"]`, and
+`implied_detector_offset` performs the separation on any pose table.
 
-Alignment cannot tell where the volume should sit: moving the volume and every
-pose together predicts the same data. The aligned volume keeps roughly the
-position of the nominal reconstruction, so a sample whose motion has a nonzero
-mean over the scan comes out displaced by that mean. On the chip phantom the
-aligned volume sits 1.3 px and 0.08° from the true-geometry reconstruction, close to the
-simulated motion's own mean displacement of 1.1 px. Register volumes before
-comparing them voxel by voxel.
+## Where the aligned volume sits
+
+The projections cannot tell where the object is: rotating or shifting the
+whole object, and every view's pose by the opposite motion, predicts exactly
+the same data. Left alone, the solver can end anywhere along that motion. On
+a 64-cubed cone-beam scan it left the poses with a common 1-voxel shift along
+the axis, and on a half-turn parallel scan with a detector offset a 3-voxel
+shift, so the volumes came out displaced (relative errors 0.26 and 0.55
+against the truth).
+
+`tj.align`, `align_multires` and `tomojax align` therefore report the estimate
+with the least per-view motion: the poses keep no common rotation and no
+rigid shift, the volume is moved to match, and `info["gauge"]` records what
+was removed. In a parallel beam with detector-frame poses, a schedule that
+reports the detector centre also moves the poses' constant u shift into it.
+On the scans above the volume errors fall to 0.0037 and 0.019; the analytic
+laminography example's falls from 0.099, with only a rigid shift removed, to
+0.047. To compare with a known
+truth, take its least-motion version too: `least_motion_estimate` in
+`tomojax.alignment.api` moves any volume and pose table to it.
+
+The motion is a symmetry only while the object stays inside the grid. If
+moving the volume would push more than 1% of it out of the grid, the grid
+edge already pins the estimate, which is then returned unchanged.
 
 ## Use mixed setup and pose as expert mode
 
@@ -309,8 +325,7 @@ near those views: on the chip phantom's 720 views, object-frame `dx` reached
 against 0.06 px with detector-frame translations.
 
 `tomojax align` therefore defaults to detector-frame translations
-(`translation_frame = "detector"`), which also leaves the translation gauge
-unfixed (`gauge_fix = "none"`). On the six-cell
+(`translation_frame = "detector"`). On the six-cell
 free-voxel pilot, the chip phantom and the analytic 128³ scans, detector-frame
 recovery is as accurate as object-frame recovery or better in every case.
 The setting `translation_frame = "object"` in a `--config` file restores the
@@ -342,12 +357,10 @@ frame raises an error. Older checkpoints retain object-frame meaning. Pass the
 same `translation_frame` when exporting JSON or CSV; detector-frame CSV output
 adds a frame column.
 
-`gauge_fix="none"` is required for detector-frame poses. Subtracting mean image
-shifts would constrain observable motion and is not a common object-frame
-translation gauge. Joint reconstruction still has a shared rigid-frame
-ambiguity: compare recovered geometry and volume in one consistent object
-frame. The option fixes representation; it does not establish successful
-free-voxel recovery or the performance and robustness targets.
+In either frame, the reported poses are the least-motion estimate (see
+[where the aligned volume sits](#where-the-aligned-volume-sits)). The frame
+fixes representation; it does not establish successful free-voxel recovery or
+the performance and robustness targets.
 
 ## Gauss–Newton updates at interpolation boundaries
 

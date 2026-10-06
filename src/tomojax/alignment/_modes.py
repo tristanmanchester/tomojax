@@ -124,9 +124,7 @@ def alignment_plan(
     name = normalize_mode(mode)
     profile = normalize_alignment_profile(quality)
     expert = config is not None
-    cfg = config or AlignConfig(
-        align_profile=profile, pose_translation_frame="detector", gauge_fix="none"
-    )
+    cfg = config or AlignConfig(align_profile=profile, pose_translation_frame="detector")
     if not expert:
         current = {key: getattr(cfg, key) for key in _PROFILE_KEYS}
         resolved = resolve_profiled_cli_defaults(

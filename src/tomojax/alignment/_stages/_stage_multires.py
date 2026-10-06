@@ -11,11 +11,13 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.alignment._config import AlignConfig
+from tomojax.alignment._gauge import Gauge, least_motion_estimate
+from tomojax.alignment._geometry.geometry_applier import BaseGeometryArrays, pose_stack_for_setup
 from tomojax.alignment._model.dofs import POSE_WIDTH
 from tomojax.alignment._model.state import AlignmentState
 from tomojax.alignment._objectives.loss_specs import loss_spec_name, resolve_loss_for_level
 from tomojax.alignment._observer import ObserverAction, ObserverCallback, OuterStat
-from tomojax.alignment._prealign import fold_detector_offset, seeded_translation_params
+from tomojax.alignment._prealign import seeded_translation_params
 from tomojax.alignment._results import (
     AlignMultiresCheckpointCallback,
     AlignMultiresInfo,
@@ -222,51 +224,70 @@ def _setup_dofs_requested(cfg: AlignConfig | None) -> bool:
     return bool(_resolved_schedule_for_cfg(cfg or AlignConfig()).active_geometry_dofs)
 
 
-def _fold_detector_offset(
+def _fix_gauge(
     state: MultiresRunState,
+    x_final: jnp.ndarray,
     *,
     context: MultiresContext,
     geometry: Geometry,
     detector: Detector,
-) -> tuple[MultiresRunState, tuple[str, ...]]:
-    """Report the poses' constant detector-u shift as the detector centre.
+    grid: Grid,
+) -> tuple[MultiresRunState, jnp.ndarray, Gauge | None, tuple[str, ...]]:
+    """Report the least-motion estimate among those predicting the same data.
 
-    Detector-frame ``dx`` moves an image along u exactly as a detector-centre
-    offset of opposite sign does, so a schedule that reports the detector
-    centre (``cor_then_pose``, or any schedule estimating ``det_u_px``) takes
-    that constant from the poses. The predicted data are unchanged.
+    A rigid motion of the object, undone by every pose, leaves the data
+    unchanged, so the solve may end anywhere along it (see
+    :mod:`tomojax.alignment._gauge`). In a parallel beam with detector-frame
+    poses, a schedule reporting the detector centre (``cor_then_pose``, or one
+    estimating ``det_u_px``) also takes the poses' constant u shift into it.
     """
     dofs = context.active_geometry_dofs
-    if beam_of(geometry) is not None:
-        # In a cone beam a lateral object shift is not a detector shift: a
-        # centre-of-rotation offset stays in the poses as the axis position.
-        return state, dofs
-    reports_centre = context.resolved_schedule.name == "cor_then_pose" or "det_u_px" in dofs
+    if state.params5 is None:
+        return state, x_final, None, dofs
+    frame = context.cfg.pose_translation_frame
     pose_dofs = context.resolved_schedule.active_pose_dofs
-    if (
-        state.params5 is None
-        or not reports_centre
-        or "dx" not in pose_dofs
-        or context.cfg.pose_translation_frame != "detector"
-    ):
-        return state, dofs
-    params5 = np.asarray(state.params5)
-    nominal = np.asarray(stack_view_poses(geometry, len(params5)))
-    offset, folded = fold_detector_offset(nominal, params5)
-    setup_state = cast("AlignmentState", state.setup_alignment_state)
-    det_u_px = float(setup_state.setup.det_u_px) + offset / float(detector.du)
+    beam = beam_of(geometry) is not None
+    reports_centre = context.resolved_schedule.name == "cor_then_pose" or "det_u_px" in dofs
+    offset = not beam and reports_centre and "dx" in pose_dofs and frame == "detector"
+    setup_state = cast("AlignmentState | None", state.setup_alignment_state)
+    if setup_state is None:
+        nominal = np.asarray(stack_view_poses(geometry, int(state.params5.shape[0])))
+    else:
+        base = BaseGeometryArrays.from_geometry(geometry, detector)
+        nominal = np.asarray(pose_stack_for_setup(base, setup_state.setup))
+    volume, params, gauge = least_motion_estimate(
+        np.asarray(x_final),
+        np.asarray(state.params5),
+        nominal=nominal,
+        grid=grid,
+        translation_frame=frame,
+        active=pose_dofs,
+        beam=beam,
+        detector_offset=offset,
+    )
+    if gauge is None:
+        LOG.info("The object reaches the grid edge, which fixes its position: poses unchanged")
+        return state, x_final, None, dofs
     LOG.info(
-        "Detector-u (centre-of-rotation) offset %.3f px, estimated with the per-view motion",
-        det_u_px,
+        "Least-motion estimate: removed a common rotation of %s deg and shift of %s",
+        [round(v, 4) for v in gauge.rotation_deg],
+        [round(float(v), 4) for v in gauge.shift],
     )
-    setup_state = setup_state.replace(
-        setup=setup_state.setup.replace(det_u_px=det_u_px),
-        pose=setup_state.pose.replace(params5=jnp.asarray(folded)),
+    if setup_state is not None:
+        setup = setup_state.setup
+        if offset:
+            det_u_px = float(setup.det_u_px) + gauge.detector_offset / float(detector.du)
+            LOG.info("Detector-u (centre-of-rotation) offset %.3f px", det_u_px)
+            setup = setup.replace(det_u_px=det_u_px)
+        setup_state = setup_state.replace(
+            setup=setup, pose=setup_state.pose.replace(params5=jnp.asarray(params))
+        )
+    fixed = replace(
+        state, params5=jnp.asarray(params, jnp.float32), setup_alignment_state=setup_state
     )
-    folded_state = replace(
-        state, params5=jnp.asarray(folded, jnp.float32), setup_alignment_state=setup_state
-    )
-    return folded_state, dofs if "det_u_px" in dofs else (*dofs, "det_u_px")
+    if offset and "det_u_px" not in dofs:
+        dofs = (*dofs, "det_u_px")
+    return fixed, jnp.asarray(volume), gauge, dofs
 
 
 def align_multires(
@@ -308,13 +329,13 @@ def align_multires(
         resume_state=resume_state,
         checkpoint_callback=checkpoint_callback,
     )
-    state, active_geometry_dofs = _fold_detector_offset(
-        state, context=context, geometry=geometry, detector=detector
-    )
     x_final = _final_multires_volume(
         x_init=state.x_init,
         prev_factor=state.prev_factor,
         grid=grid,
+    )
+    state, x_final, gauge, active_geometry_dofs = _fix_gauge(
+        state, x_final, context=context, geometry=geometry, detector=detector, grid=grid
     )
     run_complete = _multires_run_is_complete(
         params5=state.params5,
@@ -364,5 +385,6 @@ def align_multires(
             final_gauge_fix_dofs=state.final_gauge_fix_dofs,
             final_gauge_fix_stats=state.final_gauge_fix_stats,
             setup_alignment_state=state.setup_alignment_state,
+            gauge=None if gauge is None else gauge.to_dict(),
         ),
     )

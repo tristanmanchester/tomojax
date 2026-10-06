@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 import math
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 if TYPE_CHECKING:
     import jax.numpy as jnp
@@ -48,6 +48,7 @@ class AlignInfo(TypedDict):
     gauge_fix: str
     gauge_fix_dofs: list[str]
     gauge_fix_final: GaugeFixSummary
+    gauge: NotRequired[MetadataDict]
 
 
 class AlignMultiresInfo(TypedDict):
@@ -87,6 +88,8 @@ class AlignMultiresInfo(TypedDict):
     geometry_dofs: list[str]
     geometry_calibration_state: MetadataDict | None
     geometry_calibration_diagnostics: MetadataDict | None
+    # The common rigid motion removed from the poses (see alignment._gauge).
+    gauge: MetadataDict | None
 
 
 @dataclass

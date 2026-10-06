@@ -372,7 +372,6 @@ def _run_pose_alignment_stage(
     pose_optimizer = _pose_stage_optimizer_or_raise(stage)
     # Mean subtraction is an object-frame gauge; detector-frame translations need none.
     anchored = stage.gauge_policy == "anchor_mean" and cfg.pose_translation_frame == "object"
-    pose_gauge_fix = "mean_translation" if anchored else cfg.gauge_fix
     cfg_stage = replace(
         cfg,
         schedule=None,
@@ -389,7 +388,6 @@ def _run_pose_alignment_stage(
         # A supplied Lipschitz constant describes the full-resolution grid only.
         recon_L=cfg.recon_L if level_factor == 1 else None,
         loss=active_loss_spec,
-        gauge_fix=pose_gauge_fix,
     )
     cfg_stage.quality_tier = cast(Any, stage.quality_tier)
     geometry_for_align, align_kwargs = _pose_stage_geometry_context(
@@ -424,6 +422,7 @@ def _run_pose_alignment_stage(
             setup_alignment_state=state.setup_alignment_state,
             active_geometry_dofs=active_geometry_dofs,
         ),
+        anchor_translations=anchored,
         **align_kwargs,
     )
     setup_alignment_state = state.setup_alignment_state.replace(

@@ -291,6 +291,7 @@ def _final_align_multires_info(
     final_gauge_fix_dofs: list[str],
     final_gauge_fix_stats: dict[str, float | str | list[str]] | None,
     setup_alignment_state: object,
+    gauge: dict[str, object] | None = None,
 ) -> AlignMultiresInfo:
     geometry_calibration_diagnostics = add_geometry_acquisition_diagnostics(
         summarize_geometry_calibration_stats(global_outer_stats),
@@ -362,6 +363,7 @@ def _final_align_multires_info(
             else None
         ),
         "geometry_calibration_diagnostics": geometry_calibration_diagnostics,
+        "gauge": gauge,
     }
 
 
@@ -456,7 +458,7 @@ def _initial_multires_run_state(
     x_init = resume_state.x if level_complete else None
     params5 = resume_state.params5 if level_complete else None
     prev_factor = int(resume_state.level_factor) if level_complete else None
-    final_gauge_fix = normalize_gauge_fix(context.cfg.gauge_fix)
+    final_gauge_fix = normalize_gauge_fix("none")
     return MultiresRunState(
         x_init=x_init,
         params5=params5,

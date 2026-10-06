@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from tomojax.alignment._config import coupled_pose_config, resolved_schedule_for_config
+from tomojax.alignment._gauge import least_motion_estimate
 from tomojax.alignment._geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
 from tomojax.alignment._geometry.geometry_blocks import (
     GeometryCalibrationState,
@@ -65,7 +66,7 @@ from tomojax.alignment._objectives.loss_specs import (
     resolve_loss_for_level,
     validate_loss_schedule_levels,
 )
-from tomojax.alignment._prealign import fold_detector_offset, implied_detector_offset
+from tomojax.alignment._prealign import implied_detector_offset
 from tomojax.alignment._profiles import (
     AlignmentProfile,
     AlignmentProfileInput,
@@ -174,9 +175,9 @@ __all__ = [
     "cone_setup",
     "coupled_pose_config",
     "dof_spec",
-    "fold_detector_offset",
     "geometry_with_axis_state",
     "implied_detector_offset",
+    "least_motion_estimate",
     "level_detector_grid",
     "load_alignment_checkpoint",
     "loss_spec_name",

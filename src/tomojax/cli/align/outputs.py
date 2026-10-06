@@ -42,7 +42,7 @@ def _alignment_gauge_metadata(
     plan: AlignCliRunPlan,
     info: AlignCliInfo,
 ) -> dict[str, JsonValue]:
-    mode = cast("object", info.get("gauge_fix", plan.command.gauge_fix))
+    mode = cast("object", info.get("gauge_fix", "none"))
     dofs = cast("object", info.get("gauge_fix_dofs", []))
     final = cast("object", info.get("gauge_fix_final", {}))
     return {

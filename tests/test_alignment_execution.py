@@ -49,7 +49,6 @@ def test_alignment_automatic_step_bound_respects_physical_length_units(tilt):
             optimise_dofs=("dx",),
             opt_method="gd",
             lr_trans=0,
-            gauge_fix="none",
             early_stop=False,
         )
         volume, _, info = align(geometry, grid, detector, data, config=cfg)
@@ -82,7 +81,6 @@ def test_repeated_alignment_reconstruction_keeps_updating_voxels_and_resumes(
         optimise_dofs=("dx",),
         opt_method="gd",
         lr_trans=0,
-        gauge_fix="none",
         early_stop=False,
     )
     if public_fallback:

@@ -23,9 +23,9 @@ independent reconstruction accuracy. [Reproduce the figure](examples/README.md#r
 
 `tomojax align` and `tomojax.alignment` solve the volume and each view's pose
 together. Here a 96³ laminography scan with ±1° and ±2 px of random per-view
-motion goes from 0.57 to 0.063 relative error, with rotations recovered to
-0.0027°, in 14 s on a laptop GPU. The measurements are analytic integrals of
-continuous objects. [Reproduce it](examples/README.md#align-a-scan-with-per-view-motion).
+motion goes from 0.68 to 0.047 relative error, with rotations recovered to
+0.0022°, in 18 s on a laptop GPU including compilation. The measurements are
+analytic integrals of continuous objects. [Reproduce it](examples/README.md#align-a-scan-with-per-view-motion).
 
 ## First reconstruction
 

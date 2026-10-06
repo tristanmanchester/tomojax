@@ -1,5 +1,5 @@
 {
-  "align_config_fields": 61,
+  "align_config_fields": 60,
   "exported_names": {
     "tomojax": 17,
     "tomojax.geometry": 16,
@@ -18,7 +18,7 @@
     "import": 15,
     "preprocess": 27,
     "recon": 38,
-    "align": 73,
+    "align": 72,
     "export": 6,
     "simulate": 46
   },
@@ -112,6 +112,6 @@
     "reportTypedDictNotRequiredAccess": 5
   },
   "positional_options": [],
-  "params5_mentions": 263,
+  "params5_mentions": 258,
   "string_normalisers": 13
 }

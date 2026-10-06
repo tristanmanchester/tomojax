@@ -460,17 +460,6 @@ def _add_dof_schedule_options(p: argparse.ArgumentParser) -> None:
             "near 90 degrees"
         ),
     )
-    _ = p.add_argument(
-        "--gauge-fix",
-        choices=["mean_translation", "none"],
-        default=None,
-        help=(
-            "Gauge fixing for alignment parameters: mean_translation subtracts the "
-            "scan-wide mean from active dx,dz after updates (default for object-frame "
-            "translations); none leaves them unconstrained (default and required for "
-            "detector-frame translations)"
-        ),
-    )
     _ = p.add_argument("--w-rot", type=float, default=1e-3, help="Smoothness weight for rotations")
     _ = p.add_argument(
         "--w-trans",
@@ -706,7 +695,6 @@ class AlignCommand:
     checkpoint_projector: bool
     mask_vol: str
     translation_frame: str
-    gauge_fix: str
     gauge_policy: str
     opt_method: str
     gn_damping: float
@@ -787,8 +775,6 @@ def align_command_from_args(args: argparse.Namespace) -> AlignCommand:
         checkpoint_projector=cast("bool", args.checkpoint_projector),
         mask_vol=cast("str", args.mask_vol),
         translation_frame=frame,
-        gauge_fix=cast("str | None", args.gauge_fix)
-        or ("none" if frame == "detector" else "mean_translation"),
         gauge_policy=cast("str", args.gauge_policy),
         opt_method=cast("str", args.opt_method),
         gn_damping=cast("float", args.gn_damping),

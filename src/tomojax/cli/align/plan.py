@@ -60,7 +60,6 @@ if TYPE_CHECKING:
     from tomojax.alignment.api import (
         AlignInfo,
         FallbackPolicy,
-        GaugeFixMode,
         GaugePolicy,
         PoseTranslationFrame,
         QualityTier,
@@ -463,7 +462,6 @@ def _resolve_schedule_and_config(
         ),
         knot_spacing=command.knot_spacing,
         degree=command.degree,
-        gauge_fix=cast("GaugeFixMode", command.gauge_fix),
         pose_translation_frame=cast("PoseTranslationFrame", command.translation_frame),
         loss=parsed.loss_config,
         seed_translations=bool(command.seed_translations),

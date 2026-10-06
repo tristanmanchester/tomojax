@@ -142,6 +142,7 @@ def _prepare_align_setup(
     init_params5: jnp.ndarray | None,
     observer: ObserverCallback | None,
     resume_state: AlignResumeState | None,
+    anchor_translations: bool = False,
 ) -> _AlignSetupState:
     if cfg is None:
         cfg = AlignConfig()
@@ -196,14 +197,16 @@ def _prepare_align_setup(
     active_names = _active_dofs_for_cfg(cfg)
     active_mask = active_mask_bool.astype(jnp.float32)
     bounds_lower, bounds_upper = bounds_vectors(cfg.bounds)
-    gauge_fix = normalize_gauge_fix(cfg.gauge_fix)
-    if cfg.gn_coupling == "joint" and gauge_fix != "none":
-        # The coupled step updates volume and poses together; shifting the
-        # poses afterwards without the volume undoes part of each step. Pose
-        # damping keeps the translation gauge bounded, so the solution may
-        # carry a small common object shift instead.
-        logging.info("Coupled alignment leaves the translation gauge to pose damping")
-        gauge_fix = "none"
+    # Setup stages anchor mean object-frame translations so the poses cannot
+    # absorb the setup geometry. Otherwise the solve is free along the gauge,
+    # and the caller reports the least-motion estimate (alignment._gauge). The
+    # coupled step moves volume and poses together, so it is never anchored.
+    anchored = (
+        anchor_translations
+        and cfg.pose_translation_frame == "object"
+        and cfg.gn_coupling != "joint"
+    )
+    gauge_fix = normalize_gauge_fix("mean_translation" if anchored else "none")
     gauge_dofs = active_gauge_dofs(mode=gauge_fix, active_mask=active_mask_tuple)
     validate_alignment_gauge_feasible(
         mode=gauge_fix,
@@ -727,6 +730,7 @@ def align(
     resume_state: AlignResumeState | None = None,
     checkpoint_callback: AlignCheckpointCallback | None = None,
     det_grid_override: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+    anchor_translations: bool = False,
 ) -> tuple[jnp.ndarray, jnp.ndarray, AlignInfo]:
     """Alternating reconstruction + per-view alignment (5-DOF) on small cases.
 
@@ -742,6 +746,7 @@ def align(
         init_params5=init_params5,
         observer=observer,
         resume_state=resume_state,
+        anchor_translations=anchor_translations,
     )
     cfg = setup.cfg
     observer_fn = setup.observer_fn

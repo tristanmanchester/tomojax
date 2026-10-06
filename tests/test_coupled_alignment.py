@@ -104,7 +104,6 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
         projector_backend=backend,
         gather_dtype="fp32",
         pose_translation_frame="detector",
-        gauge_fix="none",
         lambda_tv=0,
         loss=PWLSLossSpec(a=0.3, b=0.8),
         w_rot=0.03 + 0.005 * scan_variant,
@@ -277,7 +276,6 @@ def test_public_joint_huber_constraints_and_resume(integrator, solver):
         early_stop=False,
         freeze_dofs=("beta",),
         bounds=(("dx", -0.01, 0.01),),
-        gauge_fix="none",
     )
     init = jnp.zeros_like(truth).at[1:3, 1, 1:3].set(0.5)
     checkpoints = []
