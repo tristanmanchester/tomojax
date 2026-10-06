@@ -71,20 +71,18 @@ def test_cli_catalog_is_product_only(capsys: pytest.CaptureFixture[str]) -> None
 
     assert product_command_names() == (
         "inspect",
-        "validate",
+        "import",
         "preprocess",
-        "ingest",
-        "convert",
         "recon",
-        "slices",
-        "export",
         "align",
+        "export",
         "simulate",
     )
     assert all(command.name in product_command_names() for command in PRODUCT_COMMANDS)
     assert main(["--help"]) == 0
     captured = capsys.readouterr()
     assert "tomojax inspect scan.nxs" in captured.out
+    assert "tomojax recon aligned.nxs -o recon.nxs" in captured.out
     assert "dev" not in captured.out.lower()
     assert "benchmark" not in captured.out.lower()
 
@@ -94,20 +92,10 @@ def test_cli_catalog_is_product_only(capsys: pytest.CaptureFixture[str]) -> None
 
 
 def test_product_command_help_has_no_dev_story(capsys: pytest.CaptureFixture[str]) -> None:
+    from tomojax.cli import product_command_names
     from tomojax.cli.main import main
 
-    for command in (
-        "inspect",
-        "validate",
-        "preprocess",
-        "ingest",
-        "convert",
-        "recon",
-        "slices",
-        "export",
-        "align",
-        "simulate",
-    ):
+    for command in product_command_names():
         with pytest.raises(SystemExit) as exc_info:
             main([command, "--help"])
 
@@ -118,9 +106,36 @@ def test_product_command_help_has_no_dev_story(capsys: pytest.CaptureFixture[str
         assert "benchmark" not in lowered
         assert "v" + "1" not in lowered
         assert "par" + "ity" not in lowered
-        if command == "simulate":
-            assert "--noise" not in captured.out
-            assert "--noise-level" not in captured.out
+        # One shape for every command: INPUT, then -o OUTPUT guarded by --force.
+        usage = captured.out.split("\n\n", 1)[0]
+        if command != "simulate":
+            assert "INPUT" in usage
+        if command != "inspect":
+            assert "-o OUTPUT" in usage
+        assert "--force" in usage
+
+
+def test_cli_prints_its_version(capsys: pytest.CaptureFixture[str]) -> None:
+    from tomojax import __version__
+    from tomojax.cli.main import main
+
+    assert main(["--version"]) == 0
+    assert capsys.readouterr().out.strip() == f"tomojax {__version__}"
+
+
+def test_cli_lists_expert_settings_as_config_keys(capsys: pytest.CaptureFixture[str]) -> None:
+    from tomojax.cli.main import main
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(["align", "--help"])
+    assert exc_info.value.code == 0
+    assert "--outer-iters" not in capsys.readouterr().out
+    with pytest.raises(SystemExit) as exc_info:
+        main(["align", "--config-keys"])
+    assert exc_info.value.code == 0
+    keys = capsys.readouterr().out
+    assert "outer_iters = " in keys
+    assert "mode = " in keys
 
 
 def test_root_docs_do_not_advertise_removed_package_surfaces() -> None:
@@ -180,3 +195,15 @@ def test_private_import_guard_passes_on_product_tree() -> None:
         capture_output=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_config_files_set_on_off_flags(tmp_path: Path) -> None:
+    from tomojax.cli.align.command import build_parser
+    from tomojax.cli.config import parse_args_with_config
+
+    config = tmp_path / "align.toml"
+    _ = config.write_text("seed_translations = false\n", encoding="utf-8")
+    args, _ = parse_args_with_config(
+        build_parser(), ["scan.nxs", "-o", "out.nxs", "--config", str(config)]
+    )
+    assert args.seed_translations is False

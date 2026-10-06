@@ -14,8 +14,10 @@ results from default CLI behavior and larger-motion targets.
 - Pose-only correction can absorb some setup errors. The reconstruction may
   look good while the recovered parameters differ from true geometry. COR mode
   fits setup offsets explicitly but still requires independent validation.
-- Mixed setup and pose correction has gauge ambiguity. Use `--mode auto` only
-  with an explicit `--gauge-policy`, such as `anchor_mean`.
+- Mixed setup and pose correction has gauge ambiguity. `--mode full` fixes a
+  gauge policy for each stage; an expert direct parameter set mixing setup and
+  pose parameters (`optimise_dofs`) needs an explicit `gauge_policy`, such as
+  `anchor_mean`, in its `--config` file.
 - Detector-v or sample-elevation reference shifts are physically ambiguous
   and not reliably recoverable.
 - `AlignConfig`'s default five-parameter pose update uses object-frame
@@ -27,11 +29,11 @@ results from default CLI behavior and larger-motion targets.
   detector shift such as a centre-of-rotation offset, at those views; changing
   optimizer damping or kernel speed cannot restore the missing degree of
   freedom. `tomojax align` defaults to detector-frame translations
-  (`--translation-frame detector`), and the Python API offers the same with
+  (`translation_frame = "detector"`), and the Python API offers the same with
   `pose_translation_frame="detector", gauge_fix="none"`.
   See [translation frames](alignment-guide.md#choose-the-translation-frame).
 - A per-view shift with a nonzero mean over the scan cannot be told apart from
-  a detector-centre offset; `--mode cor_then_pose` reports it as the offset.
+  a detector-centre offset; `--mode cor-then-pose` reports it as the offset.
 - Abrupt jumps and short bursts of bad views need more robust diagnostics or
   specialized workflows.
 - The default autodiff Gauss–Newton Jacobian is one-sided at trilinear voxel
@@ -49,15 +51,16 @@ results from default CLI behavior and larger-motion targets.
 
 ## Data and geometry boundaries
 
-- TIFF `ingest` packages data; it does not apply flat/dark correction or a log.
+- TIFF `import` packages data; it does not apply flat/dark correction or a log.
   Reconstruction expects absorption/log-attenuation projections.
 - TIFF preprocessing through the CLI records unit detector spacing and parallel
   geometry. Use the Python API to supply measured pitch, grid, and tilt; see the
   [real scan guide](real-laminography.md#prepare-tiff-data).
 - A laminography dataset without explicit tilt metadata currently uses 30° when
   building geometry. Inspect and set measured geometry before reconstruction.
-- CLI slice PNGs are display-scaled. Use the floating-point dataset volume for
-  quantitative analysis and honor its recorded axis order.
+- `tomojax inspect --preview` PNGs are display-scaled central slices. Use the
+  floating-point dataset volume for quantitative analysis and honor its
+  recorded axis order.
 
 ## Implementation limitations
 

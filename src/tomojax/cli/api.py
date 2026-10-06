@@ -14,16 +14,13 @@ class CliCommand:
 
 
 PRODUCT_COMMANDS: tuple[CliCommand, ...] = (
-    CliCommand("inspect", "Inspect a projection dataset."),
-    CliCommand("validate", "Validate a projection or reconstruction dataset."),
-    CliCommand("preprocess", "Apply flat/dark/background preprocessing."),
-    CliCommand("ingest", "Build a standard dataset from raw inputs."),
-    CliCommand("convert", "Convert supported dataset formats."),
-    CliCommand("recon", "Reconstruct a volume from a dataset."),
-    CliCommand("slices", "Extract labelled reconstruction slice PNGs."),
-    CliCommand("export", "Export a reconstruction as TIFF slices or a raw file."),
-    CliCommand("align", "Run product alignment and reconstruction."),
-    CliCommand("simulate", "Generate deterministic synthetic datasets."),
+    CliCommand("inspect", "Describe and check a dataset; preview it as PNGs."),
+    CliCommand("import", "Make a dataset from a Nikon scan, TIFF stack or .npz."),
+    CliCommand("preprocess", "Flat- and dark-correct raw frames."),
+    CliCommand("recon", "Reconstruct a volume."),
+    CliCommand("align", "Estimate the rotation axis and per-view poses."),
+    CliCommand("export", "Write a reconstruction as TIFF slices or a raw file."),
+    CliCommand("simulate", "Write a synthetic scan of a phantom."),
 )
 
 

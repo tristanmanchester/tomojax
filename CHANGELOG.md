@@ -23,6 +23,24 @@
   `tomojax.geometry` 38 to 16, `tomojax.io` 25 to 12). The geometry-level
   single-resolution `align` and `coupled_pose_config` are in
   `tomojax.alignment.api`.
+- **Breaking:** one command-line shape, `tomojax <command> INPUT -o OUTPUT`,
+  with an existing output refused unless `--force`, exit status 0 for success,
+  1 for failure and 2 for a usage error, and `tomojax --version`. Seven
+  commands: `inspect` (now also validating, exiting 1 for an invalid dataset,
+  with `--json` to stdout and `--preview DIR` PNGs of the central projection
+  and volume slices; replaces `validate` and `slices`), `import` (formerly
+  `ingest`; also converts `.npz` and `.nxs`, replacing `convert`),
+  `preprocess`, `recon`, `align`, `export` and `simulate`. Options share the
+  Python names: `recon --method --iterations --tv-weight --nonnegative`
+  (formerly `--algo --iters --lambda-tv --positivity`), `--preview`,
+  `--manifest`, and `align --freeze` and `--dry-run`. `recon` applies a saved
+  alignment unless `--ignore-alignment`. `--help` lists the options most runs
+  need; expert settings are keys of the TOML file given with `--config`,
+  listed with their defaults by `--config-keys` (they still parse as flags).
+  `preprocess` and `export` infer their formats from the paths; `import`
+  takes `--pixel-size`; `simulate` needs only `-o` (`--size`, `--views`, and
+  a cone detector sized to see the whole volume). Alignment quality is `fast`
+  or `reference`; the aliases `normal` and `full` are gone.
 - Fix the CUDA cone-beam transpose for volumes smaller than its 32- or
   64-voxel tiles: a tile's far edge, close to the source, projected through
   infinity and dropped detector columns (errors up to 30% at 8-cubed).

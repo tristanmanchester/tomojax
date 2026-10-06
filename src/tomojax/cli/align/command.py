@@ -18,35 +18,49 @@ from tomojax.alignment.api import (
     parse_loss_schedule,
     parse_loss_spec,
 )
+from tomojax.cli._options import add_config, add_output, hide_expert
 from tomojax.geometry.api import DISK_VOLUME_AXES
 
 type AlignmentMode = Literal["cor", "pose", "auto", "max", "cor_then_pose"]
 
 
-_PUBLIC_HELP_OPTIONS = frozenset(
-    {
-        "-h",
-        "--help",
-        "--config",
-        "--data",
-        "--mode",
-        "--pose-solver",
-        "--quality",
-        "--out",
-        "--save-manifest",
-        "--progress",
-        "--roi",
-        "--grid",
-        "--volume-axes",
-        "--levels",
-        "--log-summary",
-        "--views-per-batch",
-        "--print-plan-json",
-        "--checkpoint",
-        "--checkpoint-every",
-        "--resume",
-    }
+_PUBLIC_OPTIONS = (
+    "--mode",
+    "--quality",
+    "--freeze",
+    "--levels",
+    "--pose-solver",
+    "--roi",
+    "--grid",
+    "--volume-axes",
+    "--manifest",
+    "--dry-run",
+    "--checkpoint",
+    "--resume",
+    "--progress",
 )
+# Public mode names and the internal schedules' names for them; ``full`` at
+# reference quality is the former ``max``.
+_MODES = {"pose": "pose", "cor": "cor", "cor-then-pose": "cor_then_pose", "full": "auto"}
+
+
+def public_mode(mode: str) -> str:
+    """The public name of an internal alignment mode."""
+    return {v: k for k, v in _MODES.items()}.get(str(mode), str(mode))
+
+
+def public_quality(profile: str) -> str:
+    """The public name of an internal alignment profile."""
+    return "fast" if normalize_alignment_profile(profile) == "lightning" else "reference"
+
+
+def _mode_argument(value: str) -> str:
+    key = str(value).strip().lower().replace("_", "-")
+    if key not in _MODES:
+        raise argparse.ArgumentTypeError(
+            f"mode must be one of pose, cor, cor-then-pose, full; got {value!r}"
+        )
+    return _MODES[key]
 
 
 def _positive_float(value: str) -> float:
@@ -71,7 +85,7 @@ def parse_dof_args(
             if optimise_dofs_arg is None
             else normalize_alignment_dofs(optimise_dofs_arg, option_name="--optimise-dofs")
         )
-        freeze_dofs = normalize_alignment_dofs(freeze_dofs_arg, option_name="--freeze-dofs")
+        freeze_dofs = normalize_alignment_dofs(freeze_dofs_arg, option_name="--freeze")
     except ValueError as exc:
         parser.error(str(exc))
     return optimise_dofs, freeze_dofs
@@ -117,13 +131,31 @@ def _alignment_quality_argument(value: str) -> str:
     try:
         return normalize_alignment_profile(value)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError(
-            "quality must be 'fast' or 'reference' (aliases: lightning, normal, full, tortoise)"
-        ) from exc
+        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Joint reconstruction + alignment on dataset (.nxs)")
+    p = argparse.ArgumentParser(
+        prog="tomojax align",
+        description=(
+            "Estimate a scan's geometry corrections (setup geometry and per-view motion) "
+            "and reconstruct with them. OUTPUT holds the corrected scan, its poses and "
+            "the volume; tomojax recon applies them."
+        ),
+        epilog=(
+            "Modes:\n"
+            "  pose           per-view motion: rotations and translations (default)\n"
+            "  cor            setup geometry only: detector centre (parallel), or the\n"
+            "                 axis offset and detector roll (cone beam)\n"
+            "  cor-then-pose  setup geometry, then per-view motion\n"
+            "  full           detector centre, roll and axis direction, then motion,\n"
+            "                 coarse to fine\n\n"
+            "Examples:\n"
+            "  tomojax align scan.nxs -o aligned.nxs\n"
+            "  tomojax align scan.nxs -o aligned.nxs --mode cor-then-pose --freeze dy\n"
+            "  tomojax recon aligned.nxs -o recon.nxs --method cgls"
+        ),
+    )
     _add_input_mode_options(p)
     _add_reconstruction_options(p)
     _add_projector_runtime_options(p)
@@ -132,24 +164,20 @@ def build_parser() -> argparse.ArgumentParser:
     _add_loss_options(p)
     _add_checkpoint_options(p)
     _add_output_options(p)
-    _hide_expert_alignment_help(p)
+    hide_expert(p, _PUBLIC_OPTIONS)
     return p
 
 
 def _add_input_mode_options(p: argparse.ArgumentParser) -> None:
-    _ = p.add_argument("--config", help="Load command defaults from a TOML config file")
-    _ = p.add_argument("--data", help="Input .nxs")
+    _ = p.add_argument("data", metavar="INPUT", help="Scan to align (.nxs, .h5, .npz)")
+    add_output(p, "Output .nxs: the corrected scan, its per-view poses and the volume")
+    add_config(p)
     _ = p.add_argument(
         "--mode",
-        choices=["cor", "pose", "auto", "max", "cor_then_pose"],
+        type=_mode_argument,
         default="pose",
-        help=(
-            "High-level alignment mode. pose solves per-view 5-DOF motion "
-            "(default); cor solves detector centre; cor_then_pose solves per-view "
-            "motion and reports its constant detector-u shift as the detector centre; "
-            "auto is the robust setup+pose workflow; max uses the slower "
-            "reference-quality posture."
-        ),
+        metavar="{pose,cor,cor-then-pose,full}",
+        help="What to estimate (default pose; see Modes below)",
     )
     _ = p.add_argument(
         "--quality",
@@ -157,7 +185,7 @@ def _add_input_mode_options(p: argparse.ArgumentParser) -> None:
         type=_alignment_quality_argument,
         default="lightning",
         metavar="{fast,reference}",
-        help="Execution quality posture: fast (default) or reference. Aliases: normal, full.",
+        help="fast (default) or reference: slower, more conservative solver settings",
     )
     _ = p.add_argument(
         "--align-profile",
@@ -275,10 +303,9 @@ def _add_optimizer_options(p: argparse.ArgumentParser) -> None:
         choices=["coupled", "alternating"],
         default=None,
         help=(
-            "Pose stages: coupled solves free voxels and per-view poses together "
-            "(Gauss-Newton, exact ray integration, least squares, no TV); alternating "
-            "refines poses against a fixed reconstruction between volume updates. "
-            "Default: coupled for --mode pose, alternating for modes with setup stages"
+            "How pose stages solve: coupled fits the volume and the poses together "
+            "(Gauss-Newton; default for pose and cor-then-pose); alternating refines the "
+            "poses against a fixed volume between volume updates (default for full)"
         ),
     )
     _ = p.add_argument(
@@ -345,7 +372,8 @@ def _add_dof_schedule_options(p: argparse.ArgumentParser) -> None:
         type=int,
         nargs="+",
         default=None,
-        help="Optional multires factors, e.g., 4 2 1",
+        metavar="FACTOR",
+        help="Coarse-to-fine downsampling factors, for example 4 2 1 (default: by mode)",
     )
     _ = p.add_argument(
         "--optimise-dofs",
@@ -359,11 +387,15 @@ def _add_dof_schedule_options(p: argparse.ArgumentParser) -> None:
         ),
     )
     _ = p.add_argument(
-        "--freeze-dofs",
+        "--freeze",
+        dest="freeze_dofs",
         nargs="+",
         default=None,
-        metavar="DOF[,DOF]",
-        help="Named alignment DOFs to keep fixed at initial values. Example: phi or det_u_px",
+        metavar="DOF",
+        help=(
+            "Parameters to keep fixed: alpha, beta, phi, dx, dz, dy (along a cone beam), "
+            "or setup ones such as det_u_px"
+        ),
     )
     _ = p.add_argument(
         "--schedule",
@@ -582,7 +614,6 @@ def _add_checkpoint_options(p: argparse.ArgumentParser) -> None:
 
 
 def _add_output_options(p: argparse.ArgumentParser) -> None:
-    _ = p.add_argument("--out", help="Output .nxs with recon and alignment params")
     _ = p.add_argument(
         "--save-params-json",
         default=None,
@@ -594,10 +625,11 @@ def _add_output_options(p: argparse.ArgumentParser) -> None:
         help="Optional CSV sidecar for final per-view alignment parameters",
     )
     _ = p.add_argument(
-        "--save-manifest",
-        metavar="PATH",
+        "--manifest",
+        dest="save_manifest",
+        metavar="JSON",
         default=None,
-        help="Write a JSON reproducibility manifest for this alignment run.",
+        help="Also write a JSON record of the run (inputs, settings, versions)",
     )
     _ = p.add_argument(
         "--progress",
@@ -609,9 +641,8 @@ def _add_output_options(p: argparse.ArgumentParser) -> None:
         choices=["auto", "off", "cube", "bbox", "cyl"],
         default="auto",
         help=(
-            "Region to reconstruct: auto: square x-y slices + z from detector height; "
-            "off: use full grid; cube: cubic detector-FOV ROI; bbox: rectangular FOV bbox; "
-            "cyl: auto + zero outside cylindrical FOV"
+            "Crop the grid to the detector's field of view: auto (default), cube, bbox, "
+            "cyl (auto, zeroing outside the cylinder every view sees), or off"
         ),
     )
     _ = p.add_argument(
@@ -629,7 +660,7 @@ def _add_output_options(p: argparse.ArgumentParser) -> None:
         nargs=3,
         metavar=("NX", "NY", "NZ"),
         default=None,
-        help="Override reconstruction grid size (nx ny nz). Voxel sizes stay as in input metadata.",
+        help="Reconstruct NX x NY x NZ voxels of the scan's voxel size",
     )
     _ = p.add_argument(
         "--volume-axes",
@@ -638,19 +669,11 @@ def _add_output_options(p: argparse.ArgumentParser) -> None:
         help="On-disk axis order for saved volumes (default: zyx for viewer convention).",
     )
     _ = p.add_argument(
-        "--print-plan-json",
+        "--dry-run",
+        dest="print_plan_json",
         action="store_true",
-        help="Print the resolved alignment plan as JSON and exit before compute.",
+        help="Print the resolved plan as JSON and exit without aligning",
     )
-
-
-def _hide_expert_alignment_help(parser: argparse.ArgumentParser) -> None:
-    """Keep default alignment help product-shaped while accepting expert flags."""
-    for action in parser._actions:
-        if not action.option_strings:
-            continue
-        if set(action.option_strings).isdisjoint(_PUBLIC_HELP_OPTIONS):
-            action.help = argparse.SUPPRESS
 
 
 @dataclass(frozen=True, slots=True)
@@ -722,8 +745,8 @@ class AlignCommand:
 
 
 def _pose_solver(args: argparse.Namespace) -> str:
-    # The coupled solver is validated for pose-only alignment; setup schedules
-    # keep the alternating solver unless it is requested explicitly.
+    # As tomojax.alignment.alignment_plan: coupled wherever pose stages follow
+    # at most the centre-of-rotation calibration.
     requested = cast("str | None", args.pose_solver)
     if requested is not None:
         return requested

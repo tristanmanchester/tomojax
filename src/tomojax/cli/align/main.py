@@ -7,17 +7,14 @@ import logging
 import os
 from typing import TYPE_CHECKING, cast
 
-from tomojax.alignment.api import (
-    AlignmentLossSchedule,
-    loss_spec_params,
-    normalize_alignment_profile,
-)
+from tomojax.alignment.api import AlignmentLossSchedule, loss_spec_params
+from tomojax.cli._options import check_paths
 from tomojax.cli.config import parse_args_with_config
 from tomojax.core import log_jax_env, setup_logging
 from tomojax.io.api import JsonValue, normalize_json
 
 from .checkpoint import make_align_cli_checkpoint_callbacks
-from .command import build_parser
+from .command import build_parser, public_mode, public_quality
 from .outputs import write_alignment_outputs
 from .plan import (
     build_align_cli_run_plan,
@@ -71,12 +68,11 @@ def _log_resolved_plan(plan: AlignCliRunPlan) -> None:
                 dofs = ",".join(str(item) for item in dof_items)
                 stage_name = stage_map.get("stage_name", stage_map.get("name"))
                 stage_summary.append(f"{stage_name}[{stage_map.get('optimizer_kind')}:{dofs}]")
-    profile = normalize_alignment_profile(command.align_profile)
     logging.info(
         "Resolved alignment plan: mode=%s quality=%s schedule=%s levels=%s "
         "outer_iters=%d recon_iters=%d opt=%s views_per_batch=%d",
-        command.mode,
-        profile,
+        public_mode(command.mode),
+        public_quality(command.align_profile),
         command.schedule,
         plan.run_levels if plan.run_levels is not None else "single",
         command.outer_iters,
@@ -89,13 +85,13 @@ def _log_resolved_plan(plan: AlignCliRunPlan) -> None:
 
 
 def _resolved_plan_payload(plan: AlignCliRunPlan) -> dict[str, JsonValue]:
-    """Return the structured public plan printed by --print-plan-json."""
+    """Return the structured public plan printed by --dry-run."""
     command = plan.command
     schedule = plan.schedule_metadata or {}
     profile_options = cast("object", plan.config_metadata.get("profile_options", {}))
     payload: dict[str, object] = {
-        "mode": command.mode,
-        "quality": normalize_alignment_profile(command.align_profile),
+        "mode": public_mode(command.mode),
+        "quality": public_quality(command.align_profile),
         "schedule": command.schedule,
         "levels": plan.run_levels,
         "single_resolution": plan.run_levels is None,
@@ -136,7 +132,13 @@ def _resolved_plan_payload(plan: AlignCliRunPlan) -> dict[str, JsonValue]:
 def main() -> None:
     """Run alignment from the public CLI."""
     p = build_parser()
-    args, config_metadata = parse_args_with_config(p, required=("data", "out"))
+    args, config_metadata = parse_args_with_config(p)
+    check_paths(
+        p,
+        inputs=[cast("str", args.data)],
+        outputs=[cast("str", args.out)],
+        force=bool(cast("bool", args.force)),
+    )
 
     setup_logging()
     log_jax_env()

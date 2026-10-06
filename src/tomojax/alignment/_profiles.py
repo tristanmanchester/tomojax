@@ -40,12 +40,9 @@ def normalize_alignment_profile(value: AlignmentProfileInput) -> AlignmentProfil
     profile = str(value).strip().lower().replace("-", "_")
     if profile in {"fast", "lightning"}:
         return "lightning"
-    if profile in {"reference", "tortoise", "normal", "full"}:
+    if profile in {"reference", "tortoise"}:
         return "tortoise"
-    raise ValueError(
-        "align_profile must be one of 'fast' or 'reference' "
-        "(aliases: lightning, normal, full, tortoise)"
-    )
+    raise ValueError(f"quality must be 'fast' or 'reference', not {value!r}")
 
 
 def alignment_profile_policy(value: AlignmentProfileInput) -> AlignmentProfilePolicy:

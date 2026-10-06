@@ -4,6 +4,7 @@ import importlib
 import json
 from pathlib import Path
 
+import h5py
 import imageio.v3 as iio
 import jax.numpy as jnp
 import numpy as np
@@ -28,65 +29,84 @@ from ._helpers import (
 pytestmark = pytest.mark.surface
 
 
-def test_inspect_and_validate_cli_on_product_dataset(
+def test_inspect_cli_describes_and_checks_a_dataset(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     path = tmp_path / "scan.nxs"
-    report = tmp_path / "inspect.json"
     write_projection_dataset(path)
 
-    assert main(["validate", str(path)]) == 0
-    assert main(["inspect", str(path), "--json", str(report)]) == 0
-
-    captured = capsys.readouterr()
-    assert f"OK: {path}" in captured.out
-    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert main(["inspect", str(path)]) == 0
+    assert "Valid: yes" in capsys.readouterr().out
+    assert main(["inspect", str(path), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["valid"] is True
+    assert payload["issues"] == []
     assert payload["projection"]["shape"] == [2, 2, 4]
     assert payload["angles"]["coverage_deg"] == 90.0
+    assert payload["volume"]["found"] is False
 
 
-def test_ingest_cli_writes_standard_dataset_from_tiffs(tmp_path: Path) -> None:
+def test_inspect_cli_exits_1_for_an_invalid_dataset(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "scan.nxs"
+    write_projection_dataset(path)
+    with h5py.File(path, "a") as handle:
+        del handle["/entry/sample/name"]
+
+    assert main(["inspect", str(path)]) == 1
+    assert "Issues (" in capsys.readouterr().out
+
+
+def test_inspect_cli_previews_a_reconstruction(tmp_path: Path) -> None:
+    path = tmp_path / "recon.nxs"
+    dataset = make_projection_dataset()
+    dataset.volume = np.arange(4 * 4 * 2, dtype=np.float32).reshape(4, 4, 2)
+    save_dataset(path, dataset)
+    previews = tmp_path / "previews"
+
+    assert main(["inspect", str(path), "--preview", str(previews)]) == 0
+    names = sorted(p.name for p in previews.iterdir())
+    assert names == ["projection.png", "slice_x.png", "slice_y.png", "slice_z.png"]
+    with pytest.raises(SystemExit) as exc_info:
+        main(["inspect", str(path), "--preview", str(previews)])
+    assert exc_info.value.code == 2
+    assert main(["inspect", str(path), "--preview", str(previews), "--force"]) == 0
+
+
+def test_import_cli_writes_standard_dataset_from_tiffs(tmp_path: Path) -> None:
     stack = tmp_path / "stack"
     angles = tmp_path / "angles.csv"
-    out_path = tmp_path / "ingested.nxs"
+    out_path = tmp_path / "imported.nxs"
     write_tiff_stack(stack, [1.0, 2.0], shape=(2, 4))
     write_angle_csv(angles, [0.0, 90.0])
 
-    assert (
-        main(
-            [
-                "ingest",
-                str(stack),
-                "--angles",
-                str(angles),
-                "--out",
-                str(out_path),
-                "--du",
-                "0.5",
-                "--dv",
-                "0.75",
-                "--det-center-u",
-                "2.5",
-                "--det-center-v",
-                "-1.5",
-                "--grid",
-                "4",
-                "4",
-                "2",
-            ]
-        )
-        == 0
-    )
+    args = ["import", str(stack), "--angles", str(angles), "-o", str(out_path)]
+    assert main([*args, "--pixel-size", "0.5", "0.75", "--name", "rock"]) == 0
 
     dataset = load_dataset(out_path)
     assert dataset.projections.shape == (2, 2, 4)
     assert dataset.detector is not None
     assert dataset.detector.du == pytest.approx(0.5)
     assert dataset.detector.dv == pytest.approx(0.75)
-    # CLI centre offsets are detector pixels; metadata uses physical lengths.
-    assert dataset.detector.det_center == pytest.approx((1.25, -1.125))
-    assert dataset.grid is not None
-    assert dataset.grid.nz == 2
+    assert dataset.sample_name == "rock"
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(args)
+    assert exc_info.value.code == 2
+    assert main([*args, "--force"]) == 0
+    assert load_dataset(out_path).detector.du == pytest.approx(1.0)  # pyright: ignore[reportOptionalMemberAccess]
+
+
+def test_import_cli_needs_angles_for_tiffs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stack = tmp_path / "stack"
+    write_tiff_stack(stack, [1.0, 2.0], shape=(2, 4))
+    with pytest.raises(SystemExit) as exc_info:
+        main(["import", str(stack), "-o", str(tmp_path / "scan.nxs")])
+    assert exc_info.value.code == 2
+    assert "TIFF stacks need --angles" in capsys.readouterr().err
 
 
 def test_preprocess_cli_handles_tiff_stack_workflow(tmp_path: Path) -> None:
@@ -105,9 +125,8 @@ def test_preprocess_cli_handles_tiff_stack_workflow(tmp_path: Path) -> None:
             [
                 "preprocess",
                 str(projections),
+                "-o",
                 str(out_path),
-                "--format",
-                "tiff-stack",
                 "--flats",
                 str(flats),
                 "--darks",
@@ -126,9 +145,9 @@ def test_preprocess_cli_handles_tiff_stack_workflow(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("omitted_flag", "expected"),
     [
-        ("--flats", "requires --flats and --darks"),
-        ("--darks", "requires --flats and --darks"),
-        ("--angles", "requires --angles"),
+        ("--flats", "needs --flats, --darks and --angles"),
+        ("--darks", "needs --flats, --darks and --angles"),
+        ("--angles", "needs --flats, --darks and --angles"),
     ],
 )
 def test_preprocess_cli_tiff_stack_requires_sidecars(
@@ -150,9 +169,8 @@ def test_preprocess_cli_tiff_stack_requires_sidecars(
     args = [
         "preprocess",
         str(projections),
+        "-o",
         str(out_path),
-        "--format",
-        "tiff-stack",
         "--flats",
         str(flats),
         "--darks",
@@ -163,18 +181,20 @@ def test_preprocess_cli_tiff_stack_requires_sidecars(
     index = args.index(omitted_flag)
     del args[index : index + 2]
 
-    assert main(args) == 2
+    with pytest.raises(SystemExit) as exc_info:
+        main(args)
+    assert exc_info.value.code == 2
     captured = capsys.readouterr()
     assert expected in captured.err
     assert not out_path.exists()
 
 
-def test_convert_cli_roundtrips_nxtomo_to_npz(tmp_path: Path) -> None:
+def test_import_cli_converts_nxtomo_to_npz(tmp_path: Path) -> None:
     nxs_path = tmp_path / "scan.nxs"
     npz_path = tmp_path / "scan.npz"
     write_projection_dataset(nxs_path)
 
-    assert main(["convert", "--in", str(nxs_path), "--out", str(npz_path)]) == 0
+    assert main(["import", str(nxs_path), "-o", str(npz_path)]) == 0
 
     dataset = load_dataset(npz_path)
     assert dataset.projections.shape == (2, 2, 4)
@@ -202,11 +222,10 @@ def test_recon_cli_routes_tiny_workflow(monkeypatch: pytest.MonkeyPatch, tmp_pat
         main(
             [
                 "recon",
-                "--data",
                 str(scan),
-                "--out",
+                "-o",
                 str(recon),
-                "--algo",
+                "--method",
                 "fbp",
                 "--roi",
                 "off",
@@ -238,9 +257,9 @@ def test_main_formats_expected_subcommand_errors(
 
     monkeypatch.setattr(recon_cli, "_run_reconstruction", fail_expected)
 
-    assert main(["recon", "--data", str(scan), "--out", str(recon)]) == 1
+    assert main(["recon", str(scan), "-o", str(recon)]) == 1
     captured = capsys.readouterr()
-    assert captured.err == "ERROR: recon: bad detector metadata\n"
+    assert captured.err == "tomojax recon: error: bad detector metadata\n"
 
 
 def test_main_does_not_swallow_programmer_errors(
@@ -257,7 +276,7 @@ def test_main_does_not_swallow_programmer_errors(
     monkeypatch.setattr(recon_cli, "_run_reconstruction", fail_programmer)
 
     with pytest.raises(TypeError, match="wrong internal call shape"):
-        main(["recon", "--data", str(scan), "--out", str(recon)])
+        main(["recon", str(scan), "-o", str(recon)])
 
 
 def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> None:
@@ -270,11 +289,10 @@ def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> No
         main(
             [
                 "recon",
-                "--data",
                 str(scan),
-                "--out",
+                "-o",
                 str(recon),
-                "--algo",
+                "--method",
                 "fbp",
                 "--roi",
                 "off",
@@ -285,7 +303,7 @@ def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> No
                 "--views-per-batch",
                 "1",
                 "--no-checkpoint-projector",
-                "--save-manifest",
+                "--manifest",
                 str(manifest),
             ]
         )
@@ -327,9 +345,19 @@ def test_recon_cli_runs_cgls_like_the_python_solver(tmp_path: Path, warm_start: 
     recon = tmp_path / "recon.nxs"
     manifest = tmp_path / "recon-manifest.json"
     write_projection_dataset(scan)
-    args = ["--roi", "off", "--grid", "4", "4", "2", "--iters", "6", "--warm-start", warm_start]
-    command = ["recon", "--data", str(scan), "--out", str(recon), "--algo", "cgls"]
-    assert main([*command, *args, "--save-manifest", str(manifest)]) == 0
+    args = [
+        "--roi",
+        "off",
+        "--grid",
+        "4",
+        "4",
+        "2",
+        "--iterations",
+        "6",
+        *(["--warm-start"] if warm_start == "fbp" else []),
+    ]
+    command = ["recon", str(scan), "-o", str(recon), "--method", "cgls"]
+    assert main([*command, *args, "--manifest", str(manifest)]) == 0
     loaded = load_dataset(recon)
     assert loaded.volume is not None
     assert loaded.volume.shape == (4, 4, 2)
@@ -361,9 +389,8 @@ def test_recon_cli_accepts_detector_center_override(
         main(
             [
                 "recon",
-                "--data",
                 str(scan),
-                "--out",
+                "-o",
                 str(recon),
                 "--det-u-px",
                 "6",
@@ -383,7 +410,7 @@ def test_recon_cli_rejects_nonfinite_detector_center_override(tmp_path: Path) ->
     write_projection_dataset(scan)
 
     with pytest.raises(SystemExit) as exc:
-        main(["recon", "--data", str(scan), "--out", str(recon), "--det-u-px", "nan"])
+        main(["recon", str(scan), "-o", str(recon), "--det-u-px", "nan"])
 
     assert exc.value.code == 2
 
@@ -410,26 +437,9 @@ def test_recon_detector_center_override_records_effective_pixels() -> None:
     assert geometry_meta["detector"]["det_center"] == [3.0, -2.0]
 
 
-def test_slices_cli_extracts_labelled_planes_without_full_cli_recon(tmp_path: Path) -> None:
+def test_inspect_cli_previews_central_slices_of_xyz_disk_volumes(tmp_path: Path) -> None:
     path = tmp_path / "recon.nxs"
-    out_dir = tmp_path / "slices"
-    dataset = make_projection_dataset()
-    dataset.volume = np.arange(4 * 4 * 2, dtype=np.float32).reshape(4, 4, 2)
-    save_dataset(path, dataset)
-
-    assert main(["slices", "--data", str(path), "--out", str(out_dir), "--prefix", "demo"]) == 0
-
-    assert (out_dir / "demo_z0001.png").is_file()
-    assert (out_dir / "demo_y0002.png").is_file()
-    assert (out_dir / "demo_x0002.png").is_file()
-    summary = json.loads((out_dir / "demo_slices.json").read_text(encoding="utf-8"))
-    assert summary["saved_axes"] == "zyx"
-    assert summary["slices"]["z"]["display_axes"] == "yx"
-
-
-def test_slices_cli_extracts_requested_planes_with_xyz_disk_axes(tmp_path: Path) -> None:
-    path = tmp_path / "recon.nxs"
-    out_dir = tmp_path / "slices"
+    previews = tmp_path / "previews"
     volume = np.zeros((3, 4, 5), dtype=np.float32)
     for x in range(volume.shape[0]):
         for y in range(volume.shape[1]):
@@ -441,76 +451,27 @@ def test_slices_cli_extracts_requested_planes_with_xyz_disk_axes(tmp_path: Path)
     metadata.volume_axes_order = "xyz"
     save_projection_payload(path, projections=dataset.projections, metadata=metadata)
 
-    assert (
-        main(
-            [
-                "slices",
-                "--data",
-                str(path),
-                "--out",
-                str(out_dir),
-                "--prefix",
-                "demo",
-                "--z",
-                "2",
-                "--y",
-                "1",
-                "--x",
-                "2",
-                "--lower-percentile",
-                "0",
-                "--upper-percentile",
-                "100",
-            ]
-        )
-        == 0
-    )
+    assert main(["inspect", str(path), "--preview", str(previews)]) == 0
 
-    z_image = iio.imread(out_dir / "demo_z0002.png")
-    y_image = iio.imread(out_dir / "demo_y0001.png")
-    x_image = iio.imread(out_dir / "demo_x0002.png")
-    np.testing.assert_array_equal(
-        z_image,
-        scale_to_uint8(volume[:, :, 2].T, lower_percentile=0, upper_percentile=100),
-    )
-    np.testing.assert_array_equal(
-        y_image,
-        scale_to_uint8(volume[:, 1, :].T, lower_percentile=0, upper_percentile=100),
-    )
-    np.testing.assert_array_equal(
-        x_image,
-        scale_to_uint8(volume[2, :, :].T, lower_percentile=0, upper_percentile=100),
-    )
+    # Central slices, displayed as (y, x), (z, x) and (z, y).
+    for name, plane in (
+        ("slice_z", volume[:, :, 2].T),
+        ("slice_y", volume[:, 2, :].T),
+        ("slice_x", volume[1, :, :].T),
+    ):
+        np.testing.assert_array_equal(iio.imread(previews / f"{name}.png"), scale_to_uint8(plane))
 
 
-def test_slices_cli_requires_force_to_overwrite(tmp_path: Path) -> None:
-    path = tmp_path / "recon.nxs"
-    out_dir = tmp_path / "slices"
-    dataset = make_projection_dataset()
-    dataset.volume = np.arange(4 * 4 * 2, dtype=np.float32).reshape(4, 4, 2)
-    save_dataset(path, dataset)
-
-    assert main(["slices", "--data", str(path), "--out", str(out_dir), "--prefix", "demo"]) == 0
-    with pytest.raises(SystemExit) as exc:
-        main(["slices", "--data", str(path), "--out", str(out_dir), "--prefix", "demo"])
-
-    assert exc.value.code == 2
-    assert (
-        main(["slices", "--data", str(path), "--out", str(out_dir), "--prefix", "demo", "--force"])
-        == 0
-    )
-
-
-def test_slices_cli_reports_missing_file_without_traceback(
+def test_cli_reports_a_missing_input_as_a_usage_error(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    with pytest.raises(SystemExit) as exc:
-        main(["slices", "--data", str(tmp_path / "missing.nxs"), "--out", str(tmp_path)])
-
-    assert exc.value.code == 2
-    captured = capsys.readouterr()
-    assert "could not read" in captured.err
-    assert "Traceback" not in captured.err
+    for command in (["inspect"], ["recon", "-o", str(tmp_path / "r.nxs")]):
+        with pytest.raises(SystemExit) as exc:
+            main([*command, str(tmp_path / "missing.nxs")])
+        assert exc.value.code == 2
+        captured = capsys.readouterr()
+        assert "input not found" in captured.err
+        assert "Traceback" not in captured.err
 
 
 def test_simulate_cli_routes_loadable_synthetic_dataset(
@@ -541,19 +502,16 @@ def test_simulate_cli_routes_loadable_synthetic_dataset(
         main(
             [
                 "simulate",
-                "--out",
+                "-o",
                 str(out_path),
-                "--nx",
+                "--grid",
                 "2",
-                "--ny",
                 "2",
-                "--nz",
                 "2",
-                "--nu",
+                "--detector",
                 "2",
-                "--nv",
                 "2",
-                "--n-views",
+                "--views",
                 "8",
                 "--phantom",
                 "sphere",
@@ -606,9 +564,8 @@ def test_align_cli_mode_cor_writes_alignment_outputs(
         main(
             [
                 "align",
-                "--data",
                 str(scan),
-                "--out",
+                "-o",
                 str(aligned),
                 "--mode",
                 "cor",
@@ -624,7 +581,7 @@ def test_align_cli_mode_cor_writes_alignment_outputs(
                 "1",
                 "--views-per-batch",
                 "1",
-                "--save-manifest",
+                "--manifest",
                 str(manifest),
             ]
         )
@@ -682,9 +639,8 @@ def test_align_cli_geometry_dofs_route_to_multires_without_explicit_levels(
         main(
             [
                 "align",
-                "--data",
                 str(scan),
-                "--out",
+                "-o",
                 str(aligned),
                 "--optimise-dofs",
                 "det_u_px",
@@ -754,7 +710,7 @@ def test_align_cli_cor_then_pose_saves_the_detector_centre_and_motion(
     monkeypatch.setattr(align_cli_main, "log_jax_env", lambda: None)
     monkeypatch.setattr(align_cli_main, "init_jax_compilation_cache", lambda: None)
     monkeypatch.setattr(align_cli_plan, "align_multires", fake_align_multires)
-    args = ["align", "--data", str(scan), "--out", str(aligned), "--mode", "cor_then_pose"]
+    args = ["align", str(scan), "-o", str(aligned), "--mode", "cor_then_pose"]
     assert main([*args, "--roi", "off", "--save-params-json", str(params_json)]) == 0
 
     ((config, factors),) = configs
@@ -782,23 +738,23 @@ def test_align_cli_cor_then_pose_needs_detector_frame_translations(
 ) -> None:
     scan = tmp_path / "scan.nxs"
     write_projection_dataset(scan)
-    args = ["align", "--data", str(scan), "--out", str(tmp_path / "out.nxs")]
+    args = ["align", str(scan), "-o", str(tmp_path / "out.nxs")]
     assert main([*args, "--mode", "cor_then_pose", "--translation-frame", "object"]) != 0
     assert "pose_translation_frame='detector'" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
-    ("mode", "expected_schedule", "expected_levels"),
+    ("quality", "expected_schedule", "expected_levels"),
     [
-        ("auto", "setup_safe", [4, 2, 1]),
-        ("max", "setup_safe", [4, 2, 1]),
+        ("fast", "setup_safe", [4, 2, 1]),
+        ("reference", "setup_safe", [4, 2, 1]),
     ],
 )
 def test_align_cli_print_plan_json_reports_effective_public_plan(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
-    mode: str,
+    quality: str,
     expected_schedule: str,
     expected_levels: list[int],
 ) -> None:
@@ -815,14 +771,13 @@ def test_align_cli_print_plan_json_reports_effective_public_plan(
         main(
             [
                 "align",
-                "--data",
                 str(scan),
-                "--out",
+                "-o",
                 str(aligned),
                 "--mode",
-                mode,
+                "full",
                 "--quality",
-                "normal",
+                quality,
                 "--roi",
                 "off",
                 "--grid",
@@ -835,7 +790,7 @@ def test_align_cli_print_plan_json_reports_effective_public_plan(
                 "1",
                 "--loss-schedule",
                 "4:phasecorr,2:ssim,1:l2_otsu",
-                "--print-plan-json",
+                "--dry-run",
             ]
         )
         == 0
@@ -860,8 +815,8 @@ def _pose_plan(
     monkeypatch.setattr(align_cli_main, "setup_logging", lambda: None)
     monkeypatch.setattr(align_cli_main, "log_jax_env", lambda: None)
     monkeypatch.setattr(align_cli_main, "init_jax_compilation_cache", lambda: None)
-    args = ["align", "--data", str(scan), "--out", str(tmp_path / "out.nxs"), "--mode", "pose"]
-    assert main([*args, "--roi", "off", *extra, "--print-plan-json"]) == 0
+    args = ["align", str(scan), "-o", str(tmp_path / "out.nxs"), "--mode", "pose"]
+    assert main([*args, "--roi", "off", *extra, "--dry-run"]) == 0
     return json.loads(capsys.readouterr().out)
 
 

@@ -290,14 +290,15 @@ def test_cone_geometry_round_trips_through_saved_datasets(tmp_path: Path):
     np.testing.assert_allclose(rebuilt.poses(), geometry.poses(), atol=1e-6)
 
 
-def test_ingest_records_cone_beam_geometry(tmp_path: Path):
+def test_import_records_cone_beam_geometry(tmp_path: Path):
     from tomojax.cli.main import main
 
     from ._helpers import write_angle_csv, write_tiff_stack
 
     write_tiff_stack(tmp_path / "tiffs", [1.0, 2.0, 3.0, 4.0], shape=(4, 6))
     write_angle_csv(tmp_path / "angles.csv", [0.0, 90.0, 180.0, 270.0])
-    args = ["ingest", str(tmp_path / "tiffs"), str(tmp_path / "scan.nxs"), "--angles"]
+    args = ["import", str(tmp_path / "tiffs"), "-o", str(tmp_path / "scan.nxs"), "--force"]
+    args += ["--angles"]
     args += [str(tmp_path / "angles.csv"), "--geometry", "cone", "--source-to-axis", "50"]
     assert main([*args, "--source-to-detector", "80", "--detector-roll", "0.5"]) == 0
     loaded = load_dataset(tmp_path / "scan.nxs")
@@ -456,17 +457,14 @@ def test_align_cor_mode_writes_the_calibrated_cone_beam(tmp_path: Path):
     )
     save_dataset(tmp_path / "scan.nxs", dataset)
     out = tmp_path / "aligned.nxs"
-    assert (
-        main(["align", "--data", str(tmp_path / "scan.nxs"), "--out", str(out), "--mode", "cor"])
-        == 0
-    )
+    assert main(["align", str(tmp_path / "scan.nxs"), "-o", str(out), "--mode", "cor"]) == 0
     _, _, calibrated = build_geometry_from_dataset_metadata(load_dataset(out).geometry_inputs())
     assert isinstance(calibrated, ConeGeometry)
     assert abs(calibrated.beam.axis_offset - 3.1) < 0.15
     assert abs(calibrated.beam.detector_roll_deg + 0.5) < 0.15
 
 
-def test_ingest_reads_a_nikon_xtekct_scan(tmp_path: Path):
+def test_import_reads_a_nikon_xtekct_scan(tmp_path: Path):
     import imageio.v3 as iio
 
     from tomojax.cli.main import main
@@ -493,7 +491,7 @@ def test_ingest_reads_a_nikon_xtekct_scan(tmp_path: Path):
         f"VoxelSizeZ=0.05\nWhiteLevel={white}\nProjections={views}\nInitialAngle=0\n"
         "AngularStep=99\nObjectOffsetX=0.01\n"
     )
-    assert main(["ingest", str(tmp_path / "part.xtekct"), str(tmp_path / "part.nxs")]) == 0
+    assert main(["import", str(tmp_path / "part.xtekct"), "-o", str(tmp_path / "part.nxs")]) == 0
     loaded = load_dataset(tmp_path / "part.nxs")
     _, _, ingested = build_geometry_from_dataset_metadata(loaded.geometry_inputs())
     assert isinstance(ingested, ConeGeometry) and ingested.beam == beam
@@ -569,14 +567,12 @@ def test_export_writes_volume_slices_and_raw_files(tmp_path: Path):
         grid=Grid(6, 5, 4, 0.5, 0.5, 0.25),
     )
     save_dataset(tmp_path / "recon.nxs", dataset)
-    assert (
-        main(["export", "--data", str(tmp_path / "recon.nxs"), "--out", str(tmp_path / "tif")]) == 0
-    )
+    assert main(["export", str(tmp_path / "recon.nxs"), "-o", str(tmp_path / "tif")]) == 0
     np.testing.assert_array_equal(
         iio.imread(tmp_path / "tif" / "slice_00002.tif"), volume[:, :, 2].T
     )
     raw = tmp_path / "recon.raw"
-    args = ["export", "--data", str(tmp_path / "recon.nxs"), "--out", str(raw), "--format", "raw"]
+    args = ["export", str(tmp_path / "recon.nxs"), "-o", str(raw)]
     assert main([*args, "--dtype", "uint16", "--range", "0", "1"]) == 0
     stored = np.fromfile(raw, "<u2").reshape(4, 5, 6)
     np.testing.assert_array_equal(stored, np.round(volume.transpose(2, 1, 0) * 65535))

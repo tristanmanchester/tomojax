@@ -1,4 +1,4 @@
-"""Read acquisition angles consistently for TIFF ingestion and preprocessing."""
+"""Read acquisition angles consistently for TIFF import and preprocessing."""
 
 from __future__ import annotations
 

@@ -69,6 +69,15 @@ class AlignmentReport(TypedDict):
     gauge_fix_found: bool
 
 
+class VolumeReport(TypedDict):
+    """Saved reconstruction discovery report."""
+
+    found: bool
+    shape: list[int] | None
+    axes: str | None
+    method: str | None
+
+
 class AnglesReport(TypedDict):
     """Angle metadata discovery report."""
 
@@ -145,6 +154,7 @@ class InspectionReport(TypedDict):
     preprocess: PreprocessReport
     alignment: AlignmentReport
     memory_estimates: MemoryEstimatesReport
+    volume: VolumeReport
 
 
 __all__ = [
@@ -160,5 +170,6 @@ __all__ = [
     "PreprocessReport",
     "ProjectionReport",
     "ProjectionStatsReport",
+    "VolumeReport",
     "WorkingSetEstimate",
 ]

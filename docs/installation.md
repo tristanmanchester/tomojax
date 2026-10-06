@@ -67,8 +67,8 @@ uv pip install --python /tmp/tomojax-user/bin/python dist/tomojax-0.3.0-py3-none
 Use a new environment path and the wheel filename produced by your build.
 The example paths use POSIX conventions. The wheel's default dependencies
 provide the CPU path; request its `cuda12` extra for a Linux CUDA installation.
-The repository's installed-wheel check runs simulation, inspection, validation,
-reconstruction, and slice export outside the source tree.
+The repository's installed-wheel check runs a short simulate, inspect and
+reconstruct workflow outside the source tree.
 
 ## Verify a useful result
 

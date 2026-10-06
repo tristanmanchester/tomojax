@@ -9,12 +9,14 @@ the end.
 ## Import
 
 A Nikon (X-Tek) scan is an `.xtekct` parameter file beside its projection
-TIFFs. `tomojax ingest` reads the source and detector distances, the detector
+TIFFs. `tomojax import` reads the source and detector distances, the detector
 pixels and offsets, the reconstruction volume, the white level and the angles
-(from `_ctdata.txt` when present):
+(from `_ctdata.txt` when present), and `tomojax inspect` describes and checks
+the result:
 
 ```bash
-tomojax ingest scan/part.xtekct --out part.nxs
+tomojax import scan/part.xtekct -o scan.nxs
+tomojax inspect scan.nxs
 ```
 
 Projections become absorption, `-log(I / WhiteLevel)` (`--transmission` keeps
@@ -25,17 +27,27 @@ checked against a real Nikon scan: confirm the handedness of the first
 reconstruction on a known sample, and use `--reverse-angles` if the stage
 turns the other way.
 
-For other scanners, ingest the TIFF stack with the angles and the geometry,
+For other scanners, import the TIFF stack with the angles and the geometry,
 then flat- and dark-correct it:
 
 ```bash
-tomojax ingest projections/ --angles angles.csv --geometry cone \
-  --source-to-axis 120.5 --source-to-detector 980.0 --du 0.2 --dv 0.2 \
-  --out raw.nxs
-tomojax preprocess raw.nxs scan.nxs --assume-flat-field 60000 --assume-dark-field 0
+tomojax import projections/ --angles angles.csv --geometry cone \
+  --source-to-axis 120.5 --source-to-detector 980.0 --pixel-size 0.2 \
+  -o raw.nxs
+tomojax preprocess raw.nxs -o scan.nxs --config flat.toml
 ```
 
-Use one length unit throughout (the pixel sizes and both distances).
+where `flat.toml` gives the constant flat and dark levels (expert settings
+such as these are keys of a TOML file passed with `--config`;
+`tomojax preprocess --config-keys` lists them):
+
+```toml
+assume_flat_field = 60000
+assume_dark_field = 0
+```
+
+Use one length unit throughout (the pixel size and both distances).
+`--pixel-size` takes one value for square pixels, or the u then v sizes.
 
 `tomojax preprocess` also corrects two lab-CT artefacts in absorption data.
 `--beam-hardening 1,0.05` linearises beam hardening, mapping each value p to
@@ -44,11 +56,14 @@ Use one length unit throughout (the pixel sizes and both distances).
 constant offset, comparing its values sorted over views with those of its 9
 neighbouring columns, so data without defects pass unchanged (a faint offset
 on a steep gradient can remain).
-`--detector-roll`, `--detector-pitch`, `--detector-yaw` and `--axis-offset`
-take values the scanner reports; `tomojax preprocess` also takes measured flat
-and dark fields (`--flats`, `--darks`). Without an explicit grid, cone
-datasets reconstruct one voxel per detector pixel at the axis: the pixel size
-divided by the magnification `source_to_detector / source_to_axis`.
+`tomojax import --detector-roll`, `--detector-pitch`, `--detector-yaw` and
+`--axis-offset` take values the scanner reports. `tomojax preprocess` also
+takes measured flat and dark fields (`--flats`, `--darks`), but only for TIFF
+input, and that path records parallel geometry with unit pixels. A TIFF import
+records no grid: cone datasets without one reconstruct one voxel per detector
+pixel at the axis, the pixel size divided by the magnification
+`source_to_detector / source_to_axis`, and `tomojax recon --grid NX NY NZ`
+sets the number of voxels.
 
 ## Calibrate the rotation axis
 
@@ -57,7 +72,7 @@ position of the rotation axis. An axis offset from the central ray doubles
 and blurs every slice; a rolled detector makes that offset change with height.
 
 ```bash
-tomojax align --data scan.nxs --mode cor --out calibrated.nxs
+tomojax align scan.nxs -o calibrated.nxs --mode cor
 ```
 
 On cone data `--mode cor` estimates the axis offset (`ConeBeam.axis_offset`,
@@ -73,10 +88,11 @@ direction and the source distances are not estimated.
 
 ## Reconstruct
 
-FDK (`--algo fbp` runs FDK on cone data) is the fast first reconstruction:
+FDK (the default `--method fbp` runs FDK on cone data) is the fast first
+reconstruction:
 
 ```bash
-tomojax recon --data calibrated.nxs --algo fbp --out fdk.nxs
+tomojax recon calibrated.nxs -o fdk.nxs
 ```
 
 It weights full turns, offset-detector full turns (the axis projecting near
@@ -89,8 +105,8 @@ CGLS suits low-noise data, and FISTA with total variation suits noisy or
 sparse scans:
 
 ```bash
-tomojax recon --data calibrated.nxs --algo cgls --iters 20 --out cgls.nxs
-tomojax recon --data calibrated.nxs --algo fista --iters 50 --lambda-tv 0.002 --out tv.nxs
+tomojax recon calibrated.nxs -o cgls.nxs --method cgls --iterations 20
+tomojax recon calibrated.nxs -o tv.nxs --method fista --iterations 50 --tv-weight 0.002
 ```
 
 Their backprojection is the exact transpose of the projector, so CGLS stays
@@ -98,7 +114,7 @@ stable as it iterates; ASTRA's CGLS, whose backprojector is approximate,
 diverges after about 20 iterations on the same scan (see
 [measurements](measurements.md#cone-beam-projection-and-fdk)).
 
-When the volume would not fit in device memory, `--algo fbp` reconstructs it
+When the volume would not fit in device memory, `--method fbp` reconstructs it
 in z-slabs on the host (`fdk_host`), so a 2000³ volume needs host RAM for the
 projections and the volume but only a few slabs on the GPU.
 
@@ -107,14 +123,16 @@ projections and the volume but only a few slabs on the GPU.
 Volume viewers and analysis packages read slice stacks or raw volumes:
 
 ```bash
-tomojax export --data fdk.nxs --out fdk_slices                # 32-bit TIFF per z slice
-tomojax export --data fdk.nxs --out fdk.raw --format raw --dtype uint16
+tomojax export fdk.nxs -o fdk_slices/                 # 32-bit TIFF per z slice
+tomojax export fdk.nxs -o fdk.raw --dtype uint16      # one raw file
 ```
 
-TIFF slices have y rows and x columns, numbered from the bottom of the volume;
-raw files are little-endian and z-major. A JSON sidecar records the shape, the
-voxel size and, for `uint16`, the value range mapped to 0–65535 (`--range`, by
-default the 0.1 and 99.9 percentiles). The export reads one slice at a time.
+An output ending in `.raw` is written as one raw file; any other output is a
+directory of TIFF slices. TIFF slices have y rows and x columns, numbered from
+the bottom of the volume; raw files are little-endian and z-major. A JSON
+sidecar records the shape, the voxel size and, for `uint16`, the value range
+mapped to 0–65535 (`--range`, by default the 0.1 and 99.9 percentiles). The
+export reads one slice at a time.
 
 ## Correct per-view motion
 
@@ -123,12 +141,14 @@ every view. Cone-beam alignment estimates all six pose parameters per view,
 including `dy` along the beam, which changes the magnification:
 
 ```bash
-tomojax align --data scan.nxs --mode cor_then_pose --out aligned.nxs
-tomojax recon --data aligned.nxs --apply-saved-alignment --algo cgls --out recon.nxs
+tomojax align scan.nxs -o aligned.nxs --mode cor-then-pose
+tomojax recon aligned.nxs -o recon.nxs --method cgls
 ```
 
-`cor_then_pose` calibrates the axis as `--mode cor` does, then aligns the
-poses; `--mode pose` aligns the poses alone. See
+`cor-then-pose` calibrates the axis as `--mode cor` does, then aligns the
+poses; `--mode pose` aligns the poses alone. `tomojax recon` applies the
+alignment saved in `aligned.nxs`; `--ignore-alignment` reconstructs with the
+nominal geometry instead. See
 [cone-beam alignment](alignment-guide.md#align-cone-beam-scans-in-six-degrees-of-freedom)
 for its accuracy and gauges.
 

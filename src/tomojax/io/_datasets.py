@@ -375,7 +375,7 @@ def validate_dataset(path: PathLike) -> ValidationReport:
         return {
             "issues": [
                 "TIFF stacks require an angle sidecar or explicit angles; "
-                "use load_tiff_stack/ingest"
+                "import them with `tomojax import` or load_tiff_stack"
             ]
         }
     return {"issues": [f"unsupported dataset format for {input_path}"]}

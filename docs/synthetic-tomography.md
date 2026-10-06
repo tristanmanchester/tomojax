@@ -7,26 +7,28 @@ first; all commands below run from the checkout root.
 ## Generate a parallel scan
 
 ```bash
-uv run --no-sync tomojax simulate --out synthetic.nxs \
-  --nx 32 --ny 32 --nz 32 --nu 32 --nv 32 --n-views 60
-uv run --no-sync tomojax recon --data synthetic.nxs --out recon.nxs \
-  --algo fbp --roi off
-uv run --no-sync tomojax validate recon.nxs
-uv run --no-sync tomojax slices --data recon.nxs --out quicklooks
+uv run --no-sync tomojax simulate -o synthetic.nxs --size 32 --views 60
+uv run --no-sync tomojax recon synthetic.nxs -o recon.nxs
+uv run --no-sync tomojax inspect recon.nxs --preview previews
 ```
 
-The default phantom is Shepp–Logan. Simulation writes geometry and projection
-metadata into the dataset. Use `tomojax simulate --help` for other phantoms,
-noise and detector artifacts, and the explicit random seed.
+`--size 32` makes a 32³ volume and a 32×32 detector. The default phantom is
+Shepp–Logan. Simulation writes geometry and projection metadata into the
+dataset, and `inspect` writes the central projection and the volume's central
+slices to `previews/`. Use `tomojax simulate --help` for other phantoms,
+Poisson noise (`--poisson-scale`) and the random seed (`--seed`). Detector
+artifacts such as dead and hot pixels, zingers and stripes, and grids or
+detectors of other shapes (`grid`, `detector`), are keys of a `--config` TOML
+file; `tomojax simulate --config-keys` lists them.
 
 ## Try tilted geometry
 
 ```bash
-uv run --no-sync tomojax simulate --out tilted.nxs --geometry lamino --tilt-deg 30 \
-  --nx 32 --ny 32 --nz 32 --nu 32 --nv 32 --n-views 60
-uv run --no-sync tomojax recon --data tilted.nxs --out tilted-recon.nxs \
-  --algo fista --iters 50 --lambda-tv 0.005 --positivity --roi off
-uv run --no-sync tomojax slices --data tilted-recon.nxs --out tilted-slices
+uv run --no-sync tomojax simulate -o tilted.nxs --geometry lamino --tilt 30 \
+  --size 32 --views 60
+uv run --no-sync tomojax recon tilted.nxs -o tilted-recon.nxs \
+  --method fista --iterations 50 --tv-weight 0.005 --nonnegative --roi off
+uv run --no-sync tomojax inspect tilted-recon.nxs --preview tilted-previews
 ```
 
 The tilt is measured away from the nominal tomography rotation axis. Laminography
@@ -54,6 +56,10 @@ geometry = tj.ParallelGeometry(grid, tj.Detector(32, 32, 1.0, 1.0), np.linspace(
 scan = tj.Scan(tj.project(geometry, shepp_logan_3d(32, 32, 32)), geometry)
 volume = tj.reconstruct(scan, "cgls", iterations=24).volume
 ```
+
+The method and keywords of `tj.reconstruct` match the `tomojax recon` options:
+`"cgls"`, `iterations=`, `tv_weight=` and `nonnegative=` are `--method cgls`,
+`--iterations`, `--tv-weight` and `--nonnegative`.
 
 Python volumes use `(x, y, z)` and projections `(view, v, u)`. All spacings use
 one consistent physical length unit; projected values integrate attenuation

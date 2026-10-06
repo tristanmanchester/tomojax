@@ -161,7 +161,8 @@ def _explicit_cli_dests(
 
 def _coerce_action_value(action: argparse.Action, value: ConfigValue) -> ConfigValue:
     action_const = cast("object", action.const)
-    if action.nargs == 0 and isinstance(action_const, bool):
+    flag = action.nargs == 0 and isinstance(action_const, bool)
+    if flag or isinstance(action, argparse.BooleanOptionalAction):
         if not isinstance(value, bool):
             raise TypeError("expected a boolean")
         return bool(value)

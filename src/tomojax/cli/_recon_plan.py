@@ -122,7 +122,7 @@ def build_recon_runtime_plan(command: ReconCommand) -> ReconRuntimePlan:
         checkpoint_projector=bool(command.checkpoint_projector),
     )
     logging.info(
-        "Reconstruction views_per_batch=%d (mode=%s, algo=%s)",
+        "Reconstruction views_per_batch=%d (mode=%s, method=%s)",
         views_per_batch,
         views_per_batch_mode,
         command.algo,

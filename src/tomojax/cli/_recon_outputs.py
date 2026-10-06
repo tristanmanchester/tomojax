@@ -50,6 +50,7 @@ def write_reconstruction_outputs(
     save_meta.detector = detector
     save_meta.geometry_meta = dict(save_meta.geometry_meta or {})
     save_meta.geometry_meta["detector_center_override"] = detector_center_override
+    save_meta.geometry_meta["reconstruction_method"] = str(command.algo)
     save_meta.volume = volume_np
     save_meta.frame = str(command.frame)
     save_meta.volume_axes_order = str(command.volume_axes)

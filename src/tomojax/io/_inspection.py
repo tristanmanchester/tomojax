@@ -41,6 +41,7 @@ from tomojax.io._inspection_types import (
     PreprocessReport,
     ProjectionReport,
     ProjectionStatsReport,
+    VolumeReport,
     WorkingSetEstimate,
 )
 
@@ -55,6 +56,7 @@ _PROJECTION_PATHS = (
 _ANGLE_PATH = "/entry/sample/transformations/rotation_angle"
 _IMAGE_KEY_PATH = "/entry/instrument/detector/image_key"
 _ALIGN_PATH = "/entry/processing/tomojax/alignment"
+_VOLUME_PATH = "/entry/processing/tomojax/volume"
 _DEFAULT_MAX_EXACT_STATS_ELEMENTS = 5_000_000
 _MAX_PERCENTILE_SAMPLE_ELEMENTS = 1_000_000
 
@@ -296,6 +298,26 @@ def _geometry_report(file: h5py.File) -> GeometryReport:
     }
 
 
+def _volume_report(file: h5py.File) -> VolumeReport:
+    volume = file.get(_VOLUME_PATH)
+    if not isinstance(volume, h5py.Dataset):
+        return {"found": False, "shape": None, "axes": None, "method": None}
+    group = file["/entry/processing/tomojax"]
+    geom = file.get("/entry/geometry")
+    meta = (
+        _json_attr_to_mapping(geom.attrs.get("geometry_meta_json"))
+        if isinstance(geom, h5py.Group)
+        else None
+    )
+    method = cast("object", meta.get("reconstruction_method")) if meta is not None else None
+    return {
+        "found": True,
+        "shape": [int(v) for v in volume.shape],
+        "axes": _attr_to_str(group.attrs.get("volume_axes_order")) or "zyx",
+        "method": None if method is None else str(method),
+    }
+
+
 def _detector_metadata_report(file: h5py.File) -> DetectorMetadataReport:
     detector = file.get("/entry/instrument/detector")
     meta = (
@@ -516,6 +538,7 @@ def inspect_nxtomo(path: PathLike) -> InspectionReport:
             "preprocess": _preprocess_report(file),
             "alignment": _alignment_report(file),
             "memory_estimates": _memory_estimates(file, projection),
+            "volume": _volume_report(file),
         }
     return report
 

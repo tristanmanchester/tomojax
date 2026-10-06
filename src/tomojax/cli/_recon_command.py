@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 import numpy as np
 
+from tomojax.cli._options import add_config, add_output, check_paths, hide_expert
 from tomojax.cli.config import ConfigValue, parse_args_with_config
 from tomojax.geometry.api import DISK_VOLUME_AXES
 
@@ -98,8 +99,39 @@ def _finite_float(value: str) -> float:
     return parsed
 
 
+_PUBLIC = (
+    "--method",
+    "--filter",
+    "--iterations",
+    "--tv-weight",
+    "--nonnegative",
+    "--warm-start",
+    "--seed",
+    "--grid",
+    "--roi",
+    "--mask",
+    "--ignore-alignment",
+    "--preview",
+    "--manifest",
+    "--volume-axes",
+    "--progress",
+)
+
+
 def _build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Reconstruct volume from dataset (.nxs)")
+    p = argparse.ArgumentParser(
+        prog="tomojax recon",
+        description=(
+            "Reconstruct a volume from a scan. A saved alignment (from tomojax align) "
+            "is applied unless --ignore-alignment."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  tomojax recon scan.nxs -o recon.nxs\n"
+            "  tomojax recon scan.nxs -o recon.nxs --method cgls --iterations 100\n"
+            "  tomojax recon scan.nxs -o recon.nxs --method fista --tv-weight 0.002 --nonnegative"
+        ),
+    )
     _add_input_options(p)
     _add_algorithm_options(p)
     _add_iterative_options(p)
@@ -107,39 +139,48 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_output_options(p)
     _add_geometry_options(p)
     _add_runtime_options(p)
+    hide_expert(p, _PUBLIC)
     return p
 
 
 def _add_input_options(p: argparse.ArgumentParser) -> None:
-    _ = p.add_argument("--config", help="Load command defaults from a TOML config file")
-    _ = p.add_argument("--data", help="Input .nxs")
+    _ = p.add_argument("data", metavar="INPUT", help="Scan to reconstruct (.nxs, .h5, .npz)")
+    add_output(p, "Output .nxs: the volume, with the scan's projections and geometry")
+    add_config(p)
 
 
 def _add_algorithm_options(p: argparse.ArgumentParser) -> None:
     _ = p.add_argument(
-        "--algo",
+        "--method",
         choices=["fbp", "cgls", "fista", "spdhg"],
         default="fbp",
         help=(
-            "fbp: filtered backprojection; cgls: unregularised least squares, fastest "
-            "to converge on consistent data; fista/spdhg: TV-regularised"
+            "fbp: filtered backprojection, FDK for cone beams (default); cgls: least "
+            "squares; fista, spdhg: least squares with total variation"
         ),
     )
-    _ = p.add_argument("--filter", default="ramp", help="FBP filter: ramp|shepp|hann")
+    _ = p.add_argument(
+        "--filter",
+        choices=["ramp", "shepp-logan", "hann"],
+        default="ramp",
+        help="FBP filter (default ramp)",
+    )
 
 
 def _add_iterative_options(p: argparse.ArgumentParser) -> None:
     _ = p.add_argument(
-        "--iters",
+        "--iterations",
         type=int,
         default=50,
-        help="Iterations for iterative algos (CGLS/FISTA/SPDHG)",
+        metavar="N",
+        help="Iterations of cgls, fista and spdhg (default 50)",
     )
     _ = p.add_argument(
-        "--lambda-tv",
+        "--tv-weight",
         type=float,
         default=0.005,
-        help="TV regularization weight (FISTA/SPDHG)",
+        metavar="W",
+        help="Total-variation weight of fista and spdhg (default 0.005)",
     )
     _ = p.add_argument(
         "--regulariser",
@@ -165,20 +206,11 @@ def _add_iterative_options(p: argparse.ArgumentParser) -> None:
         default=None,
         help="Fixed Lipschitz constant for FISTA (skip power-method)",
     )
-    pos = p.add_mutually_exclusive_group()
-    _ = pos.add_argument(
-        "--positivity",
-        dest="positivity",
+    _ = p.add_argument(
+        "--nonnegative",
         action="store_true",
-        help="Enable nonnegative projection for FISTA reconstructions",
+        help="Keep fista and spdhg voxels nonnegative",
     )
-    _ = pos.add_argument(
-        "--no-positivity",
-        dest="positivity",
-        action="store_false",
-        help="Disable nonnegative projection for FISTA reconstructions",
-    )
-    p.set_defaults(positivity=False)
     _ = p.add_argument(
         "--lower-bound",
         type=float,
@@ -204,7 +236,9 @@ def _add_spdhg_options(p: argparse.ArgumentParser) -> None:
         ),
     )
     _ = p.add_argument("--theta", type=float, default=1.0, help="SPDHG: extrapolation for xbar")
-    _ = p.add_argument("--spdhg-seed", type=int, default=0, help="SPDHG: RNG seed for block order")
+    _ = p.add_argument(
+        "--seed", type=int, default=0, metavar="N", help="Random seed of spdhg's view order"
+    )
     _ = p.add_argument(
         "--spdhg-tau",
         type=float,
@@ -225,27 +259,23 @@ def _add_spdhg_options(p: argparse.ArgumentParser) -> None:
     )
     _ = p.add_argument(
         "--warm-start",
-        choices=["none", "fbp"],
-        default="none",
-        help="Initialize CGLS or SPDHG from this method: none|fbp",
+        action="store_true",
+        help="Start fista and spdhg from the FBP reconstruction",
     )
 
 
 def _add_output_options(p: argparse.ArgumentParser) -> None:
-    _ = p.add_argument("--out", help="Output .nxs containing recon (and copying projections)")
     _ = p.add_argument(
-        "--quicklook",
-        "--save-preview",
-        dest="quicklook",
-        metavar="PATH",
+        "--preview",
+        metavar="PNG",
         default=None,
-        help="Write a percentile-scaled central xy slice PNG preview to PATH.",
+        help="Also write a PNG of the central x-y slice",
     )
     _ = p.add_argument(
-        "--save-manifest",
-        metavar="PATH",
+        "--manifest",
+        metavar="JSON",
         default=None,
-        help="Write a JSON reproducibility manifest for this reconstruction run.",
+        help="Also write a JSON record of the run (inputs, settings, versions)",
     )
 
 
@@ -255,10 +285,8 @@ def _add_geometry_options(p: argparse.ArgumentParser) -> None:
         choices=["off", "auto", "cube", "bbox"],
         default="auto",
         help=(
-            "Optional ROI cropping based on detector FOV (default: auto). "
-            "auto: square x-y slices + z from detector height if detector < grid; "
-            "cube: force cubic ROI (nx=ny=nz) inside FOV; "
-            "bbox: rectangular FOV bbox; off: keep original grid"
+            "Crop the grid to the detector's field of view: auto (default, when the "
+            "detector sees less than the grid), cube, bbox, or off"
         ),
     )
     _ = p.add_argument(
@@ -267,7 +295,7 @@ def _add_geometry_options(p: argparse.ArgumentParser) -> None:
         nargs=3,
         metavar=("NX", "NY", "NZ"),
         default=None,
-        help="Override reconstruction grid size (nx ny nz). Voxel sizes stay as in input metadata.",
+        help="Reconstruct NX x NY x NZ voxels of the scan's voxel size",
     )
     _ = p.add_argument(
         "--frame",
@@ -293,20 +321,12 @@ def _add_geometry_options(p: argparse.ArgumentParser) -> None:
         default=None,
         help="Override detector centre v offset in detector pixels for COR sweeps.",
     )
-    saved = p.add_mutually_exclusive_group()
-    _ = saved.add_argument(
-        "--apply-saved-alignment",
-        dest="apply_saved_alignment",
-        action="store_true",
-        help="Apply saved per-view alignment parameters from the input metadata.",
-    )
-    _ = saved.add_argument(
-        "--ignore-saved-alignment",
+    _ = p.add_argument(
+        "--ignore-alignment",
         dest="apply_saved_alignment",
         action="store_false",
-        help="Ignore saved per-view alignment parameters from the input metadata (default).",
+        help="Use the nominal geometry, not the alignment saved in INPUT",
     )
-    p.set_defaults(apply_saved_alignment=False)
 
 
 def _add_runtime_options(p: argparse.ArgumentParser) -> None:
@@ -345,13 +365,10 @@ def _add_runtime_options(p: argparse.ArgumentParser) -> None:
         ),
     )
     _ = p.add_argument(
-        "--mask-vol",
+        "--mask",
         choices=["off", "cyl"],
         default="off",
-        help=(
-            "Mask the volume during forward projection (FISTA) or on output (FBP): "
-            "off (default), cyl for cylindrical x-y mask broadcast along z."
-        ),
+        help="cyl: zero the volume outside the cylinder every view sees (default off)",
     )
 
 
@@ -360,42 +377,48 @@ def parse_recon_command(
 ) -> tuple[ReconCommand, dict[str, ConfigValue]]:
     """Parse CLI/config defaults into a typed reconstruction command plan."""
     parser = _build_parser()
-    args, config_metadata = parse_args_with_config(parser, argv, required=("data", "out"))
+    args, config_metadata = parse_args_with_config(parser, argv)
+    check_paths(
+        parser,
+        inputs=[cast("str", args.data)],
+        outputs=[cast("str", args.out)],
+        force=bool(cast("bool", args.force)),
+    )
     grid = cast("list[int] | None", args.grid)
     return (
         ReconCommand(
             config=cast("str | None", args.config),
             data=cast("str", args.data),
             out=cast("str", args.out),
-            algo=cast("ReconAlgorithm", args.algo),
+            algo=cast("ReconAlgorithm", args.method),
             filter=cast("str", args.filter),
-            iters=cast("int", args.iters),
-            lambda_tv=cast("float", args.lambda_tv),
+            iters=cast("int", args.iterations),
+            lambda_tv=cast("float", args.tv_weight),
             regulariser=cast("ReconRegulariser", args.regulariser),
             huber_delta=cast("float", args.huber_delta),
             tv_prox_iters=cast("int", args.tv_prox_iters),
             lipschitz=cast("float | None", args.L),
-            positivity=cast("bool", args.positivity),
+            positivity=cast("bool", args.nonnegative),
             lower_bound=cast("float | None", args.lower_bound),
             upper_bound=cast("float | None", args.upper_bound),
             views_per_batch=cast("ViewsPerBatch | None", args.views_per_batch),
             theta=cast("float", args.theta),
-            spdhg_seed=cast("int", args.spdhg_seed),
+            spdhg_seed=cast("int", args.seed),
             spdhg_tau=cast("float | None", args.spdhg_tau),
             spdhg_sigma_data=cast("float | None", args.spdhg_sigma_data),
             spdhg_sigma_tv=cast("float | None", args.spdhg_sigma_tv),
-            warm_start=cast("ReconWarmStart", args.warm_start),
+            warm_start="fbp" if cast("bool", args.warm_start) else "none",
             gather_dtype=cast("str", args.gather_dtype),
             checkpoint_projector=cast("bool", args.checkpoint_projector),
-            quicklook=cast("str | None", args.quicklook),
-            save_manifest=cast("str | None", args.save_manifest),
+            quicklook=cast("str | None", args.preview),
+            save_manifest=cast("str | None", args.manifest),
             roi=cast("ReconRoiMode", args.roi),
             grid=None if grid is None else (int(grid[0]), int(grid[1]), int(grid[2])),
             frame=cast("ReconFrame", args.frame),
             volume_axes=cast("ReconVolumeAxes", args.volume_axes),
             progress=cast("bool", args.progress),
             transfer_guard=cast("ReconTransferGuardMode", args.transfer_guard),
-            mask_vol=cast("ReconMaskMode", args.mask_vol),
+            mask_vol=cast("ReconMaskMode", args.mask),
             apply_saved_alignment=cast("bool", args.apply_saved_alignment),
             det_u_px=cast("float | None", args.det_u_px),
             det_v_px=cast("float | None", args.det_v_px),

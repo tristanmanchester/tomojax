@@ -435,7 +435,7 @@ removes structure such as the thin ground plane parallel to the plate, so even
 an inverse-crime reconstruction stays about 0.5 relative L2 from the truth;
 score alignment against a reconstruction of the same data with the true
 geometry instead. On the moving realistic scan, `tomojax align --mode
-cor_then_pose` recovers the offset to 3.18 px (3.178 px is identifiable from
+cor-then-pose` recovers the offset to 3.18 px (3.178 px is identifiable from
 the motion), rotations to 0.073° and shifts to 0.087 px RMS in 127 s; its
 volume differs from the true-geometry reconstruction by 0.048 relative L2,
 against 0.82 without alignment.

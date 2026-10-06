@@ -27,6 +27,7 @@ def format_inspection_report(report: InspectionReport) -> str:
     preprocess = report["preprocess"]
     alignment = report["alignment"]
     memory = report["memory_estimates"]
+    volume = report["volume"]
 
     lines = [f"TomoJAX inspection: {report['input_path']}"]
     if projection["found"]:
@@ -134,6 +135,12 @@ def format_inspection_report(report: InspectionReport) -> str:
         )
     else:
         lines.append(f"Memory estimates: not found ({memory['notes']})")
+
+    if volume["found"]:
+        method = f", method={volume['method']}" if volume["method"] else ""
+        lines.append(f"Volume: shape={volume['shape']}, axes={volume['axes']}{method}")
+    else:
+        lines.append("Volume: not found")
 
     return "\n".join(lines)
 

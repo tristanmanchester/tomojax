@@ -39,18 +39,21 @@ git clone https://github.com/tristanmanchester/tomojax.git
 cd tomojax
 uv sync --locked --extra cpu --no-dev
 
-uv run --no-sync tomojax simulate --out synthetic.nxs \
-  --nx 32 --ny 32 --nz 32 --nu 32 --nv 32 --n-views 60
-uv run --no-sync tomojax recon --data synthetic.nxs --out recon.nxs \
-  --algo fbp --roi off
-uv run --no-sync tomojax validate recon.nxs
-uv run --no-sync tomojax slices --data recon.nxs --out quicklooks
+uv run --no-sync tomojax simulate -o synthetic.nxs --size 32 --views 60
+uv run --no-sync tomojax recon synthetic.nxs -o recon.nxs
+uv run --no-sync tomojax inspect recon.nxs --preview previews
 ```
 
-Open `quicklooks/slice_x0016.png`, `slice_y0016.png`, and `slice_z0016.png`.
-`recon.nxs` contains the projections, volume, and geometry metadata. The PNGs
-are display-scaled previews; use the stored volume for quantitative analysis.
-This CLI example uses FBP; the figure above uses the Python CGLS example.
+`inspect` describes the file, checks it and ends with `Valid: yes`. Open
+`previews/slice_x.png`, `slice_y.png`, and `slice_z.png`, the volume's central
+slices (`projection.png` is the central projection). `recon.nxs` contains the
+projections, volume, and geometry metadata. The PNGs are display-scaled
+previews; use the stored volume for quantitative analysis. This CLI example
+uses FBP; the figure above uses the Python CGLS example.
+
+Every command reads an input and writes `-o OUTPUT`, refusing to replace an
+existing file without `--force`; `tomojax <command> --help` describes it, and
+the [CLI overview](src/tomojax/cli/README.md) lists the commands.
 
 For CUDA installation, wheel installation, and device checks, see
 [installation](docs/installation.md). For your own scan, start with
@@ -89,6 +92,10 @@ recon = tj.reconstruct(scan, "cgls", iterations=50)
 result = tj.align(scan, mode="cor-then-pose")     # result.scan carries the corrections
 tj.save("recon.nxs", tj.reconstruct(result.scan))
 ```
+
+The command-line options use the same names: the CGLS line is
+`tomojax recon scan.nxs -o recon.nxs --method cgls --iterations 50`, and the
+alignment `tomojax align scan.nxs -o aligned.nxs --mode cor-then-pose`.
 
 `tj.Scan(projections, geometry)` builds a scan from arrays, and
 `tj.project(geometry, volume)` simulates one for any geometry. The building

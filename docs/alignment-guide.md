@@ -19,19 +19,18 @@ At 64³, ±3° and ±10 px motion is recovered in parallel and laminography scan
 (to 0.02°, the discretisation floor at that size), but the anisotropic test scan
 with unequal voxels and an offset detector diverges; ±1° is recovered in all three.
 
-Large per-view stage shifts are found first by a global shift search
-(`--seed-translations`, on by default for pose mode, `--no-seed-translations`
-to disable): reconstruct with the current shifts removed, reproject, and move
-each view to its cross-correlation peak, searching up to a quarter of the
-detector. Local solvers alone converge only from shifts of a few pixels. With
+Large per-view stage shifts are found first by a global shift search (the
+`seed_translations` setting, on by default for pose mode): reconstruct with
+the current shifts removed, reproject, and move each view to its
+cross-correlation peak, searching up to a quarter of the detector. Local solvers alone converge only from shifts of a few pixels. With
 ±0.5° tilts and ±15 px shifts (23% of a 64-pixel detector), rotations go from
 7.7–12.6° wrong without the search to 0.012–0.034° with it in parallel and
 laminography scans; at 128³ with ±8 or ±15 px all three geometries reach
 0.003–0.018°, unchanged by the search. Shifts beyond a quarter of the detector,
 which leave the object partly outside the field of view, are not recovered.
 
-`--ray-integrator exact` integrates the trilinear voxel basis exactly. It is
-10–30× slower. On the free-voxel pilot, whose measurements use that same basis,
+The expert setting `ray_integrator = "exact"` integrates the trilinear voxel
+basis exactly. It is 10–30× slower. On the free-voxel pilot, whose measurements use that same basis,
 it recovers clean cells to numerical precision, an inverse crime rather than
 evidence about real data.
 
@@ -40,18 +39,24 @@ the [real scan guide](real-laminography.md). Save an unaligned reconstruction,
 choose the mode matching your problem, and assess both image quality and
 recovered parameters. Run commands below from an installed checkout.
 
+Each command reads a scan and writes `-o OUTPUT`. Options not shown by
+`tomojax align --help`, such as `ray_integrator` above, are expert settings:
+put them in a TOML file and pass it with `--config FILE`;
+`tomojax align --config-keys` lists every key with its default. The options
+match the Python `tj.align(scan, mode=..., quality=..., levels=..., freeze=...)`.
+
 ## Choose an alignment mode
 
 `tomojax align` has several modes. Use `pose` for per-projection sample motion,
-`cor` for detector-centre calibration, `cor_then_pose` for a detector-centre
-offset together with per-view motion, and `auto` for the full setup+pose workflow.
+`cor` for detector-centre calibration, `cor-then-pose` for a detector-centre
+offset together with per-view motion, and `full` for the full setup+pose workflow.
 
 | Problem | Recommended mode | Typical command |
 | --- | --- | --- |
-| Sample or object motion changes from projection to projection | `pose` | `tomojax align --data scan.nxs --mode pose --out aligned.nxs` |
-| Detector centre or centre-of-rotation is wrong | `cor` | `tomojax align --data scan.nxs --mode cor --out aligned.nxs` |
-| Detector-centre offset and per-view motion together | `cor_then_pose` | `tomojax align --data scan.nxs --mode cor_then_pose --out aligned.nxs` |
-| Mild setup error and pose motion are both plausible | `auto` | `tomojax align --data scan.nxs --mode auto --gauge-policy anchor_mean --out aligned.nxs` |
+| Sample or object motion changes from projection to projection | `pose` | `tomojax align scan.nxs -o aligned.nxs --mode pose` |
+| Detector centre or centre-of-rotation is wrong | `cor` | `tomojax align scan.nxs -o aligned.nxs --mode cor` |
+| Detector-centre offset and per-view motion together | `cor-then-pose` | `tomojax align scan.nxs -o aligned.nxs --mode cor-then-pose` |
+| Mild setup error and pose motion are both plausible | `full` | `tomojax align scan.nxs -o aligned.nxs --mode full` |
 | Reference elevation or detector-v shift is uncertain | Inspect manually | `det_v_px` is not a reliably recoverable alignment target. |
 
 ## Use 5-DOF pose correction first
@@ -72,26 +77,22 @@ losses, smooth pose models and optimizers, but in the pilot it left rotation
 errors of 0.1–1° that the coupled solver removes.
 
 ```bash
-uv run --no-sync tomojax align \
-  --data corrected.nxs \
-  --mode pose \
-  --out aligned.nxs
+uv run --no-sync tomojax align corrected.nxs -o aligned.nxs --mode pose
 ```
 
 Use `--quality reference` for a slower, higher-fidelity solve. Use explicit
 levels when you want a specific coarse-to-fine schedule:
 
 ```bash
-uv run --no-sync tomojax align \
-  --data corrected.nxs \
-  --mode pose \
-  --quality reference \
-  --levels 4 2 1 \
-  --out aligned.nxs
+uv run --no-sync tomojax align corrected.nxs -o aligned.nxs \
+  --mode pose --quality reference --levels 4 2 1
 ```
 
-The aligned dataset stores the reconstruction and recovered parameters.
-Inspect it with:
+`--dry-run` prints the resolved plan (stages, levels and solver settings) as
+JSON without aligning.
+
+The aligned dataset stores the reconstruction and recovered parameters, and
+`tomojax recon` applies them. Inspect it with:
 
 ```bash
 uv run --no-sync tomojax inspect aligned.nxs
@@ -104,19 +105,19 @@ resolutions. For a large scan, stop the coarse-to-fine schedule early and
 reconstruct the full data with the recovered poses:
 
 ```bash
-uv run --no-sync tomojax align --data corrected.nxs --mode pose \
-  --levels 4 2 --out aligned.nxs
-uv run --no-sync tomojax recon --data aligned.nxs --apply-saved-alignment \
-  --algo fista --positivity --lambda-tv 0 --iters 300 --out recon.nxs
+uv run --no-sync tomojax align corrected.nxs -o aligned.nxs \
+  --mode pose --levels 4 2
+uv run --no-sync tomojax recon aligned.nxs -o recon.nxs \
+  --method fista --nonnegative --tv-weight 0 --iterations 300
 ```
 
 On the analytic 256³, 361-view laminography scan, stopping at half resolution
 takes 55 s instead of 202 s, with rotations recovered to 0.0052° instead
 of 0.0030°. Laminography leaves a cone of frequencies unmeasured, so the
-full-resolution solve needs a prior: unregularised CGLS (`--algo cgls`) reaches
+full-resolution solve needs a prior: unregularised CGLS (`--method cgls`) reaches
 0.27 relative error, positivity-constrained FISTA 0.12 after 100 and 0.091
 after 300 iterations (109 s), against 0.059 for the volume of the full
-alignment. Add TV (`--lambda-tv`) for noisy data.
+alignment. Add TV (`--tv-weight`) for noisy data.
 
 ## Correction quality vs physical calibration
 
@@ -127,8 +128,8 @@ a calibrated description of the machine.
 - For per-projection motion, use `--mode pose`.
 - To estimate detector-centre correction explicitly, use `--mode cor` and
   check the estimate against acquisition knowledge.
-- For both setup and pose correction, use `--mode auto` with an explicit gauge
-  policy.
+- For both setup and pose correction, use `--mode full`, whose stages fix
+  their own gauges (see [mixed setup and pose](#use-mixed-setup-and-pose-as-expert-mode)).
 
 ## Use COR mode for detector-centre calibration
 
@@ -136,10 +137,7 @@ Use `cor` mode when the main problem is a detector-u or centre-of-rotation
 offset rather than sample motion.
 
 ```bash
-uv run --no-sync tomojax align \
-  --data corrected.nxs \
-  --mode cor \
-  --out aligned.nxs
+uv run --no-sync tomojax align corrected.nxs -o aligned.nxs --mode cor
 ```
 
 COR mode fits detector-u offsets explicitly. It starts from a one-parameter
@@ -148,27 +146,24 @@ laminography and partial arcs, then refines it against held-out views. With a
 +3.7 px offset in analytic 128³ scans it recovers 3.693 px (parallel) and
 3.677 px (laminography) in 41 and 84 s. The search assumes the views are
 otherwise consistent: under per-view motion it misjudges the offset (2.2 and
-3.3 px with ±0.5°/±8 px motion), so use `cor_then_pose` when the sample also
+3.3 px with ±0.5°/±8 px motion), so use `cor-then-pose` when the sample also
 moves. Neither a lower objective nor a sharper image proves that the estimated
 geometry is physically calibrated.
 
 ## Estimate a detector offset together with motion
 
-`cor_then_pose` runs the same solver as `pose` and then reports the constant
+`cor-then-pose` runs the same solver as `pose` and then reports the constant
 part of the recovered detector-u shifts as the detector centre. With
 detector-frame translations (the CLI default) a detector-u offset is exactly a
 constant `dx`; a rigid object translation instead shifts each view by a
 sinusoid of its angle, so a fit over the scan separates the two. The output
 geometry carries the offset as `det_center`, and the saved `dx` values are the
 remaining per-view motion; both together predict the same data as the
-alignment, so the volume is unchanged. `auto` and `max` add the same constant
-to the detector centre from their setup stage.
+alignment, so the volume is unchanged. `full` adds the same constant to the
+detector centre from its setup stage.
 
 ```bash
-uv run --no-sync tomojax align \
-  --data corrected.nxs \
-  --mode cor_then_pose \
-  --out aligned.nxs
+uv run --no-sync tomojax align corrected.nxs -o aligned.nxs --mode cor-then-pose
 ```
 
 With a +3.7 px offset added to ±0.5°/±8 px motion on analytic 128³ scans, it
@@ -200,16 +195,25 @@ comparing them voxel by voxel.
 
 ## Use mixed setup and pose as expert mode
 
-`auto` mode combines setup and pose stages. Because setup and pose parameters
-can represent similar image changes, mixed correction has gauge ambiguity.
-You must choose how to handle that ambiguity.
+`full` mode combines setup and pose stages: detector centre, detector roll
+and axis direction, then per-view motion, coarse to fine. Because setup and
+pose parameters can represent similar image changes, mixed correction has
+gauge ambiguity, and each stage handles it with a fixed gauge policy: the pose
+stage anchors the mean translation (`anchor_mean`) and the axis-direction stage
+is diagnostic only (`diagnose_only`). `--dry-run` prints each stage's policy.
 
 ```bash
-uv run --no-sync tomojax align \
-  --data corrected.nxs \
-  --mode auto \
-  --gauge-policy anchor_mean \
-  --out aligned.nxs
+uv run --no-sync tomojax align corrected.nxs -o aligned.nxs --mode full
+```
+
+`--mode full --quality reference` runs the slower, more conservative solver
+settings. An expert direct parameter set that mixes setup and pose parameters
+(the `optimise_dofs` setting) must choose a policy itself, with the
+`gauge_policy` setting, in a file passed with `--config`:
+
+```toml
+optimise_dofs = ["det_u_px", "alpha", "beta", "phi", "dx", "dz"]
+gauge_policy = "anchor_mean"
 ```
 
 Gauge policies:
@@ -225,15 +229,17 @@ Gauge policies:
 
 The default pose model is `per_view`, which optimizes an independent 5-DOF
 vector for every projection. Use a smooth model when you expect the motion to
-change smoothly over the scan.
+change smoothly over the scan. Smooth models need the alternating solver; put
+the model in a TOML file, here `spline.toml`:
+
+```toml
+pose_model = "spline"
+knot_spacing = 8
+```
 
 ```bash
-uv run --no-sync tomojax align \
-  --data corrected.nxs \
-  --mode pose \
-  --pose-model spline \
-  --knot-spacing 8 \
-  --out aligned.nxs
+uv run --no-sync tomojax align corrected.nxs -o aligned.nxs \
+  --mode pose --pose-solver alternating --config spline.toml
 ```
 
 Smooth models reduce degrees of freedom but can hide abrupt jumps or outlier
@@ -243,10 +249,10 @@ views.
 
 In a cone beam, moving the sample along the beam changes its magnification,
 so `tomojax align` on a cone-beam dataset estimates `dy` with the other five
-pose parameters (`--freeze-dofs dy` keeps it fixed). Everything else is as for
+pose parameters (`--freeze dy` keeps it fixed). Everything else is as for
 parallel scans: the coupled solver, translation seeding and saved alignments
 (`dy_world` in the parameter sidecars, a sixth `thetas` column in the aligned
-file, applied by `tomojax recon --apply-saved-alignment`).
+file, applied by `tomojax recon`).
 
 Two gauges apply. As in parallel beams, moving the whole volume rigidly and
 every pose with it predicts the same data. In addition a common `dy` for all
@@ -256,7 +262,7 @@ is always fixed at zero.
 A centre-of-rotation offset in a cone beam is a lateral offset of the rotation
 axis, not a detector shift: `ConeBeam.axis_offset` places the axis at
 `x = axis_offset`. On cone data, `--mode cor` calibrates it together with the
-detector roll, and `cor_then_pose`, `auto` and `max` calibrate both before
+detector roll, and `cor-then-pose` and `full` calibrate both before
 their pose stages; the aligned file records the calibrated beam, so
 `tomojax recon` on it uses them. The calibration
 ([`calibrate_cone_axis`](../src/tomojax/recon/cone_axis.py)) reconstructs thin
@@ -302,13 +308,14 @@ near those views: on the chip phantom's 720 views, object-frame `dx` reached
 70 px RMS around 90° and 270°, where the per-view u error rose to 0.37 px
 against 0.06 px with detector-frame translations.
 
-`tomojax align` therefore defaults to `--translation-frame detector`, which also
-leaves the translation gauge unfixed (`--gauge-fix none`). On the six-cell
+`tomojax align` therefore defaults to detector-frame translations
+(`translation_frame = "detector"`), which also leaves the translation gauge
+unfixed (`gauge_fix = "none"`). On the six-cell
 free-voxel pilot, the chip phantom and the analytic 128³ scans, detector-frame
 recovery is as accurate as object-frame recovery or better in every case.
-`--translation-frame object` restores the previous tables. The aligned file
-records the frame, and `tomojax recon --apply-saved-alignment` applies the poses
-in it.
+The setting `translation_frame = "object"` in a `--config` file restores the
+previous tables. The aligned file records the frame, and `tomojax recon`
+applies the poses in it.
 
 In Python, `tj.align(scan)` returns these detector-frame poses as
 `result.poses` and applies them in `result.scan`. To export them:
@@ -373,7 +380,7 @@ Known failure modes include:
 - Abrupt jumps may need jump-aware pose handling.
 - Short bursts of bad views may need robust loss or bad-view detection.
 - A per-view shift with a nonzero mean over the scan is indistinguishable
-  from a detector-centre offset; `cor_then_pose` assigns it to the offset.
+  from a detector-centre offset; `cor-then-pose` assigns it to the offset.
 - Detector-v or sample-elevation reference shifts are physically ambiguous and
   are not reliably recoverable.
 

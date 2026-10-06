@@ -1,4 +1,4 @@
-"""Export a reconstructed volume as TIFF slices or a raw file, one slice at a time."""
+"""``tomojax export``: write a reconstruction as TIFF slices or a raw file, slice by slice."""
 # pyright: reportUnknownMemberType=false
 
 from __future__ import annotations
@@ -12,6 +12,8 @@ import h5py
 import imageio.v3 as iio
 import numpy as np
 
+from tomojax.cli._options import add_output, check_paths
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -21,17 +23,21 @@ _AXES_ATTR = "volume_axes_order"
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
+        prog="tomojax export",
         description=(
-            "Export a TomoJAX reconstruction for other software: a directory of z-slice "
-            "TIFFs (y rows, x columns) or one raw z-major file, with a JSON sidecar giving "
-            "the shape, voxel size and value scaling."
-        )
+            "Export a reconstruction for other software: a directory of z-slice TIFFs "
+            "(y rows, x columns), or one little-endian z-major file when OUTPUT ends in "
+            ".raw. A JSON sidecar gives the shape, voxel size and value scaling."
+        ),
+        epilog=(
+            "Exit status: 0 success, 1 failure, 2 usage error.\n\nExamples:\n"
+            "  tomojax export recon.nxs -o slices/\n"
+            "  tomojax export recon.nxs -o recon.raw --dtype uint16"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    _ = parser.add_argument("--data", required=True, help="Reconstruction .nxs/.h5 file")
-    _ = parser.add_argument(
-        "--out", required=True, help="Output directory (tiff) or .raw file (raw)"
-    )
-    _ = parser.add_argument("--format", choices=["tiff", "raw"], default="tiff")
+    _ = parser.add_argument("data", metavar="INPUT", help="Reconstruction (.nxs, .h5)")
+    add_output(parser, "Directory for TIFF slices, or a .raw file")
     _ = parser.add_argument(
         "--dtype",
         choices=["float32", "uint16"],
@@ -75,16 +81,19 @@ def _value_range(
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the export command."""
-    args = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    args = parser.parse_args(argv)
     data, out = Path(cast("str", args.data)), Path(cast("str", args.out))
-    fmt, dtype, prefix = cast("str", args.format), cast("str", args.dtype), cast("str", args.prefix)
+    check_paths(parser, inputs=[data], outputs=[out], force=cast("bool", args.force))
+    fmt = "raw" if out.suffix.lower() == ".raw" else "tiff"
+    dtype, prefix = cast("str", args.dtype), cast("str", args.prefix)
     with h5py.File(data, "r") as handle:
         dataset = handle.get(_VOLUME_PATH)
         if not isinstance(dataset, h5py.Dataset) or dataset.ndim != 3:
-            raise SystemExit(f"{data} holds no reconstructed volume at {_VOLUME_PATH}")
+            parser.error(f"{data} holds no reconstructed volume; reconstruct it with tomojax recon")
         axes = _decode(handle["/entry/processing/tomojax"].attrs.get(_AXES_ATTR), "zyx").lower()
         if sorted(axes) != ["x", "y", "z"]:
-            raise SystemExit(f"unsupported saved volume axes {axes!r}")
+            parser.error(f"unsupported saved volume axes {axes!r}")
         shape = {axis: int(n) for axis, n in zip(axes, dataset.shape, strict=True)}
         grid = cast(
             "dict[str, float]",
@@ -130,5 +139,5 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())

@@ -66,7 +66,7 @@ def test_geometry_dofs_is_not_a_public_setup_input() -> None:
 
 def test_cli_geometry_dofs_route_to_multires(monkeypatch: pytest.MonkeyPatch) -> None:
     parser = build_parser()
-    args = parser.parse_args(["--data", "input.nxs", "--optimise-dofs", "det_u_px"])
+    args = parser.parse_args(["input.nxs", "-o", "out.nxs", "--optimise-dofs", "det_u_px"])
     dataset = ProjectionDataset(
         projections=np.zeros((3, 4, 5), dtype=np.float32),
         angles_deg=np.asarray([0.0, 90.0, 180.0], dtype=np.float32),
@@ -108,8 +108,9 @@ def test_cli_resume_restores_geometry_dofs_from_checkpoint(
     monkeypatch.setattr("tomojax.cli.align.plan.load_projection_payload", load_dataset)
     initial_args = parser.parse_args(
         [
-            "--data",
             "input.nxs",
+            "-o",
+            "out.nxs",
             "--checkpoint",
             str(checkpoint_path),
             "--optimise-dofs",
@@ -140,7 +141,9 @@ def test_cli_resume_restores_geometry_dofs_from_checkpoint(
         ),
     )
 
-    resume_args = parser.parse_args(["--data", "input.nxs", "--resume", str(checkpoint_path)])
+    resume_args = parser.parse_args(
+        ["input.nxs", "-o", "out.nxs", "--resume", str(checkpoint_path)]
+    )
     resume_plan = build_align_cli_run_plan(
         parser,
         resume_args,
@@ -170,12 +173,15 @@ def test_cli_resume_mode_max_checkpoint_keeps_schedule_without_empty_dofs(
     monkeypatch.setattr("tomojax.cli.align.plan.load_projection_payload", load_dataset)
     initial_args = parser.parse_args(
         [
-            "--data",
             "input.nxs",
+            "-o",
+            "out.nxs",
             "--checkpoint",
             str(checkpoint_path),
             "--mode",
-            "max",
+            "full",
+            "--quality",
+            "reference",
         ]
     )
     initial_plan = build_align_cli_run_plan(
@@ -203,7 +209,17 @@ def test_cli_resume_mode_max_checkpoint_keeps_schedule_without_empty_dofs(
     )
 
     resume_args = parser.parse_args(
-        ["--data", "input.nxs", "--resume", str(checkpoint_path), "--mode", "max"]
+        [
+            "input.nxs",
+            "-o",
+            "out.nxs",
+            "--resume",
+            str(checkpoint_path),
+            "--mode",
+            "full",
+            "--quality",
+            "reference",
+        ]
     )
     resume_plan = build_align_cli_run_plan(
         parser,
@@ -218,7 +234,7 @@ def test_cli_resume_mode_max_checkpoint_keeps_schedule_without_empty_dofs(
 
 def test_cli_pose_only_dofs_stay_single_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
     parser = build_parser()
-    args = parser.parse_args(["--data", "input.nxs", "--optimise-dofs", "dx"])
+    args = parser.parse_args(["input.nxs", "-o", "out.nxs", "--optimise-dofs", "dx"])
     dataset = ProjectionDataset(
         projections=np.zeros((3, 4, 5), dtype=np.float32),
         angles_deg=np.asarray([0.0, 90.0, 180.0], dtype=np.float32),
@@ -242,7 +258,7 @@ def test_cli_pose_only_dofs_stay_single_resolution(monkeypatch: pytest.MonkeyPat
 
 def test_cli_alignment_defaults_to_per_view_pose() -> None:
     parser = build_parser()
-    args = parser.parse_args(["--data", "input.nxs", "--out", "aligned.nxs"])
+    args = parser.parse_args(["input.nxs", "-o", "aligned.nxs"])
 
     assert args.mode == "pose"
     assert args.pose_model == "per_view"

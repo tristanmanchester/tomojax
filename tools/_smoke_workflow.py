@@ -10,43 +10,24 @@ if TYPE_CHECKING:
 
 def workflow_steps(root: Path) -> list[list[str]]:
     """Return CLI steps that produce and inspect a small reconstructed volume."""
-    scan, recon, slices = root / "synthetic.nxs", root / "recon.nxs", root / "slices"
+    scan, recon = root / "synthetic.nxs", root / "recon.nxs"
     return [
-        [
-            "simulate",
-            "--out",
-            str(scan),
-            "--nx",
-            "16",
-            "--ny",
-            "16",
-            "--nz",
-            "16",
-            "--nu",
-            "16",
-            "--nv",
-            "16",
-            "--n-views",
-            "16",
-        ],
-        ["inspect", str(scan), "--json", str(root / "inspect.json")],
-        ["validate", str(scan)],
-        ["recon", "--data", str(scan), "--out", str(recon), "--algo", "fbp", "--roi", "off"],
-        ["validate", str(recon)],
-        ["slices", "--data", str(recon), "--out", str(slices)],
+        ["simulate", "-o", str(scan), "--size", "16", "--views", "16"],
+        ["inspect", str(scan)],
+        ["recon", str(scan), "-o", str(recon), "--method", "fbp", "--roi", "off"],
+        ["inspect", str(recon), "--preview", str(root / "previews")],
     ]
 
 
 def verify_workflow_outputs(root: Path) -> None:
-    """Require datasets, inspection output, and all three labelled slices."""
+    """Require both datasets and the projection and three slice previews."""
     expected = [
         root / "synthetic.nxs",
         root / "recon.nxs",
-        root / "inspect.json",
-        root / "slices/slice_slices.json",
-        root / "slices/slice_x0008.png",
-        root / "slices/slice_y0008.png",
-        root / "slices/slice_z0008.png",
+        *(
+            root / "previews" / f"{name}.png"
+            for name in ("projection", "slice_x", "slice_y", "slice_z")
+        ),
     ]
     missing = [str(path) for path in expected if not path.is_file() or not path.stat().st_size]
     if missing:

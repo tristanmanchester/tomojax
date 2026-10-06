@@ -1,166 +1,83 @@
-"""Top-level TomoJAX command dispatcher."""
+"""The ``tomojax`` command: dispatch to a subcommand."""
 
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable
 from contextlib import contextmanager
+import importlib
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
-from tomojax.cli.api import product_command_names
+from tomojax.cli.api import PRODUCT_COMMANDS
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Sequence
+    from collections.abc import Callable, Generator, Sequence
 
-type CliRunner = Callable[[], int]
+_MODULES = {c.name: c.name for c in PRODUCT_COMMANDS} | {"import": "import_"}
+# Commands that run JAX on a GPU, and the allocator each wants (None: JAX's own).
+_JAX_ALLOCATORS: dict[str, str | None] = {"recon": None, "align": "platform", "simulate": None}
 
 
-def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911
-    """Run the production-facing `tomojax` command."""
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run ``tomojax <command> ...``; return the exit status."""
     args = list(sys.argv[1:] if argv is None else argv)
     if not args or args[0] in {"-h", "--help"}:
         _build_parser().print_help()
         return 0
+    if args[0] == "--version":
+        from tomojax import __version__
 
+        print(f"tomojax {__version__}")
+        return 0
     command, *tail = args
-    if command == "inspect":
-        from tomojax.cli import inspect
-
-        return _run_command_boundary(
-            "inspect",
-            lambda: _run_positional_cli(inspect.main, "tomojax inspect", tail),
-        )
-    if command == "validate":
-        from tomojax.cli import validate
-
-        return _run_command_boundary(
-            "validate",
-            lambda: _run_positional_cli(validate.main, "tomojax validate", tail),
-        )
-    if command == "preprocess":
-        from tomojax.cli import preprocess
-
-        return _run_command_boundary(
-            "preprocess",
-            lambda: _run_positional_cli(preprocess.main, "tomojax preprocess", tail),
-        )
-    if command == "ingest":
-        from tomojax.cli import ingest
-
-        return _run_command_boundary(
-            "ingest",
-            lambda: _run_positional_cli(ingest.main, "tomojax ingest", tail),
-        )
-    if command == "convert":
-        from tomojax.cli import convert
-
-        return _run_command_boundary(
-            "convert",
-            lambda: _run_sysargv_cli(convert.main, "tomojax convert", tail),
-        )
-    if command == "recon":
+    if command not in _MODULES:
+        _build_parser().error(f"unknown command {command!r}")
+    if command in _JAX_ALLOCATORS:
         from tomojax.cli._jax_allocator import configure_jax_allocator_defaults
 
-        configure_jax_allocator_defaults()
-        from tomojax.cli import recon
-
-        return _run_command_boundary(
-            "recon",
-            lambda: _run_sysargv_cli(recon.main, "tomojax recon", tail),
-        )
-    if command == "slices":
-        from tomojax.cli import slices
-
-        return _run_command_boundary(
-            "slices",
-            lambda: _run_positional_cli(slices.main, "tomojax slices", tail),
-        )
-    if command == "export":
-        from tomojax.cli import export
-
-        return _run_command_boundary(
-            "export",
-            lambda: _run_positional_cli(export.main, "tomojax export", tail),
-        )
-    if command == "align":
-        from tomojax.cli._jax_allocator import configure_jax_allocator_defaults
-
-        configure_jax_allocator_defaults(allocator="platform")
-        from tomojax.cli import align
-
-        return _run_command_boundary(
-            "align",
-            lambda: _run_sysargv_cli(align.main, "tomojax align", tail),
-        )
-    if command == "simulate":
-        from tomojax.cli._jax_allocator import configure_jax_allocator_defaults
-
-        configure_jax_allocator_defaults()
-        from tomojax.cli import simulate
-
-        return _run_command_boundary(
-            "simulate",
-            lambda: _run_sysargv_cli(simulate.main, "tomojax simulate", tail),
-        )
-    parser = _build_parser()
-    parser.error(f"unknown command {command!r}")
-    return 2
+        configure_jax_allocator_defaults(allocator=_JAX_ALLOCATORS[command])
+    module = importlib.import_module(f"tomojax.cli.{_MODULES[command]}")
+    run = cast("Callable[[], int | None]", module.main)
+    with _temporary_argv([f"tomojax {command}", *tail]):
+        try:
+            return int(run() or 0)
+        except _expected_errors() as exc:
+            print(f"tomojax {command}: error: {exc}", file=sys.stderr)
+            return 1
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    width = max(len(c.name) for c in PRODUCT_COMMANDS)
+    commands = "\n".join(f"  {c.name:<{width}}  {c.help}" for c in PRODUCT_COMMANDS)
     parser = argparse.ArgumentParser(
         prog="tomojax",
-        description="TomoJAX tomography and laminography reconstruction toolbox.",
+        usage="tomojax [--version] <command> [options]",
+        description=(
+            "Reconstruct and align tomography, laminography and lab cone-beam CT.\n\n"
+            f"Commands:\n{commands}"
+        ),
+        epilog=(
+            "Each command reads INPUT and writes -o OUTPUT, refusing to replace an existing "
+            "output without --force; `tomojax <command> --help` describes it. Exit status: "
+            "0 success, 1 failure, 2 usage error.\n\n"
+            "A lab CT scan from start to finish:\n"
+            "  tomojax import scan/scan.xtekct -o scan.nxs\n"
+            "  tomojax inspect scan.nxs\n"
+            "  tomojax align scan.nxs -o aligned.nxs --mode cor\n"
+            "  tomojax recon aligned.nxs -o recon.nxs\n"
+            "  tomojax inspect recon.nxs --preview previews\n"
+            "  tomojax export recon.nxs -o slices/"
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    _ = parser.add_argument(
-        "command",
-        nargs="?",
-        choices=product_command_names(),
-        help="Command to run.",
-    )
-    parser.epilog = (
-        "Examples:\n"
-        "  tomojax inspect scan.nxs\n"
-        "  tomojax ingest ./projections --angles angles.csv --du 0.65 --dv 0.65 --out scan.nxs\n"
-        "  tomojax preprocess raw.nxs corrected.nxs\n"
-        "  tomojax recon --data corrected.nxs --out recon.nxs\n"
-        "  tomojax slices --data recon.nxs --out quicklooks\n"
-        "  tomojax export --data recon.nxs --out recon_tiffs\n"
-        "  tomojax align --data corrected.nxs --out aligned.nxs --mode cor\n"
-    )
+    _ = parser.add_argument("--version", action="store_true", help="Print the version and exit")
     return parser
 
 
-def _run_positional_cli(
-    command: Callable[[Sequence[str] | None], int | None],
-    prog: str,
-    argv: list[str],
-) -> int:
-    with _temporary_argv([prog, *argv]):
-        return int(command(argv) or 0)
-
-
-def _run_sysargv_cli(command: Callable[[], object], prog: str, argv: list[str]) -> int:
-    with _temporary_argv([prog, *argv]):
-        _ = command()
-    return 0
-
-
-def _run_command_boundary(command_name: str, runner: CliRunner) -> int:
-    """Turn expected user/runtime failures into consistent CLI error exits."""
-    try:
-        return runner()
-    except _expected_cli_errors() as exc:
-        print(f"ERROR: {command_name}: {exc}", file=sys.stderr)
-        return 1
-
-
-def _expected_cli_errors() -> tuple[type[BaseException], ...]:
+def _expected_errors() -> tuple[type[BaseException], ...]:
     from tomojax.alignment.api import CheckpointError
 
-    return (OSError, ValueError, CheckpointError)
+    return (OSError, ValueError, KeyError, CheckpointError)
 
 
 @contextmanager

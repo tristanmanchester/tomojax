@@ -1,13 +1,14 @@
-"""CLI: preprocess raw NXtomo sample/flat/dark frames."""
+"""``tomojax preprocess``: flat- and dark-correct raw frames."""
 
 from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
 from pathlib import Path
-import sys
 from typing import TYPE_CHECKING, cast
 
+from tomojax.cli._options import add_config, add_output, check_paths, hide_expert
+from tomojax.cli.config import parse_args_with_config
 from tomojax.core import setup_logging
 from tomojax.io import (
     PreprocessConfig,
@@ -36,64 +37,54 @@ class PreprocessCommand:
     config: PreprocessConfig
 
 
+_PUBLIC = (
+    "--flats",
+    "--darks",
+    "--angles",
+    "--transmission",
+    "--select-views",
+    "--reject-views",
+    "--crop",
+    "--beam-hardening",
+    "--remove-stripes",
+    "--preview",
+)
+_TIFF_SUFFIXES = (".tif", ".tiff")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
+        prog="tomojax preprocess",
         description=(
-            "Flat/dark-correct raw NXtomo/image_key or explicit TIFF stacks into "
-            "sample-only absorption projections by default"
-        )
-    )
-    _ = parser.add_argument(
-        "input",
-        help=(
-            "Input raw .nxs/.h5/.hdf5 file, or TIFF projection file/directory "
-            "with --format tiff-stack"
+            "Flat- and dark-correct raw frames into absorption projections ready to "
+            "reconstruct. INPUT is a raw NXtomo file (frames labelled by image_key) or a "
+            "TIFF file or directory, which needs --flats, --darks and --angles."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  tomojax preprocess raw.nxs -o scan.nxs\n"
+            "  tomojax preprocess raw.nxs -o scan.nxs --remove-stripes 9 --beam-hardening 1,0.05\n"
+            "  tomojax preprocess frames/ --flats flats/ --darks darks/ --angles angles.csv "
+            "-o scan.nxs"
         ),
     )
-    _ = parser.add_argument("output", help="Output corrected .nxs/.h5/.hdf5 file")
     _ = parser.add_argument(
-        "--format",
-        dest="input_format",
-        choices=["nxtomo", "tiff-stack"],
-        default="nxtomo",
-        help="Input layout: NXtomo/HDF5 with image_key, or explicit TIFF projections/flats/darks",
+        "data", metavar="INPUT", help="Raw .nxs/.h5 file, or a TIFF file or directory"
     )
+    add_output(parser, "Corrected dataset to write (.nxs)")
+    add_config(parser)
+    _ = parser.add_argument("--flats", metavar="TIFF", help="TIFF input: flat-field frames")
+    _ = parser.add_argument("--darks", metavar="TIFF", help="TIFF input: dark-field frames")
     _ = parser.add_argument(
-        "--domain",
-        dest="output_domain",
-        choices=["absorption", "transmission"],
-        default="absorption",
-        help="Output projection domain; absorption is reconstruction-ready and the default",
-    )
-    _ = parser.add_argument(
-        "--log",
-        action="store_true",
-        help="Alias for --domain absorption; absorption is already the default",
+        "--angles", metavar="FILE", help="TIFF input: angles in degrees (.npy, or one per line)"
     )
     _ = parser.add_argument(
         "--transmission",
         action="store_true",
-        help="Write normalized transmission instead of reconstruction-ready absorption",
+        help="Write transmission (I / flat) instead of absorption",
     )
     _ = parser.add_argument(
-        "--flats",
-        default=None,
-        help="TIFF-stack mode: flat-field TIFF file or directory",
-    )
-    _ = parser.add_argument(
-        "--darks",
-        default=None,
-        help="TIFF-stack mode: dark-field TIFF file or directory",
-    )
-    _ = parser.add_argument(
-        "--angles",
-        default=None,
-        help="TIFF-stack mode: angle sidecar (.npy or CSV/text degrees)",
-    )
-    _ = parser.add_argument(
-        "--quicklook",
-        default=None,
-        help="Write a percentile-scaled central corrected-projection PNG",
+        "--preview", metavar="PNG", help="Write the central corrected projection as a PNG"
     )
     _ = parser.add_argument(
         "--epsilon",
@@ -144,17 +135,14 @@ def _build_parser() -> argparse.ArgumentParser:
     _ = parser.add_argument(
         "--select-views",
         default=None,
-        help=(
-            "Keep only these sample-view indices/ranges after image_key filtering "
-            "(e.g. '0:90,120:180:2')"
-        ),
+        metavar="RANGES",
+        help="Keep only these views, as indices and ranges (for example 0:90,120:180:2)",
     )
     _ = parser.add_argument(
         "--reject-views",
         default=None,
-        help=(
-            "Reject these sample-view indices/ranges after image_key filtering (e.g. '12,57:61')"
-        ),
+        metavar="RANGES",
+        help="Drop these views (for example 12,57:61)",
     )
     _ = parser.add_argument(
         "--select-views-file",
@@ -190,7 +178,8 @@ def _build_parser() -> argparse.ArgumentParser:
     _ = parser.add_argument(
         "--crop",
         default=None,
-        help="Detector ROI crop in projection axis order y0:y1,x0:x1",
+        metavar="Y0:Y1,X0:X1",
+        help="Keep this detector region (rows y, then columns x)",
     )
     _ = parser.add_argument(
         "--beam-hardening",
@@ -213,6 +202,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "defects, for example 9)"
         ),
     )
+    hide_expert(parser, _PUBLIC)
     return parser
 
 
@@ -236,7 +226,19 @@ def _optional_float(value: object) -> float | None:
 
 def _parse_command(argv: Sequence[str] | None) -> PreprocessCommand:
     """Parse CLI arguments into a typed preprocessing command plan."""
-    args = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    args, _ = parse_args_with_config(parser, argv)
+    source = cast("str", args.data)
+    check_paths(
+        parser,
+        inputs=[source, cast("str | None", args.flats), cast("str | None", args.darks)],
+        outputs=[cast("str", args.out), cast("str | None", args.preview)],
+        force=cast("bool", args.force),
+    )
+    tiff = Path(source).is_dir() or source.lower().endswith(_TIFF_SUFFIXES)
+    sidecars = cast("tuple[str | None, ...]", (args.flats, args.darks, args.angles))
+    if tiff and None in sidecars:
+        parser.error("TIFF input needs --flats, --darks and --angles")
     clip_min = cast("float | None", args.clip_min)
     data_path = cast("str | None", args.data_path)
     angles_path = cast("str | None", args.angles_path)
@@ -248,11 +250,7 @@ def _parse_command(argv: Sequence[str] | None) -> PreprocessCommand:
     select_views_file = cast("str | None", args.select_views_file)
     reject_views_file = cast("str | None", args.reject_views_file)
     crop = cast("str | None", args.crop)
-    output_domain = cast("str", args.output_domain)
-    if cast("bool", args.log):
-        output_domain = "absorption"
-    if cast("bool", args.transmission):
-        output_domain = "transmission"
+    output_domain = "transmission" if cast("bool", args.transmission) else "absorption"
     config = PreprocessConfig(
         output_domain=output_domain,
         epsilon=cast("float", args.epsilon),
@@ -274,16 +272,16 @@ def _parse_command(argv: Sequence[str] | None) -> PreprocessCommand:
         stripe_width=cast("int | None", args.remove_stripes),
     )
     return PreprocessCommand(
-        input_path=Path(cast("str", args.input)),
-        output_path=Path(cast("str", args.output)),
-        input_format=cast("str", args.input_format),
+        input_path=Path(source),
+        output_path=Path(cast("str", args.out)),
+        input_format="tiff-stack" if tiff else "nxtomo",
         flats_path=Path(cast("str", args.flats)) if cast("str | None", args.flats) else None,
         darks_path=Path(cast("str", args.darks)) if cast("str | None", args.darks) else None,
         angles_sidecar_path=Path(cast("str", args.angles))
         if cast("str | None", args.angles)
         else None,
-        quicklook_path=Path(cast("str", args.quicklook))
-        if cast("str | None", args.quicklook)
+        quicklook_path=Path(cast("str", args.preview))
+        if cast("str | None", args.preview)
         else None,
         config=config,
     )
@@ -295,22 +293,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     input_path = command.input_path
     output_path = command.output_path
 
-    if not input_path.exists():
-        print(f"ERROR: file not found: {input_path}", file=sys.stderr)
-        return 2
-    if command.input_format == "nxtomo" and not input_path.is_file():
-        print(f"ERROR: not a file: {input_path}", file=sys.stderr)
-        return 2
-    if output_path.exists() and not output_path.is_file():
-        print(f"ERROR: output path exists and is not a file: {output_path}", file=sys.stderr)
-        return 2
-
     setup_logging()
     if command.input_format == "tiff-stack":
-        tiff_error = _tiff_command_error(command)
-        if tiff_error is not None:
-            print(tiff_error, file=sys.stderr)
-            return 2
         if (
             command.flats_path is None
             or command.darks_path is None
@@ -331,20 +315,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         _ = save_projection_quicklook(output_path, command.quicklook_path)
 
     print(
-        "Wrote corrected "
-        f"{result.output_domain} projections to {output_path} "
+        f"wrote {output_path}: {result.output_domain} projections "
         f"(samples={result.sample_count}, flats={result.flat_count}, darks={result.dark_count}, "
         f"shape={list(result.output_shape)})"
     )
     return 0
-
-
-def _tiff_command_error(command: PreprocessCommand) -> str | None:
-    if command.flats_path is None or command.darks_path is None:
-        return "ERROR: --format tiff-stack requires --flats and --darks"
-    if command.angles_sidecar_path is None:
-        return "ERROR: --format tiff-stack requires --angles"
-    return None
 
 
 if __name__ == "__main__":  # pragma: no cover

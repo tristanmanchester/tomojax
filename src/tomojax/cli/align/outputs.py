@@ -49,7 +49,7 @@ def _alignment_gauge_metadata(
         "mode": str(mode),
         "dofs": metadata_json_list(dofs),
         "final": metadata_json_mapping(final),
-        # Saved poses are applied in this frame by `tomojax recon --apply-saved-alignment`.
+        # Saved poses are applied in this frame by `tomojax recon` and `tomojax.load`.
         "pose_translation_frame": plan.cfg.pose_translation_frame,
     }
 

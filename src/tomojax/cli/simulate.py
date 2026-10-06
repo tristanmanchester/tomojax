@@ -1,14 +1,15 @@
-"""CLI: simulate synthetic TomoJAX datasets."""
+"""``tomojax simulate``: write a synthetic scan of a phantom."""
 
 from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-import logging
+import math
 import os
-import sys
 from typing import TYPE_CHECKING, Literal, cast
 
+from tomojax.cli._options import add_config, add_output, check_paths, hide_expert
+from tomojax.cli.config import parse_args_with_config
 from tomojax.core import log_jax_env, setup_logging
 from tomojax.datasets import (
     SimConfig,
@@ -28,24 +29,6 @@ PhantomName = Literal["shepp", "cube", "sphere", "blobs", "random_shapes", "lami
 TransferGuardName = Literal["off", "log", "disallow"]
 IntensityDriftModeName = Literal["none", "linear", "sinusoidal"]
 
-_ARTEFACT_OPTION_STRINGS = {
-    "--poisson-scale",
-    "--gaussian-sigma",
-    "--dead-pixel-fraction",
-    "--dead-pixel-value",
-    "--hot-pixel-fraction",
-    "--hot-pixel-value",
-    "--zinger-fraction",
-    "--zinger-value",
-    "--stripe-fraction",
-    "--stripe-gain-sigma",
-    "--dropped-view-fraction",
-    "--dropped-view-fill",
-    "--detector-blur-sigma",
-    "--intensity-drift-amplitude",
-    "--intensity-drift-mode",
-}
-
 
 @dataclass(frozen=True)
 class SimulateCommand:
@@ -57,58 +40,115 @@ class SimulateCommand:
     progress: bool
 
 
-def _artefact_options_present(argv: Sequence[str]) -> bool:
-    for token in argv:
-        for option in _ARTEFACT_OPTION_STRINGS:
-            if token == option or token.startswith(f"{option}="):
-                return True
-    return False
+_PUBLIC = (
+    "--size",
+    "--views",
+    "--geometry",
+    "--phantom",
+    "--rotation",
+    "--tilt",
+    "--source-to-axis",
+    "--source-to-detector",
+    "--poisson-scale",
+    "--seed",
+    "--progress",
+)
 
 
 def _build_parser() -> argparse.ArgumentParser:
     """Build the simulate command parser."""
-    parser = argparse.ArgumentParser(description="Simulate tomographic dataset and save to .nxs")
-    _ = parser.add_argument("--out", required=True, help="Output .nxs path")
-    _ = parser.add_argument("--nx", type=int, required=True)
-    _ = parser.add_argument("--ny", type=int, required=True)
-    _ = parser.add_argument("--nz", type=int, required=True)
-    _ = parser.add_argument("--nu", type=int, required=True)
-    _ = parser.add_argument("--nv", type=int, required=True)
-    _ = parser.add_argument("--n-views", type=int, required=True)
+    parser = argparse.ArgumentParser(
+        prog="tomojax simulate",
+        description=(
+            "Write a synthetic scan of a phantom (projections, geometry and the true "
+            "volume) to try reconstruction and alignment on. Deterministic for a --seed."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  tomojax simulate -o phantom.nxs\n"
+            "  tomojax simulate -o cone.nxs --geometry cone --size 128 --views 360\n"
+            "  tomojax simulate -o lamino.nxs --geometry lamino --tilt 30 --poisson-scale 1000"
+        ),
+    )
+    add_output(parser, "Dataset to write (.nxs)")
+    add_config(parser)
     _ = parser.add_argument(
-        "--rotation-deg",
-        type=float,
+        "--size",
+        type=int,
+        default=64,
+        metavar="N",
+        help="Volume edge in voxels, and the detector size",
+    )
+    _ = parser.add_argument(
+        "--views",
+        dest="n_views",
+        type=int,
         default=None,
-        help="Total rotation range in degrees. Defaults: 180 for parallel, 360 otherwise.",
+        metavar="N",
+        help="Number of views (default 2 x size)",
     )
     _ = parser.add_argument(
         "--geometry", choices=["parallel", "lamino", "cone"], default="parallel"
     )
     _ = parser.add_argument(
-        "--tilt-deg",
+        "--phantom",
+        choices=["shepp", "cube", "sphere", "blobs", "random_shapes", "lamino_disk"],
+        default="shepp",
+    )
+    _ = parser.add_argument(
+        "--rotation",
+        dest="rotation_deg",
         type=float,
         default=None,
-        help="Rotation-axis tilt in degrees. Defaults: 30 for lamino, 0 for cone.",
+        metavar="DEG",
+        help="Rotation range (default 180 for parallel, 360 otherwise)",
     )
-    _ = parser.add_argument("--tilt-about", choices=["x", "z"], default="x")
+    _ = parser.add_argument(
+        "--tilt",
+        dest="tilt_deg",
+        type=float,
+        default=None,
+        metavar="DEG",
+        help="Rotation axis tilt (default 30 for lamino, 0 otherwise)",
+    )
     _ = parser.add_argument(
         "--source-to-axis",
         type=float,
         default=None,
-        help="Cone beam: source to rotation axis distance (default 3x the volume extent).",
+        metavar="DIST",
+        help="Cone beam, in voxels (default 3 x size)",
     )
     _ = parser.add_argument(
         "--source-to-detector",
         type=float,
         default=None,
-        help="Cone beam: source to detector distance (default 1.5x --source-to-axis).",
+        metavar="DIST",
+        help="Cone beam, in voxels (default 1.5 x source-to-axis)",
     )
     _ = parser.add_argument(
-        "--phantom",
-        choices=["shepp", "cube", "sphere", "blobs", "random_shapes", "lamino_disk"],
-        default="shepp",
-        help="Phantom type. Use 'cube' or 'sphere' for a single centered object.",
+        "--poisson-scale",
+        type=float,
+        default=0.0,
+        metavar="SCALE",
+        help="Add Poisson noise, drawing counts of value x SCALE (higher is quieter)",
     )
+    _ = parser.add_argument(
+        "--grid",
+        type=int,
+        nargs=3,
+        metavar=("NX", "NY", "NZ"),
+        default=None,
+        help="Volume shape, overriding --size",
+    )
+    _ = parser.add_argument(
+        "--detector",
+        type=int,
+        nargs=2,
+        metavar=("NU", "NV"),
+        default=None,
+        help="Detector shape (default: --size, or enough to see the whole cone-beam volume)",
+    )
+    _ = parser.add_argument("--tilt-about", choices=["x", "z"], default="x")
     _ = parser.add_argument(
         "--single-rotate",
         dest="single_rotate",
@@ -139,7 +179,6 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0.2,
         help="Relative slab thickness (0-1) used by the lamino disk phantom",
     )
-    _ = parser.add_argument("--poisson-scale", type=float, default=0.0)
     _ = parser.add_argument("--gaussian-sigma", type=float, default=0.0)
     _ = parser.add_argument("--dead-pixel-fraction", type=float, default=0.0)
     _ = parser.add_argument("--dead-pixel-value", type=float, default=0.0)
@@ -158,7 +197,9 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["none", "linear", "sinusoidal"],
         default="none",
     )
-    _ = parser.add_argument("--seed", type=int, default=0)
+    _ = parser.add_argument(
+        "--seed", type=int, default=0, metavar="N", help="Random seed (phantom and noise)"
+    )
     _ = parser.add_argument(
         "--progress", action="store_true", help="Show progress bars if tqdm is available"
     )
@@ -171,29 +212,60 @@ def _build_parser() -> argparse.ArgumentParser:
             "(default: off; use log/disallow for strict transfer checks)"
         ),
     )
+    hide_expert(parser, _PUBLIC)
     return parser
+
+
+def _cone_detector(size: int, source_to_axis: float, source_to_detector: float) -> int:
+    """Detector pixels that see a ``size``-voxel cube from ``source_to_axis``."""
+    radius = size / math.sqrt(2.0)
+    if source_to_axis <= radius:
+        raise ValueError("the source must be outside the volume: increase --source-to-axis")
+    across = radius * source_to_detector / math.sqrt(source_to_axis**2 - radius**2)
+    up = 0.5 * size * source_to_detector / (source_to_axis - radius)
+    return 2 * math.ceil(max(across, up))
 
 
 def _parse_command(argv: Sequence[str] | None) -> SimulateCommand:
     """Parse CLI arguments into a typed simulation command plan."""
-    argv_list = list(sys.argv[1:] if argv is None else argv)
-    args = _build_parser().parse_args(argv_list)
-    artefacts = _build_artefacts(args, _artefact_options_present(argv_list))
+    parser = _build_parser()
+    args, _ = parse_args_with_config(parser, argv)
+    check_paths(parser, outputs=[cast("str", args.out)], force=cast("bool", args.force))
+    artefacts = _build_artefacts(args)
     rotation_deg = cast("float | None", args.rotation_deg)
     geometry = cast("GeometryName", args.geometry)
     tilt_deg = cast("float | None", args.tilt_deg)
+    size = cast("int", args.size)
+    nx, ny, nz = cast("list[int] | None", args.grid) or (size, size, size)
+    sod = cast("float | None", args.source_to_axis)
+    sdd = cast("float | None", args.source_to_detector)
+    detector = cast("list[int] | None", args.detector)
+    if detector is not None:
+        nu, nv = detector
+    elif geometry == "cone":
+        sod_default = 3.0 * max(nx, ny, nz) if sod is None else sod
+        try:
+            n = _cone_detector(
+                max(nx, ny, nz), sod_default, 1.5 * sod_default if sdd is None else sdd
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+        nu = nv = n
+    else:
+        nu, nv = max(nx, ny), nz
+    n_views = cast("int | None", args.n_views) or 2 * size
     config = SimConfig(
-        nx=cast("int", args.nx),
-        ny=cast("int", args.ny),
-        nz=cast("int", args.nz),
-        nu=cast("int", args.nu),
-        nv=cast("int", args.nv),
-        n_views=cast("int", args.n_views),
+        nx=int(nx),
+        ny=int(ny),
+        nz=int(nz),
+        nu=int(nu),
+        nv=int(nv),
+        n_views=int(n_views),
         geometry=geometry,
-        tilt_deg=tilt_deg if tilt_deg is not None else (0.0 if geometry == "cone" else 30.0),
+        tilt_deg=tilt_deg if tilt_deg is not None else (30.0 if geometry == "lamino" else 0.0),
         tilt_about=cast("TiltAxis", args.tilt_about),
-        source_to_axis=cast("float | None", args.source_to_axis),
-        source_to_detector=cast("float | None", args.source_to_detector),
+        source_to_axis=sod,
+        source_to_detector=sdd,
         rotation_deg=rotation_deg,
         phantom=cast("PhantomName", args.phantom),
         seed=cast("int", args.seed),
@@ -218,14 +290,8 @@ def _parse_command(argv: Sequence[str] | None) -> SimulateCommand:
     )
 
 
-def _build_artefacts(
-    args: argparse.Namespace,
-    explicit_artefacts: bool,
-) -> SimulationArtefacts | None:
+def _build_artefacts(args: argparse.Namespace) -> SimulationArtefacts | None:
     """Build validated optional artefact config from parsed arguments."""
-    if not explicit_artefacts:
-        return None
-
     artefacts = SimulationArtefacts(
         poisson_scale=cast("float", args.poisson_scale),
         gaussian_sigma=cast("float", args.gaussian_sigma),
@@ -260,7 +326,11 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     with transfer_guard_context(command.transfer_guard):
         out = simulate_to_file(command.config, command.out)
-    logging.info("Wrote dataset: %s", out)
+    cfg = command.config
+    print(
+        f"wrote {out}: {cfg.geometry} scan of a {cfg.nx}x{cfg.ny}x{cfg.nz} {cfg.phantom} "
+        f"phantom, {cfg.n_views} views on a {cfg.nu}x{cfg.nv} detector"
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover
