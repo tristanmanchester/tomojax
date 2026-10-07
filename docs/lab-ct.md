@@ -223,16 +223,27 @@ three orbits, 501³ voxels of 0.1 mm). On Walnut 1, on a laptop RTX 4070:
 | | TomoJAX | ASTRA |
 | --- | --- | --- |
 | Geometry from the vectors | source 66.0014 mm, detector 199.0062 mm (the scanner's log: 66.0014, 199.0062) | |
-| FDK, one orbit (1200 views) | 3.4 s; within 0.06% of ASTRA's volume and 0.6% of the authors' published FDK | 2.2 s |
-| Error against the reference, in the walnut | 0.099 | 0.099 |
-| Non-negative least squares, three orbits, every 4th view, 20 iterations | 593 s; 0.152 against the reference | 217 s (the reference's own solver); 0.147 |
+| FDK, one orbit (1200 views) | 3.4 s warm, 5.8 s with compilation; within 0.06% of ASTRA's volume and 0.6% of the authors' published FDK | 2.1 s |
+| FDK error against the reference, in the walnut | 0.099 | 0.099 |
+| FDK, detector binned 2 x 2 | 3.3 s with compilation; error 0.091 | 1.4 s; 0.091 |
+| Non-negative least squares, three orbits, every 4th view, 20 iterations | 593 s; error 0.152 | 217 s (the reference's own solver); 0.147 |
+| The same, detector binned 2 x 2 | 162 s; error 0.154 | 91 s; 0.152 |
 
-The volumes agree with ASTRA's; the speed does not yet. The FleX-ray's
-rotation axis leans 0.5° across the detector, which sends both TomoJAX
-projectors to their general kernels: on this scan they take 1.8 times as long
-as for an upright axis, and the iterative reconstruction is 2.7 times slower
-than ASTRA's. FDK's backprojection also loses cache reuse at this scan's
-magnification of 3, where each voxel spans two detector rows.
+The volumes agree with ASTRA's to 0.05% (FDK) and 1.3% (least squares); the
+speed does not yet. This detector samples twice as finely as the 0.1 mm
+voxels (a pixel spans 0.05 mm at the axis), so TomoJAX's matched projector,
+which follows every ray through every plane, does four times the work the
+volume needs, while ASTRA's backprojector samples the detector once per
+voxel. `scan.binned(2)` averages 2 x 2 pixels, matching the detector to the
+grid: it costs nothing in accuracy here (the error even falls, with the
+noise) and makes TomoJAX's reconstruction 3.7 times faster, ASTRA's 2.4 times.
+Bin a scan whenever its pixels, divided by the magnification, are smaller than
+the voxels.
+
+The FleX-ray's rotation axis also leans 0.5° across the detector, which sends
+TomoJAX's projectors to their general kernels, about 1.8 times slower than
+for an upright axis; kernels specialised to small leans were tried and were
+slower still.
 
 ## Limitations
 

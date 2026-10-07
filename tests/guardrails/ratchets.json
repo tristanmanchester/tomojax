@@ -23,8 +23,7 @@
     "simulate": 46
   },
   "long_files": [
-    "src/tomojax/alignment/_stages/_reconstruction_stage.py",
-    "src/tomojax/recon/fista_tv.py"
+    "src/tomojax/alignment/_stages/_reconstruction_stage.py"
   ],
   "suppressions": {
     "noqa": 8,
@@ -93,7 +92,7 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "type_errors": {
-    "reportArgumentType": 361,
+    "reportArgumentType": 360,
     "reportAssignmentType": 3,
     "reportAttributeAccessIssue": 167,
     "reportCallIssue": 14,

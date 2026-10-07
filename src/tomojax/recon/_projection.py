@@ -320,11 +320,8 @@ def least_squares_operators(
     joseph_interpolation: str = "linear",
     *,
     stream: bool = False,
-) -> tuple[
-    Callable[[jax.Array, jax.Array], tuple[jax.Array, jax.Array]],
-    Callable[[jax.Array, jax.Array], jax.Array],
-]:
-    """Return ``(value_and_gradient, value)`` of ``0.5 ||A x - y||^2``.
+) -> Callable[[jax.Array, jax.Array], tuple[jax.Array, jax.Array]]:
+    """Return the value and gradient of ``0.5 ||A x - y||^2``, ``(x, y) -> (value, A^T r)``.
 
     Each view batch is projected, compared with the data and transposed before
     the next, so no sinogram-sized intermediate is ever stored. With
@@ -363,13 +360,7 @@ def least_squares_operators(
 
         return jax.lax.fori_loop(0, ops.count, body, (jnp.float32(0), ops.zeros_volume()))
 
-    def value(volume: jax.Array, data: jax.Array) -> jax.Array:
-        def body(chunk: jax.Array, total: jax.Array) -> jax.Array:
-            return total + squared(batch_residual(volume, data, chunk)[2])
-
-        return jax.lax.fori_loop(0, ops.count, body, jnp.float32(0))
-
-    return value_and_gradient, value
+    return value_and_gradient
 
 
 def normal_operator_norm(

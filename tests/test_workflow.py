@@ -158,3 +158,27 @@ def test_align_calibrates_the_axis_and_returns_a_corrected_scan(tmp_path: Path) 
     assert reloaded.geometry.beam == result.scan.geometry.beam  # pyright: ignore[reportAttributeAccessIssue]
     with pytest.raises(ValueError, match="already carries pose corrections"):
         tj.align(reloaded)
+
+
+def test_binning_averages_pixels_and_keeps_the_detector_in_place():
+    grid = tj.Grid(24, 24, 24, 1.0, 1.0, 1.0)
+    detector = tj.Detector(41, 33, 0.5, 0.5, (0.3, -0.2))
+    geometry = tj.ConeGeometry(
+        grid, detector, np.linspace(0, 360, 24, endpoint=False), tj.ConeBeam(60.0, 90.0)
+    )
+    c = (np.arange(24) - 11.5) / 4
+    x, y, z = np.meshgrid(c, c, c, indexing="ij")
+    volume = np.exp(-(x**2 + y**2 + z**2)).astype(np.float32)
+    scan = tj.Scan(np.asarray(tj.project(geometry, volume)), geometry)
+
+    binned = scan.binned(2)
+
+    # The odd last column and row are dropped, shifting the centre by half a pixel.
+    assert binned.projections.shape == (24, 16, 20)
+    assert binned.detector.du == binned.detector.dv == 1.0
+    assert binned.detector.det_center == pytest.approx((0.05, -0.45))
+    direct = np.asarray(tj.project(binned.geometry, volume))
+    assert np.linalg.norm(np.asarray(binned.projections) - direct) / np.linalg.norm(direct) < 0.01
+    assert scan.binned(1) is scan
+    with pytest.raises(ValueError, match="at least 1"):
+        scan.binned(0)

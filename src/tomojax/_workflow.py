@@ -28,7 +28,7 @@ from tomojax.geometry import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
     from os import PathLike
 
     import jax
@@ -161,10 +161,32 @@ class Scan:
         grid = scans[0].grid
         parts = []
         for scan in scans:
-            geometry = _regrid(scan.geometry, grid)
+            geometry = _rebuild(scan.geometry, grid=grid)
             parts.extend(geometry.segments if isinstance(geometry, ConeSegments) else (geometry,))
         projections = np.concatenate([np.asarray(s.projections) for s in scans])
         return cls(projections, ConeSegments(tuple(parts)), name=name or scans[0].name)
+
+    def binned(self, factor: int) -> Scan:
+        """The scan with ``factor x factor`` detector pixels averaged into one.
+
+        Use it when the detector samples finer than the reconstruction grid (a
+        pixel's footprint at the rotation axis smaller than a voxel): projection
+        cost falls by ``factor**2`` for little change in the volume. Pixels that
+        do not fill a block at the detector's edges are dropped, and the
+        detector centre moves to match.
+        """
+        if factor < 1:
+            raise ValueError(f"binned needs a factor of at least 1, not {factor}")
+        if factor == 1:
+            return self
+        data = np.asarray(self.projections, np.float32)
+        views, nv, nu = data.shape
+        rows, cols = nv // factor, nu // factor
+        blocks = data[:, : rows * factor, : cols * factor].reshape(
+            views, rows, factor, cols, factor
+        )
+        geometry = _rebuild(self.geometry, detector=lambda d: _binned_detector(d, factor))
+        return replace(self, projections=blocks.mean(axis=(2, 4)), geometry=geometry)
 
     def to_astra(self) -> tuple[np.ndarray, dict[str, Any], dict[str, Any]]:
         """ASTRA ``(rows, views, columns)`` projections, ``cone_vec`` and volume geometries.
@@ -370,18 +392,40 @@ def _scan_from_record(record: ProjectionDataset, *, apply_alignment: bool) -> Sc
     )
 
 
-def _regrid(geometry: ScanGeometry, grid: Grid) -> ScanGeometry:
-    """``geometry`` with ``grid`` as its reconstruction grid, wrappers kept."""
+def _rebuild(
+    geometry: ScanGeometry,
+    *,
+    grid: Grid | None = None,
+    detector: Callable[[Detector], Detector] | None = None,
+) -> ScanGeometry:
+    """``geometry`` with a new grid and/or each detector mapped by ``detector``, wrappers kept."""
     from tomojax.geometry import ConeSegments
 
     if isinstance(geometry, ConeSegments):
-        return ConeSegments(tuple(_regrid(s, grid) for s in geometry.segments))
+        segments = (_rebuild(s, grid=grid, detector=detector) for s in geometry.segments)
+        return ConeSegments(tuple(segments))
     if not is_dataclass(geometry) or isinstance(geometry, type):
-        raise TypeError(f"cannot move a {type(geometry).__name__} to another grid")
+        raise TypeError(f"cannot rebuild a {type(geometry).__name__} geometry")
     inner = getattr(geometry, "base", None)
     if inner is not None:
-        return replace(geometry, base=_regrid(inner, grid))
-    return replace(geometry, grid=grid)
+        return replace(geometry, base=_rebuild(inner, grid=grid, detector=detector))
+    changes: dict[str, object] = {}
+    if grid is not None:
+        changes["grid"] = grid
+    if detector is not None:
+        changes["detector"] = detector(geometry.detector)
+    return replace(geometry, **changes)
+
+
+def _binned_detector(detector: Detector, factor: int) -> Detector:
+    """``detector`` with ``factor x factor`` pixels averaged; partial edge blocks dropped."""
+    from tomojax.geometry import Detector
+
+    nu, nv = detector.nu // factor, detector.nv // factor
+    # Dropped edge pixels move the binned detector's centre (see Scan.binned).
+    cu = detector.det_center[0] + detector.du * (factor * nu - detector.nu) / 2
+    cv = detector.det_center[1] + detector.dv * (factor * nv - detector.nv) / 2
+    return Detector(nu, nv, detector.du * factor, detector.dv * factor, (cu, cv))
 
 
 def _with_grid(scan: Scan, grid: Grid) -> Scan:
@@ -391,7 +435,7 @@ def _with_grid(scan: Scan, grid: Grid) -> Scan:
     if grid == scan.grid:
         return scan
     if isinstance(scan.geometry, ConeSegments):
-        return replace(scan, geometry=_regrid(scan.geometry, grid))
+        return replace(scan, geometry=_rebuild(scan.geometry, grid=grid))
     record = _record_of(scan, grid=grid)
     return replace(_scan_from_record(record, apply_alignment=True), source=scan.source)
 

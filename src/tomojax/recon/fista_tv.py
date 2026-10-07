@@ -374,128 +374,6 @@ def grad_data_term(  # noqa: PLR0915
     return grad, loss_val
 
 
-def data_term_value(
-    geometry: Geometry,
-    grid: Grid,
-    detector: Detector,
-    projections: jnp.ndarray,
-    x: jnp.ndarray,
-    *,
-    views_per_batch: int | None = None,
-    projector_unroll: int = 1,
-    checkpoint_projector: bool = True,
-    gather_dtype: str = "fp32",
-    grad_mode: GradMode = "auto",
-    ray_integrator: str = "sampled",
-    T_all: jnp.ndarray | None = None,
-    vol_mask: jnp.ndarray | None = None,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
-) -> jnp.ndarray:
-    """Compute the data term ``1/2 Σ_i ||A_i x - y_i||^2`` without its gradient."""
-    require_parallel_beam(geometry, "data_term_value")
-    validate_grid(grid, "data_term_value grid")
-    n_views, nv, nu = validate_projection_stack(
-        projections,
-        detector,
-        geometry=geometry,
-        context="data_term_value projections",
-    )
-    validate_volume(x, grid, context="data_term_value", name="x")
-    validate_optional_broadcastable_shape(
-        vol_mask,
-        (grid.nx, grid.ny, grid.nz),
-        context="data_term_value support",
-        name="vol_mask",
-        fix="use a volume mask broadcastable to shape (grid.nx, grid.ny, grid.nz).",
-    )
-    if T_all is None:
-        T_all = stack_view_poses(geometry, n_views)
-    validate_pose_stack(T_all, n_views, context="data_term_value geometry")
-
-    det_grid = get_detector_grid_device(detector) if det_grid is None else det_grid
-
-    def batched_loss(vol: jnp.ndarray) -> jnp.ndarray:
-        masked_vol = vol * vol_mask if vol_mask is not None else vol
-        vm_project = jax.vmap(
-            lambda T, v: forward_project_view_T(
-                T,
-                grid,
-                detector,
-                v,
-                use_checkpoint=checkpoint_projector,
-                unroll=int(projector_unroll),
-                gather_dtype=gather_dtype,
-                det_grid=det_grid,
-                ray_integrator=ray_integrator,
-            ),
-            in_axes=(0, None),
-        )
-        n = int(T_all.shape[0])
-        b = _effective_view_chunk_size(n, views_per_batch)
-        m = (n + b - 1) // b
-
-        def body(
-            loss_acc: jnp.ndarray,
-            i: jnp.ndarray,
-        ) -> tuple[jnp.ndarray, None]:
-            start_shifted, valid_mask, _view_idx = _view_chunk_schedule(
-                i,
-                n_views=n,
-                chunk_size=b,
-            )
-            T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
-            y_chunk = jax.lax.dynamic_slice(projections, (start_shifted, 0, 0), (b, nv, nu))
-            pred = vm_project(T_chunk, masked_vol)
-            mask = valid_mask[:, None, None]
-            resid = (pred - y_chunk).astype(jnp.float32) * mask
-            loss_batch = 0.5 * jnp.vdot(resid, resid).real
-            return (loss_acc + loss_batch, None)
-
-        loss0 = jnp.float32(0.0)
-        loss_tot, _ = jax.lax.scan(body, loss0, jnp.arange(m))
-        return loss_tot
-
-    def stream_loss(vol: jnp.ndarray) -> jnp.ndarray:
-        masked_vol = vol * vol_mask if vol_mask is not None else vol
-
-        def one_view(
-            loss_acc: jnp.ndarray,
-            i: jnp.ndarray,
-        ) -> tuple[jnp.ndarray, None]:
-            T_i = jax.lax.dynamic_slice(T_all, (i, 0, 0), (1, 4, 4))[0]
-            y_i = jax.lax.dynamic_slice(projections, (i, 0, 0), (1, nv, nu))[0]
-
-            pred_i = forward_project_view_T(
-                T_i,
-                grid,
-                detector,
-                masked_vol,
-                use_checkpoint=checkpoint_projector,
-                unroll=int(projector_unroll),
-                gather_dtype=gather_dtype,
-                det_grid=det_grid,
-                ray_integrator=ray_integrator,
-            )
-            resid_i = (pred_i - y_i).astype(jnp.float32)
-            loss_i = 0.5 * jnp.vdot(resid_i, resid_i).real
-            return loss_acc + loss_i, None
-
-        loss0 = jnp.float32(0.0)
-        loss_tot, _ = jax.lax.scan(one_view, loss0, jnp.arange(T_all.shape[0]))
-        return loss_tot
-
-    eff_b = (
-        int(views_per_batch) if (views_per_batch is not None and int(views_per_batch) > 0) else 1
-    )
-    mode = grad_mode
-    if grad_mode == "auto":
-        mode = "stream" if eff_b <= 1 else "batched"
-
-    if mode == "stream":
-        return stream_loss(x)
-    return batched_loss(x)
-
-
 def power_method_L(
     geometry: Geometry,
     grid: Grid,
@@ -785,26 +663,21 @@ def _batched_lipschitz(
 
 def _data_term(
     grid: Grid, detector: Detector, projections: jnp.ndarray, runtime: _FistaRuntime
-) -> tuple[
-    Callable[[jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]], Callable[[jnp.ndarray], jnp.ndarray]
-]:
-    """Return the data term's value-and-gradient and value functions."""
+) -> Callable[[jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]]:
+    """Return the data term's value-and-gradient function."""
     cfg = runtime.config
     regulariser = runtime.regulariser
     huber_delta = runtime.huber_delta
     mask = None if runtime.volume_mask is None else jnp.asarray(runtime.volume_mask, jnp.float32)
     if runtime.projector is not None:
         model, backend, batch = runtime.projector
-        least_squares, squared_error = least_squares_operators(
+        least_squares = least_squares_operators(
             runtime.poses, grid, detector, backend, batch, model, stream=runtime.stream
         )
 
         def batched_value_and_grad(z: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
             v, g = least_squares(z if mask is None else z * mask, projections)
             return v, g if mask is None else g * mask
-
-        def batched_value(x: jnp.ndarray) -> jnp.ndarray:
-            return squared_error(x if mask is None else x * mask, projections)
 
     def val_and_grad_fn(z: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         if runtime.projector is not None:
@@ -832,27 +705,7 @@ def _data_term(
             g = g + jnp.asarray(cfg.lambda_tv, dtype=z.dtype) * huber_tv_grad(z, huber_delta)
         return v, g
 
-    def data_value_fn(x: jnp.ndarray) -> jnp.ndarray:
-        if runtime.projector is not None:
-            return batched_value(x)
-        return data_term_value(
-            None,
-            grid,
-            detector,
-            projections,
-            x,
-            views_per_batch=cfg.views_per_batch,
-            projector_unroll=cfg.projector_unroll,
-            checkpoint_projector=cfg.checkpoint_projector,
-            gather_dtype=cfg.gather_dtype,
-            grad_mode=cfg.grad_mode,
-            T_all=runtime.poses,
-            vol_mask=runtime.volume_mask,
-            det_grid=runtime.detector_grid,
-            ray_integrator=cfg.ray_integrator,
-        )
-
-    return val_and_grad_fn, data_value_fn
+    return val_and_grad_fn
 
 
 @functools.partial(jax.jit, static_argnames=("grid", "detector"))
@@ -868,9 +721,8 @@ def _run_fista_scan(
     constraints = runtime.constraints
     L = runtime.lipschitz
 
-    val_and_grad_fn, data_value_fn = _data_term(grid, detector, projections, runtime)
-    val_and_grad = jax.jit(val_and_grad_fn, donate_argnums=(0,))
-    data_value = jax.jit(data_value_fn, donate_argnums=(0,))
+    val_and_grad_fn = _data_term(grid, detector, projections, runtime)
+    val_and_grad = jax.jit(val_and_grad_fn)
     tv_prox_jit = jax.jit(tv_proximal, static_argnames=("iters",))
 
     def regulariser_value_fn(x: jnp.ndarray) -> jnp.ndarray:
@@ -889,9 +741,12 @@ def _run_fista_scan(
 
     def step(state: FistaScanState, k: jnp.ndarray) -> tuple[FistaScanState, None]:
         def run_active(active_state: FistaScanState) -> FistaScanState:
-            _, g = val_and_grad(active_state.z)
+            # The objective is tracked at z, where the gradient's residual already
+            # gives the data term: evaluating it at x would cost a projection.
+            data_loss_val, g = val_and_grad(active_state.z)
+            reg_value = regulariser_value_fn(active_state.z)
             y = active_state.z - (1.0 / L) * g
-            if regulariser == "huber_tv":
+            if regulariser == "huber_tv" or float(cfg.lambda_tv) == 0.0:
                 x_new = y
             else:
                 x_new = tv_prox_jit(y, cfg.lambda_tv / L, iters=int(cfg.tv_prox_iters))
@@ -909,8 +764,6 @@ def _run_fista_scan(
                 lower_bound=constraints.lower_bound,
                 upper_bound=constraints.upper_bound,
             )
-            data_loss_val = data_value(x_new)
-            reg_value = regulariser_value_fn(x_new)
             obj = data_loss_val + cfg.lambda_tv * reg_value
             obj32 = obj.astype(jnp.float32)
             rel_change = jnp.abs(obj - active_state.prev_obj) / jnp.maximum(

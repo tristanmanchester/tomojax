@@ -106,12 +106,21 @@ def _astra_agd(operator: Any, data: np.ndarray, iterations: int) -> np.ndarray:
 
 
 def astra_reconstruct(
-    data: np.ndarray, vectors: np.ndarray, vol_geom: dict[str, Any], method: str, iterations: int
+    data: np.ndarray,
+    proj_geom: dict[str, Any],
+    vol_geom: dict[str, Any],
+    method: str,
+    iterations: int,
 ) -> np.ndarray:
     """ASTRA FDK, or the reference's accelerated NNLS, on the same data, as ``(x, y, z)``."""
     import astra
 
-    proj_geom = astra.create_proj_geom("cone_vec", ROWS, COLS, vectors)
+    proj_geom = astra.create_proj_geom(
+        "cone_vec",
+        proj_geom["DetectorRowCount"],
+        proj_geom["DetectorColCount"],
+        proj_geom["Vectors"],
+    )
     geometry = astra.create_vol_geom(
         vol_geom["GridRowCount"], vol_geom["GridColCount"], vol_geom["GridSliceCount"]
     )
@@ -158,6 +167,7 @@ def main() -> None:
     parser.add_argument("--method", choices=["fbp", "cgls", "fista"], default="fbp")
     parser.add_argument("--iterations", type=int, default=50)
     parser.add_argument("--voxels-per-mm", type=int, default=10)
+    parser.add_argument("--bin", type=int, default=1, help="Average N x N detector pixels")
     parser.add_argument("--astra", action="store_true", help="Also reconstruct with ASTRA")
     parser.add_argument("--save", type=Path, help="Save the TomoJAX reconstruction (.nxs)")
     args = parser.parse_args()
@@ -178,11 +188,12 @@ def main() -> None:
             "Vectors": vectors,
         },
         vol_geom,
-    )
+    ).binned(args.bin)
     summary: dict[str, Any] = {
         "walnut": args.walnut.name,
         "orbits": args.orbits,
         "views": len(vectors),
+        "bin": args.bin,
         "load_seconds": time.perf_counter() - start,
         "geometry": [
             {
@@ -216,7 +227,11 @@ def main() -> None:
             summary["tomojax_vs_published_fdk"] = compare(volume, published)
     if args.astra:
         start = time.perf_counter()
-        theirs = astra_reconstruct(data, vectors, vol_geom, args.method, args.iterations)
+        # ASTRA gets the same (binned) data and geometry back from the scan.
+        astra_data, astra_geom, astra_volume = scan.to_astra()
+        theirs = astra_reconstruct(
+            astra_data, astra_geom, astra_volume, args.method, args.iterations
+        )
         summary["astra"] = {
             "method": "FDK_CUDA" if args.method == "fbp" else "accelerated NNLS (the reference's)",
             "seconds": time.perf_counter() - start,
