@@ -247,7 +247,10 @@ def test_fdk_host_reconstructs_in_slabs_into_a_memmap(backend, tmp_path: Path):
     for beam in (ConeBeam(72, 108), ConeBeam(72, 108, detector_roll_deg=1.0)):
         geometry = ConeGeometry(grid, detector, angles, beam)
         expected = np.asarray(fdk(geometry, grid, detector, data, config=config))
-        scale = np.abs(expected).max()
+        # A slab's detector window shifts the coordinates, and CUDA's texture unit
+        # rounds interpolation weights to 1/256 (as ASTRA's FDK), so slabs then agree
+        # only to that; random data is the worst case.
+        scale = np.abs(expected).max() * (2e-5 if backend == "jax" else 2e-3)
         for depth in (5, n):
             out = np.lib.format.open_memmap(
                 tmp_path / "volume.npy", mode="w+", dtype=np.float32, shape=(n, n - 2, n)
@@ -257,7 +260,7 @@ def test_fdk_host_reconstructs_in_slabs_into_a_memmap(backend, tmp_path: Path):
                 config=FDKHostConfig(slices_per_batch=depth, fdk=config), out=out,
             )  # fmt: skip
             assert result is out
-            np.testing.assert_allclose(out, expected, atol=2e-5 * scale)
+            np.testing.assert_allclose(out, expected, atol=scale)
 
 
 def test_fbp_reconstructs_cone_scans_with_fdk_and_parallel_only_paths_refuse_them():

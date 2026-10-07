@@ -80,7 +80,7 @@ warm calls on the laptop GPU; ASTRA and TIGRE take host arrays
 |---|---:|---:|---:|
 | Forward projection | 0.123 s (error 0.0060) | 0.169 s (0.0060) | 0.477 s interpolated (0.0062), 1.24 s Siddon (0.0068) |
 | Backprojection | 0.179 s, exact transpose | 0.075 s, approximate transpose | 0.099 s, "matched" |
-| FDK | 0.098 s (error 0.0581) | 0.285 s (0.0581) | 0.520 s (0.0581) |
+| FDK | 0.048 s (error 0.0581) | 0.287 s (0.0581) | 0.510 s (0.0581) |
 | Forward, axis tilted 0.5° | 0.167 s | 0.170 s | |
 | Backprojection, axis tilted 0.5° | 0.294 s, exact transpose | 0.074 s, approximate transpose | |
 
@@ -102,9 +102,10 @@ TomoJAX's error stays near its minimum.
 
 `fdk_host` reconstructed a 1024³ scan (1024 views of 1024² pixels, 4.3 GB
 each way) in z-slabs, filtering only the detector rows each slab projects
-onto: 11.7 s with the projections and volume in RAM and 14.3 s from a
-projection memmap into a volume memmap. ASTRA's `FDK_CUDA` took 20.3 s and
-TIGRE's `fdk` 30.7 s from arrays in RAM.
+onto: 8.0 s with the projections and volume in RAM (11.1 s on the first
+call; 12.3 s before FDK filtered by matrix product and sampled half-float
+textures). ASTRA's `FDK_CUDA` took 20.3 s and TIGRE's `fdk` 30.7 s from arrays
+in RAM.
 
 ## Scans larger than device memory
 

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- FDK on CUDA is about twice as fast: rows up to 2048 pixels are ramp-filtered
+  by one matrix product (cuBLAS, three times faster than the FFTs at 768
+  pixels), and the backprojection samples the filtered images through the
+  texture unit from half floats, each batch scaled to its peak. Its
+  interpolation weights are rounded to 1/256, as in ASTRA's FDK. On the FIPS
+  walnut (1200 views, 501³) FDK takes 1.7–1.9 s against ASTRA's 2.13 s and
+  agrees with ASTRA's volume to 0.05%; the synthetic 256³ case takes 0.048 s
+  (ASTRA 0.29 s), and a 1024³ host FDK 8.0 s (was 12.3 s). FDK also compiles
+  a third as many programs on its first call. `bench/walnut.py` starts JAX's
+  and ASTRA's GPU runtimes before timing either.
 - FISTA runs one projection fewer per iteration, a quarter faster on every
   geometry: it tracks the objective at the extrapolated point, where the
   gradient's residual already gives it, instead of projecting the new iterate

@@ -144,6 +144,20 @@ def astra_reconstruct(
     return np.transpose(volume, (2, 1, 0))
 
 
+def _start_gpu_runtimes(*, astra: bool) -> None:
+    """Start JAX's GPU runtime (about 2 s per process) and ASTRA's, outside the timings.
+
+    Each library's first reconstruction is still timed, TomoJAX's compilation included.
+    """
+    import jax.numpy as jnp
+
+    jnp.zeros(()).block_until_ready()
+    if astra:
+        import astra as astra_toolbox
+
+        astra_toolbox.use_cuda()
+
+
 def compare(volume: np.ndarray, truth: np.ndarray) -> dict[str, float]:
     """Relative error and PSNR against ``truth`` over the walnut's support."""
     support = truth > 0.1 * float(np.percentile(truth, 99.9))
@@ -214,6 +228,7 @@ def main() -> None:
     options = {} if args.method == "fbp" else {"iterations": args.iterations}
     if args.method == "fista":
         options |= {"tv_weight": 0.0, "nonnegative": True}
+    _start_gpu_runtimes(astra=args.astra)
     start = time.perf_counter()
     result = tj.reconstruct(scan, args.method, **options)
     volume = np.asarray(result.volume)

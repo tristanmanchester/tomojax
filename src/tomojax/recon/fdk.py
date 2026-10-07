@@ -40,6 +40,9 @@ if TYPE_CHECKING:
 LOG = logging.getLogger(__name__)
 
 _RUN = 8
+# The CUDA path filters rows up to this wide by matrix product (see _filter_operator):
+# on an RTX 4070 that beats the FFTs 3x at 768 pixels and breaks even near 2500.
+_DENSE_FILTER_MAX = 2048
 _TILE = (8, 2)
 
 
@@ -207,6 +210,19 @@ def _cosine_weights(beam: ConeBeam, detector: Detector) -> np.ndarray:
     return np.abs(ray @ normal) / np.linalg.norm(ray, axis=-1)
 
 
+def _filter_operator(spectrum: np.ndarray, nu: int, pad_lo: int, pad_hi: int) -> np.ndarray:
+    """The ``(nu, pad_lo + nu + pad_hi)`` matrix that ramp-filters rows as ``spectrum`` does.
+
+    Filtering is a circular convolution with the zero-padded row; as a matrix
+    product it runs on the GPU's matrix units several times faster than the
+    FFTs for rows up to a couple of thousand pixels.
+    """
+    n_fft = 2 * (spectrum.shape[0] - 1)
+    impulse = np.fft.irfft(spectrum.astype(np.float64), n=n_fft)
+    columns = np.arange(-pad_lo, nu + pad_hi)
+    return impulse[(columns[None, :] - np.arange(nu)[:, None]) % n_fft].astype(np.float32)
+
+
 def _filter(
     views: jax.Array,
     cosine: jax.Array,
@@ -222,9 +238,9 @@ def _filter(
     """
     # Angular (Parker, offset-detector) weights vary along the row, so they
     # apply before the ramp filter, as do the cosine weights.
+    rows = views * cosine * weights[:, None, :]
     n_fft = 2 * (int(kernel.shape[0]) - 1)
     nu = views.shape[-1]
-    rows = views * cosine * weights[:, None, :]
     spectrum = jnp.fft.rfft(rows, n=n_fft, axis=-1) * kernel
     out = jnp.fft.irfft(spectrum, n=n_fft, axis=-1)
     if pad_lo:
@@ -269,17 +285,49 @@ def _backproject_jax(
 
 
 _SOURCE = r"""
+#include <cuda_fp16.h>
 #define NC 25
 #define RUN 8
 #define TX 8
 #define TY 2
-// filtered images (view, u, v). A warp covers 32 consecutive z voxels of one (x, y)
-// column and each lane steps through RUN of them 32 apart, so a warp's loads from an
-// image column are contiguous. A block holds a TX x TY tile of columns, which read
-// neighbouring detector columns and share them in L1.
+#define HALF_PEAK 32768.f
+
+// The largest |x| of n values, into *peak (zeroed beforehand): nonnegative floats
+// order as their bits do.
+extern "C" __global__ void abs_peak(const float* __restrict__ x, long long n, float* peak)
+{
+    float m = 0.f;
+    for (long long i = blockIdx.x * (long long)blockDim.x + threadIdx.x; i < n;
+         i += (long long)gridDim.x * blockDim.x)
+        m = fmaxf(m, fabsf(x[i]));
+    for (int o = 16; o; o >>= 1) m = fmaxf(m, __shfl_xor_sync(0xffffffffu, m, o));
+    if ((threadIdx.x & 31) == 0) atomicMax((int*)peak, __float_as_int(m));
+}
+
+// Filtered (rows, nv) images as half textures read them: scaled so the peak is
+// HALF_PEAK (half floats reach 65504), each row led by `lead` zeros and padded to `pitch`.
+extern "C" __global__ void to_half(
+    const float* __restrict__ src, const float* __restrict__ peak, __half* __restrict__ dst,
+    int nv, int pitch, int lead, long long total)
+{
+    long long i = blockIdx.x * (long long)blockDim.x + threadIdx.x;
+    if (i >= total) return;
+    long long row = i / pitch;
+    int v = (int)(i - row * pitch) - lead;
+    float gain = *peak > 0.f ? HALF_PEAK / *peak : 1.f;
+    dst[i] = __float2half_rn(v >= 0 && v < nv ? src[row * nv + v] * gain : 0.f);
+}
+
+// Filtered images (view, u, v), from to_half, are sampled through one texture per
+// view: the texture unit interpolates bilinearly (weights to 1/256, as ASTRA's FDK)
+// and returns zero beyond the detector; detector row v is texture column
+// v + vshift - 0.5. A warp covers 32 consecutive z voxels of one (x, y) column and
+// each lane steps through RUN of them 32 apart, so a warp's samples run down an image
+// column. A block holds a TX x TY tile of columns, which share the texture cache.
 extern "C" __global__ void fdk_backproject(
-    const float* __restrict__ coeff, const float* __restrict__ img, float* __restrict__ vol,
-    int nviews, int nx, int ny, int nz, int nu, int nv, float scale)
+    const float* __restrict__ coeff, const unsigned long long* __restrict__ textures,
+    const float* __restrict__ peak, float* __restrict__ vol, int nviews, int nx, int ny,
+    int nz, float vshift, float scale2)
 {
     __shared__ float cf[32 * NC];
     int lane = threadIdx.x & 31, wid = threadIdx.x >> 5;
@@ -303,70 +351,44 @@ extern "C" __global__ void fdk_backproject(
         int count = min(32, nviews - first);
         for (int w = 0; w < count; ++w) {
             const float* c = cf + w * NC;
-            const float* image = img + (long)(first + w) * nu * nv;
+            cudaTextureObject_t image = textures[first + w];
             float d0 = (float)ix - c[0], d1 = (float)iy - c[1];
             if (c[15] == 0.f && c[19] == 0.f) {
                 // Detector normal and u axis have no z part (turntable views): the
                 // depth factor and column are fixed along the column, v is linear in z.
                 float lam = c[16] / (c[13] * d0 + c[14] * d1);
-                float u = c[23] + lam * (c[17] * d0 + c[18] * d1);
-                float fu = floorf(u);
-                int u0 = (int)fu;
-                bool in0 = u0 >= 0 && u0 < nu, in1 = u0 + 1 >= 0 && u0 + 1 < nu;
-                if (!in0 && !in1) continue;
-                float wu = u - fu, g = lam * scale, gg = g * g;
-                float a0 = in0 ? (1.f - wu) * gg : 0.f, a1 = in1 ? wu * gg : 0.f;
-                const float* col0 = image + (long)max(u0, 0) * nv;
-                const float* col1 = image + (long)min(u0 + 1, nu - 1) * nv;
+                float u = c[23] + lam * (c[17] * d0 + c[18] * d1) + 0.5f;
+                float gg = lam * lam;
                 float vbase = c[24] + lam * (c[20] * d0 + c[21] * d1 + c[22] * ((float)iz0 - c[2]));
                 float vstep = 32.f * lam * c[22];
                 #pragma unroll
                 for (int j = 0; j < RUN; ++j) {
                     if (j >= runs) break;
-                    float v = vbase + (float)j * vstep;
-                    float fv = floorf(v);
-                    int v0 = (int)fv;
-                    float wv = v - fv;
-                    float s = 0.f;
-                    if (v0 >= 0 && v0 < nv)
-                        s += (1.f - wv) * (a0 * __ldg(col0 + v0) + a1 * __ldg(col1 + v0));
-                    if (v0 + 1 >= 0 && v0 + 1 < nv)
-                        s += wv * (a0 * __ldg(col0 + v0 + 1) + a1 * __ldg(col1 + v0 + 1));
-                    acc[j] += s;
+                    acc[j] += tex2D<float>(image, vbase + (float)j * vstep + vshift, u) * gg;
                 }
                 continue;
             }
+            // Other views: the x and y parts are fixed along the column; a fast
+            // reciprocal (2 ulp) is ample for a filtered backprojection.
+            float n01 = c[13] * d0 + c[14] * d1, u01 = c[17] * d0 + c[18] * d1;
+            float v01 = c[20] * d0 + c[21] * d1;
             #pragma unroll
             for (int j = 0; j < RUN; ++j) {
                 if (j >= runs) break;
                 float d2 = (float)(iz0 + 32 * j) - c[2];
-                float lam = c[16] / (c[13] * d0 + c[14] * d1 + c[15] * d2);
-                float u = c[23] + lam * (c[17] * d0 + c[18] * d1 + c[19] * d2);
-                float v = c[24] + lam * (c[20] * d0 + c[21] * d1 + c[22] * d2);
-                float fu = floorf(u), fv = floorf(v);
-                int u0 = (int)fu, v0 = (int)fv;
-                float wu = u - fu, wv = v - fv;
-                float s = 0.f;
-                if (u0 >= 0 && u0 < nu) {
-                    const float* col = image + (long)u0 * nv;
-                    if (v0 >= 0 && v0 < nv) s += (1.f - wu) * (1.f - wv) * __ldg(col + v0);
-                    if (v0 + 1 >= 0 && v0 + 1 < nv) s += (1.f - wu) * wv * __ldg(col + v0 + 1);
-                }
-                if (u0 + 1 >= 0 && u0 + 1 < nu) {
-                    const float* col = image + (long)(u0 + 1) * nv;
-                    if (v0 >= 0 && v0 < nv) s += wu * (1.f - wv) * __ldg(col + v0);
-                    if (v0 + 1 >= 0 && v0 + 1 < nv) s += wu * wv * __ldg(col + v0 + 1);
-                }
-                float g = lam * scale;
-                acc[j] += s * g * g;
+                float lam = __fdividef(c[16], n01 + c[15] * d2);
+                float u = c[23] + lam * (u01 + c[19] * d2);
+                float v = c[24] + lam * (v01 + c[22] * d2);
+                acc[j] += tex2D<float>(image, v + vshift, u + 0.5f) * (lam * lam);
             }
         }
     }
     if (valid) {
+        if (*peak > 0.f) scale2 *= *peak / HALF_PEAK;
         long base = ((long)ix * ny + iy) * nz;
         #pragma unroll
         for (int j = 0; j < RUN; ++j)
-            if (iz0 + 32 * j < nz) vol[base + iz0 + 32 * j] += acc[j];
+            if (iz0 + 32 * j < nz) vol[base + iz0 + 32 * j] += acc[j] * scale2;
     }
 }
 """
@@ -379,26 +401,117 @@ def _module() -> Any:
     return cp.RawModule(code=_SOURCE)
 
 
-def _launch(
-    context: Any, out: Any, coeff: Any, images: Any, accumulate: Any, *, grid: Grid, det: Detector,
-    scale: float,
-) -> None:  # fmt: skip
+# Texture objects whose kernels have finished, freed on the next launch (CUDA calls are
+# not allowed in the stream callback that retires them).
+_RETIRED: list[object] = []
+# The texture start alignment CUDA requires (cudaDeviceProp.textureAlignment), and
+# the half pixels in it.
+_ALIGN = 512
+_LEAD = _ALIGN // 2
+
+
+def _textures(images: Any, width: int) -> tuple[list[Any], int]:
+    """One bilinear, zero-bordered texture per ``(rows, pitch)`` half image of ``images``.
+
+    Textures must start on a ``_ALIGN`` boundary, but XLA's buffers need not, so each
+    texture starts up to ``_LEAD`` pixels into its image's rows, which lead with that
+    many zeros; returns the textures and that start.
+    """
     import cupy as cp
 
-    with xla_stream(context):
-        target, initial = cp.asarray(out), cp.asarray(accumulate)
+    runtime, texture = cp.cuda.runtime, cp.cuda.texture
+    channel = texture.ChannelFormatDescriptor(16, 0, 0, 0, runtime.cudaChannelFormatKindFloat)
+    sampling = texture.TextureDescriptor(
+        (runtime.cudaAddressModeBorder,) * 2,
+        runtime.cudaFilterModeLinear,
+        runtime.cudaReadModeElementType,
+        borderColors=(0, 0, 0, 0),
+    )
+    rows, pitch = int(images.shape[1]), int(images.shape[2])
+    start = -images.data.ptr % _ALIGN // 2
+    textures = [
+        texture.TextureObject(
+            texture.ResourceDescriptor(
+                runtime.cudaResourceTypePitch2D,
+                arr=image[0, start:],
+                chDesc=channel,
+                width=_LEAD - start + width,
+                height=rows,
+                pitchInBytes=2 * pitch,
+            ),
+            sampling,
+        )
+        for image in images
+    ]
+    return textures, start
+
+
+def _filter_into(stream: Any, images: Any, rows: Any, operator: Any) -> None:
+    """``images[k] = operator.T @ rows[k].T``: filtered rows as ``(view, u, v)`` images.
+
+    cuBLAS, called directly: XLA would autotune the product for seconds on first use.
+    """
+    import cupy as cp
+    from cupy_backends.cuda.libs import cublas
+
+    handle = cp.cuda.Device().cublas_handle
+    cublas.setStream(handle, stream.ptr)
+    cublas.setPointerMode(handle, cublas.CUBLAS_POINTER_MODE_HOST)
+    views, nv, nu = rows.shape
+    width = operator.shape[1]
+    one, zero = np.ones(1, np.float32), np.zeros(1, np.float32)
+    # Column-major, images[k] is (nv, width) = rows[k] (nv, nu) @ operator (nu, width).
+    cublas.sgemmStridedBatched(
+        handle, cublas.CUBLAS_OP_T, cublas.CUBLAS_OP_T, nv, width, nu,
+        one.ctypes.data, rows.data.ptr, nu, nv * nu, operator.data.ptr, width, 0,
+        zero.ctypes.data, images.data.ptr, nv, nv * width, views,
+    )  # fmt: skip
+
+
+def _to_half(images: Any, half: Any) -> Any:
+    """Convert ``(view, u, v)`` images into ``half``'s texture layout; returns their peak."""
+    import cupy as cp
+
+    module = _module()
+    peak = cp.zeros(1, cp.float32)
+    module.get_function("abs_peak")((256,), (256,), (images, np.int64(images.size), peak))
+    total = half.size
+    module.get_function("to_half")(
+        (-(-total // 256),), (256,),
+        (images, peak, half, np.int32(images.shape[2]), np.int32(half.shape[2]),
+         np.int32(_LEAD), np.int64(total)),
+    )  # fmt: skip
+    return peak
+
+
+def _launch(context: Any, out: Any, *buffers: Any, grid: Grid, det: Detector, scale: float) -> None:
+    import cupy as cp
+
+    _RETIRED.clear()
+    with xla_stream(context) as stream:
+        if len(out) == 3:  # unfiltered rows and the filter's operator
+            target, half, images = (cp.asarray(b) for b in out)
+            coeff, rows, operator, initial = (cp.asarray(b) for b in buffers)
+            _filter_into(stream, images, rows, operator)
+        else:
+            target, half = (cp.asarray(b) for b in out)
+            coeff, images, initial = (cp.asarray(b) for b in buffers)
         if target.data.ptr != initial.data.ptr:
             target[...] = initial
+        peak = _to_half(images, half)
+        textures, start = _textures(half, det.nv)
+        handles = cp.asarray([t.ptr for t in textures], cp.uint64)
         tiles = -(-grid.nx // _TILE[0]) * -(-grid.ny // _TILE[1]) * -(-grid.nz // (32 * _RUN))
         _module().get_function("fdk_backproject")(
             (tiles,),
             (32 * _TILE[0] * _TILE[1],),
             (
-                cp.asarray(coeff), cp.asarray(images), target, np.int32(coeff.shape[0]),
+                coeff, handles, peak, target, np.int32(coeff.shape[0]),
                 np.int32(grid.nx), np.int32(grid.ny), np.int32(grid.nz),
-                np.int32(det.nu), np.int32(det.nv), np.float32(scale),
+                np.float32(_LEAD - start + 0.5), np.float32(scale**2),
             ),
         )  # fmt: skip
+        stream.launch_host_func(_RETIRED.append, (textures, handles, peak))
 
 
 def _backproject_cuda(
@@ -408,13 +521,32 @@ def _backproject_cuda(
     detector: Detector,
     scale: float,
     out: jax.Array,
+    operator: jax.Array | None = None,
 ) -> jax.Array:
-    call = buffer_callback(
-        partial(_launch, grid=grid, det=detector, scale=float(scale)),
+    """Add the backprojection of ``(view, nv, width)`` filtered rows to ``out``.
+
+    With an ``operator`` (see :func:`_filter_operator`), ``filtered`` are the
+    weighted rows it filters, and the kernel filters them first. Either way the
+    images become half floats for the texture unit, which filters those twice as
+    fast; each batch is scaled to its peak, so they keep 11 significant bits.
+    """
+    views, width = int(filtered.shape[0]), int(filtered.shape[2])
+    if operator is not None:
+        width = int(operator.shape[1])
+    # Rows lead with _LEAD zeros (see _textures) and pad to a multiple of _LEAD
+    # pixels, so every view's image aligns alike.
+    pitch = -(-(_LEAD + detector.nv) // _LEAD) * _LEAD
+    shapes = (
         jax.ShapeDtypeStruct((grid.nx, grid.ny, grid.nz), jnp.float32),
-        input_output_aliases={2: 0},
+        jax.ShapeDtypeStruct((views, width, pitch), jnp.float16),
     )
-    return call(coeff, jnp.swapaxes(filtered, 1, 2), out)
+    launch = partial(_launch, grid=grid, det=detector, scale=float(scale))
+    if operator is None:
+        call = buffer_callback(launch, shapes, input_output_aliases={2: 0})
+        return call(coeff, jnp.swapaxes(filtered, 1, 2), out)[0]
+    images = jax.ShapeDtypeStruct((views, width, detector.nv), jnp.float32)
+    call = buffer_callback(launch, (*shapes, images), input_output_aliases={3: 0})
+    return call(coeff, filtered, operator, out)[0]
 
 
 @partial(
@@ -424,10 +556,12 @@ def _backproject_cuda(
 )
 def _fdk_batch(
     views: jax.Array,
+    start: jax.Array | int,
     coeff: jax.Array,
     cosine: jax.Array,
     weights: jax.Array,
     kernel: jax.Array,
+    operator: jax.Array | None,
     out: jax.Array,
     *,
     grid: Grid,
@@ -437,6 +571,12 @@ def _fdk_batch(
     pad_lo: int,
     pad_hi: int,
 ) -> jax.Array:
+    # The batch's views of the scan's coefficients and weights.
+    coeff = jax.lax.dynamic_slice_in_dim(coeff, start, views.shape[0])
+    weights = jax.lax.dynamic_slice_in_dim(weights, start, views.shape[0])
+    if operator is not None:
+        rows = views * cosine * weights[:, None, :]
+        return _backproject_cuda(rows, coeff, grid, detector, scale, out, operator)
     filtered = _filter(views, cosine, weights, kernel, pad_lo, pad_hi)
     backproject = _backproject_cuda if cuda else _backproject_jax
     return backproject(filtered, coeff, grid, detector, scale, out)
@@ -454,6 +594,8 @@ class _Prepared:
     batch: int
     pad_lo: int = 0
     pad_hi: int = 0
+    # The filter as a matrix (see _filter_operator), for the CUDA kernel's rows.
+    operator: jax.Array | None = None
 
     def backprojected(self, beam: ConeBeam, detector: Detector) -> Detector:
         """The detector the filtered rows cover, with its virtual columns."""
@@ -486,11 +628,17 @@ def _prepare(
     pad_lo, pad_hi = _virtual_columns(geometry, beam, columns, n_views)
     # The kernel spans the virtual row too, so its tail does not wrap around.
     width = detector.nu + pad_lo + pad_hi
+    kernel = get_fbp_filter_np(cfg.filter_name, width, du_iso, "float32")
+    operator = None
+    if cuda and width <= _DENSE_FILTER_MAX:
+        operator = jax.device_put(_filter_operator(kernel, detector.nu, pad_lo, pad_hi))
     return _Prepared(
         cuda=cuda,
-        weights=jnp.asarray(view_weights(geometry, columns, n_views), jnp.float32),
-        cosine=jnp.asarray(_cosine_weights(beam, detector), jnp.float32),
-        kernel=jnp.asarray(get_fbp_filter_np(cfg.filter_name, width, du_iso, "float32")),
+        # device_put, unlike jnp.asarray, compiles nothing for a new shape.
+        weights=jax.device_put(np.asarray(view_weights(geometry, columns, n_views), np.float32)),
+        cosine=jax.device_put(np.asarray(_cosine_weights(beam, detector), np.float32)),
+        kernel=jax.device_put(kernel),
+        operator=operator,
         scale=1.0 / beam.magnification,
         batch=max(1, int(cfg.views_per_batch)),
         pad_lo=pad_lo,
@@ -502,7 +650,7 @@ def _device_views(projections: jax.Array | np.ndarray, start: int, stop: int) ->
     part = projections[start:stop]
     if isinstance(part, jax.Array):
         return part.astype(jnp.float32)
-    return jnp.asarray(np.asarray(part, np.float32))
+    return jax.device_put(np.asarray(part, np.float32))
 
 
 _filter_jit = jax.jit(_filter, static_argnames=("pad_lo", "pad_hi"))
@@ -600,7 +748,6 @@ def _fdk(
     with ThreadPoolExecutor(max_workers=1) as copier:
         pending = copier.submit(_device_views, projections, 0, min(prep.batch, n_views))
         for index, start in enumerate(starts):
-            stop = min(start + prep.batch, n_views)
             views = pending.result()
             if index + 1 < len(starts):
                 following = starts[index + 1]
@@ -608,8 +755,7 @@ def _fdk(
                     _device_views, projections, following, min(following + prep.batch, n_views)
                 )
             out = _fdk_batch(
-                views, coeff[start:stop], prep.cosine,
-                prep.weights[start:stop], prep.kernel, out,
+                views, start, coeff, prep.cosine, prep.weights, prep.kernel, prep.operator, out,
                 grid=grid, detector=virtual, scale=prep.scale, cuda=prep.cuda,
                 pad_lo=prep.pad_lo, pad_hi=prep.pad_hi,
             )  # fmt: skip
