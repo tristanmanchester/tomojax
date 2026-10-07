@@ -84,3 +84,29 @@ def align_u_to_v(u: np.ndarray, v: np.ndarray) -> np.ndarray:
     k = k / (s + 1e-12)
     K = hat_so3(k)
     return np.eye(3, dtype=np.float64) + s * K + (1.0 - c) * (K @ K)
+
+
+def pose_rotations(angles: np.ndarray) -> np.ndarray:
+    """Rotation matrices ``R_y(beta) R_x(alpha) R_z(phi)`` of pose angles.
+
+    ``angles`` holds ``(alpha, beta, phi)`` in radians in its first three
+    columns, one row per view, as in a pose table; returns ``(views, 3, 3)``.
+    """
+    a = np.asarray(angles, dtype=np.float64)
+    ca, sa = np.cos(a[:, 0]), np.sin(a[:, 0])
+    cb, sb = np.cos(a[:, 1]), np.sin(a[:, 1])
+    cp, sp = np.cos(a[:, 2]), np.sin(a[:, 2])
+    zero, one = np.zeros_like(ca), np.ones_like(ca)
+    rx = np.stack([one, zero, zero, zero, ca, -sa, zero, sa, ca], -1).reshape(-1, 3, 3)
+    ry = np.stack([cb, zero, sb, zero, one, zero, -sb, zero, cb], -1).reshape(-1, 3, 3)
+    rz = np.stack([cp, -sp, zero, sp, cp, zero, zero, zero, one], -1).reshape(-1, 3, 3)
+    return ry @ rx @ rz
+
+
+def pose_angles(rotations: np.ndarray) -> np.ndarray:
+    """Inverse of :func:`pose_rotations`: ``(alpha, beta, phi)`` per rotation."""
+    r = np.asarray(rotations, dtype=np.float64)
+    alpha = np.arcsin(np.clip(-r[:, 1, 2], -1.0, 1.0))
+    beta = np.arctan2(r[:, 0, 2], r[:, 2, 2])
+    phi = np.arctan2(r[:, 1, 0], r[:, 1, 1])
+    return np.stack([alpha, beta, phi], axis=1)

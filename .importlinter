@@ -7,6 +7,7 @@ type = layers
 layers =
     tomojax.cli
     tomojax._workflow
+    tomojax._astra
     tomojax.alignment
     tomojax.datasets
     tomojax.io
@@ -26,6 +27,7 @@ allow_indirect_imports = True
 source_modules =
     tomojax.cli
     tomojax._workflow
+    tomojax._astra
 forbidden_modules =
     tomojax.alignment._geometry
     tomojax.alignment._model
@@ -43,5 +45,6 @@ allow_indirect_imports = True
 source_modules =
     tomojax.cli
     tomojax._workflow
+    tomojax._astra
 forbidden_modules =
     tomojax.core.geometry

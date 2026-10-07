@@ -78,8 +78,17 @@ class tomojax.Scan(
     ) -> None
     .angles
     .detector
+    .from_astra(
+        cls,
+        projections: 'np.ndarray',
+        proj_geom: 'Mapping[str, Any]',
+        vol_geom: 'Mapping[str, Any]',
+        *,
+        name: 'str' = 'sample',
+    ) -> 'Scan'
     .grid
     .poses
+    .to_astra(self) -> 'tuple[np.ndarray, dict[str, Any], dict[str, Any]]'
 tomojax.__version__: str
 def tomojax.align(
         scan: 'Scan',

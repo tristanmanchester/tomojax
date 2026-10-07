@@ -23,6 +23,7 @@ from scipy import ndimage
 from scipy.spatial.transform import Rotation
 
 from tomojax.core.geometry.base import grid_volume_origin
+from tomojax.core.geometry.transforms import pose_angles, pose_rotations
 
 from ._model.dofs import DOF_INDEX, DOF_NAMES
 
@@ -64,28 +65,11 @@ class Gauge:
         }
 
 
-def _rotations(params: np.ndarray) -> np.ndarray:
-    """``R = R_y(beta) R_x(alpha) R_z(phi)`` for every view, as in ``compose_R``."""
-    alpha, beta, phi = params[:, 0], params[:, 1], params[:, 2]
-    rx = Rotation.from_euler("x", alpha[:, None]).as_matrix()
-    ry = Rotation.from_euler("y", beta[:, None]).as_matrix()
-    rz = Rotation.from_euler("z", phi[:, None]).as_matrix()
-    return ry @ rx @ rz
-
-
-def _angles(rotations: np.ndarray) -> np.ndarray:
-    """Inverse of :func:`_rotations`: ``(alpha, beta, phi)`` per view."""
-    alpha = np.arcsin(np.clip(-rotations[:, 1, 2], -1.0, 1.0))
-    beta = np.arctan2(rotations[:, 0, 2], rotations[:, 2, 2])
-    phi = np.arctan2(rotations[:, 1, 0], rotations[:, 1, 1])
-    return np.stack([alpha, beta, phi], axis=1)
-
-
 def _translation_basis(
     params: np.ndarray, nominal: np.ndarray, frame: PoseTranslationFrame
 ) -> np.ndarray:
     """How an object shift ``q`` moves each view's translation parameters: ``A_i q``."""
-    rotations = _rotations(params)
+    rotations = pose_rotations(params)
     if frame == "detector":
         return np.asarray(nominal, np.float64)[:, :3, :3] @ rotations
     return rotations
@@ -107,7 +91,7 @@ def least_motion_gauge(
     moves a constant detector-frame ``dx`` into the detector centre.
     """
     params = np.asarray(params, np.float64)
-    rotations = _rotations(params)
+    rotations = pose_rotations(params)
     # The rotation Q minimising sum_i |R_i Q - I|^2 inverts their chordal mean.
     u, _, vt = np.linalg.svd(rotations.sum(axis=0))
     rotation = vt.T @ np.diag([1.0, 1.0, np.linalg.det(vt.T @ u.T)]) @ u.T
@@ -167,8 +151,8 @@ def apply_to_poses(
     """``params`` moved by ``gauge``; parameters in ``keep`` stay as they are."""
     params = np.asarray(params, np.float64)
     out = params.copy()
-    rotations = _rotations(params)
-    out[:, :3] = _angles(rotations @ gauge.rotation)
+    rotations = pose_rotations(params)
+    out[:, :3] = pose_angles(rotations @ gauge.rotation)
     moved = np.einsum(
         "nij,j->ni", _translation_basis(params, nominal, translation_frame), gauge.shift
     )

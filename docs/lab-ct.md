@@ -178,6 +178,34 @@ For scans larger than that, `fdk_host` reconstructs in z-slabs from a
 projection memmap into a volume memmap, reading only the detector rows each
 slab needs.
 
+## Coming from ASTRA
+
+`tj.Scan.from_astra` takes projections and geometries exactly as an ASTRA
+Toolbox script holds them: data in ASTRA's `(rows, views, columns)` layout, a
+`cone` or `cone_vec` projection geometry and a 3-D volume geometry, as
+`astra.create_proj_geom` and `astra.create_vol_geom` make them.
+
+```python
+import astra
+import tomojax as tj
+
+proj_geom = astra.create_proj_geom("cone_vec", rows, cols, vectors)
+vol_geom = astra.create_vol_geom(501, 501, 501)  # with its window set as usual
+scan = tj.Scan.from_astra(data, proj_geom, vol_geom)
+volume = tj.reconstruct(scan).volume              # (x, y, z): ASTRA's (z, y, x) transposed
+data, proj_geom, vol_geom = scan.to_astra()      # and back
+```
+
+ASTRA moves the source and detector around a fixed object; TomoJAX fixes them
+and moves the object, so each ASTRA view becomes a rigid object pose. The
+conversion fits a circular orbit (`scan.geometry`, with `scan.angles` running
+the opposite way to ASTRA's) and keeps the scan's departure from it, such as a
+tilted axis or per-view corrections, in `scan.poses`; a source raised above the
+volume moves the grid instead. It requires the source and detector to keep
+their arrangement over the scan and refuses vectors where they do not.
+Projections of the converted scan agree with ASTRA's to 0.03% on tilted,
+offset and jittered geometries.
+
 ## Limitations
 
 TomoJAX models a circular source orbit (no helical scans) and a flat

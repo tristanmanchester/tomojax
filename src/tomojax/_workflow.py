@@ -97,6 +97,45 @@ class Scan:
         params = getattr(self.geometry, "align_params", None)
         return None if params is None else np.asarray(params)
 
+    @classmethod
+    def from_astra(
+        cls,
+        projections: np.ndarray,
+        proj_geom: Mapping[str, Any],
+        vol_geom: Mapping[str, Any],
+        *,
+        name: str = "sample",
+    ) -> Scan:
+        """A scan from ASTRA Toolbox data and geometries.
+
+        ``projections`` are in ASTRA's ``(rows, views, columns)`` layout;
+        ``proj_geom`` is a ``cone`` or ``cone_vec`` geometry and ``vol_geom`` a
+        3-D volume geometry, as ``astra.create_proj_geom`` and
+        ``astra.create_vol_geom`` make them. The scan's grid is the ASTRA
+        volume, and its volumes are ASTRA's ``(z, y, x)`` arrays transposed to
+        ``(x, y, z)``. The fitted circular orbit is the scan's geometry; any
+        departure from it (tilts, wobble, per-view corrections) becomes
+        :attr:`poses`. ASTRA turns the source and detector about the object
+        and TomoJAX the object, so :attr:`angles` run the other way.
+        """
+        from tomojax._astra import from_astra
+        from tomojax._data.geometry_meta import AugmentedGeometry
+
+        data, geometry, _, poses = from_astra(projections, proj_geom, vol_geom)
+        if np.max(np.abs(poses)) > 1e-7:
+            geometry = AugmentedGeometry(geometry, poses, translation_frame="detector")
+        return cls(data, geometry, name=name)
+
+    def to_astra(self) -> tuple[np.ndarray, dict[str, Any], dict[str, Any]]:
+        """ASTRA ``(rows, views, columns)`` projections, ``cone_vec`` and volume geometries.
+
+        The inverse of :meth:`from_astra`, for cone-beam scans; transpose a
+        volume ``(x, y, z) -> (z, y, x)`` to use it with ASTRA.
+        """
+        from tomojax._astra import to_astra
+
+        return to_astra(np.asarray(self.projections), self.geometry, self.grid, self.detector)
+
 
 @dataclass(frozen=True)
 class Reconstruction:

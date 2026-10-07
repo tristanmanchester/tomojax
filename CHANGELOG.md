@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Move ASTRA Toolbox scans to TomoJAX and back: `tj.Scan.from_astra(data,
+  proj_geom, vol_geom)` reads `cone` and `cone_vec` geometries (per-view source,
+  detector and pixel vectors) as a fitted circular orbit plus per-view pose
+  corrections, and `scan.to_astra()` returns ASTRA data and geometries.
+  Converted scans project like ASTRA to 0.03% on tilted, offset and jittered
+  vector geometries.
 - **Breaking:** a workflow API at the package root. `tomojax.Scan` holds
   projections and the geometry that produced them; `tomojax.load` reads
   TomoJAX datasets and Nikon `.xtekct` scans (applying a saved alignment),
