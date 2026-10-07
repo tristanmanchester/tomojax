@@ -348,7 +348,7 @@ def _launch_adjoint(
         if target.data.ptr != initial.data.ptr:
             target[...] = initial
         coeff, images = cp.asarray(coeff), cp.asarray(images)
-        weighted = cp.empty_like(images)
+        weighted = cp.empty((views, det.nu, det.nv), cp.float32)  # (view, u, v)
         total = views * det.nu * det.nv
         module.get_function("weight_images")(
             (-(-total // 256),),
@@ -389,10 +389,10 @@ def _launch_adjoint(
 def _forward_cuda(volume: jax.Array, coeff: jax.Array, grid: Grid, detector: Detector) -> jax.Array:
     call = buffer_callback(
         partial(_launch_forward, grid=grid, det=detector),
-        jax.ShapeDtypeStruct((coeff.shape[0], detector.nu, detector.nv), jnp.float32),
+        jax.ShapeDtypeStruct((coeff.shape[0], detector.nv, detector.nu), jnp.float32),
         vmap_method="sequential",
     )
-    return jnp.swapaxes(call(coeff, volume.astype(jnp.float32)), 1, 2)
+    return call(coeff, volume.astype(jnp.float32))
 
 
 def _adjoint_cuda(
@@ -404,8 +404,7 @@ def _adjoint_cuda(
         input_output_aliases={2: 0},
         vmap_method="sequential",
     )
-    images_uv = jnp.swapaxes(images.astype(jnp.float32), 1, 2)
-    return call(coeff, images_uv, accumulate.astype(jnp.float32))
+    return call(coeff, images.astype(jnp.float32), accumulate.astype(jnp.float32))
 
 
 # ----------------------------------------------------------------------------- public

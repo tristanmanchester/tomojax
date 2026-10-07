@@ -274,6 +274,7 @@ def _final_align_multires_info(
     *,
     loss_hist: list[float],
     factors_list: list[int],
+    factors_skipped: tuple[int, ...] = (),
     final_loss_kind: str | None,
     cfg: AlignConfig,
     stopped_by_observer: bool,
@@ -324,6 +325,7 @@ def _final_align_multires_info(
     return {
         "loss": loss_hist,
         "factors": factors_list,
+        "factors_skipped": list(factors_skipped),
         "loss_kind": final_loss_kind,
         "recon_algo": str(cfg.recon_algo),
         "align_profile": str(cfg.align_profile),

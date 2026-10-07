@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import jax
 import jax.numpy as jnp
 
 from tomojax.core.geometry.views import stack_view_poses
@@ -11,7 +12,6 @@ from tomojax.geometry.api import detector_grid_from_geometry_inputs
 from tomojax.recon._projection import projection_operators, resolve_geometry_projector
 
 if TYPE_CHECKING:
-    import jax
     import numpy as np
 
     from tomojax.core.geometry.base import Geometry, Grid
@@ -48,7 +48,9 @@ def project(
             f"project: volume shape {tuple(volume.shape)} does not match the grid "
             f"{(grid.nx, grid.ny, grid.nz)}"
         )
-    return forward(jnp.asarray(volume, jnp.float32))
+    # Compiled whole, the loop fills its output in place: run op by op, the zero
+    # start and the result would be two sinogram-sized arrays.
+    return jax.jit(forward)(jnp.asarray(volume, jnp.float32))
 
 
 def backproject(
@@ -67,7 +69,7 @@ def backproject(
             f"backproject: projections shape {tuple(projections.shape)} does not match the "
             f"geometry {expected} (views, rows, columns)"
         )
-    return adjoint(jnp.asarray(projections, jnp.float32))
+    return jax.jit(adjoint)(jnp.asarray(projections, jnp.float32))
 
 
 __all__ = ["backproject", "project"]

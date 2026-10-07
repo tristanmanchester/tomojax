@@ -134,9 +134,12 @@ results from default CLI behavior and larger-motion targets.
   Real CUDA coverage therefore depends on the host CUDA/JAX installation, not
   only this package. Use `just accelerator-smoke-cuda` on CUDA hosts that must
   prove the real accelerator path is available. `just test-cuda` additionally
-  runs numerical tests of real kernels; ordinary CPU CI skips those cases.
-- The published timings cover one laptop GPU and synthetic phantoms. Large
-  tilted forward projections remain slower than ASTRA in those measurements.
+  runs every test with the GPU visible, numerical tests of real kernels
+  included; ordinary CPU CI skips those cases.
+- The published timings cover one laptop GPU, synthetic phantoms and the FIPS
+  walnut. The exact cone-beam transpose remains slower than ASTRA's
+  approximate voxel-driven backprojector, most of all when the detector
+  samples finer than the grid; bin such detectors (`Scan.binned`).
   The TIGRE adapter only compares centred isotropic parallel scans so far.
 
 ## Next steps

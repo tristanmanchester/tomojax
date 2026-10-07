@@ -54,6 +54,8 @@ class AlignInfo(TypedDict):
 class AlignMultiresInfo(TypedDict):
     loss: list[float]
     factors: list[int]
+    # Finer factors left out because they would not fit in device memory.
+    factors_skipped: list[int]
     loss_kind: str | None
     recon_algo: str
     outer_stats: list[OuterStat]

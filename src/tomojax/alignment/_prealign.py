@@ -127,7 +127,9 @@ def _quick_reconstruction(
 
     if segments_of(geometry) is None:
         return fbp(geometry, grid, detector, data, config=FBPConfig(filter_name="hann"))
-    volume, _ = cgls(geometry, grid, detector, data, config=CGLSConfig(iters=6))
+    # From the host, CGLS streams the views and keeps no projection-sized vector.
+    config = CGLSConfig(iters=6, stream_projections=True)
+    volume, _ = cgls(geometry, grid, detector, np.asarray(data), config=config)
     return volume
 
 

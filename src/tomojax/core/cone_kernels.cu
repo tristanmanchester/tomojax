@@ -122,7 +122,7 @@ __device__ float ray_sum(const float* __restrict__ vol, const float* c, float fu
     return plane_sum<0>(vol, k0, k1, first, last, Sa, Sb, Sc, inv, rb, rc, nb, nc, sa, sb, sc);
 }
 
-// One ray per thread: grid (views, u tiles, v tiles); out (view, u, v).
+// One ray per thread: grid (views, u tiles, v tiles); out (view, v, u).
 extern "C" __global__ void __launch_bounds__(GU * GV) cone_forward(
     const float* __restrict__ coeff, const float* __restrict__ vol, float* __restrict__ out,
     int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz)
@@ -136,9 +136,13 @@ extern "C" __global__ void __launch_bounds__(GU * GV) cone_forward(
     if (!live) return;
     float r0, r1, r2; ray_of(c, fu, fv, r0, r1, r2);
     float ra = SEL(ray_axis(r0, r1, r2), r0, r1, r2);
-    out[((long)view * nu + u) * nv + v] = sum * path_w(r0, r1, r2, ra, sx, sy, sz);
+    // Written (view, v, u), as JAX holds projections: one store per ray, so the
+    // stride costs little, and no transposed copy of the projections is needed.
+    out[((long)view * nv + v) * nu + u] = sum * path_w(r0, r1, r2, ra, sx, sy, sz);
 }
 
+// Path-weighted images for the transposes, reordered from JAX's (view, v, u) to the
+// (view, u, v) they read column by column.
 extern "C" __global__ void weight_images(
     const float* __restrict__ coeff, const float* __restrict__ img, float* __restrict__ out,
     int nviews, int nu, int nv, float sx, float sy, float sz)
@@ -149,7 +153,7 @@ extern "C" __global__ void weight_images(
     const float* c = coeff + (long)view * NC;
     float r0, r1, r2; ray_of(c, (float)u, (float)v, r0, r1, r2);
     float ra = SEL(ray_axis(r0, r1, r2), r0, r1, r2);
-    out[id] = img[id] * path_w(r0, r1, r2, ra, sx, sy, sz);
+    out[id] = img[((long)view * nv + v) * nu + u] * path_w(r0, r1, r2, ra, sx, sy, sz);
 }
 
 // Separable views, the columns whose plane axis is a: grid (z tiles, row tiles, planes).

@@ -47,7 +47,6 @@
     "src/tomojax/alignment/_objectives/fixed_volume.py::PLR0915::project_and_score_stack",
     "src/tomojax/alignment/_objectives/loss_adapters.py::C901::_build_loss_from_kind",
     "src/tomojax/alignment/_pose/_coupled_program.py::C901::_build_program",
-    "src/tomojax/alignment/_pose/_coupled_program.py::C901::update",
     "src/tomojax/alignment/_pose/_coupled_program.py::PLR0915::_build_program",
     "src/tomojax/alignment/_pose/_pose_summary.py::C901::_lbfgs_summary_parts",
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::C901::_run_reconstruction_step",

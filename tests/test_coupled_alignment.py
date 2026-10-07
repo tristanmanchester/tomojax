@@ -249,6 +249,15 @@ def test_coupled_solve_reports_actual_residual_at_budget_and_handles_zero_rhs():
 @pytest.mark.parametrize("integrator", ["sampled", "exact"])
 @pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
 def test_public_joint_huber_constraints_and_resume(integrator, solver):
+    # Resuming must reproduce the uninterrupted run, which needs reproducible
+    # arithmetic: on a GPU the sampled transpose adds with atomics in varying
+    # order, and this tiny ill-conditioned solve amplifies that past any
+    # tolerance by the second iteration. The bookkeeping is the same on any device.
+    with jax.default_device(jax.devices("cpu")[0]):
+        _joint_huber_constraints_and_resume(integrator, solver)
+
+
+def _joint_huber_constraints_and_resume(integrator, solver):
     from tomojax.alignment import AlignConfig
     from tomojax.alignment.api import L2LossSpec, align
     from tomojax.core.projector import forward_project_view_T

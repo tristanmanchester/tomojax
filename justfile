@@ -49,8 +49,10 @@ accelerator-smoke:
 accelerator-smoke-cuda:
     TOMOJAX_REQUIRE_CUDA=1 uv run --no-sync python tools/smoke_accelerator.py
 
+# Every test with the GPU visible: unmarked tests take the CUDA paths too, which
+# CI's CPU runner and `-m gpu` alone never exercise.
 test-cuda: accelerator-smoke-cuda
-    uv run --no-sync pytest -q -m gpu
+    uv run --no-sync pytest -q
 
 benchmark-smoke:
     JAX_PLATFORMS=cpu uv run --no-sync python bench/compare_projectors.py --libraries tomojax --sizes 32 --views 30 --repeats 1

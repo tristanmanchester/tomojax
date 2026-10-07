@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- `examples/align_walnut_orbits.py` brings the FIPS walnut's three orbits into
+  register from the scanner's uncorrected geometry with the public API (it
+  needs the data download and a GPU; see examples/README.md).
+- Large scans need less device memory. `tj.project` and `tj.backproject` run
+  compiled, so their view loop fills one projection stack in place (peak
+  3.1 GB, was 5.6, on the unbinned walnut). The cone kernels read and write
+  JAX's `(view, row, column)` layout, so no transposed copy of the
+  projections is made (and the forward is a little faster). Alignment's joint
+  pose and volume update works through view batches and stores at most one
+  projection-sized array (7.2 to 5.8 GiB at the walnut's finest level), with
+  a scalar weight for plain least squares. A level whose update cannot fit
+  in device memory now ends alignment at the level before, with a warning and
+  `info["factors_skipped"]`, instead of failing after the coarser levels; a
+  first level that cannot fit raises `AlignmentMemoryError` before any work.
+  The translation pre-search streams segmented scans' CGLS from the host.
+- `just test-cuda` runs every test with the GPU visible, not only the
+  `gpu`-marked ones: unmarked tests take CUDA paths there that CI's CPU runner
+  never does. The checkpoint-resume test runs on the CPU device, whose
+  arithmetic is reproducible (GPU atomics are not).
 - `tj.align` takes scans that already carry poses (ASTRA imports, earlier
   alignments) and corrects them on top, and aligns multi-orbit `ConeSegments`
   scans as one, bringing their orbits into register. From the FIPS walnut's

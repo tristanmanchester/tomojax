@@ -69,3 +69,26 @@ including compilation, lowering the volume error from 0.68 to 0.047.
 `tj.align` reports the least-motion estimate, so the truth is compared in its
 least-motion version too (see
 [where the aligned volume sits](../docs/alignment-guide.md#where-the-aligned-volume-sits)).
+
+## Bring a real multi-orbit scan into register
+
+This one needs data: download a walnut from the FIPS collection (Der
+Sarkissian et al., Scientific Data 6, 215, 2019; CC BY 4.0;
+[Zenodo record 2686726](https://zenodo.org/records/2686726)) and unzip it, then
+
+```bash
+uv run --no-sync python examples/align_walnut_orbits.py ~/data/walnuts/Walnut1 -o walnut.nxs
+```
+
+[align_walnut_orbits.py](align_walnut_orbits.py) reads the three orbits'
+projections and the scanner's uncorrected geometry with `tj.Scan.from_astra`,
+bins the detector 2 x 2, aligns every 4th view (900 in all) with `tj.align`, prints each
+orbit's height relative to orbit 1 and reconstructs with 20 iterations of
+non-negative least squares. On Walnut 1 it finds -0.38 and -0.76 mm for orbits
+2 and 3, where the authors' corrected geometry has -0.40 and -0.79 mm, in about
+six minutes on an 8 GB laptop GPU. The data fix the orbits' heights relative to
+one another but can't pin down the walnut's absolute height: moving the whole
+object, and every view with it, predicts the same projections, so the volume
+can sit a fraction of a millimetre from where the scanner's record would put
+it. [The walnut section of the lab CT guide](../docs/lab-ct.md#bringing-the-orbits-into-register)
+compares the reconstruction with the authors' reference.

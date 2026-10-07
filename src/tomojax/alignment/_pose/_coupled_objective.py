@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.alignment._model.dofs import POSE_WIDTH
+from tomojax.alignment._objectives.loss_specs import L2LossSpec
 from tomojax.core.projector import get_detector_grid_device
 
 from ._coupled_linear import CoupledLinearResult
@@ -34,6 +35,47 @@ def _pose_cache_limit() -> int:
         return 0
     free = device_free_memory_bytes() if jax.default_backend() == "gpu" else None
     return _POSE_CACHE_BYTES if free is None else int(_POSE_CACHE_FRACTION * free)
+
+
+class AlignmentMemoryError(MemoryError):
+    """A level's joint pose and volume update needs more device memory than is free."""
+
+    def __init__(self, needed: int, available: int) -> None:
+        self.needed, self.available = needed, available
+        super().__init__(
+            f"the joint pose and volume update needs {needed / 2**30:.1f} GiB of device "
+            f"memory, {available / 2**30:.1f} GiB is free: align at coarser levels, on a "
+            "binned scan, or with more device memory"
+        )
+
+
+def _check_device_memory(arrays: CoupledArrays, spec: CoupledSpec, n_views: int) -> None:
+    """Raise :class:`AlignmentMemoryError` if the update cannot fit on the GPU.
+
+    The update keeps about a dozen volume-sized and a few projection-sized
+    arrays; only near that size is it compiled ahead to read XLA's own figure,
+    since the check costs a second compilation.
+    """
+    if jax.default_backend() != "gpu":
+        return
+    stats = jax.devices()[0].memory_stats() or {}
+    if "bytes_limit" not in stats:
+        return
+    free = int(stats["bytes_limit"]) - int(stats.get("bytes_in_use", 0))
+    available = min(free, int(stats.get("largest_free_block_bytes", free)))
+    grid, detector = spec.grid, spec.detector
+    volume = 4 * grid.nx * grid.ny * grid.nz
+    sinogram = 4 * n_views * detector.nu * detector.nv
+    if 13 * volume + 3 * sinogram < available:
+        return
+    p = jax.ShapeDtypeStruct((n_views, POSE_WIDTH), jnp.float32)
+    x = jax.ShapeDtypeStruct((grid.nx, grid.ny, grid.nz), jnp.float32)
+    analysis = run_update.lower(arrays, p, x, spec=spec).compile().memory_analysis()
+    if analysis is None:
+        return
+    needed = int(analysis.temp_size_in_bytes) + int(analysis.output_size_in_bytes)
+    if needed > available:
+        raise AlignmentMemoryError(needed, available)
 
 
 @dataclass(frozen=True)
@@ -75,7 +117,10 @@ def build_coupled_objective(ctx: _PoseObjectiveContext) -> CoupledObjective:
     arrays = CoupledArrays(
         poses=ctx.pose_stack,
         projections=ctx.projections,
-        weights=ctx.loss_adapter.gauss_newton_weights(
+        # Plain least squares weighs every pixel alike: a scalar, not a stack of ones.
+        weights=jnp.float32(1)
+        if isinstance(ctx.loss_adapter.spec, L2LossSpec) and not ctx.has_loss_mask
+        else ctx.loss_adapter.gauss_newton_weights(
             ctx.projections, ctx.loss_mask if ctx.has_loss_mask else None
         ),
         mask=ctx.volume_mask if ctx.volume_mask is not None else jnp.float32(1),
@@ -103,6 +148,7 @@ def build_coupled_objective(ctx: _PoseObjectiveContext) -> CoupledObjective:
         has_smoothness=bool(cfg.w_rot or cfg.w_trans),
         cone=ctx.cone is not None,
     )
+    _check_device_memory(arrays, spec, ctx.n_views)
     return CoupledObjective(
         partial(run_update, arrays, spec=spec),
         partial(run_loss, arrays, spec=spec),

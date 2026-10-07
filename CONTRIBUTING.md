@@ -34,7 +34,7 @@ You can also run each recipe's commands directly from the [justfile](justfile).
 | `just examples` | Public projection/reconstruction example |
 | `just package` | Build sdist/wheel, check metadata, and run a fresh installed-wheel workflow |
 | `just ci` | Full local gate: static checks, package/workflow checks, example, CPU coverage, and small analytic benchmarks |
-| `just test-cuda` | Require a real CUDA accelerator, then run GPU-marked tests |
+| `just test-cuda` | Require a real CUDA accelerator, then run every test with the GPU visible |
 | `just guardrails` | Record an intended change to the public API or the code-health ratchets |
 
 `just check` also formats files before running checks. Use `just ci` when you

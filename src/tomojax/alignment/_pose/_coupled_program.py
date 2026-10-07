@@ -30,6 +30,22 @@ if TYPE_CHECKING:
     from tomojax.recon.types import Regulariser
 
 
+# Views projected together in the update's data-space passes.
+_VIEWS_PER_BATCH = 32
+
+
+class _BatchOps(NamedTuple):
+    """One pose stack's operators over a batch of views starting at ``start``."""
+
+    cached: jax.Array | None  # every view's pose columns, when they fit
+    view_columns: Callable  # view i's weighted pose columns
+    batch_columns: Callable  # the batch's pose columns
+    project: Callable  # (start, dx) -> W A dx over the batch
+    transpose: Callable  # (start, valid, y, out) -> out + A^T W y over its new views
+    pose_forward: Callable  # (start, cols, dp) -> C dp over the batch
+    pose_adjoint: Callable  # (start, cols, y, out) -> out with the batch's rows C^T y
+
+
 @dataclass(frozen=True)
 class CoupledSpec:
     """Only choices that change the compiled program, never measurement arrays."""
@@ -58,6 +74,7 @@ class CoupledArrays(NamedTuple):
 
     poses: jax.Array
     projections: jax.Array
+    # Per-pixel least-squares weights, or a scalar when every pixel weighs the same.
     weights: jax.Array
     mask: jax.Array
     active: jax.Array
@@ -77,6 +94,12 @@ def _build_program(
     cfg, backend = spec, spec.backend
     det_grid = None if backend == "pallas" else arrays.det_grid
     mask, weights, active = arrays.mask, arrays.weights, arrays.active
+    # A scalar mask means none: skip multiplying volumes by it, which would copy them.
+    unmasked = mask.ndim == 0
+
+    def masked(v):
+        return v if unmasked else mask * v
+
     n_views = arrays.poses.shape[0]
     cache_columns = spec.cache_columns
     predict_columns = partial(
@@ -106,15 +129,15 @@ def _build_program(
 
     cone_backend = "cuda" if backend == "pallas" else "jax"
 
-    def forward(t, x):
+    def forward(t, x, frames=None):
         if spec.cone:
-            assert arrays.frames is not None
-            coeff = frame_coefficients(t, arrays.frames, spec.grid, spec.detector)
-            return cone_project(mask * x, coeff, spec.grid, spec.detector, backend=cone_backend)
+            assert frames is not None
+            coeff = frame_coefficients(t, frames, spec.grid, spec.detector)
+            return cone_project(masked(x), coeff, spec.grid, spec.detector, backend=cone_backend)
         if joseph is not None:
             return forward_project_planes(
                 plane_coefficients(t, spec.grid, spec.detector, arrays.det_grid),
-                mask * x,
+                masked(x),
                 spec.grid,
                 spec.detector,
                 backend=backend,
@@ -122,14 +145,14 @@ def _build_program(
             )
         if spec.jacobian.integrator == "exact":
             return exact_forward(
-                t, spec.grid, spec.detector, mask * x, backend=backend, det_grid=det_grid
+                t, spec.grid, spec.detector, masked(x), backend=backend, det_grid=det_grid
             )
         return jax.lax.map(
             lambda ti: forward_project_view_T(
                 ti,
                 spec.grid,
                 spec.detector,
-                mask * x,
+                masked(x),
                 gather_dtype="fp32",
                 det_grid=det_grid,
                 unroll=spec.jacobian.unroll,
@@ -138,23 +161,27 @@ def _build_program(
             t,
         )
 
-    def adjoint(t, y):
+    def adjoint(t, y, frames=None):
         if spec.cone:
-            assert arrays.frames is not None
-            coeff = frame_coefficients(t, arrays.frames, spec.grid, spec.detector)
-            return mask * cone_backproject(y, coeff, spec.grid, spec.detector, backend=cone_backend)
+            assert frames is not None
+            coeff = frame_coefficients(t, frames, spec.grid, spec.detector)
+            return masked(
+                cone_backproject(y, coeff, spec.grid, spec.detector, backend=cone_backend)
+            )
         if joseph is not None:
-            return mask * sum_backproject_planes(
-                plane_coefficients(t, spec.grid, spec.detector, arrays.det_grid),
-                y,
-                spec.grid,
-                spec.detector,
-                backend=backend,
-                interpolation=joseph,
+            return masked(
+                sum_backproject_planes(
+                    plane_coefficients(t, spec.grid, spec.detector, arrays.det_grid),
+                    y,
+                    spec.grid,
+                    spec.detector,
+                    backend=backend,
+                    interpolation=joseph,
+                )
             )
         if spec.jacobian.integrator == "exact":
-            return mask * exact_adjoint(
-                t, spec.grid, spec.detector, y, backend=backend, det_grid=det_grid
+            return masked(
+                exact_adjoint(t, spec.grid, spec.detector, y, backend=backend, det_grid=det_grid)
             )
 
         # Accumulate one volume, never a volume stack per view.
@@ -170,142 +197,229 @@ def _build_program(
                 unroll=spec.jacobian.unroll,
             ), None
 
-        return (
-            mask
-            * jax.lax.scan(
+        return masked(
+            jax.lax.scan(
                 add, jnp.zeros((spec.grid.nx, spec.grid.ny, spec.grid.nz), jnp.float32), (t, y)
             )[0]
         )
 
+    # Data-space work runs over batches of views: projecting, comparing and
+    # transposing a batch before the next, so no projection-sized array is
+    # stored (but one in the pose-eliminated solve). The last batch is shifted
+    # back to end at the last view; ``valid`` marks its views not seen before.
+    size = min(n_views, _VIEWS_PER_BATCH)
+    count = -(-n_views // size)
+    volume_zeros = jnp.zeros((spec.grid.nx, spec.grid.ny, spec.grid.nz), jnp.float32)
+
+    def take(a, start):
+        return jax.lax.dynamic_slice_in_dim(a, start, size)
+
+    def over_batches(body, init):
+        def step(i, carry):
+            start = jnp.minimum(i * size, n_views - size)
+            valid = (start + jnp.arange(size) >= i * size).astype(jnp.float32)
+            return body(start, valid, carry)
+
+        return jax.lax.fori_loop(0, count, step, init)
+
+    def batch_weights(start):
+        return weights if weights.ndim == 0 else take(weights, start)
+
+    def batch_frames(start):
+        return None if arrays.frames is None else take(arrays.frames, start)
+
     def loss(p, x):
-        residual = weights * (forward(poses(p), x) - arrays.projections)
-        return (
-            0.5 * jnp.vdot(residual, residual, precision=jax.lax.Precision.HIGHEST).real
-            + regularisation(x)
-            + smoothness(p)
-        )
-
-    def update(p, x):
         t = poses(p)
-        residual = weights * (forward(t, x) - arrays.projections)
 
+        def body(start, valid, total):
+            residual = batch_weights(start) * (
+                forward(take(t, start), x, batch_frames(start)) - take(arrays.projections, start)
+            )
+            squares = jnp.sum(jnp.square(residual), axis=(1, 2))
+            return total + 0.5 * jnp.sum(valid * squares)
+
+        return over_batches(body, jnp.float32(0)) + regularisation(x) + smoothness(p)
+
+    highest = jax.lax.Precision.HIGHEST
+
+    def batch_ops(t, p, x):  # the batch operators of one pose stack; see _BatchOps
         def columns(i):
             return (
                 predict_columns(
                     p[i],
                     arrays.poses[i],
                     None if arrays.frames is None else arrays.frames[i],
-                    mask * x,
+                    masked(x),
                     arrays.projections[i],
-                    weights[i],
+                    weights if weights.ndim == 0 else weights[i],
                 )[1]
                 * active[:, None]
             )
 
-        indices = jnp.arange(n_views)
-        cached = jax.lax.map(columns, indices) if cache_columns else None
+        cached = jax.lax.map(columns, jnp.arange(n_views)) if cache_columns else None
 
-        def get_columns(i):
+        def view_columns(i):
             return cached[i] if cached is not None else columns(i)
 
-        highest = jax.lax.Precision.HIGHEST
-
-        # Cached columns apply to all views in one contraction; otherwise each
-        # view's columns are recomputed inside a sequential map.
-        def pose_forward(dp):
+        def batch_columns(start):
             if cached is not None:
-                return jnp.einsum("nk,nkp->np", dp, cached, precision=highest).reshape(
-                    residual.shape
-                )
-            return jax.lax.map(
-                lambda i: jnp.matmul(dp[i], get_columns(i), precision=highest), indices
-            ).reshape(residual.shape)
+                return take(cached, start)
+            return jax.lax.map(columns, start + jnp.arange(size))
 
-        def pose_adjoint(y):
-            if cached is not None:
-                return jnp.einsum("nkp,np->nk", cached, y.reshape(n_views, -1), precision=highest)
-            return jax.lax.map(
-                lambda i: jnp.matmul(get_columns(i), y[i].ravel(), precision=highest), indices
+        def project(start, dx):
+            return batch_weights(start) * forward(take(t, start), dx, batch_frames(start))
+
+        def transpose(start, valid, y, out):
+            y = batch_weights(start) * y * valid[:, None, None]
+            return out + adjoint(take(t, start), y, batch_frames(start))
+
+        def pose_forward(start, cols, dp):
+            return jnp.einsum("nk,nkp->np", take(dp, start), cols, precision=highest).reshape(
+                (size, spec.detector.nv, spec.detector.nu)
             )
 
-        reg_grad, reg_hessian = jax.linearize(jax.grad(regularisation), x)
+        def pose_adjoint(start, cols, y, out):
+            rows = jnp.einsum("nkp,np->nk", cols, y.reshape(size, -1), precision=highest)
+            return jax.lax.dynamic_update_slice_in_dim(out, rows, start, axis=0)
+
+        return _BatchOps(
+            cached, view_columns, batch_columns, project, transpose, pose_forward, pose_adjoint
+        )
+
+    def dot(a, b):
+        return jnp.vdot(a, b, precision=jax.lax.Precision.HIGHEST).real
+
+    def solve_pose_eliminated(ops, p, x, free, rhs, normal, reg_hessian, volume_inverse):
+        """Eliminate the per-view pose blocks exactly and solve for the volume by CG."""
+        if ops.cached is not None:
+            gram = jnp.einsum("nkp,nlp->nkl", ops.cached, ops.cached, precision=highest)
+        else:
+            gram = jax.lax.map(
+                lambda i: jnp.matmul(ops.view_columns(i), ops.view_columns(i).T, precision=highest),
+                jnp.arange(n_views),
+            )
+        solve_pose = pose_block_solver(
+            gram + cfg.gn_damping * jnp.eye(p.shape[1], dtype=p.dtype),
+            arrays.smoothness * active,
+            has_smoothness=spec.has_smoothness,
+        )
+        dp_rhs = solve_pose(rhs[1])
+
+        def pose_only(start, valid, out):
+            return ops.transpose(
+                start, valid, ops.pose_forward(start, ops.batch_columns(start), dp_rhs), out
+            )
+
+        reduced_rhs = rhs[0] - free * over_batches(pose_only, volume_zeros)
+
+        def pose_rows(dx):  # C^T W A dx, and the batches' W A dx
+            def body(start, _valid, carry):
+                rows, ys = carry
+                y = ops.project(start, dx)
+                rows = ops.pose_adjoint(start, ops.batch_columns(start), y, rows)
+                return rows, jax.lax.dynamic_update_slice_in_dim(ys, y, start, axis=0)
+
+            stored = jnp.zeros((n_views, spec.detector.nv, spec.detector.nu), jnp.float32)
+            return over_batches(body, (jnp.zeros_like(p), stored))
+
+        def reduced_normal(increment):
+            dx = free * increment[0]
+            rows, ys = pose_rows(dx)
+            dp = solve_pose(rows)
+
+            def body(start, valid, out):
+                y = take(ys, start) - ops.pose_forward(start, ops.batch_columns(start), dp)
+                return ops.transpose(start, valid, y, out)
+
+            ax = over_batches(body, volume_zeros)
+            return (
+                free * (ax + reg_hessian(dx) + cfg.gn_volume_damping * dx),
+                increment[1],
+            )
+
+        full_squared = dot(rhs[0], rhs[0]) + dot(rhs[1], rhs[1])
+        # After exact pose back-substitution, the full residual is the
+        # volume Schur residual. Use the same absolute stopping threshold
+        # as stacked CG rather than rescaling it by the eliminated RHS.
+        reduced_rtol = cfg.gn_joint_rtol * jnp.sqrt(
+            full_squared / jnp.maximum(dot(reduced_rhs, reduced_rhs), 1e-30)
+        )
+        empty = jnp.zeros((0,), x.dtype)
+        reduced = solve_coupled_normal(
+            reduced_normal,
+            (reduced_rhs, empty),
+            (volume_inverse, empty),
+            max_iters=cfg.gn_joint_iters,
+            rtol=reduced_rtol,
+        )
+        dx = free * reduced.increment[0]
+        dp = active * solve_pose(rhs[1] - pose_rows(dx)[0])
+        actual = normal((dx, dp))
+        rx, rp = rhs[0] - actual[0], rhs[1] - actual[1]
+        relative = jnp.sqrt((dot(rx, rx) + dot(rp, rp)) / jnp.maximum(full_squared, 1e-30))
+        finite = reduced.finite & jnp.isfinite(relative)
+        return CoupledLinearResult((dx, dp), reduced.iterations, relative, finite)
+
+    def update(p, x):
+        ops = batch_ops(poses(p), p, x)
+        if cfg.lambda_tv:
+            reg_grad, reg_hessian = jax.linearize(jax.grad(regularisation), x)
+        else:  # no regulariser: no zero volumes to carry
+            reg_grad, reg_hessian = jnp.float32(0), lambda _dx: jnp.float32(0)
         smooth_grad, smooth_hessian = jax.linearize(jax.grad(smoothness), p)
-        gx = adjoint(t, weights * residual) + reg_grad
-        gp = (pose_adjoint(residual) + smooth_grad) * active
+
+        def gradient_body(start, valid, carry):
+            gx, gp = carry
+            measured = batch_weights(start) * take(arrays.projections, start)
+            residual = ops.project(start, x) - measured
+            cols = ops.batch_columns(start)
+            return (
+                ops.transpose(start, valid, residual, gx),
+                ops.pose_adjoint(start, cols, residual, gp),
+            )
+
+        gx, gp = over_batches(gradient_body, (volume_zeros, jnp.zeros_like(p)))
+        gx = gx + reg_grad
+        gp = (gp + smooth_grad) * active
         # KKT-active zero voxels cannot move below zero. Release them when
         # the local gradient points into the feasible region.
-        free = ((x > 0) | (gx < 0)).astype(x.dtype) if cfg.recon_positivity else jnp.ones_like(x)
-        free = free * (mask != 0)
+        if cfg.recon_positivity:
+            free = ((x > 0) | (gx < 0)).astype(x.dtype) * (mask != 0)
+        else:  # every voxel free: a scalar, not a volume of ones
+            free = jnp.float32(1) if unmasked else (mask != 0).astype(x.dtype)
 
-        def normal(increment):
-            dx, dp = increment
-            dx, dp = free * dx, active * dp
-            y = weights * forward(t, dx) + pose_forward(dp)
+        def normal(increment):  # y = W A dx + C dp, then (A^T W y, C^T y), batch by batch
+            dx, dp = free * increment[0], active * increment[1]
+
+            def body(start, valid, carry):
+                ax, ap = carry
+                cols = ops.batch_columns(start)
+                y = ops.project(start, dx) + ops.pose_forward(start, cols, dp)
+                return ops.transpose(start, valid, y, ax), ops.pose_adjoint(start, cols, y, ap)
+
+            ax, ap = over_batches(body, (volume_zeros, jnp.zeros_like(p)))
             return (
-                free * (adjoint(t, weights * y) + reg_hessian(dx) + cfg.gn_volume_damping * dx),
-                active * (pose_adjoint(y) + smooth_hessian(dp) + cfg.gn_damping * dp),
+                free * (ax + reg_hessian(dx) + cfg.gn_volume_damping * dx),
+                active * (ap + smooth_hessian(dp) + cfg.gn_damping * dp),
             )
 
-        row_bound = adjoint(t, weights**2 * forward(t, jnp.ones_like(x)))
+        def ones_body(start, valid, out):
+            return ops.transpose(start, valid, ops.project(start, jnp.ones_like(x)), out)
+
+        row_bound = over_batches(ones_body, volume_zeros)
         reg_bound = 12 * cfg.lambda_tv / cfg.huber_delta if cfg.lambda_tv else 0
         volume_inverse = 1 / jnp.maximum(
             row_bound + reg_bound + cfg.gn_volume_damping, cfg.gn_volume_damping
         )
         rhs = (-free * gx, -gp)
         if cfg.gn_joint_solver == "pose_eliminated":
-            if cached is not None:
-                gram = jnp.einsum("nkp,nlp->nkl", cached, cached, precision=highest)
-            else:
-                gram = jax.lax.map(
-                    lambda i: jnp.matmul(get_columns(i), get_columns(i).T, precision=highest),
-                    indices,
-                )
-            solve_pose = pose_block_solver(
-                gram + cfg.gn_damping * jnp.eye(p.shape[1], dtype=p.dtype),
-                arrays.smoothness * active,
-                has_smoothness=spec.has_smoothness,
-            )
-            reduced_rhs = rhs[0] - free * adjoint(t, weights * pose_forward(solve_pose(rhs[1])))
-
-            def reduced_normal(increment):
-                dx = free * increment[0]
-                y = weights * forward(t, dx)
-                y = y - pose_forward(solve_pose(pose_adjoint(y)))
-                return (
-                    free * (adjoint(t, weights * y) + reg_hessian(dx) + cfg.gn_volume_damping * dx),
-                    increment[1],
-                )
-
-            def dot(a, b):
-                return jnp.vdot(a, b, precision=jax.lax.Precision.HIGHEST).real
-
-            full_squared = dot(rhs[0], rhs[0]) + dot(rhs[1], rhs[1])
-            # After exact pose back-substitution, the full residual is the
-            # volume Schur residual. Use the same absolute stopping threshold
-            # as stacked CG rather than rescaling it by the eliminated RHS.
-            reduced_rtol = cfg.gn_joint_rtol * jnp.sqrt(
-                full_squared / jnp.maximum(dot(reduced_rhs, reduced_rhs), 1e-30)
-            )
-            empty = jnp.zeros((0,), x.dtype)
-            reduced = solve_coupled_normal(
-                reduced_normal,
-                (reduced_rhs, empty),
-                (volume_inverse, empty),
-                max_iters=cfg.gn_joint_iters,
-                rtol=reduced_rtol,
-            )
-            dx = free * reduced.increment[0]
-            dp = active * solve_pose(rhs[1] - pose_adjoint(weights * forward(t, dx)))
-            actual = normal((dx, dp))
-            rx, rp = rhs[0] - actual[0], rhs[1] - actual[1]
-            relative = jnp.sqrt((dot(rx, rx) + dot(rp, rp)) / jnp.maximum(full_squared, 1e-30))
-            finite = reduced.finite & jnp.isfinite(relative)
-            return CoupledLinearResult((dx, dp), reduced.iterations, relative, finite)
-
+            return solve_pose_eliminated(ops, p, x, free, rhs, normal, reg_hessian, volume_inverse)
         pose_diagonal = (
-            jnp.sum(cached**2, axis=2)
-            if cached is not None
-            else jax.lax.map(lambda i: jnp.sum(get_columns(i) ** 2, axis=1), indices)
+            jnp.sum(ops.cached**2, axis=2)
+            if ops.cached is not None
+            else jax.lax.map(
+                lambda i: jnp.sum(ops.view_columns(i) ** 2, axis=1), jnp.arange(n_views)
+            )
         )
         pose_inverse = 1 / (pose_diagonal + 12 * arrays.smoothness**2 + cfg.gn_damping)
         return solve_coupled_normal(

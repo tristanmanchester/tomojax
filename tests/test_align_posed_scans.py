@@ -138,3 +138,30 @@ def test_align_recovers_the_misregistration_of_a_multi_orbit_scan():
     np.testing.assert_allclose(per_orbit - per_orbit[0], 0.0, atol=0.3)
     misregistered = np.asarray(scan.poses)[:, 4] - np.asarray(true_scan.poses)[:, 4]  # pyright: ignore[reportOptionalSubscript]
     assert np.ptp(misregistered.reshape(3, views).mean(axis=1)) > 2.9
+
+
+def test_a_level_that_does_not_fit_in_device_memory_ends_alignment_at_the_one_before(
+    monkeypatch,
+):
+    # check-public-imports: allow-private
+    import tomojax.alignment._pose._coupled_objective as coupled
+
+    n = 16
+    grid = tj.Grid(n, n, n, 1.0, 1.0, 1.0)
+    geometry = tj.ParallelGeometry(grid, tj.Detector(n, n, 1.0, 1.0), np.linspace(0, 180, 20))
+    scan = tj.Scan(np.asarray(tj.project(geometry, _phantom(n))), geometry)
+    checked = coupled._check_device_memory
+
+    def check(arrays, spec, n_views):
+        if spec.grid.nx == n:  # the finest level
+            raise coupled.AlignmentMemoryError(2**34, 2**30)
+        checked(arrays, spec, n_views)
+
+    monkeypatch.setattr(coupled, "_check_device_memory", check)
+
+    result = tj.align(scan, levels=(2, 1))
+
+    assert result.info["factors_skipped"] == [1]
+    assert np.asarray(result.volume).shape == (n, n, n)
+    with pytest.raises(MemoryError, match="needs 16.0 GiB"):
+        tj.align(scan, levels=(1,))

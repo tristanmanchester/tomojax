@@ -17,6 +17,7 @@ from tomojax.alignment._model.dofs import POSE_WIDTH
 from tomojax.alignment._model.state import AlignmentState
 from tomojax.alignment._objectives.loss_specs import loss_spec_name, resolve_loss_for_level
 from tomojax.alignment._observer import ObserverAction, ObserverCallback, OuterStat
+from tomojax.alignment._pose._coupled_objective import AlignmentMemoryError
 from tomojax.alignment._prealign import seeded_translation_params
 from tomojax.alignment._results import (
     AlignMultiresCheckpointCallback,
@@ -195,15 +196,26 @@ def _run_multires_levels(
             state, x_init=resume_state.x, pose_params=resume_state.pose_params, prev_factor=1
         )
     for level_index, level in _levels_to_run(context.levels, resume_state):
-        state = _run_one_multires_level(
-            geometry=geometry,
-            context=context,
-            resume_state=resume_state,
-            checkpoint_callback=checkpoint_callback,
-            level_index=int(level_index),
-            level=level,
-            state=state,
-        )
+        try:
+            state = _run_one_multires_level(
+                geometry=geometry,
+                context=context,
+                resume_state=resume_state,
+                checkpoint_callback=checkpoint_callback,
+                level_index=int(level_index),
+                level=level,
+                state=state,
+            )
+        except AlignmentMemoryError as error:
+            if state.prev_factor is None:  # nothing coarser to keep
+                raise
+            skipped = tuple(int(lv["factor"]) for lv in context.levels[int(level_index) :])
+            LOG.warning(
+                "Alignment stops at factor %d, skipping factors %s: %s",
+                state.prev_factor, list(skipped), error,
+            )  # fmt: skip
+            state = replace(state, factors_skipped=skipped)
+            break
         if state.final_observer_action == "stop_run":
             break
         _release_completed_level_accelerator_state(state)
@@ -372,6 +384,7 @@ def align_multires(
         _final_align_multires_info(
             loss_hist=state.loss_hist,
             factors_list=context.factors_list,
+            factors_skipped=state.factors_skipped,
             final_loss_kind=state.final_loss_kind,
             cfg=context.cfg,
             stopped_by_observer=state.stopped_by_observer,

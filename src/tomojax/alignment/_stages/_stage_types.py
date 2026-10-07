@@ -233,6 +233,8 @@ class MultiresRunState:
     final_gauge_fix_stats: dict[str, object] | None
     last_level_index_processed: int | None
     setup_alignment_state: object
+    # Finer levels left out because they would not fit in device memory.
+    factors_skipped: tuple[int, ...] = ()
 
 
 def _stage_index_or_none(stat: Mapping[str, object]) -> int | None:
