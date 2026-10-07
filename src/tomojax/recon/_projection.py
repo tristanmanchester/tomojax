@@ -363,6 +363,52 @@ def least_squares_operators(
     return value_and_gradient
 
 
+def least_squares_at_zero(
+    poses: jax.Array,
+    grid: Grid,
+    detector: Detector,
+    backend: str,
+    batch_size: int,
+    model: str | ConeModel = "ray",
+    joseph_interpolation: str = "linear",
+    *,
+    stream: bool = False,
+) -> Callable[[jax.Array], tuple[jax.Array, jax.Array]]:
+    """Return ``y -> (0.5 ||y||^2, A^T y)``, least squares and its negated gradient at zero.
+
+    These are the value of ``0.5 ||A x - y||^2`` at ``x = 0`` and minus its
+    gradient, with no projection of the zero volume. ``stream`` is as for
+    :func:`least_squares_operators`.
+    """
+    ops = _Batches(
+        poses,
+        grid,
+        detector,
+        None,
+        backend,
+        batch_size,
+        model,
+        joseph_interpolation,
+        absolute_weights=False,
+    )
+
+    def at_zero(data: jax.Array) -> tuple[jax.Array, jax.Array]:
+        def body(chunk: jax.Array, carry: tuple) -> tuple:
+            value, backprojection = carry
+            start, batch, valid = ops.select(chunk)
+            if stream:
+                measured = read_views(data, start, (ops.size, detector.nv, detector.nu))
+            else:
+                measured = ops.images(data, start)
+            measured = jnp.where(valid[:, None, None], measured, 0.0)
+            value = value + 0.5 * jnp.vdot(measured, measured).real
+            return value, ops.backproject(measured, start, batch, backprojection)
+
+        return jax.lax.fori_loop(0, ops.count, body, (jnp.float32(0), ops.zeros_volume()))
+
+    return at_zero
+
+
 def normal_operator_norm(
     forward: Callable[[jax.Array], jax.Array],
     adjoint: Callable[[jax.Array], jax.Array],
@@ -370,8 +416,9 @@ def normal_operator_norm(
     *,
     iters: int,
     mask: jax.Array | None = None,
+    start: jax.Array | None = None,
 ) -> jax.Array:
-    """Estimate ``||M A^T A M||`` by power iteration from a constant volume.
+    """Estimate ``||M A^T A M||`` by power iteration from ``start`` (default constant).
 
     Power iteration approaches the largest eigenvalue from below; callers
     needing a safe step size should add a margin.
@@ -388,8 +435,9 @@ def normal_operator_norm(
         norm = jnp.sqrt(jnp.sum(y * y))
         return y / jnp.maximum(norm, jnp.finfo(jnp.float32).tiny), norm
 
-    x0 = jnp.ones(shape, jnp.float32)
-    x0 = x0 / jnp.sqrt(jnp.sum((x0 if mask is None else x0 * mask) ** 2) + 1e-30)
+    x0 = jnp.ones(shape, jnp.float32) if start is None else start
+    x0 = x0 if mask is None else x0 * mask
+    x0 = x0 / jnp.sqrt(jnp.sum(x0**2) + 1e-30)
     _, norm = jax.lax.fori_loop(0, max(1, iters), step, (x0, jnp.float32(0)))
     return norm
 

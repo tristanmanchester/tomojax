@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- The CUDA cone-beam forward projector is 1.3 to 3.7 times faster, and one
+  kernel now serves every view: a warp's rays step through the planes
+  together (rays entering through the volume's top or bottom had left lanes
+  on different planes), blocks run views fastest and detector rows slowest
+  (so concurrent blocks share a slab of the volume in L2), and the inner loop
+  is half the instructions. The separable forward kernel was slower and is
+  gone. The non-separable transpose loads each run of pixels at once (15%
+  faster). FISTA estimates its step from three power iterations started from
+  the backprojected data (`power_iters` now defaults to 3; five from a
+  constant volume were less accurate on the FIPS walnut) and reuses that
+  backprojection as its first gradient, saving two and a half projections.
+  On the walnut's three orbits (every 4th view, 20 iterations, binned 2 x 2)
+  non-negative least squares now takes 90 s, ASTRA 91 s (was 162 s);
+  unbinned 304 s, ASTRA 217 s (was 593 s).
 - FDK on CUDA is about twice as fast: rows up to 2048 pixels are ramp-filtered
   by one matrix product (cuBLAS, three times faster than the FFTs at 768
   pixels), and the backprojection samples the filtered images through the

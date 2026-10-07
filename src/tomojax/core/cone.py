@@ -19,11 +19,11 @@ Two implementations agree to FP32 rounding:
 - JAX: one code path for every view through flat-index gathers; the forward
   supports autodiff in the volume and the poses, and :func:`cone_backproject`
   is its explicit transpose (a plane-by-plane scatter, never a stored tape).
-- CUDA (CuPy, launched on XLA's stream with ``buffer_callback``): per-ray
-  forward and voxel-run gather transpose, plus two-pass separable kernels for
-  views whose detector v axis is parallel to the volume's z axis (unperturbed
-  turntable scans), where the bilinear weight factors into a column and a z
-  part. Forward and transpose use identical coordinate arithmetic.
+- CUDA (CuPy, launched on XLA's stream with ``buffer_callback``): a per-ray
+  forward for every view, and a plane-tile scatter transpose plus a two-pass
+  separable one for views whose detector v axis is parallel to the volume's z
+  axis (unperturbed turntable scans), where the bilinear weight factors into a
+  column and a z part. Forward and transpose use identical coordinate arithmetic.
 """
 
 from __future__ import annotations
@@ -258,12 +258,10 @@ def _launch_forward(
             np.int32(det.nu), np.int32(det.nv),
             np.float32(grid.vx), np.float32(grid.vy), np.float32(grid.vz),
         )  # fmt: skip
-        # Each kernel writes the views of its kind and skips the others.
+        # Views vary fastest, rows slowest: the blocks running at once cover one band
+        # of rows (one slab of the volume) in many views, which then shares the L2.
         _module().get_function("cone_forward")(
-            (-(-det.nu // 8), -(-det.nv // 128), views), (128,), args
-        )
-        _module().get_function("general_forward")(
-            (-(-det.nu // 4), -(-det.nv // 128), views), (512,), args
+            (views, -(-det.nu // 32), -(-det.nv // 16)), (512,), args
         )
 
 

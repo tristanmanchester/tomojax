@@ -78,20 +78,21 @@ warm calls on the laptop GPU; ASTRA and TIGRE take host arrays
 
 | Operation | TomoJAX | ASTRA 2.5 | TIGRE |
 |---|---:|---:|---:|
-| Forward projection | 0.123 s (error 0.0060) | 0.169 s (0.0060) | 0.477 s interpolated (0.0062), 1.24 s Siddon (0.0068) |
-| Backprojection | 0.179 s, exact transpose | 0.075 s, approximate transpose | 0.099 s, "matched" |
-| FDK | 0.048 s (error 0.0581) | 0.287 s (0.0581) | 0.510 s (0.0581) |
-| Forward, axis tilted 0.5° | 0.167 s | 0.170 s | |
-| Backprojection, axis tilted 0.5° | 0.294 s, exact transpose | 0.074 s, approximate transpose | |
+| Forward projection | 0.093 s (error 0.0060) | 0.170 s (0.0060) | 0.477 s interpolated (0.0062), 1.24 s Siddon (0.0068) |
+| Backprojection | 0.178 s, exact transpose | 0.075 s, approximate transpose | 0.103 s, "matched" |
+| FDK | 0.048 s (error 0.0581) | 0.293 s (0.0581) | 0.513 s (0.0581) |
+| Forward, axis tilted 0.5° | 0.092 s | 0.171 s | |
+| Backprojection, axis tilted 0.5° | 0.232 s, exact transpose | 0.075 s, approximate transpose | |
 
 TomoJAX's backprojection is the exact transpose of its forward projector,
 which the iterative solvers and gradients rely on; ASTRA's voxel-driven
 backprojector is cheaper but only approximately its transpose. A CGLS
-iteration (one of each) therefore costs about 0.30 s against ASTRA's 0.24 s.
-A tilted axis, a rolled or pitched detector, or the per-view poses of
-alignment make every view non-separable: TomoJAX then samples each ray along
-its own axis, which costs about 0.46 s per iteration at this size. ASTRA's
-timings do not depend on the geometry.
+iteration (one of each) therefore costs about 0.27 s against ASTRA's 0.25 s.
+The forward projector follows each ray on its own, whatever the geometry; the
+transpose has a faster path for views whose detector columns are parallel to
+the rotation axis. A tilted axis, a rolled or pitched detector, or the per-view
+poses of alignment make every view non-separable, and an iteration then costs
+about 0.32 s at this size. ASTRA's timings do not depend on the geometry.
 
 On the same scan, CGLS with the matched transpose took 3.4 s for 10
 iterations, 6.6 s for 20 and 13.2 s for 40, with volume errors of 0.090, 0.043

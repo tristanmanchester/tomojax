@@ -1,10 +1,7 @@
 // CUDA kernels for cone-beam Joseph projection; see tomojax/core/cone.py.
 #define NC 25
-#define TU 8
-#define TV 128
-#define GU 4
-#define GV 128
-#define QLEN 224
+#define GU 32
+#define GV 16
 #define TB 64
 #define TC 64
 #define ULEN 112
@@ -45,8 +42,53 @@ __device__ __forceinline__ float path_w(float r0, float r1, float r2, float ra,
 }
 
 // Per-ray Joseph sum for one pixel, any view.
+// The smallest and largest of a value over the (whole) warp.
+__device__ __forceinline__ int warp_min(int x) {
+    for (int o = 16; o; o >>= 1) x = min(x, __shfl_xor_sync(0xffffffffu, x, o));
+    return x;
+}
+__device__ __forceinline__ int warp_max(int x) {
+    for (int o = 16; o; o >>= 1) x = max(x, __shfl_xor_sync(0xffffffffu, x, o));
+    return x;
+}
+
+// Planes k0..k1 of a ray, stepped by the warp through first..last (see ray_sum): plane
+// k lies sa apart, in-plane axes b and c sb and sc (SC1: c is the contiguous axis).
+template <int SC1>
+__device__ __forceinline__ float plane_sum(
+    const float* __restrict__ vol, int k0, int k1, int first, int last, float Sa, float Sb,
+    float Sc, float inv, float rb, float rc, int nb, int nc, long sa, long sb, long sc = 1)
+{
+    if (SC1) sc = 1;
+    float sum = 0.f;
+    const float* plane = vol + (long)first * sa;
+    for (int k = first; k <= last; ++k, plane += sa) {
+        if (k < k0 || k > k1) continue;
+        float t = ((float)k - Sa) * inv;
+        float fb = Sb + t * rb, fc = Sc + t * rc;
+        float fb0 = floorf(fb), fc0 = floorf(fc);
+        int b0 = (int)fb0, c0 = (int)fc0;
+        // The same weights as plane_adjoint's.
+        float wb1 = fb - fb0, wc1 = fc - fc0, wb0 = 1.f - wb1, wc0 = 1.f - wc1;
+        bool b0in = (unsigned)b0 < (unsigned)nb, b1in = (unsigned)(b0 + 1) < (unsigned)nb;
+        bool c0in = (unsigned)c0 < (unsigned)nc, c1in = (unsigned)(c0 + 1) < (unsigned)nc;
+        const float* p = plane + (long)b0 * sb + (long)c0 * sc;
+        float s0 = 0.f, s1 = 0.f;
+        if (b0in && c0in) s0 = __ldg(p) * wc0;
+        if (b0in && c1in) s0 += __ldg(p + sc) * wc1;
+        if (b1in && c0in) s1 = __ldg(p + sb) * wc0;
+        if (b1in && c1in) s1 += __ldg(p + sb + sc) * wc1;
+        sum += wb0 * s0 + wb1 * s1;
+    }
+    return sum;
+}
+
+// Called by every lane of a warp (``live`` false for lanes without a ray). The lanes
+// step through the planes together, each sampling only its own ray's planes: rays
+// entering through the volume's top or bottom start at different planes, and lanes
+// left on different planes would not share cache lines.
 __device__ float ray_sum(const float* __restrict__ vol, const float* c, float fu, float fv,
-                         int nx, int ny, int nz)
+                         int nx, int ny, int nz, bool live)
 {
     float r0, r1, r2; ray_of(c, fu, fv, r0, r1, r2);
     int a = ray_axis(r0, r1, r2), b = a == 0 ? 1 : 0, cc = a == 2 ? 1 : 2;
@@ -58,186 +100,40 @@ __device__ float ray_sum(const float* __restrict__ vol, const float* c, float fu
     float inv = 1.0f / ra;
     float lo = -1e30f, hi = 1e30f;
     float slope = rb * inv, base = Sb - Sa * slope;
-    if (fabsf(slope) < 1e-12f) { if (base <= -1.f || base >= (float)nb) return 0.f; }
+    if (fabsf(slope) < 1e-12f) { if (base <= -1.f || base >= (float)nb) live = false; }
     else { float k1 = (-1.f - base) / slope, k2 = ((float)nb - base) / slope;
            lo = fmaxf(lo, fminf(k1, k2)); hi = fminf(hi, fmaxf(k1, k2)); }
     slope = rc * inv; base = Sc - Sa * slope;
-    if (fabsf(slope) < 1e-12f) { if (base <= -1.f || base >= (float)nc) return 0.f; }
+    if (fabsf(slope) < 1e-12f) { if (base <= -1.f || base >= (float)nc) live = false; }
     else { float k1 = (-1.f - base) / slope, k2 = ((float)nc - base) / slope;
            lo = fmaxf(lo, fminf(k1, k2)); hi = fminf(hi, fmaxf(k1, k2)); }
     int k0 = max((int)floorf(lo), 0), k1 = min((int)ceilf(hi), na - 1);
-    float sum = 0.f;
-    for (int k = k0; k <= k1; ++k) {
-        float t = ((float)k - Sa) * inv;
-        float fb = Sb + t * rb, fc = Sc + t * rc;
-        float fb0 = floorf(fb), fc0 = floorf(fc);
-        int b0 = (int)fb0, c0 = (int)fc0;
-        float wb0 = trif(fb, fb0), wb1 = trif(fb, fb0 + 1.f);
-        float wc0 = trif(fc, fc0), wc1 = trif(fc, fc0 + 1.f);
-        bool b0in = b0 >= 0 && b0 < nb, b1in = b0 + 1 >= 0 && b0 + 1 < nb;
-        bool c0in = c0 >= 0 && c0 < nc, c1in = c0 + 1 >= 0 && c0 + 1 < nc;
-        const float* p = vol + (long)k * sa + (long)b0 * sb + (long)c0 * sc;
-        if (b0in && c0in) sum += __ldg(p) * (wb0 * wc0);
-        if (b0in && c1in) sum += __ldg(p + sc) * (wb0 * wc1);
-        if (b1in && c0in) sum += __ldg(p + sb) * (wb1 * wc0);
-        if (b1in && c1in) sum += __ldg(p + sb + sc) * (wb1 * wc1);
-    }
-    return sum;
+    if (!live) { k0 = na; k1 = -1; }
+    int first = warp_min(k0), last = warp_max(k1);
+    // Rays of one warp nearly always share a plane axis; z (contiguous) is then the
+    // in-plane c axis at compile time.
+    unsigned busy = __ballot_sync(0xffffffffu, k0 <= k1), x = __ballot_sync(0xffffffffu, a == 0);
+    if ((busy & ~x) == 0)
+        return plane_sum<1>(vol, k0, k1, first, last, Sa, Sb, Sc, inv, rb, rc, nb, nc,
+                            (long)ny * nz, nz);
+    if ((busy & x) == 0 && a != 2)
+        return plane_sum<1>(vol, k0, k1, first, last, Sa, Sb, Sc, inv, rb, rc, nb, nc,
+                            nz, (long)ny * nz);
+    return plane_sum<0>(vol, k0, k1, first, last, Sa, Sb, Sc, inv, rb, rc, nb, nc, sa, sb, sc);
 }
 
-// Separable view, columns u0 .. u0 + TU - 1 of one view. AX is the plane axis shared by
-// every column of the block, or -1 when columns differ (rays near 45 degrees).
-struct SepShared {
-    float Q[TU][QLEN];
-    float w0[TU], w1[TU];
-    int b0[TU], lo[TU], len[TU], ax[TU];
-};
-
-template <int AX>
-__device__ __forceinline__ void sep_forward(
-    const float* __restrict__ vol, const float* c, float (&acc)[TU], SepShared& sh, int u0,
-    int v0, int tid, int nx, int ny, int nz, int nu, int nv)
-{
-    float (&Q)[TU][QLEN] = sh.Q;
-    float *s_w0 = sh.w0, *s_w1 = sh.w1;
-    int *s_b0 = sh.b0, *clo = sh.lo, *clen = sh.len, *s_ax = sh.ax;
-    float Sc = c[2], DVc = c[11], fv = (float)(v0 + tid);
-    float inv[TU], rcv[TU], Sa_[TU];
-    int ax_t = 0;
-    float rb_t = 0.f, inv_t = 0.f, rc0_t = 0.f, Sa_t = 0.f, Sb_t = 0.f;
-    #pragma unroll
-    for (int i = 0; i < TU; ++i) {
-        float fu = (float)min(u0 + i, nu - 1);
-        float r0 = (c[3] + fu * c[6]) - c[0], r1 = (c[4] + fu * c[7]) - c[1];
-        int a = AX >= 0 ? AX : (fabsf(r1) > fabsf(r0) ? 1 : 0);
-        float ra = a == 0 ? r0 : r1;
-        inv[i] = 1.0f / ra;
-        Sa_[i] = c[a];
-        rcv[i] = ((c[5] + fu * c[8]) + fv * DVc) - Sc;
-        if (i == tid) {
-            ax_t = a; inv_t = inv[i]; Sa_t = c[a]; Sb_t = c[1 - a];
-            rb_t = a == 0 ? r1 : r0;
-            rc0_t = c[5] + fu * c[8];
-            s_ax[i] = a;
-        }
-    }
-    int vlast = min(v0 + TV, nv) - 1;
-    long sxl = (long)ny * nz;
-    int kmax = AX == 0 ? nx : (AX == 1 ? ny : max(nx, ny));
-    for (int k = 0; k < kmax; ++k) {
-        __syncthreads();
-        if (tid < TU) {
-            int na = ax_t == 0 ? nx : ny;
-            float t = ((float)k - Sa_t) * inv_t;
-            float fb = Sb_t + t * rb_t, fl = floorf(fb);
-            s_b0[tid] = (int)fl; s_w0[tid] = trif(fb, fl); s_w1[tid] = trif(fb, fl + 1.f);
-            float f1 = Sc + t * ((rc0_t + (float)v0 * DVc) - Sc);
-            float f2 = Sc + t * ((rc0_t + (float)vlast * DVc) - Sc);
-            int lo = (int)floorf(fminf(f1, f2));
-            clo[tid] = lo;
-            clen[tid] = k < na ? (int)floorf(fmaxf(f1, f2)) + 2 - lo : 0;
-        }
-        __syncthreads();
-        {
-            int i = tid / (TV / TU), j0 = tid % (TV / TU);
-            int a = AX >= 0 ? AX : s_ax[i], nb = a == 0 ? ny : nx;
-            long sa = a == 0 ? sxl : (long)nz, sb = a == 0 ? (long)nz : sxl;
-            const float* plane = vol + (long)k * sa;
-            int len = min(clen[i], QLEN), lo = clo[i], b0 = s_b0[i];
-            float w0 = (b0 >= 0 && b0 < nb) ? s_w0[i] : 0.f;
-            float w1 = (b0 + 1 >= 0 && b0 + 1 < nb) ? s_w1[i] : 0.f;
-            const float* p0 = plane + (long)min(max(b0, 0), nb - 1) * sb;
-            const float* p1 = plane + (long)min(max(b0 + 1, 0), nb - 1) * sb;
-            for (int j = j0; j < len; j += TV / TU) {
-                int jc = lo + j;
-                bool in = jc >= 0 && jc < nz;
-                Q[i][j] = in ? __ldg(p0 + jc) * w0 + __ldg(p1 + jc) * w1 : 0.f;
-            }
-        }
-        __syncthreads();
-        if (v0 + tid < nv) {
-            #pragma unroll
-            for (int i = 0; i < TU; ++i) {
-                if (AX < 0 && clen[i] == 0) continue;
-                float t = ((float)k - Sa_[i]) * inv[i];
-                float fc = Sc + t * rcv[i], fl = floorf(fc);
-                int j = (int)fl - clo[i];
-                float w0 = trif(fc, fl), w1 = trif(fc, fl + 1.f);
-                if (clen[i] <= QLEN) {
-                    if (j >= 0 && j + 1 < clen[i]) acc[i] += Q[i][j] * w0 + Q[i][j + 1] * w1;
-                } else {
-                    // Column range too long for Q: read the two rows directly.
-                    int a = AX >= 0 ? AX : s_ax[i], nb = a == 0 ? ny : nx;
-                    long sa = a == 0 ? sxl : (long)nz, sb = a == 0 ? (long)nz : sxl;
-                    const float* plane = vol + (long)k * sa;
-                    int b0 = s_b0[i], c0 = (int)fl;
-                    float wb0 = (b0 >= 0 && b0 < nb) ? s_w0[i] : 0.f;
-                    float wb1 = (b0 + 1 >= 0 && b0 + 1 < nb) ? s_w1[i] : 0.f;
-                    const float* p0 = plane + (long)min(max(b0, 0), nb - 1) * sb;
-                    const float* p1 = plane + (long)min(max(b0 + 1, 0), nb - 1) * sb;
-                    if (c0 >= 0 && c0 < nz)
-                        acc[i] += (__ldg(p0 + c0) * wb0 + __ldg(p1 + c0) * wb1) * w0;
-                    if (c0 + 1 >= 0 && c0 + 1 < nz)
-                        acc[i] += (__ldg(p0 + c0 + 1) * wb0 + __ldg(p1 + c0 + 1) * wb1) * w1;
-                }
-            }
-        }
-    }
-}
-
-__device__ __forceinline__ int column_axis(const float* c, int u) {
-    float fu = (float)u;
-    return fabsf((c[4] + fu * c[7]) - c[1]) > fabsf((c[3] + fu * c[6]) - c[0]) ? 1 : 0;
-}
-
-// Separable views: grid (u tiles, v tiles, views); out (view, u, v). They share one plane
-// axis per detector column (a in {x, y}), so a column's rays share their in-plane row.
-extern "C" __global__ void __launch_bounds__(TV, 7) cone_forward(
+// One ray per thread: grid (views, u tiles, v tiles); out (view, u, v).
+extern "C" __global__ void __launch_bounds__(GU * GV) cone_forward(
     const float* __restrict__ coeff, const float* __restrict__ vol, float* __restrict__ out,
     int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz)
 {
-    int view = blockIdx.z;
+    int view = blockIdx.x;
     const float* c = coeff + (long)view * NC;
-    int u0 = blockIdx.x * TU, v0 = blockIdx.y * TV, tid = threadIdx.x, v = v0 + tid;
-    float fv = (float)v;
-    if (!separable(c)) return;  // general_forward
-    float acc[TU];
-    #pragma unroll
-    for (int i = 0; i < TU; ++i) acc[i] = 0.f;
-    {
-        __shared__ SepShared sh;
-        int first = column_axis(c, u0);
-        bool mixed = false;
-        for (int i = 1; i < TU; ++i) mixed |= column_axis(c, min(u0 + i, nu - 1)) != first;
-        if (mixed) sep_forward<-1>(vol, c, acc, sh, u0, v0, tid, nx, ny, nz, nu, nv);
-        else if (first == 0) sep_forward<0>(vol, c, acc, sh, u0, v0, tid, nx, ny, nz, nu, nv);
-        else sep_forward<1>(vol, c, acc, sh, u0, v0, tid, nx, ny, nz, nu, nv);
-    }
-    if (v < nv) {
-        #pragma unroll
-        for (int i = 0; i < TU; ++i) {
-            int u = u0 + i;
-            if (u < nu) {
-                float r0, r1, r2; ray_of(c, (float)u, fv, r0, r1, r2);
-                float ra = SEL(ray_axis(r0, r1, r2), r0, r1, r2);
-                out[((long)view * nu + u) * nv + v] = acc[i] * path_w(r0, r1, r2, ra, sx, sy, sz);
-            }
-        }
-    }
-}
-
-// Non-separable views, one ray per thread: grid (u tiles, v tiles, views); out (view, u, v).
-extern "C" __global__ void __launch_bounds__(GU * GV) general_forward(
-    const float* __restrict__ coeff, const float* __restrict__ vol, float* __restrict__ out,
-    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz)
-{
-    int view = blockIdx.z;
-    const float* c = coeff + (long)view * NC;
-    if (separable(c)) return;  // cone_forward
-    int u = blockIdx.x * GU + threadIdx.x / GV, v = blockIdx.y * GV + threadIdx.x % GV;
-    if (u >= nu || v >= nv) return;
+    int u = blockIdx.y * GU + threadIdx.x / GV, v = blockIdx.z * GV + threadIdx.x % GV;
+    bool live = u < nu && v < nv;
     float fu = (float)u, fv = (float)v;
-    float sum = ray_sum(vol, c, fu, fv, nx, ny, nz);
+    float sum = ray_sum(vol, c, fu, fv, nx, ny, nz, live);
+    if (!live) return;
     float r0, r1, r2; ray_of(c, fu, fv, r0, r1, r2);
     float ra = SEL(ray_axis(r0, r1, r2), r0, r1, r2);
     out[((long)view * nu + u) * nv + v] = sum * path_w(r0, r1, r2, ra, sx, sy, sz);
@@ -465,7 +361,14 @@ extern "C" __global__ void plane_adjoint(
             const float* col = image + (long)u * nv;
             int cb = -100, ccj = -100;
             float x00 = 0.f, x01 = 0.f, x10 = 0.f, x11 = 0.f;
-            for (int v = v0; v < v1; ++v) {
+            // Load the run's pixels together: one wait for memory instead of VRUN.
+            float values[VRUN];
+            #pragma unroll
+            for (int i = 0; i < VRUN; ++i) values[i] = v0 + i < v1 ? __ldg(col + v0 + i) : 0.f;
+            #pragma unroll
+            for (int i = 0; i < VRUN; ++i) {
+                int v = v0 + i;
+                if (v >= v1) break;
                 float fv = (float)v;
                 float r_a = ra + fv * DVa, r_b = rb + fv * DVb, r_c = rc + fv * DVc;
                 float r0 = a == 0 ? r_a : r_b, r1 = a == 1 ? r_a : (a == 0 ? r_b : r_c);
@@ -476,7 +379,7 @@ extern "C" __global__ void plane_adjoint(
                 float fb0 = floorf(fb), fc0 = floorf(fc);
                 int jb = (int)fb0 - b0, jc = (int)fc0 - c0;
                 if (jb < -1 || jb >= PB || jc < -1 || jc >= PC) continue;
-                float value = __ldg(col + v);
+                float value = values[i];
                 float wb1 = fb - fb0, wc1 = fc - fc0, wb0 = 1.f - wb1, wc0 = 1.f - wc1;
                 if (jb != cb || jc != ccj) {
                     if (jb == cb && jc == ccj + 1) {

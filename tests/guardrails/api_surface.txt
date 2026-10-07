@@ -297,7 +297,7 @@ class tomojax.recon.FistaConfig(
         tv_prox_iters: 'int' = 10,
         recon_rel_tol: 'float | None' = None,
         recon_patience: 'int' = 0,
-        power_iters: 'int' = 5,
+        power_iters: 'int' = 3,
         support: 'jnp.ndarray | None' = None,
         positivity: 'bool' = False,
         lower_bound: 'float | None' = None,
