@@ -6,7 +6,7 @@ them lightweight and JAX-friendly (no heavy runtime logic here).
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol, TypedDict
 
@@ -192,3 +192,30 @@ class Geometry(Protocol):
 
     def pose_for_view(self, i: int) -> PoseMatrix:
         """Returns a 4x4 homogeneous transform world_from_object (row-major)."""
+
+
+class ScanGeometry(Geometry, Protocol):
+    """A geometry that names its reconstruction grid, detector and view angles.
+
+    Every built-in geometry is one; the plain :class:`Geometry` contract needs
+    only poses.
+    """
+
+    @property
+    def grid(self) -> Grid:
+        """The reconstruction grid."""
+        ...
+
+    @property
+    def detector(self) -> Detector:
+        """The detector."""
+        ...
+
+    @property
+    def thetas_deg(self) -> Sequence[float]:
+        """Each view's rotation angle, in degrees."""
+        ...
+
+    def rays_for_view(self, i: int) -> RayPair:
+        """World-frame ray callbacks for inspection (not used by the projectors)."""
+        ...

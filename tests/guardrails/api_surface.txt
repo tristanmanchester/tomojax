@@ -72,11 +72,12 @@ class tomojax.Reconstruction(
     ) -> None
 class tomojax.Scan(
         projections: 'np.ndarray | jax.Array',
-        geometry: 'Geometry',
+        geometry: 'ScanGeometry',
         name: 'str' = 'sample',
         source: 'ProjectionDataset | None' = None,
     ) -> None
     .angles
+    .combine(cls, scans: 'Sequence[Scan]', *, name: 'str | None' = None) -> 'Scan'
     .detector
     .from_astra(
         cls,
@@ -157,6 +158,14 @@ class tomojax.geometry.ConeGeometry(
     .poses(self, thetas_deg: 'np.ndarray | None' = None) -> 'np.ndarray'
     .rays_for_view(self, i: 'int') -> 'RayPair'
     .rotation_axis(self) -> 'np.ndarray'
+class tomojax.geometry.ConeSegments(segments: 'tuple[ScanGeometry, ...]') -> None
+    .beam
+    .detector
+    .grid
+    .pose_for_view(self, i: 'int') -> 'PoseMatrix'
+    .rays_for_view(self, i: 'int') -> 'RayPair'
+    .stack_poses(self, n_views: 'int', dtype: 'jnp.dtype') -> 'jax.Array'
+    .thetas_deg
 class tomojax.geometry.Detector(
         nu: 'int',
         nv: 'int',
@@ -199,6 +208,11 @@ class tomojax.geometry.RotationAxisGeometry(
     ) -> None
     .pose_for_view(self, i: 'int') -> 'PoseMatrix'
     .rays_for_view(self, i: 'int') -> 'RayPair'
+class tomojax.geometry.ScanGeometry(*args, **kwargs)
+    .detector
+    .grid
+    .rays_for_view(self, i: 'int') -> 'RayPair'
+    .thetas_deg
 def tomojax.geometry.beam_of(geometry: 'object') -> 'ConeBeam | None'
 def tomojax.geometry.compute_roi(
         grid: 'Grid',
@@ -491,7 +505,7 @@ def tomojax.io.build_geometry_from_dataset_metadata(
         grid_override: 'Grid | tuple[int, int, int] | list[int] | None' = None,
         apply_saved_alignment: 'bool' = False,
         volume_shape: 'Sequence[int] | None' = None,
-    ) -> 'tuple[Grid, Detector, Geometry]'
+    ) -> 'tuple[Grid, Detector, ScanGeometry]'
 def tomojax.io.load_dataset(path: 'PathLike') -> 'ProjectionDataset'
 def tomojax.io.load_nikon_xtekct(
         path: 'str | PathLike[str]',

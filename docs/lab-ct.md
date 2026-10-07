@@ -206,6 +206,34 @@ their arrangement over the scan and refuses vectors where they do not.
 Projections of the converted scan agree with ASTRA's to 0.03% on tilted,
 offset and jittered geometries.
 
+Where the arrangement changes partway through, as in a multi-orbit scan with
+the source at several heights or a tall sample scanned in stacked sections,
+each run of views becomes a segment of a `ConeSegments` geometry, which the
+iterative methods reconstruct together (`tj.Scan.combine([a, b, c])` builds one
+from separate scans). FDK reconstructs one circular orbit and refuses them.
+
+### A real lab scan: the FIPS walnuts
+
+`bench/walnut.py` reconstructs the walnut collection of Der Sarkissian et al.
+(Scientific Data 6, 215, 2019; CC BY 4.0): three source orbits of 1200
+projections each on a FleX-ray scanner, with per-view geometry vectors and a
+reference reconstruction (50 iterations of non-negative least squares on all
+three orbits, 501³ voxels of 0.1 mm). On Walnut 1, on a laptop RTX 4070:
+
+| | TomoJAX | ASTRA |
+| --- | --- | --- |
+| Geometry from the vectors | source 66.0014 mm, detector 199.0062 mm (the scanner's log: 66.0014, 199.0062) | |
+| FDK, one orbit (1200 views) | 3.4 s; within 0.06% of ASTRA's volume and 0.6% of the authors' published FDK | 2.2 s |
+| Error against the reference, in the walnut | 0.099 | 0.099 |
+| Non-negative least squares, three orbits, every 4th view, 20 iterations | 593 s; 0.152 against the reference | 217 s (the reference's own solver); 0.147 |
+
+The volumes agree with ASTRA's; the speed does not yet. The FleX-ray's
+rotation axis leans 0.5° across the detector, which sends both TomoJAX
+projectors to their general kernels: on this scan they take 1.8 times as long
+as for an upright axis, and the iterative reconstruction is 2.7 times slower
+than ASTRA's. FDK's backprojection also loses cache reuse at this scan's
+magnification of 3, where each voxel spans two detector rows.
+
 ## Limitations
 
 TomoJAX models a circular source orbit (no helical scans) and a flat

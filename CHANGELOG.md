@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Scans whose source and detector arrangement changes partway (multi-orbit
+  scans, stacked sections of a tall sample) are `tomojax.geometry.ConeSegments`:
+  one arrangement per run of views, reconstructed together by CGLS, FISTA and
+  SPDHG, saved and loaded like any scan. `Scan.from_astra` splits vectors into
+  segments where the arrangement changes, and `tj.Scan.combine` joins scans.
+  `tomojax.geometry.ScanGeometry` names what every scan geometry provides (grid,
+  detector, angles). FDK streams the next batch of views while the current one
+  is filtered and backprojected.
 - Move ASTRA Toolbox scans to TomoJAX and back: `tj.Scan.from_astra(data,
   proj_geom, vol_geom)` reads `cone` and `cone_vec` geometries (per-view source,
   detector and pixel vectors) as a fitted circular orbit plus per-view pose

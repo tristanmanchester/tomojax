@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
@@ -13,7 +13,10 @@ from .transforms import align_u_to_v
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from .base import Detector, Grid, PoseMatrix, RayPair
+    import jax
+    import jax.numpy as jnp
+
+    from .base import Detector, Grid, PoseMatrix, RayPair, ScanGeometry
 
 
 @dataclass(frozen=True)
@@ -168,10 +171,106 @@ class ConeGeometry:
         return origin_fn, dir_fn
 
 
+@dataclass(frozen=True)
+class ConeSegments:
+    """A scan made of cone-beam segments, each with its own source and detector arrangement.
+
+    Segments share the reconstruction grid and the detector's pixel count; their
+    views follow one another. Multi-orbit scans (a source at several heights),
+    stacked scans of a tall sample and tiled fields of view are segmented. The
+    iterative solvers and projectors take them; FDK, which assumes one circular
+    orbit, does not.
+    """
+
+    segments: tuple[ScanGeometry, ...]
+
+    def __post_init__(self) -> None:
+        if not self.segments:
+            raise ValueError("ConeSegments needs at least one segment")
+        first = self.segments[0]
+        for segment in self.segments:
+            if beam_of(segment) is None:
+                raise ValueError("ConeSegments holds cone-beam geometries")
+            if segment.grid != first.grid:
+                raise ValueError("ConeSegments' segments share one reconstruction grid")
+            detector, shared = segment.detector, first.detector
+            if (detector.nu, detector.nv) != (shared.nu, shared.nv):
+                raise ValueError("ConeSegments' detectors have the same pixel count")
+
+    @property
+    def grid(self) -> Grid:
+        """The shared reconstruction grid."""
+        return self.segments[0].grid
+
+    @property
+    def detector(self) -> Detector:
+        """The first segment's detector (every segment has its pixel count)."""
+        return self.segments[0].detector
+
+    @property
+    def thetas_deg(self) -> list[float]:
+        """Every view's rotation angle, segment after segment."""
+        return [float(t) for s in self.segments for t in s.thetas_deg]
+
+    @property
+    def beam(self) -> ConeBeam:
+        """Not defined: each segment has its own beam (see :func:`cone_parts`)."""
+        raise ValueError(
+            "this scan has one source-detector arrangement per segment; reconstruct it "
+            "with cgls, fista or spdhg (FDK and alignment take one arrangement)"
+        )
+
+    def _locate(self, i: int) -> tuple[ScanGeometry, int]:
+        for segment in self.segments:
+            count = len(segment.thetas_deg)
+            if i < count:
+                return segment, i
+            i -= count
+        raise IndexError("view index out of range")
+
+    def pose_for_view(self, i: int) -> PoseMatrix:
+        """Return the world-from-object pose of view ``i`` in its segment."""
+        segment, j = self._locate(i)
+        return segment.pose_for_view(j)
+
+    def rays_for_view(self, i: int) -> RayPair:
+        """Return the ray callbacks of view ``i`` in its segment."""
+        segment, j = self._locate(i)
+        return segment.rays_for_view(j)
+
+    def stack_poses(self, n_views: int, dtype: jnp.dtype) -> jax.Array:
+        """Every segment's poses, stacked (see ``stack_view_poses``)."""
+        import jax.numpy as jnp
+
+        from .views import stack_view_poses
+
+        stacks = [stack_view_poses(s, len(s.thetas_deg), dtype=dtype) for s in self.segments]
+        return jnp.concatenate(stacks)[: int(n_views)]
+
+
 def beam_of(geometry: object) -> ConeBeam | None:
-    """Return a geometry's cone beam, or None for parallel-beam geometries."""
+    """Return a geometry's cone beam, or None for parallel-beam geometries.
+
+    Raises for :class:`ConeSegments`, which has one beam per segment.
+    """
     beam = getattr(geometry, "beam", None)
     return beam if isinstance(beam, ConeBeam) else None
+
+
+def is_cone_beam(geometry: object) -> bool:
+    """Whether ``geometry`` traces diverging rays (a cone beam, or cone segments)."""
+    return isinstance(geometry, ConeSegments) or beam_of(geometry) is not None
+
+
+def cone_parts(geometry: ScanGeometry, n_views: int) -> tuple[tuple[int, ConeBeam, Detector], ...]:
+    """``(views, beam, detector)`` for each run of views sharing an arrangement."""
+    if isinstance(geometry, ConeSegments):
+        parts = tuple((len(s.thetas_deg), beam_of(s), s.detector) for s in geometry.segments)
+        return cast("tuple[tuple[int, ConeBeam, Detector], ...]", parts)
+    beam = beam_of(geometry)
+    if beam is None:
+        raise ValueError("cone_parts needs a cone-beam geometry")
+    return ((int(n_views), beam, geometry.detector),)
 
 
 def require_parallel_beam(geometry: object, context: str) -> None:
@@ -183,4 +282,12 @@ def require_parallel_beam(geometry: object, context: str) -> None:
         )
 
 
-__all__ = ["ConeBeam", "ConeGeometry", "beam_of", "require_parallel_beam"]
+__all__ = [
+    "ConeBeam",
+    "ConeGeometry",
+    "ConeSegments",
+    "beam_of",
+    "cone_parts",
+    "is_cone_beam",
+    "require_parallel_beam",
+]

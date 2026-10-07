@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import TypedDict
+from typing import Any, TypedDict
 
 import numpy as np
 
@@ -33,6 +33,17 @@ def _copy_array_metadata(value: object) -> np.ndarray | None:
     if value is None:
         return None
     return np.array(value, copy=True)
+
+
+# Geometry metadata keys copied into geometry inputs, with their conversions.
+_GEOMETRY_PASSTHROUGH: dict[str, Callable[[Any], Any]] = {
+    "tilt_deg": float,
+    "tilt_about": str,
+    "cone_beam": lambda value: value,
+    "cone_segments": lambda value: value,
+    "axis_unit_lab": lambda value: value,
+    "detector_roll_deg": float,
+}
 
 
 @dataclass(slots=True)
@@ -237,21 +248,10 @@ class LoadedNXTomo:
         if self.metadata.align_gauge is not None:
             payload["align_gauge"] = self.metadata.align_gauge
         geom_meta = self.metadata.geometry_meta or {}
-        tilt_deg = geom_meta.get("tilt_deg")
-        if tilt_deg is not None:
-            payload["tilt_deg"] = float(tilt_deg)
-        tilt_about = geom_meta.get("tilt_about")
-        if tilt_about is not None:
-            payload["tilt_about"] = str(tilt_about)
-        cone_beam = geom_meta.get("cone_beam")
-        if cone_beam is not None:
-            payload["cone_beam"] = cone_beam
-        axis_unit_lab = geom_meta.get("axis_unit_lab")
-        if axis_unit_lab is not None:
-            payload["axis_unit_lab"] = axis_unit_lab
-        detector_roll_deg = geom_meta.get("detector_roll_deg")
-        if detector_roll_deg is not None:
-            payload["detector_roll_deg"] = float(detector_roll_deg)
+        for key, convert in _GEOMETRY_PASSTHROUGH.items():
+            value = geom_meta.get(key)
+            if value is not None:
+                payload[key] = convert(value)
         return payload
 
 

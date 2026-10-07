@@ -25,6 +25,7 @@ from scipy.spatial.transform import Rotation
 from tomojax.geometry import (
     ConeBeam,
     ConeGeometry,
+    ConeSegments,
     Detector,
     Grid,
     beam_of,
@@ -35,11 +36,11 @@ from tomojax.geometry import (
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from tomojax.geometry import Geometry
+    from tomojax.geometry import ScanGeometry
 
 # The source and detector may move relative to each other by this fraction of
 # a detector pixel over the scan; TomoJAX models them as one rigid assembly.
-_RIGID_TOLERANCE = 1e-3
+_RIGID_TOLERANCE = 1e-2
 
 
 def cone_vectors(proj_geom: Mapping[str, Any]) -> np.ndarray:
@@ -94,27 +95,40 @@ def _detector_axes(
     return e_u, e_v, beam, data
 
 
-def _scanner(
-    vectors: np.ndarray, e_u: np.ndarray, e_v: np.ndarray, beam: np.ndarray, shape: tuple[int, int]
-) -> tuple[float, float, Detector]:
-    """Source-to-axis and source-to-detector distances and the detector, shared by every view."""
-    source, centre = vectors[:, :3], vectors[:, 3:6]
-    du, dv = np.linalg.norm(vectors[:, 6:9], axis=1), np.linalg.norm(vectors[:, 9:12], axis=1)
-    offset = centre - source
-    sdd = np.sum(offset * beam, axis=1)
-    cu, cv = np.sum(offset * e_u, axis=1), np.sum(offset * e_v, axis=1)
-    for name, values in (("pixel size", (du, dv)), ("source-detector", (sdd, cu, cv))):
-        spread = max(float(np.ptp(value)) for value in values)
-        if spread > _RIGID_TOLERANCE * float(np.mean(du)):
-            raise ValueError(
-                f"the {name} changes by {spread:.3g} over the scan; TomoJAX models a rigid "
-                "source and detector"
-            )
-    rows, cols = shape
-    centre_uv = (float(np.mean(cu)), float(np.mean(cv)))
-    detector = Detector(cols, rows, float(np.mean(du)), float(np.mean(dv)), centre_uv)
-    sod = float(np.mean(np.sum(-source * beam, axis=1)))
-    return sod, float(np.mean(sdd)), detector
+def _arrangement(
+    vectors: np.ndarray, e_u: np.ndarray, e_v: np.ndarray, beam: np.ndarray
+) -> np.ndarray:
+    """Each view's source-detector arrangement: distance, detector offset and pixel size."""
+    offset = vectors[:, 3:6] - vectors[:, :3]
+    return np.column_stack(
+        [
+            np.sum(offset * beam, axis=1),
+            np.sum(offset * e_u, axis=1),
+            np.sum(offset * e_v, axis=1),
+            np.linalg.norm(vectors[:, 6:9], axis=1),
+            np.linalg.norm(vectors[:, 9:12], axis=1),
+        ]
+    )
+
+
+def _runs(arrangement: np.ndarray) -> list[slice]:
+    """Runs of consecutive views sharing an arrangement (to a hundredth of a pixel)."""
+    tolerance = _RIGID_TOLERANCE * float(np.mean(arrangement[:, 3]))
+    runs, start = [], 0
+    for view in range(1, len(arrangement) + 1):
+        if (
+            view == len(arrangement)
+            or np.max(np.abs(arrangement[view] - arrangement[start])) > tolerance
+        ):
+            runs.append(slice(start, view))
+            start = view
+    if any(run.stop - run.start < 2 for run in runs):
+        raise ValueError(
+            "the source and detector move relative to each other from view to view; "
+            "TomoJAX models a rigid source and detector, or runs of views with one "
+            "arrangement each"
+        )
+    return runs
 
 
 def _orbit(rotation: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -133,35 +147,37 @@ def _orbit(rotation: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return turn, theta
 
 
-def from_astra(
-    projections: np.ndarray, proj_geom: Mapping[str, Any], vol_geom: Mapping[str, Any]
-) -> tuple[np.ndarray, ConeGeometry, Grid, np.ndarray]:
-    """Projections ``(view, v, u)``, nominal geometry, grid and per-view poses.
+def _segment(
+    vectors: np.ndarray,
+    axes: tuple[np.ndarray, np.ndarray, np.ndarray],
+    arrangement: np.ndarray,
+    grid: Grid,
+    shape: tuple[int, int],
+    *,
+    move_grid: bool,
+) -> tuple[ConeGeometry, np.ndarray]:
+    """The circle and per-view corrections of views sharing one arrangement.
 
-    ``projections`` are in ASTRA's ``(rows, views, columns)`` layout.
+    ``move_grid`` lets a vertical offset of the volume from the source move
+    the grid; otherwise it stays in the corrections (segments share a grid).
     """
-    vectors = cone_vectors(proj_geom)
-    rows, cols = int(proj_geom["DetectorRowCount"]), int(proj_geom["DetectorColCount"])
-    data = np.asarray(projections, np.float32)
-    if data.shape != (rows, len(vectors), cols):
-        raise ValueError(
-            f"projections have shape {data.shape}; the geometry needs (rows, views, columns) "
-            f"= {(rows, len(vectors), cols)}"
-        )
-    e_u, e_v, beam, data = _detector_axes(vectors, np.transpose(data, (1, 0, 2)))
-    sod, sdd, detector = _scanner(vectors, e_u, e_v, beam, (rows, cols))
+    e_u, e_v, beam = axes
+    sdd, cu, cv, du, dv = (float(v) for v in np.mean(arrangement, axis=0))
+    rows, cols = shape
+    detector = Detector(cols, rows, du, dv, (cu, cv))
+    sod = float(np.mean(np.sum(-vectors[:, :3] * beam, axis=1)))
     # Object (ASTRA world) to lab: rows e_u, beam, e_v; the source lands at (0, -sod, 0).
     rotation = np.stack([e_u, beam, e_v], axis=1)
     translation = -np.einsum("nij,nj->ni", rotation, vectors[:, :3] + sod * beam)
     turn, theta = _orbit(rotation)
     axis = turn[:, 2]
-    # A shift along the axis commutes with the rotation: it moves the grid
-    # instead (object coordinates X' = X + height z).
-    height = float(np.mean(translation @ axis))
-    translation = translation - height * rotation[:, :, 2]
-    grid = grid_from_astra(vol_geom)
-    cx, cy, cz = grid.vol_center or (0.0, 0.0, 0.0)
-    grid = replace(grid, vol_center=(cx, cy, cz + height))
+    if move_grid:
+        # A shift along the axis commutes with the rotation: it moves the grid
+        # instead (object coordinates X' = X + height z).
+        height = float(np.mean(translation @ axis))
+        translation = translation - height * rotation[:, :, 2]
+        cx, cy, cz = grid.vol_center or (0.0, 0.0, 0.0)
+        grid = replace(grid, vol_center=(cx, cy, cz + height))
     cone = ConeBeam(sod, sdd, axis_offset=float(np.mean(translation[:, 0])))
     axis_unit = (float(axis[0]), float(axis[1]), float(axis[2]))
     # ConeGeometry aligns +z to the axis, then turns by theta about it.
@@ -177,25 +193,59 @@ def from_astra(
     beta, alpha, phi = Rotation.from_matrix(residual).as_euler("YXZ").T
     shifts = translation - nominal[:, :3, 3]
     poses = np.column_stack([alpha, beta, phi, shifts[:, 0], shifts[:, 2], shifts[:, 1]])
-    return data, geometry, grid, poses.astype(np.float32)
+    return geometry, poses.astype(np.float32)
 
 
-def to_astra(
-    projections: np.ndarray, geometry: Geometry, grid: Grid, detector: Detector
-) -> tuple[np.ndarray, dict[str, Any], dict[str, Any]]:
-    """ASTRA ``(rows, views, columns)`` projections, ``cone_vec`` geometry and volume."""
-    beam = beam_of(geometry)
+def from_astra(
+    projections: np.ndarray, proj_geom: Mapping[str, Any], vol_geom: Mapping[str, Any]
+) -> tuple[np.ndarray, list[tuple[ConeGeometry, np.ndarray]]]:
+    """Projections ``(view, v, u)`` and each segment's circle and per-view poses.
+
+    ``projections`` are in ASTRA's ``(rows, views, columns)`` layout. Views keep
+    their order; a new segment starts wherever the source-detector arrangement
+    changes.
+    """
+    vectors = cone_vectors(proj_geom)
+    rows, cols = int(proj_geom["DetectorRowCount"]), int(proj_geom["DetectorColCount"])
+    data = np.asarray(projections, np.float32)
+    if data.shape != (rows, len(vectors), cols):
+        raise ValueError(
+            f"projections have shape {data.shape}; the geometry needs (rows, views, columns) "
+            f"= {(rows, len(vectors), cols)}"
+        )
+    e_u, e_v, beam, data = _detector_axes(vectors, np.transpose(data, (1, 0, 2)))
+    arrangement = _arrangement(vectors, e_u, e_v, beam)
+    runs = _runs(arrangement)
+    grid = grid_from_astra(vol_geom)
+    segments = [
+        _segment(
+            vectors[run],
+            (e_u[run], e_v[run], beam[run]),
+            arrangement[run],
+            grid,
+            (rows, cols),
+            move_grid=len(runs) == 1,
+        )
+        for run in runs
+    ]
+    return data, segments
+
+
+def _vectors(segment: ScanGeometry) -> np.ndarray:
+    """ASTRA cone_vec rows of one cone-beam geometry's views."""
+    beam = beam_of(segment)
     if beam is None:
         raise ValueError("to_astra converts cone-beam scans")
-    views = int(np.asarray(projections).shape[0])
-    poses = np.asarray(stack_view_poses(geometry, views), np.float64)
+    detector = segment.detector
+    views = len(segment.thetas_deg)
+    poses = np.asarray(stack_view_poses(segment, views), np.float64)
     rotation, translation = poses[:, :3, :3], poses[:, :3, 3]
     centre, e_u, e_v = beam.detector_frame(detector)
 
     def to_object(point: np.ndarray) -> np.ndarray:
         return np.einsum("nji,nj->ni", rotation, point[None, :] - translation)
 
-    vectors = np.concatenate(
+    return np.concatenate(
         [
             to_object(beam.source()),
             to_object(centre),
@@ -204,11 +254,18 @@ def to_astra(
         ],
         axis=1,
     )
+
+
+def to_astra(
+    projections: np.ndarray, geometry: ScanGeometry, grid: Grid, detector: Detector
+) -> tuple[np.ndarray, dict[str, Any], dict[str, Any]]:
+    """ASTRA ``(rows, views, columns)`` projections, ``cone_vec`` geometry and volume."""
+    segments = geometry.segments if isinstance(geometry, ConeSegments) else (geometry,)
     proj_geom = {
         "type": "cone_vec",
         "DetectorRowCount": int(detector.nv),
         "DetectorColCount": int(detector.nu),
-        "Vectors": vectors,
+        "Vectors": np.concatenate([_vectors(segment) for segment in segments]),
     }
     origin = np.asarray(grid_volume_origin(grid), np.float64)
     spacing = np.array([grid.vx, grid.vy, grid.vz])

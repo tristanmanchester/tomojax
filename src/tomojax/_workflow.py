@@ -14,7 +14,7 @@ results can be reconstructed, aligned again or saved without restating it::
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, is_dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -28,13 +28,13 @@ from tomojax.geometry import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Iterable, Mapping, Sequence
     from os import PathLike
 
     import jax
 
     from tomojax.alignment import AlignConfig
-    from tomojax.geometry import Detector, Geometry, Grid
+    from tomojax.geometry import ConeSegments, Detector, Geometry, Grid, ScanGeometry
     from tomojax.io import ProjectionDataset
 
 type Method = Literal["fbp", "cgls", "fista", "spdhg"]
@@ -42,7 +42,14 @@ METHODS: tuple[Method, ...] = ("fbp", "cgls", "fista", "spdhg")
 
 # Geometry metadata keys a geometry object owns; other keys (provenance) carry over.
 _GEOMETRY_KEYS = frozenset(
-    {"cone_beam", "tilt_deg", "tilt_about", "axis_unit_lab", "detector_roll_deg"}
+    {
+        "cone_beam",
+        "cone_segments",
+        "tilt_deg",
+        "tilt_about",
+        "axis_unit_lab",
+        "detector_roll_deg",
+    }
 )
 
 
@@ -58,7 +65,7 @@ class Scan:
     """
 
     projections: np.ndarray | jax.Array
-    geometry: Geometry
+    geometry: ScanGeometry
     name: str = "sample"
     source: ProjectionDataset | None = field(default=None, repr=False, compare=False)
 
@@ -94,8 +101,19 @@ class Scan:
         Rotations in radians, translations in the geometry's length unit, in
         the detector frame. None when the scan carries no corrections.
         """
-        params = getattr(self.geometry, "align_params", None)
-        return None if params is None else np.asarray(params)
+        segments = getattr(self.geometry, "segments", None)
+        if segments is None:
+            params = getattr(self.geometry, "align_params", None)
+            return None if params is None else np.asarray(params)
+        tables = [getattr(s, "align_params", None) for s in segments]
+        if all(t is None for t in tables):
+            return None
+        return np.concatenate(
+            [
+                np.zeros((len(s.thetas_deg), 6), np.float32) if t is None else np.asarray(t)
+                for s, t in zip(segments, tables, strict=True)
+            ]
+        )
 
     @classmethod
     def from_astra(
@@ -119,12 +137,34 @@ class Scan:
         and TomoJAX the object, so :attr:`angles` run the other way.
         """
         from tomojax._astra import from_astra
-        from tomojax._data.geometry_meta import AugmentedGeometry
+        from tomojax.geometry import ConeSegments
 
-        data, geometry, _, poses = from_astra(projections, proj_geom, vol_geom)
-        if np.max(np.abs(poses)) > 1e-7:
-            geometry = AugmentedGeometry(geometry, poses, translation_frame="detector")
-        return cls(data, geometry, name=name)
+        data, segments = from_astra(projections, proj_geom, vol_geom)
+        posed = [_with_corrections(geometry, poses) for geometry, poses in segments]
+        if len(posed) == 1:
+            return cls(data, posed[0], name=name)
+        return cls(data, ConeSegments(tuple(posed)), name=name)
+
+    @classmethod
+    def combine(cls, scans: Sequence[Scan], *, name: str | None = None) -> Scan:
+        """One scan of the same object from several cone-beam scans, view after view.
+
+        For scans that differ in their source and detector arrangement (a
+        multi-orbit scan, a tall sample scanned in stacked sections): each
+        becomes a :class:`~tomojax.geometry.ConeSegments` segment. They share
+        ``scans[0]``'s grid and need equal detector pixel counts.
+        """
+        from tomojax.geometry import ConeSegments
+
+        if not scans:
+            raise ValueError("Scan.combine needs at least one scan")
+        grid = scans[0].grid
+        parts = []
+        for scan in scans:
+            geometry = _regrid(scan.geometry, grid)
+            parts.extend(geometry.segments if isinstance(geometry, ConeSegments) else (geometry,))
+        projections = np.concatenate([np.asarray(s.projections) for s in scans])
+        return cls(projections, ConeSegments(tuple(parts)), name=name or scans[0].name)
 
     def to_astra(self) -> tuple[np.ndarray, dict[str, Any], dict[str, Any]]:
         """ASTRA ``(rows, views, columns)`` projections, ``cone_vec`` and volume geometries.
@@ -226,8 +266,27 @@ def save(path: str | PathLike[str], item: Scan | Reconstruction | Alignment) -> 
     save_dataset(path, record)
 
 
+def _with_corrections(geometry: ScanGeometry, poses: np.ndarray) -> ScanGeometry:
+    """``geometry`` with per-view pose corrections, unless they move nothing.
+
+    Corrections moving no voxel a hundredth of a pixel are rounding noise.
+    """
+    grid, detector = geometry.grid, geometry.detector
+    reach = float(np.linalg.norm([grid.nx * grid.vx, grid.ny * grid.vy, grid.nz * grid.vz]))
+    largest = np.max(np.abs(poses[:, :3])) * reach / 2 + np.max(np.abs(poses[:, 3:]))
+    if largest <= 0.01 * detector.du:
+        return geometry
+    from tomojax._data.geometry_meta import AugmentedGeometry
+
+    return AugmentedGeometry(geometry, poses, translation_frame="detector")
+
+
 def _describe(geometry: Geometry) -> tuple[str, dict[str, object], Any, Geometry]:
     """Geometry type, metadata and per-view poses of ``geometry``, and its base geometry."""
+    from tomojax.geometry import ConeSegments
+
+    if isinstance(geometry, ConeSegments):
+        return _describe_segments(geometry)
     poses = None
     meta: dict[str, object] = {}
     base = geometry
@@ -248,6 +307,23 @@ def _describe(geometry: Geometry) -> tuple[str, dict[str, object], Any, Geometry
     if isinstance(base, ParallelGeometry):
         return "parallel", meta, poses, base
     raise TypeError(f"cannot describe a {type(base).__name__} geometry")
+
+
+def _describe_segments(
+    geometry: ConeSegments,
+) -> tuple[str, dict[str, object], Any, Geometry]:
+    """:func:`_describe` for segments: each segment's arrangement under ``cone_segments``."""
+    entries, tables, posed = [], [], False
+    for segment in geometry.segments:
+        _, meta, poses, _ = _describe(segment)
+        views = len(segment.thetas_deg)
+        detector = segment.detector.to_dict()
+        entries.append({"views": views, "detector": detector, **meta})
+        posed = posed or poses is not None
+        tables.append(np.zeros((views, 6), np.float32) if poses is None else poses[0][:, :6])
+    meta = {"cone_beam": entries[0]["cone_beam"], "cone_segments": entries}
+    poses = (np.concatenate(tables), "detector") if posed else None
+    return "cone", meta, poses, geometry
 
 
 def _record_of(scan: Scan, *, grid: Grid | None = None) -> ProjectionDataset:
@@ -294,10 +370,28 @@ def _scan_from_record(record: ProjectionDataset, *, apply_alignment: bool) -> Sc
     )
 
 
+def _regrid(geometry: ScanGeometry, grid: Grid) -> ScanGeometry:
+    """``geometry`` with ``grid`` as its reconstruction grid, wrappers kept."""
+    from tomojax.geometry import ConeSegments
+
+    if isinstance(geometry, ConeSegments):
+        return ConeSegments(tuple(_regrid(s, grid) for s in geometry.segments))
+    if not is_dataclass(geometry) or isinstance(geometry, type):
+        raise TypeError(f"cannot move a {type(geometry).__name__} to another grid")
+    inner = getattr(geometry, "base", None)
+    if inner is not None:
+        return replace(geometry, base=_regrid(inner, grid))
+    return replace(geometry, grid=grid)
+
+
 def _with_grid(scan: Scan, grid: Grid) -> Scan:
     """``scan`` reconstructed on ``grid`` instead of its own."""
+    from tomojax.geometry import ConeSegments
+
     if grid == scan.grid:
         return scan
+    if isinstance(scan.geometry, ConeSegments):
+        return replace(scan, geometry=_regrid(scan.geometry, grid))
     record = _record_of(scan, grid=grid)
     return replace(_scan_from_record(record, apply_alignment=True), source=scan.source)
 

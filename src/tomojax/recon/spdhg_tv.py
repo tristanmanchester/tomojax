@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.core.geometry.cone import beam_of
+from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.operator_norm import estimate_normal_norm
 from tomojax.core.projector import (
@@ -290,7 +290,7 @@ def _batched_projector(
 ) -> tuple[str | ConeModel, str] | None:
     """Choose batched operators, or None for the ray-model reference path."""
     model, backend = config.projector_model, config.projector_backend
-    if beam_of(geometry) is not None:
+    if is_cone_beam(geometry):
         if config.ray_integrator == "exact":
             raise ValueError(
                 "spdhg_tv: cone-beam geometry uses Joseph sampling, not exact integration"

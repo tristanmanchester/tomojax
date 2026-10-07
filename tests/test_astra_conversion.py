@@ -10,6 +10,7 @@ import tomojax as tj
 
 # check-public-imports: allow-private
 from tomojax._data.geometry_meta import AugmentedGeometry
+import tomojax.geometry
 
 pytestmark = pytest.mark.numerical
 
@@ -139,3 +140,73 @@ def test_from_astra_projects_like_astra(mirrored):
 
     ours = np.asarray(tj.project(scan.geometry, np.transpose(volume_zyx, (2, 1, 0))))
     assert np.linalg.norm(ours - np.asarray(scan.projections)) / np.linalg.norm(data) < 2e-3
+
+
+@pytest.mark.gpu
+def test_a_multi_orbit_astra_scan_becomes_segments_that_project_like_astra():
+    astra = pytest.importorskip("astra")
+    n, rows, cols, views = 32, 40, 40, 30
+    vol_geom = astra.create_vol_geom(n, n, n)
+    volume_zyx = np.transpose(_volume(n), (2, 1, 0)).copy()
+    angles = np.linspace(0, 2 * np.pi, views, endpoint=False)
+    circle = astra.create_proj_geom("cone", 1.0, 1.0, rows, cols, angles, 70.0, 50.0)
+    orbits = []
+    for height in (-6.0, 0.0, 6.0):  # the source moves; the detector stays
+        vectors = astra.geom_2vec(circle)["Vectors"].copy()
+        vectors[:, 2] += height
+        orbits.append(vectors)
+    proj_geom = astra.create_proj_geom("cone_vec", rows, cols, np.concatenate(orbits))
+    volume_id = astra.data3d.create("-vol", vol_geom, volume_zyx)
+    sino_id, data = astra.create_sino3d_gpu(volume_id, proj_geom, vol_geom)
+    astra.data3d.delete([volume_id, sino_id])
+
+    scan = tj.Scan.from_astra(data, proj_geom, vol_geom)
+
+    assert isinstance(scan.geometry, tj.geometry.ConeSegments)
+    assert len(scan.geometry.segments) == 3
+    ours = np.asarray(tj.project(scan.geometry, np.transpose(volume_zyx, (2, 1, 0))))
+    assert np.linalg.norm(ours - np.asarray(scan.projections)) / np.linalg.norm(data) < 2e-3
+    back, proj_back, vol_back = scan.to_astra()
+    np.testing.assert_allclose(proj_back["Vectors"], proj_geom["Vectors"], atol=1e-4)
+    recon = tj.reconstruct(scan, "cgls", iterations=10)
+    assert np.isfinite(np.asarray(recon.volume)).all()
+    with pytest.raises(ValueError, match="one source-detector arrangement per segment"):
+        tj.reconstruct(scan, "fbp")
+
+
+def _two_orbit_scan() -> tj.Scan:
+    grid = tj.Grid(10, 10, 10, 1.0, 1.0, 1.0)
+    angles = np.linspace(0.0, 360.0, 8, endpoint=False)
+    low = tj.ConeGeometry(grid, tj.Detector(16, 14, 1.0, 1.0), angles, tj.ConeBeam(30.0, 50.0))
+    high = tj.ConeGeometry(
+        grid, tj.Detector(16, 14, 1.0, 1.0, (0.0, 4.0)), angles, tj.ConeBeam(32.0, 50.0)
+    )
+    empty = np.zeros((8, 14, 16), np.float32)
+    return tj.Scan.combine([tj.Scan(empty, low), tj.Scan(empty, high)])
+
+
+def test_combined_scans_project_each_segment_with_its_own_arrangement():
+    scan = _two_orbit_scan()
+    volume = _volume(10)
+    combined = np.asarray(tj.project(scan.geometry, volume))
+    for k, segment in enumerate(scan.geometry.segments):  # pyright: ignore[reportAttributeAccessIssue]
+        alone = np.asarray(tj.project(segment, volume))
+        np.testing.assert_allclose(combined[8 * k : 8 * (k + 1)], alone, rtol=1e-5, atol=1e-6)
+    assert len(scan.angles) == 16
+
+
+def test_segmented_scans_save_and_load(tmp_path):
+    scan = _two_orbit_scan()
+    volume = _volume(10)
+    scan = tj.Scan(np.asarray(tj.project(scan.geometry, volume)), scan.geometry)
+    tj.save(tmp_path / "scan.nxs", scan)
+
+    loaded = tj.load(tmp_path / "scan.nxs")
+
+    assert isinstance(loaded.geometry, tj.geometry.ConeSegments)
+    np.testing.assert_allclose(
+        np.asarray(tj.project(loaded.geometry, volume)), np.asarray(scan.projections), atol=1e-5
+    )
+    recon = tj.reconstruct(loaded, "cgls", iterations=3)
+    tj.save(tmp_path / "recon.nxs", recon)
+    assert tj.load_reconstruction(tmp_path / "recon.nxs").volume.shape == (10, 10, 10)

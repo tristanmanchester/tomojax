@@ -21,7 +21,7 @@ from tomojax._data import (
     save_nxtomo,
     validate_nxtomo,
 )
-from tomojax.core.geometry import Detector, Geometry, Grid
+from tomojax.core.geometry import Detector, Grid, ScanGeometry
 from tomojax.io._tiff import TIFF_SUFFIXES, tiff_files
 
 __all__ = [
@@ -75,7 +75,7 @@ def build_geometry_from_dataset_metadata(
     grid_override: Grid | tuple[int, int, int] | list[int] | None = None,
     apply_saved_alignment: bool = False,
     volume_shape: Sequence[int] | None = None,
-) -> tuple[Grid, Detector, Geometry]:
+) -> tuple[Grid, Detector, ScanGeometry]:
     """Build geometry objects from normalized dataset metadata.
 
     Keeping this wrapper in `tomojax.io` makes the command/data dependency
@@ -415,6 +415,7 @@ def _merge_geometry_metadata_dict(
         "axis_unit_lab",
         "detector_roll_deg",
         "cone_beam",
+        "cone_segments",
     ):
         value = geometry_metadata.get(key)
         if value is not None:

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 from pathlib import Path
 import time
 from typing import Any
@@ -50,9 +51,13 @@ def load_orbit(walnut: Path, orbit: int, every: int = 1) -> tuple[np.ndarray, np
     return data, vectors
 
 
-def reference(walnut: Path) -> np.ndarray | None:
-    """The published reconstruction as an ``(x, y, z)`` array, if present."""
-    files = sorted((walnut / "Reconstructions").glob("full_AGD_50_*.tiff"))
+def reference(walnut: Path, name: str = "full_AGD_50") -> np.ndarray | None:
+    """A published reconstruction as an ``(x, y, z)`` array, if present.
+
+    ``full_AGD_50`` is the three-orbit reference; ``fdk_posN`` the authors'
+    ASTRA FDK of orbit N.
+    """
+    files = sorted((walnut / "Reconstructions").glob(f"{name}_*.tiff"))
     if not files:
         return None
     zyx = np.stack([np.asarray(iio.imread(f), np.float32) for f in files])
@@ -67,10 +72,43 @@ def volume_geometry(voxels_per_mm: int = 10) -> dict[str, Any]:
     return {"GridColCount": n, "GridRowCount": n, "GridSliceCount": n, "option": window}
 
 
+def _astra_agd(operator: Any, data: np.ndarray, iterations: int) -> np.ndarray:
+    """The reference's solver: Nesterov-accelerated projected gradient, x >= 0.
+
+    As the authors' NesterovGradient.py ASTRA plugin: step 1/L from ten power
+    iterations, momentum restarted whenever the residual rises.
+    """
+    rng = np.random.default_rng(0)
+    b = rng.random(operator.shape[1]).astype(np.float32)
+    for _ in range(10):
+        b = operator.T * (operator * b)
+        lipschitz = float(np.linalg.norm(b))
+        b /= lipschitz
+    step = 1.0 / lipschitz
+    sino = data.ravel()
+    aty = operator.T * sino
+    x = np.zeros(operator.shape[1], np.float32)
+    x_old, normal, normal_old = x.copy(), np.zeros_like(x), np.zeros_like(x)
+    gradient, t, losses = -aty, 1.0, []
+    for _ in range(iterations):
+        tau = (t - 1) / (t + 2)
+        t += 1
+        direction = gradient - tau / step * (x - x_old) + tau * (normal - normal_old)
+        x_old[:] = x
+        x = np.clip(x - step * direction, 0, None)
+        forward = operator * x
+        normal_old, normal = normal, operator.T * forward
+        gradient = normal - aty
+        losses.append(0.5 * float(np.linalg.norm(forward - sino)) ** 2)
+        if losses[-1] > min(losses):
+            t = 1.0
+    return x
+
+
 def astra_reconstruct(
     data: np.ndarray, vectors: np.ndarray, vol_geom: dict[str, Any], method: str, iterations: int
 ) -> np.ndarray:
-    """ASTRA FDK or SIRT-free CGLS on the same data, as an ``(x, y, z)`` array."""
+    """ASTRA FDK, or the reference's accelerated NNLS, on the same data, as ``(x, y, z)``."""
     import astra
 
     proj_geom = astra.create_proj_geom("cone_vec", ROWS, COLS, vectors)
@@ -78,15 +116,20 @@ def astra_reconstruct(
         vol_geom["GridRowCount"], vol_geom["GridColCount"], vol_geom["GridSliceCount"]
     )
     geometry["option"].update(vol_geom["option"])
-    volume = np.zeros(
-        (geometry["GridSliceCount"], geometry["GridRowCount"], geometry["GridColCount"]), np.float32
-    )
+    shape = (geometry["GridSliceCount"], geometry["GridRowCount"], geometry["GridColCount"])
+    if method != "fbp":
+        projector = astra.create_projector("cuda3d", proj_geom, geometry)
+        operator = astra.OpTomo(projector)
+        volume = _astra_agd(operator, np.ascontiguousarray(data), iterations).reshape(shape)
+        astra.projector.delete(projector)
+        return np.transpose(volume, (2, 1, 0))
+    volume = np.zeros(shape, np.float32)
     volume_id = astra.data3d.link("-vol", geometry, volume)
     sino_id = astra.data3d.link("-sino", proj_geom, np.ascontiguousarray(data))
-    config = astra.astra_dict("FDK_CUDA" if method == "fbp" else "CGLS3D_CUDA")
+    config = astra.astra_dict("FDK_CUDA")
     config["ProjectionDataId"], config["ReconstructionDataId"] = sino_id, volume_id
     algorithm = astra.algorithm.create(config)
-    astra.algorithm.run(algorithm, 1 if method == "fbp" else iterations)
+    astra.algorithm.run(algorithm, 1)
     astra.algorithm.delete(algorithm)
     astra.data3d.delete([volume_id, sino_id])
     return np.transpose(volume, (2, 1, 0))
@@ -118,6 +161,8 @@ def main() -> None:
     parser.add_argument("--astra", action="store_true", help="Also reconstruct with ASTRA")
     parser.add_argument("--save", type=Path, help="Save the TomoJAX reconstruction (.nxs)")
     args = parser.parse_args()
+    # The scanner's TIFFs carry a malformed tag that tifffile reports and skips.
+    logging.getLogger("tifffile").setLevel(logging.ERROR)
 
     start = time.perf_counter()
     orbits = [load_orbit(args.walnut, orbit, args.every) for orbit in args.orbits]
@@ -139,16 +184,20 @@ def main() -> None:
         "orbits": args.orbits,
         "views": len(vectors),
         "load_seconds": time.perf_counter() - start,
-        "geometry": {
-            "source_to_axis_mm": scan.geometry.beam.source_to_axis,  # pyright: ignore[reportAttributeAccessIssue]
-            "source_to_detector_mm": scan.geometry.beam.source_to_detector,  # pyright: ignore[reportAttributeAccessIssue]
-            "pixel_mm": [scan.detector.du, scan.detector.dv],
-            "largest_pose_correction": None
-            if scan.poses is None
-            else {
-                "rotation_deg": float(np.rad2deg(np.abs(scan.poses[:, :3]).max())),
-                "shift_mm": float(np.abs(scan.poses[:, 3:]).max()),
-            },
+        "geometry": [
+            {
+                "source_to_axis_mm": segment.beam.source_to_axis,
+                "source_to_detector_mm": segment.beam.source_to_detector,
+                "detector_centre_mm": list(segment.detector.det_center),
+                "pixel_mm": [segment.detector.du, segment.detector.dv],
+            }
+            for segment in getattr(scan.geometry, "segments", (scan.geometry,))
+        ],
+        "largest_pose_correction": None
+        if scan.poses is None
+        else {
+            "rotation_deg": float(np.rad2deg(np.abs(scan.poses[:, :3]).max())),
+            "shift_mm": float(np.abs(scan.poses[:, 3:]).max()),
         },
     }
     options = {} if args.method == "fbp" else {"iterations": args.iterations}
@@ -161,11 +210,15 @@ def main() -> None:
     truth = reference(args.walnut)
     if truth is not None:
         summary["tomojax"] |= compare(volume, truth)
+    if args.method == "fbp" and len(args.orbits) == 1:
+        published = reference(args.walnut, f"fdk_pos{args.orbits[0]}")
+        if published is not None:
+            summary["tomojax_vs_published_fdk"] = compare(volume, published)
     if args.astra:
         start = time.perf_counter()
         theirs = astra_reconstruct(data, vectors, vol_geom, args.method, args.iterations)
         summary["astra"] = {
-            "method": "FDK_CUDA" if args.method == "fbp" else "CGLS3D_CUDA",
+            "method": "FDK_CUDA" if args.method == "fbp" else "accelerated NNLS (the reference's)",
             "seconds": time.perf_counter() - start,
         }
         if truth is not None:

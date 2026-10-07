@@ -99,8 +99,10 @@ def run_reconstruction_algorithm(request: ReconstructionAlgorithmRequest) -> Rec
 def _host_cone_volume(request: ReconstructionAlgorithmRequest) -> bool:
     """Whether a cone FDK volume is too large to hold on the device."""
     from tomojax.backends import device_free_memory_bytes
-    from tomojax.core.geometry.cone import beam_of
+    from tomojax.core.geometry.cone import ConeSegments, beam_of
 
+    if isinstance(request.geometry, ConeSegments):
+        return False  # FDK refuses segmented scans with its own message.
     if beam_of(request.geometry) is None or request.detector_grid is not None:
         return False
     free = device_free_memory_bytes()

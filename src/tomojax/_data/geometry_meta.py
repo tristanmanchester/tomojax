@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import numpy as np
 
@@ -11,7 +11,6 @@ from tomojax.core.geometry import (
     ConeBeam,
     ConeGeometry,
     Detector,
-    Geometry,
     Grid,
     LaminographyGeometry,
     ParallelGeometry,
@@ -20,9 +19,15 @@ from tomojax.core.geometry import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
-    from tomojax.core.geometry.base import DetectorDict, GridDict, PoseMatrix, RayPair
+    from tomojax.core.geometry.base import (
+        DetectorDict,
+        GridDict,
+        PoseMatrix,
+        RayPair,
+        ScanGeometry,
+    )
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 
@@ -48,6 +53,7 @@ class LoadedGeometryMeta(LoadedGeometryMetaRequired, total=False):
     align_params: np.ndarray
     align_gauge: dict[str, JsonValue]
     cone_beam: dict[str, float]
+    cone_segments: list[dict[str, object]]
 
 
 GridOverride = Grid | tuple[int, int, int] | list[int] | None
@@ -84,9 +90,24 @@ class AugmentedGeometry:
     its lab translation.
     """
 
-    base: Geometry
+    base: ScanGeometry
     align_params: np.ndarray
     translation_frame: str = "object"
+
+    @property
+    def grid(self) -> Grid:
+        """The base geometry's reconstruction grid."""
+        return self.base.grid
+
+    @property
+    def detector(self) -> Detector:
+        """The base geometry's detector."""
+        return self.base.detector
+
+    @property
+    def thetas_deg(self) -> Sequence[float]:
+        """The base geometry's view angles."""
+        return self.base.thetas_deg
 
     def pose_for_view(self, i: int) -> PoseMatrix:
         """Return nominal pose with saved pose correction applied."""
@@ -109,8 +130,23 @@ class AugmentedGeometry:
 class DetectorRollGeometry:
     """Geometry wrapper that preserves calibrated detector roll metadata."""
 
-    base: Geometry
+    base: ScanGeometry
     detector_roll_deg: float
+
+    @property
+    def grid(self) -> Grid:
+        """The base geometry's reconstruction grid."""
+        return self.base.grid
+
+    @property
+    def detector(self) -> Detector:
+        """The base geometry's detector."""
+        return self.base.detector
+
+    @property
+    def thetas_deg(self) -> Sequence[float]:
+        """The base geometry's view angles."""
+        return self.base.thetas_deg
 
     def pose_for_view(self, i: int) -> PoseMatrix:
         """Return the wrapped geometry pose."""
@@ -160,7 +196,10 @@ def _se3_from_pose_params_np(pose_params: np.ndarray) -> np.ndarray:
 
 
 def _detector_from_meta(meta: LoadedGeometryMeta) -> Detector:
-    det_d = meta["detector"]
+    return _detector_from_mapping(meta["detector"])
+
+
+def _detector_from_mapping(det_d: Mapping[str, Any]) -> Detector:
     det_center = det_d.get("det_center", [0.0, 0.0])
     return Detector(
         nu=int(det_d["nu"]),
@@ -273,7 +312,7 @@ def _base_geometry(
     grid: Grid,
     detector: Detector,
     thetas_deg: Sequence[float],
-) -> Geometry:
+) -> ScanGeometry:
     gtype = _normalize_geometry_type(meta.get("geometry_type"))
     if gtype == "cone":
         beam_meta = meta.get("cone_beam")
@@ -312,9 +351,9 @@ def _base_geometry(
 
 
 def _with_detector_roll_metadata(
-    geom: Geometry,
+    geom: ScanGeometry,
     meta: LoadedGeometryMeta,
-) -> Geometry:
+) -> ScanGeometry:
     detector_roll = meta.get("detector_roll_deg")
     if detector_roll is None:
         return geom
@@ -324,13 +363,48 @@ def _with_detector_roll_metadata(
     return DetectorRollGeometry(base=geom, detector_roll_deg=roll)
 
 
+def _segments_from_meta(
+    meta: LoadedGeometryMeta,
+    grid: Grid,
+    thetas_deg: Sequence[float],
+    *,
+    apply_saved_alignment: bool,
+) -> ScanGeometry:
+    """A ``ConeSegments`` geometry from saved ``cone_segments`` metadata."""
+    from tomojax.core.geometry.cone import ConeSegments
+
+    entries = cast("list[dict[str, Any]]", meta.get("cone_segments", []))
+    params = meta.get("align_params") if apply_saved_alignment else None
+    frame = str(meta.get("align_gauge", {}).get("pose_translation_frame", "detector"))
+    segments: list[ScanGeometry] = []
+    start = 0
+    for entry in entries:
+        views = int(entry["views"])
+        piece = cast("LoadedGeometryMeta", {**entry, "geometry_type": "cone"})
+        segment = _base_geometry(
+            meta=piece,
+            grid=grid,
+            detector=_detector_from_mapping(entry["detector"]),
+            thetas_deg=list(thetas_deg[start : start + views]),
+        )
+        if params is not None:
+            table = np.asarray(params, dtype=np.float32)[start : start + views, :6]
+            if np.any(table):
+                segment = AugmentedGeometry(segment, table, translation_frame=frame)
+        segments.append(segment)
+        start += views
+    if start != len(thetas_deg):
+        raise ValueError(f"cone_segments describe {start} views; the dataset has {len(thetas_deg)}")
+    return ConeSegments(tuple(segments))
+
+
 def build_geometry_from_meta(
     meta: LoadedGeometryMeta,
     *,
     grid_override: GridOverride = None,
     apply_saved_alignment: bool = False,
     volume_shape: Sequence[int] | None = None,
-) -> tuple[Grid, Detector, Geometry]:
+) -> tuple[Grid, Detector, ScanGeometry]:
     """Build geometry from NXtomo metadata with sensible fallbacks.
 
     When `grid` metadata is missing, the grid is inferred from detector dimensions
@@ -349,6 +423,17 @@ def build_geometry_from_meta(
         meta,
         apply_saved_angle_offset=apply_saved_alignment,
     )
+    if meta.get("cone_segments"):
+        return (
+            grid,
+            detector,
+            _segments_from_meta(
+                meta,
+                grid,
+                [float(t) for t in thetas_deg],
+                apply_saved_alignment=apply_saved_alignment,
+            ),
+        )
     geom = _with_detector_roll_metadata(
         _base_geometry(meta=meta, grid=grid, detector=detector, thetas_deg=thetas_deg),
         meta,

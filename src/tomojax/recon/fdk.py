@@ -594,14 +594,25 @@ def _fdk(
     virtual = prep.backprojected(beam, detector)
     coeff = cone_coefficients(stack_view_poses(geometry, n_views), grid, virtual, beam)
     out = jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
-    for start in range(0, n_views, prep.batch):
-        stop = min(start + prep.batch, n_views)
-        out = _fdk_batch(
-            _device_views(projections, start, stop), coeff[start:stop], prep.cosine,
-            prep.weights[start:stop], prep.kernel, out,
-            grid=grid, detector=virtual, scale=prep.scale, cuda=prep.cuda,
-            pad_lo=prep.pad_lo, pad_hi=prep.pad_hi,
-        )  # fmt: skip
+    starts = list(range(0, n_views, prep.batch))
+    # Copy the next batch to the device while the current one is filtered and
+    # backprojected.
+    with ThreadPoolExecutor(max_workers=1) as copier:
+        pending = copier.submit(_device_views, projections, 0, min(prep.batch, n_views))
+        for index, start in enumerate(starts):
+            stop = min(start + prep.batch, n_views)
+            views = pending.result()
+            if index + 1 < len(starts):
+                following = starts[index + 1]
+                pending = copier.submit(
+                    _device_views, projections, following, min(following + prep.batch, n_views)
+                )
+            out = _fdk_batch(
+                views, coeff[start:stop], prep.cosine,
+                prep.weights[start:stop], prep.kernel, out,
+                grid=grid, detector=virtual, scale=prep.scale, cuda=prep.cuda,
+                pad_lo=prep.pad_lo, pad_hi=prep.pad_hi,
+            )  # fmt: skip
     return out
 
 

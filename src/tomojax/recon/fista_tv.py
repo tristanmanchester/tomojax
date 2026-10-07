@@ -11,7 +11,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.core.geometry.cone import beam_of, require_parallel_beam
+from tomojax.core.geometry.cone import is_cone_beam, require_parallel_beam
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.operator_norm import estimate_normal_norm
 from tomojax.core.projector import (
@@ -743,7 +743,7 @@ def _batched_projector(
     """Choose batched operators, or None for the ray-model reference path."""
     model, backend = cfg.projector_model, cfg.projector_backend
     requested = 64 if cfg.views_per_batch is None else int(cfg.views_per_batch)
-    if beam_of(geometry) is not None:
+    if is_cone_beam(geometry):
         if cfg.ray_integrator == "exact":
             raise ValueError(
                 "fista_tv: cone-beam geometry uses Joseph sampling, not exact integration"

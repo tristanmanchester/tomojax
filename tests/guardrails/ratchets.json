@@ -2,7 +2,7 @@
   "align_config_fields": 59,
   "exported_names": {
     "tomojax": 17,
-    "tomojax.geometry": 16,
+    "tomojax.geometry": 18,
     "tomojax.recon": 22,
     "tomojax.io": 12,
     "tomojax.alignment": 5,
@@ -38,7 +38,6 @@
     "src/tomojax/_data/_io_nxtomo.py::PLR0912::load_nxtomo",
     "src/tomojax/_data/_io_nxtomo.py::PLR0912::validate_nxtomo",
     "src/tomojax/_data/_io_nxtomo.py::PLR0915::load_nxtomo",
-    "src/tomojax/_data/_io_types.py::C901::geometry_inputs",
     "src/tomojax/_data/_io_types.py::PLR0911::__contains__",
     "src/tomojax/alignment/_config.py::C901::_normalize_optimizer_options",
     "src/tomojax/alignment/_config.py::PLR0912::_normalize_optimizer_options",
@@ -94,9 +93,9 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "type_errors": {
-    "reportArgumentType": 365,
+    "reportArgumentType": 361,
     "reportAssignmentType": 3,
-    "reportAttributeAccessIssue": 172,
+    "reportAttributeAccessIssue": 167,
     "reportCallIssue": 14,
     "reportGeneralTypeIssues": 10,
     "reportIndexIssue": 10,
