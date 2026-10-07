@@ -23,8 +23,8 @@ from tomojax.alignment._model.motion_models import (
 from tomojax.alignment._objectives.loss_adapters import LossAdapter
 from tomojax.alignment._observer import ObserverCallback
 from tomojax.alignment._results import AlignResumeState
+from tomojax.core.cone import ConeModel
 from tomojax.core.geometry.base import Detector, Geometry, Grid
-from tomojax.core.geometry.cone import ConeBeam
 from tomojax.geometry import cylindrical_mask_xy
 
 
@@ -245,7 +245,9 @@ class AlignmentRuntimeContext:
     chunk_size: int
     num_chunks: int
     empty_loss_mask_chunk: jnp.ndarray
-    beam: ConeBeam | None = None
+    # The views' cone arrangements and lab frames; None for a parallel beam.
+    cone: ConeModel | None = None
+    frames: jnp.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -269,7 +271,9 @@ class _PoseObjectiveContext:
     loss_mask: jnp.ndarray | None
     has_loss_mask: bool
     empty_loss_mask_chunk: jnp.ndarray
-    beam: ConeBeam | None = None
+    # The views' cone arrangements and lab frames; None for a parallel beam.
+    cone: ConeModel | None = None
+    frames: jnp.ndarray | None = None
 
 
 def _pose_objective_context(
@@ -302,5 +306,6 @@ def _pose_objective_context(
         loss_mask=runtime.loss_mask,
         has_loss_mask=runtime.has_loss_mask,
         empty_loss_mask_chunk=runtime.empty_loss_mask_chunk,
-        beam=runtime.beam,
+        cone=runtime.cone,
+        frames=runtime.frames,
     )

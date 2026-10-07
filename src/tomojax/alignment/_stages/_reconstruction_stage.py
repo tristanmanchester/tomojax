@@ -22,7 +22,7 @@ from tomojax.alignment._quality_policy import (
 from tomojax.alignment._results import record_reconstruction_info as _record_reconstruction_info
 from tomojax.backends import estimate_views_per_batch_info
 from tomojax.core.backend_policy import normalize_projector_backend
-from tomojax.core.geometry.cone import beam_of
+from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.operator_norm import estimate_normal_norm
 from tomojax.core.pallas_resolver import resolve_pallas_callable
@@ -559,7 +559,7 @@ def _run_public_fista_reconstruction(
             # An initial override below the regulariser's bound cannot provide
             # a usable data bound. Let FISTA estimate it from the operator.
             data_lipschitz = None
-    cone = beam_of(step.recon_geometry) is not None
+    cone = is_cone_beam(step.recon_geometry)
     fista_cfg = FistaConfig(
         # Cone beams use their Joseph operators, on CUDA where available.
         projector_model="auto" if cone else "ray",
@@ -768,7 +768,7 @@ def _run_spdhg_reconstruction(
         step.projections,
         init_x=step.x,
         config=spdhg_cfg,
-        det_grid=None if beam_of(step.recon_geometry) is not None else step.det_grid,
+        det_grid=None if is_cone_beam(step.recon_geometry) else step.det_grid,
     )
 
 
@@ -937,7 +937,7 @@ def _run_reconstruction_step(
         )
 
     if recon_algo == "fista":
-        if beam_of(step.recon_geometry) is not None:
+        if is_cone_beam(step.recon_geometry):
             # Cone beams: the public solver, which models diverging rays.
             x_out, info_rec = _run_public_fista_reconstruction(
                 step,

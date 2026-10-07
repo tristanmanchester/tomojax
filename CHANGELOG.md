@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- `tj.align` takes scans that already carry poses (ASTRA imports, earlier
+  alignments) and corrects them on top, and aligns multi-orbit `ConeSegments`
+  scans as one, bringing their orbits into register. From the FIPS walnut's
+  uncorrected record it recovers the authors' orbit heights (orbit 2 -0.381 mm
+  against -0.397, orbit 3 -0.755 against -0.794), and the reconstruction then
+  matches the corrected one (error 0.155 against 0.154; 0.280 uncorrected);
+  see `bench/walnut_alignment.py` and docs/lab-ct.md. Underneath, cone kernels
+  take per-view lab frames (`tomojax.core.cone.ConeModel`, built for the
+  solver's binned detector), so every solver and alignment level projects each
+  segment in its own arrangement; the least-motion gauge ignores the faint
+  background a reconstruction leaves at the grid edge; FDK lets views
+  repeating an angle share it; and the translation pre-search reconstructs
+  segmented scans with CGLS.
 - The CUDA cone-beam forward projector is 1.3 to 3.7 times faster, and one
   kernel now serves every view: a warp's rays step through the planes
   together (rays entering through the volume's top or bottom had left lanes

@@ -8,6 +8,7 @@ import functools
 import logging
 import math
 import operator
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -17,8 +18,7 @@ from tomojax.core.pallas_resolver import resolve_pallas_callable
 
 from .backend_policy import ProjectorBackendInput, normalize_projector_backend
 from .compilation_cache import enable_persistent_compilation_cache
-from .geometry.base import Detector, Geometry, Grid, grid_volume_origin
-from .geometry.cone import ConeBeam, beam_of
+from .geometry.base import Detector, Geometry, Grid, ScanGeometry, grid_volume_origin
 from .validation import (
     validate_detector,
     validate_detector_grid,
@@ -383,22 +383,36 @@ def _cone_views(
     grid: Grid,
     detector: Detector,
     volume: jnp.ndarray,
-    beam: ConeBeam,
+    frames: jnp.ndarray | np.ndarray,
     projector_backend: object = "jax",
 ) -> jnp.ndarray:
-    from tomojax.core.cone import cone_coefficients, cone_project
+    from tomojax.core.cone import cone_project, frame_coefficients
 
-    coeff = cone_coefficients(poses, grid, detector, beam)
+    coeff = frame_coefficients(poses, frames, grid, detector)
     return cone_project(volume, coeff, grid, detector, backend=_cone_backend(projector_backend))
 
 
 def _cone_backproject_views(
-    poses: jnp.ndarray, grid: Grid, detector: Detector, images: jnp.ndarray, beam: ConeBeam
+    poses: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    images: jnp.ndarray,
+    frames: jnp.ndarray | np.ndarray,
 ) -> jnp.ndarray:
-    from tomojax.core.cone import cone_backproject, cone_coefficients
+    from tomojax.core.cone import cone_backproject, frame_coefficients
 
-    coeff = cone_coefficients(poses, grid, detector, beam)
+    coeff = frame_coefficients(poses, frames, grid, detector)
     return cone_backproject(images, coeff, grid, detector)
+
+
+def _view_frame(geometry: Geometry, detector: Detector, view_index: int) -> np.ndarray | None:
+    """View ``view_index``'s cone-beam lab frame, or None for a parallel beam."""
+    from tomojax.core.cone import cone_model
+
+    cone = cone_model(geometry, detector)
+    if cone is None:
+        return None
+    return cone.frames(len(cast("ScanGeometry", geometry).thetas_deg))[view_index]
 
 
 def forward_project_view_T(
@@ -415,7 +429,7 @@ def forward_project_view_T(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
     projector_backend: ProjectorBackendInput = "jax",
     ray_integrator: str = "sampled",
-    beam: ConeBeam | None = None,
+    frames: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
     """Forward project a single view given pose `T` (4x4, row-major).
 
@@ -423,11 +437,13 @@ def forward_project_view_T(
     rays in world coordinates and transforms them into object coordinates using
     inv(T), then performs incremental stepping along the beam direction expressed
     in the object frame. This avoids a matmul per step and keeps gradients clean.
-    A ``beam`` selects the cone-beam Joseph projector: ``projector_backend``
-    ``"pallas"`` runs its CUDA kernels, ``"jax"`` the differentiable reference.
+    ``frames``, the view's cone-beam lab frame (see
+    :func:`tomojax.core.cone.beam_frame`), selects the cone-beam Joseph
+    projector: ``projector_backend`` ``"pallas"`` runs its CUDA kernels,
+    ``"jax"`` the differentiable reference.
     """
-    if beam is not None:
-        return _cone_views(T[None], grid, detector, volume, beam, projector_backend)[0]
+    if frames is not None:
+        return _cone_views(T[None], grid, detector, volume, frames, projector_backend)[0]
     backend = normalize_projector_backend(projector_backend)
     if ray_integrator == "exact":
         if step_size is not None or n_steps is not None:
@@ -613,11 +629,11 @@ def backproject_view_T(
     gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
     ray_integrator: str = "sampled",
-    beam: ConeBeam | None = None,
+    frames: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
     """Backproject one detector image as the explicit adjoint of the configured projector."""
-    if beam is not None:
-        return _cone_backproject_views(T[None], grid, detector, jnp.asarray(image)[None], beam)
+    if frames is not None:
+        return _cone_backproject_views(T[None], grid, detector, jnp.asarray(image)[None], frames)
     if ray_integrator == "exact":
         if step_size is not None or n_steps is not None:
             raise ValueError("exact ray integration does not accept a step size or sample count")
@@ -662,11 +678,11 @@ def sum_backproject_views_T(
     gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
     ray_integrator: str = "sampled",
-    beam: ConeBeam | None = None,
+    frames: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
-    """Sum explicit mixed-precision adjoints over a fixed chunk."""
-    if beam is not None:
-        return _cone_backproject_views(T_all, grid, detector, images, beam)
+    """Sum explicit mixed-precision adjoints over a fixed chunk (``frames`` as above)."""
+    if frames is not None:
+        return _cone_backproject_views(T_all, grid, detector, images, frames)
     if ray_integrator == "exact":
         if step_size is not None or n_steps is not None:
             raise ValueError("exact ray integration does not accept a step size or sample count")
@@ -767,14 +783,11 @@ def forward_project_view(
     the defaults.
     """
     T = jnp.asarray(geometry.pose_for_view(view_index), dtype=jnp.float32)
-    beam = beam_of(geometry)
-    if beam is not None:
-        from tomojax.core.cone import cone_coefficients, cone_project
-
+    frames = _view_frame(geometry, detector, view_index)
+    if frames is not None:
         if det_grid is not None or ray_integrator == "exact":
             raise ValueError("cone-beam projection needs the canonical grid and Joseph sampling")
-        coeff = cone_coefficients(T[None], grid, detector, beam)
-        return cone_project(volume, coeff, grid, detector)[0]
+        return _cone_views(T[None], grid, detector, volume, frames)[0]
     return forward_project_view_T(
         T,
         grid,
@@ -812,14 +825,11 @@ def backproject_view(
     Cone-beam geometries use the transpose of the cone Joseph projector.
     """
     T = jnp.asarray(geometry.pose_for_view(view_index), dtype=jnp.float32)
-    beam = beam_of(geometry)
-    if beam is not None:
-        from tomojax.core.cone import cone_backproject, cone_coefficients
-
+    frames = _view_frame(geometry, detector, view_index)
+    if frames is not None:
         if det_grid is not None or ray_integrator == "exact":
             raise ValueError("cone-beam projection needs the canonical grid and Joseph sampling")
-        coeff = cone_coefficients(T[None], grid, detector, beam)
-        return cone_backproject(jnp.asarray(image)[None], coeff, grid, detector)
+        return _cone_backproject_views(T[None], grid, detector, jnp.asarray(image)[None], frames)
     return backproject_view_T(
         T,
         grid,

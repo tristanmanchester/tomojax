@@ -141,7 +141,9 @@ def view_weights(geometry: Geometry, detector: Detector, n_views: int) -> np.nda
     """Return ``(views, nu)`` FDK angular weights.
 
     Full turns weigh each view by its angular measure, halved (Wang's weights
-    for an offset detector); short scans use Parker weights.
+    for an offset detector); short scans use Parker weights. Views repeating
+    an angle (several turns, at several heights say) share its measure, so a
+    scan of several turns averages their reconstructions.
     """
     beam = beam_of(geometry)
     if beam is None:
@@ -149,7 +151,19 @@ def view_weights(geometry: Geometry, detector: Detector, n_views: int) -> np.nda
     thetas = getattr(geometry, "thetas_deg", None)
     if thetas is None:
         raise ValueError("FDK needs a geometry with rotation angles (thetas_deg)")
-    angles = np.deg2rad(np.asarray(thetas, dtype=np.float64)[:n_views])
+    all_angles = np.deg2rad(np.asarray(thetas, dtype=np.float64)[:n_views])
+    # Angles a whole number of turns apart, to a millionth of a turn, are one angle.
+    key = np.round(all_angles / (2 * np.pi) * 1e6).astype(np.int64) % 1_000_000
+    _, first, view_angle, repeats = np.unique(
+        key, return_index=True, return_inverse=True, return_counts=True
+    )
+    weights = _distinct_view_weights(beam, detector, all_angles[first])
+    return weights[view_angle] / repeats[view_angle][:, None]
+
+
+def _distinct_view_weights(beam: ConeBeam, detector: Detector, angles: np.ndarray) -> np.ndarray:
+    """:func:`view_weights` for views at distinct ``angles`` (radians)."""
+    n_views = len(angles)
     order = np.argsort(angles)
     sorted_angles = angles[order]
     gaps = np.diff(sorted_angles)

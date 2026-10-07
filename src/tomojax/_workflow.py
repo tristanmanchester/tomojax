@@ -583,18 +583,19 @@ def align(
     ``config`` (a :class:`tomojax.alignment.AlignConfig`) holds expert solver
     settings and replaces the quality profile's defaults.
 
+    A scan that already carries poses (an ASTRA import's, say, or an earlier
+    alignment's) is corrected on top of them, and multi-orbit
+    :class:`~tomojax.geometry.ConeSegments` scans are aligned as one, so their
+    orbits come into register; only ``pose`` alignment takes either.
+
     The returned :attr:`Alignment.scan` carries the corrections, so
-    ``tomojax.reconstruct(result.scan)`` reconstructs with them.
+    ``tomojax.reconstruct(result.scan)`` reconstructs with them;
+    :attr:`Alignment.poses` are the scan's poses, its own included.
     """
     import jax.numpy as jnp
 
     from tomojax.alignment.api import align_multires, alignment_plan, cone_setup, pad_pose_params
 
-    if scan.poses is not None:
-        raise ValueError(
-            "align: the scan already carries pose corrections; align its nominal geometry "
-            "(load it with apply_alignment=False)"
-        )
     plan = alignment_plan(
         mode, scan.grid, quality=quality, levels=levels, freeze=freeze, config=config
     )
@@ -625,6 +626,8 @@ def align(
         poses = np.asarray(pad_pose_params(params), np.float32)
         info = {**dict(run), **record}
         frame = cfg.pose_translation_frame
+        if scan.poses is not None:
+            poses, frame = _composed_poses(scan, poses, frame), "detector"
     corrected = _record_of(calibrated)
     calibration = info.get("geometry_calibration_state")
     if isinstance(calibration, dict):
@@ -646,6 +649,30 @@ def align(
     return Alignment(
         scan=replace(aligned, source=scan.source), volume=volume, poses=poses, info=info
     )
+
+
+def _composed_poses(scan: Scan, corrections: np.ndarray, frame: str) -> np.ndarray:
+    """``scan``'s poses followed by ``corrections`` (in ``frame``), as one detector-frame table.
+
+    The table moves the scan's nominal geometry as its own poses and then the
+    corrections do.
+    """
+    from scipy.spatial.transform import Rotation
+
+    from tomojax._data.geometry_meta import AugmentedGeometry
+    from tomojax.geometry import stack_view_poses
+
+    n = len(scan.angles)
+    nominal = _scan_from_record(_record_of(scan), apply_alignment=False).geometry
+    start = np.asarray(stack_view_poses(nominal, n), np.float64)
+    corrected = AugmentedGeometry(scan.geometry, np.asarray(corrections, np.float32), frame)
+    moved = np.asarray(stack_view_poses(corrected, n), np.float64)
+    rotation = np.einsum("nji,njk->nik", start[:, :3, :3], moved[:, :3, :3])
+    beta, alpha, phi = Rotation.from_matrix(rotation).as_euler("YXZ").T
+    shift = moved[:, :3, 3] - start[:, :3, 3]
+    # (alpha, beta, phi, dx, dz, dy), as Scan.poses.
+    table = np.stack([alpha, beta, phi, shift[:, 0], shift[:, 2], shift[:, 1]], axis=1)
+    return table.astype(np.float32)
 
 
 def _detector(value: object) -> Detector:

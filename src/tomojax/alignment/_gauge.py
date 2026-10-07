@@ -182,8 +182,13 @@ def apply_to_volume(volume: np.ndarray, grid: Grid, gauge: Gauge) -> np.ndarray:
     return moved.astype(np.float32)
 
 
-# Moving the volume may lose this fraction of its integral to the grid edges.
-_MAX_LOST = 0.01
+# Moving the volume may push this fraction of the object past the grid edges: a
+# holder or stem reaching the edge breaks the symmetry too weakly to fix the
+# estimate (the solve drifts along it anyway), an object filling the grid does not.
+_MAX_LOST = 0.05
+# The object: voxels above this fraction of the volume's 99.9th percentile. The
+# low background a reconstruction spreads over the whole grid does not count.
+_OBJECT_LEVEL = 0.1
 # Motions moving no voxel this far (in voxels) are left alone: resampling would
 # only blur the volume.
 _NEGLIGIBLE = 1e-3
@@ -218,8 +223,10 @@ def least_motion_estimate(
     the detector centre (``Detector.det_center[0] += gauge.detector_offset``).
 
     The motion is a symmetry only for an object inside the grid. If moving the
-    volume would push part of it out (more than 1% of its integral), the grid
-    edge already fixes the estimate: it is returned unchanged with gauge None.
+    volume would push part of the object out (more than 5% of its integral;
+    the faint background a reconstruction leaves everywhere does not count),
+    the grid edge already fixes the estimate: it is returned unchanged with
+    gauge None.
     """
     invisible = () if beam else ("dy",)
     gauge = least_motion_gauge(
@@ -233,8 +240,10 @@ def least_motion_estimate(
     if _largest_displacement(gauge, grid) < _NEGLIGIBLE and abs(gauge.detector_offset) < 1e-6:
         return np.asarray(volume), np.asarray(params), Gauge(np.eye(3), np.zeros(3))
     moved_volume = apply_to_volume(volume, grid, gauge)
-    before = float(np.sum(np.abs(volume), dtype=np.float64))
-    after = float(np.sum(np.abs(moved_volume), dtype=np.float64))
+    size = np.abs(np.asarray(volume, np.float32))
+    obj = np.where(size > _OBJECT_LEVEL * np.percentile(size, 99.9), size, 0.0)
+    before = float(np.sum(obj, dtype=np.float64))
+    after = float(np.sum(apply_to_volume(obj, grid, gauge), dtype=np.float64))
     if before > 0 and abs(after - before) > _MAX_LOST * before:
         return np.asarray(volume), np.asarray(params), None
     keep = tuple(name for name in DOF_NAMES if name not in active or name in invisible)

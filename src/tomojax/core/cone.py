@@ -28,6 +28,7 @@ Two implementations agree to FP32 rounding:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from functools import cache, partial
 from importlib.resources import files
 import os
@@ -53,32 +54,102 @@ def cone_coefficients(
     poses: jax.Array, grid: Grid, detector: Detector, beam: ConeBeam
 ) -> jax.Array:
     """Return ``(views, 25)`` FP32 per-view coefficients for the cone kernels."""
+    return frame_coefficients(poses, beam_frame(beam, detector), grid, detector)
+
+
+def beam_frame(beam: ConeBeam, detector: Detector) -> np.ndarray:
+    """``(4, 3)`` lab detector centre, unit u and v directions and source of ``beam``."""
     centre, u_dir, v_dir = beam.detector_frame(detector)
-    frame = jnp.asarray(np.stack([centre, u_dir, v_dir, beam.source()]), jnp.float32)
-    return _coefficients(jnp.asarray(poses, jnp.float32), frame, grid=grid, detector=detector)
+    return np.stack([centre, u_dir, v_dir, beam.source()]).astype(np.float32)
+
+
+def frame_coefficients(
+    poses: jax.Array, frames: jax.Array | np.ndarray, grid: Grid, detector: Detector
+) -> jax.Array:
+    """:func:`cone_coefficients` from lab frames (see :func:`beam_frame`), one per view.
+
+    ``frames`` is ``(4, 3)``, shared by every view, or ``(views, 4, 3)``;
+    ``detector`` gives the pixel count and pitch.
+    """
+    poses = jnp.asarray(poses, jnp.float32)
+    frames = jnp.broadcast_to(jnp.asarray(frames, jnp.float32), (poses.shape[0], 4, 3))
+    return _coefficients(poses, frames, grid=grid, detector=detector)
+
+
+@dataclass(frozen=True)
+class ConeModel:
+    """The source-detector arrangements of a cone-beam scan's views.
+
+    ``parts`` holds ``(views, beam, detector)`` for each run of views (see
+    :func:`cone_model`); hashable, so it can configure compiled programs.
+    """
+
+    parts: tuple[tuple[int | None, ConeBeam, Detector], ...]
+
+    @property
+    def detector(self) -> Detector:
+        """The detector's pixel count and pitch (the parts differ in centre only)."""
+        return self.parts[0][2]
+
+    def frames(self, n_views: int) -> np.ndarray:
+        """``(n_views, 4, 3)`` lab frame of every view (see :func:`beam_frame`)."""
+        frames = [
+            np.broadcast_to(beam_frame(beam, detector), (n_views if views is None else views, 4, 3))
+            for views, beam, detector in self.parts
+        ]
+        stacked = np.concatenate(frames)
+        if stacked.shape[0] != n_views:
+            raise ValueError(
+                f"the scan's arrangements cover {stacked.shape[0]} views, not {n_views}"
+            )
+        return stacked
+
+    def magnification(self, n_views: int) -> np.ndarray:
+        """Each view's magnification at the rotation axis."""
+        values = [
+            np.full(n_views if views is None else views, beam.magnification)
+            for views, beam, _ in self.parts
+        ]
+        return np.concatenate(values)
+
+    def coefficients(self, poses: jax.Array, grid: Grid) -> jax.Array:
+        """Per-view coefficients of ``poses``, each view in its own arrangement."""
+        return frame_coefficients(poses, self.frames(int(poses.shape[0])), grid, self.detector)
+
+
+def cone_model(geometry: object, detector: Detector | None = None) -> ConeModel | None:
+    """The cone arrangements of ``geometry``'s views, or None for a parallel beam.
+
+    ``detector`` is the scan's detector, binned perhaps (default the
+    geometry's); see :func:`~tomojax.core.geometry.cone.cone_parts`.
+    """
+    from tomojax.core.geometry.cone import cone_parts
+
+    parts = cone_parts(geometry, detector)
+    return None if parts is None else ConeModel(parts)
 
 
 @partial(jax.jit, static_argnames=("grid", "detector"))
 def _coefficients(
-    poses: jax.Array, frame: jax.Array, *, grid: Grid, detector: Detector
+    poses: jax.Array, frames: jax.Array, *, grid: Grid, detector: Detector
 ) -> jax.Array:
-    """:func:`cone_coefficients` from the lab detector frame and source (rows of ``frame``)."""
+    """:func:`frame_coefficients`: ``frames`` are ``(views, 4, 3)``."""
     rot, trans = poses[:, :3, :3], poses[:, :3, 3]
     origin = jnp.asarray(grid_volume_origin(grid), jnp.float32)
     spacing = jnp.asarray([grid.vx, grid.vy, grid.vz], jnp.float32)
-    centre, u_dir, v_dir, source = frame[0], frame[1], frame[2], frame[3]
+    centre, u_dir, v_dir, source = frames[:, 0], frames[:, 1], frames[:, 2], frames[:, 3]
     corner = (
         centre
         - (detector.nu - 1) / 2 * float(detector.du) * u_dir
         - (detector.nv - 1) / 2 * float(detector.dv) * v_dir
     )
 
-    def to_object(point: jax.Array) -> jax.Array:  # lab point -> object index coordinates
-        local = jnp.einsum("nji,nj->ni", rot, point[None] - trans, precision=_HI)
+    def to_object(point: jax.Array) -> jax.Array:  # lab points -> object index coordinates
+        local = jnp.einsum("nji,nj->ni", rot, point - trans, precision=_HI)
         return (local - origin) / spacing
 
     def direction(vector: jax.Array) -> jax.Array:
-        return jnp.einsum("nji,j->ni", rot, vector, precision=_HI) / spacing
+        return jnp.einsum("nji,nj->ni", rot, vector, precision=_HI) / spacing
 
     S = to_object(source)
     D0 = to_object(corner)

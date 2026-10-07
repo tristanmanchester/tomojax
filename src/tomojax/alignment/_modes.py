@@ -216,15 +216,19 @@ def cone_setup(
     DOFs a cone beam cannot estimate (the axis direction) raise when named in
     ``optimise_dofs`` and are skipped with a warning in preset schedules.
     """
+    from tomojax.core.geometry.cone import is_cone_beam
     from tomojax.geometry import ConeGeometry
     from tomojax.recon import calibrate_cone_axis
 
-    if not isinstance(geometry, ConeGeometry):
-        return None
     resolved = resolved_schedule_for_config(config)
     setup = set(resolved.active_geometry_dofs)
-    if not setup and resolved.name != "cor_then_pose":
+    if not is_cone_beam(geometry) or (not setup and resolved.name != "cor_then_pose"):
         return None
+    if not isinstance(geometry, ConeGeometry):
+        raise ValueError(
+            "cone-beam axis calibration takes one source-detector arrangement without pose "
+            "corrections; align segmented or posed scans with mode='pose'"
+        )
     if setup - _CONE_AXIS_DOFS:
         unsupported = ", ".join(sorted(setup - _CONE_AXIS_DOFS))
         message = (

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
@@ -257,20 +257,55 @@ def beam_of(geometry: object) -> ConeBeam | None:
     return beam if isinstance(beam, ConeBeam) else None
 
 
+def segments_of(geometry: object) -> ConeSegments | None:
+    """The :class:`ConeSegments` that ``geometry`` is or wraps (with poses, say), if any."""
+    for _ in range(16):
+        if isinstance(geometry, ConeSegments):
+            return geometry
+        inner = getattr(geometry, "base", None) or getattr(geometry, "geometry", None)
+        if inner is None:
+            return None
+        geometry = inner
+    return None
+
+
 def is_cone_beam(geometry: object) -> bool:
     """Whether ``geometry`` traces diverging rays (a cone beam, or cone segments)."""
-    return isinstance(geometry, ConeSegments) or beam_of(geometry) is not None
+    return segments_of(geometry) is not None or beam_of(geometry) is not None
 
 
-def cone_parts(geometry: ScanGeometry, n_views: int) -> tuple[tuple[int, ConeBeam, Detector], ...]:
-    """``(views, beam, detector)`` for each run of views sharing an arrangement."""
-    if isinstance(geometry, ConeSegments):
-        parts = tuple((len(s.thetas_deg), beam_of(s), s.detector) for s in geometry.segments)
-        return cast("tuple[tuple[int, ConeBeam, Detector], ...]", parts)
-    beam = beam_of(geometry)
-    if beam is None:
-        raise ValueError("cone_parts needs a cone-beam geometry")
-    return ((int(n_views), beam, geometry.detector),)
+def cone_parts(
+    geometry: object, detector: Detector | None = None
+) -> tuple[tuple[int | None, ConeBeam, Detector], ...] | None:
+    """``(views, beam, detector)`` for each run of views sharing an arrangement.
+
+    None for parallel beams; ``views`` is None for a single arrangement, which
+    serves every view. ``detector`` is the scan's detector, binned perhaps
+    (default the geometry's): a segment's detector is it moved by the
+    segment's centre offset from the scan's.
+    """
+    segments = segments_of(geometry)
+    if segments is None:
+        beam = beam_of(geometry)
+        if beam is None:
+            return None
+        if detector is None:
+            detector = cast("ScanGeometry", geometry).detector
+        return ((None, beam, detector),)
+    scan = segments.detector if detector is None else detector
+    reference = segments.detector
+    parts = []
+    for segment in segments.segments:
+        own = segment.detector
+        if (own.du, own.dv) != (reference.du, reference.dv):
+            raise ValueError("ConeSegments' detectors have the same pixel pitch")
+        centre = (
+            scan.det_center[0] + own.det_center[0] - reference.det_center[0],
+            scan.det_center[1] + own.det_center[1] - reference.det_center[1],
+        )
+        beam = cast("ConeBeam", beam_of(segment))
+        parts.append((len(segment.thetas_deg), beam, replace(scan, det_center=centre)))
+    return tuple(parts)
 
 
 def require_parallel_beam(geometry: object, context: str) -> None:
@@ -290,4 +325,5 @@ __all__ = [
     "cone_parts",
     "is_cone_beam",
     "require_parallel_beam",
+    "segments_of",
 ]

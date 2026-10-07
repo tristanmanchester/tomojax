@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, cast
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.core.geometry.cone import beam_of
+from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.geometry import stack_view_poses
 
 from ._config import AlignConfig
@@ -80,7 +80,7 @@ def align(
         grid=grid,
         translation_frame=cast("PoseTranslationFrame", info["pose_translation_frame"]),
         active=info["active_pose_dofs"],
-        beam=beam_of(geometry) is not None,
+        beam=is_cone_beam(geometry),
     )
     if gauge is not None:
         info["gauge"] = gauge.to_dict()

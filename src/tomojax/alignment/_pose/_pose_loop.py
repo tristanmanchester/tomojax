@@ -43,8 +43,9 @@ from tomojax.alignment.optimizers import (
 )
 from tomojax.backends import estimate_views_per_batch_info
 from tomojax.core import format_duration, progress_iter
+from tomojax.core.cone import cone_model
 from tomojax.core.geometry.base import Detector, Geometry, Grid
-from tomojax.core.geometry.cone import beam_of
+from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import get_detector_grid_device
 from tomojax.core.validation import (
@@ -126,7 +127,7 @@ def _with_beam_translation(
     inactive. ``freeze_dofs=("dy",)`` keeps it fixed.
     """
     dx, dz, dy = (DOF_INDEX[name] for name in ("dx", "dz", "dy"))
-    if beam_of(geometry) is None or "dy" in cfg.freeze_dofs or not (active[dx] and active[dz]):
+    if not is_cone_beam(geometry) or "dy" in cfg.freeze_dofs or not (active[dx] and active[dz]):
         return active
     return tuple(True if i == dy else value for i, value in enumerate(active))
 
@@ -272,8 +273,10 @@ def _build_alignment_runtime_context(
     nv = int(projections.shape[1])
     nu = int(projections.shape[2])
 
+    cone = cone_model(geometry, detector)
     return AlignmentRuntimeContext(
-        beam=beam_of(geometry),
+        cone=cone,
+        frames=None if cone is None else jnp.asarray(cone.frames(n_views)),
         pose_stack=pose_stack,
         det_grid=det_grid,
         smoothness_weights=smoothness_weights,

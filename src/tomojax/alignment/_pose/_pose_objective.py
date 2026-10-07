@@ -116,20 +116,28 @@ def _build_pose_align_loss(
             view_indices=jnp.arange(ctx.n_views, dtype=jnp.int32),
             projector_backend=ctx.cfg.projector_backend,
             # Gauss-Newton only evaluates this loss; its pose columns are separate.
-            require_differentiable_projector=ctx.beam is None or ctx.cfg.opt_method != "gn",
+            require_differentiable_projector=ctx.cone is None or ctx.cfg.opt_method != "gn",
             loss_rng_key=loss_rng_key,
             ray_integrator=ctx.cfg.ray_integrator,
-            beam=ctx.beam,
+            frames=ctx.frames,
         )
         return _apply_pose_smoothness_loss(pose_params, loss_tot, ctx.smoothness_weights)
 
     return align_loss
 
 
+def _objective_frames_chunk(ctx: _PoseObjectiveContext, start: jnp.ndarray) -> jnp.ndarray | None:
+    """The chunk's cone-beam lab frames, or None for a parallel beam."""
+    if ctx.frames is None:
+        return None
+    return jax.lax.dynamic_slice(ctx.frames, (start, 0, 0), (ctx.chunk_size, 4, 3))
+
+
 def _build_one_view_value_and_grad_batch(ctx: _PoseObjectiveContext) -> Callable[..., object]:
     def _one_view_loss(
         p5_i: jnp.ndarray,
         t_nom_i: jnp.ndarray,
+        frame_i: jnp.ndarray | None,
         y_i: jnp.ndarray,
         masked_vol: jnp.ndarray,
         mask_i: jnp.ndarray,
@@ -147,7 +155,7 @@ def _build_one_view_value_and_grad_batch(ctx: _PoseObjectiveContext) -> Callable
             gather_dtype=ctx.cfg.gather_dtype,
             det_grid=ctx.det_grid,
             ray_integrator=ctx.cfg.ray_integrator,
-            beam=ctx.beam,
+            frames=frame_i,
         )
         view_indices = jnp.expand_dims(jnp.asarray(view_idx, dtype=jnp.int32), axis=0)
         lvec = ctx.per_view_loss_fn(
@@ -162,7 +170,7 @@ def _build_one_view_value_and_grad_batch(ctx: _PoseObjectiveContext) -> Callable
     return jax.jit(
         jax.vmap(
             jax.value_and_grad(_one_view_loss),
-            in_axes=(0, 0, 0, None, 0, 0, None),
+            in_axes=(0, 0, 0, 0, None, 0, 0, None),
         )
     )
 
@@ -199,6 +207,7 @@ def _build_manual_loss_and_grad(
             lvec, g_chunk = one_view_val_and_grad_batch(
                 params_chunk,
                 t_nom_chunk,
+                _objective_frames_chunk(ctx, start_shifted),
                 y_chunk,
                 masked_vol,
                 _objective_loss_mask_chunk(ctx, start_shifted),
@@ -223,8 +232,8 @@ def _build_manual_loss_and_grad(
 def _build_gn_update_batch(ctx: _PoseObjectiveContext) -> Callable[..., object]:
     predict_and_columns = build_pose_prediction_and_columns(ctx)
 
-    def _gn_update_one(p5_i, t_nom_i, y_i, vol, w_i):
-        residual, cols = predict_and_columns(p5_i, t_nom_i, vol, y_i, w_i)
+    def _gn_update_one(p5_i, t_nom_i, frame_i, y_i, vol, w_i):
+        residual, cols = predict_and_columns(p5_i, t_nom_i, frame_i, vol, y_i, w_i)
         current_loss = jnp.float32(0.5) * jnp.vdot(residual, residual).real
         gradient = jnp.matmul(cols, residual, precision=jax.lax.Precision.HIGHEST)
         hessian = jnp.matmul(cols, cols.T, precision=jax.lax.Precision.HIGHEST)
@@ -237,7 +246,7 @@ def _build_gn_update_batch(ctx: _PoseObjectiveContext) -> Callable[..., object]:
         delta = jnp.linalg.solve(system, rhs)
         return delta * active, current_loss
 
-    return jax.jit(jax.vmap(_gn_update_one, in_axes=(0, 0, 0, None, 0)))
+    return jax.jit(jax.vmap(_gn_update_one, in_axes=(0, 0, 0, 0, None, 0)))
 
 
 def _build_gn_update_all(
@@ -278,6 +287,7 @@ def _build_gn_update_all(
             dp_values, loss_values = gn_update_batch(
                 params_chunk,
                 t_chunk,
+                _objective_frames_chunk(ctx, start_shifted),
                 y_chunk,
                 masked_vol,
                 _ls_weight_chunk(y_chunk, _objective_loss_mask_chunk(ctx, start_shifted)),

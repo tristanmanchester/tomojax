@@ -57,7 +57,7 @@ def build_coupled_objective(ctx: _PoseObjectiveContext) -> CoupledObjective:
     )
     if cfg.ray_integrator not in {"exact", "joseph", "joseph_cubic"}:
         backend = "jax"
-    if ctx.beam is not None:
+    if ctx.cone is not None:
         # Cone beams: the CUDA kernels where available ("pallas" names the CUDA path).
         from tomojax.core.cone import use_cuda_cone
 
@@ -82,13 +82,14 @@ def build_coupled_objective(ctx: _PoseObjectiveContext) -> CoupledObjective:
         active=ctx.active_mask.astype(jnp.float32),
         smoothness=ctx.smoothness_weights,
         det_grid=ctx.det_grid,
+        frames=ctx.frames,
     )
     cache_columns = ctx.n_views * ctx.nv * ctx.nu * POSE_WIDTH * 4 <= _pose_cache_limit()
     spec = CoupledSpec(
         grid=ctx.grid,
         detector=ctx.detector,
         backend=backend,
-        jacobian=replace(PoseJacobianOptions.from_config(cfg), beam=ctx.beam),
+        jacobian=replace(PoseJacobianOptions.from_config(cfg), cone=ctx.cone is not None),
         cache_columns=cache_columns,
         regulariser=cfg.regulariser,
         huber_delta=float(cfg.huber_delta),
@@ -100,7 +101,7 @@ def build_coupled_objective(ctx: _PoseObjectiveContext) -> CoupledObjective:
         gn_joint_rtol=float(cfg.gn_joint_rtol),
         gn_joint_iters=int(cfg.gn_joint_iters),
         has_smoothness=bool(cfg.w_rot or cfg.w_trans),
-        beam=ctx.beam,
+        cone=ctx.cone is not None,
     )
     return CoupledObjective(
         partial(run_update, arrays, spec=spec),

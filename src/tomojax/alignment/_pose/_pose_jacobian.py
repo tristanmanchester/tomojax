@@ -19,7 +19,6 @@ from ._pose_context import _PoseObjectiveContext
 if TYPE_CHECKING:
     from tomojax.alignment._config import AlignConfig
     from tomojax.alignment._geometry.parametrizations import PoseTranslationFrame
-    from tomojax.core.geometry.cone import ConeBeam
     from tomojax.geometry import Detector, Grid
 
 
@@ -34,7 +33,8 @@ class PoseJacobianOptions:
     gather_dtype: str
     integrator: Literal["sampled", "exact", "joseph", "joseph_cubic"]
     jacobian: Literal["central", "autodiff"]
-    beam: ConeBeam | None = None
+    # Cone beams project each view in its lab frame (``frame_i`` below).
+    cone: bool = False
 
     @classmethod
     def from_config(cls, cfg: AlignConfig) -> PoseJacobianOptions:
@@ -60,13 +60,14 @@ def build_pose_prediction_and_columns(ctx: _PoseObjectiveContext) -> Callable:
         grid=ctx.grid,
         detector=ctx.detector,
         det_grid=ctx.det_grid,
-        options=replace(PoseJacobianOptions.from_config(ctx.cfg), beam=ctx.beam),
+        options=replace(PoseJacobianOptions.from_config(ctx.cfg), cone=ctx.cone is not None),
     )
 
 
 def pose_prediction_and_columns(
     p5_i,
     t_nom_i,
+    frame_i,
     vol,
     target,
     weight,
@@ -76,7 +77,10 @@ def pose_prediction_and_columns(
     det_grid: tuple[jax.Array, jax.Array] | None,
     options: PoseJacobianOptions,
 ):
-    """Evaluate weighted columns with all scan-dependent arrays as arguments."""
+    """Evaluate weighted columns with all scan-dependent arrays as arguments.
+
+    ``frame_i`` is the view's cone-beam lab frame, or None for a parallel beam.
+    """
     # Keep pose finite differences in physical units across anisotropic grids
     # and resolution levels. The angular step moves a bounding-sphere surface
     # by approximately the same distance as the translation step.
@@ -92,13 +96,13 @@ def pose_prediction_and_columns(
     joseph = options.integrator.startswith("joseph")
     # Cone views use central differences of the CUDA forward, which has no pose
     # derivative; autodiff columns use the differentiable JAX reference.
-    central = options.jacobian == "central" or (options.beam is not None and _cuda())
-    cone_backend = "jax" if options.beam is not None and not central else "pallas"
+    central = options.jacobian == "central" or (options.cone and _cuda())
+    cone_backend = "jax" if options.cone and not central else "pallas"
 
     def _pred_flat(t_i: jnp.ndarray, masked_vol: jnp.ndarray) -> jnp.ndarray:
-        if options.beam is not None:
+        if options.cone:
             return forward_project_view_T(
-                t_i, grid, detector, masked_vol, projector_backend=cone_backend, beam=options.beam
+                t_i, grid, detector, masked_vol, projector_backend=cone_backend, frames=frame_i
             ).ravel()
         return forward_project_view_T(
             t_i,

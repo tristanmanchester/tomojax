@@ -11,14 +11,13 @@ source, with CUDA kernels where the parallel models use Pallas.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 import jax
 import jax.numpy as jnp
 
-from tomojax.core.cone import cone_backproject, cone_coefficients, cone_project, use_cuda_cone
-from tomojax.core.geometry.cone import ConeBeam, ConeSegments, beam_of, cone_parts, is_cone_beam
+from tomojax.core.cone import ConeModel, cone_backproject, cone_model, cone_project, use_cuda_cone
+from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
 from tomojax.recon._host_stream import read_views
 
@@ -68,41 +67,20 @@ def resolve_projector(
     return model, backend
 
 
-@dataclass(frozen=True)
-class ConeModel:
-    """Cone-beam Joseph sampling for the view batches.
-
-    ``beam`` serves every view, unless ``segments`` gives ``(views, beam,
-    detector)`` for each run of views of a :class:`ConeSegments` scan.
-    """
-
-    beam: ConeBeam | None
-    segments: tuple[tuple[int, ConeBeam, Detector], ...] = ()
-
-    def coefficients(self, poses: jax.Array, grid: Grid, detector: Detector) -> jax.Array:
-        """Per-view kernel coefficients, each run of views with its own arrangement."""
-        if not self.segments:
-            assert self.beam is not None
-            return cone_coefficients(poses, grid, detector, self.beam)
-        blocks, start = [], 0
-        for count, beam, part in self.segments:
-            blocks.append(cone_coefficients(poses[start : start + count], grid, part, beam))
-            start += count
-        return jnp.concatenate(blocks)
-
-
 def resolve_geometry_projector(
     geometry: object,
     model: str,
     backend: str,
     *,
+    detector: Detector,
     det_grid: object = None,
     context: str,
 ) -> tuple[str | ConeModel, str]:
     """Resolve the projector for a geometry: :class:`ConeModel` for cone beams.
 
     Cone beams use Joseph plane sampling (``model`` must be ``auto`` or
-    ``joseph``) and the canonical detector grid. Their ``pallas`` backend is
+    ``joseph``) and the canonical detector grid; ``detector`` is the one the
+    solver projects onto (a binned one, say). Their ``pallas`` backend is
     the CUDA cone kernels, chosen by ``auto`` when CuPy and a CUDA device are
     available.
     """
@@ -122,9 +100,9 @@ def resolve_geometry_projector(
         backend = "pallas" if cuda else "jax"
     if backend == "pallas" and not cuda:
         raise ValueError(f"{context}: the CUDA cone kernels need CuPy on a CUDA device")
-    if isinstance(geometry, ConeSegments):
-        return ConeModel(None, cone_parts(geometry, len(geometry.thetas_deg))), backend
-    return ConeModel(beam_of(geometry)), backend
+    cone = cone_model(geometry, detector)
+    assert cone is not None
+    return cone, backend
 
 
 class _Batches:
@@ -151,7 +129,7 @@ class _Batches:
         self.interpolation, self.absolute_weights = joseph_interpolation, absolute_weights
         if isinstance(model, ConeModel):
             # Cone weights are non-negative, so |A|^T is the transpose itself.
-            self.coefficients = model.coefficients(poses, grid, detector)
+            self.coefficients = model.coefficients(poses, grid)
             self.cone_backend = "cuda" if backend == "pallas" else "jax"
         elif model == "joseph":
             from tomojax.core.joseph import plane_coefficients

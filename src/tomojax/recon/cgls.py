@@ -475,7 +475,12 @@ def cgls(
             raise ValueError(f"cgls: {name} must be finite and nonnegative")
     _validate_model(cfg)
     model, backend = resolve_geometry_projector(
-        geometry, cfg.projector_model, cfg.projector_backend, det_grid=det_grid, context="cgls"
+        geometry,
+        cfg.projector_model,
+        cfg.projector_backend,
+        detector=detector,
+        det_grid=det_grid,
+        context="cgls",
     )
     if isinstance(model, ConeModel) and cfg.joseph_interpolation != "linear":
         raise ValueError("cgls: cone-beam geometry supports joseph_interpolation='linear' only")

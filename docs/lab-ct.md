@@ -146,7 +146,9 @@ tomojax recon aligned.nxs -o recon.nxs --method cgls
 ```
 
 `cor-then-pose` calibrates the axis as `--mode cor` does, then aligns the
-poses; `--mode pose` aligns the poses alone. `tomojax recon` applies the
+poses; `--mode pose` aligns the poses alone, and also takes scans that already
+carry poses (an ASTRA import, say) and multi-orbit scans, whose orbits it
+brings into register (see [the walnut](#bringing-the-orbits-into-register)). `tomojax recon` applies the
 alignment saved in `aligned.nxs`; `--ignore-alignment` reconstructs with the
 nominal geometry instead. See
 [cone-beam alignment](alignment-guide.md#align-cone-beam-scans-in-six-degrees-of-freedom)
@@ -210,7 +212,8 @@ Where the arrangement changes partway through, as in a multi-orbit scan with
 the source at several heights or a tall sample scanned in stacked sections,
 each run of views becomes a segment of a `ConeSegments` geometry, which the
 iterative methods reconstruct together (`tj.Scan.combine([a, b, c])` builds one
-from separate scans). FDK reconstructs one circular orbit and refuses them.
+from separate scans). FDK reconstructs one source-detector arrangement and refuses
+them; views repeating an angle (several turns of one arrangement) share it.
 
 ### A real lab scan: the FIPS walnuts
 
@@ -250,6 +253,36 @@ The FleX-ray's rotation axis also leans 0.5° across the detector, so every
 view takes the transpose's general kernel, about 1.3 times slower than its
 path for an upright axis; kernels specialised to small leans were tried and
 were slower still.
+
+#### Bringing the orbits into register
+
+Each walnut comes with two geometries: `scan_geom_original.geom`, as the
+scanner recorded it, and `scan_geom_corrected.geom`, where the authors moved
+orbits 2 and 3 up by 0.397 and 0.794 mm to bring them into register with
+orbit 1. `bench/walnut_alignment.py` gives `tj.align` the original record
+(three orbits, every 4th view, binned 2 x 2) and finds the correction itself,
+in 4.4 minutes on the laptop GPU:
+
+| | Orbit 2 | Orbit 3 |
+| --- | --- | --- |
+| Height relative to orbit 1, TomoJAX | -0.381 mm | -0.755 mm |
+| The authors' correction | -0.397 mm | -0.794 mm |
+
+Only the orbits' relative heights are observable: moving the whole object
+predicts the same data. `tj.align` reports the least-motion estimate (here
+0.38 mm above the authors', who keep orbit 1 where its record puts it), so to
+compare volumes voxel by voxel the bench holds orbit 1 fixed as they do. Then
+20 iterations of non-negative least squares reach the reference to an error
+of 0.155 with TomoJAX's geometry, against 0.154 with the authors' and 0.280
+with the original record:
+
+![Vertical and axial slices of the walnut reconstructed with the published, original, TomoJAX-aligned and corrected geometries](images/walnut_alignment_slices.png)
+
+![Each orbit's height relative to orbit 1, recovered by tj.align, against the authors' correction](images/walnut_alignment_heights.png)
+
+A scan that already carries poses, like this ASTRA import (whose poses hold
+each orbit's height), is aligned on top of them, and a multi-orbit
+`ConeSegments` scan is aligned as one.
 
 ## Limitations
 

@@ -24,7 +24,6 @@ from .loss_adapters import LossAdapter, build_loss_adapter
 if TYPE_CHECKING:
     from tomojax.alignment._model.state import AlignmentState
     from tomojax.core.geometry import Detector, Grid
-    from tomojax.core.geometry.cone import ConeBeam
 
     from .loss_specs import AlignmentLossSpec
 
@@ -181,15 +180,15 @@ def _cone_project_poses(
     grid: Grid,
     detector: Detector,
     volume: jnp.ndarray,
-    beam: ConeBeam,
+    frames: jnp.ndarray,
     *,
     differentiable: bool,
 ) -> jnp.ndarray:
-    """Cone projections; CUDA kernels unless pose derivatives are needed."""
-    from tomojax.core.cone import cone_coefficients, cone_project, use_cuda_cone
+    """Cone projections in the views' lab ``frames``; CUDA unless pose derivatives are needed."""
+    from tomojax.core.cone import cone_project, frame_coefficients, use_cuda_cone
 
     backend = "cuda" if use_cuda_cone() and not differentiable else "jax"
-    coeff = cone_coefficients(poses, grid, detector, beam)
+    coeff = frame_coefficients(poses, frames, grid, detector)
     return cone_project(volume, coeff, grid, detector, backend=backend)
 
 
@@ -207,20 +206,20 @@ def project_stack(
     projector_backend: ProjectorBackendInput = "jax",
     require_differentiable_projector: bool = True,
     ray_integrator: str = "sampled",
-    beam: ConeBeam | None = None,
+    frames: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
     """Project all views for a fixed volume in bounded-size batches."""
     backend = normalize_projector_backend(projector_backend)
     n_views = int(pose_stack.shape[0])
     if n_views == 0:
         return jnp.zeros((0, detector.nv, detector.nu), dtype=jnp.float32)
-    if beam is not None:
+    if frames is not None:
         return _cone_project_poses(
             pose_stack,
             grid,
             detector,
             volume,
-            beam,
+            frames,
             differentiable=require_differentiable_projector,
         )
     if ray_integrator == "sampled" and backend == "pallas" and not require_differentiable_projector:
@@ -308,7 +307,7 @@ def project_and_score_stack(
     require_differentiable_projector: bool = True,
     loss_rng_key: jnp.ndarray | None = None,
     ray_integrator: str = "sampled",
-    beam: ConeBeam | None = None,
+    frames: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
     """Project and score all views without materialising unnecessary batches."""
     backend = normalize_projector_backend(projector_backend)
@@ -320,7 +319,7 @@ def project_and_score_stack(
     nv = int(targets.shape[1])
     nu = int(targets.shape[2])
     loss_mask = getattr(loss_adapter.state, "mask", None)
-    vm_project = jax.vmap(
+    parallel_project = jax.vmap(
         lambda T: forward_project_view_T(
             T,
             grid,
@@ -333,12 +332,16 @@ def project_and_score_stack(
             ray_integrator=ray_integrator,
         )
     )
-    if beam is not None:
+
+    def vm_project(T: jnp.ndarray, start: jnp.ndarray | int) -> jnp.ndarray:
+        """Project the views ``start, start + 1, ...`` at poses ``T``."""
+        if frames is None:
+            return parallel_project(T)
         # One batched cone call per chunk, not one launch per view.
-        def vm_project(T: jnp.ndarray) -> jnp.ndarray:
-            return _cone_project_poses(
-                T, grid, detector, volume, beam, differentiable=require_differentiable_projector
-            )
+        chunk = jax.lax.dynamic_slice(frames, (start, 0, 0), (T.shape[0], 4, 3))
+        return _cone_project_poses(
+            T, grid, detector, volume, chunk, differentiable=require_differentiable_projector
+        )
 
     local_indices = (
         jnp.arange(n_views, dtype=jnp.int32)
@@ -394,7 +397,7 @@ def project_and_score_stack(
                 fallback_reason,
             )
     if num_chunks == 1:
-        pred = vm_project(pose_stack)
+        pred = vm_project(pose_stack, 0)
         if use_plain_l2_fast_path:
             residual = (pred - targets).astype(jnp.float32)
             losses = jnp.float32(0.5) * jnp.sum(residual * residual, axis=(1, 2))
@@ -417,7 +420,7 @@ def project_and_score_stack(
         y_chunk = jax.lax.dynamic_slice(targets, (start_shifted, 0, 0), (b, nv, nu))
         idx_chunk = jax.lax.dynamic_slice(local_indices, (start_shifted,), (b,))
         weight_chunk = jax.lax.dynamic_slice(per_view_weight, (start_shifted,), (b,))
-        pred = vm_project(T_chunk)
+        pred = vm_project(T_chunk, start_shifted)
         if loss_mask is None:
             image_mask = None
         else:
@@ -438,7 +441,7 @@ def project_and_score_stack(
         start_shifted, valid_mask, _view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice(pose_stack, (start_shifted, 0, 0), (b, 4, 4))
         y_chunk = jax.lax.dynamic_slice(targets, (start_shifted, 0, 0), (b, nv, nu))
-        pred = vm_project(T_chunk)
+        pred = vm_project(T_chunk, start_shifted)
         residual = (pred - y_chunk).astype(jnp.float32)
         losses = jnp.float32(0.5) * jnp.sum(residual * residual, axis=(1, 2))
         return loss_acc + jnp.sum(losses * valid_mask), None

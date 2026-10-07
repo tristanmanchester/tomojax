@@ -286,7 +286,10 @@ def _prox_fstar_l2(
 
 
 def _batched_projector(
-    config: SPDHGConfig, det_grid: object, geometry: object = None
+    config: SPDHGConfig,
+    det_grid: object,
+    geometry: object = None,
+    detector: Detector | None = None,
 ) -> tuple[str | ConeModel, str] | None:
     """Choose batched operators, or None for the ray-model reference path."""
     model, backend = config.projector_model, config.projector_backend
@@ -295,8 +298,9 @@ def _batched_projector(
             raise ValueError(
                 "spdhg_tv: cone-beam geometry uses Joseph sampling, not exact integration"
             )
+        assert detector is not None
         return resolve_geometry_projector(
-            geometry, model, backend, det_grid=det_grid, context="spdhg_tv"
+            geometry, model, backend, detector=detector, det_grid=det_grid, context="spdhg_tv"
         )
     if det_grid is not None or config.ray_integrator != "sampled":
         if model == "joseph" or backend == "pallas":
@@ -467,7 +471,7 @@ def _prepare_spdhg_runtime(
     poses = stack_view_poses(geometry, n_views)
     validate_pose_stack(poses, n_views, context="spdhg_tv geometry")
     resolved_det_grid = get_detector_grid_device(detector) if det_grid is None else det_grid
-    projector = _batched_projector(cfg, det_grid, geometry)
+    projector = _batched_projector(cfg, det_grid, geometry, detector)
     stream = not isinstance(projections, jax.Array) and (
         bool(cfg.stream_projections)
         if cfg.stream_projections is not None

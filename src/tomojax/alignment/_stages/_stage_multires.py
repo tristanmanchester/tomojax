@@ -24,7 +24,7 @@ from tomojax.alignment._results import (
     AlignMultiresResumeState,
 )
 from tomojax.core.geometry.base import Detector, Geometry, Grid
-from tomojax.core.geometry.cone import beam_of
+from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.geometry import stack_view_poses
 
 from ._stage_runners import _run_multires_level_stages
@@ -250,7 +250,7 @@ def _fix_gauge(
         return state, x_final, None, dofs
     frame = context.cfg.pose_translation_frame
     pose_dofs = context.resolved_schedule.active_pose_dofs
-    beam = beam_of(geometry) is not None
+    beam = is_cone_beam(geometry)
     reports_centre = context.resolved_schedule.name == "cor_then_pose" or "det_u_px" in dofs
     offset = not beam and reports_centre and "dx" in pose_dofs and frame == "detector"
     setup_state = cast("AlignmentState | None", state.setup_alignment_state)
@@ -310,7 +310,7 @@ def align_multires(
 
     Carries alignment parameters across levels and downsamples/upsamples volume.
     """
-    if beam_of(geometry) is not None and _setup_dofs_requested(cfg):
+    if is_cone_beam(geometry) and _setup_dofs_requested(cfg):
         raise ValueError(
             "align_multires: setup stages (detector centre, roll, axis) model parallel "
             "beams; for cone-beam geometry calibrate the axis offset and detector roll with "

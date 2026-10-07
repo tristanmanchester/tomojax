@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from tomojax.core.cone import cone_backproject, cone_coefficients, cone_project
+from tomojax.core.cone import cone_backproject, cone_coefficients, cone_project, use_cuda_cone
 from tomojax.geometry import ConeBeam, ConeGeometry, Detector, Grid, grid_volume_origin
 from tomojax.io import build_geometry_from_dataset_metadata, load_dataset, save_dataset
 from tomojax.recon import (
@@ -561,7 +561,10 @@ def test_fbp_reconstructs_volumes_larger_than_the_device_on_the_host(monkeypatch
     monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: 4096)
     result = run_reconstruction_algorithm(request)
     assert isinstance(result.volume, np.ndarray) and result.algorithm_config["host_slabs"]
-    np.testing.assert_allclose(result.volume, on_device, atol=1e-5 * np.abs(on_device).max())
+    # On CUDA, slabs' shifted detector windows round the texture unit's 1/256
+    # interpolation weights differently (see the slab test above).
+    tolerance = 2e-3 if use_cuda_cone() else 1e-5
+    np.testing.assert_allclose(result.volume, on_device, atol=tolerance * np.abs(on_device).max())
 
 
 def test_export_writes_volume_slices_and_raw_files(tmp_path: Path):

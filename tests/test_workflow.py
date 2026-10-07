@@ -156,8 +156,6 @@ def test_align_calibrates_the_axis_and_returns_a_corrected_scan(tmp_path: Path) 
     tj.save(tmp_path / "aligned.nxs", result)
     reloaded = tj.load(tmp_path / "aligned.nxs")
     assert reloaded.geometry.beam == result.scan.geometry.beam  # pyright: ignore[reportAttributeAccessIssue]
-    with pytest.raises(ValueError, match="already carries pose corrections"):
-        tj.align(reloaded)
 
 
 def test_binning_averages_pixels_and_keeps_the_detector_in_place():

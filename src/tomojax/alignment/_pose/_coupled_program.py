@@ -11,7 +11,7 @@ import jax
 import jax.numpy as jnp
 
 from tomojax.alignment._geometry.parametrizations import apply_pose_updates
-from tomojax.core.cone import cone_backproject, cone_coefficients, cone_project
+from tomojax.core.cone import cone_backproject, cone_project, frame_coefficients
 from tomojax.core.joseph import (
     forward_project_planes,
     plane_coefficients,
@@ -26,7 +26,6 @@ from ._pose_block import pose_block_solver
 from ._pose_jacobian import PoseJacobianOptions, pose_prediction_and_columns
 
 if TYPE_CHECKING:
-    from tomojax.core.geometry.cone import ConeBeam
     from tomojax.geometry import Detector, Grid
     from tomojax.recon.types import Regulariser
 
@@ -50,7 +49,8 @@ class CoupledSpec:
     gn_joint_rtol: float
     gn_joint_iters: int
     has_smoothness: bool
-    beam: ConeBeam | None = None
+    # Cone beams project each view in its lab frame (CoupledArrays.frames).
+    cone: bool = False
 
 
 class CoupledArrays(NamedTuple):
@@ -63,6 +63,7 @@ class CoupledArrays(NamedTuple):
     active: jax.Array
     smoothness: jax.Array
     det_grid: tuple[jax.Array, jax.Array]
+    frames: jax.Array | None = None
 
 
 def _build_program(
@@ -106,8 +107,9 @@ def _build_program(
     cone_backend = "cuda" if backend == "pallas" else "jax"
 
     def forward(t, x):
-        if spec.beam is not None:
-            coeff = cone_coefficients(t, spec.grid, spec.detector, spec.beam)
+        if spec.cone:
+            assert arrays.frames is not None
+            coeff = frame_coefficients(t, arrays.frames, spec.grid, spec.detector)
             return cone_project(mask * x, coeff, spec.grid, spec.detector, backend=cone_backend)
         if joseph is not None:
             return forward_project_planes(
@@ -137,8 +139,9 @@ def _build_program(
         )
 
     def adjoint(t, y):
-        if spec.beam is not None:
-            coeff = cone_coefficients(t, spec.grid, spec.detector, spec.beam)
+        if spec.cone:
+            assert arrays.frames is not None
+            coeff = frame_coefficients(t, arrays.frames, spec.grid, spec.detector)
             return mask * cone_backproject(y, coeff, spec.grid, spec.detector, backend=cone_backend)
         if joseph is not None:
             return mask * sum_backproject_planes(
@@ -188,9 +191,14 @@ def _build_program(
 
         def columns(i):
             return (
-                predict_columns(p[i], arrays.poses[i], mask * x, arrays.projections[i], weights[i])[
-                    1
-                ]
+                predict_columns(
+                    p[i],
+                    arrays.poses[i],
+                    None if arrays.frames is None else arrays.frames[i],
+                    mask * x,
+                    arrays.projections[i],
+                    weights[i],
+                )[1]
                 * active[:, None]
             )
 

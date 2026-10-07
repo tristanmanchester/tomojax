@@ -568,7 +568,7 @@ def _prepare_fista_runtime(
 
     poses = stack_view_poses(geometry, n_views)
     validate_pose_stack(poses, n_views, context="fista_tv geometry")
-    projector = _batched_projector(cfg, n_views, det_grid, geometry)
+    projector = _batched_projector(cfg, n_views, det_grid, geometry, detector)
     on_host = not isinstance(projections, jax.Array)
     stream = on_host and (
         bool(cfg.stream_projections)
@@ -624,7 +624,11 @@ def _prepare_fista_runtime(
 
 
 def _batched_projector(
-    cfg: FistaConfig, n_views: int, det_grid: object, geometry: object = None
+    cfg: FistaConfig,
+    n_views: int,
+    det_grid: object,
+    geometry: object = None,
+    detector: Detector | None = None,
 ) -> tuple[str | ConeModel, str, int] | None:
     """Choose batched operators, or None for the ray-model reference path."""
     model, backend = cfg.projector_model, cfg.projector_backend
@@ -634,8 +638,9 @@ def _batched_projector(
             raise ValueError(
                 "fista_tv: cone-beam geometry uses Joseph sampling, not exact integration"
             )
+        assert detector is not None
         cone, backend = resolve_geometry_projector(
-            geometry, model, backend, det_grid=det_grid, context="fista_tv"
+            geometry, model, backend, detector=detector, det_grid=det_grid, context="fista_tv"
         )
         return cone, backend, max(1, min(requested, n_views))
     if det_grid is not None or cfg.ray_integrator != "sampled":

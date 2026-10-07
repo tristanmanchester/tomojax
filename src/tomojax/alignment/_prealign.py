@@ -18,7 +18,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.core.geometry.cone import beam_of
+from tomojax.core.cone import cone_model
+from tomojax.core.geometry.cone import segments_of
 from tomojax.core.geometry.views import stack_view_poses
 
 if TYPE_CHECKING:
@@ -99,11 +100,11 @@ def _reprojector(
     geometry: Geometry, poses: jax.Array, grid: Grid, detector: Detector
 ) -> Callable[[slice, jax.Array], jax.Array]:
     """Return ``(views, volume) -> projections`` for the geometry's beam."""
-    beam = beam_of(geometry)
-    if beam is not None:
-        from tomojax.core.cone import cone_coefficients, cone_project
+    model = cone_model(geometry, detector)
+    if model is not None:
+        from tomojax.core.cone import cone_project
 
-        cone = cone_coefficients(poses, grid, detector, beam)
+        cone = model.coefficients(poses, grid)
         return lambda views, volume: cone_project(volume, cone[views], grid, detector)
     from tomojax.core.joseph import forward_project_planes, plane_coefficients
 
@@ -112,6 +113,22 @@ def _reprojector(
     return lambda views, volume: forward_project_planes(
         coefficients[views], volume, grid, detector, backend=backend
     )
+
+
+def _quick_reconstruction(
+    geometry: Geometry, grid: Grid, detector: Detector, data: jax.Array
+) -> jax.Array:
+    """A fast reconstruction to correlate against.
+
+    Filtered backprojection, or for segmented cone scans, which FDK cannot
+    take, a few CGLS iterations.
+    """
+    from tomojax.recon import CGLSConfig, FBPConfig, cgls, fbp
+
+    if segments_of(geometry) is None:
+        return fbp(geometry, grid, detector, data, config=FBPConfig(filter_name="hann"))
+    volume, _ = cgls(geometry, grid, detector, data, config=CGLSConfig(iters=6))
+    return volume
 
 
 def estimate_view_shifts(
@@ -133,8 +150,6 @@ def estimate_view_shifts(
     shifts produced by one rigid object translation is removed, because the
     reconstruction absorbs it.
     """
-    from tomojax.recon import FBPConfig, fbp
-
     data = jnp.asarray(projections, dtype=jnp.float32)
     n = int(data.shape[0])
     poses = stack_view_poses(geometry, n)
@@ -168,7 +183,7 @@ def estimate_view_shifts(
         corrected = jnp.concatenate(
             [_shift_views(data[c], jnp.asarray(-shifts[c], jnp.float32)) for c in chunks]
         )
-        volume = fbp(geometry, grid, detector, corrected, config=FBPConfig(filter_name="hann"))
+        volume = _quick_reconstruction(geometry, grid, detector, corrected)
         del corrected
         peaks = correlate(volume)
         updated = _remove_object_translation(peaks, rotations, spacing)
@@ -263,9 +278,9 @@ def seeded_translation_params(
         return None
     n = int(np.shape(projections)[0])
     shifts = estimate_view_shifts(geometry, grid, detector, projections)
-    beam = beam_of(geometry)
+    cone = cone_model(geometry, detector)
     # A cone beam magnifies object shifts near the axis onto the detector.
-    translations = shifts if beam is None else shifts / beam.magnification
+    translations = shifts if cone is None else shifts / cone.magnification(n)[:, None]
     params = translation_params_from_shifts(
         translations,
         np.asarray(stack_view_poses(geometry, n), np.float64),
