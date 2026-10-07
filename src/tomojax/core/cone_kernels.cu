@@ -304,7 +304,7 @@ __device__ __forceinline__ void flush(float (*acc)[PC + 1], int jb, int jc, floa
 // detector column in the tile's footprint; their crossings of plane k step monotonically
 // through the tile, so it keeps the 2 x 2 cells around the current crossing in registers
 // and adds them to the tile only as it moves on. img is path-weighted.
-extern "C" __global__ void plane_adjoint(
+extern "C" __global__ void __launch_bounds__(128, 12) plane_adjoint(
     const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
     const float* __restrict__ img, float* __restrict__ vol, int nx, int ny, int nz, int nu, int nv)
 {

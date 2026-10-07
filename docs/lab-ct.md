@@ -227,7 +227,7 @@ three orbits, 501³ voxels of 0.1 mm). On Walnut 1, on a laptop RTX 4070:
 | FDK error against the reference, in the walnut | 0.099 | 0.099 |
 | FDK, detector binned 2 x 2 | 1.23 s on the first call, 1.05 s after; error 0.091 | 1.43 s; 0.091 |
 | Non-negative least squares, three orbits, every 4th view, 20 iterations | 304 s; error 0.152 | 217 s (the reference's own solver); 0.147 |
-| The same, detector binned 2 x 2 | 90 s; error 0.154 | 91 s; 0.152 |
+| The same, detector binned 2 x 2 | 86 s; error 0.154 | 91 s; 0.152 |
 
 Times start with the projections in host memory and end with the volume
 there; JAX's GPU start-up (about 2 s, once per process) is not included. FDK
@@ -242,7 +242,7 @@ matched transpose, which follows every ray through every plane, does four
 times the work the volume needs, while ASTRA's backprojector samples the
 detector once per voxel. `scan.binned(2)` averages 2 x 2 pixels, matching the
 detector to the grid: it costs nothing in accuracy here (the error even falls,
-with the noise) and makes TomoJAX's reconstruction 3.4 times faster, ASTRA's
+with the noise) and makes TomoJAX's reconstruction 3.5 times faster, ASTRA's
 2.4 times, so binned TomoJAX is the faster. Bin a scan whenever its pixels,
 divided by the magnification, are smaller than the voxels.
 
