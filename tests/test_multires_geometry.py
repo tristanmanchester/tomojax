@@ -49,8 +49,8 @@ def test_coarse_detector_matches_every_selected_measured_ray(factor, shape):
 
     def coordinates(det):
         return np.meshgrid(
-            (np.arange(det.nu) - (det.nu - 1) / 2) * det.du + det.det_center[0],
-            (np.arange(det.nv) - (det.nv - 1) / 2) * det.dv + det.det_center[1],
+            (np.arange(det.nu) - (det.nu - 1) / 2) * det.du + det.center[0],
+            (np.arange(det.nv) - (det.nv - 1) / 2) * det.dv + det.center[1],
         )
 
     # Coordinate-valued images independently identify the original physical ray

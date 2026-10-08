@@ -48,8 +48,8 @@ centred detector and no grid. The grid is chosen at reconstruction, with
 voxels of the detector pitch: `tomojax recon --grid 256 256 128` reconstructs
 256 × 256 × 128 voxels of 0.65. `tomojax align --mode cor` estimates a
 centre-of-rotation offset. Detector and voxel pitch share a physical length
-unit; Python's `Detector.det_center` also uses physical lengths, so an offset
-of 2 pixels at pitch 0.65 is a `det_center` of 1.3.
+unit; Python's `Detector.center` also uses physical lengths, so an offset
+of 2 pixels at pitch 0.65 is a `center` of 1.3.
 
 ### Raw intensities with flat and dark frames
 

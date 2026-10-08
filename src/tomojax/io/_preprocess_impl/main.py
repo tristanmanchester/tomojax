@@ -174,7 +174,7 @@ def preprocess_nxtomo(
         )
         metadata = _metadata_from_raw(
             entry,
-            thetas_deg=output_angles,
+            angles=output_angles,
             output_image_key=output_image_key,
             nv=raw.cropped_shape[1],
             nu=raw.cropped_shape[2],

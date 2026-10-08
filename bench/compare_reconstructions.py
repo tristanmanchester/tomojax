@@ -82,7 +82,7 @@ def generate_fixture(path: Path, size: int, views: int, kind: str, suite: str = 
         grid=json.dumps(case.grid.to_dict()),
         detector=json.dumps(case.detector.to_dict()),
         poses=case.poses,
-        angles=case.angles_deg,
+        angles=case.angles,
         truth=case.volume,
         data=data,
         suite=suite,
@@ -100,7 +100,7 @@ def load_fixture(path: Path) -> Any:
         return Case(
             str(data["name"]),
             Grid(**json.loads(str(data["grid"]))),
-            Detector(**json.loads(str(data["detector"]))),
+            Detector.from_dict(json.loads(str(data["detector"]))),
             data["poses"],
             data["angles"],
             data["truth"],
@@ -128,9 +128,9 @@ def solve_tomojax(
     from tomojax.geometry import LaminographyGeometry, ParallelGeometry
 
     geometry = (
-        LaminographyGeometry(case.grid, case.detector, case.angles_deg, tilt_deg=30)
+        LaminographyGeometry(case.grid, case.detector, case.angles, tilt_deg=30)
         if case.name.startswith("lamino-")
-        else ParallelGeometry(case.grid, case.detector, case.angles_deg)
+        else ParallelGeometry(case.grid, case.detector, case.angles)
     )
     if method == "tomojax_fourier_cupy":
         from tomojax.recon import FourierConfig, fourier_reconstruct
@@ -327,7 +327,7 @@ def solve_tigre(case: Any, iterations: int, method: str = "tigre_cgls") -> tuple
     geo.dDetector = np.asarray([detector.dv, detector.du])
     geo.sDetector = geo.nDetector * geo.dDetector
     geo.accuracy = 1.0
-    angles = np.deg2rad(-90.0 - case.angles_deg).astype(np.float32)
+    angles = np.deg2rad(-90.0 - case.angles).astype(np.float32)
     result = (
         fbp(case.analytic.copy(), geo, angles, filter="ram_lak", verbose=False)
         if method == "tigre_fbp"

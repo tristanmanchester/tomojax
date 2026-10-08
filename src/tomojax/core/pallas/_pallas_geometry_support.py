@@ -89,9 +89,7 @@ def _supports_z_integer4_for_stack(
         + T_host[:, 1, 2] * T_host[:, 1, 3]
         + T_host[:, 2, 2] * T_host[:, 2, 3]
     )
-    first_z = (-(float(detector.nv) / 2.0 - 0.5)) * float(detector.dv) + float(
-        detector.det_center[1]
-    )
+    first_z = (-(float(detector.nv) / 2.0 - 0.5)) * float(detector.dv) + float(detector.center[1])
     iz0 = (T_host[:, 2, 2] * first_z + tinv_z - float(grid_volume_origin(grid)[2])) / float(grid.vz)
     diz_dv = T_host[:, 2, 2] * float(detector.dv) / float(grid.vz)
     # Bound the error over every row, not just the first row and the increment.

@@ -62,7 +62,7 @@ class FDKConfig:
 
 def _fan_angles(beam: ConeBeam, detector: Detector) -> np.ndarray:
     """Fan angle of each detector column from the ray through the rotation axis."""
-    u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du + detector.det_center[0]
+    u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du + detector.center[0]
     return np.arctan(u / float(beam.source_to_detector)) - np.arctan(
         float(beam.axis_offset) / float(beam.source_to_axis)
     )
@@ -93,7 +93,7 @@ def _full_turn_column_weights(beam: ConeBeam, detector: Detector) -> np.ndarray:
 
 
 def _full_turn(geometry: Geometry, n_views: int) -> bool:
-    thetas = getattr(geometry, "thetas_deg", None)
+    thetas = getattr(geometry, "angles", None)
     if thetas is None or n_views < 2:
         return False
     angles = np.sort(np.deg2rad(np.asarray(thetas, dtype=np.float64)[:n_views]))
@@ -112,7 +112,7 @@ def _virtual_columns(
     """
     if not _full_turn(geometry, n_views) or not _windowable(beam):
         return 0, 0
-    axis = (float(beam.axis_offset) * beam.magnification - float(detector.det_center[0])) / float(
+    axis = (float(beam.axis_offset) * beam.magnification - float(detector.center[0])) / float(
         detector.du
     ) + (detector.nu - 1) / 2
     below, above = axis, detector.nu - 1 - axis
@@ -133,7 +133,7 @@ def _extended(beam: ConeBeam, detector: Detector, pad_lo: int, pad_hi: int) -> D
     return replace(
         detector,
         nu=detector.nu + pad_lo + pad_hi,
-        det_center=(detector.det_center[0] + shift[0], detector.det_center[1] + shift[2]),
+        center=(detector.center[0] + shift[0], detector.center[1] + shift[2]),
     )
 
 
@@ -148,9 +148,9 @@ def view_weights(geometry: Geometry, detector: Detector, n_views: int) -> np.nda
     beam = beam_of(geometry)
     if beam is None:
         raise ValueError("view_weights needs a cone-beam geometry")
-    thetas = getattr(geometry, "thetas_deg", None)
+    thetas = getattr(geometry, "angles", None)
     if thetas is None:
-        raise ValueError("FDK needs a geometry with rotation angles (thetas_deg)")
+        raise ValueError("FDK needs a geometry with view angles")
     all_angles = np.deg2rad(np.asarray(thetas, dtype=np.float64)[:n_views])
     # Angles a whole number of turns apart, to a millionth of a turn, are one angle.
     key = np.round(all_angles / (2 * np.pi) * 1e6).astype(np.int64) % 1_000_000
@@ -832,7 +832,7 @@ def _detector_window(
 
     The window keeps its place on the rolled detector: its centre moves along
     the detector's own u and v. Needs :func:`_windowable` beams, whose detector
-    axes stay in the plane of ``det_center``.
+    axes stay in the plane of ``detector.center``.
     """
     from dataclasses import replace
 
@@ -847,7 +847,7 @@ def _detector_window(
         nv=rows,
         du=detector.du * f,
         dv=detector.dv * f,
-        det_center=(detector.det_center[0] + shift[0], detector.det_center[1] + shift[2]),
+        center=(detector.center[0] + shift[0], detector.center[1] + shift[2]),
     )
 
 

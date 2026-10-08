@@ -54,7 +54,7 @@ def test_tiff_preprocess_defaults_to_absorption_with_provenance(tmp_path: Path) 
     assert result.output_domain == "absorption"
     loaded = load_dataset(out_path)
     np.testing.assert_allclose(loaded.projections[:, 0, 0], -np.log([0.4, 0.8]), rtol=1e-6)
-    np.testing.assert_allclose(loaded.angles_deg, [0.0, 90.0])
+    np.testing.assert_allclose(loaded.angles, [0.0, 90.0])
     with h5py.File(out_path, "r") as handle:
         group = handle["entry/processing/tomojax/preprocess"]
         assert group.attrs["output_domain"] == "absorption"
@@ -94,7 +94,7 @@ def test_nxtomo_preprocess_splits_image_key_and_preserves_angles(tmp_path: Path)
     assert result.output_shape == (2, 2, 2)
     loaded = load_dataset(corrected)
     np.testing.assert_allclose(loaded.projections[:, 0, 0], -np.log([0.4, 0.8]), rtol=1e-6)
-    np.testing.assert_allclose(loaded.angles_deg, [0.0, 90.0])
+    np.testing.assert_allclose(loaded.angles, [0.0, 90.0])
     assert loaded.detector is not None
     assert loaded.detector.nu == 2
     assert loaded.detector.nv == 2
@@ -118,7 +118,7 @@ def test_nxtomo_preprocess_defaults_detector_metadata_when_absent(tmp_path: Path
     assert loaded.detector.nv == 2
     assert loaded.detector.du == 1.0
     assert loaded.detector.dv == 1.0
-    assert loaded.detector.det_center == (0.0, 0.0)
+    assert loaded.detector.center == (0.0, 0.0)
 
 
 def test_nxtomo_preprocess_uses_pixel_size_datasets_without_detector_json(
@@ -139,7 +139,7 @@ def test_nxtomo_preprocess_uses_pixel_size_datasets_without_detector_json(
     assert loaded.detector is not None
     assert loaded.detector.du == 0.5
     assert loaded.detector.dv == 0.75
-    assert loaded.detector.det_center == (0.0, 0.0)
+    assert loaded.detector.center == (0.0, 0.0)
 
 
 def test_nxtomo_preprocess_prefers_detector_json_over_pixel_size_datasets(
@@ -168,7 +168,7 @@ def test_nxtomo_preprocess_prefers_detector_json_over_pixel_size_datasets(
     assert loaded.detector is not None
     assert loaded.detector.du == 2.0
     assert loaded.detector.dv == 3.0
-    assert loaded.detector.det_center == (4.0, -5.0)
+    assert loaded.detector.center == (4.0, -5.0)
 
 
 def test_nxtomo_preprocess_shifts_detector_center_after_crop(tmp_path: Path) -> None:
@@ -194,7 +194,7 @@ def test_nxtomo_preprocess_shifts_detector_center_after_crop(tmp_path: Path) -> 
     assert loaded.detector is not None
     assert loaded.detector.nu == 1
     assert loaded.detector.nv == 1
-    assert loaded.detector.det_center == (9.0, 18.5)
+    assert loaded.detector.center == (9.0, 18.5)
 
 
 def test_nxtomo_preprocess_supports_view_selection_crop_and_transmission(tmp_path: Path) -> None:
@@ -212,7 +212,7 @@ def test_nxtomo_preprocess_supports_view_selection_crop_and_transmission(tmp_pat
     assert result.output_shape == (1, 1, 1)
     loaded = load_dataset(corrected)
     np.testing.assert_allclose(loaded.projections[:, 0, 0], [0.8], rtol=1e-6)
-    np.testing.assert_allclose(loaded.angles_deg, [90.0])
+    np.testing.assert_allclose(loaded.angles, [90.0])
     with h5py.File(corrected, "r") as handle:
         group = handle["entry/processing/tomojax/preprocess"]
         assert json.loads(group.attrs["crop_bounds"]) == {"x0": 0, "x1": 1, "y0": 0, "y1": 1}

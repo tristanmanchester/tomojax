@@ -14,6 +14,6 @@ and comments; empty/nonfinite data and malformed rows after numeric data starts
 raise `ValueError`. The caller checks that angle count matches projection count.
 
 The ingestion CLI accepts detector-centre offsets in pixels and converts them
-with `du`/`dv`. Python `Detector.det_center` stores physical lengths. See the
+with `du`/`dv`. Python `Detector.center` stores physical lengths. See the
 [real scan guide](../../../docs/real-laminography.md) for measured geometry and
 for the distinction between raw intensities and corrected absorption.

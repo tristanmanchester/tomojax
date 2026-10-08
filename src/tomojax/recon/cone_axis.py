@@ -123,7 +123,7 @@ def _fov_mask(geometry: ConeGeometry, grid: Grid, detector: Detector) -> np.ndar
     """``(nx, ny)`` mask of the voxels inside the cylinder every view sees."""
     beam = geometry.beam
     # A full turn sees the circle reached by the detector edge farther from the axis.
-    axis = float(beam.axis_offset) * beam.magnification - float(detector.det_center[0])
+    axis = float(beam.axis_offset) * beam.magnification - float(detector.center[0])
     half = detector.nu * detector.du / 2 + abs(axis)
     radius = (
         0.95

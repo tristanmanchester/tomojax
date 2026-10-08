@@ -41,7 +41,7 @@ def check_fixture(path: Path, iterations: int) -> dict:
     with np.load(path, allow_pickle=False) as archive:
         data = {key: archive[key] for key in archive.files}
     metadata = json.loads(str(data["metadata"]))
-    grid, detector = Grid(**metadata["grid"]), Detector(**metadata["detector"])
+    grid, detector = Grid(**metadata["grid"]), Detector.from_dict(metadata["detector"])
     truth = data["truth"].astype(np.float64)
     records = []
     for channel in ("mono_log", "poly_log", "poly_noisy_log"):

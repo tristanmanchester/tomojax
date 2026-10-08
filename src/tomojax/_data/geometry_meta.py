@@ -19,7 +19,7 @@ from tomojax.core.geometry import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
 
     from tomojax.core.geometry.base import (
         DetectorDict,
@@ -36,7 +36,7 @@ class LoadedGeometryMetaRequired(TypedDict):
     """Required metadata for constructing a geometry object."""
 
     detector: DetectorDict
-    thetas_deg: Sequence[float] | np.ndarray
+    angles: Sequence[float] | np.ndarray
 
 
 class LoadedGeometryMeta(LoadedGeometryMetaRequired, total=False):
@@ -105,9 +105,9 @@ class AugmentedGeometry:
         return self.base.detector
 
     @property
-    def thetas_deg(self) -> Sequence[float]:
+    def angles(self) -> Sequence[float]:
         """The base geometry's view angles."""
-        return self.base.thetas_deg
+        return self.base.angles
 
     def pose_for_view(self, i: int) -> PoseMatrix:
         """Return nominal pose with saved pose correction applied."""
@@ -144,9 +144,9 @@ class DetectorRollGeometry:
         return self.base.detector
 
     @property
-    def thetas_deg(self) -> Sequence[float]:
+    def angles(self) -> Sequence[float]:
         """The base geometry's view angles."""
-        return self.base.thetas_deg
+        return self.base.angles
 
     def pose_for_view(self, i: int) -> PoseMatrix:
         """Return the wrapped geometry pose."""
@@ -196,18 +196,7 @@ def _se3_from_pose_params_np(pose_params: np.ndarray) -> np.ndarray:
 
 
 def _detector_from_meta(meta: LoadedGeometryMeta) -> Detector:
-    return _detector_from_mapping(meta["detector"])
-
-
-def _detector_from_mapping(det_d: Mapping[str, Any]) -> Detector:
-    det_center = det_d.get("det_center", [0.0, 0.0])
-    return Detector(
-        nu=int(det_d["nu"]),
-        nv=int(det_d["nv"]),
-        du=float(det_d["du"]),
-        dv=float(det_d["dv"]),
-        det_center=(float(det_center[0]), float(det_center[1])),
-    )
+    return Detector.from_dict(meta["detector"])
 
 
 def _grid_from_meta(
@@ -279,12 +268,12 @@ def _grid_from_meta(
     )
 
 
-def _resolve_thetas_deg(
+def _resolve_angles(
     meta: LoadedGeometryMeta,
     *,
     apply_saved_angle_offset: bool,
 ) -> np.ndarray:
-    thetas = np.asarray(meta["thetas_deg"], dtype=np.float32)
+    thetas = np.asarray(meta["angles"], dtype=np.float32)
     if not apply_saved_angle_offset:
         return thetas
 
@@ -299,7 +288,7 @@ def _resolve_thetas_deg(
         return thetas
 
     # TomoJAX's misalign CLI already bakes scheduled angle offsets into
-    # `thetas_deg` and stores the raw schedule separately for provenance.
+    # `angles` and stores the raw schedule separately for provenance.
     if meta.get("misalign_spec") is not None:
         return thetas
 
@@ -311,7 +300,7 @@ def _base_geometry(
     meta: LoadedGeometryMeta,
     grid: Grid,
     detector: Detector,
-    thetas_deg: Sequence[float],
+    angles: Sequence[float],
 ) -> ScanGeometry:
     gtype = _normalize_geometry_type(meta.get("geometry_type"))
     if gtype == "cone":
@@ -322,7 +311,7 @@ def _base_geometry(
         return ConeGeometry(
             grid=grid,
             detector=detector,
-            thetas_deg=thetas_deg,
+            angles=angles,
             beam=ConeBeam(**{str(k): float(v) for k, v in beam_meta.items()}),
             tilt_deg=float(meta.get("tilt_deg", 0.0)),
             tilt_about=str(meta.get("tilt_about", "x")),
@@ -332,19 +321,19 @@ def _base_geometry(
         return RotationAxisGeometry(
             grid=grid,
             detector=detector,
-            thetas_deg=thetas_deg,
+            angles=angles,
             axis_unit_lab=normalize_axis_unit(meta["axis_unit_lab"]),  # type: ignore[arg-type]
         )
 
     if gtype == "parallel":
-        return ParallelGeometry(grid=grid, detector=detector, thetas_deg=thetas_deg)
+        return ParallelGeometry(grid=grid, detector=detector, angles=angles)
 
     tilt_deg = float(meta.get("tilt_deg", 30.0))
     tilt_about = str(meta.get("tilt_about", "x"))
     return LaminographyGeometry(
         grid=grid,
         detector=detector,
-        thetas_deg=thetas_deg,
+        angles=angles,
         tilt_deg=tilt_deg,
         tilt_about=tilt_about,
     )
@@ -366,7 +355,7 @@ def _with_detector_roll_metadata(
 def _segments_from_meta(
     meta: LoadedGeometryMeta,
     grid: Grid,
-    thetas_deg: Sequence[float],
+    angles: Sequence[float],
     *,
     apply_saved_alignment: bool,
 ) -> ScanGeometry:
@@ -384,8 +373,8 @@ def _segments_from_meta(
         segment = _base_geometry(
             meta=piece,
             grid=grid,
-            detector=_detector_from_mapping(entry["detector"]),
-            thetas_deg=list(thetas_deg[start : start + views]),
+            detector=Detector.from_dict(entry["detector"]),
+            angles=list(angles[start : start + views]),
         )
         if params is not None:
             table = np.asarray(params, dtype=np.float32)[start : start + views, :6]
@@ -393,8 +382,8 @@ def _segments_from_meta(
                 segment = AugmentedGeometry(segment, table, translation_frame=frame)
         segments.append(segment)
         start += views
-    if start != len(thetas_deg):
-        raise ValueError(f"cone_segments describe {start} views; the dataset has {len(thetas_deg)}")
+    if start != len(angles):
+        raise ValueError(f"cone_segments describe {start} views; the dataset has {len(angles)}")
     return ConeSegments(tuple(segments))
 
 
@@ -415,11 +404,11 @@ def build_geometry_from_meta(
     `[alpha, beta, phi, dx, dz]`, optionally followed by `dy`; further columns
     are ignored. Saved
     `angle_offset_deg` is applied unless it is known to have already been baked
-    into `thetas_deg`.
+    into `angles`.
     """
     detector = _detector_from_meta(meta)
     grid = _grid_from_meta(meta, detector, grid_override, volume_shape)
-    thetas_deg = _resolve_thetas_deg(
+    angles = _resolve_angles(
         meta,
         apply_saved_angle_offset=apply_saved_alignment,
     )
@@ -430,12 +419,12 @@ def build_geometry_from_meta(
             _segments_from_meta(
                 meta,
                 grid,
-                [float(t) for t in thetas_deg],
+                [float(t) for t in angles],
                 apply_saved_alignment=apply_saved_alignment,
             ),
         )
     geom = _with_detector_roll_metadata(
-        _base_geometry(meta=meta, grid=grid, detector=detector, thetas_deg=thetas_deg),
+        _base_geometry(meta=meta, grid=grid, detector=detector, angles=angles),
         meta,
     )
 
@@ -443,10 +432,10 @@ def build_geometry_from_meta(
         align_params = np.asarray(meta["align_params"], dtype=np.float32)
         if align_params.ndim != 2:
             raise ValueError("align_params must be a 2-D array with shape (n_views, >=5)")
-        if align_params.shape[0] != len(thetas_deg):
+        if align_params.shape[0] != len(angles):
             raise ValueError(
                 f"align_params row count ({align_params.shape[0]}) must match "
-                f"number of views ({len(thetas_deg)})"
+                f"number of views ({len(angles)})"
             )
         if align_params.shape[1] < 5:
             raise ValueError(

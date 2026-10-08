@@ -90,9 +90,9 @@ def fourier_reconstruct(
         projections, detector, geometry=geometry, context="fourier_reconstruct projections"
     )
     origin = grid_volume_origin(grid)
-    if not np.isfinite([*origin, *detector.det_center]).all():
+    if not np.isfinite([*origin, *detector.center]).all():
         raise ValueError("fourier_reconstruct: grid and detector placement must be finite")
-    order, flipped, theta0 = uniform_half_turn(np.asarray(geometry.thetas_deg))
+    order, flipped, theta0 = uniform_half_turn(np.asarray(geometry.angles))
     output = validate_host_arrays(projections, out, shape, "fourier_reconstruct")
     depth = min(slices, grid.nz)
     host_bytes = 4 * (grid.nx * grid.ny * grid.nz + nviews * detector.nu * grid.nz)
@@ -100,9 +100,9 @@ def fourier_reconstruct(
     plan = FourierPlan(
         grid, detector, nviews, flipped, theta0, depth, cfg.backend, async_transfers=overlap
     )
-    positions = (
-        origin[2] + np.arange(grid.nz) * grid.vz - detector.det_center[1]
-    ) / detector.dv + (detector.nv - 1) / 2
+    positions = (origin[2] + np.arange(grid.nz) * grid.vz - detector.center[1]) / detector.dv + (
+        detector.nv - 1
+    ) / 2
     if not np.isfinite(positions).all():
         raise ValueError("fourier_reconstruct: detector-row coordinates must be finite")
 

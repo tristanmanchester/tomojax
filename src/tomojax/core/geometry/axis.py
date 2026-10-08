@@ -33,12 +33,13 @@ class RotationAxisGeometry:
 
     The detector and beam model are unchanged from the standard parallel-ray model:
     rays remain fixed in the world frame along +y and detector coordinates live in
-    the world x/z detector plane. Only the per-view object pose changes.
+    the world x/z detector plane. Only the per-view object pose changes: view
+    ``i`` rotates the object about the axis by ``angles[i]``, in degrees.
     """
 
     grid: Grid
     detector: Detector
-    thetas_deg: Sequence[float]
+    angles: Sequence[float]
     axis_unit_lab: Sequence[float]
 
     def __post_init__(self) -> None:
@@ -49,7 +50,7 @@ class RotationAxisGeometry:
 
     def pose_for_view(self, i: int) -> PoseMatrix:
         """Return the world-from-object pose for one view."""
-        theta = float(np.deg2rad(self.thetas_deg[i]))
+        theta = float(np.deg2rad(self.angles[i]))
         axis = self._axis_unit()
         ez = np.array([0.0, 0.0, 1.0], dtype=np.float64)
         S = align_u_to_v(ez, axis)

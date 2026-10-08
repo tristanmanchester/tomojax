@@ -19,17 +19,18 @@ class ParallelGeometry:
     """Parallel-beam CT geometry with axis-aligned detector.
 
     - World frame: detector lies in (x,z) plane; rays along +y.
-    - Object pose per view is rotation around +z by angle phi (radians).
-      pose_for_view returns T_world_from_obj = Rz(phi). At theta=0, T = I.
+    - ``angles`` are the view angles, in degrees. View ``i`` rotates the object
+      around +z by ``phi = angles[i]``; pose_for_view returns
+      T_world_from_obj = Rz(phi). At phi=0, T = I.
     """
 
     grid: Grid
     detector: Detector
-    thetas_deg: Sequence[float]
+    angles: Sequence[float]
 
     def pose_for_view(self, i: int) -> PoseMatrix:
         """Return the world-from-object pose for one view."""
-        phi = float(np.deg2rad(self.thetas_deg[i]))
+        phi = float(np.deg2rad(self.angles[i]))
         T = rotz(phi)
         return tuple(map(tuple, T))  # 4x4
 

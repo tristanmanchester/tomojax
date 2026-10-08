@@ -74,7 +74,7 @@ def test_simulate_parallel_projection_shape_and_metadata(monkeypatch: pytest.Mon
     assert tuple(data["volume"].shape) == (2, 2, 2)
     assert data["geometry_type"] == "parallel"
     assert data["geometry_meta"] is None
-    np.testing.assert_allclose(data["thetas_deg"], [0.0, 90.0])
+    np.testing.assert_allclose(data["angles"], [0.0, 90.0])
 
 
 def test_simulate_lamino_records_tilt_metadata(monkeypatch: pytest.MonkeyPatch) -> None:

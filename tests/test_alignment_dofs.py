@@ -70,7 +70,7 @@ def test_cli_geometry_dofs_route_to_multires(monkeypatch: pytest.MonkeyPatch) ->
     args = parser.parse_args(["input.nxs", "-o", "out.nxs", "--optimise-dofs", "det_u_px"])
     dataset = ProjectionDataset(
         projections=np.zeros((3, 4, 5), dtype=np.float32),
-        angles_deg=np.asarray([0.0, 90.0, 180.0], dtype=np.float32),
+        angles=np.asarray([0.0, 90.0, 180.0], dtype=np.float32),
         detector=Detector(nu=5, nv=4, du=1.0, dv=1.0),
         grid=Grid(nx=5, ny=5, nz=4, vx=1.0, vy=1.0, vz=1.0),
     )
@@ -98,7 +98,7 @@ def test_cli_resume_restores_geometry_dofs_from_checkpoint(
     checkpoint_path = tmp_path / "align.ckpt"
     dataset = ProjectionDataset(
         projections=np.zeros((3, 4, 5), dtype=np.float32),
-        angles_deg=np.asarray([0.0, 90.0, 180.0], dtype=np.float32),
+        angles=np.asarray([0.0, 90.0, 180.0], dtype=np.float32),
         detector=Detector(nu=5, nv=4, du=1.0, dv=1.0),
         grid=Grid(nx=5, ny=5, nz=4, vx=1.0, vy=1.0, vz=1.0),
     )
@@ -163,7 +163,7 @@ def test_cli_resume_mode_max_checkpoint_keeps_schedule_without_empty_dofs(
     checkpoint_path = tmp_path / "align-max.ckpt"
     dataset = ProjectionDataset(
         projections=np.zeros((3, 4, 5), dtype=np.float32),
-        angles_deg=np.asarray([0.0, 90.0, 180.0], dtype=np.float32),
+        angles=np.asarray([0.0, 90.0, 180.0], dtype=np.float32),
         detector=Detector(nu=5, nv=4, du=1.0, dv=1.0),
         grid=Grid(nx=5, ny=5, nz=4, vx=1.0, vy=1.0, vz=1.0),
     )
@@ -238,7 +238,7 @@ def test_cli_pose_only_dofs_stay_single_resolution(monkeypatch: pytest.MonkeyPat
     args = parser.parse_args(["input.nxs", "-o", "out.nxs", "--optimise-dofs", "dx"])
     dataset = ProjectionDataset(
         projections=np.zeros((3, 4, 5), dtype=np.float32),
-        angles_deg=np.asarray([0.0, 90.0, 180.0], dtype=np.float32),
+        angles=np.asarray([0.0, 90.0, 180.0], dtype=np.float32),
         detector=Detector(nu=5, nv=4, du=1.0, dv=1.0),
         grid=Grid(nx=5, ny=5, nz=4, vx=1.0, vy=1.0, vz=1.0),
     )

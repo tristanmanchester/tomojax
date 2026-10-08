@@ -43,7 +43,7 @@ class LaminographyGeometry:
     - Rotation axis is tilted away from +z by `tilt_deg` within a chosen plane.
       With `tilt_about='x'` the axis leans towards +y (beam-aligned laminography);
       with `tilt_about='z'` the axis leans towards +x. Each view rotates the
-      object around this axis by angle `thetas_deg[i]`.
+      object around this axis by `angles[i]`, in degrees.
 
     Frame convention:
     - pose_for_view(i) returns T_world_from_obj for the sample frame, where the
@@ -53,7 +53,7 @@ class LaminographyGeometry:
 
     grid: Grid
     detector: Detector
-    thetas_deg: Sequence[float]
+    angles: Sequence[float]
     tilt_deg: float = 30.0
     tilt_about: str = "x"  # or "z"
 
@@ -72,7 +72,7 @@ class LaminographyGeometry:
         rotate around +z by view angle theta: R = S @ R_z(theta). The returned
         4x4 poses are suitable for the projector contract (world_from_object).
         """
-        theta = float(np.deg2rad(self.thetas_deg[i]))
+        theta = float(np.deg2rad(self.angles[i]))
         axis = self.axis_unit_lab
         ez = np.array([0.0, 0.0, 1.0], dtype=np.float64)
         S = align_u_to_v(ez, axis)

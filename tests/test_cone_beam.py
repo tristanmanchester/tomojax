@@ -279,7 +279,7 @@ def test_cone_geometry_round_trips_through_saved_datasets(tmp_path: Path):
     geometry, grid, detector, _ = _scan("tilted", n=10, views=6)
     dataset = ProjectionDataset(
         projections=np.zeros((6, detector.nv, detector.nu), np.float32),
-        angles_deg=np.asarray(geometry.thetas_deg, np.float32),
+        angles=np.asarray(geometry.angles, np.float32),
         detector=detector,
         grid=grid,
         geometry_type="cone",
@@ -466,7 +466,7 @@ def test_align_cor_mode_writes_the_calibrated_cone_beam(tmp_path: Path):
     geometry, data = _blob_scan(n, 180, ConeBeam(3 * n, 4.5 * n, -0.5, axis_offset=3.1))
     dataset = ProjectionDataset(
         projections=data,
-        angles_deg=np.asarray(geometry.thetas_deg, np.float32),
+        angles=np.asarray(geometry.angles, np.float32),
         detector=geometry.detector,
         grid=geometry.grid,
         geometry_type="cone",
@@ -513,7 +513,7 @@ def test_import_reads_a_nikon_xtekct_scan(tmp_path: Path):
     _, _, ingested = build_geometry_from_dataset_metadata(loaded.geometry_inputs())
     assert isinstance(ingested, ConeGeometry) and ingested.beam == beam
     assert ingested.detector.du == 0.075 and loaded.grid == grid
-    np.testing.assert_allclose(loaded.angles_deg, angles, atol=1e-4)  # from _ctdata.txt
+    np.testing.assert_allclose(loaded.angles, angles, atol=1e-4)  # from _ctdata.txt
     np.testing.assert_allclose(loaded.projections, data, atol=3e-4)
     volume = fdk(ingested, grid, ingested.detector, loaded.projections)
     truth = _voxelise(grid, shapes)
@@ -581,7 +581,7 @@ def test_export_writes_volume_slices_and_raw_files(tmp_path: Path):
     detector = Detector(6, 4, 1.0, 1.0)
     dataset = ProjectionDataset(
         projections=np.zeros((2, 4, 6), np.float32),
-        angles_deg=np.asarray([0.0, 90.0], np.float32),
+        angles=np.asarray([0.0, 90.0], np.float32),
         volume=volume,
         detector=detector,
         grid=Grid(6, 5, 4, 0.5, 0.5, 0.25),

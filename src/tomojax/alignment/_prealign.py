@@ -305,7 +305,7 @@ def implied_detector_offset(nominal: np.ndarray, aligned: np.ndarray) -> tuple[f
     the same amount along u, while a rigid object translation displaces it by a
     view-dependent amount. Fitting each view's u displacement of the object origin
     as ``-offset + (R_i t)_x`` separates the two over the scan. Both returns are
-    physical lengths, with the sign of ``Detector.det_center``.
+    physical lengths, with the sign of ``Detector.center``.
     """
     shift = np.asarray(aligned, np.float64)[:, 0, 3] - np.asarray(nominal, np.float64)[:, 0, 3]
     design = np.column_stack([-np.ones(len(shift)), np.asarray(nominal, np.float64)[:, 0, :3]])

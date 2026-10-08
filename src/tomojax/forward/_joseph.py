@@ -26,7 +26,7 @@ def _inputs(volume, poses, grid, detector, backend):
     context = "Joseph projection"
     validate_volume(volume, grid, context=context)
     validate_detector(detector, context)
-    if not np.isfinite((*grid_volume_origin(grid), *detector.det_center)).all():
+    if not np.isfinite((*grid_volume_origin(grid), *detector.center)).all():
         raise ValueError(f"{context}: grid origin and detector centre must be finite")
     if jnp.iscomplexobj(volume) or jnp.iscomplexobj(poses):
         raise ValueError(f"{context}: volume and poses must be real")

@@ -198,7 +198,7 @@ def test_import_cli_converts_nxtomo_to_npz(tmp_path: Path) -> None:
 
     dataset = load_dataset(npz_path)
     assert dataset.projections.shape == (2, 2, 4)
-    np.testing.assert_allclose(dataset.angles_deg, [0.0, 90.0])
+    np.testing.assert_allclose(dataset.angles, [0.0, 90.0])
 
 
 def test_recon_cli_routes_tiny_workflow(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -419,7 +419,7 @@ def test_recon_detector_center_override_records_effective_pixels() -> None:
     # check-public-imports: allow-private
     from tomojax.cli._recon_plan import _apply_detector_center_override
 
-    detector = Detector(nu=8, nv=8, du=0.5, dv=2.0, det_center=(1.0, -2.0))
+    detector = Detector(nu=8, nv=8, du=0.5, dv=2.0, center=(1.0, -2.0))
     geometry_meta: dict[str, object] = {"detector": detector.to_dict()}
 
     updated, provenance = _apply_detector_center_override(
@@ -429,7 +429,7 @@ def test_recon_detector_center_override_records_effective_pixels() -> None:
         det_v_px=None,
     )
 
-    assert updated.det_center == pytest.approx((3.0, -2.0))
+    assert updated.center == pytest.approx((3.0, -2.0))
     assert provenance["source"] == "cli_override"
     assert provenance["requested_px"] == {"det_u_px": 6.0, "det_v_px": None}
     assert provenance["effective_px"] == {"det_u_px": 6.0, "det_v_px": -1.0}
@@ -486,9 +486,7 @@ def test_simulate_cli_routes_loadable_synthetic_dataset(
             projections=np.zeros(
                 (int(config.n_views), int(config.nv), int(config.nu)), dtype=np.float32
             ),
-            angles_deg=np.linspace(
-                0.0, 180.0, int(config.n_views), endpoint=False, dtype=np.float32
-            ),
+            angles=np.linspace(0.0, 180.0, int(config.n_views), endpoint=False, dtype=np.float32),
         )
         dataset.volume = np.zeros(
             (int(config.nx), int(config.ny), int(config.nz)), dtype=np.float32
@@ -674,7 +672,7 @@ def test_align_cli_cor_then_pose_saves_the_detector_centre_and_motion(
     du = write_projection_dataset(
         scan,
         projections=np.ones((8, 2, 4), np.float32),
-        angles_deg=angles,
+        angles=angles,
         geometry_type="lamino",
         geometry_metadata={"tilt_deg": 30.0, "tilt_about": "x"},
     ).detector.du
@@ -717,7 +715,7 @@ def test_align_cli_cor_then_pose_saves_the_detector_centre_and_motion(
     assert config.pose_translation_frame == "detector"
     assert config.gn_coupling == "joint"
     saved = load_dataset(aligned)
-    assert saved.detector.det_center[0] == pytest.approx(offset_px * du, abs=1e-6)
+    assert saved.detector.center[0] == pytest.approx(offset_px * du, abs=1e-6)
     assert saved.align_gauge["pose_translation_frame"] == "detector"
     views = json.loads(params_json.read_text())["views"]
     assert [view["dx_world"] for view in views] == pytest.approx(list(motion), abs=1e-6)

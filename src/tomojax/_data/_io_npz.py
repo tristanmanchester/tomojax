@@ -4,6 +4,10 @@ import numpy as np
 
 from ._io_types import LoadedDataset, LoadedNXTomo, NXTomoMetadata
 
+# The file's key for the view angles (``NXTomoMetadata.angles``); earlier
+# versions wrote it, so it stays.
+_ANGLES_KEY = "thetas_deg"
+
 
 def save_npz(
     path: str,
@@ -19,6 +23,8 @@ def save_npz(
         projections=np.asarray(projections),
         metadata=metadata,
     ).to_dataset_dict()
+    if "angles" in payload:
+        payload[_ANGLES_KEY] = payload.pop("angles")
     np.savez_compressed(path, **payload)
 
 
@@ -27,10 +33,11 @@ def _load_npz_dataset(path: str) -> LoadedDataset:
         out: LoadedDataset = {}
         for k in z.files:
             val = z[k]
+            key = "angles" if k == _ANGLES_KEY else k
             if isinstance(val, np.ndarray) and val.shape == () and val.dtype == object:
-                out[k] = val.item()
+                out[key] = val.item()
             else:
-                out[k] = val
+                out[key] = val
         return out
 
 

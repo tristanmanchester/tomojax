@@ -231,7 +231,7 @@ def _source_info(entry: h5py.Group) -> dict[str, str | None]:
 def _metadata_from_raw(
     entry: h5py.Group,
     *,
-    thetas_deg: np.ndarray,
+    angles: np.ndarray,
     output_image_key: np.ndarray,
     nv: int,
     nu: int,
@@ -260,7 +260,7 @@ def _metadata_from_raw(
             )
 
     return NXTomoMetadata(
-        thetas_deg=np.asarray(thetas_deg, dtype=np.float32),
+        angles=np.asarray(angles, dtype=np.float32),
         image_key=output_image_key,
         grid=cast("GridDict | None", grid),
         detector=_detector_meta_from_raw(

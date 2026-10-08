@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 class BaseGeometryArrays:
     """Array/static bundle used by differentiable alignment objectives."""
 
-    thetas_deg: jnp.ndarray
+    angles: jnp.ndarray
     nominal_pose_stack: jnp.ndarray
     detector: Detector
     nominal_axis_unit: jnp.ndarray
@@ -48,11 +48,11 @@ class BaseGeometryArrays:
         level_factor: int = 1,
     ) -> BaseGeometryArrays:
         """Build base arrays from a concrete geometry and detector."""
-        thetas = jnp.asarray(geometry.thetas_deg, dtype=jnp.float32)
+        thetas = jnp.asarray(geometry.angles, dtype=jnp.float32)
         n_views = int(thetas.shape[0])
         is_lamino = isinstance(geometry, LaminographyGeometry)
         return cls(
-            thetas_deg=thetas,
+            angles=thetas,
             nominal_pose_stack=stack_view_poses(geometry, n_views),
             detector=detector,
             nominal_axis_unit=_nominal_axis_unit_from_geometry(geometry),
@@ -80,11 +80,11 @@ def apply_setup_to_detector_grid(
     """Apply native-pixel setup offsets and detector roll to a level detector."""
     factor = jnp.asarray(max(1, int(level_factor)), dtype=jnp.float32)
     det_u_level_px = (
-        jnp.asarray(float(detector.det_center[0]) / float(detector.du), dtype=jnp.float32)
+        jnp.asarray(float(detector.center[0]) / float(detector.du), dtype=jnp.float32)
         + setup.det_u_px / factor
     )
     det_v_level_px = (
-        jnp.asarray(float(detector.det_center[1]) / float(detector.dv), dtype=jnp.float32)
+        jnp.asarray(float(detector.center[1]) / float(detector.dv), dtype=jnp.float32)
         + setup.det_v_px / factor
     )
     return detector_grid_from_calibration(
@@ -161,7 +161,7 @@ def materialize_setup_geometry(
     indices: Sequence[int] | None = None,
 ) -> Geometry:
     """Build a Python geometry object for setup-state projection/reconstruction calls."""
-    thetas = np.asarray(geometry.thetas_deg, dtype=np.float32)
+    thetas = np.asarray(geometry.angles, dtype=np.float32)
     if indices is not None:
         thetas = thetas[np.asarray(indices, dtype=np.int32)]
     axis = tuple(
@@ -177,18 +177,18 @@ def materialize_setup_geometry(
         return RotationAxisGeometry(
             grid=grid,
             detector=detector,
-            thetas_deg=thetas,
+            angles=thetas,
             axis_unit_lab=axis,
         )
     if isinstance(geometry, LaminographyGeometry):
         return LaminographyGeometry(
             grid=grid,
             detector=detector,
-            thetas_deg=thetas,
+            angles=thetas,
             tilt_deg=float(geometry.tilt_deg) + float(np.rad2deg(float(setup.tilt_rad))),
             tilt_about=str(geometry.tilt_about),
         )
-    return ParallelGeometry(grid=grid, detector=detector, thetas_deg=thetas)
+    return ParallelGeometry(grid=grid, detector=detector, angles=thetas)
 
 
 def apply_alignment_state(
@@ -198,7 +198,7 @@ def apply_alignment_state(
     """Apply setup and pose state to base arrays without Python geometry mutation."""
     setup = state.setup
     axis = _setup_axis_unit_for_base(base, setup)
-    setup_pose = axis_pose_stack(base.thetas_deg, axis)
+    setup_pose = axis_pose_stack(base.angles, axis)
     pose_stack = apply_pose_updates(
         setup_pose, state.pose.pose_params, translation_frame=state.pose.translation_frame
     )
@@ -216,7 +216,7 @@ def pose_stack_for_setup(
 ) -> jnp.ndarray:
     """Return the setup-adjusted view pose stack for a base geometry bundle."""
     axis = _setup_axis_unit_for_base(base, setup)
-    return axis_pose_stack(base.thetas_deg, axis)
+    return axis_pose_stack(base.angles, axis)
 
 
 def _nominal_axis_unit_from_geometry(geometry: Geometry) -> jnp.ndarray:
@@ -237,7 +237,7 @@ def subset_base_geometry(
     """Return a view-subsetted copy of a base geometry array bundle."""
     idx = jnp.asarray(indices, dtype=jnp.int32)
     return BaseGeometryArrays(
-        thetas_deg=base.thetas_deg[idx],
+        angles=base.angles[idx],
         nominal_pose_stack=base.nominal_pose_stack[idx],
         detector=base.detector,
         nominal_axis_unit=base.nominal_axis_unit,

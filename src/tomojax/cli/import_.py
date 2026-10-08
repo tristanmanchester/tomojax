@@ -101,7 +101,7 @@ def _tiff_stack(parser: argparse.ArgumentParser, args: argparse.Namespace) -> Pr
     du, dv = sizes[0], sizes[-1]
     geometry = cast("str", args.geometry)
     record = load_tiff_stack(
-        cast("str", args.data), angles_deg=load_angles(Path(angles)), geometry_type=geometry
+        cast("str", args.data), angles=load_angles(Path(angles)), geometry_type=geometry
     )
     nv, nu = cast("tuple[int, int, int]", record.projections.shape)[1:]
     record.detector = Detector(nu=nu, nv=nv, du=du, dv=dv)

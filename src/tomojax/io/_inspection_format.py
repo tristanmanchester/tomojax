@@ -75,7 +75,7 @@ def format_inspection_report(report: InspectionReport) -> str:
             "Detector metadata: "
             f"nu={detector_metadata['nu']}, nv={detector_metadata['nv']}, "
             f"du={detector_metadata['du']}, dv={detector_metadata['dv']}, "
-            f"det_center={detector_metadata['det_center']}"
+            f"center={detector_metadata['center']}"
         )
     else:
         lines.append("Detector metadata: not found")

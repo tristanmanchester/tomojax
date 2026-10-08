@@ -29,7 +29,7 @@ class ConeBeam:
     at the axis is ``source_to_detector / source_to_axis``. ``axis_offset`` is
     the lab-CT centre-of-rotation offset: the axis's lateral distance from the
     line through the source and the unshifted detector centre, in physical
-    units. ``Detector.det_center`` offsets the detector within its plane. Roll,
+    units. ``Detector.center`` offsets the detector within its plane. Roll,
     pitch and yaw rotate the detector about its centre: roll about the beam
     (y), pitch about detector u (x) and yaw about detector v (z), applied in
     that order.
@@ -63,9 +63,9 @@ class ConeBeam:
         rotation = _rotation("z", yaw) @ _rotation("x", pitch) @ _rotation("y", roll)
         centre = np.array(
             [
-                float(detector.det_center[0]),
+                float(detector.center[0]),
                 float(self.source_to_detector) - float(self.source_to_axis),
-                float(detector.det_center[1]),
+                float(detector.center[1]),
             ]
         )
         return centre, rotation @ np.array([1.0, 0.0, 0.0]), rotation @ np.array([0.0, 0.0, 1.0])
@@ -97,7 +97,8 @@ class ConeGeometry:
 
     Poses follow ``ParallelGeometry`` (``tilt_deg == 0``) or
     ``LaminographyGeometry``: ``pose_for_view`` returns world_from_object, and
-    the object's +z axis is the rotation axis. ``axis_unit``, a lab-frame unit
+    the object's +z axis is the rotation axis, turned by ``angles[i]`` degrees
+    at view ``i``. ``axis_unit``, a lab-frame unit
     vector, replaces the tilt for an arbitrary calibrated axis. The beam is
     described by ``beam``; projectors read it to trace rays from the source to
     each pixel.
@@ -105,7 +106,7 @@ class ConeGeometry:
 
     grid: Grid
     detector: Detector
-    thetas_deg: Sequence[float]
+    angles: Sequence[float]
     beam: ConeBeam
     tilt_deg: float = 0.0
     tilt_about: str = "x"
@@ -113,22 +114,25 @@ class ConeGeometry:
 
     def pose_for_view(self, i: int) -> PoseMatrix:
         """Return the world-from-object pose for one view."""
-        return tuple(map(tuple, self.poses(thetas_deg=np.asarray([self.thetas_deg[i]]))[0]))
+        return tuple(map(tuple, self.poses(angles=np.asarray([self.angles[i]]))[0]))
 
-    def poses(self, *, thetas_deg: np.ndarray | None = None) -> np.ndarray:
-        """Return every view's world-from-object pose as an ``(n, 4, 4)`` FP64 array."""
-        angles = np.deg2rad(
-            np.asarray(self.thetas_deg if thetas_deg is None else thetas_deg, dtype=np.float64)
+    def poses(self, *, angles: np.ndarray | None = None) -> np.ndarray:
+        """Return every view's world-from-object pose as an ``(n, 4, 4)`` FP64 array.
+
+        ``angles``, in degrees, replaces the geometry's own view angles.
+        """
+        radians = np.deg2rad(
+            np.asarray(self.angles if angles is None else angles, dtype=np.float64)
         )
-        rotation = np.zeros((angles.size, 3, 3))
-        rotation[:, 0, 0] = rotation[:, 1, 1] = np.cos(angles)
-        rotation[:, 1, 0] = np.sin(angles)
-        rotation[:, 0, 1] = -np.sin(angles)
+        rotation = np.zeros((radians.size, 3, 3))
+        rotation[:, 0, 0] = rotation[:, 1, 1] = np.cos(radians)
+        rotation[:, 1, 0] = np.sin(radians)
+        rotation[:, 0, 1] = -np.sin(radians)
         rotation[:, 2, 2] = 1.0
         axis = self.rotation_axis()
         if not np.allclose(axis, [0.0, 0.0, 1.0], atol=1e-12):
             rotation = align_u_to_v(np.array([0.0, 0.0, 1.0]), axis) @ rotation
-        poses = np.zeros((angles.size, 4, 4))
+        poses = np.zeros((radians.size, 4, 4))
         poses[:, :3, :3] = rotation
         poses[:, 0, 3] = float(self.beam.axis_offset)
         poses[:, 3, 3] = 1.0
@@ -210,9 +214,9 @@ class ConeSegments:
         return self.segments[0].detector
 
     @property
-    def thetas_deg(self) -> list[float]:
+    def angles(self) -> list[float]:
         """Every view's rotation angle, segment after segment."""
-        return [float(t) for s in self.segments for t in s.thetas_deg]
+        return [float(t) for s in self.segments for t in s.angles]
 
     @property
     def beam(self) -> ConeBeam:
@@ -224,7 +228,7 @@ class ConeSegments:
 
     def _locate(self, i: int) -> tuple[ScanGeometry, int]:
         for segment in self.segments:
-            count = len(segment.thetas_deg)
+            count = len(segment.angles)
             if i < count:
                 return segment, i
             i -= count
@@ -246,7 +250,7 @@ class ConeSegments:
 
         from .views import stack_view_poses
 
-        stacks = [stack_view_poses(s, len(s.thetas_deg), dtype=dtype) for s in self.segments]
+        stacks = [stack_view_poses(s, len(s.angles), dtype=dtype) for s in self.segments]
         return jnp.concatenate(stacks)[: int(n_views)]
 
 
@@ -300,11 +304,11 @@ def cone_parts(
     for segment in segments.segments:
         own = segment.detector
         centre = (
-            scan.det_center[0] + own.det_center[0] - reference.det_center[0],
-            scan.det_center[1] + own.det_center[1] - reference.det_center[1],
+            scan.center[0] + own.center[0] - reference.center[0],
+            scan.center[1] + own.center[1] - reference.center[1],
         )
         beam = cast("ConeBeam", beam_of(segment))
-        parts.append((len(segment.thetas_deg), beam, replace(scan, det_center=centre)))
+        parts.append((len(segment.angles), beam, replace(scan, center=centre)))
     return tuple(parts)
 
 

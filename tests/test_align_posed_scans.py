@@ -91,7 +91,7 @@ def test_segment_detectors_keep_their_offsets_when_binned():
     model = cone_model(segments, binned)
 
     assert model is not None
-    assert [part[2].det_center for part in model.parts] == [(0.0, -1.5), (0.0, 2.5)]
+    assert [part[2].center for part in model.parts] == [(0.0, -1.5), (0.0, 2.5)]
     assert [part[0] for part in model.parts] == [2, 2]
     assert model.frames(4).shape == (4, 4, 3)
     assert cone_model(tj.ParallelGeometry(low.grid, low.detector, [0.0]), low.detector) is None

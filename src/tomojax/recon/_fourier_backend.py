@@ -66,7 +66,7 @@ class _Geometry:
         radial = xp.sqrt(fx * fx + fy * fy) * (self.nfft * detector.du)
         angle = xp.mod(xp.arctan2(-fy, fx) - theta0, 2 * np.pi) * (self.nviews / np.pi)
         detector_phase = xp.exp(
-            -2j * np.pi * radial * detector.det_center[0] / (self.nfft * detector.du)
+            -2j * np.pi * radial * detector.center[0] / (self.nfft * detector.du)
         ).astype(complex_dtype)
         ox, oy, _ = grid_volume_origin(grid)
         phase = xp.exp(

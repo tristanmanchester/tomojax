@@ -6,9 +6,9 @@ them lightweight and JAX-friendly (no heavy runtime logic here).
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Protocol, TypedDict
+from typing import Any, Protocol, TypedDict
 
 Vec2 = tuple[float, float]
 Vec3 = tuple[float, float, float]
@@ -36,7 +36,10 @@ class GridDict(GridDictRequired, total=False):
 
 
 class DetectorDict(TypedDict):
-    """JSON-compatible detector metadata fields."""
+    """JSON-compatible detector metadata fields, as written to files.
+
+    ``det_center`` is the file's key for :attr:`Detector.center`.
+    """
 
     nu: int
     nv: int
@@ -128,20 +131,20 @@ def grid_volume_origin(grid: Grid) -> Vec3:
 
 @dataclass(frozen=True)
 class Detector:
-    """Regular detector plane metadata."""
+    """Regular detector plane metadata.
+
+    ``center`` is the detector centre's ``(u, v)`` offset in its plane, in the
+    same physical units as ``du`` and ``dv``.
+    """
 
     nu: int
     nv: int
     du: float
     dv: float
-    det_center: Vec2 = field(default_factory=lambda: (0.0, 0.0))
+    center: Vec2 = field(default_factory=lambda: (0.0, 0.0))
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "det_center",
-            _coerce_fixed_tuple("det_center", self.det_center, 2),
-        )
+        object.__setattr__(self, "center", _coerce_fixed_tuple("center", self.center, 2))
 
     def to_dict(self) -> DetectorDict:
         """Return JSON-compatible detector metadata."""
@@ -150,8 +153,19 @@ class Detector:
             "nv": int(self.nv),
             "du": float(self.du),
             "dv": float(self.dv),
-            "det_center": list(self.det_center),
+            "det_center": list(self.center),  # the file's key for ``center``
         }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> Detector:
+        """Return the detector that a :meth:`to_dict` mapping describes."""
+        return cls(
+            nu=int(data["nu"]),
+            nv=int(data["nv"]),
+            du=float(data["du"]),
+            dv=float(data["dv"]),
+            center=data.get("det_center", (0.0, 0.0)),
+        )
 
 
 def _parallel_detector_rays(
@@ -161,7 +175,7 @@ def _parallel_detector_rays(
     """Return the standard detector-plane ray model used by parallel-beam setups."""
     nu, nv = int(detector.nu), int(detector.nv)
     du, dv = float(detector.du), float(detector.dv)
-    cx, cz = float(detector.det_center[0]), float(detector.det_center[1])
+    cx, cz = float(detector.center[0]), float(detector.center[1])
 
     y0 = grid_volume_origin(grid)[1]
 
@@ -212,7 +226,7 @@ class ScanGeometry(Geometry, Protocol):
         ...
 
     @property
-    def thetas_deg(self) -> Sequence[float]:
+    def angles(self) -> Sequence[float]:
         """Each view's rotation angle, in degrees."""
         ...
 

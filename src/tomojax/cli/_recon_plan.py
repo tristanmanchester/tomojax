@@ -216,38 +216,38 @@ def _apply_detector_center_override(
     """Apply CLI detector-centre overrides specified in detector pixels."""
     requested: dict[str, JsonValue] = {"det_u_px": det_u_px, "det_v_px": det_v_px}
     if det_u_px is None and det_v_px is None:
-        u_px = float(detector.det_center[0]) / float(detector.du)
-        v_px = float(detector.det_center[1]) / float(detector.dv)
+        u_px = float(detector.center[0]) / float(detector.du)
+        v_px = float(detector.center[1]) / float(detector.dv)
         metadata_override: dict[str, JsonValue] = {
             "source": "metadata",
             "requested_px": requested,
             "effective_px": {"det_u_px": u_px, "det_v_px": v_px},
             "effective_world": {
-                "det_u": float(detector.det_center[0]),
-                "det_v": float(detector.det_center[1]),
+                "det_u": float(detector.center[0]),
+                "det_v": float(detector.center[1]),
             },
         }
         return detector, metadata_override
-    u_px = float(detector.det_center[0]) / float(detector.du)
-    v_px = float(detector.det_center[1]) / float(detector.dv)
+    u_px = float(detector.center[0]) / float(detector.du)
+    v_px = float(detector.center[1]) / float(detector.dv)
     if det_u_px is not None:
         u_px = float(det_u_px)
     if det_v_px is not None:
         v_px = float(det_v_px)
     updated = replace(
         detector,
-        det_center=(u_px * float(detector.du), v_px * float(detector.dv)),
+        center=(u_px * float(detector.du), v_px * float(detector.dv)),
     )
     detector_meta = dict(cast("dict[str, object]", geometry_meta.get("detector", {})))
-    detector_meta["det_center"] = [float(updated.det_center[0]), float(updated.det_center[1])]
+    detector_meta["det_center"] = [float(updated.center[0]), float(updated.center[1])]
     geometry_meta["detector"] = detector_meta
     override: dict[str, JsonValue] = {
         "source": "cli_override",
         "requested_px": requested,
         "effective_px": {"det_u_px": u_px, "det_v_px": v_px},
         "effective_world": {
-            "det_u": float(updated.det_center[0]),
-            "det_v": float(updated.det_center[1]),
+            "det_u": float(updated.center[0]),
+            "det_v": float(updated.center[1]),
         },
     }
     logging.info(

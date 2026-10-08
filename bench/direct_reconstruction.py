@@ -27,7 +27,7 @@ def astra_geometries(case: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     vol_geom = astra.create_vol_geom(
         grid.ny, grid.nx, grid.nz, lower[0], upper[0], lower[1], upper[1], lower[2], upper[2]
     )
-    center_world = np.asarray([det.det_center[0], 0.0, det.det_center[1]])
+    center_world = np.asarray([det.center[0], 0.0, det.center[1]])
     center = np.einsum("ni,nij->nj", center_world - poses[:, :3, 3], poses[:, :3, :3])
     vectors = np.concatenate(
         [poses[:, 1, :3], center, poses[:, 0, :3] * det.du, poses[:, 2, :3] * det.dv], axis=1
@@ -49,7 +49,7 @@ def extend_filter_support(case: Any) -> tuple[Any, int]:
     far = origin + (np.array([grid.nx, grid.ny, grid.nz]) - 1) * [grid.vx, grid.vy, grid.vz]
     corners = np.array(np.meshgrid(*zip(origin, far, strict=True), indexing="ij")).reshape(3, -1).T
     coordinates = np.einsum("ni,vi->vn", corners, case.poses[:, 0, :3]) + case.poses[:, 0, 3, None]
-    radius = np.max(np.abs(coordinates - detector.det_center[0])) / detector.du
+    radius = np.max(np.abs(coordinates - detector.center[0])) / detector.du
     padding = max(0, int(np.ceil(radius - (detector.nu - 1) / 2)))
     if padding == 0:
         return case, 0
@@ -180,7 +180,7 @@ def astra_fbp2d(case: Any) -> tuple[np.ndarray, dict]:
         grid.ny * grid.vy / 2,
     )
     projection_geometry = astra.create_proj_geom(
-        "parallel", detector.du, detector.nu, -np.deg2rad(case.angles_deg)
+        "parallel", detector.du, detector.nu, -np.deg2rad(case.angles)
     )
     data_ids = []
     algorithm = None

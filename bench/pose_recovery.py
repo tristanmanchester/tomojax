@@ -75,8 +75,8 @@ def integrals(
     poses: np.ndarray, extent: np.ndarray, detector: Detector, gaussians: tuple = GAUSSIANS
 ) -> np.ndarray:
     """Analytic FP64 line integrals with bounded view workspace and FP32 output."""
-    u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du + detector.det_center[0]
-    v = (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv + detector.det_center[1]
+    u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du + detector.center[0]
+    v = (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv + detector.center[1]
     uu, vv = np.meshgrid(u, v)
     camera = np.stack([uu, np.zeros_like(uu), vv], axis=-1)
     result = np.empty((len(poses), detector.nv, detector.nu), dtype=np.float32)

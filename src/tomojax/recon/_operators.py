@@ -36,7 +36,7 @@ def _operators(
     model, backend = resolve_geometry_projector(
         geometry, "auto", "auto", detector=detector, det_grid=det_grid, context=context
     )
-    n_views = len(geometry.thetas_deg)  # pyright: ignore[reportAttributeAccessIssue]
+    n_views = len(geometry.angles)  # pyright: ignore[reportAttributeAccessIssue]
     poses = stack_view_poses(geometry, n_views)
     batch = max(1, min(_BATCH, n_views))
     split = view_split(devices, n_views)
@@ -89,7 +89,7 @@ def backproject(
     """
     grid, split, (_, adjoint) = _operators(geometry, grid, "backproject", devices)
     detector = geometry.detector
-    expected = (len(geometry.thetas_deg), detector.nv, detector.nu)  # pyright: ignore[reportAttributeAccessIssue]
+    expected = (len(geometry.angles), detector.nv, detector.nu)  # pyright: ignore[reportAttributeAccessIssue]
     if tuple(projections.shape) != expected:
         raise ValueError(
             f"backproject: projections shape {tuple(projections.shape)} does not match the "

@@ -136,7 +136,7 @@ def plan(args: argparse.Namespace) -> None:
         args.out / "plan.npz",
         grid=json.dumps(grid.to_dict()),
         detector=json.dumps(nominal.to_dict()),
-        angles_deg=angles,
+        angles_deg=angles,  # the plan file's key
         tilt_deg=args.tilt_deg,
         nominal_poses=np.asarray(nominal_poses, np.float64),
         true_poses=true_poses,
@@ -302,7 +302,7 @@ def finish(args: argparse.Namespace) -> None:
     data = np.load(args.out / "plan.npz")
     rendered = np.load(args.out / "render.npz")
     grid = Grid(**json.loads(str(data["grid"])))
-    nominal = Detector(**json.loads(str(data["detector"])))
+    nominal = Detector.from_dict(json.loads(str(data["detector"])))
     table = json.loads((args.out / "materials.json").read_text())["materials"]
     truth = _truth_volume(args.meshes, grid, table)
     # The Beer-Lambert line integrals must match TomoJAX's projector applied to
@@ -323,7 +323,7 @@ def finish(args: argparse.Namespace) -> None:
     gain = 1 + args.gain_percent / 100 * rng.standard_normal((nominal.nv, nominal.nu))
     flat = rng.poisson(args.photons * gain, size=(args.flats, *gain.shape)).mean(axis=0)
     metadata = NXTomoMetadata(
-        thetas_deg=data["angles_deg"].astype(np.float32),
+        angles=data["angles_deg"].astype(np.float32),
         grid=grid.to_dict(),
         detector=nominal.to_dict(),
         geometry_type="lamino",

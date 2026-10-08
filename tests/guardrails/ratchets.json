@@ -85,7 +85,7 @@
   },
   "suppressions": {
     "noqa": 8,
-    "type: ignore": 46,
+    "type: ignore": 45,
     "pyright: ignore": 21
   },
   "complex_functions": [

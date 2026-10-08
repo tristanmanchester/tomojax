@@ -100,7 +100,7 @@ def _backprojection_call(
             voxel=(grid.vx, grid.vy, grid.vz),
             detector_shape=(detector.nv, detector.nu),
             detector_spacing=(detector.du, detector.dv),
-            detector_center=detector.det_center,
+            detector_center=detector.center,
             n_views=n_views,
             block_size=block_size,
             z_integer=z_integer,

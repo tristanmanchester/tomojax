@@ -123,8 +123,8 @@ def make_case(size: int, n_views: int, kind: str, *, phantom: str = "gaussian") 
     shape = (grid.nx, grid.ny, grid.nz)
     voxel = np.asarray([grid.vx, grid.vy, grid.vz])
     extent = np.asarray(shape) * voxel
-    u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du + detector.det_center[0]
-    v = (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv + detector.det_center[1]
+    u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du + detector.center[0]
+    v = (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv + detector.center[1]
     uu, vv = np.meshgrid(u, v)
     world = np.stack([uu, np.zeros_like(uu), vv], axis=-1)
     gaussian_spec = (
@@ -360,7 +360,7 @@ def run_tigre(case: Case, repeats: int) -> list[dict]:
     # TIGRE's zero-angle beam follows -x, detector u follows +y, and v follows
     # -z internally, with rows reversed by its output kernel. Rotate the beam/u
     # frame into TomoJAX's object coordinates; returned rows already increase z.
-    angles = np.deg2rad(-90.0 - case.angles_deg).astype(np.float32)
+    angles = np.deg2rad(-90.0 - case.angles).astype(np.float32)
     records = []
     for method in ["interpolated", "Siddon"]:
         output, timing = measure(

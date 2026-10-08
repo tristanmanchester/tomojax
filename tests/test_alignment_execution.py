@@ -117,7 +117,7 @@ def test_align_multires_public_execution_emits_observer_and_resume_metadata() ->
     geometry = ParallelGeometry(
         grid=grid,
         detector=detector,
-        thetas_deg=np.asarray([0.0, 90.0], dtype=np.float32),
+        angles=np.asarray([0.0, 90.0], dtype=np.float32),
     )
     projections = jnp.ones((2, 2, 2), dtype=jnp.float32)
     config = AlignConfig(
@@ -198,7 +198,7 @@ def test_align_multires_executes_a_setup_then_pose_schedule_with_real_stages() -
     geometry = ParallelGeometry(
         grid=grid,
         detector=detector,
-        thetas_deg=np.asarray([0.0, 90.0], dtype=np.float32),
+        angles=np.asarray([0.0, 90.0], dtype=np.float32),
     )
     projections = jnp.ones((2, 2, 2), dtype=jnp.float32)
     config = AlignConfig(
@@ -276,7 +276,7 @@ def test_pose_adjusted_pallas_fallback_keeps_folded_detector_grid_out_of_jax_cor
     geometry = ParallelGeometry(
         grid=grid,
         detector=detector,
-        thetas_deg=np.asarray([0.0, 90.0], dtype=np.float32),
+        angles=np.asarray([0.0, 90.0], dtype=np.float32),
     )
     base_det_grid = reconstruction_stage.get_detector_grid_device(detector)
     shifted_det_grid = (base_det_grid[0] + jnp.float32(0.25), base_det_grid[1])
@@ -393,7 +393,7 @@ def test_fixed_geometry_reconstruction_reports_effective_auto_pallas_backend(
     geometry = ParallelGeometry(
         grid=grid,
         detector=detector,
-        thetas_deg=np.asarray([0.0, 90.0], dtype=np.float32),
+        angles=np.asarray([0.0, 90.0], dtype=np.float32),
     )
     cfg = AlignConfig(
         outer_iterations=1,

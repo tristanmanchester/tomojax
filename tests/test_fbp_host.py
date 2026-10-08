@@ -18,7 +18,7 @@ def scan(kind="fractional"):
     detector = Detector(9, 10, 0.9, 1.0, (0.23, -0.19))
     if kind == "integer":
         grid = replace(grid, vz=1.0, vol_center=(1.2, -0.4, 0.0))
-        detector = replace(detector, nv=11, det_center=(0.23, 0.0))
+        detector = replace(detector, nv=11, center=(0.23, 0.0))
     elif kind == "outside":
         grid = replace(grid, vz=3.0, vol_origin=(-1.7, -2.1, -25.0))
     elif kind == "one_row":
@@ -149,7 +149,7 @@ def test_host_slabs_reconstruct_laminography_like_fbp(depth, backend):
 def test_host_slabs_reject_nonfinite_samples(tilted):
     grid, detector, geometry, data = scan()
     if tilted:
-        geometry = LaminographyGeometry(grid, detector, geometry.thetas_deg, tilt_deg=30)
+        geometry = LaminographyGeometry(grid, detector, geometry.angles, tilt_deg=30)
     data[0, 4, 2] = np.nan
     with pytest.raises(ValueError, match="finite"):
         fbp_host(geometry, grid, detector, data)

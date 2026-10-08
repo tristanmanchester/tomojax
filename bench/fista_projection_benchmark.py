@@ -402,7 +402,7 @@ def materialize_case(spec: CaseSpec, rng: np.random.Generator) -> CaseData:
         nv=spec.detector_shape[0],
         du=1.0,
         dv=1.0,
-        det_center=spec.detector_center,
+        center=spec.detector_center,
     )
     theta = jittered_angles(spec.n_views, rng)
     dx = rng.normal(0.0, 0.18, size=spec.n_views).astype(np.float32)

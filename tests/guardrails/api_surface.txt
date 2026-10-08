@@ -20,7 +20,7 @@ class tomojax.ConeBeam(
 class tomojax.ConeGeometry(
         grid: 'Grid',
         detector: 'Detector',
-        thetas_deg: 'Sequence[float]',
+        angles: 'Sequence[float]',
         beam: 'ConeBeam',
         tilt_deg: 'float' = 0.0,
         tilt_about: 'str' = 'x',
@@ -28,7 +28,7 @@ class tomojax.ConeGeometry(
     ) -> None
     .geometry_metadata(self) -> 'dict[str, object]'
     .pose_for_view(self, i: 'int') -> 'PoseMatrix'
-    .poses(self, *, thetas_deg: 'np.ndarray | None' = None) -> 'np.ndarray'
+    .poses(self, *, angles: 'np.ndarray | None' = None) -> 'np.ndarray'
     .rays_for_view(self, i: 'int') -> 'RayPair'
     .rotation_axis(self) -> 'np.ndarray'
 class tomojax.Detector(
@@ -36,8 +36,9 @@ class tomojax.Detector(
         nv: 'int',
         du: 'float',
         dv: 'float',
-        det_center: 'Vec2' = <factory>,
+        center: 'Vec2' = <factory>,
     ) -> None
+    .from_dict(cls, data: 'Mapping[str, Any]') -> 'Detector'
     .to_dict(self) -> 'DetectorDict'
 class tomojax.Grid(
         nx: 'int',
@@ -53,14 +54,14 @@ class tomojax.Grid(
 class tomojax.LaminographyGeometry(
         grid: 'Grid',
         detector: 'Detector',
-        thetas_deg: 'Sequence[float]',
+        angles: 'Sequence[float]',
         tilt_deg: 'float' = 30.0,
         tilt_about: 'str' = 'x',
     ) -> None
     .axis_unit_lab
     .pose_for_view(self, i: 'int') -> 'PoseMatrix'
     .rays_for_view(self, i: 'int') -> 'RayPair'
-class tomojax.ParallelGeometry(grid: 'Grid', detector: 'Detector', thetas_deg: 'Sequence[float]') -> None
+class tomojax.ParallelGeometry(grid: 'Grid', detector: 'Detector', angles: 'Sequence[float]') -> None
     .pose_for_view(self, i: 'int') -> 'PoseMatrix'
     .rays_for_view(self, i: 'int') -> 'RayPair'
 class tomojax.Reconstruction(
@@ -151,7 +152,7 @@ class tomojax.geometry.ConeBeam(
 class tomojax.geometry.ConeGeometry(
         grid: 'Grid',
         detector: 'Detector',
-        thetas_deg: 'Sequence[float]',
+        angles: 'Sequence[float]',
         beam: 'ConeBeam',
         tilt_deg: 'float' = 0.0,
         tilt_about: 'str' = 'x',
@@ -159,24 +160,25 @@ class tomojax.geometry.ConeGeometry(
     ) -> None
     .geometry_metadata(self) -> 'dict[str, object]'
     .pose_for_view(self, i: 'int') -> 'PoseMatrix'
-    .poses(self, *, thetas_deg: 'np.ndarray | None' = None) -> 'np.ndarray'
+    .poses(self, *, angles: 'np.ndarray | None' = None) -> 'np.ndarray'
     .rays_for_view(self, i: 'int') -> 'RayPair'
     .rotation_axis(self) -> 'np.ndarray'
 class tomojax.geometry.ConeSegments(segments: 'tuple[ScanGeometry, ...]') -> None
+    .angles
     .beam
     .detector
     .grid
     .pose_for_view(self, i: 'int') -> 'PoseMatrix'
     .rays_for_view(self, i: 'int') -> 'RayPair'
     .stack_poses(self, n_views: 'int', dtype: 'jnp.dtype') -> 'jax.Array'
-    .thetas_deg
 class tomojax.geometry.Detector(
         nu: 'int',
         nv: 'int',
         du: 'float',
         dv: 'float',
-        det_center: 'Vec2' = <factory>,
+        center: 'Vec2' = <factory>,
     ) -> None
+    .from_dict(cls, data: 'Mapping[str, Any]') -> 'Detector'
     .to_dict(self) -> 'DetectorDict'
 class tomojax.geometry.Geometry(*args, **kwargs)
     .pose_for_view(self, i: 'int') -> 'PoseMatrix'
@@ -194,29 +196,29 @@ class tomojax.geometry.Grid(
 class tomojax.geometry.LaminographyGeometry(
         grid: 'Grid',
         detector: 'Detector',
-        thetas_deg: 'Sequence[float]',
+        angles: 'Sequence[float]',
         tilt_deg: 'float' = 30.0,
         tilt_about: 'str' = 'x',
     ) -> None
     .axis_unit_lab
     .pose_for_view(self, i: 'int') -> 'PoseMatrix'
     .rays_for_view(self, i: 'int') -> 'RayPair'
-class tomojax.geometry.ParallelGeometry(grid: 'Grid', detector: 'Detector', thetas_deg: 'Sequence[float]') -> None
+class tomojax.geometry.ParallelGeometry(grid: 'Grid', detector: 'Detector', angles: 'Sequence[float]') -> None
     .pose_for_view(self, i: 'int') -> 'PoseMatrix'
     .rays_for_view(self, i: 'int') -> 'RayPair'
 class tomojax.geometry.RotationAxisGeometry(
         grid: 'Grid',
         detector: 'Detector',
-        thetas_deg: 'Sequence[float]',
+        angles: 'Sequence[float]',
         axis_unit_lab: 'Sequence[float]',
     ) -> None
     .pose_for_view(self, i: 'int') -> 'PoseMatrix'
     .rays_for_view(self, i: 'int') -> 'RayPair'
 class tomojax.geometry.ScanGeometry(*args, **kwargs)
+    .angles
     .detector
     .grid
     .rays_for_view(self, i: 'int') -> 'RayPair'
-    .thetas_deg
 def tomojax.geometry.beam_of(geometry: 'object') -> 'ConeBeam | None'
 def tomojax.geometry.compute_roi(
         grid: 'Grid',
@@ -492,7 +494,7 @@ class tomojax.io.PreprocessResult(
     ) -> None
 class tomojax.io.ProjectionDataset(
         projections: 'np.ndarray',
-        angles_deg: 'np.ndarray',
+        angles: 'np.ndarray',
         volume: 'np.ndarray | None' = None,
         detector: 'Detector | None' = None,
         grid: 'Grid | None' = None,
@@ -534,7 +536,7 @@ def tomojax.io.load_nikon_xtekct(
 def tomojax.io.load_tiff_stack(
         path: 'PathLike',
         *,
-        angles_deg: 'Sequence[float] | np.ndarray',
+        angles: 'Sequence[float] | np.ndarray',
         detector: 'Detector | None' = None,
         grid: 'Grid | None' = None,
         geometry_type: 'str' = 'parallel',

@@ -71,7 +71,7 @@ def test_spdhg_one_iteration_smoke_is_finite_and_positive() -> None:
     geometry = ParallelGeometry(
         grid=grid,
         detector=detector,
-        thetas_deg=np.asarray([0.0, 90.0], dtype=np.float32),
+        angles=np.asarray([0.0, 90.0], dtype=np.float32),
     )
     projections = jnp.ones((2, 2, 2), dtype=jnp.float32)
 

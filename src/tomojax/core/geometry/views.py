@@ -32,13 +32,13 @@ def stack_view_poses(
     from .parallel import ParallelGeometry
 
     if type(geometry) is ConeGeometry:
-        thetas = np.asarray(geometry.thetas_deg[: int(n_views)], dtype=np.float64)
-        return jnp.asarray(geometry.poses(thetas_deg=thetas).astype(dtype))
+        thetas = np.asarray(geometry.angles[: int(n_views)], dtype=np.float64)
+        return jnp.asarray(geometry.poses(angles=thetas).astype(dtype))
 
     # Subclasses may override pose_for_view (for example to add calibrated
     # shifts). Only specialize the exact built-in implementation.
     if type(geometry) is ParallelGeometry:
-        thetas = np.asarray(geometry.thetas_deg[: int(n_views)], dtype=np.float32)
+        thetas = np.asarray(geometry.angles[: int(n_views)], dtype=np.float32)
         phi = np.deg2rad(thetas).astype(np.float32)
         c = np.cos(phi).astype(np.float32)
         s = np.sin(phi).astype(np.float32)
@@ -55,7 +55,7 @@ def stack_view_poses(
     if type(geometry) is LaminographyGeometry:
         from .transforms import align_u_to_v
 
-        angles = np.deg2rad(np.asarray(geometry.thetas_deg[: int(n_views)], dtype=np.float64))
+        angles = np.deg2rad(np.asarray(geometry.angles[: int(n_views)], dtype=np.float64))
         rotation = np.zeros((int(n_views), 3, 3), dtype=np.float64)
         rotation[:, 0, 0] = rotation[:, 1, 1] = np.cos(angles)
         rotation[:, 1, 0] = np.sin(angles)

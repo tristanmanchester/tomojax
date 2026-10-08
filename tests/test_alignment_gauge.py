@@ -174,4 +174,4 @@ def test_align_returns_the_least_motion_estimate_and_the_detector_centre():
     )
     np.testing.assert_allclose(left.shift, 0.0, atol=1e-3)
     np.testing.assert_allclose(result.poses[:, 3:5], truth[:, 3:5], atol=0.1)
-    assert result.scan.detector.det_center[0] == pytest.approx(1.5, abs=0.1)
+    assert result.scan.detector.center[0] == pytest.approx(1.5, abs=0.1)

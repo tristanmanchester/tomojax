@@ -24,8 +24,8 @@ def coefficients(poses, grid, detector):
     """Map integer detector coordinates and physical ray distance to voxel indices."""
     voxel = jnp.array([grid.vx, grid.vy, grid.vz])
     origin = jnp.array(grid_volume_origin(grid))
-    u0 = detector.det_center[0] - (detector.nu - 1) * detector.du / 2
-    v0 = detector.det_center[1] - (detector.nv - 1) * detector.dv / 2
+    u0 = detector.center[0] - (detector.nu - 1) * detector.du / 2
+    v0 = detector.center[1] - (detector.nv - 1) * detector.dv / 2
     base = jnp.einsum(
         "vji,vj->vi",
         poses[:, :3, :3],

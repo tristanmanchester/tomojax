@@ -30,7 +30,7 @@ from tomojax.recon.fista_tv_core import (
 
 
 def test_detector_grid_is_flattened_centered_and_read_only() -> None:
-    detector = Detector(nu=3, nv=2, du=2.0, dv=4.0, det_center=(10.0, -5.0))
+    detector = Detector(nu=3, nv=2, du=2.0, dv=4.0, center=(10.0, -5.0))
 
     x_grid, z_grid = _build_detector_grid(detector)
 

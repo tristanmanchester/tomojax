@@ -45,7 +45,7 @@ def uniform_half_turn(angles: np.ndarray) -> tuple[np.ndarray, np.ndarray, float
 
 def transform_grid(grid: Grid, detector: Detector) -> tuple[tuple[int, int], tuple[int, int]]:
     """Pad around both the requested ROI and the zero-extended detector field."""
-    radius = abs(detector.det_center[0]) + detector.nu * detector.du / 2
+    radius = abs(detector.center[0]) + detector.nu * detector.du / 2
     origin = grid_volume_origin(grid)
     shape, crop = [], []
     for count, spacing, first in zip(

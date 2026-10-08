@@ -184,8 +184,8 @@ def _segment(
     aligned = ConeGeometry(grid, detector, [0.0], cone, axis_unit=axis_unit).poses()[0]
     offset_turn = aligned[:3, :3].T @ turn
     gamma = float(np.arctan2(offset_turn[1, 0], offset_turn[0, 0]))
-    angles_deg = [float(t) for t in np.rad2deg(theta + gamma)]
-    geometry = ConeGeometry(grid, detector, angles_deg, cone, axis_unit=axis_unit)
+    angles = [float(t) for t in np.rad2deg(theta + gamma)]
+    geometry = ConeGeometry(grid, detector, angles, cone, axis_unit=axis_unit)
     # What the circle leaves, as detector-frame corrections: rotation N^T R,
     # translation t - n. Pose angles compose R_y(beta) R_x(alpha) R_z(phi).
     nominal = geometry.poses()
@@ -237,7 +237,7 @@ def _vectors(segment: ScanGeometry) -> np.ndarray:
     if beam is None:
         raise ValueError("to_astra converts cone-beam scans")
     detector = segment.detector
-    views = len(segment.thetas_deg)
+    views = len(segment.angles)
     poses = np.asarray(stack_view_poses(segment, views), np.float64)
     rotation, translation = poses[:, :3, :3], poses[:, :3, 3]
     centre, e_u, e_v = beam.detector_frame(detector)

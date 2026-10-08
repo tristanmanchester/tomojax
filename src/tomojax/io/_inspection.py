@@ -332,7 +332,7 @@ def _detector_metadata_report(file: h5py.File) -> DetectorMetadataReport:
             "nv": None,
             "du": None,
             "dv": None,
-            "det_center": None,
+            "center": None,
         }
     return {
         "found": True,
@@ -340,7 +340,7 @@ def _detector_metadata_report(file: h5py.File) -> DetectorMetadataReport:
         "nv": _json_safe(meta.get("nv")),
         "du": _json_safe(meta.get("du")),
         "dv": _json_safe(meta.get("dv")),
-        "det_center": _json_safe(meta.get("det_center")),
+        "center": _json_safe(meta.get("det_center")),  # the file's key for the centre
     }
 
 

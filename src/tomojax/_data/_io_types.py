@@ -50,7 +50,7 @@ _GEOMETRY_PASSTHROUGH: dict[str, Callable[[Any], Any]] = {
 class NXTomoMetadata:
     """Portable metadata bundle for NXtomo persistence."""
 
-    thetas_deg: np.ndarray | None = None
+    angles: np.ndarray | None = None
     image_key: np.ndarray | None = None
     grid: Grid | GridDict | None = None
     detector: Detector | DetectorDict | None = None
@@ -99,7 +99,7 @@ class NXTomoMetadata:
         }:
             volume_axes_order = disk_volume_axes_order
         return cls(
-            thetas_deg=_copy_array_metadata(data.get("thetas_deg")),
+            angles=_copy_array_metadata(data.get("angles")),
             image_key=_copy_array_metadata(data.get("image_key")),
             grid=data.get("grid"),
             detector=data.get("detector"),
@@ -227,13 +227,13 @@ class LoadedNXTomo:
         detector = self.metadata.detector
         if detector is None:
             raise ValueError("NXtomo payload is missing detector metadata")
-        thetas_deg = self.metadata.thetas_deg
-        if thetas_deg is None:
+        angles = self.metadata.angles
+        if angles is None:
             raise ValueError("NXtomo payload is missing rotation angles")
 
         payload: dict[str, DatasetValue] = {
             "detector": detector.to_dict() if isinstance(detector, Detector) else detector,
-            "thetas_deg": np.asarray(thetas_deg, dtype=np.float32),
+            "angles": np.asarray(angles, dtype=np.float32),
             "geometry_type": self.metadata.geometry_type,
         }
         grid = self.metadata.grid

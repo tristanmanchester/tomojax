@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 def zero_center_detector_grid(detector: Detector) -> tuple[jnp.ndarray, jnp.ndarray]:
     """Return detector coordinates for the same detector shape with zero physical centre."""
-    zero_detector = dataclasses.replace(detector, det_center=(0.0, 0.0))
+    zero_detector = dataclasses.replace(detector, center=(0.0, 0.0))
     return get_detector_grid_device(zero_detector)
 
 
@@ -77,8 +77,8 @@ def detector_grid_from_detector_roll(
     """Build a rolled detector grid preserving the detector's physical centre."""
     return detector_grid_from_calibration(
         detector,
-        det_u_px=float(detector.det_center[0]) / float(detector.du),
-        det_v_px=float(detector.det_center[1]) / float(detector.dv),
+        det_u_px=float(detector.center[0]) / float(detector.du),
+        det_v_px=float(detector.center[1]) / float(detector.dv),
         detector_roll_deg=detector_roll_deg,
     )
 

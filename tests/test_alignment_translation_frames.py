@@ -457,7 +457,7 @@ def test_least_motion_moves_a_constant_u_shift_into_the_detector_centre(kind):
     assert gauge.detector_offset == pytest.approx(1.5, abs=0.02)
     shifted = replace(
         detector,
-        det_center=(detector.det_center[0] + gauge.detector_offset, detector.det_center[1]),
+        center=(detector.center[0] + gauge.detector_offset, detector.center[1]),
     )
     for view in (0, 6, 13):
         pose = jnp.asarray(nominal[view], jnp.float32)
@@ -476,7 +476,7 @@ def test_saved_alignment_is_reapplied_in_its_translation_frame(frame):
     meta = {
         "detector": detector.to_dict(),
         "grid": grid.to_dict(),
-        "thetas_deg": angles.astype(np.float32),
+        "angles": angles.astype(np.float32),
         "geometry_type": "lamino",
         "tilt_deg": 30.0,
         "align_params": params,

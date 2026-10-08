@@ -22,7 +22,7 @@ def _tiny_geometry() -> tuple[Grid, Detector, ParallelGeometry]:
     geometry = ParallelGeometry(
         grid=grid,
         detector=detector,
-        thetas_deg=np.linspace(0.0, 180.0, 4, endpoint=False, dtype=np.float32),
+        angles=np.linspace(0.0, 180.0, 4, endpoint=False, dtype=np.float32),
     )
     return grid, detector, geometry
 
@@ -158,7 +158,7 @@ def test_reconstruction_volume_roundtrips_through_dataset_contract(tmp_path: Pat
     volume = np.arange(4 * 4 * 2, dtype=np.float32).reshape(4, 4, 2)
     dataset = ProjectionDataset(
         projections=np.ones((2, 2, 4), dtype=np.float32),
-        angles_deg=np.asarray([0.0, 90.0], dtype=np.float32),
+        angles=np.asarray([0.0, 90.0], dtype=np.float32),
         volume=volume,
         detector=Detector(nu=4, nv=2, du=1.0, dv=1.0),
         grid=Grid(nx=4, ny=4, nz=2, vx=1.0, vy=1.0, vz=1.0),

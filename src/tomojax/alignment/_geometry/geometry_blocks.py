@@ -207,7 +207,7 @@ def geometry_inputs_from_geometry(geometry: Geometry) -> dict[str, object]:
     payload: dict[str, object] = {
         "grid": grid.to_dict(),
         "detector": detector.to_dict(),
-        "thetas_deg": np.asarray(geometry.thetas_deg, dtype=np.float32),
+        "angles": np.asarray(geometry.angles, dtype=np.float32),
         "geometry_type": "parallel",
     }
     if isinstance(geometry, LaminographyGeometry):
@@ -362,7 +362,7 @@ def _overall_geometry_status(blocks: Sequence[Mapping[str, object]]) -> str:
 
 
 def _theta_span_from_geometry(geometry: Geometry) -> float | None:
-    thetas = np.asarray(getattr(geometry, "thetas_deg", []), dtype=np.float32).reshape(-1)
+    thetas = np.asarray(getattr(geometry, "angles", []), dtype=np.float32).reshape(-1)
     if thetas.size < 2:
         return None
     sorted_thetas = np.sort(np.mod(thetas, 360.0))

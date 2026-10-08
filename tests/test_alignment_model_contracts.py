@@ -47,7 +47,7 @@ def test_theta_span_uses_sampled_geometric_coverage() -> None:
     geometry = ParallelGeometry(
         grid=Grid(nx=4, ny=4, nz=4, vx=1.0, vy=1.0, vz=1.0),
         detector=Detector(nu=4, nv=4, du=1.0, dv=1.0),
-        thetas_deg=np.linspace(0.0, 270.0, 12, endpoint=False, dtype=np.float32),
+        angles=np.linspace(0.0, 270.0, 12, endpoint=False, dtype=np.float32),
     )
 
     assert _theta_span_from_geometry(geometry) == pytest.approx(247.5)
@@ -72,7 +72,7 @@ def test_projection_pair_detector_center_seed_uses_tomojax_sign_convention() -> 
     geometry = ParallelGeometry(
         grid=grid,
         detector=detector,
-        thetas_deg=np.asarray([0.0, 180.0], dtype=np.float32),
+        angles=np.asarray([0.0, 180.0], dtype=np.float32),
     )
     u = np.arange(detector.nu, dtype=np.float32)
     base_profile = np.exp(-0.5 * ((u - 13.0) / 2.5) ** 2)
@@ -94,7 +94,7 @@ def test_projection_pair_detector_center_seed_rejects_constant_projections() -> 
     geometry = ParallelGeometry(
         grid=grid,
         detector=detector,
-        thetas_deg=np.asarray([0.0, 180.0], dtype=np.float32),
+        angles=np.asarray([0.0, 180.0], dtype=np.float32),
     )
     projections = np.ones((2, detector.nv, detector.nu), dtype=np.float32)
 

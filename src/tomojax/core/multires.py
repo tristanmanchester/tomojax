@@ -89,9 +89,9 @@ def scale_detector(det: Detector, factor: int) -> Detector:
         nv=nv,
         du=det.du * f,
         dv=det.dv * f,
-        det_center=(
-            _scaled_center(det.nu, det.du, det.det_center[0], nu, offset_u),
-            _scaled_center(det.nv, det.dv, det.det_center[1], nv, offset_v),
+        center=(
+            _scaled_center(det.nu, det.du, det.center[0], nu, offset_u),
+            _scaled_center(det.nv, det.dv, det.center[1], nv, offset_v),
         ),
     )
 

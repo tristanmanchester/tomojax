@@ -86,7 +86,7 @@ def projection_com_det_u_seed(
         )
     com = np.zeros((n_views,), dtype=np.float32)
     com[valid] = numerator[valid] / denom[valid]
-    theta = np.deg2rad(np.asarray(geometry.thetas_deg, dtype=np.float32))
+    theta = np.deg2rad(np.asarray(geometry.angles, dtype=np.float32))
     design = np.stack(
         [
             np.ones_like(theta[valid]),
@@ -136,7 +136,7 @@ def projection_pair_det_u_seed(
             status="insufficient_projection_pairs",
         )
 
-    theta = np.asarray(geometry.thetas_deg, dtype=np.float32).reshape(-1)
+    theta = np.asarray(geometry.angles, dtype=np.float32).reshape(-1)
     if theta.size != n_views:
         return DetectorCenterSeed(
             det_u_px=0.0,

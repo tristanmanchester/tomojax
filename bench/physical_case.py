@@ -23,6 +23,6 @@ class Case:
     grid: Grid
     detector: Detector
     poses: np.ndarray
-    angles_deg: np.ndarray
+    angles: np.ndarray
     volume: np.ndarray
     analytic: np.ndarray

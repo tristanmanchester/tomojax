@@ -220,7 +220,7 @@ def least_motion_estimate(
     ``cone_beam`` says the geometry is a cone beam, where along-beam ``dy`` is
     visible; parameters not in ``active`` keep their values. Returns the moved
     volume and poses and the gauge applied; a detector offset in it belongs in
-    the detector centre (``Detector.det_center[0] += gauge.detector_offset``).
+    the detector centre (``Detector.center[0] += gauge.detector_offset``).
 
     The motion is a symmetry only for an object inside the grid. If moving the
     volume would push part of the object out (more than 5% of its integral;

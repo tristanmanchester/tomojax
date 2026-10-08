@@ -111,7 +111,7 @@ def test_scans_and_reconstructions_round_trip_through_files(kind: str, tmp_path:
     geometry = _geometries(8)[kind]
     if isinstance(geometry, tj.ConeGeometry):
         geometry = tj.ConeGeometry(
-            geometry.grid, geometry.detector, geometry.thetas_deg,
+            geometry.grid, geometry.detector, geometry.angles,
             tj.ConeBeam(24, 36, detector_roll_deg=0.4, axis_offset=0.7),
         )  # fmt: skip
     scan = tj.Scan(np.asarray(tj.project(geometry, _phantom(8))), geometry, name="part")
@@ -158,7 +158,7 @@ def test_align_calibrates_the_axis_and_returns_a_corrected_scan(tmp_path: Path) 
     n = 32
     nominal = _geometries(n)["cone"]
     truth = tj.ConeGeometry(
-        nominal.grid, nominal.detector, nominal.thetas_deg, tj.ConeBeam(96, 144, axis_offset=1.7)
+        nominal.grid, nominal.detector, nominal.angles, tj.ConeBeam(96, 144, axis_offset=1.7)
     )
     scan = tj.Scan(np.asarray(tj.project(truth, _phantom(n))), nominal)
     result = tj.align(scan, mode="cor")
@@ -219,7 +219,7 @@ def test_binning_averages_pixels_and_keeps_the_detector_in_place():
     # The odd last column and row are dropped, shifting the centre by half a pixel.
     assert binned.projections.shape == (24, 16, 20)
     assert binned.detector.du == binned.detector.dv == 1.0
-    assert binned.detector.det_center == pytest.approx((0.05, -0.45))
+    assert binned.detector.center == pytest.approx((0.05, -0.45))
     direct = np.asarray(tj.project(binned.geometry, volume))
     assert np.linalg.norm(np.asarray(binned.projections) - direct) / np.linalg.norm(direct) < 0.01
     assert scan.binned(1) is scan

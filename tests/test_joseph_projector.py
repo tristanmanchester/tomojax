@@ -41,9 +41,9 @@ def matrix(poses, g, d, interpolation="linear"):
             for iu in range(d.nu):
                 camera = np.array(
                     [
-                        (iu - (d.nu - 1) / 2) * d.du + d.det_center[0],
+                        (iu - (d.nu - 1) / 2) * d.du + d.center[0],
                         0,
-                        (iv - (d.nv - 1) / 2) * d.dv + d.det_center[1],
+                        (iv - (d.nv - 1) / 2) * d.dv + d.center[1],
                     ]
                 )
                 base = t[:3, :3].T @ (camera - t[:3, 3])
@@ -260,7 +260,7 @@ def test_joseph_rejects_invalid_geometry_before_kernel_execution(bad):
     if bad == "origin":
         grid = replace(grid, vol_origin=(np.nan, 0, 0))
     if bad == "center":
-        detector = replace(detector, det_center=(np.inf, 0))
+        detector = replace(detector, center=(np.inf, 0))
     if bad == "singular_pose":
         poses[0, :3, :3] = 0
     if bad == "scaled_pose":

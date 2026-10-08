@@ -195,7 +195,7 @@ def _backproject_voxels_jax(
     x = (jnp.arange(grid.nx, dtype=jnp.float32) * grid.vx + ox)[:, None, None]
     y = (jnp.arange(grid.ny, dtype=jnp.float32) * grid.vy + oy)[None, :, None]
     z = (jnp.arange(grid.nz, dtype=jnp.float32) * grid.vz + oz)[None, None, :]
-    cu, cv = detector.det_center
+    cu, cv = detector.center
 
     def body(
         accum: jnp.ndarray, inputs: tuple[jnp.ndarray, jnp.ndarray]
@@ -440,7 +440,7 @@ def supports_parallel_fbp_z_integer(grid: Grid, detector: Detector) -> bool:
     """Return whether the detector rows align with z-slices for direct Pallas FBP."""
     tol = 1e-5
     origin_z = float(grid_volume_origin(grid)[2])
-    first = (origin_z - float(detector.det_center[1])) / float(detector.dv)
+    first = (origin_z - float(detector.center[1])) / float(detector.dv)
     first += float(detector.nv) / 2.0 - 0.5
     step = float(grid.vz) / float(detector.dv)
     # A small per-slice mismatch can accumulate over a large volume.
@@ -476,7 +476,7 @@ def run_parallel_fbp_direct_pallas(
     coordinates = (
         poses[:, 0, 0, None] * xx.ravel() + poses[:, 0, 1, None] * yy.ravel() + poses[:, 0, 3, None]
     )
-    required_radius = np.max(np.abs(coordinates - detector.det_center[0])) / detector.du
+    required_radius = np.max(np.abs(coordinates - detector.center[0])) / detector.du
     padding = max(0, math.ceil(required_radius - (detector.nu - 1) / 2))
     detector = replace(detector, nu=detector.nu + 2 * padding)
     ramp = _rfft_filter_array(filter, detector.nu, float(detector.du), jnp.float32)
@@ -516,7 +516,7 @@ def _parallel_filter_detector(grid: Grid, detector: Detector) -> Detector:
     ox, oy, _ = grid_volume_origin(grid)
     rx = max(abs(ox), abs(ox + (grid.nx - 1) * grid.vx))
     ry = max(abs(oy), abs(oy + (grid.ny - 1) * grid.vy))
-    required_half_width = (math.hypot(rx, ry) + abs(detector.det_center[0])) / detector.du
+    required_half_width = (math.hypot(rx, ry) + abs(detector.center[0])) / detector.du
     padding = max(0, math.ceil(required_half_width - (detector.nu - 1) / 2))
     return replace(detector, nu=detector.nu + 2 * padding) if padding else detector
 
@@ -534,8 +534,8 @@ def _filter_detector(grid: Grid, detector: Detector, poses: np.ndarray, *, pad_v
     rows = np.asarray(poses, dtype=np.float64)
     u = np.einsum("ni,ic->nc", rows[:, 0, :3], corners) + rows[:, 0, 3, None]
     v = np.einsum("ni,ic->nc", rows[:, 2, :3], corners) + rows[:, 2, 3, None]
-    reach_u = np.max(np.abs(u - detector.det_center[0])) / detector.du
-    reach_v = np.max(np.abs(v - detector.det_center[1])) / detector.dv
+    reach_u = np.max(np.abs(u - detector.center[0])) / detector.du
+    reach_v = np.max(np.abs(v - detector.center[1])) / detector.dv
     extra_u = max(0, math.ceil(reach_u - (detector.nu - 1) / 2))
     extra_v = max(0, math.ceil(reach_v - (detector.nv - 1) / 2)) if pad_v else 0
     return replace(detector, nu=detector.nu + 2 * extra_u, nv=detector.nv + 2 * extra_v)

@@ -16,10 +16,10 @@ _THETAS_PATH = "entry/imaging_sum/smaract_zrot"
 
 @dataclass(frozen=True, slots=True)
 class RealLaminographyInput:
-    """Loaded real-laminography projections and stage angles."""
+    """Loaded real-laminography projections and stage angles, in degrees."""
 
     projections: np.ndarray
-    thetas_deg: np.ndarray
+    angles: np.ndarray
 
 
 def load_real_laminography_input(
@@ -67,5 +67,5 @@ def load_real_laminography_input(
 
     return RealLaminographyInput(
         projections=np.asarray(projections, dtype=np.float32),
-        thetas_deg=np.asarray(thetas, dtype=np.float32),
+        angles=np.asarray(thetas, dtype=np.float32),
     )

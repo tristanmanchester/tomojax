@@ -27,7 +27,7 @@ enable_persistent_compilation_cache()
 
 def validate_plane_geometry(poses: jax.Array, grid: Grid, detector: Detector) -> None:
     """Reject geometry that would make the plane map or gather bounds undefined."""
-    if not np.isfinite((*grid_volume_origin(grid), *detector.det_center)).all():
+    if not np.isfinite((*grid_volume_origin(grid), *detector.center)).all():
         raise ValueError("cgls: Joseph grid origin and detector centre must be finite")
     host_poses = np.asarray(poses)
     rotations = host_poses[:, :3, :3]
@@ -69,8 +69,8 @@ def plane_coefficients(
     origin = jnp.asarray(grid_volume_origin(grid), jnp.float32)
     rotation = poses[:, :3, :3]
     if det_grid is None:
-        u0 = detector.det_center[0] - (detector.nu - 1) * detector.du / 2
-        v0 = detector.det_center[1] - (detector.nv - 1) * detector.dv / 2
+        u0 = detector.center[0] - (detector.nu - 1) * detector.du / 2
+        v0 = detector.center[1] - (detector.nv - 1) * detector.dv / 2
         first = jnp.asarray([u0, 0.0, v0], jnp.float32)
         u, v = rotation[:, 0, :] * detector.du / voxel, rotation[:, 2, :] * detector.dv / voxel
     else:

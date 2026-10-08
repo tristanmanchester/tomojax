@@ -258,7 +258,7 @@ def _metadata_from_tiff_inputs(
 ) -> NXTomoMetadata:
     nv, nu = (int(v) for v in corrected.output.shape[1:])
     return NXTomoMetadata(
-        thetas_deg=np.asarray(inputs.angles, dtype=np.float32),
+        angles=np.asarray(inputs.angles, dtype=np.float32),
         image_key=np.zeros((int(corrected.output.shape[0]),), dtype=np.int32),
         detector=_detector_metadata(detector, nv=nv, nu=nu),
         grid=grid,

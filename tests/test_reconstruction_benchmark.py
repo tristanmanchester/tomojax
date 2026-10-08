@@ -460,7 +460,7 @@ def test_fourier_slab_option_reaches_isolated_worker_and_result(benchmark, monke
         name="parallel-8-2",
         grid=Grid(8, 8, 8, 1.0, 1.0, 1.0),
         detector=Detector(8, 8, 1.0, 1.0),
-        angles_deg=np.array([0.0, 90.0]),
+        angles=np.array([0.0, 90.0]),
         analytic=np.zeros((2, 8, 8), np.float32),
         volume=np.ones((8, 8, 8), np.float32),
     )

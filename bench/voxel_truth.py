@@ -76,8 +76,8 @@ def project_voxel_truth(
     """Independent detector sampling in the library's lab XZ / beam-Y convention."""
     from tomojax.core.geometry.base import grid_volume_origin
 
-    u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du + detector.det_center[0]
-    v = (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv + detector.det_center[1]
+    u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du + detector.center[0]
+    v = (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv + detector.center[1]
     uu, vv = np.meshgrid(u, v)
     world = np.stack([uu.ravel(), np.zeros(uu.size), vv.ravel()], axis=-1)
     output = []

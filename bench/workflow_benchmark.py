@@ -35,12 +35,12 @@ def run_case(size: int, kind: str, method: str, args: argparse.Namespace) -> dic
     case = make_case(size, args.views, kind)
     grid, detector = case.grid, case.detector
     geometry = (
-        LaminographyGeometry(grid, detector, case.angles_deg, tilt_deg=30)
+        LaminographyGeometry(grid, detector, case.angles, tilt_deg=30)
         if kind == "lamino"
-        else ParallelGeometry(grid, detector, case.angles_deg)
+        else ParallelGeometry(grid, detector, case.angles)
     )
     data = jnp.asarray(case.analytic)
-    n_views = len(case.angles_deg)
+    n_views = len(case.angles)
     lipschitz = 1.5 * n_views * max(grid.nx, grid.ny, grid.nz)
     if method == "fista":
         config = FistaConfig(

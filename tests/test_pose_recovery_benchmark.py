@@ -25,9 +25,9 @@ def test_streamed_integrals_match_independent_quadrature_across_view_boundaries(
     for view, row, col in [(0, 10, 12), (31, 8, 20), (32, 11, 14), (36, 7, 13)]:
         camera = np.array(
             [
-                (col - (detector.nu - 1) / 2) * detector.du + detector.det_center[0],
+                (col - (detector.nu - 1) / 2) * detector.du + detector.center[0],
                 0,
-                (row - (detector.nv - 1) / 2) * detector.dv + detector.det_center[1],
+                (row - (detector.nv - 1) / 2) * detector.dv + detector.center[1],
             ]
         )
         pose = poses[view]

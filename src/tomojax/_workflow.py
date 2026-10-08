@@ -76,7 +76,7 @@ class Scan:
     def __post_init__(self) -> None:
         shape = tuple(self.projections.shape)
         detector = self.geometry.detector
-        views = len(self.geometry.thetas_deg)  # pyright: ignore[reportAttributeAccessIssue]
+        views = len(self.geometry.angles)  # pyright: ignore[reportAttributeAccessIssue]
         if shape != (views, detector.nv, detector.nu):
             raise ValueError(
                 f"Scan: projections are {shape} but the geometry has {views} views of "
@@ -96,7 +96,7 @@ class Scan:
     @property
     def angles(self) -> np.ndarray:
         """Rotation angle of each view, in degrees."""
-        return np.asarray(self.geometry.thetas_deg, dtype=np.float64)  # pyright: ignore[reportAttributeAccessIssue]
+        return np.asarray(self.geometry.angles, dtype=np.float64)  # pyright: ignore[reportAttributeAccessIssue]
 
     @property
     def poses(self) -> np.ndarray | None:
@@ -340,7 +340,7 @@ def _describe_segments(
     for segment in geometry.segments:
         _, meta, _, _ = _describe(segment)
         detector = segment.detector.to_dict()
-        entries.append({"views": len(segment.thetas_deg), "detector": detector, **meta})
+        entries.append({"views": len(segment.angles), "detector": detector, **meta})
     meta = {"cone_beam": entries[0]["cone_beam"], "cone_segments": entries}
     table = _detector_poses(geometry)  # one frame for every segment's poses
     return "cone", meta, None if table is None else (table, "detector"), geometry
@@ -359,7 +359,7 @@ def _record_of(scan: Scan, *, grid: Grid | None = None) -> ProjectionDataset:
     )
     fields: dict[str, Any] = {
         "projections": np.asarray(scan.projections),
-        "angles_deg": scan.angles.astype(np.float32),
+        "angles": scan.angles.astype(np.float32),
         "volume": None,
         "detector": scan.detector,
         "grid": scan.grid if grid is None else grid,
@@ -421,8 +421,8 @@ def _binned_detector(detector: Detector, factor: int) -> Detector:
 
     nu, nv = detector.nu // factor, detector.nv // factor
     # Dropped edge pixels move the binned detector's centre (see Scan.binned).
-    cu = detector.det_center[0] + detector.du * (factor * nu - detector.nu) / 2
-    cv = detector.det_center[1] + detector.dv * (factor * nv - detector.nv) / 2
+    cu = detector.center[0] + detector.du * (factor * nu - detector.nu) / 2
+    cv = detector.center[1] + detector.dv * (factor * nv - detector.nv) / 2
     return Detector(nu, nv, detector.du * factor, detector.dv * factor, (cu, cv))
 
 
@@ -751,7 +751,7 @@ def _detector_poses(geometry: ScanGeometry) -> np.ndarray | None:
         if all(t is None for t in tables):
             return None
         return np.concatenate([
-            np.zeros((len(s.thetas_deg), 6), np.float32) if t is None else t
+            np.zeros((len(s.angles), 6), np.float32) if t is None else t
             for s, t in zip(geometry.segments, tables, strict=True)
         ])  # fmt: skip
     if not isinstance(geometry, AugmentedGeometry):
@@ -767,14 +767,7 @@ def _detector(value: object) -> Detector:
 
     if isinstance(value, Detector):
         return value
-    data = cast("dict[str, Any]", value)
-    return Detector(
-        nu=int(data["nu"]),
-        nv=int(data["nv"]),
-        du=float(data["du"]),
-        dv=float(data["dv"]),
-        det_center=tuple(float(x) for x in data.get("det_center", (0.0, 0.0))),  # type: ignore[arg-type]
-    )
+    return Detector.from_dict(cast("dict[str, Any]", value))
 
 
 __all__ = [

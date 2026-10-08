@@ -145,13 +145,13 @@ def _write_detector_section(
 def _write_sample_section(entry: h5py.Group, meta: NXTomoMetadata, *, n_views: int) -> None:
     sample = _ensure_group(entry, "sample", "NXsample")
     trans = _ensure_group(sample, "transformations", "NXtransformations")
-    if meta.thetas_deg is None:
-        thetas_deg = np.zeros((n_views,), dtype=np.float32)
+    if meta.angles is None:
+        angles = np.zeros((n_views,), dtype=np.float32)
     else:
-        thetas_deg = np.asarray(meta.thetas_deg, dtype=np.float32)
-        if thetas_deg.shape != (n_views,):
-            raise ValueError("thetas_deg must be (n_views,)")
-    d_angle = trans.create_dataset("rotation_angle", data=thetas_deg)
+        angles = np.asarray(meta.angles, dtype=np.float32)
+        if angles.shape != (n_views,):
+            raise ValueError("angles must be (n_views,)")
+    d_angle = trans.create_dataset("rotation_angle", data=angles)
     d_angle.attrs["units"] = "degree"
     _write_string_attr(d_angle, "transformation_type", "rotation")
     trans.create_dataset("rotation_axis", data=np.asarray([0.0, 0.0, 1.0], dtype=np.float32))
@@ -322,7 +322,7 @@ def load_nxtomo(path: str) -> LoadedNXTomo:
         out["projections"] = proj
         n_views = proj.shape[0]
         out["image_key"] = _load_image_key(entry, n_views=n_views, path=path)
-        out["thetas_deg"] = _load_rotation_angles(entry, n_views=n_views, path=path)
+        out["angles"] = _load_rotation_angles(entry, n_views=n_views, path=path)
         _load_geometry_metadata(out, entry, path=path)
         _load_grid_metadata(out, entry, path=path)
         _load_detector_metadata(out, entry, proj, path=path)

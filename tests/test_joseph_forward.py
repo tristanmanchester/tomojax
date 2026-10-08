@@ -111,7 +111,7 @@ def test_public_projection_rejects_invalid_static_inputs(bad):
     elif bad == "origin":
         g = replace(g, vol_origin=(np.nan, 0, 0))
     elif bad == "center":
-        d = replace(d, det_center=(0, np.inf))
+        d = replace(d, center=(0, np.inf))
     else:
         backend = "automatic"
     with pytest.raises(ValueError, match="Joseph projection"):

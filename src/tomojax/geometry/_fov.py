@@ -131,7 +131,7 @@ def compute_roi(
     # Detector pixel-center half extents (world units)
     u_half = ((float(detector.nu) / 2.0) - 0.5) * float(detector.du)
     v_half = ((float(detector.nv) / 2.0) - 0.5) * float(detector.dv)
-    cx, cz = float(detector.det_center[0]), float(detector.det_center[1])
+    cx, cz = float(detector.center[0]), float(detector.center[1])
 
     r_u = max(0.0, u_half - abs(cx))
     r_v = max(0.0, v_half - abs(cz))

@@ -222,8 +222,8 @@ def physical_gaussian(grid, detector, angles, length_scale=1.0):
             + ((z - mu[2]) / sigma[2]) ** 2
         )
     )
-    u = detector.det_center[0] + (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du
-    v = detector.det_center[1] + (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv
+    u = detector.center[0] + (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du
+    v = detector.center[1] + (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv
     c, s = np.cos(np.deg2rad(angles)), np.sin(np.deg2rad(angles))
     mean = c * mu[0] - s * mu[1]
     variance = (c * sigma[0]) ** 2 + (s * sigma[1]) ** 2
@@ -260,7 +260,7 @@ def scan(kind="offset", length_scale=1.0):
         detector,
         du=detector.du * length_scale,
         dv=detector.dv * length_scale,
-        det_center=tuple(v * length_scale for v in detector.det_center),
+        center=tuple(v * length_scale for v in detector.center),
     )
     geometry = ParallelGeometry(grid, detector, angles)
     data, truth = physical_gaussian(grid, detector, angles, length_scale)
@@ -438,11 +438,11 @@ def test_invalid_inputs_rejected_before_output_written(invalid):
     out = np.full((grid.nx, grid.ny, grid.nz), 123, dtype=np.float32)
     config = FourierConfig()
     if invalid in {"nonuniform", "duplicate", "nonfinite"}:
-        angles = np.asarray(geometry.thetas_deg).copy()
+        angles = np.asarray(geometry.angles).copy()
         angles[1] = {"nonuniform": 2.5, "duplicate": 0, "nonfinite": np.nan}[invalid]
         geometry = ParallelGeometry(grid, detector, angles)
     elif invalid == "tilted":
-        geometry = LaminographyGeometry(grid, detector, geometry.thetas_deg, tilt_deg=30)
+        geometry = LaminographyGeometry(grid, detector, geometry.angles, tilt_deg=30)
     elif invalid == "complex":
         data = data.astype(np.complex64)
     elif invalid == "shape":

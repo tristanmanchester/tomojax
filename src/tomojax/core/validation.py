@@ -93,7 +93,7 @@ def _is_positive_finite(value: object) -> bool:
 def _geometry_view_count(geometry: Geometry | None) -> int | None:
     if geometry is None:
         return None
-    thetas = getattr(geometry, "thetas_deg", None)
+    thetas = getattr(geometry, "angles", None)
     if thetas is None:
         return None
     try:

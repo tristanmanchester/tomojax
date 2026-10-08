@@ -111,15 +111,15 @@ def _build_detector_grid(det: Detector) -> tuple[np.ndarray, np.ndarray]:
         int(det.nv),
         float(det.du),
         float(det.dv),
-        float(det.det_center[0]),
-        float(det.det_center[1]),
+        float(det.center[0]),
+        float(det.center[1]),
     )
 
 
 def _build_detector_grid_device_uncached(det: Detector) -> tuple[jnp.ndarray, jnp.ndarray]:
     nu, nv = int(det.nu), int(det.nv)
     du, dv = jnp.float32(float(det.du)), jnp.float32(float(det.dv))
-    cx, cz = jnp.float32(float(det.det_center[0])), jnp.float32(float(det.det_center[1]))
+    cx, cz = jnp.float32(float(det.center[0])), jnp.float32(float(det.center[1]))
     u = (jnp.arange(nu, dtype=jnp.float32) - jnp.float32(nu / 2.0 - 0.5)) * du + cx
     v = (jnp.arange(nv, dtype=jnp.float32) - jnp.float32(nv / 2.0 - 0.5)) * dv + cz
     return jnp.tile(u, nv), jnp.repeat(v, nu)
@@ -412,7 +412,7 @@ def _view_frame(geometry: Geometry, detector: Detector, view_index: int) -> np.n
     cone = cone_model(geometry, detector)
     if cone is None:
         return None
-    return cone.frames(len(cast("ScanGeometry", geometry).thetas_deg))[view_index]
+    return cone.frames(len(cast("ScanGeometry", geometry).angles))[view_index]
 
 
 def forward_project_view_T(

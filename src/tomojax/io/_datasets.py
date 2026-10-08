@@ -97,10 +97,11 @@ class ProjectionDataset:
     This is the current IO boundary. It contains measured projection data,
     normalized metadata needed by reconstruction/alignment code, and the
     optional reconstructed volume when a processed container stores one.
+    ``angles`` holds each view's rotation angle, in degrees.
     """
 
     projections: np.ndarray
-    angles_deg: np.ndarray
+    angles: np.ndarray
     volume: np.ndarray | None = None
     detector: Detector | None = None
     grid: Grid | None = None
@@ -109,7 +110,7 @@ class ProjectionDataset:
     angle_offset_deg: np.ndarray | None = None
     align_params: np.ndarray | None = None
     align_gauge: dict[str, JsonValue] | None = None
-    # Simulated misalignment, whose angle offsets ``angles_deg`` already include.
+    # Simulated misalignment, whose angle offsets ``angles`` already include.
     misalign_spec: dict[str, JsonValue] | None = None
     source_path: str | None = None
     source_format: str | None = None
@@ -129,16 +130,16 @@ class ProjectionDataset:
         grid = metadata.grid
         return cls(
             projections=np.asarray(payload.projections),
-            angles_deg=np.asarray(
+            angles=np.asarray(
                 np.zeros(payload.projections.shape[0], dtype=np.float32)
-                if metadata.thetas_deg is None
-                else metadata.thetas_deg,
+                if metadata.angles is None
+                else metadata.angles,
                 dtype=np.float32,
             ),
             volume=None if metadata.volume is None else np.asarray(metadata.volume),
             detector=detector
             if isinstance(detector, Detector)
-            else (_detector_from_mapping(detector) if detector is not None else None),
+            else (Detector.from_dict(detector) if detector is not None else None),
             grid=grid
             if isinstance(grid, Grid)
             else (_grid_from_mapping(grid) if grid is not None else None),
@@ -164,7 +165,7 @@ class ProjectionDataset:
         """Return NXtomo metadata for saving this public dataset."""
         if self._metadata is not None:
             metadata = self.copy_metadata()
-            metadata.thetas_deg = np.array(self.angles_deg, dtype=np.float32, copy=True)
+            metadata.angles = np.array(self.angles, dtype=np.float32, copy=True)
             metadata.volume = None if self.volume is None else np.array(self.volume, copy=True)
             metadata.grid = self.grid
             metadata.detector = self.detector
@@ -185,7 +186,7 @@ class ProjectionDataset:
             metadata.sample_name = self.sample_name or metadata.sample_name or "sample"
             return metadata
         return NXTomoMetadata(
-            thetas_deg=np.array(self.angles_deg, dtype=np.float32, copy=True),
+            angles=np.array(self.angles, dtype=np.float32, copy=True),
             volume=None if self.volume is None else np.array(self.volume, copy=True),
             grid=self.grid,
             detector=self.detector,
@@ -215,7 +216,7 @@ class ProjectionDataset:
                     metadata=self._metadata,
                 ).to_dataset_dict()
             )
-        metadata.thetas_deg = np.array(self.angles_deg, dtype=np.float32, copy=True)
+        metadata.angles = np.array(self.angles, dtype=np.float32, copy=True)
         metadata.volume = None if self.volume is None else np.array(self.volume, copy=True)
         metadata.grid = self.grid
         metadata.detector = self.detector
@@ -246,7 +247,7 @@ class ProjectionDataset:
             raise ValueError("projection dataset is missing detector metadata")
         payload: dict[str, Any] = {
             "detector": detector.to_dict(),
-            "thetas_deg": np.asarray(self.angles_deg, dtype=np.float32),
+            "angles": np.asarray(self.angles, dtype=np.float32),
             "geometry_type": self.geometry_type,
         }
         if self.grid is not None:
@@ -278,7 +279,7 @@ def load_dataset(path: PathLike) -> ProjectionDataset:
         return ProjectionDataset.from_nxtomo(load_npz(str(input_path)), source_path=input_path)
     if input_path.is_dir() or suffix in _TIFF_SUFFIXES:
         raise ValueError(
-            "TIFF inputs require angle metadata; use load_tiff_stack(path, angles_deg=...)"
+            "TIFF inputs require angle metadata; use load_tiff_stack(path, angles=...)"
         )
     raise ValueError(f"unsupported dataset format for {input_path}")
 
@@ -328,13 +329,13 @@ def convert_dataset(input_path: PathLike, output_path: PathLike) -> None:
 def load_tiff_stack(
     path: PathLike,
     *,
-    angles_deg: Sequence[float] | np.ndarray,
+    angles: Sequence[float] | np.ndarray,
     detector: Detector | None = None,
     grid: Grid | None = None,
     geometry_type: str = "parallel",
     geometry_metadata: Mapping[str, Any] | None = None,
 ) -> ProjectionDataset:
-    """Load a TIFF projection stack with explicit angle metadata."""
+    """Load a TIFF projection stack with explicit view ``angles``, in degrees."""
     input_path = Path(path)
     files = tiff_files(input_path)
     if not files:
@@ -344,18 +345,18 @@ def load_tiff_stack(
         [np.asarray(cast("object", iio.imread(file)), dtype=np.float32) for file in files],
         axis=0,
     )
-    angles = np.asarray(angles_deg, dtype=np.float32)
+    angles = np.asarray(angles, dtype=np.float32)
     if angles.ndim != 1:
-        raise ValueError("angles_deg must be one-dimensional")
+        raise ValueError("angles must be one-dimensional")
     if angles.shape[0] != projections.shape[0]:
         raise ValueError(
-            f"angles_deg length {angles.shape[0]} does not match projection count "
+            f"angles length {angles.shape[0]} does not match projection count "
             f"{projections.shape[0]}"
         )
 
     return ProjectionDataset(
         projections=projections,
-        angles_deg=angles,
+        angles=angles,
         detector=detector,
         grid=grid,
         geometry_type=geometry_type,
@@ -419,17 +420,6 @@ def _merge_geometry_metadata_dict(
             payload[key] = value
 
 
-def _detector_from_mapping(payload: Mapping[str, Any]) -> Detector:
-    det_center = _vec2(payload.get("det_center", (0.0, 0.0)), name="det_center")
-    return Detector(
-        nu=int(payload["nu"]),
-        nv=int(payload["nv"]),
-        du=float(payload["du"]),
-        dv=float(payload["dv"]),
-        det_center=det_center,
-    )
-
-
 def _grid_from_mapping(payload: Mapping[str, Any]) -> Grid:
     vol_origin = (
         None
@@ -451,13 +441,6 @@ def _grid_from_mapping(payload: Mapping[str, Any]) -> Grid:
         vol_origin=vol_origin,
         vol_center=vol_center,
     )
-
-
-def _vec2(value: object, *, name: str) -> tuple[float, float]:
-    items = tuple(float(v) for v in cast("Sequence[float | int | str]", value))
-    if len(items) != 2:
-        raise ValueError(f"{name} must have length 2")
-    return items[0], items[1]
 
 
 def _vec3(value: object, *, name: str) -> tuple[float, float, float]:

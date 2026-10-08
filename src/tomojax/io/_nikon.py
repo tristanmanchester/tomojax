@@ -123,7 +123,7 @@ def load_nikon_xtekct(
         nv=nv,
         du=_number(params, "DetectorPixelSizeX"),
         dv=_number(params, "DetectorPixelSizeY"),
-        det_center=(
+        center=(
             _number(params, "DetectorOffsetX", 0.0),
             _number(params, "DetectorOffsetY", 0.0),
         ),
@@ -158,7 +158,7 @@ def load_nikon_xtekct(
     }
     return ProjectionDataset(
         projections=projections,
-        angles_deg=angles.astype(np.float32),
+        angles=angles.astype(np.float32),
         detector=detector,
         grid=grid,
         geometry_type="cone",

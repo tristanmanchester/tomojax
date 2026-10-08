@@ -47,6 +47,19 @@
   `recon_positivity`, `recon_L`, `freeze_dofs`, `translation_frame`,
   `early_stop_rel`, `save_manifest`, `print_plan_json`, and those above)
   fails with its new name.
+- Breaking: view angles are `angles` everywhere, always in degrees, as
+  `Scan.angles` already was. `thetas_deg` is `angles` on `ParallelGeometry`,
+  `LaminographyGeometry`, `RotationAxisGeometry`, `ConeGeometry`,
+  `ConeSegments` and the saved-pose and detector-roll wrappers, as are
+  `ConeGeometry.poses(angles=...)`, `NXTomoMetadata.angles`,
+  `RealLaminographyInput.angles` and the `"angles"` entry of `simulate`'s
+  result. `angles_deg` is `angles` on `ProjectionDataset` and in
+  `load_tiff_stack(path, angles=...)`. `Detector.det_center` is
+  `Detector.center`, and the new `Detector.from_dict` reads what
+  `Detector.to_dict` writes; `tomojax inspect` reports the detector's
+  `center`. Files written by earlier versions still load: `.nxs` files keep
+  `rotation_angle`, `.npz` files keep their `thetas_deg` key, and detector
+  metadata keeps its `det_center` key.
 - Breaking: alignment options take one spelling each. Removed: the
   `--align-profile` option and the `quality` spellings `lightning` and
   `tortoise`; `recon_algo` values `fista_tv`, `spdhg_tv`, `fista-tv` and

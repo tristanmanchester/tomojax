@@ -54,7 +54,7 @@ class DetectorMetadataReport(TypedDict):
     nv: object
     du: object
     dv: object
-    det_center: object
+    center: object
 
 
 class AlignmentReport(TypedDict):

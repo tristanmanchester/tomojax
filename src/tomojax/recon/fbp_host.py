@@ -56,7 +56,7 @@ def _slab_layout(
     """Choose a fixed local coordinate system and interpolation support."""
     ox, oy, oz = grid_volume_origin(grid)
     integer = supports_parallel_fbp_z_integer(grid, detector)
-    first = (oz - detector.det_center[1]) / detector.dv + (detector.nv - 1) / 2
+    first = (oz - detector.center[1]) / detector.dv + (detector.nv - 1) / 2
     step = grid.vz / detector.dv
     if integer:
         first, step = round(first), round(step)
@@ -69,7 +69,7 @@ def _slab_layout(
     )
     local_grid = replace(grid, nz=depth, vol_origin=(ox, oy, 0.0), vol_center=None)
     local_detector = replace(
-        detector, nv=rows, det_center=(detector.det_center[0], (rows - 1) * detector.dv / 2)
+        detector, nv=rows, center=(detector.center[0], (rows - 1) * detector.dv / 2)
     )
     local_detector = _parallel_filter_detector(local_grid, local_detector)
     return local_grid, local_detector, first, step, integer
@@ -123,11 +123,11 @@ def fbp_host(
         projections, detector, geometry=geometry, context="fbp_host projections"
     )
     ox, oy, oz = grid_volume_origin(grid)
-    if not np.isfinite([ox, oy, oz, *detector.det_center]).all():
+    if not np.isfinite([ox, oy, oz, *detector.center]).all():
         raise ValueError("fbp_host: grid and detector placement must be finite")
     if cfg.scale is not None and not math.isfinite(cfg.scale):
         raise ValueError("fbp_host: scale must be finite")
-    thetas = getattr(geometry, "thetas_deg", None)
+    thetas = getattr(geometry, "angles", None)
     if thetas is not None and not np.isfinite(np.asarray(thetas)).all():
         raise ValueError("fbp_host: angles must be finite")
 

@@ -157,7 +157,7 @@ part of the recovered detector-u shifts as the detector centre. With
 detector-frame translations (the CLI default) a detector-u offset is exactly a
 constant `dx`; a rigid object translation instead shifts each view by a
 sinusoid of its angle, so a fit over the scan separates the two. The output
-geometry carries the offset as `det_center`, and the saved `dx` values are the
+geometry carries the offset as `Detector.center`, and the saved `dx` values are the
 remaining per-view motion; both together predict the same data as the
 alignment, so the volume is unchanged. `full` adds the same constant to the
 detector centre from its setup stage.

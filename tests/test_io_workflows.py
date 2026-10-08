@@ -34,7 +34,7 @@ pytestmark = pytest.mark.surface
 
 def test_projection_dataset_roundtrips_nxtomo_with_solver_metadata(tmp_path: Path) -> None:
     path = tmp_path / "scan.nxs"
-    detector = Detector(nu=4, nv=2, du=0.5, dv=0.75, det_center=(1.0, -2.0))
+    detector = Detector(nu=4, nv=2, du=0.5, dv=0.75, center=(1.0, -2.0))
     grid = Grid(nx=4, ny=4, nz=2, vx=1.0, vy=1.0, vz=2.0)
     align_params = np.ones((2, 5), dtype=np.float32)
     dataset = make_projection_dataset(
@@ -52,7 +52,7 @@ def test_projection_dataset_roundtrips_nxtomo_with_solver_metadata(tmp_path: Pat
 
     assert isinstance(loaded, ProjectionDataset)
     np.testing.assert_allclose(loaded.projections, dataset.projections)
-    np.testing.assert_allclose(loaded.angles_deg, dataset.angles_deg)
+    np.testing.assert_allclose(loaded.angles, dataset.angles)
     assert loaded.detector == detector
     assert loaded.grid == grid
     geometry_inputs = loaded.geometry_inputs()
@@ -107,6 +107,39 @@ def test_dataset_roundtrips_npz_and_converts_to_nxtomo(tmp_path: Path) -> None:
     np.testing.assert_allclose(loaded_npz.projections, dataset.projections)
     np.testing.assert_allclose(loaded_nxs.projections, dataset.projections)
     assert validate_dataset(nxs_path)["issues"] == []
+
+
+def test_files_keep_their_angle_and_detector_centre_keys(tmp_path: Path) -> None:
+    # An .npz in the layout earlier versions wrote: angles under `thetas_deg`
+    # and the detector centre under `det_center`.
+    old_path = tmp_path / "old.npz"
+    detector = {"nu": 4, "nv": 2, "du": 1.0, "dv": 1.0, "det_center": [0.5, -1.0]}
+    np.savez_compressed(
+        old_path,
+        projections=np.zeros((2, 2, 4), np.float32),
+        thetas_deg=np.asarray([0.0, 90.0], np.float32),
+        detector=detector,  # pyright: ignore[reportArgumentType]
+        geometry_type="parallel",
+    )
+
+    loaded = load_dataset(old_path)
+
+    np.testing.assert_allclose(loaded.angles, [0.0, 90.0])
+    assert loaded.detector == Detector(nu=4, nv=2, du=1.0, dv=1.0, center=(0.5, -1.0))
+
+    npz_path, nxs_path = tmp_path / "new.npz", tmp_path / "new.nxs"
+    save_dataset(npz_path, loaded)
+    save_dataset(nxs_path, loaded)
+    with np.load(npz_path, allow_pickle=True) as saved:
+        np.testing.assert_allclose(saved["thetas_deg"], [0.0, 90.0])
+        assert saved["detector"].item()["det_center"] == [0.5, -1.0]
+    with h5py.File(nxs_path, "r") as saved:
+        angles = saved["/entry/sample/transformations/rotation_angle"][()]
+        np.testing.assert_allclose(angles, [0.0, 90.0])
+        meta = json.loads(saved["/entry/instrument/detector"].attrs["detector_meta_json"])
+        assert meta["det_center"] == [0.5, -1.0]
+    assert load_dataset(npz_path).detector == loaded.detector
+    assert load_dataset(nxs_path).detector == loaded.detector
 
 
 def test_nxtomo_loader_does_not_synthesize_grid_from_volume_only(tmp_path: Path) -> None:
@@ -275,7 +308,7 @@ def test_copy_metadata_copies_array_backed_fields(tmp_path: Path) -> None:
     dataset.angle_offset_deg = np.asarray([0.25, -0.25], dtype=np.float32)
 
     direct_copy = dataset.copy_metadata()
-    assert not np.shares_memory(direct_copy.thetas_deg, dataset.angles_deg)
+    assert not np.shares_memory(direct_copy.angles, dataset.angles)
     assert direct_copy.volume is not None
     assert not np.shares_memory(direct_copy.volume, dataset.volume)
     assert direct_copy.align_params is not None
@@ -286,9 +319,9 @@ def test_copy_metadata_copies_array_backed_fields(tmp_path: Path) -> None:
     save_dataset(path, dataset)
     loaded = load_nxtomo(str(path))
     loaded_copy = loaded.copy_metadata()
-    assert loaded_copy.thetas_deg is not None
-    assert loaded.metadata.thetas_deg is not None
-    assert not np.shares_memory(loaded_copy.thetas_deg, loaded.metadata.thetas_deg)
+    assert loaded_copy.angles is not None
+    assert loaded.metadata.angles is not None
+    assert not np.shares_memory(loaded_copy.angles, loaded.metadata.angles)
     assert loaded_copy.image_key is not None
     assert loaded.metadata.image_key is not None
     assert not np.shares_memory(loaded_copy.image_key, loaded.metadata.image_key)
@@ -320,16 +353,16 @@ def test_load_tiff_stack_requires_explicit_angles_and_sorts_files(tmp_path: Path
     iio.imwrite(stack_dir / "proj2.tif", np.full((2, 3), 2.0, dtype=np.float32))
     iio.imwrite(stack_dir / "proj1.tif", np.full((2, 3), 1.0, dtype=np.float32))
 
-    dataset = load_tiff_stack(stack_dir, angles_deg=[0.0, 45.0, 90.0])
+    dataset = load_tiff_stack(stack_dir, angles=[0.0, 45.0, 90.0])
 
     assert dataset.source_format == "tiff_stack"
     assert dataset.projections.shape == (3, 2, 3)
     np.testing.assert_allclose(dataset.projections[:, 0, 0], [1.0, 2.0, 10.0])
-    np.testing.assert_allclose(dataset.angles_deg, [0.0, 45.0, 90.0])
+    np.testing.assert_allclose(dataset.angles, [0.0, 45.0, 90.0])
     with pytest.raises(ValueError, match="TIFF inputs require angle metadata"):
         load_dataset(stack_dir)
     with pytest.raises(ValueError, match="does not match projection count"):
-        load_tiff_stack(stack_dir, angles_deg=[0.0])
+        load_tiff_stack(stack_dir, angles=[0.0])
 
 
 def test_validate_dataset_reports_schema_failures(tmp_path: Path) -> None:
@@ -433,7 +466,7 @@ def test_real_laminography_loader_reads_angles_and_detector_orientation(tmp_path
     flipped_v = load_real_laminography_input(path, flip_v=True)
 
     np.testing.assert_array_equal(loaded.projections, projections)
-    np.testing.assert_array_equal(loaded.thetas_deg, thetas)
+    np.testing.assert_array_equal(loaded.angles, thetas)
     np.testing.assert_array_equal(transposed.projections, np.transpose(projections, (0, 2, 1)))
     np.testing.assert_array_equal(flipped_u.projections, projections[:, :, ::-1])
     np.testing.assert_array_equal(flipped_v.projections, projections[:, ::-1, :])

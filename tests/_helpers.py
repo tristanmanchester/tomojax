@@ -13,7 +13,7 @@ from tomojax.io import ProjectionDataset, save_dataset
 
 
 def tiny_detector(*, nu: int = 4, nv: int = 2) -> Detector:
-    return Detector(nu=nu, nv=nv, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    return Detector(nu=nu, nv=nv, du=1.0, dv=1.0, center=(0.0, 0.0))
 
 
 def tiny_grid(*, nx: int = 4, ny: int = 4, nz: int = 2) -> Grid:
@@ -23,7 +23,7 @@ def tiny_grid(*, nx: int = 4, ny: int = 4, nz: int = 2) -> Grid:
 def make_projection_dataset(
     *,
     projections: np.ndarray | None = None,
-    angles_deg: np.ndarray | None = None,
+    angles: np.ndarray | None = None,
     detector: Detector | None = None,
     grid: Grid | None = None,
     geometry_type: str = "parallel",
@@ -31,11 +31,11 @@ def make_projection_dataset(
 ) -> ProjectionDataset:
     if projections is None:
         projections = np.arange(2 * 2 * 4, dtype=np.float32).reshape(2, 2, 4)
-    if angles_deg is None:
-        angles_deg = np.asarray([0.0, 90.0], dtype=np.float32)
+    if angles is None:
+        angles = np.asarray([0.0, 90.0], dtype=np.float32)
     return ProjectionDataset(
         projections=np.asarray(projections, dtype=np.float32),
-        angles_deg=np.asarray(angles_deg, dtype=np.float32),
+        angles=np.asarray(angles, dtype=np.float32),
         detector=detector
         or tiny_detector(nu=int(projections.shape[2]), nv=int(projections.shape[1])),
         grid=grid or tiny_grid(nz=int(projections.shape[1])),

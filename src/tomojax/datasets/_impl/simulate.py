@@ -59,7 +59,7 @@ class SimulatedData(TypedDict):
     """Generated projections, geometry metadata, and ground-truth volume."""
 
     projections: jnp.ndarray
-    thetas_deg: np.ndarray
+    angles: np.ndarray
     grid: GridDict
     detector: DetectorDict
     geometry_type: Literal["parallel", "lamino", "cone"]
@@ -178,7 +178,7 @@ def make_phantom(cfg: SimConfig) -> jnp.ndarray:
 def simulate(cfg: SimConfig) -> SimulatedData:
     """Generate projections and metadata from a simulation config."""
     grid = Grid(cfg.nx, cfg.ny, cfg.nz, cfg.vx, cfg.vy, cfg.vz)
-    det = Detector(cfg.nu, cfg.nv, cfg.du, cfg.dv, det_center=(0.0, 0.0))
+    det = Detector(cfg.nu, cfg.nv, cfg.du, cfg.dv, center=(0.0, 0.0))
     # Determine total rotation based on geometry unless overridden
     if cfg.rotation_deg is not None:
         total_deg = float(cfg.rotation_deg)
@@ -190,13 +190,13 @@ def simulate(cfg: SimConfig) -> SimulatedData:
     beam: ConeBeam | None = None
     if cfg.geometry == "parallel":
         geometry_type: Literal["parallel", "lamino", "cone"] = "parallel"
-        geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=thetas)
+        geom = ParallelGeometry(grid=grid, detector=det, angles=thetas)
     elif cfg.geometry == "lamino":
         geometry_type = "lamino"
         geom = LaminographyGeometry(
             grid=grid,
             detector=det,
-            thetas_deg=thetas,
+            angles=thetas,
             tilt_deg=cfg.tilt_deg,
             tilt_about=cfg.tilt_about,
         )
@@ -213,7 +213,7 @@ def simulate(cfg: SimConfig) -> SimulatedData:
         cone = ConeGeometry(
             grid=grid,
             detector=det,
-            thetas_deg=thetas,
+            angles=thetas,
             beam=beam,
             tilt_deg=cfg.tilt_deg,
             tilt_about=cfg.tilt_about,
@@ -282,7 +282,7 @@ def simulate(cfg: SimConfig) -> SimulatedData:
 
     return {
         "projections": proj,
-        "thetas_deg": thetas,
+        "angles": thetas,
         "grid": grid.to_dict(),
         "detector": det.to_dict(),
         "geometry_type": geometry_type,

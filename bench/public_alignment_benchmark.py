@@ -174,7 +174,7 @@ def generate_fixture(
         kind=kind,
         noisy=noisy,
         grid=json.dumps(asdict(grid)),
-        detector=json.dumps(asdict(detector)),
+        detector=json.dumps(detector.to_dict()),
         angles=angles,
         nominal=nominal,
         truth_poses=poses,
@@ -251,8 +251,8 @@ def generate_analytic_fixture(
         axis=1,
     )
     poses = physical_poses(nominal, parameters)
-    u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du + detector.det_center[0]
-    v = (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv + detector.det_center[1]
+    u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du + detector.center[0]
+    v = (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv + detector.center[1]
     uu, vv = np.meshgrid(u, v)
     world = np.stack([uu, np.zeros_like(uu), vv], axis=-1)
     data = np.empty((views, detector.nv, detector.nu), np.float32)
@@ -273,7 +273,7 @@ def generate_analytic_fixture(
         kind=kind,
         noisy=noisy,
         grid=json.dumps(asdict(grid)),
-        detector=json.dumps(asdict(detector)),
+        detector=json.dumps(detector.to_dict()),
         angles=angles,
         nominal=nominal,
         truth_poses=poses,
@@ -290,7 +290,7 @@ def load_fixture(path: Path) -> dict[str, Any]:
         result = {key: data[key] for key in data.files}
     result["kind"] = str(result["kind"])
     result["grid"] = Grid(**json.loads(str(result["grid"])))
-    result["detector"] = Detector(**json.loads(str(result["detector"])))
+    result["detector"] = Detector.from_dict(json.loads(str(result["detector"])))
     return result
 
 

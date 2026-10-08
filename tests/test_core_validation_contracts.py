@@ -65,7 +65,7 @@ def test_projection_shape_validation_uses_geometry_view_count() -> None:
     geometry = ParallelGeometry(
         grid=Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0),
         detector=detector,
-        thetas_deg=[0.0, 90.0],
+        angles=[0.0, 90.0],
     )
 
     with pytest.raises(ValueError, match=r"expected .*\(2, 3, 4\).*geometry/detector"):

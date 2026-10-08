@@ -42,7 +42,7 @@ if which == "tomojax":
     from tomojax.geometry import ParallelGeometry
     from tomojax.recon import CGLSConfig, FistaConfig, cgls, fista_tv
 
-    geo = ParallelGeometry(case.grid, case.detector, case.angles_deg)
+    geo = ParallelGeometry(case.grid, case.detector, case.angles)
     p = jnp.asarray(data)
     for lam in [0.3, 1, 3, 10, 30]:
         cfg = FistaConfig(iterations=iters, tv_weight=lam, nonnegative=True)
@@ -73,7 +73,7 @@ else:
     geo.dDetector = np.asarray([detector.dv, detector.du])
     geo.sDetector = geo.nDetector * geo.dDetector
     geo.accuracy = 1.0
-    angles = np.deg2rad(-90.0 - case.angles_deg).astype(np.float32)
+    angles = np.deg2rad(-90.0 - case.angles).astype(np.float32)
     for lam in [
         float(v) for v in os.environ.get("TIGRE_LAMBDAS", "0.003,0.01,0.03,0.1,0.3").split(",")
     ]:

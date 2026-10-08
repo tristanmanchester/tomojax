@@ -61,7 +61,7 @@ def scan_coordinate_from_geometry(geometry: object, n_views: int) -> np.ndarray:
     to the view index. The returned coordinate is always in [-1, 1].
     """
     coord: np.ndarray | None = None
-    raw_thetas = getattr(geometry, "thetas_deg", None)
+    raw_thetas = getattr(geometry, "angles", None)
     if raw_thetas is not None:
         try:
             arr = np.asarray(raw_thetas, dtype=np.float64)
