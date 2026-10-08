@@ -77,7 +77,7 @@ def _initial_projection_lipschitz(
             grid=step.grid,
             detector=step.detector,
             batch_size=max(1, int(cfg.views_per_batch)),
-            iters=1,
+            iterations=1,
             unroll=int(cfg.projector_unroll),
             checkpoint=bool(cfg.checkpoint_projector),
             gather_dtype=str(cfg.gather_dtype),
@@ -365,7 +365,7 @@ def _skipped_fixed_volume_reconstruction_result(
         recon_retry=False,
         info_rec={
             "loss": [],
-            "effective_iters": 0,
+            "effective_iterations": 0,
             "early_stop": False,
             "regulariser": str(getattr(cfg, "regulariser", "")),
             "fixed_volume_reconstruction_skipped": True,
@@ -396,7 +396,7 @@ def _retry_info_after_nonfinite_core(
             "requested_backend": core_info.get("requested_backend"),
             "actual_backend": core_info.get("actual_backend"),
             "fallback_reason": core_info.get("fallback_reason"),
-            "L": core_info.get("L"),
+            "lipschitz": core_info.get("lipschitz"),
         },
         "fallback_reason": "huber_fista_core_nonfinite_retry_public_stream",
         "actual_backend": "jax",
@@ -459,7 +459,7 @@ def _run_huber_fista_core_dynamic_geometry(
         result.loss,
         result.data_loss,
         result.regulariser_value,
-        result.effective_iters,
+        result.effective_iterations,
     )
 
 
@@ -527,7 +527,7 @@ def _cached_huber_fista_core_runner(
             result.loss,
             result.data_loss,
             result.regulariser_value,
-            result.effective_iters,
+            result.effective_iterations,
         )
 
     return jax.jit(run)
@@ -564,18 +564,18 @@ def _run_public_fista_reconstruction(
         # Cone beams use their Joseph operators, on CUDA where available.
         projector_model="auto" if cone else "ray",
         projector_backend="auto" if cone else "jax",
-        iters=scaled_reconstruction_iters(cfg.recon_iters, quality_policy),
-        lambda_tv=cfg.lambda_tv,
+        iterations=scaled_reconstruction_iters(cfg.recon_iters, quality_policy),
+        tv_weight=cfg.lambda_tv,
         regulariser=cfg.regulariser,
         huber_delta=cfg.huber_delta,
-        L=data_lipschitz,
+        lipschitz=data_lipschitz,
         views_per_batch=views_per_batch,
         projector_unroll=int(projector_unroll),
         checkpoint_projector=cfg.checkpoint_projector,
         gather_dtype=gather_dtype,
         grad_mode=grad_mode,
-        tv_prox_iters=int(cfg.tv_prox_iters),
-        positivity=bool(cfg.recon_positivity),
+        tv_prox_iterations=int(cfg.tv_prox_iters),
+        nonnegative=bool(cfg.recon_positivity),
         recon_rel_tol=cfg.recon_rel_tol,
         recon_patience=(int(cfg.recon_patience) if cfg.recon_patience is not None else 0),
         ray_integrator=getattr(cfg, "ray_integrator", "sampled"),
@@ -685,12 +685,12 @@ def _huber_fista_core_config(
 ) -> FistaCoreConfig:
     cfg = step.cfg
     return FistaCoreConfig(
-        iters=scaled_reconstruction_iters(cfg.recon_iters, quality_policy),
-        lambda_tv=float(cfg.lambda_tv),
+        iterations=scaled_reconstruction_iters(cfg.recon_iters, quality_policy),
+        tv_weight=float(cfg.lambda_tv),
         regulariser="huber_tv",
         huber_delta=float(cfg.huber_delta),
-        L=1.0,
-        positivity=bool(cfg.recon_positivity),
+        lipschitz=1.0,
+        nonnegative=bool(cfg.recon_positivity),
         checkpoint_projector=bool(cfg.checkpoint_projector),
         projector_unroll=int(cfg.projector_unroll),
         gather_dtype=str(cfg.gather_dtype),
@@ -726,14 +726,14 @@ def _huber_fista_core_info(
     return {
         "loss": loss,
         "iteration_loss_computed": bool(quality_policy.compute_iteration_loss),
-        "effective_iters": int(effective_iters),
+        "effective_iterations": int(effective_iters),
         "early_stop": False,
         "regulariser": "huber_tv",
         "huber_delta": float(cfg.huber_delta),
         "data_loss_computed": bool(quality_policy.compute_final_data_loss),
         "regulariser_value_computed": bool(quality_policy.compute_final_regulariser_value),
         "quality_policy": quality_policy.to_dict(),
-        "L": float(L_core),
+        "lipschitz": float(L_core),
         "requested_backend": backend_plan.requested_backend,
         "actual_backend": effective_backend or backend_plan.actual_backend,
         "fallback_reason": backend_plan.fallback_reason,
@@ -748,8 +748,8 @@ def _run_spdhg_reconstruction(
     cfg = step.cfg
     quality_policy = reconstruction_quality_policy(str(getattr(cfg, "quality_tier", "fast")))
     spdhg_cfg = SPDHGConfig(
-        iters=scaled_reconstruction_iters(cfg.recon_iters, quality_policy),
-        lambda_tv=float(cfg.lambda_tv),
+        iterations=scaled_reconstruction_iters(cfg.recon_iters, quality_policy),
+        tv_weight=float(cfg.lambda_tv),
         regulariser=cfg.regulariser,
         huber_delta=float(cfg.huber_delta),
         views_per_batch=max(1, int(cfg.views_per_batch)),
@@ -757,7 +757,7 @@ def _run_spdhg_reconstruction(
         projector_unroll=int(cfg.projector_unroll),
         checkpoint_projector=cfg.checkpoint_projector,
         gather_dtype=cfg.gather_dtype,
-        positivity=bool(cfg.recon_positivity),
+        nonnegative=bool(cfg.recon_positivity),
         log_every=1,
         ray_integrator=getattr(cfg, "ray_integrator", "sampled"),
     )

@@ -114,7 +114,7 @@ def build_recon_runtime_plan(command: ReconCommand) -> ReconRuntimePlan:
     volume_mask = solver_volume_mask(region, detector)
     views_per_batch, views_per_batch_mode = _resolve_views_per_batch(
         command.views_per_batch,
-        algo=str(command.algo),
+        method=str(command.method),
         n_views=int(projections.shape[0]),
         grid=recon_grid,
         detector=detector,
@@ -125,7 +125,7 @@ def build_recon_runtime_plan(command: ReconCommand) -> ReconRuntimePlan:
         "Reconstruction views_per_batch=%d (mode=%s, method=%s)",
         views_per_batch,
         views_per_batch_mode,
-        command.algo,
+        command.method,
     )
 
     algorithm_request = _reconstruction_algorithm_request(
@@ -172,7 +172,7 @@ def _resolve_gather_dtype(requested: str) -> str:
 def _resolve_views_per_batch(
     requested: int | str | None,
     *,
-    algo: str,
+    method: str,
     n_views: int,
     grid: Grid,
     detector: Detector,
@@ -181,7 +181,7 @@ def _resolve_views_per_batch(
 ) -> tuple[int, str]:
     """Resolve CLI batching after ROI/grid choices are known."""
     if requested is None:
-        return default_views_per_batch(algo), "default"
+        return default_views_per_batch(method), "default"
 
     if isinstance(requested, str) and requested.lower() == "auto":
         estimate = estimate_views_per_batch_info(
@@ -192,7 +192,7 @@ def _resolve_views_per_batch(
             projection_dtype="fp32",
             volume_dtype="fp32",
             checkpoint_projector=bool(checkpoint_projector),
-            algo=str(algo),
+            algo=str(method),
             fallback_batch=1,
         )
         if estimate.fallback_used:
@@ -272,28 +272,24 @@ def _reconstruction_algorithm_request(
     gather_dtype: str,
 ) -> ReconstructionAlgorithmRequest:
     options = ReconstructionAlgorithmOptions(
-        algorithm=command.algo,
-        filter_name=str(command.filter),
-        iters=int(command.iters),
-        lambda_tv=float(command.lambda_tv),
+        method=command.method,
+        filter=command.filter,
+        iterations=command.iterations,
+        tv_weight=command.tv_weight,
         regulariser=command.regulariser,
-        huber_delta=float(command.huber_delta),
-        lipschitz=float(command.lipschitz) if command.lipschitz is not None else None,
-        positivity=bool(command.positivity),
-        lower_bound=float(command.lower_bound) if command.lower_bound is not None else None,
-        upper_bound=float(command.upper_bound) if command.upper_bound is not None else None,
-        theta=float(command.theta),
-        spdhg_seed=int(command.spdhg_seed),
-        spdhg_tau=float(command.spdhg_tau) if command.spdhg_tau is not None else None,
-        spdhg_sigma_data=(
-            float(command.spdhg_sigma_data) if command.spdhg_sigma_data is not None else None
-        ),
-        spdhg_sigma_tv=(
-            float(command.spdhg_sigma_tv) if command.spdhg_sigma_tv is not None else None
-        ),
+        huber_delta=command.huber_delta,
+        lipschitz=command.lipschitz,
+        nonnegative=command.nonnegative,
+        lower_bound=command.lower_bound,
+        upper_bound=command.upper_bound,
+        theta=command.theta,
+        seed=command.seed,
+        spdhg_tau=command.spdhg_tau,
+        spdhg_sigma_data=command.spdhg_sigma_data,
+        spdhg_sigma_tv=command.spdhg_sigma_tv,
         warm_start=command.warm_start,
-        checkpoint_projector=bool(command.checkpoint_projector),
-        tv_prox_iters=int(command.tv_prox_iters),
+        checkpoint_projector=command.checkpoint_projector,
+        tv_prox_iterations=command.tv_prox_iterations,
     )
     return ReconstructionAlgorithmRequest(
         options=options,

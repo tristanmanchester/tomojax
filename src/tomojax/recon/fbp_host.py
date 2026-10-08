@@ -45,7 +45,7 @@ class FBPHostConfig:
 
     slices_per_batch: int | None = None
     views_per_batch: int = 32
-    filter_name: str = "ramp"
+    filter: str = "ramp"
     scale: float | None = None
     backprojector: Literal["auto", "jax", "pallas"] = "auto"
 
@@ -145,7 +145,7 @@ def fbp_host(
     depth = min(16 if slices is None else slices, grid.nz)
     local_grid, local_detector, first, step, integer = _slab_layout(grid, detector, depth)
     rows = local_detector.nv
-    ramp = _rfft_filter_array(cfg.filter_name, local_detector.nu, detector.du, jnp.float32)
+    ramp = _rfft_filter_array(cfg.filter, local_detector.nu, detector.du, jnp.float32)
     output = validate_host_arrays(projections, out, shape)
     for start in range(0, grid.nz, depth):
         v = first + start * step
@@ -194,7 +194,7 @@ def _general_slabs(
     view_scale, params, arc_length, separable = _view_weights(poses, cfg.scale)
     host_poses = np.asarray(poses, np.float32)
     detector_f = _filter_detector(grid, detector, host_poses, pad_v=not separable)
-    spectrum = _rfft_filter_array(cfg.filter_name, detector_f.nu, detector.du, jnp.float32)
+    spectrum = _rfft_filter_array(cfg.filter, detector_f.nu, detector.du, jnp.float32)
     batch = min(views, projections.shape[0])
     if slices is None:
         # Filtering workspace: padded real batch plus its complex spectrum.

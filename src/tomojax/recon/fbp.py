@@ -46,7 +46,7 @@ class FBPConfig:
     ``det_grid``, which uses the ray-model adjoint.
     """
 
-    filter_name: str = "ramp"
+    filter: str = "ramp"
     scale: float | None = None
     views_per_batch: int = 1
     projector_unroll: int = 1
@@ -67,9 +67,9 @@ def default_fbp_scale(n_views: int) -> float:
     return float(np.pi / float(n_views))
 
 
-def _rfft_filter_array(filter_name: str, nu: int, du: float, dtype: jnp.dtype) -> jnp.ndarray:
+def _rfft_filter_array(filter: str, nu: int, du: float, dtype: jnp.dtype) -> jnp.ndarray:
     """Return the padded discrete FBP filter without doubling RFFT bins."""
-    Hr_np = get_fbp_filter_np(filter_name, int(nu), float(du), str(dtype))
+    Hr_np = get_fbp_filter_np(filter, int(nu), float(du), str(dtype))
     return jnp.asarray(Hr_np, dtype=dtype)
 
 
@@ -453,7 +453,7 @@ def run_parallel_fbp_direct_pallas(
     *,
     grid: Grid,
     detector: Detector,
-    filter_name: str,
+    filter: str,
 ) -> jnp.ndarray:
     """Run unscaled z-parallel FBP, retaining filtered tails through the volume."""
     validate_grid(grid, "run_parallel_fbp_direct_pallas")
@@ -479,7 +479,7 @@ def run_parallel_fbp_direct_pallas(
     required_radius = np.max(np.abs(coordinates - detector.det_center[0])) / detector.du
     padding = max(0, math.ceil(required_radius - (detector.nu - 1) / 2))
     detector = replace(detector, nu=detector.nu + 2 * padding)
-    ramp = _rfft_filter_array(filter_name, detector.nu, float(detector.du), jnp.float32)
+    ramp = _rfft_filter_array(filter, detector.nu, float(detector.du), jnp.float32)
     return _run_fbp_streamed(
         jnp.asarray(T_all, dtype=jnp.float32),
         jnp.asarray(proj, dtype=jnp.float32),
@@ -573,7 +573,7 @@ def _run_fbp_fast_path(
     batch_size: int,
     grid: Grid,
     detector: Detector,
-    filter_name: str,
+    filter: str,
     projector_unroll: int,
     checkpoint_projector: bool,
     gather_dtype: str,
@@ -593,7 +593,7 @@ def _run_fbp_fast_path(
     T_chunks = T_all.reshape((num_chunks, batch_size, 4, 4))
     y_chunks = proj.reshape((num_chunks, batch_size, nv, nu))
     valid_mask = (jnp.arange(total_views) < n_views).reshape((num_chunks, batch_size, 1, 1))
-    rfft_filter = _rfft_filter_array(filter_name, nu, float(detector.du), proj.dtype)
+    rfft_filter = _rfft_filter_array(filter, nu, float(detector.du), proj.dtype)
 
     def scan_chunks(
         T_chunks_in: jnp.ndarray,
@@ -638,7 +638,7 @@ def _run_fbp_with_backoff(
     batch_size: int,
     grid: Grid,
     detector: Detector,
-    filter_name: str,
+    filter: str,
     projector_unroll: int,
     checkpoint_projector: bool,
     gather_dtype: str,
@@ -648,7 +648,7 @@ def _run_fbp_with_backoff(
     """Fallback path that retries smaller chunks after OOM without skipping views."""
     n_views, nv, nu = map(int, proj.shape)
     acc = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
-    rfft_filter = _rfft_filter_array(filter_name, nu, float(detector.du), proj.dtype)
+    rfft_filter = _rfft_filter_array(filter, nu, float(detector.du), proj.dtype)
     b = int(batch_size)
     s = 0
 
@@ -757,7 +757,7 @@ def fbp(
             grid,
             detector,
             projections,
-            config=FDKConfig(filter_name=cfg.filter_name, backend=backend),
+            config=FDKConfig(filter=cfg.filter, backend=backend),
         )
 
     validate_grid(grid, "fbp grid")
@@ -788,9 +788,7 @@ def fbp(
         filter_detector = _parallel_filter_detector(grid, detector)
     else:
         filter_detector = _filter_detector(grid, detector, np.asarray(T_all), pad_v=not separable)
-    spectrum = _rfft_filter_array(
-        cfg.filter_name, filter_detector.nu, float(detector.du), jnp.float32
-    )
+    spectrum = _rfft_filter_array(cfg.filter, filter_detector.nu, float(detector.du), jnp.float32)
     n_fft_v = 1 if separable else _fft_length(filter_detector.nv)
     batch = _parallel_filter_batch_size(
         n_views, filter_detector.nv * n_fft_v, 2 * (spectrum.shape[0] - 1)
@@ -866,7 +864,7 @@ def _fbp_explicit_detector_grid(
             batch_size=b,
             grid=grid,
             detector=detector,
-            filter_name=cfg.filter_name,
+            filter=cfg.filter,
             projector_unroll=cfg.projector_unroll,
             checkpoint_projector=cfg.checkpoint_projector,
             gather_dtype=cfg.gather_dtype,
@@ -880,7 +878,7 @@ def _fbp_explicit_detector_grid(
             batch_size=b,
             grid=grid,
             detector=detector,
-            filter_name=cfg.filter_name,
+            filter=cfg.filter,
             projector_unroll=cfg.projector_unroll,
             checkpoint_projector=cfg.checkpoint_projector,
             gather_dtype=cfg.gather_dtype,

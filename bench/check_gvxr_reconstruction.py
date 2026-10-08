@@ -56,7 +56,7 @@ def check_fixture(path: Path, iterations: int) -> dict:
                     detector,
                     data[channel],
                     config=CGLSConfig(
-                        iters=iterations,
+                        iterations=iterations,
                         rtol=0.0,
                         views_per_batch=len(data["poses"]),
                         projector_backend="pallas",

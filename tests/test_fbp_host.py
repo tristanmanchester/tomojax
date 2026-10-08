@@ -82,13 +82,13 @@ def test_host_slabs_write_memmap_and_preserve_custom_scale(tmp_path):
     target = np.memmap(
         tmp_path / "volume.bin", mode="w+", dtype=np.float32, shape=(grid.nx, grid.ny, grid.nz)
     )
-    cfg = FBPHostConfig(slices_per_batch=4, views_per_batch=2, scale=0.27, filter_name="hann")
+    cfg = FBPHostConfig(slices_per_batch=4, views_per_batch=2, scale=0.27, filter="hann")
     result = fbp_host(geometry, grid, detector, source, config=cfg, out=target)
     assert result is target
     target.flush()
     reloaded = np.memmap(tmp_path / "volume.bin", mode="r", dtype=np.float32, shape=target.shape)
     expected = np.asarray(
-        fbp(geometry, grid, detector, data, config=FBPConfig(scale=0.27, filter_name="hann"))
+        fbp(geometry, grid, detector, data, config=FBPConfig(scale=0.27, filter="hann"))
     )
     np.testing.assert_allclose(reloaded, expected, atol=3e-6, rtol=3e-5)
     np.testing.assert_array_equal(source, data)

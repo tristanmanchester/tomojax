@@ -723,8 +723,8 @@ def run_loss_grad_variant(
 ) -> tuple[jnp.ndarray, jnp.ndarray, dict[str, Any]]:
     forward, back = variant.split("_", maxsplit=1)
     cfg = FistaCoreConfig(
-        iters=1,
-        lambda_tv=0.0,
+        iterations=1,
+        tv_weight=0.0,
         checkpoint_projector=False,
         projector_unroll=1,
         gather_dtype="fp32",
@@ -805,10 +805,10 @@ def run_fista_macro(
     l_override: float = 0.0,
 ) -> tuple[dict[str, Any], jnp.ndarray]:
     cfg = FistaCoreConfig(
-        iters=int(iters_override) if int(iters_override) > 0 else data.spec.fista_iters,
-        lambda_tv=0.002,
-        L=float(l_override) if float(l_override) > 0.0 else 250.0,
-        positivity=True,
+        iterations=int(iters_override) if int(iters_override) > 0 else data.spec.fista_iters,
+        tv_weight=0.002,
+        lipschitz=float(l_override) if float(l_override) > 0.0 else 250.0,
+        nonnegative=True,
         checkpoint_projector=False,
         projector_unroll=1,
         gather_dtype="fp32",
@@ -879,8 +879,8 @@ def run_fista_macro(
 
 def directional_derivative_error(data: CaseData, grad: jnp.ndarray) -> float:
     cfg = FistaCoreConfig(
-        iters=1,
-        lambda_tv=0.0,
+        iterations=1,
+        tv_weight=0.0,
         checkpoint_projector=False,
         projector_unroll=1,
         gather_dtype="fp32",

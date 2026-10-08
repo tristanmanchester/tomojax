@@ -90,14 +90,14 @@ to assess the validated scope.
 `cgls` solves unconstrained least squares with a matched discrete adjoint and
 optional scalar damping and quadratic smoothness. It supports JAX and CUDA Pallas execution. Iteration
 budgets are dynamic, so changing the budget reuses compiled code. Use FISTA or
-SPDHG for TV regularization and positivity constraints.
+SPDHG for TV regularization and nonnegativity constraints.
 
 ```python
 from tomojax.recon import CGLSConfig, cgls
 
 volume, info = cgls(
     geometry, grid, detector, projections,
-    config=CGLSConfig(iters=50, rtol=1e-6, damping=0.0),
+    config=CGLSConfig(iterations=50, rtol=1e-6, damping=0.0),
 )
 ```
 
@@ -133,21 +133,21 @@ and does not itself guarantee better recovery.
 
 `cgls_multires` uses coarse CGLS solutions to initialize progressively finer
 solves. The final factor must be 1, so the final solve uses every original
-measurement. Explicit per-level budgets override `config.iters`:
+measurement. Explicit per-level budgets override `config.iterations`:
 
 ```python
 from tomojax.recon import cgls_multires
 
 volume, info = cgls_multires(
     geometry, grid, detector, projections,
-    factors=(4, 2, 1), iters_per_level=(40, 20, 20),
+    factors=(4, 2, 1), iterations_per_level=(40, 20, 20),
     config=CGLSConfig(rtol=1e-6),
 )
 ```
 
 `info["levels"]` records every level's physical grid, detector, requested and
-effective iterations, and termination. `effective_iters` counts all levels;
-`fine_effective_iters` counts only the final level. Coarsening preserves physical
+effective iterations, and termination. `effective_iterations` counts all
+levels; `fine_effective_iterations` counts only the final level. Coarsening preserves physical
 volume faces and selects actual measured rays at uniform detector strides. It
 does not average detector pixels or rescale attenuation. This can accelerate
 smooth problems but discards coarse-stage measurements and can alias sharp or

@@ -41,39 +41,39 @@ def fista_multires(
     projections: jnp.ndarray,
     *,
     factors: Iterable[int] = (2, 1),
-    iters_per_level: Iterable[int] = (10, 10),
-    lambda_tv: float = 0.005,
+    iterations_per_level: Iterable[int] = (10, 10),
+    tv_weight: float = 0.005,
 ) -> tuple[jnp.ndarray, dict]:
     """Coarse-to-fine FISTA reconstruction using simple binning/upsampling.
 
     Returns (x, info) where x is at finest resolution.
     """
     factors = tuple(validate_scale_factor(f) for f in factors)
-    iters_per_level = tuple(int(it) for it in iters_per_level)
-    if len(factors) != len(iters_per_level):
+    iterations_per_level = tuple(int(it) for it in iterations_per_level)
+    if len(factors) != len(iterations_per_level):
         raise ValueError(
-            "factors and iters_per_level must have the same length; "
-            f"got {len(factors)} and {len(iters_per_level)}"
+            "factors and iterations_per_level must have the same length; "
+            f"got {len(factors)} and {len(iterations_per_level)}"
         )
     levels = create_resolution_pyramid(grid, detector, projections, factors)
     # Heuristic: if coarse levels get very few iterations, skip them and spend
     # the entire budget at the finest level (often better for tiny problems/tests).
     if len(levels) >= 2 and levels[-1]["factor"] == 1:
-        coarse_iters = int(sum(iters_per_level[:-1]))
+        coarse_iters = int(sum(iterations_per_level[:-1]))
         if coarse_iters <= 3:
-            total_iters = int(sum(iters_per_level))
+            total_iters = int(sum(iterations_per_level))
             x_fine, info = fista_tv(
                 geometry,
                 grid,
                 detector,
                 projections,
-                config=FistaConfig(iters=total_iters, lambda_tv=lambda_tv),
+                config=FistaConfig(iterations=total_iters, tv_weight=tv_weight),
             )
             return x_fine, {"loss": info.get("loss", []), "factors": list(factors)}
     x_init = None
     prev_factor: int | None = None
     loss_hist = []
-    level_plan = list(zip(levels, iters_per_level, strict=False))
+    level_plan = list(zip(levels, iterations_per_level, strict=False))
     for lvl, iters in progress_iter(level_plan, total=len(level_plan), desc="Multires: levels"):
         g = lvl["grid"]
         d = lvl["detector"]
@@ -90,7 +90,7 @@ def fista_multires(
             d,
             y,
             init_x=x0,
-            config=FistaConfig(iters=iters, lambda_tv=lambda_tv),
+            config=FistaConfig(iterations=iters, tv_weight=tv_weight),
         )
         loss_hist.extend(info.get("loss", []))
         # Prepare initialization for next (finer) level

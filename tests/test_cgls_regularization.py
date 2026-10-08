@@ -102,7 +102,7 @@ def test_gradient_regularized_cgls_matches_dense_augmented_system(
         data,
         init_x=initial,
         config=CGLSConfig(
-            iters=80,
+            iterations=80,
             rtol=1e-7,
             damping=damping,
             gradient_damping=gradient_damping,
@@ -120,7 +120,7 @@ def test_gradient_regularized_cgls_matches_dense_augmented_system(
     assert np.linalg.norm(residual) < 3e-6 * np.linalg.norm(matrix.T @ data.ravel())
     assert info["gradient_damping"] == gradient_damping
     assert info["normal_residual_is_recomputed"]
-    assert info["effective_iters"] < 80
+    assert info["effective_iterations"] < 80
 
 
 @pytest.mark.parametrize("value", [-1.0, np.inf, np.nan])

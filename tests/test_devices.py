@@ -120,9 +120,9 @@ def test_cgls_from_a_start_shared_among_devices_matches_one_device():
     data = np.asarray(tj.project(geometry, _phantom()))
     start = 0.5 * _phantom()
     one, _ = cgls(geometry, geometry.grid, geometry.detector, data, init_x=start,
-                  config=CGLSConfig(iters=4))  # fmt: skip
+                  config=CGLSConfig(iterations=4))  # fmt: skip
     shared, _ = cgls(geometry, geometry.grid, geometry.detector, data, init_x=start,
-                     config=CGLSConfig(iters=4, devices=jax.devices()))  # fmt: skip
+                     config=CGLSConfig(iterations=4, devices=jax.devices()))  # fmt: skip
     assert _relative(shared, one) < 1e-4
 
 

@@ -29,12 +29,12 @@ if TYPE_CHECKING:
 class FistaCoreConfig:
     """Configuration for the array-level FISTA core."""
 
-    iters: int = 10
-    lambda_tv: float = 0.005
+    iterations: int = 10
+    tv_weight: float = 0.005
     regulariser: Regulariser = "huber_tv"
     huber_delta: float = 1e-2
-    L: float = 100.0
-    positivity: bool = False
+    lipschitz: float = 100.0
+    nonnegative: bool = False
     lower_bound: float | None = None
     upper_bound: float | None = None
     checkpoint_projector: bool = True
@@ -68,7 +68,7 @@ class FistaCoreResult:
     loss: jnp.ndarray
     data_loss: jnp.ndarray
     regulariser_value: jnp.ndarray
-    effective_iters: jnp.ndarray
+    effective_iterations: jnp.ndarray
     status: str
 
     def info(self) -> dict[str, object]:
@@ -77,7 +77,7 @@ class FistaCoreResult:
             "loss": self.loss,
             "data_loss": self.data_loss,
             "regulariser_value": self.regulariser_value,
-            "effective_iters": self.effective_iters,
+            "effective_iterations": self.effective_iterations,
             "status": self.status,
         }
 
@@ -87,7 +87,7 @@ class FistaCoreResult:
             "loss": [float(v) for v in list(self.loss)],
             "data_loss": float(self.data_loss),
             "regulariser_value": float(self.regulariser_value),
-            "effective_iters": int(self.effective_iters),
+            "effective_iterations": int(self.effective_iterations),
             "status": self.status,
         }
 
@@ -113,9 +113,9 @@ def fista_tv_core_arrays(
     x_init = _project_constraints(jnp.asarray(x0, dtype=jnp.float32), cfg)
     z_init = x_init
     t_init = jnp.float32(1.0)
-    L_raw = cfg.L if L_override is None else L_override
+    L_raw = cfg.lipschitz if L_override is None else L_override
     L = jnp.maximum(jnp.asarray(L_raw, dtype=jnp.float32), jnp.float32(1e-6))
-    lam = jnp.asarray(cfg.lambda_tv, dtype=jnp.float32)
+    lam = jnp.asarray(cfg.tv_weight, dtype=jnp.float32)
     weights = _sqrt_view_weights(projections, view_weights)
     data_forward_projector, data_backprojector = _resolve_fista_core_data_projectors(
         cfg,
@@ -186,7 +186,7 @@ def fista_tv_core_arrays(
     ) -> tuple[tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray], None]:
         x_prev, z_prev, t_prev, loss_arr, _last_data_loss = carry
         data_loss, grad = data_loss_and_grad_fn(z_prev)
-        if cfg.regulariser == "huber_tv" and float(cfg.lambda_tv) != 0.0:
+        if cfg.regulariser == "huber_tv" and float(cfg.tv_weight) != 0.0:
             grad = grad + lam * huber_tv_grad(z_prev, float(cfg.huber_delta))
         step = z_prev - grad / L
         # The differentiable reference path intentionally uses gradient FISTA for
@@ -204,7 +204,7 @@ def fista_tv_core_arrays(
             )
         return (x_next, z_next, t_next, loss_arr, data_loss.astype(jnp.float32)), None
 
-    n_iters = int(cfg.iters)
+    n_iters = int(cfg.iterations)
     loss0 = jnp.zeros((n_iters,), dtype=jnp.float32)
     (x_final, _, _, loss, last_data_loss), _ = jax.lax.scan(
         body,
@@ -226,7 +226,7 @@ def fista_tv_core_arrays(
         loss=loss,
         data_loss=data_final,
         regulariser_value=reg_final,
-        effective_iters=jnp.asarray(n_iters, dtype=jnp.int32),
+        effective_iterations=jnp.asarray(n_iters, dtype=jnp.int32),
         status="ok",
     )
 
@@ -294,9 +294,9 @@ def fista_objective_arrays(
         cfg=cfg,
         view_weights=view_weights,
     )
-    if cfg.lambda_tv == 0.0:
+    if cfg.tv_weight == 0.0:
         return data
-    return data + jnp.asarray(cfg.lambda_tv, dtype=jnp.float32) * regulariser_value_arrays(
+    return data + jnp.asarray(cfg.tv_weight, dtype=jnp.float32) * regulariser_value_arrays(
         volume,
         cfg,
     )
@@ -786,7 +786,7 @@ def _apply_support(x: jnp.ndarray, support: jnp.ndarray | None) -> jnp.ndarray:
 def _project_constraints(x: jnp.ndarray, cfg: FistaCoreConfig) -> jnp.ndarray:
     out = x
     lower = cfg.lower_bound
-    if cfg.positivity:
+    if cfg.nonnegative:
         lower = 0.0 if lower is None else max(0.0, float(lower))
     if lower is not None:
         out = jnp.maximum(out, jnp.asarray(lower, dtype=out.dtype))

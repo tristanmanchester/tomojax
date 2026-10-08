@@ -20,7 +20,7 @@ if TYPE_CHECKING:
         "grid",
         "detector",
         "batch_size",
-        "iters",
+        "iterations",
         "unroll",
         "checkpoint",
         "gather_dtype",
@@ -37,7 +37,7 @@ def estimate_normal_norm(
     grid: Grid,
     detector: Detector,
     batch_size: int,
-    iters: int,
+    iterations: int,
     unroll: int,
     checkpoint: bool,
     gather_dtype: str,
@@ -53,7 +53,7 @@ def estimate_normal_norm(
     normal operator instead of power iteration. One forward/adjoint pair gives
     an upper bound for the nonnegative trilinear ray model. Absolute support
     weights also bound signed masks. This mode ignores ``initial`` values and
-    ``iters``; its physical units are squared length, just like ``A.T A``.
+    ``iterations``; its physical units are squared length, just like ``A.T A``.
     """
     if upper_bound and support is not None:
         support = jnp.abs(support)
@@ -105,6 +105,6 @@ def estimate_normal_norm(
         return jnp.maximum(jnp.max(apply_normal(jnp.ones_like(initial))), jnp.float32(1e-6))
 
     vector = jax.lax.fori_loop(
-        0, max(1, iters), lambda _, v: normalize(apply_normal(v)), normalize(initial)
+        0, max(1, iterations), lambda _, v: normalize(apply_normal(v)), normalize(initial)
     )
     return jnp.maximum(jnp.vdot(vector, apply_normal(vector)).real, jnp.float32(1e-6))

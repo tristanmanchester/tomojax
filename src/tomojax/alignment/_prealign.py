@@ -126,9 +126,9 @@ def _quick_reconstruction(
     from tomojax.recon import CGLSConfig, FBPConfig, cgls, fbp
 
     if segments_of(geometry) is None:
-        return fbp(geometry, grid, detector, data, config=FBPConfig(filter_name="hann"))
+        return fbp(geometry, grid, detector, data, config=FBPConfig(filter="hann"))
     # From the host, CGLS streams the views and keeps no projection-sized vector.
-    config = CGLSConfig(iters=6, stream_projections=True)
+    config = CGLSConfig(iterations=6, stream_projections=True)
     volume, _ = cgls(geometry, grid, detector, np.asarray(data), config=config)
     return volume
 
@@ -222,7 +222,7 @@ def reprojection_residual(
         corrected = jnp.concatenate(
             [_shift_views(data[c], jnp.broadcast_to(offset, (c.stop - c.start, 2))) for c in chunks]
         )
-        volume = fbp(geometry, grid, detector, corrected, config=FBPConfig(filter_name="hann"))
+        volume = fbp(geometry, grid, detector, corrected, config=FBPConfig(filter="hann"))
         predicted = jnp.concatenate([reproject(c, volume) for c in chunks])
         scale = jnp.vdot(predicted, corrected) / jnp.maximum(jnp.vdot(predicted, predicted), 1e-30)
         return float(jnp.linalg.norm(scale * predicted - corrected)) / max(norm, 1e-30)

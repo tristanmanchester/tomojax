@@ -48,7 +48,7 @@ def test_multires_recovers_original_fine_system(explicit_coordinates, backend):
         detector,
         data,
         factors=(3, 2, 1),
-        iters_per_level=(4, 6, 90),
+        iterations_per_level=(4, 6, 90),
         init_x=jnp.ones_like(truth) * 0.5,
         config=CGLSConfig(
             projector_model="ray", rtol=1e-7, views_per_batch=3, projector_backend=backend
@@ -56,8 +56,10 @@ def test_multires_recovers_original_fine_system(explicit_coordinates, backend):
         det_grid=coordinates,
     )
     np.testing.assert_allclose(result, truth, rtol=3e-4, atol=5e-5)
-    assert info["requested_iters"] == 100
-    assert info["effective_iters"] == sum(level["effective_iters"] for level in info["levels"])
+    assert info["requested_iterations"] == 100
+    assert info["effective_iterations"] == sum(
+        level["effective_iterations"] for level in info["levels"]
+    )
     assert [level["factor"] for level in info["levels"]] == [3, 2, 1]
     assert info["levels"][-1]["grid"] == grid.to_dict()
     assert info["levels"][-1]["detector"] == detector.to_dict()
@@ -66,7 +68,7 @@ def test_multires_recovers_original_fine_system(explicit_coordinates, backend):
 def test_single_level_is_the_unmodified_public_solver():
     grid, detector, geometry, initial = problem()
     data = jnp.ones((5, 7, 9))
-    config = CGLSConfig(projector_model="ray", iters=4, projector_backend="jax")
+    config = CGLSConfig(projector_model="ray", iterations=4, projector_backend="jax")
     direct, direct_info = cgls(geometry, grid, detector, data, init_x=initial, config=config)
     result, info = cgls_multires(
         geometry,
@@ -74,13 +76,13 @@ def test_single_level_is_the_unmodified_public_solver():
         detector,
         data,
         factors=(1,),
-        iters_per_level=(4,),
+        iterations_per_level=(4,),
         init_x=initial,
         config=config,
     )
     # Both JAX scatter and Pallas atomics may sum in a different GPU order.
     np.testing.assert_allclose(result, direct, rtol=1e-5, atol=3e-6)
-    assert info["fine_effective_iters"] == direct_info["effective_iters"]
+    assert info["fine_effective_iterations"] == direct_info["effective_iterations"]
     assert info["normal_residual_norm"] == pytest.approx(
         direct_info["normal_residual_norm"], rel=1e-5
     )
@@ -91,7 +93,7 @@ def test_multires_gradient_penalty_solves_the_same_physical_fine_objective():
     data = jnp.asarray(np.random.default_rng(82).normal(size=(5, 7, 9)), jnp.float32)
     config = CGLSConfig(
         projector_model="ray",
-        iters=100,
+        iterations=100,
         rtol=1e-7,
         damping=0.2,
         gradient_damping=0.7,
@@ -104,7 +106,7 @@ def test_multires_gradient_penalty_solves_the_same_physical_fine_objective():
         detector,
         data,
         factors=(3, 2, 1),
-        iters_per_level=(6, 10, 100),
+        iterations_per_level=(6, 10, 100),
         init_x=initial,
         config=config,
     )
@@ -133,7 +135,12 @@ def test_invalid_schedule_is_rejected_before_any_solve(factors, budgets, monkeyp
     grid, detector, geometry, _ = problem()
     with pytest.raises(ValueError):
         cgls_multires(
-            geometry, grid, detector, jnp.zeros((5, 7, 9)), factors=factors, iters_per_level=budgets
+            geometry,
+            grid,
+            detector,
+            jnp.zeros((5, 7, 9)),
+            factors=factors,
+            iterations_per_level=budgets,
         )
 
 

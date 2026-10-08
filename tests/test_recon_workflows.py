@@ -56,7 +56,7 @@ def test_fbp_ramp_filter_smoke_is_finite() -> None:
         grid,
         detector,
         projections,
-        config=FBPConfig(filter_name="ramp", views_per_batch=1),
+        config=FBPConfig(filter="ramp", views_per_batch=1),
     )
 
     assert volume.shape == (4, 4, 4)
@@ -121,7 +121,7 @@ def test_fbp_chunk_backoff_preserves_accumulator_and_progress_on_async_oom(
         batch_size=4,
         grid=Grid(2, 2, 1, 1.0, 1.0, 1.0),
         detector=Detector(1, 1, 1.0, 1.0),
-        filter_name="ramp",
+        filter="ramp",
         projector_unroll=1,
         checkpoint_projector=True,
         gather_dtype="fp32",
@@ -145,7 +145,7 @@ def test_fista_reconstruction_smoke_is_finite() -> None:
         grid,
         detector,
         projections,
-        config=FistaConfig(iters=1, lambda_tv=0.0, views_per_batch=1, power_iters=1),
+        config=FistaConfig(iterations=1, tv_weight=0.0, views_per_batch=1, power_iterations=1),
     )
 
     assert volume.shape == (4, 4, 4)

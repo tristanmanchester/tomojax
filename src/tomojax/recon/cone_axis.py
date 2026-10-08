@@ -64,9 +64,7 @@ class ConeAxisConfig:
     estimate_roll: bool = True
     slices: int = 32
     max_roll_deg: float = 3.0
-    fdk: FDKConfig = field(
-        default_factory=lambda: FDKConfig(filter_name="hann", views_per_batch=1024)
-    )
+    fdk: FDKConfig = field(default_factory=lambda: FDKConfig(filter="hann", views_per_batch=1024))
 
 
 @dataclass(frozen=True)

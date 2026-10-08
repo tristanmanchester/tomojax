@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Breaking: reconstruction options have one name each, the one
+  `tj.reconstruct` already used, in Python, on the command line, as
+  `--config` keys and in saved `info`. In the solver configurations
+  (`FistaConfig`, `SPDHGConfig`, `CGLSConfig`, `FBPConfig`, `FBPHostConfig`,
+  `FDKConfig`, `FistaCoreConfig`), `ReconstructionAlgorithmOptions` and
+  `fista_multires`/`cgls_multires`: `iters` is `iterations` (and
+  `tv_prox_iters`, `power_iters`, `iters_per_level` are `tv_prox_iterations`,
+  `power_iterations`, `iterations_per_level`), `lambda_tv` is `tv_weight`,
+  `positivity` is `nonnegative`, `filter_name` is `filter`, `L` is
+  `lipschitz`, and the options' `algorithm` is `method` and `spdhg_seed` is
+  `seed`; their `warm_start` is a bool. `tomojax recon` takes
+  `--tv-prox-iterations` (was `--tv-prox-iters`) and `--lipschitz` (was
+  `--L`). A `--config` file using a retired key (`algo`, `iters`, `lambda_tv`,
+  `positivity`, `spdhg_seed`, `tv_prox_iters`, `L`) fails with its new name,
+  for example "config key 'lambda_tv' ... was renamed 'tv_weight'". Saved
+  reconstruction `info` and solver `info` use the new keys
+  (`effective_iterations`, `lipschitz`, `tv_weight`, `nonnegative`, ...), and
+  the `tomojax recon` manifest records `method` (was `algorithm`).
+  `AlignConfig` and `tomojax align` keep their names for now.
 - Fixed: `tj.reconstruct(scan, "spdhg")` ignored `nonnegative` and always
   clipped the volume at zero. It now honours it and, like `fista`, does not
   clip unless asked.

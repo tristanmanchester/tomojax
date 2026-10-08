@@ -475,7 +475,7 @@ def normal_operator_norm(
     adjoint: Callable[[jax.Array], jax.Array],
     shape: tuple[int, int, int],
     *,
-    iters: int,
+    iterations: int,
     mask: jax.Array | None = None,
     start: jax.Array | None = None,
 ) -> jax.Array:
@@ -499,7 +499,7 @@ def normal_operator_norm(
     x0 = jnp.ones(shape, jnp.float32) if start is None else start
     x0 = x0 if mask is None else x0 * mask
     x0 = x0 / jnp.sqrt(jnp.sum(x0**2) + 1e-30)
-    _, norm = jax.lax.fori_loop(0, max(1, iters), step, (x0, jnp.float32(0)))
+    _, norm = jax.lax.fori_loop(0, max(1, iterations), step, (x0, jnp.float32(0)))
     return norm
 
 

@@ -66,7 +66,7 @@ def test_implicit_layer_solves_once_and_preserves_primal_diagnostics(monkeypatch
     jax.block_until_ready(result.x)
     assert count == 1
     np.testing.assert_allclose(result.x, reference.x, rtol=1e-6, atol=1e-6)
-    for key in ["loss", "data_loss", "regulariser_value", "effective_iters"]:
+    for key in ["loss", "data_loss", "regulariser_value", "effective_iterations"]:
         np.testing.assert_allclose(result.info[key], reference.info[key], rtol=1e-6, atol=1e-6)
 
 

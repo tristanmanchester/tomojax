@@ -44,7 +44,7 @@ class CGLSConfig:
     Minimize ``||A x - y||² + damping² ||x||² + gradient_damping² ||D x||²``
     using the discrete matched
     adjoint. Stop when the normal-residual norm falls below
-    ``atol + rtol * initial_normal_residual_norm`` or after ``iters`` updates.
+    ``atol + rtol * initial_normal_residual_norm`` or after ``iterations`` updates.
     ``roundoff_limit`` indicates voxelwise update stagnation or a normal gradient
     within an FP32 cancellation estimate, without claiming the requested tolerance.
     Before reporting convergence or roundoff, recompute the data and normal
@@ -89,7 +89,7 @@ class CGLSConfig:
     are then held in device memory, never streamed.
     """
 
-    iters: int = 50
+    iterations: int = 50
     rtol: float = 1e-6
     atol: float = 0.0
     damping: float = 0.0
@@ -502,9 +502,9 @@ def cgls(
     host diagnostics and is not a differentiable reconstruction layer.
     """
     cfg = CGLSConfig() if config is None else config
-    iterations, batch = operator.index(cfg.iters), operator.index(cfg.views_per_batch)
+    iterations, batch = operator.index(cfg.iterations), operator.index(cfg.views_per_batch)
     if iterations < 0 or batch < 1:
-        raise ValueError("cgls: iters must be nonnegative and views_per_batch must be positive")
+        raise ValueError("cgls: iterations must be nonnegative and views_per_batch positive")
     for name in ("rtol", "atol", "damping", "gradient_damping"):
         value = float(getattr(cfg, name))
         if not math.isfinite(value) or value < 0:
@@ -581,7 +581,7 @@ def cgls(
         raise ValueError("cgls: projections, initial volume and poses must be finite")
     converged = bool(not failed and gamma <= tolerance * tolerance)
     info = {
-        "effective_iters": int(count),
+        "effective_iterations": int(count),
         "converged": converged,
         "termination": "numerical_breakdown"
         if failed

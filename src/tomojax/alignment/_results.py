@@ -169,7 +169,7 @@ def record_reconstruction_info(
 ) -> float | None:
     if recon_algo == "fista":
         try:
-            L_meas = float(info_rec.get("L", 0.0))
+            L_meas = float(info_rec.get("lipschitz", 0.0))
             if math.isfinite(L_meas) and L_meas > 0.0:
                 # Solvers report the bound actually used, including any
                 # safety margin. Reapplying a factor here on every outer
@@ -178,7 +178,7 @@ def record_reconstruction_info(
                 stat["L_meas"] = L_meas
                 stat["L_next"] = L_prev
         except (TypeError, ValueError, OverflowError) as exc:
-            _record_stat_conversion_error(stat, "L", exc)
+            _record_stat_conversion_error(stat, "lipschitz", exc)
     losses = info_rec.get("loss")
     if isinstance(losses, Iterable):
         try:

@@ -198,7 +198,7 @@ def solve_tomojax(
             case.detector,
             case.analytic,
             factors=factors,
-            iters_per_level=budgets,
+            iterations_per_level=budgets,
             config=CGLSConfig(
                 rtol=0.0,
                 views_per_batch=batch,
@@ -226,7 +226,7 @@ def solve_tomojax(
             jnp.asarray(case.analytic),
             init_x=initial,
             config=CGLSConfig(
-                iters=iterations,
+                iterations=iterations,
                 rtol=0.0,
                 views_per_batch=batch,
                 projector_backend=method.rsplit("_", 1)[-1],
@@ -240,10 +240,10 @@ def solve_tomojax(
             "initialization": "fbp" if initial is not None else "zero",
         }
     config = FistaConfig(
-        iters=iterations,
-        lambda_tv=0,
+        iterations=iterations,
+        tv_weight=0,
         regulariser="huber_tv",
-        positivity=False,
+        nonnegative=False,
         views_per_batch=batch,
         gather_dtype="fp32",
     )
@@ -252,8 +252,8 @@ def solve_tomojax(
     )
     return np.asarray(result), {
         "backend": "jax",
-        "effective_iters": info["effective_iters"],
-        "lipschitz": info["L"],
+        "effective_iters": info["effective_iterations"],
+        "lipschitz": info["lipschitz"],
         "views_per_batch": batch,
         "regulariser": "none",
         "positivity": False,

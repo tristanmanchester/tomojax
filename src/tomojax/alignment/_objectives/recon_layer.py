@@ -130,12 +130,12 @@ class ReconLayer:
             else jnp.asarray(init_x, dtype=jnp.float32)
         )
         core_cfg = FistaCoreConfig(
-            iters=int(self.config.iters),
-            lambda_tv=float(self.config.lambda_tv),
+            iterations=int(self.config.iters),
+            tv_weight=float(self.config.lambda_tv),
             regulariser=self.config.regulariser,
             huber_delta=float(self.config.huber_delta),
-            L=float(self.config.L),
-            positivity=bool(self.config.positivity),
+            lipschitz=float(self.config.L),
+            nonnegative=bool(self.config.positivity),
             checkpoint_projector=bool(self.config.checkpoint_projector),
             projector_unroll=int(self.config.projector_unroll),
             gather_dtype=str(self.config.gather_dtype),

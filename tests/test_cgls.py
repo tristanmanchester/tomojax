@@ -60,7 +60,7 @@ def test_underdetermined_cgls_preserves_initial_null_component(
         data,
         init_x=initial if warm_start else None,
         config=CGLSConfig(
-            iters=100,
+            iterations=100,
             rtol=1e-7,
             views_per_batch=1,
             projector_backend=backend,
@@ -115,7 +115,7 @@ def test_cgls_matches_dense_lstsq_with_tail_batches(damping, warm_start):
         init_x=initial,
         config=CGLSConfig(
             projector_model="ray",
-            iters=60,
+            iterations=60,
             rtol=1e-7,
             damping=damping,
             views_per_batch=3,
@@ -129,7 +129,7 @@ def test_cgls_matches_dense_lstsq_with_tail_batches(damping, warm_start):
     )
     assert np.linalg.norm(normal_residual) < 2e-6 * np.linalg.norm(matrix.T @ data.ravel())
     assert info["termination"] in {"converged", "roundoff_limit"}
-    assert info["effective_iters"] < 60
+    assert info["effective_iterations"] < 60
 
 
 def test_unattainable_tolerance_stops_at_roundoff_without_diverging():
@@ -148,7 +148,7 @@ def test_unattainable_tolerance_stops_at_roundoff_without_diverging():
             data,
             config=CGLSConfig(
                 projector_model="ray",
-                iters=160,
+                iterations=160,
                 rtol=0,
                 damping=0.7,
                 views_per_batch=3,
@@ -157,14 +157,14 @@ def test_unattainable_tolerance_stops_at_roundoff_without_diverging():
         )
         np.testing.assert_allclose(volume.ravel(), expected, rtol=2e-4, atol=3e-5)
         assert info["termination"] in {"converged", "roundoff_limit"}
-        assert info["effective_iters"] < 160
+        assert info["effective_iterations"] < 160
 
 
 def test_zero_data_and_zero_iteration_limit_preserve_valid_results():
     grid, detector, geometry, _ = small_problem()
     volume, info = cgls(geometry, grid, detector, jnp.zeros((5, 4, 5)))
     np.testing.assert_array_equal(volume, np.zeros((3, 2, 2)))
-    assert info["converged"] and info["effective_iters"] == 0
+    assert info["converged"] and info["effective_iterations"] == 0
     initial = jnp.ones((3, 2, 2))
     volume, info = cgls(
         geometry,
@@ -172,7 +172,7 @@ def test_zero_data_and_zero_iteration_limit_preserve_valid_results():
         detector,
         jnp.zeros((5, 4, 5)),
         init_x=initial,
-        config=CGLSConfig(iters=0),
+        config=CGLSConfig(iterations=0),
     )
     np.testing.assert_array_equal(volume, initial)
     assert info["termination"] == "iteration_limit"
@@ -194,7 +194,10 @@ def test_changed_data_geometry_and_budget_reuse_compiled_solver():
             detector,
             data,
             config=CGLSConfig(
-                projector_model="ray", iters=iterations, views_per_batch=3, projector_backend="jax"
+                projector_model="ray",
+                iterations=iterations,
+                views_per_batch=3,
+                projector_backend="jax",
             ),
         )
         np.testing.assert_allclose(result.ravel(), truth, rtol=2e-4, atol=2e-5)
@@ -207,7 +210,7 @@ def test_changed_data_geometry_and_budget_reuse_compiled_solver():
 @pytest.mark.parametrize(
     "bad_config",
     [
-        CGLSConfig(iters=-1),
+        CGLSConfig(iterations=-1),
         CGLSConfig(views_per_batch=0),
         CGLSConfig(rtol=-0.1),
         CGLSConfig(damping=np.inf),
@@ -246,7 +249,7 @@ def test_pallas_cgls_matches_dense_damped_solution():
         data,
         config=CGLSConfig(
             projector_model="ray",
-            iters=60,
+            iterations=60,
             rtol=1e-7,
             damping=damping,
             views_per_batch=3,
@@ -294,7 +297,7 @@ def test_bright_region_does_not_hide_weak_region_updates(backend, model):
         data,
         init_x=initial,
         config=CGLSConfig(
-            iters=60,
+            iterations=60,
             rtol=1e-6,
             views_per_batch=5,
             projector_model=model,
@@ -318,7 +321,7 @@ def test_streamed_cgls_solves_the_same_least_squares_problem(tmp_path, damping):
     results = {}
     for stream, projections in [(False, jnp.asarray(data)), (True, stored)]:
         config = CGLSConfig(
-            iters=300, damping=damping, views_per_batch=7, stream_projections=stream
+            iterations=300, damping=damping, views_per_batch=7, stream_projections=stream
         )
         results[stream] = cgls(geometry, grid, detector, projections, config=config)
     assert results[True][1]["formulation"] == "streamed_normal_equations"

@@ -84,8 +84,8 @@ class SPDHGConfig:
     operators.
     """
 
-    iters: int = 400
-    lambda_tv: float = 5e-3
+    iterations: int = 400
+    tv_weight: float = 5e-3
     regulariser: Regulariser = "tv"
     huber_delta: float = 1e-2
     theta: float = 1.0  # extrapolation for xbar
@@ -106,7 +106,7 @@ class SPDHGConfig:
     projector_backend: ProjectorBackend = "auto"
 
     # constraints
-    positivity: bool = True
+    nonnegative: bool = True
     support: jnp.ndarray | None = None  # 0/1 mask in volume space
 
     # logging
@@ -167,7 +167,7 @@ class _SPDHGRuntime:
     poses: jnp.ndarray
     detector_grid: tuple[jnp.ndarray, jnp.ndarray]
     support: jnp.ndarray | None
-    lambda_tv: jnp.ndarray
+    tv_weight: jnp.ndarray
     step_sizes: _SPDHGStepSizes
     schedule: _SPDHGSchedule
     # None starts from zeros created inside the compiled solve.
@@ -188,7 +188,7 @@ class _SPDHGResult:
     schedule: _SPDHGSchedule
     regulariser: Regulariser = field(metadata={"static": True})
     huber_delta: float = field(metadata={"static": True})
-    lambda_tv: float
+    tv_weight: float
 
     def info(self) -> dict[str, object]:
         step_sizes = self.step_sizes
@@ -199,7 +199,7 @@ class _SPDHGResult:
             "sigma_data": float(step_sizes.sigma_data_eff),
             "sigma_data_base": float(step_sizes.sigma_data_base),
             "sigma_tv": float(step_sizes.sigma_tv),
-            "lambda_tv": float(self.lambda_tv),
+            "tv_weight": float(self.tv_weight),
             "views_per_batch": int(schedule.views_per_batch),
             "num_blocks": int(schedule.num_blocks),
             "A_norm": (float(step_sizes.data_norm) if step_sizes.data_norm is not None else None),
@@ -226,7 +226,7 @@ def _estimate_norm_A2(
     gather_dtype: str,
     ray_integrator: str = "sampled",
     key: jax.Array | None = None,
-    power_iters: int = 20,
+    power_iterations: int = 20,
     safety: float = 1.05,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> float:
@@ -244,7 +244,7 @@ def _estimate_norm_A2(
         grid=grid,
         detector=detector,
         batch_size=max(1, min(views_per_batch, n_views)),
-        iters=int(power_iters),
+        iterations=int(power_iterations),
         unroll=int(projector_unroll),
         checkpoint=checkpoint_projector,
         gather_dtype=gather_dtype,
@@ -257,11 +257,11 @@ def _proj_pos_support(
     x: jnp.ndarray,
     support: jnp.ndarray | None,
     *,
-    positivity: bool,
+    nonnegative: bool,
 ) -> jnp.ndarray:
     if support is not None:
         x = x * support
-    if positivity:
+    if nonnegative:
         x = jnp.maximum(x, 0)
     return x
 
@@ -313,19 +313,20 @@ def _batched_projector(
     return None if (model, backend) == ("ray", "jax") else (model, backend)
 
 
-@functools.partial(jax.jit, static_argnames=("grid", "detector", "projector", "iters"))
+@functools.partial(jax.jit, static_argnames=("grid", "detector", "projector", "iterations"))
 def _batched_norm_squared(
     poses: jnp.ndarray,
     *,
     grid: Grid,
     detector: Detector,
     projector: tuple[str, str],
-    iters: int,
+    iterations: int,
 ) -> jnp.ndarray:
     model, backend = projector
     batch = min(64, int(poses.shape[0]))
     forward, adjoint = projection_operators(poses, grid, detector, None, backend, batch, model)
-    return normal_operator_norm(forward, adjoint, (grid.nx, grid.ny, grid.nz), iters=iters)
+    shape = (grid.nx, grid.ny, grid.nz)
+    return normal_operator_norm(forward, adjoint, shape, iterations=iterations)
 
 
 def _resolve_spdhg_step_sizes(
@@ -350,7 +351,7 @@ def _resolve_spdhg_step_sizes(
         )
     if projector is not None:
         norm_sq = _batched_norm_squared(
-            poses, grid=grid, detector=detector, projector=projector, iters=20
+            poses, grid=grid, detector=detector, projector=projector, iterations=20
         )
         data_norm_sq = max(float(norm_sq) * 1.05**2, 1e-6)
     else:
@@ -365,7 +366,7 @@ def _resolve_spdhg_step_sizes(
             checkpoint_projector=config.checkpoint_projector,
             gather_dtype=config.gather_dtype,
             key=jax.random.key(config.seed),
-            power_iters=20,
+            power_iterations=20,
             safety=1.05,
             det_grid=det_grid,
             ray_integrator=config.ray_integrator,
@@ -389,7 +390,7 @@ def _build_spdhg_schedule(n_views: int, config: SPDHGConfig) -> _SPDHGSchedule:
     views_per_batch = int(max(1, min(config.views_per_batch, n_views)))
     num_blocks = (n_views + views_per_batch - 1) // views_per_batch
     rng = np.random.default_rng(config.seed)
-    epochs = (config.iters + num_blocks - 1) // num_blocks
+    epochs = (config.iterations + num_blocks - 1) // num_blocks
     block_ids: list[int] = []
     for _ in range(epochs):
         block_ids.extend(int(block) for block in rng.permutation(num_blocks))
@@ -398,7 +399,7 @@ def _build_spdhg_schedule(n_views: int, config: SPDHGConfig) -> _SPDHGSchedule:
         views_per_batch=views_per_batch,
         num_blocks=num_blocks,
         selection_prob=1.0 / float(max(num_blocks, 1)),
-        block_ids=jnp.asarray(block_ids[: config.iters], dtype=jnp.int32),
+        block_ids=jnp.asarray(block_ids[: config.iterations], dtype=jnp.int32),
     )
 
 
@@ -407,7 +408,7 @@ def _initial_spdhg_state(
     y_meas: jnp.ndarray | None,
     init_x: jnp.ndarray | None,
     *,
-    iters: int,
+    iterations: int,
 ) -> _SPDHGScanState:
     # Called inside the compiled solve: zero states are never input buffers.
     x0 = init_x if init_x is not None else jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
@@ -420,7 +421,7 @@ def _initial_spdhg_state(
         p2=jnp.zeros_like(x0),
         p3=jnp.zeros_like(x0),
         s_data=jnp.zeros_like(x0),
-        losses=jnp.zeros((iters,), dtype=jnp.float32),
+        losses=jnp.zeros((iterations,), dtype=jnp.float32),
     )
 
 
@@ -501,7 +502,7 @@ def _prepare_spdhg_runtime(
         poses=poses,
         detector_grid=resolved_det_grid,
         support=None if cfg.support is None else jnp.asarray(cfg.support, dtype=jnp.float32),
-        lambda_tv=jnp.asarray(cfg.lambda_tv, dtype=jnp.float32),
+        tv_weight=jnp.asarray(cfg.tv_weight, dtype=jnp.float32),
         step_sizes=step_sizes,
         schedule=_build_spdhg_schedule(n_views, cfg),
         init_x=None if init_x is None else jnp.asarray(init_x, dtype=jnp.float32),
@@ -514,9 +515,7 @@ def _prepare_spdhg_runtime(
 def _spdhg_logged_steps(config: SPDHGConfig) -> list[int]:
     if config.log_every <= 0:
         return []
-    return [
-        int(step) for step in np.flatnonzero((np.arange(config.iters) + 1) % config.log_every == 0)
-    ]
+    return list(range(config.log_every - 1, config.iterations, config.log_every))
 
 
 def _emit_spdhg_callback(
@@ -683,14 +682,14 @@ def _run_spdhg_scan(  # noqa: PLR0915
                 p2_u,
                 p3_u,
                 sigma=step_sizes.sigma_tv,
-                lam=runtime.lambda_tv,
+                lam=runtime.tv_weight,
                 delta=runtime.huber_delta,
             )
         else:
             norm = jnp.maximum(
                 1.0,
                 jnp.sqrt(p1_u * p1_u + p2_u * p2_u + p3_u * p3_u)
-                / jnp.maximum(runtime.lambda_tv, 1e-12),
+                / jnp.maximum(runtime.tv_weight, 1e-12),
             )
             p1_new = p1_u / norm
             p2_new = p2_u / norm
@@ -700,10 +699,10 @@ def _run_spdhg_scan(  # noqa: PLR0915
         # rather than differencing old and new duals, lets them update in place.
         s_new = s_data_new - div3(p1_new, p2_new, p3_new)
         x_new = _proj_pos_support(
-            state.x - step_sizes.tau * s_new, runtime.support, positivity=cfg.positivity
+            state.x - step_sizes.tau * s_new, runtime.support, nonnegative=cfg.nonnegative
         )
         x_bar_candidate = x_new + jnp.asarray(cfg.theta, x_new.dtype) * (x_new - state.x)
-        x_bar_new = _proj_pos_support(x_bar_candidate, runtime.support, positivity=cfg.positivity)
+        x_bar_new = _proj_pos_support(x_bar_candidate, runtime.support, nonnegative=cfg.nonnegative)
         y_data_new = store(state, start_shifted, y_dual_new)
 
         do_log = (cfg.log_every > 0) & ((t + 1) % cfg.log_every == 0)
@@ -721,7 +720,7 @@ def _run_spdhg_scan(  # noqa: PLR0915
                 reg_value = huber_tv_value(x_new, runtime.huber_delta)
             else:
                 reg_value = isotropic_tv_value(x_new)
-            obj = (data_est + runtime.lambda_tv * reg_value).astype(jnp.float32)
+            obj = (data_est + runtime.tv_weight * reg_value).astype(jnp.float32)
             return state.losses.at[t].set(obj)
 
         losses_new = jax.lax.cond(do_log, log_step, lambda: state.losses)
@@ -736,8 +735,8 @@ def _run_spdhg_scan(  # noqa: PLR0915
             losses=losses_new,
         ), None
 
-    initial = _initial_spdhg_state(grid, runtime.y_meas, runtime.init_x, iters=cfg.iters)
-    final_state, _ = jax.lax.scan(one_step, initial, jnp.arange(cfg.iters))
+    initial = _initial_spdhg_state(grid, runtime.y_meas, runtime.init_x, iterations=cfg.iterations)
+    final_state, _ = jax.lax.scan(one_step, initial, jnp.arange(cfg.iterations))
     return final_state
 
 
@@ -793,7 +792,7 @@ def spdhg_tv(
         schedule=runtime.schedule,
         regulariser=runtime.regulariser,
         huber_delta=runtime.huber_delta,
-        lambda_tv=float(runtime.config.lambda_tv),
+        tv_weight=float(runtime.config.tv_weight),
     )
     _emit_spdhg_callback(callback, result, runtime.config)
     return result.volume, result.info()

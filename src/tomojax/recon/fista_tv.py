@@ -81,11 +81,11 @@ class FistaScanState(NamedTuple):
 @functools.partial(
     jax.tree_util.register_dataclass,
     data_fields=[],
-    meta_fields=["positivity", "lower_bound", "upper_bound"],
+    meta_fields=["nonnegative", "lower_bound", "upper_bound"],
 )
 @dataclass(frozen=True)
 class _FistaConstraints:
-    positivity: bool
+    nonnegative: bool
     lower_bound: float | None
     upper_bound: float | None
 
@@ -119,7 +119,7 @@ class _FistaResult:
     volume: jnp.ndarray
     losses: jnp.ndarray
     lipschitz: float
-    effective_iters: int
+    effective_iterations: int
     early_stop: bool
     regulariser: Regulariser = field(metadata={"static": True})
     huber_delta: float = field(metadata={"static": True})
@@ -127,8 +127,8 @@ class _FistaResult:
     def info(self) -> dict[str, object]:
         return {
             "loss": np.asarray(self.losses).tolist(),
-            "L": self.lipschitz,
-            "effective_iters": self.effective_iters,
+            "lipschitz": self.lipschitz,
+            "effective_iterations": self.effective_iterations,
             "early_stop": self.early_stop,
             "regulariser": self.regulariser,
             "huber_delta": self.huber_delta,
@@ -177,8 +177,8 @@ class FistaConfig:
     streams when they would take more than 40% of free device memory; ``True``
     always streams host arrays. Streaming needs the batched operators.
 
-    ``L`` is the data term's Lipschitz constant; ``None`` estimates it with
-    ``power_iters`` power iterations, started from the backprojected data.
+    ``lipschitz`` is the data term's Lipschitz constant; ``None`` estimates it
+    with ``power_iterations`` power iterations, started from the backprojected data.
 
     ``devices`` (two or more JAX devices) shares the views among them, each
     holding the whole volume, and sums their backprojections; one device, or
@@ -186,22 +186,22 @@ class FistaConfig:
     projections held in device memory (no streaming).
     """
 
-    iters: int = 50
-    lambda_tv: float = 0.005
+    iterations: int = 50
+    tv_weight: float = 0.005
     regulariser: Regulariser = "tv"
     huber_delta: float = 1e-2
-    L: float | None = None
+    lipschitz: float | None = None
     views_per_batch: int | None = None
     projector_unroll: int = 1
     checkpoint_projector: bool = True
     gather_dtype: str = "fp32"
     grad_mode: GradMode = "auto"
-    tv_prox_iters: int = 10
+    tv_prox_iterations: int = 10
     recon_rel_tol: float | None = None
     recon_patience: int = 0
-    power_iters: int = 3
+    power_iterations: int = 3
     support: jnp.ndarray | None = None
-    positivity: bool = False
+    nonnegative: bool = False
     lower_bound: float | None = None
     upper_bound: float | None = None
     ray_integrator: str = "sampled"
@@ -397,7 +397,7 @@ def power_method_L(
     detector: Detector,
     projections_shape: tuple[int, int, int],
     *,
-    iters: int = 10,
+    iterations: int = 10,
     views_per_batch: int | None = None,
     projector_unroll: int = 1,
     checkpoint_projector: bool = True,
@@ -445,7 +445,7 @@ def power_method_L(
             grid=grid,
             detector=detector,
             batch_size=batch_size,
-            iters=int(iters),
+            iterations=int(iterations),
             unroll=int(projector_unroll),
             checkpoint=checkpoint_projector,
             gather_dtype=gather_dtype,
@@ -454,7 +454,7 @@ def power_method_L(
     )
 
 
-def tv_proximal(x: jnp.ndarray, lam_over_L: float, iters: int = 20) -> jnp.ndarray:
+def tv_proximal(x: jnp.ndarray, lam_over_L: float, iterations: int = 20) -> jnp.ndarray:
     """Approximate the isotropic TV proximal by projected gradient on its dual.
 
     Solve ``min_u 0.5 ||u - x||^2 + lam TV(u)`` through the dual field ``p``
@@ -478,7 +478,7 @@ def tv_proximal(x: jnp.ndarray, lam_over_L: float, iters: int = 20) -> jnp.ndarr
             return (q1 / shrink, q2 / shrink, q3 / shrink), None
 
         zeros = jnp.zeros_like(x)
-        p, _ = jax.lax.scan(body, (zeros, zeros, zeros), None, length=int(iters))
+        p, _ = jax.lax.scan(body, (zeros, zeros, zeros), None, length=int(iterations))
         return x + div3(*p)
 
     return jax.lax.cond(lam > 0, prox_impl, lambda _: x, lam)
@@ -495,7 +495,7 @@ def _normalize_constraint_config(cfg: FistaConfig) -> tuple[bool, float | None, 
         raise ValueError("fista_tv constraints: upper_bound must be finite when provided")
 
     effective_lower = lower
-    if bool(cfg.positivity):
+    if bool(cfg.nonnegative):
         effective_lower = max(0.0, lower) if lower is not None else 0.0
 
     if upper is not None and effective_lower is not None and upper < effective_lower:
@@ -504,20 +504,20 @@ def _normalize_constraint_config(cfg: FistaConfig) -> tuple[bool, float | None, 
             "the effective lower bound"
         )
 
-    return bool(cfg.positivity), lower, upper
+    return bool(cfg.nonnegative), lower, upper
 
 
 def _project_constraints(
     x: jnp.ndarray,
     *,
-    positivity: bool,
+    nonnegative: bool,
     lower_bound: float | None,
     upper_bound: float | None,
 ) -> jnp.ndarray:
     """Project a volume onto optional elementwise physical constraints."""
     if lower_bound is not None:
         x = jnp.maximum(x, jnp.asarray(lower_bound, dtype=x.dtype))
-    if positivity:
+    if nonnegative:
         x = jnp.maximum(x, jnp.asarray(0.0, dtype=x.dtype))
     if upper_bound is not None:
         x = jnp.minimum(x, jnp.asarray(upper_bound, dtype=x.dtype))
@@ -544,13 +544,13 @@ def _prepare_fista_runtime(
         context="fista_tv config",
     )
     huber_delta = float(cfg.huber_delta)
-    positivity, lower_bound, upper_bound = _normalize_constraint_config(cfg)
+    nonnegative, lower_bound, upper_bound = _normalize_constraint_config(cfg)
     constraints = _FistaConstraints(
-        positivity=positivity,
+        nonnegative=nonnegative,
         lower_bound=lower_bound,
         upper_bound=upper_bound,
     )
-    constraints_enabled = positivity or lower_bound is not None or upper_bound is not None
+    constraints_enabled = nonnegative or lower_bound is not None or upper_bound is not None
 
     validate_grid(grid, "fista_tv grid")
     n_views, _, _ = validate_projection_stack(
@@ -573,7 +573,7 @@ def _prepare_fista_runtime(
     if constraints_enabled and x0 is not None:
         x0 = _project_constraints(
             x0,
-            positivity=constraints.positivity,
+            nonnegative=constraints.nonnegative,
             lower_bound=constraints.lower_bound,
             upper_bound=constraints.upper_bound,
         )
@@ -598,7 +598,7 @@ def _prepare_fista_runtime(
     if stream and projector is None:
         raise ValueError("fista_tv: stream_projections requires the batched projection operators")
 
-    lipschitz = cfg.L
+    lipschitz = cfg.lipschitz
     if lipschitz is None and projector is None:
         # The gradient at zero is minus the backprojected data: start from it.
         at_zero, _ = grad_data_term(
@@ -613,7 +613,7 @@ def _prepare_fista_runtime(
             grid,
             detector,
             projections.shape,
-            iters=cfg.power_iters,
+            iterations=cfg.power_iterations,
             initial=_power_start(at_zero),
             views_per_batch=cfg.views_per_batch,
             projector_unroll=cfg.projector_unroll,
@@ -681,8 +681,8 @@ def _with_huber(
     lipschitz: jax.Array | float, cfg: FistaConfig, regulariser: str, delta: float
 ) -> jax.Array | float:
     """``lipschitz`` plus the Huber-TV gradient's own Lipschitz constant, if it has one."""
-    if regulariser == "huber_tv" and float(cfg.lambda_tv) != 0.0:
-        return lipschitz + float(cfg.lambda_tv) * 12.0 / delta
+    if regulariser == "huber_tv" and float(cfg.tv_weight) != 0.0:
+        return lipschitz + float(cfg.tv_weight) * 12.0 / delta
     return lipschitz
 
 
@@ -719,7 +719,7 @@ def _first_gradient(
         runtime.poses, grid, detector, None, backend, batch, model, split=split
     )
     lipschitz = normal_operator_norm(
-        forward, adjoint, (grid.nx, grid.ny, grid.nz), iters=int(cfg.power_iters),
+        forward, adjoint, (grid.nx, grid.ny, grid.nz), iterations=int(cfg.power_iterations),
         mask=mask, start=_power_start(gradient),
     )  # fmt: skip
     lipschitz = jnp.asarray(_with_huber(lipschitz, cfg, runtime.regulariser, runtime.huber_delta))
@@ -753,8 +753,8 @@ def _data_term(
     def val_and_grad_fn(z: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         if runtime.projector is not None:
             v, g = batched_value_and_grad(z)
-            if regulariser == "huber_tv" and float(cfg.lambda_tv) != 0.0:
-                g = g + jnp.asarray(cfg.lambda_tv, dtype=z.dtype) * huber_tv_grad(z, huber_delta)
+            if regulariser == "huber_tv" and float(cfg.tv_weight) != 0.0:
+                g = g + jnp.asarray(cfg.tv_weight, dtype=z.dtype) * huber_tv_grad(z, huber_delta)
             return v, g
         g, v = grad_data_term(
             None,
@@ -772,8 +772,8 @@ def _data_term(
             det_grid=runtime.detector_grid,
             ray_integrator=cfg.ray_integrator,
         )
-        if regulariser == "huber_tv" and float(cfg.lambda_tv) != 0.0:
-            g = g + jnp.asarray(cfg.lambda_tv, dtype=z.dtype) * huber_tv_grad(z, huber_delta)
+        if regulariser == "huber_tv" and float(cfg.tv_weight) != 0.0:
+            g = g + jnp.asarray(cfg.tv_weight, dtype=z.dtype) * huber_tv_grad(z, huber_delta)
         return v, g
 
     return val_and_grad_fn
@@ -797,7 +797,7 @@ def _run_fista_scan(
 
     val_and_grad_fn = _data_term(grid, detector, projections, runtime)
     val_and_grad = jax.jit(val_and_grad_fn)
-    tv_prox_jit = jax.jit(tv_proximal, static_argnames=("iters",))
+    tv_prox_jit = jax.jit(tv_proximal, static_argnames=("iterations",))
 
     def regulariser_value_fn(x: jnp.ndarray) -> jnp.ndarray:
         if regulariser == "huber_tv":
@@ -825,13 +825,13 @@ def _run_fista_scan(
                 )
             reg_value = regulariser_value_fn(active_state.z)
             y = active_state.z - (1.0 / L) * g
-            if regulariser == "huber_tv" or float(cfg.lambda_tv) == 0.0:
+            if regulariser == "huber_tv" or float(cfg.tv_weight) == 0.0:
                 x_new = y
             else:
-                x_new = tv_prox_jit(y, cfg.lambda_tv / L, iters=int(cfg.tv_prox_iters))
+                x_new = tv_prox_jit(y, cfg.tv_weight / L, iterations=int(cfg.tv_prox_iterations))
             x_new = _project_constraints(
                 x_new,
-                positivity=constraints.positivity,
+                nonnegative=constraints.nonnegative,
                 lower_bound=constraints.lower_bound,
                 upper_bound=constraints.upper_bound,
             )
@@ -839,11 +839,11 @@ def _run_fista_scan(
             z_new = x_new + ((active_state.t - 1.0) / t_new) * (x_new - active_state.x)
             z_new = _project_constraints(
                 z_new,
-                positivity=constraints.positivity,
+                nonnegative=constraints.nonnegative,
                 lower_bound=constraints.lower_bound,
                 upper_bound=constraints.upper_bound,
             )
-            obj = data_loss_val + cfg.lambda_tv * reg_value
+            obj = data_loss_val + cfg.tv_weight * reg_value
             obj32 = obj.astype(jnp.float32)
             rel_change = jnp.abs(obj - active_state.prev_obj) / jnp.maximum(
                 jnp.abs(active_state.prev_obj),
@@ -882,12 +882,12 @@ def _run_fista_scan(
 
         return jax.lax.cond(state.done, run_skip, run_active, state), None
 
-    loss_arr0 = jnp.zeros((int(cfg.iters),), dtype=jnp.float32)
+    loss_arr0 = jnp.zeros((int(cfg.iterations),), dtype=jnp.float32)
     x0 = runtime.x0
     if x0 is None:
         x0 = _project_constraints(
             jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32),
-            positivity=constraints.positivity,
+            nonnegative=constraints.nonnegative,
             lower_bound=constraints.lower_bound,
             upper_bound=constraints.upper_bound,
         )
@@ -903,14 +903,14 @@ def _run_fista_scan(
         last_obj=jnp.float32(0.0),
         iters_done=jnp.int32(0),
     )
-    carry_final, _ = jax.lax.scan(step, init_carry, jnp.arange(int(cfg.iters)))
+    carry_final, _ = jax.lax.scan(step, init_carry, jnp.arange(int(cfg.iterations)))
     return carry_final, jnp.asarray(L, jnp.float32)
 
 
 def _emit_fista_callback(callback: LossCallback | None, result: _FistaResult) -> None:
     if result.losses.size == 0:
         return
-    final_step = max(result.effective_iters - 1, 0)
+    final_step = max(result.effective_iterations - 1, 0)
     emit_loss_callback_endpoints(
         callback,
         (
@@ -962,7 +962,7 @@ def fista_tv(
         volume=final.x,
         losses=final.loss,
         lipschitz=float(lipschitz),
-        effective_iters=int(final.iters_done),
+        effective_iterations=int(final.iters_done),
         early_stop=bool(final.done),
         regulariser=runtime.regulariser,
         huber_delta=runtime.huber_delta,

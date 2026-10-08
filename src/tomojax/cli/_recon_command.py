@@ -24,7 +24,6 @@ type ReconMaskMode = Literal["off", "cyl"]
 type ReconFrame = Literal["sample", "lab"]
 type ReconVolumeAxes = Literal["zyx", "xyz"]
 type ReconRegulariser = Literal["tv", "huber_tv"]
-type ReconWarmStart = Literal["none", "fbp"]
 
 
 @dataclass(frozen=True)
@@ -34,24 +33,24 @@ class ReconCommand:
     config: str | None
     data: str
     out: str
-    algo: ReconAlgorithm
+    method: ReconAlgorithm
     filter: str
-    iters: int
-    lambda_tv: float
+    iterations: int
+    tv_weight: float
     regulariser: ReconRegulariser
     huber_delta: float
-    tv_prox_iters: int
+    tv_prox_iterations: int
     lipschitz: float | None
-    positivity: bool
+    nonnegative: bool
     lower_bound: float | None
     upper_bound: float | None
     views_per_batch: ViewsPerBatch | None
     theta: float
-    spdhg_seed: int
+    seed: int
     spdhg_tau: float | None
     spdhg_sigma_data: float | None
     spdhg_sigma_tv: float | None
-    warm_start: ReconWarmStart
+    warm_start: bool
     gather_dtype: str
     checkpoint_projector: bool
     quicklook: str | None
@@ -195,13 +194,13 @@ def _add_iterative_options(p: argparse.ArgumentParser) -> None:
         help="Huber-TV transition radius for --regulariser huber_tv",
     )
     _ = p.add_argument(
-        "--tv-prox-iters",
+        "--tv-prox-iterations",
         type=int,
         default=10,
         help="Inner iterations for TV proximal operator (FISTA)",
     )
     _ = p.add_argument(
-        "--L",
+        "--lipschitz",
         type=float,
         default=None,
         help="Fixed Lipschitz constant for FISTA (skip power-method)",
@@ -390,24 +389,24 @@ def parse_recon_command(
             config=cast("str | None", args.config),
             data=cast("str", args.data),
             out=cast("str", args.out),
-            algo=cast("ReconAlgorithm", args.method),
+            method=cast("ReconAlgorithm", args.method),
             filter=cast("str", args.filter),
-            iters=cast("int", args.iterations),
-            lambda_tv=cast("float", args.tv_weight),
+            iterations=cast("int", args.iterations),
+            tv_weight=cast("float", args.tv_weight),
             regulariser=cast("ReconRegulariser", args.regulariser),
             huber_delta=cast("float", args.huber_delta),
-            tv_prox_iters=cast("int", args.tv_prox_iters),
-            lipschitz=cast("float | None", args.L),
-            positivity=cast("bool", args.nonnegative),
+            tv_prox_iterations=cast("int", args.tv_prox_iterations),
+            lipschitz=cast("float | None", args.lipschitz),
+            nonnegative=cast("bool", args.nonnegative),
             lower_bound=cast("float | None", args.lower_bound),
             upper_bound=cast("float | None", args.upper_bound),
             views_per_batch=cast("ViewsPerBatch | None", args.views_per_batch),
             theta=cast("float", args.theta),
-            spdhg_seed=cast("int", args.seed),
+            seed=cast("int", args.seed),
             spdhg_tau=cast("float | None", args.spdhg_tau),
             spdhg_sigma_data=cast("float | None", args.spdhg_sigma_data),
             spdhg_sigma_tv=cast("float | None", args.spdhg_sigma_tv),
-            warm_start="fbp" if cast("bool", args.warm_start) else "none",
+            warm_start=cast("bool", args.warm_start),
             gather_dtype=cast("str", args.gather_dtype),
             checkpoint_projector=cast("bool", args.checkpoint_projector),
             quicklook=cast("str | None", args.preview),

@@ -56,7 +56,7 @@ def run(backends: list[str], seeds: int) -> list[dict[str, Any]]:
                     detector,
                     data,
                     config=CGLSConfig(
-                        iters=100,
+                        iterations=100,
                         rtol=1e-7,
                         damping=damping,
                         views_per_batch=3,

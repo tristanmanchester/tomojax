@@ -32,24 +32,24 @@ type ReconstructionAlgorithm = Literal["fbp", "cgls", "fista", "spdhg"]
 class ReconstructionAlgorithmOptions:
     """User-facing solver choices after CLI/config parsing."""
 
-    algorithm: ReconstructionAlgorithm
-    filter_name: str = "ramp"
-    iters: int = 50
-    lambda_tv: float = 0.005
+    method: ReconstructionAlgorithm
+    filter: str = "ramp"
+    iterations: int = 50
+    tv_weight: float = 0.005
     regulariser: Regulariser = "tv"
     huber_delta: float = 1e-2
     lipschitz: float | None = None
-    positivity: bool = False
+    nonnegative: bool = False
     lower_bound: float | None = None
     upper_bound: float | None = None
     theta: float = 1.0
-    spdhg_seed: int = 0
+    seed: int = 0
     spdhg_tau: float | None = None
     spdhg_sigma_data: float | None = None
     spdhg_sigma_tv: float | None = None
-    warm_start: Literal["none", "fbp"] = "none"
+    warm_start: bool = False
     checkpoint_projector: bool = True
-    tv_prox_iters: int = 10
+    tv_prox_iterations: int = 10
 
 
 @dataclass(frozen=True)
@@ -80,22 +80,22 @@ class ReconstructionResult:
     algorithm_config: dict[str, object]
 
 
-def default_views_per_batch(algorithm: str) -> int:
-    """Views per device batch an algorithm uses unless told otherwise.
+def default_views_per_batch(method: str) -> int:
+    """Views per device batch a method uses unless told otherwise.
 
     SPDHG's batch is its stochastic block size; the other solvers' batched
     operators launch one projector call per batch.
     """
-    return {"spdhg": 16, "fista": 64, "cgls": 64}.get(str(algorithm).lower(), 1)
+    return {"spdhg": 16, "fista": 64, "cgls": 64}.get(str(method).lower(), 1)
 
 
 def run_reconstruction_algorithm(request: ReconstructionAlgorithmRequest) -> ReconstructionResult:
-    """Run the selected reconstruction algorithm from resolved geometry and projections."""
-    if request.options.algorithm == "fbp":
+    """Run the selected reconstruction method from resolved geometry and projections."""
+    if request.options.method == "fbp":
         return _run_fbp_reconstruction(request)
-    if request.options.algorithm == "cgls":
+    if request.options.method == "cgls":
         return _run_cgls_reconstruction(request)
-    if request.options.algorithm == "fista":
+    if request.options.method == "fista":
         return _run_fista_reconstruction(request)
     return _run_spdhg_reconstruction(request)
 
@@ -130,7 +130,7 @@ def _run_host_fdk(request: ReconstructionAlgorithmRequest) -> ReconstructionResu
         grid.nz,
     )
     fdk_cfg = FDKConfig(
-        filter_name=str(request.options.filter_name), views_per_batch=int(request.views_per_batch)
+        filter=str(request.options.filter), views_per_batch=int(request.views_per_batch)
     )
     volume = fdk_host(
         request.geometry,
@@ -144,7 +144,7 @@ def _run_host_fdk(request: ReconstructionAlgorithmRequest) -> ReconstructionResu
     return ReconstructionResult(
         volume=volume,
         algorithm_config={
-            "filter": str(fdk_cfg.filter_name),
+            "filter": str(fdk_cfg.filter),
             "views_per_batch": int(fdk_cfg.views_per_batch),
             "host_slabs": True,
         },
@@ -155,7 +155,7 @@ def _run_fbp_reconstruction(request: ReconstructionAlgorithmRequest) -> Reconstr
     if _host_cone_volume(request):
         return _run_host_fdk(request)
     cfg = FBPConfig(
-        filter_name=str(request.options.filter_name),
+        filter=str(request.options.filter),
         views_per_batch=int(request.views_per_batch),
         projector_unroll=1,
         checkpoint_projector=bool(request.options.checkpoint_projector),
@@ -174,7 +174,7 @@ def _run_fbp_reconstruction(request: ReconstructionAlgorithmRequest) -> Reconstr
     return ReconstructionResult(
         volume=volume,
         algorithm_config={
-            "filter": str(cfg.filter_name),
+            "filter": str(cfg.filter),
             "views_per_batch": int(cfg.views_per_batch),
             "projector_unroll": int(cfg.projector_unroll),
             "checkpoint_projector": bool(cfg.checkpoint_projector),
@@ -186,7 +186,7 @@ def _run_fbp_reconstruction(request: ReconstructionAlgorithmRequest) -> Reconstr
 def _run_cgls_reconstruction(request: ReconstructionAlgorithmRequest) -> ReconstructionResult:
     """Unregularised least squares; the fastest-converging solver for consistent data."""
     cfg = CGLSConfig(
-        iters=int(request.options.iters),
+        iterations=int(request.options.iterations),
         views_per_batch=int(request.views_per_batch),
         devices=request.devices,
     )
@@ -205,13 +205,13 @@ def _run_cgls_reconstruction(request: ReconstructionAlgorithmRequest) -> Reconst
     return ReconstructionResult(
         volume=volume,
         algorithm_config={
-            "iters": int(cfg.iters),
-            "effective_iters": int(cast("int", info["effective_iters"])),
+            "iterations": int(cfg.iterations),
+            "effective_iterations": int(cast("int", info["effective_iterations"])),
             "termination": str(info["termination"]),
             "views_per_batch": int(cfg.views_per_batch),
             "projector_model": str(info["projector_model"]),
             "projector_backend": str(info["projector_backend"]),
-            "warm_start": str(request.options.warm_start),
+            "warm_start": bool(request.options.warm_start),
             "support": "applied after the solve" if request.volume_mask is not None else None,
         },
     )
@@ -219,18 +219,20 @@ def _run_cgls_reconstruction(request: ReconstructionAlgorithmRequest) -> Reconst
 
 def _run_fista_reconstruction(request: ReconstructionAlgorithmRequest) -> ReconstructionResult:
     cfg = FistaConfig(
-        iters=int(request.options.iters),
-        lambda_tv=float(request.options.lambda_tv),
+        iterations=int(request.options.iterations),
+        tv_weight=float(request.options.tv_weight),
         regulariser=cast("Regulariser", str(request.options.regulariser)),
         huber_delta=float(request.options.huber_delta),
-        L=(float(request.options.lipschitz) if request.options.lipschitz is not None else None),
+        lipschitz=(
+            float(request.options.lipschitz) if request.options.lipschitz is not None else None
+        ),
         views_per_batch=int(request.views_per_batch),
         projector_unroll=1,
         checkpoint_projector=bool(request.options.checkpoint_projector),
         gather_dtype=str(request.gather_dtype),
-        tv_prox_iters=int(request.options.tv_prox_iters),
+        tv_prox_iterations=int(request.options.tv_prox_iterations),
         support=request.volume_mask,
-        positivity=bool(request.options.positivity),
+        nonnegative=bool(request.options.nonnegative),
         lower_bound=(
             float(request.options.lower_bound) if request.options.lower_bound is not None else None
         ),
@@ -250,22 +252,22 @@ def _run_fista_reconstruction(request: ReconstructionAlgorithmRequest) -> Recons
     return ReconstructionResult(
         volume=volume,
         algorithm_config={
-            "iters": int(cfg.iters),
-            "lambda_tv": float(cfg.lambda_tv),
+            "iterations": int(cfg.iterations),
+            "tv_weight": float(cfg.tv_weight),
             "regulariser": str(cfg.regulariser),
             "huber_delta": float(cfg.huber_delta),
-            "L": cfg.L,
+            "lipschitz": cfg.lipschitz,
             "views_per_batch": int(request.views_per_batch),
             "projector_unroll": int(cfg.projector_unroll),
             "checkpoint_projector": bool(cfg.checkpoint_projector),
             "gather_dtype": str(cfg.gather_dtype),
             "grad_mode": str(cfg.grad_mode),
-            "tv_prox_iters": int(cfg.tv_prox_iters),
+            "tv_prox_iterations": int(cfg.tv_prox_iterations),
             "recon_rel_tol": cfg.recon_rel_tol,
             "recon_patience": int(cfg.recon_patience),
-            "power_iters": int(cfg.power_iters),
+            "power_iterations": int(cfg.power_iterations),
             "support": "cylindrical" if request.volume_mask is not None else None,
-            "positivity": bool(cfg.positivity),
+            "nonnegative": bool(cfg.nonnegative),
             "lower_bound": cfg.lower_bound,
             "upper_bound": cfg.upper_bound,
         },
@@ -274,13 +276,13 @@ def _run_fista_reconstruction(request: ReconstructionAlgorithmRequest) -> Recons
 
 def _run_spdhg_reconstruction(request: ReconstructionAlgorithmRequest) -> ReconstructionResult:
     cfg = SPDHGConfig(
-        iters=int(request.options.iters),
-        lambda_tv=float(request.options.lambda_tv),
+        iterations=int(request.options.iterations),
+        tv_weight=float(request.options.tv_weight),
         regulariser=cast("Regulariser", str(request.options.regulariser)),
         huber_delta=float(request.options.huber_delta),
         theta=float(request.options.theta),
         views_per_batch=int(request.views_per_batch),
-        seed=int(request.options.spdhg_seed),
+        seed=int(request.options.seed),
         tau=(float(request.options.spdhg_tau) if request.options.spdhg_tau is not None else None),
         sigma_data=(
             float(request.options.spdhg_sigma_data)
@@ -295,11 +297,11 @@ def _run_spdhg_reconstruction(request: ReconstructionAlgorithmRequest) -> Recons
         projector_unroll=1,
         checkpoint_projector=bool(request.options.checkpoint_projector),
         gather_dtype=str(request.gather_dtype),
-        positivity=bool(request.options.positivity),
+        nonnegative=bool(request.options.nonnegative),
         support=request.volume_mask if request.volume_mask is not None else None,
         log_every=1,
     )
-    init_x = _fbp_warm_start(request, nonnegative=cfg.positivity)
+    init_x = _fbp_warm_start(request, nonnegative=cfg.nonnegative)
     volume = spdhg_tv(
         request.geometry,
         request.grid,
@@ -312,8 +314,8 @@ def _run_spdhg_reconstruction(request: ReconstructionAlgorithmRequest) -> Recons
     return ReconstructionResult(
         volume=volume,
         algorithm_config={
-            "iters": int(cfg.iters),
-            "lambda_tv": float(cfg.lambda_tv),
+            "iterations": int(cfg.iterations),
+            "tv_weight": float(cfg.tv_weight),
             "regulariser": str(cfg.regulariser),
             "huber_delta": float(cfg.huber_delta),
             "theta": float(cfg.theta),
@@ -325,10 +327,10 @@ def _run_spdhg_reconstruction(request: ReconstructionAlgorithmRequest) -> Recons
             "projector_unroll": int(cfg.projector_unroll),
             "checkpoint_projector": bool(cfg.checkpoint_projector),
             "gather_dtype": str(cfg.gather_dtype),
-            "positivity": bool(cfg.positivity),
+            "nonnegative": bool(cfg.nonnegative),
             "support": "cylindrical" if request.volume_mask is not None else None,
             "log_every": int(cfg.log_every),
-            "warm_start": str(request.options.warm_start),
+            "warm_start": bool(request.options.warm_start),
         },
     )
 
@@ -336,13 +338,13 @@ def _run_spdhg_reconstruction(request: ReconstructionAlgorithmRequest) -> Recons
 def _fbp_warm_start(
     request: ReconstructionAlgorithmRequest, *, nonnegative: bool
 ) -> jnp.ndarray | None:
-    if str(request.options.warm_start).lower() != "fbp":
+    if not request.options.warm_start:
         return None
     warm_start_vpb = (
         1 if request.views_per_batch_mode == "default" else int(request.views_per_batch)
     )
     warm_start_cfg = FBPConfig(
-        filter_name=str(request.options.filter_name),
+        filter=str(request.options.filter),
         views_per_batch=warm_start_vpb,
         projector_unroll=1,
         checkpoint_projector=bool(request.options.checkpoint_projector),

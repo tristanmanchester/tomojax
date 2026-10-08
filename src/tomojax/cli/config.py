@@ -92,12 +92,29 @@ def _load_config_file(
     return cast("dict[str, ConfigValue]", dict(payload))
 
 
+# Config keys that were renamed, and their new names. An old key fails with
+# the new name rather than being accepted as a second spelling.
+_RETIRED_KEYS = {
+    "algo": "method",
+    "iters": "iterations",
+    "lambda_tv": "tv_weight",
+    "positivity": "nonnegative",
+    "spdhg_seed": "seed",
+    "tv_prox_iters": "tv_prox_iterations",
+    "L": "lipschitz",
+}
+
+
 def _validate_config_keys(
     parser: argparse.ArgumentParser,
     path: Path,
     values: Mapping[str, ConfigValue],
 ) -> None:
     valid_keys = _config_actions_by_dest(parser).keys()
+    for key in values:
+        new = _RETIRED_KEYS.get(str(key))
+        if new is not None and str(key) not in valid_keys and new in valid_keys:
+            parser.error(f"config key '{key}' in {path} was renamed '{new}'")
     unknown = sorted(str(key) for key in values if str(key) not in valid_keys)
     if unknown:
         parser.error(

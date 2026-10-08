@@ -44,18 +44,18 @@ def run_case(size: int, kind: str, method: str, args: argparse.Namespace) -> dic
     lipschitz = 1.5 * n_views * max(grid.nx, grid.ny, grid.nz)
     if method == "fista":
         config = FistaConfig(
-            iters=args.recon_iters,
+            iterations=args.recon_iters,
             regulariser="huber_tv",
-            L=None if args.auto_norm else lipschitz,
+            lipschitz=None if args.auto_norm else lipschitz,
             views_per_batch=args.batch,
             gather_dtype="fp32",
-            positivity=True,
+            nonnegative=True,
         )
 
         def call() -> tuple:
             return fista_tv(geometry, grid, detector, data, config=config)
     elif method == "spdhg":
-        config = SPDHGConfig(iters=args.spdhg_iters, views_per_batch=args.batch, seed=31)
+        config = SPDHGConfig(iterations=args.spdhg_iters, views_per_batch=args.batch, seed=31)
 
         def call() -> tuple:
             return spdhg_tv(geometry, grid, detector, data, config=config)

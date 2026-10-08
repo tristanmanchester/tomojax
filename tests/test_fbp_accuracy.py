@@ -110,9 +110,7 @@ def test_fbp_keeps_filtered_tails_at_shifted_volume_corners(
         poses = np.array([geometry.pose_for_view(i) for i in range(len(angles))], np.float32)
         poses[:, 0, 3] = 2.2
         actual = np.asarray(
-            run_parallel_fbp_direct_pallas(
-                poses, data, grid=grid, detector=detector, filter_name="ramp"
-            )
+            run_parallel_fbp_direct_pallas(poses, data, grid=grid, detector=detector, filter="ramp")
         )[:, :, 0] * (np.pi / len(angles))
     else:
         actual = np.asarray(

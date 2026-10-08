@@ -84,7 +84,7 @@ factor on each outer iteration. If reconstruction falls back to public FISTA,
 the adapter removes the existing TV contribution before that solver adds it;
 the bound therefore stays consistent across both paths and resume. A fallback
 override too small to supply a positive data bound triggers operator-norm
-estimation. The public `FistaConfig.L` itself remains a data-term bound.
+estimation. The public `FistaConfig.lipschitz` itself remains a data-term bound.
 
 Without an override, Huber-FISTA alignment initializes its data bound from
 `max(A.T @ (A @ ones))`, with a 20% margin applied once. For the nonnegative

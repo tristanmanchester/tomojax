@@ -81,15 +81,15 @@ def test_spdhg_one_iteration_smoke_is_finite_and_positive() -> None:
         detector,
         projections,
         config=SPDHGConfig(
-            iters=1,
-            lambda_tv=0.0,
+            iterations=1,
+            tv_weight=0.0,
             views_per_batch=1,
             seed=123,
             tau=0.1,
             sigma_data=0.1,
             sigma_tv=0.1,
             checkpoint_projector=False,
-            positivity=True,
+            nonnegative=True,
             log_every=1,
         ),
     )

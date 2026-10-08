@@ -524,7 +524,7 @@ def reconstruct(
 
     if method not in METHODS:
         raise ValueError(f"reconstruct: method must be one of {', '.join(METHODS)}; got {method!r}")
-    given = {
+    given: dict[str, Any] = {
         name: value
         for name, value in {
             "filter": filter,
@@ -547,15 +547,8 @@ def reconstruct(
         scan = _with_grid(scan, grid)
     if method != "fbp":
         _suggest_binning(scan, "iterative reconstruction")
-    options = ReconstructionAlgorithmOptions(
-        algorithm=method,
-        filter_name=str(given.get("filter", "ramp")),
-        iters=int(given.get("iterations", 50)),
-        lambda_tv=float(given.get("tv_weight", 0.005)),
-        positivity=bool(given.get("nonnegative", False)),
-        spdhg_seed=int(given.get("seed", 0)),
-        warm_start="fbp" if given.get("warm_start") else "none",
-    )
+    _ = given.pop("devices", None)  # a request setting, not a solver option
+    options = ReconstructionAlgorithmOptions(method=method, **given)
     request = ReconstructionAlgorithmRequest(
         options=options,
         geometry=scan.geometry,

@@ -207,3 +207,17 @@ def test_config_files_set_on_off_flags(tmp_path: Path) -> None:
         build_parser(), ["scan.nxs", "-o", "out.nxs", "--config", str(config)]
     )
     assert args.seed_translations is False
+
+
+def test_config_files_name_the_new_key_for_a_retired_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from tomojax.cli.main import main
+
+    config = tmp_path / "recon.toml"
+    _ = config.write_text("lambda_tv = 0.01\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        _ = main(["recon", "scan.nxs", "-o", str(tmp_path / "out.nxs"), "--config", str(config)])
+    assert exc.value.code == 2
+    assert "config key 'lambda_tv'" in (err := capsys.readouterr().err)
+    assert err.rstrip().endswith("was renamed 'tv_weight'")

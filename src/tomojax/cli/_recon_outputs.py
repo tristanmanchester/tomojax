@@ -50,7 +50,7 @@ def write_reconstruction_outputs(
     save_meta.detector = detector
     save_meta.geometry_meta = dict(save_meta.geometry_meta or {})
     save_meta.geometry_meta["detector_center_override"] = detector_center_override
-    save_meta.geometry_meta["reconstruction_method"] = str(command.algo)
+    save_meta.geometry_meta["reconstruction_method"] = str(command.method)
     save_meta.volume = volume_np
     save_meta.frame = str(command.frame)
     save_meta.volume_axes_order = str(command.volume_axes)
@@ -122,7 +122,7 @@ def build_reconstruction_manifest(
             "config_file_values": config_metadata["config_file_values"],
             "explicit_cli_keys": config_metadata["explicit_cli_keys"],
             "effective_options": config_metadata["effective_options"],
-            "algorithm": str(command.algo),
+            "method": str(command.method),
             "algorithm_config": algorithm_config,
             "geometry_type": str(meta.geometry_type),
             "input_projection_shape": list(meta.projections.shape),

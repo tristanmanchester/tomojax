@@ -39,7 +39,7 @@ def cgls_multires(
     projections: jnp.ndarray,
     *,
     factors: Iterable[int] = (2, 1),
-    iters_per_level: Iterable[int] = (32, 16),
+    iterations_per_level: Iterable[int] = (32, 16),
     init_x: jnp.ndarray | None = None,
     config: CGLSConfig | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
@@ -47,7 +47,7 @@ def cgls_multires(
     """Initialize CGLS on coarser grids, then refine against every measured ray.
 
     ``factors`` must decrease strictly to 1. Each level gets its explicit
-    positive iteration budget from ``iters_per_level``; ``config.iters`` is
+    positive iteration budget from ``iterations_per_level``; ``config.iterations`` is
     overridden. Other CGLS settings apply unchanged at each level, including
     damping on that level's discrete problem. Tolerances may stop levels early.
 
@@ -63,9 +63,9 @@ def cgls_multires(
     Numerical breakdown at any level raises ``FloatingPointError``.
     """
     factors = tuple(validate_scale_factor(f) for f in factors)
-    budgets = tuple(operator.index(it) for it in iters_per_level)
+    budgets = tuple(operator.index(it) for it in iterations_per_level)
     if not factors or len(factors) != len(budgets):
-        raise ValueError("cgls_multires: factors and iters_per_level need equal nonzero lengths")
+        raise ValueError("cgls_multires: factors, iterations_per_level need equal nonzero lengths")
     if factors[-1] != 1 or any(a <= b for a, b in pairwise(factors)):
         raise ValueError("cgls_multires: factors must decrease strictly and end at 1")
     if any(it < 1 for it in budgets):
@@ -110,14 +110,14 @@ def cgls_multires(
             coarse_detector,
             bin_projections(data, factor),
             init_x=volume,
-            config=replace(cfg, iters=budget),
+            config=replace(cfg, iterations=budget),
             det_grid=coordinates,
         )
         levels.append(
             {
                 **info,
                 "factor": factor,
-                "requested_iters": budget,
+                "requested_iterations": budget,
                 "grid": coarse_grid.to_dict(),
                 "detector": coarse_detector.to_dict(),
             }
@@ -128,8 +128,8 @@ def cgls_multires(
     return volume, {
         **info,
         "factors": list(factors),
-        "requested_iters": sum(budgets),
-        "fine_effective_iters": info["effective_iters"],
-        "effective_iters": sum(cast("int", level["effective_iters"]) for level in levels),
+        "requested_iterations": sum(budgets),
+        "fine_effective_iterations": info["effective_iterations"],
+        "effective_iterations": sum(cast("int", level["effective_iterations"]) for level in levels),
         "levels": levels,
     }

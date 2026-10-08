@@ -45,7 +45,7 @@ if which == "tomojax":
     geo = ParallelGeometry(case.grid, case.detector, case.angles_deg)
     p = jnp.asarray(data)
     for lam in [0.3, 1, 3, 10, 30]:
-        cfg = FistaConfig(iters=iters, lambda_tv=lam, positivity=True)
+        cfg = FistaConfig(iterations=iters, tv_weight=lam, nonnegative=True)
         x, _ = fista_tv(geo, case.grid, case.detector, p, config=cfg)
         x.block_until_ready()
         t = time.perf_counter()
@@ -54,10 +54,10 @@ if which == "tomojax":
         dt = time.perf_counter() - t
         results.append(("tomojax fista_tv", lam, err(x), dt))
     for it in [5, 10, 20]:
-        x, _ = cgls(geo, case.grid, case.detector, p, config=CGLSConfig(iters=it, rtol=0))
+        x, _ = cgls(geo, case.grid, case.detector, p, config=CGLSConfig(iterations=it, rtol=0))
         x.block_until_ready()
         t = time.perf_counter()
-        x, _ = cgls(geo, case.grid, case.detector, p, config=CGLSConfig(iters=it, rtol=0))
+        x, _ = cgls(geo, case.grid, case.detector, p, config=CGLSConfig(iterations=it, rtol=0))
         x.block_until_ready()
         dt = time.perf_counter() - t
         results.append(("tomojax cgls (no TV)", it, err(x), dt))

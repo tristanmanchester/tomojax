@@ -158,7 +158,7 @@ def test_plane_cgls_matches_independent_damped_system_with_tail_batch(
         data,
         init_x=initial,
         config=CGLSConfig(
-            iters=120,
+            iterations=120,
             rtol=1e-7,
             damping=damping,
             views_per_batch=4,
@@ -278,7 +278,7 @@ def test_joseph_rejects_invalid_geometry_before_kernel_execution(bad):
             grid,
             detector,
             jnp.ones((6, 7, 9)),
-            config=CGLSConfig(projector_model="joseph", iters=1),
+            config=CGLSConfig(projector_model="joseph", iterations=1),
         )
 
 

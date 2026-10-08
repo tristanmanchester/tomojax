@@ -40,11 +40,11 @@ def test_repeated_solver_calls_use_new_arrays(solver, model):
         matrix = np.asarray(jax.jacfwd(project)(jnp.zeros(12)))
         if solver == "fista":
             cfg = FistaConfig(
-                iters=1,
-                L=20.0,
-                lambda_tv=0.0,
+                iterations=1,
+                lipschitz=20.0,
+                tv_weight=0.0,
                 views_per_batch=2,
-                positivity=False,
+                nonnegative=False,
                 support=support,
                 projector_model=model,
                 projector_backend="jax",
@@ -54,13 +54,13 @@ def test_repeated_solver_calls_use_new_arrays(solver, model):
         else:
             weights = jnp.asarray(rng.uniform(0.5, 1.5, size=data.shape), dtype=jnp.float32)
             cfg = SPDHGConfig(
-                iters=1,
+                iterations=1,
                 tau=0.1,
                 sigma_data=0.2,
                 sigma_tv=0.2,
-                lambda_tv=0.0,
+                tv_weight=0.0,
                 views_per_batch=3,
-                positivity=False,
+                nonnegative=False,
                 support=support,
                 projector_model=model,
                 projector_backend="jax",
@@ -100,7 +100,7 @@ def test_shared_power_method_matches_dense_operator_with_tail_and_support():
             grid=grid,
             detector=detector,
             batch_size=2,
-            iters=50,
+            iterations=50,
             unroll=1,
             checkpoint=True,
             gather_dtype="fp32",
@@ -138,7 +138,7 @@ def test_positive_normal_bound_dominates_dense_spectrum_for_irregular_geometry(t
             grid=grid,
             detector=detector,
             batch_size=2,
-            iters=1,
+            iterations=1,
             unroll=1,
             checkpoint=True,
             gather_dtype="fp32",
@@ -161,9 +161,9 @@ def test_fista_streams_host_projections_like_device_projections(tmp_path, batch)
     results = {}
     for stream, projections in [(False, jnp.asarray(data)), (True, stored)]:
         config = FistaConfig(
-            iters=4,
-            lambda_tv=0.01,
-            positivity=True,
+            iterations=4,
+            tv_weight=0.01,
+            nonnegative=True,
             projector_model="joseph",
             projector_backend="jax",
             views_per_batch=batch,
@@ -188,8 +188,8 @@ def test_spdhg_streams_data_weights_and_duals_from_host(tmp_path, weighted):
     results = {}
     for stream, projections in [(False, jnp.asarray(data)), (True, stored)]:
         config = SPDHGConfig(
-            iters=20,
-            lambda_tv=0.01,
+            iterations=20,
+            tv_weight=0.01,
             views_per_batch=4,
             projector_model="joseph",
             projector_backend="jax",

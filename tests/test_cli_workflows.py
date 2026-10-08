@@ -208,7 +208,7 @@ def test_recon_cli_routes_tiny_workflow(monkeypatch: pytest.MonkeyPatch, tmp_pat
     captured: dict[str, object] = {}
 
     def fake_run(command: object, config_metadata: dict[str, object]) -> None:
-        captured["algo"] = command.algo
+        captured["method"] = command.method
         captured["data"] = command.data
         captured["out"] = command.out
         assert config_metadata["config_path"] is None
@@ -238,7 +238,7 @@ def test_recon_cli_routes_tiny_workflow(monkeypatch: pytest.MonkeyPatch, tmp_pat
         == 0
     )
 
-    assert captured == {"algo": "fbp", "data": str(scan), "out": str(recon)}
+    assert captured == {"method": "fbp", "data": str(scan), "out": str(recon)}
     loaded = load_dataset(recon)
     assert loaded.volume is not None
     assert loaded.volume.shape == (4, 4, 2)
@@ -326,7 +326,7 @@ def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> No
     assert loaded.geometry_metadata["detector_center_override"]["source"] == "metadata"
 
     resolved = json.loads(manifest.read_text(encoding="utf-8"))["resolved_config"]
-    assert resolved["algorithm"] == "fbp"
+    assert resolved["method"] == "fbp"
     assert resolved["algorithm_config"]["filter"] == "ramp"
     assert resolved["reconstruction_grid"]["nx"] == 4
     assert resolved["reconstruction_grid"]["ny"] == 4
@@ -339,8 +339,8 @@ def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> No
     assert resolved["volume_shape"] == [4, 4, 2]
 
 
-@pytest.mark.parametrize("warm_start", ["none", "fbp"])
-def test_recon_cli_runs_cgls_like_the_python_solver(tmp_path: Path, warm_start: str) -> None:
+@pytest.mark.parametrize("warm_start", [False, True])
+def test_recon_cli_runs_cgls_like_the_python_solver(tmp_path: Path, *, warm_start: bool) -> None:
     scan = tmp_path / "scan.nxs"
     recon = tmp_path / "recon.nxs"
     manifest = tmp_path / "recon-manifest.json"
@@ -354,7 +354,7 @@ def test_recon_cli_runs_cgls_like_the_python_solver(tmp_path: Path, warm_start: 
         "2",
         "--iterations",
         "6",
-        *(["--warm-start"] if warm_start == "fbp" else []),
+        *(["--warm-start"] if warm_start else []),
     ]
     command = ["recon", str(scan), "-o", str(recon), "--method", "cgls"]
     assert main([*command, *args, "--manifest", str(manifest)]) == 0
@@ -362,9 +362,9 @@ def test_recon_cli_runs_cgls_like_the_python_solver(tmp_path: Path, warm_start: 
     assert loaded.volume is not None
     assert loaded.volume.shape == (4, 4, 2)
     resolved = json.loads(manifest.read_text(encoding="utf-8"))["resolved_config"]
-    assert resolved["algorithm"] == "cgls"
+    assert resolved["method"] == "cgls"
     assert resolved["algorithm_config"]["warm_start"] == warm_start
-    assert 1 <= resolved["algorithm_config"]["effective_iters"] <= 6
+    assert 1 <= resolved["algorithm_config"]["effective_iterations"] <= 6
 
 
 def test_recon_cli_accepts_detector_center_override(

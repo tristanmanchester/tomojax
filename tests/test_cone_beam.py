@@ -190,7 +190,7 @@ def test_cgls_solves_a_cone_beam_scan(backend):
         jnp.asarray(geometry.poses(), jnp.float32), grid, detector, geometry.beam
     )
     data = cone_project(truth, coeff, grid, detector, backend="jax")
-    config = CGLSConfig(iters=60, projector_backend=backend)
+    config = CGLSConfig(iterations=60, projector_backend=backend)
     volume, _ = cgls(geometry, grid, detector, data, config=config)
     assert np.linalg.norm(np.asarray(volume) - truth) / np.linalg.norm(truth) < 0.05
 
@@ -446,7 +446,7 @@ def test_calibrate_cone_axis_finds_the_offset_with_the_jax_backend():
     config = ConeAxisConfig(
         estimate_roll=False,
         slices=4,
-        fdk=FDKConfig(filter_name="hann", backend="jax", views_per_batch=60),
+        fdk=FDKConfig(filter="hann", backend="jax", views_per_batch=60),
     )
     calibration = calibrate_cone_axis(
         geometry, geometry.grid, geometry.detector, data, config=config
@@ -550,7 +550,7 @@ def test_fbp_reconstructs_volumes_larger_than_the_device_on_the_host(monkeypatch
     geometry, grid, detector, _ = _scan("turntable", n=16, views=24)
     data = np.random.default_rng(4).random((24, detector.nv, detector.nu)).astype(np.float32)
     request = ReconstructionAlgorithmRequest(
-        options=ReconstructionAlgorithmOptions(algorithm="fbp"),
+        options=ReconstructionAlgorithmOptions(method="fbp"),
         geometry=geometry,
         grid=grid,
         detector=detector,

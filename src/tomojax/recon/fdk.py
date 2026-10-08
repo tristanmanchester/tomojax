@@ -50,12 +50,12 @@ _TILE = (8, 2)
 class FDKConfig:
     """FDK options.
 
-    ``filter_name`` is ``ramp``, ``shepp-logan`` or ``hann``. ``backend``
+    ``filter`` is ``ramp``, ``shepp-logan`` or ``hann``. ``backend``
     ``auto`` uses the CUDA kernel when CuPy and a CUDA device are available.
     ``views_per_batch`` bounds the filtered views held on the device at once.
     """
 
-    filter_name: str = "ramp"
+    filter: str = "ramp"
     backend: str = "auto"
     views_per_batch: int = 64
 
@@ -643,7 +643,7 @@ def _prepare(
     pad_lo, pad_hi = _virtual_columns(geometry, beam, columns, n_views)
     # The kernel spans the virtual row too, so its tail does not wrap around.
     width = detector.nu + pad_lo + pad_hi
-    kernel = get_fbp_filter_np(cfg.filter_name, width, du_iso, "float32")
+    kernel = get_fbp_filter_np(cfg.filter, width, du_iso, "float32")
     operator = None
     if cuda and width <= _DENSE_FILTER_MAX:
         operator = jax.device_put(_filter_operator(kernel, detector.nu, pad_lo, pad_hi))
