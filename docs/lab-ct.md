@@ -147,9 +147,10 @@ tomojax recon aligned.nxs -o recon.nxs --method cgls
 
 `cor-then-pose` calibrates the axis as `--mode cor` does, then aligns the
 poses; `--mode pose` aligns the poses alone, and also takes scans that already
-carry poses (an ASTRA import, say) and multi-orbit scans, whose orbits it
-brings into register (see [the walnut](#bringing-the-orbits-into-register)). `tomojax recon` applies the
-poses saved in `aligned.nxs`; `--no-poses` reconstructs with the
+carry poses (an ASTRA import, say, or an earlier alignment), which it corrects
+on top of, and multi-orbit scans, whose orbits it brings into register (see
+[the walnut](#bringing-the-orbits-into-register)). `tomojax recon` applies the
+poses saved in `aligned.nxs`; with either command, `--no-poses` starts from the
 nominal geometry instead. See
 [cone-beam alignment](alignment-guide.md#align-cone-beam-scans-in-six-degrees-of-freedom)
 for its accuracy and gauges.

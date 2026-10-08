@@ -39,11 +39,25 @@ the [real scan guide](real-laminography.md). Save an unaligned reconstruction,
 choose the mode matching your problem, and assess both image quality and
 recovered parameters. Run commands below from an installed checkout.
 
-Each command reads a scan and writes `-o OUTPUT`. Options not shown by
-`tomojax align --help`, such as `ray_integrator` above, are expert settings:
-put them in a TOML file and pass it with `--config FILE`;
-`tomojax align --config-keys` lists every key with its default. The options
-match the Python `tj.align(scan, mode=..., quality=..., levels=..., freeze=...)`.
+Each command reads a scan and writes `-o OUTPUT`. `tomojax align` is
+`tj.align` on the command line: its options are `tj.align`'s keywords
+(`--mode`, `--quality`, `--levels`, `--freeze`, `--grid`, `--checkpoint`), and
+like `tj.align` it corrects on top of any poses saved in its input
+(`--no-poses` starts from the nominal geometry instead). Expert settings,
+such as `ray_integrator` above, are `tomojax.alignment.AlignConfig` fields:
+put them in a TOML file and pass it with `--config FILE`. Each replaces that
+field of the configuration the mode and quality give, which `--dry-run`
+prints; `tomojax align --config-keys` lists the fields with the default
+mode's values. In Python the same run is
+
+```python
+from dataclasses import replace
+
+from tomojax.alignment import alignment_plan
+
+config = replace(alignment_plan("pose", scan.grid).config, ray_integrator="exact")
+result = tj.align(scan, mode="pose", config=config)
+```
 
 ## Choose an alignment mode
 
@@ -71,10 +85,10 @@ Five-column tables from earlier versions load with `dy = 0`.
 Each Gauss–Newton step updates the volume and the poses together, using
 Joseph plane sampling and an unregularised least-squares fit; up to 30 outer
 iterations stop early once the fit stops improving.
-`--pose-solver alternating` restores the older scheme that refines poses
-against a reconstruction held fixed between volume updates. It accepts other
-losses, smooth pose models and optimizers, but in the pilot it left rotation
-errors of 0.1–1° that the coupled solver removes.
+The setting `gn_coupling = "fixed_volume"` restores the older scheme that
+refines poses against a reconstruction held fixed between volume updates. It
+accepts other losses, smooth pose models and optimizers, but in the pilot it
+left rotation errors of 0.1–1° that the coupled solver removes.
 
 ```bash
 uv run --no-sync tomojax align corrected.nxs -o aligned.nxs --mode pose
@@ -155,10 +169,8 @@ raises `ValueError` naming the difference, for example
 left as it is: delete it or choose another path to start again. Checkpoints
 written by versions before schema 4 do not resume.
 
-`tomojax align` writes checkpoints with `--checkpoint PATH` (every
-`--checkpoint-every` outer iterations, default 1) and resumes with
-`--resume PATH`, restoring `optimise_dofs`, `freeze` and `schedule` from the
-checkpoint unless they are given.
+`tomojax align --checkpoint PATH` does the same: run the same command again
+to resume.
 
 ## Correction quality vs physical calibration
 
@@ -219,8 +231,9 @@ The earlier sequence, a COR search followed by a pose polish, left rotation
 errors of 0.23–0.26° on the analytic scans.
 
 `pose` mode recovers the same poses, but leaves the offset in the per-view
-`dx`; it logs the implied offset and writes it to the manifest as
-`implied_detector_u_px`. In the Python API, `align_multires` with
+`dx`; `tj.align` reports the implied offset, in detector pixels, as
+`result.info["implied_detector_u_px"]`, and `tomojax align` logs it and writes
+it to the `--manifest`. In the Python API, `align_multires` with
 `AlignConfig(schedule="cor_then_pose", pose_translation_frame="detector")`
 returns the offset as `det_u_px` in `info["geometry_calibration_state"]`, and
 `implied_detector_offset` performs the separation on any pose table.
@@ -287,16 +300,16 @@ Gauge policies:
 The default pose model is `per_view`, which optimizes an independent 5-DOF
 vector for every projection. Use a smooth model when you expect the motion to
 change smoothly over the scan. Smooth models need the alternating solver; put
-the model in a TOML file, here `spline.toml`:
+both in a TOML file, here `spline.toml`:
 
 ```toml
+gn_coupling = "fixed_volume"
 pose_model = "spline"
 knot_spacing = 8
 ```
 
 ```bash
-uv run --no-sync tomojax align corrected.nxs -o aligned.nxs \
-  --mode pose --pose-solver alternating --config spline.toml
+uv run --no-sync tomojax align corrected.nxs -o aligned.nxs --mode pose --config spline.toml
 ```
 
 Smooth models reduce degrees of freedom but can hide abrupt jumps or outlier
@@ -308,8 +321,8 @@ In a cone beam, moving the sample along the beam changes its magnification,
 so `tomojax align` on a cone-beam dataset estimates `dy` with the other five
 pose parameters (`--freeze dy` keeps it fixed). Everything else is as for
 parallel scans: the coupled solver, translation seeding and saved alignments
-(`dy_world` in the parameter sidecars, a sixth `thetas` column in the aligned
-file, applied by `tomojax recon`).
+(a sixth column of the aligned file's poses, applied by `tomojax recon`, and
+`dy_world` in exported parameter files).
 
 Two gauges apply. As in parallel beams, moving the whole volume rigidly and
 every pose with it predicts the same data. In addition a common `dy` for all
@@ -374,7 +387,9 @@ previous tables. The aligned file records the frame, and `tomojax recon`
 applies the poses in it.
 
 In Python, `tj.align(scan)` returns these detector-frame poses as
-`result.poses` and applies them in `result.scan`. To export them:
+`result.poses` and applies them in `result.scan`; `tj.load("aligned.nxs").poses`
+reads those `tomojax align` saved. To export them as JSON
+(`save_alignment_params_csv` writes CSV the same way):
 
 ```python
 from tomojax.alignment.api import save_alignment_params_json

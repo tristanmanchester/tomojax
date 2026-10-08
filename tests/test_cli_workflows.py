@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib
 import json
 from pathlib import Path
 
@@ -525,149 +524,80 @@ def test_simulate_cli_routes_loadable_synthetic_dataset(
     assert loaded.volume is not None
 
 
+def _fake_alignment(
+    monkeypatch: pytest.MonkeyPatch,
+    poses: np.ndarray | None = None,
+    info: dict[str, object] | None = None,
+) -> list[dict[str, object]]:
+    """Make ``align_multires`` return ``poses`` (none moved by default); record its calls."""
+    calls: list[dict[str, object]] = []
+
+    def fake_align_multires(geometry, grid, detector, projections, *, factors, config, **kwargs):
+        del geometry, detector, kwargs
+        calls.append(
+            {"shape": tuple(projections.shape), "factors": list(factors), "config": config}
+        )
+        volume = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+        params = np.zeros((int(projections.shape[0]), 6), np.float32) if poses is None else poses
+        return volume, jnp.asarray(params), {"loss": [0.0], "outer_stats": [], **(info or {})}
+
+    monkeypatch.setattr("tomojax.alignment.api.align_multires", fake_align_multires)
+    return calls
+
+
 def test_align_cli_mode_cor_writes_alignment_outputs(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    align_cli_main = importlib.import_module("tomojax.cli.align.main")
-    align_cli_plan = importlib.import_module("tomojax.cli.align.plan")
     scan = tmp_path / "scan.nxs"
     aligned = tmp_path / "aligned.nxs"
     manifest = tmp_path / "align.json"
     write_projection_dataset(scan)
-    calls: list[tuple[tuple[int, int, int], list[int], str]] = []
+    calls = _fake_alignment(monkeypatch)
 
-    def fake_align_multires(
-        geom,
-        recon_grid,
-        recon_detector,
-        projections,
-        *,
-        factors,
-        config,
-        resume_state=None,
-        checkpoint_callback=None,
-    ):
-        del geom, recon_detector, resume_state, checkpoint_callback
-        calls.append((tuple(projections.shape), list(factors), config.schedule))
-        x = jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
-        pose_params = jnp.zeros((int(projections.shape[0]), 5), dtype=jnp.float32)
-        return x, pose_params, {"loss": [0.0], "outer_stats": [], "active_dofs": ["det_u"]}
+    args = ["align", str(scan), "-o", str(aligned), "--mode", "cor", "--roi", "off"]
+    assert main([*args, "--grid", "4", "4", "2", "--manifest", str(manifest)]) == 0
 
-    monkeypatch.setattr(align_cli_main, "setup_logging", lambda: None)
-    monkeypatch.setattr(align_cli_main, "log_jax_env", lambda: None)
-    monkeypatch.setattr(align_cli_main, "init_jax_compilation_cache", lambda: None)
-    monkeypatch.setattr(align_cli_plan, "align_multires", fake_align_multires)
-
-    assert (
-        main(
-            [
-                "align",
-                str(scan),
-                "-o",
-                str(aligned),
-                "--mode",
-                "cor",
-                "--roi",
-                "off",
-                "--grid",
-                "4",
-                "4",
-                "2",
-                "--outer-iterations",
-                "1",
-                "--iterations",
-                "1",
-                "--views-per-batch",
-                "1",
-                "--manifest",
-                str(manifest),
-            ]
-        )
-        == 0
-    )
-
-    assert calls == [((2, 2, 4), [1], "cor")]
+    assert [(c["shape"], c["factors"], c["config"].schedule) for c in calls] == [
+        ((2, 2, 4), [1], "cor")
+    ]
     loaded = load_dataset(aligned)
     assert loaded.volume is not None
     assert loaded.volume.shape == (4, 4, 2)
-    assert loaded.align_params is not None
-    assert loaded.align_params.shape == (2, 5)
-    assert manifest.stat().st_size > 0
+    record = json.loads(manifest.read_text())["resolved_config"]
+    assert record["alignment"]["mode"] == "cor"
+    assert record["alignment"]["config"]["schedule"] == "cor"
+    assert record["reconstruction_grid"]["nx"] == 4
 
 
-def test_align_cli_geometry_dofs_route_to_multires_without_explicit_levels(
+def test_align_cli_config_settings_replace_fields_of_the_modes_configuration(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    align_cli_main = importlib.import_module("tomojax.cli.align.main")
-    align_cli_plan = importlib.import_module("tomojax.cli.align.plan")
     scan = tmp_path / "scan.nxs"
-    aligned = tmp_path / "aligned.nxs"
+    config = tmp_path / "align.toml"
     write_projection_dataset(scan)
-    calls: list[tuple[list[int], tuple[str, ...], tuple[str, ...]]] = []
+    _ = config.write_text('optimise_dofs = ["det_u_px"]\nouter_iterations = 3\n', encoding="utf-8")
+    calls = _fake_alignment(monkeypatch)
 
-    def fake_align_multires(
-        geom,
-        recon_grid,
-        recon_detector,
-        projections,
-        *,
-        factors,
-        config,
-        resume_state=None,
-        checkpoint_callback=None,
-    ):
-        del geom, recon_detector, projections, resume_state, checkpoint_callback
-        calls.append((list(factors), tuple(config.optimise_dofs or ()), tuple(config.freeze or ())))
-        x = jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
-        pose_params = jnp.zeros((2, 5), dtype=jnp.float32)
-        return (
-            x,
-            pose_params,
-            {"loss": [0.0], "outer_stats": [], "active_geometry_dofs": ["det_u_px"]},
-        )
+    args = ["align", str(scan), "-o", str(tmp_path / "out.nxs"), "--roi", "off"]
+    assert main([*args, "--config", str(config)]) == 0
 
-    monkeypatch.setattr(align_cli_main, "setup_logging", lambda: None)
-    monkeypatch.setattr(align_cli_main, "log_jax_env", lambda: None)
-    monkeypatch.setattr(align_cli_main, "init_jax_compilation_cache", lambda: None)
-    monkeypatch.setattr(align_cli_plan, "align_multires", fake_align_multires)
-
-    assert (
-        main(
-            [
-                "align",
-                str(scan),
-                "-o",
-                str(aligned),
-                "--optimise-dofs",
-                "det_u_px",
-                "--roi",
-                "off",
-                "--grid",
-                "4",
-                "4",
-                "2",
-                "--outer-iterations",
-                "1",
-                "--iterations",
-                "1",
-                "--views-per-batch",
-                "1",
-            ]
-        )
-        == 0
+    ((call,),) = [calls]
+    cfg = call["config"]
+    assert call["factors"] == [1]
+    assert (cfg.optimise_dofs, cfg.schedule, cfg.outer_iterations) == (("det_u_px",), None, 3)
+    # The rest is pose mode's configuration.
+    assert (cfg.gn_coupling, cfg.ray_integrator, cfg.pose_translation_frame) == (
+        "joint",
+        "joseph",
+        "detector",
     )
-
-    assert calls == [([1], ("det_u_px",), ())]
 
 
 def test_align_cli_cor_then_pose_saves_the_detector_centre_and_motion(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    align_cli_main = importlib.import_module("tomojax.cli.align.main")
-    align_cli_plan = importlib.import_module("tomojax.cli.align.plan")
     scan = tmp_path / "scan.nxs"
     aligned = tmp_path / "aligned.nxs"
-    params_json = tmp_path / "params.json"
     angles = np.linspace(0.0, 360.0, 8, endpoint=False, dtype=np.float32)
     du = write_projection_dataset(
         scan,
@@ -677,48 +607,33 @@ def test_align_cli_cor_then_pose_saves_the_detector_centre_and_motion(
         geometry_metadata={"tilt_deg": 30.0, "tilt_about": "x"},
     ).detector.du
     offset_px, motion = 0.3, 0.05 * np.sin(np.deg2rad(3 * angles))
-    configs = []
+    # What align_multires returns: motion in the poses, the offset in the state.
+    poses = np.zeros((8, 6), np.float32)
+    poses[:, 3] = motion
+    det_u = CalibrationVariable(
+        name="det_u_px",
+        value=offset_px,
+        unit="native_detector_px",
+        status="estimated",
+        frame="detector",
+        gauge="detector_ray_grid_center",
+    )
+    state = CalibrationState(detector=(det_u,)).to_dict()
+    calls = _fake_alignment(monkeypatch, poses, {"geometry_calibration_state": state})
 
-    def fake_align_multires(geom, recon_grid, recon_detector, projections, *, config, **kwargs):
-        # Returns what align_multires does: motion in the poses, offset in the state.
-        del geom, recon_detector
-        configs.append((config, kwargs["factors"]))
-        x = jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
-        pose_params = np.zeros((int(projections.shape[0]), 5), np.float32)
-        pose_params[:, 3] = motion
-        det_u = CalibrationVariable(
-            name="det_u_px",
-            value=offset_px,
-            unit="native_detector_px",
-            status="estimated",
-            frame="detector",
-            gauge="detector_ray_grid_center",
-        )
-        info = {
-            "loss": [0.0],
-            "outer_stats": [],
-            "active_dofs": [],
-            "geometry_calibration_state": CalibrationState(detector=(det_u,)).to_dict(),
-        }
-        return x, jnp.asarray(pose_params), info
+    args = ["align", str(scan), "-o", str(aligned), "--mode", "cor-then-pose"]
+    assert main([*args, "--roi", "off"]) == 0
 
-    monkeypatch.setattr(align_cli_main, "setup_logging", lambda: None)
-    monkeypatch.setattr(align_cli_main, "log_jax_env", lambda: None)
-    monkeypatch.setattr(align_cli_main, "init_jax_compilation_cache", lambda: None)
-    monkeypatch.setattr(align_cli_plan, "align_multires", fake_align_multires)
-    args = ["align", str(scan), "-o", str(aligned), "--mode", "cor_then_pose"]
-    assert main([*args, "--roi", "off", "--save-params-json", str(params_json)]) == 0
-
-    ((config, factors),) = configs
-    assert factors == [1]
+    ((call,),) = [calls]
+    config = call["config"]
+    assert call["factors"] == [1]
     assert config.schedule == "cor_then_pose"
     assert config.pose_translation_frame == "detector"
     assert config.gn_coupling == "joint"
     saved = load_dataset(aligned)
     assert saved.detector.center[0] == pytest.approx(offset_px * du, abs=1e-6)
     assert saved.align_gauge["pose_translation_frame"] == "detector"
-    views = json.loads(params_json.read_text())["views"]
-    assert [view["dx_world"] for view in views] == pytest.approx(list(motion), abs=1e-6)
+    assert saved.align_params[:, 3] == pytest.approx(list(motion), abs=1e-6)
     # Only the detector centre changes; the scan geometry is kept.
     nominal = [
         build_geometry_from_dataset_metadata(load_dataset(path).geometry_inputs())[2]
@@ -733,124 +648,110 @@ def test_align_cli_cor_then_pose_needs_detector_frame_translations(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     scan = tmp_path / "scan.nxs"
+    config = tmp_path / "align.toml"
     write_projection_dataset(scan)
-    args = ["align", str(scan), "-o", str(tmp_path / "out.nxs")]
-    assert main([*args, "--mode", "cor_then_pose", "--pose-translation-frame", "object"]) != 0
+    _ = config.write_text('pose_translation_frame = "object"\n', encoding="utf-8")
+    args = ["align", str(scan), "-o", str(tmp_path / "out.nxs"), "--mode", "cor-then-pose"]
+    with pytest.raises(SystemExit) as exc:
+        _ = main([*args, "--config", str(config)])
+    assert exc.value.code == 2
     assert "pose_translation_frame='detector'" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize(
-    ("quality", "expected_schedule", "expected_levels"),
-    [
-        ("fast", "setup_safe", [4, 2, 1]),
-        ("reference", "setup_safe", [4, 2, 1]),
-    ],
-)
-def test_align_cli_dry_run_reports_the_effective_public_plan(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-    quality: str,
-    expected_schedule: str,
-    expected_levels: list[int],
+def test_aligning_a_file_with_poses_keeps_them_composed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    align_cli_main = importlib.import_module("tomojax.cli.align.main")
+    import tomojax as tj
+
+    scan = tmp_path / "scan.nxs"
+    angles = np.linspace(0.0, 180.0, 8, endpoint=False, dtype=np.float32)
+    dataset = make_projection_dataset(projections=np.ones((8, 2, 4), np.float32), angles=angles)
+    earlier = np.zeros((8, 6), np.float32)  # an earlier alignment's poses
+    earlier[:, 2], earlier[:, 3] = 0.02, 0.3 * np.cos(np.deg2rad(angles))
+    dataset.align_params, dataset.align_gauge = earlier, {"pose_translation_frame": "detector"}
+    save_dataset(scan, dataset)
+    correction = np.zeros((8, 6), np.float32)
+    correction[:, 2], correction[:, 3] = 0.01, 0.1 * np.sin(np.deg2rad(angles))
+    _ = _fake_alignment(monkeypatch, correction)
+
+    out, fresh = tmp_path / "aligned.nxs", tmp_path / "fresh.nxs"
+    assert main(["align", str(scan), "-o", str(out), "--roi", "off"]) == 0
+    assert main(["align", str(scan), "-o", str(fresh), "--roi", "off", "--no-poses"]) == 0
+
+    # The command line corrects on top of the saved poses, as tomojax.align does.
+    python = tj.align(tj.load(scan))
+    composed = tj.load(out).poses
+    assert composed is not None
+    np.testing.assert_allclose(composed, python.poses, atol=1e-6)
+    assert not np.allclose(composed, earlier, atol=1e-3)
+    assert not np.allclose(composed, correction, atol=1e-3)
+    # --no-poses starts from the nominal geometry.
+    np.testing.assert_allclose(tj.load(fresh).poses, correction, atol=1e-6)
+
+
+@pytest.mark.parametrize("quality", ["fast", "reference"])
+def test_align_cli_dry_run_reports_the_effective_public_plan(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], quality: str
+) -> None:
     scan = tmp_path / "scan.nxs"
     aligned = tmp_path / "aligned.nxs"
+    config = tmp_path / "align.toml"
     write_projection_dataset(scan)
-
-    monkeypatch.setattr(align_cli_main, "setup_logging", lambda: None)
-    monkeypatch.setattr(align_cli_main, "log_jax_env", lambda: None)
-    monkeypatch.setattr(align_cli_main, "init_jax_compilation_cache", lambda: None)
-
-    assert (
-        main(
-            [
-                "align",
-                str(scan),
-                "-o",
-                str(aligned),
-                "--mode",
-                "full",
-                "--quality",
-                quality,
-                "--roi",
-                "off",
-                "--grid",
-                "4",
-                "4",
-                "2",
-                "--outer-iterations",
-                "1",
-                "--iterations",
-                "1",
-                "--loss-schedule",
-                "4:phasecorr,2:ssim,1:l2_otsu",
-                "--dry-run",
-            ]
-        )
-        == 0
-    )
+    _ = config.write_text('loss = "4:phasecorr,2:ssim,1:l2_otsu"\n', encoding="utf-8")
+    args = ["align", str(scan), "-o", str(aligned), "--mode", "full", "--quality", quality]
+    assert main([*args, "--roi", "off", "--config", str(config), "--dry-run"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["schedule"] == expected_schedule
-    assert payload["levels"] == expected_levels
+    assert payload["schedule"]["name"] == "setup_safe"
+    assert payload["levels"] == [4, 2, 1]
     assert payload["output_path"] == str(aligned)
-    assert [stage["stage_name"] for stage in payload["stages"]][:2] == ["cor", "detector_roll"]
+    assert payload["config"]["quality"] == quality
+    assert "phasecorr" in payload["loss"]
+    stages = payload["schedule"]["stages"]
+    assert [stage["stage_name"] for stage in stages][:2] == ["cor", "detector_roll"]
+    assert not aligned.exists()
 
 
-def _pose_plan(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-    *extra: str,
-) -> dict[str, object]:
-    align_cli_main = importlib.import_module("tomojax.cli.align.main")
+def _pose_plan(tmp_path: Path, capsys: pytest.CaptureFixture[str], config: str = "") -> object:
     scan = tmp_path / "scan.nxs"
+    settings = tmp_path / "align.toml"
     write_projection_dataset(scan)
-    monkeypatch.setattr(align_cli_main, "setup_logging", lambda: None)
-    monkeypatch.setattr(align_cli_main, "log_jax_env", lambda: None)
-    monkeypatch.setattr(align_cli_main, "init_jax_compilation_cache", lambda: None)
+    _ = settings.write_text(config, encoding="utf-8")
     args = ["align", str(scan), "-o", str(tmp_path / "out.nxs"), "--mode", "pose"]
-    assert main([*args, "--roi", "off", *extra, "--dry-run"]) == 0
+    assert main([*args, "--roi", "off", "--config", str(settings), "--dry-run"]) == 0
     return json.loads(capsys.readouterr().out)
 
 
 def test_align_cli_pose_mode_defaults_to_the_coupled_solver(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    plan = _pose_plan(monkeypatch, tmp_path, capsys)
+    plan = _pose_plan(tmp_path, capsys)
+    config = plan["config"]
     assert plan["pose_solver"] == "coupled"
-    assert plan["ray_integrator"] == "joseph"
-    assert plan["loss"] == {"name": "l2", "params": {}}
-    assert plan["tv_weight"] == 0.0
-    assert plan["gather_dtype"] == "fp32"
-    assert plan["outer_iterations"] == 30
-    assert {stage["objective_kind"] for stage in plan["stages"]} == {"joint_volume_pose"}
+    assert plan["loss"] == "L2LossSpec()"
+    assert (config["ray_integrator"], config["tv_weight"], config["gather_dtype"]) == (
+        "joseph",
+        0.0,
+        "fp32",
+    )
+    assert config["outer_iterations"] == 30
+    stages = plan["schedule"]["stages"]
+    assert {stage["objective_kind"] for stage in stages} == {"joint_volume_pose"}
 
 
-def test_align_cli_alternating_pose_solver_keeps_previous_defaults(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+def test_align_cli_settings_select_the_alternating_pose_solver(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    plan = _pose_plan(monkeypatch, tmp_path, capsys, "--pose-solver", "alternating")
-    assert plan["pose_solver"] == "alternating"
-    assert plan["loss"]["name"] == "l2_otsu"
-    assert plan["outer_iterations"] == 5
-    assert {stage["objective_kind"] for stage in plan["stages"]} == {"fixed_volume"}
+    plan = _pose_plan(tmp_path, capsys, 'gn_coupling = "fixed_volume"\nloss = "l2_otsu"\n')
+    assert plan["loss"] == "L2OtsuLossSpec(temp=0.5)"
+    stages = plan["schedule"]["stages"]
+    assert {stage["objective_kind"] for stage in stages} == {"fixed_volume"}
 
 
-def test_align_cli_coupled_solver_rejects_explicit_conflicts(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+def test_align_cli_rejects_settings_the_coupled_solver_cannot_use(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    with pytest.raises(SystemExit):
-        _pose_plan(monkeypatch, tmp_path, capsys, "--loss", "l2_otsu")
-    assert "--pose-solver alternating" in capsys.readouterr().err
-
-
-def test_coupled_pose_alignment_runs_coarse_to_fine_on_large_grids() -> None:
-    from tomojax.cli.align.plan import _coupled_pose_levels  # check-public-imports: allow-private
-    from tomojax.geometry import Grid
-
-    assert _coupled_pose_levels(Grid(32, 32, 32, 1, 1, 1)) == [1]
-    assert _coupled_pose_levels(Grid(64, 64, 64, 1, 1, 1)) == [2, 1]
-    assert _coupled_pose_levels(Grid(256, 256, 128, 1, 1, 1)) == [4, 2, 1]
+    with pytest.raises(SystemExit) as exc:
+        _ = _pose_plan(tmp_path, capsys, 'pose_model = "spline"\n')
+    assert exc.value.code == 2
+    assert "joint GN requires" in capsys.readouterr().err

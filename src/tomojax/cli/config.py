@@ -8,7 +8,7 @@ import sys
 import tomllib
 from typing import TYPE_CHECKING, cast
 
-from tomojax.cli._options import options
+from tomojax.cli._options import config_settings, options
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -27,16 +27,23 @@ def parse_args_with_config(
 
     Precedence is:
         argparse defaults < config file < explicit CLI flags
+
+    A config file's expert settings (``add_config(parser, settings=...)``)
+    have no option; they are returned as written, under ``"settings"``.
     """
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     config_path = _discover_config_path(parser, raw_argv)
     config_values: dict[str, ConfigValue] = {}
     config_defaults: dict[str, ConfigValue] = {}
+    settings: dict[str, ConfigValue] = {}
     explicit_dests = _explicit_cli_dests(parser, raw_argv)
 
     if config_path is not None:
         config_values = _load_config_file(parser, config_path)
         _validate_config_keys(parser, config_path, config_values)
+        known = _config_actions_by_dest(parser)
+        settings = {k: v for k, v in config_values.items() if k not in known}
+        config_values = {k: v for k, v in config_values.items() if k in known}
         config_defaults = _coerce_config_defaults(parser, config_path, config_values)
         defaults = {
             dest: value for dest, value in config_defaults.items() if dest not in explicit_dests
@@ -52,6 +59,7 @@ def parse_args_with_config(
         "config_file_values": config_defaults,
         "explicit_cli_keys": sorted(explicit_dests),
         "effective_options": effective_options,
+        "settings": settings,
     }
     return args, metadata
 
@@ -122,7 +130,7 @@ def _validate_config_keys(
     path: Path,
     values: Mapping[str, ConfigValue],
 ) -> None:
-    valid_keys = _config_actions_by_dest(parser).keys()
+    valid_keys = _config_actions_by_dest(parser).keys() | config_settings(parser).keys()
     for key in values:
         new = _RETIRED_KEYS.get(str(key))
         if new is not None and new in valid_keys:

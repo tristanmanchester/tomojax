@@ -33,9 +33,13 @@ The options match the Python API's keywords: `tomojax recon --method cgls
 - `recon`: reconstruct a volume with FBP (FDK for cone beams), CGLS, FISTA-TV
   or SPDHG-TV, with the poses saved in the input unless `--no-poses`.
 - `align`: estimate the rotation axis and per-view poses (`--mode pose`,
-  `cor`, `cor-then-pose` or `full`). Mixed setup and pose stages in `full`
-  carry their own gauge policies; an expert direct parameter set mixing them
-  needs an explicit `gauge_policy`.
+  `cor`, `cor-then-pose` or `full`) with `tj.align`, on top of the poses saved
+  in the input unless `--no-poses`. Its expert settings are
+  `tomojax.alignment.AlignConfig` fields, each replacing that field of the
+  configuration the mode gives (`--dry-run` prints it); `--checkpoint PATH`
+  saves progress after each outer iteration and resumes from it. Mixed setup
+  and pose stages in `full` carry their own gauge policies; an expert direct
+  parameter set mixing them needs an explicit `gauge_policy`.
 - `export`: write a reconstruction as TIFF slices, or as one raw file when
   OUTPUT ends in `.raw`.
 - `simulate`: write a synthetic scan of a phantom.

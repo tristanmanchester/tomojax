@@ -143,6 +143,10 @@ def test_alignment_modes_plan_their_schedules() -> None:
     grid = tj.Grid(128, 128, 128, 1.0, 1.0, 1.0)
     pose = alignment_plan("pose", grid)
     assert pose.pose_solver == "coupled" and pose.levels == (4, 2, 1)
+    # Coarse levels keep at least 32 voxels on the shortest axis.
+    assert alignment_plan("pose", tj.Grid(32, 32, 32, 1.0, 1.0, 1.0)).levels == (1,)
+    assert alignment_plan("pose", tj.Grid(64, 64, 64, 1.0, 1.0, 1.0)).levels == (2, 1)
+    assert alignment_plan("pose", tj.Grid(256, 256, 128, 1.0, 1.0, 1.0)).levels == (4, 2, 1)
     assert (
         pose.config.schedule == "lightning_pose"
         and pose.config.pose_translation_frame == "detector"

@@ -37,7 +37,12 @@ if TYPE_CHECKING:
 
     from tomojax._typed_arrays import Device
     from tomojax.alignment import AlignConfig
-    from tomojax.alignment.api import AlignmentMode, AlignmentPlan, QualityTier
+    from tomojax.alignment.api import (
+        AlignmentMode,
+        AlignmentPlan,
+        PoseTranslationFrame,
+        QualityTier,
+    )
     from tomojax.geometry import ConeSegments, Detector, Geometry, Grid, ScanGeometry
     from tomojax.io import ProjectionDataset
 
@@ -614,6 +619,8 @@ def align(
     The returned :attr:`Alignment.scan` carries the corrections, and the grid,
     so ``tomojax.reconstruct(result.scan)`` reconstructs with them;
     :attr:`Alignment.poses` are the scan's poses, its own included.
+    :attr:`Alignment.info` holds the mode, levels and resolved ``config`` with
+    the solver's record (losses, gauge, any calibrated setup geometry).
     """
     from tomojax.alignment.api import alignment_plan
     from tomojax.geometry import ConeSegments
@@ -672,6 +679,7 @@ def _run_alignment(
     projections = jnp.asarray(scan.projections, jnp.float32)
     cfg: AlignConfig | None = plan.config
     record: dict[str, object] = {"mode": plan.mode, "levels": list(plan.levels)}
+    record["config"] = plan.config
     setup = cone_setup(geometry, grid, detector, projections, plan.config)
     if setup is not None:
         geometry, cfg = setup.geometry, setup.config
@@ -700,11 +708,30 @@ def _run_alignment(
     )
     poses = np.asarray(pad_pose_params(params), np.float32)
     frame = cfg.pose_translation_frame
+    if plan.mode == "pose" and _describe(geometry)[0] != "cone":
+        record["implied_detector_u_px"] = _implied_detector_u_px(geometry, detector, poses, frame)
     if scan.poses is not None:
         from tomojax._data.geometry_meta import composed_poses
 
         poses, frame = composed_poses(scan.geometry, poses, frame), "detector"
     return geometry, volume, poses, frame, {**dict(info), **record}
+
+
+def _implied_detector_u_px(
+    geometry: Geometry, detector: Detector, poses: np.ndarray, frame: PoseTranslationFrame
+) -> float | None:
+    """The detector-u (centre-of-rotation) offset ``poses`` hold, in detector pixels."""
+    import jax.numpy as jnp
+
+    from tomojax.alignment.api import apply_pose_updates, implied_detector_offset
+    from tomojax.geometry import stack_view_poses
+
+    if not np.any(poses[:, 3]):
+        return None
+    nominal = stack_view_poses(geometry, len(poses))
+    aligned = apply_pose_updates(nominal, jnp.asarray(poses), translation_frame=frame)
+    offset, _ = implied_detector_offset(np.asarray(nominal), np.asarray(aligned))
+    return offset / float(detector.du)
 
 
 def _oversampling(scan: Scan) -> float:

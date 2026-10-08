@@ -265,7 +265,6 @@ def _cli_flags() -> dict[str, int]:
         module_name = {
             "import": "import_",
             "recon": "_recon_command",
-            "align": "align.command",
         }.get(command, command)
         module = importlib.import_module(f"tomojax.cli.{module_name}")
         build = getattr(module, "build_parser", None) or module._build_parser  # noqa: SLF001

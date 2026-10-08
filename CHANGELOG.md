@@ -2,6 +2,57 @@
 
 ## Unreleased
 
+- Breaking: `tomojax align` is `tj.align` on the command line: it loads INPUT
+  with `tj.load`, aligns with `tj.align` and saves with `tj.save`. It now
+  corrects on top of the poses saved in INPUT, as `tj.align(tj.load(INPUT))`
+  does, where it used to start from the nominal geometry and replace them;
+  `--no-poses` starts from the nominal geometry, and a posed input takes only
+  `--mode pose`, as in Python. Its options are `--mode`, `--quality`,
+  `--levels`, `--freeze`, `--roi`, `--grid`, `--checkpoint`,
+  `--poses`/`--no-poses`, `--manifest`, `--progress` and `--dry-run`. Expert
+  settings are `tomojax.alignment.AlignConfig` fields in the `--config` file,
+  each replacing that field of the configuration the mode and quality give
+  (`--dry-run` prints it; `--config-keys` lists the fields); an unknown key
+  fails with the valid ones. Where the removed options went:
+  - `--outer-iterations`, `--iterations`, `--reconstruction`, `--tv-weight`,
+    `--regulariser`, `--huber-delta`, `--tv-prox-iterations`, `--lipschitz`,
+    `--seed`, `--nonnegative`, `--views-per-batch`, `--projector-unroll`,
+    `--projector-backend`, `--gather-dtype`, `--checkpoint-projector`,
+    `--ray-integrator`, `--opt-method`, `--gn-damping`, `--lbfgs-maxiter`,
+    `--lbfgs-ftol`, `--lbfgs-gtol`, `--lbfgs-maxls`, `--lbfgs-memory-size`,
+    `--lr-rot`, `--lr-trans`, `--w-rot`, `--w-trans`, `--optimise-dofs`,
+    `--schedule`, `--bounds`, `--gauge-policy`, `--pose-model`,
+    `--knot-spacing`, `--degree`, `--pose-translation-frame`,
+    `--seed-translations`, `--early-stop`, `--early-stop-rel-impr`,
+    `--early-stop-patience`, `--mask-vol`, `--log-summary` and
+    `--log-compact`: the `--config` keys of the same names.
+  - `--loss`, `--loss-param` and `--loss-schedule`: the `loss` key, a name
+    (`"huber"`), a table (`{ name = "huber", delta = 1.0 }`) or a level
+    schedule (`"4:phasecorr,2:ssim,1:l2_otsu"`).
+  - `--pose-solver alternating`: `gn_coupling = "fixed_volume"`. Settings the
+    coupled solver cannot use (a smooth `pose_model`, say) fail until it is
+    set, where they used to fail naming `--pose-solver`.
+  - `--resume PATH` and `--checkpoint-every N`: `--checkpoint PATH`, which
+    writes after every outer iteration and resumes a checkpoint of the same
+    run by itself. A checkpoint of other settings is refused, naming the
+    difference, instead of lending the run its `optimise_dofs`, `freeze` and
+    `schedule`.
+  - `--save-params-json` and `--save-params-csv`: `save_alignment_params_json`
+    and `save_alignment_params_csv` on `tj.load("aligned.nxs").poses` (see the
+    alignment guide).
+  - `--volume-axes`: the volume is saved as `tj.save` saves it.
+  - `--transfer-guard`: JAX's own `jax.transfer_guard`.
+  - `--mode cor_then_pose`: `--mode cor-then-pose`, the one spelling.
+
+  The aligned file holds `tj.align`'s six-column, detector-frame poses. The
+  `--dry-run` JSON gives the mode, quality, levels, grid, resolved schedule
+  and the whole configuration; the manifest gives the run's inputs and
+  settings with `result.info` (losses, gauge, calibrated setup geometry) under
+  `alignment`. The command's own pipeline (its cone-axis calibration,
+  single-resolution path, checkpoint writer and run plan) is gone.
+- `tj.align`'s `result.info` also holds the resolved `config` and, for pose
+  alignment of parallel and laminography scans, `implied_detector_u_px`: the
+  detector-centre offset the recovered translations hold, in pixels.
 - `tj.align(scan, grid=...)` aligns and reconstructs on another grid than the
   scan's (a region, or another voxel size), as `tj.reconstruct` does; the
   result's volume and `result.scan` are on that grid.
@@ -15,8 +66,7 @@
   mode, `AlignConfig`, levels, grid and detector, and a fingerprint of its
   projections and geometry (angles, pose corrections and beam included);
   the command line's `cli_options` block and the geometry type and metadata
-  are gone, and `tomojax align --resume` restores `optimise_dofs`, `freeze`
-  and `schedule` from the saved configuration. Checkpoints of earlier schemas
+  are gone. Checkpoints of earlier schemas
   do not resume. `tomojax.alignment.api.AlignmentRun` is that record, shared
   by `tj.align` and `tomojax align` with `alignment_checkpoint_metadata`,
   `write_alignment_checkpoint`, `resume_state_from_checkpoint` (moved from the
@@ -67,13 +117,9 @@
   `*_outer_iterations_*`). Alignment `info` uses the new keys:
   `reconstruction`, `lipschitz`, `quality`, `completed_outer_iterations`,
   `total_outer_iterations`, and per-outer `lipschitz_measured` and
-  `lipschitz_next`. `tomojax align` options are the field names with hyphens:
-  `--outer-iterations`, `--iterations`, `--reconstruction`, `--tv-weight`,
-  `--tv-prox-iterations`, `--seed`, `--nonnegative`/`--no-nonnegative`,
-  `--lipschitz`, `--pose-translation-frame` and `--early-stop-rel-impr`, and
-  every option's `--config` key is its own name (`quality`, `freeze`,
-  `manifest`, `dry_run`). A `--config` file using a retired key
-  (`align_profile`, `outer_iters`, `recon_iters`, `recon_algo`,
+  `lipschitz_next`. `tomojax align`'s `--config` keys are the field names
+  (and `quality`, `freeze`, `manifest`, `dry_run`). A `--config` file using a
+  retired key (`align_profile`, `outer_iters`, `recon_iters`, `recon_algo`,
   `recon_positivity`, `recon_L`, `freeze_dofs`, `translation_frame`,
   `early_stop_rel`, `save_manifest`, `print_plan_json`, and those above)
   fails with its new name.

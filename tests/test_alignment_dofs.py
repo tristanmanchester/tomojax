@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Literal
 
 import numpy as np
@@ -9,19 +8,14 @@ import pytest
 from tomojax.alignment.api import (
     AlignConfig,
     GaugePolicyError,
-    alignment_checkpoint_metadata,
     alignment_params_payload,
     dof_spec,
     normalize_alignment_dofs,
     normalize_bounds,
     normalize_geometry_dofs,
     resolve_alignment_schedule,
-    save_alignment_checkpoint,
 )
-from tomojax.cli.align.command import build_parser
-from tomojax.cli.align.plan import build_align_cli_run_plan
-from tomojax.geometry import Detector, Grid
-from tomojax.io import ProjectionDataset
+from tomojax.cli.align import build_parser
 
 
 def test_setup_dofs_use_canonical_axis_names() -> None:
@@ -62,180 +56,11 @@ def test_geometry_dofs_is_not_a_public_setup_input() -> None:
         resolve_alignment_schedule(geometry_dofs=("det_u_px",))  # type: ignore[call-arg]
 
 
-def test_cli_geometry_dofs_route_to_multires(monkeypatch: pytest.MonkeyPatch) -> None:
-    parser = build_parser()
-    args = parser.parse_args(["input.nxs", "-o", "out.nxs", "--optimise-dofs", "det_u_px"])
-    dataset = ProjectionDataset(
-        projections=np.zeros((3, 4, 5), dtype=np.float32),
-        angles=np.asarray([0.0, 90.0, 180.0], dtype=np.float32),
-        detector=Detector(nu=5, nv=4, du=1.0, dv=1.0),
-        grid=Grid(nx=5, ny=5, nz=4, vx=1.0, vy=1.0, vz=1.0),
-    )
-
-    def load_dataset(_: object) -> ProjectionDataset:
-        return dataset
-
-    monkeypatch.setattr("tomojax.cli.align.plan.load_projection_payload", load_dataset)
-
-    plan = build_align_cli_run_plan(
-        parser,
-        args,
-        {"explicit_cli_keys": [], "config_file_values": {}},
-    )
-
-    assert plan.run_levels == [1]
-    assert plan.cfg.optimise_dofs == ("det_u_px",)
-
-
-def test_cli_resume_restores_geometry_dofs_from_checkpoint(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    parser = build_parser()
-    checkpoint_path = tmp_path / "align.ckpt"
-    dataset = ProjectionDataset(
-        projections=np.zeros((3, 4, 5), dtype=np.float32),
-        angles=np.asarray([0.0, 90.0, 180.0], dtype=np.float32),
-        detector=Detector(nu=5, nv=4, du=1.0, dv=1.0),
-        grid=Grid(nx=5, ny=5, nz=4, vx=1.0, vy=1.0, vz=1.0),
-    )
-
-    def load_dataset(_: object) -> ProjectionDataset:
-        return dataset
-
-    monkeypatch.setattr("tomojax.cli.align.plan.load_projection_payload", load_dataset)
-    initial_args = parser.parse_args(
-        [
-            "input.nxs",
-            "-o",
-            "out.nxs",
-            "--checkpoint",
-            str(checkpoint_path),
-            "--optimise-dofs",
-            "det_u_px",
-        ]
-    )
-    initial_plan = build_align_cli_run_plan(
-        parser,
-        initial_args,
-        {"explicit_cli_keys": [], "config_file_values": {}},
-    )
-    save_alignment_checkpoint(
-        checkpoint_path,
-        x=np.zeros((5, 5, 4), dtype=np.float32),
-        pose_params=np.zeros((3, 5), dtype=np.float32),
-        metadata=alignment_checkpoint_metadata(initial_plan.checkpoint_run),
-    )
-
-    resume_args = parser.parse_args(
-        ["input.nxs", "-o", "out.nxs", "--resume", str(checkpoint_path)]
-    )
-    resume_plan = build_align_cli_run_plan(
-        parser,
-        resume_args,
-        {"explicit_cli_keys": [], "config_file_values": {}, "effective_options": vars(resume_args)},
-    )
-
-    assert resume_plan.run_levels == [1]
-    assert resume_plan.cfg.optimise_dofs == ("det_u_px",)
-
-
-def test_cli_resume_mode_max_checkpoint_keeps_schedule_without_empty_dofs(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    parser = build_parser()
-    checkpoint_path = tmp_path / "align-max.ckpt"
-    dataset = ProjectionDataset(
-        projections=np.zeros((3, 4, 5), dtype=np.float32),
-        angles=np.asarray([0.0, 90.0, 180.0], dtype=np.float32),
-        detector=Detector(nu=5, nv=4, du=1.0, dv=1.0),
-        grid=Grid(nx=5, ny=5, nz=4, vx=1.0, vy=1.0, vz=1.0),
-    )
-
-    def load_dataset(_: object) -> ProjectionDataset:
-        return dataset
-
-    monkeypatch.setattr("tomojax.cli.align.plan.load_projection_payload", load_dataset)
-    initial_args = parser.parse_args(
-        [
-            "input.nxs",
-            "-o",
-            "out.nxs",
-            "--checkpoint",
-            str(checkpoint_path),
-            "--mode",
-            "full",
-            "--quality",
-            "reference",
-        ]
-    )
-    initial_plan = build_align_cli_run_plan(
-        parser,
-        initial_args,
-        {"explicit_cli_keys": [], "config_file_values": {}},
-    )
-    save_alignment_checkpoint(
-        checkpoint_path,
-        x=np.zeros((5, 5, 4), dtype=np.float32),
-        pose_params=np.zeros((3, 5), dtype=np.float32),
-        metadata=alignment_checkpoint_metadata(initial_plan.checkpoint_run),
-    )
-
-    resume_args = parser.parse_args(
-        [
-            "input.nxs",
-            "-o",
-            "out.nxs",
-            "--resume",
-            str(checkpoint_path),
-            "--mode",
-            "full",
-            "--quality",
-            "reference",
-        ]
-    )
-    resume_plan = build_align_cli_run_plan(
-        parser,
-        resume_args,
-        {"explicit_cli_keys": [], "config_file_values": {}, "effective_options": vars(resume_args)},
-    )
-
-    assert resume_plan.run_levels == [4, 2, 1]
-    assert resume_plan.cfg.schedule == "setup_safe"
-    assert resume_plan.cfg.optimise_dofs is None
-
-
-def test_cli_pose_only_dofs_stay_single_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
-    parser = build_parser()
-    args = parser.parse_args(["input.nxs", "-o", "out.nxs", "--optimise-dofs", "dx"])
-    dataset = ProjectionDataset(
-        projections=np.zeros((3, 4, 5), dtype=np.float32),
-        angles=np.asarray([0.0, 90.0, 180.0], dtype=np.float32),
-        detector=Detector(nu=5, nv=4, du=1.0, dv=1.0),
-        grid=Grid(nx=5, ny=5, nz=4, vx=1.0, vy=1.0, vz=1.0),
-    )
-
-    def load_dataset(_: object) -> ProjectionDataset:
-        return dataset
-
-    monkeypatch.setattr("tomojax.cli.align.plan.load_projection_payload", load_dataset)
-
-    plan = build_align_cli_run_plan(
-        parser,
-        args,
-        {"explicit_cli_keys": [], "config_file_values": {}},
-    )
-
-    assert plan.run_levels is None
-
-
 def test_cli_alignment_defaults_to_per_view_pose() -> None:
     parser = build_parser()
     args = parser.parse_args(["input.nxs", "-o", "aligned.nxs"])
 
     assert args.mode == "pose"
-    assert args.pose_model == "per_view"
 
 
 def test_align_config_defaults_to_per_view_pose_model() -> None:
@@ -264,7 +89,7 @@ def test_alignment_qualities_size_reconstruction_batches_automatically(
 
 
 def test_direct_mixed_dofs_explain_gauge_policy() -> None:
-    with pytest.raises(GaugePolicyError, match="--gauge-policy anchor_mean"):
+    with pytest.raises(GaugePolicyError, match='gauge_policy = "anchor_mean" in a --config file'):
         resolve_alignment_schedule(
             optimise_dofs=("alpha", "det_u_px"),
             gauge_policy="reject",

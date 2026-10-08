@@ -101,14 +101,12 @@ _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
         "--quality": ("align", "quality"),
         "--levels": ("align", "levels"),
         "--freeze": ("align", "freeze"),
-        "--pose-solver": "expert override of the mode's solver",
+        "--grid": ("align", "grid"),
+        "--checkpoint": ("align", "checkpoint"),
+        "--poses": ("load", "poses"),
         "--roi": "crops the grid to the field of view; Python passes the grid",
-        "--grid": "Python sets the scan's grid",
-        "--volume-axes": "on-disk axis order",
         "--manifest": "file output",
         "--dry-run": "prints the plan; Python calls alignment_plan",
-        "--checkpoint": "file output",
-        "--resume": "restarts from a checkpoint file",
         "--progress": "terminal display",
     },
 }
@@ -121,7 +119,6 @@ def _actions(command: str) -> list[argparse.Action]:
     module = {
         "import": "tomojax.cli.import_",
         "recon": "tomojax.cli._recon_command",
-        "align": "tomojax.cli.align.command",
     }.get(command, f"tomojax.cli.{command}")
     parser_module = importlib.import_module(module)
     build = getattr(parser_module, "build_parser", None) or parser_module._build_parser
@@ -157,12 +154,21 @@ def test_cli_options_use_the_python_names(command: str) -> None:
 
 
 def test_align_options_are_stored_under_their_own_names() -> None:
-    # A --config key is the option's dest, so it must be the option's name.
+    # A --config key is the option's dest, so it must be the option's name; the
+    # file's other keys, its expert settings, are AlignConfig's fields.
+    from dataclasses import fields
+
+    from tomojax.alignment import AlignConfig
+    from tomojax.cli._options import config_settings  # check-public-imports: allow-private
+    from tomojax.cli.align import build_parser
+
     for action in _actions("align"):
         for option in action.option_strings:
             if option.startswith("--") and option not in _STANDARD_OPTIONS:
                 name = option.removeprefix("--").removeprefix("no-").replace("-", "_")
                 assert name == action.dest, f"{option} stores {action.dest!r}"
+    names = {item.name for item in fields(AlignConfig) if item.init}
+    assert set(config_settings(build_parser())) == names
 
 
 @pytest.mark.parametrize("command", _guardrails().CLI_COMMANDS)

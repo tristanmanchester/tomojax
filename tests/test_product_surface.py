@@ -197,16 +197,32 @@ def test_private_import_guard_passes_on_product_tree() -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_config_files_set_on_off_flags(tmp_path: Path) -> None:
-    from tomojax.cli.align.command import build_parser
+def test_config_files_set_on_off_flags_and_expert_settings(tmp_path: Path) -> None:
+    from tomojax.cli.align import build_parser
     from tomojax.cli.config import parse_args_with_config
 
     config = tmp_path / "align.toml"
-    _ = config.write_text("seed_translations = false\n", encoding="utf-8")
-    args, _ = parse_args_with_config(
+    _ = config.write_text("poses = false\nseed_translations = false\n", encoding="utf-8")
+    args, metadata = parse_args_with_config(
         build_parser(), ["scan.nxs", "-o", "out.nxs", "--config", str(config)]
     )
-    assert args.seed_translations is False
+    assert args.poses is False
+    assert metadata["settings"] == {"seed_translations": False}
+
+
+def test_config_files_name_the_valid_keys_for_an_unknown_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from tomojax.cli.main import main
+
+    config = tmp_path / "align.toml"
+    _ = config.write_text("outer_iteration = 3\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        _ = main(["align", "scan.nxs", "-o", str(tmp_path / "out.nxs"), "--config", str(config)])
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "unknown config key(s)" in err
+    assert "outer_iterations" in err
 
 
 def test_config_files_name_the_new_key_for_a_retired_one(

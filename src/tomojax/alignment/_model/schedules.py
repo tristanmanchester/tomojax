@@ -484,7 +484,7 @@ def resolve_alignment_schedule(
                     "Direct mixed setup+pose DOFs require an explicit expert "
                     "gauge_policy. For reconstruction-quality correction, pass "
                     "gauge_policy='anchor_mean' in Python or "
-                    "--gauge-policy anchor_mean on the CLI. Use "
+                    'gauge_policy = "anchor_mean" in a --config file. Use '
                     "gauge_policy='prior_required' only when you provide "
                     "physical setup priors."
                 )

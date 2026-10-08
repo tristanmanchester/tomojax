@@ -16,7 +16,7 @@ import sys
 from typing import TYPE_CHECKING, NoReturn, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
 
 EXPERT_EPILOG = (
     "Expert settings are TOML keys for --config; --config-keys lists them with their "
@@ -59,8 +59,15 @@ def hide_expert(parser: argparse.ArgumentParser, public: Iterable[str]) -> None:
 
 
 class _ConfigKeys(argparse.Action):
-    def __init__(self, option_strings: Sequence[str], dest: str, **kwargs: object) -> None:
+    def __init__(
+        self,
+        option_strings: Sequence[str],
+        dest: str,
+        settings: Mapping[str, object] | None = None,
+        **kwargs: object,
+    ) -> None:
         super().__init__(option_strings, dest, nargs=0, default=argparse.SUPPRESS, **kwargs)  # type: ignore[arg-type]
+        self.settings: Mapping[str, object] = settings or {}
 
     def __call__(self, parser: argparse.ArgumentParser, *_args: object) -> NoReturn:
         entries: dict[str, str] = {}
@@ -80,6 +87,8 @@ class _ConfigKeys(argparse.Action):
             line = f"{action.dest} = {value}" + (f"  # {text}" if text else "")
             if action.dest not in entries or not negated:
                 _ = entries.setdefault(action.dest, line)
+        for key, value in self.settings.items():
+            _ = entries.setdefault(key, f"{key} = {'...' if value is None else _toml(value)}")
         print("\n".join(entries[key] for key in sorted(entries)))
         parser.exit(0)
 
@@ -94,14 +103,32 @@ def _toml(value: object) -> str:
     return str(value)
 
 
-def add_config(parser: argparse.ArgumentParser) -> None:
-    """Add ``--config FILE`` and ``--config-keys``."""
+def add_config(
+    parser: argparse.ArgumentParser, *, settings: Mapping[str, object] | None = None
+) -> None:
+    """Add ``--config FILE`` and ``--config-keys``.
+
+    A config file's keys are the parser's options, and ``settings``: expert
+    settings with no option, by name and default, which
+    :func:`tomojax.cli.config.parse_args_with_config` returns as given.
+    """
     _ = parser.add_argument(
         "--config", metavar="FILE", help="Read option defaults (and expert settings) from TOML"
     )
     _ = parser.add_argument(
-        "--config-keys", action=_ConfigKeys, help="List the keys a --config file may set, and exit"
+        "--config-keys",
+        action=_ConfigKeys,
+        settings=settings,
+        help="List the keys a --config file may set, and exit",
     )
+
+
+def config_settings(parser: argparse.ArgumentParser) -> Mapping[str, object]:
+    """The expert settings ``parser``'s config file may hold besides its options."""
+    for action in options(parser):
+        if isinstance(action, _ConfigKeys):
+            return action.settings
+    return {}
 
 
 def check_paths(
@@ -132,6 +159,7 @@ __all__ = [
     "add_force",
     "add_output",
     "check_paths",
+    "config_settings",
     "fail",
     "hide_expert",
     "options",

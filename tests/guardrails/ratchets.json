@@ -18,7 +18,7 @@
     "import": 15,
     "preprocess": 27,
     "recon": 38,
-    "align": 70,
+    "align": 16,
     "export": 6,
     "simulate": 46
   },
@@ -50,8 +50,6 @@
     "src/tomojax/alignment/optimizers.py::run_pose_lbfgs": 187,
     "src/tomojax/backends/_memory.py::estimate_views_per_batch_info": 101,
     "src/tomojax/cli/_recon_plan.py::build_recon_runtime_plan": 109,
-    "src/tomojax/cli/align/command.py::_add_dof_schedule_options": 129,
-    "src/tomojax/cli/align/plan.py::build_align_cli_run_plan": 101,
     "src/tomojax/cli/preprocess.py::_build_parser": 152,
     "src/tomojax/cli/simulate.py::_build_parser": 159,
     "src/tomojax/core/pallas/_pallas_adjoint_kernels.py::_projector_loss_grad_kernel": 149,
@@ -85,7 +83,7 @@
   },
   "suppressions": {
     "noqa": 8,
-    "type: ignore": 45,
+    "type: ignore": 44,
     "pyright: ignore": 21
   },
   "complex_functions": [
