@@ -49,7 +49,7 @@ def _orbit_one_fixed(scan: tj.Scan, original: tj.Scan) -> tj.Scan:
     offset = (poses - recorded)[:per, 3:].mean(axis=0)
     record = _record_of(scan)
     record.align_params = poses - np.concatenate([np.zeros(3), offset])
-    return tj.Scan(scan.projections, _scan_from_record(record, apply_alignment=True).geometry)
+    return tj.Scan(scan.projections, _scan_from_record(record, poses=True).geometry)
 
 
 def _figures(out: Path, volumes: dict[str, np.ndarray], summary: dict[str, Any]) -> None:

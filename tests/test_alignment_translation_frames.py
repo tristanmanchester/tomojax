@@ -482,7 +482,7 @@ def test_saved_alignment_is_reapplied_in_its_translation_frame(frame):
         "align_params": params,
         "align_gauge": {"pose_translation_frame": frame},
     }
-    _, _, saved = build_geometry_from_dataset_metadata(meta, apply_saved_alignment=True)
+    _, _, saved = build_geometry_from_dataset_metadata(meta, poses=True)
     expected = apply_pose_updates(
         stack_view_poses(geometry, angles.size), jnp.asarray(params), translation_frame=frame
     )

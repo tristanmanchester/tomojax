@@ -144,7 +144,7 @@ def build_reconstruction_manifest(
             "checkpoint_projector": bool(command.checkpoint_projector),
             "transfer_guard": str(command.transfer_guard),
             "mask_vol": str(command.mask_vol),
-            "apply_saved_alignment": bool(command.apply_saved_alignment),
+            "poses": bool(command.poses),
             "mask_applied": volume_mask is not None,
             "volume_shape": volume_shape,
             "volume_axes": str(command.volume_axes),

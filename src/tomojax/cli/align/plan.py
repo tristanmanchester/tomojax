@@ -325,7 +325,7 @@ def _load_alignment_inputs(command: AlignCommand) -> _LoadedAlignInputs:
     grid, detector, geometry = build_geometry_from_dataset_metadata(
         geometry_meta,
         grid_override=initial_grid_override,
-        apply_saved_alignment=False,
+        poses=False,
     )
     return _LoadedAlignInputs(
         meta=meta,
@@ -504,7 +504,7 @@ def build_align_cli_run_plan(
         _, _, geom = build_geometry_from_dataset_metadata(
             inputs.geometry_meta,
             grid_override=recon_grid,
-            apply_saved_alignment=False,
+            poses=False,
         )
 
     checkpoint_path = command.checkpoint or command.resume

@@ -113,6 +113,7 @@ _RETIRED_KEYS = {
     "early_stop_rel": "early_stop_rel_impr",
     "save_manifest": "manifest",
     "print_plan_json": "dry_run",
+    "apply_saved_alignment": "poses",
 }
 
 

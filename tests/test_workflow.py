@@ -181,6 +181,9 @@ def test_aligning_a_loaded_scan_keeps_its_corrections(tmp_path: Path) -> None:
 
     assert result.scan.poses is not None and np.abs(result.poses).max() > 0.5
     np.testing.assert_allclose(result.scan.poses, result.poses, atol=1e-6)
+    tj.save(tmp_path / "aligned.nxs", result.scan)
+    np.testing.assert_allclose(tj.load(tmp_path / "aligned.nxs").poses, result.poses, atol=1e-6)
+    assert tj.load(tmp_path / "aligned.nxs", poses=False).poses is None
 
 
 def test_the_least_magnified_segment_decides_the_binning_suggestion() -> None:

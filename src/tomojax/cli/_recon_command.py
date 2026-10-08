@@ -62,7 +62,7 @@ class ReconCommand:
     progress: bool
     transfer_guard: ReconTransferGuardMode
     mask_vol: ReconMaskMode
-    apply_saved_alignment: bool
+    poses: bool
     det_u_px: float | None
     det_v_px: float | None
 
@@ -109,7 +109,7 @@ _PUBLIC = (
     "--grid",
     "--roi",
     "--mask",
-    "--ignore-alignment",
+    "--poses",
     "--preview",
     "--manifest",
     "--volume-axes",
@@ -121,8 +121,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="tomojax recon",
         description=(
-            "Reconstruct a volume from a scan. A saved alignment (from tomojax align) "
-            "is applied unless --ignore-alignment."
+            "Reconstruct a volume from a scan, with the poses saved with it (by tomojax "
+            "align) unless --no-poses."
         ),
         epilog=(
             "Examples:\n"
@@ -321,10 +321,10 @@ def _add_geometry_options(p: argparse.ArgumentParser) -> None:
         help="Override detector centre v offset in detector pixels for COR sweeps.",
     )
     _ = p.add_argument(
-        "--ignore-alignment",
-        dest="apply_saved_alignment",
-        action="store_false",
-        help="Use the nominal geometry, not the alignment saved in INPUT",
+        "--poses",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Apply the per-view corrections saved in INPUT (--no-poses: the nominal geometry)",
     )
 
 
@@ -418,7 +418,7 @@ def parse_recon_command(
             progress=cast("bool", args.progress),
             transfer_guard=cast("ReconTransferGuardMode", args.transfer_guard),
             mask_vol=cast("ReconMaskMode", args.mask),
-            apply_saved_alignment=cast("bool", args.apply_saved_alignment),
+            poses=cast("bool", args.poses),
             det_u_px=cast("float | None", args.det_u_px),
             det_v_px=cast("float | None", args.det_v_px),
         ),

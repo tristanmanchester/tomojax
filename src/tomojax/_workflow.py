@@ -230,11 +230,11 @@ class Alignment:
 # ----------------------------------------------------------------------------- files
 
 
-def load(path: str | PathLike[str], *, apply_alignment: bool = True) -> Scan:
+def load(path: str | PathLike[str], *, poses: bool = True) -> Scan:
     """Load a scan from a TomoJAX dataset (``.nxs``, ``.h5``, ``.npz``) or a Nikon ``.xtekct``.
 
-    A saved alignment (from :func:`align` or ``tomojax align``) is applied
-    unless ``apply_alignment`` is False. TIFF stacks need their geometry
+    The scan carries the per-view corrections saved with it (by :func:`align`
+    or ``tomojax align``) unless ``poses`` is False. TIFF stacks need their geometry
     stated: import them with ``tomojax import`` or :func:`tomojax.io.load_tiff_stack`.
     """
     from tomojax.io import load_dataset, load_nikon_xtekct
@@ -243,7 +243,7 @@ def load(path: str | PathLike[str], *, apply_alignment: bool = True) -> Scan:
     if not file.exists():
         raise FileNotFoundError(f"no such file: {file}")
     record = load_nikon_xtekct(file) if file.suffix.lower() == ".xtekct" else load_dataset(file)
-    return _scan_from_record(record, apply_alignment=apply_alignment)
+    return _scan_from_record(record, poses=poses)
 
 
 def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
@@ -376,12 +376,10 @@ def _record_of(scan: Scan, *, grid: Grid | None = None) -> ProjectionDataset:
     return replace(source, **fields)
 
 
-def _scan_from_record(record: ProjectionDataset, *, apply_alignment: bool) -> Scan:
+def _scan_from_record(record: ProjectionDataset, *, poses: bool) -> Scan:
     from tomojax.io import build_geometry_from_dataset_metadata
 
-    _, _, geometry = build_geometry_from_dataset_metadata(
-        record.geometry_inputs(), apply_saved_alignment=apply_alignment
-    )
+    _, _, geometry = build_geometry_from_dataset_metadata(record.geometry_inputs(), poses=poses)
     return Scan(
         projections=record.projections,
         geometry=geometry,
@@ -435,7 +433,7 @@ def _with_grid(scan: Scan, grid: Grid) -> Scan:
     if isinstance(scan.geometry, ConeSegments):
         return replace(scan, geometry=_rebuild(scan.geometry, grid=grid))
     record = _record_of(scan, grid=grid)
-    return replace(_scan_from_record(record, apply_alignment=True), source=scan.source)
+    return replace(_scan_from_record(record, poses=True), source=scan.source)
 
 
 # ----------------------------------------------------------------------------- operations
@@ -661,7 +659,7 @@ def align(
         }
     corrected.align_params = poses
     corrected.align_gauge = {"pose_translation_frame": frame}
-    aligned = _scan_from_record(corrected, apply_alignment=True)
+    aligned = _scan_from_record(corrected, poses=True)
     return Alignment(
         scan=replace(aligned, source=scan.source), volume=volume, poses=poses, info=info
     )

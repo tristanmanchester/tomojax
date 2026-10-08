@@ -109,7 +109,7 @@ def tomojax.backproject(
         grid: 'Grid | None' = None,
         devices: 'Device | Sequence[Device] | None' = None,
     ) -> 'jax.Array'
-def tomojax.load(path: 'str | PathLike[str]', *, apply_alignment: 'bool' = True) -> 'Scan'
+def tomojax.load(path: 'str | PathLike[str]', *, poses: 'bool' = True) -> 'Scan'
 def tomojax.load_reconstruction(path: 'str | PathLike[str]') -> 'Reconstruction'
 def tomojax.project(
         geometry: 'Geometry',
@@ -523,7 +523,7 @@ def tomojax.io.build_geometry_from_dataset_metadata(
         meta: 'Mapping[str, Any]',
         *,
         grid_override: 'Grid | tuple[int, int, int] | list[int] | None' = None,
-        apply_saved_alignment: 'bool' = False,
+        poses: 'bool' = False,
         volume_shape: 'Sequence[int] | None' = None,
     ) -> 'tuple[Grid, Detector, ScanGeometry]'
 def tomojax.io.load_dataset(path: 'PathLike') -> 'ProjectionDataset'

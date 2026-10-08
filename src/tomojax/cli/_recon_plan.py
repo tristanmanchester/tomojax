@@ -59,7 +59,7 @@ def build_recon_runtime_plan(command: ReconCommand) -> ReconRuntimePlan:
     grid, detector, geom = build_geometry_from_dataset_metadata(
         geometry_meta,
         grid_override=initial_grid_override,
-        apply_saved_alignment=bool(command.apply_saved_alignment),
+        poses=bool(command.poses),
     )
     detector, detector_center_override = _apply_detector_center_override(
         detector,
@@ -71,9 +71,9 @@ def build_recon_runtime_plan(command: ReconCommand) -> ReconRuntimePlan:
         grid, detector, geom = build_geometry_from_dataset_metadata(
             geometry_meta,
             grid_override=initial_grid_override,
-            apply_saved_alignment=bool(command.apply_saved_alignment),
+            poses=bool(command.poses),
         )
-    if command.apply_saved_alignment and meta.align_params is not None:
+    if command.poses and meta.align_params is not None:
         logging.info("Applying saved per-view alignment parameters from input metadata")
 
     det_grid = detector_grid_from_geometry_inputs(detector, geometry_meta)
@@ -108,7 +108,7 @@ def build_recon_runtime_plan(command: ReconCommand) -> ReconRuntimePlan:
         _, _, geom = build_geometry_from_dataset_metadata(
             geometry_meta,
             grid_override=recon_grid,
-            apply_saved_alignment=bool(command.apply_saved_alignment),
+            poses=bool(command.poses),
         )
 
     volume_mask = solver_volume_mask(region, detector)

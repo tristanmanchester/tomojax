@@ -357,13 +357,13 @@ def _segments_from_meta(
     grid: Grid,
     angles: Sequence[float],
     *,
-    apply_saved_alignment: bool,
+    poses: bool,
 ) -> ScanGeometry:
     """A ``ConeSegments`` geometry from saved ``cone_segments`` metadata."""
     from tomojax.core.geometry.cone import ConeSegments
 
     entries = cast("list[dict[str, Any]]", meta.get("cone_segments", []))
-    params = meta.get("align_params") if apply_saved_alignment else None
+    params = meta.get("align_params") if poses else None
     frame = str(meta.get("align_gauge", {}).get("pose_translation_frame", "detector"))
     segments: list[ScanGeometry] = []
     start = 0
@@ -391,14 +391,14 @@ def build_geometry_from_meta(
     meta: LoadedGeometryMeta,
     *,
     grid_override: GridOverride = None,
-    apply_saved_alignment: bool = False,
+    poses: bool = False,
     volume_shape: Sequence[int] | None = None,
 ) -> tuple[Grid, Detector, ScanGeometry]:
     """Build geometry from NXtomo metadata with sensible fallbacks.
 
     When `grid` metadata is missing, the grid is inferred from detector dimensions
     unless an explicit `grid_override` or `volume_shape` is supplied; both reuse
-    detector pixel spacings as voxel spacings. When `apply_saved_alignment` is
+    detector pixel spacings as voxel spacings. When `poses` is
     True, any saved `align_params` are composed onto the nominal poses. Saved
     alignments must provide one row per view and five columns ordered as
     `[alpha, beta, phi, dx, dz]`, optionally followed by `dy`; further columns
@@ -410,7 +410,7 @@ def build_geometry_from_meta(
     grid = _grid_from_meta(meta, detector, grid_override, volume_shape)
     angles = _resolve_angles(
         meta,
-        apply_saved_angle_offset=apply_saved_alignment,
+        apply_saved_angle_offset=poses,
     )
     if meta.get("cone_segments"):
         return (
@@ -420,7 +420,7 @@ def build_geometry_from_meta(
                 meta,
                 grid,
                 [float(t) for t in angles],
-                apply_saved_alignment=apply_saved_alignment,
+                poses=poses,
             ),
         )
     geom = _with_detector_roll_metadata(
@@ -428,7 +428,7 @@ def build_geometry_from_meta(
         meta,
     )
 
-    if apply_saved_alignment and meta.get("align_params") is not None:
+    if poses and meta.get("align_params") is not None:
         align_params = np.asarray(meta["align_params"], dtype=np.float32)
         if align_params.ndim != 2:
             raise ValueError("align_params must be a 2-D array with shape (n_views, >=5)")

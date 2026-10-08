@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Breaking: whether a file's saved corrections are applied has one name,
+  `poses`: `tj.load(path, poses=False)` (was `apply_alignment=False`),
+  `tomojax recon --no-poses` (was `--ignore-alignment`) and
+  `build_geometry_from_dataset_metadata(poses=...)` (was
+  `apply_saved_alignment`). The `--config` key `apply_saved_alignment` fails
+  with its new name.
 - Breaking: reconstruction options have one name each, the one
   `tj.reconstruct` already used, in Python, on the command line, as
   `--config` keys and in saved `info`. In the solver configurations

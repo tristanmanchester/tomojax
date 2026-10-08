@@ -31,7 +31,7 @@ The options match the Python API's keywords: `tomojax recon --method cgls
   `.nxs`/`.npz` dataset.
 - `preprocess`: flat- and dark-correct raw frames into absorption projections.
 - `recon`: reconstruct a volume with FBP (FDK for cone beams), CGLS, FISTA-TV
-  or SPDHG-TV, applying a saved alignment unless `--ignore-alignment`.
+  or SPDHG-TV, with the poses saved in the input unless `--no-poses`.
 - `align`: estimate the rotation axis and per-view poses (`--mode pose`,
   `cor`, `cor-then-pose` or `full`). Mixed setup and pose stages in `full`
   carry their own gauge policies; an expert direct parameter set mixing them

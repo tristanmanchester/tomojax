@@ -88,7 +88,7 @@ _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
         "--warm-start": ("reconstruct", "warm_start"),
         "--seed": ("reconstruct", "seed"),
         "--grid": ("reconstruct", "grid"),
-        "--ignore-alignment": ("load", "apply_alignment"),
+        "--poses": ("load", "poses"),
         "--roi": "crops the grid to the field of view; Python passes the grid",
         "--mask": "zeroes voxels outside the field of view of the saved volume",
         "--preview": "file output",
@@ -134,7 +134,10 @@ def _public_options(command: str) -> set[str]:
         for action in _actions(command)
         if action.help != argparse.SUPPRESS
         for option in action.option_strings
-        if option.startswith("--") and option not in _STANDARD_OPTIONS
+        if option.startswith("--")
+        and option not in _STANDARD_OPTIONS
+        # --no-x is --x's other half, not an option of its own.
+        and not (isinstance(action, argparse.BooleanOptionalAction) and option.startswith("--no-"))
     }
 
 
@@ -150,7 +153,7 @@ def test_cli_options_use_the_python_names(command: str) -> None:
             function, keyword = target
             parameters = inspect.signature(getattr(tomojax, function)).parameters
             assert keyword in parameters, f"{option} names tomojax.{function}({keyword}=...)"
-            assert option.removeprefix("--").replace("-", "_") in {keyword, "ignore_alignment"}
+            assert option.removeprefix("--").replace("-", "_") == keyword
 
 
 def test_align_options_are_stored_under_their_own_names() -> None:

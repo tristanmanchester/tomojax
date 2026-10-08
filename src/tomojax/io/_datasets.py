@@ -73,19 +73,20 @@ def build_geometry_from_dataset_metadata(
     meta: Mapping[str, Any],
     *,
     grid_override: Grid | tuple[int, int, int] | list[int] | None = None,
-    apply_saved_alignment: bool = False,
+    poses: bool = False,
     volume_shape: Sequence[int] | None = None,
 ) -> tuple[Grid, Detector, ScanGeometry]:
     """Build geometry objects from normalized dataset metadata.
 
-    Keeping this wrapper in `tomojax.io` makes the command/data dependency
+    ``poses`` applies the per-view corrections and angle offsets saved with
+    the data. Keeping this wrapper in `tomojax.io` makes the command/data dependency
     explicit and gives the `ProjectionDataset` solver contract one replacement
     point.
     """
     return build_geometry_from_meta(
         cast("LoadedGeometryMeta", dict(meta)),
         grid_override=grid_override,
-        apply_saved_alignment=apply_saved_alignment,
+        poses=poses,
         volume_shape=volume_shape,
     )
 
