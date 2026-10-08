@@ -1,7 +1,7 @@
 # tomojax
 class tomojax.Alignment(
-        scan: 'Scan',
         volume: 'np.ndarray | jax.Array',
+        scan: 'Scan',
         poses: 'np.ndarray',
         info: 'Mapping[str, object]',
     ) -> None

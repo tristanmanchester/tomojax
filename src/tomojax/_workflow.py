@@ -222,14 +222,15 @@ class Reconstruction:
 class Alignment:
     """The result of :func:`align`.
 
-    ``scan`` is the input scan with the estimated geometry and per-view poses
-    applied: reconstruct it, align it again or save it. ``volume`` is the
-    reconstruction the alignment converged with, ``poses`` the ``(views, 6)``
-    corrections (see :attr:`Scan.poses`), and ``info`` the solver's record.
+    ``volume`` is the reconstruction the alignment converged with. ``scan`` is
+    the input scan with the estimated geometry and per-view poses applied:
+    reconstruct it, align it again or save it. ``poses`` are its ``(views, 6)``
+    poses (see :attr:`Scan.poses`), always a table, zero where nothing moved;
+    ``info`` is the solver's record.
     """
 
-    scan: Scan
     volume: np.ndarray | jax.Array
+    scan: Scan
     poses: np.ndarray
     info: Mapping[str, object]
 
@@ -647,7 +648,7 @@ def align(
     corrected.align_gauge = {"pose_translation_frame": frame}
     aligned = _scan_from_record(corrected, poses=True)
     return Alignment(
-        scan=replace(aligned, source=scan.source), volume=volume, poses=poses, info=info
+        volume=volume, scan=replace(aligned, source=scan.source), poses=poses, info=info
     )
 
 

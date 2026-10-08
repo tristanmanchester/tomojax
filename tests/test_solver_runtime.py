@@ -170,7 +170,8 @@ def test_fista_streams_host_projections_like_device_projections(tmp_path, batch)
             stream_projections=stream,
         )
         results[stream] = fista_tv(geometry, grid, detector, projections, config=config)
-    np.testing.assert_allclose(results[True][0], results[False][0], rtol=1e-6, atol=1e-7)
+    # Within rounding: GPU atomics sum in no fixed order.
+    np.testing.assert_allclose(results[True][0], results[False][0], rtol=1e-5, atol=1e-6)
     np.testing.assert_allclose(results[True][1]["loss"], results[False][1]["loss"], rtol=1e-5)
 
 

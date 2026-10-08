@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `Alignment`'s fields are `(volume, scan, poses, info)`, volume first as in
+  `Reconstruction`; `Alignment.poses` is always a table, where `Scan.poses`
+  is None for a scan without corrections.
 - `tj.reconstruct(scan, method, config=...)` takes the method's own
   configuration: an `FBPConfig` (for FDK too), `CGLSConfig`, `FistaConfig` or
   `SPDHGConfig` from `tomojax.recon`, for example
