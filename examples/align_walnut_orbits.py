@@ -76,7 +76,9 @@ def main() -> None:
     # Per-view pose alignment of all three orbits together; levels 4 and 2 are
     # coarse-to-fine binnings of the grid and detector. The full-resolution
     # level needs more memory than an 8 GB GPU has (tj.align would stop before
-    # it on its own), and these two already register the orbits.
+    # it on its own), and these two already register the orbits: on a 48 GB
+    # GPU, adding it moved no orbit's height by more than a micrometre, left
+    # the reconstruction's error unchanged and made alignment five times slower.
     result = tj.align(scan, levels=(4, 2))
 
     # Each view's vertical correction (the dz pose column), averaged per orbit.
