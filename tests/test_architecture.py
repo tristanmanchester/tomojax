@@ -90,10 +90,8 @@ _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
         "--grid": ("reconstruct", "grid"),
         "--poses": ("load", "poses"),
         "--roi": "crops the grid to the field of view; Python passes the grid",
-        "--mask": "zeroes voxels outside the field of view of the saved volume",
         "--preview": "file output",
         "--manifest": "file output",
-        "--volume-axes": "on-disk axis order",
         "--progress": "terminal display",
     },
     "align": {
@@ -116,10 +114,7 @@ _HELP_BUDGET = 16
 def _actions(command: str) -> list[argparse.Action]:
     from tomojax.cli._options import options  # check-public-imports: allow-private
 
-    module = {
-        "import": "tomojax.cli.import_",
-        "recon": "tomojax.cli._recon_command",
-    }.get(command, f"tomojax.cli.{command}")
+    module = {"import": "tomojax.cli.import_"}.get(command, f"tomojax.cli.{command}")
     parser_module = importlib.import_module(module)
     build = getattr(parser_module, "build_parser", None) or parser_module._build_parser
     return options(build())
@@ -153,22 +148,32 @@ def test_cli_options_use_the_python_names(command: str) -> None:
             assert option.removeprefix("--").replace("-", "_") == keyword
 
 
-def test_align_options_are_stored_under_their_own_names() -> None:
-    # A --config key is the option's dest, so it must be the option's name; the
-    # file's other keys, its expert settings, are AlignConfig's fields.
+def _configuration_fields(command: str) -> set[str]:
     from dataclasses import fields
 
     from tomojax.alignment import AlignConfig
-    from tomojax.cli._options import config_settings  # check-public-imports: allow-private
-    from tomojax.cli.align import build_parser
+    from tomojax.recon import CGLSConfig, FBPConfig, FistaConfig, SPDHGConfig
 
-    for action in _actions("align"):
+    if command == "align":
+        return {item.name for item in fields(AlignConfig) if item.init}
+    configs = (FBPConfig, CGLSConfig, FistaConfig, SPDHGConfig)
+    # Arrays and devices have no TOML form.
+    return {item.name for c in configs for item in fields(c) if item.init} - {"support", "devices"}
+
+
+@pytest.mark.parametrize("command", ["align", "recon"])
+def test_options_are_stored_under_their_own_names(command: str) -> None:
+    # A --config key is the option's dest, so it must be the option's name; the
+    # file's other keys, its expert settings, are the configuration's fields.
+    from tomojax.cli._options import config_settings  # check-public-imports: allow-private
+
+    module = importlib.import_module(f"tomojax.cli.{command}")
+    for action in _actions(command):
         for option in action.option_strings:
             if option.startswith("--") and option not in _STANDARD_OPTIONS:
                 name = option.removeprefix("--").removeprefix("no-").replace("-", "_")
                 assert name == action.dest, f"{option} stores {action.dest!r}"
-    names = {item.name for item in fields(AlignConfig) if item.init}
-    assert set(config_settings(build_parser())) == names
+    assert set(config_settings(module.build_parser())) == _configuration_fields(command)
 
 
 @pytest.mark.parametrize("command", _guardrails().CLI_COMMANDS)

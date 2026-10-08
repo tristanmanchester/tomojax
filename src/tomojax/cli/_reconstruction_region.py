@@ -1,13 +1,13 @@
-"""Shared reconstruction region resolution for reconstruction and alignment CLIs."""
+"""The grid ``--roi`` and ``--grid`` choose, for ``tomojax recon`` and ``tomojax align``."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import replace
 import logging
+from typing import TYPE_CHECKING
 
-import jax.numpy as jnp
+import numpy as np
 
-from tomojax._typed_arrays import jax_float32_array
 from tomojax.geometry import (
     Detector,
     Grid,
@@ -18,64 +18,43 @@ from tomojax.geometry import (
     grid_from_detector_fov_slices,
 )
 
+if TYPE_CHECKING:
+    import jax
 
-@dataclass(frozen=True, slots=True)
-class ReconstructionRegion:
-    """Resolved reconstruction grid and mask policy from CLI region options."""
+    from tomojax import Scan
 
-    recon_grid: Grid
-    apply_output_mask: bool
-    solver_volume_mask_mode: str
-    roi_metadata: dict[str, object]
+ROI_CHOICES = ("auto", "off", "cube", "bbox", "cyl")
+ROI_HELP = (
+    "Crop the grid to the detector's field of view: auto (default), cube, bbox, "
+    "cyl (auto, zeroing outside the cylinder every view sees), or off"
+)
 
 
-def resolve_reconstruction_region(
-    grid: Grid,
-    detector: Detector,
-    *,
-    geometry_type: str,
-    roi_mode: str,
-    grid_override: tuple[int, int, int] | list[int] | None,
-    mask_mode: str = "off",
-) -> ReconstructionRegion:
-    """Resolve the reconstruction grid and mask policy shared by CLI workflows."""
-    roi_requested = str(roi_mode).lower()
+def region_grid(scan: Scan, *, roi: str, grid: tuple[int, int, int] | None) -> tuple[Grid, bool]:
+    """The grid ``--roi`` and ``--grid`` choose, and whether to zero outside the cylinder.
+
+    ``--grid`` keeps the cropped grid's voxels and centre and sets its size;
+    the volume is then not zeroed.
+    """
+    geometry_type = "parallel" if scan.source is None else scan.source.geometry_type
     is_parallel = str(geometry_type).lower() == "parallel"
-    recon_grid = _resolve_roi_grid(
-        grid,
-        detector,
-        is_parallel=is_parallel,
-        roi_mode=roi_requested,
-    )
-    apply_output_mask = roi_requested == "cyl"
-    if grid_override is not None:
-        nx, ny, nz = map(int, grid_override)
-        recon_grid = replace(recon_grid, nx=nx, ny=ny, nz=nz)
-        apply_output_mask = False
-
-    return ReconstructionRegion(
-        recon_grid=recon_grid,
-        apply_output_mask=apply_output_mask,
-        solver_volume_mask_mode=_normalize_mask_mode(mask_mode),
-        roi_metadata={
-            "requested": roi_requested,
-            "is_parallel": bool(is_parallel),
-            "grid_changed": recon_grid != grid,
-        },
-    )
+    chosen = _resolve_roi_grid(scan.grid, scan.detector, is_parallel=is_parallel, roi_mode=roi)
+    if grid is not None:
+        return replace(chosen, nx=grid[0], ny=grid[1], nz=grid[2]), False
+    return chosen, roi == "cyl"
 
 
-def solver_volume_mask(region: ReconstructionRegion, detector: Detector) -> jnp.ndarray | None:
-    """Return the solver mask implied by a resolved reconstruction region."""
-    if region.solver_volume_mask_mode != "cyl":
-        return None
-    try:
-        m_xy = cylindrical_mask_xy(region.recon_grid, detector)
-        return jax_float32_array(m_xy)[:, :, None]
-    except Exception as exc:
-        raise ValueError(
-            f"Failed to apply requested --mask-vol={region.solver_volume_mask_mode!r}"
-        ) from exc
+def cylinder_support(grid: Grid, detector: Detector) -> np.ndarray:
+    """``(nx, ny, nz)``: 1 inside the cylinder every view sees, 0 outside."""
+    inside = np.asarray(cylindrical_mask_xy(grid, detector), np.float32)[:, :, None]
+    return np.broadcast_to(inside, (grid.nx, grid.ny, grid.nz)).copy()
+
+
+def zero_outside_cylinder(
+    volume: np.ndarray | jax.Array, grid: Grid, detector: Detector
+) -> np.ndarray:
+    """``volume`` with the voxels outside the cylinder every view sees set to zero."""
+    return np.asarray(volume) * cylinder_support(grid, detector)
 
 
 def _resolve_roi_grid(
@@ -119,13 +98,4 @@ def _resolve_roi_grid(
         raise ValueError(f"Failed to apply requested --roi={roi_mode!r}") from exc
 
 
-def _normalize_mask_mode(mask_mode: str) -> str:
-    mode = str(mask_mode).lower()
-    if mode in {"off", "none"}:
-        return "off"
-    if mode in {"cyl", "cylindrical"}:
-        return "cyl"
-    raise ValueError(f"unsupported volume mask mode {mask_mode!r}")
-
-
-__all__ = ["ReconstructionRegion", "resolve_reconstruction_region", "solver_volume_mask"]
+__all__ = ["ROI_CHOICES", "ROI_HELP", "cylinder_support", "region_grid", "zero_outside_cylinder"]

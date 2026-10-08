@@ -109,6 +109,12 @@ tomojax recon calibrated.nxs -o cgls.nxs --method cgls --iterations 20
 tomojax recon calibrated.nxs -o tv.nxs --method fista --iterations 50 --tv-weight 0.002
 ```
 
+Expert settings are fields of the method's configuration class in a
+`--config` TOML file: `views_per_batch = 16`, say, or FISTA's
+`regulariser = "huber_tv"` (see the
+[quickstart](quickstart.md#reconstruct-and-inspect-slices)); in Python, pass
+the class, `tj.reconstruct(scan, "fista", config=FistaConfig(...))`.
+
 Their backprojection is the exact transpose of the projector, so CGLS stays
 stable as it iterates; ASTRA's CGLS, whose backprojector is approximate,
 diverges after about 20 iterations on the same scan (see

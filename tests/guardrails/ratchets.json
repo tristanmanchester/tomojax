@@ -8,7 +8,7 @@
     "tomojax.alignment": 5,
     "tomojax.datasets": 13,
     "tomojax.geometry.api": 43,
-    "tomojax.recon.api": 22,
+    "tomojax.recon.api": 19,
     "tomojax.io.api": 34,
     "tomojax.alignment.api": 73,
     "tomojax.datasets.api": 15
@@ -17,7 +17,7 @@
     "inspect": 4,
     "import": 15,
     "preprocess": 27,
-    "recon": 38,
+    "recon": 18,
     "align": 16,
     "export": 6,
     "simulate": 46
@@ -49,7 +49,6 @@
     "src/tomojax/alignment/optimizers.py::run_active_validation_lm": 107,
     "src/tomojax/alignment/optimizers.py::run_pose_lbfgs": 187,
     "src/tomojax/backends/_memory.py::estimate_views_per_batch_info": 101,
-    "src/tomojax/cli/_recon_plan.py::build_recon_runtime_plan": 109,
     "src/tomojax/cli/preprocess.py::_build_parser": 152,
     "src/tomojax/cli/simulate.py::_build_parser": 159,
     "src/tomojax/core/pallas/_pallas_adjoint_kernels.py::_projector_loss_grad_kernel": 149,
@@ -84,7 +83,7 @@
   "suppressions": {
     "noqa": 8,
     "type: ignore": 44,
-    "pyright: ignore": 21
+    "pyright: ignore": 20
   },
   "complex_functions": [
     "src/tomojax/_data/_io_helpers.py::C901::_load_processing_metadata",

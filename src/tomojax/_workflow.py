@@ -45,9 +45,9 @@ if TYPE_CHECKING:
     )
     from tomojax.geometry import ConeSegments, Detector, Geometry, Grid, ScanGeometry
     from tomojax.io import ProjectionDataset
+    from tomojax.recon.api import MethodConfig
 
 type Method = Literal["fbp", "cgls", "fista", "spdhg"]
-METHODS: tuple[Method, ...] = ("fbp", "cgls", "fista", "spdhg")
 
 # Geometry metadata keys a geometry object owns; other keys (provenance) carry over.
 _GEOMETRY_KEYS = frozenset(
@@ -284,9 +284,10 @@ def save(path: str | PathLike[str], item: Scan | Reconstruction | Alignment) -> 
         record = _record_of(item.scan)
         record.volume = np.asarray(item.volume)
         record.geometry_metadata["reconstruction_method"] = item.method
-        # As JSON, which the file's metadata is; settings JSON cannot hold become text.
+        # As JSON, which the file's metadata is: a configuration as its fields, and
+        # what else JSON cannot hold as text.
         record.geometry_metadata["reconstruction_info"] = json.loads(
-            json.dumps(dict(item.info), default=str)
+            json.dumps(dict(item.info), default=_json_value)
         )
     elif isinstance(item, Alignment):  # pyright: ignore[reportUnnecessaryIsInstance]
         record = _record_of(item.scan)
@@ -294,6 +295,14 @@ def save(path: str | PathLike[str], item: Scan | Reconstruction | Alignment) -> 
     else:
         raise TypeError(f"save takes a Scan, Reconstruction or Alignment, not {type(item)}")
     save_dataset(path, record)
+
+
+def _json_value(value: object) -> object:
+    from dataclasses import fields
+
+    if is_dataclass(value) and not isinstance(value, type):
+        return {item.name: getattr(value, item.name) for item in fields(value)}
+    return str(value)
 
 
 def _with_corrections(geometry: ScanGeometry, poses: np.ndarray) -> ScanGeometry:
@@ -474,19 +483,12 @@ def backproject(
     return _backproject(geometry, projections, grid=grid, devices=devices)
 
 
-_METHOD_OPTIONS: dict[str, frozenset[str]] = {
-    "fbp": frozenset({"filter"}),
-    "cgls": frozenset({"iterations", "devices"}),
-    "fista": frozenset({"iterations", "tv_weight", "nonnegative", "warm_start", "devices"}),
-    "spdhg": frozenset({"iterations", "tv_weight", "nonnegative", "warm_start", "seed"}),
-}
-
-
 def reconstruct(
     scan: Scan,
     method: Method = "fbp",
     *,
     grid: Grid | None = None,
+    config: MethodConfig | None = None,
     filter: str | None = None,
     iterations: int | None = None,
     tv_weight: float | None = None,
@@ -506,76 +508,64 @@ def reconstruct(
         Least squares by conjugate gradients, ``iterations`` (default 50).
     ``fista``
         Least squares with total-variation weight ``tv_weight`` (default
-        0.005), ``iterations`` (default 50), optionally ``nonnegative`` and
-        started from FBP (``warm_start``).
+        0.005), ``iterations`` (default 50), optionally ``nonnegative``.
     ``spdhg``
-        The same objective as ``fista`` by stochastic primal-dual updates,
-        with a random ``seed``.
+        The same objective as ``fista`` by stochastic primal-dual updates:
+        ``iterations`` (default 400) each update one block of views, in an
+        order drawn with ``seed``.
 
-    ``grid`` reconstructs on another grid than the scan's (a region, or a
-    different voxel size). An option the method does not take raises.
+    ``warm_start`` starts ``cgls``, ``fista`` and ``spdhg`` from the FBP
+    reconstruction. ``grid`` reconstructs on another grid than the scan's (a
+    region, or a different voxel size).
+
+    ``config`` holds the method's expert settings: a
+    :class:`~tomojax.recon.FBPConfig` (for FDK too),
+    :class:`~tomojax.recon.CGLSConfig`, :class:`~tomojax.recon.FistaConfig` or
+    :class:`~tomojax.recon.SPDHGConfig`; without one, the class's defaults
+    apply. A config of another method's class raises :class:`ValueError`. The
+    keywords are fields of that class, and each one given replaces its field,
+    as :func:`dataclasses.replace` does, so a keyword wins over the config. A
+    keyword the method's class has no field for raises.
 
     ``devices`` (``cgls`` and ``fista``; one or several, ``jax.devices()`` for
     all) shares the views among them: each projects its own views and holds
     the whole volume, and their backprojections are summed. The volume, on the
     first device, is the one-device result up to the order of that sum.
-    """
-    from tomojax.backends import default_gather_dtype
-    from tomojax.geometry.api import detector_grid_from_geometry_inputs
-    from tomojax.recon.api import (
-        ReconstructionAlgorithmOptions,
-        ReconstructionAlgorithmRequest,
-        default_views_per_batch,
-        run_reconstruction_algorithm,
-    )
 
-    if method not in METHODS:
-        raise ValueError(f"reconstruct: method must be one of {', '.join(METHODS)}; got {method!r}")
-    given: dict[str, Any] = {
+    :attr:`Reconstruction.info` holds the resolved ``config`` with the
+    solver's record (iterations run, termination, losses).
+    """
+    from tomojax.recon.api import method_config, reconstruct_arrays
+
+    given = {
         name: value
         for name, value in {
             "filter": filter,
             "iterations": iterations,
             "tv_weight": tv_weight,
             "nonnegative": nonnegative,
-            "warm_start": warm_start,
             "seed": seed,
             "devices": devices,
         }.items()
         if value is not None
     }
-    unused = sorted(set(given) - _METHOD_OPTIONS[method])
-    if unused:
-        takes = ", ".join(sorted(_METHOD_OPTIONS[method]))
-        raise ValueError(
-            f"reconstruct: method {method!r} does not take {', '.join(unused)} (it takes {takes})"
-        )
+    cfg = method_config(method, config=config, **given)
+    if warm_start is not None and method == "fbp":
+        raise ValueError("method 'fbp' does not take warm_start")
     if grid is not None:
         scan = _with_grid(scan, grid)
     if method != "fbp":
         _suggest_binning(scan, "iterative reconstruction")
-    _ = given.pop("devices", None)  # a request setting, not a solver option
-    options = ReconstructionAlgorithmOptions(method=method, **given)
-    request = ReconstructionAlgorithmRequest(
-        options=options,
-        geometry=scan.geometry,
-        grid=scan.grid,
-        detector=scan.detector,
-        projections=scan.projections,
-        detector_grid=detector_grid_from_geometry_inputs(scan.detector, scan.geometry),
-        volume_mask=None,
-        views_per_batch=default_views_per_batch(method),
-        views_per_batch_mode="default",
-        gather_dtype=default_gather_dtype(),
-        devices=devices,
+    volume, info = reconstruct_arrays(
+        method,
+        scan.geometry,
+        scan.grid,
+        scan.detector,
+        scan.projections,
+        config=cfg,
+        warm_start=bool(warm_start),
     )
-    result = run_reconstruction_algorithm(request)
-    return Reconstruction(
-        volume=result.volume,
-        scan=scan,
-        method=method,
-        info=dict(result.algorithm_config),
-    )
+    return Reconstruction(volume=volume, scan=scan, method=method, info=info)
 
 
 def align(
@@ -779,7 +769,6 @@ def _detector(value: object) -> Detector:
 
 
 __all__ = [
-    "METHODS",
     "Alignment",
     "Reconstruction",
     "Scan",

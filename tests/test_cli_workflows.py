@@ -10,9 +10,8 @@ import numpy as np
 import pytest
 
 from tomojax.cli.main import main
-import tomojax.cli.recon as recon_cli
 import tomojax.cli.simulate as simulate_cli
-from tomojax.geometry import Detector, stack_view_poses
+from tomojax.geometry import stack_view_poses
 from tomojax.geometry.api import CalibrationState, CalibrationVariable
 from tomojax.io import build_geometry_from_dataset_metadata, load_dataset, save_dataset
 from tomojax.io.api import save_projection_payload
@@ -200,44 +199,45 @@ def test_import_cli_converts_nxtomo_to_npz(tmp_path: Path) -> None:
     np.testing.assert_allclose(dataset.angles, [0.0, 90.0])
 
 
+def _fake_reconstruct(
+    monkeypatch: pytest.MonkeyPatch, error: Exception | None = None
+) -> dict[str, object]:
+    """Make ``tj.reconstruct`` return zeros (or raise ``error``); record its call."""
+    import tomojax
+
+    calls: dict[str, object] = {}
+
+    def fake(scan, method, *, grid, config, **keywords):
+        if error is not None:
+            raise error
+        calls.update(method=method, grid=grid, config=config, **keywords)
+        volume = np.zeros((grid.nx, grid.ny, grid.nz), np.float32)
+        return tomojax.Reconstruction(volume, scan, method, {"config": config})
+
+    monkeypatch.setattr(tomojax, "reconstruct", fake)
+    return calls
+
+
 def test_recon_cli_routes_tiny_workflow(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     scan = tmp_path / "scan.nxs"
     recon = tmp_path / "recon.nxs"
     write_projection_dataset(scan)
-    captured: dict[str, object] = {}
+    calls = _fake_reconstruct(monkeypatch)
 
-    def fake_run(command: object, config_metadata: dict[str, object]) -> None:
-        captured["method"] = command.method
-        captured["data"] = command.data
-        captured["out"] = command.out
-        assert config_metadata["config_path"] is None
-        dataset = load_dataset(command.data)
-        dataset.volume = np.zeros((4, 4, 2), dtype=np.float32)
-        save_dataset(command.out, dataset)
+    args = ["recon", str(scan), "-o", str(recon), "--method", "cgls", "--roi", "off"]
+    assert main([*args, "--grid", "4", "4", "2", "--iterations", "7", "--warm-start"]) == 0
 
-    monkeypatch.setattr(recon_cli, "_run_reconstruction", fake_run)
-
-    assert (
-        main(
-            [
-                "recon",
-                str(scan),
-                "-o",
-                str(recon),
-                "--method",
-                "fbp",
-                "--roi",
-                "off",
-                "--grid",
-                "4",
-                "4",
-                "2",
-            ]
-        )
-        == 0
-    )
-
-    assert captured == {"method": "fbp", "data": str(scan), "out": str(recon)}
+    assert calls.pop("method") == "cgls"
+    assert (calls.pop("grid").nx, calls.pop("config").iterations) == (4, 50)
+    # Options not given are left to the configuration.
+    assert calls == {
+        "filter": None,
+        "iterations": 7,
+        "tv_weight": None,
+        "nonnegative": None,
+        "warm_start": True,
+        "seed": None,
+    }
     loaded = load_dataset(recon)
     assert loaded.volume is not None
     assert loaded.volume.shape == (4, 4, 2)
@@ -249,12 +249,7 @@ def test_main_formats_expected_subcommand_errors(
     scan = tmp_path / "scan.nxs"
     recon = tmp_path / "recon.nxs"
     write_projection_dataset(scan)
-
-    def fail_expected(command: object, config_metadata: dict[str, object]) -> None:
-        del command, config_metadata
-        raise ValueError("bad detector metadata")
-
-    monkeypatch.setattr(recon_cli, "_run_reconstruction", fail_expected)
+    _ = _fake_reconstruct(monkeypatch, ValueError("bad detector metadata"))
 
     assert main(["recon", str(scan), "-o", str(recon)]) == 1
     captured = capsys.readouterr()
@@ -267,12 +262,7 @@ def test_main_does_not_swallow_programmer_errors(
     scan = tmp_path / "scan.nxs"
     recon = tmp_path / "recon.nxs"
     write_projection_dataset(scan)
-
-    def fail_programmer(command: object, config_metadata: dict[str, object]) -> None:
-        del command, config_metadata
-        raise TypeError("wrong internal call shape")
-
-    monkeypatch.setattr(recon_cli, "_run_reconstruction", fail_programmer)
+    _ = _fake_reconstruct(monkeypatch, TypeError("wrong internal call shape"))
 
     with pytest.raises(TypeError, match="wrong internal call shape"):
         main(["recon", str(scan), "-o", str(recon)])
@@ -282,58 +272,34 @@ def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> No
     scan = tmp_path / "scan.nxs"
     recon = tmp_path / "recon.nxs"
     manifest = tmp_path / "recon-manifest.json"
+    config = tmp_path / "recon.toml"
     write_projection_dataset(scan)
+    _ = config.write_text("views_per_batch = 1\ncheckpoint_projector = false\n", encoding="utf-8")
 
-    assert (
-        main(
-            [
-                "recon",
-                str(scan),
-                "-o",
-                str(recon),
-                "--method",
-                "fbp",
-                "--roi",
-                "off",
-                "--grid",
-                "4",
-                "4",
-                "2",
-                "--views-per-batch",
-                "1",
-                "--no-checkpoint-projector",
-                "--manifest",
-                str(manifest),
-            ]
-        )
-        == 0
-    )
+    args = ["recon", str(scan), "-o", str(recon), "--roi", "off", "--grid", "4", "4", "2"]
+    assert main([*args, "--config", str(config), "--manifest", str(manifest)]) == 0
 
     loaded = load_dataset(recon)
     assert loaded.volume is not None
     assert loaded.volume.shape == (4, 4, 2)
     assert np.isfinite(loaded.volume).all()
     assert loaded.grid is not None
-    assert loaded.grid.nx == 4
-    assert loaded.grid.ny == 4
-    assert loaded.grid.nz == 2
+    assert (loaded.grid.nx, loaded.grid.ny, loaded.grid.nz) == (4, 4, 2)
     assert loaded.detector is not None
-
-    metadata = loaded.copy_metadata()
-    assert metadata.frame == "sample"
-    assert metadata.volume_axes_order == "zyx"
-    assert loaded.geometry_metadata["detector_center_override"]["source"] == "metadata"
+    assert loaded.copy_metadata().volume_axes_order == "zyx"
+    assert loaded.geometry_metadata["reconstruction_method"] == "fbp"
 
     resolved = json.loads(manifest.read_text(encoding="utf-8"))["resolved_config"]
     assert resolved["method"] == "fbp"
-    assert resolved["algorithm_config"]["filter"] == "ramp"
+    assert resolved["settings"] == {"views_per_batch": 1, "checkpoint_projector": False}
+    settings = resolved["reconstruction"]["config"]
+    assert (settings["filter"], settings["views_per_batch"]) == ("ramp", 1)
+    assert settings["checkpoint_projector"] is False
     assert resolved["reconstruction_grid"]["nx"] == 4
-    assert resolved["reconstruction_grid"]["ny"] == 4
-    assert resolved["reconstruction_grid"]["nz"] == 2
     assert resolved["roi"] == {
         "requested": "off",
-        "is_parallel": True,
         "grid_changed": False,
+        "cylindrical_output_mask": False,
     }
     assert resolved["volume_shape"] == [4, 4, 2]
 
@@ -362,78 +328,85 @@ def test_recon_cli_runs_cgls_like_the_python_solver(tmp_path: Path, *, warm_star
     assert loaded.volume.shape == (4, 4, 2)
     resolved = json.loads(manifest.read_text(encoding="utf-8"))["resolved_config"]
     assert resolved["method"] == "cgls"
-    assert resolved["algorithm_config"]["warm_start"] == warm_start
-    assert 1 <= resolved["algorithm_config"]["effective_iterations"] <= 6
+    assert resolved["reconstruction"]["warm_start"] == warm_start
+    assert resolved["reconstruction"]["config"]["iterations"] == 6
+    assert 1 <= resolved["reconstruction"]["effective_iterations"] <= 6
 
 
-def test_recon_cli_accepts_detector_center_override(
+def test_recon_cli_cylinder_constrains_fista_to_the_field_of_view(tmp_path: Path) -> None:
+    import numpy as np
+
+    import tomojax as tj
+    from tomojax.recon import FistaConfig
+
+    scan_path, recon_path = tmp_path / "scan.nxs", tmp_path / "recon.nxs"
+    write_projection_dataset(scan_path)
+    command = ["recon", str(scan_path), "-o", str(recon_path), "--method", "fista"]
+    assert main([*command, "--roi", "cyl", "--iterations", "4"]) == 0
+
+    scan = tj.load(scan_path)
+    # The CLI's grid for --roi cyl, and the cylinder as FISTA's support.
+    grid = tj.load_reconstruction(recon_path).grid
+    # check-public-imports: allow-private
+    from tomojax.cli._reconstruction_region import cylinder_support
+
+    # The support constrains FISTA's updates, and the saved volume is zero outside.
+    support = cylinder_support(grid, scan.detector)
+    config = FistaConfig(support=support)
+    expected = tj.reconstruct(scan, "fista", grid=grid, config=config, iterations=4).volume
+    actual = tj.load_reconstruction(recon_path).volume
+    np.testing.assert_allclose(actual, np.asarray(expected) * support, rtol=1e-5, atol=1e-6)
+
+
+def test_recon_cli_config_settings_are_fields_of_the_methods_configuration(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     scan = tmp_path / "scan.nxs"
-    recon = tmp_path / "recon.nxs"
+    config = tmp_path / "recon.toml"
     write_projection_dataset(scan)
-    captured: dict[str, object] = {}
-
-    def fake_run(command: object, config_metadata: dict[str, object]) -> None:
-        del config_metadata
-        captured["det_u_px"] = command.det_u_px
-        captured["det_v_px"] = command.det_v_px
-        dataset = load_dataset(command.data)
-        dataset.volume = np.zeros((4, 4, 2), dtype=np.float32)
-        save_dataset(command.out, dataset)
-
-    monkeypatch.setattr(recon_cli, "_run_reconstruction", fake_run)
-
-    assert (
-        main(
-            [
-                "recon",
-                str(scan),
-                "-o",
-                str(recon),
-                "--det-u-px",
-                "6",
-                "--det-v-px",
-                "-1.5",
-            ]
-        )
-        == 0
+    calls = _fake_reconstruct(monkeypatch)
+    _ = config.write_text(
+        'regulariser = "huber_tv"\nhuber_delta = 0.05\ntv_weight = 0.01\n', encoding="utf-8"
     )
 
-    assert captured == {"det_u_px": 6.0, "det_v_px": -1.5}
+    args = ["recon", str(scan), "-o", str(tmp_path / "out.nxs"), "--method", "fista"]
+    assert main([*args, "--config", str(config), "--roi", "off"]) == 0
+
+    cfg = calls["config"]
+    assert (cfg.regulariser, cfg.huber_delta, cfg.iterations) == ("huber_tv", 0.05, 50)
+    # A key that is an option is passed as the keyword, which tj.reconstruct applies.
+    assert calls["tv_weight"] == 0.01
 
 
-def test_recon_cli_rejects_nonfinite_detector_center_override(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("toml", "options", "message"),
+    [
+        ("tv_prox_iterations = 3\n", [], "method 'fbp' does not take tv_prox_iterations"),
+        ("", ["--iterations", "5"], "method 'fbp' does not take iterations"),
+        ("", ["--warm-start"], "method 'fbp' does not take warm_start"),
+        ("tau = 0.1\n", ["--method", "fista"], "method 'fista' does not take tau"),
+    ],
+)
+def test_recon_cli_refuses_settings_the_method_does_not_take(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    toml: str,
+    options: list[str],
+    message: str,
+) -> None:
     scan = tmp_path / "scan.nxs"
-    recon = tmp_path / "recon.nxs"
+    config = tmp_path / "recon.toml"
     write_projection_dataset(scan)
+    _ = config.write_text(toml, encoding="utf-8")
 
+    args = ["recon", str(scan), "-o", str(tmp_path / "out.nxs"), "--config", str(config)]
     with pytest.raises(SystemExit) as exc:
-        main(["recon", str(scan), "-o", str(recon), "--det-u-px", "nan"])
-
+        main([*args, *options])
     assert exc.value.code == 2
-
-
-def test_recon_detector_center_override_records_effective_pixels() -> None:
-    # check-public-imports: allow-private
-    from tomojax.cli._recon_plan import _apply_detector_center_override
-
-    detector = Detector(nu=8, nv=8, du=0.5, dv=2.0, center=(1.0, -2.0))
-    geometry_meta: dict[str, object] = {"detector": detector.to_dict()}
-
-    updated, provenance = _apply_detector_center_override(
-        detector,
-        geometry_meta,
-        det_u_px=6.0,
-        det_v_px=None,
-    )
-
-    assert updated.center == pytest.approx((3.0, -2.0))
-    assert provenance["source"] == "cli_override"
-    assert provenance["requested_px"] == {"det_u_px": 6.0, "det_v_px": None}
-    assert provenance["effective_px"] == {"det_u_px": 6.0, "det_v_px": -1.0}
-    assert provenance["effective_world"] == {"det_u": 3.0, "det_v": -2.0}
-    assert geometry_meta["detector"]["det_center"] == [3.0, -2.0]
+    err = capsys.readouterr().err
+    assert message in err
+    if toml:
+        assert "has " in err and "views_per_batch" in err  # the valid ones
 
 
 def test_inspect_cli_previews_central_slices_of_xyz_disk_volumes(tmp_path: Path) -> None:

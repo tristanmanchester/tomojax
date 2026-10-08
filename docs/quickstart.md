@@ -62,7 +62,42 @@ software.
 `--roi off` preserves the recorded grid. The default is `--roi auto`, which may
 crop to the detector field of view. `--grid NX NY NZ` changes the dimensions but
 keeps the input voxel spacing. Check both field of view and physical units before
-comparing reconstructions.
+comparing reconstructions. `--roi cyl` also zeroes the volume outside the
+cylinder every view sees.
+
+Expert settings are fields of the method's configuration class
+(`tomojax.recon.FBPConfig`, `CGLSConfig`, `FistaConfig` or `SPDHGConfig`),
+set in a TOML file passed with `--config`; `tomojax recon --config-keys` lists
+them. Each replaces that field of the class's defaults, and a setting the
+method does not take fails with the ones it does. For FISTA with Huber total
+variation:
+
+```bash
+printf 'regulariser = "huber_tv"\nhuber_delta = 0.01\n' > huber.toml
+uv run --no-sync tomojax recon corrected.nxs -o tv.nxs --method fista --config huber.toml
+```
+
+In Python this is
+`tj.reconstruct(scan, "fista", config=FistaConfig(regulariser="huber_tv", huber_delta=0.01))`.
+The keywords, like the command's options, replace the config's fields of the
+same names: `iterations=100` wins over the config's `iterations`.
+
+`tomojax align --mode cor` estimates the detector centre (the centre of
+rotation). To compare trial centres by eye instead, shift the detector in
+Python; the centre is in the geometry's length unit, so pixels times `du`:
+
+```python
+from dataclasses import replace
+
+import tomojax as tj
+
+scan = tj.load("corrected.nxs", poses=False)
+d = scan.detector
+for u_px in (-4, -2, 0, 2, 4):
+    detector = replace(d, center=(u_px * d.du, d.center[1]))
+    trial = replace(scan, geometry=replace(scan.geometry, detector=detector))
+    tj.save(f"cor{u_px:+d}.nxs", tj.reconstruct(trial))
+```
 
 For tilted or irregular-angle data, start with the iterative workflow in the
 [real scan guide](real-laminography.md#reconstruct-with-the-recorded-geometry).

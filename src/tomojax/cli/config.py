@@ -122,6 +122,9 @@ _RETIRED_KEYS = {
     "save_manifest": "manifest",
     "print_plan_json": "dry_run",
     "apply_saved_alignment": "poses",
+    "spdhg_tau": "tau",
+    "spdhg_sigma_data": "sigma_data",
+    "spdhg_sigma_tv": "sigma_tv",
 }
 
 

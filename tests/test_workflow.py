@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 import subprocess
 import sys
@@ -92,6 +92,28 @@ def test_reconstruct_runs_every_method(kind: str) -> None:
         tj.reconstruct(scan, "sirt")  # type: ignore[arg-type]
 
 
+def test_reconstruct_takes_the_methods_configuration_under_its_keywords() -> None:
+    from tomojax.recon import CGLSConfig, FistaConfig, fista_tv
+
+    geometry = _geometries(16)["parallel"]
+    scan = tj.Scan(np.asarray(tj.project(geometry, _phantom(16))), geometry)
+    config = FistaConfig(regulariser="huber_tv", huber_delta=0.05, tv_weight=1e-3, iterations=4)
+    recon = tj.reconstruct(scan, "fista", config=config)
+    assert recon.info["config"] == config and recon.info["regulariser"] == "huber_tv"
+    # A keyword replaces its field; the config's others stay.
+    recon = tj.reconstruct(scan, "fista", config=config, iterations=6, nonnegative=True)
+    expected = replace(config, iterations=6, nonnegative=True)
+    assert recon.info["config"] == expected and recon.info["huber_delta"] == 0.05
+    direct, _ = fista_tv(
+        geometry, geometry.grid, geometry.detector, scan.projections, config=expected
+    )
+    np.testing.assert_allclose(np.asarray(recon.volume), np.asarray(direct), rtol=1e-6, atol=1e-6)
+    with pytest.raises(ValueError, match="method 'fista' takes a FistaConfig, not a CGLSConfig"):
+        tj.reconstruct(scan, "fista", config=CGLSConfig())
+    with pytest.raises(ValueError, match="method 'fbp' does not take warm_start"):
+        tj.reconstruct(scan, warm_start=True)
+
+
 @pytest.mark.parametrize("method", ["fista", "spdhg"])
 def test_nonnegative_is_honoured(method: str) -> None:
     geometry = _geometries(16)["parallel"]
@@ -132,7 +154,8 @@ def test_scans_and_reconstructions_round_trip_through_files(kind: str, tmp_path:
     tj.save(tmp_path / "recon.nxs", recon)
     back = tj.load_reconstruction(tmp_path / "recon.nxs")
     np.testing.assert_allclose(back.volume, np.asarray(recon.volume), rtol=1e-6, atol=1e-6)
-    assert back.method == "fbp" and back.info == recon.info and back.grid == recon.grid
+    assert back.method == "fbp" and back.grid == recon.grid
+    assert back.info == {"config": asdict(recon.info["config"])}  # the configuration's fields
     with pytest.raises(FileNotFoundError, match="no such file"):
         tj.load(tmp_path / "missing.nxs")
 

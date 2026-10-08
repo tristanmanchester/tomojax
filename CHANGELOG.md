@@ -2,6 +2,64 @@
 
 ## Unreleased
 
+- `tj.reconstruct(scan, method, config=...)` takes the method's own
+  configuration: an `FBPConfig` (for FDK too), `CGLSConfig`, `FistaConfig` or
+  `SPDHGConfig` from `tomojax.recon`, for example
+  `config=FistaConfig(regulariser="huber_tv", huber_delta=0.01)`. A config of
+  another method's class raises `ValueError`. The keywords are fields of that
+  class and each one given replaces its field, as `dataclasses.replace` does,
+  so a keyword wins over the config. `result.info` holds the resolved
+  `config` with the solver's record (iterations run, termination, losses),
+  and a saved reconstruction's `info` holds the config's fields.
+- Breaking: `tomojax recon` is `tj.reconstruct` on the command line: it loads
+  INPUT with `tj.load`, reconstructs with `tj.reconstruct` and saves with
+  `tj.save`. Its options are `--method`, `--filter`, `--iterations`,
+  `--tv-weight`, `--nonnegative`, `--warm-start`, `--seed`, `--grid`,
+  `--roi`, `--poses`/`--no-poses`, `--preview`, `--manifest` and
+  `--progress`. Expert settings are fields of the method's configuration
+  class in the `--config` file, each replacing that field of the class's
+  defaults (`--config-keys` lists them); a setting or option the method does
+  not take fails with the ones it does, as a usage error. Where the removed
+  options went:
+  - `--regulariser`, `--huber-delta`, `--tv-prox-iterations`, `--lipschitz`,
+    `--lower-bound`, `--upper-bound`, `--theta`, `--views-per-batch` and
+    `--gather-dtype`: the `--config` keys of the same names.
+    `views_per_batch` has no `auto` (the solvers stream large projections
+    from host memory), and `gather_dtype` no `auto`.
+  - `--checkpoint-projector`/`--no-checkpoint-projector`:
+    `checkpoint_projector = false`.
+  - `--spdhg-tau`, `--spdhg-sigma-data` and `--spdhg-sigma-tv`: `tau`,
+    `sigma_data` and `sigma_tv`, `SPDHGConfig`'s names; the old keys fail
+    with the new ones.
+  - `--mask cyl`: `--roi cyl`, as in `tomojax align`. The volume is zero
+    outside the cylinder every view sees, and FISTA and SPDHG take the
+    cylinder as their `support`, as before (`FistaConfig(support=...)` in
+    Python).
+  - `--det-u-px` and `--det-v-px`: `tomojax align --mode cor` estimates the
+    detector centre; the quickstart shows a centre sweep in Python, which
+    shifts `scan.detector.center`.
+  - `--volume-axes`: the volume is saved as `tj.save` saves it; `tomojax
+    export` writes other layouts.
+  - `--frame`: gone; it only labelled the file.
+  - `--transfer-guard`: JAX's own `jax.transfer_guard`.
+
+  The manifest records the run's inputs and settings with `result.info`
+  under `reconstruction` (was `algorithm_config`), and an `roi` block like
+  `tomojax align`'s.
+- Breaking: a method's defaults are its configuration class's, in Python and
+  on the command line. `spdhg` runs 400 iterations (was 50), each one block of
+  views, and logs its objective every 10. `gather_dtype` is `fp32` on every
+  device (was `bf16` on GPUs, for the ray-model path rolled detectors take),
+  and FISTA's `views_per_batch` is its own (64 with batched operators, one
+  view on that path). `SPDHGConfig.nonnegative` defaults to False (was True),
+  as `FistaConfig`'s does. `warm_start` also starts `cgls`, and now starts
+  `fista`, which ignored it.
+- Breaking: `tomojax.recon.api` exports `method_config(method, config=...,
+  **settings)`, which resolves and checks a method's configuration, and
+  `reconstruct_arrays`, `tj.reconstruct` on arrays. They replace
+  `ReconstructionAlgorithmOptions`, `ReconstructionAlgorithmRequest`,
+  `ReconstructionResult`, `run_reconstruction_algorithm` and
+  `default_views_per_batch`.
 - Breaking: `tomojax align` is `tj.align` on the command line: it loads INPUT
   with `tj.load`, aligns with `tj.align` and saves with `tj.save`. It now
   corrects on top of the poses saved in INPUT, as `tj.align(tj.load(INPUT))`

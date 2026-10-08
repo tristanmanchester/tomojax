@@ -55,7 +55,9 @@ def run_case(size: int, kind: str, method: str, args: argparse.Namespace) -> dic
         def call() -> tuple:
             return fista_tv(geometry, grid, detector, data, config=config)
     elif method == "spdhg":
-        config = SPDHGConfig(iterations=args.spdhg_iters, views_per_batch=args.batch, seed=31)
+        config = SPDHGConfig(
+            iterations=args.spdhg_iters, views_per_batch=args.batch, seed=31, nonnegative=True
+        )
 
         def call() -> tuple:
             return spdhg_tv(geometry, grid, detector, data, config=config)

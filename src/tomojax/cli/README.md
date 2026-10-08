@@ -31,7 +31,12 @@ The options match the Python API's keywords: `tomojax recon --method cgls
   `.nxs`/`.npz` dataset.
 - `preprocess`: flat- and dark-correct raw frames into absorption projections.
 - `recon`: reconstruct a volume with FBP (FDK for cone beams), CGLS, FISTA-TV
-  or SPDHG-TV, with the poses saved in the input unless `--no-poses`.
+  or SPDHG-TV with `tj.reconstruct`, with the poses saved in the input unless
+  `--no-poses`. Its expert settings are fields of the method's configuration
+  class (`tomojax.recon.FBPConfig`, `CGLSConfig`, `FistaConfig` or
+  `SPDHGConfig`), each replacing that field of the class's defaults, as
+  `tj.reconstruct(config=...)` takes them; `--roi cyl` zeroes the volume
+  outside the cylinder every view sees.
 - `align`: estimate the rotation axis and per-view poses (`--mode pose`,
   `cor`, `cor-then-pose` or `full`) with `tj.align`, on top of the poses saved
   in the input unless `--no-poses`. Its expert settings are

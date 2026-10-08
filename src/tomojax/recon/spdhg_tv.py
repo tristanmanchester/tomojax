@@ -106,7 +106,7 @@ class SPDHGConfig:
     projector_backend: ProjectorBackend = "auto"
 
     # constraints
-    nonnegative: bool = True
+    nonnegative: bool = False
     support: jnp.ndarray | None = None  # 0/1 mask in volume space
 
     # logging

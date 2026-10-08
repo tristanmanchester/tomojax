@@ -541,34 +541,20 @@ def test_pose_wrappers_stack_their_own_poses():
 
 def test_fbp_reconstructs_volumes_larger_than_the_device_on_the_host(monkeypatch):
     import tomojax.backends
-    from tomojax.recon.api import (
-        ReconstructionAlgorithmOptions,
-        ReconstructionAlgorithmRequest,
-        run_reconstruction_algorithm,
-    )
+    from tomojax.recon.api import reconstruct_arrays
 
     geometry, grid, detector, _ = _scan("turntable", n=16, views=24)
     data = np.random.default_rng(4).random((24, detector.nv, detector.nu)).astype(np.float32)
-    request = ReconstructionAlgorithmRequest(
-        options=ReconstructionAlgorithmOptions(method="fbp"),
-        geometry=geometry,
-        grid=grid,
-        detector=detector,
-        projections=data,
-        detector_grid=None,
-        volume_mask=None,
-        views_per_batch=8,
-        views_per_batch_mode="auto",
-        gather_dtype="fp32",
-    )
-    on_device = np.asarray(run_reconstruction_algorithm(request).volume)
+    on_device, info = reconstruct_arrays("fbp", geometry, grid, detector, data)
+    assert "host_slabs" not in info
     monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: 4096)
-    result = run_reconstruction_algorithm(request)
-    assert isinstance(result.volume, np.ndarray) and result.algorithm_config["host_slabs"]
+    volume, info = reconstruct_arrays("fbp", geometry, grid, detector, data)
+    assert isinstance(volume, np.ndarray) and info["host_slabs"]
     # On CUDA, slabs' shifted detector windows round the texture unit's 1/256
     # interpolation weights differently (see the slab test above).
     tolerance = 2e-3 if use_cuda_cone() else 1e-5
-    np.testing.assert_allclose(result.volume, on_device, atol=tolerance * np.abs(on_device).max())
+    on_device = np.asarray(on_device)
+    np.testing.assert_allclose(volume, on_device, atol=tolerance * np.abs(on_device).max())
 
 
 def test_export_writes_volume_slices_and_raw_files(tmp_path: Path):

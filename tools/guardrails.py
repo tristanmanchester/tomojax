@@ -262,10 +262,7 @@ def _cli_flags() -> dict[str, int]:
 
     counts = {}
     for command in CLI_COMMANDS:
-        module_name = {
-            "import": "import_",
-            "recon": "_recon_command",
-        }.get(command, command)
+        module_name = {"import": "import_"}.get(command, command)
         module = importlib.import_module(f"tomojax.cli.{module_name}")
         build = getattr(module, "build_parser", None) or module._build_parser  # noqa: SLF001
         counts[command] = sum(1 for action in options(build()) if action.option_strings)

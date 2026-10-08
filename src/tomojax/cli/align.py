@@ -21,6 +21,12 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 
 from tomojax.cli._options import add_config, add_output, check_paths, hide_expert
+from tomojax.cli._reconstruction_region import (
+    ROI_CHOICES,
+    ROI_HELP,
+    region_grid,
+    zero_outside_cylinder,
+)
 from tomojax.cli.config import parse_args_with_config
 
 if TYPE_CHECKING:
@@ -110,15 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
             "or setup ones such as det_u_px"
         ),
     )
-    _ = p.add_argument(
-        "--roi",
-        choices=["auto", "off", "cube", "bbox", "cyl"],
-        default="auto",
-        help=(
-            "Crop the grid to the detector's field of view: auto (default), cube, bbox, "
-            "cyl (auto, zeroing outside the cylinder every view sees), or off"
-        ),
-    )
+    _ = p.add_argument("--roi", choices=ROI_CHOICES, default="auto", help=ROI_HELP)
     _ = p.add_argument(
         "--grid",
         type=int,
@@ -260,20 +258,6 @@ class _Run:
         )
 
 
-def _grid(scan: Scan, run: _Run) -> tuple[Grid, bool]:
-    """The grid ``--roi`` and ``--grid`` choose, and whether to zero outside the cylinder."""
-    from tomojax.cli._reconstruction_region import resolve_reconstruction_region
-
-    region = resolve_reconstruction_region(
-        scan.grid,
-        scan.detector,
-        geometry_type="parallel" if scan.source is None else scan.source.geometry_type,
-        roi_mode=run.roi,
-        grid_override=run.grid,
-    )
-    return region.recon_grid, region.apply_output_mask
-
-
 def _plan_payload(run: _Run, plan: AlignmentPlan, grid: Grid) -> str:
     """The resolved plan and grid, as ``--dry-run`` prints them."""
     from tomojax.alignment.api import resolved_schedule_for_config
@@ -342,7 +326,6 @@ def main() -> None:
     """Run ``tomojax align``."""
     import tomojax as tj
     from tomojax.core import log_jax_env, setup_logging
-    from tomojax.geometry import cylindrical_mask_xy
 
     parser = build_parser()
     args, metadata = parse_args_with_config(parser)
@@ -354,7 +337,7 @@ def main() -> None:
         os.environ["TOMOJAX_PROGRESS"] = "1"
 
     scan = tj.load(run.data, poses=run.poses)
-    grid, masked = _grid(scan, run)
+    grid, masked = region_grid(scan, roi=run.roi, grid=run.grid)
     try:
         config = _config(run.plan(grid).config, cast("dict[str, object]", metadata["settings"]))
         plan = run.plan(grid, config)
@@ -375,8 +358,7 @@ def main() -> None:
         config=config,
     )
     if masked:
-        inside = np.asarray(cylindrical_mask_xy(grid, scan.detector), np.float32)[:, :, None]
-        result = replace(result, volume=np.asarray(result.volume) * inside)
+        result = replace(result, volume=zero_outside_cylinder(result.volume, grid, scan.detector))
     implied = result.info.get("implied_detector_u_px")
     if implied is not None:
         logging.info("The poses hold a detector-u (centre-of-rotation) offset of %.3f px", implied)
