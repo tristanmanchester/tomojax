@@ -18,6 +18,7 @@ from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
 from tomojax.recon.types import Regulariser
 
 if TYPE_CHECKING:
+    from jaxlib._jax import Device  # jax.Device, as a type
     import numpy as np
 
     from tomojax.geometry import Detector, Geometry, Grid
@@ -63,6 +64,7 @@ class ReconstructionAlgorithmRequest:
     views_per_batch: int
     views_per_batch_mode: str
     gather_dtype: str
+    devices: tuple[Device, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -181,7 +183,11 @@ def _run_fbp_reconstruction(request: ReconstructionAlgorithmRequest) -> Reconstr
 
 def _run_cgls_reconstruction(request: ReconstructionAlgorithmRequest) -> ReconstructionResult:
     """Unregularised least squares; the fastest-converging solver for consistent data."""
-    cfg = CGLSConfig(iters=int(request.options.iters), views_per_batch=int(request.views_per_batch))
+    cfg = CGLSConfig(
+        iters=int(request.options.iters),
+        views_per_batch=int(request.views_per_batch),
+        devices=request.devices,
+    )
     init_x = _fbp_warm_start(request, nonnegative=False)
     volume, info = cgls(
         request.geometry,
@@ -229,6 +235,7 @@ def _run_fista_reconstruction(request: ReconstructionAlgorithmRequest) -> Recons
         upper_bound=(
             float(request.options.upper_bound) if request.options.upper_bound is not None else None
         ),
+        devices=request.devices,
     )
     volume = fista_tv(
         request.geometry,

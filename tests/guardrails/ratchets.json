@@ -91,7 +91,7 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "type_errors": {
-    "reportArgumentType": 360,
+    "reportArgumentType": 359,
     "reportAssignmentType": 3,
     "reportAttributeAccessIssue": 167,
     "reportCallIssue": 14,
@@ -102,7 +102,7 @@
     "reportOptionalCall": 2,
     "reportOptionalMemberAccess": 8,
     "reportOptionalSubscript": 1,
-    "reportPrivateUsage": 104,
+    "reportPrivateUsage": 103,
     "reportRedeclaration": 1,
     "reportReturnType": 21,
     "reportTypedDictNotRequiredAccess": 5

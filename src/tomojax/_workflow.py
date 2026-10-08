@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from os import PathLike
 
     import jax
+    from jaxlib._jax import Device  # jax.Device, as a type
 
     from tomojax.alignment import AlignConfig
     from tomojax.geometry import ConeSegments, Detector, Geometry, Grid, ScanGeometry
@@ -445,21 +446,29 @@ def _with_grid(scan: Scan, grid: Grid) -> Scan:
 
 
 def project(
-    geometry: Geometry, volume: np.ndarray | jax.Array, *, grid: Grid | None = None
+    geometry: Geometry,
+    volume: np.ndarray | jax.Array,
+    *,
+    grid: Grid | None = None,
+    devices: Sequence[Device] | None = None,
 ) -> jax.Array:
     """Project ``volume`` through ``geometry``; see :func:`tomojax.recon.project`."""
     from tomojax.recon import project as _project
 
-    return _project(geometry, volume, grid=grid)
+    return _project(geometry, volume, grid=grid, devices=devices)
 
 
 def backproject(
-    geometry: Geometry, projections: np.ndarray | jax.Array, *, grid: Grid | None = None
+    geometry: Geometry,
+    projections: np.ndarray | jax.Array,
+    *,
+    grid: Grid | None = None,
+    devices: Sequence[Device] | None = None,
 ) -> jax.Array:
     """Apply the exact transpose of :func:`project`; see :func:`tomojax.recon.backproject`."""
     from tomojax.recon import backproject as _backproject
 
-    return _backproject(geometry, projections, grid=grid)
+    return _backproject(geometry, projections, grid=grid, devices=devices)
 
 
 _METHOD_OPTIONS: dict[str, frozenset[str]] = {
@@ -481,6 +490,7 @@ def reconstruct(
     nonnegative: bool | None = None,
     warm_start: bool | None = None,
     seed: int | None = None,
+    devices: Sequence[Device] | None = None,
 ) -> Reconstruction:
     """Reconstruct ``scan`` with ``method``.
 
@@ -501,6 +511,11 @@ def reconstruct(
 
     ``grid`` reconstructs on another grid than the scan's (a region, or a
     different voxel size). An option the method does not take raises.
+
+    ``devices`` (``cgls`` and ``fista``) shares the views among several GPUs,
+    ``jax.devices()`` for all of them: each projects its own views and holds
+    the whole volume, and their backprojections are summed. The result is the
+    one-device result up to the order of that sum.
     """
     from tomojax.backends import default_gather_dtype
     from tomojax.geometry.api import detector_grid_from_geometry_inputs
@@ -531,6 +546,8 @@ def reconstruct(
         raise ValueError(
             f"reconstruct: method {method!r} does not take {', '.join(unused)} (it takes {takes})"
         )
+    if devices is not None and method not in {"cgls", "fista"}:
+        raise ValueError(f"reconstruct: method {method!r} runs on one device; drop devices")
     if grid is not None:
         scan = _with_grid(scan, grid)
     if method != "fbp":
@@ -555,6 +572,7 @@ def reconstruct(
         views_per_batch=default_views_per_batch(method),
         views_per_batch_mode="default",
         gather_dtype=default_gather_dtype(),
+        devices=None if devices is None else tuple(devices),
     )
     result = run_reconstruction_algorithm(request)
     return Reconstruction(

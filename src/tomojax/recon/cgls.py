@@ -23,13 +23,17 @@ from tomojax.core.validation import (
 from tomojax.recon._host_stream import host_source, should_stream
 from tomojax.recon._projection import (
     ConeModel,
+    ViewSplit,
     normal_equation_operators,
     projection_operators as _operators,
     resolve_geometry_projector,
+    view_split,
 )
 from tomojax.recon._quadratic import gradient_energy, gradient_normal, regularization_normal
 
 if TYPE_CHECKING:
+    from jaxlib._jax import Device  # jax.Device, as a type
+
     from tomojax.geometry import Detector, Geometry, Grid
 
 
@@ -79,6 +83,10 @@ class CGLSConfig:
     volume-sized arrays occupy the device; ``None`` streams when the stack would
     take more than 40% of free device memory. The normal residual then follows
     a recurrence between recomputations, each of which streams the data once.
+
+    ``devices`` (two or more JAX devices) shares the views among them, each
+    holding the whole volume, and sums their backprojections; the projections
+    are then held in device memory, never streamed.
     """
 
     iters: int = 50
@@ -91,6 +99,7 @@ class CGLSConfig:
     joseph_interpolation: Literal["linear", "cubic"] = "linear"
     gradient_damping: float = 0.0
     stream_projections: bool | None = None
+    devices: tuple[Device, ...] | None = None
 
 
 class _State(NamedTuple):
@@ -134,6 +143,7 @@ def _checked_inputs(
         "zero_start",
         "model",
         "joseph_interpolation",
+        "split",
     ),
 )
 def _solve(
@@ -154,12 +164,14 @@ def _solve(
     model: str = "ray",
     joseph_interpolation: str = "linear",
     gradient_damping: jax.Array | None = None,
+    split: ViewSplit | None = None,
 ) -> tuple[_State, jax.Array, jax.Array, jax.Array]:
     # Iteration budgets and changing data/poses are dynamic: budget sweeps and
     # repeated scans reuse the same compiled executable.
     forward, adjoint = _operators(
-        poses, grid, detector, det_grid, backend, batch_size, model, joseph_interpolation
-    )
+        poses, grid, detector, det_grid, backend, batch_size, model, joseph_interpolation,
+        split=split,
+    )  # fmt: skip
     magnitude_adjoint = adjoint
     if model == "joseph" and joseph_interpolation == "cubic":
         # Cubic convolution has negative lobes. A.T @ abs(residual) is not
@@ -174,6 +186,7 @@ def _solve(
             model,
             joseph_interpolation,
             absolute_weights=True,
+            split=split,
         )
     initial, inputs_finite = _checked_inputs(poses, data, initial, grid)
     residual = data if zero_start else data - forward(initial)
@@ -447,6 +460,27 @@ def _as_float32(array: object) -> jax.Array:
     return jax.device_put(np.asarray(array, dtype=np.float32))
 
 
+def _placement(
+    cfg: CGLSConfig,
+    projections: jnp.ndarray | np.ndarray,
+    n: int,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+) -> tuple[ViewSplit | None, bool]:
+    """How the projections are held: shared among devices, or streamed from the host."""
+    split = view_split(cfg.devices, n)
+    if split is not None:
+        if cfg.stream_projections:
+            raise ValueError("cgls: projections shared among devices cannot be streamed")
+        return split, False  # each device holds its share
+    stream = not isinstance(projections, jax.Array) and det_grid is None
+    stream &= (
+        bool(cfg.stream_projections)
+        if cfg.stream_projections is not None
+        else should_stream(projections)
+    )
+    return None, stream
+
+
 def cgls(
     geometry: Geometry,
     grid: Grid,
@@ -489,12 +523,7 @@ def cgls(
     validate_detector_grid(det_grid, detector, context="cgls")
     if init_x is not None:
         validate_volume(init_x, grid, context="cgls", name="init_x")
-    stream = not isinstance(projections, jax.Array) and det_grid is None
-    stream &= (
-        bool(cfg.stream_projections)
-        if cfg.stream_projections is not None
-        else should_stream(projections)
-    )
+    split, stream = _placement(cfg, projections, n, det_grid)
     initial = None if init_x is None else _as_float32(init_x)
     poses = stack_view_poses(geometry, n)
     validate_pose_stack(poses, n, context="cgls")
@@ -519,14 +548,16 @@ def cgls(
             )
             jax.block_until_ready(result)
     else:
+        data = _as_float32(projections) if split is None else split.place(projections)
         result, initial_norm, threshold, inputs_finite = _solve(
             poses,
-            _as_float32(projections),
+            data,
             initial,
             det_grid,
             *budget,
             jnp.float32(cfg.damping),
             zero_start=initial is None,
+            split=split,
             **options,
         )
     finite, count, gamma, failed, roundoff, first_norm, tolerance, verified, recomputations = (

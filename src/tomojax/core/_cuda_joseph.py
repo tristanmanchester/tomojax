@@ -11,6 +11,8 @@ voxels and more; smaller volumes, runs without CuPy and
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from functools import cache, partial
 import importlib.util
 import os
@@ -150,6 +152,22 @@ class _XlaStream:
         return (0, self.handle)
 
 
+@contextmanager
+def xla_stream(context: Any, buffer: Any) -> Iterator[Any]:
+    """Make ``buffer``'s GPU current and XLA's stream for ``context`` CuPy's stream.
+
+    A ``buffer_callback`` context names its stream but not its device; on several
+    GPUs each call runs on the one holding its buffers, which CuPy must use for
+    kernels, scratch memory and library handles.
+    """
+    import cupy as cp
+
+    with cp.cuda.Device(int(buffer.__dlpack_device__()[1])):
+        stream = cp.cuda.Stream.from_external(_XlaStream(int(context.stream)))
+        with stream:
+            yield stream
+
+
 def _launch(
     context: Any, out: Any, coeff: Any, images: Any, accumulate: Any, *, shape: tuple[int, int, int]
 ) -> None:
@@ -157,7 +175,7 @@ def _launch(
 
     nx, ny, nz = shape
     views, nu, nv = images.shape
-    with cp.cuda.Stream.from_external(_XlaStream(int(context.stream))):
+    with xla_stream(context, out):
         target, initial = cp.asarray(out), cp.asarray(accumulate)
         if target.data.ptr != initial.data.ptr:
             target[...] = initial

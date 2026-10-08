@@ -415,9 +415,9 @@ def _module() -> Any:
     return cp.RawModule(code=_SOURCE)
 
 
-# Texture objects whose kernels have finished, freed on the next launch (CUDA calls are
-# not allowed in the stream callback that retires them).
-_RETIRED: list[object] = []
+# Per GPU, texture objects whose kernels have finished, freed on that GPU's next
+# launch (CUDA calls are not allowed in the stream callback that retires them).
+_RETIRED: dict[int, list[object]] = {}
 # The texture start alignment CUDA requires (cudaDeviceProp.textureAlignment), and
 # the half pixels in it.
 _ALIGN = 512
@@ -501,8 +501,9 @@ def _to_half(images: Any, half: Any) -> Any:
 def _launch(context: Any, out: Any, *buffers: Any, grid: Grid, det: Detector, scale: float) -> None:
     import cupy as cp
 
-    _RETIRED.clear()
-    with xla_stream(context) as stream:
+    with xla_stream(context, out[0]) as stream:
+        retired = _RETIRED.setdefault(stream.device_id, [])
+        retired.clear()
         if len(out) == 3:  # unfiltered rows and the filter's operator
             target, half, images = (cp.asarray(b) for b in out)
             coeff, rows, operator, initial = (cp.asarray(b) for b in buffers)
@@ -525,7 +526,7 @@ def _launch(context: Any, out: Any, *buffers: Any, grid: Grid, det: Detector, sc
                 np.float32(_LEAD - start + 0.5), np.float32(scale**2),
             ),
         )  # fmt: skip
-        stream.launch_host_func(_RETIRED.append, (textures, handles, peak))
+        stream.launch_host_func(retired.append, (textures, handles, peak))
 
 
 def _backproject_cuda(

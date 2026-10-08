@@ -1,5 +1,10 @@
+import os
 from pathlib import Path
 import sys
+
+if os.environ.get("JAX_PLATFORMS") == "cpu":
+    # Several CPU devices, so tests can share views among devices (test_devices.py).
+    os.environ.setdefault("JAX_NUM_CPU_DEVICES", "4")
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"

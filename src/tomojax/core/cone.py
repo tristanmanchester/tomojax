@@ -39,6 +39,7 @@ from jax.experimental.buffer_callback import buffer_callback
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core._cuda_joseph import xla_stream
 from tomojax.core.geometry.base import grid_volume_origin
 
 if TYPE_CHECKING:
@@ -307,22 +308,13 @@ def _module() -> Any:
     return cp.RawModule(code=source)
 
 
-def xla_stream(context: Any) -> Any:
-    """Return XLA's CUDA stream for a ``buffer_callback`` context, as a CuPy stream."""
-    import cupy as cp
-
-    from tomojax.core._cuda_joseph import _XlaStream
-
-    return cp.cuda.Stream.from_external(_XlaStream(int(context.stream)))
-
-
 def _launch_forward(
     context: Any, out: Any, coeff: Any, volume: Any, *, grid: Grid, det: Detector
 ) -> None:
     import cupy as cp
 
     views = int(coeff.shape[0])
-    with xla_stream(context):
+    with xla_stream(context, out):
         args = (
             cp.asarray(coeff), cp.asarray(volume), cp.asarray(out),
             np.int32(grid.nx), np.int32(grid.ny), np.int32(grid.nz),
@@ -343,7 +335,7 @@ def _launch_adjoint(
 
     views = int(coeff.shape[0])
     module = _module()
-    with xla_stream(context):
+    with xla_stream(context, out):
         target, initial = cp.asarray(out), cp.asarray(accumulate)
         if target.data.ptr != initial.data.ptr:
             target[...] = initial

@@ -125,6 +125,12 @@ results from default CLI behavior and larger-motion targets.
   normal equations, which square the condition number of each step's
   recurrence; it recomputes the exact gradient periodically, as in-core CGLS
   recomputes its residual, and streams only with canonical detector grids.
+- Several GPUs (`devices=`) share a scan's views; each holds the whole volume
+  and the solver's volume-sized arrays, so they add speed, not room for a
+  larger volume. Only `tj.project`, `tj.backproject`, CGLS and FISTA take
+  them: FBP, SPDHG and alignment run on one device. Shared projections are
+  held in device memory, never streamed from the host, and the devices must
+  belong to one process (no multi-host runs).
 - Pallas currently uses JAX's deprecated Triton backend. JAX 0.11.2 is tested
   on CPU and an Ada CUDA GPU, with the dependency constrained below 0.12.
   Migration and additional GPU coverage are still required before widening

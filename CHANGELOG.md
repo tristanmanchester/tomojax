@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- `tj.project`, `tj.backproject` and `tj.reconstruct` with `cgls` or `fista`
+  take `devices=` (`jax.devices()` for every GPU): each device projects its
+  share of the views and holds the whole volume, and their backprojections are
+  summed, so the transpose stays exact and the result is the one-device result
+  up to that sum's order. `FistaConfig` and `CGLSConfig` take `devices` too.
+  The CUDA kernels now launch on the GPU holding their buffers, not the current
+  one. The CPU tests run on four CPU devices, so CI exercises the split.
+  Twenty FISTA iterations on the binned walnut take 24.8 s on one H100, 13.6 s
+  on two and 7.4 s on four (docs/performance.md).
 - Fixed: aligning a scan loaded from a file returned `result.scan` without
   the corrections (`result.poses` had them). A loaded dataset rebuilt its
   geometry from the metadata it was read with, so later changes to its poses,

@@ -1982,3 +1982,24 @@ object. They do not establish a repeated 20× speedup or arbitrary-voxel
 performance. The local record is
 `.artifacts/pose-recovery/normalized-fbp-followups-v1.json`, source hash
 `802c76935aa95cd24a1bcb9e1c669ccec2d6d0cde81178904b1dac51f393fd4a`.
+
+## Views shared among several GPUs (2026-10-08)
+
+`devices=` gives each GPU a share of the views and the whole volume, and sums
+their backprojections once per projector call. On four H100 80GB GPUs in one
+machine (Modal), 20 non-negative FISTA iterations on the binned FIPS walnut
+(three orbits, every fourth view: 900 views of 486 × 384 pixels, 501³ voxels)
+took, on the second call of each:
+
+| GPUs | Time (s) | Speedup | Volume vs one GPU (relative L2) |
+|---:|---:|---:|---:|
+| 1 | 24.8 | 1.00 | — |
+| 2 | 13.6 | 1.83 | 2.9e-7 |
+| 4 | 7.4 | 3.34 | 2.9e-7 |
+
+First calls, which compile, took 27.4, 15.8 and 9.5 s. The difference from one
+GPU is the order of the cross-device sum. Each GPU still runs the solver's
+volume-sized updates and the power iteration's setup, which do not shrink with
+more GPUs, and the 0.5 GB volume sum crosses NVLink once per iteration. ASTRA
+and TIGRE were not run on this machine, so these numbers are not a comparison
+with them.

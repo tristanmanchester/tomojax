@@ -106,6 +106,7 @@ def tomojax.backproject(
         projections: 'np.ndarray | jax.Array',
         *,
         grid: 'Grid | None' = None,
+        devices: 'Sequence[Device] | None' = None,
     ) -> 'jax.Array'
 def tomojax.load(path: 'str | PathLike[str]', *, apply_alignment: 'bool' = True) -> 'Scan'
 def tomojax.load_reconstruction(path: 'str | PathLike[str]') -> 'Reconstruction'
@@ -114,6 +115,7 @@ def tomojax.project(
         volume: 'np.ndarray | jax.Array',
         *,
         grid: 'Grid | None' = None,
+        devices: 'Sequence[Device] | None' = None,
     ) -> 'jax.Array'
 def tomojax.reconstruct(
         scan: 'Scan',
@@ -126,6 +128,7 @@ def tomojax.reconstruct(
         nonnegative: 'bool | None' = None,
         warm_start: 'bool | None' = None,
         seed: 'int | None' = None,
+        devices: 'Sequence[Device] | None' = None,
     ) -> 'Reconstruction'
 def tomojax.save(
         path: 'str | PathLike[str]',
@@ -246,6 +249,7 @@ class tomojax.recon.CGLSConfig(
         joseph_interpolation: "Literal['linear', 'cubic']" = 'linear',
         gradient_damping: 'float' = 0.0,
         stream_projections: 'bool | None' = None,
+        devices: 'tuple[Device, ...] | None' = None,
     ) -> None
 class tomojax.recon.ConeAxisCalibration(
         axis_offset: 'float',
@@ -306,6 +310,7 @@ class tomojax.recon.FistaConfig(
         projector_model: 'ProjectorModel' = 'auto',
         projector_backend: 'ProjectorBackend' = 'auto',
         stream_projections: 'bool | None' = None,
+        devices: 'tuple[Device, ...] | None' = None,
     ) -> None
 class tomojax.recon.FourierConfig(
         slices_per_batch: 'int' = 16,
@@ -338,6 +343,7 @@ def tomojax.recon.backproject(
         projections: 'jax.Array | np.ndarray',
         *,
         grid: 'Grid | None' = None,
+        devices: 'Sequence[Device] | None' = None,
     ) -> 'jax.Array'
 def tomojax.recon.calibrate_cone_axis(
         geometry: 'ConeGeometry',
@@ -429,6 +435,7 @@ def tomojax.recon.project(
         volume: 'jax.Array | np.ndarray',
         *,
         grid: 'Grid | None' = None,
+        devices: 'Sequence[Device] | None' = None,
     ) -> 'jax.Array'
 def tomojax.recon.spdhg_tv(
         geometry: 'Geometry',
