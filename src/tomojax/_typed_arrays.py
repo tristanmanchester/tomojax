@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 from numpy.typing import NDArray
 
+if TYPE_CHECKING:
+    from jaxlib._jax import Device as _JaxDevice
+
 type FloatArray = NDArray[np.floating[Any]]
 type Float32Array = NDArray[np.float32]
 type Float64Array = NDArray[np.float64]
 type Int64Array = NDArray[np.int64]
 type BoolArray = NDArray[np.bool_]
+# jax.Device as a type: type checkers take jax's own name for a variable.
+type Device = _JaxDevice
 
 
 def jax_float32_array(value: object) -> jax.Array:

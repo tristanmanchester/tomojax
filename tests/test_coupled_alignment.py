@@ -11,6 +11,24 @@ import pytest
 from tomojax.alignment._pose._coupled_linear import solve_coupled_normal
 
 
+@pytest.fixture(params=[None, 2], ids=["one_batch", "batches_of_two"])
+def views_per_batch(request, monkeypatch):
+    """The program's batch size, or two views a batch: three views then end in a shifted batch."""
+    # check-public-imports: allow-private
+    from tomojax.alignment._pose import _coupled_program
+
+    if request.param is None:
+        yield
+        return
+    monkeypatch.setattr(_coupled_program, "_VIEWS_PER_BATCH", request.param)
+    # The batch size is read while tracing: drop programs traced with another.
+    _coupled_program.run_update.clear_cache()
+    _coupled_program.run_loss.clear_cache()
+    yield
+    _coupled_program.run_update.clear_cache()
+    _coupled_program.run_loss.clear_cache()
+
+
 def test_joint_coupling_selects_the_solver_for_every_pose_stage():
     from tomojax.alignment import AlignConfig
 
@@ -29,6 +47,7 @@ def test_joint_coupling_selects_the_solver_for_every_pose_stage():
 
 
 @pytest.mark.numerical
+@pytest.mark.usefixtures("views_per_batch")
 @pytest.mark.parametrize("scan_variant", [0, 1])
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
@@ -246,6 +265,7 @@ def test_coupled_solve_reports_actual_residual_at_budget_and_handles_zero_rhs():
 
 
 @pytest.mark.numerical
+@pytest.mark.usefixtures("views_per_batch")
 @pytest.mark.parametrize("integrator", ["sampled", "exact"])
 @pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
 def test_public_joint_huber_constraints_and_resume(integrator, solver):
@@ -316,3 +336,80 @@ def _joint_huber_constraints_and_resume(integrator, solver):
     np.testing.assert_allclose(resumed_x, x, atol=1e-6)
     np.testing.assert_allclose(resumed_p, p, atol=1e-6)
     np.testing.assert_allclose(resumed_info["loss"], info["loss"], atol=1e-6)
+
+
+def _small_coupled_context():
+    from tomojax.alignment import AlignConfig
+
+    # check-public-imports: allow-private
+    from tomojax.alignment._pose._pose_context import _pose_objective_context
+
+    # check-public-imports: allow-private
+    from tomojax.alignment._pose._pose_loop import _build_alignment_runtime_context
+    from tomojax.geometry import Detector, Grid, ParallelGeometry
+
+    grid, det = Grid(4, 4, 4, 1.0, 1.0, 1.0), Detector(5, 4, 1.0, 1.0)
+    geometry = ParallelGeometry(grid, det, [0.0, 60.0, 120.0])
+    projections = jnp.asarray(np.random.default_rng(3).uniform(0, 1, (3, 4, 5)), jnp.float32)
+    cfg = AlignConfig(gn_coupling="joint", gather_dtype="fp32", projector_backend="jax")
+    common = dict(
+        grid=grid,
+        detector=det,
+        projections=projections,
+        cfg=cfg,
+        n_views=3,
+        active_mask=jnp.ones(6, jnp.float32),
+    )
+    runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
+    return _pose_objective_context(runtime=runtime, **common)
+
+
+def test_memory_check_compiles_the_update_unless_far_below_the_limit(monkeypatch):
+    # check-public-imports: allow-private
+    from tomojax.alignment._pose import _coupled_objective as coupled
+
+    ctx = _small_coupled_context()
+    assert coupled._pose_cache_limit() > 0  # the columns are cached
+    volume, sinogram = 4 * 4**3, 4 * 3 * 4 * 5
+    # A dozen-odd volumes, a few sinograms and the six cached columns.
+    estimate = 13 * volume + 9 * sinogram
+    p, x = jnp.zeros((3, 6), jnp.float32), jnp.ones((4, 4, 4), jnp.float32)
+    expected = coupled.build_coupled_objective(ctx).update(p, x)
+    lowered = []
+    lower = coupled.run_update.lower
+
+    def counting_lower(*args, **kwargs):
+        lowered.append(True)
+        return lower(*args, **kwargs)
+
+    monkeypatch.setattr(coupled.run_update, "lower", counting_lower)
+
+    def free(nbytes):
+        lowered.clear()
+        monkeypatch.setattr(coupled, "_free_device_memory", lambda _array: nbytes)
+
+    def assert_update_matches(objective):
+        result = objective.update(p, x)
+        for a, b in zip(result.increment, expected.increment, strict=True):
+            # Within rounding: GPU atomics sum in no fixed order.
+            np.testing.assert_allclose(a, b, rtol=1e-3, atol=1e-6)
+
+    # Far below the limit, the estimate is trusted.
+    free(4 * estimate)
+    assert_update_matches(coupled.build_coupled_objective(ctx))
+    assert not lowered
+    # Near it, XLA's own figure decides. Here the update needs more than the
+    # estimate, which a shortcut without the columns or a margin would miss.
+    free(int(1.5 * estimate))
+    assert 13 * volume + 3 * sinogram < 1.5 * estimate
+    with pytest.raises(coupled.AlignmentMemoryError, match="GiB is free") as error:
+        coupled.build_coupled_objective(ctx)
+    assert lowered
+    assert error.value.available == int(1.5 * estimate) and error.value.needed > 1.5 * estimate
+    # When it fits, the update compiled for the check is the one used.
+    monkeypatch.setattr(coupled, "_MEMORY_MARGIN", 1000)
+    free(error.value.needed)
+    objective = coupled.build_coupled_objective(ctx)
+    assert isinstance(objective.update.func, jax.stages.Compiled)
+    assert_update_matches(objective)
+    assert len(lowered) == 1

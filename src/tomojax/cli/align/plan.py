@@ -330,6 +330,12 @@ def _resolve_profile_defaults_phase(
 def _load_alignment_inputs(command: AlignCommand) -> _LoadedAlignInputs:
     meta = load_projection_payload(command.data)
     geometry_meta = meta.geometry_inputs()
+    if meta.align_params is not None:
+        logging.warning(
+            "%s carries pose corrections; tomojax align starts from the nominal geometry "
+            "and replaces them (tomojax.align corrects on top of them)",
+            command.data,
+        )
     initial_grid_override = (
         command.grid if (meta.grid is None and command.grid is not None) else None
     )

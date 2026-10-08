@@ -158,7 +158,14 @@ def _multires_run_is_complete(
     resume_state: AlignMultiresResumeState | None,
     last_level_index_processed: int,
     level_count: int,
+    levels_skipped: bool,
 ) -> bool:
+    """Whether the run has nothing left to do.
+
+    A level that does not fit in device memory ends the run with it and every
+    finer level skipped (``levels_skipped``): those count as done, so resuming
+    does not retry them.
+    """
     return (
         pose_params is not None
         and not stopped_by_observer
@@ -166,6 +173,7 @@ def _multires_run_is_complete(
             (resume_state is not None and resume_state.run_complete)
             or last_level_index_processed == level_count - 1
             or level_count == 0
+            or levels_skipped
         )
     )
 
@@ -230,7 +238,7 @@ def _emit_run_completion_checkpoint(
     pose_params: jnp.ndarray | None,
     run_complete: bool,
     x_final: jnp.ndarray,
-    level_count: int,
+    levels_run: int,
     executed_outer_iters: int,
     loss_hist: list[float],
     global_outer_stats: list[OuterStat],
@@ -248,7 +256,7 @@ def _emit_run_completion_checkpoint(
             x=x_final,
             pose_params=pose_params,
             motion_coeffs=None,
-            level_index=max(0, level_count - 1),
+            level_index=max(0, levels_run - 1),  # the last level that ran
             level_factor=1,
             completed_outer_iters_in_level=0,
             global_outer_iters_completed=int(executed_outer_iters),

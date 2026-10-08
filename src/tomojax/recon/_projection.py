@@ -12,24 +12,20 @@ source, with CUDA kernels where the parallel models use Pallas.
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass
-from functools import partial
 from typing import TYPE_CHECKING, Literal
 
 import jax
 import jax.numpy as jnp
-from jax.sharding import Mesh, NamedSharding, PartitionSpec
-import numpy as np
+from jax.sharding import PartitionSpec
 
 from tomojax.core.cone import ConeModel, cone_backproject, cone_model, cone_project, use_cuda_cone
 from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
+from tomojax.recon._devices import VIEWS, ViewSplit, pad_views
 from tomojax.recon._host_stream import read_views
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
-
-    from jaxlib._jax import Device  # jax.Device, as a type
+    from collections.abc import Callable
 
     from tomojax.geometry import Detector, Grid
 
@@ -112,71 +108,35 @@ def resolve_geometry_projector(
     return cone, backend
 
 
-_VIEWS = "views"
+def _on_devices[T](
+    split: ViewSplit,
+    ops: _Batches,
+    local: Callable[..., T],
+    *,
+    shared: tuple[jax.Array, ...] = (),
+    views: tuple[jax.Array, ...] = (),
+    out_specs: PartitionSpec,
+) -> T:
+    """``local(share, *shared, *views)`` on every device of ``split``, with its views.
 
-
-@dataclass(frozen=True)
-class ViewSplit:
-    """``n`` views shared evenly among several devices, each holding the whole volume.
-
-    Each device projects its own views and backprojects them into its own volume,
-    and the volumes are summed. So that the shares are equal, the views are padded
-    to :attr:`total` with copies of the last one that count for nothing: their
-    projections are zero and their images are ignored. Sinogram-sized arrays of
-    a split have :attr:`total` views, the padding rows zero (see :meth:`place`).
+    ``shared`` arrays (a volume) are whole on every device; ``views`` stacks are
+    cut into the devices' views, padded with zero views first if need be.
     """
+    per_view = tuple(pad_views(a, split.total, repeat=True) for a in ops.per_view())
 
-    mesh: Mesh
-    n: int
+    def body(per_view: tuple[jax.Array, ...], counts: jax.Array, shared: tuple, views: tuple) -> T:
+        return local(ops.share(per_view, counts), *shared, *views)
 
-    @property
-    def total(self) -> int:
-        return -(-self.n // self.mesh.size) * self.mesh.size
-
-    def pad(self, stack: jax.Array) -> jax.Array:
-        """``stack`` of ``n`` views, padded with zero views to :attr:`total`."""
-        if int(stack.shape[0]) == self.total:
-            return stack
-        widths = [(0, self.total - int(stack.shape[0]))] + [(0, 0)] * (stack.ndim - 1)
-        return jnp.pad(stack, widths)
-
-    def place(self, stack: jax.Array | np.ndarray) -> jax.Array:
-        """``stack`` padded and laid out with each device's views on that device."""
-        sharding = NamedSharding(self.mesh, PartitionSpec(_VIEWS))
-        return jax.device_put(self.pad(jnp.asarray(stack, jnp.float32)), sharding)
-
-    def run[T](
-        self,
-        ops: _Batches,
-        local: Callable[..., T],
-        *,
-        shared: tuple[jax.Array, ...] = (),
-        views: tuple[jax.Array, ...] = (),
-        out_specs: PartitionSpec,
-    ) -> T:
-        """``local(share, *shared, *views)`` on every device, with its share of the views.
-
-        ``shared`` arrays (a volume) are whole on every device; ``views`` stacks
-        are cut into the devices' views, padded first if need be.
-        """
-        per_view = tuple(_pad_edge(a, self.total) for a in ops.per_view())
-        live = jnp.arange(self.total) < self.n
-
-        def body(
-            per_view: tuple[jax.Array, ...], live: jax.Array, shared: tuple, views: tuple
-        ) -> T:
-            return local(ops.restricted(per_view, live), *shared, *views)
-
-        split, whole = PartitionSpec(_VIEWS), PartitionSpec()
-        # Unchecked: the projectors' loops start from zeros that the device's views
-        # then change, which the check would make every loop declare.
-        return jax.shard_map(
-            body,
-            mesh=self.mesh,
-            in_specs=(split, split, whole, split),
-            out_specs=out_specs,
-            check_vma=False,
-        )(per_view, live, shared, tuple(self.pad(a) for a in views))
+    cut, whole = PartitionSpec(VIEWS), PartitionSpec()
+    # Unchecked: the projectors' loops start from zeros that the device's views
+    # then change, which the check would make every loop declare.
+    return jax.shard_map(
+        body,
+        mesh=split.mesh,
+        in_specs=(cut, cut, whole, cut),
+        out_specs=out_specs,
+        check_vma=False,
+    )(per_view, split.counted(), shared, tuple(pad_views(a, split.total) for a in views))
 
 
 def _summed[T](
@@ -192,22 +152,9 @@ def _summed[T](
         return local(ops, *shared, *views)
 
     def on_device(share: _Batches, *arrays: jax.Array) -> T:
-        return jax.lax.psum(local(share, *arrays), _VIEWS)
+        return jax.lax.psum(local(share, *arrays), VIEWS)
 
-    return split.run(ops, on_device, shared=shared, views=views, out_specs=PartitionSpec())
-
-
-def view_split(devices: Sequence[Device] | None, n_views: int) -> ViewSplit | None:
-    """The split of ``n_views`` among ``devices``, or None for one device (or None)."""
-    if devices is None or len(devices) < 2:
-        return None
-    return ViewSplit(Mesh(np.array(tuple(devices)), (_VIEWS,)), int(n_views))
-
-
-def _pad_edge(array: jax.Array, total: int) -> jax.Array:
-    """Per-view ``array`` padded to ``total`` views by repeating its last view."""
-    widths = [(0, total - int(array.shape[0]))] + [(0, 0)] * (array.ndim - 1)
-    return jnp.pad(array, widths, mode="edge")
+    return _on_devices(split, ops, on_device, shared=shared, views=views, out_specs=PartitionSpec())
 
 
 class _Batches:
@@ -227,11 +174,9 @@ class _Batches:
         absolute_weights: bool,
     ) -> None:
         self.batch_size = batch_size
-        self.n = int(poses.shape[0])
-        self.size = min(batch_size, self.n)
-        self.count = (self.n + self.size - 1) // self.size
+        self.lay_out(int(poses.shape[0]))
         self.poses, self.grid, self.detector, self.det_grid = poses, grid, detector, det_grid
-        self.live: jax.Array | None = None  # which views count, on a device's share
+        self.counts: jax.Array | None = None  # on a device's share: which views count
         self.coefficients: jax.Array | None = None
         self.backend, self.model = backend, model
         self.interpolation, self.absolute_weights = joseph_interpolation, absolute_weights
@@ -244,19 +189,23 @@ class _Batches:
 
             self.coefficients = plane_coefficients(poses, grid, detector)
 
+    def lay_out(self, n: int) -> None:
+        """Batch ``n`` views."""
+        self.n = n
+        self.size = min(self.batch_size, n)
+        self.count = (n + self.size - 1) // self.size
+
     def per_view(self) -> tuple[jax.Array, ...]:
         """The per-view arrays a device's share of the views is cut from."""
         return (self.poses,) if self.coefficients is None else (self.poses, self.coefficients)
 
-    def restricted(self, per_view: tuple[jax.Array, ...], live: jax.Array) -> _Batches:
-        """These operators over the views of ``per_view``, of which ``live`` count."""
+    def share(self, per_view: tuple[jax.Array, ...], counts: jax.Array) -> _Batches:
+        """These operators over one device's ``per_view`` arrays, of which ``counts`` count."""
         share = copy.copy(self)
-        share.poses = per_view[0]
-        share.coefficients = per_view[1] if len(per_view) > 1 else None
-        share.n = int(share.poses.shape[0])
-        share.size = min(self.batch_size, share.n)
-        share.count = (share.n + share.size - 1) // share.size
-        share.live = live
+        share.poses, *coefficients = per_view
+        share.coefficients = coefficients[0] if coefficients else None
+        share.lay_out(int(share.poses.shape[0]))
+        share.counts = counts
         return share
 
     def select(self, chunk: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
@@ -265,15 +214,14 @@ class _Batches:
         # The final shifted batch overlaps earlier views. Its adjoint must count
         # only new views; forward writes the same overlapping values again.
         valid = start + jnp.arange(self.size) >= chunk * self.size
-        if self.live is not None:
+        if self.counts is not None:
             valid = valid & self.counted(start)
         return start, batch, valid
 
     def counted(self, start: jax.Array) -> jax.Array:
-        """Which of the batch's views count: all but a split's padding."""
-        if self.live is None:
-            return jnp.ones((self.size,), bool)
-        return jax.lax.dynamic_slice(self.live, (start,), (self.size,))
+        """Which views of the batch at ``start`` count, on a device's share."""
+        assert self.counts is not None
+        return jax.lax.dynamic_slice(self.counts, (start,), (self.size,))
 
     def images(self, stack: jax.Array, start: jax.Array) -> jax.Array:
         shape = (self.size, self.detector.nv, self.detector.nu)
@@ -378,9 +326,9 @@ def projection_operators(
     cancellation bounds with negative interpolation lobes. ``adjoint(stacks,
     combine)`` applies ``combine`` to batches of several stacks, so a derived
     sinogram such as ``abs(a) + abs(b)`` is never stored whole; ``accumulate``
-    adds the result to an existing volume, in place for Joseph on CUDA. With a
-    ``split``, the views are shared among its devices and the sinograms both
-    take and return have its padded :attr:`ViewSplit.total` views.
+    adds the result to an existing volume, in place for Joseph on CUDA on one
+    device. With a ``split``, the views are shared among its devices and the
+    sinograms both take and return have its padded :attr:`ViewSplit.total` views.
     """
     ops = _Batches(
         poses,
@@ -397,7 +345,9 @@ def projection_operators(
     def forward(volume: jax.Array) -> jax.Array:
         if split is None:
             return _forward_views(ops, volume)
-        return split.run(ops, _forward_views, shared=(volume,), out_specs=PartitionSpec(_VIEWS))
+        return _on_devices(
+            split, ops, _forward_views, shared=(volume,), out_specs=PartitionSpec(VIEWS)
+        )
 
     def adjoint(
         images: jax.Array | tuple[jax.Array, ...],
@@ -405,6 +355,8 @@ def projection_operators(
         accumulate: jax.Array | None = None,
     ) -> jax.Array:
         stacks = tuple(images) if isinstance(images, tuple | list) else (images,)
+        if combine is None and len(stacks) != 1:
+            raise ValueError("adjoint: several stacks need a combine")
         if split is None:
             initial = ops.zeros_volume() if accumulate is None else accumulate
             return _adjoint_views(ops, stacks, combine, initial)
@@ -422,7 +374,7 @@ def _forward_views(ops: _Batches, volume: jax.Array) -> jax.Array:
     def body(chunk: jax.Array, output: jax.Array) -> jax.Array:
         start, batch, _ = ops.select(chunk)
         projected = ops.project(volume, start, batch)
-        if ops.live is not None:  # a split's padding projects to zero
+        if ops.counts is not None:  # a split's padding projects to zero
             projected = jnp.where(ops.counted(start)[:, None, None], projected, 0.0)
         return jax.lax.dynamic_update_slice(output, projected, (start, 0, 0))
 
@@ -454,30 +406,19 @@ def _measured(ops: _Batches, data: jax.Array, start: jax.Array, *, stream: bool)
 
 
 def _residual_views(
-    ops: _Batches, volume: jax.Array, data: jax.Array, *, stream: bool
+    ops: _Batches, volume: jax.Array | None, data: jax.Array, *, stream: bool
 ) -> tuple[jax.Array, jax.Array]:
-    """``0.5 ||A x - y||^2`` and ``A^T (A x - y)``, batch by batch."""
+    """``0.5 ||A x - y||^2`` and ``A^T (A x - y)``, batch by batch; ``x = 0`` for None."""
 
     def body(chunk: jax.Array, carry: tuple[jax.Array, jax.Array]) -> tuple[jax.Array, jax.Array]:
         value, gradient = carry
         start, batch, valid = ops.select(chunk)
-        residual = ops.project(volume, start, batch) - _measured(ops, data, start, stream=stream)
+        measured = _measured(ops, data, start, stream=stream)
+        projected = 0.0 if volume is None else ops.project(volume, start, batch)
+        residual = projected - measured
         residual = jnp.where(valid[:, None, None], residual, 0.0)
         value = value + 0.5 * jnp.vdot(residual, residual).real
         return value, ops.backproject(residual, start, batch, gradient)
-
-    return jax.lax.fori_loop(0, ops.count, body, (jnp.float32(0), ops.zeros_volume()))
-
-
-def _data_views(ops: _Batches, data: jax.Array, *, stream: bool) -> tuple[jax.Array, jax.Array]:
-    """``0.5 ||y||^2`` and ``A^T y``, batch by batch."""
-
-    def body(chunk: jax.Array, carry: tuple[jax.Array, jax.Array]) -> tuple[jax.Array, jax.Array]:
-        value, backprojection = carry
-        start, batch, valid = ops.select(chunk)
-        measured = jnp.where(valid[:, None, None], _measured(ops, data, start, stream=stream), 0.0)
-        value = value + 0.5 * jnp.vdot(measured, measured).real
-        return value, ops.backproject(measured, start, batch, backprojection)
 
     return jax.lax.fori_loop(0, ops.count, body, (jnp.float32(0), ops.zeros_volume()))
 
@@ -493,17 +434,17 @@ def least_squares_operators(
     *,
     stream: bool = False,
     split: ViewSplit | None = None,
-) -> Callable[[jax.Array, jax.Array], tuple[jax.Array, jax.Array]]:
+) -> Callable[[jax.Array | None, jax.Array], tuple[jax.Array, jax.Array]]:
     """Return the value and gradient of ``0.5 ||A x - y||^2``, ``(x, y) -> (value, A^T r)``.
 
     Each view batch is projected, compared with the data and transposed before
-    the next, so no sinogram-sized intermediate is ever stored. With
-    ``stream``, ``y`` is the key of a host array registered with
-    :func:`host_source`, read one batch at a time. With a ``split``, the views
-    are shared among its devices; ``y`` is best placed with :meth:`ViewSplit.place`.
+    the next, so no sinogram-sized intermediate is ever stored. ``x = None`` is
+    zero, projected for free. With ``stream``, ``y`` is the key of a host array
+    registered with :func:`host_source`, read one batch at a time. With a
+    ``split``, the views are shared among its devices; ``y`` is best placed with
+    :meth:`ViewSplit.place`. Streamed data cannot be split.
     """
-    if stream and split is not None:
-        raise ValueError("streamed data cannot be split among devices")
+    assert not (stream and split is not None), "streamed data cannot be split"
     ops = _Batches(
         poses,
         grid,
@@ -516,49 +457,17 @@ def least_squares_operators(
         absolute_weights=False,
     )
 
-    def value_and_gradient(volume: jax.Array, data: jax.Array) -> tuple[jax.Array, jax.Array]:
-        local = partial(_residual_views, stream=stream)
-        return _summed(split, ops, local, shared=(volume,), views=(data,))
+    def at(share: _Batches, *arrays: jax.Array) -> tuple[jax.Array, jax.Array]:
+        *volume, data = arrays
+        return _residual_views(share, volume[0] if volume else None, data, stream=stream)
+
+    def value_and_gradient(
+        volume: jax.Array | None, data: jax.Array
+    ) -> tuple[jax.Array, jax.Array]:
+        shared = () if volume is None else (volume,)
+        return _summed(split, ops, at, shared=shared, views=(data,))
 
     return value_and_gradient
-
-
-def least_squares_at_zero(
-    poses: jax.Array,
-    grid: Grid,
-    detector: Detector,
-    backend: str,
-    batch_size: int,
-    model: str | ConeModel = "ray",
-    joseph_interpolation: str = "linear",
-    *,
-    stream: bool = False,
-    split: ViewSplit | None = None,
-) -> Callable[[jax.Array], tuple[jax.Array, jax.Array]]:
-    """Return ``y -> (0.5 ||y||^2, A^T y)``, least squares and its negated gradient at zero.
-
-    These are the value of ``0.5 ||A x - y||^2`` at ``x = 0`` and minus its
-    gradient, with no projection of the zero volume. ``stream`` and ``split``
-    are as for :func:`least_squares_operators`.
-    """
-    if stream and split is not None:
-        raise ValueError("streamed data cannot be split among devices")
-    ops = _Batches(
-        poses,
-        grid,
-        detector,
-        None,
-        backend,
-        batch_size,
-        model,
-        joseph_interpolation,
-        absolute_weights=False,
-    )
-
-    def at_zero(data: jax.Array) -> tuple[jax.Array, jax.Array]:
-        return _summed(split, ops, partial(_data_views, stream=stream), views=(data,))
-
-    return at_zero
 
 
 def normal_operator_norm(

@@ -382,7 +382,7 @@ def test_cone_pose_alignment_recovers_each_degree_of_freedom(dof):
         grid=grid,
         translation_frame="detector",
         active=(dof,),
-        beam=True,
+        cone_beam=True,
     )[1]
     scale = np.rad2deg(1) if k < 3 else 1.0
     np.testing.assert_allclose(np.asarray(params)[:, k] * scale, expected[:, k] * scale, atol=2e-3)
@@ -443,7 +443,11 @@ def test_calibrate_cone_axis_recovers_the_axis_offset_and_detector_roll():
 def test_calibrate_cone_axis_finds_the_offset_with_the_jax_backend():
     n = 32
     geometry, data = _blob_scan(n, 60, ConeBeam(3 * n, 4.5 * n, axis_offset=2.4))
-    config = ConeAxisConfig(estimate_roll=False, slices=4, fdk=FDKConfig("hann", "jax", 60))
+    config = ConeAxisConfig(
+        estimate_roll=False,
+        slices=4,
+        fdk=FDKConfig(filter_name="hann", backend="jax", views_per_batch=60),
+    )
     calibration = calibrate_cone_axis(
         geometry, geometry.grid, geometry.detector, data, config=config
     )

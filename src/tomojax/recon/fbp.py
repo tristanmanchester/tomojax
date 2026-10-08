@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FBPConfig:
     """Configuration for filtered backprojection.
 

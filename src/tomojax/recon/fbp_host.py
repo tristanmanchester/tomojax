@@ -29,7 +29,7 @@ from .fbp import (
 )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FBPHostConfig:
     """Control slab storage and filter batches for :func:`fbp_host`.
 

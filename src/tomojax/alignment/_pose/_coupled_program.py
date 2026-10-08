@@ -65,8 +65,6 @@ class CoupledSpec:
     gn_joint_rtol: float
     gn_joint_iters: int
     has_smoothness: bool
-    # Cone beams project each view in its lab frame (CoupledArrays.frames).
-    cone: bool = False
 
 
 class CoupledArrays(NamedTuple):
@@ -130,7 +128,7 @@ def _build_program(
     cone_backend = "cuda" if backend == "pallas" else "jax"
 
     def forward(t, x, frames=None):
-        if spec.cone:
+        if spec.jacobian.cone_beam:  # each view in its lab frame
             assert frames is not None
             coeff = frame_coefficients(t, frames, spec.grid, spec.detector)
             return cone_project(masked(x), coeff, spec.grid, spec.detector, backend=cone_backend)
@@ -162,7 +160,7 @@ def _build_program(
         )
 
     def adjoint(t, y, frames=None):
-        if spec.cone:
+        if spec.jacobian.cone_beam:
             assert frames is not None
             coeff = frame_coefficients(t, frames, spec.grid, spec.detector)
             return masked(
@@ -205,8 +203,9 @@ def _build_program(
 
     # Data-space work runs over batches of views: projecting, comparing and
     # transposing a batch before the next, so no projection-sized array is
-    # stored (but one in the pose-eliminated solve). The last batch is shifted
-    # back to end at the last view; ``valid`` marks its views not seen before.
+    # stored but the cached pose columns (POSE_WIDTH of them, when they fit)
+    # and one in the pose-eliminated solve. The last batch is shifted back to
+    # end at the last view; ``valid`` marks its views not seen before.
     size = min(n_views, _VIEWS_PER_BATCH)
     count = -(-n_views // size)
     volume_zeros = jnp.zeros((spec.grid.nx, spec.grid.ny, spec.grid.nz), jnp.float32)
@@ -294,10 +293,12 @@ def _build_program(
         if ops.cached is not None:
             gram = jnp.einsum("nkp,nlp->nkl", ops.cached, ops.cached, precision=highest)
         else:
-            gram = jax.lax.map(
-                lambda i: jnp.matmul(ops.view_columns(i), ops.view_columns(i).T, precision=highest),
-                jnp.arange(n_views),
-            )
+
+            def view_gram(i):
+                columns = ops.view_columns(i)
+                return jnp.matmul(columns, columns.T, precision=highest)
+
+            gram = jax.lax.map(view_gram, jnp.arange(n_views))
         solve_pose = pose_block_solver(
             gram + cfg.gn_damping * jnp.eye(p.shape[1], dtype=p.dtype),
             arrays.smoothness * active,

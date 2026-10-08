@@ -87,6 +87,17 @@ def test_reconstruct_runs_every_method(kind: str) -> None:
         tj.reconstruct(scan, "sirt")  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("method", ["fista", "spdhg"])
+def test_nonnegative_is_honoured(method: str) -> None:
+    geometry = _geometries(16)["parallel"]
+    negative = -np.asarray(tj.project(geometry, _phantom(16)))  # a negative object's data
+    scan = tj.Scan(negative, geometry)
+    options = {"iterations": 10, "tv_weight": 1e-4}
+    free = np.asarray(tj.reconstruct(scan, method, nonnegative=False, **options).volume)
+    bounded = np.asarray(tj.reconstruct(scan, method, nonnegative=True, **options).volume)
+    assert free.min() < -0.1 and bounded.min() >= 0.0
+
+
 def test_reconstruct_on_another_grid() -> None:
     geometry = _geometries(16)["parallel"]
     scan = tj.Scan(np.asarray(tj.project(geometry, _phantom(16))), geometry)
@@ -116,7 +127,7 @@ def test_scans_and_reconstructions_round_trip_through_files(kind: str, tmp_path:
     tj.save(tmp_path / "recon.nxs", recon)
     back = tj.load_reconstruction(tmp_path / "recon.nxs")
     np.testing.assert_allclose(back.volume, np.asarray(recon.volume), rtol=1e-6, atol=1e-6)
-    assert back.method == "fbp"
+    assert back.method == "fbp" and back.info == recon.info and back.grid == recon.grid
     with pytest.raises(FileNotFoundError, match="no such file"):
         tj.load(tmp_path / "missing.nxs")
 
@@ -170,6 +181,26 @@ def test_aligning_a_loaded_scan_keeps_its_corrections(tmp_path: Path) -> None:
 
     assert result.scan.poses is not None and np.abs(result.poses).max() > 0.5
     np.testing.assert_allclose(result.scan.poses, result.poses, atol=1e-6)
+
+
+def test_the_least_magnified_segment_decides_the_binning_suggestion() -> None:
+    grid = tj.Grid(16, 16, 16, 1.0, 1.0, 1.0)
+    fine = tj.Detector(40, 40, 0.4, 0.4)
+    angles = np.linspace(0, 360, 6, endpoint=False)
+    less = tj.ConeGeometry(grid, fine, angles, tj.ConeBeam(64.0, 96.0))  # magnification 1.5
+    more = tj.ConeGeometry(grid, fine, angles, tj.ConeBeam(32.0, 96.0))  # magnification 3
+    for segments in ((less, more), (more, less)):
+        scan = tj.Scan(np.zeros((12, 40, 40), np.float32), tj.geometry.ConeSegments(segments))
+        with pytest.warns(UserWarning, match=r"3\.8 times more finely"):
+            tj.reconstruct(scan, "cgls", iterations=1)
+
+
+def test_setup_alignment_refuses_scans_that_carry_poses() -> None:
+    geometry = _geometries(12)["parallel"]
+    posed = tj.align(tj.Scan(np.asarray(tj.project(geometry, _phantom(12))), geometry), levels=(1,))
+    for mode in ("cor", "full"):
+        with pytest.raises(ValueError, match="mode='pose'"):
+            tj.align(posed.scan, mode=mode)
 
 
 def test_binning_averages_pixels_and_keeps_the_detector_in_place():

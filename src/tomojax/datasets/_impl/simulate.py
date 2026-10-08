@@ -69,7 +69,7 @@ class SimulatedData(TypedDict):
     simulation_artefacts: ArtefactMetadata | None
 
 
-@dataclass
+@dataclass(kw_only=True)
 class SimConfig:
     """Configuration for deterministic synthetic dataset generation."""
 

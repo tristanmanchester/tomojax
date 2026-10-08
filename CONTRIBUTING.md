@@ -92,10 +92,12 @@ surface, check the change against these rules.
 - the public API matches `tests/guardrails/api_surface.txt`, so every change
   to it shows in review;
 - the measures in `tests/guardrails/ratchets.json` may fall but never rise:
-  configuration fields, exported names, CLI flags, files over 1000 lines, lint
-  suppressions, functions over the complexity limits, type errors in modules
-  CI does not yet type-check, public functions with positional options, and
-  other known debt;
+  configuration fields, exported names, CLI flags, the length of every file
+  over 800 lines and every function over 100, lint suppressions, functions
+  over the complexity limits, type errors in modules CI does not yet
+  type-check, public functions, methods and `*Config` classes taking options
+  positionally, code that assumes the first device, private imports in tests,
+  and other known debt;
 - CLI options map to Python keywords, and `--help` stays short.
 
 After an intended change, run `just guardrails` and commit the updated

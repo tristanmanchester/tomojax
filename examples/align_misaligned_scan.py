@@ -109,7 +109,7 @@ def run_example(
         grid=data["grid"],
         translation_frame="detector",
         active=("alpha", "beta", "phi", "dx", "dz"),
-        beam=False,
+        cone_beam=False,
     )[:2]
     difference = result.poses[:, :5] - truth_params[:, :5]
 

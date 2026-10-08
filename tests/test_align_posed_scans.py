@@ -97,6 +97,14 @@ def test_segment_detectors_keep_their_offsets_when_binned():
     assert cone_model(tj.ParallelGeometry(low.grid, low.detector, [0.0]), low.detector) is None
 
 
+def test_segments_refuse_detectors_of_another_pitch_when_made():
+    grid = tj.Grid(8, 8, 8, 1.0, 1.0, 1.0)
+    one = tj.ConeGeometry(grid, tj.Detector(16, 16, 1.0, 1.0), [0.0], tj.ConeBeam(30.0, 50.0))
+    other = tj.ConeGeometry(grid, tj.Detector(16, 16, 0.5, 1.0), [0.0], tj.ConeBeam(30.0, 50.0))
+    with pytest.raises(ValueError, match="same pixel pitch"):
+        tj.geometry.ConeSegments((one, other))
+
+
 def test_fdk_of_repeated_turns_matches_one_turn():
     grid = tj.Grid(16, 16, 16, 1.0, 1.0, 1.0)
     detector = tj.Detector(24, 24, 1.0, 1.0)
@@ -140,28 +148,75 @@ def test_align_recovers_the_misregistration_of_a_multi_orbit_scan():
     assert np.ptp(misregistered.reshape(3, views).mean(axis=1)) > 2.9
 
 
-def test_a_level_that_does_not_fit_in_device_memory_ends_alignment_at_the_one_before(
-    monkeypatch,
-):
+def _fine_level_does_not_fit(monkeypatch, n):
+    """Make the joint update at grid size ``n`` report that it needs 16 GiB; count checks."""
     # check-public-imports: allow-private
     import tomojax.alignment._pose._coupled_objective as coupled
 
+    checked = coupled._check_device_memory
+    sizes = []
+
+    def check(arrays, spec):
+        sizes.append(spec.grid.nx)
+        if spec.grid.nx == n:
+            raise coupled.AlignmentMemoryError(2**34, 2**30)
+        return checked(arrays, spec)
+
+    monkeypatch.setattr(coupled, "_check_device_memory", check)
+    return sizes
+
+
+def test_a_level_that_does_not_fit_in_device_memory_ends_alignment_at_the_one_before(
+    monkeypatch,
+):
     n = 16
     grid = tj.Grid(n, n, n, 1.0, 1.0, 1.0)
     geometry = tj.ParallelGeometry(grid, tj.Detector(n, n, 1.0, 1.0), np.linspace(0, 180, 20))
     scan = tj.Scan(np.asarray(tj.project(geometry, _phantom(n))), geometry)
-    checked = coupled._check_device_memory
+    _fine_level_does_not_fit(monkeypatch, n)
 
-    def check(arrays, spec, n_views):
-        if spec.grid.nx == n:  # the finest level
-            raise coupled.AlignmentMemoryError(2**34, 2**30)
-        checked(arrays, spec, n_views)
+    with pytest.warns(UserWarning, match=r"stops at factor 2, skipping factors \[1\]") as caught:
+        result = tj.align(scan, levels=(2, 1))
 
-    monkeypatch.setattr(coupled, "_check_device_memory", check)
-
-    result = tj.align(scan, levels=(2, 1))
-
+    (skip,) = [w for w in caught if "skipping factors" in str(w.message)]
+    assert skip.filename == __file__  # the caller's line, not the library's
+    assert result.info["factors"] == [2]
     assert result.info["factors_skipped"] == [1]
     assert np.asarray(result.volume).shape == (n, n, n)
     with pytest.raises(MemoryError, match="needs 16.0 GiB"):
         tj.align(scan, levels=(1,))
+
+
+def test_a_run_ended_by_a_level_that_does_not_fit_is_complete(monkeypatch):
+    from tomojax.alignment import align_multires, alignment_plan
+
+    n = 16
+    grid = tj.Grid(n, n, n, 1.0, 1.0, 1.0)
+    detector = tj.Detector(n, n, 1.0, 1.0)
+    geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 20))
+    data = tj.project(geometry, _phantom(n))
+    config = alignment_plan("pose", grid, levels=(2, 1)).config
+    sizes = _fine_level_does_not_fit(monkeypatch, n)
+    checkpoints = []
+
+    with pytest.warns(UserWarning, match="skipping factors"):
+        volume, params, _ = align_multires(
+            geometry,
+            grid,
+            detector,
+            data,
+            factors=(2, 1),
+            config=config,
+            checkpoint_callback=checkpoints.append,
+        )
+
+    assert checkpoints[-1].run_complete
+    assert sizes == [n // 2, n]
+    resumed_volume, resumed_params, info = align_multires(
+        geometry, grid, detector, data, factors=(2, 1), config=config, resume_state=checkpoints[-1]
+    )
+    assert sizes == [n // 2, n]  # the skipped level is not retried
+    assert info["factors"] == [2]
+    assert info["factors_skipped"] == [1]
+    np.testing.assert_allclose(resumed_volume, volume, atol=1e-6)
+    np.testing.assert_allclose(resumed_params, params, atol=1e-6)

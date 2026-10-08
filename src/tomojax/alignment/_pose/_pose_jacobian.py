@@ -34,7 +34,7 @@ class PoseJacobianOptions:
     integrator: Literal["sampled", "exact", "joseph", "joseph_cubic"]
     jacobian: Literal["central", "autodiff"]
     # Cone beams project each view in its lab frame (``frame_i`` below).
-    cone: bool = False
+    cone_beam: bool = False
 
     @classmethod
     def from_config(cls, cfg: AlignConfig) -> PoseJacobianOptions:
@@ -60,7 +60,7 @@ def build_pose_prediction_and_columns(ctx: _PoseObjectiveContext) -> Callable:
         grid=ctx.grid,
         detector=ctx.detector,
         det_grid=ctx.det_grid,
-        options=replace(PoseJacobianOptions.from_config(ctx.cfg), cone=ctx.cone is not None),
+        options=replace(PoseJacobianOptions.from_config(ctx.cfg), cone_beam=ctx.cone is not None),
     )
 
 
@@ -96,11 +96,11 @@ def pose_prediction_and_columns(
     joseph = options.integrator.startswith("joseph")
     # Cone views use central differences of the CUDA forward, which has no pose
     # derivative; autodiff columns use the differentiable JAX reference.
-    central = options.jacobian == "central" or (options.cone and _cuda())
-    cone_backend = "jax" if options.cone and not central else "pallas"
+    central = options.jacobian == "central" or (options.cone_beam and _cuda())
+    cone_backend = "jax" if options.cone_beam and not central else "pallas"
 
     def _pred_flat(t_i: jnp.ndarray, masked_vol: jnp.ndarray) -> jnp.ndarray:
-        if options.cone:
+        if options.cone_beam:
             return forward_project_view_T(
                 t_i, grid, detector, masked_vol, projector_backend=cone_backend, frames=frame_i
             ).ravel()

@@ -26,6 +26,10 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src" / "tomojax"
@@ -51,7 +55,10 @@ EXPERT_MODULES = (
     "tomojax.datasets.api",
 )
 CLI_COMMANDS = ("inspect", "import", "preprocess", "recon", "align", "export", "simulate")
-LONG_FILE_LINES = 1000
+# Files and functions longer than these are recorded with their length, which
+# may only fall: debt inside an already long one counts too.
+LONG_FILE_LINES = 800
+LONG_FUNCTION_LINES = 100
 # Public functions whose leading optional argument is deliberately positional.
 POSITIONAL_OPTIONS_ALLOWED = {"tomojax.reconstruct": ("method",)}
 
@@ -178,25 +185,75 @@ def _type_errors() -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
+def _file_lines() -> dict[str, int]:
+    """Files over :data:`LONG_FILE_LINES`, with their length."""
+    lengths = {
+        _relative(p): len(p.read_text(encoding="utf-8").splitlines()) for p in _python_files()
+    }
+    return {path: n for path, n in lengths.items() if n > LONG_FILE_LINES}
+
+
+def _function_lines() -> dict[str, int]:
+    """Functions over :data:`LONG_FUNCTION_LINES`, as ``path::qualified.name`` with their length."""
+    found: dict[str, int] = {}
+
+    def visit(node: ast.AST, prefix: str, path: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                name = f"{prefix}{child.name}"
+                if not isinstance(child, ast.ClassDef):
+                    length = (child.end_lineno or child.lineno) - child.lineno + 1
+                    if length > LONG_FUNCTION_LINES:
+                        found[f"{path}::{name}"] = length
+                visit(child, f"{name}.", path)
+
+    for p in _python_files():
+        visit(ast.parse(p.read_text(encoding="utf-8")), "", _relative(p))
+    return dict(sorted(found.items()))
+
+
+def _test_private_imports() -> int:
+    """Test imports of private modules, each marked ``check-public-imports: allow-private``."""
+    marker = re.compile(r"check-public-imports:\s*allow-private")
+    tests = ROOT / "tests"
+    return sum(len(marker.findall(p.read_text(encoding="utf-8"))) for p in tests.rglob("*.py"))
+
+
+def _options_of(qualified: str, obj: Callable[..., object]) -> list[str]:
+    """``obj``'s optional arguments that may be passed positionally."""
+    allowed = POSITIONAL_OPTIONS_ALLOWED.get(qualified, ())
+    found = []
+    for parameter in inspect.signature(obj).parameters.values():
+        positional = parameter.kind in {
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        }
+        has_default = parameter.default is not inspect.Parameter.empty
+        if positional and has_default and parameter.name not in allowed:
+            found.append(f"{qualified}({parameter.name})")
+    return found
+
+
 def _positional_options() -> list[str]:
-    """Public functions taking an optional argument positionally."""
+    """Public functions, methods and configurations taking an option positionally.
+
+    Configurations are the public dataclasses named ``*Config``: all their
+    fields are options.
+    """
     found = []
     for module_name in PUBLIC_PACKAGES:
         module = importlib.import_module(module_name)
         for name in module.__all__:
             obj = getattr(module, name)
-            if not inspect.isfunction(obj):
-                continue
             qualified = f"{module_name}.{name}"
-            allowed = POSITIONAL_OPTIONS_ALLOWED.get(qualified, ())
-            for parameter in inspect.signature(obj).parameters.values():
-                positional = parameter.kind in {
-                    inspect.Parameter.POSITIONAL_ONLY,
-                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                }
-                has_default = parameter.default is not inspect.Parameter.empty
-                if positional and has_default and parameter.name not in allowed:
-                    found.append(f"{qualified}({parameter.name})")
+            if inspect.isfunction(obj):
+                found.extend(_options_of(qualified, obj))
+            elif inspect.isclass(obj):
+                if dataclasses.is_dataclass(obj) and name.endswith("Config"):
+                    found.extend(_options_of(qualified, obj))
+                for member, function in vars(obj).items():
+                    if inspect.isfunction(function) and not member.startswith("_"):
+                        found.extend(_options_of(f"{qualified}.{member}", function))
     return sorted(found)
 
 
@@ -227,11 +284,8 @@ def ratchets() -> dict[str, object]:
             for module in (*PUBLIC_PACKAGES, *EXPERT_MODULES)
         },
         "cli_flags": _cli_flags(),
-        "long_files": sorted(
-            _relative(p)
-            for p in _python_files()
-            if len(p.read_text(encoding="utf-8").splitlines()) > LONG_FILE_LINES
-        ),
+        "long_files": _file_lines(),
+        "long_functions": _function_lines(),
         "suppressions": {
             "noqa": _count(r"#\s*noqa"),
             "type: ignore": _count(r"#\s*type:\s*ignore"),
@@ -244,6 +298,11 @@ def ratchets() -> dict[str, object]:
         "params5_mentions": _count(r"\bparams5\b"),
         # Each normalises a user string by hand instead of through one parser.
         "string_normalisers": _count(r"\.replace\(\"[-_]\", \"[-_]\"\)"),
+        # Code assuming one device, now that work can be shared among several.
+        "first_device_probes": _count(r"jax\.devices\(\)\[0\]"),
+        # jaxlib's private modules, imported only for the Device type.
+        "jaxlib_private_imports": _count(r"\bjaxlib\._"),
+        "test_private_imports": _test_private_imports(),
     }
 
 

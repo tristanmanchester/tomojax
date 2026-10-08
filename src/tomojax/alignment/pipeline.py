@@ -80,7 +80,7 @@ def align(
         grid=grid,
         translation_frame=cast("PoseTranslationFrame", info["pose_translation_frame"]),
         active=info["active_pose_dofs"],
-        beam=is_cone_beam(geometry),
+        cone_beam=is_cone_beam(geometry),
     )
     if gauge is not None:
         info["gauge"] = gauge.to_dict()

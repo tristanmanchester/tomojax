@@ -19,10 +19,10 @@ from ._coupled_program import CoupledArrays, CoupledSpec, run_loss, run_update
 from ._pose_context import _PoseObjectiveContext
 from ._pose_jacobian import PoseJacobianOptions
 
-# Recomputing a view's five Jacobian columns costs a derivative projection,
-# and the joint solve applies them in every conjugate-gradient iteration, so
-# cache them whenever five sinograms fit in this share of free device memory.
-# Larger acquisitions recompute them per view instead.
+# Recomputing a view's POSE_WIDTH Jacobian columns costs a derivative
+# projection, and the joint solve applies them in every conjugate-gradient
+# iteration, so cache them whenever that many sinograms fit in this share of
+# free device memory. Larger acquisitions recompute them per view instead.
 _POSE_CACHE_FRACTION = 0.25
 # Fallback cap when free device memory cannot be queried.
 _POSE_CACHE_BYTES = 512 * 1024**2
@@ -49,33 +49,51 @@ class AlignmentMemoryError(MemoryError):
         )
 
 
-def _check_device_memory(arrays: CoupledArrays, spec: CoupledSpec, n_views: int) -> None:
-    """Raise :class:`AlignmentMemoryError` if the update cannot fit on the GPU.
+# The cheap estimate below must leave this factor of room before the
+# compiled update's own memory figure is skipped.
+_MEMORY_MARGIN = 2
+
+
+def _free_device_memory(array: jax.Array) -> int | None:
+    """The largest free block on the GPU holding ``array``, or None where it cannot be read."""
+    device = next(iter(array.devices()))
+    if device.platform != "gpu":
+        return None
+    stats = device.memory_stats() or {}
+    if "bytes_limit" not in stats:
+        return None
+    free = int(stats["bytes_limit"]) - int(stats.get("bytes_in_use", 0))
+    return min(free, int(stats.get("largest_free_block_bytes", free)))
+
+
+def _check_device_memory(arrays: CoupledArrays, spec: CoupledSpec) -> Callable | None:
+    """Raise :class:`AlignmentMemoryError` if the update cannot fit on its GPU.
 
     The update keeps about a dozen volume-sized and a few projection-sized
-    arrays; only near that size is it compiled ahead to read XLA's own figure,
-    since the check costs a second compilation.
+    arrays, plus the cached pose columns and per-pixel weights. Only when that
+    estimate comes within a factor of two of free memory is the update compiled
+    ahead to read XLA's own figure; the compiled update is then returned for
+    use, so it is compiled once.
     """
-    if jax.default_backend() != "gpu":
-        return
-    stats = jax.devices()[0].memory_stats() or {}
-    if "bytes_limit" not in stats:
-        return
-    free = int(stats["bytes_limit"]) - int(stats.get("bytes_in_use", 0))
-    available = min(free, int(stats.get("largest_free_block_bytes", free)))
+    available = _free_device_memory(arrays.projections)
+    if available is None:
+        return None
     grid, detector = spec.grid, spec.detector
+    n_views = int(arrays.poses.shape[0])
     volume = 4 * grid.nx * grid.ny * grid.nz
     sinogram = 4 * n_views * detector.nu * detector.nv
-    if 13 * volume + 3 * sinogram < available:
-        return
+    sinograms = 3 + (POSE_WIDTH if spec.cache_columns else 0) + (arrays.weights.ndim > 0)
+    if _MEMORY_MARGIN * (13 * volume + sinograms * sinogram) < available:
+        return None
     p = jax.ShapeDtypeStruct((n_views, POSE_WIDTH), jnp.float32)
     x = jax.ShapeDtypeStruct((grid.nx, grid.ny, grid.nz), jnp.float32)
-    analysis = run_update.lower(arrays, p, x, spec=spec).compile().memory_analysis()
-    if analysis is None:
-        return
-    needed = int(analysis.temp_size_in_bytes) + int(analysis.output_size_in_bytes)
-    if needed > available:
-        raise AlignmentMemoryError(needed, available)
+    compiled = run_update.lower(arrays, p, x, spec=spec).compile()
+    analysis = compiled.memory_analysis()
+    if analysis is not None:
+        needed = int(analysis.temp_size_in_bytes) + int(analysis.output_size_in_bytes)
+        if needed > available:
+            raise AlignmentMemoryError(needed, available)
+    return compiled
 
 
 @dataclass(frozen=True)
@@ -134,7 +152,7 @@ def build_coupled_objective(ctx: _PoseObjectiveContext) -> CoupledObjective:
         grid=ctx.grid,
         detector=ctx.detector,
         backend=backend,
-        jacobian=replace(PoseJacobianOptions.from_config(cfg), cone=ctx.cone is not None),
+        jacobian=replace(PoseJacobianOptions.from_config(cfg), cone_beam=ctx.cone is not None),
         cache_columns=cache_columns,
         regulariser=cfg.regulariser,
         huber_delta=float(cfg.huber_delta),
@@ -146,11 +164,10 @@ def build_coupled_objective(ctx: _PoseObjectiveContext) -> CoupledObjective:
         gn_joint_rtol=float(cfg.gn_joint_rtol),
         gn_joint_iters=int(cfg.gn_joint_iters),
         has_smoothness=bool(cfg.w_rot or cfg.w_trans),
-        cone=ctx.cone is not None,
     )
-    _check_device_memory(arrays, spec, ctx.n_views)
+    compiled = _check_device_memory(arrays, spec)
     return CoupledObjective(
-        partial(run_update, arrays, spec=spec),
+        partial(run_update, arrays, spec=spec) if compiled is None else partial(compiled, arrays),
         partial(run_loss, arrays, spec=spec),
         backend,
         cache_columns,

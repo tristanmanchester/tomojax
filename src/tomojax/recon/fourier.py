@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 _HOST_PIPELINE_MIN_BYTES = 64 * 1024**2
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FourierConfig:
     """Choose a portable NumPy reference or CUDA execution with fixed axial slabs.
 

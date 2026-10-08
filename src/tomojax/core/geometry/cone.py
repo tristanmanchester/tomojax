@@ -113,9 +113,9 @@ class ConeGeometry:
 
     def pose_for_view(self, i: int) -> PoseMatrix:
         """Return the world-from-object pose for one view."""
-        return tuple(map(tuple, self.poses(np.asarray([self.thetas_deg[i]]))[0]))
+        return tuple(map(tuple, self.poses(thetas_deg=np.asarray([self.thetas_deg[i]]))[0]))
 
-    def poses(self, thetas_deg: np.ndarray | None = None) -> np.ndarray:
+    def poses(self, *, thetas_deg: np.ndarray | None = None) -> np.ndarray:
         """Return every view's world-from-object pose as an ``(n, 4, 4)`` FP64 array."""
         angles = np.deg2rad(
             np.asarray(self.thetas_deg if thetas_deg is None else thetas_deg, dtype=np.float64)
@@ -196,6 +196,8 @@ class ConeSegments:
             detector, shared = segment.detector, first.detector
             if (detector.nu, detector.nv) != (shared.nu, shared.nv):
                 raise ValueError("ConeSegments' detectors have the same pixel count")
+            if (detector.du, detector.dv) != (shared.du, shared.dv):
+                raise ValueError("ConeSegments' detectors have the same pixel pitch")
 
     @property
     def grid(self) -> Grid:
@@ -217,7 +219,7 @@ class ConeSegments:
         """Not defined: each segment has its own beam (see :func:`cone_parts`)."""
         raise ValueError(
             "this scan has one source-detector arrangement per segment; reconstruct it "
-            "with cgls, fista or spdhg (FDK and alignment take one arrangement)"
+            "with cgls, fista or spdhg (FDK takes one arrangement)"
         )
 
     def _locate(self, i: int) -> tuple[ScanGeometry, int]:
@@ -259,14 +261,14 @@ def beam_of(geometry: object) -> ConeBeam | None:
 
 def segments_of(geometry: object) -> ConeSegments | None:
     """The :class:`ConeSegments` that ``geometry`` is or wraps (with poses, say), if any."""
-    for _ in range(16):
-        if isinstance(geometry, ConeSegments):
-            return geometry
-        inner = getattr(geometry, "base", None) or getattr(geometry, "geometry", None)
+    while not isinstance(geometry, ConeSegments):
+        inner = getattr(geometry, "base", None)
+        if inner is None:
+            inner = getattr(geometry, "geometry", None)
         if inner is None:
             return None
         geometry = inner
-    return None
+    return geometry
 
 
 def is_cone_beam(geometry: object) -> bool:
@@ -297,8 +299,6 @@ def cone_parts(
     parts = []
     for segment in segments.segments:
         own = segment.detector
-        if (own.du, own.dv) != (reference.du, reference.dv):
-            raise ValueError("ConeSegments' detectors have the same pixel pitch")
         centre = (
             scan.det_center[0] + own.det_center[0] - reference.det_center[0],
             scan.det_center[1] + own.det_center[1] - reference.det_center[1],
@@ -310,7 +310,7 @@ def cone_parts(
 
 def require_parallel_beam(geometry: object, context: str) -> None:
     """Raise for cone-beam geometries in code that models parallel rays only."""
-    if beam_of(geometry) is not None:
+    if is_cone_beam(geometry):
         raise ValueError(
             f"{context} models parallel rays; cone-beam geometries need the iterative "
             "solvers (cgls, fista_tv, spdhg_tv) or fdk"

@@ -46,7 +46,7 @@ _DENSE_FILTER_MAX = 2048
 _TILE = (8, 2)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class FDKConfig:
     """FDK options.
 
@@ -502,7 +502,7 @@ def _launch(context: Any, out: Any, *buffers: Any, grid: Grid, det: Detector, sc
     import cupy as cp
 
     with xla_stream(context, out[0]) as stream:
-        retired = _RETIRED.setdefault(stream.device_id, [])
+        retired = _RETIRED.setdefault(cp.cuda.Device().id, [])  # the buffers' GPU
         retired.clear()
         if len(out) == 3:  # unfiltered rows and the filter's operator
             target, half, images = (cp.asarray(b) for b in out)
@@ -777,7 +777,7 @@ def _fdk(
     return out
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class FDKHostConfig:
     """Slab options for :func:`fdk_host`.
 

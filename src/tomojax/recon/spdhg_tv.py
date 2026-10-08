@@ -67,7 +67,7 @@ _SPDHGProjectChunk = Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]
 # --------- config ----------
 
 
-@dataclass
+@dataclass(kw_only=True)
 class SPDHGConfig:
     """Configuration for stochastic primal-dual TV reconstruction.
 

@@ -31,18 +31,17 @@ from tomojax.core.validation import (
 )
 
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
+from ._devices import ViewSplit, as_devices, refuse_streaming, view_split
 from ._host_stream import host_source, should_stream
 from ._projection import (
     ConeModel,
     ProjectorBackend,
     ProjectorModel,
-    least_squares_at_zero,
     least_squares_operators,
     normal_operator_norm,
     projection_operators,
     resolve_geometry_projector,
     resolve_projector,
-    view_split,
 )
 from ._tv_ops import (
     div3,
@@ -54,10 +53,9 @@ from ._tv_ops import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
-    from jaxlib._jax import Device  # jax.Device, as a type
-
+    from tomojax._typed_arrays import Device
     from tomojax.core.geometry.base import Detector, Geometry, Grid
 
     from .types import Regulariser
@@ -112,6 +110,8 @@ class _FistaRuntime:
     projector: tuple[str, str, int] | None = field(metadata={"static": True})
     # The data argument is then a host_source key, read one batch at a time.
     stream: bool = field(default=False, metadata={"static": True})
+    # The views shared among devices, the data placed accordingly; None for one.
+    split: ViewSplit | None = field(default=None, metadata={"static": True})
 
 
 @dataclass(frozen=True)
@@ -160,7 +160,7 @@ def _view_chunk_schedule(
     return start_shifted, valid_mask, start_shifted + idx
 
 
-@dataclass
+@dataclass(kw_only=True)
 class FistaConfig:
     """Configuration for public FISTA/TV reconstruction.
 
@@ -208,7 +208,10 @@ class FistaConfig:
     projector_model: ProjectorModel = "auto"
     projector_backend: ProjectorBackend = "auto"
     stream_projections: bool | None = None
-    devices: tuple[Device, ...] | None = None
+    devices: Device | Sequence[Device] | None = None  # kept as a tuple
+
+    def __post_init__(self) -> None:
+        self.devices = as_devices(self.devices)
 
 
 jax.tree_util.register_dataclass(
@@ -578,20 +581,22 @@ def _prepare_fista_runtime(
     poses = stack_view_poses(geometry, n_views)
     validate_pose_stack(poses, n_views, context="fista_tv geometry")
     projector = _batched_projector(cfg, n_views, det_grid, geometry, detector)
+    split = view_split(cfg.devices, n_views)
+    refuse_streaming(split, cfg.stream_projections, "fista_tv")
+    if split is not None and projector is None:
+        raise ValueError("fista_tv: devices requires the batched projection operators")
     on_host = not isinstance(projections, jax.Array)
-    stream = on_host and (
-        bool(cfg.stream_projections)
-        if cfg.stream_projections is not None
-        else should_stream(projections)
+    stream = (
+        split is None
+        and on_host
+        and (
+            bool(cfg.stream_projections)
+            if cfg.stream_projections is not None
+            else should_stream(projections)
+        )
     )
     if stream and projector is None:
         raise ValueError("fista_tv: stream_projections requires the batched projection operators")
-    if view_split(cfg.devices, n_views) is not None:
-        if projector is None:
-            raise ValueError("fista_tv: devices requires the batched projection operators")
-        if stream and cfg.stream_projections:
-            raise ValueError("fista_tv: projections shared among devices cannot be streamed")
-        stream = False  # each device holds its share
 
     lipschitz = cfg.L
     if lipschitz is None and projector is None:
@@ -635,6 +640,7 @@ def _prepare_fista_runtime(
         detector_grid=det_grid,
         projector=projector,
         stream=stream,
+        split=split,
     )
 
 
@@ -698,23 +704,23 @@ def _first_gradient(
 ) -> tuple[jax.Array, jax.Array, jax.Array | None]:
     """The Lipschitz constant, and the data term and gradient at zero when FISTA starts there.
 
-    The backprojection is the gradient at zero, so a zero start needs no
-    projection of its own, and it starts the power iteration (see :func:`_power_start`).
+    The gradient at zero, minus the backprojected data, needs no projection of
+    its own, and it starts the power iteration (see :func:`_power_start`).
     """
     cfg = runtime.config
     assert runtime.projector is not None
     model, backend, batch = runtime.projector
     mask = None if runtime.volume_mask is None else jnp.asarray(runtime.volume_mask, jnp.float32)
-    split = view_split(cfg.devices, int(runtime.poses.shape[0]))
-    value, backprojection = least_squares_at_zero(
+    split = runtime.split
+    value, gradient = least_squares_operators(
         runtime.poses, grid, detector, backend, batch, model, stream=runtime.stream, split=split
-    )(projections)
+    )(None, projections)
     forward, adjoint = projection_operators(
         runtime.poses, grid, detector, None, backend, batch, model, split=split
     )
     lipschitz = normal_operator_norm(
         forward, adjoint, (grid.nx, grid.ny, grid.nz), iters=int(cfg.power_iters),
-        mask=mask, start=_power_start(backprojection),
+        mask=mask, start=_power_start(gradient),
     )  # fmt: skip
     lipschitz = jnp.asarray(_with_huber(lipschitz, cfg, runtime.regulariser, runtime.huber_delta))
     c = runtime.constraints
@@ -722,8 +728,7 @@ def _first_gradient(
     zero_start = zero_start and (c.upper_bound is None or c.upper_bound >= 0.0)
     if not zero_start:
         return lipschitz, value, None
-    gradient = -backprojection if mask is None else -backprojection * mask
-    return lipschitz, value, gradient
+    return lipschitz, value, gradient if mask is None else gradient * mask
 
 
 def _data_term(
@@ -736,10 +741,10 @@ def _data_term(
     mask = None if runtime.volume_mask is None else jnp.asarray(runtime.volume_mask, jnp.float32)
     if runtime.projector is not None:
         model, backend, batch = runtime.projector
-        split = view_split(cfg.devices, int(runtime.poses.shape[0]))
         least_squares = least_squares_operators(
-            runtime.poses, grid, detector, backend, batch, model, stream=runtime.stream, split=split
-        )
+            runtime.poses, grid, detector, backend, batch, model, stream=runtime.stream,
+            split=runtime.split,
+        )  # fmt: skip
 
         def batched_value_and_grad(z: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
             v, g = least_squares(z if mask is None else z * mask, projections)
@@ -947,10 +952,11 @@ def fista_tv(
         with host_source(np.asarray(projections)) as key:
             final, lipschitz = _run_fista_scan(grid, detector, key, runtime)
             final.x.block_until_ready()
+    elif runtime.split is not None:  # each device's views on that device, once
+        data = runtime.split.place(projections)
+        final, lipschitz = _run_fista_scan(grid, detector, data, runtime)
+        final = final._replace(x=runtime.split.gather(final.x))
     else:
-        split = view_split(runtime.config.devices, int(runtime.poses.shape[0]))
-        if split is not None:  # each device's views on that device, once
-            projections = split.place(projections)
         final, lipschitz = _run_fista_scan(grid, detector, projections, runtime)
     result = _FistaResult(
         volume=final.x,

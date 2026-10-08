@@ -255,7 +255,7 @@ def test_public_alignment_and_checkpoint_keep_detector_frame_at_ninety_degrees(
         grid=grid,
         translation_frame="detector",
         active=("dx", "dz") if motion == "translation" else ("alpha", "beta", "phi", "dx", "dz"),
-        beam=False,
+        cone_beam=False,
     )[1]
     np.testing.assert_allclose(params[:, 3:5], expected[:, 3:5], atol=3e-3)
     np.testing.assert_allclose(params[:, :3], expected[:, :3], atol=5e-5)
@@ -449,7 +449,7 @@ def test_least_motion_moves_a_constant_u_shift_into_the_detector_centre(kind):
         grid=grid,
         translation_frame="detector",
         active=("alpha", "beta", "phi", "dx", "dz"),
-        beam=False,
+        cone_beam=False,
         detector_offset=True,
     )
 

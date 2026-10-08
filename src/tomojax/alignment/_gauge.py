@@ -212,12 +212,12 @@ def least_motion_estimate(
     grid: Grid,
     translation_frame: PoseTranslationFrame,
     active: Collection[str],
-    beam: bool,
+    cone_beam: bool,
     detector_offset: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, Gauge | None]:
     """Move an alignment result (volume and poses) to its least-motion estimate.
 
-    ``beam`` says the geometry is a cone beam, where along-beam ``dy`` is
+    ``cone_beam`` says the geometry is a cone beam, where along-beam ``dy`` is
     visible; parameters not in ``active`` keep their values. Returns the moved
     volume and poses and the gauge applied; a detector offset in it belongs in
     the detector centre (``Detector.det_center[0] += gauge.detector_offset``).
@@ -228,7 +228,7 @@ def least_motion_estimate(
     the grid edge already fixes the estimate: it is returned unchanged with
     gauge None.
     """
-    invisible = () if beam else ("dy",)
+    invisible = () if cone_beam else ("dy",)
     gauge = least_motion_gauge(
         params,
         nominal,

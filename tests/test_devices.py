@@ -1,21 +1,17 @@
 """Sharing a scan's views among several devices.
 
-The CPU suite runs with four CPU devices (``JAX_NUM_CPU_DEVICES=4``, see the
-justfile); with fewer, these tests skip. On GPUs, ``test_cone_kernels_*``
-checks the CUDA kernels on every GPU there is.
+CPU test runs have four CPU devices (``JAX_NUM_CPU_DEVICES=4``, set in
+conftest.py); with fewer devices these tests skip. On GPUs,
+``test_cone_kernels_*`` checks the CUDA kernels on every GPU there is.
 """
 
 from __future__ import annotations
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import tomojax as tj
-
-# check-public-imports: allow-private
-from tomojax.recon._operators import _operators
 
 if len(jax.devices()) < 2:
     pytest.skip("needs two or more devices", allow_module_level=True)
@@ -56,8 +52,7 @@ def _relative(a: object, b: object) -> float:
 def test_projection_and_transpose_shared_among_devices_match_one_device(kind):
     geometry = _geometry(kind)
     volume = _phantom()
-    rng = np.random.default_rng(0)
-    images = rng.random((VIEWS, 20, 24)).astype(np.float32)
+    images = np.random.default_rng(0).random((VIEWS, 20, 24)).astype(np.float32)
 
     projected = tj.project(geometry, volume, devices=jax.devices())
     backprojected = tj.backproject(geometry, images, devices=jax.devices())
@@ -70,19 +65,38 @@ def test_projection_and_transpose_shared_among_devices_match_one_device(kind):
 
 
 def test_the_shared_transpose_is_the_exact_adjoint():
-    _, split, (forward, adjoint) = _operators(_geometry("cone"), None, "test", jax.devices())
-    assert split is not None and split.total % len(jax.devices()) == 0
+    geometry, devices = _geometry("cone"), jax.devices()
     rng = np.random.default_rng(1)
-    x = jnp.asarray(rng.random((N, N, N)), jnp.float32)
+    x = rng.random((N, N, N)).astype(np.float32)
     y = rng.random((VIEWS, 20, 24)).astype(np.float32)
 
-    ax = np.asarray(jax.jit(forward)(x))
-    aty = np.asarray(jax.jit(adjoint)(split.place(y)))
+    ax = np.asarray(tj.project(geometry, x, devices=devices), np.float64)
+    aty = np.asarray(tj.backproject(geometry, y, devices=devices), np.float64)
 
-    assert not ax[VIEWS:].any()  # the padding views project to nothing
-    lhs = np.vdot(ax[:VIEWS].astype(np.float64), y)
-    rhs = np.vdot(np.asarray(x, np.float64), aty)
+    lhs, rhs = np.vdot(ax, y), np.vdot(x.astype(np.float64), aty)
     assert abs(lhs - rhs) < 1e-6 * abs(lhs)
+
+
+@pytest.mark.parametrize("views", [VIEWS, 4 * 9])  # uneven and even shares
+def test_results_come_back_on_the_first_device(views):
+    geometry = _geometry("parallel")
+    geometry = tj.ParallelGeometry(geometry.grid, geometry.detector, np.linspace(0, 180, views))
+    devices = jax.devices()[::-1]
+
+    projected = tj.project(geometry, _phantom(), devices=devices)
+    backprojected = tj.backproject(geometry, projected, devices=devices)
+    scan = tj.Scan(np.asarray(projected), geometry)
+    volume = tj.reconstruct(scan, "cgls", iterations=2, devices=devices).volume
+
+    for result in (projected, backprojected, volume):
+        assert result.devices() == {devices[0]}
+
+
+def test_one_device_is_used_as_given():
+    geometry, last = _geometry("cone"), jax.devices()[-1]
+    projected = tj.project(geometry, _phantom(), devices=last)
+    assert projected.devices() == {last}
+    np.testing.assert_allclose(projected, tj.project(geometry, _phantom()), rtol=1e-5, atol=1e-5)
 
 
 @pytest.mark.parametrize("method", ["cgls", "fista"])
@@ -99,15 +113,39 @@ def test_iterative_reconstruction_shared_among_devices_matches_one_device(method
     assert _relative(shared, one) < 1e-4
 
 
-def test_methods_that_run_on_one_device_refuse_devices():
+def test_cgls_from_a_start_shared_among_devices_matches_one_device():
+    from tomojax.recon import CGLSConfig, cgls
+
+    geometry = _geometry("parallel")
+    data = np.asarray(tj.project(geometry, _phantom()))
+    start = 0.5 * _phantom()
+    one, _ = cgls(geometry, geometry.grid, geometry.detector, data, init_x=start,
+                  config=CGLSConfig(iters=4))  # fmt: skip
+    shared, _ = cgls(geometry, geometry.grid, geometry.detector, data, init_x=start,
+                     config=CGLSConfig(iters=4, devices=jax.devices()))  # fmt: skip
+    assert _relative(shared, one) < 1e-4
+
+
+def test_bad_devices_are_refused():
     scan = tj.Scan(np.zeros((VIEWS, 20, 24), np.float32), _geometry("parallel"))
-    with pytest.raises(ValueError, match="runs on one device"):
+    with pytest.raises(ValueError, match="does not take devices"):
         tj.reconstruct(scan, "fbp", devices=jax.devices())
+    with pytest.raises(ValueError, match="at least one device"):
+        tj.project(scan.geometry, _phantom(), devices=[])
+    with pytest.raises(ValueError, match="twice"):
+        tj.project(scan.geometry, _phantom(), devices=[jax.devices()[0]] * 2)
 
 
-def test_one_device_is_no_split():
-    for devices in (jax.devices()[:1], None):
-        assert _operators(_geometry("parallel"), None, "test", devices)[1] is None
+@pytest.mark.parametrize("solver", ["cgls", "fista"])
+def test_shared_projections_are_not_streamed(solver):
+    from tomojax.recon import CGLSConfig, FistaConfig, cgls, fista_tv
+
+    geometry = _geometry("parallel")
+    data = np.zeros((VIEWS, 20, 24), np.float32)
+    run, config = (cgls, CGLSConfig) if solver == "cgls" else (fista_tv, FistaConfig)
+    settings = config(stream_projections=True, devices=jax.devices())
+    with pytest.raises(ValueError, match="cannot be streamed"):
+        run(geometry, geometry.grid, geometry.detector, data, config=settings)
 
 
 @pytest.mark.gpu
@@ -117,9 +155,8 @@ def test_cone_kernels_give_the_same_projections_on_every_gpu():
     volume = _phantom()
     reference = np.asarray(tj.project(geometry, volume))
     for gpu in gpus[1:]:
-        with jax.default_device(gpu):
-            here = tj.project(geometry, jax.device_put(volume, gpu))
-            assert here.devices() == {gpu}
-            np.testing.assert_array_equal(np.asarray(here), reference)
+        here = tj.project(geometry, volume, devices=gpu)
+        assert here.devices() == {gpu}
+        np.testing.assert_array_equal(np.asarray(here), reference)
     shared = tj.backproject(geometry, reference, devices=gpus)
     assert _relative(shared, tj.backproject(geometry, reference)) < 1e-6

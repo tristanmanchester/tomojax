@@ -15,6 +15,7 @@ results can be reconstructed, aligned again or saved without restating it::
 from __future__ import annotations
 
 from dataclasses import dataclass, field, is_dataclass, replace
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 import warnings
@@ -33,9 +34,10 @@ if TYPE_CHECKING:
     from os import PathLike
 
     import jax
-    from jaxlib._jax import Device  # jax.Device, as a type
 
+    from tomojax._typed_arrays import Device
     from tomojax.alignment import AlignConfig
+    from tomojax.alignment.api import AlignmentMode, QualityTier
     from tomojax.geometry import ConeSegments, Detector, Geometry, Grid, ScanGeometry
     from tomojax.io import ProjectionDataset
 
@@ -103,19 +105,7 @@ class Scan:
         Rotations in radians, translations in the geometry's length unit, in
         the detector frame. None when the scan carries no corrections.
         """
-        segments = getattr(self.geometry, "segments", None)
-        if segments is None:
-            params = getattr(self.geometry, "align_params", None)
-            return None if params is None else np.asarray(params)
-        tables = [getattr(s, "align_params", None) for s in segments]
-        if all(t is None for t in tables):
-            return None
-        return np.concatenate(
-            [
-                np.zeros((len(s.thetas_deg), 6), np.float32) if t is None else np.asarray(t)
-                for s, t in zip(segments, tables, strict=True)
-            ]
-        )
+        return _detector_poses(self.geometry)
 
     @classmethod
     def from_astra(
@@ -205,16 +195,20 @@ class Scan:
 class Reconstruction:
     """A reconstructed volume, the scan it came from and how it was made.
 
-    ``volume`` is ``(nx, ny, nz)`` on ``grid``, in the reciprocal of the
+    ``volume`` is ``(nx, ny, nz)`` on :attr:`grid`, in the reciprocal of the
     geometry's length unit (a NumPy or JAX array; ``np.asarray`` gives NumPy).
     ``info`` records the method's settings.
     """
 
     volume: np.ndarray | jax.Array
     scan: Scan
-    grid: Grid
     method: str
     info: Mapping[str, object]
+
+    @property
+    def grid(self) -> Grid:
+        """The grid the volume is on, the scan's."""
+        return self.scan.grid
 
 
 @dataclass(frozen=True)
@@ -258,12 +252,13 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
     record = scan.source
     if record is None or record.volume is None:
         raise ValueError(f"{path} holds no reconstructed volume")
+    meta = record.geometry_metadata
+    info = meta.get("reconstruction_info")
     return Reconstruction(
         volume=np.asarray(record.volume),
         scan=scan,
-        grid=record.grid or scan.grid,
-        method=str(record.geometry_metadata.get("reconstruction_method", "unknown")),
-        info={},
+        method=str(meta.get("reconstruction_method", "unknown")),
+        info=dict(info) if isinstance(info, dict) else {},
     )
 
 
@@ -279,9 +274,13 @@ def save(path: str | PathLike[str], item: Scan | Reconstruction | Alignment) -> 
     if isinstance(item, Scan):
         record = _record_of(item)
     elif isinstance(item, Reconstruction):
-        record = _record_of(item.scan, grid=item.grid)
+        record = _record_of(item.scan)
         record.volume = np.asarray(item.volume)
         record.geometry_metadata["reconstruction_method"] = item.method
+        # As JSON, which the file's metadata is; settings JSON cannot hold become text.
+        record.geometry_metadata["reconstruction_info"] = json.loads(
+            json.dumps(dict(item.info), default=str)
+        )
     elif isinstance(item, Alignment):  # pyright: ignore[reportUnnecessaryIsInstance]
         record = _record_of(item.scan)
         record.volume = np.asarray(item.volume)
@@ -337,17 +336,14 @@ def _describe_segments(
     geometry: ConeSegments,
 ) -> tuple[str, dict[str, object], Any, Geometry]:
     """:func:`_describe` for segments: each segment's arrangement under ``cone_segments``."""
-    entries, tables, posed = [], [], False
+    entries = []
     for segment in geometry.segments:
-        _, meta, poses, _ = _describe(segment)
-        views = len(segment.thetas_deg)
+        _, meta, _, _ = _describe(segment)
         detector = segment.detector.to_dict()
-        entries.append({"views": views, "detector": detector, **meta})
-        posed = posed or poses is not None
-        tables.append(np.zeros((views, 6), np.float32) if poses is None else poses[0][:, :6])
+        entries.append({"views": len(segment.thetas_deg), "detector": detector, **meta})
     meta = {"cone_beam": entries[0]["cone_beam"], "cone_segments": entries}
-    poses = (np.concatenate(tables), "detector") if posed else None
-    return "cone", meta, poses, geometry
+    table = _detector_poses(geometry)  # one frame for every segment's poses
+    return "cone", meta, None if table is None else (table, "detector"), geometry
 
 
 def _record_of(scan: Scan, *, grid: Grid | None = None) -> ProjectionDataset:
@@ -450,7 +446,7 @@ def project(
     volume: np.ndarray | jax.Array,
     *,
     grid: Grid | None = None,
-    devices: Sequence[Device] | None = None,
+    devices: Device | Sequence[Device] | None = None,
 ) -> jax.Array:
     """Project ``volume`` through ``geometry``; see :func:`tomojax.recon.project`."""
     from tomojax.recon import project as _project
@@ -463,7 +459,7 @@ def backproject(
     projections: np.ndarray | jax.Array,
     *,
     grid: Grid | None = None,
-    devices: Sequence[Device] | None = None,
+    devices: Device | Sequence[Device] | None = None,
 ) -> jax.Array:
     """Apply the exact transpose of :func:`project`; see :func:`tomojax.recon.backproject`."""
     from tomojax.recon import backproject as _backproject
@@ -473,8 +469,8 @@ def backproject(
 
 _METHOD_OPTIONS: dict[str, frozenset[str]] = {
     "fbp": frozenset({"filter"}),
-    "cgls": frozenset({"iterations"}),
-    "fista": frozenset({"iterations", "tv_weight", "nonnegative", "warm_start"}),
+    "cgls": frozenset({"iterations", "devices"}),
+    "fista": frozenset({"iterations", "tv_weight", "nonnegative", "warm_start", "devices"}),
     "spdhg": frozenset({"iterations", "tv_weight", "nonnegative", "warm_start", "seed"}),
 }
 
@@ -490,7 +486,7 @@ def reconstruct(
     nonnegative: bool | None = None,
     warm_start: bool | None = None,
     seed: int | None = None,
-    devices: Sequence[Device] | None = None,
+    devices: Device | Sequence[Device] | None = None,
 ) -> Reconstruction:
     """Reconstruct ``scan`` with ``method``.
 
@@ -512,10 +508,10 @@ def reconstruct(
     ``grid`` reconstructs on another grid than the scan's (a region, or a
     different voxel size). An option the method does not take raises.
 
-    ``devices`` (``cgls`` and ``fista``) shares the views among several GPUs,
-    ``jax.devices()`` for all of them: each projects its own views and holds
-    the whole volume, and their backprojections are summed. The result is the
-    one-device result up to the order of that sum.
+    ``devices`` (``cgls`` and ``fista``; one or several, ``jax.devices()`` for
+    all) shares the views among them: each projects its own views and holds
+    the whole volume, and their backprojections are summed. The volume, on the
+    first device, is the one-device result up to the order of that sum.
     """
     from tomojax.backends import default_gather_dtype
     from tomojax.geometry.api import detector_grid_from_geometry_inputs
@@ -537,6 +533,7 @@ def reconstruct(
             "nonnegative": nonnegative,
             "warm_start": warm_start,
             "seed": seed,
+            "devices": devices,
         }.items()
         if value is not None
     }
@@ -546,8 +543,6 @@ def reconstruct(
         raise ValueError(
             f"reconstruct: method {method!r} does not take {', '.join(unused)} (it takes {takes})"
         )
-    if devices is not None and method not in {"cgls", "fista"}:
-        raise ValueError(f"reconstruct: method {method!r} runs on one device; drop devices")
     if grid is not None:
         scan = _with_grid(scan, grid)
     if method != "fbp":
@@ -572,13 +567,12 @@ def reconstruct(
         views_per_batch=default_views_per_batch(method),
         views_per_batch_mode="default",
         gather_dtype=default_gather_dtype(),
-        devices=None if devices is None else tuple(devices),
+        devices=devices,
     )
     result = run_reconstruction_algorithm(request)
     return Reconstruction(
         volume=result.volume,
         scan=scan,
-        grid=scan.grid,
         method=method,
         info=dict(result.algorithm_config),
     )
@@ -587,8 +581,8 @@ def reconstruct(
 def align(
     scan: Scan,
     *,
-    mode: str = "pose",
-    quality: str = "fast",
+    mode: AlignmentMode = "pose",
+    quality: QualityTier = "fast",
     levels: Iterable[int] | None = None,
     freeze: Iterable[str] = (),
     config: AlignConfig | None = None,
@@ -616,11 +610,18 @@ def align(
     import jax.numpy as jnp
 
     from tomojax.alignment.api import align_multires, alignment_plan, cone_setup, pad_pose_params
+    from tomojax.geometry import ConeSegments
 
-    _suggest_binning(scan, "alignment")
     plan = alignment_plan(
         mode, scan.grid, quality=quality, levels=levels, freeze=freeze, config=config
     )
+    segmented = isinstance(scan.geometry, ConeSegments)
+    if plan.mode != "pose" and (scan.poses is not None or segmented):
+        raise ValueError(
+            f"align: mode {plan.mode!r} calibrates one arrangement without pose corrections; "
+            "align posed or segmented scans with mode='pose'"
+        )
+    _suggest_binning(scan, "alignment")
     geometry, grid, detector = scan.geometry, scan.grid, scan.detector
     projections = jnp.asarray(scan.projections, jnp.float32)
     cfg: AlignConfig | None = plan.config
@@ -677,18 +678,22 @@ def _oversampling(scan: Scan) -> float:
     """How many times finer than the voxels the detector samples the rotation axis.
 
     The lesser of the row and column ratios: a cone beam's pixel pitch divided
-    by its magnification, a parallel beam's pitch itself, against the voxel.
+    by its magnification (the least magnified segment's), a parallel beam's
+    pitch itself, against the voxel. A tilted axis mixes the grid's axes into
+    both, so laminography compares with the smallest voxel side.
     """
     from tomojax.geometry import ConeSegments, beam_of
 
     detector, grid, geometry = scan.detector, scan.grid, scan.geometry
-    if isinstance(geometry, ConeSegments):
-        geometry = geometry.segments[0]
-    beam = beam_of(geometry)
-    magnification = 1.0 if beam is None else float(beam.magnification)
-    across = min(grid.vx, grid.vy) / (float(detector.du) / magnification)
-    along = grid.vz / (float(detector.dv) / magnification)
-    return min(across, along)
+    parts = geometry.segments if isinstance(geometry, ConeSegments) else (geometry,)
+    beams = [beam_of(part) for part in parts]
+    magnification = min(1.0 if beam is None else float(beam.magnification) for beam in beams)
+    if _describe(geometry)[0] == "lamino":
+        across = along = min(grid.vx, grid.vy, grid.vz)
+    else:
+        across, along = min(grid.vx, grid.vy), grid.vz
+    du, dv = float(detector.du), float(detector.dv)
+    return min(across * magnification / du, along * magnification / dv)
 
 
 def _suggest_binning(scan: Scan, work: str) -> None:
@@ -711,15 +716,19 @@ def _composed_poses(scan: Scan, corrections: np.ndarray, frame: str) -> np.ndarr
     The table moves the scan's nominal geometry as its own poses and then the
     corrections do.
     """
+    return _composed(scan.geometry, corrections, frame)
+
+
+def _composed(geometry: ScanGeometry, corrections: np.ndarray, frame: str) -> np.ndarray:
+    """:func:`_composed_poses` for a geometry, one row of ``corrections`` per view."""
     from scipy.spatial.transform import Rotation
 
     from tomojax._data.geometry_meta import AugmentedGeometry
     from tomojax.geometry import stack_view_poses
 
-    n = len(scan.angles)
-    nominal = _scan_from_record(_record_of(scan), apply_alignment=False).geometry
-    start = np.asarray(stack_view_poses(nominal, n), np.float64)
-    corrected = AugmentedGeometry(scan.geometry, np.asarray(corrections, np.float32), frame)
+    n = len(corrections)
+    start = np.asarray(stack_view_poses(_nominal(geometry), n), np.float64)
+    corrected = AugmentedGeometry(geometry, np.asarray(corrections, np.float32), frame)
     moved = np.asarray(stack_view_poses(corrected, n), np.float64)
     rotation = np.einsum("nji,njk->nik", start[:, :3, :3], moved[:, :3, :3])
     beta, alpha, phi = Rotation.from_matrix(rotation).as_euler("YXZ").T
@@ -727,6 +736,37 @@ def _composed_poses(scan: Scan, corrections: np.ndarray, frame: str) -> np.ndarr
     # (alpha, beta, phi, dx, dz, dy), as Scan.poses.
     table = np.stack([alpha, beta, phi, shift[:, 0], shift[:, 2], shift[:, 1]], axis=1)
     return table.astype(np.float32)
+
+
+def _nominal(geometry: ScanGeometry) -> ScanGeometry:
+    """``geometry`` without its per-view poses (each segment's, for segments)."""
+    from tomojax._data.geometry_meta import AugmentedGeometry
+    from tomojax.geometry import ConeSegments
+
+    if isinstance(geometry, ConeSegments):
+        return ConeSegments(tuple(_nominal(s) for s in geometry.segments))
+    return geometry.base if isinstance(geometry, AugmentedGeometry) else geometry
+
+
+def _detector_poses(geometry: ScanGeometry) -> np.ndarray | None:
+    """``geometry``'s per-view poses as one detector-frame table; None for none."""
+    from tomojax._data.geometry_meta import AugmentedGeometry
+    from tomojax.geometry import ConeSegments
+
+    if isinstance(geometry, ConeSegments):
+        tables = [_detector_poses(s) for s in geometry.segments]
+        if all(t is None for t in tables):
+            return None
+        return np.concatenate([
+            np.zeros((len(s.thetas_deg), 6), np.float32) if t is None else t
+            for s, t in zip(geometry.segments, tables, strict=True)
+        ])  # fmt: skip
+    if not isinstance(geometry, AugmentedGeometry):
+        return None
+    params = np.asarray(geometry.align_params, np.float32)
+    if geometry.translation_frame == "detector":
+        return params
+    return _composed(geometry, np.zeros_like(params), "detector")
 
 
 def _detector(value: object) -> Detector:

@@ -18,9 +18,11 @@ from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
 from tomojax.recon.types import Regulariser
 
 if TYPE_CHECKING:
-    from jaxlib._jax import Device  # jax.Device, as a type
+    from collections.abc import Sequence
+
     import numpy as np
 
+    from tomojax._typed_arrays import Device
     from tomojax.geometry import Detector, Geometry, Grid
 
 type ReconstructionAlgorithm = Literal["fbp", "cgls", "fista", "spdhg"]
@@ -64,7 +66,7 @@ class ReconstructionAlgorithmRequest:
     views_per_batch: int
     views_per_batch_mode: str
     gather_dtype: str
-    devices: tuple[Device, ...] | None = None
+    devices: Device | Sequence[Device] | None = None
 
 
 @dataclass(frozen=True)
@@ -293,11 +295,11 @@ def _run_spdhg_reconstruction(request: ReconstructionAlgorithmRequest) -> Recons
         projector_unroll=1,
         checkpoint_projector=bool(request.options.checkpoint_projector),
         gather_dtype=str(request.gather_dtype),
-        positivity=True,
+        positivity=bool(request.options.positivity),
         support=request.volume_mask if request.volume_mask is not None else None,
         log_every=1,
     )
-    init_x = _fbp_warm_start(request, nonnegative=True)
+    init_x = _fbp_warm_start(request, nonnegative=cfg.positivity)
     volume = spdhg_tv(
         request.geometry,
         request.grid,

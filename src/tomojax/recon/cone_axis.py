@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 LOG = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class ConeAxisConfig:
     """Options for :func:`calibrate_cone_axis`.
 

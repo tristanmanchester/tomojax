@@ -30,7 +30,7 @@ _IMAGE_KEY_PATH = "/entry/instrument/detector/image_key"
 _OUTPUT_DTYPES: dict[str, str] = {"float32": "float32", "float64": "float64"}
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class PreprocessConfig:
     """Configuration for raw NXtomo flat/dark correction."""
 

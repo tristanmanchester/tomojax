@@ -271,7 +271,9 @@ def scan(kind="offset", length_scale=1.0):
 def test_independent_physical_gaussian(backend, kind):
     grid, detector, geometry, data, truth = scan(kind)
     original = data.copy()
-    actual = fourier_reconstruct(geometry, grid, detector, data, config=FourierConfig(3, backend))
+    actual = fourier_reconstruct(
+        geometry, grid, detector, data, config=FourierConfig(slices_per_batch=3, backend=backend)
+    )
     assert actual.dtype == np.float32
     assert actual.shape == truth.shape
     assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.008
@@ -281,7 +283,9 @@ def test_independent_physical_gaussian(backend, kind):
 @pytest.mark.parametrize("length_scale", [0.5, 2.0])
 def test_physical_units_preserve_attenuation(backend, length_scale):
     grid, detector, geometry, data, truth = scan(length_scale=length_scale)
-    actual = fourier_reconstruct(geometry, grid, detector, data, config=FourierConfig(20, backend))
+    actual = fourier_reconstruct(
+        geometry, grid, detector, data, config=FourierConfig(slices_per_batch=20, backend=backend)
+    )
     assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.008
 
 
@@ -334,9 +338,11 @@ def test_cuda_matches_numpy_for_signed_data_and_partial_slabs(nu, vx, views):
     geometry = ParallelGeometry(grid, detector, angles)
     data = np.random.default_rng(321).normal(size=(views, 7, nu)).astype(np.float32)
     reference = fourier_reconstruct(
-        geometry, grid, detector, data, config=FourierConfig(2, "numpy")
+        geometry, grid, detector, data, config=FourierConfig(slices_per_batch=2, backend="numpy")
     )
-    actual = fourier_reconstruct(geometry, grid, detector, data, config=FourierConfig(2, "cupy"))
+    actual = fourier_reconstruct(
+        geometry, grid, detector, data, config=FourierConfig(slices_per_batch=2, backend="cupy")
+    )
     assert np.linalg.norm(actual - reference) / np.linalg.norm(reference) < 2e-5
     np.testing.assert_allclose(actual, reference, rtol=2e-4, atol=2e-6)
 
@@ -355,7 +361,9 @@ def test_unmeasured_axial_slices_are_zero(backend):
     detector = Detector(9, 1, 1.0, 1.0)
     geometry = ParallelGeometry(grid, detector, np.arange(10) * 18)
     data = np.ones((10, 1, 9), dtype=np.float32)
-    actual = fourier_reconstruct(geometry, grid, detector, data, config=FourierConfig(3, backend))
+    actual = fourier_reconstruct(
+        geometry, grid, detector, data, config=FourierConfig(slices_per_batch=3, backend=backend)
+    )
     np.testing.assert_array_equal(actual[:, :, [0, 1, 3, 4]], 0)
     assert np.linalg.norm(actual[:, :, 2]) > 0
 
@@ -379,11 +387,16 @@ def test_memmap_output_and_batch_size_independence(tmp_path, backend):
         tmp_path / "target.bin", dtype=np.float32, mode="w+", shape=(grid.nx, grid.ny, grid.nz)
     )
     actual = fourier_reconstruct(
-        geometry, grid, detector, source, config=FourierConfig(3, backend), out=target
+        geometry,
+        grid,
+        detector,
+        source,
+        config=FourierConfig(slices_per_batch=3, backend=backend),
+        out=target,
     )
     assert actual is target
     reference = fourier_reconstruct(
-        geometry, grid, detector, data, config=FourierConfig(7, backend)
+        geometry, grid, detector, data, config=FourierConfig(slices_per_batch=7, backend=backend)
     )
     np.testing.assert_allclose(actual, reference, rtol=3e-5, atol=3e-6)
     np.testing.assert_array_equal(source, data)

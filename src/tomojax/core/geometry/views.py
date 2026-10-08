@@ -33,7 +33,7 @@ def stack_view_poses(
 
     if type(geometry) is ConeGeometry:
         thetas = np.asarray(geometry.thetas_deg[: int(n_views)], dtype=np.float64)
-        return jnp.asarray(geometry.poses(thetas).astype(dtype))
+        return jnp.asarray(geometry.poses(thetas_deg=thetas).astype(dtype))
 
     # Subclasses may override pose_for_view (for example to add calibrated
     # shifts). Only specialize the exact built-in implementation.

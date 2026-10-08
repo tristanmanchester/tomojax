@@ -129,7 +129,7 @@ def _resolved_schedule_for_cfg(cfg: AlignConfig) -> ResolvedAlignmentSchedule:
     return resolved
 
 
-@dataclass
+@dataclass(kw_only=True)
 class AlignConfig:
     align_profile: AlignmentProfileInput = "lightning"
     outer_iters: int = 5

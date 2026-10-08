@@ -4,7 +4,10 @@ from collections.abc import Iterable, Mapping
 from dataclasses import replace
 import gc
 import logging
+import os
+from pathlib import Path
 from typing import cast
+import warnings
 
 import jax
 import jax.numpy as jnp
@@ -46,6 +49,8 @@ from ._stage_state import (
 from ._stage_types import MultiresContext, MultiresLevel, MultiresRunState
 
 LOG = logging.getLogger(__name__)
+# Warnings name the first caller outside the package, whichever entry point it used.
+_PACKAGE = (str(Path(__file__).parents[2]) + os.sep,)
 
 
 def _run_one_multires_level(
@@ -192,8 +197,14 @@ def _run_multires_levels(
 ) -> MultiresRunState:
     state = _initial_multires_run_state(context=context, resume_state=resume_state)
     if resume_state is not None and resume_state.run_complete:
+        # The completed run's level_index is the last level that ran.
+        skipped = context.factors_list[int(resume_state.level_index) + 1 :]
         return replace(
-            state, x_init=resume_state.x, pose_params=resume_state.pose_params, prev_factor=1
+            state,
+            x_init=resume_state.x,
+            pose_params=resume_state.pose_params,
+            prev_factor=1,
+            factors_skipped=tuple(skipped),
         )
     for level_index, level in _levels_to_run(context.levels, resume_state):
         try:
@@ -210,10 +221,11 @@ def _run_multires_levels(
             if state.prev_factor is None:  # nothing coarser to keep
                 raise
             skipped = tuple(int(lv["factor"]) for lv in context.levels[int(level_index) :])
-            LOG.warning(
-                "Alignment stops at factor %d, skipping factors %s: %s",
-                state.prev_factor, list(skipped), error,
-            )  # fmt: skip
+            warnings.warn(
+                f"alignment stops at factor {state.prev_factor}, skipping factors "
+                f"{list(skipped)}: {error}",
+                skip_file_prefixes=_PACKAGE,
+            )
             state = replace(state, factors_skipped=skipped)
             break
         if state.final_observer_action == "stop_run":
@@ -262,9 +274,9 @@ def _fix_gauge(
         return state, x_final, None, dofs
     frame = context.cfg.pose_translation_frame
     pose_dofs = context.resolved_schedule.active_pose_dofs
-    beam = is_cone_beam(geometry)
+    cone_beam = is_cone_beam(geometry)
     reports_centre = context.resolved_schedule.name == "cor_then_pose" or "det_u_px" in dofs
-    offset = not beam and reports_centre and "dx" in pose_dofs and frame == "detector"
+    offset = not cone_beam and reports_centre and "dx" in pose_dofs and frame == "detector"
     setup_state = cast("AlignmentState | None", state.setup_alignment_state)
     if setup_state is None:
         nominal = np.asarray(stack_view_poses(geometry, int(state.pose_params.shape[0])))
@@ -278,7 +290,7 @@ def _fix_gauge(
         grid=grid,
         translation_frame=frame,
         active=pose_dofs,
-        beam=beam,
+        cone_beam=cone_beam,
         detector_offset=offset,
     )
     if gauge is None:
@@ -359,13 +371,14 @@ def align_multires(
         resume_state=resume_state,
         last_level_index_processed=state.last_level_index_processed,
         level_count=len(context.levels),
+        levels_skipped=bool(state.factors_skipped),
     )
     _emit_run_completion_checkpoint(
         checkpoint_callback=checkpoint_callback,
         pose_params=state.pose_params,
         run_complete=run_complete,
         x_final=x_final,
-        level_count=len(context.levels),
+        levels_run=len(context.levels) - len(state.factors_skipped),
         executed_outer_iters=state.executed_outer_iters,
         loss_hist=state.loss_hist,
         global_outer_stats=state.global_outer_stats,
@@ -383,7 +396,9 @@ def align_multires(
         else jnp.zeros((projections.shape[0], POSE_WIDTH), jnp.float32),
         _final_align_multires_info(
             loss_hist=state.loss_hist,
-            factors_list=context.factors_list,
+            factors_list=context.factors_list[
+                : len(context.factors_list) - len(state.factors_skipped)
+            ],
             factors_skipped=state.factors_skipped,
             final_loss_kind=state.final_loss_kind,
             cfg=context.cfg,

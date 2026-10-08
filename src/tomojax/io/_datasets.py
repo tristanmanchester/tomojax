@@ -109,6 +109,8 @@ class ProjectionDataset:
     angle_offset_deg: np.ndarray | None = None
     align_params: np.ndarray | None = None
     align_gauge: dict[str, JsonValue] | None = None
+    # Simulated misalignment, whose angle offsets ``angles_deg`` already include.
+    misalign_spec: dict[str, JsonValue] | None = None
     source_path: str | None = None
     source_format: str | None = None
     sample_name: str | None = None
@@ -151,6 +153,7 @@ class ProjectionDataset:
                 None if metadata.align_params is None else np.asarray(metadata.align_params)
             ),
             align_gauge=None if metadata.align_gauge is None else dict(metadata.align_gauge),
+            misalign_spec=None if metadata.misalign_spec is None else dict(metadata.misalign_spec),
             source_path=None if source_path is None else str(source_path),
             source_format="nxtomo",
             sample_name=metadata.sample_name,
@@ -176,6 +179,9 @@ class ProjectionDataset:
                 None if self.align_params is None else np.array(self.align_params, copy=True)
             )
             metadata.align_gauge = None if self.align_gauge is None else dict(self.align_gauge)
+            metadata.misalign_spec = (
+                None if self.misalign_spec is None else dict(self.misalign_spec)
+            )
             metadata.sample_name = self.sample_name or metadata.sample_name or "sample"
             return metadata
         return NXTomoMetadata(
@@ -194,6 +200,7 @@ class ProjectionDataset:
                 None if self.align_params is None else np.array(self.align_params, copy=True)
             ),
             align_gauge=None if self.align_gauge is None else dict(self.align_gauge),
+            misalign_spec=None if self.misalign_spec is None else dict(self.misalign_spec),
             sample_name=self.sample_name or "sample",
         )
 
@@ -228,6 +235,7 @@ class ProjectionDataset:
             )
         )
         metadata.align_gauge = None if self.align_gauge is None else dict(self.align_gauge)
+        metadata.misalign_spec = None if self.misalign_spec is None else dict(self.misalign_spec)
         metadata.sample_name = self.sample_name or metadata.sample_name or "sample"
         return metadata
 
@@ -245,8 +253,6 @@ class ProjectionDataset:
             payload["grid"] = self.grid.to_dict()
         # The dataset's own fields, not the metadata it was loaded with: callers
         # replace them (an alignment's poses, a rebinned geometry).
-        if self._metadata is not None and self._metadata.misalign_spec is not None:
-            payload["misalign_spec"] = self._metadata.misalign_spec
         _merge_dataset_solver_metadata(payload, self)
         _merge_geometry_metadata_dict(payload, self.geometry_metadata)
         return payload
@@ -392,6 +398,8 @@ def _merge_dataset_solver_metadata(
         payload["align_params"] = np.asarray(dataset.align_params)
     if dataset.align_gauge is not None:
         payload["align_gauge"] = dict(dataset.align_gauge)
+    if dataset.misalign_spec is not None:
+        payload["misalign_spec"] = dict(dataset.misalign_spec)
 
 
 def _merge_geometry_metadata_dict(

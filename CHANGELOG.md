@@ -2,13 +2,46 @@
 
 ## Unreleased
 
+- Fixed: `tj.reconstruct(scan, "spdhg")` ignored `nonnegative` and always
+  clipped the volume at zero. It now honours it and, like `fista`, does not
+  clip unless asked.
+- Fixed: `tj.align` in `cor`, `cor-then-pose` or `full` mode on a scan that
+  already carries poses ran and found the wrong centre; those modes now
+  refuse posed and segmented scans (align them with `mode="pose"`).
+- Fixed: `Scan.poses` is in the detector frame for every scan, as documented;
+  files saved with object-frame poses reported those as they were, and a
+  segmented scan saved its poses as detector-frame whatever their frame.
+- Fixed: the binning suggestion takes a segmented scan's least magnified
+  segment (it took the first) and, for laminography, the smallest voxel side;
+  it no longer warns before `tj.align` rejects a bad option.
+- Fixed: an alignment ended early by a level that does not fit in device
+  memory is now complete, so resuming it does not retry that level;
+  `info["factors"]` lists the levels that ran, and the notice is a Python
+  warning. The memory check counts the cached pose columns and per-pixel
+  weights with a margin of two, asks the device holding the data, and the
+  update it compiles is the one that runs.
+- Breaking: configuration classes (`FistaConfig`, `CGLSConfig`, `FBPConfig`,
+  `AlignConfig`, ...) take keywords only, as the design rules ask of options;
+  so does `ConeGeometry.poses(thetas_deg=...)`. `Reconstruction.grid` is now
+  the scan's grid, a property rather than a field, and `tj.load_reconstruction`
+  returns the `info` saved with it. `least_motion_estimate` takes
+  `cone_beam=` (was `beam=`).
+- `ConeSegments` refuses detectors of different pixel pitch when made, not
+  when first projected. `tomojax align` warns when its input carries pose
+  corrections, which it replaces (`tomojax.align` corrects on top of them).
+- New ratchets: the length of every file over 800 lines and function over 100
+  (which may only shrink), options passed positionally to public methods and
+  configurations, `jax.devices()[0]` probes, jaxlib private imports and
+  private imports in tests.
 - `tj.project`, `tj.backproject` and `tj.reconstruct` with `cgls` or `fista`
-  take `devices=` (`jax.devices()` for every GPU): each device projects its
-  share of the views and holds the whole volume, and their backprojections are
-  summed, so the transpose stays exact and the result is the one-device result
-  up to that sum's order. `FistaConfig` and `CGLSConfig` take `devices` too.
-  The CUDA kernels now launch on the GPU holding their buffers, not the current
-  one. The CPU tests run on four CPU devices, so CI exercises the split.
+  take `devices=` (one device or several; `jax.devices()` for every GPU): each
+  device projects its share of the views and holds the whole volume, and their
+  backprojections are summed, so the transpose stays exact and the result, on
+  the first device, is the one-device result up to that sum's order. Each
+  device reads only its own views of the projections. `FistaConfig` and
+  `CGLSConfig` take `devices` too. The CUDA kernels now launch on the GPU
+  holding their buffers, not the current one. The CPU tests run on four CPU
+  devices, so CI exercises the split.
   Twenty FISTA iterations on the binned walnut take 24.8 s on one H100, 13.6 s
   on two and 7.4 s on four (docs/performance.md).
 - Fixed: aligning a scan loaded from a file returned `result.scan` without

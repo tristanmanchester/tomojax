@@ -20,24 +20,24 @@ from tomojax.core.validation import (
     validate_projection_stack,
     validate_volume,
 )
+from tomojax.recon._devices import ViewSplit, as_devices, refuse_streaming, view_split
 from tomojax.recon._host_stream import host_source, should_stream
 from tomojax.recon._projection import (
     ConeModel,
-    ViewSplit,
     normal_equation_operators,
     projection_operators as _operators,
     resolve_geometry_projector,
-    view_split,
 )
 from tomojax.recon._quadratic import gradient_energy, gradient_normal, regularization_normal
 
 if TYPE_CHECKING:
-    from jaxlib._jax import Device  # jax.Device, as a type
+    from collections.abc import Sequence
 
+    from tomojax._typed_arrays import Device
     from tomojax.geometry import Detector, Geometry, Grid
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class CGLSConfig:
     """Control an unconstrained least-squares solve.
 
@@ -99,7 +99,10 @@ class CGLSConfig:
     joseph_interpolation: Literal["linear", "cubic"] = "linear"
     gradient_damping: float = 0.0
     stream_projections: bool | None = None
-    devices: tuple[Device, ...] | None = None
+    devices: Device | Sequence[Device] | None = None  # kept as a tuple
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "devices", as_devices(self.devices))
 
 
 class _State(NamedTuple):
@@ -468,9 +471,8 @@ def _placement(
 ) -> tuple[ViewSplit | None, bool]:
     """How the projections are held: shared among devices, or streamed from the host."""
     split = view_split(cfg.devices, n)
+    refuse_streaming(split, cfg.stream_projections, "cgls")
     if split is not None:
-        if cfg.stream_projections:
-            raise ValueError("cgls: projections shared among devices cannot be streamed")
         return split, False  # each device holds its share
     stream = not isinstance(projections, jax.Array) and det_grid is None
     stream &= (
@@ -601,4 +603,4 @@ def cgls(
         "damping": float(cfg.damping),
         "gradient_damping": float(cfg.gradient_damping),
     }
-    return result.x, info
+    return (result.x if split is None else split.gather(result.x)), info
