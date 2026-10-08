@@ -1,4 +1,8 @@
-"""Alignment checkpoint metadata, persistence, and validation."""
+"""Alignment checkpoint files: their metadata, persistence and validation.
+
+What a checkpoint must match to resume a run, and the state it resumes, are
+in :mod:`tomojax.alignment.io.resume`.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +17,6 @@ from uuid import uuid4
 
 import numpy as np
 
-from tomojax._version import __version__
 from tomojax.alignment._geometry.parametrizations import pad_pose_params
 from tomojax.alignment._model.dofs import POSE_WIDTH
 from tomojax.io.api import normalize_json as _normalize_json
@@ -22,11 +25,31 @@ CHECKPOINT_KIND = "tomojax.alignment.checkpoint"
 # 2: pose tables are stored as "pose_params".
 # 3: settings and progress use the solver vocabulary (iterations, tv_weight,
 #    lipschitz, outer_iterations, ...).
-SCHEMA_VERSION = 3
+# 4: a run is identified by its mode, configuration, levels, grid and a
+#    fingerprint of its projections and geometry; the command line's
+#    "cli_options" and the geometry type and metadata are gone.
+SCHEMA_VERSION = 4
 MULTIRES_GEOMETRY_VERSION = 2
+# Metadata a checkpoint must share with the run it resumes.
+# The fingerprint covers the grid and detector too, so it comes last: a
+# difference in them is named as such.
+IDENTITY_KEYS = (
+    "tomojax_version",
+    "projection_shape",
+    "projection_dtype",
+    "reconstruction_grid",
+    "detector",
+    "mode",
+    "levels",
+    "multires_geometry_version",
+    "config",
+    "fingerprint",
+)
+
+_IDENTITY_NAMES = {"fingerprint": "fingerprint of the projections and geometry"}
 
 
-class CheckpointError(RuntimeError):
+class CheckpointError(ValueError):
     """Raised when an alignment checkpoint cannot be loaded or resumed."""
 
 
@@ -38,12 +61,12 @@ class CheckpointMetadata(TypedDict, total=False):
     tomojax_version: str | None
     projection_shape: Required[list[int]]
     projection_dtype: Required[str]
-    geometry_type: Required[str]
-    geometry_meta: Required[dict[str, Any]]
+    fingerprint: Required[str]
     reconstruction_grid: Required[dict[str, Any]]
     detector: Required[dict[str, Any]]
     state_grid: Required[dict[str, Any]]
     state_detector: Required[dict[str, Any]]
+    mode: Required[str]
     levels: list[int] | None
     multires_geometry_version: int
     level_index: Required[int]
@@ -56,10 +79,8 @@ class CheckpointMetadata(TypedDict, total=False):
     small_impr_streak: int
     elapsed_offset: float
     config: Required[Any]
-    cli_options: Required[dict[str, Any]]
     schedule_metadata: Any
     schedule_state: ScheduleResumeState | None
-    random_state: dict[str, Any]
     geometry_calibration_state: Any
     level_complete: bool
     run_complete: bool
@@ -85,59 +106,6 @@ class AlignmentCheckpoint:
     loss_history: list[float]
     outer_stats: list[dict[str, Any]]
     metadata: CheckpointMetadata
-
-
-@dataclass(frozen=True, slots=True)
-class AlignmentProjectionIdentity:
-    """Projection stack identity fields used for resume validation."""
-
-    shape: tuple[int, ...] | list[int]
-    dtype: str
-
-
-@dataclass(frozen=True, slots=True)
-class AlignmentCheckpointGeometrySnapshot:
-    """Geometry and detector metadata captured in a checkpoint."""
-
-    geometry_type: str
-    geometry_meta: Mapping[str, Any] | None
-    reconstruction_grid: Mapping[str, Any]
-    detector: Mapping[str, Any]
-    state_grid: Mapping[str, Any]
-    state_detector: Mapping[str, Any]
-    geometry_calibration_state: Mapping[str, Any] | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class AlignmentCheckpointProgress:
-    """Alignment progress counters captured for resume."""
-
-    levels: list[int] | None
-    level_index: int
-    level_factor: int
-    completed_outer_iterations_in_level: int
-    global_outer_iterations_completed: int
-    prev_factor: int | None = None
-    current_inner_iteration: int = 0
-    lipschitz: float | None = None
-    small_impr_streak: int = 0
-    elapsed_offset: float = 0.0
-    level_complete: bool = False
-    run_complete: bool = False
-
-
-@dataclass(frozen=True, slots=True)
-class AlignmentCheckpointMetadataInput:
-    """Structured input used to build checkpoint metadata."""
-
-    projection: AlignmentProjectionIdentity
-    geometry: AlignmentCheckpointGeometrySnapshot
-    progress: AlignmentCheckpointProgress
-    config: Any
-    cli_options: Mapping[str, Any] | None = None
-    random_state: Mapping[str, Any] | None = None
-    schedule_metadata: Mapping[str, Any] | None = None
-    schedule_state: ScheduleResumeState | None = None
 
 
 def normalize_json(value: Any) -> Any:
@@ -170,53 +138,6 @@ def normalize_schedule_resume_state(
             normalized["completed_outer_iterations_in_stage"]
         ),
     }
-
-
-def build_alignment_checkpoint_metadata_from_input(
-    metadata_input: AlignmentCheckpointMetadataInput,
-) -> CheckpointMetadata:
-    """Build normalized checkpoint metadata shared by CLI and tests."""
-    projection = metadata_input.projection
-    geometry = metadata_input.geometry
-    progress = metadata_input.progress
-    metadata: CheckpointMetadata = {
-        "checkpoint_kind": CHECKPOINT_KIND,
-        "schema_version": SCHEMA_VERSION,
-        "tomojax_version": __version__,
-        "projection_shape": [int(v) for v in projection.shape],
-        "projection_dtype": str(projection.dtype),
-        "geometry_type": str(geometry.geometry_type),
-        "geometry_meta": _normalize_json_object(geometry.geometry_meta),
-        "reconstruction_grid": _normalize_json_object(geometry.reconstruction_grid),
-        "detector": _normalize_json_object(geometry.detector),
-        "state_grid": _normalize_json_object(geometry.state_grid),
-        "state_detector": _normalize_json_object(geometry.state_detector),
-        "levels": None if progress.levels is None else [int(v) for v in progress.levels],
-        "level_index": int(progress.level_index),
-        "level_factor": int(progress.level_factor),
-        "completed_outer_iterations_in_level": int(progress.completed_outer_iterations_in_level),
-        "global_outer_iterations_completed": int(progress.global_outer_iterations_completed),
-        "current_inner_iteration": int(progress.current_inner_iteration),
-        "prev_factor": None if progress.prev_factor is None else int(progress.prev_factor),
-        "lipschitz": None if progress.lipschitz is None else float(progress.lipschitz),
-        "small_impr_streak": int(progress.small_impr_streak),
-        "elapsed_offset": float(progress.elapsed_offset),
-        "config": normalize_json(metadata_input.config),
-        "cli_options": _normalize_json_object(metadata_input.cli_options),
-        "schedule_metadata": normalize_json(metadata_input.schedule_metadata),
-        "schedule_state": normalize_schedule_resume_state(metadata_input.schedule_state),
-        "random_state": _normalize_json_object(metadata_input.random_state or {"alignment": None}),
-        "geometry_calibration_state": normalize_json(geometry.geometry_calibration_state),
-        "level_complete": bool(progress.level_complete),
-        "run_complete": bool(progress.run_complete),
-    }
-    if progress.levels is not None and any(f > 1 for f in progress.levels):
-        # Version 1 padded odd detector edges and changed coarse volume bounds.
-        # Reusing those states under the corrected pyramid would move the data.
-        metadata["multires_geometry_version"] = MULTIRES_GEOMETRY_VERSION
-    # Keep persisted metadata strict JSON.
-    json.dumps(metadata, allow_nan=False, sort_keys=True)
-    return metadata
 
 
 def save_alignment_checkpoint(
@@ -352,11 +273,39 @@ def _validate_kind_and_schema(metadata: Mapping[str, Any]) -> None:
     if isinstance(version, int) and 0 < version < SCHEMA_VERSION:
         raise CheckpointError(
             f"incompatible checkpoint: schema version {version} predates this version of "
-            f"TomoJAX (schema {SCHEMA_VERSION}), which renamed the alignment settings; "
+            f"TomoJAX (schema {SCHEMA_VERSION}), which records alignments differently; "
             "restart the alignment"
         )
     if version != SCHEMA_VERSION:
         raise CheckpointError(f"corrupt checkpoint: unsupported schema version {version!r}")
+
+
+def _check_identity(metadata: Mapping[str, Any], expected: Mapping[str, Any]) -> None:
+    """Reject a checkpoint of another run: the first identity key that differs, and how."""
+    for key in IDENTITY_KEYS:
+        if key not in expected:
+            continue
+        actual_value = normalize_json(metadata.get(key))
+        expected_value = normalize_json(expected.get(key))
+        if actual_value != expected_value:
+            name = _IDENTITY_NAMES.get(key, key.replace("_", " "))
+            raise CheckpointError(
+                f"incompatible checkpoint: {name} {_difference(actual_value, expected_value)}"
+            )
+
+
+def _difference(saved: Any, current: Any) -> str:
+    """How ``saved`` differs from ``current``: by entry, for two mappings."""
+    if not (isinstance(saved, Mapping) and isinstance(current, Mapping)):
+        return f"{saved!r} does not match current {current!r}"
+    saved_map = cast("Mapping[str, Any]", saved)
+    current_map = cast("Mapping[str, Any]", current)
+    keys = sorted(
+        k for k in {*saved_map, *current_map} if saved_map.get(k, ...) != current_map.get(k, ...)
+    )
+    return "differs in " + ", ".join(
+        f"{k} (checkpoint {saved_map.get(k)!r}, current {current_map.get(k)!r})" for k in keys
+    )
 
 
 def validate_alignment_checkpoint(
@@ -376,28 +325,7 @@ def validate_alignment_checkpoint(
         )
 
     expected = normalize_json(dict(expected_metadata))
-    for key in (
-        "tomojax_version",
-        "projection_shape",
-        "projection_dtype",
-        "geometry_type",
-        "geometry_meta",
-        "reconstruction_grid",
-        "detector",
-        "levels",
-        "multires_geometry_version",
-        "config",
-        "cli_options",
-    ):
-        if key not in expected:
-            continue
-        actual_value = normalize_json(metadata.get(key))
-        expected_value = normalize_json(expected.get(key))
-        if actual_value != expected_value:
-            raise CheckpointError(
-                f"incompatible checkpoint: {key.replace('_', ' ')} "
-                f"{actual_value!r} does not match current {expected_value!r}"
-            )
+    _check_identity(metadata, expected)
 
     expected_schedule = expected.get("schedule_metadata")
     actual_schedule = metadata.get("schedule_metadata")

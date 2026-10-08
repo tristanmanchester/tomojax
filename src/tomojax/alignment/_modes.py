@@ -198,6 +198,15 @@ class ConeSetup:
     heights: tuple[float, ...]
     slab_offsets: tuple[float, ...]
 
+    def to_dict(self) -> dict[str, float | list[float]]:
+        """The calibration, as alignment records keep it."""
+        return {
+            "axis_offset": self.axis_offset,
+            "detector_roll_deg": self.detector_roll_deg,
+            "heights": list(self.heights),
+            "slab_offsets": list(self.slab_offsets),
+        }
+
 
 def cone_setup(
     geometry: Geometry,

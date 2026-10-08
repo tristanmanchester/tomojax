@@ -10,7 +10,7 @@ from scipy.spatial.transform import Rotation
 import tomojax as tj
 
 # check-public-imports: allow-private
-from tomojax._workflow import _composed_poses
+from tomojax._data.geometry_meta import composed_poses
 from tomojax.alignment.api import apply_pose_updates
 from tomojax.core.cone import cone_model
 from tomojax.geometry import stack_view_poses
@@ -62,7 +62,7 @@ def test_corrections_compose_with_a_scans_own_poses(frame):
         [rng.normal(0, 0.01, (12, 3)), rng.normal(0, 0.5, (12, 3))], axis=1
     ).astype(np.float32)
 
-    composed = _composed_poses(scan, corrections, frame)
+    composed = composed_poses(scan.geometry, corrections, frame)
 
     expected = apply_pose_updates(
         stack_view_poses(scan.geometry, 12), corrections, translation_frame=frame

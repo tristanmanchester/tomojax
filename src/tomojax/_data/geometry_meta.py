@@ -450,3 +450,54 @@ def build_geometry_from_meta(
         )
 
     return grid, detector, geom
+
+
+def composed_poses(geometry: ScanGeometry, corrections: np.ndarray, frame: str) -> np.ndarray:
+    """``geometry``'s poses followed by ``corrections`` (in ``frame``), as one detector-frame table.
+
+    One row of ``corrections`` per view. The table moves the nominal geometry
+    as its own poses and then the corrections do.
+    """
+    from scipy.spatial.transform import Rotation
+
+    from tomojax.core.geometry.views import stack_view_poses
+
+    n = len(corrections)
+    start = np.asarray(stack_view_poses(_nominal(geometry), n), np.float64)
+    corrected = AugmentedGeometry(geometry, np.asarray(corrections, np.float32), frame)
+    moved = np.asarray(stack_view_poses(corrected, n), np.float64)
+    rotation = np.einsum("nji,njk->nik", start[:, :3, :3], moved[:, :3, :3])
+    beta, alpha, phi = Rotation.from_matrix(rotation).as_euler("YXZ").T
+    shift = moved[:, :3, 3] - start[:, :3, 3]
+    # (alpha, beta, phi, dx, dz, dy), as Scan.poses.
+    table = np.stack([alpha, beta, phi, shift[:, 0], shift[:, 2], shift[:, 1]], axis=1)
+    return table.astype(np.float32)
+
+
+def _nominal(geometry: ScanGeometry) -> ScanGeometry:
+    """``geometry`` without its per-view poses (each segment's, for segments)."""
+    from tomojax.core.geometry import ConeSegments
+
+    if isinstance(geometry, ConeSegments):
+        return ConeSegments(tuple(_nominal(s) for s in geometry.segments))
+    return geometry.base if isinstance(geometry, AugmentedGeometry) else geometry
+
+
+def detector_poses(geometry: ScanGeometry) -> np.ndarray | None:
+    """``geometry``'s per-view poses as one detector-frame table; None for none."""
+    from tomojax.core.geometry import ConeSegments
+
+    if isinstance(geometry, ConeSegments):
+        tables = [detector_poses(s) for s in geometry.segments]
+        if all(t is None for t in tables):
+            return None
+        return np.concatenate([
+            np.zeros((len(s.angles), 6), np.float32) if t is None else t
+            for s, t in zip(geometry.segments, tables, strict=True)
+        ])  # fmt: skip
+    if not isinstance(geometry, AugmentedGeometry):
+        return None
+    params = np.asarray(geometry.align_params, np.float32)
+    if geometry.translation_frame == "detector":
+        return params
+    return composed_poses(geometry, np.zeros_like(params), "detector")

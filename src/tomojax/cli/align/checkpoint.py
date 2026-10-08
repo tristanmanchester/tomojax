@@ -1,51 +1,29 @@
+"""``tomojax align``'s checkpoints: the run a plan is, and when to write one.
+
+The record and the resume state are :mod:`tomojax.alignment`'s
+(:class:`~tomojax.alignment.api.AlignmentRun`), shared with ``tomojax.align``.
+"""
+
 from __future__ import annotations
 
-# ruff: noqa: D100,D103,TC001,TC002
-from collections.abc import Mapping
-from dataclasses import dataclass
-import logging
+# ruff: noqa: D103,TC001,TC002
 from typing import cast
 
 import jax.numpy as jnp
 
-from tomojax._typed_arrays import jax_float32_array, object_list, object_mapping
+from tomojax._typed_arrays import object_list
 from tomojax.alignment.api import (
     AlignConfig,
-    AlignmentCheckpointGeometrySnapshot,
-    AlignmentCheckpointMetadataInput,
-    AlignmentCheckpointProgress,
-    AlignmentProjectionIdentity,
+    AlignmentRun,
     AlignMultiresResumeState,
     AlignResumeState,
-    CheckpointError,
-    CheckpointMetadata,
-    ScheduleResumeState,
-    build_alignment_checkpoint_metadata_from_input,
-    load_alignment_checkpoint,
-    normalize_schedule_resume_state,
-    pad_pose_params,
-    save_alignment_checkpoint,
-    validate_alignment_checkpoint,
+    write_alignment_checkpoint,
 )
-from tomojax.geometry import Detector, Grid
+from tomojax.geometry import Geometry, ScanGeometry
 from tomojax.io.api import JsonValue, normalize_json
 
-from .command import AlignCommand
+from .command import AlignCommand, public_mode
 from .types import AlignCliCheckpointCallbacks, AlignCliRunPlan
-
-
-@dataclass(frozen=True, slots=True)
-class AlignCliCheckpointMetadataContext:
-    """Stable CLI-owned inputs shared by checkpoint metadata builders."""
-
-    meta: object
-    projections: jnp.ndarray
-    cfg: AlignConfig
-    command: AlignCommand
-    recon_grid: Grid
-    detector: Detector
-    gather_dtype: str
-    schedule_metadata: dict[str, object] | None = None
 
 
 def metadata_int(value: object, default: int = 0) -> int:
@@ -72,352 +50,42 @@ def metadata_json_mapping(value: object) -> dict[str, JsonValue]:
     return {}
 
 
-def _checkpoint_cli_options(command: AlignCommand, *, gather_dtype: str) -> dict[str, object]:
-    return {
-        "quality": command.quality,
-        "mode": command.mode,
-        "roi": command.roi,
-        "grid": command.grid,
-        "requested_gather_dtype": command.requested_gather_dtype,
-        "gather_dtype": str(gather_dtype),
-        "reconstruction": command.reconstruction,
-        "views_per_batch": command.views_per_batch,
-        "seed": command.seed,
-        "nonnegative": command.nonnegative,
-        "projector_unroll": command.projector_unroll,
-        "projector_backend": command.projector_backend,
-        "checkpoint_projector": command.checkpoint_projector,
-        "mask_vol": command.mask_vol,
-        "pose_translation_frame": command.pose_translation_frame,
-        "gauge_policy": command.gauge_policy,
-        "optimise_dofs": command.optimise_dofs,
-        "freeze": command.freeze,
-        "schedule": command.schedule,
-    }
-
-
-def checkpoint_metadata_context_from_plan(
-    plan: AlignCliRunPlan,
-) -> AlignCliCheckpointMetadataContext:
-    return AlignCliCheckpointMetadataContext(
-        meta=plan.meta,
-        projections=plan.projections,
-        cfg=plan.cfg,
-        command=plan.command,
-        recon_grid=plan.recon_grid,
-        detector=plan.detector,
-        gather_dtype=plan.gather_dtype,
-        schedule_metadata=plan.schedule_metadata,
-    )
-
-
-def initial_checkpoint_metadata(
+def checkpoint_run(
     *,
-    context: AlignCliCheckpointMetadataContext,
+    projections: jnp.ndarray,
+    geometry: Geometry,
+    command: AlignCommand,
+    cfg: AlignConfig,
     levels: list[int] | None,
-) -> CheckpointMetadata:
-    return checkpoint_metadata_from_context(
-        context,
-        AlignmentCheckpointProgress(
-            levels=levels,
-            level_index=0,
-            level_factor=1,
-            completed_outer_iterations_in_level=0,
-            global_outer_iterations_completed=0,
-            prev_factor=None,
-            lipschitz=None,
-            small_impr_streak=0,
-            elapsed_offset=0.0,
-            level_complete=False,
-            run_complete=False,
-        ),
-    )
-
-
-def checkpoint_metadata_from_context(
-    context: AlignCliCheckpointMetadataContext,
-    progress: AlignmentCheckpointProgress,
-    *,
-    state_grid: Grid | None = None,
-    state_detector: Detector | None = None,
-    schedule_state: ScheduleResumeState | None = None,
-    geometry_calibration_state: dict[str, object] | None = None,
-) -> CheckpointMetadata:
-    state_grid = context.recon_grid if state_grid is None else state_grid
-    state_detector = context.detector if state_detector is None else state_detector
-    geometry_meta = getattr(getattr(context.meta, "metadata", context.meta), "geometry_meta", None)
-    geometry_type = getattr(context.meta, "geometry_type", "parallel")
-    return build_alignment_checkpoint_metadata_from_input(
-        AlignmentCheckpointMetadataInput(
-            projection=AlignmentProjectionIdentity(
-                shape=tuple(int(v) for v in context.projections.shape),
-                dtype=str(context.projections.dtype),
-            ),
-            geometry=AlignmentCheckpointGeometrySnapshot(
-                geometry_type=str(geometry_type),
-                geometry_meta=geometry_meta,
-                reconstruction_grid=context.recon_grid.to_dict(),
-                detector=context.detector.to_dict(),
-                state_grid=state_grid.to_dict(),
-                state_detector=state_detector.to_dict(),
-                geometry_calibration_state=geometry_calibration_state,
-            ),
-            progress=progress,
-            config=context.cfg,
-            cli_options=_checkpoint_cli_options(context.command, gather_dtype=context.gather_dtype),
-            random_state={
-                "alignment": None,
-                "seed_translations": (
-                    "deterministic_phase_correlation" if context.cfg.seed_translations else None
-                ),
-            },
-            schedule_metadata=context.schedule_metadata,
-            schedule_state=schedule_state,
-        )
-    )
-
-
-def checkpoint_progress(
-    *,
-    levels: list[int] | None,
-    level_index: int,
-    level_factor: int,
-    completed_outer_iterations_in_level: int,
-    global_outer_iterations_completed: int,
-    prev_factor: int | None,
-    lipschitz: float | None,
-    small_impr_streak: int,
-    elapsed_offset: float,
-    level_complete: bool,
-    run_complete: bool,
-) -> AlignmentCheckpointProgress:
-    return AlignmentCheckpointProgress(
+    schedule_metadata: dict[str, object] | None,
+) -> AlignmentRun:
+    """The run a checkpoint of this command must match to resume it."""
+    return AlignmentRun(
+        projections=projections,
+        geometry=cast("ScanGeometry", geometry),  # every built-in geometry is one
+        config=cfg,
+        mode=public_mode(command.mode),
         levels=levels,
-        level_index=int(level_index),
-        level_factor=int(level_factor),
-        completed_outer_iterations_in_level=int(completed_outer_iterations_in_level),
-        global_outer_iterations_completed=int(global_outer_iterations_completed),
-        prev_factor=prev_factor,
-        current_inner_iteration=0,
-        lipschitz=lipschitz,
-        small_impr_streak=small_impr_streak,
-        elapsed_offset=elapsed_offset,
-        level_complete=level_complete,
-        run_complete=run_complete,
-    )
-
-
-def _default_schedule_resume_state() -> ScheduleResumeState:
-    return {
-        "stage_index": 0,
-        "stage_name": None,
-        "stage_completed": False,
-        "completed_outer_iterations_in_stage": 0,
-    }
-
-
-def _schedule_resume_state_from_checkpoint(metadata: CheckpointMetadata) -> ScheduleResumeState:
-    raw_schedule_state = metadata.get("schedule_state")
-    if raw_schedule_state is not None and not isinstance(raw_schedule_state, Mapping):
-        raise CheckpointError("corrupt checkpoint: invalid schedule_state")
-    try:
-        return (
-            normalize_schedule_resume_state(raw_schedule_state) or _default_schedule_resume_state()
-        )
-    except (KeyError, TypeError, ValueError) as exc:
-        raise CheckpointError("corrupt checkpoint: invalid schedule_state") from exc
-
-
-def resume_state_from_checkpoint(
-    checkpoint_path: str,
-    *,
-    expected_metadata: CheckpointMetadata,
-    used_multires: bool,
-) -> AlignResumeState | AlignMultiresResumeState:
-    checkpoint = load_alignment_checkpoint(checkpoint_path)
-    validate_alignment_checkpoint(checkpoint, expected_metadata)
-    metadata = checkpoint.metadata
-    saved_config = cast("object", metadata.get("config", {}))
-    if not isinstance(saved_config, Mapping):
-        raise CheckpointError("corrupt checkpoint: config must be a mapping")
-    translation_frame = str(
-        cast("Mapping[str, object]", saved_config).get("pose_translation_frame", "object")
-    )
-    if used_multires:
-        schedule_state = _schedule_resume_state_from_checkpoint(metadata)
-        prev_factor_value = metadata.get("prev_factor")
-        geometry_calibration_state = metadata.get("geometry_calibration_state")
-        return AlignMultiresResumeState(
-            pose_translation_frame=translation_frame,
-            x=jax_float32_array(checkpoint.x),
-            pose_params=jax_float32_array(pad_pose_params(checkpoint.pose_params)),
-            motion_coeffs=(
-                None
-                if checkpoint.motion_coeffs is None
-                else jax_float32_array(checkpoint.motion_coeffs)
-            ),
-            level_index=int(metadata.get("level_index", 0)),
-            level_factor=int(metadata.get("level_factor", 1)),
-            completed_outer_iterations_in_level=int(
-                metadata.get("completed_outer_iterations_in_level", 0)
-            ),
-            global_outer_iterations_completed=int(
-                metadata.get("global_outer_iterations_completed", 0)
-            ),
-            prev_factor=None if prev_factor_value is None else int(prev_factor_value),
-            loss=list(checkpoint.loss_history),
-            outer_stats=[dict(stat) for stat in checkpoint.outer_stats],
-            lipschitz=metadata.get("lipschitz"),
-            small_impr_streak=int(metadata.get("small_impr_streak", 0)),
-            elapsed_offset=float(metadata.get("elapsed_offset", 0.0)),
-            level_complete=bool(metadata.get("level_complete", False)),
-            run_complete=bool(metadata.get("run_complete", False)),
-            geometry_calibration_state=(
-                object_mapping(cast("object", geometry_calibration_state))
-                if isinstance(geometry_calibration_state, dict)
-                else None
-            ),
-            stage_index=schedule_state["stage_index"],
-            stage_name=schedule_state["stage_name"],
-            stage_completed=schedule_state["stage_completed"],
-            completed_outer_iterations_in_stage=schedule_state[
-                "completed_outer_iterations_in_stage"
-            ],
-            ray_integrator=str(
-                cast("Mapping[str, object]", saved_config).get("ray_integrator", "sampled")
-            ),
-        )
-    return AlignResumeState(
-        pose_translation_frame=translation_frame,
-        x=jax_float32_array(checkpoint.x),
-        pose_params=jax_float32_array(pad_pose_params(checkpoint.pose_params)),
-        motion_coeffs=(
-            None
-            if checkpoint.motion_coeffs is None
-            else jax_float32_array(checkpoint.motion_coeffs)
-        ),
-        start_outer_iter=int(metadata.get("completed_outer_iterations_in_level", 0)),
-        loss=list(checkpoint.loss_history),
-        outer_stats=[dict(stat) for stat in checkpoint.outer_stats],
-        lipschitz=metadata.get("lipschitz"),
-        small_impr_streak=int(metadata.get("small_impr_streak", 0)),
-        elapsed_offset=float(metadata.get("elapsed_offset", 0.0)),
-        ray_integrator=str(
-            cast("Mapping[str, object]", saved_config).get("ray_integrator", "sampled")
-        ),
-    )
-
-
-def _state_grid_detector_for_checkpoint(
-    plan: AlignCliRunPlan,
-    level_factor: int,
-    *,
-    run_complete: bool,
-) -> tuple[Grid, Detector]:
-    if plan.run_levels is None or run_complete:
-        return plan.recon_grid, plan.detector
-    from tomojax.core.multires import scale_detector, scale_grid
-
-    return scale_grid(plan.recon_grid, int(level_factor)), scale_detector(
-        plan.detector,
-        int(level_factor),
+        schedule_metadata=schedule_metadata,
     )
 
 
 def make_align_cli_checkpoint_callbacks(plan: AlignCliRunPlan) -> AlignCliCheckpointCallbacks:
-    metadata_context = checkpoint_metadata_context_from_plan(plan)
+    """Callbacks writing ``plan``'s checkpoint every ``--checkpoint-every`` outer iterations."""
+    path, run = plan.checkpoint_path, plan.checkpoint_run
+    every = int(plan.checkpoint_every or 1)
 
-    def write_single_checkpoint(
-        state: AlignResumeState,
-        *,
-        run_complete: bool = False,
-    ) -> None:
-        if plan.checkpoint_path is None:
-            return
-        completed = int(state.start_outer_iter)
-        every = int(plan.checkpoint_every or 1)
-        if not run_complete and (completed <= 0 or completed % every != 0):
-            return
-        metadata = checkpoint_metadata_from_context(
-            metadata_context,
-            checkpoint_progress(
-                levels=None,
-                level_index=0,
-                level_factor=1,
-                completed_outer_iterations_in_level=completed,
-                global_outer_iterations_completed=completed,
-                prev_factor=None,
-                lipschitz=state.lipschitz,
-                small_impr_streak=int(state.small_impr_streak),
-                elapsed_offset=float(state.elapsed_offset),
-                level_complete=run_complete or completed >= int(plan.cfg.outer_iterations),
-                run_complete=run_complete,
-            ),
-        )
-        save_alignment_checkpoint(
-            plan.checkpoint_path,
-            x=state.x,
-            pose_params=state.pose_params,
-            motion_coeffs=state.motion_coeffs,
-            loss_history=state.loss,
-            outer_stats=state.outer_stats,
-            metadata=metadata,
-        )
-        logging.info("Saved alignment checkpoint to %s", plan.checkpoint_path)
+    def due(completed: int) -> bool:
+        return completed > 0 and completed % every == 0
+
+    def write_single_checkpoint(state: AlignResumeState, *, run_complete: bool = False) -> None:
+        if path is not None and (run_complete or due(int(state.start_outer_iter))):
+            write_alignment_checkpoint(path, run, state, run_complete=run_complete)
 
     def write_multires_checkpoint(state: AlignMultiresResumeState) -> None:
-        if plan.checkpoint_path is None:
-            return
-        completed = int(state.global_outer_iterations_completed)
-        every = int(plan.checkpoint_every or 1)
-        if (
-            not state.run_complete
-            and not state.level_complete
-            and (completed <= 0 or completed % every != 0)
-        ):
-            return
-        state_grid, state_detector = _state_grid_detector_for_checkpoint(
-            plan,
-            int(state.level_factor),
-            run_complete=bool(state.run_complete),
-        )
-        metadata = checkpoint_metadata_from_context(
-            metadata_context,
-            checkpoint_progress(
-                levels=plan.run_levels,
-                level_index=int(state.level_index),
-                level_factor=int(state.level_factor),
-                completed_outer_iterations_in_level=int(state.completed_outer_iterations_in_level),
-                global_outer_iterations_completed=completed,
-                prev_factor=state.prev_factor,
-                lipschitz=state.lipschitz,
-                small_impr_streak=int(state.small_impr_streak),
-                elapsed_offset=float(state.elapsed_offset),
-                level_complete=bool(state.level_complete),
-                run_complete=bool(state.run_complete),
-            ),
-            state_grid=state_grid,
-            state_detector=state_detector,
-            schedule_state={
-                "stage_index": int(state.stage_index),
-                "stage_name": state.stage_name,
-                "stage_completed": bool(state.stage_completed),
-                "completed_outer_iterations_in_stage": int(
-                    state.completed_outer_iterations_in_stage
-                ),
-            },
-            geometry_calibration_state=state.geometry_calibration_state,
-        )
-        save_alignment_checkpoint(
-            plan.checkpoint_path,
-            x=state.x,
-            pose_params=state.pose_params,
-            motion_coeffs=state.motion_coeffs,
-            loss_history=state.loss,
-            outer_stats=state.outer_stats,
-            metadata=metadata,
-        )
-        logging.info("Saved alignment checkpoint to %s", plan.checkpoint_path)
+        finished = state.run_complete or state.level_complete
+        if path is not None and (finished or due(int(state.global_outer_iterations_completed))):
+            write_alignment_checkpoint(path, run, state)
 
     return AlignCliCheckpointCallbacks(
         single=write_single_checkpoint, multires=write_multires_checkpoint

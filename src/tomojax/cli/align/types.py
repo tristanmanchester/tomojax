@@ -12,6 +12,7 @@ from tomojax.alignment.api import (
     AlignConfig,
     AlignInfo,
     AlignmentLossConfig,
+    AlignmentRun,
     AlignMultiresInfo,
     AlignMultiresResumeState,
     AlignResumeState,
@@ -47,6 +48,7 @@ class AlignCliRunPlan:
     schedule_metadata: dict[str, object] | None
     checkpoint_path: str | None
     checkpoint_every: int | None
+    checkpoint_run: AlignmentRun
     resume_state: AlignResumeState | AlignMultiresResumeState | None
     apply_cyl_mask: bool
 

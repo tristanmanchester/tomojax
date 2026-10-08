@@ -29,6 +29,7 @@ from tomojax.alignment.api import (
     resolve_alignment_schedule,
     resolve_profiled_cli_defaults,
     resolved_schedule_for_config,
+    resume_state_from_checkpoint,
     validate_loss_schedule_levels,
 )
 from tomojax.cli._reconstruction_region import resolve_reconstruction_region
@@ -38,12 +39,7 @@ from tomojax.geometry import Grid, beam_of
 from tomojax.io import build_geometry_from_dataset_metadata
 from tomojax.io.api import JsonValue, load_projection_payload, normalize_json
 
-from .checkpoint import (
-    AlignCliCheckpointMetadataContext,
-    initial_checkpoint_metadata,
-    metadata_int,
-    resume_state_from_checkpoint,
-)
+from .checkpoint import checkpoint_run, metadata_int
 from .command import (
     AlignCommand,
     AlignmentMode,
@@ -158,7 +154,7 @@ def _checkpoint_dof_option(
     if value is None:
         return None
     if not isinstance(value, list):
-        parser.error(f"checkpoint cli option {key!r} must be a list or null")
+        parser.error(f"checkpoint setting {key!r} must be a list or null")
     restored = [str(item) for item in object_list(cast("object", value))]
     return restored or None
 
@@ -176,28 +172,23 @@ def _restore_resume_schedule_options(
         checkpoint = load_alignment_checkpoint(resume_path)
     except CheckpointError as exc:
         raise SystemExit(f"tomojax align: {exc}") from exc
-    cli_options = checkpoint.metadata.get("cli_options")
-    if not isinstance(cli_options, dict):
+    config = cast("object", checkpoint.metadata.get("config"))
+    if not isinstance(config, dict):
         return []
-    cli_options = cast("dict[str, object]", cli_options)
+    saved = cast("dict[str, object]", config)
 
     restored_keys: list[str] = []
     explicit_schedule = "schedule" in configured_keys
     explicit_optimise_dofs = "optimise_dofs" in configured_keys
 
-    checkpoint_optimise_dofs = (
-        None
-        if "optimise_dofs" not in cli_options
-        else _checkpoint_dof_option(parser, cli_options["optimise_dofs"], key="optimise_dofs")
+    checkpoint_optimise_dofs = _checkpoint_dof_option(
+        parser, saved.get("optimise_dofs"), key="optimise_dofs"
     )
-    checkpoint_freeze = (
-        None
-        if "freeze" not in cli_options
-        else _checkpoint_dof_option(parser, cli_options["freeze"], key="freeze")
-    )
-    checkpoint_schedule = cli_options.get("schedule")
-    if checkpoint_schedule is not None and not isinstance(checkpoint_schedule, str):
-        parser.error("checkpoint cli option 'schedule' must be a string or null")
+    checkpoint_freeze = _checkpoint_dof_option(parser, saved.get("freeze"), key="freeze")
+    # A schedule built in Python is not a preset name the command line can restore.
+    checkpoint_schedule = saved.get("schedule")
+    if not isinstance(checkpoint_schedule, str):
+        checkpoint_schedule = None
 
     restore_schedule = (
         checkpoint_schedule is not None and not explicit_schedule and not explicit_optimise_dofs
@@ -533,27 +524,18 @@ def build_align_cli_run_plan(
     except ValueError as exc:
         parser.error(str(exc))
 
-    expected_checkpoint_metadata = initial_checkpoint_metadata(
-        context=AlignCliCheckpointMetadataContext(
-            meta=inputs.meta,
-            projections=inputs.projections,
-            cfg=resolved.cfg,
-            command=command,
-            recon_grid=recon_grid,
-            detector=inputs.detector,
-            gather_dtype=resolved.gather_dtype,
-            schedule_metadata=resolved.schedule_metadata,
-        ),
+    run = checkpoint_run(
+        projections=inputs.projections,
+        geometry=geom,
+        command=command,
+        cfg=resolved.cfg,
         levels=run_levels,
+        schedule_metadata=resolved.schedule_metadata,
     )
     resume_state = None
     if command.resume is not None:
         try:
-            resume_state = resume_state_from_checkpoint(
-                command.resume,
-                expected_metadata=expected_checkpoint_metadata,
-                used_multires=run_levels is not None,
-            )
+            resume_state = resume_state_from_checkpoint(command.resume, run)
         except CheckpointError as exc:
             raise SystemExit(f"tomojax align: {exc}") from exc
         logging.info("Resuming alignment from checkpoint %s", command.resume)
@@ -578,6 +560,7 @@ def build_align_cli_run_plan(
         schedule_metadata=resolved.schedule_metadata,
         checkpoint_path=checkpoint_path,
         checkpoint_every=None if checkpoint_every is None else int(checkpoint_every),
+        checkpoint_run=run,
         resume_state=resume_state,
         apply_cyl_mask=region.apply_output_mask,
     )
@@ -600,10 +583,7 @@ def _calibrate_cone_axis(
     beam = beam_of(setup.geometry)
     assert beam is not None
     record: dict[str, JsonValue] = {
-        "axis_offset": setup.axis_offset,
-        "detector_roll_deg": setup.detector_roll_deg,
-        "heights": list(setup.heights),
-        "slab_offsets": list(setup.slab_offsets),
+        **cast("dict[str, JsonValue]", setup.to_dict()),
         "cone_beam": normalize_json(beam.to_dict()),
     }
     cfg = setup.config

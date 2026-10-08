@@ -10,7 +10,7 @@
     "tomojax.geometry.api": 43,
     "tomojax.recon.api": 22,
     "tomojax.io.api": 34,
-    "tomojax.alignment.api": 75,
+    "tomojax.alignment.api": 73,
     "tomojax.datasets.api": 15
   },
   "cli_flags": {
@@ -51,7 +51,7 @@
     "src/tomojax/backends/_memory.py::estimate_views_per_batch_info": 101,
     "src/tomojax/cli/_recon_plan.py::build_recon_runtime_plan": 109,
     "src/tomojax/cli/align/command.py::_add_dof_schedule_options": 129,
-    "src/tomojax/cli/align/plan.py::build_align_cli_run_plan": 109,
+    "src/tomojax/cli/align/plan.py::build_align_cli_run_plan": 101,
     "src/tomojax/cli/preprocess.py::_build_parser": 152,
     "src/tomojax/cli/simulate.py::_build_parser": 159,
     "src/tomojax/core/pallas/_pallas_adjoint_kernels.py::_projector_loss_grad_kernel": 149,
@@ -111,7 +111,6 @@
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::PLR0911::_rigid_detector_grid_transform",
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::PLR0912::_run_reconstruction_step",
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::PLR0915::_run_reconstruction_step",
-    "src/tomojax/alignment/io/checkpoint.py::C901::validate_alignment_checkpoint",
     "src/tomojax/alignment/optimizers.py::C901::_run_lbfgs_optax_loop",
     "src/tomojax/alignment/optimizers.py::C901::run_pose_lbfgs",
     "src/tomojax/backends/_memory.py::PLR0911::_free_bytes_from_memory_info",

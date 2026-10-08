@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 import subprocess
 import sys
+from typing import TYPE_CHECKING
 
 import jax
 import numpy as np
 import pytest
 
 import tomojax as tj
+
+if TYPE_CHECKING:
+    from tomojax.alignment import AlignConfig
 
 
 def _phantom(n: int) -> np.ndarray:
@@ -184,6 +189,92 @@ def test_aligning_a_loaded_scan_keeps_its_corrections(tmp_path: Path) -> None:
     tj.save(tmp_path / "aligned.nxs", result.scan)
     np.testing.assert_allclose(tj.load(tmp_path / "aligned.nxs").poses, result.poses, atol=1e-6)
     assert tj.load(tmp_path / "aligned.nxs", poses=False).poses is None
+
+
+def _shifted_scan(n: int = 12) -> tj.Scan:
+    """A parallel scan whose every other view moved one pixel across."""
+    grid = tj.Grid(n, n, n, 1.0, 1.0, 1.0)
+    geometry = tj.ParallelGeometry(grid, tj.Detector(n, n, 1.0, 1.0), np.linspace(0, 180, 16))
+    data = np.array(tj.project(geometry, _phantom(n)))
+    data[::2] = np.roll(data[::2], 1, axis=2)
+    return tj.Scan(data, geometry)
+
+
+def _few_iterations(scan: tj.Scan) -> AlignConfig:
+    """The default pose alignment's settings, stopped after four outer iterations."""
+    from tomojax.alignment.api import alignment_plan
+
+    plan = alignment_plan("pose", scan.grid)
+    return replace(plan.config, outer_iterations=4, early_stop=False)
+
+
+def test_align_on_another_grid() -> None:
+    scan = _shifted_scan()
+    region = tj.Grid(10, 10, 8, 1.0, 1.0, 1.0)
+
+    result = tj.align(scan, grid=region, levels=(1,), config=_few_iterations(scan))
+
+    assert np.asarray(result.volume).shape == (10, 10, 8)
+    assert result.scan.grid == region
+    assert tj.reconstruct(result.scan).grid == region
+
+
+def test_an_interrupted_alignment_resumes_from_its_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scan = _shifted_scan()
+    options = {"levels": (1,), "config": _few_iterations(scan)}
+    uninterrupted = tj.align(scan, **options)  # pyright: ignore[reportArgumentType]
+
+    class Interrupted(Exception):
+        pass
+
+    from tomojax.alignment.api import load_alignment_checkpoint, save_alignment_checkpoint
+
+    def save_then_stop(*args: object, **kwargs: object) -> None:
+        save_alignment_checkpoint(*args, **kwargs)  # pyright: ignore[reportArgumentType]
+        raise Interrupted
+
+    path = tmp_path / "align.ckpt"
+    with monkeypatch.context() as patch:
+        patch.setattr("tomojax.alignment.io.resume.save_alignment_checkpoint", save_then_stop)
+        with pytest.raises(Interrupted):
+            tj.align(scan, checkpoint=path, **options)  # pyright: ignore[reportArgumentType]
+    # Stopped at the first checkpoint: the proposal stage and one solver iteration.
+    progress = load_alignment_checkpoint(path).metadata
+    assert progress["global_outer_iterations_completed"] == 2 and not progress["level_complete"]
+
+    resumed = tj.align(scan, checkpoint=path, **options)  # pyright: ignore[reportArgumentType]
+
+    np.testing.assert_allclose(resumed.poses, uninterrupted.poses, atol=1e-5)
+    np.testing.assert_allclose(resumed.volume, uninterrupted.volume, atol=1e-5)
+    np.testing.assert_allclose(resumed.info["loss"], uninterrupted.info["loss"], rtol=1e-5)
+    assert load_alignment_checkpoint(path).metadata["run_complete"]
+    finished = tj.align(scan, checkpoint=path, **options)  # pyright: ignore[reportArgumentType]
+    np.testing.assert_allclose(finished.poses, uninterrupted.poses, atol=1e-5)
+
+
+def test_alignment_refuses_the_checkpoint_of_another_alignment(tmp_path: Path) -> None:
+    scan = _shifted_scan()
+    config = _few_iterations(scan)
+    path = tmp_path / "align.ckpt"
+    tj.align(scan, levels=(1,), config=config, checkpoint=path)
+    saved = path.read_bytes()
+
+    with pytest.raises(ValueError, match=r"config differs in freeze .*choose another checkpoint"):
+        tj.align(scan, levels=(1,), config=replace(config, freeze=("dx",)), checkpoint=path)
+    other = replace(scan, projections=np.asarray(scan.projections)[:, :, ::-1])
+    with pytest.raises(ValueError, match="fingerprint of the projections and geometry"):
+        tj.align(other, levels=(1,), config=config, checkpoint=path)
+    with pytest.raises(ValueError, match="reconstruction grid"):
+        tj.align(
+            scan,
+            levels=(1,),
+            config=config,
+            grid=tj.Grid(10, 10, 8, 1.0, 1.0, 1.0),
+            checkpoint=path,
+        )
+    assert path.read_bytes() == saved
 
 
 def test_the_least_magnified_segment_decides_the_binning_suggestion() -> None:

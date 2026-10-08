@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 
     from tomojax._typed_arrays import Device
     from tomojax.alignment import AlignConfig
-    from tomojax.alignment.api import AlignmentMode, QualityTier
+    from tomojax.alignment.api import AlignmentMode, AlignmentPlan, QualityTier
     from tomojax.geometry import ConeSegments, Detector, Geometry, Grid, ScanGeometry
     from tomojax.io import ProjectionDataset
 
@@ -105,7 +105,9 @@ class Scan:
         Rotations in radians, translations in the geometry's length unit, in
         the detector frame. None when the scan carries no corrections.
         """
-        return _detector_poses(self.geometry)
+        from tomojax._data.geometry_meta import detector_poses
+
+        return detector_poses(self.geometry)
 
     @classmethod
     def from_astra(
@@ -342,7 +344,9 @@ def _describe_segments(
         detector = segment.detector.to_dict()
         entries.append({"views": len(segment.angles), "detector": detector, **meta})
     meta = {"cone_beam": entries[0]["cone_beam"], "cone_segments": entries}
-    table = _detector_poses(geometry)  # one frame for every segment's poses
+    from tomojax._data.geometry_meta import detector_poses
+
+    table = detector_poses(geometry)  # one frame for every segment's poses
     return "cone", meta, None if table is None else (table, "detector"), geometry
 
 
@@ -576,6 +580,8 @@ def align(
     quality: QualityTier = "fast",
     levels: Iterable[int] | None = None,
     freeze: Iterable[str] = (),
+    grid: Grid | None = None,
+    checkpoint: str | PathLike[str] | None = None,
     config: AlignConfig | None = None,
 ) -> Alignment:
     """Estimate ``scan``'s geometry corrections and reconstruct with them.
@@ -589,20 +595,31 @@ def align(
     ``config`` (a :class:`tomojax.alignment.AlignConfig`) holds expert solver
     settings and replaces the quality profile's defaults.
 
+    ``grid`` aligns and reconstructs on another grid than the scan's (a
+    region, or a different voxel size), as :func:`reconstruct` does.
+
+    ``checkpoint`` is a file the alignment saves its progress to after each
+    outer iteration. When that file holds a checkpoint of the same alignment
+    (the same projections and geometry, mode, levels, grid and settings, from
+    the same TomoJAX version), the alignment resumes from it, and a finished
+    one returns its result at once. Any other file there raises
+    :class:`ValueError` saying how it differs, and is left as it is. A cone
+    beam's ``cor`` mode runs no outer iterations and writes none.
+
     A scan that already carries poses (an ASTRA import's, say, or an earlier
     alignment's) is corrected on top of them, and multi-orbit
     :class:`~tomojax.geometry.ConeSegments` scans are aligned as one, so their
     orbits come into register; only ``pose`` alignment takes either.
 
-    The returned :attr:`Alignment.scan` carries the corrections, so
-    ``tomojax.reconstruct(result.scan)`` reconstructs with them;
+    The returned :attr:`Alignment.scan` carries the corrections, and the grid,
+    so ``tomojax.reconstruct(result.scan)`` reconstructs with them;
     :attr:`Alignment.poses` are the scan's poses, its own included.
     """
-    import jax.numpy as jnp
-
-    from tomojax.alignment.api import align_multires, alignment_plan, cone_setup, pad_pose_params
+    from tomojax.alignment.api import alignment_plan
     from tomojax.geometry import ConeSegments
 
+    if grid is not None:
+        scan = _with_grid(scan, grid)
     plan = alignment_plan(
         mode, scan.grid, quality=quality, levels=levels, freeze=freeze, config=config
     )
@@ -613,43 +630,15 @@ def align(
             "align posed or segmented scans with mode='pose'"
         )
     _suggest_binning(scan, "alignment")
-    geometry, grid, detector = scan.geometry, scan.grid, scan.detector
-    projections = jnp.asarray(scan.projections, jnp.float32)
-    cfg: AlignConfig | None = plan.config
-    record: dict[str, object] = {"mode": plan.mode, "levels": list(plan.levels)}
-    setup = cone_setup(geometry, grid, detector, projections, plan.config)
-    if setup is not None:
-        geometry, cfg = setup.geometry, setup.config
-        record["cone_axis_calibration"] = {
-            "axis_offset": setup.axis_offset,
-            "detector_roll_deg": setup.detector_roll_deg,
-            "heights": list(setup.heights),
-            "slab_offsets": list(setup.slab_offsets),
-        }
-    calibrated = replace(scan, geometry=geometry)
-    if cfg is None:
-        # Only the cone axis was asked for: reconstruct with it.
-        volume = reconstruct(calibrated).volume
-        poses = np.zeros((len(scan.angles), 6), np.float32)
-        info: dict[str, object] = dict(record)
-        frame = "detector"
-    else:
-        volume, params, run = align_multires(
-            geometry, grid, detector, projections, factors=plan.levels, config=cfg
-        )
-        poses = np.asarray(pad_pose_params(params), np.float32)
-        info = {**dict(run), **record}
-        frame = cfg.pose_translation_frame
-        if scan.poses is not None:
-            poses, frame = _composed_poses(scan, poses, frame), "detector"
-    corrected = _record_of(calibrated)
+    geometry, volume, poses, frame, info = _run_alignment(scan, plan, checkpoint)
+    corrected = _record_of(replace(scan, geometry=cast("ScanGeometry", geometry)))
     calibration = info.get("geometry_calibration_state")
     if isinstance(calibration, dict):
         from tomojax.geometry.api import build_calibrated_geometry_metadata_patch
 
         patch = build_calibrated_geometry_metadata_patch(
             calibration_state=cast("dict[str, object]", calibration),
-            detector=detector.to_dict(),
+            detector=scan.detector.to_dict(),
             geometry_meta=corrected.geometry_metadata,
         )
         corrected.detector = _detector(patch["detector"])
@@ -663,6 +652,59 @@ def align(
     return Alignment(
         scan=replace(aligned, source=scan.source), volume=volume, poses=poses, info=info
     )
+
+
+def _run_alignment(
+    scan: Scan, plan: AlignmentPlan, checkpoint: str | PathLike[str] | None
+) -> tuple[Geometry, np.ndarray | jax.Array, np.ndarray, str, dict[str, object]]:
+    """Calibrated geometry, volume, ``(views, 6)`` poses, their frame and record of ``plan``."""
+    import jax.numpy as jnp
+
+    from tomojax.alignment.api import (
+        AlignmentRun,
+        align_multires,
+        alignment_checkpointing,
+        cone_setup,
+        pad_pose_params,
+    )
+
+    geometry, grid, detector = scan.geometry, scan.grid, scan.detector
+    projections = jnp.asarray(scan.projections, jnp.float32)
+    cfg: AlignConfig | None = plan.config
+    record: dict[str, object] = {"mode": plan.mode, "levels": list(plan.levels)}
+    setup = cone_setup(geometry, grid, detector, projections, plan.config)
+    if setup is not None:
+        geometry, cfg = setup.geometry, setup.config
+        record["cone_axis_calibration"] = setup.to_dict()
+    if cfg is None:
+        # Only the cone axis was asked for: reconstruct with it.
+        volume = reconstruct(replace(scan, geometry=cast("ScanGeometry", geometry))).volume
+        return geometry, volume, np.zeros((len(scan.angles), 6), np.float32), "detector", record
+    run = AlignmentRun(
+        projections=projections,
+        geometry=scan.geometry,
+        config=plan.config,
+        mode=plan.mode,
+        levels=plan.levels,
+    )
+    resume, write = alignment_checkpointing(checkpoint, run)
+    volume, params, info = align_multires(
+        geometry,
+        grid,
+        detector,
+        projections,
+        factors=plan.levels,
+        config=cfg,
+        resume_state=resume,
+        checkpoint_callback=write,
+    )
+    poses = np.asarray(pad_pose_params(params), np.float32)
+    frame = cfg.pose_translation_frame
+    if scan.poses is not None:
+        from tomojax._data.geometry_meta import composed_poses
+
+        poses, frame = composed_poses(scan.geometry, poses, frame), "detector"
+    return geometry, volume, poses, frame, {**dict(info), **record}
 
 
 def _oversampling(scan: Scan) -> float:
@@ -699,65 +741,6 @@ def _suggest_binning(scan: Scan, work: str) -> None:
         "cheaper for little loss of detail",
         stacklevel=3,
     )
-
-
-def _composed_poses(scan: Scan, corrections: np.ndarray, frame: str) -> np.ndarray:
-    """``scan``'s poses followed by ``corrections`` (in ``frame``), as one detector-frame table.
-
-    The table moves the scan's nominal geometry as its own poses and then the
-    corrections do.
-    """
-    return _composed(scan.geometry, corrections, frame)
-
-
-def _composed(geometry: ScanGeometry, corrections: np.ndarray, frame: str) -> np.ndarray:
-    """:func:`_composed_poses` for a geometry, one row of ``corrections`` per view."""
-    from scipy.spatial.transform import Rotation
-
-    from tomojax._data.geometry_meta import AugmentedGeometry
-    from tomojax.geometry import stack_view_poses
-
-    n = len(corrections)
-    start = np.asarray(stack_view_poses(_nominal(geometry), n), np.float64)
-    corrected = AugmentedGeometry(geometry, np.asarray(corrections, np.float32), frame)
-    moved = np.asarray(stack_view_poses(corrected, n), np.float64)
-    rotation = np.einsum("nji,njk->nik", start[:, :3, :3], moved[:, :3, :3])
-    beta, alpha, phi = Rotation.from_matrix(rotation).as_euler("YXZ").T
-    shift = moved[:, :3, 3] - start[:, :3, 3]
-    # (alpha, beta, phi, dx, dz, dy), as Scan.poses.
-    table = np.stack([alpha, beta, phi, shift[:, 0], shift[:, 2], shift[:, 1]], axis=1)
-    return table.astype(np.float32)
-
-
-def _nominal(geometry: ScanGeometry) -> ScanGeometry:
-    """``geometry`` without its per-view poses (each segment's, for segments)."""
-    from tomojax._data.geometry_meta import AugmentedGeometry
-    from tomojax.geometry import ConeSegments
-
-    if isinstance(geometry, ConeSegments):
-        return ConeSegments(tuple(_nominal(s) for s in geometry.segments))
-    return geometry.base if isinstance(geometry, AugmentedGeometry) else geometry
-
-
-def _detector_poses(geometry: ScanGeometry) -> np.ndarray | None:
-    """``geometry``'s per-view poses as one detector-frame table; None for none."""
-    from tomojax._data.geometry_meta import AugmentedGeometry
-    from tomojax.geometry import ConeSegments
-
-    if isinstance(geometry, ConeSegments):
-        tables = [_detector_poses(s) for s in geometry.segments]
-        if all(t is None for t in tables):
-            return None
-        return np.concatenate([
-            np.zeros((len(s.angles), 6), np.float32) if t is None else t
-            for s, t in zip(geometry.segments, tables, strict=True)
-        ])  # fmt: skip
-    if not isinstance(geometry, AugmentedGeometry):
-        return None
-    params = np.asarray(geometry.align_params, np.float32)
-    if geometry.translation_frame == "detector":
-        return params
-    return _composed(geometry, np.zeros_like(params), "detector")
 
 
 def _detector(value: object) -> Detector:

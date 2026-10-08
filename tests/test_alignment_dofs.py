@@ -9,6 +9,7 @@ import pytest
 from tomojax.alignment.api import (
     AlignConfig,
     GaugePolicyError,
+    alignment_checkpoint_metadata,
     alignment_params_payload,
     dof_spec,
     normalize_alignment_dofs,
@@ -16,10 +17,6 @@ from tomojax.alignment.api import (
     normalize_geometry_dofs,
     resolve_alignment_schedule,
     save_alignment_checkpoint,
-)
-from tomojax.cli.align.checkpoint import (
-    AlignCliCheckpointMetadataContext,
-    initial_checkpoint_metadata,
 )
 from tomojax.cli.align.command import build_parser
 from tomojax.cli.align.plan import build_align_cli_run_plan
@@ -127,19 +124,7 @@ def test_cli_resume_restores_geometry_dofs_from_checkpoint(
         checkpoint_path,
         x=np.zeros((5, 5, 4), dtype=np.float32),
         pose_params=np.zeros((3, 5), dtype=np.float32),
-        metadata=initial_checkpoint_metadata(
-            context=AlignCliCheckpointMetadataContext(
-                meta=initial_plan.meta,
-                projections=initial_plan.projections,
-                cfg=initial_plan.cfg,
-                command=initial_plan.command,
-                recon_grid=initial_plan.recon_grid,
-                detector=initial_plan.detector,
-                gather_dtype=initial_plan.gather_dtype,
-                schedule_metadata=initial_plan.schedule_metadata,
-            ),
-            levels=initial_plan.run_levels,
-        ),
+        metadata=alignment_checkpoint_metadata(initial_plan.checkpoint_run),
     )
 
     resume_args = parser.parse_args(
@@ -194,19 +179,7 @@ def test_cli_resume_mode_max_checkpoint_keeps_schedule_without_empty_dofs(
         checkpoint_path,
         x=np.zeros((5, 5, 4), dtype=np.float32),
         pose_params=np.zeros((3, 5), dtype=np.float32),
-        metadata=initial_checkpoint_metadata(
-            context=AlignCliCheckpointMetadataContext(
-                meta=initial_plan.meta,
-                projections=initial_plan.projections,
-                cfg=initial_plan.cfg,
-                command=initial_plan.command,
-                recon_grid=initial_plan.recon_grid,
-                detector=initial_plan.detector,
-                gather_dtype=initial_plan.gather_dtype,
-                schedule_metadata=initial_plan.schedule_metadata,
-            ),
-            levels=initial_plan.run_levels,
-        ),
+        metadata=alignment_checkpoint_metadata(initial_plan.checkpoint_run),
     )
 
     resume_args = parser.parse_args(

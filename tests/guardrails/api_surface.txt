@@ -100,6 +100,8 @@ def tomojax.align(
         quality: 'QualityTier' = 'fast',
         levels: 'Iterable[int] | None' = None,
         freeze: 'Iterable[str]' = (),
+        grid: 'Grid | None' = None,
+        checkpoint: 'str | PathLike[str] | None' = None,
         config: 'AlignConfig | None' = None,
     ) -> 'Alignment'
 def tomojax.backproject(

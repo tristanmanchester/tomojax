@@ -119,6 +119,47 @@ full-resolution solve needs a prior: unregularised CGLS (`--method cgls`) reache
 after 300 iterations (109 s), against 0.059 for the volume of the full
 alignment. Add TV (`--tv-weight`) for noisy data.
 
+### Align on a region or another grid
+
+`grid=` aligns and reconstructs on another grid than the scan's, a region
+around the object or coarser voxels, as it does for `tj.reconstruct`. The
+returned volume is on that grid and `result.scan` carries it:
+
+```python
+region = tj.Grid(192, 192, 128, scan.grid.vx, scan.grid.vy, scan.grid.vz)
+result = tj.align(scan, grid=region)
+assert result.scan.grid == region
+```
+
+On the command line, `--roi` (`auto`, `off`, `cube`, `bbox`, `cyl`) and `--grid`
+choose the grid.
+
+### Resume an interrupted alignment
+
+With `checkpoint=`, alignment saves its progress (volume, poses, solver state)
+after each outer iteration. Run the same call again after an interruption and
+it resumes where the last checkpoint left off, reaching the result an
+uninterrupted run would; once the run has finished, the call returns its
+result at once:
+
+```python
+result = tj.align(scan, mode="pose", checkpoint="align.ckpt")
+```
+
+A checkpoint resumes only the alignment that wrote it: the same projections
+and geometry (checked by a fingerprint of sixteen evenly spaced views and of
+every geometry setting, angles and pose corrections included), mode, levels,
+grid and `AlignConfig`, written by the same TomoJAX version. Anything else
+raises `ValueError` naming the difference, for example
+`config differs in freeze (checkpoint [], current ['dx'])`, and the file is
+left as it is: delete it or choose another path to start again. Checkpoints
+written by versions before schema 4 do not resume.
+
+`tomojax align` writes checkpoints with `--checkpoint PATH` (every
+`--checkpoint-every` outer iterations, default 1) and resumes with
+`--resume PATH`, restoring `optimise_dofs`, `freeze` and `schedule` from the
+checkpoint unless they are given.
+
 ## Correction quality vs physical calibration
 
 Pose-only correction can absorb some global setup errors and still produce a

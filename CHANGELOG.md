@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- `tj.align(scan, grid=...)` aligns and reconstructs on another grid than the
+  scan's (a region, or another voxel size), as `tj.reconstruct` does; the
+  result's volume and `result.scan` are on that grid.
+- `tj.align(scan, checkpoint=path)` saves the alignment's progress to `path`
+  after each outer iteration and, when `path` already holds a checkpoint of
+  the same alignment, resumes from it (a finished one returns its result at
+  once). A file there from another alignment raises `ValueError` naming what
+  differs, for example "config differs in freeze (checkpoint [], current
+  ['dx'])", and is left untouched.
+- Breaking: alignment checkpoints are schema 4. A run is identified by its
+  mode, `AlignConfig`, levels, grid and detector, and a fingerprint of its
+  projections and geometry (angles, pose corrections and beam included);
+  the command line's `cli_options` block and the geometry type and metadata
+  are gone, and `tomojax align --resume` restores `optimise_dofs`, `freeze`
+  and `schedule` from the saved configuration. Checkpoints of earlier schemas
+  do not resume. `tomojax.alignment.api.AlignmentRun` is that record, shared
+  by `tj.align` and `tomojax align` with `alignment_checkpoint_metadata`,
+  `write_alignment_checkpoint`, `resume_state_from_checkpoint` (moved from the
+  CLI) and `alignment_checkpointing`; it replaces
+  `build_alignment_checkpoint_metadata_from_input` and its input classes
+  (`AlignmentCheckpointMetadataInput`, `AlignmentCheckpointGeometrySnapshot`,
+  `AlignmentProjectionIdentity`, `AlignmentCheckpointProgress`), and
+  `ScheduleResumeState` and `normalize_schedule_resume_state` are no longer
+  exported. `CheckpointError` is a `ValueError`.
 - Breaking: whether a file's saved corrections are applied has one name,
   `poses`: `tj.load(path, poses=False)` (was `apply_alignment=False`),
   `tomojax recon --no-poses` (was `--ignore-alignment`) and
