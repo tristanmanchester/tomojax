@@ -34,12 +34,12 @@ def _problem():
         grid,
         detector,
         recon_layer.ReconLayerConfig(
-            iters=8,
-            lambda_tv=0.0,
-            L=10.0,
+            iterations=8,
+            tv_weight=0.0,
+            lipschitz=10.0,
             differentiation_mode="implicit",
             implicit_damping=0.1,
-            implicit_cg_iters=32,
+            implicit_cg_iterations=32,
             implicit_cg_tol=1e-6,
         ),
     )

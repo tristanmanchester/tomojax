@@ -78,18 +78,18 @@ class PoseAdjustedGeometry:
 class ReconLayerConfig:
     """Configuration for differentiable preview reconstruction."""
 
-    iters: int = 5
-    lambda_tv: float = 0.005
+    iterations: int = 5
+    tv_weight: float = 0.005
     regulariser: Literal["huber_tv", "tv"] = "huber_tv"
     huber_delta: float = 1e-2
-    L: float = 100.0
-    positivity: bool = False
+    lipschitz: float = 100.0
+    nonnegative: bool = False
     differentiation_mode: ReconDifferentiationMode = "unrolled"
     checkpoint_projector: bool = True
     projector_unroll: int = 1
     gather_dtype: str = "fp32"
     views_per_batch: int = 1
-    implicit_cg_iters: int = 32
+    implicit_cg_iterations: int = 32
     implicit_cg_tol: float = 1e-3
     implicit_damping: float = 1e-4
     ray_integrator: str = "sampled"
@@ -121,8 +121,8 @@ class ReconLayer:
         view_weights: jnp.ndarray | None = None,
     ) -> ReconLayerResult:
         """Run a reconstruction layer for an alignment state."""
-        if self.config.regulariser != "huber_tv" and self.config.lambda_tv != 0.0:
-            raise ValueError("ReconLayer differentiable modes require huber_tv or lambda_tv=0")
+        if self.config.regulariser != "huber_tv" and self.config.tv_weight != 0.0:
+            raise ValueError("ReconLayer differentiable modes require huber_tv or tv_weight=0")
         effective = apply_alignment_state(self.base, state)
         x0 = (
             jnp.zeros((self.grid.nx, self.grid.ny, self.grid.nz), dtype=jnp.float32)
@@ -130,12 +130,12 @@ class ReconLayer:
             else jnp.asarray(init_x, dtype=jnp.float32)
         )
         core_cfg = FistaCoreConfig(
-            iterations=int(self.config.iters),
-            tv_weight=float(self.config.lambda_tv),
+            iterations=int(self.config.iterations),
+            tv_weight=float(self.config.tv_weight),
             regulariser=self.config.regulariser,
             huber_delta=float(self.config.huber_delta),
-            lipschitz=float(self.config.L),
-            nonnegative=bool(self.config.positivity),
+            lipschitz=float(self.config.lipschitz),
+            nonnegative=bool(self.config.nonnegative),
             checkpoint_projector=bool(self.config.checkpoint_projector),
             projector_unroll=int(self.config.projector_unroll),
             gather_dtype=str(self.config.gather_dtype),
@@ -153,7 +153,7 @@ class ReconLayer:
                 detector=self.detector,
                 cfg=core_cfg,
                 view_weights=view_weights,
-                cg_iters=int(self.config.implicit_cg_iters),
+                cg_iters=int(self.config.implicit_cg_iterations),
                 cg_tol=float(self.config.implicit_cg_tol),
                 damping=float(self.config.implicit_damping),
             )
@@ -164,7 +164,7 @@ class ReconLayer:
                     "differentiation_mode": self.config.differentiation_mode,
                     "inner_regulariser": self.config.regulariser,
                     "implicit_gradient_status": "cg_adjoint",
-                    "implicit_cg_iters": int(self.config.implicit_cg_iters),
+                    "implicit_cg_iterations": int(self.config.implicit_cg_iterations),
                     "implicit_cg_tol": float(self.config.implicit_cg_tol),
                     "implicit_damping": float(self.config.implicit_damping),
                 },

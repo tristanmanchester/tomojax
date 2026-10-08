@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from tomojax.core.backend_policy import normalize_projector_backend
 from tomojax.core.projector import RAY_INTEGRATORS
-from tomojax.core.validation import option_name
 
 from ._geometry.parametrizations import PoseTranslationFrame
 from ._model.diagnostics import GaugePolicy
@@ -19,16 +18,11 @@ from ._model.dofs import (
 from ._model.schedules import (
     AlignmentSchedule,
     ResolvedAlignmentSchedule,
+    StageQualityTier,
     resolve_alignment_schedule,
 )
 from ._objectives.loss_specs import L2LossSpec, L2OtsuLossSpec
-from ._profiles import (
-    AlignmentProfileInput,
-    FallbackPolicy,
-    QualityTier,
-    alignment_profile_policy,
-    normalize_alignment_profile,
-)
+from ._profiles import QualityTier, alignment_profile_policy, normalize_quality
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -39,29 +33,8 @@ if TYPE_CHECKING:
     from ._model.dofs import DofBounds
     from ._objectives.loss_specs import AlignmentLossConfig
 
-type ReconAlgo = Literal["fista", "spdhg"]
-type ReconAlgoInput = Literal[
-    "fista",
-    "spdhg",
-    "fista_tv",
-    "spdhg_tv",
-    "fista-tv",
-    "spdhg-tv",
-]
-type GaugePolicyInput = (
-    GaugePolicy
-    | Literal[
-        "anchor-mean",
-        "prior-required",
-        "diagnose-only",
-    ]
-)
-type PoseModelInput = Literal[
-    "per_view",
-    "per-view",
-    "polynomial",
-    "spline",
-]
+type Reconstruction = Literal["fista", "spdhg"]
+type PoseModel = Literal["per_view", "polynomial", "spline"]
 
 
 def _active_dof_mask_for_cfg(cfg: AlignConfig) -> tuple[bool, ...]:
@@ -83,10 +56,10 @@ def _scoped_dofs_for_cfg(cfg: AlignConfig) -> ScopedAlignmentDofs:
     return ScopedAlignmentDofs(
         active_pose_dofs=resolved.active_pose_dofs,
         active_geometry_dofs=resolved.active_geometry_dofs,
-        frozen_pose_dofs=tuple(name for name in cfg.freeze_dofs if name in set(DOF_NAMES)),
+        frozen_pose_dofs=tuple(name for name in cfg.freeze if name in set(DOF_NAMES)),
         frozen_geometry_dofs=tuple(
             name
-            for name in cfg.freeze_dofs
+            for name in cfg.freeze
             if name
             in {
                 "det_u_px",
@@ -108,11 +81,11 @@ def _resolved_schedule_for_cfg(cfg: AlignConfig) -> ResolvedAlignmentSchedule:
     resolved = resolve_alignment_schedule(
         schedule=cfg.schedule,
         optimise_dofs=cfg.optimise_dofs,
-        freeze_dofs=cfg.freeze_dofs,
-        gauge_policy=cast("GaugePolicy", cfg.gauge_policy),
+        freeze=cfg.freeze,
+        gauge_policy=cfg.gauge_policy,
         gauge_priors=cfg.gauge_priors,
         opt_method=cfg.opt_method,
-        outer_iters=int(cfg.outer_iters),
+        outer_iterations=int(cfg.outer_iterations),
         early_stop=bool(cfg.early_stop),
     )
     if cfg.gn_coupling == "joint":
@@ -131,16 +104,16 @@ def _resolved_schedule_for_cfg(cfg: AlignConfig) -> ResolvedAlignmentSchedule:
 
 @dataclass(kw_only=True)
 class AlignConfig:
-    align_profile: AlignmentProfileInput = "lightning"
-    outer_iters: int = 5
-    recon_iters: int = 10
-    lambda_tv: float = 0.005
+    quality: QualityTier = "fast"
+    outer_iterations: int = 5
+    iterations: int = 10
+    tv_weight: float = 0.005
     regulariser: Regulariser = "huber_tv"
     huber_delta: float = 1e-2
-    tv_prox_iters: int = 10
-    recon_algo: ReconAlgoInput = "fista"
-    recon_positivity: bool = True
-    spdhg_seed: int = 0
+    tv_prox_iterations: int = 10
+    reconstruction: Reconstruction = "fista"
+    nonnegative: bool = True
+    seed: int = 0
     # Reconstruction stopping criteria
     recon_rel_tol: float | None = None
     recon_patience: int = 2
@@ -157,8 +130,6 @@ class AlignConfig:
     ray_integrator: Literal["sampled", "exact", "joseph", "joseph_cubic"] = field(
         default="sampled", kw_only=True
     )
-    quality_tier: QualityTier = "fast"
-    fallback_policy: FallbackPolicy = "fallback"
     # Solver and regularization
     opt_method: str = "gn"
     gn_damping: float = 1e-3
@@ -167,7 +138,7 @@ class AlignConfig:
     gn_difference_step: float = field(default=1e-3, kw_only=True)
     gn_coupling: Literal["fixed_volume", "joint"] = field(default="fixed_volume", kw_only=True)
     gn_joint_solver: Literal["stacked", "pose_eliminated"] = field(default="stacked", kw_only=True)
-    gn_joint_iters: int = field(default=40, kw_only=True)
+    gn_joint_iterations: int = field(default=40, kw_only=True)
     gn_joint_rtol: float = field(default=1e-4, kw_only=True)
     gn_volume_damping: float = field(default=1e-3, kw_only=True)
     lbfgs_maxiter: int = 20
@@ -179,11 +150,11 @@ class AlignConfig:
     w_trans: float = 0.0
     schedule: str | AlignmentSchedule | None = None
     optimise_dofs: tuple[str, ...] | None = None
-    freeze_dofs: tuple[str, ...] = field(default_factory=tuple)
+    freeze: tuple[str, ...] = field(default_factory=tuple)
     bounds: DofBounds | str | Mapping[str, object] = field(default_factory=tuple)
-    gauge_policy: GaugePolicyInput = "reject"
+    gauge_policy: GaugePolicy = "reject"
     gauge_priors: Mapping[str, object] | None = None
-    pose_model: PoseModelInput = "per_view"
+    pose_model: PoseModel = "per_view"
     pose_translation_frame: PoseTranslationFrame = field(default="object", kw_only=True)
     knot_spacing: int = 8
     degree: int = 3
@@ -194,8 +165,8 @@ class AlignConfig:
     # Logging
     log_summary: bool = False
     log_compact: bool = True  # print one compact line per outer when log_summary is enabled
-    # Reconstruction Lipschitz (optional override to skip power-method)
-    recon_L: float | None = None
+    # Fixed Lipschitz constant for the inner FISTA; None runs the power method.
+    lipschitz: float | None = None
     # Early stopping across outers (alignment phase)
     early_stop: bool = True
     early_stop_rel_impr: float = 1e-3  # stop if (before-after)/before < this
@@ -205,6 +176,9 @@ class AlignConfig:
     gn_accept_tol: float = 0.0  # allow tiny increases if >0 (as fraction of before)
     # Data term / similarity
     loss: AlignmentLossConfig = field(default_factory=L2OtsuLossSpec)
+    # The reconstruction tier of the stage being run: ``quality`` until a
+    # schedule's stage runner sets that stage's own tier. Not a constructor option.
+    stage_quality_tier: StageQualityTier = field(init=False, default="fast", repr=False)
 
     def __post_init__(self) -> None:
         if self.ray_integrator not in RAY_INTEGRATORS:
@@ -220,51 +194,33 @@ class AlignConfig:
         if self.gn_coupling == "joint":
             if self.pose_model != "per_view" or self.opt_method != "gn":
                 raise ValueError("joint GN requires opt_method='gn' and pose_model='per_view'")
-            if self.lambda_tv != 0 and self.regulariser != "huber_tv":
+            if self.tv_weight != 0 and self.regulariser != "huber_tv":
                 raise ValueError("joint GN supports Huber-TV or zero volume regularisation")
 
     def _apply_profile_policy(self) -> None:
-        self.align_profile = normalize_alignment_profile(self.align_profile)
-        profile_policy = alignment_profile_policy(self.align_profile)
-        if self.align_profile == "tortoise":
-            self.projector_backend = profile_policy.projector_backend
-            self.gather_dtype = profile_policy.gather_dtype
-            self.regulariser = profile_policy.regulariser
-            self.recon_algo = profile_policy.recon_algo  # type: ignore[assignment]
-            self.views_per_batch = int(profile_policy.views_per_batch)
-            self.checkpoint_projector = bool(profile_policy.checkpoint_projector)
-            self.pose_model = profile_policy.pose_model  # type: ignore[assignment]
-            self.quality_tier = profile_policy.quality_tier
-            self.fallback_policy = profile_policy.fallback_policy
-        else:
-            self.quality_tier = profile_policy.quality_tier
-            self.fallback_policy = profile_policy.fallback_policy
+        self.quality = normalize_quality(self.quality)
+        self.stage_quality_tier = self.quality
+        if self.quality == "reference":
+            policy = alignment_profile_policy(self.quality)
+            self.projector_backend = policy.projector_backend
+            self.gather_dtype = policy.gather_dtype
+            self.regulariser = policy.regulariser
+            self.reconstruction = cast("Reconstruction", policy.reconstruction)
+            self.views_per_batch = int(policy.views_per_batch)
+            self.checkpoint_projector = bool(policy.checkpoint_projector)
+            self.pose_model = cast("PoseModel", policy.pose_model)
 
     def _normalize_reconstruction_options(self) -> None:
-        recon_algo = option_name(self.recon_algo)
-        if recon_algo in {"fista_tv"}:
-            recon_algo = "fista"
-        elif recon_algo in {"spdhg_tv"}:
-            recon_algo = "spdhg"
-        self.recon_algo = cast("ReconAlgoInput", recon_algo)
-        if self.recon_algo not in {"fista", "spdhg"}:
-            raise ValueError("recon_algo must be one of 'fista' or 'spdhg'")
+        if self.reconstruction not in {"fista", "spdhg"}:
+            raise ValueError(
+                f"reconstruction must be 'fista' or 'spdhg', not {self.reconstruction!r}"
+            )
 
     def _normalize_backend_options(self) -> None:
         self.projector_backend = normalize_projector_backend(self.projector_backend)
         self.gather_dtype = str(self.gather_dtype).strip().lower()
-        self.quality_tier = cast("QualityTier", str(self.quality_tier).strip().lower())
-        if self.quality_tier not in {"fast", "reference"}:
-            raise ValueError("quality_tier must be one of 'fast' or 'reference'")
-        self.fallback_policy = cast("FallbackPolicy", str(self.fallback_policy).strip().lower())
-        if self.fallback_policy not in {"fallback", "strict"}:
-            raise ValueError("fallback_policy must be one of 'fallback' or 'strict'")
 
     def _normalize_optimizer_options(self) -> None:
-        opt_method = option_name(self.opt_method)
-        if opt_method in {"lbfgsb", "l_bfgs", "l_bfgs_b"}:
-            opt_method = "lbfgs"
-        self.opt_method = opt_method
         if self.opt_method not in {"gd", "gn", "lbfgs"}:
             raise ValueError("opt_method must be one of 'gd', 'gn', or 'lbfgs'")
         if self.gn_jacobian not in {"autodiff", "central"}:
@@ -275,8 +231,11 @@ class AlignConfig:
             raise ValueError("gn_coupling must be fixed_volume or joint")
         if self.gn_joint_solver not in {"stacked", "pose_eliminated"}:
             raise ValueError("gn_joint_solver must be stacked or pose_eliminated")
-        if self.gn_joint_iters < 1 or int(self.gn_joint_iters) != self.gn_joint_iters:
-            raise ValueError("gn_joint_iters must be a positive integer")
+        if (
+            self.gn_joint_iterations < 1
+            or int(self.gn_joint_iterations) != self.gn_joint_iterations
+        ):
+            raise ValueError("gn_joint_iterations must be a positive integer")
         if not math.isfinite(self.gn_joint_rtol) or not 0 < self.gn_joint_rtol < 1:
             raise ValueError("gn_joint_rtol must be finite and between zero and one")
         if not math.isfinite(self.gn_volume_damping) or self.gn_volume_damping <= 0:
@@ -299,10 +258,8 @@ class AlignConfig:
     def _normalize_schedule_options(self) -> None:
         if self.schedule is not None and self.optimise_dofs is not None:
             raise ValueError("schedule and optimise_dofs are mutually exclusive")
-        if isinstance(self.schedule, str):
-            self.schedule = option_name(self.schedule)
-            if not self.schedule:
-                self.schedule = None
+        if self.schedule == "":
+            self.schedule = None
         if self.schedule == "cor_then_pose" and self.pose_translation_frame != "detector":
             raise ValueError(
                 "schedule 'cor_then_pose' needs pose_translation_frame='detector': only "
@@ -315,13 +272,9 @@ class AlignConfig:
             )
 
     def _normalize_dof_options(self) -> None:
-        self.freeze_dofs = normalize_alignment_dofs(self.freeze_dofs, option_name="freeze_dofs")
+        self.freeze = normalize_alignment_dofs(self.freeze, option_name="freeze")
 
     def _normalize_gauge_options(self) -> None:
-        self.gauge_policy = cast(
-            "GaugePolicyInput",
-            option_name(self.gauge_policy),
-        )
         if self.gauge_policy not in {"reject", "anchor_mean", "prior_required", "diagnose_only"}:
             raise ValueError(
                 "gauge_policy must be one of 'reject', 'anchor_mean', "
@@ -333,8 +286,6 @@ class AlignConfig:
     def _normalize_pose_model_options(self) -> None:
         if self.pose_translation_frame not in {"object", "detector"}:
             raise ValueError("pose_translation_frame must be 'object' or 'detector'")
-        pose_model = option_name(self.pose_model)
-        self.pose_model = cast("PoseModelInput", pose_model)
         if self.pose_model not in {"per_view", "polynomial", "spline"}:
             raise ValueError("pose_model must be one of 'per_view', 'polynomial', or 'spline'")
         if self.pose_model == "polynomial" and int(self.degree) < 0:
@@ -363,8 +314,8 @@ def coupled_pose_config(**overrides: object) -> AlignConfig:
         "ray_integrator": "joseph",
         "gather_dtype": "fp32",
         "loss": L2LossSpec(),
-        "lambda_tv": 0.0,
-        "outer_iters": 30,
+        "tv_weight": 0.0,
+        "outer_iterations": 30,
         "seed_translations": True,
     }
     settings.update(overrides)

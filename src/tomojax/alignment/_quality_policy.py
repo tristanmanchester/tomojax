@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Literal, cast
 
-from tomojax.core.validation import option_name
-
 type AlignmentQualityTier = Literal[
     "proposal",
     "fast",
@@ -20,7 +18,7 @@ class ReconstructionQualityPolicy:
     """Stage-level reconstruction quality and diagnostic policy."""
 
     tier: AlignmentQualityTier
-    recon_iters_multiplier: float
+    iterations_multiplier: float
     compute_iteration_loss: bool
     compute_final_data_loss: bool
     compute_final_regulariser_value: bool
@@ -42,13 +40,8 @@ _POLICIES: dict[AlignmentQualityTier, ReconstructionQualityPolicy] = {
 
 
 def normalize_quality_tier(value: str) -> AlignmentQualityTier:
-    tier = option_name(value)
-    if tier in _POLICIES:
-        return cast("AlignmentQualityTier", tier)
-    if tier == "tortoise":
-        return "reference"
-    if tier == "lightning":
-        return "fast"
+    if value in _POLICIES:
+        return cast("AlignmentQualityTier", value)
     raise ValueError(
         "quality tier must be one of 'proposal', 'fast', 'refine', "
         "'verify', 'final', or 'reference'"
@@ -59,11 +52,11 @@ def reconstruction_quality_policy(value: str) -> ReconstructionQualityPolicy:
     return _POLICIES[normalize_quality_tier(value)]
 
 
-def scaled_reconstruction_iters(
-    recon_iters: int | float,
+def scaled_reconstruction_iterations(
+    iterations: int | float,
     policy: ReconstructionQualityPolicy,
 ) -> int:
-    return max(1, int(float(recon_iters) * float(policy.recon_iters_multiplier)))
+    return max(1, int(float(iterations) * float(policy.iterations_multiplier)))
 
 
 __all__ = [
@@ -71,5 +64,5 @@ __all__ = [
     "ReconstructionQualityPolicy",
     "normalize_quality_tier",
     "reconstruction_quality_policy",
-    "scaled_reconstruction_iters",
+    "scaled_reconstruction_iterations",
 ]

@@ -30,7 +30,7 @@ from tomojax.alignment._objectives.validation_residuals import (
 )
 from tomojax.alignment._quality_policy import (
     reconstruction_quality_policy,
-    scaled_reconstruction_iters,
+    scaled_reconstruction_iterations,
 )
 from tomojax.alignment.optimizers import ValidationLmConfig, run_active_validation_lm
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
@@ -250,7 +250,7 @@ def _build_geometry_stage_stat(
             "geometry_max_step": 1.0,
             "geometry_status": "converged" if opt_result.accepted else "underconverged",
             "geometry_outer_idx": int(outer_idx),
-            "quality_tier": str(getattr(cfg, "quality_tier", "")),
+            "quality_tier": str(getattr(cfg, "stage_quality_tier", "")),
             "schedule_name": schedule_name,
             "schedule_stage_index": int(stage.index) if stage is not None else None,
             "schedule_stage_name": stage.name if stage is not None else None,
@@ -274,7 +274,7 @@ def _build_geometry_stage_stat(
             "outer_loss_kind": str(loss_name),
             "recon_sensitivity": "stopped",
             "train_reconstruction_gradient": False,
-            "train_reconstruction_iters": int(fold_recon_cfg.iters),
+            "train_reconstruction_iterations": int(fold_recon_cfg.iterations),
             "views_per_batch": max(1, int(cfg.views_per_batch)),
             "n_folds": int(folds.n_folds),
             "fold_eval_mode": "stopped_train_recon_validation_lm",
@@ -308,7 +308,7 @@ def _refresh_setup_reconstruction(
         setup_state.setup,
         level_factor=int(factor),
     )
-    quality_policy = reconstruction_quality_policy(str(getattr(cfg, "quality_tier", "fast")))
+    quality_policy = reconstruction_quality_policy(str(getattr(cfg, "stage_quality_tier", "fast")))
     x_next, _ = fista_tv(
         geom,
         grid,
@@ -318,17 +318,17 @@ def _refresh_setup_reconstruction(
         config=FistaConfig(
             projector_model="ray",
             projector_backend="jax",
-            iterations=scaled_reconstruction_iters(cfg.recon_iters, quality_policy),
-            tv_weight=float(cfg.lambda_tv),
+            iterations=scaled_reconstruction_iterations(cfg.iterations, quality_policy),
+            tv_weight=float(cfg.tv_weight),
             regulariser=cfg.regulariser,
             huber_delta=float(cfg.huber_delta),
-            tv_prox_iterations=int(cfg.tv_prox_iters),
-            lipschitz=cfg.recon_L,
+            tv_prox_iterations=int(cfg.tv_prox_iterations),
+            lipschitz=cfg.lipschitz,
             views_per_batch=max(1, int(cfg.views_per_batch)),
             projector_unroll=int(cfg.projector_unroll),
             checkpoint_projector=bool(cfg.checkpoint_projector),
             gather_dtype=str(cfg.gather_dtype),
-            nonnegative=bool(cfg.recon_positivity),
+            nonnegative=bool(cfg.nonnegative),
             ray_integrator=cfg.ray_integrator,
         ),
         det_grid=det_grid,
@@ -448,15 +448,15 @@ def _optimize_setup_geometry_bilevel_for_level(
             "Setup validation-LM requires a setup-compatible weighted least-squares loss; "
             f"level {int(factor)} stage {stage_name!r} resolved loss {loss_name!r}"
         )
-    quality_policy = reconstruction_quality_policy(str(getattr(cfg, "quality_tier", "fast")))
+    quality_policy = reconstruction_quality_policy(str(getattr(cfg, "stage_quality_tier", "fast")))
     fold_recon_cfg = FoldReconstructionConfig(
-        iters=scaled_reconstruction_iters(cfg.recon_iters, quality_policy),
-        lambda_tv=float(cfg.lambda_tv),
+        iterations=scaled_reconstruction_iterations(cfg.iterations, quality_policy),
+        tv_weight=float(cfg.tv_weight),
         regulariser=str(cfg.regulariser),
         huber_delta=float(cfg.huber_delta),
-        tv_prox_iters=int(cfg.tv_prox_iters),
-        L=cfg.recon_L,
-        positivity=bool(cfg.recon_positivity),
+        tv_prox_iterations=int(cfg.tv_prox_iterations),
+        lipschitz=cfg.lipschitz,
+        nonnegative=bool(cfg.nonnegative),
         views_per_batch=max(1, int(cfg.views_per_batch)),
         projector_unroll=int(cfg.projector_unroll),
         checkpoint_projector=bool(cfg.checkpoint_projector),
@@ -492,7 +492,7 @@ def _optimize_setup_geometry_bilevel_for_level(
         )
     setup_stats: list[OuterStat] = []
     last_loss = math.inf
-    outer_limit = max(1, int(stage.maxiter if stage is not None else cfg.outer_iters))
+    outer_limit = max(1, int(stage.maxiter if stage is not None else cfg.outer_iterations))
     for outer_idx in range(1, outer_limit + 1):
         stage_name = stage.name if stage is not None else (schedule_name or "setup")
         logging.info(

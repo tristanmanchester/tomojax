@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import pytest
@@ -268,15 +269,17 @@ def test_align_config_defaults_to_per_view_pose_model() -> None:
     assert AlignConfig().pose_model == "per_view"
 
 
-@pytest.mark.parametrize("profile", ["lightning", "tortoise"])
-def test_alignment_profiles_size_reconstruction_batches_automatically(profile: str) -> None:
+@pytest.mark.parametrize("quality", ["fast", "reference"])
+def test_alignment_qualities_size_reconstruction_batches_automatically(
+    quality: Literal["fast", "reference"],
+) -> None:
     import importlib
 
     from tomojax.geometry import Detector, Grid
 
     # check-public-imports: allow-private
     loop = importlib.import_module("tomojax.alignment._pose._pose_loop")
-    cfg = AlignConfig(align_profile=profile)
+    cfg = AlignConfig(quality=quality)
     assert cfg.views_per_batch == 0
     grid, detector = Grid(8, 8, 8, 1.0, 1.0, 1.0), Detector(8, 8, 1.0, 1.0)
     resolved = loop._with_resolved_views_per_batch(cfg, n_views=12, grid=grid, detector=detector)
@@ -312,11 +315,11 @@ def test_alignment_params_export_unwraps_object_dtype_scalars() -> None:
 def test_coupled_pose_config_matches_the_cli_pose_solver() -> None:
     from tomojax.alignment.api import L2LossSpec, coupled_pose_config
 
-    cfg = coupled_pose_config(outer_iters=7)
+    cfg = coupled_pose_config(outer_iterations=7)
     assert (cfg.gn_coupling, cfg.gn_joint_solver, cfg.ray_integrator) == (
         "joint",
         "pose_eliminated",
         "joseph",
     )
     assert isinstance(cfg.loss, L2LossSpec)
-    assert (cfg.lambda_tv, cfg.gather_dtype, cfg.outer_iters) == (0.0, "fp32", 7)
+    assert (cfg.tv_weight, cfg.gather_dtype, cfg.outer_iterations) == (0.0, "fp32", 7)

@@ -1,5 +1,5 @@
 {
-  "align_config_fields": 59,
+  "align_config_fields": 58,
   "exported_names": {
     "tomojax": 17,
     "tomojax.geometry": 18,
@@ -10,7 +10,7 @@
     "tomojax.geometry.api": 43,
     "tomojax.recon.api": 22,
     "tomojax.io.api": 34,
-    "tomojax.alignment.api": 79,
+    "tomojax.alignment.api": 75,
     "tomojax.datasets.api": 15
   },
   "cli_flags": {
@@ -18,15 +18,14 @@
     "import": 15,
     "preprocess": 27,
     "recon": 38,
-    "align": 72,
+    "align": 70,
     "export": 6,
     "simulate": 46
   },
   "long_files": {
-    "src/tomojax/alignment/_pose/_pose_loop.py": 926,
-    "src/tomojax/alignment/_stages/_reconstruction_stage.py": 1039,
+    "src/tomojax/alignment/_pose/_pose_loop.py": 923,
+    "src/tomojax/alignment/_stages/_reconstruction_stage.py": 1030,
     "src/tomojax/alignment/optimizers.py": 921,
-    "src/tomojax/cli/align/command.py": 815,
     "src/tomojax/core/projector.py": 844,
     "src/tomojax/recon/fbp.py": 895,
     "src/tomojax/recon/fdk.py": 948,
@@ -44,16 +43,15 @@
     "src/tomojax/alignment/_stages/_setup_stage.py::_run_setup_validation_objective": 124,
     "src/tomojax/alignment/_stages/_stage_multires.py::_run_one_multires_level": 119,
     "src/tomojax/alignment/_stages/_stage_multires.py::align_multires": 102,
-    "src/tomojax/alignment/_stages/_stage_runners.py::_run_multires_level_stages": 153,
-    "src/tomojax/alignment/_stages/_stage_runners.py::_run_pose_alignment_stage": 111,
+    "src/tomojax/alignment/_stages/_stage_runners.py::_run_multires_level_stages": 151,
+    "src/tomojax/alignment/_stages/_stage_runners.py::_run_pose_alignment_stage": 110,
     "src/tomojax/alignment/optimizers.py::_run_lbfgs_optax_loop": 209,
     "src/tomojax/alignment/optimizers.py::run_active_validation_lm": 107,
     "src/tomojax/alignment/optimizers.py::run_pose_lbfgs": 187,
     "src/tomojax/backends/_memory.py::estimate_views_per_batch_info": 101,
     "src/tomojax/cli/_recon_plan.py::build_recon_runtime_plan": 109,
-    "src/tomojax/cli/align/command.py::_add_dof_schedule_options": 130,
-    "src/tomojax/cli/align/plan.py::_resolve_schedule_and_config": 102,
-    "src/tomojax/cli/align/plan.py::build_align_cli_run_plan": 110,
+    "src/tomojax/cli/align/command.py::_add_dof_schedule_options": 129,
+    "src/tomojax/cli/align/plan.py::build_align_cli_run_plan": 109,
     "src/tomojax/cli/preprocess.py::_build_parser": 152,
     "src/tomojax/cli/simulate.py::_build_parser": 159,
     "src/tomojax/core/pallas/_pallas_adjoint_kernels.py::_projector_loss_grad_kernel": 149,
@@ -87,7 +85,7 @@
   },
   "suppressions": {
     "noqa": 8,
-    "type: ignore": 50,
+    "type: ignore": 46,
     "pyright: ignore": 21
   },
   "complex_functions": [
@@ -151,7 +149,7 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "type_errors": {
-    "reportArgumentType": 359,
+    "reportArgumentType": 358,
     "reportAssignmentType": 3,
     "reportAttributeAccessIssue": 167,
     "reportCallIssue": 14,

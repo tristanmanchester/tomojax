@@ -213,11 +213,11 @@ def test_public_alignment_and_checkpoint_keep_detector_frame_at_ninety_degrees(
         pose_translation_frame="detector",
         projector_backend=backend,
         optimise_dofs=("dx", "dz") if motion == "translation" else None,
-        outer_iters=8,
-        recon_iters=1,
+        outer_iterations=8,
+        iterations=1,
         # This is a fixed-volume API/derivative regression, not joint-recovery evidence.
-        recon_L=1e12,
-        lambda_tv=0,
+        lipschitz=1e12,
+        tv_weight=0,
         loss=L2LossSpec(),
         early_stop=False,
         gather_dtype="fp32",
@@ -292,12 +292,12 @@ def test_train_fold_preserves_pose_frame_and_excludes_padding(monkeypatch, frame
 
     monkeypatch.setattr(fold_recon, "fista_tv", fake_reconstruct)
     config = fold_recon.FoldReconstructionConfig(
-        iters=1,
-        lambda_tv=0,
+        iterations=1,
+        tv_weight=0,
         regulariser="huber_tv",
         huber_delta=0.01,
-        tv_prox_iters=1,
-        positivity=False,
+        tv_prox_iterations=1,
+        nonnegative=False,
     )
     _, info = fold_recon.reconstruct_train_fold_nograd(
         geometry=geometry,
@@ -396,7 +396,7 @@ def test_translation_seed_runs_once_at_the_first_level(monkeypatch, factors):
 
     monkeypatch.setattr(_pose_loop, "seeded_translation_params", record)
     monkeypatch.setattr(_stage_multires, "seeded_translation_params", record)
-    cfg = AlignConfig(outer_iters=1, recon_iters=1, seed_translations=True)
+    cfg = AlignConfig(outer_iterations=1, iterations=1, seed_translations=True)
     if factors is None:
         align(geometry, grid, detector, data, config=cfg)
         assert calls == [((6, 8, 8), True)]
@@ -501,13 +501,13 @@ def test_cor_then_pose_reports_the_constant_detector_shift_as_the_centre():
     data = jax.vmap(lambda t: forward_project_view_T(t, grid, detector, volume))(jnp.asarray(poses))
     cfg = AlignConfig(
         schedule="cor_then_pose",
-        freeze_dofs=("alpha", "beta", "phi"),  # isolate the translation split
+        freeze=("alpha", "beta", "phi"),  # isolate the translation split
         pose_translation_frame="detector",
         projector_backend="jax",
-        outer_iters=8,
-        recon_iters=1,
-        recon_L=1e12,  # keeps the known volume fixed
-        lambda_tv=0,
+        outer_iterations=8,
+        iterations=1,
+        lipschitz=1e12,  # keeps the known volume fixed
+        tv_weight=0,
         loss=L2LossSpec(),
         early_stop=False,
         gather_dtype="fp32",

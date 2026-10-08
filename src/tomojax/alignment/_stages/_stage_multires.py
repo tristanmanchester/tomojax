@@ -101,7 +101,7 @@ def _run_one_multires_level(
         level_index=level_index,
         loss_hist=state.loss_hist,
         global_outer_stats=state.global_outer_stats,
-        executed_outer_iters=state.executed_outer_iters,
+        executed_outer_iterations=state.executed_outer_iterations,
     )
     level_stats: list[OuterStat] = [dict(stat) for stat in level_run.preserved_level_stats]
     level_losses: list[float] = [float(value) for value in level_run.preserved_level_losses]
@@ -379,7 +379,7 @@ def align_multires(
         run_complete=run_complete,
         x_final=x_final,
         levels_run=len(context.levels) - len(state.factors_skipped),
-        executed_outer_iters=state.executed_outer_iters,
+        executed_outer_iterations=state.executed_outer_iterations,
         loss_hist=state.loss_hist,
         global_outer_stats=state.global_outer_stats,
         global_elapsed_offset=state.global_elapsed_offset,
@@ -404,7 +404,7 @@ def align_multires(
             cfg=context.cfg,
             stopped_by_observer=state.stopped_by_observer,
             final_observer_action=state.final_observer_action,
-            executed_outer_iters=state.executed_outer_iters,
+            executed_outer_iterations=state.executed_outer_iterations,
             global_elapsed_offset=state.global_elapsed_offset,
             global_outer_stats=state.global_outer_stats,
             resolved_schedule=context.resolved_schedule,

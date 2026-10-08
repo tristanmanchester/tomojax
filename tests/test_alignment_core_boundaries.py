@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -43,7 +45,7 @@ from tomojax.alignment._observer import _normalize_observer_action, adapt_observ
 # check-public-imports: allow-private
 from tomojax.alignment._quality_policy import (
     reconstruction_quality_policy,
-    scaled_reconstruction_iters,
+    scaled_reconstruction_iterations,
 )
 
 # check-public-imports: allow-private
@@ -100,35 +102,43 @@ def test_conditioning_diagnostics_reports_near_null_dofs() -> None:
     ]
 
 
-def test_align_config_normalizes_aliases_and_resolves_stage_dofs() -> None:
+def test_align_config_resolves_stage_dofs() -> None:
     cfg = AlignConfig(
-        recon_algo="fista-tv",
-        opt_method="l-bfgs-b",
-        schedule="pose-dx-dz-after-phi",
-        freeze_dofs=("dx",),
+        reconstruction="fista",
+        opt_method="lbfgs",
+        schedule="pose_dx_dz_after_phi",
+        freeze=("dx",),
         projector_backend="jax",
         gather_dtype="FP32",
-        gauge_policy="anchor-mean",
-        pose_model="per-view",
+        gauge_policy="anchor_mean",
     )
 
-    assert cfg.recon_algo == "fista"
-    assert cfg.opt_method == "lbfgs"
-    assert cfg.schedule == "pose_dx_dz_after_phi"
-    assert cfg.projector_backend == "jax"
     assert cfg.gather_dtype == "fp32"
-    assert cfg.gauge_policy == "anchor_mean"
-    assert cfg.pose_model == "per_view"
     assert _active_dofs_for_cfg(cfg) == ("dz",)
     assert _active_dof_mask_for_cfg(cfg) == (False, False, False, False, True, False)
 
 
+@pytest.mark.parametrize(
+    "option",
+    [
+        {"reconstruction": "fista_tv"},
+        {"opt_method": "l-bfgs-b"},
+        {"gauge_policy": "anchor-mean"},
+        {"pose_model": "per-view"},
+        {"quality": "tortoise"},
+    ],
+)
+def test_align_config_takes_one_spelling_of_each_option(option: dict[str, Any]) -> None:
+    with pytest.raises(ValueError, match=next(iter(option))):
+        AlignConfig(**option)
+
+
 def test_reconstruction_quality_policy_scales_iteration_budget() -> None:
-    assert scaled_reconstruction_iters(8, reconstruction_quality_policy("proposal")) == 2
-    assert scaled_reconstruction_iters(8, reconstruction_quality_policy("fast")) == 8
-    assert scaled_reconstruction_iters(8, reconstruction_quality_policy("refine")) == 12
-    assert scaled_reconstruction_iters(8, reconstruction_quality_policy("reference")) == 16
-    assert scaled_reconstruction_iters(1, reconstruction_quality_policy("proposal")) == 1
+    assert scaled_reconstruction_iterations(8, reconstruction_quality_policy("proposal")) == 2
+    assert scaled_reconstruction_iterations(8, reconstruction_quality_policy("fast")) == 8
+    assert scaled_reconstruction_iterations(8, reconstruction_quality_policy("refine")) == 12
+    assert scaled_reconstruction_iterations(8, reconstruction_quality_policy("reference")) == 16
+    assert scaled_reconstruction_iterations(1, reconstruction_quality_policy("proposal")) == 1
 
 
 def test_loss_specs_round_trip_params_and_scheduled_levels() -> None:
@@ -150,7 +160,7 @@ def test_loss_specs_round_trip_params_and_scheduled_levels() -> None:
 
 
 def test_stage_runtime_enriches_resume_stats_with_global_stage_context() -> None:
-    schedule = resolve_alignment_schedule(schedule=cor_then_polish_schedule(), outer_iters=3)
+    schedule = resolve_alignment_schedule(schedule=cor_then_polish_schedule(), outer_iterations=3)
     stage = schedule.stages[1]
     runtime = StageRuntime(
         level_index=1,
@@ -226,8 +236,8 @@ def test_multires_level_resume_plan_splits_preserved_and_active_stage_history() 
         pose_params=jnp.zeros((3, 5), dtype=jnp.float32),
         level_index=1,
         level_factor=2,
-        completed_outer_iters_in_level=3,
-        global_outer_iters_completed=8,
+        completed_outer_iterations_in_level=3,
+        global_outer_iterations_completed=8,
         loss=[5.0, 4.0, 3.0, 2.0],
         outer_stats=[
             {"level_index": 0, "schedule_stage_index": 0, "outer_idx": 1},
@@ -239,7 +249,7 @@ def test_multires_level_resume_plan_splits_preserved_and_active_stage_history() 
         stage_index=1,
         stage_name="pose_polish",
         stage_completed=False,
-        completed_outer_iters_in_stage=2,
+        completed_outer_iterations_in_stage=2,
     )
 
     plan = _prepare_multires_level_state(
@@ -247,7 +257,7 @@ def test_multires_level_resume_plan_splits_preserved_and_active_stage_history() 
         level_index=1,
         loss_hist=list(resume.loss),
         global_outer_stats=list(resume.outer_stats),
-        executed_outer_iters=8,
+        executed_outer_iterations=8,
     )
 
     assert plan.resuming is True
@@ -260,7 +270,7 @@ def test_multires_level_resume_plan_splits_preserved_and_active_stage_history() 
 
 
 def test_stage_runtime_checkpoint_preserves_schedule_resume_fields() -> None:
-    schedule = resolve_alignment_schedule(schedule=cor_then_polish_schedule(), outer_iters=3)
+    schedule = resolve_alignment_schedule(schedule=cor_then_polish_schedule(), outer_iterations=3)
     stage = schedule.stages[1]
     emitted: list[AlignMultiresResumeState] = []
     runtime = StageRuntime(
@@ -293,7 +303,7 @@ def test_stage_runtime_checkpoint_preserves_schedule_resume_fields() -> None:
             start_outer_iter=2,
             loss=[4.0, 3.5],
             outer_stats=[{"outer_idx": 1}, {"outer_idx": 2}],
-            L=1.25,
+            lipschitz=1.25,
             small_impr_streak=1,
             elapsed_offset=0.75,
         )
@@ -305,7 +315,7 @@ def test_stage_runtime_checkpoint_preserves_schedule_resume_fields() -> None:
     assert checkpoint.stage_index == stage.index
     assert checkpoint.stage_name == "pose_polish"
     assert checkpoint.stage_completed is False
-    assert checkpoint.completed_outer_iters_in_stage == 2
-    assert checkpoint.global_outer_iters_completed == 9
+    assert checkpoint.completed_outer_iterations_in_stage == 2
+    assert checkpoint.global_outer_iterations_completed == 9
     assert checkpoint.loss == [5.0, 4.5, 4.0, 3.5]
     assert checkpoint.geometry_calibration_state is not None

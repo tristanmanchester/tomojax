@@ -19,7 +19,10 @@ from tomojax.alignment._model.dofs import POSE_WIDTH
 from tomojax.io.api import normalize_json as _normalize_json
 
 CHECKPOINT_KIND = "tomojax.alignment.checkpoint"
-SCHEMA_VERSION = 2  # 2: pose tables are stored as "pose_params"
+# 2: pose tables are stored as "pose_params".
+# 3: settings and progress use the solver vocabulary (iterations, tv_weight,
+#    lipschitz, outer_iterations, ...).
+SCHEMA_VERSION = 3
 MULTIRES_GEOMETRY_VERSION = 2
 
 
@@ -45,11 +48,11 @@ class CheckpointMetadata(TypedDict, total=False):
     multires_geometry_version: int
     level_index: Required[int]
     level_factor: Required[int]
-    completed_outer_iters_in_level: Required[int]
-    global_outer_iters_completed: Required[int]
+    completed_outer_iterations_in_level: Required[int]
+    global_outer_iterations_completed: Required[int]
     current_inner_iteration: int
     prev_factor: int | None
-    L_prev: float | None
+    lipschitz: float | None
     small_impr_streak: int
     elapsed_offset: float
     config: Required[Any]
@@ -69,7 +72,7 @@ class ScheduleResumeState(TypedDict):
     stage_index: int
     stage_name: str | None
     stage_completed: bool
-    completed_outer_iters_in_stage: int
+    completed_outer_iterations_in_stage: int
 
 
 @dataclass(slots=True)
@@ -112,11 +115,11 @@ class AlignmentCheckpointProgress:
     levels: list[int] | None
     level_index: int
     level_factor: int
-    completed_outer_iters_in_level: int
-    global_outer_iters_completed: int
+    completed_outer_iterations_in_level: int
+    global_outer_iterations_completed: int
     prev_factor: int | None = None
     current_inner_iteration: int = 0
-    L_prev: float | None = None
+    lipschitz: float | None = None
     small_impr_streak: int = 0
     elapsed_offset: float = 0.0
     level_complete: bool = False
@@ -149,23 +152,6 @@ def _normalize_json_object(value: Mapping[str, Any] | None) -> dict[str, Any]:
     return dict(normalized)
 
 
-def _normalize_checkpoint_compare_value(value: Any, *, key: str) -> Any:
-    value = normalize_json(value)
-    if key == "config" and isinstance(value, dict):
-        # These options were added without changing the historical defaults.
-        # Only their absence is equivalent to the explicitly recorded default.
-        value.setdefault("pose_translation_frame", "object")
-        value.setdefault("gn_jacobian", "autodiff")
-        value.setdefault("ray_integrator", "sampled")
-        value.setdefault("gn_difference_step", 1e-3)
-        value.setdefault("gn_coupling", "fixed_volume")
-        value.setdefault("gn_joint_solver", "stacked")
-        value.setdefault("gn_joint_iters", 40)
-        value.setdefault("gn_joint_rtol", 1e-4)
-        value.setdefault("gn_volume_damping", 1e-3)
-    return value
-
-
 def normalize_schedule_resume_state(
     schedule_state: Mapping[str, Any] | ScheduleResumeState | None,
 ) -> ScheduleResumeState | None:
@@ -180,7 +166,9 @@ def normalize_schedule_resume_state(
         "stage_index": int(normalized["stage_index"]),
         "stage_name": stage_name,
         "stage_completed": bool(normalized["stage_completed"]),
-        "completed_outer_iters_in_stage": int(normalized["completed_outer_iters_in_stage"]),
+        "completed_outer_iterations_in_stage": int(
+            normalized["completed_outer_iterations_in_stage"]
+        ),
     }
 
 
@@ -206,11 +194,11 @@ def build_alignment_checkpoint_metadata_from_input(
         "levels": None if progress.levels is None else [int(v) for v in progress.levels],
         "level_index": int(progress.level_index),
         "level_factor": int(progress.level_factor),
-        "completed_outer_iters_in_level": int(progress.completed_outer_iters_in_level),
-        "global_outer_iters_completed": int(progress.global_outer_iters_completed),
+        "completed_outer_iterations_in_level": int(progress.completed_outer_iterations_in_level),
+        "global_outer_iterations_completed": int(progress.global_outer_iterations_completed),
         "current_inner_iteration": int(progress.current_inner_iteration),
         "prev_factor": None if progress.prev_factor is None else int(progress.prev_factor),
-        "L_prev": None if progress.L_prev is None else float(progress.L_prev),
+        "lipschitz": None if progress.lipschitz is None else float(progress.lipschitz),
         "small_impr_streak": int(progress.small_impr_streak),
         "elapsed_offset": float(progress.elapsed_offset),
         "config": normalize_json(metadata_input.config),
@@ -354,20 +342,30 @@ def _load_json_scalar(value: np.ndarray, *, field: str) -> Any:
         raise CheckpointError(f"corrupt checkpoint: invalid {field}: {exc}") from exc
 
 
+def _validate_kind_and_schema(metadata: Mapping[str, Any]) -> None:
+    """Reject checkpoints of another kind, or from another schema version."""
+    if metadata.get("checkpoint_kind") != CHECKPOINT_KIND:
+        raise CheckpointError(
+            f"corrupt checkpoint: unsupported checkpoint kind {metadata.get('checkpoint_kind')!r}"
+        )
+    version = metadata.get("schema_version")
+    if isinstance(version, int) and 0 < version < SCHEMA_VERSION:
+        raise CheckpointError(
+            f"incompatible checkpoint: schema version {version} predates this version of "
+            f"TomoJAX (schema {SCHEMA_VERSION}), which renamed the alignment settings; "
+            "restart the alignment"
+        )
+    if version != SCHEMA_VERSION:
+        raise CheckpointError(f"corrupt checkpoint: unsupported schema version {version!r}")
+
+
 def validate_alignment_checkpoint(
     checkpoint: AlignmentCheckpoint,
     expected_metadata: Mapping[str, Any] | CheckpointMetadata,
 ) -> None:
     """Validate that a checkpoint can resume the current alignment request."""
     metadata = checkpoint.metadata
-    if metadata.get("checkpoint_kind") != CHECKPOINT_KIND:
-        raise CheckpointError(
-            f"corrupt checkpoint: unsupported checkpoint kind {metadata.get('checkpoint_kind')!r}"
-        )
-    if int(metadata.get("schema_version", -1)) != SCHEMA_VERSION:
-        raise CheckpointError(
-            f"corrupt checkpoint: unsupported schema version {metadata.get('schema_version')!r}"
-        )
+    _validate_kind_and_schema(metadata)
 
     if any(f > 1 for f in metadata.get("levels") or ()) and (
         metadata.get("multires_geometry_version") != MULTIRES_GEOMETRY_VERSION
@@ -393,8 +391,8 @@ def validate_alignment_checkpoint(
     ):
         if key not in expected:
             continue
-        actual_value = _normalize_checkpoint_compare_value(metadata.get(key), key=key)
-        expected_value = _normalize_checkpoint_compare_value(expected.get(key), key=key)
+        actual_value = normalize_json(metadata.get(key))
+        expected_value = normalize_json(expected.get(key))
         if actual_value != expected_value:
             raise CheckpointError(
                 f"incompatible checkpoint: {key.replace('_', ' ')} "

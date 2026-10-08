@@ -325,10 +325,10 @@ near those views: on the chip phantom's 720 views, object-frame `dx` reached
 against 0.06 px with detector-frame translations.
 
 `tomojax align` therefore defaults to detector-frame translations
-(`translation_frame = "detector"`). On the six-cell
+(`pose_translation_frame = "detector"`). On the six-cell
 free-voxel pilot, the chip phantom and the analytic 128³ scans, detector-frame
 recovery is as accurate as object-frame recovery or better in every case.
-The setting `translation_frame = "object"` in a `--config` file restores the
+The setting `pose_translation_frame = "object"` in a `--config` file restores the
 previous tables. The aligned file records the frame, and `tomojax recon`
 applies the poses in it.
 
@@ -353,9 +353,8 @@ remain lab x/z directions rather than rolled sensor-column/row directions.
 
 The mode also applies to `align_multires`, pose smoothness models, reconstruction
 and setup objectives. Checkpoints carry the frame, and resuming with a different
-frame raises an error. Older checkpoints retain object-frame meaning. Pass the
-same `translation_frame` when exporting JSON or CSV; detector-frame CSV output
-adds a frame column.
+frame raises an error. Pass the same `translation_frame` when exporting JSON or
+CSV; detector-frame CSV output adds a frame column.
 
 In either frame, the reported poses are the least-motion estimate (see
 [where the aligned volume sits](#where-the-aligned-volume-sits)). The frame

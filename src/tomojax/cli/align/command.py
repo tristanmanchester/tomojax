@@ -12,7 +12,6 @@ from tomojax.alignment.api import (
     AlignmentLossConfig,
     DofBounds,
     normalize_alignment_dofs,
-    normalize_alignment_profile,
     normalize_bounds,
     parse_loss_schedule,
     parse_loss_spec,
@@ -51,11 +50,6 @@ def public_mode(mode: str) -> str:
     return {v: k for k, v in _MODES.items()}.get(str(mode), str(mode))
 
 
-def public_quality(profile: str) -> str:
-    """The public name of an internal alignment profile."""
-    return "fast" if normalize_alignment_profile(profile) == "lightning" else "reference"
-
-
 def _mode_argument(value: str) -> str:
     key = option_name(value, separator="-")
     if key not in _MODES:
@@ -80,17 +74,17 @@ def parse_dof_args(
     parser: argparse.ArgumentParser,
 ) -> tuple[tuple[str, ...] | None, tuple[str, ...]]:
     optimise_dofs_arg = cast("list[str] | None", args.optimise_dofs)
-    freeze_dofs_arg = cast("list[str] | None", args.freeze_dofs)
+    freeze_arg = cast("list[str] | None", args.freeze)
     try:
         optimise_dofs = (
             None
             if optimise_dofs_arg is None
             else normalize_alignment_dofs(optimise_dofs_arg, option_name="--optimise-dofs")
         )
-        freeze_dofs = normalize_alignment_dofs(freeze_dofs_arg, option_name="--freeze")
+        freeze = normalize_alignment_dofs(freeze_arg, option_name="--freeze")
     except ValueError as exc:
         parser.error(str(exc))
-    return optimise_dofs, freeze_dofs
+    return optimise_dofs, freeze
 
 
 def _parse_bounds_arg(value: object) -> DofBounds:
@@ -126,14 +120,6 @@ def parse_loss_config(
         parser.error(str(exc))
 
     raise AssertionError("unreachable")
-
-
-def _alignment_quality_argument(value: str) -> str:
-    """Normalize public quality names to the internal profile policy."""
-    try:
-        return normalize_alignment_profile(value)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -183,35 +169,37 @@ def _add_input_mode_options(p: argparse.ArgumentParser) -> None:
     )
     _ = p.add_argument(
         "--quality",
-        dest="align_profile",
-        type=_alignment_quality_argument,
-        default="lightning",
-        metavar="{fast,reference}",
+        choices=["fast", "reference"],
+        default="fast",
         help="fast (default) or reference: slower, more conservative solver settings",
-    )
-    _ = p.add_argument(
-        "--align-profile",
-        dest="align_profile",
-        type=_alignment_quality_argument,
-        help=argparse.SUPPRESS,
     )
 
 
 def _add_reconstruction_options(p: argparse.ArgumentParser) -> None:
     _ = p.add_argument(
-        "--outer-iters",
+        "--outer-iterations",
         type=int,
         default=None,
         help="Outer alignment iterations; default 30 for coupled pose stages, else 5",
     )
-    _ = p.add_argument("--recon-iters", type=int, default=10)
     _ = p.add_argument(
-        "--recon-algo",
+        "--iterations",
+        type=int,
+        default=10,
+        help="Inner reconstruction iterations per outer iteration (default: 10)",
+    )
+    _ = p.add_argument(
+        "--reconstruction",
         choices=["fista", "spdhg"],
         default="fista",
         help="Inner reconstruction solver used during alignment (default: fista)",
     )
-    _ = p.add_argument("--lambda-tv", type=float, default=0.005)
+    _ = p.add_argument(
+        "--tv-weight",
+        type=float,
+        default=0.005,
+        help="TV weight of the inner reconstruction (default: 0.005)",
+    )
     _ = p.add_argument(
         "--regulariser",
         choices=["tv", "huber_tv"],
@@ -225,7 +213,7 @@ def _add_reconstruction_options(p: argparse.ArgumentParser) -> None:
         help="Huber-TV transition radius for --regulariser huber_tv",
     )
     _ = p.add_argument(
-        "--tv-prox-iters",
+        "--tv-prox-iterations",
         type=int,
         default=10,
         help="Inner iterations for the FISTA TV proximal operator",
@@ -252,25 +240,17 @@ def _add_reconstruction_options(p: argparse.ArgumentParser) -> None:
         ),
     )
     _ = p.add_argument(
-        "--spdhg-seed",
+        "--seed",
         type=int,
         default=0,
         help="Base random seed for SPDHG subset order inside alignment",
     )
-    rp = p.add_mutually_exclusive_group()
-    _ = rp.add_argument(
-        "--recon-positivity",
-        dest="recon_positivity",
-        action="store_true",
-        help="Enable positivity projection for SPDHG inner reconstructions (default)",
+    _ = p.add_argument(
+        "--nonnegative",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Keep inner reconstruction voxels nonnegative (default: on)",
     )
-    _ = rp.add_argument(
-        "--no-recon-positivity",
-        dest="recon_positivity",
-        action="store_false",
-        help="Disable positivity projection for SPDHG inner reconstructions",
-    )
-    p.set_defaults(recon_positivity=True)
 
 
 def _add_projector_runtime_options(p: argparse.ArgumentParser) -> None:
@@ -390,7 +370,6 @@ def _add_dof_schedule_options(p: argparse.ArgumentParser) -> None:
     )
     _ = p.add_argument(
         "--freeze",
-        dest="freeze_dofs",
         nargs="+",
         default=None,
         metavar="DOF",
@@ -451,7 +430,7 @@ def _add_dof_schedule_options(p: argparse.ArgumentParser) -> None:
         help="Polynomial degree or spline degree for smooth pose models",
     )
     _ = p.add_argument(
-        "--translation-frame",
+        "--pose-translation-frame",
         choices=["object", "detector"],
         default="detector",
         help=(
@@ -493,7 +472,7 @@ def _add_dof_schedule_options(p: argparse.ArgumentParser) -> None:
     )
     _ = p.add_argument("--no-log-compact", dest="log_compact", action="store_false")
     _ = p.add_argument(
-        "--recon-L",
+        "--lipschitz",
         type=float,
         default=None,
         help="Fixed Lipschitz constant for FISTA inside alignment (skip power-method)",
@@ -565,7 +544,7 @@ def _add_loss_options(p: argparse.ArgumentParser) -> None:
     )
     p.set_defaults(early_stop=True)
     _ = p.add_argument(
-        "--early-stop-rel",
+        "--early-stop-rel-impr",
         type=float,
         default=None,
         help="Relative improvement threshold for early stop (default 1e-3)",
@@ -597,7 +576,7 @@ def _add_checkpoint_options(p: argparse.ArgumentParser) -> None:
         default=None,
         metavar="PATH",
         help=(
-            "Resume alignment from a checkpoint. Restores optimise_dofs, freeze_dofs,"
+            "Resume alignment from a checkpoint. Restores optimise_dofs, freeze"
             " and schedule from the checkpoint unless those options are set explicitly."
             " Defaults future checkpoint writes to this path."
         ),
@@ -617,7 +596,6 @@ def _add_output_options(p: argparse.ArgumentParser) -> None:
     )
     _ = p.add_argument(
         "--manifest",
-        dest="save_manifest",
         metavar="JSON",
         default=None,
         help="Also write a JSON record of the run (inputs, settings, versions)",
@@ -661,7 +639,6 @@ def _add_output_options(p: argparse.ArgumentParser) -> None:
     )
     _ = p.add_argument(
         "--dry-run",
-        dest="print_plan_json",
         action="store_true",
         help="Print the resolved plan as JSON and exit without aligning",
     )
@@ -674,29 +651,27 @@ class AlignCommand:
     data: str
     out: str
     mode: AlignmentMode
-    align_profile: str
-    outer_iters: int
-    recon_iters: int
+    quality: str
+    outer_iterations: int
+    iterations: int
     roi: str
     grid: list[int] | None
     requested_gather_dtype: str
     pose_solver: str
     ray_integrator: str | None
-    recon_algo: str
-    lambda_tv: float
+    reconstruction: str
+    tv_weight: float
     regulariser: str
     huber_delta: float
-    tv_prox_iters: int
+    tv_prox_iterations: int
     views_per_batch: int
-    spdhg_seed: int
-    recon_positivity: bool
+    seed: int
+    nonnegative: bool
     projector_unroll: int
     projector_backend: str
-    quality_tier: str
-    fallback_policy: str
     checkpoint_projector: bool
     mask_vol: str
-    translation_frame: str
+    pose_translation_frame: str
     gauge_policy: str
     opt_method: str
     gn_damping: float
@@ -716,21 +691,21 @@ class AlignCommand:
     seed_translations: bool | None
     log_summary: bool
     log_compact: bool
-    recon_l: float | None
+    lipschitz: float | None
     early_stop: bool
-    early_stop_rel: float | None
+    early_stop_rel_impr: float | None
     early_stop_patience: int | None
     optimise_dofs: list[str]
-    freeze_dofs: list[str]
+    freeze: list[str]
     schedule: str | None
-    print_plan_json: bool
+    dry_run: bool
     checkpoint: str | None
     checkpoint_every: int | None
     resume: str | None
     transfer_guard: str
     save_params_json: str | None
     save_params_csv: str | None
-    save_manifest: str | None
+    manifest: str | None
     volume_axes: str
 
 
@@ -745,38 +720,35 @@ def _pose_solver(args: argparse.Namespace) -> str:
 
 def align_command_from_args(args: argparse.Namespace) -> AlignCommand:
     """Snapshot parser/config output into typed alignment command values."""
-    frame = cast("str", args.translation_frame)
     return AlignCommand(
         data=cast("str", args.data),
         out=cast("str", args.out),
         mode=cast("AlignmentMode", args.mode),
-        align_profile=cast("str", args.align_profile),
-        outer_iters=(
-            cast("int", args.outer_iters)
-            if cast("int | None", args.outer_iters) is not None
+        quality=cast("str", args.quality),
+        outer_iterations=(
+            cast("int", args.outer_iterations)
+            if cast("int | None", args.outer_iterations) is not None
             else (30 if _pose_solver(args) == "coupled" and cast("str", args.mode) != "cor" else 5)
         ),
-        recon_iters=cast("int", args.recon_iters),
+        iterations=cast("int", args.iterations),
         roi=cast("str", args.roi),
         grid=cast("list[int] | None", args.grid),
         requested_gather_dtype=cast("str", args.gather_dtype),
         pose_solver=_pose_solver(args),
         ray_integrator=cast("str | None", args.ray_integrator),
-        recon_algo=cast("str", args.recon_algo),
-        lambda_tv=cast("float", args.lambda_tv),
+        reconstruction=cast("str", args.reconstruction),
+        tv_weight=cast("float", args.tv_weight),
         regulariser=cast("str", args.regulariser),
         huber_delta=cast("float", args.huber_delta),
-        tv_prox_iters=cast("int", args.tv_prox_iters),
+        tv_prox_iterations=cast("int", args.tv_prox_iterations),
         views_per_batch=cast("int", args.views_per_batch),
-        spdhg_seed=cast("int", args.spdhg_seed),
-        recon_positivity=cast("bool", args.recon_positivity),
+        seed=cast("int", args.seed),
+        nonnegative=cast("bool", args.nonnegative),
         projector_unroll=cast("int", args.projector_unroll),
         projector_backend=cast("str", args.projector_backend),
-        quality_tier=cast("str", getattr(args, "quality_tier", "")),
-        fallback_policy=cast("str", getattr(args, "fallback_policy", "")),
         checkpoint_projector=cast("bool", args.checkpoint_projector),
         mask_vol=cast("str", args.mask_vol),
-        translation_frame=frame,
+        pose_translation_frame=cast("str", args.pose_translation_frame),
         gauge_policy=cast("str", args.gauge_policy),
         opt_method=cast("str", args.opt_method),
         gn_damping=cast("float", args.gn_damping),
@@ -796,20 +768,20 @@ def align_command_from_args(args: argparse.Namespace) -> AlignCommand:
         seed_translations=cast("bool | None", args.seed_translations),
         log_summary=cast("bool", args.log_summary),
         log_compact=cast("bool", args.log_compact),
-        recon_l=cast("float | None", args.recon_L),
+        lipschitz=cast("float | None", args.lipschitz),
         early_stop=cast("bool", args.early_stop),
-        early_stop_rel=cast("float | None", args.early_stop_rel),
+        early_stop_rel_impr=cast("float | None", args.early_stop_rel_impr),
         early_stop_patience=cast("int | None", args.early_stop_patience),
         optimise_dofs=list(cast("list[str] | None", args.optimise_dofs) or []),
-        freeze_dofs=list(cast("list[str] | None", args.freeze_dofs) or []),
+        freeze=list(cast("list[str] | None", args.freeze) or []),
         schedule=cast("str | None", args.schedule),
-        print_plan_json=cast("bool", args.print_plan_json),
+        dry_run=cast("bool", args.dry_run),
         checkpoint=cast("str | None", args.checkpoint),
         checkpoint_every=cast("int | None", args.checkpoint_every),
         resume=cast("str | None", args.resume),
         transfer_guard=cast("str", args.transfer_guard),
         save_params_json=cast("str | None", args.save_params_json),
         save_params_csv=cast("str | None", args.save_params_csv),
-        save_manifest=cast("str | None", args.save_manifest),
+        manifest=cast("str | None", args.manifest),
         volume_axes=cast("str", args.volume_axes),
     )

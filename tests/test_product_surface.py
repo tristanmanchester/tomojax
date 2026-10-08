@@ -129,12 +129,12 @@ def test_cli_lists_expert_settings_as_config_keys(capsys: pytest.CaptureFixture[
     with pytest.raises(SystemExit) as exc_info:
         main(["align", "--help"])
     assert exc_info.value.code == 0
-    assert "--outer-iters" not in capsys.readouterr().out
+    assert "--outer-iterations" not in capsys.readouterr().out
     with pytest.raises(SystemExit) as exc_info:
         main(["align", "--config-keys"])
     assert exc_info.value.code == 0
     keys = capsys.readouterr().out
-    assert "outer_iters = " in keys
+    assert "outer_iterations = " in keys
     assert "mode = " in keys
 
 
@@ -221,3 +221,24 @@ def test_config_files_name_the_new_key_for_a_retired_one(
     assert exc.value.code == 2
     assert "config key 'lambda_tv'" in (err := capsys.readouterr().err)
     assert err.rstrip().endswith("was renamed 'tv_weight'")
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("outer_iters", "outer_iterations"),
+        ("recon_algo", "reconstruction"),
+        ("freeze_dofs", "freeze"),
+    ],
+)
+def test_align_config_files_name_the_new_key_for_a_retired_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], old: str, new: str
+) -> None:
+    from tomojax.cli.main import main
+
+    config = tmp_path / "align.toml"
+    _ = config.write_text(f"{old} = 1\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        _ = main(["align", "scan.nxs", "-o", str(tmp_path / "out.nxs"), "--config", str(config)])
+    assert exc.value.code == 2
+    assert capsys.readouterr().err.rstrip().endswith(f"was renamed '{new}'")

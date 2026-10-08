@@ -20,7 +20,44 @@
   reconstruction `info` and solver `info` use the new keys
   (`effective_iterations`, `lipschitz`, `tv_weight`, `nonnegative`, ...), and
   the `tomojax recon` manifest records `method` (was `algorithm`).
-  `AlignConfig` and `tomojax align` keep their names for now.
+- Breaking: alignment settings use the same vocabulary. An `AlignConfig` field
+  that sets the inner reconstruction has its `FistaConfig` or `SPDHGConfig`
+  name: `recon_iters` is `iterations`, `lambda_tv` is `tv_weight`,
+  `tv_prox_iters` is `tv_prox_iterations`, `recon_positivity` is
+  `nonnegative`, `spdhg_seed` is `seed`, `recon_L` is `lipschitz` and
+  `recon_algo` is `reconstruction`. Also `outer_iters` is `outer_iterations`,
+  `gn_joint_iters` is `gn_joint_iterations`, `freeze_dofs` is `freeze` (as in
+  `tj.align`), and `align_profile` (`"lightning"`/`"tortoise"`) is `quality`
+  (`"fast"`/`"reference"`, as in `tj.align`). `quality_tier` and
+  `fallback_policy` are gone: the first only echoed the profile, and the
+  second was always reset to `"fallback"`. `ReconLayerConfig` and
+  `FoldReconstructionConfig` follow (`iterations`, `tv_weight`, `lipschitz`,
+  `nonnegative`, `implicit_cg_iterations`), as do `AlignResumeState`,
+  `AlignMultiresResumeState` and `AlignmentCheckpointProgress` (`lipschitz`,
+  `*_outer_iterations_*`). Alignment `info` uses the new keys:
+  `reconstruction`, `lipschitz`, `quality`, `completed_outer_iterations`,
+  `total_outer_iterations`, and per-outer `lipschitz_measured` and
+  `lipschitz_next`. `tomojax align` options are the field names with hyphens:
+  `--outer-iterations`, `--iterations`, `--reconstruction`, `--tv-weight`,
+  `--tv-prox-iterations`, `--seed`, `--nonnegative`/`--no-nonnegative`,
+  `--lipschitz`, `--pose-translation-frame` and `--early-stop-rel-impr`, and
+  every option's `--config` key is its own name (`quality`, `freeze`,
+  `manifest`, `dry_run`). A `--config` file using a retired key
+  (`align_profile`, `outer_iters`, `recon_iters`, `recon_algo`,
+  `recon_positivity`, `recon_L`, `freeze_dofs`, `translation_frame`,
+  `early_stop_rel`, `save_manifest`, `print_plan_json`, and those above)
+  fails with its new name.
+- Breaking: alignment options take one spelling each. Removed: the
+  `--align-profile` option and the `quality` spellings `lightning` and
+  `tortoise`; `recon_algo` values `fista_tv`, `spdhg_tv`, `fista-tv` and
+  `spdhg-tv`; `opt_method` and stage optimizer values `lbfgsb`, `l_bfgs` and
+  `l_bfgs_b`; hyphenated `gauge_policy` values (`anchor-mean`,
+  `prior-required`, `diagnose-only`); `pose_model="per-view"`; hyphenated or
+  upper-case schedule names; and the gauge-fix spellings `off`, `false`,
+  `disabled` and `disable`.
+- Breaking: alignment checkpoints written before this version (schema 2 or
+  earlier) do not resume; resuming one fails with "schema version 2 predates
+  this version of TomoJAX". Restart the alignment.
 - Fixed: `tj.reconstruct(scan, "spdhg")` ignored `nonnegative` and always
   clipped the volume at zero. It now honours it and, like `fista`, does not
   clip unless asked.

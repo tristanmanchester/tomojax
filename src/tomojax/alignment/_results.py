@@ -19,16 +19,14 @@ type MetadataDict = dict[str, object]
 class AlignInfo(TypedDict):
     loss: list[float]
     loss_kind: str
-    recon_algo: str
-    L: float | None
+    reconstruction: str
+    lipschitz: float | None
     outer_stats: list[OuterStat]
     stopped_by_observer: bool
     observer_action: ObserverAction
     wall_time_total: float
-    align_profile: str
+    quality: str
     profile_policy: MetadataDict
-    quality_tier: str
-    fallback_policy: str
     pose_model: str
     pose_translation_frame: str
     pose_model_variables: int
@@ -42,7 +40,7 @@ class AlignInfo(TypedDict):
     objective_provenance: MetadataDict | None
     backend_provenance: MetadataDict | None
     optimizer_kind: str
-    completed_outer_iters: int
+    completed_outer_iterations: int
     small_impr_streak: int
     motion_coeffs: jnp.ndarray | None
     gauge_fix: str
@@ -57,16 +55,14 @@ class AlignMultiresInfo(TypedDict):
     # Finer factors left out because they would not fit in device memory.
     factors_skipped: list[int]
     loss_kind: str | None
-    recon_algo: str
+    reconstruction: str
     outer_stats: list[OuterStat]
     stopped_by_observer: bool
     observer_action: ObserverAction
-    total_outer_iters: int
+    total_outer_iterations: int
     wall_time_total: float
-    align_profile: str
+    quality: str
     profile_policy: MetadataDict
-    quality_tier: str
-    fallback_policy: str
     pose_model: str
     pose_translation_frame: str
     pose_model_variables: int | None
@@ -102,7 +98,7 @@ class AlignResumeState:
     start_outer_iter: int = 0
     loss: list[float] = field(default_factory=list)
     outer_stats: list[OuterStat] = field(default_factory=list)
-    L: float | None = None
+    lipschitz: float | None = None
     small_impr_streak: int = 0
     elapsed_offset: float = 0.0
     pose_translation_frame: str = "object"
@@ -116,12 +112,12 @@ class AlignMultiresResumeState:
     motion_coeffs: jnp.ndarray | None = None
     level_index: int = 0
     level_factor: int = 1
-    completed_outer_iters_in_level: int = 0
-    global_outer_iters_completed: int = 0
+    completed_outer_iterations_in_level: int = 0
+    global_outer_iterations_completed: int = 0
     prev_factor: int | None = None
     loss: list[float] = field(default_factory=list)
     outer_stats: list[OuterStat] = field(default_factory=list)
-    L: float | None = None
+    lipschitz: float | None = None
     small_impr_streak: int = 0
     elapsed_offset: float = 0.0
     level_complete: bool = False
@@ -130,7 +126,7 @@ class AlignMultiresResumeState:
     stage_index: int = 0
     stage_name: str | None = None
     stage_completed: bool = False
-    completed_outer_iters_in_stage: int = 0
+    completed_outer_iterations_in_stage: int = 0
     pose_translation_frame: str = "object"
     ray_integrator: str = "sampled"
 
@@ -162,12 +158,12 @@ def record_reconstruction_info(
     stat: OuterStat,
     *,
     info_rec: Mapping[str, object],
-    recon_algo: str,
+    reconstruction: str,
     cfg: object,
     outer_idx: int,
     L_prev: float | None,
 ) -> float | None:
-    if recon_algo == "fista":
+    if reconstruction == "fista":
         try:
             L_meas = float(info_rec.get("lipschitz", 0.0))
             if math.isfinite(L_meas) and L_meas > 0.0:
@@ -175,8 +171,8 @@ def record_reconstruction_info(
                 # safety margin. Reapplying a factor here on every outer
                 # iteration exponentially shrinks all subsequent voxel steps.
                 L_prev = L_meas
-                stat["L_meas"] = L_meas
-                stat["L_next"] = L_prev
+                stat["lipschitz_measured"] = L_meas
+                stat["lipschitz_next"] = L_prev
         except (TypeError, ValueError, OverflowError) as exc:
             _record_stat_conversion_error(stat, "lipschitz", exc)
     losses = info_rec.get("loss")
@@ -189,7 +185,7 @@ def record_reconstruction_info(
                 stat["recon_loss_min"] = float(min(lhist))
         except (TypeError, ValueError, OverflowError) as exc:
             _record_stat_conversion_error(stat, "loss", exc)
-    if recon_algo == "spdhg":
+    if reconstruction == "spdhg":
         for src, dst in (
             ("tau", "spdhg_tau"),
             ("sigma_data", "spdhg_sigma_data"),
@@ -205,7 +201,7 @@ def record_reconstruction_info(
                     if dst in {"spdhg_views_per_batch", "spdhg_num_blocks"}
                     else float(value)
                 )
-        stat["spdhg_seed"] = int(cfg.spdhg_seed) + int(outer_idx) - 1
+        stat["spdhg_seed"] = int(cfg.seed) + int(outer_idx) - 1
     return L_prev
 
 

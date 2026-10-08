@@ -115,7 +115,7 @@ _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
 _HELP_BUDGET = 16
 
 
-def _public_options(command: str) -> set[str]:
+def _actions(command: str) -> list[argparse.Action]:
     from tomojax.cli._options import options  # check-public-imports: allow-private
 
     module = {
@@ -125,9 +125,13 @@ def _public_options(command: str) -> set[str]:
     }.get(command, f"tomojax.cli.{command}")
     parser_module = importlib.import_module(module)
     build = getattr(parser_module, "build_parser", None) or parser_module._build_parser
+    return options(build())
+
+
+def _public_options(command: str) -> set[str]:
     return {
         option
-        for action in options(build())
+        for action in _actions(command)
         if action.help != argparse.SUPPRESS
         for option in action.option_strings
         if option.startswith("--") and option not in _STANDARD_OPTIONS
@@ -147,6 +151,15 @@ def test_cli_options_use_the_python_names(command: str) -> None:
             parameters = inspect.signature(getattr(tomojax, function)).parameters
             assert keyword in parameters, f"{option} names tomojax.{function}({keyword}=...)"
             assert option.removeprefix("--").replace("-", "_") in {keyword, "ignore_alignment"}
+
+
+def test_align_options_are_stored_under_their_own_names() -> None:
+    # A --config key is the option's dest, so it must be the option's name.
+    for action in _actions("align"):
+        for option in action.option_strings:
+            if option.startswith("--") and option not in _STANDARD_OPTIONS:
+                name = option.removeprefix("--").removeprefix("no-").replace("-", "_")
+                assert name == action.dest, f"{option} stores {action.dest!r}"
 
 
 @pytest.mark.parametrize("command", _guardrails().CLI_COMMANDS)

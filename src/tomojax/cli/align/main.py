@@ -14,7 +14,7 @@ from tomojax.core import log_jax_env, setup_logging
 from tomojax.io.api import JsonValue, normalize_json
 
 from .checkpoint import make_align_cli_checkpoint_callbacks
-from .command import build_parser, public_mode, public_quality
+from .command import build_parser, public_mode
 from .outputs import write_alignment_outputs
 from .plan import (
     build_align_cli_run_plan,
@@ -70,13 +70,13 @@ def _log_resolved_plan(plan: AlignCliRunPlan) -> None:
                 stage_summary.append(f"{stage_name}[{stage_map.get('optimizer_kind')}:{dofs}]")
     logging.info(
         "Resolved alignment plan: mode=%s quality=%s schedule=%s levels=%s "
-        "outer_iters=%d recon_iters=%d opt=%s views_per_batch=%d",
+        "outer_iterations=%d iterations=%d opt=%s views_per_batch=%d",
         public_mode(command.mode),
-        public_quality(command.align_profile),
+        command.quality,
         command.schedule,
         plan.run_levels if plan.run_levels is not None else "single",
-        command.outer_iters,
-        command.recon_iters,
+        command.outer_iterations,
+        command.iterations,
         command.opt_method,
         command.views_per_batch,
     )
@@ -91,7 +91,7 @@ def _resolved_plan_payload(plan: AlignCliRunPlan) -> dict[str, JsonValue]:
     profile_options = cast("object", plan.config_metadata.get("profile_options", {}))
     payload: dict[str, object] = {
         "mode": public_mode(command.mode),
-        "quality": public_quality(command.align_profile),
+        "quality": command.quality,
         "schedule": command.schedule,
         "levels": plan.run_levels,
         "single_resolution": plan.run_levels is None,
@@ -100,14 +100,14 @@ def _resolved_plan_payload(plan: AlignCliRunPlan) -> dict[str, JsonValue]:
         "active_geometry_dofs": normalize_json(schedule.get("active_geometry_dofs", [])),
         "active_motion_dofs": normalize_json(schedule.get("active_motion_dofs", [])),
         "loss": _loss_config_payload(plan.loss_config),
-        "outer_iters": command.outer_iters,
-        "recon_iters": command.recon_iters,
+        "outer_iterations": command.outer_iterations,
+        "iterations": command.iterations,
         "early_stop": command.early_stop,
-        "early_stop_rel": command.early_stop_rel,
+        "early_stop_rel_impr": command.early_stop_rel_impr,
         "early_stop_patience": command.early_stop_patience,
         "pose_solver": command.pose_solver,
         "ray_integrator": plan.cfg.ray_integrator,
-        "lambda_tv": plan.cfg.lambda_tv,
+        "tv_weight": plan.cfg.tv_weight,
         "optimizer": plan.cfg.opt_method,
         "gauge_policy": command.gauge_policy,
         "pose_model": command.pose_model,
@@ -147,7 +147,7 @@ def main() -> None:
         os.environ["TOMOJAX_PROGRESS"] = "1"
     plan = build_align_cli_run_plan(p, args, config_metadata)
     _log_resolved_plan(plan)
-    if plan.command.print_plan_json:
+    if plan.command.dry_run:
         print(json.dumps(_resolved_plan_payload(plan), indent=2, sort_keys=True))
         return
     checkpoint_callbacks = make_align_cli_checkpoint_callbacks(plan)

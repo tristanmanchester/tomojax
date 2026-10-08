@@ -14,8 +14,8 @@ def _recon_summary_parts(stat: OuterStat, *, compact: bool) -> list[str]:
         parts.append(f"{prefix}{format_duration(recon_time)}")
     if stat.get("recon_retry"):
         parts.append("retry" if compact else "fallback retry")
-    l_meas = stat.get("L_meas")
-    l_next = stat.get("L_next")
+    l_meas = stat.get("lipschitz_measured")
+    l_next = stat.get("lipschitz_next")
     if (l_meas is not None) and (l_next is not None):
         parts.append(f"L {float(l_meas):.{digits}e}->{float(l_next):.{digits}e}")
     f_first = stat.get("recon_loss_first")
@@ -164,13 +164,13 @@ def _format_outer_summary_lines(
     stat: OuterStat,
     *,
     cfg: AlignConfig,
-    recon_algo: str,
+    reconstruction: str,
 ) -> list[str]:
     outer_idx = int(stat.get("outer_idx", 0))
-    total_iters = int(cfg.outer_iters)
+    total_iters = int(cfg.outer_iterations)
     total_time = format_duration(stat.get("outer_time"))
     elapsed = format_duration(stat.get("cumulative_time"))
-    solver_label = str(stat.get("recon_algo") or recon_algo).upper()
+    solver_label = str(stat.get("reconstruction") or reconstruction).upper()
     if cfg.log_compact:
         parts: list[str] = [f"Outer {outer_idx}/{total_iters}"]
         recon_parts = _recon_summary_parts(stat, compact=True)

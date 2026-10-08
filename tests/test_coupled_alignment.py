@@ -111,7 +111,7 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
     cfg = AlignConfig(
         gn_coupling="joint",
         gn_joint_solver=solver,
-        gn_joint_iters=100,
+        gn_joint_iterations=100,
         gn_joint_rtol=1e-6,
         gn_damping=0.2,
         # Accepted scalar-like options must remain usable in a hashable
@@ -123,7 +123,7 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
         projector_backend=backend,
         gather_dtype="fp32",
         pose_translation_frame="detector",
-        lambda_tv=0,
+        tv_weight=0,
         loss=PWLSLossSpec(a=0.3, b=0.8),
         w_rot=0.03 + 0.005 * scan_variant,
         w_trans=0.05 + 0.003 * scan_variant,
@@ -297,13 +297,13 @@ def _joint_huber_constraints_and_resume(integrator, solver):
         gather_dtype="fp32",
         ray_integrator=integrator,
         projector_backend="jax",
-        lambda_tv=0.002,
-        outer_iters=2,
-        recon_iters=2,
-        recon_L=100,
+        tv_weight=0.002,
+        outer_iterations=2,
+        iterations=2,
+        lipschitz=100,
         loss=L2LossSpec(),
         early_stop=False,
-        freeze_dofs=("beta",),
+        freeze=("beta",),
         bounds=(("dx", -0.01, 0.01),),
     )
     init = jnp.zeros_like(truth).at[1:3, 1, 1:3].set(0.5)

@@ -27,7 +27,7 @@ from tomojax.alignment._config import AlignConfig, resolved_schedule_for_config
 from tomojax.alignment._model.dofs import DOF_NAMES
 from tomojax.alignment._model.schedules import AlignmentSchedule, schedule_preset
 from tomojax.alignment._objectives.loss_specs import L2LossSpec
-from tomojax.alignment._profiles import normalize_alignment_profile, resolve_profiled_cli_defaults
+from tomojax.alignment._profiles import normalize_quality, resolve_profiled_cli_defaults
 from tomojax.core.validation import option_name
 
 if TYPE_CHECKING:
@@ -47,7 +47,7 @@ _PROFILE_KEYS = (
     "projector_backend",
     "gather_dtype",
     "regulariser",
-    "recon_algo",
+    "reconstruction",
     "views_per_batch",
     "checkpoint_projector",
     "pose_model",
@@ -100,9 +100,9 @@ def coupled_overrides(config: AlignConfig, *, explicit: Iterable[str] = ()) -> d
     }
     if "loss" not in keep:
         options["loss"] = L2LossSpec()
-    if "lambda_tv" not in keep:
+    if "tv_weight" not in keep:
         # Default-weight TV biased coupled pose recovery in the free-voxel pilot.
-        options["lambda_tv"] = 0.0
+        options["tv_weight"] = 0.0
     return options
 
 
@@ -123,35 +123,32 @@ def alignment_plan(
     parameters (for example ``"dy"``) at their initial values.
     """
     name = normalize_mode(mode)
-    profile = normalize_alignment_profile(quality)
+    tier = normalize_quality(quality)
     expert = config is not None
-    cfg = config or AlignConfig(align_profile=profile, pose_translation_frame="detector")
+    cfg = config or AlignConfig(quality=tier, pose_translation_frame="detector")
     if not expert:
         current = {key: getattr(cfg, key) for key in _PROFILE_KEYS}
         resolved = resolve_profiled_cli_defaults(
-            align_profile=profile, current=current, configured_keys=set()
+            quality=tier, current=current, configured_keys=set()
         )
         cfg = replace(
             cfg,
-            align_profile=profile,
             **{key: resolved[key] for key in _PROFILE_KEYS},  # type: ignore[arg-type]
-            quality_tier=resolved["quality_tier"],  # type: ignore[arg-type]
-            fallback_policy=resolved["fallback_policy"],  # type: ignore[arg-type]
         )
     if cfg.schedule is None and cfg.optimise_dofs is None:
         if name == "pose":
-            schedule = "lightning_pose" if profile == "lightning" else "tortoise_pose"
+            schedule = "lightning_pose" if tier == "fast" else "tortoise_pose"
         else:
             schedule = _SCHEDULES[name]
         cfg = replace(cfg, schedule=schedule)
-    frozen = tuple(dict.fromkeys((*(cfg.freeze_dofs or ()), *freeze)))
+    frozen = tuple(dict.fromkeys((*(cfg.freeze or ()), *freeze)))
     if frozen:
-        cfg = replace(cfg, freeze_dofs=frozen)
+        cfg = replace(cfg, freeze=frozen)
     pose_solver: Literal["coupled", "alternating"] = (
         "coupled" if name in {"pose", "cor-then-pose"} else "alternating"
     )
     if pose_solver == "coupled" and not expert:
-        cfg = replace(cfg, outer_iters=30, **coupled_overrides(cfg))  # type: ignore[arg-type]
+        cfg = replace(cfg, outer_iterations=30, **coupled_overrides(cfg))  # type: ignore[arg-type]
     elif not expert:
         # Joseph plane sampling is the fastest forward model for every mode.
         cfg = replace(cfg, ray_integrator="joseph")

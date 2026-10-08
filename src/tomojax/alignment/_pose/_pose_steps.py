@@ -601,7 +601,7 @@ def _run_alignment_step(
     OuterStat,
 ]:
     align_start = time.perf_counter()
-    loss_rng_key = jax.random.fold_in(jax.random.key(int(cfg.spdhg_seed)), int(outer_idx))
+    loss_rng_key = jax.random.fold_in(jax.random.key(int(cfg.seed)), int(outer_idx))
     result = _run_alignment_step_core(
         cfg=cfg,
         optimizer=optimizer,
@@ -684,7 +684,7 @@ def _run_coupled_alignment_step(
     if bool(result.finite) and math.isfinite(before):
         for trial_scale in (1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.015625):
             trial_volume = vol + trial_scale * dx
-            if cfg.recon_positivity:
+            if cfg.nonnegative:
                 trial_volume = jnp.maximum(trial_volume, 0)
             trial_params, _ = constraints.apply_full_constraints_with_stats(
                 pose_params_in + trial_scale * dp

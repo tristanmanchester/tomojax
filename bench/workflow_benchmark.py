@@ -62,9 +62,9 @@ def run_case(size: int, kind: str, method: str, args: argparse.Namespace) -> dic
     else:
         optimizer = method.removeprefix("align_")
         config = AlignConfig(
-            outer_iters=args.outer_iters,
-            recon_iters=args.inner_iters,
-            recon_L=lipschitz,
+            outer_iterations=args.outer_iters,
+            iterations=args.inner_iters,
+            lipschitz=lipschitz,
             projector_backend="jax",
             gather_dtype="fp32",
             views_per_batch=args.batch,

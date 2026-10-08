@@ -102,6 +102,17 @@ _RETIRED_KEYS = {
     "spdhg_seed": "seed",
     "tv_prox_iters": "tv_prox_iterations",
     "L": "lipschitz",
+    "align_profile": "quality",
+    "outer_iters": "outer_iterations",
+    "recon_iters": "iterations",
+    "recon_algo": "reconstruction",
+    "recon_positivity": "nonnegative",
+    "recon_L": "lipschitz",
+    "freeze_dofs": "freeze",
+    "translation_frame": "pose_translation_frame",
+    "early_stop_rel": "early_stop_rel_impr",
+    "save_manifest": "manifest",
+    "print_plan_json": "dry_run",
 }
 
 
@@ -113,7 +124,7 @@ def _validate_config_keys(
     valid_keys = _config_actions_by_dest(parser).keys()
     for key in values:
         new = _RETIRED_KEYS.get(str(key))
-        if new is not None and str(key) not in valid_keys and new in valid_keys:
+        if new is not None and new in valid_keys:
             parser.error(f"config key '{key}' in {path} was renamed '{new}'")
     unknown = sorted(str(key) for key in values if str(key) not in valid_keys)
     if unknown:

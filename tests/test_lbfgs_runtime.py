@@ -80,9 +80,9 @@ def test_public_lbfgs_reuses_problem_across_volumes_and_motion_models(pose_model
     data = jax.vmap(lambda t: forward_project_view_T(t, grid, detector, truth))(poses)
     initial = jnp.zeros((5, 5)).at[:, 2].set(0.01).at[:, 3].set(jnp.linspace(-0.1, 0.1, 5))
     cfg = AlignConfig(
-        outer_iters=2,
-        recon_iters=1,
-        recon_L=100.0,
+        outer_iterations=2,
+        iterations=1,
+        lipschitz=100.0,
         opt_method="lbfgs",
         lbfgs_maxiter=2,
         projector_backend="jax",

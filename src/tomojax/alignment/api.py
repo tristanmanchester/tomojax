@@ -55,12 +55,8 @@ from tomojax.alignment._objectives.loss_specs import (
 )
 from tomojax.alignment._prealign import implied_detector_offset
 from tomojax.alignment._profiles import (
-    AlignmentProfile,
-    AlignmentProfileInput,
     AlignmentProfilePolicy,
-    FallbackPolicy,
     QualityTier,
-    normalize_alignment_profile,
     profile_policy_from_config,
     resolve_profiled_cli_defaults,
 )
@@ -113,8 +109,6 @@ __all__ = [
     "AlignmentLossSpec",
     "AlignmentMode",
     "AlignmentPlan",
-    "AlignmentProfile",
-    "AlignmentProfileInput",
     "AlignmentProfilePolicy",
     "AlignmentProjectionIdentity",
     "AlignmentSchedule",
@@ -126,7 +120,6 @@ __all__ = [
     "ConeSetup",
     "DofBounds",
     "DofSpec",
-    "FallbackPolicy",
     "GaugePolicy",
     "GaugePolicyError",
     "L2LossSpec",
@@ -157,7 +150,6 @@ __all__ = [
     "loss_spec_name",
     "loss_spec_params",
     "normalize_alignment_dofs",
-    "normalize_alignment_profile",
     "normalize_bounds",
     "normalize_geometry_dofs",
     "normalize_schedule_resume_state",

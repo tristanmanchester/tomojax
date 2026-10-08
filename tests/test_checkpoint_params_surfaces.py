@@ -41,10 +41,10 @@ def _metadata_input() -> AlignmentCheckpointMetadataInput:
             levels=[2, 1],
             level_index=0,
             level_factor=2,
-            completed_outer_iters_in_level=1,
-            global_outer_iters_completed=3,
+            completed_outer_iterations_in_level=1,
+            global_outer_iterations_completed=3,
         ),
-        config={"recon_algo": "fista"},
+        config={"reconstruction": "fista"},
         cli_options={"mode": "rigid"},
     )
 
@@ -65,7 +65,7 @@ def test_checkpoint_schedule_resume_state_uses_public_schema() -> None:
         "stage_index": 2,
         "stage_name": "calibrate_geometry",
         "stage_completed": False,
-        "completed_outer_iters_in_stage": 7,
+        "completed_outer_iterations_in_stage": 7,
     }
     metadata_input = _metadata_input()
     metadata = build_alignment_checkpoint_metadata_from_input(
@@ -103,7 +103,7 @@ def test_checkpoint_validation_requires_exact_config_defaults() -> None:
     )
     expected_metadata = dict(metadata)
     expected_metadata["config"] = {
-        "recon_algo": "fista",
+        "reconstruction": "fista",
         "gauge_fix": "mean_translation",
     }
 
@@ -117,7 +117,7 @@ def test_alignment_params_schema_uses_current_identifier() -> None:
     assert payload["schema"] == "tomojax.alignment_params"
 
 
-def test_legacy_checkpoint_pose_frame_is_object_and_cannot_be_reinterpreted() -> None:
+def test_checkpoints_written_before_the_settings_rename_do_not_resume() -> None:
     metadata = build_alignment_checkpoint_metadata_from_input(_metadata_input())
     checkpoint = AlignmentCheckpoint(
         x=np.zeros((2, 3, 4), dtype=np.float32),
@@ -125,25 +125,13 @@ def test_legacy_checkpoint_pose_frame_is_object_and_cannot_be_reinterpreted() ->
         motion_coeffs=None,
         loss_history=[],
         outer_stats=[],
-        metadata=metadata,
+        metadata={**metadata, "schema_version": 2},
     )
-    expected = dict(metadata)
-    expected["config"] = {**metadata["config"], "pose_translation_frame": "object"}
-    expected["config"].update(gn_jacobian="autodiff", gn_difference_step=1e-3)
-    validate_alignment_checkpoint(checkpoint, expected)
-    assert "pose_translation_frame" not in metadata["config"]
-    expected["config"]["pose_translation_frame"] = "detector"
-    with pytest.raises(CheckpointError, match="config"):
-        validate_alignment_checkpoint(checkpoint, expected)
-    expected["config"]["pose_translation_frame"] = "object"
-    expected["config"]["gn_jacobian"] = "central"
-    with pytest.raises(CheckpointError, match="config"):
-        validate_alignment_checkpoint(checkpoint, expected)
-    expected["config"].update(gn_jacobian="autodiff", gn_joint_solver="stacked")
-    validate_alignment_checkpoint(checkpoint, expected)
-    expected["config"]["gn_joint_solver"] = "pose_eliminated"
-    with pytest.raises(CheckpointError, match="config"):
-        validate_alignment_checkpoint(checkpoint, expected)
+    with pytest.raises(CheckpointError, match="schema version 2 predates this version"):
+        validate_alignment_checkpoint(checkpoint, metadata)
+    checkpoint.metadata["schema_version"] = 99
+    with pytest.raises(CheckpointError, match="unsupported schema version 99"):
+        validate_alignment_checkpoint(checkpoint, metadata)
 
 
 @pytest.mark.parametrize("multires", [False, True])

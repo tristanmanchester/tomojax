@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 import time
-from typing import Any, cast
 
 import jax.numpy as jnp
 
@@ -209,7 +208,7 @@ def _run_proposal_stage(
     )
     info = dict(state.info)
     info["wall_time_total"] = float(level_wall_time)
-    info["completed_outer_iters"] = len(level_stats)
+    info["completed_outer_iterations"] = len(level_stats)
     info["proposal"] = dict(proposal_info)
     return replace(
         state,
@@ -242,11 +241,10 @@ def _run_setup_geometry_stage(
         cfg,
         schedule=None,
         optimise_dofs=stage.active_geometry_dofs,
-        quality_tier=stage.quality_tier,
-        outer_iters=int(stage.maxiter),
+        outer_iterations=int(stage.maxiter),
         early_stop=bool(stage.early_stop),
     )
-    cfg_stage.quality_tier = cast(Any, stage.quality_tier)
+    cfg_stage.stage_quality_tier = stage.quality_tier
     geometry_start = time.perf_counter()
     setup_result = _optimize_setup_geometry_bilevel_for_level(
         geometry=geometry,
@@ -274,7 +272,7 @@ def _run_setup_geometry_stage(
     level_losses.extend(setup_result.losses)
     info = dict(state.info)
     info["wall_time_total"] = float(level_wall_time)
-    info["completed_outer_iters"] = len(level_stats)
+    info["completed_outer_iterations"] = len(level_stats)
     return replace(
         state,
         x_lvl=setup_result.x,
@@ -338,7 +336,7 @@ def _pose_stage_resume_state(
             start_outer_iter=level_resume.resume_stage_iters,
             loss=list(level_resume.resume_stage_losses),
             outer_stats=[dict(stat) for stat in level_resume.resume_stage_stats],
-            L=resume_state.L,
+            lipschitz=resume_state.lipschitz,
             small_impr_streak=int(resume_state.small_impr_streak),
             elapsed_offset=float(resume_state.elapsed_offset - global_elapsed_offset),
             pose_translation_frame=resume_state.pose_translation_frame,
@@ -377,19 +375,18 @@ def _run_pose_alignment_stage(
         schedule=None,
         optimise_dofs=stage.active_pose_dofs,
         opt_method=str(pose_optimizer),
-        quality_tier=stage.quality_tier,
-        outer_iters=int(stage.maxiter),
+        outer_iterations=int(stage.maxiter),
         # A fixed-volume objective holds the volume fixed during each pose step;
         # alternation still refreshes it between steps. Skipping reconstruction
         # left pose-only schedules optimising against an all-zero volume.
-        recon_iters=int(cfg.recon_iters),
+        iterations=int(cfg.iterations),
         gn_coupling="joint" if stage.objective_kind == "joint_volume_pose" else "fixed_volume",
         early_stop=bool(stage.early_stop),
         # A supplied Lipschitz constant describes the full-resolution grid only.
-        recon_L=cfg.recon_L if level_factor == 1 else None,
+        lipschitz=cfg.lipschitz if level_factor == 1 else None,
         loss=active_loss_spec,
     )
-    cfg_stage.quality_tier = cast(Any, stage.quality_tier)
+    cfg_stage.stage_quality_tier = stage.quality_tier
     geometry_for_align, align_kwargs = _pose_stage_geometry_context(
         geometry=geometry,
         grid=grid,
@@ -490,16 +487,14 @@ def _run_multires_level_stages(
     info: dict[str, object] = {
         "loss": [],
         "loss_kind": active_loss_name,
-        "recon_algo": str(cfg.recon_algo),
-        "L": None,
+        "reconstruction": str(cfg.reconstruction),
+        "lipschitz": None,
         "outer_stats": [],
         "stopped_by_observer": False,
         "observer_action": "continue",
         "wall_time_total": 0.0,
-        "align_profile": str(cfg.align_profile),
+        "quality": str(cfg.quality),
         "profile_policy": profile_policy_from_config(cfg).to_dict(),
-        "quality_tier": str(cfg.quality_tier),
-        "fallback_policy": str(cfg.fallback_policy),
         "pose_model": str(cfg.pose_model),
         "pose_translation_frame": cfg.pose_translation_frame,
         "ray_integrator": cfg.ray_integrator,
@@ -507,7 +502,7 @@ def _run_multires_level_stages(
         "per_view_variables": 0,
         "pose_model_basis_shape": [],
         "active_dofs": [],
-        "completed_outer_iters": 0,
+        "completed_outer_iterations": 0,
         "small_impr_streak": 0,
         "motion_coeffs": None,
         "gauge_fix": final_gauge_fix,

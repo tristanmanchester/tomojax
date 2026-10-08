@@ -57,13 +57,13 @@ class CoupledSpec:
     cache_columns: bool
     regulariser: Regulariser
     huber_delta: float
-    lambda_tv: float
-    recon_positivity: bool
+    tv_weight: float
+    nonnegative: bool
     gn_volume_damping: float
     gn_damping: float
     gn_joint_solver: Literal["stacked", "pose_eliminated"]
     gn_joint_rtol: float
-    gn_joint_iters: int
+    gn_joint_iterations: int
     has_smoothness: bool
 
 
@@ -110,9 +110,9 @@ def _build_program(
     reg_cfg = FistaCoreConfig(regulariser=cfg.regulariser, huber_delta=cfg.huber_delta)
 
     def regularisation(x):
-        if cfg.lambda_tv == 0:
+        if cfg.tv_weight == 0:
             return jnp.float32(0)
-        return cfg.lambda_tv * regulariser_value_arrays(x, reg_cfg)
+        return cfg.tv_weight * regulariser_value_arrays(x, reg_cfg)
 
     def smoothness(p):
         d2 = p[:-2] - 2 * p[1:-1] + p[2:]
@@ -350,7 +350,7 @@ def _build_program(
             reduced_normal,
             (reduced_rhs, empty),
             (volume_inverse, empty),
-            max_iters=cfg.gn_joint_iters,
+            max_iters=cfg.gn_joint_iterations,
             rtol=reduced_rtol,
         )
         dx = free * reduced.increment[0]
@@ -363,7 +363,7 @@ def _build_program(
 
     def update(p, x):
         ops = batch_ops(poses(p), p, x)
-        if cfg.lambda_tv:
+        if cfg.tv_weight:
             reg_grad, reg_hessian = jax.linearize(jax.grad(regularisation), x)
         else:  # no regulariser: no zero volumes to carry
             reg_grad, reg_hessian = jnp.float32(0), lambda _dx: jnp.float32(0)
@@ -384,7 +384,7 @@ def _build_program(
         gp = (gp + smooth_grad) * active
         # KKT-active zero voxels cannot move below zero. Release them when
         # the local gradient points into the feasible region.
-        if cfg.recon_positivity:
+        if cfg.nonnegative:
             free = ((x > 0) | (gx < 0)).astype(x.dtype) * (mask != 0)
         else:  # every voxel free: a scalar, not a volume of ones
             free = jnp.float32(1) if unmasked else (mask != 0).astype(x.dtype)
@@ -408,7 +408,7 @@ def _build_program(
             return ops.transpose(start, valid, ops.project(start, jnp.ones_like(x)), out)
 
         row_bound = over_batches(ones_body, volume_zeros)
-        reg_bound = 12 * cfg.lambda_tv / cfg.huber_delta if cfg.lambda_tv else 0
+        reg_bound = 12 * cfg.tv_weight / cfg.huber_delta if cfg.tv_weight else 0
         volume_inverse = 1 / jnp.maximum(
             row_bound + reg_bound + cfg.gn_volume_damping, cfg.gn_volume_damping
         )
@@ -427,7 +427,7 @@ def _build_program(
             normal,
             rhs,
             (volume_inverse, pose_inverse),
-            max_iters=cfg.gn_joint_iters,
+            max_iters=cfg.gn_joint_iterations,
             rtol=cfg.gn_joint_rtol,
         )
 

@@ -115,13 +115,13 @@ def test_regularized_reconstruction_derivatives_at_zero_match_dense_system(kind,
     state = AlignmentState.zeros(n_views=3)
     base = BaseGeometryArrays.from_geometry(geometry, detector)
     config = ReconLayerConfig(
-        iters=4,
-        lambda_tv=0.03,
+        iterations=4,
+        tv_weight=0.03,
         huber_delta=0.1,
-        L=30.0,
+        lipschitz=30.0,
         differentiation_mode=mode,
         implicit_damping=0.1,
-        implicit_cg_iters=64,
+        implicit_cg_iterations=64,
         implicit_cg_tol=1e-7,
     )
     layer = ReconLayer(base, grid, detector, config)
@@ -136,7 +136,7 @@ def test_regularized_reconstruction_derivatives_at_zero_match_dense_system(kind,
 
     matrix = np.asarray(jax.jacfwd(project)(jnp.zeros(np.prod(shape))), dtype=np.float64)
     edges = _edges(shape)
-    hessian = matrix.T @ matrix + (config.lambda_tv / config.huber_delta) * (edges.T @ edges)
+    hessian = matrix.T @ matrix + (config.tv_weight / config.huber_delta) * (edges.T @ edges)
     cotangent = np.linspace(-0.4, 1.0, np.prod(shape))
     if mode == "implicit":
         expected_data = matrix @ np.linalg.solve(
@@ -148,10 +148,10 @@ def test_regularized_reconstruction_derivatives_at_zero_match_dense_system(kind,
         # independently of JAX's implementation or automatic differentiation.
         jac_x = np.concatenate([np.zeros((matrix.shape[1], matrix.shape[0])), np.eye(8)], axis=1)
         jac_z = jac_x.copy()
-        forcing = np.concatenate([matrix.T, np.zeros((8, 8))], axis=1) / config.L
-        transition = np.eye(8) - hessian / config.L
+        forcing = np.concatenate([matrix.T, np.zeros((8, 8))], axis=1) / config.lipschitz
+        transition = np.eye(8) - hessian / config.lipschitz
         t = 1.0
-        for _ in range(config.iters):
+        for _ in range(config.iterations):
             jac_next = transition @ jac_z + forcing
             t_next = (1 + np.sqrt(1 + 4 * t * t)) / 2
             jac_z = jac_next + (t - 1) / t_next * (jac_next - jac_x)

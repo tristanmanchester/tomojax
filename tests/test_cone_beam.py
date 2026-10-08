@@ -361,10 +361,10 @@ def test_cone_pose_alignment_recovers_each_degree_of_freedom(dof):
     config = AlignConfig(
         pose_translation_frame="detector",
         optimise_dofs=(dof,),
-        outer_iters=4,
-        recon_iters=1,
-        recon_L=1e12,  # keeps the known volume fixed
-        lambda_tv=0,
+        outer_iterations=4,
+        iterations=1,
+        lipschitz=1e12,  # keeps the known volume fixed
+        tv_weight=0,
         loss=L2LossSpec(),
         early_stop=False,
         gather_dtype="fp32",
@@ -401,7 +401,7 @@ def test_parallel_geometry_keeps_dy_inactive_and_cone_geometry_adds_it():
     five = (True, True, True, True, True, False)
     assert _with_beam_translation(five, parallel, AlignConfig()) == five
     assert _with_beam_translation(five, cone, AlignConfig())[-1]
-    frozen = AlignConfig(freeze_dofs=("dy",))
+    frozen = AlignConfig(freeze=("dy",))
     assert not _with_beam_translation(five, cone, frozen)[-1]
 
 

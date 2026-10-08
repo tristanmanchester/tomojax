@@ -25,7 +25,6 @@ from tomojax.alignment.api import (
     align_multires,
     cone_setup,
     load_alignment_checkpoint,
-    normalize_alignment_profile,
     profile_policy_from_config,
     resolve_alignment_schedule,
     resolve_profiled_cli_defaults,
@@ -59,7 +58,6 @@ if TYPE_CHECKING:
 
     from tomojax.alignment.api import (
         AlignInfo,
-        FallbackPolicy,
         GaugePolicy,
         PoseTranslationFrame,
         QualityTier,
@@ -74,7 +72,7 @@ class _ParsedAlignOptions:
     loss_config: AlignmentLossConfig
     loss_params: dict[str, float]
     optimise_dofs: tuple[str, ...] | None
-    freeze_dofs: tuple[str, ...]
+    freeze: tuple[str, ...]
     levels: list[int] | None
 
 
@@ -100,12 +98,12 @@ def init_jax_compilation_cache() -> None:
     enable_persistent_compilation_cache()
 
 
-def _schedule_for_public_mode(mode: AlignmentMode, *, align_profile: str) -> str:
+def _schedule_for_public_mode(mode: AlignmentMode, *, quality: str) -> str:
     """Resolve the product-facing alignment mode to an internal schedule."""
     if mode == "cor":
         return "cor"
     if mode == "pose":
-        return "lightning_pose" if align_profile == "lightning" else "tortoise_pose"
+        return "lightning_pose" if quality == "fast" else "tortoise_pose"
     if mode == "cor_then_pose":
         return "cor_then_pose"
     if mode in {"auto", "max"}:
@@ -140,10 +138,10 @@ def _completed_single_resume_state(
         x=x,
         pose_params=pose_params,
         motion_coeffs=info["motion_coeffs"],
-        start_outer_iter=int(info["completed_outer_iters"]),
+        start_outer_iter=int(info["completed_outer_iterations"]),
         loss=list(info["loss"]),
         outer_stats=list(info["outer_stats"]),
-        L=info["L"],
+        lipschitz=info["lipschitz"],
         small_impr_streak=int(info["small_impr_streak"]),
         elapsed_offset=float(info["wall_time_total"]),
         pose_translation_frame=str(info.get("pose_translation_frame", "object")),
@@ -192,10 +190,10 @@ def _restore_resume_schedule_options(
         if "optimise_dofs" not in cli_options
         else _checkpoint_dof_option(parser, cli_options["optimise_dofs"], key="optimise_dofs")
     )
-    checkpoint_freeze_dofs = (
+    checkpoint_freeze = (
         None
-        if "freeze_dofs" not in cli_options
-        else _checkpoint_dof_option(parser, cli_options["freeze_dofs"], key="freeze_dofs")
+        if "freeze" not in cli_options
+        else _checkpoint_dof_option(parser, cli_options["freeze"], key="freeze")
     )
     checkpoint_schedule = cli_options.get("schedule")
     if checkpoint_schedule is not None and not isinstance(checkpoint_schedule, str):
@@ -210,16 +208,14 @@ def _restore_resume_schedule_options(
         and not explicit_schedule
         and not restore_schedule
     )
-    restore_freeze_dofs = (
-        checkpoint_freeze_dofs is not None and "freeze_dofs" not in configured_keys
-    )
+    restore_freeze = checkpoint_freeze is not None and "freeze" not in configured_keys
 
     if restore_optimise_dofs:
         args.optimise_dofs = checkpoint_optimise_dofs
         restored_keys.append("optimise_dofs")
-    if restore_freeze_dofs:
-        args.freeze_dofs = checkpoint_freeze_dofs
-        restored_keys.append("freeze_dofs")
+    if restore_freeze:
+        args.freeze = checkpoint_freeze
+        restored_keys.append("freeze")
     if restore_schedule:
         args.schedule = checkpoint_schedule
         restored_keys.append("schedule")
@@ -248,7 +244,7 @@ def _parse_align_cli_options(
     args: argparse.Namespace,
 ) -> _ParsedAlignOptions:
     loss_config, loss_params = parse_loss_config(args, parser)
-    optimise_dofs, freeze_dofs = parse_dof_args(args, parser)
+    optimise_dofs, freeze = parse_dof_args(args, parser)
     level_args = cast("list[int] | None", args.levels)
     levels = (
         [int(v) for v in level_args] if level_args is not None and len(level_args) > 0 else None
@@ -257,36 +253,27 @@ def _parse_align_cli_options(
         loss_config=loss_config,
         loss_params=loss_params,
         optimise_dofs=optimise_dofs,
-        freeze_dofs=freeze_dofs,
+        freeze=freeze,
         levels=levels,
     )
 
 
 def _resolve_profile_defaults_phase(
-    parser: argparse.ArgumentParser,
     args: argparse.Namespace,
     config_metadata: dict[str, Any],
     *,
     configured_keys: set[str],
     optimise_dofs: tuple[str, ...] | None,
 ) -> None:
-    try:
-        args.align_profile = normalize_alignment_profile(cast("str", args.align_profile))
-    except ValueError as exc:
-        parser.error(str(exc))
-    if (
-        cast("str", args.mode) == "max"
-        and "align_profile" not in configured_keys
-        and "quality" not in configured_keys
-    ):
-        args.align_profile = "tortoise"
+    if cast("str", args.mode) == "max" and "quality" not in configured_keys:
+        args.quality = "reference"
     profile_options = resolve_profiled_cli_defaults(
-        align_profile=cast("str", args.align_profile),
+        quality=cast("QualityTier", args.quality),
         current={
             "projector_backend": cast("str", args.projector_backend),
             "gather_dtype": cast("str", args.gather_dtype),
             "regulariser": cast("str", args.regulariser),
-            "recon_algo": cast("str", args.recon_algo),
+            "reconstruction": cast("str", args.reconstruction),
             "views_per_batch": cast("int", args.views_per_batch),
             "checkpoint_projector": cast("bool", args.checkpoint_projector),
             "pose_model": cast("str", args.pose_model),
@@ -296,16 +283,14 @@ def _resolve_profile_defaults_phase(
     args.projector_backend = str(profile_options["projector_backend"])
     args.gather_dtype = str(profile_options["gather_dtype"])
     args.regulariser = str(profile_options["regulariser"])
-    args.recon_algo = str(profile_options["recon_algo"])
+    args.reconstruction = str(profile_options["reconstruction"])
     args.views_per_batch = metadata_int(profile_options["views_per_batch"], 0)
     args.checkpoint_projector = bool(profile_options["checkpoint_projector"])
     args.pose_model = str(profile_options["pose_model"])
-    args.quality_tier = str(profile_options["quality_tier"])
-    args.fallback_policy = str(profile_options["fallback_policy"])
     if "schedule" not in configured_keys and optimise_dofs is None:
         args.schedule = _schedule_for_public_mode(
             cast("AlignmentMode", args.mode),
-            align_profile=cast("str", args.align_profile),
+            quality=cast("str", args.quality),
         )
     config_metadata["profile_options"] = dict(profile_options)
     _update_effective_options(
@@ -313,16 +298,14 @@ def _resolve_profile_defaults_phase(
         args,
         (
             "mode",
-            "align_profile",
+            "quality",
             "projector_backend",
             "gather_dtype",
             "regulariser",
-            "recon_algo",
+            "reconstruction",
             "views_per_batch",
             "checkpoint_projector",
             "pose_model",
-            "quality_tier",
-            "fallback_policy",
         ),
     )
 
@@ -367,8 +350,8 @@ def _coupled_pose_options(
         "loss": not isinstance(parsed.loss_config, L2LossSpec),
         "gather_dtype": command.requested_gather_dtype not in {"auto", "fp32"},
         "opt_method": command.opt_method != "gn",
-        "pose_model": command.pose_model not in {"per_view", "per-view"},
-        "lambda_tv": command.lambda_tv != 0 and command.regulariser != "huber_tv",
+        "pose_model": command.pose_model != "per_view",
+        "tv_weight": command.tv_weight != 0 and command.regulariser != "huber_tv",
     }
     explicit = sorted(key for key, bad in conflicts.items() if bad and key in configured_keys)
     if explicit:
@@ -390,9 +373,9 @@ def _coupled_pose_options(
     }
     if "loss" not in configured_keys:
         options["loss"] = L2LossSpec()
-    if "lambda_tv" not in configured_keys:
+    if "tv_weight" not in configured_keys:
         # Default-weight TV biased coupled pose recovery in the free-voxel pilot.
-        options["lambda_tv"] = 0.0
+        options["tv_weight"] = 0.0
     return options
 
 
@@ -406,10 +389,10 @@ def _resolve_schedule_and_config(
         resolved_schedule = resolve_alignment_schedule(
             schedule=command.schedule,
             optimise_dofs=parsed.optimise_dofs,
-            freeze_dofs=parsed.freeze_dofs,
+            freeze=parsed.freeze,
             gauge_policy=cast("GaugePolicy", command.gauge_policy),
             opt_method=command.opt_method,
-            outer_iters=command.outer_iters,
+            outer_iterations=command.outer_iterations,
             early_stop=command.early_stop,
         )
         schedule_metadata: dict[str, object] = resolved_schedule.to_dict()
@@ -423,26 +406,21 @@ def _resolve_schedule_and_config(
         gather_dtype = _default_gather_dtype()
 
     cfg = AlignConfig(
-        align_profile=command.align_profile,
-        outer_iters=command.outer_iters,
-        recon_iters=command.recon_iters,
-        recon_algo=cast(
-            "Literal['fista', 'spdhg', 'fista_tv', 'spdhg_tv', 'fista-tv', 'spdhg-tv']",
-            command.recon_algo,
-        ),
-        lambda_tv=command.lambda_tv,
+        quality=cast("QualityTier", command.quality),
+        outer_iterations=command.outer_iterations,
+        iterations=command.iterations,
+        reconstruction=cast("Literal['fista', 'spdhg']", command.reconstruction),
+        tv_weight=command.tv_weight,
         regulariser=cast("Regulariser", command.regulariser),
         huber_delta=command.huber_delta,
-        tv_prox_iters=command.tv_prox_iters,
-        recon_positivity=command.recon_positivity,
-        spdhg_seed=command.spdhg_seed,
+        tv_prox_iterations=command.tv_prox_iterations,
+        nonnegative=command.nonnegative,
+        seed=command.seed,
         lr_rot=command.lr_rot,
         lr_trans=command.lr_trans,
         views_per_batch=command.views_per_batch,
         projector_unroll=command.projector_unroll,
         projector_backend=command.projector_backend,
-        quality_tier=cast("QualityTier", command.quality_tier),
-        fallback_policy=cast("FallbackPolicy", command.fallback_policy),
         checkpoint_projector=command.checkpoint_projector,
         gather_dtype=gather_dtype,
         opt_method=command.opt_method,
@@ -456,27 +434,21 @@ def _resolve_schedule_and_config(
         w_trans=command.w_trans,
         schedule=command.schedule,
         optimise_dofs=parsed.optimise_dofs,
-        freeze_dofs=parsed.freeze_dofs,
+        freeze=parsed.freeze,
         bounds=() if command.bounds is None else command.bounds,
-        gauge_policy=cast(
-            "GaugePolicy | Literal['anchor-mean', 'prior-required', 'diagnose-only']",
-            command.gauge_policy,
-        ),
-        pose_model=cast(
-            "Literal['per_view', 'per-view', 'polynomial', 'spline']",
-            command.pose_model,
-        ),
+        gauge_policy=cast("GaugePolicy", command.gauge_policy),
+        pose_model=cast("Literal['per_view', 'polynomial', 'spline']", command.pose_model),
         knot_spacing=command.knot_spacing,
         degree=command.degree,
-        pose_translation_frame=cast("PoseTranslationFrame", command.translation_frame),
+        pose_translation_frame=cast("PoseTranslationFrame", command.pose_translation_frame),
         loss=parsed.loss_config,
         seed_translations=bool(command.seed_translations),
         log_summary=command.log_summary,
         log_compact=command.log_compact,
-        recon_L=command.recon_l,
+        lipschitz=command.lipschitz,
         early_stop=command.early_stop,
         early_stop_rel_impr=(
-            command.early_stop_rel if command.early_stop_rel is not None else 1e-3
+            command.early_stop_rel_impr if command.early_stop_rel_impr is not None else 1e-3
         ),
         early_stop_patience=(
             command.early_stop_patience if command.early_stop_patience is not None else 2
@@ -510,7 +482,6 @@ def build_align_cli_run_plan(
     _update_effective_options(config_metadata, args, restored_keys)
     parsed = _parse_align_cli_options(parser, args)
     _resolve_profile_defaults_phase(
-        parser,
         args,
         config_metadata,
         configured_keys=configured_keys,

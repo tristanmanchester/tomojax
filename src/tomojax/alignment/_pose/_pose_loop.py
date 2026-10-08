@@ -124,10 +124,10 @@ def _with_beam_translation(
     """Add dy (along the beam) to cone-beam alignment that estimates dx and dz.
 
     A cone beam's magnification makes dy observable; parallel beams leave it
-    inactive. ``freeze_dofs=("dy",)`` keeps it fixed.
+    inactive. ``freeze=("dy",)`` keeps it fixed.
     """
     dx, dz, dy = (DOF_INDEX[name] for name in ("dx", "dz", "dy"))
-    if not is_cone_beam(geometry) or "dy" in cfg.freeze_dofs or not (active[dx] and active[dz]):
+    if not is_cone_beam(geometry) or "dy" in cfg.freeze or not (active[dx] and active[dz]):
         return active
     return tuple(True if i == dy else value for i, value in enumerate(active))
 
@@ -423,7 +423,7 @@ def _emit_alignment_checkpoint(
             start_outer_iter=len(state.outer_stats),
             loss=list(state.loss_hist),
             outer_stats=[dict(stat) for stat in state.outer_stats],
-            L=(float(state.l_prev) if state.l_prev is not None else None),
+            lipschitz=(float(state.l_prev) if state.l_prev is not None else None),
             small_impr_streak=int(state.small_impr_streak),
             elapsed_offset=float(time.perf_counter() - wall_start),
             pose_translation_frame=pose_translation_frame,
@@ -436,7 +436,7 @@ def _initial_outer_stat(
     *,
     outer_idx: int,
     active_loss_name: str,
-    recon_algo: str,
+    reconstruction: str,
     objective_provenance: Mapping[str, object],
     backend_provenance: Mapping[str, object],
     cfg: AlignConfig,
@@ -445,14 +445,13 @@ def _initial_outer_stat(
     return {
         "outer_idx": outer_idx,
         "loss_kind": active_loss_name,
-        "recon_algo": recon_algo,
+        "reconstruction": reconstruction,
         "objective_kind": "joint_volume_pose" if cfg.gn_coupling == "joint" else "fixed_volume",
         "objective_provenance": dict(objective_provenance),
         "backend_provenance": dict(backend_provenance),
         "outer_loss_kind": active_loss_name,
-        "align_profile": str(cfg.align_profile),
-        "quality_tier": str(cfg.quality_tier),
-        "fallback_policy": str(cfg.fallback_policy),
+        "quality": str(cfg.quality),
+        "quality_tier": str(cfg.stage_quality_tier),
         "profile_policy": dict(profile_policy),
     }
 
@@ -523,7 +522,7 @@ def _run_align_outer_iteration(
     state: _AlignLoopState,
     step_contexts: _AlignmentStepContexts,
     outer_idx: int,
-    recon_algo: str,
+    reconstruction: str,
     active_loss_name: str,
     objective_provenance: Mapping[str, object],
     backend_provenance: Mapping[str, object],
@@ -533,7 +532,7 @@ def _run_align_outer_iteration(
     stat = _initial_outer_stat(
         outer_idx=outer_idx,
         active_loss_name=active_loss_name,
-        recon_algo=recon_algo,
+        reconstruction=reconstruction,
         objective_provenance=objective_provenance,
         backend_provenance=backend_provenance,
         cfg=cfg,
@@ -551,7 +550,7 @@ def _run_align_outer_iteration(
         cfg=cfg,
         L_prev=state.l_prev,
         outer_idx=outer_idx,
-        recon_algo=recon_algo,
+        reconstruction=reconstruction,
     )
     stat.update(recon_stat)
     if bool(stat.get("reconstruction_failed", False)):
@@ -611,9 +610,9 @@ def _log_align_outer_summary(
     *,
     stat: OuterStat,
     cfg: AlignConfig,
-    recon_algo: str,
+    reconstruction: str,
 ) -> None:
-    for line in _format_outer_summary_lines(stat, cfg=cfg, recon_algo=recon_algo):
+    for line in _format_outer_summary_lines(stat, cfg=cfg, reconstruction=reconstruction):
         logging.info(line)
 
 
@@ -664,7 +663,7 @@ def _final_pose_align_info(
     *,
     state: _AlignLoopState,
     active_loss_name: str,
-    recon_algo: str,
+    reconstruction: str,
     l_prev: float | None,
     wall_total: float,
     profile_policy: Mapping[str, object],
@@ -676,16 +675,14 @@ def _final_pose_align_info(
     return {
         "loss": state.loss_hist,
         "loss_kind": active_loss_name,
-        "recon_algo": recon_algo,
-        "L": (float(l_prev) if l_prev is not None else None),
+        "reconstruction": reconstruction,
+        "lipschitz": (float(l_prev) if l_prev is not None else None),
         "outer_stats": outer_stats,
         "stopped_by_observer": state.stopped_by_observer,
         "observer_action": state.observer_action,
         "wall_time_total": float(wall_total),
-        "align_profile": str(cfg.align_profile),
+        "quality": str(cfg.quality),
         "profile_policy": dict(profile_policy),
-        "quality_tier": str(cfg.quality_tier),
-        "fallback_policy": str(cfg.fallback_policy),
         "pose_model": motion_model.name,
         "pose_translation_frame": cfg.pose_translation_frame,
         "ray_integrator": cfg.ray_integrator,
@@ -713,7 +710,7 @@ def _final_pose_align_info(
         "optimizer_kind": str(outer_stats[-1].get("optimizer_kind"))
         if outer_stats and outer_stats[-1].get("optimizer_kind") is not None
         else str(cfg.opt_method),
-        "completed_outer_iters": len(outer_stats),
+        "completed_outer_iterations": len(outer_stats),
         "small_impr_streak": int(state.small_impr_streak),
         "motion_coeffs": state.motion_coeffs,
         "gauge_fix": constraint_ctx.gauge_fix,
@@ -783,10 +780,10 @@ def align(
         final_gauge_stats = dict(initial_gauge_stats)
 
     start_outer_iter = int(resume_state.start_outer_iter) if resume_state is not None else 0
-    if start_outer_iter < 0 or start_outer_iter > int(cfg.outer_iters):
+    if start_outer_iter < 0 or start_outer_iter > int(cfg.outer_iterations):
         raise ValueError(
-            "align resume_state start_outer_iter must be between 0 and cfg.outer_iters; "
-            f"got {start_outer_iter} for outer_iters={int(cfg.outer_iters)}"
+            "align resume_state start_outer_iter must be between 0 and cfg.outer_iterations; "
+            f"got {start_outer_iter} for outer_iterations={int(cfg.outer_iterations)}"
         )
     runtime = _build_alignment_runtime_context(
         geometry=geometry,
@@ -815,16 +812,16 @@ def align(
     opt_mode = str(cfg.opt_method).lower()
     elapsed_offset = float(resume_state.elapsed_offset) if resume_state is not None else 0.0
     wall_start = time.perf_counter() - elapsed_offset
-    recon_algo = str(cfg.recon_algo)
+    reconstruction = str(cfg.reconstruction)
     loop_state = _AlignLoopState(
         x=x,
         pose_params=pose_params,
         motion_coeffs=motion_coeffs,
         final_gauge_stats=final_gauge_stats,
         l_prev=(
-            resume_state.L
-            if resume_state is not None and resume_state.L is not None
-            else cfg.recon_L
+            resume_state.lipschitz
+            if resume_state is not None and resume_state.lipschitz is not None
+            else cfg.lipschitz
         ),
         small_impr_streak=int(resume_state.small_impr_streak) if resume_state is not None else 0,
         loss_hist=list(resume_state.loss) if resume_state is not None else [],
@@ -861,10 +858,10 @@ def align(
     ).to_dict()
     profile_policy = profile_policy_from_config(cfg).to_dict()
 
-    iter_range = range(start_outer_iter, int(cfg.outer_iters))
+    iter_range = range(start_outer_iter, int(cfg.outer_iterations))
     for it in progress_iter(
         iter_range,
-        total=max(0, int(cfg.outer_iters) - start_outer_iter),
+        total=max(0, int(cfg.outer_iterations) - start_outer_iter),
         desc="Align: outer iters",
     ):
         outer_idx = it + 1
@@ -878,7 +875,7 @@ def align(
             state=loop_state,
             step_contexts=step_contexts,
             outer_idx=outer_idx,
-            recon_algo=recon_algo,
+            reconstruction=reconstruction,
             active_loss_name=runtime.active_loss_name,
             objective_provenance=runtime.objective_provenance,
             backend_provenance=backend_provenance,
@@ -886,7 +883,7 @@ def align(
             wall_start=wall_start,
         )
         if cfg.log_summary:
-            _log_align_outer_summary(stat=stat, cfg=cfg, recon_algo=recon_algo)
+            _log_align_outer_summary(stat=stat, cfg=cfg, reconstruction=reconstruction)
         should_break = _observer_break_decision(
             observer_fn=observer_fn,
             state=loop_state,
@@ -915,7 +912,7 @@ def align(
     info = _final_pose_align_info(
         state=loop_state,
         active_loss_name=runtime.active_loss_name,
-        recon_algo=recon_algo,
+        reconstruction=reconstruction,
         l_prev=loop_state.l_prev,
         wall_total=wall_total,
         profile_policy=profile_policy,

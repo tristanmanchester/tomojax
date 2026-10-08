@@ -24,17 +24,17 @@ if TYPE_CHECKING:
 class FoldReconstructionConfig:
     """Configuration for per-fold stopped FISTA reconstruction."""
 
-    iters: int
-    lambda_tv: float
+    iterations: int
+    tv_weight: float
     regulariser: str
     huber_delta: float
-    tv_prox_iters: int
-    positivity: bool
+    tv_prox_iterations: int
+    nonnegative: bool
     views_per_batch: int = 1
     projector_unroll: int = 1
     checkpoint_projector: bool = True
     gather_dtype: str = "fp32"
-    L: float | None = None
+    lipschitz: float | None = None
     ray_integrator: str = "sampled"
 
 
@@ -85,18 +85,18 @@ def reconstruct_train_fold_nograd(
         config=FistaConfig(
             projector_model="ray",
             projector_backend="jax",
-            iterations=max(1, int(cfg.iters)),
-            tv_weight=float(cfg.lambda_tv),
+            iterations=max(1, int(cfg.iterations)),
+            tv_weight=float(cfg.tv_weight),
             regulariser=cfg.regulariser,
             huber_delta=float(cfg.huber_delta),
-            tv_prox_iterations=int(cfg.tv_prox_iters),
-            lipschitz=cfg.L,
+            tv_prox_iterations=int(cfg.tv_prox_iterations),
+            lipschitz=cfg.lipschitz,
             views_per_batch=max(1, int(cfg.views_per_batch)),
             projector_unroll=int(cfg.projector_unroll),
             checkpoint_projector=bool(cfg.checkpoint_projector),
             gather_dtype=str(cfg.gather_dtype),
             grad_mode="stream",
-            nonnegative=bool(cfg.positivity),
+            nonnegative=bool(cfg.nonnegative),
             ray_integrator=cfg.ray_integrator,
         ),
         det_grid=det_grid,
@@ -107,7 +107,7 @@ def reconstruct_train_fold_nograd(
         "recon_sensitivity": "stopped",
         "inner_recon_algo": "fista_tv",
         "inner_regulariser": str(cfg.regulariser),
-        "inner_iters": int(cfg.iters),
+        "inner_iterations": int(cfg.iterations),
         "views_per_batch": max(1, int(cfg.views_per_batch)),
         "info": info,
     }

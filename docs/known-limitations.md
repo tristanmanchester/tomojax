@@ -29,8 +29,8 @@ results from default CLI behavior and larger-motion targets.
   detector shift such as a centre-of-rotation offset, at those views; changing
   optimizer damping or kernel speed cannot restore the missing degree of
   freedom. `tomojax align` defaults to detector-frame translations
-  (`translation_frame = "detector"`), and the Python API offers the same with
-  `pose_translation_frame="detector"`.
+  (`pose_translation_frame = "detector"`), and the Python API offers the same
+  setting.
   See [translation frames](alignment-guide.md#choose-the-translation-frame).
 - A per-view shift with a nonzero mean over the scan cannot be told apart from
   a detector-centre offset; `--mode cor-then-pose` reports it as the offset.

@@ -55,14 +55,16 @@ def _prepare_multires_level_state(
     level_index: int,
     loss_hist: list[float],
     global_outer_stats: list[OuterStat],
-    executed_outer_iters: int,
+    executed_outer_iterations: int,
 ) -> LevelResumePlan:
     resuming = (
         resume_state is not None
         and not resume_state.level_complete
         and int(resume_state.level_index) == int(level_index)
     )
-    level_completed_before = int(resume_state.completed_outer_iters_in_level) if resuming else 0
+    level_completed_before = (
+        int(resume_state.completed_outer_iterations_in_level) if resuming else 0
+    )
     current_level_stats = [
         dict(stat) for stat in global_outer_stats if stat.get("level_index") == int(level_index)
     ]
@@ -75,13 +77,13 @@ def _prepare_multires_level_state(
         else list(loss_hist)
     )
     global_before_level = (
-        int(executed_outer_iters) - level_completed_before
+        int(executed_outer_iterations) - level_completed_before
         if resuming
-        else int(executed_outer_iters)
+        else int(executed_outer_iterations)
     )
     resume_stage_index = int(resume_state.stage_index) if resuming else 0
     resume_stage_completed = bool(resume_state.stage_completed) if resuming else False
-    resume_stage_iters = int(resume_state.completed_outer_iters_in_stage) if resuming else 0
+    resume_stage_iters = int(resume_state.completed_outer_iterations_in_stage) if resuming else 0
 
     if not resuming:
         return LevelResumePlan(
@@ -212,12 +214,12 @@ def _emit_level_completion_checkpoint(
             motion_coeffs=info.get("motion_coeffs"),
             level_index=int(level_index),
             level_factor=int(level_factor),
-            completed_outer_iters_in_level=level_completed_after,
-            global_outer_iters_completed=int(global_outer_idx),
+            completed_outer_iterations_in_level=level_completed_after,
+            global_outer_iterations_completed=int(global_outer_idx),
             prev_factor=prev_factor,
             loss=list(loss_hist),
             outer_stats=[dict(stat) for stat in global_outer_stats],
-            L=info.get("L"),
+            lipschitz=info.get("lipschitz"),
             small_impr_streak=int(info.get("small_impr_streak", 0)),
             elapsed_offset=float(global_elapsed_offset),
             level_complete=level_complete,
@@ -226,7 +228,7 @@ def _emit_level_completion_checkpoint(
             active_geometry_dofs=active_geometry_dofs,
             stage=last_stage,
             stage_completed=level_complete,
-            completed_outer_iters_in_stage=last_stage_iters,
+            completed_outer_iterations_in_stage=last_stage_iters,
             ray_integrator=ray_integrator,
         )
     )
@@ -239,7 +241,7 @@ def _emit_run_completion_checkpoint(
     run_complete: bool,
     x_final: jnp.ndarray,
     levels_run: int,
-    executed_outer_iters: int,
+    executed_outer_iterations: int,
     loss_hist: list[float],
     global_outer_stats: list[OuterStat],
     global_elapsed_offset: float,
@@ -258,12 +260,12 @@ def _emit_run_completion_checkpoint(
             motion_coeffs=None,
             level_index=max(0, levels_run - 1),  # the last level that ran
             level_factor=1,
-            completed_outer_iters_in_level=0,
-            global_outer_iters_completed=int(executed_outer_iters),
+            completed_outer_iterations_in_level=0,
+            global_outer_iterations_completed=int(executed_outer_iterations),
             prev_factor=1,
             loss=list(loss_hist),
             outer_stats=[dict(stat) for stat in global_outer_stats],
-            L=None,
+            lipschitz=None,
             small_impr_streak=0,
             elapsed_offset=float(global_elapsed_offset),
             level_complete=True,
@@ -272,7 +274,7 @@ def _emit_run_completion_checkpoint(
             active_geometry_dofs=active_geometry_dofs,
             stage=final_stage,
             stage_completed=True,
-            completed_outer_iters_in_stage=0,
+            completed_outer_iterations_in_stage=0,
             ray_integrator=ray_integrator,
         )
     )
@@ -287,7 +289,7 @@ def _final_align_multires_info(
     cfg: AlignConfig,
     stopped_by_observer: bool,
     final_observer_action: ObserverAction,
-    executed_outer_iters: int,
+    executed_outer_iterations: int,
     global_elapsed_offset: float,
     global_outer_stats: list[OuterStat],
     resolved_schedule: object,
@@ -335,14 +337,12 @@ def _final_align_multires_info(
         "factors": factors_list,
         "factors_skipped": list(factors_skipped),
         "loss_kind": final_loss_kind,
-        "recon_algo": str(cfg.recon_algo),
-        "align_profile": str(cfg.align_profile),
+        "reconstruction": str(cfg.reconstruction),
+        "quality": str(cfg.quality),
         "profile_policy": profile_policy_from_config(cfg).to_dict(),
-        "quality_tier": str(cfg.quality_tier),
-        "fallback_policy": str(cfg.fallback_policy),
         "stopped_by_observer": stopped_by_observer,
         "observer_action": final_observer_action,
-        "total_outer_iters": int(executed_outer_iters),
+        "total_outer_iterations": int(executed_outer_iterations),
         "wall_time_total": float(global_elapsed_offset),
         "outer_stats": global_outer_stats,
         "schedule": resolved_schedule.to_dict(),
@@ -480,13 +480,13 @@ def _initial_multires_run_state(
         stopped_by_observer=False,
         final_observer_action="continue",
         global_outer_idx=(
-            int(resume_state.global_outer_iters_completed) if resume_state is not None else 0
+            int(resume_state.global_outer_iterations_completed) if resume_state is not None else 0
         ),
         global_elapsed_offset=(
             float(resume_state.elapsed_offset) if resume_state is not None else 0.0
         ),
-        executed_outer_iters=(
-            int(resume_state.global_outer_iters_completed) if resume_state is not None else 0
+        executed_outer_iterations=(
+            int(resume_state.global_outer_iterations_completed) if resume_state is not None else 0
         ),
         final_pose_model_variables=None,
         final_per_view_variables=None,
@@ -581,7 +581,7 @@ def _state_after_multires_level(
         for stat in stage_result.level_stats
         if not str(stat.get("geometry_block") or "").startswith("setup_")
     ]
-    info["completed_outer_iters"] = len(stage_result.level_stats)
+    info["completed_outer_iterations"] = len(stage_result.level_stats)
     info["wall_time_total"] = float(stage_result.level_wall_time)
     info["observer_action"] = stage_result.level_action
     level_completed_after = len(stage_result.level_stats)
@@ -596,7 +596,7 @@ def _state_after_multires_level(
             stopped_by_observer=stage_result.level_action == "stop_run",
             final_observer_action=stage_result.level_action,
             global_outer_idx=level_run.global_before_level + level_completed_after,
-            executed_outer_iters=level_run.global_before_level + level_completed_after,
+            executed_outer_iterations=level_run.global_before_level + level_completed_after,
             global_elapsed_offset=state.global_elapsed_offset + float(stage_result.level_wall_time),
             final_pose_model_variables=int(info.get("pose_model_variables") or 0),
             final_per_view_variables=int(info.get("per_view_variables") or 0),

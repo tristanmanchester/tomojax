@@ -575,9 +575,9 @@ def test_align_cli_mode_cor_writes_alignment_outputs(
                 "4",
                 "4",
                 "2",
-                "--outer-iters",
+                "--outer-iterations",
                 "1",
-                "--recon-iters",
+                "--iterations",
                 "1",
                 "--views-per-batch",
                 "1",
@@ -619,9 +619,7 @@ def test_align_cli_geometry_dofs_route_to_multires_without_explicit_levels(
         checkpoint_callback=None,
     ):
         del geom, recon_detector, projections, resume_state, checkpoint_callback
-        calls.append(
-            (list(factors), tuple(config.optimise_dofs or ()), tuple(config.freeze_dofs or ()))
-        )
+        calls.append((list(factors), tuple(config.optimise_dofs or ()), tuple(config.freeze or ())))
         x = jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
         pose_params = jnp.zeros((2, 5), dtype=jnp.float32)
         return (
@@ -650,9 +648,9 @@ def test_align_cli_geometry_dofs_route_to_multires_without_explicit_levels(
                 "4",
                 "4",
                 "2",
-                "--outer-iters",
+                "--outer-iterations",
                 "1",
-                "--recon-iters",
+                "--iterations",
                 "1",
                 "--views-per-batch",
                 "1",
@@ -739,7 +737,7 @@ def test_align_cli_cor_then_pose_needs_detector_frame_translations(
     scan = tmp_path / "scan.nxs"
     write_projection_dataset(scan)
     args = ["align", str(scan), "-o", str(tmp_path / "out.nxs")]
-    assert main([*args, "--mode", "cor_then_pose", "--translation-frame", "object"]) != 0
+    assert main([*args, "--mode", "cor_then_pose", "--pose-translation-frame", "object"]) != 0
     assert "pose_translation_frame='detector'" in capsys.readouterr().err
 
 
@@ -750,7 +748,7 @@ def test_align_cli_cor_then_pose_needs_detector_frame_translations(
         ("reference", "setup_safe", [4, 2, 1]),
     ],
 )
-def test_align_cli_print_plan_json_reports_effective_public_plan(
+def test_align_cli_dry_run_reports_the_effective_public_plan(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -784,9 +782,9 @@ def test_align_cli_print_plan_json_reports_effective_public_plan(
                 "4",
                 "4",
                 "2",
-                "--outer-iters",
+                "--outer-iterations",
                 "1",
-                "--recon-iters",
+                "--iterations",
                 "1",
                 "--loss-schedule",
                 "4:phasecorr,2:ssim,1:l2_otsu",
@@ -827,9 +825,9 @@ def test_align_cli_pose_mode_defaults_to_the_coupled_solver(
     assert plan["pose_solver"] == "coupled"
     assert plan["ray_integrator"] == "joseph"
     assert plan["loss"] == {"name": "l2", "params": {}}
-    assert plan["lambda_tv"] == 0.0
+    assert plan["tv_weight"] == 0.0
     assert plan["gather_dtype"] == "fp32"
-    assert plan["outer_iters"] == 30
+    assert plan["outer_iterations"] == 30
     assert {stage["objective_kind"] for stage in plan["stages"]} == {"joint_volume_pose"}
 
 
@@ -839,7 +837,7 @@ def test_align_cli_alternating_pose_solver_keeps_previous_defaults(
     plan = _pose_plan(monkeypatch, tmp_path, capsys, "--pose-solver", "alternating")
     assert plan["pose_solver"] == "alternating"
     assert plan["loss"]["name"] == "l2_otsu"
-    assert plan["outer_iters"] == 5
+    assert plan["outer_iterations"] == 5
     assert {stage["objective_kind"] for stage in plan["stages"]} == {"fixed_volume"}
 
 

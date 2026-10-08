@@ -146,7 +146,7 @@ def test_alignment_modes_plan_their_schedules() -> None:
     assert alignment_plan("COR_then_pose", grid).config.schedule == "cor_then_pose"
     full = alignment_plan("full", grid, quality="reference", freeze=("dy",))
     assert full.config.schedule == "setup_safe" and full.levels == (4, 2, 1)
-    assert full.config.align_profile == "tortoise" and full.config.freeze_dofs == ("dy",)
+    assert full.config.quality == "reference" and full.config.freeze == ("dy",)
     with pytest.raises(ValueError, match="alignment mode must be one of"):
         alignment_plan("auto", grid)
 

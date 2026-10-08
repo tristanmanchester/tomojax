@@ -42,7 +42,7 @@ Joint GN requires `opt_method="gn"`, `pose_model="per_view"` and
 `gather_dtype="fp32"`. It supports sampled and exact integration, active/frozen
 pose parameters, pose bounds, volume masks, nonnegative voxels, pose smoothness,
 and Huber-TV or zero volume regularization. It does not support nonsmooth TV
-or polynomial/spline pose models. `gn_joint_iters=40` bounds the inner
+or polynomial/spline pose models. `gn_joint_iterations=40` bounds the inner
 matrix-free PCG solve; `gn_joint_rtol=1e-4` controls its residual stopping
 criterion. `gn_damping` and `gn_volume_damping` damp pose and voxel increments
 respectively; they are not priors on the recovered object. The returned
@@ -78,9 +78,9 @@ The shared central-difference stencil is unchanged. Recovery and performance
 claims require the complete [free-voxel pilot](research/public-free-voxel-pilot.md);
 passing the numerical tests alone does not establish them.
 
-Alignment's `info["L"]` and checkpoint `L` retain the effective FISTA step
-bound, including smooth-TV curvature. Reusing a bound does not add a safety
-factor on each outer iteration. If reconstruction falls back to public FISTA,
+Alignment's `info["lipschitz"]` and checkpoint `lipschitz` retain the effective
+FISTA step bound, including smooth-TV curvature. Reusing a bound does not add a
+safety factor on each outer iteration. If reconstruction falls back to public FISTA,
 the adapter removes the existing TV contribution before that solver adds it;
 the bound therefore stays consistent across both paths and resume. A fallback
 override too small to supply a positive data bound triggers operator-norm

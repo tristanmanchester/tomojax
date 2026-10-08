@@ -17,7 +17,7 @@ from tomojax.alignment._objectives.recon_layer import PoseAdjustedGeometry
 from tomojax.alignment._quality_policy import (
     ReconstructionQualityPolicy,
     reconstruction_quality_policy,
-    scaled_reconstruction_iters,
+    scaled_reconstruction_iterations,
 )
 from tomojax.alignment._results import record_reconstruction_info as _record_reconstruction_info
 from tomojax.backends import estimate_views_per_batch_info
@@ -85,7 +85,7 @@ def _initial_projection_lipschitz(
             ray_integrator=getattr(cfg, "ray_integrator", "sampled"),
         )
     )
-    regulariser_l = float(cfg.lambda_tv) * 12.0 / float(cfg.huber_delta)
+    regulariser_l = float(cfg.tv_weight) * 12.0 / float(cfg.huber_delta)
     return 1.2 * projection_l + regulariser_l
 
 
@@ -126,7 +126,6 @@ def _resolve_reconstruction_projector_backend(
     volume: jnp.ndarray,
     det_grid: tuple[jnp.ndarray, jnp.ndarray],
     gather_dtype: str,
-    fallback_policy: str,
 ) -> tuple[str, str | None]:
     requested = normalize_projector_backend(requested_backend)
     if requested == "jax":
@@ -136,10 +135,7 @@ def _resolve_reconstruction_projector_backend(
     except Exception:
         backend = "unknown"
     if backend != "gpu":
-        reason = f"pallas alignment reconstruction requires gpu backend; got {backend}"
-        if str(fallback_policy) == "strict":
-            raise RuntimeError(reason)
-        return "jax", reason
+        return "jax", f"pallas alignment reconstruction requires gpu backend; got {backend}"
     support_fn, reason = resolve_pallas_callable(
         "pallas_projector_sinogram_unsupported_reason",
         missing_reason="pallas_sinogram_support_check_missing",
@@ -168,8 +164,6 @@ def _resolve_reconstruction_projector_backend(
         except Exception as exc:
             reason = f"{type(exc).__name__}: {exc}"
     if reason:
-        if str(fallback_policy) == "strict":
-            raise RuntimeError(reason)
         return "jax", reason
     return "pallas", None
 
@@ -274,7 +268,7 @@ def _reconstruction_step_stat(
     recon_start: float,
     recon_retry: bool,
     info_rec: object,
-    recon_algo: str,
+    reconstruction: str,
     cfg: object,
     outer_idx: int,
     L_prev: float | None,
@@ -289,9 +283,8 @@ def _reconstruction_step_stat(
         "recon_requested_backend": requested_backend,
         "recon_actual_backend": actual_recon_backend,
         "recon_fallback_reason": str(fallback_reason) if fallback_reason else None,
-        "align_profile": str(getattr(cfg, "align_profile", "lightning")),
-        "quality_tier": str(getattr(cfg, "quality_tier", "")),
-        "fallback_policy": str(getattr(cfg, "fallback_policy", "")),
+        "quality": str(getattr(cfg, "quality", "fast")),
+        "quality_tier": str(getattr(cfg, "stage_quality_tier", "")),
         "regulariser": str(info_mapping.get("regulariser") or getattr(cfg, "regulariser", "")),
         "data_loss_computed": bool(info_mapping.get("data_loss_computed", False)),
         "regulariser_value_computed": bool(info_mapping.get("regulariser_value_computed", False)),
@@ -304,7 +297,7 @@ def _reconstruction_step_stat(
     L_next = _record_reconstruction_info(
         stat,
         info_rec=info_mapping,
-        recon_algo=recon_algo,
+        reconstruction=reconstruction,
         cfg=cfg,
         outer_idx=outer_idx,
         L_prev=L_prev,
@@ -327,7 +320,7 @@ def _nonfinite_initial_reconstruction_result(
     *,
     x: jnp.ndarray,
     recon_start: float,
-    recon_algo: str,
+    reconstruction: str,
     cfg: object,
     outer_idx: int,
     L_prev: float | None,
@@ -337,7 +330,7 @@ def _nonfinite_initial_reconstruction_result(
         recon_start=recon_start,
         recon_retry=False,
         info_rec={},
-        recon_algo=recon_algo,
+        reconstruction=reconstruction,
         cfg=cfg,
         outer_idx=outer_idx,
         L_prev=L_prev,
@@ -354,7 +347,7 @@ def _skipped_fixed_volume_reconstruction_result(
     *,
     x: jnp.ndarray,
     recon_start: float,
-    recon_algo: str,
+    reconstruction: str,
     cfg: object,
     outer_idx: int,
     L_prev: float | None,
@@ -370,7 +363,7 @@ def _skipped_fixed_volume_reconstruction_result(
             "regulariser": str(getattr(cfg, "regulariser", "")),
             "fixed_volume_reconstruction_skipped": True,
         },
-        recon_algo=recon_algo,
+        reconstruction=reconstruction,
         cfg=cfg,
         outer_idx=outer_idx,
         L_prev=L_prev,
@@ -387,7 +380,7 @@ def _retry_info_after_nonfinite_core(
     core_finite_fraction: float,
     cfg: object,
 ) -> Mapping[str, object]:
-    quality_policy = reconstruction_quality_policy(str(getattr(cfg, "quality_tier", "fast")))
+    quality_policy = reconstruction_quality_policy(str(getattr(cfg, "stage_quality_tier", "fast")))
     return {
         **dict(retry_info),
         "recon_nonfinite_retry": True,
@@ -415,7 +408,7 @@ def _public_fista_info_after_core_bypass(
     fallback_reason: str,
     cfg: object,
 ) -> Mapping[str, object]:
-    quality_policy = reconstruction_quality_policy(str(getattr(cfg, "quality_tier", "fast")))
+    quality_policy = reconstruction_quality_policy(str(getattr(cfg, "stage_quality_tier", "fast")))
     return {
         **dict(public_info),
         "recon_public_fista_fallback": True,
@@ -548,13 +541,13 @@ def _run_public_fista_reconstruction(
     grad_mode: str,
 ) -> tuple[jnp.ndarray, Mapping[str, object]]:
     cfg = step.cfg
-    quality_policy = reconstruction_quality_policy(str(getattr(cfg, "quality_tier", "fast")))
+    quality_policy = reconstruction_quality_policy(str(getattr(cfg, "stage_quality_tier", "fast")))
     # Alignment carries the effective bound used by the previous solve. Public
     # FISTA accepts a data-term bound and adds smooth-TV curvature itself.
     # Convert at this boundary, otherwise every fallback counts TV again.
     data_lipschitz = step.L_prev
     if data_lipschitz is not None and str(cfg.regulariser) == "huber_tv":
-        data_lipschitz -= float(cfg.lambda_tv) * 12.0 / float(cfg.huber_delta)
+        data_lipschitz -= float(cfg.tv_weight) * 12.0 / float(cfg.huber_delta)
         if data_lipschitz <= 0:
             # An initial override below the regulariser's bound cannot provide
             # a usable data bound. Let FISTA estimate it from the operator.
@@ -564,8 +557,8 @@ def _run_public_fista_reconstruction(
         # Cone beams use their Joseph operators, on CUDA where available.
         projector_model="auto" if cone else "ray",
         projector_backend="auto" if cone else "jax",
-        iterations=scaled_reconstruction_iters(cfg.recon_iters, quality_policy),
-        tv_weight=cfg.lambda_tv,
+        iterations=scaled_reconstruction_iterations(cfg.iterations, quality_policy),
+        tv_weight=cfg.tv_weight,
         regulariser=cfg.regulariser,
         huber_delta=cfg.huber_delta,
         lipschitz=data_lipschitz,
@@ -574,8 +567,8 @@ def _run_public_fista_reconstruction(
         checkpoint_projector=cfg.checkpoint_projector,
         gather_dtype=gather_dtype,
         grad_mode=grad_mode,
-        tv_prox_iterations=int(cfg.tv_prox_iters),
-        nonnegative=bool(cfg.recon_positivity),
+        tv_prox_iterations=int(cfg.tv_prox_iterations),
+        nonnegative=bool(cfg.nonnegative),
         recon_rel_tol=cfg.recon_rel_tol,
         recon_patience=(int(cfg.recon_patience) if cfg.recon_patience is not None else 0),
         ray_integrator=getattr(cfg, "ray_integrator", "sampled"),
@@ -617,7 +610,6 @@ def _resolve_huber_fista_backend_plan(
         volume=step.x,
         det_grid=step.det_grid,
         gather_dtype=str(cfg.gather_dtype),
-        fallback_policy=str(getattr(cfg, "fallback_policy", "fallback")),
     )
     detector_grid_folded_into_pose = False
     detector_grid_fold_reason = None
@@ -636,7 +628,6 @@ def _resolve_huber_fista_backend_plan(
                 volume=step.x,
                 det_grid=None,
                 gather_dtype=str(cfg.gather_dtype),
-                fallback_policy=str(getattr(cfg, "fallback_policy", "fallback")),
             )
             if folded_backend == "pallas":
                 return _HuberFistaBackendPlan(
@@ -685,12 +676,12 @@ def _huber_fista_core_config(
 ) -> FistaCoreConfig:
     cfg = step.cfg
     return FistaCoreConfig(
-        iterations=scaled_reconstruction_iters(cfg.recon_iters, quality_policy),
-        tv_weight=float(cfg.lambda_tv),
+        iterations=scaled_reconstruction_iterations(cfg.iterations, quality_policy),
+        tv_weight=float(cfg.tv_weight),
         regulariser="huber_tv",
         huber_delta=float(cfg.huber_delta),
         lipschitz=1.0,
-        nonnegative=bool(cfg.recon_positivity),
+        nonnegative=bool(cfg.nonnegative),
         checkpoint_projector=bool(cfg.checkpoint_projector),
         projector_unroll=int(cfg.projector_unroll),
         gather_dtype=str(cfg.gather_dtype),
@@ -746,18 +737,18 @@ def _run_spdhg_reconstruction(
     step: _ReconstructionStepInputs,
 ) -> tuple[jnp.ndarray, Mapping[str, object]]:
     cfg = step.cfg
-    quality_policy = reconstruction_quality_policy(str(getattr(cfg, "quality_tier", "fast")))
+    quality_policy = reconstruction_quality_policy(str(getattr(cfg, "stage_quality_tier", "fast")))
     spdhg_cfg = SPDHGConfig(
-        iterations=scaled_reconstruction_iters(cfg.recon_iters, quality_policy),
-        tv_weight=float(cfg.lambda_tv),
+        iterations=scaled_reconstruction_iterations(cfg.iterations, quality_policy),
+        tv_weight=float(cfg.tv_weight),
         regulariser=cfg.regulariser,
         huber_delta=float(cfg.huber_delta),
         views_per_batch=max(1, int(cfg.views_per_batch)),
-        seed=int(cfg.spdhg_seed) + int(step.outer_idx) - 1,
+        seed=int(cfg.seed) + int(step.outer_idx) - 1,
         projector_unroll=int(cfg.projector_unroll),
         checkpoint_projector=cfg.checkpoint_projector,
         gather_dtype=cfg.gather_dtype,
-        nonnegative=bool(cfg.recon_positivity),
+        nonnegative=bool(cfg.nonnegative),
         log_every=1,
         ray_integrator=getattr(cfg, "ray_integrator", "sampled"),
     )
@@ -810,7 +801,7 @@ def _run_huber_fista_core_reconstruction(
             step,
             fallback_reason=backend_plan.fallback_reason,
         )
-    quality_policy = reconstruction_quality_policy(str(getattr(cfg, "quality_tier", "fast")))
+    quality_policy = reconstruction_quality_policy(str(getattr(cfg, "stage_quality_tier", "fast")))
     core_cfg = _huber_fista_core_config(
         step,
         n_views=n_views,
@@ -883,7 +874,7 @@ def _run_reconstruction_step(
     cfg: object,
     L_prev: float | None,
     outer_idx: int,
-    recon_algo: str,
+    reconstruction: str,
 ) -> tuple[jnp.ndarray, float | None, OuterStat]:
     recon_geometry = PoseAdjustedGeometry(
         geometry=geometry,
@@ -919,24 +910,24 @@ def _run_reconstruction_step(
         return _nonfinite_initial_reconstruction_result(
             x=x,
             recon_start=recon_start,
-            recon_algo=recon_algo,
+            reconstruction=reconstruction,
             cfg=cfg,
             outer_idx=outer_idx,
             L_prev=L_prev,
             finite_fraction=x_finite_fraction,
         )
-    if int(getattr(cfg, "recon_iters", 0)) <= 0:
+    if int(getattr(cfg, "iterations", 0)) <= 0:
         return _skipped_fixed_volume_reconstruction_result(
             x=x,
             recon_start=recon_start,
-            recon_algo=recon_algo,
+            reconstruction=reconstruction,
             cfg=cfg,
             outer_idx=outer_idx,
             L_prev=L_prev,
             finite_fraction=x_finite_fraction,
         )
 
-    if recon_algo == "fista":
+    if reconstruction == "fista":
         if is_cone_beam(step.recon_geometry):
             # Cone beams: the public solver, which models diverging rays.
             x_out, info_rec = _run_public_fista_reconstruction(
@@ -1005,7 +996,7 @@ def _run_reconstruction_step(
                         logging.error(
                             "FISTA still OOM at finest level. Reduce memory pressure "
                             "(smaller problem size or lower internal batching), or "
-                            "provide --recon-L to skip power-method."
+                            "provide --lipschitz to skip power-method."
                         )
                     raise
     else:
@@ -1016,7 +1007,7 @@ def _run_reconstruction_step(
         recon_start=recon_start,
         recon_retry=recon_retry,
         info_rec=info_rec,
-        recon_algo=recon_algo,
+        reconstruction=reconstruction,
         cfg=cfg,
         outer_idx=outer_idx,
         L_prev=L_prev,

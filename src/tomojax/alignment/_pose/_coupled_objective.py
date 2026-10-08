@@ -156,13 +156,13 @@ def build_coupled_objective(ctx: _PoseObjectiveContext) -> CoupledObjective:
         cache_columns=cache_columns,
         regulariser=cfg.regulariser,
         huber_delta=float(cfg.huber_delta),
-        lambda_tv=float(cfg.lambda_tv),
-        recon_positivity=bool(cfg.recon_positivity),
+        tv_weight=float(cfg.tv_weight),
+        nonnegative=bool(cfg.nonnegative),
         gn_volume_damping=float(cfg.gn_volume_damping),
         gn_damping=float(cfg.gn_damping),
         gn_joint_solver=cfg.gn_joint_solver,
         gn_joint_rtol=float(cfg.gn_joint_rtol),
-        gn_joint_iters=int(cfg.gn_joint_iters),
+        gn_joint_iterations=int(cfg.gn_joint_iterations),
         has_smoothness=bool(cfg.w_rot or cfg.w_trans),
     )
     compiled = _check_device_memory(arrays, spec)

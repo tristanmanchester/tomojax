@@ -74,26 +74,24 @@ def metadata_json_mapping(value: object) -> dict[str, JsonValue]:
 
 def _checkpoint_cli_options(command: AlignCommand, *, gather_dtype: str) -> dict[str, object]:
     return {
-        "align_profile": command.align_profile,
+        "quality": command.quality,
         "mode": command.mode,
         "roi": command.roi,
         "grid": command.grid,
         "requested_gather_dtype": command.requested_gather_dtype,
         "gather_dtype": str(gather_dtype),
-        "recon_algo": command.recon_algo,
+        "reconstruction": command.reconstruction,
         "views_per_batch": command.views_per_batch,
-        "spdhg_seed": command.spdhg_seed,
-        "recon_positivity": command.recon_positivity,
+        "seed": command.seed,
+        "nonnegative": command.nonnegative,
         "projector_unroll": command.projector_unroll,
         "projector_backend": command.projector_backend,
-        "quality_tier": command.quality_tier,
-        "fallback_policy": command.fallback_policy,
         "checkpoint_projector": command.checkpoint_projector,
         "mask_vol": command.mask_vol,
-        "translation_frame": command.translation_frame,
+        "pose_translation_frame": command.pose_translation_frame,
         "gauge_policy": command.gauge_policy,
         "optimise_dofs": command.optimise_dofs,
-        "freeze_dofs": command.freeze_dofs,
+        "freeze": command.freeze,
         "schedule": command.schedule,
     }
 
@@ -124,10 +122,10 @@ def initial_checkpoint_metadata(
             levels=levels,
             level_index=0,
             level_factor=1,
-            completed_outer_iters_in_level=0,
-            global_outer_iters_completed=0,
+            completed_outer_iterations_in_level=0,
+            global_outer_iterations_completed=0,
             prev_factor=None,
-            L_prev=None,
+            lipschitz=None,
             small_impr_streak=0,
             elapsed_offset=0.0,
             level_complete=False,
@@ -184,10 +182,10 @@ def checkpoint_progress(
     levels: list[int] | None,
     level_index: int,
     level_factor: int,
-    completed_outer_iters_in_level: int,
-    global_outer_iters_completed: int,
+    completed_outer_iterations_in_level: int,
+    global_outer_iterations_completed: int,
     prev_factor: int | None,
-    L_prev: float | None,
+    lipschitz: float | None,
     small_impr_streak: int,
     elapsed_offset: float,
     level_complete: bool,
@@ -197,11 +195,11 @@ def checkpoint_progress(
         levels=levels,
         level_index=int(level_index),
         level_factor=int(level_factor),
-        completed_outer_iters_in_level=int(completed_outer_iters_in_level),
-        global_outer_iters_completed=int(global_outer_iters_completed),
+        completed_outer_iterations_in_level=int(completed_outer_iterations_in_level),
+        global_outer_iterations_completed=int(global_outer_iterations_completed),
         prev_factor=prev_factor,
         current_inner_iteration=0,
-        L_prev=L_prev,
+        lipschitz=lipschitz,
         small_impr_streak=small_impr_streak,
         elapsed_offset=elapsed_offset,
         level_complete=level_complete,
@@ -214,7 +212,7 @@ def _default_schedule_resume_state() -> ScheduleResumeState:
         "stage_index": 0,
         "stage_name": None,
         "stage_completed": False,
-        "completed_outer_iters_in_stage": 0,
+        "completed_outer_iterations_in_stage": 0,
     }
 
 
@@ -260,12 +258,16 @@ def resume_state_from_checkpoint(
             ),
             level_index=int(metadata.get("level_index", 0)),
             level_factor=int(metadata.get("level_factor", 1)),
-            completed_outer_iters_in_level=int(metadata.get("completed_outer_iters_in_level", 0)),
-            global_outer_iters_completed=int(metadata.get("global_outer_iters_completed", 0)),
+            completed_outer_iterations_in_level=int(
+                metadata.get("completed_outer_iterations_in_level", 0)
+            ),
+            global_outer_iterations_completed=int(
+                metadata.get("global_outer_iterations_completed", 0)
+            ),
             prev_factor=None if prev_factor_value is None else int(prev_factor_value),
             loss=list(checkpoint.loss_history),
             outer_stats=[dict(stat) for stat in checkpoint.outer_stats],
-            L=metadata.get("L_prev"),
+            lipschitz=metadata.get("lipschitz"),
             small_impr_streak=int(metadata.get("small_impr_streak", 0)),
             elapsed_offset=float(metadata.get("elapsed_offset", 0.0)),
             level_complete=bool(metadata.get("level_complete", False)),
@@ -278,7 +280,9 @@ def resume_state_from_checkpoint(
             stage_index=schedule_state["stage_index"],
             stage_name=schedule_state["stage_name"],
             stage_completed=schedule_state["stage_completed"],
-            completed_outer_iters_in_stage=schedule_state["completed_outer_iters_in_stage"],
+            completed_outer_iterations_in_stage=schedule_state[
+                "completed_outer_iterations_in_stage"
+            ],
             ray_integrator=str(
                 cast("Mapping[str, object]", saved_config).get("ray_integrator", "sampled")
             ),
@@ -292,10 +296,10 @@ def resume_state_from_checkpoint(
             if checkpoint.motion_coeffs is None
             else jax_float32_array(checkpoint.motion_coeffs)
         ),
-        start_outer_iter=int(metadata.get("completed_outer_iters_in_level", 0)),
+        start_outer_iter=int(metadata.get("completed_outer_iterations_in_level", 0)),
         loss=list(checkpoint.loss_history),
         outer_stats=[dict(stat) for stat in checkpoint.outer_stats],
-        L=metadata.get("L_prev"),
+        lipschitz=metadata.get("lipschitz"),
         small_impr_streak=int(metadata.get("small_impr_streak", 0)),
         elapsed_offset=float(metadata.get("elapsed_offset", 0.0)),
         ray_integrator=str(
@@ -340,13 +344,13 @@ def make_align_cli_checkpoint_callbacks(plan: AlignCliRunPlan) -> AlignCliCheckp
                 levels=None,
                 level_index=0,
                 level_factor=1,
-                completed_outer_iters_in_level=completed,
-                global_outer_iters_completed=completed,
+                completed_outer_iterations_in_level=completed,
+                global_outer_iterations_completed=completed,
                 prev_factor=None,
-                L_prev=state.L,
+                lipschitz=state.lipschitz,
                 small_impr_streak=int(state.small_impr_streak),
                 elapsed_offset=float(state.elapsed_offset),
-                level_complete=run_complete or completed >= int(plan.cfg.outer_iters),
+                level_complete=run_complete or completed >= int(plan.cfg.outer_iterations),
                 run_complete=run_complete,
             ),
         )
@@ -364,7 +368,7 @@ def make_align_cli_checkpoint_callbacks(plan: AlignCliRunPlan) -> AlignCliCheckp
     def write_multires_checkpoint(state: AlignMultiresResumeState) -> None:
         if plan.checkpoint_path is None:
             return
-        completed = int(state.global_outer_iters_completed)
+        completed = int(state.global_outer_iterations_completed)
         every = int(plan.checkpoint_every or 1)
         if (
             not state.run_complete
@@ -383,10 +387,10 @@ def make_align_cli_checkpoint_callbacks(plan: AlignCliRunPlan) -> AlignCliCheckp
                 levels=plan.run_levels,
                 level_index=int(state.level_index),
                 level_factor=int(state.level_factor),
-                completed_outer_iters_in_level=int(state.completed_outer_iters_in_level),
-                global_outer_iters_completed=completed,
+                completed_outer_iterations_in_level=int(state.completed_outer_iterations_in_level),
+                global_outer_iterations_completed=completed,
                 prev_factor=state.prev_factor,
-                L_prev=state.L,
+                lipschitz=state.lipschitz,
                 small_impr_streak=int(state.small_impr_streak),
                 elapsed_offset=float(state.elapsed_offset),
                 level_complete=bool(state.level_complete),
@@ -398,7 +402,9 @@ def make_align_cli_checkpoint_callbacks(plan: AlignCliRunPlan) -> AlignCliCheckp
                 "stage_index": int(state.stage_index),
                 "stage_name": state.stage_name,
                 "stage_completed": bool(state.stage_completed),
-                "completed_outer_iters_in_stage": int(state.completed_outer_iters_in_stage),
+                "completed_outer_iterations_in_stage": int(
+                    state.completed_outer_iterations_in_stage
+                ),
             },
             geometry_calibration_state=state.geometry_calibration_state,
         )

@@ -147,14 +147,16 @@ class StageRuntime:
                     motion_coeffs=state.motion_coeffs,
                     level_index=self.level_index,
                     level_factor=self.level_factor,
-                    completed_outer_iters_in_level=(len(self.level_stats) + state.start_outer_iter),
-                    global_outer_iters_completed=(
+                    completed_outer_iterations_in_level=(
+                        len(self.level_stats) + state.start_outer_iter
+                    ),
+                    global_outer_iterations_completed=(
                         self.global_before_level + len(self.level_stats) + state.start_outer_iter
                     ),
                     prev_factor=self.prev_factor,
                     loss=self.loss_before_level + self.level_losses + list(state.loss),
                     outer_stats=self.stats_before_level + self.level_stats + enriched_stats,
-                    L=state.L,
+                    lipschitz=state.lipschitz,
                     small_impr_streak=int(state.small_impr_streak),
                     elapsed_offset=float(self.global_elapsed_offset + state.elapsed_offset),
                     level_complete=False,
@@ -163,7 +165,7 @@ class StageRuntime:
                     active_geometry_dofs=active_geometry_dofs,
                     stage=stage,
                     stage_completed=int(state.start_outer_iter) >= int(stage.maxiter),
-                    completed_outer_iters_in_stage=int(state.start_outer_iter),
+                    completed_outer_iterations_in_stage=int(state.start_outer_iter),
                     ray_integrator=state.ray_integrator,
                 )
             )
@@ -223,7 +225,7 @@ class MultiresRunState:
     final_observer_action: ObserverAction
     global_outer_idx: int
     global_elapsed_offset: float
-    executed_outer_iters: int
+    executed_outer_iterations: int
     final_pose_model_variables: int | None
     final_per_view_variables: int | None
     final_pose_model_basis_shape: list[int] | None
@@ -280,12 +282,12 @@ def _build_multires_checkpoint_state(
     motion_coeffs: object,
     level_index: int,
     level_factor: int,
-    completed_outer_iters_in_level: int,
-    global_outer_iters_completed: int,
+    completed_outer_iterations_in_level: int,
+    global_outer_iterations_completed: int,
     prev_factor: int | None,
     loss: list[float],
     outer_stats: list[OuterStat],
-    L: object,
+    lipschitz: object,
     small_impr_streak: int,
     elapsed_offset: float,
     level_complete: bool,
@@ -294,7 +296,7 @@ def _build_multires_checkpoint_state(
     active_geometry_dofs: tuple[str, ...],
     stage: ResolvedAlignmentStage,
     stage_completed: bool,
-    completed_outer_iters_in_stage: int,
+    completed_outer_iterations_in_stage: int,
     ray_integrator: str = "sampled",
 ) -> AlignMultiresResumeState:
     return AlignMultiresResumeState(
@@ -303,12 +305,12 @@ def _build_multires_checkpoint_state(
         motion_coeffs=motion_coeffs,
         level_index=int(level_index),
         level_factor=int(level_factor),
-        completed_outer_iters_in_level=int(completed_outer_iters_in_level),
-        global_outer_iters_completed=int(global_outer_iters_completed),
+        completed_outer_iterations_in_level=int(completed_outer_iterations_in_level),
+        global_outer_iterations_completed=int(global_outer_iterations_completed),
         prev_factor=prev_factor,
         loss=list(loss),
         outer_stats=[dict(stat) for stat in outer_stats],
-        L=L,
+        lipschitz=lipschitz,
         small_impr_streak=int(small_impr_streak),
         elapsed_offset=float(elapsed_offset),
         level_complete=bool(level_complete),
@@ -320,7 +322,7 @@ def _build_multires_checkpoint_state(
         stage_index=int(stage.index),
         stage_name=stage.name,
         stage_completed=bool(stage_completed),
-        completed_outer_iters_in_stage=int(completed_outer_iters_in_stage),
+        completed_outer_iterations_in_stage=int(completed_outer_iterations_in_stage),
         pose_translation_frame=getattr(
             getattr(setup_alignment_state, "pose", None), "translation_frame", "object"
         ),

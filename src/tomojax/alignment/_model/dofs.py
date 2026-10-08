@@ -117,7 +117,7 @@ def normalize_alignment_dofs(
 def resolve_scoped_alignment_dofs(
     *,
     optimise_dofs: str | Iterable[str] | None = None,
-    freeze_dofs: str | Iterable[str] | None = None,
+    freeze: str | Iterable[str] | None = None,
 ) -> ScopedAlignmentDofs:
     """Resolve effective active/frozen alignment DOFs into pose and geometry scopes."""
     optimise = (
@@ -125,7 +125,7 @@ def resolve_scoped_alignment_dofs(
         if optimise_dofs is None
         else normalize_alignment_dofs(optimise_dofs, option_name="optimise_dofs")
     )
-    freeze = normalize_alignment_dofs(freeze_dofs, option_name="freeze_dofs")
+    freeze = normalize_alignment_dofs(freeze, option_name="freeze")
     frozen = set(freeze)
 
     base = DEFAULT_POSE_DOFS if optimise is None else optimise
@@ -140,7 +140,7 @@ def resolve_scoped_alignment_dofs(
 
     if not active:
         raise ValueError(
-            "No active alignment DOFs remain after applying optimise_dofs/freeze_dofs; "
+            "No active alignment DOFs remain after applying optimise_dofs/freeze; "
             f"valid DOFs: {', '.join(ALL_ALIGNMENT_DOF_NAMES)}"
         )
 
@@ -306,7 +306,7 @@ def bounds_vectors(bounds: DofBounds) -> tuple[jnp.ndarray, jnp.ndarray]:
 def active_dofs(
     *,
     optimise_dofs: str | Iterable[str] | None = None,
-    freeze_dofs: str | Iterable[str] | None = None,
+    freeze: str | Iterable[str] | None = None,
 ) -> tuple[str, ...]:
     """Return effective active DOFs after applying optimise and freeze selections."""
     optimise = (
@@ -314,13 +314,13 @@ def active_dofs(
         if optimise_dofs is None
         else normalize_dofs(optimise_dofs, option_name="optimise_dofs")
     )
-    freeze = normalize_dofs(freeze_dofs, option_name="freeze_dofs")
+    freeze = normalize_dofs(freeze, option_name="freeze")
     frozen = set(freeze)
     base = DEFAULT_POSE_DOFS if optimise is None else optimise
     active = tuple(name for name in base if name not in frozen)
     if not active:
         raise ValueError(
-            "No active alignment DOFs remain after applying optimise_dofs/freeze_dofs; "
+            "No active alignment DOFs remain after applying optimise_dofs/freeze; "
             f"valid DOFs: {', '.join(DOF_NAMES)}"
         )
     return active

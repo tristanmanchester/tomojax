@@ -143,7 +143,7 @@ def _build_alignment_manifest_payload_from_result(
         "output_path": command.out,
         "save_params_json": command.save_params_json,
         "save_params_csv": command.save_params_csv,
-        "manifest_path": command.save_manifest,
+        "manifest_path": command.manifest,
         "config_path": plan.config_metadata["config_path"],
         "config_file_values": plan.config_metadata["config_file_values"],
         "explicit_cli_keys": plan.config_metadata["explicit_cli_keys"],
@@ -152,7 +152,7 @@ def _build_alignment_manifest_payload_from_result(
         "input_projection_shape": list(plan.meta.projections.shape),
         "reconstruction_grid": plan.recon_grid.to_dict(),
         "detector": plan.detector.to_dict(),
-        "align_profile": command.align_profile,
+        "quality": command.quality,
         "profile_policy": profile_policy_from_config(plan.cfg).to_dict(),
         "roi": {
             "requested": command.roi,
@@ -162,16 +162,14 @@ def _build_alignment_manifest_payload_from_result(
         },
         "requested_gather_dtype": command.requested_gather_dtype,
         "gather_dtype": plan.gather_dtype,
-        "recon_algo": command.recon_algo,
+        "reconstruction": command.reconstruction,
         "regulariser": command.regulariser,
         "huber_delta": command.huber_delta,
         "views_per_batch": command.views_per_batch,
-        "spdhg_seed": command.spdhg_seed,
-        "recon_positivity": command.recon_positivity,
+        "seed": command.seed,
+        "nonnegative": command.nonnegative,
         "projector_unroll": command.projector_unroll,
         "projector_backend": command.projector_backend,
-        "quality_tier": command.quality_tier,
-        "fallback_policy": command.fallback_policy,
         "checkpoint_projector": command.checkpoint_projector,
         "transfer_guard": command.transfer_guard,
         "levels": plan.run_levels,
@@ -220,7 +218,7 @@ def _write_alignment_manifest(
     output_frame: str,
     implied_det_u_px: float | None = None,
 ) -> None:
-    if plan.command.save_manifest is None:
+    if plan.command.manifest is None:
         return
     payload = _build_alignment_manifest_payload_from_result(
         plan,
@@ -233,8 +231,8 @@ def _write_alignment_manifest(
     )
     payload["implied_detector_u_px"] = implied_det_u_px
     manifest = build_manifest("tomojax align", list(sys.argv), plan.cli_args, payload)
-    save_manifest(plan.command.save_manifest, manifest)
-    logging.info("Saved reproducibility manifest to %s", plan.command.save_manifest)
+    save_manifest(plan.command.manifest, manifest)
+    logging.info("Saved reproducibility manifest to %s", plan.command.manifest)
 
 
 def _implied_detector_u_px(plan: AlignCliRunPlan, pose_params_np: np.ndarray) -> float | None:

@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, cast
 
-from tomojax.core.validation import option_name
-
 from .diagnostics import GaugeDecision, GaugePolicyError, validate_active_gauge_policy
 from .dof_specs import ActiveParameterView
 from .dofs import (
@@ -410,7 +408,7 @@ def schedule_preset(
     gauge_policy: GaugePolicy | None = None,
 ) -> AlignmentSchedule:
     """Return a named public or expert alignment schedule preset."""
-    key = option_name(name)
+    key = str(name)
     if key == "detector_center_2d":
         raise ValueError(
             "Unknown alignment schedule preset 'detector_center_2d'. "
@@ -444,17 +442,17 @@ def resolve_alignment_schedule(
     *,
     schedule: str | AlignmentSchedule | None = None,
     optimise_dofs: str | Iterable[str] | None = None,
-    freeze_dofs: str | Iterable[str] | None = None,
+    freeze: str | Iterable[str] | None = None,
     gauge_policy: GaugePolicy = "reject",
     gauge_priors: Mapping[str, object] | None = None,
     opt_method: str = "gn",
-    outer_iters: int | None = None,
+    outer_iterations: int | None = None,
     early_stop: bool | None = None,
 ) -> ResolvedAlignmentSchedule:
     """Resolve public schedule/DOF inputs into executable staged alignment work."""
     frozen = normalize_alignment_dofs(
-        freeze_dofs,
-        option_name="freeze_dofs",
+        freeze,
+        option_name="freeze",
     )
     if schedule is not None and optimise_dofs is not None:
         raise ValueError("schedule and explicit optimise_dofs are mutually exclusive")
@@ -469,7 +467,7 @@ def resolve_alignment_schedule(
     else:
         scoped = resolve_scoped_alignment_dofs(
             optimise_dofs=optimise_dofs,
-            freeze_dofs=frozen,
+            freeze=frozen,
         )
         if optimise_dofs is None:
             source = "default"
@@ -564,14 +562,14 @@ def resolve_alignment_schedule(
             continue
         scoped_stage = resolve_scoped_alignment_dofs(
             optimise_dofs=active,
-            freeze_dofs=(),
+            freeze=(),
         )
         decision = validate_active_gauge_policy(
             active,
             policy=stage.gauge_policy,
             priors=gauge_priors,
         )
-        maxiter = int(outer_iters) if outer_iters is not None else int(stage.maxiter)
+        maxiter = int(outer_iterations) if outer_iterations is not None else int(stage.maxiter)
         if maxiter < 0:
             raise ValueError("alignment stage maxiter must be >= 0")
         resolved_stages.append(
@@ -595,7 +593,7 @@ def resolve_alignment_schedule(
         )
     if not resolved_stages:
         raise ValueError(
-            "No active alignment stages remain after applying freeze_dofs; "
+            "No active alignment stages remain after applying freeze; "
             "at least one schedule stage must have an active DOF"
         )
 
@@ -611,9 +609,6 @@ def resolve_alignment_schedule(
 
 
 def _normalize_pose_optimizer(value: str) -> OptimizerKind:
-    key = option_name(value)
-    if key in {"lbfgsb", "l_bfgs", "l_bfgs_b"}:
-        key = "lbfgs"
-    if key not in {"gd", "gn", "lbfgs"}:
+    if value not in {"gd", "gn", "lbfgs"}:
         raise ValueError("pose optimizer must be one of 'gd', 'gn', or 'lbfgs'")
-    return cast("OptimizerKind", key)
+    return cast("OptimizerKind", value)
