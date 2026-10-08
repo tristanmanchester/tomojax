@@ -243,11 +243,12 @@ class ProjectionDataset:
         }
         if self.grid is not None:
             payload["grid"] = self.grid.to_dict()
-        if self._metadata is not None:
-            _merge_optional_geometry_metadata(payload, self._metadata)
-        else:
-            _merge_dataset_solver_metadata(payload, self)
-            _merge_geometry_metadata_dict(payload, self.geometry_metadata)
+        # The dataset's own fields, not the metadata it was loaded with: callers
+        # replace them (an alignment's poses, a rebinned geometry).
+        if self._metadata is not None and self._metadata.misalign_spec is not None:
+            payload["misalign_spec"] = self._metadata.misalign_spec
+        _merge_dataset_solver_metadata(payload, self)
+        _merge_geometry_metadata_dict(payload, self.geometry_metadata)
         return payload
 
 
@@ -379,18 +380,6 @@ def validate_dataset(path: PathLike) -> ValidationReport:
             ]
         }
     return {"issues": [f"unsupported dataset format for {input_path}"]}
-
-
-def _merge_optional_geometry_metadata(payload: dict[str, Any], metadata: NXTomoMetadata) -> None:
-    if metadata.angle_offset_deg is not None:
-        payload["angle_offset_deg"] = np.asarray(metadata.angle_offset_deg)
-    if metadata.misalign_spec is not None:
-        payload["misalign_spec"] = metadata.misalign_spec
-    if metadata.align_params is not None:
-        payload["align_params"] = np.asarray(metadata.align_params)
-    if metadata.align_gauge is not None:
-        payload["align_gauge"] = metadata.align_gauge
-    _merge_geometry_metadata_dict(payload, metadata.geometry_meta or {})
 
 
 def _merge_dataset_solver_metadata(

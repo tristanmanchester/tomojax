@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, is_dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
+import warnings
 
 import numpy as np
 
@@ -532,6 +533,8 @@ def reconstruct(
         )
     if grid is not None:
         scan = _with_grid(scan, grid)
+    if method != "fbp":
+        _suggest_binning(scan, "iterative reconstruction")
     options = ReconstructionAlgorithmOptions(
         algorithm=method,
         filter_name=str(given.get("filter", "ramp")),
@@ -596,6 +599,7 @@ def align(
 
     from tomojax.alignment.api import align_multires, alignment_plan, cone_setup, pad_pose_params
 
+    _suggest_binning(scan, "alignment")
     plan = alignment_plan(
         mode, scan.grid, quality=quality, levels=levels, freeze=freeze, config=config
     )
@@ -648,6 +652,38 @@ def align(
     aligned = _scan_from_record(corrected, apply_alignment=True)
     return Alignment(
         scan=replace(aligned, source=scan.source), volume=volume, poses=poses, info=info
+    )
+
+
+def _oversampling(scan: Scan) -> float:
+    """How many times finer than the voxels the detector samples the rotation axis.
+
+    The lesser of the row and column ratios: a cone beam's pixel pitch divided
+    by its magnification, a parallel beam's pitch itself, against the voxel.
+    """
+    from tomojax.geometry import ConeSegments, beam_of
+
+    detector, grid, geometry = scan.detector, scan.grid, scan.geometry
+    if isinstance(geometry, ConeSegments):
+        geometry = geometry.segments[0]
+    beam = beam_of(geometry)
+    magnification = 1.0 if beam is None else float(beam.magnification)
+    across = min(grid.vx, grid.vy) / (float(detector.du) / magnification)
+    along = grid.vz / (float(detector.dv) / magnification)
+    return min(across, along)
+
+
+def _suggest_binning(scan: Scan, work: str) -> None:
+    """Warn when binning the detector would cut ``work``'s cost for little detail."""
+    ratio = _oversampling(scan)
+    if ratio < 2:
+        return
+    factor = int(ratio)
+    warnings.warn(
+        f"the detector samples the rotation axis {ratio:.1f} times more finely than the "
+        f"grid's voxels: scan.binned({factor}) makes {work} up to {factor * factor} times "
+        "cheaper for little loss of detail",
+        stacklevel=3,
     )
 
 

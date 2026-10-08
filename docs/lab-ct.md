@@ -247,7 +247,9 @@ detector once per voxel. `scan.binned(2)` averages 2 x 2 pixels, matching the
 detector to the grid: it costs nothing in accuracy here (the error even falls,
 with the noise) and makes TomoJAX's reconstruction 3.5 times faster, ASTRA's
 2.4 times, so binned TomoJAX is the faster. Bin a scan whenever its pixels,
-divided by the magnification, are smaller than the voxels.
+divided by the magnification, are smaller than the voxels: `tj.reconstruct`
+(iterative methods) and `tj.align` warn, with the factor to use, when they
+are at least twice as fine.
 
 The FleX-ray's rotation axis also leans 0.5° across the detector, so every
 view takes the transpose's general kernel, about 1.3 times slower than its

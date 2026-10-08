@@ -158,6 +158,20 @@ def test_align_calibrates_the_axis_and_returns_a_corrected_scan(tmp_path: Path) 
     assert reloaded.geometry.beam == result.scan.geometry.beam  # pyright: ignore[reportAttributeAccessIssue]
 
 
+def test_aligning_a_loaded_scan_keeps_its_corrections(tmp_path: Path) -> None:
+    n = 16
+    grid = tj.Grid(n, n, n, 1.0, 1.0, 1.0)
+    geometry = tj.ParallelGeometry(grid, tj.Detector(n, n, 1.0, 1.0), np.linspace(0, 180, 20))
+    data = np.array(tj.project(geometry, _phantom(n)))
+    data[::2] = np.roll(data[::2], 1, axis=2)  # every other view one pixel across
+    tj.save(tmp_path / "scan.nxs", tj.Scan(data, geometry))
+
+    result = tj.align(tj.load(tmp_path / "scan.nxs"), levels=(1,))
+
+    assert result.scan.poses is not None and np.abs(result.poses).max() > 0.5
+    np.testing.assert_allclose(result.scan.poses, result.poses, atol=1e-6)
+
+
 def test_binning_averages_pixels_and_keeps_the_detector_in_place():
     grid = tj.Grid(24, 24, 24, 1.0, 1.0, 1.0)
     detector = tj.Detector(41, 33, 0.5, 0.5, (0.3, -0.2))
@@ -180,3 +194,24 @@ def test_binning_averages_pixels_and_keeps_the_detector_in_place():
     assert scan.binned(1) is scan
     with pytest.raises(ValueError, match="at least 1"):
         scan.binned(0)
+
+
+def test_iterative_reconstruction_suggests_binning_a_detector_finer_than_the_grid() -> None:
+    import warnings
+
+    grid = tj.Grid(16, 16, 16, 1.0, 1.0, 1.0)
+    fine = tj.Detector(40, 40, 0.4, 0.4)
+    beam = tj.ConeBeam(64.0, 96.0)  # magnification 1.5: 0.27 pixels at the axis
+    angles = np.linspace(0, 360, 12, endpoint=False)
+    scan = tj.Scan(np.zeros((12, 40, 40), np.float32), tj.ConeGeometry(grid, fine, angles, beam))
+    with pytest.warns(UserWarning, match=r"3\.8 times more finely.*binned\(3\)"):
+        tj.reconstruct(scan, "cgls", iterations=1)
+    matched = tj.Detector(24, 24, 1.5, 1.5)
+    scan = tj.Scan(np.zeros((12, 24, 24), np.float32), tj.ConeGeometry(grid, matched, angles, beam))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        tj.reconstruct(scan, "cgls", iterations=1)
+        tj.reconstruct(
+            tj.Scan(np.zeros((12, 40, 40), np.float32), tj.ConeGeometry(grid, fine, angles, beam)),
+            "fbp",
+        )

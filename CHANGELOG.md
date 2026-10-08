@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Fixed: aligning a scan loaded from a file returned `result.scan` without
+  the corrections (`result.poses` had them). A loaded dataset rebuilt its
+  geometry from the metadata it was read with, so later changes to its poses,
+  angle offsets or geometry were ignored; it now uses its current fields.
+- Iterative `tj.reconstruct` and `tj.align` warn when the detector samples the
+  rotation axis at least twice as finely as the grid's voxels (a cone beam's
+  pixel pitch divided by its magnification), naming the `scan.binned(n)`
+  that makes them up to n² times cheaper, as on the FIPS walnut.
 - `examples/align_walnut_orbits.py` brings the FIPS walnut's three orbits into
   register from the scanner's uncorrected geometry with the public API (it
   needs the data download and a GPU; see examples/README.md).
