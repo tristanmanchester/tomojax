@@ -128,10 +128,20 @@ from the larger-motion targets.
   recomputes its residual, and streams only with canonical detector grids.
 - Several GPUs (`devices=`) share a scan's views; each holds the whole volume
   and the solver's volume-sized arrays, so they add speed, not room for a
-  larger volume. Only `tj.project`, `tj.backproject`, CGLS and FISTA take
-  them: FBP, SPDHG and alignment run on one device. Shared projections are
-  held in device memory, never streamed from the host, and the devices must
-  belong to one process (no multi-host runs).
+  larger volume, except in `fdk_host`, which gives each GPU its own z slabs.
+  `tj.project`, `tj.backproject`, FBP, FDK, CGLS, FISTA and `tj.align` take
+  them; SPDHG runs on one device, since each step would sum a whole volume
+  across the devices for one block of views. In alignment only `pose` mode's
+  joint update and cone-beam reconstruction steps are shared; parallel-beam
+  reconstruction steps, the alternating solver of the other modes and setup
+  calibration run on the first device. Shared projections are held in device
+  memory, never streamed from the host, and the devices must belong to one
+  process (no multi-host runs).
+- Alignment fixes an object's position only up to what the data can see. In
+  a cone beam, moving the object sideways needs the along-beam `dy` in some
+  views, which the default pose parameters leave out, so the solve may place
+  it a voxel or so from another estimate of the same scan (four of the 42
+  FIPS walnuts, by 1 to 1.25 voxels); the images are as sharp either way.
 - Pallas currently uses JAX's deprecated Triton backend. JAX 0.11.2 is tested
   on CPU and an Ada CUDA GPU, with the dependency constrained below 0.12.
   Migration and additional GPU coverage are still required before widening

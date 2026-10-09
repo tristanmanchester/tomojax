@@ -395,6 +395,28 @@ uv run --no-sync python bench/compare_cone.py --size 256 --views 360 \
   --output bench/results/cone-256.json
 ```
 
+## Several GPUs
+
+[`scaling.py`](scaling.py) times TomoJAX, ASTRA and TIGRE on one GPU and on
+several, from host arrays to host arrays: the cone projector and its
+transpose, FDK, and CGLS from zero, the one iterative solver all three have,
+on `compare_cone.py`'s ellipsoids. Each library and GPU count runs in a child
+process of its own. TomoJAX shares the views (`devices=`), ASTRA takes the GPUs
+from `set_gpu_index` and TIGRE from `gpuids`; an operation a library cannot
+spread over several GPUs still reports its time. `walnut.py --gpus N` does the
+same for FDK and non-negative least squares on a FIPS walnut, against ASTRA.
+
+[`modal_benchmarks.py`](modal_benchmarks.py) runs both on one Modal machine
+for each GPU count, with ASTRA from PyPI and TIGRE built from a pinned commit,
+and fetches walnut 1 from Zenodo into a Modal volume on its first run. Modal
+bills by GPU time; start with a small `--size`.
+
+```bash
+uv run --no-sync python bench/scaling.py --size 256 --views 360 --gpus 1 \
+  --output bench/results/scaling-256.json
+uv build --wheel && modal run bench/modal_benchmarks.py --gpu H100:4 --gpus 1,2,4 --size 512
+```
+
 ## FIPS walnuts (real lab cone-beam CT)
 
 The FIPS collection (Der Sarkissian et al., Scientific Data 6, 215, 2019; CC BY

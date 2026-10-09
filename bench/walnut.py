@@ -172,6 +172,32 @@ def compare(volume: np.ndarray, truth: np.ndarray) -> dict[str, float]:
     }
 
 
+def _with_astra(
+    scan: tj.Scan,
+    args: argparse.Namespace,
+    ours: np.ndarray,
+    truth: np.ndarray | None,
+    *,
+    gpus: int,
+) -> dict[str, Any]:
+    """ASTRA's reconstruction of ``scan`` on ``gpus`` GPUs: time, errors and ours against it."""
+    import astra
+
+    astra.set_gpu_index(list(range(gpus)))
+    start = time.perf_counter()
+    # ASTRA gets the same (binned) data and geometry back from the scan.
+    data, geometry, volume = scan.to_astra()
+    theirs = astra_reconstruct(data, geometry, volume, args.method, args.iterations)
+    record: dict[str, Any] = {
+        "method": "FDK_CUDA" if args.method == "fbp" else "accelerated NNLS (the reference's)",
+        "seconds": time.perf_counter() - start,
+    }
+    if truth is not None:
+        record |= compare(theirs, truth)
+    difference = float(np.linalg.norm(ours - theirs) / np.linalg.norm(theirs))
+    return {"astra": record, "tomojax_vs_astra_relative_l2": difference}
+
+
 def main() -> None:
     """Run the walnut comparison and print a JSON summary."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
@@ -183,6 +209,7 @@ def main() -> None:
     parser.add_argument("--voxels-per-mm", type=int, default=10)
     parser.add_argument("--bin", type=int, default=1, help="Average N x N detector pixels")
     parser.add_argument("--astra", action="store_true", help="Also reconstruct with ASTRA")
+    parser.add_argument("--gpus", type=int, default=1, help="GPUs each library may use")
     parser.add_argument("--save", type=Path, help="Save the TomoJAX reconstruction (.nxs)")
     args = parser.parse_args()
     # The scanner's TIFFs carry a malformed tag that tifffile reports and skips.
@@ -229,10 +256,14 @@ def main() -> None:
     if args.method == "fista":
         options |= {"tv_weight": 0.0, "nonnegative": True}
     _start_gpu_runtimes(astra=args.astra)
+    import jax
+
+    devices = jax.devices()[: args.gpus]
     start = time.perf_counter()
-    result = tj.reconstruct(scan, args.method, **options)
+    result = tj.reconstruct(scan, args.method, devices=devices, **options)
     volume = np.asarray(result.volume)
     summary["tomojax"] = {"method": args.method, **options, "seconds": time.perf_counter() - start}
+    summary["gpus"] = len(devices)
     truth = reference(args.walnut)
     if truth is not None:
         summary["tomojax"] |= compare(volume, truth)
@@ -241,21 +272,7 @@ def main() -> None:
         if published is not None:
             summary["tomojax_vs_published_fdk"] = compare(volume, published)
     if args.astra:
-        start = time.perf_counter()
-        # ASTRA gets the same (binned) data and geometry back from the scan.
-        astra_data, astra_geom, astra_volume = scan.to_astra()
-        theirs = astra_reconstruct(
-            astra_data, astra_geom, astra_volume, args.method, args.iterations
-        )
-        summary["astra"] = {
-            "method": "FDK_CUDA" if args.method == "fbp" else "accelerated NNLS (the reference's)",
-            "seconds": time.perf_counter() - start,
-        }
-        if truth is not None:
-            summary["astra"] |= compare(theirs, truth)
-        summary["tomojax_vs_astra_relative_l2"] = float(
-            np.linalg.norm(volume - theirs) / np.linalg.norm(theirs)
-        )
+        summary |= _with_astra(scan, args, volume, truth, gpus=len(devices))
     if args.save is not None:
         tj.save(args.save, result)
     print(json.dumps(summary, indent=2))

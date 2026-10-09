@@ -7,8 +7,9 @@ calibration, ASTRA conversion and multi-orbit `ConeSegments` scans) and a
 workflow API at the package root: `tj.load`, `tj.reconstruct`, `tj.align` and
 `tj.save`. Alignment now corrects scans that already carry poses and brings
 the orbits of multi-orbit scans into register, with the coupled pose solver and
-Joseph projection as its defaults. CGLS and FISTA share a scan's views among
-several GPUs (`devices=`), the solvers stream large scans from host memory,
+Joseph projection as its defaults. Reconstruction (FBP, FDK, CGLS, FISTA)
+and pose alignment share a scan's views among several GPUs (`devices=`), the
+solvers stream large scans from host memory,
 and most of them need much less device memory. The command line is now a thin
 layer over the Python API and every option has one name, so most 0.3 scripts,
 config files and command lines need changes; see Migrating from 0.3.
@@ -356,6 +357,16 @@ without a translation frame (0.3's) are read as object-frame poses, and
   views, and the CUDA kernels launch on the GPU holding their buffers.
   Twenty FISTA iterations on the binned walnut take 24.8 s on one H100,
   13.6 s on two and 7.4 s on four (docs/performance.md).
+  - FBP and FDK (`FBPConfig.devices`, `FDKConfig.devices`) weight each view
+    for the whole scan and filter and backproject each device's share in a
+    thread of its own; `fdk_host` gives each device its own z slabs, so a
+    volume larger than any one GPU reconstructs on several.
+  - `tj.align(devices=)` shares the views in `pose` alignment's joint pose and
+    volume update (one `shard_map`: each device holds its views' projections,
+    pose columns and pose increments) and in cone-beam reconstruction steps.
+    The devices are not a setting of the alignment, so a checkpoint made on
+    some resumes on others. SPDHG stays on one device: each of its steps
+    would sum a whole volume across the devices for one block of views.
 - **Host streaming.** FISTA, CGLS and SPDHG read NumPy or memmap projections
   larger than 40% of free device memory one view batch at a time inside the
   compiled solve (`stream_projections` forces either way). On a 512³,

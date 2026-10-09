@@ -180,6 +180,38 @@ def run_tomojax(
     ]
 
 
+def astra_vectors(case: dict[str, Any]) -> np.ndarray:
+    """The scan's ASTRA ``cone_vec`` vectors: the object turns by +t, so the beam by -t."""
+    vectors = np.zeros((case["views"], 12))
+    for k, t in enumerate(np.deg2rad(case["angles"])):
+        c, s = np.cos(t), np.sin(t)
+        rot_t = np.array([[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]])
+        vectors[k, 0:3] = rot_t @ [0.0, -case["sod"], 0.0]
+        vectors[k, 3:6] = rot_t @ [0.0, case["sdd"] - case["sod"], 0.0]
+        vectors[k, 6:9] = rot_t @ [1.0, 0.0, 0.0]
+        vectors[k, 9:12] = rot_t @ [0.0, 0.0, 1.0]
+    return vectors
+
+
+def tigre_geometry(case: dict[str, Any]) -> tuple[Any, np.ndarray]:
+    """The scan as a TIGRE cone geometry, with TIGRE's angles."""
+    import tigre
+
+    n = case["size"]
+    geo = tigre.geometry(mode="cone", default=False)
+    geo.mode = "cone"
+    geo.DSD, geo.DSO = case["sdd"], case["sod"]
+    geo.nDetector = np.array([case["nv"], case["nu"]])
+    geo.dDetector = np.array([1.0, 1.0])
+    geo.sDetector = geo.nDetector * geo.dDetector
+    geo.nVoxel = np.array([n, n, n])
+    geo.dVoxel = np.array([1.0, 1.0, 1.0])
+    geo.sVoxel = geo.nVoxel * geo.dVoxel
+    geo.offOrigin, geo.offDetector, geo.accuracy = np.zeros(3), np.zeros(2), 0.5
+    # TIGRE's angle convention, checked against the analytic data: -90 - theta.
+    return geo, np.deg2rad(-90.0 - case["angles"]).astype(np.float32)
+
+
 def run_astra(
     case: dict[str, Any], volume: np.ndarray, data: np.ndarray, repeats: int
 ) -> list[dict]:
@@ -189,15 +221,7 @@ def run_astra(
     n, views = case["size"], case["views"]
     lo, hi = -n / 2, n / 2
     vol_geom = astra.create_vol_geom(n, n, n, lo, hi, lo, hi, lo, hi)
-    theta = np.deg2rad(case["angles"])
-    vectors = np.zeros((views, 12))
-    for k, t in enumerate(theta):  # the object turns by +t: the source and detector turn by -t
-        c, s = np.cos(t), np.sin(t)
-        rot_t = np.array([[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]])
-        vectors[k, 0:3] = rot_t @ [0.0, -case["sod"], 0.0]
-        vectors[k, 3:6] = rot_t @ [0.0, case["sdd"] - case["sod"], 0.0]
-        vectors[k, 6:9] = rot_t @ [1.0, 0.0, 0.0]
-        vectors[k, 9:12] = rot_t @ [0.0, 0.0, 1.0]
+    vectors = astra_vectors(case)
     proj_geom = astra.create_proj_geom("cone_vec", case["nv"], case["nu"], vectors)
     avol = np.ascontiguousarray(volume.transpose(2, 1, 0))
     sino = np.ascontiguousarray(data.transpose(1, 0, 2))
@@ -275,19 +299,7 @@ def run_tigre(
     import tigre
     from tigre import algorithms
 
-    n = case["size"]
-    geo = tigre.geometry(mode="cone", default=False)
-    geo.mode = "cone"
-    geo.DSD, geo.DSO = case["sdd"], case["sod"]
-    geo.nDetector = np.array([case["nv"], case["nu"]])
-    geo.dDetector = np.array([1.0, 1.0])
-    geo.sDetector = geo.nDetector * geo.dDetector
-    geo.nVoxel = np.array([n, n, n])
-    geo.dVoxel = np.array([1.0, 1.0, 1.0])
-    geo.sVoxel = geo.nVoxel * geo.dVoxel
-    geo.offOrigin, geo.offDetector, geo.accuracy = np.zeros(3), np.zeros(2), 0.5
-    # TIGRE's angle convention, checked against the analytic data: -90 - theta.
-    angles = np.deg2rad(-90.0 - case["angles"]).astype(np.float32)
+    geo, angles = tigre_geometry(case)
     tvol = np.ascontiguousarray(volume.transpose(2, 1, 0))
     records = []
     for method in ("interpolated", "Siddon"):
