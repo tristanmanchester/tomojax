@@ -44,11 +44,16 @@ def environment() -> dict[str, Any]:
     return record
 
 
-def run_bounded(command: list[str], *, log: Path, timeout: float | None, **options: Any) -> str:
-    """Run ``command`` with its output in ``log``; ``"exit N"``, or ``"stopped after T s"``.
+def run_bounded(
+    command: list[str], *, log: Path, timeout: float | None, grace: float = 20, **options: Any
+) -> str:
+    """Run ``command``, its output in ``log``: ``"exit N"``, ``"stopped after T s"`` or so.
 
-    The command runs in a process group of its own, which a timeout ends
-    whole, children included.
+    The command runs in a process group of its own. On timeout the group gets
+    SIGTERM, then SIGKILL after ``grace`` seconds. If this process is itself
+    sent SIGTERM while waiting (by its own supervisor), it ends the group the
+    same way and returns ``"terminated"``, so nested supervisors (scaling.py
+    under the Modal run) end their workers too.
     """
     import signal
 
@@ -56,12 +61,34 @@ def run_bounded(command: list[str], *, log: Path, timeout: float | None, **optio
         process = subprocess.Popen(
             command, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True, **options
         )
+
+        def end_group() -> None:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+                process.wait(timeout=grace)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+            except ProcessLookupError:
+                pass
+
+        class _Terminated(Exception):
+            pass
+
+        def on_term(*_: object) -> None:
+            raise _Terminated
+
+        previous = signal.signal(signal.SIGTERM, on_term)
         try:
             return f"exit {process.wait(timeout=timeout)}"
         except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait()
+            end_group()
             return f"stopped after {timeout:g} s"
+        except _Terminated:
+            end_group()
+            return "terminated"
+        finally:
+            signal.signal(signal.SIGTERM, previous)
 
 
 def file_hashes(paths: list[Path]) -> dict[str, str]:

@@ -270,6 +270,21 @@ def _settings(args: argparse.Namespace) -> dict[str, Any]:
         "operations": sorted(args.operations or []),
         "case": [args.case.name, args.case.stat().st_size],
         "code": file_hashes(code),
+        "machine": _provenance(),
+    }
+
+
+def _provenance() -> dict[str, Any]:
+    """The TomoJAX build, every installed package's version and the GPUs measured on."""
+    import hashlib
+    from importlib import metadata
+
+    packages = sorted(f"{d.metadata['Name']}=={d.version}" for d in metadata.distributions())
+    return {
+        "tomojax_commit": os.environ.get("TOMOJAX_COMMIT"),
+        "tomojax": metadata.version("tomojax"),
+        "packages_sha256": hashlib.sha256("\n".join(packages).encode()).hexdigest(),
+        "gpus": environment()["gpus"],
     }
 
 
@@ -327,10 +342,13 @@ def main() -> int:
     failed = False
     for gpus in args.gpus:
         for library in args.libraries:
-            failed |= "failed" in _run_worker(library, gpus, args, workers)
+            record = _run_worker(library, gpus, args, workers)
+            failed |= "failed" in record
             # Every worker's record so far, this call's or an earlier one's.
             summary["records"] = [json.loads(f.read_text()) for f in sorted(workers.glob("*.json"))]
             _write(args.output, summary)
+            if record.get("failed") == "terminated":  # by our own supervisor: stop here
+                return 1
     return 1 if failed else 0
 
 
@@ -357,7 +375,10 @@ def _run_worker(library: str, gpus: int, args: argparse.Namespace, workers: Path
     command = [sys.executable, __file__, *sys.argv[1:], "--worker", library, str(gpus)]
     log = out.with_suffix(".log")
     status = run_bounded(command, log=log, timeout=args.worker_timeout, env=env)
-    record = json.loads(out.read_text()) if out.exists() else {"library": library, "gpus": gpus}
+    if out.exists():
+        record = json.loads(out.read_text())
+    else:  # it failed before its first checkpoint
+        record = {"library": library, "gpus": gpus, "settings": _settings(args), "operations": []}
     if status != "exit 0" or not record.get("complete"):
         record["failed"] = status
         record["log_tail"] = log.read_text(errors="replace").strip().splitlines()[-20:]

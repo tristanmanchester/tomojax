@@ -121,6 +121,31 @@ def _figures(out: Path, volumes: dict[str, np.ndarray], summary: dict[str, Any])
     fig.savefig(out / "walnut_alignment_heights.png", dpi=110)
 
 
+def _save(
+    summary: dict[str, Any],
+    volumes: dict[str, np.ndarray | None],
+    poses: dict[str, np.ndarray | None],
+    *,
+    output: Path | None,
+    slices: Path | None,
+) -> None:
+    """The record and slices so far, each whole, so a later stage that fails loses nothing."""
+    if output is not None:
+        partial = output.with_name(f"partial-{output.name}")
+        partial.write_text(json.dumps(summary, default=str))
+        partial.replace(output)
+    if slices is not None:
+        arrays = {
+            f"{name}_{plane}": np.asarray(cut, np.float16)
+            for name, volume in volumes.items()
+            if volume is not None
+            for plane, cut in _central(volume).items()
+        }
+        partial = slices.with_name(f"partial-{slices.name}")
+        np.savez_compressed(partial, **arrays, **poses)
+        partial.replace(slices)
+
+
 def _central(volume: np.ndarray) -> dict[str, np.ndarray]:
     """The three central orthogonal slices of an ``(x, y, z)`` volume."""
     x, y, z = (n // 2 for n in volume.shape)
@@ -181,17 +206,7 @@ def main() -> None:
     }
 
     def save() -> None:
-        """The record and slices so far, so a later stage that fails loses nothing."""
-        if args.output is not None:
-            args.output.write_text(json.dumps(summary, default=str))
-        if args.slices is not None:
-            arrays = {
-                f"{name}_{plane}": np.asarray(cut, np.float16)
-                for name, volume in volumes.items()
-                if volume is not None
-                for plane, cut in _central(volume).items()
-            }
-            np.savez_compressed(args.slices, **arrays, **poses)
+        _save(summary, volumes, poses, output=args.output, slices=args.slices)
 
     save()
     options = {"iterations": args.iterations, "tv_weight": 0.0, "nonnegative": True}

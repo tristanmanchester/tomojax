@@ -11,13 +11,17 @@ after the multi-device tests pass on that machine's GPUs.
 
 The run needs a clean checkout: its wheel is built from HEAD, and every
 package is pinned to ``uv.lock`` (TIGRE to a tested commit). Walnut 1 (about
-6 GB, from Zenodo) and the synthetic phantoms (made on a CPU) are kept in the
-``tomojax-walnut`` volume. Every result is saved there as soon as it is
-measured, under ``results/<date>-<gpu>-<commit>/`` with each step's log and
-the run's record (commit, wheel and script hashes, command), and copied to
-``bench/results/`` at the end. Each step has a deadline, and no step starts
-after ``--max-hours``. Modal bills by the hour: four H100s with the requested
-CPUs and memory cost about $17 an hour.
+6 GB, from Zenodo) and the synthetic phantoms (made on a CPU machine before the
+GPUs start, once, outside the time cap) are kept in the ``tomojax-walnut``
+volume. On the GPU machine the multi-device tests and a smoke run of every
+library come first, and stop the run if anything fails. Every result is saved
+in the volume as soon as it is measured, under ``results/<date>-<gpu>-<commit>/``
+with each step's log and status (``steps.jsonl``) and the run's record (commit,
+wheel and script hashes, command); ``--run-name`` continues a run of the same
+build, skipping its finished steps. One deadline, five minutes inside
+``--max-hours``, bounds every step, and Modal ends the machine a minute after
+``--max-hours``. Four H100s with the requested CPUs and memory cost about $17
+an hour.
 """
 
 from __future__ import annotations
@@ -42,7 +46,7 @@ TIGRE_COMMIT = "6b0951a"
 # The build and test tools, which uv.lock does not pin (pytest's is the lock's dev version).
 BUILD_PINS = [
     "cython==3.1.2", "setuptools==80.9.0", "wheel==0.45.1", "tqdm==4.70.1",
-    "pytest==8.4.2", "iniconfig==2.3.0", "pluggy==1.6.0", "packaging==26.2",
+    "pytest==8.4.2", "iniconfig==2.3.0", "pluggy==1.6.0", "packaging==26.2", "pygments==2.20.0",
 ]  # fmt: skip
 # What a run's results depend on: a dirty copy of any of these would not be HEAD's.
 TRACKED = ["src", "bench", "tests/test_devices.py", "pyproject.toml", "uv.lock"]
@@ -194,46 +198,110 @@ def benchmark(gpus: list[int], sizes: list[int], views: int, iterations: int, ru
     """
     import shutil
 
-    deadline = time.monotonic() + run["max_hours"] * 3600 - 120  # time to save at the end
+    deadline = time.monotonic() + run["max_hours"] * 3600 - 300  # time to save at the end
     out = Path(f"/data/results/{run['name']}")
     out.mkdir(parents=True, exist_ok=True)
-    (out / "run.json").write_text(json.dumps(run, indent=2))
+    _record_attempt(out, run)
+    finished = _finished_steps(out)
     try:
-        _check(max(gpus), out, timeout=min(2400, deadline - time.monotonic()))
+        if "tests" not in finished:
+            _check(max(gpus), out, timeout=min(2400, deadline - time.monotonic()))
+            _log_step(out, "tests", "exit 0")
     finally:
         data.commit()
     env = {**os.environ, "XLA_PYTHON_CLIENT_PREALLOCATE": "false", "TOMOJAX_COMMIT": run["commit"]}
 
-    def step(name: str, command: list[str], limit: float, *, cpu_jax: bool = False) -> bool:
-        """Run ``command`` for at most ``limit`` s; False once the run's time is spent."""
-        left = deadline - time.monotonic()
-        if left < 60:
+    def step(name: str, command: list[str], limit: float, *, cpu_jax: bool = False) -> str:
+        """Run ``command`` for at most ``limit`` s, or the time left; its status."""
+        if name in finished:
+            return "exit 0"  # in an earlier attempt of this run
+        timeout = min(limit, deadline - time.monotonic())
+        if timeout < 60:
             status = "skipped: the run's time is spent"
         else:
+            if "--worker-timeout" in command:  # inside the step's own deadline, with time to save
+                command = list(command)
+                command[command.index("--worker-timeout") + 1] = str(max(30, timeout - 60))
+            log = out / f"{name}.log"
+            attempt = 1
+            while log.exists():  # keep earlier attempts' logs
+                attempt += 1
+                log = out / f"{name}.{attempt}.log"
             status = run_bounded(
-                command, log=out / f"{name}.log", timeout=min(limit, left), cwd="/root/bench",
+                command, log=log, timeout=timeout, cwd="/root/bench",
                 env={**env, "JAX_PLATFORMS": "cpu"} if cpu_jax else env,
             )  # fmt: skip
-        with (out / "steps.jsonl").open("a") as steps:
-            steps.write(json.dumps({"step": name, "status": status, "time": time.time()}) + "\n")
+        _log_step(out, name, status)
         print(f"{name}: {status}", flush=True)
         data.commit()
-        return not status.startswith("skipped")
+        return status
 
     # Each library working at all, on every GPU, in a minute: stop here if not.
-    smoke = ["python", "scaling.py", "--size", "64", "--views", "90", "--iterations", "3",
-             "--repeats", "1", "--gpus", str(max(gpus)), "--output", "/tmp/smoke/smoke.json",
-             "--worker-timeout", "600"]  # fmt: skip
-    step("smoke", smoke, 900)
-    if any("failed" in r for r in json.loads(Path("/tmp/smoke/smoke.json").read_text())["records"]):
-        raise RuntimeError("a library failed the smoke run; see smoke.log")
+    smoke = out / "smoke" / "smoke.json"
+    command = ["python", "scaling.py", "--size", "64", "--views", "90", "--iterations", "3",
+               "--repeats", "1", "--gpus", str(max(gpus)), "--output", str(smoke),
+               "--worker-timeout", "600"]  # fmt: skip
+    status = step("smoke", command, 900)
+    if status.startswith("skipped"):
+        return
+    _require_smoke(status, smoke)
     for name, command, limit, cpu_jax in _plan(gpus, sizes, views, iterations, out):
         if command[1] == "scaling.py":
             case = Path(command[command.index("--case") + 1])
-            if not case.exists():  # read once from the volume
+            if not case.exists():  # read once from the volume, if there is time to use it
+                if deadline - time.monotonic() < 900:
+                    _log_step(out, name, "skipped: the run's time is spent")
+                    return
                 shutil.copyfile(f"/data/cases/{case.name}", case)
-        if not step(name, command, limit, cpu_jax=cpu_jax):
+        if step(name, command, limit, cpu_jax=cpu_jax).startswith("skipped"):
             return
+
+
+# What each library's smoke worker must have timed.
+SMOKE_OPERATIONS = {
+    "tomojax": {"forward", "backproject", "fdk", "cgls"},
+    "astra": {"forward", "backproject", "fdk", "cgls"},
+    "tigre": {"forward", "forward_siddon", "backproject", "fdk", "cgls"},
+}
+
+
+def _require_smoke(status: str, summary: Path) -> None:
+    """Raise unless the smoke run finished and every library timed every operation."""
+    records = json.loads(summary.read_text())["records"] if summary.exists() else []
+    timed = {r["library"]: {o["operation"] for o in r.get("operations", [])} for r in records}
+    complete = all(r.get("complete") and "failed" not in r for r in records)
+    if status != "exit 0" or not complete or timed != SMOKE_OPERATIONS:
+        raise RuntimeError(f"the smoke run failed ({status}): {timed}; see smoke.log")
+
+
+def _log_step(out: Path, name: str, status: str) -> None:
+    with (out / "steps.jsonl").open("a") as steps:
+        steps.write(json.dumps({"step": name, "status": status, "time": time.time()}) + "\n")
+
+
+def _finished_steps(out: Path) -> set[str]:
+    """The steps an earlier attempt of this run finished."""
+    path = out / "steps.jsonl"
+    lines = path.read_text().splitlines() if path.exists() else []
+    return {e["step"] for e in map(json.loads, lines) if e["status"] == "exit 0"}
+
+
+# A run continued with --run-name must be the same build on the same kind of machine.
+_IMMUTABLE = ("commit", "machine", "wheel", "scripts", "tigre_commit", "constraints")
+
+
+def _record_attempt(out: Path, run: dict) -> None:
+    """Record this attempt of ``run``; refuse to continue a run of another build or machine."""
+    first = out / "run.json"
+    if first.exists():
+        earlier = json.loads(first.read_text())
+        differs = [k for k in _IMMUTABLE if earlier.get(k) != run.get(k)]
+        if differs:
+            raise RuntimeError(f"run {run['name']} was another build or machine: {differs}")
+    else:
+        first.write_text(json.dumps(run, indent=2))
+    with (out / "attempts.jsonl").open("a") as attempts:
+        attempts.write(json.dumps({"time": time.time(), "command": run["command"]}) + "\n")
 
 
 def _plan(
@@ -336,7 +404,7 @@ def main(
     sizes_list = [int(s) for s in sizes.split(",")]
     fetch_walnut.remote()
     make_cases.remote(sizes_list, views)
-    hard_limit = int(max_hours * 3600) + 600  # the deadline inside, plus saving
+    hard_limit = int(max_hours * 3600) + 60  # the deadline inside keeps 5 minutes to save
     try:
         benchmark.with_options(gpu=gpu, timeout=hard_limit).remote(
             counts, sizes_list, views, iterations, run
