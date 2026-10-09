@@ -291,44 +291,45 @@ extern "C" __global__ void axis_boxes(
     if (threadIdx.x < 12) boxes[(long)blockIdx.x * 12 + threadIdx.x] = (&box[0][0])[threadIdx.x];
 }
 
-// Adds a crossing's pending 2 x 2 cells at (jb, jc) of a tile with nb0 x nc0 valid cells.
-__device__ __forceinline__ void flush(float (*acc)[PC + 1], int jb, int jc, float x00, float x01,
-                                      float x10, float x11, int nb0, int nc0)
+// Adds x0..x3 to four cells of shared memory (padded: no bounds to test); zeros are skipped.
+__device__ __forceinline__ void add4(float* p0, float x0, float* p1, float x1, float* p2,
+                                     float x2, float* p3, float x3)
 {
-    bool b0in = jb >= 0 && jb < nb0, b1in = jb + 1 >= 0 && jb + 1 < nb0;
-    bool c0in = jc >= 0 && jc < nc0, c1in = jc + 1 >= 0 && jc + 1 < nc0;
-    if (b0in && c0in && x00 != 0.f) atomicAdd(&acc[jb][jc], x00);
-    if (b0in && c1in && x01 != 0.f) atomicAdd(&acc[jb][jc + 1], x01);
-    if (b1in && c0in && x10 != 0.f) atomicAdd(&acc[jb + 1][jc], x10);
-    if (b1in && c1in && x11 != 0.f) atomicAdd(&acc[jb + 1][jc + 1], x11);
+    if (x0 != 0.f) atomicAdd(p0, x0);
+    if (x1 != 0.f) atomicAdd(p1, x1);
+    if (x2 != 0.f) atomicAdd(p2, x2);
+    if (x3 != 0.f) atomicAdd(p3, x3);
 }
 
 // Non-separable views, rays sampled along axis a: grid (c tiles, b tiles, planes k).
-// Each block owns a PB x PC tile of plane k. Per view each thread walks VRUN rows of one
-// detector column in the tile's footprint; their crossings of plane k step monotonically
-// through the tile, so it keeps the 2 x 2 cells around the current crossing in registers
-// and adds them to the tile only as it moves on. img is path-weighted.
-extern "C" __global__ void __launch_bounds__(128, 12) plane_adjoint(
+// Each block owns a PB x PC tile of plane k. Each of its views' footprints on the tile is
+// found by a thread of its own, and the views' runs of VRUN rows of one detector column
+// are then walked as one list, without a barrier per view. Each run's crossings of plane k
+// step monotonically through the tile, so its thread keeps the 2 x 2 cells around the
+// current crossing in registers and adds them to the tile only as it moves on. img is
+// path-weighted; nviews <= VMAX.
+#define VMAX 32
+extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint(
     const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
     const float* __restrict__ img, float* __restrict__ vol, int nx, int ny, int nz, int nu, int nv)
 {
-    __shared__ float acc[PB][PC + 1];
-    __shared__ float cf[NC];
-    __shared__ int box[4];
+    __shared__ float acc[PB + 2][PC + 3];  // a cell of padding round the tile: no bounds tests
+    __shared__ float cf[VMAX][12];  // source, detector origin, u and v axes
+    __shared__ int foot[VMAX][4];   // first column and row, rows, runs per column
+    __shared__ int first[VMAX + 1]; // each view's first run in the block's list
     int b = a == 0 ? 1 : 0, cc = a == 2 ? 1 : 2;
     int nb = SEL(b, nx, ny, nz), nc = SEL(cc, nx, ny, nz);
     int c0 = blockIdx.x * PC, b0 = blockIdx.y * PB, k = blockIdx.z;
     int nb0 = min(PB, nb - b0), nc0 = min(PC, nc - c0);
     if (!any_view(coeff, axis_box, nviews, a, false)) return;
-    for (int i = threadIdx.x; i < PB * (PC + 1); i += blockDim.x) (&acc[0][0])[i] = 0.f;
-    for (int w = 0; w < nviews; ++w) {
-        __syncthreads();
-        if (threadIdx.x < NC) cf[threadIdx.x] = coeff[(long)w * NC + threadIdx.x];
-        __syncthreads();
-        const float* c = cf;
-        const int* ab = axis_box + ((long)w * 3 + a) * 4;
-        if (separable(c) || ab[1] < ab[0]) continue;
-        if (threadIdx.x == 0) {
+    for (int i = threadIdx.x; i < (PB + 2) * (PC + 3); i += blockDim.x) (&acc[0][0])[i] = 0.f;
+    int t = threadIdx.x, runs_here = 0;
+    if (t < nviews) {
+        const float* c = coeff + (long)t * NC;
+        const int* ab = axis_box + ((long)t * 3 + a) * 4;
+        #pragma unroll
+        for (int i = 0; i < 12; ++i) cf[t][i] = c[i];
+        if (!separable(c) && ab[1] >= ab[0]) {
             float umin = 1e30f, umax = -1e30f, vmin = 1e30f, vmax = -1e30f;
             #pragma unroll
             for (int q = 0; q < 4; ++q) {
@@ -345,61 +346,95 @@ extern "C" __global__ void __launch_bounds__(128, 12) plane_adjoint(
                 umin = fminf(umin, uu); umax = fmaxf(umax, uu);
                 vmin = fminf(vmin, vv); vmax = fmaxf(vmax, vv);
             }
-            box[0] = max((int)ceilf(umin), ab[0]); box[1] = min((int)floorf(umax), ab[1]);
-            box[2] = max((int)ceilf(vmin), ab[2]); box[3] = min((int)floorf(vmax), ab[3]);
-        }
-        __syncthreads();
-        int ulo = box[0], vlo = box[2], wu = box[1] - ulo + 1, wv = box[3] - vlo + 1;
-        if (wu <= 0 || wv <= 0) continue;
-        const float* image = img + (long)w * nu * nv;
-        float Sa = comp(c, a), Sb = comp(c, b), Sc = comp(c, cc);
-        float DVa = comp(c + 9, a), DVb = comp(c + 9, b), DVc = comp(c + 9, cc);
-        float K = (float)k - Sa;
-        int runs = (wv + VRUN - 1) / VRUN;
-        for (int p = threadIdx.x; p < wu * runs; p += blockDim.x) {
-            int u = ulo + p / runs, v0 = vlo + VRUN * (p % runs), v1 = min(v0 + VRUN, vlo + wv);
-            float fu = (float)u;
-            float ra = comp(c + 3, a) + fu * comp(c + 6, a) - Sa;
-            float rb = comp(c + 3, b) + fu * comp(c + 6, b) - Sb;
-            float rc = comp(c + 3, cc) + fu * comp(c + 6, cc) - Sc;
-            const float* col = image + (long)u * nv;
-            int cb = -100, ccj = -100;
-            float x00 = 0.f, x01 = 0.f, x10 = 0.f, x11 = 0.f;
-            // Load the run's pixels together: one wait for memory instead of VRUN.
-            float values[VRUN];
-            #pragma unroll
-            for (int i = 0; i < VRUN; ++i) values[i] = v0 + i < v1 ? __ldg(col + v0 + i) : 0.f;
-            #pragma unroll
-            for (int i = 0; i < VRUN; ++i) {
-                int v = v0 + i;
-                if (v >= v1) break;
-                float fv = (float)v;
-                float r_a = ra + fv * DVa, r_b = rb + fv * DVb, r_c = rc + fv * DVc;
-                float r0 = a == 0 ? r_a : r_b, r1 = a == 1 ? r_a : (a == 0 ? r_b : r_c);
-                float r2 = a == 2 ? r_a : r_c;
-                if (ray_axis(r0, r1, r2) != a) continue;
-                float t = K / r_a;
-                float fb = Sb + t * r_b, fc = Sc + t * r_c;
-                float fb0 = floorf(fb), fc0 = floorf(fc);
-                int jb = (int)fb0 - b0, jc = (int)fc0 - c0;
-                if (jb < -1 || jb >= PB || jc < -1 || jc >= PC) continue;
-                float value = values[i];
-                float wb1 = fb - fb0, wc1 = fc - fc0, wb0 = 1.f - wb1, wc0 = 1.f - wc1;
-                if (jb != cb || jc != ccj) {
-                    if (jb == cb && jc == ccj + 1) {
-                        // Step one cell along c: the trailing cells are final.
-                        flush(acc, cb, ccj, x00, 0.f, x10, 0.f, nb0, nc0);
-                        x00 = x01; x10 = x11; x01 = 0.f; x11 = 0.f;
-                    } else {
-                        flush(acc, cb, ccj, x00, x01, x10, x11, nb0, nc0);
-                        x00 = x01 = x10 = x11 = 0.f;
-                    }
-                    cb = jb; ccj = jc;
-                }
-                x00 += value * wb0 * wc0; x01 += value * wb0 * wc1;
-                x10 += value * wb1 * wc0; x11 += value * wb1 * wc1;
+            int ulo = max((int)ceilf(umin), ab[0]), uhi = min((int)floorf(umax), ab[1]);
+            int vlo = max((int)ceilf(vmin), ab[2]), vhi = min((int)floorf(vmax), ab[3]);
+            int wu = uhi - ulo + 1, wv = vhi - vlo + 1;
+            if (wu > 0 && wv > 0) {
+                int runs = (wv + VRUN - 1) / VRUN;
+                runs_here = wu * runs;
+                foot[t][0] = ulo; foot[t][1] = vlo; foot[t][2] = wv; foot[t][3] = runs;
             }
-            flush(acc, cb, ccj, x00, x01, x10, x11, nb0, nc0);
+        }
+    }
+    if (t < 32) {  // each view's first run: a prefix sum over the (<= 32) views
+        int x = runs_here;
+        #pragma unroll
+        for (int o = 1; o < 32; o <<= 1) {
+            int y = __shfl_up_sync(0xffffffffu, x, o);
+            if (t >= o) x += y;
+        }
+        first[t + 1] = x;
+        if (t == 0) first[0] = 0;
+    }
+    __syncthreads();
+    int total = first[nviews];
+    int w = 0, cw = -1, ulo = 0, vlo = 0, wv = 0, runs = 1;
+    const float* image = img;
+    float Sa = 0.f, Sb = 0.f, Sc = 0.f, DVa = 0.f, DVb = 0.f, DVc = 0.f, K = 0.f;
+    for (int p = t; p < total; p += blockDim.x) {
+        while (p >= first[w + 1]) ++w;
+        const float* c = cf[w];
+        if (w != cw) {  // the view's constants, while this thread stays on it
+            cw = w;
+            ulo = foot[w][0]; vlo = foot[w][1]; wv = foot[w][2]; runs = foot[w][3];
+            image = img + (long)w * nu * nv;
+            Sa = comp(c, a); Sb = comp(c, b); Sc = comp(c, cc);
+            DVa = comp(c + 9, a); DVb = comp(c + 9, b); DVc = comp(c + 9, cc);
+            K = (float)k - Sa;
+        }
+        int q = p - first[w];
+        int u = ulo + q / runs, v0 = vlo + VRUN * (q % runs), v1 = min(v0 + VRUN, vlo + wv);
+        float fu = (float)u;
+        float ra = comp(c + 3, a) + fu * comp(c + 6, a) - Sa;
+        float rb = comp(c + 3, b) + fu * comp(c + 6, b) - Sb;
+        float rc = comp(c + 3, cc) + fu * comp(c + 6, cc) - Sc;
+        const float* col = image + (long)u * nv;
+        int cb = -100, ccj = -100;
+        float x00 = 0.f, x01 = 0.f, x10 = 0.f, x11 = 0.f;
+        // Load the run's pixels together: one wait for memory instead of VRUN.
+        float values[VRUN];
+        #pragma unroll
+        for (int i = 0; i < VRUN; ++i) values[i] = v0 + i < v1 ? __ldg(col + v0 + i) : 0.f;
+        // The run's crossings of plane k first, independent of each other, so their
+        // divisions overlap; then their cells, in order.
+        float fbs[VRUN], fcs[VRUN];
+        #pragma unroll
+        for (int i = 0; i < VRUN; ++i) {
+            float fv = (float)(v0 + i);
+            float r_a = ra + fv * DVa, r_b = rb + fv * DVb, r_c = rc + fv * DVc;
+            float r0 = a == 0 ? r_a : r_b, r1 = a == 1 ? r_a : (a == 0 ? r_b : r_c);
+            float r2 = a == 2 ? r_a : r_c;
+            float t_ = K / r_a;
+            bool hit = v0 + i < v1 && ray_axis(r0, r1, r2) == a;
+            fbs[i] = hit ? Sb + t_ * r_b : -1e9f;  // off the tile: skipped below
+            fcs[i] = Sc + t_ * r_c;
+        }
+        #pragma unroll
+        for (int i = 0; i < VRUN; ++i) {
+            float fb = fbs[i], fc = fcs[i];
+            float fb0 = floorf(fb), fc0 = floorf(fc);
+            int jb = (int)fb0 - b0, jc = (int)fc0 - c0;
+            if (jb < -1 || jb >= PB || jc < -1 || jc >= PC) continue;
+            float value = values[i];
+            float wb1 = fb - fb0, wc1 = fc - fc0, wb0 = 1.f - wb1, wc0 = 1.f - wc1;
+            if (jb != cb || jc != ccj) {
+                float* cell = &acc[cb + 1][ccj + 1];
+                if (jb == cb && jc == ccj + 1) {
+                    // Step one cell along c: the trailing cells are final.
+                    add4(cell, x00, cell + (PC + 3), x10, cell, 0.f, cell, 0.f);
+                    x00 = x01; x10 = x11; x01 = 0.f; x11 = 0.f;
+                } else {
+                    add4(cell, x00, cell + 1, x01, cell + (PC + 3), x10, cell + (PC + 4), x11);
+                    x00 = x01 = x10 = x11 = 0.f;
+                }
+                cb = jb; ccj = jc;
+            }
+            x00 += value * wb0 * wc0; x01 += value * wb0 * wc1;
+            x10 += value * wb1 * wc0; x11 += value * wb1 * wc1;
+        }
+        if (cb > -100) {
+            float* cell = &acc[cb + 1][ccj + 1];
+            add4(cell, x00, cell + 1, x01, cell + (PC + 3), x10, cell + (PC + 4), x11);
         }
     }
     __syncthreads();
@@ -408,6 +443,6 @@ extern "C" __global__ void __launch_bounds__(128, 12) plane_adjoint(
     for (int i = threadIdx.x; i < PB * PC; i += blockDim.x) {
         int jb = i / PC, jc = i % PC;
         if (jb < nb0 && jc < nc0)
-            vol[(long)k * sa + (long)(b0 + jb) * sb + (long)(c0 + jc) * sc] += acc[jb][jc];
+            vol[(long)k * sa + (long)(b0 + jb) * sb + (long)(c0 + jc) * sc] += acc[jb + 1][jc + 1];
     }
 }

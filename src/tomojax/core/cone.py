@@ -48,7 +48,7 @@ if TYPE_CHECKING:
 
 NC = 25
 _HI = jax.lax.Precision.HIGHEST
-_VIEW_CHUNK = 32  # adjoint views per launch, so their images stay in L2 (<= 128)
+_VIEW_CHUNK = 32  # adjoint views per launch, so their images stay in L2 (<= 32: VMAX)
 
 
 def cone_coefficients(
