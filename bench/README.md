@@ -307,8 +307,9 @@ reports compiler temporary bytes, which are distinct from process peak memory.
 
 `CGLSConfig(projector_model="joseph")` selects voxel-centre plane sampling with
 bilinear interpolation and a matched transpose. The CUDA transpose gathers
-contributions into each voxel without atomic writes. The default remains
-`projector_model="ray"`; these are different discretizations. Compare analytic
+contributions into each voxel without atomic writes. The default
+`projector_model="auto"` now selects it; `projector_model="ray"` selects the
+trilinear ray marcher. These are different discretizations. Compare analytic
 accuracy and complete reconstruction quality, not just kernel throughput:
 
 ```bash
@@ -393,6 +394,58 @@ process, since it refuses a GPU on which JAX holds memory.
 uv run --no-sync python bench/compare_cone.py --size 256 --views 360 \
   --output bench/results/cone-256.json
 ```
+
+## FIPS walnuts (real lab cone-beam CT)
+
+The FIPS collection (Der Sarkissian et al., Scientific Data 6, 215, 2019; CC BY
+4.0; Zenodo records 2686726 onwards) scans 42 walnuts in three source orbits
+each, with the scanner's recorded geometry and the authors' corrected one.
+
+- [`walnut.py`](walnut.py) reconstructs one walnut (FDK or iterative, any
+  orbits) and compares it with ASTRA and the published reference.
+- [`walnut_alignment.py`](walnut_alignment.py) aligns one walnut's three orbits
+  from the recorded geometry and compares the recovered orbit heights and
+  reconstructions with the authors' correction (the figures in
+  [docs/lab-ct.md](../docs/lab-ct.md#bringing-the-orbits-into-register)).
+- [`walnut_collection.py`](walnut_collection.py) does that for every walnut
+  without storing the 6 GB downloads: it reads only the files it uses (about
+  1.6 GB a walnut) from each zip on Zenodo by HTTP range requests, decodes them
+  in memory, and fetches the next walnut while the GPU aligns this one. It
+  writes one JSON line per walnut and each reconstruction's central slices,
+  and resumes after the walnuts already recorded.
+
+```bash
+uv run --no-sync python bench/walnut.py ~/data/walnuts/Walnut1 --orbits 2 --method fbp
+uv run --no-sync python bench/walnut_alignment.py ~/data/walnuts/Walnut1 --figures out/
+cd bench && uv run --no-sync python walnut_collection.py --out ../.artifacts/walnuts --previews
+```
+
+The first full run (2026-10-08, one laptop RTX 4070, every 4th view, 2×2 binned
+detector, alignment levels 4 and 2, 20 non-negative FISTA iterations; about 17
+minutes a walnut, set by the paced download) recovered every walnut's orbit
+heights from the recorded geometry:
+
+| All 42 walnuts | Orbit 2 | Orbit 3 |
+| --- | --- | --- |
+| Authors' height change | −0.298 to −0.397 mm | −0.645 to −0.794 mm |
+| Size of TomoJAX minus authors, median (largest) | 0.014 (0.067) mm | 0.022 (0.095) mm |
+| TomoJAX minus authors, mean | +0.011 mm | +0.020 mm |
+
+The voxel is 0.1 mm, so the median disagreement is under a fifth of a voxel;
+TomoJAX's heights vary about half as much between walnuts as the authors' do.
+Against each walnut's published reference the median relative error inside
+the walnut is 0.276 with the recorded geometry, 0.159 with the aligned one and
+0.157 with the corrected one. Walnut 41's reference is itself blurred, so its
+errors (about 1.4 for all three) say nothing about the geometry.
+
+In walnuts 4, 6, 26 and 29 the aligned reconstruction is the corrected one
+moved 1 to 1.25 voxels along x (aligned against corrected: about 0.10 before
+moving it back, 0.025 after, as for the other walnuts). Moving the object
+sideways needs the along-beam `dy` in some views, which the default pose
+parameters leave out, so the least-motion estimate keeps the position the
+solve reached; the data fix it only weakly through magnification. The script
+now records that shift and both comparisons with it removed
+(`aligned_shift_voxels`, `aligned_vs_corrected_registered`).
 
 ## Multi-material chip-package phantom
 
