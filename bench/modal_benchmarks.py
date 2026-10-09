@@ -81,7 +81,7 @@ def _local_build() -> tuple[str, Path, Path]:
 
 
 image = modal.Image.from_registry("nvidia/cuda:12.6.3-devel-ubuntu24.04", add_python="3.12")
-image = image.apt_install("git", "unzip", "curl", "build-essential")
+image = image.apt_install("git", "unzip", "aria2", "build-essential")
 COMMIT = ""
 if modal.is_local():  # the container imports this module too, without the files
     COMMIT, WHEEL, PINS = _local_build()
@@ -109,32 +109,43 @@ app = modal.App("tomojax-benchmarks", image=image)
 data = modal.Volume.from_name("tomojax-walnut", create_if_missing=True)
 
 
-@app.function(volumes={"/data": data}, timeout=5 * 3600)
+@app.function(volumes={"/data": data}, timeout=12 * 3600)
 def fetch_walnut() -> None:
     """Walnut 1's projections and reference reconstruction, unzipped into the volume once.
 
-    Zenodo serves it at about 0.6 MB/s, so a 6 GB download takes hours; it is
-    kept in the volume between attempts and resumed. Uploading a local copy is
-    far quicker: ``modal volume put tomojax-walnut <WalnutN dir> /Walnut1``,
-    then an empty ``/Walnut1/.complete``.
+    Zenodo serves it at 0.1-0.6 MB/s a connection and drops long transfers, so
+    aria2 fetches it over eight connections, retrying each piece, into the
+    volume, which is committed every five minutes: a stopped attempt resumes
+    where it was. Uploading a local copy can be quicker:
+    ``modal volume put tomojax-walnut <WalnutN dir> /Walnut1``, then an empty
+    ``/Walnut1/.complete``.
     """
     import shutil
+    import threading
 
     done = Path("/data/Walnut1/.complete")
     if done.exists():
         return
     shutil.rmtree("/data/Walnut1", ignore_errors=True)  # an interrupted extraction
-    archive = Path("/data/partial-Walnut1.zip")  # survives a stopped attempt
-    fetch = ["curl", "-L", "--fail", "--retry", "5", "--retry-all-errors", "-C", "-",
-             "-o", str(archive), WALNUT_ZIP]  # fmt: skip
-    for _ in range(20):  # Zenodo drops long downloads: resume where each stopped
-        ok = subprocess.run(fetch, check=False).returncode == 0
+    archive = Path("/data/partial-Walnut1.zip")  # with aria2's record of what it has
+    stop = threading.Event()
+
+    def keep_committing() -> None:
+        while not stop.wait(300):
+            data.commit()
+
+    committer = threading.Thread(target=keep_committing, daemon=True)
+    committer.start()
+    fetch = ["aria2c", "--split=8", "--max-connection-per-server=8", "--min-split-size=20M",
+             "--continue=true", "--max-tries=0", "--retry-wait=15", "--timeout=120",
+             "--allow-overwrite=true", "--auto-file-renaming=false", "--summary-interval=300",
+             f"--dir={archive.parent}", f"--out={archive.name}", WALNUT_ZIP]  # fmt: skip
+    try:
+        subprocess.run(fetch, check=True)
+    finally:
+        stop.set()
+        committer.join()
         data.commit()
-        if ok:
-            break
-        time.sleep(10)
-    else:
-        raise RuntimeError("could not download walnut 1 from Zenodo")
     subprocess.run(["unzip", "-tq", str(archive)], check=True)  # whole, before unpacking
     subprocess.run(["unzip", "-q", str(archive), "-d", "/data"], check=True)
     if not list(Path("/data/Walnut1/Reconstructions").glob("full_AGD_50_*.tiff")):
