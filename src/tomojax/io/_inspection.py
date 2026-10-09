@@ -55,7 +55,7 @@ _PROJECTION_PATHS = (
 )
 _ANGLE_PATH = "/entry/sample/transformations/rotation_angle"
 _IMAGE_KEY_PATH = "/entry/instrument/detector/image_key"
-_ALIGN_PATH = "/entry/processing/tomojax/alignment"
+_ALIGN_PATH = "/entry/processing/tomojax/align"  # where the NXtomo writer puts poses
 _VOLUME_PATH = "/entry/processing/tomojax/volume"
 _DEFAULT_MAX_EXACT_STATS_ELEMENTS = 5_000_000
 _MAX_PERCENTILE_SAMPLE_ELEMENTS = 1_000_000

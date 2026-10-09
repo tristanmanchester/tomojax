@@ -175,7 +175,9 @@ def test_alignment_modes_plan_their_schedules() -> None:
         and pose.config.pose_translation_frame == "detector"
     )
     assert alignment_plan("cor", grid).config.schedule == "cor"
-    assert alignment_plan("COR_then_pose", grid).config.schedule == "cor_then_pose"
+    assert alignment_plan("cor-then-pose", grid).config.schedule == "cor_then_pose"
+    with pytest.raises(ValueError, match="must be one of"):
+        alignment_plan("cor_then_pose", grid)  # one spelling, the CLI's
     full = alignment_plan("full", grid, quality="reference", freeze=("dy",))
     assert full.config.schedule == "setup_safe" and full.levels == (4, 2, 1)
     assert full.config.quality == "reference" and full.config.freeze == ("dy",)
@@ -216,6 +218,10 @@ def test_aligning_a_loaded_scan_keeps_its_corrections(tmp_path: Path) -> None:
     tj.save(tmp_path / "aligned.nxs", result.scan)
     np.testing.assert_allclose(tj.load(tmp_path / "aligned.nxs").poses, result.poses, atol=1e-6)
     assert tj.load(tmp_path / "aligned.nxs", poses=False).poses is None
+    from tomojax.io.api import inspect_dataset
+
+    alignment = inspect_dataset(tmp_path / "aligned.nxs")["alignment"]
+    assert alignment["params_found"] and alignment["params_shape"] == [20, 6]
 
 
 def _shifted_scan(n: int = 12) -> tj.Scan:

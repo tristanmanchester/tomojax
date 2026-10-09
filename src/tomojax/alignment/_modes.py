@@ -28,7 +28,6 @@ from tomojax.alignment._model.dofs import DOF_NAMES
 from tomojax.alignment._model.schedules import AlignmentSchedule, schedule_preset
 from tomojax.alignment._objectives.loss_specs import L2LossSpec
 from tomojax.alignment._profiles import normalize_quality, resolve_profiled_cli_defaults
-from tomojax.core.validation import option_name
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -57,10 +56,9 @@ _CONE_AXIS_DOFS = frozenset({"det_u_px", "detector_roll_deg"})
 
 
 def normalize_mode(mode: str) -> AlignmentMode:
-    """Return the canonical mode name; case and ``_`` versus ``-`` do not matter."""
-    name = option_name(mode, separator="-")
+    """Return ``mode``, checked: one of :data:`MODES`, spelled as there (the CLI's names)."""
     for candidate in MODES:
-        if name == candidate:
+        if mode == candidate:
             return candidate
     raise ValueError(f"alignment mode must be one of {', '.join(MODES)}; got {mode!r}")
 
