@@ -109,29 +109,38 @@ app = modal.App("tomojax-benchmarks", image=image)
 data = modal.Volume.from_name("tomojax-walnut", create_if_missing=True)
 
 
-@app.function(volumes={"/data": data}, timeout=3600)
+@app.function(volumes={"/data": data}, timeout=5 * 3600)
 def fetch_walnut() -> None:
-    """Walnut 1's projections and reference reconstruction, unzipped into the volume once."""
+    """Walnut 1's projections and reference reconstruction, unzipped into the volume once.
+
+    Zenodo serves it at about 0.6 MB/s, so a 6 GB download takes hours; it is
+    kept in the volume between attempts and resumed. Uploading a local copy is
+    far quicker: ``modal volume put tomojax-walnut <WalnutN dir> /Walnut1``,
+    then an empty ``/Walnut1/.complete``.
+    """
     import shutil
 
     done = Path("/data/Walnut1/.complete")
     if done.exists():
         return
     shutil.rmtree("/data/Walnut1", ignore_errors=True)  # an interrupted extraction
-    # Zenodo drops long downloads: resume where each attempt stopped.
+    archive = Path("/data/partial-Walnut1.zip")  # survives a stopped attempt
     fetch = ["curl", "-L", "--fail", "--retry", "5", "--retry-all-errors", "-C", "-",
-             "-o", "/tmp/w.zip", WALNUT_ZIP]  # fmt: skip
-    for _ in range(20):
-        if subprocess.run(fetch, check=False).returncode == 0:
+             "-o", str(archive), WALNUT_ZIP]  # fmt: skip
+    for _ in range(20):  # Zenodo drops long downloads: resume where each stopped
+        ok = subprocess.run(fetch, check=False).returncode == 0
+        data.commit()
+        if ok:
             break
         time.sleep(10)
     else:
         raise RuntimeError("could not download walnut 1 from Zenodo")
-    subprocess.run(["unzip", "-tq", "/tmp/w.zip"], check=True)  # whole, before unpacking
-    subprocess.run(["unzip", "-q", "/tmp/w.zip", "-d", "/data"], check=True)
+    subprocess.run(["unzip", "-tq", str(archive)], check=True)  # whole, before unpacking
+    subprocess.run(["unzip", "-q", str(archive), "-d", "/data"], check=True)
     if not list(Path("/data/Walnut1/Reconstructions").glob("full_AGD_50_*.tiff")):
         raise RuntimeError("walnut 1's reference reconstruction is missing from the download")
     done.write_text(WALNUT_ZIP)
+    archive.unlink()
     data.commit()
 
 
