@@ -296,7 +296,7 @@ def ratchets() -> dict[str, object]:
         "string_normalisers": _count(r"\.replace\(\"[-_]\", \"[-_]\"\)"),
         # Code assuming one device, now that work can be shared among several.
         "first_device_probes": _count(r"jax\.devices\(\)\[0\]"),
-        # jaxlib's private modules, imported only for the Device type.
+        # jaxlib's private modules: none needed.
         "jaxlib_private_imports": _count(r"\bjaxlib\._"),
         "test_private_imports": _test_private_imports(),
     }
