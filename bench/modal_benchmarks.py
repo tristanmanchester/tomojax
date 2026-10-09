@@ -81,7 +81,7 @@ def _local_build() -> tuple[str, Path, Path]:
 
 
 image = modal.Image.from_registry("nvidia/cuda:12.6.3-devel-ubuntu24.04", add_python="3.12")
-image = image.apt_install("git", "unzip", "build-essential")
+image = image.apt_install("git", "unzip", "curl", "build-essential")
 COMMIT = ""
 if modal.is_local():  # the container imports this module too, without the files
     COMMIT, WHEEL, PINS = _local_build()
