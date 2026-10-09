@@ -107,6 +107,19 @@ _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
         "--dry-run": "prints the plan; Python calls alignment_plan",
         "--progress": "terminal display",
     },
+    "preprocess": {
+        "--flats": ("load_frames", "flats"),
+        "--darks": ("load_frames", "darks"),
+        "--angles": ("load_frames", "angles"),
+        "--select-views": "index ranges; Python calls Frames.selected",
+        "--reject-views": "index ranges; Python calls Frames.selected",
+        "--crop": "Y0:Y1,X0:X1; Python calls Frames.cropped",
+        "--reject-outliers": "the RejectViews step",
+        "--zingers": "the Zingers step",
+        "--remove-stripes": "the Stripes step",
+        "--beam-hardening": "the BeamHardening step",
+        "--preview": "file output",
+    },
 }
 _HELP_BUDGET = 16
 

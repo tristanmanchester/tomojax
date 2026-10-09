@@ -20,7 +20,6 @@ def format_inspection_report(report: InspectionReport) -> str:
     geometry = report["geometry"]
     detector_metadata = report["detector_metadata"]
     flats_darks = report["flats_darks"]
-    preprocess = report["preprocess"]
     alignment = report["alignment"]
     memory = report["memory_estimates"]
     volume = report["volume"]
@@ -96,15 +95,8 @@ def format_inspection_report(report: InspectionReport) -> str:
     else:
         lines.append("Flats/darks: not found")
 
-    if preprocess["found"]:
-        lines.append(
-            "Preprocess output: "
-            f"domain={_fmt_value(preprocess['output_domain'])}, "
-            f"epsilon={_fmt_value(preprocess['epsilon'])}, "
-            f"clip_min={_fmt_value(preprocess['clip_min'])}"
-        )
-    else:
-        lines.append("Preprocess output: not found")
+    corrections = report["corrections"]
+    lines.append("Corrections: " + (", ".join(corrections) if corrections else "none recorded"))
 
     if alignment["found"]:
         parts: list[str] = []

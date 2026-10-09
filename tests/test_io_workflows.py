@@ -18,9 +18,7 @@ from tomojax.io import (
     validate_dataset,
 )
 from tomojax.io.api import (
-    absorption_to_transmission,
     convert_dataset,
-    flat_dark_to_absorption,
     load_nxtomo,
     load_real_laminography_input,
     projection_stats,
@@ -433,18 +431,6 @@ def test_projection_stats_keep_exact_stats_when_percentile_sample_has_no_finite_
     assert stats["p50"] is None
     assert stats["p99"] is None
     assert nonfinite["nan_count"] == 1024 * 1024
-
-
-def test_contrast_helpers_roundtrip_flat_dark_absorption() -> None:
-    projections = np.asarray([[[5.0]], [[9.0]]], dtype=np.float32)
-    flats = np.asarray([[[11.0]]], dtype=np.float32)
-    darks = np.asarray([[[1.0]]], dtype=np.float32)
-
-    absorption = flat_dark_to_absorption(projections, flats, darks)
-    transmission = absorption_to_transmission(absorption)
-
-    np.testing.assert_allclose(absorption[:, 0, 0], -np.log([0.4, 0.8]), rtol=1e-6)
-    np.testing.assert_allclose(transmission[:, 0, 0], [0.4, 0.8], rtol=1e-6)
 
 
 def _write_real_lamino_fixture(path: Path) -> tuple[np.ndarray, np.ndarray]:

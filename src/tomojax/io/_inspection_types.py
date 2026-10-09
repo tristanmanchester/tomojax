@@ -112,19 +112,6 @@ class FlatsDarksReport(TypedDict):
     dark_count: int
 
 
-class PreprocessReport(TypedDict):
-    """Preprocessing metadata discovery report."""
-
-    found: bool
-    output_domain: str | None
-    formula: str | None
-    epsilon: str | None
-    clip_min: str | None
-    paths: dict[str, str]
-    overrides: dict[str, str | None]
-    crop_bounds: dict[str, object] | None
-
-
 class WorkingSetEstimate(TypedDict):
     """Memory estimate for a reconstruction mode."""
 
@@ -151,7 +138,7 @@ class InspectionReport(TypedDict):
     geometry: GeometryReport
     detector_metadata: DetectorMetadataReport
     flats_darks: FlatsDarksReport
-    preprocess: PreprocessReport
+    corrections: list[str]  # how the projections were made from detector frames
     alignment: AlignmentReport
     memory_estimates: MemoryEstimatesReport
     volume: VolumeReport
@@ -167,7 +154,6 @@ __all__ = [
     "InspectionReport",
     "MemoryEstimatesReport",
     "NonfiniteReport",
-    "PreprocessReport",
     "ProjectionReport",
     "ProjectionStatsReport",
     "VolumeReport",

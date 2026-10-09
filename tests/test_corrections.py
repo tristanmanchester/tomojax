@@ -338,3 +338,68 @@ def test_paganin_recovers_the_attenuation_of_a_phase_contrast_image() -> None:
     assert [c.name for c in scan.corrections] == ["flat_dark", "paganin", "log"]
     with pytest.raises(ValueError, match="positive"):
         Paganin(delta_beta=0, distance=1, energy_kev=1, pixel_size=1)
+
+
+def test_cropping_reads_a_block_and_moves_the_detector(tmp_path: Path) -> None:
+    rng = np.random.default_rng(2)
+    stack = np.concatenate(
+        [np.full((1, 6, 8), 1000, np.uint16), rng.integers(100, 900, (3, 6, 8)).astype(np.uint16)]
+    )
+    _write_frames(tmp_path / "scan.nxs", stack, [1, 0, 0, 0], [0, 0, 60, 120])
+    frames = tj.load_frames(tmp_path / "scan.nxs")
+    part = frames.cropped(slice(1, 4), slice(2, 7))
+    assert part.counts.shape == (3, 3, 5) and part.flats.shape == (1, 3, 5)
+    np.testing.assert_array_equal(np.asarray(part.counts[0:3]), stack[1:, 1:4, 2:7])
+    # The block's centre, in the detector's units: columns 2..6 of 8, rows 1..3 of 6.
+    assert part.geometry.detector.center == (0.5, -0.5)
+    whole = frames.corrected()
+    np.testing.assert_allclose(
+        np.asarray(part.corrected().projections),
+        np.asarray(whole.cropped(slice(1, 4), slice(2, 7)).projections),
+    )
+    with pytest.raises(ValueError, match="non-empty block"):
+        whole.cropped(slice(3, 3), slice(None))
+
+
+def test_frames_are_found_in_other_hdf5_layouts(tmp_path: Path) -> None:
+    # A Diamond-style file: frames, keys and angles (radians) under entry1/tomo_entry.
+    stack = np.stack([np.full((2, 3), v, np.uint16) for v in (0, 1000, 500, 250, 1000)])
+    with h5py.File(tmp_path / "beamline.nxs", "w") as handle:
+        entry = handle.create_group("entry1/tomo_entry")
+        entry.create_dataset("data/data", data=stack)
+        entry.create_dataset("instrument/detector/image_key", data=[2, 1, 0, 0, 1])
+        angles = entry.create_dataset("data/rotation_angle", data=np.radians([0, 0, 0, 90, 90]))
+        angles.attrs["units"] = "rad"
+        handle.create_dataset("extra/images", data=stack)  # an unrelated stack
+    scan = tj.load(tmp_path / "beamline.nxs")
+    np.testing.assert_allclose(scan.angles, [0.0, 90.0])
+    np.testing.assert_allclose(
+        np.asarray(scan.projections)[:, 0, 0], -np.log([0.5, 0.25]), rtol=1e-6
+    )
+    assert scan.detector.nu == 3 and scan.detector.du == 1.0
+    named = tj.load_frames(tmp_path / "beamline.nxs", data_path="/extra/images", angles=[0, 45])
+    assert named.views == 2 and len(named.flats) == 2  # the file's one image_key fits it
+    np.testing.assert_allclose(named.geometry.angles, [0, 45])
+    with pytest.raises(KeyError, match="no dataset"):
+        tj.load_frames(tmp_path / "beamline.nxs", data_path="/missing")
+
+
+def test_constant_flat_and_dark_levels(tmp_path: Path) -> None:
+    _write_frames(tmp_path / "scan.nxs", np.full((2, 2, 2), 600, np.uint16), [0, 0], [0, 90])
+    scan = tj.load_frames(tmp_path / "scan.nxs", flats=1100, darks=100).corrected()
+    np.testing.assert_allclose(np.asarray(scan.projections), np.log(2.0), rtol=1e-6)
+    assert scan.corrections[0].settings == {"white_level": 1100.0, "darks": 1}
+
+
+def test_tiff_frames_take_a_measured_geometry(tmp_path: Path) -> None:
+    for i, value in enumerate((50, 25, 40)):
+        iio.imwrite(tmp_path / f"view_{i:04d}.tif", np.full((2, 3), value, np.uint16))
+    geometry = tj.LaminographyGeometry(
+        tiny_grid(nx=3, ny=3, nz=2),
+        tj.Detector(nu=3, nv=2, du=0.65, dv=0.65),
+        [0.0, 120.0, 240.0],
+        tilt_deg=30.0,
+    )
+    scan = tj.load_frames(tmp_path, flats=100, geometry=geometry).corrected()
+    assert scan.geometry is geometry and scan.detector.du == 0.65
+    np.testing.assert_allclose(np.asarray(scan.projections)[:, 0, 0], -np.log([0.5, 0.25, 0.4]))

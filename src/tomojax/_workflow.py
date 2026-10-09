@@ -21,11 +21,11 @@ import warnings
 
 import numpy as np
 
+from tomojax._loading import load
 from tomojax._scan import (
     GEOMETRY_KEYS,
     Scan,
     describe,
-    load,
     record_of,
     scan_from_record,
     with_grid,

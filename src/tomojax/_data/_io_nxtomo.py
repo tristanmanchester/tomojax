@@ -385,16 +385,6 @@ def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
     return LoadedNXTomo.from_dataset(out)
 
 
-def holds_flats_or_darks(path: str) -> bool:
-    """Whether the NXtomo file's ``image_key`` marks flat (1) or dark (2) frames."""
-    with h5py.File(path, "r") as f:
-        entry = f.get("/entry")
-        det_grp = None if not isinstance(entry, h5py.Group) else _detector_group(entry)
-        if det_grp is None or "image_key" not in det_grp:
-            return False
-        return bool(np.isin(np.asarray(det_grp["image_key"][...]), (1, 2)).any())
-
-
 def validate_nxtomo(path: str) -> ValidationReport:
     """Lightweight schema checks. Returns a report dict; empty `issues` means OK."""
     report: ValidationReport = {"issues": []}

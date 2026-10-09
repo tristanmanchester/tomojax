@@ -20,10 +20,11 @@ the nominal tomography axis, not an angle to the beam. A missing laminography
 tilt currently defaults to 30° when geometry is built; that is not a measurement
 of your scanner.
 
-For raw NXtomo data with sample/flat/dark frame keys, follow
+For raw HDF5 data with sample/flat/dark frame keys, follow
 [preprocessing](quickstart.md#correct-raw-detector-frames). Nonstandard HDF5
-layouts can set `data_path`, `angles_path`, and `image_key_path` in a TOML
-file passed to `preprocess --config`. Structural validation does not establish correct physical geometry.
+layouts can name their datasets with `--data-path`, `--angles-path` and
+`--image-key-path` (or `data_path=`... in `tj.load_frames`). Structural
+validation does not establish correct physical geometry.
 
 ## Prepare TIFF data
 
@@ -53,32 +54,33 @@ of 2 pixels at pitch 0.65 is a `center` of 1.3.
 
 ### Raw intensities with flat and dark frames
 
-The Python preprocessing API accepts measured geometry alongside TIFF inputs.
-Save the following as a script and adapt the paths and acquisition values:
+`tj.load_frames` reads TIFF frames with their flats, darks and a measured
+geometry. Save the following as a script and adapt the paths and acquisition
+values:
 
 ```python
-from tomojax.geometry import Detector, Grid
-from tomojax.io import preprocess_tiff_stack
+import tomojax as tj
+from tomojax.io.api import load_angles
 
-result = preprocess_tiff_stack(
-    "projections",
-    flats_path="flats",
-    darks_path="darks",
-    angles_path="angles.csv",
-    output_path="corrected.nxs",
-    detector=Detector(nu=256, nv=128, du=0.65, dv=0.65),
-    grid=Grid(nx=256, ny=256, nz=128, vx=0.65, vy=0.65, vz=0.65),
-    geometry_type="lamino",
-    geometry_metadata={"tilt_deg": 30.0, "tilt_about": "x"},
+angles = load_angles("angles.csv")
+geometry = tj.LaminographyGeometry(
+    tj.Grid(nx=256, ny=256, nz=128, vx=0.65, vy=0.65, vz=0.65),
+    tj.Detector(nu=256, nv=128, du=0.65, dv=0.65),
+    angles,
+    tilt_deg=30.0,
+    tilt_about="x",
 )
-print(result.output_domain, result.output_shape)
+frames = tj.load_frames("projections", flats="flats", darks="darks", geometry=geometry)
+scan = frames.corrected()
+tj.save("corrected.nxs", scan)
+print(scan)
 ```
 
-This writes absorption projections by default. Use `geometry_type="parallel"`
-and omit the tilt metadata for ordinary parallel tomography. `tomojax
-preprocess` with TIFF input currently records unit detector spacing and
-parallel geometry, so use the Python API above when supplying measured TIFF
-geometry. Do not pass already-log-transformed data into this raw-intensity path.
+This writes line integrals, recording the correction. Use
+`tj.ParallelGeometry(grid, detector, angles)` for ordinary parallel
+tomography. On the command line, `tomojax import` the frames with their
+geometry and then `tomojax preprocess` the file with `--flats` and `--darks`.
+Do not pass already-log-transformed data into this raw-intensity path.
 
 For an already-corrected dataset that needs explicit laminography metadata:
 

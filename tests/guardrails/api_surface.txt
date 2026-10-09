@@ -58,6 +58,7 @@ class tomojax.Frames(
         epsilon: 'float' = 1e-06,
         batch_views: 'int | None' = None,
     ) -> 'Scan'
+    .cropped(self, rows: 'slice', cols: 'slice') -> 'Frames'
     .selected(self, views: 'slice | Sequence[int] | np.ndarray') -> 'Frames'
     .views
 class tomojax.Grid(
@@ -102,6 +103,7 @@ class tomojax.Scan(
     .binned(self, factor: 'int') -> 'Scan'
     .combine(cls, scans: 'Sequence[Scan]', *, name: 'str | None' = None) -> 'Scan'
     .corrected(self, *steps: 'Step', batch_views: 'int | None' = None) -> 'Scan'
+    .cropped(self, rows: 'slice', cols: 'slice') -> 'Scan'
     .detector
     .from_astra(
         cls,
@@ -139,12 +141,16 @@ def tomojax.load(path: 'str | PathLike[str]', *, poses: 'bool' = True) -> 'Scan'
 def tomojax.load_frames(
         path: 'str | PathLike[str]',
         *,
-        flats: 'np.ndarray | str | PathLike[str] | None' = None,
-        darks: 'np.ndarray | str | PathLike[str] | None' = None,
+        flats: 'np.ndarray | float | str | PathLike[str] | None' = None,
+        darks: 'np.ndarray | float | str | PathLike[str] | None' = None,
         angles: 'Sequence[float] | np.ndarray | None' = None,
         detector: 'Detector | None' = None,
         grid: 'Grid | None' = None,
+        geometry: 'ScanGeometry | None' = None,
         white_level: 'float | None' = None,
+        data_path: 'str | None' = None,
+        image_key_path: 'str | None' = None,
+        angles_path: 'str | None' = None,
     ) -> 'Frames'
 def tomojax.load_reconstruction(path: 'str | PathLike[str]') -> 'Reconstruction'
 def tomojax.project(
@@ -500,37 +506,6 @@ def tomojax.recon.spdhg_tv(
     ) -> 'tuple[jnp.ndarray, dict[str, object]]'
 
 # tomojax.io
-class tomojax.io.PreprocessConfig(
-        *,
-        output_domain: 'str' = 'absorption',
-        log: 'bool | None' = None,
-        epsilon: 'float' = 1e-06,
-        clip_min: 'float | None' = None,
-        output_dtype: 'str' = 'float32',
-        data_path: 'str | None' = None,
-        angles_path: 'str | None' = None,
-        image_key_path: 'str | None' = None,
-        assume_dark_field: 'float | None' = None,
-        assume_flat_field: 'float | None' = None,
-        select_views: 'str | None' = None,
-        reject_views: 'str | None' = None,
-        select_views_file: 'str | Path | None' = None,
-        reject_views_file: 'str | Path | None' = None,
-        auto_reject: 'str' = 'off',
-        outlier_z_threshold: 'float' = 6.0,
-        crop: 'str | None' = None,
-        beam_hardening: 'tuple[float, ...] | None' = None,
-        stripe_width: 'int | None' = None,
-    ) -> None
-class tomojax.io.PreprocessResult(
-        sample_count: 'int',
-        flat_count: 'int',
-        dark_count: 'int',
-        output_shape: 'tuple[int, int, int]',
-        output_domain: 'str',
-        warning_counts: 'dict[str, int]',
-        provenance: 'dict[str, JsonValue]',
-    ) -> None
 class tomojax.io.ProjectionDataset(
         projections: 'np.ndarray',
         angles: 'np.ndarray',
@@ -581,26 +556,6 @@ def tomojax.io.load_tiff_stack(
         geometry_type: 'str' = 'parallel',
         geometry_metadata: 'Mapping[str, Any] | None' = None,
     ) -> 'ProjectionDataset'
-def tomojax.io.preprocess_nxtomo(
-        input_path: 'str | Path',
-        output_path: 'str | Path',
-        *,
-        config: 'PreprocessConfig | None' = None,
-    ) -> 'PreprocessResult'
-def tomojax.io.preprocess_tiff_stack(
-        projections_path: 'PathLike',
-        *,
-        flats_path: 'PathLike',
-        darks_path: 'PathLike',
-        angles_path: 'PathLike',
-        output_path: 'PathLike',
-        config: 'PreprocessConfig | None' = None,
-        detector: 'Detector | DetectorDict | None' = None,
-        grid: 'Grid | GridDict | None' = None,
-        geometry_type: 'str' = 'parallel',
-        geometry_metadata: 'Mapping[str, Any] | None' = None,
-        sample_name: 'str' = 'sample',
-    ) -> 'PreprocessResult'
 def tomojax.io.save_dataset(path: 'PathLike', dataset: 'ProjectionDataset') -> 'None'
 def tomojax.io.validate_dataset(path: 'PathLike') -> 'ValidationReport'
 

@@ -38,7 +38,6 @@ from tomojax.io._inspection_types import (
     InspectionReport,
     MemoryEstimatesReport,
     NonfiniteReport,
-    PreprocessReport,
     ProjectionReport,
     ProjectionStatsReport,
     VolumeReport,
@@ -374,49 +373,23 @@ def _flats_darks_report(file: h5py.File) -> FlatsDarksReport:
     }
 
 
-def _preprocess_report(file: h5py.File) -> PreprocessReport:
-    group = file.get("/entry/processing/tomojax/preprocess")
-    if not isinstance(group, h5py.Group):
-        return {
-            "found": False,
-            "output_domain": None,
-            "formula": None,
-            "epsilon": None,
-            "clip_min": None,
-            "paths": {},
-            "overrides": {},
-            "crop_bounds": None,
-        }
-    attrs = group.attrs
-    paths: dict[str, str] = {}
-    for key in (
-        "input_path",
-        "data_path",
-        "projection_path",
-        "flat_path",
-        "dark_path",
-        "angles_path",
-        "image_key_path",
-    ):
-        value = _attr_to_str(attrs.get(key))
-        if value and value != "null":
-            paths[key] = value
-    overrides = {
-        "dark_override_used": _attr_to_str(attrs.get("dark_override_used")),
-        "flat_override_used": _attr_to_str(attrs.get("flat_override_used")),
-        "assume_dark_field": _attr_to_str(attrs.get("assume_dark_field")),
-        "assume_flat_field": _attr_to_str(attrs.get("assume_flat_field")),
-    }
-    return {
-        "found": True,
-        "output_domain": _attr_to_str(attrs.get("output_domain")),
-        "formula": _attr_to_str(attrs.get("correction_formula")),
-        "epsilon": _attr_to_str(attrs.get("epsilon")),
-        "clip_min": _attr_to_str(attrs.get("clip_min")),
-        "paths": paths,
-        "overrides": overrides,
-        "crop_bounds": _json_attr_to_mapping(attrs.get("crop_bounds")),
-    }
+def _corrections_report(file: h5py.File) -> list[str]:
+    """The corrections that made the projections, as recorded with them."""
+    geom = file.get("/entry/geometry")
+    meta = (
+        _json_attr_to_mapping(geom.attrs.get("geometry_meta_json"))
+        if isinstance(geom, h5py.Group)
+        else None
+    )
+    saved = cast("object", None if meta is None else meta.get("corrections"))
+    if not isinstance(saved, list):
+        return []
+    from tomojax.corrections import Correction
+
+    entries = cast("list[object]", saved)
+    return [
+        str(Correction.from_dict(cast("dict[str, Any]", c))) for c in entries if isinstance(c, dict)
+    ]
 
 
 def _alignment_report(file: h5py.File) -> AlignmentReport:
@@ -535,7 +508,7 @@ def inspect_nxtomo(path: PathLike) -> InspectionReport:
             "geometry": _geometry_report(file),
             "detector_metadata": _detector_metadata_report(file),
             "flats_darks": _flats_darks_report(file),
-            "preprocess": _preprocess_report(file),
+            "corrections": _corrections_report(file),
             "alignment": _alignment_report(file),
             "memory_estimates": _memory_estimates(file, projection),
             "volume": _volume_report(file),
@@ -557,7 +530,6 @@ __all__ = [
     "InspectionReport",
     "MemoryEstimatesReport",
     "NonfiniteReport",
-    "PreprocessReport",
     "ProjectionReport",
     "ProjectionStatsReport",
     "WorkingSetEstimate",

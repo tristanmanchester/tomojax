@@ -20,8 +20,8 @@ tomojax import scan/part.xtekct -o scan.nxs
 tomojax inspect scan.nxs
 ```
 
-Projections become absorption, `-log(I / WhiteLevel)` (`--transmission` keeps
-intensities), with image rows flipped so that the detector's v axis points up.
+Projections become line integrals, `-log(I / WhiteLevel)` (`--transmission`
+keeps intensities), with image rows flipped so that the detector's v axis points up.
 Lengths stay in the scanner's units, millimetres for Nikon. The axis offset and
 detector roll are left at zero for the next step. TomoJAX has not yet been
 checked against a real Nikon scan: confirm the handedness of the first
@@ -35,32 +35,25 @@ then flat- and dark-correct it:
 tomojax import projections/ --angles angles.csv --geometry cone \
   --source-to-axis 120.5 --source-to-detector 980.0 --pixel-size 0.2 \
   -o raw.nxs
-tomojax preprocess raw.nxs -o scan.nxs --config flat.toml
+tomojax preprocess raw.nxs -o scan.nxs --flats flats/ --darks darks/
 ```
 
-where `flat.toml` gives the constant flat and dark levels (expert settings
-such as these are keys of a TOML file passed with `--config`;
-`tomojax preprocess --config-keys` lists them):
-
-```toml
-assume_flat_field = 60000
-assume_dark_field = 0
-```
-
+`--flats` and `--darks` take TIFF frames, or one level for every pixel
+(`--flats 60000 --darks 0`) when the scanner calibrates its flat field.
 Use one length unit throughout (the pixel size and both distances).
 `--pixel-size` takes one value for square pixels, or the u then v sizes.
 
-`tomojax preprocess` also corrects two lab-CT artefacts in absorption data.
-`--beam-hardening 1,0.05` linearises beam hardening, mapping each value p to
-`p + 0.05 p²` (calibrate the coefficients on a single-material sample).
-`--remove-stripes 9` removes rings: it subtracts each detector pixel's
-constant offset, comparing its values sorted over views with those of its 9
-neighbouring columns, so data without defects pass unchanged (a faint offset
-on a steep gradient can remain).
+`tomojax preprocess` also corrects lab-CT artefacts.
+`--beam-hardening 1,0.05` linearises beam hardening, mapping each line
+integral p to `p + 0.05 p²` (calibrate the coefficients on a single-material
+sample). `--remove-stripes 9` removes rings: it subtracts each detector
+pixel's constant offset, comparing its values sorted over views with those of
+its 9 neighbouring columns, so data without defects pass unchanged (a faint
+offset on a steep gradient can remain). `--zingers` replaces bright specks.
+In Python these are steps of `tomojax.corrections` (`BeamHardening`,
+`Stripes`, `Zingers`) passed to `tj.load_frames(path).corrected(...)`.
 `tomojax import --detector-roll`, `--detector-pitch`, `--detector-yaw` and
-`--axis-offset` take values the scanner reports. `tomojax preprocess` also
-takes measured flat and dark fields (`--flats`, `--darks`), but only for TIFF
-input, and that path records parallel geometry with unit pixels. A TIFF import
+`--axis-offset` take values the scanner reports. A TIFF import
 records no grid: cone datasets without one reconstruct one voxel per detector
 pixel at the axis, the pixel size divided by the magnification
 `source_to_detector / source_to_axis`, and `tomojax recon --grid NX NY NZ`

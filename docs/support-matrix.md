@@ -10,13 +10,13 @@ experimental. See [installation](installation.md) and [measurement scope](measur
 | Preview PNGs (central projection and central volume slices) | Supported | `tomojax inspect recon.nxs --preview previews` |
 | TIFF stack import | Supported | `tomojax import ./tiffs --angles angles.csv --pixel-size ... -o scan.nxs` |
 | Dataset container conversion (`.npz`, `.nxs`, `.h5`) | Supported | `tomojax import scan.npz -o scan.nxs` |
-| NX/HDF5 preprocessing | Supported | `tomojax preprocess raw.nxs -o corrected.nxs` |
+| HDF5 flat/dark correction (`image_key`; flat sets before and after interpolated) | Supported | `tomojax preprocess raw.nxs -o corrected.nxs`, or `tj.load("raw.nxs")` |
 | TIFF flat/dark preprocessing | Supported | `tomojax preprocess ./projections -o corrected.nxs --flats ./flats --darks ./darks --angles angles.csv` |
 | FBP, CGLS, FISTA-TV, SPDHG-TV from corrected projections | Supported | `tomojax recon corrected.nxs -o recon.nxs --method fbp\|cgls\|fista\|spdhg` |
 | Cone-beam (lab CT) scans: FDK and iterative reconstruction | Supported | `tomojax import ./tiffs --geometry cone --source-to-axis ... --source-to-detector ... --pixel-size ... --angles angles.csv -o scan.nxs`, then `tomojax recon` (`--method fbp`, the default, runs FDK) |
 | Per-projection 5-DOF pose alignment | Experimental | `tomojax align corrected.nxs -o aligned.nxs --mode pose` |
 | Cone-beam 6-DOF pose alignment (adds `dy` along the beam) | Experimental | `tomojax align cone_scan.nxs -o aligned.nxs --mode pose` |
-| Beam-hardening polynomial and ring (detector-pixel offset) correction | Supported | `tomojax preprocess raw.nxs -o scan.nxs --beam-hardening 1,0.05 --remove-stripes 9` |
+| Ring (stripe), zinger, outlier-view and beam-hardening corrections; Paganin phase retrieval | Supported | `tomojax preprocess raw.nxs -o scan.nxs --remove-stripes 9 --zingers --reject-outliers --beam-hardening 1,0.05`, or `tomojax.corrections` steps |
 | Volume export as TIFF slices or raw (`uint16` or `float32`) | Supported | `tomojax export recon.nxs -o slices/`; `tomojax export recon.nxs -o recon.raw --dtype uint16` |
 | Nikon (X-Tek) `.xtekct` scan import | Experimental (tested on synthetic files only) | `tomojax import scan/part.xtekct -o scan.nxs` |
 | Cone-beam axis-offset (centre of rotation) and detector-roll calibration | Experimental | `tomojax align cone_scan.nxs -o calibrated.nxs --mode cor`; `calibrate_cone_axis` in Python |

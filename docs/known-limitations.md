@@ -53,10 +53,14 @@ from the larger-motion targets.
 ## Data and geometry boundaries
 
 - TIFF `import` packages data; it does not apply flat/dark correction or a log.
-  Reconstruction expects absorption/log-attenuation projections.
-- TIFF preprocessing through the CLI records unit detector spacing and parallel
-  geometry. Use the Python API to supply measured pitch, grid, and tilt; see the
+  Reconstruction expects line integrals (log attenuation).
+- `tomojax preprocess` of TIFF frames records unit detector spacing and parallel
+  geometry. `tomojax import` them with their geometry first, or pass
+  `geometry=` to `tj.load_frames`; see the
   [real scan guide](real-laminography.md#prepare-tiff-data).
+- A float stack with no flats or `image_key` is taken to be line integrals
+  already: TomoJAX cannot tell raw float counts from corrected data. Correct
+  such frames with `tj.load_frames(path, flats=...)`.
 - A laminography dataset without explicit tilt metadata currently uses 30° when
   building geometry. Inspect and set measured geometry before reconstruction.
 - `tomojax inspect --preview` PNGs are display-scaled central slices. Use the

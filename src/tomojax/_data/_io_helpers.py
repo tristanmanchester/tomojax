@@ -199,13 +199,25 @@ def _load_detector_metadata(
             context="detector metadata",
         )
     if detector_dict is None:
-        _axes_log_warning(
-            "load_nxtomo: missing detector metadata for %s; "
-            "synthesizing unit detector from projection shape",
-            path,
-        )
         detector_dict = _default_detector_meta(projections)
+        # NXtomo's own pixel sizes, when the file has no TomoJAX detector record.
+        sizes = [_pixel_size(det_grp, name) for name in ("x_pixel_size", "y_pixel_size")]
+        if sizes[0] is not None:
+            detector_dict["du"] = sizes[0]
+        if sizes[1] is not None:
+            detector_dict["dv"] = sizes[1]
+        if None in sizes:
+            _axes_log_warning("load_nxtomo: no detector pixel size in %s; taking unit pixels", path)
     out["detector"] = detector_dict
+
+
+def _pixel_size(group: h5py.Group | None, name: str) -> float | None:
+    """A positive scalar dataset ``name`` of ``group``, if there is one."""
+    found = None if group is None else group.get(name)
+    if not isinstance(found, h5py.Dataset) or found.size != 1:
+        return None
+    value = float(np.asarray(found[()]).reshape(-1)[0])
+    return value if np.isfinite(value) and value > 0 else None
 
 
 def _load_source_metadata(out: LoadedDataset, entry: h5py.Group) -> None:

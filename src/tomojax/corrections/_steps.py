@@ -120,23 +120,39 @@ class Stripes(Step):
 
 @dataclass(frozen=True)
 class RejectViews(Step):
-    """Drop views whose median line integral is an outlier among the views'.
+    """Drop views whose median line integral jumps from their neighbours'.
 
-    A view taken with the beam off, a shutter closed or the sample moved out
-    differs from its neighbours as a whole; a view is rejected when its median
-    is more than ``z`` robust standard deviations (1.4826 times the median
-    absolute deviation) from the median of all views'. The scan's geometry
-    keeps the same views; the record lists those rejected.
+    A view taken with the beam off, a shutter closed or the sample out of the
+    beam differs as a whole from the views either side of it, while the
+    object's own change with angle is smooth. Each view's median is compared
+    with the median of the ``neighbours`` views around it (in the order
+    recorded); a view is rejected when that difference is more than ``z``
+    robust standard deviations (1.4826 times the median absolute deviation)
+    of all views' differences and more than ``min_jump`` of the views' typical
+    median (so the small, smooth changes of a noise-free scan never count).
+    The scan's geometry keeps the same views; the record lists those rejected.
     """
 
     domain: ClassVar[Domain] = "line integrals"
     selects_views: ClassVar[bool] = True
     z: float = 6.0
+    neighbours: int = 5
+    min_jump: float = 0.05
 
     def __post_init__(self) -> None:
         if not self.z > 0:
             raise ValueError(f"RejectViews z must be positive, not {self.z}")
+        if not self.min_jump >= 0:
+            raise ValueError(f"RejectViews min_jump must be >= 0, not {self.min_jump}")
+        object.__setattr__(self, "min_jump", float(self.min_jump))
+        if (
+            int(self.neighbours) != self.neighbours
+            or self.neighbours < 3
+            or self.neighbours % 2 == 0
+        ):
+            raise ValueError(f"RejectViews neighbours must be odd and >= 3, not {self.neighbours}")
         object.__setattr__(self, "z", float(self.z))
+        object.__setattr__(self, "neighbours", int(self.neighbours))
 
     def statistic(self, batch: jax.Array) -> jax.Array:
         return jnp.median(batch.reshape(batch.shape[0], -1), axis=1)
@@ -144,16 +160,17 @@ class RejectViews(Step):
     def select(
         self, statistics: np.ndarray, views: np.ndarray
     ) -> tuple[np.ndarray, dict[str, Json]]:
-        centre = float(np.median(statistics))
-        scale = 1.4826 * float(np.median(np.abs(statistics - centre)))
-        if not scale > 0:  # most views alike (a simulation): no scale to judge by
-            return np.ones(len(statistics), bool), {"rejected": [], "skipped": "views alike"}
-        keep = np.abs(statistics - centre) <= self.z * scale
-        found: dict[str, Json] = {
-            "rejected": [int(v) for v in views[~keep]],
-            "median": centre,
-            "robust_scale": scale,
-        }
+        medians = np.asarray(statistics, np.float64)
+        half = self.neighbours // 2
+        padded = np.pad(medians, half, mode="edge")
+        around = np.median(
+            np.lib.stride_tricks.sliding_window_view(padded, self.neighbours), axis=1
+        )
+        jumps = medians - around
+        scale = 1.4826 * float(np.median(np.abs(jumps - np.median(jumps))))
+        floor = self.min_jump * float(np.median(np.abs(medians)))
+        keep = (np.abs(jumps) <= self.z * scale) | (np.abs(jumps) <= floor)
+        found: dict[str, Json] = {"rejected": [int(v) for v in views[~keep]], "robust_scale": scale}
         return keep, found
 
 

@@ -15,47 +15,54 @@ Check the projection count and shape, angles, detector pitch, voxel pitch, and
 geometry type. `inspect` also checks the dataset contract: it ends with
 `Valid: yes`, or lists the issues and exits with status 1. That check cannot
 prove that metadata matches the instrument. `--json` prints the report as JSON
-instead. Arbitrary HDF5 layouts may need explicit paths during preprocessing,
-set as `data_path`, `angles_path` and `image_key_path` in a `--config` TOML
-file; `tomojax preprocess --config-keys` lists them.
+instead. It also lists the corrections that made the projections from
+detector frames, when the file records them.
 
-Reconstruction expects absorption/log-attenuation projections. Raw detector
-intensities, normalized transmission, and already-corrected attenuation are
-different inputs. Establish which you have before preprocessing.
+Reconstruction expects line integrals (log attenuation). Raw detector counts,
+normalized transmission, and already-corrected attenuation are different
+inputs: establish which you have. TomoJAX corrects raw frames itself when the
+file says they are raw (an `image_key` marking flats or darks, or a Nikon
+scan); it refuses integer counts with no flats rather than guess.
 
 ## Correct raw detector frames
 
-For an NXtomo scan containing sample, flat, and dark frames:
+For an HDF5 scan containing sample, flat, and dark frames:
 
 ```bash
 uv run --no-sync tomojax preprocess raw.nxs -o corrected.nxs
 uv run --no-sync tomojax inspect corrected.nxs
 ```
 
-By default this applies flat/dark correction and the negative logarithm, then
-writes sample-only absorption projections with preprocessing provenance.
-`--transmission` writes normalized transmission instead and is not the input
-domain expected by the reconstruction commands. Already-corrected absorption
-data should bypass this step; applying the logarithm again changes the data.
+This writes the line integrals `-log((I - D) / (F - D))` of the sample views,
+each view's flat interpolated between the flat sets taken around it, and
+records the correction. The frames, `image_key` and angles are found at their
+NXtomo paths or as the file's only datasets of those names; `--data-path`,
+`--image-key-path` and `--angles-path` (expert settings, `--config-keys`) name
+them otherwise. Options add corrections: `--zingers`, `--remove-stripes 9`
+(rings), `--reject-outliers` (views that jump from their neighbours, such as a
+closed shutter), `--beam-hardening 1,0.05`; `--select-views`, `--reject-views`
+and `--crop` keep part of the scan. Already-corrected data should skip this
+step; applying the logarithm again changes the data.
 
-In Python, `tj.load("raw.nxs")` makes the same correction when the file's
-`image_key` marks flats or darks, and records it in `scan.corrections`. For
-other corrections, load the frames and pass steps from `tomojax.corrections`:
+In Python, `tj.load("raw.nxs")` makes the same correction, and records it in
+`scan.corrections`. For other corrections, load the frames and pass steps from
+`tomojax.corrections`:
 
 ```python
 import tomojax as tj
-from tomojax.corrections import BeamHardening
+from tomojax.corrections import RejectViews, Stripes
 
 frames = tj.load_frames("raw.nxs")  # or a Nikon .xtekct, or TIFFs with angles=
-scan = frames.corrected(BeamHardening((1.0, 0.05)))
-print(scan)  # Scan('sample': ..., corrections: flat_dark(...), log(...), beam_hardening(...))
+scan = frames.cropped(slice(100, 900), slice(None)).corrected(RejectViews(), Stripes(9))
+print(scan)  # Scan('sample': ..., corrections: flat_dark(...), log(...), reject_views(...), ...)
+tj.save("corrected.nxs", scan)
 ```
 
-Flats taken before and after the scan are interpolated by position, and the
-views are corrected on the GPU a batch at a time.
+The views are corrected on the GPU a batch at a time, read from the file as
+they are needed.
 
-For TIFF data, use the [TIFF and measured-geometry instructions](real-laminography.md#prepare-tiff-data).
-`tomojax import` packages a stack; it does not perform flat/dark correction.
+For TIFF frames, use the [TIFF and measured-geometry instructions](real-laminography.md#prepare-tiff-data).
+`tomojax import` packages a stack; it does not correct frames.
 
 ## Reconstruct and inspect slices
 

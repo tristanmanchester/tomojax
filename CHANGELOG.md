@@ -93,8 +93,13 @@ payload and JSON helpers. Removed, as nothing used them: `VolumeSupportKind`,
 `canonicalize_geometry_gauges`, `write_geometry_json`, `write_pose_params_csv`,
 `write_pose_decomposition_csv` and the detector-grid transform helpers
 (geometry); `write_json_object`, `spatial_bin`, `pad_to_multiples`,
-`volume_chunks`, `flat_dark_to_transmission` and `transmission_to_absorption`
-(io); the profile, fallback and gauge-fix types, `schedule_preset`,
+`volume_chunks`, `flat_dark_to_transmission`, `transmission_to_absorption`,
+`flat_dark_to_absorption` and `absorption_to_transmission` (io; `tj.load_frames`
+and `Frames.corrected` correct frames, `np.exp(-p)` is transmission);
+`preprocess_nxtomo`, `preprocess_tiff_stack`, `PreprocessConfig` and
+`PreprocessResult` (io; `tj.load_frames(path, ...).corrected(*steps)` and
+`tj.save`, with `PreprocessConfig`'s settings as `load_frames` keywords,
+`Frames.selected`, `Frames.cropped` and steps); the profile, fallback and gauge-fix types, `schedule_preset`,
 `level_detector_grid`, `build_loss_adapter`, `ScheduleResumeState`,
 `normalize_schedule_resume_state`, and
 `build_alignment_checkpoint_metadata_from_input` with its input classes
@@ -118,7 +123,10 @@ expert settings are `--config` keys, listed by `--config-keys`.
 | `ingest --du --dv` | `import --pixel-size SIZE [SIZE_V]` |
 | `ingest --sample-name` | `import --name` |
 | `ingest --det-center-u/-v`, `--grid`, `--voxel-size` | removed; `tomojax align --mode cor` estimates the centre, and `recon --grid` or `tj.reconstruct(grid=...)` sets the grid |
-| `preprocess --format`, `--domain`, `--log` | the format follows the output path; absorption is the default and `--transmission` writes transmission |
+| `preprocess --format`, `--domain`, `--log`, `--transmission`, `--dtype`, `--clip-min` | removed: `preprocess` writes a float32 scan of line integrals, bounded below by `--epsilon` |
+| `preprocess --assume-flat-field V`, `--assume-dark-field V` | `--flats V`, `--darks V` (a level for every pixel) |
+| `preprocess --auto-reject`, `--outlier-z-threshold Z` | `--reject-outliers [Z]` (views that jump from their neighbours; non-finite values are set to zero and counted) |
+| `preprocess --select-views-file`, `--reject-views-file` | `--select-views`, `--reject-views` with the ranges |
 | `simulate --nx --ny --nz`, `--nu --nv`, `--n-views` | `--size N` (or the `grid` and `detector` keys), `--views` |
 | `simulate --rotation-deg`, `--tilt-deg` | `--rotation`, `--tilt` |
 
@@ -267,9 +275,12 @@ without a translation frame (0.3's) are read as object-frame poses, and
   geometry), `Zingers` replaces bright specks with their neighbours'
   median, `Paganin` retrieves single-material phase from propagation-based
   phase contrast, and `BeamHardening` linearises with a polynomial.
-  `Scan.corrected` runs line-integral steps on a scan, and `Scan.selected` and
-  `Frames.selected` keep some views with their geometry (each view's flat is
-  still interpolated at its place in the scan). `Scan.corrections` records
+  `Scan.corrected` runs line-integral steps on a scan; `selected` and
+  `cropped` (on `Scan` and `Frames`) keep some views or a detector block with
+  their geometry (each view's flat still interpolated at its place in the
+  scan; a lazily read file reads only the block). `load_frames` finds frames,
+  `image_key` and angles (radians converted) in other HDF5 layouts or at
+  `data_path=`..., takes NXtomo pixel sizes, and a whole `geometry=`. `Scan.corrections` records
   what was done, and is saved with the scan.
 - **Cone-beam CT.** `tomojax.geometry.ConeGeometry` with a `ConeBeam` source
   and a flat detector (offsets, roll, pitch and yaw; turntable, tilted or any
@@ -405,10 +416,12 @@ without a translation frame (0.3's) are read as object-frame poses, and
   makes them up to n² times cheaper. On the FIPS walnut (pixels half a voxel
   at the axis) it makes iterative reconstruction 3.7 times faster with no
   loss of accuracy.
-- `tomojax preprocess --beam-hardening C1,C2,...` maps each value p to
-  `C1 p + C2 p^2 + ...`, and `--remove-stripes WIDTH` removes rings by
-  subtracting each detector pixel's constant offset (`PreprocessConfig`'s
-  `beam_hardening` and `stripe_width`).
+- `tomojax preprocess` is a thin layer over `tj.load_frames` and the
+  corrections: `--flats`/`--darks` (TIFFs or levels, for any input),
+  `--select-views`, `--reject-views`, `--crop`, `--zingers`,
+  `--remove-stripes WIDTH` (rings), `--reject-outliers`, `--beam-hardening
+  C1,C2,...` and, expert, `--paganin`, `--epsilon` and the HDF5 paths. The
+  scan written records each correction, and `tomojax inspect` lists them.
 - `tomojax export` writes a reconstruction as 32-bit or scaled 16-bit TIFF
   z-slices, or one raw file, with a JSON sidecar of shape, voxel size and
   scaling, reading one slice at a time.

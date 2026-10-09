@@ -60,9 +60,8 @@ def test_io_root_surface_is_smaller_than_full_api() -> None:
 
     assert len(io_root.__all__) < len(io_api.__all__)
     assert "load_dataset" in io_root.__all__
-    assert "preprocess_nxtomo" in io_root.__all__
     assert "inspect_dataset" not in io_root.__all__
-    assert "flat_dark_to_absorption" not in io_root.__all__
+    assert "locate_frames" not in io_root.__all__
 
 
 def test_cli_catalog_is_product_only(capsys: pytest.CaptureFixture[str]) -> None:
