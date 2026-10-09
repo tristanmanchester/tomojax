@@ -118,7 +118,16 @@ def fetch_walnut() -> None:
     if done.exists():
         return
     shutil.rmtree("/data/Walnut1", ignore_errors=True)  # an interrupted extraction
-    subprocess.run(["curl", "-L", "--fail", "-o", "/tmp/w.zip", WALNUT_ZIP], check=True)
+    # Zenodo drops long downloads: resume where each attempt stopped.
+    fetch = ["curl", "-L", "--fail", "--retry", "5", "--retry-all-errors", "-C", "-",
+             "-o", "/tmp/w.zip", WALNUT_ZIP]  # fmt: skip
+    for _ in range(20):
+        if subprocess.run(fetch, check=False).returncode == 0:
+            break
+        time.sleep(10)
+    else:
+        raise RuntimeError("could not download walnut 1 from Zenodo")
+    subprocess.run(["unzip", "-tq", "/tmp/w.zip"], check=True)  # whole, before unpacking
     subprocess.run(["unzip", "-q", "/tmp/w.zip", "-d", "/data"], check=True)
     if not list(Path("/data/Walnut1/Reconstructions").glob("full_AGD_50_*.tiff")):
         raise RuntimeError("walnut 1's reference reconstruction is missing from the download")
