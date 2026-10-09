@@ -13,8 +13,17 @@ see :class:`Step`.
 
 from __future__ import annotations
 
-from ._engine import correct_frames, correct_projections
+from ._engine import Corrected, correct_frames, correct_projections
 from ._records import Correction
-from ._steps import BeamHardening, Step
+from ._steps import BeamHardening, RejectViews, Step, Stripes
 
-__all__ = ["BeamHardening", "Correction", "Step", "correct_frames", "correct_projections"]
+__all__ = [
+    "BeamHardening",
+    "Corrected",
+    "Correction",
+    "RejectViews",
+    "Step",
+    "Stripes",
+    "correct_frames",
+    "correct_projections",
+]

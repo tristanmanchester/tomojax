@@ -14,7 +14,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -41,20 +41,26 @@ def correct_frames(
     white_level: float | None,
     steps: Sequence[Step],
     epsilon: float,
+    view_positions: np.ndarray | None = None,
     batch_views: int | None = None,
-) -> tuple[np.ndarray, tuple[Correction, ...]]:
+) -> Corrected:
     """Line integrals from ``counts`` ``(views, rows, columns)``, and the records of how.
 
     ``flats`` are flat frames and ``flat_positions`` the number of views
     recorded before each (frames at one position are one set; None, one set);
     ``white_level`` stands in for flats on scanners that record it instead.
-    ``darks`` default to zero.
+    ``darks`` default to zero. ``view_positions`` places each view among the
+    flats (by default view ``i`` at ``i + 1/2``).
     """
     views, rows, cols = (int(s) for s in counts.shape)
     ordered = _ordered(steps)
     fields, field_record = _flat_fields(flats, flat_positions, darks, white_level, (rows, cols))
-    lo, hi, t = _interpolation(views, fields.positions)
-    head, tail = _split_at_whole_rows([s for d, s in ordered if d == "line integrals"])
+    at = (
+        np.arange(views) + 0.5 if view_positions is None else np.asarray(view_positions, np.float64)
+    )
+    lo, hi, t = _interpolation(at, fields.positions)
+    line = [s for d, s in ordered if d == "line integrals"]
+    head, tail = _split_at_break(line)
     counts_steps = tuple(s for d, s in ordered if d == "counts")
     transmission_steps = tuple(s for d, s in ordered if d == "transmission")
     out = np.empty((views, rows, cols), np.float32)
@@ -84,18 +90,26 @@ def correct_frames(
         "nonfinite_set_to_zero": int(tally[1]),
     }
     log = Correction("log", {"epsilon": float(epsilon)}, found)
+    out, kept, tail_records = _run_rest(out, tail, batch_views)
     records = tuple(
         [s.record() for s in counts_steps] + list(field_record)
         + [s.record() for s in transmission_steps] + [log]
-        + [s.record() for d, s in ordered if d == "line integrals"]
+        + [s.record() for s in head] + list(tail_records)
     )  # fmt: skip
-    _run_rest(out, tail, batch_views)
-    return out, records
+    return Corrected(out, records, kept)
+
+
+class Corrected(NamedTuple):
+    """Corrected line integrals, the records of each step, and the input views they keep."""
+
+    projections: np.ndarray
+    records: tuple[Correction, ...]
+    kept: np.ndarray  # indices of the input views, increasing
 
 
 def correct_projections(
     projections: Any, steps: Sequence[Step], *, batch_views: int | None = None
-) -> tuple[np.ndarray, tuple[Correction, ...]]:
+) -> Corrected:
     """``projections`` (line integrals) through ``steps``, and their records."""
     ordered = _ordered(steps)
     if any(d != "line integrals" for d, _ in ordered):
@@ -106,8 +120,8 @@ def correct_projections(
             "them to Frames.corrected"
         )
     out = np.array(projections, np.float32, copy=True)
-    _run_rest(out, [s for _, s in ordered], batch_views)
-    return out, tuple(s.record() for _, s in ordered)
+    out, kept, records = _run_rest(out, [s for _, s in ordered], batch_views)
+    return Corrected(out, records, kept)
 
 
 def _ordered(steps: Sequence[Step]) -> list[tuple[str, Step]]:
@@ -119,8 +133,11 @@ def _ordered(steps: Sequence[Step]) -> list[tuple[str, Step]]:
             )
         if step.domain not in DOMAINS:
             raise ValueError(f"{type(step).__name__} has an unknown domain {step.domain!r}")
-        if step.whole_rows and step.domain != "line integrals":
-            raise ValueError(f"{type(step).__name__}: whole-row steps act on line integrals only")
+        if (step.whole_rows or step.selects_views) and step.domain != "line integrals":
+            raise ValueError(
+                f"{type(step).__name__}: steps on whole rows or selecting views act on "
+                "line integrals only"
+            )
     return [(d, s) for d in DOMAINS for s in steps if s.domain == d]
 
 
@@ -178,13 +195,12 @@ def _mean(frames: np.ndarray, shape: tuple[int, int], name: str) -> np.ndarray:
     return np.asarray(frames, np.float64).mean(axis=0).astype(np.float32)
 
 
-def _interpolation(views: int, positions: np.ndarray) -> tuple[np.ndarray, ...]:
-    """For each view, the flat sets either side of it and the weight of the later one.
+def _interpolation(q: np.ndarray, positions: np.ndarray) -> tuple[np.ndarray, ...]:
+    """For each view at ``q``, the flat sets either side of it and the weight of the later one.
 
-    View i sits at i + 1/2 among the positions (views recorded before each set);
-    views before the first set or after the last take that set alone.
+    ``positions`` are the views recorded before each set; views before the
+    first set or after the last take that set alone.
     """
-    q = np.arange(views) + 0.5
     hi = np.clip(np.searchsorted(positions, q, side="right"), 0, len(positions) - 1)
     lo = np.clip(hi - 1, 0, len(positions) - 1)
     span = positions[hi] - positions[lo]
@@ -223,34 +239,64 @@ def _first_pass(
     return jnp.where(bad, 0.0, p), nonpositive, jnp.sum(bad)
 
 
-def _split_at_whole_rows(steps: list[Step]) -> tuple[list[Step], list[Step]]:
-    """The steps before the first whole-row step, and the rest."""
+def _split_at_break(steps: list[Step]) -> tuple[list[Step], list[Step]]:
+    """The steps before the first that needs whole rows or selects views, and the rest."""
     for i, step in enumerate(steps):
-        if step.whole_rows:
+        if step.whole_rows or step.selects_views:
             return steps[:i], steps[i:]
     return steps, []
 
 
-def _run_rest(out: np.ndarray, steps: Sequence[Step], batch_views: int | None) -> None:
-    """``steps`` over ``out`` in place: whole-row steps on slabs of rows, the others on views."""
-    views, rows, cols = out.shape
+def _run_rest(
+    out: np.ndarray, steps: Sequence[Step], batch_views: int | None
+) -> tuple[np.ndarray, np.ndarray, tuple[Correction, ...]]:
+    """``steps`` over ``out``: whole-row steps on slabs of rows, the others on views.
+
+    A step that selects views drops the others from ``out``. Returns the
+    result, the indices of the views kept, and each step's record.
+    """
+    kept = np.arange(out.shape[0])
+    records: list[Correction] = []
     i = 0
     while i < len(steps):
-        if steps[i].whole_rows:
+        step = steps[i]
+        views, rows, cols = out.shape
+        batch = batch_views or max(1, min(views, _BATCH_BYTES // (4 * rows * cols)))
+        if step.selects_views:
+            stats = np.concatenate([
+                np.asarray(_statistic(step, jnp.asarray(out[v0 : v0 + batch])))
+                for v0 in range(0, views, batch)
+            ])  # fmt: skip
+            keep, found = step.select(stats, kept)
+            if not keep.any():
+                raise ValueError(f"{type(step).__name__} would reject every view")
+            if not keep.all():
+                out, kept = out[keep], kept[keep]
+            records.append(Correction(step.record().name, step.record().settings, found))
+            i += 1
+            continue
+        if step.whole_rows:
             slab = max(1, min(rows, _BATCH_BYTES // (4 * views * cols)))
             for r0 in range(0, rows, slab):
                 part = jnp.asarray(out[:, r0 : r0 + slab])
-                out[:, r0 : r0 + slab] = np.asarray(_apply((steps[i],), part))
+                out[:, r0 : r0 + slab] = np.asarray(_apply((step,), part))
+            records.append(step.record())
             i += 1
             continue
         j = i
-        while j < len(steps) and not steps[j].whole_rows:
+        while j < len(steps) and not (steps[j].whole_rows or steps[j].selects_views):
             j += 1
         run = tuple(steps[i:j])
-        batch = batch_views or max(1, min(views, _BATCH_BYTES // (4 * rows * cols)))
         for v0 in range(0, views, batch):
             out[v0 : v0 + batch] = np.asarray(_apply(run, jnp.asarray(out[v0 : v0 + batch])))
+        records.extend(s.record() for s in run)
         i = j
+    return out, kept, tuple(records)
+
+
+@partial(jax.jit, static_argnames=("step",))
+def _statistic(step: Step, batch: jax.Array) -> jax.Array:
+    return step.statistic(batch)
 
 
 @partial(jax.jit, static_argnames=("steps",))

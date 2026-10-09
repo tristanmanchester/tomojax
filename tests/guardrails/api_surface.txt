@@ -47,6 +47,7 @@ class tomojax.Frames(
         darks: 'np.ndarray | None' = None,
         flat_positions: 'np.ndarray | None' = None,
         white_level: 'float | None' = None,
+        view_positions: 'np.ndarray | None' = None,
         name: 'str' = 'sample',
         source: 'ProjectionDataset | None' = None,
     ) -> None
@@ -57,6 +58,7 @@ class tomojax.Frames(
         epsilon: 'float' = 1e-06,
         batch_views: 'int | None' = None,
     ) -> 'Scan'
+    .selected(self, views: 'slice | Sequence[int] | np.ndarray') -> 'Frames'
     .views
 class tomojax.Grid(
         nx: 'int',
@@ -111,6 +113,7 @@ class tomojax.Scan(
     ) -> 'Scan'
     .grid
     .poses
+    .selected(self, views: 'slice | Sequence[int] | np.ndarray') -> 'Scan'
     .to_astra(self) -> 'tuple[np.ndarray, dict[str, Any], dict[str, Any]]'
 tomojax.__version__: str
 def tomojax.align(

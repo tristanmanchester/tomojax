@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 import tomojax as tj
-from tomojax.corrections import BeamHardening, Correction
+from tomojax.corrections import BeamHardening, Correction, RejectViews, Stripes
 
 from ._helpers import tiny_detector, tiny_grid, write_projection_dataset, write_raw_nxtomo
 
@@ -198,3 +198,99 @@ def test_a_nikon_scan_is_corrected_with_its_white_level(tmp_path: Path) -> None:
     )
     assert scan.corrections[0] == Correction("flat_dark", {"white_level": 60000.0, "darks": 0})
     assert type(scan.geometry).__name__ == "ConeGeometry"
+
+
+def test_stripes_removes_pixel_offsets_the_flats_miss(tmp_path: Path) -> None:
+    views, nv, nu = 40, 3, 64
+    u = np.arange(nu)[None, None, :]
+    centre = 32 + 12 * np.sin(np.linspace(0, 2 * np.pi, views))[:, None, None]
+    truth = 2.0 * np.maximum(0.0, 1.0 - ((u - centre) / 18.0) ** 2) * np.ones((1, nv, 1))
+    gain = np.ones(nu)
+    gain[[10, 31, 45]] = [0.97, 1.03, 0.98]  # pixels the flats do not describe
+    stack = tmp_path / "views"
+    stack.mkdir()
+    for i, image in enumerate(1000.0 * np.exp(-truth) * gain):
+        iio.imwrite(stack / f"p_{i:03d}.tif", image.astype(np.float32))
+    frames = tj.load_frames(
+        stack,
+        angles=np.linspace(0.0, 360.0, views, endpoint=False),
+        flats=np.full((nv, nu), 1000.0),
+    )
+    plain = np.asarray(frames.corrected().projections)
+    cleaned = frames.corrected(Stripes(9))
+    # Columns 10 and 31 stand out from their neighbours; column 45's offset is
+    # smaller than the gradient across it and stays.
+    error = np.abs(np.asarray(cleaned.projections) - truth).max(axis=(0, 1))
+    assert error[[10, 31]].max() < 2e-3
+    assert np.abs(plain - truth).max(axis=(0, 1))[[10, 31]].min() > 0.02
+    assert np.delete(error, [10, 31, 45]).max() < 2e-3
+    assert cleaned.corrections[-1] == Correction("stripes", {"width": 9})
+    # A step after a whole-row step runs on its result.
+    both = frames.corrected(Stripes(9), BeamHardening((1.0, 0.05)), batch_views=7)
+    p = np.asarray(cleaned.projections)
+    np.testing.assert_allclose(np.asarray(both.projections), p + 0.05 * p**2, rtol=1e-5, atol=1e-6)
+    with pytest.raises(ValueError, match=">= 3"):
+        Stripes(2)
+
+
+def test_reject_views_drops_outliers_and_their_geometry(tmp_path: Path) -> None:
+    views = 12
+    counts = np.random.default_rng(1).integers(495, 506, (views, 2, 3)).astype(np.uint16)
+    counts[[4, 9]] = 5  # the shutter closed for two views
+    _write_frames(
+        tmp_path / "scan.nxs",
+        np.concatenate([np.full((1, 2, 3), 1000, np.uint16), counts]),
+        [1, *[0] * views],
+        [0, *np.linspace(0, 180, views, endpoint=False)],
+    )
+    scan = tj.load_frames(tmp_path / "scan.nxs").corrected(RejectViews(), BeamHardening((1.0, 0.1)))
+    keep = np.delete(np.arange(views), [4, 9])
+    assert scan.projections.shape == (10, 2, 3)
+    np.testing.assert_allclose(scan.angles, np.linspace(0, 180, views, endpoint=False)[keep])
+    p = -np.log(counts[keep] / 1000.0)
+    np.testing.assert_allclose(np.asarray(scan.projections), p + 0.1 * p**2, rtol=1e-5)
+    rejected = scan.corrections[-2]
+    assert rejected.name == "reject_views" and rejected.found["rejected"] == [4, 9]
+    # A scan of line integrals rejects views the same way, numbered in that scan.
+    again = tj.load(tmp_path / "scan.nxs").selected(slice(2, None)).corrected(RejectViews())
+    assert again.corrections[-1].found["rejected"] == [2, 7]
+    assert again.projections.shape[0] == 8
+
+
+def test_selected_views_keep_their_geometry_and_flats(tmp_path: Path) -> None:
+    frames = np.stack([np.full((2, 2), v, np.float32) for v in (10, 8, 8, 8, 8, 20)])
+    _write_frames(tmp_path / "scan.nxs", frames, [1, 0, 0, 0, 0, 1], [0, 0, 45, 90, 135, 0])
+    loaded = tj.load_frames(tmp_path / "scan.nxs")
+    picked = loaded.selected([0, 3])
+    np.testing.assert_allclose(picked.geometry.angles, [0, 135])
+    flats = 10 + 10 * np.asarray([0.5, 3.5]) / 4  # interpolated at their places in the scan
+    np.testing.assert_allclose(
+        np.asarray(picked.corrected().projections)[:, 0, 0], -np.log(8 / flats), rtol=1e-5
+    )
+    whole = loaded.corrected()
+    by_mask = whole.selected(np.asarray([True, False, False, True]))
+    np.testing.assert_allclose(
+        np.asarray(by_mask.projections), np.asarray(picked.corrected().projections)
+    )
+    with pytest.raises(ValueError, match="increasing"):
+        whole.selected([3, 0])
+
+
+def test_selected_views_of_a_posed_multi_orbit_scan() -> None:
+    from tomojax.geometry import ConeBeam, ConeGeometry
+
+    grid, detector = tiny_grid(nx=4, ny=4, nz=4), tiny_detector(nu=4, nv=4)
+    orbits = [
+        tj.Scan(
+            np.full((3, 4, 4), k, np.float32),
+            ConeGeometry(grid, detector, [0.0, 120.0, 240.0], ConeBeam(20.0, 30.0 + k)),
+        )
+        for k in range(2)
+    ]
+    combined = tj.Scan.combine(orbits)
+    picked = combined.selected([1, 2, 4])
+    assert picked.projections[:, 0, 0].tolist() == [0.0, 0.0, 1.0]
+    np.testing.assert_allclose(picked.angles, [120.0, 240.0, 120.0])
+    assert [s.beam.source_to_detector for s in picked.geometry.segments] == [30.0, 31.0]
+    one_orbit = combined.selected([3, 5])
+    assert isinstance(one_orbit.geometry, ConeGeometry)

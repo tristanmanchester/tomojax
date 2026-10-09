@@ -261,9 +261,14 @@ without a translation frame (0.3's) are read as object-frame poses, and
   TIFFs). `Frames.corrected(*steps)` makes the scan of line integrals
   `-log((I - D) / (F - D))` on the device, a batch of views at a time, each
   view's flat interpolated between the flat sets taken around it; steps from
-  `tomojax.corrections` (`BeamHardening` so far) run on counts, transmission
-  or line integrals, and `Scan.corrected` runs line-integral steps on a scan.
-  `Scan.corrections` records what was done, and is saved with the scan.
+  `tomojax.corrections` run on counts, transmission or line integrals:
+  `Stripes(width)` removes rings (sorting-based, on the GPU a detector row at
+  a time), `RejectViews(z)` drops views whose median is an outlier (and their
+  geometry), and `BeamHardening` linearises with a polynomial.
+  `Scan.corrected` runs line-integral steps on a scan, and `Scan.selected` and
+  `Frames.selected` keep some views with their geometry (each view's flat is
+  still interpolated at its place in the scan). `Scan.corrections` records
+  what was done, and is saved with the scan.
 - **Cone-beam CT.** `tomojax.geometry.ConeGeometry` with a `ConeBeam` source
   and a flat detector (offsets, roll, pitch and yaw; turntable, tilted or any
   rotation axis; per-view poses). Rays are sampled on voxel planes (Joseph)

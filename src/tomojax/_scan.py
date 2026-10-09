@@ -85,8 +85,27 @@ class Scan:
         """
         from tomojax.corrections import correct_projections
 
-        projections, records = correct_projections(self.projections, steps, batch_views=batch_views)
-        return replace(self, projections=projections, corrections=(*self.corrections, *records))
+        done = correct_projections(self.projections, steps, batch_views=batch_views)
+        geometry = (
+            self.geometry
+            if len(done.kept) == self.projections.shape[0]
+            else _views_of(self.geometry, done.kept)
+        )
+        return replace(
+            self,
+            projections=done.projections,
+            geometry=geometry,
+            corrections=(*self.corrections, *done.records),
+        )
+
+    def selected(self, views: slice | Sequence[int] | np.ndarray) -> Scan:
+        """The scan of these ``views`` (a slice, increasing indices or a mask) and geometry."""
+        kept = _view_indices(views, self.projections.shape[0])
+        return replace(
+            self,
+            projections=np.asarray(self.projections)[kept],
+            geometry=_views_of(self.geometry, kept),
+        )
 
     def __post_init__(self) -> None:
         _check_shape("Scan: projections", self.projections.shape, self.geometry)
@@ -253,7 +272,9 @@ class Frames:
     alone, with ``flat_positions`` the number of views recorded before each
     (flats taken before and after a scan are interpolated between); ``darks``
     the frames with the beam off. Scanners that calibrate their flat field
-    record a ``white_level`` instead. :meth:`corrected` makes the
+    record a ``white_level`` instead. ``view_positions`` places each view
+    among the flats, in the units of ``flat_positions`` (by default view ``i``
+    at ``i + 1/2``; :meth:`selected` keeps it). :meth:`corrected` makes the
     :class:`Scan` of line integrals. Made by :func:`load_frames`.
     """
 
@@ -263,11 +284,14 @@ class Frames:
     darks: np.ndarray | None = None
     flat_positions: np.ndarray | None = None
     white_level: float | None = None
+    view_positions: np.ndarray | None = None
     name: str = "sample"
     source: ProjectionDataset | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         _check_shape("Frames: counts", self.counts.shape, self.geometry)
+        if self.view_positions is not None and np.shape(self.view_positions) != (self.views,):
+            raise ValueError(f"view_positions needs one entry for each of the {self.views} views")
 
     def __repr__(self) -> str:
         views, rows, cols = self.counts.shape
@@ -298,18 +322,40 @@ class Frames:
         """
         from tomojax.corrections import correct_frames
 
-        projections, records = correct_frames(
+        done = correct_frames(
             self.counts,
             flats=self.flats,
             flat_positions=self.flat_positions,
+            view_positions=self.view_positions,
             darks=self.darks,
             white_level=self.white_level,
             steps=steps,
             epsilon=epsilon,
             batch_views=batch_views,
         )
-        source = None if self.source is None else replace(self.source, projections=projections)
-        return Scan(projections, self.geometry, self.name, records, source)
+        geometry = (
+            self.geometry if len(done.kept) == self.views else _views_of(self.geometry, done.kept)
+        )
+        return Scan(done.projections, geometry, self.name, done.records, self.source)
+
+    def selected(self, views: slice | Sequence[int] | np.ndarray) -> Frames:
+        """These sample ``views`` only (a slice, increasing indices or a mask), with their geometry.
+
+        Each view keeps its place among the flats (:attr:`view_positions`), so
+        its flat is interpolated as before.
+        """
+        kept = _view_indices(views, self.views)
+        at = np.arange(self.views) + 0.5 if self.view_positions is None else self.view_positions
+        counts = self.counts
+        counts = (
+            counts.frames_at(kept) if hasattr(counts, "frames_at") else np.asarray(counts)[kept]
+        )
+        return replace(
+            self,
+            counts=counts,
+            geometry=_views_of(self.geometry, kept),
+            view_positions=np.asarray(at, np.float64)[kept],
+        )
 
 
 def load_frames(
@@ -373,9 +419,58 @@ def load_frames(
     return replace(frames, **changes)
 
 
+def _view_indices(views: slice | Sequence[int] | np.ndarray, count: int) -> np.ndarray:
+    """``views`` of ``count`` as increasing indices."""
+    if isinstance(views, slice):
+        return np.arange(count)[views]
+    chosen = np.asarray(views)
+    if chosen.dtype == bool:
+        if chosen.shape != (count,):
+            raise ValueError(f"a mask of views needs {count} entries, not {chosen.shape}")
+        return np.flatnonzero(chosen)
+    chosen = chosen.astype(np.int64).reshape(-1)
+    if chosen.size and (chosen.min() < 0 or chosen.max() >= count):
+        raise ValueError(f"views must be in 0..{count - 1}")
+    if np.any(np.diff(chosen) <= 0):
+        raise ValueError("views must be increasing indices, each once")
+    return chosen
+
+
+def _views_of(geometry: ScanGeometry, kept: np.ndarray) -> ScanGeometry:
+    """``geometry`` of the views ``kept`` (increasing indices), wrappers and segments kept."""
+    from tomojax._data.geometry_meta import AugmentedGeometry
+    from tomojax.geometry import ConeSegments
+
+    if isinstance(geometry, ConeSegments):
+        parts, start = [], 0
+        for segment in geometry.segments:
+            n = _view_count(segment)
+            mine = kept[(kept >= start) & (kept < start + n)] - start
+            if len(mine):
+                parts.append(_views_of(segment, mine))
+            start += n
+        return parts[0] if len(parts) == 1 else ConeSegments(tuple(parts))
+    if isinstance(geometry, AugmentedGeometry):
+        return replace(
+            geometry,
+            base=_views_of(geometry.base, kept),
+            align_params=np.asarray(geometry.align_params)[kept],
+        )
+    if not is_dataclass(geometry) or isinstance(geometry, type):
+        raise TypeError(f"cannot select views of a {type(geometry).__name__} geometry")
+    fields: dict[str, Any] = vars(geometry)  # a wrapper's base, or a geometry's own angles
+    if "base" in fields:
+        return replace(geometry, base=_views_of(fields["base"], kept))
+    return replace(geometry, angles=np.asarray(fields["angles"])[kept])
+
+
+def _view_count(geometry: ScanGeometry) -> int:
+    return len(geometry.angles)  # pyright: ignore[reportAttributeAccessIssue]
+
+
 def _check_shape(what: str, shape: tuple[int, ...], geometry: ScanGeometry) -> None:
     detector = geometry.detector
-    views = len(geometry.angles)  # pyright: ignore[reportAttributeAccessIssue]
+    views = _view_count(geometry)
     if tuple(int(s) for s in shape) != (views, detector.nv, detector.nu):
         raise ValueError(
             f"{what} are {tuple(shape)} but the geometry has {views} views of "
