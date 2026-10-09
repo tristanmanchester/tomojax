@@ -57,11 +57,13 @@ _PUBLIC = (
     "--progress",
 )
 
+_SETTINGS = (
+    "Expert settings are --config keys, fields of the method's configuration:\n"
+    "tomojax.recon.FBPConfig (fbp, and FDK for cone beams), CGLSConfig, FistaConfig\n"
+    "or SPDHGConfig. Each replaces that field of the class's defaults; a setting the\n"
+    "method's class has no field for fails with the ones it has.\n"
+)
 _EPILOG = (
-    "Expert settings are fields of the method's configuration: tomojax.recon.FBPConfig\n"
-    "(fbp, and FDK for cone beams), CGLSConfig, FistaConfig or SPDHGConfig. Each\n"
-    "replaces that field of the class's defaults; a setting the method's class has\n"
-    "no field for fails with the ones it has.\n\n"
     "Examples:\n"
     "  tomojax recon scan.nxs -o recon.nxs\n"
     "  tomojax recon scan.nxs -o recon.nxs --method cgls --iterations 100\n"
@@ -153,7 +155,7 @@ def build_parser() -> argparse.ArgumentParser:
     _ = p.add_argument(
         "--progress", action="store_true", help="Show progress bars if tqdm is available"
     )
-    hide_expert(p, _PUBLIC)
+    hide_expert(p, _PUBLIC, settings=_SETTINGS)
     return p
 
 

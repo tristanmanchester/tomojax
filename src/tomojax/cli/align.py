@@ -52,6 +52,11 @@ _PUBLIC = (
 )
 
 
+_SETTINGS = (
+    "Expert settings are --config keys, tomojax.alignment.AlignConfig fields. Each\n"
+    "replaces that field of the configuration the mode and quality give, which\n"
+    "--dry-run prints; --config-keys shows the default mode's values.\n"
+)
 _EPILOG = (
     "Modes:\n"
     "  pose           per-view motion: rotations and translations (default)\n"
@@ -60,9 +65,6 @@ _EPILOG = (
     "  cor-then-pose  setup geometry, then per-view motion\n"
     "  full           detector centre, roll and axis direction, then motion,\n"
     "                 coarse to fine\n\n"
-    "Expert settings are tomojax.alignment.AlignConfig fields. Each replaces that\n"
-    "field of the configuration the mode and quality give, which --dry-run prints;\n"
-    "--config-keys shows the default mode's values.\n\n"
     "Examples:\n"
     "  tomojax align scan.nxs -o aligned.nxs\n"
     "  tomojax align scan.nxs -o aligned.nxs --mode cor-then-pose --freeze dy\n"
@@ -154,7 +156,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print the resolved plan and grid as JSON and exit without aligning",
     )
-    hide_expert(p, _PUBLIC)
+    hide_expert(p, _PUBLIC, settings=_SETTINGS)
     return p
 
 

@@ -19,9 +19,9 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
 EXPERT_EPILOG = (
-    "Expert settings are TOML keys for --config; --config-keys lists them with their "
-    "defaults. Exit status: 0 success, 1 failure, 2 usage error."
+    "Expert settings are TOML keys for --config; --config-keys lists them with their defaults."
 )
+EXIT_STATUS = "Exit status: 0 success, 1 failure, 2 usage error."
 
 
 def add_output(parser: argparse.ArgumentParser, description: str) -> None:
@@ -44,17 +44,22 @@ def options(parser: argparse.ArgumentParser) -> list[argparse.Action]:
     return parser._actions  # noqa: SLF001
 
 
-def hide_expert(parser: argparse.ArgumentParser, public: Iterable[str]) -> None:
-    """Keep only ``public`` options (and positionals) in ``--help``; record the others' help."""
+def hide_expert(
+    parser: argparse.ArgumentParser, public: Iterable[str], *, settings: str = EXPERT_EPILOG
+) -> None:
+    """Keep only ``public`` options (and positionals) in ``--help``; record the others' help.
+
+    The help ends with ``settings``, what the expert settings are (a command with
+    its own kind of settings says so), and the exit statuses.
+    """
     keep = set(public) | {"-h", "--help", "--config", "--config-keys", "-o", "--output", "--force"}
     for action in options(parser):
         if action.option_strings and set(action.option_strings).isdisjoint(keep):
             if action.help != argparse.SUPPRESS:
                 action.expert_help = action.help  # type: ignore[attr-defined]
             action.help = argparse.SUPPRESS
-    parser.epilog = (
-        EXPERT_EPILOG if parser.epilog is None else f"{parser.epilog}\n\n{EXPERT_EPILOG}"
-    )
+    ending = f"{settings.rstrip()}\n{EXIT_STATUS}"
+    parser.epilog = ending if parser.epilog is None else f"{parser.epilog}\n\n{ending}"
     parser.formatter_class = argparse.RawDescriptionHelpFormatter
 
 
