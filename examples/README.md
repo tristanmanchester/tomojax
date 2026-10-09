@@ -63,7 +63,8 @@ full-turn 30° laminography scan of continuous Gaussian blobs, with analytic
 line integrals at randomly perturbed poses (±1° rotations, ±2 px shifts per
 view) and 0.2% noise. The data match no voxel discretisation. It reconstructs
 once with the nominal poses (CGLS) and once jointly with the poses using
-`tj.align`, then writes `images/alignment-example.png` and its JSON metrics.
+`tj.align`, then writes `images/alignment-example.png` and its JSON metrics,
+replacing the checked-in figure; it takes no options.
 On an RTX 4070 Laptop GPU it recovers rotations to 0.0022° RMS in about 18 s
 including compilation, lowering the volume error from 0.68 to 0.047.
 `tj.align` reports the least-motion estimate, so the truth is compared in its

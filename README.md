@@ -96,9 +96,12 @@ tj.save("recon.nxs", tj.reconstruct(result.scan))
 The command-line options use the same names: the CGLS line is
 `tomojax recon scan.nxs -o recon.nxs --method cgls --iterations 50`, and the
 alignment `tomojax align scan.nxs -o aligned.nxs --mode cor-then-pose`.
-Expert settings are a configuration of the method's own class,
+Expert settings are a configuration of the method's own class from
+`tomojax.recon`,
 `tj.reconstruct(scan, "fista", config=FistaConfig(regulariser="huber_tv"))`,
-or the same fields in a TOML file given to `--config`.
+or the same fields in a TOML file given to `--config`. A long alignment can
+save its progress and resume after an interruption:
+`tj.align(scan, checkpoint="align.ckpt")`, or `--checkpoint align.ckpt`.
 
 `tj.Scan(projections, geometry)` builds a scan from arrays, and
 `tj.project(geometry, volume)` simulates one for any geometry. The building

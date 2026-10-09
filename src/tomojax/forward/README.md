@@ -82,9 +82,9 @@ The loss is `0.5 * sum((prediction - data)**2)`, without mean normalization,
 masking, or fitted scale. To optimize rigid pose parameters, pull `matrix_grad`
 through the function that builds your pose matrices; matrix entries themselves
 are not unconstrained rigid-pose parameters. Other differentiable losses can
-compose `project_joseph` with ordinary JAX operations. The existing alignment
-pipeline still uses its default trilinear model; these APIs do not change its
-discretization automatically.
+compose `project_joseph` with ordinary JAX operations. The alignment pipeline
+samples with the same linear Joseph model by default (its `ray_integrator`
+setting) but does not call these fused functions.
 
 
 `joseph_pose_normal_equations(volume, poses, pose_directions, data, grid, detector,

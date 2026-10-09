@@ -1,14 +1,23 @@
 # tomojax.recon
 
-`tomojax.recon` provides reconstruction routines:
+`tomojax.recon` provides the reconstruction routines behind
+`tj.reconstruct(scan, method)`:
 
-- `fbp`
-- `fbp_host`
+- `fbp` and `fdk` (cone beams), with `fbp_host` and `fdk_host` for volumes
+  kept in host memory
 - `fourier_reconstruct`
 - `cgls`
 - `cgls_multires`
 - `fista_tv`
 - `spdhg_tv`
+- `calibrate_cone_axis`, the cone-beam axis-offset and roll calibration
+
+Each method's settings are a configuration class: `FBPConfig` (FBP and FDK),
+`CGLSConfig`, `FistaConfig` and `SPDHGConfig`. Pass one as
+`tj.reconstruct(scan, "fista", config=FistaConfig(regulariser="huber_tv"))`;
+keywords such as `iterations=` replace the fields of the same name. The same
+fields are the keys of a `tomojax recon --config` TOML file
+(`tomojax recon --config-keys` lists them).
 
 Built-in parallel `fbp` zero-extends measured detector rows far enough to retain
 the ramp filter's tails at every output voxel. Zero raw data outside a detector
@@ -167,8 +176,9 @@ CUDA. Joseph requires rigid homogeneous poses, finite grid/detector placement
 and canonical detector coordinates. `info["projector_model"]` identifies the CGLS
 selection; multiresolution diagnostics retain it per level. The matching public
 forward API exposes first-order pose differentiation; the solvers return host
-diagnostics and are not differentiable layers. Alignment keeps the ray model
-for its internal reconstructions, matching its pose objective.
+diagnostics and are not differentiable layers. Alignment's FISTA
+reconstruction stages keep the ray model on parallel beams; its coupled pose
+solver samples with Joseph by default (`ray_integrator`).
 
 Set `joseph_interpolation="cubic"` with that model to use Keys cubic convolution
 (a=-1/2) and its matched transpose on either backend. The default is `"linear"`.

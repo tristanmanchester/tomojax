@@ -23,10 +23,14 @@ pages before planning a workflow.
 Import through public module roots or their `api` facades. Files beginning with
 `_` and the `core` implementation are not stable application interfaces.
 
+- [Command line](../src/tomojax/cli/README.md): the commands, their conventions
+  and `--config` files.
 - [Geometry](../src/tomojax/geometry/README.md): grids, detectors, and poses.
 - [Forward projection](../src/tomojax/forward/README.md): model and derivative choices.
 - [Reconstruction](../src/tomojax/recon/README.md): algorithms and configuration.
 - [IO](../src/tomojax/io/README.md): datasets and preprocessing.
+- [Alignment](../src/tomojax/alignment/README.md): configurations, plans and
+  checkpoints behind `tj.align`.
 - [Alignment solver](alignment-solver.md): Jacobians, coupling, and linear-solve diagnostics.
 - [Contributing](../CONTRIBUTING.md): tests, packaging, and repository conventions.
 - [Changelog](../CHANGELOG.md): behavioral changes and migration notes.

@@ -24,7 +24,8 @@ experimental. See [installation](installation.md) and [measurement scope](measur
 | Detector-centre offset with per-view motion | Experimental | `tomojax align corrected.nxs -o aligned.nxs --mode cor-then-pose` |
 | Mixed setup and pose alignment | Experimental; each stage fixes its gauge policy | `tomojax align corrected.nxs -o aligned.nxs --mode full` |
 | Deterministic synthetic dataset generation | Supported | `tomojax simulate -o synthetic_scan.nxs --size 64 --geometry parallel\|lamino\|cone` |
-| Python API reconstruction | Supported | `tomojax.geometry`, `tomojax.forward`, `tomojax.recon` |
+| Python API reconstruction | Supported | `tj.reconstruct(scan, method, config=...)`, `tj.project`, `tj.backproject`; building blocks in `tomojax.geometry`, `tomojax.forward`, `tomojax.recon` |
+| Python API alignment, with resumable checkpoints | Experimental | `tj.align(scan, mode=..., grid=..., checkpoint=..., config=...)` |
 
 ## Scope
 
@@ -42,7 +43,7 @@ Workflows outside the table above are research or expert diagnostics.
 | Public FISTA-TV and SPDHG-TV | JAX with matched discrete adjoints; convergence regressions for parallel and tilted scans; NumPy/memmap projections stream from host memory when large (SPDHG-TV also keeps its dual and weights there) |
 | Public CGLS (Python API and `tomojax recon --method cgls`) | Matched FP32 JAX/Pallas operators, scalar damping, optional squared physical voxel differences, nonzero starts; Pallas selected automatically on CUDA with canonical detector grids; large NumPy/memmap projections stream from host memory through the equivalent normal equations |
 | Joseph plane model (Python API) | `project_joseph` and the default discretization of CGLS, FISTA-TV and SPDHG-TV; explicit bilinear or Keys cubic interpolation; JAX reference and matched CUDA gather transpose; CUDA first-order volume/pose AD, JVP/VJP and batching; rigid poses and canonical detector grids required |
-| Fused Joseph least squares (Python API) | `joseph_l2_value_and_grad`: raw half squared error plus volume/matrix-pose gradients; CUDA retains residuals and tile reductions without a ray-by-plane tape; existing alignment pipeline retains its trilinear model |
+| Fused Joseph least squares (Python API) | `joseph_l2_value_and_grad`: raw half squared error plus volume/matrix-pose gradients; CUDA retains residuals and tile reductions without a ray-by-plane tape; not called by the alignment pipeline |
 | Joseph pose normal equations (Python API) | `joseph_pose_normal_equations`: per-view raw loss, directional gradient, Gauss-Newton matrix and residual; 1–16 caller-supplied pose directions; CUDA avoids a full projection Jacobian; caller chooses damping, priors and gauges |
 | Coarse-to-fine CGLS (Python API) | Optional `cgls_multires` with explicit budgets and a final full-data solve; tested on odd/shifted grids and sharp/noisy phantoms, with known performance regressions |
 | Internal differentiable FISTA core | JAX and explicit Pallas forward/adjoint variants, used by alignment workflows |

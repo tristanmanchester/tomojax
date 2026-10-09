@@ -427,8 +427,9 @@ constraints, and actual recovery evidence before changing these settings.
 
 ## Known hard cases
 
-For voxel-basis data that need accurate line integration, the Python API accepts
-`AlignConfig(ray_integrator="exact")`. This integrates the zero-extended trilinear
+For voxel-basis data that need accurate line integration, set
+`ray_integrator = "exact"` in a `--config` file (in Python,
+`AlignConfig(ray_integrator="exact")`). This integrates the zero-extended trilinear
 interpolant between voxel-centre planes using two-point Gaussian quadrature.
 It supports rigid parallel-ray poses, including tilted scans, anisotropic voxels,
 shifted detector centres and irregular view angles. Reconstruction, pose loss,

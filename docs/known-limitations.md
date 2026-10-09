@@ -6,10 +6,11 @@ detector-centre/COR alignment, and mixed setup and pose correction.
 
 ## Alignment limitations
 
-Alignment is experimental and needs scan-specific review. The opt-in coupled
-solver passes five of six modest-motion synthetic cells; noisy anisotropic
-recovery still fails. The [measurement guide](measurements.md) separates these
-results from default CLI behavior and larger-motion targets.
+Alignment is experimental and needs scan-specific review. The coupled solver,
+which `pose` and `cor-then-pose` alignment use by default, passes five of six
+modest-motion synthetic cells; noisy anisotropic recovery still fails. The
+[measurement guide](measurements.md) gives these results and separates them
+from the larger-motion targets.
 
 - Pose-only correction can absorb some setup errors. The reconstruction may
   look good while the recovered parameters differ from true geometry. COR mode
@@ -36,7 +37,7 @@ results from default CLI behavior and larger-motion targets.
   a detector-centre offset; `--mode cor-then-pose` reports it as the offset.
 - Abrupt jumps and short bursts of bad views need more robust diagnostics or
   specialized workflows.
-- The default autodiff Gauss–Newton Jacobian is one-sided at trilinear voxel
+- The default autodiff Gauss–Newton Jacobian is one-sided at interpolation-cell
   boundaries. Sharp objects can become trapped after a wrong shift update.
   The explicit `gn_jacobian="central"` option uses symmetric numerical columns
   at extra projection cost; see [the solver guidance](alignment-guide.md#gaussnewton-updates-at-interpolation-boundaries).
@@ -67,13 +68,13 @@ results from default CLI behavior and larger-motion targets.
 - The explicit CUDA Joseph projection API supports first-order derivatives
   for linear and cubic interpolation. Cubic has negative lobes, can overshoot,
   and uses a larger stencil; it does not remove physical support truncation or
-  poor pose observability. The current alignment pipeline still uses its
-  existing trilinear ray model.
-  Use its JAX reference for higher derivatives, and parameterize poses as rigid
+  poor pose observability. Alignment samples with linear Joseph interpolation
+  by default (`ray_integrator = "joseph"`; `"joseph_cubic"` selects cubic).
+  Use the JAX reference for higher derivatives, and parameterize poses as rigid
   transforms. Derivatives are local to the selected dominant axis and
   interpolation cell. The fused loss is unweighted half squared error; other
-  losses use the differentiable projector. This API does not automatically
-  switch the existing alignment pipeline from its trilinear ray model.
+  losses use the differentiable projector. The alignment pipeline does not
+  call the fused loss or pose normal equations.
 - Cone-beam scans: FDK assumes a circular source orbit (it is exact only in
   the orbit plane, with cone artefacts growing away from it) and supports full
   turns, including offset-detector (half-fan) turns with Wang's weights, and

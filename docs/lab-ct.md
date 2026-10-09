@@ -4,7 +4,8 @@ This guide takes a lab CT scan (a point source, a flat detector and a sample on
 a turntable) from the scanner's files to a reconstruction: import, calibrate
 the rotation axis, reconstruct with FDK or an iterative solver, and correct
 per-view motion. Every step is one `tomojax` command; the Python calls are at
-the end.
+the end. The commands assume the checkout's environment is active
+(`source .venv/bin/activate`); otherwise prefix them with `uv run --no-sync`.
 
 ## Import
 
@@ -136,7 +137,8 @@ tomojax export fdk.nxs -o fdk.raw --dtype uint16      # one raw file
 An output ending in `.raw` is written as one raw file; any other output is a
 directory of TIFF slices. TIFF slices have y rows and x columns, numbered from
 the bottom of the volume; raw files are little-endian and z-major. A JSON
-sidecar records the shape, the voxel size and, for `uint16`, the value range
+sidecar (`fdk.json` beside the raw file, `slice.json` in the slice directory)
+records the shape, the voxel size and, for `uint16`, the value range
 mapped to 0–65535 (`--range`, by default the 0.1 and 99.9 percentiles). The
 export reads one slice at a time.
 
@@ -266,9 +268,11 @@ were slower still.
 #### Bringing the orbits into register
 
 Each walnut comes with two geometries: `scan_geom_original.geom`, as the
-scanner recorded it, and `scan_geom_corrected.geom`, where the authors moved
-orbits 2 and 3 up by 0.397 and 0.794 mm to bring them into register with
-orbit 1. `bench/walnut_alignment.py` gives `tj.align` the original record
+scanner recorded it, and `scan_geom_corrected.geom`, where the authors raised
+the source and detector of orbits 2 and 3 by 0.397 and 0.794 mm to bring them
+into register with orbit 1. Seen from the object, which is how TomoJAX's poses
+describe it, the object sits that much lower in those orbits: a vertical
+correction (`dz`) of -0.397 and -0.794 mm. `bench/walnut_alignment.py` gives `tj.align` the original record
 (three orbits, every 4th view, binned 2 x 2) and finds the correction itself,
 in 4.4 minutes on the laptop GPU:
 

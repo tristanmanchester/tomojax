@@ -6,18 +6,17 @@
 ## Public API
 
 - `SimConfig`
-- `SimMetadata`
 - `SimulatedData`
 - `SimulationArtefacts`
-- `apply_simulation_artefacts`
 - `make_phantom`
 - `simulate`
 - `simulate_to_file`
-- `validate_simulation_artefacts`
 - simple phantom helpers such as `shepp_logan_3d`, `cube`, `sphere`, `blobs`,
-  `random_cubes_spheres`, and `lamino_disk`
-- sidecar metadata loaders for generated datasets
+  `random_cubes_spheres`, `rotated_centered_cube` and `lamino_disk`
+
+`tomojax.datasets.api` adds `SimMetadata` and `validate_simulation_artefacts`.
 
 ## Dependency policy
 
-Import from `tomojax.datasets`, not internal data-generation helpers.
+Import from `tomojax.datasets` or `tomojax.datasets.api`, not internal
+data-generation helpers.

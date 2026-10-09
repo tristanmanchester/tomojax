@@ -78,7 +78,8 @@ uv run --no-sync tomojax recon corrected.nxs -o tv.nxs --method fista --config h
 ```
 
 In Python this is
-`tj.reconstruct(scan, "fista", config=FistaConfig(regulariser="huber_tv", huber_delta=0.01))`.
+`tj.reconstruct(scan, "fista", config=FistaConfig(regulariser="huber_tv", huber_delta=0.01))`,
+with `from tomojax.recon import FistaConfig`.
 The keywords, like the command's options, replace the config's fields of the
 same names: `iterations=100` wins over the config's `iterations`.
 

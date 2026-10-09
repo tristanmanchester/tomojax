@@ -10,8 +10,9 @@ Every command has the shape `tomojax <command> INPUT -o OUTPUT [options]`
 - An existing output is refused unless `--force` is given.
 - `tomojax <command> --help` lists the command's options. Expert settings are
   not on the help page: put them in a TOML file and pass it with
-  `--config FILE`. `tomojax <command> --config-keys` lists the keys a file may
-  set, with their defaults; explicit command-line options override the file.
+  `--config FILE` (`preprocess`, `recon`, `align` and `simulate`).
+  `tomojax <command> --config-keys` lists the keys a file may set, with their
+  defaults; explicit command-line options override the file.
 - Exit status is 0 on success, 1 on failure (for `inspect`, also when the
   dataset is invalid) and 2 for a usage error.
 - `tomojax --version` prints the version.

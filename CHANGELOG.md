@@ -2,724 +2,497 @@
 
 ## Unreleased
 
-- `Alignment`'s fields are `(volume, scan, poses, info)`, volume first as in
-  `Reconstruction`; `Alignment.poses` is always a table, where `Scan.poses`
-  is None for a scan without corrections.
-- `tj.reconstruct(scan, method, config=...)` takes the method's own
-  configuration: an `FBPConfig` (for FDK too), `CGLSConfig`, `FistaConfig` or
-  `SPDHGConfig` from `tomojax.recon`, for example
-  `config=FistaConfig(regulariser="huber_tv", huber_delta=0.01)`. A config of
-  another method's class raises `ValueError`. The keywords are fields of that
-  class and each one given replaces its field, as `dataclasses.replace` does,
-  so a keyword wins over the config. `result.info` holds the resolved
-  `config` with the solver's record (iterations run, termination, losses),
-  and a saved reconstruction's `info` holds the config's fields.
-- Breaking: `tomojax recon` is `tj.reconstruct` on the command line: it loads
-  INPUT with `tj.load`, reconstructs with `tj.reconstruct` and saves with
-  `tj.save`. Its options are `--method`, `--filter`, `--iterations`,
-  `--tv-weight`, `--nonnegative`, `--warm-start`, `--seed`, `--grid`,
-  `--roi`, `--poses`/`--no-poses`, `--preview`, `--manifest` and
-  `--progress`. Expert settings are fields of the method's configuration
-  class in the `--config` file, each replacing that field of the class's
-  defaults (`--config-keys` lists them); a setting or option the method does
-  not take fails with the ones it does, as a usage error. Where the removed
-  options went:
-  - `--regulariser`, `--huber-delta`, `--tv-prox-iterations`, `--lipschitz`,
-    `--lower-bound`, `--upper-bound`, `--theta`, `--views-per-batch` and
-    `--gather-dtype`: the `--config` keys of the same names.
-    `views_per_batch` has no `auto` (the solvers stream large projections
-    from host memory), and `gather_dtype` no `auto`.
-  - `--checkpoint-projector`/`--no-checkpoint-projector`:
-    `checkpoint_projector = false`.
-  - `--spdhg-tau`, `--spdhg-sigma-data` and `--spdhg-sigma-tv`: `tau`,
-    `sigma_data` and `sigma_tv`, `SPDHGConfig`'s names; the old keys fail
-    with the new ones.
-  - `--mask cyl`: `--roi cyl`, as in `tomojax align`. The volume is zero
-    outside the cylinder every view sees, and FISTA and SPDHG take the
-    cylinder as their `support`, as before (`FistaConfig(support=...)` in
-    Python).
-  - `--det-u-px` and `--det-v-px`: `tomojax align --mode cor` estimates the
-    detector centre; the quickstart shows a centre sweep in Python, which
-    shifts `scan.detector.center`.
-  - `--volume-axes`: the volume is saved as `tj.save` saves it; `tomojax
-    export` writes other layouts.
-  - `--frame`: gone; it only labelled the file.
-  - `--transfer-guard`: JAX's own `jax.transfer_guard`.
+This release adds lab cone-beam CT (geometry, FDK, Nikon import, axis
+calibration, ASTRA conversion and multi-orbit `ConeSegments` scans) and a
+workflow API at the package root: `tj.load`, `tj.reconstruct`, `tj.align` and
+`tj.save`. Alignment now corrects scans that already carry poses and brings
+the orbits of multi-orbit scans into register, with the coupled pose solver and
+Joseph projection as its defaults. CGLS and FISTA share a scan's views among
+several GPUs (`devices=`), the solvers stream large scans from host memory,
+and most of them need much less device memory. The command line is now a thin
+layer over the Python API and every option has one name, so most 0.3 scripts,
+config files and command lines need changes; see Migrating from 0.3.
 
-  The manifest records the run's inputs and settings with `result.info`
-  under `reconstruction` (was `algorithm_config`), and an `roi` block like
-  `tomojax align`'s.
-- Breaking: a method's defaults are its configuration class's, in Python and
-  on the command line. `spdhg` runs 400 iterations (was 50), each one block of
-  views, and logs its objective every 10. `gather_dtype` is `fp32` on every
-  device (was `bf16` on GPUs, for the ray-model path rolled detectors take),
-  and FISTA's `views_per_batch` is its own (64 with batched operators, one
-  view on that path). `SPDHGConfig.nonnegative` defaults to False (was True),
-  as `FistaConfig`'s does. `warm_start` also starts `cgls`, and now starts
-  `fista`, which ignored it.
-- Breaking: `tomojax.recon.api` exports `method_config(method, config=...,
-  **settings)`, which resolves and checks a method's configuration, and
-  `reconstruct_arrays`, `tj.reconstruct` on arrays. They replace
-  `ReconstructionAlgorithmOptions`, `ReconstructionAlgorithmRequest`,
-  `ReconstructionResult`, `run_reconstruction_algorithm` and
-  `default_views_per_batch`.
-- Breaking: `tomojax align` is `tj.align` on the command line: it loads INPUT
-  with `tj.load`, aligns with `tj.align` and saves with `tj.save`. It now
-  corrects on top of the poses saved in INPUT, as `tj.align(tj.load(INPUT))`
-  does, where it used to start from the nominal geometry and replace them;
-  `--no-poses` starts from the nominal geometry, and a posed input takes only
-  `--mode pose`, as in Python. Its options are `--mode`, `--quality`,
-  `--levels`, `--freeze`, `--roi`, `--grid`, `--checkpoint`,
-  `--poses`/`--no-poses`, `--manifest`, `--progress` and `--dry-run`. Expert
-  settings are `tomojax.alignment.AlignConfig` fields in the `--config` file,
-  each replacing that field of the configuration the mode and quality give
-  (`--dry-run` prints it; `--config-keys` lists the fields); an unknown key
-  fails with the valid ones. Where the removed options went:
-  - `--outer-iterations`, `--iterations`, `--reconstruction`, `--tv-weight`,
-    `--regulariser`, `--huber-delta`, `--tv-prox-iterations`, `--lipschitz`,
-    `--seed`, `--nonnegative`, `--views-per-batch`, `--projector-unroll`,
-    `--projector-backend`, `--gather-dtype`, `--checkpoint-projector`,
-    `--ray-integrator`, `--opt-method`, `--gn-damping`, `--lbfgs-maxiter`,
-    `--lbfgs-ftol`, `--lbfgs-gtol`, `--lbfgs-maxls`, `--lbfgs-memory-size`,
-    `--lr-rot`, `--lr-trans`, `--w-rot`, `--w-trans`, `--optimise-dofs`,
-    `--schedule`, `--bounds`, `--gauge-policy`, `--pose-model`,
-    `--knot-spacing`, `--degree`, `--pose-translation-frame`,
-    `--seed-translations`, `--early-stop`, `--early-stop-rel-impr`,
-    `--early-stop-patience`, `--mask-vol`, `--log-summary` and
-    `--log-compact`: the `--config` keys of the same names.
-  - `--loss`, `--loss-param` and `--loss-schedule`: the `loss` key, a name
-    (`"huber"`), a table (`{ name = "huber", delta = 1.0 }`) or a level
-    schedule (`"4:phasecorr,2:ssim,1:l2_otsu"`).
-  - `--pose-solver alternating`: `gn_coupling = "fixed_volume"`. Settings the
-    coupled solver cannot use (a smooth `pose_model`, say) fail until it is
-    set, where they used to fail naming `--pose-solver`.
-  - `--resume PATH` and `--checkpoint-every N`: `--checkpoint PATH`, which
-    writes after every outer iteration and resumes a checkpoint of the same
-    run by itself. A checkpoint of other settings is refused, naming the
-    difference, instead of lending the run its `optimise_dofs`, `freeze` and
-    `schedule`.
-  - `--save-params-json` and `--save-params-csv`: `save_alignment_params_json`
-    and `save_alignment_params_csv` on `tj.load("aligned.nxs").poses` (see the
-    alignment guide).
-  - `--volume-axes`: the volume is saved as `tj.save` saves it.
-  - `--transfer-guard`: JAX's own `jax.transfer_guard`.
-  - `--mode cor_then_pose`: `--mode cor-then-pose`, the one spelling.
+### Migrating from 0.3
 
-  The aligned file holds `tj.align`'s six-column, detector-frame poses. The
-  `--dry-run` JSON gives the mode, quality, levels, grid, resolved schedule
-  and the whole configuration; the manifest gives the run's inputs and
-  settings with `result.info` (losses, gauge, calibrated setup geometry) under
-  `alignment`. The command's own pipeline (its cone-axis calibration,
-  single-resolution path, checkpoint writer and run plan) is gone.
-- `tj.align`'s `result.info` also holds the resolved `config` and, for pose
-  alignment of parallel and laminography scans, `implied_detector_u_px`: the
-  detector-centre offset the recovered translations hold, in pixels.
-- `tj.align(scan, grid=...)` aligns and reconstructs on another grid than the
-  scan's (a region, or another voxel size), as `tj.reconstruct` does; the
-  result's volume and `result.scan` are on that grid.
-- `tj.align(scan, checkpoint=path)` saves the alignment's progress to `path`
-  after each outer iteration and, when `path` already holds a checkpoint of
-  the same alignment, resumes from it (a finished one returns its result at
-  once). A file there from another alignment raises `ValueError` naming what
-  differs, for example "config differs in freeze (checkpoint [], current
-  ['dx'])", and is left untouched.
-- Breaking: alignment checkpoints are schema 4. A run is identified by its
-  mode, `AlignConfig`, levels, grid and detector, and a fingerprint of its
-  projections and geometry (angles, pose corrections and beam included);
-  the command line's `cli_options` block and the geometry type and metadata
-  are gone. Checkpoints of earlier schemas
-  do not resume. `tomojax.alignment.api.AlignmentRun` is that record, shared
-  by `tj.align` and `tomojax align` with `alignment_checkpoint_metadata`,
-  `write_alignment_checkpoint`, `resume_state_from_checkpoint` (moved from the
-  CLI) and `alignment_checkpointing`; it replaces
-  `build_alignment_checkpoint_metadata_from_input` and its input classes
-  (`AlignmentCheckpointMetadataInput`, `AlignmentCheckpointGeometrySnapshot`,
-  `AlignmentProjectionIdentity`, `AlignmentCheckpointProgress`), and
-  `ScheduleResumeState` and `normalize_schedule_resume_state` are no longer
-  exported. `CheckpointError` is a `ValueError`.
-- Breaking: whether a file's saved corrections are applied has one name,
-  `poses`: `tj.load(path, poses=False)` (was `apply_alignment=False`),
-  `tomojax recon --no-poses` (was `--ignore-alignment`) and
-  `build_geometry_from_dataset_metadata(poses=...)` (was
-  `apply_saved_alignment`). The `--config` key `apply_saved_alignment` fails
-  with its new name.
-- Breaking: reconstruction options have one name each, the one
-  `tj.reconstruct` already used, in Python, on the command line, as
-  `--config` keys and in saved `info`. In the solver configurations
-  (`FistaConfig`, `SPDHGConfig`, `CGLSConfig`, `FBPConfig`, `FBPHostConfig`,
-  `FDKConfig`, `FistaCoreConfig`), `ReconstructionAlgorithmOptions` and
-  `fista_multires`/`cgls_multires`: `iters` is `iterations` (and
-  `tv_prox_iters`, `power_iters`, `iters_per_level` are `tv_prox_iterations`,
-  `power_iterations`, `iterations_per_level`), `lambda_tv` is `tv_weight`,
-  `positivity` is `nonnegative`, `filter_name` is `filter`, `L` is
-  `lipschitz`, and the options' `algorithm` is `method` and `spdhg_seed` is
-  `seed`; their `warm_start` is a bool. `tomojax recon` takes
-  `--tv-prox-iterations` (was `--tv-prox-iters`) and `--lipschitz` (was
-  `--L`). A `--config` file using a retired key (`algo`, `iters`, `lambda_tv`,
-  `positivity`, `spdhg_seed`, `tv_prox_iters`, `L`) fails with its new name,
-  for example "config key 'lambda_tv' ... was renamed 'tv_weight'". Saved
-  reconstruction `info` and solver `info` use the new keys
-  (`effective_iterations`, `lipschitz`, `tv_weight`, `nonnegative`, ...), and
-  the `tomojax recon` manifest records `method` (was `algorithm`).
-- Breaking: alignment settings use the same vocabulary. An `AlignConfig` field
-  that sets the inner reconstruction has its `FistaConfig` or `SPDHGConfig`
-  name: `recon_iters` is `iterations`, `lambda_tv` is `tv_weight`,
-  `tv_prox_iters` is `tv_prox_iterations`, `recon_positivity` is
-  `nonnegative`, `spdhg_seed` is `seed`, `recon_L` is `lipschitz` and
-  `recon_algo` is `reconstruction`. Also `outer_iters` is `outer_iterations`,
-  `gn_joint_iters` is `gn_joint_iterations`, `freeze_dofs` is `freeze` (as in
-  `tj.align`), and `align_profile` (`"lightning"`/`"tortoise"`) is `quality`
-  (`"fast"`/`"reference"`, as in `tj.align`). `quality_tier` and
-  `fallback_policy` are gone: the first only echoed the profile, and the
-  second was always reset to `"fallback"`. `ReconLayerConfig` and
-  `FoldReconstructionConfig` follow (`iterations`, `tv_weight`, `lipschitz`,
-  `nonnegative`, `implicit_cg_iterations`), as do `AlignResumeState`,
-  `AlignMultiresResumeState` and `AlignmentCheckpointProgress` (`lipschitz`,
-  `*_outer_iterations_*`). Alignment `info` uses the new keys:
-  `reconstruction`, `lipschitz`, `quality`, `completed_outer_iterations`,
-  `total_outer_iterations`, and per-outer `lipschitz_measured` and
-  `lipschitz_next`. `tomojax align`'s `--config` keys are the field names
-  (and `quality`, `freeze`, `manifest`, `dry_run`). A `--config` file using a
-  retired key (`align_profile`, `outer_iters`, `recon_iters`, `recon_algo`,
-  `recon_positivity`, `recon_L`, `freeze_dofs`, `translation_frame`,
-  `early_stop_rel`, `save_manifest`, `print_plan_json`, and those above)
-  fails with its new name.
-- Breaking: view angles are `angles` everywhere, always in degrees, as
-  `Scan.angles` already was. `thetas_deg` is `angles` on `ParallelGeometry`,
-  `LaminographyGeometry`, `RotationAxisGeometry`, `ConeGeometry`,
-  `ConeSegments` and the saved-pose and detector-roll wrappers, as are
-  `ConeGeometry.poses(angles=...)`, `NXTomoMetadata.angles`,
-  `RealLaminographyInput.angles` and the `"angles"` entry of `simulate`'s
-  result. `angles_deg` is `angles` on `ProjectionDataset` and in
-  `load_tiff_stack(path, angles=...)`. `Detector.det_center` is
-  `Detector.center`, and the new `Detector.from_dict` reads what
-  `Detector.to_dict` writes; `tomojax inspect` reports the detector's
-  `center`. Files written by earlier versions still load: `.nxs` files keep
-  `rotation_angle`, `.npz` files keep their `thetas_deg` key, and detector
-  metadata keeps its `det_center` key.
-- Breaking: alignment options take one spelling each. Removed: the
-  `--align-profile` option and the `quality` spellings `lightning` and
-  `tortoise`; `recon_algo` values `fista_tv`, `spdhg_tv`, `fista-tv` and
-  `spdhg-tv`; `opt_method` and stage optimizer values `lbfgsb`, `l_bfgs` and
-  `l_bfgs_b`; hyphenated `gauge_policy` values (`anchor-mean`,
-  `prior-required`, `diagnose-only`); `pose_model="per-view"`; hyphenated or
-  upper-case schedule names; and the gauge-fix spellings `off`, `false`,
-  `disabled` and `disable`.
-- Breaking: alignment checkpoints written before this version (schema 2 or
-  earlier) do not resume; resuming one fails with "schema version 2 predates
-  this version of TomoJAX". Restart the alignment.
-- Fixed: `tj.reconstruct(scan, "spdhg")` ignored `nonnegative` and always
-  clipped the volume at zero. It now honours it and, like `fista`, does not
-  clip unless asked.
-- Fixed: `tj.align` in `cor`, `cor-then-pose` or `full` mode on a scan that
-  already carries poses ran and found the wrong centre; those modes now
-  refuse posed and segmented scans (align them with `mode="pose"`).
-- Fixed: `Scan.poses` is in the detector frame for every scan, as documented;
-  files saved with object-frame poses reported those as they were, and a
-  segmented scan saved its poses as detector-frame whatever their frame.
-- Fixed: the binning suggestion takes a segmented scan's least magnified
-  segment (it took the first) and, for laminography, the smallest voxel side;
-  it no longer warns before `tj.align` rejects a bad option.
-- Fixed: an alignment ended early by a level that does not fit in device
-  memory is now complete, so resuming it does not retry that level;
-  `info["factors"]` lists the levels that ran, and the notice is a Python
-  warning. The memory check counts the cached pose columns and per-pixel
-  weights with a margin of two, asks the device holding the data, and the
-  update it compiles is the one that runs.
-- Breaking: configuration classes (`FistaConfig`, `CGLSConfig`, `FBPConfig`,
-  `AlignConfig`, ...) take keywords only, as the design rules ask of options;
-  so does `ConeGeometry.poses(thetas_deg=...)`. `Reconstruction.grid` is now
-  the scan's grid, a property rather than a field, and `tj.load_reconstruction`
-  returns the `info` saved with it. `least_motion_estimate` takes
-  `cone_beam=` (was `beam=`).
-- `ConeSegments` refuses detectors of different pixel pitch when made, not
-  when first projected. `tomojax align` warns when its input carries pose
-  corrections, which it replaces (`tomojax.align` corrects on top of them).
-- New ratchets: the length of every file over 800 lines and function over 100
-  (which may only shrink), options passed positionally to public methods and
-  configurations, `jax.devices()[0]` probes, jaxlib private imports and
-  private imports in tests.
-- `tj.project`, `tj.backproject` and `tj.reconstruct` with `cgls` or `fista`
-  take `devices=` (one device or several; `jax.devices()` for every GPU): each
-  device projects its share of the views and holds the whole volume, and their
-  backprojections are summed, so the transpose stays exact and the result, on
-  the first device, is the one-device result up to that sum's order. Each
-  device reads only its own views of the projections. `FistaConfig` and
-  `CGLSConfig` take `devices` too. The CUDA kernels now launch on the GPU
-  holding their buffers, not the current one. The CPU tests run on four CPU
-  devices, so CI exercises the split.
-  Twenty FISTA iterations on the binned walnut take 24.8 s on one H100, 13.6 s
-  on two and 7.4 s on four (docs/performance.md).
-- Fixed: aligning a scan loaded from a file returned `result.scan` without
-  the corrections (`result.poses` had them). A loaded dataset rebuilt its
-  geometry from the metadata it was read with, so later changes to its poses,
-  angle offsets or geometry were ignored; it now uses its current fields.
-- Iterative `tj.reconstruct` and `tj.align` warn when the detector samples the
-  rotation axis at least twice as finely as the grid's voxels (a cone beam's
-  pixel pitch divided by its magnification), naming the `scan.binned(n)`
-  that makes them up to n² times cheaper, as on the FIPS walnut.
-- `examples/align_walnut_orbits.py` brings the FIPS walnut's three orbits into
-  register from the scanner's uncorrected geometry with the public API (it
-  needs the data download and a GPU; see examples/README.md).
-- Large scans need less device memory. `tj.project` and `tj.backproject` run
-  compiled, so their view loop fills one projection stack in place (peak
-  3.1 GB, was 5.6, on the unbinned walnut). The cone kernels read and write
-  JAX's `(view, row, column)` layout, so no transposed copy of the
-  projections is made (and the forward is a little faster). Alignment's joint
-  pose and volume update works through view batches and stores at most one
-  projection-sized array (7.2 to 5.8 GiB at the walnut's finest level), with
-  a scalar weight for plain least squares. A level whose update cannot fit
-  in device memory now ends alignment at the level before, with a warning and
-  `info["factors_skipped"]`, instead of failing after the coarser levels; a
-  first level that cannot fit raises `AlignmentMemoryError` before any work.
-  The translation pre-search streams segmented scans' CGLS from the host.
-- `just test-cuda` runs every test with the GPU visible, not only the
-  `gpu`-marked ones: unmarked tests take CUDA paths there that CI's CPU runner
-  never does. The checkpoint-resume test runs on the CPU device, whose
-  arithmetic is reproducible (GPU atomics are not).
-- `tj.align` takes scans that already carry poses (ASTRA imports, earlier
-  alignments) and corrects them on top, and aligns multi-orbit `ConeSegments`
-  scans as one, bringing their orbits into register. From the FIPS walnut's
-  uncorrected record it recovers the authors' orbit heights (orbit 2 -0.381 mm
-  against -0.397, orbit 3 -0.755 against -0.794), and the reconstruction then
-  matches the corrected one (error 0.155 against 0.154; 0.280 uncorrected);
-  see `bench/walnut_alignment.py` and docs/lab-ct.md. Underneath, cone kernels
-  take per-view lab frames (`tomojax.core.cone.ConeModel`, built for the
-  solver's binned detector), so every solver and alignment level projects each
-  segment in its own arrangement; the least-motion gauge ignores the faint
-  background a reconstruction leaves at the grid edge; FDK lets views
-  repeating an angle share it; and the translation pre-search reconstructs
-  segmented scans with CGLS.
-- The CUDA cone-beam forward projector is 1.3 to 3.7 times faster, and one
-  kernel now serves every view: a warp's rays step through the planes
-  together (rays entering through the volume's top or bottom had left lanes
-  on different planes), blocks run views fastest and detector rows slowest
-  (so concurrent blocks share a slab of the volume in L2), and the inner loop
-  is half the instructions. The separable forward kernel was slower and is
-  gone. The non-separable transpose loads each run of pixels at once and
-  holds to 40 registers for full occupancy (20% faster). FISTA estimates its step from three power iterations started from
-  the backprojected data (`power_iters` now defaults to 3; five from a
-  constant volume were less accurate on the FIPS walnut) and reuses that
-  backprojection as its first gradient, saving two and a half projections.
-  On the walnut's three orbits (every 4th view, 20 iterations, binned 2 x 2)
-  non-negative least squares now takes 86 s, ASTRA 91 s (was 162 s);
-  unbinned 304 s, ASTRA 217 s (was 593 s).
-- FDK on CUDA is about twice as fast: rows up to 2048 pixels are ramp-filtered
-  by one matrix product (cuBLAS, three times faster than the FFTs at 768
-  pixels), and the backprojection samples the filtered images through the
-  texture unit from half floats, each batch scaled to its peak. Its
-  interpolation weights are rounded to 1/256, as in ASTRA's FDK. On the FIPS
-  walnut (1200 views, 501³) FDK takes 1.7–1.9 s against ASTRA's 2.13 s and
-  agrees with ASTRA's volume to 0.05%; the synthetic 256³ case takes 0.048 s
-  (ASTRA 0.29 s), and a 1024³ host FDK 8.0 s (was 12.3 s). FDK also compiles
-  a third as many programs on its first call. `bench/walnut.py` starts JAX's
-  and ASTRA's GPU runtimes before timing either.
-- FISTA runs one projection fewer per iteration, a quarter faster on every
-  geometry: it tracks the objective at the extrapolated point, where the
-  gradient's residual already gives it, instead of projecting the new iterate
-  again; its loss history and early stopping follow that point. With no TV
-  weight it skips the TV step. `Scan.binned(n)` averages n x n detector pixels,
-  for detectors that sample finer than the grid: on the FIPS walnut scan
-  (pixels half a voxel at the axis) it makes iterative reconstruction 3.7 times
-  faster with no loss of accuracy. The cone-beam CUDA kernels are in
-  `tomojax/core/cone_kernels.cu`.
-- Scans whose source and detector arrangement changes partway (multi-orbit
-  scans, stacked sections of a tall sample) are `tomojax.geometry.ConeSegments`:
-  one arrangement per run of views, reconstructed together by CGLS, FISTA and
-  SPDHG, saved and loaded like any scan. `Scan.from_astra` splits vectors into
-  segments where the arrangement changes, and `tj.Scan.combine` joins scans.
-  `tomojax.geometry.ScanGeometry` names what every scan geometry provides (grid,
-  detector, angles). FDK streams the next batch of views while the current one
-  is filtered and backprojected.
-- Move ASTRA Toolbox scans to TomoJAX and back: `tj.Scan.from_astra(data,
-  proj_geom, vol_geom)` reads `cone` and `cone_vec` geometries (per-view source,
-  detector and pixel vectors) as a fitted circular orbit plus per-view pose
-  corrections, and `scan.to_astra()` returns ASTRA data and geometries.
-  Converted scans project like ASTRA to 0.03% on tilted, offset and jittered
-  vector geometries.
-- **Breaking:** a workflow API at the package root. `tomojax.Scan` holds
-  projections and the geometry that produced them; `tomojax.load` reads
-  TomoJAX datasets and Nikon `.xtekct` scans (applying a saved alignment),
-  `tomojax.reconstruct(scan, method)` runs `fbp` (FDK for cone beams, host
-  slabs when large), `cgls`, `fista` or `spdhg` and rejects options the method
-  does not take, `tomojax.align(scan, mode=...)` returns the scan with its
-  corrections applied, and `tomojax.save` writes scans, reconstructions and
-  alignments. `tomojax.project` and `tomojax.backproject` project any geometry
-  (cone beams included, which had no public projector). `import tomojax` still
+A renamed `--config` key fails with its new name ("config key 'lambda_tv' ...
+was renamed 'tv_weight'"); a removed key fails with the list of valid keys. A
+renamed Python keyword raises `TypeError`.
+
+**Python names**
+
+| 0.3 | Now |
+|---|---|
+| `tomojax.align` (the package) | `tomojax.alignment`; `tomojax.align` is now the function `tj.align` |
+| `tomojax.align.AlignConfig`, `align_multires` | `tomojax.alignment.AlignConfig`, `align_multires` |
+| `tomojax.align.align` | `tomojax.alignment.api.align`, or `tj.align(scan)` |
+| `align(init_params5=...)`, `se3_from_5d` | `init_pose_params=`, `se3_from_pose_params` |
+| `AlignResumeState.params5` and `.L`; `AlignMultiresResumeState`'s `*_outer_iters_*` fields | `.pose_params`, `.lipschitz`; `*_outer_iterations_*` |
+| `ReconstructionAlgorithmOptions`, `ReconstructionAlgorithmRequest`, `ReconstructionResult`, `run_reconstruction_algorithm` (`tomojax.recon.api`) | `tj.reconstruct`; on arrays, `tomojax.recon.api.method_config` and `reconstruct_arrays` |
+| `thetas_deg=` on `ParallelGeometry`, `LaminographyGeometry`, `RotationAxisGeometry` | `angles=` (degrees) |
+| `ProjectionDataset.angles_deg`, `load_tiff_stack(angles_deg=)` | `angles` |
+| `NXTomoMetadata.thetas_deg`, `RealLaminographyInput.thetas_deg`, `simulate(cfg)["thetas_deg"]` | `angles` |
+| `Detector(det_center=...)`, `Detector.det_center` | `center` (`tomojax inspect` reports `center`; `Detector.from_dict` reads `to_dict`'s output) |
+| `build_geometry_from_dataset_metadata(apply_saved_alignment=)` | `poses=` |
+| `cgls_multires(iters_per_level=)` | `iterations_per_level=` |
+| Configuration fields given by position; `sphere`, `cube` and `blobs` options (`size`, `value`, `seed`, `n_blobs`); `preprocess_nxtomo`'s `config` | keywords only |
+
+**Solver configuration fields** (`FistaConfig`, `SPDHGConfig`, `CGLSConfig`,
+`FBPConfig`, `FBPHostConfig`; also saved reconstruction `info`)
+
+| 0.3 | Now |
+|---|---|
+| `iters` | `iterations` |
+| `lambda_tv` | `tv_weight` |
+| `positivity` | `nonnegative` |
+| `L` | `lipschitz` |
+| `tv_prox_iters`, `power_iters` | `tv_prox_iterations`, `power_iterations` |
+| `filter_name` | `filter` |
+
+**`AlignConfig` fields** (also the `tomojax align` `--config` keys)
+
+| 0.3 | Now |
+|---|---|
+| `align_profile="lightning"` / `"tortoise"` | `quality="fast"` / `"reference"` |
+| `outer_iters` | `outer_iterations` |
+| `recon_iters` | `iterations` |
+| `recon_algo` (`fista_tv`, `spdhg_tv`, ...) | `reconstruction` (`"fista"` or `"spdhg"`) |
+| `lambda_tv`, `tv_prox_iters` | `tv_weight`, `tv_prox_iterations` |
+| `recon_positivity` | `nonnegative` |
+| `spdhg_seed` | `seed` |
+| `recon_L` | `lipschitz` |
+| `gn_joint_iters` | `gn_joint_iterations` |
+| `freeze_dofs` | `freeze` |
+| `gauge_fix` | removed; alignment returns the least-motion estimate (see New) |
+| `quality_tier`, `fallback_policy`, `fold_rigid_detector_grid` | removed (they echoed the profile or were always on) |
+
+Each setting takes one spelling. Removed: `opt_method` values `lbfgsb`,
+`l_bfgs` and `l_bfgs_b`; hyphenated `gauge_policy` values (`anchor-mean`,
+`prior-required`, `diagnose-only`); `pose_model="per-view"`; hyphenated or
+upper-case schedule names. Alignment `info` uses the new names
+(`reconstruction`, `lipschitz`, `quality`, `completed_outer_iterations`,
+`total_outer_iterations`, and per outer iteration `lipschitz_measured` and
+`lipschitz_next`).
+
+`AlignConfig()` keeps its own defaults (object-frame translations, the
+alternating solver), and `tj.align(config=...)` uses a config as given. To
+change one setting of what a mode runs, start from the mode's configuration:
+`replace(alignment_plan("pose", scan.grid).config, ray_integrator="exact")`.
+
+**Exports.** Package roots export what users call. Names no longer at a root
+are in that package's `.api` module: from `tomojax.recon`, `Regulariser`,
+`clear_filter_caches`, `default_fbp_scale` and `run_parallel_fbp_direct_pallas`;
+from `tomojax.geometry`, the axis constants, calibration and gauge helpers,
+`axes_to_perm`, `transpose_volume`, `read_geometry_json` and
+`read_pose_params_csv`; from `tomojax.io`, `NXTomoMetadata`, `LoadedNXTomo`,
+`convert_dataset`, `load_nxtomo`, `save_nxtomo`, `validate_nxtomo` and the
+payload and JSON helpers. Removed, as nothing used them: `VolumeSupportKind`,
+`centered_volume_support`, `sum_backproject_views_chunked` and
+`supports_parallel_fbp_z_integer` (recon); `build_calibration_manifest`,
+`canonicalize_geometry_gauges`, `write_geometry_json`, `write_pose_params_csv`,
+`write_pose_decomposition_csv` and the detector-grid transform helpers
+(geometry); `write_json_object`, `spatial_bin`, `pad_to_multiples`,
+`volume_chunks`, `flat_dark_to_transmission` and `transmission_to_absorption`
+(io); the profile, fallback and gauge-fix types, `schedule_preset`,
+`level_detector_grid`, `build_loss_adapter`, `ScheduleResumeState`,
+`normalize_schedule_resume_state`, and
+`build_alignment_checkpoint_metadata_from_input` with its input classes
+(alignment, replaced by `tomojax.alignment.api.AlignmentRun`), among others;
+and the synthetic-sidecar helpers in `tomojax.datasets.api`.
+
+**Commands.** Every command is `tomojax <command> INPUT -o OUTPUT` and refuses
+an existing output unless `--force`. Exit status is 0 for success, 1 for
+failure and 2 for a usage error. `--help` lists the options most runs need;
+expert settings are `--config` keys, listed by `--config-keys`.
+
+| 0.3 | Now |
+|---|---|
+| `--data IN --out OUT`; `preprocess IN OUT`; `convert --in IN --out OUT` | `IN -o OUT`; `import IN -o OUT` converts `.npz` and `.nxs` |
+| `tomojax ingest` | `tomojax import` |
+| `tomojax validate` | `tomojax inspect` (exits 1 for an invalid dataset; `--json`) |
+| `tomojax slices` | `tomojax inspect --preview DIR` |
+| `--quicklook`, `--save-preview` | `--preview` |
+| `--save-manifest` | `--manifest` |
+| `--volume-axes`, `--transfer-guard` (`recon`, `align`) | removed; volumes are saved as `tj.save` saves them (`tomojax export` writes other layouts), and JAX's own `jax.transfer_guard` |
+| `ingest --du --dv` | `import --pixel-size SIZE [SIZE_V]` |
+| `ingest --sample-name` | `import --name` |
+| `ingest --det-center-u/-v`, `--grid`, `--voxel-size` | removed; `tomojax align --mode cor` estimates the centre, and `recon --grid` or `tj.reconstruct(grid=...)` sets the grid |
+| `preprocess --format`, `--domain`, `--log` | the format follows the output path; absorption is the default and `--transmission` writes transmission |
+| `simulate --nx --ny --nz`, `--nu --nv`, `--n-views` | `--size N` (or the `grid` and `detector` keys), `--views` |
+| `simulate --rotation-deg`, `--tilt-deg` | `--rotation`, `--tilt` |
+
+**`tomojax recon`** takes `--method`, `--filter`, `--iterations`,
+`--tv-weight`, `--nonnegative`, `--warm-start`, `--seed`, `--grid`, `--roi`,
+`--poses`/`--no-poses`, `--preview`, `--manifest` and `--progress`. Expert
+settings are fields of the method's configuration class (`FBPConfig`, also for
+FDK, `CGLSConfig`, `FistaConfig`, `SPDHGConfig`); a setting the method does not
+take fails, naming the ones it does.
+
+| 0.3 | Now |
+|---|---|
+| `--algo` | `--method` (`fbp`, `cgls`, `fista`, `spdhg`) |
+| `--iters`, `--lambda-tv`, `--spdhg-seed` | `--iterations`, `--tv-weight`, `--seed` |
+| `--positivity` / `--no-positivity` | `--nonnegative` (off by default) |
+| `--warm-start fbp` | `--warm-start` |
+| `--apply-saved-alignment` / `--ignore-saved-alignment` | `--poses` (now the default) / `--no-poses` |
+| `--mask-vol cyl` | `--roi cyl`: the `auto` crop, the volume zeroed outside the cylinder every view sees, and that cylinder as FISTA's and SPDHG's `support` |
+| `--regulariser`, `--huber-delta`, `--lower-bound`, `--upper-bound`, `--theta`, `--views-per-batch`, `--gather-dtype` | `--config` keys of the same names (`views_per_batch` has no `auto`) |
+| `--tv-prox-iters`, `--L` | keys `tv_prox_iterations`, `lipschitz` |
+| `--spdhg-tau`, `--spdhg-sigma-data`, `--spdhg-sigma-tv` | keys `tau`, `sigma_data`, `sigma_tv` |
+| `--no-checkpoint-projector` | `checkpoint_projector = false` |
+| `--det-u-px`, `--det-v-px` | removed; `tomojax align --mode cor`, or shift `scan.detector.center` in Python |
+| `--frame` | removed (it only labelled the file) |
+
+The manifest records `method` (was `algorithm`), the resolved configuration
+and the solver's record under `reconstruction` (was `algorithm_config`), and
+an `roi` block.
+
+**`tomojax align`** takes `--mode`, `--quality`, `--levels`, `--freeze`,
+`--roi`, `--grid`, `--checkpoint`, `--poses`/`--no-poses`, `--manifest`,
+`--progress` and `--dry-run`. Expert settings are `AlignConfig` fields, each
+replacing that field of the configuration the mode and quality give (which
+`--dry-run` prints).
+
+| 0.3 | Now |
+|---|---|
+| `--mode auto` | `--mode full` |
+| `--mode max` | `--mode full --quality reference` |
+| `--mode cor_then_pose`, `tj.align(mode="cor_then_pose")` and other spellings | `cor-then-pose`: each mode has one spelling, the same in Python and the CLI |
+| `--quality` aliases `normal`, `full`; `--align-profile` | `--quality fast` or `reference` |
+| `--freeze-dofs` | `--freeze` |
+| `--print-plan-json` | `--dry-run` |
+| `--resume PATH`, `--checkpoint-every N` | `--checkpoint PATH`: written after every outer iteration, resumed by itself |
+| `--save-params-json`, `--save-params-csv` | `save_alignment_params_json` and `save_alignment_params_csv` in `tomojax.alignment.api`, on `tj.load("aligned.nxs").poses` |
+| `--loss`, `--loss-param`, `--loss-schedule` | the `loss` key: a name (`"huber"`), a table (`{ name = "huber", delta = 1.0 }`) or a level schedule (`"4:phasecorr,2:ssim,1:l2_otsu"`) |
+| `--outer-iters`, `--recon-iters`, `--recon-algo`, `--lambda-tv`, `--tv-prox-iters`, `--recon-positivity`, `--spdhg-seed`, `--recon-L`, `--early-stop-rel` | keys `outer_iterations`, `iterations`, `reconstruction`, `tv_weight`, `tv_prox_iterations`, `nonnegative`, `seed`, `lipschitz`, `early_stop_rel_impr` |
+| The other expert flags (`--regulariser`, `--views-per-batch`, `--gather-dtype`, `--opt-method`, `--gn-damping`, `--lbfgs-*`, `--lr-rot`, `--w-rot`, `--optimise-dofs`, `--schedule`, `--bounds`, `--gauge-policy`, `--pose-model`, `--seed-translations`, `--early-stop`, `--mask-vol`, `--log-summary`, ...) | `--config` keys of the same names |
+| `--gauge-fix` | removed |
+
+The aligned file holds six-column, detector-frame poses. The manifest gives
+the run's inputs and settings with the alignment's record (losses, gauge,
+calibrated setup geometry) under `alignment`.
+
+**Changed behaviour and defaults**
+
+- `tomojax recon` applies the poses saved in its input unless `--no-poses`
+  (0.3 ignored them unless `--apply-saved-alignment`).
+- `tomojax align` corrects on top of the poses saved in its input, as
+  `tj.align(tj.load(path))` does; 0.3 started from the nominal geometry and
+  replaced them. `--no-poses` starts from the nominal geometry. A posed input
+  takes only `--mode pose`.
+- `tomojax align --mode pose` (and `cor-then-pose`) runs the coupled
+  volume-and-pose solver: Joseph projection, least squares without TV, fp32
+  gathers, up to 30 early-stopped outer iterations, detector-frame
+  translations, a global shift search first, and coarse-to-fine levels that
+  keep at least 32 voxels on the grid's shortest axis (4, 2, 1 from 128).
+  `gn_coupling = "fixed_volume"` gives the alternating scheme. Every mode uses
+  Joseph projection.
+- Pose translations are in the detector frame by default
+  (`pose_translation_frame = "object"` restores the 0.3 tables): object-frame
+  translations cannot shift the image sideways where the sample's x axis lies
+  along the beam.
+- Alignment returns the estimate with the least per-view motion, so its poses
+  and volume can differ from 0.3's by a rigid motion.
+- `spdhg` runs 400 iterations in `tomojax recon` too (was 50), each one block
+  of views, and does not clip at zero unless `nonnegative`
+  (`SPDHGConfig.nonnegative` defaults to False, was True).
+- `gather_dtype` is `fp32` on every device (0.3's `tomojax recon` used `bf16`
+  on GPUs).
+- CGLS, FISTA and SPDHG project with `projector_model="auto"`: Joseph plane
+  sampling, with Pallas kernels on CUDA (CGLS used the ray model).
+  `projector_model="ray"` restores it; explicit detector grids and exact
+  integration keep the ray model.
+- `FistaConfig.views_per_batch` defaults to None: 64 views with batched
+  operators, one on the ray-model path (was 1). `power_iterations` is 3 (was
+  5), started from the backprojected data. FISTA's loss history and early
+  stopping follow the extrapolated point.
+- `AlignConfig.views_per_batch` defaults to 0, which sizes batches from free
+  GPU memory (was 1).
+- `warm_start` is a bool and starts `cgls`, `fista` and `spdhg`.
+- `FBPHostConfig.slices_per_batch` defaults to None, sized to free device
+  memory (was 16).
+- FBP weights every circular parallel-beam scan exactly, and backprojects
+  voxel by voxel in every geometry (see Fixed). Tilted, partial-turn,
+  irregular, laminography and anisotropic FBP volumes change; an explicit
+  `FBPConfig.scale` keeps the old uniform weighting.
+- Compiled JAX programs are cached on disk (`TOMOJAX_JAX_CACHE=off` disables
+  it, `TOMOJAX_JAX_CACHE_DIR` moves it; an existing JAX cache setting wins).
+  The command line sets `XLA_PYTHON_CLIENT_MEM_FRACTION=0.9` unless it is set.
+
+**Checkpoints.** Alignment checkpoints are schema 4. Checkpoints from 0.3 do
+not resume ("schema version 1 predates this version of TomoJAX"); restart the
+alignment. A run is identified by its mode, `AlignConfig`, levels, grid,
+detector and a fingerprint of its projections and geometry; a checkpoint of
+other settings is refused, naming the difference. `CheckpointError` is a
+`ValueError`.
+
+**Saved files.** Files from 0.3 still load. `.nxs` files keep
+`rotation_angle`, `.npz` files their `thetas_deg` key, and detector metadata
+its `det_center` key. Five-column pose tables load with `dy = 0`. Poses saved
+without a translation frame (0.3's) are read as object-frame poses, and
+`Scan.poses` reports them in the detector frame.
+
+### New
+
+- **Workflow API.** `tj.Scan` holds projections and the geometry that made
+  them. `tj.load` reads TomoJAX datasets and Nikon `.xtekct` scans, with their
+  saved poses unless `poses=False`. `tj.reconstruct(scan, method)` runs `fbp`
+  (FDK for cone beams, in host slabs when the volume is too large for the
+  device), `cgls`, `fista` or `spdhg`; `config=` takes the method's
+  configuration class (another method's class raises `ValueError`), keywords
+  replace its fields, and `result.info` holds the resolved config and the
+  solver's record. `tj.align(scan, mode=...)` returns an `Alignment` of
+  `(volume, scan, poses, info)` whose `scan` carries the corrections.
+  `tj.save` writes scans, reconstructions and alignments, and
+  `tj.load_reconstruction` reads a reconstruction with its `info`.
+  `tj.project` and `tj.backproject` work on every geometry. `import tomojax`
   does not import JAX.
-- **Breaking:** `tomojax.align` (the subpackage) is now `tomojax.alignment`, so
-  the name `tomojax.align` is the function. Alignment modes are `pose`, `cor`,
-  `cor-then-pose` and `full` (formerly `auto`; `max` is `full` at
-  `quality="reference"`), planned by `tomojax.alignment.alignment_plan` for
-  Python and the CLI alike; the cone-beam axis calibration moved from the CLI
-  into the library.
-- **Breaking:** package roots export what users call; implementation helpers
-  moved to each package's `.api` module (`tomojax.recon` 28 names to 22,
-  `tomojax.geometry` 38 to 16, `tomojax.io` 25 to 12). The geometry-level
-  single-resolution `align` and `coupled_pose_config` are in
-  `tomojax.alignment.api`.
-- **Breaking:** one command-line shape, `tomojax <command> INPUT -o OUTPUT`,
-  with an existing output refused unless `--force`, exit status 0 for success,
-  1 for failure and 2 for a usage error, and `tomojax --version`. Seven
-  commands: `inspect` (now also validating, exiting 1 for an invalid dataset,
-  with `--json` to stdout and `--preview DIR` PNGs of the central projection
-  and volume slices; replaces `validate` and `slices`), `import` (formerly
-  `ingest`; also converts `.npz` and `.nxs`, replacing `convert`),
-  `preprocess`, `recon`, `align`, `export` and `simulate`. Options share the
-  Python names: `recon --method --iterations --tv-weight --nonnegative`
-  (formerly `--algo --iters --lambda-tv --positivity`), `--preview`,
-  `--manifest`, and `align --freeze` and `--dry-run`. `recon` applies a saved
-  alignment unless `--ignore-alignment`. `--help` lists the options most runs
-  need; expert settings are keys of the TOML file given with `--config`,
-  listed with their defaults by `--config-keys` (they still parse as flags).
-  `preprocess` and `export` infer their formats from the paths; `import`
-  takes `--pixel-size`; `simulate` needs only `-o` (`--size`, `--views`, and
-  a cone detector sized to see the whole volume). Alignment quality is `fast`
-  or `reference`; the aliases `normal` and `full` are gone.
-- **Breaking:** per-view pose tables are `pose_params` everywhere (formerly
-  `params5`, though they have six columns): `align(init_pose_params=...)`,
-  `AlignResumeState.pose_params`, `se3_from_pose_params`. Alignment checkpoints
-  store them under that name, as schema version 2; older checkpoints are
-  refused.
-- **Breaking:** the expert `.api` modules drop 67 names nothing used
-  (`tomojax.geometry.api` 77 to 43, `tomojax.alignment.api` 93 to 79,
-  `tomojax.io.api` 43 to 34, `tomojax.recon.api` 26 to 22,
-  `tomojax.datasets.api` 21 to 15), and 1,350 lines of code that nothing
-  called are deleted, among them the geometry CSV and JSON writers
-  (`write_pose_params_csv`, `write_geometry_json`), `build_calibration_manifest`,
-  `canonicalize_geometry_gauges`, `spatial_bin`, `pad_to_multiples` and
-  `run_active_lbfgs`. Option names are normalised in one place
-  (`tomojax.core.validation.option_name`).
-- Alignment reports where the object is unambiguously. Rotating or shifting
-  the object, and every pose the opposite way, predicts the same data, and the
-  solver could end anywhere along that motion: a 64-cubed cone scan came back
-  shifted a voxel along its axis (volume error 0.26 against the truth) and a
-  half-turn parallel scan with a detector offset three voxels sideways (0.55).
-  `tj.align`, `align_multires` and `tomojax align` now return the estimate
-  with the least per-view motion, moving the volume to match (errors 0.0037
-  and 0.019), and record the motion removed in `info["gauge"]`. The detector
-  centre's share of a constant u shift is found in the same fit, replacing
-  `fold_detector_offset`; `tomojax.alignment.api.least_motion_estimate` moves
-  any volume and pose table, for example a truth, to the same estimate.
-  **Breaking:** the `gauge_fix` setting is gone; setup stages still anchor
-  object-frame translations internally.
-- **Breaking:** options are keyword-only throughout the public API:
-  `tomojax.datasets.sphere`, `cube` and `blobs` (`size`, `value`, `seed`,
-  `n_blobs`) and `tomojax.io.preprocess_nxtomo(config=...)`. `Scan.source`
-  (formerly private) is the dataset record a scan was loaded from, and
-  `LaminographyGeometry.axis_unit_lab` gives its rotation axis like
-  `RotationAxisGeometry`'s.
-- Design rules for contributors, and `tests/test_architecture.py` to hold the
-  code to them: the public API is recorded so every change shows in review,
-  CLI options must map to Python keywords, and measures of debt
-  (configuration fields, exported names, CLI flags, long files, lint
-  suppressions, complex functions, type errors outside the type-checked
-  modules) may fall but not rise. Ruff now rejects
-  positional boolean parameters, private member access across objects,
-  `print` in the library, shadowed builtins and commented-out code.
-- Fix the CUDA cone-beam transpose for volumes smaller than its 32- or
-  64-voxel tiles: a tile's far edge, close to the source, projected through
-  infinity and dropped detector columns (errors up to 30% at 8-cubed).
-
-- `tomojax preprocess` corrects two lab-CT artefacts in absorption data:
-  `--beam-hardening C1,C2,...` maps each value p to `C1 p + C2 p^2 + ...`, and
-  `--remove-stripes WIDTH` removes rings by subtracting each detector pixel's
-  constant offset, judged from its values sorted over views against those of
-  its neighbouring columns. Data without such offsets pass unchanged.
-- `tomojax export` writes a reconstruction as 32-bit or scaled 16-bit TIFF
-  z-slices, or one raw file, with a JSON sidecar of shape, voxel size and
-  scaling, reading one slice at a time. `tomojax recon --algo fbp` on cone
-  data now reconstructs volumes too large for the device in z-slabs on the
-  host (`fdk_host`) instead of failing.
-- Cone-beam pose alignment runs about four times faster: the reconstruction
-  step stacked the pose-adjusted views one at a time, which dominated each
-  outer iteration. A 96-cubed-phantom, 240-view `tomojax align --mode
-  cor_then_pose` now takes 44 s instead of 163 s. Geometries can supply a
-  vectorised `stack_poses` for `stack_view_poses`.
-- Import Nikon (X-Tek) lab CT scans: `tomojax ingest scan.xtekct --out
-  scan.nxs` (and `tomojax.io.load_nikon_xtekct`) reads the source and
-  detector distances, detector pixels and offsets, reconstruction volume,
-  white level and angles (from `_ctdata.txt` when present) and converts the
-  projection TIFFs to absorption. The axis offset and detector roll are left
-  to `tomojax align --mode cor`. A [lab cone-beam CT guide](docs/lab-ct.md)
+- **Cone-beam CT.** `tomojax.geometry.ConeGeometry` with a `ConeBeam` source
+  and a flat detector (offsets, roll, pitch and yaw; turntable, tilted or any
+  rotation axis; per-view poses). Rays are sampled on voxel planes (Joseph)
+  with an exact matched transpose, in JAX (differentiable in the volume and
+  the poses) and as CUDA kernels. CGLS, FISTA and SPDHG reconstruct cone
+  scans. `tomojax.recon.fdk` (and `fbp` on cone data) reconstructs full turns,
+  Parker-weighted short scans and offset detectors (Wang's weights: a
+  detector covering 5.5 columns on one side of the axis reconstructs a 32³
+  phantom with error 0.071, against 0.075 for a centred detector twice as
+  wide). `fdk_host` reconstructs scans larger than device memory in z-slabs,
+  from and into memmaps. Cone datasets without a grid get one voxel per
+  detector pixel at the rotation axis. `tomojax simulate --geometry cone` and
+  `tomojax import --geometry cone --source-to-axis ... --source-to-detector ...`
+  make cone datasets.
+- **Lab CT import.** `tomojax import scan.xtekct -o scan.nxs`, `tj.load` and
+  `tomojax.io.load_nikon_xtekct` read Nikon (X-Tek) scans: distances, detector
+  pixels and offsets, volume, white level and angles (from `_ctdata.txt` when
+  present), converted to absorption. A [lab cone-beam CT guide](docs/lab-ct.md)
   covers import, calibration, FDK, iterative reconstruction and motion
   correction.
-- Cone datasets without a grid now reconstruct one voxel per detector pixel
-  at the rotation axis (the pixel size divided by the magnification) instead
-  of one per pixel at the detector.
-- FDK reconstructs full turns on an offset detector (the rotation axis
-  projecting off the detector centre, as lab scanners use to widen the field
-  of view): Wang's weights blend each ray's two measurements and the filtered
-  rows keep their tail past the detector's short side, so a detector covering
-  5.5 columns on one side of the axis reconstructs a 32-cubed phantom as well
-  as a centred detector twice as wide (error 0.071 against 0.075). Angular
-  weights now apply before the ramp filter, as FDK requires; this lowers
-  Parker-weighted short-scan errors (0.114 against 0.075 for a full turn).
-- Calibrate a cone-beam scan's rotation axis: `ConeBeam.axis_offset` places
-  the axis laterally (the lab-CT centre of rotation; `tomojax ingest
-  --axis-offset`), and `tomojax.recon.calibrate_cone_axis` estimates it with
-  the detector roll from the sharpness of thin FDK slabs at three heights,
-  coarse to fine on binned data. On cone data `tomojax align --mode cor`
-  calibrates both, and `cor_then_pose`, `auto` and `max` calibrate them before
-  their pose stages, saving the calibrated beam. On 128- and 256-cubed blob
-  scans it recovers offsets of up to 11 voxels to 0.08 voxels and rolls of up
-  to 1.2 degrees to 0.04 degrees, in about 4 s at 256-cubed. `fdk_host` now cuts
-  rolled detectors to the rows each slab needs, and the FDK backprojector no
-  longer wastes threads on thin slabs.
-- Add cone-beam (lab CT) geometry: `tomojax.geometry.ConeGeometry` with a
-  `ConeBeam` source and flat detector (detector offsets, roll, pitch and yaw;
-  turntable, tilted or arbitrary rotation axis; any per-view poses). Rays from
-  the source are sampled on voxel planes (Joseph) with a matched transpose, in
-  JAX (differentiable in the volume and the poses) and as CUDA kernels; views
-  of an unperturbed turntable use two-pass separable kernels. CGLS, FISTA-TV
-  and SPDHG-TV reconstruct cone scans, and `fdk` (also `fbp` and `tomojax
-  recon --algo fbp` for cone data) adds Feldkamp reconstruction for full turns
-  and Parker-weighted short scans. `tomojax simulate --geometry cone` and
-  `tomojax ingest --geometry cone --source-to-axis ... --source-to-detector ...`
-  create cone datasets, which save and load with their beam. On a 256-cubed,
-  360-view scan with a 384-squared detector, forward projection takes 0.12 s
-  (ASTRA 0.17 s, TIGRE 0.48 s), its exact transpose 0.18 s (ASTRA's
-  approximate one 0.075 s) and FDK 0.10 s (ASTRA 0.29 s, TIGRE 0.52 s) at the
-  same accuracy. `fdk_host` reconstructs scans larger than device memory in
-  z-slabs from and into memmaps, filtering only the rows each slab needs: a
-  1024-cubed scan takes 11.7 s in RAM and 14.3 s memmap to memmap (ASTRA
-  20.3 s, TIGRE 30.7 s).
-- Align cone-beam scans in six degrees of freedom: pose tables gain a sixth
-  column, `dy` along the beam, which changes cone-beam magnification and
-  stays zero for parallel beams. `tomojax align` on cone data estimates it
-  with the other five parameters, anchoring its mean (a common `dy` is the
-  volume's scale), and `tomojax recon --apply-saved-alignment` replays all six.
-  Five-column tables, sidecars and checkpoints from earlier versions load with
-  `dy = 0`. Cone rays are sampled along their own dominant axis, so
-  projections change continuously as a pose turns a ray through 45 degrees.
-- Estimate a detector-centre offset together with per-view motion:
-  `tomojax align --mode cor_then_pose` now runs the pose solver and saves the
-  constant part of the recovered detector-u shifts as the detector centre,
-  leaving the per-view motion in the pose table (`auto` and `max` add it to
-  their setup estimate). The fold runs in `align_multires`, so the Python
-  API's `cor_then_pose` schedule, which requires detector-frame translations,
-  behaves the same; the API also adds `fold_detector_offset`. With a +3.7 px offset and ±0.5°/±8 px motion on
-  analytic 128³ scans, rotation errors fall from 0.23–0.26° to 0.005–0.006°,
-  and the offset matches its identifiable value to 0.004 px. On the gVXR chip
-  phantom it recovers a 3.2 px offset to 3.18 px. The previous mode searched
-  for the offset before correcting any motion, which biased it.
-- `tomojax align` now uses detector-frame translations by default
-  (`--translation-frame detector`, with `--gauge-fix none`). Object-frame
-  translations move the sample along its own x and z axes, so at views where
-  its x axis lies along the beam they cannot shift its image horizontally; a
-  constant shift needed 70 px translations near 90° and 270° on the chip
-  phantom, with 0.37 px errors.
-  Detector-frame recovery is as accurate or better on every benchmark tried.
-  `--translation-frame object` restores the previous pose tables.
-- `tomojax recon --apply-saved-alignment` applies saved poses in the
-  translation frame they were estimated in, which `tomojax align` now records
-  with the gauge metadata; files without it are read as object-frame poses.
-- A saved detector roll of zero no longer gives `tomojax recon` an explicit
-  detector grid, which forced FISTA-TV onto the ray-model reference path one
-  view at a time. On the 720-view chip phantom, one iteration took more than
-  400 s; 100 iterations now take 29 s.
-- `tomojax recon` streams host projections for CGLS and SPDHG-TV as well as FBP
-  and FISTA-TV.
-- Stream projections from host memory in CGLS and SPDHG-TV, as FISTA-TV
-  already did. Streamed CGLS solves the equivalent normal equations: only
-  volume-sized arrays stay on the device, and each residual recomputation
-  reads the views once. Streamed SPDHG-TV keeps the data, any weights and its
-  sinogram-sized dual variable in host memory and moves one block per
-  iteration (bitwise identical to device-resident data). On a 512-cubed,
-  3072-view laminography scan (3.2 GB) on an 8 GB GPU, CGLS peaks at 3.2 GB
-  and SPDHG-TV at 4.3 GB. `CGLSConfig` and `SPDHGConfig` gain
-  `stream_projections` (``None`` streams stacks above 40% of free device memory).
-- Report the detector-u (centre-of-rotation) offset implied by pose
-  alignment: `tomojax align` logs it and writes `implied_detector_u_px` to the
-  manifest, and `tomojax.alignment.api.implied_detector_offset` computes it. Pose
-  mode absorbs such an offset exactly into the per-view translations; the
-  report separates the constant part from the view-dependent shift of a rigid
-  object translation.
-- Add a gVXR chip-package phantom for laminography (`bench/phantoms`): a
-  Blender script models eight closed, disjoint material meshes (glass-epoxy
-  substrate, copper ground plane, vias and traces, silicon die, gold bond
-  wires, silica-filled mold, voided SAC solder balls), and a simulator turns
-  gVXR path lengths into 25 keV measurements with xraylib attenuation and
-  refraction, Fresnel phase contrast, detector blur, pixel integration,
-  Poisson noise, pixel gain and noisy flats, with per-view motion and a
-  detector offset. An exact mesh voxeliser provides the truth.
-- Seed `tomojax align --mode cor` with a search for the detector-u offset
-  whose FBP reprojects most consistently (a coarse scan over a quarter of the
-  detector, then golden section), replacing the opposite-view pairing that
-  needs a parallel half or full turn. All CLI alignment modes now default to
-  Joseph integration. With a +3.7 px offset on analytic 128-cubed scans, COR
-  mode recovers 3.693 and 3.677 px (parallel, laminography) in 41 and 84 s,
-  where it previously reached 3.50 and 3.59 px in about 380 s.
-- Cache the pose Jacobian columns of the coupled solver whenever five
-  sinograms fit in a quarter of free device memory (previously a fixed 64 MB)
-  and apply cached columns to all views in single batched contractions. On a
-  256-cubed, 361-view laminography scan the columns were recomputed in every
-  conjugate-gradient iteration, 60% of GPU time; full-resolution
-  `tomojax align --mode pose` now takes 188 s instead of 13.6 minutes
-  (22 minutes this morning) with rotations to 0.0030 deg.
-- Solve each view's 5-by-5 pose block in symmetrically scaled variables and,
-  only where its FP32 Cholesky factor still fails, with Marquardt damping of
-  1e-5 relative to its diagonal. Rotation and translation columns differ in
-  size by orders of magnitude, and unscaled factorisations of weakly
-  determined blocks returned NaN, which rejected whole Gauss-Newton steps.
-- Seed translations at the first coarse-to-fine level, where the shift search
-  previously never ran because that level starts from explicit zero poses.
-- Fix the reconstruction step inside alignment with Joseph integration. Its
-  explicit gradient backprojected with the ray model's transpose (2% from the
-  Joseph adjoint), and traced poses sent it to the JAX reference operators
-  instead of the CUDA kernels, which accept dynamic poses. It now uses the
-  matched plane transpose and the CUDA kernels, with 64 views per batch.
-  `tomojax align --mode pose` on analytic 128-cubed scans takes 45 and 41 s
-  instead of 86 and 72 s (laminography, parallel) at unchanged accuracy, and
-  the README example 14 instead of 35 s.
-- Add a CUDA C gather transpose for linear Joseph plane sampling, compiled at
-  run time with CuPy (now part of the `cuda12` extra) and launched on XLA's
-  stream inside compiled solvers. Each thread loops once over the joint
-  footprint of four consecutive z voxels, and weights round exactly like the
-  forward projection. Laminography backprojection is 1.6x and parallel 1.3x
-  faster at 256-cubed scale; structured 256-cubed laminography CGLS runs in
-  1023 instead of 1372 ms warm and a 512-cubed FISTA-TV solve in 48.7 instead
-  of 63.1 s, and a full-resolution 256-cubed laminography alignment 13.6 instead
-  of 22 minutes (rotations to 0.0029 deg). It is used for volumes of 2^24 voxels and more, since its start-up
-  costs about 0.3 s per process; `TOMOJAX_CUDA_KERNELS` forces it on (1) or
-  off (0).
-- The alignment shift search reprojects, shifts and correlates 32 views at a
-  time, so its padded correlation spectra stay bounded for long scans, and
-  host-streamed FBP reads the next view batch while the current one runs.
-- Stream projections from host memory in FISTA-TV. NumPy or memmap stacks
-  larger than 40% of free device memory are read one view batch at a time
-  inside the compiled solve (`FistaConfig(stream_projections=...)` forces
-  either way), with identical results. A 512-cubed laminography scan with 3072
-  views (3.2 GB) runs on an 8 GB GPU at a 4.3 GB peak; where both fit,
-  streaming costs 4%. `tomojax recon --algo fista` passes host projections.
-- Add `tomojax recon --algo cgls`, optionally FBP-initialised with
-  `--warm-start fbp`, so the command line has the fastest-converging
-  unregularised solver the Python API already offered. Document aligning a
-  large scan at reduced resolution and reconstructing the full data with the
-  recovered poses: a 256-cubed laminography alignment stopped at half
-  resolution takes 185 s instead of 22 minutes (rotations to 0.0051 instead
-  of 0.0030 deg).
-- Seed pose alignment with a global per-view shift search. Each pass
-  reconstructs with the current shifts removed (FBP), reprojects, and moves
-  every view to its cross-correlation peak, searching up to a quarter of the
-  detector and discarding the shift pattern of a rigid object translation.
-  `--seed-translations` is now on by default for `tomojax align --mode pose`
-  (`--no-seed-translations` disables it), and `coupled_pose_config` enables
-  it; it now also runs in single-resolution alignment, and replaces the
-  previous single phase correlation against a ray-model FISTA reconstruction.
-  On 64-cubed scans with +/-0.5 deg tilts and +/-15 px shifts (23% of the
-  detector), rotation errors fall from 7.7 and 12.6 deg to 0.034 and 0.012 deg
-  in parallel and laminography; 128-cubed results are unchanged.
-- Reconstruct laminography and posed scans larger than device memory with
-  FBP. `fbp` given a NumPy array or memmap streams view batches from host
-  memory (bitwise-identical to device input), and `fbp_host` now accepts every
-  geometry `fbp` does, writing x-slabs sized to the free device memory. A
-  1024-cubed, 1024-view laminography FBP from and to memmaps (4.3 GB each) runs
-  in 37 s on an 8 GB GPU, where 768 cubed previously ran out of memory.
-  `tomojax recon --algo fbp` keeps projections on the host. The FBP kernel
-  accumulates view batches in place. `cgls`, `project_joseph` and parallel
-  `fbp_host` no longer make a transient second device copy of NumPy inputs.
-- Cut iterative-solver GPU memory. On a 512-cubed, 768-view laminography scan
-  on an 8 GB GPU, CGLS (previously out of memory) peaks at 5.6 GB, FISTA-TV
-  falls from 7.2 to 4.6 GB and SPDHG-TV (previously out of memory) peaks at
-  4.9 GB. The Joseph CUDA kernels keep sinograms in their (view, v, u) layout,
-  so XLA no longer stores transposed copies of every sinogram around solver
-  loops, and the gather transpose accumulates view batches in place.
-  FISTA-TV computes its data gradient batch by batch without a sinogram-sized
-  temporary, its TV prox runs projected gradient on the dual (Chambolle) with
-  three persistent volumes instead of five, and zero starting states are
-  created inside the compiled solves. CGLS always adopts the recomputed
-  residual and no longer retains a second state for breakdown. SPDHG-TV
-  recomputes the TV divergence instead of differencing dual fields and no
-  longer allocates a sinogram of unit weights. The forward kernel's 8-by-16
-  ray tiles also make laminography projection 18% faster. The CLI sets
-  `XLA_PYTHON_CLIENT_MEM_FRACTION=0.9` unless already set.
-  FISTA-TV on the 128-cubed TV comparison now reaches 0.076 in 1.13 s.
-- Add `bench/compare_tv.py`. On a 128-cubed structured parallel scan with 3%
-  noise and 50 iterations, TomoJAX FISTA-TV reaches 0.077 relative error in
-  1.28 s; TIGRE's FISTA reaches 0.101 in 9.7 s and ASD-POCS 0.146 in 5.7 s.
-- Align coarse to fine by default in `tomojax align --mode pose` when the
-  reconstruction grid's shortest axis has at least 64 voxels (factors 4, 2, 1
-  from 128). A 256-cubed, 361-view laminography alignment takes 22 instead of
-  44 minutes with the same 0.003 deg rotation accuracy and a better volume, and
-  +/-3 deg motion is recovered in 64-cubed laminography where a single level
-  stopped at 0.037 deg.
-- Add `tomojax.alignment.coupled_pose_config(**overrides)`, the configuration
-  `tomojax align --mode pose` runs, for Python callers; `AlignConfig()` keeps
-  its older alternating defaults. Add an alignment example and README figure:
-  a 96-cubed laminography scan with +/-1 deg and +/-2 px per-view motion goes
-  from 0.57 to 0.087 relative error in 35 s, with rotations recovered to
-  0.0026 deg, on analytic data from continuous objects.
-- Add Joseph plane sampling to alignment (`ray_integrator="joseph"` or
-  `"joseph_cubic"`, CLI `--ray-integrator`) and make it the coupled pose
-  solver's default. Its matched gather transpose replaces the exact
-  integrator's atomic scatter: on analytic 128-cubed scans of continuous
-  objects (181 views), `tomojax align --mode pose` recovers parallel and
-  laminography poses to 0.0061 and 0.0024 deg in 46 and 93 s, where exact
-  integration took 588 and 1044 s for 0.0059 and 0.0016 deg. Joseph plane
-  coefficients now accept affine detector grids (calibrated offsets and roll),
-  so the model also serves calibrated detectors.
-- Fix pose alignment through `tomojax align` and `align_multires`. Pose
-  stages skipped reconstruction, so pose-only schedules (the default `pose`
-  mode) optimised against an all-zero volume and returned the nominal poses.
-  Pose stages now alternate with reconstruction again; a supplied `recon_L` is
-  honoured at full resolution.
-- Make the coupled volume-and-pose solver the default for `tomojax align
-  --mode pose` (`--pose-solver coupled`; `alternating` keeps the previous scheme,
-  and remains the default for modes with setup stages). It
-  implies exact ray integration, least squares without TV, fp32 gathers and up
-  to 30 early-stopped outer iterations, and rejects explicitly conflicting
-  options. On the six free-voxel pilot cells the default CLI now recovers five
-  (rotation 0.0006-0.008 deg), where the alternating scheme left 0.1-4 deg.
-  `gn_coupling="joint"` now applies to every pose-only stage of a named
-  schedule, and the coupled solver no longer shifts poses alone to fix the
-  translation gauge, which had capped its accuracy at about 0.08 deg.
-  The pilot's data share the exact integrator's voxel-basis model; on analytic
-  data from continuous objects all solvers settle at a 0.09-0.5 deg
-  discretisation floor at 32 cubed, with reconstructions as good as with the
-  true poses.
-- Run FISTA-TV and SPDHG-TV on the same batched operators as CGLS, and make
-  Joseph plane sampling with Pallas kernels on CUDA the default projector for
-  all three (`projector_model="auto"`). FISTA-TV previously used the JAX ray
-  model one view at a time: 50 iterations on a 64-cubed scan fall from 20 s to
-  0.15-0.19 s, and 40 SPDHG-TV iterations from 1.3 s to 0.05-0.07 s, with equal
-  or lower reconstruction error. Joseph matches analytic line integrals as well
-  as the ray model. Explicit detector grids and the exact ray integrator keep
-  the ray-model path; `projector_model="ray"` restores the previous operator.
-  FISTA's `views_per_batch` now defaults to 64 batched views (CLI default too).
-  Alignment's internal reconstructions keep the ray model of its pose objective.
-- Size alignment's reconstruction batches from free GPU memory by default
-  (`views_per_batch=0`, also the CLI default). Both alignment profiles used one
-  view per batch, launching a projector call for every view in every
-  reconstruction pass. On the six free-voxel alignment cells, warm alignment is
-  1.9-2.3x faster and cold 1.4-2x, with the same accepted cells and unchanged
-  peak GPU memory. An explicit positive value is still honoured.
-- Clip each Joseph forward ray to the planes it crosses. Skipped planes
-  contributed exact zeros, so projections are bitwise unchanged; forward
-  projection is 8-13% faster at 256 cubed in parallel, anisotropic and tilted
-  scans. Trace each Joseph kernel once per configuration instead of at every
-  call site, cutting a CGLS solve's tracing time by about a third.
-- Weight filtered backprojection exactly for every circular parallel-beam
-  scan. `fbp` now fits the rotation axis, arc and angular spacing from the view
-  poses and applies the matching per-view filter: a ramp along u scaled by the
-  sine of the ray-axis angle, divided by how many acquired views measure each
-  frequency. Tilted (laminography) axes, partial or full turns and irregular
-  angles were previously weighted as a uniform untilted half turn. In tests,
-  tilted reconstructions now match the measured-frequency truth to 5% (14% and
-  42% before for full and half turns); uniform untilted half turns are unchanged.
-  An explicit `FBPConfig.scale` keeps the previous uniform weighting.
-- Backproject FBP voxel by voxel with bilinear detector interpolation in every
-  geometry, using the Pallas kernel on CUDA. Laminography and anisotropic FBP
-  previously used the ray-model adjoint, which blurred the result (5% error on
-  a smooth parallel phantom, against 0.1% now). Explicit `det_grid` inputs keep
-  the ray-model path.
-- Start faster. Importing `tomojax.geometry` and `tomojax.recon` no longer loads
-  JAX or SciPy until a JAX-based function is used, so a Fourier reconstruction
-  imports in about 50 ms instead of 450 ms. Compiled JAX programs are cached on
-  disk by default (`TOMOJAX_JAX_CACHE=off` disables, `TOMOJAX_JAX_CACHE_DIR`
-  relocates; an existing JAX cache setting wins). CGLS checks its inputs inside
-  the solve instead of compiling separate programs, cutting a cold 64-cubed
-  laminography call from about 930 ms to 675 ms, or 385 ms with a warm cache.
+- **Cone axis calibration.** `ConeBeam.axis_offset` places the rotation axis
+  laterally, and `tomojax.recon.calibrate_cone_axis` estimates it and the
+  detector roll from the sharpness of thin FDK slabs at three heights.
+  `tomojax align --mode cor` runs it on cone data, and `cor-then-pose` and
+  `full` run it before their pose stages. On 128³ and 256³ blob scans it
+  recovers offsets of up to 11 voxels to 0.08 voxels and rolls of up to 1.2°
+  to 0.04°, in about 4 s at 256³.
+- **Multi-orbit scans.** `tomojax.geometry.ConeSegments` holds scans whose
+  source and detector arrangement changes partway (several orbits, stacked
+  sections of a tall sample): one arrangement per run of views, reconstructed
+  together by CGLS, FISTA and SPDHG and saved like any scan. `tj.Scan.combine`
+  joins scans. Segments with detectors of different pixel pitch are refused.
+  `tomojax.geometry.ScanGeometry` names what every scan geometry provides.
+- **ASTRA Toolbox conversion.** `tj.Scan.from_astra(data, proj_geom,
+  vol_geom)` reads `cone` and `cone_vec` geometries as a fitted circular orbit
+  plus per-view pose corrections, splitting into segments where the
+  arrangement changes; `scan.to_astra()` goes back. Converted scans project
+  like ASTRA to 0.03% on tilted, offset and jittered vector geometries.
+- **Aligning posed and multi-orbit scans.** `tj.align` corrects scans that
+  already carry poses (ASTRA imports, earlier alignments) on top of them, and
+  aligns `ConeSegments` scans as one, bringing their orbits into register.
+  From the FIPS walnut's uncorrected record it recovers the authors' orbit
+  heights (orbit 2 -0.381 mm against -0.397, orbit 3 -0.755 against -0.794),
+  and the reconstruction then matches the corrected one (error 0.155 against
+  0.154; 0.280 uncorrected); see `bench/walnut_alignment.py`,
+  `examples/align_walnut_orbits.py` and docs/lab-ct.md. `cor`,
+  `cor-then-pose` and `full` refuse posed and segmented scans.
+- **Six-parameter poses.** Pose tables (`pose_params`) have a sixth column,
+  `dy` along the beam, which changes cone-beam magnification and stays zero
+  for parallel beams. Alignment estimates it with the other five and anchors
+  its mean; `--freeze dy` keeps it fixed.
+- **Alignment.** Modes are `pose`, `cor`, `cor-then-pose` and `full`, planned
+  by `tomojax.alignment.alignment_plan` for Python and the command line alike.
+  - The coupled solver recovers five of the six free-voxel pilot cells
+    (rotations to 0.0006–0.008°), where the alternating scheme left 0.1–4°.
+  - Joseph plane sampling (`ray_integrator="joseph"` or `"joseph_cubic"`)
+    with a matched gather transpose: on analytic 128³ scans pose alignment
+    recovers parallel and laminography rotations to 0.0061° and 0.0024° (in
+    41 and 45 s; see Performance), where exact integration took 588 and
+    1044 s for 0.0059° and 0.0016°. Joseph coefficients accept calibrated
+    (offset and rolled) detectors.
+  - A global per-view shift search seeds pose alignment (`seed_translations`,
+    on in `pose` mode): on 64³ scans with ±0.5° tilts and ±15 px shifts,
+    rotation errors fall from 7.7° and 12.6° to 0.034° and 0.012° (parallel,
+    laminography). Coarse to fine, ±3° motion is recovered in 64³
+    laminography, where one level stopped at 0.037°.
+  - The least-motion estimate. Rotating or shifting the object, and every
+    pose the opposite way, predicts the same data; alignment now returns the
+    estimate with the least per-view motion and moves the volume to match
+    (volume errors 0.26 to 0.0037 on a 64³ cone scan, 0.55 to 0.019 on a
+    half-turn parallel scan with a detector offset). `info["gauge"]` records
+    the motion removed; `tomojax.alignment.api.least_motion_estimate` moves
+    any volume and pose table, a truth say, to the same estimate.
+  - `cor-then-pose` on parallel data runs the pose solver and saves the
+    constant part of the detector-u shifts as the detector centre. With a
+    +3.7 px offset and ±0.5°/±8 px motion on analytic 128³ scans, rotation
+    errors fall from 0.23–0.26° to 0.005–0.006°; on the gVXR chip phantom a
+    3.2 px offset is recovered as 3.18 px. The mode used to search for the
+    offset before correcting any motion, which biased it.
+  - `cor` mode on parallel and laminography data starts from the detector-u
+    offset whose FBP reprojects most consistently, which needs no opposite
+    views. With a +3.7 px offset on analytic 128³ scans it recovers 3.693 and
+    3.677 px in 41 and 84 s, where it previously reached 3.50 and 3.59 px in
+    about 380 s.
+  - `tj.align(scan, grid=...)` aligns on another grid than the scan's.
+    `tj.align(scan, checkpoint=path)` saves progress after each outer
+    iteration and resumes a checkpoint of the same alignment (a finished one
+    returns at once); a checkpoint of another alignment raises `ValueError`
+    naming what differs, and is left untouched.
+  - `result.info` holds the resolved `config` and, for pose alignment of
+    parallel and laminography scans, `implied_detector_u_px`, the
+    detector-centre offset the translations hold, which `tomojax align` logs
+    (`tomojax.alignment.api.implied_detector_offset` computes it).
+  - `tomojax.alignment.api.coupled_pose_config(**overrides)` is the
+    configuration `pose` mode runs. The README example, a 96³ laminography
+    scan with ±1° and ±2 px motion, goes from 0.57 to 0.087 relative error in
+    14 s, with rotations to 0.0026°.
+  - An alignment whose next level cannot fit in device memory stops at the
+    level before, with a warning; `info["factors"]` lists the levels that ran
+    and `info["factors_skipped"]` the others. A first level that cannot fit
+    raises `AlignmentMemoryError` before any work.
+- **Several GPUs.** `tj.project`, `tj.backproject` and `tj.reconstruct` with
+  `cgls` or `fista` take `devices=` (one device or several; `jax.devices()`
+  for all), as do `CGLSConfig` and `FistaConfig`. Each device projects its
+  share of the views and holds the whole volume, and their backprojections
+  are summed, so the transpose stays exact; each device reads only its own
+  views, and the CUDA kernels launch on the GPU holding their buffers.
+  Twenty FISTA iterations on the binned walnut take 24.8 s on one H100,
+  13.6 s on two and 7.4 s on four (docs/performance.md).
+- **Host streaming.** FISTA, CGLS and SPDHG read NumPy or memmap projections
+  larger than 40% of free device memory one view batch at a time inside the
+  compiled solve (`stream_projections` forces either way). On a 512³,
+  3072-view laminography scan (3.2 GB) on an 8 GB GPU, FISTA peaks at 4.3 GB,
+  CGLS at 3.2 GB and SPDHG at 4.3 GB; where both fit, streaming costs FISTA
+  4%. `fbp` streams NumPy or memmap input, and `fbp_host` takes every
+  geometry `fbp` does: a 1024³, 1024-view laminography FBP from and to
+  memmaps (4.3 GB each) runs in 37 s on an 8 GB GPU, where 768³ previously
+  ran out of memory.
+- `Scan.binned(n)` averages n x n detector pixels. Iterative
+  `tj.reconstruct` and `tj.align` warn when the detector samples the rotation
+  axis at least twice as finely as the voxels, naming the `binned(n)` that
+  makes them up to n² times cheaper. On the FIPS walnut (pixels half a voxel
+  at the axis) it makes iterative reconstruction 3.7 times faster with no
+  loss of accuracy.
+- `tomojax preprocess --beam-hardening C1,C2,...` maps each value p to
+  `C1 p + C2 p^2 + ...`, and `--remove-stripes WIDTH` removes rings by
+  subtracting each detector pixel's constant offset (`PreprocessConfig`'s
+  `beam_hardening` and `stripe_width`).
+- `tomojax export` writes a reconstruction as 32-bit or scaled 16-bit TIFF
+  z-slices, or one raw file, with a JSON sidecar of shape, voxel size and
+  scaling, reading one slice at a time.
+- `tomojax --version`; `tomojax simulate` needs only `-o`, and sizes a cone
+  detector to see the whole volume. `Scan.source` is the dataset record a
+  scan was loaded from; `LaminographyGeometry.axis_unit_lab` gives its
+  rotation axis; geometries can supply a vectorised `stack_poses`.
+
+### Fixed
+
+- `tomojax align --mode pose` (and `align_multires` with pose-only schedules)
+  optimised the poses against an all-zero volume and returned the nominal
+  geometry. Pose stages alternate with reconstruction again, and a given
+  `lipschitz` is honoured at full resolution and on resume.
+- The coupled solver shifted poses alone to fix the translation gauge, which
+  capped its accuracy at about 0.08°. `gn_coupling="joint"` now applies to
+  every pose-only stage of a named schedule.
+- Each view's 5 x 5 pose block is solved in scaled variables, with Marquardt
+  damping only where its FP32 Cholesky factor fails. Unscaled factorisations
+  of weakly determined blocks returned NaN and rejected whole Gauss-Newton
+  steps.
+- The translation seed search never ran at the first coarse-to-fine level.
+- `tomojax recon --algo spdhg` always clipped the volume at zero, whatever
+  `--no-positivity` said.
+- `--warm-start fbp` did not start FISTA.
+- FBP weighted tilted (laminography) axes, partial or full turns and
+  irregular angles as a uniform untilted half turn. It now fits the axis, arc
+  and angular spacing from the poses and filters each view to match: tilted
+  reconstructions match the measured-frequency truth to 5% (14% and 42%
+  before, for full and half turns). Uniform untilted half turns are
+  unchanged.
+- Laminography and anisotropic FBP backprojected with the ray-model adjoint,
+  which blurred the result (5% error on a smooth parallel phantom, 0.1% now).
+  FBP now backprojects voxel by voxel with bilinear interpolation in every
+  geometry, with the Pallas kernel on CUDA; explicit `det_grid` inputs keep
+  the ray model.
+
+### Performance
+
+- **Cone beam on CUDA.** One forward kernel serves every view and is 1.3 to
+  3.7 times faster than this release's first cone kernels; the transpose
+  keeps full occupancy at 40 registers (20% faster). On the FIPS walnut's
+  three orbits (every 4th view, 20 iterations), non-negative least squares
+  takes 86 s binned 2 x 2 (ASTRA 91 s) and 304 s unbinned (ASTRA 217 s).
+- **FDK** filters rows up to 2048 pixels with one matrix product and samples
+  the filtered images through the texture unit from half floats, with
+  interpolation weights rounded to 1/256 as in ASTRA's FDK. On the FIPS walnut
+  (1200 views, 501³) it takes 1.7–1.9 s against ASTRA's 2.13 s and agrees
+  with ASTRA's volume to 0.05%; a synthetic 256³ case takes 0.048 s (ASTRA
+  0.29 s), and a 1024³ host FDK 8.0 s. FDK compiles a third as many programs
+  on its first call and reads the next batch of views while the current one
+  runs.
+- **FISTA and SPDHG** run on the batched operators CGLS uses: 50 FISTA
+  iterations on a 64³ scan fall from 20 s to 0.15–0.19 s, and 40 SPDHG
+  iterations from 1.3 s to 0.05–0.07 s, with equal or lower error. FISTA also
+  runs one projection fewer per iteration (a quarter faster), reuses its
+  first backprojection as its first gradient, and skips the TV step when the
+  TV weight is zero. On the 128³ TV comparison (`bench/compare_tv.py`) FISTA
+  reaches 0.076 relative error in 1.13 s; TIGRE's FISTA reaches 0.101 in
+  9.7 s and ASD-POCS 0.146 in 5.7 s.
+- **CUDA C Joseph transpose**, compiled at run time with CuPy (now in the
+  `cuda12` extra), for volumes of 2^24 voxels and more (it costs about 0.3 s
+  per process to start): laminography backprojection is 1.6x and parallel
+  1.3x faster at 256³, structured 256³
+  laminography CGLS takes 1023 ms instead of 1372 ms warm, and a 512³
+  FISTA-TV solve 48.7 s instead of 63.1 s. `TOMOJAX_CUDA_KERNELS` forces the
+  CUDA kernels on (1) or off (0).
+- The Joseph forward kernel skips the planes a ray does not cross (8–13%
+  faster at 256³, bitwise unchanged), and its 8 x 16 ray tiles make
+  laminography projection 18% faster. Joseph kernels are traced once per
+  configuration, cutting a CGLS solve's tracing time by about a third.
+- **Alignment.** The coupled solver caches pose Jacobian columns whenever
+  five sinograms fit in a quarter of free device memory: full-resolution
+  `tomojax align --mode pose` on a 256³, 361-view laminography scan takes
+  188 s, with rotations to 0.0030°. Reconstruction batches sized from free
+  memory make warm alignment of the free-voxel cells 1.9–2.3x faster and cold
+  1.4–2x. Alignment's reconstruction step uses the matched Joseph transpose
+  and the CUDA kernels with dynamic poses: pose alignment of analytic 128³
+  scans takes 41 s (parallel) and 45 s (laminography).
+- A saved detector roll of zero no longer sends `tomojax recon` down the
+  ray-model path one view at a time: 100 FISTA iterations on the 720-view
+  chip phantom take 29 s, where one took more than 400 s.
+- **Start-up.** Importing `tomojax.geometry` and `tomojax.recon` loads JAX
+  and SciPy only when needed (a Fourier reconstruction imports in about 50 ms
+  instead of 450 ms). CGLS checks its inputs inside the solve: a cold 64³
+  laminography call takes 675 ms instead of about 930 ms, or 385 ms with a
+  warm cache.
+- **Device memory.** On a 512³, 768-view laminography scan on an 8 GB GPU,
+  CGLS (previously out of memory) peaks at 5.6 GB, FISTA-TV falls from 7.2 to
+  4.6 GB and SPDHG-TV (previously out of memory) peaks at 4.9 GB. The Joseph
+  and cone kernels read and write the `(view, row, column)` layout, so no
+  transposed copies of the projections are made; the transposes accumulate view batches
+  in place; FISTA's TV step keeps three volumes instead of five; and CGLS,
+  `project_joseph` and parallel `fbp_host` no longer copy NumPy inputs to the
+  device twice. `tj.project` and `tj.backproject` run compiled (peak 3.1 GB,
+  was 5.6, on the unbinned walnut). Alignment's joint update works through
+  view batches (7.2 to 5.8 GiB at the walnut's finest level), and the shift
+  search correlates 32 views at a time.
+
+### Development
+
+- Design rules for contributors, held by `tests/test_architecture.py`: the
+  public API is recorded in `tests/guardrails/api_surface.txt` so every
+  change shows in review, CLI options must map to Python keywords, and
+  ratchets in `tests/guardrails/ratchets.json` (configuration fields,
+  exported names, CLI flags, long files and functions, lint suppressions,
+  complex functions, type errors, positional options, first-device probes,
+  jaxlib and test private imports) may fall but not rise.
+- Ruff rejects positional boolean parameters, private member access across
+  objects, `print` in the library, shadowed builtins and commented-out code.
+- The CPU tests run on four CPU devices, so CI exercises the multi-GPU split.
+  `just test-cuda` runs every test with the GPU visible. The
+  checkpoint-resume test runs on the CPU, whose arithmetic is reproducible.
+- About 1,350 lines of unused code are deleted.
+- Benchmarks: `bench/walnut.py` (starting JAX's and ASTRA's GPU runtimes
+  before timing either), `bench/walnut_alignment.py`, `bench/compare_tv.py`,
+  and a gVXR chip-package laminography phantom in `bench/phantoms` with an
+  exact mesh voxeliser for the truth.
 
 ## 0.3.0 — 2026-10-04
 

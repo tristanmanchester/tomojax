@@ -1,15 +1,23 @@
 # Alignment solver reference
 
-Use this reference when changing `AlignConfig` in Python. For data preparation,
+Use this reference when changing `AlignConfig` fields, in Python or as keys of a
+`tomojax align --config` TOML file. For data preparation,
 mode selection, and interpreting recovered parameters, start with the
 [alignment guide](alignment-guide.md). These options are experimental; the
 [public comparison](research/public-free-voxel-schur-2026-10-04.md) still has a failed cell.
-The CLI does not expose every Python solver option described here.
+
+`tj.align` and `tomojax align` in `pose` and `cor-then-pose` modes start from
+`coupled_pose_config()`: the joint coupling with
+`gn_joint_solver="pose_eliminated"`, Joseph plane sampling
+(`ray_integrator="joseph"`) and fp32 gathers. `cor` and `full` keep the
+fixed-volume coupling, also with Joseph sampling. `--dry-run` prints the full
+set for a mode. A bare `AlignConfig()` keeps the older alternating defaults,
+which the statements of defaults below describe.
 
 ## Gauss–Newton updates at interpolation boundaries
 
-The default `gn_jacobian="autodiff"` differentiates the trilinear ray model
-within its current interpolation cells. At a voxel-grid boundary this chooses
+The default `gn_jacobian="autodiff"` differentiates the ray model within its
+current interpolation cells. At a voxel-grid boundary this chooses
 a one-sided derivative. For sharp objects, an update can enter a wrong local
 minimum even for a small detector shift.
 
@@ -28,12 +36,13 @@ Small rigid-transform products and Gauss–Newton normal equations explicitly
 request full FP32 multiplication precision. This prevents reduced global JAX
 matrix-multiply settings from quantizing small pose updates on CUDA.
 
-The Python API also has an experimental `gn_coupling="joint"` option for
-per-view least-squares alignment. It solves a damped linearized volume-and-pose
+The `gn_coupling="joint"` option, which `tj.align` uses in `pose` and
+`cor-then-pose` modes, is for per-view
+least-squares alignment. It solves a damped linearized volume-and-pose
 problem after each reconstruction refresh, then accepts the updated pair only
 after scoring its constrained nonlinear objective. This addresses slow
-alternation when free voxels can compensate for pose errors. The default
-remains `gn_coupling="fixed_volume"`. In `align_multires`, the implicit schedule
+alternation when free voxels can compensate for pose errors. `AlignConfig()`
+keeps `gn_coupling="fixed_volume"`. In `align_multires`, the implicit schedule
 uses a `joint_volume_pose` stage when this option is enabled. Explicitly
 fixed-volume schedule stages continue to keep the volume fixed; a custom joint
 stage must declare `objective_kind="joint_volume_pose"` and `optimizer="gn"`.
@@ -59,7 +68,7 @@ cache for different processes. The [six-cell reuse comparison](research/public-f
 measures faster warm calls with unchanged cold startup and process GPU memory;
 noisy anisotropic recovery still fails its rotation gate.
 
-The experimental `gn_joint_solver="pose_eliminated"` factors the pose block
+The `gn_joint_solver="pose_eliminated"` method factors the pose block
 and runs PCG on the volume Schur system, then back-substitutes poses. It solves
 the same damped linear problem as the default `"stacked"` method, with the
 same joint residual threshold and nonlinear acceptance. Without pose smoothness,
@@ -69,8 +78,9 @@ Damping and iteration budgets are unchanged. Independent dense, constrained
 workflow and CUDA checks pass. The [complete public comparison](research/public-free-voxel-schur-2026-10-04.md)
 recovers five of six modest-motion clean/noisy cells, with faster accepted
 tilted recovery but the same noisy anisotropic failure as the stacked solve.
-Sampled GPU memory rises from 280 to 320 MiB. The option remains experimental
-and is not the default; it does not establish complete recovery or the 20× goal.
+Sampled GPU memory rises from 280 to 320 MiB. It is the default for `pose` and `cor-then-pose`
+alignment (`AlignConfig()` keeps `"stacked"`); it does not establish
+complete recovery or the 20× goal.
 
 Joint steps report `objective_kind="joint_volume_pose"`, their actual
 projector backend, accepted line-search scale, and linear-solve diagnostics.

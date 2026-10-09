@@ -8,7 +8,8 @@ helpers.
 
 - Axis order constants and helpers.
 - Concrete geometry metadata: `Grid`, `Detector`, `Geometry`,
-  `ParallelGeometry`, `LaminographyGeometry`, and `RotationAxisGeometry`.
+  `ParallelGeometry`, `LaminographyGeometry`, `RotationAxisGeometry`, and the
+  cone-beam `ConeBeam`, `ConeGeometry` and `ConeSegments`.
 - FOV helpers such as `compute_roi`, `grid_from_detector_fov`, and
   `cylindrical_mask_xy`.
 - State types: `ScalarParameter`, `SetupParameters`, `PoseParameters`,
@@ -19,4 +20,6 @@ helpers.
 
 ## Dependency policy
 
-Import through `tomojax.geometry`, not private implementation files.
+Import the geometry classes and field-of-view helpers from `tomojax.geometry`,
+and the state, calibration, axis and artifact helpers from
+`tomojax.geometry.api`, not from private implementation files.

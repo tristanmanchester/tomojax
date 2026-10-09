@@ -13,7 +13,8 @@ preprocessing use this same parser. It accepts leading headers, blank lines,
 and comments; empty/nonfinite data and malformed rows after numeric data starts
 raise `ValueError`. The caller checks that angle count matches projection count.
 
-The ingestion CLI accepts detector-centre offsets in pixels and converts them
-with `du`/`dv`. Python `Detector.center` stores physical lengths. See the
+`tomojax import` records a centred detector; `tomojax align --mode cor`
+estimates the offset. Python `Detector.center` stores physical lengths, so an
+offset in pixels is multiplied by `du`/`dv`. See the
 [real scan guide](../../../docs/real-laminography.md) for measured geometry and
 for the distinction between raw intensities and corrected absorption.
