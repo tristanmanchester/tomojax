@@ -27,13 +27,15 @@ TIGRE_COMMIT = "6b0951a"
 
 image = (
     modal.Image.from_registry("nvidia/cuda:12.6.3-devel-ubuntu24.04", add_python="3.12")
-    .apt_install("git", "unzip")
-    .pip_install("numpy>=2,<2.3", "cython>=3", "setuptools", "scipy", "imageio", "tqdm")
+    .apt_install("git", "unzip", "build-essential")
+    .pip_install("numpy>=2,<2.3", "cython>=3", "setuptools", "wheel", "scipy", "imageio", "tqdm")
     .pip_install("astra-toolbox>=2.5,<2.6")
     # TIGRE builds for every GPU architecture nvcc knows; this is the commit tested locally.
     .run_commands(
         "git clone https://github.com/CERN/TIGRE /opt/TIGRE",
         f"cd /opt/TIGRE && git checkout {TIGRE_COMMIT} && pip install --no-build-isolation .",
+        # This Python was built with clang, which the image does not have.
+        env={"CC": "gcc", "CXX": "g++", "LDSHARED": "gcc -pthread -shared"},
     )
 )
 if modal.is_local():  # the container imports this module too, without the files

@@ -675,9 +675,8 @@ def fdk_host(
     # Each device's slabs in turn, copied into ``result`` (slow for memmaps)
     # while the next one runs.
     with ThreadPoolExecutor(len(devices)) as writer, ThreadPoolExecutor(len(devices)) as pool:
-        configs = [cfg.fdk if d is None else replace(cfg.fdk, devices=d) for d in devices]
         shares = [slabs[k :: len(devices)] for k in range(len(devices))]
-        list(pool.map(partial(work.run, writer=writer), shares, configs))
+        list(pool.map(partial(work.run, fdk=cfg.fdk, writer=writer), shares, devices))
     return result
 
 
@@ -707,11 +706,25 @@ class _Slabs:
         volume = _fdk(self.geometry, slab, rows, views, config=fdk, columns=self.detector)
         return np.asarray(volume)
 
-    def run(self, slabs: list[tuple[int, int]], fdk: FDKConfig, *, writer: Executor) -> None:
-        """Reconstruct ``slabs`` in turn, each stored by ``writer`` while the next runs."""
+    def run(
+        self,
+        slabs: list[tuple[int, int]],
+        device: Device | None,
+        *,
+        fdk: FDKConfig,
+        writer: Executor,
+    ) -> None:
+        """Reconstruct ``slabs`` in turn on ``device``, each stored by ``writer`` as the next runs.
+
+        All of a slab's work stays on ``device``, its weights and coefficients
+        too: another thread's on the same GPU changes the order of its sums.
+        """
+        if device is not None:
+            fdk = replace(fdk, devices=device)
         pending: Future[None] | None = None
         for z0, z1 in slabs:
-            volume = self.reconstruct(z0, z1, fdk)
+            with jax.default_device(device):
+                volume = self.reconstruct(z0, z1, fdk)
             if pending is not None:
                 pending.result()
             pending = writer.submit(self.store, z0, z1, volume)
