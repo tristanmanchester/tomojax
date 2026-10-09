@@ -94,6 +94,16 @@ def test_the_moved_volume_and_poses_predict_the_same_data(kind):
     assert np.linalg.norm(after - before) / np.linalg.norm(before) < 0.02
 
 
+def test_a_sliver_of_motion_keeps_the_faces_of_the_grid():
+    # An object filling the grid, moved a ten-thousandth of a voxel: trilinear
+    # resampling with zeros outside must change its faces by as little.
+    grid = tj.Grid(8, 8, 8, 1.0, 1.0, 1.0)
+    volume = np.ones((8, 8, 8), np.float32)
+    for shift in ((0, 0, -1e-4), (0, 0, 1e-4), (1e-4, -1e-4, 0)):
+        moved = apply_to_volume(volume, grid, Gauge(np.eye(3), np.asarray(shift)))
+        np.testing.assert_allclose(moved, volume, atol=2e-4)
+
+
 @pytest.mark.parametrize("frame", ["detector", "object"])
 def test_the_least_motion_estimate_is_reached_from_any_member_of_the_orbit(frame):
     _, _, nominal = _scan("lamino")

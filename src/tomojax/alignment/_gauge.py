@@ -168,7 +168,8 @@ def apply_to_volume(volume: np.ndarray, grid: Grid, gauge: Gauge) -> np.ndarray:
     """The volume that, with the moved poses, predicts the same data.
 
     Poses ``P_i G`` image the object ``V'(o) = V(G o)``; this resamples ``V``
-    there, trilinearly, with zeros outside the grid.
+    there, trilinearly, with zeros outside the grid (blended in, so a sliver of
+    a voxel's motion cannot empty a face of the grid).
     """
     spacing = np.array([grid.vx, grid.vy, grid.vz], np.float64)
     origin = np.asarray(grid_volume_origin(grid), np.float64)
@@ -177,14 +178,15 @@ def apply_to_volume(volume: np.ndarray, grid: Grid, gauge: Gauge) -> np.ndarray:
     matrix[:3, :3] = gauge.rotation * spacing[None, :] / spacing[:, None]
     matrix[:3, 3] = (gauge.rotation @ origin + gauge.shift - origin) / spacing
     moved = ndimage.affine_transform(
-        np.asarray(volume, np.float32), matrix, order=1, mode="constant"
+        np.asarray(volume, np.float32), matrix, order=1, mode="grid-constant"
     )
     return moved.astype(np.float32)
 
 
-# Moving the volume may push this fraction of the object past the grid edges: a
-# holder or stem reaching the edge breaks the symmetry too weakly to fix the
-# estimate (the solve drifts along it anyway), an object filling the grid does not.
+# Moving the volume a voxel or more may push this fraction of the object past the
+# grid edges: a holder or stem reaching the edge breaks the symmetry too weakly to
+# fix the estimate (the solve drifts along it anyway), an object filling the grid
+# does not.
 _MAX_LOST = 0.05
 # The object: voxels above this fraction of the volume's 99.9th percentile. The
 # low background a reconstruction spreads over the whole grid does not count.
@@ -202,6 +204,13 @@ def _largest_displacement(gauge: Gauge, grid: Grid) -> float:
     corners = origin + extent * np.array(np.meshgrid([0, 1], [0, 1], [0, 1])).reshape(3, -1).T
     moved = corners @ gauge.rotation.T + gauge.shift - corners
     return float(np.max(np.abs(moved) / spacing))
+
+
+def _at_least_a_voxel(gauge: Gauge, grid: Grid) -> Gauge:
+    """``gauge``'s motion, scaled up (never down) to move some voxel a whole voxel."""
+    scale = max(1.0, 1.0 / max(_largest_displacement(gauge, grid), 1e-12))
+    rotvec = Rotation.from_matrix(gauge.rotation).as_rotvec()
+    return Gauge(Rotation.from_rotvec(scale * rotvec).as_matrix(), scale * gauge.shift)
 
 
 def least_motion_estimate(
@@ -223,10 +232,10 @@ def least_motion_estimate(
     the detector centre (``Detector.center[0] += gauge.detector_offset``).
 
     The motion is a symmetry only for an object inside the grid. If moving the
-    volume would push part of the object out (more than 5% of its integral;
-    the faint background a reconstruction leaves everywhere does not count),
-    the grid edge already fixes the estimate: it is returned unchanged with
-    gauge None.
+    volume along it, by at least a voxel, would push part of the object out
+    (more than 5% of its integral; the faint background a reconstruction
+    leaves everywhere does not count), the grid edge already fixes the
+    estimate: it is returned unchanged with gauge None.
     """
     invisible = () if cone_beam else ("dy",)
     gauge = least_motion_gauge(
@@ -243,7 +252,8 @@ def least_motion_estimate(
     size = np.abs(np.asarray(volume, np.float32))
     obj = np.where(size > _OBJECT_LEVEL * np.percentile(size, 99.9), size, 0.0)
     before = float(np.sum(obj, dtype=np.float64))
-    after = float(np.sum(apply_to_volume(obj, grid, gauge), dtype=np.float64))
+    moved_obj = apply_to_volume(obj, grid, _at_least_a_voxel(gauge, grid))
+    after = float(np.sum(moved_obj, dtype=np.float64))
     if before > 0 and abs(after - before) > _MAX_LOST * before:
         return np.asarray(volume), np.asarray(params), None
     keep = tuple(name for name in DOF_NAMES if name not in active or name in invisible)
