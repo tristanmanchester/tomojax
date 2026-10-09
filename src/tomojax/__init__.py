@@ -24,13 +24,12 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from tomojax._scan import Scan, load
     from tomojax._workflow import (
         Alignment,
         Reconstruction,
-        Scan,
         align,
         backproject,
-        load,
         load_reconstruction,
         project,
         reconstruct,
@@ -50,10 +49,10 @@ from tomojax._version import __version__
 _SOURCES = {
     "Alignment": "tomojax._workflow",
     "Reconstruction": "tomojax._workflow",
-    "Scan": "tomojax._workflow",
+    "Scan": "tomojax._scan",
     "align": "tomojax._workflow",
     "backproject": "tomojax._workflow",
-    "load": "tomojax._workflow",
+    "load": "tomojax._scan",
     "load_reconstruction": "tomojax._workflow",
     "project": "tomojax._workflow",
     "reconstruct": "tomojax._workflow",

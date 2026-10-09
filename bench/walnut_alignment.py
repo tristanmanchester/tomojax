@@ -26,7 +26,7 @@ from walnut import ROWS, VIEWS, compare, load_orbit, reference, volume_geometry
 import tomojax as tj
 
 # check-public-imports: allow-private
-from tomojax._workflow import _record_of, _scan_from_record
+from tomojax._scan import record_of, scan_from_record
 
 
 def _scan(walnut: Path, data: np.ndarray, name: str, every: int, binning: int) -> tj.Scan:
@@ -47,9 +47,9 @@ def _orbit_one_fixed(scan: tj.Scan, original: tj.Scan) -> tj.Scan:
     poses, recorded = np.asarray(scan.poses), np.asarray(original.poses)
     per = len(scan.angles) // 3
     offset = (poses - recorded)[:per, 3:].mean(axis=0)
-    record = _record_of(scan)
+    record = record_of(scan)
     record.align_params = poses - np.concatenate([np.zeros(3), offset])
-    return tj.Scan(scan.projections, _scan_from_record(record, poses=True).geometry)
+    return tj.Scan(scan.projections, scan_from_record(record, poses=True).geometry)
 
 
 def _figures(out: Path, volumes: dict[str, np.ndarray], summary: dict[str, Any]) -> None:
