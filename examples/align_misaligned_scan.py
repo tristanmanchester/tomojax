@@ -11,6 +11,7 @@ GPU takes about a minute at the default size).
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 import time
@@ -157,8 +158,23 @@ def plot(volumes: dict[str, np.ndarray], metrics: dict[str, object], path: Path)
     fig.savefig(path, dpi=120)
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Run the example and write its figure and metrics."""
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=ROOT / "images",
+        help="Directory for alignment-example.png and .json (default: the README's images/)",
+    )
+    args = parser.parse_args()
+    args.output.mkdir(parents=True, exist_ok=True)
     volumes, metrics = run_example()
-    plot(volumes, metrics, ROOT / "images" / "alignment-example.png")
-    (ROOT / "images" / "alignment-example.json").write_text(json.dumps(metrics, indent=2) + "\n")
+    plot(volumes, metrics, args.output / "alignment-example.png")
+    (args.output / "alignment-example.json").write_text(json.dumps(metrics, indent=2) + "\n")
     print(json.dumps(metrics, indent=2))
+
+
+if __name__ == "__main__":
+    main()
