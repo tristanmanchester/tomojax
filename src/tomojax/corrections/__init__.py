@@ -15,15 +15,17 @@ from __future__ import annotations
 
 from ._engine import Corrected, correct_frames, correct_projections
 from ._records import Correction
-from ._steps import BeamHardening, RejectViews, Step, Stripes
+from ._steps import BeamHardening, Paganin, RejectViews, Step, Stripes, Zingers
 
 __all__ = [
     "BeamHardening",
     "Corrected",
     "Correction",
+    "Paganin",
     "RejectViews",
     "Step",
     "Stripes",
+    "Zingers",
     "correct_frames",
     "correct_projections",
 ]

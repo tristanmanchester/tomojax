@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 import tomojax as tj
-from tomojax.corrections import BeamHardening, Correction, RejectViews, Stripes
+from tomojax.corrections import BeamHardening, Correction, Paganin, RejectViews, Stripes, Zingers
 
 from ._helpers import tiny_detector, tiny_grid, write_projection_dataset, write_raw_nxtomo
 
@@ -294,3 +294,47 @@ def test_selected_views_of_a_posed_multi_orbit_scan() -> None:
     assert [s.beam.source_to_detector for s in picked.geometry.segments] == [30.0, 31.0]
     one_orbit = combined.selected([3, 5])
     assert isinstance(one_orbit.geometry, ConeGeometry)
+
+
+def _frames(counts: np.ndarray, flat: float) -> tj.Frames:
+    views, rows, cols = counts.shape
+    geometry = tj.ParallelGeometry(
+        tiny_grid(nx=cols, ny=cols, nz=rows),
+        tiny_detector(nu=cols, nv=rows),
+        np.linspace(0.0, 180.0, views, endpoint=False),
+    )
+    return tj.Frames(counts, geometry, flats=np.full((1, rows, cols), flat, np.float32))
+
+
+def test_zingers_are_replaced_by_their_neighbours_median() -> None:
+    counts = np.full((2, 5, 6), 500.0, np.float32)
+    counts[0, 2, 3] = 1000.0  # a zinger
+    counts[1, 1:4, 1:4] = 520.0  # a faint patch: not a zinger
+    scan = _frames(counts, 1000.0).corrected(Zingers())
+    p = np.asarray(scan.projections)
+    np.testing.assert_allclose(p[0], np.log(2.0), rtol=1e-6)
+    np.testing.assert_allclose(p[1], -np.log(counts[1] / 1000.0), rtol=1e-6)
+    assert scan.corrections[1] == Correction("zingers", {"threshold": 0.1, "size": 3})
+    with pytest.raises(ValueError, match="odd"):
+        Zingers(size=4)
+
+
+def test_paganin_recovers_the_attenuation_of_a_phase_contrast_image() -> None:
+    n, pixel, distance, energy, delta_beta = 64, 1e-6, 0.05, 20.0, 300.0
+    y, x = np.mgrid[:n, :n] - n / 2 + 0.5
+    mu_t = 0.4 * np.exp(-(x**2 + y**2) / (2 * 5.0**2))  # a smooth blob, mu * thickness
+    absorbed = np.exp(-mu_t)
+    # Near-field propagation (transport of intensity): I = (1 - z delta / mu laplacian) e^{-mu t}.
+    wavelength = 12.398419843320026e-10 / energy
+    k = 2 * np.pi * np.fft.fftfreq(n, pixel)
+    k2 = k[:, None] ** 2 + k[None, :] ** 2
+    scale = distance * wavelength * delta_beta / (4 * np.pi)
+    image = np.fft.ifft2(np.fft.fft2(absorbed) * (1 + scale * k2)).real
+    assert np.abs(image - absorbed).max() > 0.05  # strong edge fringes
+    frames = _frames((1000.0 * image)[None].astype(np.float32), 1000.0)
+    step = Paganin(delta_beta=delta_beta, distance=distance, energy_kev=energy, pixel_size=pixel)
+    scan = frames.corrected(step)
+    np.testing.assert_allclose(np.asarray(scan.projections)[0], mu_t, atol=2e-3)
+    assert [c.name for c in scan.corrections] == ["flat_dark", "paganin", "log"]
+    with pytest.raises(ValueError, match="positive"):
+        Paganin(delta_beta=0, distance=1, energy_kev=1, pixel_size=1)

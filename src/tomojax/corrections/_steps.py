@@ -157,6 +157,81 @@ class RejectViews(Step):
         return keep, found
 
 
+@dataclass(frozen=True)
+class Zingers(Step):
+    """Replace bright specks (zingers) with the median of the pixels around them.
+
+    A pixel is a zinger when its transmission exceeds the median of the
+    ``size x size`` pixels around it by more than ``threshold`` (a fraction of
+    the open beam). Zingers, from scattered or direct hits on the detector,
+    are far brighter than that; a sharp corner of a strongly absorbing object
+    can be too, so raise ``threshold`` if one is touched.
+    """
+
+    domain: ClassVar[Domain] = "transmission"
+    threshold: float = 0.1
+    size: int = 3
+
+    def __post_init__(self) -> None:
+        if not self.threshold > 0:
+            raise ValueError(f"Zingers threshold must be positive, not {self.threshold}")
+        if int(self.size) != self.size or self.size < 3 or self.size % 2 == 0:
+            raise ValueError(f"Zingers size must be an odd number of pixels >= 3, not {self.size}")
+        object.__setattr__(self, "threshold", float(self.threshold))
+        object.__setattr__(self, "size", int(self.size))
+
+    def apply(self, batch: jax.Array) -> jax.Array:
+        half, (_, rows, cols) = self.size // 2, batch.shape
+        padded = jnp.pad(batch, ((0, 0), (half, half), (half, half)), mode="edge")
+        shifted = [
+            padded[:, i : i + rows, j : j + cols]
+            for i in range(self.size)
+            for j in range(self.size)
+        ]
+        median = _median_of(shifted)
+        return jnp.where(batch - median > self.threshold, median, batch)
+
+
+@dataclass(frozen=True)
+class Paganin(Step):
+    """Single-material phase retrieval (Paganin et al. 2002) of propagation-based phase contrast.
+
+    Filters each view's transmission by ``1 / (1 + z lambda (delta/beta) |k|^2 / (4 pi))``
+    before the log, so the line integrals are of the material's attenuation
+    with the edge fringes folded back in. ``delta_beta`` is the material's
+    delta / beta, ``distance`` the sample-to-detector distance (m),
+    ``energy_kev`` the X-ray energy and ``pixel_size`` the detector pixel at
+    the sample (m; the pixel divided by the magnification in a cone beam).
+    Views are padded by half their size, edges repeated, against wrap-around.
+    """
+
+    domain: ClassVar[Domain] = "transmission"
+    delta_beta: float
+    distance: float
+    energy_kev: float
+    pixel_size: float
+
+    def __post_init__(self) -> None:
+        for name in ("delta_beta", "distance", "energy_kev", "pixel_size"):
+            value = float(getattr(self, name))
+            if not value > 0:
+                raise ValueError(f"Paganin {name} must be positive, not {value}")
+            object.__setattr__(self, name, value)
+
+    def apply(self, batch: jax.Array) -> jax.Array:
+        _, rows, cols = batch.shape
+        pr, pc = rows // 2, cols // 2
+        padded = jnp.pad(batch, ((0, 0), (pr, pr), (pc, pc)), mode="edge")
+        wavelength = 12.398419843320026e-10 / self.energy_kev  # metres
+        ku = 2 * np.pi * np.fft.fftfreq(cols + 2 * pc, self.pixel_size)
+        kv = 2 * np.pi * np.fft.fftfreq(rows + 2 * pr, self.pixel_size)
+        k2 = kv[:, None] ** 2 + ku[None, :] ** 2
+        scale = self.distance * wavelength * self.delta_beta / (4 * np.pi)
+        response = jnp.asarray(1.0 / (1.0 + scale * k2), jnp.float32)
+        filtered = jnp.fft.ifft2(jnp.fft.fft2(padded) * response).real
+        return filtered[:, pr : pr + rows, pc : pc + cols].astype(batch.dtype)
+
+
 def _stripe_offsets(row: jax.Array, width: int) -> jax.Array:
     """Each column's offset in one detector row, ``(views, columns)``."""
     ranked = jnp.sort(row, axis=0)
@@ -172,12 +247,17 @@ def _sliding_median(values: jax.Array, width: int) -> jax.Array:
     """
     half, columns = width // 2, values.shape[1]
     padded = jnp.pad(values, ((0, 0), (half, width - 1 - half)), mode="edge")
-    window = [padded[:, k : k + columns] for k in range(width)]
-    for sweep in range(width):
-        for i in range(sweep % 2, width - 1, 2):
+    return _median_of([padded[:, k : k + columns] for k in range(width)])
+
+
+def _median_of(window: list[jax.Array]) -> jax.Array:
+    """The elementwise median of equally shaped arrays, by odd-even transposition sort."""
+    window, n = list(window), len(window)
+    for sweep in range(n):
+        for i in range(sweep % 2, n - 1, 2):
             low, high = window[i], window[i + 1]
             window[i], window[i + 1] = jnp.minimum(low, high), jnp.maximum(low, high)
-    return window[half] if width % 2 else 0.5 * (window[half - 1] + window[half])
+    return window[n // 2] if n % 2 else 0.5 * (window[n // 2 - 1] + window[n // 2])
 
 
 def _snake(name: str) -> str:

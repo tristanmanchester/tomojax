@@ -264,7 +264,9 @@ without a translation frame (0.3's) are read as object-frame poses, and
   `tomojax.corrections` run on counts, transmission or line integrals:
   `Stripes(width)` removes rings (sorting-based, on the GPU a detector row at
   a time), `RejectViews(z)` drops views whose median is an outlier (and their
-  geometry), and `BeamHardening` linearises with a polynomial.
+  geometry), `Zingers` replaces bright specks with their neighbours'
+  median, `Paganin` retrieves single-material phase from propagation-based
+  phase contrast, and `BeamHardening` linearises with a polynomial.
   `Scan.corrected` runs line-integral steps on a scan, and `Scan.selected` and
   `Frames.selected` keep some views with their geometry (each view's flat is
   still interpolated at its place in the scan). `Scan.corrections` records
