@@ -20,9 +20,9 @@ from jax.sharding import PartitionSpec
 
 from tomojax.core.backend_policy import cuda_backend
 from tomojax.core.cone import ConeModel, cone_backproject, cone_model, cone_project, use_cuda_cone
+from tomojax.core.devices import VIEWS, ViewSplit, pad_views
 from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
-from tomojax.recon._devices import VIEWS, ViewSplit, pad_views
 from tomojax.recon._host_stream import read_views
 
 if TYPE_CHECKING:

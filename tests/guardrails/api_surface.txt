@@ -103,6 +103,7 @@ def tomojax.align(
         grid: 'Grid | None' = None,
         checkpoint: 'str | PathLike[str] | None' = None,
         config: 'AlignConfig | None' = None,
+        devices: 'Device | Sequence[Device] | None' = None,
     ) -> 'Alignment'
 def tomojax.backproject(
         geometry: 'Geometry',
@@ -281,6 +282,7 @@ class tomojax.recon.FBPConfig(
         checkpoint_projector: 'bool' = True,
         gather_dtype: 'str' = 'fp32',
         backprojector: "Literal['auto', 'jax', 'pallas']" = 'auto',
+        devices: 'Device | Sequence[Device] | None' = None,
     ) -> None
 class tomojax.recon.FBPHostConfig(
         *,
@@ -295,6 +297,7 @@ class tomojax.recon.FDKConfig(
         filter: 'str' = 'ramp',
         backend: 'str' = 'auto',
         views_per_batch: 'int' = 64,
+        devices: 'Device | Sequence[Device] | None' = None,
     ) -> None
 class tomojax.recon.FDKHostConfig(*, slices_per_batch: 'int | None' = None, fdk: 'FDKConfig' = <factory>) -> None
 class tomojax.recon.FistaConfig(

@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 
+from tomojax.core.devices import view_split
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.geometry.api import detector_grid_from_geometry_inputs
-from tomojax.recon._devices import view_split
 from tomojax.recon._projection import projection_operators, resolve_geometry_projector
 
 if TYPE_CHECKING:

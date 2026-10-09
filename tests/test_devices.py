@@ -126,10 +126,72 @@ def test_cgls_from_a_start_shared_among_devices_matches_one_device():
     assert _relative(shared, one) < 1e-4
 
 
+@pytest.mark.parametrize("kind", ["parallel", "lamino", "cone"])
+@pytest.mark.parametrize("on_host", [False, True])
+def test_filtered_backprojection_shared_among_devices_matches_one_device(kind, on_host):
+    geometry = _geometry(kind)
+    data = np.asarray(tj.project(geometry, _phantom()))
+    scan = tj.Scan(data if on_host else jax.numpy.asarray(data), geometry)
+
+    one = tj.reconstruct(scan, "fbp").volume
+    shared = tj.reconstruct(scan, "fbp", devices=jax.devices()).volume
+
+    assert shared.devices() == {jax.devices()[0]}
+    assert _relative(shared, one) < 1e-6  # weighted for the whole scan, summed in another order
+
+
+def test_fdk_slabs_shared_among_devices_match_one_device():
+    from tomojax.recon.fdk import FDKConfig, FDKHostConfig, fdk_host
+
+    geometry = _geometry("cone")
+    data = np.asarray(tj.project(geometry, _phantom()))
+    args = (geometry, geometry.grid, geometry.detector, data)
+    one = fdk_host(*args, config=FDKHostConfig(slices_per_batch=3))
+    shared = fdk_host(
+        *args, config=FDKHostConfig(slices_per_batch=3, fdk=FDKConfig(devices=jax.devices()))
+    )
+    np.testing.assert_array_equal(shared, one)  # the same slabs, each on one device
+
+
+@pytest.mark.parametrize(
+    ("kind", "smoothness"), [("cone", 0.0), ("parallel", 1e-2), ("orbits", 0.0)]
+)
+def test_pose_alignment_shared_among_devices_matches_one_device(kind, smoothness):
+    from dataclasses import replace
+
+    # check-public-imports: allow-private
+    from tomojax._data.geometry_meta import AugmentedGeometry
+    from tomojax.alignment.api import alignment_plan
+
+    geometry = _geometry(kind)
+    rng = np.random.default_rng(3)
+    motion = np.zeros((VIEWS, 6), np.float32)
+    motion[:, 3], motion[:, 5] = rng.normal(0, 0.4, (2, VIEWS))
+    scan = tj.Scan(
+        np.asarray(tj.project(AugmentedGeometry(geometry, motion, "detector"), _phantom())),
+        geometry,
+    )
+    # A few conjugate-gradient steps: unconverged float32 CG magnifies the
+    # rounding of any change in the order of its sums, devices or not.
+    config = replace(
+        alignment_plan("pose", geometry.grid).config,
+        outer_iterations=2,
+        gn_joint_iterations=3,
+        w_trans=smoothness,
+    )
+
+    one = tj.align(scan, levels=(1,), config=config)
+    shared = tj.align(scan, levels=(1,), config=config, devices=jax.devices())
+
+    assert shared.volume.devices() == {jax.devices()[0]}
+    np.testing.assert_allclose(shared.poses, one.poses, atol=1e-4)
+    assert _relative(shared.volume, one.volume) < 1e-5
+
+
 def test_bad_devices_are_refused():
     scan = tj.Scan(np.zeros((VIEWS, 20, 24), np.float32), _geometry("parallel"))
     with pytest.raises(ValueError, match="does not take devices"):
-        tj.reconstruct(scan, "fbp", devices=jax.devices())
+        tj.reconstruct(scan, "spdhg", devices=jax.devices())
     with pytest.raises(ValueError, match="at least one device"):
         tj.project(scan.geometry, _phantom(), devices=[])
     with pytest.raises(ValueError, match="twice"):

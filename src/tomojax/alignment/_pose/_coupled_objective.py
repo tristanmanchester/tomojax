@@ -12,6 +12,7 @@ import numpy as np
 
 from tomojax.alignment._model.dofs import POSE_WIDTH
 from tomojax.alignment._objectives.loss_specs import L2LossSpec
+from tomojax.core.devices import ViewSplit, shared_devices, view_split
 from tomojax.core.projector import get_detector_grid_device
 
 from ._coupled_linear import CoupledLinearResult
@@ -81,11 +82,13 @@ def _check_device_memory(arrays: CoupledArrays, spec: CoupledSpec) -> Callable |
     grid, detector = spec.grid, spec.detector
     n_views = int(arrays.poses.shape[0])
     volume = 4 * grid.nx * grid.ny * grid.nz
+    if spec.split is not None:  # each device holds its share of the views
+        n_views //= spec.split.mesh.size
     sinogram = 4 * n_views * detector.nu * detector.nv
     sinograms = 3 + (POSE_WIDTH if spec.cache_columns else 0) + (arrays.weights.ndim > 0)
     if _MEMORY_MARGIN * (13 * volume + sinograms * sinogram) < available:
         return None
-    p = jax.ShapeDtypeStruct((n_views, POSE_WIDTH), jnp.float32)
+    p = jax.ShapeDtypeStruct((int(arrays.poses.shape[0]), POSE_WIDTH), jnp.float32)
     x = jax.ShapeDtypeStruct((grid.nx, grid.ny, grid.nz), jnp.float32)
     compiled = run_update.lower(arrays, p, x, spec=spec).compile()
     analysis = compiled.memory_analysis()
@@ -94,6 +97,48 @@ def _check_device_memory(arrays: CoupledArrays, spec: CoupledSpec) -> Callable |
         if needed > available:
             raise AlignmentMemoryError(needed, available)
     return compiled
+
+
+def _shared(arrays: CoupledArrays, split: ViewSplit) -> CoupledArrays:
+    """``arrays`` laid out on ``split``'s devices: each device's views, the rest everywhere."""
+    weights = arrays.weights
+    return CoupledArrays(
+        poses=split.place(arrays.poses, repeat=True),
+        projections=split.place(arrays.projections),
+        weights=split.everywhere(weights) if weights.ndim == 0 else split.place(weights),
+        mask=split.everywhere(arrays.mask),
+        active=split.everywhere(arrays.active),
+        smoothness=split.everywhere(arrays.smoothness),
+        det_grid=(split.everywhere(arrays.det_grid[0]), split.everywhere(arrays.det_grid[1])),
+        frames=None if arrays.frames is None else split.place(arrays.frames, repeat=True),
+        counts=split.place(split.counted().astype(jnp.float32)),
+    )
+
+
+def _on_devices(
+    update: Callable[[jax.Array, jax.Array], CoupledLinearResult],
+    loss: Callable[[jax.Array, jax.Array], jax.Array],
+    split: ViewSplit,
+) -> tuple[
+    Callable[[jax.Array, jax.Array], CoupledLinearResult],
+    Callable[[jax.Array, jax.Array], jax.Array],
+]:
+    """``update`` and ``loss`` of poses and a volume on the first device, run on ``split``."""
+
+    def shared_update(p: jax.Array, x: jax.Array) -> CoupledLinearResult:
+        result = update(split.place(p, repeat=True), split.everywhere(x))
+        dx, dp = result.increment
+        return result._replace(
+            increment=(split.gather(dx), split.take(dp)),
+            iterations=split.gather(result.iterations),
+            relative_residual=split.gather(result.relative_residual),
+            finite=split.gather(result.finite),
+        )
+
+    def shared_loss(p: jax.Array, x: jax.Array) -> jax.Array:
+        return split.gather(loss(split.place(p, repeat=True), split.everywhere(x)))
+
+    return shared_update, shared_loss
 
 
 @dataclass(frozen=True)
@@ -147,7 +192,12 @@ def build_coupled_objective(ctx: _PoseObjectiveContext) -> CoupledObjective:
         det_grid=ctx.det_grid,
         frames=ctx.frames,
     )
-    cache_columns = ctx.n_views * ctx.nv * ctx.nu * POSE_WIDTH * 4 <= _pose_cache_limit()
+    split = view_split(shared_devices(), ctx.n_views)
+    if split is not None:
+        arrays = _shared(arrays, split)
+    # Each device caches its own views' columns.
+    views = ctx.n_views if split is None else split.total // split.mesh.size
+    cache_columns = views * ctx.nv * ctx.nu * POSE_WIDTH * 4 <= _pose_cache_limit()
     spec = CoupledSpec(
         grid=ctx.grid,
         detector=ctx.detector,
@@ -164,11 +214,13 @@ def build_coupled_objective(ctx: _PoseObjectiveContext) -> CoupledObjective:
         gn_joint_rtol=float(cfg.gn_joint_rtol),
         gn_joint_iterations=int(cfg.gn_joint_iterations),
         has_smoothness=bool(cfg.w_rot or cfg.w_trans),
+        split=split,
     )
     compiled = _check_device_memory(arrays, spec)
-    return CoupledObjective(
-        partial(run_update, arrays, spec=spec) if compiled is None else partial(compiled, arrays),
-        partial(run_loss, arrays, spec=spec),
-        backend,
-        cache_columns,
+    update = (
+        partial(run_update, arrays, spec=spec) if compiled is None else partial(compiled, arrays)
     )
+    loss = partial(run_loss, arrays, spec=spec)
+    if split is not None:
+        update, loss = _on_devices(update, loss, split)
+    return CoupledObjective(update, loss, backend, cache_columns)

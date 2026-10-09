@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core.devices import ViewSplit, as_devices, refuse_streaming, view_split
 from tomojax.core.geometry.cone import is_cone_beam, require_parallel_beam
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.operator_norm import estimate_normal_norm
@@ -31,7 +32,6 @@ from tomojax.core.validation import (
 )
 
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
-from ._devices import ViewSplit, as_devices, refuse_streaming, view_split
 from ._host_stream import host_source, should_stream
 from ._projection import (
     ConeModel,
@@ -954,7 +954,7 @@ def fista_tv(
             final.x.block_until_ready()
     elif runtime.split is not None:  # each device's views on that device, once
         data = runtime.split.place(projections)
-        final, lipschitz = _run_fista_scan(grid, detector, data, runtime)
+        final, lipschitz = _run_fista_scan(grid, detector, data, runtime.split.everywhere(runtime))
         final = final._replace(x=runtime.split.gather(final.x))
     else:
         final, lipschitz = _run_fista_scan(grid, detector, projections, runtime)

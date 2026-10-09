@@ -94,7 +94,12 @@ def reconstruct_arrays(
         return volume, {"config": cfg}
     start = None
     if warm_start:
-        start = fbp(geometry, grid, detector, projections, det_grid=det_grid)
+        # On the solver's devices; an explicit detector grid takes one.
+        devices = getattr(cfg, "devices", None) if det_grid is None else None
+        start = fbp(
+            geometry, grid, detector, projections, config=FBPConfig(devices=devices),
+            det_grid=det_grid,
+        )  # fmt: skip
         if getattr(cfg, "nonnegative", False):
             start = jnp.maximum(start, 0.0)
     args = (geometry, grid, detector, projections)
@@ -150,7 +155,7 @@ def _host_fdk(
     )
     # As fbp's own FDK: the same filter, and the CUDA kernel for "pallas".
     backend = {"auto": "auto", "jax": "jax", "pallas": "cuda"}[cfg.backprojector]
-    fdk = FDKConfig(filter=cfg.filter, backend=backend)
+    fdk = FDKConfig(filter=cfg.filter, backend=backend, devices=cfg.devices)
     data = np.asarray(projections, np.float32)
     return fdk_host(geometry, grid, detector, data, config=FDKHostConfig(fdk=fdk))
 

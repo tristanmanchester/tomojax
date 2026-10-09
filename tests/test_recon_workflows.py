@@ -9,10 +9,10 @@ import pytest
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 from tomojax.io import ProjectionDataset, load_dataset, save_dataset
 from tomojax.recon import FBPConfig, FistaConfig, fbp, fista_tv
-from tomojax.recon.api import clear_filter_caches, default_fbp_scale
 
 # check-public-imports: allow-private
-from tomojax.recon.fbp import _run_fbp_generic_with_oom_fallback
+from tomojax.recon._fbp_detector_grid import _run_fbp_generic_with_oom_fallback
+from tomojax.recon.api import clear_filter_caches, default_fbp_scale
 from tomojax.recon.filters import get_filter_np
 
 
@@ -97,7 +97,7 @@ def test_fbp_chunk_backoff_preserves_accumulator_and_progress_on_async_oom(
 ) -> None:
     import importlib
 
-    module = importlib.import_module("tomojax.recon.fbp")
+    module = importlib.import_module("tomojax.recon._fbp_detector_grid")
     calls = []
     progress = iter(range(5))
 

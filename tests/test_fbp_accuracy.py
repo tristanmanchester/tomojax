@@ -8,9 +8,7 @@ import pytest
 
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 from tomojax.recon import FBPConfig, fbp
-
-# check-public-imports: allow-private
-from tomojax.recon.fbp import _fft_filter_rows, _rfft_filter_array
+from tomojax.recon.filters import fft_filter_rows, rfft_filter_array
 
 
 @pytest.mark.parametrize("nu", [1, 7, 16, 31])
@@ -25,7 +23,7 @@ def test_ramp_filter_matches_linear_convolution(nu: int, du: float) -> None:
     kernel[odd] = -1.0 / (np.pi**2 * offsets[odd] ** 2 * du)
     expected = rows @ kernel.T
 
-    filtered = _fft_filter_rows(jnp.asarray(rows), _rfft_filter_array("ramp", nu, du, jnp.float32))
+    filtered = fft_filter_rows(jnp.asarray(rows), rfft_filter_array("ramp", nu, du, jnp.float32))
 
     np.testing.assert_allclose(filtered, expected, rtol=2e-5, atol=2e-7)
 
@@ -143,7 +141,7 @@ def test_streamed_fbp_matches_whole_stack_with_partial_batches(
         np.column_stack([rng.uniform(0.5, 1, (5, 4)), np.arange(5.0), rng.uniform(0.1, 0.3, 5)]),
         dtype=jnp.float32,
     )
-    ramp = _rfft_filter_array("ramp", detector.nu, detector.du, jnp.float32)
+    ramp = rfft_filter_array("ramp", detector.nu, detector.du, jnp.float32)
 
     def run(batch_size: int, kernel: str) -> jnp.ndarray:
         return _run_fbp_streamed(
@@ -213,15 +211,15 @@ def test_voxel_pallas_fbp_matches_jax_on_partial_blocks(interpret: bool, z_integ
     geometry = ParallelGeometry(grid, detector, [0.0, 31.0, 78.0, 117.0, 161.0])
     poses = jnp.asarray([geometry.pose_for_view(i) for i in range(5)], dtype=jnp.float32)
     projections = jnp.asarray(np.random.default_rng(18).normal(size=(5, 5, 9)), dtype=jnp.float32)
-    ramp = _rfft_filter_array("ramp", 9, detector.du, jnp.float32)
+    ramp = rfft_filter_array("ramp", 9, detector.du, jnp.float32)
     expected = jax.jit(
         lambda y: _backproject_voxels_jax(
-            poses, _fft_filter_rows(y, ramp), grid=grid, detector=detector
+            poses, fft_filter_rows(y, ramp), grid=grid, detector=detector
         )
     )(projections)
     actual = backproject_filtered_pallas(
         poses,
-        _fft_filter_rows(projections, ramp),
+        fft_filter_rows(projections, ramp),
         grid=grid,
         detector=detector,
         z_integer=z_integer,

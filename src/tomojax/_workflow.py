@@ -528,10 +528,11 @@ def reconstruct(
     as :func:`dataclasses.replace` does, so a keyword wins over the config. A
     keyword the method's class has no field for raises.
 
-    ``devices`` (``cgls`` and ``fista``; one or several, ``jax.devices()`` for
-    all) shares the views among them: each projects its own views and holds
-    the whole volume, and their backprojections are summed. The volume, on the
-    first device, is the one-device result up to the order of that sum.
+    ``devices`` (``fbp``, ``cgls`` and ``fista``; one or several,
+    ``jax.devices()`` for all) shares the views among them: each projects its
+    own views and holds the whole volume, and their backprojections are
+    summed. The volume, on the first device, is the one-device result up to
+    the order of that sum.
 
     :attr:`Reconstruction.info` holds the resolved ``config`` with the
     solver's record (iterations run, termination, losses).
@@ -579,6 +580,7 @@ def align(
     grid: Grid | None = None,
     checkpoint: str | PathLike[str] | None = None,
     config: AlignConfig | None = None,
+    devices: Device | Sequence[Device] | None = None,
 ) -> Alignment:
     """Estimate ``scan``'s geometry corrections and reconstruct with them.
 
@@ -601,6 +603,12 @@ def align(
     one returns its result at once. Any other file there raises
     :class:`ValueError` saying how it differs, and is left as it is. A cone
     beam's ``cor`` mode runs no outer iterations and writes none.
+
+    ``devices`` (one or several, ``jax.devices()`` for all) shares the views
+    among them, as :func:`reconstruct` does, in the joint pose and volume
+    update of ``pose`` alignment and in cone-beam reconstruction steps; the
+    rest runs on the first. The devices change only the order of sums, so a
+    checkpoint made on some resumes on others.
 
     A scan that already carries poses (an ASTRA import's, say, or an earlier
     alignment's) is corrected on top of them, and multi-orbit
@@ -628,7 +636,10 @@ def align(
             "align posed or segmented scans with mode='pose'"
         )
     _suggest_binning(scan, "alignment")
-    geometry, volume, poses, frame, info = _run_alignment(scan, plan, checkpoint)
+    from tomojax.core.devices import sharing
+
+    with sharing(devices):
+        geometry, volume, poses, frame, info = _run_alignment(scan, plan, checkpoint)
     corrected = _record_of(replace(scan, geometry=cast("ScanGeometry", geometry)))
     calibration = info.get("geometry_calibration_state")
     if isinstance(calibration, dict):

@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core.devices import ViewSplit, as_devices, refuse_streaming, view_split
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import (
     validate_detector_grid,
@@ -20,7 +21,6 @@ from tomojax.core.validation import (
     validate_projection_stack,
     validate_volume,
 )
-from tomojax.recon._devices import ViewSplit, as_devices, refuse_streaming, view_split
 from tomojax.recon._host_stream import host_source, should_stream
 from tomojax.recon._projection import (
     ConeModel,
@@ -483,6 +483,19 @@ def _placement(
     return None, stream
 
 
+def _laid_out(
+    split: ViewSplit | None,
+    projections: jnp.ndarray | np.ndarray,
+    poses: jax.Array,
+    initial: jax.Array | None,
+) -> tuple[jax.Array, jax.Array, jax.Array | None]:
+    """The data, poses and start for :func:`_solve`: on one device, or on ``split``'s."""
+    if split is None:
+        return _as_float32(projections), poses, initial
+    # Each device's views of the data; the poses and start on all, wherever they were.
+    return split.place(projections), *split.everywhere((poses, initial))
+
+
 def cgls(
     geometry: Geometry,
     grid: Grid,
@@ -550,7 +563,7 @@ def cgls(
             )
             jax.block_until_ready(result)
     else:
-        data = _as_float32(projections) if split is None else split.place(projections)
+        data, poses, initial = _laid_out(split, projections, poses, initial)
         result, initial_norm, threshold, inputs_finite = _solve(
             poses,
             data,

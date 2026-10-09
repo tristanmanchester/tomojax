@@ -6,6 +6,7 @@ import functools
 import math
 import operator
 
+import jax.numpy as jnp
 import numpy as np
 
 
@@ -115,6 +116,20 @@ def get_fbp_filter_np(name: str, nu: int, du: float, dtype_name: str) -> np.ndar
     out = np.asarray(spectrum, dtype=dtype)
     out.setflags(write=False)
     return out
+
+
+def rfft_filter_array(filter: str, nu: int, du: float, dtype: jnp.dtype) -> jnp.ndarray:
+    """Return the padded discrete FBP filter without doubling RFFT bins."""
+    Hr_np = get_fbp_filter_np(filter, int(nu), float(du), str(dtype))
+    return jnp.asarray(Hr_np, dtype=dtype)
+
+
+def fft_filter_rows(rows: jnp.ndarray, rfft_filter: jnp.ndarray) -> jnp.ndarray:
+    """Zero-pad detector rows, filter, and crop to prevent circular wraparound."""
+    nu = int(rows.shape[-1])
+    n_fft = 2 * (int(rfft_filter.shape[0]) - 1)
+    F = jnp.fft.rfft(rows, n=n_fft, axis=-1)
+    return jnp.fft.irfft(F * rfft_filter, n=n_fft, axis=-1)[..., :nu]
 
 
 def clear_filter_caches() -> None:

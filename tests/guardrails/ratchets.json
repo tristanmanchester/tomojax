@@ -27,8 +27,6 @@
     "src/tomojax/alignment/_stages/_reconstruction_stage.py": 1030,
     "src/tomojax/alignment/optimizers.py": 921,
     "src/tomojax/core/projector.py": 837,
-    "src/tomojax/recon/fbp.py": 895,
-    "src/tomojax/recon/fdk.py": 948,
     "src/tomojax/recon/fista_tv.py": 971
   },
   "long_functions": {
@@ -36,7 +34,7 @@
     "src/tomojax/alignment/_objectives/fixed_volume.py::project_and_score_stack": 164,
     "src/tomojax/alignment/_objectives/recon_layer.py::_implicit_reconstruct_arrays": 111,
     "src/tomojax/alignment/_objectives/validation_residuals.py::accumulate_validation_normals": 131,
-    "src/tomojax/alignment/_pose/_coupled_program.py::_build_program": 351,
+    "src/tomojax/alignment/_pose/_coupled_program.py::_build_program": 349,
     "src/tomojax/alignment/_pose/_pose_loop.py::align": 202,
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::_run_reconstruction_step": 166,
     "src/tomojax/alignment/_stages/_setup_stage.py::_optimize_setup_geometry_bilevel_for_level": 154,
@@ -72,7 +70,6 @@
     "src/tomojax/recon/cgls.py::_solve_streamed": 126,
     "src/tomojax/recon/cgls.py::cgls": 121,
     "src/tomojax/recon/cgls_multires.py::cgls_multires": 101,
-    "src/tomojax/recon/fbp.py::fbp": 122,
     "src/tomojax/recon/fista_tv.py::_prepare_fista_runtime": 118,
     "src/tomojax/recon/fista_tv.py::_run_fista_scan": 125,
     "src/tomojax/recon/fista_tv.py::grad_data_term": 168,
@@ -83,7 +80,7 @@
   "suppressions": {
     "noqa": 8,
     "type: ignore": 44,
-    "pyright: ignore": 20
+    "pyright: ignore": 19
   },
   "complex_functions": [
     "src/tomojax/_data/_io_helpers.py::C901::_load_processing_metadata",
@@ -137,7 +134,6 @@
     "src/tomojax/io/_preprocess_impl/selection.py::PLR0912::_parse_view_spec",
     "src/tomojax/recon/_fbp_weights.py::PLR0915::fbp_weights",
     "src/tomojax/recon/cgls_multires.py::C901::cgls_multires",
-    "src/tomojax/recon/fbp.py::C901::fbp",
     "src/tomojax/recon/fbp_host.py::C901::fbp_host",
     "src/tomojax/recon/fista_tv.py::C901::grad_data_term",
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline",
@@ -145,7 +141,7 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "type_errors": {
-    "reportArgumentType": 358,
+    "reportArgumentType": 357,
     "reportAssignmentType": 3,
     "reportAttributeAccessIssue": 167,
     "reportCallIssue": 14,

@@ -1,4 +1,12 @@
-"""Reusable compiled joint objectives with scan arrays kept out of cache keys."""
+"""Reusable compiled joint objectives with scan arrays kept out of cache keys.
+
+With a :class:`~tomojax.core.devices.ViewSplit` in the spec, the update and
+loss run in one ``shard_map``: each device holds its share of the views (their
+projections, poses, cached pose columns and pose increments) and the whole
+volume. Volume and scalar sums over views are summed across the devices, and
+so are the pose parts of the solver's inner products; pose smoothness, which
+couples neighbouring views, gathers the small ``(views, 6)`` pose arrays.
+"""
 
 from __future__ import annotations
 
@@ -9,9 +17,11 @@ from typing import TYPE_CHECKING, Literal, NamedTuple
 
 import jax
 import jax.numpy as jnp
+from jax.sharding import PartitionSpec
 
 from tomojax.alignment._geometry.parametrizations import apply_pose_updates
 from tomojax.core.cone import cone_backproject, cone_project, frame_coefficients
+from tomojax.core.devices import VIEWS, ViewSplit
 from tomojax.core.joseph import (
     forward_project_planes,
     plane_coefficients,
@@ -65,6 +75,8 @@ class CoupledSpec:
     gn_joint_rtol: float
     gn_joint_iterations: int
     has_smoothness: bool
+    # The views shared among devices; the arrays then hold its padded views.
+    split: ViewSplit | None = None
 
 
 class CoupledArrays(NamedTuple):
@@ -79,6 +91,86 @@ class CoupledArrays(NamedTuple):
     smoothness: jax.Array
     det_grid: tuple[jax.Array, jax.Array]
     frames: jax.Array | None = None
+    # Which views count, with a split: its padding views do not.
+    counts: jax.Array | None = None
+
+
+def _regularisation(x: jax.Array, *, spec: CoupledSpec) -> jax.Array:
+    if spec.tv_weight == 0:
+        return jnp.float32(0)
+    config = FistaCoreConfig(regulariser=spec.regulariser, huber_delta=spec.huber_delta)
+    return spec.tv_weight * regulariser_value_arrays(x, config)
+
+
+def _smoothness(p: jax.Array, *, weights: jax.Array) -> jax.Array:
+    """The weighted squared second differences of the poses along the views."""
+    d2 = p[:-2] - 2 * p[1:-1] + p[2:]
+    return jnp.sum(jnp.square(d2 * weights))
+
+
+def _dot(a: jax.Array, b: jax.Array) -> jax.Array:
+    return jnp.vdot(a, b, precision=jax.lax.Precision.HIGHEST).real
+
+
+def _view_specs(arrays: CoupledArrays) -> CoupledArrays:
+    """How a split cuts ``arrays``: per-view arrays by views, the rest whole."""
+    cut, whole = PartitionSpec(VIEWS), PartitionSpec()
+    specs = {
+        "poses": cut,
+        "projections": cut,
+        "weights": whole if arrays.weights.ndim == 0 else cut,
+        "mask": whole,
+        "active": whole,
+        "smoothness": whole,
+        "det_grid": (whole, whole),
+        "frames": None if arrays.frames is None else cut,
+        "counts": cut,
+    }
+    return CoupledArrays._make(specs[name] for name in CoupledArrays._fields)
+
+
+@dataclass(frozen=True)
+class _Shares:
+    """One device's ``n`` views of a split, and sums over all of them; identities for None."""
+
+    split: ViewSplit | None
+    n: int
+
+    def across(self, value: jax.Array) -> jax.Array:
+        """``value``, a sum over this device's views, summed over every device's."""
+        return value if self.split is None else jax.lax.psum(value, VIEWS)
+
+    def whole(self, rows: jax.Array) -> jax.Array:
+        """Every view's rows, from each device's ``(n, ...)`` share of them."""
+        if self.split is None:
+            return rows
+        return jax.lax.all_gather(rows, VIEWS, tiled=True)[: self.split.n]
+
+    def mine(self, rows: jax.Array) -> jax.Array:
+        """This device's share of every view's rows."""
+        if self.split is None:
+            return rows
+        padded = jnp.pad(rows, ((0, self.split.total - self.split.n), (0, 0)))
+        return jax.lax.dynamic_slice_in_dim(padded, jax.lax.axis_index(VIEWS) * self.n, self.n)
+
+    def dot(self, a: tuple[jax.Array, jax.Array], b: tuple[jax.Array, jax.Array]) -> jax.Array:
+        """The inner product of (volume, pose rows) pairs, each device holding its views' rows."""
+        return _dot(a[0], b[0]) + self.across(_dot(a[1], b[1]))
+
+    def linearized(self, gradient: Callable, rows: jax.Array) -> tuple[jax.Array, Callable]:
+        """``gradient`` of every view's rows, and its derivative, at ``rows``, as shares."""
+        value, derivative = jax.linearize(gradient, self.whole(rows))
+        return self.mine(value), lambda change: self.mine(derivative(self.whole(change)))
+
+    def pose_solver(
+        self, gram: jax.Array, weights: jax.Array, *, has_smoothness: bool
+    ) -> Callable[[jax.Array], jax.Array]:
+        """:func:`pose_block_solver` of the shares' ``gram``; smoothness couples all views."""
+        if self.split is None or not has_smoothness:
+            return pose_block_solver(gram, weights, has_smoothness=has_smoothness)
+        every = self.whole(gram.reshape(self.n, -1)).reshape(-1, *gram.shape[1:])
+        solve = pose_block_solver(every, weights, has_smoothness=True)
+        return lambda rows: self.mine(solve(self.whole(rows)))
 
 
 def _build_program(
@@ -98,8 +190,12 @@ def _build_program(
     def masked(v):
         return v if unmasked else mask * v
 
-    n_views = arrays.poses.shape[0]
+    n_views = arrays.poses.shape[0]  # a device's share, with a split
     cache_columns = spec.cache_columns
+    shares = _Shares(spec.split, n_views)
+    across = shares.across
+    counts = jnp.ones(n_views) if arrays.counts is None else arrays.counts  # a split pads
+    movable = counts[:, None] * active  # pose rows that may change
     predict_columns = partial(
         pose_prediction_and_columns,
         grid=spec.grid,
@@ -107,16 +203,8 @@ def _build_program(
         det_grid=arrays.det_grid,
         options=spec.jacobian,
     )
-    reg_cfg = FistaCoreConfig(regulariser=cfg.regulariser, huber_delta=cfg.huber_delta)
-
-    def regularisation(x):
-        if cfg.tv_weight == 0:
-            return jnp.float32(0)
-        return cfg.tv_weight * regulariser_value_arrays(x, reg_cfg)
-
-    def smoothness(p):
-        d2 = p[:-2] - 2 * p[1:-1] + p[2:]
-        return jnp.sum(jnp.square(d2 * arrays.smoothness))
+    regularisation = partial(_regularisation, spec=spec)
+    smoothness = partial(_smoothness, weights=arrays.smoothness)
 
     def poses(p):
         return apply_pose_updates(
@@ -217,7 +305,7 @@ def _build_program(
         def step(i, carry):
             start = jnp.minimum(i * size, n_views - size)
             valid = (start + jnp.arange(size) >= i * size).astype(jnp.float32)
-            return body(start, valid, carry)
+            return body(start, valid * take(counts, start), carry)
 
         return jax.lax.fori_loop(0, count, step, init)
 
@@ -237,7 +325,8 @@ def _build_program(
             squares = jnp.sum(jnp.square(residual), axis=(1, 2))
             return total + 0.5 * jnp.sum(valid * squares)
 
-        return over_batches(body, jnp.float32(0)) + regularisation(x) + smoothness(p)
+        data = across(over_batches(body, jnp.float32(0)))
+        return data + regularisation(x) + smoothness(shares.whole(p))
 
     highest = jax.lax.Precision.HIGHEST
 
@@ -285,8 +374,7 @@ def _build_program(
             cached, view_columns, batch_columns, project, transpose, pose_forward, pose_adjoint
         )
 
-    def dot(a, b):
-        return jnp.vdot(a, b, precision=jax.lax.Precision.HIGHEST).real
+    dot, block_dot = _dot, shares.dot
 
     def solve_pose_eliminated(ops, p, x, free, rhs, normal, reg_hessian, volume_inverse):
         """Eliminate the per-view pose blocks exactly and solve for the volume by CG."""
@@ -299,7 +387,7 @@ def _build_program(
                 return jnp.matmul(columns, columns.T, precision=highest)
 
             gram = jax.lax.map(view_gram, jnp.arange(n_views))
-        solve_pose = pose_block_solver(
+        solve_pose = shares.pose_solver(
             gram + cfg.gn_damping * jnp.eye(p.shape[1], dtype=p.dtype),
             arrays.smoothness * active,
             has_smoothness=spec.has_smoothness,
@@ -311,7 +399,7 @@ def _build_program(
                 start, valid, ops.pose_forward(start, ops.batch_columns(start), dp_rhs), out
             )
 
-        reduced_rhs = rhs[0] - free * over_batches(pose_only, volume_zeros)
+        reduced_rhs = rhs[0] - free * across(over_batches(pose_only, volume_zeros))
 
         def pose_rows(dx):  # C^T W A dx, and the batches' W A dx
             def body(start, _valid, carry):
@@ -332,13 +420,13 @@ def _build_program(
                 y = take(ys, start) - ops.pose_forward(start, ops.batch_columns(start), dp)
                 return ops.transpose(start, valid, y, out)
 
-            ax = over_batches(body, volume_zeros)
+            ax = across(over_batches(body, volume_zeros))
             return (
                 free * (ax + reg_hessian(dx) + cfg.gn_volume_damping * dx),
                 increment[1],
             )
 
-        full_squared = dot(rhs[0], rhs[0]) + dot(rhs[1], rhs[1])
+        full_squared = block_dot(rhs, rhs)
         # After exact pose back-substitution, the full residual is the
         # volume Schur residual. Use the same absolute stopping threshold
         # as stacked CG rather than rescaling it by the eliminated RHS.
@@ -352,12 +440,13 @@ def _build_program(
             (volume_inverse, empty),
             max_iters=cfg.gn_joint_iterations,
             rtol=reduced_rtol,
+            dot=block_dot,
         )
         dx = free * reduced.increment[0]
-        dp = active * solve_pose(rhs[1] - pose_rows(dx)[0])
+        dp = movable * solve_pose(rhs[1] - pose_rows(dx)[0])
         actual = normal((dx, dp))
-        rx, rp = rhs[0] - actual[0], rhs[1] - actual[1]
-        relative = jnp.sqrt((dot(rx, rx) + dot(rp, rp)) / jnp.maximum(full_squared, 1e-30))
+        residual = (rhs[0] - actual[0], rhs[1] - actual[1])
+        relative = jnp.sqrt(block_dot(residual, residual) / jnp.maximum(full_squared, 1e-30))
         finite = reduced.finite & jnp.isfinite(relative)
         return CoupledLinearResult((dx, dp), reduced.iterations, relative, finite)
 
@@ -367,7 +456,7 @@ def _build_program(
             reg_grad, reg_hessian = jax.linearize(jax.grad(regularisation), x)
         else:  # no regulariser: no zero volumes to carry
             reg_grad, reg_hessian = jnp.float32(0), lambda _dx: jnp.float32(0)
-        smooth_grad, smooth_hessian = jax.linearize(jax.grad(smoothness), p)
+        smooth_grad, smooth_hessian = shares.linearized(jax.grad(smoothness), p)
 
         def gradient_body(start, valid, carry):
             gx, gp = carry
@@ -380,8 +469,8 @@ def _build_program(
             )
 
         gx, gp = over_batches(gradient_body, (volume_zeros, jnp.zeros_like(p)))
-        gx = gx + reg_grad
-        gp = (gp + smooth_grad) * active
+        gx = across(gx) + reg_grad
+        gp = (gp + smooth_grad) * movable
         # KKT-active zero voxels cannot move below zero. Release them when
         # the local gradient points into the feasible region.
         if cfg.nonnegative:
@@ -390,7 +479,7 @@ def _build_program(
             free = jnp.float32(1) if unmasked else (mask != 0).astype(x.dtype)
 
         def normal(increment):  # y = W A dx + C dp, then (A^T W y, C^T y), batch by batch
-            dx, dp = free * increment[0], active * increment[1]
+            dx, dp = free * increment[0], movable * increment[1]
 
             def body(start, valid, carry):
                 ax, ap = carry
@@ -400,14 +489,14 @@ def _build_program(
 
             ax, ap = over_batches(body, (volume_zeros, jnp.zeros_like(p)))
             return (
-                free * (ax + reg_hessian(dx) + cfg.gn_volume_damping * dx),
-                active * (ap + smooth_hessian(dp) + cfg.gn_damping * dp),
+                free * (across(ax) + reg_hessian(dx) + cfg.gn_volume_damping * dx),
+                movable * (ap + smooth_hessian(dp) + cfg.gn_damping * dp),
             )
 
         def ones_body(start, valid, out):
             return ops.transpose(start, valid, ops.project(start, jnp.ones_like(x)), out)
 
-        row_bound = over_batches(ones_body, volume_zeros)
+        row_bound = across(over_batches(ones_body, volume_zeros))
         reg_bound = 12 * cfg.tv_weight / cfg.huber_delta if cfg.tv_weight else 0
         volume_inverse = 1 / jnp.maximum(
             row_bound + reg_bound + cfg.gn_volume_damping, cfg.gn_volume_damping
@@ -429,6 +518,7 @@ def _build_program(
             (volume_inverse, pose_inverse),
             max_iters=cfg.gn_joint_iterations,
             rtol=cfg.gn_joint_rtol,
+            dot=block_dot,
         )
 
     return update, loss
@@ -438,11 +528,38 @@ def _build_program(
 def run_update(
     arrays: CoupledArrays, p: jax.Array, x: jax.Array, *, spec: CoupledSpec
 ) -> CoupledLinearResult:
-    update, _ = _build_program(spec, arrays)
-    return update(p, x)
+    """The joint step from ``(p, x)``; with a split, ``p`` and the step's ``dp`` have its views."""
+
+    def update(arrays: CoupledArrays, p: jax.Array, x: jax.Array) -> CoupledLinearResult:
+        return _build_program(spec, arrays)[0](p, x)
+
+    if spec.split is None:
+        return update(arrays, p, x)
+    cut, whole = PartitionSpec(VIEWS), PartitionSpec()
+    # Unchecked: the loops start from zeros that each device's views then change.
+    return jax.shard_map(
+        update,
+        mesh=spec.split.mesh,
+        in_specs=(_view_specs(arrays), cut, whole),
+        out_specs=CoupledLinearResult._make(((whole, cut), whole, whole, whole)),
+        check_vma=False,
+    )(arrays, p, x)
 
 
 @partial(jax.jit, static_argnames=("spec",))
 def run_loss(arrays: CoupledArrays, p: jax.Array, x: jax.Array, *, spec: CoupledSpec) -> jax.Array:
-    _, loss = _build_program(spec, arrays)
-    return loss(p, x)
+    """The joint objective at ``(p, x)``; with a split, ``p`` has its views."""
+
+    def loss(arrays: CoupledArrays, p: jax.Array, x: jax.Array) -> jax.Array:
+        return _build_program(spec, arrays)[1](p, x)
+
+    if spec.split is None:
+        return loss(arrays, p, x)
+    cut, whole = PartitionSpec(VIEWS), PartitionSpec()
+    return jax.shard_map(
+        loss,
+        mesh=spec.split.mesh,
+        in_specs=(_view_specs(arrays), cut, whole),
+        out_specs=whole,
+        check_vma=False,
+    )(arrays, p, x)

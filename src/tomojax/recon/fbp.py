@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from functools import partial
 import math
 from typing import TYPE_CHECKING, Literal
 
@@ -11,11 +12,11 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core import progress_iter
+from tomojax.core.devices import as_devices, view_split
 from tomojax.core.geometry import Detector, Geometry, Grid, grid_volume_origin
 from tomojax.core.geometry.cone import beam_of
 from tomojax.core.geometry.parallel import ParallelGeometry
 from tomojax.core.geometry.views import stack_view_poses
-from tomojax.core.projector import backproject_view_T
 from tomojax.core.validation import (
     validate_detector_grid,
     validate_grid,
@@ -23,11 +24,14 @@ from tomojax.core.validation import (
     validate_projection_stack,
 )
 
+from ._fbp_detector_grid import is_oom_error
 from ._fbp_weights import fbp_weights
-from .filters import get_fbp_filter_np
+from .filters import fft_filter_rows, rfft_filter_array
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Sequence
+
+    from tomojax._typed_arrays import Device
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -44,6 +48,10 @@ class FBPConfig:
     the uniform half-turn result. ``views_per_batch``, ``projector_unroll``,
     ``checkpoint_projector`` and ``gather_dtype`` apply only with an explicit
     ``det_grid``, which uses the ray-model adjoint.
+
+    ``devices`` (one or several JAX devices) shares the views among them: each
+    filters and backprojects its own, weighted for the whole scan, and the
+    volumes are summed on the first. Not with an explicit ``det_grid``.
     """
 
     filter: str = "ramp"
@@ -53,6 +61,10 @@ class FBPConfig:
     checkpoint_projector: bool = True
     gather_dtype: str = "fp32"
     backprojector: Literal["auto", "jax", "pallas"] = "auto"
+    devices: Device | Sequence[Device] | None = None  # kept as a tuple
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "devices", as_devices(self.devices))
 
 
 def default_fbp_scale(n_views: int) -> float:
@@ -65,109 +77,6 @@ def default_fbp_scale(n_views: int) -> float:
     if int(n_views) <= 0:
         raise ValueError("n_views must be positive")
     return float(np.pi / float(n_views))
-
-
-def _rfft_filter_array(filter: str, nu: int, du: float, dtype: jnp.dtype) -> jnp.ndarray:
-    """Return the padded discrete FBP filter without doubling RFFT bins."""
-    Hr_np = get_fbp_filter_np(filter, int(nu), float(du), str(dtype))
-    return jnp.asarray(Hr_np, dtype=dtype)
-
-
-def _fft_filter_rows(rows: jnp.ndarray, rfft_filter: jnp.ndarray) -> jnp.ndarray:
-    """Zero-pad detector rows, filter, and crop to prevent circular wraparound."""
-    nu = int(rows.shape[-1])
-    n_fft = 2 * (int(rfft_filter.shape[0]) - 1)
-    F = jnp.fft.rfft(rows, n=n_fft, axis=-1)
-    return jnp.fft.irfft(F * rfft_filter, n=n_fft, axis=-1)[..., :nu]
-
-
-_fft_filter_rows_jit = jax.jit(_fft_filter_rows)
-
-
-def _bp_one(
-    T: jnp.ndarray,
-    grid: Grid,
-    detector: Detector,
-    filtered: jnp.ndarray,
-    *,
-    projector_unroll: int = 1,
-    checkpoint_projector: bool = True,
-    gather_dtype: str = "fp32",
-    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
-) -> jnp.ndarray:
-    """Backproject one view with the explicit discrete adjoint."""
-    del checkpoint_projector
-    discrete_adjoint = backproject_view_T(
-        T,
-        grid,
-        detector,
-        filtered.astype(jnp.float32),
-        unroll=int(projector_unroll),
-        gather_dtype=gather_dtype,
-        det_grid=det_grid,
-    )
-    # Convert the Euclidean transpose into a physical backprojection: detector
-    # area / voxel volume cancels the ray integration length and sampling density.
-    return discrete_adjoint * (detector.du * detector.dv / (grid.vx * grid.vy * grid.vz))
-
-
-_bp_one_jit = jax.jit(
-    _bp_one,
-    static_argnames=(
-        "grid",
-        "detector",
-        "projector_unroll",
-        "checkpoint_projector",
-        "gather_dtype",
-    ),
-)
-
-
-def _bp_batch_sum(
-    T_chunk: jnp.ndarray,
-    filt_chunk: jnp.ndarray,
-    *,
-    grid: Grid,
-    detector: Detector,
-    projector_unroll: int = 1,
-    checkpoint_projector: bool = True,
-    gather_dtype: str = "fp32",
-    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
-) -> jnp.ndarray:
-    """Backproject a fixed-size chunk while keeping peak memory at one volume."""
-
-    def body(
-        accum: jnp.ndarray,
-        inputs: tuple[jnp.ndarray, jnp.ndarray],
-    ) -> tuple[jnp.ndarray, None]:
-        T, F = inputs
-        bp = _bp_one_jit(
-            T,
-            grid,
-            detector,
-            F,
-            projector_unroll=projector_unroll,
-            checkpoint_projector=checkpoint_projector,
-            gather_dtype=gather_dtype,
-            det_grid=det_grid,
-        )
-        return accum + bp, None
-
-    init = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
-    acc_chunk, _ = jax.lax.scan(body, init, (T_chunk, filt_chunk))
-    return acc_chunk
-
-
-_bp_batch_sum_jit = jax.jit(
-    _bp_batch_sum,
-    static_argnames=(
-        "grid",
-        "detector",
-        "projector_unroll",
-        "checkpoint_projector",
-        "gather_dtype",
-    ),
-)
 
 
 def _bilinear_detector(image: jnp.ndarray, u: jnp.ndarray, v: jnp.ndarray) -> jnp.ndarray:
@@ -232,7 +141,7 @@ def _filter_views(
     redundancy count N depends on both detector frequencies; see ``_fbp_weights``.
     """
     if separable:
-        return _fft_filter_rows(rows * view_scale[:, None, None], spectrum)
+        return fft_filter_rows(rows * view_scale[:, None, None], spectrum)
     n_u, n_v = 2 * (spectrum.shape[0] - 1), _fft_length(detector.nv)
     transformed = jnp.fft.rfft2(rows, s=(n_v, n_u))
     fu = jnp.fft.rfftfreq(n_u, detector.du).astype(jnp.float32)[None, None, :]
@@ -479,7 +388,7 @@ def run_parallel_fbp_direct_pallas(
     required_radius = np.max(np.abs(coordinates - detector.center[0])) / detector.du
     padding = max(0, math.ceil(required_radius - (detector.nu - 1) / 2))
     detector = replace(detector, nu=detector.nu + 2 * padding)
-    ramp = _rfft_filter_array(filter, detector.nu, float(detector.du), jnp.float32)
+    ramp = rfft_filter_array(filter, detector.nu, float(detector.du), jnp.float32)
     return _run_fbp_streamed(
         jnp.asarray(T_all, dtype=jnp.float32),
         jnp.asarray(proj, dtype=jnp.float32),
@@ -561,159 +470,107 @@ def _view_weights(
     return np.full(n, scale, np.float32), np.zeros((n, 6), np.float32), 0.0, True
 
 
-def _is_fbp_oom_error(exc: Exception) -> bool:
-    msg = str(exc).lower()
-    return "resource_exhausted" in msg or "out of memory" in msg
+@dataclass(frozen=True)
+class _Plan:
+    """One scan's FBP: its exact view weights, filter and backprojector (see :func:`_plan`)."""
+
+    poses: jnp.ndarray
+    projections: jnp.ndarray | np.ndarray  # host arrays stream batch by batch
+    view_scale: np.ndarray
+    params: np.ndarray
+    arc_length: float
+    separable: bool
+    spectrum: jnp.ndarray
+    grid: Grid
+    detector: Detector  # the filter's, padded
+    backend: str
+    batch: int
+    z_integer: bool
+
+    def backprojected(self, device: Device | None, views: range) -> jnp.ndarray:
+        """The weighted backprojection of ``views``, on ``device`` (JAX's default for None).
+
+        Batches halve after an out-of-memory error until one view fits.
+        """
+        part, size = slice(views.start, views.stop), self.batch
+        put = partial(jax.device_put, device=device)
+        options = {
+            "grid": self.grid,
+            "detector": self.detector,
+            "backend": self.backend,
+            "separable": self.separable,
+            "z_integer": self.z_integer,
+        }
+        while True:
+            try:
+                if isinstance(self.projections, jax.Array):
+                    acc = _run_fbp_streamed(
+                        put(self.poses[part]),
+                        put(self.projections[part]),
+                        put(jnp.asarray(self.view_scale[part])),
+                        put(jnp.asarray(self.params[part])),
+                        put(self.spectrum),
+                        jnp.float32(self.arc_length),
+                        batch_size=size,
+                        **options,
+                    )
+                else:
+                    acc = _fbp_from_host(
+                        np.asarray(self.poses, np.float32)[part],
+                        self.projections[part],
+                        self.view_scale[part],
+                        self.params[part],
+                        self.spectrum,
+                        self.arc_length,
+                        batch_size=size,
+                        **options,
+                    )
+                # Surface asynchronous allocation failures here, where a retry
+                # can use smaller batches.
+                acc.block_until_ready()
+                return acc
+            except Exception as exc:
+                if size == 1 or not is_oom_error(exc):
+                    raise
+                size //= 2
 
 
-def _run_fbp_fast_path(
-    T_all: jnp.ndarray,
-    proj: jnp.ndarray,
-    *,
-    batch_size: int,
+def _plan(
+    geometry: Geometry,
     grid: Grid,
     detector: Detector,
-    filter: str,
-    projector_unroll: int,
-    checkpoint_projector: bool,
-    gather_dtype: str,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
-) -> jnp.ndarray:
-    """Run FBP as one compiled scan over padded view chunks."""
-    n_views, nv, nu = map(int, proj.shape)
-    num_chunks = (n_views + batch_size - 1) // batch_size
-    total_views = num_chunks * batch_size
-    pad_views = total_views - n_views
-    if pad_views:
-        T_pad = jnp.repeat(T_all[-1:], pad_views, axis=0)
-        y_pad = jnp.zeros((pad_views, nv, nu), dtype=proj.dtype)
-        T_all = jnp.concatenate((T_all, T_pad), axis=0)
-        proj = jnp.concatenate((proj, y_pad), axis=0)
-
-    T_chunks = T_all.reshape((num_chunks, batch_size, 4, 4))
-    y_chunks = proj.reshape((num_chunks, batch_size, nv, nu))
-    valid_mask = (jnp.arange(total_views) < n_views).reshape((num_chunks, batch_size, 1, 1))
-    rfft_filter = _rfft_filter_array(filter, nu, float(detector.du), proj.dtype)
-
-    def scan_chunks(
-        T_chunks_in: jnp.ndarray,
-        y_chunks_in: jnp.ndarray,
-        valid_mask_in: jnp.ndarray,
-        rfft_filter_in: jnp.ndarray,
-        det_grid_in: tuple[jnp.ndarray, jnp.ndarray] | None,
-    ) -> jnp.ndarray:
-        rows = y_chunks_in.reshape((num_chunks, batch_size * nv, nu))
-        rows_f = jax.vmap(lambda chunk_rows: _fft_filter_rows_jit(chunk_rows, rfft_filter_in))(rows)
-        filt_chunks = rows_f.reshape((num_chunks, batch_size, nv, nu))
-        filt_chunks = jnp.where(valid_mask_in, filt_chunks, 0.0)
-
-        def body(
-            accum: jnp.ndarray,
-            inputs: tuple[jnp.ndarray, jnp.ndarray],
-        ) -> tuple[jnp.ndarray, None]:
-            T_chunk, filt_chunk = inputs
-            acc_chunk = _bp_batch_sum_jit(
-                T_chunk,
-                filt_chunk,
-                grid=grid,
-                detector=detector,
-                projector_unroll=projector_unroll,
-                checkpoint_projector=checkpoint_projector,
-                gather_dtype=gather_dtype,
-                det_grid=det_grid_in,
-            )
-            return accum + acc_chunk, None
-
-        init = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
-        acc, _ = jax.lax.scan(body, init, (T_chunks_in, filt_chunks))
-        return acc
-
-    return jax.jit(scan_chunks)(T_chunks, y_chunks, valid_mask, rfft_filter, det_grid)
-
-
-def _run_fbp_with_backoff(
-    T_all: jnp.ndarray,
-    proj: jnp.ndarray,
+    poses: jnp.ndarray,
+    projections: jnp.ndarray | np.ndarray,
+    cfg: FBPConfig,
     *,
-    batch_size: int,
-    grid: Grid,
-    detector: Detector,
-    filter: str,
-    projector_unroll: int,
-    checkpoint_projector: bool,
-    gather_dtype: str,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
-    view_progress: Iterator[int],
-) -> jnp.ndarray:
-    """Fallback path that retries smaller chunks after OOM without skipping views."""
-    n_views, nv, nu = map(int, proj.shape)
-    acc = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
-    rfft_filter = _rfft_filter_array(filter, nu, float(detector.du), proj.dtype)
-    b = int(batch_size)
-    s = 0
-
-    while s < n_views:
-        cur = min(b, n_views - s)
-        T_chunk = T_all[s : s + cur]
-        y_chunk = proj[s : s + cur]
-        try:
-            pad_views = b - cur
-            if pad_views:
-                T_pad = jnp.repeat(T_chunk[-1:], pad_views, axis=0)
-                y_pad = jnp.zeros((pad_views, nv, nu), dtype=y_chunk.dtype)
-                T_chunk = jnp.concatenate((T_chunk, T_pad), axis=0)
-                y_chunk = jnp.concatenate((y_chunk, y_pad), axis=0)
-
-            valid_mask = (jnp.arange(b) < cur)[:, None, None]
-            rows = y_chunk.reshape((b * nv, nu))
-            rows_f = _fft_filter_rows_jit(rows, rfft_filter)
-            filt_chunk = rows_f.reshape((b, nv, nu))
-            filt_chunk = jnp.where(valid_mask, filt_chunk, 0.0)
-            candidate = acc + _bp_batch_sum_jit(
-                T_chunk,
-                filt_chunk,
-                grid=grid,
-                detector=detector,
-                projector_unroll=projector_unroll,
-                checkpoint_projector=checkpoint_projector,
-                gather_dtype=gather_dtype,
-                det_grid=det_grid,
-            )
-            # Device work is asynchronous. Commit the accumulator and progress
-            # only once this chunk succeeds, so OOM retries neither skip nor
-            # double-count views and never reuse a failed device buffer.
-            candidate.block_until_ready()
-            acc = candidate
-            s += cur
-            for _ in range(cur):
-                next(view_progress, None)
-        except Exception as exc:
-            if _is_fbp_oom_error(exc) and b > 1:
-                b = max(1, b // 2)
-                continue
-            raise
-
-    return acc
-
-
-def _run_fbp_generic_with_oom_fallback(
-    *,
-    fast_path: Callable[[], jnp.ndarray],
-    backoff_path: Callable[[], jnp.ndarray],
-    view_progress: Iterator[int],
-    n_views: int,
-) -> jnp.ndarray:
-    """Run the compiled generic FBP path, falling back after asynchronous OOMs."""
-    try:
-        generic_acc = fast_path()
-        generic_acc.block_until_ready()
-        for _ in range(n_views):
-            next(view_progress, None)
-        return generic_acc
-    except Exception as exc:
-        if not _is_fbp_oom_error(exc):
-            raise
-        return backoff_path()
+    cuda: bool,
+) -> _Plan:
+    """The weights, filter and backprojector for :func:`fbp` of a parallel-beam scan."""
+    n_views = int(poses.shape[0])
+    view_scale, params, arc_length, separable = _view_weights(poses, cfg.scale)
+    parallel = _can_use_direct_parallel_fbp(geometry, None)
+    if parallel:
+        filter_detector = _parallel_filter_detector(grid, detector)
+    else:
+        filter_detector = _filter_detector(grid, detector, np.asarray(poses), pad_v=not separable)
+    spectrum = rfft_filter_array(cfg.filter, filter_detector.nu, float(detector.du), jnp.float32)
+    n_fft_v = 1 if separable else _fft_length(filter_detector.nv)
+    return _Plan(
+        poses=poses,
+        projections=projections,
+        view_scale=np.asarray(view_scale, np.float32),
+        params=np.asarray(params, np.float32),
+        arc_length=float(arc_length),
+        separable=bool(separable),
+        spectrum=spectrum,
+        grid=grid,
+        detector=filter_detector,
+        backend="pallas" if cuda and cfg.backprojector != "jax" else "jax",
+        batch=_parallel_filter_batch_size(
+            n_views, filter_detector.nv * n_fft_v, 2 * (spectrum.shape[0] - 1)
+        ),
+        z_integer=parallel and supports_parallel_fbp_z_integer(grid, detector),
+    )
 
 
 def fbp(
@@ -757,7 +614,7 @@ def fbp(
             grid,
             detector,
             projections,
-            config=FDKConfig(filter=cfg.filter, backend=backend),
+            config=FDKConfig(filter=cfg.filter, backend=backend, devices=cfg.devices),
         )
 
     validate_grid(grid, "fbp grid")
@@ -775,121 +632,21 @@ def fbp(
     T_all = stack_view_poses(geometry, n_views)
     validate_pose_stack(T_all, n_views, context="fbp geometry")
     if det_grid is not None:
-        return _fbp_explicit_detector_grid(T_all, proj, grid, detector, cfg, det_grid)
+        if cfg.devices is not None:
+            raise ValueError("fbp: an explicit det_grid cannot be shared among devices")
+        from ._fbp_detector_grid import fbp_on_detector_grid
+
+        return fbp_on_detector_grid(T_all, proj, grid, detector, cfg, det_grid)
     cuda = all(
         device.platform == "gpu" and device.client.platform_version.lower().startswith("cuda")
         for device in (T_all.devices() if on_host else proj.devices())
     )
     if cfg.backprojector == "pallas" and not cuda:
         raise ValueError("Pallas FBP requires CUDA arrays")
-    view_scale, params, arc_length, separable = _view_weights(T_all, cfg.scale)
-    parallel = _can_use_direct_parallel_fbp(geometry, det_grid)
-    if parallel:
-        filter_detector = _parallel_filter_detector(grid, detector)
-    else:
-        filter_detector = _filter_detector(grid, detector, np.asarray(T_all), pad_v=not separable)
-    spectrum = _rfft_filter_array(cfg.filter, filter_detector.nu, float(detector.du), jnp.float32)
-    n_fft_v = 1 if separable else _fft_length(filter_detector.nv)
-    batch = _parallel_filter_batch_size(
-        n_views, filter_detector.nv * n_fft_v, 2 * (spectrum.shape[0] - 1)
-    )
-    backend = "pallas" if cuda and cfg.backprojector != "jax" else "jax"
-    z_integer = parallel and supports_parallel_fbp_z_integer(grid, detector)
-    while True:
-        try:
-            if on_host:
-                acc = _fbp_from_host(
-                    np.asarray(T_all, np.float32),
-                    proj,
-                    np.asarray(view_scale, np.float32),
-                    np.asarray(params, np.float32),
-                    spectrum,
-                    float(arc_length),
-                    grid=grid,
-                    detector=filter_detector,
-                    backend=backend,
-                    batch_size=batch,
-                    separable=separable,
-                    z_integer=z_integer,
-                )
-                acc.block_until_ready()
-                break
-            acc = _run_fbp_streamed(
-                T_all,
-                proj,
-                jnp.asarray(view_scale),
-                jnp.asarray(params),
-                spectrum,
-                jnp.float32(arc_length),
-                grid=grid,
-                detector=filter_detector,
-                backend=backend,
-                batch_size=batch,
-                z_integer=z_integer,
-                separable=separable,
-            )
-            # Surface asynchronous allocation failures here, where a retry can use smaller batches.
-            acc.block_until_ready()
-            break
-        except Exception as exc:
-            if batch == 1 or not _is_fbp_oom_error(exc):
-                raise
-            batch //= 2
+    plan = _plan(geometry, grid, detector, T_all, proj, cfg, cuda=cuda)
+    split = view_split(cfg.devices, n_views)
+    whole = range(n_views)
+    acc = plan.backprojected(None, whole) if split is None else split.summed(plan.backprojected)
     for _ in progress_iter(range(n_views), total=n_views, desc="FBP: views"):
         pass
     return acc
-
-
-def _fbp_explicit_detector_grid(
-    T_all: jnp.ndarray,
-    proj: jnp.ndarray,
-    grid: Grid,
-    detector: Detector,
-    cfg: FBPConfig,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray],
-) -> jnp.ndarray:
-    """Backproject with the ray-model adjoint on explicit detector pixel positions.
-
-    Uses a ramp along u with uniform weights, ``pi / n`` unless ``cfg.scale`` is set.
-    """
-    n_views = int(proj.shape[0])
-    requested_b = int(cfg.views_per_batch) if int(cfg.views_per_batch) > 0 else n_views
-    b = max(1, min(requested_b, n_views))
-    view_progress = iter(progress_iter(range(n_views), total=n_views, desc="FBP: views"))
-
-    def fast_path() -> jnp.ndarray:
-        return _run_fbp_fast_path(
-            T_all,
-            proj,
-            batch_size=b,
-            grid=grid,
-            detector=detector,
-            filter=cfg.filter,
-            projector_unroll=cfg.projector_unroll,
-            checkpoint_projector=cfg.checkpoint_projector,
-            gather_dtype=cfg.gather_dtype,
-            det_grid=det_grid,
-        )
-
-    def backoff_path() -> jnp.ndarray:
-        return _run_fbp_with_backoff(
-            T_all,
-            proj,
-            batch_size=b,
-            grid=grid,
-            detector=detector,
-            filter=cfg.filter,
-            projector_unroll=cfg.projector_unroll,
-            checkpoint_projector=cfg.checkpoint_projector,
-            gather_dtype=cfg.gather_dtype,
-            det_grid=det_grid,
-            view_progress=view_progress,
-        )
-
-    acc = _run_fbp_generic_with_oom_fallback(
-        fast_path=fast_path,
-        backoff_path=backoff_path,
-        view_progress=view_progress,
-        n_views=n_views,
-    )
-    return acc * default_fbp_scale(n_views) if cfg.scale is None else acc * float(cfg.scale)

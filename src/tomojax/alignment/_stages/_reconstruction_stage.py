@@ -22,6 +22,7 @@ from tomojax.alignment._quality_policy import (
 from tomojax.alignment._results import record_reconstruction_info as _record_reconstruction_info
 from tomojax.backends import estimate_views_per_batch_info
 from tomojax.core.backend_policy import normalize_projector_backend
+from tomojax.core.devices import shared_devices
 from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.operator_norm import estimate_normal_norm
@@ -542,9 +543,8 @@ def _run_public_fista_reconstruction(
 ) -> tuple[jnp.ndarray, Mapping[str, object]]:
     cfg = step.cfg
     quality_policy = reconstruction_quality_policy(str(getattr(cfg, "stage_quality_tier", "fast")))
-    # Alignment carries the effective bound used by the previous solve. Public
-    # FISTA accepts a data-term bound and adds smooth-TV curvature itself.
-    # Convert at this boundary, otherwise every fallback counts TV again.
+    # Alignment carries the previous solve's whole bound; public FISTA takes the
+    # data term's and adds smooth-TV curvature itself, so convert, or TV counts twice.
     data_lipschitz = step.L_prev
     if data_lipschitz is not None and str(cfg.regulariser) == "huber_tv":
         data_lipschitz -= float(cfg.tv_weight) * 12.0 / float(cfg.huber_delta)
@@ -554,8 +554,7 @@ def _run_public_fista_reconstruction(
             data_lipschitz = None
     cone = is_cone_beam(step.recon_geometry)
     fista_cfg = FistaConfig(
-        # Cone beams use their Joseph operators, on CUDA where available.
-        projector_model="auto" if cone else "ray",
+        projector_model="auto" if cone else "ray",  # cone beams: Joseph, on CUDA if there
         projector_backend="auto" if cone else "jax",
         iterations=scaled_reconstruction_iterations(cfg.iterations, quality_policy),
         tv_weight=cfg.tv_weight,
@@ -572,6 +571,7 @@ def _run_public_fista_reconstruction(
         recon_rel_tol=cfg.recon_rel_tol,
         recon_patience=(int(cfg.recon_patience) if cfg.recon_patience is not None else 0),
         ray_integrator=getattr(cfg, "ray_integrator", "sampled"),
+        devices=shared_devices() if cone else None,  # the run's, see tomojax.align
     )
     return fista_tv(
         step.recon_geometry,
