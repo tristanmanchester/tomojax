@@ -403,8 +403,9 @@ transpose, FDK, and CGLS from zero, the one iterative solver all three have,
 on `compare_cone.py`'s ellipsoids. Each library and GPU count runs in a child
 process of its own. TomoJAX shares the views (`devices=`), ASTRA takes the GPUs
 from `set_gpu_index` and TIGRE from `gpuids`; an operation a library cannot
-spread over several GPUs still reports its time. `walnut.py --gpus N` does the
-same for FDK and non-negative least squares on a FIPS walnut, against ASTRA.
+spread over several GPUs still reports its time. `walnut.py --gpus N --libraries
+tomojax astra` does the same for FDK and non-negative least squares on a FIPS
+walnut, and `walnut_alignment.py --gpus N` times aligning its three orbits.
 
 [`modal_benchmarks.py`](modal_benchmarks.py) runs both on one Modal machine
 for each GPU count, with ASTRA from PyPI and TIGRE built from a pinned commit,
@@ -414,8 +415,15 @@ bills by GPU time; start with a small `--size`.
 ```bash
 uv run --no-sync python bench/scaling.py --size 256 --views 360 --gpus 1 \
   --output bench/results/scaling-256.json
-uv build --wheel && modal run bench/modal_benchmarks.py --gpu H100:4 --gpus 1,2,4 --size 512
+modal run bench/modal_benchmarks.py --gpu H100:4 --gpus 1,2,4 --sizes 512,1024
 ```
+
+The Modal run needs a clean checkout: it builds the wheel from HEAD, pins every
+package to `uv.lock`, runs the multi-device tests on the machine before any
+timing, and saves each result as it is measured, with every step's log and the
+run's commit, hashes and command. ASTRA's CGLS3D_CUDA uses one GPU whatever
+`set_gpu_index` names; TIGRE's CGLS projects with Siddon, twice per iteration,
+and may stop early, which its record shows.
 
 ## FIPS walnuts (real lab cone-beam CT)
 

@@ -10,7 +10,7 @@ non-negative least squares on all three orbits, 501^3 voxels of 0.1 mm.
 Loading follows the authors' WalnutReconstructionCodes: projections are read in
 reverse order and transposed, dark- and flat-corrected and log-transformed.
 
-    python bench/walnut.py ~/data/walnuts/Walnut1 --orbits 2 --method fbp --astra
+    python bench/walnut.py ~/data/walnuts/Walnut1 --orbits 2 --method fbp --libraries tomojax astra
     python bench/walnut.py ~/data/walnuts/Walnut1 --orbits 1 2 3 --method fista \\
         --iterations 50
 """
@@ -22,12 +22,15 @@ import json
 import logging
 from pathlib import Path
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import imageio.v3 as iio
 import numpy as np
 
 import tomojax as tj
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 ROWS, COLS, VIEWS = 972, 768, 1200
 
@@ -172,30 +175,58 @@ def compare(volume: np.ndarray, truth: np.ndarray) -> dict[str, float]:
     }
 
 
-def _with_astra(
-    scan: tj.Scan,
-    args: argparse.Namespace,
-    ours: np.ndarray,
-    truth: np.ndarray | None,
-    *,
-    gpus: int,
-) -> dict[str, Any]:
-    """ASTRA's reconstruction of ``scan`` on ``gpus`` GPUs: time, errors and ours against it."""
+def _timed[T](call: Callable[[], T], repeats: int) -> tuple[T, dict[str, Any]]:
+    """``call``'s last result, its first call's time (``seconds``) and ``repeats`` more's."""
+    start = time.perf_counter()
+    result = call()
+    times: dict[str, Any] = {"seconds": time.perf_counter() - start}
+    warm = []
+    for _ in range(repeats):
+        start = time.perf_counter()
+        result = call()
+        warm.append(time.perf_counter() - start)
+    if warm:
+        times |= {"warm_seconds": warm, "best_warm_seconds": min(warm)}
+    return result, times
+
+
+def _astra(scan: tj.Scan, args: argparse.Namespace, *, gpus: int) -> tuple[np.ndarray, dict]:
+    """ASTRA's reconstruction of ``scan`` on ``gpus`` GPUs, and its record."""
     import astra
 
     astra.set_gpu_index(list(range(gpus)))
-    start = time.perf_counter()
-    # ASTRA gets the same (binned) data and geometry back from the scan.
-    data, geometry, volume = scan.to_astra()
-    theirs = astra_reconstruct(data, geometry, volume, args.method, args.iterations)
+
+    def theirs_now() -> np.ndarray:
+        # ASTRA gets the same (binned) data and geometry back from the scan.
+        data, geometry, volume = scan.to_astra()
+        return astra_reconstruct(data, geometry, volume, args.method, args.iterations)
+
+    theirs, times = _timed(theirs_now, args.repeats)
     record: dict[str, Any] = {
         "method": "FDK_CUDA" if args.method == "fbp" else "accelerated NNLS (the reference's)",
-        "seconds": time.perf_counter() - start,
+        **times,
     }
-    if truth is not None:
-        record |= compare(theirs, truth)
-    difference = float(np.linalg.norm(ours - theirs) / np.linalg.norm(theirs))
-    return {"astra": record, "tomojax_vs_astra_relative_l2": difference}
+    return theirs, record
+
+
+def _tomojax(scan: tj.Scan, args: argparse.Namespace, *, gpus: int) -> tuple[np.ndarray, dict]:
+    """TomoJAX's reconstruction of ``scan`` on ``gpus`` GPUs (views shared), and its record."""
+    import jax
+
+    options: dict[str, Any] = {} if args.method == "fbp" else {"iterations": args.iterations}
+    if args.method == "fista":
+        options |= {"tv_weight": 0.0, "nonnegative": True}
+    # One GPU takes the ordinary one-device path, as a user would run it.
+    devices = jax.devices()[:gpus] if gpus > 1 else None
+
+    def ours() -> tuple[tj.Reconstruction, np.ndarray]:
+        result = tj.reconstruct(scan, args.method, devices=devices, **options)
+        return result, np.asarray(result.volume)
+
+    (result, volume), times = _timed(ours, args.repeats)
+    if args.save is not None:
+        tj.save(args.save, result)
+    return volume, {"method": args.method, **options, **times}
 
 
 def main() -> None:
@@ -208,8 +239,10 @@ def main() -> None:
     parser.add_argument("--iterations", type=int, default=50)
     parser.add_argument("--voxels-per-mm", type=int, default=10)
     parser.add_argument("--bin", type=int, default=1, help="Average N x N detector pixels")
-    parser.add_argument("--astra", action="store_true", help="Also reconstruct with ASTRA")
+    parser.add_argument("--libraries", nargs="+", choices=["tomojax", "astra"], default=["tomojax"])
+    parser.add_argument("--save-volume", type=Path, help="Save each volume here (<library>.npy)")
     parser.add_argument("--gpus", type=int, default=1, help="GPUs each library may use")
+    parser.add_argument("--repeats", type=int, default=0, help="Warm runs after the first")
     parser.add_argument("--save", type=Path, help="Save the TomoJAX reconstruction (.nxs)")
     args = parser.parse_args()
     # The scanner's TIFFs carry a malformed tag that tifffile reports and skips.
@@ -252,29 +285,27 @@ def main() -> None:
             "shift_mm": float(np.abs(scan.poses[:, 3:]).max()),
         },
     }
-    options = {} if args.method == "fbp" else {"iterations": args.iterations}
-    if args.method == "fista":
-        options |= {"tv_weight": 0.0, "nonnegative": True}
-    _start_gpu_runtimes(astra=args.astra)
-    import jax
-
-    devices = jax.devices()[: args.gpus]
-    start = time.perf_counter()
-    result = tj.reconstruct(scan, args.method, devices=devices, **options)
-    volume = np.asarray(result.volume)
-    summary["tomojax"] = {"method": args.method, **options, "seconds": time.perf_counter() - start}
-    summary["gpus"] = len(devices)
+    _start_gpu_runtimes(astra="astra" in args.libraries)
+    summary["gpus"] = args.gpus
     truth = reference(args.walnut)
-    if truth is not None:
-        summary["tomojax"] |= compare(volume, truth)
-    if args.method == "fbp" and len(args.orbits) == 1:
+    volumes = {}
+    for library in args.libraries:
+        run = _tomojax if library == "tomojax" else _astra
+        volumes[library], summary[library] = run(scan, args, gpus=args.gpus)
+        if truth is not None:
+            summary[library] |= compare(volumes[library], truth)
+        if args.save_volume is not None:
+            args.save_volume.mkdir(parents=True, exist_ok=True)
+            np.save(args.save_volume / f"{library}.npy", volumes[library])
+    if "tomojax" in volumes and args.method == "fbp" and len(args.orbits) == 1:
         published = reference(args.walnut, f"fdk_pos{args.orbits[0]}")
         if published is not None:
-            summary["tomojax_vs_published_fdk"] = compare(volume, published)
-    if args.astra:
-        summary |= _with_astra(scan, args, volume, truth, gpus=len(devices))
-    if args.save is not None:
-        tj.save(args.save, result)
+            summary["tomojax_vs_published_fdk"] = compare(volumes["tomojax"], published)
+    if len(volumes) == 2:
+        ours, theirs = volumes["tomojax"], volumes["astra"]
+        summary["tomojax_vs_astra_relative_l2"] = float(
+            np.linalg.norm(ours - theirs) / np.linalg.norm(theirs)
+        )
     print(json.dumps(summary, indent=2))
 
 

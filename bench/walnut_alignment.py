@@ -130,15 +130,26 @@ def main() -> None:
     parser.add_argument("--levels", default="4,2", help="Alignment resolution levels")
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument("--figures", type=Path, help="Write PNG figures to this directory")
+    parser.add_argument("--gpus", type=int, default=1, help="GPUs to share the views among")
+    parser.add_argument("--slices", type=Path, help="Save central slices and poses (.npz)")
     args = parser.parse_args()
     logging.getLogger("tifffile").setLevel(logging.ERROR)
 
     data = np.concatenate([load_orbit(args.walnut, o, args.every)[0] for o in (1, 2, 3)], axis=1)
     original = _scan(args.walnut, data, "scan_geom_original.geom", args.every, args.bin)
     corrected = _scan(args.walnut, data, "scan_geom_corrected.geom", args.every, args.bin)
+    import jax
+
+    # One GPU takes the ordinary one-device path, as a user would run it.
+    devices = jax.devices()[: args.gpus] if args.gpus > 1 else None
     start = time.perf_counter()
-    result = tj.align(original, levels=tuple(int(f) for f in args.levels.split(",")))
-    summary: dict[str, Any] = {"align_seconds": time.perf_counter() - start}
+    levels = tuple(int(f) for f in args.levels.split(","))
+    result = tj.align(original, levels=levels, devices=devices)
+    summary: dict[str, Any] = {"gpus": args.gpus, "align_seconds": time.perf_counter() - start}
+    info = result.info
+    summary["alignment"] = {
+        k: info.get(k) for k in ("mode", "levels", "factors", "factors_skipped", "loss", "gauge")
+    }
     aligned = _orbit_one_fixed(result.scan, original)
 
     recorded = np.asarray(original.poses)[:, 4]
@@ -159,13 +170,22 @@ def main() -> None:
     options = {"iterations": args.iterations, "tv_weight": 0.0, "nonnegative": True}
     for name, scan in (("original", original), ("aligned", aligned), ("corrected", corrected)):
         start = time.perf_counter()
-        volumes[name] = np.asarray(tj.reconstruct(scan, "fista", **options).volume)
+        volumes[name] = np.asarray(tj.reconstruct(scan, "fista", devices=devices, **options).volume)
         summary[name] = {"seconds": time.perf_counter() - start, **compare(volumes[name], truth)}
     if args.figures is not None:
         args.figures.mkdir(parents=True, exist_ok=True)
         _figures(args.figures, volumes, summary)
-    print(json.dumps({k: v for k, v in summary.items() if k != "heights_mm"}, indent=2))
-    print(json.dumps(summary["heights_mm"]["orbit_means"], indent=2))
+    if args.slices is not None:
+        x, y, z = (n // 2 for n in volumes["aligned"].shape)
+        arrays = {
+            f"{name}_{plane}": np.asarray(cut, np.float16)
+            for name, volume in volumes.items()
+            if volume is not None
+            for plane, cut in (("xz", volume[:, y, :]), ("yz", volume[x]), ("xy", volume[..., z]))
+        }
+        poses = {"aligned_poses": aligned.poses, "corrected_poses": corrected.poses}
+        np.savez_compressed(args.slices, **arrays, **poses, original_poses=original.poses)
+    print(json.dumps(summary, default=str))
 
 
 if __name__ == "__main__":
