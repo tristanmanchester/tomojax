@@ -24,7 +24,7 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from tomojax._scan import Scan, load
+    from tomojax._scan import Frames, Scan, load, load_frames
     from tomojax._workflow import (
         Alignment,
         Reconstruction,
@@ -48,11 +48,13 @@ from tomojax._version import __version__
 
 _SOURCES = {
     "Alignment": "tomojax._workflow",
+    "Frames": "tomojax._scan",
     "Reconstruction": "tomojax._workflow",
     "Scan": "tomojax._scan",
     "align": "tomojax._workflow",
     "backproject": "tomojax._workflow",
     "load": "tomojax._scan",
+    "load_frames": "tomojax._scan",
     "load_reconstruction": "tomojax._workflow",
     "project": "tomojax._workflow",
     "reconstruct": "tomojax._workflow",
@@ -70,6 +72,7 @@ __all__ = [
     "ConeBeam",
     "ConeGeometry",
     "Detector",
+    "Frames",
     "Grid",
     "LaminographyGeometry",
     "ParallelGeometry",
@@ -79,6 +82,7 @@ __all__ = [
     "align",
     "backproject",
     "load",
+    "load_frames",
     "load_reconstruction",
     "project",
     "reconstruct",

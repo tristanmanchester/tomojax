@@ -1,9 +1,14 @@
 """Shared TIFF stack discovery helpers."""
+# pyright: reportUnknownMemberType=false
 
 from __future__ import annotations
 
 from pathlib import Path
 import re
+from typing import cast
+
+import imageio.v3 as iio
+import numpy as np
 
 TIFF_SUFFIXES = frozenset({".tif", ".tiff"})
 _NATURAL_SORT_PARTS = re.compile(r"(\d+)")
@@ -37,3 +42,17 @@ def tiff_files(path: Path) -> list[Path]:
             key=_natural_sort_key,
         )
     raise FileNotFoundError(path)
+
+
+def read_tiff_frames(path: Path | str) -> np.ndarray:
+    """The frames of a TIFF file or folder, ``(frames, rows, columns)`` in the files' dtype."""
+    files = tiff_files(Path(path))
+    if not files:
+        raise ValueError(f"no TIFF files found under {path}")
+    frames = [np.asarray(cast("object", iio.imread(file))) for file in files]
+    shapes = {frame.shape for frame in frames}
+    if len(shapes) != 1 or len(next(iter(shapes))) != 2:
+        raise ValueError(
+            f"{path}: TIFF frames must be 2-D images of one size, found {sorted(shapes)}"
+        )
+    return np.stack(frames)

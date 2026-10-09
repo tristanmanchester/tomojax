@@ -40,6 +40,24 @@ class tomojax.Detector(
     ) -> None
     .from_dict(cls, data: 'Mapping[str, Any]') -> 'Detector'
     .to_dict(self) -> 'DetectorDict'
+class tomojax.Frames(
+        counts: 'Any',
+        geometry: 'ScanGeometry',
+        flats: 'np.ndarray | None' = None,
+        darks: 'np.ndarray | None' = None,
+        flat_positions: 'np.ndarray | None' = None,
+        white_level: 'float | None' = None,
+        name: 'str' = 'sample',
+        source: 'ProjectionDataset | None' = None,
+    ) -> None
+    .corrected(
+        self,
+        *steps: 'Step',
+        *,
+        epsilon: 'float' = 1e-06,
+        batch_views: 'int | None' = None,
+    ) -> 'Scan'
+    .views
 class tomojax.Grid(
         nx: 'int',
         ny: 'int',
@@ -75,11 +93,13 @@ class tomojax.Scan(
         projections: 'np.ndarray | jax.Array',
         geometry: 'ScanGeometry',
         name: 'str' = 'sample',
+        corrections: 'tuple[Correction, ...]' = (),
         source: 'ProjectionDataset | None' = None,
     ) -> None
     .angles
     .binned(self, factor: 'int') -> 'Scan'
     .combine(cls, scans: 'Sequence[Scan]', *, name: 'str | None' = None) -> 'Scan'
+    .corrected(self, *steps: 'Step', batch_views: 'int | None' = None) -> 'Scan'
     .detector
     .from_astra(
         cls,
@@ -113,6 +133,16 @@ def tomojax.backproject(
         devices: 'Device | Sequence[Device] | None' = None,
     ) -> 'jax.Array'
 def tomojax.load(path: 'str | PathLike[str]', *, poses: 'bool' = True) -> 'Scan'
+def tomojax.load_frames(
+        path: 'str | PathLike[str]',
+        *,
+        flats: 'np.ndarray | str | PathLike[str] | None' = None,
+        darks: 'np.ndarray | str | PathLike[str] | None' = None,
+        angles: 'Sequence[float] | np.ndarray | None' = None,
+        detector: 'Detector | None' = None,
+        grid: 'Grid | None' = None,
+        white_level: 'float | None' = None,
+    ) -> 'Frames'
 def tomojax.load_reconstruction(path: 'str | PathLike[str]') -> 'Reconstruction'
 def tomojax.project(
         geometry: 'Geometry',

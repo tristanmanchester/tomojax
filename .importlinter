@@ -12,6 +12,7 @@ layers =
     tomojax.alignment
     tomojax.datasets
     tomojax.io
+    tomojax.corrections
     tomojax._data
     tomojax.recon
     tomojax.forward

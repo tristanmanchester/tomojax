@@ -15,6 +15,7 @@ from tomojax.geometry.api import (
     transpose_volume,
 )
 
+from ._io_frames import Hdf5Frames
 from ._io_helpers import (
     _attr_to_str,
     _axes_log_warning,
@@ -295,13 +296,14 @@ def _write_alignment_metadata_section(
         align_grp.attrs["misalign_spec_json"] = json.dumps(meta.misalign_spec)
 
 
-def load_nxtomo(path: str) -> LoadedNXTomo:
+def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
     """Load an NXtomo dataset and TomoJAX extras.
 
     Returns a ``LoadedNXTomo`` payload with typed accessors for projections and
     persisted metadata. ``grid`` is present when the file stores grid metadata
     or when a saved volume allows a unit-grid fallback. Volumes are returned in
-    internal ``xyz`` order.
+    internal ``xyz`` order. With ``lazy`` the projections are an
+    :class:`~tomojax._data._io_frames.Hdf5Frames`, read only as indexed.
     """
     out: LoadedDataset = {}
     volume_raw: np.ndarray | None = None
@@ -309,16 +311,16 @@ def load_nxtomo(path: str) -> LoadedNXTomo:
 
     with h5py.File(path, "r") as f:
         entry = f["/entry"]
-        proj = None
         det_grp = _detector_group(entry)
         if det_grp is not None and "data" in det_grp:
-            proj = det_grp["data"][...]
+            where = "/entry/instrument/detector/data"
         elif "data" in entry and "projections" in entry["data"]:
-            proj = entry["data/projections"][...]
+            where = "/entry/data/projections"
         elif "projections" in entry:
-            proj = entry["projections"][...]
-        if proj is None:
+            where = "/entry/projections"
+        else:
             raise KeyError("Could not find projections dataset under /entry")
+        proj = Hdf5Frames.open(path, where) if lazy else f[where][...]
         out["projections"] = proj
         n_views = proj.shape[0]
         out["image_key"] = _load_image_key(entry, n_views=n_views, path=path)
@@ -381,6 +383,16 @@ def load_nxtomo(path: str) -> LoadedNXTomo:
             out["disk_volume_axes_order"] = disk_order
             out["volume_axes_source"] = source
     return LoadedNXTomo.from_dataset(out)
+
+
+def holds_flats_or_darks(path: str) -> bool:
+    """Whether the NXtomo file's ``image_key`` marks flat (1) or dark (2) frames."""
+    with h5py.File(path, "r") as f:
+        entry = f.get("/entry")
+        det_grp = None if not isinstance(entry, h5py.Group) else _detector_group(entry)
+        if det_grp is None or "image_key" not in det_grp:
+            return False
+        return bool(np.isin(np.asarray(det_grp["image_key"][...]), (1, 2)).any())
 
 
 def validate_nxtomo(path: str) -> ValidationReport:

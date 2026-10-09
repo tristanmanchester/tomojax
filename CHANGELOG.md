@@ -175,6 +175,12 @@ calibrated setup geometry) under `alignment`.
 
 **Changed behaviour and defaults**
 
+- `tj.load` corrects a file of raw detector frames (an NXtomo `image_key`
+  marking flats or darks) to line integrals, as `load_frames(path).corrected()`;
+  it used to return the flats and darks as projections, in counts. A file of
+  integer counts without flats, or a TIFF stack, raises and points to
+  `tj.load_frames`. A Nikon scan's line integrals are `-log(I / WhiteLevel)`
+  as before, with `I` no longer clipped to 1 first.
 - `tomojax recon` applies the poses saved in its input unless `--no-poses`
   (0.3 ignored them unless `--apply-saved-alignment`).
 - `tomojax align` corrects on top of the poses saved in its input, as
@@ -248,6 +254,16 @@ without a translation frame (0.3's) are read as object-frame poses, and
   `tj.load_reconstruction` reads a reconstruction with its `info`.
   `tj.project` and `tj.backproject` work on every geometry. `import tomojax`
   does not import JAX.
+- **Corrections.** `tj.load_frames(path)` reads detector frames as `tj.Frames`:
+  the sample frames of an NXtomo file (read from the file only as they are
+  corrected), its flats and darks by `image_key`, a Nikon scan with its white
+  level, or a TIFF stack with `angles=` (and `flats=`/`darks=` as arrays or
+  TIFFs). `Frames.corrected(*steps)` makes the scan of line integrals
+  `-log((I - D) / (F - D))` on the device, a batch of views at a time, each
+  view's flat interpolated between the flat sets taken around it; steps from
+  `tomojax.corrections` (`BeamHardening` so far) run on counts, transmission
+  or line integrals, and `Scan.corrected` runs line-integral steps on a scan.
+  `Scan.corrections` records what was done, and is saved with the scan.
 - **Cone-beam CT.** `tomojax.geometry.ConeGeometry` with a `ConeBeam` source
   and a flat detector (offsets, roll, pitch and yaw; turntable, tilted or any
   rotation axis; per-view poses). Rays are sampled on voxel planes (Joseph)

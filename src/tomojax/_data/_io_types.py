@@ -9,6 +9,8 @@ import numpy as np
 from tomojax.core.geometry.base import Detector, DetectorDict, Grid, GridDict
 from tomojax.geometry.api import DISK_VOLUME_AXES
 
+from ._io_frames import Hdf5Frames
+
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 
 
@@ -23,7 +25,7 @@ class SourceInfo(TypedDict, total=False):
     probe: str | None
 
 
-type DatasetValue = np.ndarray | JsonValue | GridDict | DetectorDict | SourceInfo
+type DatasetValue = np.ndarray | Hdf5Frames | JsonValue | GridDict | DetectorDict | SourceInfo
 
 
 type LoadedDataset = dict[str, DatasetValue]
@@ -130,7 +132,7 @@ _NXTOMO_METADATA_FIELDS = frozenset(NXTomoMetadata.__dataclass_fields__)
 class LoadedNXTomo:
     """Typed NXtomo payload returned by ``load_nxtomo()``."""
 
-    projections: np.ndarray
+    projections: np.ndarray | Hdf5Frames
     metadata: NXTomoMetadata
     source: SourceInfo | None = None
     disk_volume_axes_order: str | None = None
@@ -141,7 +143,7 @@ class LoadedNXTomo:
         """Build a loaded payload from a generic dataset mapping."""
         source_info = data.get("source")
         return cls(
-            projections=np.asarray(data["projections"]),
+            projections=_frames_or_array(data["projections"]),
             metadata=NXTomoMetadata.from_dataset(data),
             source=source_info if isinstance(source_info, dict) else None,
             disk_volume_axes_order=(
@@ -259,3 +261,8 @@ class ValidationReport(TypedDict):
     """Lightweight validation report for an NXtomo file."""
 
     issues: list[str]
+
+
+def _frames_or_array(value: object) -> np.ndarray | Hdf5Frames:
+    """Lazily read frames as they are; anything else as an array."""
+    return value if isinstance(value, Hdf5Frames) else np.asarray(value)

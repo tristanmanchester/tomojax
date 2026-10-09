@@ -38,6 +38,22 @@ writes sample-only absorption projections with preprocessing provenance.
 domain expected by the reconstruction commands. Already-corrected absorption
 data should bypass this step; applying the logarithm again changes the data.
 
+In Python, `tj.load("raw.nxs")` makes the same correction when the file's
+`image_key` marks flats or darks, and records it in `scan.corrections`. For
+other corrections, load the frames and pass steps from `tomojax.corrections`:
+
+```python
+import tomojax as tj
+from tomojax.corrections import BeamHardening
+
+frames = tj.load_frames("raw.nxs")  # or a Nikon .xtekct, or TIFFs with angles=
+scan = frames.corrected(BeamHardening((1.0, 0.05)))
+print(scan)  # Scan('sample': ..., corrections: flat_dark(...), log(...), beam_hardening(...))
+```
+
+Flats taken before and after the scan are interpolated by position, and the
+views are corrected on the GPU a batch at a time.
+
 For TIFF data, use the [TIFF and measured-geometry instructions](real-laminography.md#prepare-tiff-data).
 `tomojax import` packages a stack; it does not perform flat/dark correction.
 

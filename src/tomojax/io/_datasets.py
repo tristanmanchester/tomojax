@@ -15,6 +15,7 @@ from tomojax._data import (
     LoadedNXTomo,
     NXTomoMetadata,
     build_geometry_from_meta,
+    holds_flats_or_darks,
     load_npz,
     load_nxtomo,
     save_npz,
@@ -31,6 +32,7 @@ __all__ = [
     "ValidationReport",
     "build_geometry_from_dataset_metadata",
     "convert_dataset",
+    "holds_flats_or_darks",
     "load_dataset",
     "load_nxtomo",
     "load_projection_payload",
@@ -316,13 +318,13 @@ def convert_dataset(input_path: PathLike, output_path: PathLike) -> None:
         data = load_npz(str(in_path))
         save_nxtomo(
             str(out_path),
-            data.projections,
+            np.asarray(data.projections),
             metadata=data.copy_metadata(),
         )
         return
     if input_suffix in _HDF5_SUFFIXES and output_suffix == ".npz":
         data = load_nxtomo(str(in_path))
-        save_npz(str(out_path), data.projections, metadata=data.copy_metadata())
+        save_npz(str(out_path), np.asarray(data.projections), metadata=data.copy_metadata())
         return
     raise ValueError("Unsupported conversion. Use .npz <-> .nxs/.h5/.hdf5")
 

@@ -9,6 +9,7 @@ from tomojax.io._datasets import (
     ValidationReport,
     build_geometry_from_dataset_metadata,
     convert_dataset,
+    holds_flats_or_darks,
     load_dataset,
     load_nxtomo,
     load_projection_payload,
@@ -34,6 +35,7 @@ from tomojax.io._preprocess import (
 )
 from tomojax.io._quicklook import save_projection_quicklook
 from tomojax.io._real_laminography import RealLaminographyInput, load_real_laminography_input
+from tomojax.io._tiff import read_tiff_frames
 
 __all__ = [
     "InspectionReport",
@@ -51,6 +53,7 @@ __all__ = [
     "drop_none",
     "flat_dark_to_absorption",
     "format_inspection_report",
+    "holds_flats_or_darks",
     "inspect_dataset",
     "load_angles",
     "load_dataset",
@@ -64,6 +67,7 @@ __all__ = [
     "preprocess_tiff_stack",
     "projection_stats",
     "read_json_object",
+    "read_tiff_frames",
     "save_dataset",
     "save_nxtomo",
     "save_projection_payload",

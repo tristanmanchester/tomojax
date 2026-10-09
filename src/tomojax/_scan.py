@@ -9,8 +9,10 @@ reads the frames themselves, as :class:`Frames`, for other corrections.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, is_dataclass, replace
+import logging
+import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -27,10 +29,12 @@ if TYPE_CHECKING:
 
     import jax
 
+    from tomojax.corrections import Correction, Step
     from tomojax.geometry import ConeSegments, Detector, Geometry, Grid, ScanGeometry
     from tomojax.io import ProjectionDataset
+    from tomojax.io.api import LoadedNXTomo
 
-type Method = Literal["fbp", "cgls", "fista", "spdhg"]
+LOG = logging.getLogger(__name__)
 
 # Geometry metadata keys a geometry object owns; other keys (provenance) carry over.
 GEOMETRY_KEYS = frozenset(
@@ -53,23 +57,39 @@ class Scan:
     not intensities); ``geometry`` describes every view, and carries the
     reconstruction ``grid`` and the ``detector``. A scan loaded from a file or
     returned by :func:`align` may carry per-view pose corrections, which every
-    operation applies (see :attr:`poses`).
+    operation applies (see :attr:`poses`). ``corrections`` records how its
+    projections were made from detector frames (see :mod:`tomojax.corrections`),
+    and is saved with it.
     """
 
     projections: np.ndarray | jax.Array
     geometry: ScanGeometry
     name: str = "sample"
+    corrections: tuple[Correction, ...] = ()
     source: ProjectionDataset | None = field(default=None, repr=False, compare=False)
 
+    def __repr__(self) -> str:
+        views, rows, cols = self.projections.shape
+        text = (
+            f"Scan({self.name!r}: {views} views of {rows} x {cols}, {type(self.geometry).__name__}"
+        )
+        if self.corrections:
+            text += ", corrections: " + ", ".join(str(c) for c in self.corrections)
+        return text + ")"
+
+    def corrected(self, *steps: Step, batch_views: int | None = None) -> Scan:
+        """The scan with line-integral ``steps`` applied (see :mod:`tomojax.corrections`).
+
+        Steps on counts or transmission need the frames: use :func:`load_frames`
+        and :meth:`Frames.corrected`.
+        """
+        from tomojax.corrections import correct_projections
+
+        projections, records = correct_projections(self.projections, steps, batch_views=batch_views)
+        return replace(self, projections=projections, corrections=(*self.corrections, *records))
+
     def __post_init__(self) -> None:
-        shape = tuple(self.projections.shape)
-        detector = self.geometry.detector
-        views = len(self.geometry.angles)  # pyright: ignore[reportAttributeAccessIssue]
-        if shape != (views, detector.nv, detector.nu):
-            raise ValueError(
-                f"Scan: projections are {shape} but the geometry has {views} views of "
-                f"{detector.nv} rows x {detector.nu} columns"
-            )
+        _check_shape("Scan: projections", self.projections.shape, self.geometry)
 
     @property
     def grid(self) -> Grid:
@@ -182,19 +202,281 @@ class Scan:
 
 
 def load(path: str | PathLike[str], *, poses: bool = True) -> Scan:
-    """Load a scan from a TomoJAX dataset (``.nxs``, ``.h5``, ``.npz``) or a Nikon ``.xtekct``.
+    """Load a scan of line integrals from a dataset (``.nxs``, ``.h5``, ``.npz``) or ``.xtekct``.
 
-    The scan carries the per-view corrections saved with it (by :func:`align`
-    or ``tomojax align``) unless ``poses`` is False. TIFF stacks need their geometry
-    stated: import them with ``tomojax import`` or :func:`tomojax.io.load_tiff_stack`.
+    A file of raw detector frames (an NXtomo ``image_key`` marking flats or
+    darks, or a Nikon scan) is corrected with the standard chain, as
+    ``load_frames(path).corrected()``: dark subtraction, flat division and
+    ``-log``; :attr:`Scan.corrections` records it. For other corrections, load
+    the frames with :func:`load_frames`. The scan carries the per-view
+    corrections saved with it (by :func:`align` or ``tomojax align``) unless
+    ``poses`` is False.
     """
-    from tomojax.io import load_dataset, load_nikon_xtekct
+    from tomojax.io import load_dataset
+    from tomojax.io.api import holds_flats_or_darks
 
     file = Path(path)
     if not file.exists():
         raise FileNotFoundError(f"no such file: {file}")
-    record = load_nikon_xtekct(file) if file.suffix.lower() == ".xtekct" else load_dataset(file)
+    suffix = file.suffix.lower()
+    if file.is_dir() or suffix in {".tif", ".tiff"}:
+        raise ValueError(
+            f"{file} is a TIFF stack, which holds no geometry: load it with "
+            "tomojax.load_frames(path, angles=..., detector=...)"
+        )
+    if suffix == ".xtekct":
+        return _corrected_on_load(load_frames(file), file)
+    if suffix in {".nxs", ".h5", ".hdf5"} and holds_flats_or_darks(str(file)):
+        return _corrected_on_load(load_frames(file), file)
+    record = load_dataset(file)
+    if np.issubdtype(np.asarray(record.projections).dtype, np.integer):
+        raise ValueError(
+            f"{file} holds integer detector counts and no flat frames (image_key 1): "
+            "load them with tomojax.load_frames(path, flats=... or white_level=...)"
+        )
     return scan_from_record(record, poses=poses)
+
+
+def _corrected_on_load(frames: Frames, file: Path) -> Scan:
+    scan = frames.corrected()
+    LOG.info("%s: corrected detector frames to line integrals: %s", file.name,
+             ", ".join(str(c) for c in scan.corrections))  # fmt: skip
+    return scan
+
+
+@dataclass(frozen=True, repr=False)
+class Frames:
+    """Detector frames as recorded, with the geometry of each sample view.
+
+    ``counts`` are the sample frames, ``(views, rows, columns)``, in memory, a
+    memmap or read lazily from the file; ``flats`` the frames of the beam
+    alone, with ``flat_positions`` the number of views recorded before each
+    (flats taken before and after a scan are interpolated between); ``darks``
+    the frames with the beam off. Scanners that calibrate their flat field
+    record a ``white_level`` instead. :meth:`corrected` makes the
+    :class:`Scan` of line integrals. Made by :func:`load_frames`.
+    """
+
+    counts: Any
+    geometry: ScanGeometry
+    flats: np.ndarray | None = None
+    darks: np.ndarray | None = None
+    flat_positions: np.ndarray | None = None
+    white_level: float | None = None
+    name: str = "sample"
+    source: ProjectionDataset | None = field(default=None, compare=False)
+
+    def __post_init__(self) -> None:
+        _check_shape("Frames: counts", self.counts.shape, self.geometry)
+
+    def __repr__(self) -> str:
+        views, rows, cols = self.counts.shape
+        parts = [f"{views} views of {rows} x {cols} {np.dtype(self.counts.dtype).name}"]
+        if self.flats is not None:
+            sets = 1 if self.flat_positions is None else len(np.unique(self.flat_positions))
+            parts.append(f"{_count(len(self.flats), 'flat')} in {_count(sets, 'set')}")
+        if self.white_level is not None:
+            parts.append(f"white level {self.white_level:g}")
+        parts.append(_count(0 if self.darks is None else len(self.darks), "dark"))
+        return f"Frames({self.name!r}: {', '.join(parts)}, {type(self.geometry).__name__})"
+
+    @property
+    def views(self) -> int:
+        """The number of sample views."""
+        return int(self.counts.shape[0])
+
+    def corrected(
+        self, *steps: Step, epsilon: float = 1e-6, batch_views: int | None = None
+    ) -> Scan:
+        """The scan of line integrals ``-log((I - D) / (F - D))``, with ``steps`` applied.
+
+        Steps run by the data they act on: counts steps first, then the flat
+        and dark fields, transmission steps, the log, and line-integral steps,
+        each in the order given (see :mod:`tomojax.corrections`). ``epsilon``
+        bounds the flat field and transmission below. The views are corrected
+        on the device in batches of ``batch_views`` (by default, 256 MiB).
+        """
+        from tomojax.corrections import correct_frames
+
+        projections, records = correct_frames(
+            self.counts,
+            flats=self.flats,
+            flat_positions=self.flat_positions,
+            darks=self.darks,
+            white_level=self.white_level,
+            steps=steps,
+            epsilon=epsilon,
+            batch_views=batch_views,
+        )
+        source = None if self.source is None else replace(self.source, projections=projections)
+        return Scan(projections, self.geometry, self.name, records, source)
+
+
+def load_frames(
+    path: str | PathLike[str],
+    *,
+    flats: np.ndarray | str | PathLike[str] | None = None,
+    darks: np.ndarray | str | PathLike[str] | None = None,
+    angles: Sequence[float] | np.ndarray | None = None,
+    detector: Detector | None = None,
+    grid: Grid | None = None,
+    white_level: float | None = None,
+) -> Frames:
+    """Load detector frames from an NXtomo (or ``.npz``) file, a Nikon ``.xtekct`` or TIFFs.
+
+    An NXtomo file's ``image_key`` marks its flats (1) and darks (2); its
+    sample frames are read only as they are corrected. A Nikon scan carries
+    its white level. A TIFF file or folder of sample frames needs its
+    ``angles`` (degrees), and its ``detector`` unless pixels are unit length.
+    ``flats`` and ``darks`` (arrays, or TIFF files or folders), ``angles``,
+    ``detector``, ``grid`` and ``white_level`` replace what the file holds.
+    """
+    file = Path(path)
+    if not file.exists():
+        raise FileNotFoundError(f"no such file: {file}")
+    suffix = file.suffix.lower()
+    if suffix == ".xtekct":
+        frames = _nikon_frames(file)
+    elif file.is_dir() or suffix in {".tif", ".tiff"}:
+        frames = _tiff_frames(file, angles=angles, detector=detector)
+    elif suffix in {".nxs", ".h5", ".hdf5"}:
+        from tomojax.io.api import load_nxtomo
+
+        frames = _frames_from_payload(load_nxtomo(str(file), lazy=True), file)
+    else:
+        from tomojax.io import load_dataset
+
+        record = load_dataset(file)
+        frames = Frames(
+            record.projections,
+            _geometry_of(record, poses=True),
+            name=record.sample_name or "sample",
+            source=record,
+        )
+    changes: dict[str, Any] = {}
+    if flats is not None:
+        changes |= {"flats": _frames_of(flats, "flats"), "flat_positions": None}
+    if darks is not None:
+        changes["darks"] = _frames_of(darks, "darks")
+    if white_level is not None:
+        changes["white_level"] = float(white_level)
+    if (
+        angles is not None or detector is not None or grid is not None
+    ) and frames.source is not None:
+        record = replace(
+            frames.source,
+            angles=frames.source.angles if angles is None else np.asarray(angles, np.float32),
+            detector=detector or frames.source.detector,
+            grid=grid or frames.source.grid,
+        )
+        changes |= {"geometry": _geometry_of(record, poses=True), "source": record}
+    return replace(frames, **changes)
+
+
+def _check_shape(what: str, shape: tuple[int, ...], geometry: ScanGeometry) -> None:
+    detector = geometry.detector
+    views = len(geometry.angles)  # pyright: ignore[reportAttributeAccessIssue]
+    if tuple(int(s) for s in shape) != (views, detector.nv, detector.nu):
+        raise ValueError(
+            f"{what} are {tuple(shape)} but the geometry has {views} views of "
+            f"{detector.nv} rows x {detector.nu} columns"
+        )
+
+
+def _count(n: int, noun: str) -> str:
+    return f"{n} {noun}{'s' * (n != 1)}"
+
+
+def _frames_of(value: np.ndarray | str | PathLike[str], name: str) -> np.ndarray:
+    if isinstance(value, str | os.PathLike):
+        from tomojax.io.api import read_tiff_frames
+
+        return read_tiff_frames(Path(value))
+    frames = np.asarray(value)
+    if frames.ndim == 2:
+        frames = frames[None]
+    if frames.ndim != 3:
+        raise ValueError(f"{name} must be frames (frames, rows, columns), not {frames.shape}")
+    return frames
+
+
+def _frames_from_payload(payload: LoadedNXTomo, file: Path) -> Frames:
+    """The sample frames, flats and darks of an NXtomo payload, split by ``image_key``."""
+    from tomojax.io import ProjectionDataset
+
+    stack = payload.projections
+    views_total = int(stack.shape[0])
+    key = payload.metadata.image_key
+    key = np.zeros(views_total, np.int32) if key is None else np.asarray(key)
+    sample = key == 0
+    if not sample.any():
+        raise ValueError(f"{file} holds no sample frames (image_key 0)")
+    counts = stack[sample] if isinstance(stack, np.ndarray) else stack.frames_at(sample)
+    flats = np.asarray(stack[np.flatnonzero(key == 1)]) if (key == 1).any() else None
+    darks = np.asarray(stack[np.flatnonzero(key == 2)]) if (key == 2).any() else None
+    positions = np.cumsum(sample)[key == 1] if flats is not None else None
+    metadata = replace(
+        payload.metadata,
+        angles=None
+        if payload.metadata.angles is None
+        else np.asarray(payload.metadata.angles)[sample],
+        image_key=None,
+    )
+    # The geometry needs the views' shape, not their values: read none of them.
+    shape = (int(sample.sum()), *(int(s) for s in stack.shape[1:]))
+    placeholder = replace(
+        payload, projections=np.broadcast_to(np.float32(0), shape), metadata=metadata
+    )
+    record = ProjectionDataset.from_nxtomo(placeholder, source_path=file)
+    return Frames(
+        counts=counts,
+        geometry=_geometry_of(record, poses=True),
+        flats=flats,
+        darks=darks,
+        flat_positions=positions,
+        name=record.sample_name or "sample",
+        source=record,
+    )
+
+
+def _nikon_frames(file: Path) -> Frames:
+    from tomojax.io import load_nikon_xtekct
+
+    record = load_nikon_xtekct(file, absorption=False)
+    white = float(record.geometry_metadata["nikon_xtekct"]["white_level"])
+    return Frames(
+        counts=record.projections,
+        geometry=_geometry_of(record, poses=True),
+        white_level=white,
+        name=record.sample_name or "sample",
+        source=record,
+    )
+
+
+def _tiff_frames(
+    file: Path, *, angles: Sequence[float] | np.ndarray | None, detector: Detector | None
+) -> Frames:
+    from tomojax.geometry import Detector
+    from tomojax.io import ProjectionDataset
+    from tomojax.io.api import read_tiff_frames
+
+    if angles is None:
+        raise ValueError(
+            f"{file} is a TIFF stack, which holds no angles: pass angles=... (degrees)"
+        )
+    counts = read_tiff_frames(file)
+    views, rows, cols = counts.shape
+    angles = np.asarray(angles, np.float32)
+    if angles.shape != (views,):
+        raise ValueError(f"{file} has {views} frames but {angles.size} angles")
+    record = ProjectionDataset(
+        projections=counts,
+        angles=angles,
+        detector=detector or Detector(nu=cols, nv=rows, du=1.0, dv=1.0),
+        source_path=str(file),
+        source_format="tiff_stack",
+    )
+    return Frames(counts, _geometry_of(record, poses=True), source=record)
 
 
 def _with_corrections(geometry: ScanGeometry, poses: np.ndarray) -> ScanGeometry:
@@ -265,7 +547,11 @@ def record_of(scan: Scan, *, grid: Grid | None = None) -> ProjectionDataset:
     kept = (
         {}
         if source is None
-        else {k: v for k, v in source.geometry_metadata.items() if k not in GEOMETRY_KEYS}
+        else {
+            k: v
+            for k, v in source.geometry_metadata.items()
+            if k not in GEOMETRY_KEYS and k != "corrections"
+        }
     )
     fields: dict[str, Any] = {
         "projections": np.asarray(scan.projections),
@@ -281,21 +567,31 @@ def record_of(scan: Scan, *, grid: Grid | None = None) -> ProjectionDataset:
         "align_gauge": None if poses is None else {"pose_translation_frame": poses[1]},
         "sample_name": scan.name,
     }
+    if scan.corrections:
+        fields["geometry_metadata"]["corrections"] = [c.to_dict() for c in scan.corrections]
     if source is None:
         return ProjectionDataset(**fields)
     return replace(source, **fields)
 
 
 def scan_from_record(record: ProjectionDataset, *, poses: bool) -> Scan:
+    from tomojax.corrections import Correction
+
+    saved = record.geometry_metadata.get("corrections") or ()
+    return Scan(
+        projections=record.projections,
+        geometry=_geometry_of(record, poses=poses),
+        name=record.sample_name or "sample",
+        corrections=tuple(Correction.from_dict(c) for c in saved),
+        source=record,
+    )
+
+
+def _geometry_of(record: ProjectionDataset, *, poses: bool) -> ScanGeometry:
     from tomojax.io import build_geometry_from_dataset_metadata
 
     _, _, geometry = build_geometry_from_dataset_metadata(record.geometry_inputs(), poses=poses)
-    return Scan(
-        projections=record.projections,
-        geometry=geometry,
-        name=record.sample_name or "sample",
-        source=record,
-    )
+    return geometry
 
 
 def _rebuild(
