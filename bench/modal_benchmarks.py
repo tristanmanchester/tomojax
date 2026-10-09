@@ -27,13 +27,23 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import time
 
 import modal
 
+# The benchmark scripts' directory: this one locally, /root/bench in the container.
+sys.path[:0] = [str(Path(__file__).resolve().parent), "/root/bench"]
+from _measure import run_bounded  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 WALNUT_ZIP = "https://zenodo.org/records/2686726/files/Walnut1.zip"
 TIGRE_COMMIT = "6b0951a"
+# The build and test tools, which uv.lock does not pin (pytest's is the lock's dev version).
+BUILD_PINS = [
+    "cython==3.1.2", "setuptools==80.9.0", "wheel==0.45.1", "tqdm==4.70.1",
+    "pytest==8.4.2", "iniconfig==2.3.0", "pluggy==1.6.0", "packaging==26.2",
+]  # fmt: skip
 # What a run's results depend on: a dirty copy of any of these would not be HEAD's.
 TRACKED = ["src", "bench", "tests/test_devices.py", "pyproject.toml", "uv.lock"]
 
@@ -55,15 +65,14 @@ def _local_build() -> tuple[str, Path, Path]:
         subprocess.run(["uv", "build", "--wheel", "--out-dir", str(out)], cwd=ROOT, check=True)
     export = ["uv", "export", "--frozen", "--no-dev", "--extra", "cuda12", "--group", "benchmark"]
     pins = out / "constraints.txt"
-    pins.write_text(
-        subprocess.run(
-            [*export, "--no-hashes", "--no-emit-project"],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout
-    )
+    locked = subprocess.run(
+        [*export, "--no-hashes", "--no-emit-project"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    pins.write_text(locked + "\n".join(BUILD_PINS) + "\n")
     return commit, next(out.glob("tomojax-*.whl")), pins
 
 
@@ -76,11 +85,12 @@ if modal.is_local():  # the container imports this module too, without the files
     # The lockfile's NumPy, so TIGRE builds against the version it will run with.
     image = image.run_commands(
         "pip install -c /root/constraints.txt numpy scipy imageio astra-toolbox "
-        "'cython>=3' setuptools wheel tqdm pytest"
+        "cython setuptools wheel tqdm pytest"
     )
     image = image.run_commands(
         "git clone https://github.com/CERN/TIGRE /opt/TIGRE",
-        f"cd /opt/TIGRE && git checkout {TIGRE_COMMIT} && pip install --no-build-isolation .",
+        f"cd /opt/TIGRE && git checkout {TIGRE_COMMIT} && "
+        "pip install --no-build-isolation -c /root/constraints.txt .",
         # This Python was built with clang, which the image does not have.
         env={"CC": "gcc", "CXX": "g++", "LDSHARED": "gcc -pthread -shared"},
     )
@@ -137,82 +147,125 @@ def make_cases(sizes: list[int], views: int) -> None:
         data.commit()
 
 
-@app.function(timeout=1800)
+@app.function(timeout=2400)
 def check(gpus: int) -> str:
     """The multi-device tests on ``gpus`` GPUs: their report, or an error if any fails."""
-    return _check(gpus)
+    return _check(gpus, Path("/tmp"), timeout=2000)
 
 
-def _check(gpus: int) -> str:
-    """Run the multi-device tests; raise unless all pass on ``gpus`` GPUs, none skipped."""
+def _check(gpus: int, out: Path, *, timeout: float) -> str:
+    """Run the multi-device tests twice, the second time with TomoJAX's CUDA gather forced.
+
+    Each report is saved in ``out`` before it is judged; raises unless both pass
+    on ``gpus`` GPUs with nothing skipped, failed or in error.
+    """
+    import xml.etree.ElementTree as ET
+
     found = subprocess.run(
         ["nvidia-smi", "-L"], capture_output=True, text=True, check=True
     ).stdout.splitlines()
     if len(found) != gpus:
         raise RuntimeError(f"expected {gpus} GPUs, found {found}")
-    command = ["python", "-m", "pytest", "-v", "-p", "no:cacheprovider", "tests/test_devices.py"]
-    run = subprocess.run(command, cwd="/root", capture_output=True, text=True, check=False)
-    report = run.stdout + run.stderr
-    summary = report.strip().splitlines()[-1] if report.strip() else ""
-    if run.returncode or "skipped" in summary or "passed" not in summary:
-        raise RuntimeError(f"the multi-device tests did not all pass:\n{report[-4000:]}")
-    return report
+    reports = []
+    for name, extra in (("tests", {}), ("tests-cuda-gather", {"TOMOJAX_CUDA_KERNELS": "1"})):
+        junit = out / f"{name}.xml"
+        command = ["python", "-m", "pytest", "-v", "-p", "no:cacheprovider", f"--junitxml={junit}",
+                   "tests/test_devices.py"]  # fmt: skip
+        status = run_bounded(
+            command, log=out / f"{name}.log", timeout=timeout / 2, cwd="/root",
+            env={**os.environ, **extra},
+        )  # fmt: skip
+        report = (out / f"{name}.log").read_text(errors="replace")
+        reports.append(report)
+        counts = ET.parse(junit).getroot().find("testsuite") if junit.exists() else None
+        attrs = {} if counts is None else counts.attrib
+        bad = sum(int(attrs.get(k, 0)) for k in ("failures", "errors", "skipped"))
+        if status != "exit 0" or bad or int(attrs.get("tests", 0)) == 0:
+            raise RuntimeError(f"{name}: {status}, {attrs}:\n{report[-4000:]}")
+    return "\n".join(reports)
 
 
-@app.function(volumes={"/data": data}, timeout=6 * 3600, cpu=16, memory=96 * 1024, max_containers=1)
+@app.function(volumes={"/data": data}, cpu=16, memory=96 * 1024, max_containers=1)
 def benchmark(gpus: list[int], sizes: list[int], views: int, iterations: int, run: dict) -> None:
-    """The tests, then every comparison for each GPU count, saved to the volume as it comes."""
+    """The tests, then every comparison, most valuable first, each saved as it comes.
+
+    One deadline, ``run["max_hours"]`` after the start, bounds every step: each
+    gets at most the time left, and none starts with less than a minute left.
+    """
     import shutil
 
-    started = time.monotonic()
+    deadline = time.monotonic() + run["max_hours"] * 3600 - 120  # time to save at the end
     out = Path(f"/data/results/{run['name']}")
     out.mkdir(parents=True, exist_ok=True)
     (out / "run.json").write_text(json.dumps(run, indent=2))
-    (out / "tests.txt").write_text(_check(max(gpus)))  # raises, before any timing, if they fail
-    data.commit()
-    env = {
-        **os.environ,
-        "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
-        "TOMOJAX_COMMIT": run["commit"],
-    }
+    try:
+        _check(max(gpus), out, timeout=min(2400, deadline - time.monotonic()))
+    finally:
+        data.commit()
+    env = {**os.environ, "XLA_PYTHON_CLIENT_PREALLOCATE": "false", "TOMOJAX_COMMIT": run["commit"]}
 
-    def step(name: str, command: list[str], deadline: float) -> bool:
-        """Run ``command``, its log in the volume; False once the run's hours are spent."""
-        if time.monotonic() - started > run["max_hours"] * 3600:
-            print(f"skipped {name}: the run's {run['max_hours']} hours are spent", flush=True)
-            (out / f"{name}.skipped").write_text("out of time\n")
-            return False
-        with (out / f"{name}.log").open("w") as log:
-            try:
-                done = subprocess.run(
-                    command, cwd="/root/bench", stdout=log, stderr=subprocess.STDOUT,
-                    env=env, timeout=deadline, check=False,
-                )  # fmt: skip
-                status = f"exit {done.returncode}"
-            except subprocess.TimeoutExpired:
-                status = f"stopped after {deadline:.0f} s"
+    def step(name: str, command: list[str], limit: float, *, cpu_jax: bool = False) -> bool:
+        """Run ``command`` for at most ``limit`` s; False once the run's time is spent."""
+        left = deadline - time.monotonic()
+        if left < 60:
+            status = "skipped: the run's time is spent"
+        else:
+            status = run_bounded(
+                command, log=out / f"{name}.log", timeout=min(limit, left), cwd="/root/bench",
+                env={**env, "JAX_PLATFORMS": "cpu"} if cpu_jax else env,
+            )  # fmt: skip
+        with (out / "steps.jsonl").open("a") as steps:
+            steps.write(json.dumps({"step": name, "status": status, "time": time.time()}) + "\n")
         print(f"{name}: {status}", flush=True)
         data.commit()
-        return True
+        return not status.startswith("skipped")
 
-    counts = [str(g) for g in gpus]
-    for size in sizes:
-        case = Path(f"/tmp/{_case_name(size, views)}")  # read once from the volume
-        shutil.copyfile(f"/data/cases/{case.name}", case)
-        small = size <= 512
-        for count in counts:
-            for library in ("tomojax", "astra", "tigre"):
-                command = [
-                    "python", "scaling.py", "--size", str(size), "--views", str(views),
-                    "--iterations", str(iterations), "--repeats", "3",
-                    "--cgls-repeats", "3" if small else "1", "--gpus", count,
-                    "--libraries", library, "--case", str(case),
-                    "--output", str(out / f"scaling-{size}.json"),
-                    "--worker-timeout", "1800" if small else "5400",
-                ]  # fmt: skip
-                if not step(f"scaling-{size}-{library}-{count}", command, 6000):
-                    return
-        case.unlink()
+    # Each library working at all, on every GPU, in a minute: stop here if not.
+    smoke = ["python", "scaling.py", "--size", "64", "--views", "90", "--iterations", "3",
+             "--repeats", "1", "--gpus", str(max(gpus)), "--output", "/tmp/smoke/smoke.json",
+             "--worker-timeout", "600"]  # fmt: skip
+    step("smoke", smoke, 900)
+    if any("failed" in r for r in json.loads(Path("/tmp/smoke/smoke.json").read_text())["records"]):
+        raise RuntimeError("a library failed the smoke run; see smoke.log")
+    for name, command, limit, cpu_jax in _plan(gpus, sizes, views, iterations, out):
+        if command[1] == "scaling.py":
+            case = Path(command[command.index("--case") + 1])
+            if not case.exists():  # read once from the volume
+                shutil.copyfile(f"/data/cases/{case.name}", case)
+        if not step(name, command, limit, cpu_jax=cpu_jax):
+            return
+
+
+def _plan(
+    gpus: list[int], sizes: list[int], views: int, iterations: int, out: Path
+) -> list[tuple[str, list[str], float, bool]]:
+    """Every step, most valuable first: (name, command, time limit, whether JAX uses the CPU).
+
+    The smallest size's comparison, then the walnut and its alignment, then the
+    larger sizes' projections and FDK, then their CGLS, TIGRE's last. The fewest
+    and most GPUs come first: they bound the scaling if time runs out.
+    """
+    counts = [str(g) for g in sorted(set(gpus), key=lambda g: (g not in (min(gpus), max(gpus)), g))]
+    libraries = ("tomojax", "astra", "tigre")
+    plan: list[tuple[str, list[str], float, bool]] = []
+
+    def scaling(size: int, count: str, library: str, operations: list[str], limit: float) -> None:
+        command = [
+            "python", "scaling.py", "--size", str(size), "--views", str(views),
+            "--iterations", str(iterations), "--repeats", "3",
+            "--cgls-repeats", "3" if size <= 512 else "1", "--gpus", count,
+            "--libraries", library, "--case", f"/tmp/{_case_name(size, views)}",
+            "--output", str(out / f"scaling-{size}.json"), "--worker-timeout", str(limit - 60),
+        ]  # fmt: skip
+        if operations:
+            command += ["--operations", *operations]
+        tag = "+".join(operations) if operations else "all"
+        plan.append((f"scaling-{size}-{library}-{count}-{tag}", command, limit, False))
+
+    first, *larger = sorted(sizes)
+    for count in counts:
+        for library in libraries:
+            scaling(first, count, library, [], 1800)
     walnut = {
         "fdk": ["--orbits", "2", "--repeats", "3"],
         "nnls": ["--orbits", "1", "2", "3", "--every", "4", "--bin", "2",
@@ -220,41 +273,54 @@ def benchmark(gpus: list[int], sizes: list[int], views: int, iterations: int, ru
     }  # fmt: skip
     for count in counts:
         for name, options in walnut.items():
-            for library in (
-                "tomojax",
-                "astra",
-            ):  # a process each, so neither holds the other's GPUs
-                tag = f"walnut-{name}-{library}-{count}"
+            for library in ("tomojax", "astra"):  # a process each: neither holds the GPUs
                 command = ["python", "walnut.py", "/data/Walnut1", *options, "--gpus", count,
                            "--libraries", library]  # fmt: skip
-                if not step(tag, command, 3600):
-                    return
+                plan.append((f"walnut-{name}-{library}-{count}", command, 2400, library == "astra"))
         tag = f"walnut-align-{count}"
         command = ["python", "walnut_alignment.py", "/data/Walnut1", "--levels", "4,2",
-                   "--gpus", count, "--slices", str(out / f"{tag}.npz")]  # fmt: skip
-        if not step(tag, command, 3600):
-            return
+                   "--gpus", count, "--output", str(out / f"{tag}.json"),
+                   "--slices", str(out / f"{tag}.npz")]  # fmt: skip
+        plan.append((tag, command, 2400, False))
+    for size in larger:
+        for count in counts:
+            for library in libraries:
+                scaling(
+                    size, count, library, ["forward", "forward_siddon", "backproject", "fdk"], 3600
+                )
+        for library in libraries:
+            for count in counts:
+                scaling(size, count, library, ["cgls"], 5400)
+    return plan
 
 
 @app.local_entrypoint()
 def main(
     *,
     gpu: str = "H100:4",
-    gpus: str = "1,2,4",
+    gpus: str = "",
     sizes: str = "512,1024",
     views: int = 720,
     iterations: int = 20,
     max_hours: float = 3.0,
+    run_name: str = "",
     only_check: bool = False,
 ) -> None:
-    """Run the comparisons on a ``gpu`` machine; copy the results to bench/results."""
+    """Run the comparisons on a ``gpu`` machine; copy the results to bench/results.
+
+    ``gpus`` defaults to 1, 2, ... up to the machine's count, by doubling;
+    ``run_name`` continues an earlier run (its finished steps are kept).
+    """
     import sys
 
-    counts = [int(g) for g in gpus.split(",")]
+    machine = int(gpu.split(":")[1]) if ":" in gpu else 1
+    counts = [int(g) for g in gpus.split(",")] if gpus else _doublings(machine)
+    if max(counts) != machine or min(counts) < 1:
+        raise SystemExit(f"--gpus {counts} must run up to the {machine} GPUs of {gpu}")
     if only_check:
-        print(check.with_options(gpu=gpu).remote(max(counts))[-3000:])
+        print(check.with_options(gpu=gpu).remote(machine)[-3000:])
         return
-    name = f"{time.strftime('%Y%m%d-%H%M')}-{gpu.replace(':', 'x')}-{COMMIT}"
+    name = run_name or f"{time.strftime('%Y%m%d-%H%M')}-{gpu.replace(':', 'x')}-{COMMIT}"
     files = [*sorted((ROOT / "bench").glob("*.py")), ROOT / "tests" / "test_devices.py"]
     run = {
         "name": name,
@@ -270,13 +336,24 @@ def main(
     sizes_list = [int(s) for s in sizes.split(",")]
     fetch_walnut.remote()
     make_cases.remote(sizes_list, views)
+    hard_limit = int(max_hours * 3600) + 600  # the deadline inside, plus saving
     try:
-        benchmark.with_options(gpu=gpu).remote(counts, sizes_list, views, iterations, run)
+        benchmark.with_options(gpu=gpu, timeout=hard_limit).remote(
+            counts, sizes_list, views, iterations, run
+        )
     finally:
         target = ROOT / "bench" / "results"
         target.mkdir(parents=True, exist_ok=True)
         got = subprocess.run(
-            ["modal", "volume", "get", "tomojax-walnut", f"results/{name}", str(target)],
+            ["modal", "volume", "get", "--force", "tomojax-walnut", f"results/{name}",
+             str(target)],
             check=False,
-        )
+        )  # fmt: skip
         print(f"results in {target / name}" if got.returncode == 0 else "download failed")
+
+
+def _doublings(machine: int) -> list[int]:
+    counts = [1]
+    while counts[-1] * 2 <= machine:
+        counts.append(counts[-1] * 2)
+    return counts if counts[-1] == machine else [*counts, machine]

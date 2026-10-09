@@ -121,6 +121,12 @@ def _figures(out: Path, volumes: dict[str, np.ndarray], summary: dict[str, Any])
     fig.savefig(out / "walnut_alignment_heights.png", dpi=110)
 
 
+def _central(volume: np.ndarray) -> dict[str, np.ndarray]:
+    """The three central orthogonal slices of an ``(x, y, z)`` volume."""
+    x, y, z = (n // 2 for n in volume.shape)
+    return {"xz": volume[:, y, :], "yz": volume[x], "xy": volume[..., z]}
+
+
 def main() -> None:
     """Run the alignment comparison and print a JSON summary."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
@@ -132,6 +138,7 @@ def main() -> None:
     parser.add_argument("--figures", type=Path, help="Write PNG figures to this directory")
     parser.add_argument("--gpus", type=int, default=1, help="GPUs to share the views among")
     parser.add_argument("--slices", type=Path, help="Save central slices and poses (.npz)")
+    parser.add_argument("--output", type=Path, help="Write the record here after each stage")
     args = parser.parse_args()
     logging.getLogger("tifffile").setLevel(logging.ERROR)
 
@@ -167,24 +174,35 @@ def main() -> None:
     }
     truth = reference(args.walnut)
     volumes = {"reference": truth}
+    poses = {
+        "original_poses": original.poses,
+        "aligned_poses": aligned.poses,
+        "corrected_poses": corrected.poses,
+    }
+
+    def save() -> None:
+        """The record and slices so far, so a later stage that fails loses nothing."""
+        if args.output is not None:
+            args.output.write_text(json.dumps(summary, default=str))
+        if args.slices is not None:
+            arrays = {
+                f"{name}_{plane}": np.asarray(cut, np.float16)
+                for name, volume in volumes.items()
+                if volume is not None
+                for plane, cut in _central(volume).items()
+            }
+            np.savez_compressed(args.slices, **arrays, **poses)
+
+    save()
     options = {"iterations": args.iterations, "tv_weight": 0.0, "nonnegative": True}
     for name, scan in (("original", original), ("aligned", aligned), ("corrected", corrected)):
         start = time.perf_counter()
         volumes[name] = np.asarray(tj.reconstruct(scan, "fista", devices=devices, **options).volume)
         summary[name] = {"seconds": time.perf_counter() - start, **compare(volumes[name], truth)}
+        save()
     if args.figures is not None:
         args.figures.mkdir(parents=True, exist_ok=True)
         _figures(args.figures, volumes, summary)
-    if args.slices is not None:
-        x, y, z = (n // 2 for n in volumes["aligned"].shape)
-        arrays = {
-            f"{name}_{plane}": np.asarray(cut, np.float16)
-            for name, volume in volumes.items()
-            if volume is not None
-            for plane, cut in (("xz", volume[:, y, :]), ("yz", volume[x]), ("xy", volume[..., z]))
-        }
-        poses = {"aligned_poses": aligned.poses, "corrected_poses": corrected.poses}
-        np.savez_compressed(args.slices, **arrays, **poses, original_poses=original.poses)
     print(json.dumps(summary, default=str))
 
 

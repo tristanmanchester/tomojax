@@ -44,6 +44,26 @@ def environment() -> dict[str, Any]:
     return record
 
 
+def run_bounded(command: list[str], *, log: Path, timeout: float | None, **options: Any) -> str:
+    """Run ``command`` with its output in ``log``; ``"exit N"``, or ``"stopped after T s"``.
+
+    The command runs in a process group of its own, which a timeout ends
+    whole, children included.
+    """
+    import signal
+
+    with log.open("w") as stream:
+        process = subprocess.Popen(
+            command, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True, **options
+        )
+        try:
+            return f"exit {process.wait(timeout=timeout)}"
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+            return f"stopped after {timeout:g} s"
+
+
 def file_hashes(paths: list[Path]) -> dict[str, str]:
     """The SHA-256 of each file, by name."""
     return {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in paths if p.is_file()}

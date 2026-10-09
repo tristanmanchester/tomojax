@@ -147,14 +147,15 @@ def astra_reconstruct(
     return np.transpose(volume, (2, 1, 0))
 
 
-def _start_gpu_runtimes(*, astra: bool) -> None:
+def _start_gpu_runtimes(*, tomojax: bool, astra: bool) -> None:
     """Start JAX's GPU runtime (about 2 s per process) and ASTRA's, outside the timings.
 
     Each library's first reconstruction is still timed, TomoJAX's compilation included.
     """
-    import jax.numpy as jnp
+    if tomojax:
+        import jax.numpy as jnp
 
-    jnp.zeros(()).block_until_ready()
+        jnp.zeros(()).block_until_ready()
     if astra:
         import astra as astra_toolbox
 
@@ -186,7 +187,11 @@ def _timed[T](call: Callable[[], T], repeats: int) -> tuple[T, dict[str, Any]]:
         result = call()
         warm.append(time.perf_counter() - start)
     if warm:
-        times |= {"warm_seconds": warm, "best_warm_seconds": min(warm)}
+        times |= {
+            "warm_seconds": warm,
+            "best_warm_seconds": min(warm),
+            "median_warm_seconds": float(np.median(warm)),
+        }
     return result, times
 
 
@@ -285,7 +290,7 @@ def main() -> None:
             "shift_mm": float(np.abs(scan.poses[:, 3:]).max()),
         },
     }
-    _start_gpu_runtimes(astra="astra" in args.libraries)
+    _start_gpu_runtimes(tomojax="tomojax" in args.libraries, astra="astra" in args.libraries)
     summary["gpus"] = args.gpus
     truth = reference(args.walnut)
     volumes = {}

@@ -22,14 +22,17 @@ history (its CGLS uses the Siddon projector, projects twice per iteration and
 may stop early when the residual rises). ASTRA's CGLS3D_CUDA runs on one GPU
 whatever ``set_gpu_index`` names; its projectors and FDK use them all.
 
-Fixed iteration budgets compare implementations at equal work, not at equal
-reconstruction quality; the errors show how the quality differs.
+Equal requested iteration budgets compare implementations, not solvers at
+equal reconstruction quality (TIGRE also projects more per iteration); the
+errors show how the quality differs.
 
-Each worker writes its records to ``<output>.workers/`` after every operation,
-and a rerun with the same ``--output`` skips workers that finished, so a crash
-or ``--worker-timeout`` loses nothing measured. After every worker the summary
-at ``--output`` is rewritten with all the workers' records there, so several
-calls (one library or GPU count each) build one summary.
+Each worker writes its record to ``<output>.workers/`` after every operation,
+and a failure (its exit status or ``--worker-timeout``, with its log's tail)
+into the same record, so nothing measured is lost; the script then exits 1. A
+rerun with the same ``--output`` reuses a finished worker only when its
+settings and code match, and refuses one that differs. After every worker the
+summary at ``--output`` holds every worker's record there, so several calls
+(one library, GPU count or ``--operations`` each) build one summary.
 
     uv run --no-sync python bench/scaling.py --size 256 --views 360 --gpus 1 \\
         --output bench/results/scaling-256.json
@@ -41,12 +44,11 @@ import argparse
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
 import time
 from typing import TYPE_CHECKING, Any
 
-from _measure import GpuSampler, environment
+from _measure import GpuSampler, environment, file_hashes, run_bounded
 from compare_cone import astra_vectors, make_case, relative, setup, tigre_geometry
 import numpy as np
 
@@ -156,7 +158,8 @@ def run_tigre(case: dict[str, Any], volume: np.ndarray, data: np.ndarray, gpus: 
         alg.run_main_iter()
         residuals = np.asarray(alg.l2l, np.float64).ravel()
         info = {
-            "effective_iterations": int(np.count_nonzero(residuals)),
+            # Iterations it computed a residual for, one it then undid included.
+            "attempted_iterations": int(np.count_nonzero(residuals)),
             "residual_norms": residuals.tolist(),
             "projector": "Siddon forward, matched backprojection",
         }
@@ -185,10 +188,19 @@ def _worker(
     """Time ``library``'s operations on ``gpus`` GPUs, writing ``out`` after each one."""
     sampler = GpuSampler()  # before the library touches a GPU, so its memory counts
     volume, data = _load_case(args.case, case)
-    record: dict[str, Any] = {"library": library, "gpus": gpus, "complete": False, "operations": []}
+    record: dict[str, Any] = {
+        "library": library,
+        "gpus": gpus,
+        "settings": _settings(args),
+        "complete": False,
+        "operations": [],
+    }
+    _write(out, record)
     try:
         ops: dict[str, Op] = RUNNERS[library](case, volume, data, gpus)
         for operation, call in ops.items():
+            if args.operations and operation not in args.operations:
+                continue
             if operation == "cgls" and args.cgls_repeats is not None:
                 repeats = args.cgls_repeats
             else:
@@ -245,6 +257,22 @@ def _write(path: Path, value: object) -> None:
     temporary.replace(path)
 
 
+def _settings(args: argparse.Namespace) -> dict[str, Any]:
+    """What a worker's measurements depend on, its code included."""
+    here = Path(__file__).parent
+    code = [here / "scaling.py", here / "_measure.py", here / "compare_cone.py"]
+    return {
+        "size": args.size,
+        "views": args.views,
+        "iterations": args.iterations,
+        "repeats": args.repeats,
+        "cgls_repeats": args.cgls_repeats,
+        "operations": sorted(args.operations or []),
+        "case": [args.case.name, args.case.stat().st_size],
+        "code": file_hashes(code),
+    }
+
+
 def _load_case(path: Path, case: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
     """The cached phantom and data, checked against ``case``."""
     with np.load(path) as stored:
@@ -273,6 +301,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--case", type=Path, help="Phantom and data cache (default: by --output)")
     parser.add_argument("--worker-timeout", type=float, help="Seconds before a worker is stopped")
+    parser.add_argument("--operations", nargs="+", help="Time only these operations (default all)")
     parser.add_argument("--worker", nargs=2, help=argparse.SUPPRESS)  # library, GPU count
     ARGS = args = parser.parse_args()
     case = setup(args.size, args.views)
@@ -280,7 +309,7 @@ def main() -> int:
     workers = args.output.with_suffix(".workers")
     if args.worker:
         library, gpus = args.worker[0], int(args.worker[1])
-        _worker(library, gpus, case, args, workers / f"{library}-{gpus}.json")
+        _worker(library, gpus, case, args, _worker_file(workers, library, gpus, args))
         return 0
     if not args.case.exists():
         volume, data = make_case(case)
@@ -295,43 +324,49 @@ def main() -> int:
         "environment": environment(),
         "records": [],
     }
+    failed = False
     for gpus in args.gpus:
         for library in args.libraries:
-            _run_worker(library, gpus, args, workers)
+            failed |= "failed" in _run_worker(library, gpus, args, workers)
             # Every worker's record so far, this call's or an earlier one's.
             summary["records"] = [json.loads(f.read_text()) for f in sorted(workers.glob("*.json"))]
             _write(args.output, summary)
-    return 0
+    return 1 if failed else 0
+
+
+def _worker_file(workers: Path, library: str, gpus: int, args: argparse.Namespace) -> Path:
+    tag = "+".join(sorted(args.operations)) if args.operations else "all"
+    return workers / f"{library}-{gpus}-{tag}.json"
 
 
 def _run_worker(library: str, gpus: int, args: argparse.Namespace, workers: Path) -> dict:
-    """``library`` on ``gpus`` GPUs in a child process, or its record from an earlier run."""
-    out = workers / f"{library}-{gpus}.json"
-    if out.exists() and json.loads(out.read_text()).get("complete"):
-        return json.loads(out.read_text())
+    """``library`` on ``gpus`` GPUs in a child process, or its record from an earlier run.
+
+    A failed worker's record, measurements so far included, says how it failed.
+    """
+    out = _worker_file(workers, library, gpus, args)
+    if out.exists():
+        earlier = json.loads(out.read_text())
+        if earlier.get("settings") != _settings(args):
+            raise SystemExit(f"{out} was measured with other settings or code; use a new --output")
+        if earlier.get("complete"):
+            return earlier
     env = dict(os.environ, XLA_PYTHON_CLIENT_PREALLOCATE="false")
     if library != "tomojax":
         env["JAX_PLATFORMS"] = "cpu"  # JAX may only see the CPU in the others' processes
     command = [sys.executable, __file__, *sys.argv[1:], "--worker", library, str(gpus)]
     log = out.with_suffix(".log")
-    with log.open("w") as stream:
-        try:
-            child = subprocess.run(
-                command, stdout=stream, stderr=subprocess.STDOUT, env=env,
-                timeout=args.worker_timeout, check=False,
-            )  # fmt: skip
-            failure = f"exit status {child.returncode}" if child.returncode else None
-        except subprocess.TimeoutExpired:
-            failure = f"stopped after {args.worker_timeout} s"
+    status = run_bounded(command, log=log, timeout=args.worker_timeout, env=env)
     record = json.loads(out.read_text()) if out.exists() else {"library": library, "gpus": gpus}
-    if failure:
-        record["failed"] = failure
-        record["log_tail"] = log.read_text().strip().splitlines()[-20:]
+    if status != "exit 0" or not record.get("complete"):
+        record["failed"] = status
+        record["log_tail"] = log.read_text(errors="replace").strip().splitlines()[-20:]
+        _write(out, record)
     for op in record.get("operations", []):
         error = f"  error {op['error']:.4f}" if "error" in op else ""
         print(f"{library:8s} {gpus} GPU  {op['operation']:14s} {op['best_seconds']:8.3f} s{error}")
-    if failure:
-        print(f"{library:8s} {gpus} GPU  failed: {failure}", flush=True)
+    if "failed" in record:
+        print(f"{library:8s} {gpus} GPU  failed: {record['failed']}", flush=True)
     return record
 
 
