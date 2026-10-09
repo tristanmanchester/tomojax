@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 
 from tomojax.core._trilinear_reference import forward_project_view_exact_T
+from tomojax.core.backend_policy import cuda_backend
 from tomojax.core.validation import (
     validate_detector,
     validate_detector_grid,
@@ -37,7 +38,7 @@ def _validate_backend(backend: str, detector: Detector, det_grid: object) -> Non
     if backend not in {"jax", "pallas"}:
         raise ValueError("exact trilinear integration: backend must be 'jax' or 'pallas'")
     if backend == "pallas":
-        if jax.default_backend() != "gpu" or "NVIDIA" not in jax.devices()[0].device_kind:
+        if not cuda_backend():
             raise ValueError("exact trilinear integration: Pallas requires an NVIDIA CUDA device")
         from tomojax.core.pallas._pallas_config import _ensure_canonical_detector_grid
 

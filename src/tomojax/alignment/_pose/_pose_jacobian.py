@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 
 from tomojax.alignment._geometry.parametrizations import apply_pose_update
+from tomojax.core.backend_policy import cuda_backend
 from tomojax.core.projector import forward_project_view_T
 
 from ._pose_context import _PoseObjectiveContext
@@ -47,11 +48,6 @@ class PoseJacobianOptions:
             cfg.ray_integrator,
             cfg.gn_jacobian,
         )
-
-
-def _cuda() -> bool:
-    version = jax.devices()[0].client.platform_version.lower()
-    return jax.default_backend() == "gpu" and "cuda" in version
 
 
 def build_pose_prediction_and_columns(ctx: _PoseObjectiveContext) -> Callable:
@@ -96,7 +92,7 @@ def pose_prediction_and_columns(
     joseph = options.integrator.startswith("joseph")
     # Cone views use central differences of the CUDA forward, which has no pose
     # derivative; autodiff columns use the differentiable JAX reference.
-    central = options.jacobian == "central" or (options.cone_beam and _cuda())
+    central = options.jacobian == "central" or (options.cone_beam and cuda_backend())
     cone_backend = "jax" if options.cone_beam and not central else "pallas"
 
     def _pred_flat(t_i: jnp.ndarray, masked_vol: jnp.ndarray) -> jnp.ndarray:
@@ -114,7 +110,7 @@ def pose_prediction_and_columns(
             gather_dtype=options.gather_dtype,
             det_grid=det_grid,
             # Joseph CUDA kernels' pose derivatives avoid a per-plane JAX tape.
-            projector_backend="pallas" if joseph and _cuda() else "jax",
+            projector_backend="pallas" if joseph and cuda_backend() else "jax",
             ray_integrator=options.integrator,
         ).ravel()
 

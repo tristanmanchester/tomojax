@@ -23,6 +23,8 @@ from jax.experimental.buffer_callback import buffer_callback
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core.backend_policy import cuda_backend
+
 if TYPE_CHECKING:
     from tomojax.core.geometry.base import Detector, Grid
 
@@ -128,8 +130,7 @@ def use_cuda_gather(grid: Grid) -> bool:
 @cache
 def cuda_gather_available() -> bool:
     """Return whether the CuPy gather can run on JAX's default CUDA device."""
-    device = jax.devices()[0]
-    if jax.default_backend() != "gpu" or "cuda" not in device.client.platform_version.lower():
+    if not cuda_backend():
         return False
     return importlib.util.find_spec("cupy") is not None
 

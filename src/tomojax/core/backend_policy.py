@@ -11,6 +11,18 @@ type ProjectorBackend = Literal["jax", "pallas"]
 type ProjectorBackendInput = ProjectorBackend | str
 
 
+def cuda_backend() -> bool:
+    """Whether JAX's default backend is an NVIDIA CUDA GPU (not the CPU, ROCm or a TPU).
+
+    A property of the backend, which every device of it shares, so code that
+    works on any of several devices can ask it.
+    """
+    import jax
+    from jax.extend.backend import get_backend
+
+    return jax.default_backend() == "gpu" and "cuda" in get_backend().platform_version.lower()
+
+
 @dataclass(frozen=True, slots=True)
 class BackendProvenance:
     """Requested/actual backend metadata for supported accelerator boundaries."""

@@ -26,7 +26,7 @@
     "src/tomojax/alignment/_pose/_pose_loop.py": 923,
     "src/tomojax/alignment/_stages/_reconstruction_stage.py": 1030,
     "src/tomojax/alignment/optimizers.py": 921,
-    "src/tomojax/core/projector.py": 844,
+    "src/tomojax/core/projector.py": 837,
     "src/tomojax/recon/fbp.py": 895,
     "src/tomojax/recon/fdk.py": 948,
     "src/tomojax/recon/fista_tv.py": 971
@@ -164,7 +164,7 @@
   "positional_options": [],
   "params5_mentions": 0,
   "string_normalisers": 0,
-  "first_device_probes": 8,
+  "first_device_probes": 0,
   "jaxlib_private_imports": 1,
   "test_private_imports": 115
 }

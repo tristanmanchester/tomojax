@@ -8,6 +8,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core.backend_policy import cuda_backend
 from tomojax.core.geometry.base import grid_volume_origin
 from tomojax.core.joseph import (
     forward_project_planes,
@@ -38,9 +39,7 @@ def _inputs(volume, poses, grid, detector, backend):
     validate_pose_stack(poses, poses.shape[0], context=context)
     if backend not in {"jax", "pallas"}:
         raise ValueError(f"{context}: backend must be 'jax' or 'pallas'")
-    if backend == "pallas" and (
-        jax.default_backend() != "gpu" or "NVIDIA" not in jax.devices()[0].device_kind
-    ):
+    if backend == "pallas" and not cuda_backend():
         raise ValueError(f"{context}: backend='pallas' requires an NVIDIA CUDA device")
     return volume.astype(jnp.float32), poses.astype(jnp.float32)
 

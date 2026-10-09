@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core.backend_policy import cuda_backend
 from tomojax.core.pallas_resolver import resolve_pallas_callable
 
 from .backend_policy import ProjectorBackendInput, normalize_projector_backend
@@ -141,10 +142,7 @@ def _resolve_gather_target(gather_dtype: str) -> jnp.dtype:
         raise ValueError(f"gather_dtype must be a string; got {type(gather_dtype).__name__}")
     gd = gather_dtype.lower()
     if gd == "auto":
-        try:
-            platform = jax.devices()[0].platform if jax.devices() else "cpu"
-        except Exception:
-            platform = "cpu"
+        platform = jax.default_backend()
         if platform in ("gpu", "tpu"):
             return jnp.bfloat16 if platform == "tpu" else jnp.float16
         return jnp.float32
@@ -365,11 +363,6 @@ def _pallas_unsupported_exception_type() -> type[Exception] | None:
     if isinstance(unsupported_exc, type) and issubclass(unsupported_exc, Exception):
         return unsupported_exc
     return None
-
-
-def _cuda_default_device() -> bool:
-    version = jax.devices()[0].client.platform_version.lower()
-    return jax.default_backend() == "gpu" and "cuda" in version
 
 
 def _cone_backend(projector_backend: object) -> str:
@@ -693,7 +686,7 @@ def sum_backproject_views_T(
         from tomojax.core.joseph import sum_backproject_planes
 
         coeff, interpolation = _joseph_operands(T_all, grid, detector, det_grid, ray_integrator)
-        backend = "pallas" if _cuda_default_device() else "jax"
+        backend = "pallas" if cuda_backend() else "jax"
         return sum_backproject_planes(
             coeff,
             jnp.asarray(images, jnp.float32),

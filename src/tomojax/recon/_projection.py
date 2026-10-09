@@ -18,6 +18,7 @@ import jax
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec
 
+from tomojax.core.backend_policy import cuda_backend
 from tomojax.core.cone import ConeModel, cone_backproject, cone_model, cone_project, use_cuda_cone
 from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
@@ -31,14 +32,6 @@ if TYPE_CHECKING:
 
 type ProjectorModel = Literal["auto", "joseph", "ray"]
 type ProjectorBackend = Literal["auto", "jax", "pallas"]
-
-
-def cuda_available() -> bool:
-    """Return whether JAX's default device is a CUDA GPU."""
-    return (
-        jax.default_backend() == "gpu"
-        and "cuda" in jax.devices()[0].client.platform_version.lower()
-    )
 
 
 def resolve_projector(
@@ -62,7 +55,7 @@ def resolve_projector(
         model = "ray" if det_grid is not None else "joseph"
     if model == "joseph" and det_grid is not None:
         raise ValueError(f"{context}: Joseph sampling requires the canonical detector grid")
-    cuda = cuda_available()
+    cuda = cuda_backend()
     if backend == "auto":
         backend = "pallas" if cuda and det_grid is None else "jax"
     if backend == "pallas" and (not cuda or det_grid is not None):

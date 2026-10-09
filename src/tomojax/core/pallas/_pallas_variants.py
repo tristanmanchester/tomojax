@@ -41,10 +41,7 @@ def _normalize_gather_dtype(gather_dtype: str) -> str:
         )
     gd = gather_dtype.lower()
     if gd == "auto":
-        try:
-            platform = jax.devices()[0].platform if jax.devices() else "cpu"
-        except Exception:
-            platform = "cpu"
+        platform = jax.default_backend()
         if platform == "tpu":
             return "bf16"
         if platform == "gpu":
