@@ -14,7 +14,6 @@ import numpy as np
 
 from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.geometry.views import stack_view_poses
-from tomojax.core.operator_norm import estimate_normal_norm
 from tomojax.core.projector import (
     forward_project_view_T,
     get_detector_grid_device,
@@ -32,7 +31,6 @@ from tomojax.recon._projection import (
     ConeModel,
     ProjectorBackend,
     ProjectorModel,
-    normal_operator_norm,
     projection_operators,
     resolve_geometry_projector,
     resolve_projector,
@@ -47,6 +45,8 @@ from ._host_stream import (
     should_stream,
     write_block,
 )
+from ._solver_validation import validate_spdhg_config
+from ._spdhg_steps import SPDHGStepSizes, resolve_spdhg_step_sizes
 from ._tv_ops import (
     div3,
     grad3,
@@ -82,6 +82,11 @@ class SPDHGConfig:
     writes only its block of views. ``None`` streams when the projections would
     take more than 40% of free device memory. Streaming needs the batched
     operators.
+
+    ``tau``, ``sigma_data`` and ``sigma_tv`` independently override the primal,
+    data-dual and TV-dual step sizes. ``None`` estimates only that missing size;
+    explicit sizes must be finite and positive. Supplying overrides makes the
+    caller responsible for the combined step sizes' stability.
     """
 
     iterations: int = 400
@@ -136,17 +141,6 @@ class _SPDHGScanState(NamedTuple):
 
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
-class _SPDHGStepSizes:
-    tau: float
-    sigma_data_base: float
-    sigma_data_eff: float
-    sigma_tv: float
-    data_norm: float | None
-    grad_norm: float
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
 class _SPDHGSchedule:
     views_per_batch: int = field(metadata={"static": True})
     num_blocks: int = field(metadata={"static": True})
@@ -168,7 +162,7 @@ class _SPDHGRuntime:
     detector_grid: tuple[jnp.ndarray, jnp.ndarray]
     support: jnp.ndarray | None
     tv_weight: jnp.ndarray
-    step_sizes: _SPDHGStepSizes
+    step_sizes: SPDHGStepSizes
     schedule: _SPDHGSchedule
     # None starts from zeros created inside the compiled solve.
     init_x: jnp.ndarray | None
@@ -184,7 +178,7 @@ class _SPDHGRuntime:
 class _SPDHGResult:
     volume: jnp.ndarray
     losses: jnp.ndarray
-    step_sizes: _SPDHGStepSizes
+    step_sizes: SPDHGStepSizes
     schedule: _SPDHGSchedule
     regulariser: Regulariser = field(metadata={"static": True})
     huber_delta: float = field(metadata={"static": True})
@@ -211,46 +205,6 @@ class _SPDHGResult:
 
 
 # --------- helpers ----------
-
-
-def _estimate_norm_A2(
-    geometry: Geometry,
-    grid: Grid,
-    detector: Detector,
-    projections_shape: tuple[int, int, int],
-    T_all: jnp.ndarray,
-    *,
-    views_per_batch: int,
-    projector_unroll: int,
-    checkpoint_projector: bool,
-    gather_dtype: str,
-    ray_integrator: str = "sampled",
-    key: jax.Array | None = None,
-    power_iterations: int = 20,
-    safety: float = 1.05,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
-) -> float:
-    """Estimate the squared projection-operator norm by power iteration."""
-    del geometry
-    n_views = projections_shape[0]
-    if key is None:
-        key = jax.random.key(0)
-    initial = jax.random.normal(key, (grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
-    norm_squared = estimate_normal_norm(
-        T_all,
-        initial,
-        det_grid,
-        None,
-        grid=grid,
-        detector=detector,
-        batch_size=max(1, min(views_per_batch, n_views)),
-        iterations=int(power_iterations),
-        unroll=int(projector_unroll),
-        checkpoint=checkpoint_projector,
-        gather_dtype=gather_dtype,
-        ray_integrator=ray_integrator,
-    )
-    return max(float(norm_squared) * float(safety**2), 1e-6)
 
 
 def _proj_pos_support(
@@ -313,79 +267,6 @@ def _batched_projector(
     return None if (model, backend) == ("ray", "jax") else (model, backend)
 
 
-@functools.partial(jax.jit, static_argnames=("grid", "detector", "projector", "iterations"))
-def _batched_norm_squared(
-    poses: jnp.ndarray,
-    *,
-    grid: Grid,
-    detector: Detector,
-    projector: tuple[str, str],
-    iterations: int,
-) -> jnp.ndarray:
-    model, backend = projector
-    batch = min(64, int(poses.shape[0]))
-    forward, adjoint = projection_operators(poses, grid, detector, None, backend, batch, model)
-    shape = (grid.nx, grid.ny, grid.nz)
-    return normal_operator_norm(forward, adjoint, shape, iterations=iterations)
-
-
-def _resolve_spdhg_step_sizes(
-    geometry: Geometry,
-    grid: Grid,
-    detector: Detector,
-    data_shape: tuple[int, int, int],
-    poses: jnp.ndarray,
-    config: SPDHGConfig,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray],
-    projector: tuple[str, str] | None = None,
-) -> _SPDHGStepSizes:
-    grad_norm = float(np.sqrt(12.0))
-    if config.tau is not None and config.sigma_data is not None and config.sigma_tv is not None:
-        return _SPDHGStepSizes(
-            tau=float(config.tau),
-            sigma_data_base=float(config.sigma_data),
-            sigma_data_eff=float(config.sigma_data),
-            sigma_tv=float(config.sigma_tv),
-            data_norm=None,
-            grad_norm=grad_norm,
-        )
-    if projector is not None:
-        norm_sq = _batched_norm_squared(
-            poses, grid=grid, detector=detector, projector=projector, iterations=20
-        )
-        data_norm_sq = max(float(norm_sq) * 1.05**2, 1e-6)
-    else:
-        data_norm_sq = _estimate_norm_A2(
-            geometry,
-            grid,
-            detector,
-            data_shape,
-            poses,
-            views_per_batch=max(1, config.views_per_batch),
-            projector_unroll=config.projector_unroll,
-            checkpoint_projector=config.checkpoint_projector,
-            gather_dtype=config.gather_dtype,
-            key=jax.random.key(config.seed),
-            power_iterations=20,
-            safety=1.05,
-            det_grid=det_grid,
-            ray_integrator=config.ray_integrator,
-        )
-    data_norm = float(np.sqrt(data_norm_sq))
-    rho = 0.99
-    tau = rho / (data_norm + grad_norm)
-    sigma_data_base = rho / max(data_norm, 1e-6)
-    sigma_tv = rho / grad_norm
-    return _SPDHGStepSizes(
-        tau=tau,
-        sigma_data_base=sigma_data_base,
-        sigma_data_eff=sigma_data_base,
-        sigma_tv=sigma_tv,
-        data_norm=data_norm,
-        grad_norm=grad_norm,
-    )
-
-
 def _build_spdhg_schedule(n_views: int, config: SPDHGConfig) -> _SPDHGSchedule:
     views_per_batch = int(max(1, min(config.views_per_batch, n_views)))
     num_blocks = (n_views + views_per_batch - 1) // views_per_batch
@@ -437,6 +318,7 @@ def _prepare_spdhg_runtime(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
 ) -> _SPDHGRuntime:
     cfg = SPDHGConfig() if config is None else config
+    validate_spdhg_config(cfg)
     regulariser = validate_regulariser(
         cfg.regulariser,
         cfg.huber_delta,
@@ -482,7 +364,7 @@ def _prepare_spdhg_runtime(
         raise ValueError("spdhg_tv: stream_projections requires the batched projection operators")
     y_meas = None if stream else jnp.asarray(projections, dtype=jnp.float32)
     weights_arr = None if weights is None or stream else jnp.asarray(weights, dtype=jnp.float32)
-    step_sizes = _resolve_spdhg_step_sizes(
+    step_sizes = resolve_spdhg_step_sizes(
         geometry,
         grid,
         detector,
@@ -649,8 +531,7 @@ def _run_spdhg_scan(  # noqa: PLR0915
         start = block * jnp.int32(schedule.views_per_batch)
         remaining = jnp.maximum(0, jnp.int32(n_views) - start)
         valid = jnp.minimum(jnp.int32(schedule.views_per_batch), remaining)
-        shift = jnp.int32(schedule.views_per_batch) - valid
-        start_shifted = jnp.maximum(0, start - shift)
+        start_shifted = jnp.maximum(0, start - (jnp.int32(schedule.views_per_batch) - valid))
 
         T_chunk = jax.lax.dynamic_slice(
             runtime.poses,
@@ -736,8 +617,9 @@ def _run_spdhg_scan(  # noqa: PLR0915
         ), None
 
     initial = _initial_spdhg_state(grid, runtime.y_meas, runtime.init_x, iterations=cfg.iterations)
-    final_state, _ = jax.lax.scan(one_step, initial, jnp.arange(cfg.iterations))
-    return final_state
+    if cfg.iterations == 0:
+        return initial
+    return jax.lax.scan(one_step, initial, jnp.arange(cfg.iterations))[0]
 
 
 def spdhg_tv(

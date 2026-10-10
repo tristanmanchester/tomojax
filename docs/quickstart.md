@@ -59,7 +59,11 @@ tj.save("corrected.nxs", scan)
 ```
 
 The views are corrected on the GPU a batch at a time, read from the file as
-they are needed.
+they are needed. `batch_views` must be a positive integer and `epsilon` finite
+and positive. `frames.selected(...)` and `scan.selected(...)` keep a nonempty
+selection in acquisition order: a forward slice, increasing integer indices,
+or a Boolean mask. Selection keeps each view's geometry and its original
+position between the flat fields.
 
 For TIFF frames, use the [TIFF and measured-geometry instructions](real-laminography.md#prepare-tiff-data).
 `tomojax import` packages a stack; it does not correct frames.

@@ -17,6 +17,10 @@ real scans while `tj.load`, `tj.reconstruct` and `tj.align` just work.
 ## Checks
 
 `just ci` is the CPU gate (about 9 minutes); `just test-cuda` runs everything on
-a CUDA GPU (about 10 minutes). Conventions are in CONTRIBUTING.md, measured
-numbers in docs/measurements.md, and the comparisons with ASTRA and TIGRE in
-bench/.
+a CUDA GPU (about 10 minutes). A change is ready when `just ci` and the GPU
+tests it touches pass; the full GPU suite is run when it is merged into main.
+Conventions are in CONTRIBUTING.md, measured numbers in docs/measurements.md,
+and the comparisons with ASTRA and TIGRE in bench/.
+
+Say what changed and how it was checked in a few plain sentences. Evidence
+(logs, scripts, archived results) stays out of the repository.

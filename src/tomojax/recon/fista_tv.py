@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
 import functools
-import math
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
 import jax
@@ -43,6 +42,7 @@ from ._projection import (
     resolve_geometry_projector,
     resolve_projector,
 )
+from ._solver_validation import validate_fista_config
 from ._tv_ops import (
     div3,
     grad3,
@@ -484,29 +484,6 @@ def tv_proximal(x: jnp.ndarray, lam_over_L: float, iterations: int = 20) -> jnp.
     return jax.lax.cond(lam > 0, prox_impl, lambda _: x, lam)
 
 
-def _normalize_constraint_config(cfg: FistaConfig) -> tuple[bool, float | None, float | None]:
-    """Validate FISTA feasibility constraints and return scalar bounds."""
-    lower = None if cfg.lower_bound is None else float(cfg.lower_bound)
-    upper = None if cfg.upper_bound is None else float(cfg.upper_bound)
-
-    if lower is not None and not math.isfinite(lower):
-        raise ValueError("fista_tv constraints: lower_bound must be finite when provided")
-    if upper is not None and not math.isfinite(upper):
-        raise ValueError("fista_tv constraints: upper_bound must be finite when provided")
-
-    effective_lower = lower
-    if bool(cfg.nonnegative):
-        effective_lower = max(0.0, lower) if lower is not None else 0.0
-
-    if upper is not None and effective_lower is not None and upper < effective_lower:
-        raise ValueError(
-            "fista_tv constraints: upper_bound must be greater than or equal to "
-            "the effective lower bound"
-        )
-
-    return bool(cfg.nonnegative), lower, upper
-
-
 def _project_constraints(
     x: jnp.ndarray,
     *,
@@ -535,6 +512,7 @@ def _prepare_fista_runtime(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
 ) -> _FistaRuntime:
     cfg = FistaConfig() if config is None else config
+    nonnegative, lower_bound, upper_bound = validate_fista_config(cfg)
     if cfg.ray_integrator not in RAY_INTEGRATORS:
         raise ValueError("ray_integrator must be sampled or exact")
     volume_mask = cfg.support
@@ -544,7 +522,6 @@ def _prepare_fista_runtime(
         context="fista_tv config",
     )
     huber_delta = float(cfg.huber_delta)
-    nonnegative, lower_bound, upper_bound = _normalize_constraint_config(cfg)
     constraints = _FistaConstraints(
         nonnegative=nonnegative,
         lower_bound=lower_bound,
@@ -682,8 +659,12 @@ def _with_huber(
 ) -> jax.Array | float:
     """``lipschitz`` plus the Huber-TV gradient's own Lipschitz constant, if it has one."""
     if regulariser == "huber_tv" and float(cfg.tv_weight) != 0.0:
-        return lipschitz + float(cfg.tv_weight) * 12.0 / delta
-    return lipschitz
+        lipschitz = lipschitz + float(cfg.tv_weight) * 12.0 / delta
+    # A zero data operator (e.g. empty support) needs no step-size restriction.
+    # Keep the update defined rather than dividing a zero gradient by zero.
+    if isinstance(lipschitz, jax.Array):
+        return jnp.where(lipschitz == 0, 1e-6, lipschitz)
+    return 1e-6 if lipschitz == 0 else lipschitz
 
 
 def _power_start(backprojection: jax.Array) -> jax.Array:
@@ -777,6 +758,31 @@ def _data_term(
         return v, g
 
     return val_and_grad_fn
+
+
+def _initial_fista_state(grid: Grid, runtime: _FistaRuntime) -> FistaScanState:
+    """Build the feasible start and empty diagnostics inside the compiled solve."""
+    constraints = runtime.constraints
+    x0 = runtime.x0
+    if x0 is None:
+        x0 = _project_constraints(
+            jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32),
+            nonnegative=constraints.nonnegative,
+            lower_bound=constraints.lower_bound,
+            upper_bound=constraints.upper_bound,
+        )
+    return FistaScanState(
+        x=x0,
+        z=x0,
+        t=jnp.float32(1.0),
+        loss=jnp.zeros((runtime.config.iterations,), dtype=jnp.float32),
+        prev_obj=jnp.float32(0.0),
+        streak=jnp.int32(0),
+        done=jnp.bool_(False),
+        has_prev=jnp.bool_(False),
+        last_obj=jnp.float32(0.0),
+        iters_done=jnp.int32(0),
+    )
 
 
 @functools.partial(jax.jit, static_argnames=("grid", "detector"))
@@ -882,27 +888,9 @@ def _run_fista_scan(
 
         return jax.lax.cond(state.done, run_skip, run_active, state), None
 
-    loss_arr0 = jnp.zeros((int(cfg.iterations),), dtype=jnp.float32)
-    x0 = runtime.x0
-    if x0 is None:
-        x0 = _project_constraints(
-            jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32),
-            nonnegative=constraints.nonnegative,
-            lower_bound=constraints.lower_bound,
-            upper_bound=constraints.upper_bound,
-        )
-    init_carry = FistaScanState(
-        x=x0,
-        z=x0,
-        t=jnp.float32(1.0),
-        loss=loss_arr0,
-        prev_obj=jnp.float32(0.0),
-        streak=jnp.int32(0),
-        done=jnp.bool_(False),
-        has_prev=jnp.bool_(False),
-        last_obj=jnp.float32(0.0),
-        iters_done=jnp.int32(0),
-    )
+    init_carry = _initial_fista_state(grid, runtime)
+    if cfg.iterations == 0:
+        return init_carry, jnp.asarray(L, jnp.float32)
     carry_final, _ = jax.lax.scan(step, init_carry, jnp.arange(int(cfg.iterations)))
     return carry_final, jnp.asarray(L, jnp.float32)
 

@@ -8,6 +8,7 @@ batches of views may also be filtered first, by a cuBLAS matrix product.
 from __future__ import annotations
 
 from functools import cache, partial
+from threading import Lock
 from typing import TYPE_CHECKING, Any
 
 import jax
@@ -141,9 +142,11 @@ def _module() -> Any:
     return cp.RawModule(code=_SOURCE)
 
 
-# Per GPU, texture objects whose kernels have finished, freed on that GPU's next
-# launch (CUDA calls are not allowed in the stream callback that retires them).
-_RETIRED: dict[int, list[object]] = {}
+# Keep resources until their stream event completes, then free them on that
+# GPU's next launch. A stream host callback must not own the last reference:
+# CUDA resource destructors are forbidden on the callback thread.
+_RETIRED: dict[int, list[tuple[Any, ...]]] = {}
+_RETIRED_LOCK = Lock()
 # The texture start alignment CUDA requires (cudaDeviceProp.textureAlignment), and
 # the half pixels in it.
 _ALIGN = 512
@@ -241,8 +244,10 @@ def _launch(context: Any, out: Any, *buffers: Any, grid: Grid, det: Detector, sc
     import cupy as cp
 
     with xla_stream(context, out[0]) as stream:
-        retired = _RETIRED.setdefault(cp.cuda.Device().id, [])  # the buffers' GPU
-        retired.clear()
+        with _RETIRED_LOCK:
+            retired = _RETIRED.setdefault(cp.cuda.Device().id, [])  # the buffers' GPU
+            retired[:] = [entry for entry in retired if not entry[0].done]
+        finished = cp.cuda.Event(disable_timing=True)
         if len(out) == 3:  # unfiltered rows and the filter's operator
             target, half, images = (cp.asarray(b) for b in out)
             coeff, rows, operator, initial = (cp.asarray(b) for b in buffers)
@@ -256,16 +261,24 @@ def _launch(context: Any, out: Any, *buffers: Any, grid: Grid, det: Detector, sc
         textures, start = _textures(half, det.nv)
         handles = cp.asarray([t.ptr for t in textures], cp.uint64)
         tiles = -(-grid.nx // _TILE[0]) * -(-grid.ny // _TILE[1]) * -(-grid.nz // (32 * _RUN))
-        _module().get_function("fdk_backproject")(
-            (tiles,),
-            (32 * _TILE[0] * _TILE[1],),
-            (
-                coeff, handles, peak, target, np.int32(coeff.shape[0]),
-                np.int32(grid.nx), np.int32(grid.ny), np.int32(grid.nz),
-                np.float32(_LEAD - start + 0.5), np.float32(scale**2),
-            ),
-        )  # fmt: skip
-        stream.launch_host_func(retired.append, (textures, handles, peak))
+        try:
+            _module().get_function("fdk_backproject")(
+                (tiles,),
+                (32 * _TILE[0] * _TILE[1],),
+                (
+                    coeff, handles, peak, target, np.int32(coeff.shape[0]),
+                    np.int32(grid.nx), np.int32(grid.ny), np.int32(grid.nz),
+                    np.float32(_LEAD - start + 0.5), np.float32(scale**2),
+                ),
+            )  # fmt: skip
+            finished.record(stream)
+            with _RETIRED_LOCK:
+                retired.append((finished, textures, handles, peak))
+        except BaseException:
+            # A failed event/retirement setup must not free textures while an
+            # already-enqueued kernel uses them. Only the failure path waits.
+            stream.synchronize()
+            raise
 
 
 def backproject_cuda(

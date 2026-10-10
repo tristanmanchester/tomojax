@@ -145,8 +145,9 @@ class Frames:
         Steps run by the data they act on: counts steps first, then the flat
         and dark fields, transmission steps, the log, and line-integral steps,
         each in the order given (see :mod:`tomojax.corrections`). ``epsilon``
-        bounds the flat field and transmission below. The views are corrected
-        on the device in batches of ``batch_views`` (by default, 256 MiB).
+        must be finite and positive; it bounds the flat field and transmission
+        below. Views are corrected on the device in batches of ``batch_views``,
+        a positive integer (by default, 256 MiB).
         """
         from tomojax.corrections import correct_frames
 
@@ -189,8 +190,9 @@ class Frames:
         )
 
     def selected(self, views: slice | Sequence[int] | np.ndarray) -> Frames:
-        """These sample ``views`` only (a slice, increasing indices or a mask), with their geometry.
+        """These sample ``views`` only, with their geometry.
 
+        Take a forward slice, increasing integer indices or a nonempty mask.
         Each view keeps its place among the flats (:attr:`view_positions`), so
         its flat is interpolated as before.
         """

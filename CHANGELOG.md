@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+The CUDA cone backprojector is again the exact transpose of the forward
+projector where a ray is nearly tied between two axes: both now round the ray's
+coordinates identically (it differed by up to 1.6% there). Adjoints are about
+1.5% slower; forward projections are unchanged.
+
+The CUDA FDK no longer prints `cudaErrorNotPermitted` texture errors: its
+textures are freed once their kernel's event completes, never in a stream
+callback.
+
+Mistakes now fail early with a clear message rather than giving wrong results:
+a reversed `scan.selected(...)` of a multi-orbit scan (which paired views with
+the wrong orbit's geometry), invalid `batch_views`, `epsilon`, `white_level` or
+flat and view positions in corrections, invalid FISTA and SPDHG settings, and
+invalid `fdk_host` slab depths or output arrays. SPDHG now honours `tau`,
+`sigma_data` or `sigma_tv` given alone, both solvers accept zero iterations,
+and `fdk_host` returns zeros for slabs the detector does not see.
+
 This release adds lab cone-beam CT (geometry, FDK, Nikon import, axis
 calibration, ASTRA conversion and multi-orbit `ConeSegments` scans) and a
 workflow API at the package root: `tj.load`, `tj.reconstruct`, `tj.align` and

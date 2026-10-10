@@ -19,6 +19,7 @@ from dataclasses import dataclass, field, replace
 from functools import partial
 import logging
 import math
+import operator
 from typing import TYPE_CHECKING
 
 import jax
@@ -32,6 +33,7 @@ from tomojax.core.geometry.cone import beam_of
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import validate_grid, validate_projection_stack
 from tomojax.recon._fdk_cuda import backproject_cuda
+from tomojax.recon._host_arrays import validate_host_arrays
 from tomojax.recon.filters import get_fbp_filter_np
 
 if TYPE_CHECKING:
@@ -581,7 +583,12 @@ def _slab_rows(
     ray = world - source
     hit = source + ray * (((centre - source) @ normal) / (ray @ normal))[..., None]
     rows = ((hit - centre) @ v_dir) / detector.dv + (detector.nv - 1) / 2
-    return max(0, int(np.floor(rows.min())) - 1), min(detector.nv, int(np.ceil(rows.max())) + 2)
+    # Keep one measured border row even when the slab is entirely outside.
+    # Backprojection still samples zero beyond that row, as with the full
+    # detector, without constructing an empty or negative-height detector.
+    first = max(0, min(detector.nv - 1, int(np.floor(rows.min())) - 1))
+    stop = max(first + 1, min(detector.nv, int(np.ceil(rows.max())) + 2))
+    return first, stop
 
 
 def _windowable(beam: ConeBeam) -> bool:
@@ -649,6 +656,12 @@ def fdk_host(
     rows for a pitched or yawed detector), so projections and volume can both
     exceed device memory. With several ``config.fdk.devices``, each device
     reconstructs its own slabs, so the volume may exceed every one of them.
+
+    Input and output storage must not overlap. Input storage must remain
+    unchanged until the call finishes; sampled projections must be finite in
+    FP32. Completed slabs are written immediately, so a later failure can
+    leave a partially written output. This host-returning routine is not
+    differentiable; use :func:`fdk` for device-resident output.
     """
     from tomojax.backends import device_free_memory_bytes
 
@@ -656,14 +669,23 @@ def fdk_host(
     beam = beam_of(geometry)
     if beam is None:
         raise ValueError("fdk_host needs a cone-beam geometry; use fbp_host for parallel beams")
+    depth = cfg.slices_per_batch
+    if depth is not None:
+        if isinstance(depth, bool | np.bool_):
+            raise ValueError("fdk_host: slices_per_batch must be a positive integer or None")
+        try:
+            depth = operator.index(depth)
+        except TypeError as error:
+            raise ValueError(
+                "fdk_host: slices_per_batch must be a positive integer or None"
+            ) from error
+        if depth < 1:
+            raise ValueError("fdk_host: slices_per_batch must be a positive integer or None")
+    shape = validate_grid(grid, "fdk_host grid")
     n_views, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fdk_host projections"
     )
-    shape = (grid.nx, grid.ny, grid.nz)
-    result = np.empty(shape, np.float32) if out is None else out
-    if tuple(result.shape) != shape:
-        raise ValueError(f"fdk_host out must have shape {shape}")
-    depth = cfg.slices_per_batch
+    result = validate_host_arrays(projections, out, shape, "fdk_host")
     if depth is None:
         free = device_free_memory_bytes() or 2 * 1024**3
         depth = max(1, int(free // (3 * max(1, 4 * grid.nx * grid.ny))))
@@ -745,7 +767,13 @@ class _RowView:
         self.ndim = 3
 
     def __getitem__(self, views: slice) -> np.ndarray:
-        return np.asarray(self.projections[views, self.r0 : self.r1], np.float32)
+        # Conversion can overflow in the copier's worker thread. Report it as
+        # the same explicit input error as a measured NaN/Inf, not a warning.
+        with np.errstate(over="ignore"):
+            data = np.asarray(self.projections[views, self.r0 : self.r1], np.float32)
+        if not np.isfinite(data).all():
+            raise ValueError("fdk_host: sampled projections must be finite in FP32")
+        return data
 
     def __len__(self) -> int:
         return self.shape[0]

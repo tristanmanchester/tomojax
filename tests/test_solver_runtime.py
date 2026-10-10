@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+import itertools
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -201,3 +204,98 @@ def test_spdhg_streams_data_weights_and_duals_from_host(tmp_path, weighted):
     # The two compiled programs round differently in float32 (by ~2e-7 on a GPU).
     np.testing.assert_allclose(results[True][0], results[False][0], rtol=1e-6, atol=1e-6)
     np.testing.assert_allclose(results[True][1]["loss"], results[False][1]["loss"], rtol=1e-6)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("model", ["ray", "joseph"])
+@pytest.mark.parametrize("tilted", [False, True])
+def test_spdhg_partial_steps_match_dense_one_step_and_preserve_each_override(model, tilted):
+    grid = Grid(2, 3, 2, 0.8, 1.1, 1.3)
+    detector = Detector(4, 3, 0.9, 1.2, (0.17, -0.23))
+    angles = np.array([13.0, 68.0, 142.0])
+    geometry = (
+        LaminographyGeometry(grid, detector, angles, tilt_deg=30)
+        if tilted
+        else ParallelGeometry(grid, detector, angles)
+    )
+    data = np.random.default_rng(78).normal(size=(3, 3, 4)).astype(np.float32)
+    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(3)])
+    forward, _ = projection_operators(poses, grid, detector, None, "jax", 3, model)
+    matrix = np.asarray(jax.jacfwd(lambda x: forward(x.reshape((2, 3, 2))).ravel())(jnp.zeros(12)))
+    config = SPDHGConfig(
+        iterations=1,
+        tv_weight=0,
+        views_per_batch=3,
+        log_every=1,
+        projector_model=model,
+        projector_backend="jax",
+    )
+    weights = np.random.default_rng(91).uniform(0.5, 1.5, data.shape).astype(np.float32)
+    _, automatic = spdhg_tv(geometry, grid, detector, data, weights=weights, config=config)
+    overrides = {"tau": 0.07, "sigma_data": 0.13, "sigma_tv": 0.19}
+    for selected in itertools.product([False, True], repeat=3):
+        given = {
+            name: value
+            for (name, value), use in zip(overrides.items(), selected, strict=True)
+            if use
+        }
+        actual, info = spdhg_tv(
+            geometry, grid, detector, data, weights=weights, config=replace(config, **given)
+        )
+        for name, value in overrides.items():
+            assert info[name] == pytest.approx(value if name in given else automatic[name])
+        assert info["sigma_data_base"] == info["sigma_data"]
+        tau, sigma = info["tau"], info["sigma_data"]
+        dual = sigma * data * weights / (sigma + weights)
+        expected = tau * (matrix.T @ dual.ravel())
+        np.testing.assert_allclose(actual.ravel(), expected, rtol=2e-5, atol=2e-6)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("model", ["ray", "joseph"])
+@pytest.mark.parametrize("regulariser", ["tv", "huber_tv"])
+def test_spdhg_partial_tv_step_controls_dense_primal_update(model, regulariser):
+    shape = (2, 3, 2)
+    grid = Grid(*shape, 0.8, 1.1, 1.3)
+    detector = Detector(4, 3, 0.9, 1.2, (0.17, -0.23))
+    geometry = LaminographyGeometry(grid, detector, [13.0, 68.0, 142.0], tilt_deg=30)
+    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(3)])
+    forward, _ = projection_operators(poses, grid, detector, None, "jax", 3, model)
+    matrix = np.asarray(jax.jacfwd(lambda x: forward(x.reshape(shape)).ravel())(jnp.zeros(12)))
+    # Independent dense forward differences: each row's dual has three components.
+    edges = np.zeros((3, 12, 12))
+    for index in np.ndindex(shape):
+        row = np.ravel_multi_index(index, shape)
+        for axis in range(3):
+            neighbor = list(index)
+            neighbor[axis] += 1
+            if neighbor[axis] < shape[axis]:
+                edges[axis, row, row] = -1
+                edges[axis, row, np.ravel_multi_index(tuple(neighbor), shape)] = 1
+    rng = np.random.default_rng(734)
+    initial = rng.normal(size=shape).astype(np.float32)
+    data = rng.normal(size=(3, 3, 4)).astype(np.float32)
+    config = SPDHGConfig(
+        iterations=1,
+        tv_weight=0.04,
+        regulariser=regulariser,
+        huber_delta=0.08,
+        views_per_batch=3,
+        log_every=1,
+        projector_model=model,
+        projector_backend="jax",
+    )
+    for given in [{"sigma_tv": 0.19}, {"tau": 0.07, "sigma_data": 0.13, "sigma_tv": 0.19}]:
+        volume, info = spdhg_tv(
+            geometry, grid, detector, data, init_x=initial, config=replace(config, **given)
+        )
+        assert info["sigma_tv"] == pytest.approx(given["sigma_tv"])
+        tv_dual = info["sigma_tv"] * (edges @ initial.ravel())
+        if regulariser == "huber_tv":
+            tv_dual *= config.tv_weight / (config.tv_weight + info["sigma_tv"] * config.huber_delta)
+        tv_dual /= np.maximum(1.0, np.linalg.norm(tv_dual, axis=0) / config.tv_weight)
+        sigma = info["sigma_data"]
+        data_dual = sigma * (matrix @ initial.ravel() - data.ravel()) / (sigma + 1)
+        tv_gradient = sum(edge.T @ dual for edge, dual in zip(edges, tv_dual, strict=True))
+        expected = initial.ravel() - info["tau"] * (matrix.T @ data_dual + tv_gradient)
+        np.testing.assert_allclose(volume.ravel(), expected, rtol=2e-5, atol=3e-6)

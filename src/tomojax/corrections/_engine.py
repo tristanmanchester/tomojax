@@ -52,12 +52,16 @@ def correct_frames(
     ``darks`` default to zero. ``view_positions`` places each view among the
     flats (by default view ``i`` at ``i + 1/2``).
     """
+    batch_views = _validated_batch_views(batch_views)
+    epsilon = _positive_finite(epsilon, "epsilon")
     views, rows, cols = (int(s) for s in counts.shape)
     ordered = _ordered(steps)
     fields, field_record = _flat_fields(flats, flat_positions, darks, white_level, (rows, cols))
     at = (
         np.arange(views) + 0.5 if view_positions is None else np.asarray(view_positions, np.float64)
     )
+    if at.shape != (views,) or not np.isfinite(at).all():
+        raise ValueError(f"view_positions needs one finite position for each of the {views} views")
     lo, hi, t = _interpolation(at, fields.positions)
     line = [s for d, s in ordered if d == "line integrals"]
     head, tail = _split_at_break(line)
@@ -111,6 +115,7 @@ def correct_projections(
     projections: Any, steps: Sequence[Step], *, batch_views: int | None = None
 ) -> Corrected:
     """``projections`` (line integrals) through ``steps``, and their records."""
+    batch_views = _validated_batch_views(batch_views)
     ordered = _ordered(steps)
     if any(d != "line integrals" for d, _ in ordered):
         wrong = [type(s).__name__ for d, s in ordered if d != "line integrals"]
@@ -122,6 +127,21 @@ def correct_projections(
     out = np.array(projections, np.float32, copy=True)
     out, kept, records = _run_rest(out, [s for _, s in ordered], batch_views)
     return Corrected(out, records, kept)
+
+
+def _validated_batch_views(value: int | None) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | np.integer) or value <= 0:
+        raise ValueError(f"batch_views must be a positive integer, not {value!r}")
+    return int(value)
+
+
+def _positive_finite(value: float, name: str) -> float:
+    value = float(value)
+    if not np.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be finite and positive, not {value!r}")
+    return value
 
 
 def _ordered(steps: Sequence[Step]) -> list[tuple[str, Step]]:
@@ -166,16 +186,20 @@ def _flat_fields(
                 "no flat fields: pass flats (frames of the beam without the object) or "
                 "white_level (the counts of an unattenuated pixel) to tomojax.load_frames"
             )
-        level = float(white_level)
+        level = _positive_finite(white_level, "white_level")
         stack = np.full((1, *shape), level, np.float32)
         record = Correction("flat_dark", {"white_level": level, "darks": dark_frames})
         return _Fields(stack, np.zeros(1), dark), (record,)
     flats = np.asarray(flats)
-    if flats.ndim != 3 or flats.shape[1:] != shape:
-        raise ValueError(f"flats are {flats.shape}; frames of {shape} are needed")
+    if flats.ndim != 3 or flats.shape[1:] != shape or not len(flats):
+        raise ValueError(
+            f"flats are {flats.shape}; a nonempty stack of frames of {shape} is needed"
+        )
     where = np.zeros(len(flats)) if positions is None else np.asarray(positions, np.float64)
-    if where.shape != (len(flats),):
-        raise ValueError(f"flat_positions has {where.shape[0]} entries for {len(flats)} flats")
+    if where.shape != (len(flats),) or not np.isfinite(where).all():
+        raise ValueError(
+            f"flat_positions needs one finite position for each of the {len(flats)} flats"
+        )
     sets = np.unique(where)
     stack = np.stack([np.asarray(flats[where == p], np.float64).mean(axis=0) for p in sets])
     settings: dict[str, Any] = {"flats": len(flats), "darks": dark_frames, "flat_sets": len(sets)}
@@ -190,8 +214,10 @@ def _flat_fields(
 
 def _mean(frames: np.ndarray, shape: tuple[int, int], name: str) -> np.ndarray:
     frames = np.asarray(frames)
-    if frames.ndim != 3 or frames.shape[1:] != shape:
-        raise ValueError(f"{name} are {frames.shape}; frames of {shape} are needed")
+    if frames.ndim != 3 or frames.shape[1:] != shape or not len(frames):
+        raise ValueError(
+            f"{name} are {frames.shape}; a nonempty stack of frames of {shape} is needed"
+        )
     return np.asarray(frames, np.float64).mean(axis=0).astype(np.float32)
 
 

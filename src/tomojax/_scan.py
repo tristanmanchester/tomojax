@@ -103,7 +103,7 @@ class Scan:
         )
 
     def selected(self, views: slice | Sequence[int] | np.ndarray) -> Scan:
-        """The scan of these ``views`` (a slice, increasing indices or a mask) and geometry."""
+        """These ``views`` and geometry: a forward slice, increasing indices or a nonempty mask."""
         kept = view_indices(views, self.projections.shape[0])
         return replace(
             self,
@@ -243,20 +243,26 @@ def detector_window(rows: slice, cols: slice, detector: Detector) -> Callable[[D
 
 
 def view_indices(views: slice | Sequence[int] | np.ndarray, count: int) -> np.ndarray:
-    """``views`` of ``count`` as increasing indices."""
+    """``views`` of ``count`` as nonempty, increasing integer indices."""
     if isinstance(views, slice):
-        return np.arange(count)[views]
-    chosen = np.asarray(views)
+        if views.step is not None and views.step <= 0:
+            raise ValueError("views must follow a forward slice with a positive step")
+        chosen = np.arange(count)[views]
+    else:
+        chosen = np.asarray(views)
     if chosen.dtype == bool:
         if chosen.shape != (count,):
             raise ValueError(f"a mask of views needs {count} entries, not {chosen.shape}")
-        return np.flatnonzero(chosen)
-    chosen = chosen.astype(np.int64).reshape(-1)
-    if chosen.size and (chosen.min() < 0 or chosen.max() >= count):
+        chosen = np.flatnonzero(chosen)
+    if not chosen.size:
+        raise ValueError("views must select at least one view")
+    if chosen.ndim != 1 or chosen.dtype.kind not in "iu":
+        raise ValueError("views must be a one-dimensional array of integer indices")
+    if chosen.min() < 0 or chosen.max() >= count:
         raise ValueError(f"views must be in 0..{count - 1}")
-    if np.any(np.diff(chosen) <= 0):
+    if np.any(chosen[1:] <= chosen[:-1]):
         raise ValueError("views must be increasing indices, each once")
-    return chosen
+    return chosen.astype(np.int64)
 
 
 def views_of(geometry: ScanGeometry, kept: np.ndarray) -> ScanGeometry:

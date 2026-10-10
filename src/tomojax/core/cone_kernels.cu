@@ -31,9 +31,11 @@ __device__ __forceinline__ int ray_axis(float r0, float r1, float r2) {
 }
 __device__ __forceinline__ void ray_of(const float* c, float fu, float fv,
                                        float& r0, float& r1, float& r2) {
-    r0 = (c[3] + fu * c[6] + fv * c[9]) - c[0];
-    r1 = (c[4] + fu * c[7] + fv * c[10]) - c[1];
-    r2 = (c[5] + fu * c[8] + fv * c[11]) - c[2];
+    // Explicit rounding locks the sampling model across NVRTC optimization contexts.
+    // In particular, subtracting the source before adding v can change an axis tie.
+    r0 = __fsub_rn(__fmaf_rn(fv, c[9], __fmaf_rn(fu, c[6], c[3])), c[0]);
+    r1 = __fsub_rn(__fmaf_rn(fv, c[10], __fmaf_rn(fu, c[7], c[4])), c[1]);
+    r2 = __fsub_rn(__fmaf_rn(fv, c[11], __fmaf_rn(fu, c[8], c[5])), c[2]);
 }
 __device__ __forceinline__ float path_w(float r0, float r1, float r2, float ra,
                                         float sx, float sy, float sz) {
@@ -64,8 +66,9 @@ __device__ __forceinline__ float plane_sum(
     const float* plane = vol + (long)first * sa;
     for (int k = first; k <= last; ++k, plane += sa) {
         if (k < k0 || k > k1) continue;
-        float t = ((float)k - Sa) * inv;
-        float fb = Sb + t * rb, fc = Sc + t * rc;
+        // Same reciprocal, multiply and FMA sequence as plane_adjoint.
+        float t = __fmul_rn(__fsub_rn((float)k, Sa), inv);
+        float fb = __fmaf_rn(t, rb, Sb), fc = __fmaf_rn(t, rc, Sc);
         float fb0 = floorf(fb), fc0 = floorf(fc);
         int b0 = (int)fb0, c0 = (int)fc0;
         // The same weights as plane_adjoint's.
@@ -97,7 +100,7 @@ __device__ float ray_sum(const float* __restrict__ vol, const float* c, float fu
     long sa = SEL(a, s0, s1, 1L), sb = SEL(b, s0, s1, 1L), sc = SEL(cc, s0, s1, 1L);
     float ra = SEL(a, r0, r1, r2), rb = SEL(b, r0, r1, r2), rc = SEL(cc, r0, r1, r2);
     float Sa = c[a], Sb = c[b], Sc = c[cc];
-    float inv = 1.0f / ra;
+    float inv = __frcp_rn(ra);
     float lo = -1e30f, hi = 1e30f;
     float slope = rb * inv, base = Sb - Sa * slope;
     if (fabsf(slope) < 1e-12f) { if (base <= -1.f || base >= (float)nb) live = false; }
@@ -385,14 +388,16 @@ extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint(
             image = img + (long)w * nu * nv;
             Sa = c[0]; Sb = c[1]; Sc = c[2];
             DVa = c[9]; DVb = c[10]; DVc = c[11];
-            K = (float)k - Sa;
+            K = __fsub_rn((float)k, Sa);
         }
         int q = p - first[w];
         int u = ulo + q / runs, v0 = vlo + VRUN * (q % runs), v1 = min(v0 + VRUN, vlo + wv);
         float fu = (float)u;
-        float ra = c[3] + fu * c[6] - Sa;
-        float rb = c[4] + fu * c[7] - Sb;
-        float rc = c[5] + fu * c[8] - Sc;
+        // Keep the detector-column position, not position minus source: ray_of
+        // adds the v displacement first, then subtracts the source.
+        float ra = __fmaf_rn(fu, c[6], c[3]);
+        float rb = __fmaf_rn(fu, c[7], c[4]);
+        float rc = __fmaf_rn(fu, c[8], c[5]);
         const float* col = image + (long)u * nv;
         int cb = -100, ccj = -100;
         float x00 = 0.f, x01 = 0.f, x10 = 0.f, x11 = 0.f;
@@ -406,14 +411,16 @@ extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint(
         #pragma unroll
         for (int i = 0; i < VRUN; ++i) {
             float fv = (float)(v0 + i);
-            float r_a = ra + fv * DVa, r_b = rb + fv * DVb, r_c = rc + fv * DVc;
+            float r_a = __fsub_rn(__fmaf_rn(fv, DVa, ra), Sa);
+            float r_b = __fsub_rn(__fmaf_rn(fv, DVb, rb), Sb);
+            float r_c = __fsub_rn(__fmaf_rn(fv, DVc, rc), Sc);
             float aa = fabsf(r_a), ab = fabsf(r_b), ac = fabsf(r_c);
-            float t_ = K / r_a;
+            float t_ = __fmul_rn(K, __frcp_rn(r_a));
             bool hit = v0 + i < v1
                 && (a == 0 ? aa >= ab : aa > ab)
                 && (a == 2 ? aa > ac : aa >= ac);
-            fbs[i] = hit ? Sb + t_ * r_b : -1e9f;  // off the tile: skipped below
-            fcs[i] = Sc + t_ * r_c;
+            fbs[i] = hit ? __fmaf_rn(t_, r_b, Sb) : -1e9f;  // off the tile: skipped below
+            fcs[i] = __fmaf_rn(t_, r_c, Sc);
         }
         #pragma unroll
         for (int i = 0; i < VRUN; ++i) {
