@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import TYPE_CHECKING
 
 import jax
@@ -54,6 +55,8 @@ class FistaCoreConfig:
     compute_final_regulariser_value: bool = True
 
     def __post_init__(self) -> None:
+        if not math.isfinite(self.lipschitz) or self.lipschitz <= 0:
+            raise ValueError("FistaCoreConfig.lipschitz must be finite and positive")
         normalize_projector_backend(self.forward_projector)
         normalize_projector_backend(self.backprojector)
         if self.ray_integrator not in RAY_INTEGRATORS:
@@ -109,12 +112,13 @@ def fista_tv_core_arrays(
     This is intentionally stricter than the public `fista_tv` API: arrays in,
     arrays out, no Python `Geometry` object construction, and a static iteration
     count suitable for differentiating tiny bilevel reference problems.
+    ``L_override`` must be positive and bound the full objective gradient.
+    If final data diagnostics are disabled, ``data_loss`` is the last evaluated
+    data term, or zero when none was computed; it never includes regularization.
     """
     x_init = _project_constraints(jnp.asarray(x0, dtype=jnp.float32), cfg)
-    z_init = x_init
-    t_init = jnp.float32(1.0)
     L_raw = cfg.lipschitz if L_override is None else L_override
-    L = jnp.maximum(jnp.asarray(L_raw, dtype=jnp.float32), jnp.float32(1e-6))
+    L = jnp.asarray(L_raw, dtype=jnp.float32)
     lam = jnp.asarray(cfg.tv_weight, dtype=jnp.float32)
     weights = _sqrt_view_weights(projections, view_weights)
     data_forward_projector, data_backprojector = _resolve_fista_core_data_projectors(
@@ -198,7 +202,7 @@ def fista_tv_core_arrays(
         )
         z_next = x_next + ((t_prev - jnp.float32(1.0)) / t_next) * (x_next - x_prev)
         z_next = _project_constraints(z_next, cfg)
-        if cfg.compute_iteration_loss:
+        if cfg.compute_iteration_loss and cfg.iterations > 0:
             loss_arr = loss_arr.at[k].set(
                 (data_loss + lam * regulariser_value(z_prev)).astype(jnp.float32)
             )
@@ -208,14 +212,10 @@ def fista_tv_core_arrays(
     loss0 = jnp.zeros((n_iters,), dtype=jnp.float32)
     (x_final, _, _, loss, last_data_loss), _ = jax.lax.scan(
         body,
-        (x_init, z_init, t_init, loss0, jnp.asarray(0.0, dtype=jnp.float32)),
+        (x_init, x_init, jnp.float32(1.0), loss0, jnp.float32(0.0)),
         jnp.arange(n_iters, dtype=jnp.int32),
     )
-    data_final = (
-        data_loss_fn(x_final)
-        if cfg.compute_final_data_loss
-        else (loss[-1] if cfg.compute_iteration_loss else last_data_loss)
-    )
+    data_final = data_loss_fn(x_final) if cfg.compute_final_data_loss else last_data_loss
     reg_final = (
         regulariser_value(x_final)
         if cfg.compute_final_regulariser_value
