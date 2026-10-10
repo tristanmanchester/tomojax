@@ -11,6 +11,15 @@
 #define SEL(i, x0, x1, x2) ((i) == 0 ? (x0) : ((i) == 1 ? (x1) : (x2)))
 __device__ __forceinline__ float trif(float f, float j) { return fmaxf(1.f - fabsf(f - j), 0.f); }
 __device__ __forceinline__ bool separable(const float* c) { return c[12] > 0.5f; }
+// A projected interval has no finite corner bound when its denominator crosses zero.
+__device__ __forceinline__ bool crosses_zero(float lo, float hi) {
+    return (lo <= 0.f && hi >= 0.f) || (hi <= 0.f && lo >= 0.f);
+}
+// Clamp in floating point before converting footprint bounds to integers. The
+// two out-of-detector sentinels also leave room for the separable path's padding.
+__device__ __forceinline__ float pixel_bound(float x, int size) {
+    return fminf(fmaxf(x, -2.f), (float)size + 1.f);
+}
 // Whether any of the block's nviews (<= blockDim.x) views is (non-)separable and has rays
 // sampled along axis a; every thread of the block must call it.
 __device__ __forceinline__ bool any_view(const float* coeff, const int* axis_box, int nviews,
@@ -196,10 +205,14 @@ extern "C" __global__ void sep_adjoint(
         // The tile's rows inside the volume: a far edge beyond it can project through
         // infinity when the source is close, giving the wrong column range.
         float g1 = (float)b0 - 1.f - Sb, g2 = (float)min(b0 + TB, nb) - Sb;
-        float u1 = (K * rb0 - g1 * ra0) / (g1 * DUa - K * DUb);
-        float u2 = (K * rb0 - g2 * ra0) / (g2 * DUa - K * DUb);
-        int ulo_all = max((int)floorf(fminf(u1, u2)) - 1, ab[0]);
-        int uhi = min((int)ceilf(fmaxf(u1, u2)) + 1, ab[1]);
+        float den1 = g1 * DUa - K * DUb, den2 = g2 * DUa - K * DUb;
+        int ulo_all = ab[0], uhi = ab[1];
+        if (!crosses_zero(den1, den2)) {
+            float u1 = (K * rb0 - g1 * ra0) / den1;
+            float u2 = (K * rb0 - g2 * ra0) / den2;
+            ulo_all = max((int)floorf(pixel_bound(fminf(u1, u2), nu)) - 1, ab[0]);
+            uhi = min((int)ceilf(pixel_bound(fmaxf(u1, u2), nu)) + 1, ab[1]);
+        }
         const float* image = img + (long)w * nu * nv;
         for (int ulo = ulo_all; ulo <= uhi; ulo += ULEN) {
             int ulen = min(ULEN, uhi - ulo + 1);
@@ -217,13 +230,16 @@ extern "C" __global__ void sep_adjoint(
                 // inside ((j - 1 - f0) idf, (j + 1 - f0) idf), at most taps of them.
                 float idf = 1.f / (t * DVc);
                 s_f0[i] = Sc + t * (rc0 - Sc); s_idf[i] = idf;
-                s_taps[i] = col_axis == a ? (int)floorf(2.f * fabsf(idf)) + 1 : 0;
+                // A footprint wider than the image still needs at most nv rows.
+                float taps = fminf(2.f * fabsf(idf), (float)nv);
+                s_taps[i] = col_axis == a ? min((int)floorf(taps) + 1, nv) : 0;
             }
             __syncthreads();
             for (int i = tid / TC, j = tid % TC; i < ulen; i += blockDim.x / TC) {
                 float jcf = (float)(c0 + j);
                 float t = s_t[i], rc0 = s_rc0[i];
-                int va = (int)floorf((jcf - 1.f - s_f0[i]) * s_idf[i]) + 1;
+                float lower = (jcf - 1.f - s_f0[i]) * s_idf[i];
+                int va = max((int)floorf(pixel_bound(lower, nv)) + 1, 0);
                 int taps = s_taps[i];   // the same for the whole warp: no divergence
                 const float* col = image + (long)(ulo + i) * nv;
                 float s = 0.f;
@@ -238,10 +254,14 @@ extern "C" __global__ void sep_adjoint(
             __syncthreads();
             if (my_b < nb) {
                 float h1 = my_bf - 1.f - Sb, h2 = my_bf + 1.f - Sb;
-                float w1 = (K * rb0 - h1 * ra0) / (h1 * DUa - K * DUb);
-                float w2 = (K * rb0 - h2 * ra0) / (h2 * DUa - K * DUb);
-                int ia = max((int)floorf(fminf(w1, w2)) - 1 - ulo, 0);
-                int ib = min((int)ceilf(fmaxf(w1, w2)) + 1 - ulo, ulen - 1);
+                float den1 = h1 * DUa - K * DUb, den2 = h2 * DUa - K * DUb;
+                int ia = 0, ib = ulen - 1;
+                if (!crosses_zero(den1, den2)) {
+                    float w1 = (K * rb0 - h1 * ra0) / den1;
+                    float w2 = (K * rb0 - h2 * ra0) / den2;
+                    ia = max((int)floorf(pixel_bound(fminf(w1, w2), nu)) - 1 - ulo, 0);
+                    ib = min((int)ceilf(pixel_bound(fmaxf(w1, w2), nu)) + 1 - ulo, ulen - 1);
+                }
                 for (int i = ia; i <= ib; ++i) {
                     float wb = trif(s_fb[i], my_bf);
                     if (wb == 0.f) continue;
@@ -338,6 +358,7 @@ extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint(
         }
         if (!separable(c) && ab[1] >= ab[0]) {
             float umin = 1e30f, umax = -1e30f, vmin = 1e30f, vmax = -1e30f;
+            float denmin = 1e30f, denmax = -1e30f;
             #pragma unroll
             for (int q = 0; q < 4; ++q) {
                 // Corners of the tile's part inside the volume (see sep_adjoint).
@@ -347,14 +368,21 @@ extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint(
                 float d0 = (a == 0 ? pk : pb) - c[0];
                 float d1 = (a == 1 ? pk : (a == 0 ? pb : pc)) - c[1];
                 float d2 = (a == 2 ? pk : pc) - c[2];
-                float lam = c[16] / (c[13] * d0 + c[14] * d1 + c[15] * d2);
+                float den = c[13] * d0 + c[14] * d1 + c[15] * d2;
+                denmin = fminf(denmin, den); denmax = fmaxf(denmax, den);
+                float lam = c[16] / den;
                 float uu = c[23] + lam * (c[17] * d0 + c[18] * d1 + c[19] * d2);
                 float vv = c[24] + lam * (c[20] * d0 + c[21] * d1 + c[22] * d2);
                 umin = fminf(umin, uu); umax = fmaxf(umax, uu);
                 vmin = fminf(vmin, vv); vmax = fmaxf(vmax, vv);
             }
-            int ulo = max((int)ceilf(umin), ab[0]), uhi = min((int)floorf(umax), ab[1]);
-            int vlo = max((int)ceilf(vmin), ab[2]), vhi = min((int)floorf(vmax), ab[3]);
+            // The denominator is affine over the tile. If it crosses zero, its
+            // footprint passes through infinity: the corners cannot bound it.
+            bool unbounded = crosses_zero(denmin, denmax);
+            int ulo = unbounded ? ab[0] : max((int)ceilf(pixel_bound(umin, nu)), ab[0]);
+            int uhi = unbounded ? ab[1] : min((int)floorf(pixel_bound(umax, nu)), ab[1]);
+            int vlo = unbounded ? ab[2] : max((int)ceilf(pixel_bound(vmin, nv)), ab[2]);
+            int vhi = unbounded ? ab[3] : min((int)floorf(pixel_bound(vmax, nv)), ab[3]);
             int wu = uhi - ulo + 1, wv = vhi - vlo + 1;
             if (wu > 0 && wv > 0) {
                 int runs = (wv + VRUN - 1) / VRUN;

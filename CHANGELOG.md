@@ -465,6 +465,12 @@ without a translation frame (0.3's) are read as object-frame poses, and
 
 ### Fixed
 
+- CUDA cone backprojection no longer drops rays when a close source or yawed
+  detector makes a tile footprint cross infinity. Both transpose paths keep
+  conservative pixel bounds at a projection pole, preserving matched CGLS
+  reconstruction on these geometries. Footprint bounds are clamped before
+  integer conversion, so narrow detector windows cannot overflow them.
+
 - `tj.align(mode="cor")` (and `tomojax align --mode cor`) found a wrong axis
   for a parallel scan of a sample larger than the field of view: on an APS
   2-BM scan (720 views of 22 x 1536) it seeded −88.5 pixels for a true −15.1

@@ -7,6 +7,7 @@ import pytest
 
 from tomojax.core.cone import beam_frame, cone_backproject, cone_project, frame_coefficients
 from tomojax.geometry import ConeBeam, ConeGeometry, Detector, Grid
+from tomojax.recon import CGLSConfig, cgls
 
 
 def _frame(direction, roll, *, reverse_v=False):
@@ -85,4 +86,65 @@ def test_cuda_cone_dense_transpose_on_separable_turntable_views(yaw):
         grid, detector, np.arange(0, 360, 30), ConeBeam(40, 60, detector_yaw_deg=yaw)
     )
     frames = np.broadcast_to(beam_frame(geometry.beam, detector), (12, 4, 3))
+    _check_dense_transpose(grid, detector, frames, jnp.asarray(geometry.poses(), jnp.float32))
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("yaw", [56.4, 70.0, 80.0])
+@pytest.mark.parametrize("tilt", [0.0, 5.0])
+def test_cuda_cone_dense_transpose_when_a_footprint_crosses_infinity(yaw, tilt):
+    # The source remains outside the volume. A close source and yawed detector
+    # put a pole inside the tile's inverse projection, so finite corner bounds
+    # exclude contributing pixels. Check both separable and plane-tile paths.
+    grid = Grid(5, 4, 3, 1.16, 1.46, 1.26)
+    detector = Detector(9, 7, 1.29, 0.52, center=(-0.77, -1.05))
+    geometry = ConeGeometry(
+        grid, detector, [45.0], ConeBeam(7.0, 10.4, detector_yaw_deg=yaw), tilt_deg=tilt
+    )
+    frames = np.asarray([beam_frame(geometry.beam, detector)])
+    _check_dense_transpose(grid, detector, frames, jnp.asarray(geometry.poses(), jnp.float32))
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("tilt", [0.0, 5.0])
+def test_cuda_cone_cgls_recovers_the_image_with_unbounded_footprints(tilt):
+    grid = Grid(5, 4, 3, 1.16, 1.46, 1.26)
+    detector = Detector(9, 11, 1.29, 0.52, center=(-0.77, 0.0))
+    geometry = ConeGeometry(
+        grid,
+        detector,
+        np.arange(0, 360, 15),
+        ConeBeam(7.0, 10.4, detector_yaw_deg=70),
+        tilt_deg=tilt,
+    )
+    poses = jnp.asarray(geometry.poses(), jnp.float32)
+    frames = np.broadcast_to(beam_frame(geometry.beam, detector), (24, 4, 3))
+    coeff = frame_coefficients(poses, frames, grid, detector)
+    truth = np.random.default_rng(43).uniform(0.1, 1.0, (5, 4, 3)).astype(np.float32)
+    # Independently implemented JAX sampling supplies the data. Check image
+    # error too: the formerly mismatched adjoint stagnated far from the truth.
+    data = cone_project(truth, coeff, grid, detector, backend="jax")
+    volume, info = cgls(
+        geometry,
+        grid,
+        detector,
+        data,
+        config=CGLSConfig(iterations=120, projector_backend="pallas"),
+    )
+    assert info["converged"]
+    assert np.linalg.norm(np.asarray(volume) - truth) / np.linalg.norm(truth) < 1e-4
+    projected = np.asarray(cone_project(volume, coeff, grid, detector, backend="jax"))
+    assert np.linalg.norm(projected - np.asarray(data)) / np.linalg.norm(np.asarray(data)) < 1e-5
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("pitch", [(1e-9, 0.52), (1.29, 1e-9)])
+@pytest.mark.parametrize("tilt", [0.0, 5.0])
+def test_cuda_cone_dense_transpose_with_footprint_bounds_beyond_int32(pitch, tilt):
+    # Narrow detector windows are valid. Their inverse footprints can exceed
+    # int32 although the actual image has only nine by seven pixels.
+    grid = Grid(5, 4, 3, 1.16, 1.46, 1.26)
+    detector = Detector(9, 7, *pitch, center=(-0.77, -1.05))
+    geometry = ConeGeometry(grid, detector, [45.0], ConeBeam(7.0, 10.4), tilt_deg=tilt)
+    frames = np.asarray([beam_frame(geometry.beam, detector)])
     _check_dense_transpose(grid, detector, frames, jnp.asarray(geometry.poses(), jnp.float32))
