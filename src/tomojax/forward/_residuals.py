@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 
 
+@jax.tree_util.register_dataclass
 @dataclass(frozen=True)
 class ResidualResult:
     residual: jax.Array
@@ -28,17 +29,22 @@ def masked_whitened_residual(
     mask: jax.Array | None = None,
     sigma: float | jax.Array = 1.0,
 ) -> jax.Array:
+    """Whiten differences, excluding zero-mask entries before unsafe arithmetic."""
     pred = jnp.asarray(predicted, dtype=jnp.float32)
     obs = jnp.asarray(observed, dtype=jnp.float32)
     if pred.shape != obs.shape:
         raise ValueError("predicted and observed projections must have matching shapes")
-    residual = (pred - obs) / jnp.asarray(sigma, dtype=jnp.float32)
+    sigma_arr = jnp.asarray(sigma, dtype=jnp.float32)
     if mask is None:
-        return residual
+        return (pred - obs) / sigma_arr
     mask_arr = jnp.asarray(mask, dtype=jnp.float32)
-    if mask_arr.shape != residual.shape:
+    if mask_arr.shape != pred.shape:
         raise ValueError("mask must match projection shape")
-    return residual * mask_arr
+    active = mask_arr != 0
+    pred = jnp.where(active, pred, 0.0)
+    obs = jnp.where(active, obs, 0.0)
+    sigma_arr = jnp.where(active, sigma_arr, 1.0)
+    return ((pred - obs) / sigma_arr) * mask_arr
 
 
 def pseudo_huber_loss(residual: jax.Array, *, delta: float = 1.0) -> jax.Array:
