@@ -596,7 +596,8 @@ def fbp(
     Projections: (n_views, nv, nu) -> attenuation volume (nx, ny, nz).
     The rotation axis, arc and angular spacing are fitted from the view poses,
     so tilted (laminography) axes, partial or full turns and irregular angles
-    are weighted exactly on every measured frequency. Frequencies no view
+    are weighted exactly on every measured frequency. Repeated directions
+    share their angular weight equally. Frequencies no view
     measures, such as laminography's missing cone, reconstruct as zero.
 
     Backprojection is voxel-driven with bilinear detector interpolation and

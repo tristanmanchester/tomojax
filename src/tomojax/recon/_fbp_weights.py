@@ -68,6 +68,9 @@ def fbp_weights(poses: np.ndarray) -> FBPWeights:
     other = np.cross(axis, reference)
     angles = np.arctan2(ray @ other, ray @ reference)
 
+    # Repeated exposures share one angular cell; zero gaps must not change
+    # the acquired arc or make their weights depend on their input order.
+    angles, inverse, repeats = np.unique(angles, return_inverse=True, return_counts=True)
     order = np.argsort(angles)
     # Locate the missing arc before unwrapping: an interior gap larger than pi
     # would otherwise fold backwards and create negative quadrature weights.
@@ -98,6 +101,8 @@ def fbp_weights(poses: np.ndarray) -> FBPWeights:
     weights[order] = sorted_weights
     phase = np.empty_like(unwrapped)
     phase[order] = unwrapped - start
+    weights = weights[inverse] / repeats[inverse]
+    phase = phase[inverse]
 
     tangent = np.cross(axis, ray)
     axial = ray @ axis

@@ -79,6 +79,50 @@ def test_irregular_angles_use_midpoint_quadrature() -> None:
     np.testing.assert_allclose(weights.view_scale, expected, rtol=1e-5)
 
 
+@pytest.mark.parametrize("span", [90.0, 180.0, 270.0, 360.0])
+@pytest.mark.parametrize("start", [7.0, 150.0])
+@pytest.mark.parametrize("tilt", [0.0, 30.0])
+@pytest.mark.parametrize("repeats", [2, 3, 5])
+def test_repeated_directions_share_weights_without_changing_the_acquired_arc(
+    span, start, tilt, repeats
+):
+    grid, detector = Grid(4, 4, 4, 1, 1, 1), Detector(4, 4, 1, 1)
+    angles = start + np.arange(120) * span / 120
+    geometry = (
+        ParallelGeometry(grid, detector, angles)
+        if tilt == 0
+        else LaminographyGeometry(grid, detector, angles, tilt_deg=tilt)
+    )
+    original = fbp_weights(poses_for(geometry, len(angles)))
+    poses = np.repeat(poses_for(geometry, len(angles)), repeats, axis=0)
+    order = np.random.default_rng(432).permutation(len(poses))
+    repeated = fbp_weights(poses[order])
+    assert repeated.full_turn == original.full_turn
+    assert repeated.separable == original.separable
+    np.testing.assert_allclose(repeated.arc_length, original.arc_length, rtol=1e-6)
+    np.testing.assert_allclose(
+        repeated.params[:, 5], np.repeat(original.params[:, 5] / repeats, repeats)[order], rtol=1e-5
+    )
+    np.testing.assert_allclose(
+        repeated.view_scale, np.repeat(original.view_scale / repeats, repeats)[order], rtol=1e-5
+    )
+    assert np.all(repeated.params[:, 5] > 0)
+
+
+@pytest.mark.parametrize("order", ["forward", "reverse", "shuffled"])
+def test_unequal_repeated_directions_share_independent_midpoint_quadrature(order):
+    angles = np.array([10.0, 12.0, 40.0, 41.0, 100.0])
+    repeats = np.array([1, 4, 2, 3, 1])
+    expected = np.repeat(np.deg2rad([2.0, 15.0, 14.5, 30.0, 59.0]) / repeats, repeats)
+    indices = np.arange(sum(repeats))
+    if order == "reverse":
+        indices = indices[::-1]
+    elif order == "shuffled":
+        indices = np.random.default_rng(576).permutation(indices)
+    weights = fbp_weights(parallel(np.repeat(angles, repeats)[indices]))
+    np.testing.assert_allclose(weights.view_scale, expected[indices], rtol=1e-5)
+
+
 def test_tilted_scans_scale_ramp_by_ray_axis_sine() -> None:
     grid = Grid(4, 4, 4, 1.0, 1.0, 1.0)
     detector = Detector(4, 4, 1.0, 1.0)
@@ -161,4 +205,30 @@ def test_tilted_fbp_recovers_every_measured_frequency(span: float, n_views: int,
     # remainder is discretization of a 3-voxel Gaussian; uniform pi/n weights
     # give 0.14 (full turn) and 0.42 (half turn) here.
     assert np.linalg.norm(reference - truth) / np.linalg.norm(truth) > 0.1
+    assert np.linalg.norm(actual - reference) / np.linalg.norm(reference) < 0.07
+
+
+@pytest.mark.parametrize(("span", "n_views"), [(360.0, 120), (180.0, 60)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+def test_repeated_laminography_exposures_equal_their_mean_and_preserve_physical_truth(
+    span, n_views, backend
+):
+    geometry, grid, detector, poses, projections, truth = gaussian_case(span, n_views, 7.0)
+    noise = (
+        np.random.default_rng(132)
+        .normal(0, 0.001 * projections.max(), projections.shape)
+        .astype(np.float32)
+    )
+    repeated = np.stack((projections + noise, projections, projections - noise), axis=1)
+    averaged = repeated.mean(axis=1, dtype=np.float64).astype(np.float32)
+    repeated = repeated.reshape((-1, detector.nv, detector.nu))
+    order = np.random.default_rng(432).permutation(len(repeated))
+    repeated_geometry = LaminographyGeometry(
+        grid, detector, np.repeat(geometry.angles, 3)[order], tilt_deg=30
+    )
+    cfg = FBPConfig(backprojector=backend)
+    expected = np.asarray(fbp(geometry, grid, detector, averaged, config=cfg))
+    actual = np.asarray(fbp(repeated_geometry, grid, detector, repeated[order], config=cfg))
+    assert np.linalg.norm(actual - expected) / np.linalg.norm(expected) < 2e-6
+    reference = measured_truth(truth, poses)
     assert np.linalg.norm(actual - reference) / np.linalg.norm(reference) < 0.07
