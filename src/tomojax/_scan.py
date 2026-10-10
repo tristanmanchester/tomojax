@@ -486,14 +486,9 @@ def _binned_detector(detector: Detector, factor: int) -> Detector:
 
 def with_grid(scan: Scan, grid: Grid) -> Scan:
     """``scan`` reconstructed on ``grid`` instead of its own."""
-    from tomojax.geometry import ConeSegments
-
     if grid == scan.grid:
         return scan
-    if isinstance(scan.geometry, ConeSegments):
-        return replace(scan, geometry=rebuild(scan.geometry, grid=grid))
-    record = record_of(scan, grid=grid)
-    return replace(scan_from_record(record, poses=True), source=scan.source)
+    return replace(scan, geometry=rebuild(scan.geometry, grid=grid))
 
 
 __all__ = ["Scan"]
