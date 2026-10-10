@@ -7,6 +7,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from tomojax.forward import project_joseph
+from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
+from tomojax.recon import SPDHGConfig, spdhg_tv
 from tomojax.recon.spdhg_tv import _prox_fstar_l2
 
 
@@ -117,3 +120,73 @@ def test_weighted_data_proximal_zero_state_hessian_retains_analytic_scaling(scal
     )
     actual = np.asarray(jax.jit(jax.hessian(_prox_cell))(cell))
     np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=1e-37)
+
+
+@pytest.mark.numerical
+def test_weighted_data_proximal_is_local_to_each_observation():
+    rng = np.random.default_rng(426)
+    cells = rng.normal(size=(257, 4)).astype(np.float32)
+    cells[:, [1, 3]] = rng.uniform(0.2, 2, (257, 2))
+    cells[-1] = [1e30, 1e30, 1e30, 1]
+    # Appending one extreme observation must not change the arithmetic selected
+    # for unrelated cells. Compare batched to independent scalar proximals.
+    expected = jax.jit(jax.vmap(_prox_cell))(jnp.asarray(cells))
+    actual = jax.jit(lambda z: _prox_fstar_l2(z[:, 0], z[:, 1], z[:, 2], z[:, 3]))(
+        jnp.asarray(cells)
+    )
+    np.testing.assert_array_equal(actual, expected)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("tilted", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+def test_weighted_data_extreme_masked_outliers_keep_dense_reconstruction_and_truth_error(
+    tilted, stream
+):
+    shape = (2, 1, 1)
+    grid = Grid(*shape, 0.8, 1.1, 1.3)
+    detector = Detector(4, 3, 0.7, 0.9, (0.17, -0.23))
+    angles = [13.0, 71.0, 127.0]
+    geometry = (
+        LaminographyGeometry(grid, detector, angles, tilt_deg=25)
+        if tilted
+        else ParallelGeometry(grid, detector, angles)
+    )
+    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(3)], dtype=jnp.float32)
+
+    def project(flat):
+        return project_joseph(flat.reshape(shape), poses, grid, detector, backend="jax").ravel()
+
+    matrix = np.asarray(jax.jacfwd(project)(jnp.zeros(2)), dtype=np.float64)
+    truth = np.asarray([0.2, 1.0])
+    data = matrix @ truth + np.random.default_rng(839).normal(0, 1e-3, matrix.shape[0])
+    weights = np.linspace(0.3, 1.7, data.size).astype(np.float32)
+    weights[::3] = 0
+    # These finite masked outliers used to select balanced arithmetic for every
+    # ordinary observation sharing their device block.
+    data[weights == 0] = 1e30
+    data = data.astype(np.float32)
+    normal = matrix.T @ (weights[:, None] * matrix)
+    expected = np.linalg.solve(normal, matrix.T @ (weights * data.astype(np.float64)))
+    assert np.linalg.cond(normal) < 100
+    assert np.linalg.norm(expected - truth) / np.linalg.norm(truth) < 0.01
+    volume, info = spdhg_tv(
+        geometry,
+        grid,
+        detector,
+        data.reshape((3, 3, 4)),
+        weights=weights.reshape((3, 3, 4)),
+        config=SPDHGConfig(
+            iterations=2000,
+            views_per_batch=2,
+            tv_weight=0,
+            log_every=2000,
+            projector_model="joseph",
+            projector_backend="jax",
+            stream_projections=stream,
+        ),
+    )
+    assert np.isfinite(info["loss"]).all()
+    actual = np.asarray(volume).ravel()
+    assert np.linalg.norm(actual - expected) / np.linalg.norm(expected) < 5e-5
+    assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.01

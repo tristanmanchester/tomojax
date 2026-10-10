@@ -87,7 +87,7 @@ def _ordinary_range(u, sigma, y, w):
     limits = jnp.finfo(u.dtype)
     exponent = (min(limits.maxexp, -limits.minexp) - 4) // 2
     lower, upper = 2.0 ** (-exponent), 2.0**exponent
-    return jnp.all(
+    return (
         (sigma >= lower)
         & (sigma <= upper)
         & (jnp.abs(u) <= upper)
@@ -100,16 +100,18 @@ def _ordinary_range(u, sigma, y, w):
 def weighted_l2_conjugate(u, sigma, y, w):
     """Return ``(u - sigma*y)*w/(sigma+w)``, or exactly zero for masked weights.
 
-    A dtype-derived exponent guard keeps the ordinary affine numerator finite
-    and its positive gain normal. Outside that range, exponent-balanced affine
-    terms avoid product/denominator overflow and premature gain underflow.
+    An elementwise dtype-derived exponent guard keeps the ordinary affine
+    numerator finite and its positive gain normal. Outside that range,
+    exponent-balanced affine terms avoid product/denominator overflow and
+    premature gain underflow.
     No absolute lower bound changes the requested quadratic or its minimizer.
+    One extreme observation does not switch unrelated cells to balanced arithmetic
+    or require a global device reduction.
     """
-    return jax.lax.cond(
+    return jnp.where(
         _ordinary_range(u, sigma, y, w),
-        _ordinary_l2,
-        lambda args: _balanced_l2(*args),
-        (u, sigma, y, w),
+        _ordinary_l2((u, sigma, y, w)),
+        _balanced_l2(u, sigma, y, w),
     )
 
 
@@ -134,8 +136,22 @@ def _weighted_l2_conjugate_jvp(primals, tangents):
     # Factored ordinary partials also avoid inverse-cube Hessian intermediates.
     u, sigma, y, w = primals
     value = weighted_l2_conjugate(*primals)
-    partials = jax.lax.cond(
-        _ordinary_range(u, sigma, y, w), _ordinary_partials, _balanced_partials, primals
+    ordinary = _ordinary_range(u, sigma, y, w)
+    # Mask before differentiating either branch. Even an inactive quotient can
+    # overflow its higher derivatives at extreme scales; masking only its final
+    # partials would leave zero-times-infinity in the Hessian.
+    defaults = (0.0, 1.0, 0.0, 1.0)
+    ordinary_args = tuple(
+        jnp.where(ordinary, x, safe) for x, safe in zip(primals, defaults, strict=True)
+    )
+    balanced_args = tuple(
+        jnp.where(ordinary, safe, x) for x, safe in zip(primals, defaults, strict=True)
+    )
+    partials = tuple(
+        jnp.where(ordinary, fast, balanced)
+        for fast, balanced in zip(
+            _ordinary_partials(ordinary_args), _balanced_partials(balanced_args), strict=True
+        )
     )
     terms = [
         jnp.where(w > 0, partial, 0.0) * tangent
