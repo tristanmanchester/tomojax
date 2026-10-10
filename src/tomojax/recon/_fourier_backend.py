@@ -15,6 +15,17 @@ from tomojax.geometry import grid_volume_origin
 from ._fourier_grid import interpolate_numpy, next_fast_len, radial_coefficients, transform_grid
 
 
+def is_cuda_oom(error: Exception) -> bool:
+    """Recognize allocator exhaustion without swallowing unrelated failures."""
+    if not isinstance(error, MemoryError):
+        return False
+    try:
+        import cupy
+    except ImportError:
+        return False
+    return isinstance(error, cupy.cuda.memory.OutOfMemoryError)
+
+
 class _Geometry:
     def __init__(self, grid, detector, nviews, flipped, theta0, backend) -> None:
         self.cuda = backend == "cupy"

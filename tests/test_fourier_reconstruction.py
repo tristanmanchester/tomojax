@@ -96,6 +96,84 @@ def test_repeated_host_pipeline_calls_reuse_allocator_storage(monkeypatch):
     assert pool.total_bytes() - initial < 4 * (data.nbytes + reference.nbytes)
 
 
+@pytest.mark.parametrize("stage", ["construction", "later_slab"])
+def test_cuda_allocation_exhaustion_retries_smaller_slabs_and_rewrites_output(monkeypatch, stage):
+    import tomojax.recon.fourier as implementation
+
+    original_plan = implementation.FourierPlan
+    grid, detector, geometry, data, _ = scan()
+    expected = fourier_reconstruct(geometry, grid, detector, data)
+    depths, destroyed = [], []
+
+    class Exhausted(MemoryError):
+        pass
+
+    class Plan:
+        def __init__(self, grid, detector, nviews, flipped, theta0, depth, backend, **kwargs):
+            depths.append(depth)
+            self.depth = depth
+            self.calls = 0
+            if stage == "construction" and depth > 2:
+                raise Exhausted("test allocation")
+            self.original = original_plan(grid, detector, nviews, flipped, theta0, depth, "numpy")
+
+        def reconstruct(self, rows):
+            self.calls += 1
+            if self.depth > 2 and self.calls > 1:
+                raise Exhausted("test later allocation")
+            result = self.original.reconstruct(rows)
+            # Deliberately dirty the output from the failed attempt. A retry
+            # must recompute it, not just continue after the last complete slab.
+            return result + (100 if self.depth > 2 else 0)
+
+        def __del__(self):
+            destroyed.append(self.depth)
+
+    monkeypatch.setattr(implementation, "FourierPlan", Plan)
+    monkeypatch.setattr(implementation, "is_cuda_oom", lambda error: isinstance(error, Exhausted))
+    monkeypatch.setattr(implementation, "_HOST_PIPELINE_MIN_BYTES", 10**12)
+    output = np.full(expected.shape, -123, np.float32)
+    actual = fourier_reconstruct(
+        geometry,
+        grid,
+        detector,
+        data,
+        config=FourierConfig(backend="cupy", slices_per_batch=4),
+        out=output,
+    )
+    np.testing.assert_array_equal(actual, expected)
+    assert depths == [4, 2]
+    assert destroyed == [4, 2]
+
+
+@pytest.mark.parametrize("backend", ["numpy", "cupy"])
+@pytest.mark.parametrize("depth", [1, 4])
+@pytest.mark.parametrize(
+    "exception",
+    [MemoryError("CPU memory"), ValueError("bad data"), ImportError("optional backend")],
+)
+def test_only_cuda_allocation_exhaustion_is_retried(monkeypatch, backend, depth, exception):
+    import tomojax.recon.fourier as implementation
+
+    grid, detector, geometry, data, _ = scan()
+    attempts = []
+
+    def fail(*args, **kwargs):
+        attempts.append(args[5])
+        raise exception
+
+    monkeypatch.setattr(implementation, "FourierPlan", fail)
+    with pytest.raises(type(exception), match=str(exception)):
+        fourier_reconstruct(
+            geometry,
+            grid,
+            detector,
+            data,
+            config=FourierConfig(backend=backend, slices_per_batch=depth),
+        )
+    assert attempts == [depth]
+
+
 def test_host_pipeline_drains_pending_transfers_after_output_failure():
     from typing import cast
 
@@ -458,3 +536,13 @@ def test_invalid_inputs_rejected_before_output_written(invalid):
     with pytest.raises((ValueError, TypeError), match="fourier_reconstruct"):
         fourier_reconstruct(geometry, grid, detector, data, config=config, out=out)
     np.testing.assert_array_equal(out, 123)
+
+
+def test_missing_cupy_does_not_mask_original_memory_or_import_errors(monkeypatch):
+    import sys
+
+    import tomojax.recon.fourier as implementation
+
+    monkeypatch.setitem(sys.modules, "cupy", None)
+    assert not implementation.is_cuda_oom(MemoryError("host allocation"))
+    assert not implementation.is_cuda_oom(ImportError("optional backend"))

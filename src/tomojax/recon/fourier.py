@@ -13,7 +13,7 @@ from tomojax.core.geometry.cone import require_parallel_beam
 from tomojax.core.validation import validate_grid, validate_projection_stack
 from tomojax.geometry import ParallelGeometry, grid_volume_origin
 
-from ._fourier_backend import FourierPlan
+from ._fourier_backend import FourierPlan, is_cuda_oom
 from ._fourier_grid import sample_projection_rows, uniform_half_turn
 from ._host_arrays import validate_host_arrays
 
@@ -35,10 +35,11 @@ class FourierConfig:
     ``cupy`` uses single-precision FFTs and an original CUDA interpolation
     kernel. It requires the optional ``fourier-cuda12`` extra. ``numpy`` uses
     double-precision FFTs and a vectorized interpolation reference. Both return
-    float32 host arrays. Slab size bounds device volume storage; FFT plans and
-    allocator caches consume additional memory. Large CUDA calls overlap host
+    float32 host arrays. Slab size bounds device volume storage and is halved
+    after CUDA allocation exhaustion, down to one slice. FFT plans and allocator
+    caches consume additional memory. Large CUDA calls overlap host
     row preparation, device transfers, FFT execution and output writes, retaining
-    at most two pending device slabs. A bounded cache retains immutable small
+    at most two pending device slabs. A bounded cache retains immutable
     geometry arrays; each call owns its working buffers.
     """
 
@@ -96,10 +97,6 @@ def fourier_reconstruct(
     output = validate_host_arrays(projections, out, shape, "fourier_reconstruct")
     depth = min(slices, grid.nz)
     host_bytes = 4 * (grid.nx * grid.ny * grid.nz + nviews * detector.nu * grid.nz)
-    overlap = cfg.backend == "cupy" and grid.nz > depth and host_bytes >= _HOST_PIPELINE_MIN_BYTES
-    plan = FourierPlan(
-        grid, detector, nviews, flipped, theta0, depth, cfg.backend, async_transfers=overlap
-    )
     positions = (origin[2] + np.arange(grid.nz) * grid.vz - detector.center[1]) / detector.dv + (
         detector.nv - 1
     ) / 2
@@ -121,13 +118,30 @@ def fourier_reconstruct(
             raise ValueError("fourier_reconstruct: reconstructed slab must be finite in FP32")
         output[:, :, start:stop] = volume.transpose(1, 2, 0)
 
-    if overlap:
-        _run_host_pipeline(plan, grid.nz, depth, prepare, write)
-    else:
-        for start in range(0, grid.nz, depth):
-            count = min(depth, grid.nz - start)
-            write(start, plan.reconstruct(prepare(start))[:count])
-    return output
+    while True:
+        plan = None
+        try:
+            overlap = (
+                cfg.backend == "cupy" and grid.nz > depth and host_bytes >= _HOST_PIPELINE_MIN_BYTES
+            )
+            plan = FourierPlan(
+                grid, detector, nviews, flipped, theta0, depth, cfg.backend, async_transfers=overlap
+            )
+            if overlap:
+                _run_host_pipeline(plan, grid.nz, depth, prepare, write)
+            else:
+                for start in range(0, grid.nz, depth):
+                    count = min(depth, grid.nz - start)
+                    write(start, plan.reconstruct(prepare(start))[:count])
+            return output
+        except Exception as error:
+            if cfg.backend != "cupy" or depth == 1 or not is_cuda_oom(error):
+                raise
+            # The pipeline has drained its transfer events. Drop this attempt's
+            # buffers and the exception traceback before allocating a smaller
+            # slab; rewriting from slice zero also replaces any completed output.
+            plan = None
+        depth = max(1, depth // 2)
 
 
 def _run_host_pipeline(
