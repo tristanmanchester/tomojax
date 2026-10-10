@@ -21,6 +21,7 @@ from ._projection import normal_operator_norm, projection_operators
 if TYPE_CHECKING:
     from tomojax.core.geometry.base import Detector, Geometry, Grid
 
+    from ._projection import ConeModel
     from .spdhg_tv import SPDHGConfig
 
 
@@ -81,7 +82,7 @@ def _batched_norm_squared(
     *,
     grid: Grid,
     detector: Detector,
-    projector: tuple[str, str],
+    projector: tuple[str | ConeModel, str],
     iterations: int,
 ) -> jnp.ndarray:
     model, backend = projector
@@ -99,7 +100,7 @@ def resolve_spdhg_step_sizes(
     poses: jnp.ndarray,
     config: SPDHGConfig,
     det_grid: tuple[jnp.ndarray, jnp.ndarray],
-    projector: tuple[str, str] | None = None,
+    projector: tuple[str | ConeModel, str] | None = None,
 ) -> SPDHGStepSizes:
     # The Neumann forward difference on an n-voxel axis has squared norm
     # 2 + 2*cos(pi/n), or zero for a singleton. Axis normal matrices add.

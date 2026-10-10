@@ -301,6 +301,31 @@ class _Batches:
         return jnp.zeros((self.grid.nx, self.grid.ny, self.grid.nz), dtype=jnp.float32)
 
 
+def chunk_operators(
+    poses: jax.Array,
+    grid: Grid,
+    detector: Detector,
+    backend: str,
+    batch_size: int,
+    model: str | ConeModel,
+) -> tuple[
+    Callable[[jax.Array, jax.Array, jax.Array], jax.Array],
+    Callable[[jax.Array, jax.Array, jax.Array, jax.Array], jax.Array],
+]:
+    """Matched canonical-detector block operators with full-scan coefficients.
+
+    ``project(volume, start, poses)`` and ``backproject(images, start, poses,
+    output)`` process one block. ``start`` is its offset in this full pose
+    stack, and the block's ``poses`` must be the slice at that offset. Source
+    arrangements stay attached to global view indices across segment boundaries.
+    """
+    ops = _Batches(
+        poses, grid, detector, None, backend, batch_size, model, "linear",
+        absolute_weights=False,
+    )  # fmt: skip
+    return ops.project, ops.backproject
+
+
 def projection_operators(
     poses: jax.Array,
     grid: Grid,

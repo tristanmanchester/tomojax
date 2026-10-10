@@ -31,7 +31,7 @@ from tomojax.recon._projection import (
     ConeModel,
     ProjectorBackend,
     ProjectorModel,
-    projection_operators,
+    chunk_operators,
     resolve_geometry_projector,
     resolve_projector,
 )
@@ -64,7 +64,8 @@ if TYPE_CHECKING:
 
     from .types import Regulariser
 
-_SPDHGProjectChunk = Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]
+_SPDHGProjectChunk = Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray]
+_SPDHGBackprojectChunk = Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray]
 
 
 # --------- config ----------
@@ -170,7 +171,7 @@ class _SPDHGRuntime:
     # None starts from zeros created inside the compiled solve.
     init_x: jnp.ndarray | None
     # (model, backend) for batched operators, or None for the ray reference path.
-    projector: tuple[str, str] | None = field(metadata={"static": True})
+    projector: tuple[str | ConeModel, str] | None = field(metadata={"static": True})
     data_shape: tuple[int, int, int] = field(metadata={"static": True})
     weighted: bool = field(default=False, metadata={"static": True})
     # Host keys (measured views, duals, weights) when streaming.
@@ -426,24 +427,20 @@ def _emit_spdhg_callback(
 # --------- main algorithm ----------
 
 
-def _make_spdhg_project_chunk(
+def _make_spdhg_chunk_operators(
     grid: Grid,
     detector: Detector,
     runtime: _SPDHGRuntime,
-) -> _SPDHGProjectChunk:
+) -> tuple[_SPDHGProjectChunk, _SPDHGBackprojectChunk]:
+    """Slice full-scan coefficients along with poses, retaining each arrangement."""
     cfg = runtime.config
     if runtime.projector is not None:
         model, backend = runtime.projector
+        return chunk_operators(
+            runtime.poses, grid, detector, backend, runtime.schedule.views_per_batch, model
+        )
 
-        def project_batched(T_chunk: jnp.ndarray, vol: jnp.ndarray) -> jnp.ndarray:
-            forward, _ = projection_operators(
-                T_chunk, grid, detector, None, backend, T_chunk.shape[0], model
-            )
-            return forward(vol)
-
-        return project_batched
-
-    def project_chunk(T_chunk: jnp.ndarray, vol: jnp.ndarray) -> jnp.ndarray:
+    def project_chunk(vol: jnp.ndarray, _start: jnp.ndarray, T_chunk: jnp.ndarray) -> jnp.ndarray:
         vm_project = jax.vmap(
             lambda T, v: forward_project_view_T(
                 T,
@@ -460,24 +457,9 @@ def _make_spdhg_project_chunk(
         )
         return vm_project(T_chunk, vol)
 
-    return project_chunk
-
-
-def _make_spdhg_backproject_chunk(
-    grid: Grid,
-    detector: Detector,
-    runtime: _SPDHGRuntime,
-) -> _SPDHGProjectChunk:
-    cfg = runtime.config
-
-    def backproject(T_chunk: jnp.ndarray, images: jnp.ndarray, total: jnp.ndarray) -> jnp.ndarray:
-        """Return ``total`` plus the chunk transpose; CUDA Joseph adds in place."""
-        if runtime.projector is not None:
-            model, backend = runtime.projector
-            _, adjoint = projection_operators(
-                T_chunk, grid, detector, None, backend, T_chunk.shape[0], model
-            )
-            return adjoint(images, accumulate=total)
+    def backproject_chunk(
+        images: jnp.ndarray, _start: jnp.ndarray, T_chunk: jnp.ndarray, total: jnp.ndarray
+    ) -> jnp.ndarray:
         return total + sum_backproject_views_T(
             T_chunk,
             grid,
@@ -489,7 +471,7 @@ def _make_spdhg_backproject_chunk(
             ray_integrator=cfg.ray_integrator,
         )
 
-    return backproject
+    return project_chunk, backproject_chunk
 
 
 def _spdhg_data_residual(
@@ -538,8 +520,7 @@ def _run_spdhg_scan(  # noqa: PLR0915
     n_views, nv, nu = runtime.data_shape
     block_shape = (schedule.views_per_batch, nv, nu)
     keys = runtime.host_keys
-    project_chunk = _make_spdhg_project_chunk(grid, detector, runtime)
-    backproject_chunk = _make_spdhg_backproject_chunk(grid, detector, runtime)
+    project_chunk, backproject_chunk = _make_spdhg_chunk_operators(grid, detector, runtime)
 
     def load(state: _SPDHGScanState, start: jnp.ndarray) -> tuple:
         # Measured views, weights and duals of one block, from host or device.
@@ -586,13 +567,13 @@ def _run_spdhg_scan(  # noqa: PLR0915
         row_mask = row_mask.astype(jnp.float32)
 
         sigma_eff = jnp.asarray(step_sizes.sigma_data_eff, dtype=state.x_bar.dtype)
-        pred = project_chunk(T_chunk, state.x_bar)
+        pred = project_chunk(state.x_bar, start_shifted, T_chunk)
         u = y_dual_old + sigma_eff * pred
         y_dual_new = _prox_fstar_l2(u, sigma_eff, y_chunk, w_chunk)
         y_dual_new = row_mask * y_dual_new + (1.0 - row_mask) * y_dual_old
         delta_y = (y_dual_new - y_dual_old) * row_mask
 
-        s_data_new = backproject_chunk(T_chunk, delta_y, state.s_data)
+        s_data_new = backproject_chunk(delta_y, start_shifted, T_chunk, state.s_data)
 
         if cfg.tv_weight == 0:
             p1_new, p2_new, p3_new = state.p1, state.p2, state.p3

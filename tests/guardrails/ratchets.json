@@ -71,7 +71,7 @@
     "src/tomojax/recon/fista_tv.py::grad_data_term": 168,
     "src/tomojax/recon/fista_tv_core.py::_projection_loss_and_explicit_grad": 167,
     "src/tomojax/recon/fista_tv_core.py::fista_tv_core_arrays": 133,
-    "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 118
+    "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 117
   },
   "suppressions": {
     "noqa": 8,
@@ -133,7 +133,7 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "type_errors": {
-    "reportArgumentType": 353,
+    "reportArgumentType": 351,
     "reportAssignmentType": 3,
     "reportAttributeAccessIssue": 165,
     "reportCallIssue": 14,
@@ -146,7 +146,7 @@
     "reportOptionalSubscript": 1,
     "reportPrivateUsage": 103,
     "reportRedeclaration": 1,
-    "reportReturnType": 21,
+    "reportReturnType": 20,
     "reportTypedDictNotRequiredAccess": 5
   },
   "positional_options": [],

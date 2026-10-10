@@ -10,11 +10,20 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import tomojax as tj
 from tomojax.core.operator_norm import estimate_normal_norm
 
 # check-public-imports: allow-private
 from tomojax.core.projector import forward_project_view_T
-from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
+from tomojax.geometry import (
+    ConeBeam,
+    ConeGeometry,
+    ConeSegments,
+    Detector,
+    Grid,
+    LaminographyGeometry,
+    ParallelGeometry,
+)
 from tomojax.recon import FistaConfig, SPDHGConfig, fista_tv, spdhg_tv
 
 # check-public-imports: allow-private
@@ -616,3 +625,88 @@ def test_fista_disabled_tv_does_not_evaluate_regulariser(monkeypatch, regularise
         np.testing.assert_array_equal(info["loss"], [0.0, 0.0])
     finally:
         module._run_fista_scan.clear_cache()
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("batch", [2, 4, 7])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("backend", ["jax", "auto"])
+def test_spdhg_segmented_cone_batches_follow_dense_individual_arrangements(batch, stream, backend):
+    grid = Grid(3, 2, 2, 0.8, 1.1, 1.3)
+    detectors = [Detector(4, 3, 0.7, 0.9, (0.17, -0.23)), Detector(4, 3, 0.7, 0.9, (-0.4, 0.31))]
+    segments = [
+        ConeGeometry(grid, detectors[0], [13.0, 71.0, 127.0], ConeBeam(9.0, 15.0), tilt_deg=17.0),
+        ConeGeometry(
+            grid, detectors[1], [7.0, 49.0, 97.0, 155.0], ConeBeam(11.0, 24.0), tilt_deg=-19.0
+        ),
+    ]
+    geometry = ConeSegments(tuple(segments))
+    # Build each physical arrangement independently through the public projector:
+    # never give a sliced pose stack the combined scan's source/detector model.
+    columns = [
+        np.concatenate(
+            [
+                np.asarray(tj.project(segment, basis.reshape(3, 2, 2))).reshape(-1)
+                for segment in segments
+            ]
+        )
+        for basis in np.eye(12, dtype=np.float32)
+    ]
+    matrix = np.stack(columns, axis=1).astype(np.float64)
+    truth = np.linspace(0.2, 1.0, 12)
+    data = (matrix @ truth + np.random.default_rng(18).normal(0, 0.005, 84)).astype(np.float32)
+    weights = np.linspace(0.3, 1.4, 84).astype(np.float32)
+    weights[::7] = 0.0
+    iterations, tau, sigma = 9, 0.03, 0.2
+    cfg = SPDHGConfig(
+        iterations=iterations,
+        views_per_batch=batch,
+        tv_weight=0.0,
+        tau=tau,
+        sigma_data=sigma,
+        nonnegative=True,
+        seed=17,
+        log_every=1,
+        stream_projections=stream,
+        projector_backend=backend,
+    )
+    actual, info = spdhg_tv(
+        geometry,
+        grid,
+        detectors[0],
+        data.reshape(7, 3, 4),
+        weights=weights.reshape(7, 3, 4),
+        config=cfg,
+    )
+    # Independent FP64 block-dual/primal recurrence, including the shifted final
+    # batch mask. A boundary-crossing block contains views from both arrangements.
+    x, extrapolated, dual = np.zeros(12), np.zeros(12), np.zeros(84)
+    blocks = (7 + batch - 1) // batch
+    rng = np.random.default_rng(17)
+    schedule = np.concatenate(
+        [rng.permutation(blocks) for _ in range((iterations + blocks - 1) // blocks)]
+    )
+    losses = []
+    for block in schedule[:iterations]:
+        start, stop = int(block) * batch, min((int(block) + 1) * batch, 7)
+        rows = slice(start * 12, stop * 12)
+        prediction = matrix[rows] @ extrapolated
+        losses.append(
+            0.5 * np.sum(weights[rows] * (prediction - data[rows]) ** 2) * 7 / (stop - start)
+        )
+        dual[rows] = (
+            (dual[rows] + sigma * (prediction - data[rows]))
+            * weights[rows]
+            / (weights[rows] + sigma)
+        )
+        updated = np.maximum(x - tau * (matrix.T @ dual), 0.0)
+        extrapolated = np.maximum(updated + cfg.theta * (updated - x), 0.0)
+        x = updated
+    np.testing.assert_allclose(np.asarray(actual).ravel(), x, rtol=2e-6, atol=2e-7)
+    np.testing.assert_allclose(info["loss"], losses, rtol=3e-6, atol=2e-6)
+    # Check an image, not only an objective: finite-budget dense and solver errors agree.
+    np.testing.assert_allclose(
+        np.linalg.norm(np.asarray(actual).ravel() - truth),
+        np.linalg.norm(x - truth),
+        rtol=2e-6,
+    )
