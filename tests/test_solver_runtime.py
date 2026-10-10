@@ -415,3 +415,36 @@ def test_batched_normal_norm_matches_dense_scaled_spectrum(scale, start_scale):
     )(jnp.full((2, 1, 1), start_scale))
     expected = np.linalg.norm(np.asarray(matrix, np.float64) * np.asarray(support).ravel(), 2) ** 2
     np.testing.assert_allclose(actual, expected, rtol=3e-6)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("regulariser", ["tv", "huber_tv"])
+@pytest.mark.parametrize("stream", [False, True])
+def test_spdhg_disabled_tv_cannot_corrupt_finite_data_diagnostics(regulariser, stream):
+    scale = 1e-4
+    grid, detector = Grid(2, 1, 1, scale, scale, scale), Detector(2, 1, scale, scale)
+    geometry = ParallelGeometry(grid, detector, [0.0])
+    initial = np.array([0.0, 1e20], dtype=np.float32).reshape(2, 1, 1)
+    data = (initial.ravel() * np.float32(scale)).reshape(1, 1, 2)
+    actual, info = spdhg_tv(
+        geometry,
+        grid,
+        detector,
+        data,
+        init_x=initial,
+        config=SPDHGConfig(
+            iterations=1,
+            tv_weight=0,
+            regulariser=regulariser,
+            tau=0.1,
+            sigma_data=0.1,
+            sigma_tv=0.1,
+            log_every=1,
+            stream_projections=stream,
+            projector_backend="jax",
+        ),
+    )
+    # Each ray sees one plane of length scale: this warm start is already an
+    # exact fit. Its absent regularizer must never turn data_loss=0 into NaN.
+    np.testing.assert_array_equal(actual, initial)
+    np.testing.assert_array_equal(info["loss"], [0.0])

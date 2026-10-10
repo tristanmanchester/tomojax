@@ -289,17 +289,19 @@ def _initial_spdhg_state(
     init_x: jnp.ndarray | None,
     *,
     iterations: int,
+    tv_active: bool,
 ) -> _SPDHGScanState:
     # Called inside the compiled solve: zero states are never input buffers.
     x0 = init_x if init_x is not None else jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
+    tv_zero = jnp.zeros_like(x0) if tv_active else jnp.zeros((0,), jnp.float32)
     return _SPDHGScanState(
         x=x0,
         x_bar=x0,
         # Streaming keeps the duals on the host; a placeholder stands in here.
         y_data=jnp.zeros((1, 1, 1), jnp.float32) if y_meas is None else jnp.zeros_like(y_meas),
-        p1=jnp.zeros_like(x0),
-        p2=jnp.zeros_like(x0),
-        p3=jnp.zeros_like(x0),
+        p1=tv_zero,
+        p2=tv_zero,
+        p3=tv_zero,
         s_data=jnp.zeros_like(x0),
         losses=jnp.zeros((iterations,), dtype=jnp.float32),
     )
@@ -487,6 +489,28 @@ def _make_spdhg_backproject_chunk(
     return backproject
 
 
+def _update_spdhg_tv_duals(
+    state: _SPDHGScanState, runtime: _SPDHGRuntime
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    step_sizes = runtime.step_sizes
+    gx, gy, gz = grad3(state.x_bar)
+    p1_u = state.p1 + step_sizes.sigma_tv * gx
+    p2_u = state.p2 + step_sizes.sigma_tv * gy
+    p3_u = state.p3 + step_sizes.sigma_tv * gz
+    if runtime.regulariser == "huber_tv":
+        p1_new, p2_new, p3_new = prox_huber_tv_conj(
+            p1_u,
+            p2_u,
+            p3_u,
+            sigma=step_sizes.sigma_tv,
+            lam=runtime.tv_weight,
+            delta=runtime.huber_delta,
+        )
+    else:
+        p1_new, p2_new, p3_new = project_tv_duals(p1_u, p2_u, p3_u, radius=runtime.tv_weight)
+    return p1_new, p2_new, p3_new
+
+
 @functools.partial(jax.jit, static_argnames=("grid", "detector"))
 def _run_spdhg_scan(  # noqa: PLR0915
     grid: Grid,
@@ -553,25 +577,13 @@ def _run_spdhg_scan(  # noqa: PLR0915
 
         s_data_new = backproject_chunk(T_chunk, delta_y, state.s_data)
 
-        gx, gy, gz = grad3(state.x_bar)
-        p1_u = state.p1 + step_sizes.sigma_tv * gx
-        p2_u = state.p2 + step_sizes.sigma_tv * gy
-        p3_u = state.p3 + step_sizes.sigma_tv * gz
-        if runtime.regulariser == "huber_tv":
-            p1_new, p2_new, p3_new = prox_huber_tv_conj(
-                p1_u,
-                p2_u,
-                p3_u,
-                sigma=step_sizes.sigma_tv,
-                lam=runtime.tv_weight,
-                delta=runtime.huber_delta,
-            )
+        if cfg.tv_weight == 0:
+            p1_new, p2_new, p3_new = state.p1, state.p2, state.p3
+            s_new = s_data_new
         else:
-            p1_new, p2_new, p3_new = project_tv_duals(p1_u, p2_u, p3_u, radius=runtime.tv_weight)
-
-        # s = sum_i A_i^T y_i - div p. Recomputing div p from the updated duals,
-        # rather than differencing old and new duals, lets them update in place.
-        s_new = s_data_new - div3(p1_new, p2_new, p3_new)
+            p1_new, p2_new, p3_new = _update_spdhg_tv_duals(state, runtime)
+            # Recompute div p so the updated duals can alias their old buffers.
+            s_new = s_data_new - div3(p1_new, p2_new, p3_new)
         x_new = _proj_pos_support(
             state.x - step_sizes.tau * s_new, runtime.support, nonnegative=cfg.nonnegative
         )
@@ -590,11 +602,14 @@ def _run_spdhg_scan(  # noqa: PLR0915
                 * jnp.vdot(resid, resid).real
                 * (float(n_views) / jnp.maximum(valid.astype(jnp.float32), 1.0))
             )
-            if runtime.regulariser == "huber_tv":
-                reg_value = huber_tv_value(x_new, runtime.huber_delta)
-            else:
-                reg_value = isotropic_tv_value(x_new)
-            obj = (data_est + runtime.tv_weight * reg_value).astype(jnp.float32)
+            objective = data_est
+            if cfg.tv_weight != 0:
+                if runtime.regulariser == "huber_tv":
+                    reg_value = huber_tv_value(x_new, runtime.huber_delta)
+                else:
+                    reg_value = isotropic_tv_value(x_new)
+                objective = objective + runtime.tv_weight * reg_value
+            obj = objective.astype(jnp.float32)
             return state.losses.at[t].set(obj)
 
         losses_new = jax.lax.cond(do_log, log_step, lambda: state.losses)
@@ -609,7 +624,9 @@ def _run_spdhg_scan(  # noqa: PLR0915
             losses=losses_new,
         ), None
 
-    initial = _initial_spdhg_state(grid, runtime.y_meas, runtime.init_x, iterations=cfg.iterations)
+    initial = _initial_spdhg_state(
+        grid, runtime.y_meas, runtime.init_x, iterations=cfg.iterations, tv_active=cfg.tv_weight > 0
+    )
     if cfg.iterations == 0:
         return initial
     return jax.lax.scan(one_step, initial, jnp.arange(cfg.iterations))[0]
