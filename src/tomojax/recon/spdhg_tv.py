@@ -289,25 +289,29 @@ def _build_spdhg_schedule(n_views: int, config: SPDHGConfig) -> _SPDHGSchedule:
 
 def _initial_spdhg_state(
     grid: Grid,
-    y_meas: jnp.ndarray | None,
-    init_x: jnp.ndarray | None,
-    *,
-    iterations: int,
-    tv_active: bool,
+    runtime: _SPDHGRuntime,
 ) -> _SPDHGScanState:
     # Called inside the compiled solve: zero states are never input buffers.
-    x0 = init_x if init_x is not None else jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
-    tv_zero = jnp.zeros_like(x0) if tv_active else jnp.zeros((0,), jnp.float32)
+    cfg = runtime.config
+    x0 = runtime.init_x
+    if x0 is None:
+        x0 = jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
+    x0 = _proj_pos_support(x0, runtime.support, nonnegative=cfg.nonnegative)
+    tv_zero = jnp.zeros_like(x0) if cfg.tv_weight > 0 else jnp.zeros((0,), jnp.float32)
     return _SPDHGScanState(
         x=x0,
         x_bar=x0,
         # Streaming keeps the duals on the host; a placeholder stands in here.
-        y_data=jnp.zeros((1, 1, 1), jnp.float32) if y_meas is None else jnp.zeros_like(y_meas),
+        y_data=(
+            jnp.zeros((1, 1, 1), jnp.float32)
+            if runtime.y_meas is None
+            else jnp.zeros_like(runtime.y_meas)
+        ),
         p1=tv_zero,
         p2=tv_zero,
         p3=tv_zero,
         s_data=jnp.zeros_like(x0),
-        losses=jnp.zeros((iterations,), dtype=jnp.float32),
+        losses=jnp.zeros((cfg.iterations,), dtype=jnp.float32),
     )
 
 
@@ -620,9 +624,7 @@ def _run_spdhg_scan(  # noqa: PLR0915
             losses=losses_new,
         ), None
 
-    initial = _initial_spdhg_state(
-        grid, runtime.y_meas, runtime.init_x, iterations=cfg.iterations, tv_active=cfg.tv_weight > 0
-    )
+    initial = _initial_spdhg_state(grid, runtime)
     if cfg.iterations == 0:
         return initial
     return jax.lax.scan(one_step, initial, jnp.arange(cfg.iterations))[0]
@@ -646,6 +648,9 @@ def spdhg_tv(
     zero weights exclude unmeasured samples, including nonfinite measurements.
     Invalid weights fail before solver setup.
     Boolean/integer masks, standard NumPy floating dtypes and bfloat16 are supported.
+
+    The supplied ``init_x`` obeys the configured positivity and support map
+    before the first projection, including when ``iterations=0``.
 
     If ``callback`` is provided, it fires on the first logged objective sample and
     on the final logged objective sample. The callback arguments are ``(step,

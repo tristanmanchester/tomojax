@@ -71,7 +71,7 @@
     "src/tomojax/recon/fista_tv.py::grad_data_term": 168,
     "src/tomojax/recon/fista_tv_core.py::_projection_loss_and_explicit_grad": 167,
     "src/tomojax/recon/fista_tv_core.py::fista_tv_core_arrays": 133,
-    "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 117
+    "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 115
   },
   "suppressions": {
     "noqa": 8,
