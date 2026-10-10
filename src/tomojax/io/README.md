@@ -14,6 +14,9 @@ entry per frame and finite sample-view angles (calibration frames may have
 NaN angles); unknown units fail rather than being guessed. An
 `image_key` must be an integer vector with one entry per frame and labels in
 `{0, 1, 2, 3}` (sample, flat, dark, other); labels are checked before conversion.
+For other HDF5 layouts, per-frame shape disambiguates named angle/key datasets
+from different detectors. A sole named dataset with an invalid shape is rejected,
+not treated as absent. Ambiguous candidates require an explicit metadata path.
 
 ## TIFF angle sidecars
 

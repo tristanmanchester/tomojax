@@ -133,8 +133,10 @@ def locate_frames(
 
     Each is read from the path given, else the NXtomo (or Data Exchange) path,
     else the file's only dataset of that name (``data`` of three dimensions,
-    ``image_key``, ``rotation_angle``) with one entry per frame. Flats and
-    darks kept beside the frames (``data_white``, ``data_dark``) and angles
+    ``image_key``, ``rotation_angle``) with one entry per frame. A uniquely
+    named key or angle dataset with the wrong shape is rejected, not
+    treated as missing. Flats and darks kept beside the frames
+    (``data_white``, ``data_dark``) and angles
     there (``theta``) are found too. Angles in radians (a ``units``
     attribute) are converted to degrees.
     """
@@ -152,12 +154,16 @@ def locate_frames(
             return item.shape == (frames,)
 
         key_at = image_key_path or (_IMAGE_KEY_PATH if _dataset(file, _IMAGE_KEY_PATH) else None)
-        key_at = key_at or _only(file, "image_key", per_frame, path)
+        key_at = key_at or _only(file, "image_key", per_frame, path, validate_unmatched=True)
         angles_at = angles_path or (_ANGLE_PATH if _dataset(file, _ANGLE_PATH) else None)
         angles_at = angles_at or _only(file, "rotation_angle", per_frame, path)
         parent = where.rsplit("/", 1)[0] or "/"
         beside = {n: f"{parent.rstrip('/')}/{n}" for n in ("data_white", "data_dark", "theta")}
         angles_at = angles_at or (beside["theta"] if _dataset(file, beside["theta"]) else None)
+        # A known Data Exchange angle path takes priority over unmatched names.
+        angles_at = angles_at or _only(
+            file, "rotation_angle", per_frame, path, validate_unmatched=True
+        )
         key = (
             None
             if key_at is None
@@ -195,17 +201,32 @@ def _degrees(
 
 
 def _only(
-    file: h5py.File, name: str, fits: Callable[[h5py.Dataset], bool], path: str
+    file: h5py.File,
+    name: str,
+    fits: Callable[[h5py.Dataset], bool],
+    path: str,
+    *,
+    validate_unmatched: bool = False,
 ) -> str | None:
-    """The path of the file's only dataset called ``name`` that ``fits``, if any."""
+    """Find a fitting named dataset, or one unmatched candidate to validate.
+
+    Shape still disambiguates different detectors. With ``validate_unmatched``,
+    a malformed uniquely named acquisition dataset is not mistaken for absent
+    metadata; its caller validates it. More than one candidate is ambiguous.
+    """
     found: list[str] = []
+    named: list[str] = []
 
     def visit(where: str, item: object) -> None:
-        if isinstance(item, h5py.Dataset) and where.rsplit("/", 1)[-1] == name and fits(item):
-            found.append("/" + where)
+        if isinstance(item, h5py.Dataset) and where.rsplit("/", 1)[-1] == name:
+            named.append("/" + where)
+            if fits(item):
+                found.append("/" + where)
 
     visitable: Any = file
     visitable.visititems(visit)
+    if validate_unmatched and not found:
+        found = named
     if len(found) > 1:
         raise KeyError(f"{path} has several {name!r} datasets ({', '.join(found)}): name one")
     return found[0] if found else None

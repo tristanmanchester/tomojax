@@ -152,3 +152,88 @@ def test_radian_file_recovers_the_same_volume_and_pose_geometry(tmp_path):
     actual = np.asarray(tj.reconstruct(loaded, "cgls", iterations=40).volume)
     np.testing.assert_allclose(actual, direct, rtol=3e-4, atol=3e-4)
     assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.06
+
+
+def _write_beamline_frames(path):
+    with h5py.File(path, "w") as handle:
+        entry = handle.create_group("entry1/tomo")
+        entry.create_dataset("data", data=np.stack([np.full((2, 2), v) for v in (500, 1000, 250)]))
+        entry.create_dataset("image_key", data=[0, 1, 0])
+        entry.create_dataset("rotation_angle", data=[0.0, np.nan, 90.0])
+
+
+@pytest.mark.parametrize("name", ["image_key", "rotation_angle"])
+@pytest.mark.parametrize("shape", [(1, 3), (3, 1), (2,), ()])
+def test_unique_malformed_beamline_metadata_is_not_treated_as_absent(tmp_path, name, shape):
+    path = tmp_path / "beamline.h5"
+    _write_beamline_frames(path)
+    with h5py.File(path, "a") as handle:
+        entry = handle["entry1/tomo"]
+        del entry[name]
+        entry.create_dataset(name, data=np.zeros(shape, dtype=np.int32))
+    for read in (lambda p: locate_frames(str(p)), tj.load_frames):
+        with pytest.raises(ValueError, match="shape"):
+            read(path)
+
+
+def test_beamline_metadata_shape_still_disambiguates_different_detectors(tmp_path):
+    path = tmp_path / "beamline.h5"
+    _write_beamline_frames(path)
+    with h5py.File(path, "a") as handle:
+        entry = handle.create_group("entry2/tomo")
+        entry.create_dataset("data", data=np.zeros((4, 2, 2)))
+        entry.create_dataset("image_key", data=[0, 0, 0, 0])
+        entry.create_dataset("rotation_angle", data=[0, 45, 90, 135])
+    first = tj.load_frames(path, data_path="/entry1/tomo/data").corrected()
+    np.testing.assert_array_equal(first.angles, [0, 90])
+    np.testing.assert_allclose(first.projections[:, 0, 0], -np.log([0.5, 0.25]))
+    second = tj.load_frames(path, data_path="/entry2/tomo/data", white_level=1)
+    assert second.views == 4
+    np.testing.assert_array_equal(second.geometry.angles, [0, 45, 90, 135])
+
+
+@pytest.mark.parametrize("name", ["image_key", "rotation_angle"])
+@pytest.mark.parametrize("matching", [False, True])
+def test_ambiguous_beamline_metadata_requires_an_explicit_path(tmp_path, name, matching):
+    path = tmp_path / "beamline.h5"
+    _write_beamline_frames(path)
+    with h5py.File(path, "a") as handle:
+        if not matching:
+            entry = handle["entry1/tomo"]
+            del entry[name]
+            entry.create_dataset(name, data=np.zeros(4, np.int32))
+        handle.create_dataset(f"entry2/{name}", data=np.zeros(3 if matching else 5, np.int32))
+    with pytest.raises(KeyError, match=f"several '{name}' datasets"):
+        tj.load_frames(path)
+    keyword = "image_key_path" if name == "image_key" else "angles_path"
+    arguments = {keyword: f"/entry1/tomo/{name}"}
+    if matching:
+        scan = tj.load_frames(path, **arguments).corrected()
+        np.testing.assert_array_equal(scan.angles, [0, 90])
+        np.testing.assert_allclose(scan.projections[:, 0, 0], -np.log([0.5, 0.25]))
+    else:
+        with pytest.raises(ValueError, match="shape"):
+            tj.load_frames(path, **arguments)
+
+
+def test_a_missing_beamline_image_key_remains_supported(tmp_path):
+    path = tmp_path / "beamline.h5"
+    _write_beamline_frames(path)
+    with h5py.File(path, "a") as handle:
+        del handle["entry1/tomo/image_key"]
+        handle["entry1/tomo/rotation_angle"][...] = [0, 45, 90]
+    frames = tj.load_frames(path, white_level=1000)
+    assert frames.views == 3 and frames.flats is None
+    np.testing.assert_array_equal(frames.geometry.angles, [0, 45, 90])
+
+
+def test_data_exchange_angles_take_priority_over_unmatched_rotation_datasets(tmp_path):
+    path = tmp_path / "exchange.h5"
+    with h5py.File(path, "w") as handle:
+        handle.create_dataset("exchange/data", data=np.full((2, 2, 2), 500))
+        handle.create_dataset("exchange/data_white", data=np.full((1, 2, 2), 1000))
+        handle.create_dataset("exchange/theta", data=[0, np.pi / 2]).attrs["units"] = "rad"
+        handle.create_dataset("unrelated/rotation_angle", data=[0, 45, 90])
+    scan = tj.load_frames(path).corrected()
+    np.testing.assert_allclose(scan.angles, [0, 90], atol=1e-5)
+    np.testing.assert_allclose(scan.projections, np.log(2.0))

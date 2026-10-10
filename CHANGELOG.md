@@ -24,6 +24,10 @@ raw frames: radians are converted to degrees. Unsupported units, nonfinite sampl
 angles, wrong-shaped angle arrays and noninteger or unknown `image_key` labels fail
 instead of changing the acquisition geometry or silently dropping views.
 
+Generic HDF5 discovery also rejects uniquely named malformed angle or image-key
+datasets instead of treating them as absent. Shape-based selection for different
+detectors and explicit metadata-path selection are unchanged.
+
 The CUDA cone backprojector is again the exact transpose of the forward
 projector where a ray is nearly tied between two axes: both now round the ray's
 coordinates identically (it differed by up to 1.6% there). Adjoints are about
