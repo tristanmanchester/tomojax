@@ -50,7 +50,7 @@ class RotationAxisGeometry:
 
     def pose_for_view(self, i: int) -> PoseMatrix:
         """Return the world-from-object pose for one view."""
-        theta = float(np.deg2rad(self.angles[i]))
+        theta = float(np.deg2rad(float(self.angles[i])))
         axis = self._axis_unit()
         ez = np.array([0.0, 0.0, 1.0], dtype=np.float64)
         S = align_u_to_v(ez, axis)
