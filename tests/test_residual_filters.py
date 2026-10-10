@@ -79,3 +79,22 @@ def test_residual_filter_schedule_preserves_components_and_mask() -> None:
     for component, reference in zip(actual.components, expected, strict=True):
         np.testing.assert_allclose(component, reference, rtol=2e-5, atol=5e-7)
     np.testing.assert_allclose(actual.residual, sum(expected), rtol=2e-5, atol=5e-7)
+
+
+def test_residual_filter_result_supports_compilation_batching_and_tree_roundtrip() -> None:
+    residual = jnp.asarray(np.random.default_rng(51).normal(size=(3, 5, 7)), jnp.float32)
+    configs = (
+        ResidualFilterConfig(kind="raw", weight=0.2),
+        ResidualFilterConfig(kind="lowpass_gaussian", sigma_px=1.3, weight=0.8),
+    )
+    operation = functools.partial(apply_residual_filter_schedule, configs=configs)
+    actual = jax.jit(jax.vmap(operation))(residual)
+    reference = operation(residual)
+    assert actual.configs == configs
+    np.testing.assert_allclose(actual.residual, reference.residual, rtol=2e-5, atol=5e-7)
+    assert len(actual.components) == len(configs)
+    leaves, tree = jax.tree.flatten(actual)
+    assert len(leaves) == 1 + len(configs)
+    restored = jax.tree.unflatten(tree, leaves)
+    assert restored.configs == configs
+    np.testing.assert_array_equal(restored.residual, actual.residual)

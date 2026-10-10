@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 from typing import Literal
 
@@ -22,11 +22,12 @@ class ResidualFilterConfig:
     outer_sigma_px: float = 2.0
 
 
+@jax.tree_util.register_dataclass
 @dataclass(frozen=True)
 class ResidualFilterResult:
     residual: jax.Array
     components: tuple[jax.Array, ...]
-    configs: tuple[ResidualFilterConfig, ...]
+    configs: tuple[ResidualFilterConfig, ...] = field(metadata={"static": True})
 
 
 def apply_residual_filter(
