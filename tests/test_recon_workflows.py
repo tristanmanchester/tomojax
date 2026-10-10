@@ -1,18 +1,23 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
+import importlib
 from pathlib import Path
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from scipy.spatial.transform import Rotation
 
+import tomojax as tj
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 from tomojax.io import ProjectionDataset, load_dataset, save_dataset
-from tomojax.recon import FBPConfig, FistaConfig, fbp, fista_tv
+from tomojax.recon import FBPConfig, FDKConfig, FistaConfig, api, fbp, fista_tv
 
 # check-public-imports: allow-private
 from tomojax.recon._fbp_detector_grid import _run_fbp_generic_with_oom_fallback
 from tomojax.recon.api import clear_filter_caches, default_fbp_scale
+from tomojax.recon.fdk import fdk
 from tomojax.recon.filters import get_filter_np
 
 
@@ -171,3 +176,181 @@ def test_reconstruction_volume_roundtrips_through_dataset_contract(tmp_path: Pat
     assert loaded.volume is not None
     np.testing.assert_allclose(loaded.volume, volume)
     assert loaded.grid == dataset.grid
+
+
+@dataclass
+class _CorrectedGeometry:
+    """Independent pose wrapper, also applicable around a whole segmented scan."""
+
+    base: object
+    poses: np.ndarray
+    frame: str
+    detector_roll_deg: float = 0.0
+
+    def __getattr__(self, name):
+        return getattr(self.base, name)
+
+    def pose_for_view(self, i):
+        nominal = np.asarray(self.base.pose_for_view(i), dtype=np.float64)
+        update = np.eye(4)
+        update[:3, :3] = Rotation.from_rotvec(self.poses[i, :3]).as_matrix()
+        update[:3, 3] = self.poses[i, 3:]
+        result = nominal @ update
+        if self.frame == "detector":
+            result[:3, 3] = nominal[:3, 3] + update[:3, 3]
+        return tuple(map(tuple, result))
+
+
+def _segments(counts=(4, 7)):
+    grid = tj.Grid(5, 4, 3, 0.8, 1.1, 1.3)
+    first = tj.Detector(12, 10, 0.9, 0.8, (0.2, -0.3))
+    second = replace(first, center=(-0.7, 0.5))
+    parts = (
+        tj.ConeGeometry(
+            grid, first, np.linspace(0, 360, counts[0], endpoint=False), tj.ConeBeam(20, 36)
+        ),
+        tj.ConeGeometry(
+            grid,
+            second,
+            np.linspace(13, 373, counts[1], endpoint=False),
+            tj.ConeBeam(26, 45, detector_roll_deg=2.0),
+        ),
+    )
+    return tj.geometry.ConeSegments(parts)
+
+
+@pytest.mark.parametrize("method", ["cgls", "fista", "spdhg"])
+@pytest.mark.parametrize("posed", [False, True])
+def test_public_warm_start_weights_segments_then_applies_the_solver_constraints(
+    monkeypatch, method, posed
+):
+    segments = _segments()
+    count = len(segments.angles)
+    poses = np.zeros((count, 6), np.float32)
+    poses[:, 3] = np.linspace(-0.2, 0.3, count)
+    geometry = _CorrectedGeometry(segments, poses, "detector") if posed else segments
+    # Caller may supply a binned/cropped detector separately from the geometry.
+    detector = tj.Detector(6, 5, 1.8, 1.6, (0.1, -0.4))
+    projections = np.arange(count * 5 * 6, dtype=np.float32).reshape(count, 5, 6)
+    captured = []
+
+    def filter_part(part, grid, own_detector, data, *, config, det_grid=None):
+        assert grid == segments.grid and det_grid is None
+        captured.append((part, own_detector, data.copy(), config))
+        return jnp.full((grid.nx, grid.ny, grid.nz), -4.0 if len(captured) == 1 else 1.0)
+
+    def solve(_geometry, _grid, _detector, _data, *, init_x, **_kwargs):
+        return init_x, {"initial_image_test": True}
+
+    monkeypatch.setattr(importlib.import_module("tomojax.recon.fdk"), "fdk", filter_part)
+    monkeypatch.setattr(
+        api, {"cgls": "cgls", "fista": "fista_tv", "spdhg": "spdhg_tv"}[method], solve
+    )
+    config = api.method_config(method)
+    if method != "cgls":
+        config = replace(config, nonnegative=True)
+    volume, info = api.reconstruct_arrays(
+        method, geometry, segments.grid, detector, projections, config=config, warm_start=True
+    )
+    expected = (-4.0 * 4 + 1.0 * 7) / 11
+    np.testing.assert_allclose(volume, expected if method == "cgls" else 0.0, atol=1e-7)
+    assert info["warm_start"] and info["initial_image_test"]
+    start = 0
+    for segment, (part, own_detector, data, cfg) in zip(segments.segments, captured, strict=True):
+        n = len(segment.angles)
+        assert part.beam == segment.beam and cfg == FDKConfig()
+        assert own_detector.nu == detector.nu and own_detector.du == detector.du
+        expected_center = (
+            np.array(detector.center)
+            + np.array(segment.detector.center)
+            - np.array(segments.detector.center)
+        )
+        np.testing.assert_allclose(own_detector.center, expected_center)
+        np.testing.assert_array_equal(data, projections[start : start + n])
+        for i in range(n):
+            np.testing.assert_array_equal(part.pose_for_view(i), geometry.pose_for_view(start + i))
+        start += n
+
+
+@pytest.mark.parametrize("frame", ["object", "detector"])
+@pytest.mark.parametrize("backend", ["auto", "jax"])
+def test_segmented_start_matches_individual_fdk_with_all_pose_corrections(
+    monkeypatch, frame, backend
+):
+    segments = _segments((12, 16))
+    rng = np.random.default_rng(5)
+    poses = rng.normal(0, 0.03, (28, 6)).astype(np.float32)
+    geometry = _CorrectedGeometry(segments, poses, frame)
+    data = rng.random((28, 10, 12)).astype(np.float32)
+
+    # Compare like for like: CUDA FDK uses half-float textures with 1/256
+    # interpolation weights, not JAX's full-precision bilinear interpolation.
+    def initialize(*args, config):
+        return fdk(*args, config=replace(config, backend=backend))
+
+    monkeypatch.setattr(importlib.import_module("tomojax.recon.fdk"), "fdk", initialize)
+    config = FistaConfig(iterations=0, lipschitz=1.0, tv_weight=0.0, nonnegative=False)
+    actual, _ = api.reconstruct_arrays(
+        "fista", geometry, segments.grid, segments.detector, data, config=config, warm_start=True
+    )
+    offset = 0
+    expected = np.zeros((5, 4, 3), np.float32)
+    for segment in segments.segments:
+        n = len(segment.angles)
+        own = _CorrectedGeometry(segment, poses[offset : offset + n], frame)
+        image = fdk(
+            own,
+            segments.grid,
+            segment.detector,
+            data[offset : offset + n],
+            config=FDKConfig(backend=backend),
+        )
+        expected += np.asarray(image) * (n / len(data))
+        offset += n
+    np.testing.assert_allclose(actual, expected, atol=2e-6, rtol=2e-6)
+
+
+def test_warm_start_still_rejects_individually_incomplete_cone_arcs():
+    segments = _segments()
+    short = replace(segments.segments[1], angles=[0, 30, 60, 90])
+    geometry = tj.geometry.ConeSegments((segments.segments[0], short))
+    with pytest.raises(ValueError, match="FDK short scans need at least"):
+        api.reconstruct_arrays(
+            "fista",
+            geometry,
+            geometry.grid,
+            geometry.detector,
+            np.zeros((8, 10, 12), np.float32),
+            warm_start=True,
+        )
+
+
+def test_segmented_warm_start_requires_the_canonical_detector_grid():
+    geometry = _CorrectedGeometry(_segments(), np.zeros((11, 6)), "object", detector_roll_deg=1.0)
+    with pytest.raises(ValueError, match="canonical detector grid"):
+        api.reconstruct_arrays(
+            "fista",
+            geometry,
+            geometry.grid,
+            geometry.detector,
+            np.zeros((11, 10, 12), np.float32),
+            warm_start=True,
+        )
+
+
+def test_segmented_warm_start_rejects_mismatched_views_before_filtering(monkeypatch):
+    geometry = _segments()
+
+    def unexpected_filter(*_args, **_kwargs):
+        pytest.fail("invalid projection stack reached FDK")
+
+    monkeypatch.setattr(importlib.import_module("tomojax.recon.fdk"), "fdk", unexpected_filter)
+    with pytest.raises(ValueError, match="warm_start projections"):
+        api.reconstruct_arrays(
+            "fista",
+            geometry,
+            geometry.grid,
+            geometry.detector,
+            np.zeros((10, 10, 12), np.float32),
+            warm_start=True,
+        )

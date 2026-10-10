@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
+from tomojax.recon._warm_start import fbp_start
 from tomojax.recon.cgls import CGLSConfig, cgls
 from tomojax.recon.cgls_multires import cgls_multires
 from tomojax.recon.fbp import FBPConfig, default_fbp_scale, fbp, run_parallel_fbp_direct_pallas
@@ -75,7 +76,9 @@ def reconstruct_arrays(
 
     ``config`` is the method's configuration (see :func:`method_config`).
     ``warm_start`` starts ``cgls``, ``fista`` and ``spdhg`` from the FBP
-    reconstruction. Returns the volume and its record: the ``config`` used,
+    reconstruction. Cone segments start from the view-count-weighted mean of
+    their individual FDK images; each segment must cover an FDK-compatible
+    arc. Returns the volume and its record: the ``config`` used,
     ``warm_start`` for the iterative methods and the solver's own record. FDK
     volumes too large for the device come back as host NumPy arrays, made in
     z-slabs (``host_slabs``).
@@ -96,7 +99,7 @@ def reconstruct_arrays(
     if warm_start:
         # On the solver's devices; an explicit detector grid takes one.
         devices = getattr(cfg, "devices", None) if det_grid is None else None
-        start = fbp(
+        start = fbp_start(
             geometry, grid, detector, projections, config=FBPConfig(devices=devices),
             det_grid=det_grid,
         )  # fmt: skip

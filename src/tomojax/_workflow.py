@@ -204,7 +204,9 @@ def reconstruct(
         order drawn with ``seed``.
 
     ``warm_start`` starts ``cgls``, ``fista`` and ``spdhg`` from the FBP
-    reconstruction. ``grid`` reconstructs on another grid than the scan's (a
+    reconstruction. Cone segments use a view-count-weighted average of their
+    separate FDK initial images; each segment must cover an arc accepted by
+    FDK. ``grid`` reconstructs on another grid than the scan's (a
     region, or a different voxel size).
 
     ``config`` holds the method's expert settings: a
