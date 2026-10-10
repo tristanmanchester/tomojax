@@ -85,12 +85,33 @@ def _correlation_peaks(
     return jax.vmap(peak)(corr)
 
 
+def _detector_translation_map(
+    geometry: Geometry, detector: Detector, poses: np.ndarray
+) -> np.ndarray:
+    """Physical detector-u/v motion per lab translation at the object origin."""
+    model = cone_model(geometry, detector)
+    n = len(poses)
+    if model is None:
+        return np.broadcast_to(np.eye(3)[[0, 2]], (n, 2, 3))
+    frames = np.asarray(model.frames(n), np.float64)
+    centre, u, v, source = (frames[:, i] for i in range(4))
+    normal = np.cross(u, v)
+    ray = poses[:, :3, 3] - source
+    denominator = np.sum(normal * ray, axis=1)
+    distance = np.sum(normal * (centre - source), axis=1)
+    axes = np.stack([u, v], axis=1)
+    along = np.einsum("nki,ni->nk", axes, ray)
+    return (distance / denominator)[:, None, None] * (
+        axes - along[:, :, None] * normal[:, None, :] / denominator[:, None, None]
+    )
+
+
 def _remove_object_translation(
-    shifts: np.ndarray, rotations: np.ndarray, spacing: tuple[float, float]
+    shifts: np.ndarray, translation_basis: np.ndarray, spacing: tuple[float, float]
 ) -> np.ndarray:
     """Remove the shift pattern of one rigid object translation, which the volume absorbs."""
     physical = shifts * np.asarray(spacing)
-    basis = rotations[:, [0, 2], :].reshape(-1, 3)
+    basis = translation_basis.reshape(-1, 3)
     translation, *_ = np.linalg.lstsq(basis, physical.reshape(-1), rcond=1e-8)
     residual = physical - (basis @ translation).reshape(-1, 2)
     return residual / np.asarray(spacing)
@@ -146,8 +167,8 @@ def estimate_view_shifts(
     """Estimate per-view detector shifts by iterated projection matching.
 
     Returns an ``(n_views, 2)`` array of physical (u, v) shifts: positive
-    values mean the object appears displaced along +u/+v in that view, which is
-    the detector-frame translation of :func:`apply_pose_updates`. Shifts up to
+    values mean the object appears displaced along the physical detector axes
+    +u/+v in that view, not necessarily along lab x/z. Shifts up to
     ``max_shift_fraction`` of the detector size are searched. The part of the
     shifts produced by one rigid object translation is removed, because the
     reconstruction absorbs it.
@@ -155,7 +176,8 @@ def estimate_view_shifts(
     data = jnp.asarray(projections, dtype=jnp.float32)
     n = int(data.shape[0])
     poses = stack_view_poses(geometry, n)
-    rotations = np.asarray(poses, np.float64)[:, :3, :3]
+    nominal = np.asarray(poses, np.float64)
+    translation_basis = _detector_translation_map(geometry, detector, nominal) @ nominal[:, :3, :3]
     reproject = _reprojector(geometry, poses, grid, detector)
 
     max_u = max(1, int(max_shift_fraction * detector.nu))
@@ -188,7 +210,7 @@ def estimate_view_shifts(
         volume = _quick_reconstruction(geometry, grid, detector, corrected)
         del corrected
         peaks = correlate(volume)
-        updated = _remove_object_translation(peaks, rotations, spacing)
+        updated = _remove_object_translation(peaks, translation_basis, spacing)
         change = float(np.max(np.abs(updated - shifts)))
         shifts = updated
         LOG.info("Shift search %d: max change %.3f px", iteration + 1, change)
@@ -232,28 +254,24 @@ def reprojection_residual(
 
 def translation_params_from_shifts(
     shifts: np.ndarray,
-    poses: np.ndarray,
+    translation_map: np.ndarray,
     params: np.ndarray,
     *,
-    frame: str,
     active: tuple[bool, bool],
 ) -> np.ndarray:
-    """Set active (dx, dz) so each view's translation produces its detector shift.
+    """Fit active (dx, dz) to physical u/v shifts through their calibrated map.
 
-    ``shifts`` are physical (u, v). Detector-frame translations equal them; an
-    object-frame translation is rotated by the view's pose first, so a view can
-    lose one observable direction. Near-null directions are discarded rather
-    than turned into enormous offsets. Frozen translations are kept and their
-    contribution is subtracted first.
+    ``translation_map`` maps parameter-frame (x, y, z) translations to
+    detector-u/v motion. Near-null directions are discarded rather than turned
+    into enormous offsets. Every frozen translation, including dy in a
+    six-column pose table, is kept and its contribution is subtracted first.
     """
-    n = shifts.shape[0]
-    if frame == "detector":
-        mapping = np.broadcast_to(np.eye(2), (n, 2, 2))
-    else:
-        mapping = poses[:, [0, 2], :3][:, :, [0, 2]]
+    mapping = translation_map[:, :, [0, 2]]
     mask = np.asarray(active, bool)
     fixed = np.where(mask, 0.0, params[:, 3:5])
     residual = shifts - np.einsum("nij,nj->ni", mapping, fixed)
+    if params.shape[1] > 5:
+        residual = residual - translation_map[:, :, 1] * params[:, 5, None]
     inverse = np.linalg.pinv(mapping * mask[None, None, :], rtol=1e-3)
     estimate = np.einsum("nij,nj->ni", inverse, residual)
     seeded = np.array(params, dtype=np.float32, copy=True)
@@ -280,14 +298,14 @@ def seeded_translation_params(
         return None
     n = int(np.shape(projections)[0])
     shifts = estimate_view_shifts(geometry, grid, detector, projections)
-    cone = cone_model(geometry, detector)
-    # A cone beam magnifies object shifts near the axis onto the detector.
-    translations = shifts if cone is None else shifts / cone.magnification(n)[:, None]
+    poses = np.asarray(stack_view_poses(geometry, n), np.float64)
+    mapping = _detector_translation_map(geometry, detector, poses)
+    if cfg.pose_translation_frame == "object":
+        mapping = mapping @ poses[:, :3, :3]
     params = translation_params_from_shifts(
-        translations,
-        np.asarray(stack_view_poses(geometry, n), np.float64),
+        shifts,
+        mapping,
         np.zeros((n, len(active)), np.float32),
-        frame=cfg.pose_translation_frame,
         active=(bool(active[3]), bool(active[4])),
     )
     LOG.info(

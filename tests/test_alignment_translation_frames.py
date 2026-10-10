@@ -345,7 +345,12 @@ def test_translation_seed_converts_image_motion_without_moving_frozen_dofs(frame
     params = np.zeros((3, 5), np.float32)
     params[:, 3] = 0.4
     poses = np.asarray(stack_view_poses(geometry, 3), np.float64)
-    actual = translation_params_from_shifts(shifts, poses, params, frame=frame, active=active)
+    mapping = (
+        np.broadcast_to(np.eye(3)[[0, 2]], (len(poses), 2, 3))
+        if frame == "detector"
+        else poses[:, [0, 2], :3]
+    )
+    actual = translation_params_from_shifts(shifts, mapping, params, active=active)
     for i in range(3):
         basis = np.eye(2) if frame == "detector" else poses[i][[0, 2], :3][:, [0, 2]]
         fixed = np.where(active, 0, params[i, 3:])
@@ -362,6 +367,32 @@ def test_translation_seed_converts_image_motion_without_moving_frozen_dofs(frame
             np.testing.assert_allclose(
                 np.asarray(moved)[[0, 2], 3] - poses[i][[0, 2], 3], shifts[i], atol=1e-5
             )
+
+
+@pytest.mark.parametrize("frame", ["object", "detector"])
+@pytest.mark.parametrize("active", [(True, True), (True, False), (False, True)])
+def test_translation_seed_subtracts_frozen_depth_motion(frame, active):
+    geometry, _, _ = _geometry(8, "lamino", np.array([11.0, 47.0, 137.0]))
+    poses = np.asarray(stack_view_poses(geometry, 3), np.float64)
+    # A calibrated tilted detector sees the frozen depth translation too.
+    detector_axes = Rotation.from_euler("XYZ", [0.25, -0.13, 0.42]).as_matrix()[[0, 2]]
+    mapping = np.broadcast_to(detector_axes, (3, 2, 3))
+    if frame == "object":
+        mapping = mapping @ poses[:, :3, :3]
+    expected = np.array(
+        [
+            [0.01, -0.02, 0.03, 0.4, -0.2, 0.6],
+            [-0.02, 0.01, -0.01, -0.1, 0.3, -0.5],
+            [0.03, -0.01, 0.02, 0.2, 0.1, 0.4],
+        ],
+        dtype=np.float32,
+    )
+    shifts = np.einsum("nij,nj->ni", mapping, expected[:, [3, 5, 4]])
+    initial = expected.copy()
+    initial[:, 3:5] *= np.logical_not(active)
+    actual = translation_params_from_shifts(shifts, mapping, initial, active=active)
+    np.testing.assert_allclose(actual, expected, atol=2e-7)
+    np.testing.assert_array_equal(actual[:, [0, 1, 2, 5]], initial[:, [0, 1, 2, 5]])
 
 
 @pytest.mark.parametrize("kind", ["parallel", "lamino"])
@@ -381,8 +412,8 @@ def test_shift_search_recovers_large_view_shifts(kind):
     found = estimate_view_shifts(geometry, grid, detector, data) / [detector.du, detector.dv]
     rotations = np.asarray(poses, np.float64)[:, :3, :3]
     spacing = (detector.du, detector.dv)
-    expected = _prealign._remove_object_translation(truth, rotations, spacing)
-    actual = _prealign._remove_object_translation(found, rotations, spacing)
+    expected = _prealign._remove_object_translation(truth, rotations[:, [0, 2], :], spacing)
+    actual = _prealign._remove_object_translation(found, rotations[:, [0, 2], :], spacing)
     # +/-5 px shifts come within the local solver's sub-pixel reach.
     assert np.sqrt(np.mean((actual - expected) ** 2)) < 0.4
 
@@ -573,8 +604,11 @@ def cone_proposal_case(request):
         grid, detector, [11.0, 59.0], ConeBeam(23, 41, axis_offset=0.6), tilt_deg=23
     )
     second = ConeGeometry(
-        grid, detector, [127.0, 181.0, 237.0],
-        ConeBeam(29, 47, detector_roll_deg=7, detector_pitch_deg=-3, axis_offset=-0.3), tilt_deg=31,
+        grid,
+        detector,
+        [127.0, 181.0, 237.0],
+        ConeBeam(29, 47, detector_roll_deg=7, detector_pitch_deg=-3, axis_offset=-0.3),
+        tilt_deg=31,
     )
     geometry = first if request.param == "tilted" else ConeSegments((first, second))
     poses = stack_view_poses(geometry, len(geometry.angles))
@@ -631,13 +665,19 @@ def test_cone_proposals_use_physical_rays_and_report_backend(
     monkeypatch.setattr(cone, "cone_project", checked_project)
     result = score_pose_stack_candidates(
         candidates=(ProposalCandidate("baseline", poses), ProposalCandidate("truth", truth)),
-        grid=grid, detector=detector, volume=volume,
+        grid=grid,
+        detector=detector,
+        volume=volume,
         det_grid=apply_alignment_state(
             BaseGeometryArrays.from_geometry(cone_proposal_case[0], detector),
             AlignmentState.zeros(n_views=len(poses)),
         ).det_grid,
-        targets=targets, loss_adapter=adapter, projector_backend=backend,
-        views_per_batch=batch, ray_integrator=integrator, frames=frames,
+        targets=targets,
+        loss_adapter=adapter,
+        projector_backend=backend,
+        views_per_batch=batch,
+        ray_integrator=integrator,
+        frames=frames,
     )
     assert result.best_name == "truth" and result.improved
     np.testing.assert_allclose(result.values[0], expected, rtol=1e-5)
@@ -649,14 +689,26 @@ def test_cone_proposals_use_physical_rays_and_report_backend(
 
 def _cone_proposal_config(backend, *, dof="dx"):
     schedule = AlignmentSchedule(
-        "cone_proposal", (AlignmentStage(
-            "pose", (dof,), "fixed_volume", "gn", stage_role="proposal",
-            differentiability="performance_only", maxiter=1,
-        ),),
+        "cone_proposal",
+        (
+            AlignmentStage(
+                "pose",
+                (dof,),
+                "fixed_volume",
+                "gn",
+                stage_role="proposal",
+                differentiability="performance_only",
+                maxiter=1,
+            ),
+        ),
     )
     return AlignConfig(
-        schedule=schedule, ray_integrator="joseph", projector_backend=backend,
-        pose_translation_frame="detector", seed_translations=False, tv_weight=0,
+        schedule=schedule,
+        ray_integrator="joseph",
+        projector_backend=backend,
+        pose_translation_frame="detector",
+        seed_translations=False,
+        tv_weight=0,
         views_per_batch=2,
     )
 
@@ -676,8 +728,10 @@ def test_public_cone_proposal_stage_recovers_known_pose(cone_proposal_case, back
     )
     cfg = _cone_proposal_config(backend, dof=dof)
     resume = AlignMultiresResumeState(
-        x=volume, pose_params=jnp.zeros((len(poses), 6)),
-        pose_translation_frame="detector", ray_integrator="joseph",
+        x=volume,
+        pose_params=jnp.zeros((len(poses), 6)),
+        pose_translation_frame="detector",
+        ray_integrator="joseph",
     )
     result_volume, params, info = align_multires(
         geometry, grid, detector, targets, factors=(1,), config=cfg, resume_state=resume
@@ -703,13 +757,20 @@ def test_zero_volume_proposal_retains_poses_without_scoring(cone_proposal_case, 
     volume = jnp.zeros_like(volume)
     initial = jnp.zeros((len(poses), 6)).at[:, 3].set(jnp.arange(len(poses)) * 0.1)
     resume = AlignMultiresResumeState(
-        x=volume, pose_params=initial,
-        pose_translation_frame="detector", ray_integrator="joseph",
+        x=volume,
+        pose_params=initial,
+        pose_translation_frame="detector",
+        ray_integrator="joseph",
     )
     checkpoints = []
     result_volume, params, info = align_multires(
-        geometry, grid, detector, targets, factors=(1,),
-        config=_cone_proposal_config(backend), resume_state=resume,
+        geometry,
+        grid,
+        detector,
+        targets,
+        factors=(1,),
+        config=_cone_proposal_config(backend),
+        resume_state=resume,
         checkpoint_callback=checkpoints.append,
     )
     # The level checkpoint precedes the existing final least-motion gauge:
@@ -723,3 +784,138 @@ def test_zero_volume_proposal_retains_poses_without_scoring(cone_proposal_case, 
     assert stat["proposal_reason"] == "zero volume has no pose evidence"
     assert stat["proposal_candidate_count"] == 0
     assert stat["proposal_backend_provenance"] == {}
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("frame", ["object", "detector"])
+def test_cone_translation_seed_uses_each_physical_detector_frame(
+    monkeypatch, cone_proposal_case, frame
+):
+    geometry, grid, detector, _, _, volume, _, targets = cone_proposal_case
+    # Ordinary detector rotations expose the difference between detector u/v
+    # and lab x/z. Two arrangements also have distinct magnification.
+    if isinstance(geometry, ConeSegments):
+        geometry = ConeSegments(
+            tuple(
+                replace(
+                    segment,
+                    beam=replace(
+                        segment.beam,
+                        detector_roll_deg=25 - 10 * i,
+                        detector_pitch_deg=7 - 4 * i,
+                        detector_yaw_deg=-9 + 5 * i,
+                    ),
+                )
+                for i, segment in enumerate(geometry.segments)
+            )
+        )
+    else:
+        geometry = replace(
+            geometry,
+            beam=replace(
+                geometry.beam,
+                detector_roll_deg=25,
+                detector_pitch_deg=7,
+                detector_yaw_deg=-9,
+            ),
+        )
+    poses = np.asarray(stack_view_poses(geometry, len(geometry.angles)), np.float64)
+    model = cone_model(geometry, detector)
+    assert model is not None
+    frames = np.asarray(model.frames(len(poses)), np.float64)
+    true = np.zeros((len(poses), 6), np.float32)
+    true[:, 3] = np.linspace(-0.001, 0.001, len(poses))
+    true[:, 4] = np.linspace(0.0007, -0.0003, len(poses))
+
+    def detector_coordinates(points):
+        centre, u, v, source = (frames[:, i] for i in range(4))
+        normal = np.cross(u, v)
+        ray = points - source
+        length = np.sum(normal * (centre - source), axis=1) / np.sum(normal * ray, axis=1)
+        hit = source + length[:, None] * ray - centre
+        return np.stack([np.sum(hit * u, axis=1), np.sum(hit * v, axis=1)], axis=1)
+
+    before = poses[:, :3, 3]
+    translations = true[:, [3, 5, 4]].astype(np.float64)
+    after = before + (
+        translations
+        if frame == "detector"
+        else np.einsum(
+            "nij,nj->ni",
+            poses[:, :3, :3],
+            translations,
+        )
+    )
+    shifts = detector_coordinates(after) - detector_coordinates(before)
+    monkeypatch.setattr(_prealign, "estimate_view_shifts", lambda *args, **kwargs: shifts)
+    cfg = AlignConfig(
+        optimise_dofs=("dx", "dz"),
+        seed_translations=True,
+        pose_translation_frame=frame,
+    )
+    actual = _prealign.seeded_translation_params(geometry, grid, detector, targets, cfg)
+    assert actual is not None
+    # This initializer linearizes at the object origin; its finite-motion
+    # second-order perspective error is small but not falsely called exact.
+    np.testing.assert_allclose(actual, true, atol=2e-7, rtol=2e-4)
+    np.testing.assert_array_equal(actual[:, :3], true[:, :3])
+    np.testing.assert_array_equal(actual[:, 5], true[:, 5])
+    predicted_truth = cone_project(
+        volume,
+        frame_coefficients(
+            apply_pose_updates(
+                jnp.asarray(poses, jnp.float32), jnp.asarray(true), translation_frame=frame
+            ),
+            frames,
+            grid,
+            detector,
+        ),
+        grid,
+        detector,
+        backend="jax",
+    )
+    predicted_seed = cone_project(
+        volume,
+        frame_coefficients(
+            apply_pose_updates(jnp.asarray(poses, jnp.float32), actual, translation_frame=frame),
+            frames,
+            grid,
+            detector,
+        ),
+        grid,
+        detector,
+        backend="jax",
+    )
+    np.testing.assert_allclose(predicted_seed, predicted_truth, atol=3e-6, rtol=2e-6)
+
+
+@pytest.mark.numerical
+def test_cone_shift_search_removes_a_rigid_shift_in_each_arrangement(
+    monkeypatch, cone_proposal_case
+):
+    geometry, grid, detector, poses, frames, _, _, targets = cone_proposal_case
+    nominal = np.asarray(poses, np.float64)
+    centre, u, v, source = (np.asarray(frames, np.float64)[:, i] for i in range(4))
+    normal = np.cross(u, v)
+
+    def projection(points):
+        ray = points - source
+        length = np.sum(normal * (centre - source), axis=1) / np.sum(normal * ray, axis=1)
+        hit = source + length[:, None] * ray - centre
+        return np.stack([np.sum(hit * u, axis=1), np.sum(hit * v, axis=1)], axis=1)
+
+    # A common object translation is absorbed by the reconstructed image,
+    # not reported as different physical shifts between magnified orbits.
+    translation = np.array([0.001, -0.0007, 0.0004])
+    origin = nominal[:, :3, 3]
+    shifted = origin + np.einsum("nij,j->ni", nominal[:, :3, :3], translation)
+    shifts = (projection(shifted) - projection(origin)) / [detector.du, detector.dv]
+    monkeypatch.setattr(
+        _prealign, "_quick_reconstruction", lambda *args: jnp.zeros((grid.nx, grid.ny, grid.nz))
+    )
+    monkeypatch.setattr(
+        _prealign, "_reprojector", lambda *args: lambda views, volume: targets[views]
+    )
+    monkeypatch.setattr(_prealign, "_correlation_peaks", lambda *args, **kwargs: shifts)
+    actual = estimate_view_shifts(geometry, grid, detector, targets, iters=1)
+    np.testing.assert_allclose(actual, 0, atol=2e-7)
