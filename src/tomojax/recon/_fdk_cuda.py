@@ -59,6 +59,15 @@ extern "C" __global__ void to_half(
     dst[i] = __float2half_rn(v >= 0 && v < nv ? src[row * nv + v] * gain : 0.f);
 }
 
+// Quantize in physical detector coordinates before adding the allocation's
+// integer texture lead. Adding that lead first loses fractional bits near
+// half bins, changing a weight by 1/256 depending on the buffer's alignment.
+// Texture hardware rounds exact half bins toward increasing coordinates.
+__device__ __forceinline__ float texture_row(float v, float shift)
+{
+    return floorf(v * 256.f + 0.5f) * (1.f / 256.f) + shift;
+}
+
 // Filtered images (view, u, v), from to_half, are sampled through one texture per
 // view: the texture unit interpolates bilinearly (weights to 1/256, as ASTRA's FDK)
 // and returns zero beyond the detector; detector row v is texture column
@@ -105,7 +114,8 @@ extern "C" __global__ void fdk_backproject(
                 #pragma unroll
                 for (int j = 0; j < RUN; ++j) {
                     if (j >= runs) break;
-                    acc[j] += tex2D<float>(image, vbase + (float)j * vstep + vshift, u) * gg;
+                    acc[j] += tex2D<float>(
+                        image, texture_row(vbase + (float)j * vstep, vshift), u) * gg;
                 }
                 continue;
             }
@@ -120,7 +130,7 @@ extern "C" __global__ void fdk_backproject(
                 float lam = __fdividef(c[16], n01 + c[15] * d2);
                 float u = c[23] + lam * (u01 + c[19] * d2);
                 float v = c[24] + lam * (v01 + c[22] * d2);
-                acc[j] += tex2D<float>(image, v + vshift, u + 0.5f) * (lam * lam);
+                acc[j] += tex2D<float>(image, texture_row(v, vshift), u + 0.5f) * (lam * lam);
             }
         }
     }

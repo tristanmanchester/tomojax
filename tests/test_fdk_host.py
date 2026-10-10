@@ -316,3 +316,73 @@ def test_host_slabs_match_full_fdk_with_nonseparable_geometry(backend, kind):
     # and texture-unit interpolation weights quantized to 1/256 on CUDA.
     tolerance = np.max(np.abs(reference)) * (2e-3 if backend == "cuda" else 2e-5)
     np.testing.assert_allclose(actual, reference, atol=tolerance)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("general", [False, True])
+@pytest.mark.parametrize(
+    "row",
+    [
+        -0.501953125,
+        -0.5,
+        -1 / 512,
+        0.0,
+        1 / 512,
+        3 / 512,
+        0.5 - 1 / 512,
+        0.5 + 1 / 512 - 5e-6,
+        0.5 + 1 / 512,
+        0.5 + 1 / 512 + 5e-6,
+        1.0 - 1 / 512,
+        1.0,
+        1.0 + 1 / 512,
+        1.5 - 1 / 512,
+        1.5 + 1 / 512,
+        2.0 - 1 / 512,
+        2.0,
+    ],
+)
+def test_cuda_fdk_texture_alignment_preserves_physical_interpolation_weights(general, row):
+    import importlib
+    from types import SimpleNamespace
+
+    import cupy as cp
+
+    module = importlib.import_module("tomojax.recon._fdk_cuda")
+    # Unit depth/distance weight; the only nonzero image column is sampled at
+    # physical detector row `row`. Toggle the general branch without changing
+    # the denominator at this voxel (z == 0).
+    coeff = np.zeros((1, 25), np.float32)
+    coeff[0, 1] = -1.0
+    coeff[0, 14] = coeff[0, 16] = 1.0
+    coeff[0, 15] = 1e-12 if general else 0.0
+    coeff[0, 24] = row
+    coeff = cp.asarray(coeff)
+    images = cp.asarray(np.array([[[1.0, 2.0]]], np.float32))
+    stream = cp.cuda.get_current_stream()
+    samples = []
+    for offset in (0, 128):
+        # Select both supported XLA alignments deliberately, not by chance.
+        backing = cp.empty(768, cp.float16)
+        aligned = (-backing.data.ptr % 512) // 2
+        half = backing[aligned + offset : aligned + offset + 512].reshape((1, 1, 512))
+        assert half.data.ptr % 512 == 2 * offset
+        target = cp.zeros((1, 1, 1), cp.float32)
+        module._launch(
+            SimpleNamespace(stream=stream.ptr),
+            (target, half),
+            coeff,
+            images,
+            target,
+            grid=Grid(1, 1, 1, 1.0, 1.0, 1.0),
+            det=Detector(1, 2, 1.0, 1.0),
+            scale=1.0,
+        )
+        samples.append(float(cp.asnumpy(target)[0, 0, 0]))
+    # CUDA's 1/256 interpolation weights round half bins toward increasing
+    # detector coordinates. Both image values are exactly representable after
+    # the peak-normalized half conversion; this independent scalar reference
+    # includes interpolation across the zero-valued detector border.
+    quantized = np.floor(float(np.float32(row)) * 256 + 0.5) / 256
+    expected = max(0.0, 1.0 - abs(quantized)) + 2.0 * max(0.0, 1.0 - abs(quantized - 1.0))
+    np.testing.assert_array_equal(samples, [expected, expected])
