@@ -51,9 +51,14 @@ def test_host_slabs_match_full_physical_reconstruction(kind, depth, backend):
     np.testing.assert_allclose(actual, reference, atol=4e-6, rtol=5e-5)
 
 
-def test_host_slabs_reuse_compilation_and_bound_device_shapes(monkeypatch):
+@pytest.mark.parametrize(("depth", "nz", "count", "row_bound"), [(3, 11, 12, 4), (None, 33, 9, 9)])
+def test_host_slabs_reuse_compilation_and_bound_device_shapes(
+    monkeypatch, depth, nz, count, row_bound
+):
     module = importlib.import_module("tomojax.recon.fbp")
     grid, detector, geometry, data = scan()
+    grid = replace(grid, nz=nz)
+    geometry = ParallelGeometry(grid, detector, geometry.angles)
     kernel = module._fbp_accumulate_batch
     calls = []
     before = kernel._cache_size()
@@ -63,16 +68,73 @@ def test_host_slabs_reuse_compilation_and_bound_device_shapes(monkeypatch):
         return kernel(accum, poses, projections, *args, **kwargs)
 
     monkeypatch.setattr(module, "_fbp_accumulate_batch", record)
-    cfg = FBPHostConfig(slices_per_batch=3, views_per_batch=2, backprojector="jax")
+    cfg = FBPHostConfig(slices_per_batch=depth, views_per_batch=2, backprojector="jax")
     actual = fbp_host(geometry, grid, detector, data, config=cfg)
-    assert len(calls) == 12
-    assert all(shape[0] == 2 and shape[1] <= 4 and slab.nz == 3 for shape, slab, _ in calls)
+    assert len(calls) == count
+    assert all(shape[0] == 2 and shape[1] <= row_bound for shape, _, _ in calls)
+    assert all(slab.nz == (3 if depth is not None else 11) for _, slab, _ in calls)
     assert len({(slab, det) for _, slab, det in calls}) == 1
     after = kernel._cache_size()
     assert after - before <= 1
     repeated = fbp_host(geometry, grid, detector, data * 1.2, config=cfg)
     assert kernel._cache_size() == after
     np.testing.assert_allclose(repeated, actual * 1.2, atol=2e-6, rtol=2e-5)
+
+
+@pytest.mark.parametrize(
+    ("nz", "automatic"),
+    [(1, 1), (5, 5), (16, 16), (17, 9), (22, 11), (31, 16), (33, 11), (46, 16), (65, 13)],
+)
+@pytest.mark.parametrize("requested", [None, 1, 4, 16, 40])
+def test_automatic_axial_slabs_balance_tail_work_without_increasing_storage(
+    monkeypatch, nz, automatic, requested
+):
+    module = importlib.import_module("tomojax.recon.fbp_host")
+    grid, detector = Grid(3, 2, nz, 1, 1, 1), Detector(5, nz + 2, 1, 1)
+    geometry = ParallelGeometry(grid, detector, [7, 67, 127])
+    data = np.zeros((3, detector.nv, detector.nu), np.float32)
+    calls = []
+
+    def record(poses, projections, *args, **kwargs):
+        del poses, args
+        local_grid = kwargs["grid"]
+        calls.append((local_grid, projections.shape))
+        return np.full((local_grid.nx, local_grid.ny, local_grid.nz), len(calls), np.float32)
+
+    monkeypatch.setattr(module, "_fbp_from_host", record)
+    actual = fbp_host(
+        geometry, grid, detector, data, config=FBPHostConfig(slices_per_batch=requested)
+    )
+    depth = automatic if requested is None else min(requested, nz)
+    assert len(calls) == (nz + depth - 1) // depth
+    assert all(slab.nz == depth and shape[1] == depth for slab, shape in calls)
+    assert len({slab for slab, _ in calls}) == 1
+    if requested is None:
+        assert depth <= 16 and len(calls) == (nz + 15) // 16
+    expected = np.broadcast_to(1 + np.arange(nz) // depth, actual.shape)
+    np.testing.assert_array_equal(actual, expected)
+
+
+@pytest.mark.parametrize("nz", [22, 33])
+@pytest.mark.parametrize("kind", ["integer", "fractional", "outside", "one_row"])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+def test_balanced_automatic_axial_slabs_keep_shifted_physical_coordinates(nz, kind, backend):
+    grid, detector, geometry, data = scan(kind)
+    grid = replace(grid, nz=nz)
+    detector = replace(detector, nv=1 if kind == "one_row" else nz + 6)
+    geometry = ParallelGeometry(grid, detector, geometry.angles)
+    data = np.random.default_rng(132).normal(size=(5, detector.nv, detector.nu)).astype(np.float32)
+    reference = np.asarray(
+        fbp(geometry, grid, detector, data, config=FBPConfig(backprojector="jax"))
+    )
+    actual = fbp_host(
+        geometry,
+        grid,
+        detector,
+        data,
+        config=FBPHostConfig(views_per_batch=3, backprojector=backend),
+    )
+    np.testing.assert_allclose(actual, reference, atol=4e-6, rtol=5e-5)
 
 
 def test_host_slabs_read_and_convert_only_bounded_view_batches():
@@ -288,4 +350,62 @@ def test_host_slabs_recover_independent_gaussian_attenuation(length_scale):
         data,
         config=FBPHostConfig(slices_per_batch=3, views_per_batch=17),
     )
+    assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.01
+
+
+@pytest.mark.parametrize("length_scale", [0.5, 2.0])
+@pytest.mark.parametrize("fractional", [False, True])
+def test_balanced_automatic_slabs_recover_independent_off_axis_gaussian(length_scale, fractional):
+    nz, views = (33 if fractional else 22), 121
+    grid = Grid(
+        64,
+        48,
+        nz,
+        0.8 * length_scale,
+        1.2 * length_scale,
+        (0.7 if fractional else 1) * length_scale,
+        vol_center=(
+            1.2 * length_scale,
+            -0.4 * length_scale,
+            (0.31 if fractional else 0) * length_scale,
+        ),
+    )
+    detector = Detector(
+        96,
+        nz + 6,
+        0.9 * length_scale,
+        length_scale,
+        (0.23 * length_scale, (-0.19 if fractional else 0) * length_scale),
+    )
+    angles = 7 + np.arange(views) * 180 / views
+    geometry = ParallelGeometry(grid, detector, angles)
+    theta = np.deg2rad(angles)
+    mx, my, mz = np.array([3, -4, 1.3]) * length_scale
+    sx, sy, sz = np.array([6, 4, 4]) * length_scale
+    u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du + detector.center[0]
+    v = (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv + detector.center[1]
+    mean = mx * np.cos(theta) - my * np.sin(theta)
+    variance = sx**2 * np.cos(theta) ** 2 + sy**2 * np.sin(theta) ** 2
+    profile = (
+        np.sqrt(2 * np.pi)
+        * sx
+        * sy
+        / np.sqrt(variance[:, None])
+        * np.exp(-0.5 * (u[None] - mean[:, None]) ** 2 / variance[:, None])
+    )
+    data = (profile[:, None] * np.exp(-0.5 * ((v[None, :, None] - mz) / sz) ** 2)).astype(
+        np.float32
+    )
+    x = (np.arange(grid.nx) - (grid.nx - 1) / 2) * grid.vx + grid.vol_center[0]
+    y = (np.arange(grid.ny) - (grid.ny - 1) / 2) * grid.vy + grid.vol_center[1]
+    z = (np.arange(grid.nz) - (grid.nz - 1) / 2) * grid.vz + grid.vol_center[2]
+    truth = np.exp(
+        -0.5
+        * (
+            ((x[:, None, None] - mx) / sx) ** 2
+            + ((y[None, :, None] - my) / sy) ** 2
+            + ((z[None, None] - mz) / sz) ** 2
+        )
+    )
+    actual = fbp_host(geometry, grid, detector, data)
     assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.01

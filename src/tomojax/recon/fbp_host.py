@@ -34,10 +34,11 @@ class FBPHostConfig:
 
     The entire input and output remain in host storage. For built-in parallel
     geometry, a slab is ``slices_per_batch`` axial (z) slices with only the
-    detector rows they need (16 when ``None``). For laminography and other
-    geometry, a slab is ``slices_per_batch`` x-slices and every view batch passes
-    through the device once per slab; ``None`` sizes slabs to about half of the
-    free device memory, so a volume that fits is reconstructed in one pass.
+    detector rows they need (balanced slabs of at most 16 when ``None``). For
+    laminography and other geometry, a slab is ``slices_per_batch`` x-slices;
+    every view batch passes through the device once per slab. ``None`` sizes
+    slabs to about half of the free device memory, so a volume that fits is
+    reconstructed in one pass.
     Projection rows are read and transferred only ``views_per_batch`` views at
     a time, keeping at most two input batches on the device for either layout.
     Runtime/compiler caches add memory beyond these arrays. ``scale`` has the
@@ -49,6 +50,14 @@ class FBPHostConfig:
     filter: str = "ramp"
     scale: float | None = None
     backprojector: Literal["auto", "jax", "pallas"] = "auto"
+
+
+def _axial_depth(nz: int, requested: int | None) -> int:
+    """Balance automatic slabs without exceeding 16 slices or adding a slab."""
+    if requested is not None:
+        return min(requested, nz)
+    batches = (nz + 15) // 16
+    return (nz + batches - 1) // batches
 
 
 def _slab_layout(
@@ -132,7 +141,7 @@ def fbp_host(
     backend = "pallas" if cuda and cfg.backprojector != "jax" else "jax"
     if type(geometry) is not ParallelGeometry:
         return _general_slabs(poses, grid, detector, projections, cfg, out, backend, slices, views)
-    depth = min(16 if slices is None else slices, grid.nz)
+    depth = _axial_depth(grid.nz, slices)
     local_grid, local_detector, first, step, integer = _slab_layout(grid, detector, depth)
     rows = local_detector.nv
     ramp = rfft_filter_array(cfg.filter, local_detector.nu, detector.du, jnp.float32)
