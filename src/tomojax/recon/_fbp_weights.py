@@ -69,7 +69,9 @@ def fbp_weights(poses: np.ndarray) -> FBPWeights:
     angles = np.arctan2(ray @ other, ray @ reference)
 
     order = np.argsort(angles)
-    unwrapped = np.unwrap(angles[order])
+    # Locate the missing arc before unwrapping: an interior gap larger than pi
+    # would otherwise fold backwards and create negative quadrature weights.
+    unwrapped = angles[order]
     gaps = np.diff(unwrapped)
     # The largest gap between sorted views marks where the scanned arc starts.
     wrap_gap = _TWO_PI - (unwrapped[-1] - unwrapped[0])

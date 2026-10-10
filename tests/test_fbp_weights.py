@@ -22,10 +22,37 @@ def parallel(angles: np.ndarray) -> np.ndarray:
     return poses_for(ParallelGeometry(grid, Detector(4, 4, 1.0, 1.0), angles), len(angles))
 
 
-def test_uniform_half_turn_reduces_to_standard_fbp() -> None:
-    weights = fbp_weights(parallel(np.linspace(0, 180, 90, endpoint=False)))
+@pytest.mark.parametrize("start", [-179.0, -100.0, -1.0, 0.0, 7.0, 13.0, 37.0, 150.0, 359.0])
+@pytest.mark.parametrize("order", ["forward", "reverse", "shuffled"])
+def test_uniform_half_turn_reduces_to_standard_fbp(start, order) -> None:
+    angles = start + np.linspace(0, 180, 90, endpoint=False)
+    if order == "reverse":
+        angles = angles[::-1]
+    elif order == "shuffled":
+        angles = angles[np.random.default_rng(574).permutation(len(angles))]
+    weights = fbp_weights(parallel(angles))
     assert weights.separable and not weights.full_turn
     np.testing.assert_allclose(weights.view_scale, np.pi / 90, rtol=1e-5)
+    np.testing.assert_allclose(weights.arc_length, np.pi, rtol=1e-6)
+
+
+@pytest.mark.parametrize("start", [7.0, 150.0, -100.0])
+@pytest.mark.parametrize("span", [30.0, 90.0, 180.0])
+@pytest.mark.parametrize("tilt", [0.0, 30.0])
+def test_offset_short_arcs_have_positive_physical_midpoint_quadrature(start, span, tilt):
+    grid = Grid(4, 4, 4, 1, 1, 1)
+    detector = Detector(4, 4, 1, 1)
+    angles = start + np.linspace(0, span, 60, endpoint=False)
+    geometry = (
+        ParallelGeometry(grid, detector, angles)
+        if tilt == 0
+        else LaminographyGeometry(grid, detector, angles, tilt_deg=tilt)
+    )
+    weights = fbp_weights(poses_for(geometry, len(angles)))
+    assert not weights.full_turn
+    np.testing.assert_allclose(weights.params[:, 5], np.deg2rad(span) / 60, rtol=1e-5)
+    np.testing.assert_allclose(weights.arc_length, np.deg2rad(span), rtol=1e-6)
+    assert np.all((weights.params[:, 4] > 0) & (weights.params[:, 4] < weights.arc_length))
 
 
 def test_full_turn_counts_each_frequency_twice() -> None:
@@ -75,12 +102,12 @@ def test_degenerate_scans_are_rejected() -> None:
         fbp_weights(parallel(np.zeros(5)))
 
 
-def gaussian_case(span: float, n_views: int) -> tuple:
+def gaussian_case(span: float, n_views: int, start: float = 0.0) -> tuple:
     """Analytic projections of an off-centre Gaussian in a 30-degree laminography scan."""
     n, sigma, centre = 40, 3.0, np.array([2.0, -3.0, 1.5])
     grid = Grid(n, n, n, 1.0, 1.0, 1.0)
     detector = Detector(64, 64, 1.0, 1.0)
-    angles = np.linspace(0, span, n_views, endpoint=False)
+    angles = start + np.linspace(0, span, n_views, endpoint=False)
     geometry = LaminographyGeometry(grid, detector, angles, tilt_deg=30)
     poses = poses_for(geometry, n_views)
     u = np.arange(detector.nu) - (detector.nu - 1) / 2
@@ -117,8 +144,9 @@ def measured_truth(truth: np.ndarray, poses: np.ndarray) -> np.ndarray:
 
 
 @pytest.mark.parametrize(("span", "n_views"), [(360.0, 120), (180.0, 60)])
-def test_tilted_fbp_recovers_every_measured_frequency(span: float, n_views: int) -> None:
-    geometry, grid, detector, poses, projections, truth = gaussian_case(span, n_views)
+@pytest.mark.parametrize("start", [0.0, 7.0])
+def test_tilted_fbp_recovers_every_measured_frequency(span: float, n_views: int, start) -> None:
+    geometry, grid, detector, poses, projections, truth = gaussian_case(span, n_views, start)
     actual = np.asarray(
         fbp(
             geometry,

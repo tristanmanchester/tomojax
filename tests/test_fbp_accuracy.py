@@ -309,3 +309,32 @@ def test_automatic_fbp_tiles_bound_both_input_and_output_working_sets(
         jax.ShapeDtypeStruct((n_views, detector.nv, detector.nu), jnp.float32),
     )
     assert chosen == [expected]
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("vz", [1.0, 0.9])
+def test_medium_working_set_fbp_recovers_independent_off_axis_gaussian(vz):
+    import jax
+
+    if jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    grid = Grid(512, 512, 11, 1.0, 1.0, vz)
+    detector = Detector(767, 11, 1.0, 1.0, (0.23, 0.0))
+    angles = np.linspace(7, 187, 181, endpoint=False)
+    geometry = ParallelGeometry(grid, detector, angles)
+    x = np.arange(grid.nx) - (grid.nx - 1) / 2
+    y = np.arange(grid.ny) - (grid.ny - 1) / 2
+    z = (np.arange(grid.nz) - (grid.nz - 1) / 2) * vz
+    u = detector.center[0] + np.arange(detector.nu) - (detector.nu - 1) / 2
+    v = np.arange(detector.nv) - (detector.nv - 1) / 2
+    theta = np.deg2rad(angles)
+    sx, sy, sz = 8.0, 10.0, 4.0
+    mean = 100 * np.cos(theta) + 70 * np.sin(theta)
+    variance = (sx * np.cos(theta)) ** 2 + (sy * np.sin(theta)) ** 2
+    profile = np.sqrt(2 * np.pi) * sx * sy / np.sqrt(variance[:, None])
+    profile = profile * np.exp(-0.5 * (u[None, :] - mean[:, None]) ** 2 / variance[:, None])
+    data = (profile[:, None, :] * np.exp(-0.5 * (v / sz) ** 2)[None, :, None]).astype(np.float32)
+    truth = np.exp(-0.5 * (((x[:, None] - 100) / sx) ** 2 + ((y[None, :] + 70) / sy) ** 2))
+    truth = truth[:, :, None] * np.exp(-0.5 * (z / sz) ** 2)[None, None, :]
+    actual = np.asarray(fbp(geometry, grid, detector, data))
+    assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.008
