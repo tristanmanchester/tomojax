@@ -415,8 +415,13 @@ def main() -> int:
         for library in args.libraries:
             record = _run_worker(library, gpus, args, workers)
             failed |= "failed" in record
-            # Every worker's record so far, this call's or an earlier one's.
-            summary["records"] = [json.loads(f.read_text()) for f in sorted(workers.glob("*.json"))]
+            # Every worker's current record, this call's or an earlier one's; the
+            # interrupted attempts moved aside are listed apart, not measured here.
+            current = [f for f in sorted(workers.glob("*.json")) if ".attempt-" not in f.name]
+            summary["records"] = [json.loads(f.read_text()) for f in current]
+            summary["earlier_attempts"] = sorted(
+                f.name for f in workers.glob("*.json") if ".attempt-" in f.name
+            )
             _write(args.output, summary)
             if record.get("failed") == "terminated":  # by our own supervisor: stop here
                 return 1
