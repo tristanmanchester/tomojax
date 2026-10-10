@@ -12,6 +12,7 @@ the device.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from functools import lru_cache
 from typing import ClassVar, Literal
 
 import jax
@@ -207,7 +208,7 @@ class Zingers(Step):
             for i in range(self.size)
             for j in range(self.size)
         ]
-        median = _median_of(shifted)
+        median = _bitonic_median_of(shifted) if self.size >= 5 else _median_of(shifted)
         return jnp.where(batch - median > self.threshold, median, batch)
 
 
@@ -277,6 +278,56 @@ def _median_of(window: list[jax.Array]) -> jax.Array:
             low, high = window[i], window[i + 1]
             window[i], window[i + 1] = jnp.minimum(low, high), jnp.maximum(low, high)
     return window[n // 2] if n % 2 else 0.5 * (window[n // 2 - 1] + window[n // 2])
+
+
+def _bitonic_median_of(window: list[jax.Array]) -> jax.Array:
+    """An odd window's median, without tracing comparisons unrelated to it.
+
+    Larger spatial windows benefit from a shallower bitonic network
+    instead of quadratic odd-even sorting. Padded positive-infinity wires are
+    symbolic, not image arrays. Every real input reaches the median expression,
+    so NaNs propagate even after redundant infinity comparisons are removed.
+    """
+    operations, output = _median_network(len(window))
+    values = dict(enumerate(window))
+    for dest, minimum, a, b in operations:
+        compare = jnp.minimum if minimum else jnp.maximum
+        values[dest] = compare(values[a], values[b])
+    return values[output]
+
+
+@lru_cache(maxsize=64)
+def _median_network(n: int) -> tuple[tuple[tuple[int, bool, int, int], ...], int]:
+    """Static median-only instructions; wire -1 represents positive infinity."""
+    width = 1 << (n - 1).bit_length()
+    wires = list(range(n)) + [-1] * (width - n)
+    operations: list[tuple[bool, int, int]] = []
+    stage = 2
+    while stage <= width:
+        distance = stage // 2
+        while distance:
+            for i in range(width):
+                j = i ^ distance
+                if j <= i:
+                    continue
+                a, b = wires[i], wires[j]
+                if a == -1 or b == -1:
+                    low, high = (b if a == -1 else a), -1
+                else:
+                    low, high = n + len(operations), n + len(operations) + 1
+                    operations.extend(((True, a, b), (False, a, b)))
+                wires[i], wires[j] = (high, low) if i & stage else (low, high)
+            distance //= 2
+        stage *= 2
+    output = wires[n // 2]
+    live = {output}
+    needed: list[tuple[int, bool, int, int]] = []
+    for k in reversed(range(len(operations))):
+        if n + k in live:
+            minimum, a, b = operations[k]
+            needed.append((n + k, minimum, a, b))
+            live.update((a, b))
+    return tuple(reversed(needed)), output
 
 
 def _snake(name: str) -> str:
