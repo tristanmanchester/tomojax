@@ -106,6 +106,11 @@ def _apply_pose_proposal_stage(
             "proposal_status": "skipped",
             "proposal_reason": "proposal stage has no active pose DOFs",
         }
+    if not bool(jnp.any(x_lvl)):
+        return pose_params, {
+            "proposal_status": "skipped",
+            "proposal_reason": "zero volume has no pose evidence",
+        }
     base = BaseGeometryArrays.from_geometry(
         geometry,
         detector,
@@ -199,6 +204,7 @@ def _run_proposal_stage(
         "loss_before": loss_before,
         "loss_after": float(proposal_loss) if proposal_loss is not None else None,
         "proposal_status": str(proposal_info.get("proposal_status") or "scored"),
+        "proposal_reason": str(proposal_info.get("proposal_reason") or ""),
         "proposal_best_name": str(proposal_info.get("best_name") or ""),
         "proposal_best_index": int(proposal_info.get("best_index") or 0),
         "proposal_improved": bool(proposal_info.get("improved") or False),

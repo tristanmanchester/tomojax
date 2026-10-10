@@ -647,23 +647,27 @@ def test_cone_proposals_use_physical_rays_and_report_backend(
     assert selected and set(selected) == {"cuda" if backend == "pallas" else "jax"}
 
 
-@pytest.mark.numerical
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
-def test_public_cone_proposal_stage_recovers_known_pose(cone_proposal_case, backend):
-    if backend == "pallas" and jax.default_backend() != "gpu":
-        pytest.skip("CUDA required")
-    geometry, grid, detector, poses, _, volume, truth, targets = cone_proposal_case
+def _cone_proposal_config(backend):
     schedule = AlignmentSchedule(
         "cone_proposal", (AlignmentStage(
             "translation", ("dx",), "fixed_volume", "gn", stage_role="proposal",
             differentiability="performance_only", maxiter=1,
         ),),
     )
-    cfg = AlignConfig(
+    return AlignConfig(
         schedule=schedule, ray_integrator="joseph", projector_backend=backend,
         pose_translation_frame="detector", seed_translations=False, tv_weight=0,
         views_per_batch=2,
     )
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+def test_public_cone_proposal_stage_recovers_known_pose(cone_proposal_case, backend):
+    if backend == "pallas" and jax.default_backend() != "gpu":
+        pytest.skip("CUDA required")
+    geometry, grid, detector, poses, _, volume, truth, targets = cone_proposal_case
+    cfg = _cone_proposal_config(backend)
     resume = AlignMultiresResumeState(
         x=volume, pose_params=jnp.zeros((len(poses), 6)),
         pose_translation_frame="detector", ray_integrator="joseph",
@@ -678,3 +682,37 @@ def test_public_cone_proposal_stage_recovers_known_pose(cone_proposal_case, back
     # trade the pose correction for an image shift or reconstruction change.
     np.testing.assert_array_equal(result_volume, volume)
     assert info["outer_stats"][0]["loss_after"] < 1e-7
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("parallel", [False, True])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+def test_zero_volume_proposal_retains_poses_without_scoring(cone_proposal_case, parallel, backend):
+    if backend == "pallas" and jax.default_backend() != "gpu":
+        pytest.skip("CUDA required")
+    geometry, grid, detector, poses, _, volume, _, targets = cone_proposal_case
+    if parallel:
+        geometry = ParallelGeometry(grid, detector, geometry.angles)
+    volume = jnp.zeros_like(volume)
+    initial = jnp.zeros((len(poses), 6)).at[:, 3].set(jnp.arange(len(poses)) * 0.1)
+    resume = AlignMultiresResumeState(
+        x=volume, pose_params=initial,
+        pose_translation_frame="detector", ray_integrator="joseph",
+    )
+    checkpoints = []
+    result_volume, params, info = align_multires(
+        geometry, grid, detector, targets, factors=(1,),
+        config=_cone_proposal_config(backend), resume_state=resume,
+        checkpoint_callback=checkpoints.append,
+    )
+    # The level checkpoint precedes the existing final least-motion gauge:
+    # an empty parallel volume permits that reporting transform, not a pose fit.
+    np.testing.assert_array_equal(checkpoints[0].pose_params, initial)
+    if not parallel:
+        np.testing.assert_array_equal(params, initial)
+    np.testing.assert_array_equal(result_volume, volume)
+    stat = info["outer_stats"][0]
+    assert stat["proposal_status"] == "skipped"
+    assert stat["proposal_reason"] == "zero volume has no pose evidence"
+    assert stat["proposal_candidate_count"] == 0
+    assert stat["proposal_backend_provenance"] == {}
