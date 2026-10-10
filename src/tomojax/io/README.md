@@ -20,6 +20,11 @@ not treated as absent. Ambiguous candidates require an explicit metadata path.
 
 ## TIFF angle sidecars
 
+TIFF frame and projection loading reads every top-level grayscale page of a
+file, including separate series. Folders are naturally sorted by filename,
+then pages retain their file order. All pages must be two-dimensional and the
+same size; RGB/RGBA pages are not interpreted as extra detector views.
+
 `tomojax.io.api.load_angles` reads a one-dimensional NPY vector or the first
 column of text/CSV in degrees, preserving acquisition order. Ingestion and TIFF
 preprocessing use this same parser. It accepts leading headers, blank lines,

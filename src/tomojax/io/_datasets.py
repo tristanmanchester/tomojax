@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
-import imageio.v3 as iio
 import numpy as np
 
 from tomojax._data import (
@@ -24,7 +23,7 @@ from tomojax._data import (
     validate_nxtomo,
 )
 from tomojax.core.geometry import Detector, Grid, ScanGeometry
-from tomojax.io._tiff import TIFF_SUFFIXES, tiff_files
+from tomojax.io._tiff import TIFF_SUFFIXES, read_tiff_frames
 
 __all__ = [
     "LoadedNXTomo",
@@ -340,16 +339,9 @@ def load_tiff_stack(
     geometry_type: str = "parallel",
     geometry_metadata: Mapping[str, Any] | None = None,
 ) -> ProjectionDataset:
-    """Load a TIFF projection stack with explicit view ``angles``, in degrees."""
+    """Load grayscale TIFF pages with explicit view ``angles``, in degrees."""
     input_path = Path(path)
-    files = tiff_files(input_path)
-    if not files:
-        raise ValueError(f"no TIFF files found under {input_path}")
-
-    projections = np.stack(
-        [np.asarray(cast("object", iio.imread(file)), dtype=np.float32) for file in files],
-        axis=0,
-    )
+    projections = read_tiff_frames(input_path).astype(np.float32, copy=False)
     angles = np.asarray(angles, dtype=np.float32)
     if angles.ndim != 1:
         raise ValueError("angles must be one-dimensional")

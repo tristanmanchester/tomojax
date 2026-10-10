@@ -5,10 +5,9 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
-from typing import cast
 
-import imageio.v3 as iio
 import numpy as np
+from tifffile import TiffFile
 
 TIFF_SUFFIXES = frozenset({".tif", ".tiff"})
 _NATURAL_SORT_PARTS = re.compile(r"(\d+)")
@@ -45,11 +44,21 @@ def tiff_files(path: Path) -> list[Path]:
 
 
 def read_tiff_frames(path: Path | str) -> np.ndarray:
-    """The frames of a TIFF file or folder, ``(frames, rows, columns)`` in the files' dtype."""
+    """Grayscale TIFF pages as ``(frames, rows, columns)`` in the files' dtype.
+
+    Files in a folder are naturally sorted, then every top-level page is read
+    in file order, including pages in separate TIFF series. Colour images and
+    unequal detector sizes are rejected rather than interpreted as view axes.
+    """
     files = tiff_files(Path(path))
     if not files:
         raise ValueError(f"no TIFF files found under {path}")
-    frames = [np.asarray(cast("object", iio.imread(file))) for file in files]
+    frames: list[np.ndarray] = []
+    for file in files:
+        with TiffFile(file) as tiff:
+            frames.extend(np.asarray(page.asarray()) for page in tiff.pages)
+    if not frames:
+        raise ValueError(f"no TIFF frames found under {path}")
     shapes = {frame.shape for frame in frames}
     if len(shapes) != 1 or len(next(iter(shapes))) != 2:
         raise ValueError(
