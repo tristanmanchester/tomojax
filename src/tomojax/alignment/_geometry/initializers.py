@@ -289,11 +289,20 @@ def sinogram_det_u_seed(
     width), ``drop`` the low frequencies left out. None when the views cover
     less than a half turn.
     """
-    angles = np.asarray(angles_deg, np.float64)
-    order = np.argsort(angles)
-    first = angles[order] - angles[order][0] < 180.0 - 1e-6
+    raw_angles = np.asarray(angles_deg, np.float64)
+    angles = np.mod(raw_angles, 360.0)
+    order = np.argsort(angles, kind="stable")
+    # Cut the circular sequence at its unobserved arc, not at degree zero.
+    # Individual whole turns and acquisition order cannot change the views
+    # used by the half-turn sinogram. Equal gaps keep the lowest-angle start.
+    gaps = np.diff(np.r_[angles[order[-1]] - 360.0, angles[order]])
+    roundoff = 8 * np.spacing(max(360.0, float(np.max(np.abs(raw_angles)))))
+    start = int(np.flatnonzero(gaps >= np.max(gaps) - roundoff)[0])
+    order = np.roll(order, -start)
+    relative = np.mod(angles[order] - angles[order[0]], 360.0)
+    first = relative < 180.0 - 1e-6
     half_turn = order[first]
-    if len(half_turn) < 16 or angles[half_turn[-1]] - angles[half_turn[0]] < 175.0:
+    if len(half_turn) < 16 or relative[first][-1] < 175.0:
         return None
     data = np.asarray(projections)
     nv, nu = data.shape[1], data.shape[2]
