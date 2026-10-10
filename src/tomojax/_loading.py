@@ -147,7 +147,8 @@ class Frames:
         each in the order given (see :mod:`tomojax.corrections`). ``epsilon``
         must be finite and positive; it bounds the flat field and transmission
         below. Views are corrected on the device in batches of ``batch_views``,
-        a positive integer (by default, 256 MiB).
+        a positive integer. Automatic batches target 256 MiB, including the
+        padded FFT arrays needed for Paganin phase retrieval.
         """
         from tomojax.corrections import correct_frames
 

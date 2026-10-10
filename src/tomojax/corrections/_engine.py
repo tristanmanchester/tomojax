@@ -21,7 +21,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ._records import Correction, Json
-from ._steps import DOMAINS, Step
+from ._steps import DOMAINS, Paganin, Step
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -69,7 +69,7 @@ def correct_frames(
     transmission_steps = tuple(s for d, s in ordered if d == "transmission")
     out = np.empty((views, rows, cols), np.float32)
     flat_stack, dark = jax.device_put(fields.flats), jax.device_put(fields.dark)
-    batch = batch_views or max(1, min(views, _BATCH_BYTES // (4 * rows * cols)))
+    batch = batch_views or _frame_batch_size(views, rows, cols, transmission_steps)
     tally = np.zeros(2, np.int64)  # non-positive transmission, non-finite results
 
     def collect(start: int, stop: int, result: jax.Array, *bad: jax.Array) -> None:
@@ -127,6 +127,16 @@ def correct_projections(
     out = np.array(projections, np.float32, copy=True)
     out, kept, records = _run_rest(out, [s for _, s in ordered], batch_views)
     return Corrected(out, records, kept)
+
+
+def _frame_batch_size(views: int, rows: int, cols: int, steps: Sequence[Step]) -> int:
+    """Automatic view batch size, accounting for padded phase-retrieval buffers."""
+    pixels = rows * cols
+    if any(isinstance(step, Paganin) for step in steps):
+        # Two padded real arrays and two complex half-spectra need about four
+        # padded real-equivalent arrays, beyond the unpadded view input.
+        pixels += 4 * (rows + 2 * (rows // 2)) * (cols + 2 * (cols // 2))
+    return max(1, min(views, _BATCH_BYTES // (4 * pixels)))
 
 
 def _validated_batch_views(value: int | None) -> int | None:
