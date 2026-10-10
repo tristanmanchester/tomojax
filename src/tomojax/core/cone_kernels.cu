@@ -6,7 +6,6 @@
 #define TC 64
 #define ULEN 112
 #define PB 32
-#define PC 32
 #define VRUN 8
 #define SEL(i, x0, x1, x2) ((i) == 0 ? (x0) : ((i) == 1 ? (x1) : (x2)))
 __device__ __forceinline__ float trif(float f, float j) { return fmaxf(1.f - fabsf(f - j), 0.f); }
@@ -335,7 +334,8 @@ __device__ __forceinline__ void add4(float* p0, float x0, float* p1, float x1, f
 // current crossing in registers and adds them to the tile only as it moves on. img is
 // path-weighted; nviews <= VMAX.
 #define VMAX 32
-extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint(
+template <int PC>
+__device__ __forceinline__ void plane_tile(
     const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
     const float* __restrict__ img, float* __restrict__ vol, int nx, int ny, int nz, int nu, int nv)
 {
@@ -486,4 +486,20 @@ extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint(
         if (jb < nb0 && jc < nc0)
             vol[(long)k * sa + (long)(b0 + jb) * sb + (long)(c0 + jc) * sc] += acc[jb + 1][jc + 1];
     }
+}
+
+extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint(
+    const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
+    const float* __restrict__ img, float* __restrict__ vol, int nx, int ny, int nz, int nu, int nv)
+{
+    plane_tile<32>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv);
+}
+
+// Wider contiguous-z tiles amortize footprints and tile boundaries; the strided
+// axis and short z extents retain the original tile and shared-memory footprint.
+extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint_wide(
+    const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
+    const float* __restrict__ img, float* __restrict__ vol, int nx, int ny, int nz, int nu, int nv)
+{
+    plane_tile<64>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv);
 }

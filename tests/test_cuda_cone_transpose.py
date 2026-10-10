@@ -78,6 +78,47 @@ def test_cuda_cone_dense_transpose_with_anisotropy_and_a_view_chunk_tail():
 
 
 @pytest.mark.gpu
+@pytest.mark.parametrize("reverse_v", [False, True])
+def test_cuda_cone_dense_transpose_across_wide_contiguous_tiles(reverse_v):
+    # A thin, long odd grid exercises multiple wide z tiles and their tail
+    # without making the independent forward-basis matrix prohibitively large.
+    grid = Grid(5, 4, 129, 0.7, 1.1, 0.3, vol_center=(0.2, -0.1, 0.3))
+    detector = Detector(7, 131, 1.3, 0.4, center=(0.3, -0.2))
+    frames = [
+        _frame(direction, 0.13, reverse_v=reverse_v)
+        for direction in ((1, 1, 0), (1, 0, 1), (1, 1, 1))
+    ]
+    _check_dense_transpose(grid, detector, frames)
+
+
+@pytest.mark.gpu
+def test_cuda_cone_cgls_recovers_an_image_across_wide_tiles():
+    # A fixed-budget wide-grid image control, independent of the CUDA forward
+    # implementation. Dense basis tests separately enforce transpose accuracy.
+    grid = Grid(129, 67, 131, 0.7, 0.9, 1.1, vol_center=(0.3, -0.2, 0.1))
+    detector = Detector(193, 191, 1.0, 1.2, center=(0.2, -0.1))
+    geometry = ConeGeometry(
+        grid, detector, np.linspace(0, 360, 65, endpoint=False), ConeBeam(387, 580.5), tilt_deg=20
+    )
+    frames = np.broadcast_to(beam_frame(geometry.beam, detector), (65, 4, 3))
+    coeff = frame_coefficients(jnp.asarray(geometry.poses(), jnp.float32), frames, grid, detector)
+    x, y, z = np.ogrid[-64:65, -33:34, -65:66]
+    truth = (
+        np.exp(-((x / 27) ** 2 + (y / 15) ** 2 + (z / 28) ** 2))
+        + 0.5 * np.exp(-((x / 15 - 1) ** 2 + (y / 10 + 0.8) ** 2 + (z / 12 + 0.6) ** 2))
+    ).astype(np.float32)
+    data = cone_project(truth, coeff, grid, detector, backend="jax")
+    volume, _ = cgls(
+        geometry,
+        grid,
+        detector,
+        data,
+        config=CGLSConfig(iterations=30, projector_backend="pallas"),
+    )
+    assert np.linalg.norm(np.asarray(volume) - truth) / np.linalg.norm(truth) < 0.02
+
+
+@pytest.mark.gpu
 @pytest.mark.parametrize("yaw", [0.0, 17.0])
 def test_cuda_cone_dense_transpose_on_separable_turntable_views(yaw):
     grid = Grid(7, 6, 5, 0.7, 1.1, 0.9, vol_center=(0.2, -0.1, 0.3))

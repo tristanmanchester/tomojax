@@ -372,8 +372,10 @@ def _launch_adjoint(
             for axis in (0, 1, 2):
                 # In-plane axes (b, c): the other two, in order.
                 nb, nc = (extent[i] for i in range(3) if i != axis)
-                module.get_function("plane_adjoint")(
-                    (-(-nc // 32), -(-nb // 32), extent[axis]),
+                wide = axis != 2 and grid.nz >= 128
+                tile_c = 64 if wide else 32
+                module.get_function("plane_adjoint_wide" if wide else "plane_adjoint")(
+                    (-(-nc // tile_c), -(-nb // 32), extent[axis]),
                     (128,),
                     (*part, np.int32(axis), i_part, target, *dims),
                 )
