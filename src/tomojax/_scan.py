@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     import jax
 
     from tomojax.corrections import Correction, Step
-    from tomojax.geometry import ConeSegments, Detector, Geometry, Grid, ScanGeometry
+    from tomojax.geometry import ConeBeam, ConeSegments, Detector, Geometry, Grid, ScanGeometry
     from tomojax.io import ProjectionDataset
 
 LOG = logging.getLogger(__name__)
@@ -443,8 +443,34 @@ def rebuild(
     if grid is not None:
         changes["grid"] = grid
     if detector is not None:
-        changes["detector"] = detector(geometry.detector)
+        mapped = detector(geometry.detector)
+        if isinstance(geometry, ConeGeometry):
+            mapped, beam = _windowed_cone_detector(geometry, mapped)
+            changes["beam"] = beam
+        changes["detector"] = mapped
     return replace(geometry, **changes)
+
+
+def _windowed_cone_detector(geometry: ConeGeometry, mapped: Detector) -> tuple[Detector, ConeBeam]:
+    """Move a cropped/binned cone detector along its own pixel axes, not lab x/z."""
+    detector, beam = geometry.detector, geometry.beam
+    if mapped.center == detector.center or not any(
+        (beam.detector_roll_deg, beam.detector_pitch_deg, beam.detector_yaw_deg)
+    ):
+        return mapped, beam
+    du = mapped.center[0] - detector.center[0]
+    dv = mapped.center[1] - detector.center[1]
+    _, u_dir, v_dir = beam.detector_frame(detector)
+    shift = du * u_dir + dv * v_dir
+    # Detector.center stores lab x/z; the distance stores lab y. Moving the
+    # detector centre in its tilted plane leaves the source and object poses fixed.
+    return (
+        replace(
+            mapped,
+            center=(float(detector.center[0] + shift[0]), float(detector.center[1] + shift[2])),
+        ),
+        replace(beam, source_to_detector=float(beam.source_to_detector + shift[1])),
+    )
 
 
 def _binned_detector(detector: Detector, factor: int) -> Detector:
