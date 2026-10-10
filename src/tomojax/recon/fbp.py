@@ -82,10 +82,11 @@ def default_fbp_scale(n_views: int) -> float:
 
 
 def _bilinear_detector(image: jnp.ndarray, u: jnp.ndarray, v: jnp.ndarray) -> jnp.ndarray:
-    """Sample a (nv, nu) image at fractional pixel coordinates, zero outside."""
+    """Sample at centred pixel coordinates, excluding the integer image origin."""
     nv, nu = image.shape
     iu, iv = jnp.floor(u).astype(jnp.int32), jnp.floor(v).astype(jnp.int32)
     wu, wv = u - iu.astype(jnp.float32), v - iv.astype(jnp.float32)
+    iu, iv = iu + (nu - 1) // 2, iv + (nv - 1) // 2
     flat = image.reshape(-1)
 
     def take(row: jnp.ndarray, col: jnp.ndarray) -> jnp.ndarray:
@@ -114,8 +115,9 @@ def _backproject_voxels_jax(
         pose, image = inputs
         world_x = pose[0, 0] * x + pose[0, 1] * y + pose[0, 2] * z + pose[0, 3]
         world_z = pose[2, 0] * x + pose[2, 1] * y + pose[2, 2] * z + pose[2, 3]
-        u = (world_x - cu) / detector.du + (detector.nu - 1) / 2.0
-        v = (world_z - cv) / detector.dv + (detector.nv - 1) / 2.0
+        # Symmetric zero-padding changes integer indices, not physical fractions.
+        u = (world_x - cu) / detector.du + ((detector.nu - 1) % 2) / 2.0
+        v = (world_z - cv) / detector.dv + ((detector.nv - 1) % 2) / 2.0
         return accum + _bilinear_detector(image, u, v), None
 
     init = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)

@@ -8,6 +8,10 @@ import pytest
 
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 from tomojax.recon import FBPConfig, fbp
+
+# check-public-imports: allow-private
+from tomojax.recon._fbp_pallas import backproject_filtered_pallas
+from tomojax.recon.fbp import _backproject_voxels_jax
 from tomojax.recon.filters import fft_filter_rows, rfft_filter_array
 
 
@@ -201,10 +205,6 @@ def test_voxel_pallas_fbp_matches_jax_on_partial_blocks(
 ) -> None:
     import jax
 
-    # check-public-imports: allow-private
-    from tomojax.recon._fbp_pallas import backproject_filtered_pallas
-    from tomojax.recon.fbp import _backproject_voxels_jax
-
     if not interpret and jax.default_backend() != "gpu":
         pytest.skip("requires a CUDA GPU")
     grid = Grid(7, 6, 3, 0.8, 1.2, 1.0 if z_integer else 0.7)
@@ -338,3 +338,70 @@ def test_medium_working_set_fbp_recovers_independent_off_axis_gaussian(vz):
     truth = truth[:, :, None] * np.exp(-0.5 * (z / sz) ** 2)[None, None, :]
     actual = np.asarray(fbp(geometry, grid, detector, data))
     assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.008
+
+
+@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("z_integer", [True, False])
+@pytest.mark.parametrize("shape", [(10, 6), (11, 7)])
+@pytest.mark.parametrize("padding", [(1024, 0), (0, 1024), (512, 512)])
+def test_fbp_interpolation_preserves_physical_fractions_under_zero_padding(
+    backend, z_integer, shape, padding
+):
+    """Integer detector origins must not round away physical subpixel positions."""
+    import jax
+    from scipy.ndimage import map_coordinates
+
+    from tomojax.geometry import LaminographyGeometry
+
+    if backend == "pallas" and jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    nu, nv = shape
+    # Dyadic grid positions isolate interpolation from coordinate-grid rounding.
+    centre_z = (0.5 if nv % 2 == 0 else 0.0) if z_integer else 0.125
+    grid = Grid(
+        13, 11, 3, 0.5, 1.25, 1.0 if z_integer else 0.75, vol_center=(0.25, -0.125, centre_z)
+    )
+    detector = Detector(nu, nv, 0.875, 1.0, (0.375, 0.0 if z_integer else 0.125))
+    angles = [7.0, 31.0, 78.0, 117.0, 161.0]
+    geometry = (
+        ParallelGeometry(grid, detector, angles)
+        if z_integer
+        else LaminographyGeometry(grid, detector, angles, tilt_deg=17.0)
+    )
+    poses = np.asarray([geometry.pose_for_view(i) for i in range(5)], np.float32)
+    filtered = np.random.default_rng(739).normal(size=(5, nv, nu)).astype(np.float32)
+    coordinates = [
+        (np.arange(n) - (n - 1) / 2) * spacing + centre
+        for n, spacing, centre in zip(
+            (grid.nx, grid.ny, grid.nz), (grid.vx, grid.vy, grid.vz), grid.vol_center, strict=True
+        )
+    ]
+    xyz = np.stack(np.meshgrid(*coordinates, indexing="ij"))
+    expected = np.zeros((grid.nx, grid.ny, grid.nz))
+    for pose, image in zip(poses, filtered, strict=True):
+        world = np.einsum("ij,jxyz->ixyz", pose[:3, :3].astype(np.float64), xyz)
+        world += pose[:3, 3, None, None, None]
+        u = (world[0] - detector.center[0]) / detector.du + (nu - 1) / 2
+        v = (world[2] - detector.center[1]) / detector.dv + (nv - 1) / 2
+        expected += map_coordinates(
+            image.astype(np.float64), np.stack([v, u]), order=1, mode="grid-constant"
+        )
+
+    def run(pad_u, pad_v):
+        expanded = Detector(
+            nu + 2 * pad_u, nv + 2 * pad_v, detector.du, detector.dv, detector.center
+        )
+        rows = jnp.asarray(np.pad(filtered, ((0, 0), (pad_v, pad_v), (pad_u, pad_u))))
+
+        def call(p, y):
+            if backend == "jax":
+                return _backproject_voxels_jax(p, y, grid=grid, detector=expanded)
+            return backproject_filtered_pallas(
+                p, y, grid=grid, detector=expanded, z_integer=z_integer
+            )
+
+        return np.asarray(jax.jit(call)(jnp.asarray(poses), rows))
+
+    original, padded = run(0, 0), run(*padding)
+    np.testing.assert_allclose(padded, expected, rtol=4e-5, atol=2e-6)
+    np.testing.assert_array_equal(padded, original)

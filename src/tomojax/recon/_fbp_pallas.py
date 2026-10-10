@@ -38,9 +38,13 @@ def _backproject_filtered_kernel(
     x = ix.astype(jnp.float32) * voxel[0] + origin[0]
     y = iy.astype(jnp.float32) * voxel[1] + origin[1]
     z = iz.astype(jnp.float32) * voxel[2] + origin[2]
-    u_offset, v_offset = (nu - 1) / 2.0, (nv - 1) / 2.0
+    # Add integer pixel origins only after extracting the interpolation fractions.
+    u_offset, v_offset = ((nu - 1) % 2) / 2.0, ((nv - 1) % 2) / 2.0
     if z_integer:
-        iv = jnp.floor((z - detector_center[1]) / dv + v_offset + 0.5).astype(jnp.int32)
+        iv = (
+            jnp.floor((z - detector_center[1]) / dv + v_offset + 0.5).astype(jnp.int32)
+            + (nv - 1) // 2
+        )
 
     def body(view: jnp.ndarray, accum: jnp.ndarray) -> jnp.ndarray:
         def pose(row: int, col: int) -> jnp.ndarray:
@@ -50,8 +54,10 @@ def _backproject_filtered_kernel(
         if not z_integer:
             world_x += pose(0, 2) * z
         u = (world_x - detector_center[0]) / du + u_offset
-        iu = jnp.floor(u).astype(jnp.int32)
-        wu = u - iu.astype(jnp.float32)
+        # Keep the floating floor for fractions, without an integer round trip.
+        lower_u = jnp.floor(u)
+        wu = u - lower_u
+        iu = lower_u.astype(jnp.int32) + (nu - 1) // 2
 
         def sample(u_idx: jnp.ndarray, v_idx: jnp.ndarray) -> jnp.ndarray:
             mask = valid & (u_idx >= 0) & (u_idx < nu) & (v_idx >= 0) & (v_idx < nv)
@@ -64,8 +70,9 @@ def _backproject_filtered_kernel(
         else:
             world_z = pose(2, 0) * x + pose(2, 1) * y + pose(2, 2) * z + pose(2, 3)
             v = (world_z - detector_center[1]) / dv + v_offset
-            iv0 = jnp.floor(v).astype(jnp.int32)
-            wv = v - iv0.astype(jnp.float32)
+            lower_v = jnp.floor(v)
+            wv = v - lower_v
+            iv0 = lower_v.astype(jnp.int32) + (nv - 1) // 2
             row0 = sample(iu, iv0) * (1.0 - wu) + sample(iu + 1, iv0) * wu
             row1 = sample(iu, iv0 + 1) * (1.0 - wu) + sample(iu + 1, iv0 + 1) * wu
             value = row0 * (1.0 - wv) + row1 * wv
