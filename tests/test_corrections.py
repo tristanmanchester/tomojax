@@ -67,6 +67,22 @@ def test_load_frames_reads_the_frames_lazily(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.parametrize("index", [0, 1, -1, -2, np.int64(-1)])
+def test_lazy_frame_integer_indices_match_numpy(tmp_path: Path, index: int) -> None:
+    write_raw_nxtomo(tmp_path / "raw.nxs")
+    frames = tj.load_frames(tmp_path / "raw.nxs").cropped(slice(1, 2), slice(0, 1))
+    expected = np.asarray(frames.counts[:])
+    np.testing.assert_array_equal(frames.counts[index], expected[index])
+
+
+@pytest.mark.parametrize("index", [2, 3, -3, -4])
+def test_lazy_frame_integer_indices_out_of_bounds_raise(tmp_path: Path, index: int) -> None:
+    write_raw_nxtomo(tmp_path / "raw.nxs")
+    frames = tj.load_frames(tmp_path / "raw.nxs")
+    with pytest.raises(IndexError):
+        _ = frames.counts[index]
+
+
 def test_flats_before_and_after_are_interpolated_by_position(tmp_path: Path) -> None:
     # flat 10, four views of 8, flat 20, a dark of 0: view i sits at i + 1/2 of 4.
     frames = np.stack([np.full((2, 3), v, np.uint16) for v in (10, 8, 8, 8, 8, 20, 0)])

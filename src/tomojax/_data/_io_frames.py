@@ -74,7 +74,9 @@ class Hdf5Frames:
 
     def __getitem__(self, which: slice | int | np.ndarray) -> np.ndarray:
         if isinstance(which, int | np.integer):
-            return self[int(which) : int(which) + 1][0]
+            # Array indexing preserves NumPy's negative-index and bounds rules;
+            # a slice(-1, 0) would silently select no frames instead of the last.
+            return self[np.asarray([which], np.int64)][0]
         indices = np.asarray(self.frames[which], np.int64)
         if indices.size and np.any(np.diff(indices) <= 0):
             raise ValueError("Hdf5Frames reads frames in increasing order only")
