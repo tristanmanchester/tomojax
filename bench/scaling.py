@@ -76,8 +76,8 @@ def run_tomojax(case: dict[str, Any], volume: np.ndarray, data: np.ndarray, gpus
     for device in jax.devices("gpu")[:gpus]:  # start the runtime on each GPU, untimed
         jax.device_put(np.zeros(1, np.float32), device).block_until_ready()
 
-    def cgls() -> tuple[np.ndarray, dict[str, Any]]:
-        result = tj.reconstruct(scan, "cgls", iterations=ARGS.iterations, devices=devices)
+    def cgls(iterations: int) -> tuple[np.ndarray, dict[str, Any]]:
+        result = tj.reconstruct(scan, "cgls", iterations=iterations, devices=devices)
         keys = ("effective_iterations", "termination", "projector_backend", "projector_model")
         values = {k: result.info.get(k) for k in keys}
         plain = (str, int, float, bool, type(None))
@@ -129,12 +129,14 @@ def run_astra(case: dict[str, Any], volume: np.ndarray, data: np.ndarray, gpus: 
         out = np.empty((n, n, n), np.float32)
         return astra.projector3d.direct_BP(projector, sino, out=out)
 
-    cgls_info = {"iterations": ARGS.iterations, "gpus_it_can_use": 1}
     return {
         "forward": lambda: (forward(), {}),
         "backproject": lambda: (backproject(), {}),
         "fdk": lambda: (algorithm("FDK_CUDA"), {}),
-        "cgls": lambda: (algorithm("CGLS3D_CUDA", ARGS.iterations), cgls_info),
+        "cgls": lambda iterations: (
+            algorithm("CGLS3D_CUDA", iterations),
+            {"iterations": iterations, "gpus_it_can_use": 1},
+        ),
     }
 
 
@@ -152,9 +154,9 @@ def run_tigre(case: dict[str, Any], volume: np.ndarray, data: np.ndarray, gpus: 
     small, small_angles = tigre_geometry(setup(8, 4))
     tigre.Ax(np.ones((8, 8, 8), np.float32), small, small_angles, gpuids=ids)
 
-    def cgls() -> tuple[np.ndarray, dict[str, Any]]:
+    def cgls(iterations: int) -> tuple[np.ndarray, dict[str, Any]]:
         geo.check_geo(angles)
-        alg = CGLS(data, geo, angles, ARGS.iterations, gpuids=ids, verbose=False)
+        alg = CGLS(data, geo, angles, iterations, gpuids=ids, verbose=False)
         alg.run_main_iter()
         residuals = np.asarray(alg.l2l, np.float64).ravel()
         info = {
@@ -178,7 +180,7 @@ def run_tigre(case: dict[str, Any], volume: np.ndarray, data: np.ndarray, gpus: 
 
 
 RUNNERS = {"tomojax": run_tomojax, "astra": run_astra, "tigre": run_tigre}
-ARGS: argparse.Namespace  # the command line, for the runners' iteration count
+ARGS: argparse.Namespace  # the command line
 PROJECTORS: list[Callable[[], None]] = []  # cleanup after a worker's operations
 
 
@@ -197,22 +199,39 @@ def _worker(
     }
     _write(out, record)
     try:
-        ops: dict[str, Op] = RUNNERS[library](case, volume, data, gpus)
+        ops: dict[str, Any] = RUNNERS[library](case, volume, data, gpus)
         for operation, call in ops.items():
             if args.operations and operation not in args.operations:
                 continue
-            if operation == "cgls" and args.cgls_repeats is not None:
-                repeats = args.cgls_repeats
-            else:
-                repeats = args.repeats
-            record["operations"].append(_time(operation, call, repeats, sampler, volume, data))
-            _write(out, record)
+            if operation != "cgls":
+                calls = [(operation, call, args.repeats, {})]
+            else:  # one fresh, independent solve per iteration budget: error against time
+                repeats = args.cgls_repeats if args.cgls_repeats is not None else args.repeats
+                calls = [
+                    ("cgls", (lambda b=budget, c=call: c(b)), repeats, {"iterations": budget})
+                    for budget in _budgets(args)
+                ]
+            for name, run, repeats, extra in calls:
+                entry: dict[str, Any] = {"operation": name, **extra}
+                record["operations"].append(entry)
+
+                def save(partial: dict[str, Any], entry: dict[str, Any] = entry) -> None:
+                    entry.clear()
+                    entry.update(partial)
+                    _write(out, record)
+
+                save({**_time(name, run, repeats, sampler, volume, data, save), **extra})
         record["complete"] = True
         _write(out, record)
     finally:
         for cleanup in PROJECTORS:
             cleanup()
         sampler.close()
+
+
+def _budgets(args: argparse.Namespace) -> list[int]:
+    """CGLS's iteration budgets: ``--cgls-budgets``, else ``--iterations``."""
+    return sorted(set(args.cgls_budgets or [args.iterations]))
 
 
 def _time(
@@ -222,17 +241,50 @@ def _time(
     sampler: GpuSampler,
     volume: np.ndarray,
     data: np.ndarray,
+    save: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
-    """One operation's first call, ``repeats`` warm calls, GPU use, error and diagnostics."""
+    """One operation's first call, ``repeats`` warm calls, GPU use, error and diagnostics.
+
+    ``save`` gets the record so far after every call, so a timeout keeps them.
+    """
     start = time.perf_counter()
     result, info = call()
     first_stop = time.perf_counter()
-    warm = []
+    warm: list[float] = []
+    if save is not None:
+        save(
+            _record(
+                operation, start, first_stop, first_stop, warm, sampler, info, result, volume, data
+            )
+        )
     for _ in range(repeats):
         begin = time.perf_counter()
         result, info = call()
         warm.append(time.perf_counter() - begin)
+        if save is not None:
+            now = time.perf_counter()
+            save(
+                _record(
+                    operation, start, first_stop, now, warm, sampler, info, result, volume, data
+                )
+            )
     stop = time.perf_counter()
+    return _record(operation, start, first_stop, stop, warm, sampler, info, result, volume, data)
+
+
+def _record(
+    operation: str,
+    start: float,
+    first_stop: float,
+    stop: float,
+    warm: list[float],
+    sampler: GpuSampler,
+    info: dict[str, Any],
+    result: np.ndarray,
+    volume: np.ndarray,
+    data: np.ndarray,
+) -> dict[str, Any]:
+    """The record of ``operation``'s calls so far."""
     record: dict[str, Any] = {
         "operation": operation,
         "first_call_seconds": first_stop - start,
@@ -268,6 +320,7 @@ def _settings(args: argparse.Namespace) -> dict[str, Any]:
         "repeats": args.repeats,
         "cgls_repeats": args.cgls_repeats,
         "operations": sorted(args.operations or []),
+        "cgls_budgets": _budgets(args),
         "case": [args.case.name, args.case.stat().st_size],
         "code": file_hashes(code),
         "machine": _provenance(),
@@ -311,6 +364,10 @@ def main() -> int:
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument("--repeats", type=int, default=3, help="Warm calls of each operation")
     parser.add_argument("--cgls-repeats", type=int, help="Warm CGLS calls (default --repeats)")
+    parser.add_argument(
+        "--cgls-budgets", type=int, nargs="+",
+        help="CGLS iteration budgets, each a fresh solve (default: --iterations)",
+    )  # fmt: skip
     parser.add_argument("--gpus", type=int, nargs="+", default=[1])
     parser.add_argument("--libraries", nargs="+", choices=LIBRARIES, default=list(LIBRARIES))
     parser.add_argument("--output", type=Path, required=True)
@@ -336,6 +393,7 @@ def main() -> int:
         "iterations": args.iterations,
         "repeats": args.repeats,
         "cgls_repeats": args.cgls_repeats,
+        "cgls_budgets": _budgets(args),
         "environment": environment(),
         "records": [],
     }
@@ -385,7 +443,8 @@ def _run_worker(library: str, gpus: int, args: argparse.Namespace, workers: Path
         _write(out, record)
     for op in record.get("operations", []):
         error = f"  error {op['error']:.4f}" if "error" in op else ""
-        print(f"{library:8s} {gpus} GPU  {op['operation']:14s} {op['best_seconds']:8.3f} s{error}")
+        name = op["operation"] + (f" {op['iterations']}" if "iterations" in op else "")
+        print(f"{library:8s} {gpus} GPU  {name:14s} {op['best_seconds']:8.3f} s{error}")
     if "failed" in record:
         print(f"{library:8s} {gpus} GPU  failed: {record['failed']}", flush=True)
     return record

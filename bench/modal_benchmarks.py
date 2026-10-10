@@ -49,7 +49,7 @@ BUILD_PINS = [
     "pytest==8.4.2", "iniconfig==2.3.0", "pluggy==1.6.0", "packaging==26.2", "pygments==2.20.0",
 ]  # fmt: skip
 # What a run's results depend on: a dirty copy of any of these would not be HEAD's.
-TRACKED = ["src", "bench", "tests/test_devices.py", "pyproject.toml", "uv.lock"]
+TRACKED = ["src", "bench", "tests", "pyproject.toml", "uv.lock"]
 
 
 def _git(*args: str) -> str:
@@ -102,8 +102,8 @@ if modal.is_local():  # the container imports this module too, without the files
     image = image.run_commands(f"pip install -c /root/constraints.txt '/root/{WHEEL.name}[cuda12]'")
     ignore = ["results/**", "reference/**", "phantoms/**", "**/__pycache__/**"]
     image = image.add_local_dir(ROOT / "bench", "/root/bench", copy=True, ignore=ignore)
-    image = image.add_local_file(
-        ROOT / "tests" / "test_devices.py", "/root/tests/test_devices.py", copy=True
+    image = image.add_local_dir(
+        ROOT / "tests", "/root/tests", copy=True, ignore=["**/__pycache__/**"]
     )
 app = modal.App("tomojax-benchmarks", image=image)
 data = modal.Volume.from_name("tomojax-walnut", create_if_missing=True)
@@ -163,7 +163,21 @@ def _case_name(size: int, views: int) -> str:
 
 @app.function(volumes={"/data": data}, timeout=4 * 3600, cpu=4, memory=48 * 1024)
 def make_cases(sizes: list[int], views: int) -> None:
-    """``scaling.py``'s phantom and exact data for each size, cached in the volume (CPU only)."""
+    """``scaling.py``'s phantoms and the walnut's decoded projections, cached in the volume (CPU).
+
+    Decoding the walnut's TIFFs from the volume took 8 minutes of each GPU step
+    in the rehearsal; the cache is one file per selection of views.
+    """
+    for orbits, every in (((2,), 1), ((1, 2, 3), 4)):
+        cache = Path(_walnut_cache(orbits, every))
+        if not cache.exists():
+            code = (
+                "from pathlib import Path; from walnut import load_orbits; "
+                f"load_orbits(Path('/data/Walnut1'), {list(orbits)}, {every}, "
+                f"cache=Path('{cache}'))"
+            )
+            subprocess.run(["python", "-c", code], cwd="/root/bench", check=True)
+            data.commit()
     cases = Path("/data/cases")
     cases.mkdir(parents=True, exist_ok=True)
     for size in sizes:
@@ -219,7 +233,7 @@ def _check(gpus: int, out: Path, *, timeout: float) -> str:
 
 
 @app.function(volumes={"/data": data}, cpu=16, memory=96 * 1024, max_containers=1)
-def benchmark(gpus: list[int], sizes: list[int], views: int, iterations: int, run: dict) -> None:
+def benchmark(gpus: list[int], sizes: list[int], views: int, run: dict) -> None:
     """The tests, then every comparison, most valuable first, each saved as it comes.
 
     One deadline, ``run["max_hours"]`` after the start, bounds every step: each
@@ -274,7 +288,10 @@ def benchmark(gpus: list[int], sizes: list[int], views: int, iterations: int, ru
     if status.startswith("skipped"):
         return
     _require_smoke(status, smoke)
-    for name, command, limit, cpu_jax in _plan(gpus, sizes, views, iterations, out):
+    if run.get("preflight"):
+        _preflight(out, env)
+        return
+    for name, command, limit, cpu_jax in _plan(gpus, sizes, views, out):
         if command[1] == "scaling.py":
             case = Path(command[command.index("--case") + 1])
             if not case.exists():  # read once from the volume, if there is time to use it
@@ -286,6 +303,35 @@ def benchmark(gpus: list[int], sizes: list[int], views: int, iterations: int, ru
             return
 
 
+# Each property the kernels depend on, for every GPU.
+_PROPERTIES = (
+    "name", "major", "minor", "textureAlignment", "texturePitchAlignment", "sharedMemPerBlock",
+    "sharedMemPerBlockOptin", "maxTexture2DLinear",
+)  # fmt: skip
+_KERNEL_TESTS = (
+    "tests/test_cone_beam.py", "tests/test_projector_adjoint.py", "tests/test_fbp_accuracy.py",
+    "tests/test_workflow.py",
+)  # fmt: skip
+
+
+def _preflight(out: Path, env: dict[str, str]) -> None:
+    """The kernels' own tests on these GPUs, and the GPUs' properties; raise if a test fails."""
+    command = ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider", *_KERNEL_TESTS]
+    status = run_bounded(command, log=out / "kernel-tests.log", timeout=1800, cwd="/root", env=env)
+    _log_step(out, "kernel-tests", status)
+    keys = repr(_PROPERTIES)
+    code = (
+        "import cupy as cp, json; r = cp.cuda.runtime; "
+        f"print(json.dumps([{{k: r.getDeviceProperties(i)[k] for k in {keys}}} "
+        "for i in range(r.getDeviceCount())], default=str))"
+    )
+    run_bounded(["python", "-c", code], log=out / "device-properties.log", timeout=120, env=env)
+    data.commit()
+    print(f"kernel-tests: {status}", flush=True)
+    if status != "exit 0":
+        raise RuntimeError(f"kernel tests failed ({status}); see kernel-tests.log")
+
+
 # What each library's smoke worker must have timed.
 SMOKE_OPERATIONS = {
     "tomojax": {"forward", "backproject", "fdk", "cgls"},
@@ -294,13 +340,36 @@ SMOKE_OPERATIONS = {
 }
 
 
+# Errors the smoke case (64^3, 90 views, 3 CGLS iterations) stays under: about twice
+# what every library measured in the rehearsal.
+SMOKE_CEILINGS = {"forward": 0.05, "forward_siddon": 0.05, "fdk": 0.15, "cgls": 0.4}
+
+
 def _require_smoke(status: str, summary: Path) -> None:
-    """Raise unless the smoke run finished and every library timed every operation."""
+    """Raise unless the smoke run finished, every library timed every operation, sensibly."""
+    import math
+
     records = json.loads(summary.read_text())["records"] if summary.exists() else []
     timed = {r["library"]: {o["operation"] for o in r.get("operations", [])} for r in records}
     complete = all(r.get("complete") and "failed" not in r for r in records)
     if status != "exit 0" or not complete or timed != SMOKE_OPERATIONS:
         raise RuntimeError(f"the smoke run failed ({status}): {timed}; see smoke.log")
+    wrong = []
+    for record in records:
+        for op in record["operations"]:
+            name, seconds = op["operation"], op.get("best_seconds")
+            where = f"{record['library']} {name}"
+            if not (isinstance(seconds, float) and math.isfinite(seconds) and seconds > 0):
+                wrong.append(f"{where}: time {seconds}")
+            ceiling = SMOKE_CEILINGS.get(name)
+            error = op.get("error")
+            if ceiling is not None and not (isinstance(error, float) and 0 <= error < ceiling):
+                wrong.append(f"{where}: error {error} (ceiling {ceiling})")
+            termination = (op.get("solver") or {}).get("termination")
+            if termination not in (None, "iteration_limit", "converged", "tolerance"):
+                wrong.append(f"{where}: terminated by {termination}")
+    if wrong:
+        raise RuntimeError("the smoke run's numbers are wrong: " + "; ".join(wrong))
 
 
 def _log_step(out: Path, name: str, status: str) -> None:
@@ -316,7 +385,7 @@ def _finished_steps(out: Path) -> set[str]:
 
 
 # A run continued with --run-name must be the same build on the same kind of machine.
-_IMMUTABLE = ("commit", "machine", "wheel", "scripts", "tigre_commit", "constraints")
+_IMMUTABLE = ("commit", "machine", "wheel", "scripts", "tigre_commit", "constraints", "plan")
 
 
 def _record_attempt(out: Path, run: dict) -> None:
@@ -333,59 +402,103 @@ def _record_attempt(out: Path, run: dict) -> None:
         attempts.write(json.dumps({"time": time.time(), "command": run["command"]}) + "\n")
 
 
+CGLS_BUDGETS = (10, 20, 50)  # fresh solves each: error against time, not one fixed point
+WALNUT_BUDGETS = {"cgls": (10, 25, 50), "fista": (10, 20, 50)}
+
+
+def _walnut_cache(orbits: tuple[int, ...], every: int) -> str:
+    return f"/data/cache/walnut1-orbits{''.join(map(str, orbits))}-every{every}.npz"
+
+
 def _plan(
-    gpus: list[int], sizes: list[int], views: int, iterations: int, out: Path
+    gpus: list[int], sizes: list[int], views: int, out: Path
 ) -> list[tuple[str, list[str], float, bool]]:
     """Every step, most valuable first: (name, command, time limit, whether JAX uses the CPU).
 
-    The smallest size's comparison, then the walnut and its alignment, then the
-    larger sizes' projections and FDK, then their CGLS, TIGRE's last. The fewest
-    and most GPUs come first: they bound the scaling if time runs out.
+    First the comparisons the paper needs from the fewest and most GPUs: the
+    smallest size, the walnut (FDK, CGLS and non-negative least squares at
+    several iteration budgets, and the alignment), the larger sizes'
+    projections and FDK. Then the GPU counts between, and last the larger
+    sizes' CGLS, TIGRE's last of all. ASTRA's CGLS uses one GPU whatever it is
+    given, so it runs once per size.
     """
-    counts = [str(g) for g in sorted(set(gpus), key=lambda g: (g not in (min(gpus), max(gpus)), g))]
+    low, high = min(gpus), max(gpus)
+    ends = sorted({low, high})
+    middle = [g for g in sorted(set(gpus)) if g not in ends]
     libraries = ("tomojax", "astra", "tigre")
     plan: list[tuple[str, list[str], float, bool]] = []
+    projections = ["forward", "forward_siddon", "backproject", "fdk"]
 
-    def scaling(size: int, count: str, library: str, operations: list[str], limit: float) -> None:
+    def scaling(size: int, count: int, library: str, operations: list[str], limit: float) -> None:
         command = [
             "python", "scaling.py", "--size", str(size), "--views", str(views),
-            "--iterations", str(iterations), "--repeats", "3",
-            "--cgls-repeats", "3" if size <= 512 else "1", "--gpus", count,
+            "--repeats", "3", "--cgls-budgets", *map(str, CGLS_BUDGETS),
+            "--cgls-repeats", "1" if size <= 512 else "0", "--gpus", str(count),
             "--libraries", library, "--case", f"/tmp/{_case_name(size, views)}",
             "--output", str(out / f"scaling-{size}.json"), "--worker-timeout", str(limit - 60),
+            "--operations", *operations,
         ]  # fmt: skip
-        if operations:
-            command += ["--operations", *operations]
-        tag = "+".join(operations) if operations else "all"
+        tag = "all" if "cgls" in operations and len(operations) > 1 else "+".join(operations)
         plan.append((f"scaling-{size}-{library}-{count}-{tag}", command, limit, False))
 
-    first, *larger = sorted(sizes)
-    for count in counts:
+    def first_size(count: int) -> None:
         for library in libraries:
-            scaling(first, count, library, [], 1800)
-    walnut = {
-        "fdk": ["--orbits", "2", "--repeats", "3"],
-        "nnls": ["--orbits", "1", "2", "3", "--every", "4", "--bin", "2",
-                 "--method", "fista", "--iterations", str(iterations), "--repeats", "2"],
-    }  # fmt: skip
-    for count in counts:
-        for name, options in walnut.items():
+            ops = [*projections, "cgls"] if library != "astra" or count == low else projections
+            scaling(sizes[0], count, library, ops, 1800)
+
+    def walnut(count: int, *, alignment: bool) -> None:
+        fdk = ["--orbits", "2", "--repeats", "3", "--cache", _walnut_cache((2,), 1)]
+        orbits = ["--orbits", "1", "2", "3", "--every", "4", "--bin", "2",
+                  "--cache", _walnut_cache((1, 2, 3), 4)]  # fmt: skip
+        runs = {"fdk": fdk}
+        if count == low:  # iterative methods: ASTRA's run on one GPU
+            for method, budgets in WALNUT_BUDGETS.items():
+                runs[method] = [*orbits, "--method", method, "--budgets", *map(str, budgets)]
+        elif count == high:
+            runs["cgls"] = [
+                *orbits,
+                "--method",
+                "cgls",
+                "--budgets",
+                *map(str, WALNUT_BUDGETS["cgls"]),
+            ]
+        for name, options in runs.items():
             for library in ("tomojax", "astra"):  # a process each: neither holds the GPUs
-                command = ["python", "walnut.py", "/data/Walnut1", *options, "--gpus", count,
-                           "--libraries", library]  # fmt: skip
-                plan.append((f"walnut-{name}-{library}-{count}", command, 2400, library == "astra"))
-        tag = f"walnut-align-{count}"
-        command = ["python", "walnut_alignment.py", "/data/Walnut1", "--levels", "4,2",
-                   "--gpus", count, "--output", str(out / f"{tag}.json"),
-                   "--slices", str(out / f"{tag}.npz")]  # fmt: skip
-        plan.append((tag, command, 2400, False))
-    for size in larger:
-        for count in counts:
+                if library == "astra" and name != "fdk" and count != low:
+                    continue
+                tag = f"walnut-{name}-{library}-{count}"
+                command = ["python", "walnut.py", "/data/Walnut1", *options,
+                           "--gpus", str(count), "--libraries", library,
+                           "--output", str(out / f"{tag}.json")]  # fmt: skip
+                if name == "fdk":
+                    command += ["--method", "fbp"]
+                plan.append((tag, command, 2400, library == "astra"))
+        if alignment:
+            tag = f"walnut-align-{count}"
+            command = ["python", "walnut_alignment.py", "/data/Walnut1", "--levels", "4,2",
+                       "--gpus", str(count), "--output", str(out / f"{tag}.json"),
+                       "--slices", str(out / f"{tag}.npz"),
+                       "--checkpoint", str(out / f"{tag}.ckpt"),
+                       "--cache", _walnut_cache((1, 2, 3), 4)]  # fmt: skip
+            plan.append((tag, command, 2400, False))
+
+    for count in ends:
+        first_size(count)
+    for count in ends:
+        walnut(count, alignment=True)
+    for size in sizes[1:]:
+        for count in ends:
             for library in libraries:
-                scaling(
-                    size, count, library, ["forward", "forward_siddon", "backproject", "fdk"], 3600
-                )
+                scaling(size, count, library, projections, 3600)
+    for count in middle:
+        first_size(count)
+        walnut(count, alignment=False)
+        for size in sizes[1:]:
+            for library in libraries:
+                scaling(size, count, library, projections, 3600)
+    for size in sizes[1:]:
         for library in libraries:
+            counts = [low] if library == "astra" else [*ends, *middle]
             for count in counts:
                 scaling(size, count, library, ["cgls"], 5400)
     return plan
@@ -398,15 +511,17 @@ def main(
     gpus: str = "",
     sizes: str = "512,1024",
     views: int = 720,
-    iterations: int = 20,
     max_hours: float = 3.0,
     run_name: str = "",
     only_check: bool = False,
+    preflight: bool = False,
 ) -> None:
     """Run the comparisons on a ``gpu`` machine; copy the results to bench/results.
 
     ``gpus`` defaults to 1, 2, ... up to the machine's count, by doubling;
     ``run_name`` continues an earlier run (its finished steps are kept).
+    ``preflight`` runs only the tests, the smoke run and the kernels' own tests
+    on the machine, saving their reports, before paying for the whole run.
     """
     import sys
 
@@ -417,8 +532,9 @@ def main(
     if only_check:
         print(check.with_options(gpu=gpu).remote(machine)[-3000:])
         return
-    name = run_name or f"{time.strftime('%Y%m%d-%H%M')}-{gpu.replace(':', 'x')}-{COMMIT}"
-    files = [*sorted((ROOT / "bench").glob("*.py")), ROOT / "tests" / "test_devices.py"]
+    kind = "preflight-" if preflight else ""
+    name = run_name or f"{kind}{time.strftime('%Y%m%d-%H%M')}-{gpu.replace(':', 'x')}-{COMMIT}"
+    files = [*sorted((ROOT / "bench").glob("*.py")), *sorted((ROOT / "tests").glob("*.py"))]
     run = {
         "name": name,
         "commit": COMMIT,
@@ -429,24 +545,44 @@ def main(
         "scripts": {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in files},
         "tigre_commit": TIGRE_COMMIT,
         "constraints": PINS.read_text(),
+        "preflight": preflight,
+        # What the steps measure; a resumed run must ask for the same.
+        "plan": {
+            "sizes": sorted(int(s) for s in sizes.split(",")),
+            "views": views,
+            "gpus": counts,
+            "cgls_budgets": list(CGLS_BUDGETS),
+            "walnut_budgets": {k: list(v) for k, v in WALNUT_BUDGETS.items()},
+            "preflight": preflight,
+        },
     }
-    sizes_list = [int(s) for s in sizes.split(",")]
+    sizes_list = sorted(int(s) for s in sizes.split(","))
     fetch_walnut.remote()
-    make_cases.remote(sizes_list, views)
+    if not preflight:  # the smoke case needs no phantoms
+        make_cases.remote(sizes_list, views)
     hard_limit = int(max_hours * 3600) + 60  # the deadline inside keeps 5 minutes to save
     try:
-        benchmark.with_options(gpu=gpu, timeout=hard_limit).remote(
-            counts, sizes_list, views, iterations, run
-        )
+        benchmark.with_options(gpu=gpu, timeout=hard_limit).remote(counts, sizes_list, views, run)
     finally:
         target = ROOT / "bench" / "results"
         target.mkdir(parents=True, exist_ok=True)
-        got = subprocess.run(
-            ["modal", "volume", "get", "--force", "tomojax-walnut", f"results/{name}",
-             str(target)],
-            check=False,
-        )  # fmt: skip
-        print(f"results in {target / name}" if got.returncode == 0 else "download failed")
+        fetch = [
+            "modal",
+            "volume",
+            "get",
+            "--force",
+            "tomojax-walnut",
+            f"results/{name}",
+            str(target),
+        ]
+        for attempt in range(3):
+            if subprocess.run(fetch, check=False).returncode == 0:
+                print(f"results in {target / name}")
+                break
+            time.sleep(30 * (attempt + 1))
+        else:
+            print(f"download failed: the results stay in the volume at results/{name}")
+            raise SystemExit(1)
 
 
 def _doublings(machine: int) -> list[int]:

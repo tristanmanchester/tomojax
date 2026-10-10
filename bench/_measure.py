@@ -39,6 +39,18 @@ def environment() -> dict[str, Any]:
         "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"
     ).splitlines()
     record["gpu_topology"] = _nvidia_smi("topo", "-m")
+    # Clocks, power limit, persistence, temperature and throttling at the start.
+    record["gpu_state"] = _nvidia_smi(
+        "--query-gpu=index,clocks.sm,clocks.max.sm,clocks.mem,power.limit,persistence_mode,"
+        "temperature.gpu,clocks_throttle_reasons.active",
+        "--format=csv,noheader",
+    ).splitlines()
+    try:
+        from cupy.cuda import nvrtc, runtime
+
+        record["cuda"] = {"runtime": runtime.runtimeGetVersion(), "nvrtc": nvrtc.getVersion()}
+    except Exception:  # no CuPy (or no GPU) here: the packages list still says what is installed
+        record["cuda"] = None
     pages = os.sysconf("SC_PHYS_PAGES") if hasattr(os, "sysconf") else 0
     record["host_memory_gib"] = round(pages * os.sysconf("SC_PAGE_SIZE") / 2**30, 1)
     return record
@@ -49,11 +61,12 @@ def run_bounded(
 ) -> str:
     """Run ``command``, its output in ``log``: ``"exit N"``, ``"stopped after T s"`` or so.
 
-    The command runs in a process group of its own. On timeout the group gets
-    SIGTERM, then SIGKILL after ``grace`` seconds. If this process is itself
-    sent SIGTERM while waiting (by its own supervisor), it ends the group the
-    same way and returns ``"terminated"``, so nested supervisors (scaling.py
-    under the Modal run) end their workers too.
+    The command runs in a process group of its own. On timeout every process
+    it started, at any depth (nested supervisors start sessions of their own),
+    gets SIGTERM, then SIGKILL after ``grace`` seconds, and none is left
+    running when this returns. If this process is itself sent SIGTERM while
+    waiting (by its own supervisor), it ends them the same way and returns
+    ``"terminated"``.
     """
     import signal
 
@@ -62,15 +75,23 @@ def run_bounded(
             command, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True, **options
         )
 
-        def end_group() -> None:
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-                process.wait(timeout=grace)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
-            except ProcessLookupError:
-                pass
+        def end_all() -> None:
+            tree = [process.pid, *_descendants(process.pid)]  # before any of them exits
+            _signal(tree, signal.SIGTERM)
+            deadline = time.monotonic() + grace
+            while time.monotonic() < deadline and _alive(tree):
+                process.poll()  # reap the direct child
+                time.sleep(0.2)
+            tree += [p for p in _descendants(process.pid) if p not in tree]
+            _signal(tree, signal.SIGKILL)
+            process.wait()
+            for _ in range(50):  # the kernel takes a moment to retire them
+                if not _alive(tree):
+                    return
+                time.sleep(0.1)
+            survivors = [p for p in tree if _running(p)]
+            if survivors:
+                raise RuntimeError(f"processes {survivors} survived SIGKILL")
 
         class _Terminated(Exception):
             pass
@@ -82,13 +103,51 @@ def run_bounded(
         try:
             return f"exit {process.wait(timeout=timeout)}"
         except subprocess.TimeoutExpired:
-            end_group()
+            end_all()
             return f"stopped after {timeout:g} s"
         except _Terminated:
-            end_group()
+            end_all()
             return "terminated"
         finally:
             signal.signal(signal.SIGTERM, previous)
+
+
+def _descendants(pid: int) -> list[int]:
+    """Every process below ``pid``, from /proc's parent links (empty off Linux)."""
+    children: dict[int, list[int]] = {}
+    for entry in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            fields = entry.read_text().rsplit(")", 1)[1].split()
+        except OSError:
+            continue
+        children.setdefault(int(fields[1]), []).append(int(entry.parent.name))
+    found, todo = [], [pid]
+    while todo:
+        for child in children.get(todo.pop(), []):
+            found.append(child)
+            todo.append(child)
+    return found
+
+
+def _signal(pids: list[int], signum: int) -> None:
+    import contextlib
+
+    for pid in pids:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.kill(pid, signum)
+
+
+def _running(pid: int) -> bool:
+    """Whether ``pid`` is a live process (not gone, not a zombie awaiting its parent)."""
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except OSError:
+        return False
+    return state != "Z"
+
+
+def _alive(pids: list[int]) -> bool:
+    return any(_running(p) for p in pids)
 
 
 def file_hashes(paths: list[Path]) -> dict[str, str]:

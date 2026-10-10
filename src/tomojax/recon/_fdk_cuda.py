@@ -150,6 +150,18 @@ _ALIGN = 512
 _LEAD = _ALIGN // 2
 
 
+@cache
+def _check_alignment(device: int) -> None:
+    """Raise unless ``_ALIGN`` meets this GPU's texture start and pitch alignment."""
+    import cupy as cp
+
+    props = cp.cuda.runtime.getDeviceProperties(device)
+    for key in ("textureAlignment", "texturePitchAlignment"):
+        need = int(props[key])
+        if need > _ALIGN or _ALIGN % need:
+            raise RuntimeError(f"FDK textures start on {_ALIGN} bytes; this GPU needs {key} {need}")
+
+
 def _textures(images: Any, width: int) -> tuple[list[Any], int]:
     """One bilinear, zero-bordered texture per ``(rows, pitch)`` half image of ``images``.
 
@@ -167,6 +179,7 @@ def _textures(images: Any, width: int) -> tuple[list[Any], int]:
         runtime.cudaReadModeElementType,
         borderColors=(0, 0, 0, 0),
     )
+    _check_alignment(cp.cuda.Device().id)
     rows, pitch = int(images.shape[1]), int(images.shape[2])
     start = -images.data.ptr % _ALIGN // 2
     textures = [

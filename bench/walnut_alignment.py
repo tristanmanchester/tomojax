@@ -21,7 +21,7 @@ import time
 from typing import Any
 
 import numpy as np
-from walnut import ROWS, VIEWS, compare, load_orbit, reference, volume_geometry
+from walnut import ROWS, VIEWS, compare, load_orbits, reference, volume_geometry
 
 import tomojax as tj
 
@@ -164,10 +164,14 @@ def main() -> None:
     parser.add_argument("--gpus", type=int, default=1, help="GPUs to share the views among")
     parser.add_argument("--slices", type=Path, help="Save central slices and poses (.npz)")
     parser.add_argument("--output", type=Path, help="Write the record here after each stage")
+    parser.add_argument(
+        "--checkpoint", type=Path, help="Save the alignment's progress here; resume from it"
+    )
+    parser.add_argument("--cache", type=Path, help="Keep the decoded projections here (.npz)")
     args = parser.parse_args()
     logging.getLogger("tifffile").setLevel(logging.ERROR)
 
-    data = np.concatenate([load_orbit(args.walnut, o, args.every)[0] for o in (1, 2, 3)], axis=1)
+    data, _ = load_orbits(args.walnut, [1, 2, 3], args.every, cache=args.cache)
     original = _scan(args.walnut, data, "scan_geom_original.geom", args.every, args.bin)
     corrected = _scan(args.walnut, data, "scan_geom_corrected.geom", args.every, args.bin)
     import jax
@@ -176,7 +180,7 @@ def main() -> None:
     devices = jax.devices()[: args.gpus] if args.gpus > 1 else None
     start = time.perf_counter()
     levels = tuple(int(f) for f in args.levels.split(","))
-    result = tj.align(original, levels=levels, devices=devices)
+    result = tj.align(original, levels=levels, devices=devices, checkpoint=args.checkpoint)
     summary: dict[str, Any] = {"gpus": args.gpus, "align_seconds": time.perf_counter() - start}
     info = result.info
     summary["alignment"] = {
