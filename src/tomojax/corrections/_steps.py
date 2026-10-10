@@ -243,12 +243,15 @@ class Paganin(Step):
         pr, pc = rows // 2, cols // 2
         padded = jnp.pad(batch, ((0, 0), (pr, pr), (pc, pc)), mode="edge")
         wavelength = 12.398419843320026e-10 / self.energy_kev  # metres
-        ku = 2 * np.pi * np.fft.fftfreq(cols + 2 * pc, self.pixel_size)
+        ku = 2 * np.pi * np.fft.rfftfreq(cols + 2 * pc, self.pixel_size)
         kv = 2 * np.pi * np.fft.fftfreq(rows + 2 * pr, self.pixel_size)
         k2 = kv[:, None] ** 2 + ku[None, :] ** 2
         scale = self.distance * wavelength * self.delta_beta / (4 * np.pi)
         response = jnp.asarray(1.0 / (1.0 + scale * k2), jnp.float32)
-        filtered = jnp.fft.ifft2(jnp.fft.fft2(padded) * response).real
+        # Transmission and the response are real: keep only the Hermitian half.
+        # Odd detector extents also give odd padded lengths, so specify the shape
+        # rather than letting irfft2 infer an even last axis.
+        filtered = jnp.fft.irfft2(jnp.fft.rfft2(padded) * response, s=padded.shape[-2:])
         return filtered[:, pr : pr + rows, pc : pc + cols].astype(batch.dtype)
 
 
