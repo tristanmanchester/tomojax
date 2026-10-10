@@ -328,7 +328,11 @@ extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint(
         const float* c = coeff + (long)t * NC;
         const int* ab = axis_box + ((long)t * 3 + a) * 4;
         #pragma unroll
-        for (int i = 0; i < 12; ++i) cf[t][i] = c[i];
+        for (int i = 0; i < 4; ++i) {
+            cf[t][3*i] = comp(c + 3*i, a);
+            cf[t][3*i + 1] = comp(c + 3*i, b);
+            cf[t][3*i + 2] = comp(c + 3*i, cc);
+        }
         if (!separable(c) && ab[1] >= ab[0]) {
             float umin = 1e30f, umax = -1e30f, vmin = 1e30f, vmax = -1e30f;
             #pragma unroll
@@ -368,6 +372,7 @@ extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint(
     }
     __syncthreads();
     int total = first[nviews];
+    if (total == 0) return;
     int w = 0, cw = -1, ulo = 0, vlo = 0, wv = 0, runs = 1;
     const float* image = img;
     float Sa = 0.f, Sb = 0.f, Sc = 0.f, DVa = 0.f, DVb = 0.f, DVc = 0.f, K = 0.f;
@@ -378,16 +383,16 @@ extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint(
             cw = w;
             ulo = foot[w][0]; vlo = foot[w][1]; wv = foot[w][2]; runs = foot[w][3];
             image = img + (long)w * nu * nv;
-            Sa = comp(c, a); Sb = comp(c, b); Sc = comp(c, cc);
-            DVa = comp(c + 9, a); DVb = comp(c + 9, b); DVc = comp(c + 9, cc);
+            Sa = c[0]; Sb = c[1]; Sc = c[2];
+            DVa = c[9]; DVb = c[10]; DVc = c[11];
             K = (float)k - Sa;
         }
         int q = p - first[w];
         int u = ulo + q / runs, v0 = vlo + VRUN * (q % runs), v1 = min(v0 + VRUN, vlo + wv);
         float fu = (float)u;
-        float ra = comp(c + 3, a) + fu * comp(c + 6, a) - Sa;
-        float rb = comp(c + 3, b) + fu * comp(c + 6, b) - Sb;
-        float rc = comp(c + 3, cc) + fu * comp(c + 6, cc) - Sc;
+        float ra = c[3] + fu * c[6] - Sa;
+        float rb = c[4] + fu * c[7] - Sb;
+        float rc = c[5] + fu * c[8] - Sc;
         const float* col = image + (long)u * nv;
         int cb = -100, ccj = -100;
         float x00 = 0.f, x01 = 0.f, x10 = 0.f, x11 = 0.f;
@@ -402,10 +407,11 @@ extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint(
         for (int i = 0; i < VRUN; ++i) {
             float fv = (float)(v0 + i);
             float r_a = ra + fv * DVa, r_b = rb + fv * DVb, r_c = rc + fv * DVc;
-            float r0 = a == 0 ? r_a : r_b, r1 = a == 1 ? r_a : (a == 0 ? r_b : r_c);
-            float r2 = a == 2 ? r_a : r_c;
+            float aa = fabsf(r_a), ab = fabsf(r_b), ac = fabsf(r_c);
             float t_ = K / r_a;
-            bool hit = v0 + i < v1 && ray_axis(r0, r1, r2) == a;
+            bool hit = v0 + i < v1
+                && (a == 0 ? aa >= ab : aa > ab)
+                && (a == 2 ? aa > ac : aa >= ac);
             fbs[i] = hit ? Sb + t_ * r_b : -1e9f;  // off the tile: skipped below
             fcs[i] = Sc + t_ * r_c;
         }
@@ -419,14 +425,11 @@ extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint(
             float wb1 = fb - fb0, wc1 = fc - fc0, wb0 = 1.f - wb1, wc0 = 1.f - wc1;
             if (jb != cb || jc != ccj) {
                 float* cell = &acc[cb + 1][ccj + 1];
-                if (jb == cb && jc == ccj + 1) {
-                    // Step one cell along c: the trailing cells are final.
-                    add4(cell, x00, cell + (PC + 3), x10, cell, 0.f, cell, 0.f);
-                    x00 = x01; x10 = x11; x01 = 0.f; x11 = 0.f;
-                } else {
-                    add4(cell, x00, cell + 1, x01, cell + (PC + 3), x10, cell + (PC + 4), x11);
-                    x00 = x01 = x10 = x11 = 0.f;
-                }
+                bool next = jb == cb && jc == ccj + 1;
+                add4(cell, x00, cell + 1, next ? 0.f : x01,
+                     cell + (PC + 3), x10, cell + (PC + 4), next ? 0.f : x11);
+                x00 = next ? x01 : 0.f; x10 = next ? x11 : 0.f;
+                x01 = x11 = 0.f;
                 cb = jb; ccj = jc;
             }
             x00 += value * wb0 * wc0; x01 += value * wb0 * wc1;
