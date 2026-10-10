@@ -32,6 +32,7 @@ from tomojax.alignment.api import (
     BaseGeometryArrays,
     L2LossSpec,
     PoseState,
+    SetupGeometryState,
     align,
     apply_alignment_state,
     apply_pose_update,
@@ -56,6 +57,7 @@ from tomojax.geometry import (
     Grid,
     LaminographyGeometry,
     ParallelGeometry,
+    RotationAxisGeometry,
     stack_view_poses,
 )
 from tomojax.io import build_geometry_from_dataset_metadata
@@ -321,6 +323,76 @@ def test_train_fold_preserves_pose_frame_and_excludes_padding(monkeypatch, frame
     )
     np.testing.assert_allclose(observed[0], expected, atol=2e-7)
     assert info["train_indices"] == [2, 0]
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("kind", ["parallel", "lamino", "axis"])
+@pytest.mark.parametrize("whole_turns", [False, True])
+@pytest.mark.parametrize("calibrated", [False, True])
+def test_train_fold_preserves_represented_degree_metadata(
+    monkeypatch, dtype, kind, whole_turns, calibrated
+):
+    angles = np.asarray([17.123456789, 63.375, 137.625])
+    if whole_turns:
+        angles += 360 * np.asarray([100000, -123456, 234567])
+    angles = angles.astype(dtype)
+    grid, detector = Grid(5, 4, 3, 0.8, 1.1, 1.3), Detector(9, 7, 0.7, 0.9)
+    if kind == "parallel":
+        nominal = np.eye(3)
+        geometry = ParallelGeometry(grid, detector, angles)
+    elif kind == "lamino":
+        nominal = Rotation.from_euler("x", -30, degrees=True).as_matrix()
+        geometry = LaminographyGeometry(grid, detector, angles, tilt_deg=30)
+    else:
+        nominal = Rotation.from_rotvec(np.deg2rad(175) * np.asarray([0.6, 0.8, 0])).as_matrix()
+        geometry = RotationAxisGeometry(grid, detector, angles, nominal[:, 2])
+    dx, dy = (0.05, -0.07) if calibrated else (0.0, 0.0)
+    calibration = Rotation.from_euler("y", dy, degrees=True) * Rotation.from_euler(
+        "x", -dx, degrees=True
+    )
+    axis = calibration.apply(nominal[:, 2])
+    adjusted, _ = Rotation.align_vectors(axis[None], np.asarray([[0, 0, 1]]))
+    expected_angles = angles.astype(np.float64)[[2, 0]]
+    expected = (
+        adjusted.as_matrix()
+        @ Rotation.from_euler("z", expected_angles[:, None], degrees=True).as_matrix()
+    )
+    observed = []
+
+    def fake_reconstruct(actual_geometry, actual_grid, actual_detector, data, **kwargs):
+        observed.append(
+            (
+                np.asarray(actual_geometry.geometry.angles),
+                np.asarray(stack_view_poses(actual_geometry, len(data)))[:, :3, :3],
+            )
+        )
+        return jnp.zeros((5, 4, 3)), {}
+
+    monkeypatch.setattr(fold_recon, "fista_tv", fake_reconstruct)
+    state = AlignmentState.zeros(n_views=3).replace(
+        setup=SetupGeometryState.from_degrees(axis_rot_x_deg=dx, axis_rot_y_deg=dy)
+    )
+    fold_recon.reconstruct_train_fold_nograd(
+        geometry=geometry,
+        grid=grid,
+        detector=detector,
+        projections=jnp.zeros((3, 7, 9)),
+        state=state,
+        train_idx=jnp.asarray([2, 0, 2]),
+        train_mask=jnp.asarray([1, 1, 0]),
+        init_x=None,
+        level_factor=1,
+        cfg=fold_recon.FoldReconstructionConfig(
+            iterations=1,
+            tv_weight=0,
+            regulariser="huber_tv",
+            huber_delta=0.01,
+            tv_prox_iterations=1,
+            nonnegative=False,
+        ),
+    )
+    np.testing.assert_array_equal(observed[0][0], expected_angles)
+    np.testing.assert_allclose(observed[0][1], expected, atol=2e-6, rtol=2e-6)
 
 
 def test_detector_pose_exports_carry_their_frame(tmp_path):

@@ -185,7 +185,9 @@ def materialize_setup_geometry(
     indices: Sequence[int] | None = None,
 ) -> Geometry:
     """Build a Python geometry object for setup-state projection/reconstruction calls."""
-    thetas = np.asarray(geometry.angles, dtype=np.float32)
+    # These are host degree metadata, not projector arithmetic. Preserve
+    # their represented values through view selection and pose generation.
+    thetas = np.asarray(geometry.angles, dtype=np.float64)
     if indices is not None:
         thetas = thetas[np.asarray(indices, dtype=np.int32)]
     axis = tuple(
