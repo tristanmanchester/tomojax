@@ -215,9 +215,11 @@ def _worker(
                 entry: dict[str, Any] = {"operation": name, **extra}
                 record["operations"].append(entry)
 
-                def save(partial: dict[str, Any], entry: dict[str, Any] = entry) -> None:
+                def save(
+                    partial: dict[str, Any], entry: dict[str, Any] = entry, extra: dict = extra
+                ) -> None:
                     entry.clear()
-                    entry.update(partial)
+                    entry.update({**partial, **extra})  # the budget in every save
                     _write(out, record)
 
                 save({**_time(name, run, repeats, sampler, volume, data, save), **extra})
@@ -300,6 +302,17 @@ def _record(
     elif operation in {"fdk", "cgls"}:
         record["error"] = relative(result, volume)
     return record
+
+
+def _archive(path: Path) -> None:
+    """Move ``path`` (and its log) aside as ``<name>.attempt-N``, keeping every earlier attempt."""
+    attempt = 1
+    while path.with_suffix(f".attempt-{attempt}.json").exists():
+        attempt += 1
+    path.replace(path.with_suffix(f".attempt-{attempt}.json"))
+    log = path.with_suffix(".log")
+    if log.exists():
+        log.replace(path.with_suffix(f".attempt-{attempt}.log"))
 
 
 def _write(path: Path, value: object) -> None:
@@ -427,6 +440,7 @@ def _run_worker(library: str, gpus: int, args: argparse.Namespace, workers: Path
             raise SystemExit(f"{out} was measured with other settings or code; use a new --output")
         if earlier.get("complete"):
             return earlier
+        _archive(out)  # an interrupted attempt's measurements, kept before this one starts
     env = dict(os.environ, XLA_PYTHON_CLIENT_PREALLOCATE="false")
     if library != "tomojax":
         env["JAX_PLATFORMS"] = "cpu"  # JAX may only see the CPU in the others' processes

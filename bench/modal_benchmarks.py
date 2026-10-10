@@ -33,6 +33,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+from typing import Any
 
 import modal
 
@@ -239,8 +240,6 @@ def benchmark(gpus: list[int], sizes: list[int], views: int, run: dict) -> None:
     One deadline, ``run["max_hours"]`` after the start, bounds every step: each
     gets at most the time left, and none starts with less than a minute left.
     """
-    import shutil
-
     deadline = time.monotonic() + run["max_hours"] * 3600 - 300  # time to save at the end
     out = Path(f"/data/results/{run['name']}")
     out.mkdir(parents=True, exist_ok=True)
@@ -289,18 +288,33 @@ def benchmark(gpus: list[int], sizes: list[int], views: int, run: dict) -> None:
         return
     _require_smoke(status, smoke)
     if run.get("preflight"):
-        _preflight(out, env)
+        _preflight(out, env, timeout=max(60.0, deadline - time.monotonic()))
         return
-    for name, command, limit, cpu_jax in _plan(gpus, sizes, views, out):
+    _run_plan(_plan(gpus, sizes, views, out), step, deadline, out)
+
+
+def _run_plan(
+    plan: list[tuple[str, list[str], float, bool]], step: Any, deadline: float, out: Path
+) -> None:
+    """Each step of ``plan`` in turn until time runs out; raise at the end if any failed."""
+    import shutil
+
+    failed = []
+    for name, command, limit, cpu_jax in plan:
         if command[1] == "scaling.py":
             case = Path(command[command.index("--case") + 1])
             if not case.exists():  # read once from the volume, if there is time to use it
                 if deadline - time.monotonic() < 900:
                     _log_step(out, name, "skipped: the run's time is spent")
-                    return
+                    break
                 shutil.copyfile(f"/data/cases/{case.name}", case)
-        if step(name, command, limit, cpu_jax=cpu_jax).startswith("skipped"):
-            return
+        status = step(name, command, limit, cpu_jax=cpu_jax)
+        if status.startswith("skipped"):
+            break
+        if status != "exit 0":
+            failed.append(f"{name}: {status}")
+    if failed:  # every step ran that could; say which did not finish
+        raise RuntimeError("steps failed: " + "; ".join(failed))
 
 
 # Each property the kernels depend on, for every GPU.
@@ -314,10 +328,12 @@ _KERNEL_TESTS = (
 )  # fmt: skip
 
 
-def _preflight(out: Path, env: dict[str, str]) -> None:
-    """The kernels' own tests on these GPUs, and the GPUs' properties; raise if a test fails."""
+def _preflight(out: Path, env: dict[str, str], *, timeout: float) -> None:
+    """The kernels' own tests on these GPUs, and the GPUs' properties; raise if either fails."""
     command = ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider", *_KERNEL_TESTS]
-    status = run_bounded(command, log=out / "kernel-tests.log", timeout=1800, cwd="/root", env=env)
+    status = run_bounded(
+        command, log=out / "kernel-tests.log", timeout=min(1800, timeout), cwd="/root", env=env
+    )
     _log_step(out, "kernel-tests", status)
     keys = repr(_PROPERTIES)
     code = (
@@ -325,11 +341,14 @@ def _preflight(out: Path, env: dict[str, str]) -> None:
         f"print(json.dumps([{{k: r.getDeviceProperties(i)[k] for k in {keys}}} "
         "for i in range(r.getDeviceCount())], default=str))"
     )
-    run_bounded(["python", "-c", code], log=out / "device-properties.log", timeout=120, env=env)
+    props = run_bounded(
+        ["python", "-c", code], log=out / "device-properties.log", timeout=120, env=env
+    )
+    _log_step(out, "device-properties", props)
     data.commit()
-    print(f"kernel-tests: {status}", flush=True)
-    if status != "exit 0":
-        raise RuntimeError(f"kernel tests failed ({status}); see kernel-tests.log")
+    print(f"kernel-tests: {status}; device-properties: {props}", flush=True)
+    if status != "exit 0" or props != "exit 0":
+        raise RuntimeError(f"preflight failed: kernel tests {status}, device properties {props}")
 
 
 # What each library's smoke worker must have timed.
@@ -433,7 +452,10 @@ def _plan(
         command = [
             "python", "scaling.py", "--size", str(size), "--views", str(views),
             "--repeats", "3", "--cgls-budgets", *map(str, CGLS_BUDGETS),
-            "--cgls-repeats", "1" if size <= 512 else "0", "--gpus", str(count),
+            # A second, warm solve only where the first compiles (TomoJAX): ASTRA's and
+            # TIGRE's first solve is already their warm one.
+            "--cgls-repeats", "1" if library == "tomojax" and size <= 512 else "0",
+            "--gpus", str(count),
             "--libraries", library, "--case", f"/tmp/{_case_name(size, views)}",
             "--output", str(out / f"scaling-{size}.json"), "--worker-timeout", str(limit - 60),
             "--operations", *operations,
@@ -470,6 +492,8 @@ def _plan(
                 command = ["python", "walnut.py", "/data/Walnut1", *options,
                            "--gpus", str(count), "--libraries", library,
                            "--output", str(out / f"{tag}.json")]  # fmt: skip
+                if name != "fdk":  # TomoJAX compiles each budget's solver: time it warm too
+                    command += ["--repeats", "1" if library == "tomojax" else "0"]
                 if name == "fdk":
                     command += ["--method", "fbp"]
                 plan.append((tag, command, 2400, library == "astra"))

@@ -287,6 +287,7 @@ def main() -> None:
     # The scanner's TIFFs carry a malformed tag that tifffile reports and skips.
     logging.getLogger("tifffile").setLevel(logging.ERROR)
 
+    _archive(args.output)
     start = time.perf_counter()
     data, vectors = load_orbits(args.walnut, args.orbits, args.every, cache=args.cache)
     vol_geom = volume_geometry(args.voxels_per_mm)
@@ -334,17 +335,12 @@ def _reconstruct_all(
     for library in args.libraries:
         run = _tomojax if library == "tomojax" else _astra
         results = []
-        warmup = None
-        if args.method != "fbp":  # first-use costs (compilation) out of the first budget
-            start = time.perf_counter()
-            run(scan, args, 2, gpus=args.gpus)
-            warmup = time.perf_counter() - start
         for budget in budgets:  # fresh solves: the error against the time each takes
             volumes[library], entry = run(scan, args, budget, gpus=args.gpus)
             if truth is not None:
                 entry |= compare(volumes[library], truth)
             if args.method != "fbp":
-                entry |= {"iterations": budget, "warmup_seconds": warmup}
+                entry["iterations"] = budget
             results.append(entry)
             summary[library] = results[0] if args.method == "fbp" else results
             _save(args.output, summary)
@@ -352,6 +348,16 @@ def _reconstruct_all(
             args.save_volume.mkdir(parents=True, exist_ok=True)
             np.save(args.save_volume / f"{library}.npy", volumes[library])
     return volumes
+
+
+def _archive(path: Path | None) -> None:
+    """Move an earlier attempt's ``path`` aside as ``<name>.attempt-N.json``, keeping it."""
+    if path is None or not path.exists():
+        return
+    attempt = 1
+    while path.with_suffix(f".attempt-{attempt}.json").exists():
+        attempt += 1
+    path.replace(path.with_suffix(f".attempt-{attempt}.json"))
 
 
 def _save(path: Path | None, summary: dict[str, Any]) -> None:

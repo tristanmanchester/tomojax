@@ -152,6 +152,37 @@ def _central(volume: np.ndarray) -> dict[str, np.ndarray]:
     return {"xz": volume[:, y, :], "yz": volume[x], "xy": volume[..., z]}
 
 
+def _timed_alignment(
+    original: tj.Scan, levels: tuple[int, ...], devices: Any, args: argparse.Namespace
+) -> tuple[tj.Alignment, dict[str, Any]]:
+    """``tj.align``'s result, and its time: the first attempt's if this one resumed."""
+    resumed = args.checkpoint is not None and args.checkpoint.exists()
+    earlier = _earlier_record(args.output)
+    start = time.perf_counter()
+    result = tj.align(original, levels=levels, devices=devices, checkpoint=args.checkpoint)
+    seconds = time.perf_counter() - start
+    if not resumed:
+        return result, {"resumed_from_checkpoint": False, "align_seconds": seconds}
+    # Only part of the alignment ran now: keep what the first attempt measured.
+    return result, {
+        "resumed_from_checkpoint": True,
+        "align_seconds": earlier.get("align_seconds"),
+        "resumed_seconds": seconds,
+    }
+
+
+def _earlier_record(path: Path | None) -> dict[str, Any]:
+    """An earlier attempt's record at ``path``, moved aside as ``<name>.attempt-N.json``."""
+    if path is None or not path.exists():
+        return {}
+    earlier = json.loads(path.read_text())
+    attempt = 1
+    while path.with_suffix(f".attempt-{attempt}.json").exists():
+        attempt += 1
+    path.replace(path.with_suffix(f".attempt-{attempt}.json"))
+    return earlier
+
+
 def main() -> None:
     """Run the alignment comparison and print a JSON summary."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
@@ -178,10 +209,9 @@ def main() -> None:
 
     # One GPU takes the ordinary one-device path, as a user would run it.
     devices = jax.devices()[: args.gpus] if args.gpus > 1 else None
-    start = time.perf_counter()
     levels = tuple(int(f) for f in args.levels.split(","))
-    result = tj.align(original, levels=levels, devices=devices, checkpoint=args.checkpoint)
-    summary: dict[str, Any] = {"gpus": args.gpus, "align_seconds": time.perf_counter() - start}
+    result, timing = _timed_alignment(original, levels, devices, args)
+    summary: dict[str, Any] = {"gpus": args.gpus, **timing}
     info = result.info
     summary["alignment"] = {
         k: info.get(k) for k in ("mode", "levels", "factors", "factors_skipped", "loss", "gauge")
