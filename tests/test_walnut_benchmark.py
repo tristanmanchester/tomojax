@@ -59,3 +59,43 @@ def test_volume_geometries_share_the_published_reference_voxel_centre_extent(wal
         spacing = (upper - lower) / geometry[count_name]
         assert lower + 0.5 * spacing == pytest.approx(-25.0)
         assert upper - 0.5 * spacing == pytest.approx(25.0)
+
+
+def test_matching_projection_cache_reuses_the_decoded_request(walnut, tmp_path, monkeypatch):
+    cache = tmp_path / "projections.npz"
+    monkeypatch.setattr(
+        walnut,
+        "load_orbit",
+        lambda _path, orbit, every: (np.full((2, 3, 4), orbit), np.full((3, 12), every)),
+    )
+    expected = walnut.load_orbits(tmp_path, [2], 20, cache=cache)
+
+    def unexpected_read(*_args):
+        pytest.fail("matching cache reread the source projections")
+
+    monkeypatch.setattr(walnut, "load_orbit", unexpected_read)
+    actual = walnut.load_orbits(tmp_path, [2], 20, cache=cache)
+    for found, wanted in zip(actual, expected, strict=True):
+        np.testing.assert_array_equal(found, wanted)
+
+
+@pytest.mark.parametrize("changed", ["walnut", "orbits", "every", "legacy"])
+def test_projection_cache_cannot_silently_replace_a_different_requested_scan(
+    walnut, tmp_path, monkeypatch, changed
+):
+    cache = tmp_path / "projections.npz"
+    monkeypatch.setattr(
+        walnut,
+        "load_orbit",
+        lambda _path, orbit, every: (np.full((2, 3, 4), orbit), np.full((3, 12), every)),
+    )
+    walnut.load_orbits(tmp_path, [2], 20, cache=cache)
+    if changed == "legacy":
+        np.savez(cache, data=np.zeros((2, 3, 4)), vectors=np.zeros((3, 12)))
+    source = tmp_path / "another-walnut" if changed == "walnut" else tmp_path
+    orbits = [1, 2] if changed == "orbits" else [2]
+    every = 10 if changed == "every" else 20
+    before = cache.read_bytes()
+    with pytest.raises(ValueError, match="projection cache does not match"):
+        walnut.load_orbits(source, orbits, every, cache=cache)
+    assert cache.read_bytes() == before

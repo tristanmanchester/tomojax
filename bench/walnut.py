@@ -392,9 +392,17 @@ def _save(path: Path | None, summary: dict[str, Any]) -> None:
 def load_orbits(
     walnut: Path, orbits: list[int], every: int, *, cache: Path | None = None
 ) -> tuple[np.ndarray, np.ndarray]:
-    """The orbits' ASTRA ``(rows, views, columns)`` data and vectors, kept in ``cache``."""
+    """Load the requested views; cached data must identify that same request."""
+    request = json.dumps(
+        {"walnut": str(walnut.resolve()), "orbits": orbits, "every": every}, sort_keys=True
+    )
     if cache is not None and cache.exists():
         with np.load(cache) as stored:
+            if "request" not in stored or stored["request"].item() != request:
+                raise ValueError(
+                    "projection cache does not match walnut, orbits and every; "
+                    "use a different --cache path"
+                )
             return stored["data"], stored["vectors"]
     parts = [load_orbit(walnut, orbit, every) for orbit in orbits]
     data = np.concatenate([d for d, _ in parts], axis=1)
@@ -403,7 +411,7 @@ def load_orbits(
         cache.parent.mkdir(parents=True, exist_ok=True)
         partial = cache.with_name(f"partial-{cache.name}")
         with partial.open("wb") as stream:
-            np.savez(stream, data=data, vectors=vectors)
+            np.savez(stream, data=data, vectors=vectors, request=request)
         partial.replace(cache)
     return data, vectors
 
