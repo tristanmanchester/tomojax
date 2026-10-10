@@ -30,10 +30,11 @@ def _raised(segment: ConeGeometry, height: float) -> object:
     return build_geometry_from_dataset_metadata(meta, poses=True)[2]
 
 
-def test_orbit_heights_place_a_second_orbit_from_the_data_alone():
+@pytest.mark.parametrize(("nu", "nv"), [(64, 64), (63, 65)])
+def test_orbit_heights_place_a_second_orbit_from_the_data_alone(nu, nv):
     n, vx = 48, 0.25
     grid = Grid(n, n, n, vx, vx, vx)
-    detector = Detector(64, 64, 0.5, 0.5)
+    detector = Detector(nu, nv, 0.5, 0.5)
     angles = np.linspace(0.0, 360.0, 72, endpoint=False)
     first = ConeGeometry(grid, detector, angles, ConeBeam(30.0, 50.0))
     second = ConeGeometry(grid, detector, angles + 2.5, ConeBeam(30.0, 50.0))
@@ -61,13 +62,14 @@ def test_orbit_heights_place_a_second_orbit_from_the_data_alone():
 
 
 @pytest.mark.parametrize("value", [0.0, 1.0])
-def test_unobservable_orbit_keeps_its_height_with_zero_contrast(value):
+@pytest.mark.parametrize(("nu", "nv"), [(8, 8), (11, 9), (31, 1)])
+def test_unobservable_orbit_keeps_its_height_with_zero_contrast(value, nu, nv):
     grid = Grid(8, 8, 8, 0.25, 0.25, 0.25)
-    detector = Detector(8, 8, 0.5, 0.5)
+    detector = Detector(nu, nv, 0.5, 0.5)
     first = ConeGeometry(grid, detector, np.arange(0.0, 360.0, 90.0), ConeBeam(30.0, 50.0))
     second = ConeGeometry(grid, detector, np.arange(10.0, 360.0, 90.0), ConeBeam(30.0, 50.0))
     geometry = ConeSegments((first, second))
-    data = np.full((8, 8, 8), value, np.float32)
+    data = np.full((8, nv, nu), value, np.float32)
 
     # Blank data and fully truncated constant data have no usable epipolar
     # derivatives. Neither justifies an arbitrary correction at the search edge.

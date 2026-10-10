@@ -54,40 +54,63 @@ class _View:
     def _hit(self, directions: np.ndarray) -> np.ndarray:
         normal = np.cross(self.u, self.v)
         reach = (normal @ (self.centre - self.source)) / (directions @ normal)
-        return self.source + reach[:, None] * directions
+        return self.source + reach[..., None] * directions
 
-    def plane_derivative(self, n: np.ndarray) -> float | None:
-        """d/ds of the plane integral of the plane through the source with unit normal ``n``.
-
-        None when the plane's line leaves the detector inside the object.
-        """
+    def plane_derivatives(self, normals: np.ndarray) -> np.ndarray:
+        """Plane-integral derivatives; NaN where a line leaves the detector inside the object."""
         nv, nu = self.image.shape
-        a_n, b_n, rhs = n @ self.u, n @ self.v, n @ (self.source - self.centre)
-        along = np.array([-b_n, a_n]) / np.hypot(a_n, b_n)
-        foot = rhs * np.array([a_n, b_n]) / (a_n * a_n + b_n * b_n)
+        result = np.full(len(normals), np.nan)
+        a_n, b_n, rhs = normals @ self.u, normals @ self.v, normals @ (self.source - self.centre)
+        size = np.hypot(a_n, b_n)
+        along = np.stack([-b_n, a_n], axis=1) / np.where(size > 0, size, 1.0)[:, None]
+        norm2 = a_n * a_n + b_n * b_n
+        foot = (
+            rhs[:, None] * np.stack([a_n, b_n], axis=1) / np.where(norm2 > 0, norm2, 1.0)[:, None]
+        )
         steps = np.linspace(-np.hypot(nu, nv) / 2, np.hypot(nu, nv) / 2, _SAMPLES)
-        ab = foot[None] + steps[:, None] * along[None]
-        inside = (np.abs(ab[:, 0]) <= nu / 2 - 1) & (np.abs(ab[:, 1]) <= nv / 2 - 1)
-        if inside.sum() < 50:
-            return None
-        ab = ab[inside]
-        points = self.centre + ab[:, :1] * self.u + ab[:, 1:] * self.v
+        ab = foot[:, None] + steps[None, :, None] * along[:, None]
+        inside = (
+            (np.abs(ab[:, :, 0]) <= nu / 2 - 1)
+            & (np.abs(ab[:, :, 1]) <= nv / 2 - 1)
+            & (size[:, None] > 0)
+        )
+        keep = np.flatnonzero(inside.sum(axis=1) >= 50)
+        if not len(keep):
+            return result
+        inside, ab = inside[keep], ab[keep]
+        first = inside.argmax(axis=1)
+        last = _SAMPLES - 1 - inside[:, ::-1].argmax(axis=1)
+        count = last - first + 1
+        indices = first[:, None] + np.arange(count.max())[None]
+        ab = np.take_along_axis(ab, np.minimum(indices, _SAMPLES - 1)[:, :, None], axis=1)
+        # A line's intersection with the rectangular detector is contiguous.
+        # Pack just that interval, padding only to the longest retained line.
+        inside = indices <= last[:, None]
+        points = self.centre + ab[:, :, :1] * self.u + ab[:, :, 1:] * self.v
         g = self._sample(points)
-        peak = float(np.nanmax(np.abs(g))) if np.isfinite(g).any() else 0.0
-        if not peak or abs(g[0]) > _EDGE * peak or abs(g[-1]) > _EDGE * peak:
-            return None
+        peak = np.max(np.where(inside & np.isfinite(g), np.abs(g), 0.0), axis=1)
+        valid = (
+            (peak > 0)
+            & (np.abs(g[:, 0]) <= _EDGE * peak)
+            & (np.abs(g[np.arange(len(keep)), count - 1]) <= _EDGE * peak)
+        )
+        keep, inside, points = keep[valid], inside[valid], points[valid]
+        if not len(keep):
+            return result
         rays = points - self.source
-        dist = np.linalg.norm(rays, axis=1)
-        rays /= dist[:, None]
+        dist = np.linalg.norm(rays, axis=2)
+        rays /= dist[:, :, None]
         tilt = np.linalg.norm(self.u) / dist  # about a pixel
-        up = self._sample(self._hit(rays + tilt[:, None] * n))
-        down = self._sample(self._hit(rays - tilt[:, None] * n))
+        up = self._sample(self._hit(rays + tilt[:, :, None] * normals[keep, None]))
+        down = self._sample(self._hit(rays - tilt[:, :, None] * normals[keep, None]))
         change = (up - down) / (2 * tilt)
-        between = np.arccos(np.clip(np.sum(rays[1:] * rays[:-1], axis=1), -1.0, 1.0))
-        mid = 0.5 * (change[1:] + change[:-1])
-        if not np.isfinite(mid).all():
-            return None
-        return float(np.sum(mid * between))
+        between = np.arccos(np.clip(np.sum(rays[:, 1:] * rays[:, :-1], axis=2), -1.0, 1.0))
+        mid = 0.5 * (change[:, 1:] + change[:, :-1])
+        edges = inside[:, 1:] & inside[:, :-1]
+        valid = np.all(~edges | np.isfinite(mid), axis=1)
+        values = np.sum(np.where(edges, mid * between, 0.0), axis=1)
+        result[keep] = np.where(valid, values, np.nan)
+        return result
 
 
 def _pair_values(a: _View, b: _View) -> np.ndarray:
@@ -99,13 +122,11 @@ def _pair_values(a: _View, b: _View) -> np.ndarray:
         e1 = np.cross(base, [1.0, 0.0, 0.0])
     e1 /= np.linalg.norm(e1)
     e2 = np.cross(base, e1)
-    out = []
-    for k in np.linspace(0.0, np.pi, _PLANES, endpoint=False):
-        n = np.cos(k) * e1 + np.sin(k) * e2
-        da, db = a.plane_derivative(n), b.plane_derivative(n)
-        if da is not None and db is not None:
-            out.append((da, db))
-    return np.asarray(out).reshape(-1, 2)
+    angles = np.linspace(0.0, np.pi, _PLANES, endpoint=False)
+    normals = np.cos(angles[:, None]) * e1 + np.sin(angles[:, None]) * e2
+    da, db = a.plane_derivatives(normals), b.plane_derivatives(normals)
+    keep = np.isfinite(da) & np.isfinite(db)
+    return np.stack([da[keep], db[keep]], axis=1)
 
 
 def consistency_cost(pairs: list[tuple[_View, _View]]) -> tuple[float, int]:
