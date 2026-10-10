@@ -72,7 +72,7 @@ def _estimate_norm_A2(
         gather_dtype=gather_dtype,
         ray_integrator=ray_integrator,
     )
-    return max(float(norm_squared) * float(safety**2), 1e-6)
+    return float(norm_squared) * float(safety**2)
 
 
 @functools.partial(jax.jit, static_argnames=("grid", "detector", "projector", "iterations"))
@@ -101,14 +101,21 @@ def resolve_spdhg_step_sizes(
     det_grid: tuple[jnp.ndarray, jnp.ndarray],
     projector: tuple[str, str] | None = None,
 ) -> SPDHGStepSizes:
-    grad_norm = float(np.sqrt(12.0))
+    # The Neumann forward difference on an n-voxel axis has squared norm
+    # 2 + 2*cos(pi/n), or zero for a singleton. Axis normal matrices add.
+    grad_norm = (
+        float(np.sqrt(sum(2 + 2 * np.cos(np.pi / n) for n in (grid.nx, grid.ny, grid.nz) if n > 1)))
+        if config.tv_weight > 0
+        else 0.0
+    )
+    grad_scale = grad_norm or 1.0
     rho = 0.99
     if config.tau is not None and config.sigma_data is not None:
         return SPDHGStepSizes(
             tau=float(config.tau),
             sigma_data_base=float(config.sigma_data),
             sigma_data_eff=float(config.sigma_data),
-            sigma_tv=rho / grad_norm if config.sigma_tv is None else float(config.sigma_tv),
+            sigma_tv=rho / grad_scale if config.sigma_tv is None else float(config.sigma_tv),
             data_norm=None,
             grad_norm=grad_norm,
         )
@@ -116,7 +123,7 @@ def resolve_spdhg_step_sizes(
         norm_sq = _batched_norm_squared(
             poses, grid=grid, detector=detector, projector=projector, iterations=20
         )
-        data_norm_sq = max(float(norm_sq) * 1.05**2, 1e-6)
+        data_norm_sq = float(norm_sq) * 1.05**2
     else:
         data_norm_sq = _estimate_norm_A2(
             geometry,
@@ -134,12 +141,14 @@ def resolve_spdhg_step_sizes(
             det_grid=det_grid,
             ray_integrator=config.ray_integrator,
         )
+    if not np.isfinite(data_norm_sq) or data_norm_sq < 0:
+        raise ValueError("spdhg_tv: estimated projection norm must be finite and nonnegative")
     data_norm = float(np.sqrt(data_norm_sq))
-    tau = rho / (data_norm + grad_norm) if config.tau is None else float(config.tau)
+    tau = rho / (data_norm + grad_norm or 1.0) if config.tau is None else float(config.tau)
     sigma_data_base = (
-        rho / max(data_norm, 1e-6) if config.sigma_data is None else float(config.sigma_data)
+        rho / (data_norm or 1.0) if config.sigma_data is None else float(config.sigma_data)
     )
-    sigma_tv = rho / grad_norm if config.sigma_tv is None else float(config.sigma_tv)
+    sigma_tv = rho / grad_scale if config.sigma_tv is None else float(config.sigma_tv)
     return SPDHGStepSizes(
         tau=tau,
         sigma_data_base=sigma_data_base,
