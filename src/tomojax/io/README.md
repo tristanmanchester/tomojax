@@ -5,6 +5,16 @@ preprocessing, inspection reports, quicklooks, and metadata conversion.
 
 Import from here, not from `tomojax._data`.
 
+## HDF5 acquisition metadata
+
+Both raw-frame and processed NXtomo loading convert rotation angles labelled
+`rad`, `radian` or `radians` to degrees. `deg`, `degree`, `degrees` and missing
+units mean degrees. Angles must be a real one-dimensional vector with one
+entry per frame and finite sample-view angles (calibration frames may have
+NaN angles); unknown units fail rather than being guessed. An
+`image_key` must be an integer vector with one entry per frame and labels in
+`{0, 1, 2, 3}` (sample, flat, dark, other); labels are checked before conversion.
+
 ## TIFF angle sidecars
 
 `tomojax.io.api.load_angles` reads a one-dimensional NPY vector or the first

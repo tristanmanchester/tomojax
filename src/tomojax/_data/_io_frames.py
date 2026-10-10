@@ -9,6 +9,8 @@ from typing import Any
 import h5py
 import numpy as np
 
+from ._io_acquisition import angles_in_degrees, checked_image_key
+
 
 @dataclass(frozen=True)
 class Hdf5Frames:
@@ -156,15 +158,18 @@ def locate_frames(
         parent = where.rsplit("/", 1)[0] or "/"
         beside = {n: f"{parent.rstrip('/')}/{n}" for n in ("data_white", "data_dark", "theta")}
         angles_at = angles_at or (beside["theta"] if _dataset(file, beside["theta"]) else None)
-        key = None if key_at is None else np.asarray(_read(file, key_at, path), np.int32)
-        angles = None if angles_at is None else _degrees(file, angles_at, path)
+        key = (
+            None
+            if key_at is None
+            else checked_image_key(_read(file, key_at, path), frames=frames, path=path)
+        )
+        angles = (
+            None if angles_at is None else _degrees(file, angles_at, path, frames=frames, key=key)
+        )
         flats, darks = (
             Hdf5Frames.open(path, beside[n]) if key is None and _dataset(file, beside[n]) else None
             for n in ("data_white", "data_dark")
         )
-    for name, values in (("image_key", key), ("angles", angles)):
-        if values is not None and values.shape != (frames,):
-            raise ValueError(f"{path}: {name} has {values.shape} entries for {frames} frames")
     return LocatedFrames(Hdf5Frames.open(path, where), key, angles, flats, darks)
 
 
@@ -180,11 +185,13 @@ def _read(file: h5py.File, where: str, path: str) -> np.ndarray:
     return np.asarray(found[()])
 
 
-def _degrees(file: h5py.File, where: str, path: str) -> np.ndarray:
-    values = np.asarray(_read(file, where, path), np.float64).reshape(-1)
+def _degrees(
+    file: h5py.File, where: str, path: str, *, frames: int, key: np.ndarray | None
+) -> np.ndarray:
+    values = _read(file, where, path)
     units = file[where].attrs.get("units", b"")
     units = units.decode() if isinstance(units, bytes) else str(units)
-    return np.degrees(values) if units.strip().lower() in {"rad", "radian", "radians"} else values
+    return angles_in_degrees(values, units, frames=frames, path=path, image_key=key)
 
 
 def _only(

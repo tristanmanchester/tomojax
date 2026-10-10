@@ -10,6 +10,7 @@ import numpy as np
 from tomojax.core.geometry.base import DetectorDict
 from tomojax.geometry.api import VOLUME_AXES_ATTR
 
+from ._io_acquisition import angles_in_degrees, checked_image_key
 from ._io_types import JsonObject, LoadedDataset, SourceInfo
 
 LOG = logging.getLogger(__name__)
@@ -132,10 +133,12 @@ def _load_image_key(entry: h5py.Group, *, n_views: int, path: str) -> np.ndarray
             path,
         )
         return np.zeros((n_views,), dtype=np.int32)
-    return np.asarray(det_grp["image_key"][...], dtype=np.int32)
+    return checked_image_key(np.asarray(det_grp["image_key"][...]), frames=n_views, path=path)
 
 
-def _load_rotation_angles(entry: h5py.Group, *, n_views: int, path: str) -> np.ndarray:
+def _load_rotation_angles(
+    entry: h5py.Group, *, n_views: int, path: str, image_key: np.ndarray
+) -> np.ndarray:
     sample_grp = entry.get("sample")
     trans_grp = None if sample_grp is None else sample_grp.get("transformations")
     if trans_grp is None or "rotation_angle" not in trans_grp:
@@ -144,7 +147,13 @@ def _load_rotation_angles(entry: h5py.Group, *, n_views: int, path: str) -> np.n
             path,
         )
         return np.zeros((n_views,), dtype=np.float32)
-    return np.asarray(trans_grp["rotation_angle"][...], dtype=np.float32)
+    angles = trans_grp["rotation_angle"]
+    if not isinstance(angles, h5py.Dataset):
+        raise ValueError(f"{path}: rotation angles must be a dataset")
+    units = _attr_to_str(angles.attrs.get("units"), default="") or ""
+    return angles_in_degrees(
+        np.asarray(angles[...]), units, frames=n_views, path=path, image_key=image_key
+    ).astype(np.float32)
 
 
 def _load_geometry_metadata(

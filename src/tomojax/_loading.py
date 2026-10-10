@@ -333,7 +333,7 @@ def _located(file: Path) -> LocatedFrames | None:
 
     try:
         return locate_frames(str(file))
-    except (KeyError, ValueError):
+    except KeyError:
         return None
 
 
@@ -366,7 +366,7 @@ def _hdf5_frames(
         raise ValueError(f"{file} has {views} sample frames but {view_angles.size} angles")
     try:
         metadata = load_nxtomo(str(file), lazy=True).metadata
-    except (KeyError, ValueError):  # not laid out as NXtomo: the frames alone
+    except KeyError:  # not laid out as NXtomo: the frames alone
         metadata = NXTomoMetadata(detector=Detector(nu=cols, nv=rows, du=1.0, dv=1.0))
     metadata = replace(metadata, angles=view_angles.astype(np.float32), image_key=None)
     # The geometry needs the views' shape, not their values: read none of them.

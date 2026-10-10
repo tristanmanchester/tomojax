@@ -12,6 +12,11 @@ regularization weights instead of clamping their dual bounds to fixed numerical
 floors. Their dual projections also normalize before computing norms to avoid
 norm underflow or overflow at extreme signal scales.
 
+NXtomo loading now honours rotation-angle units for processed scans as well as
+raw frames: radians are converted to degrees. Unsupported units, nonfinite sample
+angles, wrong-shaped angle arrays and noninteger or unknown `image_key` labels fail
+instead of changing the acquisition geometry or silently dropping views.
+
 The CUDA cone backprojector is again the exact transpose of the forward
 projector where a ray is nearly tied between two axes: both now round the ray's
 coordinates identically (it differed by up to 1.6% there). Adjoints are about

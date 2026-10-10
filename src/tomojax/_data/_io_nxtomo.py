@@ -323,8 +323,11 @@ def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
         proj = Hdf5Frames.open(path, where) if lazy else f[where][...]
         out["projections"] = proj
         n_views = proj.shape[0]
-        out["image_key"] = _load_image_key(entry, n_views=n_views, path=path)
-        out["angles"] = _load_rotation_angles(entry, n_views=n_views, path=path)
+        image_key = _load_image_key(entry, n_views=n_views, path=path)
+        out["image_key"] = image_key
+        out["angles"] = _load_rotation_angles(
+            entry, n_views=n_views, path=path, image_key=image_key
+        )
         _load_geometry_metadata(out, entry, path=path)
         _load_grid_metadata(out, entry, path=path)
         _load_detector_metadata(out, entry, proj, path=path)
