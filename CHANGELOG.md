@@ -7,6 +7,11 @@ wrap at 360 degrees or differ by whole turns. Wrapped short scans no longer
 mistakenly receive full-turn weights, and offset-detector filter tails use the
 same circular view coverage as the weights. Nonfinite FDK angles fail early.
 
+FISTA-TV and SPDHG's TV/Huber-TV proximal updates now respect small
+regularization weights instead of clamping their dual bounds to fixed numerical
+floors. Their dual projections also normalize before computing norms to avoid
+norm underflow or overflow at extreme signal scales.
+
 The CUDA cone backprojector is again the exact transpose of the forward
 projector where a ray is nearly tied between two axes: both now round the ray's
 coordinates identically (it differed by up to 1.6% there). Adjoints are about

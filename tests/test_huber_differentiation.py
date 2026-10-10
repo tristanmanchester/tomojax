@@ -1,4 +1,4 @@
-"""Huber derivatives stay finite in flat image regions and at zero duals."""
+"""TV proximal scales are respected and flat-region Huber derivatives stay finite."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeome
 
 # check-public-imports: allow-private
 from tomojax.recon._tv_ops import huber_tv_grad, huber_tv_value, prox_huber_tv_conj
+from tomojax.recon.fista_tv import tv_proximal
 
 
 def _edges(shape):
@@ -95,6 +96,52 @@ def test_huber_conjugate_prox_has_correct_derivative_at_zero(lam):
     np.testing.assert_allclose(jvp, expected, rtol=2e-6, atol=2e-6)
     np.testing.assert_allclose(vjp, expected, rtol=2e-6, atol=2e-6)
     np.testing.assert_array_equal(prox(x), x)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("scale", [1e-20, 1e-10, 1e-7, 1.0, 1e20])
+@pytest.mark.parametrize("ratio", [0.0, 0.001, 0.1, 1.0])
+def test_tv_prox_matches_analytic_two_voxel_solution_at_all_scales(scale, ratio):
+    # One edge: min_u 0.5 ||u - (0, scale)||^2 + lambda |u1 - u0|.
+    # Its solution moves both endpoints by min(lambda, scale/2).
+    image = jnp.asarray([0.0, scale], dtype=jnp.float32).reshape((2, 1, 1))
+    actual = tv_proximal(image, ratio * scale, iterations=100)
+    shift = min(ratio, 0.5)
+    expected = np.asarray([shift, 1.0 - shift])
+    np.testing.assert_allclose(np.asarray(actual).ravel() / scale, expected, rtol=3e-6, atol=2e-7)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("scale", [1e-20, 1e-10, 1e-7, 1.0, 1e20])
+def test_huber_dual_prox_matches_independent_radial_solution_at_all_scales(scale):
+    vectors = np.asarray([[0.0, 0.0, 0.0], [0.03, 0.04, 0.0], [3.0, -4.0, 2.0]])
+    lam, sigma, delta = 0.1, 0.2, 0.3
+    shrunk = vectors * lam / (lam + sigma * delta)
+    norms = np.linalg.norm(shrunk, axis=1, keepdims=True)
+    expected = shrunk * np.minimum(1.0, lam / np.where(norms == 0, 1.0, norms))
+    actual = prox_huber_tv_conj(
+        *jnp.asarray(vectors.T * scale, dtype=jnp.float32),
+        sigma=sigma,
+        lam=lam * scale,
+        delta=delta * scale,
+    )
+    actual = np.asarray(actual).T / scale
+    np.testing.assert_allclose(actual, expected, rtol=3e-6, atol=2e-7)
+    assert np.max(np.linalg.norm(actual, axis=1)) <= lam * (1 + 3e-6)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize(
+    ("input_scale", "radius"), [(1e20, 1e-20), (1e10, 1e-30), (1e-20, 1e20), (1e-30, 1e10)]
+)
+def test_huber_dual_projection_handles_independently_scaled_input_and_radius(input_scale, radius):
+    vector = np.asarray([3.0, -4.0, 2.0])
+    expected_scale = min(input_scale, radius / np.linalg.norm(vector))
+    # sigma = 0 leaves just the conjugate domain's ball projection.
+    actual = prox_huber_tv_conj(
+        *jnp.asarray(vector * input_scale, dtype=jnp.float32), sigma=0.0, lam=radius, delta=1.0
+    )
+    np.testing.assert_allclose(np.asarray(actual) / expected_scale, vector, rtol=3e-6, atol=2e-7)
 
 
 @pytest.mark.numerical

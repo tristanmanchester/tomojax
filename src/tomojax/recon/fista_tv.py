@@ -49,6 +49,7 @@ from ._tv_ops import (
     huber_tv_grad,
     huber_tv_value,
     isotropic_tv_value,
+    project_tv_duals,
     validate_regulariser,
 )
 
@@ -464,18 +465,14 @@ def tv_proximal(x: jnp.ndarray, lam_over_L: float, iterations: int = 20) -> jnp.
     """
     lam = jnp.asarray(lam_over_L, dtype=x.dtype)
     tau = jnp.asarray(1.0 / 12.0, dtype=x.dtype)
-    eps = jnp.asarray(jnp.finfo(x.dtype).eps, dtype=x.dtype)
 
     def prox_impl(lam_val: jnp.ndarray) -> jnp.ndarray:
-        lam_safe = jnp.maximum(lam_val, eps)
-
         def body(
             p: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray], _: object
         ) -> tuple[tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray], None]:
             gx, gy, gz = grad3(x + div3(*p))
             q1, q2, q3 = p[0] + tau * gx, p[1] + tau * gy, p[2] + tau * gz
-            shrink = jnp.maximum(1.0, jnp.sqrt(q1 * q1 + q2 * q2 + q3 * q3) / lam_safe)
-            return (q1 / shrink, q2 / shrink, q3 / shrink), None
+            return project_tv_duals(q1, q2, q3, radius=lam_val), None
 
         zeros = jnp.zeros_like(x)
         p, _ = jax.lax.scan(body, (zeros, zeros, zeros), None, length=int(iterations))

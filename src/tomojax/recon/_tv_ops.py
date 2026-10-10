@@ -125,6 +125,35 @@ def huber_tv_grad(u: jnp.ndarray, delta: float) -> jnp.ndarray:
     return -div3(qx, qy, qz)
 
 
+def project_tv_duals(
+    p1: jnp.ndarray,
+    p2: jnp.ndarray,
+    p3: jnp.ndarray,
+    *,
+    radius: float | jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Project vector fields onto their requested ball, without an absolute floor.
+
+    Normalize before squaring to avoid norm underflow/overflow at small/large
+    physical signal scales. A zero radius projects exactly to zero; positive
+    radii retain the identity derivative at zero.
+    """
+    radius = jnp.maximum(jnp.asarray(radius, dtype=p1.dtype), 0.0)
+    peak = jnp.maximum(jnp.maximum(jnp.abs(p1), jnp.abs(p2)), jnp.abs(p3))
+    scale = jnp.maximum(peak, radius)
+    scale = jnp.where(scale == 0, jnp.ones_like(scale), scale)
+    q1, q2, q3 = p1 / scale, p2 / scale, p3 / scale
+    norm = _norm_with_zero_subgradient(q1 * q1 + q2 * q2 + q3 * q3)
+    norm = jnp.where(norm == 0, jnp.ones_like(norm), norm)
+    inside = norm <= radius / scale
+    length = radius / norm
+    return (
+        jnp.where(inside, p1, q1 * length),
+        jnp.where(inside, p2, q2 * length),
+        jnp.where(inside, p3, q3 * length),
+    )
+
+
 def prox_huber_tv_conj(
     p1: jnp.ndarray,
     p2: jnp.ndarray,
@@ -146,8 +175,4 @@ def prox_huber_tv_conj(
     q1 = p1 * scale
     q2 = p2 * scale
     q3 = p3 * scale
-    radius = jnp.maximum(lam_arr, 0.0)
-    norm = _norm_with_zero_subgradient(q1 * q1 + q2 * q2 + q3 * q3)
-    denom = jnp.maximum(radius, jnp.asarray(jnp.finfo(p1.dtype).eps, dtype=p1.dtype))
-    shrink = jnp.maximum(1.0, norm / denom)
-    return q1 / shrink, q2 / shrink, q3 / shrink
+    return project_tv_duals(q1, q2, q3, radius=lam_arr)

@@ -52,6 +52,7 @@ from ._tv_ops import (
     grad3,
     huber_tv_value,
     isotropic_tv_value,
+    project_tv_duals,
     prox_huber_tv_conj,
     validate_regulariser,
 )
@@ -567,14 +568,7 @@ def _run_spdhg_scan(  # noqa: PLR0915
                 delta=runtime.huber_delta,
             )
         else:
-            norm = jnp.maximum(
-                1.0,
-                jnp.sqrt(p1_u * p1_u + p2_u * p2_u + p3_u * p3_u)
-                / jnp.maximum(runtime.tv_weight, 1e-12),
-            )
-            p1_new = p1_u / norm
-            p2_new = p2_u / norm
-            p3_new = p3_u / norm
+            p1_new, p2_new, p3_new = project_tv_duals(p1_u, p2_u, p3_u, radius=runtime.tv_weight)
 
         # s = sum_i A_i^T y_i - div p. Recomputing div p from the updated duals,
         # rather than differencing old and new duals, lets them update in place.
