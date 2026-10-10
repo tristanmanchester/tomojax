@@ -148,3 +148,17 @@ def test_cuda_cone_dense_transpose_with_footprint_bounds_beyond_int32(pitch, til
     geometry = ConeGeometry(grid, detector, [45.0], ConeBeam(7.0, 10.4), tilt_deg=tilt)
     frames = np.asarray([beam_frame(geometry.beam, detector)])
     _check_dense_transpose(grid, detector, frames, jnp.asarray(geometry.poses(), jnp.float32))
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("yaw", [70.0, 110.0])
+@pytest.mark.parametrize("angle", [0.0, 45.0, 90.0])
+def test_cuda_cone_dense_transpose_with_reversed_separable_row_steps(yaw, angle):
+    # A wide yawed detector includes rays whose source-side plane intersections
+    # run downwards in z as the detector row increases. The forward projector
+    # samples those lines, so their transpose must enumerate negative steps too.
+    grid = Grid(5, 4, 3, 1.16, 1.46, 1.26)
+    detector = Detector(9, 9, 8.0, 0.52, center=(-0.77, 0.0))
+    geometry = ConeGeometry(grid, detector, [angle], ConeBeam(7.0, 10.4, detector_yaw_deg=yaw))
+    frames = np.asarray([beam_frame(geometry.beam, detector)])
+    _check_dense_transpose(grid, detector, frames, jnp.asarray(geometry.poses(), jnp.float32))

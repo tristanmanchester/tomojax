@@ -226,8 +226,9 @@ extern "C" __global__ void sep_adjoint(
                 float rc0 = c[5] + fu * c[8];
                 // Columns sampled along the other axis contribute nothing here.
                 s_t[i] = t; s_fb[i] = col_axis == a ? Sb + t * rb : -1e30f; s_rc0[i] = rc0;
-                // z cells rise with v at 1/idf per row: cell j takes the rows strictly
-                // inside ((j - 1 - f0) idf, (j + 1 - f0) idf), at most taps of them.
+                // z cells step with v at 1/idf per row (either sign). Cell j takes
+                // the rows strictly between (j - 1 - f0) idf and (j + 1 - f0) idf,
+                // at most taps of them.
                 float idf = 1.f / (t * DVc);
                 s_f0[i] = Sc + t * (rc0 - Sc); s_idf[i] = idf;
                 // A footprint wider than the image still needs at most nv rows.
@@ -238,7 +239,9 @@ extern "C" __global__ void sep_adjoint(
             for (int i = tid / TC, j = tid % TC; i < ulen; i += blockDim.x / TC) {
                 float jcf = (float)(c0 + j);
                 float t = s_t[i], rc0 = s_rc0[i];
-                float lower = (jcf - 1.f - s_f0[i]) * s_idf[i];
+                float v1 = (jcf - 1.f - s_f0[i]) * s_idf[i];
+                float v2 = (jcf + 1.f - s_f0[i]) * s_idf[i];
+                float lower = fminf(v1, v2);
                 int va = max((int)floorf(pixel_bound(lower, nv)) + 1, 0);
                 int taps = s_taps[i];   // the same for the whole warp: no divergence
                 const float* col = image + (long)(ulo + i) * nv;

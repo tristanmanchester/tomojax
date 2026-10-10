@@ -484,6 +484,9 @@ without a translation frame (0.3's) are read as object-frame poses, and
   conservative pixel bounds at a projection pole, preserving matched CGLS
   reconstruction on these geometries. Footprint bounds are clamped before
   integer conversion, so narrow detector windows cannot overflow them.
+- Separable CUDA cone backprojection now enumerates detector rows in either
+  sampling direction. Wide, yawed detectors can produce reversed row steps at
+  source-side plane intersections; these no longer lose transpose contributions.
 
 - `tj.align(mode="cor")` (and `tomojax align --mode cor`) found a wrong axis
   for a parallel scan of a sample larger than the field of view: on an APS
