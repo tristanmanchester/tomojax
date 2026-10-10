@@ -532,13 +532,14 @@ def test_spdhg_all_missing_data_preserve_finite_warm_start(stream, missing):
 
 @pytest.mark.numerical
 @pytest.mark.parametrize("weighted", [False, True])
-def test_spdhg_streaming_still_rejects_unmasked_nonfinite_data(weighted):
+@pytest.mark.parametrize("invalid", [np.nan, np.inf, -np.inf, 1e40])
+def test_spdhg_streaming_still_rejects_unmasked_nonfinite_data(weighted, invalid):
     grid, detector = Grid(2, 1, 1, 0.8, 1.1, 1.3), Detector(4, 3, 0.7, 0.9)
     geometry = ParallelGeometry(grid, detector, [13.0, 71.0, 127.0])
-    data = np.zeros((3, 3, 4), dtype=np.float32)
-    data[0, 0, 0] = np.nan
+    data = np.zeros((3, 3, 4), dtype=np.float64)
+    data[0, 0, 0] = invalid
     weights = np.ones_like(data) if weighted else None
-    with pytest.raises(Exception, match="finite"):
+    with pytest.raises(ValueError, match="finite"):
         spdhg_tv(
             geometry,
             grid,
@@ -553,3 +554,22 @@ def test_spdhg_streaming_still_rejects_unmasked_nonfinite_data(weighted):
                 projector_backend="jax",
             ),
         )
+    # Reject before ordered dual callbacks: their failed token would otherwise
+    # make this valid solve (or a later caller's solve) fail with the old error.
+    data[0, 0, 0] = 0.0
+    actual, info = spdhg_tv(
+        geometry,
+        grid,
+        detector,
+        data,
+        weights=weights,
+        config=SPDHGConfig(
+            iterations=1,
+            views_per_batch=3,
+            tv_weight=0,
+            stream_projections=True,
+            projector_backend="jax",
+        ),
+    )
+    np.testing.assert_array_equal(actual, 0.0)
+    np.testing.assert_array_equal(info["loss"], [0.0])

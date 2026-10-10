@@ -59,6 +59,18 @@ def read_views(
     return jax.pure_callback(partial(_read, size=shape[0]), out, key, start, weights_key)
 
 
+def validate_host_views(array: np.ndarray, *, weights: np.ndarray | None = None) -> None:
+    """Reject invalid active data before ordered solver callbacks can be poisoned."""
+    for start in range(0, array.size, 2**20):
+        chunk = array.flat[start : start + 2**20]
+        if weights is not None:
+            chunk = np.where(weights.flat[start : start + 2**20] > 0, chunk, 0)
+        with np.errstate(over="ignore", invalid="ignore"):
+            finite = np.isfinite(np.asarray(chunk, dtype=np.float32)).all()
+        if not finite:
+            raise ValueError("streamed projections must be finite in FP32")
+
+
 def should_stream(projections: object, *, fraction: float = 0.4) -> bool:
     """Stream host arrays that would take more than ``fraction`` of free device memory."""
     if isinstance(projections, jax.Array) or jax.default_backend() != "gpu":

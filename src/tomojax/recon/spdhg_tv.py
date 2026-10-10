@@ -44,6 +44,7 @@ from ._host_stream import (
     read_block,
     read_views,
     should_stream,
+    validate_host_views,
     write_block,
 )
 from ._solver_validation import validate_spdhg_config, validate_spdhg_weights
@@ -683,13 +684,14 @@ def spdhg_tv(
         det_grid=det_grid,
     )
     if runtime.y_meas is None:
+        y_host = np.asarray(projections)
+        w_host = None if weights is None else np.asarray(weights)
+        validate_host_views(y_host, weights=w_host)
         with contextlib.ExitStack() as stack:
             keys = [
-                stack.enter_context(host_source(np.asarray(projections))),
+                stack.enter_context(host_source(y_host)),
                 stack.enter_context(host_buffer(runtime.data_shape)),
-                stack.enter_context(host_source(np.asarray(weights)))
-                if weights is not None
-                else jnp.int32(-1),
+                stack.enter_context(host_source(w_host)) if w_host is not None else jnp.int32(-1),
             ]
             runtime = replace(runtime, host_keys=jnp.stack(keys))
             final = _run_spdhg_scan(grid, detector, runtime)
