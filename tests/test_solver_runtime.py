@@ -22,6 +22,55 @@ from tomojax.recon._projection import projection_operators
 
 
 @pytest.mark.numerical
+@pytest.mark.parametrize("tilted", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("device_weights", [False, True])
+def test_spdhg_zero_weight_mask_recovers_dense_weighted_solution(tilted, stream, device_weights):
+    shape = (2, 1, 1)
+    grid = Grid(*shape, 0.8, 1.1, 1.3)
+    detector = Detector(4, 3, 0.7, 0.9, (0.17, -0.23))
+    angles = [13.0, 71.0, 127.0]
+    geometry = (
+        LaminographyGeometry(grid, detector, angles, tilt_deg=25)
+        if tilted
+        else ParallelGeometry(grid, detector, angles)
+    )
+    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(3)], dtype=jnp.float32)
+    forward, _ = projection_operators(poses, grid, detector, None, "jax", 3, "joseph")
+    matrix = np.asarray(jax.jacfwd(lambda x: forward(x.reshape(shape)).ravel())(jnp.zeros(2)))
+    matrix = matrix.astype(np.float64)
+    truth = np.asarray([0.2, 1.0])
+    data = matrix @ truth + np.random.default_rng(839).normal(0, 1e-3, matrix.shape[0])
+    weights = np.linspace(0.3, 1.7, data.size).astype(np.float32)
+    weights[::3] = 0
+    data[weights == 0] = 1e4  # Masked observations must not affect the minimizer.
+    normal = matrix.T @ (weights[:, None] * matrix)
+    expected = np.linalg.solve(normal, matrix.T @ (weights * data))
+    assert np.linalg.cond(normal) < 100
+    assert np.linalg.norm(expected - truth) / np.linalg.norm(truth) < 0.01
+    weights = weights.reshape((3, 3, 4))
+    volume, info = spdhg_tv(
+        geometry,
+        grid,
+        detector,
+        data.reshape((3, 3, 4)).astype(np.float32),
+        weights=jnp.asarray(weights) if device_weights else weights,
+        config=SPDHGConfig(
+            iterations=2000,
+            views_per_batch=2,
+            tv_weight=0,
+            log_every=2000,
+            projector_model="joseph",
+            projector_backend="jax",
+            stream_projections=stream,
+        ),
+    )
+    assert np.isfinite(info["loss"]).all()
+    assert np.linalg.norm(np.asarray(volume).ravel() - expected) / np.linalg.norm(expected) < 5e-5
+    assert np.linalg.norm(np.asarray(volume).ravel() - truth) / np.linalg.norm(truth) < 0.01
+
+
+@pytest.mark.numerical
 @pytest.mark.parametrize("solver", ["fista", "spdhg"])
 @pytest.mark.parametrize("model", ["ray", "joseph"])
 def test_repeated_solver_calls_use_new_arrays(solver, model):

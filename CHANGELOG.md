@@ -11,6 +11,9 @@ wrap at 360 degrees or differ by whole turns. Wrapped short scans no longer
 mistakenly receive full-turn weights, and offset-detector filter tails use the
 same circular view coverage as the weights. Nonfinite FDK angles fail early.
 
+SPDHG rejects negative, nonfinite, complex or FP32-overflowing data weights
+before setting up its projector. Zero weights still mask unmeasured samples.
+
 FISTA-TV and SPDHG's TV/Huber-TV proximal updates now respect small
 regularization weights instead of clamping their dual bounds to fixed numerical
 floors. Their dual projections also normalize before computing norms to avoid

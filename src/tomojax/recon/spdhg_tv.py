@@ -45,7 +45,7 @@ from ._host_stream import (
     should_stream,
     write_block,
 )
-from ._solver_validation import validate_spdhg_config
+from ._solver_validation import validate_spdhg_config, validate_spdhg_weights
 from ._spdhg_steps import SPDHGStepSizes, resolve_spdhg_step_sizes
 from ._tv_ops import (
     div3,
@@ -342,6 +342,7 @@ def _prepare_spdhg_runtime(
         name="weights",
         fix="use weights with the same shape as projections.",
     )
+    validate_spdhg_weights(weights)
     validate_optional_broadcastable_shape(
         cfg.support,
         (grid.nx, grid.ny, grid.nz),
@@ -629,6 +630,10 @@ def spdhg_tv(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> tuple[jnp.ndarray, dict[str, object]]:
     """SPDHG (stochastic Chambolle-Pock) with weighted L2 data term and TV-like regularization.
+
+    ``weights`` must be real, nonnegative and finite when stored in FP32;
+    zero weights mark unmeasured samples. Invalid values fail before solver setup.
+    Boolean/integer masks, standard NumPy floating dtypes and bfloat16 are supported.
 
     If ``callback`` is provided, it fires on the first logged objective sample and
     on the final logged objective sample. The callback arguments are ``(step,
