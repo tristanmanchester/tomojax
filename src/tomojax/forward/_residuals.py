@@ -108,21 +108,42 @@ def _pseudo_huber_jvp(primals, tangents):
 
 
 def robust_residual_scale(residual: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
-    """Estimate residual noise scale with the normal-consistent MAD."""
+    """Estimate normal-consistent MAD, including dynamic masks under JAX transforms.
+
+    Empty, constant, or nonfinite-MAD samples retain the fallback scale of one.
+    Nonzero masks select samples; their magnitudes do not weight the medians.
+    """
     values = jnp.asarray(residual, dtype=jnp.float32)
+    valid = jnp.asarray(True)
     if mask is not None:
         mask_arr = jnp.asarray(mask, dtype=bool)
         if mask_arr.shape != values.shape:
             raise ValueError("mask must match residual shape")
-        values = values[mask_arr]
     if values.size == 0:
         return jnp.asarray(1.0, dtype=jnp.float32)
-    median = jnp.median(values)
-    mad = jnp.median(jnp.abs(values - median))
+    if mask is None:
+        median = jnp.median(values)
+        mad = jnp.median(jnp.abs(values - median))
+    else:
+        # Missing NaN/Inf samples must be removed before centering, not merely
+        # hidden after an unsafe subtraction. Sorting sentinels keeps the shape
+        # fixed while the selected count and median indices stay dynamic.
+        values = jnp.where(mask_arr, values, 0.0)
+        valid = ~jnp.any(jnp.isnan(values))
+        count = jnp.sum(mask_arr)
+        median = _selected_median(values, mask_arr, count)
+        mad = _selected_median(jnp.abs(values - median), mask_arr, count)
     scale = jnp.asarray(1.4826, dtype=jnp.float32) * mad
     return jnp.where(
-        jnp.isfinite(scale) & (scale > 0.0), scale, jnp.asarray(1.0, dtype=jnp.float32)
+        valid & jnp.isfinite(scale) & (scale > 0.0), scale, jnp.asarray(1.0, dtype=jnp.float32)
     )
+
+
+def _selected_median(values: jax.Array, mask: jax.Array, count: jax.Array) -> jax.Array:
+    ordered = jnp.sort(jnp.where(mask, values, jnp.inf).ravel())
+    lower = jnp.where(count > 0, ordered[jnp.maximum((count - 1) // 2, 0)], 0.0)
+    upper = jnp.where(count > 0, ordered[count // 2], 0.0)
+    return lower * 0.5 + upper * 0.5
 
 
 def residual_loss(
