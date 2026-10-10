@@ -38,14 +38,6 @@ class RoiInfo:
     nz_roi: int
 
 
-def _half_extent_from_n(n: int, v: float) -> float:
-    """Half-extent of an n-sized axis with voxel size v centered at 0.
-
-    Uses TomoJAX's default centered origin convention: ((n/2) - 0.5) * v.
-    """
-    return ((float(n) / 2.0) - 0.5) * float(v)
-
-
 def _fit_dim_to_half_extent(
     H: float,
     v: float,
@@ -68,7 +60,10 @@ def _fit_dim_to_half_extent(
     """
     if H <= 0.0:
         return 1
-    n_max = math.floor(2.0 * (H / float(v)) + 1.0)
+    count = min(float(orig_n), 2.0 * (H / float(v)) + 1.0)
+    # Allow only roundoff in the dimensionless voxel count, never an absolute
+    # physical-length tolerance. Clipping first also avoids oversized counts.
+    n_max = math.floor(count + 8 * math.ulp(count))
     n_max = max(n_max, 1)
     if match_parity and (n_max % 2) != (orig_n % 2) and n_max > 1:
         n_max -= 1
@@ -179,11 +174,7 @@ def grid_from_detector_fov(
     """
     info = compute_roi(grid, detector, crop_y_to_u=crop_y_to_u)
     # If detector already covers the full current grid, just return the original grid.
-    if (
-        _half_extent_from_n(grid.nx, grid.vx) <= info.r_u + 1e-6
-        and (not crop_y_to_u or _half_extent_from_n(grid.ny, grid.vy) <= info.r_u + 1e-6)
-        and _half_extent_from_n(grid.nz, grid.vz) <= info.r_v + 1e-6
-    ):
+    if (info.nx_roi, info.ny_roi, info.nz_roi) == (grid.nx, grid.ny, grid.nz):
         return grid
     return Grid(
         nx=int(info.nx_roi),
@@ -214,12 +205,7 @@ def grid_from_detector_fov_cube(
     side_max = min(int(info.nx_roi), int(info.ny_roi), int(info.nz_roi))
     side = _choose_shared_side(side_max, int(grid.nx), int(grid.ny), int(grid.nz))
     # If the original grid already fits within the FOV and is cubic, return it
-    if (
-        grid.nx == grid.ny == grid.nz
-        and _half_extent_from_n(grid.nx, grid.vx) <= info.r_u + 1e-6
-        and (not crop_y_to_u or _half_extent_from_n(grid.ny, grid.vy) <= info.r_u + 1e-6)
-        and _half_extent_from_n(grid.nz, grid.vz) <= info.r_v + 1e-6
-    ):
+    if grid.nx == grid.ny == grid.nz == side:
         return grid
     return Grid(
         nx=side,
@@ -244,10 +230,11 @@ def cylindrical_mask_xy(grid: Grid, detector: Detector) -> np.ndarray:
     nx, ny = int(grid.nx), int(grid.ny)
     vx, vy = float(grid.vx), float(grid.vy)
     origin = grid_volume_origin(grid)
-    x = np.arange(nx, dtype=np.float32) * vx + np.float32(origin[0])
-    y = np.arange(ny, dtype=np.float32) * vy + np.float32(origin[1])
-    x_grid, y_grid = np.meshgrid(x, y, indexing="ij")
-    return (info.r_u * info.r_u + 1e-6) >= (x_grid * x_grid + y_grid * y_grid)
+    x = np.arange(nx, dtype=np.float64) * vx + origin[0]
+    y = np.arange(ny, dtype=np.float64) * vy + origin[1]
+    tolerance = 8 * np.finfo(np.float64).eps * info.r_u
+    # hypot avoids squaring physical lengths, which can underflow or overflow.
+    return np.hypot(x[:, None], y[None, :]) <= info.r_u + tolerance
 
 
 def grid_from_detector_fov_slices(

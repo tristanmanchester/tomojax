@@ -68,14 +68,7 @@ def _resolve_roi_grid(
         return grid
     try:
         roi = compute_roi(grid, detector, crop_y_to_u=is_parallel)
-        full_half_x = ((grid.nx / 2.0) - 0.5) * float(grid.vx)
-        full_half_y = ((grid.ny / 2.0) - 0.5) * float(grid.vy)
-        full_half_z = ((grid.nz / 2.0) - 0.5) * float(grid.vz)
-        det_smaller = (
-            (roi.r_u + 1e-6) < full_half_x
-            or (is_parallel and (roi.r_u + 1e-6) < full_half_y)
-            or (roi.r_v + 1e-6) < full_half_z
-        )
+        det_smaller = (roi.nx_roi, roi.ny_roi, roi.nz_roi) != (grid.nx, grid.ny, grid.nz)
         if roi_mode == "auto" and det_smaller:
             if is_parallel:
                 return grid_from_detector_fov_slices(grid, detector, crop_y_to_u=True)

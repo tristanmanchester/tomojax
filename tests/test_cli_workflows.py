@@ -253,6 +253,25 @@ def test_recon_cli_runs_cgls_like_the_python_solver(tmp_path: Path, *, warm_star
     assert 1 <= resolved["reconstruction"]["effective_iterations"] <= 6
 
 
+@pytest.mark.parametrize("scale", [1e-6, 1.0, 1e6])
+def test_recon_cli_auto_roi_does_not_depend_on_physical_units(tmp_path: Path, scale: float) -> None:
+    import tomojax as tj
+
+    grid = tj.Grid(11, 11, 5, scale, scale, scale)
+    detector = tj.Detector(9, 3, scale, scale)
+    geometry = tj.ParallelGeometry(grid, detector, np.array([0.0, 90.0]))
+    scan_path, recon_path = tmp_path / "scan.nxs", tmp_path / "recon.nxs"
+    tj.save(scan_path, tj.Scan(np.zeros((2, 3, 9), np.float32), geometry))
+
+    args = ["recon", str(scan_path), "-o", str(recon_path), "--method", "cgls"]
+    assert main([*args, "--iterations", "0"]) == 0
+
+    actual = tj.load_reconstruction(recon_path)
+    assert (actual.grid.nx, actual.grid.ny, actual.grid.nz) == (9, 9, 3)
+    assert (actual.grid.vx, actual.grid.vy, actual.grid.vz) == (scale, scale, scale)
+    np.testing.assert_array_equal(actual.volume, np.zeros((9, 9, 3), np.float32))
+
+
 def test_recon_cli_cylinder_constrains_fista_to_the_field_of_view(tmp_path: Path) -> None:
     import numpy as np
 
