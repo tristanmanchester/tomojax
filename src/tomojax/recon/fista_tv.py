@@ -826,7 +826,7 @@ def _run_fista_scan(
                 data_loss_val, g = jax.lax.cond(
                     k == 0, lambda _: (first_value, first_gradient), val_and_grad, active_state.z
                 )
-            reg_value = regulariser_value_fn(active_state.z)
+            reg_value = 0.0 if cfg.tv_weight == 0 else regulariser_value_fn(active_state.z)
             y = active_state.z - (1.0 / L) * g
             if regulariser == "huber_tv" or float(cfg.tv_weight) == 0.0:
                 x_new = y

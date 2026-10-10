@@ -573,3 +573,46 @@ def test_spdhg_streaming_still_rejects_unmasked_nonfinite_data(weighted, invalid
     )
     np.testing.assert_array_equal(actual, 0.0)
     np.testing.assert_array_equal(info["loss"], [0.0])
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("regulariser", ["tv", "huber_tv"])
+@pytest.mark.parametrize(("model", "stream"), [("ray", False), ("joseph", False), ("joseph", True)])
+def test_fista_disabled_tv_does_not_evaluate_regulariser(monkeypatch, regulariser, stream, model):
+    import importlib
+
+    module = importlib.import_module("tomojax.recon.fista_tv")
+    grid, detector = Grid(2, 1, 1, 1.0, 1.0, 1.0), Detector(2, 1, 1.0, 1.0)
+    geometry = ParallelGeometry(grid, detector, [0.0])
+    initial = np.asarray([0.25, 0.75], dtype=np.float32).reshape(2, 1, 1)
+    data = initial.reshape(1, 1, 2)
+
+    def disabled(*_args):
+        raise AssertionError("the disabled regulariser must not be evaluated")
+
+    monkeypatch.setattr(module, "isotropic_tv_value", disabled)
+    monkeypatch.setattr(module, "huber_tv_value", disabled)
+    module._run_fista_scan.clear_cache()
+    try:
+        actual, info = fista_tv(
+            geometry,
+            grid,
+            detector,
+            data,
+            init_x=initial,
+            config=FistaConfig(
+                iterations=2,
+                lipschitz=1.0,
+                tv_weight=0.0,
+                regulariser=regulariser,
+                projector_model=model,
+                projector_backend="jax",
+                stream_projections=stream,
+            ),
+        )
+        # Each ray sees one unit-length voxel; this ordinary-range warm start
+        # is exactly the independent least-squares solution on both paths.
+        np.testing.assert_array_equal(actual, initial)
+        np.testing.assert_array_equal(info["loss"], [0.0, 0.0])
+    finally:
+        module._run_fista_scan.clear_cache()
