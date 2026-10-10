@@ -89,3 +89,34 @@ def test_raw_multipage_calibration_matches_in_memory_frames(tmp_path: Path) -> N
     np.testing.assert_array_equal(actual.projections, reference.projections)
     np.testing.assert_allclose(actual.projections, -np.log(40.0 / 90.0), rtol=1e-6)
     assert actual.corrections == reference.corrections
+
+
+@pytest.mark.parametrize("angle", [np.nan, np.inf, -np.inf])
+def test_explicit_nonfinite_angles_do_not_make_invalid_datasets(
+    tmp_path: Path, angle: float
+) -> None:
+    path = tmp_path / "views.tif"
+    tifffile.imwrite(path, np.zeros((2, 5, 7), np.float32), photometric="minisblack")
+    with pytest.raises(ValueError, match="angles.*finite"):
+        load_tiff_stack(path, angles=[0.0, angle])
+
+
+@pytest.mark.parametrize("angles", [[0.0, np.nan], [np.inf], [[0.0, 90.0]]])
+def test_bad_explicit_angles_are_checked_before_reading_frames(tmp_path: Path, angles) -> None:
+    # Invalid metadata must fail before decoding a potentially large stack.
+    with pytest.raises(ValueError, match="angles"):
+        load_tiff_stack(tmp_path / "not_read.tif", angles=angles)
+
+
+@pytest.mark.parametrize("dtype", [np.int16, np.float32, np.float64])
+def test_finite_explicit_angles_keep_their_original_representation_and_order(
+    tmp_path: Path, dtype
+) -> None:
+    projections = np.arange(3 * 5 * 7, dtype=np.float32).reshape(3, 5, 7)
+    path = tmp_path / "views.tif"
+    tifffile.imwrite(path, projections, photometric="minisblack")
+    angles = np.asarray([135, 0, 45], dtype=dtype)
+    actual = load_tiff_stack(path, angles=angles)
+    assert actual.angles.dtype == np.float32
+    np.testing.assert_array_equal(actual.angles, angles.astype(np.float32))
+    np.testing.assert_array_equal(actual.projections, projections)

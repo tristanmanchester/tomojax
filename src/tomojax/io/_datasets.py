@@ -341,10 +341,12 @@ def load_tiff_stack(
 ) -> ProjectionDataset:
     """Load grayscale TIFF pages with explicit view ``angles``, in degrees."""
     input_path = Path(path)
-    projections = read_tiff_frames(input_path).astype(np.float32, copy=False)
     angles = np.asarray(angles, dtype=np.float32)
     if angles.ndim != 1:
         raise ValueError("angles must be one-dimensional")
+    if not np.isfinite(angles).all():
+        raise ValueError("angles must contain only finite values")
+    projections = read_tiff_frames(input_path).astype(np.float32, copy=False)
     if angles.shape[0] != projections.shape[0]:
         raise ValueError(
             f"angles length {angles.shape[0]} does not match projection count "
