@@ -2,36 +2,28 @@
 
 ## Unreleased
 
-Parallel `fbp_host` now reads and transfers detector-row slabs one view batch
-at a time, instead of putting all views of each slab on the device. Its
-projection storage is bounded by `views_per_batch` in both slab layouts.
+FDK gives the same weights and reconstruction however the angles are
+labelled: wrapping at 360 degrees or adding whole turns used to change them,
+and a wrapped short scan could get full-turn or negative weights (image error
+0.77, now 0.12, matching the unwrapped scan).
 
-FDK now gives the same angular weights and reconstruction when angle labels
-wrap at 360 degrees or differ by whole turns. Wrapped short scans no longer
-mistakenly receive full-turn weights, and offset-detector filter tails use the
-same circular view coverage as the weights. Nonfinite FDK angles fail early.
+Processed NXtomo files with angles in radians are read correctly; they were
+taken as degrees. Unknown units, wrong-shaped or nonfinite angles, and bad
+`image_key` labels, in NXtomo or other HDF5 layouts, now fail instead of
+changing the geometry or treating calibration frames as views.
 
-SPDHG rejects negative, nonfinite, complex or FP32-overflowing data weights
-before setting up its projector. Zero weights still mask unmeasured samples.
+The CUDA cone backprojector is the exact transpose of the forward projector
+in three more places: where a ray is nearly tied between two axes (both now
+round its coordinates identically; it differed by up to 1.6%), where a tile's
+projection passes through infinity near a projection pole, and for detectors
+whose rows run in reverse. Adjoints are about 1.5% slower; forward projections
+are unchanged.
 
-FISTA-TV and SPDHG's TV/Huber-TV proximal updates now respect small
-regularization weights instead of clamping their dual bounds to fixed numerical
-floors. Their dual projections also normalize before computing norms to avoid
-norm underflow or overflow at extreme signal scales.
-
-NXtomo loading now honours rotation-angle units for processed scans as well as
-raw frames: radians are converted to degrees. Unsupported units, nonfinite sample
-angles, wrong-shaped angle arrays and noninteger or unknown `image_key` labels fail
-instead of changing the acquisition geometry or silently dropping views.
-
-Generic HDF5 discovery also rejects uniquely named malformed angle or image-key
-datasets instead of treating them as absent. Shape-based selection for different
-detectors and explicit metadata-path selection are unchanged.
-
-The CUDA cone backprojector is again the exact transpose of the forward
-projector where a ray is nearly tied between two axes: both now round the ray's
-coordinates identically (it differed by up to 1.6% there). Adjoints are about
-1.5% slower; forward projections are unchanged.
+TV and Huber-TV in FISTA and SPDHG, and SPDHG's weighted data term, no longer
+clamp to fixed numerical floors, so data at very small or large scales is
+regularised as asked. SPDHG rejects negative or nonfinite data weights; zero
+still masks a sample. Parallel `fbp_host` moves views to the device one batch
+at a time, as `views_per_batch` says, not a whole row slab at once.
 
 The CUDA FDK no longer prints `cudaErrorNotPermitted` texture errors: its
 textures are freed once their kernel's event completes, never in a stream

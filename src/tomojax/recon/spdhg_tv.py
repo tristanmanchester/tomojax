@@ -37,6 +37,7 @@ from tomojax.recon._projection import (
 )
 
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
+from ._data_prox import weighted_l2_conjugate
 from ._host_stream import (
     host_buffer,
     host_source,
@@ -233,11 +234,8 @@ def _prox_fstar_l2(
     otherwise return zero for the domain of the conjugate. ``None`` is w = 1.
     """
     sigma = jnp.asarray(sigma, dtype=u.dtype)
-    if w is None:
-        return ((u - sigma * y_meas) / (sigma + 1)).astype(u.dtype)
-    denom = sigma + w
-    v = (u - sigma * y_meas) * w / jnp.maximum(denom, 1e-12)
-    return jnp.where(w > 0, v, 0.0).astype(u.dtype)
+    w = jnp.ones_like(u) if w is None else jnp.asarray(w, dtype=u.dtype)
+    return weighted_l2_conjugate(u, sigma, y_meas, w).astype(u.dtype)
 
 
 def _batched_projector(
