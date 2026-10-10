@@ -22,6 +22,7 @@ from tomojax.core.backend_policy import cuda_backend
 from tomojax.core.cone import ConeModel, cone_backproject, cone_model, cone_project, use_cuda_cone
 from tomojax.core.devices import VIEWS, ViewSplit, pad_views
 from tomojax.core.geometry.cone import is_cone_beam
+from tomojax.core.operator_norm import normalize_with_norm
 from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
 from tomojax.recon._host_stream import read_views
 
@@ -485,13 +486,11 @@ def normal_operator_norm(
 
     def step(_: jax.Array, carry: tuple[jax.Array, jax.Array]) -> tuple[jax.Array, jax.Array]:
         x, _ = carry
-        y = normal(x)
-        norm = jnp.sqrt(jnp.sum(y * y))
-        return y / jnp.maximum(norm, jnp.finfo(jnp.float32).tiny), norm
+        return normalize_with_norm(normal(x))
 
     x0 = jnp.ones(shape, jnp.float32) if start is None else start
     x0 = x0 if mask is None else x0 * mask
-    x0 = x0 / jnp.sqrt(jnp.sum(x0**2) + 1e-30)
+    x0, _ = normalize_with_norm(x0)
     _, norm = jax.lax.fori_loop(0, max(1, iterations), step, (x0, jnp.float32(0)))
     return norm
 

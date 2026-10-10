@@ -18,7 +18,7 @@ from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeome
 from tomojax.recon import FistaConfig, SPDHGConfig, fista_tv, spdhg_tv
 
 # check-public-imports: allow-private
-from tomojax.recon._projection import projection_operators
+from tomojax.recon._projection import normal_operator_norm, projection_operators
 
 
 @pytest.mark.numerical
@@ -393,3 +393,25 @@ def test_spdhg_partial_tv_step_controls_dense_primal_update(model, regulariser):
         tv_gradient = sum(edge.T @ dual for edge, dual in zip(edges, tv_dual, strict=True))
         expected = initial.ravel() - info["tau"] * (matrix.T @ data_dual + tv_gradient)
         np.testing.assert_allclose(volume.ravel(), expected, rtol=2e-5, atol=3e-6)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("scale", [1e-12, 1e-4, 1.0, 1e12])
+@pytest.mark.parametrize("start_scale", [1e-25, 1.0, 1e25])
+def test_batched_normal_norm_matches_dense_scaled_spectrum(scale, start_scale):
+    matrix = jnp.asarray([[1.0, 0.3], [0.3, 2.0]], dtype=jnp.float32) * scale
+    support = jnp.asarray([0.4, 1.0]).reshape(2, 1, 1)
+
+    def forward(x):
+        return matrix @ x.ravel()
+
+    def adjoint(y):
+        return (matrix.T @ y).reshape(2, 1, 1)
+
+    actual = jax.jit(
+        lambda start: normal_operator_norm(
+            forward, adjoint, (2, 1, 1), iterations=30, mask=support, start=start
+        )
+    )(jnp.full((2, 1, 1), start_scale))
+    expected = np.linalg.norm(np.asarray(matrix, np.float64) * np.asarray(support).ravel(), 2) ** 2
+    np.testing.assert_allclose(actual, expected, rtol=3e-6)
