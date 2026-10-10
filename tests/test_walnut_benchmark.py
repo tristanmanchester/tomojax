@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -99,3 +101,88 @@ def test_projection_cache_cannot_silently_replace_a_different_requested_scan(
     with pytest.raises(ValueError, match="projection cache does not match"):
         walnut.load_orbits(source, orbits, every, cache=cache)
     assert cache.read_bytes() == before
+
+
+@pytest.mark.parametrize("failure", ["sino", "algorithm", "run", None])
+def test_astra_releases_allocated_data_and_algorithms_even_when_a_measurement_fails(
+    walnut, monkeypatch, failure
+):
+    allocated, deleted = [], []
+
+    def allocate(name):
+        if name == failure:
+            raise RuntimeError("injected ASTRA failure")
+        allocated.append(name)
+        return name
+
+    def run(*_args):
+        if failure == "run":
+            raise RuntimeError("injected ASTRA failure")
+
+    astra = SimpleNamespace(
+        create_proj_geom=lambda *_args: {},
+        create_vol_geom=lambda *_args: {
+            "GridSliceCount": 2,
+            "GridRowCount": 3,
+            "GridColCount": 4,
+            "option": {},
+        },
+        astra_dict=lambda _name: {},
+        data3d=SimpleNamespace(
+            link=lambda kind, *_args: allocate("volume" if kind == "-vol" else "sino"),
+            delete=deleted.append,
+        ),
+        algorithm=SimpleNamespace(
+            create=lambda _config: allocate("algorithm"),
+            run=run,
+            delete=deleted.append,
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "astra", astra)
+    args = (
+        np.zeros((3, 2, 4), np.float32),
+        {"DetectorRowCount": 3, "DetectorColCount": 4, "Vectors": []},
+        {"GridSliceCount": 2, "GridRowCount": 3, "GridColCount": 4, "option": {}},
+        "cgls",
+        5,
+    )
+    if failure is None:
+        assert walnut.astra_reconstruct(*args).shape == (4, 3, 2)
+    else:
+        with pytest.raises(RuntimeError, match="injected ASTRA failure"):
+            walnut.astra_reconstruct(*args)
+    assert deleted == list(reversed(allocated))
+
+
+@pytest.mark.parametrize("failure", ["operator", "solve"])
+def test_astra_releases_the_nnls_projector_when_the_operator_or_solve_fails(
+    walnut, monkeypatch, failure
+):
+    deleted = []
+
+    def fail(*_args):
+        raise RuntimeError("injected NNLS failure")
+
+    astra = SimpleNamespace(
+        create_proj_geom=lambda *_args: {},
+        create_vol_geom=lambda *_args: {
+            "GridSliceCount": 2,
+            "GridRowCount": 3,
+            "GridColCount": 4,
+            "option": {},
+        },
+        create_projector=lambda *_args: "projector",
+        OpTomo=fail if failure == "operator" else lambda _projector: object(),
+        projector=SimpleNamespace(delete=deleted.append),
+    )
+    monkeypatch.setitem(sys.modules, "astra", astra)
+    monkeypatch.setattr(walnut, "_astra_agd", fail)
+    with pytest.raises(RuntimeError, match="injected NNLS failure"):
+        walnut.astra_reconstruct(
+            np.zeros((3, 2, 4), np.float32),
+            {"DetectorRowCount": 3, "DetectorColCount": 4, "Vectors": []},
+            {"GridSliceCount": 2, "GridRowCount": 3, "GridColCount": 4, "option": {}},
+            "fista",
+            5,
+        )
+    assert deleted == ["projector"]

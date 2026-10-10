@@ -18,6 +18,7 @@ reverse order and transposed, dark- and flat-corrected and log-transformed.
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 import json
 import logging
 from pathlib import Path
@@ -131,19 +132,23 @@ def astra_reconstruct(
     shape = (geometry["GridSliceCount"], geometry["GridRowCount"], geometry["GridColCount"])
     if method == "fista":  # non-negative least squares: the reference's AGD
         projector = astra.create_projector("cuda3d", proj_geom, geometry)
-        operator = astra.OpTomo(projector)
-        volume = _astra_agd(operator, np.ascontiguousarray(data), iterations).reshape(shape)
-        astra.projector.delete(projector)
+        try:
+            operator = astra.OpTomo(projector)
+            volume = _astra_agd(operator, np.ascontiguousarray(data), iterations).reshape(shape)
+        finally:
+            astra.projector.delete(projector)
         return np.transpose(volume, (2, 1, 0))
     volume = np.zeros(shape, np.float32)
-    volume_id = astra.data3d.link("-vol", geometry, volume)
-    sino_id = astra.data3d.link("-sino", proj_geom, np.ascontiguousarray(data))
-    config = astra.astra_dict("FDK_CUDA" if method == "fbp" else "CGLS3D_CUDA")
-    config["ProjectionDataId"], config["ReconstructionDataId"] = sino_id, volume_id
-    algorithm = astra.algorithm.create(config)
-    astra.algorithm.run(algorithm, 1 if method == "fbp" else iterations)
-    astra.algorithm.delete(algorithm)
-    astra.data3d.delete([volume_id, sino_id])
+    with ExitStack() as cleanup:
+        volume_id = astra.data3d.link("-vol", geometry, volume)
+        cleanup.callback(astra.data3d.delete, volume_id)
+        sino_id = astra.data3d.link("-sino", proj_geom, np.ascontiguousarray(data))
+        cleanup.callback(astra.data3d.delete, sino_id)
+        config = astra.astra_dict("FDK_CUDA" if method == "fbp" else "CGLS3D_CUDA")
+        config["ProjectionDataId"], config["ReconstructionDataId"] = sino_id, volume_id
+        algorithm = astra.algorithm.create(config)
+        cleanup.callback(astra.algorithm.delete, algorithm)
+        astra.algorithm.run(algorithm, 1 if method == "fbp" else iterations)
     return np.transpose(volume, (2, 1, 0))
 
 
