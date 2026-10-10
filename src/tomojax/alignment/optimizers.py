@@ -280,7 +280,7 @@ class BoundTransform:
 
 def _softplus_inverse(y: jnp.ndarray) -> jnp.ndarray:
     y = jnp.maximum(y, jnp.asarray(1e-6, dtype=jnp.float32))
-    return jnp.where(y > 20.0, y, jnp.log(jnp.expm1(y)))
+    return y + jnp.log(-jnp.expm1(-y))
 
 
 def _build_pose_lbfgs_transform(
