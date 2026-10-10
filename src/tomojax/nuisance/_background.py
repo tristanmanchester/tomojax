@@ -58,34 +58,45 @@ def estimate_background_offset(
     mask: jax.Array | None = None,
     ridge: float = 1.0e-6,
 ) -> BackgroundOffsetModel:
-    """Fit low-frequency background to ``observed - predicted`` per view."""
+    """Fit low-frequency background to ``observed - predicted`` per view.
+
+    ``ridge`` penalizes both squared coefficients. Without ridge, a view with
+    only one observed detector row uses the minimum-norm constant/gradient
+    pair. Unobserved views have zero background, and zero-weight pixels are
+    excluded even if their values are nonfinite.
+    """
     pred = jnp.asarray(predicted, dtype=jnp.float32)
     obs = jnp.asarray(observed, dtype=jnp.float32)
     if pred.shape != obs.shape:
         raise ValueError("predicted and observed projections must have the same shape")
     if pred.ndim != 3:
         raise ValueError("background fitting expects projections shaped (views, rows, cols)")
-    residual = obs - pred
     weights = _mask_weights(mask, pred)
+    included = weights != 0.0
+    residual = jnp.where(included, obs, 0.0) - jnp.where(included, pred, 0.0)
     ramp = _vertical_ramp(int(pred.shape[1])).reshape((1, pred.shape[1], 1))
-    ones = jnp.ones_like(residual, dtype=jnp.float32)
-    a00 = jnp.sum(weights * ones, axis=(1, 2))
-    a01 = jnp.sum(weights * ramp, axis=(1, 2))
-    a11 = jnp.sum(weights * ramp * ramp, axis=(1, 2))
-    b0 = jnp.sum(weights * residual, axis=(1, 2))
-    b1 = jnp.sum(weights * residual * ramp, axis=(1, 2))
+    sum_w = jnp.sum(weights, axis=(1, 2))
+    safe_sum_w = jnp.where(sum_w > 0.0, sum_w, 1.0)
+    ramp_mean = jnp.sum(weights * ramp, axis=(1, 2)) / safe_sum_w
+    residual_mean = jnp.sum(weights * residual, axis=(1, 2)) / safe_sum_w
+    centred_ramp = ramp - ramp_mean[:, None, None]
+    centred_residual = jnp.where(included, residual - residual_mean[:, None, None], 0.0)
+    variance = jnp.sum(weights * centred_ramp**2, axis=(1, 2))
+    covariance = jnp.sum(weights * centred_ramp * centred_residual, axis=(1, 2))
     ridge_value = jnp.asarray(max(float(ridge), 0.0), dtype=jnp.float32)
-    a00_r = a00 + ridge_value
-    a11_r = a11 + ridge_value
-    determinant = a00_r * a11_r - a01 * a01
-    safe_determinant = jnp.where(
-        jnp.abs(determinant) > ridge_value,
-        determinant,
-        jnp.asarray(1.0, dtype=jnp.float32),
-    )
-    constant = (b0 * a11_r - b1 * a01) / safe_determinant
-    vertical_gradient = (a00_r * b1 - a01 * b0) / safe_determinant
-    valid = a00 > 0.0
+    shrink = sum_w / jnp.where(sum_w + ridge_value > 0.0, sum_w + ridge_value, 1.0)
+    # Eliminate the intercept using centered moments. Unlike a 2x2 determinant,
+    # this denominator does not subtract nearly equal raw products or compare
+    # quantities with incompatible units to a fixed numerical floor.
+    denominator = variance + ridge_value * (1.0 + ramp_mean**2 * shrink)
+    numerator = covariance + ridge_value * ramp_mean * shrink * residual_mean
+    vertical_gradient = numerator / jnp.where(denominator > 0.0, denominator, 1.0)
+    observed_rows = jnp.sum(jnp.any(included, axis=2), axis=1)
+    identifiable = (observed_rows > 1) | (ridge_value > 0.0)
+    minimum_norm = ramp_mean * residual_mean / (1.0 + ramp_mean**2)
+    vertical_gradient = jnp.where(identifiable, vertical_gradient, minimum_norm)
+    constant = shrink * (residual_mean - ramp_mean * vertical_gradient)
+    valid = sum_w > 0.0
     return BackgroundOffsetModel(
         constant=jnp.where(valid, constant, 0.0),
         vertical_gradient=jnp.where(valid, vertical_gradient, 0.0),
