@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import copy
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
@@ -167,58 +168,21 @@ class ProjectionDataset:
 
     def to_nxtomo_metadata(self) -> NXTomoMetadata:
         """Return NXtomo metadata for saving this public dataset."""
-        if self._metadata is not None:
-            metadata = self.copy_metadata()
-            metadata.angles = np.array(self.angles, dtype=np.float32, copy=True)
-            metadata.volume = None if self.volume is None else np.array(self.volume, copy=True)
-            metadata.grid = self.grid
-            metadata.detector = self.detector
-            metadata.geometry_type = self.geometry_type
-            metadata.geometry_meta = dict(self.geometry_metadata)
-            metadata.angle_offset_deg = (
-                None
-                if self.angle_offset_deg is None
-                else np.array(self.angle_offset_deg, dtype=np.float32, copy=True)
-            )
-            metadata.align_params = (
-                None if self.align_params is None else np.array(self.align_params, copy=True)
-            )
-            metadata.align_gauge = None if self.align_gauge is None else dict(self.align_gauge)
-            metadata.misalign_spec = (
-                None if self.misalign_spec is None else dict(self.misalign_spec)
-            )
-            metadata.sample_name = self.sample_name or metadata.sample_name or "sample"
-            return metadata
-        return NXTomoMetadata(
-            angles=np.array(self.angles, dtype=np.float32, copy=True),
-            volume=None if self.volume is None else np.array(self.volume, copy=True),
-            grid=self.grid,
-            detector=self.detector,
-            geometry_type=self.geometry_type,
-            geometry_meta=dict(self.geometry_metadata),
-            angle_offset_deg=(
-                None
-                if self.angle_offset_deg is None
-                else np.array(self.angle_offset_deg, dtype=np.float32, copy=True)
-            ),
-            align_params=(
-                None if self.align_params is None else np.array(self.align_params, copy=True)
-            ),
-            align_gauge=None if self.align_gauge is None else dict(self.align_gauge),
-            misalign_spec=None if self.misalign_spec is None else dict(self.misalign_spec),
-            sample_name=self.sample_name or "sample",
-        )
+        return self.copy_metadata()
 
     def copy_metadata(self) -> NXTomoMetadata:
         """Return writable persistence metadata for save/update workflows."""
         if self._metadata is None:
             metadata = NXTomoMetadata()
         else:
-            metadata = NXTomoMetadata.from_dataset(
-                LoadedNXTomo(
-                    projections=np.asarray(self.projections),
-                    metadata=self._metadata,
-                ).to_dataset_dict()
+            # Dataset-owned fields below replace the stored ones; copy only the
+            # retained acquisition key and the mutable dictionaries kept as is.
+            stored = self._metadata
+            metadata = replace(
+                stored,
+                image_key=None if stored.image_key is None else np.array(stored.image_key),
+                geometry_calibration=_copied(stored.geometry_calibration),
+                simulation_artefacts=_copied(stored.simulation_artefacts),
             )
         metadata.angles = np.array(self.angles, dtype=np.float32, copy=True)
         metadata.volume = None if self.volume is None else np.array(self.volume, copy=True)
@@ -232,12 +196,7 @@ class ProjectionDataset:
             else np.array(self.angle_offset_deg, dtype=np.float32, copy=True)
         )
         metadata.align_params = (
-            None
-            if self.align_params is None
-            else np.array(
-                self.align_params,
-                copy=True,
-            )
+            None if self.align_params is None else np.array(self.align_params, copy=True)
         )
         metadata.align_gauge = None if self.align_gauge is None else dict(self.align_gauge)
         metadata.misalign_spec = None if self.misalign_spec is None else dict(self.misalign_spec)
@@ -447,3 +406,7 @@ def _vec3(value: object, *, name: str) -> tuple[float, float, float]:
     if len(items) != 3:
         raise ValueError(f"{name} must have length 3")
     return items[0], items[1], items[2]
+
+
+def _copied(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    return None if value is None else copy.deepcopy(value)
