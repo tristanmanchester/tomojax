@@ -26,16 +26,21 @@ an hour.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import hashlib
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import modal
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 # The benchmark scripts' directory: this one locally, /root/bench in the container.
 sys.path[:0] = [str(Path(__file__).resolve().parent), "/root/bench"]
@@ -108,6 +113,39 @@ if modal.is_local():  # the container imports this module too, without the files
     )
 app = modal.App("tomojax-benchmarks", image=image)
 data = modal.Volume.from_name("tomojax-walnut", create_if_missing=True)
+_COMMITTING = threading.Lock()
+
+
+def _commit() -> None:
+    """Commit the volume, one commit at a time: what is written so far outlives the container."""
+    with _COMMITTING:
+        data.commit()
+
+
+@contextmanager
+def _committing(every: float = 300.0) -> Iterator[None]:
+    """Commit the volume every ``every`` s while the block runs, and once as it ends.
+
+    A container stopped abruptly (out of credit, preempted), whose own clean-up
+    never runs, then loses at most the last ``every`` s of what was written.
+    """
+    stop = threading.Event()
+
+    def keep_committing() -> None:
+        while not stop.wait(every):
+            try:
+                _commit()
+            except Exception as error:  # the next commit tries again
+                print(f"volume commit failed: {error}", flush=True)
+
+    committer = threading.Thread(target=keep_committing, daemon=True)
+    committer.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        committer.join()
+        _commit()
 
 
 @app.function(volumes={"/data": data}, timeout=12 * 3600)
@@ -122,38 +160,25 @@ def fetch_walnut() -> None:
     ``/Walnut1/.complete``.
     """
     import shutil
-    import threading
 
     done = Path("/data/Walnut1/.complete")
     if done.exists():
         return
     shutil.rmtree("/data/Walnut1", ignore_errors=True)  # an interrupted extraction
     archive = Path("/data/partial-Walnut1.zip")  # with aria2's record of what it has
-    stop = threading.Event()
-
-    def keep_committing() -> None:
-        while not stop.wait(300):
-            data.commit()
-
-    committer = threading.Thread(target=keep_committing, daemon=True)
-    committer.start()
     fetch = ["aria2c", "--split=8", "--max-connection-per-server=8", "--min-split-size=20M",
              "--continue=true", "--max-tries=0", "--retry-wait=15", "--timeout=120",
              "--allow-overwrite=true", "--auto-file-renaming=false", "--summary-interval=300",
              f"--dir={archive.parent}", f"--out={archive.name}", WALNUT_ZIP]  # fmt: skip
-    try:
+    with _committing():
         subprocess.run(fetch, check=True)
-    finally:
-        stop.set()
-        committer.join()
-        data.commit()
     subprocess.run(["unzip", "-tq", str(archive)], check=True)  # whole, before unpacking
     subprocess.run(["unzip", "-q", str(archive), "-d", "/data"], check=True)
     if not list(Path("/data/Walnut1/Reconstructions").glob("full_AGD_50_*.tiff")):
         raise RuntimeError("walnut 1's reference reconstruction is missing from the download")
     done.write_text(WALNUT_ZIP)
     archive.unlink()
-    data.commit()
+    _commit()
 
 
 def _case_name(size: int, views: int) -> str:
@@ -178,7 +203,7 @@ def make_cases(sizes: list[int], views: int) -> None:
                 f"cache=Path('{cache}'))"
             )
             subprocess.run(["python", "-c", code], cwd="/root/bench", check=True)
-            data.commit()
+            _commit()
     cases = Path("/data/cases")
     cases.mkdir(parents=True, exist_ok=True)
     for size in sizes:
@@ -192,7 +217,7 @@ def make_cases(sizes: list[int], views: int) -> None:
         )
         subprocess.run(["python", "-c", code], cwd="/root/bench", check=True)
         partial.rename(case)
-        data.commit()
+        _commit()
 
 
 @app.function(timeout=2400)
@@ -237,9 +262,16 @@ def _check(gpus: int, out: Path, *, timeout: float) -> str:
 def benchmark(gpus: list[int], sizes: list[int], views: int, run: dict) -> None:
     """The tests, then every comparison, most valuable first, each saved as it comes.
 
-    One deadline, ``run["max_hours"]`` after the start, bounds every step: each
-    gets at most the time left, and none starts with less than a minute left.
+    What the steps write is committed every five minutes, and each step's status
+    as it ends. One deadline, ``run["max_hours"]`` after the start, bounds every
+    step: each gets at most the time left, and none starts with less than a
+    minute left.
     """
+    with _committing():
+        _benchmark(gpus, sizes, views, run)
+
+
+def _benchmark(gpus: list[int], sizes: list[int], views: int, run: dict) -> None:
     deadline = time.monotonic() + run["max_hours"] * 3600 - 300  # time to save at the end
     out = Path(f"/data/results/{run['name']}")
     out.mkdir(parents=True, exist_ok=True)
@@ -250,7 +282,7 @@ def benchmark(gpus: list[int], sizes: list[int], views: int, run: dict) -> None:
             _check(max(gpus), out, timeout=min(2400, deadline - time.monotonic()))
             _log_step(out, "tests", "exit 0")
     finally:
-        data.commit()
+        _commit()
     env = {**os.environ, "XLA_PYTHON_CLIENT_PREALLOCATE": "false", "TOMOJAX_COMMIT": run["commit"]}
 
     def step(name: str, command: list[str], limit: float, *, cpu_jax: bool = False) -> str:
@@ -275,7 +307,7 @@ def benchmark(gpus: list[int], sizes: list[int], views: int, run: dict) -> None:
             )  # fmt: skip
         _log_step(out, name, status)
         print(f"{name}: {status}", flush=True)
-        data.commit()
+        _commit()
         return status
 
     # Each library working at all, on every GPU, in a minute: stop here if not.
@@ -345,7 +377,7 @@ def _preflight(out: Path, env: dict[str, str], *, timeout: float) -> None:
         ["python", "-c", code], log=out / "device-properties.log", timeout=120, env=env
     )
     _log_step(out, "device-properties", props)
-    data.commit()
+    _commit()
     print(f"kernel-tests: {status}; device-properties: {props}", flush=True)
     if status != "exit 0" or props != "exit 0":
         raise RuntimeError(f"preflight failed: kernel tests {status}, device properties {props}")
