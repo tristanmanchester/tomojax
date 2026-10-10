@@ -33,6 +33,8 @@ if TYPE_CHECKING:
 
     from tomojax._typed_arrays import Device
 
+    from ._host_arrays import ProjectionRows
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class FBPConfig:
@@ -285,7 +287,7 @@ def _fbp_accumulate_batch(
 
 def _fbp_from_host(
     poses: np.ndarray,
-    projections: np.ndarray,
+    projections: np.ndarray | ProjectionRows,
     view_scale: np.ndarray,
     params: np.ndarray,
     spectrum: jnp.ndarray,
@@ -342,6 +344,10 @@ def _fbp_from_host(
         )
         if start + b < n:
             pending = batch(start + b)
+            # Prefetch overlaps this step, but do not enqueue another compute
+            # step until it finishes: asynchronous submissions can otherwise
+            # retain an unbounded number of input batches on the device.
+            accum.block_until_ready()
     return accum
 
 

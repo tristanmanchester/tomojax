@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Parallel `fbp_host` now reads and transfers detector-row slabs one view batch
+at a time, instead of putting all views of each slab on the device. Its
+projection storage is bounded by `views_per_batch` in both slab layouts.
+
 FDK now gives the same angular weights and reconstruction when angle labels
 wrap at 360 degrees or differ by whole turns. Wrapped short scans no longer
 mistakenly receive full-turn weights, and offset-detector filter tails use the

@@ -16,13 +16,12 @@ from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import validate_grid, validate_projection_stack
 from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
 
-from ._host_arrays import validate_host_arrays
+from ._host_arrays import ProjectionRows, validate_host_arrays
 from .fbp import (
     _fbp_from_host,  # pyright: ignore[reportPrivateUsage]
     _fft_length,  # pyright: ignore[reportPrivateUsage]
     _filter_detector,  # pyright: ignore[reportPrivateUsage]
     _parallel_filter_detector,  # pyright: ignore[reportPrivateUsage]
-    _run_fbp_streamed,  # pyright: ignore[reportPrivateUsage]
     _view_weights,  # pyright: ignore[reportPrivateUsage]
     supports_parallel_fbp_z_integer,
 )
@@ -39,6 +38,8 @@ class FBPHostConfig:
     geometry, a slab is ``slices_per_batch`` x-slices and every view batch passes
     through the device once per slab; ``None`` sizes slabs to about half of the
     free device memory, so a volume that fits is reconstructed in one pass.
+    Projection rows are read and transferred only ``views_per_batch`` views at
+    a time, keeping at most two input batches on the device for either layout.
     Runtime/compiler caches add memory beyond these arrays. ``scale`` has the
     same meaning as in :class:`FBPConfig`.
     """
@@ -73,17 +74,6 @@ def _slab_layout(
     )
     local_detector = _parallel_filter_detector(local_grid, local_detector)
     return local_grid, local_detector, first, step, integer
-
-
-def _projection_slab(projections: np.ndarray, start: int, rows: int) -> np.ndarray:
-    """Copy measured rows, allocating zero padding only when it is needed."""
-    lo, hi = max(0, start), min(projections.shape[1], start + rows)
-    if lo == start and hi == start + rows:
-        return np.ascontiguousarray(projections[:, lo:hi], dtype=np.float32)
-    data = np.zeros((projections.shape[0], rows, projections.shape[2]), dtype=np.float32)
-    if hi > lo:
-        data[:, lo - start : hi - start] = projections[:, lo:hi]
-    return data
 
 
 def fbp_host(
@@ -132,7 +122,7 @@ def fbp_host(
         raise ValueError("fbp_host: angles must be finite")
 
     poses = stack_view_poses(geometry, n_views)
-    view_scale = jnp.asarray(_view_weights(poses, cfg.scale)[0])
+    view_scale = _view_weights(poses, cfg.scale)[0]
     cuda = all(
         d.platform == "gpu" and d.client.platform_version.lower().startswith("cuda")
         for d in poses.devices()
@@ -147,30 +137,32 @@ def fbp_host(
     rows = local_detector.nv
     ramp = rfft_filter_array(cfg.filter, local_detector.nu, detector.du, jnp.float32)
     output = validate_host_arrays(projections, out, shape)
+    host_poses = np.asarray(poses, np.float32)
+    params = np.zeros((n_views, 6), np.float32)
     for start in range(0, grid.nz, depth):
         v = first + start * step
         v_start = math.floor(v)
         if not integer:
             v_start = max(0, min(v_start, detector.nv - rows))
-        data = _projection_slab(projections, v_start, rows)
-        if not np.isfinite(data).all():
-            raise ValueError("fbp_host: sampled projection rows must be finite in FP32")
         # Local grid/detector metadata stay identical for every slab. Only the
         # fractional row phase changes, passed as a dynamic pose translation.
-        local_poses = poses if integer else poses.at[:, 2, 3].set((v - v_start) * detector.dv)
-        volume = _run_fbp_streamed(
+        local_poses = host_poses.copy()
+        if not integer:
+            local_poses[:, 2, 3] = (v - v_start) * detector.dv
+        volume = _fbp_from_host(
             local_poses,
-            jnp.asarray(data, dtype=jnp.float32),
+            ProjectionRows(projections, v_start, rows),
             view_scale,
-            jnp.zeros((n_views, 6), jnp.float32),
+            params,
             ramp,
-            jnp.float32(0),
+            0.0,
             grid=local_grid,
             detector=local_detector,
             backend=backend,
             batch_size=min(views, n_views),
             z_integer=integer,
             separable=True,
+            check_finite=True,
         )
         count = min(depth, grid.nz - start)
         # The host copy synchronizes before the next slab reuses its buffers.

@@ -76,7 +76,7 @@
   "suppressions": {
     "noqa": 8,
     "type: ignore": 40,
-    "pyright: ignore": 19
+    "pyright: ignore": 18
   },
   "complex_functions": [
     "src/tomojax/_data/_io_helpers.py::C901::_load_processing_metadata",

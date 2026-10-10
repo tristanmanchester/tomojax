@@ -52,27 +52,122 @@ def test_host_slabs_match_full_physical_reconstruction(kind, depth, backend):
 
 
 def test_host_slabs_reuse_compilation_and_bound_device_shapes(monkeypatch):
-    module = importlib.import_module("tomojax.recon.fbp_host")
+    module = importlib.import_module("tomojax.recon.fbp")
     grid, detector, geometry, data = scan()
-    kernel = module._run_fbp_streamed
+    kernel = module._fbp_accumulate_batch
     calls = []
     before = kernel._cache_size()
 
-    def record(poses, projections, *args, **kwargs):
+    def record(accum, poses, projections, *args, **kwargs):
         calls.append((projections.shape, kwargs["grid"], kwargs["detector"]))
-        return kernel(poses, projections, *args, **kwargs)
+        return kernel(accum, poses, projections, *args, **kwargs)
 
-    monkeypatch.setattr(module, "_run_fbp_streamed", record)
+    monkeypatch.setattr(module, "_fbp_accumulate_batch", record)
     cfg = FBPHostConfig(slices_per_batch=3, views_per_batch=2, backprojector="jax")
     actual = fbp_host(geometry, grid, detector, data, config=cfg)
-    assert len(calls) == 4
-    assert all(shape[1] <= 4 and slab.nz == 3 for shape, slab, _ in calls)
+    assert len(calls) == 12
+    assert all(shape[0] == 2 and shape[1] <= 4 and slab.nz == 3 for shape, slab, _ in calls)
     assert len({(slab, det) for _, slab, det in calls}) == 1
     after = kernel._cache_size()
     assert after - before <= 1
     repeated = fbp_host(geometry, grid, detector, data * 1.2, config=cfg)
     assert kernel._cache_size() == after
     np.testing.assert_allclose(repeated, actual * 1.2, atol=2e-6, rtol=2e-5)
+
+
+def test_host_slabs_read_and_convert_only_bounded_view_batches():
+    grid, detector, geometry, data = scan()
+    reads = []
+
+    class RecordedArray(np.ndarray):
+        def __getitem__(self, key):
+            views = key[0] if isinstance(key, tuple) else key
+            reads.append(len(range(*views.indices(self.shape[0]))))
+            return super().__getitem__(key)
+
+    source = data.astype(np.float64).view(RecordedArray)
+    actual = fbp_host(
+        geometry,
+        grid,
+        detector,
+        source,
+        config=FBPHostConfig(slices_per_batch=3, views_per_batch=2),
+    )
+    assert reads and max(reads) <= 2
+    expected = np.asarray(fbp(geometry, grid, detector, data))
+    np.testing.assert_allclose(actual, expected, atol=4e-6, rtol=5e-5)
+
+
+def test_host_streamer_waits_before_queuing_more_input_batches(monkeypatch):
+    module = importlib.import_module("tomojax.recon.fbp")
+    grid, detector, _, data = scan()
+    events = []
+    pending = []
+
+    class RecordedArray(np.ndarray):
+        def __getitem__(self, key):
+            events.append(("read", key.start))
+            return super().__getitem__(key)
+
+    class PendingVolume:
+        def __init__(self, index):
+            self.index = index
+            self.ready = False
+
+        def block_until_ready(self):
+            events.append(("ready", self.index))
+            self.ready = True
+
+    def step(accum, *args, **kwargs):
+        if pending:
+            assert accum.ready
+        current = PendingVolume(len(pending))
+        events.append(("step", current.index))
+        pending.append(current)
+        return current
+
+    monkeypatch.setattr(module, "_fbp_accumulate_batch", step)
+    module._fbp_from_host(
+        np.repeat(np.eye(4)[None], 5, axis=0),
+        data.view(RecordedArray),
+        np.ones(5),
+        np.zeros((5, 6)),
+        np.ones(33),
+        0,
+        grid=grid,
+        detector=detector,
+        backend="jax",
+        batch_size=2,
+        separable=True,
+    )
+    assert events == [
+        ("read", 0),
+        ("step", 0),
+        ("read", 2),
+        ("ready", 0),
+        ("step", 1),
+        ("read", 4),
+        ("ready", 1),
+        ("step", 2),
+    ]
+
+
+@pytest.mark.parametrize("invalid", [np.nan, np.inf, 1e100])
+def test_host_slabs_check_a_nonfinite_tail_batch_before_writing(invalid):
+    grid, detector, geometry, data = scan()
+    data = data.astype(np.float64)
+    data[-1] = invalid
+    out = np.full((grid.nx, grid.ny, grid.nz), 91.0, dtype=np.float32)
+    with np.errstate(over="ignore"), pytest.raises(ValueError, match="finite in FP32"):
+        fbp_host(
+            geometry,
+            grid,
+            detector,
+            data,
+            config=FBPHostConfig(slices_per_batch=3, views_per_batch=2),
+            out=out,
+        )
+    np.testing.assert_array_equal(out, 91.0)
 
 
 def test_host_slabs_write_memmap_and_preserve_custom_scale(tmp_path):

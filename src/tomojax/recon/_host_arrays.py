@@ -2,9 +2,34 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+
+
+@dataclass(frozen=True)
+class ProjectionRows:
+    """A zero-extended detector-row window, read only for requested view batches."""
+
+    projections: np.ndarray
+    start: int
+    rows: int
+
+    @property
+    def shape(self) -> tuple[int, int, int]:
+        """The window's projection shape, without reading the input storage."""
+        return self.projections.shape[0], self.rows, self.projections.shape[2]
+
+    def __getitem__(self, views: slice) -> np.ndarray:
+        batch = self.projections[views]
+        lo, hi = max(0, self.start), min(batch.shape[1], self.start + self.rows)
+        if lo == self.start and hi == self.start + self.rows:
+            return np.ascontiguousarray(batch[:, lo:hi], dtype=np.float32)
+        data = np.zeros((batch.shape[0], self.rows, batch.shape[2]), dtype=np.float32)
+        if hi > lo:
+            data[:, lo - self.start : hi - self.start] = batch[:, lo:hi]
+        return data
 
 
 def _mapped_storage(array: np.ndarray) -> np.memmap | None:
