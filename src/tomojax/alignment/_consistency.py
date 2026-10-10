@@ -20,6 +20,7 @@ import numpy as np
 from scipy.ndimage import map_coordinates
 
 from tomojax.core.geometry.cone import ConeSegments, beam_of, view_frames
+from tomojax.core.validation import validate_projection_stack
 
 if TYPE_CHECKING:
     from tomojax.core.geometry import Geometry
@@ -181,6 +182,9 @@ def orbit_heights(
     """
     if not isinstance(geometry, ConeSegments) or len(geometry.segments) < 2:
         return None
+    validate_projection_stack(
+        projections, geometry.detector, geometry=geometry, context="orbit_heights"
+    )
     frames = view_frames(geometry)
     data = np.asarray(projections, np.float64)
     orbits, start = [], 0

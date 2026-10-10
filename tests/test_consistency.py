@@ -13,6 +13,16 @@ from tomojax.io import build_geometry_from_dataset_metadata
 pytestmark = pytest.mark.numerical
 
 
+@pytest.mark.parametrize("shape", [(7, 8, 8), (9, 8, 8), (8, 4, 4), (8, 8, 9), (8, 8)])
+def test_orbit_height_search_rejects_data_from_another_detector_or_view_selection(shape):
+    grid = Grid(8, 8, 8, 0.25, 0.25, 0.25)
+    detector = Detector(8, 8, 0.5, 0.5)
+    first = ConeGeometry(grid, detector, np.arange(0.0, 360.0, 90.0), ConeBeam(30.0, 50.0))
+    second = ConeGeometry(grid, detector, np.arange(10.0, 360.0, 90.0), ConeBeam(30.0, 50.0))
+    with pytest.raises(ValueError, match="orbit_heights.*projections"):
+        orbit_heights(ConeSegments((first, second)), np.zeros(shape, np.float32), pairs=2)
+
+
 def _raised(segment: ConeGeometry, height: float) -> object:
     """``segment`` with its source and detector ``height`` higher (its object lower)."""
     views = len(segment.angles)
