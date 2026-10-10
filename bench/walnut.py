@@ -163,7 +163,25 @@ def _start_gpu_runtimes(*, tomojax: bool, astra: bool) -> None:
 
 
 def compare(volume: np.ndarray, truth: np.ndarray) -> dict[str, float]:
-    """Relative error and PSNR against ``truth`` over the walnut's support."""
+    """Compare on the reconstructed voxel centres, over the walnut's support.
+
+    ``volume_geometry`` keeps the same centre-to-centre extent at every voxel
+    density. The published reference is always 501 cubed: sample that field at
+    the output's centres rather than broadcasting unequal-resolution volumes.
+    Linear interpolation keeps aligned centres exact, including both endpoints.
+    """
+    if volume.shape != truth.shape:
+        from scipy.ndimage import zoom
+
+        truth = zoom(
+            truth,
+            tuple(
+                output / source for output, source in zip(volume.shape, truth.shape, strict=True)
+            ),
+            order=1,
+            prefilter=False,
+            grid_mode=False,
+        )
     support = truth > 0.1 * float(np.percentile(truth, 99.9))
     difference = volume - truth
     peak = float(np.percentile(truth, 99.9))
@@ -306,6 +324,7 @@ def main() -> None:
         "orbits": args.orbits,
         "views": len(vectors),
         "bin": args.bin,
+        "voxels_per_mm": args.voxels_per_mm,
         "load_seconds": time.perf_counter() - start,
         **_geometry_summary(scan),
     }
