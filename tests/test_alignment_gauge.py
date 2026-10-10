@@ -14,7 +14,13 @@ from tomojax._data.geometry_meta import AugmentedGeometry
 
 # check-public-imports: allow-private
 from tomojax.alignment._gauge import Gauge, apply_to_poses, apply_to_volume, least_motion_gauge
-from tomojax.alignment.api import apply_pose_updates
+from tomojax.alignment.api import (
+    AlignConfig,
+    AlignMultiresResumeState,
+    align_multires,
+    apply_pose_updates,
+    least_motion_estimate,
+)
 from tomojax.geometry import stack_view_poses
 
 pytestmark = pytest.mark.numerical
@@ -185,3 +191,72 @@ def test_align_returns_the_least_motion_estimate_and_the_detector_centre():
     np.testing.assert_allclose(left.shift, 0.0, atol=1e-3)
     np.testing.assert_allclose(result.poses[:, 3:5], truth[:, 3:5], atol=0.1)
     assert result.scan.detector.center[0] == pytest.approx(1.5, abs=0.1)
+
+
+@pytest.mark.parametrize("kind", ["parallel", "lamino", "cone"])
+@pytest.mark.parametrize("public", [False, True])
+def test_object_frame_gauge_keeps_all_visible_translation_components(kind, public):
+    # Object y is not the lab beam direction: it rotates into the detector
+    # plane, and cannot be discarded while reporting a common object motion.
+    geometry, grid, nominal = _scan(kind)
+    params = _params(len(nominal))
+    params[:, :3] += np.array([0.03, -0.04, 0.05], np.float32)
+    params[:, 3:] += np.array([0.5, 0.3, -0.2], np.float32)
+    c = (np.arange(grid.nx) - (grid.nx - 1) / 2) / 3.0
+    x, y, z = np.meshgrid(c, c, c, indexing="ij")
+    volume = np.exp(-((x - 0.4) ** 2 + (y + 0.3) ** 2 / 2 + z**2 / 3)).astype(np.float32)
+    active = ("alpha", "beta", "phi", "dx", "dz", "dy")
+    if public:
+        # A completed checkpoint needs no optimization; it isolates the public
+        # reporting step from reconstruction and line-search behavior.
+        cfg = AlignConfig(
+            optimise_dofs=active,
+            gauge_policy="anchor_mean",
+            pose_translation_frame="object",
+            projector_backend="jax",
+            ray_integrator="joseph",
+        )
+        resume = AlignMultiresResumeState(
+            x=jnp.asarray(volume),
+            pose_params=jnp.asarray(params),
+            run_complete=True,
+            pose_translation_frame="object",
+            ray_integrator="joseph",
+        )
+        moved_volume, moved, info = align_multires(
+            geometry,
+            grid,
+            geometry.detector,
+            jnp.zeros((len(nominal), geometry.detector.nv, geometry.detector.nu)),
+            factors=(1,),
+            config=cfg,
+            resume_state=resume,
+        )
+        reported = info["gauge"]
+        assert reported is not None
+        gauge = Gauge(
+            Rotation.from_rotvec(reported["rotation_deg"], degrees=True).as_matrix(),
+            np.asarray(reported["shift"]),
+        )
+    else:
+        moved_volume, moved, gauge = least_motion_estimate(
+            volume,
+            params,
+            nominal=nominal,
+            grid=grid,
+            translation_frame="object",
+            active=active,
+            cone_beam=kind == "cone",
+        )
+    assert gauge is not None
+    motion = np.eye(4)
+    motion[:3, :3], motion[:3, 3] = gauge.rotation, gauge.shift
+    np.testing.assert_allclose(
+        _poses(nominal, moved, "object"), _poses(nominal, params, "object") @ motion, atol=2e-5
+    )
+    # Continuous Gaussian evaluated at G's physical coordinates is independent
+    # of the library's image resampler; finite voxel interpolation is expected.
+    coordinates = np.stack(np.meshgrid(c * 3, c * 3, c * 3, indexing="ij"), axis=-1)
+    gx, gy, gz = np.moveaxis((coordinates @ gauge.rotation.T + gauge.shift) / 3, -1, 0)
+    expected = np.exp(-((gx - 0.4) ** 2 + (gy + 0.3) ** 2 / 2 + gz**2 / 3))
+    assert np.linalg.norm(moved_volume - expected) / np.linalg.norm(expected) < 0.025

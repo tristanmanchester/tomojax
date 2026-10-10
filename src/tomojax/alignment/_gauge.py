@@ -237,7 +237,7 @@ def least_motion_estimate(
     leaves everywhere does not count), the grid edge already fixes the
     estimate: it is returned unchanged with gauge None.
     """
-    invisible = () if cone_beam else ("dy",)
+    invisible = () if cone_beam or translation_frame == "object" else ("dy",)
     gauge = least_motion_gauge(
         params,
         nominal,
