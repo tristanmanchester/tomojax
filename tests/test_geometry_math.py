@@ -1,14 +1,32 @@
 from __future__ import annotations
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
+from scipy.spatial.transform import Rotation
+
+from tomojax.alignment.api import (
+    AlignmentState,
+    BaseGeometryArrays,
+    SetupGeometryState,
+    apply_alignment_state,
+)
 
 # check-public-imports: allow-private
 from tomojax.core.geometry.transforms import align_u_to_v
-from tomojax.geometry import Detector, Grid, cylindrical_mask_xy, grid_from_detector_fov_slices
+from tomojax.forward import project_joseph
+from tomojax.geometry import (
+    Detector,
+    Grid,
+    RotationAxisGeometry,
+    cylindrical_mask_xy,
+    grid_from_detector_fov_slices,
+)
 
 # check-public-imports: allow-private
 from tomojax.geometry._axis_geometry import _align_ez_to_axis
+from tomojax.geometry.api import axis_pose_stack
 
 
 def test_align_u_to_v_handles_exact_antiparallel_vectors() -> None:
@@ -32,6 +50,105 @@ def test_align_ez_to_axis_preserves_near_minus_z_tilt(tilt_deg: float) -> None:
     np.testing.assert_allclose(rotation @ np.asarray([0.0, 0.0, 1.0]), axis, atol=1e-4)
     np.testing.assert_allclose(rotation.T @ rotation, np.eye(3), atol=1e-5)
     assert np.linalg.det(rotation) == pytest.approx(1.0, abs=1e-5)
+
+
+@pytest.mark.parametrize("azimuth", [-70, 0, 30, 90, 210])
+@pytest.mark.parametrize("tilt", [0, 30, 90, 171.88, 171.9, 175, 179.9])
+def test_axis_poses_retain_the_minimum_rotation_frame(tilt, azimuth):
+    # Specifying the full independent rotation catches a changed in-plane
+    # frame even when the third column still matches the requested axis.
+    phi = np.deg2rad(azimuth)
+    alignment = Rotation.from_rotvec(
+        np.deg2rad(tilt) * np.asarray([-np.sin(phi), np.cos(phi), 0])
+    ).as_matrix()
+    angles = np.asarray([0, 17, 90, 137])
+    expected = alignment @ Rotation.from_euler("z", angles[:, None], degrees=True).as_matrix()
+    actual = np.asarray(jax.jit(axis_pose_stack)(angles, alignment[:, 2]))[:, :3, :3]
+    np.testing.assert_allclose(actual, expected, atol=1e-5, rtol=1e-5)
+    np.testing.assert_allclose(
+        actual[:, :, 2], np.broadcast_to(alignment[:, 2], (len(angles), 3)), atol=3e-7
+    )
+    np.testing.assert_allclose(
+        actual @ actual.transpose(0, 2, 1),
+        np.broadcast_to(np.eye(3), actual.shape),
+        atol=1e-6,
+    )
+
+
+def test_exact_reversed_axis_uses_the_same_half_turn_as_host_geometry():
+    grid, detector = Grid(5, 4, 3, 1, 1, 1), Detector(7, 5, 1, 1)
+    angles = np.asarray([0, 17, 90])
+    geometry = RotationAxisGeometry(grid, detector, angles, (0, 0, -1))
+    expected = np.asarray([geometry.pose_for_view(i) for i in range(len(angles))])
+    actual = jax.jit(axis_pose_stack)(angles, np.asarray([0, 0, -1]))
+    np.testing.assert_allclose(actual, expected, atol=2e-7)
+
+
+@pytest.mark.parametrize("sign", [-1, 1])
+def test_exact_axis_alignment_has_finite_forward_and_reverse_derivatives(sign):
+    axis = jnp.asarray([0.0, 0.0, sign])
+
+    def poses(a):
+        return axis_pose_stack(jnp.asarray([0.0, 17.0]), a)
+
+    for derivative in (jax.jacfwd, jax.jacrev):
+        assert np.isfinite(jax.jit(derivative(poses))(axis)).all()
+
+
+@pytest.mark.parametrize("tilt", [0, 30, 89.99, 90, 90.01, 171.88, 171.9, 179.9])
+def test_axis_pose_derivative_matches_the_physical_rotation(tilt):
+    azimuth = np.deg2rad(30)
+    direction = np.asarray([-np.sin(azimuth), np.cos(azimuth), 0])
+
+    def poses(theta):
+        axis = jnp.asarray(
+            [jnp.sin(theta) * np.cos(azimuth), jnp.sin(theta) * np.sin(azimuth), jnp.cos(theta)]
+        )
+        return axis_pose_stack(jnp.asarray([0.0]), axis)[0, :3, :3]
+
+    theta, step = np.deg2rad(tilt), 1e-5
+    expected = (
+        Rotation.from_rotvec((theta + step) * direction).as_matrix()
+        - Rotation.from_rotvec((theta - step) * direction).as_matrix()
+    ) / (2 * step)
+    actual = jax.jit(jax.jacfwd(poses))(theta)
+    np.testing.assert_allclose(actual, expected, atol=3e-4, rtol=3e-4)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+def test_small_axis_setup_change_does_not_flip_the_object_frame(backend):
+    if backend == "pallas" and jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    grid = Grid(13, 12, 11, 0.8, 1.1, 1.3)
+    detector = Detector(21, 19, 0.7, 0.9, (0.13, -0.21))
+    angles = np.asarray([0, 17, 90, 137])
+    nominal_tilt, change = 171.88, 0.04
+    nominal = Rotation.from_euler("x", -nominal_tilt, degrees=True).as_matrix()
+    adjusted = Rotation.from_euler("x", -nominal_tilt - change, degrees=True).as_matrix()
+    geometry = RotationAxisGeometry(grid, detector, angles, nominal[:, 2])
+    base = BaseGeometryArrays.from_geometry(geometry, detector)
+    state = AlignmentState.zeros(n_views=len(angles)).replace(
+        setup=SetupGeometryState.from_degrees(
+            axis_rot_x_deg=change, nominal_axis_unit=nominal[:, 2]
+        )
+    )
+    actual = jax.jit(lambda s: apply_alignment_state(base, s).pose_stack)(state)
+    expected = np.broadcast_to(np.eye(4), (len(angles), 4, 4)).copy()
+    expected[:, :3, :3] = (
+        adjusted @ Rotation.from_euler("z", angles[:, None], degrees=True).as_matrix()
+    )
+    np.testing.assert_allclose(actual, expected, atol=2e-5, rtol=2e-5)
+    # An asymmetric image prevents a half-turn frame error hiding behind a
+    # correct rotation axis or a rotationally symmetric phantom.
+    index = np.indices((13, 12, 11), dtype=np.float32)
+    volume = np.exp(-np.sum(((index - np.asarray([4, 7, 5])[:, None, None, None]) / 2) ** 2, 0))
+    volume = jnp.asarray(volume, jnp.float32)
+    reference = project_joseph(
+        volume, jnp.asarray(expected, jnp.float32), grid, detector, backend=backend
+    )
+    projected = project_joseph(volume, actual, grid, detector, backend=backend)
+    assert float(jnp.linalg.norm(projected - reference) / jnp.linalg.norm(reference)) < 5e-5
 
 
 def test_grid_from_detector_fov_slices_preserves_grid_when_no_crop_needed() -> None:
