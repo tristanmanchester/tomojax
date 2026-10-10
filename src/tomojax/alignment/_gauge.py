@@ -130,7 +130,7 @@ def least_motion_gauge(
     free = np.eye(unknowns)
     if fixed_rows:
         constraint = np.concatenate(fixed_rows)
-        _, singular, vt_c = np.linalg.svd(constraint)
+        _, singular, vt_c = np.linalg.svd(constraint, full_matrices=constraint.shape[0] < unknowns)
         rank = int(np.sum(singular > 1e-6 * max(1.0, float(singular[0]))))
         free = vt_c[rank:].T
     if free.shape[1] == 0:

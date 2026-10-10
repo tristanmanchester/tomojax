@@ -260,3 +260,45 @@ def test_object_frame_gauge_keeps_all_visible_translation_components(kind, publi
     gx, gy, gz = np.moveaxis((coordinates @ gauge.rotation.T + gauge.shift) / 3, -1, 0)
     expected = np.exp(-((gx - 0.4) ** 2 + (gy + 0.3) ** 2 / 2 + gz**2 / 3))
     assert np.linalg.norm(moved_volume - expected) / np.linalg.norm(expected) < 0.025
+
+
+@pytest.mark.parametrize("views", [1, 24])
+@pytest.mark.parametrize("offset", [False, True])
+def test_gauge_constraint_svd_bounds_storage_without_losing_free_directions(
+    monkeypatch, views, offset
+):
+    _, _, nominal = _scan("parallel", views=views)
+    params = np.zeros((views, 6), np.float32)
+    # Detector-x projection of a rigid object-x shift. Its lab-y component
+    # is invisible, so every view can remove this motion with dz still fixed.
+    params[:, 3] = 0.7 * nominal[:, 0, 0]
+    original = np.linalg.svd
+    decompositions = []
+
+    def checked_svd(matrix, *args, **kwargs):
+        result = original(matrix, *args, **kwargs)
+        decompositions.append((matrix.shape, result[0].shape))
+        return result
+
+    monkeypatch.setattr(np.linalg, "svd", checked_svd)
+    gauge = least_motion_gauge(
+        params,
+        nominal,
+        translation_frame="detector",
+        active=("dx",),
+        invisible=("dy",),
+        detector_offset=offset,
+    )
+    moved = apply_to_poses(
+        params,
+        nominal,
+        gauge,
+        translation_frame="detector",
+        keep=("alpha", "beta", "phi", "dz", "dy"),
+    )
+    assert decompositions[-1][0] == (views, 4 if offset else 3)
+    assert decompositions[-1][1][1] <= min(views, 4 if offset else 3)
+    # A one-view constraint is underdetermined: its full right nullspace must
+    # still allow both a rigid x shift and, when enabled, a detector-u offset.
+    np.testing.assert_allclose(moved[:, 3], 0, atol=2e-6)
+    np.testing.assert_array_equal(moved[:, 4:], params[:, 4:])
