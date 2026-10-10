@@ -109,7 +109,7 @@ def _pair_values(a: _View, b: _View) -> np.ndarray:
 
 
 def consistency_cost(pairs: list[tuple[_View, _View]]) -> tuple[float, int]:
-    """The pairs' relative disagreement, and the number of planes it was measured on."""
+    """Relative disagreement and usable plane count; infinite cost without derivative energy."""
     num = den = 0.0
     used = 0
     for a, b in pairs:
@@ -117,7 +117,10 @@ def consistency_cost(pairs: list[tuple[_View, _View]]) -> tuple[float, int]:
         num += float(np.sum((values[:, 0] - values[:, 1]) ** 2))
         den += float(np.sum(values**2))
         used += len(values)
-    return num / max(den, 1e-30), used
+    # No overlap or no derivative energy is unavailable evidence, not perfect
+    # agreement. A dimensional floor would also change the objective when the
+    # same measurements are expressed at a different intensity scale.
+    return (num / den if den > 0.0 else float("inf")), used
 
 
 @dataclass(frozen=True)
@@ -126,8 +129,9 @@ class OrbitHeights:
 
     ``heights`` are in the geometry's length unit, one per orbit (the first 0);
     ``contrast`` is each estimate's cost dip, ``1 - minimum / median`` of its
-    scan (near 0: the data do not decide the height). ``planes`` counts the
-    plane pairs compared.
+    scan (near 0: the data do not decide the height). ``planes`` counts usable
+    plane pairs at the sampled fine-search minima. Unobservable orbits retain
+    zero height and zero contrast.
     """
 
     heights: np.ndarray
@@ -180,16 +184,28 @@ def orbit_heights(
         few = _pairs_with_earlier(orbits, k, heights, max(2, pairs // 4))
         coarse = np.arange(-reach, reach + step / 2, step)
         costs = np.array([consistency_cost(_raise(few, h))[0] for h in coarse])
+        available = costs[np.isfinite(costs)]
+        median = float(np.median(available)) if available.size else 0.0
+        if available.size < 2 or median <= 0.0 or np.ptp(available) == 0.0:
+            heights.append(0.0)
+            contrast.append(0.0)
+            LOG.info("Orbit %d height unobservable from data consistency", k + 1)
+            continue
         best = float(coarse[int(np.argmin(costs))])
         fine = best + np.arange(-2.0, 2.01, 0.25) * step
         scores = [consistency_cost(_raise(chosen, h)) for h in fine]
         fine_costs = np.array([c for c, _ in scores])
-        planes += scores[0][1]
-        keep = fine_costs <= 2 * fine_costs.min()
+        if not np.isfinite(fine_costs).any():
+            heights.append(0.0)
+            contrast.append(0.0)
+            LOG.info("Orbit %d height unobservable from data consistency", k + 1)
+            continue
+        planes += scores[int(np.argmin(fine_costs))][1]
+        keep = np.isfinite(fine_costs) & (fine_costs <= 2 * fine_costs.min())
         a2, a1, _ = np.polyfit(fine[keep], fine_costs[keep], 2) if keep.sum() >= 3 else (0, 0, 0)
         height = float(-a1 / (2 * a2)) if a2 > 0 else float(fine[int(np.argmin(fine_costs))])
         height = float(np.clip(height, fine[0], fine[-1]))
-        dip = 1.0 - float(costs.min() / np.median(costs))
+        dip = 1.0 - float(costs.min() / median)
         heights.append(height)
         contrast.append(dip)
         LOG.info("Orbit %d height %+.4f from data consistency (cost dip %.2f)", k + 1, height, dip)

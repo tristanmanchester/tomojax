@@ -45,9 +45,36 @@ def test_orbit_heights_place_a_second_orbit_from_the_data_alone():
         volume += np.exp(-((x - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2) / 0.8).astype(np.float32)
     true = ConeSegments((first, _raised(second, 0.6)))
     data = np.asarray(tj.project(true, volume))
-    found = orbit_heights(ConeSegments((first, second)), data)
-    assert found is not None
     pixel_at_axis = detector.dv / first.beam.magnification
-    assert abs(found.heights[1] - 0.6) < 0.5 * pixel_at_axis
-    assert found.contrast[1] > 0.5
+    baseline = None
+    for intensity in (1.0, 1e-20, 1e20):
+        found = orbit_heights(ConeSegments((first, second)), data * intensity)
+        assert found is not None
+        assert abs(found.heights[1] - 0.6) < 0.5 * pixel_at_axis
+        assert found.contrast[1] > 0.5
+        if baseline is None:
+            baseline = found
+        else:
+            np.testing.assert_allclose(found.heights, baseline.heights, rtol=2e-6)
+            np.testing.assert_allclose(found.contrast, baseline.contrast, rtol=2e-6)
     assert orbit_heights(first, data[:72]) is None  # one orbit: nothing to place
+
+
+@pytest.mark.parametrize("value", [0.0, 1.0])
+def test_unobservable_orbit_keeps_its_height_with_zero_contrast(value):
+    grid = Grid(8, 8, 8, 0.25, 0.25, 0.25)
+    detector = Detector(8, 8, 0.5, 0.5)
+    first = ConeGeometry(grid, detector, np.arange(0.0, 360.0, 90.0), ConeBeam(30.0, 50.0))
+    second = ConeGeometry(grid, detector, np.arange(10.0, 360.0, 90.0), ConeBeam(30.0, 50.0))
+    geometry = ConeSegments((first, second))
+    data = np.full((8, 8, 8), value, np.float32)
+
+    # Blank data and fully truncated constant data have no usable epipolar
+    # derivatives. Neither justifies an arbitrary correction at the search edge.
+    with np.errstate(divide="raise", invalid="raise"):
+        found = orbit_heights(geometry, data, pairs=2)
+
+    assert found is not None
+    np.testing.assert_array_equal(found.heights, [0.0, 0.0])
+    np.testing.assert_array_equal(found.contrast, [1.0, 0.0])
+    assert found.planes == 0
