@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -242,8 +243,17 @@ def pose_stack_for_setup(
     axis = _setup_axis_unit_for_base(base, setup)
     nominal = axis_pose_stack(base.angles, base.nominal_axis_unit)
     adjusted = axis_pose_stack(base.angles, axis)
-    rotation = adjusted[:, :3, :3] @ jnp.swapaxes(nominal[:, :3, :3], 1, 2)
-    moved = rotation @ base.nominal_pose_stack[:, :3, :]
+    # Batched reduced-mantissa products can turn rotations into nonrigid
+    # maps, even at zero setup change. Preserve geometry independently of
+    # the precision policy a caller chooses for its large data operations.
+    rotation = jnp.matmul(
+        adjusted[:, :3, :3],
+        jnp.swapaxes(nominal[:, :3, :3], 1, 2),
+        precision=jax.lax.Precision.HIGHEST,
+    )
+    moved = jnp.matmul(
+        rotation, base.nominal_pose_stack[:, :3, :], precision=jax.lax.Precision.HIGHEST
+    )
     return base.nominal_pose_stack.at[:, :3, :].set(moved)
 
 

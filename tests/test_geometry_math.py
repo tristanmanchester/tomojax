@@ -19,6 +19,8 @@ from tomojax.forward import project_joseph
 from tomojax.geometry import (
     Detector,
     Grid,
+    LaminographyGeometry,
+    ParallelGeometry,
     RotationAxisGeometry,
     cylindrical_mask_xy,
     grid_from_detector_fov_slices,
@@ -149,6 +151,50 @@ def test_small_axis_setup_change_does_not_flip_the_object_frame(backend):
     )
     projected = project_joseph(volume, actual, grid, detector, backend=backend)
     assert float(jnp.linalg.norm(projected - reference) / jnp.linalg.norm(reference)) < 5e-5
+
+
+@pytest.mark.parametrize("views", [64, 720])
+@pytest.mark.parametrize("kind", ["parallel", "lamino", "axis"])
+@pytest.mark.parametrize("precision", [None, "bfloat16"])
+@pytest.mark.parametrize("calibrated", [False, True])
+def test_batched_axis_setup_keeps_rigid_physical_poses(views, kind, precision, calibrated):
+    angles = np.linspace(0, 180, views, endpoint=False)
+    grid, detector = Grid(5, 4, 3, 1, 1, 1), Detector(9, 7, 1, 1)
+    if kind == "parallel":
+        nominal = np.eye(3)
+        geometry = ParallelGeometry(grid, detector, angles)
+    elif kind == "lamino":
+        nominal = Rotation.from_euler("x", -30, degrees=True).as_matrix()
+        geometry = LaminographyGeometry(grid, detector, angles, tilt_deg=30)
+    else:
+        nominal = Rotation.from_rotvec(np.deg2rad(175) * np.asarray([0.6, 0.8, 0])).as_matrix()
+        geometry = RotationAxisGeometry(grid, detector, angles, nominal[:, 2])
+    base = BaseGeometryArrays.from_geometry(geometry, detector)
+    # Match the public setup convention, independently of its matrix code:
+    # axis x calibration is clockwise, then axis y calibration is counterclockwise.
+    dx, dy = (0.05, -0.07) if calibrated else (0.0, 0.0)
+    calibration = Rotation.from_euler("y", dy, degrees=True) * Rotation.from_euler(
+        "x", -dx, degrees=True
+    )
+    adjusted_axis = calibration.apply(nominal[:, 2])
+    adjusted, _ = Rotation.align_vectors(adjusted_axis[None], np.asarray([[0, 0, 1]]))
+    expected = (
+        adjusted.as_matrix() @ Rotation.from_euler("z", angles[:, None], degrees=True).as_matrix()
+    )
+    state = AlignmentState.zeros(n_views=views).replace(
+        setup=SetupGeometryState.from_degrees(
+            axis_rot_x_deg=dx, axis_rot_y_deg=dy, nominal_axis_unit=nominal[:, 2]
+        )
+    )
+    with jax.default_matmul_precision(precision):
+        poses = jax.jit(lambda s: apply_alignment_state(base, s).pose_stack)(state)
+    rotations = np.asarray(poses, dtype=np.float64)[:, :3, :3]
+    np.testing.assert_allclose(rotations, expected, atol=2e-6, rtol=2e-6)
+    np.testing.assert_allclose(
+        rotations @ rotations.transpose(0, 2, 1),
+        np.broadcast_to(np.eye(3), rotations.shape),
+        atol=1e-6,
+    )
 
 
 def test_grid_from_detector_fov_slices_preserves_grid_when_no_crop_needed() -> None:

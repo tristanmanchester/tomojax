@@ -58,7 +58,11 @@ def axis_unit_from_rotations(
         [[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]],
         dtype=jnp.float32,
     )
-    candidate = r_y @ (r_x @ axis)
+    candidate = jnp.matmul(
+        r_y,
+        jnp.matmul(r_x, axis, precision=jax.lax.Precision.HIGHEST),
+        precision=jax.lax.Precision.HIGHEST,
+    )
     return candidate / jnp.maximum(jnp.linalg.norm(candidate), jnp.float32(1e-8))
 
 
@@ -81,7 +85,7 @@ def _align_ez_to_axis(axis_unit: jnp.ndarray) -> jnp.ndarray:
         return (
             jnp.eye(3, dtype=jnp.float32)
             + K
-            + (K @ K)
+            + jnp.matmul(K, K, precision=jax.lax.Precision.HIGHEST)
             / jnp.maximum(
                 jnp.float32(1.0) + cos_theta,
                 jnp.float32(1e-8),
@@ -142,6 +146,8 @@ def axis_pose_stack(
         c, s = jnp.cos(theta), jnp.sin(theta)
         Rz = jnp.asarray([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], dtype=jnp.float32)
         T = jnp.eye(4, dtype=jnp.float32)
-        return T.at[:3, :3].set(S @ Rz)
+        # Rigid poses need FP32 products even if the caller permits reduced
+        # mantissa precision for large image/volume matrix multiplications.
+        return T.at[:3, :3].set(jnp.matmul(S, Rz, precision=jax.lax.Precision.HIGHEST))
 
     return jax.vmap(one)(thetas)
