@@ -291,7 +291,7 @@ def _with_fields(
     """``frames`` with the flat and dark fields given in place of the file's."""
     changes: dict[str, Any] = {}
     shape = tuple(int(n) for n in frames.counts.shape[1:])
-    if isinstance(flats, int | float):  # one level for every pixel: a white level
+    if isinstance(flats, int | float | np.integer | np.floating):  # one white level
         white_level = float(flats)
     elif flats is not None:
         changes |= {
@@ -301,7 +301,7 @@ def _with_fields(
         }
     if white_level is not None:
         changes |= {"flats": None, "flat_positions": None, "white_level": float(white_level)}
-    if isinstance(darks, int | float):
+    if isinstance(darks, int | float | np.integer | np.floating):
         changes["darks"] = np.full((1, *shape), float(darks), np.float32)
     elif darks is not None:
         changes["darks"] = _frames_of(darks, "darks")
