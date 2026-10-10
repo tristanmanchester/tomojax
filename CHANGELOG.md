@@ -262,6 +262,15 @@ without a translation frame (0.3's) are read as object-frame poses, and
   `tj.load_reconstruction` reads a reconstruction with its `info`.
   `tj.project` and `tj.backproject` work on every geometry. `import tomojax`
   does not import JAX.
+- **Geometry from data consistency.** `tomojax.alignment.api.orbit_heights`
+  places each orbit of a multi-orbit cone-beam scan relative to the first
+  without reconstructing: any plane through two views' sources must have the
+  same plane-integral derivative in both views' data (Grangeat), so a wrong
+  height makes them disagree. On the FIPS walnut, from its uncorrected
+  geometry, it finds +0.37 and +0.74 mm in 23 s (pose alignment: +0.38 and
+  +0.76 in about 250 s; held-out views favour about +0.39 and +0.76). It is
+  good to about half a pixel at the axis. `tomojax.geometry.api.view_frames`
+  gives each view's source and detector frame.
 - **Corrections.** `tj.load_frames(path)` reads detector frames as `tj.Frames`:
   the sample frames of an NXtomo file (read from the file only as they are
   corrected), its flats and darks by `image_key`, a Nikon scan with its white

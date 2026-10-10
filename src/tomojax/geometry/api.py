@@ -10,6 +10,7 @@ from tomojax.core.geometry import (
     grid_volume_origin,
     normalize_axis_unit,
 )
+from tomojax.core.geometry.cone import view_frames
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.geometry._axes import (
     CORE_X_AXIS,
@@ -101,4 +102,5 @@ __all__ = [
     "stack_view_poses",
     "transpose_volume",
     "validate_calibration_gauges",
+    "view_frames",
 ]

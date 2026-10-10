@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from tomojax.alignment._config import coupled_pose_config, resolved_schedule_for_config
+from tomojax.alignment._consistency import OrbitHeights, orbit_heights
 from tomojax.alignment._gauge import least_motion_estimate
 from tomojax.alignment._geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
 from tomojax.alignment._geometry.geometry_blocks import normalize_geometry_dofs
@@ -122,6 +123,7 @@ __all__ = [
     "L2LossSpec",
     "L2OtsuLossSpec",
     "LossScheduleEntry",
+    "OrbitHeights",
     "OuterStat",
     "PWLSLossSpec",
     "PoseState",
@@ -149,6 +151,7 @@ __all__ = [
     "normalize_alignment_dofs",
     "normalize_bounds",
     "normalize_geometry_dofs",
+    "orbit_heights",
     "pad_pose_params",
     "parse_loss_schedule",
     "parse_loss_spec",

@@ -30,8 +30,8 @@ from tomojax.geometry import (
     Grid,
     beam_of,
     grid_volume_origin,
-    stack_view_poses,
 )
+from tomojax.geometry.api import view_frames
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -233,27 +233,9 @@ def from_astra(
 
 def _vectors(segment: ScanGeometry) -> np.ndarray:
     """ASTRA cone_vec rows of one cone-beam geometry's views."""
-    beam = beam_of(segment)
-    if beam is None:
+    if beam_of(segment) is None:
         raise ValueError("to_astra converts cone-beam scans")
-    detector = segment.detector
-    views = len(segment.angles)
-    poses = np.asarray(stack_view_poses(segment, views), np.float64)
-    rotation, translation = poses[:, :3, :3], poses[:, :3, 3]
-    centre, e_u, e_v = beam.detector_frame(detector)
-
-    def to_object(point: np.ndarray) -> np.ndarray:
-        return np.einsum("nji,nj->ni", rotation, point[None, :] - translation)
-
-    return np.concatenate(
-        [
-            to_object(beam.source()),
-            to_object(centre),
-            np.einsum("nji,j->ni", rotation, e_u * detector.du),
-            np.einsum("nji,j->ni", rotation, e_v * detector.dv),
-        ],
-        axis=1,
-    )
+    return view_frames(segment)
 
 
 def to_astra(

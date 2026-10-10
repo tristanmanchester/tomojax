@@ -99,7 +99,15 @@ iterations, 6.6 s for 20 and 13.2 s for 40, with volume errors of 0.090, 0.043
 and 0.048. ASTRA's `CGLS3D_CUDA`, whose backprojector is not the transpose of
 its projector, took 2.3, 4.4 and 8.7 s with errors of 0.088, 0.040 and 0.101:
 faster per iteration, but it diverges after about 20 iterations where
-TomoJAX's error stays near its minimum.
+TomoJAX's error stays near its minimum. The divergence is in its own data
+residual, which CGLS with a matched transpose cannot let rise: 0.0070 at 20
+iterations, 0.0053 at 30, 0.0062 at 40 and 0.027 at 60.
+
+On the real FIPS walnut (900 views, detector binned 2, 501³ voxels; errors
+against the authors' published reconstruction) neither CGLS diverges within 50
+iterations, but the mismatch slows ASTRA's: TomoJAX's reaches its best error,
+0.040, at 25 iterations in 77 s, where ASTRA's is at 0.074 after 25 and 0.045
+after 50 (144 s).
 
 `fdk_host` reconstructed a 1024³ scan (1024 views of 1024² pixels, 4.3 GB
 each way) in z-slabs, filtering only the detector rows each slab projects

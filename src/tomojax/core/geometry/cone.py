@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -321,6 +321,41 @@ def require_parallel_beam(geometry: object, context: str) -> None:
         )
 
 
+def view_frames(geometry: ScanGeometry) -> np.ndarray:
+    """Each view's source, detector centre and pixel steps in the object frame, ``(views, 12)``.
+
+    Rows are ``[source, centre, u * du, v * dv]`` (ASTRA's ``cone_vec`` order):
+    pixel ``(row r, column c)`` of view i lies at ``centre + (c - nu / 2 + 1/2) u
+    + (r - nv / 2 + 1/2) v``. Every segment of a :class:`ConeSegments`, in order.
+    """
+    from tomojax.core.geometry.views import stack_view_poses
+
+    segments = geometry.segments if isinstance(geometry, ConeSegments) else (geometry,)
+    rows = []
+    for segment in segments:
+        beam = beam_of(segment)
+        if beam is None:
+            raise ValueError("view_frames needs cone-beam views")
+        detector = segment.detector
+        views = len(cast("Any", segment).angles)
+        poses = np.asarray(stack_view_poses(segment, views), np.float64)
+        rotation, translation = poses[:, :3, :3], poses[:, :3, 3]
+        centre, e_u, e_v = beam.detector_frame(detector)
+
+        rows.append(
+            np.concatenate(
+                [
+                    np.einsum("nji,nj->ni", rotation, beam.source()[None, :] - translation),
+                    np.einsum("nji,nj->ni", rotation, centre[None, :] - translation),
+                    np.einsum("nji,j->ni", rotation, e_u * detector.du),
+                    np.einsum("nji,j->ni", rotation, e_v * detector.dv),
+                ],
+                axis=1,
+            )
+        )
+    return np.concatenate(rows)
+
+
 __all__ = [
     "ConeBeam",
     "ConeGeometry",
@@ -330,4 +365,5 @@ __all__ = [
     "is_cone_beam",
     "require_parallel_beam",
     "segments_of",
+    "view_frames",
 ]
