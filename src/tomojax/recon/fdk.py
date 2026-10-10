@@ -32,6 +32,7 @@ from tomojax.core.geometry.base import grid_volume_origin
 from tomojax.core.geometry.cone import beam_of
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import validate_grid, validate_projection_stack
+from tomojax.recon._fdk_angles import grouped_angles, ordered_arc
 from tomojax.recon._fdk_cuda import backproject_cuda
 from tomojax.recon._host_arrays import validate_host_arrays
 from tomojax.recon.filters import get_fbp_filter_np
@@ -104,12 +105,8 @@ def _full_turn_column_weights(beam: ConeBeam, detector: Detector) -> np.ndarray:
 
 
 def _full_turn(geometry: Geometry, n_views: int) -> bool:
-    thetas = getattr(geometry, "angles", None)
-    if thetas is None or n_views < 2:
-        return False
-    angles = np.sort(np.deg2rad(np.asarray(thetas, dtype=np.float64)[:n_views]))
-    step = float(np.median(np.diff(angles)))
-    return float(angles[-1] - angles[0]) + step >= 2 * np.pi - 0.5 * step
+    angles, _, _ = grouped_angles(geometry, n_views)
+    return ordered_arc(angles)[2]
 
 
 def _virtual_columns(
@@ -154,37 +151,27 @@ def view_weights(geometry: Geometry, detector: Detector, n_views: int) -> np.nda
     Full turns weigh each view by its angular measure, halved (Wang's weights
     for an offset detector); short scans use Parker weights. Views repeating
     an angle (several turns, at several heights say) share its measure, so a
-    scan of several turns averages their reconstructions.
+    scan of several turns averages their reconstructions. Angle labels may
+    wrap at 360 degrees or differ by whole turns without changing the weights.
     """
     beam = beam_of(geometry)
     if beam is None:
         raise ValueError("view_weights needs a cone-beam geometry")
-    thetas = getattr(geometry, "angles", None)
-    if thetas is None:
-        raise ValueError("FDK needs a geometry with view angles")
-    all_angles = np.deg2rad(np.asarray(thetas, dtype=np.float64)[:n_views])
-    # Angles a whole number of turns apart, to a millionth of a turn, are one angle.
-    key = np.round(all_angles / (2 * np.pi) * 1e6).astype(np.int64) % 1_000_000
-    _, first, view_angle, repeats = np.unique(
-        key, return_index=True, return_inverse=True, return_counts=True
-    )
-    weights = _distinct_view_weights(beam, detector, all_angles[first])
+    angles, view_angle, repeats = grouped_angles(geometry, n_views)
+    weights = _distinct_view_weights(beam, detector, angles)
     return weights[view_angle] / repeats[view_angle][:, None]
 
 
 def _distinct_view_weights(beam: ConeBeam, detector: Detector, angles: np.ndarray) -> np.ndarray:
     """:func:`view_weights` for views at distinct ``angles`` (radians)."""
     n_views = len(angles)
-    order = np.argsort(angles)
-    sorted_angles = angles[order]
+    order, sorted_angles, full_turn = ordered_arc(angles)
     gaps = np.diff(sorted_angles)
-    if n_views < 2 or np.any(gaps <= 0):
-        raise ValueError("FDK needs at least two distinct rotation angles")
     step = float(np.median(gaps))
     arc = float(sorted_angles[-1] - sorted_angles[0]) + step
     # Angular measure of each view: half the gap to each neighbour.
     measure = np.empty(n_views)
-    if arc >= 2 * np.pi - 0.5 * step:
+    if full_turn:
         wrapped = np.concatenate(
             [sorted_angles[-1:] - 2 * np.pi, sorted_angles, sorted_angles[:1] + 2 * np.pi]
         )
@@ -209,7 +196,8 @@ def _distinct_view_weights(beam: ConeBeam, detector: Detector, angles: np.ndarra
             f"FDK short scans need at least 180 degrees plus the fan angle "
             f"({np.rad2deg(np.pi + 2 * delta):.1f} degrees); got {np.rad2deg(arc):.1f}"
         )
-    beta = (angles - sorted_angles[0])[:, None]
+    beta = np.empty((n_views, 1))
+    beta[order, 0] = sorted_angles - sorted_angles[0]
     g = gamma[None, :]
     weight = np.ones((n_views, detector.nu))
     rise = beta < 2 * (delta - g)
@@ -685,6 +673,7 @@ def fdk_host(
     n_views, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fdk_host projections"
     )
+    ordered_arc(grouped_angles(geometry, n_views)[0])
     result = validate_host_arrays(projections, out, shape, "fdk_host")
     if depth is None:
         free = device_free_memory_bytes() or 2 * 1024**3

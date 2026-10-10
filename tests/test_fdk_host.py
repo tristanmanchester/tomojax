@@ -66,6 +66,16 @@ def test_host_slabs_reject_invalid_depth_without_writing(depth):
     np.testing.assert_array_equal(out, 91.0)
 
 
+@pytest.mark.parametrize("angle", [np.nan, np.inf])
+def test_host_slabs_reject_nonfinite_angles_without_writing(angle):
+    geometry, grid, detector, data = scan()
+    geometry = replace(geometry, angles=[angle, *geometry.angles[1:]])
+    out = np.full((grid.nx, grid.ny, grid.nz), 91.0, np.float32)
+    with pytest.raises(ValueError, match="finite rotation angle"):
+        fdk_host(geometry, grid, detector, data, out=out)
+    np.testing.assert_array_equal(out, 91.0)
+
+
 @pytest.mark.parametrize("invalid", ["dtype", "shape", "readonly", "device_input", "complex"])
 def test_host_slabs_reject_invalid_storage_before_writing(invalid):
     geometry, grid, detector, data = scan()

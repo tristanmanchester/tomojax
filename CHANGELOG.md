@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+FDK now gives the same angular weights and reconstruction when angle labels
+wrap at 360 degrees or differ by whole turns. Wrapped short scans no longer
+mistakenly receive full-turn weights, and offset-detector filter tails use the
+same circular view coverage as the weights. Nonfinite FDK angles fail early.
+
 The CUDA cone backprojector is again the exact transpose of the forward
 projector where a ray is nearly tied between two axes: both now round the ray's
 coordinates identically (it differed by up to 1.6% there). Adjoints are about

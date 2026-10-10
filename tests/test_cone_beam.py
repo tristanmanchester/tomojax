@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -234,6 +235,38 @@ def test_fdk_reconstructs_a_full_turn_on_an_offset_detector(backend):
         volume = fdk(geometry, grid, detector, _analytic(shapes, geometry), config=config)
         errors.append(np.linalg.norm(np.asarray(volume) - truth) / np.linalg.norm(truth))
     assert errors[1] < 1.05 * errors[0] < 0.1
+
+
+@pytest.mark.parametrize("backend", ["jax", cuda])
+@pytest.mark.parametrize("host", [False, True])
+@pytest.mark.parametrize("kind", ["short", "offset_full"])
+def test_fdk_equivalent_angle_labels_preserve_analytic_phantom_recovery(backend, host, kind):
+    n = 32
+    grid = Grid(n, n, n, 1, 1, 1)
+    detector = Detector(48, 48, 1, 1) if kind == "short" else Detector(32, 48, 1, 1, (10, 0))
+    angles = (
+        np.linspace(270, 480, 90) if kind == "short" else np.linspace(270, 630, 120, endpoint=False)
+    )
+    geometry = ConeGeometry(grid, detector, angles, ConeBeam(96, 144))
+    shapes = _ellipsoids(float(n))
+    truth = _voxelise(grid, shapes)
+    data = _analytic(shapes, geometry)
+    cfg = FDKConfig(backend=backend, views_per_batch=31)
+    reference = np.asarray(fdk(geometry, grid, detector, data, config=cfg))
+    # Wrap short-scan labels at zero; give full-turn views different turn numbers.
+    labels = angles % 360 if kind == "short" else angles + 360 * (np.arange(len(angles)) % 3)
+    relabelled = replace(geometry, angles=labels)
+    actual = np.asarray(
+        fdk_host(
+            relabelled, grid, detector, data, config=FDKHostConfig(slices_per_batch=11, fdk=cfg)
+        )
+        if host
+        else fdk(relabelled, grid, detector, data, config=cfg)
+    )
+    np.testing.assert_allclose(actual, reference, atol=2e-3 if backend == "cuda" else 3e-6)
+    assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < (
+        0.16 if kind == "short" else 0.12
+    )
 
 
 @pytest.mark.parametrize("backend", ["jax", cuda])
