@@ -88,18 +88,36 @@ class Hdf5Frames:
             return np.asarray(data[indices, r, c])
 
 
-_FRAME_PATHS = ("/entry/instrument/detector/data", "/entry/data/projections", "/entry/projections")
+_FRAME_PATHS = (
+    "/entry/instrument/detector/data",
+    "/entry/data/projections",
+    "/entry/projections",
+    "/exchange/data",  # APS Data Exchange
+)
 _IMAGE_KEY_PATH = "/entry/instrument/detector/image_key"
 _ANGLE_PATH = "/entry/sample/transformations/rotation_angle"
 
 
 @dataclass(frozen=True)
 class LocatedFrames:
-    """An HDF5 file's frames, with each frame's ``image_key`` and angle (degrees) when found."""
+    """An HDF5 file's frames, with each frame's ``image_key`` and angle (degrees) when found.
+
+    ``flats`` and ``darks`` are stacks of their own beside the frames, as in
+    APS Data Exchange (``data_white``, ``data_dark``), when the file keeps
+    them apart rather than marking them in ``image_key``.
+    """
 
     stack: Hdf5Frames
     image_key: np.ndarray | None
     angles: np.ndarray | None
+    flats: Hdf5Frames | None = None
+    darks: Hdf5Frames | None = None
+
+    @property
+    def raw(self) -> bool:
+        """Whether the file holds flat or dark frames: its frames are detector counts."""
+        marked = self.image_key is not None and bool(np.isin(self.image_key, (1, 2)).any())
+        return marked or self.flats is not None or self.darks is not None
 
 
 def locate_frames(
@@ -111,10 +129,12 @@ def locate_frames(
 ) -> LocatedFrames:
     """Find the stack of frames in an HDF5 file, and its ``image_key`` and angles.
 
-    Each is read from the path given, else the NXtomo path, else the file's
-    only dataset of that name (``data`` of three dimensions, ``image_key``,
-    ``rotation_angle``) with one entry per frame. Angles in radians (a
-    ``units`` attribute) are converted to degrees.
+    Each is read from the path given, else the NXtomo (or Data Exchange) path,
+    else the file's only dataset of that name (``data`` of three dimensions,
+    ``image_key``, ``rotation_angle``) with one entry per frame. Flats and
+    darks kept beside the frames (``data_white``, ``data_dark``) and angles
+    there (``theta``) are found too. Angles in radians (a ``units``
+    attribute) are converted to degrees.
     """
     with h5py.File(path, "r") as file:
         where = data_path or next((p for p in _FRAME_PATHS if _dataset(file, p) is not None), None)
@@ -133,12 +153,19 @@ def locate_frames(
         key_at = key_at or _only(file, "image_key", per_frame, path)
         angles_at = angles_path or (_ANGLE_PATH if _dataset(file, _ANGLE_PATH) else None)
         angles_at = angles_at or _only(file, "rotation_angle", per_frame, path)
+        parent = where.rsplit("/", 1)[0] or "/"
+        beside = {n: f"{parent.rstrip('/')}/{n}" for n in ("data_white", "data_dark", "theta")}
+        angles_at = angles_at or (beside["theta"] if _dataset(file, beside["theta"]) else None)
         key = None if key_at is None else np.asarray(_read(file, key_at, path), np.int32)
         angles = None if angles_at is None else _degrees(file, angles_at, path)
+        flats, darks = (
+            Hdf5Frames.open(path, beside[n]) if key is None and _dataset(file, beside[n]) else None
+            for n in ("data_white", "data_dark")
+        )
     for name, values in (("image_key", key), ("angles", angles)):
         if values is not None and values.shape != (frames,):
             raise ValueError(f"{path}: {name} has {values.shape} entries for {frames} frames")
-    return LocatedFrames(Hdf5Frames.open(path, where), key, angles)
+    return LocatedFrames(Hdf5Frames.open(path, where), key, angles, flats, darks)
 
 
 def _dataset(file: h5py.File, where: str) -> h5py.Dataset | None:

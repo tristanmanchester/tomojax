@@ -426,6 +426,34 @@ def test_reprojection_seed_recovers_a_detector_centre_offset(kind):
     assert abs(seed.det_u_px + 2.3) < 0.1
 
 
+@pytest.mark.parametrize(
+    ("turn", "wide"), [(180.0, False), (360.0, False), (180.0, True)], ids=["half", "full", "wide"]
+)
+def test_cor_alignment_finds_the_axis_of_a_parallel_scan(turn, wide):
+    import tomojax as tj
+
+    n, rows, views, centre = 64, 20, 120, 4.6
+    angles = np.linspace(0.0, turn, views, endpoint=False)
+    # A wide object fills more than the field of view, as a sample in a
+    # capillary does; an FBP-consistency search is misled by such scans.
+    size = 96 if wide else n
+    grid = Grid(size, size, rows, 1.0, 1.0, 1.0)
+    c = np.arange(size) - (size - 1) / 2
+    x, y = np.meshgrid(c, c, indexing="ij")
+    rng = np.random.default_rng(4)
+    plane = np.zeros((size, size), np.float32)
+    for cx, cy, r in zip(
+        *rng.uniform(-0.4 * size, 0.4 * size, (2, 12)), rng.uniform(2, 6, 12), strict=False
+    ):
+        plane += np.exp(-((x - cx) ** 2 + (y - cy) ** 2) / (2 * r * r)).astype(np.float32)
+    volume = np.repeat(plane[:, :, None], rows, axis=2)
+    true = ParallelGeometry(grid, Detector(n, rows, 1.0, 1.0, (centre, 0.0)), angles)
+    data = np.asarray(tj.project(true, volume))
+    scan = tj.Scan(data, ParallelGeometry(grid, Detector(n, rows, 1.0, 1.0), angles))
+    found = tj.align(scan, mode="cor").scan.detector.center[0]
+    assert abs(found - centre) <= 0.3
+
+
 @pytest.mark.parametrize("kind", ["parallel", "lamino", "anisotropic"])
 def test_least_motion_moves_a_constant_u_shift_into_the_detector_centre(kind):
     angles = np.linspace(0.0, 360.0, 24, endpoint=False)

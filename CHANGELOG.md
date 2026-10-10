@@ -280,7 +280,9 @@ without a translation frame (0.3's) are read as object-frame poses, and
   their geometry (each view's flat still interpolated at its place in the
   scan; a lazily read file reads only the block). `load_frames` finds frames,
   `image_key` and angles (radians converted) in other HDF5 layouts or at
-  `data_path=`..., takes NXtomo pixel sizes, and a whole `geometry=`. `Scan.corrections` records
+  `data_path=`..., takes NXtomo pixel sizes, and a whole `geometry=`. APS
+  Data Exchange files (`exchange/data` with `data_white`, `data_dark` and
+  `theta`; TomoPy's and tomocupy's layout) load and correct as they are. `Scan.corrections` records
   what was done, and is saved with the scan.
 - **Cone-beam CT.** `tomojax.geometry.ConeGeometry` with a `ConeBeam` source
   and a flat detector (offsets, roll, pitch and yaw; turntable, tilted or any
@@ -432,6 +434,16 @@ without a translation frame (0.3's) are read as object-frame poses, and
 
 ### Fixed
 
+- `tj.align(mode="cor")` (and `tomojax align --mode cor`) found a wrong axis
+  for a parallel scan of a sample larger than the field of view: on an APS
+  2-BM scan (720 views of 22 x 1536) it seeded −88.5 pixels for a true −15.1
+  and spent about 30 minutes refining from there. A parallel scan over a half
+  turn is now seeded by Vo, Atwood and Drakopoulos's (2014) sinogram method
+  (−15.25 here, in 1.6 s), refined on a slab of its central rows with the
+  batched operators, scored without linearising, and stopped when a round
+  gains little: 61 s to −15.11. Other geometries keep the reprojection
+  search. The validation residuals batch as many views as fit the device
+  when `views_per_batch` is 0, instead of one.
 - `tomojax align --mode pose` (and `align_multires` with pose-only schedules)
   optimised the poses against an all-zero volume and returned the nominal
   geometry. Pose stages alternate with reconstruction again, and a given

@@ -1,19 +1,24 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import logging
 import math
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import jax.numpy as jnp
+import numpy as np
 
 from tomojax.alignment._geometry.geometry_applier import (
     BaseGeometryArrays,
     apply_setup_to_detector_grid,
     materialize_setup_geometry,
+    setup_moved_detector,
 )
-from tomojax.alignment._geometry.initializers import reprojection_det_u_seed
+from tomojax.alignment._geometry.initializers import (
+    reprojection_det_u_seed,
+    sinogram_det_u_seed,
+)
 from tomojax.alignment._model.diagnostics import validate_active_gauge_policy
 from tomojax.alignment._model.dof_specs import ActiveParameterView
 from tomojax.alignment._model.dofs import POSE_WIDTH
@@ -25,8 +30,9 @@ from tomojax.alignment._objectives.fold_recon import (
 from tomojax.alignment._objectives.folds import FoldSpec
 from tomojax.alignment._objectives.loss_adapters import build_loss_adapter
 from tomojax.alignment._objectives.validation_residuals import (
+    FoldValidation,
     accumulate_validation_normals,
-    score_validation_fixed_volume,
+    validation_loss,
 )
 from tomojax.alignment._quality_policy import (
     reconstruction_quality_policy,
@@ -47,7 +53,7 @@ if TYPE_CHECKING:
     from tomojax.core.geometry.base import Detector, Geometry, Grid
 
 
-FoldEvaluation = tuple[int, jnp.ndarray, jnp.ndarray, jnp.ndarray, dict[str, object]]
+FoldEvaluation = tuple[int, FoldValidation, dict[str, object]]
 
 
 @dataclass(frozen=True)
@@ -130,10 +136,9 @@ def _run_setup_validation_objective(
             level_factor=int(factor),
             cfg=fold_recon_cfg,
         )
-        normals = accumulate_validation_normals(
+        validation = FoldValidation(
             frozen_state=setup_state,
             active_view=active_view,
-            z=z_current,
             base=base,
             grid=grid,
             detector=detector,
@@ -148,11 +153,12 @@ def _run_setup_validation_objective(
             gather_dtype=str(cfg.gather_dtype),
             ray_integrator=cfg.ray_integrator,
         )
+        normals = accumulate_validation_normals(validation, z_current)
         total_loss = total_loss + normals.loss
         total_grad = total_grad + normals.grad
         total_hess = total_hess + normals.hess
         residual_count += int(normals.residual_count)
-        fold_cache.append((fold, fold_volume, val_idx, val_mask, fold_recon_info))
+        fold_cache.append((fold, validation, fold_recon_info))
         logging.info(
             "Setup validation-LM fold %d/%d: residuals=%d cumulative_loss=%.6g elapsed=%.1fs",
             fold + 1,
@@ -163,27 +169,7 @@ def _run_setup_validation_objective(
         )
 
     def score_candidate(z_candidate: jnp.ndarray) -> float:
-        score = jnp.asarray(0.0, dtype=jnp.float32)
-        for _fold, fold_volume, val_idx, val_mask, _fold_info in fold_cache:
-            score = score + score_validation_fixed_volume(
-                frozen_state=setup_state,
-                active_view=active_view,
-                z=z_candidate,
-                base=base,
-                grid=grid,
-                detector=detector,
-                projections=projections,
-                loss_adapter=loss_adapter,
-                fold_volume=fold_volume,
-                val_idx=val_idx,
-                val_mask=val_mask,
-                views_per_batch=max(1, int(cfg.views_per_batch)),
-                projector_unroll=int(cfg.projector_unroll),
-                checkpoint_projector=bool(cfg.checkpoint_projector),
-                gather_dtype=str(cfg.gather_dtype),
-                ray_integrator=cfg.ray_integrator,
-            )
-        return float(score)
+        return float(sum(validation_loss(v, z_candidate) for _, v, _ in fold_cache))
 
     opt_result = run_active_validation_lm(
         state=setup_state,
@@ -302,13 +288,32 @@ def _refresh_setup_reconstruction(
     factor: int,
     cfg: AlignConfig,
 ) -> jnp.ndarray:
+    quality_policy = reconstruction_quality_policy(str(getattr(cfg, "stage_quality_tier", "fast")))
+    moved = setup_moved_detector(detector, setup_state.setup, level_factor=int(factor))
+    if moved is not None:  # the batched (CUDA) operators, as in the folds
+        x_next, _ = fista_tv(
+            _geometry_with_setup_state(geometry, grid, moved, setup_state.setup),
+            grid,
+            moved,
+            projections,
+            init_x=init_x,
+            config=FistaConfig(
+                iterations=scaled_reconstruction_iterations(cfg.iterations, quality_policy),
+                tv_weight=float(cfg.tv_weight),
+                regulariser=cfg.regulariser,
+                huber_delta=float(cfg.huber_delta),
+                tv_prox_iterations=int(cfg.tv_prox_iterations),
+                lipschitz=cfg.lipschitz,
+                nonnegative=bool(cfg.nonnegative),
+            ),
+        )
+        return x_next
     geom = _geometry_with_setup_state(geometry, grid, detector, setup_state.setup)
     det_grid = apply_setup_to_detector_grid(
         detector,
         setup_state.setup,
         level_factor=int(factor),
     )
-    quality_policy = reconstruction_quality_policy(str(getattr(cfg, "stage_quality_tier", "fast")))
     x_next, _ = fista_tv(
         geom,
         grid,
@@ -374,6 +379,106 @@ def _validate_setup_stage_execution_contract(stage: ResolvedAlignmentStage | Non
         )
 
 
+_SLAB_ROWS = 8
+# Device bytes per validation view and voxel plane crossing each pixel, as
+# measured for the linearised Joseph projection (with room to spare).
+_VALIDATION_BYTES_PER_PLANE_PIXEL = 36
+
+
+def _validation_views_per_batch(grid: Grid, detector: Detector) -> int:
+    """Views the validation residuals take at once: what fits in 60% of free device memory."""
+    from tomojax.backends import device_free_memory_bytes
+
+    free = device_free_memory_bytes()
+    if free is None:
+        return 1
+    planes = max(grid.nx, grid.ny, grid.nz)
+    per_view = _VALIDATION_BYTES_PER_PLANE_PIXEL * planes * detector.nv * detector.nu
+    return max(1, min(32, int(0.6 * free) // max(1, per_view)))
+
+
+@dataclass(frozen=True)
+class _FitInputs:
+    """What the setup fit reconstructs and compares: the whole scan, or a slab of it."""
+
+    geometry: Geometry
+    grid: Grid
+    detector: Detector
+    projections: jnp.ndarray
+    base: BaseGeometryArrays
+    loss_adapter: LossAdapter
+    init_x: jnp.ndarray | None
+
+
+def _fit_inputs(
+    whole: _FitInputs, *, dofs: Iterable[str], loss_spec: AlignmentLossSpec, factor: int
+) -> _FitInputs:
+    """``whole``, or for a parallel scan's axis offset alone, a slab of its central rows."""
+    slab = _parallel_row_slab(whole.geometry, whole.grid, whole.detector, whole.projections, dofs)
+    if slab is None:
+        return whole
+    geometry, grid, detector, projections = slab
+    base = BaseGeometryArrays.from_geometry(geometry, detector, level_factor=factor)
+    adapter = build_loss_adapter(loss_spec, projections)
+    return _FitInputs(geometry, grid, detector, projections, base, adapter, None)
+
+
+def _parallel_row_slab(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray,
+    dofs: Iterable[str],
+) -> tuple[Geometry, Grid, Detector, jnp.ndarray] | None:
+    """A slab of central detector rows, and the grid over it, for fitting ``det_u_px`` alone.
+
+    In a parallel beam every detector row sees the same rotation axis, so its
+    offset is found as well from a few rows as from all: the fit's
+    reconstructions then cost a slab, not the volume. None for other
+    geometries or parameters, or when the detector has few rows already.
+    """
+    from tomojax.core.geometry import Grid as GridType, ParallelGeometry
+
+    if type(geometry) is not ParallelGeometry or tuple(dofs) != ("det_u_px",):
+        return None
+    nv = int(projections.shape[1])
+    if nv <= 2 * _SLAB_ROWS:
+        return None
+    r0 = (nv - _SLAB_ROWS) // 2
+    r1 = r0 + _SLAB_ROWS
+    u, v = detector.center
+    v_mid = v + (r0 + r1 - nv) / 2 * detector.dv  # the slab's centre, in lab z
+    slab_detector = replace(detector, nv=_SLAB_ROWS, center=(u, v_mid))
+    origin = grid.vol_origin
+    if origin is not None:
+        cx, cy = (
+            origin[i] + (n - 1) / 2 * d
+            for i, (n, d) in enumerate(((grid.nx, grid.vx), (grid.ny, grid.vy)))
+        )
+    else:
+        cx, cy = (grid.vol_center or (0.0, 0.0, 0.0))[:2]
+    nz = max(1, math.ceil(_SLAB_ROWS * detector.dv / grid.vz))
+    slab_grid = GridType(
+        grid.nx, grid.ny, nz, grid.vx, grid.vy, grid.vz, vol_center=(cx, cy, v_mid)
+    )
+    slab_geometry = replace(geometry, grid=slab_grid, detector=slab_detector)
+    return slab_geometry, slab_grid, slab_detector, projections[:, r0:r1, :]
+
+
+def _seeded(state: AlignmentState, seed: dict[str, object] | None) -> AlignmentState:
+    """``state`` with the detector-centre seed's offset, when one was found."""
+    if seed is None or not bool(seed.get("detector_center_seed_applied")):
+        return state
+    det_u_px = float(cast("float", seed["detector_center_seed_det_u_px"]))
+    logging.info(
+        "Setup detector-centre seed: det_u_px=%.3f from %s",
+        det_u_px,
+        seed.get("detector_center_seed_method"),
+    )
+    setup = state.setup.replace(det_u_px=jnp.asarray(det_u_px, dtype=jnp.float32))
+    return state.replace(setup=setup)
+
+
 def _detector_center_seed_diagnostics(
     *,
     geometry: Geometry,
@@ -395,12 +500,22 @@ def _detector_center_seed_diagnostics(
     current = float(setup_state.setup.det_u_px)
     if abs(current) > 1e-6:
         return None
-    # A one-parameter search for the offset whose FBP reprojects most
-    # consistently; unlike opposite-view pairing it suits any scan geometry.
-    seed = reprojection_det_u_seed(projections, geometry, grid, detector)
+    # A parallel scan over a half turn: Vo's sinogram method, which uses every
+    # view and is not misled by an object larger than the field of view.
+    # Otherwise a search for the offset whose FBP reprojects most
+    # consistently, which suits any scan geometry.
+    from tomojax.core.geometry import ParallelGeometry
+
+    seed, method = None, "fbp_reprojection_residual_search"
+    if type(geometry) is ParallelGeometry:
+        seed = sinogram_det_u_seed(projections, np.asarray(geometry.angles))
+        method = "sinogram_vo_2014"
+    if seed is None:
+        seed = reprojection_det_u_seed(projections, geometry, grid, detector)
+        method = "fbp_reprojection_residual_search"
     return {
         "detector_center_seed_status": seed.status,
-        "detector_center_seed_method": "fbp_reprojection_residual_search",
+        "detector_center_seed_method": method,
         "detector_center_seed_applied": True,
         # Level pixels to native pixels.
         "detector_center_seed_det_u_px": float(seed.det_u_px) * int(factor),
@@ -476,23 +591,18 @@ def _optimize_setup_geometry_bilevel_for_level(
         schedule_name=schedule_name,
         stage=stage,
     )
-    if seed_diagnostics is not None and bool(seed_diagnostics.get("detector_center_seed_applied")):
-        logging.info(
-            "Setup detector-centre seed: det_u_px=%.3f from %s",
-            float(seed_diagnostics["detector_center_seed_det_u_px"]),
-            seed_diagnostics.get("detector_center_seed_method"),
-        )
-        setup_state = setup_state.replace(
-            setup=setup_state.setup.replace(
-                det_u_px=jnp.asarray(
-                    float(seed_diagnostics["detector_center_seed_det_u_px"]),
-                    dtype=jnp.float32,
-                )
-            )
-        )
+    setup_state = _seeded(setup_state, seed_diagnostics)
     setup_stats: list[OuterStat] = []
     last_loss = math.inf
     outer_limit = max(1, int(stage.maxiter if stage is not None else cfg.outer_iterations))
+    fit = _fit_inputs(
+        _FitInputs(geometry, grid, detector, projections, base, loss_adapter, init_x),
+        dofs=active_view.dofs,
+        loss_spec=loss_spec,
+        factor=int(factor),
+    )
+    if int(cfg.views_per_batch) <= 0:  # auto: as many views as fit the device
+        cfg = replace(cfg, views_per_batch=_validation_views_per_batch(fit.grid, fit.detector))
     for outer_idx in range(1, outer_limit + 1):
         stage_name = stage.name if stage is not None else (schedule_name or "setup")
         logging.info(
@@ -504,18 +614,18 @@ def _optimize_setup_geometry_bilevel_for_level(
             ",".join(active_view.dofs),
         )
         objective_result = _run_setup_validation_objective(
-            geometry=geometry,
-            grid=grid,
-            detector=detector,
-            projections=projections,
+            geometry=fit.geometry,
+            grid=fit.grid,
+            detector=fit.detector,
+            projections=fit.projections,
             setup_state=setup_state,
             active_view=active_view,
-            base=base,
+            base=fit.base,
             folds=folds,
-            loss_adapter=loss_adapter,
+            loss_adapter=fit.loss_adapter,
             fold_recon_cfg=fold_recon_cfg,
             cfg=cfg,
-            init_x=init_x,
+            init_x=fit.init_x,
             factor=factor,
         )
         opt_result = objective_result.opt_result
@@ -545,10 +655,11 @@ def _optimize_setup_geometry_bilevel_for_level(
             bool(stat.get("geometry_accepted", False)),
             float(stat.get("geometry_step_norm", 0.0) or 0.0),
         )
-        if bool(cfg.early_stop) and outer_idx > 1:
-            prev = float(setup_stats[-2].get("geometry_loss_after", math.inf))
-            impr = (prev - last_loss) / max(abs(prev), 1e-6)
-            if impr < float(cfg.early_stop_rel_impr):
+        if bool(cfg.early_stop):
+            # This round's own improvement: a seeded start may need no more.
+            before = float(stat.get("geometry_loss_before", math.inf))
+            impr = (before - last_loss) / max(abs(before), 1e-6)
+            if math.isfinite(before) and impr < float(cfg.early_stop_rel_impr):
                 break
 
     x_next = _refresh_setup_reconstruction(

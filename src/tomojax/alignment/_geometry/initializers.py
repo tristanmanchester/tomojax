@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
+from scipy import fft
 
 if TYPE_CHECKING:
     import jax.numpy as jnp
@@ -266,3 +267,102 @@ def reprojection_det_u_seed(
         amplitude_px=float(min(values)),
         status="ok_reprojection",
     )
+
+
+def sinogram_det_u_seed(
+    projections: np.ndarray | jnp.ndarray,
+    angles_deg: np.ndarray,
+    *,
+    rows: int = 3,
+    max_fraction: float = 0.25,
+    ratio: float = 0.5,
+    drop: int = 20,
+) -> DetectorCenterSeed | None:
+    """The rotation axis of a parallel scan over a half turn or more, by Vo et al. (2014).
+
+    A sinogram over 180 degrees and its mirror image, stacked, make a
+    360-degree sinogram when the mirror is shifted by twice the axis offset;
+    a 360-degree sinogram's Fourier transform has no energy outside a double
+    wedge, so the offset minimises the energy there. Coarse on columns binned
+    by 4, then to a quarter pixel; the median over ``rows`` detector rows.
+    ``ratio`` is the object's size as a fraction of the field (the wedge's
+    width), ``drop`` the low frequencies left out. None when the views cover
+    less than a half turn.
+    """
+    angles = np.asarray(angles_deg, np.float64)
+    order = np.argsort(angles)
+    first = angles[order] - angles[order][0] < 180.0 - 1e-6
+    half_turn = order[first]
+    if len(half_turn) < 16 or angles[half_turn[-1]] - angles[half_turn[0]] < 175.0:
+        return None
+    data = np.asarray(projections)
+    nv, nu = data.shape[1], data.shape[2]
+    picks = np.unique(np.linspace(0.1 * (nv - 1), 0.9 * (nv - 1), max(1, rows)).round().astype(int))
+    offsets = []
+    for row in picks:
+        sino = np.asarray(data[half_turn, row, :], np.float32)
+        if not np.isfinite(sino).all() or np.ptp(sino) <= 0:
+            continue
+        # Coarse: columns binned by 4 (and views by 2), every binned pixel.
+        views = len(sino) // 2 * 2
+        coarse = sino[:views, : nu // 4 * 4].reshape(views // 2, 2, -1, 4).mean(axis=(1, 3))
+        reach = max(2, int(max_fraction * coarse.shape[1]))
+        steps = np.arange(-reach, reach + 1, dtype=np.float64)
+        best = steps[int(np.argmin(_vo_metrics(coarse, steps, ratio, drop)))] * 4
+        # Fine: whole pixels around it, then quarter pixels.
+        for spread, step in ((6.0, 1.0), (1.0, 0.25)):
+            near = best + np.arange(-spread, spread + step / 2, step)
+            best = float(near[int(np.argmin(_vo_metrics(sino, near, ratio, drop)))])
+        offsets.append(best)
+    if not offsets:
+        return None
+    offset = float(np.median(offsets))
+    # An axis at +s pixels from the detector centre is a detector centre at -s.
+    return DetectorCenterSeed(
+        det_u_px=-offset,
+        intercept_px=-offset,
+        amplitude_px=float(np.std(offsets)) if len(offsets) > 1 else 0.0,
+        status="ok_sinogram",
+    )
+
+
+def _vo_metrics(sino: np.ndarray, offsets: np.ndarray, ratio: float, drop: int) -> np.ndarray:
+    """Vo's metric for each axis offset (pixels from the centre column) of ``sino``."""
+    views, cols = sino.shape
+    mask = _vo_mask(2 * views, cols, 0.5 * ratio * cols, drop)
+    mirror = sino[:, ::-1]
+    # Shift the mirror by twice the offset (sub-pixel, along u, by Fourier
+    # phase), with the far edge of the flipped sinogram where it wraps.
+    freq = np.fft.fftfreq(cols).astype(np.float32)
+    spectrum = np.asarray(fft.fft(mirror, axis=1, workers=-1))
+    out = np.empty(len(offsets))
+    for i, offset in enumerate(offsets):
+        shift = 2.0 * float(offset)
+        phase = np.exp(-2j * np.pi * freq * np.float32(shift)).astype(np.complex64)
+        moved = np.real(np.asarray(fft.ifft(spectrum * phase, axis=1, workers=-1)))
+        edge = int(np.ceil(abs(shift)))
+        if edge:
+            filler = sino[::-1]
+            if shift > 0:
+                moved[:, :edge] = filler[:, :edge]
+            else:
+                moved[:, -edge:] = filler[:, -edge:]
+        both = np.vstack([sino, moved])
+        energy = np.abs(np.fft.fftshift(np.asarray(fft.fft2(both, workers=-1))))
+        out[i] = float(np.mean(energy * mask))
+    return out
+
+
+def _vo_mask(rows: int, cols: int, radius: float, drop: int) -> np.ndarray:
+    """Vo's double-wedge mask: where a centred 360-degree sinogram has no energy."""
+    du, dv = 1.0 / cols, (rows - 1.0) / (rows * 2.0 * np.pi)
+    centre_row, centre_col = int(np.ceil(rows / 2.0) - 1), int(np.ceil(cols / 2.0) - 1)
+    reach = np.round((np.arange(rows) - centre_row) * dv / radius / du)
+    low = np.clip(centre_col - np.abs(reach), 0, cols - 1).astype(int)
+    high = np.clip(centre_col + np.abs(reach), 0, cols - 1).astype(int)
+    col = np.arange(cols)[None, :]
+    mask = ((col >= low[:, None]) & (col <= high[:, None])).astype(np.float32)
+    drop = min(int(drop), int(np.ceil(0.05 * rows)))
+    mask[centre_row - drop : centre_row + drop + 1, :] = 0.0
+    mask[:, centre_col - 1 : centre_col + 2] = 0.0
+    return mask

@@ -33,12 +33,11 @@
     "src/tomojax/alignment/_model/schedules.py::resolve_alignment_schedule": 168,
     "src/tomojax/alignment/_objectives/fixed_volume.py::project_and_score_stack": 164,
     "src/tomojax/alignment/_objectives/recon_layer.py::_implicit_reconstruct_arrays": 111,
-    "src/tomojax/alignment/_objectives/validation_residuals.py::accumulate_validation_normals": 131,
     "src/tomojax/alignment/_pose/_coupled_program.py::_build_program": 349,
     "src/tomojax/alignment/_pose/_pose_loop.py::align": 202,
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::_run_reconstruction_step": 166,
-    "src/tomojax/alignment/_stages/_setup_stage.py::_optimize_setup_geometry_bilevel_for_level": 154,
-    "src/tomojax/alignment/_stages/_setup_stage.py::_run_setup_validation_objective": 124,
+    "src/tomojax/alignment/_stages/_setup_stage.py::_optimize_setup_geometry_bilevel_for_level": 150,
+    "src/tomojax/alignment/_stages/_setup_stage.py::_run_setup_validation_objective": 104,
     "src/tomojax/alignment/_stages/_stage_multires.py::_run_one_multires_level": 119,
     "src/tomojax/alignment/_stages/_stage_multires.py::align_multires": 102,
     "src/tomojax/alignment/_stages/_stage_runners.py::_run_multires_level_stages": 151,
@@ -135,7 +134,7 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "type_errors": {
-    "reportArgumentType": 355,
+    "reportArgumentType": 354,
     "reportAssignmentType": 3,
     "reportAttributeAccessIssue": 167,
     "reportCallIssue": 14,

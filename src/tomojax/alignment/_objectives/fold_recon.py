@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -11,6 +11,7 @@ import numpy as np
 from tomojax.alignment._geometry.geometry_applier import (
     apply_setup_to_detector_grid,
     materialize_setup_geometry,
+    setup_moved_detector,
 )
 from tomojax.alignment._objectives.recon_layer import PoseAdjustedGeometry
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
@@ -18,6 +19,7 @@ from tomojax.recon.fista_tv import FistaConfig, fista_tv
 if TYPE_CHECKING:
     from tomojax.alignment._model.state import AlignmentState
     from tomojax.core.geometry import Detector, Geometry, Grid
+    from tomojax.recon.types import Regulariser
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,10 +60,13 @@ def reconstruct_train_fold_nograd(
     if valid_idx.size == 0:
         raise ValueError("train fold must contain at least one active view")
 
+    # Without a detector roll the setup is a moved detector, which the batched
+    # (CUDA) operators take; a roll needs the reference path's detector grid.
+    moved = setup_moved_detector(detector, state.setup, level_factor=max(1, int(level_factor)))
     fold_geometry = materialize_setup_geometry(
         geometry,
         grid,
-        detector,
+        detector if moved is None else moved,
         state.setup,
         indices=valid_idx,
     )
@@ -70,12 +75,30 @@ def reconstruct_train_fold_nograd(
         state.pose.pose_params[jnp.asarray(valid_idx, dtype=jnp.int32)],
         translation_frame=state.pose.translation_frame,
     )
+    y_fold = jnp.asarray(projections, dtype=jnp.float32)[jnp.asarray(valid_idx, dtype=jnp.int32)]
+    if moved is not None:
+        x, info = fista_tv(
+            cast("Geometry", fold_geometry),
+            grid,
+            moved,
+            y_fold,
+            init_x=init_x,
+            config=FistaConfig(
+                iterations=max(1, int(cfg.iterations)),
+                tv_weight=float(cfg.tv_weight),
+                regulariser=cast("Regulariser", cfg.regulariser),
+                huber_delta=float(cfg.huber_delta),
+                tv_prox_iterations=int(cfg.tv_prox_iterations),
+                lipschitz=cfg.lipschitz,
+                nonnegative=bool(cfg.nonnegative),
+            ),
+        )
+        return x, _fold_metadata(valid_idx, cfg, info)
     det_grid = apply_setup_to_detector_grid(
         detector,
         state.setup,
         level_factor=max(1, int(level_factor)),
     )
-    y_fold = jnp.asarray(projections, dtype=jnp.float32)[jnp.asarray(valid_idx, dtype=jnp.int32)]
     x, info = fista_tv(
         fold_geometry,
         grid,
@@ -101,7 +124,13 @@ def reconstruct_train_fold_nograd(
         ),
         det_grid=det_grid,
     )
-    metadata = {
+    return x, _fold_metadata(valid_idx, cfg, info)
+
+
+def _fold_metadata(
+    valid_idx: np.ndarray, cfg: FoldReconstructionConfig, info: object
+) -> dict[str, object]:
+    return {
         "train_view_count": int(valid_idx.size),
         "train_indices": [int(v) for v in valid_idx],
         "recon_sensitivity": "stopped",
@@ -111,4 +140,3 @@ def reconstruct_train_fold_nograd(
         "views_per_batch": max(1, int(cfg.views_per_batch)),
         "info": info,
     }
-    return x, metadata

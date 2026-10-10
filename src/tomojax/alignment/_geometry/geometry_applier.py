@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
@@ -93,6 +93,29 @@ def apply_setup_to_detector_grid(
         det_v_px=det_v_level_px,
         detector_roll_deg=jnp.rad2deg(setup.detector_roll_rad),
     )
+
+
+def setup_moved_detector(
+    detector: Detector,
+    setup: SetupGeometryState,
+    *,
+    level_factor: int = 1,
+) -> Detector | None:
+    """``detector`` with the setup's native-pixel offsets in its centre, if it has no roll.
+
+    The same detector as :func:`apply_setup_to_detector_grid`'s grid, as a
+    :class:`Detector` the batched (CUDA) operators take; None when the setup
+    rolls the detector, which only the grid describes.
+    """
+    if abs(float(setup.detector_roll_rad)) > 0.0:
+        return None
+    factor = float(max(1, int(level_factor)))
+    u, v = detector.center
+    moved = (
+        u + float(setup.det_u_px) / factor * detector.du,
+        v + float(setup.det_v_px) / factor * detector.dv,
+    )
+    return replace(detector, center=moved)
 
 
 def _laminography_axis_unit_jax(tilt_deg: object, tilt_about: str) -> jnp.ndarray:

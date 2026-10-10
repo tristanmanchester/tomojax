@@ -403,3 +403,26 @@ def test_tiff_frames_take_a_measured_geometry(tmp_path: Path) -> None:
     scan = tj.load_frames(tmp_path, flats=100, geometry=geometry).corrected()
     assert scan.geometry is geometry and scan.detector.du == 0.65
     np.testing.assert_allclose(np.asarray(scan.projections)[:, 0, 0], -np.log([0.5, 0.25, 0.4]))
+
+
+def test_aps_data_exchange_files_load_with_their_flats_and_darks(tmp_path: Path) -> None:
+    # APS's layout (TomoPy, tomocupy): flats and darks as stacks of their own.
+    with h5py.File(tmp_path / "aps.h5", "w") as handle:
+        handle.create_dataset(
+            "exchange/data", data=np.stack([np.full((2, 3), v, np.uint16) for v in (300, 150)])
+        )
+        handle.create_dataset("exchange/data_white", data=np.full((3, 2, 3), 500, np.uint16))
+        handle.create_dataset("exchange/data_dark", data=np.full((2, 2, 3), 100, np.uint16))
+        handle.create_dataset("exchange/theta", data=np.asarray([0.0, 90.0], np.float32))
+        handle.create_dataset("defaults/NDArrayUniqueId", data=np.arange(5))
+    scan = tj.load(tmp_path / "aps.h5")
+    np.testing.assert_allclose(
+        np.asarray(scan.projections)[:, 0, 0], -np.log([0.5, 0.125]), rtol=1e-6
+    )
+    np.testing.assert_allclose(scan.angles, [0.0, 90.0])
+    assert scan.corrections[0].settings == {"flats": 3, "darks": 2, "flat_sets": 1}
+    # Without flats a foreign file says where to go.
+    with h5py.File(tmp_path / "bare.h5", "w") as handle:
+        handle.create_dataset("exchange/data", data=np.full((2, 2, 3), 7, np.uint16))
+    with pytest.raises(ValueError, match="load_frames"):
+        tj.load(tmp_path / "bare.h5")

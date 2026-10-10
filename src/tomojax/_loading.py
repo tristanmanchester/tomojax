@@ -65,13 +65,17 @@ def load(path: str | PathLike[str], *, poses: bool = True) -> Scan:
     if suffix == ".xtekct":
         return _corrected_on_load(load_frames(file), file)
     located = _located(file) if suffix in _HDF5 else None
-    if (
-        located is not None
-        and located.image_key is not None
-        and np.isin(located.image_key, (1, 2)).any()
-    ):
+    if located is not None and located.raw:
         return _corrected_on_load(_hdf5_frames(file, located, angles=None), file)
-    record = load_dataset(file)
+    try:
+        record = load_dataset(file)
+    except KeyError as exc:  # HDF5 frames not laid out as TomoJAX's
+        if located is None:
+            raise
+        raise ValueError(
+            f"{file} is not a TomoJAX dataset and holds no flat frames: load its frames with "
+            "tomojax.load_frames(path, flats=..., angles=...)"
+        ) from exc
     if np.issubdtype(np.asarray(record.projections).dtype, np.integer):
         raise ValueError(
             f"{file} holds integer detector counts and no flat frames (image_key 1): "
@@ -368,12 +372,18 @@ def _hdf5_frames(
     record = ProjectionDataset.from_nxtomo(placeholder, source_path=file)
     flats = stack[np.flatnonzero(key == 1)] if (key == 1).any() else None
     darks = stack[np.flatnonzero(key == 2)] if (key == 2).any() else None
+    if located.flats is not None:  # kept apart from the frames: one set
+        flats = located.flats[0 : len(located.flats)]
+    if located.darks is not None:
+        darks = located.darks[0 : len(located.darks)]
     return Frames(
         counts=stack.frames_at(sample),
         geometry=geometry_of(record, poses=True),
         flats=flats,
         darks=darks,
-        flat_positions=None if flats is None else np.cumsum(sample)[key == 1],
+        flat_positions=None
+        if flats is None or located.flats is not None
+        else np.cumsum(sample)[key == 1],
         name=record.sample_name or "sample",
         source=record,
     )
