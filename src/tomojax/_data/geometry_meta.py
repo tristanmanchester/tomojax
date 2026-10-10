@@ -123,6 +123,9 @@ class AugmentedGeometry:
         return self.base.rays_for_view(i)
 
     def __getattr__(self, name: str) -> object:
+        # Only once built: unpickling looks attributes up before ``base`` is set.
+        if name == "base" or "base" not in self.__dict__:
+            raise AttributeError(name)
         return getattr(self.base, name)
 
 
@@ -157,6 +160,9 @@ class DetectorRollGeometry:
         return self.base.rays_for_view(i)
 
     def __getattr__(self, name: str) -> object:
+        # Only once built: unpickling looks attributes up before ``base`` is set.
+        if name == "base" or "base" not in self.__dict__:
+            raise AttributeError(name)
         return getattr(self.base, name)
 
 

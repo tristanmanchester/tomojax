@@ -46,3 +46,21 @@ def test_parallel_subclass_pose_override_and_traced_parameters_are_preserved():
     np.testing.assert_allclose(actual[:, 0, 3], 0.7)
     derivative = jax.jacfwd(poses)(0.7)
     np.testing.assert_array_equal(derivative[:, 0, 3], np.ones(2))
+
+
+def test_geometry_wrappers_survive_pickling():
+    import pickle
+
+    from tomojax.io import build_geometry_from_dataset_metadata
+
+    meta = {
+        "detector": Detector(4, 4, 1.0, 1.0).to_dict(),
+        "grid": Grid(4, 4, 4, 1.0, 1.0, 1.0).to_dict(),
+        "angles": np.asarray([0.0, 90.0], np.float32),
+        "geometry_type": "parallel",
+        "align_params": np.zeros((2, 5), np.float32),
+        "detector_roll_deg": 0.5,
+    }
+    _, _, wrapped = build_geometry_from_dataset_metadata(meta, poses=True)
+    again = pickle.loads(pickle.dumps(wrapped))  # as for a worker process
+    assert type(again) is type(wrapped) and list(np.asarray(again.angles)) == [0.0, 90.0]
