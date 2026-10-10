@@ -211,7 +211,8 @@ def _flat_fields(
             f"flat_positions needs one finite position for each of the {len(flats)} flats"
         )
     sets = np.unique(where)
-    stack = np.stack([np.asarray(flats[where == p], np.float64).mean(axis=0) for p in sets])
+    groups = (flats if len(sets) == 1 else flats[where == p] for p in sets)
+    stack = np.stack([np.mean(group, axis=0, dtype=np.float64) for group in groups])
     settings: dict[str, Any] = {"flats": len(flats), "darks": dark_frames, "flat_sets": len(sets)}
     if len(sets) > 1:
         settings["flat_positions"] = [float(p) for p in sets]
@@ -228,7 +229,7 @@ def _mean(frames: np.ndarray, shape: tuple[int, int], name: str) -> np.ndarray:
         raise ValueError(
             f"{name} are {frames.shape}; a nonempty stack of frames of {shape} is needed"
         )
-    return np.asarray(frames, np.float64).mean(axis=0).astype(np.float32)
+    return np.asarray(np.mean(frames, axis=0, dtype=np.float64), np.float32)
 
 
 def _interpolation(q: np.ndarray, positions: np.ndarray) -> tuple[np.ndarray, ...]:
