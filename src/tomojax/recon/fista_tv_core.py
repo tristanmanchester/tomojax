@@ -113,9 +113,12 @@ def fista_tv_core_arrays(
     arrays out, no Python `Geometry` object construction, and a static iteration
     count suitable for differentiating tiny bilevel reference problems.
     ``L_override`` must be positive and bound the full objective gradient.
+    Nonzero regularization requires Huber-TV; nonsmooth TV belongs to ``fista_tv``.
     If final data diagnostics are disabled, ``data_loss`` is the last evaluated
     data term, or zero when none was computed; it never includes regularization.
     """
+    if cfg.tv_weight != 0.0 and cfg.regulariser != "huber_tv":
+        raise ValueError("fista_tv_core_arrays requires huber_tv or tv_weight=0")
     x_init = _project_constraints(jnp.asarray(x0, dtype=jnp.float32), cfg)
     L_raw = cfg.lipschitz if L_override is None else L_override
     L = jnp.asarray(L_raw, dtype=jnp.float32)
@@ -179,11 +182,6 @@ def fista_tv_core_arrays(
             grad = grad * jnp.asarray(cfg.support, dtype=grad.dtype)
         return loss, grad
 
-    def regulariser_value(x: jnp.ndarray) -> jnp.ndarray:
-        if cfg.regulariser == "huber_tv":
-            return huber_tv_value(x, float(cfg.huber_delta))
-        return isotropic_tv_value(x)
-
     def body(
         carry: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray],
         k: jnp.ndarray,
@@ -203,9 +201,10 @@ def fista_tv_core_arrays(
         z_next = x_next + ((t_prev - jnp.float32(1.0)) / t_next) * (x_next - x_prev)
         z_next = _project_constraints(z_next, cfg)
         if cfg.compute_iteration_loss and cfg.iterations > 0:
-            loss_arr = loss_arr.at[k].set(
-                (data_loss + lam * regulariser_value(z_prev)).astype(jnp.float32)
-            )
+            objective = data_loss
+            if cfg.tv_weight != 0.0:
+                objective = objective + lam * regulariser_value_arrays(z_prev, cfg)
+            loss_arr = loss_arr.at[k].set(objective.astype(jnp.float32))
         return (x_next, z_next, t_next, loss_arr, data_loss.astype(jnp.float32)), None
 
     n_iters = int(cfg.iterations)
@@ -217,7 +216,7 @@ def fista_tv_core_arrays(
     )
     data_final = data_loss_fn(x_final) if cfg.compute_final_data_loss else last_data_loss
     reg_final = (
-        regulariser_value(x_final)
+        regulariser_value_arrays(x_final, cfg)
         if cfg.compute_final_regulariser_value
         else jnp.zeros((), dtype=jnp.float32)
     )

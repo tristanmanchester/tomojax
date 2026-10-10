@@ -9,7 +9,11 @@ import pytest
 
 from tomojax.forward import project_joseph
 from tomojax.geometry import Detector, Grid
-from tomojax.recon.fista_tv_core import FistaCoreConfig, fista_tv_core_arrays
+from tomojax.recon.fista_tv_core import (
+    FistaCoreConfig,
+    fista_objective_arrays,
+    fista_tv_core_arrays,
+)
 
 
 @pytest.mark.numerical
@@ -126,3 +130,53 @@ def test_core_zero_iterations_preserve_start_and_handle_optional_diagnostics(
 def test_core_rejects_invalid_lipschitz_config(lipschitz):
     with pytest.raises(ValueError, match="lipschitz"):
         replace(FistaCoreConfig(), lipschitz=lipschitz)
+
+
+def test_core_rejects_nonsmooth_tv_instead_of_solving_an_unregularized_problem():
+    # For A=I, y=(0,1), lam=.2, exact TV has the unique optimum (.2,.8).
+    # Gradient-only FISTA previously returned (0,1) and claimed status='ok'.
+    cfg = FistaCoreConfig(iterations=1, tv_weight=0.2, regulariser="tv", ray_integrator="joseph")
+    # Objective-only evaluations still need exact TV, including coupled alignment.
+    objective = fista_objective_arrays(
+        T_all=jnp.eye(4)[None],
+        grid=Grid(2, 1, 1, 1.0, 1.0, 1.0),
+        detector=Detector(2, 1, 1.0, 1.0),
+        volume=jnp.asarray([0.0, 1.0]).reshape(2, 1, 1),
+        det_grid=None,
+        projections=jnp.asarray([[[0.0, 1.0]]]),
+        cfg=cfg,
+    )
+    np.testing.assert_allclose(objective, 0.2, rtol=1e-6)
+    with pytest.raises(ValueError, match="huber_tv or tv_weight=0"):
+        fista_tv_core_arrays(
+            x0=jnp.zeros((2, 1, 1)),
+            T_all=jnp.eye(4)[None],
+            det_grid=None,
+            projections=jnp.asarray([[[0.0, 1.0]]]),
+            grid=Grid(2, 1, 1, 1.0, 1.0, 1.0),
+            detector=Detector(2, 1, 1.0, 1.0),
+            cfg=cfg,
+        )
+
+
+@pytest.mark.numerical
+def test_zero_weight_tv_iteration_loss_has_only_the_data_gradient_at_a_flat_volume():
+    grid, detector = Grid(2, 2, 2, 1.0, 1.0, 1.0), Detector(2, 2, 1.0, 1.0)
+    poses = jnp.eye(4, dtype=jnp.float32)[None]
+    cfg = FistaCoreConfig(iterations=1, tv_weight=0, regulariser="tv", ray_integrator="joseph")
+    data = jnp.ones((1, 2, 2))
+
+    def iteration_loss(initial):
+        return fista_tv_core_arrays(
+            x0=initial,
+            T_all=poses,
+            det_grid=None,
+            projections=data,
+            grid=grid,
+            detector=detector,
+            cfg=cfg,
+        ).loss[0]
+
+    # Every voxel lies on one unit-length plane contribution to a measured ray.
+    actual = jax.jit(jax.grad(iteration_loss))(jnp.zeros((2, 2, 2)))
+    np.testing.assert_allclose(actual, -np.ones((2, 2, 2)), rtol=1e-6)
