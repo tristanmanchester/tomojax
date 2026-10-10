@@ -34,18 +34,29 @@ def host_source(array: np.ndarray) -> Iterator[jax.Array]:
         _SOURCES.pop(key, None)
 
 
-def _read(key: np.ndarray, start: np.ndarray, *, size: int) -> np.ndarray:
+def _read(
+    key: np.ndarray, start: np.ndarray, weights_key: np.ndarray | None, *, size: int
+) -> np.ndarray:
     source, first = _SOURCES[int(key)], int(start)
     views = np.ascontiguousarray(source[first : first + size], dtype=np.float32)
+    if weights_key is not None:
+        weights = _SOURCES[int(weights_key)][first : first + size]
+        views = np.where(weights > 0, views, np.float32(0))
     if not np.isfinite(views).all():
         raise ValueError("streamed projections must be finite in FP32")
     return views
 
 
-def read_views(key: jax.Array, start: jax.Array, shape: tuple[int, int, int]) -> jax.Array:
-    """Return views ``start : start + shape[0]`` of the registered host array."""
+def read_views(
+    key: jax.Array,
+    start: jax.Array,
+    shape: tuple[int, int, int],
+    *,
+    weights_key: jax.Array | None = None,
+) -> jax.Array:
+    """Read a host batch, excluding zero-weight samples before finite checks."""
     out = jax.ShapeDtypeStruct(shape, jnp.float32)
-    return jax.pure_callback(partial(_read, size=shape[0]), out, key, start)
+    return jax.pure_callback(partial(_read, size=shape[0]), out, key, start, weights_key)
 
 
 def should_stream(projections: object, *, fraction: float = 0.4) -> bool:

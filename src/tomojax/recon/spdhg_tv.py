@@ -235,6 +235,8 @@ def _prox_fstar_l2(
     """
     sigma = jnp.asarray(sigma, dtype=u.dtype)
     w = jnp.ones_like(u) if w is None else jnp.asarray(w, dtype=u.dtype)
+    u = jnp.where(w > 0, u, 0.0)
+    y_meas = jnp.where(w > 0, y_meas, 0.0)
     return weighted_l2_conjugate(u, sigma, y_meas, w).astype(u.dtype)
 
 
@@ -489,6 +491,18 @@ def _make_spdhg_backproject_chunk(
     return backproject
 
 
+def _spdhg_data_residual(
+    pred: jnp.ndarray,
+    measured: jnp.ndarray,
+    weights: jnp.ndarray | None,
+    active: jnp.ndarray,
+) -> jnp.ndarray:
+    if weights is not None:
+        active = active & (weights > 0)
+    residual = jnp.where(active, pred, 0.0) - jnp.where(active, measured, 0.0)
+    return residual if weights is None else residual * jnp.sqrt(weights)
+
+
 def _update_spdhg_tv_duals(
     state: _SPDHGScanState, runtime: _SPDHGRuntime
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
@@ -531,7 +545,9 @@ def _run_spdhg_scan(  # noqa: PLR0915
         if keys is not None:
             weights = read_views(keys[2], start, block_shape) if runtime.weighted else None
             return (
-                read_views(keys[0], start, block_shape),
+                read_views(
+                    keys[0], start, block_shape, weights_key=keys[2] if runtime.weighted else None
+                ),
                 weights,
                 read_block(keys[1], start, block_shape),
             )
@@ -594,9 +610,7 @@ def _run_spdhg_scan(  # noqa: PLR0915
         do_log = (cfg.log_every > 0) & ((t + 1) % cfg.log_every == 0)
 
         def log_step() -> jnp.ndarray:
-            resid = (pred - y_chunk) * row_mask
-            if w_chunk is not None:
-                resid = resid * jnp.sqrt(w_chunk)
+            resid = _spdhg_data_residual(pred, y_chunk, w_chunk, row_mask != 0)
             data_est = (
                 0.5
                 * jnp.vdot(resid, resid).real
@@ -647,7 +661,8 @@ def spdhg_tv(
     """SPDHG (stochastic Chambolle-Pock) with weighted L2 data term and TV-like regularization.
 
     ``weights`` must be real, nonnegative and finite when stored in FP32;
-    zero weights mark unmeasured samples. Invalid values fail before solver setup.
+    zero weights exclude unmeasured samples, including nonfinite measurements.
+    Invalid weights fail before solver setup.
     Boolean/integer masks, standard NumPy floating dtypes and bfloat16 are supported.
 
     If ``callback`` is provided, it fires on the first logged objective sample and

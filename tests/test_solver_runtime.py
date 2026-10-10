@@ -448,3 +448,108 @@ def test_spdhg_disabled_tv_cannot_corrupt_finite_data_diagnostics(regulariser, s
     # exact fit. Its absent regularizer must never turn data_loss=0 into NaN.
     np.testing.assert_array_equal(actual, initial)
     np.testing.assert_array_equal(info["loss"], [0.0])
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("missing", [np.nan, np.inf, -np.inf])
+def test_spdhg_masked_invalid_data_preserve_dense_solution_and_diagnostics(stream, missing):
+    shape = (2, 1, 1)
+    grid = Grid(*shape, 0.8, 1.1, 1.3)
+    detector = Detector(4, 3, 0.7, 0.9, (0.17, -0.23))
+    geometry = ParallelGeometry(grid, detector, [13.0, 71.0, 127.0])
+    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(3)], dtype=jnp.float32)
+    forward, _ = projection_operators(poses, grid, detector, None, "jax", 3, "joseph")
+    matrix = np.asarray(jax.jacfwd(lambda x: forward(x.reshape(shape)).ravel())(jnp.zeros(2)))
+    matrix = matrix.astype(np.float64)
+    truth = np.asarray([0.2, 1.0])
+    data = (matrix @ truth).astype(np.float32)
+    weights = np.linspace(0.3, 1.7, data.size).astype(np.float32)
+    weights[::4] = 0.0
+    normal = matrix.T @ (weights[:, None] * matrix)
+    expected = np.linalg.solve(normal, matrix.T @ (weights * data))
+    cfg = SPDHGConfig(
+        iterations=600,
+        views_per_batch=2,
+        tv_weight=0,
+        log_every=50,
+        projector_model="joseph",
+        projector_backend="jax",
+        stream_projections=stream,
+    )
+    reference, ref_info = spdhg_tv(
+        geometry,
+        grid,
+        detector,
+        data.reshape(3, 3, 4),
+        weights=weights.reshape(3, 3, 4),
+        config=cfg,
+    )
+    data[weights == 0] = missing
+    actual, info = spdhg_tv(
+        geometry,
+        grid,
+        detector,
+        data.reshape(3, 3, 4),
+        weights=weights.reshape(3, 3, 4),
+        config=cfg,
+    )
+    np.testing.assert_array_equal(actual, reference)
+    # CUDA norm/backprojection reductions can perturb a nearly zero objective
+    # while leaving the converged image identical. Keep a FP32-sized loss bound.
+    np.testing.assert_allclose(info["loss"], ref_info["loss"], rtol=1e-5, atol=1e-10)
+    assert np.isfinite(info["loss"]).all()
+    assert np.linalg.norm(np.asarray(actual).ravel() - expected) / np.linalg.norm(expected) < 5e-5
+    assert np.linalg.norm(np.asarray(actual).ravel() - truth) / np.linalg.norm(truth) < 5e-5
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("missing", [np.nan, np.inf, -np.inf])
+def test_spdhg_all_missing_data_preserve_finite_warm_start(stream, missing):
+    grid, detector = Grid(2, 1, 1, 0.8, 1.1, 1.3), Detector(4, 3, 0.7, 0.9)
+    geometry = ParallelGeometry(grid, detector, [13.0, 71.0, 127.0])
+    initial = np.asarray([0.2, 1.0], dtype=np.float32).reshape(2, 1, 1)
+    actual, info = spdhg_tv(
+        geometry,
+        grid,
+        detector,
+        np.full((3, 3, 4), missing, dtype=np.float32),
+        weights=np.zeros((3, 3, 4), dtype=np.float32),
+        init_x=initial,
+        config=SPDHGConfig(
+            iterations=2,
+            views_per_batch=2,
+            tv_weight=0,
+            log_every=1,
+            stream_projections=stream,
+            projector_backend="jax",
+        ),
+    )
+    np.testing.assert_array_equal(actual, initial)
+    np.testing.assert_array_equal(info["loss"], [0.0, 0.0])
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("weighted", [False, True])
+def test_spdhg_streaming_still_rejects_unmasked_nonfinite_data(weighted):
+    grid, detector = Grid(2, 1, 1, 0.8, 1.1, 1.3), Detector(4, 3, 0.7, 0.9)
+    geometry = ParallelGeometry(grid, detector, [13.0, 71.0, 127.0])
+    data = np.zeros((3, 3, 4), dtype=np.float32)
+    data[0, 0, 0] = np.nan
+    weights = np.ones_like(data) if weighted else None
+    with pytest.raises(Exception, match="finite"):
+        spdhg_tv(
+            geometry,
+            grid,
+            detector,
+            data,
+            weights=weights,
+            config=SPDHGConfig(
+                iterations=1,
+                views_per_batch=3,
+                tv_weight=0,
+                stream_projections=True,
+                projector_backend="jax",
+            ),
+        )
