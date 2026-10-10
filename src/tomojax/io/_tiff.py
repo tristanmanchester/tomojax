@@ -5,9 +5,15 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+from typing import TYPE_CHECKING
 
 import numpy as np
 from tifffile import TiffFile
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from tifffile import TiffFrame, TiffPage
 
 TIFF_SUFFIXES = frozenset({".tif", ".tiff"})
 _NATURAL_SORT_PARTS = re.compile(r"(\d+)")
@@ -53,15 +59,37 @@ def read_tiff_frames(path: Path | str) -> np.ndarray:
     files = tiff_files(Path(path))
     if not files:
         raise ValueError(f"no TIFF files found under {path}")
-    frames: list[np.ndarray] = []
-    for file in files:
-        with TiffFile(file) as tiff:
-            frames.extend(np.asarray(page.asarray()) for page in tiff.pages)
-    if not frames:
-        raise ValueError(f"no TIFF frames found under {path}")
-    shapes = {frame.shape for frame in frames}
-    if len(shapes) != 1 or len(next(iter(shapes))) != 2:
-        raise ValueError(
-            f"{path}: TIFF frames must be 2-D images of one size, found {sorted(shapes)}"
-        )
-    return np.stack(frames)
+    # Keep the first file open so its page headers can be reused. Only one
+    # additional file is open at a time, even for a large acquisition folder.
+    with TiffFile(files[0]) as first:
+        first.pages.cache = True  # headers only, not decoded pixel arrays
+
+        def pages() -> Iterator[TiffPage | TiffFrame]:
+            yield from first.pages
+            for file in files[1:]:
+                with TiffFile(file) as tiff:
+                    yield from tiff.pages
+
+        metadata = [(page.shape, page.dtype) for page in pages()]
+        if not metadata:
+            raise ValueError(f"no TIFF frames found under {path}")
+        shapes = {shape for shape, _ in metadata}
+        if len(shapes) != 1 or len(next(iter(shapes))) != 2:
+            raise ValueError(
+                f"{path}: TIFF frames must be 2-D images of one size, found {sorted(shapes)}"
+            )
+        dtype = np.result_type(*(dtype for _, dtype in metadata))
+        # Retain one decoded page at a time, instead of a full list plus stack.
+        frames = np.empty((len(metadata), *next(iter(shapes))), dtype=dtype)
+        view = 0
+        for page in pages():
+            if view >= len(metadata) or (page.shape, page.dtype) != metadata[view]:
+                raise ValueError(f"{path}: TIFF frame metadata changed while reading")
+            if page.dtype == dtype:
+                _ = page.asarray(out=frames[view])
+            else:  # mixed TIFF dtypes still promote like np.stack
+                frames[view] = page.asarray()
+            view += 1
+        if view != len(metadata):
+            raise ValueError(f"{path}: TIFF frame metadata changed while reading")
+        return frames

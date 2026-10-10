@@ -120,3 +120,96 @@ def test_finite_explicit_angles_keep_their_original_representation_and_order(
     assert actual.angles.dtype == np.float32
     np.testing.assert_array_equal(actual.angles, angles.astype(np.float32))
     np.testing.assert_array_equal(actual.projections, projections)
+
+
+@pytest.mark.parametrize("layout", ["files", "series"])
+@pytest.mark.parametrize("byteorder", ["<", ">"])
+def test_page_preallocation_keeps_common_dtype_and_acquisition_order(
+    tmp_path: Path, layout: str, byteorder: str
+) -> None:
+    pages = [
+        np.full((5, 7), value, dtype)
+        for value, dtype in [
+            (200, np.uint8),
+            (-25, np.int16),
+            (65500, np.uint16),
+            (1.25, np.float32),
+        ]
+    ]
+    if layout == "files":
+        for i, page in enumerate(pages):
+            tifffile.imwrite(tmp_path / f"{i}.tif", page, byteorder=byteorder)
+        path = tmp_path
+    else:
+        path = tmp_path / "series.tif"
+        with tifffile.TiffWriter(path, byteorder=byteorder) as writer:
+            for page in pages:
+                writer.write(page, compression="deflate")
+    actual = read_tiff_frames(path)
+    expected = np.stack(pages)
+    assert actual.dtype == expected.dtype
+    np.testing.assert_array_equal(actual, expected)
+
+
+@pytest.mark.parametrize("colour", [False, True])
+def test_invalid_detector_page_metadata_is_checked_before_decoding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, colour: bool
+) -> None:
+    path = tmp_path / "invalid.tif"
+    if colour:
+        tifffile.imwrite(path, np.ones((5, 7, 3), np.uint8), photometric="rgb")
+    else:
+        with tifffile.TiffWriter(path) as writer:
+            writer.write(np.zeros((5, 7), np.uint16))
+            writer.write(np.zeros((6, 7), np.uint16))
+
+    def fail_decode(*args, **kwargs):
+        raise AssertionError("invalid detector metadata must fail before decoding pixels")
+
+    monkeypatch.setattr(tifffile.TiffPage, "asarray", fail_decode)
+    with pytest.raises(ValueError, match="2-D images of one size"):
+        read_tiff_frames(path)
+
+
+@pytest.mark.parametrize("change", ["removed", "added", "shape", "dtype"])
+def test_metadata_changes_do_not_return_uninitialized_or_silently_cast_frames(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    first, second = tmp_path / "0.tif", tmp_path / "1.tif"
+    tifffile.imwrite(first, np.ones((5, 7), np.uint16))
+    tifffile.imwrite(second, np.ones((5, 7), np.uint16))
+    original = tifffile.TiffPage.asarray
+    changed = False
+
+    def decode_then_change(self, *args, **kwargs):
+        nonlocal changed
+        result = original(self, *args, **kwargs)
+        if not changed:
+            changed = True
+            if change == "removed":
+                with tifffile.TiffWriter(second):
+                    pass
+            else:
+                replacement = {
+                    "added": np.ones((2, 5, 7), np.uint16),
+                    "shape": np.ones((6, 7), np.uint16),
+                    "dtype": np.ones((5, 7), np.float32),
+                }[change]
+                tifffile.imwrite(second, replacement, photometric="minisblack")
+        return result
+
+    monkeypatch.setattr(tifffile.TiffPage, "asarray", decode_then_change)
+    with pytest.raises(ValueError, match="metadata changed while reading"):
+        read_tiff_frames(tmp_path)
+
+
+@pytest.mark.parametrize("compression", [None, "deflate"])
+def test_tiled_detector_tails_decode_into_the_same_view_pixels(tmp_path: Path, compression) -> None:
+    expected = np.arange(3 * 17 * 33, dtype=np.uint16).reshape(3, 17, 33)
+    path = tmp_path / "tiled.tif"
+    tifffile.imwrite(
+        path, expected, tile=(16, 16), photometric="minisblack", compression=compression
+    )
+    actual = read_tiff_frames(path)
+    assert actual.dtype == expected.dtype
+    np.testing.assert_array_equal(actual, expected)
