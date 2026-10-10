@@ -34,11 +34,27 @@ def test_zinger_windows_match_scipy(shape: tuple[int, ...], size: int) -> None:
 
 
 @pytest.mark.parametrize("views", [1, 16, 17])
+@pytest.mark.parametrize("rows", [1, 2, 3, 5, 9])
 @pytest.mark.parametrize("width", [3, 4, 5, 8, 9, 15, 25])
-def test_stripe_windows_match_numpy(views: int, width: int) -> None:
-    values = np.random.default_rng(width).normal(size=(views, 2, 19)).astype(np.float32)
+def test_stripe_windows_match_numpy(views: int, rows: int, width: int) -> None:
+    values = np.random.default_rng(width).normal(size=(views, rows, 19)).astype(np.float32)
     actual = jax.jit(Stripes(width=width).apply)(jnp.asarray(values))
     np.testing.assert_allclose(actual, _stripes(values, width), rtol=1e-6, atol=2e-7)
+
+
+@pytest.mark.parametrize("shape", [(257, 5, 1025), (257, 3, 4097)])
+def test_stripe_large_rows_and_partial_groups_match_numpy(shape: tuple[int, ...]) -> None:
+    values = np.random.default_rng(47).normal(size=shape).astype(np.float32)
+    actual = jax.jit(Stripes(9).apply)(jnp.asarray(values))
+    np.testing.assert_allclose(actual, _stripes(values, 9), rtol=1e-6, atol=2e-7)
+
+
+def test_stripe_row_groups_preserve_float64_values() -> None:
+    values = np.random.default_rng(46).normal(size=(129, 5, 1025))
+    with jax.enable_x64():
+        actual = jax.jit(Stripes(9).apply)(jnp.asarray(values))
+        assert actual.dtype == values.dtype
+        np.testing.assert_allclose(actual, _stripes(values, 9), rtol=1e-12, atol=2e-13)
 
 
 @pytest.mark.parametrize("size", [3, 5, 7])
@@ -58,9 +74,10 @@ def test_zinger_directional_derivative_matches_reference(size: int) -> None:
 
 
 @pytest.mark.parametrize("width", [4, 9, 15])
-def test_stripe_directional_derivative_matches_reference(width: int) -> None:
+@pytest.mark.parametrize("rows", [1, 2, 9])
+def test_stripe_directional_derivative_matches_reference(width: int, rows: int) -> None:
     rng = np.random.default_rng(49)
-    values = rng.normal(size=(17, 2, 19)).astype(np.float32)
+    values = rng.normal(size=(17, rows, 19)).astype(np.float32)
     direction = rng.normal(size=values.shape).astype(np.float32)
     _, actual = jax.jit(lambda x, d: jax.jvp(Stripes(width=width).apply, (x,), (d,)))(
         jnp.asarray(values), jnp.asarray(direction)

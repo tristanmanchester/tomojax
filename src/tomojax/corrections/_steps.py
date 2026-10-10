@@ -114,9 +114,16 @@ class Stripes(Step):
         object.__setattr__(self, "width", int(self.width))
 
     def apply(self, batch: jax.Array) -> jax.Array:
-        # One detector row at a time: the sorted row and its windows stay small.
+        # Amortize map launches across small rows, without ranking the whole
+        # slab at once. Multiple-row groups hold at most 4 MiB of ranked pixels;
+        # a larger single row retains the original serial mapping.
+        views, rows, cols = batch.shape
+        row_bytes = views * cols * batch.dtype.itemsize
+        group = max(1, min(rows, 8, (4 << 20) // max(1, row_bytes)))
         offsets = jax.lax.map(
-            lambda row: _stripe_offsets(row, self.width), jnp.swapaxes(batch, 0, 1)
+            lambda row: _stripe_offsets(row, self.width),
+            jnp.swapaxes(batch, 0, 1),
+            batch_size=group if group > 1 else None,
         )
         return batch - offsets[None]
 
