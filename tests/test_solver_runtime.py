@@ -494,9 +494,9 @@ def test_spdhg_masked_invalid_data_preserve_dense_solution_and_diagnostics(strea
         weights=weights.reshape(3, 3, 4),
         config=cfg,
     )
-    np.testing.assert_array_equal(actual, reference)
-    # CUDA norm/backprojection reductions can perturb a nearly zero objective
-    # while leaving the converged image identical. Keep a FP32-sized loss bound.
+    # Independent CUDA norm estimates can differ by an ulp between solves.
+    np.testing.assert_allclose(actual, reference, rtol=1e-6, atol=1e-7)
+    # Keep a FP32-sized bound for their nearly zero objective values too.
     np.testing.assert_allclose(info["loss"], ref_info["loss"], rtol=1e-5, atol=1e-10)
     assert np.isfinite(info["loss"]).all()
     assert np.linalg.norm(np.asarray(actual).ravel() - expected) / np.linalg.norm(expected) < 5e-5
