@@ -140,7 +140,9 @@ class RejectViews(Step):
     robust standard deviations (1.4826 times the median absolute deviation)
     of all views' differences and more than ``min_jump`` of the views' typical
     median (so the small, smooth changes of a noise-free scan never count).
-    The scan's geometry keeps the same views; the record lists those rejected.
+    Views with a nonfinite median are also rejected and do not participate
+    in the neighbours or robust baseline. The scan's geometry keeps the same
+    views; the record lists those rejected, including the nonfinite subset.
     """
 
     domain: ClassVar[Domain] = "line integrals"
@@ -171,16 +173,23 @@ class RejectViews(Step):
         self, statistics: np.ndarray, views: np.ndarray
     ) -> tuple[np.ndarray, dict[str, Json]]:
         medians = np.asarray(statistics, np.float64)
-        half = self.neighbours // 2
-        padded = np.pad(medians, half, mode="edge")
-        around = np.median(
-            np.lib.stride_tricks.sliding_window_view(padded, self.neighbours), axis=1
-        )
-        jumps = medians - around
-        scale = 1.4826 * float(np.median(np.abs(jumps - np.median(jumps))))
-        floor = self.min_jump * float(np.median(np.abs(medians)))
-        keep = (np.abs(jumps) <= self.z * scale) | (np.abs(jumps) <= floor)
+        finite = np.isfinite(medians)
+        keep = np.zeros(len(views), bool)
+        scale = 0.0
+        if finite.any():
+            medians = medians[finite]
+            half = self.neighbours // 2
+            padded = np.pad(medians, half, mode="edge")
+            around = np.median(
+                np.lib.stride_tricks.sliding_window_view(padded, self.neighbours), axis=1
+            )
+            jumps = medians - around
+            scale = 1.4826 * float(np.median(np.abs(jumps - np.median(jumps))))
+            floor = self.min_jump * float(np.median(np.abs(medians)))
+            keep[finite] = (np.abs(jumps) <= self.z * scale) | (np.abs(jumps) <= floor)
         found: dict[str, Json] = {"rejected": [int(v) for v in views[~keep]], "robust_scale": scale}
+        if not finite.all():
+            found["nonfinite"] = [int(v) for v in views[~finite]]
         return keep, found
 
 
