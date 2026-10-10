@@ -7,7 +7,43 @@ import numpy as np
 import pytest
 
 # check-public-imports: allow-private
-from tomojax.alignment.optimizers import PoseLbfgsConfig, _run_lbfgs_optax_loop
+from tomojax.alignment.optimizers import (
+    PoseLbfgsConfig,
+    PoseOptimizationContext,
+    _run_lbfgs_optax_loop,
+    run_pose_lbfgs,
+)
+
+# check-public-imports: allow-private
+from tomojax.core.projector import forward_project_view_T
+
+
+@pytest.mark.numerical
+def test_failed_lbfgs_line_search_does_not_report_unchanged_pose_as_converged():
+    # A restricted valid domain models a failed pose/objective evaluation.
+    # One zoom trial cannot backtrack to the known interior optimum.
+    def objective(z):
+        return jnp.where(jnp.all(jnp.abs(z) < 0.009), jnp.sum((z - 0.005) ** 2), jnp.inf)
+
+    result = _run_lbfgs_optax_loop(
+        z0=jnp.zeros(1),
+        value_fn=objective,
+        cfg=PoseLbfgsConfig(maxiter=4, maxls=1, ftol=1e-12, gtol=1e-8),
+    )
+    assert not result.success
+    assert result.last_grad_norm > 0.001
+    assert result.last_step_norm == 0.0
+    np.testing.assert_array_equal(result.z, [0.0])
+    assert "maxiter" in result.message
+
+    solved = _run_lbfgs_optax_loop(
+        z0=jnp.zeros(1),
+        value_fn=objective,
+        cfg=PoseLbfgsConfig(maxiter=4, maxls=5, ftol=1e-12, gtol=1e-8),
+    )
+    assert solved.success
+    np.testing.assert_allclose(solved.z, [0.005], atol=1e-8)
+    assert solved.last_grad_norm <= 1e-8
 
 
 @pytest.mark.numerical
@@ -67,9 +103,6 @@ def test_public_lbfgs_reuses_problem_across_volumes_and_motion_models(pose_model
 
     from tomojax.alignment import AlignConfig
     from tomojax.alignment.api import L2LossSpec, align
-
-    # check-public-imports: allow-private
-    from tomojax.core.projector import forward_project_view_T
     from tomojax.geometry import Detector, Grid, ParallelGeometry
 
     grid = Grid(4, 4, 3, 1.0, 1.0, 1.0)
@@ -111,3 +144,64 @@ def test_public_lbfgs_reuses_problem_across_volumes_and_motion_models(pose_model
         assert not stat.get("lbfgs_fallback_to_gd", False)
         assert stat["lbfgs_backend"] == "optax"
         assert stat["loss_after"] <= stat["loss_before"] * (1 + 1e-5)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("tilt", [0.0, 23.0])
+def test_pose_lbfgs_reduces_known_fixed_volume_pose_error(tilt):
+    import jax
+
+    from tomojax.alignment.api import apply_pose_updates
+    from tomojax.geometry import Detector, Grid, LaminographyGeometry
+
+    grid = Grid(9, 8, 7, 0.8, 1.1, 1.3)
+    detector = Detector(13, 11, 0.7, 0.9, (0.13, -0.21))
+    geometry = LaminographyGeometry(grid, detector, [13.0, 47.0, 96.0, 153.0], tilt_deg=tilt)
+    nominal = jnp.asarray([geometry.pose_for_view(i) for i in range(4)])
+    coords = np.meshgrid(
+        *[(np.arange(n) - (n - 1) / 2) * spacing for n, spacing in [(9, 0.8), (8, 1.1), (7, 1.3)]],
+        indexing="ij",
+    )
+    volume = sum(
+        np.exp(-sum((v - c) ** 2 for v, c in zip(coords, centre, strict=True)) / width)
+        for centre, width in [((1.1, -0.3, 0.7), 1.2), ((-1.3, 1.5, -1.0), 0.8)]
+    )
+    volume = jnp.asarray(volume, dtype=jnp.float32)
+    truth = (
+        jnp.zeros((4, 5))
+        .at[:, 3:]
+        .set(jnp.asarray([[0.12, -0.15], [-0.19, 0.09], [0.08, 0.14], [-0.11, -0.07]]))
+    )
+
+    def project(params):
+        poses = apply_pose_updates(nominal, params, translation_frame="detector")
+        return jax.vmap(lambda pose: forward_project_view_T(pose, grid, detector, volume))(poses)
+
+    data = project(truth)
+
+    def objective(params):
+        return 0.5 * jnp.mean((project(params) - data) ** 2)
+
+    initial = jnp.zeros_like(truth)
+    before = float(objective(initial))
+    result = run_pose_lbfgs(
+        pose_params_in=initial,
+        motion_coeffs_in=None,
+        loss_before_value=before,
+        objective_fn=objective,
+        eval_loss_fn=lambda params, _label: float(objective(params)),
+        is_expected_failure=lambda _error: False,
+        cfg=PoseLbfgsConfig(maxiter=60, maxls=20, ftol=1e-12, gtol=1e-7),
+        context=PoseOptimizationContext(
+            active_cols=np.asarray([3, 4]),
+            frozen_pose_params=initial,
+            bounds_lower=jnp.full(5, -jnp.inf),
+            bounds_upper=jnp.full(5, jnp.inf),
+            apply_param_constraints=lambda params: params,
+        ),
+    )
+    assert result.accepted
+    assert result.loss < before * 1e-5
+    # The volume is fixed, so there is no free object-frame gauge to fit away.
+    np.testing.assert_allclose(result.pose_params[:, 3:], truth[:, 3:], atol=2e-4)
+    np.testing.assert_array_equal(result.pose_params[:, :3], np.zeros((4, 3)))

@@ -554,7 +554,7 @@ def _run_lbfgs_optax_loop(  # noqa: PLR0911, PLR0912, PLR0915
             z = z_next
             if next_value_for_rel_change is not None:
                 rel_change = abs(value_f - next_value_for_rel_change) / max(1.0, abs(value_f))
-                if rel_change <= float(cfg.ftol):
+                if last_step_norm > 0.0 and rel_change <= float(cfg.ftol):
                     success = True
                     message = f"Optax L-BFGS relative objective change {rel_change:.3e} <= ftol"
     except Exception as exc:
