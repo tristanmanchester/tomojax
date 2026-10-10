@@ -513,12 +513,18 @@ def _detector_center_seed_diagnostics(
     if seed is None:
         seed = reprojection_det_u_seed(projections, geometry, grid, detector)
         method = "fbp_reprojection_residual_search"
+    det_u_level_px = float(seed.det_u_px)
+    if method == "sinogram_vo_2014":
+        # The sinogram locates the absolute detector centre, whereas setup
+        # offsets are increments from this level's existing geometry. That
+        # centre includes any physical shift introduced by detector binning.
+        det_u_level_px -= float(detector.center[0]) / float(detector.du)
     return {
         "detector_center_seed_status": seed.status,
         "detector_center_seed_method": method,
         "detector_center_seed_applied": True,
         # Level pixels to native pixels.
-        "detector_center_seed_det_u_px": float(seed.det_u_px) * int(factor),
+        "detector_center_seed_det_u_px": det_u_level_px * int(factor),
         "detector_center_seed_residual": float(seed.amplitude_px),
     }
 

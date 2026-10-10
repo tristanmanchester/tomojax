@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -188,3 +190,76 @@ def test_public_cor_keeps_wrapped_half_turn_evidence(labels):
     assert abs(actual.scan.detector.center[0] - expected.scan.detector.center[0]) < 1e-3
     reference = np.asarray(expected.volume)
     assert np.linalg.norm(np.asarray(actual.volume) - reference) / np.linalg.norm(reference) < 1e-4
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("prior_px", [-2.3, 4.6])
+@pytest.mark.parametrize("factor", [1, 2])
+def test_public_cor_seed_is_relative_to_the_existing_detector_centre(prior_px, factor):
+    import tomojax as tj
+
+    angles = 350 + np.linspace(0, 180, 120, endpoint=False)
+    data, centre = _analytic_shifted_sinogram(angles, 48)
+    pitch = 0.8
+    grid = Grid(72, 72, 3, pitch, pitch, pitch)
+    config = AlignConfig(
+        outer_iterations=1,
+        iterations=1,
+        tv_weight=0,
+        ray_integrator="joseph",
+        projector_backend="jax",
+    )
+    detector = Detector(48, 3, pitch, pitch)
+    reference = tj.align(
+        tj.Scan(data, ParallelGeometry(grid, detector, angles)),
+        mode="cor",
+        levels=(factor,),
+        config=config,
+    )
+    detector = Detector(48, 3, pitch, pitch, (prior_px * pitch, 0))
+    actual = tj.align(
+        tj.Scan(data, ParallelGeometry(grid, detector, angles)),
+        mode="cor",
+        levels=(factor,),
+        config=config,
+    )
+    first = actual.info["outer_stats"][0]
+    assert first["detector_center_seed_method"] == "sinogram_vo_2014"
+    assert abs(first["detector_center_seed_det_u_px"] + prior_px - centre) <= 0.3
+    assert abs(actual.scan.detector.center[0] - centre * pitch) <= 0.35
+    assert abs(actual.scan.detector.center[0] - reference.scan.detector.center[0]) < 1e-5
+    image = np.asarray(reference.volume)
+    assert np.linalg.norm(np.asarray(actual.volume) - image) / np.linalg.norm(image) < 1e-4
+
+
+@pytest.mark.numerical
+def test_public_cor_fallback_seed_remains_an_incremental_offset(monkeypatch):
+    import tomojax as tj
+
+    # A short arc declines the absolute sinogram estimator. The residual
+    # search already measures an offset from the supplied detector geometry.
+    angles = np.linspace(0, 130, 32)
+    data, _ = _analytic_shifted_sinogram(angles, 48)
+    monkeypatch.setattr(
+        "tomojax.alignment._stages._setup_stage.sinogram_det_u_seed", lambda *args: None
+    )
+    monkeypatch.setattr(
+        "tomojax.alignment._stages._setup_stage.reprojection_det_u_seed",
+        lambda *args: SimpleNamespace(det_u_px=1.25, amplitude_px=0.2, status="ok_reprojection"),
+    )
+    grid, detector = Grid(72, 72, 3, 1, 1, 1), Detector(48, 3, 1, 1, (2.3, 0))
+    out = tj.align(
+        tj.Scan(data, ParallelGeometry(grid, detector, angles)),
+        mode="cor",
+        levels=(1,),
+        config=AlignConfig(
+            outer_iterations=1,
+            iterations=1,
+            tv_weight=0,
+            ray_integrator="joseph",
+            projector_backend="jax",
+        ),
+    )
+    first = out.info["outer_stats"][0]
+    assert first["detector_center_seed_method"] == "fbp_reprojection_residual_search"
+    assert first["detector_center_seed_det_u_px"] == pytest.approx(1.25)
