@@ -79,17 +79,14 @@ def _gaussian_lowpass(residual: jax.Array, *, sigma_px: float) -> jax.Array:
     radius = max(1, math.ceil(2.0 * sigma))
     offsets = range(-radius, radius + 1)
     kernel = _gaussian_kernel(radius=radius, sigma_px=sigma)
-    filtered = jnp.zeros_like(residual, dtype=jnp.float32)
-    for row_index, row_offset in enumerate(offsets):
-        row_weight = kernel[row_index]
-        row_shifted = jnp.roll(residual, shift=row_offset, axis=-2)
-        for col_index, col_offset in enumerate(offsets):
-            filtered = filtered + row_weight * kernel[col_index] * jnp.roll(
-                row_shifted,
-                shift=col_offset,
-                axis=-1,
-            )
-    return filtered
+    # The 2D Gaussian is an outer product. Two 1D passes preserve the periodic
+    # boundaries while avoiding a quadratic number of weighted image shifts.
+    for axis in (-2, -1):
+        filtered = jnp.zeros_like(residual, dtype=jnp.float32)
+        for index, offset in enumerate(offsets):
+            filtered = filtered + kernel[index] * jnp.roll(residual, shift=offset, axis=axis)
+        residual = filtered
+    return residual
 
 
 def _gaussian_kernel(*, radius: int, sigma_px: float) -> jax.Array:
