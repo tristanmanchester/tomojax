@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -195,6 +197,98 @@ def test_batched_axis_setup_keeps_rigid_physical_poses(views, kind, precision, c
         np.broadcast_to(np.eye(3), rotations.shape),
         atol=1e-6,
     )
+
+
+@pytest.mark.parametrize("views", [7, 720])
+@pytest.mark.parametrize("kind", ["parallel", "lamino", "axis"])
+@pytest.mark.parametrize("precision", [None, "bfloat16"])
+@pytest.mark.parametrize("execution", ["eager", "jit"])
+def test_axis_setup_retains_arbitrary_nominal_poses_and_their_derivatives(
+    views, kind, precision, execution
+):
+    angles = np.linspace(0, 180, views, endpoint=False)
+    grid, detector = Grid(5, 4, 3, 1, 1, 1), Detector(9, 7, 1, 1)
+    if kind == "parallel":
+        nominal = np.eye(3)
+        geometry = ParallelGeometry(grid, detector, angles)
+    elif kind == "lamino":
+        nominal = Rotation.from_euler("x", -30, degrees=True).as_matrix()
+        geometry = LaminographyGeometry(grid, detector, angles, tilt_deg=30)
+    else:
+        nominal = Rotation.from_rotvec(np.deg2rad(175) * np.asarray([0.6, 0.8, 0])).as_matrix()
+        geometry = RotationAxisGeometry(grid, detector, angles, nominal[:, 2])
+    rng = np.random.default_rng(61)
+    extra_rotations = Rotation.from_euler("xyz", rng.normal(size=(views, 3)) * 0.007).as_matrix()
+    translations = rng.normal(size=(views, 3)) * 0.25
+    view_rotations = Rotation.from_euler("z", angles[:, None], degrees=True).as_matrix()
+    nominal_poses = np.broadcast_to(np.eye(4), (views, 4, 4)).copy()
+    nominal_poses[:, :3, :3] = nominal @ view_rotations @ extra_rotations
+    nominal_poses[:, :3, 3] = translations
+    base = replace(
+        BaseGeometryArrays.from_geometry(geometry, detector),
+        nominal_pose_stack=jnp.asarray(nominal_poses, jnp.float32),
+    )
+
+    def expected(parameters):
+        calibration = Rotation.from_euler("y", parameters[1], degrees=True) * Rotation.from_euler(
+            "x", -parameters[0], degrees=True
+        )
+        axis = calibration.apply(nominal[:, 2])
+        adjusted, _ = Rotation.align_vectors(axis[None], np.asarray([[0, 0, 1]]))
+        adjusted = adjusted.as_matrix()
+        poses = np.broadcast_to(np.eye(4), (views, 4, 4)).copy()
+        poses[:, :3, :3] = adjusted @ view_rotations @ extra_rotations
+        # Nominal translations are already in the lab frame, not co-rotating
+        # object offsets. Only the change in the axis basis acts on them.
+        poses[:, :3, 3] = np.einsum("ij,nj->ni", adjusted @ nominal.T, translations)
+        return poses
+
+    def poses(parameters):
+        setup = SetupGeometryState.from_degrees(
+            axis_rot_x_deg=parameters[0],
+            axis_rot_y_deg=parameters[1],
+            nominal_axis_unit=nominal[:, 2],
+        )
+        state = AlignmentState.zeros(n_views=views).replace(setup=setup)
+        return apply_alignment_state(base, state).pose_stack
+
+    parameters = np.asarray([0.05, -0.07])
+    step = 1e-3
+    derivative = np.stack(
+        [
+            (expected(parameters + delta) - expected(parameters - delta)) / (2 * step)
+            for delta in np.eye(2) * step
+        ],
+        axis=-1,
+    )
+    direction = np.asarray([0.7, -0.4], np.float32)
+    weights = rng.normal(size=(views, 4, 4)) / np.sqrt(views * 16)
+
+    def forward(p):
+        return jax.jvp(poses, (p,), (jnp.asarray(direction),))
+
+    reverse = jax.grad(lambda p: jnp.sum(poses(p) * jnp.asarray(weights, jnp.float32)))
+    if execution == "jit":
+        forward, reverse = jax.jit(forward), jax.jit(reverse)
+    with jax.default_matmul_precision(precision):
+        actual, tangent = forward(jnp.asarray(parameters, jnp.float32))
+        gradient = reverse(jnp.asarray(parameters, jnp.float32))
+    np.testing.assert_allclose(actual, expected(parameters), atol=2e-6, rtol=2e-6)
+    np.testing.assert_allclose(tangent, derivative @ direction, atol=2e-6, rtol=2e-6)
+    np.testing.assert_allclose(
+        gradient, np.einsum("nijk,nij->k", derivative, weights), atol=2e-6, rtol=2e-6
+    )
+
+
+@pytest.mark.parametrize("input_kind", ["list", "numpy", "jax"])
+def test_axis_pose_stack_accepts_array_like_inputs(input_kind):
+    angles, axis = [0.0, 17.0, 90.0], [0.0, 0.0, 1.0]
+    if input_kind == "numpy":
+        angles, axis = np.asarray(angles), np.asarray(axis)
+    elif input_kind == "jax":
+        angles, axis = jnp.asarray(angles), jnp.asarray(axis)
+    expected = Rotation.from_euler("z", np.asarray(angles)[:, None], degrees=True).as_matrix()
+    np.testing.assert_allclose(axis_pose_stack(angles, axis)[:, :3, :3], expected, atol=2e-7)
 
 
 def test_grid_from_detector_fov_slices_preserves_grid_when_no_crop_needed() -> None:
