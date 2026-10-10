@@ -10,7 +10,9 @@ from tomojax.alignment._geometry.geometry_applier import (
     BaseGeometryArrays,
     apply_alignment_state,
     apply_setup_to_detector_grid,
+    pose_stack_for_setup,
 )
+from tomojax.alignment._geometry.parametrizations import apply_pose_updates
 from tomojax.alignment._model.dofs import DOF_INDEX
 from tomojax.alignment._model.schedules import ResolvedAlignmentStage
 from tomojax.alignment._model.state import PoseState
@@ -41,13 +43,10 @@ def _proposal_candidates_for_pose_stage(
     base: BaseGeometryArrays,
     setup_alignment_state: object,
     pose_params: jnp.ndarray,
-    volume: jnp.ndarray,
 ) -> tuple[ProposalCandidate, ...]:
-    state = setup_alignment_state.replace(
-        pose=PoseState(pose_params, translation_frame=setup_alignment_state.pose.translation_frame),
-        volume=volume,
-    )
-    baseline = apply_alignment_state(base, state).pose_stack
+    nominal = pose_stack_for_setup(base, setup_alignment_state.setup)
+    frame = setup_alignment_state.pose.translation_frame
+    baseline = apply_pose_updates(nominal, pose_params, translation_frame=frame)
     candidates: list[ProposalCandidate] = [
         ProposalCandidate(
             "baseline",
@@ -67,16 +66,10 @@ def _proposal_candidates_for_pose_stage(
             continue
         for sign, label in ((-1.0, "minus"), (1.0, "plus")):
             candidate_params = pose_params.at[:, col].add(jnp.float32(sign * step))
-            candidate_state = setup_alignment_state.replace(
-                pose=PoseState(
-                    candidate_params, translation_frame=setup_alignment_state.pose.translation_frame
-                ),
-                volume=volume,
-            )
             candidates.append(
                 ProposalCandidate(
                     f"{dof}_{label}",
-                    apply_alignment_state(base, candidate_state).pose_stack,
+                    apply_pose_updates(nominal, candidate_params, translation_frame=frame),
                     {
                         "kind": "uniform_pose_perturbation",
                         "dof": dof,
@@ -128,7 +121,6 @@ def _apply_pose_proposal_stage(
         base=base,
         setup_alignment_state=setup_alignment_state,
         pose_params=pose_params,
-        volume=x_lvl,
     )
     cone = cone_model(geometry, detector)
     result = score_pose_stack_candidates(

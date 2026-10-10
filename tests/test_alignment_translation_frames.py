@@ -647,10 +647,10 @@ def test_cone_proposals_use_physical_rays_and_report_backend(
     assert selected and set(selected) == {"cuda" if backend == "pallas" else "jax"}
 
 
-def _cone_proposal_config(backend):
+def _cone_proposal_config(backend, *, dof="dx"):
     schedule = AlignmentSchedule(
         "cone_proposal", (AlignmentStage(
-            "translation", ("dx",), "fixed_volume", "gn", stage_role="proposal",
+            "pose", (dof,), "fixed_volume", "gn", stage_role="proposal",
             differentiability="performance_only", maxiter=1,
         ),),
     )
@@ -662,12 +662,19 @@ def _cone_proposal_config(backend):
 
 
 @pytest.mark.numerical
+@pytest.mark.parametrize("perturbation", [("dx", 3, 1.0), ("phi", 2, 0.02), ("dy", 5, 1.0)])
 @pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
-def test_public_cone_proposal_stage_recovers_known_pose(cone_proposal_case, backend):
+def test_public_cone_proposal_stage_recovers_known_pose(cone_proposal_case, backend, perturbation):
     if backend == "pallas" and jax.default_backend() != "gpu":
         pytest.skip("CUDA required")
-    geometry, grid, detector, poses, _, volume, truth, targets = cone_proposal_case
-    cfg = _cone_proposal_config(backend)
+    geometry, grid, detector, poses, frames, volume, _, _ = cone_proposal_case
+    dof, column, step = perturbation
+    truth_params = jnp.zeros((len(poses), 6), jnp.float32).at[:, column].set(step)
+    truth = apply_pose_updates(poses, truth_params, translation_frame="detector")
+    targets = cone_project(
+        volume, frame_coefficients(truth, frames, grid, detector), grid, detector, backend="jax"
+    )
+    cfg = _cone_proposal_config(backend, dof=dof)
     resume = AlignMultiresResumeState(
         x=volume, pose_params=jnp.zeros((len(poses), 6)),
         pose_translation_frame="detector", ray_integrator="joseph",
@@ -675,7 +682,7 @@ def test_public_cone_proposal_stage_recovers_known_pose(cone_proposal_case, back
     result_volume, params, info = align_multires(
         geometry, grid, detector, targets, factors=(1,), config=cfg, resume_state=resume
     )
-    assert info["outer_stats"][0]["proposal_best_name"] == "dx_plus"
+    assert info["outer_stats"][0]["proposal_best_name"] == f"{dof}_plus"
     actual = apply_pose_updates(poses, params, translation_frame="detector")
     np.testing.assert_allclose(actual, truth, atol=2e-6)
     # The populated grid edges anchor the known volume: the proposal may not
