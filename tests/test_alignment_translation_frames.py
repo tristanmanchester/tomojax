@@ -16,7 +16,7 @@ from scipy.spatial.transform import Rotation
 from tomojax.alignment import AlignConfig, _prealign, align_multires
 
 # check-public-imports: allow-private
-from tomojax.alignment._objectives import fold_recon
+from tomojax.alignment._objectives import fold_recon, loss_adapters
 
 # check-public-imports: allow-private
 from tomojax.alignment._objectives.recon_layer import PoseAdjustedGeometry
@@ -24,6 +24,8 @@ from tomojax.alignment._objectives.recon_layer import PoseAdjustedGeometry
 # check-public-imports: allow-private
 from tomojax.alignment._prealign import estimate_view_shifts, translation_params_from_shifts
 from tomojax.alignment.api import (
+    AlignmentSchedule,
+    AlignmentStage,
     AlignmentState,
     AlignMultiresResumeState,
     AlignResumeState,
@@ -39,11 +41,17 @@ from tomojax.alignment.api import (
     save_alignment_params_json,
     se3_from_pose_params,
 )
+from tomojax.alignment.proposals import ProposalCandidate, score_pose_stack_candidates
+from tomojax.core import cone
+from tomojax.core.cone import cone_model, cone_project, frame_coefficients
 
 # check-public-imports: allow-private
 from tomojax.core.projector import forward_project_view_T
 from tomojax.forward import project_joseph
 from tomojax.geometry import (
+    ConeBeam,
+    ConeGeometry,
+    ConeSegments,
     Detector,
     Grid,
     LaminographyGeometry,
@@ -555,3 +563,118 @@ def test_cor_then_pose_reports_the_constant_detector_shift_as_the_centre():
 
     with pytest.raises(ValueError, match="cor_then_pose"):
         AlignConfig(schedule="cor_then_pose")
+
+
+@pytest.fixture(params=["tilted", "segments"])
+def cone_proposal_case(request):
+    grid = Grid(9, 8, 7, 0.8, 1.1, 1.3)
+    detector = Detector(13, 11, 0.7, 0.9, (0.13, -0.21))
+    first = ConeGeometry(
+        grid, detector, [11.0, 59.0], ConeBeam(23, 41, axis_offset=0.6), tilt_deg=23
+    )
+    second = ConeGeometry(
+        grid, detector, [127.0, 181.0, 237.0],
+        ConeBeam(29, 47, detector_roll_deg=7, detector_pitch_deg=-3, axis_offset=-0.3), tilt_deg=31,
+    )
+    geometry = first if request.param == "tilted" else ConeSegments((first, second))
+    poses = stack_view_poses(geometry, len(geometry.angles))
+    volume = jnp.asarray(np.random.default_rng(92).uniform(0.1, 1, (9, 8, 7)), jnp.float32)
+    model = cone_model(geometry, detector)
+    assert model is not None
+    frames = jnp.asarray(model.frames(len(poses)))
+    params = jnp.zeros((len(poses), 6), jnp.float32).at[:, 3].set(1)
+    truth = apply_pose_updates(poses, params, translation_frame="detector")
+    targets = cone_project(
+        volume, frame_coefficients(truth, frames, grid, detector), grid, detector, backend="jax"
+    )
+    return geometry, grid, detector, poses, frames, volume, truth, targets
+
+
+@pytest.mark.numerical
+def test_alignment_state_preserves_nominal_cone_poses(cone_proposal_case):
+    geometry, _, detector, poses, _, _, _, _ = cone_proposal_case
+    base = BaseGeometryArrays.from_geometry(geometry, detector)
+    state = AlignmentState.zeros(n_views=len(poses))
+    actual = apply_alignment_state(base, state).pose_stack
+    np.testing.assert_allclose(actual, poses, atol=2e-6, rtol=2e-6)
+    params = state.pose.pose_params.at[:, 3].set(0.4).at[:, 4].set(-0.2)
+    moved = state.replace(pose=PoseState(params, translation_frame="detector"))
+    expected = apply_pose_updates(poses, params, translation_frame="detector")
+    np.testing.assert_allclose(apply_alignment_state(base, moved).pose_stack, expected, atol=2e-6)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("batch", [0, 2])
+@pytest.mark.parametrize("integrator", ["sampled", "joseph", "exact"])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+def test_cone_proposals_use_physical_rays_and_report_backend(
+    monkeypatch, cone_proposal_case, batch, integrator, backend
+):
+    if backend == "pallas" and jax.default_backend() != "gpu":
+        pytest.skip("CUDA required")
+    _, grid, detector, poses, frames, volume, truth, targets = cone_proposal_case
+    adapter = loss_adapters.build_loss_adapter(L2LossSpec(), targets)
+    # Independent differentiable JAX cone predictions supply both the target
+    # and the reference loss, never the parallel-ray scoring implementation.
+    prediction = cone_project(
+        volume, frame_coefficients(poses, frames, grid, detector), grid, detector, backend="jax"
+    )
+    expected = 0.5 * np.sum(
+        (np.asarray(prediction, np.float64) - np.asarray(targets, np.float64)) ** 2
+    )
+    selected = []
+
+    def checked_project(*args, **kwargs):
+        selected.append(kwargs["backend"])
+        return cone_project(*args, **kwargs)
+
+    monkeypatch.setattr(cone, "cone_project", checked_project)
+    result = score_pose_stack_candidates(
+        candidates=(ProposalCandidate("baseline", poses), ProposalCandidate("truth", truth)),
+        grid=grid, detector=detector, volume=volume,
+        det_grid=apply_alignment_state(
+            BaseGeometryArrays.from_geometry(cone_proposal_case[0], detector),
+            AlignmentState.zeros(n_views=len(poses)),
+        ).det_grid,
+        targets=targets, loss_adapter=adapter, projector_backend=backend,
+        views_per_batch=batch, ray_integrator=integrator, frames=frames,
+    )
+    assert result.best_name == "truth" and result.improved
+    np.testing.assert_allclose(result.values[0], expected, rtol=1e-5)
+    assert result.values[1] < 1e-7
+    assert result.backend_provenance["actual_backend"] == backend
+    assert result.backend_provenance["eligible_for_speed_claim"]
+    assert selected and set(selected) == {"cuda" if backend == "pallas" else "jax"}
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+def test_public_cone_proposal_stage_recovers_known_pose(cone_proposal_case, backend):
+    if backend == "pallas" and jax.default_backend() != "gpu":
+        pytest.skip("CUDA required")
+    geometry, grid, detector, poses, _, volume, truth, targets = cone_proposal_case
+    schedule = AlignmentSchedule(
+        "cone_proposal", (AlignmentStage(
+            "translation", ("dx",), "fixed_volume", "gn", stage_role="proposal",
+            differentiability="performance_only", maxiter=1,
+        ),),
+    )
+    cfg = AlignConfig(
+        schedule=schedule, ray_integrator="joseph", projector_backend=backend,
+        pose_translation_frame="detector", seed_translations=False, tv_weight=0,
+        views_per_batch=2,
+    )
+    resume = AlignMultiresResumeState(
+        x=volume, pose_params=jnp.zeros((len(poses), 6)),
+        pose_translation_frame="detector", ray_integrator="joseph",
+    )
+    result_volume, params, info = align_multires(
+        geometry, grid, detector, targets, factors=(1,), config=cfg, resume_state=resume
+    )
+    assert info["outer_stats"][0]["proposal_best_name"] == "dx_plus"
+    actual = apply_pose_updates(poses, params, translation_frame="detector")
+    np.testing.assert_allclose(actual, truth, atol=2e-6)
+    # The populated grid edges anchor the known volume: the proposal may not
+    # trade the pose correction for an image shift or reconstruction change.
+    np.testing.assert_array_equal(result_volume, volume)
+    assert info["outer_stats"][0]["loss_after"] < 1e-7

@@ -183,13 +183,22 @@ def _cone_project_poses(
     frames: jnp.ndarray,
     *,
     differentiable: bool,
+    projector_backend: ProjectorBackendInput,
 ) -> jnp.ndarray:
-    """Cone projections in the views' lab ``frames``; CUDA unless pose derivatives are needed."""
-    from tomojax.core.cone import cone_project, frame_coefficients, use_cuda_cone
+    """Cone projections in lab ``frames`` using the requested, derivative-safe backend."""
+    from tomojax.core.cone import cone_project, frame_coefficients
 
-    backend = "cuda" if use_cuda_cone() and not differentiable else "jax"
+    backend = _cone_projector_backend(projector_backend, differentiable=differentiable)
     coeff = frame_coefficients(poses, frames, grid, detector)
     return cone_project(volume, coeff, grid, detector, backend=backend)
+
+
+def _cone_projector_backend(requested: ProjectorBackendInput, *, differentiable: bool) -> str:
+    from tomojax.core.cone import use_cuda_cone
+
+    if normalize_projector_backend(requested) == "jax" or differentiable or not use_cuda_cone():
+        return "jax"
+    return "cuda"
 
 
 def project_stack(
@@ -221,6 +230,7 @@ def project_stack(
             volume,
             frames,
             differentiable=require_differentiable_projector,
+            projector_backend=backend,
         )
     if ray_integrator == "sampled" and backend == "pallas" and not require_differentiable_projector:
         fallback_reason = _pallas_sinogram_fallback_reason(
@@ -309,7 +319,7 @@ def project_and_score_stack(
     ray_integrator: str = "sampled",
     frames: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
-    """Project and score all views without materialising unnecessary batches."""
+    """Project and score views in parallel rays, or in cone-beam lab ``frames``."""
     backend = normalize_projector_backend(projector_backend)
     n_views = int(pose_stack.shape[0])
     if n_views == 0:
@@ -332,7 +342,6 @@ def project_and_score_stack(
             ray_integrator=ray_integrator,
         )
     )
-
     def vm_project(T: jnp.ndarray, start: jnp.ndarray | int) -> jnp.ndarray:
         """Project the views ``start, start + 1, ...`` at poses ``T``."""
         if frames is None:
@@ -340,7 +349,8 @@ def project_and_score_stack(
         # One batched cone call per chunk, not one launch per view.
         chunk = jax.lax.dynamic_slice(frames, (start, 0, 0), (T.shape[0], 4, 3))
         return _cone_project_poses(
-            T, grid, detector, volume, chunk, differentiable=require_differentiable_projector
+            T, grid, detector, volume, chunk, differentiable=require_differentiable_projector,
+            projector_backend=backend,
         )
 
     local_indices = (
@@ -355,7 +365,7 @@ def project_and_score_stack(
     )
     use_plain_l2_fast_path = loss_adapter.name == "l2" and view_mask is None and loss_mask is None
     if (
-        ray_integrator == "sampled"
+        ray_integrator == "sampled" and frames is None
         and backend == "pallas"
         and use_plain_l2_fast_path
         and not require_differentiable_projector
@@ -466,9 +476,26 @@ def alignment_projector_backend_provenance(
     api_surface: str,
     gather_dtype: str = "fp32",
     ray_integrator: str = "sampled",
+    frames: jnp.ndarray | None = None,
 ) -> BackendProvenance:
     """Report which projector backend is used by an alignment objective."""
     requested = normalize_projector_backend(projector_backend)
+    if frames is not None:
+        actual = _cone_projector_backend(requested, differentiable=require_differentiable_projector)
+        reason = None
+        if requested == "pallas" and actual == "jax":
+            reason = (
+                "cone pose derivatives require the JAX projector"
+                if require_differentiable_projector
+                else "CUDA cone kernels are unavailable"
+            )
+        return backend_provenance(
+            requested_backend=requested,
+            actual_backend="pallas" if actual == "cuda" else "jax",
+            api_surface=api_surface,
+            fallback_reason=reason,
+            differentiability="performance_only" if actual == "cuda" else "gradient_safe",
+        )
     if requested == "jax":
         return backend_provenance(
             requested_backend="jax",

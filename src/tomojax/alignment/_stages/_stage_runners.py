@@ -20,6 +20,7 @@ from tomojax.alignment._pose._pose_loop import align
 from tomojax.alignment._profiles import profile_policy_from_config
 from tomojax.alignment._results import AlignMultiresResumeState, AlignResumeState
 from tomojax.alignment.proposals import ProposalCandidate, score_pose_stack_candidates
+from tomojax.core.cone import cone_model
 from tomojax.core.geometry.base import Detector, Geometry, Grid
 
 from ._setup_stage import _geometry_with_setup_state, _optimize_setup_geometry_bilevel_for_level
@@ -124,6 +125,7 @@ def _apply_pose_proposal_stage(
         pose_params=pose_params,
         volume=x_lvl,
     )
+    cone = cone_model(geometry, detector)
     result = score_pose_stack_candidates(
         candidates=candidates,
         grid=grid,
@@ -138,6 +140,7 @@ def _apply_pose_proposal_stage(
         projector_unroll=cfg.projector_unroll,
         checkpoint_projector=cfg.checkpoint_projector,
         ray_integrator=cfg.ray_integrator,
+        frames=None if cone is None else jnp.asarray(cone.frames(projections.shape[0])),
     )
     best_params = pose_params
     if result.improved:

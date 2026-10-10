@@ -221,9 +221,10 @@ def apply_alignment_state(
     """Apply setup and pose state to base arrays without Python geometry mutation."""
     setup = state.setup
     axis = _setup_axis_unit_for_base(base, setup)
-    setup_pose = axis_pose_stack(base.angles, axis)
     pose_stack = apply_pose_updates(
-        setup_pose, state.pose.pose_params, translation_frame=state.pose.translation_frame
+        pose_stack_for_setup(base, setup),
+        state.pose.pose_params,
+        translation_frame=state.pose.translation_frame,
     )
     det_grid = apply_setup_to_detector_grid(
         base.detector,
@@ -237,9 +238,13 @@ def pose_stack_for_setup(
     base: BaseGeometryArrays,
     setup: SetupGeometryState,
 ) -> jnp.ndarray:
-    """Return the setup-adjusted view pose stack for a base geometry bundle."""
+    """Adjust the axis without discarding nominal translations or per-view poses."""
     axis = _setup_axis_unit_for_base(base, setup)
-    return axis_pose_stack(base.angles, axis)
+    nominal = axis_pose_stack(base.angles, base.nominal_axis_unit)
+    adjusted = axis_pose_stack(base.angles, axis)
+    rotation = adjusted[:, :3, :3] @ jnp.swapaxes(nominal[:, :3, :3], 1, 2)
+    moved = rotation @ base.nominal_pose_stack[:, :3, :]
+    return base.nominal_pose_stack.at[:, :3, :].set(moved)
 
 
 def _nominal_axis_unit_from_geometry(geometry: Geometry) -> jnp.ndarray:

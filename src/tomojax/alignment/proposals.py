@@ -75,12 +75,12 @@ def score_pose_stack_candidates(
     projector_unroll: int = 1,
     checkpoint_projector: bool = True,
     ray_integrator: str = "sampled",
+    frames: jnp.ndarray | None = None,
 ) -> ProposalScoringResult:
     """Score candidate pose stacks without requiring differentiability.
 
-    The first candidate is treated as the baseline/current state. This helper is
-    intentionally performance-oriented and records provenance so downstream
-    verification can decide whether the candidate is acceptable.
+    The first candidate is the baseline. ``frames`` selects cone-beam rays in
+    each view's lab frame; otherwise the beam is parallel.
     """
     if not candidates:
         raise ValueError("proposal scoring requires at least one candidate")
@@ -102,6 +102,7 @@ def score_pose_stack_candidates(
             projector_backend=projector_backend,
             require_differentiable_projector=False,
             ray_integrator=ray_integrator,
+            frames=frames,
         )
         jax.block_until_ready(score)
         values.append(float(score))
@@ -120,6 +121,7 @@ def score_pose_stack_candidates(
         gather_dtype=gather_dtype,
         api_surface="alignment.proposal_scoring",
         ray_integrator=ray_integrator,
+        frames=frames,
     ).to_dict()
     return ProposalScoringResult(
         best_index=int(best_index),
