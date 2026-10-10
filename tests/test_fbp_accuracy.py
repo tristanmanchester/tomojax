@@ -159,7 +159,7 @@ def test_streamed_fbp_matches_whole_stack_with_partial_batches(
             detector=detector,
             backend=kernel,
             batch_size=batch_size,
-            z_integer=False,
+            z_mode="general",
             separable=separable,
         )
 
@@ -198,17 +198,17 @@ def test_fbp_is_invariant_to_change_of_length_units(use_explicit_detector_grid: 
 
 
 @pytest.mark.parametrize("interpret", [True, pytest.param(False, marks=pytest.mark.gpu)])
-@pytest.mark.parametrize("z_integer", [False, True])
+@pytest.mark.parametrize("z_mode", ["general", "fixed", "integer"])
 @pytest.mark.parametrize("n_views", [5, 129])
 def test_voxel_pallas_fbp_matches_jax_on_partial_blocks(
-    interpret: bool, z_integer: bool, n_views: int
+    interpret: bool, z_mode: str, n_views: int
 ) -> None:
     import jax
 
     if not interpret and jax.default_backend() != "gpu":
         pytest.skip("requires a CUDA GPU")
-    grid = Grid(7, 6, 3, 0.8, 1.2, 1.0 if z_integer else 0.7)
-    detector = Detector(9, 5, 0.9, 1.0, (0.17, 0.0 if z_integer else 0.21))
+    grid = Grid(7, 6, 3, 0.8, 1.2, 1.0 if z_mode == "integer" else 0.7)
+    detector = Detector(9, 5, 0.9, 1.0, (0.17, 0.0 if z_mode == "integer" else 0.21))
     angles = (
         [0.0, 31.0, 78.0, 117.0, 161.0]
         if n_views == 5
@@ -216,6 +216,8 @@ def test_voxel_pallas_fbp_matches_jax_on_partial_blocks(
     )
     geometry = ParallelGeometry(grid, detector, angles)
     poses = jnp.asarray([geometry.pose_for_view(i) for i in range(n_views)], dtype=jnp.float32)
+    if z_mode == "fixed":
+        poses = poses.at[:, 2, 3].set(0.375)
     projections = jnp.asarray(
         np.random.default_rng(18).normal(size=(n_views, 5, 9)), dtype=jnp.float32
     )
@@ -233,10 +235,31 @@ def test_voxel_pallas_fbp_matches_jax_on_partial_blocks(
             fft_filter_rows(projections, ramp),
             grid=grid,
             detector=detector,
-            z_integer=z_integer,
+            z_mode=z_mode,
             interpret=interpret,
             block_size=block,
         )
+        np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-6)
+
+
+@pytest.mark.parametrize("interpret", [True, pytest.param(False, marks=pytest.mark.gpu)])
+def test_fixed_rows_preserve_a_common_nonbinary_translation(interpret: bool) -> None:
+    """Hoisting agrees with the generic kernel even near cancellation after many views."""
+    import jax
+
+    if not interpret and jax.default_backend() != "gpu":
+        pytest.skip("requires a CUDA GPU")
+    grid = Grid(7, 6, 3, 0.8, 1.2, 0.7)
+    detector = Detector(9, 5, 0.9, 1.0, (0.17, 0.21))
+    geometry = ParallelGeometry(grid, detector, np.linspace(13, 187, 129, endpoint=False))
+    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(129)], dtype=jnp.float32)
+    poses = poses.at[:, 2, 3].set(0.31)
+    rows = jnp.asarray(np.random.default_rng(18).normal(size=(129, 5, 9)), dtype=jnp.float32)
+    filtered = fft_filter_rows(rows, rfft_filter_array("ramp", 9, detector.du, jnp.float32))
+    for block in [None, 64]:
+        options = dict(grid=grid, detector=detector, interpret=interpret, block_size=block)
+        expected = backproject_filtered_pallas(poses, filtered, z_mode="general", **options)
+        actual = backproject_filtered_pallas(poses, filtered, z_mode="fixed", **options)
         np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-6)
 
 
@@ -302,7 +325,7 @@ def test_automatic_fbp_tiles_bound_both_input_and_output_working_sets(
             rows,
             grid=grid,
             detector=detector,
-            z_integer=True,
+            z_mode="integer",
             block_size=override,
         ),
         jax.ShapeDtypeStruct((n_views, 4, 4), jnp.float32),
@@ -341,11 +364,11 @@ def test_medium_working_set_fbp_recovers_independent_off_axis_gaussian(vz):
 
 
 @pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
-@pytest.mark.parametrize("z_integer", [True, False])
+@pytest.mark.parametrize("z_mode", ["integer", "fixed", "general"])
 @pytest.mark.parametrize("shape", [(10, 6), (11, 7)])
 @pytest.mark.parametrize("padding", [(1024, 0), (0, 1024), (512, 512)])
 def test_fbp_interpolation_preserves_physical_fractions_under_zero_padding(
-    backend, z_integer, shape, padding
+    backend, z_mode, shape, padding
 ):
     """Integer detector origins must not round away physical subpixel positions."""
     import jax
@@ -357,18 +380,26 @@ def test_fbp_interpolation_preserves_physical_fractions_under_zero_padding(
         pytest.skip("requires CUDA")
     nu, nv = shape
     # Dyadic grid positions isolate interpolation from coordinate-grid rounding.
-    centre_z = (0.5 if nv % 2 == 0 else 0.0) if z_integer else 0.125
+    centre_z = (0.5 if nv % 2 == 0 else 0.0) if z_mode == "integer" else 0.125
     grid = Grid(
-        13, 11, 3, 0.5, 1.25, 1.0 if z_integer else 0.75, vol_center=(0.25, -0.125, centre_z)
+        13,
+        11,
+        3,
+        0.5,
+        1.25,
+        1.0 if z_mode == "integer" else 0.75,
+        vol_center=(0.25, -0.125, centre_z),
     )
-    detector = Detector(nu, nv, 0.875, 1.0, (0.375, 0.0 if z_integer else 0.125))
+    detector = Detector(nu, nv, 0.875, 1.0, (0.375, 0.0 if z_mode == "integer" else 0.125))
     angles = [7.0, 31.0, 78.0, 117.0, 161.0]
     geometry = (
         ParallelGeometry(grid, detector, angles)
-        if z_integer
+        if z_mode != "general"
         else LaminographyGeometry(grid, detector, angles, tilt_deg=17.0)
     )
     poses = np.asarray([geometry.pose_for_view(i) for i in range(5)], np.float32)
+    if z_mode == "fixed":
+        poses[:, 2, 3] = 0.375
     filtered = np.random.default_rng(739).normal(size=(5, nv, nu)).astype(np.float32)
     coordinates = [
         (np.arange(n) - (n - 1) / 2) * spacing + centre
@@ -396,9 +427,7 @@ def test_fbp_interpolation_preserves_physical_fractions_under_zero_padding(
         def call(p, y):
             if backend == "jax":
                 return _backproject_voxels_jax(p, y, grid=grid, detector=expanded)
-            return backproject_filtered_pallas(
-                p, y, grid=grid, detector=expanded, z_integer=z_integer
-            )
+            return backproject_filtered_pallas(p, y, grid=grid, detector=expanded, z_mode=z_mode)
 
         return np.asarray(jax.jit(call)(jnp.asarray(poses), rows))
 

@@ -25,7 +25,7 @@ def _backproject_filtered_kernel(
     detector_center: tuple[float, float],
     n_views: int,
     block_size: int,
-    z_integer: bool,
+    z_mode: str,
 ) -> None:
     # With an accumulator, refs is (accumulator, aliased output).
     acc_ref, out_ref = refs if len(refs) == 2 else (None, refs[0])
@@ -40,18 +40,26 @@ def _backproject_filtered_kernel(
     z = iz.astype(jnp.float32) * voxel[2] + origin[2]
     # Add integer pixel origins only after extracting the interpolation fractions.
     u_offset, v_offset = ((nu - 1) % 2) / 2.0, ((nv - 1) % 2) / 2.0
-    if z_integer:
+    if z_mode == "integer":
         iv = (
             jnp.floor((z - detector_center[1]) / dv + v_offset + 0.5).astype(jnp.int32)
             + (nv - 1) // 2
         )
+    elif z_mode == "fixed":
+        world_z = plt.load(poses_ref.at[jnp.int32(0), jnp.int32(2), jnp.int32(2)]) * z + plt.load(
+            poses_ref.at[jnp.int32(0), jnp.int32(2), jnp.int32(3)]
+        )
+        v = (world_z - detector_center[1]) / dv + v_offset
+        lower_v = jnp.floor(v)
+        fixed_wv = v - lower_v
+        fixed_iv0 = lower_v.astype(jnp.int32) + (nv - 1) // 2
 
     def body(view: jnp.ndarray, accum: jnp.ndarray) -> jnp.ndarray:
         def pose(row: int, col: int) -> jnp.ndarray:
             return plt.load(poses_ref.at[view, jnp.int32(row), jnp.int32(col)])
 
         world_x = pose(0, 0) * x + pose(0, 1) * y + pose(0, 3)
-        if not z_integer:
+        if z_mode == "general":
             world_x += pose(0, 2) * z
         u = (world_x - detector_center[0]) / du + u_offset
         # Keep the floating floor for fractions, without an integer round trip.
@@ -65,14 +73,17 @@ def _backproject_filtered_kernel(
             # (view, u, v) makes neighboring z lanes read neighboring addresses.
             return plt.load(projections_ref.at[view, u_idx, v_idx], mask=mask, other=0.0)
 
-        if z_integer:
+        if z_mode == "integer":
             value = sample(iu, iv) * (1.0 - wu) + sample(iu + 1, iv) * wu
         else:
-            world_z = pose(2, 0) * x + pose(2, 1) * y + pose(2, 2) * z + pose(2, 3)
-            v = (world_z - detector_center[1]) / dv + v_offset
-            lower_v = jnp.floor(v)
-            wv = v - lower_v
-            iv0 = lower_v.astype(jnp.int32) + (nv - 1) // 2
+            if z_mode == "fixed":
+                iv0, wv = fixed_iv0, fixed_wv
+            else:
+                world_z = pose(2, 0) * x + pose(2, 1) * y + pose(2, 2) * z + pose(2, 3)
+                v = (world_z - detector_center[1]) / dv + v_offset
+                lower_v = jnp.floor(v)
+                wv = v - lower_v
+                iv0 = lower_v.astype(jnp.int32) + (nv - 1) // 2
             row0 = sample(iu, iv0) * (1.0 - wu) + sample(iu + 1, iv0) * wu
             row1 = sample(iu, iv0 + 1) * (1.0 - wu) + sample(iu + 1, iv0 + 1) * wu
             value = row0 * (1.0 - wv) + row1 * wv
@@ -91,7 +102,7 @@ def _backprojection_call(
     n_views: int,
     block_size: int,
     *,
-    z_integer: bool,
+    z_mode: str,
     interpret: bool,
     accumulate: bool = False,
 ) -> Any:
@@ -110,7 +121,7 @@ def _backprojection_call(
             detector_center=detector.center,
             n_views=n_views,
             block_size=block_size,
-            z_integer=z_integer,
+            z_mode=z_mode,
         ),
         out_shape=jax.ShapeDtypeStruct((count,), jnp.float32),
         grid=((count + block_size - 1) // block_size,),
@@ -129,17 +140,22 @@ def backproject_filtered_pallas(
     *,
     grid: Grid,
     detector: Detector,
-    z_integer: bool,
+    z_mode: str,
     interpret: bool = False,
     block_size: int | None = None,
     accumulate: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
     """Sum filtered views per voxel, avoiding atomics and intermediate volumes.
 
+    ``z_mode='integer'`` needs aligned z-axis poses; ``'fixed'`` allows
+    fractional rows and a common z translation. Both require rotations about
+    z, without coupling to x or y. ``'general'`` handles arbitrary rigid poses.
     ``accumulate`` is added to the result in place. Compact
     filtered-stack and output working sets use one voxel per lane of the
     four-warp program. Other workloads retain larger tiles for input reuse.
     """
+    if z_mode not in {"integer", "fixed", "general"}:
+        raise ValueError("FBP z_mode must be integer, fixed, or general")
     if block_size is None:
         working_bytes = filtered.size * filtered.dtype.itemsize + 4 * grid.nx * grid.ny * grid.nz
         compact = working_bytes <= 64 * 1024**2
@@ -149,7 +165,7 @@ def backproject_filtered_pallas(
         detector,
         int(poses.shape[0]),
         block_size,
-        z_integer=z_integer,
+        z_mode=z_mode,
         interpret=interpret,
         accumulate=accumulate is not None,
     )

@@ -409,3 +409,54 @@ def test_balanced_automatic_slabs_recover_independent_off_axis_gaussian(length_s
     )
     actual = fbp_host(geometry, grid, detector, data)
     assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.01
+
+
+@pytest.mark.parametrize("input_on_host", [True, False])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize(
+    ("kind", "expected"),
+    [
+        ("integer", "integer"),
+        ("fractional", "fixed"),
+        ("translated", "general"),
+        ("lamino", "general"),
+    ],
+)
+def test_fbp_only_hoists_rows_for_the_exact_builtin_parallel_geometry(
+    monkeypatch, input_on_host, backend, kind, expected
+):
+    """A custom parallel subclass may move z differently in each view."""
+    import jax.numpy as jnp
+
+    if backend == "pallas" and jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    module = importlib.import_module("tomojax.recon.fbp")
+    grid, detector, geometry, data = scan("integer" if kind == "integer" else "fractional")
+
+    class Translated(ParallelGeometry):
+        def pose_for_view(self, i):
+            pose = np.asarray(super().pose_for_view(i))
+            pose[2, 3] = 0.23 * i
+            return tuple(map(tuple, pose))
+
+    if kind == "translated":
+        geometry = Translated(grid, detector, geometry.angles)
+    elif kind == "lamino":
+        geometry = LaminographyGeometry(grid, detector, geometry.angles, tilt_deg=17)
+    reference = np.asarray(
+        fbp(geometry, grid, detector, data, config=FBPConfig(backprojector="jax"))
+    )
+    plan = module._plan
+    modes = []
+
+    def record(*args, **kwargs):
+        result = plan(*args, **kwargs)
+        modes.append(result.z_mode)
+        return result
+
+    monkeypatch.setattr(module, "_plan", record)
+    projections = data if input_on_host else jnp.asarray(data)
+    volume = fbp(geometry, grid, detector, projections, config=FBPConfig(backprojector=backend))
+    assert modes == [expected]
+    assert np.isfinite(np.asarray(volume)).all()
+    np.testing.assert_allclose(volume, reference, atol=4e-6, rtol=5e-5)

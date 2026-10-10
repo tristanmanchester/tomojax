@@ -169,7 +169,7 @@ def fbp_host(
             detector=local_detector,
             backend=backend,
             batch_size=min(views, n_views),
-            z_integer=integer,
+            z_mode="integer" if integer else "fixed",
             separable=True,
             check_finite=True,
         )

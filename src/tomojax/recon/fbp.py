@@ -179,7 +179,7 @@ def _parallel_filter_batch_size(n_views: int, nv: int, n_fft: int) -> int:
     return n_views if capacity >= n_views else 1 << (capacity.bit_length() - 1)
 
 
-@jax.jit(static_argnames=("grid", "detector", "backend", "batch_size", "z_integer", "separable"))
+@jax.jit(static_argnames=("grid", "detector", "backend", "batch_size", "z_mode", "separable"))
 def _run_fbp_streamed(
     poses: jnp.ndarray,
     projections: jnp.ndarray,
@@ -192,7 +192,7 @@ def _run_fbp_streamed(
     detector: Detector,
     backend: str,
     batch_size: int,
-    z_integer: bool,
+    z_mode: str,
     separable: bool,
 ) -> jnp.ndarray:
     """Pad, filter and backproject bounded view batches into one accumulator."""
@@ -222,7 +222,7 @@ def _run_fbp_streamed(
             grid=grid,
             detector=detector,
             backend=backend,
-            z_integer=z_integer,
+            z_mode=z_mode,
         )
 
     return jax.lax.fori_loop(
@@ -241,20 +241,20 @@ def _backproject_into(
     grid: Grid,
     detector: Detector,
     backend: str,
-    z_integer: bool,
+    z_mode: str,
 ) -> jnp.ndarray:
     """Add filtered views to ``accum``; the CUDA kernel adds in place."""
     if backend == "pallas":
         from ._fbp_pallas import backproject_filtered_pallas
 
         return backproject_filtered_pallas(
-            poses, filtered, grid=grid, detector=detector, z_integer=z_integer, accumulate=accum
+            poses, filtered, grid=grid, detector=detector, z_mode=z_mode, accumulate=accum
         )
     return accum + _backproject_voxels_jax(poses, filtered, grid=grid, detector=detector)
 
 
 @jax.jit(
-    static_argnames=("grid", "detector", "backend", "separable", "z_integer"),
+    static_argnames=("grid", "detector", "backend", "separable", "z_mode"),
     donate_argnums=(0,),
 )
 def _fbp_accumulate_batch(
@@ -270,7 +270,7 @@ def _fbp_accumulate_batch(
     detector: Detector,
     backend: str,
     separable: bool,
-    z_integer: bool,
+    z_mode: str,
 ) -> jnp.ndarray:
     """Filter one batch of views and add its backprojection to ``accum`` in place."""
     filtered = _filter_views(
@@ -283,7 +283,7 @@ def _fbp_accumulate_batch(
         separable=separable,
     )
     return _backproject_into(
-        accum, poses, filtered, grid=grid, detector=detector, backend=backend, z_integer=z_integer
+        accum, poses, filtered, grid=grid, detector=detector, backend=backend, z_mode=z_mode
     )
 
 
@@ -300,7 +300,7 @@ def _fbp_from_host(
     backend: str,
     batch_size: int,
     separable: bool,
-    z_integer: bool = False,
+    z_mode: str = "general",
     check_finite: bool = False,
 ) -> jnp.ndarray:
     """Stream host projections through the device in fixed-size view batches.
@@ -342,7 +342,7 @@ def _fbp_from_host(
             detector=detector,
             backend=backend,
             separable=separable,
-            z_integer=z_integer,
+            z_mode=z_mode,
         )
         if start + b < n:
             pending = batch(start + b)
@@ -408,7 +408,7 @@ def run_parallel_fbp_direct_pallas(
         detector=detector,
         backend="pallas",
         batch_size=_parallel_filter_batch_size(n_views, detector.nv, 2 * (ramp.shape[0] - 1)),
-        z_integer=True,
+        z_mode="integer",
         separable=True,
     )
 
@@ -493,7 +493,7 @@ class _Plan:
     detector: Detector  # the filter's, padded
     backend: str
     batch: int
-    z_integer: bool
+    z_mode: str
 
     def backprojected(self, device: Device | None, views: range) -> jnp.ndarray:
         """The weighted backprojection of ``views``, on ``device`` (JAX's default for None).
@@ -507,7 +507,7 @@ class _Plan:
             "detector": self.detector,
             "backend": self.backend,
             "separable": self.separable,
-            "z_integer": self.z_integer,
+            "z_mode": self.z_mode,
         }
         while True:
             try:
@@ -577,7 +577,9 @@ def _plan(
         batch=_parallel_filter_batch_size(
             n_views, filter_detector.nv * n_fft_v, 2 * (spectrum.shape[0] - 1)
         ),
-        z_integer=parallel and supports_parallel_fbp_z_integer(grid, detector),
+        z_mode=("integer" if supports_parallel_fbp_z_integer(grid, detector) else "fixed")
+        if parallel
+        else "general",
     )
 
 
