@@ -284,19 +284,16 @@ def _resolve_angles(
         return thetas
 
     angle_offset = meta.get("angle_offset_deg")
-    if angle_offset is None:
+    # Simulated misalignment already bakes these offsets into `angles`; the
+    # separate schedule is provenance, not a requested second correction.
+    if angle_offset is None or meta.get("misalign_spec") is not None:
         return thetas
 
     offset = np.asarray(angle_offset, dtype=np.float32)
     if offset.shape != thetas.shape:
-        return thetas
-    if not np.isfinite(offset).all() or np.allclose(offset, 0.0):
-        return thetas
-
-    # TomoJAX's misalign CLI already bakes scheduled angle offsets into
-    # `angles` and stores the raw schedule separately for provenance.
-    if meta.get("misalign_spec") is not None:
-        return thetas
+        raise ValueError(f"angle_offset_deg must have shape {thetas.shape}, got {offset.shape}")
+    if not np.isfinite(offset).all():
+        raise ValueError("angle_offset_deg must contain only finite values")
 
     return thetas + offset
 
