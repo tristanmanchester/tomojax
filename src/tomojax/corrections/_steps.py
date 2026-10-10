@@ -77,6 +77,8 @@ class BeamHardening(Step):
         object.__setattr__(self, "coefficients", tuple(float(c) for c in self.coefficients))
         if not self.coefficients:
             raise ValueError("BeamHardening needs at least one coefficient")
+        if not np.isfinite(self.coefficients).all():
+            raise ValueError("BeamHardening coefficients must be finite")
 
     def apply(self, batch: jax.Array) -> jax.Array:
         out = jnp.zeros_like(batch)
@@ -140,10 +142,10 @@ class RejectViews(Step):
     min_jump: float = 0.05
 
     def __post_init__(self) -> None:
-        if not self.z > 0:
-            raise ValueError(f"RejectViews z must be positive, not {self.z}")
-        if not self.min_jump >= 0:
-            raise ValueError(f"RejectViews min_jump must be >= 0, not {self.min_jump}")
+        if not np.isfinite(self.z) or not self.z > 0:
+            raise ValueError(f"RejectViews z must be finite and positive, not {self.z}")
+        if not np.isfinite(self.min_jump) or not self.min_jump >= 0:
+            raise ValueError(f"RejectViews min_jump must be finite and >= 0, not {self.min_jump}")
         object.__setattr__(self, "min_jump", float(self.min_jump))
         if (
             int(self.neighbours) != self.neighbours
@@ -190,8 +192,8 @@ class Zingers(Step):
     size: int = 3
 
     def __post_init__(self) -> None:
-        if not self.threshold > 0:
-            raise ValueError(f"Zingers threshold must be positive, not {self.threshold}")
+        if not np.isfinite(self.threshold) or not self.threshold > 0:
+            raise ValueError(f"Zingers threshold must be finite and positive, not {self.threshold}")
         if int(self.size) != self.size or self.size < 3 or self.size % 2 == 0:
             raise ValueError(f"Zingers size must be an odd number of pixels >= 3, not {self.size}")
         object.__setattr__(self, "threshold", float(self.threshold))
@@ -231,8 +233,8 @@ class Paganin(Step):
     def __post_init__(self) -> None:
         for name in ("delta_beta", "distance", "energy_kev", "pixel_size"):
             value = float(getattr(self, name))
-            if not value > 0:
-                raise ValueError(f"Paganin {name} must be positive, not {value}")
+            if not np.isfinite(value) or not value > 0:
+                raise ValueError(f"Paganin {name} must be finite and positive, not {value}")
             object.__setattr__(self, name, value)
 
     def apply(self, batch: jax.Array) -> jax.Array:

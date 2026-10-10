@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 import tomojax as tj
-from tomojax.corrections import BeamHardening
+from tomojax.corrections import BeamHardening, Paganin, RejectViews, Step, Zingers
 from tomojax.io import ProjectionDataset, save_dataset
 
 from ._helpers import tiny_detector, tiny_grid
@@ -134,6 +134,36 @@ def test_empty_calibration_stacks_are_refused_before_reading_counts(field):
     frames = replace(frames, **{field: np.empty((0, 4, 4), np.float32)})
     with pytest.raises(ValueError, match=field):
         frames.corrected()
+
+
+@pytest.mark.parametrize("value", [np.nan, np.inf, -np.inf])
+def test_beam_hardening_coefficients_must_be_finite(value: float) -> None:
+    with pytest.raises(ValueError, match="coefficients.*finite"):
+        BeamHardening((1.0, value))
+
+
+@pytest.mark.parametrize(
+    ("step", "field"),
+    [
+        (Paganin, "delta_beta"),
+        (Paganin, "distance"),
+        (Paganin, "energy_kev"),
+        (Paganin, "pixel_size"),
+        (RejectViews, "z"),
+        (RejectViews, "min_jump"),
+        (Zingers, "threshold"),
+    ],
+)
+@pytest.mark.parametrize("value", [np.nan, np.inf, -np.inf])
+def test_correction_parameters_must_be_finite(step: type[Step], field: str, value: float) -> None:
+    settings = (
+        {"delta_beta": 1000.0, "distance": 0.1, "energy_kev": 20.0, "pixel_size": 1e-6}
+        if step is Paganin
+        else {}
+    )
+    settings[field] = value
+    with pytest.raises(ValueError, match=f"{field}.*finite"):
+        step(**settings)
 
 
 @pytest.mark.numerical
