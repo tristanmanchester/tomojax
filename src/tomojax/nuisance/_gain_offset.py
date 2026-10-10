@@ -49,7 +49,13 @@ def estimate_gain_offset(
     mask: jax.Array | None = None,
     ridge: float = 1.0e-6,
 ) -> GainOffsetModel:
-    """Fit per-view ``observed ~= gain * predicted + offset`` by weighted least squares."""
+    """Fit per-view ``observed ~= gain * predicted + offset`` by weighted least squares.
+
+    ``ridge`` penalizes the squared gain, not the offset. A constant prediction
+    has zero fitted gain and the weighted observed mean as its offset. Views
+    with no positive total weight retain the identity model. Zero-weight pixels
+    are excluded, including nonfinite values at those pixels.
+    """
     pred = jnp.asarray(predicted, dtype=jnp.float32)
     obs = jnp.asarray(observed, dtype=jnp.float32)
     if pred.shape != obs.shape:
@@ -60,18 +66,24 @@ def estimate_gain_offset(
     pred_flat = pred.reshape((pred.shape[0], -1))
     obs_flat = obs.reshape((obs.shape[0], -1))
     weights_flat = weights.reshape((weights.shape[0], -1))
+    included = weights_flat != 0.0
+    pred_flat = jnp.where(included, pred_flat, 0.0)
+    obs_flat = jnp.where(included, obs_flat, 0.0)
     sum_w = jnp.sum(weights_flat, axis=1)
     sum_x = jnp.sum(weights_flat * pred_flat, axis=1)
     sum_y = jnp.sum(weights_flat * obs_flat, axis=1)
-    sum_xx = jnp.sum(weights_flat * pred_flat * pred_flat, axis=1)
-    sum_xy = jnp.sum(weights_flat * pred_flat * obs_flat, axis=1)
-    safe_sum_w = jnp.maximum(sum_w, jnp.asarray(1.0, dtype=jnp.float32))
+    safe_sum_w = jnp.where(sum_w > 0.0, sum_w, 1.0)
     x_mean = sum_x / safe_sum_w
     y_mean = sum_y / safe_sum_w
-    covariance = sum_xy - sum_x * y_mean
-    variance = sum_xx - sum_x * x_mean
+    # Center before forming products: subtracting raw second moments loses
+    # detector variation when the projection has a large constant background.
+    centred_x = jnp.where(included, pred_flat - x_mean[:, None], 0.0)
+    centred_y = jnp.where(included, obs_flat - y_mean[:, None], 0.0)
+    covariance = jnp.sum(weights_flat * centred_x * centred_y, axis=1)
+    variance = jnp.sum(weights_flat * centred_x * centred_x, axis=1)
     ridge_value = jnp.asarray(max(float(ridge), 0.0), dtype=jnp.float32)
-    gain = covariance / jnp.maximum(variance + ridge_value, ridge_value)
+    denominator = variance + ridge_value
+    gain = covariance / jnp.where(denominator > 0.0, denominator, 1.0)
     offset = y_mean - gain * x_mean
     valid = sum_w > 0.0
     return GainOffsetModel(
