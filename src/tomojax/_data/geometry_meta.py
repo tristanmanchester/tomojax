@@ -369,8 +369,7 @@ def _segments_from_meta(
     from tomojax.core.geometry.cone import ConeSegments
 
     entries = cast("list[dict[str, Any]]", meta.get("cone_segments", []))
-    params = meta.get("align_params") if poses else None
-    frame = str(meta.get("align_gauge", {}).get("pose_translation_frame", "detector"))
+    saved = _saved_poses(meta, len(angles), default_frame="detector") if poses else None
     segments: list[ScanGeometry] = []
     start = 0
     for entry in entries:
@@ -382,8 +381,9 @@ def _segments_from_meta(
             detector=Detector.from_dict(entry["detector"]),
             angles=list(angles[start : start + views]),
         )
-        if params is not None:
-            table = np.asarray(params, dtype=np.float32)[start : start + views, :6]
+        if saved is not None:
+            params, frame = saved
+            table = params[start : start + views]
             if np.any(table):
                 segment = AugmentedGeometry(segment, table, translation_frame=frame)
         segments.append(segment)
@@ -391,6 +391,32 @@ def _segments_from_meta(
     if start != len(angles):
         raise ValueError(f"cone_segments describe {start} views; the dataset has {len(angles)}")
     return ConeSegments(tuple(segments))
+
+
+def _saved_poses(
+    meta: LoadedGeometryMeta, views: int, *, default_frame: str
+) -> tuple[np.ndarray, str] | None:
+    """Validated saved poses, with missing dy set to zero and extra columns ignored."""
+    if meta.get("align_params") is None:
+        return None
+    params = np.asarray(meta["align_params"], dtype=np.float32)
+    if params.ndim != 2:
+        raise ValueError("align_params must be a 2-D array with shape (n_views, >=5)")
+    if params.shape[0] != views:
+        raise ValueError(
+            f"align_params row count ({params.shape[0]}) must match number of views ({views})"
+        )
+    if params.shape[1] < 5:
+        raise ValueError(
+            "align_params must provide at least 5 columns "
+            f"[alpha, beta, phi, dx, dz], got {params.shape[1]}"
+        )
+    frame = str(meta.get("align_gauge", {}).get("pose_translation_frame", default_frame))
+    if frame not in {"object", "detector"}:
+        raise ValueError(f"unknown saved pose translation frame {frame!r}")
+    if params.shape[1] == 5:
+        params = np.pad(params, ((0, 0), (0, 1)))
+    return params[:, :6], frame
 
 
 def build_geometry_from_meta(
@@ -407,8 +433,8 @@ def build_geometry_from_meta(
     detector pixel spacings as voxel spacings. When `poses` is
     True, any saved `align_params` are composed onto the nominal poses. Saved
     alignments must provide one row per view and five columns ordered as
-    `[alpha, beta, phi, dx, dz]`, optionally followed by `dy`; further columns
-    are ignored. Saved
+    `[alpha, beta, phi, dx, dz]`, optionally followed by `dy` (zero when absent);
+    further columns are ignored. Saved
     `angle_offset_deg` is applied unless it is known to have already been baked
     into `angles`.
     """
@@ -434,26 +460,10 @@ def build_geometry_from_meta(
         meta,
     )
 
-    if poses and meta.get("align_params") is not None:
-        align_params = np.asarray(meta["align_params"], dtype=np.float32)
-        if align_params.ndim != 2:
-            raise ValueError("align_params must be a 2-D array with shape (n_views, >=5)")
-        if align_params.shape[0] != len(angles):
-            raise ValueError(
-                f"align_params row count ({align_params.shape[0]}) must match "
-                f"number of views ({len(angles)})"
-            )
-        if align_params.shape[1] < 5:
-            raise ValueError(
-                "align_params must provide at least 5 columns "
-                f"[alpha, beta, phi, dx, dz], got {align_params.shape[1]}"
-            )
-        frame = str(meta.get("align_gauge", {}).get("pose_translation_frame", "object"))
-        if frame not in {"object", "detector"}:
-            raise ValueError(f"unknown saved pose translation frame {frame!r}")
-        geom = AugmentedGeometry(
-            base=geom, align_params=align_params[:, :6], translation_frame=frame
-        )
+    saved = _saved_poses(meta, len(angles), default_frame="object") if poses else None
+    if saved is not None:
+        align_params, frame = saved
+        geom = AugmentedGeometry(base=geom, align_params=align_params, translation_frame=frame)
 
     return grid, detector, geom
 
