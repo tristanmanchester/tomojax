@@ -78,6 +78,33 @@ def test_cuda_cone_dense_transpose_with_anisotropy_and_a_view_chunk_tail():
 
 
 @pytest.mark.gpu
+def test_cuda_cone_dense_transpose_with_sparse_and_cancelling_pixels():
+    grid = Grid(7, 6, 5, 0.7, 1.1, 0.9, vol_center=(0.2, -0.1, 0.3))
+    detector = Detector(9, 7, 1.3, 0.8)
+    frame = _frame((1, 1, 1), 0.13)
+    coeff = frame_coefficients(
+        jnp.broadcast_to(jnp.eye(4), (2, 4, 4)), np.stack([frame, frame]), grid, detector
+    )
+    shape = (grid.nx, grid.ny, grid.nz)
+    basis = jnp.eye(np.prod(shape), dtype=jnp.float32).reshape((-1, *shape))
+    forward = jax.jit(jax.vmap(lambda x: cone_project(x, coeff, grid, detector, backend="cuda")))
+    matrix = np.asarray(forward(basis), np.float64).reshape((np.prod(shape), -1))
+    rng = np.random.default_rng(43)
+    sparse = rng.normal(size=(2, detector.nv, detector.nu)).astype(np.float32)
+    sparse[:, ::2] = 0
+    cancelling = sparse.copy()
+    cancelling[1] = -cancelling[0]
+    impulse = np.zeros_like(sparse)
+    impulse[0, detector.nv // 2, detector.nu // 2] = 1
+    for images in (np.zeros_like(sparse), impulse, sparse, cancelling):
+        expected = matrix @ images.ravel()
+        # An absolute contribution bound remains meaningful under cancellation.
+        scale = (np.abs(matrix) @ np.abs(images).ravel()).max()
+        actual = np.asarray(cone_backproject(images, coeff, grid, detector, backend="cuda"))
+        np.testing.assert_allclose(actual.ravel(), expected, rtol=0, atol=5e-7 * scale)
+
+
+@pytest.mark.gpu
 @pytest.mark.parametrize("reverse_v", [False, True])
 def test_cuda_cone_dense_transpose_across_wide_contiguous_tiles(reverse_v):
     # A thin, long odd grid exercises multiple wide z tiles and their tail

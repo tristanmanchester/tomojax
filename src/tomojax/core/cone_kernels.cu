@@ -316,14 +316,17 @@ extern "C" __global__ void axis_boxes(
     if (threadIdx.x < 12) boxes[(long)blockIdx.x * 12 + threadIdx.x] = (&box[0][0])[threadIdx.x];
 }
 
-// Adds x0..x3 to four cells of shared memory (padded: no bounds to test); zeros are skipped.
+// Adds x0..x3 to four padded shared cells. Pair the two rows of each column:
+// moving one column retains both right-hand cells, so their flush is all zero.
 __device__ __forceinline__ void add4(float* p0, float x0, float* p1, float x1, float* p2,
                                      float x2, float* p3, float x3)
 {
-    if (x0 != 0.f) atomicAdd(p0, x0);
-    if (x1 != 0.f) atomicAdd(p1, x1);
-    if (x2 != 0.f) atomicAdd(p2, x2);
-    if (x3 != 0.f) atomicAdd(p3, x3);
+    if (x0 != 0.f || x2 != 0.f) {
+        atomicAdd(p0, x0); atomicAdd(p2, x2);
+    }
+    if (x1 != 0.f || x3 != 0.f) {
+        atomicAdd(p1, x1); atomicAdd(p3, x3);
+    }
 }
 
 // Non-separable views, rays sampled along axis a: grid (c tiles, b tiles, planes k).
