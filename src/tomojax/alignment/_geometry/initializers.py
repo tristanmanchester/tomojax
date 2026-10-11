@@ -356,17 +356,23 @@ def _uniform_sinogram(sino: np.ndarray, angles: np.ndarray) -> np.ndarray:
 def _vo_metrics(sino: np.ndarray, offsets: np.ndarray, ratio: float, drop: int) -> np.ndarray:
     """Vo's metric for each axis offset (pixels from the centre column) of ``sino``."""
     views, cols = sino.shape
-    mask = _vo_mask(2 * views, cols, 0.5 * ratio * cols, drop)
+    mask = np.fft.ifftshift(_vo_mask(2 * views, cols, 0.5 * ratio * cols, drop))
+    # Real sinograms have conjugate Fourier pairs. Fold the mask onto the
+    # stored half-plane, including each DC/Nyquist column only once. The mask
+    # itself is not symmetric, so simply doubling positive frequencies fails.
+    folded = mask[:, : cols // 2 + 1].copy()
+    stop = (cols + 1) // 2
+    folded[:, 1:stop] += mask[(-np.arange(2 * views)) % (2 * views)][:, cols - 1 : cols - stop : -1]
     mirror = sino[:, ::-1]
     # Shift the mirror by twice the offset (sub-pixel, along u, by Fourier
     # phase), with the far edge of the flipped sinogram where it wraps.
-    freq = np.fft.fftfreq(cols).astype(np.float32)
-    spectrum = np.asarray(fft.fft(mirror, axis=1, workers=-1))
+    freq = np.fft.rfftfreq(cols).astype(np.float32)
+    spectrum = np.asarray(fft.rfft(mirror, axis=1, workers=-1))
     out = np.empty(len(offsets))
     for i, offset in enumerate(offsets):
         shift = 2.0 * float(offset)
         phase = np.exp(-2j * np.pi * freq * np.float32(shift)).astype(np.complex64)
-        moved = np.real(np.asarray(fft.ifft(spectrum * phase, axis=1, workers=-1)))
+        moved = np.asarray(fft.irfft(spectrum * phase, n=cols, axis=1, workers=-1))
         edge = int(np.ceil(abs(shift)))
         if edge:
             filler = sino[::-1]
@@ -375,8 +381,8 @@ def _vo_metrics(sino: np.ndarray, offsets: np.ndarray, ratio: float, drop: int) 
             else:
                 moved[:, -edge:] = filler[:, -edge:]
         both = np.vstack([sino, moved])
-        energy = np.abs(np.fft.fftshift(np.asarray(fft.fft2(both, workers=-1))))
-        out[i] = float(np.mean(energy * mask))
+        energy = np.abs(np.asarray(fft.rfft2(both, workers=-1)))
+        out[i] = float(np.sum(energy * folded) / (2 * views * cols))
     return out
 
 

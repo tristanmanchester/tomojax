@@ -123,7 +123,8 @@ returning a scan with its physical detector centre updated and its data/grid
 unchanged; iterative `align(..., mode="cor")` behavior is unchanged.
 The sinogram centre initializer resamples nonuniform angular steps and averages
 repeated angles before its Fourier metric, avoiding a biased rotation centre
-after view rejection or repeated exposures.
+after view rejection or repeated exposures. Its metric uses real FFTs and a
+folded frequency mask instead of evaluating both conjugate half-planes.
 
 Data fixes: NXtomo angles at `/entry/sample/rotation_angle` are read (they
 loaded as zeros), with radians converted; `tj.load` leaves out frames that

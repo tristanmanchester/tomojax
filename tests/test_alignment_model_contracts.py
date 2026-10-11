@@ -11,7 +11,12 @@ import tomojax as tj
 from tomojax.alignment._geometry.geometry_blocks import _theta_span_from_geometry
 
 # check-public-imports: allow-private
-from tomojax.alignment._geometry.initializers import projection_pair_det_u_seed, sinogram_det_u_seed
+from tomojax.alignment._geometry.initializers import (
+    _vo_mask,
+    _vo_metrics,
+    projection_pair_det_u_seed,
+    sinogram_det_u_seed,
+)
 
 # check-public-imports: allow-private
 from tomojax.alignment._stages._reconstruction_stage import _is_oom_error_message
@@ -172,6 +177,26 @@ def test_sinogram_centre_seed_uses_actual_angular_spacing(sampling):
     seed = sinogram_det_u_seed(data, angles, rows=1)
     assert seed is not None
     assert abs(seed.det_u_px - centre) <= 0.3
+
+
+@pytest.mark.parametrize("columns", [31, 32, 33, 64])
+def test_sinogram_real_fourier_metric_matches_full_spectrum(columns):
+    sino = np.random.default_rng(3).normal(size=(37, columns)).astype(np.float32)
+    offsets = np.array([-4, -1.75, 0, 0.25, 3.5])
+    mask = _vo_mask(2 * len(sino), columns, 0.25 * columns, 3)
+    expected = []
+    for offset in offsets:
+        shift = 2 * offset
+        phase = np.exp(-2j * np.pi * np.fft.fftfreq(columns) * shift)
+        moved = np.fft.ifft(np.fft.fft(sino[:, ::-1], axis=1) * phase, axis=1).real
+        edge = int(np.ceil(abs(shift)))
+        if shift > 0:
+            moved[:, :edge] = sino[::-1, :edge]
+        elif shift < 0:
+            moved[:, -edge:] = sino[::-1, -edge:]
+        spectrum = np.fft.fftshift(np.fft.fft2(np.vstack([sino, moved])))
+        expected.append(np.mean(np.abs(spectrum) * mask))
+    np.testing.assert_allclose(_vo_metrics(sino, offsets, 0.5, 3), expected, rtol=2e-6)
 
 
 _COR_CONFIG = AlignConfig(
