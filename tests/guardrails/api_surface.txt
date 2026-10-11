@@ -43,8 +43,8 @@ class tomojax.Detector(
 class tomojax.Frames(
         counts: 'Any',
         geometry: 'ScanGeometry',
-        flats: 'np.ndarray | None' = None,
-        darks: 'np.ndarray | None' = None,
+        flats: 'Any' = None,
+        darks: 'Any' = None,
         flat_positions: 'np.ndarray | None' = None,
         white_level: 'float | None' = None,
         view_positions: 'np.ndarray | None' = None,

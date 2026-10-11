@@ -8,6 +8,10 @@ them. `tomojax.Frames.corrected(*steps)` runs any steps on counts, then
 taken around it, then steps on transmission, the `-log`, and steps on line
 integrals. `tomojax.Scan.corrected(*steps)` runs line-integral steps on a scan
 that is already corrected. Views are corrected on the device a batch at a time.
+HDF5 sample and calibration frames stay lazy until correction, so
+`Frames.cropped` reads only that detector window for all three. Calibration
+means accumulate in FP64 in bounded host batches. `np.asarray(frames.flats)`
+or indexing the flat/dark stack reads it explicitly.
 Each step is recorded in `Scan.corrections` and saved with the scan.
 
 `tomojax preprocess` is a thin layer over these: its options build the same

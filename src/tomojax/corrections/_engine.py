@@ -35,9 +35,9 @@ _BATCH_BYTES = 256 * 2**20
 def correct_frames(
     counts: Any,
     *,
-    flats: np.ndarray | None,
+    flats: Any,
     flat_positions: np.ndarray | None,
-    darks: np.ndarray | None,
+    darks: Any,
     white_level: float | None,
     steps: Sequence[Step],
     epsilon: float,
@@ -175,16 +175,20 @@ class _Fields:
 
 
 def _flat_fields(
-    flats: np.ndarray | None,
+    flats: Any,
     positions: np.ndarray | None,
-    darks: np.ndarray | None,
+    darks: Any,
     white_level: float | None,
     shape: tuple[int, int],
 ) -> tuple[_Fields, tuple[Correction, ...]]:
     """The mean flat of each set, the mean dark, and the record of them."""
     if darks is None and flats is not None:
         LOG.warning("no dark fields: correcting with a dark field of zero")
-    dark = np.zeros(shape, np.float32) if darks is None else _mean(darks, shape, "darks")
+    dark = (
+        np.zeros(shape, np.float32)
+        if darks is None
+        else np.asarray(_mean(darks, shape, "darks"), np.float32)
+    )
     dark_frames = 0 if darks is None else len(darks)
     if flats is None:
         if white_level is None:
@@ -196,8 +200,8 @@ def _flat_fields(
         stack = np.full((1, *shape), level, np.float32)
         record = Correction("flat_dark", {"white_level": level, "darks": dark_frames})
         return _Fields(stack, np.zeros(1), dark), (record,)
-    flats = np.asarray(flats)
-    if flats.ndim != 3 or flats.shape[1:] != shape or not len(flats):
+    flats = flats if hasattr(flats, "shape") else np.asarray(flats)
+    if len(flats.shape) != 3 or flats.shape[1:] != shape or not len(flats):
         raise ValueError(
             f"flats are {flats.shape}; a nonempty stack of frames of {shape} is needed"
         )
@@ -207,8 +211,14 @@ def _flat_fields(
             f"flat_positions needs one finite position for each of the {len(flats)} flats"
         )
     sets = np.unique(where)
-    groups = (flats if len(sets) == 1 else flats[where == p] for p in sets)
-    stack = np.stack([np.mean(group, axis=0, dtype=np.float64) for group in groups])
+    stack = np.stack(
+        [
+            _mean(
+                flats, shape, "flats", indices=np.flatnonzero(where == p) if len(sets) > 1 else None
+            )
+            for p in sets
+        ]
+    )
     settings: dict[str, Any] = {"flats": len(flats), "darks": dark_frames, "flat_sets": len(sets)}
     if len(sets) > 1:
         settings["flat_positions"] = [float(p) for p in sets]
@@ -219,13 +229,24 @@ def _flat_fields(
     )
 
 
-def _mean(frames: np.ndarray, shape: tuple[int, int], name: str) -> np.ndarray:
-    frames = np.asarray(frames)
-    if frames.ndim != 3 or frames.shape[1:] != shape or not len(frames):
+def _mean(
+    frames: Any, shape: tuple[int, int], name: str, *, indices: np.ndarray | None = None
+) -> np.ndarray:
+    """Average calibration frames in FP64, reading bounded batches from lazy stacks."""
+    frames = frames if hasattr(frames, "shape") else np.asarray(frames)
+    if len(frames.shape) != 3 or frames.shape[1:] != shape or not len(frames):
         raise ValueError(
             f"{name} are {frames.shape}; a nonempty stack of frames of {shape} is needed"
         )
-    return np.asarray(np.mean(frames, axis=0, dtype=np.float64), np.float32)
+    count = len(frames) if indices is None else len(indices)
+    batch = max(1, _BATCH_BYTES // (np.dtype(frames.dtype).itemsize * shape[0] * shape[1]))
+    total = np.zeros(shape, np.float64)
+    for start in range(0, count, batch):
+        selected = (
+            slice(start, start + batch) if indices is None else indices[start : start + batch]
+        )
+        total += np.sum(frames[selected], axis=0, dtype=np.float64)
+    return total / count
 
 
 def _interpolation(q: np.ndarray, positions: np.ndarray) -> tuple[np.ndarray, ...]:

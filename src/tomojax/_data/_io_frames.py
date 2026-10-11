@@ -72,6 +72,12 @@ class Hdf5Frames:
             first_col=self.first_col + c0,
         )
 
+    def __array__(self, dtype: np.dtype | None = None, copy: bool | None = None) -> np.ndarray:
+        """Read this stack explicitly with ``np.asarray`` (always allocates host storage)."""
+        if copy is False:
+            raise ValueError("Hdf5Frames cannot be converted to an array without copying")
+        return np.asarray(self[:], dtype=dtype)
+
     def __getitem__(self, which: slice | int | np.ndarray) -> np.ndarray:
         if isinstance(which, int | np.integer):
             # Array indexing preserves NumPy's negative-index and bounds rules;
