@@ -77,6 +77,14 @@ networks for wider windows, preserving corrected values and differentiability.
 Whole-row corrections overlap bounded slab downloads with the next slab's work,
 preserving the correction order and the previous image-memory budget.
 
+Fourier reconstruction now interpolates in measured angle for nonuniform
+half-turn scans, including encoder jitter and rejected views, with matching
+angular quadrature for DC. Repeated directions modulo 180 degrees still need
+to be excluded explicitly.
+Memory budgeting honors `jax.default_device` and CPU placement instead of
+always probing the first GPU, without initializing unused accelerators.
+
+
 Faster: exact-ray projection loads each cell corner once and integrates one
 spatial derivative for every pose direction (about 2.4x forward and 3x
 gradient on the CPU at 48³); the CUDA cone transpose weights, reorders and

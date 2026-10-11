@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 
 import jax
 import jax.numpy as jnp
@@ -30,6 +31,53 @@ def test_device_memory_probe_logs_debug_before_host_fallback(
     assert free_bytes is None
     assert "Device memory probe failed" in caplog.text
     assert "device probe unavailable" in caplog.text
+
+
+@pytest.mark.parametrize("api", ["memory_stats", "device_get_memory_info"])
+def test_memory_probe_honors_an_explicit_default_device(monkeypatch, api):
+    wrong = SimpleNamespace(platform="gpu", memory_stats=lambda: {"free_bytes": 9000})
+    selected = SimpleNamespace(platform="gpu", memory_stats=lambda: {"free_bytes": 1234})
+    monkeypatch.setattr(jax, "config", SimpleNamespace(jax_default_device=selected))
+    monkeypatch.setattr(jax, "devices", lambda *_: [wrong, selected])
+    if api == "device_get_memory_info":
+
+        def probe(device):
+            assert device is selected
+            return {"free_bytes": 1234}
+
+        monkeypatch.setattr(jax, "device_get_memory_info", probe, raising=False)
+    else:
+        monkeypatch.delattr(jax, "device_get_memory_info", raising=False)
+    assert _memory.device_free_memory_bytes() == 1234
+
+
+@pytest.mark.parametrize("default", [None, "cpu", "gpu", "tpu"])
+def test_memory_probe_uses_the_requested_platform_or_default_backend(monkeypatch, default):
+    requested = []
+
+    def devices(platform):
+        requested.append(platform)
+        return [SimpleNamespace(platform=platform, memory_stats=lambda: {"free_bytes": 1234})]
+
+    monkeypatch.setattr(jax, "config", SimpleNamespace(jax_default_device=default))
+    monkeypatch.setattr(jax, "default_backend", lambda: "tpu")
+    monkeypatch.setattr(jax, "devices", devices)
+    monkeypatch.setattr(_memory, "_host_available_memory_bytes", lambda: 5678)
+    monkeypatch.delattr(jax, "device_get_memory_info", raising=False)
+    assert _memory.device_free_memory_bytes() == (5678 if default == "cpu" else 1234)
+    assert requested == [default or "tpu"]
+
+
+def test_memory_probe_does_not_initialize_gpu_inside_cpu_default_device(monkeypatch):
+    device = next(iter(jax.devices("cpu")))
+
+    def forbidden(*args):
+        raise AssertionError("Explicit CPU placement must not initialize another backend")
+
+    monkeypatch.setattr(jax, "devices", forbidden)
+    monkeypatch.setattr(_memory, "_host_available_memory_bytes", lambda: 5678)
+    with jax.default_device(device):
+        assert _memory.device_free_memory_bytes() == 5678
 
 
 def test_invalid_views_per_batch_env_logs_selected_default(

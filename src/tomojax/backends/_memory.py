@@ -86,8 +86,10 @@ def _free_bytes_from_memory_info(info: object) -> int | None:
 
 
 def device_free_memory_bytes() -> int | None:
-    """Best-effort query of free device memory (bytes).
+    """Best-effort free memory (bytes) for JAX's current default device.
 
+    Honor ``jax.default_device`` (a device or platform), otherwise the default
+    backend. CPU placement uses host available memory, even on a GPU host.
     - Prefer JAX's device API when available: `jax.device_get_memory_info` (>=0.4.14).
     - Also support current `Device.memory_stats()` reports when exposed.
     - Fall back to host available memory via `os.sysconf` when supported.
@@ -96,16 +98,18 @@ def device_free_memory_bytes() -> int | None:
     try:  # JAX GPU/TPU or CPU
         import jax  # type: ignore
 
-        devs = jax.devices("gpu")
-        if not devs:
+        device = jax.config.jax_default_device
+        if device is None or isinstance(device, str):
+            device = next(iter(jax.devices(device or jax.default_backend())), None)
+        if device is None or device.platform == "cpu":
             return _host_available_memory_bytes()
         if hasattr(jax, "device_get_memory_info"):
             free = _free_bytes_from_memory_info(
-                jax.device_get_memory_info(devs[0])  # type: ignore[attr-defined]
+                jax.device_get_memory_info(device)  # type: ignore[attr-defined]
             )
             if free is not None:
                 return free
-        memory_stats = getattr(devs[0], "memory_stats", None)
+        memory_stats = getattr(device, "memory_stats", None)
         if callable(memory_stats):
             free = _free_bytes_from_memory_info(memory_stats())
             if free is not None:
