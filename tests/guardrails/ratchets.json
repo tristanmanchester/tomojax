@@ -127,7 +127,6 @@
     "src/tomojax/io/_json.py::PLR0911::normalize_json",
     "src/tomojax/recon/_fbp_weights.py::PLR0915::fbp_weights",
     "src/tomojax/recon/cgls_multires.py::C901::cgls_multires",
-    "src/tomojax/recon/fbp_host.py::C901::fbp_host",
     "src/tomojax/recon/fista_tv.py::C901::grad_data_term",
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline",
     "src/tomojax/recon/fourier.py::C901::fourier_reconstruct",

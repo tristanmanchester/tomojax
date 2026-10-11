@@ -6,8 +6,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tomojax.geometry import Detector, Grid, ParallelGeometry
-from tomojax.recon import FBPConfig, fbp
+from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
+from tomojax.recon import FBPConfig, FBPHostConfig, fbp, fbp_host
 
 # check-public-imports: allow-private
 from tomojax.recon._fbp_pallas import backproject_filtered_pallas
@@ -266,8 +266,6 @@ def test_fixed_rows_preserve_a_common_nonbinary_translation(interpret: bool) -> 
 def test_explicit_pallas_fbp_requires_cuda_arrays() -> None:
     import jax
 
-    from tomojax.geometry import LaminographyGeometry
-
     if jax.default_backend() == "gpu":
         pytest.skip("checks the CPU rejection")
     grid = Grid(4, 4, 3, 1.0, 1.0, 1.0)
@@ -374,8 +372,6 @@ def test_fbp_interpolation_preserves_physical_fractions_under_zero_padding(
     import jax
     from scipy.ndimage import map_coordinates
 
-    from tomojax.geometry import LaminographyGeometry
-
     if backend == "pallas" and jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
     nu, nv = shape
@@ -434,3 +430,18 @@ def test_fbp_interpolation_preserves_physical_fractions_under_zero_padding(
     original, padded = run(0, 0), run(*padding)
     np.testing.assert_allclose(padded, expected, rtol=4e-5, atol=2e-6)
     np.testing.assert_array_equal(padded, original)
+
+
+@pytest.mark.parametrize("bad", ["angle", "origin", "detector", "scale"])
+@pytest.mark.parametrize("host", [False, True])
+def test_fbp_rejects_nonfinite_geometry_before_any_work(bad, host) -> None:
+    nan = float("nan")
+    grid = Grid(3, 2, 1, 1, 1, 1, vol_origin=(nan, 0, 0) if bad == "origin" else None)
+    detector = Detector(5, 1, 1, 1, (nan, 0) if bad == "detector" else (0, 0))
+    geometry = ParallelGeometry(grid, detector, [0, nan if bad == "angle" else 60, 120])
+    scale = nan if bad == "scale" else None
+    config = FBPHostConfig(scale=scale) if host else FBPConfig(scale=scale)
+    run = fbp_host if host else fbp
+    projections = np.ones((3, 1, 5), np.float32) if host else jnp.ones((3, 1, 5))
+    with pytest.raises(ValueError, match="must be finite"):
+        run(geometry, grid, detector, projections, config=config)

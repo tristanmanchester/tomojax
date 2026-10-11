@@ -81,6 +81,21 @@ def default_fbp_scale(n_views: int) -> float:
     return float(np.pi / float(n_views))
 
 
+def validate_fbp_geometry(
+    geometry: Geometry, grid: Grid, detector: Detector, scale: float | None, context: str
+) -> tuple[int, int, int]:
+    """Check the grid, placement, scale and angles before reading projections or poses."""
+    shape = validate_grid(grid, f"{context} grid")
+    if scale is not None and not math.isfinite(scale):
+        raise ValueError(f"{context}: scale must be finite")
+    if not np.isfinite([*grid_volume_origin(grid), *detector.center]).all():
+        raise ValueError(f"{context}: grid and detector placement must be finite")
+    thetas = getattr(geometry, "angles", None)
+    if thetas is not None and not np.isfinite(np.asarray(thetas)).all():
+        raise ValueError(f"{context}: angles must be finite")
+    return shape
+
+
 def _bilinear_detector(image: jnp.ndarray, u: jnp.ndarray, v: jnp.ndarray) -> jnp.ndarray:
     """Sample at centred pixel coordinates, excluding the integer image origin."""
     nv, nu = image.shape
@@ -628,7 +643,7 @@ def fbp(
             config=FDKConfig(filter=cfg.filter, backend=backend, devices=cfg.devices),
         )
 
-    validate_grid(grid, "fbp grid")
+    validate_fbp_geometry(geometry, grid, detector, cfg.scale, "fbp")
     n_views, _, _ = validate_projection_stack(
         projections,
         detector,

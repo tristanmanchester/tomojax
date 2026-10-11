@@ -13,7 +13,7 @@ import numpy as np
 from tomojax.backends import device_free_memory_bytes
 from tomojax.core.geometry.cone import require_parallel_beam
 from tomojax.core.geometry.views import stack_view_poses
-from tomojax.core.validation import validate_grid, validate_projection_stack
+from tomojax.core.validation import validate_projection_stack
 from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
 
 from ._host_arrays import ProjectionRows, validate_host_arrays
@@ -24,6 +24,7 @@ from .fbp import (
     _parallel_filter_detector,  # pyright: ignore[reportPrivateUsage]
     _view_weights,  # pyright: ignore[reportPrivateUsage]
     supports_parallel_fbp_z_integer,
+    validate_fbp_geometry,
 )
 from .filters import rfft_filter_array
 
@@ -117,18 +118,10 @@ def fbp_host(
         raise ValueError("fbp_host: slices_per_batch and views_per_batch must be positive")
     if cfg.backprojector not in {"auto", "jax", "pallas"}:
         raise ValueError("fbp_host: backprojector must be 'auto', 'jax' or 'pallas'")
-    shape = validate_grid(grid, "fbp_host grid")
+    shape = validate_fbp_geometry(geometry, grid, detector, cfg.scale, "fbp_host")
     n_views, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fbp_host projections"
     )
-    ox, oy, oz = grid_volume_origin(grid)
-    if not np.isfinite([ox, oy, oz, *detector.center]).all():
-        raise ValueError("fbp_host: grid and detector placement must be finite")
-    if cfg.scale is not None and not math.isfinite(cfg.scale):
-        raise ValueError("fbp_host: scale must be finite")
-    thetas = getattr(geometry, "angles", None)
-    if thetas is not None and not np.isfinite(np.asarray(thetas)).all():
-        raise ValueError("fbp_host: angles must be finite")
 
     poses = stack_view_poses(geometry, n_views)
     view_scale = _view_weights(poses, cfg.scale)[0]
