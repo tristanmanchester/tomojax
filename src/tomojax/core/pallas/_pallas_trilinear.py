@@ -17,19 +17,18 @@ from jax.experimental.pallas import triton as plt
 import jax.numpy as jnp
 
 from tomojax.core.geometry.base import grid_volume_origin
-from tomojax.core.pallas._pallas_sampling import _trilinear_atomic_add
 
 
 def coefficients(poses, grid, detector):
     """Map integer detector coordinates and physical ray distance to voxel indices."""
-    voxel = jnp.array([grid.vx, grid.vy, grid.vz])
-    origin = jnp.array(grid_volume_origin(grid))
+    voxel = jnp.array([grid.vx, grid.vy, grid.vz], jnp.float32)
+    origin = jnp.array(grid_volume_origin(grid), jnp.float32)
     u0 = detector.center[0] - (detector.nu - 1) * detector.du / 2
     v0 = detector.center[1] - (detector.nv - 1) * detector.dv / 2
     base = jnp.einsum(
         "vji,vj->vi",
         poses[:, :3, :3],
-        jnp.array([u0, 0, v0]) - poses[:, :3, 3],
+        jnp.array([u0, 0, v0], jnp.float32) - poses[:, :3, 3],
         precision=jax.lax.Precision.HIGHEST,
     )
     return jnp.stack(
@@ -41,6 +40,35 @@ def coefficients(poses, grid, detector):
         ],
         axis=1,
     )
+
+
+def _add_corner(out_ref, index, value, active, *, interpret):
+    if interpret:
+        # The interpreter cannot mask atomics or combine repeated vector indices.
+        indices = jnp.where(active, index, 0).ravel()
+        values = jnp.where(active, value, 0).ravel()
+
+        def scalar_add(i, _):
+            plt.atomic_add(out_ref, (indices[i],), values[i])
+
+        jax.lax.fori_loop(0, indices.size, scalar_add, None)
+    else:
+        plt.atomic_add(out_ref, (index,), value, mask=active)
+
+
+def _cell_coordinates(q, d, current, length):
+    fractions = (0.5 - math.sqrt(3) / 6, 0.5 + math.sqrt(3) / 6)
+    # Both Gauss nodes lie in the same interpolation cell. Combine their
+    # corner weights before loading/scattering, halving memory operations.
+    midpoint = current + 0.5 * length
+    mid = [q[a] + d[a] * midpoint for a in range(3)]
+    index = [jnp.floor(p).astype(jnp.int32) for p in mid]
+    times = [current + f * length for f in fractions]
+    points = [[q[a] + d[a] * time for a in range(3)] for time in times]
+    # A node can round across the cell face on a very short interval. Clamp
+    # its fraction to keep zero-extended corner weights nonnegative.
+    frac = [[jnp.clip(p - i, 0, 1) for p, i in zip(point, index, strict=True)] for point in points]
+    return index, frac, times
 
 
 def _kernel(
@@ -95,7 +123,6 @@ def _kernel(
     if adjoint:
         ray_value = plt.load(image_ref.at[view * nu * nv + ray], mask=valid_pixel, other=0)
     zero = jnp.zeros((block,), jnp.float32)
-    fractions = (0.5 - math.sqrt(3) / 6, 0.5 + math.sqrt(3) / 6)
 
     def body(carry):
         iteration, current, tx, ty, tz, prediction, g0, g1, g2, h0, h1, h2 = carry
@@ -103,52 +130,50 @@ def _kernel(
         length = jnp.maximum(end - current, 0)
         active = valid & (length > 0)
         gs, hs = [g0, g1, g2], [h0, h1, h2]
-        for fraction in fractions:
-            time = current + fraction * length
-            point = [q[a] + d[a] * time for a in range(3)]
-            if adjoint:
-                _trilinear_atomic_add(
-                    out_ref,
-                    ray_value * 0.5 * length,
-                    *point,
-                    nx=shape[0],
-                    ny=shape[1],
-                    nz=shape[2],
-                    active=active,
-                    interpret=interpret,
-                )
-            else:
-                index = [jnp.floor(p).astype(jnp.int32) for p in point]
-                frac = [p - i for p, i in zip(point, index, strict=False)]
-                density, gradient = zero, [zero, zero, zero]
-                for dx in range(2):
-                    for dy in range(2):
-                        for dz in range(2):
-                            offsets = (dx, dy, dz)
-                            loc = [i + o for i, o in zip(index, offsets, strict=False)]
-                            weights = [
-                                f if o else 1 - f for f, o in zip(frac, offsets, strict=False)
-                            ]
-                            mask = active
-                            for a in range(3):
-                                mask = mask & (loc[a] >= 0) & (loc[a] < shape[a])
-                            position = (loc[0] * shape[1] + loc[1]) * shape[2] + loc[2]
-                            sample = plt.load(volume_ref.at[position], mask=mask, other=0)
-                            density = density + weights[0] * weights[1] * weights[2] * sample
-                            if derivatives:
-                                for a in range(3):
-                                    gradient[a] = (
-                                        gradient[a]
-                                        + (2 * offsets[a] - 1)
-                                        * weights[(a + 1) % 3]
-                                        * weights[(a + 2) % 3]
-                                        * sample
-                                    )
-                prediction = prediction + 0.5 * length * density
-                if derivatives:
+        index, frac, times = _cell_coordinates(q, d, current, length)
+        density = zero
+        gradient, moment = [zero, zero, zero], [zero, zero, zero]
+        for dx in range(2):
+            for dy in range(2):
+                for dz in range(2):
+                    offsets = (dx, dy, dz)
+                    loc = [i + o for i, o in zip(index, offsets, strict=False)]
+                    weights = [
+                        [f if o else 1 - f for f, o in zip(fs, offsets, strict=False)]
+                        for fs in frac
+                    ]
+                    w0, w1 = weights
+                    weight = 0.5 * length * (w0[0] * w0[1] * w0[2] + w1[0] * w1[1] * w1[2])
+                    mask = active
                     for a in range(3):
-                        gs[a] = gs[a] + 0.5 * length * gradient[a]
-                        hs[a] = hs[a] + 0.5 * length * time * gradient[a]
+                        mask = mask & (loc[a] >= 0) & (loc[a] < shape[a])
+                    position = (loc[0] * shape[1] + loc[1]) * shape[2] + loc[2]
+                    if adjoint:
+                        _add_corner(
+                            out_ref,
+                            position,
+                            weight * ray_value,
+                            mask & (weight != 0),
+                            interpret=interpret,
+                        )
+                    else:
+                        sample = plt.load(volume_ref.at[position], mask=mask, other=0)
+                        density = density + weight * sample
+                        if derivatives:
+                            for a in range(3):
+                                dw = [
+                                    (2 * offsets[a] - 1) * w[(a + 1) % 3] * w[(a + 2) % 3]
+                                    for w in weights
+                                ]
+                                gradient[a] = gradient[a] + 0.5 * length * (dw[0] + dw[1]) * sample
+                                moment[a] = (
+                                    moment[a]
+                                    + 0.5 * length * (times[0] * dw[0] + times[1] * dw[1]) * sample
+                                )
+        prediction = prediction + density
+        if derivatives:
+            gs = [g + dg for g, dg in zip(gs, gradient, strict=False)]
+            hs = [h + dh for h, dh in zip(hs, moment, strict=False)]
         crossing = [
             jnp.where(t <= end, t + dt, t) for t, dt in zip((tx, ty, tz), periods, strict=False)
         ]

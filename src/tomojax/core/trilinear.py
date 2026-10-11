@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Literal
 import jax
 import jax.numpy as jnp
 
-from tomojax.core._trilinear_reference import forward_project_view_exact_T
+from tomojax.core._trilinear_reference import forward_project_view_exact_T, project_pose_jacobian
 from tomojax.core.backend_policy import cuda_backend
 from tomojax.core.validation import (
     validate_detector,
@@ -170,12 +170,10 @@ def exact_pose_normal_equations(
     ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
         pose, directions, target, weight = inputs
 
-        def project(t: jax.Array) -> jax.Array:
-            return forward_project_view_exact_T(t, grid, detector, volume, det_grid=det_grid)
-
-        prediction = project(pose)
+        prediction, jacobian = project_pose_jacobian(
+            pose, directions, grid, detector, volume, det_grid=det_grid
+        )
         residual = weight * (prediction - target)
-        jacobian = jax.vmap(lambda dt: jax.jvp(project, (pose,), (dt,))[1])(directions)
         columns = (jacobian * weight).reshape((5, -1))
         gradient = jnp.matmul(columns, residual.ravel(), precision=jax.lax.Precision.HIGHEST)
         hessian = jnp.matmul(columns, columns.T, precision=jax.lax.Precision.HIGHEST)

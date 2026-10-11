@@ -242,3 +242,50 @@ def test_public_exact_alignment_scores_its_actual_operator_and_resumes(problem, 
             resume_state=checkpoints[-1],
             **extra,
         )
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("axis", [0, 2])
+def test_cardinal_right_cell_derivative(axis):
+    g = Grid(3, 3, 3, 0.5, 1.0, 2.0)
+    d = Detector(3, 3, 0.5, 2.0)
+    x = jnp.arange(27, dtype=jnp.float32).reshape(3, 3, 3) / 10
+    t = jnp.eye(4, dtype=jnp.float32)[None]
+    dt = jnp.zeros_like(t).at[:, axis, 3].set(1)
+    # Complete aligned y-rays integrate each y-centred hat to exactly vy.
+    integrals = np.pad(np.asarray(x).sum(axis=1) * g.vy, ((0, 1), (0, 1)))
+    step = np.diff(integrals, axis=axis // 2)
+    expected = -(step[:, :3] / g.vx if axis == 0 else step[:3, :] / g.vz).T[None]
+    y, jac = jax.jvp(lambda p: exact_forward(p, g, d, x), (t,), (dt,))
+    np.testing.assert_allclose(jac, expected, rtol=2e-6, atol=2e-6)
+    directions = jnp.zeros((1, 5, 4, 4), jnp.float32).at[:, 0].set(dt)
+    _, grad, hess, _ = exact_pose_normal_equations(
+        t, directions, g, d, x, jnp.zeros_like(y), jnp.ones_like(y)
+    )
+    np.testing.assert_allclose(grad[0, 0], jnp.sum(y * expected), rtol=2e-6, atol=2e-6)
+    np.testing.assert_allclose(hess[0, 0, 0], jnp.sum(expected**2), rtol=2e-6, atol=2e-6)
+
+
+@pytest.mark.numerical
+def test_exact_fp32_contract_survives_global_x64(problem):
+    grid, detector, poses, volume, *_ = problem
+    directions = jnp.zeros((3, 5, 4, 4), jnp.float32).at[:, 0, 0, 3].set(1).at[:, 1, 2, 3].set(1)
+    rng = np.random.default_rng(731)
+    targets = jnp.asarray(rng.normal(size=(3, detector.nv, detector.nu)), jnp.float32)
+    weights = jnp.asarray(rng.uniform(0.2, 1.2, targets.shape), jnp.float32)
+
+    def evaluate(t, x, y, w, dt):
+        return (
+            exact_forward(t, grid, detector, x),
+            exact_adjoint(t, grid, detector, y),
+            *exact_pose_normal_equations(t, dt, grid, detector, x, y, w),
+        )
+
+    with jax.enable_x64(False):
+        expected = jax.jit(evaluate)(poses, volume, targets, weights, directions)
+    with jax.enable_x64():
+        arrays = (poses, volume, targets, weights, directions)
+        actual = jax.jit(evaluate)(*(a.astype(jnp.float64) for a in arrays))
+        for value, reference in zip(actual, expected, strict=True):
+            assert value.dtype == jnp.float32
+            np.testing.assert_allclose(value, reference, rtol=2e-5, atol=3e-6)
