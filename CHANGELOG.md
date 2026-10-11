@@ -2,6 +2,52 @@
 
 ## Unreleased
 
+Faster: parallel FBP computes each fractional detector row once (host FBP
+on a real APS scan 1.06 s to 0.51 s), uses compact GPU tiles for small working
+sets (22-23% faster) and balances host slabs; Fourier reconstruction samples
+detector rows on the GPU and skips padded output slices (2.6x faster at 384²);
+the tilted-axis cone adjoint is 9% faster (wider tiles, tighter footprints);
+zinger and stripe medians use a median-only network, Gaussian residual
+filters are separable, Paganin uses a real FFT and alignment's gauge
+resampling runs on the GPU (about 14x faster on large volumes). Orbit heights
+batch their epipolar lines (about 2x), and cone pose columns are batched in
+one launch.
+
+Less memory: Paganin batches count their padded FFTs (peak 1.4 GB to 0.24 GB
+on the APS scan), TIFF folders decode into one preallocated stack, flat and
+dark means no longer copy the whole stack to float64, and CUDA Fourier
+reconstruction retries with smaller slabs when the GPU runs out of memory.
+
+Alignment fixes: the sinogram centre-of-rotation seed no longer counts the
+detector centre twice; cone pose proposals are scored with cone rays and keep
+nominal per-view poses; translation seeds use each view's physical detector
+frame; reduced-precision GPU matrix products no longer make setup poses
+non-rigid; reversed rotation axes keep a smooth object frame; a stalled L-BFGS
+line search is no longer reported as converged; bounded parameters near their
+limits keep finite gradients; the gauge SVD no longer allocates a views-by-views
+matrix; orbit heights stay at zero when the data cannot decide them.
+
+Reconstruction fixes: operator-norm estimates and FISTA and SPDHG steps drop
+fixed floors that silently shrank steps for fine voxels in metres; SPDHG
+skips TV work when TV is off, masks zero-weight (dead) pixels before
+arithmetic, starts inside its positivity and support constraints, keeps
+whole cone orbits in minibatches, and a failed streamed solve no longer
+poisons the next; multi-orbit scans can warm-start from per-orbit FDK; parallel
+FBP finds a missing arc before unwrapping angles, shares angular measure
+among repeated exposures and keeps sub-pixel detector positions across
+padding; CUDA FDK no longer depends on buffer alignment.
+
+Data fixes: cropping and binning keep the rays of rotated cone detectors;
+grid overrides keep the original rays and poses; saved pose tables are
+normalised before cone orbits are split; requested angle offsets that are
+malformed fail instead of being ignored; lazy HDF5 frames accept negative
+indices; multipage and colour TIFFs are read correctly; one NaN view no
+longer makes RejectViews reject every view; NaN or infinite correction
+settings, and NumPy scalar flat and dark levels, are handled; detector
+field-of-view crops no longer depend on the length unit; masked pixels are
+excluded before residual arithmetic; pseudo-Huber loss is accurate for small
+residuals.
+
 FDK gives the same weights and reconstruction however the angles are
 labelled: wrapping at 360 degrees or adding whole turns used to change them,
 and a wrapped short scan could get full-turn or negative weights (image error
