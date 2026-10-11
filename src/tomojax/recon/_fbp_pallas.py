@@ -124,13 +124,19 @@ def backproject_filtered_pallas(
     detector: Detector,
     z_integer: bool,
     interpret: bool = False,
-    block_size: int = 512,
+    block_size: int | None = None,
     accumulate: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
     """Sum filtered views per voxel, avoiding atomics and intermediate volumes.
 
-    ``accumulate`` is added to the result in place.
+    ``accumulate`` is added to the result in place. Compact
+    filtered-stack and output working sets use one voxel per lane of the
+    four-warp program. Other workloads retain larger tiles for input reuse.
     """
+    if block_size is None:
+        working_bytes = filtered.size * filtered.dtype.itemsize + 4 * grid.nx * grid.ny * grid.nz
+        compact = working_bytes <= 64 * 1024**2
+        block_size = 128 if compact else 512
     call = _backprojection_call(
         grid,
         detector,

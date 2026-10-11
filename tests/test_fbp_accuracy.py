@@ -195,38 +195,49 @@ def test_fbp_is_invariant_to_change_of_length_units(use_explicit_detector_grid: 
 
 @pytest.mark.parametrize("interpret", [True, pytest.param(False, marks=pytest.mark.gpu)])
 @pytest.mark.parametrize("z_integer", [False, True])
-def test_voxel_pallas_fbp_matches_jax_on_partial_blocks(interpret: bool, z_integer: bool) -> None:
+@pytest.mark.parametrize("n_views", [5, 129])
+def test_voxel_pallas_fbp_matches_jax_on_partial_blocks(
+    interpret: bool, z_integer: bool, n_views: int
+) -> None:
     import jax
 
     # check-public-imports: allow-private
     from tomojax.recon._fbp_pallas import backproject_filtered_pallas
-
-    # check-public-imports: allow-private
     from tomojax.recon.fbp import _backproject_voxels_jax
 
     if not interpret and jax.default_backend() != "gpu":
         pytest.skip("requires a CUDA GPU")
     grid = Grid(7, 6, 3, 0.8, 1.2, 1.0 if z_integer else 0.7)
     detector = Detector(9, 5, 0.9, 1.0, (0.17, 0.0 if z_integer else 0.21))
-    geometry = ParallelGeometry(grid, detector, [0.0, 31.0, 78.0, 117.0, 161.0])
-    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(5)], dtype=jnp.float32)
-    projections = jnp.asarray(np.random.default_rng(18).normal(size=(5, 5, 9)), dtype=jnp.float32)
+    angles = (
+        [0.0, 31.0, 78.0, 117.0, 161.0]
+        if n_views == 5
+        else np.linspace(13, 187, n_views, endpoint=False)
+    )
+    geometry = ParallelGeometry(grid, detector, angles)
+    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(n_views)], dtype=jnp.float32)
+    projections = jnp.asarray(
+        np.random.default_rng(18).normal(size=(n_views, 5, 9)), dtype=jnp.float32
+    )
     ramp = rfft_filter_array("ramp", 9, detector.du, jnp.float32)
     expected = jax.jit(
         lambda y: _backproject_voxels_jax(
             poses, fft_filter_rows(y, ramp), grid=grid, detector=detector
         )
     )(projections)
-    actual = backproject_filtered_pallas(
-        poses,
-        fft_filter_rows(projections, ramp),
-        grid=grid,
-        detector=detector,
-        z_integer=z_integer,
-        interpret=interpret,
-        block_size=64,
-    )
-    np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-6)
+    # Both automatic long/short-loop tiles and an explicit small override must
+    # retain partial-block masks and fractional/integer-row interpolation.
+    for block in [None, 64]:
+        actual = backproject_filtered_pallas(
+            poses,
+            fft_filter_rows(projections, ramp),
+            grid=grid,
+            detector=detector,
+            z_integer=z_integer,
+            interpret=interpret,
+            block_size=block,
+        )
+        np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-6)
 
 
 def test_explicit_pallas_fbp_requires_cuda_arrays() -> None:
@@ -247,3 +258,54 @@ def test_explicit_pallas_fbp_requires_cuda_arrays() -> None:
             jnp.ones((2, 3, 6)),
             config=FBPConfig(backprojector="pallas"),
         )
+
+
+@pytest.mark.parametrize(
+    ("n_views", "shape", "detector_shape", "override", "expected"),
+    [
+        (1, (7, 6, 3), (9, 5), None, 128),
+        (32, (768, 768, 11), (1104, 12), None, 128),
+        (128, (7, 6, 3), (9, 5), None, 128),
+        (32, (256, 256, 128), (1024, 256), None, 128),
+        (32, (256, 256, 128), (1025, 256), None, 512),
+        (32, (4096, 4096, 2), (9, 5), None, 512),
+        (129, (7, 6, 3), (9, 5), None, 128),
+        (129, (7, 6, 3), (512, 512), None, 512),
+        (129, (512, 512, 11), (767, 11), None, 128),
+        (129, (768, 768, 17), (1089, 17), None, 128),
+        (129, (4096, 4096, 2), (9, 5), None, 512),
+        (129, (7, 6, 3), (9, 5), 64, 64),
+    ],
+)
+def test_automatic_fbp_tiles_bound_both_input_and_output_working_sets(
+    monkeypatch, n_views, shape, detector_shape, override, expected
+):
+    import jax
+
+    # check-public-imports: allow-private
+    from tomojax.recon import _fbp_pallas as implementation
+
+    grid = Grid(*shape, 1, 1, 1)
+    detector = Detector(*detector_shape, 1, 1)
+    chosen = []
+
+    def call(*args, **kwargs):
+        chosen.append(args[3])
+        return lambda *_: jnp.zeros((grid.nx * grid.ny * grid.nz,), jnp.float32)
+
+    monkeypatch.setattr(implementation, "_backprojection_call", call)
+    # Trace only: large data/output shapes must not need large allocations just
+    # to verify the static launch policy and an explicit caller override.
+    jax.eval_shape(
+        lambda poses, rows: implementation.backproject_filtered_pallas(
+            poses,
+            rows,
+            grid=grid,
+            detector=detector,
+            z_integer=True,
+            block_size=override,
+        ),
+        jax.ShapeDtypeStruct((n_views, 4, 4), jnp.float32),
+        jax.ShapeDtypeStruct((n_views, detector.nv, detector.nu), jnp.float32),
+    )
+    assert chosen == [expected]
