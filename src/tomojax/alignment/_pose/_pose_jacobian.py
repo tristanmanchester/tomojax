@@ -13,6 +13,7 @@ import jax.numpy as jnp
 
 from tomojax.alignment._geometry.parametrizations import apply_pose_update
 from tomojax.core.backend_policy import cuda_backend
+from tomojax.core.cone import cone_project, frame_coefficients, use_cuda_cone
 from tomojax.core.projector import forward_project_view_T
 
 from ._pose_context import _PoseObjectiveContext
@@ -60,6 +61,35 @@ def build_pose_prediction_and_columns(ctx: _PoseObjectiveContext) -> Callable:
     )
 
 
+def _cone_central_columns(
+    params, nominal, frame, volume, target, weight, steps, *, grid, detector, translation_frame
+):
+    """The same central differences, with all perturbations in one CUDA launch."""
+    width = int(params.shape[-1])
+    offsets = jnp.eye(width, dtype=jnp.float32) * steps[:, None]
+
+    def coefficients(p):
+        pose = apply_pose_update(nominal, p, translation_frame=translation_frame)
+        return frame_coefficients(pose[None], frame, grid, detector)
+
+    # Keep the legacy (direction, single-view) geometry layout. Combining pose
+    # rows before their matrix products can alter FP32 rounding, amplified by
+    # the small finite-difference steps on large grids. Batch only the launch.
+    coeff = jnp.concatenate(
+        [
+            coefficients(params),
+            jax.vmap(coefficients)(params[None] + offsets).reshape(width, -1),
+            jax.vmap(coefficients)(params[None] - offsets).reshape(width, -1),
+        ]
+    )
+    images = cone_project(volume, coeff, grid, detector, backend="cuda").reshape(1 + 2 * width, -1)
+    # Preserve baseline subtraction/weighting before differencing, including
+    # cancellation against a large target and fractional pixel weights.
+    residuals = weight.ravel() * (images - target.ravel())
+    columns = (residuals[1 : width + 1] - residuals[width + 1 :]) / (2 * steps[:, None])
+    return residuals[0], columns
+
+
 def pose_prediction_and_columns(
     p5_i,
     t_nom_i,
@@ -94,6 +124,19 @@ def pose_prediction_and_columns(
     # derivative; autodiff columns use the differentiable JAX reference.
     central = options.jacobian == "central" or (options.cone_beam and cuda_backend())
     cone_backend = "jax" if options.cone_beam and not central else "pallas"
+    if options.cone_beam and central and use_cuda_cone():
+        return _cone_central_columns(
+            p5_i,
+            t_nom_i,
+            frame_i,
+            vol,
+            target,
+            weight,
+            difference_steps,
+            grid=grid,
+            detector=detector,
+            translation_frame=options.translation_frame,
+        )
 
     def _pred_flat(t_i: jnp.ndarray, masked_vol: jnp.ndarray) -> jnp.ndarray:
         if options.cone_beam:

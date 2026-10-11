@@ -6,8 +6,9 @@ here the in-plane coordinates follow the ray from the source to its pixel, so
 magnification changes from plane to plane. Line integrals are in physical
 units.
 
-Each ray is sampled along its own dominant axis, so a projection changes
-continuously as a pose turns a ray through 45 degrees. Per-view geometry is a
+Each ray is sampled along its own dominant index-space axis. The quadrature is
+piecewise smooth in poses: switching that axis can change the sample locations
+and introduce a discontinuity in 3D. Per-view geometry is a
 25-value coefficient row in voxel-index units of the object frame (source,
 detector origin and pixel steps, a separable-view flag, and the detector-plane
 projection used to bound voxel footprints). Rows come from
