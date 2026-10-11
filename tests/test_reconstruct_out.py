@@ -1,6 +1,7 @@
 """Caller-owned output reaches analytic host backends through the workflow API."""
 
 from dataclasses import replace
+import importlib
 
 import jax
 import numpy as np
@@ -159,6 +160,8 @@ def test_resident_host_output_bounds_projection_downloads(monkeypatch, kind, com
         record(value)
         return original_contiguous(value, *args, **kwargs)
 
+    host = importlib.import_module("tomojax.recon.fbp_host")
+    monkeypatch.setattr(host, "device_free_memory_bytes", lambda: 2**30)
     target = jax.devices(execution)[0]
     with jax.default_device(target):
         expected = tj.reconstruct(scan, out=np.empty((9, 7, 11), np.float32)).volume
@@ -167,6 +170,9 @@ def test_resident_host_output_bounds_projection_downloads(monkeypatch, kind, com
         out = np.empty((9, 7, 11), np.float32)
         result = tj.reconstruct(replace(scan, projections=resident), out=out)
     assert result.volume is out
-    assert downloads and max(shape[0] for shape, _ in downloads) <= 32
+    if kind == "parallel" and execution == "gpu":
+        assert not downloads
+    else:
+        assert downloads and max(shape[0] for shape, _ in downloads) <= 32
     assert all(devices == {gpu} for _, devices in downloads)
     np.testing.assert_allclose(out, expected, rtol=5e-5, atol=3e-6)

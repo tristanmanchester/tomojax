@@ -326,6 +326,50 @@ def _fbp_accumulate_batch(
     )
 
 
+@jax.jit
+def _finite_projections(projections: jax.Array) -> jax.Array:
+    return jnp.all(jnp.isfinite(projections))
+
+
+def _fbp_from_resident(
+    poses: np.ndarray,
+    projections: jax.Array,
+    view_scale: np.ndarray,
+    params: np.ndarray,
+    spectrum: jnp.ndarray,
+    arc_length: float,
+    *,
+    grid: Grid,
+    detector: Detector,
+    backend: str,
+    batch_size: int,
+    separable: bool,
+    z_mode: str = "general",
+    check_finite: bool = False,
+) -> jnp.ndarray:
+    """Run an already-budgeted resident slab without a host round trip."""
+    if check_finite and not bool(_finite_projections(projections)):
+        raise ValueError("fbp_host: projections must be finite in FP32")
+    device = next(iter(spectrum.devices()))
+    metadata = [
+        jax.device_put(np.asarray(a, np.float32), device) for a in (poses, view_scale, params)
+    ]
+    return _run_fbp_streamed(
+        metadata[0],
+        projections,
+        metadata[1],
+        metadata[2],
+        spectrum,
+        jnp.float32(arc_length),
+        grid=grid,
+        detector=detector,
+        backend=backend,
+        batch_size=batch_size,
+        z_mode=z_mode,
+        separable=separable,
+    )
+
+
 def _fbp_from_host(
     poses: np.ndarray,
     projections: np.ndarray | jax.Array | ProjectionRows,
@@ -342,6 +386,7 @@ def _fbp_from_host(
     z_mode: str = "general",
     check_finite: bool = False,
     padding: str = "zero",
+    resident_slab: bool = False,
 ) -> jnp.ndarray:
     """Stream host projections through the device in fixed-size view batches.
 
@@ -350,6 +395,23 @@ def _fbp_from_host(
     budget. Otherwise one computation and at most two input batches are live.
     The final batch is padded with zero-weight views, reusing one compiled step.
     """
+    if resident_slab:
+        assert isinstance(projections, jax.Array)
+        return _fbp_from_resident(
+            poses,
+            projections,
+            view_scale,
+            params,
+            spectrum,
+            arc_length,
+            grid=grid,
+            detector=detector,
+            backend=backend,
+            batch_size=batch_size,
+            separable=separable,
+            z_mode=z_mode,
+            check_finite=check_finite,
+        )
     n = projections.shape[0]
     b = min(batch_size, n)
     compute_window = 1

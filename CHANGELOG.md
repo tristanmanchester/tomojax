@@ -8,6 +8,9 @@ suppresses some truncation halos without larger detector/FFT arrays or a padding
 width. This is a potentially biased prior, not recovery of missing data; the
 zero-extension default and matched forward/adjoint projectors are unchanged.
 
+Native GPU-resident FBP inputs avoid projection round trips for memory-budgeted
+axial slabs; unsupported layouts or unknown/tight memory retain bounded downloads.
+
 Host FBP reads accelerator-resident projections in bounded batches, including
 `tj.reconstruct(..., out=...)`, instead of downloading the whole input first.
 

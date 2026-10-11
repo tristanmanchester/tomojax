@@ -7,6 +7,7 @@ import math
 import operator
 from typing import Literal
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -41,7 +42,9 @@ _OUTPUT_OVERLAP_MIN_BYTES = 64 * 1024**2
 class FBPHostConfig:
     """Control slab storage and filter batches for :func:`fbp_host`.
 
-    The entire input and output remain in host storage. For built-in parallel
+    Output remains in host storage. Native FP32 GPU rows can stay resident
+    when the row gathers, output slabs and FFT workspace fit half of free memory.
+    Other inputs use bounded host transfers. For built-in parallel
     geometry, a slab is ``slices_per_batch`` axial (z) slices with only the
     detector rows they need (balanced slabs of at most 16 when ``None``). For
     laminography and other geometry, a slab is ``slices_per_batch`` x-slices;
@@ -101,6 +104,38 @@ def _slab_layout(
     return local_grid, local_detector, first, step, integer
 
 
+def _resident_axial_rows(
+    projections: np.ndarray | jax.Array,
+    start: int,
+    detector: Detector,
+    spectrum: jax.Array,
+    grid: Grid,
+    batch_size: int,
+    *,
+    native: bool,
+) -> jax.Array | None:
+    """Borrow native FP32 GPU rows only when bounded extra storage fits."""
+    if not native or not isinstance(projections, jax.Array) or projections.dtype != np.float32:
+        return None
+    devices = projections.devices()
+    if len(devices) != 1 or devices != spectrum.devices():
+        return None
+    device = next(iter(devices))
+    stop = start + detector.nv
+    if device.platform != "gpu" or start < 0 or stop > projections.shape[1]:
+        return None
+    with jax.default_device(device):
+        free = device_free_memory_bytes()
+    row_bytes = 4 * projections.shape[0] * detector.nv * projections.shape[2]
+    slab_bytes = 4 * grid.nx * grid.ny * grid.nz
+    workspace = 16 * batch_size * detector.nv * (spectrum.shape[0] + detector.nu)
+    # Account for current/previous row gathers, accumulator, overlapped output
+    # and its packed copy, plus FFT workspace; reserve half for caches/runtime.
+    if free is None or 2 * row_bytes + 3 * slab_bytes + workspace > free // 2:
+        return None
+    return projections[:, start:stop]
+
+
 def fbp_host(
     geometry: Geometry,
     grid: Grid,
@@ -110,18 +145,12 @@ def fbp_host(
     config: FBPHostConfig | None = None,
     out: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Reconstruct in bounded slabs into float32 NumPy storage.
+    """Reconstruct bounded slabs into float32 NumPy storage (see FBPHostConfig).
 
-    Accept NumPy arrays/memmaps or JAX arrays; accelerator inputs are downloaded
-    only in bounded view/row batches. ``out`` may be a writable memmap and is
-    returned unchanged. Slabs are written progressively, so a later failure
-    can leave partial output. Input storage must remain unchanged during the call.
-    This routine is not differentiable; use :func:`fbp` for device output.
-
-    Built-in parallel scans use axial slabs of the required detector rows;
-    laminography and posed scans use x-slabs. Geometry, weights and the
-    measurement-extension assumption matches ``fbp``. Logical axes are ``(x, y, z)``;
-    See :class:`FBPHostConfig` for bounded transfer/workspace policy.
+    Accept NumPy/memmap or JAX projections. Accelerator inputs use bounded
+    downloads or budgeted native resident slabs. Writable ``out`` is returned
+    unchanged, with logical axes ``(x, y, z)``. Failures may leave partial output;
+    input storage must remain unchanged. Not differentiable; use ``fbp`` for that.
     """
     require_parallel_beam(geometry, "fbp_host")
     projections = host_projection_input(projections)
@@ -174,9 +203,18 @@ def fbp_host(
             local_poses = host_poses.copy()
             if not integer:
                 local_poses[:, 2, 3] = (v - v_start) * detector.dv
+            resident = _resident_axial_rows(
+                projections,
+                v_start,
+                local_detector,
+                ramp,
+                local_grid,
+                min(views, n_views),
+                native=integer and step == 1 and backend == "pallas",
+            )
             volume = _fbp_from_host(
                 local_poses,
-                ProjectionRows(projections, v_start, rows),
+                ProjectionRows(projections, v_start, rows) if resident is None else resident,
                 view_scale,
                 params,
                 ramp,
@@ -189,6 +227,7 @@ def fbp_host(
                 separable=True,
                 check_finite=True,
                 padding=cfg.padding,
+                resident_slab=resident is not None,
             )
             count = min(depth, grid.nz - start)
             write(volume, start, count)
