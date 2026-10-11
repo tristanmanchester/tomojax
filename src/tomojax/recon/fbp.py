@@ -54,8 +54,9 @@ class FBPConfig:
     ``padding='zero'`` assumes no line integrals beyond the measured detector.
     ``'edge'`` instead continues each row's two endpoint values to infinity,
     reducing boundary halos in some truncated scans. This is a prior, not a
-    recovery of missing data, and can bias attenuation; use it only when that
-    assumption is appropriate. Supported for canonical parallel pixels and
+    recovery of missing data, and can bias interior attenuation even when
+    boundary halos improve; use it only when that assumption is appropriate.
+    Supported for canonical parallel pixels and
     separable detector-u filters (not cone beams or rolled/oblique filters).
 
     ``devices`` (one or several JAX devices) shares the views among them: each
