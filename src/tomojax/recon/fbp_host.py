@@ -43,7 +43,9 @@ class FBPHostConfig:
     slabs to about half of the free device memory, so a volume that fits is
     reconstructed in one pass.
     Projection rows are read and transferred only ``views_per_batch`` views at
-    a time, keeping at most two input batches on the device for either layout.
+    a time, keeping at most three input batches on CUDA when memory permits,
+    or two otherwise, for either layout. The memory check also budgets for an
+    extra estimated filtering workspace.
     Large CUDA axial volumes overlap output copies with the next slab, retaining at most
     two output slabs on the device, plus one staging slab for packed transfers.
     Runtime/compiler caches add memory beyond

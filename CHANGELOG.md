@@ -8,6 +8,9 @@ suppresses some truncation halos without larger detector/FFT arrays or a padding
 width. This is a potentially biased prior, not recovery of missing data; the
 zero-extension default and matched forward/adjoint projectors are unchanged.
 
+CUDA host FBP overlaps two computations when an extra batch and estimated FFT
+workspace fit the device budget; unknown/tight memory keeps the old bound.
+
 CUDA axial FBP packs slabs on the device for contiguous z-leading caller-owned
 outputs, avoiding strided host copies while keeping a bounded staging buffer.
 

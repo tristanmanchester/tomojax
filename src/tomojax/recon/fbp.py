@@ -345,13 +345,28 @@ def _fbp_from_host(
 ) -> jnp.ndarray:
     """Stream host projections through the device in fixed-size view batches.
 
-    Only the output volume, two batches and one filtering workspace occupy the
-    device. The final batch is padded with zero-weight views so every batch
-    reuses one compiled step, and the next batch is read and transferred while
-    the current one runs.
+    CUDA may queue two computations with a third prefetched input batch when
+    the additional batch and estimated filtering workspace fit the memory
+    budget. Otherwise one computation and at most two input batches are live.
+    The final batch is padded with zero-weight views, reusing one compiled step.
     """
     n = projections.shape[0]
     b = min(batch_size, n)
+    compute_window = 1
+    if backend == "pallas" and n > b:
+        from tomojax.backends import device_free_memory_bytes
+
+        free = device_free_memory_bytes()
+        per_view = (
+            math.prod(projections.shape[1:])
+            + math.prod(poses.shape[1:])
+            + math.prod(params.shape[1:])
+            + 1  # Angular scale.
+        )
+        fft_rows = detector.nv if separable else _fft_length(detector.nv)
+        workspace = 16 * b * fft_rows * (spectrum.shape[0] + detector.nu)
+        if free is not None and 4 * b * per_view + workspace <= 0.05 * free:
+            compute_window = 2
 
     def batch(start: int) -> tuple[jnp.ndarray, ...]:
         stop = min(start + b, n)
@@ -387,10 +402,10 @@ def _fbp_from_host(
         )
         if start + b < n:
             pending = batch(start + b)
-            # Prefetch overlaps this step, but do not enqueue another compute
-            # step until it finishes: asynchronous submissions can otherwise
-            # retain an unbounded number of input batches on the device.
-            accum.block_until_ready()
+            # Bound submitted work while overlapping transfers. Previous
+            # accumulators were donated, so wait only on the latest result.
+            if (start // b + 1) % compute_window == 0:
+                accum.block_until_ready()
     return accum
 
 
