@@ -151,6 +151,15 @@ def forward_pallas(
     return out.reshape(views, detector.nv, detector.nu)
 
 
+def _detector_footprint(
+    center: jax.Array, radius: jax.Array, size: int
+) -> tuple[jax.Array, jax.Array]:
+    """Bound a gather to pixels on the detector; masked loads gave zero for the rest."""
+    start = jnp.maximum(jnp.floor(center - radius).astype(jnp.int32) + 1, 0)
+    stop = jnp.minimum(jnp.ceil(center + radius).astype(jnp.int32), size)
+    return start, jnp.maximum(jnp.max(stop - start), 0)
+
+
 def _bp_kernel(
     coeff_ref: Any,
     images_ref: Any,
@@ -190,10 +199,8 @@ def _bp_kernel(
         radius = 1 if interpolation == "linear" else 2
         ru = radius * (jnp.abs(iu_b) + jnp.abs(iu_c))
         rv = radius * (jnp.abs(iv_b) + jnp.abs(iv_c))
-        start_u = jnp.floor(center_u - ru).astype(jnp.int32) + 1
-        start_v = jnp.floor(center_v - rv).astype(jnp.int32) + 1
-        count_u = jnp.max(jnp.ceil(center_u + ru).astype(jnp.int32) - start_u)
-        count_v = jnp.max(jnp.ceil(center_v + rv).astype(jnp.int32) - start_v)
+        start_u, count_u = _detector_footprint(center_u, ru, nu)
+        start_v, count_v = _detector_footprint(center_v, rv, nv)
 
         # Keep u outside the v loop: dividing a flattened dynamic loop index by
         # count_v otherwise adds integer division/modulo to every detector load.
@@ -357,8 +364,7 @@ def _bp_unit_rows_kernel(
         center_u = iu_b * (b - hb) + iu_c * (c - hc)
         radius = 1 if interpolation == "linear" else 2
         ru = radius * (jnp.abs(iu_b) + jnp.abs(iu_c))
-        start_u = jnp.floor(center_u - ru).astype(jnp.int32) + 1
-        count_u = jnp.max(jnp.ceil(center_u + ru).astype(jnp.int32) - start_u)
+        start_u, count_u = _detector_footprint(center_u, ru, nu)
 
         diagonal = (vb == 0) & (uc == 0) & (jnp.abs(vc) == 1)
         u_scale, u_shift, u_target = (

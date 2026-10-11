@@ -411,3 +411,61 @@ def test_cuda_gather_matches_reference_transpose_and_accumulates(nz, voxel, spac
     lhs = float(jnp.vdot(forward_pallas(coeff, volume, g, d), images))
     rhs = float(jnp.vdot(volume, gather_transpose_cuda(coeff, swapped, g, d)))
     assert abs(lhs - rhs) <= 1e-5 * max(abs(lhs), 1.0)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("interpolation", ["linear", "cubic"])
+@pytest.mark.parametrize("offset", [0.0, 12.0])
+def test_gather_clipped_to_small_shifted_detector_matches_physical_matrix(
+    interpolation, offset, monkeypatch
+):
+    # Fine detector sampling gives footprints wider than the measured window;
+    # shifted windows put whole voxel tiles outside the detector.
+    monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "0")
+    grid = Grid(5, 3, 4, 0.8, 1.1, 1.3, vol_origin=(-1.7, -0.9, -1.1))
+    detector = Detector(5, 3, 0.07, 0.13, center=(offset, -0.23))
+    poses = np.broadcast_to(np.eye(4, dtype=np.float32), (3, 4, 4)).copy()
+    poses[:, :3, :3] = Rotation.from_euler(
+        "xyz", [[23, 0, 0], [23, 0, 37], [23, 0, 180]], degrees=True
+    ).as_matrix()
+    expected = matrix(poses, grid, detector, interpolation)
+    coeff = plane_coefficients(jnp.asarray(poses), grid, detector)
+    rng = np.random.default_rng(73)
+    images = rng.normal(size=(3, 3, 5)).astype(np.float32)
+    initial = rng.normal(size=(5, 3, 4)).astype(np.float32)
+    actual = adjoint_pallas(
+        coeff,
+        jnp.asarray(images),
+        grid,
+        detector,
+        interpolation=interpolation,
+        accumulate=jnp.asarray(initial),
+    )
+    reference = initial.ravel() + expected.T @ images.ravel()
+    np.testing.assert_allclose(np.asarray(actual).ravel(), reference, rtol=1e-5, atol=1e-5)
+
+
+@pytest.mark.gpu
+@pytest.mark.numerical
+@pytest.mark.parametrize("pixels", [(7, 1), (1, 7), (1, 1)])
+def test_explicit_singleton_detector_keeps_physical_matrix_and_transpose(pixels, monkeypatch):
+    monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
+    grid = Grid(3, 4, 2, 0.7, 1.1, 1.4)
+    detector = Detector(*pixels, 0.4, 0.9, (0.13, -0.21))
+    u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du + detector.center[0]
+    v = (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv + detector.center[1]
+    uu, vv = (jnp.asarray(a.ravel(), jnp.float32) for a in np.meshgrid(u, v))
+    poses = np.tile(np.eye(4, dtype=np.float32), (3, 1, 1))
+    poses[:, :3, :3] = Rotation.from_euler(
+        "xyz", [[0, 0, 0], [17, -21, 38], [0, 0, 90]], degrees=True
+    ).as_matrix()
+    poses[:, :3, 3] = [0.12, -0.09, 0.17]
+    expected = matrix(poses, grid, detector)
+    coeff = plane_coefficients(jnp.asarray(poses), grid, detector, (uu, vv))
+    rng = np.random.default_rng(296)
+    volume = jnp.asarray(rng.uniform(0.1, 1, (3, 4, 2)), jnp.float32)
+    images = jnp.asarray(rng.normal(size=(3, detector.nv, detector.nu)), jnp.float32)
+    actual = forward_pallas(coeff, volume, grid, detector)
+    np.testing.assert_allclose(actual.ravel(), expected @ volume.ravel(), rtol=2e-5, atol=3e-6)
+    back = adjoint_pallas(coeff, images, grid, detector)
+    np.testing.assert_allclose(back.ravel(), expected.T @ images.ravel(), rtol=2e-5, atol=3e-6)

@@ -77,8 +77,16 @@ def plane_coefficients(
         xs, zs = (jnp.asarray(a, jnp.float32).ravel() for a in det_grid)
         nu = detector.nu
         first = jnp.stack([xs[0], jnp.float32(0), zs[0]])
-        step_u = (xs[1] - xs[0], zs[1] - zs[0]) if nu > 1 else (0.0, 0.0)
-        step_v = (xs[nu] - xs[0], zs[nu] - zs[0]) if detector.nv > 1 else (0.0, 0.0)
+        step_u = (xs[1] - xs[0], zs[1] - zs[0]) if nu > 1 else (detector.du, 0.0)
+        step_v = (xs[nu] - xs[0], zs[nu] - zs[0]) if detector.nv > 1 else (0.0, detector.dv)
+        # A singleton dimension has no measured step; complete the lattice
+        # perpendicular to the other axis so gather coordinates stay invertible.
+        if nu == 1 and detector.nv > 1:
+            ratio = detector.du / detector.dv
+            step_u = (step_v[1] * ratio, -step_v[0] * ratio)
+        elif detector.nv == 1 and nu > 1:
+            ratio = detector.dv / detector.du
+            step_v = (-step_u[1] * ratio, step_u[0] * ratio)
         u = (step_u[0] * rotation[:, 0, :] + step_u[1] * rotation[:, 2, :]) / voxel
         v = (step_v[0] * rotation[:, 0, :] + step_v[1] * rotation[:, 2, :]) / voxel
     base = jnp.sum(rotation * (first[None, :] - poses[:, :3, 3])[:, :, None], axis=1)
