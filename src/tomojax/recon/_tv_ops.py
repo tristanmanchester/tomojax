@@ -1,8 +1,12 @@
+"""Discrete isotropic-TV values, derivatives, and constrained proximal maps."""
+
 from __future__ import annotations
 
+import functools
 import math
 from typing import TYPE_CHECKING, cast
 
+import jax
 import jax.numpy as jnp
 
 if TYPE_CHECKING:
@@ -23,6 +27,15 @@ def grad3(u: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         axis=2,
     )
     return dx, dy, dz
+
+
+def gradient_norm_squared(shape: tuple[int, ...]) -> float:
+    """Exact squared norm of the Neumann forward differences on a finite grid.
+
+    An n-voxel axis contributes ``2 + 2*cos(pi/n)`` (zero for a singleton).
+    The axis normal matrices form a Kronecker sum, so their maxima add.
+    """
+    return sum(2 + 2 * math.cos(math.pi / n) for n in shape if n > 1)
 
 
 def div3(px: jnp.ndarray, py: jnp.ndarray, pz: jnp.ndarray) -> jnp.ndarray:
@@ -176,3 +189,65 @@ def prox_huber_tv_conj(
     q2 = p2 * scale
     q3 = p3 * scale
     return project_tv_duals(q1, q2, q3, radius=lam_arr)
+
+
+def tv_proximal(
+    x: jnp.ndarray,
+    lam_over_L: float | jax.Array,
+    iterations: int = 20,
+    *,
+    nonnegative: bool = False,
+    lower_bound: float | None = None,
+    upper_bound: float | None = None,
+) -> jnp.ndarray:
+    """Approximate the isotropic TV proximal by projected gradient on its dual.
+
+    Solve ``min_u 0.5 ||u - x||^2 + lam TV(u)`` inside the optional box through
+    the dual field ``p`` with ``|p| <= lam`` pointwise. The minimizing primal is
+    ``u = project_box(x + div p)``; its gradient drives every dual update.
+    Clipping only after an unconstrained solve is not the joint isotropic-TV
+    prox: clipping can change the direction of a coupled gradient vector.
+    Box projection is nonexpansive, so the step ``1 / ||grad3||^2`` remains
+    valid. Use the exact finite-grid norm, not its asymptotic 3D bound of 12.
+    Only three dual components persist between iterations.
+    """
+    lam = jnp.asarray(lam_over_L, dtype=x.dtype)
+    tau = jnp.asarray(1.0 / (gradient_norm_squared(x.shape) or 1.0), dtype=x.dtype)
+
+    project = functools.partial(
+        project_box,
+        nonnegative=nonnegative,
+        lower_bound=lower_bound,
+        upper_bound=upper_bound,
+    )
+
+    def prox_impl(lam_val: jnp.ndarray) -> jnp.ndarray:
+        def body(
+            p: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray], _: object
+        ) -> tuple[tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray], None]:
+            gx, gy, gz = grad3(project(x + div3(*p)))
+            q1, q2, q3 = p[0] + tau * gx, p[1] + tau * gy, p[2] + tau * gz
+            return project_tv_duals(q1, q2, q3, radius=lam_val), None
+
+        zeros = jnp.zeros_like(x)
+        p, _ = jax.lax.scan(body, (zeros, zeros, zeros), None, length=int(iterations))
+        return project(x + div3(*p))
+
+    return jax.lax.cond(lam > 0, prox_impl, lambda _: project(x), lam)
+
+
+def project_box(
+    x: jnp.ndarray,
+    *,
+    nonnegative: bool,
+    lower_bound: float | None,
+    upper_bound: float | None,
+) -> jnp.ndarray:
+    """Project onto optional elementwise physical constraints."""
+    if lower_bound is not None:
+        x = jnp.maximum(x, jnp.asarray(lower_bound, dtype=x.dtype))
+    if nonnegative:
+        x = jnp.maximum(x, jnp.asarray(0.0, dtype=x.dtype))
+    if upper_bound is not None:
+        x = jnp.minimum(x, jnp.asarray(upper_bound, dtype=x.dtype))
+    return x

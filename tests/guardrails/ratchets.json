@@ -27,7 +27,7 @@
     "src/tomojax/alignment/_stages/_reconstruction_stage.py": 1030,
     "src/tomojax/alignment/optimizers.py": 921,
     "src/tomojax/core/projector.py": 837,
-    "src/tomojax/recon/fista_tv.py": 954
+    "src/tomojax/recon/fista_tv.py": 914
   },
   "long_functions": {
     "src/tomojax/alignment/_model/schedules.py::resolve_alignment_schedule": 168,
@@ -64,8 +64,7 @@
     "src/tomojax/recon/cgls.py::_solve": 171,
     "src/tomojax/recon/cgls.py::_solve_streamed": 126,
     "src/tomojax/recon/cgls.py::cgls": 121,
-    "src/tomojax/recon/fista_tv.py::_prepare_fista_runtime": 118,
-    "src/tomojax/recon/fista_tv.py::_run_fista_scan": 107,
+    "src/tomojax/recon/fista_tv.py::_prepare_fista_runtime": 108,
     "src/tomojax/recon/fista_tv.py::grad_data_term": 166,
     "src/tomojax/recon/fista_tv_core.py::_projection_loss_and_explicit_grad": 138,
     "src/tomojax/recon/fista_tv_core.py::fista_tv_core_arrays": 133,

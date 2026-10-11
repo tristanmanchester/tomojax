@@ -17,6 +17,7 @@ import numpy as np
 from tomojax.core.operator_norm import estimate_normal_norm
 
 from ._projection import normal_operator_norm, projection_operators
+from ._tv_ops import gradient_norm_squared
 
 if TYPE_CHECKING:
     from tomojax.core.geometry.base import Detector, Geometry, Grid
@@ -102,10 +103,8 @@ def resolve_spdhg_step_sizes(
     det_grid: tuple[jnp.ndarray, jnp.ndarray],
     projector: tuple[str | ConeModel, str] | None = None,
 ) -> SPDHGStepSizes:
-    # The Neumann forward difference on an n-voxel axis has squared norm
-    # 2 + 2*cos(pi/n), or zero for a singleton. Axis normal matrices add.
     grad_norm = (
-        float(np.sqrt(sum(2 + 2 * np.cos(np.pi / n) for n in (grid.nx, grid.ny, grid.nz) if n > 1)))
+        float(np.sqrt(gradient_norm_squared((grid.nx, grid.ny, grid.nz))))
         if config.tv_weight > 0
         else 0.0
     )

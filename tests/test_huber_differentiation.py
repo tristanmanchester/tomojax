@@ -19,9 +19,15 @@ from tomojax.alignment._objectives.recon_layer import ReconLayer, ReconLayerConf
 # check-public-imports: allow-private
 from tomojax.core.projector import forward_project_view_T
 from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
+from tomojax.recon import FistaConfig, fista_tv
 
 # check-public-imports: allow-private
-from tomojax.recon._tv_ops import huber_tv_grad, huber_tv_value, prox_huber_tv_conj
+from tomojax.recon._tv_ops import (
+    gradient_norm_squared,
+    huber_tv_grad,
+    huber_tv_value,
+    prox_huber_tv_conj,
+)
 from tomojax.recon.fista_tv import tv_proximal
 
 
@@ -215,3 +221,50 @@ def test_regularized_reconstruction_derivatives_at_zero_match_dense_system(kind,
     grad_data, grad_init = jax.jit(jax.grad(value, argnums=(0, 1)))(data, initial)
     np.testing.assert_allclose(grad_data.ravel(), expected_data, rtol=3e-4, atol=2e-5)
     np.testing.assert_allclose(grad_init.ravel(), expected_init, rtol=3e-4, atol=2e-5)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("shape", [(1, 1, 1), (2, 1, 1), (4, 3, 1), (5, 3, 2)])
+def test_gradient_norm_squared_matches_dense_singular_value(shape):
+    edges = _edges(shape)
+    expected = np.linalg.norm(edges, 2) ** 2 if edges.size else 0
+    np.testing.assert_allclose(gradient_norm_squared(shape), expected, rtol=1e-12)
+
+
+@pytest.mark.numerical
+def test_box_constrained_tv_proximal_is_the_joint_minimizer():
+    from scipy.optimize import minimize
+
+    x = np.asarray([[-2.0, 2.0], [0.5, 1.0]], np.float32).reshape(2, 1, 2)
+    lam = 0.2
+
+    def objective(flat):
+        u = flat.reshape(x.shape)
+        steps = [np.diff(u, axis=axis, append=u.take([-1], axis=axis)) for axis in range(3)]
+        tv = np.sum(np.sqrt(sum(s**2 for s in steps)))
+        return 0.5 * np.sum((flat - x.ravel()) ** 2) + lam * tv
+
+    reference = minimize(
+        objective,
+        np.maximum(x.ravel(), 0),
+        bounds=[(0, None)] * 4,
+        method="Nelder-Mead",
+        options={"xatol": 1e-9, "fatol": 1e-14, "maxiter": 20000, "maxfev": 20000},
+    ).x
+    joint = tv_proximal(jnp.asarray(x), lam, iterations=500, nonnegative=True)
+    np.testing.assert_allclose(np.ravel(joint), reference, atol=2e-4)
+    # One FISTA step from zero with A=I and L=1 applies the same proximal map to the data.
+    grid, detector = Grid(2, 1, 2, 1.0, 1.0, 1.0), Detector(2, 2, 1.0, 1.0)
+    stepped, _ = fista_tv(
+        ParallelGeometry(grid, detector, [0.0]),
+        grid,
+        detector,
+        x[:, 0, :].T[None].copy(),
+        config=FistaConfig(
+            iterations=1, lipschitz=1, tv_weight=lam, tv_prox_iterations=500, nonnegative=True
+        ),
+    )
+    np.testing.assert_allclose(stepped, joint, atol=2e-6)
+    # Clipping the unconstrained proximal point is a different (worse) answer.
+    clipped = np.maximum(np.asarray(tv_proximal(jnp.asarray(x), lam, iterations=500)), 0)
+    assert np.max(np.abs(clipped.ravel() - reference)) > 0.01
