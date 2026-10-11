@@ -307,11 +307,13 @@ def sinogram_det_u_seed(
     half_turn = order[first]
     if len(half_turn) < 16 or relative[first][-1] < 175.0:
         return None
-    data = np.asarray(projections)
-    nv, nu = data.shape[1], data.shape[2]
+    nv, nu = projections.shape[1], projections.shape[2]
     picks = np.unique(np.linspace(0.1 * (nv - 1), 0.9 * (nv - 1), max(1, rows)).round().astype(int))
+    # Transfer only the sampled rows, not a potentially multi-GB device scan.
+    # Select them together so a device input needs just one gather and copy.
+    data = np.asarray(projections[:, picks, :])
     offsets = []
-    for row in picks:
+    for row in range(len(picks)):
         sino = np.asarray(data[half_turn, row, :], np.float32)
         if not np.isfinite(sino).all() or np.ptp(sino) <= 0:
             continue

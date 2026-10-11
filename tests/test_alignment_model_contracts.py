@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -177,6 +178,34 @@ def test_sinogram_centre_seed_uses_actual_angular_spacing(sampling):
     seed = sinogram_det_u_seed(data, angles, rows=1)
     assert seed is not None
     assert abs(seed.det_u_px - centre) <= 0.3
+
+
+def test_sinogram_centre_seed_materializes_only_the_sampled_rows():
+    angles = np.linspace(0, 180, 120, endpoint=False)
+    data, _ = _analytic_shifted_sinogram(angles, 64)
+    data = np.tile(data, (1, 7, 1))
+    expected = sinogram_det_u_seed(data, angles)
+
+    class RowReadable:
+        shape = data.shape
+
+        def __init__(self):
+            self.rows = []
+
+        def __array__(self, *args, **kwargs):
+            raise AssertionError("centre finding must not materialize the complete scan")
+
+        def __getitem__(self, index):
+            views, rows, cols = index
+            self.rows.extend(rows)
+            return data[views, rows, cols]
+
+    source = RowReadable()
+    actual = sinogram_det_u_seed(source, angles)
+    assert actual == expected
+    assert len(source.rows) == 3
+    assert len(set(source.rows)) == 3
+    assert sinogram_det_u_seed(jnp.asarray(data), angles) == expected
 
 
 @pytest.mark.parametrize("columns", [31, 32, 33, 64])
