@@ -111,6 +111,40 @@ def test_a_detector_that_moves_relative_to_the_source_is_refused():
         tj.Scan.from_astra(np.zeros((4, 8, 4), np.float32), proj_geom, vol_geom | {"option": {}})
 
 
+def _circle_vectors(du, detector=30.0, source=50.0, wobble=0.0) -> np.ndarray:
+    angles = np.linspace(0.0, 2 * np.pi, 20, endpoint=False)
+    s, c = np.sin(angles), np.cos(angles)
+    zero = np.zeros_like(angles)
+    columns = [s * source, -c * source, wobble + zero, -s * detector, c * detector, wobble + zero]
+    return np.stack([*columns, c * du, s * du, zero, zero, zero, zero + du], axis=1)
+
+
+def _astra_scan(vectors: np.ndarray) -> tj.Scan:
+    proj_geom = {
+        "type": "cone_vec",
+        "DetectorRowCount": 8,
+        "DetectorColCount": 8,
+        "Vectors": vectors,
+    }
+    window = {f"WindowMin{a}": -4.0 for a in "XYZ"} | {f"WindowMax{a}": 4.0 for a in "XYZ"}
+    vol_geom = {"GridColCount": 8, "GridRowCount": 8, "GridSliceCount": 8, "option": window}
+    return tj.Scan.from_astra(np.zeros((8, 20, 8), np.float32), proj_geom, vol_geom)
+
+
+def test_astra_segments_share_one_pixel_pitch_despite_roundoff():
+    # The pixel vectors' norms differ in the last bits between the two arrangements.
+    second = np.arange(20) >= 10
+    scan = _astra_scan(_circle_vectors(0.0748, np.where(second, 40.0, 30.0), wobble=7.0 * second))
+    assert isinstance(scan.geometry, tj.geometry.ConeSegments)
+
+
+def test_astra_wobble_that_is_magnified_beyond_a_hundredth_of_a_pixel_is_kept():
+    # 5e-5 is below a hundredth of the 0.02 pitch but 0.1 pixel at 40x magnification.
+    wobble = 5e-5 * np.where(np.arange(20) % 2, 1, -1)
+    assert _astra_scan(_circle_vectors(0.02, 78.0, 2.0, wobble)).poses is not None
+    assert _astra_scan(_circle_vectors(0.02, 78.0, 2.0)).poses is None
+
+
 @pytest.mark.gpu
 @pytest.mark.parametrize("mirrored", [False, True])
 def test_from_astra_projects_like_astra(mirrored):

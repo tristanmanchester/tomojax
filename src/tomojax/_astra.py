@@ -228,6 +228,14 @@ def from_astra(
         )
         for run in runs
     ]
+    # Pixel-vector norms differ between runs by roundoff, but segments share one pitch.
+    pitches = arrangement[:, 3:5]
+    shared = pitches.mean(axis=0)
+    if np.all(np.abs(pitches - shared) <= 8 * np.finfo(np.float32).eps * shared):
+        detector = {"du": float(shared[0]), "dv": float(shared[1])}
+        segments = [
+            (replace(g, detector=replace(g.detector, **detector)), poses) for g, poses in segments
+        ]
     return data, segments
 
 

@@ -307,15 +307,16 @@ def check_shape(what: str, shape: tuple[int, ...], geometry: ScanGeometry) -> No
         )
 
 
-def _with_corrections(geometry: ScanGeometry, poses: np.ndarray) -> ScanGeometry:
+def _with_corrections(geometry: ConeGeometry, poses: np.ndarray) -> ScanGeometry:
     """``geometry`` with per-view pose corrections, unless they move nothing.
 
-    Corrections moving no voxel a hundredth of a pixel are rounding noise.
+    Corrections moving no voxel a hundredth of a detector pixel are rounding noise.
     """
-    grid, detector = geometry.grid, geometry.detector
+    grid, detector, beam = geometry.grid, geometry.detector, geometry.beam
     reach = float(np.linalg.norm([grid.nx * grid.vx, grid.ny * grid.vy, grid.nz * grid.vz]))
     largest = np.max(np.abs(poses[:, :3])) * reach / 2 + np.max(np.abs(poses[:, 3:]))
-    if largest <= 0.01 * detector.du:
+    magnification = beam.source_to_detector / beam.source_to_axis
+    if largest * magnification <= 0.01 * min(detector.du, detector.dv):
         return geometry
     from tomojax._data.geometry_meta import AugmentedGeometry
 
