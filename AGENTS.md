@@ -13,6 +13,10 @@ real scans while `tj.load`, `tj.reconstruct` and `tj.align` just work.
 - Breaking changes are fine before 1.0; no compatibility shims.
 - A faster or lower-residual result only counts once the reconstruction or pose
   error has been checked too.
+- Real data is within a few orders of magnitude of 1 in sensible units; do not
+  engineer for values like 1e-30 or 1e30.
+- Invalid input that already gives an obviously broken result (all NaN, an
+  exception) does not need a new guard.
 
 ## Checks
 
