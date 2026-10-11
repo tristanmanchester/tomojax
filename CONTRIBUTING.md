@@ -125,17 +125,17 @@ JSON provenance. Record missing provenance for historical assets in
 | `tests/` | Public behavior, numerical, and accelerator regressions |
 | `examples/` | Small runnable public API examples |
 | `tools/` | Development and package checks |
-| `docs/` | User guides and dated measurement reports |
+| `docs/` | User guides and the current measurements |
 | `bench/` | Comparison drivers; not part of the installed API |
-| `bench/reference/` | Retained raw results and measured source snapshots |
 | `images/` | Documented presentation assets |
 | `reports/`, `research_notes/` | Research material and literature notes |
 | `.artifacts/` | Ignored local runs, logs, and generated working files |
 
-Keep failed experiments and their source identity when they support a report.
-Store bulk raw JSON as lossless gzip archives with hashes in the
-[evidence catalog](bench/reference/README.md); keep summaries readable. Expanded
-experiment logs should not dominate the source change list.
+Measurement records stay out of the repository. The benchmark scripts write
+them under `bench/results/`, which Git ignores; attach the records a reviewer
+needs to the pull request or issue instead. [Measurements](docs/measurements.md)
+gives each headline result with the command, commit and date needed to rerun
+it, so a result is reproducible without its raw files in the tree.
 Do not combine measurements from different timing protocols or silently replace
 historical data. New performance claims should account for accepted-result
 quality, fresh-process and warm time, and process GPU memory across the declared

@@ -22,8 +22,8 @@ process. GPU memory is the process's peak, sampled every 10 ms; sampling can
 miss short peaks, and it includes runtime and allocator overhead.
 
 Commands, adapters and physical conventions are in the
-[benchmark guide](../bench/README.md); raw records, failed attempts included,
-are in [`bench/reference`](../bench/reference).
+[benchmark guide](../bench/README.md). Raw records are kept out of the
+repository; each result names the command, commit and date to rerun it.
 
 ## Reconstruction against ASTRA
 
@@ -37,7 +37,7 @@ workflow by cold time. Cold time runs through the first accepted budget,
 including the failed lower budgets; warm time is the median of three repeats
 of that budget. ASTRA was measured in the same session. TIGRE was not rerun,
 because it was the fastest external method in no cell of the earlier
-matrices. Raw records: `bench/reference/system-matrix-v4-*.json.gz`.
+matrices.
 
 | Speedup (ASTRA time / TomoJAX time), 26 paired cells | Cold | Warm |
 |---|---:|---:|
@@ -107,8 +107,7 @@ Measured 2026-10-07 on commit `5ea7c22` with
 (256³, 2×2×2 sub-samples) on a circular 360-view scan with a 384² detector at
 1.5× magnification. Forward projections are compared with exact analytic line
 integrals and FDK volumes with the phantom. Times are the best of three warm
-calls; ASTRA and TIGRE take host arrays
-([record](../bench/reference/cone-256-rtx4070-laptop.json.gz)).
+calls; ASTRA and TIGRE take host arrays.
 
 | Operation | TomoJAX | ASTRA 2.5 | TIGRE |
 |---|---:|---:|---:|
