@@ -12,6 +12,11 @@ zero-extension default and matched forward/adjoint projectors are unchanged.
 volumes on the host, as it already did for cone FDK, instead of allocating
 the whole volume on the accelerator. Explicit devices share spatial regions.
 
+Lazy HDF5 spatial-window reads no longer cache single-view chunks, avoiding
+unnecessary whole-frame reads for cropped previews. Uncropped and multi-view
+chunks keep the existing cache; HDF5 still handles data conversion, filters,
+fill values and file drivers.
+
 HDF5 flat and dark frames now remain lazy alongside sample counts: detector
 crops read only their calibration window, and correction averages calibrations
 in bounded host batches with FP64 accumulation. Use `np.asarray(frames.flats)`
