@@ -18,7 +18,7 @@ from tomojax.forward import (
 
 # check-public-imports: allow-private
 from tomojax.forward._projector import core_projection_geometry_from_input
-from tomojax.geometry import Detector, Grid
+from tomojax.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.recon import fista_tv_core
 
 # check-public-imports: allow-private
@@ -26,6 +26,7 @@ from tomojax.recon.fista_tv_core import (
     FistaCoreConfig,
     _fixed_geometry_is_available,
     effective_fista_core_backend,
+    fista_objective_arrays,
 )
 
 
@@ -268,3 +269,58 @@ def test_joseph_core_gradient_is_the_matched_plane_transpose(integrator, interpo
     )
     np.testing.assert_allclose(grad, expected, rtol=2e-5, atol=2e-6)
     np.testing.assert_allclose(loss, 0.5 * float(jnp.vdot(residual, residual)), rtol=1e-5)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("geometry_input", ["poses", "detector"])
+def test_sampled_objective_uses_the_requested_step_when_geometry_is_traced(geometry_input):
+    scale = 1.7
+    grid, detector = Grid(2, 2, 1, 0.8, 1.1, 1.3), Detector(5, 3, 0.6, 0.8)
+    geometry = LaminographyGeometry(grid, detector, [13, 71, 127], tilt_deg=17)
+    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(3)], jnp.float32)
+    coordinates = get_detector_grid_device(detector)
+    volume = jnp.asarray([0.2, 1.0, 0.7, 0.4]).reshape(2, 2, 1)
+    data = jnp.full((3, 3, 5), 0.1)
+    weights = jnp.asarray([0.4, 0.0, 1.3])
+    cfg = FistaCoreConfig(
+        tv_weight=0,
+        forward_projector="pallas",
+        backprojector="pallas",
+        pallas_step_size_scale=scale,
+        views_per_batch=2,
+    )
+
+    def geometry_arrays(parameter):
+        if geometry_input == "poses":
+            return poses.at[:, 0, 3].add(parameter), coordinates
+        return poses, (coordinates[0] + parameter, coordinates[1])
+
+    def objective(parameter, reference):
+        dynamic_poses, dynamic_coordinates = geometry_arrays(parameter)
+        if reference:
+            pred = jax.vmap(
+                lambda pose: forward_project_view_T(
+                    pose,
+                    grid,
+                    detector,
+                    volume,
+                    step_size=grid.vy * scale,
+                    det_grid=dynamic_coordinates,
+                )
+            )(dynamic_poses)
+            return 0.5 * jnp.sum((pred - data) ** 2 * weights[:, None, None])
+        return fista_objective_arrays(
+            T_all=dynamic_poses,
+            grid=grid,
+            detector=detector,
+            volume=volume,
+            det_grid=dynamic_coordinates,
+            projections=data,
+            cfg=cfg,
+            view_weights=weights,
+        )
+
+    parameter = jnp.float32(0.11)
+    expected = jax.jit(jax.value_and_grad(lambda p: objective(p, True)))(parameter)
+    actual = jax.jit(jax.value_and_grad(lambda p: objective(p, False)))(parameter)
+    np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=2e-6)

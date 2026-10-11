@@ -24,6 +24,8 @@ from tomojax.recon.fista_tv_core import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from tomojax.alignment._model.state import AlignmentState
     from tomojax.core.geometry import Detector, Geometry, Grid
 
@@ -76,7 +78,12 @@ class PoseAdjustedGeometry:
 
 @dataclass(frozen=True, slots=True)
 class ReconLayerConfig:
-    """Configuration for differentiable preview reconstruction."""
+    """Configuration for differentiable preview reconstruction.
+
+    Implicit differentiation uses a damped Hessian at the returned iterate,
+    restricted to free voxels when nonnegativity is enabled. Pinned voxels
+    have zero local derivative; this does not certify primal convergence.
+    """
 
     iterations: int = 5
     tv_weight: float = 0.005
@@ -187,6 +194,11 @@ class ReconLayer:
         )
 
 
+type _ImplicitOperands = tuple[
+    jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray | None
+]
+
+
 def _implicit_reconstruct_arrays(
     *,
     x0: jnp.ndarray,
@@ -216,30 +228,17 @@ def _implicit_reconstruct_arrays(
     det_u, det_v = det_grid
 
     @jax.custom_vjp
-    def attach_derivative(
-        x: jnp.ndarray,
-        T: jnp.ndarray,
-        u: jnp.ndarray,
-        v: jnp.ndarray,
-        y: jnp.ndarray,
-    ) -> jnp.ndarray:
-        del T, u, v, y
-        return x
+    def attach_derivative(operands: _ImplicitOperands) -> jnp.ndarray:
+        return operands[0]
 
-    def solve_fwd(
-        x: jnp.ndarray,
-        T: jnp.ndarray,
-        u: jnp.ndarray,
-        v: jnp.ndarray,
-        y: jnp.ndarray,
-    ) -> tuple[jnp.ndarray, tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]]:
-        return x, (x, T, u, v, y)
+    def solve_fwd(operands: _ImplicitOperands) -> tuple[jnp.ndarray, _ImplicitOperands]:
+        return operands[0], operands
 
     def solve_bwd(
-        res: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray],
+        res: _ImplicitOperands,
         x_bar: jnp.ndarray,
-    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-        x_star, T, u, v, y = res
+    ) -> tuple[_ImplicitOperands]:
+        x_star, T, u, v, y, weights = res
 
         def objective_x(
             x: jnp.ndarray,
@@ -247,6 +246,7 @@ def _implicit_reconstruct_arrays(
             u_arg: jnp.ndarray,
             v_arg: jnp.ndarray,
             y_arg: jnp.ndarray,
+            weights_arg: jnp.ndarray | None,
         ) -> jnp.ndarray:
             return fista_objective_arrays(
                 T_all=T_arg,
@@ -256,26 +256,19 @@ def _implicit_reconstruct_arrays(
                 det_grid=(u_arg, v_arg),
                 projections=y_arg,
                 cfg=cfg,
-                view_weights=view_weights,
+                view_weights=weights_arg,
             )
 
         grad_x = jax.grad(objective_x, argnums=0)
 
-        def hvp(direction: jnp.ndarray) -> jnp.ndarray:
-            return (
-                jax.jvp(
-                    lambda x: grad_x(x, T, u, v, y),
-                    (x_star,),
-                    (direction,),
-                )[1]
-                + jnp.asarray(damping, dtype=jnp.float32) * direction
-            )
-
-        adjoint, _ = jsp.sparse.linalg.cg(
-            hvp,
+        adjoint = _implicit_adjoint(
+            lambda x: grad_x(x, T, u, v, y, weights),
+            x_star,
             x_bar,
-            tol=float(cg_tol),
-            maxiter=int(cg_iters),
+            cfg=cfg,
+            damping=damping,
+            cg_iters=cg_iters,
+            cg_tol=cg_tol,
         )
 
         def stationarity(
@@ -283,18 +276,60 @@ def _implicit_reconstruct_arrays(
             u_arg: jnp.ndarray,
             v_arg: jnp.ndarray,
             y_arg: jnp.ndarray,
+            weights_arg: jnp.ndarray | None,
         ) -> jnp.ndarray:
-            return grad_x(x_star, T_arg, u_arg, v_arg, y_arg)
+            return grad_x(x_star, T_arg, u_arg, v_arg, y_arg, weights_arg)
 
-        _, pullback = jax.vjp(stationarity, T, u, v, y)
-        grad_T, grad_u, grad_v, grad_y = pullback(adjoint)
+        _, pullback = jax.vjp(stationarity, T, u, v, y, weights)
+        grad_T, grad_u, grad_v, grad_y, grad_weights = pullback(adjoint)
         return (
-            jnp.zeros_like(x_star),
-            -grad_T,
-            -grad_u,
-            -grad_v,
-            -grad_y,
+            (
+                jnp.zeros_like(x_star),
+                -grad_T,
+                -grad_u,
+                -grad_v,
+                -grad_y,
+                None if grad_weights is None else -grad_weights,
+            ),
         )
 
     attach_derivative.defvjp(solve_fwd, solve_bwd)
-    return replace(result, x=attach_derivative(result.x, T_all, det_u, det_v, projections))
+    return replace(
+        result, x=attach_derivative((result.x, T_all, det_u, det_v, projections, view_weights))
+    )
+
+
+def _implicit_adjoint(
+    gradient: Callable[[jnp.ndarray], jnp.ndarray],
+    x: jnp.ndarray,
+    cotangent: jnp.ndarray,
+    *,
+    cfg: FistaCoreConfig,
+    damping: float,
+    cg_iters: int,
+    cg_tol: float,
+) -> jnp.ndarray:
+    """Solve the damped Hessian only on the current free-variable subspace.
+
+    At a stable active set, bound-pinned voxels have zero derivative. Identity
+    rows on those coordinates keep CG nonsingular without coupling them back
+    into the free Hessian. At a bound transition we select the pinned derivative.
+    """
+    lower = cfg.lower_bound
+    if cfg.nonnegative:
+        lower = 0.0 if lower is None else max(0.0, lower)
+    free = jnp.ones_like(x, dtype=jnp.bool_)
+    if lower is not None:
+        free = free & (x > lower)
+    if cfg.upper_bound is not None:
+        free = free & (x < cfg.upper_bound)
+
+    def hvp(direction: jnp.ndarray) -> jnp.ndarray:
+        tangent = jnp.where(free, direction, 0.0)
+        product = jax.jvp(gradient, (x,), (tangent,))[1] + damping * tangent
+        return jnp.where(free, product, direction)
+
+    adjoint, _ = jsp.sparse.linalg.cg(
+        hvp, jnp.where(free, cotangent, 0.0), tol=float(cg_tol), maxiter=int(cg_iters)
+    )
+    return jnp.where(free, adjoint, 0.0)

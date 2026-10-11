@@ -194,3 +194,29 @@ def test_public_fista_partial_view_batches_run_under_global_x64(grad_mode):
     assert actual.dtype == np.float32
     np.testing.assert_allclose(actual, 3.0, rtol=3e-6)
     np.testing.assert_allclose(info["lipschitz"], 5.0, rtol=3e-6)
+
+
+@pytest.mark.numerical
+def test_zero_view_weight_has_finite_smooth_parameter_derivatives():
+    grid, detector = Grid(1, 1, 1, 1.0, 1.0, 1.0), Detector(1, 1, 1.0, 1.0)
+    poses = jnp.broadcast_to(jnp.eye(4, dtype=jnp.float32), (2, 4, 4))
+    cfg = FistaCoreConfig(tv_weight=0, ray_integrator="joseph")
+
+    def objective(parameter):
+        return fista_objective_arrays(
+            T_all=poses,
+            grid=grid,
+            detector=detector,
+            volume=jnp.full((1, 1, 1), 0.4),
+            det_grid=None,
+            projections=jnp.asarray([1.0, 3.0]).reshape(2, 1, 1),
+            cfg=cfg,
+            view_weights=jnp.asarray([parameter**2, 1.0]),
+        )
+
+    # The exact loss is .5 * (.6**2 * parameter**2 + 2.6**2), smooth at parameter 0.
+    value, gradient = jax.value_and_grad(objective)(jnp.float32(0))
+    curvature = jax.grad(jax.grad(objective))(jnp.float32(0))
+    np.testing.assert_allclose(value, 0.5 * 2.6**2, rtol=2e-6)
+    np.testing.assert_allclose(gradient, 0.0, atol=0)
+    np.testing.assert_allclose(curvature, 0.6**2, rtol=2e-6)

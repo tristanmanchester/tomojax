@@ -91,6 +91,7 @@ def reconstruct_train_fold_nograd(
                 tv_prox_iterations=int(cfg.tv_prox_iterations),
                 lipschitz=cfg.lipschitz,
                 nonnegative=bool(cfg.nonnegative),
+                ray_integrator=cfg.ray_integrator,
             ),
         )
         return x, _fold_metadata(valid_idx, cfg, info)

@@ -20,6 +20,27 @@ def unit(vector: jax.Array) -> tuple[jax.Array, jax.Array]:
     return vector / jnp.where(length == 0, 1.0, length), length
 
 
+def _absolute_cubic_normal(
+    poses: jax.Array,
+    volume: jax.Array,
+    valid: jax.Array,
+    grid: Grid,
+    detector: Detector,
+    det_grid: tuple[jax.Array, jax.Array] | None,
+) -> jax.Array:
+    """Apply |A|.T |A|, which bounds the signed cubic normal componentwise."""
+    from .joseph import adjoint_jax, forward_jax, plane_coefficients
+
+    coefficients = plane_coefficients(poses, grid, detector, det_grid)
+    projected = forward_jax(
+        coefficients, volume, grid, detector, interpolation="cubic", absolute_weights=True
+    )
+    return adjoint_jax(
+        coefficients, projected * valid, grid, detector,
+        interpolation="cubic", absolute_weights=True,
+    )  # fmt: skip
+
+
 @partial(
     jax.jit,
     static_argnames=(
@@ -57,7 +78,8 @@ def estimate_normal_norm(
 
     With ``upper_bound=True``, use the maximum row sum of the nonnegative
     normal operator instead of power iteration. One forward/adjoint pair gives
-    an upper bound for the nonnegative trilinear ray model. Absolute support
+    an upper bound for nonnegative ray models. Cubic Joseph interpolation
+    instead uses ``|A|.T |A|`` to bound its negative lobes. Absolute support
     weights also bound signed masks. This mode ignores ``initial`` values and
     ``iterations``; its physical units are squared length, just like ``A.T A``.
     """
@@ -75,6 +97,11 @@ def estimate_normal_norm(
             valid = jnp.minimum(b, n - start)
             shifted = jnp.maximum(0, start - (b - valid))
             batch = jax.lax.dynamic_slice_in_dim(poses, shifted, b)
+            mask = (jnp.arange(b) >= b - valid)[:, None, None]
+            if upper_bound and ray_integrator == "joseph_cubic":
+                return acc + _absolute_cubic_normal(
+                    batch, masked, mask, grid, detector, det_grid
+                ), None
             projected = jax.vmap(
                 lambda t: forward_project_view_T(
                     t,
@@ -88,7 +115,6 @@ def estimate_normal_norm(
                     gather_dtype=gather_dtype,
                 )
             )(batch)
-            mask = (jnp.arange(b) >= b - valid)[:, None, None]
             adjoint = sum_backproject_views_T(
                 batch,
                 grid,

@@ -216,7 +216,10 @@ def test_shared_power_method_matches_dense_operator_with_tail_and_support():
 
 @pytest.mark.numerical
 @pytest.mark.parametrize("tilt", [False, True])
-def test_positive_normal_bound_dominates_dense_spectrum_for_irregular_geometry(tilt):
+@pytest.mark.parametrize("ray_integrator", ["sampled", "joseph_cubic"])
+def test_positive_normal_bound_dominates_dense_spectrum_for_irregular_geometry(
+    tilt, ray_integrator
+):
     grid = Grid(2, 3, 2, 0.8, 1.1, 1.3)
     detector = Detector(5, 3, 0.6, 1.2, (0.17, 0.23))
     angles = np.array([13.0, 68.0, 142.0])
@@ -230,7 +233,9 @@ def test_positive_normal_bound_dominates_dense_spectrum_for_irregular_geometry(t
 
     def project(flat):
         return jax.vmap(
-            lambda t: forward_project_view_T(t, grid, detector, flat.reshape((2, 3, 2)) * support)
+            lambda t: forward_project_view_T(
+                t, grid, detector, flat.reshape((2, 3, 2)) * support, ray_integrator=ray_integrator
+            )
         )(poses).ravel()
 
     matrix = np.asarray(jax.jacfwd(project)(jnp.zeros(12))).astype(np.float64)
@@ -249,6 +254,7 @@ def test_positive_normal_bound_dominates_dense_spectrum_for_irregular_geometry(t
             checkpoint=True,
             gather_dtype="fp32",
             upper_bound=True,
+            ray_integrator=ray_integrator,
         )
     )
     np.testing.assert_allclose(actual, expected, rtol=3e-5)

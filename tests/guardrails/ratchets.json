@@ -32,7 +32,6 @@
   "long_functions": {
     "src/tomojax/alignment/_model/schedules.py::resolve_alignment_schedule": 168,
     "src/tomojax/alignment/_objectives/fixed_volume.py::project_and_score_stack": 164,
-    "src/tomojax/alignment/_objectives/recon_layer.py::_implicit_reconstruct_arrays": 111,
     "src/tomojax/alignment/_pose/_coupled_program.py::_build_program": 349,
     "src/tomojax/alignment/_pose/_pose_loop.py::align": 202,
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::_run_reconstruction_step": 166,
@@ -69,7 +68,7 @@
     "src/tomojax/recon/fista_tv.py::_prepare_fista_runtime": 118,
     "src/tomojax/recon/fista_tv.py::_run_fista_scan": 107,
     "src/tomojax/recon/fista_tv.py::grad_data_term": 166,
-    "src/tomojax/recon/fista_tv_core.py::_projection_loss_and_explicit_grad": 165,
+    "src/tomojax/recon/fista_tv_core.py::_projection_loss_and_explicit_grad": 138,
     "src/tomojax/recon/fista_tv_core.py::fista_tv_core_arrays": 133,
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 115
   },
