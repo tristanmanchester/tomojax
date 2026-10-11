@@ -284,7 +284,7 @@ def _fix_gauge(
         base = BaseGeometryArrays.from_geometry(geometry, detector)
         nominal = np.asarray(pose_stack_for_setup(base, setup_state.setup))
     volume, params, gauge = least_motion_estimate(
-        np.asarray(x_final),
+        x_final,
         np.asarray(state.pose_params),
         nominal=nominal,
         grid=grid,

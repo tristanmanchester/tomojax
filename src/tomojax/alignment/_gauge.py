@@ -19,16 +19,18 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
-from scipy import ndimage
 from scipy.spatial.transform import Rotation
 
 from tomojax.core.geometry.base import grid_volume_origin
 from tomojax.core.geometry.transforms import pose_angles, pose_rotations
+from tomojax.core.resampling import affine_resample
 
 from ._model.dofs import DOF_INDEX, DOF_NAMES
 
 if TYPE_CHECKING:
     from collections.abc import Collection
+
+    import jax
 
     from tomojax.core.geometry import Grid
 
@@ -164,7 +166,7 @@ def apply_to_poses(
     return out.astype(np.float32)
 
 
-def apply_to_volume(volume: np.ndarray, grid: Grid, gauge: Gauge) -> np.ndarray:
+def apply_to_volume(volume: np.ndarray | jax.Array, grid: Grid, gauge: Gauge) -> np.ndarray:
     """The volume that, with the moved poses, predicts the same data.
 
     Poses ``P_i G`` image the object ``V'(o) = V(G o)``; this resamples ``V``
@@ -177,10 +179,7 @@ def apply_to_volume(volume: np.ndarray, grid: Grid, gauge: Gauge) -> np.ndarray:
     matrix = np.eye(4)
     matrix[:3, :3] = gauge.rotation * spacing[None, :] / spacing[:, None]
     matrix[:3, 3] = (gauge.rotation @ origin + gauge.shift - origin) / spacing
-    moved = ndimage.affine_transform(
-        np.asarray(volume, np.float32), matrix, order=1, mode="grid-constant"
-    )
-    return moved.astype(np.float32)
+    return affine_resample(volume, matrix)
 
 
 # Moving the volume a voxel or more may push this fraction of the object past the
@@ -214,7 +213,7 @@ def _at_least_a_voxel(gauge: Gauge, grid: Grid) -> Gauge:
 
 
 def least_motion_estimate(
-    volume: np.ndarray,
+    volume: np.ndarray | jax.Array,
     params: np.ndarray,
     *,
     nominal: np.ndarray,
