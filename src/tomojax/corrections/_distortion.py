@@ -49,20 +49,29 @@ class RadialDistortion(Step):
         object.__setattr__(self, "coefficients", coefficients)
 
     def workspace_pixels(self, rows: int, cols: int) -> int:
-        """Reserve the resampled image; bilinear neighbours fuse into its gather."""
-        return rows * cols
+        """Reserve double-precision coordinate workspace, with no work for identity."""
+        return (
+            0 if self.coefficients[0] == 1 and not any(self.coefficients[1:]) else 2 * rows * cols
+        )
 
     def apply(self, batch: jax.Array) -> jax.Array:
+        if self.coefficients[0] == 1 and not any(self.coefficients[1:]):
+            return batch
         rows, cols = batch.shape[-2:]
-        # Compute the calibration in host float64 even when JAX x64 is disabled;
-        # a full detector's large pixel coordinates amplify polynomial roundoff.
-        u, v = np.meshgrid(np.arange(cols) - self.center[0], np.arange(rows) - self.center[1])
-        radius = np.hypot(u, v)
-        scale = np.polynomial.polynomial.polyval(radius, self.coefficients)
-        coordinates = (
-            jnp.asarray(self.center[1] + scale * v, jnp.float32),
-            jnp.asarray(self.center[0] + scale * u, jnp.float32),
-        )
+        # Host maps make XLA bake every stencil index/weight into the executable.
+        # Compute only the geometry in FP64, even with the caller's x64 disabled;
+        # FP32 loses subpixel calibration accuracy on large/cropped detectors.
+        with jax.enable_x64(True):
+            u = jnp.arange(cols, dtype=jnp.float64)[None, :] - self.center[0]
+            v = jnp.arange(rows, dtype=jnp.float64)[:, None] - self.center[1]
+            radius = jnp.sqrt(u * u + v * v)
+            scale = jnp.zeros_like(radius)
+            for coefficient in reversed(self.coefficients):
+                scale = scale * radius + coefficient
+            coordinates = (
+                (self.center[1] + scale * v).astype(jnp.float32),
+                (self.center[0] + scale * u).astype(jnp.float32),
+            )
         return jax.vmap(lambda image: map_coordinates(image, coordinates, order=1, mode="nearest"))(
             batch
         )

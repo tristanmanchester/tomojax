@@ -38,11 +38,23 @@ def _reference(images: np.ndarray, step: RadialDistortion) -> np.ndarray:
     return np.stack([map_coordinates(image, source, order=1, mode="nearest") for image in images])
 
 
-def test_identity_keeps_every_view_and_pixel() -> None:
+@pytest.mark.parametrize("coefficients", [(1.0,), (1.0, 0.0, 0.0)])
+def test_identity_keeps_every_view_and_pixel(coefficients: tuple[float, ...]) -> None:
     data = np.random.default_rng(5).uniform(0.1, 1, (3, 7, 11)).astype(np.float32)
-    step = RadialDistortion(center=(-2.3, 0.7), coefficients=(1.0,))
+    step = RadialDistortion(center=(-2.3, 0.7), coefficients=coefficients)
     actual = jax.jit(step.apply)(jnp.asarray(data))
     np.testing.assert_array_equal(actual, data)
+    assert step.workspace_pixels(7, 11) == 0
+
+
+def test_large_pixel_coordinates_keep_subpixel_calibration_without_global_x64() -> None:
+    data = np.random.default_rng(4).uniform(0.1, 1, (2, 64, 1024)).astype(np.float32)
+    step = RadialDistortion(center=(900.25, 720.75), coefficients=(1.001, -3e-6, 2e-8, -1e-11))
+    with jax.enable_x64(False):
+        actual = jax.jit(step.apply)(jnp.asarray(data))
+        assert not jax.config.x64_enabled
+    assert actual.dtype == jnp.float32
+    np.testing.assert_allclose(actual, _reference(data, step), rtol=2e-6, atol=2e-7)
 
 
 @pytest.mark.parametrize("center", [(3.2, 4.7), (-5.3, 9.4)])
