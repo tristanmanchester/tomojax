@@ -8,7 +8,16 @@ import numpy as np
 import pytest
 
 # check-public-imports: allow-private
+from tomojax.alignment._pose import _coupled_objective
+
+# check-public-imports: allow-private
 from tomojax.alignment._pose._coupled_linear import solve_coupled_normal
+
+# check-public-imports: allow-private
+from tomojax.alignment._pose._pose_context import _pose_objective_context
+
+# check-public-imports: allow-private
+from tomojax.alignment._pose._pose_loop import _build_alignment_runtime_context
 
 
 @pytest.fixture(params=[None, 2], ids=["one_batch", "batches_of_two"])
@@ -48,6 +57,59 @@ def test_joint_coupling_selects_the_solver_for_every_pose_stage():
 
 @pytest.mark.numerical
 @pytest.mark.usefixtures("views_per_batch")
+@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+def test_fp32_cone_joint_update_is_unchanged_with_x64_enabled(backend):
+    import tomojax as tj
+    from tomojax.alignment import AlignConfig
+
+    grid = tj.Grid(3, 4, 3, 0.7, 0.9, 1.1)
+    detector = tj.Detector(5, 4, 0.6, 0.8)
+    geometry = tj.ConeGeometry(grid, detector, [0, 60, 120], tj.ConeBeam(20, 35), tilt_deg=13)
+    truth = jnp.asarray(np.random.default_rng(3).uniform(0.2, 1, (3, 4, 3)), jnp.float32)
+    projections = jnp.asarray(tj.project(geometry, truth), jnp.float32)
+    p = jnp.zeros((3, 6), jnp.float32)
+    cfg = AlignConfig(
+        gn_coupling="joint",
+        gn_joint_solver="pose_eliminated",
+        gn_joint_iterations=3,
+        gn_damping=0.2,
+        gn_volume_damping=0.2,
+        gather_dtype="fp32",
+        projector_backend=backend,
+        w_rot=0.03,
+        w_trans=0.02,
+    )
+    common = dict(
+        grid=grid,
+        detector=detector,
+        projections=projections,
+        cfg=cfg,
+        n_views=3,
+        active_mask=jnp.ones(6, jnp.float32),
+    )
+
+    def step():
+        runtime = _build_alignment_runtime_context(
+            geometry=geometry, det_grid_override=None, **common
+        )
+        ctx = _pose_objective_context(runtime=runtime, **common)
+        return _coupled_objective.build_coupled_objective(ctx).update(p, 0.9 * truth)
+
+    with jax.enable_x64(False):
+        expected = step()
+    # A default-typed count mask used to promote the pose block to FP64,
+    # making the batched update fail despite explicitly FP32 inputs.
+    with jax.enable_x64():
+        actual = step()
+    assert actual.finite and expected.finite
+    for a, e in zip(actual.increment, expected.increment, strict=True):
+        assert a.dtype == e.dtype == jnp.float32
+        np.testing.assert_allclose(a, e, rtol=3e-4, atol=3e-6)
+    np.testing.assert_allclose(actual.relative_residual, expected.relative_residual, rtol=3e-4)
+
+
+@pytest.mark.numerical
+@pytest.mark.usefixtures("views_per_batch")
 @pytest.mark.parametrize("scan_variant", [0, 1])
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
@@ -60,13 +122,6 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
     from pathlib import Path
 
     from tomojax.alignment import AlignConfig
-    from tomojax.alignment._pose import _coupled_objective  # check-public-imports: allow-private
-
-    # check-public-imports: allow-private
-    from tomojax.alignment._pose._pose_context import _pose_objective_context
-
-    # check-public-imports: allow-private
-    from tomojax.alignment._pose._pose_loop import _build_alignment_runtime_context
     from tomojax.alignment.api import PWLSLossSpec
     from tomojax.geometry import Detector, Grid, LaminographyGeometry, stack_view_poses
 
@@ -110,7 +165,7 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
     active = np.array([1 - scan_variant, scan_variant, 1, 1, 0, 0], np.float32)
     cfg = AlignConfig(
         gn_coupling="joint",
-        gn_joint_solver=solver,
+        gn_joint_solver="pose_eliminated",
         gn_joint_iterations=100,
         gn_joint_rtol=1e-6,
         gn_damping=0.2,
@@ -292,7 +347,7 @@ def _joint_huber_constraints_and_resume(integrator, solver):
     )
     cfg = AlignConfig(
         gn_coupling="joint",
-        gn_joint_solver=solver,
+        gn_joint_solver="pose_eliminated",
         gn_jacobian="central",
         gather_dtype="fp32",
         ray_integrator=integrator,

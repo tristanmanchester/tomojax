@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
+from tomojax.core.projector import get_detector_grid_device
 from tomojax.core.trilinear import exact_adjoint, exact_forward, exact_pose_normal_equations
 from tomojax.geometry import Detector, Grid
 
@@ -55,6 +56,18 @@ def test_exact_integral_and_adjoint_match_independent_matrix(problem, backend):
     shifted = poses.at[:, 0, 3].add(20)
     np.testing.assert_array_equal(project(shifted, volume), 0)
     np.testing.assert_array_equal(adjoint(shifted, weights * 2), 0)
+
+
+@pytest.mark.numerical
+def test_exact_projection_stays_fp32_with_x64_and_float64_detector_grid(problem):
+    grid, detector, poses, volume, matrix, _ = problem
+    with jax.enable_x64():
+        det_grid = tuple(a.astype(jnp.float64) for a in get_detector_grid_device(detector))
+        image = jax.jit(lambda x: exact_forward(poses, grid, detector, x, det_grid=det_grid))(
+            volume
+        )
+    assert image.dtype == jnp.float32
+    np.testing.assert_allclose(image.ravel(), matrix @ volume.ravel(), rtol=2e-5, atol=3e-6)
 
 
 @pytest.mark.numerical

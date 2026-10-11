@@ -194,7 +194,7 @@ def _build_program(
     cache_columns = spec.cache_columns
     shares = _Shares(spec.split, n_views)
     across = shares.across
-    counts = jnp.ones(n_views) if arrays.counts is None else arrays.counts  # a split pads
+    counts = arrays.counts if arrays.counts is not None else jnp.ones(n_views, jnp.float32)
     movable = counts[:, None] * active  # pose rows that may change
     predict_columns = partial(
         pose_prediction_and_columns,

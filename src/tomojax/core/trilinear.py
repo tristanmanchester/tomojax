@@ -57,7 +57,8 @@ def exact_forward(
     """Integrate each parallel ray exactly within each trilinear interpolation cell.
 
     Rigid ``poses`` have shape ``(views, 4, 4)``. Output is FP32 with shape
-    ``(views, detector.nv, detector.nu)``. Exact refers to polynomial quadrature,
+    ``(views, detector.nv, detector.nu)``. Coordinates, including explicit detector
+    grids, are evaluated in FP32. Exact refers to polynomial quadrature,
     not infinite precision or detector-area integration. CUDA uses canonical
     detector pixels; the JAX reference also accepts explicit detector grids.
     """
