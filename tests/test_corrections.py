@@ -252,7 +252,7 @@ def test_stripes_removes_pixel_offsets_the_flats_miss(tmp_path: Path) -> None:
 def test_reject_views_drops_outliers_and_their_geometry(tmp_path: Path) -> None:
     views = 12
     counts = np.random.default_rng(1).integers(495, 506, (views, 2, 3)).astype(np.uint16)
-    counts[[4, 9]] = 5  # the shutter closed for two views
+    counts[[0, 4, 8, 11]] = 5  # the shutter closed, including the first and last views
     _write_frames(
         tmp_path / "scan.nxs",
         np.concatenate([np.full((1, 2, 3), 1000, np.uint16), counts]),
@@ -260,17 +260,17 @@ def test_reject_views_drops_outliers_and_their_geometry(tmp_path: Path) -> None:
         [0, *np.linspace(0, 180, views, endpoint=False)],
     )
     scan = tj.load_frames(tmp_path / "scan.nxs").corrected(RejectViews(), BeamHardening((1.0, 0.1)))
-    keep = np.delete(np.arange(views), [4, 9])
-    assert scan.projections.shape == (10, 2, 3)
+    keep = np.delete(np.arange(views), [0, 4, 8, 11])
+    assert scan.projections.shape == (8, 2, 3)
     np.testing.assert_allclose(scan.angles, np.linspace(0, 180, views, endpoint=False)[keep])
     p = -np.log(counts[keep] / 1000.0)
     np.testing.assert_allclose(np.asarray(scan.projections), p + 0.1 * p**2, rtol=1e-5)
     rejected = scan.corrections[-2]
-    assert rejected.name == "reject_views" and rejected.found["rejected"] == [4, 9]
+    assert rejected.name == "reject_views" and rejected.found["rejected"] == [0, 4, 8, 11]
     # A scan of line integrals rejects views the same way, numbered in that scan.
     again = tj.load(tmp_path / "scan.nxs").selected(slice(2, None)).corrected(RejectViews())
-    assert again.corrections[-1].found["rejected"] == [2, 7]
-    assert again.projections.shape[0] == 8
+    assert again.corrections[-1].found["rejected"] == [2, 6, 9]
+    assert again.projections.shape[0] == 7
 
 
 def test_selected_views_keep_their_geometry_and_flats(tmp_path: Path) -> None:

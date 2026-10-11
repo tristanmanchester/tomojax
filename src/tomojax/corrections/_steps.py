@@ -184,7 +184,8 @@ class RejectViews(Step):
         if finite.any():
             medians = medians[finite]
             half = self.neighbours // 2
-            padded = np.pad(medians, half, mode="edge")
+            # Reflect, so an end view is compared with its neighbours, not itself.
+            padded = np.pad(medians, half, mode="reflect")
             around = np.median(
                 np.lib.stride_tricks.sliding_window_view(padded, self.neighbours), axis=1
             )
