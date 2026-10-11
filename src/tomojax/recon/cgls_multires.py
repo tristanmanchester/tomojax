@@ -8,6 +8,7 @@ import operator
 from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
+import numpy as np
 
 from tomojax.core.multires import (
     bin_projections,
@@ -24,6 +25,7 @@ from tomojax.core.validation import (
     validate_volume,
 )
 
+from ._host_stream import validate_host_views
 from .cgls import CGLSConfig, cgls
 
 if TYPE_CHECKING:
@@ -32,11 +34,23 @@ if TYPE_CHECKING:
     from tomojax.geometry import Detector, Geometry, Grid
 
 
+def _projection_data(projections: jnp.ndarray | np.ndarray) -> jnp.ndarray | np.ndarray:
+    # Preserve host storage (including strided memmaps) so each level can choose
+    # its own resident/streamed placement without uploading the full fine stack.
+    if isinstance(projections, np.ndarray):
+        validate_host_views(projections)
+        return projections
+    data = jnp.asarray(projections, dtype=jnp.float32)
+    if not bool(jnp.all(jnp.isfinite(data))):
+        raise ValueError("cgls_multires: projections must be finite")
+    return data
+
+
 def cgls_multires(
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
-    projections: jnp.ndarray,
+    projections: jnp.ndarray | np.ndarray,
     *,
     factors: Iterable[int] = (2, 1),
     iterations_per_level: Iterable[int] = (32, 16),
@@ -49,7 +63,8 @@ def cgls_multires(
     ``factors`` must decrease strictly to 1. Each level gets its explicit
     positive iteration budget from ``iterations_per_level``; ``config.iterations`` is
     overridden. Other CGLS settings apply unchanged at each level, including
-    damping on that level's discrete problem. Tolerances may stop levels early.
+    damping and streaming. Host arrays remain on the host until each level chooses
+    its placement. Tolerances may stop levels early.
 
     Volume faces, world poses and physical density are preserved. Coarse data
     select a uniformly strided subset of measured rays without averaging or
@@ -76,9 +91,7 @@ def cgls_multires(
     validate_detector_grid(det_grid, detector, context="cgls_multires")
     if init_x is not None:
         validate_volume(init_x, grid, context="cgls_multires", name="init_x")
-    data = jnp.asarray(projections, dtype=jnp.float32)
-    if not bool(jnp.all(jnp.isfinite(data))):
-        raise ValueError("cgls_multires: projections must be finite")
+    data = _projection_data(projections)
     initial = None if init_x is None else jnp.asarray(init_x, dtype=jnp.float32)
     if initial is not None and not bool(jnp.all(jnp.isfinite(initial))):
         raise ValueError("cgls_multires: initial volume must be finite")

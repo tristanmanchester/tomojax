@@ -422,7 +422,7 @@ def tomojax.recon.cgls_multires(
         geometry: 'Geometry',
         grid: 'Grid',
         detector: 'Detector',
-        projections: 'jnp.ndarray',
+        projections: 'jnp.ndarray | np.ndarray',
         *,
         factors: 'Iterable[int]' = (2, 1),
         iterations_per_level: 'Iterable[int]' = (32, 16),

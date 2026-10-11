@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import jax.image as jimage
 import jax.numpy as jnp
@@ -13,6 +13,8 @@ from .validation import validate_detector, validate_grid, validate_projection_st
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+    import numpy as np
 
 
 def validate_scale_factor(factor: object) -> int:
@@ -96,7 +98,7 @@ def scale_detector(det: Detector, factor: int) -> Detector:
     )
 
 
-def bin_projections(proj: jnp.ndarray, factor: int) -> jnp.ndarray:
+def bin_projections[Array: jnp.ndarray | np.ndarray](proj: Array, factor: int) -> Array:
     """Decimate projections to uniformly spaced measured rays, without padding.
 
     This is point sampling, not detector-area averaging or an antialias filter.
@@ -110,7 +112,7 @@ def bin_projections(proj: jnp.ndarray, factor: int) -> jnp.ndarray:
         raise ValueError("bin_projections requires a nonempty (view, v, u) array")
     _, v0 = _decimated_axis(proj.shape[1], f)
     _, u0 = _decimated_axis(proj.shape[2], f)
-    return proj[:, v0::f, u0::f]
+    return cast("Array", proj[:, v0::f, u0::f])
 
 
 def bin_volume(vol: jnp.ndarray, factor: int) -> jnp.ndarray:

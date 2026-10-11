@@ -157,3 +157,31 @@ def test_breakdown_at_coarse_level_cannot_be_hidden_by_fine_solve(monkeypatch):
     with pytest.raises(FloatingPointError, match="factor 2"):
         cgls_multires(geometry, grid, detector, jnp.zeros((5, 7, 9)))
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("storage", ["array", "memmap"])
+def test_host_pyramid_stays_on_the_host_and_streams(storage, tmp_path):
+    grid, detector, geometry, truth = problem()
+    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(5)])
+    data = np.asarray(jax.vmap(lambda t: forward_project_view_T(t, grid, detector, truth))(poses))
+    if storage == "memmap":
+        mapped = np.memmap(tmp_path / "views.dat", mode="w+", dtype=np.float32, shape=data.shape)
+        mapped[:] = data
+        data = mapped
+    result, info = cgls_multires(
+        geometry,
+        grid,
+        detector,
+        data,
+        factors=(3, 1),
+        iterations_per_level=(6, 120),
+        config=CGLSConfig(
+            projector_model="ray",
+            projector_backend="jax",
+            stream_projections=True,
+            views_per_batch=3,
+            rtol=1e-7,
+        ),
+    )
+    np.testing.assert_allclose(result, truth, rtol=3e-4, atol=5e-5)
+    assert all(level["formulation"] == "streamed_normal_equations" for level in info["levels"])

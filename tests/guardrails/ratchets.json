@@ -64,7 +64,6 @@
     "src/tomojax/recon/cgls.py::_solve": 171,
     "src/tomojax/recon/cgls.py::_solve_streamed": 126,
     "src/tomojax/recon/cgls.py::cgls": 121,
-    "src/tomojax/recon/cgls_multires.py::cgls_multires": 101,
     "src/tomojax/recon/fista_tv.py::_prepare_fista_runtime": 118,
     "src/tomojax/recon/fista_tv.py::_run_fista_scan": 107,
     "src/tomojax/recon/fista_tv.py::grad_data_term": 166,
