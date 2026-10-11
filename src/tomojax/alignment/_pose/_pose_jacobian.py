@@ -83,11 +83,11 @@ def _cone_central_columns(
         ]
     )
     images = cone_project(volume, coeff, grid, detector, backend="cuda").reshape(1 + 2 * width, -1)
-    # Preserve baseline subtraction/weighting before differencing, including
-    # cancellation against a large target and fractional pixel weights.
-    residuals = weight.ravel() * (images - target.ravel())
-    columns = (residuals[1 : width + 1] - residuals[width + 1 :]) / (2 * steps[:, None])
-    return residuals[0], columns
+    residual = weight.ravel() * (images[0] - target.ravel())
+    # The target is constant in pose: subtract predictions first, so a large
+    # target cannot round away their difference. Weights are fixed here too.
+    columns = weight.ravel() * (images[1 : width + 1] - images[width + 1 :]) / (2 * steps[:, None])
+    return residual, columns
 
 
 def pose_prediction_and_columns(
@@ -157,16 +157,23 @@ def pose_prediction_and_columns(
             ray_integrator=options.integrator,
         ).ravel()
 
-    def f(p5):
+    def predict(p5):
         pose = apply_pose_update(t_nom_i, p5, translation_frame=options.translation_frame)
-        return weight.ravel() * (_pred_flat(pose, vol) - target.ravel())
+        return _pred_flat(pose, vol)
+
+    def f(p5):
+        return weight.ravel() * (predict(p5) - target.ravel())
 
     prediction = f(p5_i)
     directions = jnp.eye(width, dtype=jnp.float32)
     if central:
 
         def column(direction, step):
-            return (f(p5_i + step * direction) - f(p5_i - step * direction)) / (2 * step)
+            return (
+                weight.ravel()
+                * (predict(p5_i + step * direction) - predict(p5_i - step * direction))
+                / (2 * step)
+            )
 
         columns = jax.vmap(column)(directions, difference_steps)
     else:

@@ -17,11 +17,19 @@ from tomojax.alignment._geometry.parametrizations import apply_pose_update
 from tomojax.alignment._pose._pose_jacobian import PoseJacobianOptions, pose_prediction_and_columns
 from tomojax.core.cone import frame_coefficients, use_cuda_cone
 from tomojax.core.projector import forward_project_view_T
-from tomojax.geometry import Detector, Grid
+from tomojax.geometry import (
+    ConeBeam,
+    ConeGeometry,
+    Detector,
+    Grid,
+    LaminographyGeometry,
+    stack_view_poses,
+)
 
-pytestmark = [pytest.mark.numerical, pytest.mark.gpu]
+pytestmark = pytest.mark.numerical
 
 
+@pytest.mark.gpu
 @pytest.mark.parametrize("translation_frame", ["object", "detector"])
 @pytest.mark.parametrize("width", [5, 6])
 @pytest.mark.parametrize("jacobian", ["central", "autodiff"])
@@ -92,7 +100,7 @@ def test_cuda_columns_retain_individual_central_differences(
             image = forward_project_view_T(
                 pose, grid, detector, volume, frames=frame, projector_backend="pallas"
             )
-            return (weight * (image - target)).ravel()
+            return image.ravel()
 
         displacement = 0.001 * min(grid.vx, grid.vy, grid.vz)
         radius = 0.5 * math.sqrt(
@@ -100,14 +108,71 @@ def test_cuda_columns_retain_individual_central_differences(
         )
         steps = jnp.asarray([displacement / radius] * 3 + [displacement] * (width - 3), jnp.float32)
         columns = jax.vmap(
-            lambda direction, step: (
-                prediction(p + step * direction) - prediction(p - step * direction)
-            )
+            lambda direction, step: weight.ravel()
+            * (prediction(p + step * direction) - prediction(p - step * direction))
             / (2 * step)
         )(jnp.eye(width, dtype=jnp.float32), steps)
-        return prediction(p), columns
+        return weight.ravel() * (prediction(p) - target.ravel()), columns
 
     actual = candidate(params, nominal, frame, volume, target, weight)
     expected = individual(params, nominal, frame, volume, target, weight)
     for a, b in zip(actual, expected, strict=True):
         np.testing.assert_array_equal(a, b)
+
+
+@pytest.mark.parametrize("translation_frame", ["object", "detector"])
+@pytest.mark.parametrize("width", [5, 6])
+@pytest.mark.parametrize(
+    ("cone", "integrator"),
+    [
+        (False, "sampled"),
+        (False, "exact"),
+        (False, "joseph"),
+        (False, "joseph_cubic"),
+        (True, "joseph"),
+    ],
+)
+def test_central_pose_columns_do_not_depend_on_measurement_offsets(
+    translation_frame, width, cone, integrator
+):
+    # For fixed pixel weights, d[W(A(p)x-y)]/dp is independent of y.
+    # Subtracting a large measurement before differencing can round away
+    # the perturbations, even though the represented predictions distinguish p.
+    grid = Grid(7, 6, 5, 0.7, 1.1, 0.9, vol_center=(0.23, -0.17, 0.31))
+    detector = Detector(9, 7, 1.3, 0.8, (0.13, -0.19))
+    geometry = (
+        ConeGeometry(grid, detector, [31.7], ConeBeam(40, 60), tilt_deg=23)
+        if cone
+        else LaminographyGeometry(grid, detector, [31.7], tilt_deg=23)
+    )
+    nominal = stack_view_poses(geometry, 1)[0]
+    frame = (
+        jnp.asarray([[0, 40, 0], [1, 0, 0], [0, 0, 1], [0, -80, 0]], jnp.float32) if cone else None
+    )
+    rng = np.random.default_rng(687)
+    volume = jnp.asarray(rng.uniform(0.2, 1.1, (grid.nx, grid.ny, grid.nz)), jnp.float32)
+    params = jnp.asarray([0.012, -0.018, 0.031, 0.11, -0.07, 0.04][:width], jnp.float32)
+    weight = jnp.asarray(rng.uniform(0.1, 1, (detector.nv, detector.nu)), jnp.float32).at[0].set(0)
+    target = jnp.asarray(rng.normal(size=weight.shape), jnp.float32)
+    options = PoseJacobianOptions(
+        0.001, translation_frame, True, 1, "fp32", integrator, "central", cone
+    )
+    evaluate = jax.jit(
+        partial(
+            pose_prediction_and_columns,
+            grid=grid,
+            detector=detector,
+            det_grid=None,
+            options=options,
+        )
+    )
+    residual, columns = evaluate(params, nominal, frame, volume, target, weight)
+    assert np.linalg.norm(columns) > 0
+    np.testing.assert_array_equal(np.asarray(residual).reshape(weight.shape)[0], 0)
+    np.testing.assert_array_equal(np.asarray(columns).reshape(width, *weight.shape)[:, 0], 0)
+    for offset in (1.0, 1e5):
+        shifted_residual, shifted_columns = evaluate(
+            params, nominal, frame, volume, target + offset, weight
+        )
+        np.testing.assert_array_equal(shifted_columns, columns)
+        assert not np.array_equal(shifted_residual, residual)
