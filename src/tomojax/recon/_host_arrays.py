@@ -1,11 +1,20 @@
-"""Validation shared by reconstructions that keep inputs and outputs in host memory."""
+"""Host-array validation and bounded slab output for reconstruction."""
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+    from concurrent.futures import Future
+
+    import jax
 
 
 @dataclass(frozen=True)
@@ -64,3 +73,32 @@ def validate_host_arrays(
         if source is None or target is None or Path(source).samefile(target):
             raise ValueError(f"{context}: memory-mapped input and output require separate files")
     return out
+
+
+@contextmanager
+def volume_writer(
+    output: np.ndarray, *, asynchronous: bool
+) -> Iterator[Callable[[jax.Array, int, int], None]]:
+    """Write axial slabs with at most one pending copy and two live device slabs."""
+
+    def save(volume: jax.Array, start: int, count: int) -> None:
+        output[:, :, start : start + count] = np.asarray(volume)[:, :, :count]
+
+    if not asynchronous:
+        yield save
+        return
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending: Future[None] | None = None
+
+        def enqueue(volume: jax.Array, start: int, count: int) -> None:
+            nonlocal pending
+            if pending is not None:
+                pending.result()
+            volume.copy_to_host_async()
+            pending = pool.submit(save, volume, start, count)
+
+        try:
+            yield enqueue
+        finally:
+            if pending is not None:
+                pending.result()

@@ -16,7 +16,7 @@ from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import validate_projection_stack
 from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry, grid_volume_origin
 
-from ._host_arrays import ProjectionRows, validate_host_arrays
+from ._host_arrays import ProjectionRows, validate_host_arrays, volume_writer
 from .fbp import (
     _fbp_from_host,  # pyright: ignore[reportPrivateUsage]
     _fft_length,  # pyright: ignore[reportPrivateUsage]
@@ -27,6 +27,8 @@ from .fbp import (
     validate_fbp_geometry,
 )
 from .filters import rfft_filter_array
+
+_OUTPUT_OVERLAP_MIN_BYTES = 64 * 1024**2
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -42,7 +44,9 @@ class FBPHostConfig:
     reconstructed in one pass.
     Projection rows are read and transferred only ``views_per_batch`` views at
     a time, keeping at most two input batches on the device for either layout.
-    Runtime/compiler caches add memory beyond these arrays. ``scale`` has the
+    Large CUDA axial volumes overlap output copies with the next slab, retaining at most
+    two output slabs on the device. Runtime/compiler caches add memory beyond
+    these arrays. ``scale`` has the
     same meaning as in :class:`FBPConfig`. So does ``padding``: ``'edge'``
     assumes constant exterior endpoint values instead of zero attenuation.
     """
@@ -100,7 +104,7 @@ def fbp_host(
     """Reconstruct without storing the full volume or projections on the device.
 
     Accept NumPy arrays, including memmaps, and return a float32 NumPy array.
-    ``out`` may be a writable memmap. Completed slabs are written immediately;
+    ``out`` may be a writable memmap. Completed slabs are written progressively;
     a later failure can leave a partially written output. Input storage must
     remain unchanged until the call finishes. This host-returning routine is
     not differentiable. Use :func:`fbp` for device-resident output.
@@ -111,6 +115,8 @@ def fbp_host(
     Anisotropic spacing, detector offsets and shifted volume origins are
     supported. Filter tails use the same measurement-extension assumption as
     ``fbp`` (zero by default, constant endpoints with ``padding="edge"``).
+    Large CUDA axial outputs overlap copying with computation when
+    memory permits, retaining at most two device output slabs.
     """
     require_parallel_beam(geometry, "fbp_host")
     cfg = FBPHostConfig() if config is None else config
@@ -145,35 +151,39 @@ def fbp_host(
     output = validate_host_arrays(projections, out, shape)
     host_poses = np.asarray(poses, np.float32)
     params = np.zeros((n_views, 6), np.float32)
-    for start in range(0, grid.nz, depth):
-        v = first + start * step
-        v_start = math.floor(v)
-        if not integer:
-            v_start = max(0, min(v_start, detector.nv - rows))
-        # Local grid/detector metadata stay identical for every slab. Only the
-        # fractional row phase changes, passed as a dynamic pose translation.
-        local_poses = host_poses.copy()
-        if not integer:
-            local_poses[:, 2, 3] = (v - v_start) * detector.dv
-        volume = _fbp_from_host(
-            local_poses,
-            ProjectionRows(projections, v_start, rows),
-            view_scale,
-            params,
-            ramp,
-            0.0,
-            grid=local_grid,
-            detector=local_detector,
-            backend=backend,
-            batch_size=min(views, n_views),
-            z_mode="integer" if integer else "fixed",
-            separable=True,
-            check_finite=True,
-            padding=cfg.padding,
-        )
-        count = min(depth, grid.nz - start)
-        # The host copy synchronizes before the next slab reuses its buffers.
-        output[:, :, start : start + count] = np.asarray(volume)[:, :, :count]
+    overlap = cuda and grid.nz > depth and output.nbytes >= _OUTPUT_OVERLAP_MIN_BYTES
+    if overlap:
+        free = device_free_memory_bytes()
+        # Retain an extra output only when it takes a small part of the budget.
+        overlap = free is not None and 4 * grid.nx * grid.ny * depth <= 0.2 * free
+    with volume_writer(output, asynchronous=overlap) as write:
+        for start in range(0, grid.nz, depth):
+            v = first + start * step
+            v_start = math.floor(v)
+            if not integer:
+                v_start = max(0, min(v_start, detector.nv - rows))
+            # Local grid/detector metadata stay identical for every slab. Only the
+            # fractional row phase changes, passed as a dynamic pose translation.
+            local_poses = host_poses.copy()
+            if not integer:
+                local_poses[:, 2, 3] = (v - v_start) * detector.dv
+            volume = _fbp_from_host(
+                local_poses,
+                ProjectionRows(projections, v_start, rows),
+                view_scale,
+                params,
+                ramp,
+                0.0,
+                grid=local_grid,
+                detector=local_detector,
+                backend=backend,
+                batch_size=min(views, n_views),
+                z_mode="integer" if integer else "fixed",
+                separable=True,
+                check_finite=True,
+            )
+            count = min(depth, grid.nz - start)
+            write(volume, start, count)
     return output
 
 
