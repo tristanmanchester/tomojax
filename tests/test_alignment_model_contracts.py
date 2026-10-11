@@ -157,6 +157,23 @@ def test_sinogram_seed_still_declines_missing_half_turn_evidence(blank):
     assert sinogram_det_u_seed(data, angles % 360) is None
 
 
+@pytest.mark.numerical
+@pytest.mark.parametrize("sampling", ["nonuniform", "repeated"])
+def test_sinogram_centre_seed_uses_actual_angular_spacing(sampling):
+    angles = np.linspace(0, 179, 90)
+    if sampling == "nonuniform":
+        angles = np.r_[angles, np.random.default_rng(1).uniform(20, 50, 150)]
+    else:
+        angles = np.r_[angles, np.repeat(angles[10:25], 10)]
+    # Keep the acquisition order arbitrary; the Fourier rows must represent
+    # equally spaced angles, not equally spaced indices or repeated exposures.
+    angles = angles[np.random.default_rng(2).permutation(len(angles))]
+    data, centre = _analytic_shifted_sinogram(angles, 128)
+    seed = sinogram_det_u_seed(data, angles, rows=1)
+    assert seed is not None
+    assert abs(seed.det_u_px - centre) <= 0.3
+
+
 _COR_CONFIG = AlignConfig(
     outer_iterations=1, iterations=1, tv_weight=0, ray_integrator="joseph", projector_backend="jax"
 )

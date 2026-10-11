@@ -287,8 +287,10 @@ def sinogram_det_u_seed(
     wedge, so the offset minimises the energy there. Coarse on columns binned
     by 4, then to a quarter pixel; the median over ``rows`` detector rows.
     ``ratio`` is the object's size as a fraction of the field (the wedge's
-    width), ``drop`` the low frequencies left out. None when the views cover
-    less than a half turn.
+    width), ``drop`` the low frequencies left out. Nonuniformly spaced views
+    are interpolated onto a uniform angular grid before the Fourier metric;
+    repeated angles are averaged. None when the views cover less than a half
+    turn.
     """
     raw_angles = np.asarray(angles_deg, np.float64)
     angles = np.mod(raw_angles, 360.0)
@@ -313,6 +315,7 @@ def sinogram_det_u_seed(
         sino = np.asarray(data[half_turn, row, :], np.float32)
         if not np.isfinite(sino).all() or np.ptp(sino) <= 0:
             continue
+        sino = _uniform_sinogram(sino, relative[first])
         # Coarse: columns binned by 4 (and views by 2), every binned pixel.
         views = len(sino) // 2 * 2
         coarse = sino[:views, : nu // 4 * 4].reshape(views // 2, 2, -1, 4).mean(axis=(1, 3))
@@ -334,6 +337,20 @@ def sinogram_det_u_seed(
         amplitude_px=float(np.std(offsets)) if len(offsets) > 1 else 0.0,
         status="ok_sinogram",
     )
+
+
+def _uniform_sinogram(sino: np.ndarray, angles: np.ndarray) -> np.ndarray:
+    """Equally spaced angular rows for Vo's angular Fourier transform."""
+    unique, starts, counts = np.unique(angles, return_index=True, return_counts=True)
+    if len(unique) != len(angles):
+        sino = np.add.reduceat(sino, starts, axis=0) / counts[:, None]
+    target = np.linspace(unique[0], unique[-1], len(unique))
+    if np.allclose(unique, target, rtol=0, atol=1e-5):
+        return sino.astype(np.float32, copy=False)
+    right = np.clip(np.searchsorted(unique, target), 1, len(unique) - 1)
+    left = right - 1
+    weight = ((target - unique[left]) / (unique[right] - unique[left]))[:, None]
+    return (sino[left] * (1 - weight) + sino[right] * weight).astype(np.float32)
 
 
 def _vo_metrics(sino: np.ndarray, offsets: np.ndarray, ratio: float, drop: int) -> np.ndarray:
