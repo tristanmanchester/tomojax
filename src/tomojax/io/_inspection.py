@@ -12,6 +12,7 @@ import h5py
 import numpy as np
 from numpy.typing import NDArray
 
+from tomojax._data import ROTATION_ANGLE_PATHS, angle_scale_degrees
 from tomojax._typed_arrays import (
     any_true,
     finite_values_float64,
@@ -52,7 +53,6 @@ _PROJECTION_PATHS = (
     "/entry/data/projections",
     "/entry/projections",
 )
-_ANGLE_PATH = "/entry/sample/transformations/rotation_angle"
 _IMAGE_KEY_PATH = "/entry/instrument/detector/image_key"
 _ALIGN_PATH = "/entry/processing/tomojax/align"  # where the NXtomo writer puts poses
 _VOLUME_PATH = "/entry/processing/tomojax/volume"
@@ -249,7 +249,8 @@ def _projection_report(path: str | None, dataset: h5py.Dataset | None) -> Projec
 
 
 def _angles_report(file: h5py.File) -> AnglesReport:
-    dataset = _dataset_at(file, _ANGLE_PATH)
+    path = next((p for p in ROTATION_ANGLE_PATHS if _dataset_at(file, p) is not None), None)
+    dataset = None if path is None else _dataset_at(file, path)
     if dataset is None:
         return {
             "found": False,
@@ -262,8 +263,16 @@ def _angles_report(file: h5py.File) -> AnglesReport:
         }
 
     values = numpy_float64_array(dataset[...]).ravel()
-    finite = values[np.isfinite(values)]
+    samples = np.ones(values.shape, dtype=bool)
+    image_key = _dataset_at(file, _IMAGE_KEY_PATH)
+    if image_key is not None and image_key.shape == values.shape:
+        samples = numpy_array(image_key[...]) == 0
+    finite = values[np.isfinite(values) & samples]
     units = _attr_to_str(dataset.attrs.get("units"))
+    try:
+        finite *= angle_scale_degrees(units or "", path=path or "rotation_angle")
+    except ValueError:
+        finite = np.empty(0, np.float64)
     if finite.size == 0:
         min_deg = max_deg = coverage_deg = None
     else:
@@ -272,7 +281,7 @@ def _angles_report(file: h5py.File) -> AnglesReport:
         coverage_deg = float(max_deg - min_deg)
     return {
         "found": True,
-        "path": _ANGLE_PATH,
+        "path": path,
         "count": int(values.size),
         "units": units,
         "min_deg": min_deg,

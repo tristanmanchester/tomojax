@@ -325,30 +325,42 @@ def _with_corrections(geometry: ConeGeometry, poses: np.ndarray) -> ScanGeometry
 
 def describe(geometry: Geometry) -> tuple[str, dict[str, object], Any, Geometry]:
     """Geometry type, metadata and per-view poses of ``geometry``, and its base geometry."""
+    from tomojax._data.geometry_meta import (
+        AugmentedGeometry,
+        DetectorRollGeometry,
+        detector_poses,
+    )
     from tomojax.geometry import ConeSegments
 
     if isinstance(geometry, ConeSegments):
         return _describe_segments(geometry)
-    poses = None
+    if isinstance(geometry, AugmentedGeometry):
+        kind, meta, inner_poses, base = describe(geometry.base)
+        # One update keeps its saved frame; nested updates need one table
+        # relative to the truly nominal geometry, not an already-posed base.
+        poses = (
+            (np.asarray(geometry.align_params), str(geometry.translation_frame))
+            if inner_poses is None
+            else (detector_poses(geometry), "detector")
+        )
+        return kind, meta, poses, base
+    if isinstance(geometry, DetectorRollGeometry):
+        kind, meta, poses, base = describe(geometry.base)
+        return kind, {**meta, "detector_roll_deg": float(geometry.detector_roll_deg)}, poses, base
     meta: dict[str, object] = {}
-    base = geometry
-    if hasattr(base, "align_params") and hasattr(base, "base"):
-        poses = (np.asarray(base.align_params), str(base.translation_frame))  # pyright: ignore[reportAttributeAccessIssue]
-        base = base.base  # pyright: ignore[reportAttributeAccessIssue]
-    if hasattr(base, "detector_roll_deg") and hasattr(base, "base"):
-        meta["detector_roll_deg"] = float(base.detector_roll_deg)  # pyright: ignore[reportAttributeAccessIssue]
-        base = base.base  # pyright: ignore[reportAttributeAccessIssue]
-    if isinstance(base, ConeGeometry):
-        return "cone", {**meta, **base.geometry_metadata()}, poses, base
-    if isinstance(base, LaminographyGeometry):
-        meta |= {"tilt_deg": float(base.tilt_deg), "tilt_about": str(base.tilt_about)}
-        return "lamino", meta, poses, base
-    if isinstance(base, RotationAxisGeometry):
-        meta["axis_unit_lab"] = [float(x) for x in base.axis_unit_lab]
-        return "lamino", meta, poses, base
-    if isinstance(base, ParallelGeometry):
-        return "parallel", meta, poses, base
-    raise TypeError(f"cannot describe a {type(base).__name__} geometry")
+    if isinstance(geometry, ConeGeometry):
+        kind, meta = "cone", geometry.geometry_metadata()
+    elif isinstance(geometry, LaminographyGeometry):
+        kind = "lamino"
+        meta = {"tilt_deg": float(geometry.tilt_deg), "tilt_about": str(geometry.tilt_about)}
+    elif isinstance(geometry, RotationAxisGeometry):
+        kind = "lamino"
+        meta["axis_unit_lab"] = [float(x) for x in geometry.axis_unit_lab]
+    elif isinstance(geometry, ParallelGeometry):
+        kind = "parallel"
+    else:
+        raise TypeError(f"cannot describe a {type(geometry).__name__} geometry")
+    return kind, meta, None, geometry
 
 
 def _describe_segments(
@@ -400,7 +412,12 @@ def record_of(scan: Scan, *, grid: Grid | None = None) -> ProjectionDataset:
         fields["geometry_metadata"]["corrections"] = [c.to_dict() for c in scan.corrections]
     if source is None:
         return ProjectionDataset(**fields)
-    return replace(source, **fields)
+    # A Scan holds only sample-view line integrals, not the acquisition's raw
+    # frame labels. Keep the other provenance without reusing a stale view axis.
+    record = replace(source, **fields)
+    metadata = record.copy_metadata()
+    metadata.image_key = None
+    return replace(record, _metadata=metadata)
 
 
 def scan_from_record(record: ProjectionDataset, *, poses: bool) -> Scan:

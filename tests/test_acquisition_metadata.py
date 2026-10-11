@@ -8,11 +8,36 @@ import pytest
 
 import tomojax as tj
 from tomojax.io import load_dataset
-from tomojax.io.api import load_nxtomo, locate_frames
+from tomojax.io.api import inspect_dataset, load_nxtomo, locate_frames, validate_nxtomo
 
 from ._helpers import write_projection_dataset, write_raw_nxtomo
 
 pytestmark = pytest.mark.surface
+
+
+@pytest.mark.parametrize("raw", [False, True])
+@pytest.mark.parametrize("standard_path", [False, True])
+def test_standard_nxtomo_angles_are_loaded_and_found_before_other_detectors(
+    tmp_path, raw, standard_path
+):
+    path = tmp_path / "scan.nxs"
+    (write_raw_nxtomo if raw else write_projection_dataset)(path)
+    with h5py.File(path, "a") as handle:
+        if standard_path:
+            handle.move(
+                "entry/sample/transformations/rotation_angle", "entry/sample/rotation_angle"
+            )
+        handle.create_dataset("unrelated/rotation_angle", data=np.zeros(4 if raw else 2))
+    np.testing.assert_allclose(load_nxtomo(str(path)).angles, [0, 0, 90, 0] if raw else [0, 90])
+    np.testing.assert_allclose(tj.load(path).angles, [0, 90])
+    np.testing.assert_allclose(tj.load_frames(path).geometry.angles, [0, 90])
+    angle_path = (
+        "/entry/sample/rotation_angle"
+        if standard_path
+        else "/entry/sample/transformations/rotation_angle"
+    )
+    assert inspect_dataset(path)["angles"]["path"] == angle_path
+    assert validate_nxtomo(str(path))["issues"] == []
 
 
 @pytest.mark.parametrize("units", ["rad", "radian", " RADIANS ", np.bytes_("rad")])
@@ -97,6 +122,52 @@ def test_calibration_frames_need_no_finite_rotation_angle(tmp_path):
         np.testing.assert_allclose(scan.projections[:, 0, 0], -np.log([0.4, 0.8]), rtol=1e-6)
 
 
+def test_raw_load_can_ignore_saved_poses_and_angle_offsets(tmp_path):
+    path = tmp_path / "raw.nxs"
+    write_raw_nxtomo(path)
+    params = np.asarray([[0, 0, 0, 0.25, 0.1, -0.2], [0, 0, 0, -0.4, -0.1, 0.3]], np.float32)
+    with h5py.File(path, "a") as handle:
+        align = handle.create_group("entry/processing/tomojax/align")
+        align.create_dataset("thetas", data=params)
+        align.create_dataset("angle_offset_deg", data=[3, -7])
+        align.attrs["gauge_fix_json"] = '{"pose_translation_frame": "detector"}'
+    nominal = tj.load(path, poses=False)
+    assert nominal.poses is None
+    np.testing.assert_array_equal(nominal.angles, [0, 90])
+    corrected = tj.load(path)
+    np.testing.assert_allclose(corrected.poses, params, atol=1e-7)
+    np.testing.assert_array_equal(corrected.angles, [3, 83])
+
+
+@pytest.mark.parametrize("poses", [False, True])
+def test_processed_load_keeps_only_sample_frames_and_their_saved_poses(tmp_path, poses):
+    path = tmp_path / "processed.nxs"
+    grid = tj.Grid(3, 3, 2, 0.8, 1.1, 0.9)
+    detector = tj.Detector(3, 2, 0.9, 1.0, (0.13, -0.24))
+    angles = np.asarray([0.0, -37.0, 90.0, 113.0])
+    geometry = tj.ConeGeometry(grid, detector, angles, tj.ConeBeam(40, 60))
+    values = np.arange(4 * 2 * 3, dtype=np.float32).reshape(4, 2, 3) / 20
+    tj.save(path, tj.Scan(values, geometry))
+    params = np.zeros((4, 6), np.float32)
+    params[1, 3:] = [0.25, 0.1, -0.2]
+    params[3, 3:] = [-0.4, -0.1, 0.3]
+    with h5py.File(path, "a") as handle:
+        handle["entry/instrument/detector/image_key"][...] = [3, 0, 3, 0]
+        handle["entry/sample/transformations/rotation_angle"][[0, 2]] = np.nan
+        align = handle.create_group("entry/processing/tomojax/align")
+        align.create_dataset("thetas", data=params)
+        align.create_dataset("angle_offset_deg", data=[0, 3, 0, -7])
+        align.attrs["gauge_fix_json"] = '{"pose_translation_frame": "detector"}'
+    loaded = tj.load(path, poses=poses)
+    np.testing.assert_array_equal(loaded.projections, values[[1, 3]])
+    np.testing.assert_array_equal(loaded.angles, [-34.0, 106.0] if poses else [-37.0, 113.0])
+    assert (loaded.poses is not None) == poses
+    saved = tmp_path / "samples.nxs"
+    tj.save(saved, loaded)
+    np.testing.assert_array_equal(tj.load(saved).projections, values[[1, 3]])
+    np.testing.assert_array_equal(tj.load(saved).angles, loaded.angles)
+
+
 @pytest.mark.parametrize("layout", ["beamline", "exchange"])
 def test_external_hdf5_layouts_decode_the_same_angles_and_calibration(tmp_path, layout):
     path = tmp_path / "frames.h5"
@@ -117,6 +188,28 @@ def test_external_hdf5_layouts_decode_the_same_angles_and_calibration(tmp_path, 
     scan = frames.corrected()
     np.testing.assert_allclose(scan.angles, [0, 90], atol=1e-5)
     np.testing.assert_allclose(scan.projections[:, 0, 0], -np.log([0.5, 0.25]), rtol=1e-6)
+
+
+@pytest.mark.parametrize("marked", [1, 2])
+def test_separate_fields_fill_only_calibrations_missing_from_image_key(tmp_path, marked):
+    path = tmp_path / "hybrid.h5"
+    levels = (100 if marked == 1 else 4, 52, 28)
+    counts = np.stack([np.full((2, 3), level, np.uint16) for level in levels])
+    with h5py.File(path, "w") as handle:
+        handle.create_dataset("exchange/data", data=counts)
+        handle.create_dataset("exchange/image_key", data=[marked, 0, 0])
+        handle.create_dataset("exchange/theta", data=[np.nan, 0, 90])
+        # The marked calibration takes precedence; the sibling field fills the other.
+        white = np.full((1, 2, 3), 999 if marked == 1 else 100)
+        dark = np.full((1, 2, 3), 40 if marked == 2 else 4)
+        handle.create_dataset("exchange/data_white", data=white)
+        handle.create_dataset("exchange/data_dark", data=dark)
+    located = locate_frames(str(path))
+    assert (located.flats is None) == (marked == 1)
+    assert (located.darks is None) == (marked == 2)
+    for scan in (tj.load(path), tj.load_frames(path).corrected()):
+        np.testing.assert_array_equal(scan.angles, [0, 90])
+        np.testing.assert_allclose(scan.projections[:, 0, 0], -np.log([0.5, 0.25]), rtol=1e-6)
 
 
 def test_raw_nxtomo_does_not_discard_an_invalid_geometry_type(tmp_path):

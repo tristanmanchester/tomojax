@@ -10,7 +10,7 @@ from scipy.spatial.transform import Rotation
 import tomojax as tj
 
 # check-public-imports: allow-private
-from tomojax._data.geometry_meta import composed_poses
+from tomojax._data.geometry_meta import AugmentedGeometry, composed_poses
 from tomojax.alignment.api import apply_pose_updates
 from tomojax.core.cone import cone_model
 from tomojax.geometry import stack_view_poses
@@ -67,9 +67,6 @@ def test_corrections_compose_with_a_scans_own_poses(frame):
     expected = apply_pose_updates(
         stack_view_poses(scan.geometry, 12), corrections, translation_frame=frame
     )
-    # check-public-imports: allow-private
-    from tomojax._data.geometry_meta import AugmentedGeometry
-
     nominal = scan.geometry.base  # pyright: ignore[reportAttributeAccessIssue]
     actual = stack_view_poses(AugmentedGeometry(nominal, composed, "detector"), 12)
     np.testing.assert_allclose(np.asarray(actual), np.asarray(expected), atol=2e-5)
@@ -220,3 +217,56 @@ def test_a_run_ended_by_a_level_that_does_not_fit_is_complete(monkeypatch):
     assert info["factors_skipped"] == [1]
     np.testing.assert_allclose(resumed_volume, volume, atol=1e-6)
     np.testing.assert_allclose(resumed_params, params, atol=1e-6)
+
+
+@pytest.mark.parametrize("segmented", [False, True])
+def test_a_saved_scan_keeps_every_nested_pose_update(tmp_path, segmented):
+    grid, detector = tj.Grid(5, 4, 3, 0.7, 0.9, 1.1), tj.Detector(9, 7, 0.6, 0.8, (0.3, -0.2))
+    first = tj.ConeGeometry(grid, detector, [17, 79, 143], tj.ConeBeam(24, 39), tilt_deg=31)
+    second = tj.ConeGeometry(grid, detector, [201, 263], tj.ConeBeam(29, 44), tilt_deg=31)
+    parts = (first, second) if segmented else (first,)
+    nominal = tj.geometry.ConeSegments(parts) if segmented else first
+    views = len(nominal.angles)
+    rng = np.random.default_rng(127)
+    inner, outer = (
+        (rng.normal(size=(views, 6)) * [0.05, 0.05, 0.05, 0.3, 0.3, 0.3]).astype(np.float32)
+        for _ in range(2)
+    )
+    ends = np.cumsum([0, *(len(part.angles) for part in parts)])
+    wrapped = [
+        AugmentedGeometry(part, inner[a:b], "object")
+        for part, a, b in zip(parts, ends[:-1], ends[1:], strict=True)
+    ]
+    inner_geometry = tj.geometry.ConeSegments(tuple(wrapped)) if segmented else wrapped[0]
+    geometry = AugmentedGeometry(inner_geometry, outer, "detector")
+    expected = apply_pose_updates(
+        apply_pose_updates(stack_view_poses(nominal, views), inner, translation_frame="object"),
+        outer,
+        translation_frame="detector",
+    )
+    data = np.zeros((views, 7, 9), np.float32)
+    scan = tj.Scan(data, geometry)
+    np.testing.assert_allclose(stack_view_poses(geometry, views), expected, atol=3e-7)
+    assert scan.poses is not None
+    for suffix in (".nxs", ".npz"):
+        tj.save(tmp_path / f"scan{suffix}", scan)
+        loaded = tj.load(tmp_path / f"scan{suffix}")
+        np.testing.assert_allclose(stack_view_poses(loaded.geometry, views), expected, atol=3e-7)
+        nominal_loaded = tj.load(tmp_path / f"scan{suffix}", poses=False)
+        np.testing.assert_allclose(
+            stack_view_poses(nominal_loaded.geometry, views),
+            stack_view_poses(nominal, views),
+            atol=3e-7,
+        )
+
+
+def test_binning_advice_sees_through_pose_updates_of_segments():
+    grid, fine = tj.Grid(16, 16, 16, 1.0, 1.0, 1.0), tj.Detector(40, 40, 0.4, 0.4)
+    angles = np.linspace(0, 360, 12, endpoint=False)
+    near = tj.ConeGeometry(grid, fine, angles, tj.ConeBeam(64.0, 96.0))
+    far = tj.ConeGeometry(grid, fine, angles, tj.ConeBeam(64.0, 192.0))
+    geometry = AugmentedGeometry(tj.geometry.ConeSegments((near, far)), np.zeros((24, 6)), "object")
+    scan = tj.Scan(np.zeros((24, 40, 40), np.float32), geometry)
+    # The less magnified segment decides: 0.4 / 1.5 against the unit voxel.
+    with pytest.warns(UserWarning, match=r"3\.8 times more finely.*binned\(3\)"):
+        tj.reconstruct(scan, "cgls", iterations=1)

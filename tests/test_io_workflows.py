@@ -21,6 +21,7 @@ from tomojax.io.api import (
     convert_dataset,
     load_nxtomo,
     load_real_laminography_input,
+    locate_frames,
     projection_stats,
     save_projection_payload,
 )
@@ -332,6 +333,18 @@ def test_copy_metadata_copies_array_backed_fields(tmp_path: Path) -> None:
     assert loaded_copy.angle_offset_deg is not None
     assert loaded.metadata.angle_offset_deg is not None
     assert not np.shares_memory(loaded_copy.angle_offset_deg, loaded.metadata.angle_offset_deg)
+
+
+def test_noncontiguous_lazy_frame_reads_match_cropped_numpy_runs(tmp_path: Path) -> None:
+    path = tmp_path / "frames.h5"
+    values = np.arange(9 * 7 * 11).reshape(9, 7, 11).astype(np.uint16)
+    with h5py.File(path, "w") as handle:
+        handle.create_dataset("/exchange/data", data=values, chunks=(1, 7, 11))
+    stack = locate_frames(str(path)).stack.window(slice(1, 7), slice(2, 10))
+    indices = np.asarray([0, 1, 3, 5, 6, 7])
+    result = stack[indices]
+    np.testing.assert_array_equal(result, values[indices, 1:7, 2:10])
+    assert result.dtype == values.dtype
 
 
 def test_read_json_object_reports_path_for_malformed_json(tmp_path: Path) -> None:

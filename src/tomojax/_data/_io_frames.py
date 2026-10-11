@@ -9,7 +9,7 @@ from typing import Any
 import h5py
 import numpy as np
 
-from ._io_acquisition import angles_in_degrees, checked_image_key
+from ._io_acquisition import ROTATION_ANGLE_PATHS, angles_in_degrees, checked_image_key
 
 
 @dataclass(frozen=True)
@@ -89,7 +89,15 @@ class Hdf5Frames:
             first, last = int(indices[0]), int(indices[-1]) + 1
             if last - first == indices.size:  # contiguous: one hyperslab
                 return np.asarray(data[first:last, r, c])
-            return np.asarray(data[indices, r, c])
+            # h5py fancy indexing is far slower than reading each run of frames.
+            out = np.empty((indices.size, self.rows, self.cols), self.dtype)
+            starts = np.concatenate(([0], np.flatnonzero(np.diff(indices) > 1) + 1))
+            stops = np.concatenate((starts[1:], [indices.size]))
+            for start, stop in zip(starts, stops, strict=True):
+                source = (slice(int(indices[start]), int(indices[stop - 1]) + 1), r, c)
+                destination = (slice(int(start), int(stop)), slice(None), slice(None))
+                data.read_direct(out, source_sel=source, dest_sel=destination)
+            return out
 
 
 _FRAME_PATHS = (
@@ -99,7 +107,6 @@ _FRAME_PATHS = (
     "/exchange/data",  # APS Data Exchange
 )
 _IMAGE_KEY_PATH = "/entry/instrument/detector/image_key"
-_ANGLE_PATH = "/entry/sample/transformations/rotation_angle"
 
 
 @dataclass(frozen=True)
@@ -138,8 +145,8 @@ def locate_frames(
     ``image_key``, ``rotation_angle``) with one entry per frame. A uniquely
     named key or angle dataset with the wrong shape is rejected, not
     treated as missing. Flats and darks kept beside the frames
-    (``data_white``, ``data_dark``) and angles
-    there (``theta``) are found too. Angles in radians (a ``units``
+    (``data_white``, ``data_dark``) are found when ``image_key`` marks none of that
+    kind, and so are angles there (``theta``). Angles in radians (a ``units``
     attribute) are converted to degrees.
     """
     with h5py.File(path, "r") as file:
@@ -157,7 +164,9 @@ def locate_frames(
 
         key_at = image_key_path or (_IMAGE_KEY_PATH if _dataset(file, _IMAGE_KEY_PATH) else None)
         key_at = key_at or _only(file, "image_key", per_frame, path, validate_unmatched=True)
-        angles_at = angles_path or (_ANGLE_PATH if _dataset(file, _ANGLE_PATH) else None)
+        angles_at = angles_path or next(
+            (p for p in ROTATION_ANGLE_PATHS if _dataset(file, p) is not None), None
+        )
         angles_at = angles_at or _only(file, "rotation_angle", per_frame, path)
         parent = where.rsplit("/", 1)[0] or "/"
         beside = {n: f"{parent.rstrip('/')}/{n}" for n in ("data_white", "data_dark", "theta")}
@@ -175,8 +184,10 @@ def locate_frames(
             None if angles_at is None else _degrees(file, angles_at, path, frames=frames, key=key)
         )
         flats, darks = (
-            Hdf5Frames.open(path, beside[n]) if key is None and _dataset(file, beside[n]) else None
-            for n in ("data_white", "data_dark")
+            Hdf5Frames.open(path, beside[n])
+            if (key is None or not np.any(key == label)) and _dataset(file, beside[n])
+            else None
+            for n, label in (("data_white", 1), ("data_dark", 2))
         )
     return LocatedFrames(Hdf5Frames.open(path, where), key, angles, flats, darks)
 

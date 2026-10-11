@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import h5py
 import numpy as np
@@ -15,6 +16,7 @@ from tomojax.geometry.api import (
     transpose_volume,
 )
 
+from ._io_acquisition import ROTATION_ANGLE_PATHS, angle_scale_degrees
 from ._io_frames import Hdf5Frames
 from ._io_helpers import (
     _attr_to_str,
@@ -403,8 +405,9 @@ def validate_nxtomo(path: str) -> ValidationReport:
             # Required datasets
             if "instrument/detector/data" not in e:
                 report["issues"].append("Missing instrument/detector/data")
-            if "sample/transformations/rotation_angle" not in e:
-                report["issues"].append("Missing sample/transformations/rotation_angle")
+            angle_path = next((p for p in ROTATION_ANGLE_PATHS if p in f), None)
+            if angle_path is None:
+                report["issues"].append("Missing sample rotation_angle")
             if "instrument/detector/image_key" not in e:
                 report["issues"].append("Missing instrument/detector/image_key")
             if "sample" not in e or "name" not in e["sample"]:
@@ -438,17 +441,27 @@ def validate_nxtomo(path: str) -> ValidationReport:
                         report["issues"].append(
                             "image_key values must be in {0, 1, 2, 3}; found " + formatted
                         )
-            if "sample/transformations/rotation_angle" in e:
-                ang = e["sample/transformations/rotation_angle"]
-                if ang.ndim != 1:
-                    report["issues"].append("rotation_angle must be 1D (n_views,)")
-                elif n_views is not None and ang.shape[0] != n_views:
-                    report["issues"].append(
-                        "rotation_angle length must match #views in detector/data"
+            if angle_path is not None:
+                report["issues"].extend(
+                    _rotation_angle_issues(
+                        cast("h5py.Dataset", f[angle_path]), frames=n_views, path=path
                     )
-                units = _attr_to_str(ang.attrs.get("units"))
-                if units != "degree":
-                    report["issues"].append("rotation_angle units attr should be 'degree'")
+                )
     except OSError as exc:
         report["issues"].append(f"Unable to read HDF5 file: {exc}")
     return report
+
+
+def _rotation_angle_issues(angles: h5py.Dataset, *, frames: int | None, path: str) -> list[str]:
+    """Shape and unit issues in a rotation-angle dataset."""
+    issues = []
+    if angles.ndim != 1:
+        issues.append("rotation_angle must be 1D (n_views,)")
+    elif frames is not None and angles.shape[0] != frames:
+        issues.append("rotation_angle length must match #views in detector/data")
+    units = _attr_to_str(angles.attrs.get("units"))
+    try:
+        angle_scale_degrees(units or "", path=path)
+    except ValueError as exc:
+        issues.append(str(exc))
+    return issues

@@ -9,6 +9,12 @@ Import from here, not from `tomojax._data`.
 
 ## HDF5 acquisition metadata
 
+NXtomo angles are read from `/entry/sample/rotation_angle`, or from TomoJAX's
+`/entry/sample/transformations/rotation_angle`; these take priority over
+similarly named datasets of other detectors. Inspection and validation use the
+same angle paths and units as loading, and an inspected angle range covers
+only sample frames.
+
 Both raw-frame and processed NXtomo loading convert rotation angles labelled
 `rad`, `radian` or `radians` to degrees. `deg`, `degree`, `degrees` and missing
 units mean degrees. Angles must be a real one-dimensional vector with one
@@ -19,6 +25,12 @@ NaN angles); unknown units fail rather than being guessed. An
 For other HDF5 layouts, per-frame shape disambiguates named angle/key datasets
 from different detectors. A sole named dataset with an invalid shape is rejected,
 not treated as absent. Ambiguous candidates require an explicit metadata path.
+
+`tomojax.load` of a processed file leaves out frames that `image_key` marks as
+other than sample views. Saving a scan retains every pose update, including an
+update around a cone-segmented acquisition whose segments have their own;
+`Scan.poses` is their complete composition in the detector translation frame,
+and loading with `poses=False` removes all of them.
 
 ## TIFF angle sidecars
 

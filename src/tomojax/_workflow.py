@@ -437,10 +437,11 @@ def _oversampling(scan: Scan) -> float:
     from tomojax.geometry import ConeSegments, beam_of
 
     detector, grid, geometry = scan.detector, scan.grid, scan.geometry
-    parts = geometry.segments if isinstance(geometry, ConeSegments) else (geometry,)
+    kind, _, _, base = describe(geometry)
+    parts = base.segments if isinstance(base, ConeSegments) else (base,)
     beams = [beam_of(part) for part in parts]
     magnification = min(1.0 if beam is None else float(beam.magnification) for beam in beams)
-    if describe(geometry)[0] == "lamino":
+    if kind == "lamino":
         across = along = min(grid.vx, grid.vy, grid.vz)
     else:
         across, along = min(grid.vx, grid.vy), grid.vz

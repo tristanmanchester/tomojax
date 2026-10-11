@@ -344,7 +344,9 @@ def _batches(counts: Any, views: int, batch: int) -> Any:
     starts = list(range(0, views, batch))
 
     def read(start: int) -> np.ndarray:
-        return np.asarray(counts[start : min(start + batch, views)])
+        frames = np.asarray(counts[start : min(start + batch, views)])
+        # Device arrays use native byte order; leave ordinary batches as views.
+        return frames.astype(frames.dtype.newbyteorder("="), copy=False)
 
     with ThreadPoolExecutor(max_workers=1) as reader:
         pending = reader.submit(read, starts[0]) if starts else None

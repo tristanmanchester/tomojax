@@ -10,7 +10,7 @@ import numpy as np
 from tomojax.core.geometry.base import DetectorDict
 from tomojax.geometry.api import VOLUME_AXES_ATTR
 
-from ._io_acquisition import angles_in_degrees, checked_image_key
+from ._io_acquisition import ROTATION_ANGLE_PATHS, angles_in_degrees, checked_image_key
 from ._io_types import JsonObject, LoadedDataset, SourceInfo
 
 LOG = logging.getLogger(__name__)
@@ -139,15 +139,13 @@ def _load_image_key(entry: h5py.Group, *, n_views: int, path: str) -> np.ndarray
 def _load_rotation_angles(
     entry: h5py.Group, *, n_views: int, path: str, image_key: np.ndarray
 ) -> np.ndarray:
-    sample_grp = entry.get("sample")
-    trans_grp = None if sample_grp is None else sample_grp.get("transformations")
-    if trans_grp is None or "rotation_angle" not in trans_grp:
+    angles = next((entry.file[p] for p in ROTATION_ANGLE_PATHS if p in entry.file), None)
+    if angles is None:
         _axes_log_warning(
             "load_nxtomo: missing rotation_angle for %s; defaulting to zeros",
             path,
         )
         return np.zeros((n_views,), dtype=np.float32)
-    angles = trans_grp["rotation_angle"]
     if not isinstance(angles, h5py.Dataset):
         raise ValueError(f"{path}: rotation angles must be a dataset")
     units = _attr_to_str(angles.attrs.get("units"), default="") or ""

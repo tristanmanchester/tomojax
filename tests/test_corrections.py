@@ -216,6 +216,36 @@ def test_a_nikon_scan_is_corrected_with_its_white_level(tmp_path: Path) -> None:
     assert type(scan.geometry).__name__ == "ConeGeometry"
 
 
+@pytest.mark.parametrize("measured", [False, True])
+def test_nikon_import_takes_its_own_angles_and_numbered_projections(
+    tmp_path: Path, measured: bool
+) -> None:
+    for view, level in [(10, 250), (2, 500)]:
+        iio.imwrite(tmp_path / f"part_{view}.tif", np.full((2, 3), level, np.uint16))
+    for suffix in ["flat", "2_thumbnail", "reconstruction"]:
+        iio.imwrite(tmp_path / f"part_{suffix}.TIFF", np.full((1, 1), 123, np.uint16))
+    path = tmp_path / "renamed.xtekct"
+    path.write_text(
+        "[XTekCT]\nName=part\nSrcToObject=12\nSrcToDetector=18\nDetectorPixelSizeX=0.1\n"
+        "DetectorPixelSizeY=0.1\nWhiteLevel=1000\nInitialAngle=5\nAngularStep=90\n"
+    )
+    (tmp_path / "another_ctdata.txt").write_text("Projection Angle\n1 -60\n2 -30\n")
+    if measured:
+        (tmp_path / "part_ctdata.txt").write_text("Projection Angle\n10 97\n2 7\n")
+    frames = tj.load_frames(path)
+    np.testing.assert_array_equal(frames.counts[:, 0, 0], [500, 250])
+    np.testing.assert_array_equal(frames.geometry.angles, [7, 97] if measured else [5, 95])
+
+
+def test_big_endian_counts_are_corrected_like_native_ones() -> None:
+    counts = (300 + np.arange(2 * 3 * 4).reshape(2, 3, 4) * 3).astype(">u2")
+    geometry = tj.ParallelGeometry(tiny_grid(), tj.Detector(4, 3, 1.0, 1.0), [0, 90])
+    flats, darks = np.full((1, 3, 4), 950, ">u2"), np.full((1, 3, 4), 20, ">u2")
+    scan = tj.Frames(counts, geometry, flats=flats, darks=darks).corrected(batch_views=1)
+    expected = -np.log((counts.astype(np.float64) - 20) / (950 - 20))
+    np.testing.assert_allclose(scan.projections, expected, rtol=2e-6)
+
+
 def test_stripes_removes_pixel_offsets_the_flats_miss(tmp_path: Path) -> None:
     views, nv, nu = 40, 3, 64
     u = np.arange(nu)[None, None, :]

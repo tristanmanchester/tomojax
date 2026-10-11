@@ -8,6 +8,7 @@ import subprocess
 import sys
 from typing import TYPE_CHECKING
 
+import h5py
 import jax
 import numpy as np
 import pytest
@@ -158,6 +159,21 @@ def test_scans_and_reconstructions_round_trip_through_files(kind: str, tmp_path:
     assert back.info == {"config": asdict(recon.info["config"])}  # the configuration's fields
     with pytest.raises(FileNotFoundError, match="no such file"):
         tj.load(tmp_path / "missing.nxs")
+
+
+@pytest.mark.parametrize("suffix", [".nxs", ".npz"])
+def test_selected_loaded_scans_save_only_their_own_view_labels(tmp_path: Path, suffix: str) -> None:
+    geometry = _geometries(8)["parallel"]
+    source = tmp_path / "source.nxs"
+    tj.save(source, tj.Scan(np.zeros((40, 12, 12), np.float32), geometry))
+    with h5py.File(source, "a") as handle:
+        handle["entry/instrument/detector/image_key"][...] = 0
+    selected = tj.load(source).selected([2, 5, 11])
+    target = tmp_path / f"selected{suffix}"
+    tj.save(target, selected)
+    loaded = tj.load(target)
+    np.testing.assert_array_equal(loaded.angles, selected.angles)
+    assert loaded.projections.shape == selected.projections.shape
 
 
 def test_alignment_modes_plan_their_schedules() -> None:

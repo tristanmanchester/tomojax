@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import numpy as np
@@ -492,8 +492,16 @@ def _nominal(geometry: ScanGeometry) -> ScanGeometry:
     from tomojax.core.geometry import ConeSegments
 
     if isinstance(geometry, ConeSegments):
-        return ConeSegments(tuple(_nominal(s) for s in geometry.segments))
-    return geometry.base if isinstance(geometry, AugmentedGeometry) else geometry
+        segments = tuple(_nominal(s) for s in geometry.segments)
+        if all(a is b for a, b in zip(segments, geometry.segments, strict=True)):
+            return geometry
+        return ConeSegments(segments)
+    if isinstance(geometry, AugmentedGeometry):
+        return _nominal(geometry.base)
+    if isinstance(geometry, DetectorRollGeometry):
+        base = _nominal(geometry.base)
+        return geometry if base is geometry.base else replace(geometry, base=base)
+    return geometry
 
 
 def detector_poses(geometry: ScanGeometry) -> np.ndarray | None:
@@ -508,9 +516,11 @@ def detector_poses(geometry: ScanGeometry) -> np.ndarray | None:
             np.zeros((len(s.angles), 6), np.float32) if t is None else t
             for s, t in zip(geometry.segments, tables, strict=True)
         ])  # fmt: skip
+    if isinstance(geometry, DetectorRollGeometry):
+        return detector_poses(geometry.base)
     if not isinstance(geometry, AugmentedGeometry):
         return None
     params = np.asarray(geometry.align_params, np.float32)
-    if geometry.translation_frame == "detector":
+    if geometry.translation_frame == "detector" and _nominal(geometry.base) is geometry.base:
         return params
     return composed_poses(geometry, np.zeros_like(params), "detector")

@@ -50,7 +50,8 @@ def load(path: str | PathLike[str], *, poses: bool = True) -> Scan:
     ``-log``; :attr:`Scan.corrections` records it. For other corrections, load
     the frames with :func:`load_frames`. The scan carries the per-view
     corrections saved with it (by :func:`align` or ``tomojax align``) unless
-    ``poses`` is False.
+    ``poses`` is False. Frames that ``image_key`` marks as other than sample
+    views are left out.
     """
     from tomojax.io import load_dataset
 
@@ -67,7 +68,7 @@ def load(path: str | PathLike[str], *, poses: bool = True) -> Scan:
         return _corrected_on_load(load_frames(file), file)
     located = _located(file) if suffix in _HDF5 else None
     if located is not None and located.raw:
-        return _corrected_on_load(_hdf5_frames(file, located, angles=None), file)
+        return _corrected_on_load(_hdf5_frames(file, located, angles=None, poses=poses), file)
     try:
         record = load_dataset(file)
     except KeyError as exc:  # HDF5 frames not laid out as TomoJAX's
@@ -82,7 +83,10 @@ def load(path: str | PathLike[str], *, poses: bool = True) -> Scan:
             f"{file} holds integer detector counts and no flat frames (image_key 1): "
             "load them with tomojax.load_frames(path, flats=... or white_level=...)"
         )
-    return scan_from_record(record, poses=poses)
+    scan = scan_from_record(record, poses=poses)
+    if located is not None and located.image_key is not None and np.any(located.image_key != 0):
+        scan = scan.selected(located.image_key == 0)
+    return scan
 
 
 def _corrected_on_load(frames: Frames, file: Path) -> Scan:
@@ -257,7 +261,7 @@ def load_frames(
         located = locate_frames(
             str(file), data_path=data_path, image_key_path=image_key_path, angles_path=angles_path
         )
-        frames = _hdf5_frames(file, located, angles=angles)
+        frames = _hdf5_frames(file, located, angles=angles, poses=True)
     else:
         from tomojax.io import load_dataset
 
@@ -340,7 +344,11 @@ def _located(file: Path) -> LocatedFrames | None:
 
 
 def _hdf5_frames(
-    file: Path, located: LocatedFrames, *, angles: Sequence[float] | np.ndarray | None
+    file: Path,
+    located: LocatedFrames,
+    *,
+    angles: Sequence[float] | np.ndarray | None,
+    poses: bool,
 ) -> Frames:
     """The sample frames, flats and darks of an HDF5 file, split by ``image_key``.
 
@@ -382,7 +390,7 @@ def _hdf5_frames(
         darks = located.darks[0 : len(located.darks)]
     return Frames(
         counts=stack.frames_at(sample),
-        geometry=geometry_of(record, poses=True),
+        geometry=geometry_of(record, poses=poses),
         flats=flats,
         darks=darks,
         flat_positions=None

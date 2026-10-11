@@ -12,8 +12,10 @@ calls are at the end.
 A Nikon (X-Tek) scan is an `.xtekct` parameter file beside its projection
 TIFFs. `tomojax import` reads the source and detector distances, the detector
 pixels and offsets, the reconstruction volume, the white level and the angles
-(from `_ctdata.txt` when present), and `tomojax inspect` describes and checks
-the result:
+(from `<Name>_ctdata.txt` when present), and `tomojax inspect` describes and checks
+the result. Only TIFFs named `<Name>` plus the input separator and a number are
+projections; flat fields, thumbnails and reconstructions sharing the prefix are
+skipped:
 
 ```bash
 uv run --no-sync tomojax import scan/part.xtekct -o scan.nxs

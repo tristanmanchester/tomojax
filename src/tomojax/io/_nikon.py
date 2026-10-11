@@ -47,9 +47,11 @@ def _read(file: Path) -> np.ndarray:
     return np.asarray(cast("object", iio.imread(file)), np.float32)
 
 
-def _angles(directory: Path, params: dict[str, str], views: int) -> np.ndarray:
-    """Angles from ``_ctdata.txt`` (measured stage angles), else the nominal steps."""
-    for ctdata in sorted(directory.glob("*_ctdata.txt")):
+def _angles(file: Path, params: dict[str, str], views: int) -> np.ndarray:
+    """Angles from this scan's ``_ctdata.txt``, else the nominal steps."""
+    name = params.get("Name", "").strip() or file.stem
+    ctdata = file.parent / f"{name}_ctdata.txt"
+    if ctdata.is_file():
         rows: list[tuple[int, float]] = []
         for line in ctdata.read_text(encoding="utf-8", errors="replace").splitlines():
             parts = line.replace(",", " ").split()
@@ -68,7 +70,11 @@ def _angles(directory: Path, params: dict[str, str], views: int) -> np.ndarray:
 def _projection_files(directory: Path, params: dict[str, str]) -> list[Path]:
     name = params.get("Name", "").strip()
     prefix = name + params.get("InputSeparator", "_") if name else ""
-    files = [file for file in tiff_files(directory) if file.name.startswith(prefix)]
+    files = [
+        file
+        for file in tiff_files(directory)
+        if file.name.startswith(prefix) and (not name or file.stem[len(prefix) :].isdecimal())
+    ]
     if not files:
         raise ValueError(f"no projection TIFFs named {prefix}NNNN.tif in {directory}")
     return files
@@ -85,7 +91,8 @@ def load_nikon_xtekct(
     Reads source and detector distances, detector pixels and offsets, the
     reconstruction volume and the white level from ``path`` (an ``.xtekct``
     file), the projections ``<Name>_NNNN.tif`` beside it, and the angles from
-    ``_ctdata.txt`` when present (else ``InitialAngle`` and ``AngularStep``).
+    ``<Name>_ctdata.txt`` when present (else ``InitialAngle`` and ``AngularStep``).
+    Without ``Name``, the angle sidecar uses the parameter file's basename.
     Projections become absorption ``-log(I / WhiteLevel)`` unless
     ``absorption`` is False, with image rows flipped so detector v points up.
     Lengths stay in the file's units (mm).
@@ -115,7 +122,7 @@ def load_nikon_xtekct(
     )
     if expected != (nv, nu):
         LOG.warning("projections are %s pixels; the .xtekct file lists %s", (nv, nu), expected)
-    angles = _angles(file.parent, params, len(files))
+    angles = _angles(file, params, len(files))
     if reverse_angles:
         angles = -angles
     detector = Detector(

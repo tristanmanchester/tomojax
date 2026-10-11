@@ -44,6 +44,26 @@ def test_inspect_cli_describes_and_checks_a_dataset(
     assert payload["volume"]["found"] is False
 
 
+@pytest.mark.parametrize("units", ["degrees", "rad"])
+def test_inspection_angle_range_uses_degrees_of_sample_frames_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], units: str
+) -> None:
+    path = tmp_path / "scan.nxs"
+    angles = np.asarray([30.0, 999.0, 60.0, -400.0])
+    write_projection_dataset(path, projections=np.ones((4, 2, 4), np.float32), angles=angles)
+    with h5py.File(path, "a") as handle:
+        handle["entry/instrument/detector/image_key"][...] = [0, 3, 0, 3]
+        stored = handle["entry/sample/transformations/rotation_angle"]
+        stored[...] = np.radians(angles) if units == "rad" else angles
+        stored.attrs["units"] = units
+    assert main(["inspect", str(path), "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["issues"] == []
+    assert report["angles"]["count"] == 4
+    assert report["angles"]["min_deg"] == pytest.approx(30.0, abs=1e-5)
+    assert report["angles"]["max_deg"] == pytest.approx(60.0, abs=1e-5)
+
+
 def test_inspect_cli_exits_1_for_an_invalid_dataset(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
