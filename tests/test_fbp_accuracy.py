@@ -809,6 +809,44 @@ def test_endpoint_continuation_matches_independent_infinite_convolution(
     np.testing.assert_allclose(actual, expected, rtol=4e-5, atol=5e-7)
 
 
+@pytest.mark.parametrize("filter_name", ["ramp", "hann"])
+@pytest.mark.parametrize("nu", [1, 8, 9])
+@pytest.mark.parametrize("pad", [0, 5])
+def test_endpoint_continuation_pullback_matches_independent_dense_transpose(
+    filter_name: str, nu: int, pad: int
+) -> None:
+    """The endpoint prior is linear, but its transpose includes both boundary tails."""
+    du = 0.7
+    index = np.arange(-pad, nu + pad)
+    offsets = index[:, None] - np.arange(nu)
+    kernel = _ramp(offsets, du)
+    left, right = _tail(index, du), _tail(nu - 1 - index, du)
+    if filter_name == "hann":
+        kernel = 0.5 * kernel + 0.25 * (_ramp(offsets - 1, du) + _ramp(offsets + 1, du))
+        left = 0.5 * left + 0.25 * (_tail(index - 1, du) + _tail(index + 1, du))
+        right = 0.5 * right + 0.25 * (_tail(nu - 2 - index, du) + _tail(nu - index, du))
+    kernel[:, 0] += left
+    kernel[:, -1] += right
+    rng = np.random.default_rng(612)
+    data = rng.uniform(0.1, 2, (2, 3, nu)).astype(np.float32)
+    cotangent = rng.normal(size=(2, 3, nu + 2 * pad)).astype(np.float32)
+    spectrum = rfft_filter_array(filter_name, nu + 2 * pad, du, jnp.float32)
+
+    def filtered(rows):
+        padded = jnp.pad(rows, ((0, 0), (0, 0), (pad, pad)))
+        return fft_filter_rows(padded, spectrum, edge_width=nu)
+
+    def pullback(rows, weights):
+        _, transpose = jax.vjp(filtered, rows)
+        return transpose(weights)[0]
+
+    actual = np.asarray(jax.jit(pullback)(jnp.asarray(data), jnp.asarray(cotangent)))
+    expected = cotangent.astype(np.float64) @ kernel
+    np.testing.assert_allclose(actual, expected, rtol=4e-5, atol=5e-7)
+    # Every per-view/row constant is annihilated, so each transpose row sums to zero.
+    np.testing.assert_allclose(actual.sum(axis=-1), 0, atol=2e-6)
+
+
 @pytest.mark.parametrize("filter_name", ["ramp", "hann", "shepp-logan"])
 @pytest.mark.parametrize("nu", [1, 13, 640])
 def test_constant_exterior_and_measurements_have_zero_ramp_response(
