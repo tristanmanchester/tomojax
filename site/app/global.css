@@ -1,0 +1,31 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+/* One accent colour, a deep teal; everything else is the Fumadocs default. */
+@theme {
+  --color-fd-primary: hsl(190, 82%, 28%);
+  --color-fd-ring: hsl(190, 82%, 38%);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, SFMono-Regular, monospace;
+}
+
+.dark {
+  --color-fd-primary: hsl(188, 70%, 62%);
+  --color-fd-ring: hsl(188, 70%, 52%);
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+
+html > body[data-scroll-locked] {
+  margin-right: 0px !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+
+/* API pages: a signature block sits directly under each name. */
+.prose h2 code,
+.prose h3 code {
+  font-size: 0.95em;
+}
