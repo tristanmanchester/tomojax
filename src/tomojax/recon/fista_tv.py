@@ -597,17 +597,18 @@ def _batched_projector(
     return model, backend, max(1, min(requested, n_views))
 
 
+def huber_tv_lipschitz(tv_weight: float, huber_delta: float, grid: Grid) -> float:
+    """The Lipschitz constant of ``tv_weight`` times Huber-TV's gradient on ``grid``."""
+    shape = (grid.nx, grid.ny, grid.nz)
+    return float(tv_weight) * gradient_norm_squared(shape) / float(huber_delta)
+
+
 def _with_huber(
     lipschitz: jax.Array | float, cfg: FistaConfig, regulariser: str, grid: Grid
 ) -> jax.Array | float:
     """``lipschitz`` plus the Huber-TV gradient's own Lipschitz constant, if it has one."""
     if regulariser == "huber_tv" and float(cfg.tv_weight) != 0.0:
-        lipschitz = (
-            lipschitz
-            + float(cfg.tv_weight)
-            * gradient_norm_squared((grid.nx, grid.ny, grid.nz))
-            / cfg.huber_delta
-        )
+        lipschitz = lipschitz + huber_tv_lipschitz(cfg.tv_weight, cfg.huber_delta, grid)
     # A zero data operator (e.g. empty support) needs no step-size restriction.
     # Keep the update defined rather than dividing a zero gradient by zero.
     if isinstance(lipschitz, jax.Array):

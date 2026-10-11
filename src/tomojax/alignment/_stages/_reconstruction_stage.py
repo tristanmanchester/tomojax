@@ -28,7 +28,7 @@ from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.operator_norm import estimate_normal_norm
 from tomojax.core.pallas_resolver import resolve_pallas_callable
 from tomojax.core.projector import get_detector_grid_device
-from tomojax.recon.fista_tv import FistaConfig, fista_tv
+from tomojax.recon.fista_tv import FistaConfig, fista_tv, huber_tv_lipschitz
 from tomojax.recon.fista_tv_core import (
     FistaCoreConfig,
     effective_fista_core_backend,
@@ -86,8 +86,7 @@ def _initial_projection_lipschitz(
             ray_integrator=getattr(cfg, "ray_integrator", "sampled"),
         )
     )
-    regulariser_l = float(cfg.tv_weight) * 12.0 / float(cfg.huber_delta)
-    return 1.2 * projection_l + regulariser_l
+    return 1.2 * projection_l + huber_tv_lipschitz(cfg.tv_weight, cfg.huber_delta, step.grid)
 
 
 def _resolve_auto_views_per_batch(
@@ -547,7 +546,7 @@ def _run_public_fista_reconstruction(
     # data term's and adds smooth-TV curvature itself, so convert, or TV counts twice.
     data_lipschitz = step.L_prev
     if data_lipschitz is not None and str(cfg.regulariser) == "huber_tv":
-        data_lipschitz -= float(cfg.tv_weight) * 12.0 / float(cfg.huber_delta)
+        data_lipschitz -= huber_tv_lipschitz(cfg.tv_weight, cfg.huber_delta, step.grid)
         if data_lipschitz <= 0:
             # An initial override below the regulariser's bound cannot provide
             # a usable data bound. Let FISTA estimate it from the operator.
