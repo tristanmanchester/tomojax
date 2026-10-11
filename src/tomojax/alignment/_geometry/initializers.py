@@ -233,8 +233,9 @@ def reprojection_det_u_seed(
     """Find the detector-u offset whose FBP reprojects most consistently.
 
     For each candidate offset the projections are shifted back, reconstructed
-    by FBP and reprojected; a consistent offset minimises the relative
-    reprojection residual after a best scalar fit. A coarse scan over
+    by FBP (a few CGLS iterations for segmented cone scans) and reprojected; a
+    consistent offset minimises the relative reprojection residual after a best
+    scalar fit. A coarse scan over
     ``max_fraction`` of the detector width is refined by golden-section search.
     Works for any scan geometry, including laminography and partial arcs.
     """

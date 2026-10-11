@@ -16,6 +16,9 @@ from scipy.spatial.transform import Rotation
 from tomojax.alignment import AlignConfig, _prealign, align_multires
 
 # check-public-imports: allow-private
+from tomojax.alignment._geometry.initializers import reprojection_det_u_seed
+
+# check-public-imports: allow-private
 from tomojax.alignment._objectives import fold_recon
 
 # check-public-imports: allow-private
@@ -455,6 +458,102 @@ def test_shift_search_recovers_large_view_shifts(kind):
     assert np.sqrt(np.mean((actual - expected) ** 2)) < 0.4
 
 
+@pytest.mark.parametrize("sigma", [5.0, 12.0])
+@pytest.mark.parametrize("cropped", [False, True])
+def test_shift_correlation_recovers_finite_support_translations(sigma, cropped):
+    # Evaluate the continuous field at shifted detector coordinates, without
+    # reusing the implementation's interpolation, FFTs, or zero-fill rule. A
+    # large or cropped object overlaps itself less at big lags, which an
+    # unnormalised correlation prefers over the true shift.
+    nv, nu = 32, 64
+    v, u = np.meshgrid(np.arange(nv) - (nv - 1) / 2, np.arange(nu) - (nu - 1) / 2, indexing="ij")
+
+    def field(du, dv):
+        blobs = [
+            (-0.42 * nu if cropped else 0.0, 0.0, 1.0, sigma),
+            (0.1 * nu, 0.1 * nv, 0.7, 0.6 * sigma),
+            (-0.18 * nu, -0.15 * nv, 0.4, 0.9 * sigma),
+        ]
+        image = np.full((nv, nu), 0.5)
+        for x, y, amplitude, radius in blobs:
+            image += amplitude * np.exp(-0.5 * ((u - du - x) ** 2 + (v - dv - y) ** 2) / radius**2)
+        return image.astype(np.float32)
+
+    shifts = np.array([[3.3, -2.2], [-9.4, 3.1], [0.4, -0.3]])
+    measured = jnp.asarray(1.4 * np.stack([field(*shift) for shift in shifts]) + 0.3)
+    model = jnp.asarray(np.repeat(field(0.0, 0.0)[None], len(shifts), axis=0))
+
+    actual = _prealign._correlation_peaks(measured, model, max_u=12, max_v=8)
+
+    np.testing.assert_allclose(actual, shifts, atol=0.15, rtol=0.0)
+
+
+@pytest.mark.parametrize("widths", [(6.0, 1.4), (12.0, 3.0)])
+def test_shift_correlation_refines_coupled_detector_axes(widths):
+    # An elongated feature at 45 degrees couples the u and v peak curvature.
+    v, u = np.meshgrid(np.arange(48) - 23.5, np.arange(64) - 31.5, indexing="ij")
+    cs = sn = np.sqrt(0.5)
+
+    def field(du, dv):
+        x, y = cs * (u - du) + sn * (v - dv), -sn * (u - du) + cs * (v - dv)
+        return (0.3 + np.exp(-0.5 * (x / widths[0]) ** 2 - 0.5 * (y / widths[1]) ** 2)).astype(
+            np.float32
+        )
+
+    truth = np.array([[0.4, -0.3], [3.3, -2.2], [-5.4, 3.1]])
+    measured = jnp.asarray(np.stack([field(*shift) for shift in truth]))
+    model = jnp.asarray(np.repeat(field(0.0, 0.0)[None], len(truth), axis=0))
+
+    actual = _prealign._correlation_peaks(measured, model, max_u=8, max_v=8)
+
+    np.testing.assert_allclose(actual, truth, atol=0.15, rtol=0.0)
+
+
+@pytest.mark.parametrize("axis", ["u", "v"])
+def test_shift_correlation_keeps_an_unobservable_axis_stationary(axis):
+    # A projection of an extruded object has features in only one direction.
+    v, u = np.meshgrid(np.arange(32) - 15.5, np.arange(64) - 31.5, indexing="ij")
+
+    def field(shift):
+        coordinate = (u if axis == "u" else v) - shift
+        return (0.3 + np.exp(-0.5 * (coordinate / 3) ** 2)).astype(np.float32)
+
+    shifts = np.array([0.4, -3.3, 2.2])
+    truth = np.zeros((len(shifts), 2))
+    truth[:, 0 if axis == "u" else 1] = shifts
+    measured = jnp.asarray(np.stack([field(shift) for shift in shifts]))
+    model = jnp.asarray(np.repeat(field(0.0)[None], len(shifts), axis=0))
+
+    actual = _prealign._correlation_peaks(measured, model, max_u=5, max_v=5)
+
+    np.testing.assert_allclose(actual, truth, atol=0.15, rtol=0.0)
+    np.testing.assert_array_equal(actual[:, 1 if axis == "u" else 0], 0.0)
+
+
+@pytest.mark.parametrize(("sign_u", "sign_v"), [(-1, -1), (1, 1), (-1, 1)])
+def test_shift_correlation_has_no_wrapped_overlap_at_search_bounds(sign_u, sign_v):
+    nv, nu, max_u, max_v = 13, 16, 5, 4
+    du, dv = sign_u * max_u, sign_v * max_v
+    model = np.random.default_rng(67).uniform(0.1, 1.0, (nv, nu)).astype(np.float32)
+    # Literal integer translation with zero fill: an exact match at the bound.
+    measured = np.zeros_like(model)
+    target = (slice(max(dv, 0), min(nv + dv, nv)), slice(max(du, 0), min(nu + du, nu)))
+    source = (slice(max(-dv, 0), min(nv - dv, nv)), slice(max(-du, 0), min(nu - du, nu)))
+    measured[target] = model[source]
+
+    actual = _prealign._correlation_peaks(
+        jnp.asarray(measured[None]), jnp.asarray(model[None]), max_u=max_u, max_v=max_v
+    )
+
+    np.testing.assert_array_equal(actual, [[du, dv]])
+
+
+def test_shift_correlation_keeps_constant_views_stationary():
+    images = jnp.full((2, 13, 16), 1.2, jnp.float32)
+    actual = _prealign._correlation_peaks(images, images, max_u=4, max_v=3)
+    np.testing.assert_array_equal(actual, np.zeros((2, 2)))
+
+
 @pytest.mark.parametrize("factors", [None, (2, 1)])
 def test_translation_seed_runs_once_at_the_first_level(monkeypatch, factors):
     # check-public-imports: allow-private
@@ -483,9 +582,6 @@ def test_translation_seed_runs_once_at_the_first_level(monkeypatch, factors):
 
 @pytest.mark.parametrize("kind", ["parallel", "lamino"])
 def test_reprojection_seed_recovers_a_detector_centre_offset(kind):
-    # check-public-imports: allow-private
-    from tomojax.alignment._geometry.initializers import reprojection_det_u_seed
-
     angles = np.linspace(0.0, 180.0 if kind == "parallel" else 360.0, 48, endpoint=False)
     geometry, grid, detector = _geometry(32, kind, angles.astype(np.float32))
     c = (np.arange(32) - 15.5) / 32
@@ -500,6 +596,29 @@ def test_reprojection_seed_recovers_a_detector_centre_offset(kind):
     seed = reprojection_det_u_seed(data, geometry, grid, detector)
     assert seed.status == "ok_reprojection"
     assert abs(seed.det_u_px + 2.3) < 0.1
+
+
+def test_reprojection_seed_recovers_a_detector_centre_offset_in_a_segmented_cone_scan():
+    grid, detector = Grid(16, 16, 16, 1.0, 1.0, 1.0), Detector(24, 24, 1.0, 1.0)
+    beam = ConeBeam(40, 80)
+    geometry = ConeSegments(
+        (
+            ConeGeometry(grid, detector, np.linspace(0, 360, 16, endpoint=False), beam),
+            ConeGeometry(grid, detector, np.linspace(7, 367, 16, endpoint=False), beam),
+        )
+    )
+    c = (np.arange(16) - 7.5) / 16
+    x, y, z = np.meshgrid(c, c, c, indexing="ij")
+    volume = np.zeros((16, 16, 16), np.float32)
+    for (cx, cy, cz), r in [((0.12, -0.08, 0.05), 0.1), ((-0.1, 0.1, -0.08), 0.07)]:
+        volume += np.exp(-((x - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2) / (2 * r * r))
+    coefficients = cone_model(geometry, detector).coefficients(stack_view_poses(geometry, 32), grid)
+    clean = cone_project(jnp.asarray(volume), coefficients, grid, detector, backend="jax")
+    shift = jnp.tile(jnp.asarray([[2.3, 0.0]], jnp.float32), (32, 1))
+
+    seed = reprojection_det_u_seed(_prealign._shift_views(clean, shift), geometry, grid, detector)
+
+    assert abs(seed.det_u_px + 2.3) < 0.15
 
 
 @pytest.mark.parametrize(

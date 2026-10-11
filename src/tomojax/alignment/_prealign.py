@@ -12,11 +12,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from functools import partial
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+from scipy.fft import next_fast_len
 
 from tomojax.core.cone import cone_model
 from tomojax.core.geometry.cone import segments_of
@@ -53,36 +54,123 @@ def _correlation_peaks(
 ) -> jax.Array:
     """Return the sub-pixel shift (u, v) carrying each model view onto the measured view."""
     _, nv, nu = measured.shape
-    size = (nv + 2 * max_v, nu + 2 * max_u)
+    # At searched |lag| <= M, replicas of a length-N linear correlation
+    # cannot overlap once the FFT length is at least N + M.
+    size = (
+        cast("int", next_fast_len(nv + max_v, real=True)),
+        cast("int", next_fast_len(nu + max_u, real=True)),
+    )
 
     def centred(images: jax.Array) -> jax.Array:
+        # Subtracting a sample first keeps a constant view exactly zero.
+        images = images - images[:, :1, :1]
         return images - jnp.mean(images, axis=(1, 2), keepdims=True)
 
-    spectrum = jnp.fft.rfft2(centred(measured), s=size) * jnp.conj(
-        jnp.fft.rfft2(centred(model), s=size)
-    )
+    measured, model = centred(measured), centred(model)
+    spectrum = jnp.fft.rfft2(measured, s=size) * jnp.conj(jnp.fft.rfft2(model, s=size))
     corr = jnp.fft.irfft2(spectrum, s=size)
-    # Keep lags within the search bound; zero padding prevents wrapped overlaps.
-    lag_v = jnp.fft.fftfreq(size[0], 1.0 / size[0])
-    lag_u = jnp.fft.fftfreq(size[1], 1.0 / size[1])
-    allowed = (jnp.abs(lag_v)[:, None] <= max_v) & (jnp.abs(lag_u)[None, :] <= max_u)
-    corr = jnp.where(allowed[None], corr, -jnp.inf)
+    # Zero padding makes these bounded lags linear, not circular overlaps.
+    lag_v, lag_u = jnp.arange(-max_v, max_v + 1), jnp.arange(-max_u, max_u + 1)
+    corr = corr[:, lag_v[:, None] % size[0], lag_u[None, :] % size[1]]
+    overlap = (
+        jnp.maximum(nv - jnp.abs(lag_v), 0)[:, None] * jnp.maximum(nu - jnp.abs(lag_u), 0)[None, :]
+    )
+    count = jnp.maximum(overlap, 1)
+    # Compare the actual overlapping rectangles with local means and norms.
+    # Unnormalised correlation favours large overlaps and bright cropped
+    # features, even when a smaller overlap matches the true shift exactly.
+    measured_sum = _overlap_sums(measured, lag_v, lag_u)
+    model_sum = _overlap_sums(model, -lag_v, -lag_u)
+    measured_var = jnp.maximum(
+        _overlap_sums(measured * measured, lag_v, lag_u) - measured_sum**2 / count, 0.0
+    )
+    model_var = jnp.maximum(
+        _overlap_sums(model * model, -lag_v, -lag_u) - model_sum**2 / count, 0.0
+    )
+    product = measured_var * model_var
+    corr = (corr - measured_sum * model_sum / count) / jnp.sqrt(
+        jnp.where(product > 0, product, 1.0)
+    )
+    corr = jnp.where((overlap > 0) & (product > 0), corr, -jnp.inf)
 
-    def peak(c: jax.Array) -> jax.Array:
-        flat = jnp.argmax(c)
-        iv, iu = flat // size[1], flat % size[1]
+    peaks = jax.vmap(_correlation_peak)(corr)
+    return peaks - jnp.asarray([max_u, max_v])
 
-        def refine(axis_values: jax.Array) -> jax.Array:
-            left, centre, right = axis_values
-            curvature = left - 2 * centre + right
-            ok = jnp.isfinite(left) & jnp.isfinite(right) & (curvature < 0)
-            return jnp.where(ok, 0.5 * (left - right) / jnp.where(ok, curvature, -1.0), 0.0)
 
-        du = refine(c[iv, (iu + jnp.arange(-1, 2)) % size[1]])
-        dv = refine(c[(iv + jnp.arange(-1, 2)) % size[0], iu])
-        return jnp.stack([lag_u[iu] + du, lag_v[iv] + dv])
+def _correlation_peak(c: jax.Array) -> jax.Array:
+    """Refine a bounded correlation peak, including coupling between detector axes."""
+    maximum = jnp.max(c)
+    near = c >= maximum - 8 * jnp.finfo(c.dtype).eps * jnp.abs(maximum)
+    v = jnp.arange(c.shape[0]) - c.shape[0] // 2
+    u = jnp.arange(c.shape[1]) - c.shape[1] // 2
+    # Among equal maxima (a feature-free axis) take the one closest to no shift.
+    distance = v[:, None] ** 2 + u[None, :] ** 2
+    flat = jnp.argmin(jnp.where(near, distance, jnp.iinfo(distance.dtype).max))
+    iv, iu = flat // c.shape[1], flat % c.shape[1]
 
-    return jax.vmap(peak)(corr)
+    def refine(values: jax.Array) -> jax.Array:
+        left, centre, right = values
+        curvature = left - 2 * centre + right
+        tolerance = 8 * jnp.finfo(c.dtype).eps * jnp.abs(centre)
+        ok = jnp.isfinite(left) & jnp.isfinite(right) & (curvature < -tolerance)
+        return jnp.where(ok, 0.5 * (left - right) / jnp.where(ok, curvature, -1.0), 0.0)
+
+    interior_u = (iu > 0) & (iu < c.shape[1] - 1)
+    interior_v = (iv > 0) & (iv < c.shape[0] - 1)
+    # Independent parabolas where the coupled fit is unavailable.
+    separate = jnp.stack(
+        [
+            jnp.where(
+                interior_u, refine(c[iv, jnp.clip(iu + jnp.arange(-1, 2), 0, c.shape[1] - 1)]), 0.0
+            ),
+            jnp.where(
+                interior_v, refine(c[jnp.clip(iv + jnp.arange(-1, 2), 0, c.shape[0] - 1), iu]), 0.0
+            ),
+        ]
+    )
+    fallback = jnp.stack([iu, iv]) + separate
+    # An elongated peak's best lattice point can lie more than a pixel from its
+    # maximum: recentre on the fitted maximum, a pixel at a time, before accepting it.
+    step, valid = _correlation_peak_step(c, iv, iu)
+    for _ in range(2):
+        move = jnp.where(valid, jnp.rint(jnp.clip(step, -1, 1)), 0).astype(iu.dtype)
+        iu, iv = iu + move[0], iv + move[1]
+        step, valid = _correlation_peak_step(c, iv, iu)
+    peak = jnp.stack([iu, iv]) + step
+    return jnp.where(valid & jnp.all(jnp.abs(step) <= 1.0), peak, fallback)
+
+
+def _correlation_peak_step(
+    c: jax.Array, iv: jax.Array, iu: jax.Array
+) -> tuple[jax.Array, jax.Array]:
+    """The stationary point of a coupled log-quadratic local correlation fit."""
+    rows = jnp.clip(iv + jnp.arange(-1, 2), 0, c.shape[0] - 1)
+    cols = jnp.clip(iu + jnp.arange(-1, 2), 0, c.shape[1] - 1)
+    patch = c[rows[:, None], cols[None, :]]
+    positive = jnp.all(patch > 0)
+    patch = jnp.log(jnp.where(patch > 0, patch, 1.0))
+    hx = patch[1, 0] - 2 * patch[1, 1] + patch[1, 2]
+    hy = patch[0, 1] - 2 * patch[1, 1] + patch[2, 1]
+    cross = (patch[2, 2] - patch[2, 0] - patch[0, 2] + patch[0, 0]) / 4
+    gx, gy = (patch[1, 2] - patch[1, 0]) / 2, (patch[2, 1] - patch[0, 1]) / 2
+    determinant = hx * hy - cross * cross
+    interior = (iu > 0) & (iu < c.shape[1] - 1) & (iv > 0) & (iv < c.shape[0] - 1)
+    tolerance = 8 * jnp.finfo(c.dtype).eps
+    curved = (hx < -tolerance) & (hy < -tolerance)
+    curved &= determinant > tolerance * jnp.maximum(jnp.abs(hx), jnp.abs(hy))
+    valid = interior & positive & jnp.all(jnp.isfinite(patch)) & curved
+    denominator = jnp.where(valid, determinant, 1.0)
+    step = jnp.stack([(cross * gy - hy * gx) / denominator, (cross * gx - hx * gy) / denominator])
+    return step, valid
+
+
+def _overlap_sums(images: jax.Array, lag_v: jax.Array, lag_u: jax.Array) -> jax.Array:
+    """Sum each image over the rectangles overlapping an image shifted by these lags."""
+    _, nv, nu = images.shape
+    integral = jnp.pad(jnp.cumsum(jnp.cumsum(images, axis=1), axis=2), ((0, 0), (1, 0), (1, 0)))
+    v0, v1 = jnp.clip(lag_v, 0, nv)[:, None], jnp.clip(nv + lag_v, 0, nv)[:, None]
+    u0, u1 = jnp.clip(lag_u, 0, nu)[None, :], jnp.clip(nu + lag_u, 0, nu)[None, :]
+    return integral[:, v1, u1] - integral[:, v0, u1] - integral[:, v1, u0] + integral[:, v0, u0]
 
 
 def _detector_translation_map(
@@ -185,20 +273,20 @@ def estimate_view_shifts(
     chunks = [slice(s, min(s + _CHUNK, n)) for s in range(0, n, _CHUNK)]
 
     def correlate(volume: jax.Array) -> np.ndarray:
-        # Reproject and correlate a chunk of views at a time.
-        return np.concatenate(
-            [
-                np.asarray(
+        # Keep only the small peak tables, then synchronize once per iteration.
+        return np.asarray(
+            jnp.concatenate(
+                [
                     _correlation_peaks(
                         data[c],
                         reproject(c, volume),
                         max_u=max_u,
                         max_v=max_v,
-                    ),
-                    np.float64,
-                )
-                for c in chunks
-            ]
+                    )
+                    for c in chunks
+                ]
+            ),
+            np.float64,
         )
 
     spacing = (float(detector.du), float(detector.dv))
@@ -225,14 +313,12 @@ def reprojection_residual(
     detector: Detector,
     projections: jax.Array | np.ndarray,
 ) -> Callable[[float], float]:
-    """Return ``shift_px -> relative residual`` of FBP reprojection.
+    """Return ``shift_px -> relative residual`` of a quick reconstruction's reprojection.
 
-    The views are moved back by a common detector-u shift, reconstructed by FBP
-    and reprojected; the residual after a best scalar amplitude fit is smallest
-    when the shift matches the data.
+    The views are moved back by a common detector-u shift, reconstructed (FBP, or
+    a few CGLS iterations for segmented cone scans) and reprojected; the residual
+    after a best scalar amplitude fit is smallest when the shift matches the data.
     """
-    from tomojax.recon import FBPConfig, fbp
-
     data = jnp.asarray(projections, dtype=jnp.float32)
     n = int(data.shape[0])
     reproject = _reprojector(geometry, stack_view_poses(geometry, n), grid, detector)
@@ -244,7 +330,7 @@ def reprojection_residual(
         corrected = jnp.concatenate(
             [_shift_views(data[c], jnp.broadcast_to(offset, (c.stop - c.start, 2))) for c in chunks]
         )
-        volume = fbp(geometry, grid, detector, corrected, config=FBPConfig(filter="hann"))
+        volume = _quick_reconstruction(geometry, grid, detector, corrected)
         predicted = jnp.concatenate([reproject(c, volume) for c in chunks])
         scale = jnp.vdot(predicted, corrected) / jnp.maximum(jnp.vdot(predicted, predicted), 1e-30)
         return float(jnp.linalg.norm(scale * predicted - corrected)) / max(norm, 1e-30)
