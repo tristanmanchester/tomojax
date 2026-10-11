@@ -134,11 +134,16 @@ ASTRA's `CGLS3D_CUDA` took 2.3, 4.4 and 8.7 s with errors of 0.088, 0.040 and
 from 0.0053 at 30 iterations to 0.0062 at 40 and 0.027 at 60, which CGLS with a
 matched transpose cannot do.
 
-On the binned FIPS walnut (2026-10-10, commit `944b2e0`; 900 views, 501³
-voxels, errors against the authors' published reconstruction) neither CGLS
-diverges within 50 iterations. TomoJAX's reaches its best error, 0.040, at 25
-iterations in 77 s. ASTRA's is at 0.074 after 25 and 0.047 after 50 (about
-90 s).
+On the binned FIPS walnut (2026-10-11, commit `f9b2c5b`; 900 views from the
+three orbits, 501³ voxels, error inside the walnut against the authors'
+published reconstruction, warm times including transfers) neither CGLS
+diverges within 50 iterations, and ASTRA's is faster at equal error. From
+zero, TomoJAX's reaches 0.040 at 25 iterations in 77 s and ASTRA's 0.043 at 35
+in 72 s; ASTRA's then rises to 0.047 at 50. Started from the mean of the
+orbits' FDK volumes, TomoJAX's reaches 0.046 in 15 iterations and 49 s, ASTRA's
+0.047 in 18 and 39 s. The walnut's axis leans about half a degree, which rules
+out the faster transpose path above, so each TomoJAX iteration costs more than
+ASTRA's.
 
 `fdk_host` reconstructed a 1024³ scan (1024 views of 1024² pixels, 4.3 GB each
 way) in z-slabs in 8.0 s with the projections and volume in RAM, 11.1 s on the
