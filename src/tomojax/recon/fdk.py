@@ -4,7 +4,8 @@ Each projection is cosine-weighted, ramp-filtered along detector rows on the
 isocentre plane, and backprojected voxel by voxel with the ``(SOD / U)^2``
 distance weight, where U is the voxel's distance from the source along the
 detector normal. Full turns weight each view by half its angular step;
-shorter arcs of at least a half turn plus the fan angle use Parker weights.
+shorter arcs of at least a half turn plus the fan angle use Parker weights
+with a virtual fan spanning the acquired arc, retaining overscan measurements.
 
 FDK is exact only in the plane through the source orbit; away from it the
 reconstruction carries the usual cone-beam artefacts, growing with the cone
@@ -196,6 +197,9 @@ def _distinct_view_weights(beam: ConeBeam, detector: Detector, angles: np.ndarra
             f"FDK short scans need at least 180 degrees plus the fan angle "
             f"({np.rad2deg(np.pi + 2 * delta):.1f} degrees); got {np.rad2deg(arc):.1f}"
         )
+    # Treat the extra acquisition angle as a virtual fan. Otherwise the
+    # minimum-scan window assigns zero to valid later views of an overscan.
+    delta = max(delta, (arc - np.pi) / 2)
     beta = np.empty((n_views, 1))
     beta[order, 0] = sorted_angles - sorted_angles[0]
     g = gamma[None, :]

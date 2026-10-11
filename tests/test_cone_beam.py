@@ -206,14 +206,14 @@ def test_fdk_reconstructs_full_and_short_scans(backend):
     truth = _voxelise(grid, shapes)
     fan = np.rad2deg(2 * np.arctan(24 / beam.source_to_detector))
     errors = []
-    for arc, views in ((360.0, 120), (180.0 + fan + 2.0, 90)):
+    for arc, views in ((360.0, 120), (180.0 + fan + 2.0, 90), (300.0, 120)):
         angles = np.linspace(0.0, arc, views, endpoint=arc < 360.0)
         geometry = ConeGeometry(grid, detector, angles, beam)
         volume = fdk(
             geometry, grid, detector, _analytic(shapes, geometry), config=FDKConfig(backend=backend)
         )
         errors.append(np.linalg.norm(np.asarray(volume) - truth) / np.linalg.norm(truth))
-    assert errors[0] < 0.12 and errors[1] < 0.16
+    assert errors[0] < 0.12 and max(errors[1:]) < 0.16
     short = ConeGeometry(grid, detector, np.linspace(0.0, 150.0, 40), beam)
     with pytest.raises(ValueError, match="short scans"):
         fdk(short, grid, detector, np.zeros((40, 48, 48), np.float32))

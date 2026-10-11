@@ -75,3 +75,20 @@ def test_fdk_weights_require_distinct_angles(angles):
     scan = geometry(angles)
     with pytest.raises(ValueError, match="distinct rotation angles"):
         view_weights(scan, scan.detector, len(angles))
+
+
+@pytest.mark.parametrize("arc", [240, 300, 350])
+def test_overscan_conjugate_rays_partition_one(arc):
+    # +/-5-degree fan columns and half-degree views have exact acquired
+    # conjugates at beta + 180 + 2*gamma, independent of the weight formula.
+    step = 0.5
+    angles = np.arange(0, arc, step)
+    detector = Detector(3, 3, 120 * np.tan(np.deg2rad(5)), 1)
+    scan = ConeGeometry(Grid(3, 3, 3, 1, 1, 1), detector, angles, ConeBeam(60, 120))
+    weights = view_weights(scan, detector, len(angles)) / np.deg2rad(step)
+    assert np.all(weights[1:] > 0)
+    for column, fan in enumerate([-5, 0, 5]):
+        shift = int((180 + 2 * fan) / step)
+        np.testing.assert_allclose(
+            weights[:-shift, column] + weights[shift:, 2 - column], 1, atol=2e-12
+        )
