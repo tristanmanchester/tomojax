@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+import operator
 from typing import Any, Protocol, TypedDict
 
 Vec2 = tuple[float, float]
@@ -61,6 +62,14 @@ def _coerce_fixed_tuple(name: str, value: Iterable[float], expected_len: int) ->
         raise TypeError(f"{name} elements must be real numbers") from e
 
 
+def _plain_numbers(obj: object, counts: tuple[str, ...], pitches: tuple[str, ...]) -> None:
+    """Store counts as Python ints and pitches as floats, whatever NumPy type they came as."""
+    for name in counts:
+        object.__setattr__(obj, name, operator.index(getattr(obj, name)))
+    for name in pitches:
+        object.__setattr__(obj, name, float(getattr(obj, name)))
+
+
 @dataclass(frozen=True)
 class Grid:
     """Regular voxel grid metadata.
@@ -83,6 +92,7 @@ class Grid:
     vol_center: Vec3 | None = None
 
     def __post_init__(self) -> None:
+        _plain_numbers(self, ("nx", "ny", "nz"), ("vx", "vy", "vz"))
         if self.vol_origin is not None:
             object.__setattr__(
                 self,
@@ -144,6 +154,7 @@ class Detector:
     center: Vec2 = field(default_factory=lambda: (0.0, 0.0))
 
     def __post_init__(self) -> None:
+        _plain_numbers(self, ("nu", "nv"), ("du", "dv"))
         object.__setattr__(self, "center", _coerce_fixed_tuple("center", self.center, 2))
 
     def to_dict(self) -> DetectorDict:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import nullcontext
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 # check-public-imports: allow-private
@@ -87,6 +88,18 @@ def test_detector_grid_validation_requires_pair_of_flattened_vectors() -> None:
             detector,
             context="ctx",
         )
+
+
+def test_grid_and_detector_hold_plain_numbers_from_numpy_metadata() -> None:
+    grid = Grid(nx=np.uint8(200), ny=np.int64(3), nz=2, vx=np.float32(0.5), vy=1, vz=1.0)
+    detector = Detector(nu=np.uint16(640), nv=np.int32(1), du=np.float32(0.25), dv=1)
+
+    assert grid == Grid(nx=200, ny=3, nz=2, vx=0.5, vy=1.0, vz=1.0)
+    assert hash(grid) == hash(Grid(nx=200, ny=3, nz=2, vx=0.5, vy=1.0, vz=1.0))
+    assert grid.nx * grid.nx == 40_000  # an 8-bit count would wrap
+    assert type(detector.nu) is int and type(detector.du) is float
+    with pytest.raises(TypeError):
+        Grid(nx=64.5, ny=1, nz=1, vx=1.0, vy=1.0, vz=1.0)
 
 
 def test_transfer_guard_context_returns_noop_when_disabled() -> None:
