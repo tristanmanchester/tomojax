@@ -41,7 +41,7 @@ class FBPConfig:
     """Configuration for filtered backprojection.
 
     ``backprojector='auto'`` uses the voxel-driven Pallas kernel on CUDA and JAX
-    otherwise. ``'jax'`` forces the reference; ``'pallas'`` requires CUDA input
+    otherwise. ``'jax'`` forces the reference; ``'pallas'`` requires CUDA execution
     and never silently changes backend.
 
     ``scale=None`` weights each view exactly for the scanned arc (see
@@ -592,7 +592,7 @@ class _Plan:
                         self.projections[part],
                         self.view_scale[part],
                         self.params[part],
-                        self.spectrum,
+                        put(self.spectrum),
                         self.arc_length,
                         batch_size=size,
                         **options,
@@ -719,11 +719,14 @@ def fbp(
 
         return fbp_on_detector_grid(T_all, proj, grid, detector, cfg, det_grid)
     cuda = all(
-        device.platform == "gpu" and device.client.platform_version.lower().startswith("cuda")
-        for device in (T_all.devices() if on_host else proj.devices())
+        device.platform == "gpu"
+        and getattr(getattr(device, "client", None), "platform_version", "")
+        .lower()
+        .startswith("cuda")
+        for device in (as_devices(cfg.devices) or (T_all.devices() if on_host else proj.devices()))
     )
     if cfg.backprojector == "pallas" and not cuda:
-        raise ValueError("Pallas FBP requires CUDA arrays")
+        raise ValueError("Pallas FBP requires CUDA execution devices")
     plan = _plan(geometry, grid, detector, T_all, proj, cfg, cuda=cuda)
     split = view_split(cfg.devices, n_views)
     whole = range(n_views)

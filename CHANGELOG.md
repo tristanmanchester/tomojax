@@ -34,6 +34,11 @@ pixel/crop/binning coordinates, and saved correction settings.
 Its geometry is evaluated in double precision on the device rather than
 embedding large per-pixel interpolation tables in each compiled batch.
 
+Fixed: parallel FBP selects its backprojector and places its streamed FFT filter
+on the explicitly requested execution devices, rather than the input storage
+device. CPU-resident input can use explicit CUDA/Pallas, and explicit CPU
+execution uses the JAX reference even when input resides on CUDA.
+
 Faster: parallel GPU FBP reuses horizontal coordinates along axial tiles and
 skips view loops for tiles entirely outside the measured detector rows, retaining
 exact FP32 interpolation, zero extension and accumulation.
