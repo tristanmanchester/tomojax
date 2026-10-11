@@ -87,6 +87,10 @@ Memory budgeting honors `jax.default_device` and CPU placement instead of
 always probing the first GPU, without initializing unused accelerators.
 Unavailable accelerator memory statistics remain unknown rather than
 substituting host RAM, so conservative accelerator allocation guards apply.
+Paganin phase retrieval sizes its repeated-edge padding by the filter's physical
+range rather than half the image. Broad filters no longer mix opposite edges
+of a narrow detector crop, and short filters avoid oversized FFTs on large
+detectors. Automatic view batches account for the resulting fast-length FFTs.
 
 Faster: exact-ray projection loads each cell corner once and integrates one
 spatial derivative for every pose direction (about 2.4x forward and 3x
