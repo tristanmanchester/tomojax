@@ -79,10 +79,16 @@ def validate_host_arrays(
 def volume_writer(
     output: np.ndarray, *, asynchronous: bool
 ) -> Iterator[Callable[[jax.Array, int, int], None]]:
-    """Write axial slabs with at most one pending copy and two live device slabs."""
+    """Write axial slabs with one pending copy, optionally packing it on the device."""
+    axes = axial_output_axes(output) if asynchronous else None
+    physical = output if axes is None else output.transpose(axes)
 
     def save(volume: jax.Array, start: int, count: int) -> None:
-        output[:, :, start : start + count] = np.asarray(volume)[:, :, :count]
+        host = np.asarray(volume)
+        if axes is None:
+            output[:, :, start : start + count] = host[:, :, :count]
+        else:
+            physical[start : start + count] = host[:count]
 
     if not asynchronous:
         yield save
@@ -94,11 +100,20 @@ def volume_writer(
             nonlocal pending
             if pending is not None:
                 pending.result()
-            volume.copy_to_host_async()
-            pending = pool.submit(save, volume, start, count)
+            packed = volume if axes is None else volume.transpose(axes)
+            packed.copy_to_host_async()
+            pending = pool.submit(save, packed, start, count)
 
         try:
             yield enqueue
         finally:
             if pending is not None:
                 pending.result()
+
+
+def axial_output_axes(output: np.ndarray) -> tuple[int, int, int] | None:
+    """A z-leading permutation with contiguous storage, or no packed-copy path."""
+    for axes in ((2, 1, 0), (2, 0, 1)):
+        if output.transpose(axes).flags.c_contiguous:
+            return axes
+    return None

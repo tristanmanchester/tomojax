@@ -12,7 +12,7 @@ from tomojax.geometry import Detector, Grid, ParallelGeometry
 from tomojax.recon import FBPHostConfig, fbp_host
 
 
-def _setup(monkeypatch, volume):
+def _setup(monkeypatch, volume, *, out=None):
     module = importlib.import_module("tomojax.recon.fbp_host")
     grid, detector = Grid(3, 4, 6, 1, 1, 1), Detector(5, 6, 1, 1)
     geometry = ParallelGeometry(grid, detector, [0, 60, 120])
@@ -34,7 +34,7 @@ def _setup(monkeypatch, volume):
     monkeypatch.setattr(module, "stack_view_poses", lambda *_: Poses())
     monkeypatch.setattr(module, "_fbp_from_host", volume)
     return lambda: fbp_host(
-        geometry, grid, detector, data, config=FBPHostConfig(slices_per_batch=2)
+        geometry, grid, detector, data, config=FBPHostConfig(slices_per_batch=2), out=out
     )
 
 
@@ -93,7 +93,8 @@ def test_output_copy_failure_is_not_reported_as_success(monkeypatch):
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("z_center", [0.0, 0.3, 5.0])
-def test_cuda_overlap_matches_serial_slabs_bit_for_bit(monkeypatch, z_center):
+@pytest.mark.parametrize("storage", ["C", "F", "axial", "reverse"])
+def test_cuda_overlap_matches_serial_slabs_bit_for_bit(monkeypatch, z_center, storage):
     import jax
 
     if jax.default_backend() != "gpu":
@@ -106,7 +107,14 @@ def test_cuda_overlap_matches_serial_slabs_bit_for_bit(monkeypatch, z_center):
     monkeypatch.setattr(module, "_OUTPUT_OVERLAP_MIN_BYTES", 2**60)
     expected = fbp_host(geometry, grid, detector, data, config=config)
     monkeypatch.setattr(module, "_OUTPUT_OVERLAP_MIN_BYTES", 0)
-    actual = fbp_host(geometry, grid, detector, data, config=config)
+    if storage == "axial":
+        out = np.empty((grid.nz, grid.nx, grid.ny), np.float32).transpose(1, 2, 0)
+    elif storage == "reverse":
+        out = np.empty(expected.shape, np.float32, order="F")[::-1]
+    else:
+        out = np.empty(expected.shape, np.float32, order=storage)
+    actual = fbp_host(geometry, grid, detector, data, config=config, out=out)
+    assert actual is out
     np.testing.assert_array_equal(actual, expected)
 
 
@@ -121,3 +129,17 @@ def test_no_extra_device_slab_when_memory_is_unknown_or_tight(monkeypatch, free)
     module = importlib.import_module("tomojax.recon.fbp_host")
     monkeypatch.setattr(module, "device_free_memory_bytes", lambda: free)
     np.testing.assert_array_equal(run(), np.ones((3, 4, 6), np.float32))
+
+
+def test_packed_transfer_reserves_an_additional_device_slab(monkeypatch):
+    def compute(*args, **kwargs):
+        grid = kwargs["grid"]
+        return np.ones((grid.nx, grid.ny, grid.nz), np.float32)
+
+    out = np.empty((3, 4, 6), np.float32, order="F")
+    run = _setup(monkeypatch, compute, out=out)
+    module = importlib.import_module("tomojax.recon.fbp_host")
+    # One 96-byte extra slab fits the 144-byte budget, but packing needs two.
+    monkeypatch.setattr(module, "device_free_memory_bytes", lambda: 720)
+    assert run() is out
+    np.testing.assert_array_equal(out, 1)
