@@ -5,6 +5,7 @@ from __future__ import annotations
 from tomojax.alignment._config import coupled_pose_config, resolved_schedule_for_config
 from tomojax.alignment._consistency import OrbitHeights, orbit_heights
 from tomojax.alignment._gauge import least_motion_estimate
+from tomojax.alignment._geometry.detector_center import estimate_center
 from tomojax.alignment._geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
 from tomojax.alignment._geometry.geometry_blocks import normalize_geometry_dofs
 from tomojax.alignment._geometry.parametrizations import (
@@ -143,6 +144,7 @@ __all__ = [
     "cone_setup",
     "coupled_pose_config",
     "dof_spec",
+    "estimate_center",
     "implied_detector_offset",
     "least_motion_estimate",
     "load_alignment_checkpoint",

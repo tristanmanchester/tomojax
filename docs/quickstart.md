@@ -78,7 +78,10 @@ pixel. To set the geometry, pass the measured detector,
 `tj.load_frames("raw.h5", detector=tj.Detector(nu=2048, nv=2048, du=0.65, dv=0.65))`,
 or a whole `geometry=`, with your own detector shape and pitch. Then estimate
 the centre of rotation with `tomojax align --mode cor` (see the
-[alignment guide](alignment-guide.md)).
+[alignment guide](alignment-guide.md)). For an unposed axial parallel scan,
+`scan = tj.estimate_center(scan)` estimates physical detector-u without a
+volume solve; inspect the result, especially for very compact objects that
+can produce false Fourier minima.
 
 ### Retrieve phase from propagation-based phase contrast
 

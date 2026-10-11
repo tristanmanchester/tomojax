@@ -118,6 +118,9 @@ cropped objects); the reprojection centre score is no longer biased towards
 shifts that clip views, and works on segmented cone scans; mutual-information
 losses keep the mass of samples outside the histogram range; a gain and offset
 fit gives a constant prediction zero gain.
+`estimate_center(scan)` exposes projection-only parallel centre estimation,
+returning a scan with its physical detector centre updated and its data/grid
+unchanged; iterative `align(..., mode="cor")` behavior is unchanged.
 
 Data fixes: NXtomo angles at `/entry/sample/rotation_angle` are read (they
 loaded as zeros), with radians converted; `tj.load` leaves out frames that
