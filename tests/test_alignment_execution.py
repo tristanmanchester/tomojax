@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from tomojax import project
 from tomojax.alignment import AlignConfig, align_multires
 
 # check-public-imports: allow-private
@@ -450,3 +452,30 @@ def test_finite_volume_is_not_rejected_by_fraction_rounding(shape) -> None:
     assert reconstruction_stage._finite_fraction(volume) == 1.0
     damaged = volume.at[0, 0, 0].set(jnp.nan).at[-1, -1, -1].set(jnp.inf)
     assert reconstruction_stage._finite_fraction(damaged) == 1.0 - 2 / np.prod(shape)
+
+
+@pytest.mark.numerical
+def test_alignment_partial_view_batches_run_under_global_x64() -> None:
+    grid, detector = Grid(3, 4, 2, 0.8, 1.1, 1.3), Detector(5, 3, 0.6, 1.2)
+    geometry = ParallelGeometry(grid, detector, np.array([13, 33, 68, 110, 142], np.float32))
+    volume = np.linspace(0.2, 1, 24, dtype=np.float32).reshape(3, 4, 2)
+    data = np.asarray(project(geometry, volume))
+    config = AlignConfig(
+        outer_iterations=1,
+        iterations=1,
+        tv_weight=0,
+        projector_backend="jax",
+        optimise_dofs=("dx",),
+        opt_method="gd",
+        lr_trans=0,
+        early_stop=False,
+        views_per_batch=2,
+        checkpoint_projector=False,
+    )
+    with jax.enable_x64(False):
+        expected, _, _ = align(geometry, grid, detector, data, init_x=volume, config=config)
+    with jax.enable_x64():
+        actual, poses, _ = align(geometry, grid, detector, data, init_x=volume, config=config)
+    assert actual.dtype == np.float32
+    np.testing.assert_allclose(actual, expected, rtol=3e-5, atol=3e-6)
+    np.testing.assert_array_equal(poses, 0)

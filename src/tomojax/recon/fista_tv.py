@@ -308,8 +308,6 @@ def grad_data_term(  # noqa: PLR0915
             in_axes=(0, None),
         )
         n = int(T_all.shape[0])
-        nv = int(projections.shape[1])
-        nu = int(projections.shape[2])
         b = _effective_view_chunk_size(n, views_per_batch)
         m = (n + b - 1) // b
 
@@ -323,8 +321,8 @@ def grad_data_term(  # noqa: PLR0915
                 n_views=n,
                 chunk_size=b,
             )
-            T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
-            y_chunk = jax.lax.dynamic_slice(projections, (start_shifted, 0, 0), (b, nv, nu))
+            T_chunk = jax.lax.dynamic_slice_in_dim(T_all, start_shifted, b)
+            y_chunk = jax.lax.dynamic_slice_in_dim(projections, start_shifted, b)
             pred = vm_project(T_chunk, masked_vol)
             mask = valid_mask[:, None, None]
             resid = (pred - y_chunk).astype(jnp.float32) * mask
@@ -355,8 +353,8 @@ def grad_data_term(  # noqa: PLR0915
             i: jnp.ndarray,
         ) -> tuple[tuple[jnp.ndarray, jnp.ndarray], None]:
             loss_acc, g_acc = carry
-            T_i = jax.lax.dynamic_slice(T_all, (i, 0, 0), (1, 4, 4))[0]
-            y_i = jax.lax.dynamic_slice(projections, (i, 0, 0), (1, nv, nu))[0]
+            T_i = jax.lax.dynamic_slice_in_dim(T_all, i, 1)[0]
+            y_i = jax.lax.dynamic_slice_in_dim(projections, i, 1)[0]
             pred_i = forward_project_view_T(
                 T_i,
                 grid,

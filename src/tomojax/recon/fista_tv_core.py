@@ -330,7 +330,7 @@ def _project_stack(
         i: jnp.ndarray,
     ) -> tuple[jnp.ndarray, None]:
         start_shifted, _valid_mask, view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
-        T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
+        T_chunk = jax.lax.dynamic_slice_in_dim(T_all, start_shifted, b)
         pred = _project_chunk(
             T_chunk=T_chunk,
             grid=grid,
@@ -453,17 +453,15 @@ def _projection_loss(
         return jnp.asarray(0.0, dtype=jnp.float32)
     b = _chunk_size(n_views, views_per_batch)
     num_chunks = (n_views + b - 1) // b
-    nv = int(projections.shape[1])
-    nu = int(projections.shape[2])
 
     def body(
         loss_acc: jnp.ndarray,
         i: jnp.ndarray,
     ) -> tuple[jnp.ndarray, None]:
         start_shifted, valid_mask, _view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
-        T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
-        y_chunk = jax.lax.dynamic_slice(projections, (start_shifted, 0, 0), (b, nv, nu))
-        w_chunk = jax.lax.dynamic_slice(weights, (start_shifted, 0, 0), (b, 1, 1))
+        T_chunk = jax.lax.dynamic_slice_in_dim(T_all, start_shifted, b)
+        y_chunk = jax.lax.dynamic_slice_in_dim(projections, start_shifted, b)
+        w_chunk = jax.lax.dynamic_slice_in_dim(weights, start_shifted, b)
         pred = _project_chunk(
             T_chunk=T_chunk,
             grid=grid,
@@ -562,8 +560,6 @@ def _projection_loss_and_explicit_grad(
         backprojector = "jax"
     b = _chunk_size(n_views, views_per_batch)
     num_chunks = (n_views + b - 1) // b
-    nv = int(projections.shape[1])
-    nu = int(projections.shape[2])
     backproject_fn = _resolve_sum_backproject_views(backprojector)
 
     def body(
@@ -572,9 +568,9 @@ def _projection_loss_and_explicit_grad(
     ) -> tuple[tuple[jnp.ndarray, jnp.ndarray], None]:
         loss_acc, grad_acc = carry
         start_shifted, valid_mask, _view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
-        T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
-        y_chunk = jax.lax.dynamic_slice(projections, (start_shifted, 0, 0), (b, nv, nu))
-        w_chunk = jax.lax.dynamic_slice(weights, (start_shifted, 0, 0), (b, 1, 1))
+        T_chunk = jax.lax.dynamic_slice_in_dim(T_all, start_shifted, b)
+        y_chunk = jax.lax.dynamic_slice_in_dim(projections, start_shifted, b)
+        w_chunk = jax.lax.dynamic_slice_in_dim(weights, start_shifted, b)
         valid = valid_mask[:, None, None]
         if (
             ray_integrator == "sampled"

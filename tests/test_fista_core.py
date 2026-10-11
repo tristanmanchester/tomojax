@@ -8,7 +8,8 @@ import numpy as np
 import pytest
 
 from tomojax.forward import project_joseph
-from tomojax.geometry import Detector, Grid
+from tomojax.geometry import Detector, Grid, ParallelGeometry
+from tomojax.recon import FistaConfig, fista_tv
 from tomojax.recon.fista_tv_core import (
     FistaCoreConfig,
     fista_objective_arrays,
@@ -170,3 +171,26 @@ def test_zero_weight_tv_iteration_loss_has_only_the_data_gradient_at_a_flat_volu
     # Every voxel lies on one unit-length plane contribution to a measured ray.
     actual = jax.jit(jax.grad(iteration_loss))(jnp.zeros((2, 2, 2)))
     np.testing.assert_allclose(actual, -np.ones((2, 2, 2)), rtol=1e-6)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("grad_mode", ["batched", "stream"])
+def test_public_fista_partial_view_batches_run_under_global_x64(grad_mode):
+    grid, detector = Grid(1, 1, 1, 1.0, 1.0, 1.0), Detector(1, 1, 1.0, 1.0)
+    geometry = ParallelGeometry(grid, detector, np.zeros(5, np.float32))
+    data = np.full((5, 1, 1), 3.0, np.float32)  # five unit rays through one voxel
+    config = FistaConfig(
+        iterations=1,
+        tv_weight=0,
+        projector_model="ray",
+        projector_backend="jax",
+        ray_integrator="sampled",
+        views_per_batch=2,
+        power_iterations=3,
+        grad_mode=grad_mode,
+    )
+    with jax.enable_x64():
+        actual, info = fista_tv(geometry, grid, detector, data, config=config)
+    assert actual.dtype == np.float32
+    np.testing.assert_allclose(actual, 3.0, rtol=3e-6)
+    np.testing.assert_allclose(info["lipschitz"], 5.0, rtol=3e-6)

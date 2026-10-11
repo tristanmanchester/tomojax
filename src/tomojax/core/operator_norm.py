@@ -74,7 +74,7 @@ def estimate_normal_norm(
             start = chunk * b
             valid = jnp.minimum(b, n - start)
             shifted = jnp.maximum(0, start - (b - valid))
-            batch = jax.lax.dynamic_slice(poses, (shifted, 0, 0), (b, 4, 4))
+            batch = jax.lax.dynamic_slice_in_dim(poses, shifted, b)
             projected = jax.vmap(
                 lambda t: forward_project_view_T(
                     t,

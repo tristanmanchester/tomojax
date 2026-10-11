@@ -281,7 +281,7 @@ def project_stack(
         i: jnp.ndarray,
     ) -> tuple[jnp.ndarray, None]:
         start_shifted, _vmask, view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
-        T_chunk = jax.lax.dynamic_slice(pose_stack, (start_shifted, 0, 0), (b, 4, 4))
+        T_chunk = jax.lax.dynamic_slice_in_dim(pose_stack, start_shifted, b)
         pred = vm_project(T_chunk)
         return out.at[view_idx].set(pred), None
 
@@ -341,7 +341,7 @@ def project_and_score_stack(
         if frames is None:
             return parallel_project(T)
         # One batched cone call per chunk, not one launch per view.
-        chunk = jax.lax.dynamic_slice(frames, (start, 0, 0), (T.shape[0], 4, 3))
+        chunk = jax.lax.dynamic_slice_in_dim(frames, start, T.shape[0])
         return _cone_project_poses(T, grid, detector, volume, chunk, cone_backend)
 
     local_indices = (
@@ -418,15 +418,15 @@ def project_and_score_stack(
         i: jnp.ndarray,
     ) -> tuple[jnp.ndarray, None]:
         start_shifted, valid_mask, _view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
-        T_chunk = jax.lax.dynamic_slice(pose_stack, (start_shifted, 0, 0), (b, 4, 4))
-        y_chunk = jax.lax.dynamic_slice(targets, (start_shifted, 0, 0), (b, nv, nu))
-        idx_chunk = jax.lax.dynamic_slice(local_indices, (start_shifted,), (b,))
-        weight_chunk = jax.lax.dynamic_slice(per_view_weight, (start_shifted,), (b,))
+        T_chunk = jax.lax.dynamic_slice_in_dim(pose_stack, start_shifted, b)
+        y_chunk = jax.lax.dynamic_slice_in_dim(targets, start_shifted, b)
+        idx_chunk = jax.lax.dynamic_slice_in_dim(local_indices, start_shifted, b)
+        weight_chunk = jax.lax.dynamic_slice_in_dim(per_view_weight, start_shifted, b)
         pred = vm_project(T_chunk, start_shifted)
         if loss_mask is None:
             image_mask = None
         else:
-            image_mask = jax.lax.dynamic_slice(loss_mask, (start_shifted, 0, 0), (b, nv, nu))
+            image_mask = jax.lax.dynamic_slice_in_dim(loss_mask, start_shifted, b)
         losses = loss_adapter.per_view_loss(
             pred,
             y_chunk,
@@ -441,8 +441,8 @@ def project_and_score_stack(
         i: jnp.ndarray,
     ) -> tuple[jnp.ndarray, None]:
         start_shifted, valid_mask, _view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
-        T_chunk = jax.lax.dynamic_slice(pose_stack, (start_shifted, 0, 0), (b, 4, 4))
-        y_chunk = jax.lax.dynamic_slice(targets, (start_shifted, 0, 0), (b, nv, nu))
+        T_chunk = jax.lax.dynamic_slice_in_dim(pose_stack, start_shifted, b)
+        y_chunk = jax.lax.dynamic_slice_in_dim(targets, start_shifted, b)
         pred = vm_project(T_chunk, start_shifted)
         residual = (pred - y_chunk).astype(jnp.float32)
         losses = jnp.float32(0.5) * jnp.sum(residual * residual, axis=(1, 2))

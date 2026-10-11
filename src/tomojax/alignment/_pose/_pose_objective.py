@@ -50,11 +50,7 @@ def _objective_loss_mask_chunk(
     ctx: _PoseObjectiveContext, start_shifted: jnp.ndarray
 ) -> jnp.ndarray:
     if ctx.has_loss_mask:
-        return jax.lax.dynamic_slice(
-            ctx.loss_mask,
-            (start_shifted, 0, 0),
-            (ctx.chunk_size, ctx.nv, ctx.nu),
-        )
+        return jax.lax.dynamic_slice_in_dim(ctx.loss_mask, start_shifted, ctx.chunk_size)
     return ctx.empty_loss_mask_chunk
 
 
@@ -130,7 +126,7 @@ def _objective_frames_chunk(ctx: _PoseObjectiveContext, start: jnp.ndarray) -> j
     """The chunk's cone-beam lab frames, or None for a parallel beam."""
     if ctx.frames is None:
         return None
-    return jax.lax.dynamic_slice(ctx.frames, (start, 0, 0), (ctx.chunk_size, 4, 3))
+    return jax.lax.dynamic_slice_in_dim(ctx.frames, start, ctx.chunk_size)
 
 
 def _build_one_view_value_and_grad_batch(ctx: _PoseObjectiveContext) -> Callable[..., object]:
@@ -189,21 +185,11 @@ def _build_manual_loss_and_grad(
         ) -> tuple[tuple[jnp.ndarray, jnp.ndarray], None]:
             total, grad = carry
             start_shifted, vmask, view_idx_chunk = _objective_chunk_schedule(ctx, i)
-            params_chunk = jax.lax.dynamic_slice(
-                pose_params,
-                (start_shifted, 0),
-                (ctx.chunk_size, pose_params.shape[1]),
+            params_chunk = jax.lax.dynamic_slice_in_dim(pose_params, start_shifted, ctx.chunk_size)
+            t_nom_chunk = jax.lax.dynamic_slice_in_dim(
+                ctx.pose_stack, start_shifted, ctx.chunk_size
             )
-            t_nom_chunk = jax.lax.dynamic_slice(
-                ctx.pose_stack,
-                (start_shifted, 0, 0),
-                (ctx.chunk_size, 4, 4),
-            )
-            y_chunk = jax.lax.dynamic_slice(
-                ctx.projections,
-                (start_shifted, 0, 0),
-                (ctx.chunk_size, ctx.nv, ctx.nu),
-            )
+            y_chunk = jax.lax.dynamic_slice_in_dim(ctx.projections, start_shifted, ctx.chunk_size)
             lvec, g_chunk = one_view_val_and_grad_batch(
                 params_chunk,
                 t_nom_chunk,
@@ -269,21 +255,9 @@ def _build_gn_update_all(
         ) -> tuple[tuple[jnp.ndarray, jnp.ndarray], None]:
             delta_acc, loss_acc = carry
             start_shifted, vmask, view_idx_chunk = _objective_chunk_schedule(ctx, i)
-            params_chunk = jax.lax.dynamic_slice(
-                pose_params,
-                (start_shifted, 0),
-                (ctx.chunk_size, pose_params.shape[1]),
-            )
-            t_chunk = jax.lax.dynamic_slice(
-                ctx.pose_stack,
-                (start_shifted, 0, 0),
-                (ctx.chunk_size, 4, 4),
-            )
-            y_chunk = jax.lax.dynamic_slice(
-                ctx.projections,
-                (start_shifted, 0, 0),
-                (ctx.chunk_size, ctx.nv, ctx.nu),
-            )
+            params_chunk = jax.lax.dynamic_slice_in_dim(pose_params, start_shifted, ctx.chunk_size)
+            t_chunk = jax.lax.dynamic_slice_in_dim(ctx.pose_stack, start_shifted, ctx.chunk_size)
+            y_chunk = jax.lax.dynamic_slice_in_dim(ctx.projections, start_shifted, ctx.chunk_size)
             dp_values, loss_values = gn_update_batch(
                 params_chunk,
                 t_chunk,
