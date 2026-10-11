@@ -15,7 +15,7 @@ from tomojax.alignment._geometry.parametrizations import apply_pose_update
 
 # check-public-imports: allow-private
 from tomojax.alignment._pose._pose_jacobian import PoseJacobianOptions, pose_prediction_and_columns
-from tomojax.core.cone import use_cuda_cone
+from tomojax.core.cone import frame_coefficients, use_cuda_cone
 from tomojax.core.projector import forward_project_view_T
 from tomojax.geometry import Detector, Grid
 
@@ -25,7 +25,7 @@ pytestmark = [pytest.mark.numerical, pytest.mark.gpu]
 @pytest.mark.parametrize("translation_frame", ["object", "detector"])
 @pytest.mark.parametrize("width", [5, 6])
 @pytest.mark.parametrize("jacobian", ["central", "autodiff"])
-@pytest.mark.parametrize("grid_case", ["small", "large"])
+@pytest.mark.parametrize("grid_case", ["small", "large", "tie"])
 @pytest.mark.parametrize(
     "direction", [(1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 1), (0.2, 0.7, -0.8)]
 )
@@ -38,6 +38,11 @@ def test_cuda_columns_retain_individual_central_differences(
     if grid_case == "small":
         grid = Grid(7, 6, 5, 0.7, 1.1, 0.9, vol_center=(0.23, -0.17, 0.31))
         detector = Detector(9, 7, 1.3, 0.8)
+    elif grid_case == "tie":
+        # One ray and isotropic spacing make (1,1,1) an EXACT index-axis tie.
+        # Odd/even voxel centres give the axes distinct quadrature phases.
+        grid = Grid(7, 6, 5, 1.0, 1.0, 1.0)
+        detector = Detector(1, 1, 1.3, 0.8)
     else:
         grid = Grid(101, 101, 101, 50 / 101, 53 / 101, 47 / 101, vol_center=(0.23, -0.17, 0.31))
         detector = Detector(192, 243, 0.6, 0.6)
@@ -61,7 +66,12 @@ def test_cuda_columns_retain_individual_central_differences(
     weight = jnp.asarray(
         np.random.default_rng(86).uniform(0.05, 0.99, (detector.nv, detector.nu)), jnp.float32
     )
-    weight = weight.at[0].set(0)
+    if grid_case != "tie":
+        weight = weight.at[0].set(0)
+    if grid_case == "tie" and direction == (1, 1, 1):
+        row = np.asarray(frame_coefficients(nominal[None], frame, grid, detector))[0]
+        ray = row[3:6] - row[:3]
+        np.testing.assert_array_equal(np.abs(ray), np.repeat(abs(ray[0]), 3))
     options = PoseJacobianOptions(
         0.001, translation_frame, True, 1, "fp32", "joseph", jacobian, True
     )
