@@ -181,14 +181,11 @@ def _cone_project_poses(
     detector: Detector,
     volume: jnp.ndarray,
     frames: jnp.ndarray,
-    *,
-    differentiable: bool,
-    projector_backend: ProjectorBackendInput,
+    backend: str,
 ) -> jnp.ndarray:
-    """Cone projections in lab ``frames`` using the requested, derivative-safe backend."""
+    """Cone projections in lab ``frames`` with ``backend`` (see _cone_projector_backend)."""
     from tomojax.core.cone import cone_project, frame_coefficients
 
-    backend = _cone_projector_backend(projector_backend, differentiable=differentiable)
     coeff = frame_coefficients(poses, frames, grid, detector)
     return cone_project(volume, coeff, grid, detector, backend=backend)
 
@@ -223,15 +220,10 @@ def project_stack(
     if n_views == 0:
         return jnp.zeros((0, detector.nv, detector.nu), dtype=jnp.float32)
     if frames is not None:
-        return _cone_project_poses(
-            pose_stack,
-            grid,
-            detector,
-            volume,
-            frames,
-            differentiable=require_differentiable_projector,
-            projector_backend=backend,
+        cone_backend = _cone_projector_backend(
+            backend, differentiable=require_differentiable_projector
         )
+        return _cone_project_poses(pose_stack, grid, detector, volume, frames, cone_backend)
     if ray_integrator == "sampled" and backend == "pallas" and not require_differentiable_projector:
         fallback_reason = _pallas_sinogram_fallback_reason(
             pose_stack=pose_stack,
@@ -326,8 +318,7 @@ def project_and_score_stack(
         return jnp.asarray(0.0, dtype=jnp.float32)
     b = _chunk_size(n_views, views_per_batch)
     num_chunks = (n_views + b - 1) // b
-    nv = int(targets.shape[1])
-    nu = int(targets.shape[2])
+    nv, nu = (int(n) for n in targets.shape[1:3])
     loss_mask = getattr(loss_adapter.state, "mask", None)
     parallel_project = jax.vmap(
         lambda T: forward_project_view_T(
@@ -343,21 +334,15 @@ def project_and_score_stack(
         )
     )
 
+    cone_backend = _cone_projector_backend(backend, differentiable=require_differentiable_projector)
+
     def vm_project(T: jnp.ndarray, start: jnp.ndarray | int) -> jnp.ndarray:
         """Project the views ``start, start + 1, ...`` at poses ``T``."""
         if frames is None:
             return parallel_project(T)
         # One batched cone call per chunk, not one launch per view.
         chunk = jax.lax.dynamic_slice(frames, (start, 0, 0), (T.shape[0], 4, 3))
-        return _cone_project_poses(
-            T,
-            grid,
-            detector,
-            volume,
-            chunk,
-            differentiable=require_differentiable_projector,
-            projector_backend=backend,
-        )
+        return _cone_project_poses(T, grid, detector, volume, chunk, cone_backend)
 
     local_indices = (
         jnp.arange(n_views, dtype=jnp.int32)

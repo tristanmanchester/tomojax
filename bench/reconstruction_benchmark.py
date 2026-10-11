@@ -62,7 +62,7 @@ def run_case(size: int, n_views: int, repeats: int) -> dict:
             detector=detector,
             backend=backend,
             batch_size=n_views,
-            z_integer=backend == "pallas",
+            z_mode="integer" if backend == "pallas" else "general",
             separable=True,
         )
 

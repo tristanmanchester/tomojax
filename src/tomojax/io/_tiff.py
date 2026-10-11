@@ -75,5 +75,5 @@ def read_tiff_frames(path: Path | str) -> np.ndarray:
     # Decode straight into one stack, not a list of pages and then a copy.
     frames = np.empty((len(layouts), *shape), dtype=dtype)
     for view, page in enumerate(pages()):
-        page.asarray(out=frames[view])
+        _ = page.asarray(out=frames[view])
     return frames
