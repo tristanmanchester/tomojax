@@ -87,6 +87,13 @@ Memory budgeting honors `jax.default_device` and CPU placement instead of
 always probing the first GPU, without initializing unused accelerators.
 Unavailable accelerator memory statistics remain unknown rather than
 substituting host RAM, so conservative accelerator allocation guards apply.
+Raw correction treats flat-minus-dark signals unresolved at three standard
+errors of the calibration mean as unmeasured pixels, using neutral transmission
+before spatial corrections. Dark or unreliable detector pixels no longer
+generate enormous values that phase retrieval spreads across the entire image.
+Calibration uncertainty is accumulated in bounded FP64 host batches and follows
+the interpolation between flat sets; the correction record reports affected pixels.
+
 Paganin phase retrieval sizes its repeated-edge padding by the filter's physical
 range rather than half the image. Broad filters no longer mix opposite edges
 of a narrow detector crop, and short filters avoid oversized FFTs on large

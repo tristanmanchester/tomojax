@@ -156,6 +156,9 @@ class Frames:
         below. Views are corrected on the device in batches of ``batch_views``,
         a positive integer. Automatic batches target 256 MiB, including the
         padded FFT arrays needed for Paganin phase retrieval.
+        Flat-minus-dark signals unresolved at three standard errors of their
+        calibration mean take neutral transmission before spatial steps; the
+        flat-field record reports these unmeasured pixels.
         """
         from tomojax.corrections import correct_frames
 

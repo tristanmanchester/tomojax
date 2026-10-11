@@ -69,6 +69,10 @@ def correct_frames(
     transmission_steps = tuple(s for d, s in ordered if d == "transmission")
     out = np.empty((views, rows, cols), np.float32)
     flat_stack, dark = jax.device_put(fields.flats), jax.device_put(fields.dark)
+    flat_variance, dark_variance = (
+        jax.device_put(fields.flat_variance),
+        jax.device_put(fields.dark_variance),
+    )
     batch = batch_views or _frame_batch_size(views, rows, cols, transmission_steps)
     tally = np.zeros(2, np.int64)  # non-positive transmission, non-finite results
 
@@ -80,6 +84,7 @@ def correct_frames(
     for start, stop, raw in _batches(counts, views, batch):
         done = _first_pass(
             jnp.asarray(raw), lo[start:stop], hi[start:stop], t[start:stop], flat_stack, dark,
+            flat_variance, dark_variance,
             epsilon=float(epsilon), counts_steps=counts_steps,
             transmission_steps=transmission_steps, line_steps=tuple(head),
         )  # fmt: skip
@@ -170,8 +175,16 @@ def _ordered(steps: Sequence[Step]) -> list[tuple[str, Step]]:
 class _Fields:
     """The flat sets (``(sets, rows, columns)``), their positions and the dark field."""
 
-    def __init__(self, flats: np.ndarray, positions: np.ndarray, dark: np.ndarray) -> None:
+    def __init__(
+        self,
+        flats: np.ndarray,
+        positions: np.ndarray,
+        dark: np.ndarray,
+        flat_variance: np.ndarray,
+        dark_variance: np.ndarray,
+    ) -> None:
         self.flats, self.positions, self.dark = flats, positions, dark
+        self.flat_variance, self.dark_variance = flat_variance, dark_variance
 
 
 def _flat_fields(
@@ -184,10 +197,10 @@ def _flat_fields(
     """The mean flat of each set, the mean dark, and the record of them."""
     if darks is None and flats is not None:
         LOG.warning("no dark fields: correcting with a dark field of zero")
-    dark = (
-        np.zeros(shape, np.float32)
+    dark, dark_variance = (
+        (np.zeros(shape, np.float64), np.zeros(shape, np.float64))
         if darks is None
-        else np.asarray(_mean(darks, shape, "darks"), np.float32)
+        else _moments(darks, shape, "darks")
     )
     dark_frames = 0 if darks is None else len(darks)
     if flats is None:
@@ -198,8 +211,16 @@ def _flat_fields(
             )
         level = _positive_finite(white_level, "white_level")
         stack = np.full((1, *shape), level, np.float32)
-        record = Correction("flat_dark", {"white_level": level, "darks": dark_frames})
-        return _Fields(stack, np.zeros(1), dark), (record,)
+        record = _field_record(
+            {"white_level": level, "darks": dark_frames}, stack - dark, dark_variance
+        )
+        return _Fields(
+            stack,
+            np.zeros(1),
+            dark.astype(np.float32),
+            np.zeros_like(stack),
+            dark_variance.astype(np.float32),
+        ), (record,)
     flats = flats if hasattr(flats, "shape") else np.asarray(flats)
     if len(flats.shape) != 3 or flats.shape[1:] != shape or not len(flats):
         raise ValueError(
@@ -211,42 +232,62 @@ def _flat_fields(
             f"flat_positions needs one finite position for each of the {len(flats)} flats"
         )
     sets = np.unique(where)
-    stack = np.stack(
-        [
-            _mean(
-                flats, shape, "flats", indices=np.flatnonzero(where == p) if len(sets) > 1 else None
-            )
-            for p in sets
-        ]
-    )
+    statistics = [
+        _moments(
+            flats, shape, "flats", indices=np.flatnonzero(where == p) if len(sets) > 1 else None
+        )
+        for p in sets
+    ]
+    stack = np.stack([mean for mean, _ in statistics])
+    flat_variance = np.stack([variance for _, variance in statistics])
     settings: dict[str, Any] = {"flats": len(flats), "darks": dark_frames, "flat_sets": len(sets)}
     if len(sets) > 1:
         settings["flat_positions"] = [float(p) for p in sets]
-    lit = stack - dark
-    found: dict[str, Json] = {"pixels_without_light": int(np.count_nonzero(lit <= 0))}
-    return _Fields(stack.astype(np.float32), sets, dark), (
-        Correction("flat_dark", settings, found),
-    )
+    record = _field_record(settings, stack - dark, flat_variance + dark_variance)
+    return _Fields(
+        stack.astype(np.float32),
+        sets,
+        dark.astype(np.float32),
+        flat_variance.astype(np.float32),
+        dark_variance.astype(np.float32),
+    ), (record,)
 
 
-def _mean(
+def _field_record(settings: dict[str, Any], light: np.ndarray, variance: np.ndarray) -> Correction:
+    found: dict[str, Json] = {"pixels_without_light": int(np.count_nonzero(light <= 0))}
+    unreliable = light <= 3 * np.sqrt(variance)
+    if unreliable.any():
+        settings["minimum_signal_snr"] = 3.0
+        found["pixels_without_reliable_light"] = int(np.count_nonzero(unreliable))
+    return Correction("flat_dark", settings, found)
+
+
+def _moments(
     frames: Any, shape: tuple[int, int], name: str, *, indices: np.ndarray | None = None
-) -> np.ndarray:
-    """Average calibration frames in FP64, reading bounded batches from lazy stacks."""
+) -> tuple[np.ndarray, np.ndarray]:
+    """Mean and its sampling variance, in FP64 and bounded host batches."""
     frames = frames if hasattr(frames, "shape") else np.asarray(frames)
     if len(frames.shape) != 3 or frames.shape[1:] != shape or not len(frames):
         raise ValueError(
             f"{name} are {frames.shape}; a nonempty stack of frames of {shape} is needed"
         )
     count = len(frames) if indices is None else len(indices)
-    batch = max(1, _BATCH_BYTES // (np.dtype(frames.dtype).itemsize * shape[0] * shape[1]))
-    total = np.zeros(shape, np.float64)
+    batch = max(1, (32 << 20) // (8 * shape[0] * shape[1]))
+    total, squared = np.zeros(shape, np.float64), np.zeros(shape, np.float64)
     for start in range(0, count, batch):
         selected = (
             slice(start, start + batch) if indices is None else indices[start : start + batch]
         )
-        total += np.sum(frames[selected], axis=0, dtype=np.float64)
-    return total / count
+        values = np.asarray(frames[selected], np.float64)
+        total += np.sum(values, axis=0)
+        squared += np.einsum("ijk,ijk->jk", values, values)
+    mean = total / count
+    variance = (
+        np.maximum(0.0, (squared - total * mean) / (count * (count - 1)))
+        if count > 1
+        else np.zeros(shape, np.float64)
+    )
+    return mean, variance
 
 
 def _interpolation(q: np.ndarray, positions: np.ndarray) -> tuple[np.ndarray, ...]:
@@ -271,6 +312,8 @@ def _first_pass(
     t: jax.Array,
     flats: jax.Array,
     dark: jax.Array,
+    flat_variance: jax.Array,
+    dark_variance: jax.Array,
     *,
     epsilon: float,
     counts_steps: tuple[Step, ...],
@@ -282,7 +325,13 @@ def _first_pass(
         x = step.apply(x)
     weight = t[:, None, None]
     flat = (1 - weight) * flats[lo] + weight * flats[hi]
-    transmission = (x - dark) / jnp.maximum(flat - dark, epsilon)
+    variance = (1 - weight) ** 2 * flat_variance[lo] + weight**2 * flat_variance[hi] + dark_variance
+    light = flat - dark
+    reliable = light > jnp.maximum(epsilon, 3 * jnp.sqrt(variance))
+    # A calibration indistinguishable from darkness is an unmeasured pixel,
+    # not a denominator of epsilon. Use neutral transmission before spatial
+    # steps, so an FFT cannot spread enormous counts across the whole image.
+    transmission = jnp.where(reliable, (x - dark) / jnp.maximum(light, epsilon), 1.0)
     nonpositive = jnp.sum(transmission <= 0)
     for step in transmission_steps:
         transmission = step.apply(transmission)

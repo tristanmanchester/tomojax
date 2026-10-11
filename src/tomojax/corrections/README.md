@@ -14,6 +14,13 @@ means accumulate in FP64 in bounded host batches. `np.asarray(frames.flats)`
 or indexing the flat/dark stack reads it explicitly.
 Each step is recorded in `Scan.corrections` and saved with the scan.
 
+Flat-minus-dark signals that are nonpositive or unresolved at three standard
+errors of their calibration mean are unmeasured pixels. They take neutral
+transmission (one, hence zero line integral) before spatial corrections, rather
+than dividing their counts by an epsilon. The flat-field record reports the
+affected pixels. This avoids spreading invalid detector values through phase
+retrieval; it does not recover absorption at those pixels.
+
 `tomojax preprocess` is a thin layer over these: its options build the same
 steps.
 
