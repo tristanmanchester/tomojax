@@ -353,7 +353,7 @@ def _launch_adjoint(
         )  # fmt: skip
         boxes = cp.empty((views, 3, 4), cp.int32)
         module.get_function("axis_boxes")(
-            (views,), (256,), (coeff, boxes, np.int32(det.nu), np.int32(det.nv))
+            (views,), (256,), (coeff, weighted, boxes, np.int32(det.nu), np.int32(det.nv))
         )
         sizes = (grid.nx, grid.ny, grid.nz, det.nu, det.nv)
         dims = tuple(np.int32(x) for x in sizes)

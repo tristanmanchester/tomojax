@@ -282,10 +282,11 @@ extern "C" __global__ void sep_adjoint(
     }
 }
 
-// Per view and plane axis, the bounding box (u0, u1, v0, v1) of the pixels whose rays
-// are sampled along that axis; an empty box has u1 < u0. grid (views,).
+// Per view and plane axis, bound the nonzero path-weighted pixels whose rays are
+// sampled along that axis; an empty box has u1 < u0. grid (views,).
 extern "C" __global__ void axis_boxes(
-    const float* __restrict__ coeff, int* __restrict__ boxes, int nu, int nv)
+    const float* __restrict__ coeff, const float* __restrict__ weighted,
+    int* __restrict__ boxes, int nu, int nv)
 {
     __shared__ int box[3][4];
     const float* c = coeff + (long)blockIdx.x * NC;
@@ -298,6 +299,8 @@ extern "C" __global__ void axis_boxes(
     #pragma unroll
     for (int a = 0; a < 3; ++a) { lo[a][0] = nu; hi[a][0] = -1; lo[a][1] = nv; hi[a][1] = -1; }
     for (int p = threadIdx.x; p < nu * nv; p += blockDim.x) {
+        // Exact-zero contributions need no footprint, including shifted-batch padding.
+        if (weighted[(long)blockIdx.x * nu * nv + p] == 0.f) continue;
         int u = p / nv, v = p % nv;
         float r0, r1, r2; ray_of(c, (float)u, (float)v, r0, r1, r2);
         int a = ray_axis(r0, r1, r2);

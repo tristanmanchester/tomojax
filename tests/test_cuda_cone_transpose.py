@@ -230,3 +230,34 @@ def test_cuda_cone_dense_transpose_with_reversed_separable_row_steps(yaw, angle)
     geometry = ConeGeometry(grid, detector, [angle], ConeBeam(7.0, 10.4, detector_yaw_deg=yaw))
     frames = np.asarray([beam_frame(geometry.beam, detector)])
     _check_dense_transpose(grid, detector, frames, jnp.asarray(geometry.poses(), jnp.float32))
+
+
+@pytest.mark.gpu
+def test_cuda_cone_dense_transpose_with_empty_views_and_masked_pixels():
+    grid = Grid(5, 4, 3, 0.7, 1.1, 0.9, vol_center=(0.2, -0.1, 0.3))
+    detector = Detector(9, 17, 1.3, 0.8)
+    directions = [(1, 1, 0), (1, 0, 1), (1, 1, 1)]
+    frames = [
+        _frame(directions[i % 3], 0.0 if i % 3 == 0 else 0.13, reverse_v=i % 2 == 0)
+        for i in range(33)
+    ]
+    coeff = frame_coefficients(
+        jnp.broadcast_to(jnp.eye(4), (33, 4, 4)), np.asarray(frames), grid, detector
+    )
+    shape = (grid.nx, grid.ny, grid.nz)
+    basis = jnp.eye(np.prod(shape), dtype=jnp.float32).reshape((-1, *shape))
+    forward = jax.jit(jax.vmap(lambda x: cone_project(x, coeff, grid, detector, backend="cuda")))
+    matrix = np.asarray(forward(basis), np.float64).reshape((np.prod(shape), -1))
+    rng = np.random.default_rng(2043)
+    initial = rng.normal(size=shape).astype(np.float32)
+    for included in ([], [32], [0, 15, 32]):
+        images = np.zeros((33, detector.nv, detector.nu), np.float32)
+        images[included] = rng.normal(size=(len(included), detector.nv, detector.nu))
+        images[:, ::2, 1::2] = 0
+        expected = (matrix @ images.ravel()).reshape(shape) + initial
+        # Absolute contributions bound cancellation without using the adjoint.
+        scale = (np.abs(matrix) @ np.abs(images).ravel()).max() + np.abs(initial).max()
+        actual = np.asarray(
+            cone_backproject(images, coeff, grid, detector, backend="cuda", accumulate=initial)
+        )
+        np.testing.assert_allclose(actual, expected, rtol=0, atol=7e-7 * scale)
