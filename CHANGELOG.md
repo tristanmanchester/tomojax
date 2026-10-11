@@ -83,6 +83,8 @@ angular quadrature for DC. Repeated directions modulo 180 degrees still need
 to be excluded explicitly.
 Memory budgeting honors `jax.default_device` and CPU placement instead of
 always probing the first GPU, without initializing unused accelerators.
+Unavailable accelerator memory statistics remain unknown rather than
+substituting host RAM, so conservative accelerator allocation guards apply.
 
 
 Faster: exact-ray projection loads each cell corner once and integrates one

@@ -15,7 +15,7 @@ from tomojax.backends import _memory, estimate_views_per_batch_info
 from tomojax.geometry import Detector, Grid
 
 
-def test_device_memory_probe_logs_debug_before_host_fallback(
+def test_device_memory_probe_logs_resolution_failure_as_unknown(
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -23,7 +23,7 @@ def test_device_memory_probe_logs_debug_before_host_fallback(
         raise RuntimeError("device probe unavailable")
 
     monkeypatch.setattr(jax, "devices", raise_devices)
-    monkeypatch.setattr(_memory, "_host_available_memory_bytes", lambda: None)
+    monkeypatch.setattr(_memory, "_host_available_memory_bytes", lambda: 64 * 1024**3)
 
     with caplog.at_level(logging.DEBUG, logger="tomojax.backends._memory"):
         free_bytes = _memory.device_free_memory_bytes()
@@ -31,6 +31,68 @@ def test_device_memory_probe_logs_debug_before_host_fallback(
     assert free_bytes is None
     assert "Device memory probe failed" in caplog.text
     assert "device probe unavailable" in caplog.text
+
+
+@pytest.mark.parametrize("platform", ["gpu", "tpu"])
+@pytest.mark.parametrize("api", ["memory_stats", "device_get_memory_info"])
+@pytest.mark.parametrize("failure", ["missing", "empty", "unrecognized", "error"])
+def test_unknown_accelerator_memory_does_not_substitute_host_ram(
+    monkeypatch, platform, api, failure
+):
+    host_calls = []
+    selected = SimpleNamespace(platform=platform)
+
+    def probe(*args):
+        del args
+        if failure == "error":
+            raise RuntimeError("accelerator statistics unavailable")
+        return None if failure == "empty" else {"peak_bytes_in_use": 1234}
+
+    def host():
+        host_calls.append(True)
+        return 64 * 1024**3
+
+    monkeypatch.setattr(jax, "config", SimpleNamespace(jax_default_device=selected))
+    monkeypatch.delattr(jax, "device_get_memory_info", raising=False)
+    monkeypatch.setattr(_memory, "_host_available_memory_bytes", host)
+    if failure != "missing":
+        if api == "memory_stats":
+            selected.memory_stats = probe
+        else:
+            monkeypatch.setattr(jax, "device_get_memory_info", probe, raising=False)
+    assert _memory.device_free_memory_bytes() is None
+    estimate = estimate_views_per_batch_info(
+        n_views=32, grid_nxyz=(4, 4, 4), det_nuv=(4, 4), fallback_batch=3
+    )
+    assert estimate.free_bytes is None and estimate.fallback_used
+    assert estimate.views_per_batch == 3
+    assert not host_calls
+
+
+def test_failed_preferred_accelerator_probe_tries_its_remaining_statistics(monkeypatch):
+    selected = SimpleNamespace(platform="gpu", memory_stats=lambda: {"free_bytes": 1234})
+    monkeypatch.setattr(jax, "config", SimpleNamespace(jax_default_device=selected))
+
+    def failed(device):
+        assert device is selected
+        raise RuntimeError("preferred API unavailable")
+
+    monkeypatch.setattr(jax, "device_get_memory_info", failed, raising=False)
+    assert _memory.device_free_memory_bytes() == 1234
+
+
+def test_accelerator_zero_free_memory_is_not_replaced_by_another_probe(monkeypatch):
+    selected = SimpleNamespace(platform="gpu", memory_stats=lambda: {"free_bytes": 1234})
+    monkeypatch.setattr(jax, "config", SimpleNamespace(jax_default_device=selected))
+    monkeypatch.setattr(jax, "device_get_memory_info", lambda _: {"free_bytes": 0}, raising=False)
+    assert _memory.device_free_memory_bytes() == 0
+
+
+def test_memory_probe_without_any_discovered_device_uses_host_memory(monkeypatch):
+    monkeypatch.setattr(jax, "config", SimpleNamespace(jax_default_device="cpu"))
+    monkeypatch.setattr(jax, "devices", lambda _: [])
+    monkeypatch.setattr(_memory, "_host_available_memory_bytes", lambda: 5678)
+    assert _memory.device_free_memory_bytes() == 5678
 
 
 @pytest.mark.parametrize("api", ["memory_stats", "device_get_memory_info"])
