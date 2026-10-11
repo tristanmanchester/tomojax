@@ -17,6 +17,10 @@ outputs, avoiding strided host copies while keeping a bounded staging buffer.
 Host parallel FBP overlaps large CUDA output-slab copies with reconstruction
 when device memory permits, without changing the reconstructed values.
 
+The existing Fourier-slice inverse is available through `tj.reconstruct(scan,
+"fourier")` and `tomojax recon --method fourier`, using `FourierConfig`. It keeps
+host storage and its existing NumPy/CuPy backends; FBP remains the default.
+
 `tj.reconstruct` now keeps oversized parallel-beam and laminography FBP
 volumes on the host, as it already did for cone FDK, instead of allocating
 the whole volume on the accelerator. Explicit devices share spatial regions.
