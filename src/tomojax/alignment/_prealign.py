@@ -317,23 +317,27 @@ def reprojection_residual(
 
     The views are moved back by a common detector-u shift, reconstructed (FBP, or
     a few CGLS iterations for segmented cone scans) and reprojected; the residual
-    after a best scalar amplitude fit is smallest when the shift matches the data.
+    after a best scalar amplitude fit is divided by the corrected stack's norm.
+    Cropping measurements cannot lower the score merely by reducing their energy;
+    a shift leaving no data has infinite cost.
     """
     data = jnp.asarray(projections, dtype=jnp.float32)
     n = int(data.shape[0])
     reproject = _reprojector(geometry, stack_view_poses(geometry, n), grid, detector)
     chunks = [slice(s, min(s + _CHUNK, n)) for s in range(0, n, _CHUNK)]
-    norm = float(jnp.linalg.norm(data))
 
     def residual(shift_px: float) -> float:
         offset = jnp.asarray([[-shift_px, 0.0]], jnp.float32)
         corrected = jnp.concatenate(
             [_shift_views(data[c], jnp.broadcast_to(offset, (c.stop - c.start, 2))) for c in chunks]
         )
+        norm = float(jnp.linalg.norm(corrected))
+        if norm == 0.0:
+            return float("inf")
         volume = _quick_reconstruction(geometry, grid, detector, corrected)
         predicted = jnp.concatenate([reproject(c, volume) for c in chunks])
         scale = jnp.vdot(predicted, corrected) / jnp.maximum(jnp.vdot(predicted, predicted), 1e-30)
-        return float(jnp.linalg.norm(scale * predicted - corrected)) / max(norm, 1e-30)
+        return float(jnp.linalg.norm(scale * predicted - corrected)) / norm
 
     return residual
 

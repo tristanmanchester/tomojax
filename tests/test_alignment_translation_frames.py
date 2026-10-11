@@ -596,6 +596,10 @@ def test_reprojection_seed_recovers_a_detector_centre_offset(kind):
     seed = reprojection_det_u_seed(data, geometry, grid, detector)
     assert seed.status == "ok_reprojection"
     assert abs(seed.det_u_px + 2.3) < 0.1
+    # Shifts that clip more of the views never score better by discarding signal.
+    score = _prealign.reprojection_residual(geometry, grid, detector, data)
+    clipped = [score(shift) for shift in (-3.0, -6.0, -10.0, -14.0)]
+    assert clipped == sorted(clipped)
 
 
 def test_reprojection_seed_recovers_a_detector_centre_offset_in_a_segmented_cone_scan():
