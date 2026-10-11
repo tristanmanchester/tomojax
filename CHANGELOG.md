@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+Faster: exact-ray projection loads each cell corner once and integrates one
+spatial derivative for every pose direction (about 2.4x forward and 3x
+gradient on the CPU at 48³); the CUDA cone transpose weights, reorders and
+bounds detector images in one tiled pass; host Fourier reconstruction uses a
+half-plane transform (about 2.5x) and CUDA Fourier fuses its launches;
+streamed CGLS no longer projects its zero starting volume; sparse HDF5 frame
+reads go run by run (about 45x); pose-model setup and Gauss-Newton candidate
+smoothing are linear in the number of views (3000 views: 25 s to 0.1 s and
+8 s to 0.03 s).
+
+Reconstruction fixes: FBP and FDK treat a direction measured twice, such as
+theta and theta + 360, as one, which removes about 3% image error from scans
+that repeat a turn; FDK short scans longer than the minimum arc use every
+view; SPDHG follows the published stochastic primal-dual algorithm, with
+steps aware of each block's selection probability, and is far closer to
+converged after the same number of iterations; FISTA solves TV jointly with
+box and nonnegativity bounds and steps by the exact finite-grid gradient norm;
+differentiable FISTA stays consistent with traced detectors and poses and has
+finite derivatives at zero view weights; `cgls_multires` keeps host data on
+the host; Joseph gather transposes skip off-detector pixels and handle one-row
+or one-column detector grids.
+
+Alignment fixes: gradient-descent pose steps backtrack instead of accepting a
+higher loss; fixed-volume Gauss-Newton includes the curvature prior; the
+per-view shift search normalises its correlation over the overlap and fits the
+peak in both axes at once (the old search was off by up to 15 px on large or
+cropped objects); the reprojection centre score is no longer biased towards
+shifts that clip views, and works on segmented cone scans; mutual-information
+losses keep the mass of samples outside the histogram range; a gain and offset
+fit gives a constant prediction zero gain.
+
+Data fixes: NXtomo angles at `/entry/sample/rotation_angle` are read (they
+loaded as zeros), with radians converted; `tj.load` leaves out frames that
+`image_key` marks as flats or darks; flats and darks stored beside the frames
+are used when `image_key` marks none; big-endian counts are corrected; Nikon
+import reads its own `_ctdata.txt`; nested pose updates survive saving and
+loading; `RejectViews` can reject the first and last views; even-width stripe
+removal no longer shifts by half a pixel; ASTRA import gives multi-orbit
+scans one pixel pitch and keeps magnified pose corrections, and ASTRA export
+works for aligned multi-orbit scans; `Grid` and `Detector` hold plain Python
+numbers, so NumPy metadata cannot wrap or promote; default FP32 code runs with
+`jax_enable_x64` on.
+
 Faster: parallel FBP computes each fractional detector row once (host FBP
 on a real APS scan 1.06 s to 0.51 s), uses compact GPU tiles for small working
 sets (22-23% faster) and balances host slabs; Fourier reconstruction samples
