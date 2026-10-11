@@ -752,7 +752,7 @@ def run_loss_grad_variant(
             volume=masked,
             det_grid=data.det_grid,
             projections=target,
-            weights=jnp.sqrt(jnp.maximum(weights, jnp.float32(0.0)))[:, None, None],
+            weights=jnp.maximum(weights, jnp.float32(0.0))[:, None, None],
             checkpoint_projector=cfg.checkpoint_projector,
             projector_unroll=cfg.projector_unroll,
             gather_dtype=cfg.gather_dtype,
