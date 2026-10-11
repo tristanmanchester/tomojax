@@ -86,9 +86,7 @@ def test_public_scan_load_does_not_hide_malformed_saved_angle_offsets(
 
 
 @pytest.mark.parametrize("kind", ["parallel", "lamino", "cone", "segments"])
-@pytest.mark.parametrize(
-    "offsets", [np.full(4, 2e-9), np.asarray([0.1, -0.2, 0.3, -0.4])]
-)
+@pytest.mark.parametrize("offsets", [np.full(4, 2e-9), np.asarray([0.1, -0.2, 0.3, -0.4])])
 def test_finite_offsets_even_below_allclose_tolerance_match_independent_poses(kind, offsets):
     dataset = _dataset(kind, offsets)
     original = dataset.angles.copy()

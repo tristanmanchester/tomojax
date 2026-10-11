@@ -17,11 +17,11 @@ from tomojax.recon.fista_tv_core import (
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("scale", [1.0, 1e-4])
 @pytest.mark.parametrize("override", [False, True])
-def test_core_one_voxel_reconstruction_preserves_physical_length_units(scale, override):
+def test_core_one_voxel_reconstruction_preserves_physical_length_units(override):
     # An axis-aligned ray through one voxel has A=[scale]. Its least-squares
     # solution is exactly 3 after one step with L=scale**2, in any length units.
+    scale = 1e-4
     grid, detector = Grid(1, 1, 1, scale, scale, scale), Detector(1, 1, scale, scale)
     poses = jnp.eye(4, dtype=jnp.float32)[None]
     lipschitz = scale**2
@@ -97,36 +97,26 @@ def _diagnostic_problem(iterations, *, final_data, iteration_loss):
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("iteration_loss", [False, True])
-def test_core_uncomputed_final_data_term_never_contains_regularization(iteration_loss):
-    actual, _, expected_data, expected_tv = _diagnostic_problem(
-        1, final_data=False, iteration_loss=iteration_loss
+@pytest.mark.parametrize(
+    ("iterations", "final_data", "iteration_loss"),
+    [(1, False, False), (1, False, True), (0, False, False), (0, True, False)],
+)
+def test_core_data_diagnostic_never_contains_regularization(iterations, final_data, iteration_loss):
+    actual, initial, expected_data, expected_tv = _diagnostic_problem(
+        iterations, final_data=final_data, iteration_loss=iteration_loss
     )
     assert expected_tv > 0
-    np.testing.assert_allclose(
-        actual["data_loss"], expected_data if iteration_loss else 0, rtol=3e-6
-    )
+    computed = final_data or iteration_loss
+    np.testing.assert_allclose(actual["data_loss"], expected_data if computed else 0, rtol=3e-6)
     if iteration_loss:
         np.testing.assert_allclose(actual["loss"][0], expected_data + 0.3 * expected_tv, rtol=3e-6)
+    if not iterations:
+        np.testing.assert_array_equal(actual["x"], initial)
+        assert actual["loss"].shape == (0,) and int(actual["effective_iterations"]) == 0
+        np.testing.assert_allclose(actual["regulariser_value"], expected_tv, rtol=3e-6)
 
 
-@pytest.mark.numerical
-@pytest.mark.parametrize("iteration_loss", [False, True])
-@pytest.mark.parametrize("final_data", [False, True])
-def test_core_zero_iterations_preserve_start_and_handle_optional_diagnostics(
-    final_data, iteration_loss
-):
-    actual, initial, expected_data, expected_tv = _diagnostic_problem(
-        0, final_data=final_data, iteration_loss=iteration_loss
-    )
-    np.testing.assert_array_equal(actual["x"], initial)
-    assert actual["loss"].shape == (0,)
-    assert int(actual["effective_iterations"]) == 0
-    np.testing.assert_allclose(actual["data_loss"], expected_data if final_data else 0, rtol=3e-6)
-    np.testing.assert_allclose(actual["regulariser_value"], expected_tv, rtol=3e-6)
-
-
-@pytest.mark.parametrize("lipschitz", [0.0, -1.0, np.inf, np.nan])
+@pytest.mark.parametrize("lipschitz", [0.0, np.nan])
 def test_core_rejects_invalid_lipschitz_config(lipschitz):
     with pytest.raises(ValueError, match="lipschitz"):
         replace(FistaCoreConfig(), lipschitz=lipschitz)

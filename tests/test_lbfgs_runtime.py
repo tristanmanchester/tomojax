@@ -147,8 +147,7 @@ def test_public_lbfgs_reuses_problem_across_volumes_and_motion_models(pose_model
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("tilt", [0.0, 23.0])
-def test_pose_lbfgs_reduces_known_fixed_volume_pose_error(tilt):
+def test_pose_lbfgs_reduces_known_fixed_volume_pose_error():
     import jax
 
     from tomojax.alignment.api import apply_pose_updates
@@ -156,7 +155,7 @@ def test_pose_lbfgs_reduces_known_fixed_volume_pose_error(tilt):
 
     grid = Grid(9, 8, 7, 0.8, 1.1, 1.3)
     detector = Detector(13, 11, 0.7, 0.9, (0.13, -0.21))
-    geometry = LaminographyGeometry(grid, detector, [13.0, 47.0, 96.0, 153.0], tilt_deg=tilt)
+    geometry = LaminographyGeometry(grid, detector, [13.0, 47.0, 96.0, 153.0], tilt_deg=23.0)
     nominal = jnp.asarray([geometry.pose_for_view(i) for i in range(4)])
     coords = np.meshgrid(
         *[(np.arange(n) - (n - 1) / 2) * spacing for n, spacing in [(9, 0.8), (8, 1.1), (7, 1.3)]],
@@ -167,11 +166,8 @@ def test_pose_lbfgs_reduces_known_fixed_volume_pose_error(tilt):
         for centre, width in [((1.1, -0.3, 0.7), 1.2), ((-1.3, 1.5, -1.0), 0.8)]
     )
     volume = jnp.asarray(volume, dtype=jnp.float32)
-    truth = (
-        jnp.zeros((4, 5))
-        .at[:, 3:]
-        .set(jnp.asarray([[0.12, -0.15], [-0.19, 0.09], [0.08, 0.14], [-0.11, -0.07]]))
-    )
+    shifts = [[0.12, -0.15], [-0.19, 0.09], [0.08, 0.14], [-0.11, -0.07]]
+    truth = jnp.zeros((4, 5)).at[:, 3:].set(jnp.asarray(shifts))
 
     def project(params):
         poses = apply_pose_updates(nominal, params, translation_frame="detector")

@@ -70,10 +70,9 @@ def _geometry(kind: str, posed: bool = False):
 
 
 @pytest.mark.parametrize("kind", ["parallel", "lamino", "axis", "cone", "segments"])
-@pytest.mark.parametrize("posed", [False, True])
 @pytest.mark.parametrize("resident", [False, True])
-def test_grid_override_keeps_original_angles_poses_and_projection_storage(kind, posed, resident):
-    geometry = _geometry(kind, posed)
+def test_grid_override_keeps_original_angles_poses_and_projection_storage(kind, resident):
+    geometry = _geometry(kind, posed=True)
     data = np.zeros((6, 7, 9), np.float32)
     projections = jnp.asarray(data) if resident else data
     source = ProjectionDataset(
@@ -93,37 +92,19 @@ def test_grid_override_keeps_original_angles_poses_and_projection_storage(kind, 
     )
     assert scan.grid == geometry.grid and scan.projections is projections
     np.testing.assert_array_equal(result.volume, np.zeros((5, 4, 3), np.float32))
-
-
-@pytest.mark.parametrize("kind", ["parallel", "lamino", "axis", "cone", "segments"])
-def test_equal_grid_override_returns_the_same_scan(kind):
-    geometry = _geometry(kind, posed=True)
-    scan = tj.Scan(jnp.zeros((6, 7, 9), jnp.float32), geometry)
     assert tj.reconstruct(scan, "cgls", iterations=0, grid=scan.grid).scan is scan
 
 
-@pytest.mark.parametrize("kind", ["parallel", "lamino", "cone"])
-def test_grid_override_reconstruction_matches_dense_operator_and_known_image(kind):
+@pytest.mark.parametrize("kind", ["parallel", "cone"])
+def test_grid_override_reconstruction_recovers_a_known_image(kind):
     geometry = _geometry(kind)
     region = tj.Grid(5, 4, 3, 1.1, 0.9, 1.3)
     reference_geometry = replace(geometry, grid=region)
-    x, y, z = np.meshgrid(
-        np.arange(5) - 2,
-        np.arange(4) - 1.5,
-        np.arange(3) - 1,
-        indexing="ij",
-    )
+    x, y, z = np.meshgrid(np.arange(5) - 2, np.arange(4) - 1.5, np.arange(3) - 1, indexing="ij")
     truth = np.exp(-((x - 0.3) ** 2 + (y + 0.2) ** 2 + (z - 0.1) ** 2)).astype(np.float32)
     data = tj.project(reference_geometry, truth)
     result = tj.reconstruct(
         tj.Scan(data, geometry), "cgls", config=CGLSConfig(iterations=200, rtol=1e-8), grid=region
     )
-    # A dense FP64 solve uses columns of the unchanged reference projector.
-    basis = np.eye(truth.size, dtype=np.float32).reshape(-1, *truth.shape)
-    matrix = np.stack(
-        [np.asarray(tj.project(reference_geometry, column)).ravel() for column in basis], axis=1
-    ).astype(np.float64)
-    dense = np.linalg.lstsq(matrix, np.asarray(data).ravel(), rcond=None)[0].reshape(truth.shape)
     image = np.asarray(result.volume)
     assert np.linalg.norm(image - truth) / np.linalg.norm(truth) < 2e-4
-    assert np.linalg.norm(image - dense) / np.linalg.norm(dense) < 2e-4

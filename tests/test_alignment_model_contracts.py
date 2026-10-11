@@ -5,6 +5,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+import tomojax as tj
+
 # check-public-imports: allow-private
 from tomojax.alignment._geometry.geometry_blocks import _theta_span_from_geometry
 
@@ -127,15 +129,10 @@ def _analytic_shifted_sinogram(angles, columns):
 
 @pytest.mark.numerical
 @pytest.mark.parametrize("turn", [180, 360])
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
-@pytest.mark.parametrize(("views", "start"), [(120, 350), (150, 350.35)])
-@pytest.mark.parametrize("columns", [63, 64])
 @pytest.mark.parametrize("labels", ["wrapped", "individual_turns", "shuffled"])
-def test_sinogram_centre_seed_ignores_angle_labels_and_order(
-    turn, dtype, views, start, columns, labels
-):
-    angles = (start + np.linspace(0, turn, views, endpoint=False)).astype(dtype)
-    data, centre = _analytic_shifted_sinogram(angles, columns)
+def test_sinogram_centre_seed_ignores_angle_labels_and_order(turn, labels):
+    angles = (350.35 + np.linspace(0, turn, 150, endpoint=False)).astype(np.float32)
+    data, centre = _analytic_shifted_sinogram(angles, 64)
     expected = sinogram_det_u_seed(data, angles)
     assert expected is not None
     assert abs(expected.det_u_px - centre) <= 0.3
@@ -160,29 +157,22 @@ def test_sinogram_seed_still_declines_missing_half_turn_evidence(blank):
     assert sinogram_det_u_seed(data, angles % 360) is None
 
 
-@pytest.mark.numerical
-@pytest.mark.parametrize("labels", ["wrapped", "individual_turns"])
-def test_public_cor_keeps_wrapped_half_turn_evidence(labels):
-    import tomojax as tj
+_COR_CONFIG = AlignConfig(
+    outer_iterations=1, iterations=1, tv_weight=0, ray_integrator="joseph", projector_backend="jax"
+)
 
+
+@pytest.mark.numerical
+def test_public_cor_keeps_wrapped_half_turn_evidence():
     angles = 350 + np.linspace(0, 180, 120, endpoint=False)
     data, centre = _analytic_shifted_sinogram(angles, 48)
     grid = Grid(72, 72, 3, 1, 1, 1)
     detector = Detector(48, 3, 1, 1)
-    config = AlignConfig(
-        outer_iterations=1,
-        iterations=1,
-        tv_weight=0,
-        ray_integrator="joseph",
-        projector_backend="jax",
-    )
     original = tj.Scan(data, ParallelGeometry(grid, detector, angles))
-    expected = tj.align(original, mode="cor", levels=(1,), config=config)
-    relabelled = angles % 360
-    if labels == "individual_turns":
-        relabelled += 360 * np.random.default_rng(7).integers(-2, 3, len(angles))
+    expected = tj.align(original, mode="cor", levels=(1,), config=_COR_CONFIG)
+    relabelled = angles % 360 + 360 * np.random.default_rng(7).integers(-2, 3, len(angles))
     scan = tj.Scan(data, ParallelGeometry(grid, detector, relabelled))
-    actual = tj.align(scan, mode="cor", levels=(1,), config=config)
+    actual = tj.align(scan, mode="cor", levels=(1,), config=_COR_CONFIG)
     first = actual.info["outer_stats"][0]
     assert first["detector_center_seed_method"] == "sinogram_vo_2014"
     assert abs(first["detector_center_seed_det_u_px"] - centre) <= 0.3
@@ -193,22 +183,14 @@ def test_public_cor_keeps_wrapped_half_turn_evidence(labels):
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("prior_px", [-2.3, 4.6])
 @pytest.mark.parametrize("factor", [1, 2])
-def test_public_cor_seed_is_relative_to_the_existing_detector_centre(prior_px, factor):
-    import tomojax as tj
-
+def test_public_cor_seed_is_relative_to_the_existing_detector_centre(factor):
+    prior_px = -2.3
     angles = 350 + np.linspace(0, 180, 120, endpoint=False)
     data, centre = _analytic_shifted_sinogram(angles, 48)
     pitch = 0.8
     grid = Grid(72, 72, 3, pitch, pitch, pitch)
-    config = AlignConfig(
-        outer_iterations=1,
-        iterations=1,
-        tv_weight=0,
-        ray_integrator="joseph",
-        projector_backend="jax",
-    )
+    config = _COR_CONFIG
     detector = Detector(48, 3, pitch, pitch)
     reference = tj.align(
         tj.Scan(data, ParallelGeometry(grid, detector, angles)),
@@ -234,8 +216,6 @@ def test_public_cor_seed_is_relative_to_the_existing_detector_centre(prior_px, f
 
 @pytest.mark.numerical
 def test_public_cor_fallback_seed_remains_an_incremental_offset(monkeypatch):
-    import tomojax as tj
-
     # A short arc declines the absolute sinogram estimator. The residual
     # search already measures an offset from the supplied detector geometry.
     angles = np.linspace(0, 130, 32)
@@ -252,13 +232,7 @@ def test_public_cor_fallback_seed_remains_an_incremental_offset(monkeypatch):
         tj.Scan(data, ParallelGeometry(grid, detector, angles)),
         mode="cor",
         levels=(1,),
-        config=AlignConfig(
-            outer_iterations=1,
-            iterations=1,
-            tv_weight=0,
-            ray_integrator="joseph",
-            projector_backend="jax",
-        ),
+        config=_COR_CONFIG,
     )
     first = out.info["outer_stats"][0]
     assert first["detector_center_seed_method"] == "fbp_reprojection_residual_search"

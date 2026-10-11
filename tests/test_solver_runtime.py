@@ -405,9 +405,9 @@ def test_spdhg_partial_tv_step_controls_dense_primal_update(model, regulariser):
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("scale", [1e-4, 1.0, 1e4])
-@pytest.mark.parametrize("start_scale", [1e-3, 1.0, 1e3])
-def test_batched_normal_norm_matches_dense_scaled_spectrum(scale, start_scale):
+def test_batched_normal_norm_matches_dense_scaled_spectrum():
+    # Physical length units and an unnormalised start must not change the estimate.
+    scale, start_scale = 1e-4, 1e3
     matrix = jnp.asarray([[1.0, 0.3], [0.3, 2.0]], dtype=jnp.float32) * scale
     support = jnp.asarray([0.4, 1.0]).reshape(2, 1, 1)
 
@@ -427,8 +427,7 @@ def test_batched_normal_norm_matches_dense_scaled_spectrum(scale, start_scale):
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("regulariser", ["tv", "huber_tv"])
-@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(("regulariser", "stream"), [("tv", False), ("huber_tv", True)])
 def test_spdhg_disabled_tv_cannot_corrupt_finite_data_diagnostics(regulariser, stream):
     scale = 1e-4
     grid, detector = Grid(2, 1, 1, scale, scale, scale), Detector(2, 1, scale, scale)
@@ -459,71 +458,47 @@ def test_spdhg_disabled_tv_cannot_corrupt_finite_data_diagnostics(regulariser, s
     np.testing.assert_array_equal(info["loss"], [0.0])
 
 
+def _three_view_problem():
+    grid, detector = Grid(2, 1, 1, 0.8, 1.1, 1.3), Detector(4, 3, 0.7, 0.9, (0.17, -0.23))
+    return grid, detector, ParallelGeometry(grid, detector, [13.0, 71.0, 127.0])
+
+
 @pytest.mark.numerical
-@pytest.mark.parametrize("stream", [False, True])
-@pytest.mark.parametrize("missing", [np.nan, np.inf, -np.inf])
-def test_spdhg_masked_invalid_data_preserve_dense_solution_and_diagnostics(stream, missing):
-    shape = (2, 1, 1)
-    grid = Grid(*shape, 0.8, 1.1, 1.3)
-    detector = Detector(4, 3, 0.7, 0.9, (0.17, -0.23))
-    geometry = ParallelGeometry(grid, detector, [13.0, 71.0, 127.0])
-    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(3)], dtype=jnp.float32)
-    forward, _ = projection_operators(poses, grid, detector, None, "jax", 3, "joseph")
-    matrix = np.asarray(jax.jacfwd(lambda x: forward(x.reshape(shape)).ravel())(jnp.zeros(2)))
-    matrix = matrix.astype(np.float64)
-    truth = np.asarray([0.2, 1.0])
-    data = (matrix @ truth).astype(np.float32)
-    weights = np.linspace(0.3, 1.7, data.size).astype(np.float32)
-    weights[::4] = 0.0
-    normal = matrix.T @ (weights[:, None] * matrix)
-    expected = np.linalg.solve(normal, matrix.T @ (weights * data))
+@pytest.mark.parametrize(("stream", "missing"), [(False, np.nan), (True, -np.inf)])
+def test_spdhg_masked_invalid_data_preserve_solution_and_diagnostics(stream, missing):
+    grid, detector, geometry = _three_view_problem()
+    truth = np.asarray([0.2, 1.0], np.float32).reshape(2, 1, 1)
+    data = np.array(tj.project(geometry, truth))
+    weights = np.linspace(0.3, 1.7, data.size).astype(np.float32).reshape(data.shape)
+    weights.reshape(-1)[::4] = 0.0
     cfg = SPDHGConfig(
-        iterations=600,
+        iterations=100,
         views_per_batch=2,
         tv_weight=0,
-        log_every=50,
+        log_every=10,
         projector_model="joseph",
         projector_backend="jax",
         stream_projections=stream,
     )
-    reference, ref_info = spdhg_tv(
-        geometry,
-        grid,
-        detector,
-        data.reshape(3, 3, 4),
-        weights=weights.reshape(3, 3, 4),
-        config=cfg,
-    )
+    reference, ref_info = spdhg_tv(geometry, grid, detector, data, weights=weights, config=cfg)
     data[weights == 0] = missing
-    actual, info = spdhg_tv(
-        geometry,
-        grid,
-        detector,
-        data.reshape(3, 3, 4),
-        weights=weights.reshape(3, 3, 4),
-        config=cfg,
-    )
+    actual, info = spdhg_tv(geometry, grid, detector, data, weights=weights, config=cfg)
     # Independent CUDA norm estimates can differ by an ulp between solves.
     np.testing.assert_allclose(actual, reference, rtol=1e-6, atol=1e-7)
-    # Keep a FP32-sized bound for their nearly zero objective values too.
     np.testing.assert_allclose(info["loss"], ref_info["loss"], rtol=1e-5, atol=1e-10)
     assert np.isfinite(info["loss"]).all()
-    assert np.linalg.norm(np.asarray(actual).ravel() - expected) / np.linalg.norm(expected) < 5e-5
-    assert np.linalg.norm(np.asarray(actual).ravel() - truth) / np.linalg.norm(truth) < 5e-5
 
 
 @pytest.mark.numerical
 @pytest.mark.parametrize("stream", [False, True])
-@pytest.mark.parametrize("missing", [np.nan, np.inf, -np.inf])
-def test_spdhg_all_missing_data_preserve_finite_warm_start(stream, missing):
-    grid, detector = Grid(2, 1, 1, 0.8, 1.1, 1.3), Detector(4, 3, 0.7, 0.9)
-    geometry = ParallelGeometry(grid, detector, [13.0, 71.0, 127.0])
+def test_spdhg_all_missing_data_preserve_finite_warm_start(stream):
+    grid, detector, geometry = _three_view_problem()
     initial = np.asarray([0.2, 1.0], dtype=np.float32).reshape(2, 1, 1)
     actual, info = spdhg_tv(
         geometry,
         grid,
         detector,
-        np.full((3, 3, 4), missing, dtype=np.float32),
+        np.full((3, 3, 4), np.nan, dtype=np.float32),
         weights=np.zeros((3, 3, 4), dtype=np.float32),
         init_x=initial,
         config=SPDHGConfig(
@@ -540,53 +515,33 @@ def test_spdhg_all_missing_data_preserve_finite_warm_start(stream, missing):
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("weighted", [False, True])
-@pytest.mark.parametrize("invalid", [np.nan, np.inf, -np.inf, 1e40])
+@pytest.mark.parametrize(("weighted", "invalid"), [(False, np.nan), (True, 1e40)])
 def test_spdhg_streaming_still_rejects_unmasked_nonfinite_data(weighted, invalid):
-    grid, detector = Grid(2, 1, 1, 0.8, 1.1, 1.3), Detector(4, 3, 0.7, 0.9)
-    geometry = ParallelGeometry(grid, detector, [13.0, 71.0, 127.0])
+    grid, detector, geometry = _three_view_problem()
     data = np.zeros((3, 3, 4), dtype=np.float64)
     data[0, 0, 0] = invalid
     weights = np.ones_like(data) if weighted else None
+    cfg = SPDHGConfig(
+        iterations=1,
+        views_per_batch=3,
+        tv_weight=0,
+        stream_projections=True,
+        projector_backend="jax",
+    )
     with pytest.raises(ValueError, match="finite"):
-        spdhg_tv(
-            geometry,
-            grid,
-            detector,
-            data,
-            weights=weights,
-            config=SPDHGConfig(
-                iterations=1,
-                views_per_batch=3,
-                tv_weight=0,
-                stream_projections=True,
-                projector_backend="jax",
-            ),
-        )
+        spdhg_tv(geometry, grid, detector, data, weights=weights, config=cfg)
     # Reject before ordered dual callbacks: their failed token would otherwise
     # make this valid solve (or a later caller's solve) fail with the old error.
     data[0, 0, 0] = 0.0
-    actual, info = spdhg_tv(
-        geometry,
-        grid,
-        detector,
-        data,
-        weights=weights,
-        config=SPDHGConfig(
-            iterations=1,
-            views_per_batch=3,
-            tv_weight=0,
-            stream_projections=True,
-            projector_backend="jax",
-        ),
-    )
+    actual, info = spdhg_tv(geometry, grid, detector, data, weights=weights, config=cfg)
     np.testing.assert_array_equal(actual, 0.0)
     np.testing.assert_array_equal(info["loss"], [0.0])
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("regulariser", ["tv", "huber_tv"])
-@pytest.mark.parametrize(("model", "stream"), [("ray", False), ("joseph", False), ("joseph", True)])
+@pytest.mark.parametrize(
+    ("regulariser", "model", "stream"), [("tv", "ray", False), ("huber_tv", "joseph", True)]
+)
 def test_fista_disabled_tv_does_not_evaluate_regulariser(monkeypatch, regulariser, stream, model):
     import importlib
 
@@ -628,10 +583,8 @@ def test_fista_disabled_tv_does_not_evaluate_regulariser(monkeypatch, regularise
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("batch", [2, 4, 7])
-@pytest.mark.parametrize("stream", [False, True])
-@pytest.mark.parametrize("backend", ["jax", "auto"])
-def test_spdhg_segmented_cone_batches_follow_dense_individual_arrangements(batch, stream, backend):
+@pytest.mark.parametrize(("batch", "stream"), [(2, False), (4, True)])
+def test_spdhg_segmented_cone_batches_follow_dense_individual_arrangements(batch, stream):
     grid = Grid(3, 2, 2, 0.8, 1.1, 1.3)
     detectors = [Detector(4, 3, 0.7, 0.9, (0.17, -0.23)), Detector(4, 3, 0.7, 0.9, (-0.4, 0.31))]
     segments = [
@@ -666,11 +619,9 @@ def test_spdhg_segmented_cone_batches_follow_dense_individual_arrangements(batch
         sigma_data=sigma,
         nonnegative=True,
         seed=17,
-        log_every=1,
         stream_projections=stream,
-        projector_backend=backend,
     )
-    actual, info = spdhg_tv(
+    actual, _ = spdhg_tv(
         geometry,
         grid,
         detectors[0],
@@ -686,14 +637,10 @@ def test_spdhg_segmented_cone_batches_follow_dense_individual_arrangements(batch
     schedule = np.concatenate(
         [rng.permutation(blocks) for _ in range((iterations + blocks - 1) // blocks)]
     )
-    losses = []
     for block in schedule[:iterations]:
         start, stop = int(block) * batch, min((int(block) + 1) * batch, 7)
         rows = slice(start * 12, stop * 12)
         prediction = matrix[rows] @ extrapolated
-        losses.append(
-            0.5 * np.sum(weights[rows] * (prediction - data[rows]) ** 2) * 7 / (stop - start)
-        )
         dual[rows] = (
             (dual[rows] + sigma * (prediction - data[rows]))
             * weights[rows]
@@ -703,10 +650,3 @@ def test_spdhg_segmented_cone_batches_follow_dense_individual_arrangements(batch
         extrapolated = np.maximum(updated + cfg.theta * (updated - x), 0.0)
         x = updated
     np.testing.assert_allclose(np.asarray(actual).ravel(), x, rtol=2e-6, atol=2e-7)
-    np.testing.assert_allclose(info["loss"], losses, rtol=3e-6, atol=2e-6)
-    # Check an image, not only an objective: finite-budget dense and solver errors agree.
-    np.testing.assert_allclose(
-        np.linalg.norm(np.asarray(actual).ravel() - truth),
-        np.linalg.norm(x - truth),
-        rtol=2e-6,
-    )

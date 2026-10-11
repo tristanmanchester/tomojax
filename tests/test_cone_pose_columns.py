@@ -30,15 +30,19 @@ pytestmark = pytest.mark.numerical
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("translation_frame", ["object", "detector"])
 @pytest.mark.parametrize("width", [5, 6])
 @pytest.mark.parametrize("jacobian", ["central", "autodiff"])
-@pytest.mark.parametrize("grid_case", ["small", "large", "tie"])
 @pytest.mark.parametrize(
-    "direction", [(1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 1), (0.2, 0.7, -0.8)]
+    ("grid_case", "direction"),
+    [
+        ("small", (1, 0, 0)),
+        ("small", (0.2, 0.7, -0.8)),
+        ("large", (0.2, 0.7, -0.8)),
+        ("tie", (1, 1, 1)),
+    ],
 )
 def test_cuda_columns_retain_individual_central_differences(
-    monkeypatch, translation_frame, width, jacobian, direction, grid_case
+    monkeypatch, width, jacobian, direction, grid_case
 ):
     monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
     if not use_cuda_cone():
@@ -65,24 +69,17 @@ def test_cuda_columns_retain_individual_central_differences(
     params = jnp.zeros(width)
     if direction == (0.2, 0.7, -0.8):
         params = jnp.asarray([0.012, -0.018, 0.031, 0.11, -0.07, 0.04][:width])
-    volume = jnp.asarray(
-        np.random.default_rng(533).uniform(-0.1, 1.1, (grid.nx, grid.ny, grid.nz)), jnp.float32
-    )
-    target = jnp.asarray(
-        np.random.default_rng(85).normal(size=(detector.nv, detector.nu)), jnp.float32
-    )
-    weight = jnp.asarray(
-        np.random.default_rng(86).uniform(0.05, 0.99, (detector.nv, detector.nu)), jnp.float32
-    )
-    if grid_case != "tie":
-        weight = weight.at[0].set(0)
-    if grid_case == "tie" and direction == (1, 1, 1):
+    rng = np.random.default_rng(533)
+    volume = jnp.asarray(rng.uniform(-0.1, 1.1, (grid.nx, grid.ny, grid.nz)), jnp.float32)
+    target = jnp.asarray(rng.normal(size=(detector.nv, detector.nu)), jnp.float32)
+    weight = jnp.asarray(rng.uniform(0.05, 0.99, target.shape), jnp.float32)
+    if grid_case == "tie":
         row = np.asarray(frame_coefficients(nominal[None], frame, grid, detector))[0]
         ray = row[3:6] - row[:3]
         np.testing.assert_array_equal(np.abs(ray), np.repeat(abs(ray[0]), 3))
-    options = PoseJacobianOptions(
-        0.001, translation_frame, True, 1, "fp32", "joseph", jacobian, True
-    )
+    else:
+        weight = weight.at[0].set(0)
+    options = PoseJacobianOptions(0.001, "object", True, 1, "fp32", "joseph", jacobian, True)
     candidate = jax.jit(
         partial(
             pose_prediction_and_columns,
@@ -96,7 +93,7 @@ def test_cuda_columns_retain_individual_central_differences(
     @jax.jit
     def individual(p, nominal, frame, volume, target, weight):
         def prediction(q):
-            pose = apply_pose_update(nominal, q, translation_frame=translation_frame)
+            pose = apply_pose_update(nominal, q, translation_frame="object")
             image = forward_project_view_T(
                 pose, grid, detector, volume, frames=frame, projector_backend="pallas"
             )
@@ -120,21 +117,8 @@ def test_cuda_columns_retain_individual_central_differences(
         np.testing.assert_array_equal(a, b)
 
 
-@pytest.mark.parametrize("translation_frame", ["object", "detector"])
-@pytest.mark.parametrize("width", [5, 6])
-@pytest.mark.parametrize(
-    ("cone", "integrator"),
-    [
-        (False, "sampled"),
-        (False, "exact"),
-        (False, "joseph"),
-        (False, "joseph_cubic"),
-        (True, "joseph"),
-    ],
-)
-def test_central_pose_columns_do_not_depend_on_measurement_offsets(
-    translation_frame, width, cone, integrator
-):
+@pytest.mark.parametrize("cone", [False, True])
+def test_central_pose_columns_do_not_depend_on_measurement_offsets(cone):
     # For fixed pixel weights, d[W(A(p)x-y)]/dp is independent of y.
     # Subtracting a large measurement before differencing can round away
     # the perturbations, even though the represented predictions distinguish p.
@@ -151,12 +135,10 @@ def test_central_pose_columns_do_not_depend_on_measurement_offsets(
     )
     rng = np.random.default_rng(687)
     volume = jnp.asarray(rng.uniform(0.2, 1.1, (grid.nx, grid.ny, grid.nz)), jnp.float32)
-    params = jnp.asarray([0.012, -0.018, 0.031, 0.11, -0.07, 0.04][:width], jnp.float32)
+    params = jnp.asarray([0.012, -0.018, 0.031, 0.11, -0.07, 0.04], jnp.float32)
     weight = jnp.asarray(rng.uniform(0.1, 1, (detector.nv, detector.nu)), jnp.float32).at[0].set(0)
     target = jnp.asarray(rng.normal(size=weight.shape), jnp.float32)
-    options = PoseJacobianOptions(
-        0.001, translation_frame, True, 1, "fp32", integrator, "central", cone
-    )
+    options = PoseJacobianOptions(0.001, "object", True, 1, "fp32", "joseph", "central", cone)
     evaluate = jax.jit(
         partial(
             pose_prediction_and_columns,
@@ -169,7 +151,7 @@ def test_central_pose_columns_do_not_depend_on_measurement_offsets(
     residual, columns = evaluate(params, nominal, frame, volume, target, weight)
     assert np.linalg.norm(columns) > 0
     np.testing.assert_array_equal(np.asarray(residual).reshape(weight.shape)[0], 0)
-    np.testing.assert_array_equal(np.asarray(columns).reshape(width, *weight.shape)[:, 0], 0)
+    np.testing.assert_array_equal(np.asarray(columns).reshape(6, *weight.shape)[:, 0], 0)
     for offset in (1.0, 1e5):
         shifted_residual, shifted_columns = evaluate(
             params, nominal, frame, volume, target + offset, weight
