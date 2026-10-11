@@ -20,7 +20,7 @@ the nominal tomography axis, not an angle to the beam. A missing laminography
 tilt currently defaults to 30° when geometry is built; that is not a measurement
 of your scanner.
 
-For raw HDF5 data with sample/flat/dark frame keys, follow
+For raw NXtomo or Data Exchange frames with flats and darks, follow
 [preprocessing](quickstart.md#correct-raw-detector-frames). Nonstandard HDF5
 layouts can name their datasets with `--data-path`, `--angles-path` and
 `--image-key-path` (or `data_path=`... in `tj.load_frames`). Structural
@@ -78,9 +78,30 @@ print(scan)
 
 This writes line integrals, recording the correction. Use
 `tj.ParallelGeometry(grid, detector, angles)` for ordinary parallel
-tomography. On the command line, `tomojax import` the frames with their
-geometry and then `tomojax preprocess` the file with `--flats` and `--darks`.
-Do not pass already-log-transformed data into this raw-intensity path.
+tomography. Do not pass already-log-transformed data into this raw-intensity
+path.
+
+On the command line, import the frames with their geometry, record the
+measured tilt, then correct them. `tomojax import` has no tilt option, and a
+laminography dataset without a recorded tilt gets 30°, so set it before
+`tomojax preprocess`:
+
+```bash
+uv run --no-sync tomojax import ./projections --angles angles.csv \
+  --geometry lamino --pixel-size 0.65 -o raw.nxs
+uv run --no-sync python -c "
+from tomojax.io import load_dataset, save_dataset
+scan = load_dataset('raw.nxs')
+scan.geometry_metadata.update(tilt_deg=30.0, tilt_about='x')
+save_dataset('raw-tilt.nxs', scan)
+"
+uv run --no-sync tomojax preprocess raw-tilt.nxs -o corrected-lamino.nxs \
+  --flats ./flats --darks ./darks
+```
+
+Replace 30° with the measured tilt. To check that it was kept, run
+`uv run --no-sync python -c "import tomojax as tj; print(tj.load('corrected-lamino.nxs').geometry.tilt_deg)"`,
+which prints the tilt in degrees.
 
 For an already-corrected dataset that needs explicit laminography metadata:
 
@@ -93,9 +114,8 @@ scan.geometry_metadata.update(tilt_deg=30.0, tilt_about="x")
 save_dataset("corrected-lamino.nxs", scan)
 ```
 
-Replace 30° with the measured tilt, preserve the original dataset, and check
+Again replace 30° with the measured tilt, keep the original dataset, and check
 the new file with `tomojax inspect` before reconstructing it.
-`tomojax import --geometry lamino` alone does not record a measured tilt.
 
 ## Reconstruct with the recorded geometry
 
@@ -112,7 +132,7 @@ Use `corrected-lamino.nxs` as input if you created that file above. `previews/`
 holds PNGs of the central projection and the volume's central slices
 (`slice_z.png`, `slice_y.png`, `slice_x.png`). The iteration budget and TV
 weight are illustrative. Inspect residuals and image features,
-and assess sensitivity to regularization before quantitative use. Positivity
+and assess sensitivity to regularisation before quantitative use. Positivity
 is appropriate only when the object model permits nonnegative attenuation.
 Laminography leaves a cone of frequencies around the rotation axis unmeasured.
 FBP reconstructs every measured frequency exactly and leaves the cone empty, which
@@ -121,33 +141,14 @@ cone only from the volume bounds or the object prior.
 
 ## Reconstruct scans larger than GPU memory
 
-`tomojax recon --method fbp` streams projections from host memory, so only the
-volume must fit on the GPU. When the volume does not fit either, use
-`fbp_host` from Python with memory-mapped input and output:
-
-```python
-import numpy as np
-
-import tomojax as tj
-from tomojax.recon import fbp_host
-
-scan = tj.load("corrected-lamino.nxs")
-grid = scan.grid
-volume = np.lib.format.open_memmap(
-    "volume.npy", mode="w+", dtype=np.float32, shape=(grid.nx, grid.ny, grid.nz)
-)
-fbp_host(scan.geometry, grid, scan.detector, scan.projections, out=volume)
-volume.flush()
-```
-
-Slabs are sized to the free GPU memory; a 1024³ laminography volume takes
-about 40 s on an 8 GB laptop GPU. `tomojax recon --method fista` streams large
-projection stacks from host memory, so only its working volumes must fit on
-the GPU; CGLS and SPDHG need the projections on the GPU as well.
+FBP streams the projections from host memory, but the volume must fit on the
+GPU; for a larger volume, use `fbp_host` from Python. See
+[large scans and several GPUs](large-scans.md) for which solvers stream and
+how to share a scan among GPUs.
 
 ## Evaluate alignment after reconstruction
 
-If a geometry-checked, corrected scan still shows motion artifacts, follow the
+If a geometry-checked, corrected scan still shows motion artefacts, follow the
 [alignment guide](alignment-guide.md). Save an unaligned reconstruction for
 comparison. Check residuals, multiple slice planes, and recovered parameters;
 image sharpness alone cannot establish physical calibration. Automatic robust

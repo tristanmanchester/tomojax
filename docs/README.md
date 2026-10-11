@@ -10,13 +10,14 @@ pages before planning a workflow.
 | You want to… | Guide |
 | --- | --- |
 | Install CPU or CUDA dependencies | [Installation](installation.md) |
-| Produce a first volume and inspect slices | [Quickstart](quickstart.md) |
+| Load an NXtomo, APS Data Exchange, Nikon or TIFF scan, correct its frames and reconstruct it | [Quickstart](quickstart.md) |
 | Simulate data or call the Python API | [Synthetic tomography](synthetic-tomography.md), [examples](../examples/README.md) |
-| Process TIFF, NeXus, or laminography scans with measured geometry | [Real scan guide](real-laminography.md) |
+| Supply measured geometry for parallel or laminography scans, including TIFF stacks | [Real scan guide](real-laminography.md) |
 | Import, calibrate and reconstruct a lab cone-beam CT scan | [Lab cone-beam CT](lab-ct.md) |
-| Estimate motion or detector-centre corrections | [Alignment guide](alignment-guide.md) |
+| Correct per-view motion or the centre of rotation | [Alignment guide](alignment-guide.md) |
+| Reconstruct scans larger than the GPU, or use several GPUs | [Large scans and several GPUs](large-scans.md) |
 | Check geometry, units, algorithms, and GPU scope | [Support matrix](support-matrix.md), [known limitations](known-limitations.md) |
-| Understand the evidence behind accuracy and speed claims | [Measurements](measurements.md) |
+| See the measured speed, accuracy and memory behind the guides | [Measurements](measurements.md) |
 
 ## Python reference and development
 
@@ -28,18 +29,15 @@ Import through public module roots or their `api` facades. Files beginning with
 - [Geometry](../src/tomojax/geometry/README.md): grids, detectors, and poses.
 - [Forward projection](../src/tomojax/forward/README.md): model and derivative choices.
 - [Reconstruction](../src/tomojax/recon/README.md): algorithms and configuration.
-- [IO](../src/tomojax/io/README.md): datasets and preprocessing.
+- [Corrections](../src/tomojax/corrections/README.md): the steps from detector
+  counts to line integrals, and on line integrals.
+- [IO](../src/tomojax/io/README.md): datasets, acquisition metadata and TIFF
+  angle files.
 - [Alignment](../src/tomojax/alignment/README.md): configurations, plans and
   checkpoints behind `tj.align`.
-- [Alignment solver](alignment-solver.md): Jacobians, coupling, and linear-solve diagnostics.
+- [Alignment solver](alignment-solver.md): `AlignConfig` settings, Jacobians,
+  coupling and linear-solve diagnostics.
+- [Benchmarks](../bench/README.md): how to rerun the comparisons with ASTRA and
+  TIGRE.
 - [Contributing](../CONTRIBUTING.md): tests, packaging, and repository conventions.
-- [Changelog](../CHANGELOG.md): behavioral changes and migration notes.
-
-## Research records
-
-[`research/`](research/) holds dated measurement and experiment records for
-specific source snapshots, including rejected approaches and failed cases. They
-are evidence, not user instructions or current defaults. The
-[measurement guide](measurements.md) identifies the relevant complete
-comparisons and the retained raw evidence. The
-[optimization goal](research/optimization-goal.md) remains open.
+- [Changelog](../CHANGELOG.md): behavioural changes and migration notes.

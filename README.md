@@ -2,8 +2,9 @@
 
 Reconstruct parallel-beam tomography, laminography and lab cone-beam CT with JAX. TomoJAX
 provides differentiable projectors, fast FBP and iterative reconstruction,
-joint volume-and-pose alignment, and a CLI for taking NeXus/HDF5 or TIFF data
-through correction, reconstruction, and slice export.
+joint volume-and-pose alignment, and a CLI for taking NXtomo, APS Data
+Exchange, Nikon `.xtekct` or TIFF data through correction, reconstruction, and
+slice export.
 
 TomoJAX is an early research library. Its strongest fit is scientists who need
 control over geometry and differentiation in a Python workflow. Synchrotron
@@ -63,22 +64,15 @@ For CUDA installation, wheel installation, and device checks, see
 
 | Task | Start here |
 | --- | --- |
-| Inspect, preprocess, and reconstruct a scan | [Quickstart](docs/quickstart.md) |
-| Supply measured geometry and process TIFF or laminography data | [Real scan guide](docs/real-laminography.md) |
-| Import (including Nikon `.xtekct`), calibrate and reconstruct a lab cone-beam CT scan | [Lab cone-beam CT](docs/lab-ct.md) |
+| Load and correct an NXtomo, APS Data Exchange, Nikon `.xtekct` or TIFF scan, then reconstruct it | [Quickstart](docs/quickstart.md) |
+| Supply measured geometry for parallel or laminography data, including TIFF stacks | [Real scan guide](docs/real-laminography.md) |
+| Import, calibrate and reconstruct a lab cone-beam CT scan, including multi-orbit scans | [Lab cone-beam CT](docs/lab-ct.md) |
 | Simulate data or use the Python API | [Synthetic workflow](docs/synthetic-tomography.md), [runnable examples](examples/README.md) |
-| Estimate motion or detector-centre corrections | [Alignment guide](docs/alignment-guide.md) — experimental; review recovered geometry |
-| Check supported models and limitations | [Support matrix](docs/support-matrix.md), [limitations](docs/known-limitations.md) |
-| Assess accuracy, speed, and memory | [Measurement guide](docs/measurements.md) |
+| Correct per-view motion or the centre of rotation | [Alignment guide](docs/alignment-guide.md) (experimental; check the recovered geometry) |
+| Reconstruct scans larger than the GPU, or use several GPUs | [Large scans and several GPUs](docs/large-scans.md) |
+| Check supported models and limitations | [Support matrix](docs/support-matrix.md), [known limitations](docs/known-limitations.md) |
 
-The CLI provides FBP, CGLS, FISTA-TV, and SPDHG-TV reconstruction. FBP and
-FISTA-TV stream projections from host memory, so scans larger than the GPU
-need only their volumes on it; FBP and FDK reconstruct volumes too large for
-the GPU in slabs on the host. On an 8 GB laptop GPU, a 1024³ laminography FBP from and to
-disk takes 37 s. The Python API adds an opt-in Fourier inverse for uniform
-parallel scans. CPU paths use JAX; optional Pallas kernels accelerate selected
-operations on CUDA. Volumes use `(x, y, z)` and projections `(view, v, u)` in
-Python. Detector and voxel spacings must use the same physical length unit.
+## Python
 
 In Python, a `Scan` holds projections and their geometry, and every
 operation returns a result that carries its geometry:
@@ -104,34 +98,18 @@ save its progress and resume after an interruption:
 `tj.align(scan, checkpoint="align.ckpt")`, or `--checkpoint align.ckpt`.
 
 `tj.Scan(projections, geometry)` builds a scan from arrays, and
-`tj.project(geometry, volume)` simulates one for any geometry. The building
-blocks behind these are in `tomojax.recon`, `tomojax.alignment`,
+`tj.project(geometry, volume)` simulates one for any geometry. Volumes use
+`(x, y, z)` and projections `(view, v, u)`; detector and voxel spacings must
+use the same physical length unit. The building blocks behind these are in
+`tomojax.recon`, `tomojax.alignment`, `tomojax.corrections`,
 `tomojax.geometry`, `tomojax.io`, `tomojax.forward` and `tomojax.datasets`.
 Start with the [complete example](examples/simulate_and_reconstruct.py) or
 browse the [documentation index](docs/README.md).
 
-## Evidence and current limits
+## Evidence
 
-The [reconstruction comparison](docs/research/system-matrix-2026-10-05-memory.md) covers
-smooth, sharp, and noisy objects across parallel, anisotropic, and tilted scans,
-against the fastest accepted ASTRA workflow in each cell (TIGRE was never the
-fastest). Over the 26 cells with accepted results on both sides, TomoJAX is 2.8
-times faster warm (geometric mean; 0.59 to 20 times) and on par from a fresh
-process (1.00; 0.44 to 2.8). Small laminography scans remain slower, dominated by JAX start-up and
-backprojection cost. Published GPU measurements use one RTX 4070 Laptop GPU.
-
-`tomojax align --mode pose` solves the volume and every view's pose together.
-On analytic 128³ scans of continuous objects it recovers per-view rotations to
-0.003–0.009° in 40–45 s; at coarse resolution, discretisation limits accuracy.
-A global shift search first finds per-view stage shifts of up to a quarter of
-the detector.
-See the [alignment guide](docs/alignment-guide.md). This is not a demonstrated large-motion or 99% recovery capability.
-The [alignment comparison](docs/research/public-free-voxel-schur-2026-10-04.md) retains
-failures, cold/warm times, quality, and process GPU memory.
-
-Historical [DIAD laminography images](images/README.md#historical-real-data-illustrations)
-show qualitative use on real data. Their raw acquisition and full reproduction
-configuration are not bundled, so they are not a reproducible validation set.
+Measured speed, accuracy and memory against ASTRA and TIGRE, failed cases
+included, are in the [measurements](docs/measurements.md).
 
 ## Development and license
 

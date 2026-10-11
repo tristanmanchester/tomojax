@@ -91,5 +91,5 @@ six minutes on an 8 GB laptop GPU. The data fix the orbits' heights relative to
 one another but can't pin down the walnut's absolute height: moving the whole
 object, and every view with it, predicts the same projections, so the volume
 can sit a fraction of a millimetre from where the scanner's record would put
-it. [The walnut section of the lab CT guide](../docs/lab-ct.md#bringing-the-orbits-into-register)
-compares the reconstruction with the authors' reference.
+it. [The measurements](../docs/measurements.md#orbit-registration) compare the
+reconstruction with the authors' reference.

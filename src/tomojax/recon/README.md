@@ -92,9 +92,10 @@ device queues. Smaller slabs can reduce memory at a throughput cost; the
 measured 512³ case uses 430 MiB at eight slices versus 678 MiB at sixteen.
 This API is not differentiable, is not selected by the CLI, and rejects
 tilted/custom geometry and nonuniform or repeated half-turn angles. Its angular
-interpolation can introduce artifacts on sharp or undersampled scans; use the
-independent quality measurements in [performance](../../../docs/performance.md)
-to assess the validated scope.
+interpolation can introduce artefacts on sharp or undersampled scans; the
+[measurements](../../../docs/measurements.md#fourier-inverse) give its memory
+and speed, and the [reconstruction comparison](../../../docs/measurements.md#reconstruction-against-astra)
+its accuracy-gated results.
 
 `cgls` solves unconstrained least squares with a matched discrete adjoint and
 optional scalar damping and quadratic smoothness. It supports JAX and CUDA Pallas execution. Iteration

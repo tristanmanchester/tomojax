@@ -1,4 +1,4 @@
-# Known Limitations
+# Known limitations
 
 The shipped package covers the workflows listed in
 [`support-matrix.md`](support-matrix.md), including 5-DOF pose alignment,
@@ -6,49 +6,35 @@ detector-centre/COR alignment, and mixed setup and pose correction.
 
 ## Alignment limitations
 
-Alignment is experimental and needs scan-specific review. The coupled solver,
-which `pose` and `cor-then-pose` alignment use by default, passes five of six
-modest-motion synthetic cells; noisy anisotropic recovery still fails. The
-[measurement guide](measurements.md) gives these results and separates them
-from the larger-motion targets.
+Alignment is experimental and needs scan-specific review. What it cannot tell
+apart or recover, such as setup error absorbed by the poses, a nonzero-mean
+shift against a detector-centre offset, detector-v shifts and abrupt jumps, is
+listed with how to check a result in the
+[alignment guide](alignment-guide.md#check-the-result).
 
-- Pose-only correction can absorb some setup errors. The reconstruction may
-  look good while the recovered parameters differ from true geometry. COR mode
-  fits setup offsets explicitly but still requires independent validation.
-- Mixed setup and pose correction has gauge ambiguity. `--mode full` fixes a
-  gauge policy for each stage; an expert direct parameter set mixing setup and
-  pose parameters (`optimise_dofs`) needs an explicit `gauge_policy`, such as
-  `anchor_mean`, in its `--config` file.
-- Detector-v or sample-elevation reference shifts are physically ambiguous
-  and not reliably recoverable.
+- On the six-cell free-voxel pilot at 32³, every cell misses the 0.01°
+  rotation gate with the default Joseph integrator, and the noisy anisotropic
+  cell misses it even with the exact one; see the
+  [measurements](measurements.md#free-voxel-pilot).
 - `AlignConfig`'s default five-parameter pose update uses object-frame
-  translations: `T_nominal @ se3_from_pose_params(params)`, with translation
-  `(dx, 0, dz)` in physical units. These are not two independent
-  detector-plane shifts. Near a 90-degree view, their projection onto the
-  detector becomes nearly singular, including for tilted geometry. This
-  representation cannot recover arbitrary detector-plane motion, or a constant
-  detector shift such as a centre-of-rotation offset, at those views; changing
-  optimizer damping or kernel speed cannot restore the missing degree of
-  freedom. `tomojax align` defaults to detector-frame translations
-  (`pose_translation_frame = "detector"`), and the Python API offers the same
-  setting.
-  See [translation frames](alignment-guide.md#choose-the-translation-frame).
-- A per-view shift with a nonzero mean over the scan cannot be told apart from
-  a detector-centre offset; `--mode cor-then-pose` reports it as the offset.
-- Abrupt jumps and short bursts of bad views need more robust diagnostics or
-  specialized workflows.
+  translations, `(dx, 0, dz)` in physical units. Near a 90-degree view their
+  projections onto the detector become nearly parallel, including for tilted
+  geometry, so this representation cannot recover arbitrary detector-plane
+  motion, or a constant detector shift such as a centre-of-rotation offset, at
+  those views; optimiser damping or kernel speed cannot restore the missing
+  degree of freedom. `tomojax align` and `tj.align` default to detector-frame
+  translations instead; see
+  [translation frames](alignment-guide.md#choose-the-translation-frame).
 - The default autodiff Gauss–Newton Jacobian is one-sided at interpolation-cell
   boundaries. Sharp objects can become trapped after a wrong shift update.
   The explicit `gn_jacobian="central"` option uses symmetric numerical columns
-  at extra projection cost; see [the solver guidance](alignment-guide.md#gaussnewton-updates-at-interpolation-boundaries).
-- Gradients through regularized reconstruction are finite after the Huber-TV
+  at extra projection cost; see
+  [the solver reference](alignment-solver.md#gaussnewton-updates-at-interpolation-boundaries).
+- Gradients through regularised reconstruction are finite after the Huber-TV
   correction, but sampled-ray pose derivatives remain local to sampling and
   interpolation branches. A central finite difference across a boundary can
-  disagree with that derivative. See the [retained derivative checks](research/huber-derivatives-2026-10-04.md),
-  including unsuccessful controls; finite gradients alone do not prove reliable
-  pose recovery.
-- Large combined setup and pose errors can still need staged initialization,
-  stronger priors, or manual review.
+  disagree with that derivative, and finite gradients alone do not prove
+  reliable pose recovery.
 
 ## Data and geometry boundaries
 
@@ -58,13 +44,18 @@ from the larger-motion targets.
   geometry. `tomojax import` them with their geometry first, or pass
   `geometry=` to `tj.load_frames`; see the
   [real scan guide](real-laminography.md#prepare-tiff-data).
+- NXtomo and Data Exchange files not written by TomoJAX get a parallel beam
+  with a centred detector, and unit pixels unless the NXtomo detector records
+  `x_pixel_size` and `y_pixel_size`. Pass `detector=` or `geometry=` to
+  `tj.load_frames` to set the measured geometry; see the
+  [quickstart](quickstart.md#correct-raw-detector-frames).
 - A float stack with no flats or `image_key` is taken to be line integrals
   already: TomoJAX cannot tell raw float counts from corrected data. Correct
   such frames with `tj.load_frames(path, flats=...)`.
 - A laminography dataset without explicit tilt metadata currently uses 30° when
   building geometry. Inspect and set measured geometry before reconstruction.
 - `tomojax inspect --preview` PNGs are display-scaled central slices. Use the
-  floating-point dataset volume for quantitative analysis and honor its
+  floating-point dataset volume for quantitative analysis and honour its
   recorded axis order.
 
 ## Implementation limitations
@@ -74,7 +65,7 @@ from the larger-motion targets.
   and uses a larger stencil; it does not remove physical support truncation or
   poor pose observability. Alignment samples with linear Joseph interpolation
   by default (`ray_integrator = "joseph"`; `"joseph_cubic"` selects cubic).
-  Use the JAX reference for higher derivatives, and parameterize poses as rigid
+  Use the JAX reference for higher derivatives, and parameterise poses as rigid
   transforms. Derivatives are local to the selected dominant axis and
   interpolation cell. The fused loss is unweighted half squared error; other
   losses use the differentiable projector. The alignment pipeline does not
@@ -96,7 +87,7 @@ from the larger-motion targets.
   sharpness, which needs in-plane structure at the slab heights and a scan of
   at least 180 degrees plus the fan angle; it does not estimate detector pitch
   or yaw, the axis direction, or the source distances. The alternating
-  solver's non-Gauss-Newton optimizers are not validated for cone geometry.
+  solver's non-Gauss-Newton optimisers are not validated for cone geometry.
 - FBP weights every view exactly for rotation about one fixed axis, at any
   tilt, arc length or angular spacing. It cannot recover frequencies no view
   measured: laminography's missing cone reconstructs as zero, so FBP gives
@@ -113,34 +104,18 @@ from the larger-motion targets.
 - `fourier_reconstruct` is an opt-in, non-differentiable Fourier-slice inverse
   for uniform, unique half-turn parallel scans. It rejects tilted/custom geometry
   and nonuniform/repeated angles. Its disk frequency cutoff and angular
-  interpolation differ from FBP and can produce artifacts on sharp or
+  interpolation differ from FBP and can produce artefacts on sharp or
   undersampled scans. Missing detector data are assumed zero, without truncation
   correction. CUDA requires the optional `fourier-cuda12` extra; the NumPy
   reference is the default. Full projection/output storage stays on the host,
   while FFT plans, slab arrays and allocator caches add device memory.
-- `fbp_host` provides NumPy/memmap output in volume slabs for every geometry
-  `fbp` accepts. It is not differentiable. Laminography slabs each stream and
-  refilter every view, so smaller slabs reduce device storage at the cost of
-  repeated filtering and transfers; runtime and compiler allocations remain
-  additional memory costs.
-- The iterative solvers need the volume and a few volume-sized work arrays on
-  the device. FISTA-TV, CGLS and SPDHG-TV stream NumPy or memmap projections
-  from host memory when they are large; SPDHG-TV also keeps its sinogram-sized
-  dual variable and any weights there. Streamed CGLS solves the equivalent
-  normal equations, which square the condition number of each step's
-  recurrence; it recomputes the exact gradient periodically, as in-core CGLS
-  recomputes its residual, and streams only with canonical detector grids.
-- Several GPUs (`devices=`) share a scan's views; each holds the whole volume
-  and the solver's volume-sized arrays, so they add speed, not room for a
-  larger volume, except in `fdk_host`, which gives each GPU its own z slabs.
-  `tj.project`, `tj.backproject`, FBP, FDK, CGLS, FISTA and `tj.align` take
-  them; SPDHG runs on one device, since each step would sum a whole volume
-  across the devices for one block of views. In alignment only `pose` mode's
-  joint update and cone-beam reconstruction steps are shared; parallel-beam
-  reconstruction steps, the alternating solver of the other modes and setup
-  calibration run on the first device. Shared projections are held in device
-  memory, never streamed from the host, and the devices must belong to one
-  process (no multi-host runs).
+- The iterative solvers need the whole volume and a few volume-sized work
+  arrays on the GPU, so a volume larger than the GPU can be reconstructed only
+  by FBP or FDK in host slabs. Several GPUs (`devices=`) add speed, not room
+  for a larger volume, except in FDK's host slabs. SPDHG-TV and `fbp_host` run
+  on one GPU, the `tomojax` commands always use one, and the GPUs must belong
+  to one process. [Large scans and several GPUs](large-scans.md) says which
+  solvers stream projections from host memory and what each GPU holds.
 - Alignment fixes an object's position only up to what the data can see. In
   a cone beam, moving the object sideways needs the along-beam `dy` in some
   views, which the default pose parameters leave out, so the solve may place
@@ -149,7 +124,7 @@ from the larger-motion targets.
 - Pallas currently uses JAX's deprecated Triton backend. JAX 0.11.2 is tested
   on CPU and an Ada CUDA GPU, with the dependency constrained below 0.12.
   Migration and additional GPU coverage are still required before widening
-  compatibility. See [the performance report](performance.md).
+  compatibility. See the [test environment](measurements.md#test-environment).
 - `just accelerator-smoke` verifies the Pallas projector in interpret mode on
   CPU and attempts a real Pallas run only when JAX reports a non-CPU backend.
   Real CUDA coverage therefore depends on the host CUDA/JAX installation, not
@@ -157,8 +132,9 @@ from the larger-motion targets.
   prove the real accelerator path is available. `just test-cuda` additionally
   runs every test with the GPU visible, numerical tests of real kernels
   included; ordinary CPU CI skips those cases.
-- The published timings cover one laptop GPU, synthetic phantoms and the FIPS
-  walnut. The exact cone-beam transpose remains slower than ASTRA's
+- The published timings cover one laptop GPU (and four H100 GPUs for the
+  several-GPU runs), synthetic phantoms and the FIPS walnut. The exact
+  cone-beam transpose remains slower than ASTRA's
   approximate voxel-driven backprojector, most of all when the detector
   samples finer than the grid; bin such detectors (`Scan.binned`).
   The TIGRE adapter only compares centred isotropic parallel scans so far.

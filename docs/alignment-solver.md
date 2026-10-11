@@ -4,7 +4,7 @@ Use this reference when changing `AlignConfig` fields, in Python or as keys of a
 `tomojax align --config` TOML file. For data preparation,
 mode selection, and interpreting recovered parameters, start with the
 [alignment guide](alignment-guide.md). These options are experimental; the
-[public comparison](research/public-free-voxel-schur-2026-10-04.md) still has a failed cell.
+[free-voxel pilot](measurements.md#free-voxel-pilot) still has a failed cell.
 
 `tj.align` and `tomojax align` in `pose` and `cor-then-pose` modes start from
 `coupled_pose_config()`: the joint coupling with
@@ -34,11 +34,11 @@ does not guarantee recovery from large initial motion or poor identifiability.
 
 Small rigid-transform products and Gauss–Newton normal equations explicitly
 request full FP32 multiplication precision. This prevents reduced global JAX
-matrix-multiply settings from quantizing small pose updates on CUDA.
+matrix-multiply settings from quantising small pose updates on CUDA.
 
 The `gn_coupling="joint"` option, which `tj.align` uses in `pose` and
 `cor-then-pose` modes, is for per-view
-least-squares alignment. It solves a damped linearized volume-and-pose
+least-squares alignment. It solves a damped linearised volume-and-pose
 problem after each reconstruction refresh, then accepts the updated pair only
 after scoring its constrained nonlinear objective. This addresses slow
 alternation when free voxels can compensate for pose errors. `AlignConfig()`
@@ -50,7 +50,7 @@ stage must declare `objective_kind="joint_volume_pose"` and `optimizer="gn"`.
 Joint GN requires `opt_method="gn"`, `pose_model="per_view"` and
 `gather_dtype="fp32"`. It supports sampled and exact integration, active/frozen
 pose parameters, pose bounds, volume masks, nonnegative voxels, pose smoothness,
-and Huber-TV or zero volume regularization. It does not support nonsmooth TV
+and Huber-TV or zero volume regularisation. It does not support nonsmooth TV
 or polynomial/spline pose models. `gn_joint_iterations=40` bounds the inner
 matrix-free PCG solve; `gn_joint_rtol=1e-4` controls its residual stopping
 criterion. `gn_damping` and `gn_volume_damping` damp pose and voxel increments
@@ -64,28 +64,26 @@ options match. Measurements, nominal poses, masks, detector coordinates and
 weights remain inputs to each call, so a new scan can reuse a program without
 reusing the previous scan's values. Changing shapes or program options still
 requires compilation; this reuse is separate from the optional JAX persistent
-cache for different processes. The [six-cell reuse comparison](research/public-free-voxel-reuse-2026-10-04.md)
-measures faster warm calls with unchanged cold startup and process GPU memory;
-noisy anisotropic recovery still fails its rotation gate.
+cache for different processes. On the six-cell free-voxel pilot, reuse made
+warm calls faster and left cold start-up and process GPU memory unchanged.
 
 The `gn_joint_solver="pose_eliminated"` method factors the pose block
 and runs PCG on the volume Schur system, then back-substitutes poses. It solves
 the same damped linear problem as the default `"stacked"` method, with the
 same joint residual threshold and nonlinear acceptance. Without pose smoothness,
 the factors are independent 5-by-5 blocks; with smoothness, a block-banded
-factorization retains inter-view coupling with storage linear in view count.
+factorisation retains inter-view coupling with storage linear in view count.
 Damping and iteration budgets are unchanged. Independent dense, constrained
-workflow and CUDA checks pass. The [complete public comparison](research/public-free-voxel-schur-2026-10-04.md)
-recovers five of six modest-motion clean/noisy cells, with faster accepted
-tilted recovery but the same noisy anisotropic failure as the stacked solve.
-Sampled GPU memory rises from 280 to 320 MiB. It is the default for `pose` and `cor-then-pose`
+workflow and CUDA checks pass. On the free-voxel pilot it recovers the same
+five of six cells as the stacked solve, faster on the tilted cells, and
+sampled GPU memory rises from 280 to 320 MiB. It is the default for `pose` and `cor-then-pose`
 alignment (`AlignConfig()` keeps `"stacked"`); it does not establish
-complete recovery or the 20× goal.
+complete recovery.
 
 Joint steps report `objective_kind="joint_volume_pose"`, their actual
 projector backend, accepted line-search scale, and linear-solve diagnostics.
 The shared central-difference stencil is unchanged. Recovery and performance
-claims require the complete [free-voxel pilot](research/public-free-voxel-pilot.md);
+claims require the complete [free-voxel pilot](measurements.md#free-voxel-pilot);
 passing the numerical tests alone does not establish them.
 
 Alignment's `info["lipschitz"]` and checkpoint `lipschitz` retain the effective
@@ -96,7 +94,7 @@ the bound therefore stays consistent across both paths and resume. A fallback
 override too small to supply a positive data bound triggers operator-norm
 estimation. The public `FistaConfig.lipschitz` itself remains a data-term bound.
 
-Without an override, Huber-FISTA alignment initializes its data bound from
+Without an override, Huber-FISTA alignment initialises its data bound from
 `max(A.T @ (A @ ones))`, with a 20% margin applied once. For the nonnegative
 trilinear ray model this row sum bounds the normal operator's largest
 eigenvalue. It costs one projection/adjoint pair and accounts for actual

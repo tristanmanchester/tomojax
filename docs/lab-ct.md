@@ -3,9 +3,9 @@
 This guide takes a lab CT scan (a point source, a flat detector and a sample on
 a turntable) from the scanner's files to a reconstruction: import, calibrate
 the rotation axis, reconstruct with FDK or an iterative solver, and correct
-per-view motion. Every step is one `tomojax` command; the Python calls are at
-the end. The commands assume the checkout's environment is active
-(`source .venv/bin/activate`); otherwise prefix them with `uv run --no-sync`.
+per-view motion. Every step is one `tomojax` command, run with
+`uv run --no-sync` from the checkout root as in the other guides; the Python
+calls are at the end.
 
 ## Import
 
@@ -16,8 +16,8 @@ pixels and offsets, the reconstruction volume, the white level and the angles
 the result:
 
 ```bash
-tomojax import scan/part.xtekct -o scan.nxs
-tomojax inspect scan.nxs
+uv run --no-sync tomojax import scan/part.xtekct -o scan.nxs
+uv run --no-sync tomojax inspect scan.nxs
 ```
 
 Projections become line integrals, `-log(I / WhiteLevel)` (`--transmission`
@@ -32,10 +32,10 @@ For other scanners, import the TIFF stack with the angles and the geometry,
 then flat- and dark-correct it:
 
 ```bash
-tomojax import projections/ --angles angles.csv --geometry cone \
+uv run --no-sync tomojax import projections/ --angles angles.csv --geometry cone \
   --source-to-axis 120.5 --source-to-detector 980.0 --pixel-size 0.2 \
   -o raw.nxs
-tomojax preprocess raw.nxs -o scan.nxs --flats flats/ --darks darks/
+uv run --no-sync tomojax preprocess raw.nxs -o scan.nxs --flats flats/ --darks darks/
 ```
 
 `--flats` and `--darks` take TIFF frames, or one level for every pixel
@@ -66,7 +66,7 @@ position of the rotation axis. An axis offset from the central ray doubles
 and blurs every slice; a rolled detector makes that offset change with height.
 
 ```bash
-tomojax align scan.nxs -o calibrated.nxs --mode cor
+uv run --no-sync tomojax align scan.nxs -o calibrated.nxs --mode cor
 ```
 
 On cone data `--mode cor` estimates the axis offset (`ConeBeam.axis_offset`,
@@ -75,8 +75,8 @@ FDK slabs near the centre, top and bottom of the volume for trial offsets,
 coarse to fine on binned data, and keeps the sharpest; the slabs' offsets
 change linearly with height in proportion to the roll. The output records the
 calibrated beam, so later commands on `calibrated.nxs` use it. On simulated
-128³ and 256³ scans it recovers offsets to 0.08 voxels and rolls to 0.04°, in
-about 4 s at 256³. It needs some in-plane structure at the slab heights and a
+scans it recovers offsets to 0.08 voxels and rolls to 0.04°
+([measurements](measurements.md#cone-beam-scans)). It needs some in-plane structure at the slab heights and a
 scan of at least 180° plus the fan angle. Detector pitch and yaw, the axis
 direction and the source distances are not estimated.
 
@@ -86,7 +86,7 @@ FDK (the default `--method fbp` runs FDK on cone data) is the fast first
 reconstruction:
 
 ```bash
-tomojax recon calibrated.nxs -o fdk.nxs
+uv run --no-sync tomojax recon calibrated.nxs -o fdk.nxs
 ```
 
 It weights full turns, offset-detector full turns (the axis projecting near
@@ -99,8 +99,8 @@ CGLS suits low-noise data, and FISTA with total variation suits noisy or
 sparse scans:
 
 ```bash
-tomojax recon calibrated.nxs -o cgls.nxs --method cgls --iterations 20
-tomojax recon calibrated.nxs -o tv.nxs --method fista --iterations 50 --tv-weight 0.002
+uv run --no-sync tomojax recon calibrated.nxs -o cgls.nxs --method cgls --iterations 20
+uv run --no-sync tomojax recon calibrated.nxs -o tv.nxs --method fista --iterations 50 --tv-weight 0.002
 ```
 
 Expert settings are fields of the method's configuration class in a
@@ -114,17 +114,16 @@ stable as it iterates; ASTRA's CGLS, whose backprojector is approximate,
 diverges after about 20 iterations on the same scan (see
 [measurements](measurements.md#cone-beam-projection-and-fdk)).
 
-When the volume would not fit in device memory, `--method fbp` reconstructs it
-in z-slabs on the host (`fdk_host`), so a 2000³ volume needs host RAM for the
-projections and the volume but only a few slabs on the GPU.
+When the volume would not fit in GPU memory, FDK switches to z-slabs on the
+host by itself; see [large scans and several GPUs](large-scans.md).
 
 ## Export
 
 Volume viewers and analysis packages read slice stacks or raw volumes:
 
 ```bash
-tomojax export fdk.nxs -o fdk_slices/                 # 32-bit TIFF per z slice
-tomojax export fdk.nxs -o fdk.raw --dtype uint16      # one raw file
+uv run --no-sync tomojax export fdk.nxs -o fdk_slices/                 # 32-bit TIFF per z slice
+uv run --no-sync tomojax export fdk.nxs -o fdk.raw --dtype uint16      # one raw file
 ```
 
 An output ending in `.raw` is written as one raw file; any other output is a
@@ -142,15 +141,15 @@ every view. Cone-beam alignment estimates all six pose parameters per view,
 including `dy` along the beam, which changes the magnification:
 
 ```bash
-tomojax align scan.nxs -o aligned.nxs --mode cor-then-pose
-tomojax recon aligned.nxs -o recon.nxs --method cgls
+uv run --no-sync tomojax align scan.nxs -o aligned.nxs --mode cor-then-pose
+uv run --no-sync tomojax recon aligned.nxs -o recon.nxs --method cgls
 ```
 
 `cor-then-pose` calibrates the axis as `--mode cor` does, then aligns the
 poses; `--mode pose` aligns the poses alone, and also takes scans that already
 carry poses (an ASTRA import, say, or an earlier alignment), which it corrects
 on top of, and multi-orbit scans, whose orbits it brings into register (see
-[the walnut](#bringing-the-orbits-into-register)). `tomojax recon` applies the
+[multi-orbit scans](#multi-orbit-scans)). `tomojax recon` applies the
 poses saved in `aligned.nxs`; with either command, `--no-poses` starts from the
 nominal geometry instead. See
 [cone-beam alignment](alignment-guide.md#align-cone-beam-scans-in-six-degrees-of-freedom)
@@ -158,13 +157,11 @@ for its accuracy and gauges.
 
 ## Speed
 
-On a 256³, 360-view scan with a 384² detector on a laptop RTX 4070, forward
-projection takes 0.093 s (ASTRA 0.17 s, TIGRE 0.48 s), the exact transpose
-0.18 s (ASTRA's approximate backprojector 0.075 s) and FDK 0.048 s (ASTRA
-0.29 s, TIGRE 0.51 s). A tilted axis or per-view poses take the transpose's
-general kernel: 0.092 s forward and 0.23 s transpose. A 1024³ FDK of 1024 views takes
-8.0 s in RAM, 11.1 s on the first call (ASTRA 20.3 s, TIGRE 30.7 s). Details are in the
-[measurements](measurements.md#cone-beam-projection-and-fdk).
+On a 256³, 360-view scan on a laptop RTX 4070, FDK takes 0.048 s (ASTRA
+0.29 s, TIGRE 0.51 s) and the forward projection 0.093 s (ASTRA 0.17 s). The
+exact transpose takes 0.18 s, slower than ASTRA's approximate backprojector
+(0.075 s). The [measurements](measurements.md#cone-beam-projection-and-fdk)
+give the protocol, errors and the 1024³ FDK.
 
 ## Python
 
@@ -178,9 +175,8 @@ tj.save("part-recon.nxs", recon)
 ```
 
 The `tomojax` commands hold the projections and the volume in host memory.
-For scans larger than that, `fdk_host` reconstructs in z-slabs from a
-projection memmap into a volume memmap, reading only the detector rows each
-slab needs.
+For scans larger than that, `fdk_host` reconstructs from a projection memmap
+into a volume memmap; see [large scans and several GPUs](large-scans.md).
 
 ## Coming from ASTRA
 
@@ -205,90 +201,60 @@ and moves the object, so each ASTRA view becomes a rigid object pose. The
 conversion fits a circular orbit (`scan.geometry`, with `scan.angles` running
 the opposite way to ASTRA's) and keeps the scan's departure from it, such as a
 tilted axis or per-view corrections, in `scan.poses`; a source raised above the
-volume moves the grid instead. It requires the source and detector to keep
-their arrangement over the scan and refuses vectors where they do not.
-Projections of the converted scan agree with ASTRA's to 0.03% on tilted,
-offset and jittered geometries.
+volume moves the grid instead. The source and detector must keep one
+arrangement for runs of views: where the arrangement changes partway through,
+as in a multi-orbit scan, each run becomes a segment of a `ConeSegments` scan
+(see the next section), and vectors whose arrangement changes from view to view
+are refused. Projections of the converted scan agree with ASTRA's to 0.03% on
+tilted, offset and jittered geometries.
 
-Where the arrangement changes partway through, as in a multi-orbit scan with
-the source at several heights or a tall sample scanned in stacked sections,
-each run of views becomes a segment of a `ConeSegments` geometry, which the
-iterative methods reconstruct together (`tj.Scan.combine([a, b, c])` builds one
-from separate scans). FDK reconstructs one source-detector arrangement and refuses
-them; views repeating an angle (several turns of one arrangement) share it.
+## Multi-orbit scans
 
-### A real lab scan: the FIPS walnuts
+A scan whose source and detector arrangement changes partway through, such as
+a multi-orbit scan with the source at several heights or a tall sample scanned
+in stacked sections, has a `ConeSegments` geometry: each run of views with one
+arrangement is a segment. `tj.Scan.from_astra` makes one from ASTRA
+`cone_vec` vectors, and `tj.Scan.combine([a, b, c])` joins separate scans.
+Views that repeat an angle under one arrangement (several turns) stay in one
+segment.
 
-`bench/walnut.py` reconstructs the walnut collection of Der Sarkissian et al.
-(Scientific Data 6, 215, 2019; CC BY 4.0): three source orbits of 1200
-projections each on a FleX-ray scanner, with per-view geometry vectors and a
-reference reconstruction (50 iterations of non-negative least squares on all
-three orbits, 501³ voxels of 0.1 mm). On Walnut 1, on a laptop RTX 4070:
+The iterative methods reconstruct all the segments together. FDK reconstructs
+one arrangement and refuses segmented scans; `warm_start=True` starts an
+iterative method from the view-count-weighted mean of each segment's FDK,
+which needs every segment to cover an arc FDK accepts.
 
-| | TomoJAX | ASTRA |
-| --- | --- | --- |
-| Geometry from the vectors | source 66.0014 mm, detector 199.0062 mm (the scanner's log: 66.0014, 199.0062) | |
-| FDK, one orbit (1200 views) | 1.7–1.9 s on the first call, compilation included; 1.55 s after; within 0.05% of ASTRA's volume and 0.6% of the authors' published FDK | 2.13 s |
-| FDK error against the reference, in the walnut | 0.099 | 0.099 |
-| FDK, detector binned 2 x 2 | 1.23 s on the first call, 1.05 s after; error 0.091 | 1.43 s; 0.091 |
-| Non-negative least squares, three orbits, every 4th view, 20 iterations | 304 s; error 0.152 | 217 s (the reference's own solver); 0.147 |
-| The same, detector binned 2 x 2 | 86 s; error 0.154 | 91 s; 0.152 |
+Recorded orbit heights are often slightly wrong, which doubles and blurs
+edges. `tj.align(scan)` in `pose` mode aligns the segments as one scan and
+brings the orbits into register; the other modes refuse segmented scans. Only
+the orbits' heights relative to one another are observable, so the result is
+the least-motion estimate, and the whole object can sit away from where the
+record puts it (0.38 mm, almost four voxels, on the FIPS walnut).
 
-Times start with the projections in host memory and end with the volume
-there; JAX's GPU start-up (about 2 s, once per process) is not included. FDK
-filters each row by a matrix product on the GPU and backprojects through the
-texture unit from half floats, scaled per batch to their peak; like ASTRA's,
-its interpolation weights are rounded to 1/256.
+For a quick check without reconstructing, `orbit_heights` estimates each
+orbit's height above the first from the consistency of the views' data. It is
+good to about half a pixel at the axis, so treat it as a check or a starting
+point, not a replacement for alignment:
 
-The volumes agree with ASTRA's to 0.05% (FDK) and 1.3% (least squares).
-Unbinned, TomoJAX's least squares is still slower: this detector samples twice
-as finely as the 0.1 mm voxels (a pixel spans 0.05 mm at the axis), so its
-matched transpose, which follows every ray through every plane, does four
-times the work the volume needs, while ASTRA's backprojector samples the
-detector once per voxel. `scan.binned(2)` averages 2 x 2 pixels, matching the
-detector to the grid: it costs nothing in accuracy here (the error even falls,
-with the noise) and makes TomoJAX's reconstruction 3.5 times faster, ASTRA's
-2.4 times, so binned TomoJAX is the faster. Bin a scan whenever its pixels,
-divided by the magnification, are smaller than the voxels: `tj.reconstruct`
-(iterative methods) and `tj.align` warn, with the factor to use, when they
-are at least twice as fine.
+```python
+import numpy as np
 
-The FleX-ray's rotation axis also leans 0.5° across the detector, so every
-view takes the transpose's general kernel, about 1.3 times slower than its
-path for an upright axis; kernels specialised to small leans were tried and
-were slower still.
+from tomojax.alignment.api import orbit_heights
 
-#### Bringing the orbits into register
+found = orbit_heights(scan.geometry, np.asarray(scan.projections))
+print(found.heights)   # in the scan's length unit; the first orbit is 0
+print(found.contrast)  # near 0: the data cannot decide that orbit's height
+```
 
-Each walnut comes with two geometries: `scan_geom_original.geom`, as the
-scanner recorded it, and `scan_geom_corrected.geom`, where the authors raised
-the source and detector of orbits 2 and 3 by 0.397 and 0.794 mm to bring them
-into register with orbit 1. Seen from the object, which is how TomoJAX's poses
-describe it, the object sits that much lower in those orbits: a vertical
-correction (`dz`) of -0.397 and -0.794 mm. `bench/walnut_alignment.py` gives `tj.align` the original record
-(three orbits, every 4th view, binned 2 x 2) and finds the correction itself,
-in 4.4 minutes on the laptop GPU:
+It returns `None` for a single orbit.
 
-| | Orbit 2 | Orbit 3 |
-| --- | --- | --- |
-| Height relative to orbit 1, TomoJAX | -0.381 mm | -0.755 mm |
-| The authors' correction | -0.397 mm | -0.794 mm |
-
-Only the orbits' relative heights are observable: moving the whole object
-predicts the same data. `tj.align` reports the least-motion estimate (here
-0.38 mm above the authors', who keep orbit 1 where its record puts it), so to
-compare volumes voxel by voxel the bench holds orbit 1 fixed as they do. Then
-20 iterations of non-negative least squares reach the reference to an error
-of 0.155 with TomoJAX's geometry, against 0.154 with the authors' and 0.280
-with the original record:
-
-![Vertical and axial slices of the walnut reconstructed with the published, original, TomoJAX-aligned and corrected geometries](images/walnut_alignment_slices.png)
-
-![Each orbit's height relative to orbit 1, recovered by tj.align, against the authors' correction](images/walnut_alignment_heights.png)
-
-A scan that already carries poses, like this ASTRA import (whose poses hold
-each orbit's height), is aligned on top of them, and a multi-orbit
-`ConeSegments` scan is aligned as one.
+[`examples/align_walnut_orbits.py`](../examples/align_walnut_orbits.py) runs
+the whole workflow on a FIPS walnut, three orbits recorded with the
+uncorrected geometry: it reads them with `from_astra`, bins the detector 2 × 2
+(`scan.binned(2)`), aligns and reconstructs. It needs a CUDA GPU with 8 GB and
+about six minutes. On that walnut `tj.align` recovers the orbits' heights to
+within 0.04 mm of the authors' correction; the
+[measurements](measurements.md#fips-walnuts-real-lab-cone-beam-ct) give the
+details and the comparison with ASTRA.
 
 ## Limitations
 

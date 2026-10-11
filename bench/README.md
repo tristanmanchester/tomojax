@@ -1,34 +1,27 @@
 # Numerical and performance benchmarks
 
-The [exact-projector public alignment rerun](../docs/research/public-free-voxel-exact-2026-10-04.md) retains all 48 calls;
-all six cells still fail joint acceptance.
-
-
-These development scripts check physical accuracy as well as speed. They are
-not installed in the `tomojax` package. The measured comparison and remaining
-gaps are in [the performance report](../docs/performance.md).
-
-The [complete 27-cell reconstruction score](../docs/research/system-matrix-2026-10-04.md)
-and [diagnostic attribution](../docs/research/system-profile-2026-10-04.md) retain failed
-quality gates. `public_alignment_benchmark.py` separately exercises the actual
-alignment API with independent free voxels; its declared six-cell
-[pilot protocol](../docs/research/public-free-voxel-pilot.md) does not replace the larger
-motion/robustness goals. `voxel_truth.py` provides independently integrated
-trilinear voxel-basis data for this pilot.
-The [completed baseline](../docs/research/public-free-voxel-baseline-2026-10-04.md)
-reports every failed call, including cold/warm times and peak process GPU memory.
+These development scripts compare TomoJAX with ASTRA and TIGRE and check
+physical accuracy as well as speed. They are not installed with the `tomojax`
+package. The results and their protocols are in the
+[measurements](../docs/measurements.md); this page says how to rerun them.
+Raw records, failed attempts included, are kept in [`reference/`](reference).
 
 The complete reconstruction comparison loads fixtures through the lightweight
-`physical_case` container. External workers must not import JAX/Pallas merely
-to read scan metadata or build ASTRA geometry. Each worker records its loaded
-solver modules so this can be audited. Earlier cold measurements that imported
-`compare_projectors` in every worker included unrelated solver startup in the
-external workflows; retain those records as historical evidence, and use the
-corrected isolated runs for fresh-process comparisons.
+`physical_case` container, so external workers do not import JAX or Pallas
+merely to read scan metadata or build ASTRA geometry. Each worker records its
+loaded solver modules so this can be audited. Earlier cold measurements that
+imported `compare_projectors` in every worker included unrelated solver
+start-up in the external workflows; use the isolated runs for fresh-process
+comparisons.
 
 Methods that miss the fixed quality gate retain seven warm attempts at their
 last tested budget. These report attempted latency and quality; their time to
 an accepted result remains undefined and they cannot count as speed wins.
+
+`public_alignment_benchmark.py` exercises the alignment API on the six-cell
+free-voxel pilot, with independently integrated voxel-basis data from
+`voxel_truth.py`; see the
+[measurements](../docs/measurements.md#free-voxel-pilot).
 
 ## Joseph first-order differentiation
 
@@ -214,8 +207,9 @@ record includes the old anisotropic-volume failure and excludes it from speedups
 
 ## Fixed-quality complete reconstruction comparison
 
-The stretch targets and the frozen `gaussian-v1` acceptance thresholds are in
-[the optimization goal](../docs/research/optimization-goal.md). Run:
+This compares complete reconstructions against fixed full-volume quality gates;
+the `gaussian-v1` suite and its acceptance thresholds are defined in
+`compare_reconstructions.py`. Run:
 
 ```bash
 uv run --no-sync python bench/compare_reconstructions.py \
@@ -436,7 +430,7 @@ each, with the scanner's recorded geometry and the authors' corrected one.
 - [`walnut_alignment.py`](walnut_alignment.py) aligns one walnut's three orbits
   from the recorded geometry and compares the recovered orbit heights and
   reconstructions with the authors' correction (the figures in
-  [docs/lab-ct.md](../docs/lab-ct.md#bringing-the-orbits-into-register)).
+  [the measurements](../docs/measurements.md#orbit-registration)).
 - [`walnut_collection.py`](walnut_collection.py) does that for every walnut
   without storing the 6 GB downloads: it reads only the files it uses (about
   1.6 GB a walnut) from each zip on Zenodo by HTTP range requests, decodes them

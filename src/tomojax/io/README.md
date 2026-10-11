@@ -1,7 +1,9 @@
 # tomojax.io
 
-`tomojax.io` handles dataset loading/saving, NXtomo validation, TIFF/NX
-preprocessing, inspection reports, quicklooks, and metadata conversion.
+`tomojax.io` reads and writes TomoJAX datasets, reads Nikon `.xtekct` scans and
+TIFF stacks, and validates and inspects datasets. Raw detector frames are read
+with `tomojax.load_frames` and corrected with
+[`tomojax.corrections`](../corrections/README.md).
 
 Import from here, not from `tomojax._data`.
 

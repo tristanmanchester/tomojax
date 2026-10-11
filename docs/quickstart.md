@@ -19,10 +19,11 @@ instead. It also lists the corrections that made the projections from
 detector frames, when the file records them.
 
 Reconstruction expects line integrals (log attenuation). Raw detector counts,
-normalized transmission, and already-corrected attenuation are different
+normalised transmission, and already-corrected attenuation are different
 inputs: establish which you have. TomoJAX corrects raw frames itself when the
-file says they are raw (an `image_key` marking flats or darks, or a Nikon
-scan); it refuses integer counts with no flats rather than guess.
+file says they are raw: an NXtomo `image_key` marking flats or darks, an APS
+Data Exchange file with `data_white` or `data_dark` beside `/exchange/data`,
+or a Nikon scan. It refuses integer counts with no flats rather than guess.
 
 ## Correct raw detector frames
 
@@ -36,7 +37,9 @@ uv run --no-sync tomojax inspect corrected.nxs
 This writes the line integrals `-log((I - D) / (F - D))` of the sample views,
 each view's flat interpolated between the flat sets taken around it, and
 records the correction. The frames, `image_key` and angles are found at their
-NXtomo paths or as the file's only datasets of those names; `--data-path`,
+NXtomo paths, at the Data Exchange paths (`/exchange/data` with `data_white`,
+`data_dark` and `theta` beside it), or as the file's only datasets of those
+names; `--data-path`,
 `--image-key-path` and `--angles-path` (expert settings, `--config-keys`) name
 them otherwise. Options add corrections: `--zingers`, `--remove-stripes 9`
 (rings), `--reject-outliers` (views that jump from their neighbours, such as a
@@ -63,7 +66,41 @@ they are needed. `batch_views` must be a positive integer and `epsilon` finite
 and positive. `frames.selected(...)` and `scan.selected(...)` keep a nonempty
 selection in acquisition order: a forward slice, increasing integer indices,
 or a Boolean mask. Selection keeps each view's geometry and its original
-position between the flat fields.
+position between the flat fields. `scan.corrected(...)` runs line-integral
+steps (`Stripes`, `BeamHardening`, `RejectViews`) on a scan that is already
+corrected.
+
+A file written by TomoJAX carries its geometry. Other NXtomo and Data Exchange
+files get a parallel beam with a centred detector, the file's angles, and the
+NXtomo detector's `x_pixel_size` and `y_pixel_size` when it has them. Without
+them TomoJAX takes unit pixels, so the reconstruction's length unit is the
+pixel. To set the geometry, pass the measured detector,
+`tj.load_frames("raw.h5", detector=tj.Detector(nu=2048, nv=2048, du=0.65, dv=0.65))`,
+or a whole `geometry=`, with your own detector shape and pitch. Then estimate
+the centre of rotation with `tomojax align --mode cor` (see the
+[alignment guide](alignment-guide.md)).
+
+### Retrieve phase from propagation-based phase contrast
+
+`Paganin` is single-material phase retrieval: it filters each view's
+transmission before the logarithm. It takes the material's δ/β, the
+sample-to-detector distance in metres, the X-ray energy in keV and the pixel
+size at the sample in metres (the detector pixel divided by the magnification
+in a cone beam). The values below are illustrative:
+
+```python
+import tomojax as tj
+from tomojax.corrections import Paganin
+
+step = Paganin(delta_beta=100, distance=0.1, energy_kev=25, pixel_size=0.65e-6)
+scan = tj.load_frames("raw.nxs").corrected(step)
+```
+
+On the command line, `--paganin` takes the same four values in that order:
+`tomojax preprocess raw.nxs -o phase.nxs --paganin 100,0.1,25,0.65e-6`. It is
+an expert option, so `--help` does not list it.
+
+### TIFF frames
 
 For TIFF frames, use the [TIFF and measured-geometry instructions](real-laminography.md#prepare-tiff-data).
 `tomojax import` packages a stack; it does not correct frames.
@@ -126,6 +163,9 @@ for u_px in (-4, -2, 0, 2, 4):
     trial = replace(scan, geometry=replace(scan.geometry, detector=detector))
     tj.save(f"cor{u_px:+d}.nxs", tj.reconstruct(trial))
 ```
+
+If the projections or the volume are larger than GPU memory, see
+[large scans and several GPUs](large-scans.md).
 
 For tilted or irregular-angle data, start with the iterative workflow in the
 [real scan guide](real-laminography.md#reconstruct-with-the-recorded-geometry).
