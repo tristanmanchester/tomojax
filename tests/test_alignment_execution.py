@@ -506,7 +506,9 @@ def _shifted_laminography_scan(truth):
     return geometry, grid, detector, volume, data, project
 
 
-@pytest.mark.parametrize(("optimizer", "settings"), [("gd", {"lr_trans": 0.5})])
+@pytest.mark.parametrize(
+    ("optimizer", "settings"), [("gd", {"lr_trans": 0.5}), ("gn", {"w_trans": 10.0})]
+)
 def test_pose_steps_reduce_the_declared_objective(optimizer, settings):
     # A gradient step much longer than the remaining motion must backtrack, and
     # a Gauss-Newton step must account for its curvature prior.

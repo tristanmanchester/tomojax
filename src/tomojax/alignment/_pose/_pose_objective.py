@@ -13,6 +13,7 @@ from tomojax.core.geometry.base import Detector, Geometry, Grid
 from tomojax.core.projector import forward_project_view_T
 
 from ._coupled_objective import CoupledObjective, build_coupled_objective
+from ._pose_block import pose_block_solver
 from ._pose_context import AlignmentRuntimeContext, _pose_objective_context, _PoseObjectiveContext
 from ._pose_jacobian import build_pose_prediction_and_columns
 
@@ -228,9 +229,7 @@ def _build_gn_update_batch(ctx: _PoseObjectiveContext) -> Callable[..., object]:
         inactive = jnp.float32(1.0) - active
         hessian_active = hessian * active[:, None] * active[None, :]
         system = hessian_active + lam * jnp.diag(active) + jnp.diag(inactive)
-        rhs = -gradient * active
-        delta = jnp.linalg.solve(system, rhs)
-        return delta * active, current_loss
+        return system, -gradient * active, current_loss
 
     return jax.jit(jax.vmap(_gn_update_one, in_axes=(0, 0, 0, 0, None, 0)))
 
@@ -251,14 +250,14 @@ def _build_gn_update_all(
         masked_vol = _objective_apply_vol_mask(ctx, vol)
 
         def body(
-            carry: tuple[jnp.ndarray, jnp.ndarray], i: jnp.ndarray
-        ) -> tuple[tuple[jnp.ndarray, jnp.ndarray], None]:
-            delta_acc, loss_acc = carry
+            carry: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray], i: jnp.ndarray
+        ) -> tuple[tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray], None]:
+            system_acc, rhs_acc, loss_acc = carry
             start_shifted, vmask, view_idx_chunk = _objective_chunk_schedule(ctx, i)
             params_chunk = jax.lax.dynamic_slice_in_dim(pose_params, start_shifted, ctx.chunk_size)
             t_chunk = jax.lax.dynamic_slice_in_dim(ctx.pose_stack, start_shifted, ctx.chunk_size)
             y_chunk = jax.lax.dynamic_slice_in_dim(ctx.projections, start_shifted, ctx.chunk_size)
-            dp_values, loss_values = gn_update_batch(
+            systems, rhs_values, loss_values = gn_update_batch(
                 params_chunk,
                 t_chunk,
                 _objective_frames_chunk(ctx, start_shifted),
@@ -266,20 +265,36 @@ def _build_gn_update_all(
                 masked_vol,
                 _ls_weight_chunk(y_chunk, _objective_loss_mask_chunk(ctx, start_shifted)),
             )
-            delta_acc = delta_acc.at[view_idx_chunk].add(dp_values * vmask[:, None])
+            system_acc = system_acc.at[view_idx_chunk].add(systems * vmask[:, None, None])
+            rhs_acc = rhs_acc.at[view_idx_chunk].add(rhs_values * vmask[:, None])
             loss_acc = loss_acc + jnp.sum(loss_values * vmask)
-            return (delta_acc, loss_acc), None
+            return (system_acc, rhs_acc, loss_acc), None
 
-        delta0 = jnp.zeros_like(pose_params)
-        (delta_all, current_loss), _ = jax.lax.scan(
+        width = int(pose_params.shape[1])
+        (systems, rhs, current_loss), _ = jax.lax.scan(
             body,
-            (delta0, jnp.float32(0.0)),
+            (
+                jnp.zeros((ctx.n_views, width, width), dtype=pose_params.dtype),
+                jnp.zeros_like(pose_params),
+                jnp.float32(0.0),
+            ),
             jnp.arange(ctx.num_chunks, dtype=jnp.int32),
         )
-        current_loss = _apply_pose_smoothness_loss(
-            pose_params, current_loss, ctx.smoothness_weights
-        )
-        return delta_all, current_loss
+        if ctx.cfg.pose_model == "per_view" and (ctx.cfg.w_rot or ctx.cfg.w_trans):
+            # The curvature prior is part of the objective the step scores, so
+            # its gradient and (view-coupling) Hessian belong in the normal
+            # equations rather than only in the loss.
+            current_loss, prior_gradient = _apply_pose_smoothness_gradient(
+                pose_params, current_loss, jnp.zeros_like(pose_params), ctx.smoothness_weights
+            )
+            rhs = rhs - prior_gradient * ctx.active_mask
+            delta_all = pose_block_solver(systems, ctx.smoothness_weights, has_smoothness=True)(rhs)
+        else:
+            current_loss = _apply_pose_smoothness_loss(
+                pose_params, current_loss, ctx.smoothness_weights
+            )
+            delta_all = jax.vmap(jnp.linalg.solve)(systems, rhs)
+        return delta_all * ctx.active_mask, current_loss
 
     return jax.jit(gn_update_all)
 
