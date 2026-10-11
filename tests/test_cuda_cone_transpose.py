@@ -261,3 +261,39 @@ def test_cuda_cone_dense_transpose_with_empty_views_and_masked_pixels():
             cone_backproject(images, coeff, grid, detector, backend="cuda", accumulate=initial)
         )
         np.testing.assert_allclose(actual, expected, rtol=0, atol=7e-7 * scale)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("reverse_v", [False, True])
+def test_cuda_cone_dense_transpose_across_sparse_image_tile_seams(reverse_v):
+    grid = Grid(5, 4, 3, 0.7, 1.1, 0.9, vol_center=(0.2, -0.1, 0.3))
+    detector = Detector(35, 37, 0.14, 0.17, center=(0.3, -0.2))
+    directions = [(1, 1, 0), (1, 0, 1), (0, 1, 1), (1, 1, 1)]
+    spacing = np.array([grid.vx, grid.vy, grid.vz])
+    frames = [
+        _frame(np.asarray(directions[i % 4]) * spacing, 0.13, reverse_v=reverse_v)
+        for i in range(33)
+    ]
+    coeff = frame_coefficients(
+        jnp.broadcast_to(jnp.eye(4), (33, 4, 4)), np.asarray(frames), grid, detector
+    )
+    shape = (grid.nx, grid.ny, grid.nz)
+    count = np.prod(shape)
+    basis = jnp.eye(count, dtype=jnp.float32).reshape((count, *shape))
+    forward = jax.jit(jax.vmap(lambda x: cone_project(x, coeff, grid, detector, backend="cuda")))
+    matrix = np.asarray(forward(basis), np.float64).reshape((count, -1))
+    rng = np.random.default_rng(4610)
+    initial = rng.normal(size=shape).astype(np.float32)
+    for included in ([], [32], [0, 16, 32]):
+        images = np.zeros((33, detector.nv, detector.nu), np.float32)
+        # Sparse values straddle both 32-pixel image seams and the odd tails,
+        # with wholly empty views in both the full and the short view chunk.
+        for view in included:
+            images[view, 30:37, 30:35] = rng.normal(size=(7, 5))
+            images[view, ::8, ::8] = rng.normal(size=(5, 5))
+        expected = (matrix @ images.ravel()).reshape(shape) + initial
+        bound = (np.abs(matrix) @ np.abs(images).ravel()).max() + np.abs(initial).max()
+        actual = np.asarray(
+            cone_backproject(images, coeff, grid, detector, backend="cuda", accumulate=initial)
+        )
+        np.testing.assert_allclose(actual, expected, rtol=0, atol=7e-7 * bound)

@@ -152,23 +152,85 @@ extern "C" __global__ void __launch_bounds__(GU * GV) cone_forward(
     out[((long)view * nv + v) * nu + u] = sum * path_w(r0, r1, r2, ra, sx, sy, sz);
 }
 
-// Path-weighted images for the transposes, reordered from JAX's (view, v, u) to the
-// (view, u, v) they read column by column.
-extern "C" __global__ void weight_images(
+// Weight and transpose (view, v, u) images in coalesced 32x32 tiles,
+// recording exact nonzero pixel bounds without reading images/rays a second time.
+// Views occupy grid x so their count is not limited by CUDA grid z.
+extern "C" __global__ void weight_images_boxes_tiled(
     const float* __restrict__ coeff, const float* __restrict__ img, float* __restrict__ out,
-    int nviews, int nu, int nv, float sx, float sy, float sz)
+    int nviews, int nu, int nv, float sx, float sy, float sz, int* __restrict__ partial)
 {
-    long id = (long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (id >= (long)nviews * nu * nv) return;
-    int v = id % nv; int u = (id / nv) % nu; int view = id / ((long)nu * nv);
+    __shared__ float tile[32][33];
+    __shared__ int warp_boxes[8][12];
+    int view = blockIdx.x;
     const float* c = coeff + (long)view * NC;
-    float r0, r1, r2; ray_of(c, (float)u, (float)v, r0, r1, r2);
-    float ra = SEL(ray_axis(r0, r1, r2), r0, r1, r2);
-    out[id] = img[((long)view * nv + v) * nu + u] * path_w(r0, r1, r2, ra, sx, sy, sz);
+    int u = blockIdx.y * 32 + threadIdx.x;
+    int v0 = blockIdx.z * 32 + threadIdx.y;
+    int lo[3][2], hi[3][2];
+    #pragma unroll
+    for (int a = 0; a < 3; ++a) { lo[a][0] = nu; hi[a][0] = -1; lo[a][1] = nv; hi[a][1] = -1; }
+    #pragma unroll
+    for (int j = 0; j < 32; j += 8) {
+        int v = v0 + j;
+        if (u < nu && v < nv) {
+            float r0, r1, r2; ray_of(c, (float)u, (float)v, r0, r1, r2);
+            int a = ray_axis(r0, r1, r2);
+            float ra = SEL(a, r0, r1, r2);
+            float value = img[((long)view * nv + v) * nu + u] * path_w(r0, r1, r2, ra, sx, sy, sz);
+            tile[threadIdx.y + j][threadIdx.x] = value;
+            // Exact-zero contributions need no footprint, including shifted-batch padding.
+            if (value != 0.f) {
+                #pragma unroll
+                for (int q = 0; q < 3; ++q) if (q == a) {
+                    lo[q][0] = min(lo[q][0], u); hi[q][0] = max(hi[q][0], u);
+                    lo[q][1] = min(lo[q][1], v); hi[q][1] = max(hi[q][1], v);
+                }
+            }
+        }
+    }
+    #pragma unroll
+    for (int a = 0; a < 3; ++a) {
+        int ulo = warp_min(lo[a][0]), uhi = warp_max(hi[a][0]);
+        int vlo = warp_min(lo[a][1]), vhi = warp_max(hi[a][1]);
+        if (threadIdx.x == 0) {
+            warp_boxes[threadIdx.y][a*4] = ulo; warp_boxes[threadIdx.y][a*4+1] = uhi;
+            warp_boxes[threadIdx.y][a*4+2] = vlo; warp_boxes[threadIdx.y][a*4+3] = vhi;
+        }
+    }
+    __syncthreads();
+    int tid = threadIdx.y * 32 + threadIdx.x;
+    if (tid < 12) {
+        int value = warp_boxes[0][tid];
+        bool lower = (tid % 4) == 0 || (tid % 4) == 2;
+        #pragma unroll
+        for (int w = 1; w < 8; ++w) value = lower ? min(value, warp_boxes[w][tid]) : max(value, warp_boxes[w][tid]);
+        long id = ((long)view * gridDim.z + blockIdx.z) * gridDim.y + blockIdx.y;
+        partial[id * 12 + tid] = value;
+    }
+    int vo = blockIdx.z * 32 + threadIdx.x;
+    int u0 = blockIdx.y * 32 + threadIdx.y;
+    #pragma unroll
+    for (int j = 0; j < 32; j += 8) {
+        int uo = u0 + j;
+        if (uo < nu && vo < nv)
+            out[((long)view * nu + uo) * nv + vo] = tile[threadIdx.x][threadIdx.y + j];
+    }
+}
+extern "C" __global__ void reduce_axis_boxes_tiled(
+    const int* __restrict__ partial, int* __restrict__ boxes, int ntiles, int nu, int nv)
+{
+    int q = threadIdx.y;
+    bool lower = (q % 4) == 0 || (q % 4) == 2;
+    int value = lower ? ((q % 4) == 0 ? nu : nv) : -1;
+    for (int t = threadIdx.x; t < ntiles; t += 32) {
+        int item = partial[((long)blockIdx.x * ntiles + t) * 12 + q];
+        value = lower ? min(value, item) : max(value, item);
+    }
+    value = lower ? warp_min(value) : warp_max(value);
+    if (threadIdx.x == 0) boxes[(long)blockIdx.x * 12 + q] = value;
 }
 
 // Separable views, the columns whose plane axis is a: grid (z tiles, row tiles, planes).
-// img is path-weighted; axis_box is from axis_boxes.
+// img is path-weighted; axis_box holds each plane axis's nonzero pixel bounds.
 extern "C" __global__ void sep_adjoint(
     const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
     const float* __restrict__ img, float* __restrict__ vol,
@@ -280,43 +342,6 @@ extern "C" __global__ void sep_adjoint(
         #pragma unroll
         for (int j = 0; j < TC / 4; ++j) if (c0 + my_c + j < nz) vol[base + j] += acc[j];
     }
-}
-
-// Per view and plane axis, bound the nonzero path-weighted pixels whose rays are
-// sampled along that axis; an empty box has u1 < u0. grid (views,).
-extern "C" __global__ void axis_boxes(
-    const float* __restrict__ coeff, const float* __restrict__ weighted,
-    int* __restrict__ boxes, int nu, int nv)
-{
-    __shared__ int box[3][4];
-    const float* c = coeff + (long)blockIdx.x * NC;
-    if (threadIdx.x < 3) {
-        box[threadIdx.x][0] = nu; box[threadIdx.x][1] = -1;
-        box[threadIdx.x][2] = nv; box[threadIdx.x][3] = -1;
-    }
-    __syncthreads();
-    int lo[3][2], hi[3][2];
-    #pragma unroll
-    for (int a = 0; a < 3; ++a) { lo[a][0] = nu; hi[a][0] = -1; lo[a][1] = nv; hi[a][1] = -1; }
-    for (int p = threadIdx.x; p < nu * nv; p += blockDim.x) {
-        // Exact-zero contributions need no footprint, including shifted-batch padding.
-        if (weighted[(long)blockIdx.x * nu * nv + p] == 0.f) continue;
-        int u = p / nv, v = p % nv;
-        float r0, r1, r2; ray_of(c, (float)u, (float)v, r0, r1, r2);
-        int a = ray_axis(r0, r1, r2);
-        #pragma unroll
-        for (int q = 0; q < 3; ++q) if (q == a) {
-            lo[q][0] = min(lo[q][0], u); hi[q][0] = max(hi[q][0], u);
-            lo[q][1] = min(lo[q][1], v); hi[q][1] = max(hi[q][1], v);
-        }
-    }
-    #pragma unroll
-    for (int a = 0; a < 3; ++a) {
-        atomicMin(&box[a][0], lo[a][0]); atomicMax(&box[a][1], hi[a][0]);
-        atomicMin(&box[a][2], lo[a][1]); atomicMax(&box[a][3], hi[a][1]);
-    }
-    __syncthreads();
-    if (threadIdx.x < 12) boxes[(long)blockIdx.x * 12 + threadIdx.x] = (&box[0][0])[threadIdx.x];
 }
 
 // Adds x0..x3 to four padded shared cells. Pair the two rows of each column:

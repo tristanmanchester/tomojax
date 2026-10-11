@@ -342,19 +342,26 @@ def _launch_adjoint(
             target[...] = initial
         coeff, images = cp.asarray(coeff), cp.asarray(images)
         weighted = cp.empty((views, det.nu, det.nv), cp.float32)  # (view, u, v)
-        total = views * det.nu * det.nv
-        module.get_function("weight_images")(
-            (-(-total // 256),),
-            (256,),
+        tiles_u, tiles_v = -(-det.nu // 32), -(-det.nv // 32)
+        ntiles = tiles_u * tiles_v
+        # The first `views` entries are the final boxes; with several tiles per
+        # view the rest holds each tile's bounds. One tile writes its box directly.
+        boxes = cp.empty((views * (ntiles + 1 if ntiles > 1 else 1), 3, 4), cp.int32)
+        partial = boxes[views:] if ntiles > 1 else boxes
+        module.get_function("weight_images_boxes_tiled")(
+            (views, tiles_u, tiles_v),
+            (32, 8),
             (
                 coeff, images, weighted, np.int32(views), np.int32(det.nu), np.int32(det.nv),
-                np.float32(grid.vx), np.float32(grid.vy), np.float32(grid.vz),
+                np.float32(grid.vx), np.float32(grid.vy), np.float32(grid.vz), partial,
             ),
         )  # fmt: skip
-        boxes = cp.empty((views, 3, 4), cp.int32)
-        module.get_function("axis_boxes")(
-            (views,), (256,), (coeff, weighted, boxes, np.int32(det.nu), np.int32(det.nv))
-        )
+        if ntiles > 1:
+            module.get_function("reduce_axis_boxes_tiled")(
+                (views,),
+                (32, 12),
+                (partial, boxes, np.int32(ntiles), np.int32(det.nu), np.int32(det.nv)),
+            )
         sizes = (grid.nx, grid.ny, grid.nz, det.nu, det.nv)
         dims = tuple(np.int32(x) for x in sizes)
         extent = (grid.nx, grid.ny, grid.nz)
