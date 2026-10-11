@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
-import jax
-
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import importlib
 import sys
 from types import SimpleNamespace
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -905,6 +902,7 @@ def test_padding_is_a_recorded_expert_setting_and_validated() -> None:
     assert replace(FBPConfig(), padding="edge").padding == "edge"
     with pytest.raises(ValueError, match="padding"):
         FBPConfig(padding="unknown")
+
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("z_mode", ["integer", "fixed"])
