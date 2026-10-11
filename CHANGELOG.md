@@ -7,6 +7,7 @@ Parallel FBP can explicitly assume constant exterior detector endpoints with
 suppresses some truncation halos without larger detector/FFT arrays or a padding
 width. This is a potentially biased prior, not recovery of missing data; the
 zero-extension default and matched forward/adjoint projectors are unchanged.
+
 `tj.reconstruct` now keeps oversized parallel-beam and laminography FBP
 volumes on the host, as it already did for cone FDK, instead of allocating
 the whole volume on the accelerator. Explicit devices share spatial regions.

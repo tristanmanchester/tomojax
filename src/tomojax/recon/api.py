@@ -177,7 +177,9 @@ def _host_fbp(
         grid.nz,
     )
     data = np.asarray(projections)
-    host_cfg = FBPHostConfig(filter=cfg.filter, scale=cfg.scale, backprojector=cfg.backprojector)
+    host_cfg = FBPHostConfig(
+        filter=cfg.filter, padding=cfg.padding, scale=cfg.scale, backprojector=cfg.backprojector
+    )
     devices = as_devices(cfg.devices)
     if devices is None:
         return fbp_host(geometry, grid, detector, data, config=host_cfg)
