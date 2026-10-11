@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -68,7 +69,8 @@ def stack_view_poses(
         poses[:, 3, 3] = 1.0
         return jnp.asarray(poses.astype(dtype))
 
-    return jnp.stack(
-        [jnp.asarray(geometry.pose_for_view(i), dtype=dtype) for i in range(int(n_views))],
-        axis=0,
-    )
+    views = [geometry.pose_for_view(i) for i in range(int(n_views))]
+    if any(isinstance(pose, jax.Array) for pose in views):  # traced or device poses
+        return jnp.stack([jnp.asarray(pose, dtype=dtype) for pose in views])
+    # Host poses: stack on the host and transfer once, not one array per view.
+    return jnp.asarray(np.asarray(views, dtype=np.float64).astype(dtype))
