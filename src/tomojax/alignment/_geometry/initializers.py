@@ -377,12 +377,19 @@ def _vo_metrics(sino: np.ndarray, offsets: np.ndarray, ratio: float, drop: int) 
     # Shift the mirror by twice the offset (sub-pixel, along u, by Fourier
     # phase), with the far edge of the flipped sinogram where it wraps.
     freq = np.fft.rfftfreq(cols).astype(np.float32)
-    spectrum = np.asarray(fft.rfft(mirror, axis=1, workers=-1))
+    spectrum = None
     out = np.empty(len(offsets))
     for i, offset in enumerate(offsets):
         shift = 2.0 * float(offset)
-        phase = np.exp(-2j * np.pi * freq * np.float32(shift)).astype(np.complex64)
-        moved = np.asarray(fft.irfft(spectrum * phase, n=cols, axis=1, workers=-1))
+        if shift.is_integer():
+            # Integral translations need neither spectral interpolation nor its
+            # roundoff. Keep the same periodic shift and overwritten edge.
+            moved = np.roll(mirror, int(shift), axis=1)
+        else:
+            if spectrum is None:
+                spectrum = np.asarray(fft.rfft(mirror, axis=1, workers=-1))
+            phase = np.exp(-2j * np.pi * freq * np.float32(shift)).astype(np.complex64)
+            moved = np.asarray(fft.irfft(spectrum * phase, n=cols, axis=1, workers=-1))
         edge = int(np.ceil(abs(shift)))
         if edge:
             filler = sino[::-1]

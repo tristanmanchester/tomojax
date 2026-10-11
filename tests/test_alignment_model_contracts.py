@@ -269,6 +269,46 @@ def test_sinogram_metrics_reuse_weights_without_caching_measurements():
         cached.cache_clear()
 
 
+@pytest.mark.parametrize("columns", [31, 32, 63, 64])
+def test_sinogram_integral_mirror_shifts_do_not_interpolate(columns, monkeypatch):
+    initializers = importlib.import_module("tomojax.alignment._geometry.initializers")
+    sino = np.random.default_rng(5).normal(size=(37, columns)).astype(np.float32)
+    sino.flags.writeable = False
+    offsets = np.array([-4, -1.5, 0, 2.5, 4])
+    expected = []
+    mask = initializers._vo_mask(74, columns, 0.25 * columns, 3)
+    for offset in offsets:
+        shift = int(2 * offset)
+        moved = np.roll(sino[:, ::-1], shift, axis=1)
+        if shift > 0:
+            moved[:, :shift] = sino[::-1, :shift]
+        elif shift < 0:
+            moved[:, shift:] = sino[::-1, shift:]
+        spectrum = np.fft.fftshift(np.fft.fft2(np.vstack([sino, moved])))
+        expected.append(np.mean(np.abs(spectrum) * mask))
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("integral shifts need no inverse FFT")
+
+    monkeypatch.setattr(initializers.fft, "irfft", forbidden)
+    np.testing.assert_allclose(initializers._vo_metrics(sino, offsets, 0.5, 3), expected, rtol=2e-6)
+
+
+def test_sinogram_fractional_mirror_shifts_still_use_fourier_interpolation(monkeypatch):
+    initializers = importlib.import_module("tomojax.alignment._geometry.initializers")
+    original = initializers.fft.irfft
+    calls = []
+
+    def counted(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(initializers.fft, "irfft", counted)
+    sino = np.random.default_rng(6).normal(size=(37, 32)).astype(np.float32)
+    initializers._vo_metrics(sino, np.array([-4, -1.75, 0, 0.25, 2]), 0.5, 3)
+    assert len(calls) == 2
+
+
 _COR_CONFIG = AlignConfig(
     outer_iterations=1, iterations=1, tv_weight=0, ray_integrator="joseph", projector_backend="jax"
 )
