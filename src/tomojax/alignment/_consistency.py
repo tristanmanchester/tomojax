@@ -207,34 +207,40 @@ def orbit_heights(
     for k in range(1, len(orbits)):
         chosen = _pairs_with_earlier(orbits, k, heights, pairs)
         few = _pairs_with_earlier(orbits, k, heights, max(2, pairs // 4))
-        coarse = np.arange(-reach, reach + step / 2, step)
-        costs = np.array([consistency_cost(_raise(few, h))[0] for h in coarse])
-        available = costs[np.isfinite(costs)]
-        median = float(np.median(available)) if available.size else 0.0
-        if available.size < 2 or median <= 0.0 or np.ptp(available) == 0.0:
+        found = _height_scan(few, chosen, reach, step)
+        if found is None:
             heights.append(0.0)
             contrast.append(0.0)
             LOG.info("Orbit %d height unobservable from data consistency", k + 1)
             continue
-        best = float(coarse[int(np.argmin(costs))])
-        fine = best + np.arange(-2.0, 2.01, 0.25) * step
-        scores = [consistency_cost(_raise(chosen, h)) for h in fine]
-        fine_costs = np.array([c for c, _ in scores])
-        if not np.isfinite(fine_costs).any():
-            heights.append(0.0)
-            contrast.append(0.0)
-            LOG.info("Orbit %d height unobservable from data consistency", k + 1)
-            continue
-        planes += scores[int(np.argmin(fine_costs))][1]
-        keep = np.isfinite(fine_costs) & (fine_costs <= 2 * fine_costs.min())
-        a2, a1, _ = np.polyfit(fine[keep], fine_costs[keep], 2) if keep.sum() >= 3 else (0, 0, 0)
-        height = float(-a1 / (2 * a2)) if a2 > 0 else float(fine[int(np.argmin(fine_costs))])
-        height = float(np.clip(height, fine[0], fine[-1]))
-        dip = 1.0 - float(costs.min() / median)
+        height, dip, used = found
+        planes += used
         heights.append(height)
         contrast.append(dip)
         LOG.info("Orbit %d height %+.4f from data consistency (cost dip %.2f)", k + 1, height, dip)
     return OrbitHeights(np.asarray(heights), np.asarray(contrast), planes)
+
+
+def _height_scan(
+    few: list[tuple[_View, _View]], chosen: list[tuple[_View, _View]], reach: float, step: float
+) -> tuple[float, float, int] | None:
+    """Height, cost dip and planes used from a coarse then fine scan; None if unobservable."""
+    coarse = np.arange(-reach, reach + step / 2, step)
+    costs = np.array([consistency_cost(_raise(few, h))[0] for h in coarse])
+    available = costs[np.isfinite(costs)]
+    if available.size < 2 or np.ptp(available) == 0.0 or np.median(available) <= 0.0:
+        return None
+    best = float(coarse[int(np.argmin(costs))])
+    fine = best + np.arange(-2.0, 2.01, 0.25) * step
+    scores = [consistency_cost(_raise(chosen, h)) for h in fine]
+    fine_costs = np.array([c for c, _ in scores])
+    if not np.isfinite(fine_costs).any():
+        return None
+    keep = np.isfinite(fine_costs) & (fine_costs <= 2 * fine_costs.min())
+    a2, a1, _ = np.polyfit(fine[keep], fine_costs[keep], 2) if keep.sum() >= 3 else (0, 0, 0)
+    height = float(-a1 / (2 * a2)) if a2 > 0 else float(fine[int(np.argmin(fine_costs))])
+    dip = 1.0 - float(costs.min() / np.median(available))
+    return float(np.clip(height, fine[0], fine[-1])), dip, scores[int(np.argmin(fine_costs))][1]
 
 
 def _pairs_with_earlier(
