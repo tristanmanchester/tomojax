@@ -523,6 +523,47 @@ Noiseless data with phase contrast, blur and pixel integration give 0.073°,
 the same as the noisy measurements: what limits alignment on these data is the
 phase and blur that the projector does not model, not photon noise.
 
+## Procedural documentation phantoms
+
+Three NumPy/SciPy phantoms in [`phantoms/`](phantoms) are recognisable
+samples with sharp edges, fine features and several materials. Each function
+returns an `(n, n, n)` volume of attenuation in mm^-1 in `(x, y, z)` order and
+a metadata dict with the voxel size, field of view, energy, materials and
+seed. The object is fixed in mm, so `n` only sets the voxel size and a 2n grid
+gives the same object at twice the resolution. Edges are antialiased by
+supersampling occupancy near boundaries; foils and cracks thinner than a voxel
+are integrated analytically. Attenuation coefficients come from xraylib 4.3
+(`CS_Total_CP`) at the stated energy and are listed in each module.
+
+- `porous_rock.porous_rock`: a 1 mm sandstone core at 30 keV, 4.3 µm voxels
+  at n = 256 (parallel-beam synchrotron). About 1300 sub-angular quartz,
+  K-feldspar and zircon grains, partly dissolved feldspars, clay seams and
+  pendular clay at contacts, a calcite-cemented patch, pyrite framboids and
+  cubes, intragranular cracks and a microfracture; 19% porosity, 99% of it
+  in one connected pore network.
+- `battery.battery`: a scaled 18650 cell, 8.5 mm across, at 80 keV, 35 µm
+  voxels (lab cone-beam or high-energy synchrotron). A nine-turn Archimedean
+  jelly roll of graphite on copper, separators and particulate NMC811 on
+  aluminium, with aluminium and nickel tabs, a split centre pin, a beaded can
+  and a crimped header; a stainless-steel particle across a separator and a
+  delaminated cathode coating near z = 0.
+- `lattice_part.lattice_part`: a 10 mm Ti-6Al-4V powder-bed part at 100 keV,
+  47 µm voxels (lab cone-beam). An octet-truss lattice inside a shell with
+  drain holes, adhered powder and surface waviness, gas and contour pores, a
+  lack-of-fusion flaw holding unmelted powder, a broken strut, a tungsten
+  inclusion and loose powder trapped in one corner.
+
+```bash
+python bench/phantoms/porous_rock.py --n 256 --preview /tmp/porous_rock.png
+python bench/phantoms/battery.py --n 256 --preview /tmp/battery.png --save /tmp/battery.npz
+python bench/phantoms/lattice_part.py --n 256 --preview /tmp/lattice_part.png
+```
+
+The preview shows the central xy and xz slices and one zoomed detail. On the
+laptop CPU a 256^3 volume takes about 75–95 s for the rock, 15 s for the
+battery and 55–65 s for the lattice part.
+`tests/test_procedural_phantoms.py` builds each at n = 24 and 32.
+
 ## External direct reconstruction baselines
 
 The same fixed-quality runner also supports single-pass methods:
