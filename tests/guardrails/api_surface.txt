@@ -442,7 +442,7 @@ def tomojax.recon.fbp(
         det_grid: 'tuple[jnp.ndarray, jnp.ndarray] | None' = None,
     ) -> 'jnp.ndarray'
 def tomojax.recon.fbp_host(
-        geometry: 'ParallelGeometry',
+        geometry: 'Geometry',
         grid: 'Grid',
         detector: 'Detector',
         projections: 'np.ndarray',
