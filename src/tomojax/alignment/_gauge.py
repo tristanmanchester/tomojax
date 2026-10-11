@@ -247,7 +247,6 @@ def least_motion_estimate(
     )
     if _largest_displacement(gauge, grid) < _NEGLIGIBLE and abs(gauge.detector_offset) < 1e-6:
         return np.asarray(volume), np.asarray(params), Gauge(np.eye(3), np.zeros(3))
-    moved_volume = apply_to_volume(volume, grid, gauge)
     size = np.abs(np.asarray(volume, np.float32))
     obj = np.where(size > _OBJECT_LEVEL * np.percentile(size, 99.9), size, 0.0)
     before = float(np.sum(obj, dtype=np.float64))
@@ -255,6 +254,8 @@ def least_motion_estimate(
     after = float(np.sum(moved_obj, dtype=np.float64))
     if before > 0 and abs(after - before) > _MAX_LOST * before:
         return np.asarray(volume), np.asarray(params), None
+    del size, obj, moved_obj  # free the support estimates before resampling the volume
+    moved_volume = apply_to_volume(volume, grid, gauge)
     keep = tuple(name for name in DOF_NAMES if name not in active or name in invisible)
     moved = apply_to_poses(params, nominal, gauge, translation_frame=translation_frame, keep=keep)
     return moved_volume, moved, gauge
