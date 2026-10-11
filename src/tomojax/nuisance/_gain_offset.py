@@ -84,6 +84,10 @@ def estimate_gain_offset(
     ridge_value = jnp.asarray(max(float(ridge), 0.0), dtype=jnp.float32)
     denominator = variance + ridge_value
     gain = covariance / jnp.where(denominator > 0.0, denominator, 1.0)
+    # Rounding the weighted mean of a constant prediction invents variance and
+    # a spurious gain, so a constant prediction is detected exactly.
+    first = jnp.take_along_axis(pred_flat, jnp.argmax(included, axis=1)[:, None], axis=1)
+    gain = jnp.where(jnp.any(included & (pred_flat != first), axis=1), gain, 0.0)
     offset = y_mean - gain * x_mean
     valid = sum_w > 0.0
     return GainOffsetModel(

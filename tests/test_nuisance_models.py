@@ -79,6 +79,19 @@ def test_gain_offset_constant_prediction_and_empty_view_are_finite(ridge: float)
     np.testing.assert_allclose(np.asarray(fitted.offset), [8.0, 0.0], atol=1e-6)
 
 
+def test_gain_offset_constant_prediction_has_zero_gain_under_varied_weights() -> None:
+    rng = np.random.default_rng(52)
+    weights = rng.uniform(0.01, 1.0, (2, 128, 129)).astype(np.float32)
+    predicted = np.broadcast_to(np.asarray([0.7, 1.3], np.float32)[:, None, None], weights.shape)
+    observed = rng.uniform(0.1, 3.0, weights.shape).astype(np.float32)
+
+    fitted = estimate_gain_offset(predicted, observed, mask=weights, ridge=0.0)
+
+    np.testing.assert_array_equal(np.asarray(fitted.gain), [0.0, 0.0])
+    expected = np.sum(weights * observed, axis=(1, 2)) / np.sum(weights, axis=(1, 2))
+    np.testing.assert_allclose(np.asarray(fitted.offset), expected, rtol=1e-5)
+
+
 def test_gain_offset_zero_weight_excludes_nonfinite_pixels() -> None:
     predicted = np.asarray([[[0.0, 1.0], [np.nan, np.inf]]], np.float32)
     observed = np.asarray([[[1.0, 3.0], [np.inf, np.nan]]], np.float32)
