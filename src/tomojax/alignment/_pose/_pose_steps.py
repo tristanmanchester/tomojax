@@ -146,37 +146,33 @@ def _pre_alignment_step_loss(
 def _select_gd_step_candidate(
     objective: AlignmentStepObjective,
     *,
-    base_params: jnp.ndarray,
-    doubled_params: jnp.ndarray,
+    candidate_from_scale: Callable[[float], jnp.ndarray],
     previous_params: jnp.ndarray,
     loss_before_value: float | None,
     vol: jnp.ndarray,
     loss_rng_key: jnp.ndarray,
 ) -> tuple[jnp.ndarray, float | None]:
-    base_loss = _evaluate_align_loss(
-        lambda: objective.align_loss_jit(base_params, vol, loss_rng_key),
-        fallback=math.inf,
-        context="Treating GD base candidate as rejected during alignment loss evaluation",
-    )
-    doubled_loss = _evaluate_align_loss(
-        lambda: objective.align_loss_jit(doubled_params, vol, loss_rng_key),
-        fallback=math.inf,
-        context="Treating GD doubled-step candidate as rejected during alignment loss evaluation",
-    )
-    base_loss_f = float(base_loss) if base_loss is not None else math.inf
-    doubled_loss_f = float(doubled_loss) if doubled_loss is not None else math.inf
-    if not math.isfinite(base_loss_f) and not math.isfinite(doubled_loss_f):
-        return previous_params, loss_before_value
-    if doubled_loss_f < base_loss_f:
-        chosen_params = doubled_params
-        chosen_loss = doubled_loss_f
-    else:
-        chosen_params = base_params
-        chosen_loss = base_loss_f
-    return (
-        chosen_params,
-        float(chosen_loss) if math.isfinite(chosen_loss) else loss_before_value,
-    )
+    """Take the better of the full and doubled steps, halving them if neither improves.
+
+    RMS-normalized gradients have nearly fixed step lengths even close to a
+    solution, so without backtracking they overshoot and the loss stops falling.
+    """
+    best_loss = math.inf if loss_before_value is None else loss_before_value
+
+    def evaluate(scale: float) -> tuple[jnp.ndarray, float]:
+        candidate = candidate_from_scale(scale)
+        loss = _evaluate_align_loss(
+            lambda: objective.align_loss_jit(candidate, vol, loss_rng_key),
+            fallback=math.inf,
+            context="Treating GD candidate as rejected during alignment loss evaluation",
+        )
+        return candidate, math.inf if loss is None else float(loss)
+
+    for scales in ((1.0, 2.0), *((0.5**halvings,) for halvings in range(1, 11))):
+        candidate, loss = min((evaluate(scale) for scale in scales), key=lambda trial: trial[1])
+        if loss < best_loss:
+            return candidate, loss
+    return previous_params, loss_before_value
 
 
 def _run_gd_alignment_step(
@@ -202,14 +198,12 @@ def _run_gd_alignment_step(
         active_scales = scales[motion.active_coeff_indices]
         rms_active = jnp.sqrt(jnp.mean(jnp.square(g_coeffs), axis=0)) + 1e-6
         eff_scales = active_scales / rms_active
-        best_coeffs = coeffs_in - g_coeffs * eff_scales[None, :]
-        best_params = motion.coeffs_to_constrained_params(best_coeffs)
-        cand_coeffs = coeffs_in - 2.0 * g_coeffs * eff_scales[None, :]
-        cand_params = motion.coeffs_to_constrained_params(cand_coeffs)
+        step = g_coeffs * eff_scales[None, :]
         pose_params_out, loss_after_value = _select_gd_step_candidate(
             objective,
-            base_params=best_params,
-            doubled_params=cand_params,
+            candidate_from_scale=lambda scale: motion.coeffs_to_constrained_params(
+                coeffs_in - scale * step
+            ),
             previous_params=motion.coeffs_to_constrained_params(coeffs_in),
             loss_before_value=loss_before_value,
             vol=vol,
@@ -228,12 +222,12 @@ def _run_gd_alignment_step(
     g_params = g_params * constraints.active_mask
     rms = jnp.sqrt(jnp.mean(jnp.square(g_params), axis=0)) + 1e-6
     eff_scales = scales / rms
-    best_params = constraints.apply_full_constraints(pose_params_in - g_params * eff_scales)
-    cand_params = constraints.apply_full_constraints(pose_params_in - 2.0 * g_params * eff_scales)
+    step = g_params * eff_scales
     pose_params_out, loss_after_value = _select_gd_step_candidate(
         objective,
-        base_params=best_params,
-        doubled_params=cand_params,
+        candidate_from_scale=lambda scale: constraints.apply_full_constraints(
+            pose_params_in - scale * step
+        ),
         previous_params=pose_params_in,
         loss_before_value=loss_before_value,
         vol=vol,

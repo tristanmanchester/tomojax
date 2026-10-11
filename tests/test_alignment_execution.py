@@ -13,7 +13,7 @@ from tomojax.alignment._objectives.recon_layer import PoseAdjustedGeometry
 
 # check-public-imports: allow-private
 from tomojax.alignment._stages import _reconstruction_stage as reconstruction_stage
-from tomojax.alignment.api import align
+from tomojax.alignment.api import L2LossSpec, align
 
 # check-public-imports: allow-private
 from tomojax.core.projector import forward_project_view_T
@@ -479,3 +479,74 @@ def test_alignment_partial_view_batches_run_under_global_x64() -> None:
     assert actual.dtype == np.float32
     np.testing.assert_allclose(actual, expected, rtol=3e-5, atol=3e-6)
     np.testing.assert_array_equal(poses, 0)
+
+
+def _shifted_laminography_scan(truth):
+    """Noisy projections of a small volume whose views carry detector-plane shifts ``truth``."""
+    grid = Grid(7, 6, 5, 0.8, 1.1, 1.3)
+    detector = Detector(11, 9, 0.7, 0.9, (0.13, -0.21))
+    geometry = LaminographyGeometry(grid, detector, np.linspace(13, 157, len(truth)), tilt_deg=23.0)
+    axes = [(np.arange(n) - (n - 1) / 2) * h for n, h in [(7, 0.8), (6, 1.1), (5, 1.3)]]
+    x, y, z = np.meshgrid(*axes, indexing="ij")
+    volume = jnp.asarray(
+        sum(
+            np.exp(-((x - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2) / width)
+            for (cx, cy, cz), width in [((1.1, -0.3, 0.7), 1.2), ((-1.3, 1.5, -1.0), 0.8)]
+        ),
+        jnp.float32,
+    )
+    nominal = jnp.asarray([geometry.pose_for_view(i) for i in range(len(truth))])
+
+    def project(shifts):
+        poses = nominal.at[:, 0, 3].add(shifts[:, 0]).at[:, 2, 3].add(shifts[:, 1])
+        return jax.vmap(lambda pose: forward_project_view_T(pose, grid, detector, volume))(poses)
+
+    noise = np.random.default_rng(227).normal(size=(len(truth), detector.nv, detector.nu))
+    data = project(jnp.asarray(truth, jnp.float32)) + 0.03 * noise.astype(np.float32)
+    return geometry, grid, detector, volume, data, project
+
+
+@pytest.mark.parametrize(("optimizer", "settings"), [("gd", {"lr_trans": 0.5})])
+def test_pose_steps_reduce_the_declared_objective(optimizer, settings):
+    # A gradient step much longer than the remaining motion must backtrack, and
+    # a Gauss-Newton step must account for its curvature prior.
+    coordinate = np.linspace(-1, 1, 9)
+    truth = np.column_stack([0.012 * coordinate, 0.008 - 0.006 * coordinate])
+    geometry, grid, detector, volume, data, project = _shifted_laminography_scan(truth)
+    initial_shifts = truth + np.random.default_rng(3).normal(0, 0.012, truth.shape)
+    initial = jnp.zeros((9, 6)).at[:, 3:5].set(initial_shifts)
+    config = AlignConfig(
+        outer_iterations=8,
+        iterations=0,
+        opt_method=optimizer,
+        projector_backend="jax",
+        gather_dtype="fp32",
+        views_per_batch=4,
+        loss=L2LossSpec(),
+        early_stop=False,
+        optimise_dofs=("dx", "dz"),
+        pose_translation_frame="detector",
+        tv_weight=0,
+        **settings,
+    )
+    checkpoints = []
+    align(
+        geometry,
+        grid,
+        detector,
+        data,
+        init_x=volume,
+        init_pose_params=initial,
+        config=config,
+        checkpoint_callback=checkpoints.append,
+    )
+    found = checkpoints[-1].pose_params[:, 3:5]
+
+    def objective(shifts):
+        prior = config.w_trans**2 * jnp.sum(jnp.diff(shifts, n=2, axis=0) ** 2)
+        return 0.5 * jnp.sum((project(shifts) - data) ** 2) + prior
+
+    assert float(objective(found)) < float(objective(jnp.asarray(initial_shifts, jnp.float32)))
+    if optimizer == "gn":
+        assert np.linalg.norm(found - truth) < 0.2 * np.linalg.norm(initial_shifts - truth)
+        assert float(jnp.linalg.norm(jax.grad(objective)(found))) < 1e-3
