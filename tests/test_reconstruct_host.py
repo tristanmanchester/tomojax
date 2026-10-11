@@ -52,3 +52,23 @@ def test_host_dispatch_honours_explicit_devices(monkeypatch, kind, number):
     actual = tj.reconstruct(scan, devices=jax.devices()[:number])
     assert isinstance(actual.volume, np.ndarray) and actual.info["host_slabs"]
     np.testing.assert_allclose(actual.volume, expected, atol=3e-6, rtol=5e-5)
+
+
+def test_dispatch_probes_memory_on_explicit_devices(monkeypatch):
+    if len(jax.devices()) < 2:
+        pytest.skip("needs multiple devices")
+    first, second = jax.devices()[:2]
+    checked = []
+
+    def free_memory():
+        device = jax.config.jax_default_device
+        checked.append(device)
+        return 4096 if device == second else 2**30
+
+    monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", free_memory)
+    scan = _scan("parallel")
+    with jax.default_device(first):
+        actual = tj.reconstruct(scan, devices=[first, second])
+        assert jax.config.jax_default_device == first
+    assert isinstance(actual.volume, np.ndarray) and actual.info["host_slabs"]
+    assert checked[:2] == [first, second]

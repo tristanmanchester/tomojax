@@ -88,7 +88,7 @@ def reconstruct_arrays(
     if isinstance(cfg, FBPConfig):
         if warm_start:
             raise ValueError("method 'fbp' does not take warm_start")
-        if det_grid is None and _too_large_for_the_device(geometry, grid):
+        if det_grid is None and _too_large_for_the_device(geometry, grid, cfg):
             return _host_fbp(geometry, grid, detector, projections, cfg), {
                 "config": cfg,
                 "host_slabs": True,
@@ -123,15 +123,31 @@ def _detector_grid(
     return detector_grid_from_geometry_inputs(detector, geometry)
 
 
-def _too_large_for_the_device(geometry: Geometry, grid: Grid) -> bool:
+def _too_large_for_the_device(geometry: Geometry, grid: Grid, cfg: FBPConfig) -> bool:
     """Whether an FBP volume would take more than 40% of free device memory."""
+    import jax
+
     from tomojax.backends import device_free_memory_bytes
+    from tomojax.core.devices import as_devices
     from tomojax.core.geometry.cone import ConeSegments
 
     if isinstance(geometry, ConeSegments):
         return False  # FDK refuses segmented scans with its own message.
-    free = device_free_memory_bytes()
-    return free is not None and 4 * grid.nx * grid.ny * grid.nz > 0.4 * free
+
+    def oversized() -> bool:
+        free = device_free_memory_bytes()
+        return free is not None and 4 * grid.nx * grid.ny * grid.nz > 0.4 * free
+
+    devices = as_devices(cfg.devices)
+    if devices is None:
+        return oversized()
+    # View-shared reconstruction holds the entire volume on every device.
+    # A selected device need not be the process default (nor GPU 0).
+    for device in devices:
+        with jax.default_device(device):
+            if oversized():
+                return True
+    return False
 
 
 def _host_fbp(
