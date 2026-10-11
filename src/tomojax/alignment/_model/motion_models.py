@@ -5,8 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, cast
 
+from jax import lax
 import jax.numpy as jnp
 import numpy as np
+import scipy.linalg
 
 from .dofs import DOF_INDEX
 
@@ -19,11 +21,16 @@ type PoseModelName = Literal["per_view", "polynomial", "spline"]
 
 @dataclass(frozen=True)
 class PoseMotionModel:
-    """Low-dimensional linear model for per-view pose parameters."""
+    """Low-dimensional linear model for per-view pose parameters.
+
+    The per-view model is the identity, so it keeps no basis (``None``): a
+    dense views-by-views matrix and its pseudo-inverse would cost quadratic
+    memory and cubic time.
+    """
 
     name: PoseModelName
-    basis: jnp.ndarray
-    basis_pinv: jnp.ndarray
+    basis: jnp.ndarray | None
+    basis_pinv: jnp.ndarray | None
     active_indices: tuple[int, ...]
     active_names: tuple[str, ...]
     frozen_pose_params: jnp.ndarray
@@ -31,12 +38,12 @@ class PoseMotionModel:
     @property
     def n_views(self) -> int:
         """Return the number of modeled views."""
-        return int(self.basis.shape[0])
+        return int(self.frozen_pose_params.shape[0])
 
     @property
     def n_basis(self) -> int:
         """Return the number of basis coefficients per active DOF."""
-        return int(self.basis.shape[1])
+        return self.n_views if self.basis is None else int(self.basis.shape[1])
 
     @property
     def n_active(self) -> int:
@@ -100,15 +107,17 @@ def build_pose_motion_model(
     if coord.shape != (int(n_views),):
         raise ValueError(f"scan_coordinate must have shape ({int(n_views)},), got {coord.shape}")
 
-    basis_np = build_pose_basis(
-        name,
-        n_views=int(n_views),
-        scan_coordinate=coord,
-        knot_spacing=int(knot_spacing),
-        degree=int(degree),
-    )
-    basis = jnp.asarray(basis_np, dtype=jnp.float32)
-    basis_pinv = jnp.asarray(np.linalg.pinv(basis_np).astype(np.float32), dtype=jnp.float32)
+    basis = basis_pinv = None
+    if name != "per_view":
+        basis_np = build_pose_basis(
+            name,
+            n_views=int(n_views),
+            scan_coordinate=coord,
+            knot_spacing=int(knot_spacing),
+            degree=int(degree),
+        )
+        basis = jnp.asarray(basis_np, dtype=jnp.float32)
+        basis_pinv = jnp.asarray(_pseudo_inverse(basis_np, name), dtype=jnp.float32)
     return PoseMotionModel(
         name=name,
         basis=basis,
@@ -149,15 +158,33 @@ def build_pose_basis(
     raise ValueError(f"Unsupported pose_model: {pose_model!r}")
 
 
+def _pseudo_inverse(basis: np.ndarray, pose_model: PoseModelName) -> np.ndarray:
+    """The least-squares fit matrix of a basis, as float32.
+
+    A spline basis interpolates its knots, so its Gram matrix is small and
+    well conditioned, and solving it is far cheaper than an SVD of the tall
+    basis.
+    """
+    values = basis.astype(np.float64)
+    if pose_model == "spline":
+        return scipy.linalg.solve(values.T @ values, values.T, assume_a="pos").astype(np.float32)
+    return np.linalg.pinv(values).astype(np.float32)
+
+
 def fit_motion_coefficients(model: PoseMotionModel, pose_params: jnp.ndarray) -> jnp.ndarray:
     """Fit active-DOF model coefficients from an expanded per-view array."""
     active_params = pose_params[:, jnp.asarray(model.active_indices, dtype=jnp.int32)]
-    return model.basis_pinv @ active_params
+    if model.basis_pinv is None:
+        return active_params
+    return jnp.matmul(model.basis_pinv, active_params, precision=lax.Precision.HIGHEST)
 
 
 def expand_motion_coefficients(model: PoseMotionModel, coeffs: jnp.ndarray) -> jnp.ndarray:
     """Expand coefficient variables back to a per-view (n_views, 5) array."""
-    active_params = model.basis @ coeffs
+    if model.basis is None:
+        active_params = coeffs
+    else:
+        active_params = jnp.matmul(model.basis, coeffs, precision=lax.Precision.HIGHEST)
     pose_params = jnp.asarray(model.frozen_pose_params, dtype=jnp.float32)
     active_indices = jnp.asarray(model.active_indices, dtype=jnp.int32)
     return pose_params.at[:, active_indices].set(active_params)
@@ -217,29 +244,28 @@ def _spline_interpolation_basis(
             "is required for spline degree > 1"
         ) from exc
 
-    cols = []
-    for i in range(n_knots):
-        values = np.zeros((n_knots,), dtype=np.float64)
-        values[i] = 1.0
-        try:
-            spline = make_interp_spline(knot_x, values, k=eff_degree)
-            col = np.asarray(spline(scan_coordinate), dtype=np.float64)
-        except Exception as exc:
-            raise RuntimeError(
-                "Failed to build spline pose_model basis "
-                f"(degree={eff_degree}, n_knots={n_knots}, n_views={n_views})"
-            ) from exc
-        cols.append(col)
-    return np.stack(cols, axis=1).astype(np.float32)
+    # Every cardinal spline shares the knots, so one fit with the identity as
+    # its values gives all the columns.
+    try:
+        spline = make_interp_spline(knot_x, np.eye(n_knots), k=eff_degree)
+        return np.asarray(spline(scan_coordinate), dtype=np.float32)
+    except Exception as exc:
+        raise RuntimeError(
+            "Failed to build spline pose_model basis "
+            f"(degree={eff_degree}, n_knots={n_knots}, n_views={n_views})"
+        ) from exc
 
 
 def _linear_interpolation_basis(scan_coordinate: np.ndarray, knot_x: np.ndarray) -> np.ndarray:
-    cols = []
-    for i in range(int(knot_x.size)):
-        values = np.zeros((int(knot_x.size),), dtype=np.float64)
-        values[i] = 1.0
-        cols.append(np.interp(scan_coordinate, knot_x, values))
-    return np.stack(cols, axis=1).astype(np.float32)
+    """Hat functions on the knots: each view weighs its two neighbouring knots."""
+    right = np.clip(np.searchsorted(knot_x, scan_coordinate, side="right"), 1, knot_x.size - 1)
+    left = right - 1
+    fraction = np.clip((scan_coordinate - knot_x[left]) / (knot_x[right] - knot_x[left]), 0.0, 1.0)
+    basis = np.zeros((scan_coordinate.size, knot_x.size), dtype=np.float32)
+    rows = np.arange(scan_coordinate.size)
+    basis[rows, left] = 1.0 - fraction
+    basis[rows, right] = fraction
+    return basis
 
 
 __all__ = [

@@ -5,7 +5,6 @@ from dataclasses import dataclass
 import logging
 import re
 
-import jax
 import jax.numpy as jnp
 
 from tomojax.alignment._objectives.loss_specs import loss_is_within_relative_tolerance
@@ -41,40 +40,6 @@ def _should_prefer_gn_candidate(
         loss_before, candidate_loss, rel_tol
     )
     return candidate_ok and candidate_loss < current_loss
-
-
-def _second_difference_gram(n: int) -> jnp.ndarray:
-    if n < 3:
-        return jnp.zeros((n, n), dtype=jnp.float32)
-    d2 = jnp.zeros((n - 2, n), dtype=jnp.float32)
-    rows = jnp.arange(n - 2, dtype=jnp.int32)
-    d2 = d2.at[rows, rows].set(1.0)
-    d2 = d2.at[rows, rows + 1].set(-2.0)
-    d2 = d2.at[rows, rows + 2].set(1.0)
-    return d2.T @ d2
-
-
-def _smooth_gn_candidate(
-    pose_params: jnp.ndarray,
-    smoothness_gram: jnp.ndarray,
-    weights: jnp.ndarray,
-) -> jnp.ndarray:
-    """Project a per-view GN candidate through the quadratic curvature prior."""
-    n_views = int(pose_params.shape[0])
-    if n_views < 3:
-        return pose_params
-
-    eye = jnp.eye(n_views, dtype=jnp.float32)
-
-    def solve_one_dim(rhs: jnp.ndarray, weight: jnp.ndarray) -> jnp.ndarray:
-        return jax.lax.cond(
-            weight > 0.0,
-            lambda _: jnp.linalg.solve(eye + 2.0 * weight * smoothness_gram, rhs),
-            lambda _: rhs,
-            operand=None,
-        )
-
-    return jax.vmap(solve_one_dim, in_axes=(1, 0), out_axes=1)(pose_params, weights)
 
 
 def _select_gn_candidate(

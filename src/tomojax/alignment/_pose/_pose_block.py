@@ -125,3 +125,18 @@ def pose_block_solver(
         )
 
     return solve
+
+
+def smooth_pose_candidate(pose_params: jax.Array, weights: jax.Array) -> jax.Array:
+    """Project a per-view candidate through the quadratic curvature prior.
+
+    Each column ``c`` of ``pose_params`` becomes the ``p`` minimising
+    ``|p - c|^2 / 2 + w |D2 p|^2``, with ``D2`` the second difference and ``w``
+    the column's entry of ``weights``: the solution of ``(I + 2 w D2.T D2) p = c``
+    in storage and time linear in the views.
+    """
+    n, width = pose_params.shape
+    if n < 3:
+        return pose_params
+    identity = jnp.broadcast_to(jnp.eye(width, dtype=pose_params.dtype), (n, width, width))
+    return pose_block_solver(identity, jnp.sqrt(weights), has_smoothness=True)(pose_params)

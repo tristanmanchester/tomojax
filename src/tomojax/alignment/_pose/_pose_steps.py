@@ -28,12 +28,12 @@ from tomojax.alignment.optimizers import (
 )
 
 from ._coupled_objective import CoupledObjective
+from ._pose_block import smooth_pose_candidate
 from ._pose_candidates import (
     GNCandidateContext,
     _evaluate_align_loss,
     _is_expected_align_eval_failure,
     _select_gn_candidate,
-    _smooth_gn_candidate,
 )
 
 
@@ -85,7 +85,6 @@ class AlignmentStepMotion:
 
 @dataclass(frozen=True)
 class AlignmentStepSmoothing:
-    smoothness_gram: jnp.ndarray
     light_smoothness_weights_sq: jnp.ndarray
     medium_smoothness_weights_sq: jnp.ndarray
     smoothness_weights_sq: jnp.ndarray
@@ -286,7 +285,6 @@ def _run_lbfgs_alignment_step(
 
 
 def _gn_smooth_candidate_fn(
-    smoothing: AlignmentStepSmoothing,
     constrain_candidate: Callable[[jnp.ndarray], jnp.ndarray],
     pose_params_in: jnp.ndarray,
 ) -> Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray] | None:
@@ -294,11 +292,7 @@ def _gn_smooth_candidate_fn(
         return None
 
     def smooth_candidate(candidate: jnp.ndarray, weights: jnp.ndarray) -> jnp.ndarray:
-        return _smooth_gn_candidate(
-            constrain_candidate(candidate),
-            smoothing.smoothness_gram,
-            weights,
-        )
+        return smooth_pose_candidate(constrain_candidate(candidate), weights)
 
     return smooth_candidate
 
@@ -341,11 +335,7 @@ def _run_gn_alignment_step(
             gn_accept_tol=cfg.gn_accept_tol,
             candidate_context=GNCandidateContext(
                 constrain_candidate=constrain_candidate,
-                smooth_candidate=_gn_smooth_candidate_fn(
-                    smoothing,
-                    constrain_candidate,
-                    pose_params_in,
-                ),
+                smooth_candidate=_gn_smooth_candidate_fn(constrain_candidate, pose_params_in),
                 smoothing_weights=(
                     smoothing.light_smoothness_weights_sq,
                     smoothing.medium_smoothness_weights_sq,

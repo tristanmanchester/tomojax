@@ -134,6 +134,7 @@ def test_public_lbfgs_reuses_problem_across_volumes_and_motion_models(pose_model
         geometry, grid, detector, data, init_x=truth, init_pose_params=initial, config=cfg
     )
     assert len(info["outer_stats"]) == 2
+    assert info["pose_model_basis_shape"] == [5, 5 if pose_model == "per_view" else 3]
     assert bool(jnp.all(jnp.isfinite(volume)))
     assert bool(jnp.all(jnp.isfinite(params)))
     np.testing.assert_array_equal(params[:, :2], np.zeros((5, 2)))

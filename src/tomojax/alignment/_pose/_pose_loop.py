@@ -56,7 +56,6 @@ from tomojax.core.validation import (
     validate_volume,
 )
 
-from ._pose_candidates import _second_difference_gram
 from ._pose_context import (
     AlignmentRuntimeContext,
     PoseConstraintContext,
@@ -258,7 +257,6 @@ def _build_alignment_runtime_context(
         )
         * active_mask
     )
-    smoothness_gram = _second_difference_gram(n_views)
     smoothness_weights_sq = smoothness_weights * smoothness_weights
     medium_smoothness_weights_sq = smoothness_weights_sq * jnp.float32(0.4)
     trans_only_smoothness_weights_sq = smoothness_weights_sq.at[:3].set(0.0)
@@ -280,7 +278,6 @@ def _build_alignment_runtime_context(
         pose_stack=pose_stack,
         det_grid=det_grid,
         smoothness_weights=smoothness_weights,
-        smoothness_gram=smoothness_gram,
         smoothness_weights_sq=smoothness_weights_sq,
         medium_smoothness_weights_sq=medium_smoothness_weights_sq,
         trans_only_smoothness_weights_sq=trans_only_smoothness_weights_sq,
@@ -378,7 +375,6 @@ def _build_alignment_step_contexts(
             motion_model=motion_model,
         ),
         AlignmentStepSmoothing(
-            smoothness_gram=runtime.smoothness_gram,
             light_smoothness_weights_sq=runtime.light_smoothness_weights_sq,
             medium_smoothness_weights_sq=runtime.medium_smoothness_weights_sq,
             smoothness_weights_sq=runtime.smoothness_weights_sq,
@@ -688,10 +684,7 @@ def _final_pose_align_info(
         "ray_integrator": cfg.ray_integrator,
         "pose_model_variables": int(motion_model.variable_count),
         "per_view_variables": int(motion_model.per_view_variable_count),
-        "pose_model_basis_shape": [
-            int(motion_model.basis.shape[0]),
-            int(motion_model.basis.shape[1]),
-        ],
+        "pose_model_basis_shape": [motion_model.n_views, motion_model.n_basis],
         "active_dofs": list(motion_model.active_names),
         "active_pose_dofs": list(motion_model.active_names),
         "active_geometry_dofs": [],

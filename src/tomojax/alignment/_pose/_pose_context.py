@@ -228,7 +228,6 @@ class AlignmentRuntimeContext:
     pose_stack: jnp.ndarray
     det_grid: tuple[jnp.ndarray, jnp.ndarray]
     smoothness_weights: jnp.ndarray
-    smoothness_gram: jnp.ndarray
     smoothness_weights_sq: jnp.ndarray
     medium_smoothness_weights_sq: jnp.ndarray
     trans_only_smoothness_weights_sq: jnp.ndarray
