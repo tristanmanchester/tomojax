@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
 
-from tomojax.recon._host_arrays import validate_host_arrays
+from tomojax.recon._host_arrays import host_projection_input, validate_host_arrays
 from tomojax.recon._warm_start import fbp_start
 from tomojax.recon.cgls import CGLSConfig, cgls
 from tomojax.recon.cgls_multires import cgls_multires
@@ -212,7 +212,7 @@ def _host_fbp(
         grid.ny,
         grid.nz,
     )
-    data = np.asarray(projections)
+    data = host_projection_input(projections)
     host_cfg = FBPHostConfig(
         filter=cfg.filter, padding=cfg.padding, scale=cfg.scale, backprojector=cfg.backprojector
     )
@@ -223,7 +223,7 @@ def _host_fbp(
     # would defeat host storage. Each worker still uses bounded local slabs.
     devices = devices[: grid.nz]
     boundaries = np.linspace(0, grid.nz, len(devices) + 1, dtype=int)
-    output = validate_host_arrays(data, out, (grid.nx, grid.ny, grid.nz))
+    output = validate_host_arrays(data, out, (grid.nx, grid.ny, grid.nz), device_input=True)
     ox, oy, oz = grid_volume_origin(grid)
 
     def run(index: int) -> None:

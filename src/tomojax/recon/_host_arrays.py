@@ -8,20 +8,21 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import jax
 import numpy as np
+
+from tomojax._typed_arrays import commit_array
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
     from concurrent.futures import Future
-
-    import jax
 
 
 @dataclass(frozen=True)
 class ProjectionRows:
     """A zero-extended detector-row window, read only for requested view batches."""
 
-    projections: np.ndarray
+    projections: np.ndarray | jax.Array
     start: int
     rows: int
 
@@ -50,24 +51,43 @@ def _mapped_storage(array: np.ndarray) -> np.memmap | None:
     return None
 
 
+def host_projection_input(projections: np.ndarray | jax.Array) -> np.ndarray | jax.Array:
+    """Keep accelerator inputs resident for bounded slicing; expose CPU storage."""
+    if isinstance(projections, np.ndarray):
+        return projections
+    if isinstance(projections, jax.Array) and all(
+        d.platform != "cpu" for d in projections.devices()
+    ):
+        return commit_array(projections)
+    return np.asarray(projections)
+
+
 def validate_host_arrays(
-    projections: np.ndarray,
+    projections: np.ndarray | jax.Array,
     out: np.ndarray | None,
     shape: tuple[int, int, int],
     context: str = "fbp_host",
+    *,
+    device_input: bool = False,
 ) -> np.ndarray:
     """Check host input/output arrays and allocate the output volume if needed."""
-    if not isinstance(projections, np.ndarray) or projections.dtype.kind not in "buif":
-        raise TypeError(f"{context}: projections must be a real NumPy array or memmap")
+    valid_array = isinstance(projections, np.ndarray) or (
+        device_input and isinstance(projections, jax.Array)
+    )
+    if not valid_array or projections.dtype.kind not in "buif":
+        kinds = "NumPy or JAX" if device_input else "NumPy"
+        raise TypeError(f"{context}: projections must be a real {kinds} array")
     if out is None:
         return np.empty(shape, dtype=np.float32)
     if not isinstance(out, np.ndarray) or out.shape != shape or out.dtype != np.float32:
         raise ValueError(f"{context}: out must be a float32 NumPy array with the volume shape")
     if not out.flags.writeable:
         raise ValueError(f"{context}: out must be writable")
-    if np.may_share_memory(projections, out):
+    host = host_projection_input(projections)
+    if isinstance(host, np.ndarray) and np.may_share_memory(host, out):
         raise ValueError(f"{context}: input and output storage must not overlap")
-    input_map, output_map = _mapped_storage(projections), _mapped_storage(out)
+    input_map = _mapped_storage(host) if isinstance(host, np.ndarray) else None
+    output_map = _mapped_storage(out)
     if input_map is not None and output_map is not None:
         source, target = input_map.filename, output_map.filename
         if source is None or target is None or Path(source).samefile(target):

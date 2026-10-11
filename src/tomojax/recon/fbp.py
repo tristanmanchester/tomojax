@@ -328,7 +328,7 @@ def _fbp_accumulate_batch(
 
 def _fbp_from_host(
     poses: np.ndarray,
-    projections: np.ndarray | ProjectionRows,
+    projections: np.ndarray | jax.Array | ProjectionRows,
     view_scale: np.ndarray,
     params: np.ndarray,
     spectrum: jnp.ndarray,

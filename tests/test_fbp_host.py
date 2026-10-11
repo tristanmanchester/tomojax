@@ -315,7 +315,7 @@ def test_host_slabs_reject_nonfinite_samples(tilted):
         fbp_host(geometry, grid, detector, data)
 
 
-@pytest.mark.parametrize("invalid", ["dtype", "shape", "readonly", "device_input"])
+@pytest.mark.parametrize("invalid", ["dtype", "shape", "readonly"])
 def test_host_slabs_reject_incompatible_storage(invalid):
     grid, detector, geometry, data = scan()
     out = np.empty((grid.nx, grid.ny, grid.nz), dtype=np.float32)
@@ -325,8 +325,6 @@ def test_host_slabs_reject_incompatible_storage(invalid):
         out = out[:, :, :-1]
     elif invalid == "readonly":
         out.flags.writeable = False
-    else:
-        data = jax.device_put(data)
     with pytest.raises((ValueError, TypeError), match="fbp_host"):
         fbp_host(geometry, grid, detector, data, out=out)
 

@@ -110,3 +110,63 @@ def test_explicit_devices_preserve_output_ownership_and_validate_whole_shape(num
     np.testing.assert_allclose(out, np.asarray(expected), rtol=5e-5, atol=3e-6)
     with pytest.raises(ValueError, match="volume shape"):
         tj.reconstruct(scan, out=np.empty((7, 6, 6), np.float32), devices=devices)
+
+
+@pytest.mark.parametrize("kind", ["parallel", "lamino"])
+def test_host_output_accepts_cpu_device_projections(kind):
+    scan = _scan(kind)
+    with jax.default_device(jax.devices("cpu")[0]):
+        expected = tj.reconstruct(scan, out=np.empty((7, 6, 5), np.float32)).volume
+        resident = replace(scan, projections=jax.device_put(scan.projections))
+        out = np.empty((7, 6, 5), np.float32)
+        result = tj.reconstruct(resident, out=out)
+    assert result.volume is out
+    np.testing.assert_array_equal(out, expected)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("kind", ["parallel", "lamino"])
+@pytest.mark.parametrize("committed", [False, True])
+@pytest.mark.parametrize("execution", ["cpu", "gpu"])
+def test_resident_host_output_bounds_projection_downloads(monkeypatch, kind, committed, execution):
+    if jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    grid = tj.Grid(9, 7, 11, 1, 1, 1)
+    detector = tj.Detector(21, 13, 1, 1)
+    angles = np.linspace(0, 360 if kind == "lamino" else 180, 70, endpoint=False)
+    geometry = (
+        tj.LaminographyGeometry(grid, detector, angles, tilt_deg=20)
+        if kind == "lamino"
+        else tj.ParallelGeometry(grid, detector, angles)
+    )
+    data = np.random.default_rng(87).normal(size=(70, 13, 21)).astype(np.float32)
+    scan = tj.Scan(data, geometry)
+    gpu = jax.devices("gpu")[0]
+    with jax.default_device(gpu):
+        resident = jax.device_put(data, gpu) if committed else jax.numpy.asarray(data)
+    original_asarray, original_contiguous = np.asarray, np.ascontiguousarray
+    downloads = []
+
+    def record(value):
+        if isinstance(value, jax.Array) and value.ndim == 3 and value.shape[-1] == 21:
+            downloads.append((value.shape, value.devices()))
+
+    def asarray(value, *args, **kwargs):
+        record(value)
+        return original_asarray(value, *args, **kwargs)
+
+    def contiguous(value, *args, **kwargs):
+        record(value)
+        return original_contiguous(value, *args, **kwargs)
+
+    target = jax.devices(execution)[0]
+    with jax.default_device(target):
+        expected = tj.reconstruct(scan, out=np.empty((9, 7, 11), np.float32)).volume
+        monkeypatch.setattr(np, "asarray", asarray)
+        monkeypatch.setattr(np, "ascontiguousarray", contiguous)
+        out = np.empty((9, 7, 11), np.float32)
+        result = tj.reconstruct(replace(scan, projections=resident), out=out)
+    assert result.volume is out
+    assert downloads and max(shape[0] for shape, _ in downloads) <= 32
+    assert all(devices == {gpu} for _, devices in downloads)
+    np.testing.assert_allclose(out, expected, rtol=5e-5, atol=3e-6)

@@ -8,6 +8,9 @@ suppresses some truncation halos without larger detector/FFT arrays or a padding
 width. This is a potentially biased prior, not recovery of missing data; the
 zero-extension default and matched forward/adjoint projectors are unchanged.
 
+Host FBP reads accelerator-resident projections in bounded batches, including
+`tj.reconstruct(..., out=...)`, instead of downloading the whole input first.
+
 CUDA host FBP overlaps two computations when an extra batch and estimated FFT
 workspace fit the device budget; unknown/tight memory keeps the old bound.
 

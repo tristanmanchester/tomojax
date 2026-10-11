@@ -446,7 +446,7 @@ def tomojax.recon.fbp_host(
         geometry: 'Geometry',
         grid: 'Grid',
         detector: 'Detector',
-        projections: 'np.ndarray',
+        projections: 'np.ndarray | jnp.ndarray',
         *,
         config: 'FBPHostConfig | None' = None,
         out: 'np.ndarray | None' = None,

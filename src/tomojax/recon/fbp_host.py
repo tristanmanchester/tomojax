@@ -16,7 +16,13 @@ from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import validate_projection_stack
 from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry, grid_volume_origin
 
-from ._host_arrays import ProjectionRows, axial_output_axes, validate_host_arrays, volume_writer
+from ._host_arrays import (
+    ProjectionRows,
+    axial_output_axes,
+    host_projection_input,
+    validate_host_arrays,
+    volume_writer,
+)
 from .fbp import (
     _fbp_from_host,  # pyright: ignore[reportPrivateUsage]
     _fft_length,  # pyright: ignore[reportPrivateUsage]
@@ -99,30 +105,26 @@ def fbp_host(
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
-    projections: np.ndarray,
+    projections: np.ndarray | jnp.ndarray,
     *,
     config: FBPHostConfig | None = None,
     out: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Reconstruct without storing the full volume or projections on the device.
+    """Reconstruct in bounded slabs into float32 NumPy storage.
 
-    Accept NumPy arrays, including memmaps, and return a float32 NumPy array.
-    ``out`` may be a writable memmap. Completed slabs are written progressively;
-    a later failure can leave a partially written output. Input storage must
-    remain unchanged until the call finishes. This host-returning routine is
-    not differentiable. Use :func:`fbp` for device-resident output.
+    Accept NumPy arrays/memmaps or JAX arrays; accelerator inputs are downloaded
+    only in bounded view/row batches. ``out`` may be a writable memmap and is
+    returned unchanged. Slabs are written progressively, so a later failure
+    can leave partial output. Input storage must remain unchanged during the call.
+    This routine is not differentiable; use :func:`fbp` for device output.
 
-    Every geometry ``fbp`` accepts is supported, with the same exact weights:
-    laminography and posed scans reconstruct in x-slabs, built-in parallel
-    scans in axial slabs that read only the detector rows they need.
-    Anisotropic spacing, detector offsets and shifted volume origins are
-    supported. Filter tails use the same measurement-extension assumption as
-    ``fbp`` (zero by default, constant endpoints with ``padding="edge"``).
-    Large CUDA axial outputs overlap copying with computation when
-    memory permits, retaining at most two device output slabs plus an optional
-    layout-staging slab for contiguous axial output storage.
+    Built-in parallel scans use axial slabs of the required detector rows;
+    laminography and posed scans use x-slabs. Geometry, weights and the
+    measurement-extension assumption matches ``fbp``. Logical axes are ``(x, y, z)``;
+    See :class:`FBPHostConfig` for bounded transfer/workspace policy.
     """
     require_parallel_beam(geometry, "fbp_host")
+    projections = host_projection_input(projections)
     cfg = FBPHostConfig() if config is None else config
     if cfg.padding not in {"zero", "edge"}:
         raise ValueError("fbp_host: padding must be 'zero' or 'edge'")
@@ -152,7 +154,7 @@ def fbp_host(
     local_grid, local_detector, first, step, integer = _slab_layout(grid, detector, depth)
     rows = local_detector.nv
     ramp = rfft_filter_array(cfg.filter, local_detector.nu, detector.du, jnp.float32)
-    output = validate_host_arrays(projections, out, shape)
+    output = validate_host_arrays(projections, out, shape, device_input=True)
     host_poses = np.asarray(poses, np.float32)
     params = np.zeros((n_views, 6), np.float32)
     overlap = cuda and grid.nz > depth and output.nbytes >= _OUTPUT_OVERLAP_MIN_BYTES
@@ -198,7 +200,7 @@ def _general_slabs(
     poses: jnp.ndarray,
     grid: Grid,
     detector: Detector,
-    projections: np.ndarray,
+    projections: np.ndarray | jnp.ndarray,
     cfg: FBPHostConfig,
     out: np.ndarray | None,
     backend: str,
@@ -206,7 +208,7 @@ def _general_slabs(
     views: int,
 ) -> np.ndarray:
     """Reconstruct x-slabs, streaming every view batch once per slab."""
-    output = validate_host_arrays(projections, out, (grid.nx, grid.ny, grid.nz))
+    output = validate_host_arrays(projections, out, (grid.nx, grid.ny, grid.nz), device_input=True)
     view_scale, params, arc_length, separable = _view_weights(poses, cfg.scale)
     if cfg.padding == "edge" and not separable:
         raise ValueError("fbp_host: edge padding requires a separable detector-u filter")
