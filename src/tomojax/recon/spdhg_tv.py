@@ -237,7 +237,6 @@ def _prox_fstar_l2(
     """
     sigma = jnp.asarray(sigma, dtype=u.dtype)
     w = jnp.ones_like(u) if w is None else jnp.asarray(w, dtype=u.dtype)
-    u = jnp.where(w > 0, u, 0.0)
     y_meas = jnp.where(w > 0, y_meas, 0.0)
     return weighted_l2_conjugate(u, sigma, y_meas, w).astype(u.dtype)
 

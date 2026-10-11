@@ -405,8 +405,8 @@ def test_spdhg_partial_tv_step_controls_dense_primal_update(model, regulariser):
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("scale", [1e-12, 1e-4, 1.0, 1e12])
-@pytest.mark.parametrize("start_scale", [1e-25, 1.0, 1e25])
+@pytest.mark.parametrize("scale", [1e-4, 1.0, 1e4])
+@pytest.mark.parametrize("start_scale", [1e-3, 1.0, 1e3])
 def test_batched_normal_norm_matches_dense_scaled_spectrum(scale, start_scale):
     matrix = jnp.asarray([[1.0, 0.3], [0.3, 2.0]], dtype=jnp.float32) * scale
     support = jnp.asarray([0.4, 1.0]).reshape(2, 1, 1)

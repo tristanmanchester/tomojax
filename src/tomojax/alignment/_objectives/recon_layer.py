@@ -121,8 +121,6 @@ class ReconLayer:
         view_weights: jnp.ndarray | None = None,
     ) -> ReconLayerResult:
         """Run a reconstruction layer for an alignment state."""
-        if self.config.regulariser != "huber_tv" and self.config.tv_weight != 0.0:
-            raise ValueError("ReconLayer differentiable modes require huber_tv or tv_weight=0")
         effective = apply_alignment_state(self.base, state)
         x0 = (
             jnp.zeros((self.grid.nx, self.grid.ny, self.grid.nz), dtype=jnp.float32)

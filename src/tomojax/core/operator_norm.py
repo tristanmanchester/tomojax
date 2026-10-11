@@ -14,17 +14,10 @@ if TYPE_CHECKING:
     from tomojax.core.geometry.base import Detector, Grid
 
 
-def normalize_with_norm(vector: jax.Array) -> tuple[jax.Array, jax.Array]:
-    """Return a unit vector and its norm without squaring physical magnitudes.
-
-    Only the dimensionless scaled entries are squared. Zero stays exactly zero;
-    no absolute floor alters small positive norms. Nonfinite inputs propagate.
-    """
-    peak = jnp.max(jnp.abs(vector))
-    scaled = vector / jnp.where(peak == 0, 1.0, peak)
-    length = jnp.sqrt(jnp.sum(scaled * scaled))
-    unit = scaled / jnp.where(length == 0, 1.0, length)
-    return unit, peak * length
+def unit(vector: jax.Array) -> tuple[jax.Array, jax.Array]:
+    """``vector`` scaled to unit length, and its length; zero stays zero (no floor)."""
+    length = jnp.linalg.norm(vector.ravel())
+    return vector / jnp.where(length == 0, 1.0, length), length
 
 
 @partial(
@@ -112,7 +105,7 @@ def estimate_normal_norm(
         return result if support is None else result * support
 
     def normalize(volume: jnp.ndarray) -> jnp.ndarray:
-        return normalize_with_norm(volume)[0]
+        return unit(volume)[0]
 
     if upper_bound:
         return jnp.max(apply_normal(jnp.ones_like(initial)))

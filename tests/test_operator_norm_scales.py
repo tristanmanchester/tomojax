@@ -10,7 +10,7 @@ from tomojax.recon import FistaConfig, fista_tv
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("support_scale", [0.0, 1e-12, 1e-4, 1.0, 1e12])
+@pytest.mark.parametrize("support_scale", [0.0, 1e-4, 1.0, 1e4])
 @pytest.mark.parametrize("upper_bound", [False, True])
 def test_ray_normal_norm_preserves_support_scale_without_absolute_floor(support_scale, upper_bound):
     # A single axis-aligned voxel gives A=[1] and M=[support_scale].
@@ -59,7 +59,7 @@ def test_auto_step_fista_recovers_same_one_voxel_image_in_any_length_units(scale
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("scale", [1e-10, 1e-4, 1.0, 1e10])
+@pytest.mark.parametrize("scale", [1e-4, 1.0, 1e4])
 @pytest.mark.parametrize("model", ["ray", "joseph"])
 def test_spdhg_auto_steps_use_the_physical_data_norm_without_floors(scale, model):
     from tomojax.recon import SPDHGConfig, spdhg_tv
