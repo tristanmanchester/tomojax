@@ -72,7 +72,7 @@ class LaminographyGeometry:
         rotate around +z by view angle theta: R = S @ R_z(theta). The returned
         4x4 poses are suitable for the projector contract (world_from_object).
         """
-        theta = float(np.deg2rad(float(self.angles[i])))
+        theta = float(np.deg2rad(self.angles[i]))
         axis = self.axis_unit_lab
         ez = np.array([0.0, 0.0, 1.0], dtype=np.float64)
         S = align_u_to_v(ez, axis)

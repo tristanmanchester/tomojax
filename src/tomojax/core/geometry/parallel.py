@@ -30,7 +30,7 @@ class ParallelGeometry:
 
     def pose_for_view(self, i: int) -> PoseMatrix:
         """Return the world-from-object pose for one view."""
-        phi = float(np.deg2rad(float(self.angles[i])))
+        phi = float(np.deg2rad(self.angles[i]))
         T = rotz(phi)
         return tuple(map(tuple, T))  # 4x4
 
