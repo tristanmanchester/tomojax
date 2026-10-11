@@ -21,6 +21,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from ._directions import group_repeats
+
 _TWO_PI = 2.0 * np.pi
 # Relative tolerance for treating a scan as separable or a turn as complete.
 _EXACT = 1e-6
@@ -68,9 +70,9 @@ def fbp_weights(poses: np.ndarray) -> FBPWeights:
     other = np.cross(axis, reference)
     angles = np.arctan2(ray @ other, ray @ reference)
 
-    # Repeated exposures share one angular cell; zero gaps must not change
-    # the acquired arc or make their weights depend on their input order.
-    angles, inverse, repeats = np.unique(angles, return_inverse=True, return_counts=True)
+    # Repeated exposures share one angular cell, across rounding and whole
+    # turns; zero gaps must not change the acquired arc or weight order.
+    angles, inverse, repeats = group_repeats(angles)
     order = np.argsort(angles)
     # Locate the missing arc before unwrapping: an interior gap larger than pi
     # would otherwise fold backwards and create negative quadrature weights.

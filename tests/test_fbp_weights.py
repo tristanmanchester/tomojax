@@ -109,6 +109,22 @@ def test_repeated_directions_share_weights_without_changing_the_acquired_arc(
     assert np.all(repeated.params[:, 5] > 0)
 
 
+@pytest.mark.parametrize("start", [0.0, 150.0])
+def test_whole_turn_repeats_share_cells_despite_pose_rounding(start: float) -> None:
+    """Views labelled theta and theta + 360 differ only by rounding; they are one direction."""
+    angles = start + np.linspace(0, 180, 90, endpoint=False)
+    weights = fbp_weights(parallel(np.concatenate([angles, angles + 360.0])))
+    np.testing.assert_allclose(weights.view_scale, np.pi / 180, rtol=1e-5)
+    np.testing.assert_allclose(weights.arc_length, np.pi, rtol=1e-6)
+
+
+def test_nearby_distinct_directions_keep_their_own_angular_cells() -> None:
+    angles = np.array([10.0, 10.001, 40.0, 41.0, 100.0])
+    weights = fbp_weights(parallel(angles))
+    expected = np.deg2rad([0.001, 15.0, 15.4995, 30.0, 59.0])
+    np.testing.assert_allclose(weights.params[:, 5], expected, rtol=1e-5)
+
+
 @pytest.mark.parametrize("order", ["forward", "reverse", "shuffled"])
 def test_unequal_repeated_directions_share_independent_midpoint_quadrature(order):
     angles = np.array([10.0, 12.0, 40.0, 41.0, 100.0])

@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from ._directions import group_repeats
+
 if TYPE_CHECKING:
     from tomojax.core.geometry.base import Geometry
 
@@ -27,12 +29,7 @@ def grouped_angles(geometry: Geometry, n_views: int) -> tuple[np.ndarray, np.nda
     degrees = degrees[:n_views]
     if not np.isfinite(degrees).all():
         raise ValueError("FDK needs one finite rotation angle per view")
-    canonical = np.remainder(degrees, 360.0)
-    key = np.round(canonical / 360.0 * 1e6).astype(np.int64) % 1_000_000
-    _, first, group, repeats = np.unique(
-        key, return_index=True, return_inverse=True, return_counts=True
-    )
-    return np.deg2rad(canonical[first]), group, repeats
+    return group_repeats(np.deg2rad(degrees))
 
 
 def ordered_arc(angles: np.ndarray) -> tuple[np.ndarray, np.ndarray, bool]:
