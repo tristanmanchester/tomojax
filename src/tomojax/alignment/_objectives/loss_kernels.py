@@ -79,7 +79,12 @@ def _avgpool2(x: jnp.ndarray, k: int) -> jnp.ndarray:
     x4 = x[None, :, :, None]
     kernel = jnp.ones((k, k, 1, 1), dtype=x4.dtype) / float(k * k)
     y4 = jax.lax.conv_general_dilated(
-        x4, kernel, (1, 1), padding="SAME", dimension_numbers=("NHWC", "HWIO", "NHWC")
+        x4,
+        kernel,
+        (1, 1),
+        padding="SAME",
+        dimension_numbers=("NHWC", "HWIO", "NHWC"),
+        precision=jax.lax.Precision.HIGHEST,
     )
     return y4[0, :, :, 0]
 
@@ -134,13 +139,18 @@ def _sobel(x: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
     kx = jnp.array([[1, 0, -1], [2, 0, -2], [1, 0, -1]], jnp.float32) / 8.0
     ky = jnp.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]], jnp.float32) / 8.0
     x4 = x[None, :, :, None]
-    gx = jax.lax.conv_general_dilated(
-        x4, kx[:, :, None, None], (1, 1), padding="SAME", dimension_numbers=("NHWC", "HWIO", "NHWC")
-    )[0, :, :, 0]
-    gy = jax.lax.conv_general_dilated(
-        x4, ky[:, :, None, None], (1, 1), padding="SAME", dimension_numbers=("NHWC", "HWIO", "NHWC")
-    )[0, :, :, 0]
-    return gx, gy
+
+    def conv(kernel: jnp.ndarray) -> jnp.ndarray:
+        return jax.lax.conv_general_dilated(
+            x4,
+            kernel[:, :, None, None],
+            (1, 1),
+            padding="SAME",
+            dimension_numbers=("NHWC", "HWIO", "NHWC"),
+            precision=jax.lax.Precision.HIGHEST,
+        )[0, :, :, 0]
+
+    return conv(kx), conv(ky)
 
 
 def _loss_grad_l1(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarray:
@@ -271,14 +281,15 @@ def _kde_probabilities(
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     pr = pred.ravel()[:, None]
     tr = tar.ravel()[:, None]
-    Wx = jnp.exp(-0.5 * ((pr - bx[None, :]) / bwx) ** 2)
-    Wy = jnp.exp(-0.5 * ((tr - by[None, :]) / bwy) ** 2)
-    Wx = Wx / (jnp.sum(Wx, axis=1, keepdims=True) + 1e-12)
-    Wy = Wy / (jnp.sum(Wy, axis=1, keepdims=True) + 1e-12)
+    # Softmax gives every sample unit mass even far outside the bin range, where
+    # the exponentials underflow and a plain normalisation would drop the sample.
+    Wx = jax.nn.softmax(-0.5 * ((pr - bx[None, :]) / bwx) ** 2, axis=1)
+    Wy = jax.nn.softmax(-0.5 * ((tr - by[None, :]) / bwy) ** 2, axis=1)
     sample_count = jnp.asarray(Wx.shape[0], dtype=Wx.dtype)
     Px = jnp.clip(Wx.mean(axis=0), 1e-12, 1.0)
     Py = jnp.clip(Wy.mean(axis=0), 1e-12, 1.0)
-    Pxy = jnp.clip((Wx.T @ Wy) / sample_count, 1e-12, 1.0)
+    joint = jnp.matmul(Wx.T, Wy, precision=jax.lax.Precision.HIGHEST)
+    Pxy = jnp.clip(joint / sample_count, 1e-12, 1.0)
     return Px, Py, Pxy
 
 

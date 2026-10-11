@@ -8,7 +8,11 @@ import pytest
 from tomojax.alignment._objectives import fixed_volume
 
 # check-public-imports: allow-private
-from tomojax.alignment._objectives.loss_kernels import _loss_barron, _loss_swd
+from tomojax.alignment._objectives.loss_kernels import (
+    _kde_probabilities,
+    _loss_barron,
+    _loss_swd,
+)
 
 # check-public-imports: allow-private
 from tomojax.alignment._objectives.loss_state import LossState
@@ -25,6 +29,18 @@ def test_barron_loss_uses_general_alpha_coefficient() -> None:
     actual = _loss_barron(pred, target, LossState(kind="barron", params={"alpha": alpha, "c": 1.0}))
 
     assert float(actual) == pytest.approx(expected_per_element * 4.0)
+
+
+def test_kde_histogram_keeps_unit_mass_for_samples_outside_the_bins() -> None:
+    bins = jnp.linspace(0.0, 1.0, 32)
+    rng = jax.random.key(0)
+    pred = jax.random.uniform(rng, (64, 64)) + 0.5
+    target = jax.random.uniform(jax.random.key(1), (64, 64))
+
+    px, py, pxy = _kde_probabilities(pred, target, bins, bins, 1.0 / 32, 1.0 / 32)
+
+    for mass in (px.sum(), py.sum(), pxy.sum()):
+        assert float(mass) == pytest.approx(1.0, abs=1e-4)
 
 
 def test_swd_loss_subsampling_uses_supplied_rng_key() -> None:
