@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import functools
-from typing import Any
+import importlib
+from typing import TYPE_CHECKING, Any
 
 import jax
 from jax.experimental import pallas as pl
@@ -12,6 +13,48 @@ from jax.experimental.pallas import triton as plt
 import jax.numpy as jnp
 
 from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
+
+if TYPE_CHECKING:
+    from tomojax._typed_arrays import Device
+
+
+@functools.lru_cache(maxsize=32)
+def _cuda_l2_bytes(device: Device) -> int | None:
+    """Optional cache query for this JAX device, never CuPy's ambient device."""
+    version = getattr(getattr(device, "client", None), "platform_version", "")
+    local = getattr(device, "local_hardware_id", None)
+    if device.platform != "gpu" or not version.lower().startswith("cuda") or local is None:
+        return None
+    try:
+        runtime = importlib.import_module("cupy.cuda.runtime")
+        size = int(runtime.getDeviceProperties(int(local)).get("l2CacheSize", 0))
+        return size if size > 0 else None
+    except Exception:
+        # Cache sizing is a performance hint. Pallas needs neither CuPy nor a
+        # working optional runtime probe to retain its original FFT batch size.
+        return None
+
+
+def filtered_view_batch_size(
+    batch_size: int, *, grid: Grid, detector: Detector, device: Device
+) -> int:
+    """Cache-size dense axial FBP batches; retain FFT sizing for small/sparse outputs.
+
+    Extra batches reread/write the whole accumulator, even for axial tiles that
+    skip all views. That traffic can outweigh filtered-view caching for small
+    or axially sparse outputs, which retain the original FFT budget. Callers
+    require z-axis poses with no axial translation.
+    """
+    size = _cuda_l2_bytes(device)
+    if size is None:
+        return batch_size
+    first = grid_volume_origin(grid)[2] - detector.center[1]
+    last = first + (grid.nz - 1) * grid.vz
+    support = (detector.nv + 1) * detector.dv / 2
+    if 4 * grid.nx * grid.ny * grid.nz <= size or first < -support or last > support:
+        return batch_size
+    capacity = max(1, size // (4 * detector.nv * detector.nu))
+    return min(batch_size, 1 << (capacity.bit_length() - 1))
 
 
 def _column_tile(nz: int, block_size: int) -> tuple[int, int]:

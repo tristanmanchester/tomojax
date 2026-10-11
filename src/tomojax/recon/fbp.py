@@ -438,8 +438,15 @@ def run_parallel_fbp_direct_pallas(
     padding = max(0, math.ceil(required_radius - (detector.nu - 1) / 2))
     detector = replace(detector, nu=detector.nu + 2 * padding)
     ramp = rfft_filter_array(filter, detector.nu, float(detector.du), jnp.float32)
+    from ._fbp_pallas import filtered_view_batch_size
+
+    T_all = jnp.asarray(T_all, dtype=jnp.float32)
+    batch = _parallel_filter_batch_size(n_views, detector.nv, 2 * (ramp.shape[0] - 1))
+    batch = filtered_view_batch_size(
+        batch, grid=grid, detector=detector, device=next(iter(T_all.devices()))
+    )
     return _run_fbp_streamed(
-        jnp.asarray(T_all, dtype=jnp.float32),
+        T_all,
         jnp.asarray(proj, dtype=jnp.float32),
         jnp.ones((n_views,), jnp.float32),
         jnp.zeros((n_views, 6), jnp.float32),
@@ -448,7 +455,7 @@ def run_parallel_fbp_direct_pallas(
         grid=grid,
         detector=detector,
         backend="pallas",
-        batch_size=_parallel_filter_batch_size(n_views, detector.nv, 2 * (ramp.shape[0] - 1)),
+        batch_size=batch,
         z_mode="integer",
         separable=True,
     )
@@ -544,6 +551,13 @@ class _Plan:
         """
         part, size = slice(views.start, views.stop), self.batch
         put = partial(jax.device_put, device=device)
+        if self.backend == "pallas" and self.z_mode != "general" and self.separable:
+            from ._fbp_pallas import filtered_view_batch_size
+
+            target = device if device is not None else next(iter(put(self.poses).devices()))
+            size = filtered_view_batch_size(
+                size, grid=self.grid, detector=self.detector, device=target
+            )
         options = {
             "grid": self.grid,
             "detector": self.detector,

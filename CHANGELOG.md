@@ -38,6 +38,11 @@ Faster: parallel GPU FBP reuses horizontal coordinates along axial tiles and
 skips view loops for tiles entirely outside the measured detector rows, retaining
 exact FP32 interpolation, zero extension and accumulation.
 
+Faster: dense axial GPU FBP limits filtered-view batches to the active device's
+L2 cache as well as the FFT workspace budget. Small or mostly off-detector
+outputs keep their existing batches; an unavailable optional CUDA cache query
+leaves the original planner unchanged.
+
 Faster: exact-ray projection loads each cell corner once and integrates one
 spatial derivative for every pose direction (about 2.4x forward and 3x
 gradient on the CPU at 48³); the CUDA cone transpose weights, reorders and

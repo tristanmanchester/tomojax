@@ -5,6 +5,12 @@ from __future__ import annotations
 from dataclasses import replace
 
 import jax
+
+from dataclasses import dataclass
+import importlib
+import sys
+from types import SimpleNamespace
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -17,6 +23,199 @@ from tomojax.recon import FBPConfig, FBPHostConfig, fbp, fbp_host
 from tomojax.recon._fbp_pallas import backproject_filtered_pallas
 from tomojax.recon.fbp import _backproject_voxels_jax
 from tomojax.recon.filters import fft_filter_rows, rfft_filter_array
+
+
+@dataclass(frozen=True)
+class _CacheDevice:
+    id: int
+    local_hardware_id: int | None
+    platform: str = "gpu"
+    version: str = "CUDA 12.0"
+
+    @property
+    def client(self) -> SimpleNamespace:
+        return SimpleNamespace(platform_version=self.version)
+
+
+def test_fbp_cache_batch_queries_each_actual_device_once(monkeypatch) -> None:
+    module = importlib.import_module("tomojax.recon._fbp_pallas")
+    module._cuda_l2_bytes.cache_clear()
+    calls = []
+
+    def properties(local):
+        calls.append(local)
+        return {"l2CacheSize": (32 if local == 7 else 64) * 1024**2}
+
+    monkeypatch.setitem(
+        sys.modules, "cupy.cuda.runtime", SimpleNamespace(getDeviceProperties=properties)
+    )
+    detector = Detector(3900, 64, 1.0, 1.0)
+    first, second = _CacheDevice(42, 7), _CacheDevice(43, 3)
+    assert (
+        module.filtered_view_batch_size(
+            128, grid=Grid(2560, 2560, 64, 1.0, 1.0, 1.0), detector=detector, device=first
+        )
+        == 32
+    )
+    assert (
+        module.filtered_view_batch_size(
+            128, grid=Grid(2560, 2560, 64, 1.0, 1.0, 1.0), detector=detector, device=second
+        )
+        == 64
+    )
+    assert (
+        module.filtered_view_batch_size(
+            128, grid=Grid(2560, 2560, 64, 1.0, 1.0, 1.0), detector=detector, device=first
+        )
+        == 32
+    )
+    assert calls == [7, 3]
+
+
+@pytest.mark.parametrize("size", [0, -1, 1, 32 * 1024**2])
+@pytest.mark.parametrize("batch", [1, 3, 16, 128])
+def test_fbp_cache_batch_never_exceeds_fft_budget(monkeypatch, size, batch) -> None:
+    module = importlib.import_module("tomojax.recon._fbp_pallas")
+    module._cuda_l2_bytes.cache_clear()
+    monkeypatch.setitem(
+        sys.modules,
+        "cupy.cuda.runtime",
+        SimpleNamespace(getDeviceProperties=lambda _: {"l2CacheSize": size}),
+    )
+    actual = module.filtered_view_batch_size(
+        batch,
+        grid=Grid(2560, 2560, 64, 1.0, 1.0, 1.0),
+        detector=Detector(3900, 64, 1.0, 1.0),
+        device=_CacheDevice(42, 7),
+    )
+    expected = batch if size <= 0 else min(batch, 32 if size == 32 * 1024**2 else 1)
+    assert actual == expected
+
+
+@pytest.mark.parametrize(
+    "device",
+    [_CacheDevice(42, 7, "cpu"), _CacheDevice(42, 7, version="ROCm"), _CacheDevice(42, None)],
+)
+def test_fbp_cache_batch_skips_unavailable_cuda_device(monkeypatch, device) -> None:
+    module = importlib.import_module("tomojax.recon._fbp_pallas")
+    module._cuda_l2_bytes.cache_clear()
+
+    def forbidden(_):
+        pytest.fail("non-CUDA or unidentified devices must not query CuPy")
+
+    monkeypatch.setitem(
+        sys.modules, "cupy.cuda.runtime", SimpleNamespace(getDeviceProperties=forbidden)
+    )
+    assert (
+        module.filtered_view_batch_size(
+            128,
+            grid=Grid(2560, 2560, 64, 1.0, 1.0, 1.0),
+            detector=Detector(3900, 64, 1.0, 1.0),
+            device=device,
+        )
+        == 128
+    )
+
+
+@pytest.mark.parametrize("missing", [True, False])
+def test_fbp_cache_batch_retains_fft_budget_without_optional_probe(monkeypatch, missing) -> None:
+    module = importlib.import_module("tomojax.recon._fbp_pallas")
+    module._cuda_l2_bytes.cache_clear()
+
+    def unavailable(_):
+        raise RuntimeError("optional CUDA runtime is unavailable")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "cupy.cuda.runtime",
+        None if missing else SimpleNamespace(getDeviceProperties=unavailable),
+    )
+    assert (
+        module.filtered_view_batch_size(
+            128,
+            grid=Grid(2560, 2560, 64, 1.0, 1.0, 1.0),
+            detector=Detector(3900, 64, 1.0, 1.0),
+            device=_CacheDevice(42, 7),
+        )
+        == 128
+    )
+
+
+@pytest.mark.parametrize(
+    "grid",
+    [
+        Grid(32, 32, 64, 1.0, 1.0, 1.0),
+        Grid(2560, 2560, 129, 1.0, 1.0, 1.0),
+        Grid(2560, 2560, 64, 1.0, 1.0, 1.0, vol_center=(0.0, 0.0, 90.0)),
+        Grid(2560, 2560, 32, 1.0, 1.0, 3.0),
+    ],
+)
+def test_fbp_cache_batch_keeps_small_or_axially_sparse_output(monkeypatch, grid) -> None:
+    module = importlib.import_module("tomojax.recon._fbp_pallas")
+    monkeypatch.setattr(module, "_cuda_l2_bytes", lambda _: 32 * 1024**2)
+    assert (
+        module.filtered_view_batch_size(
+            128, grid=grid, detector=Detector(3900, 64, 1.0, 1.0), device=_CacheDevice(42, 7)
+        )
+        == 128
+    )
+
+
+def test_fbp_cache_batch_accounts_for_fractional_row_spacing(monkeypatch) -> None:
+    module = importlib.import_module("tomojax.recon._fbp_pallas")
+    monkeypatch.setattr(module, "_cuda_l2_bytes", lambda _: 32 * 1024**2)
+    assert (
+        module.filtered_view_batch_size(
+            128,
+            grid=Grid(2560, 2560, 128, 1.0, 1.0, 0.5),
+            detector=Detector(3900, 64, 1.0, 1.0),
+            device=_CacheDevice(42, 7),
+        )
+        == 32
+    )
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("on_host", [True, False])
+def test_fbp_cache_limit_preserves_shifted_gaussian_volume(monkeypatch, on_host) -> None:
+    import jax
+
+    if jax.default_backend() != "gpu":
+        pytest.skip("requires a CUDA GPU")
+    module = importlib.import_module("tomojax.recon._fbp_pallas")
+    angles = np.linspace(0, 180, 73, endpoint=False, dtype=np.float32)
+    grid = Grid(32, 32, 3, 0.7, 0.9, 0.8, vol_center=(1.2, -0.8, 0.0))
+    detector = Detector(64, 3, 0.7, 0.8, (2.2, 0.0))
+    geometry = ParallelGeometry(grid, detector, angles)
+    u = (np.arange(64) - 31.5) * 0.7 + 2.2
+    phi = np.deg2rad(angles.astype(np.float64))
+    projected_centre = -3.4 * np.cos(phi) - 2.7 * np.sin(phi)
+    profile = np.sqrt(2 * np.pi) * 5.0 * np.exp(-((u - projected_centre[:, None]) ** 2) / 50)
+    axial_scale = np.array([0.5, 1.0, 1.5])
+    projections = (profile[:, None, :] * axial_scale[None, :, None]).astype(np.float32)
+    if not on_host:
+        projections = jnp.asarray(projections)
+    cfg = FBPConfig(backprojector="pallas")
+    monkeypatch.setattr(module, "_cuda_l2_bytes", lambda _: None)
+    whole = np.asarray(fbp(geometry, grid, detector, projections, config=cfg))
+    # Three filtered views fit, so a power-of-two batch has two views and a
+    # partial final batch. Both host streaming and device loops must honour it.
+    monkeypatch.setattr(module, "_cuda_l2_bytes", lambda _: 4 * detector.nv * detector.nu * 3)
+    calls, original = [], module._backprojection_call
+
+    def record(*args, **kwargs):
+        calls.append(args[2])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(module, "_backprojection_call", record)
+    cached = np.asarray(fbp(geometry, grid, detector, projections, config=cfg))
+    assert 2 in calls
+    np.testing.assert_allclose(cached, whole, rtol=4e-5, atol=2e-6)
+    x = (np.arange(32) - 15.5) * 0.7 + 1.2
+    y = (np.arange(32) - 15.5) * 0.9 - 0.8
+    expected = np.exp(-((x[:, None] + 3.4) ** 2 + (y[None, :] - 2.7) ** 2) / 50)
+    expected = expected[:, :, None] * axial_scale
+    assert np.linalg.norm(cached - expected) / np.linalg.norm(expected) < 0.02
 
 
 @pytest.mark.parametrize("nu", [1, 7, 16, 31])
