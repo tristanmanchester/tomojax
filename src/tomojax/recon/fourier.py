@@ -15,6 +15,7 @@ from tomojax.geometry import ParallelGeometry, grid_volume_origin
 
 from ._fourier_backend import FourierPlan, is_cuda_oom
 from ._fourier_grid import sample_projection_rows, uniform_half_turn
+from ._fourier_rows import ProjectionRows, prepare_projection_rows
 from ._host_arrays import validate_host_arrays
 
 if TYPE_CHECKING:
@@ -41,6 +42,8 @@ class FourierConfig:
     row preparation, device transfers, FFT execution and output writes, retaining
     at most two pending device slabs. A bounded cache retains immutable
     geometry arrays; each call owns its working buffers.
+    Fractional detector rows are interpolated on CUDA from at most two measured
+    source rows per requested slice; entire projection stacks are not uploaded.
     """
 
     slices_per_batch: int = 16
@@ -103,9 +106,13 @@ def fourier_reconstruct(
     if not np.isfinite(positions).all():
         raise ValueError("fourier_reconstruct: detector-row coordinates must be finite")
 
-    def prepare(start: int) -> np.ndarray:
+    def prepare(start: int) -> np.ndarray | ProjectionRows:
         stop = min(start + depth, grid.nz)
-        data = sample_projection_rows(projections, order, positions[start:stop])
+        data = (prepare_projection_rows if cfg.backend == "cupy" else sample_projection_rows)(
+            projections, order, positions[start:stop]
+        )
+        if isinstance(data, ProjectionRows):
+            return data
         if not np.isfinite(data).all():
             raise ValueError("fourier_reconstruct: sampled projection rows must be finite in FP32")
         if stop - start < depth:
@@ -148,7 +155,7 @@ def _run_host_pipeline(
     plan: FourierPlan,
     nz: int,
     depth: int,
-    prepare: Callable[[int], np.ndarray],
+    prepare: Callable[[int], np.ndarray | ProjectionRows],
     write: Callable[[int, np.ndarray], None],
 ) -> None:
     """Overlap bounded staging and transfers; CUDA stays on the calling thread."""
@@ -180,7 +187,16 @@ def _run_host_pipeline(
                 stop = min(start + depth, nz)
                 if stop < nz:
                     prepared = reader.submit(prepare, stop)
-                pending.append((start, plan.enqueue(data)))
+                try:
+                    job = plan.enqueue(data)
+                except BaseException:
+                    # An execution-side failure must also commit preceding
+                    # completed slabs before releasing their transfer owners.
+                    for first, queued in pending:
+                        finish(first, queued)
+                    pending.clear()
+                    raise
+                pending.append((start, job))
                 if len(pending) >= 2:
                     finish(*pending.pop(0))
             for first, job in pending:

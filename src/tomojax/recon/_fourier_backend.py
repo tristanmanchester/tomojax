@@ -13,6 +13,7 @@ import numpy as np
 from tomojax.geometry import grid_volume_origin
 
 from ._fourier_grid import interpolate_numpy, next_fast_len, radial_coefficients, transform_grid
+from ._fourier_rows import ProjectionRows, interpolate_projection_rows
 
 
 def is_cuda_oom(error: Exception) -> bool:
@@ -243,7 +244,12 @@ class FourierPlan:
         xp = self.xp
         with self.compute if self.compute is not None else nullcontext():
             # NumPy must also copy: deapodization must not mutate caller storage.
-            raw = xp.array(host, dtype=self.deapod.dtype, copy=True)
+            if isinstance(host, ProjectionRows):
+                source = xp.asarray(host.samples)
+                raw, _owners = interpolate_projection_rows(host, source, self.depth, xp)
+                raw = raw.astype(self.deapod.dtype, copy=False)
+            else:
+                raw = xp.array(host, dtype=self.deapod.dtype, copy=True)
             volume = self._compute_volume(raw)
             return xp.asnumpy(volume) if self.cuda else volume.astype(np.float32)
 
@@ -252,16 +258,21 @@ class FourierPlan:
         assert self.upload is not None
         assert self.compute is not None
         assert self.download is not None
-        host_storage = xp.cuda.alloc_pinned_memory(host.size * 4)
-        staged = np.ndarray(host.shape, dtype=np.float32, buffer=host_storage)
-        np.copyto(staged, host)
+        samples = host.samples if isinstance(host, ProjectionRows) else host
+        host_storage = xp.cuda.alloc_pinned_memory(samples.size * 4)
+        staged = np.ndarray(samples.shape, dtype=np.float32, buffer=host_storage)
+        np.copyto(staged, samples)
         try:
             with self.upload:
-                raw = xp.asarray(staged)
+                source = xp.asarray(staged)
                 uploaded = xp.cuda.Event()
                 uploaded.record()
             self.compute.wait_event(uploaded)
             with self.compute:
+                owners = ()
+                raw = source
+                if isinstance(host, ProjectionRows):
+                    raw, owners = interpolate_projection_rows(host, source, self.depth, xp)
                 volume = self._compute_volume(raw)
                 computed = xp.cuda.Event()
                 computed.record()
@@ -277,7 +288,18 @@ class FourierPlan:
             return _PendingSlab(
                 output,
                 downloaded,
-                (host_storage, staged, raw, volume, output_storage, uploaded, computed),
+                (
+                    host,
+                    host_storage,
+                    staged,
+                    source,
+                    raw,
+                    volume,
+                    output_storage,
+                    uploaded,
+                    computed,
+                    *owners,
+                ),
             )
         except BaseException:
             self.upload.synchronize()

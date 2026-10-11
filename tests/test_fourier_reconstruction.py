@@ -21,10 +21,141 @@ from tomojax.recon import FourierConfig, fourier_reconstruct
 BACKENDS = ["numpy", pytest.param("cupy", marks=pytest.mark.gpu)]
 
 
-@pytest.mark.parametrize("dtype", [np.float32, np.float64, np.int16])
-def test_fractional_rows_preserve_readonly_strided_input_and_rounding(dtype):
+@pytest.fixture
+def row_grid():
     # check-public-imports: allow-private
-    from tomojax.recon._fourier_grid import sample_projection_rows
+    import tomojax.recon._fourier_grid as implementation
+
+    return implementation
+
+
+@pytest.fixture
+def staged_rows():
+    # check-public-imports: allow-private
+    import tomojax.recon._fourier_rows as implementation
+
+    return implementation
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("dtype", [np.float32, np.float64, np.int16])
+@pytest.mark.parametrize("nv", [1, 2, 5, 11])
+def test_bounded_row_staging_matches_host_rounding_and_partial_padding(
+    backend, dtype, nv, row_grid, staged_rows
+):
+    sample_projection_rows = row_grid.sample_projection_rows
+    ProjectionRows = staged_rows.ProjectionRows
+    interpolate_projection_rows = staged_rows.interpolate_projection_rows
+    prepare_projection_rows = staged_rows.prepare_projection_rows
+
+    xp = np if backend == "numpy" else pytest.importorskip("cupy")
+    rng = np.random.default_rng(697)
+    backing = (rng.normal(size=(7, nv, 26)) * 10).astype(dtype)
+    backing.flat[::13] = -0.0
+    backing.flat[::17] = 0.0
+    data = backing[:, :, ::2]
+    saved = data.copy()
+    data.flags.writeable = False
+    order = np.array([5, 2, 0, 6, 1])
+    positions = np.array([-1e300, -1, -0.5, 0, 0.2, 0.99999999, 1, nv - 0.5, nv, 1e300])
+    rows = prepare_projection_rows(data, order, positions)
+    assert isinstance(rows, ProjectionRows)
+    assert rows.samples.shape[0] <= 2 * len(positions)
+    assert rows.samples.flags.c_contiguous
+    actual, _owners = interpolate_projection_rows(
+        rows, xp.asarray(rows.samples), len(positions) + 2, xp
+    )
+    if backend == "cupy":
+        actual = xp.asnumpy(actual)
+    expected = np.pad(sample_projection_rows(data, order, positions), ((0, 2), (0, 0), (0, 0)))
+    np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
+    np.testing.assert_array_equal(data, saved)
+
+
+def test_bounded_staging_ignores_unused_invalid_rows_without_taking_full_source(
+    monkeypatch, staged_rows
+):
+    ProjectionRows = staged_rows.ProjectionRows
+    prepare_projection_rows = staged_rows.prepare_projection_rows
+
+    data = np.full((5, 1000, 7), np.nan, np.float64)[:, :, ::2]
+    data[:, 499:501] = 2
+    data.flags.writeable = False
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("np.take may make a full contiguous copy of strided input")
+
+    monkeypatch.setattr(np, "take", forbidden)
+    rows = prepare_projection_rows(data, np.arange(5), np.array([499.25, 499.75]))
+    assert isinstance(rows, ProjectionRows)
+    assert rows.samples.shape == (2, 5, 4)
+    np.testing.assert_array_equal(rows.samples, 2)
+
+
+def test_host_pipeline_commits_pending_slabs_after_enqueue_failure():
+    from typing import cast
+
+    # check-public-imports: allow-private
+    from tomojax.recon._fourier_backend import FourierPlan
+    from tomojax.recon.fourier import _run_host_pipeline
+
+    queued, waited, written = [], [], []
+
+    class Job:
+        def __init__(self, start):
+            self.start = start
+
+        def wait(self):
+            waited.append(self.start)
+            return np.zeros((4, 2, 2), np.float32)
+
+    class Plan:
+        def enqueue(self, data):
+            start = int(data[0])
+            if start == 8:
+                raise RuntimeError("execution-side failure")
+            queued.append(start)
+            return Job(start)
+
+    with pytest.raises(RuntimeError, match="execution-side failure"):
+        _run_host_pipeline(
+            cast(FourierPlan, Plan()),
+            16,
+            4,
+            lambda start: np.array([start]),
+            lambda start, _: written.append(start),
+        )
+    assert queued == waited == written == [0, 4]
+
+
+@pytest.mark.gpu
+def test_fractional_pipeline_commits_completed_slabs_before_late_invalid_neighbor(monkeypatch):
+    import tomojax.recon.fourier as implementation
+
+    pytest.importorskip("cupy")
+    grid = Grid(17, 19, 13, 1, 1, 1, vol_origin=(-8, -9, -6.25))
+    detector = Detector(35, 14, 1, 1)
+    angles = np.linspace(0, 180, 17, endpoint=False)
+    data, _ = physical_gaussian(grid, detector, angles)
+    data[:, -1] = np.nan
+    out = np.full((grid.nx, grid.ny, grid.nz), np.nan, np.float32)
+    monkeypatch.setattr(implementation, "_HOST_PIPELINE_MIN_BYTES", 0)
+    with pytest.raises(ValueError, match="sampled projection rows must be finite"):
+        fourier_reconstruct(
+            ParallelGeometry(grid, detector, angles),
+            grid,
+            detector,
+            data,
+            config=FourierConfig(backend="cupy", slices_per_batch=4),
+            out=out,
+        )
+    assert np.isfinite(out[:, :, :12]).all()
+    assert np.isnan(out[:, :, 12]).all()
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64, np.int16])
+def test_fractional_rows_preserve_readonly_strided_input_and_rounding(dtype, row_grid):
+    sample_projection_rows = row_grid.sample_projection_rows
 
     rng = np.random.default_rng(553)
     data = (rng.normal(size=(7, 8, 22)) * 10).astype(dtype)[:, :, ::2]
@@ -369,9 +500,11 @@ def test_physical_units_preserve_attenuation(backend, length_scale):
 
 @pytest.mark.parametrize("nu", [1, 32, 65, 131])
 @pytest.mark.parametrize("signal", ["signed", "constant", "edge"])
-def test_kaiser_interpolation_matches_independent_dense_fourier_sum(nu, signal):
-    # check-public-imports: allow-private
-    from tomojax.recon._fourier_grid import interpolate_numpy, radial_coefficients
+def test_kaiser_interpolation_matches_independent_dense_fourier_sum(nu, signal, row_grid):
+    interpolate_numpy, radial_coefficients = (
+        row_grid.interpolate_numpy,
+        row_grid.radial_coefficients,
+    )
 
     rng = np.random.default_rng(818)
     values = rng.normal(size=nu)
@@ -425,9 +558,8 @@ def test_cuda_matches_numpy_for_signed_data_and_partial_slabs(nu, vx, views):
     np.testing.assert_allclose(actual, reference, rtol=2e-4, atol=2e-6)
 
 
-def test_detector_rows_zero_extend_and_ignore_unused_nonfinite_samples():
-    # check-public-imports: allow-private
-    from tomojax.recon._fourier_grid import sample_projection_rows
+def test_detector_rows_zero_extend_and_ignore_unused_nonfinite_samples(row_grid):
+    sample_projection_rows = row_grid.sample_projection_rows
 
     data = np.array([[[np.nan], [3], [7], [np.nan]]], dtype=np.float32)
     rows = sample_projection_rows(data, np.array([0]), np.array([-1e30, -1, 1, 1.5, 2, 4, 1e30]))
