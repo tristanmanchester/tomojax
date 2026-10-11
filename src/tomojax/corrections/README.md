@@ -13,6 +13,8 @@ HDF5 sample and calibration frames stay lazy until correction, so
 means accumulate in FP64 in bounded host batches. `np.asarray(frames.flats)`
 or indexing the flat/dark stack reads it explicitly.
 Each step is recorded in `Scan.corrections` and saved with the scan.
+The log record counts nonpositive transmission after the transmission steps,
+including any undershoot introduced by phase retrieval, not before filtering.
 
 Flat-minus-dark signals that are nonpositive or unresolved at three standard
 errors of their calibration mean are unmeasured pixels. They take neutral

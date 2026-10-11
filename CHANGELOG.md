@@ -87,6 +87,10 @@ Memory budgeting honors `jax.default_device` and CPU placement instead of
 always probing the first GPU, without initializing unused accelerators.
 Unavailable accelerator memory statistics remain unknown rather than
 substituting host RAM, so conservative accelerator allocation guards apply.
+The log correction records nonpositive transmission after spatial corrections,
+so its diagnostics reflect pixels actually clamped rather than the raw normalized
+input.
+
 Raw correction treats flat-minus-dark signals unresolved at three standard
 errors of the calibration mean as unmeasured pixels, using neutral transmission
 before spatial corrections. Dark or unreliable detector pixels no longer

@@ -332,9 +332,9 @@ def _first_pass(
     # not a denominator of epsilon. Use neutral transmission before spatial
     # steps, so an FFT cannot spread enormous counts across the whole image.
     transmission = jnp.where(reliable, (x - dark) / jnp.maximum(light, epsilon), 1.0)
-    nonpositive = jnp.sum(transmission <= 0)
     for step in transmission_steps:
         transmission = step.apply(transmission)
+    nonpositive = jnp.sum(transmission <= 0)
     p = -jnp.log(jnp.maximum(transmission, epsilon))
     for step in line_steps:
         p = step.apply(p)
