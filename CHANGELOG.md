@@ -53,6 +53,9 @@ radial polynomial with bilinear transmission pullback before the log, explicit
 pixel/crop/binning coordinates, and saved correction settings.
 Its geometry is evaluated in double precision on the device rather than
 embedding large per-pixel interpolation tables in each compiled batch.
+Faster: aligned CUDA FBP detector-row addresses use the existing integer-row
+contract directly, preserving contiguous loads for unit strides and exact
+nearest-row sampling for shifted and strided grids.
 
 Faster: axial CUDA FBP keeps masked accumulator addresses affine, restoring
 contiguous memory access without changing interpolation or accumulation. The

@@ -148,10 +148,11 @@ def _backproject_filtered_kernel(
     u_offset, v_offset = ((nu - 1) % 2) / 2.0, ((nv - 1) % 2) / 2.0
     supported_rows = None
     if z_mode == "integer":
-        iv = (
-            jnp.floor((z - detector_center[1]) / dv + v_offset + 0.5).astype(jnp.int32)
-            + (nv - 1) // 2
-        )
+        # Integer mode already requires physically aligned rows. Keep their
+        # addresses affine so adjacent z lanes can load contiguous detector data.
+        first = round((origin[2] - detector_center[1]) / dv + (nv - 1) / 2)
+        step = round(voxel[2] / dv)
+        iv = first + iz * step
         supported_rows = (iv >= 0) & (iv < nv)
     elif z_mode == "fixed":
         world_z = plt.load(poses_ref.at[jnp.int32(0), jnp.int32(2), jnp.int32(2)]) * z + plt.load(

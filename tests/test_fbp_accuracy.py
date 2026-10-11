@@ -1050,3 +1050,69 @@ def test_axial_fbp_indices_keep_affine_cuda_addresses(interpret):
     if interpret:
         expected = np.where((column < 15) & (row < 3), expected, 45)
     np.testing.assert_array_equal(actual, expected.reshape(-1))
+
+
+@pytest.mark.parametrize("interpret", [True, pytest.param(False, marks=pytest.mark.gpu)])
+@pytest.mark.parametrize(
+    ("step", "nv", "nz", "first", "pitch"),
+    [(1, 6, 5, 0, 0.7), (2, 21, 7, -3, 1.3), (3, 64, 17, 7, 0.125), (4, 63, 33, -1, 0.2)],
+)
+@pytest.mark.parametrize(("phase", "drift"), [(0.0, 0.0), (4e-6, -1e-8), (-4e-6, 1e-8)])
+def test_integer_fbp_rows_preserve_physical_alignment(
+    interpret, step, nv, nz, first, pitch, phase, drift
+):
+    """Strided, shifted and barely aligned rows use the same nearest physical pixels."""
+    from dataclasses import replace
+
+    import jax
+
+    if not interpret and jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    center = -0.31
+    grid = Grid(
+        7,
+        5,
+        nz,
+        0.7,
+        0.9,
+        (step + drift) * pitch,
+        vol_origin=(-1.8, -2.4, (first + phase - (nv - 1) / 2) * pitch + center),
+    )
+    detector = Detector(65, nv, 0.9, pitch, (0.17, center))
+    implementation = importlib.import_module("tomojax.recon.fbp")
+    assert implementation.supports_parallel_fbp_z_integer(grid, detector)
+    angles = [7.0, 33.0, 81.0, 164.0]
+    geometry = ParallelGeometry(grid, detector, angles)
+    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(len(angles))], jnp.float32)
+    rng = np.random.default_rng(16103)
+    rows = jnp.asarray(rng.normal(size=(len(angles), nv, detector.nu)), jnp.float32)
+    initial = rng.normal(size=(grid.nx, grid.ny, grid.nz)).astype(np.float32)
+    # Independently sample the same nearest physical rows on an exact unit-pitch
+    # lattice. XY coordinates and poses are unchanged; no row interpolation or
+    # reconstruction fit enters this reference.
+    exact_grid = replace(grid, vz=step, vol_origin=(-1.8, -2.4, first - (nv - 1) / 2))
+    exact_detector = replace(detector, dv=1.0, center=(detector.center[0], 0.0))
+    expected = (
+        np.asarray(
+            jax.jit(
+                lambda y: _backproject_voxels_jax(
+                    poses, y, grid=exact_grid, detector=exact_detector
+                )
+            )(rows)
+        )
+        + initial
+    )
+    for block in (128, 512):
+        actual = jax.jit(
+            lambda p, y, a, block=block: backproject_filtered_pallas(
+                p,
+                y,
+                grid=grid,
+                detector=detector,
+                z_mode="integer",
+                interpret=interpret,
+                block_size=block,
+                accumulate=a,
+            )
+        )(poses, rows, jnp.asarray(initial.copy()))
+        np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=2e-6)
