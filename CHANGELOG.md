@@ -54,6 +54,9 @@ GPU batches also account for the active device's cache-sized real/half-complex
 FFT working set. The existing conservative memory estimate and out-of-memory
 retry remain; unavailable optional cache queries keep memory-budget sizing.
 
+Stripe correction selects only the median ranks on CUDA and uses pruned sorting
+networks for wider windows, preserving corrected values and differentiability.
+
 Faster: exact-ray projection loads each cell corner once and integrates one
 spatial derivative for every pose direction (about 2.4x forward and 3x
 gradient on the CPU at 48³); the CUDA cone transpose weights, reorders and
