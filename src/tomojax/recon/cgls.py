@@ -360,7 +360,7 @@ def _solve_streamed(
     penalty = partial(
         regularization_normal, spacing=spacing, damping=damping, gradient_damping=gradient_damping
     )
-    data_gradient, _ = exact(x0, key)
+    data_gradient, _ = exact(initial, key)
     gradient = data_gradient - penalty(x0)
     gamma = jnp.sum(gradient * gradient)
     finite = jnp.all(jnp.isfinite(poses)) & jnp.all(jnp.isfinite(x0))

@@ -95,9 +95,10 @@ def small_problem(offset=0.0):
 
 
 @pytest.mark.numerical
+@pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("damping", [0.0, 0.7])
 @pytest.mark.parametrize("warm_start", [False, True])
-def test_cgls_matches_dense_lstsq_with_tail_batches(damping, warm_start):
+def test_cgls_matches_dense_lstsq_with_tail_batches(stream, damping, warm_start):
     grid, detector, geometry, matrix = small_problem()
     rng = np.random.default_rng(842)
     data = rng.normal(size=(5, 4, 5)).astype(np.float32)
@@ -120,6 +121,7 @@ def test_cgls_matches_dense_lstsq_with_tail_batches(damping, warm_start):
             damping=damping,
             views_per_batch=3,
             projector_backend="jax",
+            stream_projections=stream,
         ),
     )
     np.testing.assert_allclose(volume.ravel(), expected, rtol=2e-4, atol=3e-5)

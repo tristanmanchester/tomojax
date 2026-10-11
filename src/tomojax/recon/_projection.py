@@ -530,7 +530,7 @@ def normal_equation_operators(
     joseph_interpolation: str = "linear",
 ) -> tuple[
     Callable[[jax.Array], tuple[jax.Array, jax.Array]],
-    Callable[[jax.Array, jax.Array], tuple[jax.Array, jax.Array]],
+    Callable[[jax.Array | None, jax.Array], tuple[jax.Array, jax.Array]],
 ]:
     """Return ``(normal, gradient)`` streaming data from a :func:`host_source` key.
 
@@ -538,6 +538,7 @@ def normal_equation_operators(
     touching no measured data. ``gradient(x, key)`` returns ``A^T (y - A x)`` and
     the cancellation scale ``|A|^T (|y| + |A x|)``, reading each batch of ``y``
     from the host. Only volume-sized arrays and one batch are ever on the device.
+    ``gradient(None, key)`` skips the forward projection of a known-zero volume.
     """
     ops = _Batches(
         poses,
@@ -579,14 +580,14 @@ def normal_equation_operators(
 
         return jax.lax.fori_loop(0, ops.count, body, (jnp.float32(0), ops.zeros_volume()))
 
-    def gradient(volume: jax.Array, key: jax.Array) -> tuple[jax.Array, jax.Array]:
+    def gradient(volume: jax.Array | None, key: jax.Array) -> tuple[jax.Array, jax.Array]:
         def body(
             chunk: jax.Array, carry: tuple[jax.Array, jax.Array]
         ) -> tuple[jax.Array, jax.Array]:
             total, scale = carry
             start, batch, valid = ops.select(chunk)
             measured = read_views(key, start, shape)
-            predicted = ops.project(volume, start, batch)
+            predicted = 0.0 if volume is None else ops.project(volume, start, batch)
             mask = valid[:, None, None]
             residual = jnp.where(mask, measured - predicted, 0.0)
             size = jnp.where(mask, jnp.abs(measured) + jnp.abs(predicted), 0.0)
