@@ -113,8 +113,10 @@ def test_cuda_columns_retain_individual_central_differences(
 
     actual = candidate(params, nominal, frame, volume, target, weight)
     expected = individual(params, nominal, frame, volume, target, weight)
+    # Batching may reorder float32 pose arithmetic; differencing at a ~1e-5 step
+    # magnifies that rounding, so compare at each column's scale, not bitwise.
     for a, b in zip(actual, expected, strict=True):
-        np.testing.assert_array_equal(a, b)
+        np.testing.assert_allclose(a, b, rtol=0, atol=1e-4 * float(np.max(np.abs(b))))
 
 
 @pytest.mark.parametrize("cone", [False, True])
