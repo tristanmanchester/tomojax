@@ -22,6 +22,10 @@ crops read only their calibration window, and correction averages calibrations
 in bounded host batches with FP64 accumulation. Use `np.asarray(frames.flats)`
 or index the stack to read its pixels explicitly.
 
+Raw-frame correction now accepts `RadialDistortion`: a calibrated backward
+radial polynomial with bilinear transmission pullback before the log, explicit
+pixel/crop/binning coordinates, and saved correction settings.
+
 Faster: exact-ray projection loads each cell corner once and integrates one
 spatial derivative for every pose direction (about 2.4x forward and 3x
 gradient on the CPU at 48³); the CUDA cone transpose weights, reorders and
