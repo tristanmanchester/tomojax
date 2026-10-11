@@ -19,8 +19,10 @@ def _zingers(values: np.ndarray, size: int) -> np.ndarray:
 def _stripes(values: np.ndarray, width: int) -> np.ndarray:
     ranked = np.sort(values, axis=0)
     half = width // 2
-    padded = np.pad(ranked, ((0, 0), (0, 0), (half, width - 1 - half)), mode="edge")
+    padded = np.pad(ranked, ((0, 0), (0, 0), (half, half)), mode="edge")
     local = np.median(np.lib.stride_tricks.sliding_window_view(padded, width, axis=2), axis=-1)
+    if width % 2 == 0:
+        local = 0.5 * (local[..., :-1] + local[..., 1:])
     return values - np.median(ranked - local, axis=0)[None]
 
 
@@ -40,6 +42,14 @@ def test_stripe_windows_match_numpy(views: int, rows: int, width: int) -> None:
     values = np.random.default_rng(width).normal(size=(views, rows, 19)).astype(np.float32)
     actual = jax.jit(Stripes(width=width).apply)(jnp.asarray(values))
     np.testing.assert_allclose(actual, _stripes(values, width), rtol=1e-6, atol=2e-7)
+
+
+@pytest.mark.parametrize("width", [3, 4, 8, 9])
+def test_stripes_commute_with_detector_reversal(width: int) -> None:
+    values = np.random.default_rng(615).normal(size=(17, 3, 19)).astype(np.float32)
+    correct = jax.jit(Stripes(width).apply)
+    reversed_result = np.asarray(correct(values[..., ::-1]))[..., ::-1]
+    np.testing.assert_array_equal(correct(values), reversed_result)
 
 
 @pytest.mark.parametrize("shape", [(257, 5, 1025), (257, 3, 4097)])

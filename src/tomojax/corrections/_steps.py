@@ -104,7 +104,9 @@ class Stripes(Step):
     columns compare like with like; a pixel's offset is the median over ranks
     of its sorted values minus their median over ``width`` columns. Only that
     constant is subtracted, so data without defects pass unchanged; widen
-    ``width`` for wider stripes.
+    ``width`` for wider stripes. An even ``width`` averages the two windows
+    centred half a pixel either side, so reversing the detector does not
+    change the correction.
     """
 
     domain: ClassVar[Domain] = "line integrals"
@@ -241,7 +243,8 @@ class Paganin(Step):
     Filters each view's transmission by ``1 / (1 + z lambda (delta/beta) |k|^2 / (4 pi))``
     before the log, so the line integrals are of the material's attenuation
     with the edge fringes folded back in. ``delta_beta`` is the material's
-    delta / beta, ``distance`` the sample-to-detector distance (m),
+    delta / beta, ``distance`` the effective propagation distance (m: the
+    sample-to-detector distance, divided by the magnification in a cone beam),
     ``energy_kev`` the X-ray energy and ``pixel_size`` the detector pixel at
     the sample (m; the pixel divided by the magnification in a cone beam).
     Views are padded by half their size, edges repeated, against wrap-around.
@@ -296,8 +299,13 @@ def _sliding_median(values: jax.Array, width: int) -> jax.Array:
     times slower on a GPU).
     """
     half, columns = width // 2, values.shape[1]
-    padded = jnp.pad(values, ((0, 0), (half, width - 1 - half)), mode="edge")
-    return _median_of([padded[:, k : k + columns] for k in range(width)])
+    even = width % 2 == 0
+    padded = jnp.pad(values, ((0, 0), (half, half)), mode="edge")
+    # An even window is centred between pixels: take one more window and
+    # average neighbours onto the pixels, so reversing the detector does not
+    # change the correction.
+    median = _median_of([padded[:, k : k + columns + even] for k in range(width)])
+    return 0.5 * (median[:, :-1] + median[:, 1:]) if even else median
 
 
 def _median_of(window: list[jax.Array]) -> jax.Array:

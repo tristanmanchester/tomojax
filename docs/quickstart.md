@@ -83,10 +83,12 @@ the centre of rotation with `tomojax align --mode cor` (see the
 ### Retrieve phase from propagation-based phase contrast
 
 `Paganin` is single-material phase retrieval: it filters each view's
-transmission before the logarithm. It takes the material's δ/β, the
-sample-to-detector distance in metres, the X-ray energy in keV and the pixel
-size at the sample in metres (the detector pixel divided by the magnification
-in a cone beam). The values below are illustrative:
+transmission before the logarithm. It takes the material's δ/β, the effective
+propagation distance in metres (the sample-to-detector distance, divided by the
+magnification in a cone beam), the X-ray energy in keV and the pixel size at
+the sample in metres (the detector pixel, divided by the magnification in a
+cone beam). The step does not infer these from the scan. The values below are
+illustrative:
 
 ```python
 import tomojax as tj

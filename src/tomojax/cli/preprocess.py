@@ -117,8 +117,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--paganin",
         type=_numbers,
         metavar="DELTA_BETA,DISTANCE,ENERGY_KEV,PIXEL",
-        help="Single-material phase retrieval: delta/beta, sample-detector distance (m), "
-        "energy (keV), pixel at the sample (m)",
+        help="Single-material phase retrieval: delta/beta, effective propagation distance (m), "
+        "energy (keV), pixel at the sample (m). For cone beams divide both the "
+        "sample-detector distance and the detector pixel by magnification",
     )
     _ = parser.add_argument(
         "--epsilon", type=float, default=1e-6, help="Floor of the flat field and transmission"
