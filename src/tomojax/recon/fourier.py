@@ -187,16 +187,7 @@ def _run_host_pipeline(
                 stop = min(start + depth, nz)
                 if stop < nz:
                     prepared = reader.submit(prepare, stop)
-                try:
-                    job = plan.enqueue(data)
-                except BaseException:
-                    # An execution-side failure must also commit preceding
-                    # completed slabs before releasing their transfer owners.
-                    for first, queued in pending:
-                        finish(first, queued)
-                    pending.clear()
-                    raise
-                pending.append((start, job))
+                pending.append((start, plan.enqueue(data)))
                 if len(pending) >= 2:
                     finish(*pending.pop(0))
             for first, job in pending:

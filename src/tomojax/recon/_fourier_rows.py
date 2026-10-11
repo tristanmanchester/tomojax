@@ -25,8 +25,8 @@ def prepare_projection_rows(projections, order, positions) -> np.ndarray | Proje
 
     Only contributing neighbors are copied, even for strided/mapped input. A
     sampled invalid value fails here, on the reader, before later GPU work can
-    change the completed-slab failure contract. Integer gathers and exceptional
-    near-overflow arithmetic retain the existing host sampling path.
+    change the completed-slab failure contract. Integer rows need no
+    interpolation and keep the host sampling path.
     """
     nv = projections.shape[1]
     positions = np.clip(positions, -1, nv)
@@ -40,12 +40,8 @@ def prepare_projection_rows(projections, order, positions) -> np.ndarray | Proje
     lower = np.where(valid_lower, np.searchsorted(unique, indices), -1)
     upper = np.where(valid_upper, np.searchsorted(unique, indices + 1), -1)
     samples = np.asarray(projections[order[None, :], unique[:, None], :], dtype=np.float32)
-    minimum = np.min(samples, initial=np.float32(0))
-    maximum = np.max(samples, initial=np.float32(0))
-    if not (np.isfinite(minimum) and np.isfinite(maximum)):
+    if not np.isfinite(samples).all():
         raise ValueError("fourier_reconstruct: sampled projection rows must be finite in FP32")
-    if max(-minimum, maximum) > np.finfo(np.float32).max / 2:
-        return sample_projection_rows(projections, order, positions)
     return ProjectionRows(samples, lower, upper, fraction)
 
 
@@ -77,33 +73,10 @@ def _row_kernel():
 
 
 def interpolate_projection_rows(rows: ProjectionRows, source, depth: int, xp):
-    """Materialize an owned FFT slab; return metadata owners for async CUDA use.
-
-    The NumPy path also permits an existing portable plan to consume staged
-    rows, for example when independently testing allocation-retry orchestration.
-    """
+    """An owned CUDA FFT slab, and the metadata arrays it needs until the kernel runs."""
     nviews, nu = rows.samples.shape[1:]
-    if xp is np:
-        output = np.zeros((depth, nviews, nu), dtype=np.float32)
-        for indices, weight in ((rows.lower, 1 - rows.fraction), (rows.upper, rows.fraction)):
-            valid = indices >= 0
-            if np.any(valid):
-                output[np.flatnonzero(valid)] += source[indices[valid]] * weight[valid, None, None]
-        return output, ()
     output = xp.empty((depth, nviews, nu), dtype=xp.float32)
-    lower, upper, fraction = (
-        xp.asarray(rows.lower),
-        xp.asarray(rows.upper),
-        xp.asarray(rows.fraction),
-    )
-    _row_kernel()(
-        source,
-        lower,
-        upper,
-        fraction,
-        np.int64(nviews),
-        np.int64(nu),
-        np.int64(len(rows.fraction)),
-        output,
-    )
+    lower, upper, fraction = (xp.asarray(a) for a in (rows.lower, rows.upper, rows.fraction))
+    count = np.int64(len(rows.fraction))
+    _row_kernel()(source, lower, upper, fraction, np.int64(nviews), np.int64(nu), count, output)
     return output, (lower, upper, fraction)

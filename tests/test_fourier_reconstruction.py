@@ -37,18 +37,18 @@ def staged_rows():
     return implementation
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.gpu
 @pytest.mark.parametrize("dtype", [np.float32, np.float64, np.int16])
 @pytest.mark.parametrize("nv", [1, 2, 5, 11])
 def test_bounded_row_staging_matches_host_rounding_and_partial_padding(
-    backend, dtype, nv, row_grid, staged_rows
+    dtype, nv, row_grid, staged_rows
 ):
     sample_projection_rows = row_grid.sample_projection_rows
     ProjectionRows = staged_rows.ProjectionRows
     interpolate_projection_rows = staged_rows.interpolate_projection_rows
     prepare_projection_rows = staged_rows.prepare_projection_rows
 
-    xp = np if backend == "numpy" else pytest.importorskip("cupy")
+    xp = pytest.importorskip("cupy")
     rng = np.random.default_rng(697)
     backing = (rng.normal(size=(7, nv, 26)) * 10).astype(dtype)
     backing.flat[::13] = -0.0
@@ -65,8 +65,7 @@ def test_bounded_row_staging_matches_host_rounding_and_partial_padding(
     actual, _owners = interpolate_projection_rows(
         rows, xp.asarray(rows.samples), len(positions) + 2, xp
     )
-    if backend == "cupy":
-        actual = xp.asnumpy(actual)
+    actual = xp.asnumpy(actual)
     expected = np.pad(sample_projection_rows(data, order, positions), ((0, 2), (0, 0), (0, 0)))
     np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
     np.testing.assert_array_equal(data, saved)
@@ -90,42 +89,6 @@ def test_bounded_staging_ignores_unused_invalid_rows_without_taking_full_source(
     assert isinstance(rows, ProjectionRows)
     assert rows.samples.shape == (2, 5, 4)
     np.testing.assert_array_equal(rows.samples, 2)
-
-
-def test_host_pipeline_commits_pending_slabs_after_enqueue_failure():
-    from typing import cast
-
-    # check-public-imports: allow-private
-    from tomojax.recon._fourier_backend import FourierPlan
-    from tomojax.recon.fourier import _run_host_pipeline
-
-    queued, waited, written = [], [], []
-
-    class Job:
-        def __init__(self, start):
-            self.start = start
-
-        def wait(self):
-            waited.append(self.start)
-            return np.zeros((4, 2, 2), np.float32)
-
-    class Plan:
-        def enqueue(self, data):
-            start = int(data[0])
-            if start == 8:
-                raise RuntimeError("execution-side failure")
-            queued.append(start)
-            return Job(start)
-
-    with pytest.raises(RuntimeError, match="execution-side failure"):
-        _run_host_pipeline(
-            cast(FourierPlan, Plan()),
-            16,
-            4,
-            lambda start: np.array([start]),
-            lambda start, _: written.append(start),
-        )
-    assert queued == waited == written == [0, 4]
 
 
 @pytest.mark.gpu
@@ -263,6 +226,10 @@ def test_cuda_allocation_exhaustion_retries_smaller_slabs_and_rewrites_output(mo
     monkeypatch.setattr(implementation, "FourierPlan", Plan)
     monkeypatch.setattr(implementation, "is_cuda_oom", lambda error: isinstance(error, Exhausted))
     monkeypatch.setattr(implementation, "_HOST_PIPELINE_MIN_BYTES", 10**12)
+    # The NumPy stand-in plan takes host-sampled rows, not CUDA-staged ones.
+    monkeypatch.setattr(
+        implementation, "prepare_projection_rows", implementation.sample_projection_rows
+    )
     output = np.full(expected.shape, -123, np.float32)
     actual = fourier_reconstruct(
         geometry,
