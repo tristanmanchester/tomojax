@@ -126,6 +126,8 @@ repeated angles before its Fourier metric, avoiding a biased rotation centre
 after view rejection or repeated exposures. Its metric uses real FFTs and a
 folded frequency mask instead of evaluating both conjugate half-planes, and
 copies only its sampled detector rows from device scans to the host.
+Narrow detectors keep enough columns in the coarse centre search to avoid
+aliased minima; odd-width coarse crops retain the correct detector midpoint.
 
 Data fixes: NXtomo angles at `/entry/sample/rotation_angle` are read (they
 loaded as zeros), with radians converted; `tj.load` leaves out frames that

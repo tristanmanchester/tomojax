@@ -234,6 +234,31 @@ _COR_CONFIG = AlignConfig(
 
 
 @pytest.mark.numerical
+@pytest.mark.parametrize("columns", [31, 32, 63, 64])
+@pytest.mark.parametrize("seed", [101, 108])
+def test_sinogram_coarse_search_preserves_narrow_detector_evidence(columns, seed):
+    angles = np.linspace(0, 180, 180, endpoint=False)
+    theta = np.deg2rad(angles)
+    rng = np.random.default_rng(seed)
+    centre = rng.uniform(-0.2 * columns, 0.2 * columns)
+    u = np.arange(columns) - (columns - 1) / 2 + centre
+    sino = np.zeros((len(angles), columns))
+    # Independent line integrals of an off-axis, truncated Gaussian mixture.
+    for _ in range(12):
+        cx, cy = rng.uniform(-0.6 * columns, 0.6 * columns, 2)
+        radius = rng.uniform(0.03 * columns, 0.1 * columns)
+        projected = np.cos(theta) * cx - np.sin(theta) * cy
+        sino += (
+            rng.uniform(0.5, 2)
+            * radius
+            * np.exp(-0.5 * ((u[None] - projected[:, None]) / radius) ** 2)
+        )
+    actual = sinogram_det_u_seed(sino[:, None, :].astype(np.float32), angles, rows=1)
+    assert actual is not None
+    assert abs(actual.det_u_px - centre) < 0.4
+
+
+@pytest.mark.numerical
 def test_public_cor_keeps_wrapped_half_turn_evidence():
     angles = 350 + np.linspace(0, 180, 120, endpoint=False)
     data, centre = _analytic_shifted_sinogram(angles, 48)

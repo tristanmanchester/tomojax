@@ -285,7 +285,8 @@ def sinogram_det_u_seed(
     360-degree sinogram when the mirror is shifted by twice the axis offset;
     a 360-degree sinogram's Fourier transform has no energy outside a double
     wedge, so the offset minimises the energy there. Coarse on columns binned
-    by 4, then to a quarter pixel; the median over ``rows`` detector rows.
+    by up to 4 without reducing below 32 columns, then to a quarter pixel;
+    the median over ``rows`` detector rows.
     ``ratio`` is the object's size as a fraction of the field (the wedge's
     width), ``drop`` the low frequencies left out. Nonuniformly spaced views
     are interpolated onto a uniform angular grid before the Fourier metric;
@@ -318,12 +319,20 @@ def sinogram_det_u_seed(
         if not np.isfinite(sino).all() or np.ptp(sino) <= 0:
             continue
         sino = _uniform_sinogram(sino, relative[first])
-        # Coarse: columns binned by 4 (and views by 2), every binned pixel.
+        # Preserve enough detector samples for the coarse Fourier metric:
+        # a fixed 4x reduction can alias narrow sinograms into a false basin.
+        binning = max(1, min(4, nu // 32))
         views = len(sino) // 2 * 2
-        coarse = sino[:views, : nu // 4 * 4].reshape(views // 2, 2, -1, 4).mean(axis=(1, 3))
+        coarse = (
+            sino[:views, : nu // binning * binning]
+            .reshape(views // 2, 2, -1, binning)
+            .mean(axis=(1, 3))
+        )
         reach = max(2, int(max_fraction * coarse.shape[1]))
         steps = np.arange(-reach, reach + 1, dtype=np.float64)
-        best = steps[int(np.argmin(_vo_metrics(coarse, steps, ratio, drop)))] * 4
+        best = steps[int(np.argmin(_vo_metrics(coarse, steps, ratio, drop)))] * binning
+        # Dropping rightmost columns moves the coarse detector midpoint left.
+        best -= (nu % binning) / 2
         # Fine: whole pixels around it, then quarter pixels.
         for spread, step in ((6.0, 1.0), (1.0, 0.25)):
             near = best + np.arange(-spread, spread + step / 2, step)
