@@ -7,7 +7,6 @@ runs use SciPy. The result is a host float32 array on both paths.
 
 from __future__ import annotations
 
-import importlib.util
 import os
 from typing import Any
 
@@ -17,8 +16,7 @@ import jax.numpy as jnp
 import numpy as np
 from scipy import ndimage
 
-from ._cuda_joseph import xla_stream
-from .backend_policy import cuda_backend
+from ._cuda_joseph import cuda_gather_available, xla_stream
 
 # Below this size a one-off callback/kernel compilation costs more than the
 # CPU interpolation. This is a dispatch threshold, not a change in resolution.
@@ -56,27 +54,18 @@ def affine_resample(volume: np.ndarray | jax.Array, matrix: np.ndarray) -> np.nd
     reporting operation is not a differentiable projector.
 
     ``TOMOJAX_CUDA_KERNELS=0`` disables CUDA; ``1`` also uses it for small inputs.
-    Explicit CPU arrays, and host inputs under CPU default-device contexts,
-    retain the SciPy path.
     """
     setting = os.environ.get("TOMOJAX_CUDA_KERNELS", "auto")
-    use_cuda = (
-        setting != "0"
-        and (setting == "1" or volume.size >= _MIN_CUDA_VOXELS)
-        and cuda_backend()
-        and importlib.util.find_spec("cupy") is not None
-    )
-    if use_cuda:
+    large = setting == "1" or volume.size >= _MIN_CUDA_VOXELS
+    if setting != "0" and large and cuda_gather_available():
         source = jnp.asarray(volume, jnp.float32)
-        devices = source.devices()
-        if len(devices) == 1:
-            device = next(iter(devices))
-            if device.platform == "gpu" and "cuda" in device.client.platform_version.lower():
-                # Preserve FP64 coefficients even when jax_enable_x64 is false.
-                # CuPy decodes these bits on the device that owns the volume.
-                words = np.ascontiguousarray(matrix, np.float64).view(np.uint32).reshape(4, 4, 2)
-                encoded = jax.device_put(words, device)
-                return np.asarray(_resample_cuda(source, encoded))
+        (device,) = source.devices()
+        if device.platform == "gpu":
+            # FP64 coefficients travel as raw words, so they survive
+            # jax_enable_x64=False; CuPy reads them back on the device.
+            words = np.ascontiguousarray(matrix, np.float64).view(np.uint32)
+            encoded = jax.device_put(words.reshape(4, 4, 2), device)
+            return np.asarray(_resample_cuda(source, encoded))
     return ndimage.affine_transform(
         np.asarray(volume, np.float32),
         np.asarray(matrix, np.float64),

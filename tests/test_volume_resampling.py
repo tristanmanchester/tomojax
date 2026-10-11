@@ -106,13 +106,9 @@ def test_explicit_cpu_array_retains_scipy_path_on_a_cuda_default_backend(monkeyp
         np.testing.assert_array_equal(affine_resample(volume, matrix), expected)
 
 
-def test_missing_optional_cupy_retains_scipy(monkeypatch):
+def test_without_cuda_kernels_resampling_uses_scipy(monkeypatch):
     monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
-    monkeypatch.setattr(resampling, "cuda_backend", lambda: True)
-    find_spec = importlib.util.find_spec
-    monkeypatch.setattr(
-        importlib.util, "find_spec", lambda name: None if name == "cupy" else find_spec(name)
-    )
+    monkeypatch.setattr(resampling, "cuda_gather_available", lambda: False)
     volume = np.arange(60, dtype=np.float32).reshape(3, 4, 5)
     matrix = _matrix(volume.shape, "rigid")
     expected = ndimage.affine_transform(volume, matrix, order=1, mode="grid-constant")
