@@ -37,6 +37,10 @@ pixel/crop/binning coordinates, and saved correction settings.
 Its geometry is evaluated in double precision on the device rather than
 embedding large per-pixel interpolation tables in each compiled batch.
 
+Faster: axial CUDA FBP keeps masked accumulator addresses affine, restoring
+contiguous memory access without changing interpolation or accumulation. The
+interpret backend retains its padded-row alias protection.
+
 Fixed: parallel FBP selects its backprojector and places its streamed FFT filter
 on the explicitly requested execution devices, rather than the input storage
 device. CPU-resident input can use explicit CUDA/Pallas, and explicit CPU

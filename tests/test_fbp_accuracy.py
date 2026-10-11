@@ -936,3 +936,32 @@ def test_parallel_fbp_keeps_partial_slabs_and_accumulator(z_mode, nz) -> None:
             )
         )(poses, rows, jnp.asarray(initial.copy()))
         np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=2e-6)
+
+
+@pytest.mark.parametrize("interpret", [False, True])
+def test_axial_fbp_indices_keep_affine_cuda_addresses(interpret):
+    """Only interpret stores need a sentinel for padded rows aliasing a column."""
+    import jax
+    from jax.experimental import pallas as pl
+
+    implementation = importlib.import_module("tomojax.recon._fbp_pallas")
+
+    def indices(out):
+        flat, *_ = implementation._voxel_indices(
+            (5, 3, 3), block_size=128, z_mode="integer", interpret=interpret
+        )
+        out[:] = flat.reshape(-1)
+
+    actual = np.asarray(
+        pl.pallas_call(
+            indices,
+            out_shape=jax.ShapeDtypeStruct((128,), jnp.int32),
+            grid=(1, 1),
+            interpret=True,
+        )()
+    )
+    column, row = np.arange(32)[:, None], np.arange(4)[None, :]
+    expected = column * 3 + row
+    if interpret:
+        expected = np.where((column < 15) & (row < 3), expected, 45)
+    np.testing.assert_array_equal(actual, expected.reshape(-1))

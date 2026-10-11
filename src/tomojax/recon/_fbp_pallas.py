@@ -78,7 +78,7 @@ def _column_tile(nz: int, block_size: int) -> tuple[int, int]:
 
 
 def _voxel_indices(
-    shape: tuple[int, int, int], *, block_size: int, z_mode: str
+    shape: tuple[int, int, int], *, block_size: int, z_mode: str, interpret: bool
 ) -> tuple[jnp.ndarray, ...]:
     nx, ny, nz = shape
     if z_mode == "general":
@@ -95,9 +95,11 @@ def _voxel_indices(
         ix, iy = (column // ny)[:, None], (column % ny)[:, None]
         flat = column[:, None] * nz + iz
         valid = (column[:, None] < nx * ny) & (iz < nz)
-        # Masked padded rows must not alias the next column's first voxel:
-        # the interpret backend implements stores through indexed updates.
-        flat = jnp.where(valid, flat, nx * ny * nz)
+        # Interpret stores use indexed updates: masked padded rows must not
+        # alias the next column's first voxel. CUDA suppresses masked stores;
+        # keep affine addresses there so loads/stores can remain vectorized.
+        if interpret:
+            flat = jnp.where(valid, flat, nx * ny * nz)
     return flat, valid, ix, iy, iz
 
 
@@ -130,12 +132,15 @@ def _backproject_filtered_kernel(
     n_views: int,
     block_size: int,
     z_mode: str,
+    interpret: bool,
 ) -> None:
     # With an accumulator, refs is (accumulator, aliased output).
     acc_ref, out_ref = refs if len(refs) == 2 else (None, refs[0])
     nv, nu = detector_shape
     du, dv = detector_spacing
-    flat, valid, ix, iy, iz = _voxel_indices(shape, block_size=block_size, z_mode=z_mode)
+    flat, valid, ix, iy, iz = _voxel_indices(
+        shape, block_size=block_size, z_mode=z_mode, interpret=interpret
+    )
     x = ix.astype(jnp.float32) * voxel[0] + origin[0]
     y = iy.astype(jnp.float32) * voxel[1] + origin[1]
     z = iz.astype(jnp.float32) * voxel[2] + origin[2]
@@ -236,6 +241,7 @@ def _backprojection_call(
             n_views=n_views,
             block_size=block_size,
             z_mode=z_mode,
+            interpret=interpret,
         ),
         out_shape=jax.ShapeDtypeStruct((count,), jnp.float32),
         grid=launch_grid,
