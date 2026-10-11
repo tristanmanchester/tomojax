@@ -333,3 +333,27 @@ def test_public_cor_fallback_seed_remains_an_incremental_offset(monkeypatch):
     first = out.info["outer_stats"][0]
     assert first["detector_center_seed_method"] == "fbp_reprojection_residual_search"
     assert first["detector_center_seed_det_u_px"] == pytest.approx(1.25)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("columns", [128, 511])
+@pytest.mark.parametrize("views", [901, 1801])
+def test_sinogram_coarse_angular_binning_preserves_sharp_feature_centre(columns, views):
+    angles = np.linspace(0, 180, views, endpoint=False)
+    theta = np.deg2rad(angles)
+    rng = np.random.default_rng(968)
+    centre = rng.uniform(-0.2 * columns, 0.2 * columns)
+    u = np.arange(columns) - (columns - 1) / 2 + centre
+    sino = np.zeros((views, columns))
+    for _ in range(12):
+        cx, cy = rng.uniform(-0.6 * columns, 0.6 * columns, 2)
+        radius = rng.uniform(0.001 * columns, 0.02 * columns)
+        projected = np.cos(theta) * cx - np.sin(theta) * cy
+        sino += (
+            rng.uniform(0.5, 2)
+            * radius
+            * np.exp(-0.5 * ((u[None] - projected[:, None]) / radius) ** 2)
+        )
+    actual = sinogram_det_u_seed(sino[:, None, :].astype(np.float32), angles, rows=1)
+    assert actual is not None
+    assert abs(actual.det_u_px - centre) < 0.3

@@ -284,9 +284,10 @@ def sinogram_det_u_seed(
     A sinogram over 180 degrees and its mirror image, stacked, make a
     360-degree sinogram when the mirror is shifted by twice the axis offset;
     a 360-degree sinogram's Fourier transform has no energy outside a double
-    wedge, so the offset minimises the energy there. Coarse on columns binned
-    by up to 4 without reducing below 32 columns, then to a quarter pixel;
-    the median over ``rows`` detector rows.
+    wedge, so the offset minimises the energy there. The coarse search bins
+    columns by up to 4 without reducing below 32, and averages dense angular
+    rows without reducing below 128. Full-resolution searches refine to a
+    quarter pixel; the result is the median over ``rows`` detector rows.
     ``ratio`` is the object's size as a fraction of the field (the wedge's
     width), ``drop`` the low frequencies left out. Nonuniformly spaced views
     are interpolated onto a uniform angular grid before the Fourier metric;
@@ -322,10 +323,13 @@ def sinogram_det_u_seed(
         # Preserve enough detector samples for the coarse Fourier metric:
         # a fixed 4x reduction can alias narrow sinograms into a false basin.
         binning = max(1, min(4, nu // 32))
-        views = len(sino) // 2 * 2
+        # The coarse offset only needs the low angular frequencies; averaging
+        # dense views avoids paying for their fine-resolution bandwidth here.
+        angular_binning = max(2, len(sino) // 128)
+        views = len(sino) // angular_binning * angular_binning
         coarse = (
             sino[:views, : nu // binning * binning]
-            .reshape(views // 2, 2, -1, binning)
+            .reshape(views // angular_binning, angular_binning, -1, binning)
             .mean(axis=(1, 3))
         )
         reach = max(2, int(max_fraction * coarse.shape[1]))
