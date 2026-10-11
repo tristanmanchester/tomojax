@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from types import SimpleNamespace
 
 import jax.numpy as jnp
@@ -226,6 +227,46 @@ def test_sinogram_real_fourier_metric_matches_full_spectrum(columns):
         spectrum = np.fft.fftshift(np.fft.fft2(np.vstack([sino, moved])))
         expected.append(np.mean(np.abs(spectrum) * mask))
     np.testing.assert_allclose(_vo_metrics(sino, offsets, 0.5, 3), expected, rtol=2e-6)
+
+
+def test_sinogram_frequency_cache_is_bounded_immutable_and_keyed():
+    initializers = importlib.import_module("tomojax.alignment._geometry.initializers")
+    cached = initializers._vo_folded_mask
+    cached.cache_clear()
+    try:
+        fine = cached(37, 33, 0.5, 3)
+        expected = fine.copy()
+        assert not fine.flags.writeable
+        assert cached(37, 33, 0.5, 3) is fine
+        coarse = cached(18, 16, 0.5, 3)
+        assert cached(37, 33, 0.5, 3) is fine
+        assert cached(18, 16, 0.5, 3) is coarse
+        for key in [(37, 33, 0.4, 3), (37, 33, 0.4, 1), (38, 33, 0.4, 1)]:
+            actual = cached(*key)
+            # A different geometry or wedge must never reuse the old weights.
+            assert actual is not fine
+            assert cached.cache_info().currsize == 2
+        restored = cached(37, 33, 0.5, 3)
+        assert restored is not fine
+        np.testing.assert_array_equal(restored, expected)
+    finally:
+        cached.cache_clear()
+
+
+def test_sinogram_metrics_reuse_weights_without_caching_measurements():
+    initializers = importlib.import_module("tomojax.alignment._geometry.initializers")
+    cached = initializers._vo_folded_mask
+    cached.cache_clear()
+    try:
+        offsets = np.array([-3, -0.5, 0, 1.25, 4])
+        sinogram = np.random.default_rng(15).normal(size=(37, 33)).astype(np.float32)
+        first = _vo_metrics(sinogram, offsets, 0.5, 3)
+        second = _vo_metrics(2 * sinogram, offsets, 0.5, 3)
+        np.testing.assert_array_equal(second, 2 * first)
+        assert cached.cache_info().misses == 1
+        assert cached.cache_info().hits == 1
+    finally:
+        cached.cache_clear()
 
 
 _COR_CONFIG = AlignConfig(

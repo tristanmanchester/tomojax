@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -371,13 +372,7 @@ def _uniform_sinogram(sino: np.ndarray, angles: np.ndarray) -> np.ndarray:
 def _vo_metrics(sino: np.ndarray, offsets: np.ndarray, ratio: float, drop: int) -> np.ndarray:
     """Vo's metric for each axis offset (pixels from the centre column) of ``sino``."""
     views, cols = sino.shape
-    mask = np.fft.ifftshift(_vo_mask(2 * views, cols, 0.5 * ratio * cols, drop))
-    # Real sinograms have conjugate Fourier pairs. Fold the mask onto the
-    # stored half-plane, including each DC/Nyquist column only once. The mask
-    # itself is not symmetric, so simply doubling positive frequencies fails.
-    folded = mask[:, : cols // 2 + 1].copy()
-    stop = (cols + 1) // 2
-    folded[:, 1:stop] += mask[(-np.arange(2 * views)) % (2 * views)][:, cols - 1 : cols - stop : -1]
+    folded = _vo_folded_mask(views, cols, ratio, drop)
     mirror = sino[:, ::-1]
     # Shift the mirror by twice the offset (sub-pixel, along u, by Fourier
     # phase), with the far edge of the flipped sinogram where it wraps.
@@ -399,6 +394,20 @@ def _vo_metrics(sino: np.ndarray, offsets: np.ndarray, ratio: float, drop: int) 
         energy = np.abs(np.asarray(fft.rfft2(both, workers=-1)))
         out[i] = float(np.sum(energy * folded) / (2 * views * cols))
     return out
+
+
+@lru_cache(maxsize=2)
+def _vo_folded_mask(views: int, cols: int, ratio: float, drop: int) -> np.ndarray:
+    """Reuse the immutable coarse/fine frequency weights across rows and searches."""
+    mask = np.fft.ifftshift(_vo_mask(2 * views, cols, 0.5 * ratio * cols, drop))
+    # Real sinograms have conjugate Fourier pairs. Fold the mask onto the
+    # stored half-plane, including each DC/Nyquist column only once. The mask
+    # itself is not symmetric, so simply doubling positive frequencies fails.
+    folded = mask[:, : cols // 2 + 1].copy()
+    stop = (cols + 1) // 2
+    folded[:, 1:stop] += mask[(-np.arange(2 * views)) % (2 * views)][:, cols - 1 : cols - stop : -1]
+    folded.flags.writeable = False
+    return folded
 
 
 def _vo_mask(rows: int, cols: int, radius: float, drop: int) -> np.ndarray:
