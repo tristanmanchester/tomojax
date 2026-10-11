@@ -342,6 +342,7 @@ def project_and_score_stack(
             ray_integrator=ray_integrator,
         )
     )
+
     def vm_project(T: jnp.ndarray, start: jnp.ndarray | int) -> jnp.ndarray:
         """Project the views ``start, start + 1, ...`` at poses ``T``."""
         if frames is None:
@@ -349,7 +350,12 @@ def project_and_score_stack(
         # One batched cone call per chunk, not one launch per view.
         chunk = jax.lax.dynamic_slice(frames, (start, 0, 0), (T.shape[0], 4, 3))
         return _cone_project_poses(
-            T, grid, detector, volume, chunk, differentiable=require_differentiable_projector,
+            T,
+            grid,
+            detector,
+            volume,
+            chunk,
+            differentiable=require_differentiable_projector,
             projector_backend=backend,
         )
 
@@ -365,7 +371,8 @@ def project_and_score_stack(
     )
     use_plain_l2_fast_path = loss_adapter.name == "l2" and view_mask is None and loss_mask is None
     if (
-        ray_integrator == "sampled" and frames is None
+        ray_integrator == "sampled"
+        and frames is None
         and backend == "pallas"
         and use_plain_l2_fast_path
         and not require_differentiable_projector

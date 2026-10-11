@@ -13,6 +13,7 @@ authors = [{ name = "Tristan Manchester", email = "tristan.manchester@diamond.ac
 dependencies = [
     "h5py>=3.14.0,<4",
     "imageio[tifffile]>=2.37.3,<3",
+    "tifffile>=2026.9.20",
     "jax>=0.11.2,<0.12",
     "numpy>=2.3.2,<3",
     "optax>=0.2.5,<0.3",

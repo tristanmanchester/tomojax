@@ -43,6 +43,11 @@ class Step:
     def apply(self, batch: jax.Array) -> jax.Array:
         raise NotImplementedError
 
+    def workspace_pixels(self, rows: int, cols: int) -> int:
+        """Device pixels per view this step needs beyond its input, for batch sizing."""
+        del rows, cols
+        return 0
+
     def statistic(self, batch: jax.Array) -> jax.Array:
         """A ``(views, ...)`` summary of each view in ``batch``."""
         raise NotImplementedError
@@ -253,6 +258,11 @@ class Paganin(Step):
             if not np.isfinite(value) or not value > 0:
                 raise ValueError(f"Paganin {name} must be finite and positive, not {value}")
             object.__setattr__(self, name, value)
+
+    def workspace_pixels(self, rows: int, cols: int) -> int:
+        # Two padded real arrays and two complex half-spectra: about four
+        # padded real arrays per view.
+        return 4 * (rows + 2 * (rows // 2)) * (cols + 2 * (cols // 2))
 
     def apply(self, batch: jax.Array) -> jax.Array:
         _, rows, cols = batch.shape

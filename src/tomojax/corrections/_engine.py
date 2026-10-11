@@ -21,7 +21,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ._records import Correction, Json
-from ._steps import DOMAINS, Paganin, Step
+from ._steps import DOMAINS, Step
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -130,12 +130,8 @@ def correct_projections(
 
 
 def _frame_batch_size(views: int, rows: int, cols: int, steps: Sequence[Step]) -> int:
-    """Automatic view batch size, accounting for padded phase-retrieval buffers."""
-    pixels = rows * cols
-    if any(isinstance(step, Paganin) for step in steps):
-        # Two padded real arrays and two complex half-spectra need about four
-        # padded real-equivalent arrays, beyond the unpadded view input.
-        pixels += 4 * (rows + 2 * (rows // 2)) * (cols + 2 * (cols // 2))
+    """Automatic view batch size, counting the largest step workspace (Paganin's FFTs)."""
+    pixels = rows * cols + max((s.workspace_pixels(rows, cols) for s in steps), default=0)
     return max(1, min(views, _BATCH_BYTES // (4 * pixels)))
 
 

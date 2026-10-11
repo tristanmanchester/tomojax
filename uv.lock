@@ -1168,6 +1168,7 @@ dependencies = [
     { name = "numpy" },
     { name = "optax" },
     { name = "scipy" },
+    { name = "tifffile" },
 ]
 
 [package.optional-dependencies]
@@ -1215,6 +1216,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.3.2,<3" },
     { name = "optax", specifier = ">=0.2.5,<0.3" },
     { name = "scipy", specifier = ">=1.16.1,<2" },
+    { name = "tifffile", specifier = ">=2026.9.20" },
     { name = "tqdm", marker = "extra == 'progress'", specifier = ">=4.67.1,<5" },
 ]
 provides-extras = ["cpu", "cuda12", "fourier-cuda12", "progress"]
