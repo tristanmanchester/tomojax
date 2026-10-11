@@ -57,6 +57,21 @@ def filtered_view_batch_size(
     return min(batch_size, 1 << (capacity.bit_length() - 1))
 
 
+def fft_2d_view_batch_size(batch_size: int, *, fft_shape: tuple[int, int], device: Device) -> int:
+    """Cache-bound the real and half-complex working sets of a batched 2D FFT.
+
+    Unlike independent row transforms, the two-dimensional transform revisits
+    its full padded plane. Estimate eight bytes per spatial point for its real
+    input and half-complex spectrum, without replacing the FFT memory budget or
+    its allocation-failure retry. An unavailable optional probe changes nothing.
+    """
+    size = _cuda_l2_bytes(device)
+    if size is None:
+        return batch_size
+    capacity = max(1, size // (8 * fft_shape[0] * fft_shape[1]))
+    return min(batch_size, 1 << (capacity.bit_length() - 1))
+
+
 def _column_tile(nz: int, block_size: int) -> tuple[int, int]:
     rows = min(128, block_size, 1 << (nz - 1).bit_length())
     return block_size // rows, rows

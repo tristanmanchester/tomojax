@@ -43,6 +43,12 @@ L2 cache as well as the FFT workspace budget. Small or mostly off-detector
 outputs keep their existing batches; an unavailable optional CUDA cache query
 leaves the original planner unchanged.
 
+Faster: oblique parallel FBP budgets its rectangular 2D FFT workspace without
+counting the acquired row dimension twice, avoiding needlessly small batches.
+GPU batches also account for the active device's cache-sized real/half-complex
+FFT working set. The existing conservative memory estimate and out-of-memory
+retry remain; unavailable optional cache queries keep memory-budget sizing.
+
 Faster: exact-ray projection loads each cell corner once and integrates one
 spatial derivative for every pose direction (about 2.4x forward and 3x
 gradient on the CPU at 48³); the CUDA cone transpose weights, reorders and

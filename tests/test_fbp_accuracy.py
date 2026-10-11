@@ -175,6 +175,128 @@ def test_fbp_cache_batch_accounts_for_fractional_row_spacing(monkeypatch) -> Non
     )
 
 
+@pytest.mark.parametrize(
+    ("shape", "capacity"),
+    [((1024, 2048), 2), ((512, 256), 32), ((64, 64), 1024), ((8192, 8192), 1)],
+)
+@pytest.mark.parametrize("budget", [1, 3, 16, 128])
+@pytest.mark.parametrize("available", [True, False])
+def test_2d_fbp_cache_batch_respects_fft_budget_and_actual_device(
+    monkeypatch, shape, capacity, budget, available
+):
+    module = importlib.import_module("tomojax.recon._fbp_pallas")
+    device = _CacheDevice(42, 7)
+
+    def cache(target):
+        assert target is device
+        return 32 * 1024**2 if available else None
+
+    monkeypatch.setattr(module, "_cuda_l2_bytes", cache)
+    actual = module.fft_2d_view_batch_size(budget, fft_shape=shape, device=device)
+    assert actual == (min(budget, capacity) if available else budget)
+
+
+@pytest.mark.parametrize(("nu", "nv"), [(128, 16), (128, 64), (128, 256), (2048, 1024)])
+@pytest.mark.parametrize("tilt_about", ["x", "z"])
+def test_oblique_fbp_budgets_the_actual_rectangular_fft(monkeypatch, nu, nv, tilt_about):
+    """A 2D FFT replaces the row dimension; it does not multiply it by nv."""
+    import jax
+
+    module = importlib.import_module("tomojax.recon.fbp")
+    angles = np.linspace(0, 180, 181, endpoint=False)
+    grid = Grid(32, 32, 8, 0.8, 1.1, 0.9, vol_center=(2.1, -1.3, 0.8))
+    detector = Detector(nu, nv, 1.0, 1.0, (-1.3, 2.1))
+    geometry = LaminographyGeometry(grid, detector, angles, tilt_deg=30, tilt_about=tilt_about)
+    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(len(angles))])
+    # Planning and tracing must not materialize this potentially large stack.
+    data = np.broadcast_to(np.float32(0), (len(angles), nv, nu))
+    estimates, shapes = [], []
+    original_batch, original_fft = module._parallel_filter_batch_size, jnp.fft.rfft2
+
+    def batch(n, rows, columns):
+        estimates.append((n, rows, columns))
+        return original_batch(n, rows, columns)
+
+    def fft(*args, **kwargs):
+        shapes.append(kwargs["s"])
+        return original_fft(*args, **kwargs)
+
+    monkeypatch.setattr(module, "_parallel_filter_batch_size", batch)
+    monkeypatch.setattr(jnp.fft, "rfft2", fft)
+    plan = module._plan(geometry, grid, detector, poses, data, FBPConfig(), cuda=False)
+    assert not plan.separable
+    jax.eval_shape(
+        lambda rows: module._filter_views(
+            rows,
+            jnp.asarray(plan.view_scale[:1]),
+            jnp.asarray(plan.params[:1]),
+            plan.spectrum,
+            jnp.float32(plan.arc_length),
+            detector=plan.detector,
+            separable=plan.separable,
+        ),
+        jax.ShapeDtypeStruct((1, plan.detector.nv, plan.detector.nu), jnp.float32),
+    )
+    assert len(shapes) == 1
+    assert estimates == [(len(angles), *shapes[0])]
+    # The existing conservative estimate and power-of-two rounding still apply.
+    capacity = (512 * 1024**2) // (16 * np.prod(shapes[0]))
+    expected = len(angles) if capacity >= len(angles) else 1 << (int(capacity).bit_length() - 1)
+    assert plan.batch == expected
+
+
+@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("on_host", [True, False])
+def test_oblique_fft_batches_preserve_independent_shifted_gaussian(monkeypatch, backend, on_host):
+    """A rolled camera has no missing cone; its 2D filter recovers the full truth."""
+    import jax
+
+    if backend == "pallas" and jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    module = importlib.import_module("tomojax.recon.fbp")
+    angles = np.linspace(0, 180, 89, endpoint=False)
+    grid = Grid(32, 32, 32, 1.0, 0.9, 1.1)
+    detector = Detector(128, 64, 0.7, 0.9, (-1.3, 2.1))
+    geometry = LaminographyGeometry(grid, detector, angles, tilt_deg=30, tilt_about="z")
+    centre, sigma, amplitude = np.array([-3.4, 2.7, 1.5]), 5.0, 0.02
+    u = (np.arange(detector.nu) - 63.5) * detector.du + detector.center[0]
+    v = (np.arange(detector.nv) - 31.5) * detector.dv + detector.center[1]
+    poses = np.asarray([geometry.pose_for_view(i) for i in range(len(angles))])
+    world = np.einsum("nij,j->ni", poses[:, :3, :3], centre)
+    distance2 = (u[None, None, :] - world[:, 0, None, None]) ** 2
+    distance2 = distance2 + (v[None, :, None] - world[:, 2, None, None]) ** 2
+    data = (amplitude * np.sqrt(2 * np.pi) * sigma * np.exp(-distance2 / (2 * sigma**2))).astype(
+        np.float32
+    )
+    if not on_host:
+        data = jnp.asarray(data)
+    config = FBPConfig(backprojector=backend)
+    actual = np.asarray(fbp(geometry, grid, detector, data, config=config))
+    # An odd view count exercises the final overlapping batch in both the
+    # host-streamed and device-loop paths, without changing quadrature/filtering.
+    plan = module._plan(geometry, grid, detector, jnp.asarray(poses), data, config, cuda=False)
+    bytes_per_view = 8 * module._fft_length(plan.detector.nv) * 2 * (plan.spectrum.shape[0] - 1)
+    cache_module = importlib.import_module("tomojax.recon._fbp_pallas")
+    monkeypatch.setattr(cache_module, "_cuda_l2_bytes", lambda _: bytes_per_view * 3)
+    batches, original_filter = [], module._filter_views
+
+    def filtered(rows, *args, **kwargs):
+        batches.append(rows.shape[0])
+        return original_filter(rows, *args, **kwargs)
+
+    monkeypatch.setattr(module, "_filter_views", filtered)
+    small_batches = np.asarray(fbp(geometry, grid, detector, data, config=config))
+    assert batches and set(batches) == {2}
+    np.testing.assert_allclose(actual, small_batches, rtol=5e-5, atol=2e-8)
+    x = (np.arange(grid.nx) - 15.5) * grid.vx
+    y = (np.arange(grid.ny) - 15.5) * grid.vy
+    z = (np.arange(grid.nz) - 15.5) * grid.vz
+    distance2 = (x[:, None, None] - centre[0]) ** 2 + (y[None, :, None] - centre[1]) ** 2
+    distance2 = distance2 + (z[None, None, :] - centre[2]) ** 2
+    truth = amplitude * np.exp(-distance2 / (2 * sigma**2))
+    assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.008
+
+
 @pytest.mark.gpu
 @pytest.mark.parametrize("on_host", [True, False])
 def test_fbp_cache_limit_preserves_shifted_gaussian_volume(monkeypatch, on_host) -> None:

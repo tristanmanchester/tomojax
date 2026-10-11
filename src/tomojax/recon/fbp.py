@@ -551,13 +551,20 @@ class _Plan:
         """
         part, size = slice(views.start, views.stop), self.batch
         put = partial(jax.device_put, device=device)
-        if self.backend == "pallas" and self.z_mode != "general" and self.separable:
-            from ._fbp_pallas import filtered_view_batch_size
+        if not self.separable or (self.backend == "pallas" and self.z_mode != "general"):
+            from ._fbp_pallas import fft_2d_view_batch_size, filtered_view_batch_size
 
             target = device if device is not None else next(iter(put(self.poses).devices()))
-            size = filtered_view_batch_size(
-                size, grid=self.grid, detector=self.detector, device=target
-            )
+            if self.separable:
+                size = filtered_view_batch_size(
+                    size, grid=self.grid, detector=self.detector, device=target
+                )
+            else:
+                size = fft_2d_view_batch_size(
+                    size,
+                    fft_shape=(_fft_length(self.detector.nv), 2 * (self.spectrum.shape[0] - 1)),
+                    device=target,
+                )
         options = {
             "grid": self.grid,
             "detector": self.detector,
@@ -621,7 +628,9 @@ def _plan(
     else:
         filter_detector = _filter_detector(grid, detector, np.asarray(poses), pad_v=not separable)
     spectrum = rfft_filter_array(cfg.filter, filter_detector.nu, float(detector.du), jnp.float32)
-    n_fft_v = 1 if separable else _fft_length(filter_detector.nv)
+    # Row-wise FFTs keep nv independent rows; a 2D FFT replaces that dimension
+    # with its padded length, rather than multiplying by it again.
+    fft_rows = filter_detector.nv if separable else _fft_length(filter_detector.nv)
     return _Plan(
         poses=poses,
         projections=projections,
@@ -633,9 +642,7 @@ def _plan(
         grid=grid,
         detector=filter_detector,
         backend="pallas" if cuda and cfg.backprojector != "jax" else "jax",
-        batch=_parallel_filter_batch_size(
-            n_views, filter_detector.nv * n_fft_v, 2 * (spectrum.shape[0] - 1)
-        ),
+        batch=_parallel_filter_batch_size(n_views, fft_rows, 2 * (spectrum.shape[0] - 1)),
         z_mode=("integer" if supports_parallel_fbp_z_integer(grid, detector) else "fixed")
         if parallel
         else "general",
