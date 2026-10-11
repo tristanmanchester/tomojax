@@ -326,20 +326,20 @@ def view_frames(geometry: ScanGeometry) -> np.ndarray:
 
     Rows are ``[source, centre, u * du, v * dv]`` (ASTRA's ``cone_vec`` order):
     pixel ``(row r, column c)`` of view i lies at ``centre + (c - nu / 2 + 1/2) u
-    + (r - nv / 2 + 1/2) v``. Every segment of a :class:`ConeSegments`, in order.
+    + (r - nv / 2 + 1/2) v``. Every segment of a :class:`ConeSegments`, in order,
+    with the corrections of any pose wrapper around it.
     """
     from tomojax.core.geometry.views import stack_view_poses
 
-    segments = geometry.segments if isinstance(geometry, ConeSegments) else (geometry,)
-    rows = []
-    for segment in segments:
-        beam = beam_of(segment)
-        if beam is None:
-            raise ValueError("view_frames needs cone-beam views")
-        detector = segment.detector
-        views = len(cast("Any", segment).angles)
-        poses = np.asarray(stack_view_poses(segment, views), np.float64)
-        rotation, translation = poses[:, :3, :3], poses[:, :3, 3]
+    parts = cone_parts(geometry)
+    if parts is None:
+        raise ValueError("view_frames needs cone-beam views")
+    n_views = len(cast("Any", geometry).angles)
+    poses = np.asarray(stack_view_poses(geometry, n_views), np.float64)
+    rows, start = [], 0
+    for count, beam, detector in parts:
+        stop = start + (n_views if count is None else count)
+        rotation, translation = poses[start:stop, :3, :3], poses[start:stop, :3, 3]
         centre, e_u, e_v = beam.detector_frame(detector)
 
         rows.append(
@@ -353,6 +353,7 @@ def view_frames(geometry: ScanGeometry) -> np.ndarray:
                 axis=1,
             )
         )
+        start = stop
     return np.concatenate(rows)
 
 

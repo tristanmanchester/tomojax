@@ -229,6 +229,21 @@ def test_combined_scans_project_each_segment_with_its_own_arrangement():
     assert len(scan.angles) == 16
 
 
+def test_a_posed_multi_orbit_scan_converts_to_astra_and_back_projects_the_same():
+    scan = _two_orbit_scan()
+    poses = np.zeros((16, 6), np.float32)
+    poses[:, 3:] = np.random.default_rng(5).normal(0, 0.3, (16, 3))
+    posed = AugmentedGeometry(scan.geometry, poses, "detector")
+    volume = _volume(10)
+    before = np.asarray(tj.project(posed, volume))
+
+    projections, proj_geom, vol_geom = tj.Scan(before, posed).to_astra()  # pyright: ignore[reportArgumentType]
+
+    again = tj.Scan.from_astra(projections, proj_geom, vol_geom)
+    after = np.asarray(tj.project(again.geometry, volume))
+    assert np.linalg.norm(after - before) / np.linalg.norm(before) < 1e-4
+
+
 def test_segmented_scans_save_and_load(tmp_path):
     scan = _two_orbit_scan()
     volume = _volume(10)

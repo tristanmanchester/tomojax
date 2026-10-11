@@ -25,10 +25,8 @@ from scipy.spatial.transform import Rotation
 from tomojax.geometry import (
     ConeBeam,
     ConeGeometry,
-    ConeSegments,
     Detector,
     Grid,
-    beam_of,
     grid_volume_origin,
 )
 from tomojax.geometry.api import view_frames
@@ -239,23 +237,15 @@ def from_astra(
     return data, segments
 
 
-def _vectors(segment: ScanGeometry) -> np.ndarray:
-    """ASTRA cone_vec rows of one cone-beam geometry's views."""
-    if beam_of(segment) is None:
-        raise ValueError("to_astra converts cone-beam scans")
-    return view_frames(segment)
-
-
 def to_astra(
     projections: np.ndarray, geometry: ScanGeometry, grid: Grid, detector: Detector
 ) -> tuple[np.ndarray, dict[str, Any], dict[str, Any]]:
     """ASTRA ``(rows, views, columns)`` projections, ``cone_vec`` geometry and volume."""
-    segments = geometry.segments if isinstance(geometry, ConeSegments) else (geometry,)
     proj_geom = {
         "type": "cone_vec",
         "DetectorRowCount": int(detector.nv),
         "DetectorColCount": int(detector.nu),
-        "Vectors": np.concatenate([_vectors(segment) for segment in segments]),
+        "Vectors": view_frames(geometry),
     }
     origin = np.asarray(grid_volume_origin(grid), np.float64)
     spacing = np.array([grid.vx, grid.vy, grid.vz])
