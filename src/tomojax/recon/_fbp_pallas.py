@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import functools
 from typing import Any
 
@@ -11,6 +12,51 @@ from jax.experimental.pallas import triton as plt
 import jax.numpy as jnp
 
 from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
+
+
+def _column_tile(nz: int, block_size: int) -> tuple[int, int]:
+    rows = min(128, block_size, 1 << (nz - 1).bit_length())
+    return block_size // rows, rows
+
+
+def _voxel_indices(
+    shape: tuple[int, int, int], *, block_size: int, z_mode: str
+) -> tuple[jnp.ndarray, ...]:
+    nx, ny, nz = shape
+    if z_mode == "general":
+        flat = pl.program_id(0) * block_size + jnp.arange(block_size, dtype=jnp.int32)
+        valid = flat < nx * ny * nz
+        ix, iy, iz = flat // (ny * nz), (flat // nz) % ny, flat % nz
+    else:
+        # A two-dimensional tile calculates each column coordinate once, then
+        # broadcasts it along contiguous detector rows instead of repeating the
+        # horizontal coordinate arithmetic in every z lane for every view.
+        columns, rows = _column_tile(nz, block_size)
+        column = pl.program_id(0) * columns + jnp.arange(columns, dtype=jnp.int32)
+        iz = pl.program_id(1) * rows + jnp.arange(rows, dtype=jnp.int32)[None, :]
+        ix, iy = (column // ny)[:, None], (column % ny)[:, None]
+        flat = column[:, None] * nz + iz
+        valid = (column[:, None] < nx * ny) & (iz < nz)
+        # Masked padded rows must not alias the next column's first voxel:
+        # the interpret backend implements stores through indexed updates.
+        flat = jnp.where(valid, flat, nx * ny * nz)
+    return flat, valid, ix, iy, iz
+
+
+def _sum_supported_views(
+    body: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray],
+    n_views: int,
+    initial: jnp.ndarray,
+    rows: jnp.ndarray | None,
+) -> jnp.ndarray:
+    def summed() -> jnp.ndarray:
+        return jax.lax.fori_loop(0, n_views, body, initial)
+
+    # A column tile whose axial rows lie entirely beyond the detector sees
+    # zero in every view. Skip the view loop, not merely its masked loads.
+    if rows is None:
+        return summed()
+    return jax.lax.cond(jnp.sum(rows.astype(jnp.int32)) > 0, summed, lambda: initial)
 
 
 def _backproject_filtered_kernel(
@@ -29,22 +75,21 @@ def _backproject_filtered_kernel(
 ) -> None:
     # With an accumulator, refs is (accumulator, aliased output).
     acc_ref, out_ref = refs if len(refs) == 2 else (None, refs[0])
-    nx, ny, nz = shape
     nv, nu = detector_shape
     du, dv = detector_spacing
-    flat = pl.program_id(0) * block_size + jnp.arange(block_size, dtype=jnp.int32)
-    valid = flat < nx * ny * nz
-    ix, iy, iz = flat // (ny * nz), (flat // nz) % ny, flat % nz
+    flat, valid, ix, iy, iz = _voxel_indices(shape, block_size=block_size, z_mode=z_mode)
     x = ix.astype(jnp.float32) * voxel[0] + origin[0]
     y = iy.astype(jnp.float32) * voxel[1] + origin[1]
     z = iz.astype(jnp.float32) * voxel[2] + origin[2]
     # Add integer pixel origins only after extracting the interpolation fractions.
     u_offset, v_offset = ((nu - 1) % 2) / 2.0, ((nv - 1) % 2) / 2.0
+    supported_rows = None
     if z_mode == "integer":
         iv = (
             jnp.floor((z - detector_center[1]) / dv + v_offset + 0.5).astype(jnp.int32)
             + (nv - 1) // 2
         )
+        supported_rows = (iv >= 0) & (iv < nv)
     elif z_mode == "fixed":
         world_z = plt.load(poses_ref.at[jnp.int32(0), jnp.int32(2), jnp.int32(2)]) * z + plt.load(
             poses_ref.at[jnp.int32(0), jnp.int32(2), jnp.int32(3)]
@@ -53,6 +98,7 @@ def _backproject_filtered_kernel(
         lower_v = jnp.floor(v)
         fixed_wv = v - lower_v
         fixed_iv0 = lower_v.astype(jnp.int32) + (nv - 1) // 2
+        supported_rows = (fixed_iv0 >= -1) & (fixed_iv0 < nv)
 
     def body(view: jnp.ndarray, accum: jnp.ndarray) -> jnp.ndarray:
         def pose(row: int, col: int) -> jnp.ndarray:
@@ -89,10 +135,12 @@ def _backproject_filtered_kernel(
             value = row0 * (1.0 - wv) + row1 * wv
         return accum + value
 
-    result = jax.lax.fori_loop(0, n_views, body, jnp.zeros((block_size,), dtype=jnp.float32))
+    result = _sum_supported_views(
+        body, n_views, jnp.zeros(flat.shape, dtype=jnp.float32), supported_rows
+    )
     if acc_ref is not None:
-        result = plt.load(acc_ref, mask=valid, other=0.0) + result
-    plt.store(out_ref, result, mask=valid)
+        result = plt.load(acc_ref.at[flat], mask=valid, other=0.0) + result
+    plt.store(out_ref.at[flat], result, mask=valid)
 
 
 @functools.lru_cache(maxsize=32)
@@ -108,8 +156,16 @@ def _backprojection_call(
 ) -> Any:
     count = grid.nx * grid.ny * grid.nz
     in_specs = [pl.no_block_spec, pl.no_block_spec]
+    if z_mode == "general":
+        launch_grid = ((count + block_size - 1) // block_size,)
+    else:
+        columns, rows = _column_tile(grid.nz, block_size)
+        launch_grid = (
+            (grid.nx * grid.ny + columns - 1) // columns,
+            (grid.nz + rows - 1) // rows,
+        )
     if accumulate:
-        in_specs.append(pl.BlockSpec((block_size,), lambda block: (block,)))
+        in_specs.append(pl.no_block_spec)
     return pl.pallas_call(
         functools.partial(
             _backproject_filtered_kernel,
@@ -124,9 +180,9 @@ def _backprojection_call(
             z_mode=z_mode,
         ),
         out_shape=jax.ShapeDtypeStruct((count,), jnp.float32),
-        grid=((count + block_size - 1) // block_size,),
+        grid=launch_grid,
         in_specs=in_specs,
-        out_specs=pl.BlockSpec((block_size,), lambda block: (block,)),
+        out_specs=pl.no_block_spec,
         input_output_aliases={2: 0} if accumulate else {},
         compiler_params=plt.CompilerParams(num_warps=4),
         interpret=interpret,
@@ -153,6 +209,8 @@ def backproject_filtered_pallas(
     ``accumulate`` is added to the result in place. Compact
     filtered-stack and output working sets use one voxel per lane of the
     four-warp program. Other workloads retain larger tiles for input reuse.
+    Z-axis modes broadcast each column's horizontal coordinate along axial
+    tiles and skip the view loop when all their rows lie outside the detector.
     """
     if z_mode not in {"integer", "fixed", "general"}:
         raise ValueError("FBP z_mode must be integer, fixed, or general")

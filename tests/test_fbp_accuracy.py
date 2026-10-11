@@ -584,3 +584,36 @@ def test_padding_is_a_recorded_expert_setting_and_validated() -> None:
     assert replace(FBPConfig(), padding="edge").padding == "edge"
     with pytest.raises(ValueError, match="padding"):
         FBPConfig(padding="unknown")
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("z_mode", ["integer", "fixed"])
+@pytest.mark.parametrize("nz", [1, 33, 129, 257])
+def test_parallel_fbp_keeps_partial_slabs_and_accumulator(z_mode, nz) -> None:
+    """Compare thin/partial slabs and masked zero extension with the JAX sum."""
+    import jax
+
+    if jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    grid = Grid(11, 7, nz, 0.7, 1.2, 1.0 if z_mode == "integer" else 0.73)
+    detector = Detector(13, 21, 0.9, 1.0, (-0.19, 0.0 if z_mode == "integer" else 0.31))
+    angles = [7.0, 33.0, 81.0, 119.0, 164.0]
+    geometry = ParallelGeometry(grid, detector, angles)
+    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(len(angles))], jnp.float32)
+    if z_mode == "fixed":
+        poses = poses.at[:, 2, 3].set(0.375)
+    rng = np.random.default_rng(843)
+    rows = jnp.asarray(rng.normal(size=(len(angles), detector.nv, detector.nu)), jnp.float32)
+    initial = rng.normal(size=(grid.nx, grid.ny, grid.nz)).astype(np.float32)
+    expected = (
+        np.asarray(
+            jax.jit(lambda y: _backproject_voxels_jax(poses, y, grid=grid, detector=detector))(rows)
+        )
+        + initial
+    )
+    for block in (128, 512):
+        actual = jax.jit(
+            lambda p, y, a, block=block: backproject_filtered_pallas(
+                p, y, grid=grid, detector=detector, z_mode=z_mode, block_size=block, accumulate=a
+            )
+        )(poses, rows, jnp.asarray(initial.copy()))
+        np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=2e-6)
