@@ -223,8 +223,7 @@ class _Batches:
 
     def _coefficients(self, start: jax.Array) -> jax.Array:
         assert self.coefficients is not None
-        width = int(self.coefficients.shape[1])
-        return jax.lax.dynamic_slice(self.coefficients, (start, 0), (self.size, width))
+        return jax.lax.dynamic_slice_in_dim(self.coefficients, start, self.size)
 
     def project(self, volume: jax.Array, start: jax.Array, batch: jax.Array) -> jax.Array:
         grid, detector = self.grid, self.detector
@@ -518,6 +517,33 @@ def normal_operator_norm(
     x0, _ = unit(x0)
     _, norm = jax.lax.fori_loop(0, max(1, iterations), step, (x0, jnp.float32(0)))
     return norm
+
+
+def positive_normal_bound(
+    forward: Callable[[jax.Array], jax.Array],
+    adjoint: Callable[[jax.Array], jax.Array],
+    shape: tuple[int, int, int],
+    *,
+    iterations: int,
+) -> jax.Array:
+    """Bound a nonnegative projector's squared norm, starting from a constant volume.
+
+    For a nonnegative normal matrix N and positive q, the Collatz bound
+    ``max((N q) / q)`` dominates its spectral radius even when q barely overlaps
+    the leading mode; power passes tighten it. Zero coordinates after a pass
+    belong to zero rows of N and do not enter the ratio. A small FP32 margin
+    covers rounding in the passes.
+    """
+
+    def step(_: jax.Array, state: tuple[jax.Array, jax.Array]) -> tuple[jax.Array, jax.Array]:
+        vector, _ = state
+        normal = adjoint(forward(vector))
+        ratio = normal / jnp.where(vector == 0, 1.0, vector)
+        return unit(normal)[0], jnp.max(jnp.where(vector == 0, 0.0, ratio))
+
+    vector = unit(jnp.ones(shape, jnp.float32))[0]
+    _, upper = jax.lax.fori_loop(0, max(1, iterations), step, (vector, jnp.float32(0)))
+    return upper * (1.0 + 8 * jnp.finfo(jnp.float32).eps)
 
 
 def normal_equation_operators(

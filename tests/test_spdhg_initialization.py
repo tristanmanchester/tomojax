@@ -24,19 +24,26 @@ def _problem():
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("iterations", [0, 1])
-def test_spdhg_initial_feasibility_and_first_step_match_dense(iterations):
+@pytest.mark.parametrize("iterations", [0, 1, 2, 5])
+@pytest.mark.parametrize("theta", [0.0, 1.0])
+def test_spdhg_initial_feasibility_and_first_step_match_dense(iterations, theta):
     grid, detector, geometry, initial, support, truth = _problem()
     matrix = np.stack(
         [np.asarray(tj.project(geometry, b.reshape(SHAPE))).ravel() for b in np.eye(12)],
         axis=1,
     ).astype(np.float64)
-    data = (matrix @ truth.ravel()).astype(np.float32).reshape(3, 4, 5)
+    data = (matrix @ (truth + 0.2 * support).ravel()).astype(np.float32).reshape(3, 4, 5)
     expected = np.maximum(initial.astype(np.float64) * support, 0)
-    if iterations:
-        dual = 0.2 * (matrix @ expected.ravel() - data.ravel()) / 1.2
-        expected -= 0.1 * (matrix.T @ dual).reshape(SHAPE)
-        expected = np.maximum(expected * support, 0)
+    dual = np.zeros(matrix.shape[0])
+    adjoint = np.zeros(12)
+    extrapolated = np.zeros(12)
+    # Independent primal-first dense recurrence, including its terminal image.
+    for _ in range(iterations):
+        expected = np.maximum((expected - 0.1 * extrapolated.reshape(SHAPE)) * support, 0)
+        dual = (dual + 0.2 * (matrix @ expected.ravel() - data.ravel())) / 1.2
+        new_adjoint = matrix.T @ dual
+        extrapolated = new_adjoint + theta * (new_adjoint - adjoint)
+        adjoint = new_adjoint
     volume, info = spdhg_tv(
         geometry,
         grid,
@@ -48,6 +55,7 @@ def test_spdhg_initial_feasibility_and_first_step_match_dense(iterations):
             tau=0.1,
             sigma_data=0.2,
             sigma_tv=0.2,
+            theta=theta,
             tv_weight=0,
             views_per_batch=3,
             nonnegative=True,

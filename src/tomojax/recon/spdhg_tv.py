@@ -89,15 +89,21 @@ class SPDHGConfig:
 
     ``tau``, ``sigma_data`` and ``sigma_tv`` independently override the primal,
     data-dual and TV-dual step sizes. ``None`` estimates only that missing size;
-    explicit sizes must be finite and positive. Supplying overrides makes the
-    caller responsible for the combined step sizes' stability.
+    explicit sizes must be finite and positive. Automatic sizes bound every
+    block's squared norm divided by its selection probability. Batched
+    positive-kernel operators use three upper-bound passes per block;
+    reference rays use a one-pass row-sum bound per block. ``info["A_norm"]``
+    is the square root of this probability-scaled bound, also bounding the
+    full-scan operator norm.
+    Supplying overrides makes the caller responsible for the combined step
+    sizes' stability.
     """
 
     iterations: int = 400
     tv_weight: float = 5e-3
     regulariser: Regulariser = "tv"
     huber_delta: float = 1e-2
-    theta: float = 1.0  # extrapolation for xbar
+    theta: float = 1.0  # extrapolation of the dual gradient
     views_per_batch: int = 16  # size of a stochastic block
     seed: int = 0
 
@@ -119,7 +125,7 @@ class SPDHGConfig:
     support: jnp.ndarray | None = None  # 0/1 mask in volume space
 
     # logging
-    log_every: int = 10  # minibatch objective estimator every k steps
+    log_every: int = 10  # sampled objective at the current primal every k steps
 
     stream_projections: bool | None = None
 
@@ -133,7 +139,6 @@ jax.tree_util.register_dataclass(
 
 class _SPDHGScanState(NamedTuple):
     x: jnp.ndarray
-    x_bar: jnp.ndarray
     y_data: jnp.ndarray
     p1: jnp.ndarray
     p2: jnp.ndarray
@@ -226,7 +231,7 @@ def _proj_pos_support(
 
 def _prox_fstar_l2(
     u: jnp.ndarray,
-    sigma: float,
+    sigma: float | jnp.ndarray,
     y_meas: jnp.ndarray,
     w: jnp.ndarray | None,
 ) -> jnp.ndarray:
@@ -273,16 +278,15 @@ def _build_spdhg_schedule(n_views: int, config: SPDHGConfig) -> _SPDHGSchedule:
     views_per_batch = int(max(1, min(config.views_per_batch, n_views)))
     num_blocks = (n_views + views_per_batch - 1) // views_per_batch
     rng = np.random.default_rng(config.seed)
-    epochs = (config.iterations + num_blocks - 1) // num_blocks
-    block_ids: list[int] = []
-    for _ in range(epochs):
-        block_ids.extend(int(block) for block in rng.permutation(num_blocks))
+    # SPDHG's inverse-probability extrapolation assumes independent draws,
+    # not a permutation whose remaining blocks depend on earlier draws.
+    block_ids = rng.integers(0, num_blocks, size=config.iterations, dtype=np.int32)
 
     return _SPDHGSchedule(
         views_per_batch=views_per_batch,
         num_blocks=num_blocks,
         selection_prob=1.0 / float(max(num_blocks, 1)),
-        block_ids=jnp.asarray(block_ids[: config.iterations], dtype=jnp.int32),
+        block_ids=jnp.asarray(block_ids),
     )
 
 
@@ -299,7 +303,6 @@ def _initial_spdhg_state(
     tv_zero = jnp.zeros_like(x0) if cfg.tv_weight > 0 else jnp.zeros((0,), jnp.float32)
     return _SPDHGScanState(
         x=x0,
-        x_bar=x0,
         # Streaming keeps the duals on the host; a placeholder stands in here.
         y_data=(
             jnp.zeros((1, 1, 1), jnp.float32)
@@ -490,10 +493,10 @@ def _spdhg_data_residual(
 
 
 def _update_spdhg_tv_duals(
-    state: _SPDHGScanState, runtime: _SPDHGRuntime
+    state: _SPDHGScanState, x: jnp.ndarray, runtime: _SPDHGRuntime
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     step_sizes = runtime.step_sizes
-    gx, gy, gz = grad3(state.x_bar)
+    gx, gy, gz = grad3(x)
     p1_u = state.p1 + step_sizes.sigma_tv * gx
     p2_u = state.p2 + step_sizes.sigma_tv * gy
     p3_u = state.p3 + step_sizes.sigma_tv * gz
@@ -509,6 +512,41 @@ def _update_spdhg_tv_duals(
     else:
         p1_new, p2_new, p3_new = project_tv_duals(p1_u, p2_u, p3_u, radius=runtime.tv_weight)
     return p1_new, p2_new, p3_new
+
+
+def _extrapolate_spdhg_gradient(
+    state: _SPDHGScanState,
+    runtime: _SPDHGRuntime,
+    x: jnp.ndarray,
+    s_data_new: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Update deterministic TV and extrapolate each dual increment by its probability."""
+    cfg = runtime.config
+    gradient_bar = s_data_new + (cfg.theta / runtime.schedule.selection_prob) * (
+        s_data_new - state.s_data
+    )
+    if cfg.tv_weight == 0:
+        return state.p1, state.p2, state.p3, gradient_bar
+    p1, p2, p3 = _update_spdhg_tv_duals(state, x, runtime)
+    tv_adjoint = -div3(p1, p2, p3)
+    # TV is selected on every iteration, so its probability is one.
+    gradient_bar += tv_adjoint + cfg.theta * (tv_adjoint + div3(state.p1, state.p2, state.p3))
+    return p1, p2, p3, gradient_bar
+
+
+def _spdhg_primal_successor(
+    x: jnp.ndarray,
+    gradient: jnp.ndarray,
+    step: jnp.ndarray,
+    runtime: _SPDHGRuntime,
+) -> jnp.ndarray:
+    """Prepare the next primal, retaining the projected image on the terminal step."""
+    candidate = _proj_pos_support(
+        x - runtime.step_sizes.tau * gradient,
+        runtime.support,
+        nonnegative=runtime.config.nonnegative,
+    )
+    return jnp.where(step + 1 < runtime.config.iterations, candidate, x)
 
 
 @functools.partial(jax.jit, static_argnames=("grid", "detector"))
@@ -538,18 +576,19 @@ def _run_spdhg_scan(  # noqa: PLR0915
             )
         weights = None
         if runtime.weights is not None:
-            weights = jax.lax.dynamic_slice(runtime.weights, (start, 0, 0), block_shape)
+            weights = jax.lax.dynamic_slice_in_dim(runtime.weights, start, block_shape[0])
+        assert runtime.y_meas is not None
         return (
-            jax.lax.dynamic_slice(runtime.y_meas, (start, 0, 0), block_shape),
+            jax.lax.dynamic_slice_in_dim(runtime.y_meas, start, block_shape[0]),
             weights,
-            jax.lax.dynamic_slice(state.y_data, (start, 0, 0), block_shape),
+            jax.lax.dynamic_slice_in_dim(state.y_data, start, block_shape[0]),
         )
 
     def store(state: _SPDHGScanState, start: jnp.ndarray, duals: jnp.ndarray) -> jnp.ndarray:
         if keys is not None:
             write_block(keys[1], start, duals)
             return state.y_data
-        return jax.lax.dynamic_update_slice(state.y_data, duals, (start, 0, 0))
+        return jax.lax.dynamic_update_slice_in_dim(state.y_data, duals, start, axis=0)
 
     def one_step(state: _SPDHGScanState, t: jnp.ndarray) -> tuple[_SPDHGScanState, None]:
         block = schedule.block_ids[t]
@@ -558,10 +597,8 @@ def _run_spdhg_scan(  # noqa: PLR0915
         valid = jnp.minimum(jnp.int32(schedule.views_per_batch), remaining)
         start_shifted = jnp.maximum(0, start - (jnp.int32(schedule.views_per_batch) - valid))
 
-        T_chunk = jax.lax.dynamic_slice(
-            runtime.poses,
-            (start_shifted, 0, 0),
-            (schedule.views_per_batch, 4, 4),
+        T_chunk = jax.lax.dynamic_slice_in_dim(
+            runtime.poses, start_shifted, schedule.views_per_batch
         )
         y_chunk, w_chunk, y_dual_old = load(state, start_shifted)
 
@@ -569,8 +606,11 @@ def _run_spdhg_scan(  # noqa: PLR0915
         row_mask = (idx >= (jnp.int32(schedule.views_per_batch) - valid))[:, None, None]
         row_mask = row_mask.astype(jnp.float32)
 
-        sigma_eff = jnp.asarray(step_sizes.sigma_data_eff, dtype=state.x_bar.dtype)
-        pred = project_chunk(state.x_bar, start_shifted, T_chunk)
+        # The state holds the primal for this projection. Its successor is formed
+        # after the duals update, so the extrapolated gradient and the primal
+        # proximal share one pointwise program and no volume-sized buffer is carried.
+        sigma_eff = jnp.asarray(step_sizes.sigma_data_eff, dtype=state.x.dtype)
+        pred = project_chunk(state.x, start_shifted, T_chunk)
         u = y_dual_old + sigma_eff * pred
         y_dual_new = _prox_fstar_l2(u, sigma_eff, y_chunk, w_chunk)
         y_dual_new = row_mask * y_dual_new + (1.0 - row_mask) * y_dual_old
@@ -578,35 +618,25 @@ def _run_spdhg_scan(  # noqa: PLR0915
 
         s_data_new = backproject_chunk(delta_y, start_shifted, T_chunk, state.s_data)
 
-        if cfg.tv_weight == 0:
-            p1_new, p2_new, p3_new = state.p1, state.p2, state.p3
-            s_new = s_data_new
-        else:
-            p1_new, p2_new, p3_new = _update_spdhg_tv_duals(state, runtime)
-            # Recompute div p so the updated duals can alias their old buffers.
-            s_new = s_data_new - div3(p1_new, p2_new, p3_new)
-        x_new = _proj_pos_support(
-            state.x - step_sizes.tau * s_new, runtime.support, nonnegative=cfg.nonnegative
+        p1_new, p2_new, p3_new, gradient_bar_new = _extrapolate_spdhg_gradient(
+            state, runtime, state.x, s_data_new
         )
-        x_bar_candidate = x_new + jnp.asarray(cfg.theta, x_new.dtype) * (x_new - state.x)
-        x_bar_new = _proj_pos_support(x_bar_candidate, runtime.support, nonnegative=cfg.nonnegative)
+        x_new = _spdhg_primal_successor(state.x, gradient_bar_new, t, runtime)
         y_data_new = store(state, start_shifted, y_dual_new)
 
         do_log = (cfg.log_every > 0) & ((t + 1) % cfg.log_every == 0)
 
         def log_step() -> jnp.ndarray:
             resid = _spdhg_data_residual(pred, y_chunk, w_chunk, row_mask != 0)
-            data_est = (
-                0.5
-                * jnp.vdot(resid, resid).real
-                * (float(n_views) / jnp.maximum(valid.astype(jnp.float32), 1.0))
-            )
+            # Blocks are selected uniformly, not in proportion to their view
+            # counts. The final partial block has the same selection weight.
+            data_est = 0.5 * jnp.vdot(resid, resid).real / schedule.selection_prob
             objective = data_est
             if cfg.tv_weight != 0:
                 if runtime.regulariser == "huber_tv":
-                    reg_value = huber_tv_value(x_new, runtime.huber_delta)
+                    reg_value = huber_tv_value(state.x, runtime.huber_delta)
                 else:
-                    reg_value = isotropic_tv_value(x_new)
+                    reg_value = isotropic_tv_value(state.x)
                 objective = objective + runtime.tv_weight * reg_value
             obj = objective.astype(jnp.float32)
             return state.losses.at[t].set(obj)
@@ -614,7 +644,6 @@ def _run_spdhg_scan(  # noqa: PLR0915
         losses_new = jax.lax.cond(do_log, log_step, lambda: state.losses)
         return _SPDHGScanState(
             x=x_new,
-            x_bar=x_bar_new,
             y_data=y_data_new,
             p1=p1_new,
             p2=p2_new,
@@ -650,6 +679,10 @@ def spdhg_tv(
 
     The supplied ``init_x`` obeys the configured positivity and support map
     before the first projection, including when ``iterations=0``.
+
+    Logged losses estimate the full objective at the primal image used
+    for that iteration's data projection, with inverse block-selection weights.
+    They are samples, not full-scan objectives of the returned primal image.
 
     If ``callback`` is provided, it fires on the first logged objective sample and
     on the final logged objective sample. The callback arguments are ``(step,

@@ -160,7 +160,7 @@ def test_repeated_solver_calls_use_new_arrays(solver, model):
         else:
             weights = jnp.asarray(rng.uniform(0.5, 1.5, size=data.shape), dtype=jnp.float32)
             cfg = SPDHGConfig(
-                iterations=1,
+                iterations=2,
                 tau=0.1,
                 sigma_data=0.2,
                 sigma_tv=0.2,
@@ -173,7 +173,7 @@ def test_repeated_solver_calls_use_new_arrays(solver, model):
             )
             actual, _ = spdhg_tv(geometry, grid, detector, data, weights=weights, config=cfg)
             dual = 0.2 * data * weights / (0.2 + weights)
-            expected = 0.1 * support.ravel() * (matrix.T @ dual.ravel())
+            expected = 2 * 0.1 * support.ravel() * (matrix.T @ dual.ravel())
         np.testing.assert_allclose(actual.ravel(), expected, rtol=2e-5, atol=2e-6)
         if previous is not None:
             assert not np.allclose(previous, actual)
@@ -318,7 +318,7 @@ def test_spdhg_streams_data_weights_and_duals_from_host(tmp_path, weighted):
 @pytest.mark.numerical
 @pytest.mark.parametrize("model", ["ray", "joseph"])
 @pytest.mark.parametrize("tilted", [False, True])
-def test_spdhg_partial_steps_match_dense_one_step_and_preserve_each_override(model, tilted):
+def test_spdhg_partial_steps_match_dense_first_update_and_preserve_each_override(model, tilted):
     grid = Grid(2, 3, 2, 0.8, 1.1, 1.3)
     detector = Detector(4, 3, 0.9, 1.2, (0.17, -0.23))
     angles = np.array([13.0, 68.0, 142.0])
@@ -332,7 +332,7 @@ def test_spdhg_partial_steps_match_dense_one_step_and_preserve_each_override(mod
     forward, _ = projection_operators(poses, grid, detector, None, "jax", 3, model)
     matrix = np.asarray(jax.jacfwd(lambda x: forward(x.reshape((2, 3, 2))).ravel())(jnp.zeros(12)))
     config = SPDHGConfig(
-        iterations=1,
+        iterations=2,
         tv_weight=0,
         views_per_batch=3,
         log_every=1,
@@ -356,7 +356,7 @@ def test_spdhg_partial_steps_match_dense_one_step_and_preserve_each_override(mod
         assert info["sigma_data_base"] == info["sigma_data"]
         tau, sigma = info["tau"], info["sigma_data"]
         dual = sigma * data * weights / (sigma + weights)
-        expected = tau * (matrix.T @ dual.ravel())
+        expected = 2 * tau * (matrix.T @ dual.ravel())
         np.testing.assert_allclose(actual.ravel(), expected, rtol=2e-5, atol=2e-6)
 
 
@@ -385,7 +385,7 @@ def test_spdhg_partial_tv_step_controls_dense_primal_update(model, regulariser):
     initial = rng.normal(size=shape).astype(np.float32)
     data = rng.normal(size=(3, 3, 4)).astype(np.float32)
     config = SPDHGConfig(
-        iterations=1,
+        iterations=2,
         tv_weight=0.04,
         regulariser=regulariser,
         huber_delta=0.08,
@@ -406,7 +406,7 @@ def test_spdhg_partial_tv_step_controls_dense_primal_update(model, regulariser):
         sigma = info["sigma_data"]
         data_dual = sigma * (matrix @ initial.ravel() - data.ravel()) / (sigma + 1)
         tv_gradient = sum(edge.T @ dual for edge, dual in zip(edges, tv_dual, strict=True))
-        expected = initial.ravel() - info["tau"] * (matrix.T @ data_dual + tv_gradient)
+        expected = initial.ravel() - 2 * info["tau"] * (matrix.T @ data_dual + tv_gradient)
         np.testing.assert_allclose(volume.ravel(), expected, rtol=2e-5, atol=3e-6)
 
 
@@ -637,22 +637,183 @@ def test_spdhg_segmented_cone_batches_follow_dense_individual_arrangements(batch
     )
     # Independent FP64 block-dual/primal recurrence, including the shifted final
     # batch mask. A boundary-crossing block contains views from both arrangements.
-    x, extrapolated, dual = np.zeros(12), np.zeros(12), np.zeros(84)
+    x, gradient_bar, dual = np.zeros(12), np.zeros(12), np.zeros(84)
     blocks = (7 + batch - 1) // batch
-    rng = np.random.default_rng(17)
-    schedule = np.concatenate(
-        [rng.permutation(blocks) for _ in range((iterations + blocks - 1) // blocks)]
-    )
-    for block in schedule[:iterations]:
+    schedule = np.random.default_rng(17).integers(0, blocks, iterations, dtype=np.int32)
+    for block in schedule:
+        x = np.maximum(x - tau * gradient_bar, 0.0)
         start, stop = int(block) * batch, min((int(block) + 1) * batch, 7)
         rows = slice(start * 12, stop * 12)
-        prediction = matrix[rows] @ extrapolated
+        old_dual = dual[rows].copy()
         dual[rows] = (
-            (dual[rows] + sigma * (prediction - data[rows]))
+            (dual[rows] + sigma * (matrix[rows] @ x - data[rows]))
             * weights[rows]
             / (weights[rows] + sigma)
         )
-        updated = np.maximum(x - tau * (matrix.T @ dual), 0.0)
-        extrapolated = np.maximum(updated + cfg.theta * (updated - x), 0.0)
-        x = updated
+        gradient_bar = matrix.T @ dual + cfg.theta * blocks * (
+            matrix[rows].T @ (dual[rows] - old_dual)
+        )
     np.testing.assert_allclose(np.asarray(actual).ravel(), x, rtol=2e-6, atol=2e-7)
+
+
+class _RareMeasuredView(ParallelGeometry):
+    def pose_for_view(self, i):
+        pose = np.eye(4)
+        pose[0, 3] = 0.0 if i == 0 else 20.0
+        return tuple(map(tuple, pose))
+
+
+@pytest.mark.numerical
+def test_spdhg_automatic_steps_stay_stable_when_one_view_measures_the_volume():
+    # One ray measures the voxel and the other 18 views miss it, so the least-squares
+    # minimizer is 3. Block norms without the selection probability give unsafe steps.
+    grid, detector = Grid(1, 1, 1, 1, 1, 1), Detector(1, 1, 1, 1)
+    geometry = _RareMeasuredView(grid, detector, [0.0] * 19)
+    data = np.zeros((19, 1, 1), np.float32)
+    data[0] = 3.0
+    volume, info = spdhg_tv(
+        geometry,
+        grid,
+        detector,
+        data,
+        config=SPDHGConfig(
+            iterations=1500,
+            tv_weight=0,
+            views_per_batch=1,
+            projector_model="joseph",
+            projector_backend="jax",
+            seed=8,
+            log_every=0,
+        ),
+    )
+    assert info["tau"] * info["sigma_data"] / info["selection_prob"] < 1
+    np.testing.assert_allclose(volume, 3.0, rtol=2e-6, atol=2e-6)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("regulariser", ["tv", "huber_tv"])
+def test_spdhg_tv_trajectory_matches_dense_primal_dual_reference(regulariser):
+    shape = (2, 2, 1)
+    grid = Grid(*shape, 0.8, 1.1, 1.3)
+    detector = Detector(4, 3, 0.7, 0.9, (0.17, -0.23))
+    geometry = LaminographyGeometry(grid, detector, [13, 71, 127, 193, 241], tilt_deg=25)
+    columns = [np.asarray(tj.project(geometry, b.reshape(shape))).ravel() for b in np.eye(4)]
+    matrix = np.stack(columns, axis=1).astype(np.float64)
+    edges = np.zeros((3, 4, 4))
+    for index in np.ndindex(shape):
+        for axis in range(3):
+            neighbor = list(index)
+            neighbor[axis] += 1
+            if neighbor[axis] < shape[axis]:
+                row = np.ravel_multi_index(index, shape)
+                edges[axis, row, row] = -1
+                edges[axis, row, np.ravel_multi_index(tuple(neighbor), shape)] = 1
+    data = np.random.default_rng(938).normal(0.3, 0.2, matrix.shape[0]).astype(np.float32)
+    weights = np.linspace(0, 1.7, data.size).astype(np.float32)
+    initial = np.asarray([-0.3, 0.7, 1.3, 0.4], np.float32)
+    cfg = SPDHGConfig(
+        iterations=14,
+        tv_weight=0.2,
+        regulariser=regulariser,
+        huber_delta=0.4,
+        tau=0.015,
+        sigma_data=0.07,
+        sigma_tv=0.08,
+        views_per_batch=2,
+        seed=12,
+        nonnegative=True,
+        log_every=1,
+    )
+    # Independent dense recurrence: primal first, then the sampled block dual and
+    # the deterministic TV dual, each extrapolated by its inverse selection probability.
+    x = np.maximum(initial, 0).astype(np.float64)
+    dual, tv_dual, gradient_bar = np.zeros(data.size), np.zeros((3, 4)), np.zeros(4)
+    losses = []
+    for block in np.random.default_rng(12).integers(0, 3, 14, dtype=np.int32):
+        x = np.maximum(x - cfg.tau * gradient_bar, 0)
+        rows = slice(int(block) * 24, (int(block) + 1) * 24)
+        a, w, y = matrix[rows], weights[rows], data[rows]
+        old_dual, old_tv = dual[rows].copy(), tv_dual.copy()
+        dual[rows] = (old_dual + cfg.sigma_data * (a @ x - y)) * w / (w + cfg.sigma_data)
+        differences = edges @ x
+        tv_dual += cfg.sigma_tv * differences
+        if regulariser == "huber_tv":
+            tv_dual *= cfg.tv_weight / (cfg.tv_weight + cfg.sigma_tv * cfg.huber_delta)
+        tv_dual /= np.maximum(1, np.linalg.norm(tv_dual, axis=0) / cfg.tv_weight)
+        gradient_bar = matrix.T @ dual + sum(e.T @ p for e, p in zip(edges, tv_dual, strict=True))
+        gradient_bar += 3 * (a.T @ (dual[rows] - old_dual))
+        gradient_bar += sum(e.T @ dp for e, dp in zip(edges, tv_dual - old_tv, strict=True))
+        lengths = np.linalg.norm(differences, axis=0)
+        if regulariser == "huber_tv":
+            lengths = np.where(
+                lengths <= cfg.huber_delta,
+                lengths**2 / (2 * cfg.huber_delta),
+                lengths - 0.5 * cfg.huber_delta,
+            )
+        losses.append(1.5 * np.sum(w * (a @ x - y) ** 2) + cfg.tv_weight * lengths.sum())
+    actual, info = spdhg_tv(
+        geometry,
+        grid,
+        detector,
+        data.reshape(5, 3, 4),
+        weights=weights.reshape(5, 3, 4),
+        init_x=initial.reshape(shape),
+        config=cfg,
+    )
+    np.testing.assert_allclose(np.asarray(actual).ravel(), x, rtol=2e-5, atol=3e-6)
+    np.testing.assert_allclose(info["loss"], losses, rtol=2e-5, atol=3e-6)
+
+
+@pytest.mark.numerical
+def test_spdhg_automatic_norm_bounds_every_block_scaled_by_its_probability():
+    shape = (2, 1, 1)
+    grid = Grid(*shape, 0.8, 1.1, 1.3)
+    detector = Detector(4, 3, 0.7, 0.9, (0.17, -0.23))
+    geometry = ConeGeometry(
+        grid, detector, [13, 71, 127, 193, 241], ConeBeam(7, 12, detector_roll_deg=13), tilt_deg=23
+    )
+    columns = [np.asarray(tj.project(geometry, b.reshape(shape))).ravel() for b in np.eye(2)]
+    matrix = np.stack(columns, axis=1).astype(np.float64)
+    _, info = spdhg_tv(
+        geometry,
+        grid,
+        detector,
+        np.zeros((5, 3, 4), np.float32),
+        config=SPDHGConfig(iterations=1, tv_weight=0, views_per_batch=2, log_every=0),
+    )
+    block_norms = [np.linalg.norm(matrix[start * 12 : (start + 2) * 12], 2) for start in (0, 2, 4)]
+    assert info["A_norm"] >= np.linalg.norm(matrix, 2)
+    assert info["A_norm"] >= np.sqrt(3) * max(block_norms)
+
+
+@pytest.mark.numerical
+def test_spdhg_runs_with_global_x64_and_returns_fp32():
+    grid = Grid(2, 1, 1, 0.8, 1.1, 1.3)
+    detector = Detector(2, 1, 0.8, 1.3)
+    geometry = ParallelGeometry(grid, detector, [0.0] * 5)
+    density = np.asarray([0.2, 1.0])
+    data = np.broadcast_to(grid.vy * density, (5, 1, 2)).astype(np.float32).copy()
+    weights = np.linspace(0.3, 1.7, 10).astype(np.float32).reshape(data.shape)
+    lam = 0.1
+    # Both free voxels are beyond the TV corner: stationarity gives the exact minimizer.
+    expected = density + np.asarray([lam, -lam]) / (grid.vy**2 * weights.sum(axis=(0, 1)))
+    with jax.enable_x64():
+        actual, _ = spdhg_tv(
+            geometry,
+            grid,
+            detector,
+            data,
+            weights=weights,
+            init_x=np.asarray([-1.0, 3.0], np.float32).reshape(2, 1, 1),
+            config=SPDHGConfig(
+                iterations=1500,
+                tv_weight=lam,
+                nonnegative=True,
+                views_per_batch=2,
+                projector_model="joseph",
+                projector_backend="jax",
+                log_every=0,
+            ),
+        )
+    assert actual.dtype == np.dtype("float32")
+    np.testing.assert_allclose(np.asarray(actual).ravel(), expected, rtol=3e-5, atol=3e-6)
