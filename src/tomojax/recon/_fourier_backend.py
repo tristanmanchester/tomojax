@@ -207,7 +207,7 @@ class FourierPlan:
             ),
         )
 
-    def _compute_volume(self, raw):
+    def _compute_volume(self, raw, count: int):
         xp = self.xp
         mass = xp.mean(xp.sum(raw, axis=-1, dtype=xp.float64), axis=1) * self.detector.du
         raw *= self.deapod
@@ -236,11 +236,12 @@ class FourierPlan:
             if self.cuda
             else xp.fft.ifft2(self.frequencies, axes=(-2, -1)).real
         )
-        return volume[:, cx : cx + self.grid.nx, cy : cy + self.grid.ny] / (
+        # Keep fixed FFT batches, but do not materialize or transfer padded output.
+        return volume[:count, cx : cx + self.grid.nx, cy : cy + self.grid.ny] / (
             self.grid.vx * self.grid.vy
         )
 
-    def reconstruct(self, host) -> np.ndarray:
+    def reconstruct(self, host, *, count: int) -> np.ndarray:
         xp = self.xp
         with self.compute if self.compute is not None else nullcontext():
             # NumPy must also copy: deapodization must not mutate caller storage.
@@ -250,10 +251,10 @@ class FourierPlan:
                 raw = raw.astype(self.deapod.dtype, copy=False)
             else:
                 raw = xp.array(host, dtype=self.deapod.dtype, copy=True)
-            volume = self._compute_volume(raw)
+            volume = self._compute_volume(raw, count)
             return xp.asnumpy(volume) if self.cuda else volume.astype(np.float32)
 
-    def enqueue(self, host) -> _PendingSlab:
+    def enqueue(self, host, *, count: int) -> _PendingSlab:
         xp = self.xp
         assert self.upload is not None
         assert self.compute is not None
@@ -273,7 +274,7 @@ class FourierPlan:
                 raw = source
                 if isinstance(host, ProjectionRows):
                     raw, owners = interpolate_projection_rows(host, source, self.depth, xp)
-                volume = self._compute_volume(raw)
+                volume = self._compute_volume(raw, count)
                 computed = xp.cuda.Event()
                 computed.record()
             output_storage = xp.cuda.alloc_pinned_memory(volume.size * 4)

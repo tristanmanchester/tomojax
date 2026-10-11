@@ -139,7 +139,7 @@ def fourier_reconstruct(
             else:
                 for start in range(0, grid.nz, depth):
                     count = min(depth, grid.nz - start)
-                    write(start, plan.reconstruct(prepare(start))[:count])
+                    write(start, plan.reconstruct(prepare(start), count=count))
             return output
         except Exception as error:
             if cfg.backend != "cupy" or depth == 1 or not is_cuda_oom(error):
@@ -187,7 +187,7 @@ def _run_host_pipeline(
                 stop = min(start + depth, nz)
                 if stop < nz:
                     prepared = reader.submit(prepare, stop)
-                pending.append((start, plan.enqueue(data)))
+                pending.append((start, plan.enqueue(data, count=stop - start)))
                 if len(pending) >= 2:
                     finish(*pending.pop(0))
             for first, job in pending:

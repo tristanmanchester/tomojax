@@ -211,11 +211,11 @@ def test_cuda_allocation_exhaustion_retries_smaller_slabs_and_rewrites_output(mo
                 raise Exhausted("test allocation")
             self.original = original_plan(grid, detector, nviews, flipped, theta0, depth, "numpy")
 
-        def reconstruct(self, rows):
+        def reconstruct(self, rows, *, count):
             self.calls += 1
             if self.depth > 2 and self.calls > 1:
                 raise Exhausted("test later allocation")
-            result = self.original.reconstruct(rows)
+            result = self.original.reconstruct(rows, count=count)
             # Deliberately dirty the output from the failed attempt. A retry
             # must recompute it, not just continue after the last complete slab.
             return result + (100 if self.depth > 2 else 0)
@@ -290,7 +290,8 @@ def test_host_pipeline_drains_pending_transfers_after_output_failure():
             return np.zeros((4, 2, 2), np.float32)
 
     class Plan:
-        def enqueue(self, data):
+        def enqueue(self, data, *, count):
+            assert count == 4
             queued.append(int(data[0]))
             return Job(int(data[0]))
 
@@ -645,3 +646,56 @@ def test_missing_cupy_does_not_mask_original_memory_or_import_errors(monkeypatch
     monkeypatch.setitem(sys.modules, "cupy", None)
     assert not implementation.is_cuda_oom(MemoryError("host allocation"))
     assert not implementation.is_cuda_oom(ImportError("optional backend"))
+
+
+@pytest.mark.parametrize("nz", [1, 6, 7])
+@pytest.mark.parametrize("threshold", [0, 10**12])
+def test_fixed_fft_batches_materialize_only_real_output_slices(monkeypatch, backend, nz, threshold):
+    import tomojax.recon.fourier as implementation
+
+    grid, detector, geometry, _, _ = scan()
+    grid = replace(grid, nz=nz)
+    geometry = ParallelGeometry(grid, detector, geometry.angles)
+    data, truth = physical_gaussian(grid, detector, geometry.angles)
+    saved = data.copy()
+    data.flags.writeable = False
+    batches = []
+    original_plan = implementation.FourierPlan
+
+    class Plan(original_plan):
+        def _compute_volume(self, raw, count):
+            volume = super()._compute_volume(raw, count)
+            batches.append((raw.shape[0], self.frequencies.shape[0], count, volume.shape[0]))
+            assert volume.shape == (count, grid.nx, grid.ny)
+            return volume
+
+    monkeypatch.setattr(implementation, "FourierPlan", Plan)
+    monkeypatch.setattr(implementation, "_HOST_PIPELINE_MIN_BYTES", threshold)
+    actual = fourier_reconstruct(
+        geometry,
+        grid,
+        detector,
+        data,
+        config=FourierConfig(backend=backend, slices_per_batch=3),
+    )
+    depth = min(3, nz)
+    assert batches == [
+        (depth, depth, min(depth, nz - start), min(depth, nz - start))
+        for start in range(0, nz, depth)
+    ]
+    assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.015
+    np.testing.assert_array_equal(data, saved)
+
+
+@pytest.mark.parametrize("layout", ["C", "F", "reversed"])
+def test_provided_output_retains_layout_and_identity(backend, layout):
+    grid, detector, geometry, data, truth = scan()
+    config = FourierConfig(backend=backend, slices_per_batch=3)
+    expected = fourier_reconstruct(geometry, grid, detector, data, config=config)
+    out = np.empty(truth.shape, dtype=np.float32, order="F" if layout == "F" else "C")
+    if layout == "reversed":
+        out = out[::-1, ::-1, ::-1]
+    strides = out.strides
+    result = fourier_reconstruct(geometry, grid, detector, data, config=config, out=out)
+    assert result is out and result.strides == strides
+    np.testing.assert_array_equal(result.view(np.uint32), expected.view(np.uint32))
