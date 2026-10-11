@@ -148,6 +148,26 @@ cone beams and laminography are unsupported. The routine checks angular sampling
 and coverage, and does not correct detector truncation. It refuses `filter`,
 iterative-solver options and `warm_start` rather than silently ignoring them.
 
+For FBP, FDK and Fourier volumes larger than host RAM, provide a writable
+float32 memory map. The returned volume is that same array, written in bounded
+slabs; input and output storage must not overlap. No full output copy is made:
+
+```python
+import numpy as np
+
+g = scan.grid
+out = np.memmap(
+    "volume.dat", mode="w+", dtype=np.float32, shape=(g.nx, g.ny, g.nz), order="F"
+)
+recon = tj.reconstruct(scan, out=out)
+out.flush()  # Include this in timings that promise persisted output.
+```
+
+Fortran order keeps axial slices together for parallel FBP, FDK and Fourier,
+avoiding page-strided file writes. Oblique/posed FBP writes x-slabs instead;
+use C order there. Use separate input/output files. A failed reconstruction may
+leave partial output. `out` is not supported by the iterative methods.
+
 Expert settings are fields of the method's configuration class
 (`tomojax.recon.FBPConfig`, `FourierConfig`, `CGLSConfig`, `FistaConfig` or `SPDHGConfig`),
 set in a TOML file passed with `--config`; `tomojax recon --config-keys` lists

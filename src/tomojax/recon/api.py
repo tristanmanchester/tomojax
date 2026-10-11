@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
 
+from tomojax.recon._host_arrays import validate_host_arrays
 from tomojax.recon._warm_start import fbp_start
 from tomojax.recon.cgls import CGLSConfig, cgls
 from tomojax.recon.cgls_multires import cgls_multires
@@ -72,6 +73,7 @@ def reconstruct_arrays(
     *,
     config: MethodConfig | None = None,
     warm_start: bool = False,
+    out: np.ndarray | None = None,
 ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
     """Reconstruct ``projections`` with ``method``; :func:`tomojax.reconstruct` on arrays.
 
@@ -83,6 +85,8 @@ def reconstruct_arrays(
     ``warm_start`` for the iterative methods and the solver's own record. FDK
     and FBP volumes too large for the device come back as host NumPy arrays,
     made in slabs (``host_slabs``). Fourier always returns host arrays in slabs.
+    ``out`` supplies writable float32 host storage for FBP/FDK or Fourier and
+    forces host slabs; it is returned without allocating another full volume.
     """
     cfg = method_config(method, config=config)
     if isinstance(cfg, FourierConfig):
@@ -91,20 +95,21 @@ def reconstruct_arrays(
         if warm_start:
             raise ValueError("method 'fourier' does not take warm_start")
         volume = fourier_reconstruct(
-            cast("ParallelGeometry", geometry), grid, detector, np.asarray(projections), config=cfg
+            cast("ParallelGeometry", geometry),
+            grid,
+            detector,
+            np.asarray(projections),
+            config=cfg,
+            out=out,
         )
         return volume, {"config": cfg, "host_slabs": True}
+    if out is not None and not isinstance(cfg, FBPConfig):
+        raise ValueError(f"method {method!r} does not take out")
     det_grid = _detector_grid(geometry, detector)
     if isinstance(cfg, FBPConfig):
         if warm_start:
             raise ValueError("method 'fbp' does not take warm_start")
-        if det_grid is None and _too_large_for_the_device(geometry, grid, cfg):
-            return _host_fbp(geometry, grid, detector, projections, cfg), {
-                "config": cfg,
-                "host_slabs": True,
-            }
-        volume = fbp(geometry, grid, detector, projections, config=cfg, det_grid=det_grid)
-        return volume, {"config": cfg}
+        return _fbp_result(geometry, grid, detector, projections, cfg, det_grid, out)
     start = None
     if warm_start:
         # On the solver's devices; an explicit detector grid takes one.
@@ -123,6 +128,25 @@ def reconstruct_arrays(
     else:
         volume, record = spdhg_tv(*args, init_x=start, config=cfg, det_grid=det_grid)
     return volume, {"config": cfg, "warm_start": warm_start, **record}
+
+
+def _fbp_result(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray | np.ndarray,
+    config: FBPConfig,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+    out: np.ndarray | None,
+) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
+    """Choose FBP storage, respecting caller-owned output and device capacity."""
+    if out is not None and det_grid is not None:
+        raise ValueError("host output does not support explicit detector grids")
+    if out is not None or (det_grid is None and _too_large_for_the_device(geometry, grid, config)):
+        volume = _host_fbp(geometry, grid, detector, projections, config, out=out)
+        return volume, {"config": config, "host_slabs": True}
+    volume = fbp(geometry, grid, detector, projections, config=config, det_grid=det_grid)
+    return volume, {"config": config}
 
 
 def _detector_grid(
@@ -166,6 +190,8 @@ def _host_fbp(
     detector: Detector,
     projections: jnp.ndarray | np.ndarray,
     cfg: FBPConfig,
+    *,
+    out: np.ndarray | None = None,
 ) -> np.ndarray:
     """Use bounded slabs for either beam type, keeping the result on the host."""
     from concurrent.futures import ThreadPoolExecutor
@@ -179,9 +205,9 @@ def _host_fbp(
     from tomojax.geometry import grid_volume_origin
 
     if beam_of(geometry) is not None:
-        return _host_fdk(geometry, grid, detector, projections, cfg)
+        return _host_fdk(geometry, grid, detector, projections, cfg, out=out)
     logging.info(
-        "The %dx%dx%d volume exceeds device memory; reconstructing in slabs on the host",
+        "Reconstructing %dx%dx%d in slabs on the host",
         grid.nx,
         grid.ny,
         grid.nz,
@@ -192,12 +218,12 @@ def _host_fbp(
     )
     devices = as_devices(cfg.devices)
     if devices is None:
-        return fbp_host(geometry, grid, detector, data, config=host_cfg)
+        return fbp_host(geometry, grid, detector, data, config=host_cfg, out=out)
     # Share spatial regions instead of views: summing whole device volumes
     # would defeat host storage. Each worker still uses bounded local slabs.
     devices = devices[: grid.nz]
     boundaries = np.linspace(0, grid.nz, len(devices) + 1, dtype=int)
-    output = np.empty((grid.nx, grid.ny, grid.nz), np.float32)
+    output = validate_host_arrays(data, out, (grid.nx, grid.ny, grid.nz))
     ox, oy, oz = grid_volume_origin(grid)
 
     def run(index: int) -> None:
@@ -221,6 +247,8 @@ def _host_fdk(
     detector: Detector,
     projections: jnp.ndarray | np.ndarray,
     cfg: FBPConfig,
+    *,
+    out: np.ndarray | None = None,
 ) -> np.ndarray:
     """FDK in z-slabs with the volume on the host (see :func:`fdk_host`)."""
     import logging
@@ -232,7 +260,7 @@ def _host_fdk(
     if cfg.padding == "edge":
         raise ValueError("FBP edge padding requires canonical parallel-beam detector pixels")
     logging.info(
-        "The %dx%dx%d volume exceeds device memory; reconstructing in z-slabs on the host",
+        "Reconstructing %dx%dx%d in z-slabs on the host",
         grid.nx,
         grid.ny,
         grid.nz,
@@ -241,7 +269,7 @@ def _host_fdk(
     backend = {"auto": "auto", "jax": "jax", "pallas": "cuda"}[cfg.backprojector]
     fdk = FDKConfig(filter=cfg.filter, backend=backend, devices=cfg.devices)
     data = np.asarray(projections, np.float32)
-    return fdk_host(geometry, grid, detector, data, config=FDKHostConfig(fdk=fdk))
+    return fdk_host(geometry, grid, detector, data, config=FDKHostConfig(fdk=fdk), out=out)
 
 
 __all__ = [

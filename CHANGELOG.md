@@ -14,6 +14,10 @@ workspace fit the device budget; unknown/tight memory keeps the old bound.
 CUDA axial FBP packs slabs on the device for contiguous z-leading caller-owned
 outputs, avoiding strided host copies while keeping a bounded staging buffer.
 
+`tj.reconstruct(..., out=array)` accepts caller-owned float32 NumPy arrays and
+memmaps for FBP, FDK and Fourier reconstruction, without allocating another
+full output volume. Iterative methods reject this option.
+
 Host parallel FBP overlaps large CUDA output-slab copies with reconstruction
 when device memory permits, without changing the reconstructed values.
 
