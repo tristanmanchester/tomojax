@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+Parallel FBP can explicitly assume constant exterior detector endpoints with
+`FBPConfig(padding="edge")` (also in `FBPHostConfig`). Boundary-tail compensation
+suppresses some truncation halos without larger detector/FFT arrays or a padding
+width. This is a potentially biased prior, not recovery of missing data; the
+zero-extension default and matched forward/adjoint projectors are unchanged.
+
 Faster: exact-ray projection loads each cell corner once and integrates one
 spatial derivative for every pose direction (about 2.4x forward and 3x
 gradient on the CPU at 48³); the CUDA cone transpose weights, reorders and

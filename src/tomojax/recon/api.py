@@ -150,6 +150,8 @@ def _host_fdk(
 
     from tomojax.recon.fdk import FDKConfig, FDKHostConfig, fdk_host
 
+    if cfg.padding == "edge":
+        raise ValueError("FBP edge padding requires canonical parallel-beam detector pixels")
     logging.info(
         "The %dx%dx%d volume exceeds device memory; reconstructing in z-slabs on the host",
         grid.nx,

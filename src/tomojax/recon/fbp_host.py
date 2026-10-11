@@ -43,12 +43,14 @@ class FBPHostConfig:
     Projection rows are read and transferred only ``views_per_batch`` views at
     a time, keeping at most two input batches on the device for either layout.
     Runtime/compiler caches add memory beyond these arrays. ``scale`` has the
-    same meaning as in :class:`FBPConfig`.
+    same meaning as in :class:`FBPConfig`. So does ``padding``: ``'edge'``
+    assumes constant exterior endpoint values instead of zero attenuation.
     """
 
     slices_per_batch: int | None = None
     views_per_batch: int = 32
     filter: str = "ramp"
+    padding: Literal["zero", "edge"] = "zero"
     scale: float | None = None
     backprojector: Literal["auto", "jax", "pallas"] = "auto"
 
@@ -107,11 +109,13 @@ def fbp_host(
     laminography and posed scans reconstruct in x-slabs, built-in parallel
     scans in axial slabs that read only the detector rows they need.
     Anisotropic spacing, detector offsets and shifted volume origins are
-    supported. Filter tails use the same zero-extended measurement model as
-    ``fbp``.
+    supported. Filter tails use the same measurement-extension assumption as
+    ``fbp`` (zero by default, constant endpoints with ``padding="edge"``).
     """
     require_parallel_beam(geometry, "fbp_host")
     cfg = FBPHostConfig() if config is None else config
+    if cfg.padding not in {"zero", "edge"}:
+        raise ValueError("fbp_host: padding must be 'zero' or 'edge'")
     slices = None if cfg.slices_per_batch is None else operator.index(cfg.slices_per_batch)
     views = operator.index(cfg.views_per_batch)
     if (slices is not None and slices < 1) or views < 1:
@@ -165,6 +169,7 @@ def fbp_host(
             z_mode="integer" if integer else "fixed",
             separable=True,
             check_finite=True,
+            padding=cfg.padding,
         )
         count = min(depth, grid.nz - start)
         # The host copy synchronizes before the next slab reuses its buffers.
@@ -186,6 +191,8 @@ def _general_slabs(
     """Reconstruct x-slabs, streaming every view batch once per slab."""
     output = validate_host_arrays(projections, out, (grid.nx, grid.ny, grid.nz))
     view_scale, params, arc_length, separable = _view_weights(poses, cfg.scale)
+    if cfg.padding == "edge" and not separable:
+        raise ValueError("fbp_host: edge padding requires a separable detector-u filter")
     host_poses = np.asarray(poses, np.float32)
     detector_f = _filter_detector(grid, detector, host_poses, pad_v=not separable)
     spectrum = rfft_filter_array(cfg.filter, detector_f.nu, detector.du, jnp.float32)
@@ -215,6 +222,7 @@ def _general_slabs(
             batch_size=batch,
             separable=separable,
             check_finite=True,
+            padding=cfg.padding,
         )
         output[start : start + count] = np.asarray(volume)[:count]
     return output

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from scipy.special import polygamma
 
 from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.recon import FBPConfig, FBPHostConfig, fbp, fbp_host
@@ -445,3 +449,138 @@ def test_fbp_rejects_nonfinite_geometry_before_any_work(bad, host) -> None:
     projections = np.ones((3, 1, 5), np.float32) if host else jnp.ones((3, 1, 5))
     with pytest.raises(ValueError, match="must be finite"):
         run(geometry, grid, detector, projections, config=config)
+
+
+def _ramp(offset: np.ndarray, du: float) -> np.ndarray:
+    kernel = np.zeros(offset.shape, dtype=np.float64)
+    kernel[offset == 0] = 0.25 / du
+    odd = offset % 2 != 0
+    kernel[odd] = -1 / (np.pi**2 * offset[odd] ** 2 * du)
+    return kernel
+
+
+def _tail(index: np.ndarray, du: float) -> np.ndarray:
+    """Independent infinite odd-lag sum, using the trigamma identity."""
+    distance = np.where(index < 0, -index - 1, index)
+    first = distance + 1
+    first += first % 2 == 0
+    positive = -polygamma(1, first / 2) / (4 * np.pi**2 * du)
+    return np.where(index < 0, -positive, positive)
+
+
+@pytest.mark.parametrize("filter_name", ["ramp", "hann"])
+@pytest.mark.parametrize("nu", [1, 7, 12])
+@pytest.mark.parametrize("pad", [0, 5, 47])
+@pytest.mark.parametrize("du", [0.4, 1.7])
+def test_endpoint_continuation_matches_independent_infinite_convolution(
+    filter_name: str, nu: int, pad: int, du: float
+) -> None:
+    data = np.random.default_rng(901).uniform(0.1, 3, size=(3, nu)).astype(np.float32)
+    index = np.arange(-pad, nu + pad)
+    offsets = index[:, None] - np.arange(nu)
+    kernel = _ramp(offsets, du)
+    left, right = _tail(index, du), _tail(nu - 1 - index, du)
+    if filter_name == "hann":
+        kernel = 0.5 * kernel + 0.25 * (_ramp(offsets - 1, du) + _ramp(offsets + 1, du))
+        left = 0.5 * left + 0.25 * (_tail(index - 1, du) + _tail(index + 1, du))
+        right = 0.5 * right + 0.25 * (_tail(nu - 2 - index, du) + _tail(nu - index, du))
+    expected = data @ kernel.T + data[:, :1] * left + data[:, -1:] * right
+    rows = jnp.asarray(np.pad(data, ((0, 0), (pad, pad))))
+    spectrum = rfft_filter_array(filter_name, nu + 2 * pad, du, rows.dtype)
+    actual = jax.jit(lambda x: fft_filter_rows(x, spectrum, edge_width=nu))(rows)
+    np.testing.assert_allclose(actual, expected, rtol=4e-5, atol=5e-7)
+
+
+@pytest.mark.parametrize("filter_name", ["ramp", "hann", "shepp-logan"])
+@pytest.mark.parametrize("nu", [1, 13, 640])
+def test_constant_exterior_and_measurements_have_zero_ramp_response(
+    filter_name: str, nu: int
+) -> None:
+    rows = jnp.pad(jnp.full((3, nu), 2.3), ((0, 0), (9, 9)))
+    spectrum = rfft_filter_array(filter_name, nu + 18, 0.7, rows.dtype)
+    actual = fft_filter_rows(rows, spectrum, edge_width=nu)
+    np.testing.assert_array_equal(actual, 0)
+
+
+@pytest.mark.parametrize("filter_name", ["ramp", "hann", "shepp-logan"])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("depth", [1, 4])
+def test_host_and_device_paths_keep_the_same_endpoint_assumption(
+    filter_name: str, backend: str, depth: int
+) -> None:
+    if backend == "pallas" and jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    grid = Grid(9, 7, 5, 0.8, 1.2, 0.7, vol_center=(1.2, -0.4, 0.31))
+    detector = Detector(9, 7, 0.9, 1, (0.23, -0.19))
+    geometry = ParallelGeometry(grid, detector, [0, 29, 73, 118, 163])
+    data = np.random.default_rng(133).uniform(0.1, 2, size=(5, 7, 9)).astype(np.float32)
+    cfg = FBPConfig(filter=filter_name, padding="edge", backprojector=backend)
+    expected = np.asarray(fbp(geometry, grid, detector, jnp.asarray(data), config=cfg))
+    streamed = np.asarray(fbp(geometry, grid, detector, data, config=cfg))
+    actual = fbp_host(
+        geometry,
+        grid,
+        detector,
+        data,
+        config=FBPHostConfig(
+            filter=filter_name,
+            padding="edge",
+            backprojector=backend,
+            views_per_batch=3,
+            slices_per_batch=depth,
+        ),
+    )
+    np.testing.assert_allclose(streamed, expected, atol=3e-6, rtol=4e-5)
+    np.testing.assert_allclose(actual, expected, atol=3e-6, rtol=4e-5)
+
+
+def test_edge_continuation_reduces_severe_truncation_error_not_just_residual() -> None:
+    grid = Grid(64, 64, 1, 1, 1, 1)
+    detector = Detector(32, 1, 1, 1, (-3, 0))
+    angles = np.linspace(0, 180, 180, endpoint=False)
+    geometry = ParallelGeometry(grid, detector, angles)
+    sigma = 20
+    u = np.arange(32) - 15.5 - 3
+    profile = np.sqrt(2 * np.pi) * sigma * np.exp(-0.5 * (u / sigma) ** 2)
+    data = np.broadcast_to(profile.astype(np.float32), (180, 1, 32))
+    x = np.arange(64) - 31.5
+    truth = np.exp(-0.5 * (x[:, None] ** 2 + x[None, :] ** 2) / sigma**2)
+    region = np.hypot(x[:, None], x[None, :]) < 12.8
+    zero = np.asarray(fbp(geometry, grid, detector, data))[:, :, 0]
+    edge = np.asarray(fbp(geometry, grid, detector, data, config=FBPConfig(padding="edge")))[
+        :, :, 0
+    ]
+    zero_error = np.linalg.norm((zero - truth)[region]) / np.linalg.norm(truth[region])
+    edge_error = np.linalg.norm((edge - truth)[region]) / np.linalg.norm(truth[region])
+    assert edge_error < 0.65
+    assert edge_error < 0.6 * zero_error
+    # This prior suppresses the discontinuity but cannot recover missing curvature.
+    assert edge_error > 0.3
+
+
+def test_zero_endpoint_data_do_not_change_under_edge_continuation() -> None:
+    grid = Grid(13, 11, 1, 1, 1, 1)
+    detector = Detector(9, 1, 1, 1, (0.3, 0))
+    geometry = ParallelGeometry(grid, detector, [0, 37, 84, 123, 162])
+    data = np.random.default_rng(77).uniform(0.1, 2, size=(5, 1, 9)).astype(np.float32)
+    data[..., [0, -1]] = 0
+    zero = fbp(geometry, grid, detector, data)
+    edge = fbp(geometry, grid, detector, data, config=FBPConfig(padding="edge"))
+    np.testing.assert_array_equal(edge, zero)
+
+
+@pytest.mark.parametrize("host", [False, True])
+def test_edge_padding_refuses_oblique_filters_instead_of_silently_using_zero(host: bool) -> None:
+    grid, detector = Grid(3, 2, 1, 1, 1, 1), Detector(5, 3, 1, 1)
+    geometry = LaminographyGeometry(grid, detector, [0, 37, 84, 123, 162], tilt_deg=30)
+    data = np.ones((5, 3, 5), dtype=np.float32)
+    cfg = FBPHostConfig(padding="edge") if host else FBPConfig(padding="edge")
+    with pytest.raises(ValueError, match="separable"):
+        (fbp_host if host else fbp)(geometry, grid, detector, data, config=cfg)
+
+
+def test_padding_is_a_recorded_expert_setting_and_validated() -> None:
+    assert FBPConfig().padding == "zero"
+    assert replace(FBPConfig(), padding="edge").padding == "edge"
+    with pytest.raises(ValueError, match="padding"):
+        FBPConfig(padding="unknown")
