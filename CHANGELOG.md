@@ -56,6 +56,8 @@ retry remain; unavailable optional cache queries keep memory-budget sizing.
 
 Stripe correction selects only the median ranks on CUDA and uses pruned sorting
 networks for wider windows, preserving corrected values and differentiability.
+Whole-row corrections overlap bounded slab downloads with the next slab's work,
+preserving the correction order and the previous image-memory budget.
 
 Faster: exact-ray projection loads each cell corner once and integrates one
 spatial derivative for every pose direction (about 2.4x forward and 3x

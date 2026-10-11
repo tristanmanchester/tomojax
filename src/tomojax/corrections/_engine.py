@@ -330,10 +330,9 @@ def _run_rest(
             i += 1
             continue
         if step.whole_rows:
-            slab = max(1, min(rows, _BATCH_BYTES // (4 * views * cols)))
-            for r0 in range(0, rows, slab):
-                part = jnp.asarray(out[:, r0 : r0 + slab])
-                out[:, r0 : r0 + slab] = np.asarray(_apply((step,), part))
+            # Two pending input/output slabs share the old one-slab budget.
+            slab = max(1, min(rows, _BATCH_BYTES // (8 * views * cols)))
+            _whole_rows(out, step, slab)
             records.append(step.record())
             i += 1
             continue
@@ -346,6 +345,27 @@ def _run_rest(
         records.extend(s.record() for s in run)
         i = j
     return out, kept, tuple(records)
+
+
+def _whole_rows(out: np.ndarray, step: Step, slab: int) -> None:
+    """Overlap one slab's transfer with the next; disjoint rows can be written in place."""
+    if out.shape[0] * out.shape[2] * out.dtype.itemsize > _BATCH_BYTES // 2:
+        # A single row cannot be split across views: keep its original serial footprint.
+        for r0 in range(out.shape[1]):
+            out[:, r0 : r0 + 1] = np.asarray(_apply((step,), jnp.asarray(out[:, r0 : r0 + 1])))
+        return
+    pending = None
+    for r0 in range(0, out.shape[1], slab):
+        done = _apply((step,), jnp.asarray(out[:, r0 : r0 + slab]))
+        done.copy_to_host_async()
+        if pending is not None:
+            previous, result = pending
+            out[:, previous : previous + slab] = np.asarray(result)
+            del result
+        pending = (r0, done)
+    if pending is not None:
+        previous, result = pending
+        out[:, previous : previous + slab] = np.asarray(result)
 
 
 @partial(jax.jit, static_argnames=("step",))
