@@ -37,9 +37,9 @@ class _Geometry:
                 raise ImportError(
                     "fourier_reconstruct: backend='cupy' requires tomojax[fourier-cuda12]"
                 ) from exc
-            from ._fourier_cuda import interpolation_kernel
+            from ._fourier_cuda import interpolation_kernel, mass_deapod_kernel
 
-            self.kernel = interpolation_kernel()
+            self.mass_kernel = mass_deapod_kernel()
         else:
             xp = np
         self.xp = xp
@@ -56,7 +56,7 @@ class _Geometry:
         self.deapod = xp.asarray(deapod, dtype=real)
         self.table = xp.asarray(table, dtype=real)
         px, py = self.shape
-        qy = py // 2 + 1 if self.cuda else py
+        qy = py // 2 + 1
         fx = xp.fft.fftfreq(px, d=grid.vx)[:, None]
         # Retain the full transform's negative y Nyquist frequency. The real
         # inverse FFT supplies the same Hermitian projection as real(ifft2).
@@ -64,12 +64,14 @@ class _Geometry:
         self.coordinates = self._coordinates(fx, fy, theta0)
         self.x_boundary = None
         stop = qy - 1 if py % 2 == 0 else qy
-        if self.cuda and px % 2 == 0 and grid.vx > detector.du and stop > 1:
+        if px % 2 == 0 and grid.vx > detector.du and stop > 1:
             # At x Nyquist, -kx maps to the same stored bin. If its line is
             # inside the detector's disk, conjugate symmetry needs the missing
             # opposite-y sample, not just conjugation of the current sample.
             coordinates = self._coordinates(fx[px // 2 : px // 2 + 1], -fy[:, 1:stop], theta0)
             self.x_boundary = (coordinates, stop)
+        if self.cuda:
+            self.kernel = interpolation_kernel(x_boundary=self.x_boundary is not None)
 
     def _coordinates(self, fx, fy, theta0):
         xp, grid, detector = self.xp, self.grid, self.detector
@@ -174,52 +176,71 @@ class FourierPlan:
             self.coordinates = geometry.coordinates
             if self.cuda:
                 self.kernel = geometry.kernel
+                self.mass_kernel = geometry.mass_kernel
+                self.row_mass = xp.empty((depth, nviews), dtype=xp.float64)
             px, py = self.shape
-            qy = py // 2 + 1 if self.cuda else py
+            qy = py // 2 + 1
             dtype = xp.complex64 if self.cuda else xp.complex128
             self.frequencies = xp.empty((depth, px, qy), dtype=dtype)
-            self.x_boundary = None
-            if geometry.x_boundary is not None:
-                coordinates, stop = geometry.x_boundary
-                self.x_boundary = (coordinates, xp.empty((depth, 1, stop - 1), dtype=dtype), stop)
+            self.x_boundary = geometry.x_boundary
 
-    def _interpolate_cuda(self, spectrum, coordinates, output):
-        angle, radial, phase, detector_phase = coordinates
+    def _interpolate_cuda(self, spectrum):
+        output = self.frequencies
+        angle, radial, phase, detector_phase = self.coordinates
+        layers = min(self.depth, 65535)
+        args = (
+            spectrum,
+            angle,
+            radial,
+            phase,
+            output,
+            np.int64(output.shape[1] * output.shape[2]),
+            np.int32(self.depth),
+            np.int32(self.nviews),
+            np.int32(spectrum.shape[-1]),
+            np.int32(self.nfft),
+            np.float32(self.period_phase.real),
+            np.float32(self.period_phase.imag),
+            self.table,
+            detector_phase,
+            self.flipped,
+            self.row_mass,
+            np.float64(self.detector.du),
+            np.int32(1),
+        )
+        if self.x_boundary is not None:
+            coordinates, stop = self.x_boundary
+            args += (
+                *coordinates,
+                np.int64(self.shape[0] // 2 * output.shape[2]),
+                np.int32(stop),
+            )
         self.kernel(
-            ((output.size + 255) // 256,),
-            (256,),
             (
-                spectrum,
-                angle,
-                radial,
-                phase,
-                output,
-                np.int64(output.shape[1] * output.shape[2]),
-                np.int32(self.depth),
-                np.int32(self.nviews),
-                np.int32(spectrum.shape[-1]),
-                np.int32(self.nfft),
-                np.float32(self.period_phase.real),
-                np.float32(self.period_phase.imag),
-                self.table,
-                detector_phase,
-                self.flipped,
+                (output.shape[1] * output.shape[2] + 255) // 256,
+                layers,
+                (self.depth + layers - 1) // layers,
             ),
+            (256,),
+            args,
         )
 
-    def _compute_volume(self, raw, count: int):
+    def _compute_volume(self, raw, count: int) -> Any:
         xp = self.xp
-        mass = xp.mean(xp.sum(raw, axis=-1, dtype=xp.float64), axis=1) * self.detector.du
-        raw *= self.deapod
+        if self.cuda:
+            rows = self.depth * self.nviews
+            self.mass_kernel(
+                ((rows + 7) // 8,),
+                (256,),
+                (raw, self.deapod, self.row_mass, np.int32(self.detector.nu), np.int64(rows)),
+            )
+        else:
+            mass = xp.mean(xp.sum(raw, axis=-1, dtype=xp.float64), axis=1) * self.detector.du
+            raw *= self.deapod
         spectrum = xp.fft.rfft(raw, n=self.nfft, axis=-1)
         spectrum *= self.projection_phase
         if self.cuda:
-            self._interpolate_cuda(spectrum, self.coordinates, self.frequencies)
-            if self.x_boundary is not None:
-                coordinates, mirror, stop = self.x_boundary
-                self._interpolate_cuda(spectrum, coordinates, mirror)
-                row = self.frequencies[:, self.shape[0] // 2, 1:stop]
-                row[:] = 0.5 * (row + mirror[:, 0, :].conj())
+            self._interpolate_cuda(spectrum)
         else:
             self.frequencies = interpolate_numpy(
                 spectrum,
@@ -229,13 +250,21 @@ class FourierPlan:
                 self.nfft,
                 self.period_phase,
             )
-        self.frequencies[:, 0, 0] = mass
+            self.frequencies[:, 0, 0] = mass
+            if self.x_boundary is not None:
+                coordinates, stop = self.x_boundary
+                mirror = interpolate_numpy(
+                    spectrum,
+                    *coordinates,
+                    self.flipped,
+                    self.table,
+                    self.nfft,
+                    self.period_phase,
+                )
+                row = self.frequencies[:, self.shape[0] // 2, 1:stop]
+                row[:] = 0.5 * (row + mirror[:, 0, :].conj())
         cx, cy = self.crop
-        volume = (
-            xp.fft.irfft2(self.frequencies, s=self.shape, axes=(-2, -1))
-            if self.cuda
-            else xp.fft.ifft2(self.frequencies, axes=(-2, -1)).real
-        )
+        volume = xp.fft.irfft2(self.frequencies, s=self.shape, axes=(-2, -1))
         # Keep fixed FFT batches, but do not materialize or transfer padded output.
         return volume[:count, cx : cx + self.grid.nx, cy : cy + self.grid.ny] / (
             self.grid.vx * self.grid.vy

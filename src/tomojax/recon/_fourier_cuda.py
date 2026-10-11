@@ -14,15 +14,12 @@ __device__ float radial_weight(float distance, const float* table) {
     return table[index] * (1 - fraction) + table[index + 1] * fraction;
 }
 
-extern "C" __global__ void polar(
+__device__ __forceinline__ float2 polar_value(
     const float2* spectrum, const double* angle, const float* radial,
-    const float2* phase, float2* out, long long count, int layers,
+    const float2* phase, const float2* detector_phase, long long m, long long z,
     int nviews, int nr, int nfft, float qr, float qi, const float* table,
-    const float2* detector_phase, const signed char* flipped
+    const signed char* flipped
 ) {
-    long long i = (long long)blockDim.x * blockIdx.x + threadIdx.x;
-    if (i >= count * layers) return;
-    long long m = i % count, z = i / count;
     // Keep the angular fraction precise even with hundreds of views. Casting
     // the full view coordinate to FP32 would lose bits before subtracting ai.
     double a = angle[m];
@@ -65,13 +62,101 @@ extern "C" __global__ void polar(
         }
     }
     float2 p = phase[m];
-    out[i] = make_float2(total.x * p.x - total.y * p.y, total.x * p.y + total.y * p.x);
+    return make_float2(total.x * p.x - total.y * p.y, total.x * p.y + total.y * p.x);
+}
+
+extern "C" __global__ void polar(
+    const float2* spectrum, const double* angle, const float* radial,
+    const float2* phase, float2* out, long long count, int layers,
+    int nviews, int nr, int nfft, float qr, float qi, const float* table,
+    const float2* detector_phase, const signed char* flipped,
+    const double* row_mass, double du, int replace_dc
+    #ifdef FUSE_X_BOUNDARY
+    , const double* mirror_angle, const float* mirror_radial,
+    const float2* mirror_phase, const float2* mirror_detector,
+    long long row_offset, int stop
+    #endif
+) {
+    long long m = (long long)blockDim.x * blockIdx.x + threadIdx.x;
+    long long z = blockIdx.y + (long long)blockIdx.z * gridDim.y;
+    if (z >= layers) return;
+    long long i = z * count + m;
+    // The unweighted projection mass replaces DC, not the deapodized FFT's DC.
+    // All lanes participate before the bounds guard, even for fewer than 32 sites.
+    if (replace_dc && blockIdx.x == 0 && threadIdx.x < 32) {
+        double mass = 0;
+        for (int view = threadIdx.x; view < nviews; view += 32)
+            mass += row_mass[z * nviews + view];
+        for (int shift = 16; shift > 0; shift >>= 1)
+            mass += __shfl_down_sync(0xffffffff, mass, shift);
+        if (threadIdx.x == 0) {
+            out[i] = make_float2((float)(mass / nviews * du), 0.0f);
+            return;
+        }
+    }
+    if (m >= count) return;
+    #ifdef FUSE_X_BOUNDARY
+    // The x Nyquist bin also represents -kx. Average the missing opposite-y
+    // value before storing it, preserving real(ifft2)'s Hermitian projection.
+    // One non-unrolled loop shares the interpolation body between both samples.
+    long long y = m - row_offset;
+    int samples = y > 0 && y < stop ? 2 : 1;
+    float2 value = make_float2(0, 0);
+    #pragma unroll 1
+    for (int pass = 0; pass < samples; pass++) {
+        bool opposite = pass != 0;
+        float2 current = polar_value(
+            spectrum, opposite ? mirror_angle : angle, opposite ? mirror_radial : radial,
+            opposite ? mirror_phase : phase, opposite ? mirror_detector : detector_phase,
+            opposite ? y - 1 : m, z, nviews, nr, nfft, qr, qi, table, flipped
+        );
+        if (pass == 0) value = current;
+        else value = make_float2(0.5f * (value.x + current.x), 0.5f * (value.y - current.y));
+    }
+    out[i] = value;
+    #else
+    out[i] = polar_value(
+        spectrum, angle, radial, phase, detector_phase, m, z,
+        nviews, nr, nfft, qr, qi, table, flipped
+    );
+    #endif
+
+}
+"""
+
+_MASS_SOURCE = r"""
+extern "C" __global__ void mass_deapod(
+    float* raw, const float* deapod, double* row_mass, int nu, long long nrows
+) {
+    long long row = (long long)blockIdx.x * 8 + threadIdx.x / 32;
+    int lane = threadIdx.x % 32;
+    double total = 0.0;
+    if (row < nrows) {
+        for (int u = lane; u < nu; u += 32) {
+            long long index = row * nu + u;
+            float value = raw[index];
+            total += (double)value;
+            raw[index] = value * deapod[u];
+        }
+    }
+    for (int shift = 16; shift > 0; shift >>= 1)
+        total += __shfl_down_sync(0xffffffff, total, shift);
+    if (lane == 0 && row < nrows) row_mass[row] = total;
 }
 """
 
 
-@functools.lru_cache(maxsize=1)
-def interpolation_kernel():
+@functools.lru_cache(maxsize=2)
+def interpolation_kernel(*, x_boundary=False):
     import cupy
 
-    return cupy.RawKernel(_SOURCE, "polar", options=("--fmad=false",))
+    options = ("--fmad=false",) + (("-DFUSE_X_BOUNDARY",) if x_boundary else ())
+    return cupy.RawKernel(_SOURCE, "polar", options=options)
+
+
+@functools.lru_cache(maxsize=1)
+def mass_deapod_kernel():
+    """Sum each measured profile in FP64 while deapodizing its owned FP32 copy."""
+    import cupy
+
+    return cupy.RawKernel(_MASS_SOURCE, "mass_deapod", options=("--fmad=false",))

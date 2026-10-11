@@ -128,9 +128,42 @@ def interpolate_numpy(
     period_phase: complex,
 ) -> np.ndarray:
     """Vectorized reference for linear angular and Kaiser radial interpolation."""
+    angle, radial, phase, detector_phase = np.broadcast_arrays(angle, radial, phase, detector_phase)
+    inside = radial <= nfft / 2
+    if np.all(inside):
+        return _interpolate_inside(
+            spectrum, angle, radial, phase, detector_phase, flipped, table, nfft, period_phase
+        )
+    result = np.zeros((spectrum.shape[0], *angle.shape), dtype=np.complex128)
+    if np.any(inside):
+        result[:, inside] = _interpolate_inside(
+            spectrum,
+            angle[inside],
+            radial[inside],
+            phase[inside],
+            detector_phase[inside],
+            flipped,
+            table,
+            nfft,
+            period_phase,
+        )
+    return result
+
+
+def _interpolate_inside(
+    spectrum: np.ndarray,
+    angle: np.ndarray,
+    radial: np.ndarray,
+    phase: np.ndarray,
+    detector_phase: np.ndarray,
+    flipped: np.ndarray,
+    table: np.ndarray,
+    nfft: int,
+    period_phase: complex,
+) -> np.ndarray:
+    """Vectorized reference for linear angular and Kaiser radial interpolation."""
     layers, nviews, _ = spectrum.shape
     ai, ri = np.floor(angle).astype(np.int64), np.floor(radial).astype(np.int64)
-    inside = radial <= nfft / 2
     result = np.zeros((layers, *angle.shape), dtype=np.complex128)
     for da in (0, 1):
         view = (ai + da) % (2 * nviews)
@@ -139,18 +172,22 @@ def interpolate_numpy(
         angular = 1 - (angle - ai) if da == 0 else angle - ai
         row = np.zeros_like(result)
         for dr in range(-2, 4):
-            k = np.where(inside, ri + dr, 0)
+            k = ri + dr
             reflected = np.where(k < 0, -k, np.where(k > nfft // 2, nfft - k, k))
+            # Advanced indexing owns a copy, even for scalar coordinates. Reuse
+            # it rather than creating full complex temporaries for each mask.
             values = spectrum[:, view, reflected]
-            values = np.where((k < 0) | (k > nfft // 2), values.conj(), values)
-            values = np.where(k > nfft // 2, values * period_phase, values)
+            np.conjugate(values, out=values, where=((k < 0) | (k > nfft // 2))[None, ...])
+            np.multiply(values, period_phase, out=values, where=(k > nfft // 2)[None, ...])
             distance = np.abs(radial - k)
             coordinate = np.minimum(distance * (16384 / 3), 16384)
             index = np.minimum(coordinate.astype(np.int64), 16383)
             fraction = coordinate - index
             weight = table[index] * (1 - fraction) + table[index + 1] * fraction
-            row += values * np.where(inside & (distance < 3), weight, 0)
+            values *= np.where(distance < 3, weight, 0)
+            row += values
         row *= detector_phase
-        row = np.where(conjugate, row.conj(), row)
+        np.conjugate(row, out=row, where=conjugate[None, ...])
         result += row * angular
-    return result * phase
+    result *= phase
+    return result

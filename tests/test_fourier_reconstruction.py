@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import math
 
 import jax
 import numpy as np
@@ -484,9 +485,12 @@ def test_kaiser_interpolation_matches_independent_dense_fourier_sum(nu, signal, 
     nfft = max(64, next_fast_len(2 * nu, real=True))
     phase, deapod, table = radial_coefficients(nu, nfft, 0.7)
     spectrum = np.fft.rfft(values * deapod, n=nfft) * phase
-    radial = np.concatenate((rng.uniform(0, nfft / 2, 100), [0, 1, nfft // 2, nfft / 2]))
+    spectrum.flags.writeable = False
+    radial = np.concatenate(
+        (rng.uniform(0, nfft / 2, 100), [0, 1, nfft // 2, nfft / 2, nfft / 2 + 0.001, nfft])
+    )
     angle = np.zeros_like(radial)
-    ones = np.ones_like(radial, dtype=np.complex128)
+    ones = np.asarray(1, dtype=np.complex128)
     actual = interpolate_numpy(
         spectrum[None, None, :],
         angle,
@@ -500,6 +504,7 @@ def test_kaiser_interpolation_matches_independent_dense_fourier_sum(nu, signal, 
     )[0]
     coordinates = (np.arange(nu) - (nu - 1) / 2) / nfft
     reference = 0.7 * (np.exp(-2j * np.pi * radial[:, None] * coordinates) @ values)
+    reference[radial > nfft / 2] = 0  # beyond the sampled disk
     assert np.linalg.norm(actual - reference) / np.linalg.norm(reference) < 2e-5
 
 
@@ -699,3 +704,83 @@ def test_provided_output_retains_layout_and_identity(backend, layout):
     result = fourier_reconstruct(geometry, grid, detector, data, config=config, out=out)
     assert result is out and result.strides == strides
     np.testing.assert_array_equal(result.view(np.uint32), expected.view(np.uint32))
+
+
+def dense_full_spectrum_reference(grid, detector, angles, data):
+    """Centred DFT of every sampled detector profile, then a full complex Cartesian FFT."""
+    origin = grid_volume_origin(grid)
+    radius = abs(detector.center[0]) + detector.nu * detector.du / 2
+    shape, crop = [], []
+    for count, spacing, first in zip(
+        (grid.nx, grid.ny), (grid.vx, grid.vy), origin[:2], strict=True
+    ):
+        lo = min(0, math.floor((-radius - first) / spacing))
+        hi = max(count - 1, math.ceil((radius - first) / spacing))
+        support = hi - lo + 1
+        padded = next_fast_len(2 * support, real=True)
+        shape.append(padded)
+        crop.append(-lo + (padded - support) // 2)
+    nviews = len(angles)
+    order = np.argsort(np.mod(angles, 180))
+    theta0 = np.deg2rad(np.mod(angles[order[0]], 180))
+    flipped = np.mod(angles[order], 360) >= 180
+    raw = np.zeros((grid.nz, nviews, detector.nu), np.float32)
+    positions = (origin[2] + np.arange(grid.nz) * grid.vz - detector.center[1]) / detector.dv + (
+        detector.nv - 1
+    ) / 2
+    for z, position in enumerate(positions):
+        low = int(np.floor(position))
+        fraction = np.float32(position - low)
+        for row, weight in [(low, 1 - fraction), (low + 1, fraction)]:
+            if 0 <= row < detector.nv and weight != 0:
+                raw[z] += data[order, row, :] * weight
+    fx = np.fft.fftfreq(shape[0], d=grid.vx)[:, None]
+    fy = np.fft.fftfreq(shape[1], d=grid.vy)[None, :]
+    frequency = np.sqrt(fx * fx + fy * fy)
+    u = detector.center[0] + (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du
+    matrix = detector.du * np.exp(-2j * np.pi * frequency.reshape(-1, 1) * u[None, :])
+    measured = raw.astype(np.float64) @ matrix.T
+    a = (np.mod(np.arctan2(-fy, fx) - theta0, 2 * np.pi) * (nviews / np.pi)).ravel()
+    index = np.floor(a).astype(np.int64)
+    sites = np.arange(len(a))
+    values = np.zeros((grid.nz, len(a)), np.complex128)
+    for shift, weight in [(0, 1 - (a - index)), (1, a - index)]:
+        view = (index + shift) % (2 * nviews)
+        conjugate = (view >= nviews) ^ flipped[view % nviews]
+        sampled = measured[:, view % nviews, sites]
+        values += np.where(conjugate, sampled.conj(), sampled) * weight
+    phase = np.exp(
+        2j * np.pi * (fx * (origin[0] - crop[0] * grid.vx) + fy * (origin[1] - crop[1] * grid.vy))
+    )
+    values = values.reshape(grid.nz, *shape) * phase
+    values[:, frequency > 0.5 / detector.du] = 0
+    values[:, 0, 0] = raw.astype(np.float64).sum(axis=-1).mean(axis=-1) * detector.du
+    full = np.fft.ifft2(values, axes=(-2, -1)).real / (grid.vx * grid.vy)
+    cropped = full[:, crop[0] : crop[0] + grid.nx, crop[1] : crop[1] + grid.ny]
+    return cropped.transpose(1, 2, 0).astype(np.float32)
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("ny", [11, 13])
+@pytest.mark.parametrize("vx", [0.35, 1.3])
+def test_signed_profiles_match_a_dense_full_spectrum_reconstruction(backend, ny, vx):
+    # Signed rows have power at the x Nyquist bin, which a half-plane transform
+    # must project to a real image as the full transform does.
+    if backend == "cupy":
+        pytest.importorskip("cupy")
+    grid = Grid(13, ny, 5, vx, 1.7, 0.7, vol_center=(0.2, -0.3, 0.1))
+    detector = Detector(17, 7, 0.9, 1.1, (0.7, -0.23))
+    angles = -37 + np.arange(13) * (180 / 13)
+    angles[::3] += 180
+    angles = angles[np.random.default_rng(17).permutation(13)]
+    data = np.random.default_rng(321).normal(size=(13, 7, 17)).astype(np.float32)
+    data += ((-1.0) ** np.arange(17))[None, None, :]
+    reference = dense_full_spectrum_reference(grid, detector, angles, data)
+    actual = fourier_reconstruct(
+        ParallelGeometry(grid, detector, angles),
+        grid,
+        detector,
+        data,
+        config=FourierConfig(slices_per_batch=3, backend=backend),
+    )
+    assert np.linalg.norm(actual - reference) / np.linalg.norm(reference) < 2e-5
