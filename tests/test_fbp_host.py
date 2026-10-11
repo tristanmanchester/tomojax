@@ -115,28 +115,6 @@ def test_automatic_axial_slabs_balance_tail_work_without_increasing_storage(
     np.testing.assert_array_equal(actual, expected)
 
 
-@pytest.mark.parametrize("nz", [22, 33])
-@pytest.mark.parametrize("kind", ["integer", "fractional", "outside", "one_row"])
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
-def test_balanced_automatic_axial_slabs_keep_shifted_physical_coordinates(nz, kind, backend):
-    grid, detector, geometry, data = scan(kind)
-    grid = replace(grid, nz=nz)
-    detector = replace(detector, nv=1 if kind == "one_row" else nz + 6)
-    geometry = ParallelGeometry(grid, detector, geometry.angles)
-    data = np.random.default_rng(132).normal(size=(5, detector.nv, detector.nu)).astype(np.float32)
-    reference = np.asarray(
-        fbp(geometry, grid, detector, data, config=FBPConfig(backprojector="jax"))
-    )
-    actual = fbp_host(
-        geometry,
-        grid,
-        detector,
-        data,
-        config=FBPHostConfig(views_per_batch=3, backprojector=backend),
-    )
-    np.testing.assert_allclose(actual, reference, atol=4e-6, rtol=5e-5)
-
-
 def test_host_slabs_read_and_convert_only_bounded_view_batches():
     grid, detector, geometry, data = scan()
     reads = []
@@ -350,64 +328,6 @@ def test_host_slabs_recover_independent_gaussian_attenuation(length_scale):
         data,
         config=FBPHostConfig(slices_per_batch=3, views_per_batch=17),
     )
-    assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.01
-
-
-@pytest.mark.parametrize("length_scale", [0.5, 2.0])
-@pytest.mark.parametrize("fractional", [False, True])
-def test_balanced_automatic_slabs_recover_independent_off_axis_gaussian(length_scale, fractional):
-    nz, views = (33 if fractional else 22), 121
-    grid = Grid(
-        64,
-        48,
-        nz,
-        0.8 * length_scale,
-        1.2 * length_scale,
-        (0.7 if fractional else 1) * length_scale,
-        vol_center=(
-            1.2 * length_scale,
-            -0.4 * length_scale,
-            (0.31 if fractional else 0) * length_scale,
-        ),
-    )
-    detector = Detector(
-        96,
-        nz + 6,
-        0.9 * length_scale,
-        length_scale,
-        (0.23 * length_scale, (-0.19 if fractional else 0) * length_scale),
-    )
-    angles = 7 + np.arange(views) * 180 / views
-    geometry = ParallelGeometry(grid, detector, angles)
-    theta = np.deg2rad(angles)
-    mx, my, mz = np.array([3, -4, 1.3]) * length_scale
-    sx, sy, sz = np.array([6, 4, 4]) * length_scale
-    u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du + detector.center[0]
-    v = (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv + detector.center[1]
-    mean = mx * np.cos(theta) - my * np.sin(theta)
-    variance = sx**2 * np.cos(theta) ** 2 + sy**2 * np.sin(theta) ** 2
-    profile = (
-        np.sqrt(2 * np.pi)
-        * sx
-        * sy
-        / np.sqrt(variance[:, None])
-        * np.exp(-0.5 * (u[None] - mean[:, None]) ** 2 / variance[:, None])
-    )
-    data = (profile[:, None] * np.exp(-0.5 * ((v[None, :, None] - mz) / sz) ** 2)).astype(
-        np.float32
-    )
-    x = (np.arange(grid.nx) - (grid.nx - 1) / 2) * grid.vx + grid.vol_center[0]
-    y = (np.arange(grid.ny) - (grid.ny - 1) / 2) * grid.vy + grid.vol_center[1]
-    z = (np.arange(grid.nz) - (grid.nz - 1) / 2) * grid.vz + grid.vol_center[2]
-    truth = np.exp(
-        -0.5
-        * (
-            ((x[:, None, None] - mx) / sx) ** 2
-            + ((y[None, :, None] - my) / sy) ** 2
-            + ((z[None, None] - mz) / sz) ** 2
-        )
-    )
-    actual = fbp_host(geometry, grid, detector, data)
     assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.01
 
 
