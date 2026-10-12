@@ -70,6 +70,15 @@ position between the flat fields. `scan.corrected(...)` runs line-integral
 steps (`Stripes`, `BeamHardening`, `RejectViews`) on a scan that is already
 corrected.
 
+For calibrated lens distortion, pass
+`RadialDistortion(center=(column, row), coefficients=(c0, c1, ...))` from
+`tomojax.corrections`. It bilinearly samples a **backward** radial polynomial
+on transmission before the log. The centre is in zero-based image pixels,
+not the rotation axis; estimate the axis after this correction. Correct
+before cropping if the warp needs pixels outside the crop. Calibration
+coordinates also change with binning; see the
+[lens-distortion instructions](../src/tomojax/corrections/README.md#calibrated-lens-distortion).
+
 A file written by TomoJAX carries its geometry. Other NXtomo and Data Exchange
 files get a parallel beam with a centred detector, the file's angles, and the
 NXtomo detector's `x_pixel_size` and `y_pixel_size` when it has them. Without
@@ -97,6 +106,11 @@ from tomojax.corrections import Paganin
 step = Paganin(delta_beta=100, distance=0.1, energy_kev=25, pixel_size=0.65e-6)
 scan = tj.load_frames("raw.nxs").corrected(step)
 ```
+
+If using calibrated lens correction too, pass `RadialDistortion` before
+`Paganin`, so phase retrieval acts on uniformly spaced undistorted pixels.
+Put any `Zingers` step before both. Transmission steps run in the order
+supplied, and changing their order changes the result.
 
 On the command line, `--paganin` takes the same four values in that order:
 `tomojax preprocess raw.nxs -o phase.nxs --paganin 100,0.1,25,0.65e-6`. It is

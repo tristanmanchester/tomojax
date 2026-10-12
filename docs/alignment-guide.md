@@ -234,6 +234,45 @@ misjudges the offset, so use `cor-then-pose` when the sample also moves. The
 To compare trial centres by eye instead, see the
 [quickstart](quickstart.md#reconstruct-and-inspect-slices).
 
+For an axial parallel scan, a narrow, binned preview can reduce the cost.
+Apply lens correction before cropping the preview (or retain its measured
+source halo). Cropping and binning retain the scan's output grid, so give
+alignment an explicit preview grid:
+
+```python
+from dataclasses import replace
+
+row = scan.detector.nv // 2 - 2
+preview = scan.cropped(slice(row, row + 4), slice(None)).binned(4)
+d = preview.detector
+region = tj.Grid(d.nu, d.nu, 1, d.du, d.du, d.dv, vol_center=(0, 0, d.center[1]))
+result = tj.align(preview, mode="cor", grid=region)
+
+# Transfer the fitted change in physical lengths, not preview pixels.
+# Cropping columns or dropping an incomplete bin moves the preview's origin.
+delta_u = result.scan.detector.center[0] - preview.detector.center[0]
+detector = replace(
+    scan.detector,
+    center=(scan.detector.center[0] + delta_u, scan.detector.center[1]),
+)
+scan = replace(scan, geometry=replace(scan.geometry, detector=detector))
+recon = tj.reconstruct(scan)  # retains the full scan's grid and projections
+```
+
+Do not multiply this change by the preview's binning factor again. Copying
+the preview's absolute centre directly is valid only if its detector origin
+has not moved.
+Check it on another row band and at finer resolution. For a sample wider
+than the detector, density outside the preview grid can bias the fitted
+centre even while the held-out residual decreases. Compare wider XY support
+at the same voxel pitch and physical centre; this does not recover the
+unmeasured exterior or guarantee a calibrated axis.
+
+Changing grid support also changes the inner reconstruction problem. Check
+the estimated centre as that reconstruction converges, rather than assuming
+the same iteration count is equally accurate on every grid. A stable centre
+or a lower residual is not independent calibration.
+
 ## Estimate a detector offset together with motion
 
 `cor-then-pose` runs the same solver as `pose` and then reports the constant
