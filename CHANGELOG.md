@@ -129,7 +129,8 @@ copies only its sampled detector rows from device scans to the host. Dense
 scans average more angular rows during the coarse search, leaving the final
 full-resolution searches unchanged. Coarse and fine frequency masks are
 reused across sampled rows in a bounded, immutable cache. Integer mirror shifts
-use exact pixel rolls; fractional shifts retain Fourier interpolation.
+use exact pixel rolls; fractional shifts retain Fourier interpolation. Overlapping
+fine-search candidates reuse their metric only within the same sampled row.
 Narrow detectors keep enough columns in the coarse centre search to avoid
 aliased minima; odd-width coarse crops retain the correct detector midpoint.
 

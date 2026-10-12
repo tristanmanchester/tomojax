@@ -339,9 +339,13 @@ def sinogram_det_u_seed(
         # Dropping rightmost columns moves the coarse detector midpoint left.
         best -= (nu % binning) / 2
         # Fine: whole pixels around it, then quarter pixels.
+        fine_metrics: dict[float, float] = {}
         for spread, step in ((6.0, 1.0), (1.0, 0.25)):
             near = best + np.arange(-spread, spread + step / 2, step)
-            best = float(near[int(np.argmin(_vo_metrics(sino, near, ratio, drop)))])
+            # Reuse overlapping candidates only for this full-resolution row.
+            missing = np.asarray([offset for offset in near if offset not in fine_metrics])
+            fine_metrics.update(zip(missing, _vo_metrics(sino, missing, ratio, drop), strict=True))
+            best = float(near[int(np.argmin([fine_metrics[offset] for offset in near]))])
         offsets.append(best)
     if not offsets:
         return None

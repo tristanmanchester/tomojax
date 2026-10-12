@@ -309,6 +309,31 @@ def test_sinogram_fractional_mirror_shifts_still_use_fourier_interpolation(monke
     assert len(calls) == 2
 
 
+def test_sinogram_fine_metrics_are_reused_only_within_each_sampled_row(monkeypatch):
+    initializers = importlib.import_module("tomojax.alignment._geometry.initializers")
+    calls = []
+
+    def metric(sino, offsets, ratio, drop):
+        calls.append((sino.shape, float(sino[0, 0]), offsets.copy()))
+        return offsets**2
+
+    monkeypatch.setattr(initializers, "_vo_metrics", metric)
+    angles = np.arange(180, dtype=np.float32)
+    data = np.broadcast_to(np.arange(64, dtype=np.float32), (180, 3, 64)).copy()
+    data += np.arange(3, dtype=np.float32)[None, :, None]
+    for factor in (1, 2):
+        seed = initializers.sinogram_det_u_seed(factor * data, angles)
+        assert seed is not None and seed.det_u_px == 0
+    fine = [(value, offsets) for shape, value, offsets in calls if shape == (180, 64)]
+    assert len(fine) == 12  # Two refinements for each of three rows on both calls.
+    for i in range(0, len(fine), 2):
+        whole, fractional = fine[i : i + 2]
+        assert whole[0] == fractional[0]
+        assert len(whole[1]) == 13 and len(fractional[1]) == 6
+        assert not set(whole[1]) & set(fractional[1])
+    assert [value for value, _ in fine[::2]] == [0, 1, 2, 0, 2, 4]
+
+
 _COR_CONFIG = AlignConfig(
     outer_iterations=1, iterations=1, tv_weight=0, ray_integrator="joseph", projector_backend="jax"
 )
