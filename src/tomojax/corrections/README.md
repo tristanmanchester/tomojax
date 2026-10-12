@@ -53,6 +53,19 @@ Also exported:
 See the [quickstart](../../../docs/quickstart.md#correct-raw-detector-frames)
 for loading frames and choosing steps.
 
+## Choosing ring removal
+
+`Stripes` estimates a detector-fixed offset in line integrals and subtracts it
+from every view. A residual multiplicative gain error has this form after the
+logarithm; a raw additive count bias, such as an incorrect dark field, does not.
+It preserves each pixel's differences between views, but a
+real feature symmetric about the rotation axis also looks stationary in a
+sinogram. Ring removal can therefore alter genuine centred features, especially
+ones narrower than `width`; defect-free data are not guaranteed to be unchanged.
+Use the smallest window that covers the detector defect, and compare corrected
+and uncorrected reconstructions when centred fine structure matters. Completely
+dead pixels or view-dependent defects need more than a constant-offset model.
+
 ## Dependencies
 
 Allowed: `tomojax._data`, `tomojax.recon`, `tomojax.forward`,

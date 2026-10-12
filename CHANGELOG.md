@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+Stripe correction selects only the median ranks on CUDA and uses pruned sorting
+networks for wider windows, preserving corrected values and differentiability.
+Whole-row corrections overlap bounded slab downloads with the next slab's work,
+preserving the correction order and the previous image-memory budget.
+Raw correction collects the first view-selector's summaries while its batches
+are still on the device, avoiding another transfer of the corrected stack.
+Automatic correction batches respect declared workspace for counts and
+line-integral steps too, including view-selector statistics and post-stripe steps.
+Binning a device-resident scan reduces detector blocks on that device before
+downloading only the smaller, writable host array.
+`Frames.corrected(binning=f)` averages detector blocks after all corrections,
+reducing the final device download where step dependencies allow it.
+With automatic batching and independent whole-row line steps, terminal binning
+can stream raw row groups from efficient sources without a full-resolution
+corrected host stack. Other correction dependencies keep their existing path.
+64-bit raw row groups normalize before the compiled FP32 row steps, avoiding
+excess cold-compilation scratch without downloading unbinned detector pixels.
+When the first view-selector is also the final step, terminal binning keeps
+its original-pixel statistics but stores only the reduced detector data.
+
 Lazy HDF5 spatial-window reads no longer cache single-view chunks, avoiding
 unnecessary whole-frame reads for cropped previews. Uncropped and multi-view
 chunks keep the existing cache; HDF5 still handles data conversion, filters,
@@ -16,9 +36,6 @@ HDF5 flat and dark frames now remain lazy alongside sample counts: detector
 crops read only their calibration window, and correction averages calibrations
 in bounded host batches with FP64 accumulation. Use `np.asarray(frames.flats)`
 or index the stack to read its pixels explicitly.
-
-Raw correction collects the first view-selector's summaries while its batches
-are still on the device, avoiding another transfer of the corrected stack.
 
 Faster: exact-ray projection loads each cell corner once and integrates one
 spatial derivative for every pose direction (about 2.4x forward and 3x
