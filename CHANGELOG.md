@@ -17,6 +17,8 @@ Complete circles keep both frequency roots even when floating-point
 angle wrapping lands on the circular seam.
 FBP filter dtype classes retain requested FP64 coefficient precision before
 the coefficients reach the device.
+FBP retries smaller view batches when cuFFT scratch allocation fails behind
+an internal plan-creation error, without retrying unrelated internal failures.
 Automatic few-direction FBP shares angular measure between repeated exposures,
 so duplicating one sparse projection cannot overweight its direction.
 

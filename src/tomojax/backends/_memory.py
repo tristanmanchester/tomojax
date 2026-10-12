@@ -13,6 +13,23 @@ from tomojax.backends._subprocesses import check_output_resolved_command
 LOG = logging.getLogger(__name__)
 
 
+def is_oom_error(exc: Exception) -> bool:
+    """Identify JAX allocation failures that may permit a bounded retry or fallback.
+
+    This only classifies the error; callers own synchronization, rollback and
+    their recovery strategy. Unrelated INTERNAL failures are not recoverable.
+    """
+    msg = str(exc).lower()
+    # cuFFT can hide scratch exhaustion behind an INTERNAL plan-creation error;
+    # the allocation diagnostic appears only in stderr. Do not retry unrelated
+    # INTERNAL errors. Callers still propagate failures at a single-view batch.
+    cufft_scratch_failure = (
+        "fft_plan != nullptr" in msg
+        and "failed to create cufft batched plan with scratch allocator" in msg
+    )
+    return "resource_exhausted" in msg or "out of memory" in msg or cufft_scratch_failure
+
+
 @dataclass(frozen=True)
 class ViewsPerBatchEstimate:
     """Memory-estimator result for callers that need fallback diagnostics."""

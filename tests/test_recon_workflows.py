@@ -20,6 +20,13 @@ from tomojax.recon.api import clear_filter_caches, default_fbp_scale
 from tomojax.recon.fdk import fdk
 from tomojax.recon.filters import get_filter_np
 
+_ALLOCATION_ERRORS = (
+    "RESOURCE_EXHAUSTED: simulated async allocation failure",
+    "INTERNAL: RET_CHECK failure (external/xla+/xla/backends/gpu/runtime/fft_thunk.cc:201) "
+    "fft_plan != nullptr Failed to create cuFFT batched plan with scratch allocator "
+    "[executable_name='jit_filter']",
+)
+
 
 def _tiny_geometry() -> tuple[Grid, Detector, ParallelGeometry]:
     grid = Grid(nx=4, ny=4, nz=4, vx=1.0, vy=1.0, vz=1.0)
@@ -68,12 +75,13 @@ def test_fbp_ramp_filter_smoke_is_finite() -> None:
     assert bool(jnp.all(jnp.isfinite(volume)))
 
 
-def test_fbp_generic_fallback_helper_synchronizes_before_oom_backoff() -> None:
+@pytest.mark.parametrize("error", _ALLOCATION_ERRORS)
+def test_fbp_generic_fallback_helper_synchronizes_before_oom_backoff(error) -> None:
     calls: list[str] = []
 
     class AsyncFailure:
         def block_until_ready(self) -> None:
-            raise RuntimeError("RESOURCE_EXHAUSTED: simulated async allocation failure")
+            raise RuntimeError(error)
 
     def fake_fast_path(*args: object, **kwargs: object) -> AsyncFailure:
         del args, kwargs
@@ -97,8 +105,9 @@ def test_fbp_generic_fallback_helper_synchronizes_before_oom_backoff() -> None:
 
 
 @pytest.mark.parametrize(("fail_call", "expected_batches"), [(1, [4, 2, 2, 2]), (2, [4, 4, 2])])
+@pytest.mark.parametrize("error", _ALLOCATION_ERRORS)
 def test_fbp_chunk_backoff_preserves_accumulator_and_progress_on_async_oom(
-    monkeypatch, fail_call, expected_batches
+    monkeypatch, fail_call, expected_batches, error
 ) -> None:
     import importlib
 
@@ -111,7 +120,7 @@ def test_fbp_chunk_backoff_preserves_accumulator_and_progress_on_async_oom(
             return self
 
         def block_until_ready(self):
-            raise RuntimeError("RESOURCE_EXHAUSTED: asynchronous chunk allocation")
+            raise RuntimeError(error)
 
     def backproject(poses, filtered, **kwargs):
         calls.append(int(poses.shape[0]))
@@ -138,6 +147,95 @@ def test_fbp_chunk_backoff_preserves_accumulator_and_progress_on_async_oom(
     np.testing.assert_allclose(result, (1 + 2 + 3 + 4 + 5) / 4)
     assert calls == expected_batches
     assert next(progress, None) is None
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        "INTERNAL: unrelated compiler failure",
+        "INTERNAL: fft_plan != nullptr Failed to create cuFFT plan",
+        "INTERNAL: Failed to create cuFFT batched plan with scratch allocator",
+        "INVALID_ARGUMENT: bad FFT dimensions",
+    ],
+)
+def test_fbp_generic_fallback_propagates_unrelated_errors(error) -> None:
+    progress = iter(range(4))
+
+    def fail():
+        raise RuntimeError(error)
+
+    def unexpected_backoff():
+        pytest.fail("Unrelated errors must not trigger a retry")
+
+    with pytest.raises(RuntimeError) as raised:
+        _run_fbp_generic_with_oom_fallback(
+            fast_path=fail,
+            backoff_path=unexpected_backoff,
+            view_progress=progress,
+            n_views=4,
+        )
+    assert str(raised.value) == error
+    assert list(progress) == list(range(4))
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("on_host", [False, True])
+@pytest.mark.parametrize("backend", ["jax", "auto"])
+def test_fbp_scratch_plan_retry_preserves_complete_gaussian_volume(monkeypatch, on_host, backend):
+    module = importlib.import_module("tomojax.recon.fbp")
+    width, views, sigma = 49, 65, 4.0
+    angles = np.linspace(0.0, 180.0, views, endpoint=False, dtype=np.float32)
+    theta = np.deg2rad(angles.astype(float))
+    positions = np.arange(width) - (width - 1) / 2
+    displacement = 2.0 * np.cos(theta) + np.sin(theta)
+    projections = (
+        np.sqrt(2 * np.pi)
+        * sigma
+        * np.exp(-0.5 * ((positions[None, :] - displacement[:, None]) / sigma) ** 2)
+    ).astype(np.float32)[:, None, :]
+    if not on_host:
+        projections = jnp.asarray(projections)
+    grid = Grid(width, width, 1, 1.0, 1.0, 1.0)
+    detector = Detector(width, 1, 1.0, 1.0)
+    geometry = ParallelGeometry(grid=grid, detector=detector, angles=angles)
+    config = FBPConfig(backprojector=backend)
+    expected = np.asarray(fbp(geometry, grid, detector, projections, config=config))
+    name = "_fbp_from_host" if on_host else "_run_fbp_streamed"
+    run = getattr(module, name)
+    calls = []
+
+    class AsyncFailure:
+        def block_until_ready(self):
+            raise RuntimeError(_ALLOCATION_ERRORS[1])
+
+    def retry(*args, **kwargs):
+        batch = kwargs["batch_size"]
+        calls.append(batch)
+        return AsyncFailure() if batch > 8 else run(*args, **kwargs)
+
+    monkeypatch.setattr(module, name, retry)
+    result = np.asarray(fbp(geometry, grid, detector, projections, config=config))
+    assert calls == [65, 32, 16, 8]
+    assert np.linalg.norm(result - expected) / np.linalg.norm(expected) < 2e-6
+    truth = np.exp(
+        -0.5 * ((positions[:, None] - 2.0) ** 2 + (positions[None, :] + 1.0) ** 2) / sigma**2
+    )
+    assert np.linalg.norm(result[:, :, 0] - truth) / np.linalg.norm(truth) < 0.02
+
+
+def test_fbp_scratch_plan_retry_propagates_single_view_failure(monkeypatch):
+    module = importlib.import_module("tomojax.recon.fbp")
+    grid, detector, geometry = _tiny_geometry()
+    calls = []
+
+    def fail(*args, **kwargs):
+        calls.append(kwargs["batch_size"])
+        raise RuntimeError(_ALLOCATION_ERRORS[1])
+
+    monkeypatch.setattr(module, "_run_fbp_streamed", fail)
+    with pytest.raises(RuntimeError, match="Failed to create cuFFT"):
+        fbp(geometry, grid, detector, jnp.ones((4, 4, 4)))
+    assert calls == [4, 2, 1]
 
 
 @pytest.mark.numerical

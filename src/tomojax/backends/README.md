@@ -16,9 +16,14 @@ and accelerator capability probes.
 - `run_resolved_command(...)`
 - `check_output_resolved_command(...)`
 
+Expert callers also use `tomojax.backends.api.is_oom_error(exc)` to identify
+JAX allocation failures, including the narrow cuFFT scratch-plan diagnostic.
+It does not perform a retry: callers own synchronization, partial-result
+rollback, and their bounded retry or fallback policy.
+
 ## Invariants
 
-- Public imports go through `tomojax.backends`, not private `_memory` or
+- Public imports go through `tomojax.backends` or its `.api`, not private `_memory` or
   `_subprocesses`.
 - Optional Pallas projector access is owned by `tomojax.core.pallas_resolver`;
   this package re-exports that resolver for backend-facing callers.
