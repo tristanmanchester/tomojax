@@ -6,9 +6,12 @@ from functools import cache
 import logging
 import math
 import os
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from tomojax.backends._subprocesses import check_output_resolved_command
+
+if TYPE_CHECKING:
+    from tomojax._typed_arrays import Device
 
 LOG = logging.getLogger(__name__)
 
@@ -86,36 +89,38 @@ def _free_bytes_from_memory_info(info: object) -> int | None:
 
 
 def device_free_memory_bytes() -> int | None:
-    """Best-effort query of free device memory (bytes).
+    """Best-effort free memory (bytes) for JAX's current default device.
 
+    Honor ``jax.default_device`` (a device or platform), otherwise the default
+    backend. CPU placement uses host available memory, even on a GPU host.
     - Prefer JAX's device API when available: `jax.device_get_memory_info` (>=0.4.14).
     - Also support current `Device.memory_stats()` reports when exposed.
-    - Fall back to host available memory via `os.sysconf` when supported.
-    - Returns None if nothing is available.
+    - CPU (or no discoverable device) uses host available memory via `os.sysconf`.
+    - An accelerator with unavailable statistics returns None, never host RAM.
     """
     try:  # JAX GPU/TPU or CPU
         import jax  # type: ignore
 
-        devs = jax.devices("gpu")
-        if not devs:
+        device = _current_device()
+        if device is None or device.platform == "cpu":
             return _host_available_memory_bytes()
-        if hasattr(jax, "device_get_memory_info"):
-            free = _free_bytes_from_memory_info(
-                jax.device_get_memory_info(devs[0])  # type: ignore[attr-defined]
-            )
-            if free is not None:
-                return free
-        memory_stats = getattr(devs[0], "memory_stats", None)
-        if callable(memory_stats):
-            free = _free_bytes_from_memory_info(memory_stats())
-            if free is not None:
-                return free
     except Exception as exc:
-        LOG.debug(
-            "Device memory probe failed; falling back to host available memory: %s",
-            exc,
-        )
-    return _host_available_memory_bytes()
+        LOG.debug("Device memory probe failed; available memory is unknown: %s", exc)
+        return None
+
+    probes = [getattr(device, "memory_stats", None)]
+    memory_info = getattr(jax, "device_get_memory_info", None)
+    if callable(memory_info):
+        probes.insert(0, lambda: memory_info(device))
+    for probe in probes:
+        if callable(probe):
+            try:
+                free = _free_bytes_from_memory_info(probe())
+                if free is not None:
+                    return free
+            except Exception as exc:
+                LOG.debug("Device memory probe failed; trying remaining statistics: %s", exc)
+    return None
 
 
 def estimate_views_per_batch(
@@ -259,33 +264,36 @@ def estimate_views_per_batch_info(
 
 
 def default_gather_dtype() -> str:
-    """Choose a default gather dtype based on the active JAX backend.
+    """Choose a default gather dtype for the current JAX default device.
 
     Returns "bf16" when the active accelerator supports bfloat16 gathers,
     falls back to "fp16" on older GPUs that support float16 but not efficient
     bfloat16, and otherwise returns "fp32". CPU or backend-detection failures
     also fall back to "fp32".
     """
-    backend = _current_backend()
+    try:
+        device = _current_device()
+    except Exception as exc:
+        LOG.debug("JAX device probe failed; using fp32 gather default: %s", exc)
+        return "fp32"
+    backend = device.platform if device is not None else None
     if isinstance(backend, str) and backend.lower() in ("gpu", "tpu"):
         if backend.lower() == "tpu":
             return "bf16"
-        cc = _gpu_compute_capability()
+        cc = _gpu_compute_capability(device)
         if cc and cc < (8, 0):
-            if _device_supports_dtype("float16"):
-                return "fp16"
-            return "fp32"
+            return "fp16" if _device_supports_dtype(device, "float16") else "fp32"
         # GPU: prefer bf16 if the device JIT supports it, else fp16/fp32.
-        if _device_supports_dtype("bfloat16"):
+        if _device_supports_dtype(device, "bfloat16"):
             return "bf16"
-        if _device_supports_dtype("float16"):
+        if _device_supports_dtype(device, "float16"):
             return "fp16"
     return "fp32"
 
 
 @cache
-def _device_supports_dtype(dtype_name: str) -> bool:
-    """Heuristic check whether the active accelerator can JIT kernels with `dtype`."""
+def _device_supports_dtype(device: Device, dtype_name: str) -> bool:
+    """Check whether this accelerator can JIT `dtype`, cached per device."""
     try:
         import jax  # type: ignore
         import jax.numpy as jnp  # type: ignore
@@ -296,25 +304,15 @@ def _device_supports_dtype(dtype_name: str) -> bool:
             exc,
         )
         return False
-    try:
-        devs = jax.devices("gpu")
-    except Exception as exc:
-        LOG.debug(
-            "Could not list GPU devices while probing %s support; using fp32 fallback: %s",
-            dtype_name,
-            exc,
-        )
-        return False
-    if not devs:
-        return False
-    if devs[0].platform != "gpu":
+    if device.platform != "gpu":
         return False
     try:
         # Simple kernel to trigger compilation in the requested dtype.
         fn = jax.jit(lambda x: x + x)
         dtype = getattr(jnp, dtype_name)
-        arr = jnp.ones((1,), dtype=dtype)
-        fn(arr).block_until_ready()
+        with jax.default_device(device):
+            arr = jnp.ones((1,), dtype=dtype)
+            fn(arr).block_until_ready()
         return True
     except Exception as exc:
         LOG.debug(
@@ -326,11 +324,28 @@ def _device_supports_dtype(dtype_name: str) -> bool:
 
 
 @cache
-def _gpu_compute_capability() -> tuple[int, int] | None:
-    """Return (major, minor) compute capability for the first CUDA device, if available."""
+def _gpu_compute_capability(device: Device) -> tuple[int, int] | None:
+    """Return this CUDA device's capability, if it can be identified safely."""
     try:
+        capability = getattr(device, "compute_capability", None)
+        if capability is not None:
+            parts = str(capability).strip("()").replace(" ", "").replace(",", ".").split(".")
+            if len(parts) >= 2:
+                return int(parts[0]), int(parts[1])
+        # CUDA's logical device IDs follow CUDA_VISIBLE_DEVICES, whereas
+        # nvidia-smi uses physical IDs (or UUIDs). Never substitute GPU0.
+        index = getattr(device, "local_hardware_id", None)
+        if index is None:
+            return None
+        visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+        identifier = visible.split(",")[index].strip() if visible is not None else str(index)
         output = check_output_resolved_command(  # nosec B603,B607
-            ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"],
+            [
+                "nvidia-smi",
+                f"--id={identifier}",
+                "--query-gpu=compute_cap",
+                "--format=csv,noheader",
+            ],
             stderr=-3,
             text=True,
         )
@@ -344,15 +359,11 @@ def _gpu_compute_capability() -> tuple[int, int] | None:
     return None
 
 
-def _current_backend() -> str | None:
-    """Best-effort helper to query the active JAX backend name."""
-    try:
-        import jax  # type: ignore
+def _current_device() -> Device | None:
+    """Resolve explicit device/platform placement without probing other backends."""
+    import jax  # type: ignore
 
-        backend = getattr(jax, "default_backend", lambda: None)()
-        if backend:
-            return backend
-        return os.environ.get("JAX_PLATFORM_NAME")
-    except Exception as exc:
-        LOG.debug("JAX backend probe failed; using fp32 gather default: %s", exc)
-        return None
+    device = jax.config.jax_default_device
+    if device is None or isinstance(device, str):
+        device = next(iter(jax.devices(device or jax.default_backend())), None)
+    return device

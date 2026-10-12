@@ -25,3 +25,8 @@ and accelerator capability probes.
 - Subprocess probes resolve executables and run with `shell=False`.
 - Memory estimates are conservative and deterministic when
   `free_bytes_override` is provided.
+- The no-argument memory probe follows `jax.default_device` or the default
+  backend; CPU placement reports host memory without initializing a GPU.
+- Default gather precision follows the same device. Capability and dtype-JIT
+  probes are device-scoped, including CUDA-visible device ordering; explicit CPU
+  placement retains full precision even when GPUs are available.
