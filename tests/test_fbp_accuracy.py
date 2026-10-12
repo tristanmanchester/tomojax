@@ -11,9 +11,15 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from scipy.special import polygamma
+from scipy.special import i0e, polygamma
 
-from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
+from tomojax.geometry import (
+    Detector,
+    Grid,
+    LaminographyGeometry,
+    ParallelGeometry,
+    grid_volume_origin,
+)
 from tomojax.recon import FBPConfig, FBPHostConfig, fbp, fbp_host
 
 # check-public-imports: allow-private
@@ -784,6 +790,47 @@ def _tail(index: np.ndarray, du: float) -> np.ndarray:
     first += first % 2 == 0
     positive = -polygamma(1, first / 2) / (4 * np.pi**2 * du)
     return np.where(index < 0, -positive, positive)
+
+
+@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("pitch", [(0.8, 0.7, 0.9, 1.8), (0.6, 0.5, 0.7, 1.2)])
+def test_fbp_preserves_shifted_fine_annulus(backend, pitch) -> None:
+    """A true annulus is not a detector ring: use an independent Gaussian-circle oracle."""
+    if backend == "pallas" and jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    du, vx, vy, sigma = pitch
+    grid = Grid(64, 62, 1, vx, vy, 1, vol_center=(0.3, -0.7, 0))
+    detector = Detector(102, 1, du, 1, (0.43, 0))
+    angles = np.linspace(0, 180, 361, endpoint=False)
+    geometry = ParallelGeometry(grid, detector, angles)
+    radius, amplitude, x0, y0 = 12.6, 0.03, 3.2, -1.9
+    origin = grid_volume_origin(grid)
+    x = origin[0] + np.arange(grid.nx) * vx
+    y = origin[1] + np.arange(grid.ny) * vy
+    rho = np.hypot(x[:, None] - x0, y[None, :] - y0)
+    truth = amplitude * np.exp(-0.5 * ((rho - radius) / sigma) ** 2)
+    truth *= i0e(rho * radius / sigma**2)
+    u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * du + detector.center[0]
+    theta = np.deg2rad(angles)
+    position = u[None] - (x0 * np.cos(theta) - y0 * np.sin(theta))[:, None]
+    # Averaging the exact Radon profiles of Gaussians placed on a circle gives
+    # the projections; the independent continuous-circle image uses I0 above.
+    means = radius * np.cos(np.arange(512) * 2 * np.pi / 512)
+    data = np.zeros(position.shape, np.float64)
+    for start in range(0, len(means), 64):
+        distance = (position[..., None] - means[None, None, start : start + 64]) / sigma
+        data += np.exp(-0.5 * distance**2).sum(axis=-1)
+    data *= amplitude * np.sqrt(2 * np.pi) * sigma / len(means)
+    actual = np.asarray(
+        fbp(
+            geometry,
+            grid,
+            detector,
+            data[:, None].astype(np.float32),
+            config=FBPConfig(backprojector=backend),
+        )
+    )[:, :, 0]
+    assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.035
 
 
 @pytest.mark.parametrize("filter_name", ["ramp", "hann"])
