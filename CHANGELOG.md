@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+Raw-frame correction now accepts `RadialDistortion`: a calibrated backward
+radial polynomial with bilinear transmission pullback before the log, explicit
+pixel/crop/binning coordinates, and saved correction settings.
+Its geometry is evaluated in double precision on the device rather than
+embedding large per-pixel interpolation tables in each compiled batch.
+
 Faster: exact-ray projection loads each cell corner once and integrates one
 spatial derivative for every pose direction (about 2.4x forward and 3x
 gradient on the CPU at 48³); the CUDA cone transpose weights, reorders and
