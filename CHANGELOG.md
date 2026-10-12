@@ -21,6 +21,10 @@ FBP retries smaller view batches when cuFFT scratch allocation fails behind
 an internal plan-creation error, without retrying unrelated internal failures.
 Automatic few-direction FBP shares angular measure between repeated exposures,
 so duplicating one sparse projection cannot overweight its direction.
+Quicklook PNGs and CLI previews transfer only the selected central plane of
+resident device volumes, retaining the existing image orientation and scaling.
+PNG scaling reuses its owned finite-pixel buffer rather than allocating
+whole-plane arithmetic temporaries; caller images remain unchanged.
 
 Faster: exact-ray projection loads each cell corner once and integrates one
 spatial derivative for every pose direction (about 2.4x forward and 3x
