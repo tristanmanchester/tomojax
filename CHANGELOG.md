@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+Raw-count correction warns and records integer projection readings at their
+storage ceiling, including when flats remain unsaturated. The log diagnostic
+uses already-read input batches before counts steps or view rejection, without
+changing corrected values or inferring an ADC limit from floating storage.
+
+Flat-field correction warns and records integer calibration pixels fixed at
+their dtype ceiling, which can otherwise appear highly reliable despite clipped
+or stuck detector readings. The diagnostic reuses existing calibration means;
+it does not alter corrected values or silently infer missing absorption.
+
 Memory budgeting honors `jax.default_device` and CPU placement instead of
 always probing the first GPU, without initializing unused accelerators.
 Unavailable accelerator memory statistics remain unknown rather than

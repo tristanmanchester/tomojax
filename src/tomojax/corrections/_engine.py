@@ -11,6 +11,7 @@ host (NumPy, memmap or a lazily read file) while the device works on the last.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 import logging
@@ -78,13 +79,22 @@ def correct_frames(
     )
     batch = batch_views or _frame_batch_size(counts, transmission_steps)
     tally = np.zeros(2, np.int64)  # non-positive transmission, non-finite results
+    counts_ceiling = _dtype_ceiling(counts)
+    ceiling_readings = 0
 
     def collect(start: int, stop: int, result: jax.Array, *bad: jax.Array) -> None:
         out[start:stop] = np.asarray(result)
         tally[:] += [int(b) for b in bad]
 
+    def diagnose(raw: np.ndarray) -> None:
+        nonlocal ceiling_readings
+        if counts_ceiling is not None:
+            ceiling_readings += _count_ceiling_readings(raw, counts_ceiling)
+
     pending = None
-    for start, stop, raw in _batches(counts, views, batch):
+    for start, stop, raw in _batches(
+        counts, views, batch, after_read=diagnose if counts_ceiling is not None else None
+    ):
         done = _first_pass(
             jnp.asarray(raw), lo[start:stop], hi[start:stop], t[start:stop], flat_stack, dark,
             flat_variance, dark_variance,
@@ -102,6 +112,7 @@ def correct_frames(
         "nonfinite_set_to_zero": int(tally[1]),
     }
     log = Correction("log", {"epsilon": float(epsilon)}, found)
+    log = _with_counts_ceiling(log, counts_ceiling, ceiling_readings)
     out, kept, tail_records = _run_rest(out, tail, batch_views)
     records = tuple(
         [s.record() for s in counts_steps] + list(field_record)
@@ -263,6 +274,7 @@ def _flat_fields(
     shape: tuple[int, int],
 ) -> tuple[_Fields, tuple[Correction, ...]]:
     """The mean flat of each set, the mean dark, and the record of them."""
+    darks = darks if darks is None or hasattr(darks, "shape") else np.asarray(darks)
     if darks is None and flats is not None:
         LOG.warning("no dark fields: correcting with a dark field of zero")
     dark, dark_variance = (
@@ -282,6 +294,7 @@ def _flat_fields(
         record = _field_record(
             {"white_level": level, "darks": dark_frames}, stack - dark, dark_variance
         )
+        record = _with_calibration_ceiling(record, darks, dark, "dark")
         return _Fields(
             stack,
             np.zeros(1),
@@ -312,6 +325,8 @@ def _flat_fields(
     if len(sets) > 1:
         settings["flat_positions"] = [float(p) for p in sets]
     record = _field_record(settings, stack - dark, flat_variance + dark_variance)
+    record = _with_calibration_ceiling(record, flats, stack, "flat")
+    record = _with_calibration_ceiling(record, darks, dark, "dark")
     return _Fields(
         stack.astype(np.float32),
         sets,
@@ -328,6 +343,58 @@ def _field_record(settings: dict[str, Any], light: np.ndarray, variance: np.ndar
         settings["minimum_signal_snr"] = 3.0
         found["pixels_without_reliable_light"] = int(np.count_nonzero(unreliable))
     return Correction("flat_dark", settings, found)
+
+
+def _with_calibration_ceiling(
+    record: Correction, frames: Any, mean: np.ndarray, field: str
+) -> Correction:
+    """Report integer sets fixed at their storage ceiling, without rereading them."""
+    ceiling = _dtype_ceiling(frames)
+    if ceiling is None:
+        return record
+    pixels = int(np.count_nonzero(mean == ceiling))
+    if not pixels:
+        return record
+    LOG.warning(
+        "%s calibration: %s pixels at dtype ceiling %s; readings may be clipped",
+        field,
+        pixels,
+        ceiling,
+    )
+    return Correction(
+        record.name,
+        {**record.settings, f"{field}_dtype_ceiling": ceiling},
+        {**record.found, f"{field}_pixels_at_dtype_ceiling": pixels},
+    )
+
+
+def _dtype_ceiling(frames: Any) -> int | None:
+    """The integer storage ceiling, never an inferred ADC limit for floating data."""
+    dtype = getattr(frames, "dtype", None)
+    return int(np.iinfo(dtype).max) if dtype is not None and np.dtype(dtype).kind in "iu" else None
+
+
+def _count_ceiling_readings(raw: np.ndarray, ceiling: int) -> int:
+    """Count already-read inputs in small groups of complete views."""
+    batch = max(1, (32 << 20) // (int(raw.shape[1]) * int(raw.shape[2])))
+    return sum(
+        int(np.count_nonzero(raw[start : start + batch] == ceiling))
+        for start in range(0, len(raw), batch)
+    )
+
+
+def _with_counts_ceiling(record: Correction, ceiling: int | None, readings: int) -> Correction:
+    """Attach a raw-input diagnostic, without changing any corrected reading."""
+    if not readings or ceiling is None:
+        return record
+    LOG.warning(
+        "counts: %s readings at dtype ceiling %s; readings may be clipped", readings, ceiling
+    )
+    return Correction(
+        record.name,
+        {**record.settings, "counts_dtype_ceiling": ceiling},
+        {**record.found, "counts_at_dtype_ceiling": readings},
+    )
 
 
 def _moments(
@@ -489,14 +556,19 @@ def _apply(steps: tuple[Step, ...], batch: jax.Array) -> jax.Array:
     return batch
 
 
-def _batches(counts: Any, views: int, batch: int) -> Any:
+def _batches(
+    counts: Any, views: int, batch: int, *, after_read: Callable[[np.ndarray], None] | None = None
+) -> Any:
     """``(start, stop, frames)`` for each batch of views, the next read while one is used."""
     starts = list(range(0, views, batch))
 
     def read(start: int) -> np.ndarray:
         frames = np.asarray(counts[start : min(start + batch, views)])
         # Device arrays use native byte order; leave ordinary batches as views.
-        return frames.astype(frames.dtype.newbyteorder("="), copy=False)
+        frames = frames.astype(frames.dtype.newbyteorder("="), copy=False)
+        if after_read is not None:
+            after_read(frames)
+        return frames
 
     with ThreadPoolExecutor(max_workers=1) as reader:
         pending = reader.submit(read, starts[0]) if starts else None

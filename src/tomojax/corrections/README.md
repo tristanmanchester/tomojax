@@ -29,6 +29,24 @@ retrieval; it does not recover absorption at those pixels.
 At an interpolation endpoint, only the calibration with nonzero weight is
 used; a missing value in an unused neighbouring flat does not discard a valid ray.
 
+Integer calibration sets fixed at their dtype's maximum value are warned about
+and reported as `flat_pixels_at_dtype_ceiling` or `dark_pixels_at_dtype_ceiling`.
+These counts include each flat set separately. Zero variance at that ceiling is
+not evidence for a well-measured illumination: clipping or stuck bright pixels
+can still create severe artifacts. This diagnostic does not change the pixels
+or recover their missing measurements; use an unsaturated calibration or a
+validated detector-defect repair. Floating calibrations and lower ADC limits
+within an integer storage type cannot be diagnosed from dtype alone.
+
+Integer projection counts at their storage ceiling are diagnosed separately:
+the log record reports `counts_at_dtype_ceiling` and its `counts_dtype_ceiling`.
+The tally covers the corrected input readings before counts steps or view
+rejection, and reuses each already-read batch. A healthy flat does not exclude
+clipped sample readings, for example at bright phase-contrast fringes. The
+warning does not replace, mask, or clip those readings; transmission above one
+can also be physically valid. Floating counts and lower ADC limits within a
+wider storage type cannot be diagnosed from dtype alone.
+
 Spatial steps need measured neighbouring pixels. Prefer cropping the corrected
 scan after Paganin: its FFT edge padding cannot restore measurements discarded
 by cropping raw frames. For a bounded raw window, correct an enlarged window
