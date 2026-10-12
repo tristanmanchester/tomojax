@@ -316,6 +316,9 @@ def sinogram_det_u_seed(
     # Select them together so a device input needs just one gather and copy.
     data = np.asarray(projections[:, picks, :])
     offsets = []
+    # Amortize accelerator compilation over the sampled full-resolution rows.
+    # Small searches retain the CPU path, including one-row preview scans.
+    gpu_fine = len(picks) * len(half_turn) * nu >= 3 * 2**20
     for row in range(len(picks)):
         sino = np.asarray(data[half_turn, row, :], np.float32)
         if not np.isfinite(sino).all() or np.ptp(sino) <= 0:
@@ -344,7 +347,17 @@ def sinogram_det_u_seed(
             near = best + np.arange(-spread, spread + step / 2, step)
             # Reuse overlapping candidates only for this full-resolution row.
             missing = np.asarray([offset for offset in near if offset not in fine_metrics])
-            fine_metrics.update(zip(missing, _vo_metrics(sino, missing, ratio, drop), strict=True))
+            metrics = None
+            if gpu_fine:
+                from ._vo_gpu import try_metrics
+
+                metrics = try_metrics(sino, missing, _vo_folded_mask(*sino.shape, ratio, drop))
+                # A capacity miss only disables acceleration for this estimate,
+                # not future calls or searches on another device.
+                gpu_fine = metrics is not None
+            if metrics is None:
+                metrics = _vo_metrics(sino, missing, ratio, drop)
+            fine_metrics.update(zip(missing, metrics, strict=True))
             best = float(near[int(np.argmin([fine_metrics[offset] for offset in near]))])
         offsets.append(best)
     if not offsets:

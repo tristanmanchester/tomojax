@@ -217,6 +217,33 @@ views.
 
 ## Calibrate the detector centre
 
+For an unposed axial parallel scan covering a half-turn, start with the
+projection-only estimator if you do not need iterative alignment:
+
+```python
+import tomojax as tj
+
+scan = tj.load_frames("raw.nxs").corrected()
+scan = tj.estimate_center(scan)
+recon = tj.reconstruct(scan)
+tj.save("reconstruction.nxs", recon)
+```
+
+Choose any required correction steps before estimating the centre; the example
+only applies flat/dark correction and the logarithm. `estimate_center` uses up
+to three detector rows and returns a new `Scan`, without reconstructing or
+shifting pixels. Its `detector.center[0]` is an **absolute physical detector-u
+coordinate**, not a pixel column or a correction to add to the same scan.
+Projections, the reconstruction grid and detector-v remain unchanged.
+
+This Fourier estimate can have false minima for compact objects and can be
+biased by motion, truncation or uncorrected lens distortion. Check representative
+reconstructions and other row bands; a plausible number is not a calibration.
+For a cropped/binned preview, transfer the **change** in physical detector-u to
+the original scan: add `estimated_preview.detector.center[0] -
+preview.detector.center[0]` to the original detector-u. Do not copy the preview's
+absolute centre or multiply the change by its binning factor again.
+
 Use `cor` mode when the main problem is a detector-u or centre-of-rotation
 offset rather than sample motion:
 

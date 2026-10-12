@@ -85,6 +85,9 @@ def test_estimate_center_after_crop_and_bin_keeps_absolute_physical_units():
             abs(result.detector.center[0] - expected.detector.center[0])
             <= 0.4 * preview.detector.du
         )
+        # Transfer the calibration correction, not the preview's shifted midpoint.
+        delta_u = result.detector.center[0] - preview.detector.center[0]
+        assert abs(scan.detector.center[0] + delta_u - true_u) <= 0.4 * preview.detector.du
 
 
 @pytest.mark.parametrize("order", ["reverse", "repeat", "irregular"])

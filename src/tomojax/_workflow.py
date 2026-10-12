@@ -268,6 +268,9 @@ def estimate_center(scan: Scan) -> Scan:
     source and correction records are unchanged; no pixels are shifted. This
     is not a detector column index or an increment from the supplied centre.
     Use ``reconstruct(result)`` to reconstruct with this estimate.
+    To transfer a cropped/binned preview estimate to its original scan, add
+    ``result.detector.center[0] - preview.detector.center[0]`` to the original
+    detector-u centre: cropping or discarded bins can move the preview midpoint.
 
     Takes corrected line integrals from an unposed axial ParallelGeometry,
     with at least 16 views spanning 175 degrees within a half-turn. Vo's Fourier

@@ -11,21 +11,21 @@ import pytest
 import tomojax as tj
 
 # check-public-imports: allow-private
-from tomojax.alignment._geometry.geometry_blocks import _theta_span_from_geometry
+from tomojax.alignment._geometry import _vo_gpu as gpu, initializers as init
 
 # check-public-imports: allow-private
-from tomojax.alignment._geometry.initializers import (
-    _vo_mask,
-    _vo_metrics,
-    projection_pair_det_u_seed,
-    sinogram_det_u_seed,
-)
+from tomojax.alignment._geometry.geometry_blocks import _theta_span_from_geometry
 
 # check-public-imports: allow-private
 from tomojax.alignment._stages._reconstruction_stage import _is_oom_error_message
 from tomojax.alignment.api import AlignConfig, AlignmentSchedule, AlignmentStage, SetupGeometryState
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 from tomojax.recon import fista_tv
+
+_vo_mask = init._vo_mask
+_vo_metrics = init._vo_metrics
+projection_pair_det_u_seed = init.projection_pair_det_u_seed
+sinogram_det_u_seed = init.sinogram_det_u_seed
 
 
 @pytest.mark.parametrize("optimizer", ["adam", "validation_lm"])
@@ -522,3 +522,206 @@ def test_sinogram_coarse_angular_binning_preserves_sharp_feature_centre(columns,
     actual = sinogram_det_u_seed(sino[:, None, :].astype(np.float32), angles, rows=1)
     assert actual is not None
     assert abs(actual.det_u_px - centre) < 0.3
+
+
+@pytest.mark.parametrize("cols", [31, 32, 64])
+@pytest.mark.parametrize("layout", ["c", "f", "reversed"])
+def test_vo_gpu_metric_matches_cpu(cols, layout):
+    sino = np.random.default_rng(21).normal(size=(37, cols)).astype(np.float32)
+    if layout == "f":
+        sino = np.asfortranarray(sino)
+    elif layout == "reversed":
+        sino = sino[::-1, ::-1]
+    sino.flags.writeable = False
+    saved = sino.copy()
+    offsets = np.array([-40, -4, -1.75, 0, 0.25, 3.5, 40], dtype=np.float32)
+    padded = np.zeros(13, np.float32)
+    padded[: len(offsets)] = offsets
+    got = np.asarray(
+        gpu._metrics(
+            sino,
+            padded,
+            init._vo_folded_mask(*sino.shape, 0.5, 3),
+            np.fft.rfftfreq(cols).astype(np.float32),
+            np.int32(len(offsets)),
+        )
+    )[: len(offsets)]
+    np.testing.assert_allclose(got, init._vo_metrics(sino, offsets, 0.5, 3), rtol=2e-6)
+    np.testing.assert_array_equal(sino, saved)
+
+
+def _fake_execution(monkeypatch, *, free=100, workspace=True, error=None):
+    calls = []
+    device = SimpleNamespace(platform="gpu")
+    monkeypatch.setattr(
+        gpu,
+        "jax",
+        SimpleNamespace(config=SimpleNamespace(jax_disable_jit=False, jax_default_device=device)),
+    )
+
+    def memory(*, device):
+        calls.append(("memory", device))
+        return free
+
+    def run(*args):
+        calls.append(("run", args[-1]))
+        if error is not None:
+            raise error
+        return np.arange(13, dtype=np.float32)
+
+    compiled = SimpleNamespace(
+        memory_analysis=lambda: SimpleNamespace(
+            temp_size_in_bytes=20, argument_size_in_bytes=20, output_size_in_bytes=10
+        )
+        if workspace
+        else None
+    )
+
+    class Executable:
+        memory_analysis = staticmethod(compiled.memory_analysis)
+
+        def __call__(self, *args):
+            return run(*args)
+
+    def lower(*args):
+        calls.append(("lower", len(args[1])))
+        return SimpleNamespace(compile=lambda: Executable())
+
+    monkeypatch.setattr(gpu, "device_free_memory_bytes", memory)
+    monkeypatch.setattr(gpu, "_metrics", SimpleNamespace(lower=lower))
+    return calls, device
+
+
+@pytest.mark.parametrize("free", [None, 0, 99, 100])
+def test_vo_gpu_budget_uses_exact_selected_device(monkeypatch, free):
+    calls, device = _fake_execution(monkeypatch, free=free)
+    result = gpu.try_metrics(np.ones((16, 32), np.float32), np.arange(6), np.ones((32, 17)))
+    assert all(value is device for kind, value in calls if kind == "memory")
+    assert any(kind == "run" for kind, _ in calls) == (free == 100)
+    if free == 100:
+        np.testing.assert_array_equal(result, np.arange(6))
+    else:
+        assert result is None
+    if free is None:
+        assert not any(kind == "lower" for kind, _ in calls)
+
+
+def test_vo_gpu_unknown_workspace_keeps_cpu(monkeypatch):
+    calls, _ = _fake_execution(monkeypatch, workspace=False)
+    assert gpu.try_metrics(np.ones((16, 32)), np.arange(6), np.ones((32, 17))) is None
+    assert not any(kind == "run" for kind, _ in calls)
+
+
+@pytest.mark.parametrize("disabled", [False, True])
+def test_vo_gpu_skips_cpu_and_disabled_jit(monkeypatch, disabled):
+    calls, _ = _fake_execution(monkeypatch)
+    gpu.jax.config.jax_disable_jit = disabled
+    gpu.jax.config.jax_default_device = SimpleNamespace(platform="gpu" if disabled else "cpu")
+    assert gpu.try_metrics(np.ones((16, 32)), np.arange(6), np.ones((32, 17))) is None
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "RESOURCE_EXHAUSTED: allocation failed",
+        "INTERNAL: fft_plan != nullptr Failed to create cuFFT batched plan with scratch allocator.",
+        "INTERNAL: unrelated kernel failure",
+    ],
+)
+def test_vo_gpu_only_falls_back_for_allocation_failure(monkeypatch, message):
+    _fake_execution(monkeypatch, error=RuntimeError(message))
+    args = (np.ones((16, 32)), np.arange(6), np.ones((32, 17)))
+    if "unrelated" in message:
+        with pytest.raises(RuntimeError, match="unrelated"):
+            gpu.try_metrics(*args)
+    else:
+        assert gpu.try_metrics(*args) is None
+
+
+def test_vo_gpu_fallback_is_per_estimate(monkeypatch):
+    calls = []
+
+    def miss(*args):
+        calls.append(True)
+
+    monkeypatch.setattr(gpu, "try_metrics", miss)
+    monkeypatch.setattr(init, "_vo_metrics", lambda sino, offsets, ratio, drop: offsets**2)
+    data = np.broadcast_to(np.arange(640, dtype=np.float32), (1800, 3, 640))
+    angles = np.arange(1800) * 0.1
+    for expected_calls in (1, 2):
+        seed = init.sinogram_det_u_seed(data, angles)
+        assert seed.det_u_px == 0
+        assert len(calls) == expected_calls
+    init.sinogram_det_u_seed(data[:, :1], angles)
+    assert len(calls) == 2
+
+
+def test_vo_gpu_independent_gaussian_axis(monkeypatch):
+    n = 128
+    angles = np.arange(180, dtype=np.float32)
+    t = np.deg2rad(angles)
+    axis = -7.25
+    u = np.arange(n) - (n - 1) / 2 + axis
+    sino = np.zeros((len(angles), n))
+    for cx, cy, radius, amplitude in [(10, 4, 6, 1), (-12, -6, 4, 0.7), (0, 18, 2.4, 0.4)]:
+        distance = u[None] - np.cos(t)[:, None] * cx + np.sin(t)[:, None] * cy
+        sino += amplitude * np.sqrt(2 * np.pi) * radius * np.exp(-0.5 * (distance / radius) ** 2)
+    data = sino.astype(np.float32)[:, None]
+    cpu = init.sinogram_det_u_seed(data, angles)
+
+    def metrics(sino, offsets, ratio, drop):
+        return np.asarray(
+            gpu._metrics(
+                sino,
+                np.asarray(offsets, np.float32),
+                init._vo_folded_mask(*sino.shape, ratio, drop),
+                np.fft.rfftfreq(sino.shape[1]).astype(np.float32),
+                np.int32(len(offsets)),
+            )
+        )
+
+    monkeypatch.setattr(init, "_vo_metrics", metrics)
+    accelerated = init.sinogram_det_u_seed(data, angles)
+    assert accelerated == cpu
+    assert abs(accelerated.det_u_px - axis) < 0.3
+
+
+@pytest.mark.gpu
+@pytest.mark.numerical
+def test_vo_gpu_public_large_scan_preserves_physical_density(monkeypatch):
+    # Cross the actual public dispatch threshold, not a forced small FFT helper.
+    n = 512
+    angles = np.linspace(0, 180, 2048, endpoint=False, dtype=np.float32)
+    theta = np.deg2rad(angles.astype(np.float64))
+    axis = -32.25
+    u = np.arange(n) - (n - 1) / 2 + axis
+    x, y = np.meshgrid((np.arange(256) - 127.5) * 2, (np.arange(256) - 127.5) * 2, indexing="ij")
+    sino = np.zeros((len(angles), n))
+    truth = np.zeros((256, 256))
+    for cx, cy, radius, amplitude in [
+        (80, 60, 24, 0.005),
+        (-110, -60, 18, 0.004),
+        (15, -105, 12, 0.003),
+    ]:
+        distance = u[None] - np.cos(theta)[:, None] * cx + np.sin(theta)[:, None] * cy
+        sino += amplitude * np.sqrt(2 * np.pi) * radius * np.exp(-0.5 * (distance / radius) ** 2)
+        truth += amplitude * np.exp(-0.5 * ((x - cx) ** 2 + (y - cy) ** 2) / radius**2)
+    data = np.broadcast_to(sino.astype(np.float32)[:, None], (len(angles), 3, n))
+    scan = tj.Scan(data, ParallelGeometry(Grid(256, 256, 3, 2, 2, 1), Detector(n, 3, 1, 1), angles))
+    metrics = gpu.try_metrics
+    accelerated = []
+
+    def measured(*args):
+        result = metrics(*args)
+        accelerated.append(result is not None)
+        return result
+
+    monkeypatch.setattr(gpu, "try_metrics", measured)
+    centred = tj.estimate_center(scan)
+    assert accelerated == [True] * 6
+    assert abs(centred.detector.center[0] - axis) <= 0.25
+    assert centred.projections is scan.projections
+    volume = np.asarray(tj.reconstruct(centred).volume)
+    expected = np.broadcast_to(truth[:, :, None], volume.shape)
+    assert np.linalg.norm(volume - expected) / np.linalg.norm(expected) < 0.006

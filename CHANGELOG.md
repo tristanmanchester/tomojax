@@ -56,6 +56,9 @@ use exact pixel rolls; fractional shifts retain Fourier interpolation. Overlappi
 fine-search candidates reuse their metric only within the same sampled row.
 Each metric call reuses its stacked-sinogram scratch and disposable magnitude
 buffer without mutating measured data.
+Large centre searches evaluate fine candidates sequentially on the selected GPU,
+with a compiled-workspace reserve and CPU fallback for unavailable capacity.
+Small searches, CPU placement and disabled JIT retain the CPU metric.
 Narrow detectors keep enough columns in the coarse centre search to avoid
 aliased minima; odd-width coarse crops retain the correct detector midpoint.
 The final setup-alignment reconstruction honors the requested ray integrator,
