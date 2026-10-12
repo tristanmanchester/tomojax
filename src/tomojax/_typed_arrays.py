@@ -38,6 +38,8 @@ def mapped_storage(array: np.ndarray) -> np.memmap | None:
             return current
         current = current.obj if isinstance(current, memoryview) else current.base
     return None
+
+
 def commit_array[T](value: T) -> T:
     """Keep a JAX array's existing placement when operating in another context.
 

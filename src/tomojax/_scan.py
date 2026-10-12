@@ -8,6 +8,7 @@ corrections, binning), and its record in a dataset file. Files become scans in
 from __future__ import annotations
 
 from dataclasses import dataclass, field, is_dataclass, replace
+from functools import cache
 import logging
 from typing import TYPE_CHECKING, Any
 

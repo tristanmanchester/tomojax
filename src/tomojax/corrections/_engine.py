@@ -11,7 +11,6 @@ host (NumPy, memmap or a lazily read file) while the device works on the last.
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 import logging
 from pathlib import Path
@@ -21,10 +20,22 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax._typed_arrays import commit_array
+from tomojax._typed_arrays import mapped_storage
 from tomojax.core.array_ops import mean_detector_pixels
 
+from ._calibration import (
+    Fields,
+    count_ceiling_readings,
+    dtype_ceiling,
+    flat_fields,
+    positive_finite,
+    view_interpolation,
+    with_counts_ceiling,
+)
+from ._lens_rows import correct_lens_rows, lens_row_slab
+from ._normalization import first_pass
 from ._records import Correction, Json
+from ._source_batches import batches
 from ._steps import DOMAINS, Step
 
 if TYPE_CHECKING:
@@ -62,46 +73,159 @@ def correct_frames(
     into its leading views; the caller owns and flushes this storage.
     """
     batch_views = _validated_batch_views(batch_views)
-    epsilon = _positive_finite(epsilon, "epsilon")
+    epsilon = positive_finite(epsilon, "epsilon")
     views, rows, cols = (int(s) for s in counts.shape)
     ordered = _ordered(steps)
     if binning < 1:
         raise ValueError(f"binning needs a factor of at least 1, not {binning}")
     shape = (views, rows // binning, cols // binning)
     _validate_out(out, shape, (counts, flats, darks))
-    fields, field_record = _flat_fields(flats, flat_positions, darks, white_level, (rows, cols))
-    lo, hi, t = _view_interpolation(views, view_positions, fields.positions)
+    fields, field_record = flat_fields(flats, flat_positions, darks, white_level, (rows, cols))
+    lo, hi, t = view_interpolation(views, view_positions, fields.positions)
     line = [s for d, s in ordered if d == "line integrals"]
     head, tail = _split_at_break(line)
     counts_steps = tuple(s for d, s in ordered if d == "counts")
     transmission_steps = tuple(s for d, s in ordered if d == "transmission")
-    slab = _raw_row_slab(counts, ordered, batch_views, binning)
-    if slab is not None:
-        output, tally = _correct_rows_binned(
-            counts, fields, (lo, hi, t), tuple(line),
-            epsilon=epsilon, factor=binning, slab=slab, target=out,
-        )  # fmt: skip
-        return Corrected(
-            output, _frame_records(field_record, epsilon, tally, (), (), line, ()), np.arange(views)
-        )
+    counts_ceiling = dtype_ceiling(counts)
+    done = _correct_terminal_rows(
+        counts,
+        fields,
+        field_record,
+        (lo, hi, t),
+        ordered,
+        line,
+        head,
+        tail,
+        transmission_steps,
+        epsilon=epsilon,
+        batch_views=batch_views,
+        binning=binning,
+        out=out,
+    )
+    if done is not None:
+        return done
     reduce_first = not tail and binning > 1
     needs_intermediate = bool(tail) and binning > 1
     output = (
         out if out is not None and not needs_intermediate
         else np.empty((views, rows, cols) if needs_intermediate else shape, np.float32)
     )  # fmt: skip
+    selector = tail[0] if tail and tail[0].selects_views else None
+    tally, statistics, ceiling_readings = _correct_view_batches(
+        counts,
+        output,
+        fields,
+        (lo, hi, t),
+        counts_steps,
+        transmission_steps,
+        head,
+        selector,
+        epsilon=epsilon,
+        batch_views=batch_views,
+        binning=binning,
+        reduce_first=reduce_first,
+    )
+    output, kept, tail_records = _run_rest_binned(
+        output, tail, batch_views, binning, statistics=statistics, target=out
+    )
+    records = _frame_records(
+        field_record,
+        epsilon,
+        tally,
+        counts_steps,
+        transmission_steps,
+        head,
+        tail_records,
+        counts_ceiling=counts_ceiling,
+        ceiling_readings=ceiling_readings,
+    )
+    return Corrected(output, records, kept)
+
+
+def _correct_terminal_rows(
+    counts,
+    fields,
+    field_record,
+    interpolation,
+    ordered,
+    line,
+    head,
+    tail,
+    transmission,
+    *,
+    epsilon,
+    batch_views,
+    binning,
+    out,
+):
+    """Consume only a proven row-local chain; otherwise leave the view path alone."""
+    views = counts.shape[0]
+    lo, hi, t = interpolation
+    counts_ceiling = dtype_ceiling(counts)
+    lens_slab = lens_row_slab(counts, ordered, batch_views, binning, _BATCH_BYTES)
+    slab = _raw_row_slab(counts, ordered, batch_views, binning)
+    if lens_slab is not None:
+        output, tally, readings = correct_lens_rows(
+            counts, fields, (lo, hi, t), transmission[0], tuple(head), tuple(tail),
+            epsilon=epsilon, factor=binning, slab=lens_slab, budget=_BATCH_BYTES, target=out,
+        )  # fmt: skip
+    elif slab is not None:
+        output, tally, readings = _correct_rows_binned(
+            counts, fields, (lo, hi, t), tuple(line),
+            epsilon=epsilon, factor=binning, slab=slab, target=out,
+        )  # fmt: skip
+    else:
+        return None
+    records = _frame_records(
+        field_record,
+        epsilon,
+        tally,
+        (),
+        transmission,
+        line,
+        (),
+        counts_ceiling=counts_ceiling,
+        ceiling_readings=readings,
+    )
+    return Corrected(output, records, np.arange(views))
+
+
+def _correct_view_batches(
+    counts,
+    output,
+    fields,
+    interpolation,
+    counts_steps,
+    transmission_steps,
+    head,
+    selector,
+    *,
+    epsilon,
+    batch_views,
+    binning,
+    reduce_first,
+):
+    """One bounded view pass, collecting selector summaries before the download."""
+    views, rows, cols = counts.shape
+    lo, hi, t = interpolation
     flat_stack, dark = jax.device_put(fields.flats), jax.device_put(fields.dark)
     flat_variance, dark_variance = (
         jax.device_put(fields.flat_variance),
         jax.device_put(fields.dark_variance),
     )
-    selector = tail[0] if tail and tail[0].selects_views else None
     view_steps = (*counts_steps, *transmission_steps, *head)
     if selector is not None:
         view_steps = (*view_steps, selector)
     batch = batch_views or _frame_batch_size(views, rows, cols, view_steps)
     tally = np.zeros(2, np.int64)  # non-positive transmission, non-finite results
     summaries: list[np.ndarray] = []
+    counts_ceiling = dtype_ceiling(counts)
+    ceiling_readings = 0
+
+    def diagnose(raw: np.ndarray) -> None:
+        nonlocal ceiling_readings
+        if counts_ceiling is not None:
+            ceiling_readings += count_ceiling_readings(raw, counts_ceiling)
 
     def collect(
         start: int, stop: int, done: tuple[jax.Array, ...], summary: jax.Array | None
@@ -112,8 +236,10 @@ def correct_frames(
             summaries.append(np.asarray(summary))
 
     pending = None
-    for start, stop, raw in _batches(counts, views, batch):
-        pass_fn = partial(_first_pass_binned, factor=binning) if reduce_first else _first_pass
+    for start, stop, raw in batches(
+        counts, views, batch, after_read=diagnose if counts_ceiling is not None else None
+    ):
+        pass_fn = partial(_first_pass_binned, factor=binning) if reduce_first else first_pass
         done = pass_fn(
             jnp.asarray(raw), lo[start:stop], hi[start:stop], t[start:stop], flat_stack, dark,
             flat_variance, dark_variance,
@@ -128,13 +254,7 @@ def correct_frames(
     if pending is not None:
         collect(*pending)
     statistics = np.concatenate(summaries) if summaries else None
-    output, kept, tail_records = _run_rest_binned(
-        output, tail, batch_views, binning, statistics=statistics, target=out
-    )
-    records = _frame_records(
-        field_record, epsilon, tally, counts_steps, transmission_steps, head, tail_records
-    )
-    return Corrected(output, records, kept)
+    return tally, statistics, ceiling_readings
 
 
 class Corrected(NamedTuple):
@@ -153,15 +273,21 @@ def _frame_records(
     transmission: Sequence[Step],
     line: Sequence[Step],
     tail: tuple[Correction, ...],
+    *,
+    counts_ceiling: int | None = None,
+    ceiling_readings: int = 0,
 ) -> tuple[Correction, ...]:
     """The domain-ordered chain, retaining original-pixel log tallies and selector findings."""
     found: dict[str, Json] = {
         "nonpositive_transmission": int(tally[0]),
         "nonfinite_set_to_zero": int(tally[1]),
     }
+    log = with_counts_ceiling(
+        Correction("log", {"epsilon": float(epsilon)}, found), counts_ceiling, ceiling_readings
+    )
     return (
         *(s.record() for s in counts), *fields,
-        *(s.record() for s in transmission), Correction("log", {"epsilon": float(epsilon)}, found),
+        *(s.record() for s in transmission), log,
         *(s.record() for s in line), *tail,
     )  # fmt: skip
 
@@ -209,24 +335,21 @@ def _validate_out(out: np.ndarray | None, shape: tuple[int, ...], sources: tuple
         raise ValueError("out must be a float32 NumPy array or memmap with the input shape")
     if not out.flags.writeable:
         raise ValueError("out must be writable")
-    target = _mapped_storage(out)
+    target = mapped_storage(out)
     for source in sources:
         if not isinstance(source, np.ndarray):
             continue
         if np.may_share_memory(source, out):
             raise ValueError("correction input and output storage must not overlap")
-        origin = _mapped_storage(source)
-        if target is not None and origin is not None and Path(origin).samefile(target):
-            raise ValueError("memory-mapped correction input and output require separate files")
-
-
-def _mapped_storage(array: np.ndarray) -> str | None:
-    current: object = array
-    while isinstance(current, np.ndarray):
-        if isinstance(current, np.memmap):
-            return str(current.filename)
-        current = current.base
-    return None
+        origin = mapped_storage(source)
+        if target is not None and origin is not None:
+            source_name, target_name = origin.filename, target.filename
+            if (
+                source_name is None
+                or target_name is None
+                or Path(source_name).samefile(target_name)
+            ):
+                raise ValueError("memory-mapped correction input and output require separate files")
 
 
 def _frame_batch_size(views: int, rows: int, cols: int, steps: Sequence[Step]) -> int:
@@ -241,13 +364,6 @@ def _validated_batch_views(value: int | None) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int | np.integer) or value <= 0:
         raise ValueError(f"batch_views must be a positive integer, not {value!r}")
     return int(value)
-
-
-def _positive_finite(value: float, name: str) -> float:
-    value = float(value)
-    if not np.isfinite(value) or value <= 0:
-        raise ValueError(f"{name} must be finite and positive, not {value!r}")
-    return value
 
 
 def _ordered(steps: Sequence[Step]) -> list[tuple[str, Step]]:
@@ -267,235 +383,27 @@ def _ordered(steps: Sequence[Step]) -> list[tuple[str, Step]]:
     return [(d, s) for d in DOMAINS for s in steps if s.domain == d]
 
 
-class _Fields:
-    """The flat sets (``(sets, rows, columns)``), their positions and the dark field."""
-
-    def __init__(
-        self,
-        flats: np.ndarray,
-        positions: np.ndarray,
-        dark: np.ndarray,
-        flat_variance: np.ndarray,
-        dark_variance: np.ndarray,
-    ) -> None:
-        self.flats, self.positions, self.dark = flats, positions, dark
-        self.flat_variance, self.dark_variance = flat_variance, dark_variance
-
-
-def _flat_fields(
-    flats: Any,
-    positions: np.ndarray | None,
-    darks: Any,
-    white_level: float | None,
-    shape: tuple[int, int],
-) -> tuple[_Fields, tuple[Correction, ...]]:
-    """The mean flat of each set, the mean dark, and the record of them."""
-    darks = darks if darks is None or hasattr(darks, "shape") else np.asarray(darks)
-    if darks is None and flats is not None:
-        LOG.warning("no dark fields: correcting with a dark field of zero")
-    dark, dark_variance = (
-        (np.zeros(shape, np.float64), np.zeros(shape, np.float64))
-        if darks is None
-        else _moments(darks, shape, "darks")
-    )
-    dark_frames = 0 if darks is None else len(darks)
-    if flats is None:
-        if white_level is None:
-            raise ValueError(
-                "no flat fields: pass flats (frames of the beam without the object) or "
-                "white_level (the counts of an unattenuated pixel) to tomojax.load_frames"
-            )
-        level = _positive_finite(white_level, "white_level")
-        stack = np.full((1, *shape), level, np.float32)
-        record = _field_record(
-            {"white_level": level, "darks": dark_frames}, stack - dark, dark_variance
-        )
-        record = _with_calibration_ceiling(record, darks, dark, "dark")
-        return _Fields(
-            stack,
-            np.zeros(1),
-            dark.astype(np.float32),
-            np.zeros_like(stack),
-            dark_variance.astype(np.float32),
-        ), (record,)
-    flats = flats if hasattr(flats, "shape") else np.asarray(flats)
-    if len(flats.shape) != 3 or flats.shape[1:] != shape or not len(flats):
-        raise ValueError(
-            f"flats are {flats.shape}; a nonempty stack of frames of {shape} is needed"
-        )
-    where = np.zeros(len(flats)) if positions is None else np.asarray(positions, np.float64)
-    if where.shape != (len(flats),) or not np.isfinite(where).all():
-        raise ValueError(
-            f"flat_positions needs one finite position for each of the {len(flats)} flats"
-        )
-    sets = np.unique(where)
-    statistics = [
-        _moments(
-            flats, shape, "flats", indices=np.flatnonzero(where == p) if len(sets) > 1 else None
-        )
-        for p in sets
-    ]
-    stack = np.stack([mean for mean, _ in statistics])
-    flat_variance = np.stack([variance for _, variance in statistics])
-    settings: dict[str, Any] = {"flats": len(flats), "darks": dark_frames, "flat_sets": len(sets)}
-    if len(sets) > 1:
-        settings["flat_positions"] = [float(p) for p in sets]
-    record = _field_record(settings, stack - dark, flat_variance + dark_variance)
-    record = _with_calibration_ceiling(record, flats, stack, "flat")
-    record = _with_calibration_ceiling(record, darks, dark, "dark")
-    return _Fields(
-        stack.astype(np.float32),
-        sets,
-        dark.astype(np.float32),
-        flat_variance.astype(np.float32),
-        dark_variance.astype(np.float32),
-    ), (record,)
-
-
-def _field_record(settings: dict[str, Any], light: np.ndarray, variance: np.ndarray) -> Correction:
-    found: dict[str, Json] = {"pixels_without_light": int(np.count_nonzero(light <= 0))}
-    unreliable = ~np.isfinite(light) | ~np.isfinite(variance) | (light <= 3 * np.sqrt(variance))
-    if unreliable.any():
-        settings["minimum_signal_snr"] = 3.0
-        found["pixels_without_reliable_light"] = int(np.count_nonzero(unreliable))
-    return Correction("flat_dark", settings, found)
-
-
-def _with_calibration_ceiling(
-    record: Correction, frames: Any, mean: np.ndarray, field: str
-) -> Correction:
-    """Report integer sets fixed at their storage ceiling, without rereading them."""
-    dtype = getattr(frames, "dtype", None)
-    if dtype is None or np.dtype(dtype).kind not in "iu":
-        return record
-    ceiling = int(np.iinfo(dtype).max)
-    pixels = int(np.count_nonzero(mean == ceiling))
-    if not pixels:
-        return record
-    LOG.warning(
-        "%s calibration: %s pixels at dtype ceiling %s; readings may be clipped",
-        field,
-        pixels,
-        ceiling,
-    )
-    return Correction(
-        record.name,
-        {**record.settings, f"{field}_dtype_ceiling": ceiling},
-        {**record.found, f"{field}_pixels_at_dtype_ceiling": pixels},
-    )
-
-
-def _moments(
-    frames: Any, shape: tuple[int, int], name: str, *, indices: np.ndarray | None = None
-) -> tuple[np.ndarray, np.ndarray]:
-    """Mean and its sampling variance, in FP64 and bounded host batches."""
-    frames = frames if hasattr(frames, "shape") else np.asarray(frames)
-    if len(frames.shape) != 3 or frames.shape[1:] != shape or not len(frames):
-        raise ValueError(
-            f"{name} are {frames.shape}; a nonempty stack of frames of {shape} is needed"
-        )
-    count = len(frames) if indices is None else len(indices)
-    batch = max(1, (32 << 20) // (8 * shape[0] * shape[1]))
-    total, squared = np.zeros(shape, np.float64), np.zeros(shape, np.float64)
-    for start in range(0, count, batch):
-        selected = (
-            slice(start, start + batch) if indices is None else indices[start : start + batch]
-        )
-        values = np.asarray(frames[selected], np.float64)
-        total += np.sum(values, axis=0)
-        squared += np.einsum("ijk,ijk->jk", values, values)
-    mean = total / count
-    variance = (
-        np.maximum(0.0, (squared - total * mean) / (count * (count - 1)))
-        if count > 1
-        else np.zeros(shape, np.float64)
-    )
-    return mean, variance
-
-
-def _view_interpolation(
-    views: int, at: np.ndarray | None, positions: np.ndarray
-) -> tuple[np.ndarray, ...]:
-    """Validate acquisition positions and interpolate each view's calibration fields."""
-    q = np.arange(views) + 0.5 if at is None else np.asarray(at, np.float64)
-    if q.shape != (views,) or not np.isfinite(q).all():
-        raise ValueError(f"view_positions needs one finite position for each of the {views} views")
-    return _interpolation(q, positions)
-
-
-def _interpolation(q: np.ndarray, positions: np.ndarray) -> tuple[np.ndarray, ...]:
-    """For each view at ``q``, the flat sets either side of it and the weight of the later one.
-
-    ``positions`` are the views recorded before each set; views before the
-    first set or after the last take that set alone.
-    """
-    hi = np.clip(np.searchsorted(positions, q, side="right"), 0, len(positions) - 1)
-    lo = np.clip(hi - 1, 0, len(positions) - 1)
-    span = positions[hi] - positions[lo]
-    t = np.where(span > 0, (q - positions[lo]) / np.where(span > 0, span, 1), 0.0)
-    t = np.where(q >= positions[-1], 1.0, np.clip(t, 0.0, 1.0)) if len(positions) > 1 else t
-    return lo.astype(np.int32), hi.astype(np.int32), t.astype(np.float32)
-
-
-@partial(jax.jit, static_argnames=("epsilon", "counts_steps", "transmission_steps", "line_steps"))
-def _first_pass(
-    raw: jax.Array,
-    lo: jax.Array,
-    hi: jax.Array,
-    t: jax.Array,
-    flats: jax.Array,
-    dark: jax.Array,
-    flat_variance: jax.Array,
-    dark_variance: jax.Array,
-    *,
-    epsilon: float,
-    counts_steps: tuple[Step, ...],
-    transmission_steps: tuple[Step, ...],
-    line_steps: tuple[Step, ...],
-) -> tuple[jax.Array, jax.Array, jax.Array]:
-    x = raw.astype(jnp.float32)
-    for step in counts_steps:
-        x = step.apply(x)
-    weight = t[:, None, None]
-    # An unused calibration must not contaminate an endpoint through 0 * NaN
-    # (or 0 * Inf). Interior views still need both bracketing fields.
-    flat = jnp.where(
-        weight == 0, flats[lo],
-        jnp.where(weight == 1, flats[hi], (1 - weight) * flats[lo] + weight * flats[hi]),
-    )  # fmt: skip
-    variance = jnp.where(
-        weight == 0, flat_variance[lo],
-        jnp.where(weight == 1, flat_variance[hi],
-                  (1 - weight) ** 2 * flat_variance[lo] + weight**2 * flat_variance[hi]),
-    ) + dark_variance  # fmt: skip
-    light = flat - dark
-    reliable = (
-        jnp.isfinite(light) & jnp.isfinite(variance)
-        & (light > jnp.maximum(epsilon, 3 * jnp.sqrt(variance)))
-    )  # fmt: skip
-    # A calibration indistinguishable from darkness is an unmeasured pixel,
-    # not a denominator of epsilon. Use neutral transmission before spatial
-    # steps, so an FFT cannot spread enormous counts across the whole image.
-    transmission = jnp.where(reliable, (x - dark) / jnp.maximum(light, epsilon), 1.0)
-    for step in transmission_steps:
-        transmission = step.apply(transmission)
-    nonpositive = jnp.sum(transmission <= 0)
-    p = -jnp.log(jnp.maximum(transmission, epsilon))
-    for step in line_steps:
-        p = step.apply(p)
-    bad = ~jnp.isfinite(p)
-    return jnp.where(bad, 0.0, p), nonpositive, jnp.sum(bad)
-
-
 @partial(
     jax.jit,
     static_argnames=("epsilon", "counts_steps", "transmission_steps", "line_steps", "factor"),
 )
 def _first_pass_binned(
-    raw, lo, hi, t, flats, dark, flat_variance, dark_variance, *,
-    epsilon, counts_steps, transmission_steps, line_steps, factor
+    raw,
+    lo,
+    hi,
+    t,
+    flats,
+    dark,
+    flat_variance,
+    dark_variance,
+    *,
+    epsilon,
+    counts_steps,
+    transmission_steps,
+    line_steps,
+    factor,
 ):
-    done = _first_pass(
+    done = first_pass(
         raw,
         lo,
         hi,
@@ -531,7 +439,9 @@ def _raw_row_slab(
     return slab if slab >= factor else None
 
 
-def _first_rows_binned(raw, lo, hi, t, flats, dark, *, epsilon, steps, factor):
+def _first_rows_binned(
+    raw, lo, hi, t, flats, dark, flat_variance, dark_variance, *, epsilon, steps, factor
+):
     """Normalize wide counts separately, keeping row corrections entirely on device.
 
     Fusing 64-bit raw normalization into the row reduction can need much more
@@ -539,20 +449,32 @@ def _first_rows_binned(raw, lo, hi, t, flats, dark, *, epsilon, steps, factor):
     retain the fused dispatch; neither route transfers unbinned pixels to host.
     """
     if raw.dtype.itemsize > 4:
-        p, nonpositive, bad = _first_pass(
-            raw, lo, hi, t, flats, dark, epsilon=epsilon,
+        p, nonpositive, bad = first_pass(
+            raw, lo, hi, t, flats, dark, flat_variance, dark_variance, epsilon=epsilon,
             counts_steps=(), transmission_steps=(), line_steps=(),
         )  # fmt: skip
         return _rows_binned(p, steps=steps, factor=factor), nonpositive, bad
     return _fused_rows_binned(
-        raw, lo, hi, t, flats, dark, epsilon=epsilon, steps=steps, factor=factor
+        raw,
+        lo,
+        hi,
+        t,
+        flats,
+        dark,
+        flat_variance,
+        dark_variance,
+        epsilon=epsilon,
+        steps=steps,
+        factor=factor,
     )
 
 
 @partial(jax.jit, static_argnames=("epsilon", "steps", "factor"))
-def _fused_rows_binned(raw, lo, hi, t, flats, dark, *, epsilon, steps, factor):
-    p, nonpositive, bad = _first_pass(
-        raw, lo, hi, t, flats, dark, epsilon=epsilon,
+def _fused_rows_binned(
+    raw, lo, hi, t, flats, dark, flat_variance, dark_variance, *, epsilon, steps, factor
+):
+    p, nonpositive, bad = first_pass(
+        raw, lo, hi, t, flats, dark, flat_variance, dark_variance, epsilon=epsilon,
         counts_steps=(), transmission_steps=(), line_steps=(),
     )  # fmt: skip
     return _rows_binned(p, steps=steps, factor=factor), nonpositive, bad
@@ -569,7 +491,7 @@ def _rows_binned(p, *, steps, factor):
 
 def _correct_rows_binned(
     counts: Any,
-    fields: _Fields,
+    fields: Fields,
     interpolation: tuple[np.ndarray, ...],
     steps: tuple[Step, ...],
     *,
@@ -577,15 +499,20 @@ def _correct_rows_binned(
     factor: int,
     slab: int,
     target: np.ndarray | None,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, int]:
     """Stream row-local raw corrections without allocating an original-sized host stack."""
     views, rows, cols = counts.shape
     output = (
         np.empty((views, rows // factor, cols // factor), np.float32) if target is None else target
     )
     flats, dark = jax.device_put(fields.flats), jax.device_put(fields.dark)
+    flat_variance, dark_variance = (
+        jax.device_put(fields.flat_variance),
+        jax.device_put(fields.dark_variance),
+    )
     lo, hi, t = (jax.device_put(q) for q in interpolation)
     tally = np.zeros(2, np.int64)
+    ceiling, ceiling_readings = dtype_ceiling(counts), 0
 
     def collect(start: int, end: int, done: tuple[jax.Array, ...]) -> None:
         output[:, start // factor : end // factor] = np.asarray(done[0])
@@ -601,8 +528,11 @@ def _correct_rows_binned(
         )
         raw = np.asarray(raw)
         raw = raw.astype(raw.dtype.newbyteorder("="), copy=False)
+        if ceiling is not None:
+            ceiling_readings += count_ceiling_readings(raw, ceiling)
         done = _first_rows_binned(
             jnp.asarray(raw), lo, hi, t, flats[:, start:end], dark[start:end],
+            flat_variance[:, start:end], dark_variance[start:end],
             epsilon=epsilon, steps=steps, factor=factor,
         )  # fmt: skip
         done[0].copy_to_host_async()
@@ -611,7 +541,7 @@ def _correct_rows_binned(
         pending = (start, end, done)
     if pending is not None:
         collect(*pending)
-    return output, tally
+    return output, tally, ceiling_readings
 
 
 @partial(jax.jit, static_argnames=("steps", "factor"))
@@ -781,22 +711,3 @@ def _apply(steps: tuple[Step, ...], batch: jax.Array) -> jax.Array:
     for step in steps:
         batch = step.apply(batch)
     return batch
-
-
-def _batches(counts: Any, views: int, batch: int) -> Any:
-    """``(start, stop, frames)`` for each batch of views, the next read while one is used."""
-    starts = list(range(0, views, batch))
-
-    def read(start: int) -> np.ndarray:
-        frames = np.asarray(counts[start : min(start + batch, views)])
-        # Device arrays use native byte order; leave ordinary batches as views.
-        return frames.astype(frames.dtype.newbyteorder("="), copy=False)
-
-    with ThreadPoolExecutor(max_workers=1) as reader:
-        pending = reader.submit(read, starts[0]) if starts else None
-        for k, start in enumerate(starts):
-            assert pending is not None
-            frames = pending.result()
-            if k + 1 < len(starts):
-                pending = reader.submit(read, starts[k + 1])
-            yield start, min(start + batch, views), frames

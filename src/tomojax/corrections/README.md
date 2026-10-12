@@ -34,6 +34,7 @@ kept views into its beginning using bounded batches. The returned projections
 share it, and may have fewer views than the original buffer. The caller owns
 the file's lifetime and flushing; buffer contents are unspecified if a
 correction fails. See the quickstart for a memmap example.
+
 Integer calibration sets fixed at their dtype's maximum value are warned about
 and reported as `flat_pixels_at_dtype_ceiling` or `dark_pixels_at_dtype_ceiling`.
 These counts include each flat set separately. Zero variance at that ceiling is
@@ -42,6 +43,23 @@ can still create severe artifacts. This diagnostic does not change the pixels
 or recover their missing measurements; use an unsaturated calibration or a
 validated detector-defect repair. Floating calibrations and lower ADC limits
 within an integer storage type cannot be diagnosed from dtype alone.
+
+`Frames.corrected(..., binning=f)` averages corrected line integrals, not raw
+counts. Automatic batches can stream a single `RadialDistortion` followed by
+independent whole-row corrections such as `Stripes` (and pointwise
+`BeamHardening`) from NumPy or efficiently windowed HDF5 counts. Each output
+band retains its measured optical halo before averaging. Calibration statistics
+are computed once on the full detector; log diagnostics own output pixels,
+whereas raw-count diagnostics own acquired pixels once, not repeated halos.
+This avoids an unbinned intermediate. Explicit view batches, view selectors,
+additional transmission steps such as Paganin, and unknown readers retain
+their original full-detector path. This is a capacity optimization, not a new
+optical approximation or detector-defect repair.
+
+Raw integer counts at their dtype maximum are warned about and reported as
+`counts_dtype_ceiling` and `counts_at_dtype_ceiling` in the log record. These
+refer to original readings before spatial repair or view selection; they do
+not detect lower ADC ceilings or recover clipped measurements.
 
 Spatial steps need measured neighbouring pixels. Prefer cropping the corrected
 scan after Paganin: its FFT edge padding cannot restore measurements discarded

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+Terminal correction binning can now stream a calibrated radial transmission
+pullback followed by row-local line corrections, retaining measured optical
+halos without an unbinned host stack. Full and bounded paths share calibration,
+normalization and global-coordinate calculations; original-input diagnostics
+count acquired pixels once rather than overlapping halos. Phase retrieval,
+view selectors and unknown readers retain their full-detector dependencies.
+
 Fourier reconstruction now interpolates in measured angle for nonuniform
 half-turn scans, including encoder jitter and rejected views, with matching
 angular quadrature for DC. Inclusive 0–180° scans and repeated/opposing
@@ -33,25 +40,6 @@ Flat-field correction warns and records integer calibration pixels fixed at
 their dtype ceiling, which can otherwise appear highly reliable despite clipped
 or stuck detector readings. The diagnostic reuses existing calibration means;
 it does not alter corrected values or silently infer missing absorption.
-
-Memory budgeting honors `jax.default_device` and CPU placement instead of
-always probing the first GPU, without initializing unused accelerators.
-Unavailable accelerator memory statistics remain unknown rather than
-substituting host RAM, so conservative accelerator allocation guards apply.
-Default gather precision follows that placement too, with device-scoped
-capability probes; CPU simulations no longer use reduced-precision GPU gathers.
-
-Cropping or selecting device-backed scans and frames transfers only the chosen
-pixels to the host, not the entire input. Selected views remain independent,
-writable host arrays; NumPy and memmap crops retain their existing aliases.
-These operations retain the input's device placement even under a different
-caller default, without moving the original pixels or changing that default.
-Writable device view selections fill their host output in bounded chunks,
-avoiding a second whole selected stack and oversized transfer-staging buffers.
-
-Paganin phase retrieval accepts rectangular-pixel pitches `(u, v)` in metres,
-using each axis's physical frequency and padding range. A scalar retains square
-pixels; the CLI accepts an optional fifth value for the v pitch.
 
 The log correction records nonpositive transmission after spatial corrections,
 so its diagnostics reflect pixels actually clamped rather than the raw normalized
