@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+Fourier reconstruction now interpolates in measured angle for nonuniform
+half-turn scans, including encoder jitter and rejected views, with matching
+angular quadrature for DC. Inclusive 0–180° scans and repeated/opposing
+exposures are averaged in physical Fourier coordinates, without resampling
+shifted detector columns.
+CUDA Fourier coordinate generation is fused to avoid full-size double/complex
+temporaries competing with correction and FFT memory in repeated workflows.
+Allocation-exhaustion recovery also evicts cached cuFFT workspaces before
+reducing slabs, so changing scan shapes does not leave stale plans monopolizing
+device memory; normal successful calls retain their caches.
+Fourier's default host volume now stores contiguous axial slices, avoiding
+cacheline-strided slab placement without changing logical axes or supplied
+output arrays.
+Linux host-volume allocation avoids synchronous huge-page compaction when the
+output exceeds available contiguous buddy blocks, without changing caller
+storage or NumPy's process-wide page policy.
+Finished projection Fourier spectra are released before Cartesian inverse FFTs,
+reducing live slab memory without changing reconstruction values.
+NumPy Fourier interpolation bounds point-wise working arrays with Cartesian
+tiles, preserving double precision and the existing FFT and worker policy.
+
 Faster: exact-ray projection loads each cell corner once and integrates one
 spatial derivative for every pose direction (about 2.4x forward and 3x
 gradient on the CPU at 48³); the CUDA cone transpose weights, reorders and

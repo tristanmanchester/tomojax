@@ -9,12 +9,16 @@ _TURN = 2 * np.pi
 _REPEAT = _TURN * 1e-6
 
 
-def group_repeats(angles: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def group_repeats(
+    angles: np.ndarray, *, tolerance: float = _REPEAT
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Distinct directions in ``[0, 2 pi)``, each view's group, and group sizes.
 
     Angles in radians within a millionth of a turn of a neighbour share a
-    group, whichever whole turn they are labelled with and whatever their
-    rounding, so a direction measured twice keeps one angular cell.
+    group by default, whichever whole turn they are labelled with and whatever
+    their rounding, so a direction measured twice keeps one angular cell.
+    ``tolerance`` is in radians; literal high-precision acquisition angles can
+    request only roundoff-scale grouping instead of fitted-pose tolerance.
     """
     canonical = np.remainder(np.asarray(angles, np.float64), _TURN)
     order = np.argsort(canonical)
@@ -24,7 +28,7 @@ def group_repeats(angles: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarra
     unwrapped = canonical[order[0]] + np.append(
         0.0, np.cumsum(np.remainder(np.diff(canonical[order]), _TURN))
     )
-    sorted_groups = np.cumsum(np.append(0, np.diff(unwrapped) > _REPEAT))
+    sorted_groups = np.cumsum(np.append(0, np.diff(unwrapped) > tolerance))
     repeats = np.bincount(sorted_groups)
     representatives = np.bincount(sorted_groups, weights=unwrapped) / repeats
     groups = np.empty_like(sorted_groups)

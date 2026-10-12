@@ -9,6 +9,10 @@ import numpy as np
 
 from tomojax.geometry import Detector, Grid, grid_volume_origin
 
+from ._directions import group_repeats
+
+_INTERPOLATION_WORKSPACE_BYTES = 8 * 1024**2
+
 
 def next_fast_len(target: int) -> int:
     """Return the smallest 5-smooth length >= ``target``, as ``scipy.fft`` does for real FFTs.
@@ -29,18 +33,29 @@ def next_fast_len(target: int) -> int:
     return best
 
 
-def uniform_half_turn(angles: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
-    """Sort a uniform half turn, retaining the orientation of opposing views."""
+def sorted_half_turn(angles: np.ndarray) -> tuple[np.ndarray, np.ndarray, tuple[float, ...]]:
+    """Sort half-turn directions, retaining redundant exposures and opposing orientations."""
     if angles.ndim != 1 or angles.size < 2 or not np.isfinite(angles).all():
         raise ValueError("fourier_reconstruct: requires at least two finite angles")
-    reduced = np.mod(angles.astype(np.float64), 180.0)
-    order = np.argsort(reduced)
-    sorted_angles = reduced[order]
-    gaps = np.diff(np.append(sorted_angles, sorted_angles[0] + 180.0))
-    if not np.allclose(gaps, 180.0 / len(angles), rtol=1e-5, atol=2e-5):
-        raise ValueError("fourier_reconstruct: angles must cover one uniform half turn")
-    flipped = np.mod(angles[order], 360.0) >= 180.0
-    return order, flipped.astype(np.int8), float(np.deg2rad(sorted_angles[0]))
+    degrees = angles.astype(np.float64)
+    # Adding a half turn and reducing it can perturb the same physical
+    # direction by a few FP64 ulps. Exact uniqueness would give redundant
+    # exposures separate, almost-zero angular cells instead of averaging them.
+    tolerance = np.deg2rad(
+        8 * np.finfo(np.float64).eps * max(180.0, float(np.max(np.abs(degrees))))
+    )
+    representatives, inverse, counts = group_repeats(
+        2 * np.deg2rad(degrees), tolerance=2 * tolerance
+    )
+    if representatives.size < 2:
+        raise ValueError("fourier_reconstruct: requires at least two distinct half-turn directions")
+    reduced = representatives[inverse] / 2
+    unique = counts[inverse] == 1
+    reduced[unique] = np.deg2rad(np.mod(degrees[unique], 180.0))
+    reduced[np.minimum(reduced, np.pi - reduced) <= tolerance] = 0
+    order = np.argsort(reduced, kind="stable")
+    flipped = np.cos(np.deg2rad(degrees[order]) - reduced[order]) < 0
+    return order, flipped.astype(np.int8), tuple(reduced[order])
 
 
 def transform_grid(grid: Grid, detector: Detector) -> tuple[tuple[int, int], tuple[int, int]]:
@@ -126,13 +141,66 @@ def interpolate_numpy(
     table: np.ndarray,
     nfft: int,
     period_phase: complex,
+    groups: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Vectorized reference for linear angular and Kaiser radial interpolation."""
+    """Bound point-wise temporaries without changing interpolation or slab precision."""
     angle, radial, phase, detector_phase = np.broadcast_arrays(angle, radial, phase, detector_phase)
+    coordinates = (angle, radial, phase, detector_phase)
+    # Scalar/index fields and four complex slab arrays dominate the working set.
+    # More simultaneous slices therefore require fewer Cartesian sites per tile.
+    points = max(1, _INTERPOLATION_WORKSPACE_BYTES // (256 + 64 * spectrum.shape[0]))
+    if coordinates[0].size <= points:
+        return _interpolate_block(
+            spectrum, *coordinates, flipped, table, nfft, period_phase, groups
+        )
+    result = np.empty((spectrum.shape[0], coordinates[0].size), dtype=np.complex128)
+    for start in range(0, coordinates[0].size, points):
+        stop = min(start + points, coordinates[0].size)
+        # flat slices copy only this window, even for broadcast/strided fields.
+        tile_angle, tile_radial, tile_phase, tile_detector = (
+            coordinate.flat[start:stop] for coordinate in coordinates
+        )
+        result[:, start:stop] = _interpolate_block(
+            spectrum,
+            tile_angle,
+            tile_radial,
+            tile_phase,
+            tile_detector,
+            flipped,
+            table,
+            nfft,
+            period_phase,
+            groups,
+        )
+    return result.reshape((spectrum.shape[0], *coordinates[0].shape))
+
+
+def _interpolate_block(
+    spectrum: np.ndarray,
+    angle: np.ndarray,
+    radial: np.ndarray,
+    phase: np.ndarray,
+    detector_phase: np.ndarray,
+    flipped: np.ndarray,
+    table: np.ndarray,
+    nfft: int,
+    period_phase: complex,
+    groups: np.ndarray | None,
+) -> np.ndarray:
+    """Literal interpolation for broadcast coordinates, with detector-Nyquist cutoff."""
     inside = radial <= nfft / 2
     if np.all(inside):
         return _interpolate_inside(
-            spectrum, angle, radial, phase, detector_phase, flipped, table, nfft, period_phase
+            spectrum,
+            angle,
+            radial,
+            phase,
+            detector_phase,
+            flipped,
+            table,
+            nfft,
+            period_phase,
+            groups,
         )
     result = np.zeros((spectrum.shape[0], *angle.shape), dtype=np.complex128)
     if np.any(inside):
@@ -146,6 +214,7 @@ def interpolate_numpy(
             table,
             nfft,
             period_phase,
+            groups,
         )
     return result
 
@@ -160,34 +229,54 @@ def _interpolate_inside(
     table: np.ndarray,
     nfft: int,
     period_phase: complex,
+    groups: np.ndarray | None = None,
 ) -> np.ndarray:
     """Vectorized reference for linear angular and Kaiser radial interpolation."""
-    layers, nviews, _ = spectrum.shape
+    layers, sources, _ = spectrum.shape
+    nviews = sources if groups is None else len(groups) - 1
     ai, ri = np.floor(angle).astype(np.int64), np.floor(radial).astype(np.int64)
     result = np.zeros((layers, *angle.shape), dtype=np.complex128)
+    repeats = 1 if groups is None else int(np.max(np.diff(groups)))
     for da in (0, 1):
         view = (ai + da) % (2 * nviews)
-        conjugate = (view >= nviews) != flipped[view % nviews].astype(bool)
+        opposing = view >= nviews
         view %= nviews
         angular = 1 - (angle - ai) if da == 0 else angle - ai
-        row = np.zeros_like(result)
-        for dr in range(-2, 4):
-            k = ri + dr
-            reflected = np.where(k < 0, -k, np.where(k > nfft // 2, nfft - k, k))
-            # Advanced indexing owns a copy, even for scalar coordinates. Reuse
-            # it rather than creating full complex temporaries for each mask.
-            values = spectrum[:, view, reflected]
-            np.conjugate(values, out=values, where=((k < 0) | (k > nfft // 2))[None, ...])
-            np.multiply(values, period_phase, out=values, where=(k > nfft // 2)[None, ...])
-            distance = np.abs(radial - k)
-            coordinate = np.minimum(distance * (16384 / 3), 16384)
-            index = np.minimum(coordinate.astype(np.int64), 16383)
-            fraction = coordinate - index
-            weight = table[index] * (1 - fraction) + table[index + 1] * fraction
-            values *= np.where(distance < 3, weight, 0)
-            row += values
-        row *= detector_phase
-        np.conjugate(row, out=row, where=conjugate[None, ...])
-        result += row * angular
+        counts = 1 if groups is None else groups[view + 1] - groups[view]
+        for repeat in range(repeats):
+            valid = repeat < counts
+            if not np.any(valid):
+                continue
+            # An inclusive scan repeats only one direction: do not repeat the
+            # radial work at every Cartesian site for its second endpoint.
+            active = Ellipsis if np.all(valid) else valid
+            source = view if groups is None else np.minimum(groups[view] + repeat, sources - 1)
+            conjugate = opposing != flipped[source].astype(bool)
+            row = _radial_values(
+                spectrum, source[active], radial[active], ri[active], table, nfft, period_phase
+            )
+            row *= detector_phase[active]
+            np.conjugate(row, out=row, where=conjugate[active][None, ...])
+            result[:, active] += row * (angular / counts)[active]
     result *= phase
     return result
+
+
+def _radial_values(spectrum, source, radial, ri, table, nfft, period_phase):
+    """Interpolate before physical phase/orientation and redundant-view averaging."""
+    row = np.zeros((spectrum.shape[0], *radial.shape), dtype=np.complex128)
+    for dr in range(-2, 4):
+        k = ri + dr
+        reflected = np.where(k < 0, -k, np.where(k > nfft // 2, nfft - k, k))
+        # Advanced indexing owns a copy, even for scalar coordinates.
+        values = spectrum[:, source, reflected]
+        np.conjugate(values, out=values, where=((k < 0) | (k > nfft // 2))[None, ...])
+        np.multiply(values, period_phase, out=values, where=(k > nfft // 2)[None, ...])
+        distance = np.abs(radial - k)
+        coordinate = np.minimum(distance * (16384 / 3), 16384)
+        index = np.minimum(coordinate.astype(np.int64), 16383)
+        fraction = coordinate - index
+        weight = table[index] * (1 - fraction) + table[index + 1] * fraction
+        values *= np.where(distance < 3, weight, 0)
+        row += values
+    return row

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import fields, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
 
@@ -21,12 +21,13 @@ from tomojax.recon.types import Regulariser
 if TYPE_CHECKING:
     import numpy as np
 
-    from tomojax.geometry import Detector, Geometry, Grid
+    from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry
 
-type MethodConfig = FBPConfig | CGLSConfig | FistaConfig | SPDHGConfig
+type MethodConfig = FBPConfig | FourierConfig | CGLSConfig | FistaConfig | SPDHGConfig
 
 _CONFIGS: dict[str, type[MethodConfig]] = {
     "fbp": FBPConfig,
+    "fourier": FourierConfig,
     "cgls": CGLSConfig,
     "fista": FistaConfig,
     "spdhg": SPDHGConfig,
@@ -40,8 +41,8 @@ def method_config(
 
     ``fbp`` (FDK for cone beams) takes an :class:`FBPConfig`, ``cgls`` a
     :class:`CGLSConfig`, ``fista`` a :class:`FistaConfig` and ``spdhg`` an
-    :class:`SPDHGConfig`. Each setting replaces the field of its name, as
-    :func:`dataclasses.replace` does. A config of another class, or a setting
+    :class:`SPDHGConfig`; ``fourier`` takes :class:`FourierConfig`. Each setting
+    replaces its field as :func:`dataclasses.replace` does. A config of another class, or a setting
     its class has no field for, raises :class:`ValueError` naming the valid ones.
     """
     kind = _CONFIGS.get(method)
@@ -81,9 +82,18 @@ def reconstruct_arrays(
     arc. Returns the volume and its record: the ``config`` used,
     ``warm_start`` for the iterative methods and the solver's own record. FDK
     volumes too large for the device come back as host NumPy arrays, made in
-    z-slabs (``host_slabs``).
+    z-slabs (``host_slabs``). Fourier always returns host arrays in slabs.
     """
     cfg = method_config(method, config=config)
+    if isinstance(cfg, FourierConfig):
+        import numpy as np
+
+        if warm_start:
+            raise ValueError("method 'fourier' does not take warm_start")
+        volume = fourier_reconstruct(
+            cast("ParallelGeometry", geometry), grid, detector, np.asarray(projections), config=cfg
+        )
+        return volume, {"config": cfg, "host_slabs": True}
     det_grid = _detector_grid(geometry, detector)
     if isinstance(cfg, FBPConfig):
         if warm_start:
