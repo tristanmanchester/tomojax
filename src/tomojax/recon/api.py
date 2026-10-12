@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import fields, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
 
@@ -21,12 +21,13 @@ from tomojax.recon.types import Regulariser
 if TYPE_CHECKING:
     import numpy as np
 
-    from tomojax.geometry import Detector, Geometry, Grid
+    from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry
 
-type MethodConfig = FBPConfig | CGLSConfig | FistaConfig | SPDHGConfig
+type MethodConfig = FBPConfig | FourierConfig | CGLSConfig | FistaConfig | SPDHGConfig
 
 _CONFIGS: dict[str, type[MethodConfig]] = {
     "fbp": FBPConfig,
+    "fourier": FourierConfig,
     "cgls": CGLSConfig,
     "fista": FistaConfig,
     "spdhg": SPDHGConfig,
@@ -40,8 +41,8 @@ def method_config(
 
     ``fbp`` (FDK for cone beams) takes an :class:`FBPConfig`, ``cgls`` a
     :class:`CGLSConfig`, ``fista`` a :class:`FistaConfig` and ``spdhg`` an
-    :class:`SPDHGConfig`. Each setting replaces the field of its name, as
-    :func:`dataclasses.replace` does. A config of another class, or a setting
+    :class:`SPDHGConfig`; ``fourier`` takes :class:`FourierConfig`. Each setting
+    replaces its field as :func:`dataclasses.replace` does. A config of another class, or a setting
     its class has no field for, raises :class:`ValueError` naming the valid ones.
     """
     kind = _CONFIGS.get(method)
@@ -80,16 +81,25 @@ def reconstruct_arrays(
     their individual FDK images; each segment must cover an FDK-compatible
     arc. Returns the volume and its record: the ``config`` used,
     ``warm_start`` for the iterative methods and the solver's own record. FDK
-    volumes too large for the device come back as host NumPy arrays, made in
-    z-slabs (``host_slabs``).
+    and FBP volumes too large for the device come back as host NumPy arrays,
+    made in slabs (``host_slabs``). Fourier always returns host arrays in slabs.
     """
     cfg = method_config(method, config=config)
+    if isinstance(cfg, FourierConfig):
+        import numpy as np
+
+        if warm_start:
+            raise ValueError("method 'fourier' does not take warm_start")
+        volume = fourier_reconstruct(
+            cast("ParallelGeometry", geometry), grid, detector, np.asarray(projections), config=cfg
+        )
+        return volume, {"config": cfg, "host_slabs": True}
     det_grid = _detector_grid(geometry, detector)
     if isinstance(cfg, FBPConfig):
         if warm_start:
             raise ValueError("method 'fbp' does not take warm_start")
-        if det_grid is None and _too_large_for_the_device(geometry, grid):
-            return _host_fdk(geometry, grid, detector, projections, cfg), {
+        if det_grid is None and _too_large_for_the_device(geometry, grid, cfg):
+            return _host_fbp(geometry, grid, detector, projections, cfg), {
                 "config": cfg,
                 "host_slabs": True,
             }
@@ -123,17 +133,84 @@ def _detector_grid(
     return detector_grid_from_geometry_inputs(detector, geometry)
 
 
-def _too_large_for_the_device(geometry: Geometry, grid: Grid) -> bool:
-    """Whether a cone-beam FDK volume would take more than 40% of free device memory."""
+def _too_large_for_the_device(geometry: Geometry, grid: Grid, cfg: FBPConfig) -> bool:
+    """Whether an FBP volume would take more than 40% of free device memory."""
+    import jax
+
     from tomojax.backends import device_free_memory_bytes
-    from tomojax.core.geometry.cone import ConeSegments, beam_of
+    from tomojax.core.devices import as_devices
+    from tomojax.core.geometry.cone import ConeSegments
 
     if isinstance(geometry, ConeSegments):
         return False  # FDK refuses segmented scans with its own message.
-    if beam_of(geometry) is None:
-        return False
-    free = device_free_memory_bytes()
-    return free is not None and 4 * grid.nx * grid.ny * grid.nz > 0.4 * free
+
+    def oversized() -> bool:
+        free = device_free_memory_bytes()
+        return free is not None and 4 * grid.nx * grid.ny * grid.nz > 0.4 * free
+
+    devices = as_devices(cfg.devices)
+    if devices is None:
+        return oversized()
+    # View-shared reconstruction holds the entire volume on every device.
+    # A selected device need not be the process default (nor GPU 0).
+    for device in devices:
+        with jax.default_device(device):
+            if oversized():
+                return True
+    return False
+
+
+def _host_fbp(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray | np.ndarray,
+    cfg: FBPConfig,
+) -> np.ndarray:
+    """Use bounded slabs for either beam type, keeping the result on the host."""
+    from concurrent.futures import ThreadPoolExecutor
+    import logging
+
+    import jax
+    import numpy as np
+
+    from tomojax.core.devices import as_devices
+    from tomojax.core.geometry.cone import beam_of
+    from tomojax.geometry import grid_volume_origin
+
+    if beam_of(geometry) is not None:
+        return _host_fdk(geometry, grid, detector, projections, cfg)
+    logging.info(
+        "The %dx%dx%d volume exceeds device memory; reconstructing in slabs on the host",
+        grid.nx,
+        grid.ny,
+        grid.nz,
+    )
+    data = np.asarray(projections)
+    host_cfg = FBPHostConfig(filter=cfg.filter, scale=cfg.scale, backprojector=cfg.backprojector)
+    devices = as_devices(cfg.devices)
+    if devices is None:
+        return fbp_host(geometry, grid, detector, data, config=host_cfg)
+    # Share spatial regions instead of views: summing whole device volumes
+    # would defeat host storage. Each worker still uses bounded local slabs.
+    devices = devices[: grid.nz]
+    boundaries = np.linspace(0, grid.nz, len(devices) + 1, dtype=int)
+    output = np.empty((grid.nx, grid.ny, grid.nz), np.float32)
+    ox, oy, oz = grid_volume_origin(grid)
+
+    def run(index: int) -> None:
+        start, stop = map(int, boundaries[index : index + 2])
+        slab = replace(
+            grid, nz=stop - start, vol_origin=(ox, oy, oz + start * grid.vz), vol_center=None
+        )
+        with jax.default_device(devices[index]):
+            _ = fbp_host(
+                geometry, slab, detector, data, config=host_cfg, out=output[:, :, start:stop]
+            )
+
+    with ThreadPoolExecutor(len(devices)) as pool:
+        _ = list(pool.map(run, range(len(devices))))
+    return output
 
 
 def _host_fdk(

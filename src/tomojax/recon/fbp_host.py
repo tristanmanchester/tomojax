@@ -14,7 +14,7 @@ from tomojax.backends import device_free_memory_bytes
 from tomojax.core.geometry.cone import require_parallel_beam
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import validate_projection_stack
-from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
+from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry, grid_volume_origin
 
 from ._host_arrays import ProjectionRows, validate_host_arrays
 from .fbp import (
@@ -87,7 +87,7 @@ def _slab_layout(
 
 
 def fbp_host(
-    geometry: ParallelGeometry,
+    geometry: Geometry,
     grid: Grid,
     detector: Detector,
     projections: np.ndarray,

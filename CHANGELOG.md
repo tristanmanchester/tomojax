@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+The existing Fourier-slice inverse is available through `tj.reconstruct(scan,
+"fourier")` and `tomojax recon --method fourier`, using `FourierConfig`. It keeps
+host storage and its existing NumPy/CuPy backends; FBP remains the default.
+
+`tj.reconstruct` now keeps oversized parallel-beam and laminography FBP
+volumes on the host, as it already did for cone FDK, instead of allocating
+the whole volume on the accelerator. Explicit devices share spatial regions.
+
 Faster: exact-ray projection loads each cell corner once and integrates one
 spatial derivative for every pose direction (about 2.4x forward and 3x
 gradient on the CPU at 48³); the CUDA cone transpose weights, reorders and
