@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 LOG = logging.getLogger(__name__)
 
-# Host memory a batch of views (or slab of rows) may take, as float32.
+# Memory budget for a source read or float32 correction batch (or slab of rows).
 _BATCH_BYTES = 256 * 2**20
 
 
@@ -73,7 +73,7 @@ def correct_frames(
         jax.device_put(fields.flat_variance),
         jax.device_put(fields.dark_variance),
     )
-    batch = batch_views or _frame_batch_size(views, rows, cols, transmission_steps)
+    batch = batch_views or _frame_batch_size(counts, transmission_steps)
     tally = np.zeros(2, np.int64)  # non-positive transmission, non-finite results
 
     def collect(start: int, stop: int, result: jax.Array, *bad: jax.Array) -> None:
@@ -134,10 +134,13 @@ def correct_projections(
     return Corrected(out, records, kept)
 
 
-def _frame_batch_size(views: int, rows: int, cols: int, steps: Sequence[Step]) -> int:
-    """Automatic view batch size, counting the largest step workspace (Paganin's FFTs)."""
-    pixels = rows * cols + max((s.workspace_pixels(rows, cols) for s in steps), default=0)
-    return max(1, min(views, _BATCH_BYTES // (4 * pixels)))
+def _frame_batch_size(counts: Any, steps: Sequence[Step]) -> int:
+    """Bound source reads and float32 work, including the largest step's FFT workspace."""
+    views, rows, cols = (int(s) for s in counts.shape)
+    pixels = rows * cols
+    workspace = max((s.workspace_pixels(rows, cols) for s in steps), default=0)
+    frame_bytes = max(np.dtype(counts.dtype).itemsize * pixels, 4 * (pixels + workspace))
+    return max(1, min(views, _BATCH_BYTES // frame_bytes))
 
 
 def _validated_batch_views(value: int | None) -> int | None:
