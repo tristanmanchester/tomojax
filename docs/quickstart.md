@@ -70,6 +70,23 @@ position between the flat fields. `scan.corrected(...)` runs line-integral
 steps (`Stripes`, `BeamHardening`, `RejectViews`) on a scan that is already
 corrected.
 
+When the float32 corrected stack would exceed host RAM, supply disk-backed
+output storage rather than allocating that whole stack in anonymous memory:
+
+```python
+import numpy as np
+
+frames = tj.load_frames("raw.nxs")
+storage = np.memmap("line-integrals.bin", mode="w+", dtype=np.float32, shape=frames.counts.shape)
+scan = frames.corrected(RejectViews(), Stripes(9), out=storage)
+storage.flush()
+```
+
+`out` must be separate from the counts and calibrations. The returned scan
+shares the buffer; if views were rejected, its projections use only the
+leading kept views. You own the file's lifetime. The raw memmap file alone
+does not store the scan's geometry or correction records; `tj.save` does.
+
 A file written by TomoJAX carries its geometry. Other NXtomo and Data Exchange
 files get a parallel beam with a centred detector, the file's angles, and the
 NXtomo detector's `x_pixel_size` and `y_pixel_size` when it has them. Without
@@ -131,8 +148,25 @@ keeps the input voxel spacing. Check both field of view and physical units befor
 comparing reconstructions. `--roi cyl` also zeroes the volume outside the
 cylinder every view sees.
 
+For supported parallel scans, `--method fourier` uses the Fourier-slice inverse,
+with the volume on the host in bounded slabs. It defaults to NumPy; CUDA needs
+the optional `fourier-cuda12` extra and a config file containing `backend = "cupy"`.
+In Python:
+
+```python
+from tomojax.recon import FourierConfig
+
+recon = tj.reconstruct(scan, "fourier", config=FourierConfig(backend="cupy"))
+```
+
+Fourier is an approximate inverse with its own frequency cutoff, not an FBP
+filter selection. It requires built-in parallel geometry without per-view poses;
+cone beams and laminography are unsupported. The routine checks angular sampling
+and coverage, and does not correct detector truncation. It refuses `filter`,
+iterative-solver options and `warm_start` rather than silently ignoring them.
+
 Expert settings are fields of the method's configuration class
-(`tomojax.recon.FBPConfig`, `CGLSConfig`, `FistaConfig` or `SPDHGConfig`),
+(`tomojax.recon.FBPConfig`, `FourierConfig`, `CGLSConfig`, `FistaConfig` or `SPDHGConfig`),
 set in a TOML file passed with `--config`; `tomojax recon --config-keys` lists
 them. Each replaces that field of the class's defaults, and a setting the
 method does not take fails with the ones it does. For FISTA with Huber total

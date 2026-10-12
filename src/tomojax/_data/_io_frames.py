@@ -32,6 +32,9 @@ class Hdf5Frames:
     dtype: np.dtype
     first_row: int = 0  # the window of each frame read: rows and columns from these
     first_col: int = 0
+    chunk_views: int | None = None  # acquisition storage layout, not a caller cache setting
+    is_window: bool = False
+    _efficient_row_windows: bool = False  # safe to revisit each frame in successive row windows
 
     @classmethod
     def open(cls, path: str, dataset: str) -> Hdf5Frames:
@@ -41,7 +44,18 @@ class Hdf5Frames:
             if not isinstance(data, h5py.Dataset) or data.ndim != 3:
                 raise ValueError(f"{path}:{dataset} is not a 3-D stack of frames")
             n, rows, cols = (int(s) for s in data.shape)
-            return cls(path, dataset, np.arange(n), rows, cols, np.dtype(data.dtype))
+            layout = cast(Any, data)  # h5py's typing omits acquisition layout metadata
+            chunks = layout.chunks
+            efficient = (
+                not layout.is_virtual
+                and layout.id.get_create_plist().get_nfilters() == 0
+                and (chunks is None or chunks[0] == 1)
+            )
+            return cls(
+                path, dataset, np.arange(n), rows, cols, np.dtype(data.dtype),
+                chunk_views=None if chunks is None else int(chunks[0]),
+                _efficient_row_windows=efficient,
+            )  # fmt: skip
 
     @property
     def shape(self) -> tuple[int, int, int]:
@@ -71,6 +85,12 @@ class Hdf5Frames:
             first_row=self.first_row + r0,
             first_col=self.first_col + c0,
         )
+
+    def __array__(self, dtype: np.dtype | None = None, copy: bool | None = None) -> np.ndarray:
+        """Read this stack explicitly with ``np.asarray`` (always allocates host storage)."""
+        if copy is False:
+            raise ValueError("Hdf5Frames cannot be converted to an array without copying")
+        return np.asarray(self[:], dtype=dtype)
 
     def __getitem__(self, which: slice | int | np.ndarray) -> np.ndarray:
         if isinstance(which, int | np.integer):

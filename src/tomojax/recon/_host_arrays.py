@@ -12,6 +12,8 @@ from typing import Literal
 
 import numpy as np
 
+from tomojax._typed_arrays import mapped_storage
+
 
 @dataclass(frozen=True)
 class ProjectionRows:
@@ -35,15 +37,6 @@ class ProjectionRows:
         if hi > lo:
             data[:, lo - self.start : hi - self.start] = batch[:, lo:hi]
         return data
-
-
-def _mapped_storage(array: np.ndarray) -> np.memmap | None:
-    current: object = array
-    while isinstance(current, np.ndarray):
-        if isinstance(current, np.memmap):
-            return current
-        current = current.base
-    return None
 
 
 def _hugepage_capacity() -> int | None:
@@ -104,7 +97,7 @@ def validate_host_arrays(
         raise ValueError(f"{context}: out must be writable")
     if np.may_share_memory(projections, out):
         raise ValueError(f"{context}: input and output storage must not overlap")
-    input_map, output_map = _mapped_storage(projections), _mapped_storage(out)
+    input_map, output_map = mapped_storage(projections), mapped_storage(out)
     if input_map is not None and output_map is not None:
         source, target = input_map.filename, output_map.filename
         if source is None or target is None or Path(source).samefile(target):

@@ -229,7 +229,7 @@ def test_host_slabs_write_memmap_and_preserve_custom_scale(tmp_path):
     np.testing.assert_array_equal(source, data)
 
 
-@pytest.mark.parametrize("mapping", [False, True])
+@pytest.mark.parametrize("mapping", [False, True, "source", "output", "both"])
 def test_host_slabs_reject_overlapping_output_before_writing(tmp_path, mapping):
     grid, detector = Grid(5, 4, 3, 1, 1, 1), Detector(3, 4, 1, 1)
     geometry = ParallelGeometry(grid, detector, [0, 31, 73, 114, 155])
@@ -237,6 +237,10 @@ def test_host_slabs_reject_overlapping_output_before_writing(tmp_path, mapping):
         path = tmp_path / "same.bin"
         data = np.memmap(path, mode="w+", dtype=np.float32, shape=(5, 4, 3))
         out = np.memmap(path, mode="r+", dtype=np.float32, shape=data.shape)
+        if mapping in {"source", "both"}:
+            data = np.frombuffer(memoryview(data), dtype=data.dtype).reshape(data.shape)
+        if mapping in {"output", "both"}:
+            out = np.frombuffer(memoryview(out), dtype=out.dtype).reshape(out.shape)
     else:
         data = np.ones((5, 4, 3), dtype=np.float32)
         out = data.view()

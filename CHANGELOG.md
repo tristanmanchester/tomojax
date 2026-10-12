@@ -22,6 +22,76 @@ Finished projection Fourier spectra are released before Cartesian inverse FFTs,
 reducing live slab memory without changing reconstruction values.
 NumPy Fourier interpolation bounds point-wise working arrays with Cartesian
 tiles, preserving double precision and the existing FFT and worker policy.
+Stripe correction selects only the median ranks on CUDA and uses pruned sorting
+networks for wider windows, preserving corrected values and differentiability.
+Whole-row corrections overlap bounded slab downloads with the next slab's work,
+preserving the correction order and the previous image-memory budget.
+The existing Fourier-slice inverse is available through `tj.reconstruct(scan,
+"fourier")` and `tomojax recon --method fourier`, using `FourierConfig`. It keeps
+host storage and its existing NumPy/CuPy backends; FBP remains the default.
+Flat-field correction warns and records integer calibration pixels fixed at
+their dtype ceiling, which can otherwise appear highly reliable despite clipped
+or stuck detector readings. The diagnostic reuses existing calibration means;
+it does not alter corrected values or silently infer missing absorption.
+
+Memory budgeting honors `jax.default_device` and CPU placement instead of
+always probing the first GPU, without initializing unused accelerators.
+Unavailable accelerator memory statistics remain unknown rather than
+substituting host RAM, so conservative accelerator allocation guards apply.
+Default gather precision follows that placement too, with device-scoped
+capability probes; CPU simulations no longer use reduced-precision GPU gathers.
+
+Cropping or selecting device-backed scans and frames transfers only the chosen
+pixels to the host, not the entire input. Selected views remain independent,
+writable host arrays; NumPy and memmap crops retain their existing aliases.
+These operations retain the input's device placement even under a different
+caller default, without moving the original pixels or changing that default.
+Writable device view selections fill their host output in bounded chunks,
+avoiding a second whole selected stack and oversized transfer-staging buffers.
+
+Paganin phase retrieval accepts rectangular-pixel pitches `(u, v)` in metres,
+using each axis's physical frequency and padding range. A scalar retains square
+pixels; the CLI accepts an optional fifth value for the v pitch.
+
+The log correction records nonpositive transmission after spatial corrections,
+so its diagnostics reflect pixels actually clamped rather than the raw normalized
+input.
+
+Raw correction treats flat-minus-dark signals unresolved at three standard
+errors of the calibration mean as unmeasured pixels, using neutral transmission
+before spatial corrections. Dark or unreliable detector pixels no longer
+generate enormous values that phase retrieval spreads across the entire image.
+Calibration uncertainty is accumulated in bounded FP64 host batches and follows
+the interpolation between flat sets; the correction record reports affected pixels.
+
+Raw-frame correction now accepts `RadialDistortion`: a calibrated backward
+radial polynomial with bilinear transmission pullback before the log, explicit
+pixel/crop/binning coordinates, and saved correction settings.
+Its geometry is evaluated in double precision on the device rather than
+embedding large per-pixel interpolation tables in each compiled batch.
+Raw correction collects the first view-selector's summaries while its batches
+are still on the device, avoiding another transfer of the corrected stack.
+Automatic correction batches respect declared workspace for counts and
+line-integral steps too, including view-selector statistics and post-stripe steps.
+Binning a device-resident scan reduces detector blocks on that device before
+downloading only the smaller, writable host array.
+`Frames.corrected(binning=f)` averages detector blocks after all corrections,
+reducing the final device download where step dependencies allow it.
+With automatic batching and independent whole-row line steps, terminal binning
+can stream raw row groups from efficient sources without a full-resolution
+corrected host stack. Other correction dependencies keep their existing path.
+64-bit raw row groups normalize before the compiled FP32 row steps, avoiding
+excess cold-compilation scratch without downloading unbinned detector pixels.
+
+`Frames.corrected` and `Scan.corrected` accept caller-owned float32 output
+storage, including memmaps for corrected stacks larger than host RAM. View
+rejection compacts that storage in bounded batches, preserving the scan's
+geometry and correction records without allocating another whole stack.
+
+HDF5 flat and dark frames now remain lazy alongside sample counts: detector
+crops read only their calibration window, and correction averages calibrations
+in bounded host batches with FP64 accumulation. Use `np.asarray(frames.flats)`
+or index the stack to read its pixels explicitly.
 
 Faster: exact-ray projection loads each cell corner once and integrates one
 spatial derivative for every pose direction (about 2.4x forward and 3x
