@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+Memory budgeting honors `jax.default_device` and CPU placement instead of
+always probing the first GPU, without initializing unused accelerators.
+Unavailable accelerator memory statistics remain unknown rather than
+substituting host RAM, so conservative accelerator allocation guards apply.
+Default gather precision follows that placement too, with device-scoped
+capability probes; CPU simulations no longer use reduced-precision GPU gathers.
+
 Cropping or selecting device-backed scans and frames transfers only the chosen
 pixels to the host, not the entire input. Selected views remain independent,
 writable host arrays; NumPy and memmap crops retain their existing aliases.
