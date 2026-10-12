@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import functools
 import importlib
+import math
 from typing import TYPE_CHECKING, Any
 
 import jax
@@ -38,7 +39,7 @@ def _cuda_l2_bytes(device: Device) -> int | None:
 def filtered_view_batch_size(
     batch_size: int, *, grid: Grid, detector: Detector, device: Device
 ) -> int:
-    """Cache-size dense axial FBP batches; retain FFT sizing for small/sparse outputs.
+    """Cache-size dense axial FBP row bands; retain FFT sizing for small/sparse outputs.
 
     Extra batches reread/write the whole accumulator, even for axial tiles that
     skip all views. That traffic can outweigh filtered-view caching for small
@@ -53,7 +54,12 @@ def filtered_view_batch_size(
     support = (detector.nv + 1) * detector.dv / 2
     if 4 * grid.nx * grid.ny * grid.nz <= size or first < -support or last > support:
         return batch_size
-    capacity = max(1, size // (4 * detector.nv * detector.nu))
+    # Axial programs sweep XY columns within one contiguous row band. Estimate
+    # that band's physical detector span, including fractional-row interpolation,
+    # rather than charging every measured row to each batch's cache footprint.
+    rows = _column_tile(grid.nz, 128)[1]
+    active_rows = min(detector.nv, math.ceil((rows - 1) * (grid.vz / detector.dv)) + 2)
+    capacity = max(1, size // (4 * active_rows * detector.nu))
     return min(batch_size, 1 << (capacity.bit_length() - 1))
 
 
@@ -73,7 +79,7 @@ def fft_2d_view_batch_size(batch_size: int, *, fft_shape: tuple[int, int], devic
 
 
 def _column_tile(nz: int, block_size: int) -> tuple[int, int]:
-    rows = min(128, block_size, 1 << (nz - 1).bit_length())
+    rows = min(32, block_size, 1 << (nz - 1).bit_length())
     return block_size // rows, rows
 
 

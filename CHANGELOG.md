@@ -53,6 +53,11 @@ radial polynomial with bilinear transmission pullback before the log, explicit
 pixel/crop/binning coordinates, and saved correction settings.
 Its geometry is evaluated in double precision on the device rather than
 embedding large per-pixel interpolation tables in each compiled batch.
+Faster: axial CUDA FBP uses narrower row bands and sizes dense view batches for
+their physical detector span, retaining the FFT workspace limit, allocation
+retry and small/sparse-output batch policy. Interpolation and FP32 precision are
+unchanged; different view batches can alter floating-point association.
+
 Faster: aligned CUDA FBP detector-row addresses use the existing integer-row
 contract directly, preserving contiguous loads for unit strides and exact
 nearest-row sampling for shifted and strided grids.

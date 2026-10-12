@@ -58,19 +58,19 @@ def test_fbp_cache_batch_queries_each_actual_device_once(monkeypatch) -> None:
         module.filtered_view_batch_size(
             128, grid=Grid(2560, 2560, 64, 1.0, 1.0, 1.0), detector=detector, device=first
         )
-        == 32
+        == 64
     )
     assert (
         module.filtered_view_batch_size(
             128, grid=Grid(2560, 2560, 64, 1.0, 1.0, 1.0), detector=detector, device=second
         )
-        == 64
+        == 128
     )
     assert (
         module.filtered_view_batch_size(
             128, grid=Grid(2560, 2560, 64, 1.0, 1.0, 1.0), detector=detector, device=first
         )
-        == 32
+        == 64
     )
     assert calls == [7, 3]
 
@@ -91,7 +91,7 @@ def test_fbp_cache_batch_never_exceeds_fft_budget(monkeypatch, size, batch) -> N
         detector=Detector(3900, 64, 1.0, 1.0),
         device=_CacheDevice(42, 7),
     )
-    expected = batch if size <= 0 else min(batch, 32 if size == 32 * 1024**2 else 1)
+    expected = batch if size <= 0 else min(batch, 64 if size == 32 * 1024**2 else 1)
     assert actual == expected
 
 
@@ -174,8 +174,33 @@ def test_fbp_cache_batch_accounts_for_fractional_row_spacing(monkeypatch) -> Non
             detector=Detector(3900, 64, 1.0, 1.0),
             device=_CacheDevice(42, 7),
         )
-        == 32
+        == 64
     )
+
+
+@pytest.mark.parametrize(
+    ("nz", "nv", "vz", "columns", "capacity"),
+    [
+        (64, 64, 1.0, 3900, 64),
+        (128, 64, 0.5, 3900, 64),
+        (32, 129, 4.0, 3900, 16),
+        (540, 540, 1.0, 976, 256),
+    ],
+)
+@pytest.mark.parametrize("budget", [1, 3, 16, 512])
+@pytest.mark.parametrize("unit", [0.2, 1.3])
+def test_fbp_cache_batch_budgets_the_physical_axial_band(
+    monkeypatch, nz, nv, vz, columns, capacity, budget, unit
+):
+    implementation = importlib.import_module("tomojax.recon._fbp_pallas")
+    monkeypatch.setattr(implementation, "_cuda_l2_bytes", lambda _: 32 * 1024**2)
+    actual = implementation.filtered_view_batch_size(
+        budget,
+        grid=Grid(2560, 2560, nz, unit, unit, vz * unit),
+        detector=Detector(columns, nv, unit, unit),
+        device=_CacheDevice(42, 7),
+    )
+    assert actual == min(budget, capacity)
 
 
 @pytest.mark.parametrize(
@@ -1017,7 +1042,13 @@ def test_parallel_fbp_keeps_partial_slabs_and_accumulator(z_mode, nz) -> None:
     for block in (128, 512):
         actual = jax.jit(
             lambda p, y, a, block=block: backproject_filtered_pallas(
-                p, y, grid=grid, detector=detector, z_mode=z_mode, block_size=block, accumulate=a
+                p,
+                y,
+                grid=grid,
+                detector=detector,
+                z_mode=z_mode,
+                block_size=block,
+                accumulate=a,
             )
         )(poses, rows, jnp.asarray(initial.copy()))
         np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=2e-6)
@@ -1115,4 +1146,39 @@ def test_integer_fbp_rows_preserve_physical_alignment(
                 accumulate=a,
             )
         )(poses, rows, jnp.asarray(initial.copy()))
+        np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=2e-6)
+
+
+@pytest.mark.parametrize("z_mode", ["integer", "fixed"])
+@pytest.mark.parametrize("nz", [33, 65, 129])
+def test_interpret_axial_bands_preserve_long_slab_masks(z_mode, nz):
+    """Exact binary pitches isolate long-row tile masks from CPU FMA differences."""
+    import jax
+
+    grid = Grid(7, 5, nz, 0.5, 0.75, 1.0 if z_mode == "integer" else 0.5)
+    detector = Detector(13, 21, 0.5, 1.0, (0.25, 0.0 if z_mode == "integer" else 0.25))
+    geometry = ParallelGeometry(grid, detector, [0.0, 90.0, 180.0, 270.0])
+    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(4)], jnp.float32)
+    if z_mode == "fixed":
+        poses = poses.at[:, 2, 3].set(0.375)
+    rng = np.random.default_rng(8327)
+    rows = jnp.asarray(rng.normal(size=(4, detector.nv, detector.nu)), jnp.float32)
+    initial = rng.normal(size=(grid.nx, grid.ny, grid.nz)).astype(np.float32)
+    expected = (
+        np.asarray(
+            jax.jit(lambda y: _backproject_voxels_jax(poses, y, grid=grid, detector=detector))(rows)
+        )
+        + initial
+    )
+    for block in (128, 512):
+        actual = backproject_filtered_pallas(
+            poses,
+            rows,
+            grid=grid,
+            detector=detector,
+            z_mode=z_mode,
+            block_size=block,
+            interpret=True,
+            accumulate=jnp.asarray(initial.copy()),
+        )
         np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=2e-6)
