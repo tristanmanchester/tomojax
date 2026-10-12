@@ -221,22 +221,18 @@ def _run_fbp_streamed(
         # Shift the final fixed-size batch back into range and exclude overlaps.
         valid = start + jnp.arange(b) >= chunk * b
         rows = _pad_detector(jnp.where(valid[:, None, None], rows, 0.0), detector)
-        filtered = _filter_views(
+        return _filter_and_backproject(
+            accum,
+            batch_poses,
             rows,
             jax.lax.dynamic_slice(view_scale, (start,), (b,)),
             jax.lax.dynamic_slice(params, (start, 0), (b, params.shape[1])),
             spectrum,
             arc_length,
-            detector=detector,
-            separable=separable,
-        )
-        return _backproject_into(
-            accum,
-            batch_poses,
-            filtered,
             grid=grid,
             detector=detector,
             backend=backend,
+            separable=separable,
             z_mode=z_mode,
         )
 
@@ -246,6 +242,47 @@ def _run_fbp_streamed(
         step,
         jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32),
     )
+
+
+def _pack_fixed_rows(
+    poses: jnp.ndarray,
+    rows: jnp.ndarray,
+    *,
+    grid: Grid,
+    detector: Detector,
+    integer: bool = False,
+) -> tuple[jnp.ndarray, jnp.ndarray, Grid, Detector]:
+    """Sample common axial rows once per view, rather than per xy voxel.
+
+    Match the sampler's centred-coordinate decomposition before adding its
+    integer row origin; padding must not change the interpolation fractions.
+    Horizontal poses and detector coordinates remain unchanged. Integer mode
+    preserves the nearest-row convention, including its alignment tolerance.
+    """
+    ox, oy, oz = grid_volume_origin(grid)
+    z = jnp.arange(grid.nz, dtype=jnp.float32) * jnp.float32(grid.vz) + jnp.float32(oz)
+    world_z = z if integer else poses[0, 2, 2] * z + poses[0, 2, 3]
+    v = (world_z - jnp.float32(detector.center[1])) / jnp.float32(detector.dv)
+    v = v + jnp.float32(((detector.nv - 1) % 2) / 2)
+    lower = jnp.floor(v + 0.5) if integer else jnp.floor(v)
+    index = lower.astype(jnp.int32) + (detector.nv - 1) // 2
+
+    def take(row: jnp.ndarray) -> jnp.ndarray:
+        values = jnp.take(rows, jnp.clip(row, 0, detector.nv - 1), axis=1)
+        valid = (row >= 0) & (row < detector.nv)
+        return jnp.where(valid[None, :, None], values, 0.0)
+
+    packed = take(index)
+    if not integer:
+        weight = v - lower
+        packed = packed * (1 - weight[None, :, None])
+        packed = packed + take(index + 1) * weight[None, :, None]
+    local_grid = replace(grid, vol_origin=(ox, oy, 0.0), vol_center=None)
+    local_detector = replace(
+        detector, nv=grid.nz, dv=grid.vz, center=(detector.center[0], (grid.nz - 1) * grid.vz / 2)
+    )
+    local_poses = poses.at[:, 2, :].set(jnp.array([0.0, 0.0, 1.0, 0.0], jnp.float32))
+    return local_poses, packed, local_grid, local_detector
 
 
 def _backproject_into(
@@ -262,10 +299,64 @@ def _backproject_into(
     if backend == "pallas":
         from ._fbp_pallas import backproject_filtered_pallas
 
+        # Compact working sets keep the existing direct sampler: packing adds
+        # a launch and a plane workspace. Bound that workspace to twice the
+        # source rows even for a strongly upsampled or retained output grid.
+        working_bytes = filtered.size * filtered.dtype.itemsize + 4 * grid.nx * grid.ny * grid.nz
+        if z_mode == "fixed" and grid.nz <= 2 * detector.nv and working_bytes > 64 * 1024**2:
+            poses, filtered, grid, detector = _pack_fixed_rows(
+                poses, filtered, grid=grid, detector=detector
+            )
+            z_mode = "integer"
         return backproject_filtered_pallas(
             poses, filtered, grid=grid, detector=detector, z_mode=z_mode, accumulate=accum
         )
     return accum + _backproject_voxels_jax(poses, filtered, grid=grid, detector=detector)
+
+
+def _filter_and_backproject(
+    accum: jnp.ndarray,
+    poses: jnp.ndarray,
+    rows: jnp.ndarray,
+    view_scale: jnp.ndarray,
+    params: jnp.ndarray,
+    spectrum: jnp.ndarray,
+    arc_length: jnp.ndarray,
+    *,
+    grid: Grid,
+    detector: Detector,
+    backend: str,
+    separable: bool,
+    z_mode: str,
+) -> jnp.ndarray:
+    """Filter padded rows, packing axial samples first when it saves FFT work."""
+    # Axial interpolation commutes with the separable u filter. Keep compact
+    # FFTs on the existing path: an extra gather needs a launch and workspace.
+    # Use the same conservative FFT-byte estimate as the view-batch planner.
+    filtering_bytes = 16 * rows.shape[0] * detector.nv * (2 * (spectrum.shape[0] - 1))
+    if (
+        backend == "pallas"
+        and separable
+        and z_mode in ("integer", "fixed")
+        and grid.nz < detector.nv
+        and filtering_bytes > 64 * 1024**2
+    ):
+        poses, rows, grid, detector = _pack_fixed_rows(
+            poses, rows, grid=grid, detector=detector, integer=z_mode == "integer"
+        )
+        z_mode = "integer"
+    filtered = _filter_views(
+        rows,
+        view_scale,
+        params,
+        spectrum,
+        arc_length,
+        detector=detector,
+        separable=separable,
+    )
+    return _backproject_into(
+        accum, poses, filtered, grid=grid, detector=detector, backend=backend, z_mode=z_mode
+    )
 
 
 @jax.jit(
@@ -288,17 +379,19 @@ def _fbp_accumulate_batch(
     z_mode: str,
 ) -> jnp.ndarray:
     """Filter one batch of views and add its backprojection to ``accum`` in place."""
-    filtered = _filter_views(
+    return _filter_and_backproject(
+        accum,
+        poses,
         _pad_detector(rows, detector),
         view_scale,
         params,
         spectrum,
         arc_length,
+        grid=grid,
         detector=detector,
+        backend=backend,
         separable=separable,
-    )
-    return _backproject_into(
-        accum, poses, filtered, grid=grid, detector=detector, backend=backend, z_mode=z_mode
+        z_mode=z_mode,
     )
 
 

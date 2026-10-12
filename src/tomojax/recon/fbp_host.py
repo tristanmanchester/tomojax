@@ -35,8 +35,11 @@ class FBPHostConfig:
 
     The entire input and output remain in host storage. For built-in parallel
     geometry, a slab is ``slices_per_batch`` axial (z) slices with only the
-    detector rows they need (balanced slabs of at most 16 when ``None``). For
-    laminography and other geometry, a slab is ``slices_per_batch`` x-slices;
+    detector rows they need (balanced slabs of at most 16 when ``None``).
+    Axial downsampling transfers and filters only the selected rows, blending
+    fractional row coordinates before the row-linear filter when this saves
+    device storage. For laminography and other geometry,
+    a slab is ``slices_per_batch`` x-slices;
     every view batch passes through the device once per slab. ``None`` sizes
     slabs to about half of the free device memory, so a volume that fits is
     reconstructed in one pass.
@@ -73,17 +76,16 @@ def _slab_layout(
         first, step = round(first), round(step)
     integer &= first >= 0 and first + (grid.nz - 1) * step < detector.nv
     integer &= (depth - 1) * step + 1 <= detector.nv
-    rows = (
-        int((depth - 1) * step + 1)
-        if integer
-        else min(detector.nv, math.ceil((depth - 1) * step) + 2)
-    )
+    rows = min(detector.nv, math.ceil((depth - 1) * step) + 2)
+    packed = integer or rows > depth
+    rows = depth if packed else rows
+    spacing = grid.vz if packed else detector.dv
     local_grid = replace(grid, nz=depth, vol_origin=(ox, oy, 0.0), vol_center=None)
     local_detector = replace(
-        detector, nv=rows, center=(detector.center[0], (rows - 1) * detector.dv / 2)
+        detector, nv=rows, dv=spacing, center=(detector.center[0], (rows - 1) * spacing / 2)
     )
     local_detector = _parallel_filter_detector(local_grid, local_detector)
-    return local_grid, local_detector, first, step, integer
+    return local_grid, local_detector, first, step, packed
 
 
 def fbp_host(
@@ -135,25 +137,32 @@ def fbp_host(
     if type(geometry) is not ParallelGeometry:
         return _general_slabs(poses, grid, detector, projections, cfg, out, backend, slices, views)
     depth = _axial_depth(grid.nz, slices)
-    local_grid, local_detector, first, step, integer = _slab_layout(grid, detector, depth)
+    local_grid, local_detector, first, step, packed = _slab_layout(grid, detector, depth)
     rows = local_detector.nv
     ramp = rfft_filter_array(cfg.filter, local_detector.nu, detector.du, jnp.float32)
     output = validate_host_arrays(projections, out, shape)
     host_poses = np.asarray(poses, np.float32)
     params = np.zeros((n_views, 6), np.float32)
     for start in range(0, grid.nz, depth):
+        count = min(depth, grid.nz - start)
         v = first + start * step
-        v_start = math.floor(v)
-        if not integer:
+        # Linear sampling of zero-extended rows has support only in (-1, nv).
+        # A crop can retain a much larger output grid: do not filter, sample or
+        # download slabs with no measured support, including a partial tail.
+        if v >= detector.nv or v + (count - 1) * step <= -1:
+            output[:, :, start : start + count] = 0
+            continue
+        v_start = v if packed else math.floor(v)
+        if not packed:
             v_start = max(0, min(v_start, detector.nv - rows))
-        # Local grid/detector metadata stay identical for every slab. Only the
-        # fractional row phase changes, passed as a dynamic pose translation.
+        # Metadata stay identical: packed windows blend fractional source rows;
+        # other windows carry their row phase as a dynamic pose translation.
         local_poses = host_poses.copy()
-        if not integer:
+        if not packed:
             local_poses[:, 2, 3] = (v - v_start) * detector.dv
         volume = _fbp_from_host(
             local_poses,
-            ProjectionRows(projections, v_start, rows),
+            ProjectionRows(projections, v_start, rows, stride=step if packed else 1),
             view_scale,
             params,
             ramp,
@@ -162,11 +171,10 @@ def fbp_host(
             detector=local_detector,
             backend=backend,
             batch_size=min(views, n_views),
-            z_mode="integer" if integer else "fixed",
+            z_mode="integer" if packed else "fixed",
             separable=True,
             check_finite=True,
         )
-        count = min(depth, grid.nz - start)
         # The host copy synchronizes before the next slab reuses its buffers.
         output[:, :, start : start + count] = np.asarray(volume)[:, :, :count]
     return output

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+Host FBP packs aligned axial downsampling into its slabs, transferring and
+filtering only the requested detector rows rather than all intervening rows.
+Voxel coordinates, angular weights and the reconstruction are unchanged.
+Fractional axial previews also pack their interpolated rows when this reduces
+device storage, using the linearity of the row filter to avoid filtering
+intervening detector rows.
+Axial host slabs wholly outside the measured detector rows are filled with
+zeros directly, avoiding filtering, backprojection and device transfers for
+unsupported slices in a cropped scan's retained reconstruction grid.
+CUDA FBP with large working sets packs fractional axial samples after filtering,
+avoiding repeated vertical interpolation at every xy voxel while retaining
+zero extension and the same physical coordinates. Compact working sets and
+large row expansions keep their existing sampler.
 Memory budgeting honors `jax.default_device` and CPU placement instead of
 always probing the first GPU, without initializing unused accelerators.
 Unavailable accelerator memory statistics remain unknown rather than
