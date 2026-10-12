@@ -195,6 +195,7 @@ def _flat_fields(
     shape: tuple[int, int],
 ) -> tuple[_Fields, tuple[Correction, ...]]:
     """The mean flat of each set, the mean dark, and the record of them."""
+    darks = darks if darks is None or hasattr(darks, "shape") else np.asarray(darks)
     if darks is None and flats is not None:
         LOG.warning("no dark fields: correcting with a dark field of zero")
     dark, dark_variance = (
@@ -214,6 +215,7 @@ def _flat_fields(
         record = _field_record(
             {"white_level": level, "darks": dark_frames}, stack - dark, dark_variance
         )
+        record = _with_calibration_ceiling(record, darks, dark, "dark")
         return _Fields(
             stack,
             np.zeros(1),
@@ -244,6 +246,8 @@ def _flat_fields(
     if len(sets) > 1:
         settings["flat_positions"] = [float(p) for p in sets]
     record = _field_record(settings, stack - dark, flat_variance + dark_variance)
+    record = _with_calibration_ceiling(record, flats, stack, "flat")
+    record = _with_calibration_ceiling(record, darks, dark, "dark")
     return _Fields(
         stack.astype(np.float32),
         sets,
@@ -260,6 +264,30 @@ def _field_record(settings: dict[str, Any], light: np.ndarray, variance: np.ndar
         settings["minimum_signal_snr"] = 3.0
         found["pixels_without_reliable_light"] = int(np.count_nonzero(unreliable))
     return Correction("flat_dark", settings, found)
+
+
+def _with_calibration_ceiling(
+    record: Correction, frames: Any, mean: np.ndarray, field: str
+) -> Correction:
+    """Report integer sets fixed at their storage ceiling, without rereading them."""
+    dtype = getattr(frames, "dtype", None)
+    if dtype is None or np.dtype(dtype).kind not in "iu":
+        return record
+    ceiling = int(np.iinfo(dtype).max)
+    pixels = int(np.count_nonzero(mean == ceiling))
+    if not pixels:
+        return record
+    LOG.warning(
+        "%s calibration: %s pixels at dtype ceiling %s; readings may be clipped",
+        field,
+        pixels,
+        ceiling,
+    )
+    return Correction(
+        record.name,
+        {**record.settings, f"{field}_dtype_ceiling": ceiling},
+        {**record.found, f"{field}_pixels_at_dtype_ceiling": pixels},
+    )
 
 
 def _moments(

@@ -26,6 +26,16 @@ retrieval; it does not recover absorption at those pixels.
 At an interpolation endpoint, only the calibration with nonzero weight is
 used; a missing value in an unused neighbouring flat does not discard a valid ray.
 
+Integer calibration sets fixed at their dtype's maximum value are warned about
+and reported as `flat_pixels_at_dtype_ceiling` or `dark_pixels_at_dtype_ceiling`.
+These counts include each flat set separately. Zero variance at that ceiling is
+not evidence for a well-measured illumination: clipping or stuck bright pixels
+can still create severe artifacts. This diagnostic does not change the pixels
+or recover their missing measurements; use an unsaturated calibration or a
+validated detector-defect repair. Floating calibrations and lower ADC limits
+within an integer storage type cannot be diagnosed from dtype alone.
+
+
 `tomojax preprocess` is a thin layer over these: its options build the same
 steps.
 

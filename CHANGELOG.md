@@ -98,6 +98,10 @@ Stripe correction selects only the median ranks on CUDA and uses pruned sorting
 networks for wider windows, preserving corrected values and differentiability.
 Whole-row corrections overlap bounded slab downloads with the next slab's work,
 preserving the correction order and the previous image-memory budget.
+Flat-field correction warns and records integer calibration pixels fixed at
+their dtype ceiling, which can otherwise appear highly reliable despite clipped
+or stuck detector readings. The diagnostic reuses existing calibration means;
+it does not alter corrected values or silently infer missing absorption.
 
 Memory budgeting honors `jax.default_device` and CPU placement instead of
 always probing the first GPU, without initializing unused accelerators.
