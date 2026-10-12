@@ -49,6 +49,8 @@ __all__ = [
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    import jax
+
     from tomojax.io._json import JsonValue
 
 type PathLike = str | Path
@@ -66,7 +68,7 @@ class ValidationReport(TypedDict):
 def save_projection_payload(
     path: PathLike,
     *,
-    projections: np.ndarray,
+    projections: np.ndarray | jax.Array,
     metadata: NXTomoMetadata,
 ) -> None:
     """Save a solver-facing projection payload with updated metadata."""
@@ -105,9 +107,9 @@ class ProjectionDataset:
     ``angles`` holds each view's rotation angle, in degrees.
     """
 
-    projections: np.ndarray
+    projections: np.ndarray | jax.Array
     angles: np.ndarray
-    volume: np.ndarray | None = None
+    volume: np.ndarray | jax.Array | None = None
     detector: Detector | None = None
     grid: Grid | None = None
     geometry_type: str = "parallel"
@@ -248,21 +250,25 @@ def load_dataset(path: PathLike) -> ProjectionDataset:
 
 
 def save_dataset(path: PathLike, dataset: ProjectionDataset) -> None:
-    """Save a public projection dataset as NXtomo/HDF5 or NPZ."""
+    """Save synchronously as NXtomo/HDF5 or NPZ; keep input storage unchanged."""
     output_path = Path(path)
     suffix = output_path.suffix.lower()
+    # Public metadata copies own their arrays, but a synchronous writer only
+    # borrows the volume. Do not materialize a full memmap just to pass it on.
+    metadata = replace(dataset, volume=None).to_nxtomo_metadata()
+    metadata.volume = dataset.volume
     if suffix in _HDF5_SUFFIXES:
         save_nxtomo(
             str(output_path),
-            projections=np.asarray(dataset.projections),
-            metadata=dataset.to_nxtomo_metadata(),
+            projections=dataset.projections,
+            metadata=metadata,
         )
         return
     if suffix == ".npz":
         save_npz(
             str(output_path),
             np.asarray(dataset.projections),
-            metadata=dataset.to_nxtomo_metadata(),
+            metadata=metadata,
         )
         return
     raise ValueError(f"unsupported dataset output format for {output_path}")

@@ -2,6 +2,50 @@
 
 ## Unreleased
 
+HDF5 saving overlaps bounded GPU tile downloads with compression, preserving
+the 64 MiB staging bound. Host-array and NPZ saving are unchanged.
+
+Saved volumes use a neutral HDF5 label rather than claiming to be ground truth.
+Reconstruction methods and settings remain in their existing provenance fields.
+
+Native float32 host FBP inputs can use the budgeted resident loop, uploading
+row slabs through bounded chunks instead of a second full host slab allocation.
+Unknown/tight device budgets and oversized single-view transfers keep streaming.
+
+HDF5 saves device projections and reconstructions in bounded, axis-correct
+tiles rather than downloading a full stack or transposing a full volume first.
+NPZ storage remains unchanged.
+
+Native GPU-resident FBP inputs avoid projection round trips for memory-budgeted
+axial slabs; unsupported layouts or unknown/tight memory retain bounded downloads.
+
+Host FBP reads accelerator-resident projections in bounded batches, including
+`tj.reconstruct(..., out=...)`, instead of downloading the whole input first.
+
+CUDA host FBP overlaps two computations when an extra batch and estimated FFT
+workspace fit the device budget; unknown/tight memory keeps the old bound.
+
+Single-device host FBP now uses the backend allocation path directly, including
+its axial output layout, when the execution device is explicitly selected.
+
+Large CUDA axial host FBP outputs are allocated with contiguous axial slices
+when device memory permits packed transfers. Logical volume axes remain
+`(x, y, z)`; caller-owned output identity and layout are preserved.
+
+CUDA axial FBP packs slabs on the device for contiguous z-leading caller-owned
+outputs, avoiding strided host copies while keeping a bounded staging buffer.
+
+Saving a dataset borrows its volume instead of making a full metadata copy.
+HDF5 writes strided projections and volume-axis permutations through bounded,
+chunk-aligned buffers; public metadata-copy methods still own their arrays.
+
+`tj.reconstruct(..., out=array)` accepts caller-owned float32 NumPy arrays and
+memmaps for FBP, FDK and Fourier reconstruction, without allocating another
+full output volume. Iterative methods reject this option.
+
+Host parallel FBP overlaps large CUDA output-slab copies with reconstruction
+when device memory permits, without changing the reconstructed values.
+
 The existing Fourier-slice inverse is available through `tj.reconstruct(scan,
 "fourier")` and `tomojax recon --method fourier`, using `FourierConfig`. It keeps
 host storage and its existing NumPy/CuPy backends; FBP remains the default.

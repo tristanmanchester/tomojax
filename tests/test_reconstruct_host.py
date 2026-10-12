@@ -72,3 +72,39 @@ def test_dispatch_probes_memory_on_explicit_devices(monkeypatch):
         assert jax.config.jax_default_device == first
     assert isinstance(actual.volume, np.ndarray) and actual.info["host_slabs"]
     assert checked[:2] == [first, second]
+
+
+@pytest.mark.parametrize("kind", ["parallel", "lamino"])
+@pytest.mark.parametrize("caller_owned", [False, True])
+def test_single_explicit_device_keeps_host_allocation_at_the_backend(
+    monkeypatch, kind, caller_owned
+):
+    from tomojax.recon import api
+
+    scan = _scan(kind)
+    shape = (scan.grid.nx, scan.grid.ny, scan.grid.nz)
+    expected = np.empty(shape, np.float32, order="F")
+    out = expected if caller_owned else None
+    target = jax.devices("cpu")[-1]
+    original_device = jax.config.jax_default_device
+    calls = []
+
+    def host(geometry, grid, detector, data, *, config, out):
+        calls.append(jax.config.jax_default_device)
+        # Let the backend allocate its preferred storage, or honor caller storage.
+        if caller_owned:
+            assert np.shares_memory(out, expected)
+        else:
+            assert out is None
+        assert data is scan.projections
+        expected.fill(0.25)
+        return expected
+
+    monkeypatch.setattr(api, "fbp_host", host)
+    monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: 4096)
+    result = tj.reconstruct(scan, devices=[target], out=out)
+    assert result.volume is expected
+    assert result.volume.flags.f_contiguous
+    np.testing.assert_array_equal(result.volume, 0.25)
+    assert calls == [target]
+    assert jax.config.jax_default_device is original_device

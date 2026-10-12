@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from itertools import product
 import json
 from pathlib import Path
 from typing import cast
 
 import h5py
+import jax
 import numpy as np
 
+from tomojax._typed_arrays import commit_array
 from tomojax.geometry.api import (
     DISK_VOLUME_AXES,
     INTERNAL_VOLUME_AXES,
@@ -39,7 +42,7 @@ from ._io_types import LoadedDataset, LoadedNXTomo, NXTomoMetadata, ValidationRe
 
 def save_nxtomo(
     path: str,
-    projections: np.ndarray,
+    projections: np.ndarray | jax.Array,
     *,
     metadata: NXTomoMetadata | None = None,
     compression: str = "lzf",
@@ -60,7 +63,7 @@ def save_nxtomo(
     meta = metadata or NXTomoMetadata()
     mode = "w" if overwrite else "x"
 
-    proj = np.asarray(projections)
+    proj = projections if isinstance(projections, jax.Array) else np.asarray(projections)
     if proj.ndim != 3:
         raise ValueError("projections must be (n_views, nv, nu)")
     n_views, nv, nu = proj.shape
@@ -112,7 +115,7 @@ def _write_geometry_section(
 def _write_detector_section(
     inst: h5py.Group,
     meta: NXTomoMetadata,
-    proj: np.ndarray,
+    proj: np.ndarray | jax.Array,
     *,
     n_views: int,
     nv: int,
@@ -120,9 +123,10 @@ def _write_detector_section(
     compression: str,
 ) -> h5py.Group:
     det = _ensure_group(inst, "detector", "NXdetector")
-    det.create_dataset(
+    _write_array(
+        det,
         "data",
-        data=proj,
+        proj,
         chunks=(1, min(256, nv), min(256, nu)),
         compression=compression,
     )
@@ -203,19 +207,92 @@ def _write_volume_section(
     _validate_volume_save_options(meta, disk_axes=disk_axes)
     processing = _ensure_group(entry, "processing", "NXprocess")
     tj = _ensure_group(processing, "tomojax", "NXcollection")
-    vol_data = np.asarray(meta.volume)
-    if disk_axes != INTERNAL_VOLUME_AXES:
-        vol_data = np.asarray(transpose_volume(vol_data, INTERNAL_VOLUME_AXES, disk_axes))
-    vol = tj.create_dataset(
+    axes = axes_to_perm(INTERNAL_VOLUME_AXES, disk_axes)
+    vol = _write_array(
+        tj,
         "volume",
-        data=vol_data,
+        meta.volume,
         chunks=True,
         compression=compression,
+        axes=axes,
     )
-    vol.attrs["long_name"] = "ground_truth_volume"
+    vol.attrs["long_name"] = "volume"
     _write_string_attr(tj, VOLUME_AXES_ATTR, disk_axes)
     if meta.frame is not None:
         _write_string_attr(tj, "frame", str(meta.frame))
+
+
+def _write_array(
+    group: h5py.Group,
+    name: str,
+    source: np.ndarray | jax.Array,
+    *,
+    chunks: bool | tuple[int, ...],
+    compression: str,
+    axes: tuple[int, ...] | None = None,
+) -> h5py.Dataset:
+    """Write host arrays directly when contiguous; tile strided/device storage."""
+    if isinstance(source, jax.Array) and any(d.platform != "cpu" for d in source.devices()):
+        source = commit_array(source)
+        contiguous = False
+    else:
+        source = np.asarray(source)
+        if axes is not None:
+            source = source.transpose(axes)
+        axes = None
+        contiguous = source.flags.c_contiguous
+    shape = source.shape if axes is None else tuple(source.shape[axis] for axis in axes)
+    target = group.create_dataset(
+        name,
+        shape=shape,
+        dtype=source.dtype,
+        data=source if contiguous else None,
+        chunks=chunks,
+        compression=compression,
+    )
+    if not contiguous:
+        _write_strided_array(target, source, axes=axes)
+    return target
+
+
+def _write_strided_array(
+    target: h5py.Dataset, source: np.ndarray | jax.Array, *, axes: tuple[int, ...] | None = None
+) -> None:
+    """Stage at most 64 MiB in chunk-aligned tiles, never a whole large payload."""
+    chunks = target.chunks
+    assert chunks is not None  # Both large-array writers create chunked datasets.
+    axes = tuple(range(source.ndim)) if axes is None else axes
+    inverse = tuple(axes.index(axis) for axis in range(source.ndim))
+    tile = list(chunks)
+    device = isinstance(source, jax.Array)
+    # Two device tiles overlap download with compression without increasing the
+    # total staging bound. Host storage keeps its existing single-tile path.
+    budget = (32 if device else 64) * 1024**2 // source.dtype.itemsize
+    # Grow complete chunks along fast disk axes first. The final tile along an
+    # axis may be partial, but no compressed chunk is repeatedly rewritten.
+    for axis in reversed(range(source.ndim)):
+        other = int(np.prod([n for i, n in enumerate(tile) if i != axis]))
+        multiple = max(1, budget // other // chunks[axis])
+        tile[axis] = min(target.shape[axis], multiple * chunks[axis])
+    starts = (range(0, n, step) for n, step in zip(target.shape, tile, strict=True))
+    pending = None
+    for start in product(*starts):
+        region = tuple(
+            slice(lo, min(lo + step, n))
+            for lo, step, n in zip(start, tile, target.shape, strict=True)
+        )
+        # Slice before transposing: a full device transpose would itself need a
+        # second full-volume allocation even without a host download.
+        value = source[tuple(region[axis] for axis in inverse)].transpose(axes)
+        if isinstance(value, jax.Array):
+            value.copy_to_host_async()
+            if pending is not None:
+                target[pending[0]] = np.ascontiguousarray(pending[1])
+            pending = (region, value)
+        else:
+            target[region] = np.ascontiguousarray(value)
+    if pending is not None:
+        target[pending[0]] = np.ascontiguousarray(pending[1])
 
 
 def _validate_volume_save_options(meta: NXTomoMetadata, *, disk_axes: str) -> None:
@@ -234,8 +311,8 @@ def _validate_volume_save_options(meta: NXTomoMetadata, *, disk_axes: str) -> No
             "metadata.volume_axes_order must be a permutation of 'xyz', "
             f"got {meta.volume_axes_order!r}"
         ) from exc
-    vol_data = np.asarray(meta.volume)
-    if vol_data.ndim != 3:
+    volume = meta.volume if isinstance(meta.volume, jax.Array) else np.asarray(meta.volume)
+    if volume.ndim != 3:
         raise ValueError("volume must be 3D (nx, ny, nz)")
 
 
