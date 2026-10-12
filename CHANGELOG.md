@@ -25,6 +25,8 @@ Quicklook PNGs and CLI previews transfer only the selected central plane of
 resident device volumes, retaining the existing image orientation and scaling.
 PNG scaling reuses its owned finite-pixel buffer rather than allocating
 whole-plane arithmetic temporaries; caller images remain unchanged.
+Zinger correction includes padded sorting scratch in automatic raw view
+batches, avoiding oversized batches without changing pixels or explicit batch sizes.
 
 Faster: exact-ray projection loads each cell corner once and integrates one
 spatial derivative for every pose direction (about 2.4x forward and 3x

@@ -224,6 +224,14 @@ class Zingers(Step):
         object.__setattr__(self, "threshold", float(self.threshold))
         object.__setattr__(self, "size", int(self.size))
 
+    def workspace_pixels(self, rows: int, cols: int) -> int:
+        # Edge padding and the median network keep whole-image temporaries.
+        # Include the larger CPU footprint rather than assuming CUDA fusion
+        # removes all scratch: three padded arrays for the small network,
+        # five for the bitonic network.
+        padded_pixels = (rows + self.size - 1) * (cols + self.size - 1)
+        return (3 if self.size == 3 else 5) * padded_pixels
+
     def apply(self, batch: jax.Array) -> jax.Array:
         half, (_, rows, cols) = self.size // 2, batch.shape
         padded = jnp.pad(batch, ((0, 0), (half, half), (half, half)), mode="edge")
