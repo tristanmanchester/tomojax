@@ -383,6 +383,8 @@ def _vo_metrics(sino: np.ndarray, offsets: np.ndarray, ratio: float, drop: int) 
     freq = np.fft.rfftfreq(cols).astype(np.float32)
     spectrum = None
     out = np.empty(len(offsets))
+    both = np.empty((2 * views, cols), dtype=sino.dtype)
+    both[:views] = sino
     for i, offset in enumerate(offsets):
         shift = 2.0 * float(offset)
         if shift.is_integer():
@@ -401,9 +403,10 @@ def _vo_metrics(sino: np.ndarray, offsets: np.ndarray, ratio: float, drop: int) 
                 moved[:, :edge] = filler[:, :edge]
             else:
                 moved[:, -edge:] = filler[:, -edge:]
-        both = np.vstack([sino, moved])
+        both[views:] = moved
         energy = np.abs(np.asarray(fft.rfft2(both, workers=-1)))
-        out[i] = float(np.sum(energy * folded) / (2 * views * cols))
+        energy *= folded
+        out[i] = float(np.sum(energy) / (2 * views * cols))
     return out
 
 

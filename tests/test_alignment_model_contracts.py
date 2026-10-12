@@ -210,8 +210,16 @@ def test_sinogram_centre_seed_materializes_only_the_sampled_rows():
 
 
 @pytest.mark.parametrize("columns", [31, 32, 33, 64])
-def test_sinogram_real_fourier_metric_matches_full_spectrum(columns):
-    sino = np.random.default_rng(3).normal(size=(37, columns)).astype(np.float32)
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("layout", ["C", "F", "reverse"])
+def test_sinogram_real_fourier_metric_matches_full_spectrum(columns, dtype, layout):
+    sino = np.random.default_rng(3).normal(size=(37, columns)).astype(dtype)
+    if layout == "F":
+        sino = np.asfortranarray(sino)
+    elif layout == "reverse":
+        sino = sino[:, ::-1]
+    original = sino.copy()
+    sino.flags.writeable = False
     offsets = np.array([-4, -1.75, 0, 0.25, 3.5])
     mask = _vo_mask(2 * len(sino), columns, 0.25 * columns, 3)
     expected = []
@@ -227,6 +235,7 @@ def test_sinogram_real_fourier_metric_matches_full_spectrum(columns):
         spectrum = np.fft.fftshift(np.fft.fft2(np.vstack([sino, moved])))
         expected.append(np.mean(np.abs(spectrum) * mask))
     np.testing.assert_allclose(_vo_metrics(sino, offsets, 0.5, 3), expected, rtol=2e-6)
+    np.testing.assert_array_equal(sino, original)
 
 
 def test_sinogram_frequency_cache_is_bounded_immutable_and_keyed():
