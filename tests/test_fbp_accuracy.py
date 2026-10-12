@@ -992,7 +992,8 @@ def test_axial_launch_keeps_small_outputs_and_general_layout(
         jax.ShapeDtypeStruct((5, 4, 4), jnp.float32),
         jax.ShapeDtypeStruct((5, nv, nu), jnp.float32),
     )
-    assert sizes == [512 if z_mode == "general" and expected == 2048 else expected]
+    size = 512 if z_mode == "general" and expected == 2048 else expected
+    assert sizes == [size] * (2 if shape[2] == 65 and z_mode != "general" else 1)
 
 
 @pytest.mark.parametrize("z_mode", ["integer", "fixed", "general"])
@@ -1020,3 +1021,84 @@ def test_axial_launch_warps_follow_only_large_axial_programs(monkeypatch, z_mode
         assert warps == [8 if z_mode != "general" and block_size >= 2048 else 4]
     finally:
         implementation._backprojection_call.cache_clear()
+
+
+@pytest.mark.parametrize("z_mode", ["integer", "fixed", "general"])
+@pytest.mark.parametrize("nz", [16, 32, 33, 65, 80, 81, 96, 129])
+@pytest.mark.parametrize("accumulate", [False, True])
+def test_axial_fbp_tail_calls_keep_full_accumulator_and_global_rows(
+    monkeypatch, z_mode, nz, accumulate
+):
+    import jax
+
+    implementation = importlib.import_module("tomojax.recon._fbp_pallas")
+    grid = Grid(7, 5, nz, 1.0, 1.0, 1.0)
+    detector = Detector(13, nz, 1.0, 1.0)
+    calls = []
+
+    def call(grid, detector, n, block_size, **options):
+        calls.append((options.get("z_start", 0), options.get("row_count"), options["accumulate"]))
+        return lambda *operands: (
+            operands[-1]
+            if options["accumulate"]
+            else jnp.zeros(grid.nx * grid.ny * grid.nz, jnp.float32)
+        )
+
+    monkeypatch.setattr(implementation, "_backprojection_call", call)
+    poses = jax.ShapeDtypeStruct((5, 4, 4), jnp.float32)
+    rows = jax.ShapeDtypeStruct((5, nz, 13), jnp.float32)
+    initial = jax.ShapeDtypeStruct((grid.nx, grid.ny, nz), jnp.float32)
+    result = jax.eval_shape(
+        lambda p, y, a: backproject_filtered_pallas(
+            p,
+            y,
+            grid=grid,
+            detector=detector,
+            z_mode=z_mode,
+            accumulate=a if accumulate else None,
+        ),
+        poses,
+        rows,
+        initial,
+    )
+    assert result.shape == initial.shape
+    if z_mode != "general" and nz in (33, 65, 80, 129):
+        prefix = nz // 32 * 32
+        assert calls == [(0, prefix, True), (prefix, nz - prefix, True)]
+    else:
+        assert calls == [(0, None, accumulate)]
+
+
+def test_fbp_short_tail_preserves_independent_last_row_weak_feature():
+    """The final physical row is not the short tile's local row zero."""
+    grid = Grid(32, 32, 33, 0.25, 0.25, 1.0)
+    detector = Detector(257, 33, 0.125, 1.0, (0.35, 0.0))
+    angles = np.linspace(7, 187, 37, endpoint=False)
+    geometry = ParallelGeometry(grid, detector, angles)
+    u = (np.arange(257) - 128) * 0.125 + 0.35
+    z = np.arange(33) - 16
+    phi = np.deg2rad(angles)
+    x = (np.arange(32) - 15.5) * 0.25
+    xx, yy = x[:, None], x[None, :]
+    background_z = 1 + 0.1 * np.cos(0.13 * z)
+    feature_z = np.exp(-((z - 16) ** 2) / 4.5)
+
+    def profile(amplitude, sigma, cx, cy):
+        mean = cx * np.cos(phi) - cy * np.sin(phi)
+        return (
+            amplitude
+            * np.sqrt(2 * np.pi)
+            * sigma
+            * np.exp(-((u[None, :] - mean[:, None]) ** 2) / (2 * sigma**2))
+        )
+
+    background = profile(0.02, 3.0, -0.5, 0.5)[:, None, :] * background_z[None, :, None]
+    feature = profile(2e-5, 0.6, 1.125, -0.625)[:, None, :] * feature_z[None, :, None]
+    truth = 2e-5 * np.exp(-((xx - 1.125) ** 2 + (yy + 0.625) ** 2) / (2 * 0.6**2))
+    truth = truth[:, :, None] * feature_z
+    full = np.asarray(fbp(geometry, grid, detector, (background + feature).astype(np.float32)))
+    broad = np.asarray(fbp(geometry, grid, detector, background.astype(np.float32)))
+    signal = full - broad
+    mask = (xx - 1.125) ** 2 + (yy + 0.625) ** 2 < 1.5**2
+    assert np.linalg.norm((signal - truth)[mask]) / np.linalg.norm(truth[mask]) < 0.03
+    assert np.unravel_index(np.argmax(signal), signal.shape) == (20, 13, 32)

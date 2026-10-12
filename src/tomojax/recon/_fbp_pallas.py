@@ -84,7 +84,13 @@ def _column_tile(nz: int, block_size: int) -> tuple[int, int]:
 
 
 def _voxel_indices(
-    shape: tuple[int, int, int], *, block_size: int, z_mode: str, interpret: bool
+    shape: tuple[int, int, int],
+    *,
+    block_size: int,
+    z_mode: str,
+    interpret: bool,
+    z_start: int = 0,
+    row_count: int | None = None,
 ) -> tuple[jnp.ndarray, ...]:
     nx, ny, nz = shape
     if z_mode == "general":
@@ -95,12 +101,16 @@ def _voxel_indices(
         # A two-dimensional tile calculates each column coordinate once, then
         # broadcasts it along contiguous detector rows instead of repeating the
         # horizontal coordinate arithmetic in every z lane for every view.
-        columns, rows = _column_tile(nz, block_size)
+        columns, rows = _column_tile(row_count if row_count is not None else nz, block_size)
         column = pl.program_id(0) * columns + jnp.arange(columns, dtype=jnp.int32)
-        iz = pl.program_id(1) * rows + jnp.arange(rows, dtype=jnp.int32)[None, :]
+        iz = z_start + pl.program_id(1) * rows + jnp.arange(rows, dtype=jnp.int32)[None, :]
         ix, iy = (column // ny)[:, None], (column % ny)[:, None]
         flat = column[:, None] * nz + iz
-        valid = (column[:, None] < nx * ny) & (iz < nz)
+        valid = (
+            (column[:, None] < nx * ny)
+            & (iz < nz)
+            & (iz < z_start + (row_count if row_count is not None else nz))
+        )
         # Interpret stores use indexed updates: masked padded rows must not
         # alias the next column's first voxel. CUDA suppresses masked stores;
         # keep affine addresses there so loads/stores can remain vectorized.
@@ -139,13 +149,20 @@ def _backproject_filtered_kernel(
     block_size: int,
     z_mode: str,
     interpret: bool,
+    z_start: int,
+    row_count: int | None,
 ) -> None:
     # With an accumulator, refs is (accumulator, aliased output).
     acc_ref, out_ref = refs if len(refs) == 2 else (None, refs[0])
     nv, nu = detector_shape
     du, dv = detector_spacing
     flat, valid, ix, iy, iz = _voxel_indices(
-        shape, block_size=block_size, z_mode=z_mode, interpret=interpret
+        shape,
+        block_size=block_size,
+        z_mode=z_mode,
+        interpret=interpret,
+        z_start=z_start,
+        row_count=row_count,
     )
     x = ix.astype(jnp.float32) * voxel[0] + origin[0]
     y = iy.astype(jnp.float32) * voxel[1] + origin[1]
@@ -223,16 +240,18 @@ def _backprojection_call(
     z_mode: str,
     interpret: bool,
     accumulate: bool = False,
+    z_start: int = 0,
+    row_count: int | None = None,
 ) -> Any:
     count = grid.nx * grid.ny * grid.nz
     in_specs = [pl.no_block_spec, pl.no_block_spec]
     if z_mode == "general":
         launch_grid = ((count + block_size - 1) // block_size,)
     else:
-        columns, rows = _column_tile(grid.nz, block_size)
+        columns, rows = _column_tile(row_count if row_count is not None else grid.nz, block_size)
         launch_grid = (
             (grid.nx * grid.ny + columns - 1) // columns,
-            (grid.nz + rows - 1) // rows,
+            ((row_count if row_count is not None else grid.nz) + rows - 1) // rows,
         )
     if accumulate:
         in_specs.append(pl.no_block_spec)
@@ -249,6 +268,8 @@ def _backprojection_call(
             block_size=block_size,
             z_mode=z_mode,
             interpret=interpret,
+            z_start=z_start,
+            row_count=row_count,
         ),
         out_shape=jax.ShapeDtypeStruct((count,), jnp.float32),
         grid=launch_grid,
@@ -285,6 +306,8 @@ def backproject_filtered_pallas(
     pose reuse; small outputs and general poses retain their previous layouts.
     Z-axis modes broadcast each column's horizontal coordinate along axial
     tiles and skip the view loop when all their rows lie outside the detector.
+    A short final axial band uses a separate tile without changing global voxel
+    coordinates or the accumulator stride.
     """
     if z_mode not in {"integer", "fixed", "general"}:
         raise ValueError("FBP z_mode must be integer, fixed, or general")
@@ -301,6 +324,30 @@ def backproject_filtered_pallas(
             block_size = 2048
         else:
             block_size = 512
+    rows = _column_tile(grid.nz, block_size)[1]
+    full = grid.nz // rows * rows
+    # Short tails otherwise run mostly masked lanes in every view. Both calls
+    # alias the same full accumulator, writing disjoint physical row ranges.
+    if z_mode != "general" and full and 0 < grid.nz - full <= rows // 2:
+        acc = (
+            jnp.zeros((grid.nx * grid.ny * grid.nz,), jnp.float32)
+            if accumulate is None
+            else accumulate.reshape(-1)
+        )
+        for first, count in ((0, full), (full, grid.nz - full)):
+            call = _backprojection_call(
+                grid,
+                detector,
+                int(poses.shape[0]),
+                block_size,
+                z_mode=z_mode,
+                interpret=interpret,
+                accumulate=True,
+                z_start=first,
+                row_count=count,
+            )
+            acc = call(poses, jnp.transpose(filtered, (0, 2, 1)), acc)
+        return acc.reshape((grid.nx, grid.ny, grid.nz))
     call = _backprojection_call(
         grid,
         detector,

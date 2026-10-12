@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Faster: short final axial CUDA FBP bands use disjoint tiles instead of mostly
+masked lanes. Global voxel coordinates, full accumulator layout, view batches
+and interpolation remain unchanged.
+
 Faster: large axial CUDA FBP outputs use larger eight-warp programs for pose
 reuse. Compact, small-output and general-pose launches keep their previous
 layouts; view batches, interpolation and FP32 accumulation are unchanged.
