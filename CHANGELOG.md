@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+Cropping or selecting device-backed scans and frames transfers only the chosen
+pixels to the host, not the entire input. Selected views remain independent,
+writable host arrays; NumPy and memmap crops retain their existing aliases.
+These operations retain the input's device placement even under a different
+caller default, without moving the original pixels or changing that default.
+Writable device view selections fill their host output in bounded chunks,
+avoiding a second whole selected stack and oversized transfer-staging buffers.
+
+Paganin phase retrieval accepts rectangular-pixel pitches `(u, v)` in metres,
+using each axis's physical frequency and padding range. A scalar retains square
+pixels; the CLI accepts an optional fifth value for the v pitch.
+
+The log correction records nonpositive transmission after spatial corrections,
+so its diagnostics reflect pixels actually clamped rather than the raw normalized
+input.
+
+Raw correction treats flat-minus-dark signals unresolved at three standard
+errors of the calibration mean as unmeasured pixels, using neutral transmission
+before spatial corrections. Dark or unreliable detector pixels no longer
+generate enormous values that phase retrieval spreads across the entire image.
+Calibration uncertainty is accumulated in bounded FP64 host batches and follows
+the interpolation between flat sets; the correction record reports affected pixels.
+
+Paganin phase retrieval sizes its repeated-edge padding by the filter's physical
+range rather than half the image. Broad filters no longer mix opposite edges
+of a narrow detector crop, and short filters avoid oversized FFTs on large
+detectors. Automatic view batches account for the resulting fast-length FFTs.
+
 Faster: exact-ray projection loads each cell corner once and integrates one
 spatial derivative for every pose direction (about 2.4x forward and 3x
 gradient on the CPU at 48³); the CUDA cone transpose weights, reorders and

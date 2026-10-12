@@ -212,7 +212,9 @@ def test_a_nikon_scan_is_corrected_with_its_white_level(tmp_path: Path) -> None:
     np.testing.assert_allclose(
         np.asarray(scan.projections)[0, :, 0], -np.log([0.25, 0.5]), rtol=1e-6
     )
-    assert scan.corrections[0] == Correction("flat_dark", {"white_level": 60000.0, "darks": 0})
+    assert scan.corrections[0] == Correction(
+        "flat_dark", {"white_level": 60000.0, "darks": 0}, {"pixels_without_light": 0}
+    )
     assert type(scan.geometry).__name__ == "ConeGeometry"
 
 

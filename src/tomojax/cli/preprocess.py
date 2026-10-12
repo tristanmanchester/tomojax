@@ -116,9 +116,10 @@ def _build_parser() -> argparse.ArgumentParser:
     _ = parser.add_argument(
         "--paganin",
         type=_numbers,
-        metavar="DELTA_BETA,DISTANCE,ENERGY_KEV,PIXEL",
+        metavar="DELTA_BETA,DISTANCE,ENERGY_KEV,PIXEL_U[,PIXEL_V]",
         help="Single-material phase retrieval: delta/beta, effective propagation distance (m), "
-        "energy (keV), pixel at the sample (m). For cone beams divide both the "
+        "energy (keV), u and optional v pixel pitches at the sample (m). "
+        "One pitch means square pixels. For cone beams divide both the "
         "sample-detector distance and the detector pixel by magnification",
     )
     _ = parser.add_argument(
@@ -194,9 +195,10 @@ def _steps(args: argparse.Namespace) -> list[Step]:
     if zingers is not None:
         steps.append(Zingers(threshold=zingers))
     if paganin is not None:
-        if len(paganin) != 4:
-            raise ValueError("--paganin takes DELTA_BETA,DISTANCE,ENERGY_KEV,PIXEL")
-        steps.append(Paganin(*paganin))
+        if len(paganin) not in (4, 5):
+            raise ValueError("--paganin takes DELTA_BETA,DISTANCE,ENERGY_KEV,PIXEL_U[,PIXEL_V]")
+        pixel = paganin[3] if len(paganin) == 4 else (paganin[3], paganin[4])
+        steps.append(Paganin(paganin[0], paganin[1], paganin[2], pixel))
     if outliers is not None:
         steps.append(RejectViews(z=outliers))
     if stripes is not None:

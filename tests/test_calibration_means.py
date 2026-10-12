@@ -20,7 +20,7 @@ def test_calibration_means_match_independent_host_interpolation(
     flats = rng.uniform(900.0, 1100.0, (9, 5, 7)).astype(dtype)
     darks = rng.uniform(5.0, 15.0, (7, 5, 7)).astype(dtype)
     counts = rng.uniform(300.0, 800.0, (5, 5, 7)).astype(np.float32)
-    # A known unlit column exercises the calibration record and log floor too.
+    # A known unlit column exercises the calibration record and neutral fill.
     flats[:, :, 0], darks[:, :, 0], counts[:, :, 0] = 5, 15, 10
     if layout == "F":
         flats, darks = np.asfortranarray(flats), np.asfortranarray(darks)
@@ -41,6 +41,7 @@ def test_calibration_means_match_independent_host_interpolation(
                 np.arange(5) + 0.5, positions, reference_flats[:, row, col]
             )
     transmission = (counts - reference_dark) / np.maximum(interpolated - reference_dark, 1e-6)
+    transmission[:, :, 0] = 1.0  # the unlit column measures no absorption
     expected = -np.log(np.maximum(transmission, 1e-6))
     geometry = tj.ParallelGeometry(
         tj.Grid(4, 4, 2, 1.0, 1.0, 1.0), tj.Detector(7, 5, 1.0, 1.0), np.arange(5) * 36.0
@@ -50,9 +51,12 @@ def test_calibration_means_match_independent_host_interpolation(
     ).corrected(batch_views=3)
     np.testing.assert_allclose(actual.projections, expected, rtol=2e-6, atol=2e-7)
     assert actual.corrections[0].settings["flat_sets"] == len(positions)
-    assert actual.corrections[0].found == {"pixels_without_light": 5 * len(positions)}
+    assert actual.corrections[0].found == {
+        "pixels_without_light": 5 * len(positions),
+        "pixels_without_reliable_light": 5 * len(positions),
+    }
     assert actual.corrections[-1].found == {
-        "nonpositive_transmission": 25,
+        "nonpositive_transmission": 0,
         "nonfinite_set_to_zero": 0,
     }
     for values, original in zip((counts, flats, darks), originals, strict=True):
@@ -60,14 +64,18 @@ def test_calibration_means_match_independent_host_interpolation(
 
 
 def test_float32_calibration_accumulates_small_frames_in_float64() -> None:
-    # A float32 running sum loses every small frame after the first large one.
-    flats = np.ones((4097, 2, 3), np.float32)
-    flats[0] = 1e8
-    mean = (1e8 + 4096.0) / 4097.0
-    counts = np.full((2, 2, 3), 12345.0, np.float32)
+    # A float32 running sum loses small frames after the large ones. Sixteen
+    # large frames also keep the calibration mean resolved at three SEs; a
+    # single outlier would correctly be treated as an unreliable flat field.
+    flats = np.ones((4112, 2, 3), np.float32)
+    flats[:16] = 1e8
+    mean = (16e8 + 4096.0) / 4112.0
+    counts = np.full((2, 2, 3), 0.9 * mean, np.float32)
     geometry = tj.ParallelGeometry(
         tj.Grid(4, 4, 2, 1.0, 1.0, 1.0), tj.Detector(3, 2, 1.0, 1.0), [0.0, 90.0]
     )
     actual = tj.Frames(counts, geometry, flats=flats).corrected()
-    np.testing.assert_allclose(actual.projections, -np.log(12345.0 / mean), rtol=2e-6)
+    np.testing.assert_allclose(
+        actual.projections, -np.log(float(counts[0, 0, 0]) / mean), rtol=2e-6
+    )
     assert actual.corrections[-1].found["nonfinite_set_to_zero"] == 0

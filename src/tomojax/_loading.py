@@ -21,10 +21,12 @@ import numpy as np
 from tomojax._scan import (
     Scan,
     check_shape,
+    cropped_data,
     detector_window,
     geometry_of,
     rebuild,
     scan_from_record,
+    selected_data,
     view_indices,
     views_of,
 )
@@ -154,6 +156,9 @@ class Frames:
         below. Views are corrected on the device in batches of ``batch_views``,
         a positive integer. Automatic batches target 256 MiB, including the
         padded FFT arrays needed for Paganin phase retrieval.
+        Flat-minus-dark signals unresolved at three standard errors of their
+        calibration mean take neutral transmission before spatial steps; the
+        flat-field record reports these unmeasured pixels.
         """
         from tomojax.corrections import correct_frames
 
@@ -183,9 +188,10 @@ class Frames:
         if hasattr(counts, "window"):
             counts = counts.window(rows, cols)
         else:
-            counts = np.asarray(counts)[:, rows, cols]
+            counts = cropped_data(counts, rows=rows, cols=cols)
         flats, darks = (
-            None if f is None else np.asarray(f)[:, rows, cols] for f in (self.flats, self.darks)
+            None if f is None else cropped_data(f, rows=rows, cols=cols)
+            for f in (self.flats, self.darks)
         )
         return replace(
             self,
@@ -206,7 +212,7 @@ class Frames:
         at = np.arange(self.views) + 0.5 if self.view_positions is None else self.view_positions
         counts = self.counts
         counts = (
-            counts.frames_at(kept) if hasattr(counts, "frames_at") else np.asarray(counts)[kept]
+            counts.frames_at(kept) if hasattr(counts, "frames_at") else selected_data(counts, kept)
         )
         return replace(
             self,
