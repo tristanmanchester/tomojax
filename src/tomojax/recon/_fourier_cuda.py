@@ -70,7 +70,7 @@ extern "C" __global__ void polar(
     const float2* phase, float2* out, long long count, int layers,
     int nviews, int nr, int nfft, float qr, float qi, const float* table,
     const float2* detector_phase, const signed char* flipped,
-    const double* row_mass, double du, int replace_dc
+    const double* row_mass, const double* view_weights, double du, int replace_dc
     #ifdef FUSE_X_BOUNDARY
     , const double* mirror_angle, const float* mirror_radial,
     const float2* mirror_phase, const float2* mirror_detector,
@@ -86,11 +86,11 @@ extern "C" __global__ void polar(
     if (replace_dc && blockIdx.x == 0 && threadIdx.x < 32) {
         double mass = 0;
         for (int view = threadIdx.x; view < nviews; view += 32)
-            mass += row_mass[z * nviews + view];
+            mass += row_mass[z * nviews + view] * view_weights[view];
         for (int shift = 16; shift > 0; shift >>= 1)
             mass += __shfl_down_sync(0xffffffff, mass, shift);
         if (threadIdx.x == 0) {
-            out[i] = make_float2((float)(mass / nviews * du), 0.0f);
+            out[i] = make_float2((float)(mass * du), 0.0f);
             return;
         }
     }

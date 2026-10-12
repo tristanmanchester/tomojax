@@ -10,6 +10,16 @@ host storage and its existing NumPy/CuPy backends; FBP remains the default.
 volumes on the host, as it already did for cone FDK, instead of allocating
 the whole volume on the accelerator. Explicit devices share spatial regions.
 
+Fourier reconstruction now interpolates in measured angle for nonuniform
+half-turn scans, including encoder jitter and rejected views, with matching
+angular quadrature for DC. Repeated directions modulo 180 degrees still need
+to be excluded explicitly.
+Memory budgeting honors `jax.default_device` and CPU placement instead of
+always probing the first GPU, without initializing unused accelerators.
+Unavailable accelerator memory statistics remain unknown rather than
+substituting host RAM, so conservative accelerator allocation guards apply.
+
+
 Faster: exact-ray projection loads each cell corner once and integrates one
 spatial derivative for every pose direction (about 2.4x forward and 3x
 gradient on the CPU at 48³); the CUDA cone transpose weights, reorders and

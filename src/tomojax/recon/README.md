@@ -61,10 +61,11 @@ output. Callers own memmap flushing. Device workspace and runtime caches remain
 additional costs; batch dimensions are not a hard process-memory cap.
 
 `fourier_reconstruct` is an opt-in Fourier-slice inverse for built-in parallel
-scans with uniform, unique angles modulo 180 degrees. It accepts reordered,
+scans with unique angles modulo 180 degrees, including nonuniform encoder positions
+and scans with rejected views. It accepts reordered,
 reversed and opposing views, offset detectors, anisotropic spacing and cropped
 output grids. Projection FFTs use six-point Kaiser–Bessel radial interpolation,
-linear angular interpolation and a detector-Nyquist disk cutoff, followed by a
+linear interpolation in measured angle (periodic over a half turn) and a detector-Nyquist disk cutoff, followed by a
 padded Cartesian inverse FFT. The padding covers both the output grid and the
 acquired detector field to avoid wrapping an object outside a cropped ROI back
 into it. Missing detector data are assumed zero; this does not correct truncation.
@@ -91,7 +92,10 @@ performed. Large CUDA jobs overlap bounded host work and transfers on reused
 device queues. Smaller slabs can reduce memory at a throughput cost; the
 measured 512³ case uses 430 MiB at eight slices versus 678 MiB at sixteen.
 This API is not differentiable, is not selected by the CLI, and rejects
-tilted/custom geometry and nonuniform or repeated half-turn angles. Its angular
+tilted/custom geometry and repeated half-turn angles. An inclusive 0–180° scan must exclude one
+redundant endpoint, for example with `frames.selected(slice(None, -1))`.
+Large missing angular sectors are interpolated, not recovered; use adequately
+sampled half-turn scans. Its angular
 interpolation can introduce artefacts on sharp or undersampled scans; the
 [measurements](../../../docs/measurements.md#fourier-inverse) give its memory
 and speed, and the [reconstruction comparison](../../../docs/measurements.md#reconstruction-against-astra)

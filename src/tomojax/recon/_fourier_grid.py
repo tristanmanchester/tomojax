@@ -29,18 +29,18 @@ def next_fast_len(target: int) -> int:
     return best
 
 
-def uniform_half_turn(angles: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
-    """Sort a uniform half turn, retaining the orientation of opposing views."""
+def sorted_half_turn(angles: np.ndarray) -> tuple[np.ndarray, np.ndarray, tuple[float, ...]]:
+    """Sort unique half-turn directions, retaining the orientation of opposing views."""
     if angles.ndim != 1 or angles.size < 2 or not np.isfinite(angles).all():
         raise ValueError("fourier_reconstruct: requires at least two finite angles")
     reduced = np.mod(angles.astype(np.float64), 180.0)
     order = np.argsort(reduced)
     sorted_angles = reduced[order]
     gaps = np.diff(np.append(sorted_angles, sorted_angles[0] + 180.0))
-    if not np.allclose(gaps, 180.0 / len(angles), rtol=1e-5, atol=2e-5):
-        raise ValueError("fourier_reconstruct: angles must cover one uniform half turn")
+    if np.any(gaps <= 0):
+        raise ValueError("fourier_reconstruct: angles must be unique modulo 180 degrees")
     flipped = np.mod(angles[order], 360.0) >= 180.0
-    return order, flipped.astype(np.int8), float(np.deg2rad(sorted_angles[0]))
+    return order, flipped.astype(np.int8), tuple(np.deg2rad(sorted_angles))
 
 
 def transform_grid(grid: Grid, detector: Detector) -> tuple[tuple[int, int], tuple[int, int]]:

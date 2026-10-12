@@ -424,6 +424,13 @@ def scan(kind="offset", length_scale=1.0):
         angles[::2] += 180
     elif kind == "reversed":
         angles = (angles + 37.5)[::-1] - 360
+    elif kind == "nonuniform":
+        # Uneven encoder positions, a rejected-view gap, arbitrary order and
+        # opposing orientations must use actual angles rather than view indices.
+        angles += 0.7 * np.sin(np.arange(len(angles)) * 1.3)
+        angles = np.delete(angles, [11, 42])
+        angles[::3] += 180
+        angles = angles[np.random.default_rng(27).permutation(len(angles))]
     elif kind == "even":
         detector = replace(detector, nu=64)
     grid = replace(
@@ -445,7 +452,9 @@ def scan(kind="offset", length_scale=1.0):
     return grid, detector, geometry, data, truth
 
 
-@pytest.mark.parametrize("kind", ["offset", "cropped", "reordered", "opposing", "reversed", "even"])
+@pytest.mark.parametrize(
+    "kind", ["offset", "cropped", "reordered", "opposing", "reversed", "even", "nonuniform"]
+)
 def test_independent_physical_gaussian(backend, kind):
     grid, detector, geometry, data, truth = scan(kind)
     original = data.copy()
@@ -604,7 +613,6 @@ def test_overlapping_storage_rejected_before_writing(tmp_path, mapped):
 @pytest.mark.parametrize(
     "invalid",
     [
-        "nonuniform",
         "duplicate",
         "tilted",
         "nonfinite",
@@ -620,9 +628,9 @@ def test_invalid_inputs_rejected_before_output_written(invalid):
     grid, detector, geometry, data, _ = scan()
     out = np.full((grid.nx, grid.ny, grid.nz), 123, dtype=np.float32)
     config = FourierConfig()
-    if invalid in {"nonuniform", "duplicate", "nonfinite"}:
+    if invalid in {"duplicate", "nonfinite"}:
         angles = np.asarray(geometry.angles).copy()
-        angles[1] = {"nonuniform": 2.5, "duplicate": 0, "nonfinite": np.nan}[invalid]
+        angles[1] = {"duplicate": 0, "nonfinite": np.nan}[invalid]
         geometry = ParallelGeometry(grid, detector, angles)
     elif invalid == "tilted":
         geometry = LaminographyGeometry(grid, detector, geometry.angles, tilt_deg=30)
@@ -740,11 +748,14 @@ def dense_full_spectrum_reference(grid, detector, angles, data):
     u = detector.center[0] + (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du
     matrix = detector.du * np.exp(-2j * np.pi * frequency.reshape(-1, 1) * u[None, :])
     measured = raw.astype(np.float64) @ matrix.T
-    a = (np.mod(np.arctan2(-fy, fx) - theta0, 2 * np.pi) * (nviews / np.pi)).ravel()
-    index = np.floor(a).astype(np.int64)
-    sites = np.arange(len(a))
-    values = np.zeros((grid.nz, len(a)), np.complex128)
-    for shift, weight in [(0, 1 - (a - index)), (1, a - index)]:
+    directions = np.mod(np.arctan2(-fy, fx) - theta0, 2 * np.pi).ravel()
+    acquired = np.deg2rad(np.mod(angles[order], 180)) - theta0
+    knots = np.concatenate((acquired, acquired + np.pi, [2 * np.pi]))
+    index = np.searchsorted(knots, directions, side="right") - 1
+    fraction = (directions - knots[index]) / (knots[index + 1] - knots[index])
+    sites = np.arange(len(directions))
+    values = np.zeros((grid.nz, len(directions)), np.complex128)
+    for shift, weight in [(0, 1 - fraction), (1, fraction)]:
         view = (index + shift) % (2 * nviews)
         conjugate = (view >= nviews) ^ flipped[view % nviews]
         sampled = measured[:, view % nviews, sites]
@@ -754,7 +765,9 @@ def dense_full_spectrum_reference(grid, detector, angles, data):
     )
     values = values.reshape(grid.nz, *shape) * phase
     values[:, frequency > 0.5 / detector.du] = 0
-    values[:, 0, 0] = raw.astype(np.float64).sum(axis=-1).mean(axis=-1) * detector.du
+    gaps = np.diff(np.append(acquired, np.pi))
+    weights = (gaps + np.roll(gaps, 1)) / (2 * np.pi)
+    values[:, 0, 0] = (raw.astype(np.float64).sum(axis=-1) @ weights) * detector.du
     full = np.fft.ifft2(values, axes=(-2, -1)).real / (grid.vx * grid.vy)
     cropped = full[:, crop[0] : crop[0] + grid.nx, crop[1] : crop[1] + grid.ny]
     return cropped.transpose(1, 2, 0).astype(np.float32)
@@ -763,7 +776,8 @@ def dense_full_spectrum_reference(grid, detector, angles, data):
 @pytest.mark.parametrize("backend", BACKENDS)
 @pytest.mark.parametrize("ny", [11, 13])
 @pytest.mark.parametrize("vx", [0.35, 1.3])
-def test_signed_profiles_match_a_dense_full_spectrum_reconstruction(backend, ny, vx):
+@pytest.mark.parametrize("nonuniform", [False, True])
+def test_signed_profiles_match_a_dense_full_spectrum_reconstruction(backend, ny, vx, nonuniform):
     # Signed rows have power at the x Nyquist bin, which a half-plane transform
     # must project to a real image as the full transform does.
     if backend == "cupy":
@@ -771,6 +785,8 @@ def test_signed_profiles_match_a_dense_full_spectrum_reconstruction(backend, ny,
     grid = Grid(13, ny, 5, vx, 1.7, 0.7, vol_center=(0.2, -0.3, 0.1))
     detector = Detector(17, 7, 0.9, 1.1, (0.7, -0.23))
     angles = -37 + np.arange(13) * (180 / 13)
+    if nonuniform:
+        angles += 4 * np.sin(np.arange(13))
     angles[::3] += 180
     angles = angles[np.random.default_rng(17).permutation(13)]
     data = np.random.default_rng(321).normal(size=(13, 7, 17)).astype(np.float32)

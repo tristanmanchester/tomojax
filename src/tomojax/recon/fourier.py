@@ -14,7 +14,7 @@ from tomojax.core.validation import validate_grid, validate_projection_stack
 from tomojax.geometry import ParallelGeometry, grid_volume_origin
 
 from ._fourier_backend import FourierPlan, is_cuda_oom
-from ._fourier_grid import sample_projection_rows, uniform_half_turn
+from ._fourier_grid import sample_projection_rows, sorted_half_turn
 from ._fourier_rows import ProjectionRows, prepare_projection_rows
 from ._host_arrays import validate_host_arrays
 
@@ -59,18 +59,19 @@ def fourier_reconstruct(
     config: FourierConfig | None = None,
     out: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Reconstruct a uniform half-turn parallel scan using the Fourier slice theorem.
+    """Reconstruct a half-turn parallel scan using the Fourier slice theorem.
 
     Projections have shape ``(views, nv, nu)`` in physical line-integral units.
     Angles may be reordered, reversed, offset or replaced by opposing views,
-    but must be uniformly spaced and unique modulo 180 degrees. Only built-in
-    ``ParallelGeometry`` is supported. Detector offsets, anisotropic voxel
+    with uniform or nonuniform spacing, but must be unique modulo 180 degrees.
+    Only built-in ``ParallelGeometry`` is supported. Detector offsets, anisotropic voxel
     sizes, shifted/cropped output grids and fractional detector-v rows retain
     their physical coordinates.
 
     This approximate inverse uses six-point Kaiser--Bessel radial interpolation,
-    linear angular interpolation, a detector-Nyquist disk cutoff and a padded
-    Cartesian inverse FFT. Missing detector data are zero. Truncated scans and
+    linear interpolation in measured angle, a detector-Nyquist disk cutoff and
+    a padded Cartesian inverse FFT. DC uses periodic angular trapezoid weights.
+    Missing detector data are zero. Truncated scans and
     insufficient angular sampling can produce artifacts; no amplitude fitting,
     positivity clipping or truncation correction is applied.
 
@@ -96,7 +97,7 @@ def fourier_reconstruct(
     origin = grid_volume_origin(grid)
     if not np.isfinite([*origin, *detector.center]).all():
         raise ValueError("fourier_reconstruct: grid and detector placement must be finite")
-    order, flipped, theta0 = uniform_half_turn(np.asarray(geometry.angles))
+    order, flipped, angles = sorted_half_turn(np.asarray(geometry.angles))
     output = validate_host_arrays(projections, out, shape, "fourier_reconstruct")
     depth = min(slices, grid.nz)
     host_bytes = 4 * (grid.nx * grid.ny * grid.nz + nviews * detector.nu * grid.nz)
@@ -132,7 +133,7 @@ def fourier_reconstruct(
                 cfg.backend == "cupy" and grid.nz > depth and host_bytes >= _HOST_PIPELINE_MIN_BYTES
             )
             plan = FourierPlan(
-                grid, detector, nviews, flipped, theta0, depth, cfg.backend, async_transfers=overlap
+                grid, detector, nviews, flipped, angles, depth, cfg.backend, async_transfers=overlap
             )
             if overlap:
                 _run_host_pipeline(plan, grid.nz, depth, prepare, write)

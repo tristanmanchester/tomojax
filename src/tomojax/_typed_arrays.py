@@ -26,6 +26,17 @@ class Device(Protocol):
     def platform(self) -> str: ...
 
 
+def commit_array[T](value: T) -> T:
+    """Keep a JAX array's existing placement when operating in another context.
+
+    Explicit commitment aliases the same pixels; NumPy and lazy inputs are
+    returned unchanged. It does not change the caller's default device.
+    """
+    if isinstance(value, jax.Array):
+        return cast("T", jax.device_put(value, value.sharding))
+    return value
+
+
 def jax_float32_array(value: object) -> jax.Array:
     """Convert an array-like value to a JAX float32 array."""
     return cast("jax.Array", jnp.asarray(value, dtype=np.float32))

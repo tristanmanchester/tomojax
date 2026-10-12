@@ -28,7 +28,7 @@ def is_cuda_oom(error: Exception) -> bool:
 
 
 class _Geometry:
-    def __init__(self, grid, detector, nviews, flipped, theta0, backend) -> None:
+    def __init__(self, grid, detector, nviews, flipped, angles, backend) -> None:
         self.cuda = backend == "cupy"
         if self.cuda:
             try:
@@ -45,6 +45,9 @@ class _Geometry:
         self.xp = xp
         self.grid, self.detector = grid, detector
         self.nviews = nviews
+        gaps = np.diff(np.append(angles, angles[0] + np.pi)).astype(np.float64)
+        self.view_weights = xp.asarray((gaps + np.roll(gaps, 1)) / (2 * np.pi))
+        self.uniform = np.allclose(gaps, np.pi / nviews, rtol=1e-5, atol=np.deg2rad(2e-5))
         self.nfft = max(64, next_fast_len(2 * detector.nu))
         self.shape, self.crop = transform_grid(grid, detector)
         self.flipped = xp.asarray(flipped, dtype=xp.int8)
@@ -61,24 +64,32 @@ class _Geometry:
         # Retain the full transform's negative y Nyquist frequency. The real
         # inverse FFT supplies the same Hermitian projection as real(ifft2).
         fy = xp.fft.fftfreq(py, d=grid.vy)[None, :qy]
-        self.coordinates = self._coordinates(fx, fy, theta0)
+        self.coordinates = self._coordinates(fx, fy, angles)
         self.x_boundary = None
         stop = qy - 1 if py % 2 == 0 else qy
         if px % 2 == 0 and grid.vx > detector.du and stop > 1:
             # At x Nyquist, -kx maps to the same stored bin. If its line is
             # inside the detector's disk, conjugate symmetry needs the missing
             # opposite-y sample, not just conjugation of the current sample.
-            coordinates = self._coordinates(fx[px // 2 : px // 2 + 1], -fy[:, 1:stop], theta0)
+            coordinates = self._coordinates(fx[px // 2 : px // 2 + 1], -fy[:, 1:stop], angles)
             self.x_boundary = (coordinates, stop)
         if self.cuda:
             self.kernel = interpolation_kernel(x_boundary=self.x_boundary is not None)
 
-    def _coordinates(self, fx, fy, theta0):
+    def _coordinates(self, fx, fy, angles):
         xp, grid, detector = self.xp, self.grid, self.detector
         real = xp.float32 if self.cuda else xp.float64
         complex_dtype = xp.complex64 if self.cuda else xp.complex128
         radial = xp.sqrt(fx * fx + fy * fy) * (self.nfft * detector.du)
-        angle = xp.mod(xp.arctan2(-fy, fx) - theta0, 2 * np.pi) * (self.nviews / np.pi)
+        direction = xp.mod(xp.arctan2(-fy, fx) - angles[0], 2 * np.pi)
+        if self.uniform:
+            angle = direction * (self.nviews / np.pi)
+        else:
+            # Interpolate in measured angle, not view index. Include the opposing
+            # half turn and periodic endpoint, retaining FP64 angular fractions.
+            knots = np.asarray(angles) - angles[0]
+            knots = xp.asarray(np.concatenate((knots, knots + np.pi, [2 * np.pi])))
+            angle = xp.interp(direction, knots, xp.arange(2 * self.nviews + 1))
         detector_phase = xp.exp(
             -2j * np.pi * radial * detector.center[0] / (self.nfft * detector.du)
         ).astype(complex_dtype)
@@ -90,12 +101,12 @@ class _Geometry:
 
 
 @lru_cache(maxsize=8)
-def _cached_geometry(grid, detector, nviews, flipped, theta0, device) -> tuple[_Geometry, Any]:
+def _cached_geometry(grid, detector, nviews, flipped, angles, device) -> tuple[_Geometry, Any]:
     """Retain small immutable geometry arrays; no mutable slab buffers."""
     import cupy
 
     with cupy.cuda.Device(device):
-        geometry = _Geometry(grid, detector, nviews, flipped, theta0, "cupy")
+        geometry = _Geometry(grid, detector, nviews, flipped, angles, "cupy")
         ready = cupy.cuda.Event()
         ready.record()
     return geometry, ready
@@ -132,7 +143,7 @@ class _PendingSlab:
 
 class FourierPlan:
     def __init__(
-        self, grid, detector, nviews, flipped, theta0, depth, backend, *, async_transfers=False
+        self, grid, detector, nviews, flipped, angles, depth, backend, *, async_transfers=False
     ) -> None:
         self.cuda = backend == "cupy"
         if self.cuda:
@@ -162,15 +173,16 @@ class FourierPlan:
                     detector,
                     nviews,
                     tuple(map(int, flipped)),
-                    theta0,
+                    angles,
                     xp.cuda.runtime.getDevice(),
                 )
                 xp.cuda.get_current_stream().wait_event(ready)
             else:
-                geometry = _Geometry(grid, detector, nviews, flipped, theta0, backend)
+                geometry = _Geometry(grid, detector, nviews, flipped, angles, backend)
             self.nfft = geometry.nfft
             self.shape, self.crop = geometry.shape, geometry.crop
             self.flipped, self.period_phase = geometry.flipped, geometry.period_phase
+            self.view_weights = geometry.view_weights
             self.projection_phase = geometry.projection_phase
             self.deapod, self.table = geometry.deapod, geometry.table
             self.coordinates = geometry.coordinates
@@ -205,6 +217,7 @@ class FourierPlan:
             detector_phase,
             self.flipped,
             self.row_mass,
+            self.view_weights,
             np.float64(self.detector.du),
             np.int32(1),
         )
@@ -235,7 +248,7 @@ class FourierPlan:
                 (raw, self.deapod, self.row_mass, np.int32(self.detector.nu), np.int64(rows)),
             )
         else:
-            mass = xp.mean(xp.sum(raw, axis=-1, dtype=xp.float64), axis=1) * self.detector.du
+            mass = (xp.sum(raw, axis=-1, dtype=xp.float64) @ self.view_weights) * self.detector.du
             raw *= self.deapod
         spectrum = xp.fft.rfft(raw, n=self.nfft, axis=-1)
         spectrum *= self.projection_phase
