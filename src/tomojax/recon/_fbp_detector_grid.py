@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 
+from tomojax.backends.api import is_oom_error
 from tomojax.core import progress_iter
 from tomojax.core.projector import backproject_view_T
 
@@ -25,12 +26,6 @@ if TYPE_CHECKING:
     from .fbp import FBPConfig
 
 _fft_filter_rows_jit = jax.jit(fft_filter_rows)
-
-
-def is_oom_error(exc: Exception) -> bool:
-    """Whether ``exc`` is a device running out of memory, which smaller batches may avoid."""
-    msg = str(exc).lower()
-    return "resource_exhausted" in msg or "out of memory" in msg
 
 
 def _bp_one(

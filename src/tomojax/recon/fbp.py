@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.backends.api import is_oom_error
 from tomojax.core import progress_iter
 from tomojax.core.devices import as_devices, view_split
 from tomojax.core.geometry import Detector, Geometry, Grid, grid_volume_origin
@@ -24,7 +25,6 @@ from tomojax.core.validation import (
     validate_projection_stack,
 )
 
-from ._fbp_detector_grid import is_oom_error
 from ._fbp_weights import fbp_weights
 from .filters import fft_filter_rows, rfft_filter_array
 
