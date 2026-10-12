@@ -1,4 +1,4 @@
-"""Circular view ordering shared by FDK weights and virtual detector columns."""
+"""Circular view ordering shared by FBP, FDK and virtual detector columns."""
 
 from __future__ import annotations
 

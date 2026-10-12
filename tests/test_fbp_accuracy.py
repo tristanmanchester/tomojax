@@ -11,6 +11,7 @@ from tomojax.recon import FBPConfig, FBPHostConfig, fbp, fbp_host
 
 # check-public-imports: allow-private
 from tomojax.recon._fbp_pallas import backproject_filtered_pallas
+from tomojax.recon._fbp_weights import fbp_weights
 from tomojax.recon.fbp import _backproject_voxels_jax
 from tomojax.recon.filters import fft_filter_rows, rfft_filter_array
 
@@ -52,6 +53,323 @@ def test_fbp_reconstructs_analytic_gaussian_in_physical_units(spacing: float, nu
     nrmse = np.linalg.norm(actual - expected) / np.linalg.norm(expected)
     assert nrmse < 0.01
     np.testing.assert_allclose(actual[n // 2, n // 2], expected[n // 2, n // 2], rtol=0.005)
+
+
+def _quarter_turned(geometry, detector, data, sign):
+    """The same physical rays and pixels in a quarter-turned camera frame."""
+
+    class TurnedGeometry(ParallelGeometry):
+        def pose_for_view(self, i):
+            pose = np.asarray(geometry.pose_for_view(i))
+            return np.stack([sign * pose[2], pose[1], -sign * pose[0], pose[3]])
+
+    turned_detector = Detector(
+        detector.nv,
+        detector.nu,
+        detector.dv,
+        detector.du,
+        (sign * detector.center[1], -sign * detector.center[0]),
+    )
+    turned_data = data.swapaxes(1, 2)
+    turned_data = turned_data[:, ::-1, :] if sign == 1 else turned_data[:, :, ::-1]
+    return (
+        TurnedGeometry(geometry.grid, turned_detector, geometry.angles),
+        turned_detector,
+        turned_data,
+    )
+
+
+@pytest.mark.parametrize("backend", ["jax", "host", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("filter_name", ["ramp", "hann", "shepp-logan"])
+@pytest.mark.parametrize("sign", [-1, 1])
+@pytest.mark.parametrize("device_input", [False, True])
+def test_fbp_is_invariant_to_quarter_turned_detector_axes(
+    backend, filter_name, sign, device_input
+) -> None:
+    """An exact camera-coordinate change cannot change the filter or physical volume."""
+    grid = Grid(12, 10, 3, 0.7, 1.1, 0.9, vol_center=(1.2, -0.7, 0.3))
+    detector = Detector(20, 7, 0.8, 1.3, center=(0.27, -0.31))
+    angles = [0.0, 31.0, 75.0, 113.0, 150.0, 180.0]
+    geometry = ParallelGeometry(grid, detector, angles)
+    data = np.random.default_rng(916).normal(size=(6, 7, 20)).astype(np.float32)
+    if device_input:
+        if backend == "host":
+            pytest.skip("fbp_host accepts host storage only")
+        data = jnp.asarray(data)
+    turned, turned_detector, turned_data = _quarter_turned(geometry, detector, data, sign)
+    config = FBPConfig(filter=filter_name, backprojector="jax")
+    expected = fbp(geometry, grid, detector, data, config=config)
+    if backend == "host":
+        actual = fbp_host(
+            turned,
+            grid,
+            turned_detector,
+            turned_data,
+            config=FBPHostConfig(filter=filter_name, slices_per_batch=5, views_per_batch=4),
+        )
+    else:
+        actual = fbp(
+            turned,
+            grid,
+            turned_detector,
+            turned_data,
+            config=FBPConfig(filter=filter_name, backprojector=backend),
+        )
+    np.testing.assert_allclose(actual, expected, rtol=5e-5, atol=2e-6)
+
+
+@pytest.mark.parametrize("backend", ["jax", "host", pytest.param("pallas", marks=pytest.mark.gpu)])
+def test_quarter_turned_detector_recovers_shifted_anisotropic_gaussian(backend) -> None:
+    grid, detector = Grid(24, 24, 5, 0.7, 1.1, 0.9), Detector(48, 17, 0.7, 0.9, (0.4, -0.7))
+    angles = np.arange(0.0, 180.0, 2.0)
+    geometry = ParallelGeometry(grid, detector, angles)
+    phi = np.deg2rad(angles)
+    cx, cy, cz, sx, sy, sz = 1.3, -1.7, 0.2, 3.0, 4.0, 2.0
+    sigma = np.sqrt(sx**2 * np.cos(phi) ** 2 + sy**2 * np.sin(phi) ** 2)
+    centre = cx * np.cos(phi) - cy * np.sin(phi)
+    u = (np.arange(48) - 23.5) * detector.du + detector.center[0]
+    v = (np.arange(17) - 8) * detector.dv + detector.center[1]
+    data = (
+        (np.sqrt(2 * np.pi) * sx * sy / sigma)[:, None, None]
+        * np.exp(-0.5 * ((u[None, None, :] - centre[:, None, None]) / sigma[:, None, None]) ** 2)
+        * np.exp(-0.5 * ((v[None, :, None] - cz) / sz) ** 2)
+    ).astype(np.float32)
+    turned, turned_detector, turned_data = _quarter_turned(geometry, detector, data, 1)
+    actual = (
+        fbp_host(turned, grid, turned_detector, turned_data)
+        if backend == "host"
+        else fbp(
+            turned, grid, turned_detector, turned_data, config=FBPConfig(backprojector=backend)
+        )
+    )
+    x, y, z = [(np.arange(n) - (n - 1) / 2) * step for n, step in [(24, 0.7), (24, 1.1), (5, 0.9)]]
+    truth = np.exp(
+        -0.5 * ((x[:, None, None] - cx) / sx) ** 2
+        - 0.5 * ((y[None, :, None] - cy) / sy) ** 2
+        - 0.5 * ((z[None, None, :] - cz) / sz) ** 2
+    )
+    assert np.linalg.norm(np.asarray(actual) - truth) / np.linalg.norm(truth) < 0.035
+
+
+def test_explicit_scale_keeps_u_only_filter_on_quarter_turned_camera() -> None:
+    grid, detector = Grid(7, 6, 3, 0.7, 1.1, 0.9), Detector(20, 7, 0.8, 1.3, (0.27, -0.31))
+    geometry = ParallelGeometry(grid, detector, [0.0, 45.0, 90.0, 135.0])
+    data = np.random.default_rng(91).normal(size=(4, 7, 20)).astype(np.float32)
+    turned, turned_detector, turned_data = _quarter_turned(geometry, detector, data, 1)
+    scale = np.pi / 4
+    poses = jnp.asarray([turned.pose_for_view(i) for i in range(4)])
+    filtered = fft_filter_rows(
+        jnp.asarray(turned_data * scale),
+        rfft_filter_array("hann", turned_detector.nu, turned_detector.du, jnp.float32),
+    )
+    expected = _backproject_voxels_jax(poses, filtered, grid=grid, detector=turned_detector)
+    actual = fbp(
+        turned,
+        grid,
+        turned_detector,
+        turned_data,
+        config=FBPConfig(filter="hann", scale=scale, backprojector="jax"),
+    )
+    np.testing.assert_allclose(actual, expected, rtol=3e-5, atol=2e-6)
+
+
+def _rolled_camera(geometry, degrees):
+    c, s = np.cos(np.deg2rad(degrees)), np.sin(np.deg2rad(degrees))
+
+    class Camera(ParallelGeometry):
+        def pose_for_view(self, i):
+            pose = np.asarray(geometry.pose_for_view(i))
+            return np.stack(
+                [c * pose[0] + s * pose[2], pose[1], -s * pose[0] + c * pose[2], pose[3]]
+            )
+
+    return Camera(geometry.grid, geometry.detector, geometry.angles)
+
+
+def _reflected_parallel_frame(geometry, detector, data):
+    """A proper pi camera rotation: same u, opposite v and opposite ray."""
+
+    class Reflected(ParallelGeometry):
+        def pose_for_view(self, i):
+            pose = np.asarray(geometry.pose_for_view(i))
+            return np.stack([pose[0], -pose[1], -pose[2], pose[3]])
+
+    reflected_detector = Detector(
+        detector.nu,
+        detector.nv,
+        detector.du,
+        detector.dv,
+        (detector.center[0], -detector.center[1]),
+    )
+    return (
+        Reflected(geometry.grid, reflected_detector, geometry.angles),
+        reflected_detector,
+        data[:, ::-1, :],
+    )
+
+
+@pytest.mark.parametrize("backend", ["jax", "host", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("filter_name", ["ramp", "hann", "shepp-logan"])
+@pytest.mark.parametrize("tilt", [0.0, 30.0])
+def test_oblique_fbp_is_invariant_to_reflected_parallel_camera_frame(backend, filter_name, tilt):
+    """Nyquist aliases cannot pick a physical v sign from a coordinate convention."""
+    grid = Grid(15, 13, 7, 0.8, 1.2, 0.75, vol_center=(0.3, -0.4, 0.2))
+    detector = Detector(20, 14, 0.9, 1.3, center=(0.2, -0.1))
+    angles = [0.0, 21.0, 57.0, 88.0, 123.0, 160.0, 180.0]
+    base = (
+        ParallelGeometry(grid, detector, angles)
+        if tilt == 0
+        else LaminographyGeometry(grid, detector, angles, tilt_deg=tilt)
+    )
+    geometry = _rolled_camera(base, 40.0)
+    data = (0.3 + 0.05 * np.random.default_rng(34).normal(size=(7, 14, 20))).astype(np.float32)
+    reflected, reflected_detector, reflected_data = _reflected_parallel_frame(
+        geometry, detector, data
+    )
+    expected = np.asarray(
+        fbp(
+            geometry,
+            grid,
+            detector,
+            data,
+            config=FBPConfig(filter=filter_name, backprojector="jax"),
+        )
+    )
+    if backend == "host":
+        actual = fbp_host(
+            reflected,
+            grid,
+            reflected_detector,
+            reflected_data,
+            config=FBPHostConfig(filter=filter_name, slices_per_batch=4, views_per_batch=3),
+        )
+    else:
+        actual = fbp(
+            reflected,
+            grid,
+            reflected_detector,
+            reflected_data,
+            config=FBPConfig(filter=filter_name, backprojector=backend),
+        )
+    assert np.linalg.norm(np.asarray(actual) - expected) / np.linalg.norm(expected) < 1e-5
+    np.testing.assert_allclose(actual, expected, rtol=5e-5, atol=2e-6)
+
+
+@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("counts", [None, 10000])
+def test_oblique_fbp_preserves_independent_noisy_gaussian_accuracy(backend, counts):
+    grid, detector = Grid(24, 24, 24, 1, 1, 1), Detector(48, 48, 1, 1, (0.2, -0.1))
+    angles = np.arange(0.0, 180.0, 2.0)
+    geometry = _rolled_camera(ParallelGeometry(grid, detector, angles), 40.0)
+    mean, precision = np.array([2.3, -1.2, 1.4]), np.diag(1 / np.array([4.0, 5.0, 3.0]) ** 2)
+    u = np.arange(48) - 23.5 + detector.center[0]
+    v = np.arange(48) - 23.5 + detector.center[1]
+    points = np.stack(np.broadcast_arrays(u[None, :], np.zeros((48, 48)), v[:, None]))
+    profiles = []
+    for i in range(len(angles)):
+        pose = np.asarray(geometry.pose_for_view(i))
+        ray = pose[1, :3]
+        delta = np.einsum("ji,jvu->ivu", pose[:3, :3], points) - mean[:, None, None]
+        a = ray @ precision @ ray
+        b = np.einsum("i,ij,jvu->vu", ray, precision, delta)
+        c = np.einsum("ivu,ij,jvu->vu", delta, precision, delta)
+        profiles.append(0.04 * np.sqrt(2 * np.pi / a) * np.exp(-0.5 * (c - b**2 / a)))
+    data = np.asarray(profiles)
+    if counts is not None:
+        data = -np.log(
+            np.maximum(np.random.default_rng(119).poisson(counts * np.exp(-data)), 1) / counts
+        )
+    coordinate = np.arange(24) - 11.5
+    xyz = np.stack(np.meshgrid(coordinate, coordinate, coordinate, indexing="ij"))
+    delta = xyz - mean[:, None, None, None]
+    truth = 0.04 * np.exp(-0.5 * np.einsum("ixyz,ij,jxyz->xyz", delta, precision, delta))
+    actual = np.asarray(
+        fbp(
+            geometry,
+            grid,
+            detector,
+            data.astype(np.float32),
+            config=FBPConfig(backprojector=backend),
+        )
+    )
+    assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < (
+        0.025 if counts is None else 0.10
+    )
+
+
+def _full_turn_filtered_reference(data, params, spectrum):
+    """Every nonzero measured frequency has two roots in a complete circle."""
+    n = 2 * (len(spectrum) - 1)
+    fu = np.fft.rfftfreq(n)[None, None, :]
+    fv = np.fft.fftfreq(n)[None, :, None]
+    tu, tv, weight = (params[:, i, None, None].astype(np.float64) for i in (0, 1, 5))
+    window = spectrum / np.maximum(np.abs(fu), spectrum[0])
+
+    def response(vertical):
+        return (
+            np.where(
+                (fu == 0) & (vertical == 0),
+                np.hypot(tu, tv) * spectrum[0],
+                np.abs(tu * fu + tv * vertical) * window,
+            )
+            * weight
+            / 2
+        )
+
+    factor = response(fv)
+    face = slice(n // 2, n // 2 + 1)
+    factor[:, face] = 0.5 * (factor[:, face] + response(-fv[:, face]))
+    factor[:, :, -1] = 0.5 * (factor[:, :, -1] + factor[:, (-np.arange(n)) % n, -1])
+    return np.fft.irfft2(np.fft.rfft2(data, s=(n, n)) * factor, s=(n, n))[:, :64, :64]
+
+
+@pytest.mark.parametrize("backend", ["jax", "host", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("filter_name", ["ramp", "hann", "shepp-logan"])
+@pytest.mark.parametrize("n_views", [6, 18, 90])
+def test_full_turn_oblique_fbp_keeps_both_roots_at_the_circular_seam(backend, filter_name, n_views):
+    from scipy.ndimage import map_coordinates
+
+    grid = Grid(11, 9, 7, 0.8, 1.2, 0.75, vol_center=(0.3, -0.4, 0.2))
+    detector = Detector(64, 64, 1, 1, center=(0.2, -0.1))
+    angles = np.linspace(0, 360, n_views, endpoint=False)
+    geometry = _rolled_camera(LaminographyGeometry(grid, detector, angles, tilt_deg=30), 45)
+    poses = np.asarray([geometry.pose_for_view(i) for i in range(n_views)], dtype=np.float32)
+    weights = fbp_weights(poses)
+    assert weights.full_turn and not weights.separable
+    data = (0.3 + 0.05 * np.random.default_rng(2).normal(size=(n_views, 64, 64))).astype(np.float32)
+    spectrum = np.asarray(rfft_filter_array(filter_name, 64, 1, jnp.float32), dtype=np.float64)
+    filtered = _full_turn_filtered_reference(data, weights.params, spectrum)
+    coordinate = [
+        (np.arange(n) - (n - 1) / 2) * spacing + centre
+        for n, spacing, centre in zip(
+            (grid.nx, grid.ny, grid.nz), (grid.vx, grid.vy, grid.vz), grid.vol_center, strict=True
+        )
+    ]
+    xyz = np.stack(np.meshgrid(*coordinate, indexing="ij"))
+    expected = np.zeros((grid.nx, grid.ny, grid.nz))
+    for pose, image in zip(poses, filtered, strict=True):
+        world = np.einsum("ij,jxyz->ixyz", pose[:3, :3].astype(np.float64), xyz)
+        world += pose[:3, 3, None, None, None]
+        uv = np.stack([world[2] - detector.center[1], world[0] - detector.center[0]]) + 31.5
+        expected += map_coordinates(image, uv, order=1, mode="grid-constant")
+    if backend == "host":
+        actual = fbp_host(
+            geometry,
+            grid,
+            detector,
+            data,
+            config=FBPHostConfig(filter=filter_name, slices_per_batch=4, views_per_batch=5),
+        )
+    else:
+        actual = fbp(
+            geometry,
+            grid,
+            detector,
+            data,
+            config=FBPConfig(filter=filter_name, backprojector=backend),
+        )
+    assert np.linalg.norm(np.asarray(actual) - expected) / np.linalg.norm(expected) < 1e-5
+    np.testing.assert_allclose(actual, expected, rtol=5e-5, atol=2e-6)
 
 
 @pytest.mark.parametrize(

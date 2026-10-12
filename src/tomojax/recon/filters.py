@@ -120,7 +120,7 @@ def get_fbp_filter_np(name: str, nu: int, du: float, dtype_name: str) -> np.ndar
 
 def rfft_filter_array(filter: str, nu: int, du: float, dtype: jnp.dtype) -> jnp.ndarray:
     """Return the padded discrete FBP filter without doubling RFFT bins."""
-    Hr_np = get_fbp_filter_np(filter, int(nu), float(du), str(dtype))
+    Hr_np = get_fbp_filter_np(filter, int(nu), float(du), np.dtype(dtype).name)
     return jnp.asarray(Hr_np, dtype=dtype)
 
 

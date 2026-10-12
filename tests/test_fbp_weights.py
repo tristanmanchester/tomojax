@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
-from tomojax.recon import FBPConfig, fbp
+from tomojax.recon import FBPConfig, FBPHostConfig, fbp, fbp_host
 
 # check-public-imports: allow-private
 from tomojax.recon._fbp_weights import fbp_weights
@@ -20,6 +20,131 @@ def poses_for(geometry: ParallelGeometry | LaminographyGeometry, n: int) -> np.n
 def parallel(angles: np.ndarray) -> np.ndarray:
     grid = Grid(4, 4, 4, 1.0, 1.0, 1.0)
     return poses_for(ParallelGeometry(grid, Detector(4, 4, 1.0, 1.0), angles), len(angles))
+
+
+@pytest.mark.parametrize("indices", [[0, 0, 1], [1, 0, 1, 1], [0, 0, 1, 1]])
+@pytest.mark.parametrize("filter_name", ["ramp", "hann", "shepp-logan"])
+@pytest.mark.parametrize("backend", ["jax", "auto"])
+@pytest.mark.parametrize("host_slabs", [False, True])
+def test_sparse_fbp_averages_repeated_exposures(indices, filter_name, backend, host_slabs):
+    """Underdetermined axis fitting must not weight a plane by its exposure count."""
+    width, sigma = 33, 3.2
+    positions = np.arange(width) - (width - 1) / 2
+    angles = np.array([0.0, 90.0])
+    theta = np.deg2rad(angles)
+    centre = 1.7 * np.cos(theta) + 0.6 * np.sin(theta)
+    data = (
+        np.sqrt(2 * np.pi)
+        * sigma
+        * np.exp(-0.5 * ((positions[None, :] - centre[:, None]) / sigma) ** 2)
+    ).astype(np.float32)[:, None, :]
+    repeated = data[indices].copy()
+    # Vary individual exposures without changing each plane's mean signal.
+    noise = np.random.default_rng(452).normal(0, 0.01, repeated.shape)
+    for plane in range(2):
+        own = np.flatnonzero(np.asarray(indices) == plane)
+        noise[own] -= noise[own].mean(axis=0)
+    repeated += noise.astype(np.float32)
+    grid = Grid(width, width, 1, 1.0, 1.0, 1.0)
+    detector = Detector(width, 1, 1.0, 1.0)
+
+    def run(views, rows):
+        geometry = ParallelGeometry(grid, detector, views)
+        if host_slabs:
+            return fbp_host(
+                geometry,
+                grid,
+                detector,
+                rows,
+                config=FBPHostConfig(filter=filter_name, backprojector=backend, views_per_batch=2),
+            )
+        return np.asarray(
+            fbp(
+                geometry,
+                grid,
+                detector,
+                jnp.asarray(rows),
+                config=FBPConfig(filter=filter_name, backprojector=backend),
+            )
+        )
+
+    expected = run(angles, data)
+    actual = run(angles[indices], repeated)
+    np.testing.assert_allclose(actual, expected, rtol=3e-5, atol=2e-6)
+    truth = np.exp(
+        -0.5 * ((positions[:, None] - 1.7) ** 2 + (positions[None, :] + 0.6) ** 2) / sigma**2
+    )[:, :, None]
+    error = np.linalg.norm(actual - truth) / np.linalg.norm(truth)
+    # Two views deliberately leave severe streaks; repeats must not alter the
+    # independently scored reconstruction error, not just its total amplitude.
+    assert abs(error - np.linalg.norm(expected - truth) / np.linalg.norm(truth)) < 2e-6
+
+
+@pytest.mark.parametrize("angles", [[0.0], [0.0, 180.0], [-360.0, 0.0, 180.0]])
+def test_single_projection_plane_fbp_fallback_remains_finite(angles):
+    grid = Grid(9, 9, 1, 1.0, 1.0, 1.0)
+    detector = Detector(9, 1, 1.0, 1.0)
+    positions = np.arange(9) - 4
+    row = np.exp(-0.5 * positions**2 / 4).astype(np.float32)
+    geometry = ParallelGeometry(grid, detector, angles)
+    actual = np.asarray(
+        fbp(geometry, grid, detector, jnp.broadcast_to(jnp.asarray(row), (len(angles), 1, 9)))
+    )
+    expected = np.asarray(
+        fbp(
+            ParallelGeometry(grid, detector, [0.0]), grid, detector, jnp.asarray(row)[None, None, :]
+        )
+    )
+    np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=2e-6)
+
+
+def test_sparse_fbp_explicit_scale_keeps_per_exposure_weight():
+    grid = Grid(9, 9, 1, 1.0, 1.0, 1.0)
+    detector = Detector(9, 1, 1.0, 1.0)
+    data = jnp.arange(18, dtype=jnp.float32).reshape(2, 1, 9) / 10
+    config = FBPConfig(scale=0.1)
+
+    def run(angles, rows):
+        return np.asarray(
+            fbp(ParallelGeometry(grid, detector, angles), grid, detector, rows, config=config)
+        )
+
+    expected = run([0.0, 90.0], data) + run([0.0], data[:1])
+    actual = run([0.0, 0.0, 90.0], data[jnp.array([0, 0, 1])])
+    np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=2e-6)
+
+
+@pytest.mark.parametrize("backend", ["jax", "auto"])
+def test_sparse_fbp_matches_independent_dense_plane_cells(backend):
+    """Independent spatial ramp/linear sampling anchors the fallback's measure."""
+    width, sigma = 33, 3.2
+    positions = np.arange(width) - (width - 1) / 2
+    rows = (
+        np.sqrt(2 * np.pi)
+        * sigma
+        * np.exp(-0.5 * ((positions[None, :] - np.array([1.7, 0.6])[:, None]) / sigma) ** 2)
+    )
+    radius = int(np.ceil(np.sqrt(2) * np.max(abs(positions))))
+    filtered_positions = np.arange(-radius, radius + 1)
+    distance = filtered_positions[:, None] - positions[None, :]
+    ramp = np.zeros(distance.shape)
+    ramp[distance == 0] = 0.25
+    odd = distance % 2 != 0
+    ramp[odd] = -1 / (np.pi**2 * distance[odd] ** 2)
+    filtered = rows @ ramp.T
+    x, y = np.meshgrid(positions, positions, indexing="ij")
+    expected = (np.pi / 2) * (
+        np.interp(x, filtered_positions, filtered[0])
+        + np.interp(-y, filtered_positions, filtered[1])
+    )
+    grid = Grid(width, width, 1, 1.0, 1.0, 1.0)
+    detector = Detector(width, 1, 1.0, 1.0)
+    geometry = ParallelGeometry(grid, detector, [0.0, 0.0, 90.0])
+    data = jnp.asarray(rows[[0, 0, 1], None, :], jnp.float32)
+    actual = np.asarray(
+        fbp(geometry, grid, detector, data, config=FBPConfig(backprojector=backend))
+    )[:, :, 0]
+    np.testing.assert_allclose(actual, expected, rtol=3e-5, atol=2e-6)
 
 
 @pytest.mark.parametrize("start", [-179.0, -100.0, -1.0, 0.0, 7.0, 13.0, 37.0, 150.0, 359.0])
@@ -62,6 +187,42 @@ def test_full_turn_counts_each_frequency_twice() -> None:
 
 
 @pytest.mark.parametrize("start", [0.0, 150.0, -100.0])
+@pytest.mark.parametrize("order", ["forward", "reverse", "shuffled"])
+def test_irregular_full_turn_uses_closed_circle_quadrature(start, order) -> None:
+    angles = start + np.array([0.0, 60.0, 150.0, 260.0])
+    expected = np.deg2rad([40.0, 37.5, 50.0, 52.5])
+    indices = np.arange(len(angles))
+    if order == "reverse":
+        indices = indices[::-1]
+    elif order == "shuffled":
+        indices = np.random.default_rng(564).permutation(indices)
+    weights = fbp_weights(parallel(angles[indices]))
+    assert weights.full_turn and weights.separable
+    np.testing.assert_allclose(weights.arc_length, 2 * np.pi)
+    np.testing.assert_allclose(weights.view_scale, expected[indices], rtol=1e-5)
+    np.testing.assert_allclose(weights.view_scale.sum(), np.pi, rtol=1e-6)
+
+
+@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+def test_jittered_full_turn_recovers_gaussian_in_physical_units(backend) -> None:
+    n, sigma = 48, 5.0
+    grid, detector = Grid(n, n, 1, 1, 1, 1), Detector(80, 1, 1, 1)
+    angles = np.arange(0.0, 360.0, 6.0)
+    angles += np.random.default_rng(451).uniform(-0.6, 0.6, angles.shape)
+    geometry = ParallelGeometry(grid, detector, angles)
+    u = np.arange(detector.nu) - (detector.nu - 1) / 2
+    profile = np.sqrt(2 * np.pi) * sigma * np.exp(-(u**2) / (2 * sigma**2))
+    projections = jnp.asarray(np.broadcast_to(profile, (len(angles), 1, detector.nu)))
+    actual = np.asarray(
+        fbp(geometry, grid, detector, projections, config=FBPConfig(backprojector=backend))
+    )[:, :, 0]
+    x = np.arange(n) - (n - 1) / 2
+    truth = np.exp(-(x[:, None] ** 2 + x[None, :] ** 2) / (2 * sigma**2))
+    assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.007
+    np.testing.assert_allclose(actual[n // 2, n // 2], truth[n // 2, n // 2], rtol=0.006)
+
+
+@pytest.mark.parametrize("start", [0.0, 150.0, -100.0])
 def test_partial_arc_halves_views_with_an_opposite(start: float) -> None:
     """Over 270 degrees, only views whose opposite was also acquired share frequencies."""
     angles = start + np.arange(270) + 0.5
@@ -77,6 +238,111 @@ def test_irregular_angles_use_midpoint_quadrature() -> None:
     weights = fbp_weights(parallel(angles[::-1]))
     expected = np.deg2rad([2.0, 15.0, 14.5, 30.0, 59.0])[::-1]
     np.testing.assert_allclose(weights.view_scale, expected, rtol=1e-5)
+
+
+@pytest.mark.parametrize("start", [0.0, 150.0, -100.0])
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("repeats", [None, (1, 3, 2, 1, 2, 4)])
+def test_irregular_half_turn_uses_periodic_direction_cells(start, reverse, repeats) -> None:
+    angles = start + np.array([0.0, 1.0, 45.0, 90.0, 170.0, 180.0])
+    # Unique directions have circular cell widths 5.5,22.5,44.5,62.5,45
+    # degrees. The 0/180 pair shares the first cell equally, independently
+    # of how many repeated exposures each ray direction contains.
+    expected = np.deg2rad([2.75, 22.5, 44.5, 62.5, 45.0, 2.75])
+    if repeats is not None:
+        angles = np.repeat(angles, repeats)
+        expected = np.repeat(expected / np.asarray(repeats), repeats)
+    if reverse:
+        angles, expected = angles[::-1], expected[::-1]
+    weights = fbp_weights(parallel(angles))
+    assert weights.separable and not weights.full_turn
+    np.testing.assert_allclose(weights.view_scale, expected, rtol=1e-5)
+    np.testing.assert_allclose(weights.view_scale.sum(), np.pi, rtol=1e-6)
+
+
+@pytest.mark.parametrize("backend", ["jax", "host", pytest.param("pallas", marks=pytest.mark.gpu)])
+def test_missing_early_views_preserve_gaussian_attenuation(backend) -> None:
+    n, sigma = 64, 8.0
+    grid, detector = Grid(n, n, 1, 1, 1, 1), Detector(96, 1, 1, 1)
+    angles = np.concatenate(([0.0], np.arange(10.0, 181.0)))
+    geometry = ParallelGeometry(grid, detector, angles)
+    u = np.arange(detector.nu) - (detector.nu - 1) / 2
+    profile = np.sqrt(2 * np.pi) * sigma * np.exp(-(u**2) / (2 * sigma**2))
+    projections = jnp.asarray(np.broadcast_to(profile, (len(angles), 1, detector.nu)))
+    volume = (
+        fbp_host(geometry, grid, detector, np.asarray(projections))
+        if backend == "host"
+        else fbp(geometry, grid, detector, projections, config=FBPConfig(backprojector=backend))
+    )
+    actual = np.asarray(volume)[:, :, 0]
+    x = np.arange(n) - (n - 1) / 2
+    truth = np.exp(-(x[:, None] ** 2 + x[None, :] ** 2) / (2 * sigma**2))
+    assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.005
+    np.testing.assert_allclose(actual[n // 2, n // 2], truth[n // 2, n // 2], rtol=0.003)
+
+
+@pytest.mark.parametrize("backend", ["jax", "host", pytest.param("pallas", marks=pytest.mark.gpu)])
+def test_missing_views_recover_an_off_axis_anisotropic_gaussian(backend) -> None:
+    n = 64
+    grid, detector = Grid(n, n, 1, 1, 1, 1), Detector(96, 1, 1, 1)
+    angles = np.concatenate(([0.0], np.arange(10.0, 181.0)))
+    geometry = ParallelGeometry(grid, detector, angles)
+    cx, cy, sx, sy = 8.0, -5.0, 4.0, 8.0
+    phi = np.deg2rad(angles)
+    sigma = np.sqrt(sx**2 * np.cos(phi) ** 2 + sy**2 * np.sin(phi) ** 2)
+    centre = cx * np.cos(phi) - cy * np.sin(phi)
+    u = np.arange(detector.nu) - (detector.nu - 1) / 2
+    profile = (
+        np.sqrt(2 * np.pi)
+        * sx
+        * sy
+        / sigma[:, None]
+        * np.exp(-((u[None, :] - centre[:, None]) ** 2) / (2 * sigma[:, None] ** 2))
+    )
+    projections = jnp.asarray(profile[:, None, :])
+    volume = (
+        fbp_host(geometry, grid, detector, np.asarray(projections))
+        if backend == "host"
+        else fbp(geometry, grid, detector, projections, config=FBPConfig(backprojector=backend))
+    )
+    x = np.arange(n) - (n - 1) / 2
+    truth = np.exp(-((x[:, None] - cx) ** 2) / (2 * sx**2) - (x[None, :] - cy) ** 2 / (2 * sy**2))
+    assert np.linalg.norm(np.asarray(volume)[:, :, 0] - truth) / np.linalg.norm(truth) < 0.04
+
+
+@pytest.mark.parametrize("backend", ["jax", "host", pytest.param("pallas", marks=pytest.mark.gpu)])
+def test_missing_views_preserve_attenuation_with_a_rolled_detector(backend) -> None:
+    class RolledGeometry(ParallelGeometry):
+        def pose_for_view(self, i):
+            roll = np.eye(4)
+            sine, cosine = np.sin(0.4), np.cos(0.4)
+            roll[0, 0] = roll[2, 2] = cosine
+            roll[0, 2], roll[2, 0] = sine, -sine
+            return roll @ super().pose_for_view(i)
+
+    n, sigma = 24, 4.0
+    grid, detector = Grid(n, n, n, 1, 1, 1), Detector(48, 48, 1, 1)
+    angles = np.concatenate(([0.0], np.arange(10.0, 181.0, 2.0)))
+    geometry = RolledGeometry(grid, detector, angles)
+    u = np.arange(detector.nu) - (detector.nu - 1) / 2
+    profile = (
+        np.sqrt(2 * np.pi) * sigma * np.exp(-(u[:, None] ** 2 + u[None, :] ** 2) / (2 * sigma**2))
+    )
+    projections = jnp.asarray(np.broadcast_to(profile, (len(angles), 48, 48)))
+    volume = (
+        fbp_host(geometry, grid, detector, np.asarray(projections))
+        if backend == "host"
+        else fbp(geometry, grid, detector, projections, config=FBPConfig(backprojector=backend))
+    )
+    actual = np.asarray(volume)
+    x = np.arange(n) - (n - 1) / 2
+    truth = np.exp(
+        -(x[:, None, None] ** 2 + x[None, :, None] ** 2 + x[None, None, :] ** 2) / (2 * sigma**2)
+    )
+    assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.015
+    np.testing.assert_allclose(
+        actual[n // 2, n // 2, n // 2], truth[n // 2, n // 2, n // 2], rtol=0.015
+    )
 
 
 @pytest.mark.parametrize("span", [90.0, 180.0, 270.0, 360.0])

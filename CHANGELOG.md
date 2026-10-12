@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+Reconstruction fix: parallel FBP recognises irregularly spaced full turns using
+the same circular-gap inference as FDK, rather than introducing a missing arc
+and biased attenuation when encoder angles jitter. Complete untilted half turns
+use periodic projection-direction cells, preserving angular measure after
+rejecting blocks of views near the ends of a half turn.
+Quarter-turned parallel detectors exchange their pixel axes exactly before
+filtering, so ramp lengths and smoothing windows follow the physical ramp
+direction instead of the original camera u axis, including host-slab FBP.
+Two-dimensional FBP averages both real Nyquist-frequency aliases, so reversing
+the detector v axis and parallel-ray direction cannot change the volume. The
+existing ramp, smoothing windows and angular quadrature are unchanged.
+Complete circles keep both frequency roots even when floating-point
+angle wrapping lands on the circular seam.
+FBP filter dtype classes retain requested FP64 coefficient precision before
+the coefficients reach the device.
+Automatic few-direction FBP shares angular measure between repeated exposures,
+so duplicating one sparse projection cannot overweight its direction.
+
 Faster: exact-ray projection loads each cell corner once and integrates one
 spatial derivative for every pose direction (about 2.4x forward and 3x
 gradient on the CPU at 48³); the CUDA cone transpose weights, reorders and
