@@ -20,6 +20,7 @@ import numpy as np
 
 from tomojax._scan import (
     Scan,
+    binned_geometry,
     check_shape,
     detector_window,
     geometry_of,
@@ -150,6 +151,7 @@ class Frames:
         epsilon: float = 1e-6,
         batch_views: int | None = None,
         out: np.ndarray | None = None,
+        binning: int = 1,
     ) -> Scan:
         """The scan of line integrals ``-log((I - D) / (F - D))``, with ``steps`` applied.
 
@@ -160,6 +162,10 @@ class Frames:
         below. Views are corrected on the device in batches of ``batch_views``,
         a positive integer. Automatic batches target 256 MiB, including the
         padded FFT arrays needed for Paganin phase retrieval.
+        ``binning`` averages detector pixels after all steps, as ``.binned(binning)``;
+        ``out`` then has the reduced detector shape and the original view capacity.
+        Automatic correction of independent whole-row line steps can stream raw
+        row groups from efficient sources, without an original-sized intermediate.
         ``out`` can be a writable float32 NumPy array or memmap with the counts'
         shape, separate from all inputs. Correction writes there in bounded
         batches; rejected views compact into its leading views. The returned
@@ -178,10 +184,13 @@ class Frames:
             epsilon=epsilon,
             batch_views=batch_views,
             out=out,
+            binning=binning,
         )
         geometry = (
             self.geometry if len(done.kept) == self.views else views_of(self.geometry, done.kept)
         )
+        if binning != 1:
+            geometry = binned_geometry(geometry, binning)
         return Scan(done.projections, geometry, self.name, done.records, self.source)
 
     def cropped(self, rows: slice, cols: slice) -> Frames:

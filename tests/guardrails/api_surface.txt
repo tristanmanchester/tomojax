@@ -58,6 +58,7 @@ class tomojax.Frames(
         epsilon: 'float' = 1e-06,
         batch_views: 'int | None' = None,
         out: 'np.ndarray | None' = None,
+        binning: 'int' = 1,
     ) -> 'Scan'
     .cropped(self, rows: 'slice', cols: 'slice') -> 'Frames'
     .selected(self, views: 'slice | Sequence[int] | np.ndarray') -> 'Frames'

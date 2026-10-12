@@ -31,7 +31,7 @@ class Step:
 
     Subclasses are frozen dataclasses of their settings with a ``domain`` and an
     :meth:`apply` taking and returning a ``(views, rows, columns)`` float32 JAX
-    array (every view of a slab of rows when ``whole_rows``). A step that
+    array (every view of a slab of independent rows when ``whole_rows``). A step that
     ``selects_views`` has instead a :meth:`statistic` of each view in a batch
     and a :meth:`select` of the views to keep from every view's statistic.
     """
@@ -44,7 +44,7 @@ class Step:
         raise NotImplementedError
 
     def workspace_pixels(self, rows: int, cols: int) -> int:
-        """Device pixels per view this step needs beyond its input, for batch sizing."""
+        """Extra device pixels per view for automatic batches, including statistics."""
         del rows, cols
         return 0
 
@@ -97,15 +97,17 @@ class BeamHardening(Step):
 class Stripes(Step):
     """Remove rings: subtract each detector pixel's constant offset from its line integrals.
 
-    A pixel whose gain or offset the flat field does not describe adds the same
-    absorption to every view, a stripe in the sinogram and a ring in the
+    A residual detector gain error adds the same absorption to every view,
+    a stripe in the sinogram and a ring in the
     volume. Each detector row's values are sorted over views, column by column
     (as in Vo, Atwood and Drakopoulos, 2018), so equal ranks of neighbouring
     columns compare like with like; a pixel's offset is the median over ranks
     of its sorted values minus their median over ``width`` columns. Only that
-    constant is subtracted, so data without defects pass unchanged; widen
-    ``width`` for wider stripes. An even ``width`` averages the two windows
-    centred half a pixel either side, so reversing the detector does not
+    constant is subtracted, preserving differences between views; widen
+    ``width`` for wider stripes. A genuine feature symmetric about the rotation
+    axis also produces a stationary sinogram signal: ring removal can alter
+    it, especially when it is narrower than ``width``. An even ``width``
+    averages the two windows centred half a pixel either side, so reversing the detector does not
     change the correction.
     """
 
@@ -288,15 +290,30 @@ class Paganin(Step):
 def _stripe_offsets(row: jax.Array, width: int) -> jax.Array:
     """Each column's offset in one detector row, ``(views, columns)``."""
     ranked = jnp.sort(row, axis=0)
-    return jnp.median(ranked - _sliding_median(ranked, width), axis=0)
+    difference = ranked - _sliding_median(ranked, width)
+    # CUDA's rank selection saves a full sort; the CPU sort is faster there.
+    # Resolve this for the actual execution platform, not the default device.
+    return jax.lax.platform_dependent(
+        difference, cuda=_median_ranks, default=lambda values: jnp.median(values, axis=0)
+    )
+
+
+def _median_ranks(difference: jax.Array) -> jax.Array:
+    """Each column's exact median, by selecting its upper ranks on CUDA."""
+    # Select only the upper half, not a second full sorted sinogram. top_k
+    # sorts descending, so its last one or two entries are the median ranks.
+    views = difference.shape[0]
+    upper, _ = jax.lax.top_k(difference.T, views // 2 + 1)
+    median = upper[:, -1] if views % 2 else 0.5 * (upper[:, -2] + upper[:, -1])
+    return jnp.where(jnp.any(jnp.isnan(difference), axis=0), jnp.nan, median)
 
 
 def _sliding_median(values: jax.Array, width: int) -> jax.Array:
     """The median over ``width`` neighbouring columns, edges repeated.
 
-    An odd-even transposition sort of the shifted copies: elementwise minima
-    and maxima, which fuse into one pass (a sort along a window axis is ten
-    times slower on a GPU).
+    Sorting networks over the shifted copies use elementwise minima and
+    maxima, which fuse into one pass. Larger windows use a pruned bitonic
+    network instead of the quadratic odd-even transposition network.
     """
     half, columns = width // 2, values.shape[1]
     even = width % 2 == 0
@@ -304,7 +321,8 @@ def _sliding_median(values: jax.Array, width: int) -> jax.Array:
     # An even window is centred between pixels: take one more window and
     # average neighbours onto the pixels, so reversing the detector does not
     # change the correction.
-    median = _median_of([padded[:, k : k + columns + even] for k in range(width)])
+    window = [padded[:, k : k + columns + even] for k in range(width)]
+    median = _bitonic_median_of(window) if width >= 15 else _median_of(window)
     return 0.5 * (median[:, :-1] + median[:, 1:]) if even else median
 
 
@@ -319,23 +337,25 @@ def _median_of(window: list[jax.Array]) -> jax.Array:
 
 
 def _bitonic_median_of(window: list[jax.Array]) -> jax.Array:
-    """An odd window's median, without tracing comparisons unrelated to it.
+    """A window's median, without tracing comparisons unrelated to it.
 
     Larger spatial windows benefit from a shallower bitonic network
     instead of quadratic odd-even sorting. Padded positive-infinity wires are
     symbolic, not image arrays. Every real input reaches the median expression,
     so NaNs propagate even after redundant infinity comparisons are removed.
     """
-    operations, output = _median_network(len(window))
+    operations, outputs = _median_network(len(window))
     values = dict(enumerate(window))
     for dest, minimum, a, b in operations:
         compare = jnp.minimum if minimum else jnp.maximum
         values[dest] = compare(values[a], values[b])
-    return values[output]
+    if len(outputs) == 1:
+        return values[outputs[0]]
+    return 0.5 * (values[outputs[0]] + values[outputs[1]])
 
 
 @lru_cache(maxsize=64)
-def _median_network(n: int) -> tuple[tuple[tuple[int, bool, int, int], ...], int]:
+def _median_network(n: int) -> tuple[tuple[tuple[int, bool, int, int], ...], tuple[int, ...]]:
     """Static median-only instructions; wire -1 represents positive infinity."""
     width = 1 << (n - 1).bit_length()
     wires = list(range(n)) + [-1] * (width - n)
@@ -357,15 +377,15 @@ def _median_network(n: int) -> tuple[tuple[tuple[int, bool, int, int], ...], int
                 wires[i], wires[j] = (high, low) if i & stage else (low, high)
             distance //= 2
         stage *= 2
-    output = wires[n // 2]
-    live = {output}
+    outputs = (wires[n // 2],) if n % 2 else (wires[n // 2 - 1], wires[n // 2])
+    live = set(outputs)
     needed: list[tuple[int, bool, int, int]] = []
     for k in reversed(range(len(operations))):
         if n + k in live:
             minimum, a, b = operations[k]
             needed.append((n + k, minimum, a, b))
             live.update((a, b))
-    return tuple(reversed(needed)), output
+    return tuple(reversed(needed)), outputs
 
 
 def _snake(name: str) -> str:
