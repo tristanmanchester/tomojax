@@ -16,12 +16,15 @@ Each step is recorded in `Scan.corrections` and saved with the scan.
 The log record counts nonpositive transmission after the transmission steps,
 including any undershoot introduced by phase retrieval, not before filtering.
 
-Flat-minus-dark signals that are nonpositive or unresolved at three standard
-errors of their calibration mean are unmeasured pixels. They take neutral
+Nonfinite calibrations and flat-minus-dark signals that are nonpositive or
+unresolved at three standard errors of their calibration mean are unmeasured
+pixels. They take neutral
 transmission (one, hence zero line integral) before spatial corrections, rather
 than dividing their counts by an epsilon. The flat-field record reports the
 affected pixels. This avoids spreading invalid detector values through phase
 retrieval; it does not recover absorption at those pixels.
+At an interpolation endpoint, only the calibration with nonzero weight is
+used; a missing value in an unused neighbouring flat does not discard a valid ray.
 
 `tomojax preprocess` is a thin layer over these: its options build the same
 steps.

@@ -255,7 +255,7 @@ def _flat_fields(
 
 def _field_record(settings: dict[str, Any], light: np.ndarray, variance: np.ndarray) -> Correction:
     found: dict[str, Json] = {"pixels_without_light": int(np.count_nonzero(light <= 0))}
-    unreliable = light <= 3 * np.sqrt(variance)
+    unreliable = ~np.isfinite(light) | ~np.isfinite(variance) | (light <= 3 * np.sqrt(variance))
     if unreliable.any():
         settings["minimum_signal_snr"] = 3.0
         found["pixels_without_reliable_light"] = int(np.count_nonzero(unreliable))
@@ -324,10 +324,22 @@ def _first_pass(
     for step in counts_steps:
         x = step.apply(x)
     weight = t[:, None, None]
-    flat = (1 - weight) * flats[lo] + weight * flats[hi]
-    variance = (1 - weight) ** 2 * flat_variance[lo] + weight**2 * flat_variance[hi] + dark_variance
+    # An unused calibration must not contaminate an endpoint through 0 * NaN
+    # (or 0 * Inf). Interior views still need both bracketing fields.
+    flat = jnp.where(
+        weight == 0, flats[lo],
+        jnp.where(weight == 1, flats[hi], (1 - weight) * flats[lo] + weight * flats[hi]),
+    )  # fmt: skip
+    variance = jnp.where(
+        weight == 0, flat_variance[lo],
+        jnp.where(weight == 1, flat_variance[hi],
+                  (1 - weight) ** 2 * flat_variance[lo] + weight**2 * flat_variance[hi]),
+    ) + dark_variance  # fmt: skip
     light = flat - dark
-    reliable = light > jnp.maximum(epsilon, 3 * jnp.sqrt(variance))
+    reliable = (
+        jnp.isfinite(light) & jnp.isfinite(variance)
+        & (light > jnp.maximum(epsilon, 3 * jnp.sqrt(variance)))
+    )  # fmt: skip
     # A calibration indistinguishable from darkness is an unmeasured pixel,
     # not a denominator of epsilon. Use neutral transmission before spatial
     # steps, so an FFT cannot spread enormous counts across the whole image.
