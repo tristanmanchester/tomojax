@@ -1,7 +1,7 @@
 {
   "align_config_fields": 58,
   "exported_names": {
-    "tomojax": 19,
+    "tomojax": 20,
     "tomojax.geometry": 18,
     "tomojax.recon": 22,
     "tomojax.io": 8,
@@ -10,7 +10,7 @@
     "tomojax.geometry.api": 44,
     "tomojax.recon.api": 19,
     "tomojax.io.api": 31,
-    "tomojax.alignment.api": 75,
+    "tomojax.alignment.api": 76,
     "tomojax.datasets.api": 15
   },
   "cli_flags": {
@@ -35,7 +35,7 @@
     "src/tomojax/alignment/_pose/_coupled_program.py::_build_program": 349,
     "src/tomojax/alignment/_pose/_pose_loop.py::align": 202,
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::_run_reconstruction_step": 166,
-    "src/tomojax/alignment/_stages/_setup_stage.py::_optimize_setup_geometry_bilevel_for_level": 150,
+    "src/tomojax/alignment/_stages/_setup_stage.py::_optimize_setup_geometry_bilevel_for_level": 148,
     "src/tomojax/alignment/_stages/_setup_stage.py::_run_setup_validation_objective": 104,
     "src/tomojax/alignment/_stages/_stage_multires.py::_run_one_multires_level": 119,
     "src/tomojax/alignment/_stages/_stage_multires.py::align_multires": 102,

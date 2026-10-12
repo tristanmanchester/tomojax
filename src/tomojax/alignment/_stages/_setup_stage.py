@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, replace
 import logging
 import math
@@ -305,6 +306,9 @@ def _refresh_setup_reconstruction(
                 tv_prox_iterations=int(cfg.tv_prox_iterations),
                 lipschitz=cfg.lipschitz,
                 nonnegative=bool(cfg.nonnegative),
+                ray_integrator=cfg.ray_integrator,
+                projector_backend="jax" if cfg.projector_backend == "jax" else "auto",
+                views_per_batch=int(cfg.views_per_batch) or None,
             ),
         )
         return x_next
@@ -395,6 +399,15 @@ def _validation_views_per_batch(grid: Grid, detector: Detector) -> int:
     planes = max(grid.nx, grid.ny, grid.nz)
     per_view = _VALIDATION_BYTES_PER_PLANE_PIXEL * planes * detector.nv * detector.nu
     return max(1, min(32, int(0.6 * free) // max(1, per_view)))
+
+
+def _validation_config(cfg: AlignConfig, grid: Grid, detector: Detector) -> AlignConfig:
+    """Size validation batches without resetting the stage's non-init quality tier."""
+    if int(cfg.views_per_batch) > 0:
+        return cfg
+    validation = copy.copy(cfg)
+    validation.views_per_batch = _validation_views_per_batch(grid, detector)
+    return validation
 
 
 @dataclass(frozen=True)
@@ -578,13 +591,13 @@ def _optimize_setup_geometry_bilevel_for_level(
         tv_prox_iterations=int(cfg.tv_prox_iterations),
         lipschitz=cfg.lipschitz,
         nonnegative=bool(cfg.nonnegative),
-        views_per_batch=max(1, int(cfg.views_per_batch)),
+        views_per_batch=int(cfg.views_per_batch) or None,
         projector_unroll=int(cfg.projector_unroll),
         checkpoint_projector=bool(cfg.checkpoint_projector),
         gather_dtype=str(cfg.gather_dtype),
         ray_integrator=cfg.ray_integrator,
+        projector_backend="jax" if cfg.projector_backend == "jax" else "auto",
     )
-
     setup_state = alignment_state
     seed_diagnostics = _detector_center_seed_diagnostics(
         geometry=geometry,
@@ -599,7 +612,6 @@ def _optimize_setup_geometry_bilevel_for_level(
     )
     setup_state = _seeded(setup_state, seed_diagnostics)
     setup_stats: list[OuterStat] = []
-    last_loss = math.inf
     outer_limit = max(1, int(stage.maxiter if stage is not None else cfg.outer_iterations))
     fit = _fit_inputs(
         _FitInputs(geometry, grid, detector, projections, base, loss_adapter, init_x),
@@ -607,8 +619,7 @@ def _optimize_setup_geometry_bilevel_for_level(
         loss_spec=loss_spec,
         factor=int(factor),
     )
-    if int(cfg.views_per_batch) <= 0:  # auto: as many views as fit the device
-        cfg = replace(cfg, views_per_batch=_validation_views_per_batch(fit.grid, fit.detector))
+    validation_cfg = _validation_config(cfg, fit.grid, fit.detector)
     for outer_idx in range(1, outer_limit + 1):
         stage_name = stage.name if stage is not None else (schedule_name or "setup")
         logging.info(
@@ -630,7 +641,7 @@ def _optimize_setup_geometry_bilevel_for_level(
             folds=folds,
             loss_adapter=fit.loss_adapter,
             fold_recon_cfg=fold_recon_cfg,
-            cfg=cfg,
+            cfg=validation_cfg,
             init_x=fit.init_x,
             factor=factor,
         )
@@ -640,7 +651,7 @@ def _optimize_setup_geometry_bilevel_for_level(
         stat = _build_geometry_stage_stat(
             objective_result=objective_result,
             active_view=active_view,
-            cfg=cfg,
+            cfg=validation_cfg,
             fold_recon_cfg=fold_recon_cfg,
             folds=folds,
             loss_name=loss_name,

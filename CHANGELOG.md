@@ -10,7 +10,9 @@ half-plane transform (about 2.5x) and CUDA Fourier fuses its launches;
 streamed CGLS no longer projects its zero starting volume; sparse HDF5 frame
 reads go run by run (about 45x); pose-model setup and Gauss-Newton candidate
 smoothing are linear in the number of views (3000 views: 25 s to 0.1 s and
-8 s to 0.03 s).
+8 s to 0.03 s). Explicit linear Joseph FISTA uses the matched batched
+operators when the model is automatic and the detector grid is canonical,
+rather than unnecessarily falling back to per-view reference execution.
 
 Reconstruction fixes: FBP and FDK treat a direction measured twice, such as
 theta and theta + 360, as one, which removes about 3% image error from scans
@@ -32,6 +34,30 @@ cropped objects); the reprojection centre score is no longer biased towards
 shifts that clip views, and works on segmented cone scans; mutual-information
 losses keep the mass of samples outside the histogram range; a gain and offset
 fit gives a constant prediction zero gain.
+The sinogram centre initializer resamples nonuniform angular steps and averages
+repeated angles before its Fourier metric, avoiding a biased rotation centre
+after view rejection or repeated exposures. Its metric uses real FFTs and a
+folded frequency mask instead of evaluating both conjugate half-planes, and
+copies only its sampled detector rows from device scans to the host. Dense
+scans average more angular rows during the coarse search, leaving the final
+full-resolution searches unchanged. Coarse and fine frequency masks are
+reused across sampled rows in a bounded, immutable cache. Integer mirror shifts
+use exact pixel rolls; fractional shifts retain Fourier interpolation. Overlapping
+fine-search candidates reuse their metric only within the same sampled row.
+Each metric call reuses its stacked-sinogram scratch and disposable magnitude
+buffer without mutating measured data.
+Narrow detectors keep enough columns in the coarse centre search to avoid
+aliased minima; odd-width coarse crops retain the correct detector midpoint.
+The final setup-alignment reconstruction honors the requested ray integrator,
+matching its training folds instead of silently using the default model.
+Both reconstructions honor explicit view-batch limits; automatic reconstruction
+batches remain independent of validation-residual batching. Automatic batch
+sizing preserves the setup stage quality tier and its final iteration count.
+Setup folds and the final reconstruction retain an explicit JAX backend request
+instead of silently selecting CUDA kernels.
+`estimate_center(scan)` exposes projection-only parallel centre estimation,
+returning a scan with its physical detector centre updated and its data/grid
+unchanged; iterative `align(..., mode="cor")` behavior is unchanged.
 
 Data fixes: NXtomo angles at `/entry/sample/rotation_angle` are read (they
 loaded as zeros), with radians converted; `tj.load` leaves out frames that

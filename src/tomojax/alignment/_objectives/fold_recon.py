@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -32,12 +32,13 @@ class FoldReconstructionConfig:
     huber_delta: float
     tv_prox_iterations: int
     nonnegative: bool
-    views_per_batch: int = 1
+    views_per_batch: int | None = None
     projector_unroll: int = 1
     checkpoint_projector: bool = True
     gather_dtype: str = "fp32"
     lipschitz: float | None = None
     ray_integrator: str = "sampled"
+    projector_backend: Literal["auto", "jax", "pallas"] = "auto"
 
 
 def reconstruct_train_fold_nograd(
@@ -92,6 +93,8 @@ def reconstruct_train_fold_nograd(
                 lipschitz=cfg.lipschitz,
                 nonnegative=bool(cfg.nonnegative),
                 ray_integrator=cfg.ray_integrator,
+                projector_backend=cfg.projector_backend,
+                views_per_batch=cfg.views_per_batch,
             ),
         )
         return x, _fold_metadata(valid_idx, cfg, info)
@@ -115,7 +118,7 @@ def reconstruct_train_fold_nograd(
             huber_delta=float(cfg.huber_delta),
             tv_prox_iterations=int(cfg.tv_prox_iterations),
             lipschitz=cfg.lipschitz,
-            views_per_batch=max(1, int(cfg.views_per_batch)),
+            views_per_batch=max(1, int(cfg.views_per_batch or 1)),
             projector_unroll=int(cfg.projector_unroll),
             checkpoint_projector=bool(cfg.checkpoint_projector),
             gather_dtype=str(cfg.gather_dtype),
@@ -138,6 +141,6 @@ def _fold_metadata(
         "inner_recon_algo": "fista_tv",
         "inner_regulariser": str(cfg.regulariser),
         "inner_iterations": int(cfg.iterations),
-        "views_per_batch": max(1, int(cfg.views_per_batch)),
+        "views_per_batch": cfg.views_per_batch,
         "info": info,
     }
