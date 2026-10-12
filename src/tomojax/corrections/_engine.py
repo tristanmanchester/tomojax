@@ -20,6 +20,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax._typed_arrays import commit_array
+from tomojax.backends import api as backend_runtime
+
 from ._records import Correction, Json
 from ._steps import DOMAINS, Step
 
@@ -129,18 +132,80 @@ def correct_projections(
             "integrals no longer holds: load the frames with tomojax.load_frames and pass "
             "them to Frames.corrected"
         )
-    out = np.array(projections, np.float32, copy=True)
-    out, kept, records = _run_rest(out, [s for _, s in ordered], batch_views)
+    line = [s for _, s in ordered]
+    head, tail = _split_at_break(line)
+    out = (
+        _resident_prefix(projections, tuple(head), batch_views)
+        if isinstance(projections, jax.Array) and head
+        else None
+    )
+    if out is not None:
+        out, kept, records = _run_rest(out, tail, batch_views)
+        records = tuple(s.record() for s in head) + records
+    else:
+        out = np.array(projections, np.float32, copy=True)
+        out, kept, records = _run_rest(out, line, batch_views)
     return Corrected(out, records, kept)
 
 
-def _frame_batch_size(counts: Any, steps: Sequence[Step]) -> int:
+def _resident_prefix(
+    projections: jax.Array, steps: tuple[Step, ...], batch_views: int | None
+) -> np.ndarray | None:
+    """Download corrected view batches when the input's devices have known headroom."""
+    batch = _resident_batch_size(projections, steps, batch_views)
+    if batch is None:
+        return None
+    projections = commit_array(projections)
+    views = int(projections.shape[0])
+    out = np.empty(projections.shape, np.float32)
+    for start in range(0, views, batch):
+        stop = min(start + batch, views)
+        # Fuse slicing and conversion into the first correction; no separate
+        # resident input tile or overlapping corrected outputs are retained.
+        part = _resident_apply(projections, start, stop - start, steps)
+        part.copy_to_host_async()
+        out[start:stop] = np.asarray(part)
+        del part
+    return out
+
+
+def _resident_batch_size(
+    projections: jax.Array, steps: tuple[Step, ...], requested: int | None
+) -> int | None:
+    """Reserve half each producer's headroom; unknown or oversized requests stay host-first."""
+    free = [
+        backend_runtime.device_free_memory_bytes(device=device) for device in projections.devices()
+    ]
+    if any(value is None for value in free):
+        return None
+    budget = min(_BATCH_BYTES, min(value for value in free if value is not None) // 2)
+    if budget < _frame_bytes(projections, steps):
+        return None
+    cap = _frame_batch_size(projections, steps, budget=budget)
+    if requested is not None:
+        return requested if min(requested, int(projections.shape[0])) <= cap else None
+    return cap
+
+
+@partial(jax.jit, static_argnames=("count", "steps"))
+def _resident_apply(
+    projections: jax.Array, start: int, count: int, steps: tuple[Step, ...]
+) -> jax.Array:
+    part = jax.lax.dynamic_slice_in_dim(projections, start, count, axis=0)
+    return _apply(steps, part.astype(jnp.float32))
+
+
+def _frame_batch_size(counts: Any, steps: Sequence[Step], *, budget: int | None = None) -> int:
     """Bound source reads and float32 work, including the largest step's FFT workspace."""
-    views, rows, cols = (int(s) for s in counts.shape)
+    limit = _BATCH_BYTES if budget is None else budget
+    return max(1, min(int(counts.shape[0]), limit // _frame_bytes(counts, steps)))
+
+
+def _frame_bytes(counts: Any, steps: Sequence[Step]) -> int:
+    rows, cols = (int(s) for s in counts.shape[1:])
     pixels = rows * cols
     workspace = max((s.workspace_pixels(rows, cols) for s in steps), default=0)
-    frame_bytes = max(np.dtype(counts.dtype).itemsize * pixels, 4 * (pixels + workspace))
-    return max(1, min(views, _BATCH_BYTES // frame_bytes))
+    return max(np.dtype(counts.dtype).itemsize * pixels, 4 * (pixels + workspace))
 
 
 def _validated_batch_views(value: int | None) -> int | None:

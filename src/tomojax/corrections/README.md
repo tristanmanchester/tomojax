@@ -9,6 +9,13 @@ taken around it, then steps on transmission, the `-log`, and steps on line
 integrals. `tomojax.Scan.corrected(*steps)` runs line-integral steps on a scan
 that is already corrected. Views are corrected on the device a batch at a time.
 Each step is recorded in `Scan.corrections` and saved with the scan.
+For a device-backed `Scan`, an initial chain of per-view line-integral steps
+runs on its existing device storage when the producer devices have known
+workspace headroom, before bounded corrected batches come back to the host.
+Automatic batches reserve half that headroom. Unknown budgets, insufficient room
+for one view, or oversized explicit batches retain the original host-first route;
+explicit batches are not silently reduced. The result remains independent, writable float32 host storage;
+whole-row steps and view selectors still see the complete stored stack.
 The log record counts nonpositive transmission after the transmission steps,
 including any undershoot introduced by phase retrieval, not before filtering.
 

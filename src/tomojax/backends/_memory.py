@@ -67,17 +67,17 @@ def _free_bytes_from_memory_info(info: object) -> int | None:
     """Extract free bytes from JAX/XLA memory-info shapes."""
     if isinstance(info, Mapping):
         mapping = cast("Mapping[str, object]", info)
+        if "bytes_limit" in mapping and "bytes_in_use" in mapping:
+            try:
+                return max(0, int(mapping["bytes_limit"]) - int(mapping["bytes_in_use"]))
+            except (TypeError, ValueError):
+                return None
         for key in ("free", "free_bytes", "bytes_free", "available", "bytes_available"):
             if key in mapping:
                 try:
                     return int(cast("object", mapping[key]))
                 except (TypeError, ValueError):
                     return None
-        if "bytes_limit" in mapping and "bytes_in_use" in mapping:
-            try:
-                return max(0, int(mapping["bytes_limit"]) - int(mapping["bytes_in_use"]))
-            except (TypeError, ValueError):
-                return None
         return None
 
     if isinstance(info, tuple | list) and len(info) >= 1:
@@ -88,38 +88,56 @@ def _free_bytes_from_memory_info(info: object) -> int | None:
     return None
 
 
-def device_free_memory_bytes() -> int | None:
-    """Best-effort free memory (bytes) for JAX's current default device.
+def device_free_memory_bytes(*, device: Device | None = None) -> int | None:
+    """Best-effort free memory (bytes) for ``device`` or JAX's current default.
 
     Honor ``jax.default_device`` (a device or platform), otherwise the default
     backend. CPU placement uses host available memory, even on a GPU host.
-    - Prefer JAX's device API when available: `jax.device_get_memory_info` (>=0.4.14).
-    - Also support current `Device.memory_stats()` reports when exposed.
+    - Prefer allocator `Device.memory_stats()` limits, including a known zero.
+    - Otherwise use JAX's device memory-info API when available.
     - CPU (or no discoverable device) uses host available memory via `os.sysconf`.
     - An accelerator with unavailable statistics returns None, never host RAM.
     """
     try:  # JAX GPU/TPU or CPU
-        import jax  # type: ignore
-
-        device = _current_device()
+        device = _current_device() if device is None else device
         if device is None or device.platform == "cpu":
             return _host_available_memory_bytes()
     except Exception as exc:
         LOG.debug("Device memory probe failed; available memory is unknown: %s", exc)
         return None
 
-    probes = [getattr(device, "memory_stats", None)]
+    return _device_memory_bytes(device)
+
+
+def _allocator_memory_info(device: Device) -> object:
+    stats = getattr(device, "memory_stats", None)
+    if callable(stats):
+        try:
+            return stats()
+        except Exception as exc:
+            LOG.debug("Device memory probe failed; trying remaining statistics: %s", exc)
+    return None
+
+
+def _device_memory_bytes(device: Device) -> int | None:
+    import jax  # type: ignore
+
+    # Allocator limits are authoritative, including a known zero or invalid
+    # limit. Other statistics retain their established probe order.
+    info = _allocator_memory_info(device)
+    if isinstance(info, Mapping) and "bytes_limit" in info and "bytes_in_use" in info:
+        return _free_bytes_from_memory_info(info)
+    probes = [lambda: info]
     memory_info = getattr(jax, "device_get_memory_info", None)
     if callable(memory_info):
         probes.insert(0, lambda: memory_info(device))
     for probe in probes:
-        if callable(probe):
-            try:
-                free = _free_bytes_from_memory_info(probe())
-                if free is not None:
-                    return free
-            except Exception as exc:
-                LOG.debug("Device memory probe failed; trying remaining statistics: %s", exc)
+        try:
+            free = _free_bytes_from_memory_info(probe())
+            if free is not None:
+                return free
+        except Exception as exc:
+            LOG.debug("Device memory probe failed; trying remaining statistics: %s", exc)
     return None
 
 

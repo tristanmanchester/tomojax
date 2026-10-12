@@ -30,3 +30,7 @@ and accelerator capability probes.
 - Default gather precision follows the same device. Capability and dtype-JIT
   probes are device-scoped, including CUDA-visible device ordering; explicit CPU
   placement retains full precision even when GPUs are available.
+
+`device_free_memory_bytes(device=...)` queries an explicit producer device without
+changing the caller context. Allocator limits take precedence over physical free
+memory; unavailable accelerator budgets remain unknown, and known zero stays zero.
