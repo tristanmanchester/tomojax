@@ -70,6 +70,23 @@ position between the flat fields. `scan.corrected(...)` runs line-integral
 steps (`Stripes`, `BeamHardening`, `RejectViews`) on a scan that is already
 corrected.
 
+When the float32 corrected stack would exceed host RAM, supply disk-backed
+output storage rather than allocating that whole stack in anonymous memory:
+
+```python
+import numpy as np
+
+frames = tj.load_frames("raw.nxs")
+storage = np.memmap("line-integrals.bin", mode="w+", dtype=np.float32, shape=frames.counts.shape)
+scan = frames.corrected(RejectViews(), Stripes(9), out=storage)
+storage.flush()
+```
+
+`out` must be separate from the counts and calibrations. The returned scan
+shares the buffer; if views were rejected, its projections use only the
+leading kept views. You own the file's lifetime. The raw memmap file alone
+does not store the scan's geometry or correction records; `tj.save` does.
+
 A file written by TomoJAX carries its geometry. Other NXtomo and Data Exchange
 files get a parallel beam with a centred detector, the file's angles, and the
 NXtomo detector's `x_pixel_size` and `y_pixel_size` when it has them. Without

@@ -104,7 +104,9 @@ class Frames:
     memmap or read lazily from the file; ``flats`` the frames of the beam
     alone, with ``flat_positions`` the number of views recorded before each
     (flats taken before and after a scan are interpolated between); ``darks``
-    the frames with the beam off. Scanners that calibrate their flat field
+    the frames with the beam off. HDF5 calibration stacks, like ``counts``,
+    are read lazily and cropped before correction. Scanners that calibrate their
+    flat field
     record a ``white_level`` instead. ``view_positions`` places each view
     among the flats, in the units of ``flat_positions`` (by default view ``i``
     at ``i + 1/2``; :meth:`selected` keeps it). :meth:`corrected` makes the
@@ -113,8 +115,8 @@ class Frames:
 
     counts: Any
     geometry: ScanGeometry
-    flats: np.ndarray | None = None
-    darks: np.ndarray | None = None
+    flats: Any = None
+    darks: Any = None
     flat_positions: np.ndarray | None = None
     white_level: float | None = None
     view_positions: np.ndarray | None = None
@@ -143,7 +145,11 @@ class Frames:
         return int(self.counts.shape[0])
 
     def corrected(
-        self, *steps: Step, epsilon: float = 1e-6, batch_views: int | None = None
+        self,
+        *steps: Step,
+        epsilon: float = 1e-6,
+        batch_views: int | None = None,
+        out: np.ndarray | None = None,
     ) -> Scan:
         """The scan of line integrals ``-log((I - D) / (F - D))``, with ``steps`` applied.
 
@@ -154,6 +160,10 @@ class Frames:
         below. Views are corrected on the device in batches of ``batch_views``,
         a positive integer. Automatic batches target 256 MiB, including the
         padded FFT arrays needed for Paganin phase retrieval.
+        ``out`` can be a writable float32 NumPy array or memmap with the counts'
+        shape, separate from all inputs. Correction writes there in bounded
+        batches; rejected views compact into its leading views. The returned
+        scan shares this storage, which the caller owns and flushes if needed.
         """
         from tomojax.corrections import correct_frames
 
@@ -167,6 +177,7 @@ class Frames:
             steps=steps,
             epsilon=epsilon,
             batch_views=batch_views,
+            out=out,
         )
         geometry = (
             self.geometry if len(done.kept) == self.views else views_of(self.geometry, done.kept)
@@ -184,9 +195,15 @@ class Frames:
             counts = counts.window(rows, cols)
         else:
             counts = np.asarray(counts)[:, rows, cols]
-        flats, darks = (
-            None if f is None else np.asarray(f)[:, rows, cols] for f in (self.flats, self.darks)
-        )
+
+        def crop_field(frames: Any) -> Any:
+            if frames is None:
+                return None
+            if hasattr(frames, "window"):
+                return frames.window(rows, cols)
+            return np.asarray(frames)[:, rows, cols]
+
+        flats, darks = (crop_field(f) for f in (self.flats, self.darks))
         return replace(
             self,
             counts=counts,
@@ -233,7 +250,9 @@ def load_frames(
     """Load detector frames from an HDF5 (NXtomo) or ``.npz`` file, a Nikon ``.xtekct`` or TIFFs.
 
     An HDF5 file's ``image_key`` marks its flats (1) and darks (2), and its
-    sample frames are read only as they are corrected. The frames, key and
+    sample, flat and dark frames are read only as they are corrected or
+    explicitly indexed; :meth:`Frames.cropped` narrows all three before reading.
+    The frames, key and
     angles are found at their NXtomo paths or as the file's only datasets of
     that name (``data``, ``image_key``, ``rotation_angle``); ``data_path``,
     ``image_key_path`` and ``angles_path`` name them otherwise. A Nikon scan
@@ -382,12 +401,12 @@ def _hdf5_frames(
     # The geometry needs the views' shape, not their values: read none of them.
     placeholder = LoadedNXTomo(np.broadcast_to(np.float32(0), (views, rows, cols)), metadata)
     record = ProjectionDataset.from_nxtomo(placeholder, source_path=file)
-    flats = stack[np.flatnonzero(key == 1)] if (key == 1).any() else None
-    darks = stack[np.flatnonzero(key == 2)] if (key == 2).any() else None
+    flats = stack.frames_at(key == 1) if (key == 1).any() else None
+    darks = stack.frames_at(key == 2) if (key == 2).any() else None
     if located.flats is not None:  # kept apart from the frames: one set
-        flats = located.flats[0 : len(located.flats)]
+        flats = located.flats
     if located.darks is not None:
-        darks = located.darks[0 : len(located.darks)]
+        darks = located.darks
     return Frames(
         counts=stack.frames_at(sample),
         geometry=geometry_of(record, poses=poses),

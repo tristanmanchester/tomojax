@@ -3,8 +3,9 @@
 Frames are corrected in one compiled pass over batches of views: the counts
 steps, then ``(I - D) / (F - D)`` with each view's flat interpolated between
 the flat sets around it, the transmission steps, ``-log``, and the line-integral
-steps up to the first that needs whole detector rows. Such a step, and every
-step after it, then runs over the result: a whole-row step on slabs of rows
+steps up to the first that needs whole detector rows or selects views. A first
+selecting step's summaries are collected while each batch is on the device;
+the remaining steps then run over the result: a whole-row step on slabs of rows
 (every view), the others on batches of views again. Batches are read from the
 host (NumPy, memmap or a lazily read file) while the device works on the last.
 """
@@ -14,11 +15,14 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+
+from tomojax._typed_arrays import commit_array
 
 from ._records import Correction, Json
 from ._steps import DOMAINS, Step
@@ -35,14 +39,15 @@ _BATCH_BYTES = 256 * 2**20
 def correct_frames(
     counts: Any,
     *,
-    flats: np.ndarray | None,
+    flats: Any,
     flat_positions: np.ndarray | None,
-    darks: np.ndarray | None,
+    darks: Any,
     white_level: float | None,
     steps: Sequence[Step],
     epsilon: float,
     view_positions: np.ndarray | None = None,
     batch_views: int | None = None,
+    out: np.ndarray | None = None,
 ) -> Corrected:
     """Line integrals from ``counts`` ``(views, rows, columns)``, and the records of how.
 
@@ -51,11 +56,15 @@ def correct_frames(
     ``white_level`` stands in for flats on scanners that record it instead.
     ``darks`` default to zero. ``view_positions`` places each view among the
     flats (by default view ``i`` at ``i + 1/2``).
+    ``out`` supplies separate writable float32 NumPy/memmap storage with the
+    counts' shape; rejected views compact into its leading views. The caller
+    owns this storage and flushes it if needed.
     """
     batch_views = _validated_batch_views(batch_views)
     epsilon = _positive_finite(epsilon, "epsilon")
     views, rows, cols = (int(s) for s in counts.shape)
     ordered = _ordered(steps)
+    _validate_out(out, (views, rows, cols), (counts, flats, darks))
     fields, field_record = _flat_fields(flats, flat_positions, darks, white_level, (rows, cols))
     at = (
         np.arange(views) + 0.5 if view_positions is None else np.asarray(view_positions, np.float64)
@@ -67,14 +76,21 @@ def correct_frames(
     head, tail = _split_at_break(line)
     counts_steps = tuple(s for d, s in ordered if d == "counts")
     transmission_steps = tuple(s for d, s in ordered if d == "transmission")
-    out = np.empty((views, rows, cols), np.float32)
+    supplied_out = out is not None
+    output = np.empty((views, rows, cols), np.float32) if out is None else out
     flat_stack, dark = jax.device_put(fields.flats), jax.device_put(fields.dark)
     batch = batch_views or _frame_batch_size(views, rows, cols, transmission_steps)
     tally = np.zeros(2, np.int64)  # non-positive transmission, non-finite results
+    selector = tail[0] if tail and tail[0].selects_views else None
+    summaries: list[np.ndarray] = []
 
-    def collect(start: int, stop: int, result: jax.Array, *bad: jax.Array) -> None:
-        out[start:stop] = np.asarray(result)
-        tally[:] += [int(b) for b in bad]
+    def collect(
+        start: int, stop: int, done: tuple[jax.Array, ...], summary: jax.Array | None
+    ) -> None:
+        output[start:stop] = np.asarray(done[0])
+        tally[:] += [int(b) for b in done[1:]]
+        if summary is not None:
+            summaries.append(np.asarray(summary))
 
     pending = None
     for start, stop, raw in _batches(counts, views, batch):
@@ -83,10 +99,14 @@ def correct_frames(
             epsilon=float(epsilon), counts_steps=counts_steps,
             transmission_steps=transmission_steps, line_steps=tuple(head),
         )  # fmt: skip
+        # The first selecting step needs only small per-view summaries. Use
+        # this device batch instead of transferring the corrected stack back
+        # to the device once more in _run_rest.
+        summary = None if selector is None else _statistic(selector, done[0])
         done[0].copy_to_host_async()
         if pending is not None:  # the last batch comes back while this one runs
             collect(*pending)
-        pending = (start, stop, *done)
+        pending = (start, stop, done, summary)
     if pending is not None:
         collect(*pending)
     found: dict[str, Json] = {
@@ -94,13 +114,16 @@ def correct_frames(
         "nonfinite_set_to_zero": int(tally[1]),
     }
     log = Correction("log", {"epsilon": float(epsilon)}, found)
-    out, kept, tail_records = _run_rest(out, tail, batch_views)
+    statistics = np.concatenate(summaries) if summaries else None
+    output, kept, tail_records = _run_rest(
+        output, tail, batch_views, statistics=statistics, keep_storage=supplied_out
+    )
     records = tuple(
         [s.record() for s in counts_steps] + list(field_record)
         + [s.record() for s in transmission_steps] + [log]
         + [s.record() for s in head] + list(tail_records)
     )  # fmt: skip
-    return Corrected(out, records, kept)
+    return Corrected(output, records, kept)
 
 
 class Corrected(NamedTuple):
@@ -112,9 +135,20 @@ class Corrected(NamedTuple):
 
 
 def correct_projections(
-    projections: Any, steps: Sequence[Step], *, batch_views: int | None = None
+    projections: Any,
+    steps: Sequence[Step],
+    *,
+    batch_views: int | None = None,
+    out: np.ndarray | None = None,
 ) -> Corrected:
-    """``projections`` (line integrals) through ``steps``, and their records."""
+    """``projections`` (line integrals) through ``steps``, and their records.
+
+    ``out`` supplies separate writable float32 NumPy/memmap storage with the
+    input shape; rejected views compact into its leading views. The caller
+    owns this storage and flushes it if needed. Device and lazy sources are
+    copied in ``batch_views`` batches, or automatic source-dtype-aware batches,
+    without materializing a second whole host stack.
+    """
     batch_views = _validated_batch_views(batch_views)
     ordered = _ordered(steps)
     if any(d != "line integrals" for d, _ in ordered):
@@ -124,9 +158,78 @@ def correct_projections(
             "integrals no longer holds: load the frames with tomojax.load_frames and pass "
             "them to Frames.corrected"
         )
-    out = np.array(projections, np.float32, copy=True)
-    out, kept, records = _run_rest(out, [s for _, s in ordered], batch_views)
+    if out is not None:
+        _validate_out(out, np.shape(projections), (projections,))
+    supplied_out = out is not None
+    if out is None:
+        out = np.array(projections, np.float32, copy=True)
+    else:
+        _copy_input(projections, out, batch_views)
+    out, kept, records = _run_rest(
+        out, [s for _, s in ordered], batch_views, keep_storage=supplied_out
+    )
     return Corrected(out, records, kept)
+
+
+def _copy_input(projections: Any, out: np.ndarray, batch_views: int | None) -> None:
+    """Fill validated host storage, releasing temporary reads before correction steps run."""
+    if isinstance(projections, np.ndarray):
+        np.copyto(out, projections, casting="unsafe")
+        return
+    # A device/lazy source must not allocate a second whole host stack just
+    # to fill caller-owned storage. Bound its reads by the source dtype too.
+    views, rows, cols = out.shape
+    itemsize = max(4, np.dtype(projections.dtype).itemsize)
+    batch = batch_views or max(1, min(views, _BATCH_BYTES // (itemsize * rows * cols)))
+    for start, stop, part in _batches(projections, views, batch):
+        np.copyto(out[start:stop], part, casting="unsafe")
+
+
+def _validate_out(out: np.ndarray | None, shape: tuple[int, ...], sources: tuple[Any, ...]) -> None:
+    """Validate caller-owned host storage before reading or overwriting any input."""
+    if out is None:
+        return
+    if not isinstance(out, np.ndarray) or out.shape != shape or out.dtype != np.float32:
+        raise ValueError("out must be a float32 NumPy array or memmap with the input shape")
+    if not out.flags.writeable:
+        raise ValueError("out must be writable")
+    target = _mapped_storage(out)
+    for source in (array for item in sources for array in _host_arrays(item)):
+        if np.may_share_memory(source, out):
+            raise ValueError("correction input and output storage must not overlap")
+        origin = _mapped_storage(source)
+        if target is not None and origin is not None:
+            source_name, target_name = origin.filename, target.filename
+            if (
+                source_name is None
+                or target_name is None
+                or Path(source_name).samefile(target_name)
+            ):
+                raise ValueError(
+                    "memory-mapped correction input and output require separate named files"
+                )
+
+
+def _host_arrays(source: Any) -> tuple[np.ndarray, ...]:
+    """Views of addressable host storage only; never download a GPU shard for validation."""
+    if isinstance(source, np.ndarray):
+        return (source,)
+    if isinstance(source, jax.Array):
+        return tuple(
+            np.asarray(part.data)
+            for part in source.addressable_shards
+            if part.device.platform == "cpu"
+        )
+    return ()
+
+
+def _mapped_storage(array: np.ndarray) -> np.memmap | None:
+    current: object = array
+    while isinstance(current, np.ndarray):
+        if isinstance(current, np.memmap):
+            return current
+        current = current.base
+    return None
 
 
 def _frame_batch_size(views: int, rows: int, cols: int, steps: Sequence[Step]) -> int:
@@ -175,16 +278,20 @@ class _Fields:
 
 
 def _flat_fields(
-    flats: np.ndarray | None,
+    flats: Any,
     positions: np.ndarray | None,
-    darks: np.ndarray | None,
+    darks: Any,
     white_level: float | None,
     shape: tuple[int, int],
 ) -> tuple[_Fields, tuple[Correction, ...]]:
     """The mean flat of each set, the mean dark, and the record of them."""
     if darks is None and flats is not None:
         LOG.warning("no dark fields: correcting with a dark field of zero")
-    dark = np.zeros(shape, np.float32) if darks is None else _mean(darks, shape, "darks")
+    dark = (
+        np.zeros(shape, np.float32)
+        if darks is None
+        else np.asarray(_mean(darks, shape, "darks"), np.float32)
+    )
     dark_frames = 0 if darks is None else len(darks)
     if flats is None:
         if white_level is None:
@@ -196,8 +303,8 @@ def _flat_fields(
         stack = np.full((1, *shape), level, np.float32)
         record = Correction("flat_dark", {"white_level": level, "darks": dark_frames})
         return _Fields(stack, np.zeros(1), dark), (record,)
-    flats = np.asarray(flats)
-    if flats.ndim != 3 or flats.shape[1:] != shape or not len(flats):
+    flats = flats if hasattr(flats, "shape") else np.asarray(flats)
+    if len(flats.shape) != 3 or flats.shape[1:] != shape or not len(flats):
         raise ValueError(
             f"flats are {flats.shape}; a nonempty stack of frames of {shape} is needed"
         )
@@ -207,8 +314,14 @@ def _flat_fields(
             f"flat_positions needs one finite position for each of the {len(flats)} flats"
         )
     sets = np.unique(where)
-    groups = (flats if len(sets) == 1 else flats[where == p] for p in sets)
-    stack = np.stack([np.mean(group, axis=0, dtype=np.float64) for group in groups])
+    stack = np.stack(
+        [
+            _mean(
+                flats, shape, "flats", indices=np.flatnonzero(where == p) if len(sets) > 1 else None
+            )
+            for p in sets
+        ]
+    )
     settings: dict[str, Any] = {"flats": len(flats), "darks": dark_frames, "flat_sets": len(sets)}
     if len(sets) > 1:
         settings["flat_positions"] = [float(p) for p in sets]
@@ -219,13 +332,24 @@ def _flat_fields(
     )
 
 
-def _mean(frames: np.ndarray, shape: tuple[int, int], name: str) -> np.ndarray:
-    frames = np.asarray(frames)
-    if frames.ndim != 3 or frames.shape[1:] != shape or not len(frames):
+def _mean(
+    frames: Any, shape: tuple[int, int], name: str, *, indices: np.ndarray | None = None
+) -> np.ndarray:
+    """Average calibration frames in FP64, reading bounded batches from lazy stacks."""
+    frames = commit_array(frames) if hasattr(frames, "shape") else np.asarray(frames)
+    if len(frames.shape) != 3 or frames.shape[1:] != shape or not len(frames):
         raise ValueError(
             f"{name} are {frames.shape}; a nonempty stack of frames of {shape} is needed"
         )
-    return np.asarray(np.mean(frames, axis=0, dtype=np.float64), np.float32)
+    count = len(frames) if indices is None else len(indices)
+    batch = max(1, _BATCH_BYTES // (np.dtype(frames.dtype).itemsize * shape[0] * shape[1]))
+    total = np.zeros(shape, np.float64)
+    for start in range(0, count, batch):
+        selected = (
+            slice(start, start + batch) if indices is None else indices[start : start + batch]
+        )
+        total += np.sum(np.asarray(frames[selected]), axis=0, dtype=np.float64)
+    return total / count
 
 
 def _interpolation(q: np.ndarray, positions: np.ndarray) -> tuple[np.ndarray, ...]:
@@ -281,7 +405,12 @@ def _split_at_break(steps: list[Step]) -> tuple[list[Step], list[Step]]:
 
 
 def _run_rest(
-    out: np.ndarray, steps: Sequence[Step], batch_views: int | None
+    out: np.ndarray,
+    steps: Sequence[Step],
+    batch_views: int | None,
+    *,
+    statistics: np.ndarray | None = None,
+    keep_storage: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, tuple[Correction, ...]]:
     """``steps`` over ``out``: whole-row steps on slabs of rows, the others on views.
 
@@ -296,15 +425,20 @@ def _run_rest(
         views, rows, cols = out.shape
         batch = batch_views or max(1, min(views, _BATCH_BYTES // (4 * rows * cols)))
         if step.selects_views:
-            stats = np.concatenate([
-                np.asarray(_statistic(step, jnp.asarray(out[v0 : v0 + batch])))
-                for v0 in range(0, views, batch)
-            ])  # fmt: skip
+            batch = batch_views or _frame_batch_size(views, rows, cols, (step,))
+            if i == 0 and statistics is not None:
+                stats = statistics
+            else:
+                stats = np.concatenate([
+                    np.asarray(_statistic(step, jnp.asarray(out[v0 : v0 + batch])))
+                    for v0 in range(0, views, batch)
+                ])  # fmt: skip
             keep, found = step.select(stats, kept)
             if not keep.any():
                 raise ValueError(f"{type(step).__name__} would reject every view")
             if not keep.all():
-                out, kept = out[keep], kept[keep]
+                out = _compact(out, keep, batch) if keep_storage else out[keep]
+                kept = kept[keep]
             records.append(Correction(step.record().name, step.record().settings, found))
             i += 1
             continue
@@ -327,6 +461,16 @@ def _run_rest(
     return out, kept, tuple(records)
 
 
+def _compact(out: np.ndarray, keep: np.ndarray, batch: int) -> np.ndarray:
+    """Keep views in their original order using bounded copies into the leading storage."""
+    written = 0
+    for start in range(0, len(keep), batch):
+        selected = out[start : start + batch][keep[start : start + batch]]
+        out[written : written + len(selected)] = selected
+        written += len(selected)
+    return out[:written]
+
+
 @partial(jax.jit, static_argnames=("step",))
 def _statistic(step: Step, batch: jax.Array) -> jax.Array:
     return step.statistic(batch)
@@ -342,6 +486,9 @@ def _apply(steps: tuple[Step, ...], batch: jax.Array) -> jax.Array:
 def _batches(counts: Any, views: int, batch: int) -> Any:
     """``(start, stop, frames)`` for each batch of views, the next read while one is used."""
     starts = list(range(0, views, batch))
+    # The worker does not inherit default_device; preserve existing placement
+    # before slicing rather than relocating an uncommitted source wholesale.
+    counts = commit_array(counts)
 
     def read(start: int) -> np.ndarray:
         frames = np.asarray(counts[start : min(start + batch, views)])

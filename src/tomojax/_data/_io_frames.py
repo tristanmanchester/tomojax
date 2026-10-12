@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, cast
 
 import h5py
 import numpy as np
@@ -32,6 +32,9 @@ class Hdf5Frames:
     dtype: np.dtype
     first_row: int = 0  # the window of each frame read: rows and columns from these
     first_col: int = 0
+    chunk_views: int | None = None  # acquisition storage layout, not a caller cache setting
+    is_window: bool = False
+    _efficient_row_windows: bool = False  # safe to revisit each frame in successive row windows
 
     @classmethod
     def open(cls, path: str, dataset: str) -> Hdf5Frames:
@@ -41,7 +44,18 @@ class Hdf5Frames:
             if not isinstance(data, h5py.Dataset) or data.ndim != 3:
                 raise ValueError(f"{path}:{dataset} is not a 3-D stack of frames")
             n, rows, cols = (int(s) for s in data.shape)
-            return cls(path, dataset, np.arange(n), rows, cols, np.dtype(data.dtype))
+            layout = cast(Any, data)  # h5py's typing omits acquisition layout metadata
+            chunks = layout.chunks
+            efficient = (
+                not layout.is_virtual
+                and layout.id.get_create_plist().get_nfilters() == 0
+                and (chunks is None or chunks[0] == 1)
+            )
+            return cls(
+                path, dataset, np.arange(n), rows, cols, np.dtype(data.dtype),
+                chunk_views=None if chunks is None else int(chunks[0]),
+                _efficient_row_windows=efficient,
+            )  # fmt: skip
 
     @property
     def shape(self) -> tuple[int, int, int]:
@@ -70,7 +84,14 @@ class Hdf5Frames:
             cols=c1 - c0,
             first_row=self.first_row + r0,
             first_col=self.first_col + c0,
+            is_window=self.is_window or (r0, r1, c0, c1) != (0, self.rows, 0, self.cols),
         )
+
+    def __array__(self, dtype: np.dtype | None = None, copy: bool | None = None) -> np.ndarray:
+        """Read this stack explicitly with ``np.asarray`` (always allocates host storage)."""
+        if copy is False:
+            raise ValueError("Hdf5Frames cannot be converted to an array without copying")
+        return np.asarray(self[:], dtype=dtype)
 
     def __getitem__(self, which: slice | int | np.ndarray) -> np.ndarray:
         if isinstance(which, int | np.integer):
@@ -80,7 +101,11 @@ class Hdf5Frames:
         indices = np.asarray(self.frames[which], np.int64)
         if indices.size and np.any(np.diff(indices) <= 0):
             raise ValueError("Hdf5Frames reads frames in increasing order only")
-        with h5py.File(self.path, "r") as file:
+        # Cropped reads never reuse single-view chunks. Caching an unfiltered
+        # chunk forces the whole frame to be read even for a tiny window. Keep
+        # the established bulk path, and multi-view reuse across sparse runs.
+        cache = {"rdcc_nbytes": 0} if self.is_window and self.chunk_views == 1 else {}
+        with h5py.File(self.path, "r", **cache) as file:
             data: Any = file[self.dataset]
             if indices.size == 0:
                 return np.empty((0, self.rows, self.cols), self.dtype)

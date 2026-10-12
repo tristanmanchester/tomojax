@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import jax
 import numpy as np
 import pytest
 
@@ -71,3 +72,31 @@ def test_float32_calibration_accumulates_small_frames_in_float64() -> None:
     actual = tj.Frames(counts, geometry, flats=flats).corrected()
     np.testing.assert_allclose(actual.projections, -np.log(12345.0 / mean), rtol=2e-6)
     assert actual.corrections[-1].found["nonfinite_set_to_zero"] == 0
+
+
+@pytest.mark.parametrize("several_sets", [False, True])
+def test_device_calibration_batches_use_numpy_fp64_averaging(several_sets: bool) -> None:
+    rng = np.random.default_rng(8673)
+    flats = rng.uniform(0.9, 1.1, (99, 4, 7)).astype(np.float32)
+    darks = rng.uniform(0.005, 0.015, (83, 4, 7)).astype(np.float32)
+    counts = np.full((7, 4, 7), 0.5, np.float32)
+    geometry = tj.ParallelGeometry(
+        tj.Grid(7, 7, 4, 1, 1, 1), tj.Detector(7, 4, 1, 1), np.arange(7) * 180 / 7
+    )
+    positions = np.resize([0, 7], len(flats)) if several_sets else None
+    with jax.enable_x64(False):
+        expected = tj.Frames(
+            counts, geometry, flats=flats, darks=darks, flat_positions=positions
+        ).corrected(batch_views=3)
+        actual = tj.Frames(
+            counts,
+            geometry,
+            flats=jax.device_put(flats),
+            darks=jax.device_put(darks),
+            flat_positions=positions,
+        ).corrected(batch_views=3)
+        np.testing.assert_array_equal(actual.projections, expected.projections)
+        assert actual.corrections == expected.corrections
+        np.testing.assert_array_equal(
+            tj.reconstruct(actual).volume, tj.reconstruct(expected).volume
+        )

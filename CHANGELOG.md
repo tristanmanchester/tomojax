@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+Lazy HDF5 spatial-window reads no longer cache single-view chunks, avoiding
+unnecessary whole-frame reads for cropped previews. Uncropped and multi-view
+chunks keep the existing cache; HDF5 still handles data conversion, filters,
+fill values and file drivers.
+
+`Frames.corrected` and `Scan.corrected` accept caller-owned float32 output
+storage, including memmaps for corrected stacks larger than host RAM. View
+rejection compacts that storage in bounded batches, preserving the scan's
+geometry and correction records without allocating another whole stack.
+
+HDF5 flat and dark frames now remain lazy alongside sample counts: detector
+crops read only their calibration window, and correction averages calibrations
+in bounded host batches with FP64 accumulation. Use `np.asarray(frames.flats)`
+or index the stack to read its pixels explicitly.
+
+Raw correction collects the first view-selector's summaries while its batches
+are still on the device, avoiding another transfer of the corrected stack.
+
 Faster: exact-ray projection loads each cell corner once and integrates one
 spatial derivative for every pose direction (about 2.4x forward and 3x
 gradient on the CPU at 48³); the CUDA cone transpose weights, reorders and
