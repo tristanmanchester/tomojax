@@ -642,12 +642,12 @@ def test_explicit_pallas_fbp_requires_cuda_arrays() -> None:
         (128, (7, 6, 3), (9, 5), None, 128),
         (32, (256, 256, 128), (1024, 256), None, 128),
         (32, (256, 256, 128), (1025, 256), None, 512),
-        (32, (4096, 4096, 2), (9, 5), None, 512),
+        (32, (4096, 4096, 2), (9, 5), None, 2048),
         (129, (7, 6, 3), (9, 5), None, 128),
         (129, (7, 6, 3), (512, 512), None, 512),
         (129, (512, 512, 11), (767, 11), None, 128),
         (129, (768, 768, 17), (1089, 17), None, 128),
-        (129, (4096, 4096, 2), (9, 5), None, 512),
+        (129, (4096, 4096, 2), (9, 5), None, 2048),
         (129, (7, 6, 3), (9, 5), 64, 64),
     ],
 )
@@ -1182,3 +1182,59 @@ def test_interpret_axial_bands_preserve_long_slab_masks(z_mode, nz):
             accumulate=jnp.asarray(initial.copy()),
         )
         np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=2e-6)
+
+
+@pytest.mark.parametrize("z_mode", ["integer", "fixed", "general"])
+@pytest.mark.parametrize(
+    ("shape", "nv", "nu", "expected"),
+    [((32, 32, 3), 3, 5, 128), ((32, 32, 3), 2048, 2048, 512), ((512, 512, 65), 65, 13, 2048)],
+)
+def test_axial_launch_keeps_small_outputs_and_general_layout(
+    monkeypatch, z_mode, shape, nv, nu, expected
+):
+    """Planning large inputs does not allocate them or underfill small output grids."""
+    import jax
+
+    implementation = importlib.import_module("tomojax.recon._fbp_pallas")
+    grid = Grid(*shape, 1.0, 1.0, 1.0)
+    detector = Detector(nu, nv, 1.0, 1.0)
+    sizes = []
+
+    def call(grid, detector, n, block_size, **options):
+        sizes.append(block_size)
+        return lambda *args: jnp.zeros(grid.nx * grid.ny * grid.nz, jnp.float32)
+
+    monkeypatch.setattr(implementation, "_backprojection_call", call)
+    jax.eval_shape(
+        lambda p, y: backproject_filtered_pallas(p, y, grid=grid, detector=detector, z_mode=z_mode),
+        jax.ShapeDtypeStruct((5, 4, 4), jnp.float32),
+        jax.ShapeDtypeStruct((5, nv, nu), jnp.float32),
+    )
+    assert sizes == [512 if z_mode == "general" and expected == 2048 else expected]
+
+
+@pytest.mark.parametrize("z_mode", ["integer", "fixed", "general"])
+@pytest.mark.parametrize("block_size", [64, 128, 512, 1024, 2048])
+def test_axial_launch_warps_follow_only_large_axial_programs(monkeypatch, z_mode, block_size):
+    from jax.experimental import pallas as pl
+
+    implementation = importlib.import_module("tomojax.recon._fbp_pallas")
+    warps = []
+
+    def call(*args, **options):
+        warps.append(options["compiler_params"].num_warps)
+
+    monkeypatch.setattr(pl, "pallas_call", call)
+    implementation._backprojection_call.cache_clear()
+    try:
+        implementation._backprojection_call(
+            Grid(7, 5, 33, 1.0, 1.0, 1.0),
+            Detector(13, 21, 1.0, 1.0),
+            5,
+            block_size,
+            z_mode=z_mode,
+            interpret=False,
+        )
+        assert warps == [8 if z_mode != "general" and block_size >= 2048 else 4]
+    finally:
+        implementation._backprojection_call.cache_clear()

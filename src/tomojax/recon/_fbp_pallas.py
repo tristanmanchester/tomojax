@@ -255,7 +255,9 @@ def _backprojection_call(
         in_specs=in_specs,
         out_specs=pl.no_block_spec,
         input_output_aliases={2: 0} if accumulate else {},
-        compiler_params=plt.CompilerParams(num_warps=4),
+        compiler_params=plt.CompilerParams(
+            num_warps=8 if z_mode != "general" and block_size >= 2048 else 4
+        ),
         interpret=interpret,
         name="tomojax_fbp_voxel_backprojection",
     )
@@ -279,7 +281,8 @@ def backproject_filtered_pallas(
     z, without coupling to x or y. ``'general'`` handles arbitrary rigid poses.
     ``accumulate`` is added to the result in place. Compact
     filtered-stack and output working sets use one voxel per lane of the
-    four-warp program. Other workloads retain larger tiles for input reuse.
+    four-warp program. Large axial outputs use eight-warp programs for greater
+    pose reuse; small outputs and general poses retain their previous layouts.
     Z-axis modes broadcast each column's horizontal coordinate along axial
     tiles and skip the view loop when all their rows lie outside the detector.
     """
@@ -288,7 +291,16 @@ def backproject_filtered_pallas(
     if block_size is None:
         working_bytes = filtered.size * filtered.dtype.itemsize + 4 * grid.nx * grid.ny * grid.nz
         compact = working_bytes <= 64 * 1024**2
-        block_size = 128 if compact else 512
+        output_bytes = 4 * grid.nx * grid.ny * grid.nz
+        # Larger axial programs share each pose across more XY columns. Keep
+        # enough programs for small outputs, even with a large filtered stack;
+        # oblique/general voxels retain their independent-coordinate layout.
+        if compact:
+            block_size = 128
+        elif z_mode != "general" and output_bytes >= 64 * 1024**2:
+            block_size = 2048
+        else:
+            block_size = 512
     call = _backprojection_call(
         grid,
         detector,
