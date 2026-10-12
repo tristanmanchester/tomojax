@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import math
 import operator
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import jax
 import jax.numpy as jnp
@@ -35,17 +35,22 @@ from .fbp import (
 )
 from .filters import rfft_filter_array
 
+if TYPE_CHECKING:
+    from tomojax._typed_arrays import Device
+
 _OUTPUT_OVERLAP_MIN_BYTES = 64 * 1024**2
+_HOST_UPLOAD_BYTES = 16 * 1024**2
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class FBPHostConfig:
     """Control slab storage and filter batches for :func:`fbp_host`.
 
-    Output remains in host storage. Native FP32 GPU rows can stay resident
-    when the row gathers, output slabs and FFT workspace fit half of free memory.
-    Other inputs use bounded host transfers. For built-in parallel
-    geometry, a slab is ``slices_per_batch`` axial (z) slices with only the
+    Output remains in host storage. Native FP32 rows can stay resident when
+    row storage, output slabs and FFT workspace fit half of free device memory.
+    Host rows upload in at most two 16 MiB chunks at a time before reconstruction;
+    they never require a full host row-slab copy. Other inputs use bounded transfers.
+    For built-in parallel geometry, a slab is ``slices_per_batch`` axial (z) slices with only the
     detector rows they need (balanced slabs of at most 16 when ``None``). For
     laminography and other geometry, a slab is ``slices_per_batch`` x-slices;
     every view batch passes through the device once per slab. ``None`` sizes
@@ -114,11 +119,13 @@ def _resident_axial_rows(
     *,
     native: bool,
 ) -> jax.Array | None:
-    """Borrow native FP32 GPU rows only when bounded extra storage fits."""
-    if not native or not isinstance(projections, jax.Array) or projections.dtype != np.float32:
+    """Prepare native FP32 rows only when bounded extra device storage fits."""
+    if not native or projections.dtype != np.float32:
         return None
-    devices = projections.devices()
-    if len(devices) != 1 or devices != spectrum.devices():
+    devices = spectrum.devices()
+    if len(devices) != 1 or (
+        isinstance(projections, jax.Array) and projections.devices() != devices
+    ):
         return None
     device = next(iter(devices))
     stop = start + detector.nv
@@ -129,11 +136,38 @@ def _resident_axial_rows(
     row_bytes = 4 * projections.shape[0] * detector.nv * projections.shape[2]
     slab_bytes = 4 * grid.nx * grid.ny * grid.nz
     workspace = 16 * batch_size * detector.nv * (spectrum.shape[0] + detector.nu)
-    # Account for current/previous row gathers, accumulator, overlapped output
-    # and its packed copy, plus FFT workspace; reserve half for caches/runtime.
-    if free is None or 2 * row_bytes + 3 * slab_bytes + workspace > free // 2:
+    row_copies = 3 if isinstance(projections, np.ndarray) else 2
+    # Keep room for previous/current rows plus host-upload concatenation, the
+    # accumulator, overlapped/packed output and FFTs; leave half for caches/runtime.
+    if free is None or row_copies * row_bytes + 3 * slab_bytes + workspace > free // 2:
         return None
+    if isinstance(projections, np.ndarray):
+        return _upload_axial_rows(projections, start, stop, device)
     return projections[:, start:stop]
+
+
+def _upload_axial_rows(
+    projections: np.ndarray, start: int, stop: int, device: Device
+) -> jax.Array | None:
+    """Assemble device rows from bounded host transfers, without a host slab copy."""
+    per_view = 4 * (stop - start) * projections.shape[2]
+    views = _HOST_UPLOAD_BYTES // per_view
+    if views == 0:
+        return None
+    parts: list[jax.Array] = []
+    try:
+        for first in range(0, projections.shape[0], views):
+            block = np.ascontiguousarray(projections[first : first + views, start:stop])
+            parts.append(jax.device_put(block, device))
+            # Keep at most two host buffers in flight. Device parts stay alive
+            # through concatenation, included in the row-storage device budget.
+            if len(parts) > 1:
+                parts[-2].block_until_ready()
+    except MemoryError:
+        if parts:
+            parts[-1].block_until_ready()
+        return None
+    return jnp.concatenate(parts, axis=0)
 
 
 def fbp_host(

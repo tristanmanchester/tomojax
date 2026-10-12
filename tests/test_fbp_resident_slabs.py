@@ -119,15 +119,17 @@ def test_resident_loop_retains_independent_gaussian_truth(monkeypatch, batch):
 @pytest.mark.gpu
 @pytest.mark.parametrize("free", [None, 0, "below", "enough"])
 @pytest.mark.parametrize("native", [False, True])
-def test_resident_rows_budget_before_allocation(monkeypatch, free, native):
+@pytest.mark.parametrize("source", ["host", "device"])
+def test_resident_rows_budget_before_allocation(monkeypatch, free, native, source):
     if jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
     grid, detector, _, data, _ = gaussian()
-    projections = jax.device_put(data)
+    projections = data if source == "host" else jax.device_put(data)
     detector = replace(detector, nv=3)
     grid = replace(grid, nz=3)
     spectrum = jnp.ones(65, jnp.float32)
-    required = 2 * (4 * 83 * 3 * 40) + 3 * (4 * 40 * 40 * 3) + 16 * 17 * 3 * (65 + 40)
+    row_copies = 3 if source == "host" else 2
+    required = row_copies * (4 * 83 * 3 * 40) + 3 * (4 * 40 * 40 * 3) + 16 * 17 * 3 * (65 + 40)
     available = 2 * required - (1 if free == "below" else 0) if isinstance(free, str) else free
     probes = []
 
@@ -138,7 +140,7 @@ def test_resident_rows_budget_before_allocation(monkeypatch, free, native):
     monkeypatch.setattr(host, "device_free_memory_bytes", memory)
     actual = host._resident_axial_rows(projections, 2, detector, spectrum, grid, 17, native=native)
     assert (actual is not None) == (native and free == "enough")
-    assert probes == ([next(iter(projections.devices()))] if native else [])
+    assert probes == ([next(iter(spectrum.devices()))] if native else [])
     if actual is not None:
         np.testing.assert_array_equal(actual, data[:, 2:5])
 
@@ -166,7 +168,8 @@ def test_ineligible_resident_rows_keep_bounded_fallback(monkeypatch, reason):
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("case", ["native", "fractional", "strided", "tight"])
-def test_resident_host_output_matches_fallback(monkeypatch, case):
+@pytest.mark.parametrize("source", ["host", "device"])
+def test_resident_host_output_matches_fallback(monkeypatch, case, source):
     if jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
     grid, detector, geometry, data, truth = gaussian()
@@ -187,7 +190,8 @@ def test_resident_host_output_matches_fallback(monkeypatch, case):
     monkeypatch.setattr(fbp_module, "_fbp_from_resident", resident)
     monkeypatch.setattr(host, "device_free_memory_bytes", lambda: 0 if case == "tight" else 2**30)
     out = np.empty_like(expected)
-    actual = fbp_host(geometry, grid, detector, jax.device_put(data), config=config, out=out)
+    projections = data if source == "host" else jax.device_put(data)
+    actual = fbp_host(geometry, grid, detector, projections, config=config, out=out)
     assert actual is out
     assert bool(calls) == (case == "native")
     assert all(shape == (83, 3, 40) for shape in calls)
@@ -214,3 +218,65 @@ def test_resident_nonfinite_tail_rejected_before_slab_write(monkeypatch):
             config=FBPHostConfig(slices_per_batch=3, views_per_batch=17),
         )
     np.testing.assert_array_equal(out, 123)
+
+
+@pytest.mark.parametrize("layout", ["c", "f", "negative"])
+def test_host_row_upload_preserves_strides_and_bounds_staging(monkeypatch, layout):
+    data = np.arange(101 * 7 * 13, dtype=np.float32).reshape(101, 7, 13)
+    if layout == "f":
+        data = np.asfortranarray(data)
+    elif layout == "negative":
+        data = data[::-1, ::-1, ::-1]
+    limit = 5 * 3 * 13 * 4
+    monkeypatch.setattr(host, "_HOST_UPLOAD_BYTES", limit)
+    contiguous = np.ascontiguousarray
+    copies = []
+
+    def bounded(value, *args, **kwargs):
+        assert value.nbytes <= limit
+        copies.append(value.shape[0])
+        return contiguous(value, *args, **kwargs)
+
+    monkeypatch.setattr(np, "ascontiguousarray", bounded)
+    actual = host._upload_axial_rows(data, 2, 5, jax.devices("cpu")[0])
+    np.testing.assert_array_equal(actual, data[:, 2:5])
+    assert copies == [5] * 20 + [1]
+
+
+def test_host_row_upload_oversized_view_keeps_fallback(monkeypatch):
+    data = np.ones((5, 7, 13), np.float32)
+    monkeypatch.setattr(host, "_HOST_UPLOAD_BYTES", 3 * 13 * 4 - 1)
+    monkeypatch.setattr(np, "ascontiguousarray", lambda *a, **k: pytest.fail("host copy"))
+    assert host._upload_axial_rows(data, 2, 5, jax.devices("cpu")[0]) is None
+
+
+def test_host_row_upload_host_allocation_failure_keeps_fallback(monkeypatch):
+    data = np.ones((11, 7, 13), np.float32)
+    monkeypatch.setattr(host, "_HOST_UPLOAD_BYTES", 5 * 3 * 13 * 4)
+    contiguous = np.ascontiguousarray
+    calls = []
+
+    def unavailable(value, *args, **kwargs):
+        calls.append(value.shape)
+        if len(calls) == 2:
+            raise MemoryError("host staging quota")
+        return contiguous(value, *args, **kwargs)
+
+    monkeypatch.setattr(np, "ascontiguousarray", unavailable)
+    assert host._upload_axial_rows(data, 2, 5, jax.devices("cpu")[0]) is None
+    assert len(calls) == 2
+
+
+@pytest.mark.gpu
+def test_host_row_upload_honors_target_inside_cpu_context(monkeypatch):
+    if jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    grid, detector, _, data, _ = gaussian()
+    detector, grid = replace(detector, nv=3), replace(grid, nz=3)
+    spectrum = jnp.ones(65, jnp.float32)
+    gpu = next(iter(spectrum.devices()))
+    monkeypatch.setattr(host, "device_free_memory_bytes", lambda: 2**30)
+    with jax.default_device(jax.devices("cpu")[0]):
+        result = host._resident_axial_rows(data, 2, detector, spectrum, grid, 17, native=True)
+    assert result.devices() == {gpu}
+    np.testing.assert_array_equal(result, data[:, 2:5])
