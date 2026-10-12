@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+`RejectViews` computes exact medians of megapixel FP32 detector frames by
+bounded-workspace selection rather than sorting every pixel. Small views and
+other dtypes keep the sorting path; nonfinite behavior and derivatives are
+unchanged.
+CUDA selection uses sampled pivots with full-frame counts, preserving exact
+medians while reducing rank refinements.
+Empty view batches retain empty statistics.
+Raw correction collects the first view-selector's summaries while its batches
+are still on the device, avoiding another transfer of the corrected stack.
+CUDA summary execution overlaps batch downloads; compilation retains the
+caller's JAX configuration and mesh. Tight or unknown GPU allocator budgets
+retain serial summary execution.
+Large CUDA correction batches download directly into the final host array
+when CuPy is installed, avoiding an extra host buffer and copy.
+First-pass device batches and calibration fields are released before the
+remaining host-backed correction steps run.
+Fully downloaded CUDA batches are explicitly released, without waiting for
+garbage collection of DLPack shard aliases; CPU-backed statistics keep their
+shared buffer ownership.
 Memory budgeting honors `jax.default_device` and CPU placement instead of
 always probing the first GPU, without initializing unused accelerators.
 Unavailable accelerator memory statistics remain unknown rather than
