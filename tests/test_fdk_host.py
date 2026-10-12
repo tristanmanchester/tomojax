@@ -95,7 +95,7 @@ def test_host_slabs_reject_invalid_storage_before_writing(invalid):
     np.testing.assert_array_equal(out, 91.0)
 
 
-@pytest.mark.parametrize("mapping", [False, True])
+@pytest.mark.parametrize("mapping", [False, True, "source", "output", "both"])
 def test_host_slabs_reject_overlapping_storage_before_writing(tmp_path, mapping):
     geometry, grid, detector, data = scan()
     shape = (grid.nx, grid.ny, grid.nz)
@@ -103,6 +103,10 @@ def test_host_slabs_reject_overlapping_storage_before_writing(tmp_path, mapping)
         path = tmp_path / "same.bin"
         data = np.memmap(path, mode="w+", dtype=np.float32, shape=data.shape)
         out = np.memmap(path, mode="r+", dtype=np.float32, shape=shape)
+        if mapping in {"source", "both"}:
+            data = np.frombuffer(memoryview(data), dtype=data.dtype).reshape(data.shape)
+        if mapping in {"output", "both"}:
+            out = np.frombuffer(memoryview(out), dtype=out.dtype).reshape(out.shape)
     else:
         storage = np.ones(data.size, np.float32)
         data = storage.reshape(data.shape)
