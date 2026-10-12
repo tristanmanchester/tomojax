@@ -41,7 +41,7 @@ class FBPConfig:
     """Configuration for filtered backprojection.
 
     ``backprojector='auto'`` uses the voxel-driven Pallas kernel on CUDA and JAX
-    otherwise. ``'jax'`` forces the reference; ``'pallas'`` requires CUDA input
+    otherwise. ``'jax'`` forces the reference; ``'pallas'`` requires CUDA execution
     and never silently changes backend.
 
     ``scale=None`` weights each view exactly for the scanned arc (see
@@ -412,8 +412,15 @@ def run_parallel_fbp_direct_pallas(
     padding = max(0, math.ceil(required_radius - (detector.nu - 1) / 2))
     detector = replace(detector, nu=detector.nu + 2 * padding)
     ramp = rfft_filter_array(filter, detector.nu, float(detector.du), jnp.float32)
+    from ._fbp_pallas import filtered_view_batch_size
+
+    T_all = jnp.asarray(T_all, dtype=jnp.float32)
+    batch = _parallel_filter_batch_size(n_views, detector.nv, 2 * (ramp.shape[0] - 1))
+    batch = filtered_view_batch_size(
+        batch, grid=grid, detector=detector, device=next(iter(T_all.devices()))
+    )
     return _run_fbp_streamed(
-        jnp.asarray(T_all, dtype=jnp.float32),
+        T_all,
         jnp.asarray(proj, dtype=jnp.float32),
         jnp.ones((n_views,), jnp.float32),
         jnp.zeros((n_views, 6), jnp.float32),
@@ -422,7 +429,7 @@ def run_parallel_fbp_direct_pallas(
         grid=grid,
         detector=detector,
         backend="pallas",
-        batch_size=_parallel_filter_batch_size(n_views, detector.nv, 2 * (ramp.shape[0] - 1)),
+        batch_size=batch,
         z_mode="integer",
         separable=True,
     )
@@ -517,6 +524,25 @@ class _Plan:
         """
         part, size = slice(views.start, views.stop), self.batch
         put = partial(jax.device_put, device=device)
+        if not self.separable or (self.backend == "pallas" and self.z_mode != "general"):
+            from ._fbp_pallas import fft_2d_view_batch_size, filtered_view_batch_size
+
+            resident = (
+                self.projections
+                if isinstance(self.projections, jax.Array) and self.projections.committed
+                else self.poses
+            )
+            target = device if device is not None else next(iter(put(resident).devices()))
+            if self.separable:
+                size = filtered_view_batch_size(
+                    size, grid=self.grid, detector=self.detector, device=target
+                )
+            else:
+                size = fft_2d_view_batch_size(
+                    size,
+                    fft_shape=(_fft_length(self.detector.nv), 2 * (self.spectrum.shape[0] - 1)),
+                    device=target,
+                )
         options = {
             "grid": self.grid,
             "detector": self.detector,
@@ -543,7 +569,7 @@ class _Plan:
                         self.projections[part],
                         self.view_scale[part],
                         self.params[part],
-                        self.spectrum,
+                        put(self.spectrum),
                         self.arc_length,
                         batch_size=size,
                         **options,
@@ -577,7 +603,9 @@ def _plan(
     else:
         filter_detector = _filter_detector(grid, detector, np.asarray(poses), pad_v=not separable)
     spectrum = rfft_filter_array(cfg.filter, filter_detector.nu, float(detector.du), jnp.float32)
-    n_fft_v = 1 if separable else _fft_length(filter_detector.nv)
+    # Row-wise FFTs keep nv independent rows; a 2D FFT replaces that dimension
+    # with its padded length, rather than multiplying by it again.
+    fft_rows = filter_detector.nv if separable else _fft_length(filter_detector.nv)
     return _Plan(
         poses=poses,
         projections=projections,
@@ -589,9 +617,7 @@ def _plan(
         grid=grid,
         detector=filter_detector,
         backend="pallas" if cuda and cfg.backprojector != "jax" else "jax",
-        batch=_parallel_filter_batch_size(
-            n_views, filter_detector.nv * n_fft_v, 2 * (spectrum.shape[0] - 1)
-        ),
+        batch=_parallel_filter_batch_size(n_views, fft_rows, 2 * (spectrum.shape[0] - 1)),
         z_mode=("integer" if supports_parallel_fbp_z_integer(grid, detector) else "fixed")
         if parallel
         else "general",
@@ -663,16 +689,28 @@ def fbp(
         from ._fbp_detector_grid import fbp_on_detector_grid
 
         return fbp_on_detector_grid(T_all, proj, grid, detector, cfg, det_grid)
+    resident = isinstance(proj, jax.Array) and proj.committed
+    execution_devices = as_devices(cfg.devices) or (proj.devices() if resident else T_all.devices())
     cuda = all(
-        device.platform == "gpu" and device.client.platform_version.lower().startswith("cuda")
-        for device in (T_all.devices() if on_host else proj.devices())
+        device.platform == "gpu"
+        and getattr(getattr(device, "client", None), "platform_version", "")
+        .lower()
+        .startswith("cuda")
+        for device in execution_devices
     )
     if cfg.backprojector == "pallas" and not cuda:
-        raise ValueError("Pallas FBP requires CUDA arrays")
+        raise ValueError("Pallas FBP requires CUDA execution devices")
     plan = _plan(geometry, grid, detector, T_all, proj, cfg, cuda=cuda)
     split = view_split(cfg.devices, n_views)
     whole = range(n_views)
-    acc = plan.backprojected(None, whole) if split is None else split.summed(plan.backprojected)
+    if split is None:
+        device = next(iter(execution_devices))
+        with jax.default_device(device):
+            # Keep a committed distributed input's existing sharding instead
+            # of gathering the whole scan onto this compilation-context device.
+            acc = plan.backprojected(device if len(execution_devices) == 1 else None, whole)
+    else:
+        acc = split.summed(plan.backprojected)
     for _ in progress_iter(range(n_views), total=n_views, desc="FBP: views"):
         pass
     return acc

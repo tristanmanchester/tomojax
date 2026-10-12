@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+Faster: large axial CUDA FBP outputs use larger eight-warp programs for pose
+reuse. Compact, small-output and general-pose launches keep their previous
+layouts; view batches, interpolation and FP32 accumulation are unchanged.
+
+Faster: axial CUDA FBP uses narrower row bands and sizes dense view batches for
+their physical detector span, retaining the FFT workspace limit, allocation
+retry and small/sparse-output batch policy. Interpolation and FP32 precision are
+unchanged; different view batches can alter floating-point association.
+
+Faster: aligned CUDA FBP detector-row addresses use the existing integer-row
+contract directly, preserving contiguous loads for unit strides and exact
+nearest-row sampling for shifted and strided grids.
+
+Faster: axial CUDA FBP keeps masked accumulator addresses affine, restoring
+contiguous memory access without changing interpolation or accumulation. The
+interpret backend retains its padded-row alias protection.
+
+Fixed: parallel FBP uses one execution-device decision for dispatch, compilation
+context and cache sizing. Committed projection arrays retain their device;
+uncommitted arrays follow JAX's caller context, unless devices are explicit.
+
+Fixed: parallel FBP selects its backprojector and places its streamed FFT filter
+on the explicitly requested execution devices, rather than the input storage
+device. CPU-resident input can use explicit CUDA/Pallas, and explicit CPU
+execution uses the JAX reference even when input resides on CUDA.
+
+Faster: parallel GPU FBP reuses horizontal coordinates along axial tiles and
+skips view loops for tiles entirely outside the measured detector rows, retaining
+exact FP32 interpolation, zero extension and accumulation.
+
+Faster: dense axial GPU FBP limits filtered-view batches to the active device's
+L2 cache as well as the FFT workspace budget. Small or mostly off-detector
+outputs keep their existing batches; an unavailable optional CUDA cache query
+leaves the original planner unchanged.
+
+Faster: oblique parallel FBP budgets its rectangular 2D FFT workspace without
+counting the acquired row dimension twice, avoiding needlessly small batches.
+GPU batches also account for the active device's cache-sized real/half-complex
+FFT working set. The existing conservative memory estimate and out-of-memory
+retry remain; unavailable optional cache queries keep memory-budget sizing.
+
 Faster: exact-ray projection loads each cell corner once and integrates one
 spatial derivative for every pose direction (about 2.4x forward and 3x
 gradient on the CPU at 48³); the CUDA cone transpose weights, reorders and
