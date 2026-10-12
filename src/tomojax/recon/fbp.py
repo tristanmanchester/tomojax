@@ -40,14 +40,12 @@ if TYPE_CHECKING:
 class FBPConfig:
     """Configuration for filtered backprojection.
 
-    ``backprojector='auto'`` uses the voxel-driven Pallas kernel on CUDA and JAX
-    otherwise. ``'jax'`` forces the reference; ``'pallas'`` requires CUDA execution
-    and never silently changes backend.
+    ``backprojector='auto'`` uses voxel-driven Pallas on CUDA and JAX otherwise.
+    ``'jax'`` forces the reference; ``'pallas'`` requires CUDA, never falling back.
 
     ``scale=None`` weights each view exactly for the scanned arc (see
-    :func:`fbp`). A number instead weights every view by that constant and
-    filters along u only, the convention before exact weights; ``pi / n`` gives
-    the uniform half-turn result. ``views_per_batch``, ``projector_unroll``,
+    :func:`fbp`). A number gives a constant per-view detector-u ramp weight;
+    ``pi / n`` gives the uniform half-turn result. ``views_per_batch``, ``projector_unroll``,
     ``checkpoint_projector`` and ``gather_dtype`` apply only with an explicit
     ``det_grid``, which uses the ray-model adjoint.
 
@@ -56,12 +54,11 @@ class FBPConfig:
     reducing boundary halos in some truncated scans. This is a prior, not a
     recovery of missing data, and can bias interior attenuation even when
     boundary halos improve; use it only when that assumption is appropriate.
-    Supported for canonical parallel pixels and
-    separable detector-u filters (not cone beams or rolled/oblique filters).
+    Supported for canonical parallel pixels with separable detector-u filters
+    (not cone beams or rolled/oblique filters).
 
-    ``devices`` (one or several JAX devices) shares the views among them: each
-    filters and backprojects its own, weighted for the whole scan, and the
-    volumes are summed on the first. Not with an explicit ``det_grid``.
+    ``devices`` splits views among JAX devices, weighted for the whole scan and
+    summed on the first. Not with an explicit ``det_grid``.
     """
 
     filter: str = "ramp"
@@ -81,11 +78,9 @@ class FBPConfig:
 
 
 def default_fbp_scale(n_views: int) -> float:
-    """Return the uniform half-turn angular weight ``pi / n_views``.
+    """Return ``pi / n_views``, the uniform untilted half-turn angular weight.
 
-    :func:`fbp` derives exact per-view weights by default; this constant is the
-    uniform weight for an untilted half turn and the fallback for scans with too
-    few views to define a rotation.
+    FBP instead derives exact per-view weights unless too few views define a rotation.
     """
     if int(n_views) <= 0:
         raise ValueError("n_views must be positive")
@@ -166,10 +161,9 @@ def _filter_views(
     separable: bool,
     padding: str = "zero",
 ) -> jnp.ndarray:
-    """Pad measured rows to ``detector`` and apply each view's FBP filter.
+    """Pad and filter views: separable scans use a per-view-scaled detector-u ramp.
 
-    Separable scans multiply a 1D ramp along u by a per-view scale. Otherwise the
-    redundancy count N depends on both detector frequencies; see ``_fbp_weights``.
+    Otherwise redundancy depends on both detector frequencies (``_fbp_weights``).
     """
     measured_width = rows.shape[-1]
     rows = _pad_detector(rows, detector)
@@ -346,6 +340,7 @@ def _fbp_from_resident(
     separable: bool,
     z_mode: str = "general",
     check_finite: bool = False,
+    padding: str = "zero",
 ) -> jnp.ndarray:
     """Run an already-budgeted resident slab without a host round trip."""
     if check_finite and not bool(_finite_projections(projections)):
@@ -367,6 +362,7 @@ def _fbp_from_resident(
         batch_size=batch_size,
         z_mode=z_mode,
         separable=separable,
+        padding=padding,
     )
 
 
@@ -388,12 +384,10 @@ def _fbp_from_host(
     padding: str = "zero",
     resident_slab: bool = False,
 ) -> jnp.ndarray:
-    """Stream host projections through the device in fixed-size view batches.
+    """Stream fixed view batches, zero-weight-padding the last to reuse compiled code.
 
-    CUDA may queue two computations with a third prefetched input batch when
-    the additional batch and estimated filtering workspace fit the memory
-    budget. Otherwise one computation and at most two input batches are live.
-    The final batch is padded with zero-weight views, reusing one compiled step.
+    Budgeted CUDA can queue two computations plus one input prefetch; otherwise
+    one computation and at most two input batches stay live.
     """
     if resident_slab:
         assert isinstance(projections, jax.Array)
@@ -411,6 +405,7 @@ def _fbp_from_host(
             separable=separable,
             z_mode=z_mode,
             check_finite=check_finite,
+            padding=padding,
         )
     n = projections.shape[0]
     b = min(batch_size, n)
@@ -547,13 +542,10 @@ def _can_use_direct_parallel_fbp(
 
 
 def _parallel_filter_detector(grid: Grid, detector: Detector) -> Detector:
-    """Keep the zero-extended ramp convolution at every reconstructed voxel.
+    """Retain filtered tails at every reconstructed voxel's detector position.
 
-    Raw samples outside the measured row are zero, but filtered samples are not.
-    Cropping the filter output to the measured detector discards negative tails
-    needed by voxels outside its inscribed field of view. Bound all z rotations
-    of voxel centres, with symmetric padding preserving the acquired coordinates.
-    This does not infer missing attenuation in genuinely truncated acquisitions.
+    Symmetric, coordinate-preserving padding bounds all z rotations, rather than
+    discarding tails outside the measured detector or inferring missing attenuation.
     """
     ox, oy, _ = grid_volume_origin(grid)
     rx = max(abs(ox), abs(ox + (grid.nx - 1) * grid.vx))
@@ -564,11 +556,9 @@ def _parallel_filter_detector(grid: Grid, detector: Detector) -> Detector:
 
 
 def _filter_detector(grid: Grid, detector: Detector, poses: np.ndarray, *, pad_v: bool) -> Detector:
-    """Extend the detector to every view's projected voxel centres.
+    """Retain filtered tails at every view's projected voxel centres.
 
-    Filtered values are nonzero beyond the measured detector. Padding keeps
-    those tails for voxels projecting outside it, as ``_parallel_filter_detector``
-    does for z-axis scans. Rows need padding only for two-dimensional filters.
+    Axial padding is needed only for two-dimensional filters.
     """
     origin = np.asarray(grid_volume_origin(grid), dtype=np.float64)
     far = origin + (np.asarray([grid.nx, grid.ny, grid.nz]) - 1) * [grid.vx, grid.vy, grid.vz]
@@ -586,11 +576,10 @@ def _filter_detector(grid: Grid, detector: Detector, poses: np.ndarray, *, pad_v
 def _view_weights(
     poses: jnp.ndarray, scale: float | None
 ) -> tuple[np.ndarray, np.ndarray, float, bool]:
-    """Return per-view scales, filter parameters, arc length and separability.
+    """Return scales, filter parameters, arc and separability for a fitted circular scan.
 
-    An explicit ``scale`` keeps the uniform weighting: one constant per view
-    times a ramp along u. Otherwise weights are exact for the fitted circular
-    scan; scans with too few views to define one fall back to ``pi / n``.
+    Explicit ``scale`` uses one constant detector-u ramp per view; scans with too
+    few views to define an arc fall back to ``pi / n``.
     """
     n = int(poses.shape[0])
     if scale is None:
@@ -622,10 +611,7 @@ class _Plan:
     padding: str
 
     def backprojected(self, device: Device | None, views: range) -> jnp.ndarray:
-        """The weighted backprojection of ``views``, on ``device`` (JAX's default for None).
-
-        Batches halve after an out-of-memory error until one view fits.
-        """
+        """Backproject ``views`` on ``device`` (None: JAX default), halving batches on OOM."""
         part, size = slice(views.start, views.stop), self.batch
         put = partial(jax.device_put, device=device)
         if not self.separable or (self.backend == "pallas" and self.z_mode != "general"):

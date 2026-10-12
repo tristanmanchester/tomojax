@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from tomojax.geometry import Detector, Grid, ParallelGeometry
-from tomojax.recon import FBPHostConfig, fbp_host
+from tomojax.recon import FBPConfig, FBPHostConfig, fbp_host
 
 host = importlib.import_module("tomojax.recon.fbp_host")
 fbp_module = importlib.import_module("tomojax.recon.fbp")
@@ -26,6 +26,75 @@ def gaussian():
     data = np.broadcast_to(axial[:, None] * profile, (views, nz, n)).astype(np.float32)
     truth = np.exp(-0.5 * (x[:, None, None] ** 2 + x[None, :, None] ** 2) / 16) * axial
     return grid, detector, geometry, data, truth
+
+
+def truncated_gaussian():
+    grid, detector = Grid(48, 48, 7, 1, 1, 1), Detector(24, 7, 1, 1, (-2.3, 0))
+    angles = np.linspace(0, 180, 97, endpoint=False)
+    geometry = ParallelGeometry(grid, detector, angles)
+    x = np.arange(grid.nx) - (grid.nx - 1) / 2
+    z = np.arange(grid.nz) - (grid.nz - 1) / 2
+    u = np.arange(detector.nu) - (detector.nu - 1) / 2 + detector.center[0]
+    theta = np.deg2rad(angles)
+    axial = np.exp(-0.5 * ((z - 0.4) / 3.1) ** 2)
+    centre = 2 * np.cos(theta) + np.sin(theta)
+    profile = np.sqrt(2 * np.pi) * 16 * np.exp(-0.5 * ((u[None] - centre[:, None]) / 16) ** 2)
+    data = (profile[:, None] * axial[None, :, None]).astype(np.float32)
+    truth = np.exp(-0.5 * ((x[:, None, None] - 2) ** 2 + (x[None, :, None] + 1) ** 2) / 16**2)
+    truth = truth * axial
+    return grid, detector, geometry, data, truth
+
+
+@pytest.mark.parametrize("filter_name", ["ramp", "hann", "shepp-logan"])
+@pytest.mark.parametrize("padding", ["zero", "edge"])
+def test_resident_loop_preserves_endpoint_prior(monkeypatch, filter_name, padding):
+    grid, detector, geometry, data, truth = truncated_gaussian()
+    config = FBPHostConfig(
+        slices_per_batch=3,
+        views_per_batch=17,
+        backprojector="jax",
+        filter=filter_name,
+        padding=padding,
+    )
+    expected = fbp_host(geometry, grid, detector, data, config=config)
+    original = host._fbp_from_host
+
+    def resident(poses, rows, *args, **kwargs):
+        kwargs["resident_slab"] = True
+        return original(poses, jax.device_put(rows[:]), *args, **kwargs)
+
+    monkeypatch.setattr(host, "_fbp_from_host", resident)
+    actual = fbp_host(geometry, grid, detector, data, config=config)
+    np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=2e-6)
+    assert abs(np.linalg.norm(actual - truth) - np.linalg.norm(expected - truth)) < 2e-5
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("filter_name", ["ramp", "hann", "shepp-logan"])
+@pytest.mark.parametrize("padding", ["zero", "edge"])
+def test_public_resident_output_preserves_endpoint_prior(monkeypatch, filter_name, padding):
+    if jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    import tomojax as tj
+
+    grid, detector, geometry, data, truth = truncated_gaussian()
+    config = FBPConfig(filter=filter_name, padding=padding)
+    expected = tj.reconstruct(tj.Scan(data, geometry), config=config).volume
+    calls = []
+    original = fbp_module._fbp_from_resident
+
+    def resident(*args, **kwargs):
+        calls.append(kwargs.get("padding", "zero"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(fbp_module, "_fbp_from_resident", resident)
+    monkeypatch.setattr(host, "device_free_memory_bytes", lambda: 2**30)
+    out = np.empty((grid.nx, grid.ny, grid.nz), np.float32, order="F")
+    result = tj.reconstruct(tj.Scan(jax.device_put(data), geometry), config=config, out=out)
+    assert result.volume is out and result.info["config"].padding == padding
+    assert calls == [padding]
+    np.testing.assert_allclose(out, np.asarray(expected), rtol=2e-6, atol=2e-6)
+    assert abs(np.linalg.norm(out - truth) - np.linalg.norm(np.asarray(expected) - truth)) < 2e-5
 
 
 @pytest.mark.parametrize("batch", [17, 32, 64])
