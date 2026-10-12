@@ -139,7 +139,9 @@ def fbp_host(
     depth = _axial_depth(grid.nz, slices)
     local_grid, local_detector, first, step, packed = _slab_layout(grid, detector, depth)
     rows = local_detector.nv
-    ramp = rfft_filter_array(cfg.filter, local_detector.nu, detector.du, jnp.float32)
+    ramp = rfft_filter_array(
+        cfg.filter, local_detector.nu, detector.du, jnp.float32, source_nu=projections.shape[2]
+    )
     output = validate_host_arrays(projections, out, shape)
     host_poses = np.asarray(poses, np.float32)
     params = np.zeros((n_views, 6), np.float32)
@@ -196,7 +198,13 @@ def _general_slabs(
     view_scale, params, arc_length, separable = _view_weights(poses, cfg.scale)
     host_poses = np.asarray(poses, np.float32)
     detector_f = _filter_detector(grid, detector, host_poses, pad_v=not separable)
-    spectrum = rfft_filter_array(cfg.filter, detector_f.nu, detector.du, jnp.float32)
+    spectrum = rfft_filter_array(
+        cfg.filter,
+        detector_f.nu,
+        detector.du,
+        jnp.float32,
+        source_nu=projections.shape[2] if separable else None,
+    )
     batch = min(views, projections.shape[0])
     if slices is None:
         # Filtering workspace: padded real batch plus its complex spectrum.

@@ -333,7 +333,7 @@ def _filter_and_backproject(
     # Axial interpolation commutes with the separable u filter. Keep compact
     # FFTs on the existing path: an extra gather needs a launch and workspace.
     # Use the same conservative FFT-byte estimate as the view-batch planner.
-    filtering_bytes = 16 * rows.shape[0] * detector.nv * (2 * (spectrum.shape[0] - 1))
+    filtering_bytes = 16 * rows.shape[0] * detector.nv * _fft_length(detector.nu)
     if (
         backend == "pallas"
         and separable
@@ -504,7 +504,9 @@ def run_parallel_fbp_direct_pallas(
     required_radius = np.max(np.abs(coordinates - detector.center[0])) / detector.du
     padding = max(0, math.ceil(required_radius - (detector.nu - 1) / 2))
     detector = replace(detector, nu=detector.nu + 2 * padding)
-    ramp = rfft_filter_array(filter, detector.nu, float(detector.du), jnp.float32)
+    ramp = rfft_filter_array(
+        filter, detector.nu, float(detector.du), jnp.float32, source_nu=proj.shape[2]
+    )
     return _run_fbp_streamed(
         jnp.asarray(T_all, dtype=jnp.float32),
         jnp.asarray(proj, dtype=jnp.float32),
@@ -515,7 +517,7 @@ def run_parallel_fbp_direct_pallas(
         grid=grid,
         detector=detector,
         backend="pallas",
-        batch_size=_parallel_filter_batch_size(n_views, detector.nv, 2 * (ramp.shape[0] - 1)),
+        batch_size=_parallel_filter_batch_size(n_views, detector.nv, _fft_length(detector.nu)),
         z_mode="integer",
         separable=True,
     )
@@ -669,7 +671,13 @@ def _plan(
         filter_detector = _parallel_filter_detector(grid, detector)
     else:
         filter_detector = _filter_detector(grid, detector, np.asarray(poses), pad_v=not separable)
-    spectrum = rfft_filter_array(cfg.filter, filter_detector.nu, float(detector.du), jnp.float32)
+    spectrum = rfft_filter_array(
+        cfg.filter,
+        filter_detector.nu,
+        float(detector.du),
+        jnp.float32,
+        source_nu=projections.shape[2] if separable else None,
+    )
     n_fft_v = 1 if separable else _fft_length(filter_detector.nv)
     return _Plan(
         poses=poses,
@@ -682,8 +690,10 @@ def _plan(
         grid=grid,
         detector=filter_detector,
         backend="pallas" if cuda and cfg.backprojector != "jax" else "jax",
+        # Preserve the conservative output-width batch bound: a shorter FFT
+        # does not make a larger filtered view stack cache-resident.
         batch=_parallel_filter_batch_size(
-            n_views, filter_detector.nv * n_fft_v, 2 * (spectrum.shape[0] - 1)
+            n_views, filter_detector.nv * n_fft_v, _fft_length(filter_detector.nu)
         ),
         z_mode=("integer" if supports_parallel_fbp_z_integer(grid, detector) else "fixed")
         if parallel

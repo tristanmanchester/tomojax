@@ -216,7 +216,7 @@ def test_pre_filter_packing_keeps_compact_general_and_reference_paths(
 ):
     implementation = importlib.import_module("tomojax.recon.fbp")
     grid = Grid(17, 15, 16, 1.0, 1.0, 2.5)
-    detector = Detector(512, nv, 1.0, 1.0)
+    detector = Detector(4096, nv, 1.0, 1.0)
     calls = []
 
     def filter_rows(rows, *args, detector, separable):
@@ -233,7 +233,7 @@ def test_pre_filter_packing_keeps_compact_general_and_reference_paths(
     monkeypatch.setattr(implementation, "_backproject_into", backproject)
     sizes = (
         jax.ShapeDtypeStruct((views, 4, 4), jnp.float32),
-        jax.ShapeDtypeStruct((views, nv, 512), jnp.float32),
+        jax.ShapeDtypeStruct((views, nv, 4096), jnp.float32),
         jax.ShapeDtypeStruct((views,), jnp.float32),
         jax.ShapeDtypeStruct((views, 6), jnp.float32),
         jax.ShapeDtypeStruct((4097,), jnp.float32),
@@ -253,6 +253,6 @@ def test_pre_filter_packing_keeps_compact_general_and_reference_paths(
         )
     expected_rows = grid.nz if packed else nv
     assert calls == [
-        ("filter", (views, expected_rows, 512), expected_rows),
-        ("integer" if packed else mode, (views, expected_rows, 512), expected_rows),
+        ("filter", (views, expected_rows, 4096), expected_rows),
+        ("integer" if packed else mode, (views, expected_rows, 4096), expected_rows),
     ]

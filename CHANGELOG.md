@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+FBP shortens ramp/Hann FFTs when the measured detector is narrower than the
+required filter output, preserving exterior convolution tails and existing
+view-batch and axial-packing decisions.
+Shepp--Logan now uses its analytic Nyquist-bandlimited spatial kernel rather
+than a padded-extent-dependent sinc approximation, so its FFTs can retain
+the same finite-support savings too.
+
 Host FBP packs aligned axial downsampling into its slabs, transferring and
 filtering only the requested detector rows rather than all intervening rows.
 Voxel coordinates, angular weights and the reconstruction are unchanged.
