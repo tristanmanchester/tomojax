@@ -57,7 +57,8 @@ for loading frames and choosing steps.
 `Stripes(..., varying=True)` fits gain and offset only at pixels whose
 view-to-view differences are anomalous. Unselected centred features are
 preserved, but their constant-offset stripes are left too; sparse views or
-sharp moving edges can cause false detections, and dead pixels are not repaired.
+sharp moving edges can cause false detections. Selected dead pixels receive
+only the neighbouring mean; their missing angular information is not recovered.
 
 ## Dependencies
 

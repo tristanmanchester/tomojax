@@ -117,8 +117,9 @@ class Stripes(Step):
     features, but does not remove ordinary constant-offset stripes there.
     Detection compares adjacent-view differences with neighbouring columns;
     it needs sufficiently sampled, noisy views, and sharp moving edges can
-    cause false detections. It cannot recover an unresponsive pixel or
-    distinguish a real feature from a defect at an already selected pixel.
+    cause false detections. Selected unresponsive pixels receive only the
+    neighbouring mean: their missing angular information is not recovered.
+    It cannot distinguish a real feature from a defect at a selected pixel.
     """
 
     domain: ClassVar[Domain] = "line integrals"
@@ -406,9 +407,14 @@ def _stripe_response(row: jax.Array, width: int) -> jax.Array:
     dx, dy = ranked - xmean, target - ymean
     variance = jnp.sum(dx * dx, axis=0)
     gain = jnp.sum(dx * dy, axis=0) / jnp.where(variance > 0, variance, 1)
-    selected = bad & (variance > 0)
-    gain = jnp.where(selected, gain, 1)
-    bias = jnp.where(selected, ymean - gain * xmean, 0)
+    # A saturated core has no angular information to fit, but still needs
+    # its mean offset restored. Leaving it unchanged while correcting its
+    # shoulders creates a sharper stripe. Keep unit gain there rather than
+    # inventing view dependence; noise also detects nonzero constant columns
+    # whose floating-point mean can leave a spurious nonzero variance.
+    responsive = (noise > 0) & (variance > 0)
+    gain = jnp.where(bad & responsive, gain, 1)
+    bias = jnp.where(bad, ymean - gain * xmean, 0)
     return jnp.stack((gain, bias))
 
 

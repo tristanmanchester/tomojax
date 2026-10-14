@@ -30,6 +30,13 @@ def test_varying_response_preserves_centred_absorption(width: int) -> None:
     difference = np.asarray(correct(measured + feature)) - actual
     np.testing.assert_allclose(difference, np.broadcast_to(feature, measured.shape), atol=2e-6)
     np.testing.assert_array_equal(correct(measured[..., ::-1])[..., ::-1], actual)
+    for level in (0.0, 0.4):
+        saturated = measured.copy()
+        saturated[..., 38] = level
+        repaired = np.asarray(correct(saturated))
+        assert np.linalg.norm(repaired - truth) < np.linalg.norm(saturated - truth)
+        assert np.max(np.ptp(repaired[..., 38], axis=0)) == 0
+        np.testing.assert_allclose(repaired[..., 38].mean(0), truth[..., 38].mean(0), rtol=0.1)
     for views in (1, 2, 10):
         constant = np.ones((views, 2, 17), dtype=np.float32)
         np.testing.assert_array_equal(correct(constant), constant)
