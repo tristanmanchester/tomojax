@@ -332,9 +332,31 @@ def test_axial_decimation_recovers_independent_gaussian_attenuation(stride, firs
     assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.01
 
 
-def test_host_streamer_waits_before_queuing_more_input_batches(monkeypatch):
+@pytest.mark.parametrize(
+    ("backend", "free", "window"),
+    [
+        ("jax", 2**30, 1),
+        ("pallas", None, 1),
+        ("pallas", 1, 1),
+        ("pallas", "ten_percent", 1),
+        ("pallas", "five_percent", 2),
+        ("pallas", 2**30, 2),
+    ],
+)
+@pytest.mark.parametrize("separable", [True, False])
+def test_host_streamer_waits_before_queuing_more_input_batches(
+    monkeypatch, backend, free, window, separable
+):
+    import tomojax.backends
+
     module = importlib.import_module("tomojax.recon.fbp")
     grid, detector, _, data = scan()
+    batch_bytes = 4 * 2 * (np.prod(data.shape[1:]) + 16 + 6 + 1)
+    fft_rows = detector.nv if separable else module._fft_length(detector.nv)
+    batch_bytes += 16 * 2 * fft_rows * (33 + detector.nu)
+    if isinstance(free, str):
+        free = batch_bytes * (20 if free == "five_percent" else 10)
+    monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: free)
     events = []
     pending = []
 
@@ -353,7 +375,7 @@ def test_host_streamer_waits_before_queuing_more_input_batches(monkeypatch):
             self.ready = True
 
     def step(accum, *args, **kwargs):
-        if pending:
+        if pending and len(pending) % window == 0:
             assert accum.ready
         current = PendingVolume(len(pending))
         events.append(("step", current.index))
@@ -370,11 +392,11 @@ def test_host_streamer_waits_before_queuing_more_input_batches(monkeypatch):
         0,
         grid=grid,
         detector=detector,
-        backend="jax",
+        backend=backend,
         batch_size=2,
-        separable=True,
+        separable=separable,
     )
-    assert events == [
+    expected = [
         ("read", 0),
         ("step", 0),
         ("read", 2),
@@ -384,6 +406,9 @@ def test_host_streamer_waits_before_queuing_more_input_batches(monkeypatch):
         ("ready", 1),
         ("step", 2),
     ]
+    if window == 2:
+        expected.remove(("ready", 0))
+    assert events == expected
 
 
 @pytest.mark.parametrize("invalid", [np.nan, np.inf, 1e100])
@@ -488,7 +513,7 @@ def test_host_slabs_reject_nonfinite_samples(tilted):
         fbp_host(geometry, grid, detector, data)
 
 
-@pytest.mark.parametrize("invalid", ["dtype", "shape", "readonly", "device_input"])
+@pytest.mark.parametrize("invalid", ["dtype", "shape", "readonly"])
 def test_host_slabs_reject_incompatible_storage(invalid):
     grid, detector, geometry, data = scan()
     out = np.empty((grid.nx, grid.ny, grid.nz), dtype=np.float32)
@@ -498,8 +523,6 @@ def test_host_slabs_reject_incompatible_storage(invalid):
         out = out[:, :, :-1]
     elif invalid == "readonly":
         out.flags.writeable = False
-    else:
-        data = jax.device_put(data)
     with pytest.raises((ValueError, TypeError), match="fbp_host"):
         fbp_host(geometry, grid, detector, data, out=out)
 

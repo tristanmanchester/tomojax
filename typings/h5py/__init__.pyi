@@ -21,10 +21,12 @@ class AttributeManager(MutableMapping[str, object]):
 class Dataset:
     attrs: AttributeManager
     shape: tuple[int, ...]
+    chunks: tuple[int, ...] | None
     ndim: int
     size: int | None
     dtype: np.dtype[Any]
     def __getitem__(self, key: object) -> object: ...
+    def __setitem__(self, key: object, value: object) -> None: ...
     def astype(self, dtype: DTypeLike) -> Dataset: ...
 
 class Group:

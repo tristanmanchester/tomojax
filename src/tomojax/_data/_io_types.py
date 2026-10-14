@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import numpy as np
 
@@ -10,6 +10,9 @@ from tomojax.core.geometry.base import Detector, DetectorDict, Grid, GridDict
 from tomojax.geometry.api import DISK_VOLUME_AXES
 
 from ._io_frames import Hdf5Frames
+
+if TYPE_CHECKING:
+    import jax
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 
@@ -58,7 +61,7 @@ class NXTomoMetadata:
     detector: Detector | DetectorDict | None = None
     geometry_type: str = "parallel"
     geometry_meta: JsonObject | None = None
-    volume: np.ndarray | None = None
+    volume: np.ndarray | jax.Array | None = None
     align_params: np.ndarray | None = None
     align_gauge: JsonObject | None = None
     geometry_calibration: JsonObject | None = None

@@ -457,7 +457,7 @@ def _describe_segments(
 
 
 def record_of(scan: Scan, *, grid: Grid | None = None) -> ProjectionDataset:
-    """A dataset record for ``scan``: its geometry, keeping the source's provenance."""
+    """Record scan geometry/provenance while borrowing its unchanged projection storage."""
     from tomojax.io import ProjectionDataset
 
     geometry_type, meta, poses, _ = describe(scan.geometry)
@@ -472,7 +472,7 @@ def record_of(scan: Scan, *, grid: Grid | None = None) -> ProjectionDataset:
         }
     )
     fields: dict[str, Any] = {
-        "projections": np.asarray(scan.projections),
+        "projections": scan.projections,
         "angles": scan.angles.astype(np.float32),
         "volume": None,
         "detector": scan.detector,

@@ -174,6 +174,7 @@ def tomojax.reconstruct(
         method: 'Method' = 'fbp',
         *,
         grid: 'Grid | None' = None,
+        out: 'np.ndarray | None' = None,
         config: 'MethodConfig | None' = None,
         filter: 'str | None' = None,
         iterations: 'int | None' = None,
@@ -449,10 +450,10 @@ def tomojax.recon.fbp(
         det_grid: 'tuple[jnp.ndarray, jnp.ndarray] | None' = None,
     ) -> 'jnp.ndarray'
 def tomojax.recon.fbp_host(
-        geometry: 'ParallelGeometry',
+        geometry: 'Geometry',
         grid: 'Grid',
         detector: 'Detector',
-        projections: 'np.ndarray',
+        projections: 'np.ndarray | jnp.ndarray',
         *,
         config: 'FBPHostConfig | None' = None,
         out: 'np.ndarray | None' = None,
@@ -516,9 +517,9 @@ def tomojax.recon.spdhg_tv(
 
 # tomojax.io
 class tomojax.io.ProjectionDataset(
-        projections: 'np.ndarray',
+        projections: 'np.ndarray | jax.Array',
         angles: 'np.ndarray',
-        volume: 'np.ndarray | None' = None,
+        volume: 'np.ndarray | jax.Array | None' = None,
         detector: 'Detector | None' = None,
         grid: 'Grid | None' = None,
         geometry_type: 'str' = 'parallel',

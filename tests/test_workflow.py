@@ -153,6 +153,8 @@ def test_scans_and_reconstructions_round_trip_through_files(kind: str, tmp_path:
         assert loaded.geometry.beam == geometry.beam  # pyright: ignore[reportAttributeAccessIssue]
     recon = tj.reconstruct(loaded)
     tj.save(tmp_path / "recon.nxs", recon)
+    with h5py.File(tmp_path / "recon.nxs") as handle:
+        assert handle["entry/processing/tomojax/volume"].attrs["long_name"] == "volume"
     back = tj.load_reconstruction(tmp_path / "recon.nxs")
     np.testing.assert_allclose(back.volume, np.asarray(recon.volume), rtol=1e-6, atol=1e-6)
     assert back.method == "fbp" and back.grid == recon.grid

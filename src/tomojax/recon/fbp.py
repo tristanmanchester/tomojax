@@ -416,9 +416,14 @@ def _fbp_accumulate_batch(
     )
 
 
-def _fbp_from_host(
+@jax.jit
+def _finite_projections(projections: jax.Array) -> jax.Array:
+    return jnp.all(jnp.isfinite(projections))
+
+
+def _fbp_from_resident(
     poses: np.ndarray,
-    projections: np.ndarray | ProjectionRows,
+    projections: jax.Array,
     view_scale: np.ndarray,
     params: np.ndarray,
     spectrum: jnp.ndarray,
@@ -432,15 +437,87 @@ def _fbp_from_host(
     z_mode: str = "general",
     check_finite: bool = False,
 ) -> jnp.ndarray:
+    """Run an already-budgeted resident slab without a host round trip."""
+    if check_finite and not bool(_finite_projections(projections)):
+        raise ValueError("fbp_host: projections must be finite in FP32")
+    device = next(iter(spectrum.devices()))
+    metadata = [
+        jax.device_put(np.asarray(a, np.float32), device) for a in (poses, view_scale, params)
+    ]
+    return _run_fbp_streamed(
+        metadata[0],
+        projections,
+        metadata[1],
+        metadata[2],
+        spectrum,
+        jnp.float32(arc_length),
+        grid=grid,
+        detector=detector,
+        backend=backend,
+        batch_size=batch_size,
+        z_mode=z_mode,
+        separable=separable,
+    )
+
+
+def _fbp_from_host(
+    poses: np.ndarray,
+    projections: np.ndarray | jax.Array | ProjectionRows,
+    view_scale: np.ndarray,
+    params: np.ndarray,
+    spectrum: jnp.ndarray,
+    arc_length: float,
+    *,
+    grid: Grid,
+    detector: Detector,
+    backend: str,
+    batch_size: int,
+    separable: bool,
+    z_mode: str = "general",
+    check_finite: bool = False,
+    resident_slab: bool = False,
+) -> jnp.ndarray:
     """Stream host projections through the device in fixed-size view batches.
 
-    Only the output volume, two batches and one filtering workspace occupy the
-    device. The final batch is padded with zero-weight views so every batch
-    reuses one compiled step, and the next batch is read and transferred while
-    the current one runs.
+    CUDA may queue two computations with a third prefetched input batch when
+    the additional batch and estimated filtering workspace fit the memory
+    budget. Otherwise one computation and at most two input batches are live.
+    The final batch is padded with zero-weight views, reusing one compiled step.
     """
+    if resident_slab:
+        assert isinstance(projections, jax.Array)
+        return _fbp_from_resident(
+            poses,
+            projections,
+            view_scale,
+            params,
+            spectrum,
+            arc_length,
+            grid=grid,
+            detector=detector,
+            backend=backend,
+            batch_size=batch_size,
+            separable=separable,
+            z_mode=z_mode,
+            check_finite=check_finite,
+        )
     n = projections.shape[0]
     b = min(batch_size, n)
+    compute_window = 1
+    if backend == "pallas" and n > b:
+        from tomojax.backends import device_free_memory_bytes
+
+        free = device_free_memory_bytes()
+        per_view = (
+            math.prod(projections.shape[1:])
+            + math.prod(poses.shape[1:])
+            + math.prod(params.shape[1:])
+            + 1  # Angular scale.
+        )
+        fft_rows = detector.nv if separable else _fft_length(detector.nv)
+        workspace = 16 * b * fft_rows * (spectrum.shape[0] + detector.nu)
+        if free is not None and 4 * b * per_view + workspace <= 0.05 * free:
+            compute_window = 2
 
     def batch(start: int) -> tuple[jnp.ndarray, ...]:
         stop = min(start + b, n)
@@ -475,10 +552,10 @@ def _fbp_from_host(
         )
         if start + b < n:
             pending = batch(start + b)
-            # Prefetch overlaps this step, but do not enqueue another compute
-            # step until it finishes: asynchronous submissions can otherwise
-            # retain an unbounded number of input batches on the device.
-            accum.block_until_ready()
+            # Bound submitted work while overlapping transfers. Previous
+            # accumulators were donated, so wait only on the latest result.
+            if (start // b + 1) % compute_window == 0:
+                accum.block_until_ready()
     return accum
 
 
