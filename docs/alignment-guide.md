@@ -217,32 +217,17 @@ views.
 
 ## Calibrate the detector centre
 
-For an unposed axial parallel scan covering a half-turn, start with the
-projection-only estimator if you do not need iterative alignment:
+For an unposed axial parallel scan covering a half-turn, `tj.estimate_center`
+gives a projection-only estimate with no volume solve:
 
 ```python
-import tomojax as tj
-
-scan = tj.load_frames("raw.nxs").corrected()
-scan = tj.estimate_center(scan)
+scan = tj.estimate_center(tj.load_frames("raw.nxs").corrected())
 recon = tj.reconstruct(scan)
-tj.save("reconstruction.nxs", recon)
 ```
 
-Choose any required correction steps before estimating the centre; the example
-only applies flat/dark correction and the logarithm. `estimate_center` uses up
-to three detector rows and returns a new `Scan`, without reconstructing or
-shifting pixels. Its `detector.center[0]` is an **absolute physical detector-u
-coordinate**, not a pixel column or a correction to add to the same scan.
-Projections, the reconstruction grid and detector-v remain unchanged.
-
-This Fourier estimate can have false minima for compact objects and can be
-biased by motion, truncation or uncorrected lens distortion. Check representative
-reconstructions and other row bands; a plausible number is not a calibration.
-For a cropped/binned preview, transfer the **change** in physical detector-u to
-the original scan: add `estimated_preview.detector.center[0] -
-preview.detector.center[0]` to the original detector-u. Do not copy the preview's
-absolute centre or multiply the change by its binning factor again.
+It returns a new `Scan` whose `detector.center[0]` is the absolute physical
+detector-u coordinate, estimated from up to three detector rows. The Fourier
+metric can have false minima for compact objects, so check the reconstruction.
 
 Use `cor` mode when the main problem is a detector-u or centre-of-rotation
 offset rather than sample motion:
@@ -260,45 +245,6 @@ misjudges the offset, so use `cor-then-pose` when the sample also moves. The
 
 To compare trial centres by eye instead, see the
 [quickstart](quickstart.md#reconstruct-and-inspect-slices).
-
-For an axial parallel scan, a narrow, binned preview can reduce the cost.
-Apply lens correction before cropping the preview (or retain its measured
-source halo). Cropping and binning retain the scan's output grid, so give
-alignment an explicit preview grid:
-
-```python
-from dataclasses import replace
-
-row = scan.detector.nv // 2 - 2
-preview = scan.cropped(slice(row, row + 4), slice(None)).binned(4)
-d = preview.detector
-region = tj.Grid(d.nu, d.nu, 1, d.du, d.du, d.dv, vol_center=(0, 0, d.center[1]))
-result = tj.align(preview, mode="cor", grid=region)
-
-# Transfer the fitted change in physical lengths, not preview pixels.
-# Cropping columns or dropping an incomplete bin moves the preview's origin.
-delta_u = result.scan.detector.center[0] - preview.detector.center[0]
-detector = replace(
-    scan.detector,
-    center=(scan.detector.center[0] + delta_u, scan.detector.center[1]),
-)
-scan = replace(scan, geometry=replace(scan.geometry, detector=detector))
-recon = tj.reconstruct(scan)  # retains the full scan's grid and projections
-```
-
-Do not multiply this change by the preview's binning factor again. Copying
-the preview's absolute centre directly is valid only if its detector origin
-has not moved.
-Check it on another row band and at finer resolution. For a sample wider
-than the detector, density outside the preview grid can bias the fitted
-centre even while the held-out residual decreases. Compare wider XY support
-at the same voxel pitch and physical centre; this does not recover the
-unmeasured exterior or guarantee a calibrated axis.
-
-Changing grid support also changes the inner reconstruction problem. Check
-the estimated centre as that reconstruction converges, rather than assuming
-the same iteration count is equally accurate on every grid. A stable centre
-or a lower residual is not independent calibration.
 
 ## Estimate a detector offset together with motion
 

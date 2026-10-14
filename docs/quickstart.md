@@ -262,15 +262,6 @@ for u_px in (-4, -2, 0, 2, 4):
     tj.save(f"cor{u_px:+d}.nxs", tj.reconstruct(trial))
 ```
 
-For a parallel-beam scan, if the beamline reports a rotation-axis column `c`,
-counted from zero at the first pixel centre, its detector offset is
-`((d.nu - 1) / 2 - c) * d.du`.
-The column may be fractional; it is not the detector offset itself. After
-averaging blocks of `f` pixels starting at column zero, that same axis is at
-column `(c - (f - 1) / 2) / f`, not simply `c / f`. `scan.binned(f)` updates
-the physical detector geometry automatically; do not apply another shift.
-These detector-axis conversions do not change the reconstruction grid's origin.
-
 If the projections or the volume are larger than GPU memory, see
 [large scans and several GPUs](large-scans.md).
 
