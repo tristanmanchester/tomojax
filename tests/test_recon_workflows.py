@@ -425,3 +425,25 @@ def test_segmented_warm_start_rejects_invalid_scans(monkeypatch, case, views, me
             np.zeros((views, 10, 12), np.float32),
             warm_start=True,
         )
+
+
+@pytest.mark.parametrize("host", [False, True])
+def test_edge_padding_refuses_cone_beams_on_both_storage_paths(monkeypatch, host):
+    from tomojax import backends
+
+    grid, detector, parallel = _tiny_geometry()
+    geometry = tj.ConeGeometry(grid, detector, parallel.angles, tj.ConeBeam(20, 40))
+    scan = tj.Scan(np.ones((4, 4, 4), np.float32), geometry)
+    monkeypatch.setattr(backends, "device_free_memory_bytes", lambda: 0 if host else 2**40)
+    with pytest.raises(ValueError, match="edge padding requires canonical parallel"):
+        tj.reconstruct(scan, config=FBPConfig(padding="edge"))
+
+
+def test_public_edge_padding_result_carries_its_assumption():
+    grid, detector, geometry = _tiny_geometry()
+    scan = tj.Scan(np.ones((4, 4, 4), np.float32), geometry)
+    result = tj.reconstruct(scan, config=FBPConfig(padding="edge"))
+    assert result.info["config"].padding == "edge"
+    assert result.scan.geometry == geometry
+    assert result.volume.shape == (grid.nx, grid.ny, grid.nz)
+    np.testing.assert_array_equal(result.volume, 0)

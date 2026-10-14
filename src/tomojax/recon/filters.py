@@ -138,12 +138,41 @@ def rfft_filter_array(
     return jnp.asarray(Hr_np, dtype=dtype)
 
 
-def fft_filter_rows(rows: jnp.ndarray, rfft_filter: jnp.ndarray) -> jnp.ndarray:
-    """Zero-pad detector rows, filter, and crop to prevent circular wraparound."""
+def fft_filter_rows(
+    rows: jnp.ndarray, rfft_filter: jnp.ndarray, *, edge_width: int | None = None
+) -> jnp.ndarray:
+    """Filter zero-extended rows, optionally continuing measured endpoints to infinity.
+
+    ``edge_width`` is the measured width of symmetrically zero-padded ``rows``.
+    Its endpoints supply constant exterior line integrals. Boundary-tail sums
+    compensate the zero-extended convolution without extra detector/FFT storage.
+    The ramp has zero infinite DC: symmetry fixes each half-sum to ``-h[0]/2``.
+    The same completion is used for the smoothed finite discrete filters.
+    """
     nu = int(rows.shape[-1])
     n_fft = 2 * (int(rfft_filter.shape[0]) - 1)
+    pad = 0 if edge_width is None else (nu - edge_width) // 2
+    index = jnp.arange(nu) - pad
+    if edge_width is not None:
+        # The infinite ramp annihilates a constant. Remove the left endpoint
+        # before the FFT, avoiding cancellation between large finite-row and
+        # boundary responses (and preserving constant rows exactly).
+        rows = jnp.where((index >= 0) & (index < edge_width), rows - rows[..., pad, None], 0)
     F = jnp.fft.rfft(rows, n=n_fft, axis=-1)
-    return jnp.fft.irfft(F * rfft_filter, n=n_fft, axis=-1)[..., :nu]
+    filtered = jnp.fft.irfft(F * rfft_filter, n=n_fft, axis=-1)[..., :nu]
+    if edge_width is None:
+        return filtered
+    impulse = jnp.fft.irfft(rfft_filter, n=n_fft)
+    cumulative = jnp.concatenate([jnp.zeros((1,), impulse.dtype), jnp.cumsum(impulse[1:nu])])
+    tails = -0.5 * impulse[0] - cumulative
+
+    def tail_at(index: jnp.ndarray) -> jnp.ndarray:
+        # sum_{k > i} h[k], with h even and its infinite sum zero.
+        distance = jnp.where(index < 0, -index - 1, index)
+        return jnp.where(index < 0, -1.0, 1.0) * tails[distance]
+
+    right = rows[..., nu - pad - 1, None] * tail_at(edge_width - 1 - index)
+    return filtered + right
 
 
 def clear_filter_caches() -> None:

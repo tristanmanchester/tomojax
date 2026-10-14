@@ -325,6 +325,7 @@ class tomojax.recon.ConeAxisConfig(
 class tomojax.recon.FBPConfig(
         *,
         filter: 'str' = 'ramp',
+        padding: "Literal['zero', 'edge']" = 'zero',
         scale: 'float | None' = None,
         views_per_batch: 'int' = 1,
         projector_unroll: 'int' = 1,
@@ -338,6 +339,7 @@ class tomojax.recon.FBPHostConfig(
         slices_per_batch: 'int | None' = None,
         views_per_batch: 'int' = 32,
         filter: 'str' = 'ramp',
+        padding: "Literal['zero', 'edge']" = 'zero',
         scale: 'float | None' = None,
         backprojector: "Literal['auto', 'jax', 'pallas']" = 'auto',
     ) -> None

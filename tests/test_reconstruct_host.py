@@ -24,13 +24,14 @@ def _scan(kind):
 
 @pytest.mark.parametrize("kind", ["parallel", "lamino"])
 @pytest.mark.parametrize("device_input", [False, True])
+@pytest.mark.parametrize("padding", ["zero", "edge"])
 def test_public_reconstruction_uses_host_slabs_without_changing_values(
-    monkeypatch, kind, device_input
+    monkeypatch, kind, device_input, padding
 ):
     scan = _scan(kind)
     if device_input:
         scan = replace(scan, projections=jax.device_put(scan.projections))
-    cfg = FBPConfig(filter="hann", scale=0.17)
+    cfg = FBPConfig(filter="hann", scale=0.17, padding=padding)
     expected = np.asarray(tj.reconstruct(scan, config=cfg).volume)
     monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: 4096)
     actual = tj.reconstruct(scan, config=cfg)

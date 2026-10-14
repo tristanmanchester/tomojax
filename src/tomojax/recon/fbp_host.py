@@ -68,12 +68,14 @@ class FBPHostConfig:
     two output slabs on the device, plus one staging slab for packed transfers.
     Runtime/compiler caches add memory beyond
     these arrays. ``scale`` has the
-    same meaning as in :class:`FBPConfig`.
+    same meaning as in :class:`FBPConfig`. So does ``padding``: ``'edge'``
+    assumes constant exterior endpoint values instead of zero attenuation.
     """
 
     slices_per_batch: int | None = None
     views_per_batch: int = 32
     filter: str = "ramp"
+    padding: Literal["zero", "edge"] = "zero"
     scale: float | None = None
     backprojector: Literal["auto", "jax", "pallas"] = "auto"
 
@@ -190,6 +192,8 @@ def fbp_host(
     require_parallel_beam(geometry, "fbp_host")
     projections = host_projection_input(projections)
     cfg = FBPHostConfig() if config is None else config
+    if cfg.padding not in {"zero", "edge"}:
+        raise ValueError("fbp_host: padding must be 'zero' or 'edge'")
     slices = None if cfg.slices_per_batch is None else operator.index(cfg.slices_per_batch)
     views = operator.index(cfg.views_per_batch)
     if (slices is not None and slices < 1) or views < 1:
@@ -215,8 +219,10 @@ def fbp_host(
     depth = _axial_depth(grid.nz, slices)
     local_grid, local_detector, first, step, packed = _slab_layout(grid, detector, depth)
     rows = local_detector.nv
+    # Edge continuation sums the filter's whole tails: keep its full support.
+    source_nu = projections.shape[2] if cfg.padding == "zero" else None
     ramp = rfft_filter_array(
-        cfg.filter, local_detector.nu, detector.du, jnp.float32, source_nu=projections.shape[2]
+        cfg.filter, local_detector.nu, detector.du, jnp.float32, source_nu=source_nu
     )
     overlap = cuda and grid.nz > depth and 4 * math.prod(shape) >= _OUTPUT_OVERLAP_MIN_BYTES
     free = device_free_memory_bytes() if overlap else None
@@ -277,6 +283,7 @@ def fbp_host(
                 z_mode="integer" if packed else "fixed",
                 separable=True,
                 check_finite=True,
+                padding=cfg.padding,
                 resident_slab=resident is not None,
             )
             write(volume, start, count)
@@ -305,6 +312,8 @@ def _general_slabs(
     if poses is not original:
         projections = np.asarray(oriented)
         view_scale, params, arc_length, separable = _view_weights(poses, cfg.scale)
+    if cfg.padding == "edge" and not separable:
+        raise ValueError("fbp_host: edge padding requires a separable detector-u filter")
     host_poses = np.asarray(poses, np.float32)
     detector_f = _filter_detector(grid, detector, host_poses, pad_v=not separable)
     spectrum = rfft_filter_array(
@@ -312,7 +321,7 @@ def _general_slabs(
         detector_f.nu,
         detector.du,
         jnp.float32,
-        source_nu=projections.shape[2] if separable else None,
+        source_nu=projections.shape[2] if separable and cfg.padding == "zero" else None,
     )
     batch = min(views, projections.shape[0])
     if slices is None:
@@ -340,6 +349,7 @@ def _general_slabs(
             batch_size=batch,
             separable=separable,
             check_finite=True,
+            padding=cfg.padding,
         )
         output[start : start + count] = np.asarray(volume)[:count]
     return output

@@ -27,6 +27,23 @@ measured coordinates or fitting output amplitude. It assumes zero unmeasured
 attenuation and is not an object-truncation correction. Generic filtered-adjoint
 reconstruction, including explicit detector grids, uses the supplied support.
 
+For a truncated parallel scan, `FBPConfig(padding="edge")` instead assumes each
+measured row's endpoint values continue to infinity. This can suppress boundary
+halos, but it is a prior: it does not recover unmeasured attenuation and can bias
+values when the assumption is wrong. Check the interior separately: fewer halos
+or lower whole-volume error can coexist with worse central attenuation.
+The default remains `padding="zero"`.
+Boundary-tail compensation adds no larger detector or FFT arrays and requires no
+padding-width setting. `FBPHostConfig` uses the same option. Edge continuation
+requires canonical parallel-beam pixels and a separable detector-u filter; cone
+beams and oblique/rolled filters are not supported.
+
+```python
+from tomojax.recon import FBPConfig
+
+reconstruction = tj.reconstruct(scan, config=FBPConfig(padding="edge"))
+```
+
 Direct FBP pads, filters and backprojects one view batch at a time. An internal
 512 MiB FFT-workspace estimate selects a power-of-two batch for large stacks;
 small stacks stay in one batch. This estimate is not a hard process-memory cap:
