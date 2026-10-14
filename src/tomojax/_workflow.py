@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     from tomojax.geometry import Detector, Geometry, Grid, ScanGeometry
     from tomojax.recon.api import MethodConfig
 
-type Method = Literal["fbp", "cgls", "fista", "spdhg"]
+type Method = Literal["fbp", "fourier", "cgls", "fista", "spdhg"]
 
 
 @dataclass(frozen=True)
@@ -193,6 +193,13 @@ def reconstruct(
         short scans and Wang's for offset detectors. ``filter`` is ``ramp``
         (default), ``shepp-logan`` or ``hann``. Volumes too large for the
         device are reconstructed in slabs on the host.
+    ``fourier``
+        Fourier-slice reconstruction of built-in parallel geometry. Input and
+        output stay on the host; :class:`~tomojax.recon.FourierConfig` selects
+        NumPy (default) or optional CuPy CUDA execution. This approximate inverse
+        has its own frequency cutoff, not the selectable FBP ``filter``.
+        See :func:`~tomojax.recon.fourier_reconstruct` for angular sampling
+        requirements; per-view poses, cone beams and laminography are not supported.
     ``cgls``
         Least squares by conjugate gradients, ``iterations`` (default 50).
     ``fista``
@@ -211,7 +218,8 @@ def reconstruct(
 
     ``config`` holds the method's expert settings: a
     :class:`~tomojax.recon.FBPConfig` (for FDK too),
-    :class:`~tomojax.recon.CGLSConfig`, :class:`~tomojax.recon.FistaConfig` or
+    :class:`~tomojax.recon.FourierConfig`, :class:`~tomojax.recon.CGLSConfig`,
+    :class:`~tomojax.recon.FistaConfig` or
     :class:`~tomojax.recon.SPDHGConfig`; without one, the class's defaults
     apply. A config of another method's class raises :class:`ValueError`. The
     keywords are fields of that class, and each one given replaces its field,
@@ -242,11 +250,11 @@ def reconstruct(
         if value is not None
     }
     cfg = method_config(method, config=config, **given)
-    if warm_start is not None and method == "fbp":
-        raise ValueError("method 'fbp' does not take warm_start")
+    if warm_start is not None and method in {"fbp", "fourier"}:
+        raise ValueError(f"method {method!r} does not take warm_start")
     if grid is not None:
         scan = with_grid(scan, grid)
-    if method != "fbp":
+    if method not in {"fbp", "fourier"}:
         _suggest_binning(scan, "iterative reconstruction")
     volume, info = reconstruct_arrays(
         method,

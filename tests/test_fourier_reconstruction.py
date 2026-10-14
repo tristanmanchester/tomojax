@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import math
+import weakref
 
 import jax
 import numpy as np
@@ -20,6 +21,49 @@ from tomojax.geometry import (
 from tomojax.recon import FourierConfig, fourier_reconstruct
 
 BACKENDS = ["numpy", pytest.param("cupy", marks=pytest.mark.gpu)]
+
+
+def test_projection_spectrum_is_released_before_cartesian_fft(monkeypatch, backend):
+    xp = np if backend == "numpy" else pytest.importorskip("cupy")
+    original_rfft, original_irfft2 = xp.fft.rfft, xp.fft.irfft2
+    spectra = []
+
+    def rfft(*args, **kwargs):
+        spectrum = original_rfft(*args, **kwargs)
+        spectra.append(weakref.ref(spectrum))
+        return spectrum
+
+    def irfft2(*args, **kwargs):
+        assert spectra and spectra[-1]() is None
+        return original_irfft2(*args, **kwargs)
+
+    monkeypatch.setattr(xp.fft, "rfft", rfft)
+    monkeypatch.setattr(xp.fft, "irfft2", irfft2)
+    grid, detector, geometry, data, truth = scan()
+    actual = fourier_reconstruct(
+        geometry, grid, detector, data, config=FourierConfig(backend=backend, slices_per_batch=3)
+    )
+    assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.015
+
+
+@pytest.mark.gpu
+def test_cuda_geometry_construction_fits_bounded_coordinate_storage(row_grid):
+    import tomojax.recon.fourier as implementation
+
+    cp = pytest.importorskip("cupy")
+    grid = Grid(512, 512, 1, 1, 1, 1)
+    detector = Detector(512, 1, 1, 1, (6.3, 0))
+    angles = np.arange(17) * (180 / 17) + 0.5 * np.sin(np.arange(17))
+    _order, flipped, angles = row_grid.sorted_half_turn(angles)
+    # Storage for the four coordinate fields plus one half-spectrum fits;
+    # broadcasted FP64/complex temporaries used to exhaust this bounded pool.
+    pool = cp.cuda.MemoryPool()
+    pool.set_limit(size=32 * 1024**2)
+    with cp.cuda.using_allocator(pool.malloc):
+        plan = implementation.FourierPlan(grid, detector, 17, flipped, angles, 1, "cupy")
+        expected = implementation.FourierPlan(grid, detector, 17, flipped, angles, 1, "numpy")
+        for actual, reference in zip(plan.coordinates, expected.coordinates, strict=True):
+            np.testing.assert_allclose(cp.asnumpy(actual), reference, rtol=2e-6, atol=2e-6)
 
 
 @pytest.fixture
@@ -226,6 +270,7 @@ def test_cuda_allocation_exhaustion_retries_smaller_slabs_and_rewrites_output(mo
 
     monkeypatch.setattr(implementation, "FourierPlan", Plan)
     monkeypatch.setattr(implementation, "is_cuda_oom", lambda error: isinstance(error, Exhausted))
+    monkeypatch.setattr(implementation, "release_cuda_fft_cache", lambda: False)
     monkeypatch.setattr(implementation, "_HOST_PIPELINE_MIN_BYTES", 10**12)
     # The NumPy stand-in plan takes host-sampled rows, not CUDA-staged ones.
     monkeypatch.setattr(
@@ -243,6 +288,79 @@ def test_cuda_allocation_exhaustion_retries_smaller_slabs_and_rewrites_output(mo
     np.testing.assert_array_equal(actual, expected)
     assert depths == [4, 2]
     assert destroyed == [4, 2]
+
+
+@pytest.mark.parametrize("depth", [1, 4])
+def test_cuda_fft_workspace_exhaustion_retries_same_depth(monkeypatch, depth):
+    import tomojax.recon.fourier as implementation
+
+    original_plan = implementation.FourierPlan
+    grid, detector, geometry, data, _ = scan()
+    expected = fourier_reconstruct(geometry, grid, detector, data)
+    attempts, released = [], []
+
+    class Plan:
+        def __init__(self, grid, detector, nviews, flipped, angles, depth, backend, **kwargs):
+            attempts.append(depth)
+            if len(attempts) == 1:
+                raise MemoryError("cached FFT workspace")
+            self.original = original_plan(grid, detector, nviews, flipped, angles, depth, "numpy")
+
+        def reconstruct(self, rows, *, count):
+            return self.original.reconstruct(rows, count=count)
+
+    monkeypatch.setattr(implementation, "FourierPlan", Plan)
+    monkeypatch.setattr(implementation, "is_cuda_oom", lambda error: True)
+    monkeypatch.setattr(
+        implementation, "release_cuda_fft_cache", lambda: released.append(True) or True
+    )
+    monkeypatch.setattr(implementation, "_HOST_PIPELINE_MIN_BYTES", 10**12)
+    monkeypatch.setattr(
+        implementation, "prepare_projection_rows", implementation.sample_projection_rows
+    )
+    actual = fourier_reconstruct(
+        geometry, grid, detector, data, config=FourierConfig(backend="cupy", slices_per_batch=depth)
+    )
+    np.testing.assert_array_equal(actual, expected)
+    assert attempts == [depth, depth]
+    assert released == [True]
+
+
+def test_cuda_fft_workspace_retry_is_bounded_at_every_depth(monkeypatch):
+    import tomojax.recon.fourier as implementation
+
+    grid, detector, geometry, data, _ = scan()
+    attempts = []
+
+    def fail(*args, **kwargs):
+        attempts.append(args[5])
+        raise MemoryError("persistent CUDA exhaustion")
+
+    monkeypatch.setattr(implementation, "FourierPlan", fail)
+    monkeypatch.setattr(implementation, "is_cuda_oom", lambda error: True)
+    monkeypatch.setattr(implementation, "release_cuda_fft_cache", lambda: True)
+    with pytest.raises(MemoryError, match="persistent CUDA exhaustion"):
+        fourier_reconstruct(
+            geometry, grid, detector, data, config=FourierConfig(backend="cupy", slices_per_batch=4)
+        )
+    assert attempts == [4, 4, 2, 2, 1, 1]
+
+
+@pytest.mark.gpu
+def test_cuda_fft_workspace_eviction_releases_current_thread_cache():
+    import tomojax.recon.fourier as implementation
+
+    cp = pytest.importorskip("cupy")
+    cache = cp.fft.config.get_plan_cache()
+    cache.clear()
+    # A Cartesian real inverse retains workspace on the production FFT path.
+    # Small complex transforms may need no workspace, even at prime lengths.
+    cp.fft.irfft2(cp.zeros((1, 2880, 1441), dtype=cp.complex64), s=(2880, 2880))
+    cp.cuda.get_current_stream().synchronize()
+    assert cache.get_curr_memsize() > 0
+    assert implementation.release_cuda_fft_cache()
+    assert cache.get_curr_size() == 0
+    assert not implementation.release_cuda_fft_cache()
 
 
 @pytest.mark.parametrize("backend", ["numpy", "cupy"])
@@ -424,6 +542,18 @@ def scan(kind="offset", length_scale=1.0):
         angles[::2] += 180
     elif kind == "reversed":
         angles = (angles + 37.5)[::-1] - 360
+    elif kind == "inclusive":
+        angles = np.linspace(0, 180, 91)
+    elif kind == "repeated":
+        angles = np.repeat(angles, 3)
+        angles[1::3] += 180
+    elif kind == "nonuniform":
+        # Uneven encoder positions, a rejected-view gap, arbitrary order and
+        # opposing orientations must use actual angles rather than view indices.
+        angles += 0.7 * np.sin(np.arange(len(angles)) * 1.3)
+        angles = np.delete(angles, [11, 42])
+        angles[::3] += 180
+        angles = angles[np.random.default_rng(27).permutation(len(angles))]
     elif kind == "even":
         detector = replace(detector, nu=64)
     grid = replace(
@@ -445,7 +575,20 @@ def scan(kind="offset", length_scale=1.0):
     return grid, detector, geometry, data, truth
 
 
-@pytest.mark.parametrize("kind", ["offset", "cropped", "reordered", "opposing", "reversed", "even"])
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "offset",
+        "cropped",
+        "reordered",
+        "opposing",
+        "reversed",
+        "even",
+        "nonuniform",
+        "inclusive",
+        "repeated",
+    ],
+)
 def test_independent_physical_gaussian(backend, kind):
     grid, detector, geometry, data, truth = scan(kind)
     original = data.copy()
@@ -465,6 +608,74 @@ def test_physical_units_preserve_attenuation(backend, length_scale):
         geometry, grid, detector, data, config=FourierConfig(slices_per_batch=20, backend=backend)
     )
     assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.008
+
+
+def test_redundant_exposures_share_one_angular_cell(backend):
+    grid, detector, geometry, data, _ = scan()
+    rng = np.random.default_rng(723)
+    exposures = np.repeat(data, 3, axis=0)
+    exposures += rng.normal(0, 0.02, exposures.shape).astype(np.float32)
+    angles = np.repeat(geometry.angles, 3)
+    expected = fourier_reconstruct(
+        geometry,
+        grid,
+        detector,
+        exposures.reshape(len(data), 3, *data.shape[1:]).mean(axis=1),
+        config=FourierConfig(backend=backend),
+    )
+    actual = fourier_reconstruct(
+        ParallelGeometry(grid, detector, angles),
+        grid,
+        detector,
+        exposures,
+        config=FourierConfig(backend=backend),
+    )
+    np.testing.assert_allclose(actual, expected, rtol=2e-4, atol=2e-6)
+
+
+def test_half_turn_roundoff_preserves_orientation_and_real_angle_gaps(row_grid):
+    epsilon = np.spacing(180.0)
+    angles = np.array([0, 180, -epsilon, 180 - epsilon, -180 - epsilon, 10, 190, 10 + 1e-8])
+    order, flipped, canonical = row_grid.sorted_half_turn(angles)
+    np.testing.assert_array_equal(order, np.arange(len(angles)))
+    np.testing.assert_array_equal(flipped, [0, 1, 0, 1, 1, 0, 1, 0])
+    np.testing.assert_array_equal(canonical[:5], 0)
+    assert canonical[5] == canonical[6]
+    assert canonical[7] > canonical[6]
+
+
+def test_nonredundant_fourier_directions_preserve_measured_knots(row_grid):
+    angles = -37.123 + np.arange(901) * (180 / 901) + 0.03 * np.sin(np.arange(901))
+    angles[::3] += 180
+    order, flipped, canonical = row_grid.sorted_half_turn(angles)
+    np.testing.assert_array_equal(canonical, np.deg2rad(np.mod(angles[order], 180)))
+    np.testing.assert_array_equal(flipped, np.mod(angles[order], 360) >= 180)
+
+
+@pytest.mark.parametrize("offset", [0.0, 0.7])
+@pytest.mark.parametrize("seam", [False, True])
+def test_wrapped_redundant_exposures_average_physical_signal(backend, offset, seam):
+    grid = Grid(33, 35, 3, 1, 1, 1)
+    detector = Detector(65, 3, 1, 1, (offset, 0))
+    angles = -37.123 + np.arange(31) * (180 / 31) + 0.8 * np.sin(np.arange(31))
+    if seam:
+        angles += 37.123
+    data, truth = physical_gaussian(grid, detector, angles)
+    config = FourierConfig(backend=backend, slices_per_batch=2)
+    expected = 2 * fourier_reconstruct(
+        ParallelGeometry(grid, detector, angles), grid, detector, data, config=config
+    )
+    repeated = np.repeat(angles, 2)
+    repeated[1::2] += 180
+    if seam:
+        repeated[:2] = [-np.spacing(180.0), 180 - np.spacing(180.0)]
+    exposures, _ = physical_gaussian(grid, detector, repeated)
+    exposures[1::2] *= 3
+    actual = fourier_reconstruct(
+        ParallelGeometry(grid, detector, repeated), grid, detector, exposures, config=config
+    )
+    assert np.linalg.norm(actual - expected) / np.linalg.norm(expected) < 3e-5
+    assert np.linalg.norm(actual - 2 * truth) / np.linalg.norm(2 * truth) < 0.004
 
 
 @pytest.mark.parametrize("nu", [1, 32, 65, 131])
@@ -608,7 +819,6 @@ def test_overlapping_storage_rejected_before_writing(tmp_path, mapped):
 @pytest.mark.parametrize(
     "invalid",
     [
-        "nonuniform",
         "duplicate",
         "tilted",
         "nonfinite",
@@ -624,9 +834,12 @@ def test_invalid_inputs_rejected_before_output_written(invalid):
     grid, detector, geometry, data, _ = scan()
     out = np.full((grid.nx, grid.ny, grid.nz), 123, dtype=np.float32)
     config = FourierConfig()
-    if invalid in {"nonuniform", "duplicate", "nonfinite"}:
+    if invalid in {"duplicate", "nonfinite"}:
         angles = np.asarray(geometry.angles).copy()
-        angles[1] = {"nonuniform": 2.5, "duplicate": 0, "nonfinite": np.nan}[invalid]
+        if invalid == "duplicate":
+            angles[:] = 0
+        else:
+            angles[1] = np.nan
         geometry = ParallelGeometry(grid, detector, angles)
     elif invalid == "tilted":
         geometry = LaminographyGeometry(grid, detector, geometry.angles, tilt_deg=30)
@@ -710,7 +923,26 @@ def test_provided_output_retains_layout_and_identity(backend, layout):
     np.testing.assert_array_equal(result.view(np.uint32), expected.view(np.uint32))
 
 
-def dense_full_spectrum_reference(grid, detector, angles, data):
+@pytest.mark.parametrize("nz", [1, 7])
+def test_default_output_stores_contiguous_axial_slices(backend, nz):
+    grid, detector, geometry, _data, _truth = scan()
+    grid = replace(grid, nz=nz)
+    geometry = replace(geometry, grid=grid)
+    data, truth = physical_gaussian(grid, detector, geometry.angles)
+    actual = fourier_reconstruct(
+        geometry,
+        grid,
+        detector,
+        data,
+        config=FourierConfig(backend=backend, slices_per_batch=3),
+    )
+    assert actual.shape == (grid.nx, grid.ny, nz)
+    assert actual.dtype == np.float32
+    assert all(actual[:, :, z].flags.c_contiguous for z in range(nz))
+    assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.015
+
+
+def dense_full_spectrum_reference(grid, detector, angles, data, *, directions=None):
     """Centred DFT of every sampled detector profile, then a full complex Cartesian FFT."""
     origin = grid_volume_origin(grid)
     radius = abs(detector.center[0]) + detector.nu * detector.du / 2
@@ -724,11 +956,14 @@ def dense_full_spectrum_reference(grid, detector, angles, data):
         padded = next_fast_len(2 * support, real=True)
         shape.append(padded)
         crop.append(-lo + (padded - support) // 2)
-    nviews = len(angles)
-    order = np.argsort(np.mod(angles, 180))
-    theta0 = np.deg2rad(np.mod(angles[order[0]], 180))
+    nsource = len(angles)
+    # Fixtures can declare repeated physical directions before adding opposing
+    # labels, without copying production's numerical grouping policy.
+    canonical = np.mod(angles if directions is None else directions, 180)
+    order = np.argsort(canonical)
+    theta0 = np.deg2rad(canonical[order[0]])
     flipped = np.mod(angles[order], 360) >= 180
-    raw = np.zeros((grid.nz, nviews, detector.nu), np.float32)
+    raw = np.zeros((grid.nz, nsource, detector.nu), np.float32)
     positions = (origin[2] + np.arange(grid.nz) * grid.vz - detector.center[1]) / detector.dv + (
         detector.nv - 1
     ) / 2
@@ -738,27 +973,44 @@ def dense_full_spectrum_reference(grid, detector, angles, data):
         for row, weight in [(low, 1 - fraction), (low + 1, fraction)]:
             if 0 <= row < detector.nv and weight != 0:
                 raw[z] += data[order, row, :] * weight
-    fx = np.fft.fftfreq(shape[0], d=grid.vx)[:, None]
-    fy = np.fft.fftfreq(shape[1], d=grid.vy)[None, :]
+    fx, fy = (
+        np.fft.fftfreq(shape[0], d=grid.vx)[:, None],
+        np.fft.fftfreq(shape[1], d=grid.vy)[None, :],
+    )
     frequency = np.sqrt(fx * fx + fy * fy)
     u = detector.center[0] + (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du
     matrix = detector.du * np.exp(-2j * np.pi * frequency.reshape(-1, 1) * u[None, :])
     measured = raw.astype(np.float64) @ matrix.T
-    a = (np.mod(np.arctan2(-fy, fx) - theta0, 2 * np.pi) * (nviews / np.pi)).ravel()
-    index = np.floor(a).astype(np.int64)
-    sites = np.arange(len(a))
-    values = np.zeros((grid.nz, len(a)), np.complex128)
-    for shift, weight in [(0, 1 - (a - index)), (1, a - index)]:
+    # Average independent physical DFTs after opposing-view conjugation,
+    # never detector-column values from differently placed measured fields.
+    acquired, inverse, counts = np.unique(
+        np.deg2rad(canonical[order]) - theta0, return_inverse=True, return_counts=True
+    )
+    nviews = len(acquired)
+    canonical = np.zeros((grid.nz, nviews, measured.shape[-1]), np.complex128)
+    for source in range(nsource):
+        value = measured[:, source].conj() if flipped[source] else measured[:, source]
+        canonical[:, inverse[source]] += value / counts[inverse[source]]
+    directions = np.mod(np.arctan2(-fy, fx) - theta0, 2 * np.pi).ravel()
+    knots = np.concatenate((acquired, acquired + np.pi, [2 * np.pi]))
+    index = np.searchsorted(knots, directions, side="right") - 1
+    fraction = (directions - knots[index]) / (knots[index + 1] - knots[index])
+    sites = np.arange(len(directions))
+    values = np.zeros((grid.nz, len(directions)), np.complex128)
+    for shift, weight in [(0, 1 - fraction), (1, fraction)]:
         view = (index + shift) % (2 * nviews)
-        conjugate = (view >= nviews) ^ flipped[view % nviews]
-        sampled = measured[:, view % nviews, sites]
+        conjugate = view >= nviews
+        sampled = canonical[:, view % nviews, sites]
         values += np.where(conjugate, sampled.conj(), sampled) * weight
     phase = np.exp(
         2j * np.pi * (fx * (origin[0] - crop[0] * grid.vx) + fy * (origin[1] - crop[1] * grid.vy))
     )
     values = values.reshape(grid.nz, *shape) * phase
     values[:, frequency > 0.5 / detector.du] = 0
-    values[:, 0, 0] = raw.astype(np.float64).sum(axis=-1).mean(axis=-1) * detector.du
+    gaps = np.diff(np.append(acquired, np.pi))
+    weights = (gaps + np.roll(gaps, 1)) / (2 * np.pi)
+    weights = weights[inverse] / counts[inverse]
+    values[:, 0, 0] = (raw.astype(np.float64).sum(axis=-1) @ weights) * detector.du
     full = np.fft.ifft2(values, axes=(-2, -1)).real / (grid.vx * grid.vy)
     cropped = full[:, crop[0] : crop[0] + grid.nx, crop[1] : crop[1] + grid.ny]
     return cropped.transpose(1, 2, 0).astype(np.float32)
@@ -767,7 +1019,11 @@ def dense_full_spectrum_reference(grid, detector, angles, data):
 @pytest.mark.parametrize("backend", BACKENDS)
 @pytest.mark.parametrize("ny", [11, 13])
 @pytest.mark.parametrize("vx", [0.35, 1.3])
-def test_signed_profiles_match_a_dense_full_spectrum_reconstruction(backend, ny, vx):
+@pytest.mark.parametrize("nonuniform", [False, True])
+@pytest.mark.parametrize("repeated", [False, True])
+def test_signed_profiles_match_a_dense_full_spectrum_reconstruction(
+    backend, ny, vx, nonuniform, repeated
+):
     # Signed rows have power at the x Nyquist bin, which a half-plane transform
     # must project to a real image as the full transform does.
     if backend == "cupy":
@@ -775,11 +1031,17 @@ def test_signed_profiles_match_a_dense_full_spectrum_reconstruction(backend, ny,
     grid = Grid(13, ny, 5, vx, 1.7, 0.7, vol_center=(0.2, -0.3, 0.1))
     detector = Detector(17, 7, 0.9, 1.1, (0.7, -0.23))
     angles = -37 + np.arange(13) * (180 / 13)
+    if nonuniform:
+        angles += 4 * np.sin(np.arange(13))
+    if repeated:
+        angles = np.repeat(angles, np.arange(13) % 3 + 1)
+    directions = angles.copy()
     angles[::3] += 180
-    angles = angles[np.random.default_rng(17).permutation(13)]
-    data = np.random.default_rng(321).normal(size=(13, 7, 17)).astype(np.float32)
+    order = np.random.default_rng(17).permutation(len(angles))
+    angles, directions = angles[order], directions[order]
+    data = np.random.default_rng(321).normal(size=(len(angles), 7, 17)).astype(np.float32)
     data += ((-1.0) ** np.arange(17))[None, None, :]
-    reference = dense_full_spectrum_reference(grid, detector, angles, data)
+    reference = dense_full_spectrum_reference(grid, detector, angles, data, directions=directions)
     actual = fourier_reconstruct(
         ParallelGeometry(grid, detector, angles),
         grid,
@@ -788,3 +1050,109 @@ def test_signed_profiles_match_a_dense_full_spectrum_reconstruction(backend, ny,
         config=FourierConfig(slices_per_batch=3, backend=backend),
     )
     assert np.linalg.norm(actual - reference) / np.linalg.norm(reference) < 2e-5
+
+
+@pytest.mark.parametrize("layout", ["scalar", "strided", "broadcast", "volume"])
+@pytest.mark.parametrize("repeats", [False, True])
+def test_cpu_cartesian_tiles_preserve_coordinates_and_spectrum(
+    monkeypatch, row_grid, layout, repeats
+):
+    rng = np.random.default_rng(1177)
+    sources, layers, nfft = 3, 2, 64
+    spectrum = rng.normal(size=(layers, sources, 33)) + 1j * rng.normal(size=(layers, sources, 33))
+    spectrum.flags.writeable = False
+    saved = spectrum.copy()
+    groups = np.array([0, 1, 3], dtype=np.int32) if repeats else None
+    views = sources if groups is None else groups.size - 1
+    flipped = np.array([0, 1, 0], dtype=np.int8)
+    if layout == "scalar":
+        angle, radial, phase = np.array(0.37), np.array(2.1), np.array(np.exp(0.3j))
+    elif layout == "strided":
+        angle = np.linspace(0, 2 * views - 0.1, 43)[::-1]
+        radial = np.linspace(0, nfft / 2 + 2, 43)[::-1]
+        phase = np.exp(1j * angle)
+    elif layout == "broadcast":
+        angle = np.linspace(0, 2 * views - 0.1, 7)[:, None]
+        radial = np.linspace(0, nfft / 2 + 2, 13)[None, :]
+        phase = np.exp(1j * angle)
+    else:
+        angle = np.linspace(0, 2 * views - 0.1, 42).reshape(2, 3, 7)
+        radial = np.linspace(0, nfft / 2 + 2, 7)
+        phase = np.exp(1j * angle)
+    detector_phase = np.array(np.exp(-0.7j))
+    _phase, _deapod, table = row_grid.radial_coefficients(31, nfft, 0.9)
+    arguments = (
+        spectrum,
+        angle,
+        radial,
+        phase,
+        detector_phase,
+        flipped,
+        table,
+        nfft,
+        -1 + 0j,
+        groups,
+    )
+    monkeypatch.setattr(row_grid, "_INTERPOLATION_WORKSPACE_BYTES", 10**9)
+    expected = row_grid.interpolate_numpy(*arguments)
+    monkeypatch.setattr(row_grid, "_INTERPOLATION_WORKSPACE_BYTES", 384)
+    actual = row_grid.interpolate_numpy(*arguments)
+    np.testing.assert_array_equal(actual.view(np.float64), expected.view(np.float64))
+    np.testing.assert_array_equal(spectrum, saved)
+    assert actual.dtype == np.complex128 and actual.flags.c_contiguous
+
+
+def test_cpu_interpolation_bounds_complex_work_tiles(monkeypatch, row_grid):
+    layers, nfft = 7, 64
+    spectrum = np.ones((layers, 5, 33), dtype=np.complex128)
+    angle = np.linspace(0, 9.9, 23)[:, None]
+    radial = np.linspace(0, 35, 19)[None, :]
+    calls = []
+    original = row_grid._interpolate_inside
+
+    def interpolate(spectrum, angle, *args):
+        calls.append(angle.size)
+        return original(spectrum, angle, *args)
+
+    monkeypatch.setattr(row_grid, "_interpolate_inside", interpolate)
+    budget = 8 * (256 + 64 * layers)
+    monkeypatch.setattr(row_grid, "_INTERPOLATION_WORKSPACE_BYTES", budget)
+    _, _, table = row_grid.radial_coefficients(31, nfft, 1)
+    result = row_grid.interpolate_numpy(
+        spectrum,
+        angle,
+        radial,
+        np.array(1j),
+        np.array(1 + 0j),
+        np.zeros(5, dtype=np.int8),
+        table,
+        nfft,
+        1 + 0j,
+    )
+    assert result.shape == (layers, 23, 19)
+    assert calls and max(calls) <= 8
+
+
+@pytest.mark.parametrize("contrast", [0.01, 0.001])
+def test_weak_density_difference_survives_a_strong_background(backend, contrast):
+    # Whole-volume error can hide a lost weak feature. Subtract independently
+    # reconstructed broad and broad+bead scans, then score the bead itself.
+    grid = Grid(65, 67, 5, 0.9, 1.1, 0.8, vol_center=(0.3, -0.2, 0.1))
+    detector = Detector(97, 7, 0.8, 1.2, (0.4, -0.15))
+    angles = np.linspace(0, 180, 181)
+    geometry = ParallelGeometry(grid, detector, angles)
+    broad, _ = physical_gaussian(grid, detector, angles, length_scale=3)
+    bead, bead_truth = physical_gaussian(grid, detector, angles)
+    amplitude = np.float32(0.02)
+    background = amplitude * broad
+    combined = amplitude * (broad + np.float32(contrast) * bead)
+    config = FourierConfig(backend=backend, slices_per_batch=3)
+    base = fourier_reconstruct(geometry, grid, detector, background, config=config)
+    actual = fourier_reconstruct(geometry, grid, detector, combined, config=config) - base
+    expected = amplitude * np.float32(contrast) * bead_truth
+    assert np.linalg.norm(actual - expected) / np.linalg.norm(expected) < 0.02
+    # Retain feature position as well as density; use the axial sum because
+    # detector-v sampling interpolates this broad axial profile.
+    assert np.unravel_index(np.argmax(actual.sum(axis=2)), actual.shape[:2]) == np.unravel_index(
+        np.argmax(expected.sum(axis=2)), expected.shape[:2]
+    )

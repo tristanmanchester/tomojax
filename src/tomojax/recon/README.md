@@ -61,10 +61,12 @@ output. Callers own memmap flushing. Device workspace and runtime caches remain
 additional costs; batch dimensions are not a hard process-memory cap.
 
 `fourier_reconstruct` is an opt-in Fourier-slice inverse for built-in parallel
-scans with uniform, unique angles modulo 180 degrees. It accepts reordered,
+half-turn scans, including nonuniform encoder positions
+and scans with rejected views. Redundant directions share one angular cell;
+their Fourier samples are averaged after physical detector phase/orientation. It accepts reordered,
 reversed and opposing views, offset detectors, anisotropic spacing and cropped
 output grids. Projection FFTs use six-point Kaiser–Bessel radial interpolation,
-linear angular interpolation and a detector-Nyquist disk cutoff, followed by a
+linear interpolation in measured angle (periodic over a half turn) and a detector-Nyquist disk cutoff, followed by a
 padded Cartesian inverse FFT. The padding covers both the output grid and the
 acquired detector field to avoid wrapping an object outside a cropped ROI back
 into it. Missing detector data are assumed zero; this does not correct truncation.
@@ -87,11 +89,22 @@ Cartesian spectrum. Angular interpolation fractions retain double-precision
 coordinates before FP32 accumulation. Both return FP32 host arrays and process fixed axial
 slabs, including a padded final batch. The same storage lifetime, nonoverlap and
 partial-output rules as `fbp_host` apply. No amplitude fitting or clipping is
-performed. Large CUDA jobs overlap bounded host work and transfers on reused
-device queues. Smaller slabs can reduce memory at a throughput cost; the
+performed. Newly allocated `(nx, ny, nz)` volumes store contiguous axial slices,
+avoiding cacheline-strided slab writes. Supplied `out` arrays keep their exact
+identity and strides. Large CUDA jobs overlap bounded host work and transfers on reused
+device queues. CUDA coordinate generation uses one fused pass, avoiding large
+broadcast temporaries while retaining double-precision angles. Smaller slabs
+can reduce memory at a throughput cost. On CUDA allocation exhaustion, completed
+transfers are drained and the current thread/device's cuFFT plan cache is
+evicted, synchronizing the device before releasing workspaces. Reclaimed cached
+workspaces permit one retry at the same depth before reducing slabs, so old FFT
+shapes cannot monopolize memory.
+Successful calls keep their FFT caches. The
 measured 512³ case uses 430 MiB at eight slices versus 678 MiB at sixteen.
 This API is not differentiable, is not selected by the CLI, and rejects
-tilted/custom geometry and nonuniform or repeated half-turn angles. Its angular
+tilted/custom geometry. Inclusive 0–180° scans and repeated/opposing exposures are accepted.
+Large missing angular sectors are interpolated, not recovered; use adequately
+sampled half-turn scans. Its angular
 interpolation can introduce artefacts on sharp or undersampled scans; the
 [measurements](../../../docs/measurements.md#fourier-inverse) give its memory
 and speed, and the [reconstruction comparison](../../../docs/measurements.md#reconstruction-against-astra)

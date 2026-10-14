@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
+import mmap
+import os
 from pathlib import Path
+import sys
+from typing import Literal
 
 import numpy as np
 
@@ -55,6 +60,47 @@ class ProjectionRows:
         return data
 
 
+def _hugepage_capacity() -> int | None:
+    """Linux buddy blocks large enough for THP without synchronous compaction."""
+    if sys.platform != "linux":
+        return None
+    try:
+        root = Path("/sys/kernel/mm/transparent_hugepage")
+        if "[never]" in (root / "enabled").read_text():
+            return None
+        defrag = (root / "defrag").read_text().split()
+        if not any(mode in defrag for mode in ("[always]", "[madvise]", "[defer+madvise]")):
+            return None
+        page = os.sysconf("SC_PAGE_SIZE")
+        huge = int((root / "hpage_pmd_size").read_text())
+        minimum = (huge // page).bit_length() - 1
+        return sum(
+            int(count) * (1 << order) * page
+            for line in Path("/proc/buddyinfo").read_text().splitlines()
+            for order, count in enumerate(line.split()[4:])
+            if order >= minimum
+        )
+    except (OSError, ValueError):
+        return None
+
+
+def _empty_host_output(
+    shape: tuple[int, int, int], *, order: Literal["C", "F"] = "C"
+) -> np.ndarray:
+    """Avoid direct THP defragmentation for outputs exceeding contiguous RAM.
+
+    Advice applies only to this owned mapping, never caller storage or NumPy's
+    process-wide allocation policy. Small outputs retain ordinary NumPy pages.
+    """
+    size = math.prod(shape) * np.dtype(np.float32).itemsize
+    capacity = _hugepage_capacity()
+    if capacity is not None and size > capacity:
+        storage = mmap.mmap(-1, size, flags=mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS)
+        storage.madvise(mmap.MADV_NOHUGEPAGE)
+        return np.ndarray(shape, dtype=np.float32, buffer=storage, order=order)
+    return np.empty(shape, dtype=np.float32, order=order)
+
+
 def validate_host_arrays(
     projections: np.ndarray,
     out: np.ndarray | None,
@@ -65,7 +111,7 @@ def validate_host_arrays(
     if not isinstance(projections, np.ndarray) or projections.dtype.kind not in "buif":
         raise TypeError(f"{context}: projections must be a real NumPy array or memmap")
     if out is None:
-        return np.empty(shape, dtype=np.float32)
+        return _empty_host_output(shape)
     if not isinstance(out, np.ndarray) or out.shape != shape or out.dtype != np.float32:
         raise ValueError(f"{context}: out must be a float32 NumPy array with the volume shape")
     if not out.flags.writeable:

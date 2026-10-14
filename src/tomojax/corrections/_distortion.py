@@ -57,21 +57,59 @@ class RadialDistortion(Step):
     def apply(self, batch: jax.Array) -> jax.Array:
         if self.coefficients[0] == 1 and not any(self.coefficients[1:]):
             return batch
-        rows, cols = batch.shape[-2:]
-        # Host maps make XLA bake every stencil index/weight into the executable.
-        # Compute only the geometry in FP64, even with the caller's x64 disabled;
-        # FP32 loses subpixel calibration accuracy on large/cropped detectors.
-        with jax.enable_x64(True):
-            u = jnp.arange(cols, dtype=jnp.float64)[None, :] - self.center[0]
-            v = jnp.arange(rows, dtype=jnp.float64)[:, None] - self.center[1]
-            radius = jnp.sqrt(u * u + v * v)
-            scale = jnp.zeros_like(radius)
-            for coefficient in reversed(self.coefficients):
-                scale = scale * radius + coefficient
-            coordinates = (
-                (self.center[1] + scale * v).astype(jnp.float32),
-                (self.center[0] + scale * u).astype(jnp.float32),
-            )
-        return jax.vmap(lambda image: map_coordinates(image, coordinates, order=1, mode="nearest"))(
-            batch
+        return pullback_rows(
+            self,
+            batch,
+            input_first=0,
+            output_first=0,
+            output_rows=batch.shape[1],
         )
+
+
+def _coordinates(step: RadialDistortion, first: int, rows: int, cols: int, xp):
+    """The calibrated map in GLOBAL camera coordinates; FP32 only at the stencil."""
+    u = xp.arange(cols, dtype=xp.float64)[None, :] - step.center[0]
+    v = (xp.arange(rows, dtype=xp.float64)[:, None] + first) - step.center[1]
+    radius = xp.sqrt(u * u + v * v)
+    scale = xp.zeros_like(radius)
+    for coefficient in reversed(step.coefficients):
+        scale = scale * radius + coefficient
+    return (
+        (step.center[1] + scale * v).astype(xp.float32),
+        (step.center[0] + scale * u).astype(xp.float32),
+    )
+
+
+def source_rows(step: RadialDistortion, first: int, stop: int, rows: int, cols: int):
+    """Bound every bilinear neighbour in this owned output band, including camera edges."""
+    if step.coefficients[0] == 1 and not any(step.coefficients[1:]):
+        return first, stop
+    y, _ = _coordinates(step, first, stop - first, cols, np)
+    y = np.clip(y, 0, rows - 1)
+    # A spare row also covers host/device FP64 arithmetic rounding near an integer.
+    return max(0, int(np.floor(y.min())) - 1), min(rows, int(np.floor(y.max())) + 3)
+
+
+def pullback_rows(
+    step: RadialDistortion,
+    batch: jax.Array,
+    *,
+    input_first: int,
+    output_first: int,
+    output_rows: int,
+) -> jax.Array:
+    """Sample an owned band using a measured halo, not the halo's artificial edges."""
+    if step.coefficients[0] == 1 and not any(step.coefficients[1:]):
+        return jax.lax.dynamic_slice(
+            batch,
+            (0, output_first - input_first, 0),
+            (batch.shape[0], output_rows, batch.shape[2]),
+        )
+    # Compute global geometry in FP64 even with caller x64 disabled. Casting
+    # AFTER subtracting the halo origin would change the bilinear weights.
+    with jax.enable_x64(True):
+        y, x = _coordinates(step, output_first, output_rows, batch.shape[2], jnp)
+    coordinates = (y - jnp.float32(input_first), x)
+    return jax.vmap(lambda image: map_coordinates(image, coordinates, order=1, mode="nearest"))(
+        batch
+    )

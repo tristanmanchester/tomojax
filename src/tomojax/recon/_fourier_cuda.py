@@ -17,7 +17,8 @@ __device__ float radial_weight(float distance, const float* table) {
 __device__ __forceinline__ float2 polar_value(
     const float2* spectrum, const double* angle, const float* radial,
     const float2* phase, const float2* detector_phase, long long m, long long z,
-    int nviews, int nr, int nfft, float qr, float qi, const float* table,
+    int nviews, int nsource, const int* groups, int nr, int nfft,
+    float qr, float qi, const float* table,
     const signed char* flipped
 ) {
     // Keep the angular fraction precise even with hundreds of views. Casting
@@ -35,30 +36,38 @@ __device__ __forceinline__ float2 polar_value(
         for (int da = 0; da <= 1; da++) {
             int view = ai + da;
             if (view >= 2 * nviews) view -= 2 * nviews;
-            bool conjugate = view >= nviews;
-            if (conjugate) view -= nviews;
-            conjugate = conjugate != (flipped[view] != 0);
+            bool opposing = view >= nviews;
+            if (opposing) view -= nviews;
             float angular = da == 0 ? 1 - (a - ai) : a - ai;
-            float2 row = make_float2(0, 0);
-            #pragma unroll
-            for (int j = 0; j < 6; j++) {
-                int k = ri + j - 2;
-                int reflected = k < 0 ? -k : (k > nfft / 2 ? nfft - k : k);
-                float2 value = spectrum[(z * nviews + view) * nr + reflected];
-                if (k < 0 || k > nfft / 2) value.y = -value.y;
-                // The centered transform is quasi-periodic for an even detector.
-                if (k > nfft / 2) {
-                    float real = value.x * qr - value.y * qi;
-                    value.y = value.x * qi + value.y * qr;
-                    value.x = real;
+            #ifdef GROUP_REPEATS
+            int first = groups[view], stop = groups[view + 1];
+            angular /= stop - first;
+            #else
+            int first = view, stop = view + 1;
+            #endif
+            for (int source = first; source < stop; source++) {
+                bool conjugate = opposing != (flipped[source] != 0);
+                float2 row = make_float2(0, 0);
+                #pragma unroll
+                for (int j = 0; j < 6; j++) {
+                    int k = ri + j - 2;
+                    int reflected = k < 0 ? -k : (k > nfft / 2 ? nfft - k : k);
+                    float2 value = spectrum[(z * nsource + source) * nr + reflected];
+                    if (k < 0 || k > nfft / 2) value.y = -value.y;
+                    // The centered transform is quasi-periodic for an even detector.
+                    if (k > nfft / 2) {
+                        float real = value.x * qr - value.y * qi;
+                        value.y = value.x * qi + value.y * qr;
+                        value.x = real;
+                    }
+                    row.x += weights[j] * value.x;
+                    row.y += weights[j] * value.y;
                 }
-                row.x += weights[j] * value.x;
-                row.y += weights[j] * value.y;
+                float real = row.x * dp.x - row.y * dp.y;
+                float imag = row.x * dp.y + row.y * dp.x;
+                total.x += angular * real;
+                total.y += angular * (conjugate ? -imag : imag);
             }
-            float real = row.x * dp.x - row.y * dp.y;
-            float imag = row.x * dp.y + row.y * dp.x;
-            total.x += angular * real;
-            total.y += angular * (conjugate ? -imag : imag);
         }
     }
     float2 p = phase[m];
@@ -68,9 +77,10 @@ __device__ __forceinline__ float2 polar_value(
 extern "C" __global__ void polar(
     const float2* spectrum, const double* angle, const float* radial,
     const float2* phase, float2* out, long long count, int layers,
-    int nviews, int nr, int nfft, float qr, float qi, const float* table,
+    int nviews, int nsource, const int* groups, int nr, int nfft,
+    float qr, float qi, const float* table,
     const float2* detector_phase, const signed char* flipped,
-    const double* row_mass, double du, int replace_dc
+    const double* row_mass, const double* view_weights, double du, int replace_dc
     #ifdef FUSE_X_BOUNDARY
     , const double* mirror_angle, const float* mirror_radial,
     const float2* mirror_phase, const float2* mirror_detector,
@@ -85,12 +95,12 @@ extern "C" __global__ void polar(
     // All lanes participate before the bounds guard, even for fewer than 32 sites.
     if (replace_dc && blockIdx.x == 0 && threadIdx.x < 32) {
         double mass = 0;
-        for (int view = threadIdx.x; view < nviews; view += 32)
-            mass += row_mass[z * nviews + view];
+        for (int view = threadIdx.x; view < nsource; view += 32)
+            mass += row_mass[z * nsource + view] * view_weights[view];
         for (int shift = 16; shift > 0; shift >>= 1)
             mass += __shfl_down_sync(0xffffffff, mass, shift);
         if (threadIdx.x == 0) {
-            out[i] = make_float2((float)(mass / nviews * du), 0.0f);
+            out[i] = make_float2((float)(mass * du), 0.0f);
             return;
         }
     }
@@ -108,7 +118,7 @@ extern "C" __global__ void polar(
         float2 current = polar_value(
             spectrum, opposite ? mirror_angle : angle, opposite ? mirror_radial : radial,
             opposite ? mirror_phase : phase, opposite ? mirror_detector : detector_phase,
-            opposite ? y - 1 : m, z, nviews, nr, nfft, qr, qi, table, flipped
+            opposite ? y - 1 : m, z, nviews, nsource, groups, nr, nfft, qr, qi, table, flipped
         );
         if (pass == 0) value = current;
         else value = make_float2(0.5f * (value.x + current.x), 0.5f * (value.y - current.y));
@@ -117,7 +127,7 @@ extern "C" __global__ void polar(
     #else
     out[i] = polar_value(
         spectrum, angle, radial, phase, detector_phase, m, z,
-        nviews, nr, nfft, qr, qi, table, flipped
+        nviews, nsource, groups, nr, nfft, qr, qi, table, flipped
     );
     #endif
 
@@ -146,11 +156,15 @@ extern "C" __global__ void mass_deapod(
 """
 
 
-@functools.lru_cache(maxsize=2)
-def interpolation_kernel(*, x_boundary=False):
+@functools.lru_cache(maxsize=4)
+def interpolation_kernel(*, x_boundary=False, repeats=False):
     import cupy
 
-    options = ("--fmad=false",) + (("-DFUSE_X_BOUNDARY",) if x_boundary else ())
+    options = (
+        ("--fmad=false",)
+        + (("-DFUSE_X_BOUNDARY",) if x_boundary else ())
+        + (("-DGROUP_REPEATS",) if repeats else ())
+    )
     return cupy.RawKernel(_SOURCE, "polar", options=options)
 
 
@@ -160,3 +174,44 @@ def mass_deapod_kernel():
     import cupy
 
     return cupy.RawKernel(_MASS_SOURCE, "mass_deapod", options=("--fmad=false",))
+
+
+_COORDINATES_SOURCE = r"""
+extern "C" __global__ void coordinates(
+    const double* fx, const double* fy, const double* knots,
+    double* angle, float* radial, float2* phase, float2* detector_phase,
+    long long count, int columns, int nviews, int uniform,
+    double first, double radial_scale, double detector_shift, double ox, double oy
+) {
+    long long m = (long long)blockDim.x * blockIdx.x + threadIdx.x;
+    if (m >= count) return;
+    const double pi = 3.1415926535897932384626433832795;
+    double x = fx[m / columns], y = fy[m % columns];
+    double r = sqrt(x * x + y * y) * radial_scale;
+    radial[m] = (float)r;
+    double a = fmod(atan2(-y, x) - first, 2 * pi);
+    if (a < 0) a += 2 * pi;
+    if (uniform) angle[m] = a * (nviews / pi);
+    else {
+        int lo = 0, hi = 2 * nviews;
+        while (hi - lo > 1) {
+            int mid = (lo + hi) / 2;
+            if (knots[mid] <= a) lo = mid;
+            else hi = mid;
+        }
+        angle[m] = lo + (a - knots[lo]) / (knots[hi] - knots[lo]);
+    }
+    double p = 2 * pi * (x * ox + y * oy);
+    phase[m] = make_float2((float)cos(p), (float)sin(p));
+    double dp = -2 * pi * r * detector_shift;
+    detector_phase[m] = make_float2((float)cos(dp), (float)sin(dp));
+}
+"""
+
+
+@functools.lru_cache(maxsize=1)
+def coordinates_kernel():
+    """Generate physical coordinates without full-size broadcast temporaries."""
+    import cupy
+
+    return cupy.RawKernel(_COORDINATES_SOURCE, "coordinates", options=("--fmad=false",))

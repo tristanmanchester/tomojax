@@ -168,10 +168,14 @@ class Frames:
         ``out`` then has the reduced detector shape and the original view capacity.
         Automatic correction of independent whole-row line steps can stream raw
         row groups from efficient sources, without an original-sized intermediate.
-        ``out`` can be a writable float32 NumPy array or memmap with the counts'
-        shape, separate from all inputs. Correction writes there in bounded
-        batches; rejected views compact into its leading views. The returned
-        scan shares this storage, which the caller owns and flushes if needed.
+        With a single RadialDistortion, measured optical halos are retained
+        before those row steps and terminal averaging; phase retrieval and
+        view selection retain their full-detector dependencies.
+        ``out`` can be a writable float32 NumPy array or memmap with the reduced
+        detector shape and original view capacity, separate from all inputs.
+        Correction writes there in bounded batches; rejected views compact into
+        its leading views. The returned scan shares this storage, which the
+        caller owns and flushes if needed.
         Flat-minus-dark signals unresolved at three standard errors of their
         calibration mean take neutral transmission before spatial steps; the
         flat-field record reports these unmeasured pixels.

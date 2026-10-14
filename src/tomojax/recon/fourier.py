@@ -1,4 +1,4 @@
-"""Fourier-slice reconstruction for uniform parallel scans with host storage."""
+"""Fourier-slice reconstruction for measured half-turn parallel scans with host storage."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from tomojax.core.geometry.cone import require_parallel_beam
 from tomojax.core.validation import validate_grid, validate_projection_stack
 from tomojax.geometry import ParallelGeometry, grid_volume_origin
 
-from ._fourier_backend import FourierPlan, is_cuda_oom
-from ._fourier_grid import sample_projection_rows, uniform_half_turn
+from ._fourier_backend import FourierPlan, is_cuda_oom, release_cuda_fft_cache
+from ._fourier_grid import sample_projection_rows, sorted_half_turn
 from ._fourier_rows import ProjectionRows, prepare_projection_rows
 from ._host_arrays import validate_host_arrays
 
@@ -37,8 +37,9 @@ class FourierConfig:
     kernel. It requires the optional ``fourier-cuda12`` extra. ``numpy`` uses
     double-precision FFTs and a vectorized interpolation reference. Both return
     float32 host arrays. Slab size bounds device volume storage and is halved
-    after CUDA allocation exhaustion, down to one slice. FFT plans and allocator
-    caches consume additional memory. Large CUDA calls overlap host
+    after CUDA allocation exhaustion, down to one slice. Reclaiming this
+    thread/device's cached FFT workspaces permits one retry at the same size.
+    FFT plans and allocator caches consume additional memory. Large CUDA calls overlap host
     row preparation, device transfers, FFT execution and output writes, retaining
     at most two pending device slabs. A bounded cache retains immutable
     geometry arrays; each call owns its working buffers.
@@ -59,26 +60,26 @@ def fourier_reconstruct(
     config: FourierConfig | None = None,
     out: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Reconstruct a uniform half-turn parallel scan using the Fourier slice theorem.
+    """Reconstruct a half-turn parallel scan using the Fourier slice theorem.
 
     Projections have shape ``(views, nv, nu)`` in physical line-integral units.
     Angles may be reordered, reversed, offset or replaced by opposing views,
-    but must be uniformly spaced and unique modulo 180 degrees. Only built-in
-    ``ParallelGeometry`` is supported. Detector offsets, anisotropic voxel
-    sizes, shifted/cropped output grids and fractional detector-v rows retain
-    their physical coordinates.
+    with uniform or nonuniform spacing. Redundant half-turn directions are
+    averaged in physical Fourier coordinates after detector phase/orientation.
+    Detector offsets, anisotropic voxels, shifted/cropped grids and fractional
+    detector-v rows retain their physical coordinates.
 
     This approximate inverse uses six-point Kaiser--Bessel radial interpolation,
-    linear angular interpolation, a detector-Nyquist disk cutoff and a padded
-    Cartesian inverse FFT. Missing detector data are zero. Truncated scans and
-    insufficient angular sampling can produce artifacts; no amplitude fitting,
-    positivity clipping or truncation correction is applied.
+    linear interpolation in measured angle, a detector-Nyquist disk cutoff and
+    a padded Cartesian inverse FFT. DC uses periodic angular trapezoid weights.
+    Missing detector data are zero. Truncation or angular undersampling can cause
+    artifacts; no amplitude fitting, clipping or truncation correction is applied.
 
-    Input and output stay in NumPy arrays or memmaps, with float32 output in
-    ``(nx, ny, nz)`` order. Their storage must not overlap. Completed slabs are
-    written immediately, so a later failure may leave partial output. Input
-    storage must remain unchanged during the call. This routine is not
-    differentiable and does not replace the default FBP reconstruction.
+    Input and output stay in NumPy arrays or memmaps; FP32 output is
+    ``(nx, ny, nz)`` with contiguous axial slices by default. Caller output
+    strides are retained. Storage must not overlap or change during the call.
+    Completed slabs are written immediately; later failures may leave partial
+    output. This nondifferentiable routine does not replace default FBP.
     """
     require_parallel_beam(geometry, "fourier_reconstruct")
     cfg = FourierConfig() if config is None else config
@@ -96,8 +97,8 @@ def fourier_reconstruct(
     origin = grid_volume_origin(grid)
     if not np.isfinite([*origin, *detector.center]).all():
         raise ValueError("fourier_reconstruct: grid and detector placement must be finite")
-    order, flipped, theta0 = uniform_half_turn(np.asarray(geometry.angles))
-    output = validate_host_arrays(projections, out, shape, "fourier_reconstruct")
+    order, flipped, angles = sorted_half_turn(np.asarray(geometry.angles))
+    output = _fourier_output(projections, out, shape)
     depth = min(slices, grid.nz)
     host_bytes = 4 * (grid.nx * grid.ny * grid.nz + nviews * detector.nu * grid.nz)
     positions = (origin[2] + np.arange(grid.nz) * grid.vz - detector.center[1]) / detector.dv + (
@@ -125,6 +126,7 @@ def fourier_reconstruct(
             raise ValueError("fourier_reconstruct: reconstructed slab must be finite in FP32")
         output[:, :, start:stop] = volume.transpose(1, 2, 0)
 
+    retried = False
     while True:
         plan = None
         try:
@@ -132,23 +134,57 @@ def fourier_reconstruct(
                 cfg.backend == "cupy" and grid.nz > depth and host_bytes >= _HOST_PIPELINE_MIN_BYTES
             )
             plan = FourierPlan(
-                grid, detector, nviews, flipped, theta0, depth, cfg.backend, async_transfers=overlap
+                grid, detector, nviews, flipped, angles, depth, cfg.backend, async_transfers=overlap
             )
-            if overlap:
-                _run_host_pipeline(plan, grid.nz, depth, prepare, write)
-            else:
-                for start in range(0, grid.nz, depth):
-                    count = min(depth, grid.nz - start)
-                    write(start, plan.reconstruct(prepare(start), count=count))
+            _run_slabs(plan, grid.nz, depth, prepare, write, overlap=overlap)
             return output
         except Exception as error:
-            if cfg.backend != "cupy" or depth == 1 or not is_cuda_oom(error):
+            if cfg.backend != "cupy" or not is_cuda_oom(error):
                 raise
-            # The pipeline has drained its transfer events. Drop this attempt's
-            # buffers and the exception traceback before allocating a smaller
-            # slab; rewriting from slice zero also replaces any completed output.
+            # Transfer events are drained. Retry from zero to replace dirty slabs.
             plan = None
-        depth = max(1, depth // 2)
+            retry = _retry_after_exhaustion(depth, retried=retried)
+            if retry is None:
+                raise
+            depth, retried = retry
+
+
+def _fourier_output(
+    projections: np.ndarray, out: np.ndarray | None, shape: tuple[int, int, int]
+) -> np.ndarray:
+    """Keep default axial slab writes contiguous without changing caller storage."""
+    output = validate_host_arrays(projections, out, shape, "fourier_reconstruct")
+    if out is None:
+        # Reinterpret the uninitialized owner; allocate no second volume.
+        return output.reshape((shape[2], shape[0], shape[1])).transpose(1, 2, 0)
+    return output
+
+
+def _retry_after_exhaustion(depth: int, *, retried: bool) -> tuple[int, bool] | None:
+    """Evict stale FFT workspaces once at each depth, then reduce axial storage."""
+    if release_cuda_fft_cache() and not retried:
+        return depth, True
+    if depth > 1:
+        return max(1, depth // 2), False
+    return None
+
+
+def _run_slabs(
+    plan: FourierPlan,
+    nz: int,
+    depth: int,
+    prepare: Callable[[int], np.ndarray | ProjectionRows],
+    write: Callable[[int, np.ndarray], None],
+    *,
+    overlap: bool,
+) -> None:
+    """Execute complete slabs either serially or through the bounded pipeline."""
+    if overlap:
+        _run_host_pipeline(plan, nz, depth, prepare, write)
+    else:
+        for start in range(0, nz, depth):
+            count = min(depth, nz - start)
+            write(start, plan.reconstruct(prepare(start), count=count))
 
 
 def _run_host_pipeline(

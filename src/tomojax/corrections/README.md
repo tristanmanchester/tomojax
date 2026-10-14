@@ -42,6 +42,18 @@ or recover their missing measurements; use an unsaturated calibration or a
 validated detector-defect repair. Floating calibrations and lower ADC limits
 within an integer storage type cannot be diagnosed from dtype alone.
 
+`Frames.corrected(..., binning=f)` averages corrected line integrals, not raw
+counts. Automatic batches can stream a single `RadialDistortion` followed by
+independent whole-row corrections such as `Stripes` (and pointwise
+`BeamHardening`) from NumPy or efficiently windowed HDF5 counts. Each output
+band retains its measured optical halo before averaging. Calibration statistics
+are computed once on the full detector; log diagnostics own output pixels,
+whereas raw-count diagnostics own acquired pixels once, not repeated halos.
+This avoids an unbinned intermediate. Explicit view batches, view selectors,
+additional transmission steps such as Paganin, and unknown readers retain
+their original full-detector path. This is a capacity optimization, not a new
+optical approximation or detector-defect repair.
+
 Integer projection counts at their storage ceiling are diagnosed separately:
 the log record reports `counts_at_dtype_ceiling` and its `counts_dtype_ceiling`.
 The tally covers the corrected input readings before counts steps or view
@@ -135,7 +147,6 @@ Use the smallest window that covers the detector defect, and compare corrected
 and uncorrected reconstructions when centred fine structure matters. Completely
 dead pixels or view-dependent defects need more than a constant-offset model.
 
-
 ## Calibrated lens distortion
 
 ```python
@@ -201,7 +212,5 @@ the workflow modules, which sit above it in the import layers
   phase retrieval.
 - `tests/test_correction_output_storage.py` checks caller-owned array/memmap
   storage, bounded view compaction, and input/output separation.
-
-
 - `tests/test_radial_distortion.py` checks identity, bilinear interpolation
   against SciPy, crop/binning coordinates, domain ordering and saved records.

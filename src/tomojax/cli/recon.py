@@ -34,8 +34,8 @@ if TYPE_CHECKING:
     from tomojax import Reconstruction, Scan
     from tomojax.recon.api import MethodConfig
 
-type _Method = Literal["fbp", "cgls", "fista", "spdhg"]
-_METHODS: tuple[_Method, ...] = ("fbp", "cgls", "fista", "spdhg")
+type _Method = Literal["fbp", "fourier", "cgls", "fista", "spdhg"]
+_METHODS: tuple[_Method, ...] = ("fbp", "fourier", "cgls", "fista", "spdhg")
 # The options that are tj.reconstruct keywords besides the method and grid.
 _KEYWORDS = ("filter", "iterations", "tv_weight", "nonnegative", "warm_start", "seed")
 # Configuration fields a TOML file cannot hold.
@@ -59,8 +59,8 @@ _PUBLIC = (
 
 _SETTINGS = (
     "Expert settings are --config keys, fields of the method's configuration:\n"
-    "tomojax.recon.FBPConfig (fbp, and FDK for cone beams), CGLSConfig, FistaConfig\n"
-    "or SPDHGConfig. Each replaces that field of the class's defaults; a setting the\n"
+    "tomojax.recon.FBPConfig (fbp, and FDK for cone beams), FourierConfig, CGLSConfig,\n"
+    "FistaConfig or SPDHGConfig. Each replaces that field of the class's defaults; a setting the\n"
     "method's class has no field for fails with the ones it has.\n"
 )
 _EPILOG = (
@@ -89,8 +89,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=_METHODS,
         default="fbp",
         help=(
-            "fbp: filtered backprojection, FDK for cone beams (default); cgls: least "
-            "squares; fista, spdhg: least squares with total variation"
+            "fbp: filtered backprojection/FDK (default); fourier: parallel Fourier inverse; "
+            "cgls: least squares; fista, spdhg: least squares with total variation"
         ),
     )
     _ = p.add_argument(
@@ -235,8 +235,8 @@ class _Run:
         config = method_config(self.method, config=None, **settings)
         options = {k: v for k, v in self.keywords().items() if k != "warm_start"}
         _ = method_config(self.method, config=config, **options)
-        if self.method == "fbp" and self.warm_start is not None:
-            raise ValueError("method 'fbp' does not take warm_start")
+        if self.method in {"fbp", "fourier"} and self.warm_start is not None:
+            raise ValueError(f"method {self.method!r} does not take warm_start")
         return config
 
 
