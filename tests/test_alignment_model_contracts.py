@@ -10,7 +10,7 @@ import pytest
 import tomojax as tj
 
 # check-public-imports: allow-private
-from tomojax.alignment._geometry import initializers as init
+from tomojax.alignment._geometry import common_lines, initializers as init
 
 # check-public-imports: allow-private
 from tomojax.alignment._geometry.geometry_blocks import _theta_span_from_geometry
@@ -343,3 +343,67 @@ def test_public_cor_reconstructs_with_the_configured_integrator_and_batches(monk
     # Two folds and the returned-volume reconstruction.
     assert seen == [("exact", 7, "jax")] * 3
     assert abs(result.scan.detector.center[0] - centre) <= 0.35
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("shape", [(49, 65), (225, 257)])
+def test_common_line_phase_recovers_absolute_center_with_unequal_pixels_and_binning(shape):
+    # Independent continuous 3-D Gaussian line integrals, not a planar object
+    # or data from the discrete projector. Odd tails exercise Fourier origins.
+    rng = np.random.default_rng(469)
+    nv, nu = shape
+    detector = Detector(nu, nv, 0.8, 1.1, (1.2, 2.7))
+    angles = np.linspace(0, 360, 48, endpoint=False)
+    theta, tilt = np.deg2rad(angles), np.deg2rad(35)
+    azimuth = np.deg2rad(17)
+    ca, sa = np.cos(azimuth), np.sin(azimuth)
+    axis = np.array([sa * np.cos(tilt), np.sin(tilt), ca * np.cos(tilt)])
+    u = np.stack([np.cos(theta), -np.sin(theta), 0 * theta], axis=1)
+    v = np.stack(
+        [-np.sin(tilt) * np.sin(theta), -np.sin(tilt) * np.cos(theta), 0 * theta + np.cos(tilt)],
+        axis=1,
+    )
+    basis = np.stack([ca * u + sa * v, -sa * u + ca * v], axis=1)
+    extent = min(nu * detector.du, nv * detector.dv)
+    centre_px = 0.08 * nu
+    yy, xx = np.mgrid[:nv, :nu]
+    points = np.stack(
+        [
+            (xx - (nu - 1) / 2 + centre_px) * detector.du,
+            (yy - (nv - 1) / 2) * detector.dv + detector.center[1],
+        ],
+        axis=-1,
+    )
+    data = np.zeros((len(angles), nv, nu), np.float32)
+    for _ in range(5):
+        centre = rng.uniform(-0.18, 0.18, 3) * extent
+        rotation, _ = np.linalg.qr(rng.normal(size=(3, 3)))
+        covariance = rotation @ np.diag((rng.uniform(0.03, 0.07, 3) * extent) ** 2) @ rotation.T
+        projected_covariance = basis @ covariance @ basis.transpose(0, 2, 1)
+        delta = points[None] - (basis @ centre)[:, None, None]
+        amplitude = np.sqrt(
+            2 * np.pi * np.linalg.det(covariance) / np.linalg.det(projected_covariance)
+        )
+        data += amplitude[:, None, None] * np.exp(
+            -0.5
+            * np.einsum("nvui,nij,nvuj->nvu", delta, np.linalg.inv(projected_covariance), delta)
+        )
+    prepared = common_lines.prepare_common_lines(data, angles, detector)
+    assert prepared is not None
+    assert prepared.center(axis) == pytest.approx(centre_px, abs=0.1)
+    shuffled = rng.permutation(len(angles))
+    again = common_lines.prepare_common_lines(data[shuffled], angles[shuffled] + 360, detector)
+    assert again is not None
+    np.testing.assert_allclose(again.sample(axis), prepared.sample(axis), rtol=2e-5, atol=1e-5)
+
+
+def test_common_line_center_declines_axial_or_featureless_evidence():
+    detector = Detector(33, 31, 0.8, 1.1)
+    angles = np.linspace(0, 360, 24, endpoint=False)
+    data = np.random.default_rng(34).normal(size=(24, 31, 33)).astype(np.float32)
+    prepared = common_lines.prepare_common_lines(data, angles, detector)
+    assert prepared is not None
+    assert prepared.center(np.array([0, 0, 1])) is None
+    blank = common_lines.prepare_common_lines(np.ones_like(data), angles, detector)
+    assert blank is not None
+    assert blank.center(np.array([0, 0.6, 0.8])) is None
