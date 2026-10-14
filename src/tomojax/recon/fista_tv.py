@@ -165,13 +165,11 @@ def _view_chunk_schedule(
 class FistaConfig:
     """Configuration for public FISTA/TV reconstruction.
 
-    ``projector_model`` and ``projector_backend`` choose the projection operator as
-    in :class:`CGLSConfig`; ``"auto"`` uses Joseph plane sampling with Pallas
-    kernels on CUDA. An explicit detector grid or the exact ray integrator uses
-    the ray-model reference path instead, which is the only path honouring
-    ``gather_dtype``, ``projector_unroll``, ``checkpoint_projector`` and
-    ``grad_mode``. ``views_per_batch=None`` uses 64 views per batch with batched
-    operators and one view at a time on the reference path.
+    ``projector_model``/``projector_backend`` follow :class:`CGLSConfig`: ``"auto"``
+    uses batched Joseph (also for ``ray_integrator="joseph"``), with Pallas on CUDA.
+    Explicit grids/exact integration use the reference path, alone honouring
+    ``gather_dtype``, ``projector_unroll``, ``checkpoint_projector`` and ``grad_mode``.
+    ``views_per_batch=None`` batches 64 views, or one on the reference path.
 
     ``stream_projections`` reads NumPy or memmap projections from host memory
     one view batch at a time, so they never occupy the device whole. ``None``
@@ -584,7 +582,9 @@ def _batched_projector(
             geometry, model, backend, detector=detector, det_grid=det_grid, context="fista_tv"
         )
         return cone, backend, max(1, min(requested, n_views))
-    if det_grid is not None or cfg.ray_integrator != "sampled":
+    if det_grid is None and cfg.ray_integrator == "joseph" and model == "auto":
+        model = "joseph"
+    elif det_grid is not None or cfg.ray_integrator != "sampled":
         if model == "joseph" or backend == "pallas":
             raise ValueError(
                 "fista_tv: explicit detector grids and exact integration require "

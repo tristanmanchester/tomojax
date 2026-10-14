@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -284,11 +285,15 @@ def sinogram_det_u_seed(
     A sinogram over 180 degrees and its mirror image, stacked, make a
     360-degree sinogram when the mirror is shifted by twice the axis offset;
     a 360-degree sinogram's Fourier transform has no energy outside a double
-    wedge, so the offset minimises the energy there. Coarse on columns binned
-    by 4, then to a quarter pixel; the median over ``rows`` detector rows.
+    wedge, so the offset minimises the energy there. The coarse search bins
+    columns by up to 4 without reducing below 32, and averages dense angular
+    rows without reducing below 128. Full-resolution searches refine to a
+    quarter pixel; the result is the median over ``rows`` detector rows.
     ``ratio`` is the object's size as a fraction of the field (the wedge's
-    width), ``drop`` the low frequencies left out. None when the views cover
-    less than a half turn.
+    width), ``drop`` the low frequencies left out. Nonuniformly spaced views
+    are interpolated onto a uniform angular grid before the Fourier metric;
+    repeated angles are averaged. None when the views cover less than a half
+    turn.
     """
     raw_angles = np.asarray(angles_deg, np.float64)
     angles = np.mod(raw_angles, 360.0)
@@ -305,24 +310,55 @@ def sinogram_det_u_seed(
     half_turn = order[first]
     if len(half_turn) < 16 or relative[first][-1] < 175.0:
         return None
-    data = np.asarray(projections)
-    nv, nu = data.shape[1], data.shape[2]
+    nv, nu = projections.shape[1], projections.shape[2]
     picks = np.unique(np.linspace(0.1 * (nv - 1), 0.9 * (nv - 1), max(1, rows)).round().astype(int))
+    # Transfer only the sampled rows, not a potentially multi-GB device scan.
+    # Select them together so a device input needs just one gather and copy.
+    data = np.asarray(projections[:, picks, :])
     offsets = []
-    for row in picks:
+    # Amortize accelerator compilation over the sampled full-resolution rows.
+    # Small searches retain the CPU path, including one-row preview scans.
+    gpu_fine = len(picks) * len(half_turn) * nu >= 3 * 2**20
+    for row in range(len(picks)):
         sino = np.asarray(data[half_turn, row, :], np.float32)
         if not np.isfinite(sino).all() or np.ptp(sino) <= 0:
             continue
-        # Coarse: columns binned by 4 (and views by 2), every binned pixel.
-        views = len(sino) // 2 * 2
-        coarse = sino[:views, : nu // 4 * 4].reshape(views // 2, 2, -1, 4).mean(axis=(1, 3))
+        sino = _uniform_sinogram(sino, relative[first])
+        # Preserve enough detector samples for the coarse Fourier metric:
+        # a fixed 4x reduction can alias narrow sinograms into a false basin.
+        binning = max(1, min(4, nu // 32))
+        # The coarse offset only needs the low angular frequencies; averaging
+        # dense views avoids paying for their fine-resolution bandwidth here.
+        angular_binning = max(2, len(sino) // 128)
+        views = len(sino) // angular_binning * angular_binning
+        coarse = (
+            sino[:views, : nu // binning * binning]
+            .reshape(views // angular_binning, angular_binning, -1, binning)
+            .mean(axis=(1, 3))
+        )
         reach = max(2, int(max_fraction * coarse.shape[1]))
         steps = np.arange(-reach, reach + 1, dtype=np.float64)
-        best = steps[int(np.argmin(_vo_metrics(coarse, steps, ratio, drop)))] * 4
+        best = steps[int(np.argmin(_vo_metrics(coarse, steps, ratio, drop)))] * binning
+        # Dropping rightmost columns moves the coarse detector midpoint left.
+        best -= (nu % binning) / 2
         # Fine: whole pixels around it, then quarter pixels.
+        fine_metrics: dict[float, float] = {}
         for spread, step in ((6.0, 1.0), (1.0, 0.25)):
             near = best + np.arange(-spread, spread + step / 2, step)
-            best = float(near[int(np.argmin(_vo_metrics(sino, near, ratio, drop)))])
+            # Reuse overlapping candidates only for this full-resolution row.
+            missing = np.asarray([offset for offset in near if offset not in fine_metrics])
+            metrics = None
+            if gpu_fine:
+                from ._vo_gpu import try_metrics
+
+                metrics = try_metrics(sino, missing, _vo_folded_mask(*sino.shape, ratio, drop))
+                # A capacity miss only disables acceleration for this estimate,
+                # not future calls or searches on another device.
+                gpu_fine = metrics is not None
+            if metrics is None:
+                metrics = _vo_metrics(sino, missing, ratio, drop)
+            fine_metrics.update(zip(missing, metrics, strict=True))
+            best = float(near[int(np.argmin([fine_metrics[offset] for offset in near]))])
         offsets.append(best)
     if not offsets:
         return None
@@ -336,20 +372,43 @@ def sinogram_det_u_seed(
     )
 
 
+def _uniform_sinogram(sino: np.ndarray, angles: np.ndarray) -> np.ndarray:
+    """Equally spaced angular rows for Vo's angular Fourier transform."""
+    unique, starts, counts = np.unique(angles, return_index=True, return_counts=True)
+    if len(unique) != len(angles):
+        sino = np.add.reduceat(sino, starts, axis=0) / counts[:, None]
+    target = np.linspace(unique[0], unique[-1], len(unique))
+    if np.allclose(unique, target, rtol=0, atol=1e-5):
+        return sino.astype(np.float32, copy=False)
+    right = np.clip(np.searchsorted(unique, target), 1, len(unique) - 1)
+    left = right - 1
+    weight = ((target - unique[left]) / (unique[right] - unique[left]))[:, None]
+    return (sino[left] * (1 - weight) + sino[right] * weight).astype(np.float32)
+
+
 def _vo_metrics(sino: np.ndarray, offsets: np.ndarray, ratio: float, drop: int) -> np.ndarray:
     """Vo's metric for each axis offset (pixels from the centre column) of ``sino``."""
     views, cols = sino.shape
-    mask = _vo_mask(2 * views, cols, 0.5 * ratio * cols, drop)
+    folded = _vo_folded_mask(views, cols, ratio, drop)
     mirror = sino[:, ::-1]
     # Shift the mirror by twice the offset (sub-pixel, along u, by Fourier
     # phase), with the far edge of the flipped sinogram where it wraps.
-    freq = np.fft.fftfreq(cols).astype(np.float32)
-    spectrum = np.asarray(fft.fft(mirror, axis=1, workers=-1))
+    freq = np.fft.rfftfreq(cols).astype(np.float32)
+    spectrum = None
     out = np.empty(len(offsets))
+    both = np.empty((2 * views, cols), dtype=sino.dtype)
+    both[:views] = sino
     for i, offset in enumerate(offsets):
         shift = 2.0 * float(offset)
-        phase = np.exp(-2j * np.pi * freq * np.float32(shift)).astype(np.complex64)
-        moved = np.real(np.asarray(fft.ifft(spectrum * phase, axis=1, workers=-1)))
+        if shift.is_integer():
+            # Integral translations need neither spectral interpolation nor its
+            # roundoff. Keep the same periodic shift and overwritten edge.
+            moved = np.roll(mirror, int(shift), axis=1)
+        else:
+            if spectrum is None:
+                spectrum = np.asarray(fft.rfft(mirror, axis=1, workers=-1))
+            phase = np.exp(-2j * np.pi * freq * np.float32(shift)).astype(np.complex64)
+            moved = np.asarray(fft.irfft(spectrum * phase, n=cols, axis=1, workers=-1))
         edge = int(np.ceil(abs(shift)))
         if edge:
             filler = sino[::-1]
@@ -357,10 +416,25 @@ def _vo_metrics(sino: np.ndarray, offsets: np.ndarray, ratio: float, drop: int) 
                 moved[:, :edge] = filler[:, :edge]
             else:
                 moved[:, -edge:] = filler[:, -edge:]
-        both = np.vstack([sino, moved])
-        energy = np.abs(np.fft.fftshift(np.asarray(fft.fft2(both, workers=-1))))
-        out[i] = float(np.mean(energy * mask))
+        both[views:] = moved
+        energy = np.abs(np.asarray(fft.rfft2(both, workers=-1)))
+        energy *= folded
+        out[i] = float(np.sum(energy) / (2 * views * cols))
     return out
+
+
+@lru_cache(maxsize=2)
+def _vo_folded_mask(views: int, cols: int, ratio: float, drop: int) -> np.ndarray:
+    """Reuse the immutable coarse/fine frequency weights across rows and searches."""
+    mask = np.fft.ifftshift(_vo_mask(2 * views, cols, 0.5 * ratio * cols, drop))
+    # Real sinograms have conjugate Fourier pairs. Fold the mask onto the
+    # stored half-plane, including each DC/Nyquist column only once. The mask
+    # itself is not symmetric, so simply doubling positive frequencies fails.
+    folded = mask[:, : cols // 2 + 1].copy()
+    stop = (cols + 1) // 2
+    folded[:, 1:stop] += mask[(-np.arange(2 * views)) % (2 * views)][:, cols - 1 : cols - stop : -1]
+    folded.flags.writeable = False
+    return folded
 
 
 def _vo_mask(rows: int, cols: int, radius: float, drop: int) -> np.ndarray:
