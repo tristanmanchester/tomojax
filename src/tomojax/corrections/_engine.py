@@ -258,16 +258,13 @@ def _correct_view_batches(
                 epsilon=float(epsilon), counts_steps=counts_steps,
                 transmission_steps=transmission_steps, line_steps=tuple(head),
             )  # fmt: skip
-            # The first selecting step needs only small per-view summaries. Use
-            # this device batch instead of transferring the corrected stack back
-            # to the device once more in _run_rest.
-            summary = (
-                None if selector is None else _stage_statistic(selector, done[0], statistic_worker)
+            done, summary, download = _stage_batch(
+                done,
+                selector,
+                statistic_worker,
+                output[start:stop],
+                binning=binning if bin_after_summary else 1,
             )
-            if bin_after_summary:
-                # Keep original-pixel statistics, then compact the owned reduced storage.
-                done = (_apply_binned((), done[0], factor=binning), *done[1:])
-            download = stage_download(done[0], output[start:stop])
             if pending is not None:  # the last batch comes back while this one runs
                 collect(*pending)
             pending = (done, summary, download)
@@ -281,6 +278,27 @@ def _correct_view_batches(
     del flat_stack, dark, flat_variance, dark_variance, field
     statistics = np.concatenate(summaries) if summaries else None
     return tally, statistics, ceiling_readings
+
+
+def _stage_batch(
+    done: tuple[jax.Array, ...],
+    selector: Step | None,
+    worker: ThreadPoolExecutor,
+    destination: np.ndarray,
+    *,
+    binning: int,
+) -> tuple[tuple[jax.Array, ...], Callable[[], np.ndarray] | None, Callable[[], None]]:
+    """Start a corrected batch's selector summary and its download into ``destination``.
+
+    The first selecting step needs only small per-view summaries. Use this
+    device batch instead of transferring the corrected stack back to the
+    device once more in _run_rest. With ``binning`` above one, the summary
+    keeps original pixels and only the detector means are downloaded.
+    """
+    summary = None if selector is None else _stage_statistic(selector, done[0], worker)
+    if binning > 1:
+        done = (_apply_binned((), done[0], factor=binning), *done[1:])
+    return done, summary, stage_download(done[0], destination)
 
 
 class Corrected(NamedTuple):
