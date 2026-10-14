@@ -56,13 +56,9 @@ def scale_to_uint8(
     if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
         return out
 
-    # Boolean indexing owns this buffer; reuse it without mutating the image.
-    finite_values -= lo
-    finite_values /= hi - lo
-    _ = np.clip(finite_values, 0.0, 1.0, out=finite_values)
-    finite_values *= 255.0
-    _ = np.round(finite_values, out=finite_values)
-    out[finite] = finite_values.astype(np.uint8)
+    scaled = (finite_values - lo) / (hi - lo)
+    scaled = np.clip(scaled, 0.0, 1.0)
+    out[finite] = np.round(scaled * 255.0).astype(np.uint8)
     return out
 
 

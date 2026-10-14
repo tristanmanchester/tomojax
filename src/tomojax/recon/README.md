@@ -13,7 +13,7 @@
 - `calibrate_cone_axis`, the cone-beam axis-offset and roll calibration
 
 Each method's settings are a configuration class: `FBPConfig` (FBP and FDK),
-`CGLSConfig`, `FistaConfig` and `SPDHGConfig`. Pass one as
+`FourierConfig`, `CGLSConfig`, `FistaConfig` and `SPDHGConfig`. Pass one as
 `tj.reconstruct(scan, "fista", config=FistaConfig(regulariser="huber_tv"))`;
 keywords such as `iterations=` replace the fields of the same name. The same
 fields are the keys of a `tomojax recon --config` TOML file
@@ -35,10 +35,13 @@ caches remain additional costs. The final partial batch counts each view once.
 Given a NumPy array or memmap, `fbp` streams view batches from host memory, so
 only the volume and one batch occupy the device.
 
-`fbp_host` also keeps the volume in host memory, for scans whose volume does
-not fit on the device. Built-in parallel geometry is processed in axial slabs
-that read only the detector rows they need; laminography and other geometry in
-x-slabs, each streaming every view batch once (filtering is repeated per slab).
+`tj.reconstruct` switches `fbp` to `fbp_host`, and FDK to `fdk_host`, when the
+volume would take more than 40% of the free device memory on the first device;
+`out=` forces it. `fbp_host` keeps the volume in host memory, for scans whose
+volume does not fit on the device. Projections already on the device stay
+there and are sliced in place. Built-in parallel geometry is processed in axial
+slabs that read only the detector rows they need; laminography and other
+geometry in x-slabs, each streaming every view batch once (filtering is repeated per slab).
 With `slices_per_batch=None`, non-parallel slabs are sized to about half of
 the free device memory, so a volume that fits takes one pass:
 
@@ -54,17 +57,20 @@ volume = fbp_host(
 
 Each slab uses the same compiled shape, including a final partial slab. Smaller
 slabs reduce device storage but increase transfer and dispatch costs. This API
-is not differentiable and rejects JAX input arrays.
+is not differentiable.
 Input and output must not overlap, including separate mappings of the same file.
 Completed slabs are written immediately, so a later exception can leave partial
 output. Callers own memmap flushing. Device workspace and runtime caches remain
 additional costs; batch dimensions are not a hard process-memory cap.
 
-`fourier_reconstruct` is an opt-in Fourier-slice inverse for built-in parallel
-scans with uniform, unique angles modulo 180 degrees. It accepts reordered,
-reversed and opposing views, offset detectors, anisotropic spacing and cropped
-output grids. Projection FFTs use six-point Kaiser–Bessel radial interpolation,
-linear angular interpolation and a detector-Nyquist disk cutoff, followed by a
+`fourier_reconstruct` (`tj.reconstruct(scan, "fourier")`) is an opt-in
+Fourier-slice inverse for built-in parallel half-turn scans, including
+nonuniform encoder angles, rejected views and an inclusive 0 to 180 degree
+range; views of one direction share an angular cell and are averaged. It accepts
+reordered, reversed and opposing views, offset detectors, anisotropic spacing
+and cropped output grids. Projection FFTs use six-point Kaiser–Bessel radial
+interpolation, linear interpolation in the measured angle (periodic over a half
+turn) and a detector-Nyquist disk cutoff, followed by a
 padded Cartesian inverse FFT. The padding covers both the output grid and the
 acquired detector field to avoid wrapping an object outside a cropped ROI back
 into it. Missing detector data are assumed zero; this does not correct truncation.
@@ -90,8 +96,8 @@ partial-output rules as `fbp_host` apply. No amplitude fitting or clipping is
 performed. Large CUDA jobs overlap bounded host work and transfers on reused
 device queues. Smaller slabs can reduce memory at a throughput cost; the
 measured 512³ case uses 430 MiB at eight slices versus 678 MiB at sixteen.
-This API is not differentiable, is not selected by the CLI, and rejects
-tilted/custom geometry and nonuniform or repeated half-turn angles. Its angular
+This API is not differentiable and rejects tilted/custom geometry. Large
+missing angular sectors are interpolated, not recovered, and the angular
 interpolation can introduce artefacts on sharp or undersampled scans; the
 [measurements](../../../docs/measurements.md#fourier-inverse) give its memory
 and speed, and the [reconstruction comparison](../../../docs/measurements.md#reconstruction-against-astra)

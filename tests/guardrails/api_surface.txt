@@ -318,7 +318,6 @@ class tomojax.recon.ConeAxisConfig(
 class tomojax.recon.FBPConfig(
         *,
         filter: 'str' = 'ramp',
-        padding: "Literal['zero', 'edge']" = 'zero',
         scale: 'float | None' = None,
         views_per_batch: 'int' = 1,
         projector_unroll: 'int' = 1,
@@ -332,7 +331,6 @@ class tomojax.recon.FBPHostConfig(
         slices_per_batch: 'int | None' = None,
         views_per_batch: 'int' = 32,
         filter: 'str' = 'ramp',
-        padding: "Literal['zero', 'edge']" = 'zero',
         scale: 'float | None' = None,
         backprojector: "Literal['auto', 'jax', 'pallas']" = 'auto',
     ) -> None
@@ -445,10 +443,10 @@ def tomojax.recon.fbp(
         det_grid: 'tuple[jnp.ndarray, jnp.ndarray] | None' = None,
     ) -> 'jnp.ndarray'
 def tomojax.recon.fbp_host(
-        geometry: 'Geometry',
+        geometry: 'ParallelGeometry',
         grid: 'Grid',
         detector: 'Detector',
-        projections: 'np.ndarray | jnp.ndarray',
+        projections: 'np.ndarray | jax.Array',
         *,
         config: 'FBPHostConfig | None' = None,
         out: 'np.ndarray | None' = None,

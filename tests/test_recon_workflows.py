@@ -327,3 +327,42 @@ def test_segmented_warm_start_rejects_invalid_scans(monkeypatch, case, views, me
             np.zeros((views, 10, 12), np.float32),
             warm_start=True,
         )
+
+
+def test_fbp_halves_view_batches_after_a_cufft_scratch_failure(monkeypatch):
+    module = importlib.import_module("tomojax.recon.fbp")
+    grid, detector, geometry = _tiny_geometry()
+    calls = []
+
+    def fail(*args, **kwargs):
+        calls.append(kwargs["batch_size"])
+        raise RuntimeError(
+            "INTERNAL: RET_CHECK failure (fft_thunk.cc:201) fft_plan != nullptr "
+            "Failed to create cuFFT batched plan with scratch allocator"
+        )
+
+    monkeypatch.setattr(module, "_run_fbp_streamed", fail)
+    with pytest.raises(RuntimeError, match="Failed to create cuFFT"):
+        fbp(geometry, grid, detector, jnp.ones((4, 4, 4)))
+    assert calls == [4, 2, 1]
+
+
+def test_quicklook_transfers_only_the_central_slice_of_a_device_volume():
+    from tomojax.recon.quicklook import extract_central_slice
+
+    class Volume:
+        shape, ndim = (7, 6, 5), 3
+
+        def __init__(self):
+            self.selections = []
+
+        def __array__(self, dtype=None, copy=None):
+            raise AssertionError("downloaded the whole volume")
+
+        def __getitem__(self, selection):
+            self.selections.append(selection)
+            return np.arange(42, dtype=np.float32).reshape(7, 6)
+
+    volume = Volume()
+    assert extract_central_slice(volume).shape == (6, 7)
+    assert volume.selections == [(slice(None), slice(None), 2)]

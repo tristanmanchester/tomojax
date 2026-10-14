@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import fields, replace
 from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
 
-from tomojax.recon._host_arrays import host_projection_input, validate_host_arrays
 from tomojax.recon._warm_start import fbp_start
 from tomojax.recon.cgls import CGLSConfig, cgls
 from tomojax.recon.cgls_multires import cgls_multires
@@ -20,6 +20,8 @@ from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
 from tomojax.recon.types import Regulariser
 
 if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+
     import numpy as np
 
     from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry
@@ -43,8 +45,9 @@ def method_config(
     ``fbp`` (FDK for cone beams) takes an :class:`FBPConfig`, ``cgls`` a
     :class:`CGLSConfig`, ``fista`` a :class:`FistaConfig` and ``spdhg`` an
     :class:`SPDHGConfig`; ``fourier`` takes :class:`FourierConfig`. Each setting
-    replaces its field as :func:`dataclasses.replace` does. A config of another class, or a setting
-    its class has no field for, raises :class:`ValueError` naming the valid ones.
+    replaces the field of its name, as :func:`dataclasses.replace` does. A config
+    of another class, or a setting its class has no field for, raises
+    :class:`ValueError` naming the valid ones.
     """
     kind = _CONFIGS.get(method)
     if kind is None:
@@ -157,31 +160,27 @@ def _detector_grid(
     return detector_grid_from_geometry_inputs(detector, geometry)
 
 
-def _too_large_for_the_device(geometry: Geometry, grid: Grid, cfg: FBPConfig) -> bool:
-    """Whether an FBP volume would take more than 40% of free device memory."""
+def _first_device(cfg: FBPConfig) -> AbstractContextManager[object]:
+    """Make the configuration's first device the default, or leave JAX's own."""
     import jax
 
-    from tomojax.backends import device_free_memory_bytes
     from tomojax.core.devices import as_devices
+
+    devices = as_devices(cfg.devices)
+    return jax.default_device(devices[0]) if devices else nullcontext()
+
+
+def _too_large_for_the_device(geometry: Geometry, grid: Grid, cfg: FBPConfig) -> bool:
+    """Whether an FBP volume would take more than 40% of free device memory."""
+    from tomojax.backends import device_free_memory_bytes
     from tomojax.core.geometry.cone import ConeSegments
 
     if isinstance(geometry, ConeSegments):
         return False  # FDK refuses segmented scans with its own message.
-
-    def oversized() -> bool:
+    # View-shared reconstruction holds the whole volume on every device.
+    with _first_device(cfg):
         free = device_free_memory_bytes()
-        return free is not None and 4 * grid.nx * grid.ny * grid.nz > 0.4 * free
-
-    devices = as_devices(cfg.devices)
-    if devices is None:
-        return oversized()
-    # View-shared reconstruction holds the entire volume on every device.
-    # A selected device need not be the process default (nor GPU 0).
-    for device in devices:
-        with jax.default_device(device):
-            if oversized():
-                return True
-    return False
+    return free is not None and 4 * grid.nx * grid.ny * grid.nz > 0.4 * free
 
 
 def _host_fbp(
@@ -193,55 +192,20 @@ def _host_fbp(
     *,
     out: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Use bounded slabs for either beam type, keeping the result on the host."""
-    from concurrent.futures import ThreadPoolExecutor
+    """Bounded slabs for either beam type, keeping the result on the host."""
     import logging
 
-    import jax
-    import numpy as np
-
-    from tomojax.core.devices import as_devices
     from tomojax.core.geometry.cone import beam_of
-    from tomojax.geometry import grid_volume_origin
 
     if beam_of(geometry) is not None:
         return _host_fdk(geometry, grid, detector, projections, cfg, out=out)
-    logging.info(
-        "Reconstructing %dx%dx%d in slabs on the host",
-        grid.nx,
-        grid.ny,
-        grid.nz,
-    )
-    data = host_projection_input(projections)
-    host_cfg = FBPHostConfig(
-        filter=cfg.filter, padding=cfg.padding, scale=cfg.scale, backprojector=cfg.backprojector
-    )
-    devices = as_devices(cfg.devices)
-    if devices is None:
-        return fbp_host(geometry, grid, detector, data, config=host_cfg, out=out)
-    # Share spatial regions instead of views: summing whole device volumes
-    # would defeat host storage. Each worker still uses bounded local slabs.
-    devices = devices[: grid.nz]
-    if len(devices) == 1:
-        with jax.default_device(devices[0]):
-            return fbp_host(geometry, grid, detector, data, config=host_cfg, out=out)
-    boundaries = np.linspace(0, grid.nz, len(devices) + 1, dtype=int)
-    output = validate_host_arrays(data, out, (grid.nx, grid.ny, grid.nz), device_input=True)
-    ox, oy, oz = grid_volume_origin(grid)
-
-    def run(index: int) -> None:
-        start, stop = map(int, boundaries[index : index + 2])
-        slab = replace(
-            grid, nz=stop - start, vol_origin=(ox, oy, oz + start * grid.vz), vol_center=None
+    logging.info("Reconstructing %dx%dx%d in z-slabs on the host", grid.nx, grid.ny, grid.nz)
+    host = FBPHostConfig(filter=cfg.filter, scale=cfg.scale, backprojector=cfg.backprojector)
+    # Slabs are not shared among devices; the first selected one does the work.
+    with _first_device(cfg):
+        return fbp_host(
+            cast("ParallelGeometry", geometry), grid, detector, projections, config=host, out=out
         )
-        with jax.default_device(devices[index]):
-            _ = fbp_host(
-                geometry, slab, detector, data, config=host_cfg, out=output[:, :, start:stop]
-            )
-
-    with ThreadPoolExecutor(len(devices)) as pool:
-        _ = list(pool.map(run, range(len(devices))))
-    return output
 
 
 def _host_fdk(
@@ -260,8 +224,6 @@ def _host_fdk(
 
     from tomojax.recon.fdk import FDKConfig, FDKHostConfig, fdk_host
 
-    if cfg.padding == "edge":
-        raise ValueError("FBP edge padding requires canonical parallel-beam detector pixels")
     logging.info(
         "Reconstructing %dx%dx%d in z-slabs on the host",
         grid.nx,

@@ -60,8 +60,8 @@ _PUBLIC = (
 _SETTINGS = (
     "Expert settings are --config keys, fields of the method's configuration:\n"
     "tomojax.recon.FBPConfig (fbp, and FDK for cone beams), FourierConfig, CGLSConfig,\n"
-    "FistaConfig or SPDHGConfig. Each replaces that field of the class's defaults; a setting the\n"
-    "method's class has no field for fails with the ones it has.\n"
+    "FistaConfig or SPDHGConfig. Each replaces that field of the class's defaults; a\n"
+    "setting the method's class has no field for fails with the ones it has.\n"
 )
 _EPILOG = (
     "Examples:\n"

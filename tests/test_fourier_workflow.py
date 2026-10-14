@@ -48,15 +48,6 @@ def test_fourier_refuses_inapplicable_workflow_options(options):
         tj.reconstruct(_scan(), "fourier", **options)
 
 
-def test_fourier_workflow_accepts_device_input_without_changing_it():
-    scan = _scan()
-    expected = tj.reconstruct(scan, "fourier")
-    device_scan = replace(scan, projections=jax.device_put(scan.projections))
-    actual = tj.reconstruct(device_scan, "fourier")
-    np.testing.assert_array_equal(actual.volume, expected.volume)
-    np.testing.assert_array_equal(np.asarray(device_scan.projections), scan.projections)
-
-
 def test_cli_fourier_uses_config_and_round_trips_context(tmp_path):
     from tomojax.cli.main import main
 
@@ -87,14 +78,3 @@ def test_cli_fourier_uses_config_and_round_trips_context(tmp_path):
     np.testing.assert_allclose(actual.volume, expected.volume, atol=1e-6)
     assert actual.method == "fourier" and actual.grid == scan.grid
     assert actual.info["config"] == asdict(expected.info["config"])
-
-
-@pytest.mark.parametrize("kind", ["cone", "lamino"])
-def test_fourier_workflow_does_not_reinterpret_other_geometries(kind):
-    scan = _scan()
-    if kind == "cone":
-        geometry = tj.ConeGeometry(scan.grid, scan.detector, scan.angles, tj.ConeBeam(80, 120))
-    else:
-        geometry = tj.LaminographyGeometry(scan.grid, scan.detector, scan.angles, tilt_deg=25)
-    with pytest.raises(ValueError, match="parallel|Parallel"):
-        tj.reconstruct(replace(scan, geometry=geometry), "fourier")

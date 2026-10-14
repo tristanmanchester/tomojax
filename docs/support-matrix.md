@@ -29,7 +29,7 @@ experimental. See [installation](installation.md) and [measurement scope](measur
 | Deterministic synthetic dataset generation | Supported | `tomojax simulate -o synthetic_scan.nxs --size 64 --geometry parallel\|lamino\|cone` |
 | Python API reconstruction | Supported | `tj.reconstruct(scan, method, config=...)`, `tj.project`, `tj.backproject`; building blocks in `tomojax.geometry`, `tomojax.forward`, `tomojax.recon` |
 | Python API alignment, with resumable checkpoints | Experimental | `tj.align(scan, mode=..., grid=..., checkpoint=..., config=...)` |
-| Volumes larger than the GPU | Supported | FDK switches to host slabs automatically; `fbp_host` and `fdk_host` in Python ([large scans](large-scans.md)) |
+| Volumes larger than the GPU | Supported | FBP and FDK switch to host slabs automatically; `fbp_host` and `fdk_host` in Python ([large scans](large-scans.md)) |
 | Several GPUs in one process | Supported (Python only) | `devices=` on `tj.project`, `tj.backproject`, `tj.reconstruct` (`fbp`, `cgls`, `fista`) and `tj.align` ([large scans](large-scans.md#use-several-gpus)) |
 
 ## Scope
@@ -42,7 +42,7 @@ Workflows outside the table above are research or expert diagnostics.
 |---|---|
 | Forward model and matched adjoint | Parallel rays with rigid poses, anisotropic voxels, and shifted grids/detectors; JAX reference and optional Pallas kernels |
 | Parallel FBP | JAX on CPU/CUDA; Pallas selected automatically on CUDA for built-in `ParallelGeometry` without an explicit detector grid |
-| Host-output FBP | `fbp_host`: NumPy/memmap input and optional FP32 output for every parallel-beam geometry `fbp` accepts (cone beams use `fdk_host`); parallel axial slabs or laminography x-slabs on JAX CPU/CUDA or Pallas CUDA; not differentiable. `fbp` itself streams NumPy/memmap projections batch by batch |
+| Host-output FBP | `fbp_host`: NumPy/memmap or device input and optional FP32 output for every parallel-beam geometry `fbp` accepts (cone beams use `fdk_host`); parallel axial slabs or laminography x-slabs on JAX CPU/CUDA or Pallas CUDA; not differentiable. `fbp` itself streams NumPy/memmap projections batch by batch |
 | Fourier-slice inverse (opt-in Python API) | `fourier_reconstruct`: uniform/nonuniform half-turn parallel scans, including redundant/opposing exposures, offsets/anisotropic spacing/cropped grids; NumPy reference or optional CuPy CUDA; host arrays/memmaps and axial slabs; not differentiable |
 | General posed/laminography filtered adjoint | JAX; approximate initialisation for incomplete-angle data |
 | Public FISTA-TV and SPDHG-TV | JAX with matched discrete adjoints; convergence regressions for parallel and tilted scans; NumPy/memmap projections stream from host memory when large (SPDHG-TV also keeps its dual and weights there) |

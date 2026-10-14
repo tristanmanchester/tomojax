@@ -176,8 +176,8 @@ recon = tj.reconstruct(scan, "fourier", config=FourierConfig(backend="cupy"))
 
 Fourier is an approximate inverse with its own frequency cutoff, not an FBP
 filter selection. It requires built-in parallel geometry without per-view poses;
-cone beams and laminography are unsupported. The routine checks angular sampling
-and coverage, and does not correct detector truncation. It refuses `filter`,
+cone beams and laminography are unsupported. It does not check angular coverage
+or correct detector truncation. It refuses `filter`,
 iterative-solver options and `warm_start` rather than silently ignoring them.
 
 For FBP, FDK and Fourier volumes larger than host RAM, provide a writable

@@ -102,19 +102,14 @@ listed with how to check a result in the
   Pallas automatically on CUDA; `FBPConfig(backprojector="jax")` selects JAX.
   Reference/JAX paths and independent analytic data both validate correctness.
 - `fourier_reconstruct` is an opt-in, non-differentiable Fourier-slice inverse
-  for built-in parallel half-turn scans, including nonuniform encoder positions
-  and redundant directions. It rejects tilted/custom geometry. Redundant views
-  are averaged after physical detector phase/orientation. Its disk frequency
-  cutoff and angular interpolation differ from FBP and can produce artefacts
-  on sharp or undersampled scans. Check weak features away from the rotation
-  axis: good bulk density or central-feature agreement does not certify
-  peripheral detail.
-  A finer output grid does not add angular measurements. Missing detector data
-  are assumed zero; FFT padding prevents wraparound, not object truncation.
-  Extending attenuation beyond the measured detector imposes a scientific
-  prior, not additional measurements. CUDA requires the optional
-  `fourier-cuda12` extra; the NumPy reference is the default.
-  Full projection/output storage stays on the host,
+  for built-in parallel half-turn scans, including nonuniform encoder angles,
+  rejected views and repeated or opposing exposures. It rejects tilted/custom
+  geometry. Its disk frequency cutoff and angular interpolation differ from FBP
+  and can produce artefacts on sharp or undersampled scans; a large missing
+  angular sector is interpolated, not recovered. Missing detector data are
+  assumed zero, without truncation correction. CUDA requires the optional
+  `fourier-cuda12` extra; the NumPy reference is the default. Full
+  projection/output storage stays on the host,
   while FFT plans, slab arrays and allocator caches add device memory.
 - The iterative solvers need the whole volume and a few volume-sized work
   arrays on the GPU, so a volume larger than the GPU can be reconstructed only

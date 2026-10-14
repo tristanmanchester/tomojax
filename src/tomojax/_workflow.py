@@ -112,8 +112,7 @@ def save(path: str | PathLike[str], item: Scan | Reconstruction | Alignment) -> 
 
     Reconstructions and alignments are saved with their scan (projections,
     geometry and any pose corrections), so the file reloads with :func:`load`
-    and :func:`load_reconstruction`. HDF5 bounds device-array transfers; NPZ
-    may materialize projections and volumes on the host.
+    and :func:`load_reconstruction`.
     """
     from tomojax.io import save_dataset
 
@@ -196,12 +195,10 @@ def reconstruct(
         (default), ``shepp-logan`` or ``hann``. Volumes too large for the
         device are reconstructed in slabs on the host.
     ``fourier``
-        Fourier-slice reconstruction of built-in parallel geometry. Input and
-        output stay on the host; :class:`~tomojax.recon.FourierConfig` selects
-        NumPy (default) or optional CuPy CUDA execution. This approximate inverse
-        has its own frequency cutoff, not the selectable FBP ``filter``.
-        See :func:`~tomojax.recon.fourier_reconstruct` for angular sampling
-        requirements; per-view poses, cone beams and laminography are not supported.
+        Fourier-slice inversion of parallel-beam half-turn scans, with
+        nonuniform or repeated angles; no per-view poses, cone beams or
+        laminography. Input and output stay on the host;
+        :class:`~tomojax.recon.FourierConfig` selects NumPy or CuPy CUDA.
     ``cgls``
         Least squares by conjugate gradients, ``iterations`` (default 50).
     ``fista``
@@ -218,25 +215,26 @@ def reconstruct(
     FDK. ``grid`` reconstructs on another grid than the scan's (a
     region, or a different voxel size).
 
-    ``out`` is an optional writable float32 NumPy array or memmap with shape
-    ``(grid.nx, grid.ny, grid.nz)`` for ``fbp`` (including FDK) and ``fourier``.
-    It forces host-slab reconstruction and is returned as ``volume`` without
-    allocating another full output. Input and output storage must not overlap;
-    a later failure can leave a partially written output. Flush memmaps yourself
-    when persistence is required. Iterative methods and replayed explicit
-    detector grids do not accept ``out``.
+    ``out`` is a writable float32 array or memmap of shape ``(grid.nx, grid.ny,
+    grid.nz)`` for ``fbp`` and ``fourier``: the volume is made in host slabs
+    straight into it and returned as ``volume``. It must not overlap the scan,
+    and a later failure can leave it partly written.
 
-    ``config`` holds the method's expert settings (see
-    :func:`~tomojax.recon.method_config`); without one, its defaults apply.
-    A config of another method's class raises :class:`ValueError`. Solver
-    keywords replace their config fields as :func:`dataclasses.replace` does;
-    a solver keyword the method's class has no field for raises.
+    ``config`` holds the method's expert settings: a
+    :class:`~tomojax.recon.FBPConfig` (for FDK too),
+    :class:`~tomojax.recon.FourierConfig`, :class:`~tomojax.recon.CGLSConfig`,
+    :class:`~tomojax.recon.FistaConfig` or :class:`~tomojax.recon.SPDHGConfig`;
+    without one, the class's defaults apply. A config of another method's class
+    raises :class:`ValueError`. The keywords are fields of that class, and each
+    one given replaces its field, as :func:`dataclasses.replace` does, so a
+    keyword wins over the config. A keyword the method's class has no field for
+    raises.
 
     ``devices`` (``fbp``, ``cgls`` and ``fista``; one or several,
-    ``jax.devices()`` for all) shares work among them. Device-resident solvers
-    split views, hold a volume on each device, and sum on the first device;
-    host FBP/FDK split spatial slabs instead. Results agree with one-device
-    reconstruction up to floating-point summation order.
+    ``jax.devices()`` for all) shares the views among them: each projects its
+    own views and holds the whole volume, and their backprojections are
+    summed. The volume, on the first device, is the one-device result up to
+    the order of that sum. Host slabs use the first device only.
 
     :attr:`Reconstruction.info` holds the resolved ``config`` with the
     solver's record (iterations run, termination, losses).
