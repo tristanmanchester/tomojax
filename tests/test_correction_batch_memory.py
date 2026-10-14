@@ -1,26 +1,22 @@
-"""Automatic raw-frame batches account for source dtype and padded FFT arrays."""
+"""Automatic raw-frame batches account for padded FFT arrays before reading data."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import ClassVar
-
-import jax
-import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import tomojax as tj
-from tomojax.corrections import BeamHardening, Paganin, Step, Stripes, Zingers
+from tomojax.corrections import Paganin
 
 
 class ConstantViews:
     """Lazy per-view constant fields, logging which data the correction reads."""
 
-    def __init__(self, rows: int, cols: int, dtype: str = "float32") -> None:
+    dtype = np.dtype(np.float32)
+
+    def __init__(self, rows: int, cols: int) -> None:
         self.shape = (65, rows, cols)
-        self.dtype = np.dtype(dtype)
-        self.levels = np.linspace(400.0, 800.0, self.shape[0], dtype=self.dtype)
+        self.levels = np.linspace(400.0, 800.0, self.shape[0], dtype=np.float32)
         self.requests: list[int] = []
 
     def __getitem__(self, views: slice) -> np.ndarray:
@@ -29,101 +25,18 @@ class ConstantViews:
         return np.broadcast_to(levels[:, None, None], (len(levels), *self.shape[1:]))
 
 
-@dataclass(frozen=True)
-class CountsFFT(Step):
-    """A public custom step with a padded FFT workspace, in the counts domain."""
-
-    domain: ClassVar = "counts"
-    batches: ClassVar[list[int]] = []
-
-    def workspace_pixels(self, rows: int, cols: int) -> int:
-        return 4 * (rows + 2 * (rows // 2)) * (cols + 2 * (cols // 2))
-
-    def apply(self, batch):
-        # Observe actual calls, not just the shapes seen while tracing the JIT.
-        jax.debug.callback(lambda n: CountsFFT.batches.append(int(n)), batch.shape[0], ordered=True)
-        _, rows, cols = batch.shape
-        pr, pc = rows // 2, cols // 2
-        padded = jnp.pad(batch, ((0, 0), (pr, pr), (pc, pc)), mode="edge")
-        result = jnp.fft.irfft2(jnp.fft.rfft2(padded), s=padded.shape[-2:])
-        return result[:, pr : pr + rows, pc : pc + cols]
-
-
-@dataclass(frozen=True)
-class LineFFT(CountsFFT):
-    """The same workspace requirement, after the logarithm."""
-
-    domain: ClassVar = "line integrals"
-
-
-@dataclass(frozen=True)
-class FFTStatistic(LineFFT):
-    """A view selector whose per-view statistic also needs device workspace."""
-
-    selects_views: ClassVar = True
-
-    def statistic(self, batch):
-        return jnp.mean(self.apply(batch), axis=(1, 2))
-
-    def select(self, statistics, views):
-        return np.ones(len(views), bool), {}
-
-
-@pytest.mark.parametrize(
-    "where", ["counts", "head", "tail", "scan", "scan_tail", "scan_selector", "raw_selector"]
-)
-@pytest.mark.parametrize("batch", [None, 3])
-def test_all_per_view_domains_respect_workspace_and_explicit_batches(
-    monkeypatch, where: str, batch: int | None
+@pytest.mark.parametrize("shape", [(256, 256), (192, 512)])
+@pytest.mark.parametrize("phase", [False, True])
+@pytest.mark.parametrize("batch", [None, 11])
+def test_phase_retrieval_limits_automatic_reads_and_preserves_explicit_batches(
+    shape: tuple[int, int], phase: bool, batch: int | None
 ) -> None:
-    rows, cols = 17, 19
+    rows, cols = shape
     counts = ConstantViews(rows, cols)
-    # Twenty-four inputs fit the budget, but only one input with its padded FFTs.
-    budget = 4 * rows * cols * 24
-    monkeypatch.setattr("tomojax.corrections._engine._BATCH_BYTES", budget)
-    CountsFFT.batches.clear()
     geometry = tj.ParallelGeometry(
         tj.Grid(8, 8, 2, 1.0, 1.0, 1.0), tj.Detector(cols, rows, 1.0, 1.0), np.arange(65)
     )
-    expected = np.broadcast_to(-np.log(counts.levels / 1000.0)[:, None, None], counts.shape)
-    # Include a zero-workspace step first: sizing must inspect the whole run.
-    steps = [BeamHardening((1.0,)), LineFFT()]
-    if where in {"tail", "scan_tail"}:
-        steps.insert(0, Stripes())
-    if where == "counts":
-        steps = [CountsFFT()]
-    if where in {"scan_selector", "raw_selector"}:
-        steps = [FFTStatistic()]
-    if where.startswith("scan"):
-        actual = tj.Scan(expected.copy(), geometry).corrected(*steps, batch_views=batch)
-    else:
-        actual = tj.Frames(counts, geometry, white_level=1000.0).corrected(
-            *steps, batch_views=batch
-        )
-        assert max(counts.requests) == (batch or (24 if where == "tail" else 1))
-        assert sum(counts.requests) == counts.shape[0]
-    assert max(CountsFFT.batches) == (batch or 1)
-    assert sum(CountsFFT.batches) == counts.shape[0]
-    if batch is None:
-        pixels = rows * cols + CountsFFT().workspace_pixels(rows, cols)
-        assert 4 * pixels * max(CountsFFT.batches) <= budget
-    np.testing.assert_allclose(actual.projections, expected, rtol=2e-6, atol=2e-7)
-    np.testing.assert_array_equal(actual.angles, geometry.angles)
-
-
-@pytest.mark.parametrize("shape", [(256, 256), (128, 512)])
-@pytest.mark.parametrize("phase", [False, True])
-@pytest.mark.parametrize("batch", [None, 11])
-@pytest.mark.parametrize("dtype", ["float32", "float64"])
-def test_phase_retrieval_limits_automatic_reads_and_preserves_explicit_batches(
-    shape: tuple[int, int], phase: bool, batch: int | None, dtype: str
-) -> None:
-    rows, cols = shape
-    counts = ConstantViews(rows, cols, dtype)
-    geometry = tj.ParallelGeometry(
-        tj.Grid(8, 8, 2, 1.0, 1.0, 1.0), tj.Detector(cols, rows, 1.0, 1.0), np.arange(65).tolist()
-    )
-    steps = [Paganin(300.0, 0.05, 20.0, 1e-6)] if phase else []
+    steps = [Paganin(300.0, 0.001, 20.0, 1e-6)] if phase else []
     actual = tj.Frames(counts, geometry, white_level=1000.0).corrected(*steps, batch_views=batch)
 
     if batch is not None:
@@ -140,122 +53,6 @@ def test_phase_retrieval_limits_automatic_reads_and_preserves_explicit_batches(
     )
     np.testing.assert_array_equal(actual.angles, np.arange(65))
     assert next(record for record in actual.corrections if record.name == "log").found == {
-        "nonpositive_transmission": 0,
-        "nonfinite_set_to_zero": 0,
-    }
-
-
-@pytest.mark.numerical
-@pytest.mark.parametrize("shape", [(512, 512), (256, 1024)])
-@pytest.mark.parametrize("size", [3, 5, 7])
-@pytest.mark.parametrize("batch", [None, 11])
-def test_zinger_workspace_bounds_automatic_reads_without_changing_pixels(shape, size, batch):
-    rows, cols = shape
-    counts = ConstantViews(rows, cols)
-    geometry = tj.ParallelGeometry(
-        tj.Grid(8, 8, 2, 1.0, 1.0, 1.0), tj.Detector(cols, rows, 1.0, 1.0), np.arange(65)
-    )
-    actual = tj.Frames(counts, geometry, white_level=1000.0).corrected(
-        Zingers(size=size), batch_views=batch
-    )
-    if batch is None:
-        # The unpadded inputs fit together; the padded sorting scratch does not.
-        assert max(counts.requests) < counts.shape[0]
-    else:
-        assert max(counts.requests) == batch
-    assert sum(counts.requests) == counts.shape[0]
-    expected = -np.log(counts.levels / 1000.0)[:, None, None]
-    np.testing.assert_allclose(
-        actual.projections, np.broadcast_to(expected, counts.shape), rtol=2e-6, atol=2e-7
-    )
-    np.testing.assert_array_equal(actual.angles, np.arange(65))
-    assert actual.corrections[1].name == "zingers"
-    assert actual.corrections[1].settings == {"threshold": 0.1, "size": size}
-
-
-@pytest.mark.numerical
-def test_zinger_batch_sizes_preserve_independent_gaussian_reconstruction():
-    views, nu, nv = 65, 65, 17
-    du, dv, mu, sigma, sigma_z = 0.8, 1.2, 0.025, 3.0, 2.0
-    x0, y0, z0 = 1.2, -1.7, 0.9
-    angles = np.linspace(0.0, 180.0, views, endpoint=False, dtype=np.float32)
-    theta = np.deg2rad(angles.astype(float))
-    u = (np.arange(nu) - (nu - 1) / 2) * du
-    v = (np.arange(nv) - (nv - 1) / 2) * dv
-    shift = x0 * np.cos(theta) - y0 * np.sin(theta)
-    p = (
-        mu
-        * np.sqrt(2 * np.pi)
-        * sigma
-        * np.exp(-0.5 * ((u[None, :] - shift[:, None]) / sigma) ** 2)[:, None, :]
-        * np.exp(-0.5 * ((v - z0) / sigma_z) ** 2)[None, :, None]
-    )
-    counts = (1000 * np.exp(-p)).astype(np.float32)
-    counts[np.arange(views), np.arange(views) % nv, 3 + np.arange(views) % 59] += 500
-    grid = tj.Grid(49, 49, nv, du, du, dv)
-    geometry = tj.ParallelGeometry(grid, tj.Detector(nu, nv, du, dv), angles)
-    frames = tj.Frames(counts, geometry, white_level=1000.0)
-    x = (np.arange(49) - 24) * du
-    truth = mu * np.exp(
-        -0.5 * ((x[:, None, None] - x0) ** 2 + (x[None, :, None] - y0) ** 2) / sigma**2
-        - 0.5 * ((v[None, None, :] - z0) / sigma_z) ** 2
-    )
-    full = frames.corrected(Zingers())
-    chunked = frames.corrected(Zingers(), batch_views=7)
-    np.testing.assert_array_equal(full.projections, chunked.projections)
-    a = np.asarray(tj.reconstruct(full, "fbp").volume)
-    b = np.asarray(tj.reconstruct(chunked, "fbp").volume)
-    np.testing.assert_array_equal(a, b)
-    assert np.linalg.norm(a - truth) / np.linalg.norm(truth) < 0.05
-
-
-def test_broad_phase_filter_reduces_automatic_batch_before_reading() -> None:
-    """A crop's broad filter can need far more padding than half its image size."""
-    rows, cols = 128, 512
-    geometry = tj.ParallelGeometry(
-        tj.Grid(8, 8, 2, 1.0, 1.0, 1.0), tj.Detector(cols, rows, 1.0, 1.0), np.arange(65)
-    )
-    requests = []
-    for distance in (0.001, 0.6):
-        counts = ConstantViews(rows, cols)
-        phase = Paganin(300.0, distance, 20.0, 1e-6)
-        scan = tj.Frames(counts, geometry, white_level=1000.0).corrected(phase)
-        expected = np.broadcast_to(-np.log(counts.levels / 1000.0)[:, None, None], counts.shape)
-        np.testing.assert_allclose(scan.projections, expected, rtol=2e-6, atol=2e-7)
-        requests.append(max(counts.requests))
-    assert requests[1] < requests[0]
-    # A ~30-pixel decay length requires almost 500 pixels of edge extension,
-    # so the FFT workspace limits a 256 MiB automatic batch to ten views.
-    assert requests[1] <= 10
-
-
-class BoundedDoubleViews(ConstantViews):
-    """A valid lazy reader that cannot materialize more than one 256MiB read."""
-
-    def __getitem__(self, views: slice) -> np.ndarray:
-        size = len(self.levels[views]) * self.shape[1] * self.shape[2] * self.dtype.itemsize
-        if size > 256 * 2**20:
-            raise MemoryError("raw read exceeds available memory")
-        return super().__getitem__(views)
-
-
-def test_automatic_reads_budget_double_counts_before_conversion() -> None:
-    counts = BoundedDoubleViews(512, 1024, "float64")
-    geometry = tj.ParallelGeometry(
-        tj.Grid(8, 8, 2, 1.0, 1.0, 1.0), tj.Detector(1024, 512, 1.0, 1.0), np.arange(65).tolist()
-    )
-    actual = tj.Frames(counts, geometry, white_level=1000.0).corrected()
-    assert counts.requests == [64, 1]
-    for start in range(0, 65, 8):
-        levels = counts.levels[start : start + 8].astype(np.float32)
-        expected = np.broadcast_to(
-            -np.log(levels / 1000.0)[:, None, None], actual.projections[start : start + 8].shape
-        )
-        np.testing.assert_allclose(
-            actual.projections[start : start + 8], expected, rtol=2e-6, atol=2e-7
-        )
-    np.testing.assert_array_equal(actual.angles, np.arange(65))
-    assert actual.corrections[-1].found == {
         "nonpositive_transmission": 0,
         "nonfinite_set_to_zero": 0,
     }

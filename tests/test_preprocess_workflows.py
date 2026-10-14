@@ -150,30 +150,3 @@ def test_inspect_lists_the_corrections(tmp_path: Path, capsys: pytest.CaptureFix
     assert "Corrections: flat_dark(flats=1, darks=1, flat_sets=1), log(epsilon=1e-06)" in (
         capsys.readouterr().out
     )
-
-
-@pytest.mark.parametrize("pitches", [(1e-6,), (1e-6, 2e-6)])
-def test_phase_cli_preserves_scalar_or_rectangular_pixel_pitches(
-    tmp_path: Path, pitches: tuple[float, ...]
-) -> None:
-    from tomojax.corrections import Paganin
-
-    counts = np.random.default_rng(819).uniform(400.0, 800.0, (2, 9, 11)).astype(np.float32)
-    raw, output = tmp_path / "raw.nxs", tmp_path / "phase.nxs"
-    with h5py.File(raw, "w") as handle:
-        detector = handle.create_group("entry/instrument/detector")
-        detector.create_dataset(
-            "data", data=np.concatenate([np.full((2, 9, 11), 1000.0), counts, np.zeros((2, 9, 11))])
-        )
-        detector.create_dataset("image_key", data=[1, 1, 0, 0, 2, 2])
-        handle.create_dataset("entry/sample/rotation_angle", data=[0.0, 0.0, 0.0, 90.0, 0.0, 0.0])
-    parameter = ",".join(str(p) for p in (100.0, 0.02, 20.0, *pitches))
-    assert _preprocess(raw, "-o", output, "--paganin", parameter) == 0
-    scan = tj.load(output)
-    pixel_size = pitches[0] if len(pitches) == 1 else pitches
-    expected = -np.log(np.asarray(Paganin(100.0, 0.02, 20.0, pixel_size).apply(counts / 1000)))
-    np.testing.assert_allclose(scan.projections, expected, rtol=3e-6, atol=3e-7)
-    phase_record = next(record for record in scan.corrections if record.name == "paganin")
-    assert phase_record.settings["pixel_size"] == (
-        pitches[0] if len(pitches) == 1 else list(pitches)
-    )

@@ -13,10 +13,17 @@ see :class:`Step`.
 
 from __future__ import annotations
 
-from ._distortion import RadialDistortion
 from ._engine import Corrected, correct_frames, correct_projections
 from ._records import Correction
-from ._steps import BeamHardening, Paganin, RejectViews, Step, Stripes, Zingers
+from ._steps import (
+    BeamHardening,
+    Paganin,
+    RadialDistortion,
+    RejectViews,
+    Step,
+    Stripes,
+    Zingers,
+)
 
 __all__ = [
     "BeamHardening",

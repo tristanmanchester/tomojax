@@ -17,11 +17,11 @@ from typing import ClassVar, Literal, cast
 
 import jax
 import jax.numpy as jnp
+from jax.scipy.ndimage import map_coordinates
 import numpy as np
 from scipy.fft import next_fast_len
 
 from ._records import Correction, Json
-from ._view_statistics import view_medians
 
 type Domain = Literal["counts", "transmission", "line integrals"]
 DOMAINS: tuple[Domain, ...] = ("counts", "transmission", "line integrals")
@@ -33,7 +33,7 @@ class Step:
 
     Subclasses are frozen dataclasses of their settings with a ``domain`` and an
     :meth:`apply` taking and returning a ``(views, rows, columns)`` float32 JAX
-    array (every view of a slab of independent rows when ``whole_rows``). A step that
+    array (every view of a slab of rows when ``whole_rows``). A step that
     ``selects_views`` has instead a :meth:`statistic` of each view in a batch
     and a :meth:`select` of the views to keep from every view's statistic.
     """
@@ -46,7 +46,7 @@ class Step:
         raise NotImplementedError
 
     def workspace_pixels(self, rows: int, cols: int) -> int:
-        """Extra device pixels per view for automatic batches, including statistics."""
+        """Device pixels per view this step needs beyond its input, for batch sizing."""
         del rows, cols
         return 0
 
@@ -99,18 +99,17 @@ class BeamHardening(Step):
 class Stripes(Step):
     """Remove rings: subtract each detector pixel's constant offset from its line integrals.
 
-    A residual detector gain error adds the same absorption to every view,
-    a stripe in the sinogram and a ring in the
+    A pixel whose gain or offset the flat field does not describe adds the same
+    absorption to every view, a stripe in the sinogram and a ring in the
     volume. Each detector row's values are sorted over views, column by column
     (as in Vo, Atwood and Drakopoulos, 2018), so equal ranks of neighbouring
     columns compare like with like; a pixel's offset is the median over ranks
     of its sorted values minus their median over ``width`` columns. Only that
     constant is subtracted, preserving differences between views; widen
-    ``width`` for wider stripes. A genuine feature symmetric about the rotation
-    axis also produces a stationary sinogram signal: ring removal can alter
-    it, especially when it is narrower than ``width``. An even ``width``
-    averages the two windows centred half a pixel either side, so reversing the detector does not
-    change the correction.
+    ``width`` for wider stripes. A feature symmetric about the rotation axis is
+    also stationary in the sinogram, and one narrower than ``width`` can be
+    altered. An even ``width`` averages the two windows centred half a pixel
+    either side, so reversing the detector does not change the correction.
     """
 
     domain: ClassVar[Domain] = "line integrals"
@@ -150,16 +149,10 @@ class RejectViews(Step):
     recorded); a view is rejected when that difference is more than ``z``
     robust standard deviations (1.4826 times the median absolute deviation)
     of all views' differences and more than ``min_jump`` of the views' typical
-    median (a floor for small, smooth changes).
+    median (so the small, smooth changes of a noise-free scan never count).
     Views with a nonfinite median are also rejected and do not participate
     in the neighbours or robust baseline. The scan's geometry keeps the same
     views; the record lists those rejected, including the nonfinite subset.
-
-    This is a local jump heuristic: a majority-bad neighbourhood can hide a
-    sustained interruption, and bad neighbours can also cause healthy views
-    to be rejected. Inspect the rejected views; use an acquisition mask for
-    known invalid views. A wider ``neighbours`` window may expose longer runs
-    but also confuse genuine angular changes with faults.
     """
 
     domain: ClassVar[Domain] = "line integrals"
@@ -184,7 +177,7 @@ class RejectViews(Step):
         object.__setattr__(self, "neighbours", int(self.neighbours))
 
     def statistic(self, batch: jax.Array) -> jax.Array:
-        return view_medians(batch)
+        return jnp.median(batch.reshape(batch.shape[0], -1), axis=1)
 
     def select(
         self, statistics: np.ndarray, views: np.ndarray
@@ -234,14 +227,6 @@ class Zingers(Step):
         object.__setattr__(self, "threshold", float(self.threshold))
         object.__setattr__(self, "size", int(self.size))
 
-    def workspace_pixels(self, rows: int, cols: int) -> int:
-        # Edge padding and the median network keep whole-image temporaries.
-        # Include the larger CPU footprint rather than assuming CUDA fusion
-        # removes all scratch: three padded arrays for the small network,
-        # five for the bitonic network.
-        padded_pixels = (rows + self.size - 1) * (cols + self.size - 1)
-        return (3 if self.size == 3 else 5) * padded_pixels
-
     def apply(self, batch: jax.Array) -> jax.Array:
         half, (_, rows, cols) = self.size // 2, batch.shape
         padded = jnp.pad(batch, ((0, 0), (half, half), (half, half)), mode="edge")
@@ -252,6 +237,53 @@ class Zingers(Step):
         ]
         median = _bitonic_median_of(shifted) if self.size >= 5 else _median_of(shifted)
         return jnp.where(batch - median > self.threshold, median, batch)
+
+
+@dataclass(frozen=True, kw_only=True)
+class RadialDistortion(Step):
+    """Unwarp transmission with a calibrated backward radial polynomial.
+
+    ``center`` is ``(column, row)`` in zero-based pixel coordinates of the frames
+    (not the rotation axis), and ``coefficients`` are ``(c0, c1, ...)``: an
+    undistorted pixel at radius ``r`` from the centre samples the measured image
+    at radius ``r * (c0 + c1 r + ...)``, the convention of Algotom and Discorpy
+    (``(1.0,)`` is the identity). Bilinear interpolation acts on the normalised
+    transmission before the log, repeating the nearest edge pixel beyond the
+    detector; the shape is kept and no Jacobian factor is applied.
+
+    The calibration must be in the coordinates of the frames corrected: after a
+    crop, subtract its first column and row from ``center``; after mean binning
+    by ``f``, use ``(center - (f - 1) / 2) / f`` and ``c_k * f**k``. Correct before
+    cropping when the map needs pixels outside the crop.
+    """
+
+    domain: ClassVar[Domain] = "transmission"
+    center: tuple[float, float]
+    coefficients: tuple[float, ...]
+
+    def __post_init__(self) -> None:
+        center = tuple(float(c) for c in self.center)
+        coefficients = tuple(float(c) for c in self.coefficients)
+        if len(center) != 2 or not np.isfinite(center).all():
+            raise ValueError("RadialDistortion center must be a finite (column, row) pair")
+        if not coefficients or not np.isfinite(coefficients).all():
+            raise ValueError("RadialDistortion coefficients must be nonempty and finite")
+        object.__setattr__(self, "center", center)
+        object.__setattr__(self, "coefficients", coefficients)
+
+    def workspace_pixels(self, rows: int, cols: int) -> int:
+        return 2 * rows * cols  # the sampling coordinates
+
+    def apply(self, batch: jax.Array) -> jax.Array:
+        _, rows, cols = batch.shape
+        x = jnp.arange(cols, dtype=jnp.float32)[None, :] - self.center[0]
+        y = jnp.arange(rows, dtype=jnp.float32)[:, None] - self.center[1]
+        radius = jnp.sqrt(x * x + y * y)
+        scale = jnp.zeros_like(radius)
+        for c in reversed(self.coefficients):  # Horner's rule
+            scale = scale * radius + c
+        at = (self.center[1] + scale * y, self.center[0] + scale * x)
+        return jax.vmap(lambda view: map_coordinates(view, at, order=1, mode="nearest"))(batch)
 
 
 @dataclass(frozen=True)
@@ -265,79 +297,56 @@ class Paganin(Step):
     sample-to-detector distance, divided by the magnification in a cone beam),
     ``energy_kev`` the X-ray energy and ``pixel_size`` the detector pixel at
     the sample (m; the pixel divided by the magnification in a cone beam).
-    ``pixel_size`` is one pitch for square pixels or ``(u, v)`` pitches for
-    rectangular pixels, in the same order as ``Detector.du`` and ``Detector.dv``.
-    Edges are repeated over at least sixteen filter decay lengths against
-    wrap-around. An additional guard of up to half the image size, capped at
-    128 pixels, suppresses tails from the sampled spectrum. FFT extents are
-    rounded up to efficient lengths. This also avoids doubling a large detector
-    when the filter has only a short range.
+    Views are padded with repeated edges against wrap-around, by at least 16
+    decay lengths of the filter's point response (and up to half the view, at
+    most 128 pixels), and to an efficient FFT length.
     """
 
     domain: ClassVar[Domain] = "transmission"
     delta_beta: float
     distance: float
     energy_kev: float
-    pixel_size: float | tuple[float, float]
+    pixel_size: float
 
     def __post_init__(self) -> None:
-        for name in ("delta_beta", "distance", "energy_kev"):
+        for name in ("delta_beta", "distance", "energy_kev", "pixel_size"):
             value = float(getattr(self, name))
             if not np.isfinite(value) or not value > 0:
                 raise ValueError(f"Paganin {name} must be finite and positive, not {value}")
             object.__setattr__(self, name, value)
-        pixels = np.asarray(self.pixel_size, np.float64)
-        if pixels.shape not in ((), (2,)) or not np.isfinite(pixels).all() or (pixels <= 0).any():
-            raise ValueError(
-                f"Paganin pixel_size must be a positive finite scalar or (u, v) pair, "
-                f"not {self.pixel_size}"
-            )
-        normalized = float(pixels) if pixels.ndim == 0 else (float(pixels[0]), float(pixels[1]))
-        object.__setattr__(self, "pixel_size", normalized)
-
-    def _pitches(self) -> tuple[float, float]:
-        return (
-            self.pixel_size
-            if isinstance(self.pixel_size, tuple)
-            else (self.pixel_size, self.pixel_size)
-        )
 
     def workspace_pixels(self, rows: int, cols: int) -> int:
         # Two padded real arrays and two complex half-spectra: about four
         # padded real arrays per view.
-        pv, pu = self._padding(rows, cols)
-        return 4 * (rows + sum(pv)) * (cols + sum(pu))
+        (rows_before, rows_after), (cols_before, cols_after) = self._padding(rows, cols)
+        return 4 * (rows + rows_before + rows_after) * (cols + cols_before + cols_after)
+
+    def _scale(self) -> float:
+        wavelength = 12.398419843320026e-10 / self.energy_kev  # metres
+        return self.distance * wavelength * self.delta_beta / (4 * np.pi)
 
     def _padding(self, rows: int, cols: int) -> tuple[tuple[int, int], tuple[int, int]]:
-        wavelength = 12.398419843320026e-10 / self.energy_kev
-        scale = self.distance * wavelength * self.delta_beta / (4 * np.pi)
-        # The continuous filter's Green function decays over sqrt(scale).
-        # Half-image padding can be much too short for a cropped detector;
-        # conversely it wastes most of a large image's FFT for a narrow filter.
-        pixel_u, pixel_v = self._pitches()
+        # The filter's point response decays over sqrt(scale) metres. Half a view
+        # is too little for a narrow crop and wasteful for a large detector.
+        decay = 16 * np.sqrt(self._scale()) / self.pixel_size
 
-        def axis(n: int, pitch: float) -> tuple[int, int]:
-            decay_guard = int(np.ceil(16 * np.sqrt(scale) / pitch))
-            # A singleton axis is constant under edge extension, so no FFT
-            # samples along it can contribute to the filter.
-            guard = max(min(n // 2, 128), decay_guard)
-            padded = 1 if n == 1 else cast(int, next_fast_len(n + 2 * guard, real=True))
-            before = (padded - n) // 2
-            return before, padded - n - before
+        def axis(n: int) -> tuple[int, int]:
+            if n == 1:  # constant under edge extension
+                return 0, 0
+            guard = max(min(n // 2, 128), int(np.ceil(decay)))
+            extra = cast(int, next_fast_len(n + 2 * guard, real=True)) - n
+            return extra // 2, extra - extra // 2
 
-        return axis(rows, pixel_v), axis(cols, pixel_u)
+        return axis(rows), axis(cols)
 
     def apply(self, batch: jax.Array) -> jax.Array:
         _, rows, cols = batch.shape
         pv, pu = self._padding(rows, cols)
         padded = jnp.pad(batch, ((0, 0), pv, pu), mode="edge")
-        wavelength = 12.398419843320026e-10 / self.energy_kev  # metres
-        pixel_u, pixel_v = self._pitches()
-        ku = 2 * np.pi * np.fft.rfftfreq(padded.shape[2], pixel_u)
-        kv = 2 * np.pi * np.fft.fftfreq(padded.shape[1], pixel_v)
+        ku = 2 * np.pi * np.fft.rfftfreq(padded.shape[2], self.pixel_size)
+        kv = 2 * np.pi * np.fft.fftfreq(padded.shape[1], self.pixel_size)
         k2 = kv[:, None] ** 2 + ku[None, :] ** 2
-        scale = self.distance * wavelength * self.delta_beta / (4 * np.pi)
-        response = jnp.asarray(1.0 / (1.0 + scale * k2), jnp.float32)
+        response = jnp.asarray(1.0 / (1.0 + self._scale() * k2), jnp.float32)
         # Transmission and the response are real: keep only the Hermitian half.
         # Odd detector extents also give odd padded lengths, so specify the shape
         # rather than letting irfft2 infer an even last axis.
@@ -348,30 +357,15 @@ class Paganin(Step):
 def _stripe_offsets(row: jax.Array, width: int) -> jax.Array:
     """Each column's offset in one detector row, ``(views, columns)``."""
     ranked = jnp.sort(row, axis=0)
-    difference = ranked - _sliding_median(ranked, width)
-    # CUDA's rank selection saves a full sort; the CPU sort is faster there.
-    # Resolve this for the actual execution platform, not the default device.
-    return jax.lax.platform_dependent(
-        difference, cuda=_median_ranks, default=lambda values: jnp.median(values, axis=0)
-    )
-
-
-def _median_ranks(difference: jax.Array) -> jax.Array:
-    """Each column's exact median, by selecting its upper ranks on CUDA."""
-    # Select only the upper half, not a second full sorted sinogram. top_k
-    # sorts descending, so its last one or two entries are the median ranks.
-    views = difference.shape[0]
-    upper, _ = jax.lax.top_k(difference.T, views // 2 + 1)
-    median = upper[:, -1] if views % 2 else 0.5 * (upper[:, -2] + upper[:, -1])
-    return jnp.where(jnp.any(jnp.isnan(difference), axis=0), jnp.nan, median)
+    return jnp.median(ranked - _sliding_median(ranked, width), axis=0)
 
 
 def _sliding_median(values: jax.Array, width: int) -> jax.Array:
     """The median over ``width`` neighbouring columns, edges repeated.
 
-    Sorting networks over the shifted copies use elementwise minima and
-    maxima, which fuse into one pass. Larger windows use a pruned bitonic
-    network instead of the quadratic odd-even transposition network.
+    An odd-even transposition sort of the shifted copies: elementwise minima
+    and maxima, which fuse into one pass (a sort along a window axis is ten
+    times slower on a GPU).
     """
     half, columns = width // 2, values.shape[1]
     even = width % 2 == 0
@@ -379,8 +373,7 @@ def _sliding_median(values: jax.Array, width: int) -> jax.Array:
     # An even window is centred between pixels: take one more window and
     # average neighbours onto the pixels, so reversing the detector does not
     # change the correction.
-    window = [padded[:, k : k + columns + even] for k in range(width)]
-    median = _bitonic_median_of(window) if width >= 15 else _median_of(window)
+    median = _median_of([padded[:, k : k + columns + even] for k in range(width)])
     return 0.5 * (median[:, :-1] + median[:, 1:]) if even else median
 
 
@@ -395,25 +388,23 @@ def _median_of(window: list[jax.Array]) -> jax.Array:
 
 
 def _bitonic_median_of(window: list[jax.Array]) -> jax.Array:
-    """A window's median, without tracing comparisons unrelated to it.
+    """An odd window's median, without tracing comparisons unrelated to it.
 
     Larger spatial windows benefit from a shallower bitonic network
     instead of quadratic odd-even sorting. Padded positive-infinity wires are
     symbolic, not image arrays. Every real input reaches the median expression,
     so NaNs propagate even after redundant infinity comparisons are removed.
     """
-    operations, outputs = _median_network(len(window))
+    operations, output = _median_network(len(window))
     values = dict(enumerate(window))
     for dest, minimum, a, b in operations:
         compare = jnp.minimum if minimum else jnp.maximum
         values[dest] = compare(values[a], values[b])
-    if len(outputs) == 1:
-        return values[outputs[0]]
-    return 0.5 * (values[outputs[0]] + values[outputs[1]])
+    return values[output]
 
 
 @lru_cache(maxsize=64)
-def _median_network(n: int) -> tuple[tuple[tuple[int, bool, int, int], ...], tuple[int, ...]]:
+def _median_network(n: int) -> tuple[tuple[tuple[int, bool, int, int], ...], int]:
     """Static median-only instructions; wire -1 represents positive infinity."""
     width = 1 << (n - 1).bit_length()
     wires = list(range(n)) + [-1] * (width - n)
@@ -435,15 +426,15 @@ def _median_network(n: int) -> tuple[tuple[tuple[int, bool, int, int], ...], tup
                 wires[i], wires[j] = (high, low) if i & stage else (low, high)
             distance //= 2
         stage *= 2
-    outputs = (wires[n // 2],) if n % 2 else (wires[n // 2 - 1], wires[n // 2])
-    live = set(outputs)
+    output = wires[n // 2]
+    live = {output}
     needed: list[tuple[int, bool, int, int]] = []
     for k in reversed(range(len(operations))):
         if n + k in live:
             minimum, a, b = operations[k]
             needed.append((n + k, minimum, a, b))
             live.update((a, b))
-    return tuple(reversed(needed)), outputs
+    return tuple(reversed(needed)), output
 
 
 def _snake(name: str) -> str:

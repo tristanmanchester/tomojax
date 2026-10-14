@@ -50,13 +50,10 @@ Use one length unit throughout (the pixel size and both distances).
 integral p to `p + 0.05 p²` (calibrate the coefficients on a single-material
 sample). `--remove-stripes 9` removes rings: it subtracts each detector
 pixel's constant offset, comparing its values sorted over views with those of
-its 9 neighbouring columns. Differences between views are preserved, but real
-structure symmetric about the rotation axis also looks stationary and can be
-altered, especially when narrower than the window. Use the smallest width that
-covers the detector defect, and compare corrected and uncorrected volumes when
-centred fine structure matters; defect-free data are not guaranteed to pass
-unchanged. A faint offset on a steep gradient can remain. `--zingers` replaces
-bright specks.
+its 9 neighbouring columns. Structure symmetric about the rotation axis also
+looks stationary, so a narrow centred feature can be altered: use the smallest
+width that covers the defect. A faint offset on a steep gradient can remain.
+`--zingers` replaces bright specks.
 In Python these are steps of `tomojax.corrections` (`BeamHardening`,
 `Stripes`, `Zingers`) passed to `tj.load_frames(path).corrected(...)`.
 `tomojax import --detector-roll`, `--detector-pitch`, `--detector-yaw` and
