@@ -2,22 +2,35 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+import importlib
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import h5py
 import imageio.v3 as iio
 import numpy as np
 import pytest
+import tifffile
 
 import tomojax as tj
-from tomojax.corrections import BeamHardening, Correction, Paganin, RejectViews, Stripes, Zingers
+from tomojax.corrections import (
+    BeamHardening,
+    Correction,
+    Paganin,
+    RejectViews,
+    Stripes,
+    Zingers,
+)
+from tomojax.io.api import locate_frames, read_tiff_frames
 
 from ._helpers import tiny_detector, tiny_grid, write_projection_dataset, write_raw_nxtomo
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from tomojax.corrections import Step
 
 pytestmark = pytest.mark.surface
 
@@ -474,3 +487,105 @@ def test_aps_data_exchange_files_load_with_their_flats_and_darks(tmp_path: Path)
         handle.create_dataset("exchange/data", data=np.full((2, 2, 3), 7, np.uint16))
     with pytest.raises(ValueError, match="load_frames"):
         tj.load(tmp_path / "bare.h5")
+
+
+def test_pixels_without_a_resolved_flat_take_no_absorption() -> None:
+    rng = np.random.default_rng(6)
+    views, rows, cols = 4, 5, 8
+    flats = np.full((20, rows, cols), 1000.0) + rng.normal(0, 3, (20, rows, cols))
+    darks = np.full((20, rows, cols), 10.0) + rng.normal(0, 3, (20, rows, cols))
+    flats[..., :2] = darks[..., :2] = 10 + rng.normal(0, 3, (20, rows, 2))  # outside the beam
+    counts = rng.uniform(100.0, 900.0, (views, rows, cols))
+    counts[..., :2] = rng.uniform(5.0, 15.0, (views, rows, 2))
+    geometry = tj.ParallelGeometry(
+        tj.Grid(cols, cols, rows, 1.0, 1.0, 1.0),
+        tj.Detector(cols, rows, 1.0, 1.0),
+        np.arange(views) * 45.0,
+    )
+    scan = tj.Frames(counts, geometry, flats=flats, darks=darks).corrected()
+    projections = np.asarray(scan.projections)
+    np.testing.assert_array_equal(projections[..., :2], 0.0)
+    lit = np.s_[..., 2:]
+    expected = -np.log((counts - darks.mean(0))[lit] / (flats.mean(0) - darks.mean(0))[lit])
+    np.testing.assert_allclose(projections[lit], expected, rtol=1e-5, atol=1e-6)
+    assert scan.corrections[0].found == {"pixels_without_light": 2 * rows}
+
+
+@pytest.mark.parametrize("lazy", [False, True])
+@pytest.mark.parametrize("steps", [(), (Stripes(5),), (Stripes(5), RejectViews())])
+def test_binning_averages_the_corrected_line_integrals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, steps: tuple[Step, ...], lazy: bool
+) -> None:
+    rng = np.random.default_rng(7)
+    views, rows, cols = 12, 10, 14
+    counts = rng.uniform(300.0, 900.0, (views, rows, cols)).astype(np.uint16)
+    counts[5] //= 4  # a view for RejectViews to drop
+    stack = np.concatenate([np.full((1, rows, cols), 1000, np.uint16), counts])
+    _write_frames(tmp_path / "scan.nxs", stack, [1, *[0] * views], [0.0, *range(0, views * 15, 15)])
+    frames = tj.load_frames(tmp_path / "scan.nxs")
+    if not lazy:
+        frames = replace(frames, counts=np.asarray(frames.counts), flats=np.asarray(frames.flats))
+    expected = frames.corrected(*steps).binned(2)
+
+    # A small budget makes the row-by-row path take several slabs where it applies.
+    engine = importlib.import_module("tomojax.corrections._engine")
+    monkeypatch.setattr(engine, "_BATCH_BYTES", 5376)
+    slabs: list[int] = []
+    correct_slabs = engine._correct_row_slabs
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        slabs.append(kwargs["slab"])
+        return correct_slabs(*args, **kwargs)
+
+    monkeypatch.setattr(engine, "_correct_row_slabs", spy)
+    actual = frames.corrected(*steps, binning=2)
+
+    np.testing.assert_allclose(actual.projections, expected.projections, rtol=1e-5, atol=1e-6)
+    assert actual.detector == expected.detector and actual.corrections == expected.corrections
+    np.testing.assert_array_equal(actual.angles, expected.angles)
+    streamed = steps == (Stripes(5),)
+    assert slabs == ([4] if streamed else [])
+
+
+def test_cropping_reads_lazy_flats_and_darks_as_a_block(tmp_path: Path) -> None:
+    rng = np.random.default_rng(3)
+    stack = rng.integers(100, 900, (5, 6, 8)).astype(np.uint16)
+    _write_frames(tmp_path / "scan.nxs", stack, [1, 2, 0, 0, 0], [0, 0, 0, 60, 120])
+    part = tj.load_frames(tmp_path / "scan.nxs").cropped(slice(1, 4), slice(2, 7))
+    assert type(part.flats).__name__ == type(part.darks).__name__ == "Hdf5Frames"
+    np.testing.assert_array_equal(np.asarray(part.flats), stack[:1, 1:4, 2:7])
+    np.testing.assert_array_equal(np.asarray(part.darks), stack[1:2, 1:4, 2:7])
+
+
+@pytest.mark.parametrize("compression", [None, "zlib"])
+def test_tiff_stacks_are_read_lazily_by_window(tmp_path: Path, compression: str | None) -> None:
+    rng = np.random.default_rng(4)
+    pages = rng.integers(0, 60000, (5, 6, 9)).astype(np.uint16)
+    for name, part in (("a.tif", pages[:2]), ("b.tif", pages[2:])):
+        with tifffile.TiffWriter(tmp_path / name) as writer:
+            for page in part:
+                writer.write(page, compression=compression, contiguous=False)
+    frames = read_tiff_frames(tmp_path, lazy=True)
+    assert frames.shape == pages.shape and frames._efficient_row_windows == (compression is None)
+    np.testing.assert_array_equal(np.asarray(frames), pages)
+    part = frames.frames_at(np.array([1, 2, 4])).window(slice(1, 4), slice(2, 7))
+    assert part.shape == (3, 3, 5)
+    np.testing.assert_array_equal(part[:], pages[[1, 2, 4], 1:4, 2:7])
+    np.testing.assert_array_equal(part[1], pages[2, 1:4, 2:7])
+
+
+@pytest.mark.parametrize(
+    ("options", "efficient"),
+    [
+        ({}, True),
+        ({"chunks": (1, 2, 16)}, True),
+        ({"chunks": (1, 16, 16)}, False),  # a few rows would read the whole frame
+        ({"chunks": (1, 2, 16), "compression": "gzip"}, False),
+    ],
+)
+def test_hdf5_row_windows_are_cheap_only_when_unfiltered_and_chunked_finely(
+    tmp_path: Path, options: dict[str, Any], efficient: bool
+) -> None:
+    with h5py.File(tmp_path / "scan.h5", "w") as handle:
+        handle.create_dataset("exchange/data", data=np.zeros((3, 16, 16), np.uint16), **options)
+    assert locate_frames(str(tmp_path / "scan.h5")).stack._efficient_row_windows is efficient

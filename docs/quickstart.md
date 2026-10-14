@@ -61,12 +61,9 @@ print(scan)  # Scan('sample': ..., corrections: flat_dark(...), log(...), reject
 tj.save("corrected.nxs", scan)
 ```
 
-HDF5 and TIFF sample, flat and dark stacks are loaded lazily: crop or select
-before correction to avoid materializing the whole acquisition. TIFF headers
-are checked at load time; contiguous TIFF pages read just the cropped pixels,
-and scalar compressed/tiled pages decode only intersecting strips/tiles.
-Special formats fall back to decoding one native page. `np.asarray(frames.counts)`
-explicitly reads the current selection into memory.
+HDF5 and TIFF sample, flat and dark stacks are read lazily, as they are
+corrected: crop or select first to read less. `np.asarray(frames.counts)` reads
+the current selection into memory.
 
 The views are corrected on the GPU a batch at a time, read from the file as
 they are needed. `batch_views` must be a positive integer and `epsilon` finite
@@ -77,23 +74,10 @@ position between the flat fields. `scan.corrected(...)` runs line-integral
 steps (`Stripes`, `BeamHardening`, `RejectViews`) on a scan that is already
 corrected.
 
-When the float32 corrected stack would exceed host RAM, supply disk-backed
-output storage rather than allocating that whole stack in anonymous memory:
-
-```python
-import numpy as np
-
-frames = tj.load_frames("raw.nxs")
-storage = np.memmap("line-integrals.bin", mode="w+", dtype=np.float32, shape=frames.counts.shape)
-scan = frames.corrected(RejectViews(), Stripes(9), out=storage)
-storage.flush()
-```
-
-`out` must be separate from the counts and calibrations. The returned scan
-shares the buffer; if views were rejected, its projections use only the
-leading kept views. You own the file's lifetime. The raw memmap file alone
-does not store the scan's geometry or correction records; `tj.save` does.
-
+`corrected(..., binning=2)` averages 2 x 2 detector blocks of the line integrals,
+as `scan.binned(2)` does. With only `Stripes` and the like after the log, it
+bins slabs of rows read straight from an uncompressed file, so the unbinned
+stack never reaches host memory.
 
 For calibrated lens distortion, pass
 `RadialDistortion(center=(column, row), coefficients=(c0, c1, ...))` from
@@ -125,9 +109,7 @@ propagation distance in metres (the sample-to-detector distance, divided by the
 magnification in a cone beam), the X-ray energy in keV and the pixel size at
 the sample in metres (the detector pixel, divided by the magnification in a
 cone beam). The step does not infer these from the scan. The values below are
-illustrative. For rectangular detector pixels, pass `pixel_size=(u_pitch, v_pitch)`
-in metres, in the same order as `Detector.du` and `Detector.dv`; a scalar pitch
-means square pixels:
+illustrative:
 
 ```python
 import tomojax as tj
@@ -139,13 +121,9 @@ scan = tj.load_frames("raw.nxs").corrected(step)
 scan = scan.cropped(slice(100, 900), slice(None))
 ```
 
-Paganin mixes neighbouring pixels along both detector axes. Cropping raw
-frames first discards measured neighbours and replaces them by repeated crop
-edges; its FFT padding prevents wrap-around, not this loss of measurements.
-When correcting the full detector is too expensive, correct a larger raw
-window and keep only its interior. Enlarge that window until the retained
-slices converge.
-
+Paganin mixes neighbouring pixels, so cropping raw frames first discards
+measured neighbours; correct a larger window and keep its interior if the full
+detector is too expensive.
 
 If using calibrated lens correction too, pass `RadialDistortion` before
 `Paganin`, so phase retrieval acts on uniformly spaced undistorted pixels.
@@ -155,11 +133,7 @@ supplied, and changing their order changes the result.
 On the command line, `--paganin` takes the same four values in that order:
 `tomojax preprocess raw.nxs -o phase.nxs --paganin 100,0.1,25,0.65e-6`. It is
 an expert option, so `--help` does not list it.
-For rectangular pixels, append the v pitch after the u pitch:
-`--paganin 100,0.1,25,0.65e-6,1.3e-6`.
-`--crop` crops raw frames before correction; for an interior phase-retrieved
-window, use the Python ordering above or retain a measured halo around the
-command-line crop.
+`--crop` crops raw frames before correction.
 
 ### TIFF frames
 
