@@ -24,7 +24,6 @@ from tomojax.recon import FBPConfig, FBPHostConfig, fbp, fbp_host
 
 # check-public-imports: allow-private
 from tomojax.recon._fbp_pallas import backproject_filtered_pallas
-from tomojax.recon._fbp_weights import fbp_weights
 from tomojax.recon.fbp import _backproject_voxels_jax
 from tomojax.recon.filters import fft_filter_rows, rfft_filter_array
 
@@ -687,7 +686,7 @@ def test_full_turn_oblique_fbp_keeps_both_roots_at_the_circular_seam(backend, fi
     angles = np.linspace(0, 360, n_views, endpoint=False)
     geometry = _rolled_camera(LaminographyGeometry(grid, detector, angles, tilt_deg=30), 45)
     poses = np.asarray([geometry.pose_for_view(i) for i in range(n_views)], dtype=np.float32)
-    weights = fbp_weights(poses)
+    weights = importlib.import_module("tomojax.recon._fbp_weights").fbp_weights(poses)
     assert weights.full_turn and not weights.separable
     data = (0.3 + 0.05 * np.random.default_rng(2).normal(size=(n_views, 64, 64))).astype(np.float32)
     spectrum = np.asarray(rfft_filter_array(filter_name, 64, 1, jnp.float32), dtype=np.float64)
