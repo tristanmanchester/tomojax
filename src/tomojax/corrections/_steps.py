@@ -20,6 +20,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ._records import Correction, Json
+from ._view_statistics import view_medians
 
 type Domain = Literal["counts", "transmission", "line integrals"]
 DOMAINS: tuple[Domain, ...] = ("counts", "transmission", "line integrals")
@@ -174,7 +175,7 @@ class RejectViews(Step):
         object.__setattr__(self, "neighbours", int(self.neighbours))
 
     def statistic(self, batch: jax.Array) -> jax.Array:
-        return jnp.median(batch.reshape(batch.shape[0], -1), axis=1)
+        return view_medians(batch)
 
     def select(
         self, statistics: np.ndarray, views: np.ndarray

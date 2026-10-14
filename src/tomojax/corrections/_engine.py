@@ -3,8 +3,9 @@
 Frames are corrected in one compiled pass over batches of views: the counts
 steps, then ``(I - D) / (F - D)`` with each view's flat interpolated between
 the flat sets around it, the transmission steps, ``-log``, and the line-integral
-steps up to the first that needs whole detector rows. Such a step, and every
-step after it, then runs over the result: a whole-row step on slabs of rows
+steps up to the first that needs whole detector rows or selects views. A first
+selecting step's summaries are collected while each batch is on the device;
+the remaining steps then run over the result: a whole-row step on slabs of rows
 (every view), the others on batches of views again. Batches are read from the
 host (NumPy, memmap or a lazily read file) while the device works on the last.
 """
@@ -20,11 +21,14 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.backends.api import device_free_memory_bytes
+
+from ._downloads import cuda_device_id, release_device, stage_download
 from ._records import Correction, Json
 from ._steps import DOMAINS, Step
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
 LOG = logging.getLogger(__name__)
 
@@ -71,30 +75,53 @@ def correct_frames(
     flat_stack, dark = jax.device_put(fields.flats), jax.device_put(fields.dark)
     batch = batch_views or _frame_batch_size(views, rows, cols, transmission_steps)
     tally = np.zeros(2, np.int64)  # non-positive transmission, non-finite results
+    selector = tail[0] if tail and tail[0].selects_views else None
+    summaries: list[np.ndarray] = []
 
-    def collect(start: int, stop: int, result: jax.Array, *bad: jax.Array) -> None:
-        out[start:stop] = np.asarray(result)
-        tally[:] += [int(b) for b in bad]
+    def collect(
+        done: tuple[jax.Array, ...],
+        summary: Callable[[], np.ndarray] | None,
+        download: Callable[[], None],
+    ) -> None:
+        download()
+        tally[:] += [int(b) for b in done[1:]]
+        if summary is not None:
+            summaries.append(summary())
+        release_device(done[0])
 
-    pending = None
-    for start, stop, raw in _batches(counts, views, batch):
-        done = _first_pass(
-            jnp.asarray(raw), lo[start:stop], hi[start:stop], t[start:stop], flat_stack, dark,
-            epsilon=float(epsilon), counts_steps=counts_steps,
-            transmission_steps=transmission_steps, line_steps=tuple(head),
-        )  # fmt: skip
-        done[0].copy_to_host_async()
-        if pending is not None:  # the last batch comes back while this one runs
+    with ThreadPoolExecutor(max_workers=1) as statistic_worker:
+        pending = None
+        for start, stop, raw in _batches(counts, views, batch):
+            done = _first_pass(
+                jnp.asarray(raw), lo[start:stop], hi[start:stop], t[start:stop], flat_stack, dark,
+                epsilon=float(epsilon), counts_steps=counts_steps,
+                transmission_steps=transmission_steps, line_steps=tuple(head),
+            )  # fmt: skip
+            # The first selecting step needs only small per-view summaries. Use
+            # this device batch instead of transferring the corrected stack back
+            # to the device once more in _run_rest.
+            summary = (
+                None if selector is None else _stage_statistic(selector, done[0], statistic_worker)
+            )
+            download = stage_download(done[0], out[start:stop])
+            if pending is not None:  # the last batch comes back while this one runs
+                collect(*pending)
+            pending = (done, summary, download)
+        if pending is not None:
             collect(*pending)
-        pending = (start, stop, *done)
-    if pending is not None:
-        collect(*pending)
+            # The tail starts from host storage. Do not retain the last batch,
+            # its download closure or its raw host input throughout row-slab work.
+            del pending, done, summary, download, raw
+    release_device(flat_stack)
+    release_device(dark)
+    del flat_stack, dark
     found: dict[str, Json] = {
         "nonpositive_transmission": int(tally[0]),
         "nonfinite_set_to_zero": int(tally[1]),
     }
     log = Correction("log", {"epsilon": float(epsilon)}, found)
-    out, kept, tail_records = _run_rest(out, tail, batch_views)
+    statistics = np.concatenate(summaries) if summaries else None
+    out, kept, tail_records = _run_rest(out, tail, batch_views, statistics=statistics)
     records = tuple(
         [s.record() for s in counts_steps] + list(field_record)
         + [s.record() for s in transmission_steps] + [log]
@@ -281,7 +308,11 @@ def _split_at_break(steps: list[Step]) -> tuple[list[Step], list[Step]]:
 
 
 def _run_rest(
-    out: np.ndarray, steps: Sequence[Step], batch_views: int | None
+    out: np.ndarray,
+    steps: Sequence[Step],
+    batch_views: int | None,
+    *,
+    statistics: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, tuple[Correction, ...]]:
     """``steps`` over ``out``: whole-row steps on slabs of rows, the others on views.
 
@@ -296,10 +327,13 @@ def _run_rest(
         views, rows, cols = out.shape
         batch = batch_views or max(1, min(views, _BATCH_BYTES // (4 * rows * cols)))
         if step.selects_views:
-            stats = np.concatenate([
-                np.asarray(_statistic(step, jnp.asarray(out[v0 : v0 + batch])))
-                for v0 in range(0, views, batch)
-            ])  # fmt: skip
+            if i == 0 and statistics is not None:
+                stats = statistics
+            else:
+                stats = np.concatenate([
+                    np.asarray(_statistic(step, jnp.asarray(out[v0 : v0 + batch])))
+                    for v0 in range(0, views, batch)
+                ])  # fmt: skip
             keep, found = step.select(stats, kept)
             if not keep.any():
                 raise ValueError(f"{type(step).__name__} would reject every view")
@@ -330,6 +364,37 @@ def _run_rest(
 @partial(jax.jit, static_argnames=("step",))
 def _statistic(step: Step, batch: jax.Array) -> jax.Array:
     return step.statistic(batch)
+
+
+def _stage_statistic(
+    step: Step, batch: jax.Array, worker: ThreadPoolExecutor
+) -> Callable[[], np.ndarray]:
+    """Collect a summary without blocking CUDA downloads on device-loop dispatch.
+
+    Lower on the caller: its JAX configuration, mesh and captured arrays belong
+    to the calculation. Only the compiled execution moves to the worker. The
+    owner keeps each input until both its download and this collection finish.
+    """
+    if (
+        cuda_device_id(batch) is None
+        or jax.config.jax_disable_jit
+        or jax.config.jax_debug_nans
+        or jax.config.jax_debug_infs
+    ):
+        done = _statistic(step, batch)
+        return lambda: np.asarray(done)
+    compiled = _statistic.lower(step, batch).compile()
+    (device,) = batch.devices()  # cuda_device_id has checked the single producer.
+    free = device_free_memory_bytes(device=device)
+    workspace = compiled.memory_analysis()
+    # Keep room for the next correction's inputs, outputs and temporaries.
+    # The serial path remains available for tight or unknown allocator budgets.
+    reserve = None if workspace is None else 2 * workspace.temp_size_in_bytes + 4 * batch.nbytes
+    if reserve is None or free is None or free < reserve:
+        done = compiled(batch)
+        return lambda: np.asarray(done)
+    future = worker.submit(compiled, batch)
+    return lambda: np.asarray(future.result())
 
 
 @partial(jax.jit, static_argnames=("steps",))
