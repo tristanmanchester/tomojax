@@ -84,7 +84,7 @@ class CommonLines:
             values.append(ndimage.map_coordinates(self.spectra, points, order=1, mode="constant"))
         return values[0], values[1]
 
-    def center(self, axis_unit: np.ndarray) -> float | None:
+    def center(self, axis_unit: np.ndarray, *, detector_roll_deg: float = 0.0) -> float | None:
         """Absolute detector-u centre in native pixels, or None without evidence.
 
         Search within a quarter detector width of the supplied centre, not zero:
@@ -92,17 +92,23 @@ class CommonLines:
         A boundary optimum is declined rather than reported as a centre.
         A common object translation cancels between the two Fourier planes;
         independent view translations do not, so this remains only a seed.
+        With a known detector roll, the supplied centres still denote lab x/z;
+        ``axis_unit`` must already be expressed in the rolled detector frame.
         """
         q1, q2 = self._coordinates(axis_unit)
-        slope = (q1[..., 0] - q2[..., 0]) * self.native_du
+        difference = q1 - q2
+        roll = np.deg2rad(detector_roll_deg)
+        c, s = np.cos(roll), np.sin(roll)
+        # The pixel grid rotates before its lab-frame centre is added. Varying
+        # lab-u therefore changes both origin components in Fourier coordinates.
+        slope = (c * difference[..., 0] - s * difference[..., 1]) * self.native_du
+        fixed_v = (s * difference[..., 0] + c * difference[..., 1]) * self.center_v
         if np.max(np.abs(slope)) < 1e-5:
             return None  # Axial tomography's common lines cannot locate COR.
         left, right = self._sample_coordinates((q1, q2))
         # A rolled projected axis couples detector-v and u origins. Keep the
         # supplied v reference fixed; its independent calibration is a gauge.
-        cross = (
-            left * right.conj() * np.exp(-2j * np.pi * (q1[..., 1] - q2[..., 1]) * self.center_v)
-        ).ravel()
+        cross = (left * right.conj() * np.exp(-2j * np.pi * fixed_v)).ravel()
         amplitude = np.sqrt(np.abs(cross))
         total = float(amplitude.sum())
         if total == 0:
@@ -129,7 +135,7 @@ class CommonLines:
         return float(cast("optimize.OptimizeResult", fit).x)
 
     def motion(self, axis_unit: np.ndarray, *, center_u: float) -> PhaseShiftSeed:
-        """Seed small, smooth detector motion after setup calibration.
+        """Seed small, smooth motion after setup calibration of an unrolled detector.
 
         ``center_u`` and returned shifts use physical detector units. Returned
         rows follow ``view_indices``; interpolate in acquisition order before local pose

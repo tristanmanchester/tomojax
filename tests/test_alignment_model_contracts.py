@@ -345,7 +345,7 @@ def test_public_cor_reconstructs_with_the_configured_integrator_and_batches(monk
     assert abs(result.scan.detector.center[0] - centre) <= 0.35
 
 
-def _common_line_gaussians(shape, motion=0.0, views=48, turns=1, centre_fraction=0.08):
+def _common_line_gaussians(shape, motion=0.0, views=48, turns=1, centre_fraction=0.08, roll=0.0):
     # Independent continuous 3-D Gaussian line integrals, not a planar object
     # or data from the discrete projector. Odd tails exercise Fourier origins.
     rng = np.random.default_rng(469)
@@ -353,7 +353,7 @@ def _common_line_gaussians(shape, motion=0.0, views=48, turns=1, centre_fraction
     detector = Detector(nu, nv, 0.8, 1.1, (1.2, 2.7))
     angles = np.linspace(0, 360 * turns, views, endpoint=False)
     theta, tilt = np.deg2rad(angles), np.deg2rad(35)
-    azimuth = np.deg2rad(17)
+    azimuth = np.deg2rad(17 + roll)
     ca, sa = np.cos(azimuth), np.sin(azimuth)
     axis = np.array([sa * np.cos(tilt), np.sin(tilt), ca * np.cos(tilt)])
     u = np.stack([np.cos(theta), -np.sin(theta), 0 * theta], axis=1)
@@ -362,13 +362,16 @@ def _common_line_gaussians(shape, motion=0.0, views=48, turns=1, centre_fraction
         axis=1,
     )
     basis = np.stack([ca * u + sa * v, -sa * u + ca * v], axis=1)
+    c, s = np.cos(np.deg2rad(roll)), np.sin(np.deg2rad(roll))
     extent = min(nu * detector.du, nv * detector.dv)
     centre_px = centre_fraction * nu
     yy, xx = np.mgrid[:nv, :nu]
     points = np.stack(
         [
-            (xx - (nu - 1) / 2 + centre_px) * detector.du,
-            (yy - (nv - 1) / 2) * detector.dv + detector.center[1],
+            (xx - (nu - 1) / 2 + c * centre_px) * detector.du + s * detector.center[1],
+            (yy - (nv - 1) / 2) * detector.dv
+            - s * centre_px * detector.du
+            + c * detector.center[1],
         ],
         axis=-1,
     )
@@ -395,11 +398,12 @@ def _common_line_gaussians(shape, motion=0.0, views=48, turns=1, centre_fraction
 
 @pytest.mark.numerical
 @pytest.mark.parametrize("shape", [(49, 65), (225, 257)])
-def test_common_line_phase_recovers_absolute_center_with_unequal_pixels_and_binning(shape):
-    data, angles, detector, axis, centre_px, _, _ = _common_line_gaussians(shape)
+@pytest.mark.parametrize("roll", [0, 30])
+def test_common_line_phase_recovers_absolute_center_with_unequal_pixels_and_binning(shape, roll):
+    data, angles, detector, axis, centre_px, _, _ = _common_line_gaussians(shape, roll=roll)
     prepared = common_lines.prepare_common_lines(data, angles, detector)
     assert prepared is not None
-    assert prepared.center(axis) == pytest.approx(centre_px, abs=0.1)
+    assert prepared.center(axis, detector_roll_deg=roll) == pytest.approx(centre_px, abs=0.1)
     shuffled = np.random.default_rng(469).permutation(len(angles))
     again = common_lines.prepare_common_lines(data[shuffled], angles[shuffled] + 360, detector)
     assert again is not None
