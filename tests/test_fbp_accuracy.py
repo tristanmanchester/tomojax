@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+import importlib
+import sys
+from types import SimpleNamespace
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -14,6 +19,346 @@ from tomojax.recon._fbp_pallas import backproject_filtered_pallas
 from tomojax.recon._fbp_weights import fbp_weights
 from tomojax.recon.fbp import _backproject_voxels_jax
 from tomojax.recon.filters import fft_filter_rows, rfft_filter_array
+
+
+@dataclass(frozen=True)
+class _CacheDevice:
+    id: int
+    local_hardware_id: int | None
+    platform: str = "gpu"
+    version: str = "CUDA 12.0"
+
+    @property
+    def client(self) -> SimpleNamespace:
+        return SimpleNamespace(platform_version=self.version)
+
+
+def test_fbp_cache_batch_queries_each_actual_device_once(monkeypatch) -> None:
+    module = importlib.import_module("tomojax.recon._fbp_pallas")
+    module._cuda_l2_bytes.cache_clear()
+    calls = []
+
+    def properties(local):
+        calls.append(local)
+        return {"l2CacheSize": (32 if local == 7 else 64) * 1024**2}
+
+    monkeypatch.setitem(
+        sys.modules, "cupy.cuda.runtime", SimpleNamespace(getDeviceProperties=properties)
+    )
+    detector = Detector(3900, 64, 1.0, 1.0)
+    first, second = _CacheDevice(42, 7), _CacheDevice(43, 3)
+    assert (
+        module.filtered_view_batch_size(
+            128, grid=Grid(2560, 2560, 64, 1.0, 1.0, 1.0), detector=detector, device=first
+        )
+        == 64
+    )
+    assert (
+        module.filtered_view_batch_size(
+            128, grid=Grid(2560, 2560, 64, 1.0, 1.0, 1.0), detector=detector, device=second
+        )
+        == 128
+    )
+    assert (
+        module.filtered_view_batch_size(
+            128, grid=Grid(2560, 2560, 64, 1.0, 1.0, 1.0), detector=detector, device=first
+        )
+        == 64
+    )
+    assert calls == [7, 3]
+
+
+@pytest.mark.parametrize("size", [0, -1, 1, 32 * 1024**2])
+@pytest.mark.parametrize("batch", [1, 3, 16, 128])
+def test_fbp_cache_batch_never_exceeds_fft_budget(monkeypatch, size, batch) -> None:
+    module = importlib.import_module("tomojax.recon._fbp_pallas")
+    module._cuda_l2_bytes.cache_clear()
+    monkeypatch.setitem(
+        sys.modules,
+        "cupy.cuda.runtime",
+        SimpleNamespace(getDeviceProperties=lambda _: {"l2CacheSize": size}),
+    )
+    actual = module.filtered_view_batch_size(
+        batch,
+        grid=Grid(2560, 2560, 64, 1.0, 1.0, 1.0),
+        detector=Detector(3900, 64, 1.0, 1.0),
+        device=_CacheDevice(42, 7),
+    )
+    expected = batch if size <= 0 else min(batch, 64 if size == 32 * 1024**2 else 1)
+    assert actual == expected
+
+
+@pytest.mark.parametrize(
+    "device",
+    [_CacheDevice(42, 7, "cpu"), _CacheDevice(42, 7, version="ROCm"), _CacheDevice(42, None)],
+)
+def test_fbp_cache_batch_skips_unavailable_cuda_device(monkeypatch, device) -> None:
+    module = importlib.import_module("tomojax.recon._fbp_pallas")
+    module._cuda_l2_bytes.cache_clear()
+
+    def forbidden(_):
+        pytest.fail("non-CUDA or unidentified devices must not query CuPy")
+
+    monkeypatch.setitem(
+        sys.modules, "cupy.cuda.runtime", SimpleNamespace(getDeviceProperties=forbidden)
+    )
+    assert (
+        module.filtered_view_batch_size(
+            128,
+            grid=Grid(2560, 2560, 64, 1.0, 1.0, 1.0),
+            detector=Detector(3900, 64, 1.0, 1.0),
+            device=device,
+        )
+        == 128
+    )
+
+
+@pytest.mark.parametrize("missing", [True, False])
+def test_fbp_cache_batch_retains_fft_budget_without_optional_probe(monkeypatch, missing) -> None:
+    module = importlib.import_module("tomojax.recon._fbp_pallas")
+    module._cuda_l2_bytes.cache_clear()
+
+    def unavailable(_):
+        raise RuntimeError("optional CUDA runtime is unavailable")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "cupy.cuda.runtime",
+        None if missing else SimpleNamespace(getDeviceProperties=unavailable),
+    )
+    assert (
+        module.filtered_view_batch_size(
+            128,
+            grid=Grid(2560, 2560, 64, 1.0, 1.0, 1.0),
+            detector=Detector(3900, 64, 1.0, 1.0),
+            device=_CacheDevice(42, 7),
+        )
+        == 128
+    )
+
+
+@pytest.mark.parametrize(
+    "grid",
+    [
+        Grid(32, 32, 64, 1.0, 1.0, 1.0),
+        Grid(2560, 2560, 129, 1.0, 1.0, 1.0),
+        Grid(2560, 2560, 64, 1.0, 1.0, 1.0, vol_center=(0.0, 0.0, 90.0)),
+        Grid(2560, 2560, 32, 1.0, 1.0, 3.0),
+    ],
+)
+def test_fbp_cache_batch_keeps_small_or_axially_sparse_output(monkeypatch, grid) -> None:
+    module = importlib.import_module("tomojax.recon._fbp_pallas")
+    monkeypatch.setattr(module, "_cuda_l2_bytes", lambda _: 32 * 1024**2)
+    assert (
+        module.filtered_view_batch_size(
+            128, grid=grid, detector=Detector(3900, 64, 1.0, 1.0), device=_CacheDevice(42, 7)
+        )
+        == 128
+    )
+
+
+def test_fbp_cache_batch_accounts_for_fractional_row_spacing(monkeypatch) -> None:
+    module = importlib.import_module("tomojax.recon._fbp_pallas")
+    monkeypatch.setattr(module, "_cuda_l2_bytes", lambda _: 32 * 1024**2)
+    assert (
+        module.filtered_view_batch_size(
+            128,
+            grid=Grid(2560, 2560, 128, 1.0, 1.0, 0.5),
+            detector=Detector(3900, 64, 1.0, 1.0),
+            device=_CacheDevice(42, 7),
+        )
+        == 64
+    )
+
+
+@pytest.mark.parametrize(
+    ("nz", "nv", "vz", "columns", "capacity"),
+    [
+        (64, 64, 1.0, 3900, 64),
+        (128, 64, 0.5, 3900, 64),
+        (32, 129, 4.0, 3900, 16),
+        (540, 540, 1.0, 976, 256),
+    ],
+)
+@pytest.mark.parametrize("budget", [1, 3, 16, 512])
+@pytest.mark.parametrize("unit", [0.2, 1.3])
+def test_fbp_cache_batch_budgets_the_physical_axial_band(
+    monkeypatch, nz, nv, vz, columns, capacity, budget, unit
+):
+    implementation = importlib.import_module("tomojax.recon._fbp_pallas")
+    monkeypatch.setattr(implementation, "_cuda_l2_bytes", lambda _: 32 * 1024**2)
+    actual = implementation.filtered_view_batch_size(
+        budget,
+        grid=Grid(2560, 2560, nz, unit, unit, vz * unit),
+        detector=Detector(columns, nv, unit, unit),
+        device=_CacheDevice(42, 7),
+    )
+    assert actual == min(budget, capacity)
+
+
+@pytest.mark.parametrize(
+    ("shape", "capacity"),
+    [((1024, 2048), 2), ((512, 256), 32), ((64, 64), 1024), ((8192, 8192), 1)],
+)
+@pytest.mark.parametrize("budget", [1, 3, 16, 128])
+@pytest.mark.parametrize("available", [True, False])
+def test_2d_fbp_cache_batch_respects_fft_budget_and_actual_device(
+    monkeypatch, shape, capacity, budget, available
+):
+    module = importlib.import_module("tomojax.recon._fbp_pallas")
+    device = _CacheDevice(42, 7)
+
+    def cache(target):
+        assert target is device
+        return 32 * 1024**2 if available else None
+
+    monkeypatch.setattr(module, "_cuda_l2_bytes", cache)
+    actual = module.fft_2d_view_batch_size(budget, fft_shape=shape, device=device)
+    assert actual == (min(budget, capacity) if available else budget)
+
+
+@pytest.mark.parametrize(("nu", "nv"), [(128, 16), (128, 64), (128, 256), (2048, 1024)])
+@pytest.mark.parametrize("tilt_about", ["x", "z"])
+def test_oblique_fbp_budgets_the_actual_rectangular_fft(monkeypatch, nu, nv, tilt_about):
+    """A 2D FFT replaces the row dimension; it does not multiply it by nv."""
+    import jax
+
+    module = importlib.import_module("tomojax.recon.fbp")
+    angles = np.linspace(0, 180, 181, endpoint=False)
+    grid = Grid(32, 32, 8, 0.8, 1.1, 0.9, vol_center=(2.1, -1.3, 0.8))
+    detector = Detector(nu, nv, 1.0, 1.0, (-1.3, 2.1))
+    geometry = LaminographyGeometry(grid, detector, angles, tilt_deg=30, tilt_about=tilt_about)
+    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(len(angles))])
+    # Planning and tracing must not materialize this potentially large stack.
+    data = np.broadcast_to(np.float32(0), (len(angles), nv, nu))
+    estimates, shapes = [], []
+    original_batch, original_fft = module._parallel_filter_batch_size, jnp.fft.rfft2
+
+    def batch(n, rows, columns):
+        estimates.append((n, rows, columns))
+        return original_batch(n, rows, columns)
+
+    def fft(*args, **kwargs):
+        shapes.append(kwargs["s"])
+        return original_fft(*args, **kwargs)
+
+    monkeypatch.setattr(module, "_parallel_filter_batch_size", batch)
+    monkeypatch.setattr(jnp.fft, "rfft2", fft)
+    plan = module._plan(geometry, grid, detector, poses, data, FBPConfig(), cuda=False)
+    assert not plan.separable
+    jax.eval_shape(
+        lambda rows: module._filter_views(
+            rows,
+            jnp.asarray(plan.view_scale[:1]),
+            jnp.asarray(plan.params[:1]),
+            plan.spectrum,
+            jnp.float32(plan.arc_length),
+            detector=plan.detector,
+            separable=plan.separable,
+        ),
+        jax.ShapeDtypeStruct((1, plan.detector.nv, plan.detector.nu), jnp.float32),
+    )
+    assert len(shapes) == 1
+    assert estimates == [(len(angles), *shapes[0])]
+    # The existing conservative estimate and power-of-two rounding still apply.
+    capacity = (512 * 1024**2) // (16 * np.prod(shapes[0]))
+    expected = len(angles) if capacity >= len(angles) else 1 << (int(capacity).bit_length() - 1)
+    assert plan.batch == expected
+
+
+@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("on_host", [True, False])
+def test_oblique_fft_batches_preserve_independent_shifted_gaussian(monkeypatch, backend, on_host):
+    """A rolled camera has no missing cone; its 2D filter recovers the full truth."""
+    import jax
+
+    if backend == "pallas" and jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    module = importlib.import_module("tomojax.recon.fbp")
+    angles = np.linspace(0, 180, 89, endpoint=False)
+    grid = Grid(32, 32, 32, 1.0, 0.9, 1.1)
+    detector = Detector(128, 64, 0.7, 0.9, (-1.3, 2.1))
+    geometry = LaminographyGeometry(grid, detector, angles, tilt_deg=30, tilt_about="z")
+    centre, sigma, amplitude = np.array([-3.4, 2.7, 1.5]), 5.0, 0.02
+    u = (np.arange(detector.nu) - 63.5) * detector.du + detector.center[0]
+    v = (np.arange(detector.nv) - 31.5) * detector.dv + detector.center[1]
+    poses = np.asarray([geometry.pose_for_view(i) for i in range(len(angles))])
+    world = np.einsum("nij,j->ni", poses[:, :3, :3], centre)
+    distance2 = (u[None, None, :] - world[:, 0, None, None]) ** 2
+    distance2 = distance2 + (v[None, :, None] - world[:, 2, None, None]) ** 2
+    data = (amplitude * np.sqrt(2 * np.pi) * sigma * np.exp(-distance2 / (2 * sigma**2))).astype(
+        np.float32
+    )
+    if not on_host:
+        data = jnp.asarray(data)
+    config = FBPConfig(backprojector=backend)
+    actual = np.asarray(fbp(geometry, grid, detector, data, config=config))
+    # An odd view count exercises the final overlapping batch in both the
+    # host-streamed and device-loop paths, without changing quadrature/filtering.
+    plan = module._plan(geometry, grid, detector, jnp.asarray(poses), data, config, cuda=False)
+    bytes_per_view = 8 * module._fft_length(plan.detector.nv) * 2 * (plan.spectrum.shape[0] - 1)
+    cache_module = importlib.import_module("tomojax.recon._fbp_pallas")
+    monkeypatch.setattr(cache_module, "_cuda_l2_bytes", lambda _: bytes_per_view * 3)
+    batches, original_filter = [], module._filter_views
+
+    def filtered(rows, *args, **kwargs):
+        batches.append(rows.shape[0])
+        return original_filter(rows, *args, **kwargs)
+
+    monkeypatch.setattr(module, "_filter_views", filtered)
+    small_batches = np.asarray(fbp(geometry, grid, detector, data, config=config))
+    assert batches and set(batches) == {2}
+    np.testing.assert_allclose(actual, small_batches, rtol=5e-5, atol=2e-8)
+    x = (np.arange(grid.nx) - 15.5) * grid.vx
+    y = (np.arange(grid.ny) - 15.5) * grid.vy
+    z = (np.arange(grid.nz) - 15.5) * grid.vz
+    distance2 = (x[:, None, None] - centre[0]) ** 2 + (y[None, :, None] - centre[1]) ** 2
+    distance2 = distance2 + (z[None, None, :] - centre[2]) ** 2
+    truth = amplitude * np.exp(-distance2 / (2 * sigma**2))
+    assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.008
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("on_host", [True, False])
+def test_fbp_cache_limit_preserves_shifted_gaussian_volume(monkeypatch, on_host) -> None:
+    import jax
+
+    if jax.default_backend() != "gpu":
+        pytest.skip("requires a CUDA GPU")
+    module = importlib.import_module("tomojax.recon._fbp_pallas")
+    angles = np.linspace(0, 180, 73, endpoint=False, dtype=np.float32)
+    grid = Grid(32, 32, 3, 0.7, 0.9, 0.8, vol_center=(1.2, -0.8, 0.0))
+    detector = Detector(64, 3, 0.7, 0.8, (2.2, 0.0))
+    geometry = ParallelGeometry(grid, detector, angles)
+    u = (np.arange(64) - 31.5) * 0.7 + 2.2
+    phi = np.deg2rad(angles.astype(np.float64))
+    projected_centre = -3.4 * np.cos(phi) - 2.7 * np.sin(phi)
+    profile = np.sqrt(2 * np.pi) * 5.0 * np.exp(-((u - projected_centre[:, None]) ** 2) / 50)
+    axial_scale = np.array([0.5, 1.0, 1.5])
+    projections = (profile[:, None, :] * axial_scale[None, :, None]).astype(np.float32)
+    if not on_host:
+        projections = jnp.asarray(projections)
+    cfg = FBPConfig(backprojector="pallas")
+    monkeypatch.setattr(module, "_cuda_l2_bytes", lambda _: None)
+    whole = np.asarray(fbp(geometry, grid, detector, projections, config=cfg))
+    # Three filtered views fit, so a power-of-two batch has two views and a
+    # partial final batch. Both host streaming and device loops must honour it.
+    monkeypatch.setattr(module, "_cuda_l2_bytes", lambda _: 4 * detector.nv * detector.nu * 3)
+    calls, original = [], module._backprojection_call
+
+    def record(*args, **kwargs):
+        calls.append(args[2])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(module, "_backprojection_call", record)
+    cached = np.asarray(fbp(geometry, grid, detector, projections, config=cfg))
+    assert 2 in calls
+    np.testing.assert_allclose(cached, whole, rtol=4e-5, atol=2e-6)
+    x = (np.arange(32) - 15.5) * 0.7 + 1.2
+    y = (np.arange(32) - 15.5) * 0.9 - 0.8
+    expected = np.exp(-((x[:, None] + 3.4) ** 2 + (y[None, :] - 2.7) ** 2) / 50)
+    expected = expected[:, :, None] * axial_scale
+    assert np.linalg.norm(cached - expected) / np.linalg.norm(expected) < 0.02
 
 
 @pytest.mark.parametrize("nu", [1, 7, 16, 31])
@@ -485,14 +830,17 @@ def test_streamed_fbp_matches_whole_stack_with_partial_batches(
 
 
 @pytest.mark.parametrize("use_explicit_detector_grid", [False, True])
-def test_fbp_is_invariant_to_change_of_length_units(use_explicit_detector_grid: bool) -> None:
+@pytest.mark.parametrize("axial_pitch_ratio", [0.75, 1.0, 2.0])
+def test_fbp_is_invariant_to_change_of_length_units(
+    use_explicit_detector_grid: bool, axial_pitch_ratio: float
+) -> None:
     """Scaling all lengths and line integrals leaves attenuation values unchanged."""
     angles = np.asarray([0.0, 37.0, 81.0, 127.0], dtype=np.float32)
-    projections = np.random.default_rng(17).normal(size=(4, 3, 9)).astype(np.float32)
+    projections = np.random.default_rng(17).normal(size=(4, 7, 9)).astype(np.float32)
     reconstructions = []
-    for scale in [1.0, 3.0]:
-        grid = Grid(7, 8, 3, 0.8 * scale, 1.1 * scale, 1.3 * scale)
-        detector = Detector(9, 3, 0.9 * scale, 1.3 * scale)
+    for scale in [1.0, 0.1, 1.3, 10.0]:
+        grid = Grid(7, 8, 3, 0.8 * scale, 1.1 * scale, axial_pitch_ratio * 1.3 * scale)
+        detector = Detector(9, 7, 0.9 * scale, 1.3 * scale)
         geometry = ParallelGeometry(grid, detector, angles)
         det_grid = None
         if use_explicit_detector_grid:
@@ -512,7 +860,8 @@ def test_fbp_is_invariant_to_change_of_length_units(use_explicit_detector_grid: 
                 det_grid=det_grid,
             )
         )
-    np.testing.assert_allclose(reconstructions[0], reconstructions[1], rtol=5e-5, atol=5e-6)
+    for result in reconstructions[1:]:
+        np.testing.assert_allclose(result, reconstructions[0], rtol=5e-5, atol=5e-6)
 
 
 @pytest.mark.parametrize("interpret", [True, pytest.param(False, marks=pytest.mark.gpu)])
@@ -607,12 +956,12 @@ def test_explicit_pallas_fbp_requires_cuda_arrays() -> None:
         (128, (7, 6, 3), (9, 5), None, 128),
         (32, (256, 256, 128), (1024, 256), None, 128),
         (32, (256, 256, 128), (1025, 256), None, 512),
-        (32, (4096, 4096, 2), (9, 5), None, 512),
+        (32, (4096, 4096, 2), (9, 5), None, 2048),
         (129, (7, 6, 3), (9, 5), None, 128),
         (129, (7, 6, 3), (512, 512), None, 512),
         (129, (512, 512, 11), (767, 11), None, 128),
         (129, (768, 768, 17), (1089, 17), None, 128),
-        (129, (4096, 4096, 2), (9, 5), None, 512),
+        (129, (4096, 4096, 2), (9, 5), None, 2048),
         (129, (7, 6, 3), (9, 5), 64, 64),
     ],
 )
@@ -763,3 +1112,311 @@ def test_fbp_rejects_nonfinite_geometry_before_any_work(bad, host) -> None:
     projections = np.ones((3, 1, 5), np.float32) if host else jnp.ones((3, 1, 5))
     with pytest.raises(ValueError, match="must be finite"):
         run(geometry, grid, detector, projections, config=config)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("z_mode", ["integer", "fixed"])
+@pytest.mark.parametrize("nz", [1, 33, 129, 257])
+def test_parallel_fbp_keeps_partial_slabs_and_accumulator(z_mode, nz) -> None:
+    """Compare thin/partial slabs and masked zero extension with the JAX sum."""
+    import jax
+
+    if jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    grid = Grid(11, 7, nz, 0.7, 1.2, 1.0 if z_mode == "integer" else 0.73)
+    detector = Detector(13, 21, 0.9, 1.0, (-0.19, 0.0 if z_mode == "integer" else 0.31))
+    angles = [7.0, 33.0, 81.0, 119.0, 164.0]
+    geometry = ParallelGeometry(grid, detector, angles)
+    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(len(angles))], jnp.float32)
+    if z_mode == "fixed":
+        poses = poses.at[:, 2, 3].set(0.375)
+    rng = np.random.default_rng(843)
+    rows = jnp.asarray(rng.normal(size=(len(angles), detector.nv, detector.nu)), jnp.float32)
+    initial = rng.normal(size=(grid.nx, grid.ny, grid.nz)).astype(np.float32)
+    expected = (
+        np.asarray(
+            jax.jit(lambda y: _backproject_voxels_jax(poses, y, grid=grid, detector=detector))(rows)
+        )
+        + initial
+    )
+    for block in (128, 512):
+        actual = jax.jit(
+            lambda p, y, a, block=block: backproject_filtered_pallas(
+                p,
+                y,
+                grid=grid,
+                detector=detector,
+                z_mode=z_mode,
+                block_size=block,
+                accumulate=a,
+            )
+        )(poses, rows, jnp.asarray(initial.copy()))
+        np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=2e-6)
+
+
+@pytest.mark.parametrize("interpret", [False, True])
+def test_axial_fbp_indices_keep_affine_cuda_addresses(interpret):
+    """Only interpret stores need a sentinel for padded rows aliasing a column."""
+    import jax
+    from jax.experimental import pallas as pl
+
+    implementation = importlib.import_module("tomojax.recon._fbp_pallas")
+
+    def indices(out):
+        flat, *_ = implementation._voxel_indices(
+            (5, 3, 3), block_size=128, z_mode="integer", interpret=interpret
+        )
+        out[:] = flat.reshape(-1)
+
+    actual = np.asarray(
+        pl.pallas_call(
+            indices,
+            out_shape=jax.ShapeDtypeStruct((128,), jnp.int32),
+            grid=(1, 1),
+            interpret=True,
+        )()
+    )
+    column, row = np.arange(32)[:, None], np.arange(4)[None, :]
+    expected = column * 3 + row
+    if interpret:
+        expected = np.where((column < 15) & (row < 3), expected, 45)
+    np.testing.assert_array_equal(actual, expected.reshape(-1))
+
+
+@pytest.mark.parametrize("interpret", [True, pytest.param(False, marks=pytest.mark.gpu)])
+@pytest.mark.parametrize(
+    ("step", "nv", "nz", "first", "pitch"),
+    [(1, 6, 5, 0, 0.7), (2, 21, 7, -3, 1.3), (3, 64, 17, 7, 0.125), (4, 63, 33, -1, 0.2)],
+)
+@pytest.mark.parametrize(("phase", "drift"), [(0.0, 0.0), (4e-6, -1e-8), (-4e-6, 1e-8)])
+def test_integer_fbp_rows_preserve_physical_alignment(
+    interpret, step, nv, nz, first, pitch, phase, drift
+):
+    """Strided, shifted and barely aligned rows use the same nearest physical pixels."""
+    from dataclasses import replace
+
+    import jax
+
+    if not interpret and jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    center = -0.31
+    grid = Grid(
+        7,
+        5,
+        nz,
+        0.7,
+        0.9,
+        (step + drift) * pitch,
+        vol_origin=(-1.8, -2.4, (first + phase - (nv - 1) / 2) * pitch + center),
+    )
+    detector = Detector(65, nv, 0.9, pitch, (0.17, center))
+    implementation = importlib.import_module("tomojax.recon.fbp")
+    assert implementation.supports_parallel_fbp_z_integer(grid, detector)
+    angles = [7.0, 33.0, 81.0, 164.0]
+    geometry = ParallelGeometry(grid, detector, angles)
+    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(len(angles))], jnp.float32)
+    rng = np.random.default_rng(16103)
+    rows = jnp.asarray(rng.normal(size=(len(angles), nv, detector.nu)), jnp.float32)
+    initial = rng.normal(size=(grid.nx, grid.ny, grid.nz)).astype(np.float32)
+    # Independently sample the same nearest physical rows on an exact unit-pitch
+    # lattice. XY coordinates and poses are unchanged; no row interpolation or
+    # reconstruction fit enters this reference.
+    exact_grid = replace(grid, vz=step, vol_origin=(-1.8, -2.4, first - (nv - 1) / 2))
+    exact_detector = replace(detector, dv=1.0, center=(detector.center[0], 0.0))
+    expected = (
+        np.asarray(
+            jax.jit(
+                lambda y: _backproject_voxels_jax(
+                    poses, y, grid=exact_grid, detector=exact_detector
+                )
+            )(rows)
+        )
+        + initial
+    )
+    for block in (128, 512):
+        actual = jax.jit(
+            lambda p, y, a, block=block: backproject_filtered_pallas(
+                p,
+                y,
+                grid=grid,
+                detector=detector,
+                z_mode="integer",
+                interpret=interpret,
+                block_size=block,
+                accumulate=a,
+            )
+        )(poses, rows, jnp.asarray(initial.copy()))
+        np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=2e-6)
+
+
+@pytest.mark.parametrize("z_mode", ["integer", "fixed"])
+@pytest.mark.parametrize("nz", [33, 65, 129])
+def test_interpret_axial_bands_preserve_long_slab_masks(z_mode, nz):
+    """Exact binary pitches isolate long-row tile masks from CPU FMA differences."""
+    import jax
+
+    grid = Grid(7, 5, nz, 0.5, 0.75, 1.0 if z_mode == "integer" else 0.5)
+    detector = Detector(13, 21, 0.5, 1.0, (0.25, 0.0 if z_mode == "integer" else 0.25))
+    geometry = ParallelGeometry(grid, detector, [0.0, 90.0, 180.0, 270.0])
+    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(4)], jnp.float32)
+    if z_mode == "fixed":
+        poses = poses.at[:, 2, 3].set(0.375)
+    rng = np.random.default_rng(8327)
+    rows = jnp.asarray(rng.normal(size=(4, detector.nv, detector.nu)), jnp.float32)
+    initial = rng.normal(size=(grid.nx, grid.ny, grid.nz)).astype(np.float32)
+    expected = (
+        np.asarray(
+            jax.jit(lambda y: _backproject_voxels_jax(poses, y, grid=grid, detector=detector))(rows)
+        )
+        + initial
+    )
+    for block in (128, 512):
+        actual = backproject_filtered_pallas(
+            poses,
+            rows,
+            grid=grid,
+            detector=detector,
+            z_mode=z_mode,
+            block_size=block,
+            interpret=True,
+            accumulate=jnp.asarray(initial.copy()),
+        )
+        np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=2e-6)
+
+
+@pytest.mark.parametrize("z_mode", ["integer", "fixed", "general"])
+@pytest.mark.parametrize(
+    ("shape", "nv", "nu", "expected"),
+    [((32, 32, 3), 3, 5, 128), ((32, 32, 3), 2048, 2048, 512), ((512, 512, 65), 65, 13, 2048)],
+)
+def test_axial_launch_keeps_small_outputs_and_general_layout(
+    monkeypatch, z_mode, shape, nv, nu, expected
+):
+    """Planning large inputs does not allocate them or underfill small output grids."""
+    import jax
+
+    implementation = importlib.import_module("tomojax.recon._fbp_pallas")
+    grid = Grid(*shape, 1.0, 1.0, 1.0)
+    detector = Detector(nu, nv, 1.0, 1.0)
+    sizes = []
+
+    def call(grid, detector, n, block_size, **options):
+        sizes.append(block_size)
+        return lambda *args: jnp.zeros(grid.nx * grid.ny * grid.nz, jnp.float32)
+
+    monkeypatch.setattr(implementation, "_backprojection_call", call)
+    jax.eval_shape(
+        lambda p, y: backproject_filtered_pallas(p, y, grid=grid, detector=detector, z_mode=z_mode),
+        jax.ShapeDtypeStruct((5, 4, 4), jnp.float32),
+        jax.ShapeDtypeStruct((5, nv, nu), jnp.float32),
+    )
+    size = 512 if z_mode == "general" and expected == 2048 else expected
+    assert sizes == [size] * (2 if shape[2] == 65 and z_mode != "general" else 1)
+
+
+@pytest.mark.parametrize("z_mode", ["integer", "fixed", "general"])
+@pytest.mark.parametrize("block_size", [64, 128, 512, 1024, 2048])
+def test_axial_launch_warps_follow_only_large_axial_programs(monkeypatch, z_mode, block_size):
+    from jax.experimental import pallas as pl
+
+    implementation = importlib.import_module("tomojax.recon._fbp_pallas")
+    warps = []
+
+    def call(*args, **options):
+        warps.append(options["compiler_params"].num_warps)
+
+    monkeypatch.setattr(pl, "pallas_call", call)
+    implementation._backprojection_call.cache_clear()
+    try:
+        implementation._backprojection_call(
+            Grid(7, 5, 33, 1.0, 1.0, 1.0),
+            Detector(13, 21, 1.0, 1.0),
+            5,
+            block_size,
+            z_mode=z_mode,
+            interpret=False,
+        )
+        assert warps == [8 if z_mode != "general" and block_size >= 2048 else 4]
+    finally:
+        implementation._backprojection_call.cache_clear()
+
+
+@pytest.mark.parametrize("z_mode", ["integer", "fixed", "general"])
+@pytest.mark.parametrize("nz", [16, 32, 33, 65, 80, 81, 96, 129])
+@pytest.mark.parametrize("accumulate", [False, True])
+def test_axial_fbp_tail_calls_keep_full_accumulator_and_global_rows(
+    monkeypatch, z_mode, nz, accumulate
+):
+    import jax
+
+    implementation = importlib.import_module("tomojax.recon._fbp_pallas")
+    grid = Grid(7, 5, nz, 1.0, 1.0, 1.0)
+    detector = Detector(13, nz, 1.0, 1.0)
+    calls = []
+
+    def call(grid, detector, n, block_size, **options):
+        calls.append((options.get("z_start", 0), options.get("row_count"), options["accumulate"]))
+        return lambda *operands: (
+            operands[-1]
+            if options["accumulate"]
+            else jnp.zeros(grid.nx * grid.ny * grid.nz, jnp.float32)
+        )
+
+    monkeypatch.setattr(implementation, "_backprojection_call", call)
+    poses = jax.ShapeDtypeStruct((5, 4, 4), jnp.float32)
+    rows = jax.ShapeDtypeStruct((5, nz, 13), jnp.float32)
+    initial = jax.ShapeDtypeStruct((grid.nx, grid.ny, nz), jnp.float32)
+    result = jax.eval_shape(
+        lambda p, y, a: backproject_filtered_pallas(
+            p,
+            y,
+            grid=grid,
+            detector=detector,
+            z_mode=z_mode,
+            accumulate=a if accumulate else None,
+        ),
+        poses,
+        rows,
+        initial,
+    )
+    assert result.shape == initial.shape
+    if z_mode != "general" and nz in (33, 65, 80, 129):
+        prefix = nz // 32 * 32
+        assert calls == [(0, prefix, True), (prefix, nz - prefix, True)]
+    else:
+        assert calls == [(0, None, accumulate)]
+
+
+def test_fbp_short_tail_preserves_independent_last_row_weak_feature():
+    """The final physical row is not the short tile's local row zero."""
+    grid = Grid(32, 32, 33, 0.25, 0.25, 1.0)
+    detector = Detector(257, 33, 0.125, 1.0, (0.35, 0.0))
+    angles = np.linspace(7, 187, 37, endpoint=False)
+    geometry = ParallelGeometry(grid, detector, angles)
+    u = (np.arange(257) - 128) * 0.125 + 0.35
+    z = np.arange(33) - 16
+    phi = np.deg2rad(angles)
+    x = (np.arange(32) - 15.5) * 0.25
+    xx, yy = x[:, None], x[None, :]
+    background_z = 1 + 0.1 * np.cos(0.13 * z)
+    feature_z = np.exp(-((z - 16) ** 2) / 4.5)
+
+    def profile(amplitude, sigma, cx, cy):
+        mean = cx * np.cos(phi) - cy * np.sin(phi)
+        return (
+            amplitude
+            * np.sqrt(2 * np.pi)
+            * sigma
+            * np.exp(-((u[None, :] - mean[:, None]) ** 2) / (2 * sigma**2))
+        )
+
+    background = profile(0.02, 3.0, -0.5, 0.5)[:, None, :] * background_z[None, :, None]
+    feature = profile(2e-5, 0.6, 1.125, -0.625)[:, None, :] * feature_z[None, :, None]
+    truth = 2e-5 * np.exp(-((xx - 1.125) ** 2 + (yy + 0.625) ** 2) / (2 * 0.6**2))
+    truth = truth[:, :, None] * feature_z
+    full = np.asarray(fbp(geometry, grid, detector, (background + feature).astype(np.float32)))
+    broad = np.asarray(fbp(geometry, grid, detector, background.astype(np.float32)))
+    signal = full - broad
+    mask = (xx - 1.125) ** 2 + (yy + 0.625) ** 2 < 1.5**2
+    assert np.linalg.norm((signal - truth)[mask]) / np.linalg.norm(truth[mask]) < 0.03
+    assert np.unravel_index(np.argmax(signal), signal.shape) == (20, 13, 32)
