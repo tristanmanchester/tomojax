@@ -285,7 +285,7 @@ def test_stripes_removes_pixel_offsets_the_flats_miss(tmp_path: Path) -> None:
     assert error[[10, 31]].max() < 2e-3
     assert np.abs(plain - truth).max(axis=(0, 1))[[10, 31]].min() > 0.02
     assert np.delete(error, [10, 31, 45]).max() < 2e-3
-    assert cleaned.corrections[-1] == Correction("stripes", {"width": 9})
+    assert cleaned.corrections[-1] == Correction("stripes", {"width": 9, "varying": False})
     # A step after a whole-row step runs on its result.
     both = frames.corrected(Stripes(9), BeamHardening((1.0, 0.05)), batch_views=7)
     p = np.asarray(cleaned.projections)

@@ -11,7 +11,7 @@ the device.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from functools import lru_cache
 from typing import ClassVar, Literal, cast
 
@@ -97,7 +97,7 @@ class BeamHardening(Step):
 
 @dataclass(frozen=True)
 class Stripes(Step):
-    """Remove rings: subtract each detector pixel's constant offset from its line integrals.
+    """Correct detector stripes that reconstruct as rings.
 
     A pixel whose gain or offset the flat field does not describe adds the same
     absorption to every view, a stripe in the sinogram and a ring in the
@@ -110,11 +110,21 @@ class Stripes(Step):
     also stationary in the sinogram, and one narrower than ``width`` can be
     altered. An even ``width`` averages the two windows centred half a pixel
     either side, so reversing the detector does not change the correction.
+
+    ``varying=True`` instead detects pixels with an anomalous view-to-view
+    response and fits a gain and offset to their neighbouring sorted values.
+    It leaves unselected pixels unchanged, including stationary centred
+    features, but does not remove ordinary constant-offset stripes there.
+    Detection compares adjacent-view differences with neighbouring columns;
+    it needs sufficiently sampled, noisy views, and sharp moving edges can
+    cause false detections. It cannot recover an unresponsive pixel or
+    distinguish a real feature from a defect at an already selected pixel.
     """
 
     domain: ClassVar[Domain] = "line integrals"
     whole_rows: ClassVar[bool] = True
     width: int = 9
+    varying: bool = field(default=False, kw_only=True)
 
     def __post_init__(self) -> None:
         if int(self.width) != self.width or self.width < 3:
@@ -130,6 +140,13 @@ class Stripes(Step):
         views, rows, cols = batch.shape
         row_bytes = views * cols * batch.dtype.itemsize
         group = max(1, min(rows, 8, (4 << 20) // max(1, row_bytes)))
+        if self.varying:
+            parameters = jax.lax.map(
+                lambda row: _stripe_response(row, self.width),
+                jnp.swapaxes(batch, 0, 1),
+                batch_size=group if group > 1 else None,
+            )
+            return batch * parameters[None, :, 0] + parameters[None, :, 1]
         offsets = jax.lax.map(
             lambda row: _stripe_offsets(row, self.width),
             jnp.swapaxes(batch, 0, 1),
@@ -358,6 +375,41 @@ def _stripe_offsets(row: jax.Array, width: int) -> jax.Array:
     """Each column's offset in one detector row, ``(views, columns)``."""
     ranked = jnp.sort(row, axis=0)
     return jnp.median(ranked - _sliding_median(ranked, width), axis=0)
+
+
+def _stripe_response(row: jax.Array, width: int) -> jax.Array:
+    """Gain and offset for pixels with an anomalous angular response.
+
+    Differences, not the mean absorption, select pixels: a stationary
+    feature cannot itself trigger detection. The local median removes the
+    slowly varying noise envelope; six robust standard deviations select
+    exceptional responses. Extend those seeds to include a defect's edges.
+    A zero MAD gives no noise-based evidence, so leave that row alone.
+    """
+    if row.shape[0] < 3:
+        return jnp.stack((jnp.ones_like(row[0]), jnp.zeros_like(row[0])))
+    noise = jnp.mean(jnp.abs(jnp.diff(row, axis=0)), axis=0)
+    local = _sliding_median(noise[None], width)[0]
+    relative = noise / jnp.where(local > 0, local, 1)
+    ratio = jnp.where(local > 0, jnp.log(jnp.maximum(relative, jnp.finfo(row.dtype).eps)), 0)
+    deviation = jnp.abs(ratio - jnp.median(ratio))
+    scale = 1.4826 * jnp.median(deviation)
+    bad = (deviation > 6 * scale) & (scale > 0)
+    radius = max(1, width // 8)
+    bad = jax.lax.reduce_window(bad, False, jax.lax.bitwise_or, (2 * radius + 1,), (1,), "SAME")
+
+    # Matching distributions, rather than adjacent views, retains angular
+    # features; a fitted response also avoids interpolating missing columns.
+    ranked = jnp.sort(row, axis=0)
+    target = _sliding_median(ranked, width)
+    xmean, ymean = ranked.mean(0), target.mean(0)
+    dx, dy = ranked - xmean, target - ymean
+    variance = jnp.sum(dx * dx, axis=0)
+    gain = jnp.sum(dx * dy, axis=0) / jnp.where(variance > 0, variance, 1)
+    selected = bad & (variance > 0)
+    gain = jnp.where(selected, gain, 1)
+    bias = jnp.where(selected, ymean - gain * xmean, 0)
+    return jnp.stack((gain, bias))
 
 
 def _sliding_median(values: jax.Array, width: int) -> jax.Array:
