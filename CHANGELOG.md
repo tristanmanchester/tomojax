@@ -2,9 +2,10 @@
 
 ## Unreleased
 
-Alignment keeps the initial poses when global shift initialization has not
-settled to sub-pixel updates, rather than passing oscillating correlation
-peaks to the local solver.
+Alignment declines global shift initialization when its updates have not
+settled, rather than passing oscillating correlation peaks to the local solver.
+For calibrated tilted-axis scans it then tries bounded, smooth common-line
+phase motion; if that also declines, it keeps the initial poses.
 
 Synchrotron data (fifth lab run): `tj.reconstruct(scan, "fourier")` and
 `tomojax recon --method fourier` expose the Fourier-slice inverse, now with

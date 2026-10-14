@@ -19,9 +19,11 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.fft import next_fast_len
 
+from tomojax.alignment._geometry.common_lines import prepare_common_lines
 from tomojax.core.cone import cone_model
 from tomojax.core.geometry.cone import segments_of
 from tomojax.core.geometry.views import stack_view_poses
+from tomojax.geometry import LaminographyGeometry, RotationAxisGeometry
 
 if TYPE_CHECKING:
     from tomojax.alignment._config import AlignConfig
@@ -205,6 +207,50 @@ def _remove_object_translation(
     return residual / np.asarray(spacing)
 
 
+def _phase_view_shifts(
+    geometry: Geometry,
+    detector: Detector,
+    projections: jax.Array | np.ndarray,
+    translation_basis: np.ndarray,
+) -> np.ndarray | None:
+    """Try bounded, smooth motion when global correlation has not settled.
+
+    Common-line phase assumes a fixed rotation axis and calibrated detector
+    origin. Custom pose/roll wrappers do not obey that model; leave those to
+    projection matching. The phase helper itself declines fits outside its
+    local capture range or without convergence.
+    """
+    if not isinstance(geometry, LaminographyGeometry | RotationAxisGeometry):
+        return None
+    lines = prepare_common_lines(projections, np.asarray(geometry.angles), detector)
+    if lines is None:
+        return None
+    fit = lines.motion(np.asarray(geometry.axis_unit_lab), center_u=detector.center[0])
+    if fit.shifts is None:
+        LOG.info("Common-line motion seed declined: %s", fit.status)
+        return None
+    # Motion follows acquisition order, not angle: repeated rotations and
+    # turnaround scans can revisit an angle with a different displacement.
+    order = np.argsort(lines.view_indices)
+    shifts = np.column_stack(
+        [
+            np.interp(
+                np.arange(len(projections)), lines.view_indices[order], fit.shifts[order, axis]
+            )
+            for axis in range(2)
+        ]
+    )
+    # The helper already returns physical lengths. Remove the same rigid
+    # object-translation gauge as the broad search, without rescaling pixels.
+    shifts = _remove_object_translation(shifts, translation_basis, (1.0, 1.0))
+    LOG.info(
+        "Common-line motion seed accepted: coherence %.3f -> %.3f",
+        fit.coherence_before,
+        fit.coherence_after,
+    )
+    return shifts
+
+
 def _reprojector(
     geometry: Geometry, poses: jax.Array, grid: Grid, detector: Detector
 ) -> Callable[[slice, jax.Array], jax.Array]:
@@ -263,8 +309,9 @@ def estimate_view_shifts(
 
     Periodic or truncated projections can make correlation peaks jump between
     unrelated features. If the final update still moves a view by more than
-    one detector pixel, return zero shifts instead of trusting an unsettled
-    proposal. This conservative stability check does not certify motion
+    one detector pixel, decline that proposal. For calibrated tilted-axis
+    geometry, try a bounded common-line phase seed for smooth, small motion;
+    otherwise retain zero shifts. Neither initializer certifies motion
     accuracy; declining initialization does not mean the sample did not move.
     """
     data = jnp.asarray(projections, dtype=jnp.float32)
@@ -313,10 +360,11 @@ def estimate_view_shifts(
             break
     if change > max(1.0, float(tolerance_px)):
         LOG.warning(
-            "Shift search has not settled (last update %.3f px); keeping initial poses",
+            "Shift search has not settled (last update %.3f px); declining correlation seed",
             change,
         )
-        return np.zeros_like(shifts)
+        phase = _phase_view_shifts(geometry, detector, data, translation_basis)
+        return np.zeros_like(shifts) if phase is None else phase
     return shifts * np.asarray(spacing)
 
 
