@@ -17,4 +17,7 @@ correction (five parameters, six in a cone beam). Smooth pose models, setup
 stages and mixed schedules are available when requested explicitly. See the
 [alignment guide](../../../docs/alignment-guide.md).
 
+Joint alignment retries without its derivative cache before skipping a level
+that does not fit GPU memory.
+
 Import from `tomojax.alignment` or `tomojax.alignment.api`.

@@ -468,3 +468,16 @@ def test_memory_check_compiles_the_update_unless_far_below_the_limit(monkeypatch
     assert isinstance(objective.update.func, jax.stages.Compiled)
     assert_update_matches(objective)
     assert len(lowered) == 1
+
+
+def test_a_cached_update_that_does_not_fit_retries_without_columns(monkeypatch):
+    checks = []
+
+    def check(_arrays, spec):
+        checks.append(spec.cache_columns)
+        if spec.cache_columns:
+            raise _coupled_objective.AlignmentMemoryError(2**30, 2**29)
+
+    monkeypatch.setattr(_coupled_objective, "_check_device_memory", check)
+    objective = _coupled_objective.build_coupled_objective(_small_coupled_context())
+    assert checks == [True, False] and not objective.pose_columns_cached
