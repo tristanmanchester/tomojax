@@ -84,9 +84,8 @@ For calibrated lens distortion, pass
 `tomojax.corrections`. It bilinearly samples a **backward** radial polynomial
 on transmission before the log. The centre is in zero-based image pixels,
 not the rotation axis; estimate the axis after this correction. Correct
-before cropping if the warp needs pixels outside the crop. Calibration
-coordinates also change with binning; see the
-[lens-distortion instructions](../src/tomojax/corrections/README.md#calibrated-lens-distortion).
+before cropping if the warp needs pixels outside the crop, and convert the
+calibration after a crop or binning (see `help(RadialDistortion)`).
 
 A file written by TomoJAX carries its geometry. Other NXtomo and Data Exchange
 files get a parallel beam with a centred detector, the file's angles, and the
