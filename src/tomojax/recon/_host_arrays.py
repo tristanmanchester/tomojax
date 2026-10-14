@@ -10,11 +10,12 @@ import numpy as np
 
 @dataclass(frozen=True)
 class ProjectionRows:
-    """A zero-extended detector-row window, read only for requested view batches."""
+    """Zero-extended, optionally interpolated rows, read for requested views only."""
 
     projections: np.ndarray
-    start: int
+    start: int | float
     rows: int
+    stride: int | float = 1
 
     @property
     def shape(self) -> tuple[int, int, int]:
@@ -22,13 +23,33 @@ class ProjectionRows:
         return self.projections.shape[0], self.rows, self.projections.shape[2]
 
     def __getitem__(self, views: slice) -> np.ndarray:
-        batch = self.projections[views]
-        lo, hi = max(0, self.start), min(batch.shape[1], self.start + self.rows)
-        if lo == self.start and hi == self.start + self.rows:
-            return np.ascontiguousarray(batch[:, lo:hi], dtype=np.float32)
-        data = np.zeros((batch.shape[0], self.rows, batch.shape[2]), dtype=np.float32)
-        if hi > lo:
-            data[:, lo - self.start : hi - self.start] = batch[:, lo:hi]
+        positions = self.start + np.arange(self.rows) * self.stride
+        indices = np.floor(positions).astype(np.int64)
+        weights = (positions - indices).astype(np.float32)
+        if weights.any():
+            return self._interpolated(views, indices, weights)
+        valid = (indices >= 0) & (indices < self.projections.shape[1])
+        if valid.all() and self.stride > 0 and float(self.stride).is_integer():
+            start, stride = int(self.start), int(self.stride)
+            stop = start + self.rows * stride
+            return np.ascontiguousarray(
+                self.projections[views, start:stop:stride], dtype=np.float32
+            )
+        count = len(range(*views.indices(self.projections.shape[0])))
+        data = np.zeros((count, self.rows, self.projections.shape[2]), dtype=np.float32)
+        if valid.any():
+            data[:, valid] = self.projections[views, indices[valid], :]
+        return data
+
+    def _interpolated(self, views: slice, indices: np.ndarray, weights: np.ndarray) -> np.ndarray:
+        """Blend the two supporting source rows before their row-linear u filter."""
+        count = len(range(*views.indices(self.projections.shape[0])))
+        data = np.zeros((count, self.rows, self.projections.shape[2]), dtype=np.float32)
+        for index, weight in ((indices, 1 - weights), (indices + 1, weights)):
+            valid = (index >= 0) & (index < self.projections.shape[1])
+            if valid.any():
+                values = np.asarray(self.projections[views, index[valid], :], dtype=np.float32)
+                data[:, valid, :] += values * weight[None, valid, None]
         return data
 
 
