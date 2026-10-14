@@ -37,7 +37,7 @@ def test_zinger_windows_match_scipy(shape: tuple[int, ...], size: int) -> None:
 
 @pytest.mark.parametrize("views", [1, 16, 17])
 @pytest.mark.parametrize("rows", [1, 2, 3, 5, 9])
-@pytest.mark.parametrize("width", [3, 4, 5, 8, 9, 15, 25])
+@pytest.mark.parametrize("width", [3, 4, 5, 8, 9, 15, 25, 55])
 def test_stripe_windows_match_numpy(views: int, rows: int, width: int) -> None:
     values = np.random.default_rng(width).normal(size=(views, rows, 19)).astype(np.float32)
     actual = jax.jit(Stripes(width=width).apply)(jnp.asarray(values))

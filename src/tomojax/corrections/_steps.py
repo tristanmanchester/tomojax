@@ -363,9 +363,9 @@ def _stripe_offsets(row: jax.Array, width: int) -> jax.Array:
 def _sliding_median(values: jax.Array, width: int) -> jax.Array:
     """The median over ``width`` neighbouring columns, edges repeated.
 
-    An odd-even transposition sort of the shifted copies: elementwise minima
-    and maxima, which fuse into one pass (a sort along a window axis is ten
-    times slower on a GPU).
+    Sorting networks of shifted copies use elementwise minima and maxima,
+    which fuse into one pass. Wide odd windows retain only comparisons that
+    reach the median; even windows also need its neighbouring rank.
     """
     half, columns = width // 2, values.shape[1]
     even = width % 2 == 0
@@ -373,7 +373,10 @@ def _sliding_median(values: jax.Array, width: int) -> jax.Array:
     # An even window is centred between pixels: take one more window and
     # average neighbours onto the pixels, so reversing the detector does not
     # change the correction.
-    median = _median_of([padded[:, k : k + columns + even] for k in range(width)])
+    window = [padded[:, k : k + columns + even] for k in range(width)]
+    # Wide stripe windows otherwise trace a quadratic sorting network. Reuse
+    # the median-only network, keeping the even-window midpoint convention.
+    median = _bitonic_median_of(window) if width >= 15 and not even else _median_of(window)
     return 0.5 * (median[:, :-1] + median[:, 1:]) if even else median
 
 
