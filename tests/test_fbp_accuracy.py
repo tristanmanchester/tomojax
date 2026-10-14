@@ -227,9 +227,9 @@ def test_voxel_pallas_fbp_matches_jax_on_partial_blocks(
             poses, fft_filter_rows(y, ramp), grid=grid, detector=detector
         )
     )(projections)
-    # Both automatic long/short-loop tiles and an explicit small override must
+    # Automatic tiles and both small and large explicit overrides must
     # retain partial-block masks and fractional/integer-row interpolation.
-    for block in [None, 64]:
+    for block in [None, 64, 2048]:
         actual = backproject_filtered_pallas(
             poses,
             fft_filter_rows(projections, ramp),
@@ -289,12 +289,12 @@ def test_explicit_pallas_fbp_requires_cuda_arrays() -> None:
         (128, (7, 6, 3), (9, 5), None, 128),
         (32, (256, 256, 128), (1024, 256), None, 128),
         (32, (256, 256, 128), (1025, 256), None, 512),
-        (32, (4096, 4096, 2), (9, 5), None, 512),
+        (32, (4096, 4096, 2), (9, 5), None, 2048),
         (129, (7, 6, 3), (9, 5), None, 128),
         (129, (7, 6, 3), (512, 512), None, 512),
         (129, (512, 512, 11), (767, 11), None, 128),
         (129, (768, 768, 17), (1089, 17), None, 128),
-        (129, (4096, 4096, 2), (9, 5), None, 512),
+        (129, (4096, 4096, 2), (9, 5), None, 2048),
         (129, (7, 6, 3), (9, 5), 64, 64),
     ],
 )
@@ -334,13 +334,14 @@ def test_automatic_fbp_tiles_bound_both_input_and_output_working_sets(
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("vz", [1.0, 0.9])
-def test_medium_working_set_fbp_recovers_independent_off_axis_gaussian(vz):
+@pytest.mark.parametrize(("n", "nz", "nu"), [(512, 11, 767), (1024, 17, 1535)])
+def test_fbp_tiles_recover_independent_off_axis_gaussian(vz, n, nz, nu):
     import jax
 
     if jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
-    grid = Grid(512, 512, 11, 1.0, 1.0, vz)
-    detector = Detector(767, 11, 1.0, 1.0, (0.23, 0.0))
+    grid = Grid(n, n, nz, 1.0, 1.0, vz)
+    detector = Detector(nu, nz, 1.0, 1.0, (0.23, 0.0))
     angles = np.linspace(7, 187, 181, endpoint=False)
     geometry = ParallelGeometry(grid, detector, angles)
     x = np.arange(grid.nx) - (grid.nx - 1) / 2

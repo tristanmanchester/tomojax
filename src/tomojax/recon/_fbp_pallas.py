@@ -152,14 +152,21 @@ def backproject_filtered_pallas(
     z, without coupling to x or y. ``'general'`` handles arbitrary rigid poses.
     ``accumulate`` is added to the result in place. Compact
     filtered-stack and output working sets use one voxel per lane of the
-    four-warp program. Other workloads retain larger tiles for input reuse.
+    four-warp program. Large axial outputs amortize pose loads across more
+    voxels; general poses and smaller outputs retain their previous tiles.
     """
     if z_mode not in {"integer", "fixed", "general"}:
         raise ValueError("FBP z_mode must be integer, fixed, or general")
     if block_size is None:
-        working_bytes = filtered.size * filtered.dtype.itemsize + 4 * grid.nx * grid.ny * grid.nz
+        output_bytes = 4 * grid.nx * grid.ny * grid.nz
+        working_bytes = filtered.size * filtered.dtype.itemsize + output_bytes
         compact = working_bytes <= 64 * 1024**2
-        block_size = 128 if compact else 512
+        if compact:
+            block_size = 128
+        elif z_mode != "general" and output_bytes >= 64 * 1024**2:
+            block_size = 2048
+        else:
+            block_size = 512
     call = _backprojection_call(
         grid,
         detector,
