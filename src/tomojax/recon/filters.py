@@ -91,9 +91,6 @@ def get_fbp_filter_np(name: str, nu: int, du: float, dtype_name: str) -> np.ndar
     avoids the bias introduced by sampling abs(f) with an exactly zero DC bin.
     Padding to at least twice the detector width prevents circular wraparound
     in the retained output pixels. The caller must crop the inverse FFT to nu.
-    Shepp--Logan uses the exact Nyquist-bandlimited impulse
-    h[k] = 2/(pi**2*(1 - 4*k**2)*du), rather than a periodic sinc-window
-    approximation whose spatial coefficients depend on the padded extent.
     """
     if isinstance(nu, bool) or operator.index(nu) <= 0:
         raise ValueError("nu must be a positive integer")
@@ -102,19 +99,18 @@ def get_fbp_filter_np(name: str, nu: int, du: float, dtype_name: str) -> np.ndar
     n = max(64, 1 << (2 * int(nu) - 1).bit_length())
     k = np.arange(n, dtype=np.int64)
     k = np.minimum(k, n - k)
-    filter_name = _normalize_filter_name(name)
     impulse = np.zeros(n, dtype=np.float64)
-    if filter_name == "shepp-logan":
-        impulse[:] = 2.0 / (np.pi**2 * (1 - 4 * k.astype(np.float64) ** 2) * du)
-    else:
-        impulse[0] = 0.25 / du
-        odd = (k % 2) != 0
-        impulse[odd] = -1.0 / (np.pi**2 * k[odd] ** 2 * du)
+    impulse[0] = 0.25 / du
+    odd = (k % 2) != 0
+    impulse[odd] = -1.0 / (np.pi**2 * k[odd] ** 2 * du)
     spectrum = np.fft.rfft(impulse).real
     normalized_frequency = 2.0 * np.fft.rfftfreq(n)
-    if filter_name == "hann":
+    filter_name = _normalize_filter_name(name)
+    if filter_name == "shepp-logan":
+        spectrum *= np.sinc(normalized_frequency / 2.0)
+    elif filter_name == "hann":
         spectrum *= 0.5 + 0.5 * np.cos(np.pi * normalized_frequency)
-    elif filter_name not in {"ramp", "shepp-logan"}:
+    elif filter_name != "ramp":
         raise ValueError(f"Unknown filter {name}")
     dtype = np.float64 if dtype_name in {"float64", "complex128"} else np.float32
     out = np.asarray(spectrum, dtype=dtype)
@@ -122,57 +118,18 @@ def get_fbp_filter_np(name: str, nu: int, du: float, dtype_name: str) -> np.ndar
     return out
 
 
-def rfft_filter_array(
-    filter: str, nu: int, du: float, dtype: jnp.dtype, *, source_nu: int | None = None
-) -> jnp.ndarray:
-    """Return a discrete FBP filter, retaining the whole padded output width.
-
-    A known centred measured width can shorten these finite-kernel FFTs without
-    changing their retained convolution.
-    """
-    if source_nu is not None and _normalize_filter_name(filter) in {"ramp", "hann", "shepp-logan"}:
-        # Largest source-to-output distance plus Hann's neighbouring tap.
-        # The factory pads to twice this width; parity need not be assumed.
-        nu = (int(nu) + int(source_nu) + 1) // 2
-    Hr_np = get_fbp_filter_np(filter, int(nu), float(du), np.dtype(dtype).name)
+def rfft_filter_array(filter: str, nu: int, du: float, dtype: jnp.dtype) -> jnp.ndarray:
+    """Return the padded discrete FBP filter without doubling RFFT bins."""
+    Hr_np = get_fbp_filter_np(filter, int(nu), float(du), str(dtype))
     return jnp.asarray(Hr_np, dtype=dtype)
 
 
-def fft_filter_rows(
-    rows: jnp.ndarray, rfft_filter: jnp.ndarray, *, edge_width: int | None = None
-) -> jnp.ndarray:
-    """Filter zero-extended rows, optionally continuing measured endpoints to infinity.
-
-    ``edge_width`` is the measured width of symmetrically zero-padded ``rows``.
-    Its endpoints supply constant exterior line integrals. Boundary-tail sums
-    compensate the zero-extended convolution without extra detector/FFT storage.
-    The ramp has zero infinite DC: symmetry fixes each half-sum to ``-h[0]/2``.
-    The same completion is used for the smoothed finite discrete filters.
-    """
+def fft_filter_rows(rows: jnp.ndarray, rfft_filter: jnp.ndarray) -> jnp.ndarray:
+    """Zero-pad detector rows, filter, and crop to prevent circular wraparound."""
     nu = int(rows.shape[-1])
     n_fft = 2 * (int(rfft_filter.shape[0]) - 1)
-    pad = 0 if edge_width is None else (nu - edge_width) // 2
-    index = jnp.arange(nu) - pad
-    if edge_width is not None:
-        # The infinite ramp annihilates a constant. Remove the left endpoint
-        # before the FFT, avoiding cancellation between large finite-row and
-        # boundary responses (and preserving constant rows exactly).
-        rows = jnp.where((index >= 0) & (index < edge_width), rows - rows[..., pad, None], 0)
     F = jnp.fft.rfft(rows, n=n_fft, axis=-1)
-    filtered = jnp.fft.irfft(F * rfft_filter, n=n_fft, axis=-1)[..., :nu]
-    if edge_width is None:
-        return filtered
-    impulse = jnp.fft.irfft(rfft_filter, n=n_fft)
-    cumulative = jnp.concatenate([jnp.zeros((1,), impulse.dtype), jnp.cumsum(impulse[1:nu])])
-    tails = -0.5 * impulse[0] - cumulative
-
-    def tail_at(index: jnp.ndarray) -> jnp.ndarray:
-        # sum_{k > i} h[k], with h even and its infinite sum zero.
-        distance = jnp.where(index < 0, -index - 1, index)
-        return jnp.where(index < 0, -1.0, 1.0) * tails[distance]
-
-    right = rows[..., nu - pad - 1, None] * tail_at(edge_width - 1 - index)
-    return filtered + right
+    return jnp.fft.irfft(F * rfft_filter, n=n_fft, axis=-1)[..., :nu]
 
 
 def clear_filter_caches() -> None:

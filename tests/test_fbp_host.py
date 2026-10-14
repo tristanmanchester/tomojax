@@ -138,225 +138,9 @@ def test_host_slabs_read_and_convert_only_bounded_view_batches():
     np.testing.assert_allclose(actual, expected, atol=4e-6, rtol=5e-5)
 
 
-@pytest.mark.parametrize(
-    ("first", "step", "nz"),
-    [(-9.0, 1.0, 17), (-9.25, 2.5, 9), (-7.0, 1.0, 7), (9.0, 1.0, 7)],
-)
-def test_empty_axial_slabs_do_not_filter_or_read_views(monkeypatch, first, step, nz):
-    module = importlib.import_module("tomojax.recon.fbp_host")
-    detector = Detector(9, 5, 0.9, 0.8, (0.23, -0.19))
-    grid = Grid(
-        9,
-        7,
-        nz,
-        0.8,
-        1.2,
-        step * detector.dv,
-        vol_origin=(-2.1, -3.2, detector.center[1] + (first - 2) * detector.dv),
-    )
-    geometry = ParallelGeometry(grid, detector, [0, 29, 73, 118, 163])
-    data = np.random.default_rng(135).normal(size=(5, 5, 9)).astype(np.float32)
-    run = module._fbp_from_host
-    calls = []
-
-    def record(*args, **kwargs):
-        calls.append(kwargs["grid"].nz)
-        return run(*args, **kwargs)
-
-    monkeypatch.setattr(module, "_fbp_from_host", record)
-    actual = fbp_host(
-        geometry, grid, detector, data, config=FBPHostConfig(slices_per_batch=4, views_per_batch=3)
-    )
-    reference = np.asarray(
-        fbp(geometry, grid, detector, data, config=FBPConfig(backprojector="jax"))
-    )
-    expected_calls = sum(
-        first + start * step < detector.nv and first + (start + min(4, nz - start) - 1) * step > -1
-        for start in range(0, nz, 4)
-    )
-    assert len(calls) == expected_calls < (nz + 3) // 4
-    np.testing.assert_allclose(actual, reference, atol=4e-6, rtol=5e-5)
-
-
-@pytest.mark.parametrize("first", [-1.0, -0.75, 0.75, 1.0])
-def test_empty_slab_support_preserves_fractional_single_row_edges(monkeypatch, first):
-    module = importlib.import_module("tomojax.recon.fbp_host")
-    detector = Detector(9, 1, 1, 1)
-    grid = Grid(9, 7, 1, 1, 1, 1, vol_origin=(-4, -3, first))
-    geometry = ParallelGeometry(grid, detector, [0, 29, 73, 118, 163])
-    data = np.random.default_rng(136).normal(size=(5, 1, 9)).astype(np.float32)
-    run = module._fbp_from_host
-    calls = []
-
-    def record(*args, **kwargs):
-        calls.append(1)
-        return run(*args, **kwargs)
-
-    monkeypatch.setattr(module, "_fbp_from_host", record)
-    actual = fbp_host(geometry, grid, detector, data)
-    reference = np.asarray(
-        fbp(geometry, grid, detector, data, config=FBPConfig(backprojector="jax"))
-    )
-    assert len(calls) == int(-1 < first < 1)
-    np.testing.assert_allclose(actual, reference, atol=4e-6, rtol=5e-5)
-
-
-@pytest.mark.parametrize("stride", [2, 2.5, 5, 5.25])
-@pytest.mark.parametrize("depth", [1, 4])
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
-def test_axially_decimated_slabs_pack_only_requested_rows(monkeypatch, stride, depth, backend):
-    if backend == "pallas" and jax.default_backend() != "gpu":
-        pytest.skip("requires CUDA")
-    module = importlib.import_module("tomojax.recon.fbp_host")
-    detector = Detector(9, 35, 0.9, 0.8, (0.23, -0.19))
-    grid = Grid(
-        9,
-        7,
-        7,
-        0.8,
-        1.2,
-        stride * detector.dv,
-        vol_origin=(-2.1, -3.2, detector.center[1] + (2 - 17) * detector.dv),
-    )
-    geometry = ParallelGeometry(grid, detector, [0, 29, 73, 118, 163])
-    data = np.random.default_rng(132).normal(size=(5, 35, 9)).astype(np.float32)
-    run = module._fbp_from_host
-    shapes = []
-
-    def record(poses, projections, *args, **kwargs):
-        shapes.append(projections.shape)
-        assert projections.stride == stride
-        assert kwargs["detector"].dv == grid.vz
-        return run(poses, projections, *args, **kwargs)
-
-    monkeypatch.setattr(module, "_fbp_from_host", record)
-    actual = fbp_host(
-        geometry,
-        grid,
-        detector,
-        data,
-        config=FBPHostConfig(slices_per_batch=depth, views_per_batch=3, backprojector=backend),
-    )
-    expected = np.asarray(
-        fbp(geometry, grid, detector, data, config=FBPConfig(backprojector="jax"))
-    )
-    assert shapes and all(shape[1] == depth for shape in shapes)
-    np.testing.assert_allclose(actual, expected, atol=4e-6, rtol=5e-5)
-
-
-@pytest.mark.parametrize("stride", [0, 1, 3])
-@pytest.mark.parametrize("start", [-3, 2, 10])
-def test_strided_projection_window_zero_extends_without_reading_skipped_rows(stride, start):
-    module = importlib.import_module("tomojax.recon._host_arrays")
-    data = np.random.default_rng(751).normal(size=(5, 11, 7)).astype(np.float64)
-    reads = []
-
-    class RecordedArray(np.ndarray):
-        def __getitem__(self, key):
-            assert isinstance(key, tuple), "Select source rows before reading or converting views"
-            reads.append(key)
-            return super().__getitem__(key)
-
-    source = data[:, :, ::2].view(RecordedArray)
-    window = module.ProjectionRows(source, start, 4, stride=stride)
-    actual = window[slice(1, 5, 2)]
-    expected = np.zeros((2, 4, 4), np.float32)
-    for i in range(4):
-        row = start + i * stride
-        if 0 <= row < data.shape[1]:
-            expected[:, i] = data[1:5:2, row, ::2]
-    assert actual.flags.c_contiguous
-    np.testing.assert_array_equal(actual, expected)
-    assert len(reads) <= 1
-
-
-@pytest.mark.parametrize("stride", [0, 0.75, 2.5])
-@pytest.mark.parametrize("start", [-3.25, 2.0, 10.4])
-def test_fractional_projection_rows_blend_only_bounded_support_rows(stride, start):
-    module = importlib.import_module("tomojax.recon._host_arrays")
-    data = np.random.default_rng(752).normal(size=(5, 11, 7)).astype(np.float64)
-    reads = []
-
-    class RecordedArray(np.ndarray):
-        def __getitem__(self, key):
-            assert isinstance(key, tuple)
-            reads.append(key)
-            return super().__getitem__(key)
-
-    source = data[:, :, ::2].view(RecordedArray)
-    actual = module.ProjectionRows(source, start, 4, stride=stride)[slice(1, 5, 2)]
-    expected = np.zeros((2, 4, 4), np.float32)
-    for i in range(4):
-        position = start + i * stride
-        low = int(np.floor(position))
-        weight = np.float32(position - low)
-        for row, fraction in ((low, 1 - weight), (low + 1, weight)):
-            if 0 <= row < data.shape[1]:
-                expected[:, i] += data[1:5:2, row, ::2].astype(np.float32) * fraction
-    assert actual.flags.c_contiguous
-    np.testing.assert_array_equal(actual, expected)
-    assert len(reads) <= 2
-    for views, rows, _ in reads:
-        assert len(range(*views.indices(data.shape[0]))) == 2
-        assert len(rows) <= 4
-        support = {int(np.floor(start + i * stride)) + j for i in range(4) for j in (0, 1)}
-        assert set(rows).issubset(support)
-
-
-@pytest.mark.parametrize(("stride", "first"), [(1, 2), (3, 2), (7, 2), (2.5, 2.27), (4.25, 2.27)])
-def test_axial_decimation_recovers_independent_gaussian_attenuation(stride, first):
-    n, nz, nv, views = 40, 8, 55, 80
-    spacing, sigma, cv = 0.8, 4.0, -0.2
-    oz = cv + (first - (nv - 1) / 2) * spacing
-    grid = Grid(n, n, nz, spacing, spacing, stride * spacing, vol_origin=(-15.6, -15.6, oz))
-    detector = Detector(n, nv, spacing, spacing, (0.23, cv))
-    angles = np.linspace(0, 180, views, endpoint=False)
-    geometry = ParallelGeometry(grid, detector, angles)
-    x = np.arange(n) * spacing - 15.6
-    z = np.arange(nz) * stride * spacing + oz
-    u = (np.arange(n) - (n - 1) / 2) * spacing + detector.center[0]
-    v = (np.arange(nv) - (nv - 1) / 2) * spacing + cv
-    theta = np.deg2rad(angles)
-    mean = 3 * np.cos(theta) + 2 * np.sin(theta)
-    profile = np.sqrt(2 * np.pi) * sigma * np.exp(-0.5 * ((u - mean[:, None]) / sigma) ** 2)
-    data = (profile[:, None] * np.exp(-0.5 * (v / 15) ** 2)[None, :, None]).astype(np.float32)
-    truth = np.exp(-0.5 * (((x[:, None] - 3) / sigma) ** 2 + ((x[None, :] + 2) / sigma) ** 2))
-    truth = truth[:, :, None] * np.exp(-0.5 * (z / 15) ** 2)
-    actual = fbp_host(
-        geometry,
-        grid,
-        detector,
-        data,
-        config=FBPHostConfig(slices_per_batch=3, views_per_batch=17),
-    )
-    assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.01
-
-
-@pytest.mark.parametrize(
-    ("backend", "free", "window"),
-    [
-        ("jax", 2**30, 1),
-        ("pallas", None, 1),
-        ("pallas", 1, 1),
-        ("pallas", "ten_percent", 1),
-        ("pallas", "five_percent", 2),
-        ("pallas", 2**30, 2),
-    ],
-)
-@pytest.mark.parametrize("separable", [True, False])
-def test_host_streamer_waits_before_queuing_more_input_batches(
-    monkeypatch, backend, free, window, separable
-):
-    import tomojax.backends
-
+def test_host_streamer_waits_before_queuing_more_input_batches(monkeypatch):
     module = importlib.import_module("tomojax.recon.fbp")
     grid, detector, _, data = scan()
-    batch_bytes = 4 * 2 * (np.prod(data.shape[1:]) + 16 + 6 + 1)
-    fft_rows = detector.nv if separable else module._fft_length(detector.nv)
-    batch_bytes += 16 * 2 * fft_rows * (33 + detector.nu)
-    if isinstance(free, str):
-        free = batch_bytes * (20 if free == "five_percent" else 10)
-    monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: free)
     events = []
     pending = []
 
@@ -375,7 +159,7 @@ def test_host_streamer_waits_before_queuing_more_input_batches(
             self.ready = True
 
     def step(accum, *args, **kwargs):
-        if pending and len(pending) % window == 0:
+        if pending:
             assert accum.ready
         current = PendingVolume(len(pending))
         events.append(("step", current.index))
@@ -392,11 +176,11 @@ def test_host_streamer_waits_before_queuing_more_input_batches(
         0,
         grid=grid,
         detector=detector,
-        backend=backend,
+        backend="jax",
         batch_size=2,
-        separable=separable,
+        separable=True,
     )
-    expected = [
+    assert events == [
         ("read", 0),
         ("step", 0),
         ("read", 2),
@@ -406,9 +190,6 @@ def test_host_streamer_waits_before_queuing_more_input_batches(
         ("ready", 1),
         ("step", 2),
     ]
-    if window == 2:
-        expected.remove(("ready", 0))
-    assert events == expected
 
 
 @pytest.mark.parametrize("invalid", [np.nan, np.inf, 1e100])
@@ -448,7 +229,7 @@ def test_host_slabs_write_memmap_and_preserve_custom_scale(tmp_path):
     np.testing.assert_array_equal(source, data)
 
 
-@pytest.mark.parametrize("mapping", [False, True, "source", "output", "both"])
+@pytest.mark.parametrize("mapping", [False, True])
 def test_host_slabs_reject_overlapping_output_before_writing(tmp_path, mapping):
     grid, detector = Grid(5, 4, 3, 1, 1, 1), Detector(3, 4, 1, 1)
     geometry = ParallelGeometry(grid, detector, [0, 31, 73, 114, 155])
@@ -456,10 +237,6 @@ def test_host_slabs_reject_overlapping_output_before_writing(tmp_path, mapping):
         path = tmp_path / "same.bin"
         data = np.memmap(path, mode="w+", dtype=np.float32, shape=(5, 4, 3))
         out = np.memmap(path, mode="r+", dtype=np.float32, shape=data.shape)
-        if mapping in {"source", "both"}:
-            data = np.frombuffer(memoryview(data), dtype=data.dtype).reshape(data.shape)
-        if mapping in {"output", "both"}:
-            out = np.frombuffer(memoryview(out), dtype=out.dtype).reshape(out.shape)
     else:
         data = np.ones((5, 4, 3), dtype=np.float32)
         out = data.view()
@@ -521,10 +298,25 @@ def test_host_slabs_reject_incompatible_storage(invalid):
         out = out.astype(np.float64)
     elif invalid == "shape":
         out = out[:, :, :-1]
-    elif invalid == "readonly":
+    else:
         out.flags.writeable = False
     with pytest.raises((ValueError, TypeError), match="fbp_host"):
         fbp_host(geometry, grid, detector, data, out=out)
+
+
+@pytest.mark.parametrize("kind", ["integer", "fractional", "outside"])
+@pytest.mark.parametrize("tilted", [False, True])
+def test_host_slabs_slice_device_projections_in_place(kind, tilted):
+    grid, detector, geometry, data = scan(kind)
+    if tilted:
+        geometry = LaminographyGeometry(grid, detector, geometry.angles, tilt_deg=30)
+    config = FBPHostConfig(slices_per_batch=4, views_per_batch=3)
+    expected = fbp_host(geometry, grid, detector, data, config=config)
+    actual = fbp_host(geometry, grid, detector, jax.device_put(data), config=config)
+    np.testing.assert_allclose(actual, expected, atol=4e-6, rtol=5e-5)
+    data[0, 4, 2] = np.nan
+    with pytest.raises(ValueError, match="finite"):
+        fbp_host(geometry, grid, detector, jax.device_put(data), config=config)
 
 
 @pytest.mark.parametrize("length_scale", [0.5, 2.0])

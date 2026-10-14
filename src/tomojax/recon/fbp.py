@@ -25,7 +25,7 @@ from tomojax.core.validation import (
     validate_projection_stack,
 )
 
-from ._fbp_weights import fbp_weights, sparse_view_scales
+from ._fbp_weights import fbp_weights
 from .filters import fft_filter_rows, rfft_filter_array
 
 if TYPE_CHECKING:
@@ -41,29 +41,22 @@ class FBPConfig:
     """Configuration for filtered backprojection.
 
     ``backprojector='auto'`` uses the voxel-driven Pallas kernel on CUDA and JAX
-    otherwise. ``'jax'`` forces the reference; ``'pallas'`` requires CUDA execution
+    otherwise. ``'jax'`` forces the reference; ``'pallas'`` requires CUDA input
     and never silently changes backend.
 
     ``scale=None`` weights each view exactly for the scanned arc (see
-    :func:`fbp`). A number gives a constant per-view detector-u ramp weight;
-    ``pi / n`` gives the uniform half-turn result. ``views_per_batch``, ``projector_unroll``,
+    :func:`fbp`). A number instead weights every view by that constant and
+    filters along u only, the convention before exact weights; ``pi / n`` gives
+    the uniform half-turn result. ``views_per_batch``, ``projector_unroll``,
     ``checkpoint_projector`` and ``gather_dtype`` apply only with an explicit
     ``det_grid``, which uses the ray-model adjoint.
 
-    ``padding='zero'`` assumes no line integrals beyond the measured detector.
-    ``'edge'`` instead continues each row's two endpoint values to infinity,
-    reducing boundary halos in some truncated scans. This is a prior, not a
-    recovery of missing data, and can bias interior attenuation even when
-    boundary halos improve; use it only when that assumption is appropriate.
-    Supported for canonical parallel pixels with separable detector-u filters
-    (not cone beams or rolled/oblique filters).
-
-    ``devices`` splits views among JAX devices, weighted for the whole scan and
-    summed on the first. Not with an explicit ``det_grid``.
+    ``devices`` (one or several JAX devices) shares the views among them: each
+    filters and backprojects its own, weighted for the whole scan, and the
+    volumes are summed on the first. Not with an explicit ``det_grid``.
     """
 
     filter: str = "ramp"
-    padding: Literal["zero", "edge"] = "zero"
     scale: float | None = None
     views_per_batch: int = 1
     projector_unroll: int = 1
@@ -73,15 +66,15 @@ class FBPConfig:
     devices: Device | Sequence[Device] | None = None  # kept as a tuple
 
     def __post_init__(self) -> None:
-        if self.padding not in {"zero", "edge"}:
-            raise ValueError("FBP padding must be 'zero' or 'edge'")
         object.__setattr__(self, "devices", as_devices(self.devices))
 
 
 def default_fbp_scale(n_views: int) -> float:
-    """Return ``pi / n_views``, the uniform untilted half-turn angular weight.
+    """Return the uniform half-turn angular weight ``pi / n_views``.
 
-    FBP instead derives exact per-view weights unless too few views define a rotation.
+    :func:`fbp` derives exact per-view weights by default; this constant is the
+    uniform weight for an untilted half turn and the fallback for scans with too
+    few views to define a rotation.
     """
     if int(n_views) <= 0:
         raise ValueError("n_views must be positive")
@@ -160,61 +153,32 @@ def _filter_views(
     *,
     detector: Detector,
     separable: bool,
-    padding: str = "zero",
-    measured_width: int | None = None,
 ) -> jnp.ndarray:
-    """Pad and filter views: separable scans use a per-view-scaled detector-u ramp.
+    """Apply each view's exact FBP filter to rows already padded to ``detector``.
 
-    Otherwise redundancy depends on both detector frequencies (``_fbp_weights``).
-    ``measured_width`` is the acquired row width when ``rows`` are already padded.
+    Separable scans multiply a 1D ramp along u by a per-view scale. Otherwise the
+    redundancy count N depends on both detector frequencies; see ``_fbp_weights``.
     """
-    measured_width = rows.shape[-1] if measured_width is None else measured_width
-    rows = _pad_detector(rows, detector)
     if separable:
-        return fft_filter_rows(
-            rows * view_scale[:, None, None],
-            spectrum,
-            edge_width=measured_width if padding == "edge" else None,
-        )
+        return fft_filter_rows(rows * view_scale[:, None, None], spectrum)
     n_u, n_v = 2 * (spectrum.shape[0] - 1), _fft_length(detector.nv)
     transformed = jnp.fft.rfft2(rows, s=(n_v, n_u))
     fu = jnp.fft.rfftfreq(n_u, detector.du).astype(jnp.float32)[None, None, :]
     fv = jnp.fft.fftfreq(n_v, detector.dv).astype(jnp.float32)[None, :, None]
     t_u, t_v, c_u, c_v, phase, weight = (params[:, i, None, None] for i in range(6))
+    along = t_u * fu + t_v * fv
+    axial = c_u * fu + c_v * fv
+    # A zero ramp coordinate is the limit of nearby frequencies, not a double root.
+    other = jnp.mod(phase - 2 * jnp.arctan2(jnp.where(along == 0, 1e-30, along), axial), 2 * np.pi)
+    count = 1.0 + (other < arc_length).astype(jnp.float32)
     row_ramp = jnp.abs(t_v) <= 1e-6 * jnp.abs(t_u)
     window = spectrum / jnp.maximum(jnp.abs(fu[0, 0]), spectrum[0])
-
-    def response(vertical: jnp.ndarray) -> jnp.ndarray:
-        along = t_u * fu + t_v * vertical
-        axial = c_u * fu + c_v * vertical
-        # A zero ramp coordinate is the limit of nearby frequencies, not a double root.
-        other = jnp.mod(
-            phase - 2 * jnp.arctan2(jnp.where(along == 0, 1e-30, along), axial), 2 * np.pi
-        )
-        # FP32 modulo can round a root just below zero to 2*pi. Complete
-        # circles still contain both roots, including at that circular seam.
-        count = 1.0 + ((arc_length >= 2 * np.pi) | (other < arc_length)).astype(jnp.float32)
-        # Keep the existing smoothing window and finite-kernel DC term.
-        oblique = jnp.where(
-            (fu == 0) & (vertical == 0),
-            jnp.hypot(t_u, t_v) * spectrum[0],
-            jnp.abs(along) * window,
-        )
-        return jnp.where(row_ramp, jnp.abs(t_u) * spectrum, oblique) * weight / count
-
-    factor = response(fv)
-    nyquist = slice(n_v // 2, n_v // 2 + 1)
-    # A real Nyquist mode aliases both physical frequency signs. Keeping only
-    # fftfreq's negative v sign makes a camera-frame reflection change the
-    # reconstructed volume. Average the filter (including redundancy) over
-    # both aliases; the u face also needs the paired v frequencies. At the
-    # corner these two averages include all four physical sign choices.
-    factor = factor.at[:, nyquist, :].set(
-        0.5 * (factor[:, nyquist, :] + response(-fv[:, nyquist, :]))
+    # A rolled detector needs the ramp along a u-v diagonal; keep the finite-kernel DC term.
+    oblique = jnp.where(
+        (fu == 0) & (fv == 0), jnp.hypot(t_u, t_v) * spectrum[0], jnp.abs(along) * window
     )
-    reverse_v = (-jnp.arange(n_v)) % n_v
-    factor = factor.at[:, :, -1].set(0.5 * (factor[:, :, -1] + factor[:, reverse_v, -1]))
-    filtered = jnp.fft.irfft2(transformed * factor, s=(n_v, n_u))
+    ramp = jnp.where(row_ramp, jnp.abs(t_u) * spectrum, oblique)
+    filtered = jnp.fft.irfft2(transformed * (ramp * weight / count), s=(n_v, n_u))
     return filtered[:, : detector.nv, : detector.nu]
 
 
@@ -230,9 +194,7 @@ def _parallel_filter_batch_size(n_views: int, nv: int, n_fft: int) -> int:
     return n_views if capacity >= n_views else 1 << (capacity.bit_length() - 1)
 
 
-@jax.jit(
-    static_argnames=("grid", "detector", "backend", "batch_size", "z_mode", "separable", "padding")
-)
+@jax.jit(static_argnames=("grid", "detector", "backend", "batch_size", "z_mode", "separable"))
 def _run_fbp_streamed(
     poses: jnp.ndarray,
     projections: jnp.ndarray,
@@ -247,7 +209,6 @@ def _run_fbp_streamed(
     batch_size: int,
     z_mode: str,
     separable: bool,
-    padding: str = "zero",
 ) -> jnp.ndarray:
     """Pad, filter and backproject bounded view batches into one accumulator."""
     n, nv, nu = projections.shape
@@ -259,21 +220,24 @@ def _run_fbp_streamed(
         rows = jax.lax.dynamic_slice(projections, (start, 0, 0), (b, nv, nu))
         # Shift the final fixed-size batch back into range and exclude overlaps.
         valid = start + jnp.arange(b) >= chunk * b
-        rows = jnp.where(valid[:, None, None], rows, 0.0)
-        return _filter_and_backproject(
-            accum,
-            batch_poses,
+        rows = _pad_detector(jnp.where(valid[:, None, None], rows, 0.0), detector)
+        filtered = _filter_views(
             rows,
             jax.lax.dynamic_slice(view_scale, (start,), (b,)),
             jax.lax.dynamic_slice(params, (start, 0), (b, params.shape[1])),
             spectrum,
             arc_length,
+            detector=detector,
+            separable=separable,
+        )
+        return _backproject_into(
+            accum,
+            batch_poses,
+            filtered,
             grid=grid,
             detector=detector,
             backend=backend,
-            separable=separable,
             z_mode=z_mode,
-            padding=padding,
         )
 
     return jax.lax.fori_loop(
@@ -282,47 +246,6 @@ def _run_fbp_streamed(
         step,
         jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32),
     )
-
-
-def _pack_fixed_rows(
-    poses: jnp.ndarray,
-    rows: jnp.ndarray,
-    *,
-    grid: Grid,
-    detector: Detector,
-    integer: bool = False,
-) -> tuple[jnp.ndarray, jnp.ndarray, Grid, Detector]:
-    """Sample common axial rows once per view, rather than per xy voxel.
-
-    Match the sampler's centred-coordinate decomposition before adding its
-    integer row origin; padding must not change the interpolation fractions.
-    Horizontal poses and detector coordinates remain unchanged. Integer mode
-    preserves the nearest-row convention, including its alignment tolerance.
-    """
-    ox, oy, oz = grid_volume_origin(grid)
-    z = jnp.arange(grid.nz, dtype=jnp.float32) * jnp.float32(grid.vz) + jnp.float32(oz)
-    world_z = z if integer else poses[0, 2, 2] * z + poses[0, 2, 3]
-    v = (world_z - jnp.float32(detector.center[1])) / jnp.float32(detector.dv)
-    v = v + jnp.float32(((detector.nv - 1) % 2) / 2)
-    lower = jnp.floor(v + 0.5) if integer else jnp.floor(v)
-    index = lower.astype(jnp.int32) + (detector.nv - 1) // 2
-
-    def take(row: jnp.ndarray) -> jnp.ndarray:
-        values = jnp.take(rows, jnp.clip(row, 0, detector.nv - 1), axis=1)
-        valid = (row >= 0) & (row < detector.nv)
-        return jnp.where(valid[None, :, None], values, 0.0)
-
-    packed = take(index)
-    if not integer:
-        weight = v - lower
-        packed = packed * (1 - weight[None, :, None])
-        packed = packed + take(index + 1) * weight[None, :, None]
-    local_grid = replace(grid, vol_origin=(ox, oy, 0.0), vol_center=None)
-    local_detector = replace(
-        detector, nv=grid.nz, dv=grid.vz, center=(detector.center[0], (grid.nz - 1) * grid.vz / 2)
-    )
-    local_poses = poses.at[:, 2, :].set(jnp.array([0.0, 0.0, 1.0, 0.0], jnp.float32))
-    return local_poses, packed, local_grid, local_detector
 
 
 def _backproject_into(
@@ -339,73 +262,14 @@ def _backproject_into(
     if backend == "pallas":
         from ._fbp_pallas import backproject_filtered_pallas
 
-        # Compact working sets keep the existing direct sampler: packing adds
-        # a launch and a plane workspace. Bound that workspace to twice the
-        # source rows even for a strongly upsampled or retained output grid.
-        working_bytes = filtered.size * filtered.dtype.itemsize + 4 * grid.nx * grid.ny * grid.nz
-        if z_mode == "fixed" and grid.nz <= 2 * detector.nv and working_bytes > 64 * 1024**2:
-            poses, filtered, grid, detector = _pack_fixed_rows(
-                poses, filtered, grid=grid, detector=detector
-            )
-            z_mode = "integer"
         return backproject_filtered_pallas(
             poses, filtered, grid=grid, detector=detector, z_mode=z_mode, accumulate=accum
         )
     return accum + _backproject_voxels_jax(poses, filtered, grid=grid, detector=detector)
 
 
-def _filter_and_backproject(
-    accum: jnp.ndarray,
-    poses: jnp.ndarray,
-    rows: jnp.ndarray,
-    view_scale: jnp.ndarray,
-    params: jnp.ndarray,
-    spectrum: jnp.ndarray,
-    arc_length: jnp.ndarray,
-    *,
-    grid: Grid,
-    detector: Detector,
-    backend: str,
-    separable: bool,
-    z_mode: str,
-    padding: str = "zero",
-) -> jnp.ndarray:
-    """Pad and filter rows, packing axial samples first when it saves FFT work."""
-    measured_width = rows.shape[-1]
-    rows = _pad_detector(rows, detector)
-    # Axial interpolation commutes with the separable u filter. Keep compact
-    # FFTs on the existing path: an extra gather needs a launch and workspace.
-    # Use the same conservative FFT-byte estimate as the view-batch planner.
-    filtering_bytes = 16 * rows.shape[0] * detector.nv * _fft_length(detector.nu)
-    if (
-        backend == "pallas"
-        and separable
-        and z_mode in ("integer", "fixed")
-        and grid.nz < detector.nv
-        and filtering_bytes > 64 * 1024**2
-    ):
-        poses, rows, grid, detector = _pack_fixed_rows(
-            poses, rows, grid=grid, detector=detector, integer=z_mode == "integer"
-        )
-        z_mode = "integer"
-    filtered = _filter_views(
-        rows,
-        view_scale,
-        params,
-        spectrum,
-        arc_length,
-        detector=detector,
-        separable=separable,
-        padding=padding,
-        measured_width=measured_width,
-    )
-    return _backproject_into(
-        accum, poses, filtered, grid=grid, detector=detector, backend=backend, z_mode=z_mode
-    )
-
-
 @jax.jit(
-    static_argnames=("grid", "detector", "backend", "separable", "z_mode", "padding"),
+    static_argnames=("grid", "detector", "backend", "separable", "z_mode"),
     donate_argnums=(0,),
 )
 def _fbp_accumulate_batch(
@@ -422,23 +286,19 @@ def _fbp_accumulate_batch(
     backend: str,
     separable: bool,
     z_mode: str,
-    padding: str = "zero",
 ) -> jnp.ndarray:
     """Filter one batch of views and add its backprojection to ``accum`` in place."""
-    return _filter_and_backproject(
-        accum,
-        poses,
-        rows,
+    filtered = _filter_views(
+        _pad_detector(rows, detector),
         view_scale,
         params,
         spectrum,
         arc_length,
-        grid=grid,
         detector=detector,
-        backend=backend,
         separable=separable,
-        z_mode=z_mode,
-        padding=padding,
+    )
+    return _backproject_into(
+        accum, poses, filtered, grid=grid, detector=detector, backend=backend, z_mode=z_mode
     )
 
 
@@ -460,31 +320,30 @@ def _fbp_from_resident(
     backend: str,
     batch_size: int,
     separable: bool,
-    z_mode: str = "general",
-    check_finite: bool = False,
-    padding: str = "zero",
+    z_mode: str,
+    check_finite: bool,
 ) -> jnp.ndarray:
-    """Run an already-budgeted resident slab without a host round trip."""
+    """Run projections already on the device without a host round trip."""
+    projections = projections.astype(jnp.float32)
     if check_finite and not bool(_finite_projections(projections)):
         raise ValueError("fbp_host: projections must be finite in FP32")
-    device = next(iter(spectrum.devices()))
-    metadata = [
+    device = next(iter(projections.devices()))
+    poses, view_scale, params = (
         jax.device_put(np.asarray(a, np.float32), device) for a in (poses, view_scale, params)
-    ]
+    )
     return _run_fbp_streamed(
-        metadata[0],
+        poses,
         projections,
-        metadata[1],
-        metadata[2],
-        spectrum,
+        view_scale,
+        params,
+        jax.device_put(spectrum, device),
         jnp.float32(arc_length),
         grid=grid,
         detector=detector,
         backend=backend,
-        batch_size=batch_size,
+        batch_size=min(batch_size, projections.shape[0]),
         z_mode=z_mode,
         separable=separable,
-        padding=padding,
     )
 
 
@@ -503,18 +362,15 @@ def _fbp_from_host(
     separable: bool,
     z_mode: str = "general",
     check_finite: bool = False,
-    padding: str = "zero",
-    resident_slab: bool = False,
 ) -> jnp.ndarray:
     """Stream host projections through the device in fixed-size view batches.
 
-    CUDA may queue two computations with a third prefetched input batch when
-    the additional batch and estimated filtering workspace fit the memory
-    budget. Otherwise one computation and at most two input batches are live.
-    The final batch is padded with zero-weight views, reusing one compiled step.
+    Only the output volume, two batches and one filtering workspace occupy the
+    device. The final batch is padded with zero-weight views so every batch
+    reuses one compiled step, and the next batch is read and transferred while
+    the current one runs. Device arrays are filtered in place instead.
     """
-    if resident_slab:
-        assert isinstance(projections, jax.Array)
+    if isinstance(projections, jax.Array):
         return _fbp_from_resident(
             poses,
             projections,
@@ -529,25 +385,9 @@ def _fbp_from_host(
             separable=separable,
             z_mode=z_mode,
             check_finite=check_finite,
-            padding=padding,
         )
     n = projections.shape[0]
     b = min(batch_size, n)
-    compute_window = 1
-    if backend == "pallas" and n > b:
-        from tomojax.backends import device_free_memory_bytes
-
-        free = device_free_memory_bytes()
-        per_view = (
-            math.prod(projections.shape[1:])
-            + math.prod(poses.shape[1:])
-            + math.prod(params.shape[1:])
-            + 1  # Angular scale.
-        )
-        fft_rows = detector.nv if separable else _fft_length(detector.nv)
-        workspace = 16 * b * fft_rows * (spectrum.shape[0] + detector.nu)
-        if free is not None and 4 * b * per_view + workspace <= 0.05 * free:
-            compute_window = 2
 
     def batch(start: int) -> tuple[jnp.ndarray, ...]:
         stop = min(start + b, n)
@@ -579,14 +419,13 @@ def _fbp_from_host(
             backend=backend,
             separable=separable,
             z_mode=z_mode,
-            padding=padding,
         )
         if start + b < n:
             pending = batch(start + b)
-            # Bound submitted work while overlapping transfers. Previous
-            # accumulators were donated, so wait only on the latest result.
-            if (start // b + 1) % compute_window == 0:
-                accum.block_until_ready()
+            # Prefetch overlaps this step, but do not enqueue another compute
+            # step until it finishes: asynchronous submissions can otherwise
+            # retain an unbounded number of input batches on the device.
+            accum.block_until_ready()
     return accum
 
 
@@ -633,18 +472,9 @@ def run_parallel_fbp_direct_pallas(
     required_radius = np.max(np.abs(coordinates - detector.center[0])) / detector.du
     padding = max(0, math.ceil(required_radius - (detector.nu - 1) / 2))
     detector = replace(detector, nu=detector.nu + 2 * padding)
-    ramp = rfft_filter_array(
-        filter, detector.nu, float(detector.du), jnp.float32, source_nu=proj.shape[2]
-    )
-    from ._fbp_pallas import filtered_view_batch_size
-
-    T_all = jnp.asarray(T_all, dtype=jnp.float32)
-    batch = _parallel_filter_batch_size(n_views, detector.nv, _fft_length(detector.nu))
-    batch = filtered_view_batch_size(
-        batch, grid=grid, detector=detector, device=next(iter(T_all.devices()))
-    )
+    ramp = rfft_filter_array(filter, detector.nu, float(detector.du), jnp.float32)
     return _run_fbp_streamed(
-        T_all,
+        jnp.asarray(T_all, dtype=jnp.float32),
         jnp.asarray(proj, dtype=jnp.float32),
         jnp.ones((n_views,), jnp.float32),
         jnp.zeros((n_views, 6), jnp.float32),
@@ -653,7 +483,7 @@ def run_parallel_fbp_direct_pallas(
         grid=grid,
         detector=detector,
         backend="pallas",
-        batch_size=batch,
+        batch_size=_parallel_filter_batch_size(n_views, detector.nv, 2 * (ramp.shape[0] - 1)),
         z_mode="integer",
         separable=True,
     )
@@ -668,10 +498,13 @@ def _can_use_direct_parallel_fbp(
 
 
 def _parallel_filter_detector(grid: Grid, detector: Detector) -> Detector:
-    """Retain filtered tails at every reconstructed voxel's detector position.
+    """Keep the zero-extended ramp convolution at every reconstructed voxel.
 
-    Symmetric, coordinate-preserving padding bounds all z rotations, rather than
-    discarding tails outside the measured detector or inferring missing attenuation.
+    Raw samples outside the measured row are zero, but filtered samples are not.
+    Cropping the filter output to the measured detector discards negative tails
+    needed by voxels outside its inscribed field of view. Bound all z rotations
+    of voxel centres, with symmetric padding preserving the acquired coordinates.
+    This does not infer missing attenuation in genuinely truncated acquisitions.
     """
     ox, oy, _ = grid_volume_origin(grid)
     rx = max(abs(ox), abs(ox + (grid.nx - 1) * grid.vx))
@@ -682,9 +515,11 @@ def _parallel_filter_detector(grid: Grid, detector: Detector) -> Detector:
 
 
 def _filter_detector(grid: Grid, detector: Detector, poses: np.ndarray, *, pad_v: bool) -> Detector:
-    """Retain filtered tails at every view's projected voxel centres.
+    """Extend the detector to every view's projected voxel centres.
 
-    Axial padding is needed only for two-dimensional filters.
+    Filtered values are nonzero beyond the measured detector. Padding keeps
+    those tails for voxels projecting outside it, as ``_parallel_filter_detector``
+    does for z-axis scans. Rows need padding only for two-dimensional filters.
     """
     origin = np.asarray(grid_volume_origin(grid), dtype=np.float64)
     far = origin + (np.asarray([grid.nx, grid.ny, grid.nz]) - 1) * [grid.vx, grid.vy, grid.vz]
@@ -702,54 +537,21 @@ def _filter_detector(grid: Grid, detector: Detector, poses: np.ndarray, *, pad_v
 def _view_weights(
     poses: jnp.ndarray, scale: float | None
 ) -> tuple[np.ndarray, np.ndarray, float, bool]:
-    """Return scales, filter parameters, arc and separability for a fitted circular scan.
+    """Return per-view scales, filter parameters, arc length and separability.
 
     An explicit ``scale`` keeps the uniform weighting: one constant per view
     times a ramp along u. Otherwise weights are exact for the fitted circular
-    scan; scans with too few directions use uniform plane cells, sharing
-    repeated exposures' measure. This remains a sparse u-ramp approximation.
+    scan; scans with too few views to define one fall back to ``pi / n``.
     """
     n = int(poses.shape[0])
     if scale is None:
         try:
             weights = fbp_weights(np.asarray(poses))
         except ValueError:
-            return sparse_view_scales(np.asarray(poses)), np.zeros((n, 6), np.float32), 0.0, True
+            scale = default_fbp_scale(n)
         else:
             return weights.view_scale, weights.params, weights.arc_length, weights.separable
     return np.full(n, scale, np.float32), np.zeros((n, 6), np.float32), 0.0, True
-
-
-def canonical_fbp_detector_axes(
-    poses: jnp.ndarray,
-    projections: jnp.ndarray | np.ndarray,
-    *,
-    detector: Detector,
-    params: np.ndarray,
-    separable: bool,
-) -> tuple[jnp.ndarray, jnp.ndarray | np.ndarray, Detector]:
-    """Re-express a column ramp as a row ramp, without interpolating measurements.
-
-    A quarter-turned camera has its ramp along v. Keeping that orientation in
-    the 2-D path incorrectly applies the u smoothing window and finite-ramp
-    length to it. A rigid camera-coordinate change exchanges the pixel axes,
-    centres and spacings exactly; the object grid and ray directions stay put.
-    Explicit uniform scaling keeps its documented u-only filter unchanged.
-    """
-    if separable or not np.all(np.abs(params[:, 0]) <= 1e-6 * np.abs(params[:, 1])):
-        return poses, projections, detector
-    return (
-        jnp.stack([-poses[:, 2], poses[:, 1], poses[:, 0], poses[:, 3]], axis=1),
-        projections.swapaxes(1, 2)[:, :, ::-1],
-        replace(
-            detector,
-            nu=detector.nv,
-            nv=detector.nu,
-            du=detector.dv,
-            dv=detector.du,
-            center=(-detector.center[1], detector.center[0]),
-        ),
-    )
 
 
 @dataclass(frozen=True)
@@ -768,38 +570,20 @@ class _Plan:
     backend: str
     batch: int
     z_mode: str
-    padding: str
 
     def backprojected(self, device: Device | None, views: range) -> jnp.ndarray:
-        """Backproject ``views`` on ``device`` (None: JAX default), halving batches on OOM."""
+        """The weighted backprojection of ``views``, on ``device`` (JAX's default for None).
+
+        Batches halve after an out-of-memory error until one view fits.
+        """
         part, size = slice(views.start, views.stop), self.batch
         put = partial(jax.device_put, device=device)
-        if not self.separable or (self.backend == "pallas" and self.z_mode != "general"):
-            from ._fbp_pallas import fft_2d_view_batch_size, filtered_view_batch_size
-
-            resident = (
-                self.projections
-                if isinstance(self.projections, jax.Array) and self.projections.committed
-                else self.poses
-            )
-            target = device if device is not None else next(iter(put(resident).devices()))
-            if self.separable:
-                size = filtered_view_batch_size(
-                    size, grid=self.grid, detector=self.detector, device=target
-                )
-            else:
-                size = fft_2d_view_batch_size(
-                    size,
-                    fft_shape=(_fft_length(self.detector.nv), 2 * (self.spectrum.shape[0] - 1)),
-                    device=target,
-                )
         options = {
             "grid": self.grid,
             "detector": self.detector,
             "backend": self.backend,
             "separable": self.separable,
             "z_mode": self.z_mode,
-            "padding": self.padding,
         }
         while True:
             try:
@@ -820,7 +604,7 @@ class _Plan:
                         self.projections[part],
                         self.view_scale[part],
                         self.params[part],
-                        put(self.spectrum),
+                        self.spectrum,
                         self.arc_length,
                         batch_size=size,
                         **options,
@@ -848,30 +632,13 @@ def _plan(
     """The weights, filter and backprojector for :func:`fbp` of a parallel-beam scan."""
     n_views = int(poses.shape[0])
     view_scale, params, arc_length, separable = _view_weights(poses, cfg.scale)
-    original = poses
-    poses, projections, detector = canonical_fbp_detector_axes(
-        poses, projections, detector=detector, params=params, separable=separable
-    )
-    if poses is not original:
-        view_scale, params, arc_length, separable = _view_weights(poses, cfg.scale)
-    if cfg.padding == "edge" and not separable:
-        raise ValueError("FBP edge padding requires a separable detector-u filter")
     parallel = _can_use_direct_parallel_fbp(geometry, None)
     if parallel:
         filter_detector = _parallel_filter_detector(grid, detector)
     else:
         filter_detector = _filter_detector(grid, detector, np.asarray(poses), pad_v=not separable)
-    spectrum = rfft_filter_array(
-        cfg.filter,
-        filter_detector.nu,
-        float(detector.du),
-        jnp.float32,
-        # Edge continuation sums the filter's whole tails: keep its full support.
-        source_nu=projections.shape[2] if separable and cfg.padding == "zero" else None,
-    )
-    # Row-wise FFTs keep nv independent rows; a 2D FFT replaces that dimension
-    # with its padded length, rather than multiplying by it again.
-    fft_rows = filter_detector.nv if separable else _fft_length(filter_detector.nv)
+    spectrum = rfft_filter_array(cfg.filter, filter_detector.nu, float(detector.du), jnp.float32)
+    n_fft_v = 1 if separable else _fft_length(filter_detector.nv)
     return _Plan(
         poses=poses,
         projections=projections,
@@ -883,13 +650,12 @@ def _plan(
         grid=grid,
         detector=filter_detector,
         backend="pallas" if cuda and cfg.backprojector != "jax" else "jax",
-        # Preserve the conservative output-width batch bound: a shorter FFT
-        # does not make a larger filtered view stack cache-resident.
-        batch=_parallel_filter_batch_size(n_views, fft_rows, _fft_length(filter_detector.nu)),
+        batch=_parallel_filter_batch_size(
+            n_views, filter_detector.nv * n_fft_v, 2 * (spectrum.shape[0] - 1)
+        ),
         z_mode=("integer" if supports_parallel_fbp_z_integer(grid, detector) else "fixed")
         if parallel
         else "general",
-        padding=cfg.padding,
     )
 
 
@@ -916,16 +682,13 @@ def fbp(
 
     Backprojection is voxel-driven with bilinear detector interpolation and
     retains filtered tails through the full output volume, assuming zero raw
-    attenuation beyond the measured detector by default. ``padding="edge"``
-    assumes constant exterior endpoint values instead; neither assumption
-    recovers missing attenuation in a truncated object. An explicit ``det_grid``
-    instead uses the ray-model adjoint with uniform weights.
+    attenuation beyond the measured detector. This is not a correction for
+    truncated objects. An explicit ``det_grid`` instead uses the ray-model
+    adjoint with uniform weights.
     """
     cfg = FBPConfig() if config is None else config
     if cfg.backprojector not in ("auto", "jax", "pallas"):
         raise ValueError("FBP backprojector must be 'auto', 'jax', or 'pallas'")
-    if cfg.padding == "edge" and (beam_of(geometry) is not None or det_grid is not None):
-        raise ValueError("FBP edge padding requires canonical parallel-beam detector pixels")
     if beam_of(geometry) is not None:
         # Cone beams: FDK, with the same filter and the CUDA kernel for "pallas".
         if det_grid is not None:
@@ -961,28 +724,16 @@ def fbp(
         from ._fbp_detector_grid import fbp_on_detector_grid
 
         return fbp_on_detector_grid(T_all, proj, grid, detector, cfg, det_grid)
-    resident = isinstance(proj, jax.Array) and proj.committed
-    execution_devices = as_devices(cfg.devices) or (proj.devices() if resident else T_all.devices())
     cuda = all(
-        device.platform == "gpu"
-        and getattr(getattr(device, "client", None), "platform_version", "")
-        .lower()
-        .startswith("cuda")
-        for device in execution_devices
+        device.platform == "gpu" and device.client.platform_version.lower().startswith("cuda")
+        for device in (T_all.devices() if on_host else proj.devices())
     )
     if cfg.backprojector == "pallas" and not cuda:
-        raise ValueError("Pallas FBP requires CUDA execution devices")
+        raise ValueError("Pallas FBP requires CUDA arrays")
     plan = _plan(geometry, grid, detector, T_all, proj, cfg, cuda=cuda)
     split = view_split(cfg.devices, n_views)
     whole = range(n_views)
-    if split is None:
-        device = next(iter(execution_devices))
-        with jax.default_device(device):
-            # Keep a committed distributed input's existing sharding instead
-            # of gathering the whole scan onto this compilation-context device.
-            acc = plan.backprojected(device if len(execution_devices) == 1 else None, whole)
-    else:
-        acc = split.summed(plan.backprojected)
+    acc = plan.backprojected(None, whole) if split is None else split.summed(plan.backprojected)
     for _ in progress_iter(range(n_views), total=n_views, desc="FBP: views"):
         pass
     return acc
