@@ -30,3 +30,27 @@ def group_repeats(angles: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarra
     groups = np.empty_like(sorted_groups)
     groups[order] = sorted_groups
     return np.remainder(representatives, _TURN), groups, repeats
+
+
+def group_projection_planes(rays: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Each unit ray's projection-plane group and its exposure count.
+
+    Used when too few directions are present to fit an axis. Opposing rays share
+    a plane; doubled-angle half-turn grouping uses half the repeat tolerance.
+    """
+    rays = np.asarray(rays, np.float64)
+    remaining = np.ones(len(rays), bool)
+    inverse = np.empty(len(rays), np.intp)
+    repeats = []
+    while remaining.any():
+        first = np.flatnonzero(remaining)[0]
+        ray = rays[first]
+        distance = np.minimum(
+            np.linalg.norm(rays - ray, axis=1), np.linalg.norm(rays + ray, axis=1)
+        )
+        distance[first] = 0.0
+        group = np.flatnonzero(remaining & (distance <= _REPEAT / 2))
+        inverse[group] = len(repeats)
+        repeats.append(len(group))
+        remaining[group] = False
+    return inverse, np.asarray(repeats, np.intp)

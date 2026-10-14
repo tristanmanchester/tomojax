@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.backends.api import is_oom_error
 from tomojax.core import progress_iter
 from tomojax.core.devices import as_devices, view_split
 from tomojax.core.geometry import Detector, Geometry, Grid, grid_volume_origin
@@ -24,8 +25,7 @@ from tomojax.core.validation import (
     validate_projection_stack,
 )
 
-from ._fbp_detector_grid import is_oom_error
-from ._fbp_weights import fbp_weights
+from ._fbp_weights import fbp_weights, sparse_view_scales
 from .filters import fft_filter_rows, rfft_filter_array
 
 if TYPE_CHECKING:
@@ -166,19 +166,40 @@ def _filter_views(
     fu = jnp.fft.rfftfreq(n_u, detector.du).astype(jnp.float32)[None, None, :]
     fv = jnp.fft.fftfreq(n_v, detector.dv).astype(jnp.float32)[None, :, None]
     t_u, t_v, c_u, c_v, phase, weight = (params[:, i, None, None] for i in range(6))
-    along = t_u * fu + t_v * fv
-    axial = c_u * fu + c_v * fv
-    # A zero ramp coordinate is the limit of nearby frequencies, not a double root.
-    other = jnp.mod(phase - 2 * jnp.arctan2(jnp.where(along == 0, 1e-30, along), axial), 2 * np.pi)
-    count = 1.0 + (other < arc_length).astype(jnp.float32)
     row_ramp = jnp.abs(t_v) <= 1e-6 * jnp.abs(t_u)
     window = spectrum / jnp.maximum(jnp.abs(fu[0, 0]), spectrum[0])
-    # A rolled detector needs the ramp along a u-v diagonal; keep the finite-kernel DC term.
-    oblique = jnp.where(
-        (fu == 0) & (fv == 0), jnp.hypot(t_u, t_v) * spectrum[0], jnp.abs(along) * window
+
+    def response(vertical: jnp.ndarray) -> jnp.ndarray:
+        along = t_u * fu + t_v * vertical
+        axial = c_u * fu + c_v * vertical
+        # A zero ramp coordinate is the limit of nearby frequencies, not a double root.
+        other = jnp.mod(
+            phase - 2 * jnp.arctan2(jnp.where(along == 0, 1e-30, along), axial), 2 * np.pi
+        )
+        # FP32 modulo can round a root just below zero to 2*pi. Complete
+        # circles still contain both roots, including at that circular seam.
+        count = 1.0 + ((arc_length >= 2 * np.pi) | (other < arc_length)).astype(jnp.float32)
+        # Keep the existing smoothing window and finite-kernel DC term.
+        oblique = jnp.where(
+            (fu == 0) & (vertical == 0),
+            jnp.hypot(t_u, t_v) * spectrum[0],
+            jnp.abs(along) * window,
+        )
+        return jnp.where(row_ramp, jnp.abs(t_u) * spectrum, oblique) * weight / count
+
+    factor = response(fv)
+    nyquist = slice(n_v // 2, n_v // 2 + 1)
+    # A real Nyquist mode aliases both physical frequency signs. Keeping only
+    # fftfreq's negative v sign makes a camera-frame reflection change the
+    # reconstructed volume. Average the filter (including redundancy) over
+    # both aliases; the u face also needs the paired v frequencies. At the
+    # corner these two averages include all four physical sign choices.
+    factor = factor.at[:, nyquist, :].set(
+        0.5 * (factor[:, nyquist, :] + response(-fv[:, nyquist, :]))
     )
-    ramp = jnp.where(row_ramp, jnp.abs(t_u) * spectrum, oblique)
-    filtered = jnp.fft.irfft2(transformed * (ramp * weight / count), s=(n_v, n_u))
+    reverse_v = (-jnp.arange(n_v)) % n_v
+    factor = factor.at[:, :, -1].set(0.5 * (factor[:, :, -1] + factor[:, reverse_v, -1]))
+    filtered = jnp.fft.irfft2(transformed * factor, s=(n_v, n_u))
     return filtered[:, : detector.nv, : detector.nu]
 
 
@@ -480,17 +501,50 @@ def _view_weights(
 
     An explicit ``scale`` keeps the uniform weighting: one constant per view
     times a ramp along u. Otherwise weights are exact for the fitted circular
-    scan; scans with too few views to define one fall back to ``pi / n``.
+    scan; scans with too few directions use uniform plane cells, sharing
+    repeated exposures' measure. This remains a sparse u-ramp approximation.
     """
     n = int(poses.shape[0])
     if scale is None:
         try:
             weights = fbp_weights(np.asarray(poses))
         except ValueError:
-            scale = default_fbp_scale(n)
+            return sparse_view_scales(np.asarray(poses)), np.zeros((n, 6), np.float32), 0.0, True
         else:
             return weights.view_scale, weights.params, weights.arc_length, weights.separable
     return np.full(n, scale, np.float32), np.zeros((n, 6), np.float32), 0.0, True
+
+
+def canonical_fbp_detector_axes(
+    poses: jnp.ndarray,
+    projections: jnp.ndarray | np.ndarray,
+    *,
+    detector: Detector,
+    params: np.ndarray,
+    separable: bool,
+) -> tuple[jnp.ndarray, jnp.ndarray | np.ndarray, Detector]:
+    """Re-express a column ramp as a row ramp, without interpolating measurements.
+
+    A quarter-turned camera has its ramp along v. Keeping that orientation in
+    the 2-D path incorrectly applies the u smoothing window and finite-ramp
+    length to it. A rigid camera-coordinate change exchanges the pixel axes,
+    centres and spacings exactly; the object grid and ray directions stay put.
+    Explicit uniform scaling keeps its documented u-only filter unchanged.
+    """
+    if separable or not np.all(np.abs(params[:, 0]) <= 1e-6 * np.abs(params[:, 1])):
+        return poses, projections, detector
+    return (
+        jnp.stack([-poses[:, 2], poses[:, 1], poses[:, 0], poses[:, 3]], axis=1),
+        projections.swapaxes(1, 2)[:, :, ::-1],
+        replace(
+            detector,
+            nu=detector.nv,
+            nv=detector.nu,
+            du=detector.dv,
+            dv=detector.du,
+            center=(-detector.center[1], detector.center[0]),
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -571,6 +625,12 @@ def _plan(
     """The weights, filter and backprojector for :func:`fbp` of a parallel-beam scan."""
     n_views = int(poses.shape[0])
     view_scale, params, arc_length, separable = _view_weights(poses, cfg.scale)
+    original = poses
+    poses, projections, detector = canonical_fbp_detector_axes(
+        poses, projections, detector=detector, params=params, separable=separable
+    )
+    if poses is not original:
+        view_scale, params, arc_length, separable = _view_weights(poses, cfg.scale)
     parallel = _can_use_direct_parallel_fbp(geometry, None)
     if parallel:
         filter_detector = _parallel_filter_detector(grid, detector)

@@ -21,10 +21,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ._directions import group_repeats
+from ._directions import group_projection_planes, group_repeats
+from ._fdk_angles import ordered_arc
 
 _TWO_PI = 2.0 * np.pi
-# Relative tolerance for treating a scan as separable or a turn as complete.
+# Relative tolerance for treating a scan as separable.
 _EXACT = 1e-6
 
 
@@ -34,7 +35,8 @@ class FBPWeights:
 
     ``params`` columns are ``t_u, t_v, c_u, c_v, phase, weight``: the detector
     components of ``a x r``, the detector components of ``a`` scaled by ``a . r``,
-    the view angle from the start of the scanned arc and its quadrature weight.
+    the view angle from the start of the scanned arc and its quadrature weight
+    (including periodic direction cells for complete untilted half turns).
     ``separable`` scans need only a per-view scalar times a 1D ramp along u;
     ``view_scale`` holds those scalars.
     """
@@ -52,8 +54,10 @@ def fbp_weights(poses: np.ndarray) -> FBPWeights:
     Poses are world-from-object transforms with rays along world +y and the
     detector u/v axes along world x/z. The axis is the normal of the cone traced
     by the object-frame ray directions, so built-in and calibrated geometries
-    are handled alike. Raises ``ValueError`` when the views do not determine a
-    rotation (fewer than three distinct directions).
+    are handled alike. As for FDK, a largest circular gap no greater than 1.5
+    typical view steps denotes a complete turn; otherwise it is the missing arc.
+    Raises ``ValueError`` when the views do not determine a rotation (fewer than
+    three distinct directions).
     """
     rotation = np.asarray(poses, dtype=np.float64)[:, :3, :3]
     if rotation.shape[0] < 3:
@@ -73,21 +77,13 @@ def fbp_weights(poses: np.ndarray) -> FBPWeights:
     # Repeated exposures share one angular cell, across rounding and whole
     # turns; zero gaps must not change the acquired arc or weight order.
     angles, inverse, repeats = group_repeats(angles)
-    order = np.argsort(angles)
-    # Locate the missing arc before unwrapping: an interior gap larger than pi
-    # would otherwise fold backwards and create negative quadrature weights.
-    unwrapped = angles[order]
+    # FBP and FDK infer the same acquired arc from physical directions. A
+    # complete turn may have irregular spacing: requiring its largest gap to
+    # equal the median misclassifies even slightly jittered full scans.
+    order, unwrapped, full_turn = ordered_arc(angles)
     gaps = np.diff(unwrapped)
-    # The largest gap between sorted views marks where the scanned arc starts.
     wrap_gap = _TWO_PI - (unwrapped[-1] - unwrapped[0])
-    largest = int(np.argmax(np.append(gaps, wrap_gap)))
-    if largest < len(gaps):
-        order = np.roll(order, -(largest + 1))
-        unwrapped = np.unwrap(angles[order])
-        gaps = np.diff(unwrapped)
-        wrap_gap = _TWO_PI - (unwrapped[-1] - unwrapped[0])
     span = unwrapped[-1] - unwrapped[0]
-    full_turn = wrap_gap <= float(np.median(gaps)) * (1 + 1e-3)
     if full_turn:
         # Midpoint quadrature around the closed circle.
         previous = np.append(wrap_gap, gaps)
@@ -99,12 +95,10 @@ def fbp_weights(poses: np.ndarray) -> FBPWeights:
         following = np.append(gaps, gaps[-1])
         start, arc_length = unwrapped[0] - 0.5 * gaps[0], span + 0.5 * (gaps[0] + gaps[-1])
     sorted_weights = 0.5 * (previous + following)
-    weights = np.empty_like(sorted_weights)
-    weights[order] = sorted_weights
-    phase = np.empty_like(unwrapped)
-    phase[order] = unwrapped - start
-    weights = weights[inverse] / repeats[inverse]
-    phase = phase[inverse]
+    undo = np.empty_like(order)
+    undo[order] = np.arange(len(order))
+    weights = sorted_weights[undo][inverse] / repeats[inverse]
+    phase = (unwrapped - start)[undo][inverse]
 
     tangent = np.cross(axis, ray)
     axial = ray @ axis
@@ -121,6 +115,16 @@ def fbp_weights(poses: np.ndarray) -> FBPWeights:
         # Untilted views share frequencies only with the opposite view.
         count = 1.0 + (np.mod(phase + np.pi, _TWO_PI) < arc_length)
     view_scale = np.abs(t_u) * weights / count
+    if untilted and not full_turn and arc_length >= np.pi:
+        # Opposing rays measure one projection direction. Once a half turn is
+        # covered, its direction cells close periodically; extending unequal
+        # endpoint gaps and dividing entire cells by a midpoint redundancy
+        # otherwise biases attenuation after views have been dropped.
+        measure = _half_turn_measure(angles)[inverse] / repeats[inverse]
+        view_scale = np.abs(t_u) * measure
+        # Nonseparable (rolled) detectors still divide by their direction's
+        # count in the 2-D filter: fold in the periodic direction measure there.
+        params[:, 5] = measure * count
     return FBPWeights(
         params=params.astype(np.float32),
         arc_length=float(arc_length),
@@ -128,3 +132,26 @@ def fbp_weights(poses: np.ndarray) -> FBPWeights:
         separable=separable,
         view_scale=view_scale.astype(np.float32),
     )
+
+
+def _half_turn_measure(angles: np.ndarray) -> np.ndarray:
+    """Periodic angular cells modulo pi, shared by each pair of opposing ray directions."""
+    # Group doubled directions with the same rounding tolerance as ray repeats.
+    normal, inverse, repeats = group_repeats(2.0 * angles)
+    normal *= 0.5
+    order = np.argsort(normal)
+    gaps = np.diff(np.append(normal[order], normal[order[0]] + np.pi))
+    measure = np.empty_like(normal)
+    measure[order] = 0.5 * (gaps + np.roll(gaps, 1))
+    return measure[inverse] / repeats[inverse]
+
+
+def sparse_view_scales(poses: np.ndarray) -> np.ndarray:
+    """Uniform few-direction fallback, averaging repeated projection planes.
+
+    Too few distinct rays do not identify a circular axis. Retain the uniform
+    u-ramp approximation, but let each distinct plane share the total pi
+    measure equally rather than weighting it by its exposure count.
+    """
+    inverse, repeats = group_projection_planes(np.asarray(poses, np.float64)[:, 1, :3])
+    return np.asarray(np.pi / (len(repeats) * repeats[inverse]), np.float32)

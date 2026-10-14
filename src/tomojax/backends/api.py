@@ -6,6 +6,7 @@ from tomojax.backends._memory import (
     device_free_memory_bytes,
     estimate_views_per_batch,
     estimate_views_per_batch_info,
+    is_oom_error,
 )
 from tomojax.backends._subprocesses import (
     check_output_resolved_command,
@@ -25,6 +26,7 @@ __all__ = [
     "device_free_memory_bytes",
     "estimate_views_per_batch",
     "estimate_views_per_batch_info",
+    "is_oom_error",
     "resolve_pallas_callable",
     "resolve_pallas_module",
     "run_resolved_command",

@@ -3,24 +3,29 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import imageio.v3 as iio
 import numpy as np
 
+if TYPE_CHECKING:
+    import jax
+
 type PathLike = str | Path
 
 
-def extract_central_slice(volume: np.ndarray) -> np.ndarray:
+def extract_central_slice(volume: np.ndarray | jax.Array) -> np.ndarray:
     """Return a display-oriented central reconstruction slice.
 
     Reconstruction volumes use internal ``xyz`` order. PNG images use row/column
     order, so the returned slice is transposed to display as ``y, x``.
+    Only the selected plane of a device volume is transferred to the host.
     """
-    arr = np.asarray(volume)
+    arr = volume if hasattr(volume, "shape") else np.asarray(volume)
     if arr.ndim == 2:
-        return arr.T
+        return np.asarray(arr).T
     if arr.ndim == 3:
-        return arr[:, :, arr.shape[2] // 2].T
+        return np.asarray(arr[:, :, arr.shape[2] // 2]).T
     raise ValueError(f"quicklook expects a 2D image or 3D volume, got shape {arr.shape}")
 
 
@@ -51,13 +56,17 @@ def scale_to_uint8(
     if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
         return out
 
-    scaled = (finite_values - lo) / (hi - lo)
-    scaled = np.clip(scaled, 0.0, 1.0)
-    out[finite] = np.round(scaled * 255.0).astype(np.uint8)
+    # Boolean indexing owns this buffer; reuse it without mutating the image.
+    finite_values -= lo
+    finite_values /= hi - lo
+    _ = np.clip(finite_values, 0.0, 1.0, out=finite_values)
+    finite_values *= 255.0
+    _ = np.round(finite_values, out=finite_values)
+    out[finite] = finite_values.astype(np.uint8)
     return out
 
 
-def save_quicklook_png(path: PathLike, volume: np.ndarray) -> Path:
+def save_quicklook_png(path: PathLike, volume: np.ndarray | jax.Array) -> Path:
     """Write a percentile-scaled central reconstruction slice as a PNG."""
     out_path = Path(path)
     out_path.parent.mkdir(parents=True, exist_ok=True)

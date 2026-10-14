@@ -23,6 +23,7 @@ from .fbp import (
     _filter_detector,  # pyright: ignore[reportPrivateUsage]
     _parallel_filter_detector,  # pyright: ignore[reportPrivateUsage]
     _view_weights,  # pyright: ignore[reportPrivateUsage]
+    canonical_fbp_detector_axes,
     supports_parallel_fbp_z_integer,
     validate_fbp_geometry,
 )
@@ -186,6 +187,13 @@ def _general_slabs(
     """Reconstruct x-slabs, streaming every view batch once per slab."""
     output = validate_host_arrays(projections, out, (grid.nx, grid.ny, grid.nz))
     view_scale, params, arc_length, separable = _view_weights(poses, cfg.scale)
+    original = poses
+    poses, oriented, detector = canonical_fbp_detector_axes(
+        poses, projections, detector=detector, params=params, separable=separable
+    )
+    if poses is not original:
+        projections = np.asarray(oriented)
+        view_scale, params, arc_length, separable = _view_weights(poses, cfg.scale)
     host_poses = np.asarray(poses, np.float32)
     detector_f = _filter_detector(grid, detector, host_poses, pad_v=not separable)
     spectrum = rfft_filter_array(cfg.filter, detector_f.nu, detector.du, jnp.float32)

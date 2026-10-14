@@ -121,7 +121,6 @@
     "src/tomojax/io/_inspection_format.py::PLR0915::format_inspection_report",
     "src/tomojax/io/_json.py::C901::normalize_json",
     "src/tomojax/io/_json.py::PLR0911::normalize_json",
-    "src/tomojax/recon/_fbp_weights.py::PLR0915::fbp_weights",
     "src/tomojax/recon/cgls_multires.py::C901::cgls_multires",
     "src/tomojax/recon/fista_tv.py::C901::grad_data_term",
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline",

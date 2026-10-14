@@ -323,7 +323,7 @@ def main() -> None:
     if run.preview is not None:
         from tomojax.recon.quicklook import save_quicklook_png
 
-        _ = save_quicklook_png(run.preview, np.asarray(result.volume))
+        _ = save_quicklook_png(run.preview, result.volume)
         logging.info("Saved reconstruction preview to %s", run.preview)
     if run.manifest is not None:
         _write_manifest(args, metadata, scan, result, masked=masked)

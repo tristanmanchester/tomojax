@@ -38,6 +38,23 @@ Also exported:
 See the [quickstart](../../../docs/quickstart.md#correct-raw-detector-frames)
 for loading frames and choosing steps.
 
+## Calibration limits and missing pixels
+
+Clipped counts do not retain intensity above the sensor's range. A binned
+flat below the encoding ceiling does not prove that every native pixel was
+in range: averaging can conceal clipped subpixels. Retain native calibration
+frames for this check; binning does not recover the lost measurements.
+
+Interpolating a declared missing-pixel mask is a continuity prior, not a
+recovered measurement. It can reduce a visible ring while removing real
+narrow features. A smoother image or better reference score alone does not
+establish that those features were preserved.
+
+Track missing counts in sensor coordinates. Spatial remapping and phase
+retrieval mix input pixels, so errors from a missing input can affect apparently
+healthy output pixels. Masking only the final line integrals does not undo
+that mixing; keep the missing-data and interpolation assumptions explicit.
+
 ## Dependencies
 
 Allowed: `tomojax._data`, `tomojax.recon`, `tomojax.forward`,
