@@ -343,3 +343,75 @@ def test_public_cor_reconstructs_with_the_configured_integrator_and_batches(monk
     # Two folds and the returned-volume reconstruction.
     assert seen == [("exact", 7, "jax")] * 3
     assert abs(result.scan.detector.center[0] - centre) <= 0.35
+
+
+def _analytic_common_lines(true_axis):
+    # Independent 3-D Fourier oracle: nonplanar Gaussian mixture, arbitrary
+    # per-view translations. Intersections use cross products, not tilt formulas.
+    rng = np.random.default_rng(415)
+    angles = np.linspace(0, 2 * np.pi, 24, endpoint=False)
+    poses = np.zeros((len(angles), 3, 3))
+    poses[:, 0, 0] = poses[:, 1, 1] = np.cos(angles)
+    poses[:, 1, 0] = np.sin(angles)
+    poses[:, 0, 1] = -np.sin(angles)
+    poses[:, 2, 2] = 1
+
+    def orient(axis):
+        cross = np.cross([0, 0, 1], axis)
+        x, y, z = cross
+        skew = np.array([[0, -z, y], [z, 0, -x], [-y, x, 0]])
+        return (np.eye(3) + skew + skew @ skew / (1 + axis[2])) @ poses
+
+    truth = orient(np.asarray(true_axis))
+    i = np.repeat(np.arange(len(angles)), 3)
+    j = (i + np.tile([3, 7, 10], len(angles))) % len(angles)
+    centres = rng.uniform(-10, 10, (8, 3))
+    variance = rng.uniform(1.5, 5, (8, 3)) ** 2
+    shifts = rng.uniform(-5, 5, (len(angles), 2))
+    frequency = np.linspace(0.01, 0.25, 40)
+
+    def sample(axis):
+        candidate = orient(axis)
+        line = np.cross(candidate[i, 1], candidate[j, 1])
+        line /= np.linalg.norm(line, axis=1, keepdims=True)
+        spectra = []
+        for ids in (i, j):
+            uv = np.einsum("pki,pi->pk", candidate[ids][:, [0, 2]], line)
+            uv = uv[:, None, :] * frequency[None, :, None]
+            q = np.einsum("pki,pfk->pfi", truth[ids][:, [0, 2]], uv)
+            exponent = -2 * np.pi**2 * np.einsum("pfi,gi->pfg", q**2, variance)
+            phase = -2j * np.pi * np.einsum("pfi,gi->pfg", q, centres)
+            value = np.exp(exponent + phase).sum(axis=-1)
+            value *= np.exp(-2j * np.pi * np.einsum("pfi,pi->pf", uv, shifts[ids]))
+            spectra.append(value)
+        return tuple(spectra)
+
+    return sample
+
+
+@pytest.mark.parametrize(("tilt", "azimuth", "roll"), [(35.0, 0.4, 1.7), (24.0, -2.0, 0.0)])
+def test_common_line_axis_seed_recovers_nonplanar_geometry_despite_view_shifts(tilt, azimuth, roll):
+    t, a = np.deg2rad([tilt, azimuth + roll])
+    axis = np.array([np.cos(t) * np.sin(a), np.sin(t), np.cos(t) * np.cos(a)])
+    nominal = np.array([0, np.sin(t - np.deg2rad(4)), np.cos(t - np.deg2rad(4))])
+    result = init.fit_axis_direction(_analytic_common_lines(axis), nominal, detector_roll_deg=roll)
+    np.testing.assert_allclose(result.rotations_deg, [4, azimuth], atol=0.03)
+    assert result.correlation_after > result.correlation_before
+    assert result.correlation_after > 0.99999
+
+
+def test_common_line_axis_seed_preserves_frozen_bounds_and_uninformative_estimates():
+    t = np.deg2rad(35)
+    sample = _analytic_common_lines(np.array([0, np.sin(t), np.cos(t)]))
+    n = np.deg2rad(31)
+    nominal = np.array([0, np.sin(n), np.cos(n)])
+    result = init.fit_axis_direction(
+        sample, nominal, active=(True, False), bounds_deg=((0, 2), (-60, 60))
+    )
+    np.testing.assert_allclose(result.rotations_deg, [2, 0], atol=1e-3)
+    empty = init.fit_axis_direction(
+        lambda axis: (np.ones((3, 8), complex), np.ones((3, 8), complex)),
+        nominal,
+        rotations_deg=(1.25, -0.75),
+    )
+    assert empty.rotations_deg == (1.25, -0.75)
