@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Literal
 
 import numpy as np
@@ -121,3 +122,18 @@ def test_coupled_pose_config_matches_the_cli_pose_solver() -> None:
     )
     assert isinstance(cfg.loss, L2LossSpec)
     assert (cfg.tv_weight, cfg.gather_dtype, cfg.outer_iterations) == (0.0, "fp32", 7)
+
+
+def test_normalized_angular_bounds_survive_configuration_copies() -> None:
+    cfg = AlignConfig(
+        bounds={"axis_rot_x_deg": (-2, 2), "detector_roll_deg": (-3, 3), "dx": (-4, 4)}
+    )
+    expected = (
+        ("dx", -4.0, 4.0),
+        ("detector_roll_deg", *np.deg2rad([-3, 3])),
+        ("axis_rot_x_deg", *np.deg2rad([-2, 2])),
+    )
+    assert cfg.bounds == expected
+    for _ in range(3):
+        cfg = replace(cfg, bounds=normalize_bounds(cfg.bounds))
+        assert cfg.bounds == expected

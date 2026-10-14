@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from tomojax.alignment._config import AlignConfig
+    from tomojax.alignment._model.dofs import DofBounds
     from tomojax.alignment._model.schedules import ResolvedAlignmentStage
     from tomojax.alignment._objectives.folds import FoldArrays
     from tomojax.alignment._objectives.loss_adapters import LossAdapter
@@ -478,7 +479,13 @@ def _parallel_row_slab(
     return slab_geometry, slab_grid, slab_detector, projections[:, r0:r1, :]
 
 
-def _seeded(state: AlignmentState, seed: dict[str, object] | None) -> AlignmentState:
+def _seeded(
+    state: AlignmentState,
+    seed: dict[str, object] | None,
+    *,
+    view: ActiveParameterView,
+    cfg: AlignConfig,
+) -> AlignmentState:
     """``state`` with the detector-centre seed's offset, when one was found."""
     if seed is None or not bool(seed.get("detector_center_seed_applied")):
         return state
@@ -489,7 +496,14 @@ def _seeded(state: AlignmentState, seed: dict[str, object] | None) -> AlignmentS
         seed.get("detector_center_seed_method"),
     )
     setup = state.setup.replace(det_u_px=jnp.asarray(det_u_px, dtype=jnp.float32))
-    return state.replace(setup=setup)
+    candidate = state.replace(setup=setup)
+    # An infeasible seed can have a better residual than every feasible LM
+    # candidate. Bound it before reconstructing, not only during line search.
+    lower, upper = view.bounds_whitened(candidate, bounds=cast("DofBounds", cfg.bounds))
+    values = view.pack(candidate)
+    bounded = jnp.clip(values, lower, upper)
+    seed["setup_seed_clipped_to_bounds"] = bool(np.any(np.asarray(values != bounded)))
+    return view.unpack(candidate, bounded)
 
 
 def _detector_center_seed_diagnostics(
@@ -610,7 +624,7 @@ def _optimize_setup_geometry_bilevel_for_level(
         schedule_name=schedule_name,
         stage=stage,
     )
-    setup_state = _seeded(setup_state, seed_diagnostics)
+    setup_state = _seeded(setup_state, seed_diagnostics, view=active_view, cfg=cfg)
     setup_stats: list[OuterStat] = []
     outer_limit = max(1, int(stage.maxiter if stage is not None else cfg.outer_iterations))
     fit = _fit_inputs(

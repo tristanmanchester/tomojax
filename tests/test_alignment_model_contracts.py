@@ -301,7 +301,8 @@ def test_public_cor_seed_is_relative_to_the_existing_detector_centre(factor):
 
 
 @pytest.mark.numerical
-def test_public_cor_fallback_seed_remains_an_incremental_offset(monkeypatch):
+@pytest.mark.parametrize("bounded", [False, True])
+def test_public_cor_fallback_seed_remains_an_incremental_offset(monkeypatch, bounded):
     # A short arc declines the absolute sinogram estimator. The residual
     # search already measures an offset from the supplied detector geometry.
     angles = np.linspace(0, 130, 32)
@@ -318,11 +319,15 @@ def test_public_cor_fallback_seed_remains_an_incremental_offset(monkeypatch):
         tj.Scan(data, ParallelGeometry(grid, detector, angles)),
         mode="cor",
         levels=(1,),
-        config=_COR_CONFIG,
+        config=replace(_COR_CONFIG, bounds=(("det_u_px", -0.5, 0.5),) if bounded else ()),
     )
     first = out.info["outer_stats"][0]
     assert first["detector_center_seed_method"] == "fbp_reprojection_residual_search"
     assert first["detector_center_seed_det_u_px"] == pytest.approx(1.25)
+
+    assert first["setup_seed_clipped_to_bounds"] is bounded
+    if bounded:
+        assert abs(out.scan.detector.center[0] - detector.center[0]) <= 0.5
 
 
 @pytest.mark.numerical

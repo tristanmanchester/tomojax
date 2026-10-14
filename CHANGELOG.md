@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Setup alignment constrains initializer proposals to the requested bounds before
+reconstructing or evaluating candidate updates; angular bounds keep their units
+when alignment configurations are copied.
+
 Synchrotron data (fifth lab run): `tj.reconstruct(scan, "fourier")` and
 `tomojax recon --method fourier` expose the Fourier-slice inverse, now with
 measured-angle interpolation for uneven, repeated and opposing views (on a

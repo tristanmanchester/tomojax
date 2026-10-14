@@ -27,6 +27,11 @@ ALL_ALIGNMENT_DOF_NAMES = DOF_NAMES + GEOMETRY_DOF_NAMES
 ALL_ALIGNMENT_DOF_INDEX = {name: idx for idx, name in enumerate(ALL_ALIGNMENT_DOF_NAMES)}
 type DofBounds = tuple[tuple[str, float, float], ...]
 
+
+class _NormalizedBounds(tuple[tuple[str, float, float], ...]):
+    """Immutable bounds in internal units, retained across configuration copies."""
+
+
 _ANGULAR_SETUP_DOF_NAMES = {
     "detector_roll_deg",
     "axis_rot_x_deg",
@@ -281,13 +286,19 @@ def normalize_bounds(
     Returned angular setup bounds are stored in internal radians even though the
     public setup DOF names use `_deg` and accept degree values.
     """
+    # Setup angles enter in degrees, but optimizers consume radians. Retain
+    # that distinction when dataclasses.replace normalizes an existing config.
+    if isinstance(value, _NormalizedBounds):
+        return value
     parsed: dict[str, tuple[float, float]] = {}
     for raw_name, raw_pair in _iter_bound_items(value, option_name=option_name):
         name = _validate_bound_name(raw_name, option_name=option_name)
         if name in parsed:
             raise ValueError(f"Duplicate alignment bounds for {option_name}: {name!r}")
         parsed[name] = _parse_bound_pair(raw_pair, option_name=option_name, dof_name=name)
-    return tuple((name, *parsed[name]) for name in ALL_ALIGNMENT_DOF_NAMES if name in parsed)
+    return _NormalizedBounds(
+        (name, *parsed[name]) for name in ALL_ALIGNMENT_DOF_NAMES if name in parsed
+    )
 
 
 def bounds_vectors(bounds: DofBounds) -> tuple[jnp.ndarray, jnp.ndarray]:
