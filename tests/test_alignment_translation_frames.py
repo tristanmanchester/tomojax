@@ -954,3 +954,15 @@ def test_cone_shift_search_removes_a_rigid_shift_in_each_arrangement(
     monkeypatch.setattr(_prealign, "_correlation_peaks", lambda *args, **kwargs: shifts)
     actual = estimate_view_shifts(geometry, grid, detector, targets, iters=1)
     np.testing.assert_allclose(actual, 0, atol=2e-7)
+
+
+def test_shift_search_declines_unsettled_proposals(monkeypatch):
+    geometry, grid, detector = _geometry(8, "parallel", np.array([0, 90, 180, 270]))
+    data = jnp.zeros((4, detector.nv, detector.nu))
+    shifts = np.array([[2, 0], [-2, 0], [2, 0], [-2, 0]], np.float32)
+    steps = iter((shifts, -shifts))
+    monkeypatch.setattr(_prealign, "_quick_reconstruction", lambda *a: None)
+    monkeypatch.setattr(_prealign, "_reprojector", lambda *a: lambda c, x: data[c])
+    monkeypatch.setattr(_prealign, "_correlation_peaks", lambda *a, **k: next(steps))
+    actual = estimate_view_shifts(geometry, grid, detector, data, iters=2)
+    np.testing.assert_array_equal(actual, np.zeros_like(shifts))

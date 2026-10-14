@@ -260,6 +260,12 @@ def estimate_view_shifts(
     ``max_shift_fraction`` of the detector size are searched. The part of the
     shifts produced by one rigid object translation is removed, because the
     reconstruction absorbs it.
+
+    Periodic or truncated projections can make correlation peaks jump between
+    unrelated features. If the final update still moves a view by more than
+    one detector pixel, return zero shifts instead of trusting an unsettled
+    proposal. This conservative stability check does not certify motion
+    accuracy; declining initialization does not mean the sample did not move.
     """
     data = jnp.asarray(projections, dtype=jnp.float32)
     n = int(data.shape[0])
@@ -291,6 +297,7 @@ def estimate_view_shifts(
 
     spacing = (float(detector.du), float(detector.dv))
     shifts = np.zeros((n, 2))
+    change = 0.0
     for iteration in range(int(iters)):
         corrected = jnp.concatenate(
             [_shift_views(data[c], jnp.asarray(-shifts[c], jnp.float32)) for c in chunks]
@@ -304,6 +311,12 @@ def estimate_view_shifts(
         LOG.info("Shift search %d: max change %.3f px", iteration + 1, change)
         if change <= tolerance_px:
             break
+    if change > max(1.0, float(tolerance_px)):
+        LOG.warning(
+            "Shift search has not settled (last update %.3f px); keeping initial poses",
+            change,
+        )
+        return np.zeros_like(shifts)
     return shifts * np.asarray(spacing)
 
 

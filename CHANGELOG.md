@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Alignment keeps the initial poses when global shift initialization has not
+settled to sub-pixel updates, rather than passing oscillating correlation
+peaks to the local solver.
+
 Synchrotron data (fifth lab run): `tj.reconstruct(scan, "fourier")` and
 `tomojax recon --method fourier` expose the Fourier-slice inverse, now with
 measured-angle interpolation for uneven, repeated and opposing views (on a
