@@ -68,7 +68,7 @@ class ValidationReport(TypedDict):
 def save_projection_payload(
     path: PathLike,
     *,
-    projections: np.ndarray | jax.Array,
+    projections: np.ndarray,
     metadata: NXTomoMetadata,
 ) -> None:
     """Save a solver-facing projection payload with updated metadata."""
@@ -107,7 +107,7 @@ class ProjectionDataset:
     ``angles`` holds each view's rotation angle, in degrees.
     """
 
-    projections: np.ndarray | jax.Array
+    projections: np.ndarray
     angles: np.ndarray
     volume: np.ndarray | jax.Array | None = None
     detector: Detector | None = None
@@ -250,17 +250,16 @@ def load_dataset(path: PathLike) -> ProjectionDataset:
 
 
 def save_dataset(path: PathLike, dataset: ProjectionDataset) -> None:
-    """Save synchronously as NXtomo/HDF5 or NPZ; keep input storage unchanged."""
+    """Save a public projection dataset as NXtomo/HDF5 or NPZ."""
     output_path = Path(path)
     suffix = output_path.suffix.lower()
-    # Public metadata copies own their arrays, but a synchronous writer only
-    # borrows the volume. Do not materialize a full memmap just to pass it on.
+    # The metadata copy would duplicate a large volume that the writer only reads.
     metadata = replace(dataset, volume=None).to_nxtomo_metadata()
     metadata.volume = dataset.volume
     if suffix in _HDF5_SUFFIXES:
         save_nxtomo(
             str(output_path),
-            projections=dataset.projections,
+            projections=np.asarray(dataset.projections),
             metadata=metadata,
         )
         return

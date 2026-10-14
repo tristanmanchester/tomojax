@@ -5,6 +5,7 @@ from pathlib import Path
 
 import h5py
 import imageio.v3 as iio
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -488,3 +489,17 @@ def test_only_a_nonzero_saved_detector_roll_builds_an_explicit_grid() -> None:
     assert detector_grid_from_geometry_inputs(detector, {}) is None
     assert detector_grid_from_geometry_inputs(detector, {"detector_roll_deg": 0.0}) is None
     assert detector_grid_from_geometry_inputs(detector, {"detector_roll_deg": 0.5}) is not None
+
+
+def test_a_volume_is_written_in_tiles_without_a_transposed_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("tomojax._data._io_nxtomo._TILE_BYTES", 600)  # one chunk per tile
+    volume = np.random.default_rng(5).normal(size=(40, 50, 60)).astype(np.float32)
+    dataset = make_projection_dataset()
+    for index, stored in enumerate((volume, jnp.asarray(volume))):
+        path = tmp_path / f"volume_{index}.nxs"
+        dataset.volume = stored
+        save_dataset(path, dataset)
+        np.testing.assert_array_equal(load_nxtomo(str(path)).volume, volume)
+        assert h5py.File(path, "r")["/entry/processing/tomojax/volume"].shape == (60, 50, 40)

@@ -57,7 +57,6 @@ class tomojax.Frames(
         *,
         epsilon: 'float' = 1e-06,
         batch_views: 'int | None' = None,
-        out: 'np.ndarray | None' = None,
         binning: 'int' = 1,
     ) -> 'Scan'
     .cropped(self, rows: 'slice', cols: 'slice') -> 'Frames'
@@ -104,13 +103,7 @@ class tomojax.Scan(
     .angles
     .binned(self, factor: 'int') -> 'Scan'
     .combine(cls, scans: 'Sequence[Scan]', *, name: 'str | None' = None) -> 'Scan'
-    .corrected(
-        self,
-        *steps: 'Step',
-        *,
-        batch_views: 'int | None' = None,
-        out: 'np.ndarray | None' = None,
-    ) -> 'Scan'
+    .corrected(self, *steps: 'Step', batch_views: 'int | None' = None) -> 'Scan'
     .cropped(self, rows: 'slice', cols: 'slice') -> 'Scan'
     .detector
     .from_astra(
@@ -519,7 +512,7 @@ def tomojax.recon.spdhg_tv(
 
 # tomojax.io
 class tomojax.io.ProjectionDataset(
-        projections: 'np.ndarray | jax.Array',
+        projections: 'np.ndarray',
         angles: 'np.ndarray',
         volume: 'np.ndarray | jax.Array | None' = None,
         detector: 'Detector | None' = None,
