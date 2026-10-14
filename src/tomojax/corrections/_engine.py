@@ -24,6 +24,7 @@ import numpy as np
 
 from tomojax._typed_arrays import commit_array, mapped_storage
 from tomojax.backends import api as backend_runtime
+from tomojax.core.array_ops import mean_detector_pixels
 
 from ._downloads import cuda_device_id, release_device, stage_download
 from ._records import Correction, Json
@@ -50,6 +51,7 @@ def correct_frames(
     view_positions: np.ndarray | None = None,
     batch_views: int | None = None,
     out: np.ndarray | None = None,
+    binning: int = 1,
 ) -> Corrected:
     """Line integrals from ``counts`` ``(views, rows, columns)``, and the records of how.
 
@@ -58,38 +60,54 @@ def correct_frames(
     ``white_level`` stands in for flats on scanners that record it instead.
     ``darks`` default to zero. ``view_positions`` places each view among the
     flats (by default view ``i`` at ``i + 1/2``).
-    ``out`` supplies separate writable float32 NumPy/memmap storage with the
-    counts' shape; rejected views compact into its leading views. The caller
-    owns this storage and flushes it if needed.
+    ``out`` is separate writable float32 NumPy/memmap storage: original view
+    capacity, detector shape reduced by ``binning``. Rejected views compact
+    into its leading views; the caller owns and flushes this storage.
     """
     batch_views = _validated_batch_views(batch_views)
     epsilon = _positive_finite(epsilon, "epsilon")
     views, rows, cols = (int(s) for s in counts.shape)
     ordered = _ordered(steps)
-    _validate_out(out, (views, rows, cols), (counts, flats, darks))
+    if binning < 1:
+        raise ValueError(f"binning needs a factor of at least 1, not {binning}")
+    shape = (views, rows // binning, cols // binning)
+    _validate_out(out, shape, (counts, flats, darks))
     fields, field_record = _flat_fields(flats, flat_positions, darks, white_level, (rows, cols))
-    at = (
-        np.arange(views) + 0.5 if view_positions is None else np.asarray(view_positions, np.float64)
-    )
-    if at.shape != (views,) or not np.isfinite(at).all():
-        raise ValueError(f"view_positions needs one finite position for each of the {views} views")
-    lo, hi, t = _interpolation(at, fields.positions)
+    lo, hi, t = _view_interpolation(views, view_positions, fields.positions)
     line = [s for d, s in ordered if d == "line integrals"]
     head, tail = _split_at_break(line)
     counts_steps = tuple(s for d, s in ordered if d == "counts")
     transmission_steps = tuple(s for d, s in ordered if d == "transmission")
-    supplied_out = out is not None
-    output = np.empty((views, rows, cols), np.float32) if out is None else out
+    counts_ceiling = _dtype_ceiling(counts)
+    slab = _raw_row_slab(counts, ordered, batch_views, binning)
+    if slab is not None:
+        output, tally, readings = _correct_rows_binned(
+            counts, fields, (lo, hi, t), tuple(line),
+            epsilon=epsilon, factor=binning, slab=slab, target=out, ceiling=counts_ceiling,
+        )  # fmt: skip
+        records = _frame_records(
+            field_record, epsilon, tally, (), (), line, (), ceiling=(counts_ceiling, readings)
+        )
+        return Corrected(output, records, np.arange(views))
+    reduce_first = not tail and binning > 1
+    bin_after_summary = binning > 1 and len(tail) == 1 and tail[0].selects_views
+    needs_intermediate = bool(tail) and binning > 1 and not bin_after_summary
+    output = (
+        out if out is not None and not needs_intermediate
+        else np.empty((views, rows, cols) if needs_intermediate else shape, np.float32)
+    )  # fmt: skip
     flat_stack, dark = jax.device_put(fields.flats), jax.device_put(fields.dark)
     flat_variance, dark_variance = (
         jax.device_put(fields.flat_variance),
         jax.device_put(fields.dark_variance),
     )
-    batch = batch_views or _frame_batch_size(counts, transmission_steps)
-    tally = np.zeros(2, np.int64)  # non-positive transmission, non-finite results
-    counts_ceiling = _dtype_ceiling(counts)
-    ceiling_readings = 0
     selector = tail[0] if tail and tail[0].selects_views else None
+    view_steps = (*counts_steps, *transmission_steps, *head)
+    if selector is not None:
+        view_steps = (*view_steps, selector)
+    batch = batch_views or _frame_batch_size(counts, view_steps)
+    tally = np.zeros(2, np.int64)  # non-positive transmission, non-finite results
+    ceiling_readings = 0
     summaries: list[np.ndarray] = []
 
     def collect(
@@ -108,12 +126,13 @@ def correct_frames(
         if counts_ceiling is not None:
             ceiling_readings += _count_ceiling_readings(raw, counts_ceiling)
 
+    pass_fn = partial(_first_pass_binned, factor=binning) if reduce_first else _first_pass
     with ThreadPoolExecutor(max_workers=1) as statistic_worker:
         pending = None
         for start, stop, raw in _batches(
             counts, views, batch, after_read=diagnose if counts_ceiling is not None else None
         ):
-            done = _first_pass(
+            done = pass_fn(
                 jnp.asarray(raw), lo[start:stop], hi[start:stop], t[start:stop], flat_stack, dark,
                 flat_variance, dark_variance,
                 epsilon=float(epsilon), counts_steps=counts_steps,
@@ -125,6 +144,9 @@ def correct_frames(
             summary = (
                 None if selector is None else _stage_statistic(selector, done[0], statistic_worker)
             )
+            if bin_after_summary:
+                # Keep original-pixel statistics, then compact the owned reduced storage.
+                done = (_apply_binned((), done[0], factor=binning), *done[1:])
             download = stage_download(done[0], output[start:stop])
             if pending is not None:  # the last batch comes back while this one runs
                 collect(*pending)
@@ -137,20 +159,14 @@ def correct_frames(
     for field in (flat_stack, dark, flat_variance, dark_variance):
         release_device(field)
     del flat_stack, dark, flat_variance, dark_variance, field
-    found: dict[str, Json] = {
-        "nonpositive_transmission": int(tally[0]),
-        "nonfinite_set_to_zero": int(tally[1]),
-    }
-    log = Correction("log", {"epsilon": float(epsilon)}, found)
-    log = _with_counts_ceiling(log, counts_ceiling, ceiling_readings)
     statistics = np.concatenate(summaries) if summaries else None
-    output, kept, tail_records = _run_rest(
-        output, tail, batch_views, statistics=statistics, keep_storage=supplied_out
-    )
-    records = tuple(
-        [s.record() for s in counts_steps] + list(field_record)
-        + [s.record() for s in transmission_steps] + [log]
-        + [s.record() for s in head] + list(tail_records)
+    output, kept, tail_records = _run_rest_binned(
+        output, tail, batch_views, 1 if bin_after_summary else binning,
+        statistics=statistics, target=output if bin_after_summary else out,
+    )  # fmt: skip
+    records = _frame_records(
+        field_record, epsilon, tally, counts_steps, transmission_steps, head, tail_records,
+        ceiling=(counts_ceiling, ceiling_readings),
     )  # fmt: skip
     return Corrected(output, records, kept)
 
@@ -161,6 +177,30 @@ class Corrected(NamedTuple):
     projections: np.ndarray
     records: tuple[Correction, ...]
     kept: np.ndarray  # indices of the input views, increasing
+
+
+def _frame_records(
+    fields: tuple[Correction, ...],
+    epsilon: float,
+    tally: np.ndarray,
+    counts: Sequence[Step],
+    transmission: Sequence[Step],
+    line: Sequence[Step],
+    tail: tuple[Correction, ...],
+    *,
+    ceiling: tuple[int | None, int] = (None, 0),
+) -> tuple[Correction, ...]:
+    """The domain-ordered chain, retaining original-pixel log tallies and selector findings."""
+    found: dict[str, Json] = {
+        "nonpositive_transmission": int(tally[0]),
+        "nonfinite_set_to_zero": int(tally[1]),
+    }
+    log = _with_counts_ceiling(Correction("log", {"epsilon": float(epsilon)}, found), *ceiling)
+    return (
+        *(s.record() for s in counts), *fields,
+        *(s.record() for s in transmission), log,
+        *(s.record() for s in line), *tail,
+    )  # fmt: skip
 
 
 def correct_projections(
@@ -546,6 +586,16 @@ def _moments(
     return mean, variance
 
 
+def _view_interpolation(
+    views: int, at: np.ndarray | None, positions: np.ndarray
+) -> tuple[np.ndarray, ...]:
+    """Validate acquisition positions and interpolate each view's calibration fields."""
+    q = np.arange(views) + 0.5 if at is None else np.asarray(at, np.float64)
+    if q.shape != (views,) or not np.isfinite(q).all():
+        raise ValueError(f"view_positions needs one finite position for each of the {views} views")
+    return _interpolation(q, positions)
+
+
 def _interpolation(q: np.ndarray, positions: np.ndarray) -> tuple[np.ndarray, ...]:
     """For each view at ``q``, the flat sets either side of it and the weight of the later one.
 
@@ -610,6 +660,212 @@ def _first_pass(
     return jnp.where(bad, 0.0, p), nonpositive, jnp.sum(bad)
 
 
+@partial(
+    jax.jit,
+    static_argnames=("epsilon", "counts_steps", "transmission_steps", "line_steps", "factor"),
+)
+def _first_pass_binned(
+    raw, lo, hi, t, flats, dark, flat_variance, dark_variance, *,
+    epsilon, counts_steps, transmission_steps, line_steps, factor,
+):  # fmt: skip
+    done = _first_pass(
+        raw,
+        lo,
+        hi,
+        t,
+        flats,
+        dark,
+        flat_variance,
+        dark_variance,
+        epsilon=epsilon,
+        counts_steps=counts_steps,
+        transmission_steps=transmission_steps,
+        line_steps=line_steps,
+    )
+    return mean_detector_pixels(done[0], factor), *done[1:]
+
+
+def _raw_row_slab(
+    counts: Any, ordered: Sequence[tuple[str, Step]], batch_views: int | None, factor: int
+) -> int | None:
+    """A bounded aligned row group only when both the corrections and source permit it."""
+    if batch_views is not None or factor == 1 or not ordered:
+        return None
+    if any(d != "line integrals" or not s.whole_rows or s.selects_views for d, s in ordered):
+        return None
+    # Do not reread/decompress whole frames for every row group. Discovery owns
+    # the lazy-source capability; unknown readers and device arrays keep the old path.
+    if not isinstance(counts, np.ndarray) and not getattr(counts, "_efficient_row_windows", False):
+        return None
+    views, rows, cols = counts.shape
+    itemsize = max(4, np.dtype(counts.dtype).itemsize)
+    cap = min(rows, _BATCH_BYTES // (2 * itemsize * views * cols))
+    slab = (cap // factor) * factor
+    return slab if slab >= factor else None
+
+
+def _first_rows_binned(
+    raw, lo, hi, t, flats, dark, flat_variance, dark_variance, *, epsilon, steps, factor
+):
+    """Normalize wide counts separately, keeping row corrections entirely on device.
+
+    Fusing 64-bit raw normalization into the row reduction can need much more
+    cold-compilation scratch than the two FP32 stages. Ordinary count dtypes
+    retain the fused dispatch; neither route transfers unbinned pixels to host.
+    """
+    if raw.dtype.itemsize > 4:
+        p, nonpositive, bad = _first_pass(
+            raw, lo, hi, t, flats, dark, flat_variance, dark_variance, epsilon=epsilon,
+            counts_steps=(), transmission_steps=(), line_steps=(),
+        )  # fmt: skip
+        return _rows_binned(p, steps=steps, factor=factor), nonpositive, bad
+    return _fused_rows_binned(
+        raw, lo, hi, t, flats, dark, flat_variance, dark_variance,
+        epsilon=epsilon, steps=steps, factor=factor,
+    )  # fmt: skip
+
+
+@partial(jax.jit, static_argnames=("epsilon", "steps", "factor"))
+def _fused_rows_binned(
+    raw, lo, hi, t, flats, dark, flat_variance, dark_variance, *, epsilon, steps, factor
+):
+    p, nonpositive, bad = _first_pass(
+        raw, lo, hi, t, flats, dark, flat_variance, dark_variance, epsilon=epsilon,
+        counts_steps=(), transmission_steps=(), line_steps=(),
+    )  # fmt: skip
+    return _rows_binned(p, steps=steps, factor=factor), nonpositive, bad
+
+
+@partial(jax.jit, static_argnames=("steps", "factor"))
+def _rows_binned(p, *, steps, factor):
+    """Each whole-row step retains its original FP32 storage barrier."""
+    p = p.astype(jnp.float32)
+    for step in steps:
+        p = step.apply(p).astype(jnp.float32)
+    return mean_detector_pixels(p, factor)
+
+
+def _correct_rows_binned(
+    counts: Any,
+    fields: _Fields,
+    interpolation: tuple[np.ndarray, ...],
+    steps: tuple[Step, ...],
+    *,
+    epsilon: float,
+    factor: int,
+    slab: int,
+    target: np.ndarray | None,
+    ceiling: int | None = None,
+) -> tuple[np.ndarray, np.ndarray, int]:
+    """Stream row-local raw corrections without allocating an original-sized host stack.
+
+    Also returns the number of raw readings at the integer ``ceiling``.
+    """
+    views, rows, cols = counts.shape
+    output = (
+        np.empty((views, rows // factor, cols // factor), np.float32) if target is None else target
+    )
+    flats, dark = jax.device_put(fields.flats), jax.device_put(fields.dark)
+    flat_variance, dark_variance = (
+        jax.device_put(fields.flat_variance),
+        jax.device_put(fields.dark_variance),
+    )
+    lo, hi, t = (jax.device_put(q) for q in interpolation)
+    tally = np.zeros(2, np.int64)
+    readings = 0
+
+    def collect(start: int, end: int, done: tuple[jax.Array, ...]) -> None:
+        output[:, start // factor : end // factor] = np.asarray(done[0])
+        tally[:] += [int(n) for n in done[1:]]
+
+    pending = None
+    for start in range(0, rows, slab):
+        end = min(start + slab, rows)
+        raw = (
+            counts[:, start:end, :]
+            if isinstance(counts, np.ndarray)
+            else counts.window(slice(start, end), slice(None))[:]
+        )
+        raw = np.asarray(raw)
+        raw = raw.astype(raw.dtype.newbyteorder("="), copy=False)
+        if ceiling is not None:
+            readings += _count_ceiling_readings(raw, ceiling)
+        done = _first_rows_binned(
+            jnp.asarray(raw), lo, hi, t, flats[:, start:end], dark[start:end],
+            flat_variance[:, start:end], dark_variance[start:end],
+            epsilon=epsilon, steps=steps, factor=factor,
+        )  # fmt: skip
+        done[0].copy_to_host_async()
+        if pending is not None:
+            collect(*pending)
+        pending = (start, end, done)
+    if pending is not None:
+        collect(*pending)
+    return output, tally, readings
+
+
+@partial(jax.jit, static_argnames=("steps", "factor"))
+def _apply_binned(steps: tuple[Step, ...], batch: jax.Array, *, factor: int) -> jax.Array:
+    return mean_detector_pixels(_apply(steps, batch), factor)
+
+
+def _run_rest_binned(
+    data: np.ndarray,
+    steps: Sequence[Step],
+    batch_views: int | None,
+    factor: int,
+    *,
+    statistics: np.ndarray | None,
+    target: np.ndarray | None,
+) -> tuple[np.ndarray, np.ndarray, tuple[Correction, ...]]:
+    """Keep original-detector dependencies; reduce only after the final step."""
+    if factor == 1 or not steps:
+        return _run_rest(
+            data, steps, batch_views, statistics=statistics, keep_storage=target is not None
+        )
+    views, rows, cols = data.shape
+    cap = max(1, min(rows, _BATCH_BYTES // (8 * views * cols)))
+    slab = (cap // factor) * factor
+    if steps and steps[-1].whole_rows and slab >= factor:
+        data, kept, records = _run_rest(data, steps[:-1], batch_views, statistics=statistics)
+        views, rows, cols = data.shape
+        output = (
+            np.empty((views, rows // factor, cols // factor), np.float32)
+            if target is None
+            else target[:views]
+        )
+        _whole_rows_binned(data, steps[-1], slab, factor, output)
+        return output, kept, (*records, steps[-1].record())
+    # Selectors or a bin larger than a bounded row group retain the old path.
+    data, kept, records = _run_rest(data, steps, batch_views, statistics=statistics)
+    reduced = mean_detector_pixels(data, factor)
+    if target is None:
+        return reduced, kept, records
+    output = target[: len(kept)]
+    np.copyto(output, reduced)
+    return output, kept, records
+
+
+def _whole_rows_binned(
+    data: np.ndarray, step: Step, slab: int, factor: int, output: np.ndarray
+) -> None:
+    """Use aligned, bounded input groups and download only complete pixel means."""
+    stop = (data.shape[1] // factor) * factor
+    pending = None
+    for start in range(0, stop, slab):
+        end = min(start + slab, stop)
+        done = _apply_binned((step,), jnp.asarray(data[:, start:end]), factor=factor)
+        done.copy_to_host_async()
+        if pending is not None:
+            a, b, result = pending
+            output[:, a:b] = np.asarray(result)
+            del result
+        pending = (start // factor, end // factor, done)
+    if pending is not None:
+        a, b, result = pending
+        output[:, a:b] = np.asarray(result)
+
+
 def _split_at_break(steps: list[Step]) -> tuple[list[Step], list[Step]]:
     """The steps before the first that needs whole rows or selects views, and the rest."""
     for i, step in enumerate(steps):
@@ -637,8 +893,8 @@ def _run_rest(
     while i < len(steps):
         step = steps[i]
         views, rows, cols = out.shape
-        batch = batch_views or max(1, min(views, _BATCH_BYTES // (4 * rows * cols)))
         if step.selects_views:
+            batch = batch_views or _frame_batch_size(out, (step,))
             if i == 0 and statistics is not None:
                 stats = statistics
             else:
@@ -656,10 +912,9 @@ def _run_rest(
             i += 1
             continue
         if step.whole_rows:
-            slab = max(1, min(rows, _BATCH_BYTES // (4 * views * cols)))
-            for r0 in range(0, rows, slab):
-                part = jnp.asarray(out[:, r0 : r0 + slab])
-                out[:, r0 : r0 + slab] = np.asarray(_apply((step,), part))
+            # Two pending input/output slabs share the old one-slab budget.
+            slab = max(1, min(rows, _BATCH_BYTES // (8 * views * cols)))
+            _whole_rows(out, step, slab)
             records.append(step.record())
             i += 1
             continue
@@ -667,11 +922,33 @@ def _run_rest(
         while j < len(steps) and not (steps[j].whole_rows or steps[j].selects_views):
             j += 1
         run = tuple(steps[i:j])
+        batch = batch_views or _frame_batch_size(out, run)
         for v0 in range(0, views, batch):
             out[v0 : v0 + batch] = np.asarray(_apply(run, jnp.asarray(out[v0 : v0 + batch])))
         records.extend(s.record() for s in run)
         i = j
     return out, kept, tuple(records)
+
+
+def _whole_rows(out: np.ndarray, step: Step, slab: int) -> None:
+    """Overlap one slab's transfer with the next; disjoint rows can be written in place."""
+    if out.shape[0] * out.shape[2] * out.dtype.itemsize > _BATCH_BYTES // 2:
+        # A single row cannot be split across views: keep its original serial footprint.
+        for r0 in range(out.shape[1]):
+            out[:, r0 : r0 + 1] = np.asarray(_apply((step,), jnp.asarray(out[:, r0 : r0 + 1])))
+        return
+    pending = None
+    for r0 in range(0, out.shape[1], slab):
+        done = _apply((step,), jnp.asarray(out[:, r0 : r0 + slab]))
+        done.copy_to_host_async()
+        if pending is not None:
+            previous, result = pending
+            out[:, previous : previous + slab] = np.asarray(result)
+            del result
+        pending = (r0, done)
+    if pending is not None:
+        previous, result = pending
+        out[:, previous : previous + slab] = np.asarray(result)
 
 
 def _compact(out: np.ndarray, keep: np.ndarray, batch: int) -> np.ndarray:

@@ -37,14 +37,14 @@ def test_zinger_windows_match_scipy(shape: tuple[int, ...], size: int) -> None:
 
 @pytest.mark.parametrize("views", [1, 16, 17])
 @pytest.mark.parametrize("rows", [1, 2, 3, 5, 9])
-@pytest.mark.parametrize("width", [3, 4, 5, 8, 9, 15, 25])
+@pytest.mark.parametrize("width", [3, 4, 5, 8, 9, 15, 16, 25])
 def test_stripe_windows_match_numpy(views: int, rows: int, width: int) -> None:
     values = np.random.default_rng(width).normal(size=(views, rows, 19)).astype(np.float32)
     actual = jax.jit(Stripes(width=width).apply)(jnp.asarray(values))
     np.testing.assert_allclose(actual, _stripes(values, width), rtol=1e-6, atol=2e-7)
 
 
-@pytest.mark.parametrize("width", [3, 4, 8, 9])
+@pytest.mark.parametrize("width", [3, 4, 8, 9, 16, 25])
 def test_stripes_commute_with_detector_reversal(width: int) -> None:
     values = np.random.default_rng(615).normal(size=(17, 3, 19)).astype(np.float32)
     correct = jax.jit(Stripes(width).apply)
@@ -83,7 +83,7 @@ def test_zinger_directional_derivative_matches_reference(size: int) -> None:
     np.testing.assert_allclose(actual, reference, rtol=2e-6, atol=2e-7)
 
 
-@pytest.mark.parametrize("width", [4, 9, 15])
+@pytest.mark.parametrize("width", [4, 9, 15, 16])
 @pytest.mark.parametrize("rows", [1, 2, 9])
 def test_stripe_directional_derivative_matches_reference(width: int, rows: int) -> None:
     rng = np.random.default_rng(49)
@@ -98,6 +98,25 @@ def test_stripe_directional_derivative_matches_reference(width: int, rows: int) 
         - _stripes(values.astype(np.float64) - epsilon * direction, width)
     ) / (2 * epsilon)
     np.testing.assert_allclose(actual, reference, rtol=2e-6, atol=2e-7)
+
+
+@pytest.mark.parametrize("width", [9, 10, 16, 25, 32])
+def test_stripe_median_networks_preserve_tied_values(width: int) -> None:
+    values = np.random.default_rng(width).integers(0, 3, (17, 3, 37)).astype(np.float32)
+    actual = jax.jit(Stripes(width=width).apply)(jnp.asarray(values))
+    np.testing.assert_array_equal(actual, _stripes(values, width))
+
+
+@pytest.mark.parametrize("views", [16, 17])
+def test_stripe_rank_selection_preserves_nonfinite_offsets(views: int) -> None:
+    values = np.random.default_rng(53).normal(size=(views, 3, 37)).astype(np.float32)
+    values[0, 0, 9] = np.nan
+    values[0, 1, 17] = np.inf
+    values[0, 2, 23] = -np.inf
+    with np.errstate(invalid="ignore"):
+        reference = _stripes(values, 16)
+    actual = jax.jit(Stripes(width=16).apply)(jnp.asarray(values))
+    np.testing.assert_array_equal(actual, reference)
 
 
 @pytest.mark.parametrize("size", [3, 5, 7])

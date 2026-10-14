@@ -8,6 +8,7 @@ corrections, binning), and its record in a dataset file. Files become scans in
 from __future__ import annotations
 
 from dataclasses import dataclass, field, is_dataclass, replace
+from functools import cache
 import logging
 from math import prod
 from typing import TYPE_CHECKING, Any
@@ -16,6 +17,7 @@ import jax
 import numpy as np
 
 from tomojax._typed_arrays import commit_array
+from tomojax.core.array_ops import mean_detector_pixels
 from tomojax.geometry import (
     ConeGeometry,
     LaminographyGeometry,
@@ -215,14 +217,21 @@ class Scan:
             raise ValueError(f"binned needs a factor of at least 1, not {factor}")
         if factor == 1:
             return self
-        data = np.asarray(self.projections, np.float32)
-        views, nv, nu = data.shape
-        rows, cols = nv // factor, nu // factor
-        blocks = data[:, : rows * factor, : cols * factor].reshape(
-            views, rows, factor, cols, factor
-        )
-        geometry = rebuild(self.geometry, detector=lambda d: _binned_detector(d, factor))
-        return replace(self, projections=blocks.mean(axis=(2, 4)), geometry=geometry)
+        if isinstance(self.projections, np.ndarray):
+            binned = mean_detector_pixels(np.asarray(self.projections, np.float32), factor)
+        else:
+            import jax
+
+            from tomojax._typed_arrays import commit_array
+
+            # An ambient default device must not relocate the full input stack.
+            with jax.default_device(None):
+                data = commit_array(self.projections)
+                reduced = _device_binner()(data, factor)
+            # Like NumPy's mean, the returned host array is independent and writable.
+            binned = np.array(reduced, copy=True)
+        geometry = binned_geometry(self.geometry, factor)
+        return replace(self, projections=binned, geometry=geometry)
 
     def to_astra(self) -> tuple[np.ndarray, dict[str, Any], dict[str, Any]]:
         """ASTRA ``(rows, views, columns)`` projections, ``cone_vec`` and volume geometries.
@@ -282,6 +291,14 @@ def _download_view_chunks(
     if pending is not None:
         out[pending[0] : pending[0] + batch] = np.asarray(pending[1])
     return out
+
+
+@cache
+def _device_binner():
+    # Keep host-only scan operations independent of JAX initialization.
+    import jax
+
+    return jax.jit(mean_detector_pixels, static_argnames=("factor",))
 
 
 def detector_window(rows: slice, cols: slice, detector: Detector) -> Callable[[Detector], Detector]:
@@ -549,6 +566,11 @@ def _windowed_cone_detector(geometry: ConeGeometry, mapped: Detector) -> tuple[D
         ),
         replace(beam, source_to_detector=float(beam.source_to_detector + shift[1])),
     )
+
+
+def binned_geometry(geometry: ScanGeometry, factor: int) -> ScanGeometry:
+    """The geometry of detector block means, retaining physical pixel positions."""
+    return rebuild(geometry, detector=lambda d: _binned_detector(d, factor))
 
 
 def _binned_detector(detector: Detector, factor: int) -> Detector:
