@@ -219,8 +219,8 @@ def test_pre_filter_packing_keeps_compact_general_and_reference_paths(
     detector = Detector(4096, nv, 1.0, 1.0)
     calls = []
 
-    def filter_rows(rows, *args, detector, separable):
-        del args, separable
+    def filter_rows(rows, *args, detector, separable, **options):
+        del args, separable, options
         calls.append(("filter", rows.shape, detector.nv))
         return rows
 

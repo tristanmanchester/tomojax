@@ -173,6 +173,20 @@ def _upload_axial_rows(
     return jnp.concatenate(parts, axis=0)
 
 
+def _validated_config(config: FBPHostConfig | None) -> tuple[FBPHostConfig, int | None, int]:
+    """The configuration with its slab and view batch sizes, checked."""
+    cfg = FBPHostConfig() if config is None else config
+    if cfg.padding not in {"zero", "edge"}:
+        raise ValueError("fbp_host: padding must be 'zero' or 'edge'")
+    slices = None if cfg.slices_per_batch is None else operator.index(cfg.slices_per_batch)
+    views = operator.index(cfg.views_per_batch)
+    if (slices is not None and slices < 1) or views < 1:
+        raise ValueError("fbp_host: slices_per_batch and views_per_batch must be positive")
+    if cfg.backprojector not in {"auto", "jax", "pallas"}:
+        raise ValueError("fbp_host: backprojector must be 'auto', 'jax' or 'pallas'")
+    return cfg, slices, views
+
+
 def fbp_host(
     geometry: Geometry,
     grid: Grid,
@@ -191,15 +205,7 @@ def fbp_host(
     """
     require_parallel_beam(geometry, "fbp_host")
     projections = host_projection_input(projections)
-    cfg = FBPHostConfig() if config is None else config
-    if cfg.padding not in {"zero", "edge"}:
-        raise ValueError("fbp_host: padding must be 'zero' or 'edge'")
-    slices = None if cfg.slices_per_batch is None else operator.index(cfg.slices_per_batch)
-    views = operator.index(cfg.views_per_batch)
-    if (slices is not None and slices < 1) or views < 1:
-        raise ValueError("fbp_host: slices_per_batch and views_per_batch must be positive")
-    if cfg.backprojector not in {"auto", "jax", "pallas"}:
-        raise ValueError("fbp_host: backprojector must be 'auto', 'jax' or 'pallas'")
+    cfg, slices, views = _validated_config(config)
     shape = validate_fbp_geometry(geometry, grid, detector, cfg.scale, "fbp_host")
     n_views, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fbp_host projections"
