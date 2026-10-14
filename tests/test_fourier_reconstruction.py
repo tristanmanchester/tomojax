@@ -424,6 +424,18 @@ def scan(kind="offset", length_scale=1.0):
         angles[::2] += 180
     elif kind == "reversed":
         angles = (angles + 37.5)[::-1] - 360
+    elif kind == "inclusive":
+        angles = np.linspace(0, 180, 91)
+    elif kind == "repeated":
+        angles = np.repeat(angles, 3)
+        angles[1::3] += 180
+    elif kind == "nonuniform":
+        # Uneven encoder positions, rejected views, arbitrary order and opposing
+        # orientations must use the actual angles rather than view indices.
+        angles += 0.7 * np.sin(np.arange(len(angles)) * 1.3)
+        angles = np.delete(angles, [11, 42])
+        angles[::3] += 180
+        angles = angles[np.random.default_rng(27).permutation(len(angles))]
     elif kind == "even":
         detector = replace(detector, nu=64)
     grid = replace(
@@ -445,7 +457,13 @@ def scan(kind="offset", length_scale=1.0):
     return grid, detector, geometry, data, truth
 
 
-@pytest.mark.parametrize("kind", ["offset", "cropped", "reordered", "opposing", "reversed", "even"])
+@pytest.mark.parametrize(
+    "kind",
+    [
+        *("offset", "cropped", "reordered", "opposing", "reversed", "even"),
+        *("nonuniform", "inclusive", "repeated"),
+    ],
+)
 def test_independent_physical_gaussian(backend, kind):
     grid, detector, geometry, data, truth = scan(kind)
     original = data.copy()
@@ -456,6 +474,28 @@ def test_independent_physical_gaussian(backend, kind):
     assert actual.shape == truth.shape
     assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.008
     np.testing.assert_array_equal(data, original)
+
+
+def test_redundant_exposures_share_one_angular_cell(backend):
+    grid, detector, geometry, data, _ = scan()
+    exposures = np.repeat(data, 3, axis=0)
+    exposures += np.random.default_rng(723).normal(0, 0.02, exposures.shape).astype(np.float32)
+    config = FourierConfig(backend=backend)
+    expected = fourier_reconstruct(
+        geometry,
+        grid,
+        detector,
+        exposures.reshape(len(data), 3, *data.shape[1:]).mean(axis=1),
+        config=config,
+    )
+    actual = fourier_reconstruct(
+        ParallelGeometry(grid, detector, np.repeat(geometry.angles, 3)),
+        grid,
+        detector,
+        exposures,
+        config=config,
+    )
+    np.testing.assert_allclose(actual, expected, rtol=2e-4, atol=2e-6)
 
 
 @pytest.mark.parametrize("length_scale", [0.5, 2.0])
@@ -604,8 +644,6 @@ def test_overlapping_storage_rejected_before_writing(tmp_path, mapped):
 @pytest.mark.parametrize(
     "invalid",
     [
-        "nonuniform",
-        "duplicate",
         "tilted",
         "nonfinite",
         "complex",
@@ -620,9 +658,9 @@ def test_invalid_inputs_rejected_before_output_written(invalid):
     grid, detector, geometry, data, _ = scan()
     out = np.full((grid.nx, grid.ny, grid.nz), 123, dtype=np.float32)
     config = FourierConfig()
-    if invalid in {"nonuniform", "duplicate", "nonfinite"}:
+    if invalid == "nonfinite":
         angles = np.asarray(geometry.angles).copy()
-        angles[1] = {"nonuniform": 2.5, "duplicate": 0, "nonfinite": np.nan}[invalid]
+        angles[1] = np.nan
         geometry = ParallelGeometry(grid, detector, angles)
     elif invalid == "tilted":
         geometry = LaminographyGeometry(grid, detector, geometry.angles, tilt_deg=30)

@@ -27,21 +27,6 @@ def is_cuda_oom(error: Exception) -> bool:
     return isinstance(error, cupy.cuda.memory.OutOfMemoryError)
 
 
-def release_cuda_fft_cache() -> bool:
-    """On exhaustion, discard this thread/device's cached cuFFT workspaces."""
-    import cupy
-
-    cache = cupy.fft.config.get_plan_cache()
-    if not cache.get_curr_memsize():
-        return False
-    # Cached plans may have been used by other streams on this device. Finish
-    # those uses before destroying their plans and freeing workspace storage.
-    cupy.cuda.runtime.deviceSynchronize()
-    cache.clear()
-    cupy.get_default_memory_pool().free_all_blocks()
-    return True
-
-
 class _Geometry:
     def __init__(self, grid, detector, nviews, flipped, angles, backend) -> None:
         self.cuda = backend == "cupy"
@@ -52,10 +37,9 @@ class _Geometry:
                 raise ImportError(
                     "fourier_reconstruct: backend='cupy' requires tomojax[fourier-cuda12]"
                 ) from exc
-            from ._fourier_cuda import coordinates_kernel, interpolation_kernel, mass_deapod_kernel
+            from ._fourier_cuda import interpolation_kernel, mass_deapod_kernel
 
             self.mass_kernel = mass_deapod_kernel()
-            self.coordinates_kernel = coordinates_kernel()
         else:
             xp = np
         self.xp = xp
@@ -100,8 +84,6 @@ class _Geometry:
             )
 
     def _coordinates(self, fx, fy, angles):
-        if self.cuda:
-            return self._cuda_coordinates(fx, fy, angles)
         xp, grid, detector = self.xp, self.grid, self.detector
         real = xp.float32 if self.cuda else xp.float64
         complex_dtype = xp.complex64 if self.cuda else xp.complex128
@@ -123,41 +105,6 @@ class _Geometry:
             2j * np.pi * (fx * (ox - self.crop[0] * grid.vx) + fy * (oy - self.crop[1] * grid.vy))
         ).astype(complex_dtype)
         return angle, radial.astype(real), phase, detector_phase
-
-    def _cuda_coordinates(self, fx, fy, angles):
-        xp, grid, detector = self.xp, self.grid, self.detector
-        shape = (fx.size, fy.size)
-        angle = xp.empty(shape, dtype=xp.float64)
-        radial = xp.empty(shape, dtype=xp.float32)
-        phase = xp.empty(shape, dtype=xp.complex64)
-        detector_phase = xp.empty(shape, dtype=xp.complex64)
-        knots = np.asarray(angles) - angles[0]
-        knots = xp.asarray(np.concatenate((knots, knots + np.pi, [2 * np.pi])))
-        ox, oy, _ = grid_volume_origin(grid)
-        scale = self.nfft * detector.du
-        self.coordinates_kernel(
-            ((angle.size + 255) // 256,),
-            (256,),
-            (
-                fx,
-                fy,
-                knots,
-                angle,
-                radial,
-                phase,
-                detector_phase,
-                np.int64(angle.size),
-                np.int32(fy.size),
-                np.int32(self.nviews),
-                np.int32(self.uniform),
-                np.float64(angles[0]),
-                np.float64(scale),
-                np.float64(detector.center[0] / scale),
-                np.float64(ox - self.crop[0] * grid.vx),
-                np.float64(oy - self.crop[1] * grid.vy),
-            ),
-        )
-        return angle, radial, phase, detector_phase
 
 
 @lru_cache(maxsize=8)

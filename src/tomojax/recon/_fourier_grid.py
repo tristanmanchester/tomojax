@@ -11,8 +11,6 @@ from tomojax.geometry import Detector, Grid, grid_volume_origin
 
 from ._directions import group_repeats
 
-_INTERPOLATION_WORKSPACE_BYTES = 8 * 1024**2
-
 
 def next_fast_len(target: int) -> int:
     """Return the smallest 5-smooth length >= ``target``, as ``scipy.fft`` does for real FFTs.
@@ -143,51 +141,12 @@ def interpolate_numpy(
     period_phase: complex,
     groups: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Bound point-wise temporaries without changing interpolation or slab precision."""
+    """Vectorized reference for linear angular and Kaiser radial interpolation.
+
+    ``groups`` are the first source view of each distinct direction (and the view
+    count); the views of one direction share its angular cell.
+    """
     angle, radial, phase, detector_phase = np.broadcast_arrays(angle, radial, phase, detector_phase)
-    coordinates = (angle, radial, phase, detector_phase)
-    # Scalar/index fields and four complex slab arrays dominate the working set.
-    # More simultaneous slices therefore require fewer Cartesian sites per tile.
-    points = max(1, _INTERPOLATION_WORKSPACE_BYTES // (256 + 64 * spectrum.shape[0]))
-    if coordinates[0].size <= points:
-        return _interpolate_block(
-            spectrum, *coordinates, flipped, table, nfft, period_phase, groups
-        )
-    result = np.empty((spectrum.shape[0], coordinates[0].size), dtype=np.complex128)
-    for start in range(0, coordinates[0].size, points):
-        stop = min(start + points, coordinates[0].size)
-        # flat slices copy only this window, even for broadcast/strided fields.
-        tile_angle, tile_radial, tile_phase, tile_detector = (
-            coordinate.flat[start:stop] for coordinate in coordinates
-        )
-        result[:, start:stop] = _interpolate_block(
-            spectrum,
-            tile_angle,
-            tile_radial,
-            tile_phase,
-            tile_detector,
-            flipped,
-            table,
-            nfft,
-            period_phase,
-            groups,
-        )
-    return result.reshape((spectrum.shape[0], *coordinates[0].shape))
-
-
-def _interpolate_block(
-    spectrum: np.ndarray,
-    angle: np.ndarray,
-    radial: np.ndarray,
-    phase: np.ndarray,
-    detector_phase: np.ndarray,
-    flipped: np.ndarray,
-    table: np.ndarray,
-    nfft: int,
-    period_phase: complex,
-    groups: np.ndarray | None,
-) -> np.ndarray:
-    """Literal interpolation for broadcast coordinates, with detector-Nyquist cutoff."""
     inside = radial <= nfft / 2
     if np.all(inside):
         return _interpolate_inside(
