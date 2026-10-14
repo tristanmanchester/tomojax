@@ -151,9 +151,49 @@ how to share a scan among GPUs.
 If a geometry-checked, corrected scan still shows motion artefacts, follow the
 [alignment guide](alignment-guide.md). Save an unaligned reconstruction for
 comparison. Check residuals, multiple slice planes, and recovered parameters;
-image sharpness alone cannot establish physical calibration. Automatic robust
-recovery across real scans has not been established by the current synthetic
-pilot.
+image sharpness alone cannot establish physical calibration. Recovery remains
+data-dependent, especially for truncated or periodic objects; a lower training residual alone does not establish correct alignment.
+
+## K11 tilted-axis preview
+
+The DIAD K11 file labels the rotation field with the wrong units; supply its
+recorded angles in degrees explicitly. This example uses every fourth sample view and
+another factor of two detector binning. Lengths below are in **loaded detector
+pixels** (one is 2.16 µm), not the camera's pre-binning pixels. The wide grid is
+intentional: this mesh extends beyond the detector's field of view.
+
+```python
+import h5py
+import tomojax as tj
+from tomojax.alignment.api import coupled_pose_config
+
+path = "/home/tristan/data/k11/k11-67208_binned.nxs"
+key = "/entry/tomo_entry/instrument/detector/image_key"
+with h5py.File(path) as h:
+    angles = h["/entry/imaging/smaract_zrot_value_set"][()][h[key][()] == 0]
+frames = tj.load_frames(path, data_path="/entry/imaging/data",
+                        image_key_path=key, angles=angles)
+preview = frames.selected(slice(None, None, 4)).corrected(binning=2)
+grid = tj.Grid(768, 768, 48, 2., 2., 2., vol_center=(0., 0., 20.))
+geometry = tj.LaminographyGeometry(grid, preview.detector, preview.angles,
+                                  tilt_deg=30.9)
+scan = tj.Scan(preview.projections, geometry)
+config = coupled_pose_config(pose_translation_frame="detector",
+                             outer_iterations=8, iterations=30,
+                             gn_joint_iterations=20)
+aligned = tj.align(scan, mode="full", levels=(2,), config=config)
+recon = tj.reconstruct(aligned.scan, "fista", iterations=120,
+                       tv_weight=0., nonnegative=True)
+tj.save("mesh-aligned.nxs", aligned)
+tj.save("mesh-reconstruction.nxs", recon)
+```
+
+Setup calibration precedes motion fitting. Inspect the calibrated axis and
+centre in `aligned.scan.geometry` and compare the central in-plane slice
+`recon.volume[:, :, 24]` with the same-budget unaligned reconstruction. For
+validation, exclude interleaved views before calibration/alignment and score
+only those untouched projections afterward. The preview is not a replacement
+for resolution, support-size and regularization checks on the full scan.
 
 For a qualitative real-data illustration, see the
 [historical DIAD images](../images/README.md#historical-real-data-illustrations).
