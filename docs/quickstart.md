@@ -94,6 +94,16 @@ shares the buffer; if views were rejected, its projections use only the
 leading kept views. You own the file's lifetime. The raw memmap file alone
 does not store the scan's geometry or correction records; `tj.save` does.
 
+
+For calibrated lens distortion, pass
+`RadialDistortion(center=(column, row), coefficients=(c0, c1, ...))` from
+`tomojax.corrections`. It bilinearly samples a **backward** radial polynomial
+on transmission before the log. The centre is in zero-based image pixels,
+not the rotation axis; estimate the axis after this correction. Correct
+before cropping if the warp needs pixels outside the crop. Calibration
+coordinates also change with binning; see the
+[lens-distortion instructions](../src/tomojax/corrections/README.md#calibrated-lens-distortion).
+
 A file written by TomoJAX carries its geometry. Other NXtomo and Data Exchange
 files get a parallel beam with a centred detector, the file's angles, and the
 NXtomo detector's `x_pixel_size` and `y_pixel_size` when it has them. Without
@@ -135,6 +145,12 @@ edges; its FFT padding prevents wrap-around, not this loss of measurements.
 When correcting the full detector is too expensive, correct a larger raw
 window and keep only its interior. Enlarge that window until the retained
 slices converge.
+
+
+If using calibrated lens correction too, pass `RadialDistortion` before
+`Paganin`, so phase retrieval acts on uniformly spaced undistorted pixels.
+Put any `Zingers` step before both. Transmission steps run in the order
+supplied, and changing their order changes the result.
 
 On the command line, `--paganin` takes the same four values in that order:
 `tomojax preprocess raw.nxs -o phase.nxs --paganin 100,0.1,25,0.65e-6`. It is
