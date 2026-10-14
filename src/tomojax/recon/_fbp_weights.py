@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ._directions import group_projection_planes, group_repeats
+from ._directions import group_repeats
 from ._fdk_angles import ordered_arc
 
 _TWO_PI = 2.0 * np.pi
@@ -144,14 +144,3 @@ def _half_turn_measure(angles: np.ndarray) -> np.ndarray:
     measure = np.empty_like(normal)
     measure[order] = 0.5 * (gaps + np.roll(gaps, 1))
     return measure[inverse] / repeats[inverse]
-
-
-def sparse_view_scales(poses: np.ndarray) -> np.ndarray:
-    """Uniform few-direction fallback, averaging repeated projection planes.
-
-    Too few distinct rays do not identify a circular axis. Retain the uniform
-    u-ramp approximation, but let each distinct plane share the total pi
-    measure equally rather than weighting it by its exposure count.
-    """
-    inverse, repeats = group_projection_planes(np.asarray(poses, np.float64)[:, 1, :3])
-    return np.asarray(np.pi / (len(repeats) * repeats[inverse]), np.float32)

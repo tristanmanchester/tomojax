@@ -61,6 +61,18 @@ def test_full_turn_counts_each_frequency_twice() -> None:
     np.testing.assert_allclose(weights.view_scale, (2 * np.pi / 120) / 2, rtol=1e-5)
 
 
+@pytest.mark.parametrize("order", ["forward", "shuffled"])
+def test_irregular_full_turn_uses_closed_circle_quadrature(order) -> None:
+    angles = np.array([0.0, 60.0, 150.0, 260.0])
+    expected = np.deg2rad([40.0, 37.5, 50.0, 52.5])
+    indices = np.arange(len(angles))
+    if order == "shuffled":
+        indices = np.random.default_rng(564).permutation(indices)
+    weights = fbp_weights(parallel(angles[indices]))
+    assert weights.full_turn and weights.separable
+    np.testing.assert_allclose(weights.view_scale, expected[indices], rtol=1e-5)
+
+
 @pytest.mark.parametrize("start", [0.0, 150.0, -100.0])
 def test_partial_arc_halves_views_with_an_opposite(start: float) -> None:
     """Over 270 degrees, only views whose opposite was also acquired share frequencies."""
@@ -77,6 +89,34 @@ def test_irregular_angles_use_midpoint_quadrature() -> None:
     weights = fbp_weights(parallel(angles[::-1]))
     expected = np.deg2rad([2.0, 15.0, 14.5, 30.0, 59.0])[::-1]
     np.testing.assert_allclose(weights.view_scale, expected, rtol=1e-5)
+
+
+@pytest.mark.parametrize("repeats", [None, (1, 3, 2, 1, 2, 4)])
+def test_irregular_half_turn_uses_periodic_direction_cells(repeats) -> None:
+    angles = np.array([0.0, 1.0, 45.0, 90.0, 170.0, 180.0])
+    # The 0/180 pair shares the first circular cell, however often each ray repeats.
+    expected = np.deg2rad([2.75, 22.5, 44.5, 62.5, 45.0, 2.75])
+    if repeats is not None:
+        angles = np.repeat(angles, repeats)
+        expected = np.repeat(expected / np.asarray(repeats), repeats)
+    weights = fbp_weights(parallel(angles))
+    assert weights.separable and not weights.full_turn
+    np.testing.assert_allclose(weights.view_scale, expected, rtol=1e-5)
+
+
+def test_missing_early_views_preserve_gaussian_attenuation() -> None:
+    n, sigma = 64, 8.0
+    grid, detector = Grid(n, n, 1, 1, 1, 1), Detector(96, 1, 1, 1)
+    angles = np.concatenate(([0.0], np.arange(10.0, 181.0)))
+    geometry = ParallelGeometry(grid, detector, angles)
+    u = np.arange(detector.nu) - (detector.nu - 1) / 2
+    profile = np.sqrt(2 * np.pi) * sigma * np.exp(-(u**2) / (2 * sigma**2))
+    projections = jnp.asarray(np.broadcast_to(profile, (len(angles), 1, detector.nu)))
+    actual = np.asarray(fbp(geometry, grid, detector, projections))[:, :, 0]
+    x = np.arange(n) - (n - 1) / 2
+    truth = np.exp(-(x[:, None] ** 2 + x[None, :] ** 2) / (2 * sigma**2))
+    assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.005
+    np.testing.assert_allclose(actual[n // 2, n // 2], truth[n // 2, n // 2], rtol=0.003)
 
 
 @pytest.mark.parametrize("span", [90.0, 180.0, 270.0, 360.0])
