@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+Synchrotron data (fifth lab run): `tj.reconstruct(scan, "fourier")` and
+`tomojax recon --method fourier` expose the Fourier-slice inverse, now with
+measured-angle interpolation for uneven, repeated and opposing views (on a
+full-resolution 1801-view slab of a Diamond I12 scan, raw counts to volume in
+2.3 s against tomocupy's 6.3 s); `tj.reconstruct(..., out=)` writes FBP, FDK and
+Fourier volumes into a caller's memory map; oversized parallel FBP switches to
+host slabs automatically; `tj.estimate_center` estimates a parallel scan's
+centre from its projections without reconstructing, with fixes for uneven and
+repeated angles and narrow detectors and about 6x less time on large sinograms;
+the `RadialDistortion` step corrects calibrated lens distortion;
+`Frames.corrected(binning=)` bins while correcting; flats, darks and TIFF stacks
+are read lazily through crops; flat-field pixels that are not reliably above
+the dark take no absorption; Paganin pads by its filter's range; FBP weights
+handle irregular full and half turns; volumes are saved in tiles.
+
 Faster: exact-ray projection loads each cell corner once and integrates one
 spatial derivative for every pose direction (about 2.4x forward and 3x
 gradient on the CPU at 48³); the CUDA cone transpose weights, reorders and

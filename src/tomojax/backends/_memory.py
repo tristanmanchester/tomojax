@@ -78,12 +78,13 @@ def _free_bytes_from_memory_info(info: object) -> int | None:
         for key in ("free", "free_bytes", "bytes_free", "available", "bytes_available"):
             if key in mapping:
                 try:
-                    return int(cast("object", mapping[key]))
+                    return int(cast("int", mapping[key]))
                 except (TypeError, ValueError):
                     return None
         if "bytes_limit" in mapping and "bytes_in_use" in mapping:
             try:
-                return max(0, int(mapping["bytes_limit"]) - int(mapping["bytes_in_use"]))
+                limit, used = (cast("int", mapping[k]) for k in ("bytes_limit", "bytes_in_use"))
+                return max(0, int(limit) - int(used))
             except (TypeError, ValueError):
                 return None
         return None
