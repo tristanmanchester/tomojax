@@ -4,7 +4,9 @@
 
 Setup alignment constrains initializer proposals to the requested bounds before
 reconstructing or evaluating candidate updates; angular bounds keep their units
-when alignment configurations are copied.
+when alignment configurations are copied. Full alignment seeds the rotation axis
+and detector centre together from Fourier common lines before pose refinement,
+keeping the supplied detector roll fixed to remove its axis-direction gauge.
 
 Synchrotron data (fifth lab run): `tj.reconstruct(scan, "fourier")` and
 `tomojax recon --method fourier` expose the Fourier-slice inverse, now with

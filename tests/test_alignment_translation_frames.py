@@ -560,7 +560,7 @@ def test_translation_seed_runs_once_at_the_first_level(monkeypatch, factors):
     from tomojax.alignment._pose import _pose_loop
 
     # check-public-imports: allow-private
-    from tomojax.alignment._stages import _stage_multires
+    from tomojax.alignment._stages import _stage_runners
 
     geometry, grid, detector = _geometry(8, "parallel", np.linspace(0, 180, 6, endpoint=False))
     data = jnp.zeros((6, detector.nv, detector.nu), jnp.float32)
@@ -570,7 +570,7 @@ def test_translation_seed_runs_once_at_the_first_level(monkeypatch, factors):
         calls.append((projections.shape, cfg.seed_translations))
 
     monkeypatch.setattr(_pose_loop, "seeded_translation_params", record)
-    monkeypatch.setattr(_stage_multires, "seeded_translation_params", record)
+    monkeypatch.setattr(_stage_runners, "seeded_translation_params", record)
     cfg = AlignConfig(outer_iterations=1, iterations=1, seed_translations=True)
     if factors is None:
         align(geometry, grid, detector, data, config=cfg)

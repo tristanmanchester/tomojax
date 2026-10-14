@@ -420,3 +420,52 @@ def test_common_line_axis_seed_preserves_frozen_bounds_and_uninformative_estimat
         rotations_deg=(1.25, -0.75),
     )
     assert empty.rotations_deg == (1.25, -0.75)
+
+
+@pytest.mark.parametrize("bounded", [False, True])
+def test_full_setup_seeds_jointly_in_native_units_and_preserves_frozen_axes(monkeypatch, bounded):
+    from tomojax.geometry import LaminographyGeometry
+
+    true = np.array([0.0, np.sin(np.deg2rad(35.0)), np.cos(np.deg2rad(35.0))])
+    sample = _analytic_common_lines(true)
+    monkeypatch.setattr(
+        init,
+        "prepare_common_lines",
+        lambda data, angles, detector: SimpleNamespace(
+            sample=sample, center=lambda axis: (3.0 + (detector.du - 0.8) / 2) / detector.du
+        ),
+    )
+    grid, detector = Grid(8, 8, 8, 0.8, 0.8, 0.8), Detector(8, 8, 0.8, 0.8, (1.6, 0.0))
+    geometry = LaminographyGeometry(
+        grid, detector, np.linspace(0, 360, 8, endpoint=False), tilt_deg=31.0
+    )
+    seeded_at = []
+    monkeypatch.setattr(
+        "tomojax.alignment._stages._stage_runners.seeded_translation_params",
+        lambda geometry, grid, detector, data, cfg: seeded_at.append(
+            (geometry.axis_unit_lab, detector.center)
+        ),
+    )
+    cfg = replace(
+        _COR_CONFIG,
+        bounds={"axis_rot_x_deg": (-2, 2), "det_u_px": (-1, 1)} if bounded else (),
+        freeze=("axis_rot_y_deg",),
+        seed_translations=True,
+    )
+    result = tj.align(
+        tj.Scan(np.zeros((8, 8, 8), np.float32), geometry), mode="full", levels=(2, 1), config=cfg
+    )
+    calibration = result.info["geometry_calibration_state"]
+    scan = {item["name"]: item["value"] for item in calibration["scan"]}
+    detector_fit = {item["name"]: item["value"] for item in calibration["detector"]}
+    assert scan["axis_rot_x_deg"] == pytest.approx(2.0 if bounded else 4.0, abs=0.03)
+    assert scan["axis_rot_y_deg"] == 0.0
+    assert detector_fit["detector_roll_deg"] == 0.0
+    assert result.scan.detector.center[0] == pytest.approx(2.4 if bounded else 3.0, abs=1e-5)
+
+    assert len(seeded_at) == 1
+    assert seeded_at[0][0][1] == pytest.approx(
+        np.sin(np.deg2rad(33.0 if bounded else 35.0)), abs=5e-4
+    )
+    # Point decimation shifts the coarse detector centre by half a native pixel.
+    assert seeded_at[0][1][0] == pytest.approx(2.8 if bounded else 3.4, abs=1e-5)

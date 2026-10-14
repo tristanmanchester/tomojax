@@ -362,29 +362,14 @@ _PUBLIC_PRESET_STAGES: dict[str, tuple[AlignmentStage, ...]] = {
             quality_tier="reference",
         ),
     ),
+    # Detector roll and axis-y share a volume-frame gauge. Keep the supplied
+    # roll fixed and calibrate centre/axis together before local pose fitting.
     "setup_safe": (
         AlignmentStage(
-            "cor",
-            ("det_u_px",),
+            "setup",
+            ("det_u_px", "axis_rot_x_deg", "axis_rot_y_deg"),
             "bilevel_cv",
             "validation_lm",
-            stage_role="setup",
-            quality_tier="reference",
-        ),
-        AlignmentStage(
-            "detector_roll",
-            ("detector_roll_deg",),
-            "bilevel_cv",
-            "validation_lm",
-            stage_role="setup",
-            quality_tier="reference",
-        ),
-        AlignmentStage(
-            "axis_direction",
-            ("axis_rot_x_deg", "axis_rot_y_deg"),
-            "bilevel_cv",
-            "validation_lm",
-            gauge_policy="diagnose_only",
             stage_role="setup",
             quality_tier="reference",
         ),

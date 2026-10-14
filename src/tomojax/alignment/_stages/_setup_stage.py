@@ -17,6 +17,7 @@ from tomojax.alignment._geometry.geometry_applier import (
     setup_moved_detector,
 )
 from tomojax.alignment._geometry.initializers import (
+    common_line_setup_seed,
     reprojection_det_u_seed,
     sinogram_det_u_seed,
 )
@@ -487,15 +488,16 @@ def _seeded(
     cfg: AlignConfig,
 ) -> AlignmentState:
     """``state`` with the detector-centre seed's offset, when one was found."""
-    if seed is None or not bool(seed.get("detector_center_seed_applied")):
+    if seed is None:
         return state
-    det_u_px = float(cast("float", seed["detector_center_seed_det_u_px"]))
-    logging.info(
-        "Setup detector-centre seed: det_u_px=%.3f from %s",
-        det_u_px,
-        seed.get("detector_center_seed_method"),
-    )
-    setup = state.setup.replace(det_u_px=jnp.asarray(det_u_px, dtype=jnp.float32))
+    setup = state.setup
+    if seed.get("detector_center_seed_applied"):
+        offset = float(cast("float", seed["detector_center_seed_det_u_px"]))
+        logging.info("Setup detector-centre seed: det_u_px=%.3f", offset)
+        setup = setup.replace(det_u_px=jnp.asarray(offset, dtype=jnp.float32))
+    if seed.get("axis_seed_applied"):
+        x, y = cast("tuple[float, float]", seed["axis_seed_rotations_deg"])
+        setup = setup.replace(axis_rot_x_rad=jnp.deg2rad(x), axis_rot_y_rad=jnp.deg2rad(y))
     candidate = state.replace(setup=setup)
     # An infeasible seed can have a better residual than every feasible LM
     # candidate. Bound it before reconstructing, not only during line search.
@@ -506,7 +508,7 @@ def _seeded(
     return view.unpack(candidate, bounded)
 
 
-def _detector_center_seed_diagnostics(
+def _setup_seed_diagnostics(
     *,
     geometry: Geometry,
     grid: Grid,
@@ -517,16 +519,30 @@ def _detector_center_seed_diagnostics(
     active_view: ActiveParameterView,
     schedule_name: str | None,
     stage: ResolvedAlignmentStage | None,
+    cfg: AlignConfig,
 ) -> dict[str, object] | None:
-    """Return COR seed diagnostics when a detector-u-only setup stage can be seeded."""
+    """Seed setup before pose fitting, retaining the axial/short-arc COR fallback."""
+    if np.any(np.asarray(setup_state.pose.pose_params)):
+        return None
+    seed_info = common_line_setup_seed(
+        projections,
+        geometry,
+        detector=detector,
+        setup=setup_state.setup,
+        active_dofs=active_view.dofs,
+        bounds=cast("DofBounds", cfg.bounds),
+        factor=factor,
+    )
+    if seed_info is not None and seed_info.get("detector_center_seed_applied"):
+        return seed_info
     stage_name = stage.name if stage is not None else schedule_name
-    if tuple(active_view.dofs) != ("det_u_px",):
-        return None
-    if stage_name != "cor" and schedule_name != "cor":
-        return None
+    if "det_u_px" not in active_view.dofs:
+        return seed_info
+    if stage_name not in {"cor", "setup"} and schedule_name not in {"cor", "setup_safe"}:
+        return seed_info
     current = float(setup_state.setup.det_u_px)
     if abs(current) > 1e-6:
-        return None
+        return seed_info
     # A parallel scan over a half turn: Vo's sinogram method, which uses every
     # view and is not misled by an object larger than the field of view.
     # Otherwise a search for the offset whose FBP reprojects most
@@ -547,6 +563,7 @@ def _detector_center_seed_diagnostics(
         # centre includes any physical shift introduced by detector binning.
         det_u_level_px -= float(detector.center[0]) / float(detector.du)
     return {
+        **(seed_info or {}),
         "detector_center_seed_status": seed.status,
         "detector_center_seed_method": method,
         "detector_center_seed_applied": True,
@@ -576,7 +593,7 @@ def _optimize_setup_geometry_bilevel_for_level(
     _validate_setup_stage_execution_contract(stage)
     base = BaseGeometryArrays.from_geometry(geometry, detector, level_factor=int(factor))
     active_view = ActiveParameterView.from_dofs(active_geometry_dofs)
-    alignment_state = state.replace(
+    setup_state = state.replace(
         setup=state.setup.replace(nominal_axis_unit=base.nominal_axis_unit),
         pose=PoseState(
             jnp.zeros((int(projections.shape[0]), POSE_WIDTH), dtype=jnp.float32)
@@ -612,8 +629,7 @@ def _optimize_setup_geometry_bilevel_for_level(
         ray_integrator=cfg.ray_integrator,
         projector_backend="jax" if cfg.projector_backend == "jax" else "auto",
     )
-    setup_state = alignment_state
-    seed_diagnostics = _detector_center_seed_diagnostics(
+    seed_diagnostics = _setup_seed_diagnostics(
         geometry=geometry,
         grid=grid,
         detector=detector,
@@ -623,6 +639,7 @@ def _optimize_setup_geometry_bilevel_for_level(
         active_view=active_view,
         schedule_name=schedule_name,
         stage=stage,
+        cfg=cfg,
     )
     setup_state = _seeded(setup_state, seed_diagnostics, view=active_view, cfg=cfg)
     setup_stats: list[OuterStat] = []

@@ -24,8 +24,8 @@ class AxisDirectionSeed:
     correlation_after: float
 
 
-def _axis_in_detector(
-    nominal: np.ndarray, rotations: np.ndarray, detector_roll_deg: float
+def axis_in_detector(
+    nominal: np.ndarray, rotations: np.ndarray, *, detector_roll_deg: float
 ) -> np.ndarray:
     """Calibration ``Ry @ Rx`` axis, expressed in the rolled detector frame."""
     x, y = np.deg2rad(rotations)
@@ -74,7 +74,7 @@ def fit_axis_direction(
     bounds = np.asarray(bounds_deg, dtype=np.float64)
 
     def score(x: np.ndarray) -> float:
-        axis = _axis_in_detector(nominal, x, detector_roll_deg)
+        axis = axis_in_detector(nominal, x, detector_roll_deg=detector_roll_deg)
         return -_magnitude_agreement(*sample(axis))
 
     before = score(initial)
