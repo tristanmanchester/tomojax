@@ -345,7 +345,7 @@ def test_public_cor_reconstructs_with_the_configured_integrator_and_batches(monk
     assert abs(result.scan.detector.center[0] - centre) <= 0.35
 
 
-def _common_line_gaussians(shape, motion=0.0, views=48, turns=1):
+def _common_line_gaussians(shape, motion=0.0, views=48, turns=1, centre_fraction=0.08):
     # Independent continuous 3-D Gaussian line integrals, not a planar object
     # or data from the discrete projector. Odd tails exercise Fourier origins.
     rng = np.random.default_rng(469)
@@ -363,7 +363,7 @@ def _common_line_gaussians(shape, motion=0.0, views=48, turns=1):
     )
     basis = np.stack([ca * u + sa * v, -sa * u + ca * v], axis=1)
     extent = min(nu * detector.du, nv * detector.dv)
-    centre_px = 0.08 * nu
+    centre_px = centre_fraction * nu
     yy, xx = np.mgrid[:nv, :nu]
     points = np.stack(
         [
@@ -457,3 +457,13 @@ def test_common_line_motion_declines_missing_saturated_or_unconverged_evidence(m
     monkeypatch.setattr(common_lines.optimize, "minimize", one_iteration)
     fit = prepared.motion(axis, center_u=centre_px * detector.du)
     assert fit.status == "not_converged" and fit.shifts is None
+
+
+def test_common_line_center_respects_a_supplied_wide_center_and_declines_boundary():
+    data, angles, det, axis, center, _, _ = _common_line_gaussians((81, 81), centre_fraction=0.31)
+    det = replace(det, center=(center * det.du, det.center[1]))
+    prepared = common_lines.prepare_common_lines(data, angles, det)
+    assert prepared is not None
+    assert prepared.center(axis) == pytest.approx(center, abs=0.2)
+    outside = replace(prepared, center_u=(center + det.nu / 4 + 1) * det.du)
+    assert outside.center(axis) is None

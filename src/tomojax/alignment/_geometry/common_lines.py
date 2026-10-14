@@ -47,6 +47,7 @@ class CommonLines:
     native_du: float
     native_width: int
     center_v: float
+    center_u: float
     view_indices: np.ndarray
 
     def _coordinates(self, axis_unit: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -86,9 +87,11 @@ class CommonLines:
     def center(self, axis_unit: np.ndarray) -> float | None:
         """Absolute detector-u centre in native pixels, or None without evidence.
 
-        A bounded phase search avoids phase-unwrapping aliases. A common object
-        translation cancels between the two Fourier planes; independent view
-        translations do not, so this is only an initializer in moving scans.
+        Search within a quarter detector width of the supplied centre, not zero:
+        an already calibrated wide offset must remain inside the capture range.
+        A boundary optimum is declined rather than reported as a centre.
+        A common object translation cancels between the two Fourier planes;
+        independent view translations do not, so this remains only a seed.
         """
         q1, q2 = self._coordinates(axis_unit)
         slope = (q1[..., 0] - q2[..., 0]) * self.native_du
@@ -111,10 +114,13 @@ class CommonLines:
             return float(np.real(np.sum(cross * np.exp(-2j * np.pi * center * slope))) / total)
 
         bound = self.native_width / 4
-        candidates = np.linspace(-bound, bound, max(65, self.native_width + 1))
+        # Detector centres are physical lengths; search/report native pixels,
+        # independently of the additional preview downsampling.
+        prior = self.center_u / self.native_du
+        candidates = np.linspace(prior - bound, prior + bound, max(65, self.native_width + 1))
         scores = np.asarray([score(c) for c in candidates])
         best = int(np.argmax(scores))
-        if np.ptp(scores) < 1e-3:
+        if best in (0, len(candidates) - 1) or np.ptp(scores) < 1e-3:
             return None
         lower, upper = candidates[max(0, best - 1)], candidates[min(best + 1, len(scores) - 1)]
         fit = optimize.minimize_scalar(
@@ -256,5 +262,6 @@ def prepare_common_lines(
         detector.du,
         original_nu,
         detector.center[1],
+        detector.center[0],
         keep,
     )
