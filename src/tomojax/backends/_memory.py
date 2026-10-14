@@ -17,20 +17,11 @@ LOG = logging.getLogger(__name__)
 
 
 def is_oom_error(exc: Exception) -> bool:
-    """Identify JAX allocation failures that may permit a bounded retry or fallback.
-
-    This only classifies the error; callers own synchronization, rollback and
-    their recovery strategy. Unrelated INTERNAL failures are not recoverable.
-    """
+    """Whether ``exc`` is a device running out of memory, which smaller batches may avoid."""
     msg = str(exc).lower()
-    # cuFFT can hide scratch exhaustion behind an INTERNAL plan-creation error;
-    # the allocation diagnostic appears only in stderr. Do not retry unrelated
-    # INTERNAL errors. Callers still propagate failures at a single-view batch.
-    cufft_scratch_failure = (
-        "fft_plan != nullptr" in msg
-        and "failed to create cufft batched plan with scratch allocator" in msg
-    )
-    return "resource_exhausted" in msg or "out of memory" in msg or cufft_scratch_failure
+    # cuFFT reports exhausted scratch memory as an INTERNAL plan-creation error.
+    cufft_scratch = "fft_plan != nullptr" in msg and "cufft batched plan with scratch" in msg
+    return "resource_exhausted" in msg or "out of memory" in msg or cufft_scratch
 
 
 @dataclass(frozen=True)
@@ -84,17 +75,17 @@ def _free_bytes_from_memory_info(info: object) -> int | None:
     """Extract free bytes from JAX/XLA memory-info shapes."""
     if isinstance(info, Mapping):
         mapping = cast("Mapping[str, object]", info)
-        if "bytes_limit" in mapping and "bytes_in_use" in mapping:
-            try:
-                return max(0, int(mapping["bytes_limit"]) - int(mapping["bytes_in_use"]))
-            except (TypeError, ValueError):
-                return None
         for key in ("free", "free_bytes", "bytes_free", "available", "bytes_available"):
             if key in mapping:
                 try:
                     return int(cast("object", mapping[key]))
                 except (TypeError, ValueError):
                     return None
+        if "bytes_limit" in mapping and "bytes_in_use" in mapping:
+            try:
+                return max(0, int(mapping["bytes_limit"]) - int(mapping["bytes_in_use"]))
+            except (TypeError, ValueError):
+                return None
         return None
 
     if isinstance(info, tuple | list) and len(info) >= 1:
@@ -106,56 +97,40 @@ def _free_bytes_from_memory_info(info: object) -> int | None:
 
 
 def device_free_memory_bytes(*, device: Device | None = None) -> int | None:
-    """Best-effort free memory (bytes) for ``device`` or JAX's current default.
+    """Best-effort query of free memory (bytes) on ``device``.
 
-    Honor ``jax.default_device`` (a device or platform), otherwise the default
-    backend. CPU placement uses host available memory, even on a GPU host.
-    - Prefer allocator `Device.memory_stats()` limits, including a known zero.
-    - Otherwise use JAX's device memory-info API when available.
-    - CPU (or no discoverable device) uses host available memory via `os.sysconf`.
-    - An accelerator with unavailable statistics returns None, never host RAM.
+    - ``device`` defaults to ``jax.default_device``, else the first GPU.
+    - Prefer JAX's device API when available: `jax.device_get_memory_info` (>=0.4.14).
+    - Also support current `Device.memory_stats()` reports when exposed.
+    - Fall back to host available memory via `os.sysconf` when supported,
+      which is also the answer for a CPU device or no GPU.
+    - Returns None if nothing is available.
     """
     try:  # JAX GPU/TPU or CPU
-        device = _current_device() if device is None else device
+        import jax  # type: ignore
+
+        if device is None:
+            device = jax.config.jax_default_device
+            if device is None or isinstance(device, str):
+                device = next(iter(jax.devices(device or "gpu")), None)
         if device is None or device.platform == "cpu":
             return _host_available_memory_bytes()
-    except Exception as exc:
-        LOG.debug("Device memory probe failed; available memory is unknown: %s", exc)
-        return None
-
-    return _device_memory_bytes(device)
-
-
-def _allocator_memory_info(device: Device) -> object:
-    stats = getattr(device, "memory_stats", None)
-    if callable(stats):
-        try:
-            return stats()
-        except Exception as exc:
-            LOG.debug("Device memory probe failed; trying remaining statistics: %s", exc)
-    return None
-
-
-def _device_memory_bytes(device: Device) -> int | None:
-    import jax  # type: ignore
-
-    # Allocator limits are authoritative, including a known zero or invalid
-    # limit. Other statistics retain their established probe order.
-    info = _allocator_memory_info(device)
-    if isinstance(info, Mapping) and "bytes_limit" in info and "bytes_in_use" in info:
-        return _free_bytes_from_memory_info(info)
-    probes = [lambda: info]
-    memory_info = getattr(jax, "device_get_memory_info", None)
-    if callable(memory_info):
-        probes.insert(0, lambda: memory_info(device))
-    for probe in probes:
-        try:
-            free = _free_bytes_from_memory_info(probe())
+        memory_info = getattr(jax, "device_get_memory_info", None)
+        if callable(memory_info):
+            free = _free_bytes_from_memory_info(memory_info(device))
             if free is not None:
                 return free
-        except Exception as exc:
-            LOG.debug("Device memory probe failed; trying remaining statistics: %s", exc)
-    return None
+        memory_stats = getattr(device, "memory_stats", None)
+        if callable(memory_stats):
+            free = _free_bytes_from_memory_info(memory_stats())
+            if free is not None:
+                return free
+    except Exception as exc:
+        LOG.debug(
+            "Device memory probe failed; falling back to host available memory: %s",
+            exc,
+        )
+    return _host_available_memory_bytes()
 
 
 def estimate_views_per_batch(
@@ -299,36 +274,33 @@ def estimate_views_per_batch_info(
 
 
 def default_gather_dtype() -> str:
-    """Choose a default gather dtype for the current JAX default device.
+    """Choose a default gather dtype based on the active JAX backend.
 
     Returns "bf16" when the active accelerator supports bfloat16 gathers,
     falls back to "fp16" on older GPUs that support float16 but not efficient
     bfloat16, and otherwise returns "fp32". CPU or backend-detection failures
     also fall back to "fp32".
     """
-    try:
-        device = _current_device()
-    except Exception as exc:
-        LOG.debug("JAX device probe failed; using fp32 gather default: %s", exc)
-        return "fp32"
-    backend = device.platform if device is not None else None
+    backend = _current_backend()
     if isinstance(backend, str) and backend.lower() in ("gpu", "tpu"):
         if backend.lower() == "tpu":
             return "bf16"
-        cc = _gpu_compute_capability(device)
+        cc = _gpu_compute_capability()
         if cc and cc < (8, 0):
-            return "fp16" if _device_supports_dtype(device, "float16") else "fp32"
+            if _device_supports_dtype("float16"):
+                return "fp16"
+            return "fp32"
         # GPU: prefer bf16 if the device JIT supports it, else fp16/fp32.
-        if _device_supports_dtype(device, "bfloat16"):
+        if _device_supports_dtype("bfloat16"):
             return "bf16"
-        if _device_supports_dtype(device, "float16"):
+        if _device_supports_dtype("float16"):
             return "fp16"
     return "fp32"
 
 
 @cache
-def _device_supports_dtype(device: Device, dtype_name: str) -> bool:
-    """Check whether this accelerator can JIT `dtype`, cached per device."""
+def _device_supports_dtype(dtype_name: str) -> bool:
+    """Heuristic check whether the active accelerator can JIT kernels with `dtype`."""
     try:
         import jax  # type: ignore
         import jax.numpy as jnp  # type: ignore
@@ -339,15 +311,25 @@ def _device_supports_dtype(device: Device, dtype_name: str) -> bool:
             exc,
         )
         return False
-    if device.platform != "gpu":
+    try:
+        devs = jax.devices("gpu")
+    except Exception as exc:
+        LOG.debug(
+            "Could not list GPU devices while probing %s support; using fp32 fallback: %s",
+            dtype_name,
+            exc,
+        )
+        return False
+    if not devs:
+        return False
+    if devs[0].platform != "gpu":
         return False
     try:
         # Simple kernel to trigger compilation in the requested dtype.
         fn = jax.jit(lambda x: x + x)
         dtype = getattr(jnp, dtype_name)
-        with jax.default_device(device):
-            arr = jnp.ones((1,), dtype=dtype)
-            fn(arr).block_until_ready()
+        arr = jnp.ones((1,), dtype=dtype)
+        fn(arr).block_until_ready()
         return True
     except Exception as exc:
         LOG.debug(
@@ -359,28 +341,11 @@ def _device_supports_dtype(device: Device, dtype_name: str) -> bool:
 
 
 @cache
-def _gpu_compute_capability(device: Device) -> tuple[int, int] | None:
-    """Return this CUDA device's capability, if it can be identified safely."""
+def _gpu_compute_capability() -> tuple[int, int] | None:
+    """Return (major, minor) compute capability for the first CUDA device, if available."""
     try:
-        capability = getattr(device, "compute_capability", None)
-        if capability is not None:
-            parts = str(capability).strip("()").replace(" ", "").replace(",", ".").split(".")
-            if len(parts) >= 2:
-                return int(parts[0]), int(parts[1])
-        # CUDA's logical device IDs follow CUDA_VISIBLE_DEVICES, whereas
-        # nvidia-smi uses physical IDs (or UUIDs). Never substitute GPU0.
-        index = getattr(device, "local_hardware_id", None)
-        if index is None:
-            return None
-        visible = os.environ.get("CUDA_VISIBLE_DEVICES")
-        identifier = visible.split(",")[index].strip() if visible is not None else str(index)
         output = check_output_resolved_command(  # nosec B603,B607
-            [
-                "nvidia-smi",
-                f"--id={identifier}",
-                "--query-gpu=compute_cap",
-                "--format=csv,noheader",
-            ],
+            ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"],
             stderr=-3,
             text=True,
         )
@@ -394,11 +359,15 @@ def _gpu_compute_capability(device: Device) -> tuple[int, int] | None:
     return None
 
 
-def _current_device() -> Device | None:
-    """Resolve explicit device/platform placement without probing other backends."""
-    import jax  # type: ignore
+def _current_backend() -> str | None:
+    """Best-effort helper to query the active JAX backend name."""
+    try:
+        import jax  # type: ignore
 
-    device = jax.config.jax_default_device
-    if device is None or isinstance(device, str):
-        device = next(iter(jax.devices(device or jax.default_backend())), None)
-    return device
+        backend = getattr(jax, "default_backend", lambda: None)()
+        if backend:
+            return backend
+        return os.environ.get("JAX_PLATFORM_NAME")
+    except Exception as exc:
+        LOG.debug("JAX backend probe failed; using fp32 gather default: %s", exc)
+        return None
