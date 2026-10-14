@@ -10,7 +10,7 @@ import pytest
 import tomojax as tj
 
 # check-public-imports: allow-private
-from tomojax.alignment._geometry import _vo_gpu, initializers as init
+from tomojax.alignment._geometry import initializers as init
 
 # check-public-imports: allow-private
 from tomojax.alignment._geometry.geometry_blocks import _theta_span_from_geometry
@@ -241,19 +241,6 @@ def test_sinogram_real_spectrum_metric_matches_the_full_spectrum(columns):
         spectrum = np.fft.fftshift(np.fft.fft2(np.vstack([sino, moved])))
         expected.append(np.mean(np.abs(spectrum) * mask))
     np.testing.assert_allclose(init._vo_metrics(sino, offsets, 0.5, 3), expected, rtol=2e-6)
-    gpu_args = (sino, np.pad(offsets, (0, 8)), init._vo_folded_mask(*sino.shape, 0.5, 3))
-    actual = _vo_gpu._metrics(
-        *gpu_args[:3], np.fft.rfftfreq(columns).astype(np.float32), np.int32(len(offsets))
-    )
-    np.testing.assert_allclose(np.asarray(actual)[:5], expected, rtol=2e-5)
-
-
-@pytest.mark.gpu
-def test_gpu_metrics_are_used_on_a_gpu_and_match_the_cpu():
-    sino = np.random.default_rng(4).normal(size=(37, 64)).astype(np.float32)
-    offsets = np.array([-4, -1.75, 0, 0.25, 3.5])
-    actual = _vo_gpu.gpu_metrics(sino, offsets, init._vo_folded_mask(*sino.shape, 0.5, 3))
-    np.testing.assert_allclose(actual, init._vo_metrics(sino, offsets, 0.5, 3), rtol=2e-5)
 
 
 _COR_CONFIG = AlignConfig(

@@ -9,8 +9,6 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy import fft
 
-from ._vo_gpu import gpu_metrics
-
 if TYPE_CHECKING:
     import jax.numpy as jnp
 
@@ -318,8 +316,6 @@ def sinogram_det_u_seed(
     # Select them together so a device input needs just one gather and copy.
     data = np.asarray(projections[:, picks, :])
     offsets = []
-    # Small searches stay on the CPU; compiling for the GPU only pays on large rows.
-    large = len(picks) * len(half_turn) * nu >= 3 * 2**20
     for row in range(len(picks)):
         sino = np.asarray(data[half_turn, row, :], np.float32)
         if not np.isfinite(sino).all() or np.ptp(sino) <= 0:
@@ -345,11 +341,7 @@ def sinogram_det_u_seed(
         # Fine: whole pixels around it, then quarter pixels.
         for spread, step in ((6.0, 1.0), (1.0, 0.25)):
             near = best + np.arange(-spread, spread + step / 2, step)
-            metrics = None
-            if large:
-                metrics = gpu_metrics(sino, near, _vo_folded_mask(*sino.shape, ratio, drop))
-            if metrics is None:
-                metrics = _vo_metrics(sino, near, ratio, drop)
+            metrics = _vo_metrics(sino, near, ratio, drop)
             best = float(near[int(np.argmin(metrics))])
         offsets.append(best)
     if not offsets:
