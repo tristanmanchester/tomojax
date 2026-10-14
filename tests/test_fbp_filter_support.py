@@ -130,7 +130,8 @@ def test_support_sizing_preserves_existing_view_batch_bound(monkeypatch, separab
         cuda=True,
     )
     original_length = implementation._fft_length(plan.detector.nu)
-    rows = nv * (1 if separable else implementation._fft_length(nv))
+    # Row-wise FFTs keep nv rows; a 2D FFT replaces them with its padded length.
+    rows = plan.detector.nv if separable else implementation._fft_length(plan.detector.nv)
     expected_batch = implementation._parallel_filter_batch_size(views, rows, original_length)
     assert plan.batch == expected_batch
     actual_length = 2 * (plan.spectrum.size - 1)

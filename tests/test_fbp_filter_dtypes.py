@@ -25,15 +25,17 @@ def test_fbp_filter_preserves_requested_coefficient_precision(filter_name, repre
     nu, du, n_fft = 31, 0.7, 64
     offsets = np.minimum(np.arange(n_fft), n_fft - np.arange(n_fft))
     impulse = np.zeros(n_fft)
-    impulse[0] = 0.25 / du
-    odd = offsets % 2 != 0
-    impulse[odd] = -1 / (np.pi**2 * offsets[odd] ** 2 * du)
+    if filter_name == "shepp-logan":
+        # The exact Nyquist-bandlimited Shepp-Logan impulse.
+        impulse[:] = 2 / (np.pi**2 * (1 - 4 * offsets.astype(float) ** 2) * du)
+    else:
+        impulse[0] = 0.25 / du
+        odd = offsets % 2 != 0
+        impulse[odd] = -1 / (np.pi**2 * offsets[odd] ** 2 * du)
     spectrum = np.fft.fft(impulse).real[: n_fft // 2 + 1]
     frequency = 2 * np.arange(n_fft // 2 + 1) / n_fft
     if filter_name == "hann":
         spectrum *= (1 + np.cos(np.pi * frequency)) / 2
-    elif filter_name == "shepp-logan":
-        spectrum *= np.sinc(frequency / 2)
     with jax.enable_x64():
         actual = np.asarray(rfft_filter_array(filter_name, nu, du, dtype))
     assert actual.dtype == np.dtype(name)
