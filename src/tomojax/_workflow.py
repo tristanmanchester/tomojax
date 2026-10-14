@@ -278,26 +278,13 @@ def reconstruct(
 def estimate_center(scan: Scan) -> Scan:
     """Estimate a parallel scan's rotation centre without reconstructing a volume.
 
-    Returns the scan with an absolute physical detector-u centre, available as
-    ``result.detector.center[0]``. Projections, detector-v, reconstruction grid,
-    source and correction records are unchanged; no pixels are shifted. This
-    is not a detector column index or an increment from the supplied centre.
-    Use ``reconstruct(result)`` to reconstruct with this estimate.
-    To transfer a cropped/binned preview estimate to its original scan, add
-    ``result.detector.center[0] - preview.detector.center[0]`` to the original
-    detector-u centre: cropping or discarded bins can move the preview midpoint.
-
-    Takes corrected line integrals from an unposed axial ParallelGeometry,
-    with at least 16 views spanning 175 degrees within a half-turn. Vo's Fourier
-    estimator samples up to three detector rows, averages repeated angles and
-    linearly resamples irregular angular steps. Other geometries, shorter arcs
-    or featureless sampled rows raise ValueError rather than switching methods.
-
-    This is an estimate, not a guarantee of the true axis. Compare representative
-    reconstructions and detector rows, especially with motion, truncation or
-    uncorrected distortion. Very compact objects can produce false Fourier
-    minima even with clean data. Unlike ``align(..., mode="cor")``, this operation
-    does not perform iterative geometric refinement or return a volume.
+    Returns the scan with its absolute physical detector-u centre set, available as
+    ``result.detector.center[0]``; no pixels are shifted. For a cropped or binned
+    preview, add ``result.detector.center[0] - preview.detector.center[0]`` to the
+    full scan's centre rather than copying the preview's. Needs corrected line
+    integrals of an unposed axial :class:`ParallelGeometry` over a half turn (at least
+    16 views spanning 175 degrees); anything else raises ``ValueError``. The estimate
+    can be wrong for very compact objects, so check the reconstruction.
     """
     from tomojax.alignment.api import estimate_center as estimate_geometry_center
 

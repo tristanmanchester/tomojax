@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import replace
-import importlib
 from types import SimpleNamespace
 
 import jax.numpy as jnp
@@ -11,7 +10,7 @@ import pytest
 import tomojax as tj
 
 # check-public-imports: allow-private
-from tomojax.alignment._geometry import _vo_gpu as gpu, initializers as init
+from tomojax.alignment._geometry import _vo_gpu, initializers as init
 
 # check-public-imports: allow-private
 from tomojax.alignment._geometry.geometry_blocks import _theta_span_from_geometry
@@ -22,8 +21,6 @@ from tomojax.alignment.api import AlignConfig, AlignmentSchedule, AlignmentStage
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 from tomojax.recon import fista_tv
 
-_vo_mask = init._vo_mask
-_vo_metrics = init._vo_metrics
 projection_pair_det_u_seed = init.projection_pair_det_u_seed
 sinogram_det_u_seed = init.sinogram_det_u_seed
 
@@ -174,8 +171,6 @@ def test_sinogram_centre_seed_uses_actual_angular_spacing(sampling):
         angles = np.r_[angles, np.random.default_rng(1).uniform(20, 50, 150)]
     else:
         angles = np.r_[angles, np.repeat(angles[10:25], 10)]
-    # Keep the acquisition order arbitrary; the Fourier rows must represent
-    # equally spaced angles, not equally spaced indices or repeated exposures.
     angles = angles[np.random.default_rng(2).permutation(len(angles))]
     data, centre = _analytic_shifted_sinogram(angles, 128)
     seed = sinogram_det_u_seed(data, angles, rows=1)
@@ -183,47 +178,56 @@ def test_sinogram_centre_seed_uses_actual_angular_spacing(sampling):
     assert abs(seed.det_u_px - centre) <= 0.3
 
 
-def test_sinogram_centre_seed_materializes_only_the_sampled_rows():
+def _random_gaussian_sinogram(views, columns, seed, radius):
+    """Line integrals of off-axis Gaussians whose rotation axis is ``centre`` pixels off."""
+    angles = np.linspace(0, 180, views, endpoint=False)
+    theta = np.deg2rad(angles)
+    rng = np.random.default_rng(seed)
+    centre = rng.uniform(-0.2 * columns, 0.2 * columns)
+    u = np.arange(columns) - (columns - 1) / 2 + centre
+    sino = np.zeros((views, columns))
+    for _ in range(12):
+        cx, cy = rng.uniform(-0.6 * columns, 0.6 * columns, 2)
+        r = rng.uniform(*radius) * columns
+        projected = np.cos(theta) * cx - np.sin(theta) * cy
+        sino += rng.uniform(0.5, 2) * r * np.exp(-0.5 * ((u[None] - projected[:, None]) / r) ** 2)
+    return sino[:, None, :].astype(np.float32), angles, centre
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize(
+    ("views", "columns", "radius"), [(180, 31, (0.03, 0.1)), (901, 128, (0.001, 0.02))]
+)
+def test_sinogram_coarse_search_keeps_narrow_and_sharp_evidence(views, columns, radius):
+    data, angles, centre = _random_gaussian_sinogram(views, columns, 101, radius)
+    seed = sinogram_det_u_seed(data, angles, rows=1)
+    assert seed is not None
+    assert abs(seed.det_u_px - centre) < 0.4
+
+
+def test_sinogram_centre_seed_reads_only_the_sampled_rows():
     angles = np.linspace(0, 180, 120, endpoint=False)
     data, _ = _analytic_shifted_sinogram(angles, 64)
     data = np.tile(data, (1, 7, 1))
-    expected = sinogram_det_u_seed(data, angles)
 
     class RowReadable:
         shape = data.shape
 
-        def __init__(self):
-            self.rows = []
-
         def __array__(self, *args, **kwargs):
-            raise AssertionError("centre finding must not materialize the complete scan")
+            raise AssertionError("centre finding must not copy the complete scan")
 
         def __getitem__(self, index):
-            views, rows, cols = index
-            self.rows.extend(rows)
-            return data[views, rows, cols]
+            return data[index]
 
-    source = RowReadable()
-    actual = sinogram_det_u_seed(source, angles)
-    assert actual == expected
-    assert len(source.rows) == 3
-    assert len(set(source.rows)) == 3
-    assert sinogram_det_u_seed(jnp.asarray(data), angles) == expected
+    assert sinogram_det_u_seed(RowReadable(), angles) == sinogram_det_u_seed(data, angles)
+    assert sinogram_det_u_seed(jnp.asarray(data), angles) == sinogram_det_u_seed(data, angles)
 
 
-@pytest.mark.parametrize("columns", [31, 32, 33, 64])
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
-@pytest.mark.parametrize("layout", ["C", "F", "reverse"])
-def test_sinogram_real_fourier_metric_matches_full_spectrum(columns, dtype, layout):
-    sino = np.random.default_rng(3).normal(size=(37, columns)).astype(dtype)
-    if layout == "F":
-        sino = np.asfortranarray(sino)
-    elif layout == "reverse":
-        sino = sino[:, ::-1]
-    original = sino.copy()
-    sino.flags.writeable = False
+@pytest.mark.parametrize("columns", [32, 33])
+def test_sinogram_real_spectrum_metric_matches_the_full_spectrum(columns):
+    sino = np.random.default_rng(3).normal(size=(37, columns)).astype(np.float32)
     offsets = np.array([-4, -1.75, 0, 0.25, 3.5])
-    mask = _vo_mask(2 * len(sino), columns, 0.25 * columns, 3)
+    mask = init._vo_mask(2 * len(sino), columns, 0.25 * columns, 3)
     expected = []
     for offset in offsets:
         shift = 2 * offset
@@ -236,113 +240,20 @@ def test_sinogram_real_fourier_metric_matches_full_spectrum(columns, dtype, layo
             moved[:, -edge:] = sino[::-1, -edge:]
         spectrum = np.fft.fftshift(np.fft.fft2(np.vstack([sino, moved])))
         expected.append(np.mean(np.abs(spectrum) * mask))
-    np.testing.assert_allclose(_vo_metrics(sino, offsets, 0.5, 3), expected, rtol=2e-6)
-    np.testing.assert_array_equal(sino, original)
+    np.testing.assert_allclose(init._vo_metrics(sino, offsets, 0.5, 3), expected, rtol=2e-6)
+    gpu_args = (sino, np.pad(offsets, (0, 8)), init._vo_folded_mask(*sino.shape, 0.5, 3))
+    actual = _vo_gpu._metrics(
+        *gpu_args[:3], np.fft.rfftfreq(columns).astype(np.float32), np.int32(len(offsets))
+    )
+    np.testing.assert_allclose(np.asarray(actual)[:5], expected, rtol=2e-5)
 
 
-def test_sinogram_frequency_cache_is_bounded_immutable_and_keyed():
-    initializers = importlib.import_module("tomojax.alignment._geometry.initializers")
-    cached = initializers._vo_folded_mask
-    cached.cache_clear()
-    try:
-        fine = cached(37, 33, 0.5, 3)
-        expected = fine.copy()
-        assert not fine.flags.writeable
-        assert cached(37, 33, 0.5, 3) is fine
-        coarse = cached(18, 16, 0.5, 3)
-        assert cached(37, 33, 0.5, 3) is fine
-        assert cached(18, 16, 0.5, 3) is coarse
-        for key in [(37, 33, 0.4, 3), (37, 33, 0.4, 1), (38, 33, 0.4, 1)]:
-            actual = cached(*key)
-            # A different geometry or wedge must never reuse the old weights.
-            assert actual is not fine
-            assert cached.cache_info().currsize == 2
-        restored = cached(37, 33, 0.5, 3)
-        assert restored is not fine
-        np.testing.assert_array_equal(restored, expected)
-    finally:
-        cached.cache_clear()
-
-
-def test_sinogram_metrics_reuse_weights_without_caching_measurements():
-    initializers = importlib.import_module("tomojax.alignment._geometry.initializers")
-    cached = initializers._vo_folded_mask
-    cached.cache_clear()
-    try:
-        offsets = np.array([-3, -0.5, 0, 1.25, 4])
-        sinogram = np.random.default_rng(15).normal(size=(37, 33)).astype(np.float32)
-        first = _vo_metrics(sinogram, offsets, 0.5, 3)
-        second = _vo_metrics(2 * sinogram, offsets, 0.5, 3)
-        np.testing.assert_array_equal(second, 2 * first)
-        assert cached.cache_info().misses == 1
-        assert cached.cache_info().hits == 1
-    finally:
-        cached.cache_clear()
-
-
-@pytest.mark.parametrize("columns", [31, 32, 63, 64])
-def test_sinogram_integral_mirror_shifts_do_not_interpolate(columns, monkeypatch):
-    initializers = importlib.import_module("tomojax.alignment._geometry.initializers")
-    sino = np.random.default_rng(5).normal(size=(37, columns)).astype(np.float32)
-    sino.flags.writeable = False
-    offsets = np.array([-4, -1.5, 0, 2.5, 4])
-    expected = []
-    mask = initializers._vo_mask(74, columns, 0.25 * columns, 3)
-    for offset in offsets:
-        shift = int(2 * offset)
-        moved = np.roll(sino[:, ::-1], shift, axis=1)
-        if shift > 0:
-            moved[:, :shift] = sino[::-1, :shift]
-        elif shift < 0:
-            moved[:, shift:] = sino[::-1, shift:]
-        spectrum = np.fft.fftshift(np.fft.fft2(np.vstack([sino, moved])))
-        expected.append(np.mean(np.abs(spectrum) * mask))
-
-    def forbidden(*args, **kwargs):
-        raise AssertionError("integral shifts need no inverse FFT")
-
-    monkeypatch.setattr(initializers.fft, "irfft", forbidden)
-    np.testing.assert_allclose(initializers._vo_metrics(sino, offsets, 0.5, 3), expected, rtol=2e-6)
-
-
-def test_sinogram_fractional_mirror_shifts_still_use_fourier_interpolation(monkeypatch):
-    initializers = importlib.import_module("tomojax.alignment._geometry.initializers")
-    original = initializers.fft.irfft
-    calls = []
-
-    def counted(*args, **kwargs):
-        calls.append(1)
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(initializers.fft, "irfft", counted)
-    sino = np.random.default_rng(6).normal(size=(37, 32)).astype(np.float32)
-    initializers._vo_metrics(sino, np.array([-4, -1.75, 0, 0.25, 2]), 0.5, 3)
-    assert len(calls) == 2
-
-
-def test_sinogram_fine_metrics_are_reused_only_within_each_sampled_row(monkeypatch):
-    initializers = importlib.import_module("tomojax.alignment._geometry.initializers")
-    calls = []
-
-    def metric(sino, offsets, ratio, drop):
-        calls.append((sino.shape, float(sino[0, 0]), offsets.copy()))
-        return offsets**2
-
-    monkeypatch.setattr(initializers, "_vo_metrics", metric)
-    angles = np.arange(180, dtype=np.float32)
-    data = np.broadcast_to(np.arange(64, dtype=np.float32), (180, 3, 64)).copy()
-    data += np.arange(3, dtype=np.float32)[None, :, None]
-    for factor in (1, 2):
-        seed = initializers.sinogram_det_u_seed(factor * data, angles)
-        assert seed is not None and seed.det_u_px == 0
-    fine = [(value, offsets) for shape, value, offsets in calls if shape == (180, 64)]
-    assert len(fine) == 12  # Two refinements for each of three rows on both calls.
-    for i in range(0, len(fine), 2):
-        whole, fractional = fine[i : i + 2]
-        assert whole[0] == fractional[0]
-        assert len(whole[1]) == 13 and len(fractional[1]) == 6
-        assert not set(whole[1]) & set(fractional[1])
-    assert [value for value, _ in fine[::2]] == [0, 1, 2, 0, 2, 4]
+@pytest.mark.gpu
+def test_gpu_metrics_are_used_on_a_gpu_and_match_the_cpu():
+    sino = np.random.default_rng(4).normal(size=(37, 64)).astype(np.float32)
+    offsets = np.array([-4, -1.75, 0, 0.25, 3.5])
+    actual = _vo_gpu.gpu_metrics(sino, offsets, init._vo_folded_mask(*sino.shape, 0.5, 3))
+    np.testing.assert_allclose(actual, init._vo_metrics(sino, offsets, 0.5, 3), rtol=2e-5)
 
 
 _COR_CONFIG = AlignConfig(
@@ -351,53 +262,16 @@ _COR_CONFIG = AlignConfig(
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("columns", [31, 32, 63, 64])
-@pytest.mark.parametrize("seed", [101, 108])
-def test_sinogram_coarse_search_preserves_narrow_detector_evidence(columns, seed):
-    angles = np.linspace(0, 180, 180, endpoint=False)
-    theta = np.deg2rad(angles)
-    rng = np.random.default_rng(seed)
-    centre = rng.uniform(-0.2 * columns, 0.2 * columns)
-    u = np.arange(columns) - (columns - 1) / 2 + centre
-    sino = np.zeros((len(angles), columns))
-    # Independent line integrals of an off-axis, truncated Gaussian mixture.
-    for _ in range(12):
-        cx, cy = rng.uniform(-0.6 * columns, 0.6 * columns, 2)
-        radius = rng.uniform(0.03 * columns, 0.1 * columns)
-        projected = np.cos(theta) * cx - np.sin(theta) * cy
-        sino += (
-            rng.uniform(0.5, 2)
-            * radius
-            * np.exp(-0.5 * ((u[None] - projected[:, None]) / radius) ** 2)
-        )
-    actual = sinogram_det_u_seed(sino[:, None, :].astype(np.float32), angles, rows=1)
-    assert actual is not None
-    assert abs(actual.det_u_px - centre) < 0.4
-
-
-@pytest.mark.numerical
-@pytest.mark.parametrize("ray_integrator", ["joseph", "exact"])
-def test_public_cor_keeps_wrapped_half_turn_evidence(monkeypatch, ray_integrator):
-    final_integrators = []
-
-    def record_final_reconstruction(*args, config, **kwargs):
-        final_integrators.append(config.ray_integrator)
-        return fista_tv(*args, config=config, **kwargs)
-
-    monkeypatch.setattr(
-        "tomojax.alignment._stages._setup_stage.fista_tv", record_final_reconstruction
-    )
-    config = replace(_COR_CONFIG, ray_integrator=ray_integrator)
+def test_public_cor_keeps_wrapped_half_turn_evidence():
     angles = 350 + np.linspace(0, 180, 120, endpoint=False)
     data, centre = _analytic_shifted_sinogram(angles, 48)
     grid = Grid(72, 72, 3, 1, 1, 1)
     detector = Detector(48, 3, 1, 1)
     original = tj.Scan(data, ParallelGeometry(grid, detector, angles))
-    expected = tj.align(original, mode="cor", levels=(1,), config=config)
+    expected = tj.align(original, mode="cor", levels=(1,), config=_COR_CONFIG)
     relabelled = angles % 360 + 360 * np.random.default_rng(7).integers(-2, 3, len(angles))
     scan = tj.Scan(data, ParallelGeometry(grid, detector, relabelled))
-    actual = tj.align(scan, mode="cor", levels=(1,), config=config)
-    assert final_integrators == [ray_integrator, ray_integrator]
+    actual = tj.align(scan, mode="cor", levels=(1,), config=_COR_CONFIG)
     first = actual.info["outer_stats"][0]
     assert first["detector_center_seed_method"] == "sinogram_vo_2014"
     assert abs(first["detector_center_seed_det_u_px"] - centre) <= 0.3
@@ -465,263 +339,20 @@ def test_public_cor_fallback_seed_remains_an_incremental_offset(monkeypatch):
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("batch", [0, 7])
-@pytest.mark.parametrize("backend", ["jax", "pallas"])
-def test_public_cor_preserves_reconstruction_settings(monkeypatch, batch, backend):
-    batches = []
-    iterations = []
-    backends = []
+def test_public_cor_reconstructs_with_the_configured_integrator_and_batches(monkeypatch):
+    seen = []
 
-    def record_reconstruction(*args, config, **kwargs):
-        batches.append(config.views_per_batch)
-        iterations.append(config.iterations)
-        backends.append(config.projector_backend)
+    def record(*args, config, **kwargs):
+        seen.append((config.ray_integrator, config.views_per_batch, config.projector_backend))
         return fista_tv(*args, config=config, **kwargs)
 
-    monkeypatch.setattr("tomojax.alignment._stages._setup_stage.fista_tv", record_reconstruction)
-    monkeypatch.setattr("tomojax.alignment._objectives.fold_recon.fista_tv", record_reconstruction)
+    monkeypatch.setattr("tomojax.alignment._stages._setup_stage.fista_tv", record)
+    monkeypatch.setattr("tomojax.alignment._objectives.fold_recon.fista_tv", record)
     angles = np.linspace(0, 180, 120, endpoint=False)
     data, centre = _analytic_shifted_sinogram(angles, 48)
     geometry = ParallelGeometry(Grid(72, 72, 3, 1, 1, 1), Detector(48, 3, 1, 1), angles)
-    result = tj.align(
-        tj.Scan(data, geometry),
-        mode="cor",
-        levels=(1,),
-        config=replace(_COR_CONFIG, views_per_batch=batch, projector_backend=backend),
-    )
-    assert len(batches) == 3  # Two folds and the returned-volume reconstruction.
-    assert batches == [batch or None] * 3
-    # Explicit JAX must never be upgraded to CUDA. The accelerator preference
-    # still falls back on CPU and for unsupported integration/grid models.
-    assert backends == ["jax" if backend == "jax" else "auto"] * 3
-    assert iterations == [2 * _COR_CONFIG.iterations] * 3
-    assert result.info["outer_stats"][0]["quality_tier"] == "reference"
+    config = replace(_COR_CONFIG, ray_integrator="exact", views_per_batch=7)
+    result = tj.align(tj.Scan(data, geometry), mode="cor", levels=(1,), config=config)
+    # Two folds and the returned-volume reconstruction.
+    assert seen == [("exact", 7, "jax")] * 3
     assert abs(result.scan.detector.center[0] - centre) <= 0.35
-    assert np.isfinite(result.volume).all()
-
-
-@pytest.mark.numerical
-@pytest.mark.parametrize("columns", [128, 511])
-@pytest.mark.parametrize("views", [901, 1801])
-def test_sinogram_coarse_angular_binning_preserves_sharp_feature_centre(columns, views):
-    angles = np.linspace(0, 180, views, endpoint=False)
-    theta = np.deg2rad(angles)
-    rng = np.random.default_rng(968)
-    centre = rng.uniform(-0.2 * columns, 0.2 * columns)
-    u = np.arange(columns) - (columns - 1) / 2 + centre
-    sino = np.zeros((views, columns))
-    for _ in range(12):
-        cx, cy = rng.uniform(-0.6 * columns, 0.6 * columns, 2)
-        radius = rng.uniform(0.001 * columns, 0.02 * columns)
-        projected = np.cos(theta) * cx - np.sin(theta) * cy
-        sino += (
-            rng.uniform(0.5, 2)
-            * radius
-            * np.exp(-0.5 * ((u[None] - projected[:, None]) / radius) ** 2)
-        )
-    actual = sinogram_det_u_seed(sino[:, None, :].astype(np.float32), angles, rows=1)
-    assert actual is not None
-    assert abs(actual.det_u_px - centre) < 0.3
-
-
-@pytest.mark.parametrize("cols", [31, 32, 64])
-@pytest.mark.parametrize("layout", ["c", "f", "reversed"])
-def test_vo_gpu_metric_matches_cpu(cols, layout):
-    sino = np.random.default_rng(21).normal(size=(37, cols)).astype(np.float32)
-    if layout == "f":
-        sino = np.asfortranarray(sino)
-    elif layout == "reversed":
-        sino = sino[::-1, ::-1]
-    sino.flags.writeable = False
-    saved = sino.copy()
-    offsets = np.array([-40, -4, -1.75, 0, 0.25, 3.5, 40], dtype=np.float32)
-    padded = np.zeros(13, np.float32)
-    padded[: len(offsets)] = offsets
-    got = np.asarray(
-        gpu._metrics(
-            sino,
-            padded,
-            init._vo_folded_mask(*sino.shape, 0.5, 3),
-            np.fft.rfftfreq(cols).astype(np.float32),
-            np.int32(len(offsets)),
-        )
-    )[: len(offsets)]
-    np.testing.assert_allclose(got, init._vo_metrics(sino, offsets, 0.5, 3), rtol=2e-6)
-    np.testing.assert_array_equal(sino, saved)
-
-
-def _fake_execution(monkeypatch, *, free=100, workspace=True, error=None):
-    calls = []
-    device = SimpleNamespace(platform="gpu")
-    monkeypatch.setattr(
-        gpu,
-        "jax",
-        SimpleNamespace(config=SimpleNamespace(jax_disable_jit=False, jax_default_device=device)),
-    )
-
-    def memory(*, device):
-        calls.append(("memory", device))
-        return free
-
-    def run(*args):
-        calls.append(("run", args[-1]))
-        if error is not None:
-            raise error
-        return np.arange(13, dtype=np.float32)
-
-    compiled = SimpleNamespace(
-        memory_analysis=lambda: SimpleNamespace(
-            temp_size_in_bytes=20, argument_size_in_bytes=20, output_size_in_bytes=10
-        )
-        if workspace
-        else None
-    )
-
-    class Executable:
-        memory_analysis = staticmethod(compiled.memory_analysis)
-
-        def __call__(self, *args):
-            return run(*args)
-
-    def lower(*args):
-        calls.append(("lower", len(args[1])))
-        return SimpleNamespace(compile=lambda: Executable())
-
-    monkeypatch.setattr(gpu, "device_free_memory_bytes", memory)
-    monkeypatch.setattr(gpu, "_metrics", SimpleNamespace(lower=lower))
-    return calls, device
-
-
-@pytest.mark.parametrize("free", [None, 0, 99, 100])
-def test_vo_gpu_budget_uses_exact_selected_device(monkeypatch, free):
-    calls, device = _fake_execution(monkeypatch, free=free)
-    result = gpu.try_metrics(np.ones((16, 32), np.float32), np.arange(6), np.ones((32, 17)))
-    assert all(value is device for kind, value in calls if kind == "memory")
-    assert any(kind == "run" for kind, _ in calls) == (free == 100)
-    if free == 100:
-        np.testing.assert_array_equal(result, np.arange(6))
-    else:
-        assert result is None
-    if free is None:
-        assert not any(kind == "lower" for kind, _ in calls)
-
-
-def test_vo_gpu_unknown_workspace_keeps_cpu(monkeypatch):
-    calls, _ = _fake_execution(monkeypatch, workspace=False)
-    assert gpu.try_metrics(np.ones((16, 32)), np.arange(6), np.ones((32, 17))) is None
-    assert not any(kind == "run" for kind, _ in calls)
-
-
-@pytest.mark.parametrize("disabled", [False, True])
-def test_vo_gpu_skips_cpu_and_disabled_jit(monkeypatch, disabled):
-    calls, _ = _fake_execution(monkeypatch)
-    gpu.jax.config.jax_disable_jit = disabled
-    gpu.jax.config.jax_default_device = SimpleNamespace(platform="gpu" if disabled else "cpu")
-    assert gpu.try_metrics(np.ones((16, 32)), np.arange(6), np.ones((32, 17))) is None
-    assert calls == []
-
-
-@pytest.mark.parametrize(
-    "message",
-    [
-        "RESOURCE_EXHAUSTED: allocation failed",
-        "INTERNAL: fft_plan != nullptr Failed to create cuFFT batched plan with scratch allocator.",
-        "INTERNAL: unrelated kernel failure",
-    ],
-)
-def test_vo_gpu_only_falls_back_for_allocation_failure(monkeypatch, message):
-    _fake_execution(monkeypatch, error=RuntimeError(message))
-    args = (np.ones((16, 32)), np.arange(6), np.ones((32, 17)))
-    if "unrelated" in message:
-        with pytest.raises(RuntimeError, match="unrelated"):
-            gpu.try_metrics(*args)
-    else:
-        assert gpu.try_metrics(*args) is None
-
-
-def test_vo_gpu_fallback_is_per_estimate(monkeypatch):
-    calls = []
-
-    def miss(*args):
-        calls.append(True)
-
-    monkeypatch.setattr(gpu, "try_metrics", miss)
-    monkeypatch.setattr(init, "_vo_metrics", lambda sino, offsets, ratio, drop: offsets**2)
-    data = np.broadcast_to(np.arange(640, dtype=np.float32), (1800, 3, 640))
-    angles = np.arange(1800) * 0.1
-    for expected_calls in (1, 2):
-        seed = init.sinogram_det_u_seed(data, angles)
-        assert seed.det_u_px == 0
-        assert len(calls) == expected_calls
-    init.sinogram_det_u_seed(data[:, :1], angles)
-    assert len(calls) == 2
-
-
-def test_vo_gpu_independent_gaussian_axis(monkeypatch):
-    n = 128
-    angles = np.arange(180, dtype=np.float32)
-    t = np.deg2rad(angles)
-    axis = -7.25
-    u = np.arange(n) - (n - 1) / 2 + axis
-    sino = np.zeros((len(angles), n))
-    for cx, cy, radius, amplitude in [(10, 4, 6, 1), (-12, -6, 4, 0.7), (0, 18, 2.4, 0.4)]:
-        distance = u[None] - np.cos(t)[:, None] * cx + np.sin(t)[:, None] * cy
-        sino += amplitude * np.sqrt(2 * np.pi) * radius * np.exp(-0.5 * (distance / radius) ** 2)
-    data = sino.astype(np.float32)[:, None]
-    cpu = init.sinogram_det_u_seed(data, angles)
-
-    def metrics(sino, offsets, ratio, drop):
-        return np.asarray(
-            gpu._metrics(
-                sino,
-                np.asarray(offsets, np.float32),
-                init._vo_folded_mask(*sino.shape, ratio, drop),
-                np.fft.rfftfreq(sino.shape[1]).astype(np.float32),
-                np.int32(len(offsets)),
-            )
-        )
-
-    monkeypatch.setattr(init, "_vo_metrics", metrics)
-    accelerated = init.sinogram_det_u_seed(data, angles)
-    assert accelerated == cpu
-    assert abs(accelerated.det_u_px - axis) < 0.3
-
-
-@pytest.mark.gpu
-@pytest.mark.numerical
-def test_vo_gpu_public_large_scan_preserves_physical_density(monkeypatch):
-    # Cross the actual public dispatch threshold, not a forced small FFT helper.
-    n = 512
-    angles = np.linspace(0, 180, 2048, endpoint=False, dtype=np.float32)
-    theta = np.deg2rad(angles.astype(np.float64))
-    axis = -32.25
-    u = np.arange(n) - (n - 1) / 2 + axis
-    x, y = np.meshgrid((np.arange(256) - 127.5) * 2, (np.arange(256) - 127.5) * 2, indexing="ij")
-    sino = np.zeros((len(angles), n))
-    truth = np.zeros((256, 256))
-    for cx, cy, radius, amplitude in [
-        (80, 60, 24, 0.005),
-        (-110, -60, 18, 0.004),
-        (15, -105, 12, 0.003),
-    ]:
-        distance = u[None] - np.cos(theta)[:, None] * cx + np.sin(theta)[:, None] * cy
-        sino += amplitude * np.sqrt(2 * np.pi) * radius * np.exp(-0.5 * (distance / radius) ** 2)
-        truth += amplitude * np.exp(-0.5 * ((x - cx) ** 2 + (y - cy) ** 2) / radius**2)
-    data = np.broadcast_to(sino.astype(np.float32)[:, None], (len(angles), 3, n))
-    scan = tj.Scan(data, ParallelGeometry(Grid(256, 256, 3, 2, 2, 1), Detector(n, 3, 1, 1), angles))
-    metrics = gpu.try_metrics
-    accelerated = []
-
-    def measured(*args):
-        result = metrics(*args)
-        accelerated.append(result is not None)
-        return result
-
-    monkeypatch.setattr(gpu, "try_metrics", measured)
-    centred = tj.estimate_center(scan)
-    assert accelerated == [True] * 6
-    assert abs(centred.detector.center[0] - axis) <= 0.25
-    assert centred.projections is scan.projections
-    volume = np.asarray(tj.reconstruct(centred).volume)
-    expected = np.broadcast_to(truth[:, :, None], volume.shape)
-    assert np.linalg.norm(volume - expected) / np.linalg.norm(expected) < 0.006

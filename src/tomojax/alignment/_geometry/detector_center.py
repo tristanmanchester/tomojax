@@ -27,11 +27,8 @@ if TYPE_CHECKING:
 def estimate_center(geometry: Geometry, projections: np.ndarray | jax.Array) -> ParallelGeometry:
     """Estimate an axial parallel detector's absolute physical u centre from line integrals.
 
-    Vo's half-turn Fourier estimator uses up to three detector rows. Wrapped
-    or reversed angles are ordered by direction, repeated angles averaged,
-    and irregular angular samples linearly resampled before the Fourier metric.
-    This estimates geometry only: it neither reconstructs nor refines a volume.
-    Non-axial, posed and partial-arc geometries are not supported.
+    Vo's half-turn Fourier estimator on up to three detector rows. Geometry only:
+    nothing is reconstructed. Non-axial, posed and partial-arc geometries raise.
     """
     if type(geometry) is not ParallelGeometry:
         raise ValueError("estimate_center requires an unposed axial ParallelGeometry")

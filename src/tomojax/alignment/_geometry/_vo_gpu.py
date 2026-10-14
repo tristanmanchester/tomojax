@@ -1,12 +1,10 @@
-"""Bounded GPU evaluation of the full-resolution Vo centre metric."""
+"""GPU evaluation of the full-resolution Vo centre metric."""
 
 from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
 import numpy as np
-
-from tomojax.backends.api import device_free_memory_bytes, is_oom_error
 
 
 @jax.jit
@@ -49,52 +47,12 @@ def _metrics(
     return jax.lax.fori_loop(0, count, body, jnp.zeros(offsets.shape, dtype=sino.dtype))
 
 
-def try_metrics(sino: np.ndarray, offsets: np.ndarray, folded: np.ndarray) -> np.ndarray | None:
-    """Return GPU metrics, or None when this search should retain CPU execution.
-
-    Unknown/tight allocator headroom skips execution. Compiled buffer sizes
-    exclude some cuFFT scratch, so reserve twice their total and retain a narrow
-    allocation-failure fallback. No measurements or failure state persist here.
-    """
-    if jax.config.jax_disable_jit:
+def gpu_metrics(sino: np.ndarray, offsets: np.ndarray, folded: np.ndarray) -> np.ndarray | None:
+    """The metric for up to thirteen offsets on the GPU, or None when not on a GPU."""
+    if jax.default_backend() != "gpu":
         return None
-    device = jax.config.jax_default_device
-    if device is None or isinstance(device, str):
-        device = next(iter(jax.devices(device or jax.default_backend())), None)
-    if device is None or device.platform != "gpu":
-        return None
-    free = device_free_memory_bytes(device=device)
-    if free is None:
-        return None
-    # The fine search has at most thirteen candidates. Its second pass reuses
-    # the same array shape, even when several candidates were already scored.
     padded = np.zeros(13, dtype=np.float32)
     padded[: len(offsets)] = offsets
-    args = (
-        sino,
-        padded,
-        folded,
-        np.fft.rfftfreq(sino.shape[1]).astype(np.float32),
-        np.int32(len(offsets)),
-    )
-    try:
-        compiled = _metrics.lower(*args).compile()
-        workspace = compiled.memory_analysis()
-        reserve = (
-            None
-            if workspace is None
-            else 2
-            * (
-                workspace.temp_size_in_bytes
-                + workspace.argument_size_in_bytes
-                + workspace.output_size_in_bytes
-            )
-        )
-        free = device_free_memory_bytes(device=device)
-        if reserve is None or free is None or free < reserve:
-            return None
-        return np.asarray(compiled(*args))[: len(offsets)]
-    except Exception as exc:
-        if not is_oom_error(exc):
-            raise
-        return None
+    freq = np.fft.rfftfreq(sino.shape[1]).astype(np.float32)
+    out = _metrics(sino, padded, folded, freq, np.int32(len(offsets)))
+    return np.asarray(out)[: len(offsets)]

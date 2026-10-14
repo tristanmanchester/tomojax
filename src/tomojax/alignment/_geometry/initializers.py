@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy import fft
 
+from ._vo_gpu import gpu_metrics
+
 if TYPE_CHECKING:
     import jax.numpy as jnp
 
@@ -316,9 +318,8 @@ def sinogram_det_u_seed(
     # Select them together so a device input needs just one gather and copy.
     data = np.asarray(projections[:, picks, :])
     offsets = []
-    # Amortize accelerator compilation over the sampled full-resolution rows.
-    # Small searches retain the CPU path, including one-row preview scans.
-    gpu_fine = len(picks) * len(half_turn) * nu >= 3 * 2**20
+    # Small searches stay on the CPU; compiling for the GPU only pays on large rows.
+    large = len(picks) * len(half_turn) * nu >= 3 * 2**20
     for row in range(len(picks)):
         sino = np.asarray(data[half_turn, row, :], np.float32)
         if not np.isfinite(sino).all() or np.ptp(sino) <= 0:
@@ -342,23 +343,14 @@ def sinogram_det_u_seed(
         # Dropping rightmost columns moves the coarse detector midpoint left.
         best -= (nu % binning) / 2
         # Fine: whole pixels around it, then quarter pixels.
-        fine_metrics: dict[float, float] = {}
         for spread, step in ((6.0, 1.0), (1.0, 0.25)):
             near = best + np.arange(-spread, spread + step / 2, step)
-            # Reuse overlapping candidates only for this full-resolution row.
-            missing = np.asarray([offset for offset in near if offset not in fine_metrics])
             metrics = None
-            if gpu_fine:
-                from ._vo_gpu import try_metrics
-
-                metrics = try_metrics(sino, missing, _vo_folded_mask(*sino.shape, ratio, drop))
-                # A capacity miss only disables acceleration for this estimate,
-                # not future calls or searches on another device.
-                gpu_fine = metrics is not None
+            if large:
+                metrics = gpu_metrics(sino, near, _vo_folded_mask(*sino.shape, ratio, drop))
             if metrics is None:
-                metrics = _vo_metrics(sino, missing, ratio, drop)
-            fine_metrics.update(zip(missing, metrics, strict=True))
-            best = float(near[int(np.argmin([fine_metrics[offset] for offset in near]))])
+                metrics = _vo_metrics(sino, near, ratio, drop)
+            best = float(near[int(np.argmin(metrics))])
         offsets.append(best)
     if not offsets:
         return None
@@ -394,21 +386,14 @@ def _vo_metrics(sino: np.ndarray, offsets: np.ndarray, ratio: float, drop: int) 
     # Shift the mirror by twice the offset (sub-pixel, along u, by Fourier
     # phase), with the far edge of the flipped sinogram where it wraps.
     freq = np.fft.rfftfreq(cols).astype(np.float32)
-    spectrum = None
+    spectrum = np.asarray(fft.rfft(mirror, axis=1, workers=-1))
     out = np.empty(len(offsets))
     both = np.empty((2 * views, cols), dtype=sino.dtype)
     both[:views] = sino
     for i, offset in enumerate(offsets):
         shift = 2.0 * float(offset)
-        if shift.is_integer():
-            # Integral translations need neither spectral interpolation nor its
-            # roundoff. Keep the same periodic shift and overwritten edge.
-            moved = np.roll(mirror, int(shift), axis=1)
-        else:
-            if spectrum is None:
-                spectrum = np.asarray(fft.rfft(mirror, axis=1, workers=-1))
-            phase = np.exp(-2j * np.pi * freq * np.float32(shift)).astype(np.complex64)
-            moved = np.asarray(fft.irfft(spectrum * phase, n=cols, axis=1, workers=-1))
+        phase = np.exp(-2j * np.pi * freq * np.float32(shift)).astype(np.complex64)
+        moved = np.asarray(fft.irfft(spectrum * phase, n=cols, axis=1, workers=-1))
         edge = int(np.ceil(abs(shift)))
         if edge:
             filler = sino[::-1]

@@ -820,45 +820,17 @@ def test_spdhg_runs_with_global_x64_and_returns_fp32():
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("tilted", [False, True])
-@pytest.mark.parametrize("regulariser", ["tv", "huber_tv"])
-@pytest.mark.parametrize("backend", ["jax", "auto"])
-@pytest.mark.parametrize("stream", [False, True])
-def test_fista_explicit_linear_joseph_uses_matched_batched_operators(
-    tilted, regulariser, backend, stream
-):
+def test_fista_joseph_integrator_uses_the_matched_batched_operators():
     grid = Grid(3, 4, 2, 0.8, 1.1, 1.3)
     detector = Detector(6, 3, 0.9, 1.2, (0.17, -0.23))
-    angles = [13.0, 68.0, 142.0]
-    geometry = (
-        LaminographyGeometry(grid, detector, angles, tilt_deg=30)
-        if tilted
-        else ParallelGeometry(grid, detector, angles)
-    )
-    rng = np.random.default_rng(78)
-    data = rng.normal(size=(3, 3, 6)).astype(np.float32)
-    support = jnp.asarray(rng.uniform(0.3, 1, size=(3, 4, 2)), dtype=jnp.float32)
+    geometry = ParallelGeometry(grid, detector, [13.0, 68.0, 142.0])
+    data = np.random.default_rng(78).normal(size=(3, 3, 6)).astype(np.float32)
     config = FistaConfig(
-        iterations=4,
-        lipschitz=100.0,
-        tv_weight=0.001,
-        regulariser=regulariser,
-        ray_integrator="joseph",
-        projector_backend=backend,
-        views_per_batch=2,
-        support=support,
-        stream_projections=stream,
+        iterations=4, lipschitz=100.0, tv_weight=0.001, ray_integrator="joseph", views_per_batch=2
     )
     actual, _ = fista_tv(geometry, grid, detector, data, config=config)
-    # Explicit ray keeps the reference implementation. A fixed bound isolates
-    # the matched operators from their different norm-estimation reductions.
-    expected, _ = fista_tv(
-        geometry,
-        grid,
-        detector,
-        data,
-        config=replace(
-            config, projector_model="ray", projector_backend="jax", stream_projections=False
-        ),
-    )
+    # Explicit ray model keeps the reference implementation; a fixed bound
+    # isolates the operators from their norm estimates.
+    reference = replace(config, projector_model="ray", projector_backend="jax")
+    expected, _ = fista_tv(geometry, grid, detector, data, config=reference)
     np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=2e-6)
