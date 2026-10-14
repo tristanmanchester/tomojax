@@ -72,15 +72,22 @@ class Scan:
             text += ", corrections: " + ", ".join(str(c) for c in self.corrections)
         return text + ")"
 
-    def corrected(self, *steps: Step, batch_views: int | None = None) -> Scan:
+    def corrected(
+        self, *steps: Step, batch_views: int | None = None, out: np.ndarray | None = None
+    ) -> Scan:
         """The scan with line-integral ``steps`` applied (see :mod:`tomojax.corrections`).
 
         Steps on counts or transmission need the frames: use :func:`load_frames`
         and :meth:`Frames.corrected`.
+        ``out`` supplies separate writable float32 NumPy/memmap storage with
+        the projections' shape. Device and lazy inputs are copied there in
+        bounded view batches, without materializing another whole host stack.
+        Rejected views compact into its leading views;
+        the returned scan shares that storage, owned and flushed by the caller.
         """
         from tomojax.corrections import correct_projections
 
-        done = correct_projections(self.projections, steps, batch_views=batch_views)
+        done = correct_projections(self.projections, steps, batch_views=batch_views, out=out)
         geometry = (
             self.geometry
             if len(done.kept) == self.projections.shape[0]

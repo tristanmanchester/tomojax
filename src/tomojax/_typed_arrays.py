@@ -26,6 +26,31 @@ class Device(Protocol):
     def platform(self) -> str: ...
 
 
+def commit_array[T](value: T) -> T:
+    """Keep a JAX array's existing placement when operating in another context.
+
+    Explicit commitment aliases the same pixels; NumPy and lazy inputs are
+    returned unchanged. It does not change the caller's default device.
+    """
+    if isinstance(value, jax.Array):
+        return cast("T", jax.device_put(value, value.sharding))
+    return value
+
+
+def mapped_storage(array: np.ndarray) -> np.memmap | None:
+    """Find mapped ownership through NumPy views and buffer-protocol views.
+
+    This only inspects the base chain, without reading pixels or changing the
+    mapping. Consumers decide whether two owners are allowed to share a file.
+    """
+    current: object = array
+    while isinstance(current, np.ndarray | memoryview):
+        if isinstance(current, np.memmap):
+            return current
+        current = current.obj if isinstance(current, memoryview) else current.base
+    return None
+
+
 def jax_float32_array(value: object) -> jax.Array:
     """Convert an array-like value to a JAX float32 array."""
     return cast("jax.Array", jnp.asarray(value, dtype=np.float32))

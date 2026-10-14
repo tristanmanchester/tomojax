@@ -585,13 +585,17 @@ def test_memmap_output_and_batch_size_independence(tmp_path, backend):
     np.testing.assert_array_equal(source, data)
 
 
-@pytest.mark.parametrize("mapped", [False, True])
+@pytest.mark.parametrize("mapped", [False, True, "source", "output", "both"])
 def test_overlapping_storage_rejected_before_writing(tmp_path, mapped):
     grid, detector = Grid(5, 4, 3, 1, 1, 1), Detector(3, 4, 1, 1)
     geometry = ParallelGeometry(grid, detector, np.arange(5) * 36)
     if mapped:
         data = np.memmap(tmp_path / "same.bin", mode="w+", dtype=np.float32, shape=(5, 4, 3))
         out = np.memmap(tmp_path / "same.bin", mode="r+", dtype=np.float32, shape=data.shape)
+        if mapped in {"source", "both"}:
+            data = np.frombuffer(memoryview(data), dtype=data.dtype).reshape(data.shape)
+        if mapped in {"output", "both"}:
+            out = np.frombuffer(memoryview(out), dtype=out.dtype).reshape(out.shape)
     else:
         data = np.ones((5, 4, 3), dtype=np.float32)
         out = data.view()

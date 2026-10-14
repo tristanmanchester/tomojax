@@ -8,7 +8,22 @@ them. `tomojax.Frames.corrected(*steps)` runs any steps on counts, then
 taken around it, then steps on transmission, the `-log`, and steps on line
 integrals. `tomojax.Scan.corrected(*steps)` runs line-integral steps on a scan
 that is already corrected. Views are corrected on the device a batch at a time.
+HDF5 sample and calibration frames stay lazy until correction, so
+`Frames.cropped` reads only that detector window for all three. Calibration
+means accumulate in FP64 in bounded host batches. `np.asarray(frames.flats)`
+or indexing the flat/dark stack reads it explicitly.
 Each step is recorded in `Scan.corrections` and saved with the scan.
+
+For scans whose corrected stack is too large for host RAM, `Frames.corrected`
+and `Scan.corrected` accept `out=`: a writable float32 NumPy array or memmap
+with the input shape, separate from all inputs (including calibrations).
+Corrections write into this caller-owned storage; view rejection compacts
+kept views into its beginning using bounded batches. The returned projections
+share it, and may have fewer views than the original buffer. The caller owns
+the file's lifetime and flushing; buffer contents are unspecified if a
+correction fails. When both an input and output are memory-mapped, they need
+separate named files: distinct mappings of an unnamed file cannot be checked
+portably for shared storage. See the quickstart for a memmap example.
 
 `tomojax preprocess` is a thin layer over these: its options build the same
 steps.
@@ -82,3 +97,5 @@ the workflow modules, which sit above it in the import layers
   against SciPy and NumPy references.
 - `tests/test_correction_batch_memory.py` covers automatic batch sizing for
   phase retrieval.
+- `tests/test_correction_output_storage.py` checks caller-owned array/memmap
+  storage, bounded view compaction, and input/output separation.

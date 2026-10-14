@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import Any
+import glob
+import os
+from pathlib import Path
+import re
+from typing import Any, cast
 
 import h5py
 import numpy as np
@@ -32,16 +36,31 @@ class Hdf5Frames:
     dtype: np.dtype
     first_row: int = 0  # the window of each frame read: rows and columns from these
     first_col: int = 0
+    chunk_views: int | None = None  # acquisition storage layout, not a caller cache setting
+    is_window: bool = False
+    _efficient_row_windows: bool = False  # safe to revisit each frame in successive row windows
 
     @classmethod
     def open(cls, path: str, dataset: str) -> Hdf5Frames:
         """Every frame of ``dataset`` in ``path``."""
+        path = str(Path(path).absolute())  # later reads must not depend on the process cwd
         with h5py.File(path, "r") as file:
             data = file[dataset]
             if not isinstance(data, h5py.Dataset) or data.ndim != 3:
                 raise ValueError(f"{path}:{dataset} is not a 3-D stack of frames")
             n, rows, cols = (int(s) for s in data.shape)
-            return cls(path, dataset, np.arange(n), rows, cols, np.dtype(data.dtype))
+            layout = cast(Any, data)  # h5py's typing omits acquisition layout metadata
+            chunks = layout.chunks
+            efficient = (
+                not layout.is_virtual
+                and layout.id.get_create_plist().get_nfilters() == 0
+                and (chunks is None or chunks[0] == 1)
+            )
+            return cls(
+                path, dataset, np.arange(n), rows, cols, np.dtype(data.dtype),
+                chunk_views=None if chunks is None else int(chunks[0]),
+                _efficient_row_windows=efficient,
+            )  # fmt: skip
 
     @property
     def shape(self) -> tuple[int, int, int]:
@@ -53,6 +72,13 @@ class Hdf5Frames:
 
     def __len__(self) -> int:
         return len(self.frames)
+
+    def _shares_file(self, path: Path) -> bool:
+        """Check physical containers/storage without reading acquisition pixels."""
+        if Path(self.path).samefile(path):
+            return True
+        with h5py.File(self.path, "r") as file:
+            return _dataset_shares_file(cast(Any, file[self.dataset]), path, set())
 
     def frames_at(self, which: np.ndarray | slice) -> Hdf5Frames:
         """The stack of these frames only (a boolean mask, indices or slice), unread."""
@@ -70,7 +96,14 @@ class Hdf5Frames:
             cols=c1 - c0,
             first_row=self.first_row + r0,
             first_col=self.first_col + c0,
+            is_window=self.is_window or (r0, r1, c0, c1) != (0, self.rows, 0, self.cols),
         )
+
+    def __array__(self, dtype: np.dtype | None = None, copy: bool | None = None) -> np.ndarray:
+        """Read this stack explicitly with ``np.asarray`` (always allocates host storage)."""
+        if copy is False:
+            raise ValueError("Hdf5Frames cannot be converted to an array without copying")
+        return np.asarray(self[:], dtype=dtype)
 
     def __getitem__(self, which: slice | int | np.ndarray) -> np.ndarray:
         if isinstance(which, int | np.integer):
@@ -80,7 +113,11 @@ class Hdf5Frames:
         indices = np.asarray(self.frames[which], np.int64)
         if indices.size and np.any(np.diff(indices) <= 0):
             raise ValueError("Hdf5Frames reads frames in increasing order only")
-        with h5py.File(self.path, "r") as file:
+        # Cropped reads never reuse single-view chunks. Caching an unfiltered
+        # chunk forces the whole frame to be read even for a tiny window. Keep
+        # the established bulk path, and multi-view reuse across sparse runs.
+        cache = {"rdcc_nbytes": 0} if self.is_window and self.chunk_views == 1 else {}
+        with h5py.File(self.path, "r", **cache) as file:
             data: Any = file[self.dataset]
             if indices.size == 0:
                 return np.empty((0, self.rows, self.cols), self.dtype)
@@ -91,6 +128,8 @@ class Hdf5Frames:
                 return np.asarray(data[first:last, r, c])
             # h5py fancy indexing is far slower than reading each run of frames.
             out = np.empty((indices.size, self.rows, self.cols), self.dtype)
+            if _read_regular(data, indices, out, r, c):
+                return out
             starts = np.concatenate(([0], np.flatnonzero(np.diff(indices) > 1) + 1))
             stops = np.concatenate((starts[1:], [indices.size]))
             for start, stop in zip(starts, stops, strict=True):
@@ -98,6 +137,163 @@ class Hdf5Frames:
                 destination = (slice(int(start), int(stop)), slice(None), slice(None))
                 data.read_direct(out, source_sel=source, dest_sel=destination)
             return out
+
+
+def _read_regular(
+    data: Any, indices: np.ndarray, out: np.ndarray, rows: slice, cols: slice
+) -> bool:
+    """Match regular file and memory strides, then compact a bounded workspace."""
+    stride = int(indices[1] - indices[0])
+    if not np.all(np.diff(indices) == stride):
+        return False
+    # A strided file selection into dense memory is expensive inside HDF5.
+    # Matching its memory stride avoids that cost without reading skipped views.
+    # Keep at most one extra workspace, no larger than the result or 16 MiB.
+    frame_bytes = out[0].nbytes
+    group = min(len(indices), min(16 * 2**20, out.nbytes) // (stride * frame_bytes))
+    if group < 2:
+        return False
+    padded = np.empty(((group - 1) * stride + 1, *out.shape[1:]), out.dtype)
+    for first in range(0, len(indices), group):
+        stop = min(first + group, len(indices))
+        extent = (stop - first - 1) * stride + 1
+        source = (slice(int(indices[first]), int(indices[stop - 1]) + 1, stride), rows, cols)
+        destination = (slice(0, extent, stride), slice(None), slice(None))
+        data.read_direct(padded, source_sel=source, dest_sel=destination)
+        out[first:stop] = padded[:extent:stride]
+    return True
+
+
+def _dataset_shares_file(data: Any, target: Path, visited: set[tuple[Path, str]]) -> bool:
+    """Follow linked/virtual datasets and external raw storage using header metadata."""
+    container = Path(data.file.filename).resolve()
+    if container.samefile(target):
+        return True
+    identity = (container, data.name)
+    if identity in visited:
+        return False
+    visited.add(identity)
+    access = data.id.get_access_plist()
+    prefix = os.environ.get("HDF5_EXTFILE_PREFIX", os.fsdecode(access.get_efile_prefix()))
+    prefix = prefix.replace("${ORIGIN}", str(container.parent))
+    if any(
+        raw.is_file() and raw.samefile(target)
+        for raw in (Path(prefix) / filename for filename, _, _ in data.external or ())
+    ):
+        return True
+    return data.is_virtual and any(
+        _virtual_source_shares_file(source, container, access, target, visited)
+        for source in data.virtual_sources()
+    )
+
+
+def _virtual_source_shares_file(
+    source: Any, container: Path, access: Any, target: Path, visited: set[tuple[Path, str]]
+) -> bool:
+    for path, blocks in _virtual_source_locations(os.fsdecode(source.file_name), container, access):
+        if path.samefile(target):
+            return True
+        try:
+            with h5py.File(path, "r") as file:
+                if any(
+                    _dataset_shares_file(dataset, target, visited)
+                    for dataset in _virtual_source_datasets(
+                        file, os.fsdecode(source.dset_name), blocks
+                    )
+                ):
+                    return True
+        except OSError:
+            # Leave source availability/read errors to the native reader.
+            continue
+    return False
+
+
+def _virtual_source_locations(
+    filename: str, container: Path, access: Any
+) -> list[tuple[Path, dict[str, str]]]:
+    """Resolve each materialized VDS block in HDF5's documented search order."""
+    if filename == ".":
+        return [(container, {})]
+    name = Path(filename)
+    searches = []
+    if name.is_absolute():
+        anchor = Path(name.anchor)
+        searches.append((anchor, name.relative_to(anchor)))
+        name = Path(name.name)
+    prefixes = [Path(p) for p in os.environ.get("HDF5_VDS_PREFIX", "").split(os.pathsep) if p]
+    access_prefix = os.fsdecode(access.get_virtual_prefix())
+    if access_prefix:
+        prefixes.append(Path(access_prefix))
+    prefixes.extend([container.parent, Path.cwd()])
+    searches.extend((base, name) for base in prefixes)
+    files: dict[tuple[tuple[str, str], ...], tuple[Path, dict[str, str]]] = {}
+    for base, pattern in searches:
+        fields = _virtual_fields(re.split(r"(%%|%(?:\d+)?b)", str(pattern)))
+        for block, path in _materialized_virtual_files(base, pattern).items():
+            bindings = dict(zip(fields, block, strict=True))
+            files.setdefault(tuple(bindings.items()), (path, bindings))
+    return list(files.values())
+
+
+def _virtual_source_datasets(file: Any, name: str, blocks: dict[str, str]) -> list[Any]:
+    """Resolve dataset-name substitutions, retaining repeated/cross-file block bindings."""
+    locations = [(file, blocks)]
+    for component in (part for part in name.split("/") if part not in {"", "."}):
+        children = []
+        for group, bindings in locations:
+            if not isinstance(group, h5py.Group):
+                continue
+            parts = [bindings.get(p, p) for p in re.split(r"(%%|%(?:\d+)?b)", component)]
+            _, pattern = _virtual_name_patterns(parts)
+            fields = _virtual_fields(parts)
+            for key in cast(Any, group):  # h5py's stubs omit native group iteration
+                match = re.fullmatch(pattern, key)
+                if match is not None:
+                    child = group.get(key)
+                    values = dict(zip(fields, match.groups(), strict=True))
+                    children.append((child, bindings | values))
+        locations = children
+    return [value for value, _ in locations if isinstance(value, h5py.Dataset)]
+
+
+def _virtual_fields(parts: list[str]) -> tuple[str, ...]:
+    """Distinct substitution fields in the same order as the pattern's capture groups."""
+    return tuple(dict.fromkeys(p for p in parts if re.fullmatch(r"%(?:\d+)?b", p)))
+
+
+def _materialized_virtual_files(base: Path, name: Path) -> dict[tuple[str, ...], Path]:
+    """Match source-name blocks without formatting/globbing a literal search prefix."""
+    parts = re.split(r"(%%|%(?:\d+)?b)", str(name))
+    if len(parts) == 1:
+        path = base / name
+        return {(): path} if path.is_file() else {}
+    wildcard, pattern = _virtual_name_patterns(parts)
+    files = {}
+    for path in base.glob(wildcard):
+        match = re.fullmatch(pattern, str(path.relative_to(base)))
+        if match is not None and path.is_file():
+            files[match.groups()] = path
+    return files
+
+
+def _virtual_name_patterns(parts: list[str]) -> tuple[str, str]:
+    """Capture distinct integer substitutions; repeated placeholders must agree."""
+    wildcard, pattern = "", ""
+    groups = {}
+    for part in parts:
+        if re.fullmatch(r"%(?:\d+)?b", part):
+            wildcard += "*"
+            if part in groups:
+                pattern += f"(?P={groups[part]})"
+            else:
+                group = f"block{len(groups)}"
+                groups[part] = group
+                pattern += rf"(?P<{group}>0|[1-9]\d*)"
+        else:
+            literal = part.replace("%%", "%")
+            wildcard += glob.escape(literal)
+            pattern += re.escape(literal)
+    return wildcard, pattern
 
 
 _FRAME_PATHS = (
