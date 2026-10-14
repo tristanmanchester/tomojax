@@ -345,15 +345,13 @@ def test_public_cor_reconstructs_with_the_configured_integrator_and_batches(monk
     assert abs(result.scan.detector.center[0] - centre) <= 0.35
 
 
-@pytest.mark.numerical
-@pytest.mark.parametrize("shape", [(49, 65), (225, 257)])
-def test_common_line_phase_recovers_absolute_center_with_unequal_pixels_and_binning(shape):
+def _common_line_gaussians(shape, motion=0.0, views=48, turns=1):
     # Independent continuous 3-D Gaussian line integrals, not a planar object
     # or data from the discrete projector. Odd tails exercise Fourier origins.
     rng = np.random.default_rng(469)
     nv, nu = shape
     detector = Detector(nu, nv, 0.8, 1.1, (1.2, 2.7))
-    angles = np.linspace(0, 360, 48, endpoint=False)
+    angles = np.linspace(0, 360 * turns, views, endpoint=False)
     theta, tilt = np.deg2rad(angles), np.deg2rad(35)
     azimuth = np.deg2rad(17)
     ca, sa = np.cos(azimuth), np.sin(azimuth)
@@ -374,13 +372,17 @@ def test_common_line_phase_recovers_absolute_center_with_unequal_pixels_and_binn
         ],
         axis=-1,
     )
+    time = np.linspace(0, 2 * np.pi, views, endpoint=False)
+    shifts = motion * np.stack([np.sin(2 * time), 0.8 * np.cos(3 * time)], axis=1)
+    shifts += motion * np.arange(views)[:, None] / views * np.array([0.2, -0.15])
+    shifts *= np.array([detector.du, detector.dv])
     data = np.zeros((len(angles), nv, nu), np.float32)
     for _ in range(5):
         centre = rng.uniform(-0.18, 0.18, 3) * extent
         rotation, _ = np.linalg.qr(rng.normal(size=(3, 3)))
         covariance = rotation @ np.diag((rng.uniform(0.03, 0.07, 3) * extent) ** 2) @ rotation.T
         projected_covariance = basis @ covariance @ basis.transpose(0, 2, 1)
-        delta = points[None] - (basis @ centre)[:, None, None]
+        delta = points[None] - (basis @ centre + shifts)[:, None, None]
         amplitude = np.sqrt(
             2 * np.pi * np.linalg.det(covariance) / np.linalg.det(projected_covariance)
         )
@@ -388,10 +390,17 @@ def test_common_line_phase_recovers_absolute_center_with_unequal_pixels_and_binn
             -0.5
             * np.einsum("nvui,nij,nvuj->nvu", delta, np.linalg.inv(projected_covariance), delta)
         )
+    return data, angles, detector, axis, centre_px, basis, shifts
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("shape", [(49, 65), (225, 257)])
+def test_common_line_phase_recovers_absolute_center_with_unequal_pixels_and_binning(shape):
+    data, angles, detector, axis, centre_px, _, _ = _common_line_gaussians(shape)
     prepared = common_lines.prepare_common_lines(data, angles, detector)
     assert prepared is not None
     assert prepared.center(axis) == pytest.approx(centre_px, abs=0.1)
-    shuffled = rng.permutation(len(angles))
+    shuffled = np.random.default_rng(469).permutation(len(angles))
     again = common_lines.prepare_common_lines(data[shuffled], angles[shuffled] + 360, detector)
     assert again is not None
     np.testing.assert_allclose(again.sample(axis), prepared.sample(axis), rtol=2e-5, atol=1e-5)
@@ -407,3 +416,44 @@ def test_common_line_center_declines_axial_or_featureless_evidence():
     blank = common_lines.prepare_common_lines(np.ones_like(data), angles, detector)
     assert blank is not None
     assert blank.center(np.array([0, 0.6, 0.8])) is None
+
+
+@pytest.mark.numerical
+def test_common_line_motion_recovers_physical_shifts_up_to_one_object_translation():
+    data, angles, detector, axis, centre_px, basis, truth = _common_line_gaussians(
+        (225, 257), 3.0, views=80, turns=2
+    )
+    prepared = common_lines.prepare_common_lines(data, angles, detector)
+    assert prepared is not None
+    np.testing.assert_allclose(angles[prepared.view_indices] % 360, np.rad2deg(prepared.angles))
+    fit = prepared.motion(axis, center_u=centre_px * detector.du)
+    assert fit.status == "accepted" and fit.shifts is not None
+    assert fit.coherence_after > fit.coherence_before
+    error = (fit.shifts - truth[prepared.view_indices]).ravel()
+    gauge = basis[prepared.view_indices].reshape(-1, 3)
+    error -= gauge @ np.linalg.lstsq(gauge, error, rcond=None)[0]
+    assert np.sqrt(np.mean(error**2)) < 0.09  # Physical units, not preview pixels.
+    wrapped = common_lines.prepare_common_lines(data, (angles + 180) % 360 - 180, detector)
+    assert wrapped is not None
+    again = wrapped.motion(axis, center_u=centre_px * detector.du)
+    assert again.shifts is not None
+    np.testing.assert_allclose(again.shifts, fit.shifts, atol=1e-3)
+
+
+def test_common_line_motion_declines_missing_saturated_or_unconverged_evidence(monkeypatch):
+    data, angles, detector, axis, centre_px, _, _ = _common_line_gaussians((65, 81), 12.0)
+    prepared = common_lines.prepare_common_lines(data, angles, detector)
+    assert prepared is not None
+    fit = prepared.motion(axis, center_u=centre_px * detector.du)
+    assert fit.status == "boundary" and fit.shifts is None
+    blank = replace(prepared, spectra=np.zeros_like(prepared.spectra))
+    assert blank.motion(axis, center_u=0).status == "no_signal"
+    minimize = common_lines.optimize.minimize
+
+    def one_iteration(*args, **kwargs):
+        kwargs["options"] = {**kwargs["options"], "maxiter": 1}
+        return minimize(*args, **kwargs)
+
+    monkeypatch.setattr(common_lines.optimize, "minimize", one_iteration)
+    fit = prepared.motion(axis, center_u=centre_px * detector.du)
+    assert fit.status == "not_converged" and fit.shifts is None

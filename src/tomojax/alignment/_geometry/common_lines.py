@@ -25,6 +25,17 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class PhaseShiftSeed:
+    """Selected-view physical (u, v) shifts, or a declined fit with diagnostics."""
+
+    shifts: np.ndarray | None
+    coherence_before: float
+    coherence_after: float
+    iterations: int
+    status: str
+
+
+@dataclass(frozen=True)
 class CommonLines:
     """Small host spectra and angular pairs shared by setup searches."""
 
@@ -36,6 +47,7 @@ class CommonLines:
     native_du: float
     native_width: int
     center_v: float
+    view_indices: np.ndarray
 
     def _coordinates(self, axis_unit: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         rotation = align_u_to_v(np.array([0.0, 0.0, 1.0]), np.asarray(axis_unit))
@@ -110,6 +122,86 @@ class CommonLines:
         )
         return float(cast("optimize.OptimizeResult", fit).x)
 
+    def motion(self, axis_unit: np.ndarray, *, center_u: float) -> PhaseShiftSeed:
+        """Seed small, smooth detector motion after setup calibration.
+
+        ``center_u`` and returned shifts use physical detector units. Returned
+        rows follow ``view_indices``; interpolate in acquisition order before local pose
+        refinement. This is not a global shift search: each component is bounded
+        to four preview pixels and nonconverged/boundary fits are declined.
+        A second-difference prior favours smooth motion, not arbitrary jitter.
+        The reconstruction still supplies the acceptance test on truncated data.
+        """
+        pitch = np.asarray(self.pitch)
+        q1, q2 = (q * pitch for q in self._coordinates(axis_unit))
+        f, g = self.sample(axis_unit)
+        cross = f * g.conj()
+        amplitude = np.sqrt(np.abs(cross))
+        total = float(amplitude.sum())
+        if total == 0:
+            return PhaseShiftSeed(None, 0.0, 0.0, 0, "no_signal")
+        weight = amplitude / total
+        cross = np.divide(cross, np.abs(cross), out=np.zeros_like(cross), where=amplitude > 0)
+        center = np.array([center_u, self.center_v]) / pitch
+        cross *= np.exp(-2j * np.pi * np.einsum("pfi,i->pf", q1 - q2, center))
+        left, right = self.pairs.T
+        # Motion follows acquisition order, including repeated/turnaround angles.
+        order = np.argsort(self.view_indices)
+        step = np.diff(self.view_indices[order]).astype(float)
+        step = step[:, None] / step.mean()
+        middle_step = (step[:-1] + step[1:]) / 2
+        n = len(self.angles)
+
+        def coherence(x: np.ndarray) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
+            x = x.reshape(n, 2)
+            phase = (
+                2
+                * np.pi
+                * (np.einsum("pfi,pi->pf", q1, x[left]) - np.einsum("pfi,pi->pf", q2, x[right]))
+            )
+            return cross * np.exp(1j * phase)
+
+        def objective(x: np.ndarray) -> tuple[float, np.ndarray]:
+            x = x.reshape(n, 2)
+            z = coherence(x)
+            loss = float(np.sum(weight * (1 - z.real)))
+            grad = np.zeros_like(x)
+            np.add.at(grad, left, np.einsum("pf,pfi->pi", 2 * np.pi * weight * z.imag, q1))
+            np.add.at(grad, right, -np.einsum("pf,pfi->pi", 2 * np.pi * weight * z.imag, q2))
+            slope = np.diff(x[order], axis=0) / step
+            difference = np.diff(slope, axis=0) / middle_step
+            # Do not wrap the endpoints: a scan-long drift is observable.
+            loss += 0.01 * float(np.mean(difference**2)) + 1e-5 * float(np.mean(x**2))
+            derivative = 0.02 * difference / (difference.size * middle_step)
+            slope_grad = np.zeros_like(slope)
+            slope_grad[:-1] -= derivative
+            slope_grad[1:] += derivative
+            grad[order[:-1]] -= slope_grad / step
+            grad[order[1:]] += slope_grad / step
+            grad += 2e-5 * x / x.size
+            return loss, grad.ravel()
+
+        initial = np.zeros(2 * n)
+        fit = optimize.minimize(
+            objective,
+            initial,
+            jac=True,
+            method="L-BFGS-B",
+            bounds=[(-4.0, 4.0)] * initial.size,
+            options={"maxiter": 1000, "ftol": 1e-12, "gtol": 1e-8},
+        )
+        shifts = np.asarray(fit.x).reshape(n, 2)
+        status = "accepted" if fit.success else "not_converged"
+        if np.max(np.abs(shifts)) >= 4.0 - 1e-3:
+            status = "boundary"
+        return PhaseShiftSeed(
+            shifts * pitch if status == "accepted" else None,
+            float(np.sum(weight * cross.real)),
+            float(np.sum(weight * coherence(fit.x).real)),
+            int(fit.nit),
+            status,
+        )
+
 
 def _angular_pairs(angles: np.ndarray) -> np.ndarray:
     pairs = set()
@@ -132,7 +224,8 @@ def prepare_common_lines(
     """
     order = np.argsort(np.mod(angles, 360), kind="stable")
     keep = order[np.linspace(0, len(order) - 1, min(64, len(order))).astype(int)]
-    theta = np.deg2rad(np.asarray(angles)[keep])
+    # Canonical physical angles; acquisition chronology is carried by keep.
+    theta = np.deg2rad(np.mod(np.asarray(angles)[keep], 360))
     pairs = _angular_pairs(theta)
     if len(pairs) < 3 or min(projections.shape[1:]) < 8:
         return None
@@ -155,5 +248,13 @@ def prepare_common_lines(
     spectra *= np.exp(2j * np.pi * (fu[None, :] * origin_u + fv[:, None] * origin_v))
     frequency = np.linspace(2 / min(nv * dv, nu * du), 0.45 / max(du, dv), 128)
     return CommonLines(
-        spectra, theta, pairs, frequency, (du, dv), detector.du, original_nu, detector.center[1]
+        spectra,
+        theta,
+        pairs,
+        frequency,
+        (du, dv),
+        detector.du,
+        original_nu,
+        detector.center[1],
+        keep,
     )
