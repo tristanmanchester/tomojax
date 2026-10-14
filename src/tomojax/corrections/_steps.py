@@ -13,11 +13,12 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from functools import lru_cache
-from typing import ClassVar, Literal
+from typing import ClassVar, Literal, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+from scipy.fft import next_fast_len
 
 from ._records import Correction, Json
 from ._view_statistics import view_medians
@@ -147,10 +148,16 @@ class RejectViews(Step):
     recorded); a view is rejected when that difference is more than ``z``
     robust standard deviations (1.4826 times the median absolute deviation)
     of all views' differences and more than ``min_jump`` of the views' typical
-    median (so the small, smooth changes of a noise-free scan never count).
+    median (a floor for small, smooth changes).
     Views with a nonfinite median are also rejected and do not participate
     in the neighbours or robust baseline. The scan's geometry keeps the same
     views; the record lists those rejected, including the nonfinite subset.
+
+    This is a local jump heuristic: a majority-bad neighbourhood can hide a
+    sustained interruption, and bad neighbours can also cause healthy views
+    to be rejected. Inspect the rejected views; use an acquisition mask for
+    known invalid views. A wider ``neighbours`` window may expose longer runs
+    but also confuse genuine angular changes with faults.
     """
 
     domain: ClassVar[Domain] = "line integrals"
@@ -256,34 +263,76 @@ class Paganin(Step):
     sample-to-detector distance, divided by the magnification in a cone beam),
     ``energy_kev`` the X-ray energy and ``pixel_size`` the detector pixel at
     the sample (m; the pixel divided by the magnification in a cone beam).
-    Views are padded by half their size, edges repeated, against wrap-around.
+    ``pixel_size`` is one pitch for square pixels or ``(u, v)`` pitches for
+    rectangular pixels, in the same order as ``Detector.du`` and ``Detector.dv``.
+    Edges are repeated over at least sixteen filter decay lengths against
+    wrap-around. An additional guard of up to half the image size, capped at
+    128 pixels, suppresses tails from the sampled spectrum. FFT extents are
+    rounded up to efficient lengths. This also avoids doubling a large detector
+    when the filter has only a short range.
     """
 
     domain: ClassVar[Domain] = "transmission"
     delta_beta: float
     distance: float
     energy_kev: float
-    pixel_size: float
+    pixel_size: float | tuple[float, float]
 
     def __post_init__(self) -> None:
-        for name in ("delta_beta", "distance", "energy_kev", "pixel_size"):
+        for name in ("delta_beta", "distance", "energy_kev"):
             value = float(getattr(self, name))
             if not np.isfinite(value) or not value > 0:
                 raise ValueError(f"Paganin {name} must be finite and positive, not {value}")
             object.__setattr__(self, name, value)
+        pixels = np.asarray(self.pixel_size, np.float64)
+        if pixels.shape not in ((), (2,)) or not np.isfinite(pixels).all() or (pixels <= 0).any():
+            raise ValueError(
+                f"Paganin pixel_size must be a positive finite scalar or (u, v) pair, "
+                f"not {self.pixel_size}"
+            )
+        normalized = float(pixels) if pixels.ndim == 0 else (float(pixels[0]), float(pixels[1]))
+        object.__setattr__(self, "pixel_size", normalized)
+
+    def _pitches(self) -> tuple[float, float]:
+        return (
+            self.pixel_size
+            if isinstance(self.pixel_size, tuple)
+            else (self.pixel_size, self.pixel_size)
+        )
 
     def workspace_pixels(self, rows: int, cols: int) -> int:
         # Two padded real arrays and two complex half-spectra: about four
         # padded real arrays per view.
-        return 4 * (rows + 2 * (rows // 2)) * (cols + 2 * (cols // 2))
+        pv, pu = self._padding(rows, cols)
+        return 4 * (rows + sum(pv)) * (cols + sum(pu))
+
+    def _padding(self, rows: int, cols: int) -> tuple[tuple[int, int], tuple[int, int]]:
+        wavelength = 12.398419843320026e-10 / self.energy_kev
+        scale = self.distance * wavelength * self.delta_beta / (4 * np.pi)
+        # The continuous filter's Green function decays over sqrt(scale).
+        # Half-image padding can be much too short for a cropped detector;
+        # conversely it wastes most of a large image's FFT for a narrow filter.
+        pixel_u, pixel_v = self._pitches()
+
+        def axis(n: int, pitch: float) -> tuple[int, int]:
+            decay_guard = int(np.ceil(16 * np.sqrt(scale) / pitch))
+            # A singleton axis is constant under edge extension, so no FFT
+            # samples along it can contribute to the filter.
+            guard = max(min(n // 2, 128), decay_guard)
+            padded = 1 if n == 1 else cast(int, next_fast_len(n + 2 * guard, real=True))
+            before = (padded - n) // 2
+            return before, padded - n - before
+
+        return axis(rows, pixel_v), axis(cols, pixel_u)
 
     def apply(self, batch: jax.Array) -> jax.Array:
         _, rows, cols = batch.shape
-        pr, pc = rows // 2, cols // 2
-        padded = jnp.pad(batch, ((0, 0), (pr, pr), (pc, pc)), mode="edge")
+        pv, pu = self._padding(rows, cols)
+        padded = jnp.pad(batch, ((0, 0), pv, pu), mode="edge")
         wavelength = 12.398419843320026e-10 / self.energy_kev  # metres
-        ku = 2 * np.pi * np.fft.rfftfreq(cols + 2 * pc, self.pixel_size)
-        kv = 2 * np.pi * np.fft.fftfreq(rows + 2 * pr, self.pixel_size)
+        pixel_u, pixel_v = self._pitches()
+        ku = 2 * np.pi * np.fft.rfftfreq(padded.shape[2], pixel_u)
+        kv = 2 * np.pi * np.fft.fftfreq(padded.shape[1], pixel_v)
         k2 = kv[:, None] ** 2 + ku[None, :] ** 2
         scale = self.distance * wavelength * self.delta_beta / (4 * np.pi)
         response = jnp.asarray(1.0 / (1.0 + scale * k2), jnp.float32)
@@ -291,7 +340,7 @@ class Paganin(Step):
         # Odd detector extents also give odd padded lengths, so specify the shape
         # rather than letting irfft2 infer an even last axis.
         filtered = jnp.fft.irfft2(jnp.fft.rfft2(padded) * response, s=padded.shape[-2:])
-        return filtered[:, pr : pr + rows, pc : pc + cols].astype(batch.dtype)
+        return filtered[:, pv[0] : pv[0] + rows, pu[0] : pu[0] + cols].astype(batch.dtype)
 
 
 def _stripe_offsets(row: jax.Array, width: int) -> jax.Array:

@@ -36,7 +36,7 @@ def test_phase_retrieval_limits_automatic_reads_and_preserves_explicit_batches(
     geometry = tj.ParallelGeometry(
         tj.Grid(8, 8, 2, 1.0, 1.0, 1.0), tj.Detector(cols, rows, 1.0, 1.0), np.arange(65).tolist()
     )
-    steps = [Paganin(300.0, 0.001, 20.0, 1e-6)] if phase else []
+    steps = [Paganin(300.0, 0.05, 20.0, 1e-6)] if phase else []
     actual = tj.Frames(counts, geometry, white_level=1000.0).corrected(*steps, batch_views=batch)
 
     if batch is not None:
@@ -120,6 +120,26 @@ def test_zinger_batch_sizes_preserve_independent_gaussian_reconstruction():
     b = np.asarray(tj.reconstruct(chunked, "fbp").volume)
     np.testing.assert_array_equal(a, b)
     assert np.linalg.norm(a - truth) / np.linalg.norm(truth) < 0.05
+
+
+def test_broad_phase_filter_reduces_automatic_batch_before_reading() -> None:
+    """A crop's broad filter can need far more padding than half its image size."""
+    rows, cols = 128, 512
+    geometry = tj.ParallelGeometry(
+        tj.Grid(8, 8, 2, 1.0, 1.0, 1.0), tj.Detector(cols, rows, 1.0, 1.0), np.arange(65)
+    )
+    requests = []
+    for distance in (0.001, 0.6):
+        counts = ConstantViews(rows, cols)
+        phase = Paganin(300.0, distance, 20.0, 1e-6)
+        scan = tj.Frames(counts, geometry, white_level=1000.0).corrected(phase)
+        expected = np.broadcast_to(-np.log(counts.levels / 1000.0)[:, None, None], counts.shape)
+        np.testing.assert_allclose(scan.projections, expected, rtol=2e-6, atol=2e-7)
+        requests.append(max(counts.requests))
+    assert requests[1] < requests[0]
+    # A ~30-pixel decay length requires almost 500 pixels of edge extension,
+    # so the FFT workspace limits a 256 MiB automatic batch to ten views.
+    assert requests[1] <= 10
 
 
 class BoundedDoubleViews(ConstantViews):

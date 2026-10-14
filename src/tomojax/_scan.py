@@ -9,10 +9,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, is_dataclass, replace
 import logging
+from math import prod
 from typing import TYPE_CHECKING, Any
 
+import jax
 import numpy as np
 
+from tomojax._typed_arrays import commit_array
 from tomojax.geometry import (
     ConeGeometry,
     LaminographyGeometry,
@@ -23,13 +26,14 @@ from tomojax.geometry import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
-    import jax
-
     from tomojax.corrections import Correction, Step
     from tomojax.geometry import ConeBeam, ConeSegments, Detector, Geometry, Grid, ScanGeometry
     from tomojax.io import ProjectionDataset
 
 LOG = logging.getLogger(__name__)
+
+# Per-transfer target; at most two temporary selections overlap their downloads.
+_TRANSFER_BATCH_BYTES = 128 << 20
 
 # Geometry metadata keys a geometry object owns; other keys (provenance) carry over.
 GEOMETRY_KEYS = frozenset(
@@ -105,7 +109,7 @@ class Scan:
         window = detector_window(rows, cols, self.detector)
         return replace(
             self,
-            projections=np.asarray(self.projections)[:, rows, cols],
+            projections=cropped_data(self.projections, rows=rows, cols=cols),
             geometry=rebuild(self.geometry, detector=window),
         )
 
@@ -114,7 +118,7 @@ class Scan:
         kept = view_indices(views, self.projections.shape[0])
         return replace(
             self,
-            projections=np.asarray(self.projections)[kept],
+            projections=selected_data(self.projections, kept),
             geometry=views_of(self.geometry, kept),
         )
 
@@ -229,6 +233,55 @@ class Scan:
         from tomojax._astra import to_astra
 
         return to_astra(np.asarray(self.projections), self.geometry, self.grid, self.detector)
+
+
+def selected_data(data: Any, kept: np.ndarray) -> np.ndarray:
+    """Select before downloading, retaining an independent writable host array."""
+    data = commit_array(data)
+    if isinstance(data, jax.Array):
+        # A full read-only host cache followed by .copy() holds two selected
+        # stacks and can also grow the runtime's transfer-staging pool. Fill
+        # writable storage directly from bounded selections instead.
+        return _download_view_chunks(
+            (len(kept), *data.shape[1:]), data.dtype, read=lambda part: data[kept[part]]
+        )
+    selected = np.asarray(data[kept])
+    # NumPy's advanced indexing already makes a writable copy. Other array-like
+    # inputs may expose read-only or aliased views; copy only the selection.
+    return selected if isinstance(data, np.ndarray) else selected.copy()
+
+
+def cropped_data(data: Any, *, rows: slice, cols: slice) -> np.ndarray:
+    """A host detector window: preserve host aliases and bound large device downloads."""
+    data = commit_array(data)
+    if not isinstance(data, jax.Array):
+        return np.asarray(data[:, rows, cols])
+    r0, r1, _ = rows.indices(data.shape[1])
+    c0, c1, _ = cols.indices(data.shape[2])
+    shape = (data.shape[0], r1 - r0, c1 - c0)
+    if prod(shape) * data.dtype.itemsize <= _TRANSFER_BATCH_BYTES:
+        return np.asarray(data[:, rows, cols])
+    cropped = _download_view_chunks(shape, data.dtype, read=lambda part: data[part, rows, cols])
+    cropped.flags.writeable = False
+    return cropped
+
+
+def _download_view_chunks(
+    shape: tuple[int, ...], dtype: np.dtype[Any], *, read: Callable[[slice], jax.Array]
+) -> np.ndarray:
+    """Fill owned host storage from at most two overlapping bounded device chunks."""
+    out = np.empty(shape, dtype)
+    batch = max(1, _TRANSFER_BATCH_BYTES // (prod(shape[1:]) * dtype.itemsize))
+    pending = None
+    for start in range(0, shape[0], batch):
+        part = read(slice(start, start + batch))
+        part.copy_to_host_async()
+        if pending is not None:
+            out[pending[0] : pending[0] + batch] = np.asarray(pending[1])
+        pending = start, part
+    if pending is not None:
+        out[pending[0] : pending[0] + batch] = np.asarray(pending[1])
+    return out
 
 
 def detector_window(rows: slice, cols: slice, detector: Detector) -> Callable[[Detector], Detector]:

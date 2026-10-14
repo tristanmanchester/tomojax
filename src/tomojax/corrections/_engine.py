@@ -23,7 +23,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax._typed_arrays import commit_array, mapped_storage
-from tomojax.backends.api import device_free_memory_bytes
+from tomojax.backends import api as backend_runtime
 
 from ._downloads import cuda_device_id, release_device, stage_download
 from ._records import Correction, Json
@@ -81,8 +81,14 @@ def correct_frames(
     supplied_out = out is not None
     output = np.empty((views, rows, cols), np.float32) if out is None else out
     flat_stack, dark = jax.device_put(fields.flats), jax.device_put(fields.dark)
+    flat_variance, dark_variance = (
+        jax.device_put(fields.flat_variance),
+        jax.device_put(fields.dark_variance),
+    )
     batch = batch_views or _frame_batch_size(counts, transmission_steps)
     tally = np.zeros(2, np.int64)  # non-positive transmission, non-finite results
+    counts_ceiling = _dtype_ceiling(counts)
+    ceiling_readings = 0
     selector = tail[0] if tail and tail[0].selects_views else None
     summaries: list[np.ndarray] = []
 
@@ -97,11 +103,19 @@ def correct_frames(
             summaries.append(summary())
         release_device(done[0])
 
+    def diagnose(raw: np.ndarray) -> None:
+        nonlocal ceiling_readings
+        if counts_ceiling is not None:
+            ceiling_readings += _count_ceiling_readings(raw, counts_ceiling)
+
     with ThreadPoolExecutor(max_workers=1) as statistic_worker:
         pending = None
-        for start, stop, raw in _batches(counts, views, batch):
+        for start, stop, raw in _batches(
+            counts, views, batch, after_read=diagnose if counts_ceiling is not None else None
+        ):
             done = _first_pass(
                 jnp.asarray(raw), lo[start:stop], hi[start:stop], t[start:stop], flat_stack, dark,
+                flat_variance, dark_variance,
                 epsilon=float(epsilon), counts_steps=counts_steps,
                 transmission_steps=transmission_steps, line_steps=tuple(head),
             )  # fmt: skip
@@ -120,14 +134,15 @@ def correct_frames(
             # The tail starts from host storage. Do not retain the last batch,
             # its download closure or its raw host input throughout row-slab work.
             del pending, done, summary, download, raw
-    release_device(flat_stack)
-    release_device(dark)
-    del flat_stack, dark
+    for field in (flat_stack, dark, flat_variance, dark_variance):
+        release_device(field)
+    del flat_stack, dark, flat_variance, dark_variance, field
     found: dict[str, Json] = {
         "nonpositive_transmission": int(tally[0]),
         "nonfinite_set_to_zero": int(tally[1]),
     }
     log = Correction("log", {"epsilon": float(epsilon)}, found)
+    log = _with_counts_ceiling(log, counts_ceiling, ceiling_readings)
     statistics = np.concatenate(summaries) if summaries else None
     output, kept, tail_records = _run_rest(
         output, tail, batch_views, statistics=statistics, keep_storage=supplied_out
@@ -175,13 +190,22 @@ def correct_projections(
     if out is not None:
         _validate_out(out, np.shape(projections), (projections,))
     supplied_out = out is not None
-    if out is None:
-        out = np.array(projections, np.float32, copy=True)
-    else:
-        _copy_input(projections, out, batch_views)
-    out, kept, records = _run_rest(
-        out, [s for _, s in ordered], batch_views, keep_storage=supplied_out
+    line = [s for _, s in ordered]
+    head, tail = _split_at_break(line)
+    resident = (
+        _resident_prefix(projections, tuple(head), batch_views, out=out)
+        if isinstance(projections, jax.Array) and head
+        else None
     )
+    if resident is not None:
+        out, kept, records = _run_rest(resident, tail, batch_views, keep_storage=supplied_out)
+        records = tuple(s.record() for s in head) + records
+    else:
+        if out is None:
+            out = np.array(projections, np.float32, copy=True)
+        else:
+            _copy_input(projections, out, batch_views)
+        out, kept, records = _run_rest(out, line, batch_views, keep_storage=supplied_out)
     return Corrected(out, records, kept)
 
 
@@ -249,13 +273,71 @@ def _host_arrays(source: Any) -> tuple[np.ndarray, ...]:
     return ()
 
 
-def _frame_batch_size(counts: Any, steps: Sequence[Step]) -> int:
+def _resident_prefix(
+    projections: jax.Array,
+    steps: tuple[Step, ...],
+    batch_views: int | None,
+    *,
+    out: np.ndarray | None = None,
+) -> np.ndarray | None:
+    """Download corrected view batches when the input's devices have known headroom.
+
+    ``out``, when given, is validated caller-owned storage to fill.
+    """
+    batch = _resident_batch_size(projections, steps, batch_views)
+    if batch is None:
+        return None
+    projections = commit_array(projections)
+    views = int(projections.shape[0])
+    out = np.empty(projections.shape, np.float32) if out is None else out
+    for start in range(0, views, batch):
+        stop = min(start + batch, views)
+        # Fuse slicing and conversion into the first correction; no separate
+        # resident input tile or overlapping corrected outputs are retained.
+        part = _resident_apply(projections, start, stop - start, steps)
+        part.copy_to_host_async()
+        out[start:stop] = np.asarray(part)
+        del part
+    return out
+
+
+def _resident_batch_size(
+    projections: jax.Array, steps: tuple[Step, ...], requested: int | None
+) -> int | None:
+    """Reserve half each producer's headroom; unknown or oversized requests stay host-first."""
+    free = [
+        backend_runtime.device_free_memory_bytes(device=device) for device in projections.devices()
+    ]
+    if any(value is None for value in free):
+        return None
+    budget = min(_BATCH_BYTES, min(value for value in free if value is not None) // 2)
+    if budget < _frame_bytes(projections, steps):
+        return None
+    cap = _frame_batch_size(projections, steps, budget=budget)
+    if requested is not None:
+        return requested if min(requested, int(projections.shape[0])) <= cap else None
+    return cap
+
+
+@partial(jax.jit, static_argnames=("count", "steps"))
+def _resident_apply(
+    projections: jax.Array, start: int, count: int, steps: tuple[Step, ...]
+) -> jax.Array:
+    part = jax.lax.dynamic_slice_in_dim(projections, start, count, axis=0)
+    return _apply(steps, part.astype(jnp.float32))
+
+
+def _frame_batch_size(counts: Any, steps: Sequence[Step], *, budget: int | None = None) -> int:
     """Bound source reads and float32 work, including the largest step's FFT workspace."""
-    views, rows, cols = (int(s) for s in counts.shape)
+    limit = _BATCH_BYTES if budget is None else budget
+    return max(1, min(int(counts.shape[0]), limit // _frame_bytes(counts, steps)))
+
+
+def _frame_bytes(counts: Any, steps: Sequence[Step]) -> int:
+    rows, cols = (int(s) for s in counts.shape[1:])
     pixels = rows * cols
     workspace = max((s.workspace_pixels(rows, cols) for s in steps), default=0)
-    frame_bytes = max(np.dtype(counts.dtype).itemsize * pixels, 4 * (pixels + workspace))
-    return max(1, min(views, _BATCH_BYTES // frame_bytes))
+    return max(np.dtype(counts.dtype).itemsize * pixels, 4 * (pixels + workspace))
 
 
 def _validated_batch_views(value: int | None) -> int | None:
@@ -293,8 +375,16 @@ def _ordered(steps: Sequence[Step]) -> list[tuple[str, Step]]:
 class _Fields:
     """The flat sets (``(sets, rows, columns)``), their positions and the dark field."""
 
-    def __init__(self, flats: np.ndarray, positions: np.ndarray, dark: np.ndarray) -> None:
+    def __init__(
+        self,
+        flats: np.ndarray,
+        positions: np.ndarray,
+        dark: np.ndarray,
+        flat_variance: np.ndarray,
+        dark_variance: np.ndarray,
+    ) -> None:
         self.flats, self.positions, self.dark = flats, positions, dark
+        self.flat_variance, self.dark_variance = flat_variance, dark_variance
 
 
 def _flat_fields(
@@ -305,12 +395,13 @@ def _flat_fields(
     shape: tuple[int, int],
 ) -> tuple[_Fields, tuple[Correction, ...]]:
     """The mean flat of each set, the mean dark, and the record of them."""
+    darks = darks if darks is None or hasattr(darks, "shape") else np.asarray(darks)
     if darks is None and flats is not None:
         LOG.warning("no dark fields: correcting with a dark field of zero")
-    dark = (
-        np.zeros(shape, np.float32)
+    dark, dark_variance = (
+        (np.zeros(shape, np.float64), np.zeros(shape, np.float64))
         if darks is None
-        else np.asarray(_mean(darks, shape, "darks"), np.float32)
+        else _moments(darks, shape, "darks")
     )
     dark_frames = 0 if darks is None else len(darks)
     if flats is None:
@@ -321,8 +412,17 @@ def _flat_fields(
             )
         level = _positive_finite(white_level, "white_level")
         stack = np.full((1, *shape), level, np.float32)
-        record = Correction("flat_dark", {"white_level": level, "darks": dark_frames})
-        return _Fields(stack, np.zeros(1), dark), (record,)
+        record = _field_record(
+            {"white_level": level, "darks": dark_frames}, stack - dark, dark_variance
+        )
+        record = _with_calibration_ceiling(record, darks, dark, "dark")
+        return _Fields(
+            stack,
+            np.zeros(1),
+            dark.astype(np.float32),
+            np.zeros_like(stack),
+            dark_variance.astype(np.float32),
+        ), (record,)
     flats = flats if hasattr(flats, "shape") else np.asarray(flats)
     if len(flats.shape) != 3 or flats.shape[1:] != shape or not len(flats):
         raise ValueError(
@@ -334,42 +434,116 @@ def _flat_fields(
             f"flat_positions needs one finite position for each of the {len(flats)} flats"
         )
     sets = np.unique(where)
-    stack = np.stack(
-        [
-            _mean(
-                flats, shape, "flats", indices=np.flatnonzero(where == p) if len(sets) > 1 else None
-            )
-            for p in sets
-        ]
-    )
+    statistics = [
+        _moments(
+            flats, shape, "flats", indices=np.flatnonzero(where == p) if len(sets) > 1 else None
+        )
+        for p in sets
+    ]
+    stack = np.stack([mean for mean, _ in statistics])
+    flat_variance = np.stack([variance for _, variance in statistics])
     settings: dict[str, Any] = {"flats": len(flats), "darks": dark_frames, "flat_sets": len(sets)}
     if len(sets) > 1:
         settings["flat_positions"] = [float(p) for p in sets]
-    lit = stack - dark
-    found: dict[str, Json] = {"pixels_without_light": int(np.count_nonzero(lit <= 0))}
-    return _Fields(stack.astype(np.float32), sets, dark), (
-        Correction("flat_dark", settings, found),
+    record = _field_record(settings, stack - dark, flat_variance + dark_variance)
+    record = _with_calibration_ceiling(record, flats, stack, "flat")
+    record = _with_calibration_ceiling(record, darks, dark, "dark")
+    return _Fields(
+        stack.astype(np.float32),
+        sets,
+        dark.astype(np.float32),
+        flat_variance.astype(np.float32),
+        dark_variance.astype(np.float32),
+    ), (record,)
+
+
+def _field_record(settings: dict[str, Any], light: np.ndarray, variance: np.ndarray) -> Correction:
+    found: dict[str, Json] = {"pixels_without_light": int(np.count_nonzero(light <= 0))}
+    unreliable = ~np.isfinite(light) | ~np.isfinite(variance) | (light <= 3 * np.sqrt(variance))
+    if unreliable.any():
+        settings["minimum_signal_snr"] = 3.0
+        found["pixels_without_reliable_light"] = int(np.count_nonzero(unreliable))
+    return Correction("flat_dark", settings, found)
+
+
+def _with_calibration_ceiling(
+    record: Correction, frames: Any, mean: np.ndarray, field: str
+) -> Correction:
+    """Report integer sets fixed at their storage ceiling, without rereading them."""
+    ceiling = _dtype_ceiling(frames)
+    if ceiling is None:
+        return record
+    pixels = int(np.count_nonzero(mean == ceiling))
+    if not pixels:
+        return record
+    LOG.warning(
+        "%s calibration: %s pixels at dtype ceiling %s; readings may be clipped",
+        field,
+        pixels,
+        ceiling,
+    )
+    return Correction(
+        record.name,
+        {**record.settings, f"{field}_dtype_ceiling": ceiling},
+        {**record.found, f"{field}_pixels_at_dtype_ceiling": pixels},
     )
 
 
-def _mean(
+def _dtype_ceiling(frames: Any) -> int | None:
+    """The integer storage ceiling, never an inferred ADC limit for floating data."""
+    dtype = getattr(frames, "dtype", None)
+    return int(np.iinfo(dtype).max) if dtype is not None and np.dtype(dtype).kind in "iu" else None
+
+
+def _count_ceiling_readings(raw: np.ndarray, ceiling: int) -> int:
+    """Count already-read inputs in small groups of complete views."""
+    batch = max(1, (32 << 20) // (int(raw.shape[1]) * int(raw.shape[2])))
+    return sum(
+        int(np.count_nonzero(raw[start : start + batch] == ceiling))
+        for start in range(0, len(raw), batch)
+    )
+
+
+def _with_counts_ceiling(record: Correction, ceiling: int | None, readings: int) -> Correction:
+    """Attach a raw-input diagnostic, without changing any corrected reading."""
+    if not readings or ceiling is None:
+        return record
+    LOG.warning(
+        "counts: %s readings at dtype ceiling %s; readings may be clipped", readings, ceiling
+    )
+    return Correction(
+        record.name,
+        {**record.settings, "counts_dtype_ceiling": ceiling},
+        {**record.found, "counts_at_dtype_ceiling": readings},
+    )
+
+
+def _moments(
     frames: Any, shape: tuple[int, int], name: str, *, indices: np.ndarray | None = None
-) -> np.ndarray:
-    """Average calibration frames in FP64, reading bounded batches from lazy stacks."""
+) -> tuple[np.ndarray, np.ndarray]:
+    """Mean and its sampling variance, in FP64 and bounded host batches."""
     frames = commit_array(frames) if hasattr(frames, "shape") else np.asarray(frames)
     if len(frames.shape) != 3 or frames.shape[1:] != shape or not len(frames):
         raise ValueError(
             f"{name} are {frames.shape}; a nonempty stack of frames of {shape} is needed"
         )
     count = len(frames) if indices is None else len(indices)
-    batch = max(1, _BATCH_BYTES // (np.dtype(frames.dtype).itemsize * shape[0] * shape[1]))
-    total = np.zeros(shape, np.float64)
+    batch = max(1, (32 << 20) // (8 * shape[0] * shape[1]))
+    total, squared = np.zeros(shape, np.float64), np.zeros(shape, np.float64)
     for start in range(0, count, batch):
         selected = (
             slice(start, start + batch) if indices is None else indices[start : start + batch]
         )
-        total += np.sum(np.asarray(frames[selected]), axis=0, dtype=np.float64)
-    return total / count
+        values = np.asarray(frames[selected], np.float64)
+        total += np.sum(values, axis=0)
+        squared += np.einsum("ijk,ijk->jk", values, values)
+    mean = total / count
+    variance = (
+        np.maximum(0.0, (squared - total * mean) / (count * (count - 1)))
+        if count > 1
+        else np.zeros(shape, np.float64)
+    )
+    return mean, variance
 
 
 def _interpolation(q: np.ndarray, positions: np.ndarray) -> tuple[np.ndarray, ...]:
@@ -394,6 +568,8 @@ def _first_pass(
     t: jax.Array,
     flats: jax.Array,
     dark: jax.Array,
+    flat_variance: jax.Array,
+    dark_variance: jax.Array,
     *,
     epsilon: float,
     counts_steps: tuple[Step, ...],
@@ -404,11 +580,29 @@ def _first_pass(
     for step in counts_steps:
         x = step.apply(x)
     weight = t[:, None, None]
-    flat = (1 - weight) * flats[lo] + weight * flats[hi]
-    transmission = (x - dark) / jnp.maximum(flat - dark, epsilon)
-    nonpositive = jnp.sum(transmission <= 0)
+    # An unused calibration must not contaminate an endpoint through 0 * NaN
+    # (or 0 * Inf). Interior views still need both bracketing fields.
+    flat = jnp.where(
+        weight == 0, flats[lo],
+        jnp.where(weight == 1, flats[hi], (1 - weight) * flats[lo] + weight * flats[hi]),
+    )  # fmt: skip
+    variance = jnp.where(
+        weight == 0, flat_variance[lo],
+        jnp.where(weight == 1, flat_variance[hi],
+                  (1 - weight) ** 2 * flat_variance[lo] + weight**2 * flat_variance[hi]),
+    ) + dark_variance  # fmt: skip
+    light = flat - dark
+    reliable = (
+        jnp.isfinite(light) & jnp.isfinite(variance)
+        & (light > jnp.maximum(epsilon, 3 * jnp.sqrt(variance)))
+    )  # fmt: skip
+    # A calibration indistinguishable from darkness is an unmeasured pixel,
+    # not a denominator of epsilon. Use neutral transmission before spatial
+    # steps, so an FFT cannot spread enormous counts across the whole image.
+    transmission = jnp.where(reliable, (x - dark) / jnp.maximum(light, epsilon), 1.0)
     for step in transmission_steps:
         transmission = step.apply(transmission)
+    nonpositive = jnp.sum(transmission <= 0)
     p = -jnp.log(jnp.maximum(transmission, epsilon))
     for step in line_steps:
         p = step.apply(p)
@@ -514,7 +708,7 @@ def _stage_statistic(
         return lambda: np.asarray(done)
     compiled = _statistic.lower(step, batch).compile()
     (device,) = batch.devices()  # cuda_device_id has checked the single producer.
-    free = device_free_memory_bytes(device=device)
+    free = backend_runtime.device_free_memory_bytes(device=device)
     workspace = compiled.memory_analysis()
     # Keep room for the next correction's inputs, outputs and temporaries.
     # The serial path remains available for tight or unknown allocator budgets.
@@ -533,7 +727,9 @@ def _apply(steps: tuple[Step, ...], batch: jax.Array) -> jax.Array:
     return batch
 
 
-def _batches(counts: Any, views: int, batch: int) -> Any:
+def _batches(
+    counts: Any, views: int, batch: int, *, after_read: Callable[[np.ndarray], None] | None = None
+) -> Any:
     """``(start, stop, frames)`` for each batch of views, the next read while one is used."""
     starts = list(range(0, views, batch))
     # The worker does not inherit default_device; preserve existing placement
@@ -543,7 +739,10 @@ def _batches(counts: Any, views: int, batch: int) -> Any:
     def read(start: int) -> np.ndarray:
         frames = np.asarray(counts[start : min(start + batch, views)])
         # Device arrays use native byte order; leave ordinary batches as views.
-        return frames.astype(frames.dtype.newbyteorder("="), copy=False)
+        frames = frames.astype(frames.dtype.newbyteorder("="), copy=False)
+        if after_read is not None:
+            after_read(frames)
+        return frames
 
     with ThreadPoolExecutor(max_workers=1) as reader:
         pending = reader.submit(read, starts[0]) if starts else None

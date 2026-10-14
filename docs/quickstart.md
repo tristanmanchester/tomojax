@@ -115,7 +115,9 @@ propagation distance in metres (the sample-to-detector distance, divided by the
 magnification in a cone beam), the X-ray energy in keV and the pixel size at
 the sample in metres (the detector pixel, divided by the magnification in a
 cone beam). The step does not infer these from the scan. The values below are
-illustrative:
+illustrative. For rectangular detector pixels, pass `pixel_size=(u_pitch, v_pitch)`
+in metres, in the same order as `Detector.du` and `Detector.dv`; a scalar pitch
+means square pixels:
 
 ```python
 import tomojax as tj
@@ -123,11 +125,25 @@ from tomojax.corrections import Paganin
 
 step = Paganin(delta_beta=100, distance=0.1, energy_kev=25, pixel_size=0.65e-6)
 scan = tj.load_frames("raw.nxs").corrected(step)
+# Retain a detector window after phase retrieval, not before it.
+scan = scan.cropped(slice(100, 900), slice(None))
 ```
+
+Paganin mixes neighbouring pixels along both detector axes. Cropping raw
+frames first discards measured neighbours and replaces them by repeated crop
+edges; its FFT padding prevents wrap-around, not this loss of measurements.
+When correcting the full detector is too expensive, correct a larger raw
+window and keep only its interior. Enlarge that window until the retained
+slices converge.
 
 On the command line, `--paganin` takes the same four values in that order:
 `tomojax preprocess raw.nxs -o phase.nxs --paganin 100,0.1,25,0.65e-6`. It is
 an expert option, so `--help` does not list it.
+For rectangular pixels, append the v pitch after the u pitch:
+`--paganin 100,0.1,25,0.65e-6,1.3e-6`.
+`--crop` crops raw frames before correction; for an interior phase-retrieved
+window, use the Python ordering above or retain a measured halo around the
+command-line crop.
 
 ### TIFF frames
 
