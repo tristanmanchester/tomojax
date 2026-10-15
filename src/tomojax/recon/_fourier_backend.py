@@ -150,7 +150,17 @@ class _PendingSlab:
 
 class FourierPlan:
     def __init__(
-        self, grid, detector, nviews, flipped, angles, depth, backend, *, async_transfers=False
+        self,
+        grid,
+        detector,
+        nviews,
+        flipped,
+        angles,
+        depth,
+        backend,
+        *,
+        async_transfers=False,
+        transpose_download=False,
     ) -> None:
         self.cuda = backend == "cupy"
         if self.cuda:
@@ -163,6 +173,7 @@ class FourierPlan:
         else:
             xp = np
         self.xp = xp
+        self.transpose_download = transpose_download
         self.grid, self.detector = grid, detector
         self.source_views, self.depth = nviews, depth
         self.upload = self.compute = self.download = None
@@ -295,9 +306,11 @@ class FourierPlan:
         cx, cy = self.crop
         volume = xp.fft.irfft2(self.frequencies, s=self.shape, axes=(-2, -1))
         # Keep fixed FFT batches, but do not materialize or transfer padded output.
-        return volume[:count, cx : cx + self.grid.nx, cy : cy + self.grid.ny] / (
+        output = volume[:count, cx : cx + self.grid.nx, cy : cy + self.grid.ny] / (
             self.grid.vx * self.grid.vy
         )
+        # Match plane-contiguous Fortran xyz storage before the device-to-host copy.
+        return xp.ascontiguousarray(output.swapaxes(1, 2)) if self.transpose_download else output
 
     def reconstruct(self, host, *, count: int) -> np.ndarray:
         xp = self.xp

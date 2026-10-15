@@ -308,7 +308,7 @@ def test_host_pipeline_drains_pending_transfers_after_output_failure():
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("storage", ["array", "mapped", "strided"])
+@pytest.mark.parametrize("storage", ["array", "mapped", "mapped_F", "strided"])
 def test_host_pipeline_matches_sequential_with_partial_slabs(monkeypatch, tmp_path, storage):
     import tomojax.recon.fourier as implementation
 
@@ -327,9 +327,13 @@ def test_host_pipeline_matches_sequential_with_partial_slabs(monkeypatch, tmp_pa
     config = FourierConfig(backend="cupy", slices_per_batch=4)
     monkeypatch.setattr(implementation, "_HOST_PIPELINE_MIN_BYTES", 10**12)
     expected = fourier_reconstruct(geometry, grid, detector, projections, config=config)
-    if storage == "mapped":
+    if storage.startswith("mapped"):
         out = np.lib.format.open_memmap(
-            tmp_path / "pipeline.npy", mode="w+", dtype=np.float32, shape=expected.shape
+            tmp_path / "pipeline.npy",
+            mode="w+",
+            dtype=np.float32,
+            shape=expected.shape,
+            fortran_order=storage == "mapped_F",
         )
     elif storage == "strided":
         out = np.empty((grid.nx * 2, grid.ny, grid.nz), dtype=np.float32)[::2]
