@@ -92,3 +92,49 @@ def test_ordered_start_rejects_unsupported_objective_or_storage(changes):
             np.ones((2, 1, 2), np.float32),
             config=replace(config, **changes),
         )
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("early", [False, True])
+def test_volume_larger_than_data_preserves_owned_start_and_final_state(early):
+    import importlib
+
+    module = importlib.import_module("tomojax.recon.fista_tv")
+    grid, detector = Grid(16, 16, 8, 1, 1, 1), Detector(8, 6, 1, 1)
+    geometry = LaminographyGeometry(grid, detector, np.linspace(180, 0, 31), tilt_deg=27)
+    rng = np.random.default_rng(614)
+    data = jnp.asarray(rng.uniform(size=(31, 6, 8)).astype(np.float32))
+    initial = jnp.asarray(rng.uniform(0, 0.1, (16, 16, 8)).astype(np.float32))
+    before = np.asarray(initial).copy()
+    config = FistaConfig(
+        iterations=5,
+        tv_weight=0,
+        nonnegative=True,
+        initial_epochs=2,
+        initial_subsets=4,
+        recon_rel_tol=1e5 if early else None,
+        recon_patience=1,
+        lipschitz=1000 if early else None,
+    )
+    runtime = module._prepare_fista_runtime(
+        geometry, grid, detector, data, init_x=initial, config=config, det_grid=None
+    )
+    expected, limit = module._run_fista_scan(grid, detector, data, runtime)
+    callbacks = []
+    actual, info = fista_tv(
+        geometry,
+        grid,
+        detector,
+        data,
+        init_x=initial,
+        config=config,
+        callback=lambda step, loss: callbacks.append((step, loss)),
+    )
+    np.testing.assert_allclose(actual, expected.x, rtol=3e-5, atol=2e-7)
+    np.testing.assert_allclose(info["loss"], expected.loss, rtol=3e-6)
+    np.testing.assert_allclose(info["lipschitz"], limit, rtol=1e-6)
+    np.testing.assert_array_equal(initial, before)
+    assert np.isfinite(np.asarray(data)).all()
+    assert info["effective_iterations"] == int(expected.iters_done)
+    assert info["early_stop"] == bool(expected.done)
+    assert callbacks[-1][0] == info["effective_iterations"] - 1

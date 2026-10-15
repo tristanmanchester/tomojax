@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+Initialized nonnegative FISTA reuses two owned volume buffers when the volume
+is larger than the measured data, without changing global allocator settings.
+
 Laminography alignment on real data (sixth lab run): `tj.align(mode="full")`
 now improves a real DIAD (Diamond K11) TEM-grid laminography scan instead of
 degrading it, starting from the file's nominal geometry: setup is seeded from
