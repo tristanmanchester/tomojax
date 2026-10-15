@@ -94,7 +94,9 @@ def _resolved_schedule_for_cfg(cfg: AlignConfig) -> ResolvedAlignmentSchedule:
             resolved,
             stages=tuple(
                 replace(stage, objective_kind="joint_volume_pose")
-                if stage.active_pose_dofs and not stage.active_geometry_dofs
+                if stage.active_pose_dofs
+                and not stage.active_geometry_dofs
+                and stage.objective_kind != "projection_consistency"
                 else stage
                 for stage in resolved.stages
             ),

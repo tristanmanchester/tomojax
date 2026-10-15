@@ -21,6 +21,9 @@ preserving bounds, frozen parameters and the supplied detector roll. It leaves
 the volume unchanged: compose it before a pose stage or reconstruct its returned
 scan. Its diagnostics say `unvalidated_seed`, not a successful validation fit;
 the default `full` schedule still validates and reconstructs its setup updates.
+For calibrated, unrolled laminography, a separate `projection_consistency` /
+`spectral` setup stage with `("dx", "dz")` initializes smooth detector-frame
+motion from zero poses, also without reconstructing or claiming validation.
 
 ## Gauss–Newton updates at interpolation boundaries
 

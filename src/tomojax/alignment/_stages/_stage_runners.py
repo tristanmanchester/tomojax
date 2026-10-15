@@ -33,6 +33,7 @@ from ._setup_stage import (
     _optimize_setup_geometry_bilevel_for_level,
     initialize_setup_geometry_for_level,
 )
+from ._spectral_motion_stage import run_spectral_motion_stage
 from ._stage_types import (
     _PROPOSAL_STEP_BY_DOF,
     LevelResumePlan,
@@ -368,6 +369,28 @@ def _pose_stage_resume_state(
     )
 
 
+def _pose_stage_config(cfg, stage, active_loss_spec, level_factor):
+    pose_optimizer = _pose_stage_optimizer_or_raise(stage)
+    cfg_stage = replace(
+        cfg,
+        schedule=None,
+        optimise_dofs=stage.active_pose_dofs,
+        opt_method=str(pose_optimizer),
+        outer_iterations=int(stage.maxiter),
+        # A fixed-volume objective holds the volume fixed during each pose step;
+        # alternation still refreshes it between steps. Skipping reconstruction
+        # left pose-only schedules optimising against an all-zero volume.
+        iterations=int(cfg.iterations),
+        gn_coupling="joint" if stage.objective_kind == "joint_volume_pose" else "fixed_volume",
+        early_stop=bool(stage.early_stop),
+        # A supplied Lipschitz constant describes the full-resolution grid only.
+        lipschitz=cfg.lipschitz if level_factor == 1 else None,
+        loss=active_loss_spec,
+    )
+    cfg_stage.stage_quality_tier = stage.quality_tier
+    return cfg_stage
+
+
 def _run_pose_alignment_stage(
     *,
     geometry: Geometry,
@@ -389,26 +412,22 @@ def _run_pose_alignment_stage(
     level_losses: list[float],
     state: StageLoopState,
 ) -> StageLoopState:
-    pose_optimizer = _pose_stage_optimizer_or_raise(stage)
-    # Mean subtraction is an object-frame gauge; detector-frame translations need none.
+    if stage.objective_kind == "projection_consistency":
+        return run_spectral_motion_stage(
+            state,
+            stage,
+            geometry=geometry,
+            grid=grid,
+            detector=detector,
+            projections=projections,
+            cfg=cfg,
+            level_factor=level_factor,
+            stage_runtime=stage_runtime,
+            stage_global_start=stage_global_start,
+            level_stats=level_stats,
+        )
     anchored = stage.gauge_policy == "anchor_mean" and cfg.pose_translation_frame == "object"
-    cfg_stage = replace(
-        cfg,
-        schedule=None,
-        optimise_dofs=stage.active_pose_dofs,
-        opt_method=str(pose_optimizer),
-        outer_iterations=int(stage.maxiter),
-        # A fixed-volume objective holds the volume fixed during each pose step;
-        # alternation still refreshes it between steps. Skipping reconstruction
-        # left pose-only schedules optimising against an all-zero volume.
-        iterations=int(cfg.iterations),
-        gn_coupling="joint" if stage.objective_kind == "joint_volume_pose" else "fixed_volume",
-        early_stop=bool(stage.early_stop),
-        # A supplied Lipschitz constant describes the full-resolution grid only.
-        lipschitz=cfg.lipschitz if level_factor == 1 else None,
-        loss=active_loss_spec,
-    )
-    cfg_stage.stage_quality_tier = stage.quality_tier
+    cfg_stage = _pose_stage_config(cfg, stage, active_loss_spec, level_factor)
     geometry_for_align, align_kwargs = _pose_stage_geometry_context(
         geometry=geometry,
         grid=grid,
@@ -518,6 +537,7 @@ def _initial_stage_info(
 
 def _seed_stage_translations(
     state: StageLoopState,
+    stage: ResolvedAlignmentStage,
     *,
     geometry: Geometry,
     grid: Grid,
@@ -528,7 +548,7 @@ def _seed_stage_translations(
     level_factor: int,
 ) -> StageLoopState:
     """Seed the first pose stage against the geometry calibrated before it."""
-    if not cfg.seed_translations:
+    if not cfg.seed_translations or stage.objective_kind == "projection_consistency":
         return state
     start = time.perf_counter()
     if active_geometry_dofs:
@@ -592,18 +612,15 @@ def _run_multires_level_stages(
         final_gauge_fix_stats=final_gauge_fix_stats or {},
     )
 
+    # Start after the checkpointed stage only if that stage finished.
+    resume_stage = level_resume.resume_stage_index + int(level_resume.resume_stage_completed)
     for stage in resolved_schedule.stages:
-        if resuming_this_level:
-            if int(stage.index) < level_resume.resume_stage_index:
-                continue
-            if (
-                int(stage.index) == level_resume.resume_stage_index
-                and level_resume.resume_stage_completed
-            ):
-                continue
+        if resuming_this_level and int(stage.index) < resume_stage:
+            continue
         if seed_translations and stage.active_pose_dofs:
             state = _seed_stage_translations(
                 state,
+                stage,
                 geometry=geometry,
                 grid=grid,
                 detector=detector,
