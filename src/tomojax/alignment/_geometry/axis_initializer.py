@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 
 import numpy as np
 from scipy.optimize import minimize
@@ -56,8 +57,50 @@ def fit_axis_direction(
     *,
     rotations_deg: tuple[float, float] = (0.0, 0.0),
     active: tuple[bool, bool] = (True, True),
-    bounds_deg: tuple[tuple[float, float], tuple[float, float]] = ((-60.0, 60.0), (-60.0, 60.0)),
+    bounds_deg: tuple[tuple[float, float], tuple[float, float]] = ((-180.0, 180.0), (-60.0, 60.0)),
     detector_roll_deg: float = 0.0,
+) -> AxisDirectionSeed:
+    """Fit local axis candidates on both beam sides, retaining recorded angles.
+
+    A file's nominal tilt need not specify which way the rotation axis leans
+    along the beam. Rank the current and reflected candidates by their measured
+    common-line agreement. Explicit bounds and frozen rotations remain binding;
+    equal evidence retains the candidate near the supplied axis.
+    """
+    fit_local = partial(
+        _fit_local_axis_direction,
+        sample,
+        nominal_axis,
+        active=active,
+        bounds_deg=bounds_deg,
+        detector_roll_deg=detector_roll_deg,
+    )
+    fitted = fit_local(rotations_deg=rotations_deg)
+    nominal = np.asarray(nominal_axis, np.float64)
+    reflected_x = -2 * np.rad2deg(np.arctan2(nominal[1], nominal[2])) - rotations_deg[0]
+    reflected_x = float((reflected_x + 180) % 360 - 180)
+    if (
+        not active[0]
+        or np.isclose(reflected_x, rotations_deg[0])
+        or not bounds_deg[0][0] <= reflected_x <= bounds_deg[0][1]
+    ):
+        return fitted
+    reflected = fit_local(rotations_deg=(reflected_x, rotations_deg[1]))
+    if reflected.correlation_after <= fitted.correlation_after:
+        return fitted
+    return AxisDirectionSeed(
+        reflected.rotations_deg, fitted.correlation_before, reflected.correlation_after
+    )
+
+
+def _fit_local_axis_direction(
+    sample: Callable[[np.ndarray], tuple[np.ndarray, np.ndarray]],
+    nominal_axis: np.ndarray,
+    *,
+    rotations_deg: tuple[float, float],
+    active: tuple[bool, bool],
+    bounds_deg: tuple[tuple[float, float], tuple[float, float]],
+    detector_roll_deg: float,
 ) -> AxisDirectionSeed:
     """Initialize active axis rotations within a local angular capture range.
 

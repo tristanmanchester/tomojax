@@ -394,13 +394,19 @@ def _analytic_common_lines(true_axis):
     return sample
 
 
-@pytest.mark.parametrize(("tilt", "azimuth", "roll"), [(35.0, 0.4, 1.7), (24.0, -2.0, 0.0)])
-def test_common_line_axis_seed_recovers_nonplanar_geometry_despite_view_shifts(tilt, azimuth, roll):
+@pytest.mark.parametrize(
+    ("tilt", "azimuth", "roll", "nominal_tilt"),
+    [(35.0, 0.4, 1.7, 31.0), (24.0, -2.0, 0.0, 20.0), (-35.0, 0.4, 1.7, 31.0)],
+)
+def test_common_line_axis_seed_recovers_nonplanar_geometry_despite_view_shifts(
+    tilt, azimuth, roll, nominal_tilt
+):
     t, a = np.deg2rad([tilt, azimuth + roll])
     axis = np.array([np.cos(t) * np.sin(a), np.sin(t), np.cos(t) * np.cos(a)])
-    nominal = np.array([0, np.sin(t - np.deg2rad(4)), np.cos(t - np.deg2rad(4))])
+    n = np.deg2rad(nominal_tilt)
+    nominal = np.array([0, np.sin(n), np.cos(n)])
     result = init.fit_axis_direction(_analytic_common_lines(axis), nominal, detector_roll_deg=roll)
-    np.testing.assert_allclose(result.rotations_deg, [4, azimuth], atol=0.03)
+    np.testing.assert_allclose(result.rotations_deg, [tilt - nominal_tilt, azimuth], atol=0.03)
     assert result.correlation_after > result.correlation_before
     assert result.correlation_after > 0.99999
 
@@ -424,15 +430,16 @@ def test_common_line_axis_seed_preserves_frozen_bounds_and_uninformative_estimat
 
 @pytest.mark.parametrize("bounded", [False, True])
 @pytest.mark.parametrize("roll", [0.0, 3.0])
+@pytest.mark.parametrize("tilt", [35.0, -35.0])
 def test_full_setup_seeds_jointly_in_native_units_and_preserves_frozen_axes(
-    monkeypatch, bounded, roll
+    monkeypatch, bounded, roll, tilt
 ):
     from tomojax.alignment.api import align as pose_align
     from tomojax.core.multires import bin_projections
     from tomojax.geometry.api import detector_grid_from_geometry_inputs
     from tomojax.io import build_geometry_from_dataset_metadata
 
-    true = np.array([0.0, np.sin(np.deg2rad(35.0)), np.cos(np.deg2rad(35.0))])
+    true = np.array([0.0, np.sin(np.deg2rad(tilt)), np.cos(np.deg2rad(tilt))])
     sample = _analytic_common_lines(
         init.axis_in_detector(true, np.zeros(2), detector_roll_deg=roll)
     )
@@ -468,7 +475,9 @@ def test_full_setup_seeds_jointly_in_native_units_and_preserves_frozen_axes(
     )
     cfg = replace(
         _COR_CONFIG,
-        bounds={"axis_rot_x_deg": (-2, 2), "det_u_px": (-1, 1)} if bounded else (),
+        bounds={"axis_rot_x_deg": (-2, 2) if tilt > 0 else (-70, -60), "det_u_px": (-1, 1)}
+        if bounded
+        else (),
         freeze=("axis_rot_y_deg",),
         seed_translations=True,
     )
@@ -494,7 +503,8 @@ def test_full_setup_seeds_jointly_in_native_units_and_preserves_frozen_axes(
     calibration = result.info["geometry_calibration_state"]
     scan = {item["name"]: item["value"] for item in calibration["scan"]}
     detector_fit = {item["name"]: item["value"] for item in calibration["detector"]}
-    assert scan["axis_rot_x_deg"] == pytest.approx(2.0 if bounded else 4.0, abs=0.03)
+    expected_tilt = 33.0 if bounded and tilt > 0 else tilt
+    assert scan["axis_rot_x_deg"] == pytest.approx(expected_tilt - 31.0, abs=0.03)
     assert scan["axis_rot_y_deg"] == 0.0
     assert detector_fit["detector_roll_deg"] == pytest.approx(roll)
     assert result.scan.detector.center[0] == pytest.approx(target, abs=1e-5)
@@ -504,8 +514,6 @@ def test_full_setup_seeds_jointly_in_native_units_and_preserves_frozen_axes(
         assert not seeded_at  # The broad translation initializer has no rolled-ray override.
         return
     assert len(seeded_at) == 1
-    assert seeded_at[0][0][1] == pytest.approx(
-        np.sin(np.deg2rad(33.0 if bounded else 35.0)), abs=5e-4
-    )
+    assert seeded_at[0][0][1] == pytest.approx(np.sin(np.deg2rad(expected_tilt)), abs=5e-4)
     # Point decimation shifts the coarse detector centre by half a native pixel.
     assert seeded_at[0][1][0] == pytest.approx(2.8 if bounded else 3.4, abs=1e-5)

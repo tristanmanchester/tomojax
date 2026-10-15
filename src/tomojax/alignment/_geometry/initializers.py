@@ -89,7 +89,10 @@ def common_line_setup_seed(
     if any(active):
         limits = {name: np.rad2deg([lo, hi]) for name, lo, hi in bounds}
         angular_bounds = np.asarray(
-            [limits.get(name, (-60.0, 60.0)) for name in ("axis_rot_x_deg", "axis_rot_y_deg")]
+            [
+                limits.get("axis_rot_x_deg", (-180.0, 180.0)),
+                limits.get("axis_rot_y_deg", (-60.0, 60.0)),
+            ]
         )
         for i in np.flatnonzero(active):
             rotations[i] = np.clip(rotations[i], *angular_bounds[i])

@@ -131,8 +131,8 @@ DOF_SPECS: dict[str, DofSpec] = {
         unit="rad",
         display_unit="deg",
         scale=ParameterScale(scale=_deg(1.0)),
-        lower=_deg(-60.0),
-        upper=_deg(60.0),
+        lower=-math.pi,
+        upper=math.pi,
         gauge_group="rotation_axis_direction",
     ),
     "axis_rot_y_deg": DofSpec(

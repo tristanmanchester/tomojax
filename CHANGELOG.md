@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+Setup initialization compares both beam-facing tilt signs when allowed by the
+requested bounds, without changing recorded view angles.
+
 Setup alignment preserves a supplied detector roll and its nominal rotation axis,
 including the physical rays selected at coarser levels.
 
