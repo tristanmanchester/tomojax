@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import time
+from typing import cast
 
 import jax.numpy as jnp
 
@@ -11,21 +12,27 @@ from tomojax.alignment._geometry.geometry_applier import (
     apply_alignment_state,
     apply_setup_to_detector_grid,
     pose_stack_for_setup,
+    setup_moved_detector,
 )
 from tomojax.alignment._geometry.parametrizations import apply_pose_updates
 from tomojax.alignment._model.dofs import DOF_INDEX
 from tomojax.alignment._model.schedules import ResolvedAlignmentStage
-from tomojax.alignment._model.state import PoseState
+from tomojax.alignment._model.state import AlignmentState, PoseState
 from tomojax.alignment._objectives.loss_adapters import build_loss_adapter
 from tomojax.alignment._observer import OuterStat, _normalize_observer_action
 from tomojax.alignment._pose._pose_loop import align
+from tomojax.alignment._prealign import seeded_translation_params
 from tomojax.alignment._profiles import profile_policy_from_config
 from tomojax.alignment._results import AlignMultiresResumeState, AlignResumeState
 from tomojax.alignment.proposals import ProposalCandidate, score_pose_stack_candidates
 from tomojax.core.cone import cone_model
 from tomojax.core.geometry.base import Detector, Geometry, Grid
 
-from ._setup_stage import _geometry_with_setup_state, _optimize_setup_geometry_bilevel_for_level
+from ._setup_stage import (
+    _geometry_with_setup_state,
+    _optimize_setup_geometry_bilevel_for_level,
+    initialize_setup_geometry_for_level,
+)
 from ._stage_types import (
     _PROPOSAL_STEP_BY_DOF,
     LevelResumePlan,
@@ -247,22 +254,36 @@ def _run_setup_geometry_stage(
     )
     cfg_stage.stage_quality_tier = stage.quality_tier
     geometry_start = time.perf_counter()
-    setup_result = _optimize_setup_geometry_bilevel_for_level(
-        geometry=geometry,
-        grid=grid,
-        detector=detector,
-        projections=projections,
-        init_x=state.x_lvl,
-        init_pose_params=state.pose_params,
-        state=state.setup_alignment_state,
-        active_geometry_dofs=stage.active_geometry_dofs,
-        factor=int(level_factor),
-        cfg=cfg_stage,
-        loss_spec=active_loss_spec,
-        loss_name=active_loss_name,
-        schedule_name=resolved_schedule.name,
-        stage=stage,
-    )
+    if stage.objective_kind == "projection_consistency":
+        setup_result = initialize_setup_geometry_for_level(
+            geometry=geometry,
+            detector=detector,
+            projections=projections,
+            state=cast("AlignmentState", state.setup_alignment_state).replace(
+                pose=PoseState(state.pose_params, translation_frame=cfg.pose_translation_frame),
+                volume=state.x_lvl,
+            ),
+            active_geometry_dofs=stage.active_geometry_dofs,
+            factor=int(level_factor),
+            cfg=cfg_stage,
+        )
+    else:
+        setup_result = _optimize_setup_geometry_bilevel_for_level(
+            geometry=geometry,
+            grid=grid,
+            detector=detector,
+            projections=projections,
+            init_x=state.x_lvl,
+            init_pose_params=state.pose_params,
+            state=state.setup_alignment_state,
+            active_geometry_dofs=stage.active_geometry_dofs,
+            factor=int(level_factor),
+            cfg=cfg_stage,
+            loss_spec=active_loss_spec,
+            loss_name=active_loss_name,
+            schedule_name=resolved_schedule.name,
+            stage=stage,
+        )
     level_wall_time = state.level_wall_time + (time.perf_counter() - geometry_start)
     enriched = stage_runtime.enrich_stats(
         [dict(stat) for stat in setup_result.checkpoint_outer_stats],
@@ -459,33 +480,16 @@ def _run_pose_alignment_stage(
     )
 
 
-def _run_multires_level_stages(
-    *,
-    geometry: Geometry,
-    grid: Grid,
-    detector: Detector,
-    projections: jnp.ndarray,
+def _initial_stage_info(
     cfg: AlignConfig,
-    resolved_schedule: object,
-    active_loss_spec: object,
     active_loss_name: str,
-    setup_alignment_state: object,
-    active_geometry_dofs: tuple[str, ...],
-    level_factor: int,
-    stage_runtime: StageRuntime,
-    resume_state: AlignMultiresResumeState | None,
-    resuming_this_level: bool,
-    level_resume: LevelResumePlan,
-    global_elapsed_offset: float,
-    x_lvl: jnp.ndarray,
-    pose_params: jnp.ndarray,
-    level_stats: list[OuterStat],
-    level_losses: list[float],
+    *,
     final_gauge_fix: str,
     final_gauge_fix_dofs: list[str],
     final_gauge_fix_stats: dict[str, object],
-) -> StageRunResult:
-    info: dict[str, object] = {
+) -> dict[str, object]:
+    """Initial metadata shared by setup and pose stages."""
+    return {
         "loss": [],
         "loss_kind": active_loss_name,
         "reconstruction": str(cfg.reconstruction),
@@ -510,6 +514,72 @@ def _run_multires_level_stages(
         "gauge_fix_dofs": final_gauge_fix_dofs,
         "gauge_fix_final": final_gauge_fix_stats or {},
     }
+
+
+def _seed_stage_translations(
+    state: StageLoopState,
+    *,
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray,
+    cfg: AlignConfig,
+    active_geometry_dofs: tuple[str, ...],
+    level_factor: int,
+) -> StageLoopState:
+    """Seed the first pose stage against the geometry calibrated before it."""
+    if not cfg.seed_translations:
+        return state
+    start = time.perf_counter()
+    if active_geometry_dofs:
+        setup = cast("AlignmentState", state.setup_alignment_state).setup
+        moved = setup_moved_detector(detector, setup, level_factor=level_factor)
+        if moved is None:
+            return state  # The image-domain seed does not support a rolled ray grid.
+        detector = moved
+        geometry = _geometry_with_setup_state(geometry, grid, detector, setup)
+    seed = seeded_translation_params(geometry, grid, detector, projections, cfg)
+    return replace(
+        state,
+        pose_params=state.pose_params if seed is None else seed,
+        level_wall_time=state.level_wall_time + time.perf_counter() - start,
+    )
+
+
+def _run_multires_level_stages(
+    *,
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray,
+    cfg: AlignConfig,
+    resolved_schedule: object,
+    active_loss_spec: object,
+    active_loss_name: str,
+    setup_alignment_state: object,
+    active_geometry_dofs: tuple[str, ...],
+    level_factor: int,
+    stage_runtime: StageRuntime,
+    resume_state: AlignMultiresResumeState | None,
+    resuming_this_level: bool,
+    level_resume: LevelResumePlan,
+    global_elapsed_offset: float,
+    x_lvl: jnp.ndarray,
+    pose_params: jnp.ndarray,
+    seed_translations: bool,
+    level_stats: list[OuterStat],
+    level_losses: list[float],
+    final_gauge_fix: str,
+    final_gauge_fix_dofs: list[str],
+    final_gauge_fix_stats: dict[str, object],
+) -> StageRunResult:
+    info = _initial_stage_info(
+        cfg,
+        active_loss_name,
+        final_gauge_fix=final_gauge_fix,
+        final_gauge_fix_dofs=final_gauge_fix_dofs,
+        final_gauge_fix_stats=final_gauge_fix_stats,
+    )
     state = StageLoopState(
         x_lvl=x_lvl,
         pose_params=pose_params,
@@ -531,6 +601,18 @@ def _run_multires_level_stages(
                 and level_resume.resume_stage_completed
             ):
                 continue
+        if seed_translations and stage.active_pose_dofs:
+            state = _seed_stage_translations(
+                state,
+                geometry=geometry,
+                grid=grid,
+                detector=detector,
+                projections=projections,
+                cfg=cfg,
+                active_geometry_dofs=active_geometry_dofs,
+                level_factor=level_factor,
+            )
+            seed_translations = False
         stage_global_start = level_resume.global_before_level + len(level_stats)
         if stage.stage_role == "proposal":
             state = _run_proposal_stage(

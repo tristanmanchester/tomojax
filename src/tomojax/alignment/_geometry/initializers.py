@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy import fft
 
+from .axis_initializer import axis_in_detector, fit_axis_direction
+from .common_lines import prepare_common_lines
+
 if TYPE_CHECKING:
+    import jax
     import jax.numpy as jnp
 
+    from tomojax.alignment._model.dofs import DofBounds
+    from tomojax.alignment._model.state import SetupGeometryState
     from tomojax.alignment._objectives.loss_adapters import LossAdapter
     from tomojax.core.geometry import Detector, Geometry, Grid
 
@@ -33,6 +39,92 @@ class DetectorCenterSeed:
             "amplitude_px": float(self.amplitude_px),
             "status": self.status,
         }
+
+
+def common_line_setup_seed(
+    projections: np.ndarray | jax.Array,
+    geometry: Geometry,
+    *,
+    detector: Detector,
+    setup: SetupGeometryState,
+    active_dofs: tuple[str, ...],
+    bounds: DofBounds,
+    factor: int,
+) -> dict[str, object] | None:
+    """Seed an axis and then its centre without fitting projection translations."""
+    from tomojax.core.geometry import LaminographyGeometry, ParallelGeometry, RotationAxisGeometry
+
+    active = ("axis_rot_x_deg" in active_dofs, "axis_rot_y_deg" in active_dofs)
+    if not isinstance(geometry, LaminographyGeometry | ParallelGeometry | RotationAxisGeometry):
+        return None
+    if not any(active) and (
+        "det_u_px" not in active_dofs or isinstance(geometry, ParallelGeometry)
+    ):
+        return None
+    # The v origin is fixed during this seed; include any existing calibration.
+    detector_v = replace(
+        detector,
+        center=(
+            detector.center[0],
+            detector.center[1] + float(setup.det_v_px) / factor * detector.dv,
+        ),
+    )
+    lines = prepare_common_lines(projections, np.asarray(geometry.angles), detector_v)
+    if lines is None:
+        return None
+    nominal = np.asarray(setup.nominal_axis_unit, np.float64)
+    if isinstance(geometry, LaminographyGeometry):
+        nominal = np.asarray(
+            replace(
+                geometry, tilt_deg=geometry.tilt_deg + np.rad2deg(float(setup.tilt_rad))
+            ).axis_unit_lab
+        )
+    else:
+        nominal = axis_in_detector(
+            nominal, np.rad2deg([float(setup.tilt_rad), 0.0]), detector_roll_deg=0.0
+        )
+    rotations = np.rad2deg([float(setup.axis_rot_x_rad), float(setup.axis_rot_y_rad)])
+    roll = np.rad2deg(float(setup.detector_roll_rad))
+    result: dict[str, object] = {}
+    if any(active):
+        limits = {name: np.rad2deg([lo, hi]) for name, lo, hi in bounds}
+        angular_bounds = np.asarray(
+            [
+                limits.get("axis_rot_x_deg", (-180.0, 180.0)),
+                limits.get("axis_rot_y_deg", (-60.0, 60.0)),
+            ]
+        )
+        for i in np.flatnonzero(active):
+            rotations[i] = np.clip(rotations[i], *angular_bounds[i])
+        fit = fit_axis_direction(
+            lines.sample,
+            nominal,
+            rotations_deg=(float(rotations[0]), float(rotations[1])),
+            active=active,
+            bounds_deg=(
+                (float(angular_bounds[0, 0]), float(angular_bounds[0, 1])),
+                (float(angular_bounds[1, 0]), float(angular_bounds[1, 1])),
+            ),
+            detector_roll_deg=roll,
+        )
+        rotations = np.asarray(fit.rotations_deg)
+        result.update(
+            axis_seed_applied=True,
+            axis_seed_rotations_deg=fit.rotations_deg,
+            axis_seed_correlation_before=fit.correlation_before,
+            axis_seed_correlation_after=fit.correlation_after,
+        )
+    if "det_u_px" in active_dofs:
+        center = lines.center(
+            axis_in_detector(nominal, rotations, detector_roll_deg=roll), detector_roll_deg=roll
+        )
+        if center is not None:
+            result.update(
+                detector_center_seed_applied=True,
+                detector_center_seed_method="fourier_common_line_phase",
+                detector_center_seed_det_u_px=(center - detector.center[0] / detector.du) * factor,
+            )
+    return result or None
 
 
 def train_heldout_view_indices(
@@ -427,3 +519,15 @@ def _vo_mask(rows: int, cols: int, radius: float, drop: int) -> np.ndarray:
     mask[centre_row - drop : centre_row + drop + 1, :] = 0.0
     mask[:, centre_col - 1 : centre_col + 2] = 0.0
     return mask
+
+
+__all__ = [
+    "DetectorCenterSeed",
+    "common_line_setup_seed",
+    "fit_axis_direction",
+    "projection_com_det_u_seed",
+    "projection_pair_det_u_seed",
+    "reprojection_det_u_seed",
+    "sinogram_det_u_seed",
+    "train_heldout_view_indices",
+]

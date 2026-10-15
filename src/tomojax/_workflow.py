@@ -312,6 +312,8 @@ def align(
     ``("dy",)``); ``levels`` sets the coarse-to-fine binning factors.
     ``config`` (a :class:`tomojax.alignment.AlignConfig`) holds expert solver
     settings and replaces the quality profile's defaults.
+    An initializer-only ``spectral_setup`` schedule does not reconstruct;
+    reconstruct its returned scan or compose it before a pose stage.
 
     ``grid`` aligns and reconstructs on another grid than the scan's (a
     region, or a different voxel size), as :func:`reconstruct` does.

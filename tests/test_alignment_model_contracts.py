@@ -301,7 +301,8 @@ def test_public_cor_seed_is_relative_to_the_existing_detector_centre(factor):
 
 
 @pytest.mark.numerical
-def test_public_cor_fallback_seed_remains_an_incremental_offset(monkeypatch):
+@pytest.mark.parametrize("bounded", [False, True])
+def test_public_cor_fallback_seed_remains_an_incremental_offset(monkeypatch, bounded):
     # A short arc declines the absolute sinogram estimator. The residual
     # search already measures an offset from the supplied detector geometry.
     angles = np.linspace(0, 130, 32)
@@ -318,11 +319,15 @@ def test_public_cor_fallback_seed_remains_an_incremental_offset(monkeypatch):
         tj.Scan(data, ParallelGeometry(grid, detector, angles)),
         mode="cor",
         levels=(1,),
-        config=_COR_CONFIG,
+        config=replace(_COR_CONFIG, bounds=(("det_u_px", -0.5, 0.5),) if bounded else ()),
     )
     first = out.info["outer_stats"][0]
     assert first["detector_center_seed_method"] == "fbp_reprojection_residual_search"
     assert first["detector_center_seed_det_u_px"] == pytest.approx(1.25)
+
+    assert first["setup_seed_clipped_to_bounds"] is bounded
+    if bounded:
+        assert abs(out.scan.detector.center[0] - detector.center[0]) <= 0.5
 
 
 @pytest.mark.numerical
@@ -471,3 +476,260 @@ def test_common_line_center_respects_a_supplied_wide_center_and_declines_boundar
     assert prepared.center(axis) == pytest.approx(center, abs=0.2)
     outside = replace(prepared, center_u=(center + det.nu / 4 + 1) * det.du)
     assert outside.center(axis) is None
+
+
+def _analytic_common_lines(true_axis):
+    # Independent 3-D Fourier oracle: nonplanar Gaussian mixture, arbitrary
+    # per-view translations. Intersections use cross products, not tilt formulas.
+    rng = np.random.default_rng(415)
+    angles = np.linspace(0, 2 * np.pi, 24, endpoint=False)
+    poses = np.zeros((len(angles), 3, 3))
+    poses[:, 0, 0] = poses[:, 1, 1] = np.cos(angles)
+    poses[:, 1, 0] = np.sin(angles)
+    poses[:, 0, 1] = -np.sin(angles)
+    poses[:, 2, 2] = 1
+
+    def orient(axis):
+        cross = np.cross([0, 0, 1], axis)
+        x, y, z = cross
+        skew = np.array([[0, -z, y], [z, 0, -x], [-y, x, 0]])
+        return (np.eye(3) + skew + skew @ skew / (1 + axis[2])) @ poses
+
+    truth = orient(np.asarray(true_axis))
+    i = np.repeat(np.arange(len(angles)), 3)
+    j = (i + np.tile([3, 7, 10], len(angles))) % len(angles)
+    centres = rng.uniform(-10, 10, (8, 3))
+    variance = rng.uniform(1.5, 5, (8, 3)) ** 2
+    shifts = rng.uniform(-5, 5, (len(angles), 2))
+    frequency = np.linspace(0.01, 0.25, 40)
+
+    def sample(axis):
+        candidate = orient(axis)
+        line = np.cross(candidate[i, 1], candidate[j, 1])
+        line /= np.linalg.norm(line, axis=1, keepdims=True)
+        spectra = []
+        for ids in (i, j):
+            uv = np.einsum("pki,pi->pk", candidate[ids][:, [0, 2]], line)
+            uv = uv[:, None, :] * frequency[None, :, None]
+            q = np.einsum("pki,pfk->pfi", truth[ids][:, [0, 2]], uv)
+            exponent = -2 * np.pi**2 * np.einsum("pfi,gi->pfg", q**2, variance)
+            phase = -2j * np.pi * np.einsum("pfi,gi->pfg", q, centres)
+            value = np.exp(exponent + phase).sum(axis=-1)
+            value *= np.exp(-2j * np.pi * np.einsum("pfi,pi->pf", uv, shifts[ids]))
+            spectra.append(value)
+        return tuple(spectra)
+
+    return sample
+
+
+@pytest.mark.parametrize(
+    ("tilt", "azimuth", "roll", "nominal_tilt"),
+    [(35.0, 0.4, 1.7, 31.0), (24.0, -2.0, 0.0, 20.0), (-35.0, 0.4, 1.7, 31.0)],
+)
+def test_common_line_axis_seed_recovers_nonplanar_geometry_despite_view_shifts(
+    tilt, azimuth, roll, nominal_tilt
+):
+    t, a = np.deg2rad([tilt, azimuth + roll])
+    axis = np.array([np.cos(t) * np.sin(a), np.sin(t), np.cos(t) * np.cos(a)])
+    n = np.deg2rad(nominal_tilt)
+    nominal = np.array([0, np.sin(n), np.cos(n)])
+    result = init.fit_axis_direction(_analytic_common_lines(axis), nominal, detector_roll_deg=roll)
+    np.testing.assert_allclose(result.rotations_deg, [tilt - nominal_tilt, azimuth], atol=0.03)
+    assert result.correlation_after > result.correlation_before
+    assert result.correlation_after > 0.99999
+
+
+def test_common_line_axis_seed_preserves_frozen_bounds_and_uninformative_estimates():
+    t = np.deg2rad(35)
+    sample = _analytic_common_lines(np.array([0, np.sin(t), np.cos(t)]))
+    n = np.deg2rad(31)
+    nominal = np.array([0, np.sin(n), np.cos(n)])
+    result = init.fit_axis_direction(
+        sample, nominal, active=(True, False), bounds_deg=((0, 2), (-60, 60))
+    )
+    np.testing.assert_allclose(result.rotations_deg, [2, 0], atol=1e-3)
+    empty = init.fit_axis_direction(
+        lambda axis: (np.ones((3, 8), complex), np.ones((3, 8), complex)),
+        nominal,
+        rotations_deg=(1.25, -0.75),
+    )
+    assert empty.rotations_deg == (1.25, -0.75)
+
+
+@pytest.mark.parametrize("bounded", [False, True])
+@pytest.mark.parametrize("roll", [0.0, 3.0])
+@pytest.mark.parametrize("tilt", [35.0, -35.0])
+def test_full_setup_seeds_jointly_in_native_units_and_preserves_frozen_axes(
+    monkeypatch, bounded, roll, tilt
+):
+    from tomojax.alignment.api import align as pose_align
+    from tomojax.core.multires import bin_projections
+    from tomojax.geometry.api import detector_grid_from_geometry_inputs
+    from tomojax.io import build_geometry_from_dataset_metadata
+
+    true = np.array([0.0, np.sin(np.deg2rad(tilt)), np.cos(np.deg2rad(tilt))])
+    sample = _analytic_common_lines(
+        init.axis_in_detector(true, np.zeros(2), detector_roll_deg=roll)
+    )
+    declined = bool(roll and bounded)
+    target = 1.6 if declined else 2.4 if bounded else 3.0
+    monkeypatch.setattr(
+        init,
+        "prepare_common_lines",
+        lambda data, angles, detector: SimpleNamespace(
+            sample=sample,
+            center=lambda axis, **kwargs: None
+            if declined
+            else (3.0 + detector.center[0] - 1.6) / detector.du,
+        ),
+    )
+    grid, detector = Grid(8, 8, 8, 0.8, 0.8, 0.8), Detector(8, 8, 0.8, 0.8, (1.6, 0.0))
+    geometry = build_geometry_from_dataset_metadata(
+        {
+            "grid": grid.to_dict(),
+            "detector": detector.to_dict(),
+            "angles": np.linspace(0, 360, 8, endpoint=False),
+            "geometry_type": "lamino",
+            "tilt_deg": 31.0,
+            "detector_roll_deg": roll,
+        }
+    )[2]
+    seeded_at = []
+    monkeypatch.setattr(
+        "tomojax.alignment._stages._stage_runners.seeded_translation_params",
+        lambda geometry, grid, detector, data, cfg: seeded_at.append(
+            (geometry.axis_unit_lab, detector.center)
+        ),
+    )
+    cfg = replace(
+        _COR_CONFIG,
+        bounds={"axis_rot_x_deg": (-2, 2) if tilt > 0 else (-70, -60), "det_u_px": (-1, 1)}
+        if bounded
+        else (),
+        freeze=("axis_rot_y_deg",),
+        seed_translations=True,
+    )
+
+    def check(geometry, grid, level_detector, projections, **kwargs):
+        if roll:
+            reference = replace(detector, center=(target, 0.0))
+            native = np.stack(
+                detector_grid_from_geometry_inputs(reference, {"detector_roll_deg": roll})
+            ).reshape(2, 8, 8)
+            selected = bin_projections(native, detector.nu // level_detector.nu)
+            np.testing.assert_allclose(
+                np.stack(kwargs["det_grid_override"]), selected.reshape(2, -1), atol=5e-7
+            )
+        kwargs["config"] = kwargs.pop("cfg")
+        kwargs.pop("anchor_translations")
+        return pose_align(geometry, grid, level_detector, projections, **kwargs)
+
+    monkeypatch.setattr("tomojax.alignment._stages._stage_runners.align", check)
+    result = tj.align(
+        tj.Scan(np.zeros((8, 8, 8), np.float32), geometry), mode="full", levels=(2, 1), config=cfg
+    )
+    calibration = result.info["geometry_calibration_state"]
+    scan = {item["name"]: item["value"] for item in calibration["scan"]}
+    detector_fit = {item["name"]: item["value"] for item in calibration["detector"]}
+    expected_tilt = 33.0 if bounded and tilt > 0 else tilt
+    assert scan["axis_rot_x_deg"] == pytest.approx(expected_tilt - 31.0, abs=0.03)
+    assert scan["axis_rot_y_deg"] == 0.0
+    assert detector_fit["detector_roll_deg"] == pytest.approx(roll)
+    assert result.scan.detector.center[0] == pytest.approx(target, abs=1e-5)
+    assert bool(result.info["outer_stats"][0].get("detector_center_seed_applied")) != declined
+
+    if roll:
+        assert not seeded_at  # The broad translation initializer has no rolled-ray override.
+        return
+    assert len(seeded_at) == 1
+    assert seeded_at[0][0][1] == pytest.approx(np.sin(np.deg2rad(expected_tilt)), abs=5e-4)
+    # Point decimation shifts the coarse detector centre by half a native pixel.
+    assert seeded_at[0][1][0] == pytest.approx(2.8 if bounded else 3.4, abs=1e-5)
+
+
+@pytest.mark.parametrize(("tilt", "bounded"), [(-35.0, False), (35.0, True)])
+def test_public_spectral_setup_calibrates_without_claiming_validation(tilt, bounded):
+    from tomojax.io import build_geometry_from_dataset_metadata
+
+    # Independent infinite-ray integrals of an asymmetric, nonplanar Gaussian mixture.
+    rng = np.random.default_rng(913)
+    centres = rng.uniform(-9, 9, (9, 3))
+    widths = rng.uniform(1.5, 3, 9)
+    angles = np.linspace(0, 360, 80, endpoint=False)
+    grid, detector = Grid(32, 32, 24, 1, 1, 1), Detector(48, 48, 1, 1)
+    t, roll = np.deg2rad([tilt, 3])
+    axis = np.array([0, np.sin(t), np.cos(t)])
+    skew = np.array([[0, 0, 0], [0, 0, axis[1]], [0, -axis[1], 0]])
+    orient = np.eye(3) + skew + skew @ skew / (1 + axis[2])
+    u, v = np.meshgrid(np.arange(48) - 23.5, np.arange(48) - 23.5)
+    uv = np.stack(
+        [np.cos(roll) * u - np.sin(roll) * v + 3, np.sin(roll) * u + np.cos(roll) * v], -1
+    )
+    images = []
+    for theta in np.deg2rad(angles):
+        c, s = np.cos(theta), np.sin(theta)
+        rotation = orient @ np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+        projected = (centres @ rotation.T)[:, [0, 2]]
+        distance2 = np.sum((uv[:, :, None] - projected) ** 2, axis=-1)
+        images.append(np.sum(widths * np.exp(-distance2 / (2 * widths**2)), axis=-1))
+    geometry = build_geometry_from_dataset_metadata(
+        dict(
+            grid=grid.to_dict(),
+            detector=detector.to_dict(),
+            angles=angles,
+            geometry_type="lamino",
+            tilt_deg=31.0,
+            detector_roll_deg=3.0,
+        )
+    )[2]
+    config = replace(
+        _COR_CONFIG,
+        schedule="spectral_setup",
+        freeze=("axis_rot_y_deg",),
+        bounds={"axis_rot_x_deg": (0, 2)} if bounded else (),
+    )
+    result = tj.align(
+        tj.Scan(np.asarray(images, np.float32), geometry), mode="full", levels=(2, 1), config=config
+    )
+    calibrated = result.scan.geometry.axis_unit_lab
+    expected = np.deg2rad(33 if bounded else tilt)
+    np.testing.assert_allclose(calibrated, [0, np.sin(expected), np.cos(expected)], atol=0.005)
+    assert result.scan.geometry.detector_roll_deg == pytest.approx(3)
+    assert abs(result.scan.detector.center[0] - 3) < 0.15
+    assert not np.any(result.volume) and not np.any(result.poses)
+    assert result.info["loss"] == []
+    for stat in result.info["outer_stats"]:
+        assert stat["geometry_status"] == "unvalidated_seed"
+        assert stat["geometry_validation_performed"] is False
+        assert stat["num_train_reconstructions"] == 0
+        assert "geometry_loss_after" not in stat
+
+
+def test_spectral_stage_contract_rejects_unsupported_work_and_declines_blank_data():
+    schedule = AlignmentSchedule(
+        "seed",
+        (
+            AlignmentStage(
+                "seed", ("det_u_px",), "projection_consistency", "spectral", stage_role="setup"
+            ),
+        ),
+    )
+    for change in (
+        dict(active_dofs=("det_u_px", "dx")),
+        dict(active_dofs=("detector_roll_deg",)),
+        dict(optimizer="gn"),
+        dict(stage_role="refine"),
+    ):
+        with pytest.raises(ValueError, match="projection_consistency"):
+            replace(schedule, stages=(replace(schedule.stages[0], **change),)).validate()
+    grid, detector = Grid(8, 8, 8, 1, 1, 1), Detector(8, 8, 1, 1)
+    angles = np.linspace(0, 360, 16, endpoint=False)
+    data = np.zeros((16, 8, 8), np.float32)
+    config = replace(_COR_CONFIG, schedule="spectral_setup")
+    geometry = tj.LaminographyGeometry(grid, detector, angles, tilt_deg=31)
+    result = tj.align(tj.Scan(data, geometry), mode="full", levels=(1,), config=config)
+    assert result.info["outer_stats"][0]["geometry_status"] == "seed_declined"
+    np.testing.assert_allclose(result.scan.geometry.axis_unit_lab, geometry.axis_unit_lab)
+    cone = tj.ConeGeometry(grid, detector, angles, tj.ConeBeam(30, 45))
+    with pytest.raises(ValueError, match="spectral setup requires a parallel beam"):
+        tj.align(tj.Scan(data, cone), mode="full", levels=(1,), config=config)

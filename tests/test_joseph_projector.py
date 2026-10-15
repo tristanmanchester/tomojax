@@ -385,6 +385,16 @@ def test_cubic_cancellation_bound_uses_magnitudes_of_physical_weights(backend):
     assert np.linalg.norm(a.T @ data.ravel() - expected) > 0.01 * np.linalg.norm(expected)
 
 
+def test_cuda_gather_auto_size_threshold(monkeypatch):
+    # check-public-imports: allow-private
+    from tomojax.core import _cuda_joseph as cuda
+
+    monkeypatch.setattr(cuda, "cuda_gather_available", lambda: True)
+    monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "auto")
+    assert not cuda.use_cuda_gather(Grid(128, 128, 127, 1, 1, 1))
+    assert cuda.use_cuda_gather(Grid(128, 128, 128, 1, 1, 1))
+
+
 @pytest.mark.gpu
 @pytest.mark.parametrize("nz", [4, 5, 7, 13])
 @pytest.mark.parametrize(

@@ -15,13 +15,16 @@ import numpy as np
 
 from tomojax.alignment._config import AlignConfig
 from tomojax.alignment._gauge import Gauge, least_motion_estimate
-from tomojax.alignment._geometry.geometry_applier import BaseGeometryArrays, pose_stack_for_setup
+from tomojax.alignment._geometry.geometry_applier import (
+    BaseGeometryArrays,
+    nominal_setup_geometry,
+    pose_stack_for_setup,
+)
 from tomojax.alignment._model.dofs import POSE_WIDTH
 from tomojax.alignment._model.state import AlignmentState
 from tomojax.alignment._objectives.loss_specs import loss_spec_name, resolve_loss_for_level
 from tomojax.alignment._observer import ObserverAction, ObserverCallback, OuterStat
 from tomojax.alignment._pose._coupled_objective import AlignmentMemoryError
-from tomojax.alignment._prealign import seeded_translation_params
 from tomojax.alignment._results import (
     AlignMultiresCheckpointCallback,
     AlignMultiresInfo,
@@ -93,9 +96,6 @@ def _run_one_multires_level(
         if resuming_this_level and resume_state is not None
         else state.pose_params
     )
-    if params0 is None and level_index == 0:
-        # The first level starts from explicit zero poses, so seed it here.
-        params0 = seeded_translation_params(geometry, grid, detector, projections, context.cfg)
     level_run = _prepare_multires_level_state(
         resume_state=resume_state,
         level_index=level_index,
@@ -133,6 +133,7 @@ def _run_one_multires_level(
         level_resume=level_run,
         global_elapsed_offset=state.global_elapsed_offset,
         x_lvl=x0 if x0 is not None else jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32),
+        seed_translations=params0 is None and level_index == 0,
         pose_params=params0
         if params0 is not None
         else jnp.zeros((projections.shape[0], POSE_WIDTH), dtype=jnp.float32),
@@ -342,15 +343,10 @@ def align_multires(
             "the beam)"
         )
     context = _build_multires_context(
-        geometry,
-        grid,
-        detector,
-        projections,
-        cfg,
-        observer,
-        resume_state,
-        factors,
+        geometry, grid, detector, projections, cfg, observer, resume_state, factors
     )
+    if context.active_geometry_dofs:
+        geometry = nominal_setup_geometry(geometry)
     state = _run_multires_levels(
         geometry=geometry,
         context=context,

@@ -17,6 +17,7 @@ from tomojax.alignment._geometry.geometry_applier import (
     setup_moved_detector,
 )
 from tomojax.alignment._geometry.initializers import (
+    common_line_setup_seed,
     reprojection_det_u_seed,
     sinogram_det_u_seed,
 )
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from tomojax.alignment._config import AlignConfig
+    from tomojax.alignment._model.dofs import DofBounds
     from tomojax.alignment._model.schedules import ResolvedAlignmentStage
     from tomojax.alignment._objectives.folds import FoldArrays
     from tomojax.alignment._objectives.loss_adapters import LossAdapter
@@ -478,21 +480,35 @@ def _parallel_row_slab(
     return slab_geometry, slab_grid, slab_detector, projections[:, r0:r1, :]
 
 
-def _seeded(state: AlignmentState, seed: dict[str, object] | None) -> AlignmentState:
+def _seeded(
+    state: AlignmentState,
+    seed: dict[str, object] | None,
+    *,
+    view: ActiveParameterView,
+    cfg: AlignConfig,
+) -> AlignmentState:
     """``state`` with the detector-centre seed's offset, when one was found."""
-    if seed is None or not bool(seed.get("detector_center_seed_applied")):
+    if seed is None:
         return state
-    det_u_px = float(cast("float", seed["detector_center_seed_det_u_px"]))
-    logging.info(
-        "Setup detector-centre seed: det_u_px=%.3f from %s",
-        det_u_px,
-        seed.get("detector_center_seed_method"),
-    )
-    setup = state.setup.replace(det_u_px=jnp.asarray(det_u_px, dtype=jnp.float32))
-    return state.replace(setup=setup)
+    setup = state.setup
+    if seed.get("detector_center_seed_applied"):
+        offset = float(cast("float", seed["detector_center_seed_det_u_px"]))
+        logging.info("Setup detector-centre seed: det_u_px=%.3f", offset)
+        setup = setup.replace(det_u_px=jnp.asarray(offset, dtype=jnp.float32))
+    if seed.get("axis_seed_applied"):
+        x, y = cast("tuple[float, float]", seed["axis_seed_rotations_deg"])
+        setup = setup.replace(axis_rot_x_rad=jnp.deg2rad(x), axis_rot_y_rad=jnp.deg2rad(y))
+    candidate = state.replace(setup=setup)
+    # An infeasible seed can have a better residual than every feasible LM
+    # candidate. Bound it before reconstructing, not only during line search.
+    lower, upper = view.bounds_whitened(candidate, bounds=cast("DofBounds", cfg.bounds))
+    values = view.pack(candidate)
+    bounded = jnp.clip(values, lower, upper)
+    seed["setup_seed_clipped_to_bounds"] = bool(np.any(np.asarray(values != bounded)))
+    return view.unpack(candidate, bounded)
 
 
-def _detector_center_seed_diagnostics(
+def _setup_seed_diagnostics(
     *,
     geometry: Geometry,
     grid: Grid,
@@ -503,16 +519,34 @@ def _detector_center_seed_diagnostics(
     active_view: ActiveParameterView,
     schedule_name: str | None,
     stage: ResolvedAlignmentStage | None,
+    cfg: AlignConfig,
 ) -> dict[str, object] | None:
-    """Return COR seed diagnostics when a detector-u-only setup stage can be seeded."""
+    """Seed setup before pose fitting, retaining the axial/short-arc COR fallback."""
+    if np.any(np.asarray(setup_state.pose.pose_params)):
+        return None
+    seed_info = common_line_setup_seed(
+        projections,
+        geometry,
+        detector=detector,
+        setup=setup_state.setup,
+        active_dofs=active_view.dofs,
+        bounds=cast("DofBounds", cfg.bounds),
+        factor=factor,
+    )
+    # The legacy sinogram/reprojection searches assume an unrolled detector.
+    # Without common-line centre evidence, let the rolled setup objective refine
+    # the supplied origin rather than seeding it from a different ray geometry.
+    center_ready = seed_info is not None and seed_info.get("detector_center_seed_applied")
+    if center_ready or float(setup_state.setup.detector_roll_rad) != 0.0:
+        return seed_info
     stage_name = stage.name if stage is not None else schedule_name
-    if tuple(active_view.dofs) != ("det_u_px",):
-        return None
-    if stage_name != "cor" and schedule_name != "cor":
-        return None
+    if "det_u_px" not in active_view.dofs:
+        return seed_info
+    if stage_name not in {"cor", "setup"} and schedule_name not in {"cor", "setup_safe"}:
+        return seed_info
     current = float(setup_state.setup.det_u_px)
     if abs(current) > 1e-6:
-        return None
+        return seed_info
     # A parallel scan over a half turn: Vo's sinogram method, which uses every
     # view and is not misled by an object larger than the field of view.
     # Otherwise a search for the offset whose FBP reprojects most
@@ -533,6 +567,7 @@ def _detector_center_seed_diagnostics(
         # centre includes any physical shift introduced by detector binning.
         det_u_level_px -= float(detector.center[0]) / float(detector.du)
     return {
+        **(seed_info or {}),
         "detector_center_seed_status": seed.status,
         "detector_center_seed_method": method,
         "detector_center_seed_applied": True,
@@ -540,6 +575,64 @@ def _detector_center_seed_diagnostics(
         "detector_center_seed_det_u_px": det_u_level_px * int(factor),
         "detector_center_seed_residual": float(seed.amplitude_px),
     }
+
+
+def initialize_setup_geometry_for_level(
+    *,
+    geometry: Geometry,
+    detector: Detector,
+    projections: jnp.ndarray,
+    state: AlignmentState,
+    active_geometry_dofs: tuple[str, ...],
+    factor: int,
+    cfg: AlignConfig,
+) -> SetupStageResult:
+    """Fit a projection-domain seed without validation or a volume update.
+
+    This stage precedes motion fitting. At subsequent levels, nonzero poses
+    leave the calibrated setup untouched rather than fitting uncorrected data.
+    """
+    base = BaseGeometryArrays.from_geometry(geometry, detector, level_factor=factor)
+    state = state.replace(setup=state.setup.replace(nominal_axis_unit=base.nominal_axis_unit))
+    view = ActiveParameterView.from_dofs(active_geometry_dofs)
+    seed = None
+    reason = "nonzero_pose_corrections"
+    if not np.any(np.asarray(state.pose.pose_params)):
+        seed = common_line_setup_seed(
+            projections,
+            geometry,
+            detector=detector,
+            setup=state.setup,
+            active_dofs=view.dofs,
+            bounds=cast("DofBounds", cfg.bounds),
+            factor=factor,
+        )
+        if (
+            seed is not None
+            and not seed.get("detector_center_seed_applied")
+            and float(cast("float", seed.get("axis_seed_correlation_after", 0.0))) <= 0.0
+        ):
+            seed = None
+        reason = "unavailable_projection_evidence" if seed is None else "projection_evidence"
+    state = _seeded(state, seed, view=view, cfg=cfg)
+    stat = cast(
+        "OuterStat",
+        {
+            **(seed or {}),
+            "geometry_block": "setup_spectral_initializer",
+            "geometry_active_dofs": ",".join(view.dofs),
+            "geometry_objective": "projection_consistency",
+            "geometry_optimizer": "spectral",
+            "geometry_status": "unvalidated_seed" if seed is not None else "seed_declined",
+            "geometry_seed_reason": reason,
+            "geometry_validation_performed": False,
+            "num_train_reconstructions": 0,
+            "validation_residual_count": 0,
+        },
+    )
+    return _build_setup_stage_result(
+        x=cast("jnp.ndarray", state.volume), state=state, setup_stats=[stat]
+    )
 
 
 def _optimize_setup_geometry_bilevel_for_level(
@@ -562,7 +655,7 @@ def _optimize_setup_geometry_bilevel_for_level(
     _validate_setup_stage_execution_contract(stage)
     base = BaseGeometryArrays.from_geometry(geometry, detector, level_factor=int(factor))
     active_view = ActiveParameterView.from_dofs(active_geometry_dofs)
-    alignment_state = state.replace(
+    setup_state = state.replace(
         setup=state.setup.replace(nominal_axis_unit=base.nominal_axis_unit),
         pose=PoseState(
             jnp.zeros((int(projections.shape[0]), POSE_WIDTH), dtype=jnp.float32)
@@ -598,8 +691,7 @@ def _optimize_setup_geometry_bilevel_for_level(
         ray_integrator=cfg.ray_integrator,
         projector_backend="jax" if cfg.projector_backend == "jax" else "auto",
     )
-    setup_state = alignment_state
-    seed_diagnostics = _detector_center_seed_diagnostics(
+    seed_diagnostics = _setup_seed_diagnostics(
         geometry=geometry,
         grid=grid,
         detector=detector,
@@ -609,8 +701,9 @@ def _optimize_setup_geometry_bilevel_for_level(
         active_view=active_view,
         schedule_name=schedule_name,
         stage=stage,
+        cfg=cfg,
     )
-    setup_state = _seeded(setup_state, seed_diagnostics)
+    setup_state = _seeded(setup_state, seed_diagnostics, view=active_view, cfg=cfg)
     setup_stats: list[OuterStat] = []
     outer_limit = max(1, int(stage.maxiter if stage is not None else cfg.outer_iterations))
     fit = _fit_inputs(

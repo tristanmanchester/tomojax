@@ -230,7 +230,8 @@ def test_observer_action_adapter_normalizes_bool_and_string_results() -> None:
         _normalize_observer_action("pause")
 
 
-def test_multires_level_resume_plan_splits_preserved_and_active_stage_history() -> None:
+@pytest.mark.parametrize("seed_only", [False, True])
+def test_multires_level_resume_plan_splits_preserved_and_active_stage_history(seed_only) -> None:
     resume = AlignMultiresResumeState(
         x=jnp.zeros((2, 2, 2), dtype=jnp.float32),
         pose_params=jnp.zeros((3, 5), dtype=jnp.float32),
@@ -238,7 +239,7 @@ def test_multires_level_resume_plan_splits_preserved_and_active_stage_history() 
         level_factor=2,
         completed_outer_iterations_in_level=3,
         global_outer_iterations_completed=8,
-        loss=[5.0, 4.0, 3.0, 2.0],
+        loss=[5.0, 3.0, 2.0] if seed_only else [5.0, 4.0, 3.0, 2.0],
         outer_stats=[
             {"level_index": 0, "schedule_stage_index": 0, "outer_idx": 1},
             {"level_index": 1, "schedule_stage_index": 0, "outer_idx": 1},
@@ -251,6 +252,11 @@ def test_multires_level_resume_plan_splits_preserved_and_active_stage_history() 
         stage_completed=False,
         completed_outer_iterations_in_stage=2,
     )
+
+    for stat, loss in zip(resume.outer_stats, [5.0, 4.0, 3.0, 2.0], strict=True):
+        stat["loss"] = loss
+    resume.outer_stats[1].pop("loss")
+    resume.outer_stats[1]["geometry_loss_after"] = None if seed_only else 4.0
 
     plan = _prepare_multires_level_state(
         resume_state=resume,
@@ -265,7 +271,8 @@ def test_multires_level_resume_plan_splits_preserved_and_active_stage_history() 
     assert [stat["level_index"] for stat in plan.stats_before_level] == [0]
     assert [stat["schedule_stage_index"] for stat in plan.preserved_level_stats] == [0]
     assert [stat["outer_idx"] for stat in plan.resume_stage_stats] == [2, 3]
-    assert plan.preserved_level_losses == [4.0]
+    assert plan.loss_before_level == [5.0]
+    assert plan.preserved_level_losses == ([] if seed_only else [4.0])
     assert plan.resume_stage_losses == [3.0, 2.0]
 
 

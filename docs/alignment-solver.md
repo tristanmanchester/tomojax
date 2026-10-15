@@ -14,6 +14,14 @@ fixed-volume coupling, also with Joseph sampling. `--dry-run` prints the full
 set for a mode. A bare `AlignConfig()` keeps the older alternating defaults,
 which the statements of defaults below describe.
 
+The opt-in `spectral_setup` schedule (or a setup stage with
+`objective_kind="projection_consistency", optimizer="spectral"`) initializes
+parallel-beam axis direction and detector-u centre from Fourier common lines,
+preserving bounds, frozen parameters and the supplied detector roll. It leaves
+the volume unchanged: compose it before a pose stage or reconstruct its returned
+scan. Its diagnostics say `unvalidated_seed`, not a successful validation fit;
+the default `full` schedule still validates and reconstructs its setup updates.
+
 ## Gauss–Newton updates at interpolation boundaries
 
 The default `gn_jacobian="autodiff"` differentiates the ray model within its
