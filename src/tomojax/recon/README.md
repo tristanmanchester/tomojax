@@ -108,6 +108,11 @@ optional scalar damping and quadratic smoothness. It supports JAX and CUDA Palla
 budgets are dynamic, so changing the budget reuses compiled code. Use FISTA or
 SPDHG for TV regularization and nonnegativity constraints.
 
+For resident, unmasked parallel or laminographic nonnegative least squares,
+`FistaConfig(initial_epochs=8, initial_subsets=16, iterations=10, tv_weight=0,
+nonnegative=True)` optionally initializes with ordered subsets before the full-data
+iterations; it is off by default, and more subsets can worsen image quality.
+
 ```python
 from tomojax.recon import CGLSConfig, cgls
 

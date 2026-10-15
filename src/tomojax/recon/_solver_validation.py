@@ -35,9 +35,9 @@ def _weight(value: float, name: str, *, positive: bool = False, context: str) ->
 def validate_fista_config(cfg: FistaConfig) -> tuple[bool, float | None, float | None]:
     """Check scalar settings and return normalized feasibility constraints."""
     context = "fista_tv config"
-    for name in ("iterations", "recon_patience"):
+    for name in ("iterations", "recon_patience", "initial_epochs"):
         _count(getattr(cfg, name), name, minimum=0, context=context)
-    for name in ("projector_unroll", "tv_prox_iterations", "power_iterations"):
+    for name in ("projector_unroll", "tv_prox_iterations", "power_iterations", "initial_subsets"):
         _count(getattr(cfg, name), name, minimum=1, context=context)
     if cfg.views_per_batch is not None:
         _count(cfg.views_per_batch, "views_per_batch", minimum=1, context=context)

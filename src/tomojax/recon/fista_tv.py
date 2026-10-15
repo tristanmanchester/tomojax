@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 import functools
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
@@ -31,14 +31,19 @@ from tomojax.core.validation import (
 )
 
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
+from ._fista_initialization import (
+    first_gradient as estimate_first_gradient,
+    initial_view_order,
+    ordered_start,
+    power_start,
+    validate_initialization,
+)
 from ._host_stream import host_source, should_stream
 from ._projection import (
     ConeModel,
     ProjectorBackend,
     ProjectorModel,
     least_squares_operators,
-    normal_operator_norm,
-    projection_operators,
     resolve_geometry_projector,
     resolve_projector,
 )
@@ -93,7 +98,9 @@ class _FistaConstraints:
 
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
-class _FistaRuntime:
+class FistaRuntime:
+    """Resolved solver state shared with the initialization module."""
+
     config: FistaConfig
     regulariser: Regulariser = field(metadata={"static": True})
     huber_delta: float = field(metadata={"static": True})
@@ -113,6 +120,7 @@ class _FistaRuntime:
     stream: bool = field(default=False, metadata={"static": True})
     # The views shared among devices, the data placed accordingly; None for one.
     split: ViewSplit | None = field(default=None, metadata={"static": True})
+    initial_order: jax.Array | None = None
 
 
 @dataclass(frozen=True)
@@ -180,6 +188,14 @@ class FistaConfig:
     with ``power_iterations`` power iterations, started from the backprojected data.
     Huber-TV's finite-grid gradient bound is added automatically.
 
+    ``initial_epochs`` optionally initializes nonnegative least squares with
+    accelerated, interleaved ordered subsets before the full-data iterations.
+    Each epoch interleaves nominal angle order into ``initial_subsets`` groups; more groups save
+    time but increase gradient error. This needs resident, unmasked parallel or
+    laminographic Joseph data, ``tv_weight=0``, and at least one final iteration.
+    It is not a convergence or image-quality guarantee. Defaults leave it off.
+    Its norm bounds are reused unless ``lipschitz`` is supplied.
+
     ``devices`` (two or more JAX devices) shares the views among them, each
     holding the whole volume, and sums their backprojections; one device, or
     ``None``, runs on the default device. It needs the batched operators and
@@ -187,6 +203,8 @@ class FistaConfig:
     """
 
     iterations: int = 50
+    initial_epochs: int = 0
+    initial_subsets: int = 16
     tv_weight: float = 0.005
     regulariser: Regulariser = "tv"
     huber_delta: float = 1e-2
@@ -409,7 +427,7 @@ def power_method_L(
 ) -> float:
     """Estimate the Lipschitz constant of the data gradient by power iteration.
 
-    ``initial`` is the start (default a constant volume); see :func:`_power_start`.
+    ``initial`` is the start (default a constant volume); see :func:`power_start`.
     """
     require_parallel_beam(geometry, "power_method_L")
     validate_grid(grid, "power_method_L grid")
@@ -461,7 +479,7 @@ def _prepare_fista_runtime(
     init_x: jnp.ndarray | None,
     config: FistaConfig | None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
-) -> _FistaRuntime:
+) -> FistaRuntime:
     cfg = FistaConfig() if config is None else config
     nonnegative, lower_bound, upper_bound = validate_fista_config(cfg)
     if cfg.ray_integrator not in RAY_INTEGRATORS:
@@ -472,7 +490,6 @@ def _prepare_fista_runtime(
         cfg.huber_delta,
         context="fista_tv config",
     )
-    huber_delta = float(cfg.huber_delta)
     constraints = _FistaConstraints(
         nonnegative=nonnegative,
         lower_bound=lower_bound,
@@ -503,10 +520,9 @@ def _prepare_fista_runtime(
     refuse_streaming(split, cfg.stream_projections, "fista_tv")
     if split is not None and projector is None:
         raise ValueError("fista_tv: devices requires the batched projection operators")
-    on_host = not isinstance(projections, jax.Array)
     stream = (
         split is None
-        and on_host
+        and not isinstance(projections, jax.Array)
         and (
             bool(cfg.stream_projections)
             if cfg.stream_projections is not None
@@ -516,6 +532,7 @@ def _prepare_fista_runtime(
     if stream and projector is None:
         raise ValueError("fista_tv: stream_projections requires the batched projection operators")
 
+    validate_initialization(cfg, projector, n_views, stream=stream, split=split)
     lipschitz = cfg.lipschitz
     if lipschitz is None and projector is None:
         # The gradient at zero is minus the backprojected data: start from it.
@@ -532,7 +549,7 @@ def _prepare_fista_runtime(
             detector,
             projections.shape,
             iterations=cfg.power_iterations,
-            initial=_power_start(at_zero),
+            initial=power_start(at_zero),
             views_per_batch=cfg.views_per_batch,
             projector_unroll=cfg.projector_unroll,
             checkpoint_projector=cfg.checkpoint_projector,
@@ -546,10 +563,10 @@ def _prepare_fista_runtime(
     if lipschitz is not None:
         lipschitz = float(_with_huber(float(lipschitz), cfg, regulariser, grid))
 
-    return _FistaRuntime(
+    return FistaRuntime(
         config=cfg,
         regulariser=regulariser,
-        huber_delta=huber_delta,
+        huber_delta=float(cfg.huber_delta),
         constraints=constraints,
         x0=x0,
         poses=poses,
@@ -559,6 +576,7 @@ def _prepare_fista_runtime(
         projector=projector,
         stream=stream,
         split=split,
+        initial_order=initial_view_order(cfg, geometry),
     )
 
 
@@ -616,53 +634,8 @@ def _with_huber(
     return 1e-6 if lipschitz == 0 else lipschitz
 
 
-def _power_start(backprojection: jax.Array) -> jax.Array:
-    """Where power iteration for ``||A^T A||`` starts: ``|A^T y|``, plus a little constant.
-
-    The backprojected data overlap the leading eigenvector (a smooth, positive
-    volume) far more than a constant does: on the FIPS walnut three iterations from
-    it come closer than five from a constant. The constant keeps every voxel in play
-    and covers zero data.
-    """
-    size = jnp.abs(backprojection)
-    peak = jnp.max(size)
-    return size + jnp.where(peak > 0, 1e-3 * peak, 1.0)
-
-
-def _first_gradient(
-    grid: Grid, detector: Detector, projections: jnp.ndarray, runtime: _FistaRuntime
-) -> tuple[jax.Array, jax.Array, jax.Array | None]:
-    """The Lipschitz constant, and the data term and gradient at zero when FISTA starts there.
-
-    The gradient at zero, minus the backprojected data, needs no projection of
-    its own, and it starts the power iteration (see :func:`_power_start`).
-    """
-    cfg = runtime.config
-    assert runtime.projector is not None
-    model, backend, batch = runtime.projector
-    mask = None if runtime.volume_mask is None else jnp.asarray(runtime.volume_mask, jnp.float32)
-    split = runtime.split
-    value, gradient = least_squares_operators(
-        runtime.poses, grid, detector, backend, batch, model, stream=runtime.stream, split=split
-    )(None, projections)
-    forward, adjoint = projection_operators(
-        runtime.poses, grid, detector, None, backend, batch, model, split=split
-    )
-    lipschitz = normal_operator_norm(
-        forward, adjoint, (grid.nx, grid.ny, grid.nz), iterations=int(cfg.power_iterations),
-        mask=mask, start=_power_start(gradient),
-    )  # fmt: skip
-    lipschitz = jnp.asarray(_with_huber(lipschitz, cfg, runtime.regulariser, grid))
-    c = runtime.constraints
-    zero_start = runtime.x0 is None and (c.lower_bound is None or c.lower_bound <= 0.0)
-    zero_start = zero_start and (c.upper_bound is None or c.upper_bound >= 0.0)
-    if not zero_start:
-        return lipschitz, value, None
-    return lipschitz, value, gradient if mask is None else gradient * mask
-
-
 def _data_term(
-    grid: Grid, detector: Detector, projections: jnp.ndarray, runtime: _FistaRuntime
+    grid: Grid, detector: Detector, projections: jnp.ndarray, runtime: FistaRuntime
 ) -> Callable[[jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]]:
     """Return the data term's value-and-gradient function."""
     cfg = runtime.config
@@ -709,7 +682,7 @@ def _data_term(
     return val_and_grad_fn
 
 
-def _initial_fista_state(grid: Grid, runtime: _FistaRuntime) -> FistaScanState:
+def _initial_fista_state(grid: Grid, runtime: FistaRuntime) -> FistaScanState:
     """Build the feasible start and empty diagnostics inside the compiled solve."""
     x0 = runtime.x0
     if x0 is None:
@@ -729,7 +702,7 @@ def _initial_fista_state(grid: Grid, runtime: _FistaRuntime) -> FistaScanState:
     )
 
 
-def _feasible_volume(x: jax.Array, runtime: _FistaRuntime) -> jax.Array:
+def _feasible_volume(x: jax.Array, runtime: FistaRuntime) -> jax.Array:
     constraints = runtime.constraints
     return project_box(
         x,
@@ -740,7 +713,7 @@ def _feasible_volume(x: jax.Array, runtime: _FistaRuntime) -> jax.Array:
 
 
 def _fista_proximal(
-    runtime: _FistaRuntime, lipschitz: jax.Array | float
+    runtime: FistaRuntime, lipschitz: jax.Array | float
 ) -> Callable[[jax.Array], jax.Array]:
     """The joint regularizer/feasibility prox for the selected FISTA objective."""
     cfg, constraints = runtime.config, runtime.constraints
@@ -761,15 +734,22 @@ def _run_fista_scan(
     grid: Grid,
     detector: Detector,
     projections: jnp.ndarray,
-    runtime: _FistaRuntime,
+    runtime: FistaRuntime,
 ) -> tuple[FistaScanState, jax.Array]:
     """Run the iterations; returns the final state and the Lipschitz constant used."""
     cfg = runtime.config
     regulariser = runtime.regulariser
     huber_delta = runtime.huber_delta
     L, first_value, first_gradient = runtime.lipschitz, None, None
+    if cfg.initial_epochs:
+        initial, bound = ordered_start(grid, detector, projections, runtime)
+        runtime = replace(runtime, x0=initial)
+        L = bound if L is None else L
     if L is None:
-        L, first_value, first_gradient = _first_gradient(grid, detector, projections, runtime)
+        L, first_value, first_gradient = estimate_first_gradient(
+            grid, detector, projections, runtime
+        )
+        L = _with_huber(L, cfg, regulariser, grid)
 
     val_and_grad_fn = _data_term(grid, detector, projections, runtime)
     val_and_grad = jax.jit(val_and_grad_fn)
@@ -795,7 +775,7 @@ def _run_fista_scan(
             # gives the data term: evaluating it at x would cost a projection.
             if first_gradient is None:
                 data_loss_val, g = val_and_grad(active_state.z)
-            else:  # the start, zero: _first_gradient already has it
+            else:  # the start, zero: first_gradient already has it
                 data_loss_val, g = jax.lax.cond(
                     k == 0, lambda _: (first_value, first_gradient), val_and_grad, active_state.z
                 )
@@ -912,4 +892,8 @@ def fista_tv(
         huber_delta=runtime.huber_delta,
     )
     _emit_fista_callback(callback, result)
-    return result.volume, result.info()
+    info = result.info()
+    if runtime.config.initial_epochs:
+        info["initial_epochs"] = runtime.config.initial_epochs
+        info["initial_updates"] = runtime.config.initial_epochs * runtime.config.initial_subsets
+    return result.volume, info
