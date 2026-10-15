@@ -640,7 +640,7 @@ def test_align_cli_dry_run_reports_the_effective_public_plan(
     assert payload["config"]["quality"] == quality
     assert "phasecorr" in payload["loss"]
     stages = payload["schedule"]["stages"]
-    assert [stage["stage_name"] for stage in stages][:2] == ["cor", "detector_roll"]
+    assert [stage["stage_name"] for stage in stages][:2] == ["setup", "pose_polish"]
     assert not aligned.exists()
 
 
