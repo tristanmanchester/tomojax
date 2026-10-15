@@ -14,7 +14,7 @@ from tomojax.io.api import format_inspection_report, inspect_dataset
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-_HDF5 = (".nxs", ".h5", ".hdf5")
+_HDF5 = (".nxs", ".h5", ".hdf", ".hdf5")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -34,7 +34,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    _ = parser.add_argument("data", metavar="INPUT", help="Dataset (.nxs, .h5)")
+    _ = parser.add_argument("data", metavar="INPUT", help="NXtomo/HDF5 dataset")
     _ = parser.add_argument(
         "--json", action="store_true", help="Print the report as JSON instead of text"
     )
@@ -55,7 +55,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     preview = cast("str | None", args.preview)
     check_paths(parser, inputs=[path])
     if not path.lower().endswith(_HDF5):
-        parser.error(f"inspect reads .nxs/.h5 datasets; convert {path} with `tomojax import`")
+        parser.error(f"inspect reads NXtomo/HDF5 datasets; convert {path} with `tomojax import`")
     if preview is not None:
         check_paths(
             parser,

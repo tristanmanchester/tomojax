@@ -56,8 +56,8 @@ def _write_frames(
 
 
 def test_load_corrects_a_raw_nxtomo_file_and_says_so(tmp_path: Path) -> None:
-    write_raw_nxtomo(tmp_path / "raw.nxs")  # sample 5, flat 11, sample 9, dark 1
-    scan = tj.load(tmp_path / "raw.nxs")
+    write_raw_nxtomo(tmp_path / "raw.hdf")  # sample 5, flat 11, sample 9, dark 1
+    scan = tj.load(tmp_path / "raw.hdf")
     assert scan.projections.shape == (2, 2, 2)
     np.testing.assert_allclose(scan.angles, [0.0, 90.0])
     np.testing.assert_allclose(
@@ -129,18 +129,26 @@ def test_counts_without_flats_are_refused(tmp_path: Path) -> None:
     assert scan.corrections[0].settings == {"white_level": 200.0, "darks": 0}
 
 
-def test_tiff_stacks_go_through_load_frames(tmp_path: Path) -> None:
+@pytest.mark.parametrize("suffix", [".tif", ".hdf"])
+def test_tiff_stacks_go_through_load_frames(tmp_path: Path, suffix: str) -> None:
     views = tmp_path / "views"
     views.mkdir()
     for i, value in enumerate((50, 25)):
         iio.imwrite(views / f"view_{i:04d}.tif", np.full((2, 3), value, np.uint16))
-    flat = tmp_path / "flat.tif"
-    iio.imwrite(flat, np.full((2, 3), 100, np.uint16))
+    flat, dark = (tmp_path / f"{kind}{suffix}" for kind in ("flat", "dark"))
+    for path, value in ((flat, 100), (dark, 0)):
+        data = np.full((2, 3), value, np.uint16)
+        if suffix == ".hdf":
+            with h5py.File(path, "w") as handle:
+                handle.create_dataset("entry/data/data", data=data[None])
+        else:
+            iio.imwrite(path, data)
     with pytest.raises(ValueError, match="load_frames"):
         tj.load(views)
     with pytest.raises(ValueError, match="angles"):
         tj.load_frames(views / "view_0000.tif")
-    frames = tj.load_frames(views, angles=[0, 90], flats=flat)
+    frames = tj.load_frames(views, angles=[0, 90], flats=flat, darks=dark)
+    assert not any(isinstance(field, np.ndarray) for field in (frames.flats, frames.darks))
     scan = frames.corrected()
     np.testing.assert_allclose(np.asarray(scan.projections)[:, 0, 0], -np.log([0.5, 0.25]))
     assert scan.detector.nu == 3 and scan.detector.nv == 2

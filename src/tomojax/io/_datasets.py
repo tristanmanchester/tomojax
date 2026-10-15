@@ -55,7 +55,7 @@ if TYPE_CHECKING:
 
 type PathLike = str | Path
 
-_HDF5_SUFFIXES = {".nxs", ".h5", ".hdf5"}
+_HDF5_SUFFIXES = {".nxs", ".h5", ".hdf", ".hdf5"}
 _TIFF_SUFFIXES = TIFF_SUFFIXES
 
 
@@ -232,7 +232,7 @@ def load_projection_payload(path: PathLike) -> ProjectionDataset:
 def load_dataset(path: PathLike) -> ProjectionDataset:
     """Load a standard TomoJAX projection dataset.
 
-    Supported direct inputs are NXtomo/HDF5 (`.nxs`, `.h5`, `.hdf5`) and TomoJAX
+    Supported direct inputs are NXtomo/HDF5 (`.nxs`, `.h5`, `.hdf`, `.hdf5`) and TomoJAX
     `.npz` payloads. TIFF stacks need explicit angle metadata, so use
     :func:`load_tiff_stack`.
     """
@@ -291,7 +291,7 @@ def convert_dataset(input_path: PathLike, output_path: PathLike) -> None:
         data = load_nxtomo(str(in_path))
         save_npz(str(out_path), np.asarray(data.projections), metadata=data.copy_metadata())
         return
-    raise ValueError("Unsupported conversion. Use .npz <-> .nxs/.h5/.hdf5")
+    raise ValueError("Unsupported conversion. Use .npz <-> .nxs/.h5/.hdf/.hdf5")
 
 
 def load_tiff_stack(

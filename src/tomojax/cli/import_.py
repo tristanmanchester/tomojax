@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
     from tomojax.io import ProjectionDataset
 
-_DATASETS = (".nxs", ".h5", ".hdf5", ".npz")
+_DATASETS = (".nxs", ".h5", ".hdf", ".hdf5", ".npz")
 
 
 def _build_parser() -> argparse.ArgumentParser:
