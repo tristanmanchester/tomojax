@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Generator
 from contextlib import closing
-from dataclasses import dataclass
 import operator
 from typing import Any
 
@@ -17,18 +16,7 @@ from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origi
 from ._fourier_backend import FourierPlan, PendingSlab, is_cuda_oom
 from ._fourier_grid import sample_projection_rows, sorted_half_turn
 from .fourier import FourierConfig
-
-
-@dataclass
-class FourierSlab[T]:
-    """An owned output block, its measured source interval and the producer's context."""
-
-    start: int
-    stop: int
-    rows: slice
-    projections: np.ndarray | jax.Array
-    volume: np.ndarray
-    context: T
+from .types import ReconstructionSlab
 
 
 def _source_rows(positions: np.ndarray, rows: int) -> tuple[int, int]:
@@ -47,7 +35,7 @@ def _source_rows(positions: np.ndarray, rows: int) -> tuple[int, int]:
     return first, first + 1
 
 
-def _finish[T](item: tuple[FourierSlab[T], PendingSlab]) -> FourierSlab[T]:
+def _finish[T](item: tuple[ReconstructionSlab[T], PendingSlab]) -> ReconstructionSlab[T]:
     slab, pending = item
     slab.volume = pending.wait().transpose(2, 1, 0)
     if not np.isfinite(slab.volume).all():
@@ -62,7 +50,7 @@ def fourier_slabs[T](
     read: Callable[[int, int], tuple[np.ndarray | jax.Array, T]],
     *,
     config: FourierConfig,
-) -> Generator[FourierSlab[T], None, None]:
+) -> Generator[ReconstructionSlab[T], None, None]:
     """Yield independent Fourier slabs; closing drains all outstanding device work.
 
     ``read`` supplies all views of a measured detector-row interval and an opaque
@@ -118,8 +106,8 @@ def _run_plan[T](
     order: np.ndarray,
     positions: np.ndarray,
     start: int,
-) -> Generator[FourierSlab[T], None, None]:
-    pending: list[tuple[FourierSlab[T], PendingSlab]] = []
+) -> Generator[ReconstructionSlab[T], None, None]:
+    pending: list[tuple[ReconstructionSlab[T], PendingSlab]] = []
     device_order: Any = order
     if plan.cuda:
         assert plan.compute is not None
@@ -131,7 +119,7 @@ def _run_plan[T](
             requested = positions[at:stop]
             first, last = _source_rows(requested, plan.detector.nv)
             data, context = read(first, last)
-            slab = FourierSlab(at, stop, slice(first, last), data, np.empty(0), context)
+            slab = ReconstructionSlab(at, stop, slice(first, last), data, np.empty(0), context)
             if plan.cuda:
                 job = plan.enqueue_rows(data, device_order, requested - first)
                 pending.append((slab, job))

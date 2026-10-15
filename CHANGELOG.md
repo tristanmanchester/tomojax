@@ -8,7 +8,7 @@ projection-only motion initialisation stage, bounded smooth-motion refinement
 and `Scan.with_poses`; docs/real-laminography.md gives a recipe that starts
 from the file's nominal geometry (all 4000 views of the DIAD K11 TEM-grid scan
 in about 60 s, and 46 s on a second scan). `tj.reconstruct_slabs` streams a
-Fourier reconstruction from raw frames slab by slab. Whole-scan parallel FBP
+Fourier or FBP reconstruction from raw frames slab by slab. Whole-scan parallel FBP
 consumes corrected detector rows directly in bounded slabs, caches filtered
 rows for one CUDA gather, shares lateral coordinates across rows and writes
 host output slab-contiguously: the full Diamond I12 scan from raw counts takes

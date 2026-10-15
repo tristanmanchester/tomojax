@@ -49,7 +49,7 @@ if TYPE_CHECKING:
     )
     from tomojax.corrections import Step
     from tomojax.geometry import Detector, Geometry, Grid, ScanGeometry
-    from tomojax.recon import FourierConfig
+    from tomojax.recon import FBPConfig, FourierConfig
     from tomojax.recon.api import MethodConfig
 
 type Method = Literal["fbp", "fourier", "cgls", "fista", "spdhg"]
@@ -280,16 +280,16 @@ def reconstruct(
 @contextmanager
 def reconstruct_slabs(
     frames: Frames,
-    method: Literal["fourier"],
+    method: Literal["fbp", "fourier"],
     *,
     grid: Grid | None = None,
     corrections: Sequence[Step] = (),
-    config: FourierConfig | None = None,
+    config: FBPConfig | FourierConfig | None = None,
     epsilon: float = 1e-6,
 ) -> Iterator[Iterator[tuple[slice, Reconstruction]]]:
     """Correct raw frames and reconstruct bounded axial slabs without host projections.
 
-    Use ``with reconstruct_slabs(frames, "fourier", ...) as slabs:`` and iterate
+    Use ``with reconstruct_slabs(frames, "fbp", ...) as slabs:`` and iterate
     over ``(z_slice, reconstruction)``. The slice indexes the requested output
     grid; each reconstruction retains its physical global grid, genuine corrected
     source rows (including interpolation neighbors), and correction records.
@@ -297,9 +297,9 @@ def reconstruct_slabs(
     or closing the iterator; collecting them retains their volume and projections.
 
     This supports unposed axial parallel beams and whole-row line-integral
-    corrections such as Stripes, not Paganin or view rejection. FourierConfig
-    selects NumPy or CuPy and bounds the output slab depth. CUDA passes corrected
-    rows directly from JAX to CuPy without a corrected-projection host round trip.
+    corrections such as Stripes, not Paganin or view rejection. FBPConfig selects
+    the FBP filter and backend; FourierConfig selects NumPy or CuPy and slab depth.
+    CUDA consumes corrected rows without a corrected-projection host round trip.
     Raw reads are prefetched within bounded storage and calibration is reused.
     The context drains pending work on normal completion, early exit or failure.
     Raw frames and calibration arrays must remain unchanged inside the context.
@@ -307,11 +307,13 @@ def reconstruct_slabs(
     from tomojax._scan import detector_window, rebuild
     from tomojax.corrections import corrected_row_source
     from tomojax.geometry import ParallelGeometry, grid_volume_origin
-    from tomojax.recon.api import fourier_slabs, method_config
+    from tomojax.recon.api import fbp_slabs, fourier_slabs, method_config
 
     cfg = method_config(method, config=config)
-    if method != "fourier" or type(frames.geometry) is not ParallelGeometry:
-        raise ValueError("reconstruct_slabs supports Fourier with unposed axial ParallelGeometry")
+    if method not in {"fbp", "fourier"} or type(frames.geometry) is not ParallelGeometry:
+        raise ValueError(
+            "reconstruct_slabs supports FBP/Fourier with unposed axial ParallelGeometry"
+        )
     target = frames.geometry.grid if grid is None else grid
     origin = grid_volume_origin(target)
     with corrected_row_source(
@@ -329,15 +331,23 @@ def reconstruct_slabs(
             corrected = source(first, stop)
             return corrected.projections, corrected
 
-        with closing(
-            fourier_slabs(
+        if method == "fbp":
+            completed = fbp_slabs(
+                frames.geometry,
+                target,
+                frames.geometry.detector,
+                read,
+                config=cast("FBPConfig", cfg),
+            )
+        else:
+            completed = fourier_slabs(
                 frames.geometry,
                 target,
                 frames.geometry.detector,
                 read,
                 config=cast("FourierConfig", cfg),
             )
-        ) as prepared:
+        with closing(completed) as prepared:
 
             def results():
                 for slab in prepared:
