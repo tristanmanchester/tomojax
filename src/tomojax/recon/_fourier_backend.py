@@ -138,7 +138,7 @@ def _transfer_streams(device):
 
 
 @dataclass
-class _PendingSlab:
+class PendingSlab:
     output: np.ndarray
     event: Any
     owners: tuple[Any, ...]
@@ -215,6 +215,14 @@ class FourierPlan:
             dtype = xp.complex64 if self.cuda else xp.complex128
             self.frequencies = xp.empty((depth, px, qy), dtype=dtype)
             self.x_boundary = geometry.x_boundary
+            if self.cuda:
+                from cupyx.scipy.fft import get_fft_plan
+
+                # A failed slab attempt must not leave its inverse workspace in
+                # CuPy's global plan cache, preventing a smaller retry from fitting.
+                self.inverse_plan = get_fft_plan(
+                    self.frequencies, shape=self.shape, axes=(-2, -1), value_type="C2R"
+                )
 
     def _interpolate_cuda(self, spectrum):
         output = self.frequencies
@@ -304,10 +312,25 @@ class FourierPlan:
         # serve the Cartesian FFT on this same compute stream.
         del spectrum
         cx, cy = self.crop
-        volume = xp.fft.irfft2(self.frequencies, s=self.shape, axes=(-2, -1))
+        normalization = 1
+        if self.cuda:
+            from cupyx.scipy.fft import irfft2
+
+            # The next slab overwrites every frequency. Normalize only the crop.
+            volume = irfft2(
+                self.frequencies,
+                s=self.shape,
+                axes=(-2, -1),
+                norm="forward",
+                overwrite_x=True,
+                plan=self.inverse_plan,
+            )
+            normalization = self.shape[0] * self.shape[1]
+        else:
+            volume = xp.fft.irfft2(self.frequencies, s=self.shape, axes=(-2, -1))
         # Keep fixed FFT batches, but do not materialize or transfer padded output.
         output = volume[:count, cx : cx + self.grid.nx, cy : cy + self.grid.ny] / (
-            self.grid.vx * self.grid.vy
+            self.grid.vx * self.grid.vy * normalization
         )
         # Match plane-contiguous Fortran xyz storage before the device-to-host copy.
         return xp.ascontiguousarray(output.swapaxes(1, 2)) if self.transpose_download else output
@@ -325,7 +348,7 @@ class FourierPlan:
             volume = self._compute_volume(raw, count)
             return xp.asnumpy(volume) if self.cuda else volume.astype(np.float32)
 
-    def enqueue(self, host, *, count: int) -> _PendingSlab:
+    def enqueue(self, host, *, count: int) -> PendingSlab:
         xp = self.xp
         assert self.upload is not None
         assert self.compute is not None
@@ -357,7 +380,7 @@ class FourierPlan:
                 downloaded.record()
             # Keep the asynchronous upload input and output device storage alive
             # until the final copy event, including every cross-stream use.
-            return _PendingSlab(
+            return PendingSlab(
                 output,
                 downloaded,
                 (
@@ -378,3 +401,53 @@ class FourierPlan:
             self.compute.synchronize()
             self.download.synchronize()
             raise
+
+    def enqueue_rows(self, data, order, positions) -> PendingSlab:
+        """Borrow device source rows, making an owned FFT slab and output download."""
+        import jax
+
+        xp: Any = self.xp
+        assert self.compute is not None
+        assert self.download is not None
+        try:
+            with self.compute:
+                if isinstance(data, jax.Array) and all(
+                    device.platform == "gpu" for device in data.devices()
+                ):
+                    source = xp.from_dlpack(data)
+                else:
+                    source = xp.asarray(np.asarray(data))
+                source = xp.ascontiguousarray(xp.take(source.transpose(1, 0, 2), order, axis=1))
+                positions = np.clip(positions, -1, data.shape[1])
+                indices = np.floor(positions).astype(np.int64)
+                fraction = (positions - indices).astype(np.float32)
+                lower = np.where((indices >= 0) & (indices < data.shape[1]), indices, -1)
+                upper = np.where(
+                    (indices + 1 >= 0) & (indices + 1 < data.shape[1]) & (fraction != 0),
+                    indices + 1,
+                    -1,
+                )
+                rows = ProjectionRows(source, lower, upper, fraction)
+                raw, metadata = interpolate_projection_rows(rows, source, self.depth, xp)
+                volume = self._compute_volume(raw, len(positions))
+                computed = xp.cuda.Event()
+                computed.record()
+            storage = xp.cuda.alloc_pinned_memory(volume.size * 4)
+            host = np.ndarray(volume.shape, np.float32, buffer=storage)
+            self.download.wait_event(computed)
+            with self.download:
+                volume.get(out=host, stream=self.download, blocking=False)
+                downloaded = xp.cuda.Event()
+                downloaded.record()
+            return PendingSlab(
+                host, downloaded, (data, source, raw, volume, storage, computed, *metadata)
+            )
+        except BaseException:
+            self.synchronize()
+            raise
+
+    def synchronize(self) -> None:
+        """Drain every queue before releasing borrowed producers or retrying a slab."""
+        for stream in (self.upload, self.compute, self.download):
+            if stream is not None:
+                stream.synchronize()

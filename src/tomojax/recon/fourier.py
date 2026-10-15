@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
     from tomojax.geometry import Detector, Grid
 
-    from ._fourier_backend import _PendingSlab
+    from ._fourier_backend import PendingSlab
 
 _HOST_PIPELINE_MIN_BYTES = 64 * 1024**2
 
@@ -180,14 +180,14 @@ def _run_host_pipeline(
     write: Callable[[int, np.ndarray], None],
 ) -> None:
     """Overlap bounded staging and transfers; CUDA stays on the calling thread."""
-    pending: list[tuple[int, _PendingSlab]] = []
+    pending: list[tuple[int, PendingSlab]] = []
     with (
         ThreadPoolExecutor(max_workers=1, thread_name_prefix="tomojax-fourier-read") as reader,
         ThreadPoolExecutor(max_workers=1, thread_name_prefix="tomojax-fourier-write") as writer,
     ):
         written: Future[None] | None = None
 
-        def finish(start: int, job: _PendingSlab) -> None:
+        def finish(start: int, job: PendingSlab) -> None:
             nonlocal written
             volume = job.wait()[: min(depth, nz - start)]
             if written is not None:

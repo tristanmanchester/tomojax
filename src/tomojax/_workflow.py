@@ -14,6 +14,7 @@ results can be reconstructed, aligned again or saved without restating it::
 
 from __future__ import annotations
 
+from contextlib import closing, contextmanager
 from dataclasses import dataclass, is_dataclass, replace
 import json
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -32,11 +33,12 @@ from tomojax._scan import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Iterable, Iterator, Mapping, Sequence
     from os import PathLike
 
     import jax
 
+    from tomojax._loading import Frames
     from tomojax._typed_arrays import Device
     from tomojax.alignment import AlignConfig
     from tomojax.alignment.api import (
@@ -45,7 +47,9 @@ if TYPE_CHECKING:
         PoseTranslationFrame,
         QualityTier,
     )
+    from tomojax.corrections import Step
     from tomojax.geometry import Detector, Geometry, Grid, ScanGeometry
+    from tomojax.recon import FourierConfig
     from tomojax.recon.api import MethodConfig
 
 type Method = Literal["fbp", "fourier", "cgls", "fista", "spdhg"]
@@ -271,6 +275,98 @@ def reconstruct(
         out=out,
     )
     return Reconstruction(volume=volume, scan=scan, method=method, info=info)
+
+
+@contextmanager
+def reconstruct_slabs(
+    frames: Frames,
+    method: Literal["fourier"],
+    *,
+    grid: Grid | None = None,
+    corrections: Sequence[Step] = (),
+    config: FourierConfig | None = None,
+    epsilon: float = 1e-6,
+) -> Iterator[Iterator[tuple[slice, Reconstruction]]]:
+    """Correct raw frames and reconstruct bounded axial slabs without host projections.
+
+    Use ``with reconstruct_slabs(frames, "fourier", ...) as slabs:`` and iterate
+    over ``(z_slice, reconstruction)``. The slice indexes the requested output
+    grid; each reconstruction retains its physical global grid, genuine corrected
+    source rows (including interpolation neighbors), and correction records.
+    Volumes are owned float32 host arrays. Results remain valid after advancing
+    or closing the iterator; collecting them retains their volume and projections.
+
+    This supports unposed axial parallel beams and whole-row line-integral
+    corrections such as Stripes, not Paganin or view rejection. FourierConfig
+    selects NumPy or CuPy and bounds the output slab depth. CUDA passes corrected
+    rows directly from JAX to CuPy without a corrected-projection host round trip.
+    Raw reads are prefetched within bounded storage and calibration is reused.
+    The context drains pending work on normal completion, early exit or failure.
+    Raw frames and calibration arrays must remain unchanged inside the context.
+    """
+    from tomojax._scan import detector_window, rebuild
+    from tomojax.corrections import corrected_row_source
+    from tomojax.geometry import ParallelGeometry, grid_volume_origin
+    from tomojax.recon.api import fourier_slabs, method_config
+
+    cfg = method_config(method, config=config)
+    if method != "fourier" or type(frames.geometry) is not ParallelGeometry:
+        raise ValueError("reconstruct_slabs supports Fourier with unposed axial ParallelGeometry")
+    target = frames.geometry.grid if grid is None else grid
+    origin = grid_volume_origin(target)
+    with corrected_row_source(
+        frames.counts,
+        flats=frames.flats,
+        flat_positions=frames.flat_positions,
+        darks=frames.darks,
+        white_level=frames.white_level,
+        steps=corrections,
+        epsilon=epsilon,
+        view_positions=frames.view_positions,
+    ) as source:
+
+        def read(first: int, stop: int):
+            corrected = source(first, stop)
+            return corrected.projections, corrected
+
+        with closing(
+            fourier_slabs(
+                frames.geometry,
+                target,
+                frames.geometry.detector,
+                read,
+                config=cast("FourierConfig", cfg),
+            )
+        ) as prepared:
+
+            def results():
+                for slab in prepared:
+                    block = replace(
+                        target,
+                        nz=slab.stop - slab.start,
+                        vol_center=None,
+                        vol_origin=(origin[0], origin[1], origin[2] + slab.start * target.vz),
+                    )
+                    geometry = rebuild(
+                        frames.geometry,
+                        grid=block,
+                        detector=detector_window(slab.rows, slice(None), frames.geometry.detector),
+                    )
+                    scan = Scan(
+                        slab.projections, geometry, frames.name, slab.context.records, frames.source
+                    )
+                    info = {
+                        "config": cfg,
+                        "host_slabs": True,
+                        "source_rows": (slab.rows.start, slab.rows.stop),
+                    }
+                    yield (
+                        slice(slab.start, slab.stop),
+                        Reconstruction(slab.volume, scan, method, info),
+                    )
+
+            with closing(results()) as output:
+                yield output
 
 
 def estimate_center(scan: Scan) -> Scan:

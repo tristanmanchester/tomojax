@@ -181,6 +181,15 @@ def tomojax.reconstruct(
         seed: 'int | None' = None,
         devices: 'Device | Sequence[Device] | None' = None,
     ) -> 'Reconstruction'
+def tomojax.reconstruct_slabs(
+        frames: 'Frames',
+        method: "Literal['fourier']",
+        *,
+        grid: 'Grid | None' = None,
+        corrections: 'Sequence[Step]' = (),
+        config: 'FourierConfig | None' = None,
+        epsilon: 'float' = 1e-06,
+    ) -> 'Iterator[Iterator[tuple[slice, Reconstruction]]]'
 def tomojax.save(
         path: 'str | PathLike[str]',
         item: 'Scan | Reconstruction | Alignment',

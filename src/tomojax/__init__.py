@@ -36,6 +36,7 @@ if TYPE_CHECKING:
         load_reconstruction,
         project,
         reconstruct,
+        reconstruct_slabs,
         save,
     )
     from tomojax.geometry import (
@@ -64,6 +65,7 @@ _SOURCES = {
     "load_reconstruction": "tomojax._workflow",
     "project": "tomojax._workflow",
     "reconstruct": "tomojax._workflow",
+    "reconstruct_slabs": "tomojax._workflow",
     "save": "tomojax._workflow",
     "ConeBeam": "tomojax.geometry",
     "ConeGeometry": "tomojax.geometry",
@@ -95,6 +97,7 @@ __all__ = [
     "load_reconstruction",
     "project",
     "reconstruct",
+    "reconstruct_slabs",
     "save",
 ]
 
