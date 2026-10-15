@@ -577,6 +577,64 @@ def _setup_seed_diagnostics(
     }
 
 
+def initialize_setup_geometry_for_level(
+    *,
+    geometry: Geometry,
+    detector: Detector,
+    projections: jnp.ndarray,
+    state: AlignmentState,
+    active_geometry_dofs: tuple[str, ...],
+    factor: int,
+    cfg: AlignConfig,
+) -> SetupStageResult:
+    """Fit a projection-domain seed without validation or a volume update.
+
+    This stage precedes motion fitting. At subsequent levels, nonzero poses
+    leave the calibrated setup untouched rather than fitting uncorrected data.
+    """
+    base = BaseGeometryArrays.from_geometry(geometry, detector, level_factor=factor)
+    state = state.replace(setup=state.setup.replace(nominal_axis_unit=base.nominal_axis_unit))
+    view = ActiveParameterView.from_dofs(active_geometry_dofs)
+    seed = None
+    reason = "nonzero_pose_corrections"
+    if not np.any(np.asarray(state.pose.pose_params)):
+        seed = common_line_setup_seed(
+            projections,
+            geometry,
+            detector=detector,
+            setup=state.setup,
+            active_dofs=view.dofs,
+            bounds=cast("DofBounds", cfg.bounds),
+            factor=factor,
+        )
+        if (
+            seed is not None
+            and not seed.get("detector_center_seed_applied")
+            and float(cast("float", seed.get("axis_seed_correlation_after", 0.0))) <= 0.0
+        ):
+            seed = None
+        reason = "unavailable_projection_evidence" if seed is None else "projection_evidence"
+    state = _seeded(state, seed, view=view, cfg=cfg)
+    stat = cast(
+        "OuterStat",
+        {
+            **(seed or {}),
+            "geometry_block": "setup_spectral_initializer",
+            "geometry_active_dofs": ",".join(view.dofs),
+            "geometry_objective": "projection_consistency",
+            "geometry_optimizer": "spectral",
+            "geometry_status": "unvalidated_seed" if seed is not None else "seed_declined",
+            "geometry_seed_reason": reason,
+            "geometry_validation_performed": False,
+            "num_train_reconstructions": 0,
+            "validation_residual_count": 0,
+        },
+    )
+    return _build_setup_stage_result(
+        x=cast("jnp.ndarray", state.volume), state=state, setup_stats=[stat]
+    )
+
+
 def _optimize_setup_geometry_bilevel_for_level(
     *,
     geometry: Geometry,

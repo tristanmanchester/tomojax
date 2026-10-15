@@ -28,7 +28,11 @@ from tomojax.alignment.proposals import ProposalCandidate, score_pose_stack_cand
 from tomojax.core.cone import cone_model
 from tomojax.core.geometry.base import Detector, Geometry, Grid
 
-from ._setup_stage import _geometry_with_setup_state, _optimize_setup_geometry_bilevel_for_level
+from ._setup_stage import (
+    _geometry_with_setup_state,
+    _optimize_setup_geometry_bilevel_for_level,
+    initialize_setup_geometry_for_level,
+)
 from ._stage_types import (
     _PROPOSAL_STEP_BY_DOF,
     LevelResumePlan,
@@ -250,22 +254,36 @@ def _run_setup_geometry_stage(
     )
     cfg_stage.stage_quality_tier = stage.quality_tier
     geometry_start = time.perf_counter()
-    setup_result = _optimize_setup_geometry_bilevel_for_level(
-        geometry=geometry,
-        grid=grid,
-        detector=detector,
-        projections=projections,
-        init_x=state.x_lvl,
-        init_pose_params=state.pose_params,
-        state=state.setup_alignment_state,
-        active_geometry_dofs=stage.active_geometry_dofs,
-        factor=int(level_factor),
-        cfg=cfg_stage,
-        loss_spec=active_loss_spec,
-        loss_name=active_loss_name,
-        schedule_name=resolved_schedule.name,
-        stage=stage,
-    )
+    if stage.objective_kind == "projection_consistency":
+        setup_result = initialize_setup_geometry_for_level(
+            geometry=geometry,
+            detector=detector,
+            projections=projections,
+            state=cast("AlignmentState", state.setup_alignment_state).replace(
+                pose=PoseState(state.pose_params, translation_frame=cfg.pose_translation_frame),
+                volume=state.x_lvl,
+            ),
+            active_geometry_dofs=stage.active_geometry_dofs,
+            factor=int(level_factor),
+            cfg=cfg_stage,
+        )
+    else:
+        setup_result = _optimize_setup_geometry_bilevel_for_level(
+            geometry=geometry,
+            grid=grid,
+            detector=detector,
+            projections=projections,
+            init_x=state.x_lvl,
+            init_pose_params=state.pose_params,
+            state=state.setup_alignment_state,
+            active_geometry_dofs=stage.active_geometry_dofs,
+            factor=int(level_factor),
+            cfg=cfg_stage,
+            loss_spec=active_loss_spec,
+            loss_name=active_loss_name,
+            schedule_name=resolved_schedule.name,
+            stage=stage,
+        )
     level_wall_time = state.level_wall_time + (time.perf_counter() - geometry_start)
     enriched = stage_runtime.enrich_stats(
         [dict(stat) for stat in setup_result.checkpoint_outer_stats],

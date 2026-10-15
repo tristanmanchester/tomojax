@@ -18,8 +18,10 @@ from .dofs import (
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
-ObjectiveKind = Literal["fixed_volume", "joint_volume_pose", "bilevel_cv", "all_data_bilevel"]
-OptimizerKind = Literal["lbfgs", "adam", "gd", "gn", "validation_lm"]
+ObjectiveKind = Literal[
+    "fixed_volume", "joint_volume_pose", "bilevel_cv", "all_data_bilevel", "projection_consistency"
+]
+OptimizerKind = Literal["lbfgs", "adam", "gd", "gn", "validation_lm", "spectral"]
 GaugePolicy = Literal["reject", "anchor_mean", "prior_required", "diagnose_only"]
 ScheduleSource = Literal["preset", "direct", "default", "expert"]
 StageRole = Literal["proposal", "setup", "reconstruction", "refine", "verify"]
@@ -39,6 +41,7 @@ PUBLIC_SCHEDULE_PRESETS = (
     "axis_direction",
     "lamino_tilt",
     "setup_safe",
+    "spectral_setup",
 )
 
 
@@ -79,6 +82,15 @@ class AlignmentSchedule:
             if not stage.active_dofs:
                 raise ValueError(f"alignment stage {stage.name!r} has no active DOFs")
             stage.active_view()
+            if stage.objective_kind == "projection_consistency" and (
+                stage.optimizer != "spectral"
+                or stage.stage_role != "setup"
+                or set(stage.active_dofs) - {"det_u_px", "axis_rot_x_deg", "axis_rot_y_deg"}
+            ):
+                raise ValueError(
+                    "projection_consistency requires a spectral setup stage with only "
+                    "det_u_px, axis_rot_x_deg, or axis_rot_y_deg"
+                )
             if stage.objective_kind == "joint_volume_pose" and (
                 stage.optimizer != "gn" or any(d in GEOMETRY_DOF_NAMES for d in stage.active_dofs)
             ):
@@ -383,6 +395,18 @@ _PUBLIC_PRESET_STAGES: dict[str, tuple[AlignmentStage, ...]] = {
             quality_tier="reference",
         ),
     ),
+    # An initializer, not a validation fit: the next stage reconstructs with it.
+    "spectral_setup": (
+        AlignmentStage(
+            "spectral_setup",
+            ("det_u_px", "axis_rot_x_deg", "axis_rot_y_deg"),
+            "projection_consistency",
+            "spectral",
+            maxiter=1,
+            stage_role="setup",
+            differentiability="not_required",
+        ),
+    ),
 }
 
 
@@ -421,6 +445,15 @@ def schedule_preset(
     if stages is not None:
         return AlignmentSchedule(name=key, stages=stages).validate()
     raise ValueError(f"Unknown alignment schedule preset {name!r}")
+
+
+def _stage_iterations(stage: AlignmentStage, outer_iterations: int | None) -> int:
+    if stage.objective_kind == "projection_consistency":
+        return 1  # One initializer, not an iterative validation fit.
+    count = int(outer_iterations) if outer_iterations is not None else int(stage.maxiter)
+    if count < 0:
+        raise ValueError("alignment stage maxiter must be >= 0")
+    return count
 
 
 def resolve_alignment_schedule(
@@ -554,9 +587,7 @@ def resolve_alignment_schedule(
             policy=stage.gauge_policy,
             priors=gauge_priors,
         )
-        maxiter = int(outer_iterations) if outer_iterations is not None else int(stage.maxiter)
-        if maxiter < 0:
-            raise ValueError("alignment stage maxiter must be >= 0")
+        maxiter = _stage_iterations(stage, outer_iterations)
         resolved_stages.append(
             ResolvedAlignmentStage(
                 index=len(resolved_stages),

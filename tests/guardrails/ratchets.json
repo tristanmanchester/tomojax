@@ -30,7 +30,7 @@
     "src/tomojax/recon/fista_tv.py": 915
   },
   "long_functions": {
-    "src/tomojax/alignment/_model/schedules.py::resolve_alignment_schedule": 168,
+    "src/tomojax/alignment/_model/schedules.py::resolve_alignment_schedule": 166,
     "src/tomojax/alignment/_objectives/fixed_volume.py::project_and_score_stack": 164,
     "src/tomojax/alignment/_pose/_coupled_program.py::_build_program": 349,
     "src/tomojax/alignment/_pose/_pose_loop.py::align": 202,

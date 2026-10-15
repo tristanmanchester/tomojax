@@ -228,6 +228,8 @@ def cone_setup(
     setup = set(resolved.active_geometry_dofs)
     if not is_cone_beam(geometry) or (not setup and resolved.name != "cor_then_pose"):
         return None
+    if any(stage.objective_kind == "projection_consistency" for stage in resolved.stages):
+        raise ValueError("spectral setup requires a parallel beam, not a cone beam")
     if not isinstance(geometry, ConeGeometry):
         raise ValueError(
             "cone-beam axis calibration takes one source-detector arrangement without pose "

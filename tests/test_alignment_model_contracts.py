@@ -517,3 +517,91 @@ def test_full_setup_seeds_jointly_in_native_units_and_preserves_frozen_axes(
     assert seeded_at[0][0][1] == pytest.approx(np.sin(np.deg2rad(expected_tilt)), abs=5e-4)
     # Point decimation shifts the coarse detector centre by half a native pixel.
     assert seeded_at[0][1][0] == pytest.approx(2.8 if bounded else 3.4, abs=1e-5)
+
+
+@pytest.mark.parametrize(("tilt", "bounded"), [(-35.0, False), (35.0, True)])
+def test_public_spectral_setup_calibrates_without_claiming_validation(tilt, bounded):
+    from tomojax.io import build_geometry_from_dataset_metadata
+
+    # Independent infinite-ray integrals of an asymmetric, nonplanar Gaussian mixture.
+    rng = np.random.default_rng(913)
+    centres = rng.uniform(-9, 9, (9, 3))
+    widths = rng.uniform(1.5, 3, 9)
+    angles = np.linspace(0, 360, 80, endpoint=False)
+    grid, detector = Grid(32, 32, 24, 1, 1, 1), Detector(48, 48, 1, 1)
+    t, roll = np.deg2rad([tilt, 3])
+    axis = np.array([0, np.sin(t), np.cos(t)])
+    skew = np.array([[0, 0, 0], [0, 0, axis[1]], [0, -axis[1], 0]])
+    orient = np.eye(3) + skew + skew @ skew / (1 + axis[2])
+    u, v = np.meshgrid(np.arange(48) - 23.5, np.arange(48) - 23.5)
+    uv = np.stack(
+        [np.cos(roll) * u - np.sin(roll) * v + 3, np.sin(roll) * u + np.cos(roll) * v], -1
+    )
+    images = []
+    for theta in np.deg2rad(angles):
+        c, s = np.cos(theta), np.sin(theta)
+        rotation = orient @ np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+        projected = (centres @ rotation.T)[:, [0, 2]]
+        distance2 = np.sum((uv[:, :, None] - projected) ** 2, axis=-1)
+        images.append(np.sum(widths * np.exp(-distance2 / (2 * widths**2)), axis=-1))
+    geometry = build_geometry_from_dataset_metadata(
+        dict(
+            grid=grid.to_dict(),
+            detector=detector.to_dict(),
+            angles=angles,
+            geometry_type="lamino",
+            tilt_deg=31.0,
+            detector_roll_deg=3.0,
+        )
+    )[2]
+    config = replace(
+        _COR_CONFIG,
+        schedule="spectral_setup",
+        freeze=("axis_rot_y_deg",),
+        bounds={"axis_rot_x_deg": (0, 2)} if bounded else (),
+    )
+    result = tj.align(
+        tj.Scan(np.asarray(images, np.float32), geometry), mode="full", levels=(2, 1), config=config
+    )
+    calibrated = result.scan.geometry.axis_unit_lab
+    expected = np.deg2rad(33 if bounded else tilt)
+    np.testing.assert_allclose(calibrated, [0, np.sin(expected), np.cos(expected)], atol=0.005)
+    assert result.scan.geometry.detector_roll_deg == pytest.approx(3)
+    assert abs(result.scan.detector.center[0] - 3) < 0.15
+    assert not np.any(result.volume) and not np.any(result.poses)
+    assert result.info["loss"] == []
+    for stat in result.info["outer_stats"]:
+        assert stat["geometry_status"] == "unvalidated_seed"
+        assert stat["geometry_validation_performed"] is False
+        assert stat["num_train_reconstructions"] == 0
+        assert "geometry_loss_after" not in stat
+
+
+def test_spectral_stage_contract_rejects_unsupported_work_and_declines_blank_data():
+    schedule = AlignmentSchedule(
+        "seed",
+        (
+            AlignmentStage(
+                "seed", ("det_u_px",), "projection_consistency", "spectral", stage_role="setup"
+            ),
+        ),
+    )
+    for change in (
+        dict(active_dofs=("det_u_px", "dx")),
+        dict(active_dofs=("detector_roll_deg",)),
+        dict(optimizer="gn"),
+        dict(stage_role="refine"),
+    ):
+        with pytest.raises(ValueError, match="projection_consistency"):
+            replace(schedule, stages=(replace(schedule.stages[0], **change),)).validate()
+    grid, detector = Grid(8, 8, 8, 1, 1, 1), Detector(8, 8, 1, 1)
+    angles = np.linspace(0, 360, 16, endpoint=False)
+    data = np.zeros((16, 8, 8), np.float32)
+    config = replace(_COR_CONFIG, schedule="spectral_setup")
+    geometry = tj.LaminographyGeometry(grid, detector, angles, tilt_deg=31)
+    result = tj.align(tj.Scan(data, geometry), mode="full", levels=(1,), config=config)
+    assert result.info["outer_stats"][0]["geometry_status"] == "seed_declined"
+    np.testing.assert_allclose(result.scan.geometry.axis_unit_lab, geometry.axis_unit_lab)
+    cone = tj.ConeGeometry(grid, detector, angles, tj.ConeBeam(30, 45))
+    with pytest.raises(ValueError, match="spectral setup requires a parallel beam"):
+        tj.align(tj.Scan(data, cone), mode="full", levels=(1,), config=config)
