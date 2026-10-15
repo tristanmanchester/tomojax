@@ -3,23 +3,27 @@
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import closing, nullcontext
 from dataclasses import dataclass, replace
 import math
 import operator
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from tomojax.backends import device_free_memory_bytes
+from tomojax.backends.api import is_oom_error
+from tomojax.core.devices import as_devices
 from tomojax.core.geometry.cone import require_parallel_beam
 from tomojax.core.geometry.views import stack_view_poses
-from tomojax.core.validation import validate_projection_stack
+from tomojax.core.validation import validate_detector, validate_projection_stack
 from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
 
 from ._host_arrays import ProjectionRows, validate_host_arrays
 from .fbp import (
+    FBPConfig,
     _fbp_from_host,  # pyright: ignore[reportPrivateUsage]
     _fft_length,  # pyright: ignore[reportPrivateUsage]
     _filter_detector,  # pyright: ignore[reportPrivateUsage]
@@ -29,6 +33,9 @@ from .fbp import (
     validate_fbp_geometry,
 )
 from .filters import rfft_filter_array
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Generator
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -326,3 +333,137 @@ def _general_slabs(
         target = output[start : start + count]
         target[...] = _host_volume(volume, target)[:count]
     return output
+
+
+@dataclass
+class FBPSlab[T]:
+    """An owned volume, measured source rows and the producer's retained context."""
+
+    start: int
+    stop: int
+    rows: slice
+    projections: np.ndarray | jax.Array
+    volume: np.ndarray
+    context: T
+
+
+def fbp_slabs[T](
+    geometry: ParallelGeometry,
+    grid: Grid,
+    detector: Detector,
+    read: Callable[[int, int], tuple[np.ndarray | jax.Array, T]],
+    *,
+    config: FBPConfig,
+) -> Generator[FBPSlab[T], None, None]:
+    """Yield independent axial FBP slabs without downloading corrected projections.
+
+    ``read`` supplies all views of a measured detector-row interval and an opaque
+    context retained until that output completes. The output and source arrays
+    remain valid after advancing or closing the iterator. Inputs must not change.
+    Slabs are automatically bounded to eight output rows, reducing depth on OOM.
+    The first configured device does the work, as for host-returning FBP.
+    Closing the generator drains all pending downloads before releasing inputs.
+    """
+    if type(geometry) is not ParallelGeometry:
+        raise ValueError("reconstruct_slabs requires unposed axial ParallelGeometry")
+    _ = validate_fbp_geometry(geometry, grid, detector, config.scale, "reconstruct_slabs")
+    _ = validate_detector(detector, "reconstruct_slabs detector")
+    if config.backprojector not in {"auto", "jax", "pallas"}:
+        raise ValueError("FBP backprojector must be 'auto', 'jax' or 'pallas'")
+    batches = (grid.nz + 7) // 8
+    depth = (grid.nz + batches - 1) // batches
+    devices = as_devices(config.devices)
+    context = jax.default_device(devices[0]) if devices else nullcontext()
+    with context:
+        poses = stack_view_poses(geometry, len(geometry.angles))
+        cuda = all(
+            d.platform == "gpu" and d.client.platform_version.lower().startswith("cuda")
+            for d in poses.devices()
+        )
+        if config.backprojector == "pallas" and not cuda:
+            raise ValueError("FBP Pallas backprojection requires CUDA")
+        backend = "pallas" if cuda and config.backprojector != "jax" else "jax"
+        host_poses = np.asarray(poses, np.float32)
+        scale = np.asarray(_view_weights(poses, config.scale)[0], np.float32)
+        start = 0
+        while start < grid.nz:
+            try:
+                with closing(
+                    _run_slabs(
+                        grid, detector, host_poses, scale, read, config, backend, depth, start
+                    )
+                ) as completed:
+                    for slab in completed:
+                        start = slab.stop
+                        yield slab
+            except Exception as error:
+                if depth == 1 or not is_oom_error(error):
+                    raise
+                depth = max(1, depth // 2)
+
+
+def _finish[T](item: tuple[FBPSlab[T], jax.Array]) -> FBPSlab[T]:
+    slab, packed = item
+    slab.volume = np.asarray(packed).transpose(2, 1, 0)
+    if not np.isfinite(slab.volume).all():
+        raise ValueError("FBP reconstruction must be finite in FP32")
+    return slab
+
+
+def _run_slabs[T](
+    grid: Grid,
+    detector: Detector,
+    poses: np.ndarray,
+    scale: np.ndarray,
+    read: Callable[[int, int], tuple[np.ndarray | jax.Array, T]],
+    config: FBPConfig,
+    backend: str,
+    depth: int,
+    start: int,
+) -> Generator[FBPSlab[T], None, None]:
+    local_grid, local_detector, first, step, integer = _slab_layout(grid, detector, depth)
+    rows = local_detector.nv
+    ramp = rfft_filter_array(config.filter, local_detector.nu, detector.du, jnp.float32)
+    params = np.zeros((len(poses), 6), np.float32)
+    pending: list[tuple[FBPSlab[T], jax.Array]] = []
+    try:
+        for at in range(start, grid.nz, depth):
+            stop = min(at + depth, grid.nz)
+            v = first + at * step
+            source_start = math.floor(v)
+            if not integer:
+                source_start = max(0, min(source_start, detector.nv - rows))
+            source_stop = min(source_start + rows, detector.nv)
+            data, context = read(source_start, source_stop)
+            source = jnp.asarray(data, jnp.float32)
+            if source_stop - source_start < rows:
+                source = jnp.pad(source, ((0, 0), (0, rows - source.shape[1]), (0, 0)))
+            local_poses = poses.copy()
+            if not integer:
+                local_poses[:, 2, 3] = (v - source_start) * detector.dv
+            volume = _fbp_from_host(
+                local_poses,
+                source,
+                scale,
+                params,
+                ramp,
+                0.0,
+                grid=local_grid,
+                detector=local_detector,
+                backend=backend,
+                batch_size=min(32, len(poses)),
+                z_mode="integer" if integer else "fixed",
+                separable=True,
+                check_finite=True,
+            )
+            packed = jnp.transpose(volume[:, :, : stop - at], (2, 1, 0))
+            packed.copy_to_host_async()
+            slab = FBPSlab(at, stop, slice(source_start, source_stop), data, np.empty(0), context)
+            pending.append((slab, packed))
+            if len(pending) >= 2:
+                yield _finish(pending.pop(0))
+        for item in pending:
+            yield _finish(item)
+    finally:
+        jax.block_until_ready([item[1] for item in pending])
+        pending.clear()

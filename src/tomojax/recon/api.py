@@ -13,7 +13,7 @@ from tomojax.recon._warm_start import fbp_start
 from tomojax.recon.cgls import CGLSConfig, cgls
 from tomojax.recon.cgls_multires import cgls_multires
 from tomojax.recon.fbp import FBPConfig, default_fbp_scale, fbp, run_parallel_fbp_direct_pallas
-from tomojax.recon.fbp_host import FBPHostConfig, fbp_host
+from tomojax.recon.fbp_host import FBPHostConfig, fbp_host, fbp_slabs
 from tomojax.recon.filters import clear_filter_caches
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 from tomojax.recon.fourier import FourierConfig, fourier_reconstruct
@@ -254,6 +254,7 @@ __all__ = [
     "default_fbp_scale",
     "fbp",
     "fbp_host",
+    "fbp_slabs",
     "fista_tv",
     "fourier_reconstruct",
     "method_config",
