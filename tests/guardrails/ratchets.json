@@ -1,7 +1,7 @@
 {
   "align_config_fields": 58,
   "exported_names": {
-    "tomojax": 22,
+    "tomojax": 23,
     "tomojax.geometry": 18,
     "tomojax.recon": 22,
     "tomojax.io": 8,
@@ -138,7 +138,7 @@
     "reportOptionalCall": 2,
     "reportOptionalMemberAccess": 8,
     "reportOptionalSubscript": 1,
-    "reportPrivateUsage": 100,
+    "reportPrivateUsage": 99,
     "reportRedeclaration": 1,
     "reportReturnType": 20,
     "reportTypedDictNotRequiredAccess": 5
