@@ -82,6 +82,28 @@ def test_a_detector_offset_moves_every_view_and_the_detector_centre():
     np.testing.assert_allclose(moved[:, 3] - params[:, 3], 0.7, atol=1e-6)
 
 
+def test_zero_seed_volume_skips_resampling_but_keeps_the_pose_gauge(monkeypatch):
+    _, grid, nominal = _scan("lamino")
+    params, volume = _params(len(nominal)), np.zeros((24, 24, 24), np.float32)
+
+    monkeypatch.setattr(
+        "tomojax.alignment._gauge.apply_to_volume", lambda *_: pytest.fail("zero seed resampled")
+    )
+    moved_volume, moved, gauge = least_motion_estimate(
+        volume,
+        params,
+        nominal=nominal,
+        grid=grid,
+        translation_frame="object",
+        active=("alpha", "beta", "phi", "dx", "dz", "dy"),
+        cone_beam=False,
+    )
+    assert moved_volume is volume and gauge is not None
+    assert np.linalg.norm(moved - params) > 0.1
+    expected = apply_to_poses(params, nominal, gauge, translation_frame="object")
+    np.testing.assert_array_equal(moved, expected)
+
+
 @pytest.mark.parametrize("kind", ["parallel", "cone"])
 def test_the_moved_volume_and_poses_predict_the_same_data(kind):
     geometry, grid, nominal = _scan(kind)

@@ -208,11 +208,11 @@ def test_a_run_ended_by_a_level_that_does_not_fit_is_complete(monkeypatch):
         )
 
     assert checkpoints[-1].run_complete
-    assert sizes == [n // 2, n]
+    assert sizes == [n // 2, n, n]
     resumed_volume, resumed_params, info = align_multires(
         geometry, grid, detector, data, factors=(2, 1), config=config, resume_state=checkpoints[-1]
     )
-    assert sizes == [n // 2, n]  # the skipped level is not retried
+    assert sizes == [n // 2, n, n]  # the skipped level is not retried
     assert info["factors"] == [2]
     assert info["factors_skipped"] == [1]
     np.testing.assert_allclose(resumed_volume, volume, atol=1e-6)

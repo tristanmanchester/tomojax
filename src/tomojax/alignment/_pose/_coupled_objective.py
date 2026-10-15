@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from functools import partial
+import logging
 
 import jax
 import jax.numpy as jnp
@@ -23,10 +24,12 @@ from ._pose_jacobian import PoseJacobianOptions
 # Recomputing a view's POSE_WIDTH Jacobian columns costs a derivative
 # projection, and the joint solve applies them in every conjugate-gradient
 # iteration, so cache them whenever that many sinograms fit in this share of
-# free device memory. Larger acquisitions recompute them per view instead.
-_POSE_CACHE_FRACTION = 0.25
+# free device memory. The complete working set is still checked below, and a
+# cached update that cannot fit retries without columns before giving up a level.
+_POSE_CACHE_FRACTION = 0.5
 # Fallback cap when free device memory cannot be queried.
 _POSE_CACHE_BYTES = 512 * 1024**2
+LOG = logging.getLogger(__name__)
 
 
 def _pose_cache_limit() -> int:
@@ -56,15 +59,20 @@ _MEMORY_MARGIN = 2
 
 
 def _free_device_memory(array: jax.Array) -> int | None:
-    """The largest free block on the GPU holding ``array``, or None where it cannot be read."""
+    """Free allocator capacity on the GPU holding ``array``, when queryable.
+
+    The compiled update reports total live storage, not one allocation. A pool's
+    largest free block is not a bound on that total; it can even be zero while
+    a non-preallocating allocator still has capacity to grow. Fragmentation can
+    still cause an actual OOM, handled by the alignment level's normal fallback.
+    """
     device = next(iter(array.devices()))
     if device.platform != "gpu":
         return None
     stats = device.memory_stats() or {}
     if "bytes_limit" not in stats:
         return None
-    free = int(stats["bytes_limit"]) - int(stats.get("bytes_in_use", 0))
-    return min(free, int(stats.get("largest_free_block_bytes", free)))
+    return int(stats["bytes_limit"]) - int(stats.get("bytes_in_use", 0))
 
 
 def _check_device_memory(arrays: CoupledArrays, spec: CoupledSpec) -> Callable | None:
@@ -216,11 +224,20 @@ def build_coupled_objective(ctx: _PoseObjectiveContext) -> CoupledObjective:
         has_smoothness=bool(cfg.w_rot or cfg.w_trans),
         split=split,
     )
-    compiled = _check_device_memory(arrays, spec)
+    try:
+        compiled = _check_device_memory(arrays, spec)
+    except AlignmentMemoryError as error:
+        if not spec.cache_columns:
+            raise
+        # This is the same linear update, only with derivative projections
+        # recomputed during its solve. Do not discard a level just for its cache.
+        LOG.info("Cached pose update does not fit (%s); recomputing columns instead", error)
+        spec = replace(spec, cache_columns=False)
+        compiled = _check_device_memory(arrays, spec)
     update = (
         partial(run_update, arrays, spec=spec) if compiled is None else partial(compiled, arrays)
     )
     loss = partial(run_loss, arrays, spec=spec)
     if split is not None:
         update, loss = _on_devices(update, loss, split)
-    return CoupledObjective(update, loss, backend, cache_columns)
+    return CoupledObjective(update, loss, backend, spec.cache_columns)

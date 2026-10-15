@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -423,6 +425,9 @@ def test_memory_check_compiles_the_update_unless_far_below_the_limit(monkeypatch
     # check-public-imports: allow-private
     from tomojax.alignment._pose import _coupled_objective as coupled
 
+    stats = dict(bytes_limit=1000, bytes_in_use=100, largest_free_block_bytes=0)
+    device = SimpleNamespace(platform="gpu", memory_stats=lambda: stats)
+    assert coupled._free_device_memory(SimpleNamespace(devices=lambda: (device,))) == 900
     ctx = _small_coupled_context()
     assert coupled._pose_cache_limit() > 0  # the columns are cached
     volume, sinogram = 4 * 4**3, 4 * 3 * 4 * 5
@@ -468,3 +473,16 @@ def test_memory_check_compiles_the_update_unless_far_below_the_limit(monkeypatch
     assert isinstance(objective.update.func, jax.stages.Compiled)
     assert_update_matches(objective)
     assert len(lowered) == 1
+
+
+def test_a_cached_update_that_does_not_fit_retries_without_columns(monkeypatch):
+    checks = []
+
+    def check(_arrays, spec):
+        checks.append(spec.cache_columns)
+        if spec.cache_columns:
+            raise _coupled_objective.AlignmentMemoryError(2**30, 2**29)
+
+    monkeypatch.setattr(_coupled_objective, "_check_device_memory", check)
+    objective = _coupled_objective.build_coupled_objective(_small_coupled_context())
+    assert checks == [True, False] and not objective.pose_columns_cached
