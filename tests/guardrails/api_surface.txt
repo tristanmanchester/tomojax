@@ -93,6 +93,8 @@ class tomojax.Reconstruction(
         info: 'Mapping[str, object]',
     ) -> None
     .grid
+class tomojax.RegionEstimate(scan: 'Scan', info: 'Mapping[str, object]') -> None
+    .grid
 class tomojax.Scan(
         projections: 'np.ndarray | jax.Array',
         geometry: 'ScanGeometry',
@@ -139,6 +141,7 @@ def tomojax.backproject(
         devices: 'Device | Sequence[Device] | None' = None,
     ) -> 'jax.Array'
 def tomojax.estimate_center(scan: 'Scan') -> 'Scan'
+def tomojax.estimate_region(scan: 'Scan') -> 'RegionEstimate'
 def tomojax.load(path: 'str | PathLike[str]', *, poses: 'bool' = True) -> 'Scan'
 def tomojax.load_frames(
         path: 'str | PathLike[str]',

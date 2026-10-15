@@ -430,3 +430,9 @@ which sharp voxel boundaries can make unsuitable for a pose update. The
 [alignment solver reference](alignment-solver.md#gaussnewton-updates-at-interpolation-boundaries)
 describes the symmetric numerical columns and coupled-solve settings, and what
 they cost.
+
+For calibrated laminography scans, `region = tj.estimate_region(aligned.scan)`
+selects an axial region from coarse projection-validation probes; reconstruct
+`region.scan` and inspect `region.info` for uncertainty and any memory-driven
+coarsening. Ambiguous or multilayer data retain a broad survey, not an assumed
+thin slab; the region does not certify physical support or reconstruction accuracy.
