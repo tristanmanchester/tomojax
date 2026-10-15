@@ -360,7 +360,9 @@ def fbp_slabs[T](
     ``read`` supplies all views of a measured detector-row interval and an opaque
     context retained until that output completes. The output and source arrays
     remain valid after advancing or closing the iterator. Inputs must not change.
-    Slabs are automatically bounded to eight output rows, reducing depth on OOM.
+    Slabs use at most eight output rows (four for aligned CUDA gathers), reducing
+    depth on OOM. Aligned CUDA slabs retain filtered rows for one all-view gather;
+    filtering itself still uses bounded view batches.
     The first configured device does the work, as for host-returning FBP.
     Closing the generator drains all pending downloads before releasing inputs.
     """
@@ -383,6 +385,8 @@ def fbp_slabs[T](
         if config.backprojector == "pallas" and not cuda:
             raise ValueError("FBP Pallas backprojection requires CUDA")
         backend = "pallas" if cuda and config.backprojector != "jax" else "jax"
+        if backend == "pallas" and _slab_layout(grid, detector, depth)[-1]:
+            depth = min(depth, 4)
         host_poses = np.asarray(poses, np.float32)
         scale = np.asarray(_view_weights(poses, config.scale)[0], np.float32)
         start = 0
@@ -455,6 +459,7 @@ def _run_slabs[T](
                 z_mode="integer" if integer else "fixed",
                 separable=True,
                 check_finite=True,
+                cache_filtered=backend == "pallas" and integer,
             )
             packed = jnp.transpose(volume[:, :, : stop - at], (2, 1, 0))
             packed.copy_to_host_async()

@@ -194,7 +194,17 @@ def _parallel_filter_batch_size(n_views: int, nv: int, n_fft: int) -> int:
     return n_views if capacity >= n_views else 1 << (capacity.bit_length() - 1)
 
 
-@jax.jit(static_argnames=("grid", "detector", "backend", "batch_size", "z_mode", "separable"))
+@jax.jit(
+    static_argnames=(
+        "grid",
+        "detector",
+        "backend",
+        "batch_size",
+        "z_mode",
+        "separable",
+        "cache_filtered",
+    )
+)
 def _run_fbp_streamed(
     poses: jnp.ndarray,
     projections: jnp.ndarray,
@@ -209,10 +219,18 @@ def _run_fbp_streamed(
     batch_size: int,
     z_mode: str,
     separable: bool,
+    cache_filtered: bool = False,
 ) -> jnp.ndarray:
-    """Pad, filter and backproject bounded view batches into one accumulator."""
+    """Bound filter batches; a bounded axial consumer may retain filtered rows."""
     n, nv, nu = projections.shape
     b = min(batch_size, n)
+    if cache_filtered and backend == "pallas" and separable and z_mode == "integer":
+        from ._fbp_pallas import backproject_filtered_pallas
+
+        filtered = _filter_axial_stack(projections, view_scale, spectrum, detector, b)
+        return backproject_filtered_pallas(
+            poses, filtered, grid=grid, detector=detector, z_mode=z_mode
+        )
 
     def step(chunk: jnp.ndarray, accum: jnp.ndarray) -> jnp.ndarray:
         start = jnp.minimum(chunk * b, n - b)
@@ -246,6 +264,35 @@ def _run_fbp_streamed(
         step,
         jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32),
     )
+
+
+def _filter_axial_stack(
+    projections: jnp.ndarray,
+    view_scale: jnp.ndarray,
+    spectrum: jnp.ndarray,
+    detector: Detector,
+    batch_size: int,
+) -> jnp.ndarray:
+    """Retain a corrected row slab's filtered views, without a whole-stack FFT.
+
+    The row-slab consumer bounds this storage and retries smaller row blocks on
+    OOM. A single gather then avoids repeatedly reading and writing its volume.
+    """
+    n, nv, nu = projections.shape
+    batches = (n + batch_size - 1) // batch_size
+    extra = batches * batch_size - n
+    data = jnp.pad(projections, ((0, extra), (0, 0), (0, 0)))
+    scale = jnp.pad(view_scale, ((0, extra),))
+
+    def step(_: None, chunk: jnp.ndarray) -> tuple[None, jnp.ndarray]:
+        start = chunk * batch_size
+        rows = jax.lax.dynamic_slice(data, (start, 0, 0), (batch_size, nv, nu))
+        weights = jax.lax.dynamic_slice(scale, (start,), (batch_size,))
+        filtered = fft_filter_rows(_pad_detector(rows, detector) * weights[:, None, None], spectrum)
+        return None, filtered
+
+    _, filtered = jax.lax.scan(step, None, jnp.arange(batches))
+    return filtered.reshape(batches * batch_size, detector.nv, detector.nu)[:n]
 
 
 def _backproject_into(
@@ -322,6 +369,7 @@ def _fbp_from_resident(
     separable: bool,
     z_mode: str,
     check_finite: bool,
+    cache_filtered: bool,
 ) -> jnp.ndarray:
     """Run projections already on the device without a host round trip."""
     projections = projections.astype(jnp.float32)
@@ -344,6 +392,7 @@ def _fbp_from_resident(
         batch_size=min(batch_size, projections.shape[0]),
         z_mode=z_mode,
         separable=separable,
+        cache_filtered=cache_filtered,
     )
 
 
@@ -362,6 +411,7 @@ def _fbp_from_host(
     separable: bool,
     z_mode: str = "general",
     check_finite: bool = False,
+    cache_filtered: bool = False,
 ) -> jnp.ndarray:
     """Stream host projections through the device in fixed-size view batches.
 
@@ -385,6 +435,7 @@ def _fbp_from_host(
             separable=separable,
             z_mode=z_mode,
             check_finite=check_finite,
+            cache_filtered=cache_filtered,
         )
     n = projections.shape[0]
     b = min(batch_size, n)
