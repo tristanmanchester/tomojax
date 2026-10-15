@@ -18,6 +18,8 @@ intermediate host/device round trip, not the final stack's memory cost.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from dataclasses import dataclass
 from functools import partial
 import logging
 from typing import TYPE_CHECKING, Any, NamedTuple
@@ -32,7 +34,7 @@ from ._records import Correction, Json
 from ._steps import DOMAINS, Step
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Iterator, Sequence
 
 LOG = logging.getLogger(__name__)
 
@@ -537,3 +539,142 @@ def _batches(counts: Any, views: int, batch: int) -> Any:
             if k + 1 < len(starts):
                 pending = reader.submit(read, starts[k + 1])
             yield start, min(start + batch, views), frames
+
+
+@dataclass
+class CorrectedRows:
+    """Owned device projections and their records, completed only when requested."""
+
+    projections: jax.Array
+    flat: Correction
+    steps: tuple[Step, ...]
+    epsilon: float
+    counts: tuple[jax.Array, jax.Array]
+    raw: np.ndarray
+
+    @property
+    def records(self) -> tuple[Correction, ...]:
+        """Correction records for these measured rows, including any sampling halo."""
+        log = Correction(
+            "log",
+            {"epsilon": self.epsilon},
+            {
+                "nonpositive_transmission": int(self.counts[0]),
+                "nonfinite_set_to_zero": int(self.counts[1]),
+            },
+        )
+        return (self.flat, log, *(step.record() for step in self.steps))
+
+
+class _RowReader:
+    """One current raw block and one prefetched block; requests own their small copies."""
+
+    def __init__(self, counts: Any) -> None:
+        self.counts = counts
+        views, rows, cols = counts.shape
+        self.batch = max(1, min(rows, (1 << 30) // (views * cols * counts.dtype.itemsize)))
+        self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tomojax-raw-rows")
+        self.current = self.future = None
+        self.first = self.next_first = -1
+
+    def _read(self, first: int) -> np.ndarray:
+        stop = min(first + self.batch, self.counts.shape[1])
+        return self.counts.window(slice(first, stop), slice(None))[:]
+
+    def read(self, first: int, stop: int) -> np.ndarray:
+        if isinstance(self.counts, np.ndarray):
+            return np.ascontiguousarray(self.counts[:, first:stop])
+        views, rows, cols = self.counts.shape
+        output = np.empty((views, stop - first, cols), dtype=self.counts.dtype)
+        at = first
+        while at < stop:
+            block = at // self.batch * self.batch
+            if block != self.first:
+                if block != self.next_first:
+                    if self.future is not None and not self.future.cancel():
+                        self.future.result()
+                    self.future = self.pool.submit(self._read, block)
+                assert self.future is not None
+                self.current = self.future.result()
+                self.first = block
+                self.next_first = block + self.batch
+                self.future = (
+                    self.pool.submit(self._read, self.next_first)
+                    if self.next_first < rows
+                    else None
+                )
+            end = min(stop, block + self.batch)
+            assert self.current is not None
+            output[:, at - first : end - first] = self.current[:, at - block : end - block]
+            at = end
+        return output
+
+    def close(self) -> None:
+        self.pool.shutdown(wait=True, cancel_futures=True)
+        self.current = self.future = None
+
+
+@contextmanager
+def corrected_row_source(
+    counts: Any,
+    *,
+    flats: Any,
+    flat_positions: np.ndarray | None,
+    darks: Any,
+    white_level: float | None,
+    steps: Sequence[Step],
+    epsilon: float = 1e-6,
+    view_positions: np.ndarray | None = None,
+) -> Iterator[Callable[[int, int], CorrectedRows]]:
+    """Read corrected detector-row intervals without a materialized projection stack.
+
+    Each request returns owned JAX projections, independent of later reads and
+    context closure. Only whole-row line-integral steps without view selection
+    are supported; operations requiring neighboring rows must run on full frames.
+    Raw inputs must be NumPy arrays or support lazy detector windows. The source
+    and calibration arrays must remain unchanged until this context closes.
+    """
+    ordered = _ordered(steps)
+    if any(
+        domain != "line integrals" or not step.whole_rows or step.selects_views
+        for domain, step in ordered
+    ):
+        raise ValueError(
+            "streamed corrections require whole-row line-integral steps without view selection"
+        )
+    if not isinstance(counts, np.ndarray) and not hasattr(counts, "window"):
+        raise TypeError("streamed counts must be NumPy arrays or support detector windows")
+    epsilon = _positive_finite(epsilon, "epsilon")
+    views, rows, cols = counts.shape
+    fields, records = _flat_fields(flats, flat_positions, darks, white_level, (rows, cols), epsilon)
+    at = (
+        np.arange(views) + 0.5 if view_positions is None else np.asarray(view_positions, np.float64)
+    )
+    if at.shape != (views,) or not np.isfinite(at).all():
+        raise ValueError(f"view_positions needs one finite position for each of the {views} views")
+    interpolation = tuple(jax.device_put(value) for value in _interpolation(at, fields.positions))
+    reader = _RowReader(counts)
+    line_steps = tuple(steps)
+
+    def correct(first: int, stop: int) -> CorrectedRows:
+        raw = reader.read(first, stop)
+        raw = raw.astype(raw.dtype.newbyteorder("="), copy=False)
+        selected = (fields.flats[:, first:stop], fields.dark[first:stop], fields.usable[first:stop])
+        done = _first_pass(
+            jax.device_put(raw),
+            *interpolation,
+            *(jax.device_put(np.ascontiguousarray(value)) for value in selected),
+            epsilon=epsilon,
+            line_steps=line_steps,
+        )
+        flat = Correction(
+            "flat_dark",
+            records[0].settings,
+            {"pixels_without_light": int(np.count_nonzero(~selected[2]))},
+        )
+        return CorrectedRows(done[0], flat, line_steps, epsilon, (done[1], done[2]), raw)
+
+    try:
+        yield correct
+    finally:
+        reader.close()

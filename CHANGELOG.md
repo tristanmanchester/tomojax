@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+`reconstruct_slabs(frames, "fourier", ...)` streams corrected axial rows into
+owned reconstructions, retaining each slab's measured projections and geometry;
+its context manager drains pending transfers when iteration stops early.
+
 Laminography alignment on real data (sixth lab run): `tj.align(mode="full")`
 now improves a real DIAD (Diamond K11) TEM-grid laminography scan instead of
 degrading it, starting from the file's nominal geometry: setup is seeded from

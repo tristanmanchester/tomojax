@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
 
+from tomojax.recon._fourier_stream import fourier_slabs
 from tomojax.recon._warm_start import fbp_start
 from tomojax.recon.cgls import CGLSConfig, cgls
 from tomojax.recon.cgls_multires import cgls_multires
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
     from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry
 
 type MethodConfig = FBPConfig | FourierConfig | CGLSConfig | FistaConfig | SPDHGConfig
+
+__all__ = ["MethodConfig", "fourier_slabs", "method_config", "reconstruct_arrays"]
 
 _CONFIGS: dict[str, type[MethodConfig]] = {
     "fbp": FBPConfig,
