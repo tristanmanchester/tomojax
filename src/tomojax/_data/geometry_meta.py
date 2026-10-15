@@ -476,7 +476,7 @@ def composed_poses(geometry: ScanGeometry, corrections: np.ndarray, frame: str) 
     from tomojax.core.geometry.views import stack_view_poses
 
     n = len(corrections)
-    start = np.asarray(stack_view_poses(_nominal(geometry), n), np.float64)
+    start = np.asarray(stack_view_poses(nominal_geometry(geometry), n), np.float64)
     corrected = AugmentedGeometry(geometry, np.asarray(corrections, np.float32), frame)
     moved = np.asarray(stack_view_poses(corrected, n), np.float64)
     rotation = np.einsum("nji,njk->nik", start[:, :3, :3], moved[:, :3, :3])
@@ -487,19 +487,19 @@ def composed_poses(geometry: ScanGeometry, corrections: np.ndarray, frame: str) 
     return table.astype(np.float32)
 
 
-def _nominal(geometry: ScanGeometry) -> ScanGeometry:
+def nominal_geometry(geometry: ScanGeometry) -> ScanGeometry:
     """``geometry`` without its per-view poses (each segment's, for segments)."""
     from tomojax.core.geometry import ConeSegments
 
     if isinstance(geometry, ConeSegments):
-        segments = tuple(_nominal(s) for s in geometry.segments)
+        segments = tuple(nominal_geometry(s) for s in geometry.segments)
         if all(a is b for a, b in zip(segments, geometry.segments, strict=True)):
             return geometry
         return ConeSegments(segments)
     if isinstance(geometry, AugmentedGeometry):
-        return _nominal(geometry.base)
+        return nominal_geometry(geometry.base)
     if isinstance(geometry, DetectorRollGeometry):
-        base = _nominal(geometry.base)
+        base = nominal_geometry(geometry.base)
         return geometry if base is geometry.base else replace(geometry, base=base)
     return geometry
 
@@ -521,6 +521,9 @@ def detector_poses(geometry: ScanGeometry) -> np.ndarray | None:
     if not isinstance(geometry, AugmentedGeometry):
         return None
     params = np.asarray(geometry.align_params, np.float32)
-    if geometry.translation_frame == "detector" and _nominal(geometry.base) is geometry.base:
+    if (
+        geometry.translation_frame == "detector"
+        and nominal_geometry(geometry.base) is geometry.base
+    ):
         return params
     return composed_poses(geometry, np.zeros_like(params), "detector")

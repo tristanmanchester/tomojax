@@ -141,6 +141,31 @@ class Scan:
 
         return detector_poses(self.geometry)
 
+    def with_poses(self, poses: np.ndarray | None) -> Scan:
+        """The scan with its per-view corrections replaced by ``poses``.
+
+        The table has one row per view and six columns, in :attr:`poses`'s
+        order, units and detector translation frame. It is relative to the
+        calibrated geometry, not to the scan's current corrections: applying
+        the same table twice does not double the motion. ``None`` removes
+        corrections while retaining the calibrated axis, detector and grid.
+
+        Use this to attach externally estimated or interpolated poses to a
+        full scan after fitting selected views. Interpolate small corrections
+        in acquisition order, not wrapped rotation angle; no interpolation or
+        additional alignment is performed here.
+        """
+        from tomojax._data.geometry_meta import AugmentedGeometry, nominal_geometry
+
+        geometry = nominal_geometry(self.geometry)
+        if poses is not None:
+            table = np.asarray(poses, dtype=np.float32)
+            shape = (self.projections.shape[0], 6)
+            if table.shape != shape:
+                raise ValueError(f"Scan.with_poses needs a {shape} table, not {table.shape}")
+            geometry = AugmentedGeometry(geometry, table, translation_frame="detector")
+        return replace(self, geometry=geometry)
+
     @classmethod
     def from_astra(
         cls,

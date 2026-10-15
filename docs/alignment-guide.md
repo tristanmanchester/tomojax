@@ -68,6 +68,10 @@ config = replace(alignment_plan("pose", scan.grid).config, ray_integrator="exact
 result = tj.align(scan, mode="pose", config=config)
 ```
 
+`scan.with_poses(table)` attaches externally estimated or interpolated corrections
+in `Scan.poses`'s detector frame; it replaces, rather than adds to, existing poses.
+`scan.with_poses(None)` removes poses without undoing setup calibration.
+
 `result.poses` is the `(views, 6)` pose table and `result.info` the solver's
 record.
 

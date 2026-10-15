@@ -120,6 +120,7 @@ class tomojax.Scan(
     .poses
     .selected(self, views: 'slice | Sequence[int] | np.ndarray') -> 'Scan'
     .to_astra(self) -> 'tuple[np.ndarray, dict[str, Any], dict[str, Any]]'
+    .with_poses(self, poses: 'np.ndarray | None') -> 'Scan'
 tomojax.__version__: str
 def tomojax.align(
         scan: 'Scan',
