@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+Axial CUDA FBP stages small detector-row windows when spare device memory
+allows, reducing host dispatch without changing its slab or filter batches.
+
 Laminography alignment on real data (sixth lab run): `tj.align(mode="full")`
 now improves a real DIAD (Diamond K11) TEM-grid laminography scan instead of
 degrading it, starting from the file's nominal geometry: setup is seeded from

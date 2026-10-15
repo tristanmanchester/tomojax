@@ -95,8 +95,10 @@ each streaming and refiltering every view; those slabs use about half the free
 GPU memory by default. For explicit slab-depth control, call `fbp_host` with
 `FBPHostConfig(slices_per_batch=...)`. Host slabs are not differentiable.
 Device projections remain resident and are sliced on the device; use NumPy
-arrays or memmaps to stream projections from host memory. Input and output
-must not overlap, and public `out=` does not support explicit detector grids.
+arrays or memmaps to stream projections from host memory. Axial CUDA FBP may
+stage one slab's detector rows (up to 512 MiB and a quarter of free device
+memory) to reduce host dispatch; filtering still uses bounded view batches.
+Input and output must not overlap, and public `out=` does not support explicit detector grids.
 `method="fourier"` also accepts `out=` for axial parallel scans. These storage
 choices do not make raw-frame correction out of core: `frames.corrected()`
 still returns a complete corrected projection stack in host memory.

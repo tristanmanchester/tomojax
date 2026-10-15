@@ -138,6 +138,31 @@ def test_host_slabs_read_and_convert_only_bounded_view_batches():
     np.testing.assert_allclose(actual, expected, atol=4e-6, rtol=5e-5)
 
 
+@pytest.mark.gpu
+@pytest.mark.parametrize("kind", ["integer", "fractional", "outside"])
+@pytest.mark.parametrize("free", [0, 2**30])
+def test_axial_cuda_staging_respects_memory_and_physical_rows(monkeypatch, kind, free):
+    grid, detector, geometry, data = scan(kind)
+    geometry = replace(geometry, angles=np.linspace(0, 180, 20, endpoint=False))
+    data = np.tile(data, (4, 1, 1))
+    expected = np.asarray(
+        fbp(geometry, grid, detector, data, config=FBPConfig(backprojector="jax"))
+    )
+    module = importlib.import_module("tomojax.recon.fbp_host")
+    original, seen = module._fbp_from_host, []
+
+    def record(poses, rows, *args, **kwargs):
+        seen.append(isinstance(rows, jax.Array))
+        return original(poses, rows, *args, **kwargs)
+
+    monkeypatch.setattr(module, "device_free_memory_bytes", lambda **kwargs: free)
+    monkeypatch.setattr(module, "_fbp_from_host", record)
+    cfg = FBPHostConfig(slices_per_batch=4, views_per_batch=3)
+    actual = fbp_host(geometry, grid, detector, data, config=cfg)
+    assert seen == [bool(free)] * 3
+    np.testing.assert_allclose(actual, expected, atol=4e-6, rtol=5e-5)
+
+
 def test_host_streamer_waits_before_queuing_more_input_batches(monkeypatch):
     module = importlib.import_module("tomojax.recon.fbp")
     grid, detector, _, data = scan()
