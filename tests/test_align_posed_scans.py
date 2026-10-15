@@ -10,7 +10,7 @@ from scipy.spatial.transform import Rotation
 import tomojax as tj
 
 # check-public-imports: allow-private
-from tomojax._data.geometry_meta import AugmentedGeometry, composed_poses
+from tomojax._data.geometry_meta import AugmentedGeometry, DetectorRollGeometry, composed_poses
 from tomojax.alignment.api import apply_pose_updates
 from tomojax.core.cone import cone_model
 from tomojax.geometry import stack_view_poses
@@ -70,6 +70,35 @@ def test_corrections_compose_with_a_scans_own_poses(frame):
     nominal = scan.geometry.base  # pyright: ignore[reportAttributeAccessIssue]
     actual = stack_view_poses(AugmentedGeometry(nominal, composed, "detector"), 12)
     np.testing.assert_allclose(np.asarray(actual), np.asarray(expected), atol=2e-5)
+
+
+@pytest.mark.parametrize("segmented", [False, True])
+def test_scan_replaces_poses_without_losing_calibration(tmp_path, segmented):
+    nominal = _scan(_orbit_vectors(3, 2.0, -1.0), np.zeros((48, 3, 64), np.float32), 8)
+    if segmented:
+        nominal = tj.Scan.combine([nominal, nominal])
+    nominal = tj.Scan(nominal.projections, DetectorRollGeometry(nominal.geometry, 0.3))
+    n = len(nominal.angles)
+    table = np.tile([0.01, -0.02, 0.03, 0.2, 0.4, -0.1], (n, 1)).astype(np.float32)
+    old = AugmentedGeometry(nominal.geometry, -table, "object")
+    scan = tj.Scan(nominal.projections, AugmentedGeometry(old, table, "detector"))
+    replaced = scan.with_poses(table).with_poses(table)
+    expected = apply_pose_updates(
+        stack_view_poses(nominal.geometry, n), table, translation_frame="detector"
+    )
+    np.testing.assert_allclose(stack_view_poses(replaced.geometry, n), expected, atol=2e-6)
+    tj.save(tmp_path / "posed.npz", replaced)
+    loaded = tj.load(tmp_path / "posed.npz")
+    np.testing.assert_allclose(stack_view_poses(loaded.geometry, n), expected, atol=2e-6)
+    cleared = replaced.with_poses(None)
+    assert cleared.poses is None and cleared.projections is scan.projections
+    np.testing.assert_allclose(
+        stack_view_poses(cleared.geometry, n), stack_view_poses(nominal.geometry, n), atol=2e-6
+    )
+    assert cleared.geometry.detector_roll_deg == 0.3
+    assert replaced.grid == nominal.grid and replaced.detector == nominal.detector
+    with pytest.raises(ValueError, match="table"):
+        scan.with_poses(table[:-1])
 
 
 def test_segment_detectors_keep_their_offsets_when_binned():
