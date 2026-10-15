@@ -140,6 +140,20 @@ class _VolumeWriter:
                 self.pool.shutdown(wait=True, cancel_futures=True)
 
 
+def _output_memory(projections: np.ndarray | jax.Array, poses: jax.Array) -> int:
+    """Budget the device that will actually produce a resident-input slab.
+
+    Host input follows the pose/default device. Resident input is reconstructed
+    where it already lives, which need not be the current default device.
+    Sharded input does not identify one output-device budget.
+    """
+    devices = projections.devices() if isinstance(projections, jax.Array) else poses.devices()
+    if len(devices) != 1:
+        return 0
+    device = next(iter(devices))
+    return device_free_memory_bytes(device=device) or 0
+
+
 def fbp_host(
     geometry: ParallelGeometry,
     grid: Grid,
@@ -202,7 +216,7 @@ def fbp_host(
     enabled = (
         grid.nz > depth
         and output.flags.f_contiguous
-        and slab_bytes <= (device_free_memory_bytes() or 0) // 4
+        and slab_bytes <= _output_memory(projections, poses) // 4
     )
     with _VolumeWriter(enabled=enabled) as write:
         for start in range(0, grid.nz, depth):

@@ -306,13 +306,25 @@ def test_host_slabs_reject_incompatible_storage(invalid):
 
 @pytest.mark.parametrize("kind", ["integer", "fractional", "outside"])
 @pytest.mark.parametrize("tilted", [False, True])
-def test_host_slabs_slice_device_projections_in_place(kind, tilted):
+@pytest.mark.parametrize("backend", ["auto", "jax"])
+def test_host_slabs_slice_device_projections_in_place(monkeypatch, kind, tilted, backend):
     grid, detector, geometry, data = scan(kind)
     if tilted:
         geometry = LaminographyGeometry(grid, detector, geometry.angles, tilt_deg=30)
-    config = FBPHostConfig(slices_per_batch=4, views_per_batch=3)
+    config = FBPHostConfig(slices_per_batch=4, views_per_batch=3, backprojector=backend)
     expected = fbp_host(geometry, grid, detector, data, config=config)
-    actual = fbp_host(geometry, grid, detector, jax.device_put(data), config=config)
+    module = importlib.import_module("tomojax.recon.fbp_host")
+    queried = []
+
+    def free(*, device):
+        return queried.append(device) or 2**30
+
+    monkeypatch.setattr(module, "device_free_memory_bytes", free)
+    device = jax.devices("cpu")[-1] if backend == "jax" else jax.devices()[0]
+    out = np.empty(expected.shape, np.float32, order="F")
+    resident = jax.device_put(data, device)
+    actual = fbp_host(geometry, grid, detector, resident, config=config, out=out)
+    assert queried == ([] if tilted else [device])
     np.testing.assert_allclose(actual, expected, atol=4e-6, rtol=5e-5)
     data[0, 4, 2] = np.nan
     with pytest.raises(ValueError, match="finite"):
