@@ -72,12 +72,15 @@ def _prepare_multires_level_state(
     current_level_stats = [
         dict(stat) for stat in global_outer_stats if stat.get("level_index") == int(level_index)
     ]
+    # Initializer/proposal records can have no scored loss. Their iteration
+    # count still matters for resume, but cannot index the shorter loss history.
+    level_loss_count = sum(_has_scored_loss(stat) for stat in current_level_stats)
     stats_before_level = [
         dict(stat) for stat in global_outer_stats if stat.get("level_index") != int(level_index)
     ]
     loss_before_level = (
-        list(loss_hist[:-level_completed_before])
-        if resuming and level_completed_before > 0
+        list(loss_hist[:-level_loss_count])
+        if resuming and level_loss_count > 0
         else list(loss_hist)
     )
     global_before_level = (
@@ -121,8 +124,8 @@ def _prepare_multires_level_state(
         for stat in current_level_stats
         if _stage_index_or_none(stat) == resume_stage_index and not resume_stage_completed
     ]
-    level_history = list(loss_hist[-level_completed_before:]) if level_completed_before > 0 else []
-    preserved_loss_count = min(len(preserved_level_stats), len(level_history))
+    level_history = list(loss_hist[-level_loss_count:]) if level_loss_count > 0 else []
+    preserved_loss_count = sum(_has_scored_loss(stat) for stat in preserved_level_stats)
     preserved_level_losses = level_history[:preserved_loss_count]
     resume_stage_losses = level_history[preserved_loss_count:]
     if len(resume_stage_losses) > resume_stage_iters:
@@ -142,6 +145,10 @@ def _prepare_multires_level_state(
         preserved_level_losses=[float(value) for value in preserved_level_losses],
         resume_stage_losses=[float(value) for value in resume_stage_losses],
     )
+
+
+def _has_scored_loss(stat: Mapping[str, object]) -> bool:
+    return stat.get("loss") is not None or stat.get("geometry_loss_after") is not None
 
 
 def _final_multires_volume(
