@@ -2,8 +2,9 @@
 
 ## Unreleased
 
-Initialized nonnegative FISTA reuses two owned volume buffers when the volume
-is larger than the measured data, without changing global allocator settings.
+Resident unmasked nonnegative parallel/laminographic Joseph FISTA reuses two
+owned volume buffers for zero or ordered starts when the volume is larger
+than the measured data, without changing global allocator settings.
 
 Laminography alignment on real data (sixth lab run): `tj.align(mode="full")`
 now improves a real DIAD (Diamond K11) TEM-grid laminography scan instead of
