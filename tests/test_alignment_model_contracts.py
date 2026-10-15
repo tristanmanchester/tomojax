@@ -10,7 +10,7 @@ import pytest
 import tomojax as tj
 
 # check-public-imports: allow-private
-from tomojax.alignment._geometry import common_lines, initializers as init
+from tomojax.alignment._geometry import common_lines, initializers as init, spectral_motion
 
 # check-public-imports: allow-private
 from tomojax.alignment._geometry.geometry_blocks import _theta_span_from_geometry
@@ -733,3 +733,74 @@ def test_spectral_stage_contract_rejects_unsupported_work_and_declines_blank_dat
     cone = tj.ConeGeometry(grid, detector, angles, tj.ConeBeam(30, 45))
     with pytest.raises(ValueError, match="spectral setup requires a parallel beam"):
         tj.align(tj.Scan(data, cone), mode="full", levels=(1,), config=config)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("shape", [(65, 81), (225, 257)])
+def test_dense_common_line_motion_keeps_acquisition_order_and_bounded_reads(shape):
+    data, angles, detector, axis, centre, basis, truth = _common_line_gaussians(
+        shape, 3.0, views=320, turns=2
+    )
+    small = common_lines.prepare_common_lines(data, angles, detector)
+    seed = small.motion(axis, center_u=centre * detector.du)
+    assert seed.shifts is not None
+    order = np.argsort(small.view_indices)
+    initial = np.column_stack(
+        [
+            np.interp(np.arange(len(angles)), small.view_indices[order], seed.shifts[order, k])
+            for k in range(2)
+        ]
+    )
+
+    class BoundedReads:
+        shape = data.shape
+
+        def __getitem__(self, index):
+            assert len(index) <= 16
+            return data[index]
+
+        def __array__(self, *args, **kwargs):
+            raise AssertionError("must not copy all input views")
+
+    fit = spectral_motion.refine_common_line_motion(
+        BoundedReads(),
+        (angles + 180) % 360 - 180,
+        detector,
+        axis,
+        center_u=centre * detector.du,
+        initial_shifts=0.5 * initial,
+    )
+    assert fit.status == "accepted" and fit.shifts is not None
+    error = (fit.shifts - truth).ravel()
+    gauge = basis.reshape(-1, 3)
+    error -= gauge @ np.linalg.lstsq(gauge, error, rcond=None)[0]
+    assert np.sqrt(np.mean(error**2)) < 0.1
+    assert fit.coherence_after > fit.coherence_before
+    settled = spectral_motion.refine_common_line_motion(
+        BoundedReads(),
+        angles,
+        detector,
+        axis,
+        center_u=centre * detector.du,
+        initial_shifts=initial,
+    )
+    # A strong old seed must survive a regularized candidate that worsens agreement.
+    assert settled.status == "not_improved" and settled.shifts is None
+
+
+def test_dense_common_line_motion_declines_blank_boundary_and_unconverged(monkeypatch):
+    data, angles, detector, axis, centre, _, _ = _common_line_gaussians((65, 81), 12.0)
+    kwargs = dict(center_u=centre * detector.du, initial_shifts=np.zeros((len(angles), 2)))
+    refine = spectral_motion.refine_common_line_motion
+    assert refine(np.zeros_like(data), angles, detector, axis, **kwargs).status == "no_signal"
+    fit = refine(data, angles, detector, axis, **kwargs)
+    assert fit.status == "boundary" and fit.shifts is None
+    minimize = spectral_motion.optimize.minimize
+
+    def one_iteration(*args, **kwargs):
+        kwargs["options"] = {**kwargs["options"], "maxiter": 1}
+        return minimize(*args, **kwargs)
+
+    monkeypatch.setattr(spectral_motion.optimize, "minimize", one_iteration)
+    fit = refine(data, angles, detector, axis, **kwargs)
+    assert fit.status == "not_converged" and fit.shifts is None

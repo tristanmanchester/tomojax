@@ -51,21 +51,7 @@ class CommonLines:
     view_indices: np.ndarray
 
     def _coordinates(self, axis_unit: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        rotation = align_u_to_v(np.array([0.0, 0.0, 1.0]), np.asarray(axis_unit))
-        c, s = np.cos(self.angles), np.sin(self.angles)
-        rz = np.zeros((len(c), 3, 3))
-        rz[:, 0, 0], rz[:, 0, 1] = c, -s
-        rz[:, 1, 0], rz[:, 1, 1], rz[:, 2, 2] = s, c, 1
-        poses = rotation @ rz
-        i, j = self.pairs.T
-        line = np.cross(poses[i, 1], poses[j, 1])
-        norm = np.linalg.norm(line, axis=1, keepdims=True)
-        line = np.divide(line, norm, out=np.zeros_like(line), where=norm > 1e-8)
-        return tuple(
-            np.einsum("pdi,pi->pd", poses[k][:, [0, 2]], line)[:, None, :]
-            * self.frequency[None, :, None]
-            for k in (i, j)
-        )
+        return line_coordinates(self.angles, self.pairs, self.frequency, axis_unit)
 
     def sample(self, axis_unit: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Corresponding complex samples, each shaped ``(pairs, frequencies)``."""
@@ -215,7 +201,26 @@ class CommonLines:
         )
 
 
-def _angular_pairs(angles: np.ndarray) -> np.ndarray:
+def line_coordinates(
+    angles: np.ndarray, pairs: np.ndarray, frequency: np.ndarray, axis_unit: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    rotation = align_u_to_v(np.array([0.0, 0.0, 1.0]), np.asarray(axis_unit))
+    c, s = np.cos(angles), np.sin(angles)
+    rz = np.zeros((len(c), 3, 3))
+    rz[:, 0, 0], rz[:, 0, 1] = c, -s
+    rz[:, 1, 0], rz[:, 1, 1], rz[:, 2, 2] = s, c, 1
+    poses = rotation @ rz
+    i, j = pairs.T
+    line = np.cross(poses[i, 1], poses[j, 1])
+    norm = np.linalg.norm(line, axis=1, keepdims=True)
+    line = np.divide(line, norm, out=np.zeros_like(line), where=norm > 1e-8)
+    return tuple(
+        np.einsum("pdi,pi->pd", poses[k][:, [0, 2]], line)[:, None, :] * frequency[None, :, None]
+        for k in (i, j)
+    )
+
+
+def angular_pairs(angles: np.ndarray) -> np.ndarray:
     pairs = set()
     for i, angle in enumerate(angles):
         for offset in np.deg2rad([30, 60, 90, 120, 150]):
@@ -238,10 +243,29 @@ def prepare_common_lines(
     keep = order[np.linspace(0, len(order) - 1, min(64, len(order))).astype(int)]
     # Canonical physical angles; acquisition chronology is carried by keep.
     theta = np.deg2rad(np.mod(np.asarray(angles)[keep], 360))
-    pairs = _angular_pairs(theta)
+    pairs = angular_pairs(theta)
     if len(pairs) < 3 or min(projections.shape[1:]) < 8:
         return None
-    data = np.asarray(projections[keep], np.float32)
+    spectra, pitch, frequency = preview_spectra(projections[keep], detector)
+    original_nu = projections.shape[2]
+    return CommonLines(
+        spectra,
+        theta,
+        pairs,
+        frequency,
+        pitch,
+        detector.du,
+        original_nu,
+        detector.center[1],
+        detector.center[0],
+        keep,
+    )
+
+
+def preview_spectra(
+    data: np.ndarray | jax.Array, detector: Detector
+) -> tuple[np.ndarray, tuple[float, float], np.ndarray]:
+    data = np.asarray(data, np.float32)
     original_nv, original_nu = data.shape[1:]
     factor = max(1, int(np.ceil(max(original_nv, original_nu) / 192)))
     nv, nu = original_nv // factor, original_nu // factor
@@ -259,15 +283,4 @@ def prepare_common_lines(
     fv = fft.fftshift(fft.fftfreq(shape[0]))
     spectra *= np.exp(2j * np.pi * (fu[None, :] * origin_u + fv[:, None] * origin_v))
     frequency = np.linspace(2 / min(nv * dv, nu * du), 0.45 / max(du, dv), 128)
-    return CommonLines(
-        spectra,
-        theta,
-        pairs,
-        frequency,
-        (du, dv),
-        detector.du,
-        original_nu,
-        detector.center[1],
-        detector.center[0],
-        keep,
-    )
+    return spectra, (du, dv), frequency
