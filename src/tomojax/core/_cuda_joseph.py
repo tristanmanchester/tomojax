@@ -4,9 +4,11 @@ Each thread owns ``_RUN`` consecutive z voxels and loops once over the union of
 their detector footprints, so every detector load and loop step serves several
 voxels. Weights use the same arithmetic as the forward projection. The kernel
 is compiled at run time with CuPy and launched on XLA's stream through
-``buffer_callback``, inside compiled solver loops. It serves volumes of 2**24
-voxels and more; smaller volumes, runs without CuPy and
-``TOMOJAX_CUDA_KERNELS=0`` use the Pallas transpose.
+``buffer_callback``, inside compiled solver loops. Automatic dispatch uses it
+from 2**21 voxels, including coarse reconstruction and alignment grids. Smaller
+volumes retain the Pallas transpose to avoid the fixed callback/kernel setup
+cost for short operations. Runs without CuPy and ``TOMOJAX_CUDA_KERNELS=0``
+also use Pallas; the environment override can force either implementation.
 """
 
 from __future__ import annotations
@@ -31,10 +33,12 @@ if TYPE_CHECKING:
 _RUN = 4
 _VIEWS_PER_STAGE = 32
 _THREADS = 128
-# Below this volume size the one-off cost (CuPy import, kernel load, and a
-# callback program the persistent compile cache cannot reuse, about 0.2-0.4 s
-# per process) outweighs the faster gather; the Pallas transpose is used.
-_MIN_VOXELS = 2**24
+# Keep tiny grids on Pallas: CuPy import, kernel loading and the callback
+# program incur a fixed cost that the persistent compile cache cannot reuse.
+# Medium grids already amortize that setup over ordinary solver iterations;
+# requiring a full-resolution volume would exclude useful multiresolution work.
+# This is a size-only crossover, independent of scan identity and geometry.
+_MIN_VOXELS = 2**21
 
 _SOURCE = r"""
 extern "C" __global__ void joseph_gather(
