@@ -10,7 +10,7 @@ from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeome
 from tomojax.recon import FBPConfig, FBPHostConfig, fbp, fbp_host
 
 # check-public-imports: allow-private
-from tomojax.recon._fbp_pallas import backproject_filtered_pallas
+from tomojax.recon._fbp_pallas import _backprojection_call, backproject_filtered_pallas
 from tomojax.recon.fbp import _backproject_voxels_jax
 from tomojax.recon.filters import fft_filter_rows, rfft_filter_array
 
@@ -243,6 +243,43 @@ def test_voxel_pallas_fbp_matches_jax_on_partial_blocks(
 
 
 @pytest.mark.parametrize("interpret", [True, pytest.param(False, marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("first_row", [-2, 3])
+def test_integer_slice_tiles_mask_both_axes_and_accumulate(interpret, first_row):
+    import jax
+
+    if not interpret and jax.default_backend() != "gpu":
+        pytest.skip("requires a CUDA GPU")
+    grid = Grid(17, 9, 19, 0.8, 1.2, 1.0, vol_origin=(-8.1, -4.2, first_row))
+    detector = Detector(11, 20, 0.9, 1.0, (0.17, 9.5))
+    geometry = ParallelGeometry(grid, detector, [0.0, 31.0, 78.0, 117.0, 161.0])
+    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(5)], dtype=jnp.float32)
+    rng = np.random.default_rng(18)
+    filtered = jnp.asarray(rng.normal(size=(5, 20, 11)), dtype=jnp.float32)
+    expected = jax.jit(
+        lambda rows: _backproject_voxels_jax(poses, rows, grid=grid, detector=detector)
+    )(filtered)
+    offset = jnp.asarray(rng.normal(size=expected.shape), dtype=jnp.float32)
+    for accumulate in [False, True]:
+        call = _backprojection_call(
+            grid,
+            detector,
+            5,
+            128,
+            block_z=16,
+            z_mode="integer",
+            interpret=interpret,
+            accumulate=accumulate,
+        )
+        operands = [poses, jnp.transpose(filtered, (0, 2, 1))]
+        if accumulate:
+            operands.append(offset.reshape(grid.nx * grid.ny, grid.nz))
+        actual = jax.jit(call)(*operands).reshape(expected.shape)
+        np.testing.assert_allclose(
+            actual, expected + (offset if accumulate else 0), rtol=1e-5, atol=5e-6
+        )
+
+
+@pytest.mark.parametrize("interpret", [True, pytest.param(False, marks=pytest.mark.gpu)])
 def test_fixed_rows_preserve_a_common_nonbinary_translation(interpret: bool) -> None:
     """Hoisting agrees with the generic kernel even near cancellation after many views."""
     import jax
@@ -284,22 +321,26 @@ def test_explicit_pallas_fbp_requires_cuda_arrays() -> None:
 @pytest.mark.parametrize(
     ("n_views", "shape", "detector_shape", "override", "expected"),
     [
-        (1, (7, 6, 3), (9, 5), None, 128),
-        (32, (768, 768, 11), (1104, 12), None, 128),
-        (128, (7, 6, 3), (9, 5), None, 128),
-        (32, (256, 256, 128), (1024, 256), None, 128),
-        (32, (256, 256, 128), (1025, 256), None, 512),
-        (32, (4096, 4096, 2), (9, 5), None, 2048),
-        (129, (7, 6, 3), (9, 5), None, 128),
-        (129, (7, 6, 3), (512, 512), None, 512),
-        (129, (512, 512, 11), (767, 11), None, 128),
-        (129, (768, 768, 17), (1089, 17), None, 128),
-        (129, (4096, 4096, 2), (9, 5), None, 2048),
-        (129, (7, 6, 3), (9, 5), 64, 64),
+        (1, (7, 6, 3), (9, 5), None, (128, 0)),
+        (32, (768, 768, 11), (1104, 12), None, (128, 0)),
+        (128, (7, 6, 3), (9, 5), None, (128, 0)),
+        (32, (256, 256, 128), (1024, 256), None, (128, 0)),
+        (32, (256, 256, 128), (1025, 256), None, (512, 0)),
+        (32, (4096, 4096, 2), (9, 5), None, (2048, 0)),
+        (129, (7, 6, 3), (9, 5), None, (128, 0)),
+        (129, (7, 6, 3), (512, 512), None, (512, 0)),
+        (129, (512, 512, 11), (767, 11), None, (128, 0)),
+        (129, (768, 768, 17), (1089, 17), None, (128, 0)),
+        (129, (4096, 4096, 2), (9, 5), None, (2048, 0)),
+        (129, (7, 6, 3), (9, 5), 64, (64, 0)),
+        (64, (1024, 1024, 16), (1536, 16), None, (128, 16)),
+        (64, (1024, 1024, 16), (1536, 17), None, (2048, 0)),
+        (64, (1024, 1024, 16), (1536, 16), 128, (128, 0)),
     ],
 )
+@pytest.mark.parametrize("row_shift", [0, 1])
 def test_automatic_fbp_tiles_bound_both_input_and_output_working_sets(
-    monkeypatch, n_views, shape, detector_shape, override, expected
+    monkeypatch, n_views, shape, detector_shape, override, expected, row_shift
 ):
     import jax
 
@@ -307,11 +348,11 @@ def test_automatic_fbp_tiles_bound_both_input_and_output_working_sets(
     from tomojax.recon import _fbp_pallas as implementation
 
     grid = Grid(*shape, 1, 1, 1)
-    detector = Detector(*detector_shape, 1, 1)
+    detector = Detector(*detector_shape, 1, 1, center=(0, -row_shift))
     chosen = []
 
     def call(*args, **kwargs):
-        chosen.append(args[3])
+        chosen.append((args[3], kwargs["block_z"]))
         return lambda *_: jnp.zeros((grid.nx * grid.ny * grid.nz,), jnp.float32)
 
     monkeypatch.setattr(implementation, "_backprojection_call", call)
@@ -329,6 +370,8 @@ def test_automatic_fbp_tiles_bound_both_input_and_output_working_sets(
         jax.ShapeDtypeStruct((n_views, 4, 4), jnp.float32),
         jax.ShapeDtypeStruct((n_views, detector.nv, detector.nu), jnp.float32),
     )
+    if row_shift and expected[1]:
+        expected = (2048, 0)
     assert chosen == [expected]
 
 

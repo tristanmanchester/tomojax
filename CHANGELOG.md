@@ -24,7 +24,8 @@ Synchrotron parallel beam: intensity-dependent detector stripes are corrected
 without altering unselected features, wide stripe windows use median-only
 networks, HDF5 count and calibration paths load lazily and row-local
 corrections read unfiltered HDF5 windows directly; axial FBP amortises pose
-loads over larger CUDA tiles and overlaps bounded downloads with host writes in
+loads over larger CUDA tiles, shares lateral coordinates across aligned detector
+rows, and overlaps bounded downloads with host writes in
 the caller's storage order, and Fourier CUDA output is written plane-contiguous.
 The whole Diamond I12 scan (2160 rows, 1801 views) goes from raw counts to a
 saved volume in about 158 s against tomocupy's 167 s, with lower error against

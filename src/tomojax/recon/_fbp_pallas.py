@@ -13,6 +13,34 @@ import jax.numpy as jnp
 from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
 
 
+def _voxel_coordinates(shape, origin, voxel, block_size, block_z):
+    nx, ny, nz = shape
+    lanes = pl.program_id(0) * block_size + jnp.arange(block_size, dtype=jnp.int32)
+    if block_z:
+        # Share lateral geometry across contiguous detector rows instead of
+        # repeating it independently for each voxel in a flattened tile.
+        iz = (pl.program_id(1) * block_z + jnp.arange(block_z, dtype=jnp.int32))[None, :]
+        ix, iy = (lanes // ny)[:, None], (lanes % ny)[:, None]
+        valid = (lanes < nx * ny)[:, None] & (iz < nz)
+    else:
+        ix, iy, iz = lanes // (ny * nz), (lanes // nz) % ny, lanes % nz
+        valid = lanes < nx * ny * nz
+    x = ix.astype(jnp.float32) * voxel[0] + origin[0]
+    y = iy.astype(jnp.float32) * voxel[1] + origin[1]
+    z = iz.astype(jnp.float32) * voxel[2] + origin[2]
+    return x, y, z, iz, valid
+
+
+def _integer_detector_rows(z, iz, origin_z, center_v, dv, nv, block_z):
+    if block_z:
+        # Integer arithmetic exposes contiguous row loads to the compiler;
+        # rounding floating z coordinates separately hides that relationship.
+        first = round((origin_z - center_v) / dv + (nv - 1) / 2)
+        return first + iz
+    v_offset = ((nv - 1) % 2) / 2.0
+    return jnp.floor((z - center_v) / dv + v_offset + 0.5).astype(jnp.int32) + (nv - 1) // 2
+
+
 def _backproject_filtered_kernel(
     poses_ref: Any,
     projections_ref: Any,
@@ -25,26 +53,18 @@ def _backproject_filtered_kernel(
     detector_center: tuple[float, float],
     n_views: int,
     block_size: int,
+    block_z: int,
     z_mode: str,
 ) -> None:
     # With an accumulator, refs is (accumulator, aliased output).
     acc_ref, out_ref = refs if len(refs) == 2 else (None, refs[0])
-    nx, ny, nz = shape
     nv, nu = detector_shape
     du, dv = detector_spacing
-    flat = pl.program_id(0) * block_size + jnp.arange(block_size, dtype=jnp.int32)
-    valid = flat < nx * ny * nz
-    ix, iy, iz = flat // (ny * nz), (flat // nz) % ny, flat % nz
-    x = ix.astype(jnp.float32) * voxel[0] + origin[0]
-    y = iy.astype(jnp.float32) * voxel[1] + origin[1]
-    z = iz.astype(jnp.float32) * voxel[2] + origin[2]
+    x, y, z, iz, valid = _voxel_coordinates(shape, origin, voxel, block_size, block_z)
     # Add integer pixel origins only after extracting the interpolation fractions.
     u_offset, v_offset = ((nu - 1) % 2) / 2.0, ((nv - 1) % 2) / 2.0
     if z_mode == "integer":
-        iv = (
-            jnp.floor((z - detector_center[1]) / dv + v_offset + 0.5).astype(jnp.int32)
-            + (nv - 1) // 2
-        )
+        iv = _integer_detector_rows(z, iz, origin[2], detector_center[1], dv, nv, block_z)
     elif z_mode == "fixed":
         world_z = plt.load(poses_ref.at[jnp.int32(0), jnp.int32(2), jnp.int32(2)]) * z + plt.load(
             poses_ref.at[jnp.int32(0), jnp.int32(2), jnp.int32(3)]
@@ -89,7 +109,7 @@ def _backproject_filtered_kernel(
             value = row0 * (1.0 - wv) + row1 * wv
         return accum + value
 
-    result = jax.lax.fori_loop(0, n_views, body, jnp.zeros((block_size,), dtype=jnp.float32))
+    result = jax.lax.fori_loop(0, n_views, body, jnp.zeros(valid.shape, dtype=jnp.float32))
     if acc_ref is not None:
         result = plt.load(acc_ref, mask=valid, other=0.0) + result
     plt.store(out_ref, result, mask=valid)
@@ -105,11 +125,20 @@ def _backprojection_call(
     z_mode: str,
     interpret: bool,
     accumulate: bool = False,
+    block_z: int = 0,
 ) -> Any:
     count = grid.nx * grid.ny * grid.nz
+    if block_z:
+        shape = (grid.nx * grid.ny, grid.nz)
+        launch = ((shape[0] + block_size - 1) // block_size, (grid.nz + block_z - 1) // block_z)
+        spec = pl.BlockSpec((block_size, block_z), lambda xy, z: (xy, z))
+    else:
+        shape = (count,)
+        launch = ((count + block_size - 1) // block_size,)
+        spec = pl.BlockSpec((block_size,), lambda block: (block,))
     in_specs = [pl.no_block_spec, pl.no_block_spec]
     if accumulate:
-        in_specs.append(pl.BlockSpec((block_size,), lambda block: (block,)))
+        in_specs.append(spec)
     return pl.pallas_call(
         functools.partial(
             _backproject_filtered_kernel,
@@ -121,12 +150,13 @@ def _backprojection_call(
             detector_center=detector.center,
             n_views=n_views,
             block_size=block_size,
+            block_z=block_z,
             z_mode=z_mode,
         ),
-        out_shape=jax.ShapeDtypeStruct((count,), jnp.float32),
-        grid=((count + block_size - 1) // block_size,),
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+        grid=launch,
         in_specs=in_specs,
-        out_specs=pl.BlockSpec((block_size,), lambda block: (block,)),
+        out_specs=spec,
         input_output_aliases={2: 0} if accumulate else {},
         compiler_params=plt.CompilerParams(num_warps=4),
         interpret=interpret,
@@ -153,10 +183,12 @@ def backproject_filtered_pallas(
     ``accumulate`` is added to the result in place. Compact
     filtered-stack and output working sets use one voxel per lane of the
     four-warp program. Large axial outputs amortize pose loads across more
-    voxels; general poses and smaller outputs retain their previous tiles.
+    voxels. Aligned contiguous rows use a two-dimensional tile with shared
+    lateral coordinates; fractional/general poses retain flattened tiles.
     """
     if z_mode not in {"integer", "fixed", "general"}:
         raise ValueError("FBP z_mode must be integer, fixed, or general")
+    block_z = 0
     if block_size is None:
         output_bytes = 4 * grid.nx * grid.ny * grid.nz
         working_bytes = filtered.size * filtered.dtype.itemsize + output_bytes
@@ -165,6 +197,18 @@ def backproject_filtered_pallas(
             block_size = 128
         elif z_mode != "general" and output_bytes >= 64 * 1024**2:
             block_size = 2048
+            first = (grid_volume_origin(grid)[2] - detector.center[1]) / detector.dv
+            first += (detector.nv - 1) / 2
+            if (
+                z_mode == "integer"
+                and grid.nz % 4 == 0
+                and detector.nv % 4 == 0
+                and grid.vz == detector.dv
+                and abs(first - round(first)) <= 1e-5
+                and round(first) % 4 == 0
+            ):
+                block_z = min(16, 1 << (grid.nz - 1).bit_length())
+                block_size //= block_z
         else:
             block_size = 512
     call = _backprojection_call(
@@ -175,8 +219,10 @@ def backproject_filtered_pallas(
         z_mode=z_mode,
         interpret=interpret,
         accumulate=accumulate is not None,
+        block_z=block_z,
     )
     operands = [poses, jnp.transpose(filtered, (0, 2, 1))]
     if accumulate is not None:
-        operands.append(accumulate.reshape(-1))
+        shape = (grid.nx * grid.ny, grid.nz) if block_z else (-1,)
+        operands.append(accumulate.reshape(shape))
     return call(*operands).reshape((grid.nx, grid.ny, grid.nz))
