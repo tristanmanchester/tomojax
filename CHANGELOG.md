@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+Automatically allocated axial FBP host volumes use slab-contiguous Fortran order;
+caller-owned output storage and `(x, y, z)` coordinates are unchanged.
+
 Axial CUDA FBP stages small detector-row windows when spare device memory
 allows, reducing host dispatch without changing its slab or filter batches.
 

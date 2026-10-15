@@ -189,7 +189,8 @@ def fbp_host(
     """Reconstruct without storing the full volume or projections on the device.
 
     Accept NumPy arrays, including memmaps, or device arrays and return a float32
-    NumPy array.
+    NumPy array. Automatically allocated axial output uses Fortran order for
+    contiguous xy-planes; general geometry uses C order for contiguous x-slabs.
     ``out`` may be a writable memmap. Writes complete before returning, but
     a later failure can leave a partially written output. Input storage must
     remain unchanged until the call finishes. This host-returning routine is
@@ -230,7 +231,7 @@ def fbp_host(
     local_grid, local_detector, first, step, integer = _slab_layout(grid, detector, depth)
     rows = local_detector.nv
     ramp = rfft_filter_array(cfg.filter, local_detector.nu, detector.du, jnp.float32)
-    output = validate_host_arrays(projections, out, shape, device_input=True)
+    output = validate_host_arrays(projections, out, shape, device_input=True, order="F")
     host_poses = np.asarray(poses, np.float32)
     params = np.zeros((n_views, 6), np.float32)
     slab_bytes = 4 * grid.nx * grid.ny * depth

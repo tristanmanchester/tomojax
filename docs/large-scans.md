@@ -84,7 +84,9 @@ volume.flush()
 ```
 
 Built-in parallel scans use balanced axial slabs of at most 16 slices, reading
-only the detector rows they need. For large disk-backed axial FBP output, pass
+only the detector rows they need. Automatically allocated axial host output uses
+Fortran order for contiguous xy-planes; laminography keeps C order for x-slabs.
+For large disk-backed axial FBP output, pass
 `fortran_order=True` to `open_memmap`: contiguous xy-planes avoid repeatedly
 dirtying pages across the whole file as successive z-slabs are written. This
 changes storage order, not the volume's `(x, y, z)` shape or coordinates.

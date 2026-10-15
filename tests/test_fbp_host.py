@@ -48,6 +48,7 @@ def test_host_slabs_match_full_physical_reconstruction(kind, depth, backend):
     )
     assert isinstance(actual, np.ndarray)
     assert actual.dtype == np.float32
+    assert actual.flags.f_contiguous
     np.testing.assert_allclose(actual, reference, atol=4e-6, rtol=5e-5)
 
 
@@ -302,6 +303,7 @@ def test_host_slabs_reconstruct_laminography_like_fbp(depth, backend):
         data,
         config=FBPHostConfig(slices_per_batch=depth, views_per_batch=2, backprojector=backend),
     )
+    assert actual.flags.c_contiguous
     np.testing.assert_allclose(actual, reference, atol=4e-6, rtol=5e-5)
 
 

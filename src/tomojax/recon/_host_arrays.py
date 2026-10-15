@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import jax
 import numpy as np
@@ -49,10 +50,12 @@ def validate_host_arrays(
     context: str = "fbp_host",
     *,
     device_input: bool = False,
+    order: Literal["C", "F"] = "C",
 ) -> np.ndarray:
     """Check host input/output arrays and allocate the output volume if needed.
 
     ``device_input`` also accepts a JAX array, which cannot overlap host storage.
+    ``order`` selects storage only when allocating; caller-owned output is kept.
     """
     valid = isinstance(projections, np.ndarray) or (
         device_input and isinstance(projections, jax.Array)
@@ -61,7 +64,7 @@ def validate_host_arrays(
         kinds = "NumPy or JAX" if device_input else "NumPy"
         raise TypeError(f"{context}: projections must be a real {kinds} array")
     if out is None:
-        return np.empty(shape, dtype=np.float32)
+        return np.empty(shape, dtype=np.float32, order=order)
     if not isinstance(out, np.ndarray) or out.shape != shape or out.dtype != np.float32:
         raise ValueError(f"{context}: out must be a float32 NumPy array with the volume shape")
     if not out.flags.writeable:
