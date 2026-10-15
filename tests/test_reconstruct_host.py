@@ -66,3 +66,15 @@ def test_out_is_refused_where_it_cannot_be_honoured():
     grid = tj.Grid(13, 20, 11, 1, 1, 1)
     with pytest.raises(ValueError, match="must not overlap"):
         tj.reconstruct(scan, grid=grid, out=scan.projections)
+
+
+def test_fortran_output_with_ragged_axial_slabs(tmp_path):
+    scan = _scan("parallel", nz=19)  # Balanced slabs contain 10 and 9 slices.
+    shape = (scan.grid.nx, scan.grid.ny, scan.grid.nz + 2)
+    path = tmp_path / "volume.dat"
+    backing = np.memmap(path, mode="w+", dtype=np.float32, shape=shape, order="F")
+    backing[:] = -71
+    expected = tj.reconstruct(scan, filter="hann")
+    result = tj.reconstruct(scan, filter="hann", out=backing[:, :, 1:-1])
+    np.testing.assert_allclose(result.volume, np.asarray(expected.volume), rtol=5e-5, atol=3e-6)
+    np.testing.assert_array_equal(backing[:, :, [0, -1]], -71)

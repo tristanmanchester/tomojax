@@ -97,6 +97,15 @@ def _device_rows(projections: jax.Array, start: int, rows: int) -> jax.Array:
     return jnp.pad(block, ((0, 0), (lo - start, start + rows - hi), (0, 0)))
 
 
+def _host_volume(volume: jax.Array, target: np.ndarray) -> np.ndarray:
+    """Download in the caller's contiguous order without a CPU transpose copy."""
+    if target.flags.f_contiguous:
+        # A device-side transpose gives contiguous zyx host storage. Its xyz
+        # view can then be copied directly into an axial Fortran-order slab.
+        return np.asarray(jnp.transpose(volume, (2, 1, 0))).transpose(2, 1, 0)
+    return np.asarray(volume)
+
+
 def fbp_host(
     geometry: ParallelGeometry,
     grid: Grid,
@@ -182,7 +191,8 @@ def fbp_host(
         )
         count = min(depth, grid.nz - start)
         # The host copy synchronizes before the next slab reuses its buffers.
-        output[:, :, start : start + count] = np.asarray(volume)[:, :, :count]
+        target = output[:, :, start : start + count]
+        target[...] = _host_volume(volume, target)[:, :, :count]
     return output
 
 
@@ -230,5 +240,6 @@ def _general_slabs(
             separable=separable,
             check_finite=True,
         )
-        output[start : start + count] = np.asarray(volume)[:count]
+        target = output[start : start + count]
+        target[...] = _host_volume(volume, target)[:count]
     return output
