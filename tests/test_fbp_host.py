@@ -334,7 +334,8 @@ def test_host_slabs_reject_incompatible_storage(invalid):
 @pytest.mark.parametrize("kind", ["integer", "fractional", "outside"])
 @pytest.mark.parametrize("tilted", [False, True])
 @pytest.mark.parametrize("backend", ["auto", "jax"])
-def test_host_slabs_slice_device_projections_in_place(monkeypatch, kind, tilted, backend):
+@pytest.mark.parametrize("order", ["C", "F"])
+def test_host_slabs_slice_device_projections_in_place(monkeypatch, kind, tilted, backend, order):
     grid, detector, geometry, data = scan(kind)
     if tilted:
         geometry = LaminographyGeometry(grid, detector, geometry.angles, tilt_deg=30)
@@ -348,7 +349,7 @@ def test_host_slabs_slice_device_projections_in_place(monkeypatch, kind, tilted,
 
     monkeypatch.setattr(module, "device_free_memory_bytes", free)
     device = jax.devices("cpu")[-1] if backend == "jax" else jax.devices()[0]
-    out = np.empty(expected.shape, np.float32, order="F")
+    out = np.empty(expected.shape, np.float32, order=order)
     resident = jax.device_put(data, device)
     actual = fbp_host(geometry, grid, detector, resident, config=config, out=out)
     assert queried == ([] if tilted else [device])

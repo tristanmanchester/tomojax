@@ -146,11 +146,13 @@ class _VolumeWriter:
             return
         if self.pending is not None:
             self.pending.result()
-        value = jnp.transpose(volume, (2, 1, 0))
+        packed = target.flags.f_contiguous
+        value = jnp.transpose(volume, (2, 1, 0)) if packed else volume
         value.copy_to_host_async()
 
         def store() -> None:
-            target[...] = np.asarray(value).transpose(2, 1, 0)[:, :, :count]
+            host = np.asarray(value)
+            target[...] = (host.transpose(2, 1, 0) if packed else host)[:, :, :count]
 
         self.pending = self.pool.submit(store)
 
@@ -239,7 +241,7 @@ def fbp_host(
     # leave the remaining memory for input/filter workspaces and runtime caches.
     enabled = (
         grid.nz > depth
-        and output.flags.f_contiguous
+        and (output.flags.f_contiguous or output.flags.c_contiguous)
         and slab_bytes <= _output_memory(projections, poses) // 4
     )
     with _VolumeWriter(enabled=enabled) as write:
