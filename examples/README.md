@@ -93,3 +93,12 @@ object, and every view with it, predicts the same projections, so the volume
 can sit a fraction of a millimetre from where the scanner's record would put
 it. [The measurements](../docs/measurements.md#orbit-registration) compare the
 reconstruction with the authors' reference.
+
+## Reconstruct raw laminography from nominal geometry
+
+[align_laminography.py](align_laminography.py) combines public setup/motion
+initialization, data-selected region, sparse pose fitting, untouched-view checks
+and positive reconstruction. It is a conservative example, not a new alignment
+mode or default. See the [raw K11 recipe](../docs/real-laminography.md#k11-nominal-geometry-recipe)
+for the command and limitations. Its HDF5 dataset paths and nominal tilt are
+explicit arguments; it writes nothing unless `-o` is supplied.
