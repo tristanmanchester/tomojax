@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+Laminography alignment on real data (sixth lab run): `tj.align(mode="full")`
+now improves a real DIAD (Diamond K11) TEM-grid laminography scan instead of
+degrading it, starting from the file's nominal geometry: setup is seeded from
+translation-invariant Fourier common lines (axis tilt on either beam-facing
+side, centre and smooth motion), the detector roll supplied is preserved, an
+unsettled global shift search falls back to bounded phase motion, and seeds
+stay within stable calibration bounds. On 4000 views it reaches 3.5x lower
+held-out projection error than centre-only alignment in about 51 s from raw
+counts. FISTA has an opt-in ordered-subset start (`initial_epochs`,
+`initial_subsets`). docs/real-laminography.md has the recipe.
+
+Synchrotron parallel beam: intensity-dependent detector stripes are corrected
+without altering unselected features, wide stripe windows use median-only
+networks, HDF5 count and calibration paths load lazily and row-local
+corrections read unfiltered HDF5 windows directly; axial FBP amortises pose
+loads over larger CUDA tiles and overlaps bounded downloads with host writes in
+the caller's storage order, and Fourier CUDA output is written plane-contiguous.
+The whole Diamond I12 scan (2160 rows, 1801 views) goes from raw counts to a
+saved volume in about 158 s against tomocupy's 167 s, with lower error against
+the authors' reconstruction.
+
 `Stripes(varying=True)` detects and fits intensity-dependent detector responses
 without correcting unselected pixels; constant-offset correction remains the default.
 
