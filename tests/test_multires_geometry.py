@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -89,3 +90,26 @@ def test_volume_resize_preserves_constant_density_and_world_linear_interior():
     assert downsampled.shape == (coarse.nx, coarse.ny, coarse.nz)
     np.testing.assert_allclose(downsampled, 2.75, rtol=1e-6)
     np.testing.assert_allclose(upsample_volume(downsampled, 3, (17, 15, 13)), 2.75, rtol=1e-6)
+
+
+@pytest.mark.parametrize(
+    ("shape", "target"), [((3, 4, 2), (7, 9, 5)), ((7, 9, 5), (3, 4, 2)), ((1, 5, 3), (7, 2, 1))]
+)
+def test_sparse_resize_preserves_linear_values_and_transpose(shape, target):
+    x = jnp.asarray(np.random.default_rng(903).uniform(-1, 1, shape), jnp.float32)
+    weight = jnp.asarray(np.random.default_rng(904).normal(size=target), jnp.float32)
+
+    def reference(v):
+        return jax.image.resize(v, target, method="linear", antialias=False)
+
+    np.testing.assert_allclose(upsample_volume(x, 2, target), reference(x), rtol=1e-5, atol=4e-7)
+    actual = jax.grad(lambda v: jnp.sum(upsample_volume(v, 2, target) * weight))(x)
+    expected = jax.grad(lambda v: jnp.sum(reference(v) * weight))(x)
+    np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=2e-6)
+
+
+@pytest.mark.parametrize("dtype", [jnp.float16, jnp.int32])
+def test_other_resize_dtypes_retain_the_existing_cast(dtype):
+    x = jnp.arange(24, dtype=dtype).reshape(3, 4, 2)
+    expected = jax.image.resize(x, (7, 9, 5), method="linear", antialias=False).astype(dtype)
+    np.testing.assert_array_equal(upsample_volume(x, 2, (7, 9, 5)), expected)

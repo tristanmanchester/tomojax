@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from functools import partial
 import math
 from typing import TYPE_CHECKING, Any, cast
 
+import jax
 import jax.image as jimage
 import jax.numpy as jnp
 
@@ -126,6 +128,26 @@ def bin_volume(vol: jnp.ndarray, factor: int) -> jnp.ndarray:
     return jimage.resize(vol, shape, method="linear", antialias=True)
 
 
+@partial(jax.jit, static_argnames=("shape",))
+def _linear_resize(vol: jax.Array, shape: tuple[int, int, int]) -> jax.Array:
+    """Half-pixel linear interpolation without dense, mostly-zero weight matrices."""
+    for axis, size in enumerate(shape):
+        old = vol.shape[axis]
+        if size == old:
+            continue
+        coordinate = (jnp.arange(size, dtype=jnp.result_type(0.0)) + 0.5) * (1 / (size / old)) - 0.5
+        coordinate = jnp.clip(coordinate, 0, old - 1)
+        lower = jnp.floor(coordinate).astype(jnp.int32)
+        upper = jnp.minimum(lower + 1, old - 1)
+        broadcast = [1] * vol.ndim
+        broadcast[axis] = size
+        weight = (coordinate - lower).astype(vol.dtype).reshape(broadcast)
+        left = jnp.take(vol, lower, axis=axis, mode="clip")
+        right = jnp.take(vol, upper, axis=axis, mode="clip")
+        vol = (1 - weight) * left + weight * right
+    return vol
+
+
 def upsample_volume(
     vol: jnp.ndarray, factor: int, target_shape: tuple[int, int, int]
 ) -> jnp.ndarray:
@@ -136,6 +158,8 @@ def upsample_volume(
         raise ValueError(f"target_shape must contain positive dimensions, got {target_shape!r}")
     if tuple(int(s) for s in vol.shape) == out_shape:
         return vol
+    if vol.dtype in (jnp.float32, jnp.float64):
+        return _linear_resize(vol, out_shape)
     v = jimage.resize(vol, out_shape, method="linear", antialias=False)
     return v.astype(vol.dtype)
 

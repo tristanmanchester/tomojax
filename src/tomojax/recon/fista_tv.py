@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, fields, replace
 import functools
-from typing import TYPE_CHECKING, Literal, NamedTuple
+from typing import TYPE_CHECKING, Literal
 
 import jax
 import jax.numpy as jnp
@@ -38,6 +38,7 @@ from ._fista_initialization import (
     power_start,
     validate_initialization,
 )
+from ._fista_owned import FistaScanState, run_owned_fista, use_owned_fista
 from ._host_stream import host_source, should_stream
 from ._projection import (
     ConeModel,
@@ -67,21 +68,6 @@ if TYPE_CHECKING:
     from .types import Regulariser
 
 GradMode = Literal["auto", "batched", "stream"]
-
-
-class FistaScanState(NamedTuple):
-    """State carried through the FISTA scan loop."""
-
-    x: jnp.ndarray
-    z: jnp.ndarray
-    t: jnp.ndarray
-    loss: jnp.ndarray
-    prev_obj: jnp.ndarray
-    streak: jnp.ndarray
-    done: jnp.ndarray
-    has_prev: jnp.ndarray
-    last_obj: jnp.ndarray
-    iters_done: jnp.ndarray
 
 
 @functools.partial(
@@ -194,7 +180,9 @@ class FistaConfig:
     time but increase gradient error. This needs resident, unmasked parallel or
     laminographic Joseph data, ``tv_weight=0``, and at least one final iteration.
     It is not a convergence or image-quality guarantee. Defaults leave it off.
-    Its norm bounds are reused unless ``lipschitz`` is supplied.
+    Its norm bounds are reused unless ``lipschitz`` is supplied. Unmasked resident
+    nonnegative Joseph volumes larger than the data reuse two owned buffers
+    for zero or ordered starts; this changes FP32 summation order.
 
     ``devices`` (two or more JAX devices) shares the views among them, each
     holding the whole volume, and sums their backprojections; one device, or
@@ -881,7 +869,9 @@ def fista_tv(
         final, lipschitz = _run_fista_scan(grid, detector, data, runtime.split.everywhere(runtime))
         final = final._replace(x=runtime.split.gather(final.x))
     else:
-        final, lipschitz = _run_fista_scan(grid, detector, projections, runtime)
+        # Store residuals rather than another volume when that is the smaller object.
+        run = run_owned_fista if use_owned_fista(grid, projections, runtime) else _run_fista_scan
+        final, lipschitz = run(grid, detector, projections, runtime)
     result = _FistaResult(
         volume=final.x,
         losses=final.loss,

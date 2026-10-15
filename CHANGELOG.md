@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+FP32/FP64 volume upsampling uses sparse linear interpolation with the same
+half-pixel centres and edge extension, avoiding dense resize setup.
+
+Resident unmasked nonnegative parallel/laminographic Joseph FISTA reuses two
+owned volume buffers for zero or ordered starts when the volume is larger
+than the measured data, without changing global allocator settings.
+
 Laminography alignment on real data (sixth lab run): `tj.align(mode="full")`
 now improves a real DIAD (Diamond K11) TEM-grid laminography scan instead of
 degrading it, starting from the file's nominal geometry: setup is seeded from

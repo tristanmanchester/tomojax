@@ -104,6 +104,19 @@ def validate_initialization(
         raise ValueError("initial_subsets must not exceed the number of views")
 
 
+def ordered_data(data: jax.Array, runtime: FistaRuntime) -> tuple[jax.Array, jax.Array]:
+    """Nominal-angle-ordered poses and measurements, without a padded image stack."""
+    if runtime.initial_order is None:
+        return runtime.poses, data
+    return runtime.poses[runtime.initial_order], data[runtime.initial_order]
+
+
+def subset_order(subsets: int) -> jax.Array:
+    """Visit interleaved angular groups in bit-reversal order."""
+    bits = (subsets - 1).bit_length()
+    return jnp.asarray(sorted(range(subsets), key=lambda i: int(f"{i:0{bits}b}"[::-1], 2)))
+
+
 def ordered_start(
     grid: Grid, detector: Detector, data: jax.Array, runtime: FistaRuntime
 ) -> tuple[jax.Array, jax.Array]:
@@ -117,9 +130,7 @@ def ordered_start(
     assert runtime.projector is not None
     _, backend, _ = runtime.projector
     n, subsets = runtime.poses.shape[0], cfg.initial_subsets
-    nominal = runtime.poses
-    if runtime.initial_order is not None:
-        nominal, data = nominal[runtime.initial_order], data[runtime.initial_order]
+    nominal, data = ordered_data(data, runtime)
     count = (n + subsets - 1) // subsets
     shape = (grid.nx, grid.ny, grid.nz)
     indices = jnp.arange(subsets)[:, None] + subsets * jnp.arange(count)[None, :]
@@ -130,8 +141,7 @@ def ordered_start(
     else:
         poses = nominal.reshape(count, subsets, 4, 4).swapaxes(0, 1)
         images = data.reshape(count, subsets, detector.nv, detector.nu).swapaxes(0, 1)
-    bits = (subsets - 1).bit_length()
-    order = jnp.asarray(sorted(range(subsets), key=lambda i: int(f"{i:0{bits}b}"[::-1], 2)))
+    order = subset_order(subsets)
 
     def operators(p, mask):
         forward, adjoint = projection_operators(p, grid, detector, None, backend, count, "joseph")
