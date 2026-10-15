@@ -345,6 +345,8 @@ class tomojax.recon.FDKHostConfig(*, slices_per_batch: 'int | None' = None, fdk:
 class tomojax.recon.FistaConfig(
         *,
         iterations: 'int' = 50,
+        initial_epochs: 'int' = 0,
+        initial_subsets: 'int' = 16,
         tv_weight: 'float' = 0.005,
         regulariser: 'Regulariser' = 'tv',
         huber_delta: 'float' = 0.01,
