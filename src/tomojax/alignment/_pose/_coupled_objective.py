@@ -59,15 +59,20 @@ _MEMORY_MARGIN = 2
 
 
 def _free_device_memory(array: jax.Array) -> int | None:
-    """The largest free block on the GPU holding ``array``, or None where it cannot be read."""
+    """Free allocator capacity on the GPU holding ``array``, when queryable.
+
+    The compiled update reports total live storage, not one allocation. A pool's
+    largest free block is not a bound on that total; it can even be zero while
+    a non-preallocating allocator still has capacity to grow. Fragmentation can
+    still cause an actual OOM, handled by the alignment level's normal fallback.
+    """
     device = next(iter(array.devices()))
     if device.platform != "gpu":
         return None
     stats = device.memory_stats() or {}
     if "bytes_limit" not in stats:
         return None
-    free = int(stats["bytes_limit"]) - int(stats.get("bytes_in_use", 0))
-    return min(free, int(stats.get("largest_free_block_bytes", free)))
+    return int(stats["bytes_limit"]) - int(stats.get("bytes_in_use", 0))
 
 
 def _check_device_memory(arrays: CoupledArrays, spec: CoupledSpec) -> Callable | None:

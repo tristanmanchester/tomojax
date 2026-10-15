@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -423,6 +425,9 @@ def test_memory_check_compiles_the_update_unless_far_below_the_limit(monkeypatch
     # check-public-imports: allow-private
     from tomojax.alignment._pose import _coupled_objective as coupled
 
+    stats = dict(bytes_limit=1000, bytes_in_use=100, largest_free_block_bytes=0)
+    device = SimpleNamespace(platform="gpu", memory_stats=lambda: stats)
+    assert coupled._free_device_memory(SimpleNamespace(devices=lambda: (device,))) == 900
     ctx = _small_coupled_context()
     assert coupled._pose_cache_limit() > 0  # the columns are cached
     volume, sinogram = 4 * 4**3, 4 * 3 * 4 * 5
