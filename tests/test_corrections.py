@@ -511,10 +511,15 @@ def test_pixels_without_a_resolved_flat_take_no_absorption() -> None:
     assert scan.corrections[0].found == {"pixels_without_light": 2 * rows}
 
 
-@pytest.mark.parametrize("lazy", [False, True])
+@pytest.mark.parametrize("source", ["array", "hdf5", "tiff"])
 @pytest.mark.parametrize("steps", [(), (Stripes(5),), (Stripes(5), RejectViews())])
-def test_binning_averages_the_corrected_line_integrals(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, steps: tuple[Step, ...], lazy: bool
+@pytest.mark.parametrize("factor", [1, 2])
+def test_row_slabs_match_view_batches_and_optional_binning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    steps: tuple[Step, ...],
+    source: str,
+    factor: int,
 ) -> None:
     rng = np.random.default_rng(7)
     views, rows, cols = 12, 10, 14
@@ -523,9 +528,12 @@ def test_binning_averages_the_corrected_line_integrals(
     stack = np.concatenate([np.full((1, rows, cols), 1000, np.uint16), counts])
     _write_frames(tmp_path / "scan.nxs", stack, [1, *[0] * views], [0.0, *range(0, views * 15, 15)])
     frames = tj.load_frames(tmp_path / "scan.nxs")
-    if not lazy:
+    if source == "array":
         frames = replace(frames, counts=np.asarray(frames.counts), flats=np.asarray(frames.flats))
-    expected = frames.corrected(*steps).binned(2)
+    elif source == "tiff":
+        tifffile.imwrite(tmp_path / "counts.tif", counts, photometric="minisblack")
+        frames = replace(frames, counts=read_tiff_frames(tmp_path / "counts.tif", lazy=True))
+    expected = frames.corrected(*steps, batch_views=3).binned(factor)
 
     # A small budget makes the row-by-row path take several slabs where it applies.
     engine = importlib.import_module("tomojax.corrections._engine")
@@ -538,12 +546,12 @@ def test_binning_averages_the_corrected_line_integrals(
         return correct_slabs(*args, **kwargs)
 
     monkeypatch.setattr(engine, "_correct_row_slabs", spy)
-    actual = frames.corrected(*steps, binning=2)
+    actual = frames.corrected(*steps, binning=factor)
 
     np.testing.assert_allclose(actual.projections, expected.projections, rtol=1e-5, atol=1e-6)
     assert actual.detector == expected.detector and actual.corrections == expected.corrections
     np.testing.assert_array_equal(actual.angles, expected.angles)
-    streamed = steps == (Stripes(5),)
+    streamed = steps == (Stripes(5),) and (source != "tiff" or factor > 1)
     assert slabs == ([4] if streamed else [])
 
 
@@ -579,13 +587,18 @@ def test_tiff_stacks_are_read_lazily_by_window(tmp_path: Path, compression: str 
     [
         ({}, True),
         ({"chunks": (1, 2, 16)}, True),
-        ({"chunks": (1, 16, 16)}, False),  # a few rows would read the whole frame
+        ({"chunks": (1, 16, 16)}, True),  # unfiltered windows bypass the chunk cache
+        ({"chunks": (2, 16, 16)}, True),
         ({"chunks": (1, 2, 16), "compression": "gzip"}, False),
     ],
 )
-def test_hdf5_row_windows_are_cheap_only_when_unfiltered_and_chunked_finely(
+def test_hdf5_unfiltered_row_windows_use_direct_partial_chunk_reads(
     tmp_path: Path, options: dict[str, Any], efficient: bool
 ) -> None:
+    data = np.arange(3 * 16 * 16, dtype=np.uint16).reshape(3, 16, 16)
     with h5py.File(tmp_path / "scan.h5", "w") as handle:
-        handle.create_dataset("exchange/data", data=np.zeros((3, 16, 16), np.uint16), **options)
-    assert locate_frames(str(tmp_path / "scan.h5")).stack._efficient_row_windows is efficient
+        handle.create_dataset("exchange/data", data=data, **options)
+    stack = locate_frames(str(tmp_path / "scan.h5")).stack
+    assert stack._efficient_row_windows is efficient
+    part = stack.window(slice(3, 7), slice(2, 8))
+    np.testing.assert_array_equal(np.asarray(part), data[:, 3:7, 2:8])

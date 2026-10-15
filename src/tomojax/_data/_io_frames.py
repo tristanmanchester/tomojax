@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import h5py
 import numpy as np
@@ -34,6 +34,7 @@ class Hdf5Frames:
     first_row: int = 0  # the window of each frame read: rows and columns from these
     first_col: int = 0
     _efficient_row_windows: bool = False  # a window of rows reads only those rows
+    _bulk_row_reads: ClassVar[bool] = True  # many views in one HDF5 request
 
     @classmethod
     def open(cls, path: str, dataset: str) -> Hdf5Frames:
@@ -45,14 +46,9 @@ class Hdf5Frames:
                 raise ValueError(f"{path}:{dataset} is not a 3-D stack of frames")
             n, rows, cols = (int(s) for s in data.shape)
             layout = cast(Any, data)  # h5py's typing omits the storage layout
-            chunks = layout.chunks
-            # Unfiltered, and stored contiguously or in chunks of one frame and a small
-            # share of its rows: a window of rows then reads little more than those rows.
-            windows = (
-                not layout.is_virtual
-                and layout.id.get_create_plist().get_nfilters() == 0
-                and (chunks is None or (chunks[0] == 1 and 8 * chunks[1] <= rows))
-            )
+            # Unfiltered data supports direct reads of partial chunks. __getitem__
+            # bypasses the chunk cache so narrow windows do not fetch whole frames.
+            windows = not layout.is_virtual and layout.id.get_create_plist().get_nfilters() == 0
             return cls(path, dataset, np.arange(n), rows, cols, np.dtype(data.dtype), 0, 0, windows)
 
     @property
@@ -98,7 +94,10 @@ class Hdf5Frames:
         indices = np.asarray(self.frames[which], np.int64)
         if indices.size and np.any(np.diff(indices) <= 0):
             raise ValueError("Hdf5Frames reads frames in increasing order only")
-        with h5py.File(self.path, "r") as file:
+        # Chunk caching can amplify a narrow read to the entire chunk even with
+        # no compression. Filtered/virtual datasets retain their normal cache.
+        cache = 0 if self._efficient_row_windows else None
+        with h5py.File(self.path, "r", rdcc_nbytes=cache) as file:
             data: Any = file[self.dataset]
             if indices.size == 0:
                 return np.empty((0, self.rows, self.cols), self.dtype)

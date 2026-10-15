@@ -8,9 +8,11 @@ step after it, then runs over the result: a whole-row step on slabs of rows
 (every view), the others on batches of views again. Batches are read from the
 host (NumPy, memmap or a lazily read file) while the device works on the last.
 
-With ``binning`` the detector means are taken on the device, so no unbinned
-stack reaches the host: after the first pass, or, when only whole-row steps
-follow the ``-log``, by correcting slabs of rows read straight from the source.
+When only whole-row steps follow the ``-log``, they can share the first pass
+on slabs read from a row-efficient source. With ``binning`` the detector means
+are taken on the device, so no unbinned stack reaches the host in that path.
+Both paths materialise the final corrected host stack; fusion avoids the
+intermediate host/device round trip, not the final stack's memory cost.
 """
 
 from __future__ import annotations
@@ -358,13 +360,21 @@ def _correct_view_batches(
 def _row_slab(
     counts: Any, ordered: Sequence[tuple[str, Step]], batch_views: int | None, factor: int
 ) -> int | None:
-    """Rows per slab to correct raw counts a slab of rows at a time, if that can bin them.
+    """Rows per slab to fuse raw-count correction with whole-row steps.
 
-    That needs a terminal binning of line integrals through whole-row steps alone
-    (no step looks across rows), and a source that reads a window of rows without
-    decoding whole frames. The slab is a multiple of ``factor`` rows.
+    No step may look across rows, and the source must read a window of rows
+    without decoding whole frames. The slab is a multiple of ``factor`` rows
+    when the corrected line integrals are also binned.
     """
-    if batch_views is not None or factor == 1 or not ordered:
+    if batch_views is not None or not ordered:
+        return None
+    # At native sampling, per-view file opens can cost more than the saved
+    # transfers. Keep the existing view path for sources without bulk reads.
+    if (
+        factor == 1
+        and not isinstance(counts, np.ndarray)
+        and not getattr(counts, "_bulk_row_reads", False)
+    ):
         return None
     if any(d != "line integrals" or not s.whole_rows or s.selects_views for d, s in ordered):
         return None
@@ -385,7 +395,7 @@ def _correct_row_slabs(
     slab: int,
     **settings: Any,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Correct, then bin, every view of a slab of rows at a time: the binned stack, the tally."""
+    """Correct and optionally bin slabs of whole rows: the corrected stack and the tally."""
     views, rows, cols = counts.shape
     factor = settings["factor"]
     out = np.empty((views, rows // factor, cols // factor), np.float32)
