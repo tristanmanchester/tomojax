@@ -39,14 +39,15 @@ def test_volume_larger_than_the_device_is_reconstructed_in_host_slabs(
 
 
 @pytest.mark.parametrize("kind", ["parallel", "lamino", "cone", "fourier"])
-@pytest.mark.parametrize("storage", ["memmap", "strided"])
+@pytest.mark.parametrize("storage", ["C", "F", "strided"])
 def test_out_is_filled_and_returned(tmp_path, kind, storage):
     scan = _scan("parallel" if kind == "fourier" else kind, nz=4)
     method = "fourier" if kind == "fourier" else "fbp"
     expected = tj.reconstruct(scan, method)
     shape = (scan.grid.nx, scan.grid.ny, scan.grid.nz)
-    if storage == "memmap":
-        out = np.memmap(tmp_path / "volume.dat", mode="w+", dtype=np.float32, shape=shape)
+    if storage != "strided":
+        path = tmp_path / "volume.dat"
+        out = np.memmap(path, mode="w+", dtype=np.float32, shape=shape, order=storage)
     else:
         backing = np.full((*shape[:2], 2 * shape[2]), -71, np.float32)
         out = backing[:, :, ::2]

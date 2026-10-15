@@ -84,7 +84,13 @@ volume.flush()
 ```
 
 Built-in parallel scans use balanced axial slabs of at most 16 slices, reading
-only the detector rows they need. Laminography and posed scans use x-slabs,
+only the detector rows they need. For large disk-backed axial FBP output, pass
+`fortran_order=True` to `open_memmap`: contiguous xy-planes avoid repeatedly
+dirtying pages across the whole file as successive z-slabs are written. This
+changes storage order, not the volume's `(x, y, z)` shape or coordinates.
+Keep the default C order for laminography's x-slabs.
+
+Laminography and posed scans use x-slabs,
 each streaming and refiltering every view; those slabs use about half the free
 GPU memory by default. For explicit slab-depth control, call `fbp_host` with
 `FBPHostConfig(slices_per_batch=...)`. Host slabs are not differentiable.
