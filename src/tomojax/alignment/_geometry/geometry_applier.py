@@ -28,6 +28,18 @@ if TYPE_CHECKING:
     from tomojax.core.geometry import Detector, Geometry, Grid
 
 
+def nominal_setup_geometry(geometry: Geometry) -> Geometry:
+    """Remove saved detector roll, which the setup state carries explicitly.
+
+    Keep any pose corrections: those cannot be replaced by an axis direction.
+    """
+    from tomojax._data.geometry_meta import DetectorRollGeometry
+
+    while isinstance(geometry, DetectorRollGeometry):
+        geometry = geometry.base
+    return geometry
+
+
 @dataclass(frozen=True, slots=True)
 class BaseGeometryArrays:
     """Array/static bundle used by differentiable alignment objectives."""

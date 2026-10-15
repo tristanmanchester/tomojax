@@ -533,7 +533,11 @@ def _setup_seed_diagnostics(
         bounds=cast("DofBounds", cfg.bounds),
         factor=factor,
     )
-    if seed_info is not None and seed_info.get("detector_center_seed_applied"):
+    # The legacy sinogram/reprojection searches assume an unrolled detector.
+    # Without common-line centre evidence, let the rolled setup objective refine
+    # the supplied origin rather than seeding it from a different ray geometry.
+    center_ready = seed_info is not None and seed_info.get("detector_center_seed_applied")
+    if center_ready or float(setup_state.setup.detector_roll_rad) != 0.0:
         return seed_info
     stage_name = stage.name if stage is not None else schedule_name
     if "det_u_px" not in active_view.dofs:

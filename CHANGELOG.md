@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+Setup alignment preserves a supplied detector roll and its nominal rotation axis,
+including the physical rays selected at coarser levels.
+
 Setup alignment constrains initializer proposals to the requested bounds before
 reconstructing or evaluating candidate updates; angular bounds keep their units
 when alignment configurations are copied. Full alignment seeds the rotation axis

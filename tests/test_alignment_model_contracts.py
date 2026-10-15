@@ -423,22 +423,42 @@ def test_common_line_axis_seed_preserves_frozen_bounds_and_uninformative_estimat
 
 
 @pytest.mark.parametrize("bounded", [False, True])
-def test_full_setup_seeds_jointly_in_native_units_and_preserves_frozen_axes(monkeypatch, bounded):
-    from tomojax.geometry import LaminographyGeometry
+@pytest.mark.parametrize("roll", [0.0, 3.0])
+def test_full_setup_seeds_jointly_in_native_units_and_preserves_frozen_axes(
+    monkeypatch, bounded, roll
+):
+    from tomojax.alignment.api import align as pose_align
+    from tomojax.core.multires import bin_projections
+    from tomojax.geometry.api import detector_grid_from_geometry_inputs
+    from tomojax.io import build_geometry_from_dataset_metadata
 
     true = np.array([0.0, np.sin(np.deg2rad(35.0)), np.cos(np.deg2rad(35.0))])
-    sample = _analytic_common_lines(true)
+    sample = _analytic_common_lines(
+        init.axis_in_detector(true, np.zeros(2), detector_roll_deg=roll)
+    )
+    declined = bool(roll and bounded)
+    target = 1.6 if declined else 2.4 if bounded else 3.0
     monkeypatch.setattr(
         init,
         "prepare_common_lines",
         lambda data, angles, detector: SimpleNamespace(
-            sample=sample, center=lambda axis: (3.0 + (detector.du - 0.8) / 2) / detector.du
+            sample=sample,
+            center=lambda axis, **kwargs: None
+            if declined
+            else (3.0 + detector.center[0] - 1.6) / detector.du,
         ),
     )
     grid, detector = Grid(8, 8, 8, 0.8, 0.8, 0.8), Detector(8, 8, 0.8, 0.8, (1.6, 0.0))
-    geometry = LaminographyGeometry(
-        grid, detector, np.linspace(0, 360, 8, endpoint=False), tilt_deg=31.0
-    )
+    geometry = build_geometry_from_dataset_metadata(
+        {
+            "grid": grid.to_dict(),
+            "detector": detector.to_dict(),
+            "angles": np.linspace(0, 360, 8, endpoint=False),
+            "geometry_type": "lamino",
+            "tilt_deg": 31.0,
+            "detector_roll_deg": roll,
+        }
+    )[2]
     seeded_at = []
     monkeypatch.setattr(
         "tomojax.alignment._stages._stage_runners.seeded_translation_params",
@@ -452,6 +472,22 @@ def test_full_setup_seeds_jointly_in_native_units_and_preserves_frozen_axes(monk
         freeze=("axis_rot_y_deg",),
         seed_translations=True,
     )
+
+    def check(geometry, grid, level_detector, projections, **kwargs):
+        if roll:
+            reference = replace(detector, center=(target, 0.0))
+            native = np.stack(
+                detector_grid_from_geometry_inputs(reference, {"detector_roll_deg": roll})
+            ).reshape(2, 8, 8)
+            selected = bin_projections(native, detector.nu // level_detector.nu)
+            np.testing.assert_allclose(
+                np.stack(kwargs["det_grid_override"]), selected.reshape(2, -1), atol=5e-7
+            )
+        kwargs["config"] = kwargs.pop("cfg")
+        kwargs.pop("anchor_translations")
+        return pose_align(geometry, grid, level_detector, projections, **kwargs)
+
+    monkeypatch.setattr("tomojax.alignment._stages._stage_runners.align", check)
     result = tj.align(
         tj.Scan(np.zeros((8, 8, 8), np.float32), geometry), mode="full", levels=(2, 1), config=cfg
     )
@@ -460,9 +496,13 @@ def test_full_setup_seeds_jointly_in_native_units_and_preserves_frozen_axes(monk
     detector_fit = {item["name"]: item["value"] for item in calibration["detector"]}
     assert scan["axis_rot_x_deg"] == pytest.approx(2.0 if bounded else 4.0, abs=0.03)
     assert scan["axis_rot_y_deg"] == 0.0
-    assert detector_fit["detector_roll_deg"] == 0.0
-    assert result.scan.detector.center[0] == pytest.approx(2.4 if bounded else 3.0, abs=1e-5)
+    assert detector_fit["detector_roll_deg"] == pytest.approx(roll)
+    assert result.scan.detector.center[0] == pytest.approx(target, abs=1e-5)
+    assert bool(result.info["outer_stats"][0].get("detector_center_seed_applied")) != declined
 
+    if roll:
+        assert not seeded_at  # The broad translation initializer has no rolled-ray override.
+        return
     assert len(seeded_at) == 1
     assert seeded_at[0][0][1] == pytest.approx(
         np.sin(np.deg2rad(33.0 if bounded else 35.0)), abs=5e-4

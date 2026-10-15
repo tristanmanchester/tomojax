@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
+import math
 
 import jax.numpy as jnp
 
 from tomojax.alignment._config import AlignConfig, _resolved_schedule_for_cfg
-from tomojax.alignment._geometry.geometry_applier import BaseGeometryArrays
+from tomojax.alignment._geometry.geometry_applier import (
+    BaseGeometryArrays,
+    nominal_setup_geometry,
+)
 from tomojax.alignment._geometry.geometry_blocks import (
     add_geometry_acquisition_diagnostics,
     summarize_geometry_calibration_stats,
@@ -397,7 +401,7 @@ def _build_multires_context(
         raise ValueError("align_multires resume_state ray_integrator differs from config")
     observer_fn = adapt_observer_callback(observer) if observer is not None else None
     resolved_schedule = _resolved_schedule_for_cfg(cfg)
-    setup_base = BaseGeometryArrays.from_geometry(geometry, detector)
+    setup_base = BaseGeometryArrays.from_geometry(nominal_setup_geometry(geometry), detector)
     setup_alignment_state = alignment_state_from_checkpoint(
         resume_state.geometry_calibration_state if resume_state is not None else None,
         n_views=int(projections.shape[0]),
@@ -407,6 +411,11 @@ def _build_multires_context(
         pose=setup_alignment_state.pose.replace(translation_frame=cfg.pose_translation_frame),
         setup=setup_alignment_state.setup.replace(
             nominal_axis_unit=setup_base.nominal_axis_unit,
+            detector_roll_rad=(
+                setup_alignment_state.setup.detector_roll_rad
+                if resume_state is not None
+                else jnp.deg2rad(float(getattr(geometry, "detector_roll_deg", 0.0)))
+            ),
         ),
     )
     validate_grid(grid, "align_multires grid")
@@ -441,6 +450,19 @@ def _build_multires_levels(
     for factor in factors_list:
         level_grid = scale_grid(grid, factor)
         level_detector = scale_detector(detector, factor)
+        # Decimation moves the pixel origin in the detector's rolled basis;
+        # its stored centre, like the setup offsets, remains in lab coordinates.
+        roll = math.radians(float(getattr(geometry, "detector_roll_deg", 0.0)))
+        if roll:
+            u = level_detector.center[0] - detector.center[0]
+            v = level_detector.center[1] - detector.center[1]
+            level_detector = replace(
+                level_detector,
+                center=(
+                    detector.center[0] + math.cos(roll) * u - math.sin(roll) * v,
+                    detector.center[1] + math.sin(roll) * u + math.cos(roll) * v,
+                ),
+            )
         level_projections = bin_projections(projections, factor)
         validate_projection_stack(
             level_projections,

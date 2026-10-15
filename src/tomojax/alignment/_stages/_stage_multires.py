@@ -15,7 +15,11 @@ import numpy as np
 
 from tomojax.alignment._config import AlignConfig
 from tomojax.alignment._gauge import Gauge, least_motion_estimate
-from tomojax.alignment._geometry.geometry_applier import BaseGeometryArrays, pose_stack_for_setup
+from tomojax.alignment._geometry.geometry_applier import (
+    BaseGeometryArrays,
+    nominal_setup_geometry,
+    pose_stack_for_setup,
+)
 from tomojax.alignment._model.dofs import POSE_WIDTH
 from tomojax.alignment._model.state import AlignmentState
 from tomojax.alignment._objectives.loss_specs import loss_spec_name, resolve_loss_for_level
@@ -339,15 +343,10 @@ def align_multires(
             "the beam)"
         )
     context = _build_multires_context(
-        geometry,
-        grid,
-        detector,
-        projections,
-        cfg,
-        observer,
-        resume_state,
-        factors,
+        geometry, grid, detector, projections, cfg, observer, resume_state, factors
     )
+    if context.active_geometry_dofs:
+        geometry = nominal_setup_geometry(geometry)
     state = _run_multires_levels(
         geometry=geometry,
         context=context,

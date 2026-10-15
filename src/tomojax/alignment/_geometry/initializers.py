@@ -112,7 +112,9 @@ def common_line_setup_seed(
             axis_seed_correlation_after=fit.correlation_after,
         )
     if "det_u_px" in active_dofs:
-        center = lines.center(axis_in_detector(nominal, rotations, detector_roll_deg=roll))
+        center = lines.center(
+            axis_in_detector(nominal, rotations, detector_roll_deg=roll), detector_roll_deg=roll
+        )
         if center is not None:
             result.update(
                 detector_center_seed_applied=True,
