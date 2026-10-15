@@ -39,14 +39,15 @@ def test_volume_larger_than_the_device_is_reconstructed_in_host_slabs(
 
 
 @pytest.mark.parametrize("kind", ["parallel", "lamino", "cone", "fourier"])
-@pytest.mark.parametrize("storage", ["memmap", "strided"])
+@pytest.mark.parametrize("storage", ["C", "F", "strided"])
 def test_out_is_filled_and_returned(tmp_path, kind, storage):
     scan = _scan("parallel" if kind == "fourier" else kind, nz=4)
     method = "fourier" if kind == "fourier" else "fbp"
     expected = tj.reconstruct(scan, method)
     shape = (scan.grid.nx, scan.grid.ny, scan.grid.nz)
-    if storage == "memmap":
-        out = np.memmap(tmp_path / "volume.dat", mode="w+", dtype=np.float32, shape=shape)
+    if storage != "strided":
+        path = tmp_path / "volume.dat"
+        out = np.memmap(path, mode="w+", dtype=np.float32, shape=shape, order=storage)
     else:
         backing = np.full((*shape[:2], 2 * shape[2]), -71, np.float32)
         out = backing[:, :, ::2]
@@ -65,3 +66,30 @@ def test_out_is_refused_where_it_cannot_be_honoured():
     grid = tj.Grid(13, 20, 11, 1, 1, 1)
     with pytest.raises(ValueError, match="must not overlap"):
         tj.reconstruct(scan, grid=grid, out=scan.projections)
+
+
+def test_fortran_output_with_ragged_axial_slabs(tmp_path):
+    scan = _scan("parallel", nz=19)  # Balanced slabs contain 10 and 9 slices.
+    shape = (scan.grid.nx, scan.grid.ny, scan.grid.nz + 2)
+    path = tmp_path / "volume.dat"
+    backing = np.memmap(path, mode="w+", dtype=np.float32, shape=shape, order="F")
+    backing[:] = -71
+    expected = tj.reconstruct(scan, filter="hann")
+    result = tj.reconstruct(scan, filter="hann", out=backing[:, :, 1:-1])
+    np.testing.assert_allclose(result.volume, np.asarray(expected.volume), rtol=5e-5, atol=3e-6)
+    np.testing.assert_array_equal(backing[:, :, [0, -1]], -71)
+
+
+def test_fortran_output_propagates_write_failures():
+    scan = _scan("parallel", nz=19)
+    writes = []
+
+    class FailingStorage(np.ndarray):
+        def __setitem__(self, key, value):
+            writes.append(value.shape)
+            raise OSError("output write failed")
+
+    out = np.empty((9, 7, 19), np.float32, order="F").view(FailingStorage)
+    with pytest.raises(OSError, match="output write failed"):
+        tj.reconstruct(scan, out=out)
+    assert len(writes) == 1

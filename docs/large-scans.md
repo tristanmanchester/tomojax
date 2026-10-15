@@ -10,7 +10,8 @@ there.
 
 | Method | Projections | Volume |
 |---|---|---|
-| FBP (parallel and laminography) | Streamed from host memory a batch of views at a time | On the GPU; use `fbp_host` when it does not fit |
+| FBP (parallel and laminography) | Streamed from host memory a batch of views at a time | Moves to host slabs automatically when it does not fit |
+| Fourier (axial parallel only) | Host arrays or memmaps, read by row slabs | Always returned in host slabs |
 | FDK (cone beam) | Read from host memory a slab's detector rows at a time when the volume is large | Moves to host z-slabs automatically when it does not fit |
 | CGLS | Streamed when they would take more than 40% of free GPU memory | On the GPU, with about five volume-sized work arrays |
 | FISTA-TV | Streamed under the same rule | On the GPU, with about seven volumes |
@@ -39,57 +40,69 @@ free GPU memory. The volume then comes back as a NumPy array, and
 `Reconstruction.info["host_slabs"]` is true. Each slab filters only the
 detector rows it projects onto. The `tomojax` commands still hold the whole
 projection stack and volume in host RAM; to write the volume straight to disk,
-call `fdk_host` with a memmap:
+pass a memmap through `out=`:
 
 ```python
 import numpy as np
 
 import tomojax as tj
-from tomojax.recon import fdk_host
 
 scan = tj.load("scan.nxs")
 grid = scan.grid
 volume = np.lib.format.open_memmap(
     "volume.npy", mode="w+", dtype=np.float32, shape=(grid.nx, grid.ny, grid.nz)
 )
-fdk_host(scan.geometry, grid, scan.detector, np.asarray(scan.projections, np.float32), out=volume)
+recon = tj.reconstruct(scan, "fbp", out=volume)
 volume.flush()
 ```
 
-`FDKHostConfig(slices_per_batch=...)` sets the slab depth; by default slabs
-take about a third of the free GPU memory. FDK refuses multi-orbit
+For explicit slab-depth control, use `fdk_host` with
+`FDKHostConfig(slices_per_batch=...)`; by default slabs take about a third of
+the free GPU memory. FDK refuses multi-orbit
 `ConeSegments` scans; reconstruct those with an iterative method.
 
 ### Parallel beam and laminography
 
-FBP does not switch to slabs on its own, and the command line has no slab
-option. From Python, `fbp_host` reconstructs from host or memmapped
-projections into host or memmapped output:
+`tj.reconstruct(scan, "fbp")` and `tomojax recon --method fbp` switch to host
+slabs when the volume would take more than 40% of the free device memory.
+`Reconstruction.info["host_slabs"]` records that choice. Passing `out=` forces
+host slabs even for a small volume and fills the supplied float32 storage
+without allocating another full volume:
 
 ```python
 import numpy as np
 
 import tomojax as tj
-from tomojax.recon import fbp_host
 
 scan = tj.load("corrected-lamino.nxs")
 grid = scan.grid
 volume = np.lib.format.open_memmap(
     "volume.npy", mode="w+", dtype=np.float32, shape=(grid.nx, grid.ny, grid.nz)
 )
-fbp_host(scan.geometry, grid, scan.detector, scan.projections, out=volume)
+recon = tj.reconstruct(scan, "fbp", filter="ramp", out=volume)
 volume.flush()
 ```
 
-Parallel scans are processed in axial slabs that read only the detector rows
-they need. Laminography and posed scans are processed in x-slabs, each
-streaming and refiltering every view, so smaller slabs save GPU memory at the
-cost of repeated filtering. By default slabs take about half the free GPU
-memory, so a volume that fits is reconstructed in one pass;
-`FBPHostConfig(slices_per_batch=...)` sets the depth. `fbp_host` is not
-differentiable and rejects JAX arrays. Input and output must not overlap.
-Completed slabs are written immediately, so a failure can leave a partly
-written volume. A 1024³ laminography volume takes about
+Built-in parallel scans use balanced axial slabs of at most 16 slices, reading
+only the detector rows they need. For large disk-backed axial FBP output, pass
+`fortran_order=True` to `open_memmap`: contiguous xy-planes avoid repeatedly
+dirtying pages across the whole file as successive z-slabs are written. This
+changes storage order, not the volume's `(x, y, z)` shape or coordinates.
+Keep the default C order for laminography's x-slabs.
+
+Laminography and posed scans use x-slabs,
+each streaming and refiltering every view; those slabs use about half the free
+GPU memory by default. For explicit slab-depth control, call `fbp_host` with
+`FBPHostConfig(slices_per_batch=...)`. Host slabs are not differentiable.
+Device projections remain resident and are sliced on the device; use NumPy
+arrays or memmaps to stream projections from host memory. Input and output
+must not overlap, and public `out=` does not support explicit detector grids.
+`method="fourier"` also accepts `out=` for axial parallel scans. These storage
+choices do not make raw-frame correction out of core: `frames.corrected()`
+still returns a complete corrected projection stack in host memory.
+Axial F-order output can overlap one slab download/write with the next
+computation when spare device memory permits. All writes finish before return;
+a failure can leave a partly written volume. A 1024³ laminography volume takes about
 [37 s on an 8 GB laptop GPU](measurements.md#scans-larger-than-the-gpu).
 
 ## Bin detectors finer than the grid

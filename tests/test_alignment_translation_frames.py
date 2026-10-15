@@ -954,3 +954,58 @@ def test_cone_shift_search_removes_a_rigid_shift_in_each_arrangement(
     monkeypatch.setattr(_prealign, "_correlation_peaks", lambda *args, **kwargs: shifts)
     actual = estimate_view_shifts(geometry, grid, detector, targets, iters=1)
     np.testing.assert_allclose(actual, 0, atol=2e-7)
+
+
+def test_shift_search_declines_unsettled_proposals(monkeypatch):
+    geometry, grid, detector = _geometry(8, "parallel", np.array([0, 90, 180, 270]))
+    data = jnp.zeros((4, detector.nv, detector.nu))
+    shifts = np.array([[2, 0], [-2, 0], [2, 0], [-2, 0]], np.float32)
+    steps = iter((shifts, -shifts))
+    monkeypatch.setattr(_prealign, "_quick_reconstruction", lambda *a: None)
+    monkeypatch.setattr(_prealign, "_reprojector", lambda *a: lambda c, x: data[c])
+    monkeypatch.setattr(_prealign, "_correlation_peaks", lambda *a, **k: next(steps))
+    actual = estimate_view_shifts(geometry, grid, detector, data, iters=2)
+    np.testing.assert_array_equal(actual, np.zeros_like(shifts))
+
+
+@pytest.mark.parametrize("status", ["accepted", "declined", "unavailable"])
+def test_unsettled_search_uses_physical_phase_seed_in_acquisition_order(monkeypatch, status):
+    from types import SimpleNamespace
+
+    angles = np.array([0, 60, 120, 180, 120, 60, 0])
+    geometry, grid, detector = _geometry(8, "lamino", angles)
+    detector = replace(detector, du=0.7, dv=1.3, center=(2.1, -0.4))
+    geometry = replace(geometry, detector=detector)
+    data = jnp.zeros((len(angles), detector.nv, detector.nu))
+    nominal = np.asarray(stack_view_poses(geometry, len(angles)))
+    basis = nominal[:, [0, 2], :3].reshape(-1, 3)
+    selected = np.array([6, 0, 3])
+    physical = np.array([[0.7, 0.2], [-0.2, 0.6], [0.5, -0.8]])
+
+    def motion(axis, *, center_u):
+        np.testing.assert_allclose(axis, geometry.axis_unit_lab)
+        assert center_u == detector.center[0]
+        return SimpleNamespace(
+            shifts=physical if status == "accepted" else None,
+            status=status,
+            coherence_before=0.2,
+            coherence_after=0.8,
+        )
+
+    lines = SimpleNamespace(view_indices=selected, motion=motion)
+    monkeypatch.setattr(
+        _prealign, "prepare_common_lines", lambda *a: None if status == "unavailable" else lines
+    )
+    peaks = np.array([[2, 0], [-2, 0], [2, 0], [-2, 0], [2, 0], [-2, 0], [2, 0]])
+    steps = iter((peaks, -peaks))
+    monkeypatch.setattr(_prealign, "_quick_reconstruction", lambda *a: None)
+    monkeypatch.setattr(_prealign, "_reprojector", lambda *a: lambda c, x: data[c])
+    monkeypatch.setattr(_prealign, "_correlation_peaks", lambda *a, **k: next(steps))
+    actual = estimate_view_shifts(geometry, grid, detector, data, iters=2)
+    expected = np.column_stack(
+        [np.interp(np.arange(7), [0, 3, 6], physical[[1, 2, 0], i]) for i in range(2)]
+    ).ravel()
+    expected -= basis @ np.linalg.lstsq(basis, expected, rcond=1e-8)[0]
+    np.testing.assert_allclose(
+        actual, expected.reshape(-1, 2) if status == "accepted" else 0, atol=1e-7
+    )
