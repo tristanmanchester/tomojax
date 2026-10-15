@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+`Stripes(varying=True)` detects and fits intensity-dependent detector responses
+without correcting unselected pixels; constant-offset correction remains the default.
+
 Synchrotron data (fifth lab run): `tj.reconstruct(scan, "fourier")` and
 `tomojax recon --method fourier` expose the Fourier-slice inverse, now with
 measured-angle interpolation for uneven, repeated and opposing views (on a

@@ -37,7 +37,7 @@ Steps, each a frozen dataclass of its settings:
 | `Zingers(threshold=0.1, size=3)` | transmission | specks brighter than their neighbours' median by `threshold` (a fraction of the open beam) | `--zingers [THRESHOLD]` |
 | `RadialDistortion(center, coefficients)` | transmission | calibrated backward radial polynomial in zero-based `(column, row)` pixels, as in Algotom; bilinear, on normalised transmission before the log | Python only |
 | `Paganin(delta_beta, distance, energy_kev, pixel_size)` | transmission | single-material phase retrieval; distance and pixel size at the sample in metres, energy in keV | `--paganin DELTA_BETA,DISTANCE,ENERGY_KEV,PIXEL` (expert) |
-| `Stripes(width=9)` | line integrals | ring removal: each pixel's offset against a median over `width` columns | `--remove-stripes WIDTH` |
+| `Stripes(width=9, varying=False)` | line integrals | constant pixel offsets, or selected intensity-dependent responses with `varying=True` | `--remove-stripes WIDTH` (constant offsets) |
 | `RejectViews(z=6.0, neighbours=5, min_jump=0.05)` | line integrals | drops views whose median jumps from their neighbours', and their geometry | `--reject-outliers [Z]` |
 | `BeamHardening(coefficients=(1.0,))` | line integrals | linearisation `p -> c1 p + c2 p^2 + ...` | `--beam-hardening C1,C2,...` |
 
@@ -53,6 +53,12 @@ Also exported:
 
 See the [quickstart](../../../docs/quickstart.md#correct-raw-detector-frames)
 for loading frames and choosing steps.
+
+`Stripes(..., varying=True)` fits gain and offset only at pixels whose
+view-to-view differences are anomalous. Unselected centred features are
+preserved, but their constant-offset stripes are left too; sparse views or
+sharp moving edges can cause false detections. Selected dead pixels receive
+only the neighbouring mean; their missing angular information is not recovered.
 
 ## Dependencies
 

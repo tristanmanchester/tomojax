@@ -75,7 +75,8 @@ def fourier_reconstruct(
     artifacts; no amplitude fitting, clipping or truncation correction is applied.
 
     Input and output stay in NumPy arrays or memmaps, with float32 output in
-    ``(nx, ny, nz)`` order. Their storage must not overlap. Completed slabs are
+    ``(nx, ny, nz)`` order. CUDA downloads match Fortran-order output storage.
+    Their storage must not overlap. Completed slabs are
     written immediately, so a later failure may leave partial output. Input
     storage must remain unchanged during the call. This routine is not
     differentiable and does not replace the default FBP reconstruction.
@@ -98,6 +99,7 @@ def fourier_reconstruct(
         raise ValueError("fourier_reconstruct: grid and detector placement must be finite")
     order, flipped, angles = sorted_half_turn(np.asarray(geometry.angles))
     output = validate_host_arrays(projections, out, shape, "fourier_reconstruct")
+    transpose_download = cfg.backend == "cupy" and output.flags.f_contiguous
     depth = min(slices, grid.nz)
     host_bytes = 4 * (grid.nx * grid.ny * grid.nz + nviews * detector.nu * grid.nz)
     positions = (origin[2] + np.arange(grid.nz) * grid.vz - detector.center[1]) / detector.dv + (
@@ -107,32 +109,31 @@ def fourier_reconstruct(
         raise ValueError("fourier_reconstruct: detector-row coordinates must be finite")
 
     def prepare(start: int) -> np.ndarray | ProjectionRows:
-        stop = min(start + depth, grid.nz)
-        data = (prepare_projection_rows if cfg.backend == "cupy" else sample_projection_rows)(
-            projections, order, positions[start:stop]
-        )
-        if isinstance(data, ProjectionRows):
-            return data
-        if not np.isfinite(data).all():
-            raise ValueError("fourier_reconstruct: sampled projection rows must be finite in FP32")
-        if stop - start < depth:
-            data = np.pad(data, ((0, depth - (stop - start)), (0, 0), (0, 0)))
-        return data
+        rows = positions[start : start + depth]
+        return _prepare_slab(projections, order, rows, depth, cfg.backend)
 
     def write(start: int, volume: np.ndarray) -> None:
         stop = min(start + depth, grid.nz)
         if not np.isfinite(volume).all():
             raise ValueError("fourier_reconstruct: reconstructed slab must be finite in FP32")
-        output[:, :, start:stop] = volume.transpose(1, 2, 0)
+        axes = (2, 1, 0) if transpose_download else (1, 2, 0)
+        output[:, :, start:stop] = volume.transpose(axes)
 
     while True:
-        plan = None
         try:
             overlap = (
                 cfg.backend == "cupy" and grid.nz > depth and host_bytes >= _HOST_PIPELINE_MIN_BYTES
             )
             plan = FourierPlan(
-                grid, detector, nviews, flipped, angles, depth, cfg.backend, async_transfers=overlap
+                grid,
+                detector,
+                nviews,
+                flipped,
+                angles,
+                depth,
+                cfg.backend,
+                async_transfers=overlap,
+                transpose_download=transpose_download,
             )
             if overlap:
                 _run_host_pipeline(plan, grid.nz, depth, prepare, write)
@@ -149,6 +150,26 @@ def fourier_reconstruct(
             # slab; rewriting from slice zero also replaces any completed output.
             plan = None
         depth = max(1, depth // 2)
+
+
+def _prepare_slab(
+    projections: np.ndarray,
+    order: np.ndarray,
+    positions: np.ndarray,
+    depth: int,
+    backend: Literal["numpy", "cupy"],
+) -> np.ndarray | ProjectionRows:
+    """Finite measured rows for a fixed-depth FFT, padded only after row sampling."""
+    data = (prepare_projection_rows if backend == "cupy" else sample_projection_rows)(
+        projections, order, positions
+    )
+    if isinstance(data, ProjectionRows):
+        return data
+    if not np.isfinite(data).all():
+        raise ValueError("fourier_reconstruct: sampled projection rows must be finite in FP32")
+    if len(positions) < depth:
+        data = np.pad(data, ((0, depth - len(positions)), (0, 0), (0, 0)))
+    return data
 
 
 def _run_host_pipeline(

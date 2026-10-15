@@ -250,10 +250,12 @@ def load_frames(
     carries its white level. TIFF frames need their ``angles`` (degrees), and
     their ``detector`` unless pixels are unit length.
 
-    ``flats`` and ``darks`` (arrays, TIFF files or folders, or one level for
+    ``flats`` and ``darks`` (arrays, HDF5 stacks, TIFF files or folders, or one level for
     every pixel), ``angles``, ``detector``, ``grid``, ``white_level`` and a
     whole ``geometry`` (of every sample view; then TIFFs need no ``angles``)
-    replace what the file holds.
+    replace what the file holds. HDF5 calibration paths use the same automatic
+    dataset discovery as the input and stay lazy; every frame in their stack
+    contributes to the calibration mean.
     """
     file = Path(path)
     if not file.exists():
@@ -329,8 +331,10 @@ def _count(n: int, noun: str) -> str:
 
 def _frames_of(value: np.ndarray | float | str | PathLike[str], name: str) -> Any:
     if isinstance(value, str | os.PathLike):
-        from tomojax.io.api import read_tiff_frames
+        from tomojax.io.api import locate_frames, read_tiff_frames
 
+        if Path(value).suffix.lower() in _HDF5:
+            return locate_frames(str(value)).stack
         return read_tiff_frames(Path(value), lazy=True)
     frames = np.asarray(value)
     if frames.ndim == 2:
@@ -340,7 +344,7 @@ def _frames_of(value: np.ndarray | float | str | PathLike[str], name: str) -> An
     return frames
 
 
-_HDF5 = frozenset({".nxs", ".h5", ".hdf5"})
+_HDF5 = frozenset({".nxs", ".h5", ".hdf", ".hdf5"})
 
 
 def _located(file: Path) -> LocatedFrames | None:
