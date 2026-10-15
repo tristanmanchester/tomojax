@@ -212,6 +212,26 @@ def _at_least_a_voxel(gauge: Gauge, grid: Grid) -> Gauge:
     return Gauge(Rotation.from_rotvec(scale * rotvec).as_matrix(), scale * gauge.shift)
 
 
+def _move_supported_volume(volume, grid: Grid, gauge: Gauge) -> np.ndarray | None:
+    """Resample only when the object support permits this gauge motion.
+
+    Projection-only setup stages have an exactly zero seed volume. Every rigid
+    resampling leaves it zero; neither a support probe nor a device kernel is
+    needed. The pose and detector gauges must still be applied by the caller.
+    """
+    size = np.abs(np.asarray(volume, np.float32))
+    if not np.any(size):
+        return np.asarray(volume, np.float32)
+    obj = np.where(size > _OBJECT_LEVEL * np.percentile(size, 99.9), size, 0.0)
+    before = float(np.sum(obj, dtype=np.float64))
+    moved_obj = apply_to_volume(obj, grid, _at_least_a_voxel(gauge, grid))
+    after = float(np.sum(moved_obj, dtype=np.float64))
+    if before > 0 and abs(after - before) > _MAX_LOST * before:
+        return None
+    del size, obj, moved_obj  # free support estimates before resampling the volume
+    return apply_to_volume(volume, grid, gauge)
+
+
 def least_motion_estimate(
     volume: np.ndarray | jax.Array,
     params: np.ndarray,
@@ -247,15 +267,9 @@ def least_motion_estimate(
     )
     if _largest_displacement(gauge, grid) < _NEGLIGIBLE and abs(gauge.detector_offset) < 1e-6:
         return np.asarray(volume), np.asarray(params), Gauge(np.eye(3), np.zeros(3))
-    size = np.abs(np.asarray(volume, np.float32))
-    obj = np.where(size > _OBJECT_LEVEL * np.percentile(size, 99.9), size, 0.0)
-    before = float(np.sum(obj, dtype=np.float64))
-    moved_obj = apply_to_volume(obj, grid, _at_least_a_voxel(gauge, grid))
-    after = float(np.sum(moved_obj, dtype=np.float64))
-    if before > 0 and abs(after - before) > _MAX_LOST * before:
+    moved_volume = _move_supported_volume(volume, grid, gauge)
+    if moved_volume is None:
         return np.asarray(volume), np.asarray(params), None
-    del size, obj, moved_obj  # free the support estimates before resampling the volume
-    moved_volume = apply_to_volume(volume, grid, gauge)
     keep = tuple(name for name in DOF_NAMES if name not in active or name in invisible)
     moved = apply_to_poses(params, nominal, gauge, translation_frame=translation_frame, keep=keep)
     return moved_volume, moved, gauge
