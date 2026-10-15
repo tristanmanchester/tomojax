@@ -78,3 +78,18 @@ def test_fortran_output_with_ragged_axial_slabs(tmp_path):
     result = tj.reconstruct(scan, filter="hann", out=backing[:, :, 1:-1])
     np.testing.assert_allclose(result.volume, np.asarray(expected.volume), rtol=5e-5, atol=3e-6)
     np.testing.assert_array_equal(backing[:, :, [0, -1]], -71)
+
+
+def test_fortran_output_propagates_write_failures():
+    scan = _scan("parallel", nz=19)
+    writes = []
+
+    class FailingStorage(np.ndarray):
+        def __setitem__(self, key, value):
+            writes.append(value.shape)
+            raise OSError("output write failed")
+
+    out = np.empty((9, 7, 19), np.float32, order="F").view(FailingStorage)
+    with pytest.raises(OSError, match="output write failed"):
+        tj.reconstruct(scan, out=out)
+    assert len(writes) == 1

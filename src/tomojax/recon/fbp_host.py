@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, replace
 import math
 import operator
@@ -106,6 +107,39 @@ def _host_volume(volume: jax.Array, target: np.ndarray) -> np.ndarray:
     return np.asarray(volume)
 
 
+class _VolumeWriter:
+    """Keep at most one output transfer/write alive beside the current slab."""
+
+    def __init__(self, *, enabled: bool) -> None:
+        self.pool = ThreadPoolExecutor(max_workers=1) if enabled else None
+        self.pending: Future[None] | None = None
+
+    def __enter__(self) -> _VolumeWriter:
+        return self
+
+    def __call__(self, volume: jax.Array, target: np.ndarray, count: int) -> None:
+        if self.pool is None:
+            target[...] = _host_volume(volume, target)[:, :, :count]
+            return
+        if self.pending is not None:
+            self.pending.result()
+        value = jnp.transpose(volume, (2, 1, 0))
+        value.copy_to_host_async()
+
+        def store() -> None:
+            target[...] = np.asarray(value).transpose(2, 1, 0)[:, :, :count]
+
+        self.pending = self.pool.submit(store)
+
+    def __exit__(self, *args: object) -> None:
+        try:
+            if self.pending is not None:
+                self.pending.result()
+        finally:
+            if self.pool is not None:
+                self.pool.shutdown(wait=True, cancel_futures=True)
+
+
 def fbp_host(
     geometry: ParallelGeometry,
     grid: Grid,
@@ -119,7 +153,7 @@ def fbp_host(
 
     Accept NumPy arrays, including memmaps, or device arrays and return a float32
     NumPy array.
-    ``out`` may be a writable memmap. Completed slabs are written immediately;
+    ``out`` may be a writable memmap. Writes complete before returning, but
     a later failure can leave a partially written output. Input storage must
     remain unchanged until the call finishes. This host-returning routine is
     not differentiable. Use :func:`fbp` for device-resident output.
@@ -162,37 +196,46 @@ def fbp_host(
     output = validate_host_arrays(projections, out, shape, device_input=True)
     host_poses = np.asarray(poses, np.float32)
     params = np.zeros((n_views, 6), np.float32)
-    for start in range(0, grid.nz, depth):
-        v = first + start * step
-        v_start = math.floor(v)
-        if not integer:
-            v_start = max(0, min(v_start, detector.nv - rows))
-        # Local grid/detector metadata stay identical for every slab. Only the
-        # fractional row phase changes, passed as a dynamic pose translation.
-        local_poses = host_poses.copy()
-        if not integer:
-            local_poses[:, 2, 3] = (v - v_start) * detector.dv
-        volume = _fbp_from_host(
-            local_poses,
-            _device_rows(projections, v_start, rows)
-            if isinstance(projections, jax.Array)
-            else ProjectionRows(projections, v_start, rows),
-            view_scale,
-            params,
-            ramp,
-            0.0,
-            grid=local_grid,
-            detector=local_detector,
-            backend=backend,
-            batch_size=min(views, n_views),
-            z_mode="integer" if integer else "fixed",
-            separable=True,
-            check_finite=True,
-        )
-        count = min(depth, grid.nz - start)
-        # The host copy synchronizes before the next slab reuses its buffers.
-        target = output[:, :, start : start + count]
-        target[...] = _host_volume(volume, target)[:, :, :count]
+    slab_bytes = 4 * grid.nx * grid.ny * depth
+    # Bound the previous result, its packed transfer and the current result;
+    # leave the remaining memory for input/filter workspaces and runtime caches.
+    enabled = (
+        grid.nz > depth
+        and output.flags.f_contiguous
+        and slab_bytes <= (device_free_memory_bytes() or 0) // 4
+    )
+    with _VolumeWriter(enabled=enabled) as write:
+        for start in range(0, grid.nz, depth):
+            v = first + start * step
+            v_start = math.floor(v)
+            if not integer:
+                v_start = max(0, min(v_start, detector.nv - rows))
+            # Local grid/detector metadata stay identical for every slab. Only the
+            # fractional row phase changes, passed as a dynamic pose translation.
+            local_poses = host_poses.copy()
+            if not integer:
+                local_poses[:, 2, 3] = (v - v_start) * detector.dv
+            volume = _fbp_from_host(
+                local_poses,
+                _device_rows(projections, v_start, rows)
+                if isinstance(projections, jax.Array)
+                else ProjectionRows(projections, v_start, rows),
+                view_scale,
+                params,
+                ramp,
+                0.0,
+                grid=local_grid,
+                detector=local_detector,
+                backend=backend,
+                batch_size=min(views, n_views),
+                z_mode="integer" if integer else "fixed",
+                separable=True,
+                check_finite=True,
+            )
+            count = min(depth, grid.nz - start)
+            # Only one previous slab can remain pending while this slab computes.
+            target = output[:, :, start : start + count]
+            write(volume, target, count)
     return output
 
 

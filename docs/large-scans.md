@@ -100,8 +100,9 @@ must not overlap, and public `out=` does not support explicit detector grids.
 `method="fourier"` also accepts `out=` for axial parallel scans. These storage
 choices do not make raw-frame correction out of core: `frames.corrected()`
 still returns a complete corrected projection stack in host memory.
-Completed slabs are written immediately, so a failure can leave a partly
-written volume. A 1024³ laminography volume takes about
+Axial F-order output can overlap one slab download/write with the next
+computation when spare device memory permits. All writes finish before return;
+a failure can leave a partly written volume. A 1024³ laminography volume takes about
 [37 s on an 8 GB laptop GPU](measurements.md#scans-larger-than-the-gpu).
 
 ## Bin detectors finer than the grid

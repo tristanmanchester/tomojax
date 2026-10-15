@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+Host FBP can overlap one Fortran-order axial slab download/write with the
+next computation when spare device memory permits; it waits for writes before returning.
+
 Alignment declines global shift initialization when its updates have not
 settled, rather than passing oscillating correlation peaks to the local solver.
 For calibrated tilted-axis scans it then tries bounded, smooth common-line
