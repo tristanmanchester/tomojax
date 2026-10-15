@@ -43,8 +43,10 @@ class FBPHostConfig:
     every view batch passes through the device once per slab. ``None`` sizes
     slabs to about half of the free device memory, so a volume that fits is
     reconstructed in one pass.
-    Projection rows are read and transferred only ``views_per_batch`` views at
-    a time, keeping at most two input batches on the device for either layout.
+    Filtering uses ``views_per_batch`` views at a time. Axial CUDA slabs with
+    many batches can stage up to 512 MiB of detector rows when those fit in a
+    quarter of free device memory, avoiding per-batch host dispatch. Otherwise
+    rows are read and transferred with at most two input batches on the device.
     Runtime/compiler caches add memory beyond these arrays. ``scale`` has the
     same meaning as in :class:`FBPConfig`.
     """
@@ -98,6 +100,27 @@ def _device_rows(projections: jax.Array, start: int, rows: int) -> jax.Array:
     return jnp.pad(block, ((0, 0), (lo - start, start + rows - hi), (0, 0)))
 
 
+def _stage_rows(
+    window: ProjectionRows, poses: jax.Array, views: int, backend: str
+) -> ProjectionRows | jax.Array:
+    """Stage a bounded axial window when it saves many CUDA host submissions.
+
+    The original stack stays on the host. Only this slab's rows are uploaded;
+    filtering and backprojection still use the requested view-batch size.
+    Query after each preceding slab, since pending output and caches use memory.
+    """
+    n, nv, nu = window.shape
+    size = 4 * n * nv * nu
+    if backend != "pallas" or n <= 4 * views or size > 512 * 1024**2:
+        return window
+    devices = poses.devices()
+    if len(devices) != 1:
+        return window
+    device = next(iter(devices))
+    free = device_free_memory_bytes(device=device) or 0
+    return jax.device_put(window[:], device) if size <= free // 4 else window
+
+
 def _host_volume(volume: jax.Array, target: np.ndarray) -> np.ndarray:
     """Download in the caller's contiguous order without a CPU transpose copy."""
     if target.flags.f_contiguous:
@@ -123,11 +146,13 @@ class _VolumeWriter:
             return
         if self.pending is not None:
             self.pending.result()
-        value = jnp.transpose(volume, (2, 1, 0))
+        packed = target.flags.f_contiguous
+        value = jnp.transpose(volume, (2, 1, 0)) if packed else volume
         value.copy_to_host_async()
 
         def store() -> None:
-            target[...] = np.asarray(value).transpose(2, 1, 0)[:, :, :count]
+            host = np.asarray(value)
+            target[...] = (host.transpose(2, 1, 0) if packed else host)[:, :, :count]
 
         self.pending = self.pool.submit(store)
 
@@ -166,7 +191,8 @@ def fbp_host(
     """Reconstruct without storing the full volume or projections on the device.
 
     Accept NumPy arrays, including memmaps, or device arrays and return a float32
-    NumPy array.
+    NumPy array. Automatically allocated axial output uses Fortran order for
+    contiguous xy-planes; general geometry uses C order for contiguous x-slabs.
     ``out`` may be a writable memmap. Writes complete before returning, but
     a later failure can leave a partially written output. Input storage must
     remain unchanged until the call finishes. This host-returning routine is
@@ -207,7 +233,7 @@ def fbp_host(
     local_grid, local_detector, first, step, integer = _slab_layout(grid, detector, depth)
     rows = local_detector.nv
     ramp = rfft_filter_array(cfg.filter, local_detector.nu, detector.du, jnp.float32)
-    output = validate_host_arrays(projections, out, shape, device_input=True)
+    output = validate_host_arrays(projections, out, shape, device_input=True, order="F")
     host_poses = np.asarray(poses, np.float32)
     params = np.zeros((n_views, 6), np.float32)
     slab_bytes = 4 * grid.nx * grid.ny * depth
@@ -215,7 +241,7 @@ def fbp_host(
     # leave the remaining memory for input/filter workspaces and runtime caches.
     enabled = (
         grid.nz > depth
-        and output.flags.f_contiguous
+        and (output.flags.f_contiguous or output.flags.c_contiguous)
         and slab_bytes <= _output_memory(projections, poses) // 4
     )
     with _VolumeWriter(enabled=enabled) as write:
@@ -233,7 +259,7 @@ def fbp_host(
                 local_poses,
                 _device_rows(projections, v_start, rows)
                 if isinstance(projections, jax.Array)
-                else ProjectionRows(projections, v_start, rows),
+                else _stage_rows(ProjectionRows(projections, v_start, rows), poses, views, backend),
                 view_scale,
                 params,
                 ramp,

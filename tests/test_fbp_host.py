@@ -48,6 +48,7 @@ def test_host_slabs_match_full_physical_reconstruction(kind, depth, backend):
     )
     assert isinstance(actual, np.ndarray)
     assert actual.dtype == np.float32
+    assert actual.flags.f_contiguous
     np.testing.assert_allclose(actual, reference, atol=4e-6, rtol=5e-5)
 
 
@@ -135,6 +136,31 @@ def test_host_slabs_read_and_convert_only_bounded_view_batches():
     )
     assert reads and max(reads) <= 2
     expected = np.asarray(fbp(geometry, grid, detector, data))
+    np.testing.assert_allclose(actual, expected, atol=4e-6, rtol=5e-5)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("kind", ["integer", "fractional", "outside"])
+@pytest.mark.parametrize("free", [0, 2**30])
+def test_axial_cuda_staging_respects_memory_and_physical_rows(monkeypatch, kind, free):
+    grid, detector, geometry, data = scan(kind)
+    geometry = replace(geometry, angles=np.linspace(0, 180, 20, endpoint=False))
+    data = np.tile(data, (4, 1, 1))
+    expected = np.asarray(
+        fbp(geometry, grid, detector, data, config=FBPConfig(backprojector="jax"))
+    )
+    module = importlib.import_module("tomojax.recon.fbp_host")
+    original, seen = module._fbp_from_host, []
+
+    def record(poses, rows, *args, **kwargs):
+        seen.append(isinstance(rows, jax.Array))
+        return original(poses, rows, *args, **kwargs)
+
+    monkeypatch.setattr(module, "device_free_memory_bytes", lambda **kwargs: free)
+    monkeypatch.setattr(module, "_fbp_from_host", record)
+    cfg = FBPHostConfig(slices_per_batch=4, views_per_batch=3)
+    actual = fbp_host(geometry, grid, detector, data, config=cfg)
+    assert seen == [bool(free)] * 3
     np.testing.assert_allclose(actual, expected, atol=4e-6, rtol=5e-5)
 
 
@@ -277,6 +303,7 @@ def test_host_slabs_reconstruct_laminography_like_fbp(depth, backend):
         data,
         config=FBPHostConfig(slices_per_batch=depth, views_per_batch=2, backprojector=backend),
     )
+    assert actual.flags.c_contiguous
     np.testing.assert_allclose(actual, reference, atol=4e-6, rtol=5e-5)
 
 
@@ -307,7 +334,8 @@ def test_host_slabs_reject_incompatible_storage(invalid):
 @pytest.mark.parametrize("kind", ["integer", "fractional", "outside"])
 @pytest.mark.parametrize("tilted", [False, True])
 @pytest.mark.parametrize("backend", ["auto", "jax"])
-def test_host_slabs_slice_device_projections_in_place(monkeypatch, kind, tilted, backend):
+@pytest.mark.parametrize("order", ["C", "F"])
+def test_host_slabs_slice_device_projections_in_place(monkeypatch, kind, tilted, backend, order):
     grid, detector, geometry, data = scan(kind)
     if tilted:
         geometry = LaminographyGeometry(grid, detector, geometry.angles, tilt_deg=30)
@@ -321,7 +349,7 @@ def test_host_slabs_slice_device_projections_in_place(monkeypatch, kind, tilted,
 
     monkeypatch.setattr(module, "device_free_memory_bytes", free)
     device = jax.devices("cpu")[-1] if backend == "jax" else jax.devices()[0]
-    out = np.empty(expected.shape, np.float32, order="F")
+    out = np.empty(expected.shape, np.float32, order=order)
     resident = jax.device_put(data, device)
     actual = fbp_host(geometry, grid, detector, resident, config=config, out=out)
     assert queried == ([] if tilted else [device])
