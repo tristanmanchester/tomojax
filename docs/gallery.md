@@ -18,8 +18,13 @@ jitters by about two pixels and 0.1° between views. `tj.align(scan,
 mode="cor-then-pose")` finds the centre to 0.02 pixels and the per-view shifts
 to 0.03 and 0.08 pixels in under two minutes; the voids in the solder balls
 reappear. The shifts are compared after removing a rigid motion of the whole
-sample, which no reconstruction can detect, and slices across the sample plane
-are left out because laminography blurs them for any method.
+sample, which no reconstruction can detect; the errors that remain are
+largest near 90° and 270°. The display is clipped at 1.2 mm⁻¹, so copper and
+gold (16 and 85 mm⁻¹) saturate. The die reads about twice its attenuation even
+from exact, motionless data: laminography does not measure the slowly varying
+part along the sample's normal, so the copper and the layers above and below
+bleed into its slice. Slices across the sample plane are left out for the same
+reason.
 
 ```bash
 uv run python bench/phantoms/chip_package.py build DATA   # gVXR environment, about 20 minutes

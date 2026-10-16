@@ -12,10 +12,11 @@ centre, then each view's pose with the volume.
     uv run python bench/phantoms/chip_package.py build DATA
     uv run python examples/gallery/chip_laminography.py DATA images/gallery/chip-laminography.png
 
-Both volumes are FISTA-TV reconstructions. The motion panel compares the
-per-view shifts after removing a rigid motion of the whole sample, which a
-reconstruction cannot detect. Slices across the sample plane are not shown:
-laminography's missing cone of directions blurs them for any method.
+Both volumes are FISTA-TV reconstructions. The motion panels compare each
+view's recovered and true shifts, on the scale of the motion, after removing a
+rigid motion of the whole sample, which a reconstruction cannot detect.
+Slices across the sample plane are not shown: laminography's missing cone of
+directions blurs them for any method.
 """
 
 from __future__ import annotations
@@ -80,26 +81,30 @@ def main() -> None:
                     -0.03, 0.5, label, transform=ax.transAxes, rotation=90, ha="right", va="center"
                 )
     poses = np.asarray(result.poses)
-    ax = fig.add_subplot(grid[2, :])
-    for column, name, colour in ((3, "dx", "tab:blue"), (4, "dz", "tab:orange")):
+    motion = grid[2, :].subgridspec(1, 3, width_ratios=(1, 1, 2.3), wspace=0.4)
+    limit = 1.5
+    errors = {}
+    for k, (column, name, colour) in enumerate(((3, "dx", "tab:blue"), (4, "dz", "tab:orange"))):
         true = without_rigid_motion(true_params[:, column], angles) / pixel
         estimate = without_rigid_motion(poses[:, column], angles) / pixel
-        error = np.sqrt(np.mean((estimate - true) ** 2))
-        ax.plot(angles, true, color=colour, lw=0.6, alpha=0.45, label=f"true {name}")
-        ax.plot(
-            angles,
-            estimate,
-            ".",
-            color=colour,
-            ms=1.6,
-            label=f"recovered {name}, error {error:.2f} px RMS",
-        )
-    ax.set_xlim(0, 360)
-    ax.set_ylim(-1.5, 2.1)
+        errors[name] = (estimate - true, colour)
+        ax = fig.add_subplot(motion[0, k])
+        ax.plot([-limit, limit], [-limit, limit], color="0.6", lw=0.6)
+        ax.plot(true, estimate, ".", ms=2, color=colour, alpha=0.6)
+        ax.set(xlim=(-limit, limit), ylim=(-limit, limit), aspect="equal")
+        ax.set_xlabel(f"true {name} (px)")
+        ax.set_ylabel("recovered (px)" if k == 0 else "")
+        ax.set_title(f"{name}, {np.sqrt(np.mean((estimate - true) ** 2)):.2f} px RMS")
+    ax = fig.add_subplot(motion[0, 2])
+    for name, (error, colour) in errors.items():
+        ax.plot(angles, error, ".", ms=1.5, color=colour, label=name)
+    ax.set(xlim=(0, 360), ylim=(-limit, limit), xticks=range(0, 361, 90))
     ax.set_xlabel("rotation angle (°)")
-    ax.set_ylabel("shift (pixels)")
-    ax.legend(ncols=2, fontsize=7, frameon=False, loc="upper right")
-    ax.set_title(f"Per-view shifts; centre found at {found:.2f} px (true {cor_mm / pixel:.2f})")
+    ax.set_ylabel("recovered \N{MINUS SIGN} true (px)")
+    ax.set_title(f"Error per view; centre {found:.2f} px, true {cor_mm / pixel:.2f}")
+    ax.legend(frameon=False, fontsize=7, markerscale=4, loc="upper right", ncols=2)
+    for ax in fig.axes[-3:]:
+        ax.spines[["top", "right"]].set_visible(False)
     fig.suptitle("Laminography of a chip package, 720 views at 30° tilt, 8 µm pixels", y=0.915)
     save(fig, args.output)
 
