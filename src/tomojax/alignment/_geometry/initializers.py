@@ -113,6 +113,7 @@ def common_line_setup_seed(
             axis_seed_rotations_deg=fit.rotations_deg,
             axis_seed_correlation_before=fit.correlation_before,
             axis_seed_correlation_after=fit.correlation_after,
+            axis_seed_on_search_boundary=fit.on_search_boundary,
         )
     if "det_u_px" in active_dofs:
         center = lines.center(

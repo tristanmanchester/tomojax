@@ -421,6 +421,19 @@ def test_common_line_center_declines_axial_or_featureless_evidence():
     data = np.random.default_rng(34).normal(size=(24, 31, 33)).astype(np.float32)
     prepared = common_lines.prepare_common_lines(data, angles, detector)
     assert prepared is not None
+    coordinates = prepared._coordinates(np.array([0, 0.6, 0.8]))
+    coordinates[0][0, :4] = [[0, 0], [1, 1], [-1, -1], [0.5, 0.5]]
+    nv, nu = prepared.spectra.shape[1:]
+    for actual, indices, q in zip(
+        prepared._sample_coordinates(coordinates), prepared.pairs.T, coordinates, strict=True
+    ):
+        u = q[..., 0] * prepared.pitch[0] * nu + nu // 2
+        v = q[..., 1] * prepared.pitch[1] * nv + nv // 2
+        expected = common_lines.ndimage.map_coordinates(
+            prepared.spectra, [np.broadcast_to(indices[:, None], u.shape), v, u], order=1
+        )
+        np.testing.assert_allclose(actual, expected, rtol=2e-7, atol=2e-6)
+        assert actual.flags.c_contiguous
     assert prepared.center(np.array([0, 0, 1])) is None
     blank = common_lines.prepare_common_lines(np.ones_like(data), angles, detector)
     assert blank is not None
@@ -524,7 +537,13 @@ def _analytic_common_lines(true_axis):
 
 @pytest.mark.parametrize(
     ("tilt", "azimuth", "roll", "nominal_tilt"),
-    [(35.0, 0.4, 1.7, 31.0), (24.0, -2.0, 0.0, 20.0), (-35.0, 0.4, 1.7, 31.0)],
+    [
+        (35.0, 0.4, 1.7, 31.0),
+        (24.0, -2.0, 0.0, 20.0),
+        (-35.0, 0.4, 1.7, 31.0),
+        (58.0, 17.0, 0.0, 0.0),
+        (-43.0, -13.0, 0.0, 0.0),
+    ],
 )
 def test_common_line_axis_seed_recovers_nonplanar_geometry_despite_view_shifts(
     tilt, azimuth, roll, nominal_tilt
@@ -548,12 +567,22 @@ def test_common_line_axis_seed_preserves_frozen_bounds_and_uninformative_estimat
         sample, nominal, active=(True, False), bounds_deg=((0, 2), (-60, 60))
     )
     np.testing.assert_allclose(result.rotations_deg, [2, 0], atol=1e-3)
+    assert result.on_search_boundary
     empty = init.fit_axis_direction(
         lambda axis: (np.ones((3, 8), complex), np.ones((3, 8), complex)),
         nominal,
         rotations_deg=(1.25, -0.75),
     )
     assert empty.rotations_deg == (1.25, -0.75)
+    unknown = init.fit_axis_direction(
+        lambda axis: (np.ones((3, 8), complex), np.ones((3, 8), complex)), np.array([0, 0, 1])
+    )
+    assert unknown.rotations_deg == (0.0, 0.0)
+    assert not unknown.on_search_boundary
+    seam = init.fit_axis_direction(
+        lambda axis: (np.ones((3, 8)), np.ones((3, 8))), nominal, rotations_deg=(180, 0)
+    )
+    assert not seam.on_search_boundary
 
 
 @pytest.mark.parametrize("bounded", [False, True])

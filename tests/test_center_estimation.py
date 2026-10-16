@@ -88,3 +88,20 @@ def test_estimate_center_rejects_scans_without_a_half_turn_of_axial_parallel_vie
         scan = replace(scan, geometry=geometry)
     with pytest.raises(ValueError, match="estimate_center"):
         tj.estimate_center(scan)
+
+
+def test_auto_alignment_records_center_and_resolves_only_its_limitation(monkeypatch):
+    from tomojax import _workflow
+
+    scan, true_u, _ = _scan()
+    context = dict(
+        status="limited", reasons=["centre", "rings"], center_calibration_reason="centre"
+    )
+    rec = tj.Reconstruction(np.zeros((80, 80, 8)), scan, "fbp", {"automatic": context})
+    monkeypatch.setattr(_workflow, "reconstruct", lambda s: replace(rec, scan=s))
+    info = tj.align(scan).info["automatic"]
+    assert info["reconstruction"] == context
+    assert info["reasons"] == ["rings"] and info["status"] == "limited"
+    center = info["center_estimation"]
+    assert center["input"] == list(scan.detector.center) and center["status"] == "estimated"
+    assert abs(center["output"][0] - true_u) <= 0.3 * scan.detector.du

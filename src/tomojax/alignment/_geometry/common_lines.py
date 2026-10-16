@@ -66,8 +66,20 @@ class CommonLines:
         for indices, q in zip(self.pairs.T, coordinates, strict=True):
             u = q[..., 0] * du * nu + nu // 2
             v = q[..., 1] * dv * nv + nv // 2
-            points = [np.broadcast_to(indices[:, None], u.shape), v, u]
-            values.append(ndimage.map_coordinates(self.spectra, points, order=1, mode="constant"))
+            valid = (u >= 0) & (u <= nu - 1) & (v >= 0) & (v <= nv - 1)
+            u, v = np.clip(u, 0, nu - 1), np.clip(v, 0, nv - 1)
+            i, j = np.floor(u).astype(np.intp), np.floor(v).astype(np.intp)
+            fu, fv = u - i, v - j
+            i1, j1 = np.minimum(i + 1, nu - 1), np.minimum(j + 1, nv - 1)
+            k = indices[:, None]  # View coordinates are integers, not interpolated.
+            sampled = (1 - fv) * (
+                (1 - fu) * self.spectra[k, j, i] + fu * self.spectra[k, j, i1]
+            ) + fv * ((1 - fu) * self.spectra[k, j1, i] + fu * self.spectra[k, j1, i1])
+            # Match constant (not grid-constant) extension and C-order reductions
+            # downstream; advanced indexing otherwise produces Fortran layout.
+            values.append(
+                np.ascontiguousarray(np.where(valid, sampled, 0), dtype=self.spectra.dtype)
+            )
         return values[0], values[1]
 
     def center(self, axis_unit: np.ndarray, *, detector_roll_deg: float = 0.0) -> float | None:

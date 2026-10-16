@@ -154,36 +154,37 @@ comparison. Check residuals, multiple slice planes, and recovered parameters;
 image sharpness alone cannot establish physical calibration. Recovery remains
 data-dependent, especially for truncated or periodic objects; a lower training residual alone does not establish correct alignment.
 
-## K11 nominal-geometry recipe
+## Automatic NeXus laminography
 
-The DIAD K11 file labels its rotation field with the wrong units; read its
-recorded angles explicitly in degrees. The runnable
-[laminography example](../examples/align_laminography.py) starts from the nominal
-tilt and centred detector, estimates setup and smooth motion, and chooses a
-reconstruction region rather than requiring a hand-selected depth:
+Recognised Diamond/GDA NeXus layouts need no dataset paths. The
+[laminography example](../examples/align_laminography.py) uses the same default
+workflow as Python and the CLI:
 
-```bash
-uv run --no-sync python examples/align_laminography.py k11-67208_binned.nxs \
-  --angles-path /entry/imaging/smaract_zrot_value_set \
-  --image-key-path /entry/tomo_entry/instrument/detector/image_key \
-  --tilt 30.9
+```python
+scan = tj.load_frames("scan.nxs").corrected()
+result = tj.align(scan)
+print(result.info["automatic"])
+tj.save("aligned.nxs", result)
 ```
 
-It applies another factor of two detector binning **after** the logarithm.
-The recipe excludes internal validation views from setup and pose fitting,
-interpolates small pose corrections in acquisition order, and keeps refinement
-only if both ordinary and high-pass held-projection errors improve at the final
-grid. An uncertain region retains the projection-only seed and a broad survey;
-that is a conservative choice, not evidence that broad objects cannot align.
-No library defaults change, and no file is written unless `-o result.nxs` is given.
+```bash
+tomojax align scan.nxs -o aligned.nxs
+```
 
-Inspect the correction record, recovered axis, several volume planes and the
-reported validation scores. Large nonpositive-transmission counts, a broad/coarse
-region or multiple layers still need acquisition-specific investigation. Held
-residuals do not establish physical poses or support, and an independent quality
-assessment must reserve further views before calling the recipe. The example's
-sampling and iteration budgets are not convergence guarantees.
+Missing axis metadata triggers a data-driven signed-axis search, not an assumed
+tilt. Automatic unposed laminography uses a bounded working detector, excludes
+internal validation views from setup and motion fitting, and selects a region
+before reconstructing all input views. Resolved regions compare the motion seed
+with joint refinement; broad regions compare it with zero motion. A candidate
+must improve both ordinary and high-pass held projection error to be retained.
+The returned scan carries the actual geometry, poses and working resolution.
 
-For a qualitative real-data illustration, see the
-[historical DIAD images](../images/README.md#historical-real-data-illustrations).
-The raw scan and complete configuration for those images are not bundled.
+Inspect the saved automatic outcome: an unresolved support or unsupported setup
+is reported as `limited`, with reasons. Held consistency does not establish
+physical pose or support truth. An unknown-axis estimate at a finite search
+boundary, or providing less than one working pixel of depth parallax across the
+detector field, is declined rather than used to infer a reconstruction region.
+Independent evaluation must reserve additional
+views before calling the workflow. Explicit `mode` and reconstruction `method`
+retain direct control; automatic reconstruction of a posed scan does not reset
+its corrections.
