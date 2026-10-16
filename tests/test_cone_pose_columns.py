@@ -1,4 +1,4 @@
-"""Batched CUDA central differences retain the per-view finite-difference model."""
+"""CUDA pose columns follow the requested analytic or finite-difference model."""
 
 from __future__ import annotations
 
@@ -31,7 +31,6 @@ pytestmark = pytest.mark.numerical
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("width", [5, 6])
-@pytest.mark.parametrize("jacobian", ["central", "autodiff"])
 @pytest.mark.parametrize(
     ("grid_case", "direction"),
     [
@@ -42,7 +41,7 @@ pytestmark = pytest.mark.numerical
     ],
 )
 def test_cuda_columns_retain_individual_central_differences(
-    monkeypatch, width, jacobian, direction, grid_case
+    monkeypatch, width, direction, grid_case
 ):
     monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
     if not use_cuda_cone():
@@ -79,7 +78,7 @@ def test_cuda_columns_retain_individual_central_differences(
         np.testing.assert_array_equal(np.abs(ray), np.repeat(abs(ray[0]), 3))
     else:
         weight = weight.at[0].set(0)
-    options = PoseJacobianOptions(0.001, "object", True, 1, "fp32", "joseph", jacobian, True)
+    options = PoseJacobianOptions(0.001, "object", True, 1, "fp32", "joseph", "central", True)
     candidate = jax.jit(
         partial(
             pose_prediction_and_columns,
@@ -117,6 +116,58 @@ def test_cuda_columns_retain_individual_central_differences(
     # magnifies that rounding, so compare at each column's scale, not bitwise.
     for a, b in zip(actual, expected, strict=True):
         np.testing.assert_allclose(a, b, rtol=0, atol=1e-4 * float(np.max(np.abs(b))))
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("width", [5, 6])
+@pytest.mark.parametrize("translation_frame", ["object", "detector"])
+@pytest.mark.parametrize("direction", [(1, 0.2, 0.1), (0.2, 1, 0.1), (0.1, 0.2, 1)])
+def test_cuda_analytic_pose_columns_match_jax(width, translation_frame, direction):
+    if not use_cuda_cone():
+        pytest.skip("CUDA cone columns require an NVIDIA GPU and CuPy")
+    grid = Grid(7, 6, 5, 0.7, 1.1, 0.9, vol_center=(0.23, -0.17, 0.31))
+    detector = Detector(9, 7, 1.3, 0.8)
+    beam = np.asarray(direction, np.float64)
+    beam /= np.linalg.norm(beam)
+    u = np.cross(beam, np.eye(3)[np.argmin(np.abs(beam))])
+    u /= np.linalg.norm(u)
+    v = np.cross(beam, u)
+    u, v = np.cos(0.13) * u + np.sin(0.13) * v, -np.sin(0.13) * u + np.cos(0.13) * v
+    frame = jnp.asarray(np.stack([40 * beam, u, v, -80 * beam]), jnp.float32)
+    nominal = jnp.eye(4).at[:3, 3].set(jnp.asarray([0.11, 0.09, -0.13]))
+    params = jnp.asarray([0.013, -0.019, 0.031, 0.11, -0.07, 0.04][:width])
+    rng = np.random.default_rng(177)
+    volume = jnp.asarray(rng.uniform(-0.1, 1.1, (7, 6, 5)), jnp.float32)
+    target = jnp.asarray(rng.normal(size=(7, 9)), jnp.float32)
+    weight = jnp.asarray(rng.uniform(0.1, 1, (7, 9)), jnp.float32).at[0].set(0)
+    options = PoseJacobianOptions(
+        0.001, translation_frame, True, 1, "fp32", "joseph", "autodiff", True
+    )
+    candidate = jax.jit(
+        partial(
+            pose_prediction_and_columns,
+            grid=grid,
+            detector=detector,
+            det_grid=None,
+            options=options,
+        )
+    )
+
+    @jax.jit
+    def predict(p):
+        pose = apply_pose_update(nominal, p, translation_frame=translation_frame)
+        image = forward_project_view_T(
+            pose, grid, detector, volume, frames=frame, projector_backend="jax"
+        )
+        return weight.ravel() * (image.ravel() - target.ravel())
+
+    actual = candidate(params, nominal, frame, volume, target, weight)
+    expected = predict(params), jax.jit(jax.jacfwd(predict))(params).T
+    # These rays avoid interpolation knots and dominant-axis ties, where the
+    # Joseph quadrature is not differentiable. Each backend retains FP32 rays.
+    for a, b in zip(actual, expected, strict=True):
+        assert np.isfinite(a).all()
+        np.testing.assert_allclose(a, b, rtol=0, atol=1e-4 * float(jnp.max(jnp.abs(b))))
 
 
 @pytest.mark.parametrize("cone", [False, True])
