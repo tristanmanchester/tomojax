@@ -92,6 +92,14 @@ def test_mlem_public_workflow_improves_likelihood_and_image(problem):
         geometry, grid, detector, np.zeros((5, 4, 5), np.float32), config=MLEMConfig(iterations=2)
     )
     np.testing.assert_array_equal(np.asarray(zero).ravel()[matrix.sum(axis=0) > 0], 0)
+    if isinstance(geometry, LaminographyGeometry):
+        initial = np.maximum(np.asarray(tj.reconstruct(scan, "fbp").volume), 0)
+        expected, _ = mlem(
+            geometry, grid, detector, scan.projections, init_x=initial,
+            config=MLEMConfig(iterations=1),
+        )  # fmt: skip
+        warm = tj.reconstruct(scan, "mlem", iterations=1, warm_start=True)
+        np.testing.assert_allclose(warm.volume, expected, rtol=2e-5, atol=2e-6)
 
 
 @pytest.mark.numerical

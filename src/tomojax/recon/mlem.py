@@ -40,6 +40,9 @@ class MLEMConfig:
     ``support`` is a boolean mask broadcastable to the volume shape: voxels
     outside it stay zero. The default initial volume is one inside the observed support.
     A supplied zero voxel stays zero under multiplicative updates.
+    ``tj.reconstruct(..., warm_start=True)`` instead starts from nonnegative
+    FBP/FDK, including its zero voxels. This can improve early image quality,
+    but fixes the initial zero set for all subsequent EM updates.
 
     These are linear emission-style measurements, not transmission counts
     with mean ``I0 * exp(-A x)``. Applying MLEM to nonnegative log-transformed

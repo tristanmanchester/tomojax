@@ -226,5 +226,5 @@ unchanged; a precision-limited result is still reported as `roundoff_limit`.
 counts. `MLEMConfig(subsets=1)` is MLEM; larger values give angle-interleaved
 OSEM, with `iterations` counting full passes through the views. OSEM can cycle
 near convergence. The boolean `support` mask fixes excluded voxels to zero;
-initial zeros are absorbing under multiplicative updates. FBP warm starts are
-not supported for this data model.
+initial zeros are absorbing under multiplicative updates. `warm_start=True`
+starts from FBP/FDK clipped to nonnegative values, retaining its zero set.

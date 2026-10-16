@@ -84,7 +84,7 @@ def reconstruct_arrays(
     """Reconstruct ``projections`` with ``method``; :func:`tomojax.reconstruct` on arrays.
 
     ``config`` is the method's configuration (see :func:`method_config`).
-    ``warm_start`` starts ``cgls``, ``fista`` and ``spdhg`` from the FBP
+    ``warm_start`` starts the iterative methods from the FBP
     reconstruction. Cone segments start from the view-count-weighted mean of
     their individual FDK images; each segment must cover an FDK-compatible
     arc. Returns the volume and its record: the ``config`` used,
@@ -135,11 +135,6 @@ def _iterative_result(
     warm_start: bool,
 ) -> tuple[jnp.ndarray, dict[str, object]]:
     """Initialize and dispatch an iterative solve with its method's data model."""
-    if isinstance(cfg, MLEMConfig):
-        if warm_start:
-            raise ValueError("method 'mlem' does not take an FBP warm_start")
-        volume, record = mlem(geometry, grid, detector, projections, config=cfg, det_grid=det_grid)
-        return volume, {"config": cfg, **record}
     start = None
     if warm_start:
         # On the solver's devices; an explicit detector grid takes one.
@@ -148,13 +143,15 @@ def _iterative_result(
             geometry, grid, detector, projections, config=FBPConfig(devices=devices),
             det_grid=det_grid,
         )  # fmt: skip
-        if getattr(cfg, "nonnegative", False):
+        if isinstance(cfg, MLEMConfig) or getattr(cfg, "nonnegative", False):
             start = jnp.maximum(start, 0.0)
     args = (geometry, grid, detector, projections)
     if isinstance(cfg, CGLSConfig):
         volume, record = cgls(*args, init_x=start, config=cfg, det_grid=det_grid)
     elif isinstance(cfg, FistaConfig):
         volume, record = fista_tv(*args, init_x=start, config=cfg, det_grid=det_grid)
+    elif isinstance(cfg, MLEMConfig):
+        volume, record = mlem(*args, init_x=start, config=cfg, det_grid=det_grid)
     else:
         volume, record = spdhg_tv(*args, init_x=start, config=cfg, det_grid=det_grid)
     return volume, {"config": cfg, "warm_start": warm_start, **record}

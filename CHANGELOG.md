@@ -3,7 +3,8 @@
 ## Unreleased
 
 `mlem` adds matched MLEM/OSEM reconstruction for nonnegative linear Poisson
-measurements, with angular subsets and a reconstruction support mask.
+measurements, with angular subsets, a reconstruction support mask, and optional
+nonnegative FBP/FDK warm starts.
 
 It just works (end of the sixth lab run): `tj.reconstruct(scan)` now defaults
 to `method="auto"` and `tj.align(scan)` to `mode="auto"`, choosing the method,
