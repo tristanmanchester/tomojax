@@ -397,6 +397,44 @@ def _forward_cuda(volume: jax.Array, coeff: jax.Array, grid: Grid, detector: Det
     return call(coeff, volume.astype(jnp.float32))
 
 
+def _launch_pose_columns(
+    context: Any, out: Any, coeff: Any, tangent: Any, volume: Any, *, grid: Grid, det: Detector
+) -> None:
+    import cupy as cp
+
+    with xla_stream(context, out):
+        _module().get_function("cone_pose_columns")(
+            (coeff.shape[0], -(-det.nu // 16), -(-det.nv // 8)),
+            (128,),
+            (
+                cp.asarray(coeff), cp.asarray(tangent), cp.asarray(volume), cp.asarray(out),
+                np.int32(grid.nx), np.int32(grid.ny), np.int32(grid.nz),
+                np.int32(det.nu), np.int32(det.nv), np.int32(tangent.shape[1]),
+                np.float32(grid.vx), np.float32(grid.vy), np.float32(grid.vz),
+            ),
+        )  # fmt: skip
+
+
+def cone_pose_columns(
+    volume: jax.Array, coeff: jax.Array, *, tangent: jax.Array, grid: Grid, detector: Detector
+) -> jax.Array:
+    """CUDA value and pose columns from one traversal of each ray.
+
+    ``tangent`` holds ``(views, directions, 12)`` derivatives of the source,
+    detector origin and pixel steps. As for the JAX projector, the ray's
+    dominant axis is held fixed: its switches are not differentiable.
+    Interpolation derivatives use the current bilinear cell.
+    """
+    call = buffer_callback(
+        partial(_launch_pose_columns, grid=grid, det=detector),
+        jax.ShapeDtypeStruct(
+            (coeff.shape[0], 1 + tangent.shape[1], detector.nv, detector.nu), jnp.float32
+        ),
+        vmap_method="sequential",
+    )
+    return call(coeff, tangent, volume.astype(jnp.float32))
+
+
 def _adjoint_cuda(
     images: jax.Array, coeff: jax.Array, grid: Grid, detector: Detector, accumulate: jax.Array
 ) -> jax.Array:

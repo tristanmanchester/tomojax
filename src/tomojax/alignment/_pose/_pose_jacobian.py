@@ -13,7 +13,7 @@ import jax.numpy as jnp
 
 from tomojax.alignment._geometry.parametrizations import apply_pose_update
 from tomojax.core.backend_policy import cuda_backend
-from tomojax.core.cone import cone_project, frame_coefficients, use_cuda_cone
+from tomojax.core.cone import cone_pose_columns, cone_project, frame_coefficients, use_cuda_cone
 from tomojax.core.projector import forward_project_view_T
 
 from ._pose_context import _PoseObjectiveContext
@@ -59,6 +59,26 @@ def build_pose_prediction_and_columns(ctx: _PoseObjectiveContext) -> Callable:
         det_grid=ctx.det_grid,
         options=replace(PoseJacobianOptions.from_config(ctx.cfg), cone_beam=ctx.cone is not None),
     )
+
+
+def _cone_autodiff_columns(
+    params, nominal, frame, volume, target, weight, *, grid, detector, translation_frame
+):
+    """Analytic columns of the same piecewise-smooth cone Joseph model."""
+
+    def coefficients(p):
+        pose = apply_pose_update(nominal, p, translation_frame=translation_frame)
+        return frame_coefficients(pose[None], frame, grid, detector)[0, :12]
+
+    # Forward rays do not need the adjoint's detector-plane coefficients or
+    # separability flag. Padding only the ray geometry lets JAX drop that work.
+    coeff = jnp.pad(coefficients(params), (0, 13))
+    tangent = jax.jacfwd(coefficients)(params).T
+    images = cone_pose_columns(
+        volume, coeff[None], tangent=tangent[None], grid=grid, detector=detector
+    )[0]
+    images = images.reshape(1 + params.shape[0], -1)
+    return weight.ravel() * (images[0] - target.ravel()), weight.ravel() * images[1:]
 
 
 def _cone_central_columns(
@@ -120,11 +140,21 @@ def pose_prediction_and_columns(
     )
 
     joseph = options.integrator.startswith("joseph")
-    # Cone views use central differences of the CUDA forward, which has no pose
-    # derivative; autodiff columns use the differentiable JAX reference.
-    central = options.jacobian == "central" or (options.cone_beam and cuda_backend())
+    central = options.jacobian == "central"
     cone_backend = "jax" if options.cone_beam and not central else "pallas"
-    if options.cone_beam and central and use_cuda_cone():
+    if options.cone_beam and use_cuda_cone():
+        if not central:
+            return _cone_autodiff_columns(
+                p5_i,
+                t_nom_i,
+                frame_i,
+                vol,
+                target,
+                weight,
+                grid=grid,
+                detector=detector,
+                translation_frame=options.translation_frame,
+            )
         return _cone_central_columns(
             p5_i,
             t_nom_i,

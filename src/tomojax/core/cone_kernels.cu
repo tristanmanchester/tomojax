@@ -534,3 +534,75 @@ extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint_wide(
 {
     plane_tile<64>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv);
 }
+
+// One traversal accumulates the two spatial gradients and their plane moments.
+// Six physical pose directions are then contractions, not six extra ray traversals.
+extern "C" __global__ void cone_pose_columns(
+    const float* __restrict__ coeff, const float* __restrict__ tangent,
+    const float* __restrict__ vol, float* __restrict__ out,
+    int nx, int ny, int nz, int nu, int nv, int width, float sx, float sy, float sz)
+{
+    int view = blockIdx.x;
+    const float* c = coeff + (long)view * NC;
+    int u = blockIdx.y * 16 + threadIdx.x / 8, v = blockIdx.z * 8 + threadIdx.x % 8;
+    bool live = u < nu && v < nv;
+    float fu = u, fv = v, r0, r1, r2;
+    ray_of(c, fu, fv, r0, r1, r2);
+    int a = ray_axis(r0,r1,r2), b = a == 0 ? 1 : 0, cc = a == 2 ? 1 : 2;
+    int na = SEL(a,nx,ny,nz), nb = SEL(b,nx,ny,nz), nc = SEL(cc,nx,ny,nz);
+    long s0=(long)ny*nz, s1=nz;
+    long sa=SEL(a,s0,s1,1L), sb=SEL(b,s0,s1,1L), sc=SEL(cc,s0,s1,1L);
+    float ra=SEL(a,r0,r1,r2), rb=SEL(b,r0,r1,r2), rc=SEL(cc,r0,r1,r2);
+    float Sa=c[a], Sb=c[b], Sc=c[cc], inv=__frcp_rn(ra);
+    float slopeb=rb*inv, slopec=rc*inv;
+    float lo=0.f, hi=(float)(na-1), base=Sb-Sa*slopeb;
+    if(fabsf(slopeb)<1e-12f) { if(base<=-1.f || base>=(float)nb) live=false; }
+    else { float k0=(-1.f-base)/slopeb,k1=((float)nb-base)/slopeb;
+        lo=fmaxf(lo,fminf(k0,k1)); hi=fminf(hi,fmaxf(k0,k1)); }
+    base=Sc-Sa*slopec;
+    if(fabsf(slopec)<1e-12f) { if(base<=-1.f || base>=(float)nc) live=false; }
+    else { float k0=(-1.f-base)/slopec,k1=((float)nc-base)/slopec;
+        lo=fmaxf(lo,fminf(k0,k1)); hi=fminf(hi,fmaxf(k0,k1)); }
+    int k0=max((int)floorf(fminf(lo,(float)na)),0),k1=min((int)ceilf(fmaxf(hi,-1.f)),na-1);
+    if(!live) { k0=na;k1=-1; }
+    int first=warp_min(k0),last=warp_max(k1);
+    // Spatial gradients and their ray-parameter moments suffice for every pose direction.
+    float sum=0.f, gb=0.f,gc=0.f,gtb=0.f,gtc=0.f;
+    for(int k=first;k<=last;++k) {
+        if(k<k0 || k>k1)continue;
+        float t=__fmul_rn(__fsub_rn((float)k,Sa),inv);
+        float fb=__fmaf_rn(t,rb,Sb),fc=__fmaf_rn(t,rc,Sc);
+        float fb0=floorf(fb),fc0=floorf(fc);
+        int b0=(int)fb0,c0=(int)fc0;
+        float wb1=fb-fb0,wc1=fc-fc0,wb0=1.f-wb1,wc0=1.f-wc1;
+        bool b0in=(unsigned)b0<(unsigned)nb,b1in=(unsigned)(b0+1)<(unsigned)nb;
+        bool c0in=(unsigned)c0<(unsigned)nc,c1in=(unsigned)(c0+1)<(unsigned)nc;
+        const float* p=vol+(long)k*sa+(long)b0*sb+(long)c0*sc;
+        float v00=b0in&&c0in?__ldg(p):0.f;
+        float v01=b0in&&c1in?__ldg(p+sc):0.f;
+        float v10=b1in&&c0in?__ldg(p+sb):0.f;
+        float v11=b1in&&c1in?__ldg(p+sb+sc):0.f;
+        float s0=v00*wc0+v01*wc1,s1=v10*wc0+v11*wc1;
+        sum+=wb0*s0+wb1*s1;
+        float db=s1-s0,dc=wb0*(v01-v00)+wb1*(v11-v10);
+        gb+=db;gc+=dc;gtb+=t*db;gtc+=t*dc;
+    }
+    if(u>=nu || v>=nv)return;
+    long pixel=((long)view*(width+1)*nv+v)*nu+u, stride=(long)nv*nu;
+    float w=path_w(r0,r1,r2,ra,sx,sy,sz);
+    out[pixel]=sum*w;
+    float length2=(r0*sx)*(r0*sx)+(r1*sy)*(r1*sy)+(r2*sz)*(r2*sz);
+    const float* dc=tangent+(long)view*width*12;
+    for(int q=0;q<width;++q) {
+        const float* d=dc+q*12;
+        float dr0=d[3]+fu*d[6]+fv*d[9]-d[0];
+        float dr1=d[4]+fu*d[7]+fv*d[10]-d[1];
+        float dr2=d[5]+fu*d[8]+fv*d[11]-d[2];
+        float dra=SEL(a,dr0,dr1,dr2),drb=SEL(b,dr0,dr1,dr2),drc=SEL(cc,dr0,dr1,dr2);
+        // df_b = dS_b - (r_b/r_a)dS_a + t(dr_b - (r_b/r_a)dr_a).
+        float derivative=(d[b]-slopeb*d[a])*gb+(d[cc]-slopec*d[a])*gc
+                         +(drb-slopeb*dra)*gtb+(drc-slopec*dra)*gtc;
+        float dlog=(r0*dr0*sx*sx+r1*dr1*sy*sy+r2*dr2*sz*sz)/length2-dra*inv;
+        out[pixel+(q+1)*stride]=w*(derivative+sum*dlog);
+    }
+}
