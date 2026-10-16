@@ -9,7 +9,7 @@ module fits only the requested x/y axis rotations, in the calibration convention
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 
 import numpy as np
@@ -23,6 +23,8 @@ class AxisDirectionSeed:
     rotations_deg: tuple[float, float]
     correlation_before: float
     correlation_after: float
+    # Boundary contact is diagnostic; explicit bounded fits retain their solution.
+    on_search_boundary: bool = False
 
 
 def axis_in_detector(
@@ -66,6 +68,8 @@ def fit_axis_direction(
     along the beam. Rank the current and reflected candidates by their measured
     common-line agreement. Explicit bounds and frozen rotations remain binding;
     equal evidence retains the candidate near the supplied axis.
+    Explicit bounded fits retain their solution; ``on_search_boundary`` records
+    whether an active, nonperiodic bound may limit its interpretation.
     """
     fit_local = partial(
         _fit_local_axis_direction,
@@ -75,8 +79,23 @@ def fit_axis_direction(
         bounds_deg=bounds_deg,
         detector_roll_deg=detector_roll_deg,
     )
-    fitted = fit_local(rotations_deg=rotations_deg)
     nominal = np.asarray(nominal_axis, np.float64)
+    start = rotations_deg
+    # An axial starting geometry carries no beam-side or laminography tilt.
+    # Search the allowed hemisphere before the local fit, rather than silently
+    # imposing the local capture range as an absent metadata prior.
+    if all(active) and np.allclose(nominal, (0, 0, 1)) and np.allclose(start, (0, 0)):
+        start = _global_axis_start(sample, nominal, bounds_deg, detector_roll_deg)
+    fitted = fit_local(rotations_deg=start)
+    if start != rotations_deg:
+        before = _magnitude_agreement(
+            *sample(
+                axis_in_detector(
+                    nominal, np.asarray(rotations_deg), detector_roll_deg=detector_roll_deg
+                )
+            )
+        )
+        fitted = replace(fitted, correlation_before=before)
     reflected_x = -2 * np.rad2deg(np.arctan2(nominal[1], nominal[2])) - rotations_deg[0]
     reflected_x = float((reflected_x + 180) % 360 - 180)
     if (
@@ -88,9 +107,24 @@ def fit_axis_direction(
     reflected = fit_local(rotations_deg=(reflected_x, rotations_deg[1]))
     if reflected.correlation_after <= fitted.correlation_after:
         return fitted
-    return AxisDirectionSeed(
-        reflected.rotations_deg, fitted.correlation_before, reflected.correlation_after
+    return replace(reflected, correlation_before=fitted.correlation_before)
+
+
+def _global_axis_start(sample, nominal, bounds, roll):
+    """Coarse signed axis search, with equal evidence retaining the axial prior."""
+    candidates = [(0.0, 0.0)]
+    candidates.extend(
+        (float(x), float(y))
+        for x in np.arange(-80.0, 81.0, 5.0)
+        for y in np.arange(-60.0, 61.0, 10.0)
+        if bounds[0][0] <= x <= bounds[0][1] and bounds[1][0] <= y <= bounds[1][1]
     )
+
+    def rank(rotations):
+        axis = axis_in_detector(nominal, np.asarray(rotations), detector_roll_deg=roll)
+        return -_magnitude_agreement(*sample(axis)), sum(x * x for x in rotations)
+
+    return min(candidates, key=rank)
 
 
 def _fit_local_axis_direction(
@@ -154,4 +188,7 @@ def _fit_local_axis_direction(
     after = score(x)
     if after > before:
         x, after = initial, before
-    return AxisDirectionSeed((float(x[0]), float(x[1])), -before, -after)
+    # A full turn ends at a periodic coordinate seam, not an inference limit.
+    limited = indices[np.diff(bounds[indices], axis=1).ravel() < 360 - 1e-3]
+    on_boundary = bool(np.any(np.isclose(x[limited, None], bounds[limited], rtol=0, atol=1e-3)))
+    return AxisDirectionSeed((float(x[0]), float(x[1])), -before, -after, on_boundary)

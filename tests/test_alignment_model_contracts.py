@@ -524,7 +524,13 @@ def _analytic_common_lines(true_axis):
 
 @pytest.mark.parametrize(
     ("tilt", "azimuth", "roll", "nominal_tilt"),
-    [(35.0, 0.4, 1.7, 31.0), (24.0, -2.0, 0.0, 20.0), (-35.0, 0.4, 1.7, 31.0)],
+    [
+        (35.0, 0.4, 1.7, 31.0),
+        (24.0, -2.0, 0.0, 20.0),
+        (-35.0, 0.4, 1.7, 31.0),
+        (58.0, 17.0, 0.0, 0.0),
+        (-43.0, -13.0, 0.0, 0.0),
+    ],
 )
 def test_common_line_axis_seed_recovers_nonplanar_geometry_despite_view_shifts(
     tilt, azimuth, roll, nominal_tilt
@@ -548,12 +554,22 @@ def test_common_line_axis_seed_preserves_frozen_bounds_and_uninformative_estimat
         sample, nominal, active=(True, False), bounds_deg=((0, 2), (-60, 60))
     )
     np.testing.assert_allclose(result.rotations_deg, [2, 0], atol=1e-3)
+    assert result.on_search_boundary
     empty = init.fit_axis_direction(
         lambda axis: (np.ones((3, 8), complex), np.ones((3, 8), complex)),
         nominal,
         rotations_deg=(1.25, -0.75),
     )
     assert empty.rotations_deg == (1.25, -0.75)
+    unknown = init.fit_axis_direction(
+        lambda axis: (np.ones((3, 8), complex), np.ones((3, 8), complex)), np.array([0, 0, 1])
+    )
+    assert unknown.rotations_deg == (0.0, 0.0)
+    assert not unknown.on_search_boundary
+    seam = init.fit_axis_direction(
+        lambda axis: (np.ones((3, 8)), np.ones((3, 8))), nominal, rotations_deg=(180, 0)
+    )
+    assert not seam.on_search_boundary
 
 
 @pytest.mark.parametrize("bounded", [False, True])

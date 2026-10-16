@@ -125,7 +125,7 @@ tomojax.__version__: str
 def tomojax.align(
         scan: 'Scan',
         *,
-        mode: 'AlignmentMode' = 'pose',
+        mode: "AlignmentMode | Literal['auto']" = 'auto',
         quality: 'QualityTier' = 'fast',
         levels: 'Iterable[int] | None' = None,
         freeze: 'Iterable[str]' = (),

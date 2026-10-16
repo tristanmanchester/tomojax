@@ -12,11 +12,12 @@ import numpy as np
 from scipy.ndimage import gaussian_filter, gaussian_filter1d
 from scipy.signal.windows import tukey
 
-import tomojax as tj
 from tomojax._scan import Scan, describe, with_grid
 from tomojax.backends import device_free_memory_bytes
 from tomojax.geometry import Grid
 from tomojax.geometry.api import stack_view_poses
+from tomojax.recon import backproject, project
+from tomojax.recon.api import reconstruct_arrays
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -121,7 +122,9 @@ def _focus_evidence(scan: Scan, voxel_budget: float) -> _Evidence:
         grid = _broad_grid(small, pitch)
     window = (tukey(d.nv, 1)[:, None] * tukey(d.nu, 1)[None]).astype(np.float32)
     volume = np.asarray(
-        tj.reconstruct(Scan(small.projections * window, small.geometry), "fbp", grid=grid).volume
+        reconstruct_arrays("fbp", small.geometry, grid, small.detector, small.projections * window)[
+            0
+        ]
     )
     xy = (np.arange(grid.nx) - (grid.nx - 1) / 2) * grid.vx
     disk = xy[:, None] ** 2 + xy[None, :] ** 2 < (d.nu * d.du / 4) ** 2
@@ -162,12 +165,12 @@ def _score_supports(scan: Scan, evidence: _Evidence) -> list[_Score]:
     zeros = jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
 
     def forward(x: jax.Array) -> jax.Array:
-        return tj.project(fit.geometry, x, grid=grid)
+        return project(fit.geometry, x, grid=grid)
 
     def adjoint(y: jax.Array) -> jax.Array:
-        return tj.backproject(fit.geometry, y, grid=grid)
+        return backproject(fit.geometry, y, grid=grid)
 
-    validate = jax.jit(lambda x: tj.project(validation.geometry, x, grid=grid))
+    validate = jax.jit(lambda x: project(validation.geometry, x, grid=grid))
 
     @jax.jit
     def solve(mask: jax.Array) -> jax.Array:

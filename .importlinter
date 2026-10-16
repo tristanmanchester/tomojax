@@ -6,8 +6,9 @@ name = Layer direction
 type = layers
 layers =
     tomojax.cli
-    tomojax._region
     tomojax._workflow
+    tomojax._laminography
+    tomojax._region
     tomojax._loading
     tomojax._scan
     tomojax._astra
@@ -30,6 +31,7 @@ type = forbidden
 allow_indirect_imports = True
 source_modules =
     tomojax.cli
+    tomojax._laminography
     tomojax._region
     tomojax._workflow
     tomojax._loading
@@ -51,6 +53,7 @@ type = forbidden
 allow_indirect_imports = True
 source_modules =
     tomojax.cli
+    tomojax._laminography
     tomojax._region
     tomojax._workflow
     tomojax._loading

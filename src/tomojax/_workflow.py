@@ -102,7 +102,7 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
     if record is None or record.volume is None:
         raise ValueError(f"{path} holds no reconstructed volume")
     meta = record.geometry_metadata
-    info = meta.get("reconstruction_info")
+    info = meta.get("reconstruction_info", meta.get("alignment_info"))
     return Reconstruction(
         volume=np.asarray(record.volume),
         scan=scan,
@@ -134,6 +134,9 @@ def save(path: str | PathLike[str], item: Scan | Reconstruction | Alignment) -> 
     elif isinstance(item, Alignment):  # pyright: ignore[reportUnnecessaryIsInstance]
         record = record_of(item.scan)
         record.volume = item.volume
+        record.geometry_metadata["alignment_info"] = json.loads(
+            json.dumps(dict(item.info), default=_json_value)
+        )
     else:
         raise TypeError(f"save takes a Scan, Reconstruction or Alignment, not {type(item)}")
     save_dataset(path, record)
@@ -389,7 +392,7 @@ def estimate_center(scan: Scan) -> Scan:
 def align(
     scan: Scan,
     *,
-    mode: AlignmentMode = "pose",
+    mode: AlignmentMode | Literal["auto"] = "auto",
     quality: QualityTier = "fast",
     levels: Iterable[int] | None = None,
     freeze: Iterable[str] = (),
@@ -400,7 +403,12 @@ def align(
 ) -> Alignment:
     """Estimate ``scan``'s geometry corrections and reconstruct with them.
 
-    ``mode`` is ``pose`` (per-view motion, the default), ``cor`` (detector
+    ``mode="auto"`` selects centre estimation for axial parallel scans and
+    guarded setup/support/motion selection for unposed laminography. Its
+    conditional outcome and limitations are in ``info["automatic"]``.
+    Centre estimation records its input/output physical detector coordinates;
+    its success resolves only the reconstruction-only calibration limitation.
+    Explicit ``mode`` is ``pose`` (per-view motion), ``cor`` (detector
     centre, or a cone beam's axis offset and detector roll), ``cor-then-pose``
     or ``full`` (setup geometry, then motion, coarse to fine); see
     :mod:`tomojax.alignment`. ``quality`` is ``fast`` or ``reference`` (slower,
@@ -439,6 +447,48 @@ def align(
     :attr:`Alignment.info` holds the mode, levels and resolved ``config`` with
     the solver's record (losses, gauge, any calibrated setup geometry).
     """
+    if mode == "auto":
+        freeze = tuple(freeze)
+        explicit = config is not None or levels is not None or bool(freeze)
+        explicit = explicit or grid is not None or checkpoint is not None or quality != "fast"
+        if not explicit and describe(scan.geometry)[0] != "cone":
+            from tomojax.core.devices import sharing
+
+            with sharing(devices):
+                return _align_automatically(scan)
+        if explicit and describe(scan.geometry)[0] != "cone":
+            from tomojax._laminography import uses_laminography_workflow
+
+            if uses_laminography_workflow(scan):
+                raise ValueError(
+                    "automatic laminography needs an explicit mode for expert overrides"
+                )
+        mode = "pose"
+    return _align_explicit(
+        scan,
+        mode=mode,
+        quality=quality,
+        levels=levels,
+        freeze=freeze,
+        grid=grid,
+        checkpoint=checkpoint,
+        config=config,
+        devices=devices,
+    )
+
+
+def _align_explicit(
+    scan: Scan,
+    *,
+    mode: AlignmentMode,
+    quality: QualityTier,
+    levels: Iterable[int] | None,
+    freeze: Iterable[str],
+    grid: Grid | None,
+    checkpoint: str | PathLike[str] | None,
+    config: AlignConfig | None,
+    devices: Device | Sequence[Device] | None,
+) -> Alignment:
     from tomojax.alignment.api import alignment_plan
     from tomojax.geometry import ConeSegments
 
@@ -478,6 +528,50 @@ def align(
     aligned = scan_from_record(corrected, poses=True)
     return Alignment(
         volume=volume, scan=replace(aligned, source=scan.source), poses=poses, info=info
+    )
+
+
+def _align_automatically(scan: Scan) -> Alignment:
+    """Geometry-aware policy; every numerical operation below has an explicit mode."""
+    from tomojax._laminography import reconstruct_laminography, uses_laminography_workflow
+
+    if scan.poses is not None:
+        return align(scan, mode="pose")
+    if uses_laminography_workflow(scan):
+        result = reconstruct_laminography(scan, align=align, reconstruct=reconstruct)
+        poses = result.scan.poses
+        if poses is None:
+            poses = np.zeros((len(result.scan.angles), 6), np.float32)
+        return Alignment(result.volume, result.scan, np.asarray(poses), result.info)
+    automatic: dict[str, object] = {"status": "ok", "method": "center", "reasons": []}
+    center: dict[str, object] = {
+        "input": list(scan.detector.center),
+        "unit": "geometry_length",
+    }
+    try:
+        scan = estimate_center(scan)
+        center.update(status="estimated", output=list(scan.detector.center))
+    except ValueError as exc:
+        center.update(status="failed", reason=str(exc))
+        automatic.update(status="limited", reasons=[str(exc)])
+    automatic["center_estimation"] = center
+    result = reconstruct(scan)
+    reconstruction = dict(cast("Mapping[str, Any]", result.info.get("automatic", {})))
+    automatic["reconstruction"] = reconstruction
+    reasons = list(reconstruction.get("reasons", []))
+    if center["status"] == "estimated":
+        # Resolve only the named calibration issue in the composed workflow;
+        # nested reconstruction context still describes that operation alone.
+        resolved = reconstruction.get("center_calibration_reason")
+        reasons = [reason for reason in reasons if reason != resolved]
+    if reconstruction.get("status") == "limited" and (reasons or not reconstruction.get("reasons")):
+        automatic["status"] = "limited"
+    automatic["reasons"] = [*cast("list[str]", automatic["reasons"]), *reasons]
+    return Alignment(
+        result.volume,
+        result.scan,
+        np.zeros((len(scan.angles), 6), np.float32),
+        {**result.info, "automatic": automatic},
     )
 
 
