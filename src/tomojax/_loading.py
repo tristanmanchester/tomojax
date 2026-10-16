@@ -154,8 +154,9 @@ class Frames:
         each in the order given (see :mod:`tomojax.corrections`). ``epsilon``
         must be finite and positive; it bounds the flat field and transmission
         below. Views are corrected on the device in batches of ``batch_views``,
-        a positive integer. Automatic batches target 256 MiB, including the
-        padded FFT arrays needed for Paganin phase retrieval.
+        a positive integer. Automatic view batches target 32 MiB for simple
+        pipelines, or 256 MiB including additional workspace such as the padded
+        FFT arrays needed for Paganin phase retrieval.
 
         ``binning`` averages blocks of ``binning`` x ``binning`` detector pixels of
         the line integrals, as :meth:`Scan.binned` does, without holding the

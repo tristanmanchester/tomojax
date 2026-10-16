@@ -445,7 +445,13 @@ def align(
     if grid is not None:
         scan = with_grid(scan, grid)
     plan = alignment_plan(
-        mode, scan.grid, quality=quality, levels=levels, freeze=freeze, config=config
+        mode,
+        scan.grid,
+        quality=quality,
+        geometry=scan.geometry,
+        levels=levels,
+        freeze=freeze,
+        config=config,
     )
     segmented = isinstance(scan.geometry, ConeSegments)
     if plan.mode != "pose" and (scan.poses is not None or segmented):
