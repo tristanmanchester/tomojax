@@ -531,7 +531,7 @@ def tomojax.recon.sirt(
         init_x: 'jax.Array | np.ndarray | None' = None,
         config: 'SIRTConfig | None' = None,
         det_grid: 'tuple[jax.Array, jax.Array] | None' = None,
-    ) -> 'tuple[jax.Array, dict[str, object]]'
+    ) -> 'tuple[jax.Array | np.ndarray, dict[str, object]]'
 def tomojax.recon.spdhg_tv(
         geometry: 'Geometry',
         grid: 'Grid',

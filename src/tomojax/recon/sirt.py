@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 import math
 import operator
@@ -19,6 +19,7 @@ from tomojax.core.validation import (
     validate_projection_stack,
     validate_volume,
 )
+from tomojax.recon._axial_slabs import axial_slabs, independent_planes
 from tomojax.recon._projection import (
     ConeModel,
     ProjectorBackend,
@@ -28,7 +29,7 @@ from tomojax.recon._projection import (
 )
 
 if TYPE_CHECKING:
-    from tomojax.geometry import Detector, Geometry, Grid
+    from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -66,7 +67,16 @@ def _inverse(value: jax.Array) -> jax.Array:
 
 @partial(
     jax.jit,
-    static_argnames=("grid", "detector", "backend", "batch", "model", "subsets"),
+    static_argnames=(
+        "grid",
+        "detector",
+        "backend",
+        "batch",
+        "model",
+        "subsets",
+        "cache_columns",
+        "axial",
+    ),
 )
 def _solve(
     poses: jax.Array,
@@ -85,9 +95,23 @@ def _solve(
     batch: int,
     model: str | ConeModel,
     subsets: int,
+    cache_columns: bool,
+    axial: bool,
 ) -> jax.Array:
     select = subset_operators(poses, grid, detector, det_grid, backend, batch, model, subsets)
     shape = (grid.nx, grid.ny, grid.nz)
+    normalization = select
+    normal_rows = detector.nv
+    normal_shape = shape
+    if axial:
+        from tomojax.geometry import grid_volume_origin
+
+        normal_grid = replace(grid, nz=1, vol_origin=(*grid_volume_origin(grid)[:2], 0.0))
+        normal_detector = replace(detector, nv=1, center=(detector.center[0], 0.0))
+        normalization = subset_operators(
+            poses, normal_grid, normal_detector, None, backend, batch, model, subsets
+        )
+        normal_rows, normal_shape = 1, (grid.nx, grid.ny, 1)
     mask = jnp.ones(shape, jnp.float32) if support is None else (support != 0).astype(jnp.float32)
 
     def constrain(x: jax.Array) -> jax.Array:
@@ -96,26 +120,26 @@ def _solve(
     initial = constrain(jnp.zeros(shape, jnp.float32) if initial is None else initial)
 
     def row_weights(index: jax.Array) -> jax.Array:
-        _, forward, _ = select(index)
-        return _inverse(forward(mask))
+        forward, _, _ = (normalization if support is None else select)(index)
+        return _inverse(forward(jnp.ones(normal_shape, jnp.float32) if support is None else mask))
 
     def column_weights(index: jax.Array) -> jax.Array:
-        indices, _, adjoint = select(index)
-        return _inverse(adjoint(jnp.ones((len(indices), detector.nv, detector.nu), jnp.float32)))
+        _, adjoint, _ = normalization(index)
+        count = (data.shape[0] + subsets - 1) // subsets
+        return _inverse(adjoint(jnp.ones((count, normal_rows, detector.nu), jnp.float32)))
 
     rows = jax.lax.map(row_weights, jnp.arange(subsets))
     # Avoid storing a volume for every subset on large scans. The exact subset
     # normalization is then recomputed at each update, not approximated by a
     # rescaled full-scan normalization.
-    cache_columns = subsets * math.prod(shape) * 4 <= 256 * 1024**2
     columns = jax.lax.map(column_weights, jnp.arange(subsets)) if cache_columns else None
 
     def update(step: jax.Array, x: jax.Array) -> jax.Array:
         index = step % subsets
-        indices, forward, adjoint = select(index)
+        _, _, residual_adjoint = select(index)
         column = column_weights(index) if columns is None else columns[index]
-        residual = (data[indices] - forward(x)) * rows[index]
-        return constrain(x + relaxation * column * adjoint(residual))
+        gradient = residual_adjoint(x, data, rows[index])
+        return constrain(x + relaxation * column * gradient)
 
     return jax.lax.fori_loop(0, iterations * subsets, update, initial)
 
@@ -129,12 +153,14 @@ def sirt(
     init_x: jax.Array | np.ndarray | None = None,
     config: SIRTConfig | None = None,
     det_grid: tuple[jax.Array, jax.Array] | None = None,
-) -> tuple[jax.Array, dict[str, object]]:
+) -> tuple[jax.Array | np.ndarray, dict[str, object]]:
     """Reconstruct with SIRT/OS-SART; return the volume and full-sweep count.
 
     Supports parallel, tilted and cone-beam scans on the existing matched
     projectors. Inputs and updates are FP32. An iteration is a complete sweep,
     not one subset update. No residual-based stopping or quality claim is made.
+    Large axial Joseph scans whose detector rows coincide with voxel planes
+    run in independent slabs, returning a host array without changing the solve.
     """
     cfg = SIRTConfig() if config is None else config
     iterations = operator.index(cfg.iterations)
@@ -163,24 +189,52 @@ def sirt(
         det_grid=det_grid,
         context="sirt",
     )
+    axial = model == "joseph" and det_grid is None and independent_planes(geometry, grid, detector)
+    if axial:
+
+        def solve_slab(
+            geometry: ParallelGeometry,
+            data: jax.Array | np.ndarray,
+            initial: jax.Array | np.ndarray | None,
+            support: jax.Array | np.ndarray | None,
+        ) -> tuple[jax.Array | np.ndarray, dict[str, object]]:
+            return sirt(
+                geometry,
+                geometry.grid,
+                geometry.detector,
+                data,
+                init_x=initial,
+                config=replace(cfg, support=support),
+            )
+
+        result = axial_slabs(
+            geometry,
+            grid,
+            detector,
+            projections,
+            initial=init_x,
+            support=cfg.support,
+            volume_buffers=3 + min(subsets, 16),
+            projection_buffers=2 + 2 / subsets,
+            solve=solve_slab,
+        )
+        if result is not None:
+            return result
+    from tomojax.backends import device_free_memory_bytes
+
+    free = device_free_memory_bytes()
+    column_budget = 256 * 1024**2 if free is None else free // 4
     poses = stack_view_poses(geometry, n)
     volume = _solve(
-        poses,
-        jnp.asarray(projections, jnp.float32),
+        poses, jnp.asarray(projections, jnp.float32),
         None if init_x is None else jnp.asarray(init_x, jnp.float32),
         None if cfg.support is None else jnp.asarray(cfg.support),
-        det_grid,
-        jnp.int32(iterations),
-        jnp.float32(cfg.relaxation),
-        jnp.float32(lower),
-        jnp.float32(upper),
-        grid=grid,
-        detector=detector,
-        backend=backend,
-        batch=batch,
-        model=model,
-        subsets=subsets,
-    )
+        det_grid, jnp.int32(iterations), jnp.float32(cfg.relaxation),
+        jnp.float32(lower), jnp.float32(upper), grid=grid, detector=detector,
+        backend=backend, batch=batch, model=model, subsets=subsets,
+        cache_columns=subsets * grid.nx * grid.ny * (1 if axial else grid.nz) * 4 <= column_budget,
+        axial=axial,
+    )  # fmt: skip
     return volume, {
         "effective_iterations": iterations,
         "subset_updates": iterations * subsets,

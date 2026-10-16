@@ -142,7 +142,7 @@ def _iterative_result(
     cfg: CGLSConfig | FistaConfig | SPDHGConfig | SIRTConfig,
     start: jnp.ndarray | None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
-) -> tuple[jnp.ndarray, dict[str, object]]:
+) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
     """Dispatch normalized method configurations to the matched solvers."""
     args = (geometry, grid, detector, projections)
     if isinstance(cfg, CGLSConfig):

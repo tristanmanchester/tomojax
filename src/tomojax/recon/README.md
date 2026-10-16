@@ -25,7 +25,9 @@ SIRT uses the exact matched projector pair with row/column normalization:
 More subsets select interleaved OS-SART, with one full sweep per iteration;
 one view per subset gives SART. Bounds apply after every subset update, and
 voxels outside the support stay zero. Ordered subsets can cycle on inconsistent
-data; reduce their number or relaxation for final refinement.
+data; reduce their number or relaxation for final refinement. Large axial
+Joseph scans with detector rows on voxel planes run in exact independent
+slabs when needed, returning a host NumPy volume.
 
 Built-in parallel `fbp` zero-extends measured detector rows far enough to retain
 the ramp filter's tails at every output voxel. Zero raw data outside a detector

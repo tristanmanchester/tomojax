@@ -3,7 +3,9 @@
 ## Unreleased
 
 `tj.reconstruct(scan, "sirt")` adds matched SIRT and ordered-subset SART,
-with per-update lower/upper bounds and a reconstruction support mask.
+with per-update lower/upper bounds and a reconstruction support mask. Axial
+Joseph solves share their exact two-dimensional normalization across rows
+and use host slabs when the workspace is too large.
 
 It just works (end of the sixth lab run): `tj.reconstruct(scan)` now defaults
 to `method="auto"` and `tj.align(scan)` to `mode="auto"`, choosing the method,

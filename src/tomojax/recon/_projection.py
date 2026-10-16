@@ -400,10 +400,12 @@ def subset_operators(
 ):
     """A factory for interleaved subsets of a matched, nonnegative operator.
 
-    ``select(index)`` returns ``(indices, forward, adjoint)``. Each subset has
+    ``select(index)`` returns ``(forward, adjoint, residual_adjoint)``. Each subset has
     ``ceil(views / subsets)`` entries; trailing repeated indices have zero
-    operator weights. Select data with ``indices`` too. Cone source arrangements
-    and detector centres stay attached to their original views.
+    operator weights. ``residual_adjoint(x, full_data, row_weights)`` evaluates
+    ``A.T @ (row_weights * (full_data[indices] - A*x))`` one batch at a time,
+    without storing a predicted sinogram. Cone source arrangements and detector
+    centres stay attached to their original views.
     """
     ops = _Batches(
         poses, grid, detector, det_grid, backend, batch_size, model, "linear",
@@ -423,7 +425,21 @@ def subset_operators(
         def adjoint(images):
             return _adjoint_views(selected, (images,), None, selected.zeros_volume())
 
-        return indices, forward, adjoint
+        def residual_adjoint(volume, data, weights):
+            def body(chunk, output):
+                start, batch, counts = selected.select(chunk)
+                view_ids = jax.lax.dynamic_slice_in_dim(indices, start, selected.size)
+                residual = data[view_ids] - selected.project(volume, start, batch)
+                residual = residual * jax.lax.dynamic_slice(
+                    weights, (start, 0, 0), (selected.size, weights.shape[1], detector.nu)
+                )
+                return selected.backproject(
+                    jnp.where(counts[:, None, None], residual, 0.0), start, batch, output
+                )
+
+            return jax.lax.fori_loop(0, selected.count, body, selected.zeros_volume())
+
+        return forward, adjoint, residual_adjoint
 
     return select
 
