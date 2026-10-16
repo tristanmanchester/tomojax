@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 import math
+import subprocess
+import sys
 
 import jax
 import numpy as np
@@ -20,6 +22,20 @@ from tomojax.geometry import (
 from tomojax.recon import FourierConfig, fourier_reconstruct
 
 BACKENDS = ["numpy", pytest.param("cupy", marks=pytest.mark.gpu)]
+
+
+def test_host_fourier_does_not_import_jax():
+    code = """
+import sys, numpy as np
+from tomojax.geometry import Grid, Detector, ParallelGeometry
+from tomojax.recon import FourierConfig, fourier_reconstruct
+g, d = Grid(4, 4, 1, 1, 1, 1), Detector(4, 1, 1, 1)
+x = fourier_reconstruct(ParallelGeometry(g, d, [0., 90.]), g, d,
+    np.zeros((2, 1, 4), np.float32), config=FourierConfig(backend='numpy'),
+    out=np.empty((4, 4, 1), np.float32))
+assert 'jax' not in sys.modules and np.all(x == 0)
+"""
+    subprocess.run([sys.executable, "-c", code], check=True)
 
 
 @pytest.fixture
