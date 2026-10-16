@@ -57,6 +57,54 @@ def test_joint_coupling_selects_the_solver_for_every_pose_stage():
     assert cor.stages[0].objective_kind != "joint_volume_pose"
 
 
+@pytest.mark.gpu
+@pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
+def test_frozen_columns_use_no_cache_space_and_preserve_the_update(monkeypatch, solver):
+    from dataclasses import replace
+
+    import tomojax as tj
+    from tomojax.alignment import AlignConfig
+
+    grid, detector = tj.Grid(4, 3, 5, 0.7, 1.1, 0.8), tj.Detector(5, 6, 0.8, 0.9)
+    geometry = tj.LaminographyGeometry(grid, detector, [13, 47, 103], tilt_deg=23)
+    x = jnp.asarray(np.random.default_rng(9).uniform(0.2, 1.0, (4, 3, 5)), jnp.float32)
+    cfg = AlignConfig(
+        gn_coupling="joint",
+        gn_joint_solver=solver,
+        ray_integrator="joseph",
+        gather_dtype="fp32",
+    )
+    common = dict(
+        grid=grid,
+        detector=detector,
+        projections=tj.project(geometry, x),
+        cfg=cfg,
+        n_views=3,
+        active_mask=jnp.array([0, 0, 0, 1, 1, 0], jnp.float32),
+    )
+    runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
+    ctx = _pose_objective_context(runtime=runtime, **common)
+    captured = []
+    monkeypatch.setattr(_coupled_objective, "_pose_cache_limit", lambda: 3 * 5 * 6 * 2 * 4)
+    monkeypatch.setattr(
+        _coupled_objective,
+        "_check_device_memory",
+        lambda arrays, spec: captured.append((arrays, spec)),
+    )
+    objective = _coupled_objective.build_coupled_objective(ctx)
+    assert objective.pose_columns_cached
+    arrays, spec = captured[0]
+    p = jnp.zeros((3, 6), jnp.float32).at[:, 3].set(jnp.array([0.03, -0.01, 0.02]))
+    compact = objective.update(p, 0.9 * x)
+    full = _coupled_objective.run_update(
+        arrays, p, 0.9 * x, spec=replace(spec, active_columns=tuple(range(6)))
+    )
+    assert compact.finite and full.finite
+    for actual, expected in zip(compact.increment, full.increment, strict=True):
+        np.testing.assert_allclose(actual, expected, rtol=5e-4, atol=3e-6)
+    np.testing.assert_array_equal(compact.increment[1][:, [0, 1, 2, 5]], 0)
+
+
 @pytest.mark.numerical
 @pytest.mark.usefixtures("views_per_batch")
 @pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])

@@ -62,7 +62,7 @@ def build_pose_prediction_and_columns(ctx: _PoseObjectiveContext) -> Callable:
 
 
 def _cone_autodiff_columns(
-    params, nominal, frame, volume, target, weight, *, grid, detector, translation_frame
+    params, nominal, frame, volume, target, weight, indices, *, grid, detector, translation_frame
 ):
     """Analytic columns of the same piecewise-smooth cone Joseph model."""
 
@@ -73,20 +73,31 @@ def _cone_autodiff_columns(
     # Forward rays do not need the adjoint's detector-plane coefficients or
     # separability flag. Padding only the ray geometry lets JAX drop that work.
     coeff = jnp.pad(coefficients(params), (0, 13))
-    tangent = jax.jacfwd(coefficients)(params).T
+    tangent = jax.jacfwd(coefficients)(params).T[indices]
     images = cone_pose_columns(
         volume, coeff[None], tangent=tangent[None], grid=grid, detector=detector
     )[0]
-    images = images.reshape(1 + params.shape[0], -1)
+    images = images.reshape(1 + len(indices), -1)
     return weight.ravel() * (images[0] - target.ravel()), weight.ravel() * images[1:]
 
 
 def _cone_central_columns(
-    params, nominal, frame, volume, target, weight, steps, *, grid, detector, translation_frame
+    params,
+    nominal,
+    frame,
+    volume,
+    target,
+    weight,
+    steps,
+    indices,
+    *,
+    grid,
+    detector,
+    translation_frame,
 ):
     """The same central differences, with all perturbations in one CUDA launch."""
-    width = int(params.shape[-1])
-    offsets = jnp.eye(width, dtype=jnp.float32) * steps[:, None]
+    width = len(indices)
+    offsets = jnp.eye(params.shape[-1], dtype=jnp.float32)[indices] * steps[:, None]
 
     def coefficients(p):
         pose = apply_pose_update(nominal, p, translation_frame=translation_frame)
@@ -110,6 +121,15 @@ def _cone_central_columns(
     return residual, columns
 
 
+def _difference_steps(grid: Grid, fraction: float, width: int) -> jax.Array:
+    """Translation steps in physical units, with rotations moving the bounding sphere as far."""
+    displacement = fraction * min(grid.vx, grid.vy, grid.vz)
+    radius = 0.5 * math.sqrt(
+        (grid.nx * grid.vx) ** 2 + (grid.ny * grid.vy) ** 2 + (grid.nz * grid.vz) ** 2
+    )
+    return jnp.asarray([displacement / radius] * 3 + [displacement] * (width - 3), jnp.float32)
+
+
 def pose_prediction_and_columns(
     p5_i,
     t_nom_i,
@@ -122,22 +142,18 @@ def pose_prediction_and_columns(
     detector: Detector,
     det_grid: tuple[jax.Array, jax.Array] | None,
     options: PoseJacobianOptions,
+    column_indices: tuple[int, ...] | None = None,
 ):
     """Evaluate weighted columns with all scan-dependent arrays as arguments.
 
     ``frame_i`` is the view's cone-beam lab frame, or None for a parallel beam.
+    ``column_indices`` selects the requested parameter derivatives, in that order.
     """
-    # Keep pose finite differences in physical units across anisotropic grids
-    # and resolution levels. The angular step moves a bounding-sphere surface
-    # by approximately the same distance as the translation step.
-    displacement = options.difference_step * min(grid.vx, grid.vy, grid.vz)
-    radius = 0.5 * math.sqrt(
-        (grid.nx * grid.vx) ** 2 + (grid.ny * grid.vy) ** 2 + (grid.nz * grid.vz) ** 2
-    )
     width = int(p5_i.shape[-1])
-    difference_steps = jnp.asarray(
-        [displacement / radius] * 3 + [displacement] * (width - 3), dtype=jnp.float32
+    indices = jnp.asarray(
+        tuple(range(width)) if column_indices is None else column_indices, jnp.int32
     )
+    difference_steps = _difference_steps(grid, options.difference_step, width)[indices]
 
     joseph = options.integrator.startswith("joseph")
     central = options.jacobian == "central"
@@ -151,6 +167,7 @@ def pose_prediction_and_columns(
                 vol,
                 target,
                 weight,
+                indices,
                 grid=grid,
                 detector=detector,
                 translation_frame=options.translation_frame,
@@ -163,6 +180,7 @@ def pose_prediction_and_columns(
             target,
             weight,
             difference_steps,
+            indices,
             grid=grid,
             detector=detector,
             translation_frame=options.translation_frame,
@@ -195,7 +213,7 @@ def pose_prediction_and_columns(
         return weight.ravel() * (predict(p5) - target.ravel())
 
     prediction = f(p5_i)
-    directions = jnp.eye(width, dtype=jnp.float32)
+    directions = jnp.eye(width, dtype=jnp.float32)[indices]
     if central:
 
         def column(direction, step):
