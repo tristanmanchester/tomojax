@@ -201,7 +201,7 @@ def _fbp_result(
 def _detector_grid(
     geometry: Geometry, detector: Detector
 ) -> tuple[jnp.ndarray, jnp.ndarray] | None:
-    from tomojax.geometry.api import detector_grid_from_geometry_inputs
+    from tomojax.geometry.detector_grid import detector_grid_from_geometry_inputs
 
     return detector_grid_from_geometry_inputs(detector, geometry)
 

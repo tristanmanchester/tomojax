@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
-import jax
-import jax.numpy as jnp
 import numpy as np
 
 if TYPE_CHECKING:
+    import jax.numpy as jnp
+    from numpy.typing import DTypeLike
+
     from .base import Geometry
 
 
@@ -16,7 +17,7 @@ def stack_view_poses(
     geometry: Geometry,
     n_views: int,
     *,
-    dtype: jnp.dtype = jnp.float32,
+    dtype: DTypeLike = np.float32,
 ) -> jnp.ndarray:
     """Stack world-from-object poses for the first ``n_views`` views.
 
@@ -26,15 +27,37 @@ def stack_view_poses(
     """
     stack = getattr(type(geometry), "stack_poses", None)
     if callable(stack):
-        return stack(geometry, int(n_views), dtype)
+        return cast("jnp.ndarray", stack(geometry, int(n_views), dtype))
 
+    import jax
+    import jax.numpy as jnp
+
+    host = host_view_poses(geometry, n_views, dtype=dtype)
+    if host is not None:
+        return jnp.asarray(host)
+
+    views = [geometry.pose_for_view(i) for i in range(int(n_views))]
+    if any(isinstance(pose, jax.Array) for pose in views):  # traced or device poses
+        return jnp.stack([jnp.asarray(pose, dtype=np.dtype(dtype)) for pose in views])
+    # Host poses: stack on the host and transfer once, not one array per view.
+    return jnp.asarray(np.asarray(views, dtype=np.float64).astype(dtype))
+
+
+def host_view_poses(
+    geometry: Geometry, n_views: int, *, dtype: DTypeLike = np.float32
+) -> np.ndarray | None:
+    """Materialize built-in physical poses without starting a device runtime.
+
+    Return None for custom geometries, whose per-view or stack implementation
+    may be traced or use device state.
+    """
     from .cone import ConeGeometry
     from .lamino import LaminographyGeometry
     from .parallel import ParallelGeometry
 
     if type(geometry) is ConeGeometry:
         thetas = np.asarray(geometry.angles[: int(n_views)], dtype=np.float64)
-        return jnp.asarray(geometry.poses(angles=thetas).astype(dtype))
+        return geometry.poses(angles=thetas).astype(dtype)
 
     # Subclasses may override pose_for_view (for example to add calibrated
     # shifts). Only specialize the exact built-in implementation.
@@ -51,7 +74,7 @@ def stack_view_poses(
         poses[:, 2, 2] = 1.0
         poses[:, 3, 3] = 1.0
         # Convert on the host: a device-side cast would compile a separate program.
-        return jnp.asarray(poses.astype(dtype))
+        return poses.astype(dtype)
 
     if type(geometry) is LaminographyGeometry:
         from .transforms import align_u_to_v
@@ -66,10 +89,6 @@ def stack_view_poses(
         poses = np.zeros((int(n_views), 4, 4), dtype=np.float64)
         poses[:, :3, :3] = alignment @ rotation
         poses[:, 3, 3] = 1.0
-        return jnp.asarray(poses.astype(dtype))
+        return poses.astype(dtype)
 
-    views = [geometry.pose_for_view(i) for i in range(int(n_views))]
-    if any(isinstance(pose, jax.Array) for pose in views):  # traced or device poses
-        return jnp.stack([jnp.asarray(pose, dtype=dtype) for pose in views])
-    # Host poses: stack on the host and transfer once, not one array per view.
-    return jnp.asarray(np.asarray(views, dtype=np.float64).astype(dtype))
+    return None

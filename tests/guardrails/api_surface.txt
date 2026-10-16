@@ -295,7 +295,7 @@ def tomojax.geometry.stack_view_poses(
         geometry: 'Geometry',
         n_views: 'int',
         *,
-        dtype: 'jnp.dtype' = <class 'jax.numpy.float32'>,
+        dtype: 'DTypeLike' = <class 'numpy.float32'>,
     ) -> 'jnp.ndarray'
 
 # tomojax.recon
@@ -432,10 +432,10 @@ def tomojax.recon.cgls(
         detector: 'Detector',
         projections: 'jnp.ndarray | np.ndarray',
         *,
-        init_x: 'jnp.ndarray | None' = None,
+        init_x: 'jnp.ndarray | np.ndarray | None' = None,
         config: 'CGLSConfig | None' = None,
         det_grid: 'tuple[jnp.ndarray, jnp.ndarray] | None' = None,
-    ) -> 'tuple[jnp.ndarray, dict[str, object]]'
+    ) -> 'tuple[jnp.ndarray | np.ndarray, dict[str, object]]'
 def tomojax.recon.cgls_multires(
         geometry: 'Geometry',
         grid: 'Grid',

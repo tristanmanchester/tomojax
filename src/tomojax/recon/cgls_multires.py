@@ -25,8 +25,9 @@ from tomojax.core.validation import (
     validate_volume,
 )
 
+from ._cgls_jax import cgls
 from ._host_stream import validate_host_views
-from .cgls import CGLSConfig, cgls
+from .cgls import CGLSConfig
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

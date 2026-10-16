@@ -182,7 +182,7 @@ def test_zero_data_and_zero_iteration_limit_preserve_valid_results():
 
 def test_changed_data_geometry_and_budget_reuse_compiled_solver():
     # check-public-imports: allow-private
-    from tomojax.recon.cgls import _solve
+    from tomojax.recon._cgls_jax import _solve
 
     _solve.clear_cache()
     outputs = []
@@ -278,7 +278,7 @@ def test_bright_region_does_not_hide_weak_region_updates(backend, model):
     from tomojax.geometry import ParallelGeometry
 
     # check-public-imports: allow-private
-    from tomojax.recon.cgls import _operators
+    from tomojax.recon._cgls_jax import _operators
 
     grid = Grid(4, 3, 2, 1.0, 1.0, 1.0)
     detector = Detector(9, 2, 1.0, 1.0)
@@ -338,3 +338,62 @@ def test_streamed_cgls_rejects_nonfinite_views():
     data[3, 2, 2] = np.nan
     with pytest.raises(Exception, match="finite"):
         cgls(geometry, grid, detector, data, config=CGLSConfig(stream_projections=True))
+
+
+@pytest.mark.gpu
+def test_host_cuda_cgls_does_not_import_jax():
+    import subprocess
+    import sys
+
+    code = """
+import sys, json, numpy as np
+import tomojax as tj
+from tomojax.geometry import Grid, Detector, LaminographyGeometry
+from tomojax.recon import CGLSConfig, cgls
+g, d = Grid(4, 4, 3, 1, 1, 1), Detector(9, 7, 1, 1)
+geometry = LaminographyGeometry(g, d, np.linspace(0, 180, 7, endpoint=False), tilt_deg=23)
+x, info = cgls(geometry, g, d, np.zeros((7, 7, 9), np.float32),
+    init_x=np.ones((4, 4, 3), np.float32),
+    config=CGLSConfig(iterations=2, projector_backend='pallas', views_per_batch=3))
+json.dumps(info, allow_nan=False)
+assert 'jax' not in sys.modules and info['execution_backend'] == 'cupy'
+assert isinstance(x, np.ndarray) and np.isfinite(x).all() and np.linalg.norm(x) < 7
+result = tj.reconstruct(tj.Scan(np.ones((7, 7, 9), np.float32), geometry), 'cgls', iterations=2)
+assert 'jax' not in sys.modules and result.info['execution_backend'] == 'cupy'
+assert isinstance(result.volume, np.ndarray) and np.isfinite(result.volume).all()
+"""
+    subprocess.run([sys.executable, "-c", code], check=True)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("tilt", [0, 27])
+def test_native_cuda_cgls_matches_independent_damped_system(tilt):
+    from tomojax.forward import project_joseph
+
+    g, d = Grid(5, 4, 3, 0.8, 1.1, 1.3), Detector(7, 5, 0.9, 1.0, (0.2, -0.3))
+    geometry = LaminographyGeometry(g, d, [13, 49, 83, 122, 161], tilt_deg=tilt)
+    poses = np.asarray([geometry.pose_for_view(i) for i in range(5)], np.float32)
+    rng = np.random.default_rng(761)
+    data = rng.normal(size=(5, 5, 7)).astype(np.float32)
+    matrix = np.asarray(
+        jax.jacfwd(
+            lambda x: project_joseph(x.reshape(5, 4, 3), poses, g, d, backend="jax").ravel()
+        )(jnp.zeros(60))
+    )
+    expected = np.linalg.lstsq(
+        np.concatenate((matrix, 0.3 * np.eye(60))),
+        np.concatenate((data.ravel(), np.zeros(60))),
+        rcond=None,
+    )[0]
+    x, info = cgls(
+        geometry,
+        g,
+        d,
+        data,
+        config=CGLSConfig(
+            iterations=100, rtol=1e-6, damping=0.3, projector_backend="pallas", views_per_batch=3
+        ),
+    )
+    assert info["execution_backend"] == "cupy"
+    np.testing.assert_allclose(x.ravel(), expected, atol=2e-5, rtol=3e-4)
+    assert info["termination"] in {"converged", "roundoff_limit"}

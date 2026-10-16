@@ -38,10 +38,6 @@ from tomojax.geometry._calibration import (
     build_calibrated_geometry_metadata_patch,
     validate_calibration_gauges,
 )
-from tomojax.geometry._detector_grid import (
-    detector_grid_from_calibration,
-    detector_grid_from_geometry_inputs,
-)
 from tomojax.geometry._fov import (
     RoiInfo,
     compute_roi,
@@ -56,6 +52,10 @@ from tomojax.geometry._state import (
     GeometryState,
     PoseParameters,
     SetupParameters,
+)
+from tomojax.geometry.detector_grid import (
+    detector_grid_from_calibration,
+    detector_grid_from_geometry_inputs,
 )
 
 __all__ = [

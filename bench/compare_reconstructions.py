@@ -151,11 +151,6 @@ def solve_tomojax(
             "regulariser": "none",
             "positivity": False,
         }
-    # Import JAX-based solvers only when needed, as a Fourier-only script would.
-    import jax.numpy as jnp
-
-    from tomojax.recon import CGLSConfig, FBPConfig, FistaConfig, cgls, cgls_multires, fbp, fista_tv
-
     if method == "tomojax_fbp_host_pallas":
         from tomojax.recon import FBPHostConfig, fbp_host
 
@@ -176,6 +171,10 @@ def solve_tomojax(
             "positivity": False,
         }
     if method == "tomojax_fbp_pallas":
+        import jax.numpy as jnp
+
+        from tomojax.recon import FBPConfig, fbp
+
         result = fbp(
             geometry,
             case.grid,
@@ -191,6 +190,8 @@ def solve_tomojax(
             "positivity": False,
         }
     if method in {"tomojax_multires_cgls_pallas", "tomojax_multires_joseph_cgls_pallas"}:
+        from tomojax.recon import CGLSConfig, cgls_multires
+
         factors, budgets = multires_schedule((case.grid.nx, case.grid.ny, case.grid.nz), iterations)
         result, info = cgls_multires(
             geometry,
@@ -208,6 +209,13 @@ def solve_tomojax(
         )
         return np.asarray(result), {**info, "regulariser": "none", "positivity": False}
     if method.startswith(("tomojax_cgls_", "tomojax_joseph_cgls_", "tomojax_fbp_joseph_cgls_")):
+        from tomojax.recon import CGLSConfig, cgls
+
+        if method == "tomojax_fbp_joseph_cgls_pallas":
+            import jax.numpy as jnp
+
+            from tomojax.recon import FBPConfig, fbp
+
         initial = (
             fbp(
                 geometry,
@@ -223,7 +231,7 @@ def solve_tomojax(
             geometry,
             case.grid,
             case.detector,
-            jnp.asarray(case.analytic),
+            case.analytic,
             init_x=initial,
             config=CGLSConfig(
                 iterations=iterations,
@@ -239,6 +247,10 @@ def solve_tomojax(
             "positivity": False,
             "initialization": "fbp" if initial is not None else "zero",
         }
+    import jax.numpy as jnp
+
+    from tomojax.recon import FistaConfig, fista_tv
+
     config = FistaConfig(
         iterations=iterations,
         tv_weight=0,

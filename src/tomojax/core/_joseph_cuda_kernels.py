@@ -1,0 +1,133 @@
+"""JAX-independent CUDA kernels for the exact linear Joseph projector pair."""
+
+from functools import cache
+from typing import Any
+
+RUN = 4
+_VIEWS_PER_STAGE = 32
+THREADS = 128
+
+_GATHER_SOURCE = r"""
+extern "C" __global__ void joseph_gather(
+    const float* __restrict__ coeff, const float* __restrict__ images,
+    float* __restrict__ out, int nviews, int nx, int ny, int nz, int nu, int nv)
+{
+    const int R = RUN, VB = VIEWS;
+    __shared__ float cf[VB * 14];
+    long run = (long)blockIdx.x * blockDim.x + threadIdx.x;
+    int runs_z = (nz + R - 1) / R;
+    bool valid = run < (long)nx * ny * runs_z;
+    int ix = valid ? run / ((long)ny * runs_z) : 0;
+    int iy = valid ? (run / runs_z) % ny : 0;
+    int iz0 = valid ? R * (int)(run % runs_z) : 0;
+    float total[R];
+    #pragma unroll
+    for (int j = 0; j < R; ++j) total[j] = 0.f;
+    for (int first = 0; first < nviews; first += VB) {
+        __syncthreads();
+        for (int i = threadIdx.x; i < VB * 14; i += blockDim.x)
+            cf[i] = first * 14 + i < nviews * 14 ? coeff[first * 14 + i] : 0.f;
+        __syncthreads();
+        int count = min(VB, nviews - first);
+        for (int view = 0; view < count; ++view) {
+            const float* c = cf + view * 14;
+            int a = (int)c[0];
+            float ub = c[1], vb = c[2], kb = c[3], cb = c[4];
+            float uc = c[5], vc = c[6], kc = c[7], cc = c[8], weight = c[9];
+            float iub = c[10], iuc = c[11], ivb = c[12], ivc = c[13];
+            int k0 = a == 0 ? ix : (a == 1 ? iy : iz0);
+            int b0 = a == 0 ? iy : (a == 1 ? iz0 : ix);
+            int c0 = a == 0 ? iz0 : (a == 1 ? ix : iy);
+            // Step of the run's voxel index along the plane coordinates.
+            int dk = a == 2, db = a == 1, dc = a == 0;
+            float hb[R], hc[R], tb[R], tc[R];
+            float lo_u = 3.4e38f, hi_u = -3.4e38f, lo_v = 3.4e38f, hi_v = -3.4e38f;
+            #pragma unroll
+            for (int j = 0; j < R; ++j) {
+                float k = (float)(k0 + j * dk);
+                hb[j] = __fadd_rn(__fmul_rn(kb, k), cb);
+                hc[j] = __fadd_rn(__fmul_rn(kc, k), cc);
+                tb[j] = (float)(b0 + j * db);
+                tc[j] = (float)(c0 + j * dc);
+                float cu = iub * (tb[j] - hb[j]) + iuc * (tc[j] - hc[j]);
+                float cv = ivb * (tb[j] - hb[j]) + ivc * (tc[j] - hc[j]);
+                lo_u = fminf(lo_u, cu); hi_u = fmaxf(hi_u, cu);
+                lo_v = fminf(lo_v, cv); hi_v = fmaxf(hi_v, cv);
+            }
+            float ru = fabsf(iub) + fabsf(iuc), rv = fabsf(ivb) + fabsf(ivc);
+            int u_start = max((int)floorf(lo_u - ru) + 1, 0);
+            int u_stop = min((int)ceilf(hi_u + ru), nu);
+            int v_start = max((int)floorf(lo_v - rv) + 1, 0);
+            int v_stop = min((int)ceilf(hi_v + rv), nv);
+            const float* image = images + (long)(first + view) * nu * nv;
+            for (int u = u_start; u < u_stop; ++u) {
+                for (int v = v_start; v < v_stop; ++v) {
+                    float value = image[(long)u * nv + v] * weight;
+                    // Round each product as the forward projection does; weights
+                    // must match it exactly to keep the transpose matched.
+                    float pb = __fadd_rn(__fmul_rn(ub, (float)u), __fmul_rn(vb, (float)v));
+                    float pc = __fadd_rn(__fmul_rn(uc, (float)u), __fmul_rn(vc, (float)v));
+                    #pragma unroll
+                    for (int j = 0; j < R; ++j) {
+                        float qb = __fadd_rn(pb, hb[j]), qc = __fadd_rn(pc, hc[j]);
+                        total[j] += value * (fmaxf(1.f - fabsf(qb - tb[j]), 0.f)
+                                             * fmaxf(1.f - fabsf(qc - tc[j]), 0.f));
+                    }
+                }
+            }
+        }
+    }
+    if (valid) {
+        long base = ((long)ix * ny + iy) * nz + iz0;
+        #pragma unroll
+        for (int j = 0; j < R; ++j)
+            if (iz0 + j < nz) out[base + j] += total[j];
+    }
+}
+"""
+
+
+@cache
+def gather_kernel() -> Any:
+    import cupy as cp
+
+    source = _GATHER_SOURCE.replace("RUN", str(RUN)).replace("VIEWS", str(_VIEWS_PER_STAGE))
+    return cp.RawModule(code=source).get_function("joseph_gather")
+
+
+_FORWARD_SOURCE = r"""
+__device__ float sample(const float* x, int a, int k, int b, int c,
+                       int nx, int ny, int nz, int nb, int nc) {
+    if (b<0 || b>=nb || c<0 || c>=nc) return 0.f;
+    int ix=a==0?k:(a==1?c:b), iy=a==0?b:(a==1?k:c), iz=a==0?c:(a==1?b:k);
+    return x[((long)ix*ny+iy)*nz+iz];
+}
+extern "C" __global__ void forward(const float* coeff, const float* x, float* out,
+        int nx,int ny,int nz,int nu,int nv) {
+    long pixel=(long)blockIdx.x*blockDim.x+threadIdx.x;
+    if (pixel>=nu*nv) return;
+    int view=blockIdx.y,u=pixel/nv,v=pixel%nv;
+    const float* c=coeff+14*view;
+    int a=(int)c[0];
+    int na=a==0?nx:(a==1?ny:nz),nb=a==0?ny:(a==1?nz:nx),nc=a==0?nz:(a==1?nx:ny);
+    float pb=c[1]*u+c[2]*v,pc=c[5]*u+c[6]*v;
+    float total=0.f;
+    for(int k=0;k<na;k++) {
+        float qb=pb+(c[3]*k+c[4]),qc=pc+(c[7]*k+c[8]);
+        int ib=(int)floorf(qb),ic=(int)floorf(qc);
+        float wb=qb-ib,wc=qc-ic;
+        float val=(sample(x,a,k,ib,ic,nx,ny,nz,nb,nc)*(1-wc)
+                  +sample(x,a,k,ib,ic+1,nx,ny,nz,nb,nc)*wc)*(1-wb)
+                 +(sample(x,a,k,ib+1,ic,nx,ny,nz,nb,nc)*(1-wc)+sample(x,a,k,ib+1,ic+1,nx,ny,nz,nb,nc)*wc)*wb;
+        total+=val*c[9];
+    }
+    out[((long)view*nv+v)*nu+u]=total;
+}
+"""
+
+
+@cache
+def forward_kernel() -> Any:
+    import cupy as cp
+
+    return cp.RawModule(code=_FORWARD_SOURCE, options=("--fmad=false",)).get_function("forward")
