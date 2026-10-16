@@ -433,3 +433,32 @@ def test_fbp_only_hoists_rows_for_the_exact_builtin_parallel_geometry(
     assert modes == [expected]
     assert np.isfinite(np.asarray(volume)).all()
     np.testing.assert_allclose(volume, reference, atol=4e-6, rtol=5e-5)
+
+
+def test_general_slabs_release_outputs_and_retry_only_unfinished_slab(monkeypatch):
+    import weakref
+
+    module = importlib.import_module("tomojax.recon.fbp_host")
+    grid, detector, base, data = scan()
+    geometry = LaminographyGeometry(grid, detector, base.angles, tilt_deg=30)
+    cfg = FBPHostConfig(slices_per_batch=4, views_per_batch=4)
+    expected = fbp_host(geometry, grid, detector, data, config=cfg)
+    original, calls, previous = module._fbp_from_host, [], [lambda: None]
+    origin = module.grid_volume_origin(grid)[0]
+
+    def bounded(*args, **kwargs):
+        assert previous[0]() is None, "a completed device slab is still retained"
+        local, batch = kwargs["grid"], kwargs["batch_size"]
+        start = round((module.grid_volume_origin(local)[0] - origin) / grid.vx)
+        calls.append((start, local.nx, batch))
+        if start and (local.nx > 1 or batch > 1):
+            raise RuntimeError("RESOURCE_EXHAUSTED: simulated device allocation failure")
+        value = original(*args, **kwargs)
+        previous[0] = weakref.ref(value)
+        return value
+
+    monkeypatch.setattr(module, "_fbp_from_host", bounded)
+    actual = fbp_host(geometry, grid, detector, data, config=cfg)
+    assert calls[:5] == [(0, 4, 4), (4, 4, 4), (4, 2, 4), (4, 1, 4), (4, 1, 2)]
+    assert calls[5:] == [(start, 1, 1) for start in range(4, grid.nx)]
+    np.testing.assert_allclose(actual, expected, atol=4e-6, rtol=5e-5)
