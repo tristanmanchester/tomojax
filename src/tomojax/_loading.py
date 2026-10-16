@@ -245,9 +245,12 @@ def load_frames(
     An HDF5 file's ``image_key`` marks its flats (1) and darks (2), and its
     sample, flat and dark frames are read only as they are corrected. The
     frames, key and angles are found at their NXtomo paths or as the file's only datasets of
-    that name (``data``, ``image_key``, ``rotation_angle``); ``data_path``,
+    that name (``data``, ``image_key``, ``rotation_angle``), or their paired GDA imaging
+    paths; ``data_path``,
     ``image_key_path`` and ``angles_path`` name them otherwise. A Nikon scan
-    carries its white level. TIFF frames need their ``angles`` (degrees), and
+    carries its white level. A GDA angular command mislabeled as mm is read in
+    degrees with a warning; discovered paths and this correction stay in source metadata.
+    TIFF frames need their ``angles`` (degrees), and
     their ``detector`` unless pixels are unit length.
 
     ``flats`` and ``darks`` (arrays, HDF5 stacks, TIFF files or folders, or one level for
@@ -295,7 +298,33 @@ def load_frames(
             grid=grid or frames.source.grid,
         )
         frames = replace(frames, geometry=geometry_of(record, poses=True), source=record)
-    return frames if geometry is None else replace(frames, geometry=geometry)
+    if geometry is not None:
+        source = frames.source
+        if source is not None and "acquisition" in source.geometry_metadata:
+            source = replace(
+                source,
+                geometry_metadata={
+                    **source.geometry_metadata,
+                    "acquisition": {
+                        **source.geometry_metadata["acquisition"],
+                        "geometry_status": "provided",
+                        "geometry_note": "Geometry supplied explicitly by caller.",
+                    },
+                },
+            )
+        frames = replace(frames, geometry=geometry, source=source)
+    if (geometry is not None or detector is not None) and frames.source is not None:
+        frames = replace(
+            frames,
+            source=replace(
+                frames.source,
+                geometry_metadata={
+                    **frames.source.geometry_metadata,
+                    "detector_center_status": "provided",
+                },
+            ),
+        )
+    return frames
 
 
 def _with_fields(
@@ -391,7 +420,19 @@ def _hdf5_frames(
     try:
         metadata = load_nxtomo(str(file), lazy=True).metadata
     except KeyError:  # not laid out as NXtomo: the frames alone
-        metadata = NXTomoMetadata(detector=Detector(nu=cols, nv=rows, du=1.0, dv=1.0))
+        metadata = NXTomoMetadata(
+            detector=Detector(nu=cols, nv=rows, du=1.0, dv=1.0),
+            geometry_meta={"detector_center_status": "not_recorded"},
+        )
+        if located.acquisition is not None:
+            metadata.geometry_meta = {
+                "detector_center_status": "not_recorded",
+                "acquisition": {
+                    **located.acquisition,
+                    "geometry_status": "not_recorded",
+                    "geometry_note": "Source has no calibrated rotation axis or pixel scale.",
+                }
+            }
     metadata = replace(metadata, angles=view_angles.astype(np.float32), image_key=None)
     # The geometry needs the views' shape, not their values: read none of them.
     placeholder = LoadedNXTomo(np.broadcast_to(np.float32(0), (views, rows, cols)), metadata)

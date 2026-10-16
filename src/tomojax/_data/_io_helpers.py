@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from typing import cast
 
 import h5py
 import numpy as np
@@ -205,6 +206,16 @@ def _load_detector_metadata(
             path=path,
             context="detector metadata",
         )
+    # A default numerical zero is not evidence of a recorded/calibrated centre.
+    # Keep saved provenance, including an earlier inferred or still absent centre.
+    geometry_meta = dict(cast("JsonObject", out.get("geometry_meta") or {}))
+    geometry_meta.setdefault(
+        "detector_center_status",
+        "recorded"
+        if detector_dict is not None and "det_center" in detector_dict
+        else "not_recorded",
+    )
+    out["geometry_meta"] = geometry_meta
     if detector_dict is None:
         detector_dict = _default_detector_meta(projections)
         # NXtomo's own pixel sizes, when the file has no TomoJAX detector record.
