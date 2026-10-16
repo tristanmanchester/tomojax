@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+Intensity-dependent stripe fitting ranks only selected detector tiles when sparse,
+with unchanged selection, full neighborhood halos and a dense fallback.
+
 Sixth lab run, second merge: laminography alignment gains `tj.estimate_region`
 (the reconstruction region from projection data, with its uncertainty), a
 projection-only motion initialisation stage, bounded smooth-motion refinement
