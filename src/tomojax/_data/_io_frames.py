@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+import logging
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
@@ -126,6 +127,85 @@ _FRAME_PATHS = (
 _IMAGE_KEY_PATH = "/entry/instrument/detector/image_key"
 
 
+def _gda_paths(file: h5py.File) -> tuple[str, str, str] | None:
+    """A coherent GDA imaging acquisition, including stripped NeXus exports.
+
+    The rotation command, not the encoder's raw counts, supplies the angles.
+    Matching the stack, key and command together avoids unrelated NXdata
+    signals and duplicate instrument links. Entry names are not prescribed.
+    """
+    found: list[tuple[str, str, str]] = []
+    entries: Any = file  # h5py's File stub omits inherited Group methods.
+    for name, entry in entries.items():
+        if not isinstance(entry, h5py.Group):
+            continue
+        prefix = f"/{name}"
+        data = f"{prefix}/imaging/data"
+        stack = _dataset(file, data)
+        if stack is None or stack.ndim != 3:
+            continue
+        key = next(
+            (
+                f"{prefix}/{p}"
+                for p in (
+                    "tomo_entry/instrument/detector/image_key",
+                    "instrument/EtherCAT/image_key",
+                )
+                if _dataset(file, f"{prefix}/{p}") is not None
+            ),
+            None,
+        )
+        angle = next(
+            (
+                f"{prefix}/{p}"
+                for p in (
+                    "imaging/smaract_zrot_value_set",
+                    "imaging_sum/smaract_zrot_value_set",
+                    "imaging_sum/smaract_zrot",
+                )
+                if _dataset(file, f"{prefix}/{p}") is not None
+            ),
+            None,
+        )
+        if key is not None and angle is not None:
+            found.append((data, key, angle))
+    if len(found) > 1:
+        raise KeyError("Several GDA imaging acquisitions found: name their data/key/angle paths")
+    return found[0] if found else None
+
+
+def _gda_metadata(
+    file: h5py.File,
+    gda: tuple[str, str, str] | None,
+    where: str,
+    key_at: str | None,
+    angles_at: str | None,
+) -> tuple[dict[str, str] | None, str | None]:
+    """Record discovery and the known GDA angular-command unit correction."""
+    acquisition = None
+    units_override = None
+    if gda is not None and key_at is not None and angles_at is not None:
+        acquisition = {
+            "layout": "diamond_gda",
+            "data_path": where,
+            "image_key_path": key_at,
+            "angles_path": angles_at,
+        }
+        units = file[angles_at].attrs.get("units", "")
+        units = units.decode() if isinstance(units, bytes) else str(units)
+        # GDA's SmarAct angular command can inherit the positioner's linear
+        # unit label. Only this identified rotation command has that quirk.
+        if angles_at == gda[2] and angles_at.endswith("/smaract_zrot_value_set") and units == "mm":
+            units_override = "degree"
+            acquisition.update(angle_units_recorded=units, angle_units="degree")
+            logging.getLogger(__name__).warning(
+                "%s:%s: GDA angular command is labelled mm; interpreting it as degrees",
+                cast(Any, file).filename,
+                angles_at,
+            )
+    return acquisition, units_override
+
+
 @dataclass(frozen=True)
 class LocatedFrames:
     """An HDF5 file's frames, with each frame's ``image_key`` and angle (degrees) when found.
@@ -140,6 +220,7 @@ class LocatedFrames:
     angles: np.ndarray | None
     flats: Hdf5Frames | None = None
     darks: Hdf5Frames | None = None
+    acquisition: dict[str, str] | None = None
 
     @property
     def raw(self) -> bool:
@@ -168,6 +249,9 @@ def locate_frames(
     """
     with h5py.File(path, "r") as file:
         where = data_path or next((p for p in _FRAME_PATHS if _dataset(file, p) is not None), None)
+        gda = _gda_paths(file) if where is None else None
+        where = where or (gda[0] if gda is not None else None)
+        gda = gda if gda is not None and where == gda[0] else None
         where = where or _only(file, "data", lambda d: len(d.shape) == 3, path)
         stack = None if where is None else _dataset(file, where)
         if data_path is not None and stack is None:
@@ -180,10 +264,12 @@ def locate_frames(
             return item.shape == (frames,)
 
         key_at = image_key_path or (_IMAGE_KEY_PATH if _dataset(file, _IMAGE_KEY_PATH) else None)
+        key_at = key_at or (gda[1] if gda is not None else None)
         key_at = key_at or _only(file, "image_key", per_frame, path, validate_unmatched=True)
         angles_at = angles_path or next(
             (p for p in ROTATION_ANGLE_PATHS if _dataset(file, p) is not None), None
         )
+        angles_at = angles_at or (gda[2] if gda is not None else None)
         angles_at = angles_at or _only(file, "rotation_angle", per_frame, path)
         parent = where.rsplit("/", 1)[0] or "/"
         beside = {n: f"{parent.rstrip('/')}/{n}" for n in ("data_white", "data_dark", "theta")}
@@ -197,8 +283,13 @@ def locate_frames(
             if key_at is None
             else checked_image_key(_read(file, key_at, path), frames=frames, path=path)
         )
+        acquisition, units_override = _gda_metadata(file, gda, where, key_at, angles_at)
         angles = (
-            None if angles_at is None else _degrees(file, angles_at, path, frames=frames, key=key)
+            None
+            if angles_at is None
+            else _degrees(
+                file, angles_at, path, frames=frames, key=key, units_override=units_override
+            )
         )
         flats, darks = (
             Hdf5Frames.open(path, beside[n])
@@ -206,7 +297,7 @@ def locate_frames(
             else None
             for n, label in (("data_white", 1), ("data_dark", 2))
         )
-    return LocatedFrames(Hdf5Frames.open(path, where), key, angles, flats, darks)
+    return LocatedFrames(Hdf5Frames.open(path, where), key, angles, flats, darks, acquisition)
 
 
 def _dataset(file: h5py.File, where: str) -> h5py.Dataset | None:
@@ -222,12 +313,20 @@ def _read(file: h5py.File, where: str, path: str) -> np.ndarray:
 
 
 def _degrees(
-    file: h5py.File, where: str, path: str, *, frames: int, key: np.ndarray | None
+    file: h5py.File,
+    where: str,
+    path: str,
+    *,
+    frames: int,
+    key: np.ndarray | None,
+    units_override: str | None = None,
 ) -> np.ndarray:
     values = _read(file, where, path)
     units = file[where].attrs.get("units", b"")
     units = units.decode() if isinstance(units, bytes) else str(units)
-    return angles_in_degrees(values, units, frames=frames, path=path, image_key=key)
+    return angles_in_degrees(
+        values, units_override or units, frames=frames, path=path, image_key=key
+    )
 
 
 def _only(

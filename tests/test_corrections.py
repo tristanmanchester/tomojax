@@ -453,6 +453,43 @@ def test_frames_are_found_in_other_hdf5_layouts(tmp_path: Path) -> None:
         tj.load_frames(tmp_path / "beamline.nxs", data_path="/missing")
 
 
+@pytest.mark.parametrize("command", [True, False])
+def test_gda_frames_use_paired_rotation_and_key(tmp_path, caplog, command):
+    path = tmp_path / "arbitrary-name.nxs"
+    stack = np.stack([np.full((2, 3), v, np.int32) for v in (100, 1100, 600, 350)])
+    with h5py.File(path, "w") as handle:
+        entry = handle.create_group("entry7")
+        entry.create_dataset("imaging/data", data=stack)
+        entry.create_dataset("instrument/EtherCAT/image_key", data=[2, 1, 0, 0])
+        name = "imaging/smaract_zrot_value_set" if command else "imaging_sum/smaract_zrot"
+        angle = entry.create_dataset(name, data=[0.0, 0.0, 0.0, 90.0])
+        angle.attrs["units"] = "mm" if command else "degree"
+        entry.create_dataset("imaging/smaract_zrot_value", data=np.arange(4) * 1e6)
+        handle.create_dataset("other/data", data=stack)
+        handle.create_dataset("other/image_key", data=[0, 0, 0, 0])
+    frames = tj.load_frames(path)
+    assert frames.views == 2 and len(frames.flats) == len(frames.darks) == 1
+    assert frames.counts.dataset == "/entry7/imaging/data"
+    np.testing.assert_array_equal(frames.geometry.angles, [0, 90])
+    acquisition = frames.source.geometry_metadata["acquisition"]
+    assert acquisition["geometry_status"] == "not_recorded"
+    assert ("interpreting it as degrees" in caplog.text) == command
+    np.testing.assert_allclose(frames.corrected().projections[:, 0, 0], -np.log([0.5, 0.25]))
+    explicit = tj.load_frames(path, geometry=frames.geometry)
+    assert explicit.source.geometry_metadata["acquisition"]["geometry_status"] == "provided"
+
+
+def test_gda_unit_correction_does_not_accept_other_linear_axes(tmp_path):
+    path = tmp_path / "unknown-units.nxs"
+    with h5py.File(path, "w") as handle:
+        handle.create_dataset("entry/imaging/data", data=np.ones((2, 2, 3)))
+        handle.create_dataset("entry/instrument/EtherCAT/image_key", data=[0, 0])
+        angle = handle.create_dataset("entry/imaging_sum/smaract_zrot", data=[0, 90])
+        angle.attrs["units"] = "mm"
+    with pytest.raises(ValueError, match="unsupported angle units"):
+        tj.load_frames(path)
+
+
 def test_constant_flat_and_dark_levels(tmp_path: Path) -> None:
     _write_frames(tmp_path / "scan.nxs", np.full((2, 2, 2), 600, np.uint16), [0, 0], [0, 90])
     scan = tj.load_frames(tmp_path / "scan.nxs", flats=1100, darks=100).corrected()
