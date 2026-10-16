@@ -82,7 +82,8 @@ def _check_device_memory(arrays: CoupledArrays, spec: CoupledSpec) -> Callable |
     arrays, plus the cached pose columns and per-pixel weights. Only when that
     estimate comes within a factor of two of free memory is the update compiled
     ahead to read XLA's own figure; the compiled update is then returned for
-    use, so it is compiled once.
+    use, so it is compiled once. Recheck current free memory at dispatch: an
+    intervening reconstruction can retain another volume after this admission.
     """
     available = _free_device_memory(arrays.projections)
     if available is None:
@@ -100,11 +101,19 @@ def _check_device_memory(arrays: CoupledArrays, spec: CoupledSpec) -> Callable |
     x = jax.ShapeDtypeStruct((grid.nx, grid.ny, grid.nz), jnp.float32)
     compiled = run_update.lower(arrays, p, x, spec=spec).compile()
     analysis = compiled.memory_analysis()
-    if analysis is not None:
-        needed = int(analysis.temp_size_in_bytes) + int(analysis.output_size_in_bytes)
-        if needed > available:
+    if analysis is None:
+        return compiled
+    needed = int(analysis.temp_size_in_bytes) + int(analysis.output_size_in_bytes)
+    if needed > available:
+        raise AlignmentMemoryError(needed, available)
+
+    def checked_update(arrays: CoupledArrays, p: jax.Array, x: jax.Array) -> CoupledLinearResult:
+        available = _free_device_memory(x)
+        if available is not None and needed > available:
             raise AlignmentMemoryError(needed, available)
-    return compiled
+        return compiled(arrays, p, x)
+
+    return checked_update
 
 
 def _shared(arrays: CoupledArrays, split: ViewSplit) -> CoupledArrays:
