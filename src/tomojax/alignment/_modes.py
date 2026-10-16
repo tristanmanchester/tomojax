@@ -109,6 +109,7 @@ def alignment_plan(
     grid: Grid,
     *,
     quality: str = "fast",
+    geometry: Geometry | None = None,
     levels: Iterable[int] | None = None,
     freeze: Iterable[str] = (),
     config: AlignConfig | None = None,
@@ -119,7 +120,12 @@ def alignment_plan(
     quality profile's defaults apply. The mode sets the schedule unless
     ``config`` names one (or ``optimise_dofs``). ``freeze`` keeps the named
     parameters (for example ``"dy"``) at their initial values.
+    When ``geometry`` is a cone beam, fast coupled plans limit each inexact
+    linear update to ten CG steps; nonlinear acceptance and outer convergence
+    still decide progress. Without geometry context, budgets are conservative.
     """
+    from tomojax.core.geometry.cone import is_cone_beam
+
     name = normalize_mode(mode)
     tier = normalize_quality(quality)
     expert = config is not None
@@ -146,7 +152,14 @@ def alignment_plan(
         "coupled" if name in {"pose", "cor-then-pose"} else "alternating"
     )
     if pose_solver == "coupled" and not expert:
-        cfg = replace(cfg, outer_iterations=30, **coupled_overrides(cfg))  # type: ignore[arg-type]
+        cfg = replace(
+            cfg,
+            outer_iterations=30,
+            gn_joint_iterations=(
+                10 if tier == "fast" and is_cone_beam(geometry) else cfg.gn_joint_iterations
+            ),
+            **coupled_overrides(cfg),  # type: ignore[arg-type]
+        )
     elif not expert:
         # Joseph plane sampling is the fastest forward model for every mode.
         cfg = replace(cfg, ray_integrator="joseph")

@@ -662,6 +662,7 @@ def tomojax.alignment.alignment_plan(
         grid: 'Grid',
         *,
         quality: 'str' = 'fast',
+        geometry: 'Geometry | None' = None,
         levels: 'Iterable[int] | None' = None,
         freeze: 'Iterable[str]' = (),
         config: 'AlignConfig | None' = None,

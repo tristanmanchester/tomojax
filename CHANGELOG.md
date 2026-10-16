@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Fast coupled cone-beam pose alignment uses shorter inexact linear updates while
+retaining its nonlinear acceptance and outer convergence checks; parallel beams,
+reference quality and explicit expert budgets are unchanged.
+
 Sixth lab run, second merge: laminography alignment gains `tj.estimate_region`
 (the reconstruction region from projection data, with its uncertainty), a
 projection-only motion initialisation stage, bounded smooth-motion refinement

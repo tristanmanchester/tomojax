@@ -179,11 +179,28 @@ def test_selected_loaded_scans_save_only_their_own_view_labels(tmp_path: Path, s
 
 
 def test_alignment_modes_plan_their_schedules() -> None:
+    from tomojax.alignment import AlignConfig
     from tomojax.alignment.api import alignment_plan
 
     grid = tj.Grid(128, 128, 128, 1.0, 1.0, 1.0)
     pose = alignment_plan("pose", grid)
     assert pose.pose_solver == "coupled" and pose.levels == (4, 2, 1)
+    assert pose.config.gn_joint_iterations == 40
+    geometry = _geometries(16)
+    cone = tj.geometry.ConeSegments((geometry["cone"], geometry["cone"]))
+    for beam in (cone, geometry["cone"]):
+        fast = alignment_plan("pose", grid, geometry=beam).config
+        assert fast.gn_joint_iterations == 10 and fast.iterations == 10
+    for kind in ("parallel", "lamino"):
+        assert (
+            alignment_plan("pose", grid, geometry=geometry[kind]).config.gn_joint_iterations == 40
+        )
+    reference = alignment_plan("pose", grid, geometry=cone, quality="reference")
+    assert reference.config.gn_joint_iterations == 40
+    expert = AlignConfig(gn_joint_iterations=23)
+    assert (
+        alignment_plan("pose", grid, geometry=cone, config=expert).config.gn_joint_iterations == 23
+    )
     # Coarse levels keep at least 32 voxels on the shortest axis.
     assert alignment_plan("pose", tj.Grid(32, 32, 32, 1.0, 1.0, 1.0)).levels == (1,)
     assert alignment_plan("pose", tj.Grid(64, 64, 64, 1.0, 1.0, 1.0)).levels == (2, 1)
