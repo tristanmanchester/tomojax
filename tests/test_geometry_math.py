@@ -71,9 +71,11 @@ def test_axis_poses_retain_the_minimum_rotation_frame(tilt, azimuth):
 
 def test_exact_reversed_axis_uses_the_same_half_turn_as_host_geometry():
     grid, detector = Grid(5, 4, 3, 1, 1, 1), Detector(7, 5, 1, 1)
-    angles = np.asarray([0, 17, 90])
+    angles = np.asarray([0, 17, 90], dtype=np.float32)
     geometry = RotationAxisGeometry(grid, detector, angles, (0, 0, -1))
     expected = np.asarray([geometry.pose_for_view(i) for i in range(len(angles))])
+    listed = RotationAxisGeometry(grid, detector, angles.tolist(), (0, 0, -1))
+    np.testing.assert_array_equal(expected, [listed.pose_for_view(i) for i in range(len(angles))])
     actual = jax.jit(axis_pose_stack)(angles, np.asarray([0, 0, -1]))
     np.testing.assert_allclose(actual, expected, atol=2e-7)
 
