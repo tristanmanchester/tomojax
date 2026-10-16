@@ -86,4 +86,6 @@ def axial_slabs(
             None if support is None else support[:, :, start:stop],
         )
         output[:, :, start:stop] = np.asarray(volume)
+        # Do not retain the previous device slab while allocating the next.
+        del volume
     return output, {**info, "host_slabs": True, "slices_per_batch": depth}

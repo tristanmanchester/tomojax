@@ -114,3 +114,26 @@ def test_axial_memory_slabs_preserve_the_full_constrained_solve(monkeypatch, sub
     slabs, info = sirt(geometry, grid, detector, data, init_x=initial, config=cfg)
     assert info["host_slabs"] and isinstance(slabs, np.ndarray)
     np.testing.assert_allclose(slabs, full, atol=3e-6, rtol=3e-5)
+
+
+def test_axial_slabs_release_each_result_before_solving_the_next(monkeypatch):
+    import weakref
+
+    import tomojax.backends
+    from tomojax.recon._axial_slabs import axial_slabs
+
+    geometry = tj.ParallelGeometry(tj.Grid(3, 3, 3, 1, 1, 1), tj.Detector(3, 3, 1, 1), [0])
+    previous = []
+
+    def solve(local, *_):
+        assert not previous or previous[-1]() is None
+        volume = np.ones((3, 3, local.grid.nz), np.float32)
+        previous.append(weakref.ref(volume))
+        return volume, {}
+
+    monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: 1)
+    result = axial_slabs(
+        geometry, geometry.grid, geometry.detector, np.zeros((1, 3, 3)),
+        initial=None, support=None, volume_buffers=4, projection_buffers=2, solve=solve,
+    )
+    assert result is not None and len(previous) == 3 and previous[-1]() is None
