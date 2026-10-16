@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Automatic axial reconstruction estimates an explicitly unrecorded detector centre;
+recorded, supplied and previously inferred centres are preserved, with calibration
+provenance carried by the returned scan and saved files.
+
 Fourier slab depth is automatic by default, sized from the padded CUDA footprint;
 explicit integer depths are unchanged.
 

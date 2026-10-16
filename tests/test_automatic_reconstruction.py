@@ -1,11 +1,14 @@
 """Automatic reconstruction selects a measured inverse without changing geometry."""
 
 from dataclasses import replace
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
 
 import tomojax as tj
+from tomojax.alignment import api as alignment
+from tomojax.io import ProjectionDataset
 from tomojax.recon import FBPConfig
 
 
@@ -34,7 +37,9 @@ def test_default_reconstruction_matches_explicit_inverse_and_reports_coverage(
     if raw:
         reasons = actual.info["automatic"]["reasons"]
         assert any("stripe correction" in reason for reason in reasons)
-        assert any("centre calibration" in reason for reason in reasons)
+        assert actual.info["automatic"]["center_calibration_reason"] in reasons
+    else:
+        assert actual.info["automatic"]["center_calibration_reason"] is None
     tj.save(tmp_path / "reconstruction.nxs", actual)
     loaded = tj.load_reconstruction(tmp_path / "reconstruction.nxs")
     assert loaded.info["automatic"] == actual.info["automatic"]
@@ -49,3 +54,44 @@ def test_explicit_method_bypasses_automatic_geometry_policy():
     assert "automatic" not in result.info and result.scan is scan
     with pytest.raises(ValueError, match="choose method='fista'"):
         tj.reconstruct(scan, grid=replace(grid, nx=3))
+
+
+@pytest.mark.parametrize(
+    "status", [None, "recorded", "provided", "inferred", "not_recorded", "failed"]
+)
+def test_automatic_center_provenance_failure_and_saved_reuse(status, monkeypatch, tmp_path):
+    grid, detector = tj.Grid(8, 8, 2, 1, 1, 1), tj.Detector(12, 2, 1, 1)
+    angles = np.linspace(0, 180, 33)
+    geometry = tj.ParallelGeometry(grid, detector, angles)
+    scan = tj.Frames(np.full((33, 2, 12), 0.5, np.float32), geometry, white_level=1).corrected()
+    meta = {} if status is None else {"detector_center_status": status}
+    if status == "failed":
+        meta["detector_center_status"] = "not_recorded"
+    record = ProjectionDataset(scan.projections, angles, geometry_metadata=meta)
+    scan = replace(scan, source=record)
+    estimate = Mock(return_value=replace(geometry, detector=replace(detector, center=(-2.2, 0))))
+    if status == "failed":
+        estimate.side_effect = ValueError("no usable half-turn")
+    monkeypatch.setattr(alignment, "estimate_center", estimate)
+    tj.reconstruct(scan, "fourier")
+    assert estimate.call_count == 0
+    actual = tj.reconstruct(scan)
+    assert estimate.call_count == int(status in {"not_recorded", "failed"})
+    assert record.geometry_metadata == meta and scan.detector.center == (0, 0)
+    automatic = actual.info["automatic"]
+    if status == "not_recorded":
+        assert actual.scan.detector.center == (-2.2, 0)
+        assert actual.scan.source.geometry_metadata["detector_center_status"] == "inferred"
+        assert automatic["center_calibration_reason"] is None
+        path = tmp_path / "calibrated.nxs"
+        tj.save(path, actual)
+        loaded = tj.load_reconstruction(path)
+        replay = tj.reconstruct(loaded.scan)
+        np.testing.assert_array_equal(actual.volume, replay.volume)
+        assert estimate.call_count == 1 and replay.scan is loaded.scan
+    else:
+        assert actual.scan is scan
+        if status == "failed":
+            assert automatic["center_estimation"]["status"] == "failed"
+            assert automatic["status"] == "limited"
+            assert automatic["center_calibration_reason"] in automatic["reasons"]

@@ -195,8 +195,8 @@ def reconstruct(
 
     ``auto`` (default) chooses Fourier inversion for unposed axial half-turn
     scans, the guarded laminography workflow for oblique scans, and FBP/FDK
-    otherwise. Axial geometry is preserved; oblique auto may infer setup,
-    support and a binned working grid. The returned scan and ``info["automatic"]``
+    otherwise. An explicitly unrecorded axial centre may be inferred; oblique auto
+    may infer setup, support and a binned grid. The scan and ``info["automatic"]``
     record those choices and limitations. Explicit methods bypass this policy.
 
     ``fbp``
@@ -320,14 +320,51 @@ def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstructio
             "Posed or custom parallel geometry uses FBP; "
             "automatic iterative validation is unavailable."
         )
+    scan, center_estimation, center_calibration_reason = _automatic_axial_setup(
+        scan, method=method, reasons=reasons
+    )
     result = reconstruct(scan, method, **options)
     if result.info.get("backend") == "numpy":
         reasons.append("CUDA Fourier is not active; NumPy execution cannot promise GPU throughput.")
+    automatic = {
+        "method": method,
+        "status": "limited" if reasons else "ok",
+        "reasons": reasons,
+        "center_calibration_reason": center_calibration_reason,
+        "geometry": (
+            "center_estimated"
+            if center_estimation and center_estimation["status"] == "estimated"
+            else "preserved"
+        ),
+        "center_estimation": center_estimation,
+        "warning": "Method selection does not validate geometry, support or detector artefacts.",
+    }
+    return replace(result, info={**result.info, "automatic": automatic})
+
+
+def _automatic_axial_setup(
+    scan: Scan, *, method: Method, reasons: list[str]
+) -> tuple[Scan, dict[str, Any] | None, str | None]:
+    """Infer an absent axial centre and identify unresolved raw-workflow limitations."""
+    center_estimation = None
+    source_meta = {} if scan.source is None else scan.source.geometry_metadata
+    if method == "fourier" and source_meta.get("detector_center_status") == "not_recorded":
+        try:
+            scan = estimate_center(scan)
+            assert scan.source is not None
+            source_meta = scan.source.geometry_metadata
+            center_estimation = source_meta["detector_center_calibration"]
+        except ValueError as exc:
+            center_estimation = {"status": "failed", "reason": str(exc)}
+            reasons.append("Automatic centre estimation failed: " + str(exc))
+    center_calibration_reason = None
     if method == "fourier" and any(step.name == "log" for step in scan.corrections):
-        reasons.append(
-            "Reconstruction did not perform centre calibration; the supplied geometry was "
-            "preserved. Use align if the centre needs estimating."
-        )
+        if source_meta.get("detector_center_status") not in {"inferred", "recorded", "provided"}:
+            center_calibration_reason = (
+                "Reconstruction did not perform centre calibration; the supplied geometry was "
+                "preserved. Use align if the centre needs estimating."
+            )
+            reasons.append(center_calibration_reason)
         reasons.append(
             "Corrected projections were already materialized; use reconstruct_slabs on raw "
             "Frames to avoid that host round trip. Raw-workflow speed is not guaranteed here."
@@ -336,14 +373,7 @@ def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstructio
             reasons.append(
                 "No stripe correction is recorded; detector-ring suppression is unassessed."
             )
-    automatic = {
-        "method": method,
-        "status": "limited" if reasons else "ok",
-        "reasons": reasons,
-        "geometry": "preserved",
-        "warning": "Method selection does not validate geometry, support or detector artefacts.",
-    }
-    return replace(result, info={**result.info, "automatic": automatic})
+    return scan, center_estimation, center_calibration_reason
 
 
 @contextmanager
@@ -447,12 +477,29 @@ def estimate_center(scan: Scan) -> Scan:
     full scan's centre rather than copying the preview's. Needs corrected line
     integrals of an unposed axial :class:`ParallelGeometry` over a half turn (at least
     16 views spanning 175 degrees); anything else raises ``ValueError``. The estimate
-    can be wrong for very compact objects, so check the reconstruction.
+    can be wrong for very compact objects, so check the reconstruction. Source
+    provenance, when present, records the inferred centre without changing the input.
     """
     from tomojax.alignment.api import estimate_center as estimate_geometry_center
 
     geometry = estimate_geometry_center(cast("Geometry", scan.geometry), scan.projections)
-    return replace(scan, geometry=geometry)
+    source = scan.source
+    if source is not None:
+        source = replace(
+            source,
+            geometry_metadata={
+                **source.geometry_metadata,
+                "detector_center_status": "inferred",
+                "detector_center_calibration": {
+                    "status": "estimated",
+                    "method": "half_turn_fourier",
+                    "input": list(scan.detector.center),
+                    "output": list(geometry.detector.center),
+                    "unit": "geometry_length",
+                },
+            },
+        )
+    return replace(scan, geometry=geometry, source=source)
 
 
 def align(
