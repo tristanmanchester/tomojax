@@ -388,6 +388,15 @@ class tomojax.recon.FourierConfig(
         slices_per_batch: 'int | None' = None,
         backend: "Literal['auto', 'numpy', 'cupy']" = 'auto',
     ) -> None
+class tomojax.recon.MLEMConfig(
+        *,
+        iterations: 'int' = 50,
+        subsets: 'int' = 1,
+        support: 'jax.Array | np.ndarray | None' = None,
+        views_per_batch: 'int' = 32,
+        projector_backend: 'ProjectorBackend' = 'auto',
+        projector_model: 'ProjectorModel' = 'auto',
+    ) -> None
 class tomojax.recon.SPDHGConfig(
         *,
         iterations: 'int' = 400,
@@ -503,6 +512,16 @@ def tomojax.recon.fourier_reconstruct(
         config: 'FourierConfig | None' = None,
         out: 'np.ndarray | None' = None,
     ) -> 'np.ndarray'
+def tomojax.recon.mlem(
+        geometry: 'Geometry',
+        grid: 'Grid',
+        detector: 'Detector',
+        projections: 'jax.Array | np.ndarray',
+        *,
+        init_x: 'jax.Array | np.ndarray | None' = None,
+        config: 'MLEMConfig | None' = None,
+        det_grid: 'tuple[jax.Array, jax.Array] | None' = None,
+    ) -> 'tuple[jax.Array, dict[str, object]]'
 def tomojax.recon.project(
         geometry: 'Geometry',
         volume: 'jax.Array | np.ndarray',

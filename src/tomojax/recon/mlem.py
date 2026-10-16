@@ -1,0 +1,165 @@
+"""Poisson maximum-likelihood reconstruction with matched nonnegative projectors."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from functools import partial
+import operator
+from typing import TYPE_CHECKING
+
+import jax
+import jax.numpy as jnp
+import numpy as np
+
+from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.validation import (
+    validate_detector_grid,
+    validate_grid,
+    validate_projection_stack,
+    validate_volume,
+)
+from tomojax.recon._projection import (
+    ConeModel,
+    ProjectorBackend,
+    ProjectorModel,
+    poisson_operators,
+    resolve_geometry_projector,
+)
+
+if TYPE_CHECKING:
+    from tomojax.geometry import Detector, Geometry, Grid
+
+
+@dataclass(frozen=True, kw_only=True)
+class MLEMConfig:
+    """Reconstruct nonnegative linear Poisson measurements, ``y ~ Poisson(A x)``.
+
+    ``subsets=1`` is MLEM; larger values use ordered-subsets EM (OSEM).
+    Each iteration visits every view once, in angle-interleaved groups. OSEM
+    accelerates early progress but can cycle; use one subset for convergence.
+    ``support`` is a boolean mask broadcastable to the volume shape: voxels
+    outside it stay zero. The default initial volume is one inside support.
+    A supplied zero voxel stays zero under multiplicative updates.
+
+    These are linear emission-style measurements, not transmission counts
+    with mean ``I0 * exp(-A x)``. Applying MLEM to nonnegative log-transformed
+    attenuation data is possible, but does not give it Poisson statistics.
+    The projectors are the same matched pair as :class:`CGLSConfig`, with
+    nonnegative interpolation weights. A single sensitivity is retained; multiple
+    subset sensitivities are cached only when they fit in 256 MiB, otherwise
+    recomputed to bound memory use.
+    """
+
+    iterations: int = 50
+    subsets: int = 1
+    support: jax.Array | np.ndarray | None = None
+    views_per_batch: int = 32
+    projector_backend: ProjectorBackend = "auto"
+    projector_model: ProjectorModel = "auto"
+
+
+@partial(jax.jit, static_argnames=("grid", "detector", "backend", "batch_size", "model"))
+def _solve(
+    poses: jax.Array,
+    data: jax.Array,
+    initial: jax.Array | None,
+    support: jax.Array | None,
+    indices: jax.Array,
+    valid: jax.Array,
+    iterations: jax.Array,
+    det_grid: tuple[jax.Array, jax.Array] | None,
+    *,
+    grid: Grid,
+    detector: Detector,
+    backend: str,
+    batch_size: int,
+    model: str | ConeModel,
+) -> tuple[jax.Array, jax.Array]:
+    sensitivity, correction = poisson_operators(
+        poses, grid, detector, det_grid, backend, batch_size, model, indices, valid
+    )
+    shape = (grid.nx, grid.ny, grid.nz)
+    x = jnp.ones(shape, jnp.float32) if initial is None else initial
+    if support is not None:
+        x = jnp.where(support, x, 0.0)
+    inputs_valid = jnp.all(jnp.isfinite(data) & (data >= 0))
+    inputs_valid &= jnp.all(jnp.isfinite(x) & (x >= 0)) & jnp.all(jnp.isfinite(poses))
+    subsets = indices.shape[0]
+    # A full subset stack on a large volume can exceed device memory. Retain
+    # only one current sensitivity in that case, independent of subset count.
+    cache = subsets == 1 or subsets * np.prod(shape) * 4 <= 256 * 2**20
+    sensitivities = jax.lax.map(sensitivity, jnp.arange(subsets)) if cache else None
+
+    def step(k: jax.Array, volume: jax.Array) -> jax.Array:
+        i = k % subsets
+        norm = sensitivity(i) if sensitivities is None else sensitivities[i]
+        update = correction(i, volume, data)
+        return volume * jnp.where(norm > 0, update / jnp.where(norm > 0, norm, 1), 1)
+
+    return jax.lax.fori_loop(0, iterations * subsets, step, x), inputs_valid
+
+
+def _device(array: object) -> jax.Array:
+    if isinstance(array, jax.Array):
+        return jnp.asarray(array, jnp.float32)
+    return jax.device_put(np.asarray(array, np.float32))
+
+
+def mlem(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jax.Array | np.ndarray,
+    *,
+    init_x: jax.Array | np.ndarray | None = None,
+    config: MLEMConfig | None = None,
+    det_grid: tuple[jax.Array, jax.Array] | None = None,
+) -> tuple[jax.Array, dict[str, object]]:
+    """MLEM or OSEM with the exact transpose; see :class:`MLEMConfig`.
+
+    Returns the FP32 volume and an iteration record, without a convergence
+    claim. An unobserved voxel keeps its initial value; zero measurements
+    drive observed voxels to zero. Input and output remain device resident.
+    """
+    cfg = MLEMConfig() if config is None else config
+    iterations, subsets, batch = map(
+        operator.index, (cfg.iterations, cfg.subsets, cfg.views_per_batch)
+    )
+    if iterations < 0 or subsets < 1 or batch < 1:
+        raise ValueError(
+            "mlem: iterations must be nonnegative; subsets and views_per_batch positive"
+        )
+    shape = validate_grid(grid, "mlem grid")
+    n, _, _ = validate_projection_stack(projections, detector, geometry=geometry, context="mlem")
+    validate_detector_grid(det_grid, detector, context="mlem")
+    if subsets > n:
+        raise ValueError("mlem: subsets must not exceed the number of views")
+    if init_x is not None:
+        validate_volume(init_x, grid, context="mlem", name="init_x")
+    support = (
+        None if cfg.support is None else jnp.broadcast_to(jnp.asarray(cfg.support, bool), shape)
+    )
+    model, backend = resolve_geometry_projector(
+        geometry, cfg.projector_model, cfg.projector_backend, detector=detector,
+        det_grid=det_grid, context="mlem",
+    )  # fmt: skip
+    order = np.argsort(np.asarray(getattr(geometry, "angles", np.arange(n))), kind="stable")
+    count = (n + subsets - 1) // subsets
+    indices = np.arange(subsets)[:, None] + subsets * np.arange(count)[None, :]
+    valid = indices < n
+    indices = order[np.minimum(indices, n - 1)].astype(np.int32)
+    volume, good = _solve(
+        stack_view_poses(geometry, n), _device(projections),
+        None if init_x is None else _device(init_x), support,
+        jax.device_put(indices), jax.device_put(valid), jnp.int32(iterations), det_grid,
+        grid=grid, detector=detector, backend=backend, batch_size=batch, model=model,
+    )  # fmt: skip
+    if not bool(good):
+        raise ValueError("mlem: projections and initial volume must be finite and nonnegative")
+    return volume, {
+        "effective_iterations": iterations,
+        "subset_updates": iterations * subsets,
+        "termination": "iteration_limit",
+        "projector_backend": backend,
+        "projector_model": model,
+    }

@@ -17,6 +17,7 @@ from tomojax.recon.fbp_host import FBPHostConfig, fbp_host, fbp_slabs
 from tomojax.recon.filters import clear_filter_caches
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 from tomojax.recon.fourier import FourierConfig, fourier_reconstruct
+from tomojax.recon.mlem import MLEMConfig, mlem
 from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
 from tomojax.recon.types import Regulariser
 
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
 
     from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry
 
-type MethodConfig = FBPConfig | FourierConfig | CGLSConfig | FistaConfig | SPDHGConfig
+type MethodConfig = FBPConfig | FourierConfig | CGLSConfig | FistaConfig | SPDHGConfig | MLEMConfig
 
 _CONFIGS: dict[str, type[MethodConfig]] = {
     "fbp": FBPConfig,
@@ -35,6 +36,7 @@ _CONFIGS: dict[str, type[MethodConfig]] = {
     "cgls": CGLSConfig,
     "fista": FistaConfig,
     "spdhg": SPDHGConfig,
+    "mlem": MLEMConfig,
 }
 
 
@@ -117,6 +119,27 @@ def reconstruct_arrays(
         if warm_start:
             raise ValueError("method 'fbp' does not take warm_start")
         return _fbp_result(geometry, grid, detector, projections, cfg, det_grid, out)
+    return _iterative_result(
+        geometry, grid, detector, projections, cfg, det_grid, warm_start=warm_start
+    )
+
+
+def _iterative_result(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray | np.ndarray,
+    cfg: CGLSConfig | FistaConfig | SPDHGConfig | MLEMConfig,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+    *,
+    warm_start: bool,
+) -> tuple[jnp.ndarray, dict[str, object]]:
+    """Initialize and dispatch an iterative solve with its method's data model."""
+    if isinstance(cfg, MLEMConfig):
+        if warm_start:
+            raise ValueError("method 'mlem' does not take an FBP warm_start")
+        volume, record = mlem(geometry, grid, detector, projections, config=cfg, det_grid=det_grid)
+        return volume, {"config": cfg, **record}
     start = None
     if warm_start:
         # On the solver's devices; an explicit detector grid takes one.
@@ -247,6 +270,7 @@ __all__ = [
     "FBPHostConfig",
     "FistaConfig",
     "FourierConfig",
+    "MLEMConfig",
     "Regulariser",
     "SPDHGConfig",
     "cgls",
@@ -260,6 +284,7 @@ __all__ = [
     "fourier_reconstruct",
     "fourier_slabs",
     "method_config",
+    "mlem",
     "reconstruct_arrays",
     "run_parallel_fbp_direct_pallas",
     "spdhg_tv",
