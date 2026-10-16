@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+Simple frame corrections use smaller automatic batches to reduce transfer staging
+and retained device workspace; explicit batches and workspace-heavy steps are unchanged.
+
 Fast coupled cone-beam pose alignment uses shorter inexact linear updates while
 retaining its nonlinear acceptance and outer convergence checks; parallel beams,
 reference quality and explicit expert budgets are unchanged.

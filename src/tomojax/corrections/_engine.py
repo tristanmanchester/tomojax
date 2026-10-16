@@ -40,6 +40,7 @@ LOG = logging.getLogger(__name__)
 
 # Host memory a batch of views (or slab of rows) may take, as float32.
 _BATCH_BYTES = 256 * 2**20
+_SIMPLE_FRAME_BYTES = 32 * 2**20
 
 
 def correct_frames(
@@ -146,9 +147,14 @@ def correct_projections(
 
 
 def _frame_batch_size(views: int, rows: int, cols: int, steps: Sequence[Step]) -> int:
-    """Automatic view batch size, counting the largest step workspace (Paganin's FFTs)."""
-    pixels = rows * cols + max((s.workspace_pixels(rows, cols) for s in steps), default=0)
-    return max(1, min(views, _BATCH_BYTES // (4 * pixels)))
+    """Bound streaming batches while retaining room for workspace-heavy steps."""
+    workspace = max((s.workspace_pixels(rows, cols) for s in steps), default=0)
+    # Smaller simple-frame batches overlap file reads and transfers more cheaply
+    # and leave less idle device-pool storage before the reconstruction starts.
+    # Keep the existing workspace allowance for phase retrieval and resampling.
+    budget = _BATCH_BYTES if workspace else _SIMPLE_FRAME_BYTES
+    pixels = rows * cols + workspace
+    return max(1, min(views, budget // (4 * pixels)))
 
 
 def _validated_batch_views(value: int | None) -> int | None:
