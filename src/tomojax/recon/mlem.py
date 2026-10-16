@@ -38,7 +38,7 @@ class MLEMConfig:
     Each iteration visits every view once, in angle-interleaved groups. OSEM
     accelerates early progress but can cycle; use one subset for convergence.
     ``support`` is a boolean mask broadcastable to the volume shape: voxels
-    outside it stay zero. The default initial volume is one inside support.
+    outside it stay zero. The default initial volume is one inside the observed support.
     A supplied zero voxel stays zero under multiplicative updates.
 
     These are linear emission-style measurements, not transmission counts
@@ -89,6 +89,17 @@ def _solve(
     # only one current sensitivity in that case, independent of subset count.
     cache = subsets == 1 or subsets * np.prod(shape) * 4 <= 256 * 2**20
     sensitivities = jax.lax.map(sensitivity, jnp.arange(subsets)) if cache else None
+    # A wholly unobserved voxel has no likelihood information: choose zero,
+    # not an arbitrary unit activity. Visibility must include every subset;
+    # a voxel missed by one subset can still be measured by another.
+    observed = (
+        jnp.any(sensitivities > 0, axis=0)
+        if sensitivities is not None
+        else jax.lax.fori_loop(
+            0, subsets, lambda i, seen: seen | (sensitivity(i) > 0), jnp.zeros(shape, bool)
+        )
+    )
+    x = jnp.where(observed, x, 0.0)
 
     def step(k: jax.Array, volume: jax.Array) -> jax.Array:
         i = k % subsets
@@ -118,8 +129,8 @@ def mlem(
     """MLEM or OSEM with the exact transpose; see :class:`MLEMConfig`.
 
     Returns the FP32 volume and an iteration record, without a convergence
-    claim. An unobserved voxel keeps its initial value; zero measurements
-    drive observed voxels to zero. Input and output remain device resident.
+    claim. Wholly unobserved voxels are zero; zero measurements drive
+    observed voxels to zero. Input and output remain device resident.
     """
     cfg = MLEMConfig() if config is None else config
     iterations, subsets, batch = map(

@@ -92,3 +92,15 @@ def test_mlem_public_workflow_improves_likelihood_and_image(problem):
         geometry, grid, detector, np.zeros((5, 4, 5), np.float32), config=MLEMConfig(iterations=2)
     )
     np.testing.assert_array_equal(np.asarray(zero).ravel()[matrix.sum(axis=0) > 0], 0)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("subsets", [1, 2])
+def test_unobserved_activity_is_zero_not_the_initial_constant(subsets):
+    geometry = tj.ParallelGeometry(Grid(3, 1, 3, 1, 1, 1), Detector(1, 1, 1, 1), [0, 90, 0])
+    volume, _ = mlem(
+        geometry, geometry.grid, geometry.detector, np.array([2, 6, 2], np.float32)[:, None, None],
+        init_x=np.full((3, 1, 3), 7, np.float32),
+        config=MLEMConfig(iterations=100, subsets=subsets),
+    )  # fmt: skip
+    np.testing.assert_allclose(np.asarray(volume), [[[0, 2, 0]]] * 3, atol=1e-5)
