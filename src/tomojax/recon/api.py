@@ -96,17 +96,20 @@ def reconstruct_arrays(
     if isinstance(cfg, FourierConfig):
         import numpy as np
 
+        from tomojax.recon._fourier_backend import resolve_fourier_backend
+
         if warm_start:
             raise ValueError("method 'fourier' does not take warm_start")
+        backend = resolve_fourier_backend(cfg.backend)
         volume = fourier_reconstruct(
             cast("ParallelGeometry", geometry),
             grid,
             detector,
             np.asarray(projections),
-            config=cfg,
+            config=replace(cfg, backend=backend),
             out=out,
         )
-        return volume, {"config": cfg, "host_slabs": True}
+        return volume, {"config": cfg, "host_slabs": True, "backend": backend}
     if out is not None and not isinstance(cfg, FBPConfig):
         raise ValueError(f"method {method!r} does not take out")
     det_grid = _detector_grid(geometry, detector)

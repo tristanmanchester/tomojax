@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Generator
 from contextlib import closing
-import operator
 from typing import Any
 
 import jax
@@ -13,7 +12,13 @@ import numpy as np
 from tomojax.core.validation import validate_detector, validate_grid
 from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
 
-from ._fourier_backend import FourierPlan, PendingSlab, is_cuda_oom
+from ._fourier_backend import (
+    FourierPlan,
+    PendingSlab,
+    fourier_slab_depth,
+    is_cuda_oom,
+    resolve_fourier_backend,
+)
 from ._fourier_grid import sample_projection_rows, sorted_half_turn
 from .fourier import FourierConfig
 from .types import ReconstructionSlab
@@ -61,9 +66,8 @@ def fourier_slabs[T](
         raise ValueError("reconstruct_slabs requires unposed axial ParallelGeometry")
     validate_grid(grid, "reconstruct_slabs grid")
     validate_detector(detector, "reconstruct_slabs detector")
-    depth = min(operator.index(config.slices_per_batch), grid.nz)
-    if depth < 1 or config.backend not in {"numpy", "cupy"}:
-        raise ValueError("Fourier needs positive slices_per_batch and a numpy or cupy backend")
+    backend = resolve_fourier_backend(config.backend)
+    depth = fourier_slab_depth(grid, detector, config.slices_per_batch, backend)
     origin = grid_volume_origin(grid)
     if not np.isfinite([*origin, *detector.center]).all():
         raise ValueError("Fourier grid and detector placement must be finite")
@@ -82,8 +86,8 @@ def fourier_slabs[T](
                 flipped,
                 angles,
                 depth,
-                config.backend,
-                async_transfers=config.backend == "cupy",
+                backend,
+                async_transfers=backend == "cupy",
                 transpose_download=True,
             )
             with closing(_run_plan(plan, read, order, positions, start)) as completed:
@@ -91,7 +95,7 @@ def fourier_slabs[T](
                     start = slab.stop
                     yield slab
         except Exception as error:
-            if config.backend != "cupy" or depth == 1 or not is_cuda_oom(error):
+            if backend != "cupy" or depth == 1 or not is_cuda_oom(error):
                 raise
             depth = max(1, depth // 2)
         finally:

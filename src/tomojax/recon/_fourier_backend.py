@@ -1,19 +1,62 @@
-"""Slab FFT execution; CuPy is imported only for an explicit CUDA request."""
+"""Slab FFT execution and runtime selection of available CUDA support."""
 
 from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import dataclass
 from functools import lru_cache
+import operator
 from threading import Lock
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
-from tomojax.geometry import grid_volume_origin
+from tomojax.geometry import Detector, Grid, grid_volume_origin
 
 from ._fourier_grid import interpolate_numpy, next_fast_len, radial_coefficients, transform_grid
 from ._fourier_rows import ProjectionRows, interpolate_projection_rows
+
+
+def resolve_fourier_backend(backend: str) -> Literal["numpy", "cupy"]:
+    """Resolve auto once, without falling back after reconstruction has started."""
+    if backend in {"numpy", "cupy"}:
+        return "cupy" if backend == "cupy" else "numpy"
+    if backend != "auto":
+        raise ValueError("fourier_reconstruct: backend must be 'auto', 'numpy' or 'cupy'")
+    import jax
+
+    device = jax.config.jax_default_device
+    if device is None or isinstance(device, str):
+        device = jax.devices(device)[0]
+    if device.platform != "gpu" or not device.client.platform_version.lower().startswith("cuda"):
+        return "numpy"
+    try:
+        import cupy
+    except ImportError:
+        return "numpy"
+    if not cupy.cuda.is_available():
+        return "numpy"
+    # Never change the caller's current CUDA device or mix it with another JAX device.
+    if cupy.cuda.runtime.getDevice() != device.local_hardware_id:
+        return "numpy"
+    return "cupy"
+
+
+def fourier_slab_depth(grid: Grid, detector: Detector, requested: int | None, backend: str) -> int:
+    """Bound automatic CUDA FFT planes before allocation; explicit budgets stay fixed."""
+    if requested is not None:
+        depth = operator.index(requested)
+    elif backend == "cupy":
+        shape, _ = transform_grid(grid, detector)
+        # Several transform buffers, workspaces and pending transfers coexist.
+        # Bounding one padded FP32 plane stack avoids expensive retry cascades.
+        planes = max(1, (256 * 1024**2) // (4 * shape[0] * shape[1]))
+        depth = min(16, 1 << (planes.bit_length() - 1))
+    else:
+        depth = 16
+    if depth < 1:
+        raise ValueError("fourier_reconstruct: slices_per_batch must be positive")
+    return min(depth, grid.nz)
 
 
 def is_cuda_oom(error: Exception) -> bool:

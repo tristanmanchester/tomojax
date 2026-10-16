@@ -6,7 +6,7 @@ returns results that carry their geometry::
     import tomojax as tj
 
     scan = tj.load("scan.nxs")  # or a Nikon .xtekct
-    recon = tj.reconstruct(scan)  # FBP (FDK for cone beams)
+    recon = tj.reconstruct(scan)  # Geometry-aware automatic reconstruction
     recon = tj.reconstruct(scan, method="cgls", iterations=50)
     result = tj.align(scan, mode="cor-then-pose")  # result.scan carries the corrections
     tj.save("recon.nxs", tj.reconstruct(result.scan))

@@ -80,22 +80,24 @@ from tomojax.recon import FourierConfig, fourier_reconstruct
 
 volume = fourier_reconstruct(
     geometry, grid, detector, projections_numpy,
-    config=FourierConfig(slices_per_batch=16, backend="cupy"),
+    config=FourierConfig(),  # backend and slab depth selected automatically
     out=output_memmap,  # optional writable FP32 host storage
 )
 ```
 
 Install `tomojax[fourier-cuda12]` for the optional CuPy implementation on a host
-with a working CUDA 12 runtime/toolkit and NVIDIA driver. The
-default `backend="numpy"` provides a portable, double-precision FFT reference;
-CUDA uses single-precision FFTs and a real inverse FFT to store only half the
+with a working CUDA 12 runtime/toolkit and NVIDIA driver. The default
+`backend="auto"` uses CUDA when it matches the selected JAX device, otherwise
+NumPy's portable double-precision FFT reference. CUDA uses single-precision
+FFTs and a real inverse FFT to store only half the
 Cartesian spectrum. Angular interpolation fractions retain double-precision
 coordinates before FP32 accumulation. Both return FP32 host arrays and process fixed axial
 slabs, including a padded final batch. The same storage lifetime, nonoverlap and
 partial-output rules as `fbp_host` apply. No amplitude fitting or clipping is
 performed. Large CUDA jobs overlap bounded host work and transfers on reused
-device queues. Smaller slabs can reduce memory at a throughput cost; the
-measured 512³ case uses 430 MiB at eight slices versus 678 MiB at sixteen.
+device queues. Default CUDA slab depth targets a 256 MiB padded FP32 plane stack (at least one and at most sixteen slices); NumPy defaults to sixteen.
+An explicit integer `slices_per_batch` overrides this choice. Additional buffers
+and FFT workspaces need more memory, so CUDA exhaustion still halves the depth.
 This API is not differentiable and rejects tilted/custom geometry. Large
 missing angular sectors are interpolated, not recovered, and the angular
 interpolation can introduce artefacts on sharp or undersampled scans; the

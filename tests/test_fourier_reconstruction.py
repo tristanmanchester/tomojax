@@ -197,7 +197,9 @@ def test_cuda_allocation_exhaustion_retries_smaller_slabs_and_rewrites_output(mo
 
     original_plan = implementation.FourierPlan
     grid, detector, geometry, data, _ = scan()
-    expected = fourier_reconstruct(geometry, grid, detector, data)
+    expected = fourier_reconstruct(
+        geometry, grid, detector, data, config=FourierConfig(backend="numpy")
+    )
     depths, destroyed = [], []
 
     class Exhausted(MemoryError):
@@ -625,6 +627,7 @@ def test_memmap_output_and_batch_size_independence(tmp_path, backend):
     reference = fourier_reconstruct(
         geometry, grid, detector, data, config=FourierConfig(slices_per_batch=7, backend=backend)
     )
+    assert reference.flags.f_contiguous and actual.flags.c_contiguous
     np.testing.assert_allclose(actual, reference, rtol=3e-5, atol=3e-6)
     np.testing.assert_array_equal(source, data)
 
@@ -713,7 +716,7 @@ def test_fixed_fft_batches_materialize_only_real_output_slices(monkeypatch, back
         def _compute_volume(self, raw, count):
             volume = super()._compute_volume(raw, count)
             batches.append((raw.shape[0], self.frequencies.shape[0], count, volume.shape[0]))
-            assert volume.shape == (count, grid.nx, grid.ny)
+            assert volume.size == count * grid.nx * grid.ny
             return volume
 
     monkeypatch.setattr(implementation, "FourierPlan", Plan)
@@ -826,3 +829,26 @@ def test_signed_profiles_match_a_dense_full_spectrum_reconstruction(backend, ny,
         config=FourierConfig(slices_per_batch=3, backend=backend),
     )
     assert np.linalg.norm(actual - reference) / np.linalg.norm(reference) < 2e-5
+
+
+def test_automatic_slab_depth_bounds_padded_physical_support_and_preserves_overrides(monkeypatch):
+    import tomojax.recon.fourier as implementation
+
+    depths = []
+
+    def plan(*args, **kwargs):
+        depths.append(args[5])
+        raise RuntimeError("planning complete")
+
+    monkeypatch.setattr(implementation, "FourierPlan", plan)
+    detector = Detector(64, 31, 1, 1)
+    angles = np.linspace(0, 180, 32, endpoint=False)
+    data = np.zeros((32, 31, 64), np.float32)
+    for pitch, expected in ((1, 16), (1 / 16, 8), (1 / 36, 2)):
+        grid = Grid(4, 4, 31, pitch, pitch, 1)
+        geometry = ParallelGeometry(grid, detector, angles)
+        for requested, selected in ((None, expected), (5, 5)):
+            cfg = FourierConfig(backend="cupy", slices_per_batch=requested)
+            with pytest.raises(RuntimeError, match="planning complete"):
+                fourier_reconstruct(geometry, grid, detector, data, config=cfg)
+            assert depths[-1] == selected

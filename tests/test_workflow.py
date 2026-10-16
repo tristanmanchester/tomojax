@@ -112,7 +112,7 @@ def test_reconstruct_takes_the_methods_configuration_under_its_keywords() -> Non
     with pytest.raises(ValueError, match="method 'fista' takes a FistaConfig, not a CGLSConfig"):
         tj.reconstruct(scan, "fista", config=CGLSConfig())
     with pytest.raises(ValueError, match="method 'fbp' does not take warm_start"):
-        tj.reconstruct(scan, warm_start=True)
+        tj.reconstruct(scan, "fbp", warm_start=True)
 
 
 @pytest.mark.parametrize("method", ["fista", "spdhg"])
@@ -151,7 +151,7 @@ def test_scans_and_reconstructions_round_trip_through_files(kind: str, tmp_path:
     np.testing.assert_array_equal(loaded.projections, scan.projections)
     if isinstance(geometry, tj.ConeGeometry):
         assert loaded.geometry.beam == geometry.beam  # pyright: ignore[reportAttributeAccessIssue]
-    recon = tj.reconstruct(loaded)
+    recon = tj.reconstruct(loaded, "fbp")
     tj.save(tmp_path / "recon.nxs", recon)
     with h5py.File(tmp_path / "recon.nxs") as handle:
         assert handle["entry/processing/tomojax/volume"].attrs["long_name"] == "volume"

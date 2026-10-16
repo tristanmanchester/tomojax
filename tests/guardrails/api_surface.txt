@@ -168,7 +168,7 @@ def tomojax.project(
     ) -> 'jax.Array'
 def tomojax.reconstruct(
         scan: 'Scan',
-        method: 'Method' = 'fbp',
+        method: 'Method' = 'auto',
         *,
         grid: 'Grid | None' = None,
         out: 'np.ndarray | None' = None,
@@ -385,8 +385,8 @@ class tomojax.recon.FistaConfig(
     ) -> None
 class tomojax.recon.FourierConfig(
         *,
-        slices_per_batch: 'int' = 16,
-        backend: "Literal['numpy', 'cupy']" = 'numpy',
+        slices_per_batch: 'int | None' = None,
+        backend: "Literal['auto', 'numpy', 'cupy']" = 'auto',
     ) -> None
 class tomojax.recon.SPDHGConfig(
         *,
