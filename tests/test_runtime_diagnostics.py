@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 import logging
+import sys
 from types import SimpleNamespace
 
 import jax
@@ -41,6 +43,28 @@ def test_device_memory_is_read_from_the_requested_device(monkeypatch: pytest.Mon
 
     monkeypatch.setattr(_memory, "_host_available_memory_bytes", lambda: 5678)
     assert _memory.device_free_memory_bytes(device=SimpleNamespace(platform="cpu")) == 5678
+
+
+def test_cuda_memory_fallback_uses_requested_local_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    selected = []
+    cuda = SimpleNamespace(
+        Device=lambda ordinal: (selected.append(ordinal), nullcontext())[1],
+        runtime=SimpleNamespace(memGetInfo=lambda: (1234, 5678)),
+    )
+    monkeypatch.setitem(sys.modules, "cupy", SimpleNamespace(cuda=cuda))
+    monkeypatch.delattr(jax, "device_get_memory_info", raising=False)
+    gpu = SimpleNamespace(platform="gpu", id=17, local_hardware_id=2, memory_stats=lambda: None)
+    assert _memory.device_free_memory_bytes(device=gpu) == 1234
+    assert selected == [2]
+
+
+@pytest.mark.parametrize("platform", ["gpu", "tpu"])
+def test_unknown_accelerator_memory_does_not_use_host(monkeypatch, platform) -> None:
+    monkeypatch.delattr(jax, "device_get_memory_info", raising=False)
+    monkeypatch.setattr(_memory, "_cuda_free_memory_bytes", lambda device: None)
+    monkeypatch.setattr(_memory, "_host_available_memory_bytes", lambda: 5678)
+    device = SimpleNamespace(platform=platform, memory_stats=lambda: None)
+    assert _memory.device_free_memory_bytes(device=device) is None
 
 
 def test_invalid_views_per_batch_env_logs_selected_default(

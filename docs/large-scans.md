@@ -109,6 +109,38 @@ computation when spare device memory permits. All writes finish before return;
 a failure can leave a partly written volume. A 1024³ laminography volume takes about
 [37 s on an 8 GB laptop GPU](measurements.md#scans-larger-than-the-gpu).
 
+### Stream raw axial frames
+
+For an unposed axial parallel scan, `tj.reconstruct_slabs` corrects raw rows
+and reconstructs them without storing the full corrected stack. Choose `"fbp"`
+or `"fourier"`; pass `FBPConfig` or `FourierConfig` through `config=` when needed.
+For example, write owned blocks directly to plane-contiguous storage:
+
+```python
+import numpy as np
+
+import tomojax as tj
+from tomojax.corrections import Stripes
+
+frames = tj.load_frames("raw.nxs")
+grid = frames.geometry.grid
+volume = np.lib.format.open_memmap(
+    "volume.npy", mode="w+", dtype=np.float32,
+    shape=(grid.nx, grid.ny, grid.nz), fortran_order=True,
+)
+with tj.reconstruct_slabs(frames, "fbp", corrections=[Stripes(51, varying=True)]) as slabs:
+    for z_slice, block in slabs:
+        volume[:, :, z_slice] = block.volume
+volume.flush()
+```
+
+Each block retains its global physical grid, genuinely corrected source rows
+(including interpolation neighbors), and correction records. Blocks remain
+valid after iteration or context exit, but collecting them retains both their
+volumes and projections. The context drains pending work on early exit or
+failure. Only whole-row line-integral corrections are supported, not Paganin
+or view rejection; keep the raw and calibration inputs unchanged in the context.
+
 ## Bin detectors finer than the grid
 
 When the detector samples the rotation axis more finely than the voxels (the

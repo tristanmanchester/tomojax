@@ -216,7 +216,20 @@ def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> No
     write_projection_dataset(scan)
     _ = config.write_text("views_per_batch = 1\ncheckpoint_projector = false\n", encoding="utf-8")
 
-    args = ["recon", str(scan), "-o", str(recon), "--roi", "off", "--grid", "4", "4", "2"]
+    args = [
+        "recon",
+        str(scan),
+        "-o",
+        str(recon),
+        "--method",
+        "fbp",
+        "--roi",
+        "off",
+        "--grid",
+        "4",
+        "4",
+        "2",
+    ]
     assert main([*args, "--config", str(config), "--manifest", str(manifest)]) == 0
 
     loaded = load_dataset(recon)
@@ -340,9 +353,13 @@ def test_recon_cli_config_settings_are_fields_of_the_methods_configuration(
 @pytest.mark.parametrize(
     ("toml", "options", "message"),
     [
-        ("tv_prox_iterations = 3\n", [], "method 'fbp' does not take tv_prox_iterations"),
-        ("", ["--iterations", "5"], "method 'fbp' does not take iterations"),
-        ("", ["--warm-start"], "method 'fbp' does not take warm_start"),
+        (
+            "tv_prox_iterations = 3\n",
+            ["--method", "fbp"],
+            "method 'fbp' does not take tv_prox_iterations",
+        ),
+        ("", ["--method", "fbp", "--iterations", "5"], "method 'fbp' does not take iterations"),
+        ("", ["--method", "fbp", "--warm-start"], "method 'fbp' does not take warm_start"),
         ("tau = 0.1\n", ["--method", "fista"], "method 'fista' does not take tau"),
     ],
 )
@@ -510,7 +527,7 @@ def test_align_cli_config_settings_replace_fields_of_the_modes_configuration(
     _ = config.write_text('optimise_dofs = ["det_u_px"]\nouter_iterations = 3\n', encoding="utf-8")
     calls = _fake_alignment(monkeypatch)
 
-    args = ["align", str(scan), "-o", str(tmp_path / "out.nxs"), "--roi", "off"]
+    args = ["align", str(scan), "-o", str(tmp_path / "out.nxs"), "--mode", "pose", "--roi", "off"]
     assert main([*args, "--config", str(config)]) == 0
 
     ((call,),) = [calls]
@@ -607,11 +624,14 @@ def test_aligning_a_file_with_poses_keeps_them_composed(
     _ = _fake_alignment(monkeypatch, correction)
 
     out, fresh = tmp_path / "aligned.nxs", tmp_path / "fresh.nxs"
-    assert main(["align", str(scan), "-o", str(out), "--roi", "off"]) == 0
-    assert main(["align", str(scan), "-o", str(fresh), "--roi", "off", "--no-poses"]) == 0
+    assert main(["align", str(scan), "-o", str(out), "--mode", "pose", "--roi", "off"]) == 0
+    assert (
+        main(["align", str(scan), "-o", str(fresh), "--mode", "pose", "--roi", "off", "--no-poses"])
+        == 0
+    )
 
     # The command line corrects on top of the saved poses, as tomojax.align does.
-    python = tj.align(tj.load(scan))
+    python = tj.align(tj.load(scan), mode="pose")
     composed = tj.load(out).poses
     assert composed is not None
     np.testing.assert_allclose(composed, python.poses, atol=1e-6)
@@ -644,20 +664,30 @@ def test_align_cli_dry_run_reports_the_effective_public_plan(
     assert not aligned.exists()
 
 
-def _pose_plan(tmp_path: Path, capsys: pytest.CaptureFixture[str], config: str = "") -> object:
+def _pose_plan(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    config: str = "",
+    *,
+    geometry_type="parallel",
+) -> object:
     scan = tmp_path / "scan.nxs"
     settings = tmp_path / "align.toml"
-    write_projection_dataset(scan)
+    beam = {"source_to_axis": 10.0, "source_to_detector": 20.0}
+    write_projection_dataset(
+        scan, geometry_type=geometry_type, geometry_metadata={"cone_beam": beam}
+    )
     _ = settings.write_text(config, encoding="utf-8")
     args = ["align", str(scan), "-o", str(tmp_path / "out.nxs"), "--mode", "pose"]
     assert main([*args, "--roi", "off", "--config", str(settings), "--dry-run"]) == 0
     return json.loads(capsys.readouterr().out)
 
 
+@pytest.mark.parametrize("geometry_type", ["parallel", "cone"])
 def test_align_cli_pose_mode_defaults_to_the_coupled_solver(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], geometry_type: str
 ) -> None:
-    plan = _pose_plan(tmp_path, capsys)
+    plan = _pose_plan(tmp_path, capsys, geometry_type=geometry_type)
     config = plan["config"]
     assert plan["pose_solver"] == "coupled"
     assert plan["loss"] == "L2LossSpec()"
@@ -667,6 +697,7 @@ def test_align_cli_pose_mode_defaults_to_the_coupled_solver(
         "fp32",
     )
     assert config["outer_iterations"] == 30
+    assert config["gn_joint_iterations"] == (10 if geometry_type == "cone" else 40)
     stages = plan["schedule"]["stages"]
     assert {stage["objective_kind"] for stage in stages} == {"joint_volume_pose"}
 
@@ -687,3 +718,53 @@ def test_align_cli_rejects_settings_the_coupled_solver_cannot_use(
         _ = _pose_plan(tmp_path, capsys, 'pose_model = "spline"\n')
     assert exc.value.code == 2
     assert "joint GN requires" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("command", ["align", "recon"])
+def test_cli_defaults_defer_policy_and_report_limitations(
+    command: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    import tomojax as tj
+
+    path, output = tmp_path / "scan.nxs", tmp_path / "result.nxs"
+    write_projection_dataset(path)
+    automatic = {"status": "limited", "reasons": ["Rotation axis metadata is missing."]}
+
+    def automatic_result(scan, *args, **kwargs):
+        from tomojax.recon import FistaConfig
+
+        assert kwargs["grid"] is None and kwargs["config"] is None
+        assert (args[0] if command == "recon" else kwargs["mode"]) == "auto"
+        volume = np.zeros((scan.grid.nx, scan.grid.ny, scan.grid.nz), np.float32)
+        if command == "recon":
+            return tj.Reconstruction(volume, scan, "fbp", {"automatic": automatic})
+        info = {"automatic": automatic, "config": FistaConfig()}
+        return tj.Alignment(volume, scan, np.zeros((len(scan.angles), 6)), info)
+
+    monkeypatch.setattr(tj, "reconstruct" if command == "recon" else "align", automatic_result)
+    manifest = tmp_path / "manifest.json"
+    assert main([command, str(path), "-o", str(output), "--manifest", str(manifest)]) == 0
+    assert load_dataset(output).volume is not None
+    assert "Rotation axis metadata is missing" in caplog.text
+    record = json.loads(manifest.read_text())["resolved_config"]
+    assert record["reconstruction" if command == "recon" else "alignment"]["automatic"] == automatic
+
+
+def test_cli_automatic_dry_run_and_expert_settings(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path, output = tmp_path / "scan.nxs", tmp_path / "result.nxs"
+    write_projection_dataset(path)
+    assert main(["align", str(path), "-o", str(output), "--dry-run"]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "data_dependent"
+    assert not output.exists()
+    config = tmp_path / "expert.toml"
+    for command, key, option in [
+        ("align", "outer_iterations", "mode"),
+        ("recon", "views_per_batch", "method"),
+    ]:
+        config.write_text(f"{key} = 2\n")
+        with pytest.raises(SystemExit) as error:
+            main([command, str(path), "-o", str(output), "--config", str(config)])
+        assert error.value.code == 2
+        assert f"explicit --{option}" in capsys.readouterr().err

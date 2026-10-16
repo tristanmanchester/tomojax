@@ -16,7 +16,7 @@ import json
 import logging
 import os
 import sys
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import numpy as np
 
@@ -35,7 +35,9 @@ if TYPE_CHECKING:
     from tomojax import Alignment, Scan
     from tomojax.alignment import AlignConfig, AlignmentPlan
     from tomojax.alignment.api import AlignmentLossSpec, AlignmentMode, QualityTier
-    from tomojax.geometry import Grid
+    from tomojax.geometry import Geometry, Grid
+
+type _Mode = Literal["auto"] | AlignmentMode
 
 _PUBLIC = (
     "--mode",
@@ -55,11 +57,13 @@ _PUBLIC = (
 _SETTINGS = (
     "Expert settings are --config keys, tomojax.alignment.AlignConfig fields. Each\n"
     "replaces that field of the configuration the mode and quality give, which\n"
-    "--dry-run prints; --config-keys shows the default mode's values.\n"
+    "--dry-run prints; --config-keys shows the pose profile's values.\n"
+    "Expert settings require an explicit --mode rather than automatic selection.\n"
 )
 _EPILOG = (
     "Modes:\n"
-    "  pose           per-view motion: rotations and translations (default)\n"
+    "  auto           choose from geometry and data (default)\n"
+    "  pose           per-view motion: rotations and translations\n"
     "  cor            setup geometry only: detector centre (parallel), or the\n"
     "                 axis offset and detector roll (cone beam)\n"
     "  cor-then-pose  setup geometry, then per-view motion\n"
@@ -90,9 +94,9 @@ def build_parser() -> argparse.ArgumentParser:
     add_config(p, settings=_settings())
     _ = p.add_argument(
         "--mode",
-        choices=MODES,
-        default="pose",
-        help="What to estimate (default pose; see Modes below)",
+        choices=("auto", *MODES),
+        default="auto",
+        help="What to estimate (default auto; see Modes below)",
     )
     _ = p.add_argument(
         "--quality",
@@ -161,7 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _settings() -> dict[str, object]:
-    """A config file's expert settings: ``AlignConfig``'s fields, as the default mode sets them."""
+    """A config file's expert settings: ``AlignConfig`` fields as the pose profile sets them."""
     from tomojax.alignment import AlignConfig, alignment_plan
     from tomojax.alignment.api import loss_spec_name
     from tomojax.geometry import Grid
@@ -215,7 +219,7 @@ class _Run:
 
     data: str
     out: str
-    mode: AlignmentMode
+    mode: _Mode
     quality: QualityTier
     levels: tuple[int, ...] | None
     freeze: tuple[str, ...]
@@ -234,7 +238,7 @@ class _Run:
         return cls(
             data=cast("str", args.data),
             out=cast("str", args.out),
-            mode=cast("AlignmentMode", args.mode),
+            mode=cast("_Mode", args.mode),
             quality=cast("QualityTier", args.quality),
             levels=None if levels is None else tuple(levels),
             freeze=tuple(cast("list[str]", args.freeze)),
@@ -246,14 +250,19 @@ class _Run:
             dry_run=cast("bool", args.dry_run),
         )
 
-    def plan(self, grid: Grid, config: AlignConfig | None = None) -> AlignmentPlan:
+    def plan(
+        self, grid: Grid, config: AlignConfig | None = None, *, geometry: Geometry
+    ) -> AlignmentPlan:
         """The plan of this run's mode, quality, levels and frozen parameters on ``grid``."""
         from tomojax.alignment import alignment_plan
 
+        if self.mode == "auto":
+            raise ValueError("automatic alignment has no static plan; choose an explicit --mode")
         return alignment_plan(
             self.mode,
             grid,
             quality=self.quality,
+            geometry=geometry,
             levels=self.levels,
             freeze=self.freeze,
             config=config,
@@ -290,6 +299,7 @@ def _write_manifest(
     masked: bool,
 ) -> None:
     """Write ``--manifest``: the run's inputs and settings and the alignment's record."""
+    from tomojax.alignment import AlignConfig
     from tomojax.cli.manifest import build_manifest, save_manifest
 
     run = _Run.of(args)
@@ -313,7 +323,7 @@ def _write_manifest(
         },
         "reconstruction_grid": result.scan.grid.to_dict(),
         "detector": result.scan.detector.to_dict(),
-        "loss": None if config is None else repr(cast("AlignConfig", config).loss),
+        "loss": repr(config.loss) if isinstance(config, AlignConfig) else None,
         "poses_shape": list(result.poses.shape),
         "volume_shape": list(np.shape(result.volume)),
         # Mode, levels, configuration, losses, gauge and any calibrated geometry.
@@ -324,9 +334,36 @@ def _write_manifest(
     logging.info("Saved reproducibility manifest to %s", run.manifest)
 
 
+def _configuration(
+    run: _Run,
+    grid: Grid | None,
+    settings: Mapping[str, object],
+    *,
+    geometry: Geometry,
+) -> tuple[AlignConfig | None, str | None]:
+    """Resolve explicit settings, or describe the automatic data-dependent dry run."""
+    if run.mode == "auto":
+        if settings:
+            raise ValueError("expert alignment settings require an explicit --mode")
+        payload = {
+            "mode": "auto",
+            "status": "data_dependent",
+            "reason": (
+                "Automatic calibration and region selection require the scan data; "
+                "choose an explicit --mode for a static solver plan."
+            ),
+        }
+        return None, json.dumps(payload) if run.dry_run else None
+    assert grid is not None
+    config = _config(run.plan(grid, geometry=geometry).config, settings)
+    plan = run.plan(grid, config, geometry=geometry)
+    return config, _plan_payload(run, plan, grid) if run.dry_run else None
+
+
 def main() -> None:
     """Run ``tomojax align``."""
     import tomojax as tj
+    from tomojax.cli._runtime import report_automatic
     from tomojax.core import log_jax_env, setup_logging
 
     parser = build_parser()
@@ -339,14 +376,17 @@ def main() -> None:
         os.environ["TOMOJAX_PROGRESS"] = "1"
 
     scan = tj.load(run.data, poses=run.poses)
-    grid, masked = region_grid(scan, roi=run.roi, grid=run.grid)
+    grid, masked = (None, False)
+    if run.mode != "auto" or run.grid is not None or run.roi != "auto":
+        grid, masked = region_grid(scan, roi=run.roi, grid=run.grid)
     try:
-        config = _config(run.plan(grid).config, cast("dict[str, object]", metadata["settings"]))
-        plan = run.plan(grid, config)
+        config, payload = _configuration(
+            run, grid, cast("dict[str, object]", metadata["settings"]), geometry=scan.geometry
+        )
     except (TypeError, ValueError) as exc:
         parser.error(str(exc))
-    if run.dry_run:
-        print(_plan_payload(run, plan, grid))
+    if payload is not None:
+        print(payload)
         return
 
     result = tj.align(
@@ -360,7 +400,10 @@ def main() -> None:
         config=config,
     )
     if masked:
-        result = replace(result, volume=zero_outside_cylinder(result.volume, grid, scan.detector))
+        result = replace(
+            result, volume=zero_outside_cylinder(result.volume, result.scan.grid, scan.detector)
+        )
+    report_automatic(result.info)
     implied = result.info.get("implied_detector_u_px")
     if implied is not None:
         logging.info("The poses hold a detector-u (centre-of-rotation) offset of %.3f px", implied)

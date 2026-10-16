@@ -97,15 +97,30 @@ def _free_bytes_from_memory_info(info: object) -> int | None:
     return None
 
 
+def _cuda_free_memory_bytes(device: Device) -> int | None:
+    """Query the requested CUDA device when its allocator has no statistics."""
+    try:
+        import cupy
+
+        # JAX ids can be global across processes; CUDA ordinals are local.
+        ordinal = int(device.local_hardware_id)
+        with cupy.cuda.Device(ordinal):
+            free, _total = cupy.cuda.runtime.memGetInfo()
+        return int(free)
+    except Exception as exc:
+        LOG.debug("CUDA device memory probe unavailable: %s", exc)
+        return None
+
+
 def device_free_memory_bytes(*, device: Device | None = None) -> int | None:
     """Best-effort query of free memory (bytes) on ``device``.
 
     - ``device`` defaults to ``jax.default_device``, else the first GPU.
     - Prefer JAX's device API when available: `jax.device_get_memory_info` (>=0.4.14).
     - Also support current `Device.memory_stats()` reports when exposed.
-    - Fall back to host available memory via `os.sysconf` when supported,
-      which is also the answer for a CPU device or no GPU.
-    - Returns None if nothing is available.
+    - Query CUDA directly when a GPU allocator does not expose statistics.
+    - Use host available memory only for a CPU device or no GPU.
+    - Return None for an accelerator whose memory cannot be queried.
     """
     try:  # JAX GPU/TPU or CPU
         import jax  # type: ignore
@@ -127,10 +142,10 @@ def device_free_memory_bytes(*, device: Device | None = None) -> int | None:
             if free is not None:
                 return free
     except Exception as exc:
-        LOG.debug(
-            "Device memory probe failed; falling back to host available memory: %s",
-            exc,
-        )
+        LOG.debug("Device memory probe failed: %s", exc)
+    # Host RAM is not a capacity estimate for a known accelerator.
+    if device is not None and not isinstance(device, str) and device.platform != "cpu":
+        return _cuda_free_memory_bytes(device) if device.platform == "gpu" else None
     return _host_available_memory_bytes()
 
 

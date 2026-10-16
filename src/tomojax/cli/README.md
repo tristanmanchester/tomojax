@@ -22,6 +22,13 @@ The options match the Python API's keywords: `tomojax recon --method cgls
 `tomojax align --mode cor --freeze dy` is
 `tj.align(scan, mode="cor", freeze=["dy"])`.
 
+With no `--mode` or `--method`, `align` and `recon` use the same automatic
+policy as Python. Explicit modes and methods retain their own settings;
+expert TOML solver settings require one. Limitations are printed and retained
+in result records/manifests. Automatic `align --dry-run` reports that its plan
+is data-dependent rather than running calibration. Explicit dry-run plans use
+the input beam geometry, matching the Python workflow's solver budget.
+
 ## Commands
 
 - `inspect`: describe a dataset and check that it can be reconstructed;
@@ -31,14 +38,14 @@ The options match the Python API's keywords: `tomojax recon --method cgls
   `--angles`, `--pixel-size` and, for cone beams, the distances) or another
   `.nxs`/`.npz` dataset.
 - `preprocess`: flat- and dark-correct raw frames into absorption projections.
-- `recon`: reconstruct a volume with FBP (FDK for cone beams), CGLS, FISTA-TV
+- `recon`: choose automatically, or reconstruct with Fourier, FBP/FDK, CGLS, FISTA-TV
   or SPDHG-TV with `tj.reconstruct`, with the poses saved in the input unless
   `--no-poses`. Its expert settings are fields of the method's configuration
-  class (`tomojax.recon.FBPConfig`, `CGLSConfig`, `FistaConfig` or
+  class (`tomojax.recon.FBPConfig`, `FourierConfig`, `CGLSConfig`, `FistaConfig` or
   `SPDHGConfig`), each replacing that field of the class's defaults, as
   `tj.reconstruct(config=...)` takes them; `--roi cyl` zeroes the volume
   outside the cylinder every view sees.
-- `align`: estimate the rotation axis and per-view poses (`--mode pose`,
+- `align`: estimate the rotation axis and per-view poses (`--mode auto`, `pose`,
   `cor`, `cor-then-pose` or `full`) with `tj.align`, on top of the poses saved
   in the input unless `--no-poses`. Its expert settings are
   `tomojax.alignment.AlignConfig` fields, each replacing that field of the

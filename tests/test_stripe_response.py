@@ -42,9 +42,10 @@ def test_varying_response_preserves_centred_absorption(width: int) -> None:
         np.testing.assert_array_equal(correct(constant), constant)
 
 
-def test_varying_response_directional_derivative() -> None:
+@pytest.mark.parametrize("columns", [41, 1031])
+def test_varying_response_directional_derivative(columns: int) -> None:
     rng = np.random.default_rng(17)
-    values = rng.normal(1, 0.1, (129, 1, 41))
+    values = rng.normal(1, 0.1, (129, 1, columns))
     values[..., 9:11] = 0.4 * values[..., 9:11] + 0.3
     direction = rng.normal(0, 0.1, values.shape)
     with jax.enable_x64():
@@ -56,3 +57,44 @@ def test_varying_response_directional_derivative() -> None:
         reference = correct(values + epsilon * direction) - correct(values - epsilon * direction)
         reference /= 2 * epsilon
         np.testing.assert_allclose(actual, reference, rtol=2e-5, atol=2e-7)
+
+
+@pytest.mark.parametrize("width", [15, 16, 51])
+@pytest.mark.parametrize("columns", [1031, 2053])
+@pytest.mark.parametrize("defect", ["none", "left", "right", "interior", "dense"])
+def test_varying_sparse_response_matches_full_distribution_fit(width, defect, columns):
+    values = np.random.default_rng(71).normal(1, 0.07, (129, columns)).astype(np.float32)
+    where = {
+        "none": slice(0, 0),
+        "left": slice(0, 4),
+        "right": slice(-4, None),
+        "interior": slice(130, 134),
+        "dense": slice(None, None, 97),
+    }[defect]
+    values[:, where] = 0.5 * values[:, where] + 0.2
+    if defect == "interior":
+        values[:, 131] = 0.4
+
+    def median(x):
+        half = width // 2
+        padded = np.pad(x, ((0, 0), (half, half)), mode="edge")
+        result = np.median(np.lib.stride_tricks.sliding_window_view(padded, width, axis=1), -1)
+        return (result[:, :-1] + result[:, 1:]) * 0.5 if width % 2 == 0 else result
+
+    noise = np.mean(np.abs(np.diff(values, axis=0)), axis=0)
+    local = median(noise[None])[0]
+    ratio = np.log(np.maximum(noise / local, np.finfo(values.dtype).eps))
+    deviation = np.abs(ratio - np.median(ratio))
+    scale = 1.4826 * np.median(deviation)
+    bad = (deviation > 6 * scale) & (scale > 0)
+    bad = np.convolve(bad, np.ones(2 * max(1, width // 8) + 1), mode="same") > 0
+    ranked = np.sort(values, axis=0)
+    target = median(ranked)
+    xmean, ymean = ranked.mean(0), target.mean(0)
+    dx, dy = ranked - xmean, target - ymean
+    variance = np.sum(dx * dx, axis=0)
+    gain = np.sum(dx * dy, axis=0) / np.where(variance > 0, variance, 1)
+    gain = np.where(bad & (noise > 0) & (variance > 0), gain, 1)
+    bias = np.where(bad, ymean - gain * xmean, 0)
+    actual = jax.jit(Stripes(width, varying=True).apply)(values[:, None])[:, 0]
+    np.testing.assert_allclose(actual, values * gain + bias, rtol=2e-6, atol=2e-6)

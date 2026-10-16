@@ -13,7 +13,8 @@ compare with. Commands run from the checkout root.
 
 | Problem | Mode | Command |
 | --- | --- | --- |
-| The sample moved from projection to projection | `pose` (the default) | `tomojax align scan.nxs -o aligned.nxs --mode pose` |
+| Choose a data-dependent workflow and inspect its limitations | `auto` (the default) | `tomojax align scan.nxs -o aligned.nxs` |
+| The sample moved from projection to projection | `pose` | `tomojax align scan.nxs -o aligned.nxs --mode pose` |
 | The detector centre (centre of rotation) is wrong | `cor` | `tomojax align scan.nxs -o aligned.nxs --mode cor` |
 | A detector-centre offset and per-view motion together | `cor-then-pose` | `tomojax align scan.nxs -o aligned.nxs --mode cor-then-pose` |
 | Mild setup error (centre, detector roll, axis direction) and motion | `full` | `tomojax align scan.nxs -o aligned.nxs --mode full` |
@@ -32,6 +33,10 @@ uv run --no-sync tomojax inspect aligned.nxs
 uv run --no-sync tomojax recon aligned.nxs -o recon.nxs --method cgls
 ```
 
+Automatic alignment records its selected workflow and any limitations in
+`result.info["automatic"]`; the CLI prints limitations without requiring a
+manifest. These conditional checks do not certify physical pose truth.
+
 The aligned file holds the corrected scan, its per-view poses and the volume
 the alignment converged with, and `tomojax recon` applies the poses.
 `tomojax align` corrects on top of any poses saved in its input; with either
@@ -41,13 +46,14 @@ command, `--no-poses` starts from the nominal geometry instead.
 `tj.align`'s keywords (`--mode`, `--quality`, `--levels`, `--freeze`, `--grid`,
 `--checkpoint`). `--quality reference` runs slower, more conservative solver
 settings, and `--levels 4 2 1` sets the coarse-to-fine binning factors.
-`--dry-run` prints the resolved plan (stages, levels and solver settings) as
-JSON without aligning.
+`--dry-run` prints the resolved plan for an explicit mode as JSON without
+aligning. Automatic mode reports that calibration and region selection are
+data-dependent; it does not run them during a dry run.
 
 Expert settings are `tomojax.alignment.AlignConfig` fields: put them in a TOML
-file and pass it with `--config FILE`. Each replaces that field of the
-configuration the mode and quality give, which `--dry-run` prints;
-`tomojax align --config-keys` lists the fields with the default mode's values.
+file and pass it with `--config FILE` and an explicit `--mode`. Each replaces
+that field of the configuration the mode and quality give, which `--dry-run` prints;
+`tomojax align --config-keys` lists the fields with the pose profile's values.
 The [alignment solver reference](alignment-solver.md) describes them.
 
 In Python:
@@ -104,7 +110,7 @@ returned volume is on that grid and `result.scan` carries it:
 
 ```python
 region = tj.Grid(192, 192, 128, scan.grid.vx, scan.grid.vy, scan.grid.vz)
-result = tj.align(scan, grid=region)
+result = tj.align(scan, mode="pose", grid=region)
 assert result.scan.grid == region
 ```
 
@@ -137,7 +143,7 @@ to resume.
 
 ### Use several GPUs
 
-`tj.align(scan, devices=jax.devices())` shares the views of `pose` mode's joint
+`tj.align(scan, mode="pose", devices=jax.devices())` shares the views of the joint
 update and of cone-beam reconstruction steps among the GPUs; the rest runs on
 the first. A checkpoint written on some GPUs resumes on others. The command
 line uses one GPU. See [large scans and several GPUs](large-scans.md#use-several-gpus).
@@ -175,7 +181,7 @@ Known failure modes:
 
 ## Correct per-view motion
 
-The default `pose` mode optimises one pose per projection: rotations `alpha`,
+Explicit `pose` mode optimises one pose per projection: rotations `alpha`,
 `beta` and `phi`, and translations `dx` and `dz`. Pose tables carry a sixth
 column, `dy`, a translation along the beam. It has no effect on parallel-beam
 projections and stays at zero there; cone-beam alignment estimates it. Five-
@@ -400,7 +406,7 @@ a frame column for detector-frame poses), pass the same frame:
 ```python
 from tomojax.alignment.api import save_alignment_params_json
 
-result = tj.align(scan)
+result = tj.align(scan, mode="pose")
 save_alignment_params_json(
     "poses.json", result.poses, du=scan.detector.du, dv=scan.detector.dv,
     translation_frame="detector",

@@ -29,8 +29,6 @@ if TYPE_CHECKING:
 
 type MethodConfig = FBPConfig | FourierConfig | CGLSConfig | FistaConfig | SPDHGConfig
 
-__all__ = ["MethodConfig", "fourier_slabs", "method_config", "reconstruct_arrays"]
-
 _CONFIGS: dict[str, type[MethodConfig]] = {
     "fbp": FBPConfig,
     "fourier": FourierConfig,
@@ -257,6 +255,7 @@ __all__ = [
     "fbp_slabs",
     "fista_tv",
     "fourier_reconstruct",
+    "fourier_slabs",
     "method_config",
     "reconstruct_arrays",
     "run_parallel_fbp_direct_pallas",

@@ -141,31 +141,36 @@ For TIFF frames, use the [TIFF and measured-geometry instructions](real-laminogr
 
 ## Reconstruct and inspect slices
 
-For parallel or laminography data, start with FBP:
+Start with the same automatic policy as `tj.reconstruct(scan)`:
 
 ```bash
 uv run --no-sync tomojax recon corrected.nxs -o recon.nxs \
-  --roi off --manifest recon-manifest.json
+  --manifest recon-manifest.json
 uv run --no-sync tomojax inspect recon.nxs --preview previews
 ```
 
-FBP is the default `--method`. `recon.nxs` stores the volume and copies the
-projections. The manifest records reconstruction settings. `previews/` contains
-PNGs of the central projection (`projection.png`) and the volume's three central
-planes (`slice_z.png`, `slice_y.png`, `slice_x.png`). PNG contrast is scaled for
+The default `--method auto` selects a reconstruction from the geometry and
+reports any limitations; use an explicit `--method` for a fixed solver.
+`recon.nxs` stores the volume and copies the projections. The manifest records
+the selected method, reconstruction settings and automatic outcome. `previews/`
+contains PNGs of the central projection (`projection.png`) and the volume's
+three central planes (`slice_z.png`, `slice_y.png`, `slice_x.png`). PNG contrast is scaled for
 display; read the stored floating-point volume for quantitative work.
 `tomojax export recon.nxs -o slices/` writes the volume as TIFF slices for other
 software.
 
-`--roi off` preserves the recorded grid. The default is `--roi auto`, which may
-crop to the detector field of view. `--grid NX NY NZ` changes the dimensions but
-keeps the input voxel spacing. Check both field of view and physical units before
-comparing reconstructions. `--roi cyl` also zeroes the volume outside the
-cylinder every view sees.
+Without grid/ROI overrides, automatic mode leaves region selection to the
+Python workflow. With an explicit method, the default `--roi auto` may crop
+to the detector field of view; `--roi off` preserves the recorded grid.
+`--grid NX NY NZ` changes dimensions while keeping the selected voxel spacing.
+Automatic policies that cannot honor an override require an explicit method.
+Check both field of view and physical units before comparing reconstructions.
+`--roi cyl` also zeroes the volume outside the cylinder every view sees.
 
 For supported parallel scans, `--method fourier` uses the Fourier-slice inverse,
-with the volume on the host in bounded slabs. It defaults to NumPy; CUDA needs
-the optional `fourier-cuda12` extra and a config file containing `backend = "cupy"`.
+with the volume on the host in bounded slabs. The backend uses matching available
+CUDA support from the optional `fourier-cuda12` extra, or NumPy otherwise;
+explicit `backend = "cupy"` or `"numpy"` in a config file fixes that choice.
 In Python:
 
 ```python
@@ -191,7 +196,7 @@ g = scan.grid
 out = np.memmap(
     "volume.dat", mode="w+", dtype=np.float32, shape=(g.nx, g.ny, g.nz), order="F"
 )
-recon = tj.reconstruct(scan, out=out)
+recon = tj.reconstruct(scan, "fbp", out=out)
 out.flush()  # Include this in timings that promise persisted output.
 ```
 
@@ -202,9 +207,9 @@ leave partial output. `out` is not supported by the iterative methods.
 
 Expert settings are fields of the method's configuration class
 (`tomojax.recon.FBPConfig`, `FourierConfig`, `CGLSConfig`, `FistaConfig` or `SPDHGConfig`),
-set in a TOML file passed with `--config`; `tomojax recon --config-keys` lists
-them. Each replaces that field of the class's defaults, and a setting the
-method does not take fails with the ones it does. For FISTA with Huber total
+set in a TOML file passed with `--config` alongside an explicit `--method`;
+`tomojax recon --config-keys` lists them. Each replaces that field of the class's
+defaults, and a setting the method does not take fails with the ones it does. For FISTA with Huber total
 variation:
 
 ```bash

@@ -399,14 +399,17 @@ def _stripe_response(row: jax.Array, width: int) -> jax.Array:
     radius = max(1, width // 8)
     bad = jax.lax.reduce_window(bad, False, jax.lax.bitwise_or, (2 * radius + 1,), (1,), "SAME")
 
-    # Matching distributions, rather than adjacent views, retains angular
-    # features; a fitted response also avoids interpolating missing columns.
-    ranked = jnp.sort(row, axis=0)
-    target = _sliding_median(ranked, width)
-    xmean, ymean = ranked.mean(0), target.mean(0)
-    dx, dy = ranked - xmean, target - ymean
-    variance = jnp.sum(dx * dx, axis=0)
-    gain = jnp.sum(dx * dy, axis=0) / jnp.where(variance > 0, variance, 1)
+    return _fit_stripe_response(row, width, noise, bad)
+
+
+def _response_parameters(
+    ranked: jax.Array, target: jax.Array, noise: jax.Array, bad: jax.Array
+) -> jax.Array:
+    """Fit selected angular distributions, including saturated detector pixels."""
+    xmean, ymean = ranked.mean(-2), target.mean(-2)
+    dx, dy = ranked - xmean[..., None, :], target - ymean[..., None, :]
+    variance = jnp.sum(dx * dx, axis=-2)
+    gain = jnp.sum(dx * dy, axis=-2) / jnp.where(variance > 0, variance, 1)
     # A saturated core has no angular information to fit, but still needs
     # its mean offset restored. Leaving it unchanged while correcting its
     # shoulders creates a sharper stripe. Keep unit gain there rather than
@@ -416,6 +419,53 @@ def _stripe_response(row: jax.Array, width: int) -> jax.Array:
     gain = jnp.where(bad & responsive, gain, 1)
     bias = jnp.where(bad, ymean - gain * xmean, 0)
     return jnp.stack((gain, bias))
+
+
+def _fit_stripe_response(row: jax.Array, width: int, noise: jax.Array, bad: jax.Array) -> jax.Array:
+    """Rank only selected column tiles, with full median halos and a dense fallback."""
+    columns, tile, half = row.shape[1], 256, width // 2
+
+    def dense():
+        # Matching distributions retains angular features; do not interpolate
+        # measured columns. This is also the reference for densely bad rows.
+        ranked = jnp.sort(row, axis=0)
+        return _response_parameters(ranked, _sliding_median(ranked, width), noise, bad)
+
+    # Keep packed sorting storage below half a dense row, including its halos.
+    slots = columns // (2 * (tile + 2 * half))
+    if slots < 1:
+        return dense()
+    tiles = (columns + tile - 1) // tile
+    extra = tiles * tile - columns
+    flags = jnp.pad(bad, (0, extra))
+    active = flags.reshape(tiles, tile).any(1)
+    count = active.sum()
+
+    def sparse():
+        starts = jnp.nonzero(active, size=slots, fill_value=0)[0] * tile
+        indices = starts[:, None] + jnp.arange(tile + 2 * half)[None]
+        padded = jnp.pad(row, ((0, 0), (half, half + extra)), mode="edge")
+        values = jnp.take(padded, indices, axis=1).transpose(1, 0, 2)
+        ranked = jnp.sort(values, axis=1)
+        target = _sliding_median(ranked.reshape(-1, tile + 2 * half), width)
+        target = target.reshape(slots, row.shape[0], tile + 2 * half)[:, :, half : half + tile]
+        destinations = starts[:, None] + jnp.arange(tile)[None]
+        signal = jnp.pad(noise, (0, extra))[destinations]
+        params = _response_parameters(
+            ranked[:, :, half : half + tile], target, signal, flags[destinations]
+        )
+        # Unused packed slots repeat the first tile only for static shape;
+        # discard their writes rather than overwrite any real response.
+        destinations = jnp.where(jnp.arange(slots)[:, None] < count, destinations, tiles * tile)
+        out = jnp.stack((jnp.ones(tiles * tile, row.dtype), jnp.zeros(tiles * tile, row.dtype)))
+        return out.at[:, destinations.reshape(-1)].set(params.reshape(2, -1), mode="drop")[
+            :, :columns
+        ]
+
+    def identity():
+        return jnp.stack((jnp.ones(columns, row.dtype), jnp.zeros(columns, row.dtype)))
+
+    return jax.lax.cond(count == 0, identity, lambda: jax.lax.cond(count <= slots, sparse, dense))
 
 
 def _sliding_median(values: jax.Array, width: int) -> jax.Array:

@@ -33,6 +33,7 @@ from .fbp import (
     validate_fbp_geometry,
 )
 from .filters import rfft_filter_array
+from .types import ReconstructionSlab
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
@@ -335,18 +336,6 @@ def _general_slabs(
     return output
 
 
-@dataclass
-class FBPSlab[T]:
-    """An owned volume, measured source rows and the producer's retained context."""
-
-    start: int
-    stop: int
-    rows: slice
-    projections: np.ndarray | jax.Array
-    volume: np.ndarray
-    context: T
-
-
 def fbp_slabs[T](
     geometry: ParallelGeometry,
     grid: Grid,
@@ -354,7 +343,7 @@ def fbp_slabs[T](
     read: Callable[[int, int], tuple[np.ndarray | jax.Array, T]],
     *,
     config: FBPConfig,
-) -> Generator[FBPSlab[T], None, None]:
+) -> Generator[ReconstructionSlab[T], None, None]:
     """Yield independent axial FBP slabs without downloading corrected projections.
 
     ``read`` supplies all views of a measured detector-row interval and an opaque
@@ -406,7 +395,7 @@ def fbp_slabs[T](
                 depth = max(1, depth // 2)
 
 
-def _finish[T](item: tuple[FBPSlab[T], jax.Array]) -> FBPSlab[T]:
+def _finish[T](item: tuple[ReconstructionSlab[T], jax.Array]) -> ReconstructionSlab[T]:
     slab, packed = item
     slab.volume = np.asarray(packed).transpose(2, 1, 0)
     if not np.isfinite(slab.volume).all():
@@ -424,12 +413,12 @@ def _run_slabs[T](
     backend: str,
     depth: int,
     start: int,
-) -> Generator[FBPSlab[T], None, None]:
+) -> Generator[ReconstructionSlab[T], None, None]:
     local_grid, local_detector, first, step, integer = _slab_layout(grid, detector, depth)
     rows = local_detector.nv
     ramp = rfft_filter_array(config.filter, local_detector.nu, detector.du, jnp.float32)
     params = np.zeros((len(poses), 6), np.float32)
-    pending: list[tuple[FBPSlab[T], jax.Array]] = []
+    pending: list[tuple[ReconstructionSlab[T], jax.Array]] = []
     try:
         for at in range(start, grid.nz, depth):
             stop = min(at + depth, grid.nz)
@@ -463,7 +452,9 @@ def _run_slabs[T](
             )
             packed = jnp.transpose(volume[:, :, : stop - at], (2, 1, 0))
             packed.copy_to_host_async()
-            slab = FBPSlab(at, stop, slice(source_start, source_stop), data, np.empty(0), context)
+            slab = ReconstructionSlab(
+                at, stop, slice(source_start, source_stop), data, np.empty(0), context
+            )
             pending.append((slab, packed))
             if len(pending) >= 2:
                 yield _finish(pending.pop(0))
