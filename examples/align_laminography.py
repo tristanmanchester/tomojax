@@ -40,8 +40,8 @@ def reconstruct_lamino(
 ) -> tuple[tj.Reconstruction, dict[str, object]]:
     """Return a reconstruction and its conditional selection record.
 
-    Broad/uncertain regions retain their unvalidated projection-only seed.
-    This conservative choice is not a statement that broad objects cannot align.
+    Broad/uncertain regions validate projection-only motion against zero motion,
+    without joint refinement. This is not a statement that broad objects cannot align.
     """
     started = time.perf_counter()
     n = len(scan.angles)
@@ -111,8 +111,13 @@ def reconstruct_lamino(
     region_info = dict(region.info)
     del region, seed_scan
     records = []
-    accepted = False
-    if region_info["status"] != "broad_uncertain":
+    broad = region_info["status"] == "broad_uncertain"
+    # Bound validation-only work; pose fitting and the final solve keep their views.
+    check_fit = fit
+    if broad:
+        check_fit = fit[np.linspace(0, len(fit) - 1, min(320, len(fit))).astype(int)]
+        candidates = (("zero", np.zeros_like(initial)), ("seed", initial))
+    else:
         config = replace(
             alignment_plan("pose", work.grid).config,
             seed_translations=False,
@@ -123,31 +128,34 @@ def reconstruct_lamino(
         refined = tj.align(work.selected(fit), mode="pose", levels=(2,), config=config)
         alternative = interpolate(np.asarray(refined.poses), fit, np.arange(n))
         del refined
-        target = np.asarray(work.projections)[validation]
+        candidates = (("seed", initial), ("refined", alternative))
+    target = np.asarray(work.projections)[validation]
 
-        def high(a: np.ndarray) -> np.ndarray:
-            return a - gaussian_filter(a, (0, 6, 6))
+    def high(a: np.ndarray) -> np.ndarray:
+        return a - gaussian_filter(a, (0, 6, 6))
 
-        target_hp = high(target)
-        for label, poses in (("seed", initial), ("refined", alternative)):
-            candidate = work.with_poses(poses)
-            rec = tj.reconstruct(candidate.selected(fit), "fista", config=final_config)
-            pred = np.asarray(tj.project(candidate.selected(validation).geometry, rec.volume))
-            records.append(
-                {
-                    "label": label,
-                    "l2": float(np.linalg.norm(pred - target) / np.linalg.norm(target)),
-                    "hp": float(np.linalg.norm(high(pred) - target_hp) / np.linalg.norm(target_hp)),
-                }
-            )
-            del rec, pred
-        accepted = all(records[1][key] < records[0][key] for key in ("l2", "hp"))
-        if accepted:
-            work = work.with_poses(alternative)
+    target_hp = high(target)
+    for label, poses in candidates:
+        candidate = work.with_poses(poses)
+        rec = tj.reconstruct(candidate.selected(check_fit), "fista", config=final_config)
+        pred = np.asarray(tj.project(candidate.selected(validation).geometry, rec.volume))
+        records.append(
+            {
+                "label": label,
+                "l2": float(np.linalg.norm(pred - target) / np.linalg.norm(target)),
+                "hp": float(np.linalg.norm(high(pred) - target_hp) / np.linalg.norm(target_hp)),
+            }
+        )
+        del rec, pred
+    improved = all(records[1][key] < records[0][key] for key in ("l2", "hp"))
+    accepted = improved and not broad
+    motion_accepted = improved if broad else None
+    work = work.with_poses(candidates[int(improved)][1])
     prepared = time.perf_counter() - started
     result = tj.reconstruct(work, "fista", config=final_config)
     return result, {
         "accepted": accepted,
+        "motion_accepted": motion_accepted,
         "internal": records,
         "region": region_info,
         "preparation_seconds": prepared,
@@ -174,6 +182,8 @@ def main() -> None:
     print(scan)  # Includes the correction's nonpositive-transmission count.
     print("Region:", info["region"])
     print("Pose refinement retained:", info["accepted"])
+    if info["motion_accepted"] is not None:
+        print("Projection-only motion retained:", info["motion_accepted"])
     print("Internal held projections:", info["internal"])
     print(info["warning"])
     if args.output is not None:

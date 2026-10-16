@@ -173,8 +173,9 @@ It applies another factor of two detector binning **after** the logarithm.
 The recipe excludes internal validation views from setup and pose fitting,
 interpolates small pose corrections in acquisition order, and keeps refinement
 only if both ordinary and high-pass held-projection errors improve at the final
-grid. An uncertain region retains the projection-only seed and a broad survey;
-that is a conservative choice, not evidence that broad objects cannot align.
+grid. An uncertain region retains a broad survey and compares its projection-only
+motion seed against zero motion using the same held-view checks, without joint
+refinement; this is not evidence that broad objects cannot align.
 No library defaults change, and no file is written unless `-o result.nxs` is given.
 
 Inspect the correction record, recovered axis, several volume planes and the
