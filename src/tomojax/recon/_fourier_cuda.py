@@ -20,6 +20,9 @@ __device__ __forceinline__ float2 polar_value(
     int nviews, int nsource, const int* groups, int nr, int nfft,
     float qr, float qi, const float* table,
     const signed char* flipped
+    #ifdef TRANSLATED_VIEWS
+    , const float* shifts
+    #endif
 ) {
     // Keep the angular fraction precise even with hundreds of views. Casting
     // the full view coordinate to FP32 would lose bits before subtracting ai.
@@ -63,8 +66,14 @@ __device__ __forceinline__ float2 polar_value(
                     row.x += weights[j] * value.x;
                     row.y += weights[j] * value.y;
                 }
-                float real = row.x * dp.x - row.y * dp.y;
-                float imag = row.x * dp.y + row.y * dp.x;
+                float2 shifted_dp = dp;
+                #ifdef TRANSLATED_VIEWS
+                float sn, cs;
+                sincosf(6.283185307179586f * r * shifts[source] / nfft, &sn, &cs);
+                shifted_dp = make_float2(dp.x * cs - dp.y * sn, dp.x * sn + dp.y * cs);
+                #endif
+                float real = row.x * shifted_dp.x - row.y * shifted_dp.y;
+                float imag = row.x * shifted_dp.y + row.y * shifted_dp.x;
                 total.x += angular * real;
                 total.y += angular * (conjugate ? -imag : imag);
             }
@@ -81,6 +90,9 @@ extern "C" __global__ void polar(
     float qr, float qi, const float* table,
     const float2* detector_phase, const signed char* flipped,
     const double* row_mass, const double* view_weights, double du, int replace_dc
+    #ifdef TRANSLATED_VIEWS
+    , const float* shifts
+    #endif
     #ifdef FUSE_X_BOUNDARY
     , const double* mirror_angle, const float* mirror_radial,
     const float2* mirror_phase, const float2* mirror_detector,
@@ -119,6 +131,9 @@ extern "C" __global__ void polar(
             spectrum, opposite ? mirror_angle : angle, opposite ? mirror_radial : radial,
             opposite ? mirror_phase : phase, opposite ? mirror_detector : detector_phase,
             opposite ? y - 1 : m, z, nviews, nsource, groups, nr, nfft, qr, qi, table, flipped
+            #ifdef TRANSLATED_VIEWS
+            , shifts
+            #endif
         );
         if (pass == 0) value = current;
         else value = make_float2(0.5f * (value.x + current.x), 0.5f * (value.y - current.y));
@@ -128,6 +143,9 @@ extern "C" __global__ void polar(
     out[i] = polar_value(
         spectrum, angle, radial, phase, detector_phase, m, z,
         nviews, nsource, groups, nr, nfft, qr, qi, table, flipped
+            #ifdef TRANSLATED_VIEWS
+            , shifts
+            #endif
     );
     #endif
 
@@ -156,14 +174,15 @@ extern "C" __global__ void mass_deapod(
 """
 
 
-@functools.lru_cache(maxsize=4)
-def interpolation_kernel(*, x_boundary=False, repeats=False):
+@functools.lru_cache(maxsize=8)
+def interpolation_kernel(*, x_boundary=False, repeats=False, translated=False):
     import cupy
 
     options = (
         ("--fmad=false",)
         + (("-DFUSE_X_BOUNDARY",) if x_boundary else ())
         + (("-DGROUP_REPEATS",) if repeats else ())
+        + (("-DTRANSLATED_VIEWS",) if translated else ())
     )
     return cupy.RawKernel(_SOURCE, "polar", options=options)
 

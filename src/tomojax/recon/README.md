@@ -64,11 +64,12 @@ output. Callers own memmap flushing. Device workspace and runtime caches remain
 additional costs; batch dimensions are not a hard process-memory cap.
 
 `fourier_reconstruct` (`tj.reconstruct(scan, "fourier")`) is an opt-in
-Fourier-slice inverse for built-in parallel half-turn scans, including
+Fourier-slice inverse for axial parallel half-turn scans, including
 nonuniform encoder angles, rejected views and an inclusive 0 to 180 degree
 range; views of one direction share an angular cell and are averaged. It accepts
 reordered, reversed and opposing views, offset detectors, anisotropic spacing
-and cropped output grids. Projection FFTs use six-point Kaiser–Bessel radial
+and cropped output grids. Per-view translations are honored; rotational pose
+corrections and tilted axes are not supported. Projection FFTs use six-point Kaiser–Bessel radial
 interpolation, linear interpolation in the measured angle (periodic over a half
 turn) and a detector-Nyquist disk cutoff, followed by a
 padded Cartesian inverse FFT. The padding covers both the output grid and the
