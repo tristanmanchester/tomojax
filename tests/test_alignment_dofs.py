@@ -57,11 +57,11 @@ def test_geometry_dofs_is_not_a_public_setup_input() -> None:
         resolve_alignment_schedule(geometry_dofs=("det_u_px",))  # type: ignore[call-arg]
 
 
-def test_cli_alignment_defaults_to_per_view_pose() -> None:
+def test_cli_alignment_defaults_to_auto() -> None:
     parser = build_parser()
     args = parser.parse_args(["input.nxs", "-o", "aligned.nxs"])
 
-    assert args.mode == "pose"
+    assert args.mode == "auto"
 
 
 def test_align_config_defaults_to_per_view_pose_model() -> None:

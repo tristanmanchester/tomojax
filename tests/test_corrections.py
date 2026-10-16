@@ -205,6 +205,7 @@ def test_batches_give_the_same_result(tmp_path: Path) -> None:
 
 
 def test_automatic_batch_budget_preserves_workspace_steps() -> None:
+    # check-public-imports: allow-private
     from tomojax.corrections._engine import _frame_batch_size
 
     assert _frame_batch_size(1000, 512, 512, ()) == 32
