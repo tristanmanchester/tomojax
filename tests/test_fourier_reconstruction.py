@@ -627,6 +627,7 @@ def test_memmap_output_and_batch_size_independence(tmp_path, backend):
     reference = fourier_reconstruct(
         geometry, grid, detector, data, config=FourierConfig(slices_per_batch=7, backend=backend)
     )
+    assert reference.flags.f_contiguous and actual.flags.c_contiguous
     np.testing.assert_allclose(actual, reference, rtol=3e-5, atol=3e-6)
     np.testing.assert_array_equal(source, data)
 
@@ -715,7 +716,7 @@ def test_fixed_fft_batches_materialize_only_real_output_slices(monkeypatch, back
         def _compute_volume(self, raw, count):
             volume = super()._compute_volume(raw, count)
             batches.append((raw.shape[0], self.frequencies.shape[0], count, volume.shape[0]))
-            assert volume.shape == (count, grid.nx, grid.ny)
+            assert volume.size == count * grid.nx * grid.ny
             return volume
 
     monkeypatch.setattr(implementation, "FourierPlan", Plan)

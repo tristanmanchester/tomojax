@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+Fourier reconstruction allocates plane-contiguous host output by default;
+supplied output arrays keep their storage layout.
+
 Automatic axial reconstruction estimates an explicitly unrecorded detector centre;
 recorded, supplied and previously inferred centres are preserved, with calibration
 provenance carried by the returned scan and saved files.
