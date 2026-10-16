@@ -102,3 +102,12 @@ and positive reconstruction. It is a conservative example, not a new alignment
 mode or default. See the [raw K11 recipe](../docs/real-laminography.md#k11-nominal-geometry-recipe)
 for the command and limitations. Its HDF5 dataset paths and nominal tilt are
 explicit arguments; it writes nothing unless `-o` is supplied.
+
+## Gallery figures
+
+The scripts in [gallery](gallery) make the figures on the
+[gallery page](../docs/gallery.md): laminography alignment of a gVXR-rendered
+chip package, ring removal on a real Diamond I12 scan, few-view sandstone
+micro-CT, an offset-detector battery scan and wide-cone FDK against CGLS on a
+lattice part. Each takes an output path; the phantoms are built on first use
+and cached under `.artifacts/figures`.

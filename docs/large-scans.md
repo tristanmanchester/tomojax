@@ -128,7 +128,7 @@ volume = np.lib.format.open_memmap(
     "volume.npy", mode="w+", dtype=np.float32,
     shape=(grid.nx, grid.ny, grid.nz), fortran_order=True,
 )
-with tj.reconstruct_slabs(frames, "fbp", corrections=[Stripes(51, varying=True)]) as slabs:
+with tj.reconstruct_slabs(frames, "fbp", corrections=[Stripes(), Stripes(51, varying=True)]) as slabs:
     for z_slice, block in slabs:
         volume[:, :, z_slice] = block.volume
 volume.flush()
