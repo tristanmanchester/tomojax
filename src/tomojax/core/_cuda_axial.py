@@ -70,6 +70,49 @@ extern "C" __global__ void axial_forward(
 }
 """
 
+_FORWARD_VEC4 = r"""
+// Exact specialization for axial rays with unit vertical scale and aligned z.
+extern "C" __global__ void axial_forward_vec4(
+    const float* __restrict__ coeff,const float* __restrict__ x,float* __restrict__ out,
+    int nx,int ny,int nz,int nu,int nv)
+{
+    int view=blockIdx.x,tile=blockIdx.y,tiles_v=(nv+4*TV-1)/(4*TV);
+    int u=(tile/tiles_v)*(128/TV)+threadIdx.x/TV;
+    int v=(tile%tiles_v)*(4*TV)+4*(threadIdx.x%TV);
+    if(u>=nu || v>=nv) return;
+    const float* c=coeff+14*view;
+    int a=(int)c[0],na=a==0?nx:ny,nh=a==0?ny:nx;
+    float p=(a==0?c[1]:c[5])*(float)u;
+    float slope=a==0?c[3]:c[7],offset=a==0?c[4]:c[8];
+    int z=v+(int)(a==0?c[8]:c[4]);
+    float total[4]={};
+    if(z>=0 && z+3<nz) {
+        int start=0,stop=na;
+        if(slope!=0.f) {
+            float l=(-1.f-p-offset)/slope,h=((float)nh-p-offset)/slope;
+            start=max(0,(int)floorf(fminf(fmaxf(fminf(l,h),-1.f),(float)na+1.f))-1);
+            stop=min(na,(int)ceilf(fminf(fmaxf(fmaxf(l,h),-1.f),(float)na+1.f))+2);
+        }
+        long stride=a==0?nz:(long)ny*nz;
+        for(int k=start;k<stop;++k) {
+            float q=p+(slope*(float)k+offset);
+            int h0=(int)floorf(q);float wh=q-(float)h0;
+            bool loh=(unsigned)h0<(unsigned)nh,hih=(unsigned)(h0+1)<(unsigned)nh;
+            long base=(a==0?(long)k*ny:(long)k)*nz+z;
+            float4 lo={0.f,0.f,0.f,0.f},hi=lo;
+            if(loh) lo=reinterpret_cast<const float4*>(x+base+(long)h0*stride)[0];
+            if(hih) hi=reinterpret_cast<const float4*>(x+base+(long)(h0+1)*stride)[0];
+            total[0]+=(lo.x*(1.f-wh)+hi.x*wh)*c[9];
+            total[1]+=(lo.y*(1.f-wh)+hi.y*wh)*c[9];
+            total[2]+=(lo.z*(1.f-wh)+hi.z*wh)*c[9];
+            total[3]+=(lo.w*(1.f-wh)+hi.w*wh)*c[9];
+        }
+    }
+    #pragma unroll
+    for(int j=0;j<4;++j) if(v+j<nv) out[((long)view*nv+v+j)*nu+u]=total[j];
+}
+"""
+
 _TRANSPOSE = r"""
 extern "C" __global__ void joseph_vertical(
     const float* __restrict__ coeff, const float* __restrict__ images,
@@ -153,12 +196,14 @@ def axial_coefficients(coeff: jax.Array) -> jax.Array:
 
 
 @cache
-def _forward_kernel(tile_v: int) -> Any:
+def _forward_kernel(tile_v: int, *, vector: bool) -> Any:
     import cupy as cp
 
+    source = _FORWARD_VEC4 if vector else _FORWARD
+    name = "axial_forward_vec4" if vector else "axial_forward"
     return cp.RawModule(
-        code=_FORWARD.replace("TV", str(tile_v)), options=("--fmad=false",)
-    ).get_function("axial_forward")
+        code=source.replace("TV", str(tile_v)), options=("--fmad=false",)
+    ).get_function(name)
 
 
 @cache
@@ -170,18 +215,26 @@ def _transpose_module(*, vector: bool) -> Any:
 
 
 def _forward_launch(
-    context: Any, out: Any, coeff: Any, volume: Any, *, grid: Grid, detector: Detector
+    context: Any,
+    out: Any,
+    coeff: Any,
+    volume: Any,
+    *,
+    grid: Grid,
+    detector: Detector,
+    vector: bool,
 ) -> None:
     import cupy as cp
 
     from tomojax.core._cuda_joseph import xla_stream
 
     with xla_stream(context, out):
-        cap = 32 if grid.nz >= 512 else 16
-        tile_v = min(cap, 1 << (int(detector.nv).bit_length() - 1))
-        tiles = -(-detector.nu // (128 // tile_v)) * -(-detector.nv // tile_v)
+        rows = 4 if vector else 1
+        cap = 8 if vector else (32 if grid.nz >= 512 else 16)
+        tile_v = min(cap, 1 << ((int(detector.nv) // rows).bit_length() - 1))
+        tiles = -(-detector.nu // (128 // tile_v)) * -(-detector.nv // (rows * tile_v))
         dims = tuple(np.int32(n) for n in (grid.nx, grid.ny, grid.nz, detector.nu, detector.nv))
-        _forward_kernel(tile_v)(
+        _forward_kernel(tile_v, vector=vector)(
             (coeff.shape[0], tiles),
             (128,),
             (cp.asarray(coeff), cp.asarray(volume), cp.asarray(out), *dims),
@@ -192,12 +245,26 @@ def forward_axial_cuda(
     coeff: jax.Array, volume: jax.Array, *, grid: Grid, detector: Detector
 ) -> jax.Array:
     """Project coefficients for which :func:`axial_coefficients` is true."""
-    call = buffer_callback(
-        partial(_forward_launch, grid=grid, detector=detector),
-        jax.ShapeDtypeStruct((coeff.shape[0], detector.nv, detector.nu), jnp.float32),
-        vmap_method="sequential",
-    )
-    return call(coeff, volume)
+
+    def launch(_: None, *, vector: bool) -> jax.Array:
+        call = buffer_callback(
+            partial(_forward_launch, grid=grid, detector=detector, vector=vector),
+            jax.ShapeDtypeStruct((coeff.shape[0], detector.nv, detector.nu), jnp.float32),
+            vmap_method="sequential",
+        )
+        return call(coeff, volume)
+
+    if grid.nz % 4 == 0 and detector.nv >= 4:
+        # Four consecutive detector rows can share horizontal geometry and
+        # aligned float4 voxel loads only when they coincide with axial voxels.
+        x = coeff[:, 0] == 0
+        scale = jnp.where(x, coeff[:, 6], coeff[:, 2])
+        offset = jnp.where(x, coeff[:, 8], coeff[:, 4])
+        aligned = jnp.all((scale == 1) & (offset == 4 * jnp.floor(offset * 0.25)))
+        return jax.lax.cond(
+            aligned, partial(launch, vector=True), partial(launch, vector=False), None
+        )
+    return launch(None, vector=False)
 
 
 def _transpose_launch(

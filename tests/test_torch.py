@@ -14,6 +14,9 @@ pytestmark = pytest.mark.gpu
 def geometry(kind):
     grid = tj.Grid(3, 4, 2, 0.8, 1.1, 1.3)
     detector = tj.Detector(5, 3, 0.9, 1.2, (0.2, -0.1))
+    if kind == "axial":
+        grid = tj.Grid(3, 4, 4, 0.8, 1.1, 1.3)
+        detector = tj.Detector(5, 4, 0.9, 1.3, (0.2, 0))
     angles = [7.0, 41.0, 93.0]
     if kind == "cone":
         return tj.ConeGeometry(grid, detector, angles, tj.ConeBeam(15.0, 25.0))
@@ -22,9 +25,11 @@ def geometry(kind):
     return tj.ParallelGeometry(grid, detector, angles)
 
 
-@pytest.mark.parametrize("kind", ["parallel", "cone", "lamino"])
+@pytest.mark.parametrize("kind", ["parallel", "cone", "lamino", "axial"])
 @pytest.mark.filterwarnings("ignore:Input #0 requires gradient and is not a double precision")
-def test_matched_autograd(kind):
+def test_matched_autograd(kind, monkeypatch):
+    if kind == "axial":
+        monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
     geom = geometry(kind)
     operator = Projector(geom)
     torch.manual_seed(3)

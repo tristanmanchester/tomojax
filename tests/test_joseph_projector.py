@@ -482,12 +482,21 @@ def test_explicit_singleton_detector_keeps_physical_matrix_and_transpose(pixels,
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("fractional", [False, True])
-@pytest.mark.parametrize("nz", [5, 8])
-def test_axial_cuda_pair_matches_physical_matrix_near_axis(fractional, nz, monkeypatch):
+@pytest.mark.parametrize(
+    ("nz", "fractional", "v_center"),
+    [
+        (5, False, 0),
+        (5, True, -0.23),
+        (8, False, 0),
+        (8, True, -0.23),
+        (8, False, -5.2),
+        (8, False, 5.2),
+    ],
+)
+def test_axial_cuda_pair_matches_physical_matrix_near_axis(nz, fractional, v_center, monkeypatch):
     monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
     g = Grid(7, 6, nz, 0.8, 1.1, 1.3)
-    d = Detector(9, nz + 2, 0.7, 1.2 if fractional else 1.3, (0.17, -0.23 if fractional else 0))
+    d = Detector(9, nz + 2 if fractional else nz, 0.7, 1.2 if fractional else 1.3, (0.17, v_center))
     poses = np.broadcast_to(np.eye(4, dtype=np.float32), (5, 4, 4)).copy()
     poses[:, :3, :3] = Rotation.from_euler(
         "z", np.array([0, 1e-7, 43, 90, 179])[:, None], degrees=True
@@ -496,7 +505,7 @@ def test_axial_cuda_pair_matches_physical_matrix_near_axis(fractional, nz, monke
     coeff = plane_coefficients(jnp.asarray(poses), g, d)
     rng = np.random.default_rng(72)
     volume = jnp.asarray(rng.normal(size=(7, 6, nz)), jnp.float32)
-    data = jnp.asarray(rng.normal(size=(5, nz + 2, 9)), jnp.float32)
+    data = jnp.asarray(rng.normal(size=(5, d.nv, 9)), jnp.float32)
     fp = jax.jit(lambda x: forward_pallas(coeff, x, g, d))
     bp = jax.jit(lambda y: adjoint_pallas(coeff, y, g, d))
     np.testing.assert_allclose(

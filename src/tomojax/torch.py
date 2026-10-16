@@ -54,7 +54,9 @@ class Projector(torch.nn.Module):
 
     ``operator(volume)`` maps ``(nx, ny, nz)`` to ``(views, v, u)``;
     ``operator.adjoint(projections)`` maps back. Inputs must be contiguous
-    CUDA float32 tensors. The DLPack boundary shares storage in both directions;
+    CUDA float32 tensors with 16-byte-aligned storage (standard allocations).
+    Clone an unaligned offset view before passing it. The DLPack boundary
+    shares storage in both directions;
     neither inputs nor outputs pass through the host. Noncontiguous gradients
     produced by PyTorch are made contiguous before applying the transpose.
 

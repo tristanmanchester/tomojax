@@ -27,7 +27,8 @@ calibrated poses. Volumes use TomoJAX's `(x, y, z)` order and geometry lengths
 must use consistent units. The geometry is fixed at construction; gradients
 are with respect to tensors, not poses. Both directions support autograd.
 
-Pass contiguous CUDA float32 tensors. DLPack shares their storage with JAX,
+Pass contiguous CUDA float32 tensors with 16-byte-aligned storage (standard
+PyTorch allocations); clone an unaligned offset view first. DLPack shares storage with JAX,
 including the output storage returned to PyTorch, and handles CUDA stream
 dependencies. No host transfers are involved. A strided or broadcast gradient
 created by PyTorch is made contiguous for the backward projector. Do not modify
