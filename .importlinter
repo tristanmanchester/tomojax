@@ -6,6 +6,7 @@ name = Layer direction
 type = layers
 layers =
     tomojax.cli
+    tomojax.torch
     tomojax._workflow
     tomojax._laminography
     tomojax._region

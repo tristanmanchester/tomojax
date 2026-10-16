@@ -111,6 +111,35 @@ def _describe(module: str, name: str, obj: object) -> list[str]:
     return [f"{qualified}: {type(obj).__name__}"]
 
 
+def _optional_api_surface(module: str) -> list[str]:
+    """Record an optional module's declared API without importing its dependency."""
+    path = ROOT / "src" / (module.replace(".", "/") + ".py")
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    exports = next(
+        ast.literal_eval(node.value)
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets)
+    )
+    lines = [f"# {module}"]
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name in exports:
+            result = "" if node.returns is None else f" -> {ast.unparse(node.returns)}"
+            lines.append(f"def {module}.{node.name}({ast.unparse(node.args)}){result}")
+            continue
+        if not isinstance(node, ast.ClassDef) or node.name not in exports:
+            continue
+        methods = [item for item in node.body if isinstance(item, ast.FunctionDef)]
+        constructor = next(item for item in methods if item.name == "__init__")
+        constructor.args.args = constructor.args.args[1:]  # omit self, as inspect.signature does
+        lines.append(f"class {module}.{node.name}({ast.unparse(constructor.args)})")
+        for method in sorted(methods, key=lambda item: item.name):
+            if not method.name.startswith("_"):
+                result = "" if method.returns is None else f" -> {ast.unparse(method.returns)}"
+                lines.append(f"    .{method.name}({ast.unparse(method.args)}){result}")
+    return [*lines, ""]
+
+
 def api_surface() -> str:
     """Every public name of :data:`PUBLIC_PACKAGES`, with signatures."""
     lines: list[str] = []
@@ -120,6 +149,7 @@ def api_surface() -> str:
         for name in sorted(module.__all__):
             lines.extend(_describe(module_name, name, getattr(module, name)))
         lines.append("")
+    lines.extend(_optional_api_surface("tomojax.torch"))
     return "\n".join(lines)
 
 

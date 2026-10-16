@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+`tomojax.torch.Projector` provides optional CUDA PyTorch autograd operations
+for projection and its exact transpose, exchanging tensors with JAX through DLPack.
+
 It just works (end of the sixth lab run): `tj.reconstruct(scan)` now defaults
 to `method="auto"` and `tj.align(scan)` to `mode="auto"`, choosing the method,
 workflow and Fourier backend from the scan and saying in the result when a

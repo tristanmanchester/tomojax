@@ -14,6 +14,7 @@ pages before planning a workflow.
 | Simulate data or call the Python API | [Synthetic tomography](synthetic-tomography.md), [examples](../examples/README.md) |
 | Supply measured geometry for parallel or laminography scans, including TIFF stacks | [Real scan guide](real-laminography.md) |
 | Import, calibrate and reconstruct a lab cone-beam CT scan | [Lab cone-beam CT](lab-ct.md) |
+| Differentiate through projection in PyTorch | [PyTorch bridge](pytorch.md) |
 | Correct per-view motion or the centre of rotation | [Alignment guide](alignment-guide.md) |
 | Reconstruct scans larger than the GPU, or use several GPUs | [Large scans and several GPUs](large-scans.md) |
 | Check geometry, units, algorithms, and GPU scope | [Support matrix](support-matrix.md), [known limitations](known-limitations.md) |
