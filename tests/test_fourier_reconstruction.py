@@ -36,6 +36,7 @@ x = fourier_reconstruct(ParallelGeometry(g, d, [0., 90.]), g, d,
     out=np.empty((4, 4, 1), np.float32))
 assert 'jax' not in sys.modules and np.all(x == 0)
 assert 'cupyx.scipy.fft' not in sys.modules
+assert 'cupyx.scipy.sparse' not in sys.modules
 """
     subprocess.run([sys.executable, "-c", code], check=True)
 
@@ -870,3 +871,18 @@ def test_automatic_slab_depth_bounds_padded_physical_support_and_preserves_overr
             with pytest.raises(RuntimeError, match="planning complete"):
                 fourier_reconstruct(geometry, grid, detector, data, config=cfg)
             assert depths[-1] == selected
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("nonuniform", [False, True])
+def test_cuda_fourier_coordinate_pass_matches_physical_reference(nonuniform):
+    grid = Grid(13, 10, 4, 1.4, 0.9, 1.2, vol_center=(0.3, -0.2, 0.5))
+    detector = Detector(17, 7, 0.7, 1.0, (0.2, -0.3))
+    angles = [4, 28, 62, 99, 146, 171] if nonuniform else np.linspace(3, 183, 17, endpoint=False)
+    geometry = ParallelGeometry(grid, detector, angles)
+    data = np.random.default_rng(837).normal(size=(len(angles), 7, 17)).astype(np.float32)
+    results = [
+        fourier_reconstruct(geometry, grid, detector, data, config=FourierConfig(backend=backend))
+        for backend in ("numpy", "cupy")
+    ]
+    np.testing.assert_allclose(results[1], results[0], rtol=3e-4, atol=2e-7)
