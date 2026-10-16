@@ -11,11 +11,12 @@ from tomojax.corrections import RejectViews, Stripes
 from tomojax.geometry import grid_volume_origin
 from tomojax.recon import FourierConfig
 
-BACKENDS = ["numpy", pytest.param("cupy", marks=pytest.mark.gpu)]
+BACKENDS = ["auto", "numpy", pytest.param("cupy", marks=pytest.mark.gpu)]
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_raw_slabs_match_corrected_scan_and_remain_reconstructible(tmp_path, backend):
+@pytest.mark.parametrize("depth", [None, 4])
+def test_raw_slabs_match_corrected_scan_and_remain_reconstructible(tmp_path, backend, depth):
     rng = np.random.default_rng(27)
     grid = tj.Grid(17, 19, 11, 0.9, 1.1, 0.6, vol_origin=(-7, -8, -3))
     detector = tj.Detector(23, 9, 1, 0.8, center=(0.7, 0.3))
@@ -31,7 +32,7 @@ def test_raw_slabs_match_corrected_scan_and_remain_reconstructible(tmp_path, bac
         slice(1, 8), slice(None)
     )
     step = Stripes(5, varying=True)
-    cfg = FourierConfig(backend=backend, slices_per_batch=4)
+    cfg = FourierConfig(backend=backend, slices_per_batch=depth)
     expected = tj.reconstruct(frames.corrected(step), "fourier", config=cfg).volume
     with tj.reconstruct_slabs(frames, "fourier", corrections=[step], config=cfg) as slabs:
         collected = list(slabs)

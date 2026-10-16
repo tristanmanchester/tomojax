@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+Fourier slab depth is automatic by default, sized from the padded CUDA footprint;
+explicit integer depths are unchanged.
+
+Reconstruction defaults to geometry-aware method selection (`method="auto"`),
+with its choice and limitations in `Reconstruction.info["automatic"]`. Explicit
+methods keep their existing settings and behavior. `tj.align` now defaults to
+data-driven setup/support/motion selection for unposed laminography, preserving
+explicit modes and saving conditional or limited outcomes.
+
+Fourier reconstruction now uses CuPy automatically when its current CUDA device
+matches the selected JAX device, otherwise NumPy; explicit backend choices stay fixed.
+
 Sixth lab run, second merge: laminography alignment gains `tj.estimate_region`
 (the reconstruction region from projection data, with its uncertainty), a
 projection-only motion initialisation stage, bounded smooth-motion refinement

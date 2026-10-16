@@ -7,7 +7,7 @@ results can be reconstructed, aligned again or saved without restating it::
     import tomojax as tj
 
     scan = tj.load("scan.nxs")
-    recon = tj.reconstruct(scan)  # FBP, or FDK for cone beams
+    recon = tj.reconstruct(scan)  # Geometry-aware automatic reconstruction
     result = tj.align(scan, mode="cor-then-pose")
     tj.save("recon.nxs", tj.reconstruct(result.scan, method="cgls"))
 """
@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from tomojax.recon import FourierConfig
     from tomojax.recon.api import MethodConfig
 
-type Method = Literal["fbp", "fourier", "cgls", "fista", "spdhg"]
+type Method = Literal["auto", "fbp", "fourier", "cgls", "fista", "spdhg"]
 
 
 @dataclass(frozen=True)
@@ -178,7 +178,7 @@ def backproject(
 
 def reconstruct(
     scan: Scan,
-    method: Method = "fbp",
+    method: Method = "auto",
     *,
     grid: Grid | None = None,
     out: np.ndarray | None = None,
@@ -192,6 +192,12 @@ def reconstruct(
     devices: Device | Sequence[Device] | None = None,
 ) -> Reconstruction:
     """Reconstruct ``scan`` with ``method``.
+
+    ``auto`` (default) chooses Fourier inversion for unposed axial half-turn
+    scans, the guarded laminography workflow for oblique scans, and FBP/FDK
+    otherwise. Axial geometry is preserved; oblique auto may infer setup,
+    support and a binned working grid. The returned scan and ``info["automatic"]``
+    record those choices and limitations. Explicit methods bypass this policy.
 
     ``fbp``
         Filtered backprojection: FDK for cone beams, with Parker weights for
@@ -213,26 +219,17 @@ def reconstruct(
         ``iterations`` (default 400) each update one block of views, in an
         order drawn with ``seed``.
 
-    ``warm_start`` starts ``cgls``, ``fista`` and ``spdhg`` from the FBP
-    reconstruction. Cone segments use a view-count-weighted average of their
-    separate FDK initial images; each segment must cover an arc accepted by
-    FDK. ``grid`` reconstructs on another grid than the scan's (a
-    region, or a different voxel size).
+    ``warm_start`` starts iterative methods from FBP (or the view-weighted
+    FDK images of cone segments). ``grid`` overrides the scan's output grid.
 
     ``out`` is a writable float32 array or memmap of shape ``(grid.nx, grid.ny,
     grid.nz)`` for ``fbp`` and ``fourier``: the volume is made in host slabs
     straight into it and returned as ``volume``. It must not overlap the scan,
     and a later failure can leave it partly written.
 
-    ``config`` holds the method's expert settings: a
-    :class:`~tomojax.recon.FBPConfig` (for FDK too),
-    :class:`~tomojax.recon.FourierConfig`, :class:`~tomojax.recon.CGLSConfig`,
-    :class:`~tomojax.recon.FistaConfig` or :class:`~tomojax.recon.SPDHGConfig`;
-    without one, the class's defaults apply. A config of another method's class
-    raises :class:`ValueError`. The keywords are fields of that class, and each
-    one given replaces its field, as :func:`dataclasses.replace` does, so a
-    keyword wins over the config. A keyword the method's class has no field for
-    raises.
+    ``config`` is the method's expert configuration from :mod:`tomojax.recon`;
+    omitted settings use that class's defaults. Keywords replace its fields.
+    A mismatched configuration class or unknown keyword raises ``ValueError``.
 
     ``devices`` (``fbp``, ``cgls`` and ``fista``; one or several,
     ``jax.devices()`` for all) shares the views among them: each projects its
@@ -240,8 +237,9 @@ def reconstruct(
     summed. The volume, on the first device, is the one-device result up to
     the order of that sum. Host slabs use the first device only.
 
-    :attr:`Reconstruction.info` holds the resolved ``config`` with the
-    solver's record (iterations run, termination, losses).
+    :attr:`Reconstruction.info` holds ``config`` and solver records (iterations,
+    termination, losses). Fourier's ``backend`` records the actual selected
+    implementation separately from the requested configuration.
     """
     from tomojax.recon.api import method_config, reconstruct_arrays
 
@@ -257,6 +255,9 @@ def reconstruct(
         }.items()
         if value is not None
     }
+    if method == "auto":
+        options = {"grid": grid, "out": out, "config": config, "warm_start": warm_start, **given}
+        return _automatic_reconstruct(scan, {k: v for k, v in options.items() if v is not None})
     cfg = method_config(method, config=config, **given)
     if warm_start is not None and method in {"fbp", "fourier"}:
         raise ValueError(f"method {method!r} does not take warm_start")
@@ -275,6 +276,74 @@ def reconstruct(
         out=out,
     )
     return Reconstruction(volume=volume, scan=scan, method=method, info=info)
+
+
+def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstruction:
+    """Select an inverse without changing an explicit scan's acquisition geometry."""
+    from tomojax.geometry import (
+        LaminographyGeometry,
+        ParallelGeometry,
+        RotationAxisGeometry,
+    )
+
+    base: Any = scan.geometry
+    while hasattr(base, "base"):
+        base = base.base
+    acquisition = (
+        {} if scan.source is None else scan.source.geometry_metadata.get("acquisition", {})
+    )
+    unknown_axis = (
+        isinstance(acquisition, dict) and acquisition.get("geometry_status") == "not_recorded"
+    )
+    if isinstance(base, LaminographyGeometry | RotationAxisGeometry) or unknown_axis:
+        if options:
+            raise ValueError(
+                "automatic geometry reconstruction does not take expert overrides; "
+                "choose method='fista' (or another explicit method) to supply them"
+            )
+        from tomojax._laminography import reconstruct_laminography
+
+        return reconstruct_laminography(scan, align=align, reconstruct=reconstruct)
+    reasons = []
+    method: Method = "fbp"
+    if type(scan.geometry) is ParallelGeometry:
+        angles = np.unique(np.mod(np.asarray(scan.angles, np.float64), 180.0))
+        gaps = np.diff(np.r_[angles, angles[0] + 180])
+        if len(angles) >= 16 and np.max(gaps) <= max(22.5, 2 * float(np.median(gaps))):
+            method = "fourier"
+        else:
+            reasons.append(
+                "Sparse or incomplete half-turn coverage: Fourier inversion was not selected."
+            )
+    elif getattr(base, "beam", None) is None:
+        reasons.append(
+            "Posed or custom parallel geometry uses FBP; "
+            "automatic iterative validation is unavailable."
+        )
+    result = reconstruct(scan, method, **options)
+    if result.info.get("backend") == "numpy":
+        reasons.append("CUDA Fourier is not active; NumPy execution cannot promise GPU throughput.")
+    if method == "fourier" and any(step.name == "log" for step in scan.corrections):
+        reasons.append(
+            "Reconstruction did not perform centre calibration; the supplied geometry was "
+            "preserved. Use align if the centre needs estimating."
+        )
+        reasons.append(
+            "Corrected projections were already materialized; use reconstruct_slabs on raw "
+            "Frames to avoid that host round trip. Raw-workflow speed is not guaranteed here."
+        )
+        if not any(step.name == "stripes" for step in scan.corrections):
+            reasons.append(
+                "No stripe correction is recorded; detector-ring suppression is unassessed."
+            )
+    automatic = {
+        "method": method,
+        "status": "limited" if reasons else "ok",
+        "reasons": reasons,
+        "geometry": "preserved",
+        "warning": "Method selection does not validate geometry, support or detector artefacts.",
+    }
+    return replace(result, info={**result.info, "automatic": automatic})
 
 
 @contextmanager

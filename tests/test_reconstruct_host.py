@@ -31,9 +31,9 @@ def test_volume_larger_than_the_device_is_reconstructed_in_host_slabs(
     scan = _scan(kind)
     if device_input:
         scan = replace(scan, projections=jax.device_put(scan.projections))
-    expected = np.asarray(tj.reconstruct(scan, filter="hann").volume)
+    expected = np.asarray(tj.reconstruct(scan, "fbp", filter="hann").volume)
     monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: 4096)
-    actual = tj.reconstruct(scan, filter="hann")
+    actual = tj.reconstruct(scan, "fbp", filter="hann")
     assert isinstance(actual.volume, np.ndarray) and actual.info["host_slabs"]
     np.testing.assert_allclose(actual.volume, expected, atol=3e-6, rtol=5e-5)
 
@@ -74,8 +74,8 @@ def test_fortran_output_with_ragged_axial_slabs(tmp_path):
     path = tmp_path / "volume.dat"
     backing = np.memmap(path, mode="w+", dtype=np.float32, shape=shape, order="F")
     backing[:] = -71
-    expected = tj.reconstruct(scan, filter="hann")
-    result = tj.reconstruct(scan, filter="hann", out=backing[:, :, 1:-1])
+    expected = tj.reconstruct(scan, "fbp", filter="hann")
+    result = tj.reconstruct(scan, "fbp", filter="hann", out=backing[:, :, 1:-1])
     np.testing.assert_allclose(result.volume, np.asarray(expected.volume), rtol=5e-5, atol=3e-6)
     np.testing.assert_array_equal(backing[:, :, [0, -1]], -71)
 
@@ -91,5 +91,5 @@ def test_fortran_output_propagates_write_failures():
 
     out = np.empty((9, 7, 19), np.float32, order="F").view(FailingStorage)
     with pytest.raises(OSError, match="output write failed"):
-        tj.reconstruct(scan, out=out)
+        tj.reconstruct(scan, "fbp", out=out)
     assert len(writes) == 1

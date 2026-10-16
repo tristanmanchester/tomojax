@@ -33,7 +33,7 @@ def test_fourier_workflow_preserves_geometry_and_recovers_independent_gaussian(b
     assert isinstance(actual.volume, np.ndarray)
     assert actual.method == "fourier" and actual.grid == grid
     assert actual.scan.name == scan.name and actual.scan.detector == scan.detector
-    assert actual.info == {"config": cfg, "host_slabs": True}
+    assert actual.info == {"config": cfg, "host_slabs": True, "backend": backend}
     expected = fourier_reconstruct(scan.geometry, grid, scan.detector, scan.projections, config=cfg)
     np.testing.assert_array_equal(actual.volume, expected)
     x = (np.arange(grid.nx) - (grid.nx - 1) / 2) + 0.4
@@ -74,7 +74,48 @@ def test_cli_fourier_uses_config_and_round_trips_context(tmp_path):
         == 0
     )
     actual = tj.load_reconstruction(output)
-    expected = tj.reconstruct(scan, "fourier", config=FourierConfig(slices_per_batch=1))
+    expected = tj.reconstruct(
+        scan, "fourier", config=FourierConfig(backend="numpy", slices_per_batch=1)
+    )
     np.testing.assert_allclose(actual.volume, expected.volume, atol=1e-6)
     assert actual.method == "fourier" and actual.grid == scan.grid
     assert actual.info["config"] == asdict(expected.info["config"])
+
+
+@pytest.mark.parametrize("backend", ["numpy", pytest.param("cupy", marks=pytest.mark.gpu)])
+def test_default_fourier_matches_the_selected_device(backend):
+    device = jax.devices("cpu" if backend == "numpy" else "gpu")[0]
+    with jax.default_device(device):
+        actual = tj.reconstruct(_scan(), "fourier")
+        expected = tj.reconstruct(_scan(), "fourier", config=FourierConfig(backend=backend))
+    np.testing.assert_array_equal(actual.volume, expected.volume)
+    assert actual.info["backend"] == backend
+
+
+def test_auto_fourier_handles_missing_cupy_without_hiding_errors(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    scan = _scan()
+    expected = tj.reconstruct(scan, "fourier", config=FourierConfig(backend="numpy"))
+    device = SimpleNamespace(
+        platform="gpu", client=SimpleNamespace(platform_version="CUDA"), local_hardware_id=0
+    )
+    monkeypatch.setattr(jax, "devices", lambda _: [device])
+    monkeypatch.setitem(sys.modules, "cupy", None)
+    np.testing.assert_array_equal(tj.reconstruct(scan, "fourier").volume, expected.volume)
+    with pytest.raises(ImportError, match="requires"):
+        tj.reconstruct(scan, "fourier", config=FourierConfig(backend="cupy"))
+    runtime = SimpleNamespace(getDevice=lambda: 1)
+    cuda = SimpleNamespace(is_available=lambda: True, runtime=runtime)
+    monkeypatch.setitem(sys.modules, "cupy", SimpleNamespace(cuda=cuda))
+    np.testing.assert_array_equal(tj.reconstruct(scan, "fourier").volume, expected.volume)
+
+    def broken_device():
+        raise RuntimeError("device discovery failed")
+
+    monkeypatch.setitem(
+        sys.modules, "cupy", SimpleNamespace(cuda=SimpleNamespace(is_available=broken_device))
+    )
+    with pytest.raises(RuntimeError, match="device discovery failed"):
+        tj.reconstruct(scan, "fourier")

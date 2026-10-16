@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-import operator
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -13,7 +12,7 @@ from tomojax.core.geometry.cone import require_parallel_beam
 from tomojax.core.validation import validate_grid, validate_projection_stack
 from tomojax.geometry import ParallelGeometry, grid_volume_origin
 
-from ._fourier_backend import FourierPlan, is_cuda_oom
+from ._fourier_backend import FourierPlan, fourier_slab_depth, is_cuda_oom, resolve_fourier_backend
 from ._fourier_grid import sample_projection_rows, sorted_half_turn
 from ._fourier_rows import ProjectionRows, prepare_projection_rows
 from ._host_arrays import validate_host_arrays
@@ -33,12 +32,17 @@ _HOST_PIPELINE_MIN_BYTES = 64 * 1024**2
 class FourierConfig:
     """Choose a portable NumPy reference or CUDA execution with fixed axial slabs.
 
+    ``auto`` uses CuPy when its current CUDA device matches the selected JAX
+    device and NumPy otherwise, including when CuPy is not installed. Explicit
+    ``numpy`` and ``cupy`` never switch backends or change the current device.
     ``cupy`` uses single-precision FFTs and an original CUDA interpolation
     kernel. It requires the optional ``fourier-cuda12`` extra. ``numpy`` uses
     double-precision FFTs and a vectorized interpolation reference. Both return
-    float32 host arrays. Slab size bounds device volume storage and is halved
-    after CUDA allocation exhaustion, down to one slice. FFT plans and allocator
-    caches consume additional memory. Large CUDA calls overlap host
+    float32 host arrays. ``slices_per_batch=None`` chooses up to 16 slices,
+    targeting a 256 MiB padded CUDA FP32 plane stack (at least one slice).
+    NumPy defaults to 16; an explicit integer fixes the requested depth.
+    CUDA allocation exhaustion still halves it down to one slice. FFT plans and
+    allocator caches consume additional memory. Large CUDA calls overlap host
     row preparation, device transfers, FFT execution and output writes, retaining
     at most two pending device slabs. A bounded cache retains immutable
     geometry arrays; each call owns its working buffers.
@@ -46,8 +50,8 @@ class FourierConfig:
     source rows per requested slice; entire projection stacks are not uploaded.
     """
 
-    slices_per_batch: int = 16
-    backend: Literal["numpy", "cupy"] = "numpy"
+    slices_per_batch: int | None = None
+    backend: Literal["auto", "numpy", "cupy"] = "auto"
 
 
 def fourier_reconstruct(
@@ -79,15 +83,11 @@ def fourier_reconstruct(
     Their storage must not overlap. Completed slabs are
     written immediately, so a later failure may leave partial output. Input
     storage must remain unchanged during the call. This routine is not
-    differentiable and does not replace the default FBP reconstruction.
+    differentiable; use the matched projector pair for iterative solves.
     """
     require_parallel_beam(geometry, "fourier_reconstruct")
     cfg = FourierConfig() if config is None else config
-    slices = operator.index(cfg.slices_per_batch)
-    if slices < 1:
-        raise ValueError("fourier_reconstruct: slices_per_batch must be positive")
-    if cfg.backend not in {"numpy", "cupy"}:
-        raise ValueError("fourier_reconstruct: backend must be 'numpy' or 'cupy'")
+    backend = resolve_fourier_backend(cfg.backend)
     if type(geometry) is not ParallelGeometry:
         raise ValueError("fourier_reconstruct: requires built-in ParallelGeometry")
     shape = validate_grid(grid, "fourier_reconstruct grid")
@@ -97,10 +97,10 @@ def fourier_reconstruct(
     origin = grid_volume_origin(grid)
     if not np.isfinite([*origin, *detector.center]).all():
         raise ValueError("fourier_reconstruct: grid and detector placement must be finite")
+    depth = fourier_slab_depth(grid, detector, cfg.slices_per_batch, backend)
     order, flipped, angles = sorted_half_turn(np.asarray(geometry.angles))
     output = validate_host_arrays(projections, out, shape, "fourier_reconstruct")
-    transpose_download = cfg.backend == "cupy" and output.flags.f_contiguous
-    depth = min(slices, grid.nz)
+    transpose_download = backend == "cupy" and output.flags.f_contiguous
     host_bytes = 4 * (grid.nx * grid.ny * grid.nz + nviews * detector.nu * grid.nz)
     positions = (origin[2] + np.arange(grid.nz) * grid.vz - detector.center[1]) / detector.dv + (
         detector.nv - 1
@@ -110,7 +110,7 @@ def fourier_reconstruct(
 
     def prepare(start: int) -> np.ndarray | ProjectionRows:
         rows = positions[start : start + depth]
-        return _prepare_slab(projections, order, rows, depth, cfg.backend)
+        return _prepare_slab(projections, order, rows, depth, backend)
 
     def write(start: int, volume: np.ndarray) -> None:
         stop = min(start + depth, grid.nz)
@@ -122,7 +122,7 @@ def fourier_reconstruct(
     while True:
         try:
             overlap = (
-                cfg.backend == "cupy" and grid.nz > depth and host_bytes >= _HOST_PIPELINE_MIN_BYTES
+                backend == "cupy" and grid.nz > depth and host_bytes >= _HOST_PIPELINE_MIN_BYTES
             )
             plan = FourierPlan(
                 grid,
@@ -131,7 +131,7 @@ def fourier_reconstruct(
                 flipped,
                 angles,
                 depth,
-                cfg.backend,
+                backend,
                 async_transfers=overlap,
                 transpose_download=transpose_download,
             )
@@ -143,7 +143,7 @@ def fourier_reconstruct(
                     write(start, plan.reconstruct(prepare(start), count=count))
             return output
         except Exception as error:
-            if cfg.backend != "cupy" or depth == 1 or not is_cuda_oom(error):
+            if backend != "cupy" or depth == 1 or not is_cuda_oom(error):
                 raise
             # The pipeline has drained its transfer events. Drop this attempt's
             # buffers and the exception traceback before allocating a smaller
