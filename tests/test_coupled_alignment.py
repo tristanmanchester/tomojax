@@ -470,9 +470,14 @@ def test_memory_check_compiles_the_update_unless_far_below_the_limit(monkeypatch
     monkeypatch.setattr(coupled, "_MEMORY_MARGIN", 1000)
     free(error.value.needed)
     objective = coupled.build_coupled_objective(ctx)
-    assert isinstance(objective.update.func, jax.stages.Compiled)
     assert_update_matches(objective)
     assert len(lowered) == 1
+    # Reconstruction can consume memory after admission, before this update.
+    monkeypatch.setattr(coupled, "_free_device_memory", lambda _array: 0)
+    with pytest.raises(coupled.AlignmentMemoryError) as late_error:
+        objective.update(p, x)
+    assert late_error.value.available == 0 < late_error.value.needed
+    assert len(lowered) == 1  # no recompilation, nor dispatch of the oversized update
 
 
 def test_a_cached_update_that_does_not_fit_retries_without_columns(monkeypatch):

@@ -54,6 +54,7 @@ class AlignMultiresInfo(TypedDict):
     factors: list[int]
     # Finer factors left out because they would not fit in device memory.
     factors_skipped: list[int]
+    factors_skipped_reason: str | None
     loss_kind: str | None
     reconstruction: str
     outer_stats: list[OuterStat]
@@ -122,6 +123,7 @@ class AlignMultiresResumeState:
     elapsed_offset: float = 0.0
     level_complete: bool = False
     run_complete: bool = False
+    factors_skipped_reason: str | None = None
     geometry_calibration_state: dict[str, object] | None = None
     stage_index: int = 0
     stage_name: str | None = None

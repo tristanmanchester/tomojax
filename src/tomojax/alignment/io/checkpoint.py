@@ -84,6 +84,7 @@ class CheckpointMetadata(TypedDict, total=False):
     geometry_calibration_state: Any
     level_complete: bool
     run_complete: bool
+    factors_skipped_reason: str | None
     has_motion_coeffs: bool
 
 
