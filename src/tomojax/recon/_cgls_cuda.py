@@ -117,7 +117,8 @@ def solve(geometry, grid, detector, projections, initial, cfg: CGLSConfig):
 def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
     residual = data.copy() if zero_start else data - ops.forward(x)
     damp2 = np.float32(cfg.damping) ** 2
-    gradient = ops.adjoint(residual) - damp2 * x
+    # Explicit dense scalar ufuncs avoid importing CuPy sparse-operand dispatch.
+    gradient = ops.adjoint(residual) - cp.multiply(damp2, x)
     gamma = cp.sum(gradient * gradient)
     initial_norm = float(cp.sqrt(gamma))
     tolerance = np.float32(cfg.atol + cfg.rtol * initial_norm)
@@ -130,7 +131,7 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
     while count < cfg.iterations and norm2 > tolerance**2 and not failed and not roundoff:
         projected = ops.forward(direction)
         direction_norm2 = cp.sum(direction * direction)
-        denominator = cp.sum(projected * projected) + damp2 * direction_norm2
+        denominator = cp.sum(projected * projected) + cp.multiply(damp2, direction_norm2)
         value = float(denominator)
         if not np.isfinite(value) or value <= 0:
             failed = True
@@ -138,13 +139,14 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
         alpha = gamma / denominator
         x += alpha * direction
         residual -= alpha * projected
-        gradient = ops.adjoint(residual) - damp2 * x
+        gradient = ops.adjoint(residual) - cp.multiply(damp2, x)
         gamma_new = cp.sum(gradient * gradient)
         count += 1
         roundoff = cp.all(
-            cp.abs(alpha * direction) <= eps * cp.maximum(cp.abs(x), np.finfo(np.float32).tiny)
+            cp.abs(alpha * direction)
+            <= cp.multiply(eps, cp.maximum(cp.abs(x), np.finfo(np.float32).tiny))
         )
-        small_update = alpha**2 * direction_norm2 <= eps**2 * cp.sum(x * x)
+        small_update = cp.square(alpha) * direction_norm2 <= cp.multiply(eps**2, cp.sum(x * x))
         stats = cp.asnumpy(cp.stack((gamma_new, roundoff, small_update)))
         norm2, roundoff, small_update = float(stats[0]), bool(stats[1]), bool(stats[2])
         failed = not np.isfinite(norm2)
@@ -194,11 +196,11 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
 def _verify(cp, ops, data, x, gradient, gamma, damp2, *, candidate: bool, roundoff: bool):
     """Replace the recurrence with the measured residual before accepting a stop."""
     prediction = ops.forward(x)
-    cancellation = ops.adjoint(cp.abs(data) + cp.abs(prediction)) + damp2 * cp.abs(x)
+    cancellation = ops.adjoint(cp.abs(data) + cp.abs(prediction)) + cp.multiply(damp2, cp.abs(x))
     residual = data - prediction
-    exact = ops.adjoint(residual) - damp2 * x
+    exact = ops.adjoint(residual) - cp.multiply(damp2, x)
     exact_gamma = cp.sum(exact * exact)
-    at_precision = cp.all(cp.abs(exact) <= 8 * np.finfo(np.float32).eps * cancellation)
+    at_precision = cp.all(cp.abs(exact) <= cp.multiply(8 * np.finfo(np.float32).eps, cancellation))
     gap = cp.sum((exact - gradient) ** 2)
     checks = cp.asnumpy(cp.stack((exact_gamma, at_precision, gap)))
     norm2, at_precision, gap = float(checks[0]), bool(checks[1]), float(checks[2])

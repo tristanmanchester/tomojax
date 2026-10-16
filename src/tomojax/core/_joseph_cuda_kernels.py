@@ -104,15 +104,44 @@ __device__ float sample(const float* x, int a, int k, int b, int c,
 }
 extern "C" __global__ void forward(const float* coeff, const float* x, float* out,
         int nx,int ny,int nz,int nu,int nv) {
-    long pixel=(long)blockIdx.x*blockDim.x+threadIdx.x;
-    if (pixel>=nu*nv) return;
-    int view=blockIdx.y,u=pixel/nv,v=pixel%nv;
+    int tiles_v=(nv+15)/16;
+    int u=(blockIdx.x/tiles_v)*8+threadIdx.x/16;
+    int v=(blockIdx.x%tiles_v)*16+threadIdx.x%16;
+    bool valid=(u<nu && v<nv);
+    int view=blockIdx.y;
     const float* c=coeff+14*view;
     int a=(int)c[0];
     int na=a==0?nx:(a==1?ny:nz),nb=a==0?ny:(a==1?nz:nx),nc=a==0?nz:(a==1?nx:ny);
     float pb=c[1]*u+c[2]*v,pc=c[5]*u+c[6]*v;
     float total=0.f;
-    for(int k=0;k<na;k++) {
+    float low=0.f, high=na-1.f;
+    for (int d=0;d<2;d++) {
+        float p=d?pc:pb, slope=d?c[7]:c[3], offset=d?c[8]:c[4];
+        float size=d?nc:nb, start=p+offset;
+        // Bound coordinate roundoff before computing a support interval.
+        float margin=8*1.1920928955078125e-7f*(fabsf(p)+fabsf(offset)+fabsf(slope)*na+1.f);
+        if (slope==0.f) {
+            if (start < -1.f-margin || start > size+margin) { low=na; high=-1.f; }
+        } else {
+            float a=(-1.f-margin-start)/slope, b=(size+margin-start)/slope;
+            low=fmaxf(low,fminf(a,b)); high=fminf(high,fmaxf(a,b));
+        }
+    }
+    int first=(int)fminf((float)na,fmaxf(0.f,floorf(low)-1.f));
+    int stop=(int)fminf((float)na,fmaxf(0.f,ceilf(high)+2.f));
+    if (!valid) { first=na; stop=0; }
+    int lane=threadIdx.x%32, warp=threadIdx.x/32;
+    for(int delta=16;delta>0;delta/=2) {
+        first=min(first,__shfl_down_sync(0xffffffff,first,delta));
+        stop=max(stop,__shfl_down_sync(0xffffffff,stop,delta));
+    }
+    __shared__ int starts[4], stops[4];
+    if(lane==0) { starts[warp]=first; stops[warp]=stop; }
+    __syncthreads();
+    first=min(min(starts[0],starts[1]),min(starts[2],starts[3]));
+    stop=max(max(stops[0],stops[1]),max(stops[2],stops[3]));
+    for(int k=first;k<stop;k++) {
+        if(!valid) continue;
         float qb=pb+(c[3]*k+c[4]),qc=pc+(c[7]*k+c[8]);
         int ib=(int)floorf(qb),ic=(int)floorf(qc);
         float wb=qb-ib,wc=qc-ic;
@@ -121,7 +150,7 @@ extern "C" __global__ void forward(const float* coeff, const float* x, float* ou
                  +(sample(x,a,k,ib+1,ic,nx,ny,nz,nb,nc)*(1-wc)+sample(x,a,k,ib+1,ic+1,nx,ny,nz,nb,nc)*wc)*wb;
         total+=val*c[9];
     }
-    out[((long)view*nv+v)*nu+u]=total;
+    if(valid) out[((long)view*nv+v)*nu+u]=total;
 }
 """
 

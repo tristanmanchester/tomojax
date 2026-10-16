@@ -361,6 +361,7 @@ assert isinstance(x, np.ndarray) and np.isfinite(x).all() and np.linalg.norm(x) 
 result = tj.reconstruct(tj.Scan(np.ones((7, 7, 9), np.float32), geometry), 'cgls', iterations=2)
 assert 'jax' not in sys.modules and result.info['execution_backend'] == 'cupy'
 assert isinstance(result.volume, np.ndarray) and np.isfinite(result.volume).all()
+assert 'cupyx.scipy.sparse' not in sys.modules
 """
     subprocess.run([sys.executable, "-c", code], check=True)
 
@@ -397,3 +398,28 @@ def test_native_cuda_cgls_matches_independent_damped_system(tilt):
     assert info["execution_backend"] == "cupy"
     np.testing.assert_allclose(x.ravel(), expected, atol=2e-5, rtol=3e-4)
     assert info["termination"] in {"converged", "roundoff_limit"}
+
+
+@pytest.mark.gpu
+def test_native_cuda_clipped_planes_keep_the_matched_pair():
+    import cupy as cp
+
+    from tomojax.core.joseph_cuda import JosephCUDA
+    from tomojax.forward import project_joseph
+
+    grid = Grid(17, 13, 11, 1.2, 0.8, 1.4, vol_center=(0.3, -0.2, 0.7))
+    detector = Detector(23, 19, 0.7, 1.1, (0.1, -0.4))
+    geometry = LaminographyGeometry(grid, detector, [0, 0.000001, 31, 89.99999, 90, 153], 51)
+    poses = np.asarray([geometry.pose_for_view(i) for i in range(6)], np.float32)
+    rng = np.random.default_rng(719)
+    x = rng.normal(size=(17, 13, 11)).astype(np.float32)
+    y = rng.normal(size=(6, 19, 23)).astype(np.float32)
+    operators = JosephCUDA(poses, grid, detector, views_per_batch=4)
+    ax, aty = (
+        cp.asnumpy(operators.forward(cp.asarray(x))),
+        cp.asnumpy(operators.adjoint(cp.asarray(y))),
+    )
+    expected = np.asarray(project_joseph(jnp.asarray(x), poses, grid, detector, backend="jax"))
+    np.testing.assert_allclose(ax, expected, rtol=3e-5, atol=5e-5)
+    lhs, rhs = np.vdot(ax.astype(float), y), np.vdot(x.astype(float), aty)
+    assert abs(lhs - rhs) < 1e-6 * np.linalg.norm(ax) * np.linalg.norm(y)

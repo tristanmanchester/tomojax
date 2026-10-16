@@ -36,11 +36,12 @@ class JosephCUDA:
         volume = cp.ascontiguousarray(volume, dtype=cp.float32)
         n, nv, nu = self.image_shape
         out = cp.empty(self.image_shape, cp.float32)
+        tiles = -(-nu // 8) * -(-nv // 16)
         # CUDA's grid.y is limited to 65535 even on recent devices.
         for first in range(0, n, 65535):
             stop = min(first + 65535, n)
             self.forward_kernel(
-                (-(-(nv * nu) // THREADS), stop - first),
+                (tiles, stop - first),
                 (THREADS,),
                 (self.coeff[first:stop], volume, out[first:stop], *self.args),
             )
