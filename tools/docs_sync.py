@@ -40,6 +40,7 @@ SECTIONS: list[tuple[str, list[tuple[str, str, str | None, str]]]] = [
                 "Simulate data and call the Python API.",
             ),
             ("examples/README.md", "examples", "Examples", "The runnable example scripts."),
+            ("docs/gallery.md", "gallery", None, "Figures from phantoms and real scans."),
             ("docs/README.md", "guide-map", "Documentation map", "Every guide by task."),
         ],
     ),
