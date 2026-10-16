@@ -479,3 +479,32 @@ def test_explicit_singleton_detector_keeps_physical_matrix_and_transpose(pixels,
     np.testing.assert_allclose(actual.ravel(), expected @ volume.ravel(), rtol=2e-5, atol=3e-6)
     back = adjoint_pallas(coeff, images, grid, detector)
     np.testing.assert_allclose(back.ravel(), expected.T @ images.ravel(), rtol=2e-5, atol=3e-6)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("fractional", [False, True])
+@pytest.mark.parametrize("nz", [5, 8])
+def test_axial_cuda_pair_matches_physical_matrix_near_axis(fractional, nz, monkeypatch):
+    monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
+    g = Grid(7, 6, nz, 0.8, 1.1, 1.3)
+    d = Detector(9, nz + 2, 0.7, 1.2 if fractional else 1.3, (0.17, -0.23 if fractional else 0))
+    poses = np.broadcast_to(np.eye(4, dtype=np.float32), (5, 4, 4)).copy()
+    poses[:, :3, :3] = Rotation.from_euler(
+        "z", np.array([0, 1e-7, 43, 90, 179])[:, None], degrees=True
+    ).as_matrix()
+    expected = matrix(poses, g, d)
+    coeff = plane_coefficients(jnp.asarray(poses), g, d)
+    rng = np.random.default_rng(72)
+    volume = jnp.asarray(rng.normal(size=(7, 6, nz)), jnp.float32)
+    data = jnp.asarray(rng.normal(size=(5, nz + 2, 9)), jnp.float32)
+    fp = jax.jit(lambda x: forward_pallas(coeff, x, g, d))
+    bp = jax.jit(lambda y: adjoint_pallas(coeff, y, g, d))
+    np.testing.assert_allclose(
+        np.asarray(fp(volume)).ravel(), expected @ np.asarray(volume).ravel(), atol=5e-6, rtol=1e-5
+    )
+    np.testing.assert_allclose(
+        np.asarray(bp(data)).ravel(), expected.T @ np.asarray(data).ravel(), atol=5e-6, rtol=1e-5
+    )
+    np.testing.assert_allclose(
+        jnp.vdot(fp(volume), data), jnp.vdot(volume, bp(data)), atol=1e-5, rtol=1e-5
+    )

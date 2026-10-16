@@ -7,7 +7,8 @@ is compiled at run time with CuPy and launched on XLA's stream through
 ``buffer_callback``, inside compiled solver loops. Automatic dispatch uses it
 from 2**21 voxels, including coarse reconstruction and alignment grids. Smaller
 volumes retain the Pallas transpose to avoid the fixed callback/kernel setup
-cost for short operations. Runs without CuPy and ``TOMOJAX_CUDA_KERNELS=0``
+cost for short operations. Axial batches use a bounded separable vertical
+prepass; other views retain this gather. Runs without CuPy and ``TOMOJAX_CUDA_KERNELS=0``
 also use Pallas; the environment override can force either implementation.
 """
 
@@ -224,4 +225,20 @@ def gather_transpose_cuda(
         input_output_aliases={2: 0},
         vmap_method="sequential",
     )
-    return call(coeff.astype(jnp.float32), images_uv, initial).reshape(shape)
+    coeff = coeff.astype(jnp.float32)
+
+    def generic(_: None) -> jax.Array:
+        return call(coeff, images_uv, initial)
+
+    # Bound the additional vertical-resampling scratch independently of scan
+    # aspect ratio. Nonseparable views keep the existing gather unchanged.
+    if images_uv.shape[0] * images_uv.shape[1] * grid.nz <= 32 * 1024**2:
+        from tomojax.core._cuda_axial import axial_coefficients, transpose_axial_cuda
+
+        return jax.lax.cond(
+            axial_coefficients(coeff),
+            lambda _: transpose_axial_cuda(coeff, images_uv, initial, grid=grid),
+            generic,
+            operand=None,
+        ).reshape(shape)
+    return generic(None).reshape(shape)

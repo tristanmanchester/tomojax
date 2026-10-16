@@ -130,25 +130,40 @@ def forward_pallas(
     count = detector.nu * detector.nv
     if block % _TILE_V:
         raise ValueError(f"forward block must be a multiple of {_TILE_V}")
-    out = pl.pallas_call(
-        partial(
-            _fp_kernel,
-            shape=(grid.nx, grid.ny, grid.nz),
-            det_shape=(detector.nv, detector.nu),
-            block=block,
-            interpolation=interpolation,
-        ),
-        out_shape=jax.ShapeDtypeStruct((views, count), jnp.float32),
-        grid=(
-            views,
-            -(-detector.nu // (block // _TILE_V)) * -(-detector.nv // _TILE_V),
-        ),
-        in_specs=[pl.no_block_spec, pl.no_block_spec],
-        out_specs=pl.no_block_spec,
-        compiler_params=plt.CompilerParams(num_warps=4),
-        interpret=interpret,
-    )(coeff, volume)
-    return out.reshape(views, detector.nv, detector.nu)
+
+    def pallas(_: None) -> jax.Array:
+        out = pl.pallas_call(
+            partial(
+                _fp_kernel,
+                shape=(grid.nx, grid.ny, grid.nz),
+                det_shape=(detector.nv, detector.nu),
+                block=block,
+                interpolation=interpolation,
+            ),
+            out_shape=jax.ShapeDtypeStruct((views, count), jnp.float32),
+            grid=(
+                views,
+                -(-detector.nu // (block // _TILE_V)) * -(-detector.nv // _TILE_V),
+            ),
+            in_specs=[pl.no_block_spec, pl.no_block_spec],
+            out_specs=pl.no_block_spec,
+            compiler_params=plt.CompilerParams(num_warps=4),
+            interpret=interpret,
+        )(coeff, volume)
+        return out.reshape(views, detector.nv, detector.nu)
+
+    if interpolation == "linear" and not interpret:
+        from tomojax.core._cuda_axial import axial_coefficients, forward_axial_cuda
+        from tomojax.core._cuda_joseph import use_cuda_gather
+
+        if use_cuda_gather(grid):
+            return jax.lax.cond(
+                axial_coefficients(coeff),
+                lambda _: forward_axial_cuda(coeff, volume, grid=grid, detector=detector),
+                pallas,
+                operand=None,
+            )
+    return pallas(None)
 
 
 def _detector_footprint(
