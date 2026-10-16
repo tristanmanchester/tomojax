@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+Rotation-axis poses use the same angle precision before and after saving a scan.
+
 Sixth lab run, second merge: laminography alignment gains `tj.estimate_region`
 (the reconstruction region from projection data, with its uncertainty), a
 projection-only motion initialisation stage, bounded smooth-motion refinement

@@ -49,8 +49,12 @@ class RotationAxisGeometry:
         return np.asarray(normalize_axis_unit(self.axis_unit_lab), dtype=np.float64)
 
     def pose_for_view(self, i: int) -> PoseMatrix:
-        """Return the world-from-object pose for one view."""
-        theta = float(np.deg2rad(self.angles[i]))
+        """Return the world-from-object pose for one view.
+
+        Degree conversion uses host precision for lists and saved FP32 arrays alike.
+        """
+        angle_deg = float(self.angles[i])
+        theta = float(np.deg2rad(angle_deg))
         axis = self._axis_unit()
         ez = np.array([0.0, 0.0, 1.0], dtype=np.float64)
         S = align_u_to_v(ez, axis)
