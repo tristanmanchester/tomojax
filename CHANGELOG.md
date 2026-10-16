@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+GPU memory budgeting queries the device when allocator statistics are unavailable,
+rather than using unrelated host RAM.
+
+CLI alignment and reconstruction defer omitted mode/method and grid choices to
+the automatic Python workflow, and print any reported limitations.
+
 Intensity-dependent stripe fitting ranks only selected detector tiles when sparse,
 with unchanged selection, full neighborhood halos and a dense fallback.
 

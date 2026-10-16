@@ -86,8 +86,8 @@ direction and the source distances are not estimated.
 
 ## Reconstruct
 
-FDK (the default `--method fbp` runs FDK on cone data) is the fast first
-reconstruction:
+The default `--method auto` selects FDK for a single cone-beam arrangement;
+`--method fbp` selects it explicitly:
 
 ```bash
 uv run --no-sync tomojax recon calibrated.nxs -o fdk.nxs
@@ -107,8 +107,8 @@ uv run --no-sync tomojax recon calibrated.nxs -o cgls.nxs --method cgls --iterat
 uv run --no-sync tomojax recon calibrated.nxs -o tv.nxs --method fista --iterations 50 --tv-weight 0.002
 ```
 
-Expert settings are fields of the method's configuration class in a
-`--config` TOML file: `views_per_batch = 16`, say, or FISTA's
+Expert settings are fields of the explicitly selected method's configuration
+class in a `--config` TOML file: `views_per_batch = 16`, say, or FISTA's
 `regulariser = "huber_tv"` (see the
 [quickstart](quickstart.md#reconstruct-and-inspect-slices)); in Python, pass
 the class, `tj.reconstruct(scan, "fista", config=FistaConfig(...))`.
@@ -228,7 +228,7 @@ iterative method from the view-count-weighted mean of each segment's FDK,
 which needs every segment to cover an arc FDK accepts.
 
 Recorded orbit heights are often slightly wrong, which doubles and blurs
-edges. `tj.align(scan)` in `pose` mode aligns the segments as one scan and
+edges. `tj.align(scan)` selects `pose` alignment for segments as one scan and
 brings the orbits into register; the other modes refuse segmented scans. Only
 the orbits' heights relative to one another are observable, so the result is
 the least-motion estimate, and the whole object can sit away from where the

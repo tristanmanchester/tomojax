@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from tomojax import Reconstruction, Scan
     from tomojax.recon.api import MethodConfig
 
-type _Method = Literal["fbp", "fourier", "cgls", "fista", "spdhg"]
+type _Method = Literal["auto", "fbp", "fourier", "cgls", "fista", "spdhg"]
 _METHODS: tuple[_Method, ...] = ("fbp", "fourier", "cgls", "fista", "spdhg")
 # The options that are tj.reconstruct keywords besides the method and grid.
 _KEYWORDS = ("filter", "iterations", "tv_weight", "nonnegative", "warm_start", "seed")
@@ -62,6 +62,7 @@ _SETTINGS = (
     "tomojax.recon.FBPConfig (fbp, and FDK for cone beams), FourierConfig, CGLSConfig,\n"
     "FistaConfig or SPDHGConfig. Each replaces that field of the class's defaults; a\n"
     "setting the method's class has no field for fails with the ones it has.\n"
+    "Expert settings require an explicit --method rather than automatic selection.\n"
 )
 _EPILOG = (
     "Examples:\n"
@@ -86,10 +87,11 @@ def build_parser() -> argparse.ArgumentParser:
     add_config(p, settings=_settings())
     _ = p.add_argument(
         "--method",
-        choices=_METHODS,
-        default="fbp",
+        choices=("auto", *_METHODS),
+        default="auto",
         help=(
-            "fbp: filtered backprojection/FDK (default); fourier: parallel Fourier inverse; "
+            "auto (default): choose from geometry; fbp: filtered backprojection/FDK; "
+            "fourier: parallel Fourier inverse; "
             "cgls: least squares; fista, spdhg: least squares with total variation"
         ),
     )
@@ -224,7 +226,7 @@ class _Run:
         given = {name: cast("object", getattr(self, name)) for name in _KEYWORDS}
         return {name: value for name, value in given.items() if value is not None}
 
-    def config(self, settings: Mapping[str, object]) -> MethodConfig:
+    def config(self, settings: Mapping[str, object]) -> MethodConfig | None:
         """The method's configuration with the config file's ``settings``.
 
         The options are checked against it too, so one the method does not
@@ -232,6 +234,10 @@ class _Run:
         """
         from tomojax.recon.api import method_config
 
+        if self.method == "auto":
+            if settings:
+                raise ValueError("expert reconstruction settings require an explicit --method")
+            return None
         config = method_config(self.method, config=None, **settings)
         options = {k: v for k, v in self.keywords().items() if k != "warm_start"}
         _ = method_config(self.method, config=config, **options)
@@ -284,6 +290,7 @@ def _write_manifest(
 def main() -> None:
     """Run ``tomojax recon``."""
     import tomojax as tj
+    from tomojax.cli._runtime import report_automatic
     from tomojax.core import log_jax_env, setup_logging
 
     parser = build_parser()
@@ -300,8 +307,11 @@ def main() -> None:
         os.environ["TOMOJAX_PROGRESS"] = "1"
 
     scan = tj.load(run.data, poses=run.poses)
-    grid, masked = region_grid(scan, roi=run.roi, grid=run.grid)
-    if masked and hasattr(config, "support"):
+    grid, masked = (None, False)
+    if run.method != "auto" or run.grid is not None or run.roi != "auto":
+        grid, masked = region_grid(scan, roi=run.roi, grid=run.grid)
+    if masked and config is not None and hasattr(config, "support"):
+        assert grid is not None
         # The solvers that take a support constrain the solve to the cylinder.
         config = replace(config, support=cylinder_support(grid, scan.detector))
     result = tj.reconstruct(
@@ -317,7 +327,10 @@ def main() -> None:
         seed=run.seed,
     )
     if masked:
-        result = replace(result, volume=zero_outside_cylinder(result.volume, grid, scan.detector))
+        result = replace(
+            result, volume=zero_outside_cylinder(result.volume, result.grid, scan.detector)
+        )
+    report_automatic(result.info)
     tj.save(run.out, result)
     logging.info("Saved reconstruction to %s", run.out)
     if run.preview is not None:

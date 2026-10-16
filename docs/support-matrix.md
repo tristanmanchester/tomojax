@@ -14,8 +14,8 @@ experimental. See [installation](installation.md) and [measurement scope](measur
 | Frame corrections in Python (crop, select views, correction steps) | Supported | `tj.load_frames(path).cropped(...).selected(...).corrected(*steps)`; `Scan.corrected(*steps)` for line-integral steps |
 | TIFF flat/dark preprocessing | Supported | `tomojax preprocess ./projections -o corrected.nxs --flats ./flats --darks ./darks --angles angles.csv` |
 | FBP, CGLS, FISTA-TV, SPDHG-TV from corrected projections | Supported | `tomojax recon corrected.nxs -o recon.nxs --method fbp\|cgls\|fista\|spdhg` |
-| Fourier-slice inverse of supported parallel scans | Supported | `tomojax recon corrected.nxs -o recon.nxs --method fourier`; NumPy default, optional CuPy via config |
-| Cone-beam (lab CT) scans: FDK and iterative reconstruction | Supported | `tomojax import ./tiffs --geometry cone --source-to-axis ... --source-to-detector ... --pixel-size ... --angles angles.csv -o scan.nxs`, then `tomojax recon` (`--method fbp`, the default, runs FDK) |
+| Fourier-slice inverse of supported parallel scans | Supported | `tomojax recon corrected.nxs -o recon.nxs --method fourier`; matching available CUDA or NumPy, with explicit backend configuration |
+| Cone-beam (lab CT) scans: FDK and iterative reconstruction | Supported | `tomojax import ./tiffs --geometry cone --source-to-axis ... --source-to-detector ... --pixel-size ... --angles angles.csv -o scan.nxs`, then `tomojax recon` (automatic FDK for one arrangement; `--method fbp` selects it explicitly) |
 | Per-projection 5-DOF pose alignment | Experimental | `tomojax align corrected.nxs -o aligned.nxs --mode pose` |
 | Cone-beam 6-DOF pose alignment (adds `dy` along the beam) | Experimental | `tomojax align cone_scan.nxs -o aligned.nxs --mode pose` |
 | Ring (stripe), zinger, outlier-view and beam-hardening corrections; Paganin phase retrieval | Supported | `tomojax preprocess raw.nxs -o scan.nxs --remove-stripes 9 --zingers --reject-outliers --beam-hardening 1,0.05` (and the expert `--paganin`), or `tomojax.corrections` steps |
@@ -32,6 +32,10 @@ experimental. See [installation](installation.md) and [measurement scope](measur
 | Volumes larger than the GPU | Supported | FBP and FDK switch to host slabs automatically; `fbp_host` and `fdk_host` in Python ([large scans](large-scans.md)) |
 | Several GPUs in one process | Supported (Python only) | `devices=` on `tj.project`, `tj.backproject`, `tj.reconstruct` (`fbp`, `cgls`, `fista`) and `tj.align` ([large scans](large-scans.md#use-several-gpus)) |
 
+No-flag `tomojax align` and `tomojax recon` use the Python automatic policies.
+Their recorded outcome is conditional: reported limitations are not accuracy
+certificates. Choose an explicit mode/method when supplying expert solver settings.
+
 ## Scope
 
 Workflows outside the table above are research or expert diagnostics.
@@ -43,7 +47,7 @@ Workflows outside the table above are research or expert diagnostics.
 | Forward model and matched adjoint | Parallel rays with rigid poses, anisotropic voxels, and shifted grids/detectors; JAX reference and optional Pallas kernels |
 | Parallel FBP | JAX on CPU/CUDA; Pallas selected automatically on CUDA for built-in `ParallelGeometry` without an explicit detector grid |
 | Host-output FBP | `fbp_host`: NumPy/memmap or device input and optional FP32 output for every parallel-beam geometry `fbp` accepts (cone beams use `fdk_host`); parallel axial slabs or laminography x-slabs on JAX CPU/CUDA or Pallas CUDA; not differentiable. `fbp` itself streams NumPy/memmap projections batch by batch |
-| Fourier-slice inverse (opt-in Python API) | `fourier_reconstruct`: uniform/nonuniform half-turn parallel scans, including redundant/opposing exposures, offsets/anisotropic spacing/cropped grids; NumPy reference or optional CuPy CUDA; host arrays/memmaps and axial slabs; not differentiable |
+| Fourier-slice inverse (Python API) | `fourier_reconstruct`: uniform/nonuniform half-turn parallel scans, including redundant/opposing exposures, offsets/anisotropic spacing/cropped grids; NumPy reference or optional CuPy CUDA; host arrays/memmaps and axial slabs; not differentiable |
 | General posed/laminography filtered adjoint | JAX; approximate initialisation for incomplete-angle data |
 | Public FISTA-TV and SPDHG-TV | JAX with matched discrete adjoints; convergence regressions for parallel and tilted scans; NumPy/memmap projections stream from host memory when large (SPDHG-TV also keeps its dual and weights there) |
 | Public CGLS (Python API and `tomojax recon --method cgls`) | Matched FP32 JAX/Pallas operators, scalar damping, optional squared physical voxel differences, nonzero starts; Pallas selected automatically on CUDA with canonical detector grids; large NumPy/memmap projections stream from host memory through the equivalent normal equations |

@@ -25,6 +25,9 @@ class Device(Protocol):
     @property
     def platform(self) -> str: ...
 
+    @property
+    def local_hardware_id(self) -> int: ...
+
 
 def commit_array[T](value: T) -> T:
     """Keep a JAX array's existing placement when operating in another context.

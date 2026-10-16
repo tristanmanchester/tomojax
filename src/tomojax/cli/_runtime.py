@@ -6,6 +6,7 @@ import os
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
     from contextlib import AbstractContextManager
 
 LOG = logging.getLogger(__name__)
@@ -51,3 +52,13 @@ def transfer_guard_context(mode: str | None = None) -> AbstractContextManager[ob
     except Exception as exc:
         _warn_transfer_guard_demotion(mode, str(exc))
         return nullcontext()
+
+
+def report_automatic(info: Mapping[str, object]) -> None:
+    """Keep a successful but limited automatic result visible without a manifest."""
+    automatic = info.get("automatic")
+    if isinstance(automatic, dict):
+        record = cast("Mapping[str, object]", automatic)
+        if record.get("status") == "limited":
+            reasons = cast("Sequence[object]", record.get("reasons", ()))
+            LOG.warning("Automatic workflow is limited: %s", "; ".join(map(str, reasons)))
