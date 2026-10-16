@@ -80,6 +80,24 @@ def test_load_frames_reads_the_frames_lazily(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.parametrize("recorded", [True, False])
+def test_frame_center_provenance_preserves_explicit_overrides(tmp_path, recorded):
+    path = tmp_path / "raw.nxs"
+    write_raw_nxtomo(path)
+    if not recorded:
+        with h5py.File(path, "r+") as handle:
+            del handle["entry/instrument/detector"].attrs["detector_meta_json"]
+    frames = tj.load_frames(path)
+    status = "recorded" if recorded else "not_recorded"
+    assert frames.source.geometry_metadata["detector_center_status"] == status
+    for kwargs in ({"detector": frames.geometry.detector}, {"geometry": frames.geometry}):
+        explicit = tj.load_frames(path, **kwargs)
+        assert explicit.source.geometry_metadata["detector_center_status"] == "provided"
+    saved = tmp_path / "saved.nxs"
+    tj.save(saved, frames.corrected())
+    assert tj.load(saved).source.geometry_metadata["detector_center_status"] == status
+
+
 @pytest.mark.parametrize("index", [0, 1, -1, -2, np.int64(-1)])
 def test_lazy_frame_integer_indices_match_numpy(tmp_path: Path, index: int) -> None:
     write_raw_nxtomo(tmp_path / "raw.nxs")
@@ -473,6 +491,7 @@ def test_gda_frames_use_paired_rotation_and_key(tmp_path, caplog, command):
     np.testing.assert_array_equal(frames.geometry.angles, [0, 90])
     acquisition = frames.source.geometry_metadata["acquisition"]
     assert acquisition["geometry_status"] == "not_recorded"
+    assert frames.source.geometry_metadata["detector_center_status"] == "not_recorded"
     assert ("interpreting it as degrees" in caplog.text) == command
     np.testing.assert_allclose(frames.corrected().projections[:, 0, 0], -np.log([0.5, 0.25]))
     explicit = tj.load_frames(path, geometry=frames.geometry)

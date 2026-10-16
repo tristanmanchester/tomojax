@@ -313,6 +313,17 @@ def load_frames(
                 },
             )
         frames = replace(frames, geometry=geometry, source=source)
+    if (geometry is not None or detector is not None) and frames.source is not None:
+        frames = replace(
+            frames,
+            source=replace(
+                frames.source,
+                geometry_metadata={
+                    **frames.source.geometry_metadata,
+                    "detector_center_status": "provided",
+                },
+            ),
+        )
     return frames
 
 
@@ -409,9 +420,13 @@ def _hdf5_frames(
     try:
         metadata = load_nxtomo(str(file), lazy=True).metadata
     except KeyError:  # not laid out as NXtomo: the frames alone
-        metadata = NXTomoMetadata(detector=Detector(nu=cols, nv=rows, du=1.0, dv=1.0))
+        metadata = NXTomoMetadata(
+            detector=Detector(nu=cols, nv=rows, du=1.0, dv=1.0),
+            geometry_meta={"detector_center_status": "not_recorded"},
+        )
         if located.acquisition is not None:
             metadata.geometry_meta = {
+                "detector_center_status": "not_recorded",
                 "acquisition": {
                     **located.acquisition,
                     "geometry_status": "not_recorded",
