@@ -111,3 +111,30 @@ chip package, ring removal on a real Diamond I12 scan, few-view sandstone
 micro-CT, an offset-detector battery scan and wide-cone FDK against CGLS on a
 lattice part. Each takes an output path; the phantoms are built on first use
 and cached under `.artifacts/figures`.
+
+## Train a denoiser through the PyTorch projector
+
+Install a CUDA-enabled PyTorch separately, then run
+[train_denoiser.py](train_denoiser.py) on a Diamond I12 NXtomo row cut (raw
+counts with flat and dark frames, Zenodo 3339629):
+
+```bash
+python examples/train_denoiser.py full_rows1048-1111.nxs --center -138
+```
+
+The small residual CNN learns from two disjoint, angle-interleaved view sets:
+one supplies an FBP input, the other an independent image and projection target.
+The loss sums image and projection mean-square errors in dimensionless units.
+The CUDA PyTorch projector backpropagates with its exact transpose. A third view set is used
+only for final projection-error reporting, never for training or input FBP.
+The default bins 8×8, uses all views and takes 500 training steps.
+Do not undersample each split: missing angular detail can teach the CNN to
+blur structures even while its held-out projection error improves. Binning preserves physical
+units, so the calibrated detector centre stays −138, not −138/8. Omit
+`--center` to estimate it from the scan before splitting.
+
+No clean image is needed for training. This is a single-scan demonstration;
+projection residual is not image accuracy, and shared calibration errors,
+rings and truncation can bias the result. Validate against an independent
+reconstruction before interpreting learned features. Nothing is written
+unless `--output result.npz` is given.
