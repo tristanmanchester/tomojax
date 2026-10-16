@@ -370,6 +370,10 @@ def test_binning_averages_pixels_and_keeps_the_detector_in_place():
     assert scan.binned(1) is scan
     with pytest.raises(ValueError, match="at least 1"):
         scan.binned(0)
+    for data in (scan.projections, np.asfortranarray(scan.projections), scan.projections[:, ::-1]):
+        actual = replace(scan, projections=data).binned(2)
+        expected = data[:, :32, :40].reshape(24, 16, 2, 20, 2).mean(axis=(2, 4))
+        np.testing.assert_array_equal(actual.projections, expected)
 
 
 def test_iterative_reconstruction_suggests_binning_a_detector_finer_than_the_grid() -> None:

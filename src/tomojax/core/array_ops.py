@@ -20,5 +20,13 @@ def mean_detector_pixels[T: (np.ndarray, jax.Array)](data: T, factor: int) -> T:
     data = data.astype(np.float32, copy=False)
     views, nv, nu = data.shape
     rows, cols = nv // factor, nu // factor
+    if isinstance(data, np.ndarray) and factor == 2 and data.flags.c_contiguous:
+        # Preserve the column-pair then row-pair FP32 reduction. NumPy's
+        # generic two-axis reduction cannot vectorize these short blocks well.
+        pixels = data[:, : rows * 2, : cols * 2]
+        result = pixels[:, ::2, ::2] + pixels[:, ::2, 1::2]
+        result += pixels[:, 1::2, ::2] + pixels[:, 1::2, 1::2]
+        result *= 0.25
+        return cast("T", result)
     blocks = data[:, : rows * factor, : cols * factor].reshape(views, rows, factor, cols, factor)
     return cast("T", blocks.mean(axis=(2, 4)))

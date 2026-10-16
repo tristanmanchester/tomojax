@@ -421,6 +421,19 @@ def test_common_line_center_declines_axial_or_featureless_evidence():
     data = np.random.default_rng(34).normal(size=(24, 31, 33)).astype(np.float32)
     prepared = common_lines.prepare_common_lines(data, angles, detector)
     assert prepared is not None
+    coordinates = prepared._coordinates(np.array([0, 0.6, 0.8]))
+    coordinates[0][0, :4] = [[0, 0], [1, 1], [-1, -1], [0.5, 0.5]]
+    nv, nu = prepared.spectra.shape[1:]
+    for actual, indices, q in zip(
+        prepared._sample_coordinates(coordinates), prepared.pairs.T, coordinates, strict=True
+    ):
+        u = q[..., 0] * prepared.pitch[0] * nu + nu // 2
+        v = q[..., 1] * prepared.pitch[1] * nv + nv // 2
+        expected = common_lines.ndimage.map_coordinates(
+            prepared.spectra, [np.broadcast_to(indices[:, None], u.shape), v, u], order=1
+        )
+        np.testing.assert_allclose(actual, expected, rtol=2e-7, atol=2e-6)
+        assert actual.flags.c_contiguous
     assert prepared.center(np.array([0, 0, 1])) is None
     blank = common_lines.prepare_common_lines(np.ones_like(data), angles, detector)
     assert blank is not None
