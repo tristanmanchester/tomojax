@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 import operator
 from threading import Lock
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import numpy as np
 
@@ -259,12 +259,26 @@ class FourierPlan:
             self.frequencies = xp.empty((depth, px, qy), dtype=dtype)
             self.x_boundary = geometry.x_boundary
             if self.cuda:
-                from cupyx.scipy.fft import get_fft_plan
+                from cupy.cuda import cufft
 
-                # A failed slab attempt must not leave its inverse workspace in
-                # CuPy's global plan cache, preventing a smaller retry from fitting.
-                self.inverse_plan = get_fft_plan(
-                    self.frequencies, shape=self.shape, axes=(-2, -1), value_type="C2R"
+                # Own this batched contiguous C2R workspace, not a global-cache
+                # entry that could prevent a smaller retry from fitting. Calling
+                # cuFFT directly also avoids importing SciPy's FFT adapter.
+                cuda_fft = cast("Any", cufft)
+                self.inverse_direction = cuda_fft.CUFFT_INVERSE
+                self.inverse_plan = cuda_fft.PlanNd(
+                    self.shape,
+                    (px, qy),
+                    1,
+                    px * qy,
+                    self.shape,
+                    1,
+                    px * py,
+                    cuda_fft.CUFFT_C2R,
+                    depth,
+                    "C",
+                    2,
+                    py,
                 )
 
     def _interpolate_cuda(self, spectrum):
@@ -357,17 +371,10 @@ class FourierPlan:
         cx, cy = self.crop
         normalization = 1
         if self.cuda:
-            from cupyx.scipy.fft import irfft2
-
-            # The next slab overwrites every frequency. Normalize only the crop.
-            volume = irfft2(
-                self.frequencies,
-                s=self.shape,
-                axes=(-2, -1),
-                norm="forward",
-                overwrite_x=True,
-                plan=self.inverse_plan,
-            )
+            # cuFFT may destroy the input; the next slab overwrites every
+            # frequency. Its inverse is unnormalized: normalize only the crop.
+            volume = xp.empty((self.depth, *self.shape), dtype=xp.float32)
+            self.inverse_plan.fft(self.frequencies, volume, self.inverse_direction)
             normalization = self.shape[0] * self.shape[1]
         else:
             volume = xp.fft.irfft2(self.frequencies, s=self.shape, axes=(-2, -1))
