@@ -90,7 +90,7 @@ def test_reconstruct_runs_every_method(kind: str) -> None:
     with pytest.raises(ValueError, match="method 'cgls' does not take filter"):
         tj.reconstruct(scan, "cgls", filter="hann")
     with pytest.raises(ValueError, match="method must be one of"):
-        tj.reconstruct(scan, "sirt")  # type: ignore[arg-type]
+        tj.reconstruct(scan, "not-a-method")  # type: ignore[arg-type]
 
 
 def test_reconstruct_takes_the_methods_configuration_under_its_keywords() -> None:

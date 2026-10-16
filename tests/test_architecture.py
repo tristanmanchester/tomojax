@@ -165,11 +165,18 @@ def _configuration_fields(command: str) -> set[str]:
     from dataclasses import fields
 
     from tomojax.alignment import AlignConfig
-    from tomojax.recon import CGLSConfig, FBPConfig, FistaConfig, FourierConfig, SPDHGConfig
+    from tomojax.recon import (
+        CGLSConfig,
+        FBPConfig,
+        FistaConfig,
+        FourierConfig,
+        SIRTConfig,
+        SPDHGConfig,
+    )
 
     if command == "align":
         return {item.name for item in fields(AlignConfig) if item.init}
-    configs = (FBPConfig, FourierConfig, CGLSConfig, FistaConfig, SPDHGConfig)
+    configs = (FBPConfig, FourierConfig, CGLSConfig, FistaConfig, SPDHGConfig, SIRTConfig)
     # Arrays and devices have no TOML form.
     return {item.name for c in configs for item in fields(c) if item.init} - {"support", "devices"}
 

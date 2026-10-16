@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from tomojax.recon import FBPConfig, FourierConfig
     from tomojax.recon.api import MethodConfig
 
-type Method = Literal["auto", "fbp", "fourier", "cgls", "fista", "spdhg"]
+type Method = Literal["auto", "fbp", "fourier", "cgls", "fista", "spdhg", "sirt"]
 
 
 @dataclass(frozen=True)
@@ -217,22 +217,22 @@ def reconstruct(
     ``fista``
         Least squares with total-variation weight ``tv_weight`` (default
         0.005), ``iterations`` (default 50), optionally ``nonnegative``.
+    ``sirt``
+        SIRT, OS-SART, bounds and support via :class:`~tomojax.recon.SIRTConfig`.
     ``spdhg``
         The same objective as ``fista`` by stochastic primal-dual updates:
         ``iterations`` (default 400) each update one block of views, in an
         order drawn with ``seed``.
 
-    ``warm_start`` starts iterative methods from FBP (or the view-weighted
-    FDK images of cone segments). ``grid`` overrides the scan's output grid.
+    ``warm_start`` starts iterative methods from FBP/FDK; ``grid`` overrides the scan's grid.
 
     ``out`` is a writable float32 array or memmap of shape ``(grid.nx, grid.ny,
     grid.nz)`` for ``fbp`` and ``fourier``: the volume is made in host slabs
     straight into it and returned as ``volume``. It must not overlap the scan,
     and a later failure can leave it partly written.
 
-    ``config`` is the method's expert configuration from :mod:`tomojax.recon`;
-    omitted settings use that class's defaults. Keywords replace its fields.
-    A mismatched configuration class or unknown keyword raises ``ValueError``.
+    ``config`` is from :mod:`tomojax.recon`; keywords replace its fields.
+    Mismatched config classes or unknown keywords raise ``ValueError``.
 
     ``devices`` (``fbp``, ``cgls`` and ``fista``; one or several,
     ``jax.devices()`` for all) shares the views among them: each projects its

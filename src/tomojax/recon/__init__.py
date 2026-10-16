@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from tomojax.recon.fdk import FDKConfig, FDKHostConfig, fdk, fdk_host
     from tomojax.recon.fista_tv import FistaConfig, fista_tv
     from tomojax.recon.fourier import FourierConfig, fourier_reconstruct
+    from tomojax.recon.sirt import SIRTConfig, sirt
     from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
 
 _SOURCES = {
@@ -39,6 +40,8 @@ _SOURCES = {
     "FistaConfig": "fista_tv",
     "FourierConfig": "fourier",
     "SPDHGConfig": "spdhg_tv",
+    "SIRTConfig": "sirt",
+    "sirt": "sirt",
     "calibrate_cone_axis": "cone_axis",
     "cgls": "cgls",
     "cgls_multires": "cgls_multires",
@@ -61,6 +64,7 @@ __all__ = [
     "FDKHostConfig",
     "FistaConfig",
     "FourierConfig",
+    "SIRTConfig",
     "SPDHGConfig",
     "backproject",
     "calibrate_cone_axis",
@@ -73,6 +77,7 @@ __all__ = [
     "fista_tv",
     "fourier_reconstruct",
     "project",
+    "sirt",
     "spdhg_tv",
 ]
 

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+`tj.reconstruct(scan, "sirt")` adds matched SIRT and ordered-subset SART,
+with per-update lower/upper bounds and a reconstruction support mask.
+
 It just works (end of the sixth lab run): `tj.reconstruct(scan)` now defaults
 to `method="auto"` and `tj.align(scan)` to `mode="auto"`, choosing the method,
 workflow and Fourier backend from the scan and saying in the result when a

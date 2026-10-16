@@ -388,6 +388,18 @@ class tomojax.recon.FourierConfig(
         slices_per_batch: 'int | None' = None,
         backend: "Literal['auto', 'numpy', 'cupy']" = 'auto',
     ) -> None
+class tomojax.recon.SIRTConfig(
+        *,
+        iterations: 'int' = 50,
+        subsets: 'int' = 1,
+        relaxation: 'float' = 1.0,
+        lower_bound: 'float | None' = None,
+        upper_bound: 'float | None' = None,
+        support: 'jax.Array | np.ndarray | None' = None,
+        views_per_batch: 'int' = 64,
+        projector_backend: 'ProjectorBackend' = 'auto',
+        projector_model: 'ProjectorModel' = 'auto',
+    ) -> None
 class tomojax.recon.SPDHGConfig(
         *,
         iterations: 'int' = 400,
@@ -510,6 +522,16 @@ def tomojax.recon.project(
         grid: 'Grid | None' = None,
         devices: 'Device | Sequence[Device] | None' = None,
     ) -> 'jax.Array'
+def tomojax.recon.sirt(
+        geometry: 'Geometry',
+        grid: 'Grid',
+        detector: 'Detector',
+        projections: 'jax.Array | np.ndarray',
+        *,
+        init_x: 'jax.Array | np.ndarray | None' = None,
+        config: 'SIRTConfig | None' = None,
+        det_grid: 'tuple[jax.Array, jax.Array] | None' = None,
+    ) -> 'tuple[jax.Array, dict[str, object]]'
 def tomojax.recon.spdhg_tv(
         geometry: 'Geometry',
         grid: 'Grid',

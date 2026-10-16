@@ -388,6 +388,46 @@ def projection_operators(
     return forward, adjoint
 
 
+def subset_operators(
+    poses: jax.Array,
+    grid: Grid,
+    detector: Detector,
+    det_grid: tuple[jax.Array, jax.Array] | None,
+    backend: str,
+    batch_size: int,
+    model: str | ConeModel,
+    subsets: int,
+):
+    """A factory for interleaved subsets of a matched, nonnegative operator.
+
+    ``select(index)`` returns ``(indices, forward, adjoint)``. Each subset has
+    ``ceil(views / subsets)`` entries; trailing repeated indices have zero
+    operator weights. Select data with ``indices`` too. Cone source arrangements
+    and detector centres stay attached to their original views.
+    """
+    ops = _Batches(
+        poses, grid, detector, det_grid, backend, batch_size, model, "linear",
+        absolute_weights=False,
+    )  # fmt: skip
+    size = (ops.n + subsets - 1) // subsets
+
+    def select(index):
+        indices = index + subsets * jnp.arange(size)
+        valid = indices < ops.n
+        indices = jnp.minimum(indices, ops.n - 1)
+        selected = ops.share(tuple(a[indices] for a in ops.per_view()), valid)
+
+        def forward(volume):
+            return _forward_views(selected, volume)
+
+        def adjoint(images):
+            return _adjoint_views(selected, (images,), None, selected.zeros_volume())
+
+        return indices, forward, adjoint
+
+    return select
+
+
 def _forward_views(ops: _Batches, volume: jax.Array) -> jax.Array:
     def body(chunk: jax.Array, output: jax.Array) -> jax.Array:
         start, batch, _ = ops.select(chunk)

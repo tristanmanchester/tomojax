@@ -17,6 +17,7 @@ from tomojax.recon.fbp_host import FBPHostConfig, fbp_host, fbp_slabs
 from tomojax.recon.filters import clear_filter_caches
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 from tomojax.recon.fourier import FourierConfig, fourier_reconstruct
+from tomojax.recon.sirt import SIRTConfig, sirt
 from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
 from tomojax.recon.types import Regulariser
 
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
 
     from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry
 
-type MethodConfig = FBPConfig | FourierConfig | CGLSConfig | FistaConfig | SPDHGConfig
+type MethodConfig = FBPConfig | FourierConfig | CGLSConfig | FistaConfig | SPDHGConfig | SIRTConfig
 
 _CONFIGS: dict[str, type[MethodConfig]] = {
     "fbp": FBPConfig,
@@ -35,6 +36,7 @@ _CONFIGS: dict[str, type[MethodConfig]] = {
     "cgls": CGLSConfig,
     "fista": FistaConfig,
     "spdhg": SPDHGConfig,
+    "sirt": SIRTConfig,
 }
 
 
@@ -45,7 +47,8 @@ def method_config(
 
     ``fbp`` (FDK for cone beams) takes an :class:`FBPConfig`, ``cgls`` a
     :class:`CGLSConfig`, ``fista`` a :class:`FistaConfig` and ``spdhg`` an
-    :class:`SPDHGConfig`; ``fourier`` takes :class:`FourierConfig`. Each setting
+    :class:`SPDHGConfig`; ``sirt`` takes :class:`SIRTConfig`, and ``fourier``
+    :class:`FourierConfig`. Each setting
     replaces the field of its name, as :func:`dataclasses.replace` does. A config
     of another class, or a setting its class has no field for, raises
     :class:`ValueError` naming the valid ones.
@@ -127,14 +130,28 @@ def reconstruct_arrays(
         )  # fmt: skip
         if getattr(cfg, "nonnegative", False):
             start = jnp.maximum(start, 0.0)
+    volume, record = _iterative_result(geometry, grid, detector, projections, cfg, start, det_grid)
+    return volume, {"config": cfg, "warm_start": warm_start, **record}
+
+
+def _iterative_result(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray | np.ndarray,
+    cfg: CGLSConfig | FistaConfig | SPDHGConfig | SIRTConfig,
+    start: jnp.ndarray | None,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+) -> tuple[jnp.ndarray, dict[str, object]]:
+    """Dispatch normalized method configurations to the matched solvers."""
     args = (geometry, grid, detector, projections)
     if isinstance(cfg, CGLSConfig):
-        volume, record = cgls(*args, init_x=start, config=cfg, det_grid=det_grid)
-    elif isinstance(cfg, FistaConfig):
-        volume, record = fista_tv(*args, init_x=start, config=cfg, det_grid=det_grid)
-    else:
-        volume, record = spdhg_tv(*args, init_x=start, config=cfg, det_grid=det_grid)
-    return volume, {"config": cfg, "warm_start": warm_start, **record}
+        return cgls(*args, init_x=start, config=cfg, det_grid=det_grid)
+    if isinstance(cfg, FistaConfig):
+        return fista_tv(*args, init_x=start, config=cfg, det_grid=det_grid)
+    if isinstance(cfg, SIRTConfig):
+        return sirt(*args, init_x=start, config=cfg, det_grid=det_grid)
+    return spdhg_tv(*args, init_x=start, config=cfg, det_grid=det_grid)
 
 
 def _fbp_result(
@@ -248,6 +265,7 @@ __all__ = [
     "FistaConfig",
     "FourierConfig",
     "Regulariser",
+    "SIRTConfig",
     "SPDHGConfig",
     "cgls",
     "cgls_multires",
@@ -262,5 +280,6 @@ __all__ = [
     "method_config",
     "reconstruct_arrays",
     "run_parallel_fbp_direct_pallas",
+    "sirt",
     "spdhg_tv",
 ]

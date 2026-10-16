@@ -10,14 +10,22 @@
 - `cgls_multires`
 - `fista_tv`
 - `spdhg_tv`
+- `sirt` (SIRT, OS-SART and SART)
 - `calibrate_cone_axis`, the cone-beam axis-offset and roll calibration
 
 Each method's settings are a configuration class: `FBPConfig` (FBP and FDK),
-`FourierConfig`, `CGLSConfig`, `FistaConfig` and `SPDHGConfig`. Pass one as
+`FourierConfig`, `CGLSConfig`, `FistaConfig`, `SPDHGConfig` and `SIRTConfig`. Pass one as
 `tj.reconstruct(scan, "fista", config=FistaConfig(regulariser="huber_tv"))`;
 keywords such as `iterations=` replace the fields of the same name. The same
 fields are the keys of a `tomojax recon --config` TOML file
 (`tomojax recon --config-keys` lists them).
+
+SIRT uses the exact matched projector pair with row/column normalization:
+`SIRTConfig(iterations=50, subsets=1, lower_bound=0, upper_bound=None, support=None)`.
+More subsets select interleaved OS-SART, with one full sweep per iteration;
+one view per subset gives SART. Bounds apply after every subset update, and
+voxels outside the support stay zero. Ordered subsets can cycle on inconsistent
+data; reduce their number or relaxation for final refinement.
 
 Built-in parallel `fbp` zero-extends measured detector rows far enough to retain
 the ramp filter's tails at every output voxel. Zero raw data outside a detector
