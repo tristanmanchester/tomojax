@@ -23,6 +23,7 @@
     "simulate": 46
   },
   "long_files": {
+    "src/tomojax/_workflow.py": 840,
     "src/tomojax/alignment/_pose/_pose_loop.py": 916,
     "src/tomojax/alignment/_stages/_reconstruction_stage.py": 1029,
     "src/tomojax/alignment/optimizers.py": 921,

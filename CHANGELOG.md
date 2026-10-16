@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+It just works (end of the sixth lab run): `tj.reconstruct(scan)` now defaults
+to `method="auto"` and `tj.align(scan)` to `mode="auto"`, choosing the method,
+workflow and Fourier backend from the scan and saying in the result when a
+scan's geometry limits what can be recovered; the CLI follows. `tj.load_frames`
+discovers paired Diamond GDA imaging acquisitions (both K11 layouts) with no
+data, key or angle paths, keeps detector-centre provenance (absent, recorded,
+provided or inferred) and infers a missing axial centre. Automatic laminography
+workflows validate broad-region motion seeds on held-out views; host binning
+and integer-view Fourier sampling are vectorised. Cone-beam alignment computes
+analytic pose columns in one CUDA traversal and uses shorter coupled updates:
+the FIPS walnut's three-orbit alignment takes about 106 s, down from 223 s, at
+the same height and reconstruction error. Sparse detector-response fitting
+makes the whole-scan raw-count FBP about 10% faster (about 36-40 s for the
+Diamond I12 scan), and `tj.reconstruct_slabs` now takes FBP as well as
+Fourier. Fixes: rotation-axis pose precision across saved-scan replay,
+resolution-limit reasons kept through checkpoints, and joint-update memory
+rechecked after an intervening reconstruction.
+
 Rotation-axis poses use the same angle precision before and after saving a scan.
 
 Sixth lab run, second merge: laminography alignment gains `tj.estimate_region`

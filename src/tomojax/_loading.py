@@ -432,7 +432,7 @@ def _hdf5_frames(
                     **located.acquisition,
                     "geometry_status": "not_recorded",
                     "geometry_note": "Source has no calibrated rotation axis or pixel scale.",
-                }
+                },
             }
     metadata = replace(metadata, angles=view_angles.astype(np.float32), image_key=None)
     # The geometry needs the views' shape, not their values: read none of them.
