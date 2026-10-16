@@ -237,6 +237,7 @@ class MultiresRunState:
     setup_alignment_state: object
     # Finer levels left out because they would not fit in device memory.
     factors_skipped: tuple[int, ...] = ()
+    factors_skipped_reason: str | None = None
 
 
 def _stage_index_or_none(stat: Mapping[str, object]) -> int | None:
@@ -298,6 +299,7 @@ def _build_multires_checkpoint_state(
     stage_completed: bool,
     completed_outer_iterations_in_stage: int,
     ray_integrator: str = "sampled",
+    factors_skipped_reason: str | None = None,
 ) -> AlignMultiresResumeState:
     return AlignMultiresResumeState(
         x=x,
@@ -315,6 +317,7 @@ def _build_multires_checkpoint_state(
         elapsed_offset=float(elapsed_offset),
         level_complete=bool(level_complete),
         run_complete=bool(run_complete),
+        factors_skipped_reason=factors_skipped_reason,
         geometry_calibration_state=_geometry_calibration_payload(
             setup_alignment_state,
             active_geometry_dofs,

@@ -206,6 +206,7 @@ def _run_multires_levels(
             pose_params=resume_state.pose_params,
             prev_factor=1,
             factors_skipped=tuple(skipped),
+            factors_skipped_reason=resume_state.factors_skipped_reason,
         )
     for level_index, level in _levels_to_run(context.levels, resume_state):
         try:
@@ -227,7 +228,7 @@ def _run_multires_levels(
                 f"{list(skipped)}: {error}",
                 skip_file_prefixes=_PACKAGE,
             )
-            state = replace(state, factors_skipped=skipped)
+            state = replace(state, factors_skipped=skipped, factors_skipped_reason=str(error))
             break
         if state.final_observer_action == "stop_run":
             break
@@ -375,6 +376,7 @@ def align_multires(
         run_complete=run_complete,
         x_final=x_final,
         levels_run=len(context.levels) - len(state.factors_skipped),
+        factors_skipped_reason=state.factors_skipped_reason,
         executed_outer_iterations=state.executed_outer_iterations,
         loss_hist=state.loss_hist,
         global_outer_stats=state.global_outer_stats,
@@ -396,6 +398,7 @@ def align_multires(
                 : len(context.factors_list) - len(state.factors_skipped)
             ],
             factors_skipped=state.factors_skipped,
+            factors_skipped_reason=state.factors_skipped_reason,
             final_loss_kind=state.final_loss_kind,
             cfg=context.cfg,
             stopped_by_observer=state.stopped_by_observer,

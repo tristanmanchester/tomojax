@@ -211,6 +211,7 @@ def _multires_progress(run: AlignmentRun, state: AlignMultiresResumeState) -> di
         "geometry_calibration_state": normalize_json(state.geometry_calibration_state),
         "level_complete": bool(state.level_complete),
         "run_complete": bool(state.run_complete),
+        "factors_skipped_reason": state.factors_skipped_reason,
     }
 
 
@@ -281,6 +282,7 @@ def resume_state_from_checkpoint(path: str | os.PathLike[str], run: AlignmentRun
         prev_factor=None if prev_factor is None else int(prev_factor),
         level_complete=bool(metadata.get("level_complete", False)),
         run_complete=bool(metadata.get("run_complete", False)),
+        factors_skipped_reason=metadata.get("factors_skipped_reason"),
         geometry_calibration_state=(
             object_mapping(cast("object", calibration)) if isinstance(calibration, dict) else None
         ),

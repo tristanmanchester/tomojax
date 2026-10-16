@@ -208,13 +208,15 @@ def test_a_level_that_does_not_fit_in_device_memory_ends_alignment_at_the_one_be
     assert skip.filename == __file__  # the caller's line, not the library's
     assert result.info["factors"] == [2]
     assert result.info["factors_skipped"] == [1]
+    assert "needs 16.0 GiB" in result.info["factors_skipped_reason"]
     assert np.asarray(result.volume).shape == (n, n, n)
     with pytest.raises(MemoryError, match="needs 16.0 GiB"):
         tj.align(scan, levels=(1,))
 
 
-def test_a_run_ended_by_a_level_that_does_not_fit_is_complete(monkeypatch):
+def test_a_run_ended_by_a_level_that_does_not_fit_is_complete(monkeypatch, tmp_path):
     from tomojax.alignment import align_multires, alignment_plan
+    import tomojax.alignment.api as alignment
 
     n = 16
     grid = tj.Grid(n, n, n, 1.0, 1.0, 1.0)
@@ -238,12 +240,20 @@ def test_a_run_ended_by_a_level_that_does_not_fit_is_complete(monkeypatch):
 
     assert checkpoints[-1].run_complete
     assert sizes == [n // 2, n, n]
+    run = alignment.AlignmentRun(
+        projections=data, geometry=geometry, config=config, mode="pose", levels=(2, 1)
+    )
+    path = tmp_path / "limited.npz"
+    alignment.write_alignment_checkpoint(path, run, checkpoints[-1])
+    restored = alignment.resume_state_from_checkpoint(path, run)
     resumed_volume, resumed_params, info = align_multires(
-        geometry, grid, detector, data, factors=(2, 1), config=config, resume_state=checkpoints[-1]
+        geometry, grid, detector, data, factors=(2, 1), config=config, resume_state=restored
     )
     assert sizes == [n // 2, n, n]  # the skipped level is not retried
     assert info["factors"] == [2]
     assert info["factors_skipped"] == [1]
+    assert info["factors_skipped_reason"] == checkpoints[-1].factors_skipped_reason
+    assert "needs 16.0 GiB" in info["factors_skipped_reason"]
     np.testing.assert_allclose(resumed_volume, volume, atol=1e-6)
     np.testing.assert_allclose(resumed_params, params, atol=1e-6)
 
