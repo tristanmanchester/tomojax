@@ -8,9 +8,10 @@ from jax.experimental.pallas import triton as plt
 import jax.numpy as jnp
 
 from ._pallas_config import _LAYOUT_VARIANT_IDS
-from ._pallas_loop import paired_fori_loop, static_fori_loop
+from ._pallas_loop import static_fori_loop
 from ._pallas_ray_geometry import ray_traversal
-from ._pallas_sampling import _trilinear_load_active, _trilinear_load_z_integer
+from ._pallas_ray_integral import integrate_rays
+from ._pallas_sampling import _trilinear_load_z_integer
 
 
 def _projector_kernel(
@@ -75,43 +76,19 @@ def _projector_kernel(
         voxel_size=(vx, vy, vz),
         step_size=step_size,
     )
-    step_size32 = jnp.float32(step_size)
-
-    def body(step_idx, carry):
-        acc, ix, iy, iz = carry
-        active = in_detector & (step_idx < n_steps_ray)
-        sample = _trilinear_load_active(
-            volume_ref,
-            ix,
-            iy,
-            iz,
-            nx=nx,
-            ny=ny,
-            nz=nz,
-            active=active,
-            kernel_variant_id=kernel_variant_id,
-        )
-        return (
-            acc + sample.astype(jnp.float32) * active.astype(jnp.float32) * step_size32,
-            ix + dix,
-            iy + diy,
-            iz + diz,
-        )
-
-    init = (
-        jnp.zeros_like(ix0, dtype=jnp.float32),
-        ix0,
-        iy0,
-        iz0,
+    acc = integrate_rays(
+        volume_ref,
+        (ix0, iy0, iz0),
+        (dix, diy, diz),
+        n_steps_ray,
+        shape=(nx, ny, nz),
+        in_detector=in_detector,
+        step_size=step_size,
+        n_steps=n_steps,
+        kernel_variant_id=kernel_variant_id,
+        unroll=unroll,
+        mask_detector=True,
     )
-    if unroll is None:
-        tile_steps = jnp.minimum(
-            jnp.max(jnp.where(in_detector, n_steps_ray, 0)),
-            jnp.asarray(n_steps, dtype=jnp.int32),
-        )
-        acc, _, _, _ = paired_fori_loop(tile_steps, body, init)
-    else:
-        acc, _, _, _ = static_fori_loop(n_steps, body, init, unroll=unroll)
     if layout_variant_id == _LAYOUT_VARIANT_IDS["detector_uv"]:
         plt.store(out_ref, acc.T.astype(jnp.float32), mask=in_detector.T)
     else:
@@ -183,43 +160,19 @@ def _projector_views_kernel(
         voxel_size=(vx, vy, vz),
         step_size=step_size,
     )
-    step_size32 = jnp.float32(step_size)
-
-    def body(step_idx, carry):
-        acc, ix, iy, iz = carry
-        active = in_detector & (step_idx < n_steps_ray)
-        sample = _trilinear_load_active(
-            volume_ref,
-            ix,
-            iy,
-            iz,
-            nx=nx,
-            ny=ny,
-            nz=nz,
-            active=active,
-            kernel_variant_id=kernel_variant_id,
-        )
-        return (
-            acc + sample.astype(jnp.float32) * active.astype(jnp.float32) * step_size32,
-            ix + dix,
-            iy + diy,
-            iz + diz,
-        )
-
-    init = (
-        jnp.zeros_like(ix0, dtype=jnp.float32),
-        ix0,
-        iy0,
-        iz0,
+    acc = integrate_rays(
+        volume_ref,
+        (ix0, iy0, iz0),
+        (dix, diy, diz),
+        n_steps_ray,
+        shape=(nx, ny, nz),
+        in_detector=in_detector,
+        step_size=step_size,
+        n_steps=n_steps,
+        kernel_variant_id=kernel_variant_id,
+        unroll=unroll,
+        mask_detector=True,
     )
-    if unroll is None:
-        tile_steps = jnp.minimum(
-            jnp.max(jnp.where(in_detector, n_steps_ray, 0)),
-            jnp.asarray(n_steps, dtype=jnp.int32),
-        )
-        acc, _, _, _ = paired_fori_loop(tile_steps, body, init)
-    else:
-        acc, _, _, _ = static_fori_loop(n_steps, body, init, unroll=unroll)
     if layout_variant_id == _LAYOUT_VARIANT_IDS["detector_uv"]:
         plt.store(
             out_ref,

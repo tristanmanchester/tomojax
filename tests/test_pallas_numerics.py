@@ -27,8 +27,9 @@ from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeome
     [("inline", "detector_vu"), ("inline", "detector_uv"), ("cached", "detector_vu")],
 )
 @pytest.mark.parametrize("tilted", [False, True])
+@pytest.mark.parametrize("unroll", [None, 2])
 def test_partial_detector_tiles_match_reference(
-    interpret: bool, state_mode: str, layout: str, tilted: bool
+    interpret: bool, state_mode: str, layout: str, tilted: bool, unroll: int | None
 ) -> None:
     if not interpret and jax.default_backend() != "gpu":
         pytest.skip("requires a CUDA GPU")
@@ -49,7 +50,7 @@ def test_partial_detector_tiles_match_reference(
         layout_variant=layout,
         tile_shape=(4, 8),
         num_warps=1,
-        unroll=2,
+        unroll=unroll,
     )
     metadata = pallas.pallas_projector_actual_sinogram_variant_metadata(
         poses,
@@ -190,3 +191,33 @@ def test_weighted_fused_loss_gradient_matches_autodiff(interpret, layout, unroll
     )
     np.testing.assert_allclose(actual_loss, expected_loss, rtol=2e-6)
     np.testing.assert_allclose(actual_gradient, expected_gradient, rtol=2e-5, atol=1e-5)
+
+
+@pytest.mark.parametrize("interpret", [True, pytest.param(False, marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("state_mode", ["inline", "cached"])
+@pytest.mark.parametrize("unroll", [None, 2])
+def test_empty_ray_tiles_produce_zero_projection(interpret, state_mode, unroll) -> None:
+    if not interpret and jax.default_backend() != "gpu":
+        pytest.skip("requires a CUDA GPU")
+    grid = Grid(3, 4, 2, 0.8, 1.1, 1.3)
+    detector = Detector(5, 3, 0.7, 1.2)
+    pose = jnp.eye(4, dtype=jnp.float32).at[0, 3].set(100.0)
+    volume = jnp.ones((3, 4, 2), dtype=jnp.float32)
+    options = pallas.PallasProjectorOptions(
+        interpret=interpret,
+        state_mode=state_mode,
+        unroll=unroll,
+        tile_shape=(4, 4),
+        num_warps=1,
+        kernel_variant="generic",
+    )
+    single = pallas.forward_project_view_T_pallas(pose, grid, detector, volume, options=options)
+    stack = pallas.forward_project_views_T_pallas(
+        pose[None], grid, detector, volume, options=options
+    )
+    sse = pallas.forward_project_residual_sse_T_pallas(
+        pose[None], grid, detector, volume, jnp.ones((1, 3, 5)), options=options
+    )
+    np.testing.assert_array_equal(single, np.zeros((3, 5)))
+    np.testing.assert_array_equal(stack, np.zeros((1, 3, 5)))
+    assert float(sse) == 15.0
