@@ -60,6 +60,27 @@ preserved, but their constant-offset stripes are left too; sparse views or
 sharp moving edges can cause false detections. Selected dead pixels receive
 only the neighbouring mean; their missing angular information is not recovered.
 
+## Complex transmission images
+
+For ptychography or holotomography, `unwrap_phase(complex_images)` integrates
+wrapped phase gradients with nonperiodic boundaries on each image. It returns
+zero-mean radians on the last two axes, `(..., rows, columns)`. Then
+`remove_phase_ramp(phase, air_mask=air)` subtracts a plane fitted to known air
+pixels; the boolean mask or nonnegative weights may be shared or per view.
+Crop unreliable probe borders first. Air must exclude the sample, and phase
+residues produce a least-squares integral rather than an exact unwrap. Both
+functions return JAX arrays and compose under `jax.jit`; process large stacks
+in batches of views.
+
+On a grid measured in detector pixels, convert the corrected phase to line
+integrals of the refractive-index decrement with
+`-phase * wavelength / (2 * np.pi * pixel_size)`, then build a `tj.Scan`.
+For a grid in physical length units, omit the division by `pixel_size`.
+Wavelength, pixel size and grid lengths must use consistent units. For joint
+alignment, keep `-phase` in radians on a unit-pixel grid and apply the same
+conversion factor to the reconstructed volume afterwards, keeping the solver
+data near unit scale.
+
 ## Dependencies
 
 Allowed: `tomojax._data`, `tomojax.recon`, `tomojax.forward`,

@@ -7,7 +7,7 @@ from functools import lru_cache
 
 import numpy as np
 
-from ._fourier_grid import sample_projection_rows
+from ._fourier_grid import gather_per_view_rows, sample_projection_rows
 
 
 @dataclass
@@ -28,6 +28,15 @@ def prepare_projection_rows(projections, order, positions) -> np.ndarray | Proje
     change the completed-slab failure contract. Integer rows need no
     interpolation and keep the host sampling path.
     """
+    if positions.ndim == 2:
+        samples, fraction = gather_per_view_rows(projections, order, positions)
+        if not np.isfinite(samples).all():
+            raise ValueError("fourier_reconstruct: sampled projection rows must be finite in FP32")
+        count = len(positions)
+        if np.all(fraction == 0):
+            return samples[:count]
+        lower = np.broadcast_to(np.arange(count, dtype=np.int64)[:, None], fraction.shape).copy()
+        return ProjectionRows(samples, lower, lower + count, fraction)
     nv = projections.shape[1]
     positions = np.clip(positions, -1, nv)
     indices = np.floor(positions).astype(np.int64)
@@ -45,8 +54,8 @@ def prepare_projection_rows(projections, order, positions) -> np.ndarray | Proje
     return ProjectionRows(samples, lower, upper, fraction)
 
 
-@lru_cache(maxsize=1)
-def _row_kernel():
+@lru_cache(maxsize=2)
+def _row_kernel(*, per_view=False):
     import cupy
 
     return cupy.ElementwiseKernel(
@@ -58,8 +67,9 @@ def _row_kernel():
         long long view = (i / nu) % nviews;
         long long z = i / (nu * nviews);
         if (z >= count) { output = 0.0f; return; }
-        long long lo = lower[z], hi = upper[z];
-        float f = fraction[z], value = 0.0f;
+        long long metadata = PER_VIEW ? z * nviews + view : z;
+        long long lo = lower[metadata], hi = upper[metadata];
+        float f = fraction[metadata], value = 0.0f;
         // Match host multiply/add rounding, zero-weight masking and signed zeros.
         if (lo >= 0)
             value = __fadd_rn(value, __fmul_rn(
@@ -67,8 +77,8 @@ def _row_kernel():
         if (hi >= 0)
             value = __fadd_rn(value, __fmul_rn(source[(hi * nviews + view) * nu + u], f));
         output = value;
-        """,
-        "tomojax_fourier_detector_rows",
+        """.replace("PER_VIEW", "1" if per_view else "0"),
+        "tomojax_fourier_detector_rows" + ("_per_view" if per_view else ""),
     )
 
 
@@ -78,5 +88,7 @@ def interpolate_projection_rows(rows: ProjectionRows, source, depth: int, xp):
     output = xp.empty((depth, nviews, nu), dtype=xp.float32)
     lower, upper, fraction = (xp.asarray(a) for a in (rows.lower, rows.upper, rows.fraction))
     count = np.int64(len(rows.fraction))
-    _row_kernel()(source, lower, upper, fraction, np.int64(nviews), np.int64(nu), count, output)
+    _row_kernel(per_view=rows.fraction.ndim == 2)(
+        source, lower, upper, fraction, np.int64(nviews), np.int64(nu), count, output
+    )
     return output, (lower, upper, fraction)

@@ -14,6 +14,7 @@ see :class:`Step`.
 from __future__ import annotations
 
 from ._engine import Corrected, correct_frames, correct_projections, corrected_row_source
+from ._phase import remove_phase_ramp, unwrap_phase
 from ._records import Correction
 from ._steps import (
     BeamHardening,
@@ -38,4 +39,6 @@ __all__ = [
     "correct_frames",
     "correct_projections",
     "corrected_row_source",
+    "remove_phase_ramp",
+    "unwrap_phase",
 ]

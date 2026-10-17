@@ -251,6 +251,7 @@ class FourierPlan:
         *,
         async_transfers=False,
         transpose_download=False,
+        shifts=None,
     ) -> None:
         self.cuda = backend == "cupy"
         if self.cuda:
@@ -287,6 +288,7 @@ class FourierPlan:
                 xp.cuda.get_current_stream().wait_event(ready)
             else:
                 geometry = _Geometry(grid, detector, nviews, flipped, angles, backend)
+            self.shifts = None if shifts is None else xp.asarray(shifts, dtype=xp.float32)
             self.nviews = geometry.nviews
             self.groups, self.device_groups = geometry.groups, geometry.device_groups
             self.nfft = geometry.nfft
@@ -298,6 +300,14 @@ class FourierPlan:
             self.coordinates = geometry.coordinates
             if self.cuda:
                 self.kernel = geometry.kernel
+                if self.shifts is not None:
+                    from ._fourier_cuda import interpolation_kernel
+
+                    self.kernel = interpolation_kernel(
+                        x_boundary=geometry.x_boundary is not None,
+                        repeats=self.groups is not None,
+                        translated=True,
+                    )
                 self.mass_kernel = geometry.mass_kernel
                 self.row_mass = xp.empty((depth, nviews), dtype=xp.float64)
             px, py = self.shape
@@ -355,6 +365,8 @@ class FourierPlan:
             np.float64(self.detector.du),
             np.int32(1),
         )
+        if self.shifts is not None:
+            args += (self.shifts,)
         if self.x_boundary is not None:
             coordinates, stop = self.x_boundary
             args += (
@@ -397,6 +409,7 @@ class FourierPlan:
                 self.nfft,
                 self.period_phase,
                 self.groups,
+                self.shifts,
             )
             self.frequencies[:, 0, 0] = mass
             if self.x_boundary is not None:
@@ -409,6 +422,7 @@ class FourierPlan:
                     self.nfft,
                     self.period_phase,
                     self.groups,
+                    self.shifts,
                 )
                 row = self.frequencies[:, self.shape[0] // 2, 1:stop]
                 row[:] = 0.5 * (row + mirror[:, 0, :].conj())

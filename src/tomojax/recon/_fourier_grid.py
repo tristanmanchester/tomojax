@@ -97,6 +97,12 @@ def sample_projection_rows(
     positions: np.ndarray,
 ) -> np.ndarray:
     """Interpolate physical detector-v rows with zero extension and host storage."""
+    if positions.ndim == 2:
+        samples, fraction = gather_per_view_rows(projections, order, positions)
+        count = len(positions)
+        samples[:count] *= (1 - fraction)[..., None]
+        samples[count:] *= fraction[..., None]
+        return samples[:count] + samples[count:]
     nv = projections.shape[1]
     # Far outside rows contribute zero, including coordinates beyond int64.
     positions = np.clip(positions, -1, nv)
@@ -129,6 +135,20 @@ def sample_projection_rows(
     return result
 
 
+def gather_per_view_rows(projections, order, positions):
+    """Copy at most two contributing rows per slice/view, with zero extension."""
+    nv = projections.shape[1]
+    positions = np.clip(positions, -1, nv)
+    lower = np.floor(positions).astype(np.int64)
+    fraction = np.asarray(positions - lower, dtype=np.float32)
+    rows = np.concatenate((lower, lower + 1))
+    valid = (rows >= 0) & (rows < nv)
+    valid[len(lower) :] &= fraction != 0
+    samples = np.asarray(projections[order[None, :], np.clip(rows, 0, nv - 1), :], np.float32)
+    np.copyto(samples, 0, where=~valid[..., None])
+    return samples, fraction
+
+
 def interpolate_numpy(
     spectrum: np.ndarray,
     angle: np.ndarray,
@@ -140,6 +160,7 @@ def interpolate_numpy(
     nfft: int,
     period_phase: complex,
     groups: np.ndarray | None = None,
+    shifts: np.ndarray | None = None,
 ) -> np.ndarray:
     """Vectorized reference for linear angular and Kaiser radial interpolation.
 
@@ -160,6 +181,7 @@ def interpolate_numpy(
             nfft,
             period_phase,
             groups,
+            shifts,
         )
     result = np.zeros((spectrum.shape[0], *angle.shape), dtype=np.complex128)
     if np.any(inside):
@@ -174,6 +196,7 @@ def interpolate_numpy(
             nfft,
             period_phase,
             groups,
+            shifts,
         )
     return result
 
@@ -189,6 +212,7 @@ def _interpolate_inside(
     nfft: int,
     period_phase: complex,
     groups: np.ndarray | None = None,
+    shifts: np.ndarray | None = None,
 ) -> np.ndarray:
     """Vectorized reference for linear angular and Kaiser radial interpolation."""
     layers, sources, _ = spectrum.shape
@@ -215,6 +239,10 @@ def _interpolate_inside(
                 spectrum, source[active], radial[active], ri[active], table, nfft, period_phase
             )
             row *= detector_phase[active]
+            if shifts is not None:
+                # Shift at the query frequency, AFTER radial interpolation: a
+                # binwise phase would also translate its deapodization window.
+                row *= np.exp(2j * np.pi * radial[active] * shifts[source[active]] / nfft)
             np.conjugate(row, out=row, where=conjugate[active][None, ...])
             result[:, active] += row * (angular / counts)[active]
     result *= phase

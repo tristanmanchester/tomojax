@@ -209,8 +209,8 @@ def reconstruct(
         device are reconstructed in slabs on the host.
     ``fourier``
         Fourier-slice inversion of parallel-beam half-turn scans, with
-        nonuniform or repeated angles; no per-view poses, cone beams or
-        laminography. Input and output stay on the host;
+        nonuniform or repeated angles and translation-only poses; no cone beams
+        or tilted axes. Input and output stay on the host;
         :class:`~tomojax.recon.FourierConfig` selects NumPy or CuPy CUDA.
     ``cgls``
         Least squares by conjugate gradients, ``iterations`` (default 50).

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from concurrent.futures import Future
 
-    from tomojax.geometry import Detector, Grid
+    from tomojax.geometry import Detector, Grid, ScanGeometry
 
     from ._fourier_backend import PendingSlab
 
@@ -55,7 +55,7 @@ class FourierConfig:
 
 
 def fourier_reconstruct(
-    geometry: ParallelGeometry,
+    geometry: ScanGeometry,
     grid: Grid,
     detector: Detector,
     projections: np.ndarray,
@@ -69,6 +69,8 @@ def fourier_reconstruct(
     Angles may be reordered, reversed, offset or replaced by opposing views,
     with uniform or nonuniform spacing. Redundant half-turn directions are
     averaged in physical Fourier coordinates after detector phase/orientation.
+    Per-view translations are honored in either detector or object coordinates.
+    Rotational pose corrections and tilted axes are not supported.
     Detector offsets, anisotropic voxels, shifted/cropped grids and fractional
     detector-v rows retain their physical coordinates.
 
@@ -89,8 +91,6 @@ def fourier_reconstruct(
     require_parallel_beam(geometry, "fourier_reconstruct")
     cfg = FourierConfig() if config is None else config
     backend = resolve_fourier_backend(cfg.backend)
-    if type(geometry) is not ParallelGeometry:
-        raise ValueError("fourier_reconstruct: requires built-in ParallelGeometry")
     shape = validate_grid(grid, "fourier_reconstruct grid")
     nviews, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fourier_reconstruct projections"
@@ -98,16 +98,12 @@ def fourier_reconstruct(
     origin = grid_volume_origin(grid)
     if not np.isfinite([*origin, *detector.center]).all():
         raise ValueError("fourier_reconstruct: grid and detector placement must be finite")
-    depth = fourier_slab_depth(grid, detector, cfg.slices_per_batch, backend)
     order, flipped, angles = sorted_half_turn(np.asarray(geometry.angles))
+    plan_detector, shifts, positions = _sampling_coordinates(geometry, grid, detector, order)
+    depth = fourier_slab_depth(grid, plan_detector, cfg.slices_per_batch, backend)
     output = validate_host_arrays(projections, out, shape, "fourier_reconstruct")
     transpose_download = backend == "cupy" and output.flags.f_contiguous
     host_bytes = 4 * (grid.nx * grid.ny * grid.nz + nviews * detector.nu * grid.nz)
-    positions = (origin[2] + np.arange(grid.nz) * grid.vz - detector.center[1]) / detector.dv + (
-        detector.nv - 1
-    ) / 2
-    if not np.isfinite(positions).all():
-        raise ValueError("fourier_reconstruct: detector-row coordinates must be finite")
 
     def prepare(start: int) -> np.ndarray | ProjectionRows:
         rows = positions[start : start + depth]
@@ -127,7 +123,7 @@ def fourier_reconstruct(
             )
             plan = FourierPlan(
                 grid,
-                detector,
+                plan_detector,
                 nviews,
                 flipped,
                 angles,
@@ -135,6 +131,7 @@ def fourier_reconstruct(
                 backend,
                 async_transfers=overlap,
                 transpose_download=transpose_download,
+                shifts=shifts,
             )
             if overlap:
                 _run_host_pipeline(plan, grid.nz, depth, prepare, write)
@@ -151,6 +148,57 @@ def fourier_reconstruct(
             # slab; rewriting from slice zero also replaces any completed output.
             plan = None
         depth = max(1, depth // 2)
+
+
+def _sampling_coordinates(
+    geometry: ScanGeometry, grid: Grid, detector: Detector, order: np.ndarray
+) -> tuple[Detector, np.ndarray | None, np.ndarray]:
+    """Padded Fourier field and physical source rows for all requested slices."""
+    translations = _detector_translations(geometry, len(order))
+    plan_detector, shifts = detector, None
+    origin = grid_volume_origin(grid)
+    positions = (origin[2] + np.arange(grid.nz) * grid.vz - detector.center[1]) / detector.dv + (
+        detector.nv - 1
+    ) / 2
+    if translations is not None:
+        translations = translations[order]
+        # Cover every translated detector field while retaining the physical
+        # detector phase through a compensating per-view shift.
+        extent = float(np.max(np.abs(detector.center[0] - translations[:, 0])))
+        if extent > abs(detector.center[0]):
+            plan_detector = replace(detector, center=(extent, detector.center[1]))
+        if np.any(translations[:, 0]):
+            shifts = (
+                translations[:, 0] + plan_detector.center[0] - detector.center[0]
+            ) / detector.du
+        positions = positions[:, None] + translations[None, :, 1] / detector.dv
+    if not np.isfinite(positions).all():
+        raise ValueError("fourier_reconstruct: detector-row coordinates must be finite")
+    return plan_detector, shifts, positions
+
+
+def _detector_translations(geometry: ScanGeometry, nviews: int) -> np.ndarray | None:
+    """Extract physical detector-u/v translations without importing alignment.
+
+    Nominal angles remain exact, including repeated/opposing directions; a
+    float32 pose's trigonometric rounding must not split their angular cells.
+    Translations along the parallel beam have no effect on its line integral.
+    """
+    if type(geometry) is ParallelGeometry:
+        return None
+    angles = np.deg2rad(np.asarray(geometry.angles, dtype=np.float64))
+    poses = np.asarray([geometry.pose_for_view(i) for i in range(nviews)])
+    expected = np.zeros((nviews, 3, 3))
+    expected[:, 0, 0] = expected[:, 1, 1] = np.cos(angles)
+    expected[:, 1, 0] = np.sin(angles)
+    expected[:, 0, 1] = -np.sin(angles)
+    expected[:, 2, 2] = 1
+    if not np.allclose(poses[:, :3, :3], expected, atol=2e-7, rtol=0):
+        raise ValueError(
+            "fourier_reconstruct: requires axial rotations with translation-only poses"
+        )
+    translations = poses[:, [0, 2], 3]
+    return translations if np.any(translations) else None
 
 
 def _prepare_slab(

@@ -517,7 +517,7 @@ def tomojax.recon.fista_tv(
         det_grid: 'tuple[jnp.ndarray, jnp.ndarray] | None' = None,
     ) -> 'tuple[jnp.ndarray, dict[str, object]]'
 def tomojax.recon.fourier_reconstruct(
-        geometry: 'ParallelGeometry',
+        geometry: 'ScanGeometry',
         grid: 'Grid',
         detector: 'Detector',
         projections: 'np.ndarray',
