@@ -22,6 +22,18 @@ def read_hdf5_array(
     decode workers; HDF5 access itself stays on the calling thread. A bounded
     four-job queue avoids allocating any full-sized temporary stack.
     Other layouts, filters and slices use the ordinary HDF5 reader.
+
+    Parameters
+    ----------
+    dataset : h5py.Dataset
+        Open dataset to read from.
+    selection : tuple of slice or None, optional
+        Index of the region to read; None reads the whole dataset.
+
+    Returns
+    -------
+    numpy.ndarray
+        The selected values, in the dataset's dtype and axis order.
     """
     key = tuple(slice(None) for _ in dataset.shape) if selection is None else selection
     chunks = dataset.chunks

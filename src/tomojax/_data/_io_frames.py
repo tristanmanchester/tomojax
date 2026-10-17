@@ -228,6 +228,10 @@ class LocatedFrames:
         Separate beam-off frames.
     acquisition : dict or None, optional
         Discovered acquisition paths and unit corrections.
+    image_key_path : str or None, optional
+        HDF5 path the frame labels were read from, when present.
+    angles_path : str or None, optional
+        HDF5 path the rotation angles were read from, when present.
     """
 
     stack: Hdf5Frames

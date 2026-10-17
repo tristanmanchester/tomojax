@@ -236,10 +236,11 @@ class _Batches:
                 self._coefficients(start), self.grid, self.detector, backend=self.cone_backend
             )
         if self.model == "joseph" and self.backend == "pallas":
-            from tomojax.core._cuda_joseph import project_ones_cuda, use_cuda_gather
+            from tomojax.core.joseph import project_ones_native
 
-            if use_cuda_gather(self.grid):
-                return project_ones_cuda(self._coefficients(start), self.grid, self.detector)
+            native = project_ones_native(self._coefficients(start), self.grid, self.detector)
+            if native is not None:
+                return native
         return self.project(jnp.ones_like(self.zeros_volume()), start, batch)
 
     def project(self, volume: jax.Array, start: jax.Array, batch: jax.Array) -> jax.Array:

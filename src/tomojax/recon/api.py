@@ -156,7 +156,36 @@ def reconstruct_slabs[T](
     config: MethodConfig,
     warm_start: bool = False,
 ) -> Generator[ReconstructionSlab[T], None, None]:
-    """Reconstruct owned axial slabs from bounded corrected detector-row reads."""
+    """Reconstruct owned axial slabs from bounded corrected detector-row reads.
+
+    Parameters
+    ----------
+    method : {'fbp', 'fourier', 'sirt', 'mlem'}
+        Reconstruction method.
+    geometry : ParallelGeometry
+        Unposed axial parallel-beam geometry.
+    grid : Grid
+        Output grid.
+    detector : Detector
+        Detector of the corrected rows.
+    read : callable
+        ``read(first_row, stop_row)`` returning corrected rows and the producer's
+        context for that interval.
+    config : MethodConfig
+        Method configuration, as for ``tomojax.reconstruct``.
+    warm_start : bool, optional
+        Start SIRT/OSEM from FBP. Default is False.
+
+    Returns
+    -------
+    generator of ReconstructionSlab
+        Owned slabs in z order, each with its source interval and context.
+
+    Raises
+    ------
+    ValueError
+        If the method or a setting does not support slabs.
+    """
     cfg = method_config(method, config=config)
     if method in {"fbp", "fourier"}:
         if warm_start:

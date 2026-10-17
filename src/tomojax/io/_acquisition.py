@@ -42,6 +42,24 @@ def read_acquisition(
     ordinary datasets or TIFF stacks. Recognized but incomplete or ambiguous
     inputs raise rather than silently becoming an unrelated format. Readers
     own format-specific discovery; this function owns their dispatch order.
+
+    Parameters
+    ----------
+    path : str or os.PathLike
+        Acquisition file or folder.
+    data_path : str or None, optional
+        Explicit dataset path for formats that hold several candidate stacks.
+
+    Returns
+    -------
+    RawAcquisition or None
+        The reader's geometry record and raw stacks, or None if no reader
+        recognizes the input.
+
+    Raises
+    ------
+    ValueError
+        If a recognized acquisition is incomplete or ambiguous.
     """
     from ._nikon import read_nikon
 

@@ -46,9 +46,13 @@ class ProjectionMatchingConfig:
     already aligned input; reconstruction consistency alone does not establish
     pose accuracy or image preservation.
 
-    ``iterations`` caps joint refinement, not the conjugate-gradient inner
-    solve. Exhausting it does not imply convergence. No trajectory prior or
-    supplied aligned reference enters inference.
+    No trajectory prior or supplied aligned reference enters inference.
+
+    Parameters
+    ----------
+    iterations : int, optional
+        Cap on joint volume/pose refinement, not on the conjugate-gradient inner
+        solve; exhausting it does not imply convergence. Default is 20.
     """
 
     iterations: int = 20
@@ -201,6 +205,27 @@ def match_projections(
 
     Owns the sparse native reconstruction grid and temporary volumes. Only the
     coupled objective is filtered; input projections and final inverse are not.
+
+    Parameters
+    ----------
+    geometry : ParallelGeometry
+        Unposed axial parallel-beam geometry of the scan.
+    projections : array-like
+        Line integrals of shape ``(views, nv, nu)``, at least 20 rows and columns.
+    config : ProjectionMatchingConfig
+        Refinement settings.
+
+    Returns
+    -------
+    poses : numpy.ndarray
+        Per-view pose table ``(views, 6)`` in the detector translation frame.
+    info : dict
+        Solver record: timings, iterations and the estimator's settings.
+
+    Raises
+    ------
+    ValueError
+        If the geometry is not unposed axial parallel beam, or the detector is too small.
     """
     if type(geometry) is not ParallelGeometry:
         raise ValueError("projection matching requires an unposed axial ParallelGeometry")

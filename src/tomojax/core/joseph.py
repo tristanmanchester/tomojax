@@ -292,3 +292,26 @@ def plane_l2_normal_equations(
     gradient = jnp.einsum("nmp,nm->np", jacobian, flat, precision=jax.lax.Precision.HIGHEST)
     matrix = jnp.einsum("nmp,nmq->npq", jacobian, jacobian, precision=jax.lax.Precision.HIGHEST)
     return 0.5 * jnp.sum(flat**2, axis=1), gradient, matrix, residual
+
+
+def project_ones_native(coeff: jax.Array, grid: Grid, detector: Detector) -> jax.Array | None:
+    """Project a uniform unit volume with the native CUDA gather, or return None.
+
+    Parameters
+    ----------
+    coeff : jax.Array
+        Prepared plane coefficients of the views, from ``plane_coefficients``.
+    grid : Grid
+        Volume grid.
+    detector : Detector
+        Detector the coefficients map onto.
+
+    Returns
+    -------
+    jax.Array or None
+        Projections of ones with the ordinary boundary weights, or None when the
+        native CUDA gather does not apply to this grid.
+    """
+    from ._cuda_joseph import project_ones_cuda, use_cuda_gather
+
+    return project_ones_cuda(coeff, grid, detector) if use_cuda_gather(grid) else None
