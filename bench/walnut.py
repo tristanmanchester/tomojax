@@ -18,6 +18,7 @@ reverse order and transposed, dark- and flat-corrected and log-transformed.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 import json
 import logging
@@ -53,14 +54,22 @@ def load_orbit(walnut: Path, orbit: int, every: int = 1) -> tuple[np.ndarray, np
     # Correct contiguous frames without full-frame arithmetic temporaries;
     # expose ASTRA's row/view/column axes as a view after loading.
     data = np.empty((len(indices), ROWS, COLS), np.float32)
-    for view, index in enumerate(indices):
-        image = np.ascontiguousarray(_read(folder / f"scan_{index:06d}.tif"))
+
+    def correct(item: tuple[int, int]) -> None:
+        view, index = item
+        image = data[view]
+        image[:] = _read(folder / f"scan_{index:06d}.tif")
         np.subtract(image, dark, out=image)
         np.divide(image, flat, out=image)
         np.maximum(image, 1e-6, out=image)
         np.log(image, out=image)
         np.negative(image, out=image)
-        data[view] = image
+
+    # Two workers overlap TIFF reading and correction with bounded frame scratch.
+    # Each owns a disjoint frame; consuming map also propagates read errors.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        for _ in pool.map(correct, enumerate(indices)):
+            pass
     return data.transpose(1, 0, 2), vectors
 
 
