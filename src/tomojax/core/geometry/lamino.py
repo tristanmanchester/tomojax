@@ -49,6 +49,19 @@ class LaminographyGeometry:
     - pose_for_view(i) returns T_world_from_obj for the sample frame, where the
       object's +z axis equals the nominal rotation axis. At theta=0, T is the
       fixed alignment S (generally not identity) that maps e_z -> axis.
+
+    Parameters
+    ----------
+    grid : Grid
+        Reconstruction voxel grid.
+    detector : Detector
+        Detector dimensions, pitches and physical centre.
+    angles : sequence of float
+        View rotation angles in degrees, in acquisition order.
+    tilt_deg : float, optional
+        Axis tilt away from +z, in degrees; defaults to 30.
+    tilt_about : {'x', 'z'}
+        Tilt convention: x leans towards +y; z leans towards +x.
     """
 
     grid: Grid
@@ -62,7 +75,18 @@ class LaminographyGeometry:
 
     @property
     def axis_unit_lab(self) -> np.ndarray:
-        """The rotation axis in the lab frame, a unit vector."""
+        """The rotation axis in the lab frame, a unit vector.
+
+        Returns
+        -------
+        numpy.ndarray
+            Three-component unit rotation axis in lab coordinates.
+
+        Raises
+        ------
+        ValueError
+            If tilt_about is unsupported for a nonzero tilt.
+        """
         return laminography_axis_unit(self.tilt_deg, self.tilt_about)
 
     def pose_for_view(self, i: int) -> PoseMatrix:
@@ -71,6 +95,21 @@ class LaminographyGeometry:
         We align the object's +z axis to the laminography axis once via S, then
         rotate around +z by view angle theta: R = S @ R_z(theta). The returned
         4x4 poses are suitable for the projector contract (world_from_object).
+
+        Parameters
+        ----------
+        i : int
+            Zero-based view index.
+
+        Returns
+        -------
+        tuple of tuple of float
+            Row-major 4 x 4 homogeneous world-from-object transform.
+
+        Raises
+        ------
+        IndexError
+            If the view index is outside the angle sequence.
         """
         theta = float(np.deg2rad(self.angles[i]))
         axis = self.axis_unit_lab
@@ -83,7 +122,18 @@ class LaminographyGeometry:
         return tuple(map(tuple, T))  # 4x4
 
     def rays_for_view(self, i: int) -> RayPair:
-        """Return detector ray callbacks for inspection tools."""
+        """Return detector ray callbacks for inspection tools.
+
+        Parameters
+        ----------
+        i : int
+            Zero-based view index.
+
+        Returns
+        -------
+        tuple of callable
+            Origin and unit-direction callbacks taking detector pixel indices (u, v).
+        """
         del i
         # Use the same detector plane and beam direction as parallel CT.
         return _parallel_detector_rays(self.grid, self.detector)

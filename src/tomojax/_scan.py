@@ -56,6 +56,33 @@ class Scan:
     operation applies (see :attr:`poses`). ``corrections`` records how its
     projections were made from detector frames (see :mod:`tomojax.corrections`),
     and is saved with it.
+
+    Parameters
+    ----------
+    projections : numpy.ndarray or jax.Array
+        Line integrals, not intensities, shaped (views, rows, columns).
+    geometry : ScanGeometry
+        Per-view geometry carrying the reconstruction grid and detector.
+    name : str, optional
+        Sample name.
+    corrections : tuple of Correction, optional
+        Record of corrections already applied to the projections.
+    source : ProjectionDataset or None, optional
+        Source metadata retained for saving and provenance.
+
+    Raises
+    ------
+    ValueError
+        If projection dimensions disagree with the detector or view count.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> import tomojax as tj
+    >>> grid = tj.Grid(8, 8, 1, 1.0, 1.0, 1.0)
+    >>> detector = tj.Detector(8, 1, 1.0, 1.0)
+    >>> geometry = tj.ParallelGeometry(grid, detector, [0.0, 90.0])
+    >>> scan = tj.Scan(np.zeros((2, 1, 8), dtype=np.float32), geometry)
     """
 
     projections: np.ndarray | jax.Array
@@ -78,6 +105,23 @@ class Scan:
 
         Steps on counts or transmission need the frames: use :func:`load_frames`
         and :meth:`Frames.corrected`.
+
+        Parameters
+        ----------
+        *steps : Step
+            Line-integral correction steps, applied in order.
+        batch_views : int or None, optional
+            Positive views per batch; None chooses automatically.
+
+        Returns
+        -------
+        Scan
+            Corrected projections and geometry, with appended correction records.
+
+        Raises
+        ------
+        ValueError
+            If a step needs raw counts or transmission, or settings are invalid.
         """
         from tomojax.corrections import correct_projections
 
@@ -95,7 +139,25 @@ class Scan:
         )
 
     def cropped(self, rows: slice, cols: slice) -> Scan:
-        """The scan of this block of detector ``rows`` and ``cols``, the detector moved to match."""
+        """Crop a contiguous detector window and move the detector to match.
+
+        Parameters
+        ----------
+        rows : slice
+            Nonempty contiguous detector row window.
+        cols : slice
+            Nonempty contiguous detector column window.
+
+        Returns
+        -------
+        Scan
+            Cropped projections with the detector centre moved to match.
+
+        Raises
+        ------
+        ValueError
+            If a window is empty or has a step other than one.
+        """
         window = detector_window(rows, cols, self.detector)
         return replace(
             self,
@@ -104,7 +166,23 @@ class Scan:
         )
 
     def selected(self, views: slice | Sequence[int] | np.ndarray) -> Scan:
-        """These ``views`` and geometry: a forward slice, increasing indices or a nonempty mask."""
+        """Select views and their geometry in acquisition order.
+
+        Parameters
+        ----------
+        views : slice, sequence of int or numpy.ndarray
+            Forward slice, increasing indices or nonempty boolean view mask.
+
+        Returns
+        -------
+        Scan
+            Selected projections and their geometry, in acquisition order.
+
+        Raises
+        ------
+        ValueError
+            If indices are empty, unordered, repeated or out of bounds.
+        """
         kept = view_indices(views, self.projections.shape[0])
         return replace(
             self,
@@ -117,17 +195,35 @@ class Scan:
 
     @property
     def grid(self) -> Grid:
-        """The reconstruction grid."""
+        """The reconstruction grid.
+
+        Returns
+        -------
+        Grid
+            Reconstruction grid carried by the geometry.
+        """
         return self.geometry.grid
 
     @property
     def detector(self) -> Detector:
-        """The detector."""
+        """The detector.
+
+        Returns
+        -------
+        Detector
+            Detector carried by the geometry.
+        """
         return self.geometry.detector
 
     @property
     def angles(self) -> np.ndarray:
-        """Rotation angle of each view, in degrees."""
+        """Rotation angle of each view, in degrees.
+
+        Returns
+        -------
+        numpy.ndarray
+            One rotation angle per view, in degrees.
+        """
         return np.asarray(self.geometry.angles, dtype=np.float64)  # pyright: ignore[reportAttributeAccessIssue]
 
     @property
@@ -136,6 +232,11 @@ class Scan:
 
         Rotations in radians, translations in the geometry's length unit, in
         the detector frame. None when the scan carries no corrections.
+
+        Returns
+        -------
+        numpy.ndarray or None
+            Pose corrections with shape (views, 6), or None when absent.
         """
         from tomojax._data.geometry_meta import detector_poses
 
@@ -154,6 +255,21 @@ class Scan:
         full scan after fitting selected views. Interpolate small corrections
         in acquisition order, not wrapped rotation angle; no interpolation or
         additional alignment is performed here.
+
+        Parameters
+        ----------
+        poses : numpy.ndarray or None
+            Replacement (views, 6) correction table; None removes all corrections.
+
+        Returns
+        -------
+        Scan
+            Scan with replacement poses and unchanged calibrated geometry.
+
+        Raises
+        ------
+        ValueError
+            If the pose table does not have shape (views, 6).
         """
         from tomojax._data.geometry_meta import AugmentedGeometry, nominal_geometry
 
@@ -186,6 +302,27 @@ class Scan:
         departure from it (tilts, wobble, per-view corrections) becomes
         :attr:`poses`. ASTRA turns the source and detector about the object
         and TomoJAX the object, so :attr:`angles` run the other way.
+
+        Parameters
+        ----------
+        projections : numpy.ndarray
+            ASTRA line integrals in (rows, views, columns) order.
+        proj_geom : mapping
+            ASTRA cone or cone_vec projection geometry.
+        vol_geom : mapping
+            ASTRA three-dimensional volume geometry.
+        name : str, optional
+            Sample name.
+
+        Returns
+        -------
+        Scan
+            Imported cone-beam scan, including departures from its fitted orbit as poses.
+
+        Raises
+        ------
+        ValueError
+            If ASTRA geometry or data shape is unsupported or inconsistent.
         """
         from tomojax._astra import from_astra
         from tomojax.geometry import ConeSegments
@@ -204,6 +341,23 @@ class Scan:
         multi-orbit scan, a tall sample scanned in stacked sections): each
         becomes a :class:`~tomojax.geometry.ConeSegments` segment. They share
         ``scans[0]``'s grid and need equal detector pixel counts.
+
+        Parameters
+        ----------
+        scans : sequence of Scan
+            Nonempty cone-beam scans with equal detector pixel counts.
+        name : str or None, optional
+            Combined sample name; None keeps the first scan's name.
+
+        Returns
+        -------
+        Scan
+            Concatenated views on the first scan's reconstruction grid.
+
+        Raises
+        ------
+        ValueError
+            If scans are empty or their geometry and detector counts are incompatible.
         """
         from tomojax.geometry import ConeSegments
 
@@ -225,6 +379,21 @@ class Scan:
         cost falls by ``factor**2`` for little change in the volume. Pixels that
         do not fill a block at the detector's edges are dropped, and the
         detector centre moves to match.
+
+        Parameters
+        ----------
+        factor : int
+            Positive detector-block side length, in pixels.
+
+        Returns
+        -------
+        Scan
+            Block-averaged projections and detector geometry; the grid is unchanged.
+
+        Raises
+        ------
+        ValueError
+            If factor is less than one or leaves no complete detector block.
         """
         if factor < 1:
             raise ValueError(f"binned needs a factor of at least 1, not {factor}")
@@ -234,10 +403,24 @@ class Scan:
         return replace(self, projections=binned, geometry=binned_geometry(self.geometry, factor))
 
     def to_astra(self) -> tuple[np.ndarray, dict[str, Any], dict[str, Any]]:
-        """ASTRA ``(rows, views, columns)`` projections, ``cone_vec`` and volume geometries.
+        """Export projections and cone-beam geometry for ASTRA.
 
         The inverse of :meth:`from_astra`, for cone-beam scans; transpose a
         volume ``(x, y, z) -> (z, y, x)`` to use it with ASTRA.
+
+        Returns
+        -------
+        projections : numpy.ndarray
+            Line integrals in ASTRA (rows, views, columns) order.
+        proj_geom : dict
+            ASTRA cone_vec projection geometry.
+        vol_geom : dict
+            ASTRA three-dimensional volume geometry.
+
+        Raises
+        ------
+        ValueError
+            If the scan is not a supported cone-beam geometry.
         """
         from tomojax._astra import to_astra
 

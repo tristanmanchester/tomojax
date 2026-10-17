@@ -43,7 +43,7 @@ LOG = logging.getLogger(__name__)
 
 
 def load(path: str | PathLike[str], *, poses: bool = True) -> Scan:
-    """Load a scan of line integrals from a dataset (``.nxs``, ``.h5``, ``.npz``) or ``.xtekct``.
+    """Load line integrals from a dataset or Nikon scan.
 
     A file of raw detector frames (an NXtomo ``image_key`` marking flats or
     darks, or a Nikon scan) is corrected with the standard chain, as
@@ -53,6 +53,30 @@ def load(path: str | PathLike[str], *, poses: bool = True) -> Scan:
     corrections saved with it (by :func:`align` or ``tomojax align``) unless
     ``poses`` is False. Frames that ``image_key`` marks as other than sample
     views are left out.
+
+    Parameters
+    ----------
+    path : str or path-like
+        Dataset or Nikon scan to read.
+    poses : bool, optional
+        Apply the saved per-view pose corrections; default is True.
+
+    Returns
+    -------
+    Scan
+        Line-integral projections with geometry and correction records.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the input does not exist.
+    ValueError
+        If TIFFs need geometry, counts lack calibration, or metadata are invalid.
+
+    Examples
+    --------
+    >>> import tomojax as tj
+    >>> scan = tj.load("scan.nxs")  # doctest: +SKIP
     """
     from tomojax.io import load_dataset
 
@@ -111,6 +135,32 @@ class Frames:
     ``flat_positions`` (by default view ``i`` at ``i + 1/2``; :meth:`selected`
     keeps it). :meth:`corrected` makes the :class:`Scan` of line integrals.
     Made by :func:`load_frames`.
+
+    Parameters
+    ----------
+    counts : array-like
+        Sample detector frames, shape (views, rows, columns); may be lazy.
+    geometry : ScanGeometry
+        Geometry of every sample view, including the grid and detector.
+    flats : array-like or None, optional
+        Open-beam calibration frames; may be lazy.
+    darks : array-like or None, optional
+        Beam-off calibration frames; may be lazy.
+    flat_positions : numpy.ndarray or None, optional
+        Number of sample views preceding each flat frame.
+    white_level : float or None, optional
+        Calibrated open-beam count level, instead of flat frames.
+    view_positions : numpy.ndarray or None, optional
+        Sample positions in flat-position units; default is i + 1/2.
+    name : str, optional
+        Sample name.
+    source : ProjectionDataset or None, optional
+        Original dataset metadata retained when loading from a file.
+
+    Raises
+    ------
+    ValueError
+        If frame shape or view-position count does not match the geometry.
     """
 
     counts: Any
@@ -141,13 +191,19 @@ class Frames:
 
     @property
     def views(self) -> int:
-        """The number of sample views."""
+        """The number of sample views.
+
+        Returns
+        -------
+        int
+            Number of sample frames.
+        """
         return int(self.counts.shape[0])
 
     def corrected(
         self, *steps: Step, epsilon: float = 1e-6, batch_views: int | None = None, binning: int = 1
     ) -> Scan:
-        """The scan of line integrals ``-log((I - D) / (F - D))``, with ``steps`` applied.
+        """Correct detector counts to line integrals with the requested steps.
 
         Steps run by the data they act on: counts steps first, then the flat
         and dark fields, transmission steps, the log, and line-integral steps,
@@ -164,6 +220,27 @@ class Frames:
         non-row step needs it. Pixels where the flat does not exceed the dark by
         three standard errors of their means take no absorption; the flat-field
         record counts them.
+
+        Parameters
+        ----------
+        *steps : Step
+            Corrections applied in domain order, then in the order supplied.
+        epsilon : float, optional
+            Positive finite lower bound for flat field and transmission.
+        batch_views : int or None, optional
+            Positive views per device batch; None selects a workspace-based size.
+        binning : int, optional
+            Positive factor for averaging detector blocks after correction.
+
+        Returns
+        -------
+        Scan
+            Corrected line integrals with matching geometry and correction records.
+
+        Raises
+        ------
+        ValueError
+            If calibration, correction settings or batch dimensions are invalid.
         """
         from tomojax.corrections import correct_frames
 
@@ -189,6 +266,23 @@ class Frames:
         """These frames' block of detector ``rows`` and ``cols``, the detector moved to match.
 
         A lazily read file reads only that block, of the flats and darks too.
+
+        Parameters
+        ----------
+        rows : slice
+            Nonempty contiguous detector row window.
+        cols : slice
+            Nonempty contiguous detector column window.
+
+        Returns
+        -------
+        Frames
+            Selected frames with matching geometry and calibration.
+
+        Raises
+        ------
+        ValueError
+            If the selection is empty, out of bounds or not ordered as required.
         """
         window = detector_window(rows, cols, self.geometry.detector)
 
@@ -212,6 +306,21 @@ class Frames:
         Take a forward slice, increasing integer indices or a nonempty mask.
         Each view keeps its place among the flats (:attr:`view_positions`), so
         its flat is interpolated as before.
+
+        Parameters
+        ----------
+        views : slice, sequence of int or numpy.ndarray
+            Forward slice, increasing indices or nonempty boolean sample-view mask.
+
+        Returns
+        -------
+        Frames
+            Selected frames with matching geometry and calibration.
+
+        Raises
+        ------
+        ValueError
+            If the selection is empty, out of bounds or not ordered as required.
         """
         kept = view_indices(views, self.views)
         at = np.arange(self.views) + 0.5 if self.view_positions is None else self.view_positions
@@ -241,7 +350,7 @@ def load_frames(
     image_key_path: str | None = None,
     angles_path: str | None = None,
 ) -> Frames:
-    """Load detector frames from an HDF5 (NXtomo) or ``.npz`` file, a Nikon ``.xtekct`` or TIFFs.
+    """Load raw detector frames from HDF5, NPZ, Nikon or TIFF data.
 
     An HDF5 file's ``image_key`` marks its flats (1) and darks (2), and its
     sample, flat and dark frames are read only as they are corrected. The
@@ -260,6 +369,51 @@ def load_frames(
     replace what the file holds. HDF5 calibration paths use the same automatic
     dataset discovery as the input and stay lazy; every frame in their stack
     contributes to the calibration mean.
+
+    Parameters
+    ----------
+    path : str or path-like
+        HDF5, NPZ, Nikon scan, TIFF file or directory.
+    flats : array-like, float, str, path-like or None, optional
+        Replacement flat frames, calibration stack path or constant open-beam level.
+    darks : array-like, float, str, path-like or None, optional
+        Replacement dark frames, calibration stack path or constant dark level.
+    angles : array-like or None, optional
+        Sample-view angles in degrees, replacing file metadata.
+    detector : Detector or None, optional
+        Replacement detector dimensions, pixel sizes and physical centre.
+    grid : Grid or None, optional
+        Replacement reconstruction grid.
+    geometry : ScanGeometry or None, optional
+        Complete sample-view geometry, overriding individual metadata.
+    white_level : float or None, optional
+        Replacement calibrated open-beam level, used instead of flats.
+    data_path : str or None, optional
+        Explicit HDF5 frame dataset path; None discovers it.
+    image_key_path : str or None, optional
+        Explicit HDF5 sample/flat/dark key path; None discovers it.
+    angles_path : str or None, optional
+        Explicit HDF5 rotation-angle path; None discovers it.
+
+    Returns
+    -------
+    Frames
+        Raw sample and calibration frames with geometry; HDF5/TIFF reads stay lazy.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the input does not exist.
+    ValueError
+        If required angles are absent or metadata and frame shapes disagree.
+    KeyError
+        If a required dataset cannot be found in the file.
+
+    Examples
+    --------
+    >>> import tomojax as tj
+    >>> frames = tj.load_frames("raw_scan.nxs")  # doctest: +SKIP
+    >>> scan = frames.corrected(binning=4)  # doctest: +SKIP
     """
     file = Path(path)
     if not file.exists():

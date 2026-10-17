@@ -33,6 +33,26 @@ class ConeBeam:
     pitch and yaw rotate the detector about its centre: roll about the beam
     (y), pitch about detector u (x) and yaw about detector v (z), applied in
     that order.
+
+    Parameters
+    ----------
+    source_to_axis : float
+        Source-to-axis distance in physical units; strictly positive.
+    source_to_detector : float
+        Source-to-detector distance, greater than source_to_axis.
+    detector_roll_deg : float, optional
+        Detector roll about the lab y axis, in degrees.
+    detector_pitch_deg : float, optional
+        Detector pitch about the x axis, in degrees.
+    detector_yaw_deg : float, optional
+        Detector yaw about the z axis, in degrees.
+    axis_offset : float, optional
+        Lateral x displacement of the rotation axis, in physical units.
+
+    Raises
+    ------
+    ValueError
+        If 0 < source_to_axis < source_to_detector does not hold.
     """
 
     source_to_axis: float
@@ -48,15 +68,42 @@ class ConeBeam:
 
     @property
     def magnification(self) -> float:
-        """Magnification of the rotation axis on the detector."""
+        """Magnification of the rotation axis on the detector.
+
+        Returns
+        -------
+        float
+            Source-to-detector divided by source-to-axis distance.
+        """
         return float(self.source_to_detector) / float(self.source_to_axis)
 
     def source(self) -> np.ndarray:
-        """Source position in the lab frame."""
+        """Source position in the lab frame.
+
+        Returns
+        -------
+        numpy.ndarray
+            Lab-frame source (x, y, z) position, in physical units.
+        """
         return np.array([0.0, -float(self.source_to_axis), 0.0])
 
     def detector_frame(self, detector: Detector) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Lab position of the detector centre and its unit u and v directions."""
+        """Lab position of the detector centre and its unit u and v directions.
+
+        Parameters
+        ----------
+        detector : Detector
+            Detector with its physical in-plane centre offset.
+
+        Returns
+        -------
+        centre : numpy.ndarray
+            Lab-frame detector-centre position in physical units.
+        u_dir : numpy.ndarray
+            Lab-frame unit direction of increasing detector columns.
+        v_dir : numpy.ndarray
+            Lab-frame unit direction of increasing detector rows.
+        """
         roll, pitch, yaw = np.deg2rad(
             [self.detector_roll_deg, self.detector_pitch_deg, self.detector_yaw_deg]
         )
@@ -71,7 +118,13 @@ class ConeBeam:
         return centre, rotation @ np.array([1.0, 0.0, 0.0]), rotation @ np.array([0.0, 0.0, 1.0])
 
     def to_dict(self) -> dict[str, float]:
-        """Return JSON-compatible metadata."""
+        """Return JSON-compatible metadata.
+
+        Returns
+        -------
+        dict
+            Source distances, axis offset and detector rotations, ready for JSON.
+        """
         return {
             "source_to_axis": float(self.source_to_axis),
             "source_to_detector": float(self.source_to_detector),
@@ -102,6 +155,23 @@ class ConeGeometry:
     vector, replaces the tilt for an arbitrary calibrated axis. The beam is
     described by ``beam``; projectors read it to trace rays from the source to
     each pixel.
+
+    Parameters
+    ----------
+    grid : Grid
+        Reconstruction voxel grid.
+    detector : Detector
+        Detector dimensions, pitches and physical centre.
+    angles : sequence of float
+        View rotation angles in degrees, in acquisition order.
+    beam : ConeBeam
+        Source and detector placement in the lab frame.
+    tilt_deg : float, optional
+        Axis tilt away from +z, in degrees; defaults to zero.
+    tilt_about : {'x', 'z'}
+        Tilt convention used when axis_unit is absent.
+    axis_unit : tuple of float or None, optional
+        Explicit lab-frame rotation axis, replacing the tilt settings.
     """
 
     grid: Grid
@@ -113,13 +183,39 @@ class ConeGeometry:
     axis_unit: tuple[float, float, float] | None = None
 
     def pose_for_view(self, i: int) -> PoseMatrix:
-        """Return the world-from-object pose for one view."""
+        """Return the world-from-object pose for one view.
+
+        Parameters
+        ----------
+        i : int
+            Zero-based view index.
+
+        Returns
+        -------
+        tuple of tuple of float
+            Row-major 4 x 4 homogeneous world-from-object transform.
+
+        Raises
+        ------
+        IndexError
+            If the view index is outside the angle sequence.
+        """
         return tuple(map(tuple, self.poses(angles=np.asarray([self.angles[i]]))[0]))
 
     def poses(self, *, angles: np.ndarray | None = None) -> np.ndarray:
         """Return every view's world-from-object pose as an ``(n, 4, 4)`` FP64 array.
 
         ``angles``, in degrees, replaces the geometry's own view angles.
+
+        Parameters
+        ----------
+        angles : numpy.ndarray or None, optional
+            Replacement view angles in degrees; None uses this geometry's angles.
+
+        Returns
+        -------
+        numpy.ndarray
+            World-from-object poses with shape (views, 4, 4), in float64.
         """
         radians = np.deg2rad(
             np.asarray(self.angles if angles is None else angles, dtype=np.float64)
@@ -139,14 +235,31 @@ class ConeGeometry:
         return poses
 
     def rotation_axis(self) -> np.ndarray:
-        """Return the lab-frame unit rotation axis."""
+        """Return the lab-frame unit rotation axis.
+
+        Returns
+        -------
+        numpy.ndarray
+            Three-component lab-frame unit rotation axis.
+
+        Raises
+        ------
+        ValueError
+            If the tilt convention is unsupported for a nonzero tilt.
+        """
         if self.axis_unit is not None:
             axis = np.asarray(self.axis_unit, dtype=np.float64)
             return axis / np.linalg.norm(axis)
         return laminography_tilt_matrix(self.tilt_deg, self.tilt_about) @ np.array([0.0, 0.0, 1.0])
 
     def geometry_metadata(self) -> dict[str, object]:
-        """Return the metadata that reconstructs this geometry from a saved dataset."""
+        """Return the metadata that reconstructs this geometry from a saved dataset.
+
+        Returns
+        -------
+        dict
+            Serializable beam and rotation-axis metadata.
+        """
         meta: dict[str, object] = {"cone_beam": self.beam.to_dict()}
         if self.axis_unit is not None:
             meta["axis_unit_lab"] = [float(x) for x in self.rotation_axis()]
@@ -156,7 +269,18 @@ class ConeGeometry:
         return meta
 
     def rays_for_view(self, i: int) -> RayPair:
-        """Return world-frame ray callbacks (source origin, unit direction) for inspection."""
+        """Return world-frame ray callbacks (source origin, unit direction) for inspection.
+
+        Parameters
+        ----------
+        i : int
+            Zero-based view index.
+
+        Returns
+        -------
+        tuple of callable
+            Origin and unit-direction callbacks taking detector pixel indices (u, v).
+        """
         del i
         source = self.beam.source()
         centre, u_dir, v_dir = self.beam.detector_frame(self.detector)
@@ -177,13 +301,23 @@ class ConeGeometry:
 
 @dataclass(frozen=True)
 class ConeSegments:
-    """A scan made of cone-beam segments, each with its own source and detector arrangement.
+    """A scan of cone-beam segments with separate source and detector arrangements.
 
     Segments share the reconstruction grid and the detector's pixel count; their
     views follow one another. Multi-orbit scans (a source at several heights),
     stacked scans of a tall sample and tiled fields of view are segmented. The
     iterative solvers and projectors take them; FDK, which assumes one circular
     orbit, does not.
+
+    Parameters
+    ----------
+    segments : tuple of ScanGeometry
+        Nonempty cone-beam geometries in acquisition order, sharing a grid and pixel sizes.
+
+    Raises
+    ------
+    ValueError
+        If segments are absent, not cone beams, or disagree in grid or detector sampling.
     """
 
     segments: tuple[ScanGeometry, ...]
@@ -205,22 +339,46 @@ class ConeSegments:
 
     @property
     def grid(self) -> Grid:
-        """The shared reconstruction grid."""
+        """The shared reconstruction grid.
+
+        Returns
+        -------
+        Grid
+            Reconstruction grid shared by all segments.
+        """
         return self.segments[0].grid
 
     @property
     def detector(self) -> Detector:
-        """The first segment's detector (every segment has its pixel count)."""
+        """The first segment's detector (every segment has its pixel count).
+
+        Returns
+        -------
+        Detector
+            First segment's detector, with the shared pixel counts and pitches.
+        """
         return self.segments[0].detector
 
     @property
     def angles(self) -> list[float]:
-        """Every view's rotation angle, segment after segment."""
+        """Every view's rotation angle, segment after segment.
+
+        Returns
+        -------
+        list of float
+            Rotation angles in degrees, concatenated in segment order.
+        """
         return [float(t) for s in self.segments for t in s.angles]
 
     @property
     def beam(self) -> ConeBeam:
-        """Not defined: each segment has its own beam (see :func:`cone_parts`)."""
+        """Not defined: each segment has its own beam (see :func:`cone_parts`).
+
+        Raises
+        ------
+        ValueError
+            Always: each segment has its own beam; a single-beam method cannot use this scan.
+        """
         raise ValueError(
             "this scan has one source-detector arrangement per segment; reconstruct it "
             "with cgls, fista or spdhg (FDK takes one arrangement)"
@@ -235,17 +393,62 @@ class ConeSegments:
         raise IndexError("view index out of range")
 
     def pose_for_view(self, i: int) -> PoseMatrix:
-        """Return the world-from-object pose of view ``i`` in its segment."""
+        """Return the world-from-object pose of view ``i`` in its segment.
+
+        Parameters
+        ----------
+        i : int
+            Zero-based view index.
+
+        Returns
+        -------
+        tuple of tuple of float
+            Row-major 4 x 4 homogeneous world-from-object transform.
+
+        Raises
+        ------
+        IndexError
+            If the view index lies beyond the last segment.
+        """
         segment, j = self._locate(i)
         return segment.pose_for_view(j)
 
     def rays_for_view(self, i: int) -> RayPair:
-        """Return the ray callbacks of view ``i`` in its segment."""
+        """Return the ray callbacks of view ``i`` in its segment.
+
+        Parameters
+        ----------
+        i : int
+            Zero-based view index.
+
+        Returns
+        -------
+        tuple of callable
+            Origin and unit-direction callbacks taking detector pixel indices (u, v).
+
+        Raises
+        ------
+        IndexError
+            If the view index lies beyond the last segment.
+        """
         segment, j = self._locate(i)
         return segment.rays_for_view(j)
 
     def stack_poses(self, n_views: int, dtype: jnp.dtype) -> jax.Array:
-        """Every segment's poses, stacked (see ``stack_view_poses``)."""
+        """Every segment's poses, stacked (see ``stack_view_poses``).
+
+        Parameters
+        ----------
+        n_views : int
+            Number of leading views to return.
+        dtype : dtype
+            Output pose dtype.
+
+        Returns
+        -------
+        jax.Array
+            Concatenated world-from-object poses, shape (views, 4, 4).
+        """
         import jax.numpy as jnp
 
         from .views import stack_view_poses
@@ -258,6 +461,21 @@ def beam_of(geometry: object) -> ConeBeam | None:
     """Return a geometry's cone beam, or None for parallel-beam geometries.
 
     Raises for :class:`ConeSegments`, which has one beam per segment.
+
+    Parameters
+    ----------
+    geometry : object
+        Geometry with an optional cone beam.
+
+    Returns
+    -------
+    ConeBeam or None
+        Beam metadata, or None for parallel-beam geometry.
+
+    Raises
+    ------
+    ValueError
+        If geometry has a separate beam per segment rather than one shared beam.
     """
     beam = getattr(geometry, "beam", None)
     return beam if isinstance(beam, ConeBeam) else None
