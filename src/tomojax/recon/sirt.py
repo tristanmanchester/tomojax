@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from functools import partial
 import math
@@ -20,6 +21,7 @@ from tomojax.core.validation import (
     validate_volume,
 )
 from tomojax.recon._axial_slabs import axial_slabs, independent_planes
+from tomojax.recon._host_stream import host_source, should_stream
 from tomojax.recon._projection import (
     ConeModel,
     ProjectorBackend,
@@ -104,6 +106,7 @@ def _accelerated_steps(
         "cache_columns",
         "axial",
         "acceleration",
+        "stream",
     ),
 )
 def _solve(
@@ -126,8 +129,11 @@ def _solve(
     cache_columns: bool,
     axial: bool,
     acceleration: bool,
+    stream: bool,
 ) -> jax.Array:
-    select = subset_operators(poses, grid, detector, det_grid, backend, batch, model, subsets)
+    select = subset_operators(
+        poses, grid, detector, det_grid, backend, batch, model, subsets, stream=stream
+    )
     shape = (grid.nx, grid.ny, grid.nz)
     normalization = select
     normal_rows = detector.nv
@@ -154,10 +160,10 @@ def _solve(
 
     def column_weights(index: jax.Array) -> jax.Array:
         _, adjoint, _ = normalization(index)
-        count = (data.shape[0] + subsets - 1) // subsets
+        count = (poses.shape[0] + subsets - 1) // subsets
         return _inverse(adjoint(jnp.ones((count, normal_rows, detector.nu), jnp.float32)))
 
-    rows = jax.lax.map(row_weights, jnp.arange(subsets))
+    rows = None if stream else jax.lax.map(row_weights, jnp.arange(subsets))
     # Avoid storing a volume for every subset on large scans. The exact subset
     # normalization is then recomputed at each update, not approximated by a
     # rescaled full-scan normalization.
@@ -167,12 +173,33 @@ def _solve(
         index = step % subsets
         _, _, residual_adjoint = select(index)
         column = column_weights(index) if columns is None else columns[index]
-        gradient = residual_adjoint(x, data, rows[index])
+        gradient = residual_adjoint(
+            x, data, None if rows is None else rows[index], row_support=mask
+        )
         return constrain(x + relaxation * column * gradient)
 
     if acceleration:
         return _accelerated_steps(update, initial, iterations)
     return jax.lax.fori_loop(0, iterations * subsets, update, initial)
+
+
+def _parameters(cfg: SIRTConfig, n: int) -> tuple[int, int, int, float, float]:
+    """Validate iteration controls and bounds before choosing memory placement."""
+    iterations = operator.index(cfg.iterations)
+    subsets, batch = operator.index(cfg.subsets), operator.index(cfg.views_per_batch)
+    if iterations < 0 or batch < 1 or not 1 <= subsets <= n:
+        raise ValueError(
+            "sirt: iterations >= 0, views_per_batch >= 1 and 1 <= subsets <= views required"
+        )
+    if not math.isfinite(cfg.relaxation) or not 0 < cfg.relaxation < 2:
+        raise ValueError("sirt: relaxation must be finite and in (0, 2)")
+    if cfg.acceleration and (subsets != 1 or cfg.relaxation > 1):
+        raise ValueError("sirt: acceleration requires subsets=1 and relaxation <= 1")
+    lower = -np.inf if cfg.lower_bound is None else float(cfg.lower_bound)
+    upper = np.inf if cfg.upper_bound is None else float(cfg.upper_bound)
+    if lower > upper:
+        raise ValueError("sirt: lower_bound must not exceed upper_bound")
+    return iterations, subsets, batch, lower, upper
 
 
 def sirt(
@@ -187,30 +214,18 @@ def sirt(
 ) -> tuple[jax.Array | np.ndarray, dict[str, object]]:
     """Reconstruct with SIRT/OS-SART; return the volume and full-sweep count.
 
-    Supports parallel, tilted and cone-beam scans on the existing matched
-    projectors. Inputs and updates are FP32. An iteration is a complete sweep,
-    not one subset update. No residual-based stopping or quality claim is made.
+    Supports parallel, tilted and cone-beam scans on matched FP32 projectors.
+    An iteration is a complete sweep, not one subset update.
     Large axial Joseph scans whose detector rows coincide with voxel planes
     run in independent slabs, returning a host array without changing the solve.
+    Large host projection stacks stream in batches, recomputing exact row weights
+    rather than keeping a second full projection stack on the device.
     """
     cfg = SIRTConfig() if config is None else config
-    iterations = operator.index(cfg.iterations)
-    subsets, batch = operator.index(cfg.subsets), operator.index(cfg.views_per_batch)
     validate_grid(grid, "sirt grid")
     n, _, _ = validate_projection_stack(projections, detector, geometry=geometry, context="sirt")
     validate_detector_grid(det_grid, detector, context="sirt")
-    if iterations < 0 or batch < 1 or not 1 <= subsets <= n:
-        raise ValueError(
-            "sirt: iterations >= 0, views_per_batch >= 1 and 1 <= subsets <= views required"
-        )
-    if not math.isfinite(cfg.relaxation) or not 0 < cfg.relaxation < 2:
-        raise ValueError("sirt: relaxation must be finite and in (0, 2)")
-    if cfg.acceleration and (subsets != 1 or cfg.relaxation > 1):
-        raise ValueError("sirt: acceleration requires subsets=1 and relaxation <= 1")
-    lower = -np.inf if cfg.lower_bound is None else float(cfg.lower_bound)
-    upper = np.inf if cfg.upper_bound is None else float(cfg.upper_bound)
-    if lower > upper:
-        raise ValueError("sirt: lower_bound must not exceed upper_bound")
+    iterations, subsets, batch, lower, upper = _parameters(cfg, n)
     for name, value in (("init_x", init_x), ("support", cfg.support)):
         if value is not None:
             validate_volume(value, grid, context="sirt", name=name)
@@ -257,21 +272,33 @@ def sirt(
 
     free = device_free_memory_bytes()
     column_budget = 256 * 1024**2 if free is None else free // 4
+    cache_columns = subsets * grid.nx * grid.ny * (1 if axial else grid.nz) * 4 <= column_budget
     poses = stack_view_poses(geometry, n)
-    volume = _solve(
-        poses, jnp.asarray(projections, jnp.float32),
-        None if init_x is None else jnp.asarray(init_x, jnp.float32),
-        None if cfg.support is None else jnp.asarray(cfg.support),
-        det_grid, jnp.int32(iterations), jnp.float32(cfg.relaxation),
-        jnp.float32(lower), jnp.float32(upper), grid=grid, detector=detector,
-        backend=backend, batch=batch, model=model, subsets=subsets,
-        cache_columns=subsets * grid.nx * grid.ny * (1 if axial else grid.nz) * 4 <= column_budget,
-        axial=axial, acceleration=cfg.acceleration,
-    )  # fmt: skip
+    # Resident execution keeps both measured data and inverse row weights.
+    stream = should_stream(projections, fraction=0.2)
+    source = (
+        host_source(np.asarray(projections))
+        if stream
+        else nullcontext(jnp.asarray(projections, jnp.float32))
+    )
+    with source as data:
+        volume = _solve(
+            poses, data,
+            None if init_x is None else jnp.asarray(init_x, jnp.float32),
+            None if cfg.support is None else jnp.asarray(cfg.support),
+            det_grid, jnp.int32(iterations), jnp.float32(cfg.relaxation),
+            jnp.float32(lower), jnp.float32(upper), grid=grid, detector=detector,
+            backend=backend, batch=batch, model=model, subsets=subsets,
+            cache_columns=cache_columns,
+            axial=axial, acceleration=cfg.acceleration, stream=stream,
+        )  # fmt: skip
+        if stream:
+            volume.block_until_ready()  # callbacks must finish before unregistering the source
     return volume, {
         "effective_iterations": iterations,
         "subset_updates": iterations * subsets,
         "termination": "iteration_limit",
+        "stream_projections": stream,
         "projector_backend": backend,
         "projector_model": model,
     }

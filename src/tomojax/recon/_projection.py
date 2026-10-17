@@ -397,15 +397,19 @@ def subset_operators(
     batch_size: int,
     model: str | ConeModel,
     subsets: int,
+    *,
+    stream: bool = False,
 ):
     """A factory for interleaved subsets of a matched, nonnegative operator.
 
     ``select(index)`` returns ``(forward, adjoint, residual_adjoint)``. Each subset has
     ``ceil(views / subsets)`` entries; trailing repeated indices have zero
-    operator weights. ``residual_adjoint(x, full_data, row_weights)`` evaluates
+    operator weights. ``residual_adjoint(x, full_data, row_weights, row_support=mask)`` evaluates
     ``A.T @ (row_weights * (full_data[indices] - A*x))`` one batch at a time,
     without storing a predicted sinogram. Cone source arrangements and detector
     centres stay attached to their original views.
+    With ``stream``, data names a registered host source. Passing ``weights=None``
+    recomputes inverse row sums from ``row_support`` per batch instead of storing them.
     """
     size = (int(poses.shape[0]) + subsets - 1) // subsets
     chunks = (size + batch_size - 1) // batch_size
@@ -428,14 +432,25 @@ def subset_operators(
         def adjoint(images):
             return _adjoint_views(selected, (images,), None, selected.zeros_volume())
 
-        def residual_adjoint(volume, data, weights):
+        def residual_adjoint(volume, data, weights, *, row_support: jax.Array):
             def body(chunk, output):
                 start, batch, counts = selected.select(chunk)
                 view_ids = jax.lax.dynamic_slice_in_dim(indices, start, selected.size)
-                residual = data[view_ids] - selected.project(volume, start, batch)
-                residual = residual * jax.lax.dynamic_slice(
-                    weights, (start, 0, 0), (selected.size, weights.shape[1], detector.nu)
+                measured = (
+                    read_views(
+                        data, start, (selected.size, detector.nv, detector.nu), indices=view_ids
+                    )
+                    if stream
+                    else data[view_ids]
                 )
+                residual = measured - selected.project(volume, start, batch)
+                if weights is None:
+                    row = selected.project(row_support, start, batch)
+                    residual = jnp.where(row > 0, residual / jnp.where(row > 0, row, 1.0), 0.0)
+                else:
+                    residual = residual * jax.lax.dynamic_slice(
+                        weights, (start, 0, 0), (selected.size, weights.shape[1], detector.nu)
+                    )
                 return selected.backproject(
                     jnp.where(counts[:, None, None], residual, 0.0), start, batch, output
                 )

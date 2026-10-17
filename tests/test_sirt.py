@@ -1,6 +1,7 @@
 """Normalized algebraic updates against a dense matched matrix."""
 
 from dataclasses import replace
+import importlib
 
 import jax
 import jax.numpy as jnp
@@ -13,12 +14,18 @@ from tomojax.recon import SIRTConfig, sirt
 
 
 @pytest.mark.numerical
+@pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize(
     ("subsets", "acceleration", "batch"),
     [(1, False, 2), (2, False, 2), (5, False, 2), (1, True, 2), (1, False, 4)],
 )
 @pytest.mark.parametrize("kind", ["parallel", "axial", "cone", "segments"])
-def test_sirt_dense_updates_with_bounds_support_and_tail(subsets, acceleration, batch, kind):
+def test_sirt_dense_updates_with_bounds_support_and_tail(
+    monkeypatch, subsets, acceleration, batch, kind, stream
+):
+    monkeypatch.setattr(
+        importlib.import_module(sirt.__module__), "should_stream", lambda *a, **k: stream
+    )
     grid = tj.Grid(3, 3, 2, 0.8, 1.2, 1.3)
     detector = tj.Detector(5, 4, 0.9, 1.1, (0.1, -0.2))
     if kind == "axial":
@@ -88,6 +95,7 @@ def test_sirt_dense_updates_with_bounds_support_and_tail(subsets, acceleration, 
     )
     np.testing.assert_allclose(np.asarray(volume).ravel(), expected, atol=3e-6, rtol=3e-5)
     assert info["subset_updates"] == 4 * subsets
+    assert info["stream_projections"] is stream
 
 
 @pytest.mark.numerical
