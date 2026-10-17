@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Axial geometry loaded with a recorded zero tilt or vertical axis keeps the
+parallel-beam model. Centre-only alignment no longer turns axial data into
+laminography and selects an unsuitable automatic reconstruction.
+
 `tomojax preprocess --config` accepts `binning`, matching
 `Frames.corrected(binning=...)` without materialising unbinned projections.
 
