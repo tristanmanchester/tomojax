@@ -37,12 +37,21 @@ _SENSITIVITY_CACHE_BYTES = 256 * 2**20
 
 
 def _cache_sensitivities(
-    nbytes: int, subsets: int, iterations: int, *, workspace_bytes: int
+    nbytes: int,
+    subsets: int,
+    iterations: int,
+    *,
+    workspace_bytes: int,
+    initial: jax.Array | None = None,
 ) -> bool:
     if subsets == 1 or nbytes <= _SENSITIVITY_CACHE_BYTES:
         return True
     if iterations <= 1:
         return False  # A single sweep cannot reuse the extra cached volumes.
+    # An asynchronous initializer can still retain its inputs and temporaries.
+    # Finish it before measuring reusable memory for a large sensitivity cache.
+    if initial is not None:
+        initial.block_until_ready()
     free = device_free_memory_bytes()
     # A cache is only part of the compiled solve's live memory. Leave room
     # for its working volumes/projections, and never use most of the free pool.
@@ -218,7 +227,7 @@ def mlem(
         if not stream:
             workspace += count * image_bytes
         cache = _cache_sensitivities(
-            subsets * volume_bytes, subsets, iterations, workspace_bytes=workspace
+            subsets * volume_bytes, subsets, iterations, workspace_bytes=workspace, initial=initial
         )
         volume, good = _solve(
             stack_view_poses(geometry, n), data, initial, support,
