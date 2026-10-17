@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from functools import partial
 from typing import Literal, cast
 
 type RobustLossKind = Literal[
@@ -268,26 +269,12 @@ def _gradient_builder(kind: GradientLossKind) -> LossBuilder:
     return _build
 
 
-def _build_mi(raw: Mapping[str, float]) -> AlignmentLossSpec:
+def _build_information(
+    raw: Mapping[str, float], *, normalized: bool = False, renyi: bool = False
+) -> AlignmentLossSpec:
     return InformationLossSpec(
-        bins=int(raw.get("bins", 32)),
-        bw_x=raw.get("bw_x"),
-        bw_y=raw.get("bw_y"),
-    )
-
-
-def _build_nmi(raw: Mapping[str, float]) -> AlignmentLossSpec:
-    return InformationLossSpec(
-        normalized=True,
-        bins=int(raw.get("bins", 32)),
-        bw_x=raw.get("bw_x"),
-        bw_y=raw.get("bw_y"),
-    )
-
-
-def _build_renyi_mi(raw: Mapping[str, float]) -> AlignmentLossSpec:
-    return InformationLossSpec(
-        renyi_alpha=float(raw.get("alpha", 1.5)),
+        normalized=normalized,
+        renyi_alpha=float(raw.get("alpha", 1.5)) if renyi else None,
         bins=int(raw.get("bins", 32)),
         bw_x=raw.get("bw_x"),
         bw_y=raw.get("bw_y"),
@@ -368,10 +355,12 @@ _LOSS_KIND_REGISTRY: dict[str, LossKindEntry] = {
         _gradient_builder("chamfer_edge"),
         frozenset({"eps"}),
     ),
-    "mi": LossKindEntry(_build_mi, frozenset({"bins", "bw_x", "bw_y", "alpha"})),
-    "nmi": LossKindEntry(_build_nmi, frozenset({"bins", "bw_x", "bw_y", "alpha"})),
+    "mi": LossKindEntry(_build_information, frozenset({"bins", "bw_x", "bw_y", "alpha"})),
+    "nmi": LossKindEntry(
+        partial(_build_information, normalized=True), frozenset({"bins", "bw_x", "bw_y", "alpha"})
+    ),
     "renyi_mi": LossKindEntry(
-        _build_renyi_mi,
+        partial(_build_information, renyi=True),
         frozenset({"bins", "bw_x", "bw_y", "alpha"}),
     ),
     "swd": LossKindEntry(_build_swd, frozenset({"n_samples", "p"})),

@@ -326,3 +326,11 @@ def test_stage_runtime_checkpoint_preserves_schedule_resume_fields() -> None:
     assert checkpoint.global_outer_iterations_completed == 9
     assert checkpoint.loss == [5.0, 4.5, 4.0, 3.5]
     assert checkpoint.geometry_calibration_state is not None
+
+
+def test_information_losses_share_fields_but_keep_their_variant():
+    params = {"bins": 16.0, "bw_x": 0.2, "bw_y": 0.3}
+    for kind, extra in (("mi", {}), ("nmi", {"nmi": 1.0}), ("renyi_mi", {"alpha": 1.5})):
+        spec = parse_loss_spec(kind, params)
+        assert loss_spec_name(spec) == kind
+        assert loss_spec_params(spec) == params | extra
