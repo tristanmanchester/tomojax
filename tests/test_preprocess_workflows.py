@@ -44,16 +44,19 @@ def _set_detector(
                 detector.create_dataset(name, data=np.float32(value))
 
 
-def test_a_raw_nxtomo_file_becomes_a_scan_that_records_its_corrections(tmp_path: Path) -> None:
+@pytest.mark.parametrize("binning", [1, 2])
+def test_a_raw_nxtomo_file_becomes_a_scan_that_records_its_corrections(tmp_path, binning):
     write_raw_nxtomo(tmp_path / "raw.nxs")  # sample 5, flat 11, sample 9, dark 1
-    assert _preprocess(tmp_path / "raw.nxs", "-o", tmp_path / "scan.nxs") == 0
+    config = tmp_path / "small.toml"
+    config.write_text(f"binning = {binning}\n")
+    assert _preprocess(tmp_path / "raw.nxs", "-o", tmp_path / "scan.nxs", "--config", config) == 0
     scan = tj.load(tmp_path / "scan.nxs")
     np.testing.assert_allclose(
         np.asarray(scan.projections)[:, 0, 0], -np.log([0.4, 0.8]), rtol=1e-6
     )
     np.testing.assert_allclose(scan.angles, [0.0, 90.0])
     assert [c.name for c in scan.corrections] == ["flat_dark", "log"]
-    assert scan.detector.nu == 2 and scan.detector.nv == 2
+    assert scan.detector.nu == 2 // binning and scan.detector.nv == 2 // binning
 
 
 def test_tiff_frames_with_flats_darks_and_angles(tmp_path: Path) -> None:

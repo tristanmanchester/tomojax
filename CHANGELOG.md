@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+`tomojax preprocess --config` accepts `binning`, matching
+`Frames.corrected(binning=...)` without materialising unbinned projections.
+
 Generic CUDA cone backprojection keeps inverse corner bounds conservative at
 FP32 pixel boundaries, retaining positive forward weights in its transpose.
 

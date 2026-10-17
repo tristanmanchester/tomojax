@@ -77,7 +77,17 @@ corrected.
 `corrected(..., binning=2)` averages 2 x 2 detector blocks of the line integrals,
 as `scan.binned(2)` does. With only `Stripes` and the like after the log, it
 bins slabs of rows read straight from an uncompressed file, so the unbinned
-stack never reaches host memory.
+stack never reaches host memory. The CLI accepts the same factor as an expert
+config key:
+
+```bash
+printf 'binning = 4\n' > preview.toml
+uv run --no-sync tomojax preprocess raw.nxs -o binned.nxs --config preview.toml
+```
+
+Binning reduces detector sampling, not the reconstruction grid. In Python,
+pass a coarser `grid=` to `tj.reconstruct` when you also want larger voxels;
+`--grid` on the CLI only changes the voxel counts, retaining their spacing.
 
 For calibrated lens distortion, pass
 `RadialDistortion(center=(column, row), coefficients=(c0, c1, ...))` from
