@@ -1,12 +1,17 @@
 """Small raw acquisitions, with geometry and calibrations owned by their files."""
 
+import json
 from pathlib import Path
 
 import h5py
+import imageio.v3 as iio
 import numpy as np
 import pytest
 
 import tomojax as tj
+from tomojax.cli.main import main
+from tomojax.io import validate_dataset
+from tomojax.recon.quicklook import scale_to_uint8
 
 
 def _edf(path: Path, values: np.ndarray) -> None:
@@ -24,7 +29,21 @@ def _edf(path: Path, values: np.ndarray) -> None:
     path.write_bytes(header + b" " * (510 - len(header)) + b"}\n" + data.tobytes())
 
 
-def test_edf_acquisition_metadata_calibration_and_lazy_windows(tmp_path):
+def _check_inspection(path, frames, previews, capsys):
+    assert main(["inspect", str(path), "--json", "--preview", str(previews)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    counts = np.asarray(frames.counts)
+    assert report["valid"] and report["projection"]["shape"] == list(counts.shape)
+    assert report["projection"]["stats"]["mean"] == pytest.approx(float(counts.mean()))
+    assert report["detector_metadata"]["du"] == frames.source.detector.du
+    assert report["flats_darks"]["flat_count"] == len(frames.flats)
+    np.testing.assert_allclose(report["angles"]["coverage_deg"], np.ptp(frames.source.angles))
+    np.testing.assert_array_equal(
+        iio.imread(previews / "projection.png"), scale_to_uint8(counts[len(counts) // 2])
+    )
+
+
+def test_edf_acquisition_metadata_calibration_and_lazy_windows(tmp_path, capsys):
     shape = (3, 5)
     dark = np.full(shape, 20.25, np.float32)
     for i in range(4):
@@ -55,6 +74,7 @@ def test_edf_acquisition_metadata_calibration_and_lazy_windows(tmp_path):
         frames.counts.frames_at(np.array([3, 1])).window(slice(1, 3), slice(2, 5))[:],
         np.asarray(frames.counts)[[3, 1], 1:3, 2:5],
     )
+    _check_inspection(metadata, frames, tmp_path / "previews", capsys)
     scan = tj.load(metadata)
     np.testing.assert_allclose(scan.projections, 0.2, atol=2e-7)
     np.testing.assert_allclose(scan.detector.du, 0.0125)
@@ -67,11 +87,12 @@ def test_edf_acquisition_metadata_calibration_and_lazy_windows(tmp_path):
     )
     np.testing.assert_array_equal(tj.load_frames(tmp_path).counts[:], frames.counts[:])
     metadata.write_text(metadata.read_text().replace("<Dim_1>5", "<Dim_1>50"))
+    assert "cropped or resized" in validate_dataset(tmp_path)["issues"][0]
     with pytest.raises(ValueError, match="cropped or resized"):
         tj.load_frames(tmp_path)
 
 
-def test_bliss_raw_sequence_units_keys_and_virtual_pixels(tmp_path):
+def test_bliss_raw_sequence_units_keys_and_virtual_pixels(tmp_path, capsys):
     path = tmp_path / "renamed.bin"
     with h5py.File(path, "w") as file:
         file.attrs["default"] = "1.1"
@@ -111,6 +132,7 @@ def test_bliss_raw_sequence_units_keys_and_virtual_pixels(tmp_path):
         frames.counts.frames_at(np.array([3, 0, 2])).window(slice(1, 3), slice(2, 4))[:],
         np.full((3, 2, 2), 60),
     )
+    _check_inspection(path, frames, tmp_path / "previews", capsys)
     scan = tj.load(path)
     np.testing.assert_allclose(scan.projections, np.log(2), atol=1e-7)
     np.testing.assert_allclose([scan.detector.du, scan.detector.dv], [0.01, 0.02])
@@ -120,5 +142,6 @@ def test_bliss_raw_sequence_units_keys_and_virtual_pixels(tmp_path):
     assert meta["source_sample_distance"] == 145000
     with h5py.File(tmp_path / "pixels.h5", "w") as file:
         file["data"] = np.empty((0,), np.float32)
+    assert "missing Bliss virtual detector pixels" in validate_dataset(path)["issues"][0]
     with pytest.raises(ValueError, match="missing Bliss virtual detector pixels"):
         tj.load_frames(path)

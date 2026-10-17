@@ -12,7 +12,7 @@ import h5py
 import numpy as np
 
 from tomojax._typed_arrays import numpy_float32_array, write_image
-from tomojax.io.api import locate_frames
+from tomojax.io.api import locate_frames, read_acquisition
 from tomojax.recon.quicklook import scale_to_uint8
 
 _VOLUME_PATH = "/entry/processing/tomojax/volume"
@@ -24,6 +24,8 @@ def preview_paths(path: str | Path, out_dir: str | Path) -> dict[str, Path]:
     """The previews :func:`write_previews` makes for ``path``, by name."""
     out = Path(out_dir)
     paths = {"projection": out / "projection.png"}
+    if not h5py.is_hdf5(path):
+        return paths
     with h5py.File(path, "r") as file:
         if isinstance(file.get(_VOLUME_PATH), h5py.Dataset):
             paths.update({f"slice_{axis}": out / f"slice_{axis}.png" for axis in _DISPLAY_AXES})
@@ -33,6 +35,19 @@ def preview_paths(path: str | Path, out_dir: str | Path) -> dict[str, Path]:
 def write_previews(path: str | Path, out_dir: str | Path) -> dict[str, Path]:
     """Write percentile-scaled PNG previews of ``path`` into ``out_dir``."""
     paths = preview_paths(path, out_dir)
+    raw = read_acquisition(path)
+    images = (
+        _hdf5_images(path)
+        if raw is None
+        else {"projection": numpy_float32_array(raw.counts[raw.counts.shape[0] // 2])}
+    )
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    for name, image in images.items():
+        write_image(paths[name], scale_to_uint8(image))
+    return paths
+
+
+def _hdf5_images(path: str | Path) -> dict[str, np.ndarray]:
     images: dict[str, np.ndarray] = {}
     located = locate_frames(str(path))
     samples = (
@@ -49,10 +64,7 @@ def write_previews(path: str | Path, out_dir: str | Path) -> dict[str, Path]:
         if isinstance(volume, h5py.Dataset):
             axes = str(file["/entry/processing/tomojax"].attrs.get("volume_axes_order", "zyx"))
             images.update({f"slice_{axis}": _central_slice(volume, axes, axis) for axis in "zyx"})
-    Path(out_dir).mkdir(parents=True, exist_ok=True)
-    for name, image in images.items():
-        write_image(paths[name], scale_to_uint8(image))
-    return paths
+    return images
 
 
 def _central_slice(volume: h5py.Dataset, axes: str, axis: str) -> np.ndarray:

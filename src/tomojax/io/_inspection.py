@@ -1,4 +1,4 @@
-"""Lightweight HDF5/NXtomo inspection helpers owned by the IO boundary."""
+"""Bounded-memory dataset and acquisition inspection helpers owned by the IO boundary."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from collections.abc import Iterator
 import json
 import math
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 import h5py
 import numpy as np
@@ -29,6 +29,7 @@ from tomojax._typed_arrays import (
     true_count,
     unique_int_count_map,
 )
+from tomojax.io._acquisition import RawAcquisition, read_acquisition
 from tomojax.io._inspection_types import (
     AlignmentReport,
     AnglesReport,
@@ -51,6 +52,21 @@ _ALIGN_PATH = "/entry/processing/tomojax/align"  # where the NXtomo writer puts 
 _VOLUME_PATH = "/entry/processing/tomojax/volume"
 _DEFAULT_MAX_EXACT_STATS_ELEMENTS = 5_000_000
 _MAX_PERCENTILE_SAMPLE_ELEMENTS = 1_000_000
+
+
+class _ProjectionStack(Protocol):
+    """The bounded indexing contract shared by HDF5 and vendor frame stacks."""
+
+    @property
+    def shape(self) -> tuple[int, ...]: ...
+
+    @property
+    def ndim(self) -> int: ...
+
+    @property
+    def dtype(self) -> np.dtype[Any]: ...
+
+    def __getitem__(self, key: int | slice, /) -> object: ...
 
 
 def _attr_to_str(value: object, default: str | None = None) -> str | None:
@@ -100,7 +116,7 @@ def _dataset_at(file: h5py.File, path: str) -> h5py.Dataset | None:
     return obj if isinstance(obj, h5py.Dataset) else None
 
 
-def _iter_view_blocks(dataset: h5py.Dataset) -> Iterator[NDArray[np.float64]]:
+def _iter_view_blocks(dataset: _ProjectionStack) -> Iterator[NDArray[np.float64]]:
     n_views = int(dataset.shape[0])
     block = 1
     if dataset.ndim == 3:
@@ -111,30 +127,31 @@ def _iter_view_blocks(dataset: h5py.Dataset) -> Iterator[NDArray[np.float64]]:
         yield numpy_float64_array(dataset[start:stop])
 
 
-def _sample_projection_values(dataset: h5py.Dataset) -> NDArray[np.float64]:
-    total = int(dataset.size or 0)
+def _sample_projection_values(dataset: _ProjectionStack) -> NDArray[np.float64]:
+    total = math.prod(dataset.shape)
     if total <= _MAX_PERCENTILE_SAMPLE_ELEMENTS:
-        return numpy_float64_array(dataset[...]).ravel()
+        return numpy_float64_array(dataset[:]).ravel()
 
     n_views = int(dataset.shape[0])
     plane_elements = max(1, total // max(1, n_views))
     n_sample_views = max(1, min(n_views, _MAX_PERCENTILE_SAMPLE_ELEMENTS // plane_elements))
     view_indices = linspace_indices(0, n_views - 1, num=n_sample_views)
     samples: list[NDArray[np.float64]] = [
-        numpy_float64_array(dataset[index]).ravel() for index in view_indices
+        numpy_float64_array(dataset[int(index)]).ravel() for index in view_indices
     ]
     if not samples:
         return np.asarray([], dtype=np.float64)
     return cast("NDArray[np.float64]", np.concatenate(samples))
 
 
-def projection_stats(dataset: h5py.Dataset) -> tuple[ProjectionStatsReport, NonfiniteReport]:
-    """Return finite-value projection statistics and nonfinite counts for an HDF5 dataset.
+def projection_stats(dataset: _ProjectionStack) -> tuple[ProjectionStatsReport, NonfiniteReport]:
+    """Return finite-value projection statistics and nonfinite counts for a frame stack.
 
     Parameters
     ----------
-    dataset : h5py.Dataset
-        Projection stack to summarize in bounded view blocks.
+    dataset : array-like
+        HDF5 dataset, NumPy array or lazily indexed projection stack, summarized
+        in bounded view blocks.
 
     Returns
     -------
@@ -201,7 +218,7 @@ def projection_stats(dataset: h5py.Dataset) -> tuple[ProjectionStatsReport, Nonf
     return stats, nonfinite
 
 
-def _projection_report(path: str | None, dataset: h5py.Dataset | None) -> ProjectionReport:
+def _projection_report(path: str | None, dataset: _ProjectionStack | None) -> ProjectionReport:
     if dataset is None:
         return {
             "found": False,
@@ -238,7 +255,7 @@ def _projection_report(path: str | None, dataset: h5py.Dataset | None) -> Projec
         "dtype": str(dataset.dtype),
         "n_views": n_views,
         "detector_shape": {"nv": nv, "nu": nu},
-        "storage_bytes": int(int(dataset.size or 0) * dataset.dtype.itemsize),
+        "storage_bytes": math.prod(dataset.shape) * dataset.dtype.itemsize,
         "stats": stats,
         "nonfinite": nonfinite,
     }
@@ -298,9 +315,9 @@ def _geometry_report(file: h5py.File) -> GeometryReport:
     }
 
 
-def _volume_report(file: h5py.File) -> VolumeReport:
-    volume = file.get(_VOLUME_PATH)
-    if not isinstance(volume, h5py.Dataset):
+def _volume_report(file: h5py.File | None) -> VolumeReport:
+    volume = None if file is None else file.get(_VOLUME_PATH)
+    if file is None or not isinstance(volume, h5py.Dataset):
         return {"found": False, "shape": None, "axes": None, "method": None}
     group = file["/entry/processing/tomojax"]
     geom = file.get("/entry/geometry")
@@ -381,8 +398,8 @@ def _corrections_report(file: h5py.File) -> list[str]:
     ]
 
 
-def _alignment_report(file: h5py.File) -> AlignmentReport:
-    align = file.get(_ALIGN_PATH)
+def _alignment_report(file: h5py.File | None) -> AlignmentReport:
+    align = None if file is None else file.get(_ALIGN_PATH)
     if not isinstance(align, h5py.Group):
         return {
             "found": False,
@@ -438,7 +455,9 @@ def _grid_shape_from_metadata(file: h5py.File, projection: ProjectionReport) -> 
     return None
 
 
-def _memory_estimates(file: h5py.File, projection: ProjectionReport) -> MemoryEstimatesReport:
+def _memory_estimates(
+    grid_shape: list[int] | None, projection: ProjectionReport
+) -> MemoryEstimatesReport:
     if not projection.get("found"):
         return {
             "feasible": False,
@@ -448,7 +467,6 @@ def _memory_estimates(file: h5py.File, projection: ProjectionReport) -> MemoryEs
             "notes": "Projection data not found; memory estimates are unavailable.",
         }
 
-    grid_shape = _grid_shape_from_metadata(file, projection)
     projection_bytes = int(projection["storage_bytes"] or 0)
     if grid_shape is None:
         return {
@@ -498,10 +516,68 @@ def inspect_nxtomo(path: PathLike) -> InspectionReport:
             "flats_darks": _flats_darks_report(located),
             "corrections": _corrections_report(file),
             "alignment": _alignment_report(file),
-            "memory_estimates": _memory_estimates(file, projection),
+            "memory_estimates": _memory_estimates(
+                _grid_shape_from_metadata(file, projection), projection
+            ),
             "volume": _volume_report(file),
         }
     return report
+
+
+def _acquisition_report(path: PathLike, raw: RawAcquisition) -> InspectionReport:
+    record = raw.record
+    counts = cast("_ProjectionStack", raw.counts)
+    projection = _projection_report(str(path), counts)
+    n, nv, nu = counts.shape
+    angles = record.angles
+    detector = record.detector
+    flat_count = len(raw.flats) if raw.flats is not None else int(raw.white_level is not None)
+    dark_count = 0 if raw.darks is None else len(raw.darks)
+    grid_shape = (
+        [nu, nu, nv] if record.grid is None else [record.grid.nx, record.grid.ny, record.grid.nz]
+    )
+    return {
+        "schema_version": 1,
+        "input_path": str(path),
+        "projection": projection,
+        "angles": {
+            "found": True,
+            "path": None,
+            "count": len(angles),
+            "units": "deg",
+            "min_deg": float(angles.min()),
+            "max_deg": float(angles.max()),
+            "coverage_deg": float(np.ptp(angles)),
+        },
+        "geometry": {
+            "found": True,
+            "type": record.geometry_type,
+            "meta_found": bool(record.geometry_metadata),
+            "meta_keys": sorted(record.geometry_metadata),
+        },
+        "detector_metadata": {
+            "found": detector is not None,
+            "nu": None if detector is None else detector.nu,
+            "nv": None if detector is None else detector.nv,
+            "du": None if detector is None else detector.du,
+            "dv": None if detector is None else detector.dv,
+            "center": None if detector is None else list(detector.center),
+        },
+        "flats_darks": {
+            "image_key_found": False,
+            "image_key_path": None,
+            "image_key_counts": {},
+            "sample_count": n,
+            "flats_present": flat_count > 0,
+            "darks_present": dark_count > 0,
+            "flat_count": flat_count,
+            "dark_count": dark_count,
+        },
+        "corrections": [],
+        "alignment": _alignment_report(None),
+        "volume": _volume_report(None),
+        "memory_estimates": _memory_estimates(grid_shape, projection),
+    }
 
 
 def inspect_dataset(path: PathLike) -> InspectionReport:
@@ -510,7 +586,7 @@ def inspect_dataset(path: PathLike) -> InspectionReport:
     Parameters
     ----------
     path : str or pathlib.Path
-        HDF5/NXtomo input dataset.
+        HDF5/NXtomo dataset or recognized vendor acquisition file or folder.
 
     Returns
     -------
@@ -526,7 +602,8 @@ def inspect_dataset(path: PathLike) -> InspectionReport:
     OSError
         If the input cannot be opened.
     """
-    return inspect_nxtomo(Path(path))
+    raw = read_acquisition(path)
+    return inspect_nxtomo(Path(path)) if raw is None else _acquisition_report(path, raw)
 
 
 __all__ = [
