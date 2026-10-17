@@ -15,6 +15,14 @@ into fixed FISTA acceleration with `SIRTConfig(acceleration=True)`.
 measurements, with angular subsets, a reconstruction support mask, and optional
 nonnegative FBP/FDK warm starts.
 
+Axial Joseph projection and its exact transpose use separable CUDA kernels with
+bounded workspace, including smaller axial volumes; general and tilted geometries
+retain their existing kernels.
+Conservative axial footprints preserve nonzero interpolation weights at rounded boundaries.
+
+`tomojax.torch.Projector` provides optional CUDA PyTorch autograd operations
+for projection and its exact transpose, exchanging tensors with JAX through DLPack.
+
 It just works (end of the sixth lab run): `tj.reconstruct(scan)` now defaults
 to `method="auto"` and `tj.align(scan)` to `mode="auto"`, choosing the method,
 workflow and Fourier backend from the scan and saying in the result when a

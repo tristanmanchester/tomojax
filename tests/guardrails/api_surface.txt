@@ -836,3 +836,8 @@ def tomojax.datasets.sphere(
         size: 'float' = 0.5,
         value: 'float' = 1.0,
     ) -> 'np.ndarray'
+
+# tomojax.torch
+class tomojax.torch.Projector(geometry: ScanGeometry, *, grid: Grid | None=None)
+    .adjoint(self, projections: torch.Tensor) -> torch.Tensor
+    .forward(self, volume: torch.Tensor) -> torch.Tensor

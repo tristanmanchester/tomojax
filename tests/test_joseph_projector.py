@@ -13,7 +13,7 @@ from tomojax.core.joseph import adjoint_jax, forward_jax, plane_coefficients
 
 # check-public-imports: allow-private
 from tomojax.core.pallas._pallas_joseph import adjoint_pallas, forward_pallas
-from tomojax.geometry import Detector, Grid, grid_volume_origin
+from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
 from tomojax.recon import CGLSConfig, cgls
 
 
@@ -393,6 +393,9 @@ def test_cuda_gather_auto_size_threshold(monkeypatch):
     monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "auto")
     assert not cuda.use_cuda_gather(Grid(128, 128, 127, 1, 1, 1))
     assert cuda.use_cuda_gather(Grid(128, 128, 128, 1, 1, 1))
+    assert not cuda.use_cuda_gather(Grid(256, 256, 7, 1, 1, 1), axial=True)
+    assert cuda.use_cuda_gather(Grid(256, 256, 8, 1, 1, 1), axial=True)
+    assert not cuda.use_cuda_gather(Grid(256, 256, 8, 1, 1, 1))
 
 
 @pytest.mark.gpu
@@ -479,3 +482,75 @@ def test_explicit_singleton_detector_keeps_physical_matrix_and_transpose(pixels,
     np.testing.assert_allclose(actual.ravel(), expected @ volume.ravel(), rtol=2e-5, atol=3e-6)
     back = adjoint_pallas(coeff, images, grid, detector)
     np.testing.assert_allclose(back.ravel(), expected.T @ images.ravel(), rtol=2e-5, atol=3e-6)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize(
+    ("nz", "fractional", "v_center", "tilt"),
+    [
+        (5, False, 0, 0),
+        (5, True, -0.23, 0),
+        (8, False, 0, 0),
+        (8, True, -0.23, 0),
+        (8, False, -5.2, 0),
+        (8, False, 5.2, 0),
+        (8, False, 0, 7),
+    ],
+)
+def test_axial_cuda_pair_matches_physical_matrix_near_axis(
+    nz, fractional, v_center, tilt, monkeypatch
+):
+    # check-public-imports: allow-private
+    from tomojax.core import _cuda_joseph as cuda
+
+    monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "auto")
+    monkeypatch.setattr(cuda, "_MIN_AXIAL_VOXELS", 1)
+    g = Grid(7, 6, nz, 0.8, 1.1, 1.3)
+    d = Detector(9, nz + 2 if fractional else nz, 0.7, 1.2 if fractional else 1.3, (0.17, v_center))
+    # Cross the native forward's view-batch boundary, including its final tail.
+    angles = np.r_[0, 1e-7, 43, 90, 179, np.linspace(2, 178, 12)]
+    poses = np.broadcast_to(np.eye(4, dtype=np.float32), (len(angles), 4, 4)).copy()
+    poses[:, :3, :3] = Rotation.from_euler("z", angles[:, None], degrees=True).as_matrix()
+    poses[:, :3, :3] = Rotation.from_euler("x", tilt, degrees=True).as_matrix() @ poses[:, :3, :3]
+    expected = matrix(poses, g, d)
+    coeff = plane_coefficients(jnp.asarray(poses), g, d)
+    rng = np.random.default_rng(72)
+    volume = jnp.asarray(rng.normal(size=(7, 6, nz)), jnp.float32)
+    data = jnp.asarray(rng.normal(size=(len(poses), d.nv, 9)), jnp.float32)
+    fp = jax.jit(lambda x: forward_pallas(coeff, x, g, d))
+    bp = jax.jit(lambda y: adjoint_pallas(coeff, y, g, d))
+    np.testing.assert_allclose(
+        adjoint_pallas(coeff, data, g, d, accumulate=jnp.ones_like(volume)),
+        bp(data) + 1,
+        atol=5e-6,
+        rtol=1e-5,
+    )
+    np.testing.assert_allclose(
+        np.asarray(fp(volume)).ravel(), expected @ np.asarray(volume).ravel(), atol=5e-6, rtol=1e-5
+    )
+    actual_bp, expected_bp = np.asarray(bp(data)).ravel(), expected.T @ np.asarray(data).ravel()
+    if tilt:
+        # The general FP32 path uses the physical-matrix norm bound above;
+        # cancellation across 17 views magnifies relative error near zero.
+        assert np.linalg.norm(actual_bp - expected_bp) / np.linalg.norm(expected_bp) < 8e-6
+    else:
+        np.testing.assert_allclose(actual_bp, expected_bp, atol=5e-6, rtol=1e-5)
+    np.testing.assert_allclose(
+        jnp.vdot(fp(volume), data), jnp.vdot(volume, bp(data)), atol=1e-5, rtol=1e-5
+    )
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize(("angle", "point"), [(8, (204, 230, 0)), (74.5, (255, 97, 0))])
+def test_axial_cuda_keeps_positive_footprint_edge(angle, point, monkeypatch):
+    monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
+    grid, detector = Grid(256, 256, 8, 1, 1, 1), Detector(256, 8, 1, 1)
+    pose = ParallelGeometry(grid, detector, [angle]).pose_for_view(0)
+    coeff = plane_coefficients(jnp.asarray([pose]), grid, detector)
+    ray = (0, 0, 188 if angle == 8 else 190)
+    x = jnp.zeros((256, 256, 8), jnp.float32).at[point].set(1)
+    y = jnp.zeros((1, 8, 256), jnp.float32).at[ray].set(1)
+    fp = jax.jit(lambda x: forward_pallas(coeff, x, grid, detector))(x)[ray]
+    bp = jax.jit(lambda y: adjoint_pallas(coeff, y, grid, detector))(y)[point]
+    assert fp > 1e-5
+    np.testing.assert_allclose(bp, fp, rtol=1e-6, atol=1e-9)

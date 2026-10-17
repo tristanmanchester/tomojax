@@ -13,6 +13,7 @@ import importlib.util
 import inspect
 import json
 from pathlib import Path
+import sys
 import tomllib
 from types import ModuleType
 
@@ -40,6 +41,13 @@ def test_public_api_matches_the_recorded_surface() -> None:
     current = guardrails.api_surface().splitlines()
     diff = list(difflib.unified_diff(recorded, current, "recorded", "current", lineterm=""))
     assert not diff, "the public API changed; if intended, " + UPDATE + ":\n" + "\n".join(diff[:80])
+
+
+def test_optional_torch_surface_needs_no_torch_installation(monkeypatch):
+    monkeypatch.setitem(sys.modules, "torch", None)
+    surface = _guardrails().api_surface()
+    assert "class tomojax.torch.Projector(" in surface
+    assert ".adjoint(self, projections: torch.Tensor) -> torch.Tensor" in surface
 
 
 def _compare(name: str, recorded: object, current: object, problems: list[str]) -> None:

@@ -130,25 +130,40 @@ def forward_pallas(
     count = detector.nu * detector.nv
     if block % _TILE_V:
         raise ValueError(f"forward block must be a multiple of {_TILE_V}")
-    out = pl.pallas_call(
-        partial(
-            _fp_kernel,
-            shape=(grid.nx, grid.ny, grid.nz),
-            det_shape=(detector.nv, detector.nu),
-            block=block,
-            interpolation=interpolation,
-        ),
-        out_shape=jax.ShapeDtypeStruct((views, count), jnp.float32),
-        grid=(
-            views,
-            -(-detector.nu // (block // _TILE_V)) * -(-detector.nv // _TILE_V),
-        ),
-        in_specs=[pl.no_block_spec, pl.no_block_spec],
-        out_specs=pl.no_block_spec,
-        compiler_params=plt.CompilerParams(num_warps=4),
-        interpret=interpret,
-    )(coeff, volume)
-    return out.reshape(views, detector.nv, detector.nu)
+
+    def pallas(_: None) -> jax.Array:
+        out = pl.pallas_call(
+            partial(
+                _fp_kernel,
+                shape=(grid.nx, grid.ny, grid.nz),
+                det_shape=(detector.nv, detector.nu),
+                block=block,
+                interpolation=interpolation,
+            ),
+            out_shape=jax.ShapeDtypeStruct((views, count), jnp.float32),
+            grid=(
+                views,
+                -(-detector.nu // (block // _TILE_V)) * -(-detector.nv // _TILE_V),
+            ),
+            in_specs=[pl.no_block_spec, pl.no_block_spec],
+            out_specs=pl.no_block_spec,
+            compiler_params=plt.CompilerParams(num_warps=4),
+            interpret=interpret,
+        )(coeff, volume)
+        return out.reshape(views, detector.nv, detector.nu)
+
+    if interpolation == "linear" and not interpret:
+        from tomojax.core._cuda_axial import axial_coefficients, forward_axial_cuda
+        from tomojax.core._cuda_joseph import use_cuda_gather
+
+        if use_cuda_gather(grid, axial=True):
+            return jax.lax.cond(
+                axial_coefficients(coeff),
+                lambda _: forward_axial_cuda(coeff, volume, grid=grid, detector=detector),
+                pallas,
+                operand=None,
+            )
+    return pallas(None)
 
 
 def _detector_footprint(
@@ -262,41 +277,57 @@ def adjoint_pallas(
     keeps one volume rather than an accumulator plus a per-batch volume.
     """
     validate_interpolation(interpolation)
+
+    def pallas(_: None) -> jax.Array:
+        count = grid.nx * grid.ny * grid.nz
+        operands = [coeff, _swap_detector_axes(images), _has_unit_rows(coeff)]
+        in_specs = [pl.no_block_spec, pl.no_block_spec, pl.no_block_spec]
+        if accumulate is not None:
+            operands.append(accumulate.astype(jnp.float32).reshape(count))
+            in_specs.append(pl.BlockSpec((block,), lambda tile: (tile,)))
+        out = pl.pallas_call(
+            partial(
+                _bp_dispatch_kernel,
+                shape=(grid.nx, grid.ny, grid.nz),
+                det_shape=(detector.nv, detector.nu),
+                nviews=coeff.shape[0],
+                block=block,
+                interpolation=interpolation,
+                absolute_weights=absolute_weights,
+            ),
+            out_shape=jax.ShapeDtypeStruct((count,), jnp.float32),
+            grid=((count + block - 1) // block,),
+            in_specs=in_specs,
+            out_specs=pl.BlockSpec((block,), lambda tile: (tile,)),
+            input_output_aliases={3: 0} if accumulate is not None else {},
+            # A single warp keeps the footprint maxima within a warp and avoids
+            # cross-warp synchronization on every view. Larger explicit tiles retain
+            # the original four-warp launch configuration.
+            compiler_params=plt.CompilerParams(num_warps=1 if block == 32 else 4),
+            interpret=interpret,
+        )(*operands)
+        return out.reshape((grid.nx, grid.ny, grid.nz))
+
     if interpolation == "linear" and not absolute_weights and not interpret and block == 32:
+        from tomojax.core._cuda_axial import axial_coefficients
         from tomojax.core._cuda_joseph import gather_transpose_cuda, use_cuda_gather
 
-        if use_cuda_gather(grid):
+        def native(_: None) -> jax.Array:
             return gather_transpose_cuda(
                 coeff, _swap_detector_axes(images), grid, detector, accumulate
             )
-    count = grid.nx * grid.ny * grid.nz
-    operands = [coeff, _swap_detector_axes(images), _has_unit_rows(coeff)]
-    in_specs = [pl.no_block_spec, pl.no_block_spec, pl.no_block_spec]
-    if accumulate is not None:
-        operands.append(accumulate.astype(jnp.float32).reshape(count))
-        in_specs.append(pl.BlockSpec((block,), lambda tile: (tile,)))
-    out = pl.pallas_call(
-        partial(
-            _bp_dispatch_kernel,
-            shape=(grid.nx, grid.ny, grid.nz),
-            det_shape=(detector.nv, detector.nu),
-            nviews=coeff.shape[0],
-            block=block,
-            interpolation=interpolation,
-            absolute_weights=absolute_weights,
-        ),
-        out_shape=jax.ShapeDtypeStruct((count,), jnp.float32),
-        grid=((count + block - 1) // block,),
-        in_specs=in_specs,
-        out_specs=pl.BlockSpec((block,), lambda tile: (tile,)),
-        input_output_aliases={3: 0} if accumulate is not None else {},
-        # A single warp keeps the footprint maxima within a warp and avoids
-        # cross-warp synchronization on every view. Larger explicit tiles retain
-        # the original four-warp launch configuration.
-        compiler_params=plt.CompilerParams(num_warps=1 if block == 32 else 4),
-        interpret=interpret,
-    )(*operands)
-    return out.reshape((grid.nx, grid.ny, grid.nz))
+
+        if use_cuda_gather(grid):
+            return native(None)
+        # Below the generic crossover, only the separable pair is worthwhile.
+        # Match its 128 MiB scratch cap so an oversized batch cannot silently
+        # select the generic CUDA gather on a small grid.
+        if (
+            use_cuda_gather(grid, axial=True)
+            and coeff.shape[0] * detector.nu * grid.nz <= 32 * 1024**2
+        ):
+            return jax.lax.cond(axial_coefficients(coeff), native, pallas, operand=None)
+    return pallas(None)
 
 
 def _swap_kernel(images_ref: Any, out_ref: Any, *, det_shape: tuple[int, int]) -> None:
