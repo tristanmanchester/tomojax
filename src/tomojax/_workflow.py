@@ -285,6 +285,7 @@ def reconstruct(
 def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstruction:
     """Select an inverse without changing an explicit scan's acquisition geometry."""
     from tomojax.geometry import (
+        ConeSegments,
         LaminographyGeometry,
         ParallelGeometry,
         RotationAxisGeometry,
@@ -310,7 +311,13 @@ def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstructio
         return reconstruct_laminography(scan, align=align, reconstruct=reconstruct)
     reasons = []
     method: Method = "fbp"
-    if type(scan.geometry) is ParallelGeometry:
+    if isinstance(base, ConeSegments):
+        method = "cgls"
+        reasons.append(
+            "Segmented cone geometry uses matched CGLS because FDK requires one arrangement; "
+            "iteration count and image quality are not automatically validated."
+        )
+    elif type(scan.geometry) is ParallelGeometry:
         angles = np.unique(np.mod(np.asarray(scan.angles, np.float64), 180.0))
         gaps = np.diff(np.r_[angles, angles[0] + 180])
         if len(angles) >= 16 and np.max(gaps) <= max(22.5, 2 * float(np.median(gaps))):
