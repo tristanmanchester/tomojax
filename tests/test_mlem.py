@@ -125,8 +125,17 @@ def test_uncached_sensitivities_preserve_visibility_and_updates(monkeypatch):
         expected = tj.reconstruct(tj.Scan(data, geometry), "mlem", config=config).volume
         with monkeypatch.context() as patch:
             patch.setattr(module, "_SENSITIVITY_CACHE_BYTES", 0)
-            module._solve.clear_cache()
+            patch.setattr(module, "device_free_memory_bytes", lambda: 0)
             actual = tj.reconstruct(tj.Scan(data, geometry), "mlem", config=config).volume
-        module._solve.clear_cache()
         np.testing.assert_array_equal(np.asarray(actual)[:, :, [0, 2]], 0)
         np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=2e-6)
+
+
+def test_large_sensitivity_cache_is_bounded_and_requires_reuse(monkeypatch):
+    module = import_module("tomojax.recon.mlem")
+    for free, fits in ((None, False), (2 * 2**30, False), (4 * 2**30, True)):
+        monkeypatch.setattr(module, "device_free_memory_bytes", lambda free=free: free)
+        assert module._cache_sensitivities(300 * 2**20, 4, 4) == fits
+        assert not module._cache_sensitivities(300 * 2**20, 4, 1)
+    monkeypatch.setattr(module, "device_free_memory_bytes", lambda: 16 * 2**30)
+    assert not module._cache_sensitivities(1025 * 2**20, 4, 4)

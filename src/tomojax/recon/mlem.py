@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.backends import device_free_memory_bytes
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import (
     validate_detector_grid,
@@ -32,6 +33,15 @@ if TYPE_CHECKING:
 _SENSITIVITY_CACHE_BYTES = 256 * 2**20
 
 
+def _cache_sensitivities(nbytes: int, subsets: int, iterations: int) -> bool:
+    if subsets == 1 or nbytes <= _SENSITIVITY_CACHE_BYTES:
+        return True
+    if iterations <= 1:
+        return False  # A single sweep cannot reuse the extra cached volumes.
+    free = device_free_memory_bytes()
+    return free is not None and nbytes <= min(free // 8, 1024 * 2**20)
+
+
 @dataclass(frozen=True, kw_only=True)
 class MLEMConfig:
     """Reconstruct nonnegative linear Poisson measurements, ``y ~ Poisson(A x)``.
@@ -51,8 +61,9 @@ class MLEMConfig:
     attenuation data is possible, but does not give it Poisson statistics.
     The projectors are the same matched pair as :class:`CGLSConfig`, with
     nonnegative interpolation weights. A single sensitivity is retained; multiple
-    subset sensitivities are cached only when they fit in 256 MiB, otherwise
-    recomputed to bound memory use.
+    subset sensitivities are cached within 256 MiB, or up to one eighth of
+    available memory (at most 1 GiB) when reused across multiple sweeps;
+    otherwise they are recomputed to bound memory use.
     """
 
     iterations: int = 50
@@ -63,7 +74,7 @@ class MLEMConfig:
     projector_model: ProjectorModel = "auto"
 
 
-@partial(jax.jit, static_argnames=("grid", "detector", "backend", "batch_size", "model"))
+@partial(jax.jit, static_argnames=("grid", "detector", "backend", "batch_size", "model", "cache"))
 def _solve(
     poses: jax.Array,
     data: jax.Array,
@@ -79,6 +90,7 @@ def _solve(
     backend: str,
     batch_size: int,
     model: str | ConeModel,
+    cache: bool,
 ) -> tuple[jax.Array, jax.Array]:
     sensitivity, correction = poisson_operators(
         poses, grid, detector, det_grid, backend, batch_size, model, indices, valid
@@ -92,7 +104,6 @@ def _solve(
     subsets = indices.shape[0]
     # A full subset stack on a large volume can exceed device memory. Retain
     # only one current sensitivity in that case, independent of subset count.
-    cache = subsets == 1 or subsets * np.prod(shape) * 4 <= _SENSITIVITY_CACHE_BYTES
     sensitivities = jax.lax.map(sensitivity, jnp.arange(subsets)) if cache else None
     # A wholly unobserved voxel has no likelihood information: choose zero,
     # not an arbitrary unit activity. Visibility must include every subset;
@@ -173,11 +184,15 @@ def mlem(
     indices = np.arange(subsets)[:, None] + subsets * np.arange(count)[None, :]
     valid = indices < n
     indices = order[np.minimum(indices, n - 1)].astype(np.int32)
+    data = _device(projections)
+    initial = None if init_x is None else _device(init_x)
+    # Query after these persistent inputs occupy their device storage.
+    cache = _cache_sensitivities(int(subsets * np.prod(shape) * 4), subsets, iterations)
     volume, good = _solve(
-        stack_view_poses(geometry, n), _device(projections),
-        None if init_x is None else _device(init_x), support,
+        stack_view_poses(geometry, n), data, initial, support,
         jax.device_put(indices), jax.device_put(valid), jnp.int32(iterations), det_grid,
         grid=grid, detector=detector, backend=backend, batch_size=batch, model=model,
+        cache=cache,
     )  # fmt: skip
     if not bool(good):
         raise ValueError("mlem: projections and initial volume must be finite and nonnegative")
