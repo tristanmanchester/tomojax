@@ -12,7 +12,9 @@ uv run --no-sync tomojax inspect scan.nxs
 ```
 
 Check the projection count and shape, angles, detector pitch, voxel pitch, and
-geometry type. `inspect` also checks the dataset contract: it ends with
+geometry type. Raw NXtomo, APS Data Exchange and recognised Diamond/GDA layouts
+use the same acquisition discovery as loading; optional NXtomo labels are not
+required. `inspect` also checks the acquisition metadata: it ends with
 `Valid: yes`, or lists the issues and exits with status 1. That check cannot
 prove that metadata matches the instrument. `--json` prints the report as JSON
 instead. It also lists the corrections that made the projections from
@@ -86,6 +88,26 @@ or a Boolean mask. Selection keeps each view's geometry and its original
 position between the flat fields. `scan.corrected(...)` runs line-integral
 steps (`Stripes`, `BeamHardening`, `RejectViews`) on a scan that is already
 corrected.
+
+For rings that remain after `Stripes(9)`, a detector pixel's response may vary
+with the view rather than add a constant offset. In Python, follow the ordinary
+stripe correction with `Stripes(51, varying=True)`. Keep densely sampled views
+for this correction; selecting widely spaced views first can confuse moving
+object edges with defective pixels. Crop detector rows to save memory instead:
+
+```python
+import tomojax as tj
+from tomojax.corrections import Stripes
+
+frames = tj.load_frames("raw.nxs").cropped(slice(100, 116), slice(None))
+scan = frames.corrected(Stripes(9), Stripes(51, varying=True))
+# Select fewer views for a quick reconstruction only after correcting them.
+preview = scan.selected(slice(None, None, 4))
+```
+
+The widths are detector columns, not reconstructed-ring radii. Increase the
+ordinary width for wider stripes, and compare images: stationary centred object
+features can also be changed. Missing information at dead pixels is not recovered.
 
 `corrected(..., binning=2)` averages 2 x 2 detector blocks of the line integrals,
 as `scan.binned(2)` does. With only `Stripes` and the like after the log, it
@@ -171,6 +193,27 @@ three central planes (`slice_z.png`, `slice_y.png`, `slice_x.png`). PNG contrast
 display; read the stored floating-point volume for quantitative work.
 `tomojax export recon.nxs -o slices/` writes the volume as TIFF slices for other
 software.
+Each z-slice has y rows and x columns, numbered from low to high physical z.
+For an in-memory Python reconstruction, write the same orientation explicitly:
+
+```python
+from pathlib import Path
+
+import numpy as np
+import tifffile
+import tomojax as tj
+
+recon = tj.load_reconstruction("recon.nxs")  # Or keep the tj.reconstruct result.
+slices = Path("slices")
+slices.mkdir()  # Refuse an existing directory rather than overwrite slices.
+for z in range(recon.scan.grid.nz):
+    plane = np.asarray(recon.volume[:, :, z], dtype=np.float32).T
+    tifffile.imwrite(slices / f"slice_{z:04d}.tif", plane)
+```
+
+Keep the saved `.nxs` for geometry and correction records; these TIFFs hold only
+floating-point pixels. The CLI export also writes a JSON geometry sidecar and
+reads one disk slice at a time, avoiding a full-volume load.
 
 Without grid/ROI overrides, automatic mode leaves region selection to the
 Python workflow. With an explicit method, the default `--roi auto` may crop

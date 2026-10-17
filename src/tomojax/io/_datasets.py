@@ -577,8 +577,16 @@ def validate_dataset(path: PathLike) -> ValidationReport:
     input_path = Path(path)
     suffix = input_path.suffix.lower()
     if suffix in _HDF5_SUFFIXES:
-        report = validate_nxtomo(str(input_path))
-        return {"issues": [str(issue) for issue in report.get("issues", [])]}
+        try:
+            located = locate_frames(str(input_path))
+        except (OSError, ValueError, KeyError) as exc:
+            return {"issues": [str(exc)]}
+        issues = []
+        if located.angles is None:
+            issues.append("Missing rotation angles; supply angles when loading the frames")
+        if located.image_key is not None and not np.any(located.image_key == 0):
+            issues.append("No sample frames (image_key == 0)")
+        return {"issues": issues}
     if suffix == ".npz":
         try:
             load_dataset(input_path)

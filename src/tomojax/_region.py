@@ -111,7 +111,23 @@ def _ray_grid(scan: Scan, height: float, width: float, pitch: float) -> Grid:
     return Grid(side, side, depth, pitch, pitch, pitch, vol_center=(0, 0, height))
 
 
-def _broad_grid(scan: Scan, pitch: float) -> Grid:
+def _budgeted_grid(
+    scan: Scan, height: float, width: float, pitch: float, voxel_budget: float
+) -> Grid:
+    """Coarsen one physical survey, never expand it to each new grid's padding.
+
+    In shallow laminography, rounding the depth to eight voxels at each pitch
+    can keep enlarging the ray footprint, imposing a voxel-count floor that
+    no further coarsening can reduce. Numerical padding is not object support.
+    """
+    grid = _ray_grid(scan, height, width, pitch)
+    while grid.nx * grid.ny * grid.nz > voxel_budget:
+        pitch *= 2
+        grid = _ray_grid(scan, height, width, pitch)
+    return grid
+
+
+def _broad_grid(scan: Scan, pitch: float, voxel_budget: float) -> Grid:
     _, beam, matrix = _posed_rays(scan)
     vertical = matrix[:, 2, 2]
     if np.any(np.isclose(beam[:, 2], 0)) or np.any(np.isclose(vertical, 0)):
@@ -120,7 +136,7 @@ def _broad_grid(scan: Scan, pitch: float) -> Grid:
     bounds = (corners[None, :, 2] - matrix[:, None, 2, 3]) / vertical[:, None]
     half_depth = float(np.max(np.abs(bounds)))
     depth = int(np.ceil(2 * half_depth / pitch / 8)) * 8
-    return _ray_grid(scan, 0, depth * pitch, pitch)
+    return _budgeted_grid(scan, 0, depth * pitch, pitch, voxel_budget)
 
 
 def _focus_evidence(scan: Scan, voxel_budget: float) -> _Evidence:
@@ -129,10 +145,7 @@ def _focus_evidence(scan: Scan, voxel_budget: float) -> _Evidence:
     small = scan.selected(indices).binned(2)
     d = small.detector
     pitch = 2 * max(d.du, d.dv)
-    grid = _broad_grid(small, pitch)
-    while grid.nx * grid.ny * grid.nz > voxel_budget:
-        pitch *= 2
-        grid = _broad_grid(small, pitch)
+    grid = _broad_grid(small, pitch, voxel_budget)
     window = (tukey(d.nv, 1)[:, None] * tukey(d.nu, 1)[None]).astype(np.float32)
     volume = np.asarray(
         reconstruct_arrays("fbp", small.geometry, grid, small.detector, small.projections * window)[
@@ -320,11 +333,7 @@ def estimate_region(scan: Scan) -> RegionEstimate:
         pitch = max(scan.detector.du, scan.detector.dv)
         height = pitch * round(evidence.height / pitch) if width is not None else 0.0
         depth = width if width is not None else span
-        grid = _ray_grid(scan, height, depth, pitch)
-        spacing = pitch
-        while grid.nx * grid.ny * grid.nz > budget:
-            spacing *= 2
-            grid = _ray_grid(scan, height, depth, spacing)
+        grid = _budgeted_grid(scan, height, depth, pitch, budget)
     info = {
         "status": "conditional_cv_region" if width is not None else "broad_uncertain",
         "isolated": evidence.isolated,
@@ -334,7 +343,7 @@ def estimate_region(scan: Scan) -> RegionEstimate:
         "focus": evidence.focus.tolist(),
         "probes": probes,
         "requested_pitch": pitch,
-        "selected_pitch": spacing,
+        "selected_pitch": grid.vz,
         "preview_pitch": evidence.grid.vz,
         "grid": asdict(grid),
         "seconds": time.perf_counter() - started,

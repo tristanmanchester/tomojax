@@ -12,7 +12,7 @@ import h5py
 import numpy as np
 from numpy.typing import NDArray
 
-from tomojax._data import ROTATION_ANGLE_PATHS, angle_scale_degrees
+from tomojax._data import LocatedFrames, locate_frames
 from tomojax._typed_arrays import (
     any_true,
     finite_values_float64,
@@ -21,7 +21,6 @@ from tomojax._typed_arrays import (
     min_float,
     numpy_array,
     numpy_float64_array,
-    numpy_int64_array,
     object_list,
     object_mapping,
     scalar_float,
@@ -48,12 +47,6 @@ from tomojax.io._inspection_types import (
 type PathLike = str | Path
 
 
-_PROJECTION_PATHS = (
-    "/entry/instrument/detector/data",
-    "/entry/data/projections",
-    "/entry/projections",
-)
-_IMAGE_KEY_PATH = "/entry/instrument/detector/image_key"
 _ALIGN_PATH = "/entry/processing/tomojax/align"  # where the NXtomo writer puts poses
 _VOLUME_PATH = "/entry/processing/tomojax/volume"
 _DEFAULT_MAX_EXACT_STATS_ELEMENTS = 5_000_000
@@ -105,14 +98,6 @@ def _json_safe(value: object) -> object:
 def _dataset_at(file: h5py.File, path: str) -> h5py.Dataset | None:
     obj = file.get(path)
     return obj if isinstance(obj, h5py.Dataset) else None
-
-
-def _find_projection_dataset(file: h5py.File) -> tuple[str | None, h5py.Dataset | None]:
-    for path in _PROJECTION_PATHS:
-        dataset = _dataset_at(file, path)
-        if dataset is not None:
-            return path, dataset
-    return None, None
 
 
 def _iter_view_blocks(dataset: h5py.Dataset) -> Iterator[NDArray[np.float64]]:
@@ -259,10 +244,10 @@ def _projection_report(path: str | None, dataset: h5py.Dataset | None) -> Projec
     }
 
 
-def _angles_report(file: h5py.File) -> AnglesReport:
-    path = next((p for p in ROTATION_ANGLE_PATHS if _dataset_at(file, p) is not None), None)
+def _angles_report(file: h5py.File, located: LocatedFrames) -> AnglesReport:
+    path = located.angles_path
     dataset = None if path is None else _dataset_at(file, path)
-    if dataset is None:
+    if dataset is None or located.angles is None:
         return {
             "found": False,
             "path": None,
@@ -273,23 +258,19 @@ def _angles_report(file: h5py.File) -> AnglesReport:
             "coverage_deg": None,
         }
 
-    values = numpy_float64_array(dataset[...]).ravel()
-    samples = np.ones(values.shape, dtype=bool)
-    image_key = _dataset_at(file, _IMAGE_KEY_PATH)
-    if image_key is not None and image_key.shape == values.shape:
-        samples = numpy_array(image_key[...]) == 0
+    # Discovery has already converted radians and known GDA command units.
+    values = located.angles
+    samples = (
+        np.ones(values.shape, dtype=bool) if located.image_key is None else located.image_key == 0
+    )
     finite = values[np.isfinite(values) & samples]
     units = _attr_to_str(dataset.attrs.get("units"))
-    try:
-        finite *= angle_scale_degrees(units or "", path=path or "rotation_angle")
-    except ValueError:
-        finite = np.empty(0, np.float64)
     if finite.size == 0:
         min_deg = max_deg = coverage_deg = None
     else:
-        min_deg = scalar_float(cast("object", finite.min()))
-        max_deg = scalar_float(cast("object", finite.max()))
-        coverage_deg = float(max_deg - min_deg)
+        min_deg = float(finite.min())
+        max_deg = float(finite.max())
+        coverage_deg = max_deg - min_deg
     return {
         "found": True,
         "path": path,
@@ -363,27 +344,15 @@ def _detector_metadata_report(file: h5py.File) -> DetectorMetadataReport:
     }
 
 
-def _flats_darks_report(file: h5py.File) -> FlatsDarksReport:
-    dataset = _dataset_at(file, _IMAGE_KEY_PATH)
-    if dataset is None:
-        return {
-            "image_key_found": False,
-            "image_key_path": None,
-            "image_key_counts": {},
-            "sample_count": 0,
-            "flats_present": False,
-            "darks_present": False,
-            "flat_count": 0,
-            "dark_count": 0,
-        }
-    keys = numpy_int64_array(dataset[...]).ravel()
-    count_map = unique_int_count_map(keys)
-    sample_count = int(count_map.get("0", 0))
-    flat_count = int(count_map.get("1", 0))
-    dark_count = int(count_map.get("2", 0))
+def _flats_darks_report(located: LocatedFrames) -> FlatsDarksReport:
+    keys = located.image_key
+    count_map = {} if keys is None else unique_int_count_map(keys)
+    sample_count = located.stack.shape[0] if keys is None else int(count_map.get("0", 0))
+    flat_count = int(count_map.get("1", 0)) + (0 if located.flats is None else len(located.flats))
+    dark_count = int(count_map.get("2", 0)) + (0 if located.darks is None else len(located.darks))
     return {
-        "image_key_found": True,
-        "image_key_path": _IMAGE_KEY_PATH,
+        "image_key_found": keys is not None,
+        "image_key_path": located.image_key_path,
         "image_key_counts": count_map,
         "sample_count": sample_count,
         "flats_present": flat_count > 0,
@@ -515,19 +484,18 @@ def _memory_estimates(file: h5py.File, projection: ProjectionReport) -> MemoryEs
 def inspect_nxtomo(path: PathLike) -> InspectionReport:
     """Inspect an HDF5/NXtomo file without materializing TomoJAX/JAX objects."""
     input_path = Path(path)
+    located = locate_frames(str(input_path))
     with h5py.File(input_path, "r") as file:
-        projection_path, projection_dataset = _find_projection_dataset(file)
-        if projection_dataset is None:
-            raise KeyError("Could not find projections dataset under /entry")
-        projection = _projection_report(projection_path, projection_dataset)
+        projection_path = located.stack.dataset
+        projection = _projection_report(projection_path, _dataset_at(file, projection_path))
         report: InspectionReport = {
             "schema_version": 1,
             "input_path": str(input_path),
             "projection": projection,
-            "angles": _angles_report(file),
+            "angles": _angles_report(file, located),
             "geometry": _geometry_report(file),
             "detector_metadata": _detector_metadata_report(file),
-            "flats_darks": _flats_darks_report(file),
+            "flats_darks": _flats_darks_report(located),
             "corrections": _corrections_report(file),
             "alignment": _alignment_report(file),
             "memory_estimates": _memory_estimates(file, projection),

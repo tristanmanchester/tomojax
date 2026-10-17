@@ -131,3 +131,23 @@ def test_uninformative_region_is_broad_and_does_not_recalibrate() -> None:
     parallel = replace(scan, geometry=tj.ParallelGeometry(scan.grid, scan.detector, scan.angles))
     with pytest.raises(ValueError, match="laminography"):
         tj.estimate_region(parallel)
+
+
+@pytest.mark.numerical
+def test_shallow_region_coarsens_a_fixed_physical_survey(monkeypatch) -> None:
+    scan, _ = _layer_scan((4.0,))
+    scan = replace(
+        scan,
+        projections=np.zeros_like(scan.projections),
+        geometry=replace(scan.geometry, tilt_deg=0.1),
+    )
+    monkeypatch.setattr("tomojax._region.device_free_memory_bytes", lambda **kw: 2**20)
+    monkeypatch.setattr(
+        "tomojax._region.reconstruct_arrays",
+        lambda method, geometry, grid, *args: (np.zeros((grid.nx, grid.ny, grid.nz)), {}),
+    )
+    estimate = tj.estimate_region(scan)
+    grid = estimate.grid
+    assert grid.nx * grid.ny * grid.nz <= 0.6 * 2**20 / 32
+    assert estimate.info["status"] == "broad_uncertain"
+    assert np.isfinite(estimate.info["focus"]).all()

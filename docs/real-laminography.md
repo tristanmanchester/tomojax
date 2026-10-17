@@ -141,8 +141,8 @@ cone only from the volume bounds or the object prior.
 
 ## Reconstruct scans larger than GPU memory
 
-FBP streams the projections from host memory, but the volume must fit on the
-GPU; for a larger volume, use `fbp_host` from Python. See
+FBP streams projections from host memory and automatically reconstructs in
+host slabs when the volume would exceed the device-memory budget. See
 [large scans and several GPUs](large-scans.md) for which solvers stream and
 how to share a scan among GPUs.
 

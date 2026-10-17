@@ -8,6 +8,13 @@ including optional FBP initialization, without retaining the full output volume.
 `tomojax.io.api.read_hdf5_array` reads explicit HDF5 crops with bounded parallel
 gzip decoding, preserving dtype and falling back for other filters and selections.
 
+Laminography region estimation keeps the physical survey fixed while coarsening
+to fit memory, avoiding unbounded grid growth for shallow oblique axes.
+
+Inspection, previews and dataset validation share raw-frame HDF5 discovery,
+including APS Data Exchange and Diamond/GDA. Missing optional NXtomo labels
+no longer reject an otherwise readable acquisition; `validate_nxtomo` stays strict.
+
 Generic CUDA cone backprojection keeps inverse corner bounds conservative at
 FP32 pixel boundaries, retaining positive forward weights in its transpose.
 

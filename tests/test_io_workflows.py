@@ -386,7 +386,7 @@ def test_validate_dataset_reports_schema_failures(tmp_path: Path) -> None:
         handle.create_group("not_entry")
 
     assert validate_dataset(valid)["issues"] == []
-    assert validate_dataset(invalid)["issues"] == ["Missing /entry"]
+    assert "no stack of frames found" in validate_dataset(invalid)["issues"][0]
 
 
 def test_validate_dataset_reports_scalar_axis_datasets(tmp_path: Path) -> None:
@@ -406,8 +406,7 @@ def test_validate_dataset_reports_scalar_axis_datasets(tmp_path: Path) -> None:
 
     issues = validate_dataset(path)["issues"]
 
-    assert "instrument/detector/image_key must be 1D (n_views,)" in issues
-    assert "rotation_angle must be 1D (n_views,)" in issues
+    assert "image_key must have shape" in issues[0]
 
 
 def test_validate_dataset_reports_invalid_image_key_values(tmp_path: Path) -> None:
@@ -420,7 +419,7 @@ def test_validate_dataset_reports_invalid_image_key_values(tmp_path: Path) -> No
 
     issues = validate_dataset(path)["issues"]
 
-    assert "image_key values must be in {0, 1, 2, 3}; found 99 (1 frame)" in issues
+    assert "image_key values must be in {0, 1, 2, 3}" in issues[0]
 
 
 def test_projection_stats_keep_exact_stats_when_percentile_sample_has_no_finite_values(

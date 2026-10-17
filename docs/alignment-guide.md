@@ -121,7 +121,8 @@ samples finer than the grid, binning it also helps; see
 
 `grid=` aligns and reconstructs on another grid than the scan's, a region
 around the object or coarser voxels, as it does for `tj.reconstruct`. The
-returned volume is on that grid and `result.scan` carries it:
+returned volume is on that grid and `result.scan` carries it. Use an explicit
+mode with this override: automatic laminography selects its own grid and region.
 
 ```python
 region = tj.Grid(192, 192, 128, scan.grid.vx, scan.grid.vy, scan.grid.vz)
