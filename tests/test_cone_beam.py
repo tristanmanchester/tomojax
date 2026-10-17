@@ -425,17 +425,17 @@ def test_parallel_geometry_keeps_dy_inactive_and_cone_geometry_adds_it():
     from tomojax.alignment import AlignConfig
 
     # check-public-imports: allow-private
-    from tomojax.alignment._pose._pose_loop import _with_beam_translation
+    from tomojax.alignment._pose._pose_context import with_beam_translation
     from tomojax.geometry import ParallelGeometry
 
     grid, detector = Grid(4, 4, 4, 1.0, 1.0, 1.0), Detector(6, 6, 1.0, 1.0)
     cone = ConeGeometry(grid, detector, [0.0, 90.0], ConeBeam(20, 30))
     parallel = ParallelGeometry(grid, detector, [0.0, 90.0])
     five = (True, True, True, True, True, False)
-    assert _with_beam_translation(five, parallel, AlignConfig()) == five
-    assert _with_beam_translation(five, cone, AlignConfig())[-1]
+    assert with_beam_translation(five, parallel, AlignConfig()) == five
+    assert with_beam_translation(five, cone, AlignConfig())[-1]
     frozen = AlignConfig(freeze=("dy",))
-    assert not _with_beam_translation(five, cone, frozen)[-1]
+    assert not with_beam_translation(five, cone, frozen)[-1]
 
 
 def _blob_scan(n: int, views: int, beam: ConeBeam) -> tuple[ConeGeometry, np.ndarray]:

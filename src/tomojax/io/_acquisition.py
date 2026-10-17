@@ -61,6 +61,13 @@ def read_acquisition(
     ValueError
         If a recognized acquisition is incomplete or ambiguous.
     """
+    from ._esrf import read_esrf
     from ._nikon import read_nikon
+    from ._zeiss import read_zeiss
 
-    return read_nikon(Path(path), data_path=data_path)
+    target = Path(path)
+    for reader in (read_nikon, read_zeiss, read_esrf):
+        acquisition = reader(target, data_path=data_path)
+        if acquisition is not None:
+            return acquisition
+    return None
