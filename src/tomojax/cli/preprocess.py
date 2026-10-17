@@ -42,13 +42,15 @@ def _build_parser() -> argparse.ArgumentParser:
         description=(
             "Correct raw detector frames into line integrals -log((I - D) / (F - D)) ready "
             "to reconstruct, with each view's flat interpolated between the flat sets "
-            "around it. INPUT is an HDF5 file whose image_key marks flats (1) and darks "
-            "(2), a Nikon or Zeiss acquisition with calibration, or a TIFF file or "
-            "folder (with --angles and --flats). The scan written records each correction."
+            "around it. INPUT may be HDF5 with image_key calibration, or a Nikon, "
+            "SkyScan, Zeiss or ESRF acquisition with its own metadata. Generic TIFF "
+            "stacks need --angles and --flats; corrected SkyScan exports do not. "
+            "The scan written records each correction."
         ),
         epilog=(
             "Examples:\n"
             "  tomojax preprocess raw.nxs -o scan.nxs\n"
+            "  tomojax preprocess skyscan/ -o scan.nxs\n"
             "  tomojax preprocess raw.nxs -o scan.nxs --remove-stripes 9 --zingers\n"
             "  tomojax preprocess frames/ --flats flats/ --darks darks/ --angles angles.csv "
             "-o scan.nxs\n"
@@ -57,7 +59,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     _ = parser.add_argument(
-        "data", metavar="INPUT", help="Raw HDF5, Nikon .xtekct, Zeiss .txrm, or TIFF frames"
+        "data", metavar="INPUT", help="Acquisition file/folder (including SkyScan), or TIFF stack"
     )
     add_output(parser, "Corrected scan to write (.nxs)")
     add_config(parser, settings={"binning": 1})

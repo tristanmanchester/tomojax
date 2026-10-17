@@ -1,7 +1,7 @@
 # tomojax.io
 
-`tomojax.io` reads and writes TomoJAX datasets, reads Nikon `.xtekct` scans and
-TIFF stacks, and validates and inspects datasets. Raw detector frames are read
+`tomojax.io` reads and writes TomoJAX datasets, reads Nikon, SkyScan, Zeiss and
+ESRF acquisitions and TIFF stacks, and validates and inspects datasets. Detector frames are read
 with `tomojax.load_frames` and corrected with
 [`tomojax.corrections`](../corrections/README.md).
 
@@ -65,3 +65,37 @@ estimates the offset. Python `Detector.center` stores physical lengths, so an
 offset in pixels is multiplied by `du`/`dv`. See the
 [real scan guide](../../../docs/real-laminography.md) for measured geometry and
 for the distinction between raw intensities and corrected absorption.
+
+## SkyScan corrected acquisitions
+
+`tomojax.load_frames` and `tomojax.load` recognize a SkyScan acquisition log by
+content, either explicitly or in its folder. Numbered sample TIFFs are read
+lazily; scout images and the separate drift-reference acquisition are excluded.
+Geometry and the bit-depth white level come from the log, in millimetres, with
+detector v pointing up. Geometric and flat-field corrections must be enabled in
+the export. Camera rotation, aspect and random-movement settings remain in the
+source metadata but are not reapplied: corrected pixel coordinates are assumed,
+not independently certified by the reader.
+
+Keep the log beside its numbered TIFFs. No external angles or flats are needed.
+For a modest preview, bin detector counts and independently choose a smaller
+reconstruction grid, preserving the metadata's physical extent:
+
+```python
+import tomojax as tj
+
+scan = tj.load_frames("skyscan/").corrected(binning=4)
+grid = scan.grid.resampled((256, 256, 256))
+result = tj.reconstruct(scan, method="fbp", grid=grid)  # FDK for this cone geometry
+tj.save("grains-recon.nxs", result)
+```
+
+Alternatively, the equivalent CLI workflow writes the corrected scan, then the
+volume and a central-slice preview (use fresh output names):
+
+```sh
+printf 'binning = 4\n' > preview.toml
+tomojax preprocess skyscan/ --config preview.toml -o grains.nxs
+tomojax recon grains.nxs --method fbp --roi off --grid 256 256 256 \
+  -o grains-recon.nxs --preview grains.png
+```

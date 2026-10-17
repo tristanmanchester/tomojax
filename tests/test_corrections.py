@@ -258,6 +258,10 @@ def test_a_nikon_scan_is_corrected_with_its_white_level(tmp_path: Path) -> None:
         "[XTekCT]\nName=part\nSrcToObject=12.0\nSrcToDetector=18.0\nDetectorPixelSizeX=0.1\n"
         "DetectorPixelSizeY=0.1\nWhiteLevel=60000\nInitialAngle=0\nAngularStep=90\n"
     )
+    frames = tj.load_frames(tmp_path / "part.xtekct")
+    assert not isinstance(frames.counts, np.ndarray) and frames.counts.dtype == np.uint16
+    window = frames.cropped(slice(0, 1), slice(0, 1)).selected([1])
+    np.testing.assert_array_equal(np.asarray(window.counts), [[[15000]]])
     scan = tj.load(tmp_path / "part.xtekct")
     # Detector v points up: the image's bottom row is the scan's first.
     np.testing.assert_allclose(
@@ -286,7 +290,7 @@ def test_nikon_import_takes_its_own_angles_and_numbered_projections(
     if measured:
         (tmp_path / "part_ctdata.txt").write_text("Projection Angle\n10 97\n2 7\n")
     frames = tj.load_frames(path)
-    np.testing.assert_array_equal(frames.counts[:, 0, 0], [500, 250])
+    np.testing.assert_array_equal(np.asarray(frames.counts)[:, 0, 0], [500, 250])
     np.testing.assert_array_equal(frames.geometry.angles, [7, 97] if measured else [5, 95])
 
 
@@ -738,3 +742,28 @@ def test_nikon_calibrated_axis_and_closing_turn_are_physical_metadata(
             point = np.asarray(geometry.pose_for_view(0)) @ [0, 0, z, 1]
             hit = source + 2 * (point[:3] - source)
             np.testing.assert_allclose(hit[[0, 2]], [expected_cor, detector_height], atol=1e-12)
+
+
+@pytest.mark.parametrize("suffix", [".nxs", ".tif"])
+def test_lazy_selections_compose_without_reading_storage(tmp_path, suffix):
+    values = np.arange(5 * 6 * 9, dtype=np.uint16).reshape(5, 6, 9)
+    path = tmp_path / f"frames{suffix}"
+    angles = np.arange(5, dtype=np.float32)
+    if suffix == ".nxs":
+        _write_frames(path, values, [0] * 5, angles.tolist())
+    else:
+        tifffile.imwrite(path, values, photometric="minisblack")
+    counts = tj.load_frames(path, angles=angles).counts
+    moved = path.rename(tmp_path / "unavailable")
+    selected = counts.frames_at(np.array([True, False, True, True, False]))
+    selected = selected.window(slice(1, 6), slice(2, 9)).window(slice(1, 4), slice(1, 5))
+    selected = selected.frames_at(slice(1, None))
+    moved.rename(path)
+    expected = values[[2, 3], 2:5, 3:7]
+    np.testing.assert_array_equal(selected[-1], expected[-1])
+    np.testing.assert_array_equal(np.asarray(selected, dtype=np.float32), expected)
+    assert selected[:0].shape == (0, 3, 4)
+    with pytest.raises(ValueError, match="without copying"):
+        np.array(selected, copy=False)
+    with pytest.raises(ValueError, match="non-empty block"):
+        selected.window(slice(None, None, -1), slice(None))

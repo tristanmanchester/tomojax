@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import logging
 from pathlib import Path
 from typing import Any, ClassVar, cast
@@ -11,11 +11,12 @@ from typing import Any, ClassVar, cast
 import h5py
 import numpy as np
 
+from ._frame_stack import FrameStack
 from ._io_acquisition import ROTATION_ANGLE_PATHS, angles_in_degrees, checked_image_key
 
 
 @dataclass(frozen=True)
-class Hdf5Frames:
+class Hdf5Frames(FrameStack):
     """Frames ``frames`` of the 3-D dataset ``dataset`` in ``path``, read on indexing.
 
     It holds no open file: each read opens the file, reads the frames asked for
@@ -28,12 +29,6 @@ class Hdf5Frames:
 
     path: str
     dataset: str
-    frames: np.ndarray  # indices into the dataset's first axis, increasing
-    rows: int
-    cols: int
-    dtype: np.dtype
-    first_row: int = 0  # the window of each frame read: rows and columns from these
-    first_col: int = 0
     _efficient_row_windows: bool = False  # a window of rows reads only those rows
     _bulk_row_reads: ClassVar[bool] = True  # many views in one HDF5 request
 
@@ -50,49 +45,17 @@ class Hdf5Frames:
             # Unfiltered data supports direct reads of partial chunks. __getitem__
             # bypasses the chunk cache so narrow windows do not fetch whole frames.
             windows = not layout.is_virtual and layout.id.get_create_plist().get_nfilters() == 0
-            return cls(path, dataset, np.arange(n), rows, cols, np.dtype(data.dtype), 0, 0, windows)
+            return cls(
+                path,
+                dataset,
+                frames=np.arange(n),
+                rows=rows,
+                cols=cols,
+                dtype=np.dtype(data.dtype),
+                _efficient_row_windows=windows,
+            )
 
-    @property
-    def shape(self) -> tuple[int, int, int]:
-        return (len(self.frames), self.rows, self.cols)
-
-    @property
-    def ndim(self) -> int:
-        return 3
-
-    def __len__(self) -> int:
-        return len(self.frames)
-
-    def frames_at(self, which: np.ndarray | slice) -> Hdf5Frames:
-        """The stack of these frames only (a boolean mask, indices or slice), unread."""
-        return replace(self, frames=np.asarray(self.frames[which], np.int64))
-
-    def window(self, rows: slice, cols: slice) -> Hdf5Frames:
-        """The stack of this block of ``rows`` and ``cols`` of each frame, unread."""
-        r0, r1, rstep = rows.indices(self.rows)
-        c0, c1, cstep = cols.indices(self.cols)
-        if rstep != 1 or cstep != 1 or r1 <= r0 or c1 <= c0:
-            raise ValueError("a window of frames is a non-empty block of rows and columns")
-        return replace(
-            self,
-            rows=r1 - r0,
-            cols=c1 - c0,
-            first_row=self.first_row + r0,
-            first_col=self.first_col + c0,
-        )
-
-    def __array__(self, dtype: np.dtype | None = None, copy: bool | None = None) -> np.ndarray:
-        """Read this stack explicitly with ``np.asarray`` (always allocates host storage)."""
-        if copy is False:
-            raise ValueError("Hdf5Frames cannot be converted to an array without copying")
-        return np.asarray(self[:], dtype=dtype)
-
-    def __getitem__(self, which: slice | int | np.ndarray) -> np.ndarray:
-        if isinstance(which, int | np.integer):
-            # Array indexing preserves NumPy's negative-index and bounds rules;
-            # a slice(-1, 0) would silently select no frames instead of the last.
-            return self[np.asarray([which], np.int64)][0]
-        indices = np.asarray(self.frames[which], np.int64)
+    def _read(self, indices: np.ndarray, rows: slice, cols: slice) -> np.ndarray:
         if indices.size and np.any(np.diff(indices) <= 0):
             raise ValueError("Hdf5Frames reads frames in increasing order only")
         # Chunk caching can amplify a narrow read to the entire chunk even with
@@ -102,17 +65,15 @@ class Hdf5Frames:
             data: Any = file[self.dataset]
             if indices.size == 0:
                 return np.empty((0, self.rows, self.cols), self.dtype)
-            r = slice(self.first_row, self.first_row + self.rows)
-            c = slice(self.first_col, self.first_col + self.cols)
             first, last = int(indices[0]), int(indices[-1]) + 1
             if last - first == indices.size:  # contiguous: one hyperslab
-                return np.asarray(data[first:last, r, c])
+                return np.asarray(data[first:last, rows, cols])
             # h5py fancy indexing is far slower than reading each run of frames.
             out = np.empty((indices.size, self.rows, self.cols), self.dtype)
             starts = np.concatenate(([0], np.flatnonzero(np.diff(indices) > 1) + 1))
             stops = np.concatenate((starts[1:], [indices.size]))
             for start, stop in zip(starts, stops, strict=True):
-                source = (slice(int(indices[start]), int(indices[stop - 1]) + 1), r, c)
+                source = (slice(int(indices[start]), int(indices[stop - 1]) + 1), rows, cols)
                 destination = (slice(int(start), int(stop)), slice(None), slice(None))
                 data.read_direct(out, source_sel=source, dest_sel=destination)
             return out
