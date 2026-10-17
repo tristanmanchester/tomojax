@@ -25,6 +25,19 @@ file says they are raw: an NXtomo `image_key` marking flats or darks, an APS
 Data Exchange file with `data_white` or `data_dark` beside `/exchange/data`,
 or a Nikon scan. It refuses integer counts with no flats rather than guess.
 
+## ESRF acquisitions
+
+`tj.load("scan_folder")` reads uncompressed single-image EDF projections with
+SPEC acquisition `.info` or XML metadata, including accumulated darks and
+flat sets; accumulated dark means retain fractional counts. Reconstruction
+`.par` files are not acquisition metadata.
+`tj.load("raw_bliss.h5")` reads a basic, half-turn or full-turn Bliss sequence,
+including linked detector data, when unique or selected by the recorded default.
+For other sequences use `tj.load_frames("raw_bliss.h5", data_path="1.1").corrected()`. Both readers use effective sample
+pixels and preserve recorded distances in millimetres; they construct parallel
+geometry. Missing virtual detector pixels and mismatched EDF dimensions are
+errors. Helical and multi-volume Bliss sequences are not yet supported.
+
 ## Correct raw detector frames
 
 For an HDF5 scan containing sample, flat, and dark frames:
