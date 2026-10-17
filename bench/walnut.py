@@ -30,6 +30,7 @@ import imageio.v3 as iio
 import numpy as np
 
 import tomojax as tj
+from tomojax.core.array_ops import mean_detector_pixels
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -330,18 +331,20 @@ def main() -> None:
 
     _archive(args.output)
     start = time.perf_counter()
-    data, vectors = load_orbits(args.walnut, args.orbits, args.every, cache=args.cache)
+    data, vectors = load_orbits(
+        args.walnut, args.orbits, args.every, cache=args.cache, binning=args.bin
+    )
     vol_geom = volume_geometry(args.voxels_per_mm)
     scan = tj.Scan.from_astra(
         data,
         {
             "type": "cone_vec",
-            "DetectorRowCount": ROWS,
-            "DetectorColCount": COLS,
+            "DetectorRowCount": data.shape[0],
+            "DetectorColCount": data.shape[2],
             "Vectors": vectors,
         },
         vol_geom,
-    ).binned(args.bin)
+    )
     summary: dict[str, Any] = {
         "walnut": args.walnut.name,
         "orbits": args.orbits,
@@ -413,21 +416,34 @@ def _save(path: Path | None, summary: dict[str, Any]) -> None:
 
 
 def load_orbits(
-    walnut: Path, orbits: list[int], every: int, *, cache: Path | None = None
+    walnut: Path, orbits: list[int], every: int, *, cache: Path | None = None, binning: int = 1
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Load the requested views; cached data must identify that same request."""
+    """Bin each orbit before joining; caches identify the same views and binning."""
     request = json.dumps(
-        {"walnut": str(walnut.resolve()), "orbits": orbits, "every": every}, sort_keys=True
+        {"walnut": str(walnut.resolve()), "orbits": orbits, "every": every, "binning": binning},
+        sort_keys=True,
     )
     if cache is not None and cache.exists():
         with np.load(cache) as stored:
             if "request" not in stored or stored["request"].item() != request:
                 raise ValueError(
-                    "projection cache does not match walnut, orbits and every; "
+                    "projection cache does not match walnut, orbits, every and binning; "
                     "use a different --cache path"
                 )
             return stored["data"], stored["vectors"]
-    parts = [load_orbit(walnut, orbit, every) for orbit in orbits]
+    parts = []
+    for orbit in orbits:
+        data, vectors = load_orbit(walnut, orbit, every)
+        if binning != 1:
+            rows, _, cols = data.shape
+            data = mean_detector_pixels(data.transpose(1, 0, 2), binning).transpose(1, 0, 2)
+            # Cropping incomplete edge blocks moves the detector in its own
+            # pixel basis, including calibrated detector tilt, before rescaling.
+            du = (binning * data.shape[2] - cols) / 2
+            dv = (binning * data.shape[0] - rows) / 2
+            vectors[:, 3:6] += du * vectors[:, 6:9] + dv * vectors[:, 9:12]
+            vectors[:, 6:12] *= binning
+        parts.append((data, vectors))
     data = np.concatenate([d for d, _ in parts], axis=1)
     vectors = np.concatenate([v for _, v in parts])
     if cache is not None:
