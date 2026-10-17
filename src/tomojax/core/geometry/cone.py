@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
@@ -23,13 +23,16 @@ if TYPE_CHECKING:
 class ConeBeam:
     """Source and detector placement in the lab frame, shared by every view.
 
-    The beam travels along +y. The source sits at ``(0, -source_to_axis, 0)``
+    The beam travels along +y. The source sits at
+    ``(0, -source_to_axis, source_height)``
     and the detector plane at ``y = source_to_detector - source_to_axis``; the
     rotation axis passes through ``(axis_offset, 0, 0)``, so the magnification
     at the axis is ``source_to_detector / source_to_axis``. ``axis_offset`` is
     the lab-CT centre-of-rotation offset: the axis's lateral distance from the
     line through the source and the unshifted detector centre, in physical
-    units. ``Detector.center`` offsets the detector within its plane. Roll,
+    units. ``source_height`` is the calibrated lab-frame z position of the source
+    and unshifted detector centre, not an editable per-view object correction.
+    ``Detector.center`` offsets the detector relative to that centre. Roll,
     pitch and yaw rotate the detector about its centre: roll about the beam
     (y), pitch about detector u (x) and yaw about detector v (z), applied in
     that order.
@@ -48,6 +51,8 @@ class ConeBeam:
         Detector yaw about the z axis, in degrees.
     axis_offset : float, optional
         Lateral x displacement of the rotation axis, in physical units.
+    source_height : float, optional
+        Lab-frame z position of the source and unshifted detector centre, in physical units.
 
     Raises
     ------
@@ -61,6 +66,7 @@ class ConeBeam:
     detector_pitch_deg: float = 0.0
     detector_yaw_deg: float = 0.0
     axis_offset: float = 0.0
+    source_height: float = field(default=0.0, kw_only=True)
 
     def __post_init__(self) -> None:
         if not (0.0 < float(self.source_to_axis) < float(self.source_to_detector)):
@@ -85,7 +91,7 @@ class ConeBeam:
         numpy.ndarray
             Lab-frame source (x, y, z) position, in physical units.
         """
-        return np.array([0.0, -float(self.source_to_axis), 0.0])
+        return np.array([0.0, -float(self.source_to_axis), float(self.source_height)])
 
     def detector_frame(self, detector: Detector) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Lab position of the detector centre and its unit u and v directions.
@@ -112,7 +118,7 @@ class ConeBeam:
             [
                 float(detector.center[0]),
                 float(self.source_to_detector) - float(self.source_to_axis),
-                float(detector.center[1]),
+                float(self.source_height) + float(detector.center[1]),
             ]
         )
         return centre, rotation @ np.array([1.0, 0.0, 0.0]), rotation @ np.array([0.0, 0.0, 1.0])
@@ -132,6 +138,7 @@ class ConeBeam:
             "detector_pitch_deg": float(self.detector_pitch_deg),
             "detector_yaw_deg": float(self.detector_yaw_deg),
             "axis_offset": float(self.axis_offset),
+            "source_height": float(self.source_height),
         }
 
 

@@ -11,7 +11,8 @@ Conversion fits a circular orbit to those poses (a ``ConeGeometry``) and
 keeps what remains, the scan's departure from a perfect circle, as per-view
 pose corrections. The ASTRA world frame is TomoJAX's object frame, so volumes
 convert by transposing ``(z, y, x)`` arrays to ``(x, y, z)``. The supplied
-grid is preserved, with source-height offsets represented in the view poses.
+grid is preserved; mean source height is calibrated beam geometry and only
+per-view departures from the fitted orbit are editable pose corrections.
 """
 
 from __future__ import annotations
@@ -151,13 +152,12 @@ def _segment(
     arrangement: np.ndarray,
     grid: Grid,
     shape: tuple[int, int],
-    *,
-    move_grid: bool,
 ) -> tuple[ConeGeometry, np.ndarray]:
-    """The circle and per-view corrections of views sharing one arrangement.
+    """Fit a circle in the caller's frame, preserving its axial calibration.
 
-    ``move_grid`` lets a vertical offset of the volume from the source move
-    the grid; otherwise it stays in the corrections (segments share a grid).
+    The mean source height belongs to the calibrated beam, not to the grid
+    or to editable per-view corrections. Independently imported orbits then
+    combine in one object frame, even after replacing their corrections.
     """
     e_u, e_v, beam = axes
     sdd, cu, cv, du, dv = (float(v) for v in np.mean(arrangement, axis=0))
@@ -169,14 +169,13 @@ def _segment(
     translation = -np.einsum("nij,nj->ni", rotation, vectors[:, :3] + sod * beam)
     turn, theta = _orbit(rotation)
     axis = turn[:, 2]
-    if move_grid:
-        # A shift along the axis commutes with the rotation: it moves the grid
-        # instead (object coordinates X' = X + height z).
-        height = float(np.mean(translation @ axis))
-        translation = translation - height * rotation[:, :, 2]
-        cx, cy, cz = grid.vol_center or (0.0, 0.0, 0.0)
-        grid = replace(grid, vol_center=(cx, cy, cz + height))
-    cone = ConeBeam(sod, sdd, axis_offset=float(np.mean(translation[:, 0])))
+    # Shift the canonical source and detector together to the mean height;
+    # only departures from that calibrated orbit remain pose corrections.
+    height = -float(np.mean(translation[:, 2]))
+    translation[:, 2] += height
+    cone = ConeBeam(
+        sod, sdd, axis_offset=float(np.mean(translation[:, 0])), source_height=height
+    )
     axis_unit = (float(axis[0]), float(axis[1]), float(axis[2]))
     # ConeGeometry aligns +z to the axis, then turns by theta about it.
     aligned = ConeGeometry(grid, detector, [0.0], cone, axis_unit=axis_unit).poses()[0]
@@ -222,7 +221,6 @@ def from_astra(
             arrangement[run],
             grid,
             (rows, cols),
-            move_grid=len(runs) == 1,
         )
         for run in runs
     ]

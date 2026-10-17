@@ -166,11 +166,13 @@ def test_align_recovers_the_misregistration_of_a_multi_orbit_scan():
 
     result = tj.align(scan, levels=(2, 1))
 
-    shift = result.scan.poses[:, 4] - np.asarray(true_scan.poses)[:, 4]  # pyright: ignore[reportOptionalSubscript]
+    # Compare calibrated physical frames, not correction tables with different bases.
+    true_height = true_scan.to_astra()[1]["Vectors"][:, 2]
+    shift = result.scan.to_astra()[1]["Vectors"][:, 2] - true_height
     per_orbit = shift.reshape(3, views).mean(axis=1)
     # Only the orbits' relative heights are observable: a common shift moves the volume.
     np.testing.assert_allclose(per_orbit - per_orbit[0], 0.0, atol=0.3)
-    misregistered = np.asarray(scan.poses)[:, 4] - np.asarray(true_scan.poses)[:, 4]  # pyright: ignore[reportOptionalSubscript]
+    misregistered = scan.to_astra()[1]["Vectors"][:, 2] - true_height
     assert np.ptp(misregistered.reshape(3, views).mean(axis=1)) > 2.9
 
 
