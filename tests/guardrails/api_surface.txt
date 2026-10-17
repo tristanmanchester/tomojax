@@ -447,7 +447,7 @@ def tomojax.recon.cgls_multires(
         init_x: 'jnp.ndarray | None' = None,
         config: 'CGLSConfig | None' = None,
         det_grid: 'tuple[jnp.ndarray, jnp.ndarray] | None' = None,
-    ) -> 'tuple[jnp.ndarray, dict[str, object]]'
+    ) -> 'tuple[jnp.ndarray | np.ndarray, dict[str, object]]'
 def tomojax.recon.fbp(
         geometry: 'Geometry',
         grid: 'Grid',

@@ -103,6 +103,9 @@ def test_sparse_resize_preserves_linear_values_and_transpose(shape, target):
         return jax.image.resize(v, target, method="linear", antialias=False)
 
     np.testing.assert_allclose(upsample_volume(x, 2, target), reference(x), rtol=1e-5, atol=4e-7)
+    host = upsample_volume(np.asarray(x), 2, target)
+    assert isinstance(host, np.ndarray)
+    np.testing.assert_allclose(host, reference(x), rtol=1e-5, atol=4e-7)
     actual = jax.grad(lambda v: jnp.sum(upsample_volume(v, 2, target) * weight))(x)
     expected = jax.grad(lambda v: jnp.sum(reference(v) * weight))(x)
     np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=2e-6)

@@ -86,3 +86,23 @@ def validate_host_arrays(
         if source is None or target is None or Path(source).samefile(target):
             raise ValueError(f"{context}: memory-mapped input and output require separate files")
     return out
+
+
+def validate_host_views(array: np.ndarray, *, weights: np.ndarray | None = None) -> None:
+    """Reject invalid active data before ordered solver callbacks can be poisoned."""
+    values = array.reshape(-1) if array.flags.c_contiguous else array.flat
+    active = (
+        None
+        if weights is None
+        else weights.reshape(-1)
+        if weights.flags.c_contiguous
+        else weights.flat
+    )
+    for start in range(0, array.size, 2**20):
+        chunk = values[start : start + 2**20]
+        if active is not None:
+            chunk = np.where(active[start : start + 2**20] > 0, chunk, 0)
+        with np.errstate(over="ignore", invalid="ignore"):
+            finite = np.isfinite(np.asarray(chunk, dtype=np.float32)).all()
+        if not finite:
+            raise ValueError("streamed projections must be finite in FP32")

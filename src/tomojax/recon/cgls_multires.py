@@ -7,7 +7,6 @@ from itertools import pairwise
 import operator
 from typing import TYPE_CHECKING, cast
 
-import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core.multires import (
@@ -25,12 +24,13 @@ from tomojax.core.validation import (
     validate_volume,
 )
 
-from ._cgls_jax import cgls
-from ._host_stream import validate_host_views
-from .cgls import CGLSConfig
+from ._host_arrays import validate_host_views
+from .cgls import CGLSConfig, cgls
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+    import jax.numpy as jnp
 
     from tomojax.geometry import Detector, Geometry, Grid
 
@@ -41,10 +41,23 @@ def _projection_data(projections: jnp.ndarray | np.ndarray) -> jnp.ndarray | np.
     if isinstance(projections, np.ndarray):
         validate_host_views(projections)
         return projections
+    import jax.numpy as jnp
+
     data = jnp.asarray(projections, dtype=jnp.float32)
     if not bool(jnp.all(jnp.isfinite(data))):
         raise ValueError("cgls_multires: projections must be finite")
     return data
+
+
+def _initial_volume(initial: jnp.ndarray | None, factor: int) -> jnp.ndarray | None:
+    if initial is None:
+        return None
+    import jax.numpy as jnp
+
+    volume = jnp.asarray(initial, dtype=jnp.float32)
+    if not bool(jnp.all(jnp.isfinite(volume))):
+        raise ValueError("cgls_multires: initial volume must be finite")
+    return bin_volume(volume, factor)
 
 
 def cgls_multires(
@@ -58,14 +71,15 @@ def cgls_multires(
     init_x: jnp.ndarray | None = None,
     config: CGLSConfig | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
-) -> tuple[jnp.ndarray, dict[str, object]]:
+) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
     """Initialize CGLS on coarser grids, then refine against every measured ray.
 
     ``factors`` must decrease strictly to 1. Each level gets its explicit
     positive iteration budget from ``iterations_per_level``; ``config.iterations`` is
     overridden. Other CGLS settings apply unchanged at each level, including
     damping and streaming. Host arrays remain on the host until each level chooses
-    its placement. Tolerances may stop levels early.
+    its placement. Supported host-array CUDA solves and their interpolation avoid
+    JAX startup. Tolerances may stop levels early.
 
     Volume faces, world poses and physical density are preserved. Coarse data
     select a uniformly strided subset of measured rays without averaging or
@@ -93,17 +107,16 @@ def cgls_multires(
     if init_x is not None:
         validate_volume(init_x, grid, context="cgls_multires", name="init_x")
     data = _projection_data(projections)
-    initial = None if init_x is None else jnp.asarray(init_x, dtype=jnp.float32)
-    if initial is not None and not bool(jnp.all(jnp.isfinite(initial))):
-        raise ValueError("cgls_multires: initial volume must be finite")
+    volume = _initial_volume(init_x, factors[0])
     if det_grid is not None:
+        import jax.numpy as jnp
+
         det_grid = (
             jnp.asarray(det_grid[0], dtype=jnp.float32),
             jnp.asarray(det_grid[1], dtype=jnp.float32),
         )
         if not all(bool(jnp.all(jnp.isfinite(v))) for v in det_grid):
             raise ValueError("cgls_multires: detector coordinates must be finite")
-    volume = None if initial is None else bin_volume(initial, factors[0])
     levels: list[dict[str, object]] = []
     info: dict[str, object] = {}
     for factor, budget in zip(factors, budgets, strict=True):

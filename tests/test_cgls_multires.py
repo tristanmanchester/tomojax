@@ -185,3 +185,41 @@ def test_host_pyramid_stays_on_the_host_and_streams(storage, tmp_path):
     )
     np.testing.assert_allclose(result, truth, rtol=3e-4, atol=5e-5)
     assert all(level["formulation"] == "streamed_normal_equations" for level in info["levels"])
+
+
+@pytest.mark.gpu
+def test_host_multires_avoids_jax_and_matches_the_device_workflow():
+    import subprocess
+    import sys
+
+    code = """
+import sys
+import numpy as np
+from tomojax.geometry import Grid, Detector, LaminographyGeometry
+from tomojax.recon import CGLSConfig, cgls_multires
+rng = np.random.default_rng(27)
+grid, det = Grid(9, 7, 5, .8, 1.2, 1.1), Detector(13, 11, .7, .9, (.2, -.1))
+geom = LaminographyGeometry(grid, det, [13, 39, 77, 111, 153], 31)
+data = rng.normal(size=(5, 11, 13)).astype(np.float32)
+kwargs = dict(factors=(3, 1), iterations_per_level=(4, 7),
+              config=CGLSConfig(rtol=0, damping=.1, projector_backend='pallas'))
+host, info = cgls_multires(geom, grid, det, data, **kwargs)
+assert 'jax' not in sys.modules and 'cupyx.scipy.sparse' not in sys.modules
+assert isinstance(host, np.ndarray) and info['execution_backend'] == 'cupy'
+import jax.numpy as jnp
+device, reference = cgls_multires(geom, grid, det, jnp.asarray(data), **kwargs)
+np.testing.assert_allclose(host, device, atol=3e-5, rtol=3e-4)
+assert info['effective_iterations'] == reference['effective_iterations']
+"""
+    subprocess.run([sys.executable, "-c", code], check=True)
+
+
+@pytest.mark.parametrize("strided", [False, True])
+def test_host_multires_rejects_nonfinite_unsampled_rays(strided):
+    grid, detector, geometry, _ = problem()
+    data = np.ones((5, 7, 9), np.float32)
+    if strided:
+        data = data[:, :, ::-1]
+    data[0, 0, 0] = np.nan
+    with pytest.raises(ValueError, match="finite"):
+        cgls_multires(geometry, grid, detector, data, factors=(3, 1), iterations_per_level=(1, 1))
