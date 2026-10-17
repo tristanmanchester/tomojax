@@ -93,6 +93,30 @@ class MLEMConfig:
     projector_model: ProjectorModel = "auto"
 
 
+@partial(jax.jit, static_argnames=("grid", "detector", "backend", "batch_size", "model", "axial"))
+def _normalizer(
+    poses: jax.Array,
+    indices: jax.Array,
+    valid: jax.Array,
+    det_grid: tuple[jax.Array, jax.Array] | None,
+    *,
+    grid: Grid,
+    detector: Detector,
+    backend: str,
+    batch_size: int,
+    model: str | ConeModel,
+    axial: bool,
+) -> jax.Array:
+    """Own a large norm stack separately from the iterative solver's workspace."""
+    if axial:
+        grid = replace(grid, nz=1, vol_origin=(*grid_volume_origin(grid)[:2], 0.0))
+        detector = replace(detector, nv=1, center=(detector.center[0], 0.0))
+    sensitivity, _ = poisson_operators(
+        poses, grid, detector, det_grid, backend, batch_size, model, indices, valid
+    )
+    return jax.lax.map(sensitivity, jnp.arange(indices.shape[0]))
+
+
 @partial(
     jax.jit,
     static_argnames=(
@@ -124,6 +148,7 @@ def _solve(
     cache: bool,
     stream: bool,
     axial: bool,
+    sensitivities: jax.Array | None = None,
 ) -> tuple[jax.Array, jax.Array]:
     sensitivity, correction = poisson_operators(
         poses, grid, detector, det_grid, backend, batch_size, model, indices, valid, stream=stream
@@ -144,7 +169,8 @@ def _solve(
     subsets = indices.shape[0]
     # A full subset stack on a large volume can exceed device memory. Retain
     # only one current sensitivity in that case, independent of subset count.
-    sensitivities = jax.lax.map(sensitivity, jnp.arange(subsets)) if cache else None
+    if sensitivities is None and cache:
+        sensitivities = jax.lax.map(sensitivity, jnp.arange(subsets))
     # A wholly unobserved voxel has no likelihood information: choose zero,
     # not an arbitrary unit activity. Visibility must include every subset;
     # a voxel missed by one subset can still be measured by another.
@@ -251,11 +277,21 @@ def mlem(
         cache = _cache_sensitivities(
             subsets * norm_bytes, subsets, iterations, workspace_bytes=workspace, initial=initial
         )
+        poses = stack_view_poses(geometry, n)
+        device_indices, device_valid = jax.device_put((indices, valid))
+        norms = None
+        if cache and subsets * norm_bytes > _SENSITIVITY_CACHE_BYTES:
+            norms = _normalizer(
+                poses, device_indices, device_valid, det_grid, grid=grid, detector=detector,
+                backend=backend, batch_size=batch, model=model, axial=axial,
+            )  # fmt: skip
+            # Release builder scratch before allocating the iteration workspace.
+            norms.block_until_ready()
         volume, good = _solve(
-            stack_view_poses(geometry, n), data, initial, support,
-            jax.device_put(indices), jax.device_put(valid), jnp.int32(iterations), det_grid,
+            poses, data, initial, support,
+            device_indices, device_valid, jnp.int32(iterations), det_grid,
             grid=grid, detector=detector, backend=backend, batch_size=batch, model=model,
-            cache=cache, stream=stream, axial=axial,
+            cache=cache, stream=stream, axial=axial, sensitivities=norms,
         )  # fmt: skip
         if stream:
             volume.block_until_ready()  # Host registrations must outlive every callback.

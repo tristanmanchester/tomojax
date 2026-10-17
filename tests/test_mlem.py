@@ -174,6 +174,8 @@ def test_streamed_counts_match_resident_subsets_and_release_sources(problem, mon
 @pytest.mark.numerical
 def test_single_plane_sensitivities_match_full_axial_norms(monkeypatch):
     module = import_module("tomojax.recon.mlem")
+    monkeypatch.setattr(module, "_SENSITIVITY_CACHE_BYTES", 0)
+    monkeypatch.setattr(module, "device_free_memory_bytes", lambda: 2**30)
     rng = np.random.default_rng(9)
     grid = Grid(5, 4, 3, 0.8, 1.1, 1.3, vol_origin=(1.3, -2.7, 2.5 - 2 * 1.3 / 2))
     detector = Detector(8, 3, 0.8, 1.3, (0.2, 2.5))
@@ -187,4 +189,18 @@ def test_single_plane_sensitivities_match_full_axial_norms(monkeypatch):
         with monkeypatch.context() as patch:
             patch.setattr(module, "independent_planes", lambda *_: False)
             expected = tj.reconstruct(scan, "mlem", config=cfg).volume
+        np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=2e-6)
+
+
+@pytest.mark.numerical
+def test_separately_allocated_norms_match_inline_cache(problem, monkeypatch):
+    module = import_module("tomojax.recon.mlem")
+    grid, detector, geometry, matrix = problem
+    data = (matrix @ np.linspace(0.2, 1.1, 12)).reshape(5, 4, 5).astype(np.float32)
+    cfg = MLEMConfig(iterations=3, subsets=3, views_per_batch=2)
+    expected = mlem(geometry, grid, detector, data, config=cfg)[0]
+    monkeypatch.setattr(module, "_SENSITIVITY_CACHE_BYTES", 0)
+    monkeypatch.setattr(module, "device_free_memory_bytes", lambda: 2**30)
+    for _ in range(2):
+        actual = mlem(geometry, grid, detector, data, config=cfg)[0]
         np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=2e-6)
