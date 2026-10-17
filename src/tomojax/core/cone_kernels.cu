@@ -541,11 +541,12 @@ __device__ __forceinline__ void add4(float* p0, float x0, float* p1, float x1, f
 // current crossing in registers and adds them to the tile only as it moves on. img is
 // path-weighted; nviews <= VMAX.
 #define VMAX 32
-template <int PC, int RHS = 1>
+template <int PC, int RHS = 1, bool PACKED = false>
 __device__ __forceinline__ void plane_tile(
     const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
     const float* __restrict__ img, float* __restrict__ vol, int nx, int ny, int nz, int nu, int nv,
-    float* __restrict__ vol1 = nullptr, const float* __restrict__ img1 = nullptr)
+    float* __restrict__ vol1 = nullptr, const float* __restrict__ img1 = nullptr,
+    int z_start = 0, int z_capacity = 0)
 {
     __shared__ float acc[RHS][PB + 2][PC + 3];  // a cell of padding round the tile: no bounds tests
     __shared__ float cf[VMAX][12];  // source, detector origin, u and v axes
@@ -553,7 +554,7 @@ __device__ __forceinline__ void plane_tile(
     __shared__ int first[VMAX + 1]; // each view's first run in the block's list
     int b = a == 0 ? 1 : 0, cc = a == 2 ? 1 : 2;
     int nb = SEL(b, nx, ny, nz), nc = SEL(cc, nx, ny, nz);
-    int c0 = blockIdx.x * PC, b0 = blockIdx.y * PB, k = blockIdx.z;
+    int c0 = blockIdx.x * PC, b0 = blockIdx.y * PB, k = blockIdx.z + (PACKED ? z_start : 0);
     int nb0 = min(PB, nb - b0), nc0 = min(PC, nc - c0);
     if (!any_view(coeff, axis_box, nviews, a, false)) return;
     for (int i = threadIdx.x; i < RHS * (PB + 2) * (PC + 3); i += blockDim.x) (&acc[0][0][0])[i] = 0.f;
@@ -712,7 +713,11 @@ __device__ __forceinline__ void plane_tile(
     for (int i = threadIdx.x; i < PB * PC; i += blockDim.x) {
         int jb = i / PC, jc = i % PC;
         if (jb < nb0 && jc < nc0) {
-            long offset = (long)k * sa + (long)(b0 + jb) * sb + (long)(c0 + jc) * sc;
+            // Packed axis-2 planes retain physical k for every ray calculation;
+            // only the final output address uses the bounded scratch layout.
+            long offset = PACKED
+                ? ((long)(b0 + jb) * z_capacity + blockIdx.z) * ny + c0 + jc
+                : (long)k * sa + (long)(b0 + jb) * sb + (long)(c0 + jc) * sc;
             vol[offset] += acc[0][jb + 1][jc + 1];
             if (RHS == 2) vol1[offset] += acc[1][jb + 1][jc + 1];
         }
@@ -733,6 +738,16 @@ extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint_wide(
     const float* __restrict__ img, float* __restrict__ vol, int nx, int ny, int nz, int nu, int nv)
 {
     plane_tile<64>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv);
+}
+
+// Independent physical z slabs, stored with contiguous y for axis-2 output.
+extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint_packed(
+    const float* coeff, const int* axis_box, int nviews, int a,
+    const float* img, float* vol, int nx, int ny, int nz, int nu, int nv,
+    int z_start, int z_capacity)
+{
+    plane_tile<32, 1, true>(coeff, axis_box, nviews, a, img, vol,
+                            nx, ny, nz, nu, nv, nullptr, nullptr, z_start, z_capacity);
 }
 
 // One traversal accumulates the two spatial gradients and their plane moments.
@@ -964,4 +979,14 @@ extern "C" __global__ void __launch_bounds__(128, 8) pair_plane_adjoint(
     int nx, int ny, int nz, int nu, int nv)
 {
     plane_tile<32, 2>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv, vol1, img1);
+}
+
+// Two independent right-hand sides share the same bounded physical z slab.
+extern "C" __global__ void __launch_bounds__(128, 8) pair_plane_adjoint_packed(
+    const float* coeff, const int* axis_box, int nviews, int a,
+    const float* img, const float* img1, float* vol, float* vol1,
+    int nx, int ny, int nz, int nu, int nv, int z_start, int z_capacity)
+{
+    plane_tile<32, 2, true>(coeff, axis_box, nviews, a, img, vol,
+                           nx, ny, nz, nu, nv, vol1, img1, z_start, z_capacity);
 }

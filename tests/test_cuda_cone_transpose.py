@@ -384,3 +384,63 @@ def test_cuda_cone_rounds_inverse_corner_bounds_outward():
     poses[0, :3, 3] = [75.462677, -215.025162, 33.546272]
     frames = [beam_frame(geometry.beam, detector)]
     _check_dense_transpose(grid, detector, frames, jnp.asarray(poses))
+
+
+def test_cone_output_layout_plan_respects_cache_and_workspace():
+    plan = cone._cone_output.slab_capacity
+    spacing, l2, free = (1, 1, 1), 32 << 20, 4 << 30
+    grid, detector = Grid(501, 501, 501, *spacing), Detector(192, 243, 1, 1)
+    hint = (spacing, 0.5)
+    assert plan(grid, detector, 40, hint, l2, free) == 66
+    assert plan(grid, detector, 40, hint, l2, free, rhs=2) == 33
+    assert plan(Grid(301, 301, 301, *spacing), Detector(384, 486, 1, 1), 40, hint, l2, free) == 0
+    for unavailable in (None, (spacing, 0), ((2, 1, 1), 0.5)):
+        assert plan(grid, detector, 40, unavailable, l2, free) == 0
+    for cache, available in ((0, free), (l2, None), (l2, 32 << 20)):
+        assert plan(grid, detector, 40, hint, cache, available) == 0
+    assert plan(Grid(8192, 8192, 2, *spacing), detector, 40, hint, l2, free) == 0
+    assert plan(Grid(501, 501, 1, *spacing), detector, 40, hint, l2, free) == 0
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize(("capacity", "rhs"), [(1, 1), (3, 1), (1, 2), (3, 2)])
+def test_cuda_cone_packed_slabs_match_dense_transpose_with_accumulation(monkeypatch, capacity, rhs):
+    grid = Grid(5, 4, 7, 0.7, 1.1, 0.9, vol_center=(0.2, -0.1, 0.3))
+    detector = Detector(9, 7, 1.3, 0.8)
+    directions = [(1, 1, 0), (1, 0, 1), (0, 1, -1), (-1, 1, -2)]
+    frames = [_frame(directions[i % 4], 0.13, reverse_v=i % 2 == 0) for i in range(70)]
+    coeff = frame_coefficients(
+        jnp.broadcast_to(jnp.eye(4), (70, 4, 4)), np.asarray(frames), grid, detector
+    )
+    shape = (grid.nx, grid.ny, grid.nz)
+    basis = jnp.eye(np.prod(shape), dtype=jnp.float32).reshape((-1, *shape))
+    forward = jax.jit(jax.vmap(lambda x: cone_project(x, coeff, grid, detector, backend="cuda")))
+    matrix = np.asarray(forward(basis), np.float64).reshape((np.prod(shape), -1))
+    rng = np.random.default_rng(576)
+    images = rng.normal(size=(rhs, 70, detector.nv, detector.nu)).astype(np.float32)
+    images[:, ::3] = 0
+    images[:, :, ::2, 1::2] = 0
+    initial = tuple(rng.normal(size=shape).astype(np.float32) for _ in range(rhs))
+
+    model = cone.ConeModel(((70, ConeBeam(40, 80), detector),))
+    # Tiny dense oracles force slab boundaries through the production model seam;
+    # the separate cache/workspace test covers its hardware admission policy.
+    monkeypatch.setattr(cone._cone_output, "device_capacity", lambda *a, **k: capacity)
+
+    def transpose(*values):
+        kwargs = dict(grid=grid, detector=detector, backend="cuda")
+        if rhs == 1:
+            return (
+                model.backproject(jnp.asarray(images[0]), coeff, accumulate=values[0], **kwargs),
+            )
+        return model.backproject_pair(
+            tuple(jnp.asarray(image) for image in images), coeff, accumulate=values, **kwargs
+        )
+
+    for donated in (False, True):
+        apply = jax.jit(transpose, donate_argnums=tuple(range(rhs)) if donated else ())
+        actual = apply(*(jnp.array(value, copy=True) for value in initial))
+        for result, image, value in zip(actual, images, initial, strict=True):
+            expected = (matrix @ image.ravel()).reshape(shape) + value
+            bound = (np.abs(matrix) @ np.abs(image).ravel()).max() + np.abs(value).max()
+            np.testing.assert_allclose(result, expected, rtol=0, atol=7e-7 * bound)

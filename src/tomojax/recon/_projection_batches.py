@@ -14,8 +14,6 @@ import jax.numpy as jnp
 
 from tomojax.core.cone import (
     ConeModel,
-    cone_backproject,
-    cone_backproject_pair,
     cone_project,
     cone_project_ones,
     prepare_cone_projection,
@@ -174,11 +172,11 @@ class ViewBatches:
         """Return ``output`` plus the batch transpose; Joseph on CUDA adds in place."""
         grid, detector = self.grid, self.detector
         if isinstance(self.model, ConeModel):
-            return cone_backproject(
+            return self.model.backproject(
                 images,
                 self._coefficients(start),
-                grid,
-                detector,
+                grid=grid,
+                detector=detector,
                 backend=self.cone_backend,
                 accumulate=output,
             )
@@ -208,11 +206,11 @@ class ViewBatches:
     def backproject_pair(self, images, start, batch, outputs):
         """Two exact transposes with common batch geometry and separate accumulators."""
         if isinstance(self.model, ConeModel):
-            return cone_backproject_pair(
+            return self.model.backproject_pair(
                 images,
                 self._coefficients(start),
-                self.grid,
-                self.detector,
+                grid=self.grid,
+                detector=self.detector,
                 backend=self.cone_backend,
                 accumulate=outputs,
             )
