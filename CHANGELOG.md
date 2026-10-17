@@ -13,6 +13,8 @@ into fixed FISTA acceleration with `SIRTConfig(acceleration=True)`.
 Large host projection stacks stream in batches with exact row normalization.
 Uniform-support cone row sums count fully supported planes while retaining the
 ordinary interpolation weights at volume boundaries.
+Uniform-support Joseph row sums avoid volume reads, and bounded SIRT placement
+can stream data and rows to retain reusable exact subset columns.
 
 `mlem` adds matched MLEM/OSEM reconstruction for nonnegative linear Poisson
 measurements, with angular subsets, a reconstruction support mask, and optional

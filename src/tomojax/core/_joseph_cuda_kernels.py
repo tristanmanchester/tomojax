@@ -115,6 +115,7 @@ _FORWARD_SOURCE = r"""
 __device__ float sample(const float* x, int a, int k, int b, int c,
                        int nx, int ny, int nz, int nb, int nc) {
     if (b<0 || b>=nb || c<0 || c>=nc) return 0.f;
+    if (UNIFORM) return 1.f;
     int ix=a==0?k:(a==1?c:b), iy=a==0?b:(a==1?k:c), iz=a==0?c:(a==1?b:k);
     return x[((INDEX)ix*ny+iy)*nz+iz];
 }
@@ -159,11 +160,17 @@ extern "C" __global__ void forward(const float* coeff, const float* x, float* ou
     for(int k=first;k<stop;k++) {
         if(!valid) continue;
         float qb=pb+(c[3]*k+c[4]),qc=pc+(c[7]*k+c[8]);
-        int ib=(int)floorf(qb),ic=(int)floorf(qc);
-        float wb=qb-ib,wc=qc-ic;
-        float val=(sample(x,a,k,ib,ic,nx,ny,nz,nb,nc)*(1-wc)
+        float val;
+        if (UNIFORM && qb>=0.f && qb<(float)(nb-1) && qc>=0.f && qc<(float)(nc-1)) {
+            val=1.f;
+        } else {
+            int ib=(int)floorf(qb),ic=(int)floorf(qc);
+            float wb=qb-ib,wc=qc-ic;
+            val=(sample(x,a,k,ib,ic,nx,ny,nz,nb,nc)*(1-wc)
                   +sample(x,a,k,ib,ic+1,nx,ny,nz,nb,nc)*wc)*(1-wb)
                  +(sample(x,a,k,ib+1,ic,nx,ny,nz,nb,nc)*(1-wc)+sample(x,a,k,ib+1,ic+1,nx,ny,nz,nb,nc)*wc)*wb;
+        }
+        // Keep the original sequential additions, even for uniform support.
         total+=val*c[9];
     }
     if(valid) out[((long)view*nv+v)*nu+u]=total;
@@ -172,8 +179,10 @@ extern "C" __global__ void forward(const float* coeff, const float* x, float* ou
 
 
 @cache
-def forward_kernel(*, narrow: bool) -> Any:
+def forward_kernel(*, narrow: bool, uniform: bool = False) -> Any:
     import cupy as cp
 
-    source = _FORWARD_SOURCE.replace("INDEX", "int" if narrow else "long")
+    source = _FORWARD_SOURCE.replace("INDEX", "int" if narrow else "long").replace(
+        "UNIFORM", str(int(uniform))
+    )
     return cp.RawModule(code=source, options=("--fmad=false",)).get_function("forward")

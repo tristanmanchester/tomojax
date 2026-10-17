@@ -1,12 +1,8 @@
-"""Batched projection operators shared by the iterative reconstruction solvers.
+"""Batched matched projectors shared by iterative reconstruction solvers.
 
-``projection_operators`` returns a matched forward projector and transpose over
-all views, processed in fixed-size view batches inside one compiled loop.
-``"joseph"`` samples voxel-centre planes along each ray's dominant axis and is
-the fastest model on CUDA; ``"ray"`` is the trilinear ray marcher. Both use
-physical units and agree with analytic line integrals to the same accuracy.
-Cone-beam geometries use :class:`ConeModel`, Joseph sampling of rays from the
-source, with CUDA kernels where the parallel models use Pallas.
+Fixed-size view loops bound storage for parallel Joseph/ray and cone models.
+Subsets preserve poses, source arrangements and padding weights; streamed
+measurements remain host resident.
 """
 
 from __future__ import annotations
@@ -238,6 +234,11 @@ class _Batches:
             return cone_project_ones(
                 self._coefficients(start), self.grid, self.detector, backend=self.cone_backend
             )
+        if self.model == "joseph" and self.backend == "pallas":
+            from tomojax.core._cuda_joseph import project_ones_cuda, use_cuda_gather
+
+            if use_cuda_gather(self.grid):
+                return project_ones_cuda(self._coefficients(start), self.grid, self.detector)
         return self.project(jnp.ones_like(self.zeros_volume()), start, batch)
 
     def project(self, volume: jax.Array, start: jax.Array, batch: jax.Array) -> jax.Array:

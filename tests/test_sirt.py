@@ -25,6 +25,44 @@ def test_streamed_initialization_finishes_before_solve_workspace(monkeypatch):
     assert len(waited) == 1
 
 
+@pytest.mark.parametrize(
+    ("free", "masked", "iterations", "device_data", "backend", "expected"),
+    [
+        (1440, False, 2, False, "pallas", (True, True)),
+        (1167, False, 2, False, "pallas", (False, False)),
+        (1440, True, 2, False, "pallas", (False, False)),
+        (1440, False, 1, False, "pallas", (False, False)),
+        (1440, False, 2, True, "pallas", (False, False)),
+        (1440, False, 2, False, "jax", (False, False)),
+        (None, False, 2, False, "pallas", (False, True)),
+    ],
+)
+def test_streamed_columns_reserve_workspace_and_preserve_other_paths(
+    monkeypatch, free, masked, iterations, device_data, backend, expected
+):
+    import tomojax.backends
+
+    module = importlib.import_module(sirt.__module__)
+    monkeypatch.setattr(module, "should_stream", lambda *a, **k: False)
+    monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: free)
+    grid, detector = tj.Grid(3, 3, 2, 1, 1, 1), tj.Detector(5, 4, 1, 1)
+    data = np.ones((8, 4, 5), np.float32)
+    cfg = SIRTConfig(
+        iterations=iterations, subsets=8, support=np.ones((3, 3, 2)) if masked else None
+    )
+    initial, stream, cache = module._storage(
+        jnp.asarray(data) if device_data else data,
+        None,
+        grid=grid,
+        detector=detector,
+        cfg=cfg,
+        views=8,
+        backend=backend,
+        axial=False,
+    )
+    assert initial is None and (stream, cache) == expected
+
+
 @pytest.mark.numerical
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("uniform", [False, True])

@@ -216,6 +216,52 @@ def _parameters(cfg: SIRTConfig, n: int) -> tuple[int, int, int, float, float]:
     return iterations, subsets, batch, lower, upper
 
 
+def _storage(
+    projections: jax.Array | np.ndarray,
+    init_x: jax.Array | np.ndarray | None,
+    *,
+    grid: Grid,
+    detector: Detector,
+    cfg: SIRTConfig,
+    views: int,
+    backend: str,
+    axial: bool,
+) -> tuple[jax.Array | None, bool, bool]:
+    """Place data and normalizers together, reserving the solve's working buffers."""
+    from tomojax.backends import device_free_memory_bytes
+
+    stream = should_stream(projections, fraction=0.2)
+    initial = _initial_volume(init_x, stream=stream)
+    free = device_free_memory_bytes()
+    volume_bytes = grid.nx * grid.ny * grid.nz * 4
+    column_bytes = cfg.subsets * grid.nx * grid.ny * (1 if axial else grid.nz) * 4
+    budget = 256 * 1024**2 if free is None else free // 4
+    cache = column_bytes <= budget
+    if (
+        not cache
+        and free is not None
+        and backend == "pallas"
+        and cfg.projector_model != "ray"
+        and not axial
+        and cfg.support is None
+        and cfg.iterations > 1
+        and cfg.subsets > 1
+        and not isinstance(projections, jax.Array)
+    ):
+        # Finish an asynchronous FBP before deciding whether its transient
+        # workspace can instead hold exact, reusable subset columns.
+        initial = _initial_volume(initial, stream=True)
+        free = device_free_memory_bytes()
+        count = (views + cfg.subsets - 1) // cfg.subsets
+        image_bytes = min(cfg.views_per_batch, count) * detector.nu * detector.nv * 4
+        # Six volumes cover state/update, gradient, column slice, normalization
+        # work and optional projector packing; two images cover batch scratch.
+        reserve = 6 * volume_bytes + 2 * image_bytes
+        if free is not None and column_bytes + reserve <= free:
+            stream, cache = True, True
+    return initial, stream, cache
+
+
 def sirt(
     geometry: Geometry,
     grid: Grid,
@@ -226,14 +272,11 @@ def sirt(
     config: SIRTConfig | None = None,
     det_grid: tuple[jax.Array, jax.Array] | None = None,
 ) -> tuple[jax.Array | np.ndarray, dict[str, object]]:
-    """Reconstruct with SIRT/OS-SART; return the volume and full-sweep count.
+    """Matched FP32 SIRT/OS-SART; each iteration visits every subset once.
 
-    Supports parallel, tilted and cone-beam scans on matched FP32 projectors.
-    An iteration is a complete sweep, not one subset update.
-    Large axial Joseph scans whose detector rows coincide with voxel planes
-    run in independent slabs, returning a host array without changing the solve.
-    Large host projection stacks stream in batches, recomputing exact row weights
-    rather than keeping a second full projection stack on the device.
+    Large independent axial planes use host slabs. Large host projection stacks
+    stream with exact row recomputation, also allowing reusable column weights
+    to fit in device memory. Returns the volume and full-sweep count.
     """
     cfg = SIRTConfig() if config is None else config
     validate_grid(grid, "sirt grid")
@@ -282,21 +325,23 @@ def sirt(
         )
         if result is not None:
             return result
-    from tomojax.backends import device_free_memory_bytes
-
-    free = device_free_memory_bytes()
-    column_budget = 256 * 1024**2 if free is None else free // 4
-    cache_columns = subsets * grid.nx * grid.ny * (1 if axial else grid.nz) * 4 <= column_budget
+    initial, stream, cache_columns = _storage(
+        projections,
+        init_x,
+        grid=grid,
+        detector=detector,
+        cfg=cfg,
+        views=n,
+        backend=backend,
+        axial=axial,
+    )
     poses = stack_view_poses(geometry, n)
-    # Resident execution keeps both measured data and inverse row weights.
-    stream = should_stream(projections, fraction=0.2)
     source = (
         host_source(np.asarray(projections))
         if stream
         else nullcontext(jnp.asarray(projections, jnp.float32))
     )
     with source as data:
-        initial = _initial_volume(init_x, stream=stream)
         volume = _solve(
             poses, data, initial,
             None if cfg.support is None else jnp.asarray(cfg.support),

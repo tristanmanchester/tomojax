@@ -9,6 +9,9 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 # check-public-imports: allow-private
+from tomojax.core import _cuda_joseph as cuda
+
+# check-public-imports: allow-private
 from tomojax.core.joseph import adjoint_jax, forward_jax, plane_coefficients
 
 # check-public-imports: allow-private
@@ -90,6 +93,23 @@ def problem(voxel=(0.8, 1.1, 1.3), spacing=(0.7, 1.2)):
     ).as_matrix()
     poses[:, :3, 3] = [0.13, -0.17, 0.29]
     return grid, detector, poses
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("nz", [1, 11, 257])
+def test_uniform_cuda_projection_keeps_rounded_boundary_and_plane_sums(nz):
+    from dataclasses import replace
+
+    if not cuda.cuda_gather_available():
+        pytest.skip("requires CUDA and CuPy")
+    grid, detector, poses = problem()
+    grid = replace(grid, nx=23, ny=17, nz=nz, vol_origin=(-5.1, -2.3, -3.7))
+    detector = replace(detector, nu=31, nv=23)
+    coeff = plane_coefficients(jnp.asarray(poses), grid, detector)
+    expected = forward_pallas(coeff, jnp.ones((23, 17, nz), jnp.float32), grid, detector)
+    actual = jax.jit(lambda c: cuda.project_ones_cuda(c, grid, detector))(coeff)
+    np.testing.assert_allclose(actual, expected, rtol=3e-6, atol=1e-6)
+    np.testing.assert_array_equal(np.asarray(actual) == 0, np.asarray(expected) == 0)
 
 
 @pytest.mark.parametrize(
@@ -386,9 +406,6 @@ def test_cubic_cancellation_bound_uses_magnitudes_of_physical_weights(backend):
 
 
 def test_cuda_gather_auto_size_threshold(monkeypatch):
-    # check-public-imports: allow-private
-    from tomojax.core import _cuda_joseph as cuda
-
     monkeypatch.setattr(cuda, "cuda_gather_available", lambda: True)
     monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "auto")
     assert not cuda.use_cuda_gather(Grid(128, 128, 127, 1, 1, 1))
@@ -404,10 +421,7 @@ def test_cuda_gather_auto_size_threshold(monkeypatch):
     ("voxel", "spacing"), [((0.8, 1.1, 1.3), (0.7, 1.2)), ((2.0, 0.4, 1.3), (0.3, 0.5))]
 )
 def test_cuda_gather_matches_reference_transpose_and_accumulates(nz, voxel, spacing):
-    # check-public-imports: allow-private
-    from tomojax.core._cuda_joseph import cuda_gather_available, gather_transpose_cuda
-
-    if not cuda_gather_available():
+    if not cuda.cuda_gather_available():
         pytest.skip("requires CUDA and CuPy")
     g, d, poses = problem(voxel, spacing)
     g = Grid(g.nx, g.ny, nz, *voxel, vol_origin=(-1.7, -0.9, -1.1))
@@ -417,12 +431,14 @@ def test_cuda_gather_matches_reference_transpose_and_accumulates(nz, voxel, spac
     start = jnp.asarray(rng.normal(size=(g.nx, g.ny, g.nz)), jnp.float32)
     expected = adjoint_jax(coeff, images, g, d)
     swapped = jnp.transpose(images, (0, 2, 1))
-    actual = jax.jit(lambda c, y, x: gather_transpose_cuda(c, y, g, d, x))(coeff, swapped, start)
+    actual = jax.jit(lambda c, y, x: cuda.gather_transpose_cuda(c, y, g, d, x))(
+        coeff, swapped, start
+    )
     np.testing.assert_allclose(actual - start, expected, rtol=2e-5, atol=2e-5)
     # The forward projection and this gather are matched transposes.
     volume = jnp.asarray(rng.normal(size=(g.nx, g.ny, g.nz)), jnp.float32)
     lhs = float(jnp.vdot(forward_pallas(coeff, volume, g, d), images))
-    rhs = float(jnp.vdot(volume, gather_transpose_cuda(coeff, swapped, g, d)))
+    rhs = float(jnp.vdot(volume, cuda.gather_transpose_cuda(coeff, swapped, g, d)))
     assert abs(lhs - rhs) <= 1e-5 * max(abs(lhs), 1.0)
 
 
@@ -500,9 +516,6 @@ def test_explicit_singleton_detector_keeps_physical_matrix_and_transpose(pixels,
 def test_axial_cuda_pair_matches_physical_matrix_near_axis(
     nz, fractional, v_center, tilt, monkeypatch
 ):
-    # check-public-imports: allow-private
-    from tomojax.core import _cuda_joseph as cuda
-
     monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "auto")
     monkeypatch.setattr(cuda, "_MIN_AXIAL_VOXELS", 1)
     g = Grid(7, 6, nz, 0.8, 1.1, 1.3)

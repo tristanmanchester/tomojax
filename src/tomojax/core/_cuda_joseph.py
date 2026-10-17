@@ -26,7 +26,7 @@ from jax.experimental.buffer_callback import buffer_callback
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.core._joseph_cuda_kernels import RUN, THREADS, gather_kernel
+from tomojax.core._joseph_cuda_kernels import RUN, THREADS, forward_kernel, gather_kernel
 from tomojax.core.backend_policy import cuda_backend
 
 if TYPE_CHECKING:
@@ -158,3 +158,30 @@ def gather_transpose_cuda(
             operand=None,
         ).reshape(shape)
     return generic(None).reshape(shape)
+
+
+def _launch_uniform(context: Any, out: Any, coeff: Any, *, grid: Grid, detector: Detector) -> None:
+    import cupy as cp
+
+    shape = (grid.nx, grid.ny, grid.nz)
+    with xla_stream(context, out):
+        geometry, target = cp.asarray(coeff), cp.asarray(out)
+        kernel = forward_kernel(narrow=grid.nx * grid.ny * grid.nz < 2**31, uniform=True)
+        tiles = -(-detector.nu // 8) * -(-detector.nv // 16)
+        for start in range(0, coeff.shape[0], 64):
+            stop = min(start + 64, coeff.shape[0])
+            # The uniform specialization never dereferences its volume argument.
+            kernel(
+                (tiles * (stop - start),), (THREADS,),
+                (geometry[start:stop], geometry, target[start:stop],
+                 *map(np.int32, (*shape, detector.nu, detector.nv, stop - start))),
+            )  # fmt: skip
+
+
+def project_ones_cuda(coeff: jax.Array, grid: Grid, detector: Detector) -> jax.Array:
+    """Exact unit-support row sums without allocating or reading a ones volume."""
+    return buffer_callback(
+        partial(_launch_uniform, grid=grid, detector=detector),
+        jax.ShapeDtypeStruct((coeff.shape[0], detector.nv, detector.nu), jnp.float32),
+        vmap_method="sequential",
+    )(coeff.astype(jnp.float32))
