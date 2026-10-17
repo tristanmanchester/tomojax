@@ -427,3 +427,21 @@ def test_native_cuda_clipped_planes_keep_the_matched_pair(narrow):
     np.testing.assert_allclose(ax, expected, rtol=3e-5, atol=5e-5)
     lhs, rhs = np.vdot(ax.astype(float), y), np.vdot(x.astype(float), aty)
     assert abs(lhs - rhs) < 1e-6 * np.linalg.norm(ax) * np.linalg.norm(y)
+
+
+@pytest.mark.gpu
+def test_native_cuda_inverse_support_keeps_rounded_boundary_weights():
+    import cupy as cp
+
+    from tomojax.core.joseph_cuda import JosephCUDA
+
+    grid, detector = Grid(256, 256, 256, 1, 1, 1), Detector(256, 256, 1, 1)
+    geometry = LaminographyGeometry(grid, detector, [21.0], 30.0)
+    poses = np.asarray([geometry.pose_for_view(0)], np.float32)
+    operators = JosephCUDA(poses, grid, detector, views_per_batch=1)
+    volume, images = cp.zeros((256,) * 3, cp.float32), cp.zeros((1, 256, 256), cp.float32)
+    volume[230, 251, 165], images[0, 84, 178] = 1, 1
+    projected = float(operators.forward(volume)[0, 84, 178])
+    backprojected = float(operators.adjoint(images)[230, 251, 165])
+    assert projected > 1e-6
+    np.testing.assert_allclose(backprojected, projected, rtol=2e-6, atol=2e-10)

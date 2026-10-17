@@ -8,6 +8,60 @@ _VIEWS_PER_STAGE = 32
 THREADS = 128
 
 _GATHER_SOURCE = r"""
+template<int A, int R>
+__device__ __forceinline__ void gather_view(
+    const float* c, const float* image, int ix, int iy, int iz0,
+    int nu, int nv, float (&total)[R]) {
+    const int a = A;
+    float ub = c[1], vb = c[2], kb = c[3], cb = c[4];
+    float uc = c[5], vc = c[6], kc = c[7], cc = c[8], weight = c[9];
+    float iub = c[10], iuc = c[11], ivb = c[12], ivc = c[13];
+    int k0 = a == 0 ? ix : (a == 1 ? iy : iz0);
+    int b0 = a == 0 ? iy : (a == 1 ? iz0 : ix);
+    int c0 = a == 0 ? iz0 : (a == 1 ? ix : iy);
+    // Step of the run's voxel index along the plane coordinates.
+    int dk = a == 2, db = a == 1, dc = a == 0;
+    float hb[R], hc[R], tb[R], tc[R];
+    float lo_u = 3.4e38f, hi_u = -3.4e38f, lo_v = 3.4e38f, hi_v = -3.4e38f;
+    #pragma unroll
+    for (int j = 0; j < R; ++j) {
+        float k = (float)(k0 + j * dk);
+        hb[j] = __fadd_rn(__fmul_rn(kb, k), cb);
+        hc[j] = __fadd_rn(__fmul_rn(kc, k), cc);
+        tb[j] = (float)(b0 + j * db);
+        tc[j] = (float)(c0 + j * dc);
+        float cu = iub * (tb[j] - hb[j]) + iuc * (tc[j] - hc[j]);
+        float cv = ivb * (tb[j] - hb[j]) + ivc * (tc[j] - hc[j]);
+        lo_u = fminf(lo_u, cu); hi_u = fmaxf(hi_u, cu);
+        lo_v = fminf(lo_v, cv); hi_v = fmaxf(hi_v, cv);
+    }
+    float ru = fabsf(iub) + fabsf(iuc), rv = fabsf(ivb) + fabsf(ivc);
+    // Bound inverse-coordinate roundoff without expanding the physical weights.
+    float eb = fmaxf(fabsf(tb[0]), fabsf(tb[R-1])) + fmaxf(fabsf(hb[0]), fabsf(hb[R-1]));
+    float ec = fmaxf(fabsf(tc[0]), fabsf(tc[R-1])) + fmaxf(fabsf(hc[0]), fabsf(hc[R-1]));
+    float mu = 8*1.1920928955078125e-7f*(fabsf(iub)*eb + fabsf(iuc)*ec + ru + 1);
+    float mv = 8*1.1920928955078125e-7f*(fabsf(ivb)*eb + fabsf(ivc)*ec + rv + 1);
+    int u_start = max((int)floorf(lo_u - ru - mu) + 1, 0);
+    int u_stop = min((int)ceilf(hi_u + ru + mu), nu);
+    int v_start = max((int)floorf(lo_v - rv - mv) + 1, 0);
+    int v_stop = min((int)ceilf(hi_v + rv + mv), nv);
+    for (int u = u_start; u < u_stop; ++u) {
+        for (int v = v_start; v < v_stop; ++v) {
+            float value = image[(long)u * nv + v] * weight;
+            // Round each product as the forward projection does; weights
+            // must match it exactly to keep the transpose matched.
+            float pb = __fadd_rn(__fmul_rn(ub, (float)u), __fmul_rn(vb, (float)v));
+            float pc = __fadd_rn(__fmul_rn(uc, (float)u), __fmul_rn(vc, (float)v));
+            #pragma unroll
+            for (int j = 0; j < R; ++j) {
+                float qb = __fadd_rn(pb, hb[j]), qc = __fadd_rn(pc, hc[j]);
+                total[j] += value * (fmaxf(1.f - fabsf(qb - tb[j]), 0.f)
+                                     * fmaxf(1.f - fabsf(qc - tc[j]), 0.f));
+            }
+        }
+    }
+}
+
 extern "C" __global__ void joseph_gather(
     const float* __restrict__ coeff, const float* __restrict__ images,
     float* __restrict__ out, int nviews, int nx, int ny, int nz, int nu, int nv)
@@ -31,49 +85,11 @@ extern "C" __global__ void joseph_gather(
         int count = min(VB, nviews - first);
         for (int view = 0; view < count; ++view) {
             const float* c = cf + view * 14;
-            int a = (int)c[0];
-            float ub = c[1], vb = c[2], kb = c[3], cb = c[4];
-            float uc = c[5], vc = c[6], kc = c[7], cc = c[8], weight = c[9];
-            float iub = c[10], iuc = c[11], ivb = c[12], ivc = c[13];
-            int k0 = a == 0 ? ix : (a == 1 ? iy : iz0);
-            int b0 = a == 0 ? iy : (a == 1 ? iz0 : ix);
-            int c0 = a == 0 ? iz0 : (a == 1 ? ix : iy);
-            // Step of the run's voxel index along the plane coordinates.
-            int dk = a == 2, db = a == 1, dc = a == 0;
-            float hb[R], hc[R], tb[R], tc[R];
-            float lo_u = 3.4e38f, hi_u = -3.4e38f, lo_v = 3.4e38f, hi_v = -3.4e38f;
-            #pragma unroll
-            for (int j = 0; j < R; ++j) {
-                float k = (float)(k0 + j * dk);
-                hb[j] = __fadd_rn(__fmul_rn(kb, k), cb);
-                hc[j] = __fadd_rn(__fmul_rn(kc, k), cc);
-                tb[j] = (float)(b0 + j * db);
-                tc[j] = (float)(c0 + j * dc);
-                float cu = iub * (tb[j] - hb[j]) + iuc * (tc[j] - hc[j]);
-                float cv = ivb * (tb[j] - hb[j]) + ivc * (tc[j] - hc[j]);
-                lo_u = fminf(lo_u, cu); hi_u = fmaxf(hi_u, cu);
-                lo_v = fminf(lo_v, cv); hi_v = fmaxf(hi_v, cv);
-            }
-            float ru = fabsf(iub) + fabsf(iuc), rv = fabsf(ivb) + fabsf(ivc);
-            int u_start = max((int)floorf(lo_u - ru) + 1, 0);
-            int u_stop = min((int)ceilf(hi_u + ru), nu);
-            int v_start = max((int)floorf(lo_v - rv) + 1, 0);
-            int v_stop = min((int)ceilf(hi_v + rv), nv);
             const float* image = images + (long)(first + view) * nu * nv;
-            for (int u = u_start; u < u_stop; ++u) {
-                for (int v = v_start; v < v_stop; ++v) {
-                    float value = image[(long)u * nv + v] * weight;
-                    // Round each product as the forward projection does; weights
-                    // must match it exactly to keep the transpose matched.
-                    float pb = __fadd_rn(__fmul_rn(ub, (float)u), __fmul_rn(vb, (float)v));
-                    float pc = __fadd_rn(__fmul_rn(uc, (float)u), __fmul_rn(vc, (float)v));
-                    #pragma unroll
-                    for (int j = 0; j < R; ++j) {
-                        float qb = __fadd_rn(pb, hb[j]), qc = __fadd_rn(pc, hc[j]);
-                        total[j] += value * (fmaxf(1.f - fabsf(qb - tb[j]), 0.f)
-                                             * fmaxf(1.f - fabsf(qc - tc[j]), 0.f));
-                    }
-                }
+            switch ((int)c[0]) {
+                case 0: gather_view<0,R>(c, image, ix, iy, iz0, nu, nv, total); break;
+                case 1: gather_view<1,R>(c, image, ix, iy, iz0, nu, nv, total); break;
+                case 2: gather_view<2,R>(c, image, ix, iy, iz0, nu, nv, total); break;
             }
         }
     }
