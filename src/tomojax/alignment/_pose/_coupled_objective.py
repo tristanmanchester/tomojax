@@ -21,7 +21,7 @@ from ._coupled_program import CoupledArrays, CoupledSpec, run_loss, run_update
 from ._pose_context import _PoseObjectiveContext
 from ._pose_jacobian import PoseJacobianOptions
 
-# Recomputing a view's POSE_WIDTH Jacobian columns costs a derivative
+# Recomputing a view's active Jacobian columns costs a derivative
 # projection, and the joint solve applies them in every conjugate-gradient
 # iteration, so cache them whenever that many sinograms fit in this share of
 # free device memory. The complete working set is still checked below, and a
@@ -94,7 +94,9 @@ def _check_device_memory(arrays: CoupledArrays, spec: CoupledSpec) -> Callable |
     if spec.split is not None:  # each device holds its share of the views
         n_views //= spec.split.mesh.size
     sinogram = 4 * n_views * detector.nu * detector.nv
-    sinograms = 3 + (POSE_WIDTH if spec.cache_columns else 0) + (arrays.weights.ndim > 0)
+    sinograms = (
+        3 + (len(spec.active_columns) if spec.cache_columns else 0) + (arrays.weights.ndim > 0)
+    )
     if _MEMORY_MARGIN * (13 * volume + sinograms * sinogram) < available:
         return None
     p = jax.ShapeDtypeStruct((int(arrays.poses.shape[0]), POSE_WIDTH), jnp.float32)
@@ -214,12 +216,14 @@ def build_coupled_objective(ctx: _PoseObjectiveContext) -> CoupledObjective:
         arrays = _shared(arrays, split)
     # Each device caches its own views' columns.
     views = ctx.n_views if split is None else split.total // split.mesh.size
-    cache_columns = views * ctx.nv * ctx.nu * POSE_WIDTH * 4 <= _pose_cache_limit()
+    active_columns = tuple(int(i) for i in np.flatnonzero(np.asarray(ctx.active_mask)))
+    cache_columns = views * ctx.nv * ctx.nu * len(active_columns) * 4 <= _pose_cache_limit()
     spec = CoupledSpec(
         grid=ctx.grid,
         detector=ctx.detector,
         backend=backend,
         jacobian=replace(PoseJacobianOptions.from_config(cfg), cone_beam=ctx.cone is not None),
+        active_columns=active_columns,
         cache_columns=cache_columns,
         regulariser=cfg.regulariser,
         huber_delta=float(cfg.huber_delta),

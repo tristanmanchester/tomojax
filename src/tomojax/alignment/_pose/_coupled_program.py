@@ -64,6 +64,7 @@ class CoupledSpec:
     detector: Detector
     backend: Literal["jax", "pallas"]
     jacobian: PoseJacobianOptions
+    active_columns: tuple[int, ...]
     cache_columns: bool
     regulariser: Regulariser
     huber_delta: float
@@ -173,6 +174,26 @@ class _Shares:
         return lambda rows: self.mine(solve(self.whole(rows)))
 
 
+def _pose_gram(ops: _BatchOps, n_views: int, width: int, indices: jax.Array) -> jax.Array:
+    """Embed the active-column Gram matrices in the full small pose blocks."""
+    if ops.cached is not None:
+        gram = jnp.einsum(
+            "nkp,nlp->nkl", ops.cached, ops.cached, precision=jax.lax.Precision.HIGHEST
+        )
+    else:
+
+        def view_gram(i):
+            columns = ops.view_columns(i)
+            return jnp.matmul(columns, columns.T, precision=jax.lax.Precision.HIGHEST)
+
+        gram = jax.lax.map(view_gram, jnp.arange(n_views))
+    return (
+        jnp.zeros((n_views, width, width), gram.dtype)
+        .at[:, indices[:, None], indices[None, :]]
+        .set(gram)
+    )
+
+
 def _build_program(
     spec: CoupledSpec, arrays: CoupledArrays
 ) -> tuple[
@@ -184,6 +205,10 @@ def _build_program(
     cfg, backend = spec, spec.backend
     det_grid = None if backend == "pallas" else arrays.det_grid
     mask, weights, active = arrays.mask, arrays.weights, arrays.active
+    # Only active derivative images are cached. Keep the small pose vectors
+    # and normal matrices full-width, so frozen nonzero poses and smoothness
+    # retain exactly the same coordinates throughout the linear solve.
+    indices = jnp.asarray(spec.active_columns, jnp.int32)
     # A scalar mask means none: skip multiplying volumes by it, which would copy them.
     unmasked = mask.ndim == 0
 
@@ -202,6 +227,7 @@ def _build_program(
         detector=spec.detector,
         det_grid=arrays.det_grid,
         options=spec.jacobian,
+        column_indices=spec.active_columns,
     )
     regularisation = partial(_regularisation, spec=spec)
     smoothness = partial(_smoothness, weights=arrays.smoothness)
@@ -341,7 +367,7 @@ def _build_program(
                     arrays.projections[i],
                     weights if weights.ndim == 0 else weights[i],
                 )[1]
-                * active[:, None]
+                * active[indices, None]
             )
 
         cached = jax.lax.map(columns, jnp.arange(n_views)) if cache_columns else None
@@ -362,12 +388,13 @@ def _build_program(
             return out + adjoint(take(t, start), y, batch_frames(start))
 
         def pose_forward(start, cols, dp):
-            return jnp.einsum("nk,nkp->np", take(dp, start), cols, precision=highest).reshape(
-                (size, spec.detector.nv, spec.detector.nu)
-            )
+            return jnp.einsum(
+                "nk,nkp->np", take(dp, start)[:, indices], cols, precision=highest
+            ).reshape((size, spec.detector.nv, spec.detector.nu))
 
         def pose_adjoint(start, cols, y, out):
             rows = jnp.einsum("nkp,np->nk", cols, y.reshape(size, -1), precision=highest)
+            rows = jnp.zeros((size, active.size), rows.dtype).at[:, indices].set(rows)
             return jax.lax.dynamic_update_slice_in_dim(out, rows, start, axis=0)
 
         return _BatchOps(
@@ -378,15 +405,7 @@ def _build_program(
 
     def solve_pose_eliminated(ops, p, x, free, rhs, normal, reg_hessian, volume_inverse):
         """Eliminate the per-view pose blocks exactly and solve for the volume by CG."""
-        if ops.cached is not None:
-            gram = jnp.einsum("nkp,nlp->nkl", ops.cached, ops.cached, precision=highest)
-        else:
-
-            def view_gram(i):
-                columns = ops.view_columns(i)
-                return jnp.matmul(columns, columns.T, precision=highest)
-
-            gram = jax.lax.map(view_gram, jnp.arange(n_views))
+        gram = _pose_gram(ops, n_views, p.shape[1], indices)
         solve_pose = shares.pose_solver(
             gram + cfg.gn_damping * jnp.eye(p.shape[1], dtype=p.dtype),
             arrays.smoothness * active,
@@ -511,6 +530,7 @@ def _build_program(
                 lambda i: jnp.sum(ops.view_columns(i) ** 2, axis=1), jnp.arange(n_views)
             )
         )
+        pose_diagonal = jnp.zeros_like(p).at[:, indices].set(pose_diagonal)
         pose_inverse = 1 / (pose_diagonal + 12 * arrays.smoothness**2 + cfg.gn_damping)
         return solve_coupled_normal(
             normal,
