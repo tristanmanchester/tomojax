@@ -32,8 +32,10 @@ view count excludes an extra closing frame on a full turn, with a warning.
 Confirm handedness on a known sample; `--reverse-angles` reverses the stage
 direction.
 
-For other scanners, import the TIFF stack with the angles and the geometry,
-then flat- and dark-correct it:
+Zeiss Xradia projection acquisitions can be corrected directly, without a TIFF
+export; see the [Zeiss preview](#zeiss-xradia-preview) below. For scanners without
+a reader, import the TIFF stack with the angles and the geometry, then flat- and
+dark-correct it:
 
 ```bash
 uv run --no-sync tomojax import projections/ --angles angles.csv --geometry cone \
@@ -67,6 +69,47 @@ sets the number of voxels while preserving the selected physical field of view
 (adjusting voxel sizes). For a small whole-volume preview, bin the detector
 with `preprocess` and use `recon --grid 64 64 64 --roi off`. In Python the same
 grid is `scan.grid.resampled((64, 64, 64))`, passed as `grid=` to reconstruction.
+
+### Zeiss Xradia preview
+
+Use the **projection acquisition** (usually `.txrm`), not a reconstructed `.txm`
+volume or a single scout image. TomoJAX reads the embedded reference image,
+angles, detector calibration and source distances. Fractional per-view image
+shifts stay in the geometry rather than resampling the measured pixels. If no
+dark reference is stored, correction uses zero and warns; supply measured darks
+with `--darks` or `load_frames(..., darks=...)` when available.
+
+This is a coarse, whole-volume CPU preview. It keeps every eighth view, bins
+16 x 16 detector pixels and resamples the original physical volume to 64³ voxels.
+Replace `801` below with the acquisition's number of sample views; CLI ranges
+require both start and stop indices:
+
+```bash
+printf 'binning = 16\n' > preview.toml
+uv run --no-sync tomojax preprocess scan.txrm -o corrected.nxs \
+  --select-views 0:801:8 --config preview.toml
+uv run --no-sync tomojax recon corrected.nxs -o preview.nxs \
+  --method cgls --iterations 10 --grid 64 64 64 --roi off
+uv run --no-sync tomojax inspect preview.nxs --preview previews
+```
+
+The equivalent Python route is:
+
+```python
+import tomojax as tj
+
+scan = tj.load_frames("scan.txrm").selected(slice(None, None, 8)).corrected(binning=16)
+grid = scan.grid.resampled((64, 64, 64))
+recon = tj.reconstruct(scan, "cgls", iterations=10, grid=grid)
+tj.save("preview.nxs", recon)
+```
+
+Per-view detector shifts can make this a `ConeSegments` geometry. Automatic
+reconstruction then selects matched CGLS, not the single-arrangement FDK path.
+Binning changes the detector sampling, **not** the recorded reconstruction grid;
+keep the explicit grid for a small preview. Inspect all three slice planes and
+increase view sampling, resolution and iterations for a final reconstruction.
+A finite volume or lower residual alone does not establish its accuracy.
 
 ## Calibrate the rotation axis
 

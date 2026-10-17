@@ -43,8 +43,8 @@ def _build_parser() -> argparse.ArgumentParser:
             "Correct raw detector frames into line integrals -log((I - D) / (F - D)) ready "
             "to reconstruct, with each view's flat interpolated between the flat sets "
             "around it. INPUT is an HDF5 file whose image_key marks flats (1) and darks "
-            "(2), a Nikon .xtekct scan, or a TIFF file or folder (with --angles and "
-            "--flats). The scan written records each correction."
+            "(2), a Nikon or Zeiss acquisition with calibration, or a TIFF file or "
+            "folder (with --angles and --flats). The scan written records each correction."
         ),
         epilog=(
             "Examples:\n"
@@ -57,7 +57,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     _ = parser.add_argument(
-        "data", metavar="INPUT", help="Raw HDF5 file, Nikon .xtekct, or a TIFF file or folder"
+        "data", metavar="INPUT", help="Raw HDF5, Nikon .xtekct, Zeiss .txrm, or TIFF frames"
     )
     add_output(parser, "Corrected scan to write (.nxs)")
     add_config(parser, settings={"binning": 1})

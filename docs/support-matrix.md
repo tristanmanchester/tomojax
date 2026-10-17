@@ -21,6 +21,7 @@ experimental. See [installation](installation.md) and [measurement scope](measur
 | Ring (stripe), zinger, outlier-view and beam-hardening corrections; Paganin phase retrieval | Supported | `tomojax preprocess raw.nxs -o scan.nxs --remove-stripes 9 --zingers --reject-outliers --beam-hardening 1,0.05` (and the expert `--paganin`), or `tomojax.corrections` steps |
 | Volume export as TIFF slices or raw (`uint16` or `float32`) | Supported | `tomojax export recon.nxs -o slices/`; `tomojax export recon.nxs -o recon.raw --dtype uint16` |
 | Nikon (X-Tek) scan import, including its calibrated rotation axis | Supported | `tj.load("scan/part.xtekct")`, or `tomojax import scan/part.xtekct -o scan.nxs` |
+| Zeiss Xradia projection acquisitions with embedded calibration | Supported | `tj.load_frames("scan.txrm").corrected(...)`, or `tomojax preprocess scan.txrm -o scan.nxs`; [CPU preview](lab-ct.md#zeiss-xradia-preview) |
 | Multi-orbit cone-beam scans (`ConeSegments`): iterative reconstruction and pose alignment | Supported; alignment experimental | `tj.Scan.from_astra(...)` or `tj.Scan.combine([...])`, then `tj.reconstruct(scan, "cgls")` and `tj.align(scan)`; `orbit_heights` in `tomojax.alignment.api` |
 | Cone-beam axis-offset (centre of rotation) and detector-roll calibration | Experimental | `tomojax align cone_scan.nxs -o calibrated.nxs --mode cor`; `calibrate_cone_axis` in Python |
 | Detector-centre/COR alignment | Experimental | `tomojax align corrected.nxs -o aligned.nxs --mode cor` |
