@@ -136,6 +136,7 @@ def _accelerated_steps(
         "axial",
         "acceleration",
         "stream",
+        "column_device",
     ),
 )
 def _solve(
@@ -159,6 +160,8 @@ def _solve(
     axial: bool,
     acceleration: bool,
     stream: bool,
+    host_columns: jax.Array | None = None,
+    column_device: jax.sharding.Sharding | None = None,
 ) -> jax.Array:
     select = subset_operators(
         poses, grid, detector, det_grid, backend, batch, model, subsets, stream=stream
@@ -197,7 +200,11 @@ def _solve(
     # normalization is then recomputed at each update, not approximated by a
     # rescaled full-scan normalization. Cone updates share its ray geometry
     # with the residual transpose without sharing their accumulators.
-    columns = jax.lax.map(column_weights, jnp.arange(subsets)) if cache_columns else None
+    columns = (
+        jax.lax.map(column_weights, jnp.arange(subsets))
+        if cache_columns and host_columns is None
+        else None
+    )
 
     def update(step: jax.Array, x: jax.Array) -> jax.Array:
         index = step % subsets
@@ -210,7 +217,13 @@ def _solve(
             )
             column = _inverse(norm)
         else:
-            column = column_weights(index) if columns is None else columns[index]
+            column = (
+                jax.device_put(host_columns[index], column_device)[:, :, None]
+                if host_columns is not None
+                else column_weights(index)
+                if columns is None
+                else columns[index]
+            )
             gradient = residual_adjoint(x, data, row_weights, row_support=row_support)
         return constrain(x + relaxation * column * gradient)
 
@@ -310,7 +323,8 @@ def sirt(
     Supports parallel, tilted and cone-beam scans on the existing matched
     projectors. Inputs and updates are FP32. An iteration is a complete sweep,
     not one subset update. No residual-based stopping or quality claim is made.
-    Large independent axial planes use host slabs. Large host projection stacks
+    Large independent axial planes use host slabs and invocation-owned host
+    normalizers. Large host projection stacks
     stream with exact row recomputation, also allowing reusable column weights
     to fit in device memory.
 
@@ -364,24 +378,186 @@ def sirt(
     >>> volume.shape
     (4, 4, 1)
     """
-    cfg = SIRTConfig() if config is None else config
-    validate_grid(grid, "sirt grid")
-    n, _, _ = validate_projection_stack(projections, detector, geometry=geometry, context="sirt")
-    validate_detector_grid(det_grid, detector, context="sirt")
-    iterations, subsets, batch, lower, upper = _parameters(cfg, n)
-    for name, value in (("init_x", init_x), ("support", cfg.support)):
-        if value is not None:
-            validate_volume(value, grid, context="sirt", name=name)
-    model, backend = resolve_geometry_projector(
-        geometry,
-        cfg.projector_model,
-        cfg.projector_backend,
-        detector=detector,
-        det_grid=det_grid,
-        context="sirt",
+    return SIRTCall().solve(
+        geometry, grid, detector, projections, init_x=init_x, config=config, det_grid=det_grid
     )
-    axial = model == "joseph" and det_grid is None and independent_planes(geometry, grid, detector)
-    if axial:
+
+
+_HOST_COLUMN_MIN_BYTES = 128 * 1024**2
+
+
+@partial(jax.jit, static_argnames=("grid", "detector", "backend", "batch", "model", "subsets"))
+def _axial_column(
+    poses: jax.Array,
+    index: jax.Array,
+    *,
+    grid: Grid,
+    detector: Detector,
+    backend: str,
+    batch: int,
+    model: str | ConeModel,
+    subsets: int,
+) -> jax.Array:
+    """Build one exact single-plane column map without a device-sized stack."""
+    from tomojax.geometry import grid_volume_origin
+
+    grid = replace(grid, nz=1, vol_origin=(*grid_volume_origin(grid)[:2], 0.0))
+    detector = replace(detector, nv=1, center=(detector.center[0], 0.0))
+    select = subset_operators(poses, grid, detector, None, backend, batch, model, subsets)
+    _, adjoint, _ = select(index)
+    count = (poses.shape[0] + subsets - 1) // subsets
+    return _inverse(adjoint(jnp.ones((count, 1, detector.nu), jnp.float32)))[:, :, 0]
+
+
+class SIRTCall:
+    """Own exact axial normalizers across one invocation's translated slabs.
+
+    Each caller owns this object; no geometry- or shape-keyed global cache can
+    leak between reconstructions. Slab depth/support may vary, but angles and
+    transverse sampling stay those of the original independent-plane problem.
+    """
+
+    def __init__(self) -> None:
+        self.columns: jax.Array | None = None
+
+    def solve(
+        self,
+        geometry: Geometry,
+        grid: Grid,
+        detector: Detector,
+        projections: jax.Array | np.ndarray,
+        *,
+        init_x: jax.Array | np.ndarray | None = None,
+        config: SIRTConfig | None = None,
+        det_grid: tuple[jax.Array, jax.Array] | None = None,
+    ) -> tuple[jax.Array | np.ndarray, dict[str, object]]:
+        """Solve this invocation, retaining normalizers across its axial slabs."""
+        cfg = SIRTConfig() if config is None else config
+        validate_grid(grid, "sirt grid")
+        n, _, _ = validate_projection_stack(
+            projections, detector, geometry=geometry, context="sirt"
+        )
+        validate_detector_grid(det_grid, detector, context="sirt")
+        iterations, subsets, batch, lower, upper = _parameters(cfg, n)
+        for name, value in (("init_x", init_x), ("support", cfg.support)):
+            if value is not None:
+                validate_volume(value, grid, context="sirt", name=name)
+        model, backend = resolve_geometry_projector(
+            geometry,
+            cfg.projector_model,
+            cfg.projector_backend,
+            detector=detector,
+            det_grid=det_grid,
+            context="sirt",
+        )
+        axial = (
+            model == "joseph" and det_grid is None and independent_planes(geometry, grid, detector)
+        )
+        if axial:
+            result = self._slabs(geometry, grid, detector, projections, init_x, cfg)
+            if result is not None:
+                return result
+        initial, stream, cache_columns = _storage(
+            projections,
+            init_x,
+            grid=grid,
+            detector=detector,
+            cfg=cfg,
+            views=n,
+            backend=backend,
+            axial=axial,
+        )
+        poses = stack_view_poses(geometry, n)
+        host_columns, column_device = self._host_columns(
+            poses,
+            grid=grid,
+            detector=detector,
+            backend=backend,
+            batch=batch,
+            model=model,
+            subsets=subsets,
+            enabled=axial and cache_columns and iterations > 0,
+        )
+        source = (
+            host_source(np.asarray(projections))
+            if stream
+            else nullcontext(jnp.asarray(projections, jnp.float32))
+        )
+        with source as data:
+            volume = _solve(
+                poses, data, initial,
+                None if cfg.support is None else jnp.asarray(cfg.support),
+                det_grid, jnp.int32(iterations), jnp.float32(cfg.relaxation),
+                jnp.float32(lower), jnp.float32(upper), grid=grid, detector=detector,
+                backend=backend, batch=batch, model=model, subsets=subsets,
+                cache_columns=cache_columns,
+                axial=axial, acceleration=cfg.acceleration, stream=stream,
+                host_columns=host_columns, column_device=column_device,
+            )  # fmt: skip
+            if stream:
+                volume.block_until_ready()  # callbacks must finish before unregistering the source
+        return volume, {
+            "effective_iterations": iterations,
+            "subset_updates": iterations * subsets,
+            "termination": "iteration_limit",
+            "stream_projections": stream,
+            "projector_backend": backend,
+            "projector_model": model,
+        }
+
+    def _host_columns(
+        self,
+        poses: jax.Array,
+        *,
+        grid: Grid,
+        detector: Detector,
+        backend: str,
+        batch: int,
+        model: str | ConeModel,
+        subsets: int,
+        enabled: bool,
+    ) -> tuple[jax.Array | None, jax.sharding.Sharding | None]:
+        """Retain large exact maps on host, leaving small device caches unchanged."""
+        host_columns = None
+        column_device = None
+        column_bytes = subsets * grid.nx * grid.ny * 4
+        if enabled and column_bytes >= _HOST_COLUMN_MIN_BYTES:
+            device = next(iter(poses.devices()))
+            column_device = jax.sharding.SingleDeviceSharding(device)
+            if self.columns is None:
+                maps = np.empty((subsets, grid.nx, grid.ny), np.float32)
+                for index in range(subsets):
+                    maps[index] = np.asarray(
+                        _axial_column(
+                            poses,
+                            jnp.int32(index),
+                            grid=grid,
+                            detector=detector,
+                            backend=backend,
+                            batch=batch,
+                            model=model,
+                            subsets=subsets,
+                        )
+                    )
+                host = (
+                    jax.sharding.SingleDeviceSharding(device, memory_kind="pinned_host")
+                    if device.platform == "gpu"
+                    else column_device
+                )
+                self.columns = jax.block_until_ready(jax.device_put(maps, host))
+            host_columns = self.columns
+        return host_columns, column_device
+
+    def _slabs(
+        self,
+        geometry: Geometry,
+        grid: Grid,
+        detector: Detector,
+        projections: jax.Array | np.ndarray,
+        init_x: jax.Array | np.ndarray | None,
+        cfg: SIRTConfig,
+    ) -> tuple[np.ndarray, dict[str, object]] | None:
+        """Plan translated independent planes while retaining this call's cache."""
 
         def solve_slab(
             geometry: ParallelGeometry,
@@ -389,7 +565,7 @@ def sirt(
             initial: jax.Array | np.ndarray | None,
             support: jax.Array | np.ndarray | None,
         ) -> tuple[jax.Array | np.ndarray, dict[str, object]]:
-            return sirt(
+            return self.solve(
                 geometry,
                 geometry.grid,
                 geometry.detector,
@@ -398,52 +574,14 @@ def sirt(
                 config=replace(cfg, support=support),
             )
 
-        result = axial_slabs(
+        return axial_slabs(
             geometry,
             grid,
             detector,
             projections,
             initial=init_x,
             support=cfg.support,
-            volume_buffers=3 + min(subsets, 16) + 2 * cfg.acceleration,
-            projection_buffers=2 + 2 / subsets,
+            volume_buffers=3 + min(cfg.subsets, 16) + 2 * cfg.acceleration,
+            projection_buffers=2 + 2 / cfg.subsets,
             solve=solve_slab,
         )
-        if result is not None:
-            return result
-    initial, stream, cache_columns = _storage(
-        projections,
-        init_x,
-        grid=grid,
-        detector=detector,
-        cfg=cfg,
-        views=n,
-        backend=backend,
-        axial=axial,
-    )
-    poses = stack_view_poses(geometry, n)
-    source = (
-        host_source(np.asarray(projections))
-        if stream
-        else nullcontext(jnp.asarray(projections, jnp.float32))
-    )
-    with source as data:
-        volume = _solve(
-            poses, data, initial,
-            None if cfg.support is None else jnp.asarray(cfg.support),
-            det_grid, jnp.int32(iterations), jnp.float32(cfg.relaxation),
-            jnp.float32(lower), jnp.float32(upper), grid=grid, detector=detector,
-            backend=backend, batch=batch, model=model, subsets=subsets,
-            cache_columns=cache_columns,
-            axial=axial, acceleration=cfg.acceleration, stream=stream,
-        )  # fmt: skip
-        if stream:
-            volume.block_until_ready()  # callbacks must finish before unregistering the source
-    return volume, {
-        "effective_iterations": iterations,
-        "subset_updates": iterations * subsets,
-        "termination": "iteration_limit",
-        "stream_projections": stream,
-        "projector_backend": backend,
-        "projector_model": model,
-    }

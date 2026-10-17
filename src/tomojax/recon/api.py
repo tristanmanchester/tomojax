@@ -336,6 +336,12 @@ def _iterative_result(
                     validate_volume(support, grid, context="sirt", name="support")
                 support = jnp.broadcast_to(jnp.asarray(support, bool), (grid.nx, grid.ny, grid.nz))
 
+            solver = None
+            if method == "sirt":
+                from tomojax.recon.sirt import SIRTCall
+
+                solver = SIRTCall().solve
+
             def solve(
                 local: ParallelGeometry,
                 data: jnp.ndarray | np.ndarray,
@@ -344,7 +350,8 @@ def _iterative_result(
             ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
                 return _iterative_incore(
                     method, local, local.grid, local.detector, data,
-                    replace(algebraic, support=local_support), None, warm_start=warm_start,
+                    replace(algebraic, support=local_support), None,
+                    warm_start=warm_start, solver=solver,
                 )  # fmt: skip
 
             # EM stores axial sensitivities as single planes; the cache policy
@@ -378,6 +385,7 @@ def _iterative_incore(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     *,
     warm_start: bool,
+    solver: Callable[..., tuple[jnp.ndarray | np.ndarray, dict[str, object]]] | None = None,
 ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
     """Initialize and dispatch an iterative solve with its method's data model."""
     start = None
@@ -402,7 +410,7 @@ def _iterative_incore(
         "sirt": "sirt",
         "mlem": "mlem",
     }[method]
-    solve = getattr(sys.modules[__name__], name)
+    solve = getattr(sys.modules[__name__], name) if solver is None else solver
     volume, record = solve(*args, init_x=start, config=cfg, det_grid=det_grid)
     return volume, {"config": cfg, "warm_start": warm_start, **record}
 

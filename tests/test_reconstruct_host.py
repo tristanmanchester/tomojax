@@ -1,6 +1,7 @@
 """Public reconstruction keeps oversized volumes on the host and fills caller storage."""
 
 from dataclasses import replace
+import importlib
 
 import jax
 import numpy as np
@@ -32,6 +33,8 @@ def test_volume_larger_than_the_device_is_reconstructed_in_host_slabs(
     if device_input:
         scan = replace(scan, projections=jax.device_put(scan.projections))
     expected = np.asarray(tj.reconstruct(scan, "fbp", filter="hann").volume)
+    # Import before patching the facade budget: the host module binds its own query.
+    importlib.import_module("tomojax.recon.fbp_host")
     monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: 4096)
     actual = tj.reconstruct(scan, "fbp", filter="hann")
     assert isinstance(actual.volume, np.ndarray) and actual.info["host_slabs"]
