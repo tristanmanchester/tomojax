@@ -221,6 +221,8 @@ class LocatedFrames:
     flats: Hdf5Frames | None = None
     darks: Hdf5Frames | None = None
     acquisition: dict[str, str] | None = None
+    image_key_path: str | None = None
+    angles_path: str | None = None
 
     @property
     def raw(self) -> bool:
@@ -297,7 +299,9 @@ def locate_frames(
             else None
             for n, label in (("data_white", 1), ("data_dark", 2))
         )
-    return LocatedFrames(Hdf5Frames.open(path, where), key, angles, flats, darks, acquisition)
+    return LocatedFrames(
+        Hdf5Frames.open(path, where), key, angles, flats, darks, acquisition, key_at, angles_at
+    )
 
 
 def _dataset(file: h5py.File, where: str) -> h5py.Dataset | None:

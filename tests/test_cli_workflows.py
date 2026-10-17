@@ -70,7 +70,7 @@ def test_inspect_cli_exits_1_for_an_invalid_dataset(
     path = tmp_path / "scan.nxs"
     write_projection_dataset(path)
     with h5py.File(path, "a") as handle:
-        del handle["/entry/sample/name"]
+        del handle["/entry/sample/transformations/rotation_angle"]
 
     assert main(["inspect", str(path)]) == 1
     assert "Issues (" in capsys.readouterr().out
@@ -768,3 +768,48 @@ def test_cli_automatic_dry_run_and_expert_settings(
             main([command, str(path), "-o", str(output), "--config", str(config)])
         assert error.value.code == 2
         assert f"explicit --{option}" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("layout", ["nxtomo", "exchange", "gda"])
+def test_inspect_and_preview_share_raw_acquisition_discovery(tmp_path, capsys, layout):
+    path = tmp_path / "raw.h5"
+    sample = np.arange(8, dtype=np.uint16).reshape(2, 4) + 10
+    with h5py.File(path, "w") as handle:
+        if layout == "exchange":
+            data_path, key_path, angles_path = "/exchange/data", None, "/exchange/theta"
+            frames, angles = [sample, sample * 2], [0, np.pi]
+            handle.create_dataset("exchange/data_white", data=[sample * 10])
+            handle.create_dataset("exchange/data_dark", data=[sample * 0])
+        else:
+            data_path, key_path, angles_path = (
+                (
+                    "/entry/instrument/detector/data",
+                    "/entry/instrument/detector/image_key",
+                    "/entry/sample/rotation_angle",
+                )
+                if layout == "nxtomo"
+                else (
+                    "/entry/imaging/data",
+                    "/entry/instrument/EtherCAT/image_key",
+                    "/entry/imaging/smaract_zrot_value_set",
+                )
+            )
+            frames, angles = [sample, sample * 2, sample * 10, sample * 0], [0, 180, 0, 0]
+            handle.create_dataset(key_path, data=[0, 0, 1, 2])
+        handle.create_dataset(data_path, data=frames)
+        handle.create_dataset(angles_path, data=angles).attrs["units"] = (
+            "radians" if layout == "exchange" else "mm" if layout == "gda" else "degree"
+        )
+    previews = tmp_path / "previews"
+    assert main(["inspect", str(path), "--json", "--preview", str(previews)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["valid"] and report["issues"] == []
+    assert report["projection"]["path"] == data_path
+    assert report["angles"]["path"] == angles_path
+    assert report["angles"]["coverage_deg"] == pytest.approx(180)
+    assert report["flats_darks"]["sample_count"] == 2
+    assert report["flats_darks"]["flat_count"] == report["flats_darks"]["dark_count"] == 1
+    assert report["flats_darks"]["image_key_path"] == key_path
+    np.testing.assert_array_equal(
+        iio.imread(previews / "projection.png"), scale_to_uint8(sample * 2)
+    )

@@ -12,14 +12,10 @@ import h5py
 import numpy as np
 
 from tomojax._typed_arrays import numpy_float32_array, write_image
+from tomojax.io.api import locate_frames
 from tomojax.recon.quicklook import scale_to_uint8
 
 _VOLUME_PATH = "/entry/processing/tomojax/volume"
-_PROJECTION_PATHS = (
-    "/entry/instrument/detector/data",
-    "/entry/data/projections",
-    "/entry/projections",
-)
 # Each slice is displayed with these axes as (rows, columns).
 _DISPLAY_AXES = {"z": ("y", "x"), "y": ("z", "x"), "x": ("z", "y")}
 
@@ -38,18 +34,17 @@ def write_previews(path: str | Path, out_dir: str | Path) -> dict[str, Path]:
     """Write percentile-scaled PNG previews of ``path`` into ``out_dir``."""
     paths = preview_paths(path, out_dir)
     images: dict[str, np.ndarray] = {}
+    located = locate_frames(str(path))
+    samples = (
+        located.stack.frames
+        if located.image_key is None
+        else np.flatnonzero(located.image_key == 0)
+    )
+    if not len(samples):
+        raise ValueError(f"{path} holds no sample projections")
     with h5py.File(path, "r") as file:
-        projections = next(
-            (
-                obj
-                for obj in (file.get(key) for key in _PROJECTION_PATHS)
-                if isinstance(obj, h5py.Dataset) and obj.ndim == 3
-            ),
-            None,
-        )
-        if projections is None:
-            raise ValueError(f"{path} holds no 3-D projection stack")
-        images["projection"] = numpy_float32_array(projections[int(projections.shape[0]) // 2])
+        projections = cast("h5py.Dataset", file[located.stack.dataset])
+        images["projection"] = numpy_float32_array(projections[int(samples[len(samples) // 2])])
         volume = file.get(_VOLUME_PATH)
         if isinstance(volume, h5py.Dataset):
             axes = str(file["/entry/processing/tomojax"].attrs.get("volume_axes_order", "zyx"))

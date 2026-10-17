@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Inspection, previews and dataset validation share raw-frame HDF5 discovery,
+including APS Data Exchange and Diamond/GDA. Missing optional NXtomo labels
+no longer reject an otherwise readable acquisition; `validate_nxtomo` stays strict.
+
 Generic CUDA cone backprojection keeps inverse corner bounds conservative at
 FP32 pixel boundaries, retaining positive forward weights in its transpose.
 

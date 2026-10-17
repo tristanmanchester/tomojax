@@ -13,7 +13,10 @@ NXtomo angles are read from `/entry/sample/rotation_angle`, or from TomoJAX's
 `/entry/sample/transformations/rotation_angle`; these take priority over
 similarly named datasets of other detectors. Inspection and validation use the
 same angle paths and units as loading, and an inspected angle range covers
-only sample frames.
+only sample frames. `inspect_dataset`, previews and `validate_dataset` also use
+raw-frame discovery for APS Data Exchange, Diamond/GDA and uniquely named HDF5
+stacks. Optional NXtomo labels are not needed; `validate_nxtomo` remains the
+strict NXtomo schema check.
 
 Both raw-frame and processed NXtomo loading convert rotation angles labelled
 `rad`, `radian` or `radians` to degrees. `deg`, `degree`, `degrees` and missing
