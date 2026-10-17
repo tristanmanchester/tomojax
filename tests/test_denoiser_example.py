@@ -99,12 +99,24 @@ def test_loss_balance_is_finite_at_an_exact_fit(device):
 
 
 @pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=pytest.mark.gpu)])
-def test_denoiser_initial_identity_keeps_float32(device):
+def test_denoiser_identity_and_slice_batch_gradients(device, monkeypatch):
     module = example()
     torch = pytest.importorskip("torch")
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA-enabled PyTorch required")
     volume = torch.arange(192, dtype=torch.float32, device=device).reshape(8, 8, 3) / 192
-    output = module.Denoiser().to(device=device, memory_format=torch.channels_last)(volume)
+    model = module.Denoiser().to(device=device, memory_format=torch.channels_last)
+    output = model(volume)
     assert output.dtype == torch.float32
     torch.testing.assert_close(output, volume, rtol=0, atol=0)
+    with torch.no_grad():
+        model.layers[-1].weight.fill_(0.125)
+    volume.requires_grad_()
+    parameters = (volume, *model.parameters())
+    full = model(volume)
+    full_gradients = torch.autograd.grad(full.sum(), parameters)
+    monkeypatch.setattr(model, "_slice_batch_size", lambda _: 2)
+    split = model(volume)
+    split_gradients = torch.autograd.grad(split.sum(), parameters)
+    torch.testing.assert_close(split, full, rtol=2e-3, atol=2e-4)
+    torch.testing.assert_close(split_gradients, full_gradients, rtol=2e-3, atol=2e-4)

@@ -53,12 +53,30 @@ class Denoiser(nn.Module):
         nn.init.zeros_(self.layers[-1].weight)
         nn.init.zeros_(self.layers[-1].bias)
 
+    def _slice_batch_size(self, slices: torch.Tensor) -> int:
+        """Keep two half-precision hidden feature maps within CUDA's L2.
+
+        Slice groups do not change this network: it has no batch-dependent
+        layers. CPU inference and already-small stacks retain one batch.
+        """
+        batch = slices.shape[0]
+        if slices.is_cuda:
+            pair_bytes = 4 * self.layers[0].out_channels * slices.shape[-2] * slices.shape[-1]
+            cache_bytes = torch.cuda.get_device_properties(slices.device).L2_cache_size
+            batch = min(batch, max(1, cache_bytes // pair_bytes))
+        return batch
+
     def forward(self, volume: torch.Tensor) -> torch.Tensor:
         slices = volume.permute(2, 0, 1).unsqueeze(1).contiguous(memory_format=torch.channels_last)
+        batch = self._slice_batch_size(slices)
         # Only the CNN uses mixed precision. The skip keeps attenuation and
         # the exact projector/transpose in float32, including during inference.
         with torch.autocast("cuda", dtype=torch.float16, enabled=volume.is_cuda):
-            residual = self.layers(slices)
+            residual = (
+                self.layers(slices)
+                if batch == slices.shape[0]
+                else torch.cat([self.layers(part) for part in slices.split(batch)])
+            )
         return (slices + residual).squeeze(1).permute(1, 2, 0).contiguous()
 
 
