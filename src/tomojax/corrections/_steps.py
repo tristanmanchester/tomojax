@@ -43,28 +43,98 @@ class Step:
     selects_views: ClassVar[bool] = False
 
     def apply(self, batch: jax.Array) -> jax.Array:
+        """Apply this correction to a batch of detector images.
+
+        Parameters
+        ----------
+        batch : jax.Array
+            Float32 data of shape ``(views, rows, columns)`` in this step's domain.
+            Whole-row steps require every view of the selected row slab.
+
+        Returns
+        -------
+        jax.Array
+            Corrected data with the same shape and domain.
+
+        Raises
+        ------
+        NotImplementedError
+            If the subclass does not implement a batch correction.
+        """
         raise NotImplementedError
 
     def workspace_pixels(self, rows: int, cols: int) -> int:
-        """Device pixels per view this step needs beyond its input, for batch sizing."""
+        """Estimate device pixels per view needed in addition to the input.
+
+        Parameters
+        ----------
+        rows : int
+            Detector rows in the batch.
+        cols : int
+            Detector columns in the batch.
+
+        Returns
+        -------
+        int
+            Workspace estimate used to size batches; zero in the base class.
+        """
         del rows, cols
         return 0
 
     def statistic(self, batch: jax.Array) -> jax.Array:
-        """A ``(views, ...)`` summary of each view in ``batch``."""
+        """Summarize each view for a view-selecting correction.
+
+        Parameters
+        ----------
+        batch : jax.Array
+            Float32 data of shape ``(views, rows, columns)`` in this step's domain.
+
+        Returns
+        -------
+        jax.Array
+            Per-view statistics with shape ``(views, ...)``.
+
+        Raises
+        ------
+        NotImplementedError
+            If the subclass does not implement view statistics.
+        """
         raise NotImplementedError
 
     def select(
         self, statistics: np.ndarray, views: np.ndarray
     ) -> tuple[np.ndarray, dict[str, Json]]:
-        """Which views to keep (a mask) given every view's statistic, and what was found.
+        """Select views from their statistics and record what was found.
 
-        ``views`` are the views' indices in the scan the steps started from.
+        Parameters
+        ----------
+        statistics : numpy.ndarray
+            Statistics for every input view, with shape ``(views, ...)``.
+        views : numpy.ndarray
+            View indices in the scan the correction steps started from.
+
+        Returns
+        -------
+        keep : numpy.ndarray
+            Boolean mask of the views to keep.
+        found : dict
+            JSON-compatible findings to include in the correction record.
+
+        Raises
+        ------
+        NotImplementedError
+            If the subclass does not implement view selection.
         """
         raise NotImplementedError
 
     def record(self) -> Correction:
-        """This step's record: its name and settings."""
+        """Build this step's record from its name and settings.
+
+        Returns
+        -------
+        Correction
+            Step name and JSON-compatible settings, with no findings yet.
+        """
         return Correction(
             _snake(type(self).__name__), {k: _json(v) for k, v in asdict(self).items()}
         )
@@ -76,6 +146,17 @@ class BeamHardening(Step):
 
     ``coefficients`` are ``(c1, c2, ...)``, with no constant term, as fitted
     from a step wedge or a homogeneous object; ``(1, 0.05)`` adds 5% of ``p^2``.
+
+    Parameters
+    ----------
+    coefficients : tuple of float, optional
+        Polynomial coefficients ``(c1, c2, ...)`` without a constant term.
+        The default ``(1.0,)`` leaves the line integrals unchanged.
+
+    Raises
+    ------
+    ValueError
+        If coefficients are empty or nonfinite.
     """
 
     domain: ClassVar[Domain] = "line integrals"
@@ -89,6 +170,19 @@ class BeamHardening(Step):
             raise ValueError("BeamHardening coefficients must be finite")
 
     def apply(self, batch: jax.Array) -> jax.Array:
+        """Linearize a batch of detector images.
+
+        Parameters
+        ----------
+        batch : jax.Array
+            Float32 line integrals of shape ``(views, rows, columns)``.
+            Rows and columns form each detector image.
+
+        Returns
+        -------
+        jax.Array
+            Corrected line integrals, retaining the input shape.
+        """
         out = jnp.zeros_like(batch)
         for c in reversed(self.coefficients):  # Horner's rule, from the highest power
             out = (out + c) * batch
@@ -120,6 +214,26 @@ class Stripes(Step):
     cause false detections. Selected unresponsive pixels receive only the
     neighbouring mean: their missing angular information is not recovered.
     It cannot distinguish a real feature from a defect at a selected pixel.
+
+    Parameters
+    ----------
+    width : int, optional
+        Neighbourhood width in detector columns, at least 3. Default is 9.
+    varying : bool, optional
+        Fit gain and offset at anomalous pixels instead of subtracting constant
+        offsets at all pixels. Default is False.
+
+    Raises
+    ------
+    ValueError
+        If width is not a whole number of columns at least 3.
+
+    Examples
+    --------
+    >>> from tomojax.corrections import Stripes
+    >>> correction = Stripes(width=9)
+    >>> correction.domain
+    'line integrals'
     """
 
     domain: ClassVar[Domain] = "line integrals"
@@ -138,6 +252,19 @@ class Stripes(Step):
         # Amortize map launches across small rows, without ranking the whole
         # slab at once. Multiple-row groups hold at most 4 MiB of ranked pixels;
         # a larger single row retains the original serial mapping.
+        """Remove stripes from a batch of detector images.
+
+        Parameters
+        ----------
+        batch : jax.Array
+            Float32 line integrals of shape ``(views, rows, columns)``.
+            Supply every view of each row for stripe estimation.
+
+        Returns
+        -------
+        jax.Array
+            Corrected line integrals, retaining the input shape.
+        """
         views, rows, cols = batch.shape
         row_bytes = views * cols * batch.dtype.itemsize
         group = max(1, min(rows, 8, (4 << 20) // max(1, row_bytes)))
@@ -171,6 +298,22 @@ class RejectViews(Step):
     Views with a nonfinite median are also rejected and do not participate
     in the neighbours or robust baseline. The scan's geometry keeps the same
     views; the record lists those rejected, including the nonfinite subset.
+
+    Parameters
+    ----------
+    z : float, optional
+        Positive robust-standard-deviation threshold. Default is 6.
+    neighbours : int, optional
+        Odd neighbourhood length of at least 3 views. Default is 5.
+    min_jump : float, optional
+        Nonnegative minimum jump as a fraction of the typical view median.
+        Default is 0.05.
+
+    Raises
+    ------
+    ValueError
+        If thresholds are nonfinite or outside their ranges, or the
+        neighbourhood length is not odd and at least 3.
     """
 
     domain: ClassVar[Domain] = "line integrals"
@@ -195,11 +338,39 @@ class RejectViews(Step):
         object.__setattr__(self, "neighbours", int(self.neighbours))
 
     def statistic(self, batch: jax.Array) -> jax.Array:
+        """Compute the median line integral of every view.
+
+        Parameters
+        ----------
+        batch : jax.Array
+            Float32 line integrals of shape ``(views, rows, columns)``.
+
+        Returns
+        -------
+        jax.Array
+            Median of each detector image, with shape ``(views,)``.
+        """
         return jnp.median(batch.reshape(batch.shape[0], -1), axis=1)
 
     def select(
         self, statistics: np.ndarray, views: np.ndarray
     ) -> tuple[np.ndarray, dict[str, Json]]:
+        """Select views with medians consistent with their neighbours.
+
+        Parameters
+        ----------
+        statistics : numpy.ndarray
+            Median line integral of every input view, with shape ``(views,)``.
+        views : numpy.ndarray
+            Original scan indices corresponding to these medians.
+
+        Returns
+        -------
+        keep : numpy.ndarray
+            Boolean mask of retained views; nonfinite medians are rejected.
+        found : dict
+            Rejected original indices, robust scale and any nonfinite-view indices.
+        """
         medians = np.asarray(statistics, np.float64)
         finite = np.isfinite(medians)
         keep = np.zeros(len(views), bool)
@@ -231,6 +402,20 @@ class Zingers(Step):
     the open beam). Zingers, from scattered or direct hits on the detector,
     are far brighter than that; a sharp corner of a strongly absorbing object
     can be too, so raise ``threshold`` if one is touched.
+
+    Parameters
+    ----------
+    threshold : float, optional
+        Positive excess over the neighbourhood median, as a fraction of the
+        open beam. Default is 0.1.
+    size : int, optional
+        Odd side length of the square neighbourhood, at least 3 pixels.
+        Default is 3.
+
+    Raises
+    ------
+    ValueError
+        If threshold is not finite and positive, or size is not odd and at least 3.
     """
 
     domain: ClassVar[Domain] = "transmission"
@@ -246,6 +431,19 @@ class Zingers(Step):
         object.__setattr__(self, "size", int(self.size))
 
     def apply(self, batch: jax.Array) -> jax.Array:
+        """Replace bright specks in a batch of detector images.
+
+        Parameters
+        ----------
+        batch : jax.Array
+            Float32 transmission of shape ``(views, rows, columns)``.
+            Rows and columns form each detector image.
+
+        Returns
+        -------
+        jax.Array
+            Corrected transmission, retaining the input shape.
+        """
         half, (_, rows, cols) = self.size // 2, batch.shape
         padded = jnp.pad(batch, ((0, 0), (half, half), (half, half)), mode="edge")
         shifted = [
@@ -273,6 +471,19 @@ class RadialDistortion(Step):
     crop, subtract its first column and row from ``center``; after mean binning
     by ``f``, use ``(center - (f - 1) / 2) / f`` and ``c_k * f**k``. Correct before
     cropping when the map needs pixels outside the crop.
+
+    Parameters
+    ----------
+    center : tuple of float
+        Distortion centre ``(column, row)`` in zero-based frame pixels.
+    coefficients : tuple of float
+        Backward radial-polynomial coefficients ``(c0, c1, ...)`` in frame-pixel
+        coordinates; ``(1.0,)`` is the identity.
+
+    Raises
+    ------
+    ValueError
+        If center is not a finite pair or coefficients are empty or nonfinite.
     """
 
     domain: ClassVar[Domain] = "transmission"
@@ -290,9 +501,36 @@ class RadialDistortion(Step):
         object.__setattr__(self, "coefficients", coefficients)
 
     def workspace_pixels(self, rows: int, cols: int) -> int:
+        """Estimate additional workspace pixels per view.
+
+        Parameters
+        ----------
+        rows : int
+            Detector rows in the batch.
+        cols : int
+            Detector columns in the batch.
+
+        Returns
+        -------
+        int
+            Two detector-coordinate arrays for resampling.
+        """
         return 2 * rows * cols  # the sampling coordinates
 
     def apply(self, batch: jax.Array) -> jax.Array:
+        """Unwarp a batch of detector images.
+
+        Parameters
+        ----------
+        batch : jax.Array
+            Float32 transmission of shape ``(views, rows, columns)``.
+            Rows and columns form each detector image.
+
+        Returns
+        -------
+        jax.Array
+            Corrected transmission, retaining the input shape.
+        """
         _, rows, cols = batch.shape
         x = jnp.arange(cols, dtype=jnp.float32)[None, :] - self.center[0]
         y = jnp.arange(rows, dtype=jnp.float32)[:, None] - self.center[1]
@@ -306,7 +544,7 @@ class RadialDistortion(Step):
 
 @dataclass(frozen=True)
 class Paganin(Step):
-    """Single-material phase retrieval (Paganin et al. 2002) of propagation-based phase contrast.
+    """Retrieve single-material phase from propagation contrast.
 
     Filters each view's transmission by ``1 / (1 + z lambda (delta/beta) |k|^2 / (4 pi))``
     before the log, so the line integrals are of the material's attenuation
@@ -318,6 +556,22 @@ class Paganin(Step):
     Views are padded with repeated edges against wrap-around, by at least 16
     decay lengths of the filter's point response (and up to half the view, at
     most 128 pixels), and to an efficient FFT length.
+
+    Parameters
+    ----------
+    delta_beta : float
+        Positive ratio of the material's refractive-index decrement to absorption.
+    distance : float
+        Positive effective propagation distance at the sample, in metres.
+    energy_kev : float
+        Positive X-ray energy in keV.
+    pixel_size : float
+        Positive detector-pixel size at the sample, in metres.
+
+    Raises
+    ------
+    ValueError
+        If any parameter is nonfinite or nonpositive.
     """
 
     domain: ClassVar[Domain] = "transmission"
@@ -336,6 +590,20 @@ class Paganin(Step):
     def workspace_pixels(self, rows: int, cols: int) -> int:
         # Two padded real arrays and two complex half-spectra: about four
         # padded real arrays per view.
+        """Estimate additional workspace pixels per view.
+
+        Parameters
+        ----------
+        rows : int
+            Detector rows in the batch.
+        cols : int
+            Detector columns in the batch.
+
+        Returns
+        -------
+        int
+            Padded real arrays and complex half-spectra for phase filtering.
+        """
         (rows_before, rows_after), (cols_before, cols_after) = self._padding(rows, cols)
         return 4 * (rows + rows_before + rows_after) * (cols + cols_before + cols_after)
 
@@ -358,6 +626,19 @@ class Paganin(Step):
         return axis(rows), axis(cols)
 
     def apply(self, batch: jax.Array) -> jax.Array:
+        """Retrieve phase from a batch of detector images.
+
+        Parameters
+        ----------
+        batch : jax.Array
+            Float32 transmission of shape ``(views, rows, columns)``.
+            Rows and columns form each detector image.
+
+        Returns
+        -------
+        jax.Array
+            Corrected transmission, retaining the input shape.
+        """
         _, rows, cols = batch.shape
         pv, pu = self._padding(rows, cols)
         padded = jnp.pad(batch, ((0, 0), pv, pu), mode="edge")
