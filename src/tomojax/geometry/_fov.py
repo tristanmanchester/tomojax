@@ -184,6 +184,13 @@ def compute_roi(
     return RoiInfo(r_u=r_u, r_v=r_v, nx_roi=nx_roi, ny_roi=ny_roi, nz_roi=nz_roi)
 
 
+def _roi_grid(grid: Grid, nx: int, ny: int, nz: int) -> Grid:
+    """Keep an unchanged grid; otherwise centre the ROI at the same voxel pitches."""
+    if (nx, ny, nz) == (grid.nx, grid.ny, grid.nz):
+        return grid
+    return Grid(nx, ny, nz, grid.vx, grid.vy, grid.vz)
+
+
 def grid_from_detector_fov(
     grid: Grid,
     detector: Detector,
@@ -211,19 +218,7 @@ def grid_from_detector_fov(
         Cropped grid with unchanged pitches, centred at the origin when resized.
     """
     info = compute_roi(grid, detector, crop_y_to_u=crop_y_to_u)
-    # If detector already covers the full current grid, just return the original grid.
-    if (info.nx_roi, info.ny_roi, info.nz_roi) == (grid.nx, grid.ny, grid.nz):
-        return grid
-    return Grid(
-        nx=int(info.nx_roi),
-        ny=int(info.ny_roi),
-        nz=int(info.nz_roi),
-        vx=float(grid.vx),
-        vy=float(grid.vy),
-        vz=float(grid.vz),
-        vol_origin=None,
-        vol_center=None,
-    )
+    return _roi_grid(grid, info.nx_roi, info.ny_roi, info.nz_roi)
 
 
 def grid_from_detector_fov_cube(
@@ -256,19 +251,7 @@ def grid_from_detector_fov_cube(
     info = compute_roi(grid, detector, crop_y_to_u=crop_y_to_u, match_parity=True)
     side_max = min(int(info.nx_roi), int(info.ny_roi), int(info.nz_roi))
     side = _choose_shared_side(side_max, int(grid.nx), int(grid.ny), int(grid.nz))
-    # If the original grid already fits within the FOV and is cubic, return it
-    if grid.nx == grid.ny == grid.nz == side:
-        return grid
-    return Grid(
-        nx=side,
-        ny=side,
-        nz=side,
-        vx=float(grid.vx),
-        vy=float(grid.vy),
-        vz=float(grid.vz),
-        vol_origin=None,
-        vol_center=None,
-    )
+    return _roi_grid(grid, side, side, side)
 
 
 def cylindrical_mask_xy(grid: Grid, detector: Detector) -> np.ndarray:
@@ -331,15 +314,9 @@ def grid_from_detector_fov_slices(
     info = compute_roi(grid, detector, crop_y_to_u=crop_y_to_u, match_parity=True)
     side_max = min(int(info.nx_roi), int(info.ny_roi))
     side = _choose_shared_side(side_max, int(grid.nx), int(grid.ny))
-    if int(grid.nx) == int(grid.ny) and int(grid.nx) <= side and int(grid.nz) <= int(info.nz_roi):
-        return grid
-    return Grid(
-        nx=min(int(grid.nx), side),
-        ny=min(int(grid.ny), side),
-        nz=min(int(grid.nz), int(info.nz_roi)),
-        vx=float(grid.vx),
-        vy=float(grid.vy),
-        vz=float(grid.vz),
-        vol_origin=None,
-        vol_center=None,
+    return _roi_grid(
+        grid,
+        min(int(grid.nx), side),
+        min(int(grid.ny), side),
+        min(int(grid.nz), int(info.nz_roi)),
     )

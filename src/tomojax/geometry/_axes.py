@@ -134,24 +134,6 @@ def _grid_dims(grid: GridLike | None) -> tuple[int, int, int] | None:
     return None
 
 
-def is_shape_xyz(vol_shape: Sequence[int], grid: GridLike | None) -> bool:
-    dims = _grid_dims(grid)
-    if dims is None:
-        return False
-    if len(vol_shape) != 3:
-        return False
-    return tuple(int(s) for s in vol_shape) == dims
-
-
-def is_shape_zyx(vol_shape: Sequence[int], grid: GridLike | None) -> bool:
-    dims = _grid_dims(grid)
-    if dims is None:
-        return False
-    if len(vol_shape) != 3:
-        return False
-    return tuple(int(s) for s in vol_shape) == (dims[2], dims[1], dims[0])
-
-
 def infer_disk_axes(vol_shape: Sequence[int], grid: GridLike | None) -> str | None:
     """Infer on-disk axis order using grid heuristics.
 
@@ -171,8 +153,12 @@ def infer_disk_axes(vol_shape: Sequence[int], grid: GridLike | None) -> str | No
     """
     if len(vol_shape) != 3:
         return None
-    matches_xyz = is_shape_xyz(vol_shape, grid)
-    matches_zyx = is_shape_zyx(vol_shape, grid)
+    dims = _grid_dims(grid)
+    if dims is None:
+        return None
+    shape = tuple(int(s) for s in vol_shape)
+    matches_xyz = shape == dims
+    matches_zyx = shape == dims[::-1]
     if matches_xyz and matches_zyx:
         return None
     if matches_xyz:
@@ -192,7 +178,5 @@ __all__ = [
     "VOLUME_AXES_ATTR",
     "axes_to_perm",
     "infer_disk_axes",
-    "is_shape_xyz",
-    "is_shape_zyx",
     "transpose_volume",
 ]
