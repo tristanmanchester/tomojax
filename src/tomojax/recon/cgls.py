@@ -67,6 +67,41 @@ class CGLSConfig:
     ``devices`` (two or more JAX devices) shares the views among them, each
     holding the whole volume, and sums their backprojections; the projections
     are then held in device memory, never streamed.
+
+    Parameters
+    ----------
+    iterations : int, optional
+        Maximum number of solver updates. For SIRT and MLEM, an update is a complete
+        subset sweep. Default is 50.
+    rtol : float, optional
+        Nonnegative relative tolerance on the normal-residual norm. Default is
+        1e-06.
+    atol : float, optional
+        Nonnegative absolute tolerance on the normal-residual norm. Default is 0.0.
+    damping : float, optional
+        Nonnegative weight of the volume-norm penalty; squared in the objective.
+        Default is 0.0.
+    views_per_batch : int, optional
+        Number of views processed together to bound temporary storage. Default is
+        64.
+    projector_backend : Literal['auto', 'jax', 'pallas'], optional
+        Execution backend: "auto", "jax" or "pallas". An explicit accelerator
+        request never silently falls back. Default is 'auto'.
+    projector_model : Literal['auto', 'ray', 'joseph'], optional
+        Projection model: "auto", "ray" or "joseph". Auto selects Joseph unless an
+        explicit detector grid requires rays. Default is 'auto'.
+    joseph_interpolation : Literal['linear', 'cubic'], optional
+        Joseph interpolation: "linear" or Keys "cubic" with a=-1/2. Cubic is not
+        supported by the ray model. Default is 'linear'.
+    gradient_damping : float, optional
+        Nonnegative weight of the physical finite-difference penalty; squared in the
+        objective. Default is 0.0.
+    stream_projections : bool | None, optional
+        Read host projections one view batch at a time. None selects streaming from
+        available device memory; False keeps them resident.
+    devices : jax.Device or sequence of jax.Device or None, optional
+        JAX device or sequence of devices. None uses the current default; multiple
+        devices divide the views and each hold the full volume.
     """
 
     iterations: int = 50
@@ -106,13 +141,63 @@ def cgls(
     config: CGLSConfig | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
-    """Reconstruct with matched CGLS and return volume plus convergence diagnostics.
+    """Reconstruct with matched CGLS and report convergence diagnostics.
 
     Inputs and the solve use FP32. Host arrays on CUDA can use the native
     linear Joseph kernels and return a NumPy volume, avoiding JAX startup and
     tracing; device arrays, streaming, and other models use the compiled JAX
     solver. Both paths use the same stationarity and roundoff checks. This
     public solver returns host diagnostics and is not differentiable.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Scan geometry, including view angles and any per-view poses.
+    grid : Grid
+        Reconstruction grid in ``(x, y, z)`` order, with physical voxel spacing.
+    detector : Detector
+        Detector dimensions and placement in the same length unit as the grid.
+    projections : array-like
+        Measured line integrals with shape ``(views, detector.nv, detector.nu)``.
+    init_x : array-like or None, optional
+        Initial volume of shape ``(nx, ny, nz)``; None starts from zero.
+    config : CGLSConfig or None, optional
+        Solver settings. None uses CGLSConfig defaults.
+    det_grid : tuple of array-like or None, optional
+        Explicit detector-coordinate arrays ``(u, v)``, each of shape ``(nv, nu)``.
+        None uses the canonical detector grid.
+
+    Returns
+    -------
+    volume : jax.Array or numpy.ndarray
+        Float32 reconstruction of shape ``(nx, ny, nz)``.
+    info : dict
+        Solver diagnostics and effective work; a small residual or iteration
+        count does not establish reconstruction accuracy.
+
+    Raises
+    ------
+    ValueError
+        If shapes, geometry or solver settings are incompatible with this method.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> import tomojax as tj
+    >>> from tomojax.recon import cgls, CGLSConfig, project
+    >>> grid = tj.Grid(4, 4, 1, 1.0, 1.0, 1.0)
+    >>> detector = tj.Detector(4, 1, 1.0, 1.0)
+    >>> geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 8, endpoint=False))
+    >>> data = project(geometry, np.ones((4, 4, 1), np.float32))
+    >>> volume, info = cgls(
+    ...     geometry,
+    ...     geometry.grid,
+    ...     geometry.detector,
+    ...     data,
+    ...     config=CGLSConfig(iterations=1),
+    ... )
+    >>> volume.shape
+    (4, 4, 1)
     """
     cfg = CGLSConfig() if config is None else config
     iterations, batch = operator.index(cfg.iterations), operator.index(cfg.views_per_batch)

@@ -93,7 +93,7 @@ def __dir__() -> list[str]:
 def method_config(
     method: str, *, config: MethodConfig | None = None, **settings: object
 ) -> MethodConfig:
-    """``method``'s configuration: ``config``, or its class's defaults, with ``settings``.
+    """Build a method configuration from defaults or named replacements.
 
     ``fbp`` (FDK for cone beams) takes an :class:`FBPConfig`, ``cgls`` a
     :class:`CGLSConfig`, ``fista`` a :class:`FistaConfig` and ``spdhg`` an
@@ -102,6 +102,32 @@ def method_config(
     replaces the field of its name, as :func:`dataclasses.replace` does. A config
     of another class, or a setting its class has no field for, raises
     :class:`ValueError` naming the valid ones.
+
+    Parameters
+    ----------
+    method : str
+        Reconstruction method: "fbp", "fourier", "cgls", "fista", "spdhg",
+        "sirt" or "mlem".
+    config : MethodConfig or None, optional
+        Existing configuration of the method's type. None uses its defaults.
+    **settings : object
+        Named fields replacing the corresponding configuration values.
+
+    Returns
+    -------
+    MethodConfig
+        Configuration for the requested method with replacements applied.
+
+    Raises
+    ------
+    ValueError
+        If method is unknown, config has the wrong type or a setting is unknown.
+
+    Examples
+    --------
+    >>> from tomojax.recon.api import method_config
+    >>> method_config("cgls", iterations=20).iterations
+    20
     """
     name = _CONFIGS.get(method)
     if name is None:
@@ -133,7 +159,7 @@ def reconstruct_arrays(
     warm_start: bool = False,
     out: np.ndarray | None = None,
 ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
-    """Reconstruct ``projections`` with ``method``; :func:`tomojax.reconstruct` on arrays.
+    """Reconstruct projection arrays and return their solver record.
 
     ``config`` is the method's configuration (see :func:`method_config`).
     ``warm_start`` starts the iterative methods from the FBP
@@ -145,6 +171,40 @@ def reconstruct_arrays(
     made in slabs (``host_slabs``). Fourier always returns host arrays in slabs.
     ``out`` supplies writable float32 host storage for FBP/FDK or Fourier and
     forces host slabs; it is returned without allocating another full volume.
+
+    Parameters
+    ----------
+    method : str
+        Reconstruction method accepted by method_config.
+    geometry : Geometry
+        Scan geometry, including angles and per-view poses.
+    grid : Grid
+        Reconstruction grid, with physical spacing in ``(x, y, z)`` order.
+    detector : Detector
+        Detector shape and placement in the same length unit as the grid.
+    projections : array-like
+        Line integrals of shape ``(views, nv, nu)``. For MLEM these represent
+        nonnegative linear Poisson measurements, not raw transmission counts.
+    config : MethodConfig or None, optional
+        Method-specific configuration. None uses that method's defaults.
+    warm_start : bool, optional
+        Start iterative reconstruction from FBP or FDK. Default is False.
+    out : numpy.ndarray or None, optional
+        Writable float32 ``(nx, ny, nz)`` host storage for FBP/FDK or Fourier.
+        None lets the method select storage; other methods do not accept out.
+
+    Returns
+    -------
+    volume : jax.Array or numpy.ndarray
+        Reconstruction of shape ``(nx, ny, nz)``; uses out itself if supplied.
+    record : dict
+        Configuration used, solver diagnostics and any host-slab or warm-start flags.
+
+    Raises
+    ------
+    ValueError
+        If method, configuration, shapes or geometry are incompatible, warm_start
+        is requested for a noniterative method, or out is unsupported.
     """
     cfg = method_config(method, config=config)
     if method == "fourier":

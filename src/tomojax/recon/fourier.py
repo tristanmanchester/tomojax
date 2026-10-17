@@ -48,6 +48,14 @@ class FourierConfig:
     geometry arrays; each call owns its working buffers.
     Fractional detector rows are interpolated on CUDA from at most two measured
     source rows per requested slice; entire projection stacks are not uploaded.
+
+    Parameters
+    ----------
+    slices_per_batch : int | None, optional
+        Positive slab depth, or None to choose automatically as described above.
+    backend : Literal['auto', 'numpy', 'cupy'], optional
+        Execution backend: "auto", "numpy" or "cupy". Explicit choices never change
+        backends. Default is 'auto'.
     """
 
     slices_per_batch: int | None = None
@@ -87,6 +95,47 @@ def fourier_reconstruct(
     written immediately, so a later failure may leave partial output. Input
     storage must remain unchanged during the call. This routine is not
     differentiable; use the matched projector pair for iterative solves.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Scan geometry, including view angles and any per-view poses.
+    grid : Grid
+        Reconstruction grid in ``(x, y, z)`` order, with physical voxel spacing.
+    detector : Detector
+        Detector dimensions and placement in the same length unit as the grid.
+    projections : array-like
+        Measured line integrals with shape ``(views, detector.nv, detector.nu)``.
+    config : FourierConfig or None, optional
+        Solver settings. None uses FourierConfig defaults.
+    out : numpy.ndarray or None, optional
+        Writable float32 host storage of shape ``(nx, ny, nz)``, including a memmap.
+        Must not overlap input storage. None allocates a new output.
+
+    Returns
+    -------
+    numpy.ndarray
+        Float32 reconstruction of shape ``(nx, ny, nz)``. Returns out itself when supplied.
+
+    Raises
+    ------
+    ValueError
+        If shapes, geometry or solver settings are incompatible with this method.
+    ImportError
+        If the requested CuPy backend is not installed.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> import tomojax as tj
+    >>> from tomojax.recon import fourier_reconstruct, FourierConfig, project
+    >>> grid = tj.Grid(4, 4, 1, 1.0, 1.0, 1.0)
+    >>> detector = tj.Detector(4, 1, 1.0, 1.0)
+    >>> geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 8, endpoint=False))
+    >>> data = project(geometry, np.ones((4, 4, 1), np.float32))
+    >>> volume = fourier_reconstruct(geometry, geometry.grid, geometry.detector, np.asarray(data))
+    >>> volume.shape
+    (4, 4, 1)
     """
     require_parallel_beam(geometry, "fourier_reconstruct")
     cfg = FourierConfig() if config is None else config

@@ -62,6 +62,20 @@ class FDKConfig:
     ``devices`` (one or several JAX devices) shares the views among them: each
     filters and backprojects its own, weighted for the whole scan, and the
     volumes are summed on the first. :func:`fdk_host` gives each its own slabs.
+
+    Parameters
+    ----------
+    filter : str, optional
+        Frequency filter: "ramp", "shepp-logan" or "hann". Default is 'ramp'.
+    backend : str, optional
+        Execution backend: "auto", "jax" or "cuda". Auto uses CUDA when available.
+        Default is 'auto'.
+    views_per_batch : int, optional
+        Number of views processed together to bound temporary storage. Default is
+        64.
+    devices : jax.Device or sequence of jax.Device or None, optional
+        JAX device or sequence of devices. None uses the current default; multiple
+        devices divide the views and each hold the full volume.
     """
 
     filter: str = "ramp"
@@ -484,6 +498,29 @@ def fdk(
     stacks stream to the device ``views_per_batch`` views at a time. Full turns
     on an offset detector (the axis projecting off its centre) get Wang's
     weights and reconstruct the field the detector's long side covers.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Scan geometry, including view angles and any per-view poses.
+    grid : Grid
+        Reconstruction grid in ``(x, y, z)`` order, with physical voxel spacing.
+    detector : Detector
+        Detector dimensions and placement in the same length unit as the grid.
+    projections : array-like
+        Measured line integrals with shape ``(views, detector.nv, detector.nu)``.
+    config : FDKConfig or None, optional
+        Solver settings. None uses FDKConfig defaults.
+
+    Returns
+    -------
+    jax.Array
+        Float32 reconstruction of shape ``(nx, ny, nz)``.
+
+    Raises
+    ------
+    ValueError
+        If shapes, geometry or solver settings are incompatible with this method.
     """
     return _fdk(geometry, grid, detector, projections, config=config)
 
@@ -547,6 +584,13 @@ class FDKHostConfig:
     ``slices_per_batch`` z slices are reconstructed per slab; ``None`` sizes slabs
     to about a third of the free device memory. ``fdk`` holds the filter and backend
     options.
+
+    Parameters
+    ----------
+    slices_per_batch : int | None, optional
+        Positive slab depth, or None to choose automatically as described above.
+    fdk : FDKConfig, optional
+        FDK filter, batching and backend configuration.
     """
 
     slices_per_batch: int | None = None
@@ -654,6 +698,32 @@ def fdk_host(
     FP32. Completed slabs are written immediately, so a later failure can
     leave a partially written output. This host-returning routine is not
     differentiable; use :func:`fdk` for device-resident output.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Scan geometry, including view angles and any per-view poses.
+    grid : Grid
+        Reconstruction grid in ``(x, y, z)`` order, with physical voxel spacing.
+    detector : Detector
+        Detector dimensions and placement in the same length unit as the grid.
+    projections : array-like
+        Measured line integrals with shape ``(views, detector.nv, detector.nu)``.
+    config : FDKHostConfig or None, optional
+        Solver settings. None uses FDKHostConfig defaults.
+    out : numpy.ndarray or None, optional
+        Writable float32 host storage of shape ``(nx, ny, nz)``, including a memmap.
+        Must not overlap input storage. None allocates a new output.
+
+    Returns
+    -------
+    numpy.ndarray
+        Float32 reconstruction of shape ``(nx, ny, nz)``. Returns out itself when supplied.
+
+    Raises
+    ------
+    ValueError
+        If shapes, geometry or solver settings are incompatible with this method.
     """
     from tomojax.backends import device_free_memory_bytes
 

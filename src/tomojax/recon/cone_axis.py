@@ -58,6 +58,22 @@ class ConeAxisConfig:
     volume), ``max_roll_deg`` the
     largest roll the slabs leave detector rows for, and ``fdk`` the filter
     (Hann by default, so noise does not swamp the sharpness) and backend.
+
+    Parameters
+    ----------
+    search_range : float | None, optional
+        Half-width of the axis-offset search in physical length units. None uses a
+        quarter of the volume width.
+    estimate_roll : bool, optional
+        Estimate roll from three slab heights; False uses only the central slab.
+        Default is True.
+    slices : int, optional
+        Requested slab thickness in full-resolution voxels. Default is 32.
+    max_roll_deg : float, optional
+        Maximum detector roll in degrees allowed for detector-row planning. Default
+        is 3.0.
+    fdk : FDKConfig, optional
+        FDK filter, batching and backend configuration.
     """
 
     search_range: float | None = None
@@ -74,6 +90,17 @@ class ConeAxisCalibration:
     ``axis_offset`` and ``detector_roll_deg`` are absolute ``ConeBeam`` values.
     ``slab_offsets[i]`` is the sharpest axis offset of the slab centred at
     height ``heights[i]`` (physical z), with the calibrated roll applied.
+
+    Parameters
+    ----------
+    axis_offset : float
+        Absolute rotation-axis offset in the geometry length unit.
+    detector_roll_deg : float
+        Absolute detector roll in degrees.
+    heights : tuple[float, ...]
+        Physical z coordinates of the slab centres.
+    slab_offsets : tuple[float, ...]
+        Sharpest axis offset at each slab height with the calibrated roll applied.
     """
 
     axis_offset: float
@@ -82,7 +109,18 @@ class ConeAxisCalibration:
     slab_offsets: tuple[float, ...]
 
     def apply(self, geometry: ConeGeometry) -> ConeGeometry:
-        """Return ``geometry`` with the calibrated axis offset and detector roll."""
+        """Return ``geometry`` with the calibrated axis offset and detector roll.
+
+        Parameters
+        ----------
+        geometry : ConeGeometry
+            Geometry to update, without changing its other scan settings.
+
+        Returns
+        -------
+        ConeGeometry
+            Copy with the calibrated absolute axis offset and detector roll.
+        """
         beam = replace(
             geometry.beam,
             axis_offset=float(self.axis_offset),
@@ -287,6 +325,29 @@ def calibrate_cone_axis(
     JAX). The scan should cover at least 180 degrees plus the fan angle; the
     sample should have some in-plane structure at the slab heights. Use
     :meth:`ConeAxisCalibration.apply` to update the geometry.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Scan geometry, including view angles and any per-view poses.
+    grid : Grid
+        Reconstruction grid in ``(x, y, z)`` order, with physical voxel spacing.
+    detector : Detector
+        Detector dimensions and placement in the same length unit as the grid.
+    projections : array-like
+        Measured line integrals with shape ``(views, detector.nv, detector.nu)``.
+    config : ConeAxisConfig or None, optional
+        Solver settings. None uses ConeAxisConfig defaults.
+
+    Returns
+    -------
+    ConeAxisCalibration
+        Absolute axis offset and detector roll, with per-slab estimates.
+
+    Raises
+    ------
+    ValueError
+        If shapes, geometry or solver settings are incompatible with this method.
     """
     cfg = ConeAxisConfig() if config is None else config
     if not isinstance(geometry, ConeGeometry) or beam_of(geometry) is None:

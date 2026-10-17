@@ -91,6 +91,44 @@ def cgls_multires(
     fine detail and noisy data may require more fine-level iterations. Diagnostics
     contain every level's actual work and the final level's stopping criterion.
     Numerical breakdown at any level raises ``FloatingPointError``.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Scan geometry, including view angles and any per-view poses.
+    grid : Grid
+        Reconstruction grid in ``(x, y, z)`` order, with physical voxel spacing.
+    detector : Detector
+        Detector dimensions and placement in the same length unit as the grid.
+    projections : array-like
+        Measured line integrals with shape ``(views, detector.nv, detector.nu)``.
+    factors : iterable of int, optional
+        Coarsening factors decreasing strictly to 1. Default is ``(2, 1)``.
+    iterations_per_level : iterable of int, optional
+        Positive iteration budget at each level. Default is ``(32, 16)``;
+        overrides config.iterations.
+    init_x : array-like or None, optional
+        Initial volume of shape ``(nx, ny, nz)``; None starts from zero.
+    config : CGLSConfig or None, optional
+        Solver settings. None uses CGLSConfig defaults.
+    det_grid : tuple of array-like or None, optional
+        Explicit detector-coordinate arrays ``(u, v)``, each of shape ``(nv, nu)``.
+        None uses the canonical detector grid.
+
+    Returns
+    -------
+    volume : jax.Array or numpy.ndarray
+        Float32 reconstruction of shape ``(nx, ny, nz)``.
+    info : dict
+        Solver diagnostics and effective work; a small residual or iteration
+        count does not establish reconstruction accuracy.
+
+    Raises
+    ------
+    ValueError
+        If shapes, geometry or solver settings are incompatible with this method.
+    FloatingPointError
+        If a level's CGLS solve breaks down numerically.
     """
     factors = tuple(validate_scale_factor(f) for f in factors)
     budgets = tuple(operator.index(it) for it in iterations_per_level)

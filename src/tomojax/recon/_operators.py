@@ -79,7 +79,7 @@ def project(
     grid: Grid | None = None,
     devices: Device | Sequence[Device] | None = None,
 ) -> jax.Array:
-    """Project ``volume`` through ``geometry``: line integrals ``(views, rows, columns)``.
+    """Project a volume through the scan geometry.
 
     ``volume`` is ``(nx, ny, nz)`` on ``grid`` (the geometry's own by default),
     in the reciprocal of the geometry's length unit. Works for parallel,
@@ -87,6 +87,27 @@ def project(
     detector; :func:`backproject` is its exact transpose. ``devices`` (one or
     several, ``jax.devices()`` for all) shares the views among them, each
     holding the whole volume; the projections come back on the first.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Parallel, laminography or cone-beam scan geometry, with any per-view poses.
+    volume : array-like
+        Volume of shape ``(nx, ny, nz)`` in reciprocal geometry-length units.
+    grid : Grid or None, optional
+        Volume grid. None uses geometry.grid.
+    devices : jax.Device or sequence of jax.Device or None, optional
+        Devices sharing the views. None uses the current default device.
+
+    Returns
+    -------
+    jax.Array
+        Line integrals of shape ``(views, nv, nu)``.
+
+    Raises
+    ------
+    ValueError
+        If the array shape does not match the grid or scan geometry.
     """
     grid, split, (forward, _) = _operators(geometry, grid, "project", devices)
     if tuple(volume.shape) != (grid.nx, grid.ny, grid.nz):
@@ -107,11 +128,32 @@ def backproject(
     grid: Grid | None = None,
     devices: Device | Sequence[Device] | None = None,
 ) -> jax.Array:
-    """Apply the transpose of :func:`project` to ``(views, rows, columns)`` projections.
+    """Apply the exact transpose of the forward projector.
 
     This is the exact adjoint, not a reconstruction: use
     :func:`tomojax.reconstruct` for a volume. ``devices`` shares the views
     among them, as for :func:`project`, and sums their backprojections.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Parallel, laminography or cone-beam scan geometry, with any per-view poses.
+    projections : array-like
+        Projection stack of shape ``(views, nv, nu)``.
+    grid : Grid or None, optional
+        Volume grid. None uses geometry.grid.
+    devices : jax.Device or sequence of jax.Device or None, optional
+        Devices sharing the views. None uses the current default device.
+
+    Returns
+    -------
+    jax.Array
+        Adjoint volume of shape ``(nx, ny, nz)``, not a reconstruction.
+
+    Raises
+    ------
+    ValueError
+        If the array shape does not match the grid or scan geometry.
     """
     grid, split, (_, adjoint) = _operators(geometry, grid, "backproject", devices)
     detector = geometry.detector

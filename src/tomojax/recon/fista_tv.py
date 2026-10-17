@@ -188,6 +188,75 @@ class FistaConfig:
     holding the whole volume, and sums their backprojections; one device, or
     ``None``, runs on the default device. It needs the batched operators and
     projections held in device memory (no streaming).
+
+    Parameters
+    ----------
+    iterations : int, optional
+        Maximum number of solver updates. For SIRT and MLEM, an update is a complete
+        subset sweep. Default is 50.
+    initial_epochs : int, optional
+        Number of ordered-subset initialization sweeps; zero disables
+        initialization. Default is 0.
+    initial_subsets : int, optional
+        Number of angle-interleaved groups per initialization sweep. Default is 16.
+    tv_weight : float, optional
+        Nonnegative regularization weight. Default is 0.005.
+    regulariser : Regulariser, optional
+        Regularization model: "tv" or "huber_tv". Default is 'tv'.
+    huber_delta : float, optional
+        Positive Huber transition scale when regulariser is "huber_tv". Default is
+        0.01.
+    lipschitz : float | None, optional
+        Positive data-gradient Lipschitz constant, or None to estimate it by power
+        iteration.
+    views_per_batch : int | None, optional
+        View batch size. None uses 64 for batched operators or one on the reference
+        path.
+    projector_unroll : int, optional
+        Loop unrolling for the explicit-grid or ray-reference projector. Default is
+        1.
+    checkpoint_projector : bool, optional
+        Recompute intermediate projector values during differentiation on the
+        reference path. Default is True.
+    gather_dtype : str, optional
+        Gather precision on the reference path: "auto", "fp32", "fp16" or "bf16". Default is 'fp32'.
+    grad_mode : GradMode, optional
+        Reference gradient evaluation: "auto", "batched" or "stream". Default is
+        'auto'.
+    tv_prox_iterations : int, optional
+        Iterations of the TV proximal solve per FISTA update. Default is 10.
+    recon_rel_tol : float | None, optional
+        Relative objective-change tolerance for stopping reconstruction early; None disables
+        it.
+    recon_patience : int, optional
+        Number of successive small-change iterations required for early stopping.
+        Default is 0.
+    power_iterations : int, optional
+        Number of power iterations used to estimate the data-gradient Lipschitz
+        constant. Default is 3.
+    support : array-like | None, optional
+        Volume support mask. Excluded voxels remain zero; None uses the entire grid.
+    nonnegative : bool, optional
+        Constrain the reconstruction to nonnegative values. Default is False.
+    lower_bound : float | None, optional
+        Lower voxel-value bound, or None for no explicit lower bound.
+    upper_bound : float | None, optional
+        Upper voxel-value bound, or None for no upper bound.
+    ray_integrator : str, optional
+        Reference ray integration rule; "sampled" is the default, "exact" uses exact
+        integration, and "joseph" selects Joseph sampling. Default is 'sampled'.
+    projector_model : ProjectorModel, optional
+        Projection model: "auto", "ray" or "joseph". Auto selects Joseph unless an
+        explicit detector grid requires rays. Default is 'auto'.
+    projector_backend : ProjectorBackend, optional
+        Execution backend: "auto", "jax" or "pallas". An explicit accelerator
+        request never silently falls back. Default is 'auto'.
+    stream_projections : bool | None, optional
+        Read host projections one view batch at a time. None selects streaming from
+        available device memory; False keeps them resident.
+    devices : jax.Device or sequence of jax.Device or None, optional
+        JAX device or sequence of devices. None uses the current default; multiple
+        devices divide the views and each hold the full volume.
     """
 
     iterations: int = 50
@@ -850,6 +919,58 @@ def fista_tv(
     where ``step`` is the zero-based iteration index that produced ``loss``. When
     early stopping truncates active iterations, the final callback reports the
     last active iteration rather than the repeated padded tail entry.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Scan geometry, including view angles and any per-view poses.
+    grid : Grid
+        Reconstruction grid in ``(x, y, z)`` order, with physical voxel spacing.
+    detector : Detector
+        Detector dimensions and placement in the same length unit as the grid.
+    projections : array-like
+        Measured line integrals with shape ``(views, detector.nv, detector.nu)``.
+    init_x : array-like or None, optional
+        Initial volume of shape ``(nx, ny, nz)``; None starts from zero.
+    config : FistaConfig or None, optional
+        Solver settings. None uses FistaConfig defaults.
+    callback : callable or None, optional
+        Callback receiving ``(step, loss)`` at the first and last logged samples.
+    det_grid : tuple of array-like or None, optional
+        Explicit detector-coordinate arrays ``(u, v)``, each of shape ``(nv, nu)``.
+        None uses the canonical detector grid.
+
+    Returns
+    -------
+    volume : jax.Array
+        Float32 reconstruction of shape ``(nx, ny, nz)``.
+    info : dict
+        Solver diagnostics and effective work; a small residual or iteration
+        count does not establish reconstruction accuracy.
+
+    Raises
+    ------
+    ValueError
+        If shapes, geometry or solver settings are incompatible with this method.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> import tomojax as tj
+    >>> from tomojax.recon import fista_tv, FistaConfig, project
+    >>> grid = tj.Grid(4, 4, 1, 1.0, 1.0, 1.0)
+    >>> detector = tj.Detector(4, 1, 1.0, 1.0)
+    >>> geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 8, endpoint=False))
+    >>> data = project(geometry, np.ones((4, 4, 1), np.float32))
+    >>> volume, info = fista_tv(
+    ...     geometry,
+    ...     geometry.grid,
+    ...     geometry.detector,
+    ...     data,
+    ...     config=FistaConfig(iterations=1),
+    ... )
+    >>> volume.shape
+    (4, 4, 1)
     """
     runtime = _prepare_fista_runtime(
         geometry,
