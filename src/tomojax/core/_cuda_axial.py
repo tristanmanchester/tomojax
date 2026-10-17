@@ -247,11 +247,16 @@ def _forward_launch(
         tile_v = min(cap, 1 << ((int(detector.nv) // rows).bit_length() - 1))
         tiles = -(-detector.nu // (128 // tile_v)) * -(-detector.nv // (rows * tile_v))
         dims = tuple(np.int32(n) for n in (grid.nx, grid.ny, grid.nz, detector.nu, detector.nv))
-        _forward_kernel(tile_v, vector=vector)(
-            (coeff.shape[0], tiles),
-            (128,),
-            (cp.asarray(coeff), cp.asarray(volume), cp.asarray(out), *dims),
-        )
+        coeff, volume, out = (cp.asarray(a) for a in (coeff, volume, out))
+        kernel = _forward_kernel(tile_v, vector=vector)
+        # Bound concurrent view footprints without adding JAX callback boundaries.
+        batch = 16 if vector else coeff.shape[0]
+        for first in range(0, coeff.shape[0], batch):
+            kernel(
+                (min(batch, coeff.shape[0] - first), tiles),
+                (128,),
+                (coeff[first:], volume, out[first:], *dims),
+            )
 
 
 def forward_axial_cuda(
