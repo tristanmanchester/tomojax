@@ -5,6 +5,9 @@
 `tj.reconstruct_slabs` now supports SIRT/OSEM on matching axial Joseph planes,
 including optional FBP initialization, without retaining the full output volume.
 
+`tomojax.io.api.read_hdf5_array` reads explicit HDF5 crops with bounded parallel
+gzip decoding, preserving dtype and falling back for other filters and selections.
+
 Generic CUDA cone backprojection keeps inverse corner bounds conservative at
 FP32 pixel boundaries, retaining positive forward weights in its transpose.
 

@@ -5,7 +5,16 @@ TIFF stacks, and validates and inspects datasets. Raw detector frames are read
 with `tomojax.load_frames` and corrected with
 [`tomojax.corrections`](../corrections/README.md).
 
+Zeiss Xradia acquisitions are recognised by OLE content, with lazy raw counts,
+embedded reference images and physical calibration; fractional image shifts stay
+in the geometry rather than resampling the data. Per-view cone arrangements use
+matched CGLS under automatic reconstruction, not single-arrangement FDK.
+
 Import from here, not from `tomojax._data`.
+
+For explicit HDF5 crops, `tomojax.io.api.read_hdf5_array(dataset, slices)`
+preserves dtype and axes while decoding eligible gzip chunks in bounded parallel
+batches; the caller retains ownership of the open dataset.
 
 ## HDF5 acquisition metadata
 

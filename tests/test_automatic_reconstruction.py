@@ -95,3 +95,22 @@ def test_automatic_center_provenance_failure_and_saved_reuse(status, monkeypatch
             assert automatic["center_estimation"]["status"] == "failed"
             assert automatic["status"] == "limited"
             assert automatic["center_calibration_reason"] in automatic["reasons"]
+
+
+def test_automatic_segmented_cone_preserves_calibration():
+    from tomojax.geometry import ConeBeam, ConeGeometry, ConeSegments
+
+    grid, detector = tj.Grid(4, 4, 3, 1, 1, 1), tj.Detector(8, 5, 1, 1)
+    geometry = ConeSegments(
+        tuple(
+            ConeGeometry(grid, replace(detector, center=(offset, 0.2)), [angle], ConeBeam(20, 30))
+            for offset, angle in zip([-0.4, 0.7], [0, 90], strict=True)
+        )
+    )
+    scan = tj.Scan(np.ones((2, 5, 8), np.float32), geometry)
+    expected = tj.reconstruct(scan, "cgls", iterations=2)
+    actual = tj.reconstruct(scan, iterations=2)
+    np.testing.assert_allclose(actual.volume, expected.volume, rtol=2e-6, atol=1e-7)
+    assert actual.scan is scan and actual.method == "cgls"
+    assert actual.info["automatic"]["status"] == "limited"
+    assert "Segmented cone" in actual.info["automatic"]["reasons"][0]

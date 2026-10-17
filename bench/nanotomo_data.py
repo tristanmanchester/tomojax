@@ -102,6 +102,11 @@ class PtychographyData:
         """
         name = "aligned_phase_sinogram" if reference else "stack_object"
         selection = (views, cols, rows) if self.hdf5 else (rows, cols, views)
-        value = np.asarray(self.file[name][selection])
+        if self.hdf5:
+            from tomojax.io.api import read_hdf5_array
+
+            value = read_hdf5_array(self.file[name], selection)
+        else:
+            value = np.asarray(self.file[name][selection])
         value = complex_values(value)
         return value.transpose(0, 2, 1) if self.hdf5 else value.transpose(2, 0, 1)

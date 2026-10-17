@@ -9,7 +9,7 @@
     "tomojax.datasets": 13,
     "tomojax.geometry.api": 44,
     "tomojax.recon.api": 24,
-    "tomojax.io.api": 32,
+    "tomojax.io.api": 33,
     "tomojax.alignment.api": 78,
     "tomojax.datasets.api": 15
   },
@@ -23,7 +23,7 @@
     "simulate": 46
   },
   "long_files": {
-    "src/tomojax/_workflow.py": 873,
+    "src/tomojax/_workflow.py": 880,
     "src/tomojax/alignment/_pose/_pose_loop.py": 901,
     "src/tomojax/alignment/_stages/_reconstruction_stage.py": 1029,
     "src/tomojax/alignment/optimizers.py": 921,
@@ -123,6 +123,7 @@
     "src/tomojax/io/_inspection_format.py::PLR0915::format_inspection_report",
     "src/tomojax/io/_json.py::C901::normalize_json",
     "src/tomojax/io/_json.py::PLR0911::normalize_json",
+    "src/tomojax/io/_zeiss.py::C901::read_zeiss",
     "src/tomojax/recon/cgls_multires.py::C901::cgls_multires",
     "src/tomojax/recon/fista_tv.py::C901::grad_data_term",
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline",
