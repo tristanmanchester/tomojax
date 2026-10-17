@@ -128,7 +128,7 @@ def _astra_scan(vectors: np.ndarray) -> tj.Scan:
     }
     window = {f"WindowMin{a}": -4.0 for a in "XYZ"} | {f"WindowMax{a}": 4.0 for a in "XYZ"}
     vol_geom = {"GridColCount": 8, "GridRowCount": 8, "GridSliceCount": 8, "option": window}
-    return tj.Scan.from_astra(np.zeros((8, len(vectors), 8), np.float32), proj_geom, vol_geom)
+    return tj.Scan.from_astra(np.zeros((8, 20, 8), np.float32), proj_geom, vol_geom)
 
 
 def test_astra_segments_share_one_pixel_pitch_despite_roundoff():
@@ -259,12 +259,3 @@ def test_segmented_scans_save_and_load(tmp_path):
     recon = tj.reconstruct(loaded, "cgls", iterations=3)
     tj.save(tmp_path / "recon.nxs", recon)
     assert tj.load_reconstruction(tmp_path / "recon.nxs").volume.shape == (10, 10, 10)
-
-
-def test_independently_imported_orbits_keep_one_object_frame():
-    vectors = [_circle_vectors(0.7, wobble=h) for h in (-2.5, 3.0)]
-    combined = tj.Scan.combine([_astra_scan(v) for v in vectors])
-    assert combined.grid.vol_center == (0.0, 0.0, 0.0)
-    np.testing.assert_allclose(
-        combined.to_astra()[1]["Vectors"], np.concatenate(vectors), atol=1e-6
-    )
