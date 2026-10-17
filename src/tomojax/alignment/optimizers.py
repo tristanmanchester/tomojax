@@ -382,7 +382,7 @@ def prepare_pose_lbfgs(
     )
 
 
-def _run_lbfgs_optax_loop(  # noqa: PLR0911, PLR0912, PLR0915
+def _run_lbfgs_optax_loop(  # noqa: PLR0912, PLR0915
     *,
     z0: jnp.ndarray,
     value_fn: Callable[[jnp.ndarray], jnp.ndarray],
@@ -416,25 +416,6 @@ def _run_lbfgs_optax_loop(  # noqa: PLR0911, PLR0912, PLR0915
 
     try:
         initial_value_jax, initial_grad = kernels.evaluate(z, opt_state, objective_args)
-    except Exception as exc:
-        if expected_failure(exc):
-            return LbfgsLoopResult(
-                z=z,
-                best_z=best_z,
-                best_value=best_value,
-                eval_count=eval_count,
-                total_line_search_steps=total_line_search_steps,
-                initial_value=None,
-                initial_grad_norm=None,
-                success=False,
-                message="initial L-BFGS objective/gradient failed",
-                nit=0,
-                last_grad_norm=math.inf,
-                last_step_norm=0.0,
-                failure_message=f"initial L-BFGS objective/gradient failed: {exc}",
-            )
-        raise
-    try:
         initial_value = float(initial_value_jax)
         initial_grad_norm = float(jnp.linalg.norm(initial_grad))
         record_value(initial_value, z)
