@@ -68,7 +68,8 @@ def _volume_shape_nxyz(volume_shape: Sequence[int] | None) -> tuple[int, int, in
     return dims
 
 
-def _normalize_geometry_type(geometry_type: str | None) -> str:
+def normalize_geometry_type(geometry_type: str | None) -> str:
+    """Use the same geometry labels when reading, writing, and materializing metadata."""
     gtype = "parallel" if geometry_type is None else str(geometry_type).strip().lower()
     if gtype == "parallel":
         return gtype
@@ -227,7 +228,7 @@ def _grid_from_meta(
         # A cone beam magnifies the axis plane: one voxel per detector pixel there.
         beam = meta.get("cone_beam")
         scale = 1.0
-        if _normalize_geometry_type(meta.get("geometry_type")) == "cone" and isinstance(beam, dict):
+        if normalize_geometry_type(meta.get("geometry_type")) == "cone" and isinstance(beam, dict):
             scale = float(beam["source_to_axis"]) / float(beam["source_to_detector"])
         return Grid(
             nx=nx,
@@ -305,7 +306,7 @@ def _base_geometry(
     detector: Detector,
     angles: Sequence[float],
 ) -> ScanGeometry:
-    gtype = _normalize_geometry_type(meta.get("geometry_type"))
+    gtype = normalize_geometry_type(meta.get("geometry_type"))
     if gtype == "cone":
         beam_meta = meta.get("cone_beam")
         if not isinstance(beam_meta, dict):

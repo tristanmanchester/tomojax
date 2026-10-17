@@ -134,7 +134,7 @@
     "reportOptionalCall": 2,
     "reportOptionalMemberAccess": 8,
     "reportOptionalSubscript": 1,
-    "reportPrivateUsage": 97,
+    "reportPrivateUsage": 96,
     "reportRedeclaration": 1,
     "reportReturnType": 20,
     "reportTypedDictNotRequiredAccess": 5

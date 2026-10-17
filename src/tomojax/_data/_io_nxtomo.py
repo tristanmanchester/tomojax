@@ -32,10 +32,10 @@ from ._io_helpers import (
     _load_rotation_angles,
     _load_sample_metadata,
     _load_source_metadata,
-    _normalize_geometry_type,
     _write_string_attr,
 )
 from ._io_types import LoadedDataset, LoadedNXTomo, NXTomoMetadata, ValidationReport
+from .geometry_meta import normalize_geometry_type
 
 if TYPE_CHECKING:
     import jax
@@ -68,7 +68,7 @@ def save_nxtomo(
     if proj.ndim != 3:
         raise ValueError("projections must be (n_views, nv, nu)")
     n_views, nv, nu = proj.shape
-    geometry_type_norm = _normalize_geometry_type(meta.geometry_type)
+    geometry_type_norm = normalize_geometry_type(meta.geometry_type)
 
     disk_axes = meta.volume_axes_order.lower()
     _validate_volume_save_options(meta, disk_axes=disk_axes)
