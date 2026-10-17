@@ -83,6 +83,17 @@ surface, check the change against these rules.
   about (`tj.reconstruct(scan, "cgls", iterations=50)`). No positional flags.
 - **Results carry their context.** Return objects that hold the geometry and
   settings they were made with, not bare arrays plus metadata to keep in sync.
+- **Fix the method, don't wrap it.** When a method gets a case wrong, change its
+  model or its statistics so that the case comes out right. Do not detect the
+  case and bypass the method. For example, the nano-tomography aligner once
+  reported about 0.1 px of motion on scans that were already aligned. A
+  "consistency guard" was built that reconstructed two half-datasets, compared
+  their resolution and discarded the alignment unless it improved. It hid the
+  bias rather than removing it, flipped between "no motion" and a full
+  correction at a threshold, judged the method by a second objective, and still
+  let a worse result through on drifted data. The fix belongs in the estimator:
+  weight residuals by their noise, regularise each pose by how well the data
+  determine it, and report the pose uncertainties.
 - **The CLI shape is fixed:** `tomojax <command> INPUT -o OUTPUT`, existing
   outputs refused without `--force`, exit status 0/1/2. `--help` shows what
   most runs need; expert settings are `--config` keys.

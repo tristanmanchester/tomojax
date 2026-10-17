@@ -17,6 +17,8 @@ real scans while `tj.load`, `tj.reconstruct` and `tj.align` just work.
   engineer for values like 1e-30 or 1e30.
 - Invalid input that already gives an obviously broken result (all NaN, an
   exception) does not need a new guard.
+- Fix a method that gets a case wrong; do not detect the case and bypass it
+  (see "Fix the method, don't wrap it" in CONTRIBUTING.md).
 
 ## Checks
 
