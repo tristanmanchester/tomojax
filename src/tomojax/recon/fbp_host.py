@@ -55,7 +55,9 @@ class FBPHostConfig:
     many batches can stage up to 512 MiB of detector rows when those fit in a
     quarter of free device memory, avoiding per-batch host dispatch. Otherwise
     rows are read and transferred with at most two input batches on the device.
-    Runtime/compiler caches add memory beyond these arrays. ``scale`` has the
+    Runtime/compiler caches add memory beyond these arrays. General slabs shrink
+    their depth, then their view batch, after device allocation exhaustion.
+    ``scale`` has the
     same meaning as in :class:`FBPConfig`.
     """
 
@@ -309,30 +311,49 @@ def _general_slabs(
         # Filtering workspace: padded real batch plus its complex spectrum.
         rows = 1 if separable else _fft_length(detector_f.nv)
         workspace = 16 * batch * max(rows, detector_f.nv) * (spectrum.shape[0] + detector_f.nu)
-        free = device_free_memory_bytes() or 2**30
+        free = _output_memory(projections, poses) or 2**30
         slices = max(1, (free // 2 - workspace) // (4 * grid.ny * grid.nz))
     depth = min(slices, grid.nx)
     ox, oy, oz = grid_volume_origin(grid)
-    for start in range(0, grid.nx, depth):
+    start = 0
+    while start < grid.nx:
         count = min(depth, grid.nx - start)
-        # Every slab has the same shape, so one compiled step serves them all.
+        # Keep the slab shape fixed at this depth, including the padded tail.
         slab = replace(grid, nx=depth, vol_origin=(ox + start * grid.vx, oy, oz), vol_center=None)
-        volume = _fbp_from_host(
-            host_poses,
-            projections,
-            np.asarray(view_scale, np.float32),
-            np.asarray(params, np.float32),
-            spectrum,
-            float(arc_length),
-            grid=slab,
-            detector=detector_f,
-            backend=backend,
-            batch_size=batch,
-            separable=separable,
-            check_finite=True,
-        )
-        target = output[start : start + count]
-        target[...] = _host_volume(volume, target)[:count]
+        volume = None
+        try:
+            volume = _fbp_from_host(
+                host_poses,
+                projections,
+                np.asarray(view_scale, np.float32),
+                np.asarray(params, np.float32),
+                spectrum,
+                float(arc_length),
+                grid=slab,
+                detector=detector_f,
+                backend=backend,
+                batch_size=batch,
+                separable=separable,
+                check_finite=True,
+            )
+            target = output[start : start + count]
+            target[...] = _host_volume(volume, target)[:count]
+        except Exception as error:
+            if not is_oom_error(error):
+                raise
+            volume = None
+            if depth > 1:
+                depth = max(1, depth // 2)
+            elif batch > 1:
+                batch = max(1, batch // 2)
+            else:
+                raise
+            # Leave the exception scope before retrying: its traceback can own
+            # device buffers. Completed slabs stay on the host and are not redone.
+            continue
+        # Do not keep the preceding device slab alive while constructing the next.
+        del volume
+        start += count
     return output
 
 
