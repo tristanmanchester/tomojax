@@ -89,6 +89,25 @@ Binning reduces detector sampling, not the reconstruction grid. In Python,
 pass a coarser `grid=` to `tj.reconstruct` when you also want larger voxels;
 `--grid` on the CLI only changes the voxel counts, retaining their spacing.
 
+For a small **axial parallel-beam** preview, use one voxel per binned detector
+pixel and retain the selected detector rows' height. This explicit grid avoids
+upsampling the binned data back onto the original fine grid:
+
+```python
+import tomojax as tj
+
+scan = tj.load_frames("raw.nxs").selected(slice(None, None, 4)).corrected(binning=8)
+scan = tj.estimate_center(scan)
+d = scan.detector
+grid = tj.Grid(d.nu, d.nu, d.nv, d.du, d.du, d.dv, vol_center=(0, 0, d.center[1]))
+tj.save("preview.nxs", tj.reconstruct(scan, grid=grid))
+```
+
+Inspect it with `tomojax inspect preview.nxs --preview previews`. Use enough
+views for the binned width; fewer views can create streaks. This grid recipe
+is not for cone beams or tilted axes, where magnification or the sample's
+extent along the axis also matters.
+
 For calibrated lens distortion, pass
 `RadialDistortion(center=(column, row), coefficients=(c0, c1, ...))` from
 `tomojax.corrections`. It bilinearly samples a **backward** radial polynomial
