@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -367,7 +369,9 @@ assert 'jax' not in sys.modules and result.info['execution_backend'] == 'cupy'
 assert isinstance(result.volume, np.ndarray) and np.isfinite(result.volume).all()
 assert 'cupyx.scipy.sparse' not in sys.modules
 """
-    subprocess.run([sys.executable, "-c", code], check=True)
+    # The test process may already hold the GPU: the child must not preallocate.
+    env = {**os.environ, "XLA_PYTHON_CLIENT_PREALLOCATE": "false"}
+    subprocess.run([sys.executable, "-c", code], check=True, env=env)
 
 
 @pytest.mark.gpu
@@ -455,5 +459,8 @@ def test_native_cuda_inverse_support_keeps_rounded_boundary_weights():
 def _require_free_gpu() -> None:
     """Skip when this process already holds the GPU the subprocess needs."""
     cupy = pytest.importorskip("cupy")
+    # Earlier tests leave blocks in this process's CuPy pools; give them back.
+    cupy.get_default_memory_pool().free_all_blocks()
+    cupy.get_default_pinned_memory_pool().free_all_blocks()
     if cupy.cuda.runtime.memGetInfo()[0] < 1 << 30:
         pytest.skip("the test process holds the GPU; run this test on its own")

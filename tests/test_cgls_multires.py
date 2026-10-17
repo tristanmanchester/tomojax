@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 
 import jax
 import jax.numpy as jnp
@@ -212,7 +213,9 @@ device, reference = cgls_multires(geom, grid, det, jnp.asarray(data), **kwargs)
 np.testing.assert_allclose(host, device, atol=3e-5, rtol=3e-4)
 assert info['effective_iterations'] == reference['effective_iterations']
 """
-    subprocess.run([sys.executable, "-c", code], check=True)
+    # The test process may already hold the GPU: the child must not preallocate.
+    env = {**os.environ, "XLA_PYTHON_CLIENT_PREALLOCATE": "false"}
+    subprocess.run([sys.executable, "-c", code], check=True, env=env)
 
 
 @pytest.mark.parametrize("strided", [False, True])
@@ -229,5 +232,8 @@ def test_host_multires_rejects_nonfinite_unsampled_rays(strided):
 def _require_free_gpu() -> None:
     """Skip when this process already holds the GPU the subprocess needs."""
     cupy = pytest.importorskip("cupy")
+    # Earlier tests leave blocks in this process's CuPy pools; give them back.
+    cupy.get_default_memory_pool().free_all_blocks()
+    cupy.get_default_pinned_memory_pool().free_all_blocks()
     if cupy.cuda.runtime.memGetInfo()[0] < 1 << 30:
         pytest.skip("the test process holds the GPU; run this test on its own")
