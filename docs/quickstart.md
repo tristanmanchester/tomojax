@@ -12,9 +12,10 @@ uv run --no-sync tomojax inspect scan.nxs
 ```
 
 Check the projection count and shape, angles, detector pitch, voxel pitch, and
-geometry type. Raw NXtomo, APS Data Exchange and recognised Diamond/GDA layouts
-use the same acquisition discovery as loading; optional NXtomo labels are not
-required. `inspect` also checks the acquisition metadata: it ends with
+geometry type. Recognised Nikon, Zeiss and ESRF acquisitions use the same
+readers as loading; inspection reports their raw detector values without applying
+corrections. Raw NXtomo, APS Data Exchange and recognised Diamond/GDA layouts
+also use loading's acquisition discovery; optional NXtomo labels are not required. `inspect` also checks the acquisition metadata: it ends with
 `Valid: yes`, or lists the issues and exits with status 1. That check cannot
 prove that metadata matches the instrument. `--json` prints the report as JSON
 instead. It also lists the corrections that made the projections from

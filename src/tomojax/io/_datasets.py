@@ -574,33 +574,39 @@ def validate_dataset(path: PathLike) -> ValidationReport:
     ValidationReport
         Issues found in the file or format; an empty issues list means none were found.
     """
-    input_path = Path(path)
+    try:
+        issues = _dataset_issues(Path(path))
+    except (OSError, ValueError, KeyError) as exc:
+        issues = [str(exc)]
+    return {"issues": issues}
+
+
+def _dataset_issues(input_path: Path) -> list[str]:
+    from ._acquisition import read_acquisition
+
+    if read_acquisition(input_path) is not None:
+        return []
     suffix = input_path.suffix.lower()
     if suffix in _HDF5_SUFFIXES:
-        try:
-            located = locate_frames(str(input_path))
-        except (OSError, ValueError, KeyError) as exc:
-            return {"issues": [str(exc)]}
+        located = locate_frames(str(input_path))
         issues = []
         if located.angles is None:
             issues.append("Missing rotation angles; supply angles when loading the frames")
         if located.image_key is not None and not np.any(located.image_key == 0):
             issues.append("No sample frames (image_key == 0)")
-        return {"issues": issues}
+        return issues
     if suffix == ".npz":
         try:
             load_dataset(input_path)
         except Exception as exc:
-            return {"issues": [str(exc)]}
-        return {"issues": []}
+            return [str(exc)]
+        return []
     if input_path.is_dir() or suffix in _TIFF_SUFFIXES:
-        return {
-            "issues": [
-                "TIFF stacks require an angle sidecar or explicit angles; "
-                "import them with `tomojax import` or load_tiff_stack"
-            ]
-        }
-    return {"issues": [f"unsupported dataset format for {input_path}"]}
+        return [
+            "TIFF stacks require an angle sidecar or explicit angles; "
+            "import them with `tomojax import` or load_tiff_stack"
+        ]
+    return [f"unsupported dataset format for {input_path}"]
 
 
 def _merge_dataset_solver_metadata(
