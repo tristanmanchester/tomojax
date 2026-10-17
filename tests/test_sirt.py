@@ -14,10 +14,11 @@ from tomojax.recon import SIRTConfig, sirt
 
 @pytest.mark.numerical
 @pytest.mark.parametrize(
-    ("subsets", "acceleration"), [(1, False), (2, False), (5, False), (1, True)]
+    ("subsets", "acceleration", "batch"),
+    [(1, False, 2), (2, False, 2), (5, False, 2), (1, True, 2), (1, False, 4)],
 )
 @pytest.mark.parametrize("kind", ["parallel", "axial", "cone", "segments"])
-def test_sirt_matches_dense_updates_with_bounds_support_and_tail(subsets, acceleration, kind):
+def test_sirt_dense_updates_with_bounds_support_and_tail(subsets, acceleration, batch, kind):
     grid = tj.Grid(3, 3, 2, 0.8, 1.2, 1.3)
     detector = tj.Detector(5, 4, 0.9, 1.1, (0.1, -0.2))
     if kind == "axial":
@@ -82,7 +83,7 @@ def test_sirt_matches_dense_updates_with_bounds_support_and_tail(subsets, accele
             lower_bound=0.05,
             upper_bound=0.7,
             support=support.reshape(shape),
-            views_per_batch=2,
+            views_per_batch=batch,
         ),
     )
     np.testing.assert_allclose(np.asarray(volume).ravel(), expected, atol=3e-6, rtol=3e-5)

@@ -407,11 +407,14 @@ def subset_operators(
     without storing a predicted sinogram. Cone source arrangements and detector
     centres stay attached to their original views.
     """
+    size = (int(poses.shape[0]) + subsets - 1) // subsets
+    chunks = (size + batch_size - 1) // batch_size
+    # Keep the callback count while minimizing the final shifted batch's overlap.
+    balanced_batch = (size + chunks - 1) // chunks
     ops = _Batches(
-        poses, grid, detector, det_grid, backend, batch_size, model, "linear",
+        poses, grid, detector, det_grid, backend, balanced_batch, model, "linear",
         absolute_weights=False,
     )  # fmt: skip
-    size = (ops.n + subsets - 1) // subsets
 
     def select(index):
         indices = index + subsets * jnp.arange(size)
