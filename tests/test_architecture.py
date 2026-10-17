@@ -244,4 +244,5 @@ def test_size_ratchets_exclude_only_docstrings():
     assert count(source) == 3
     assert count(source, ast.parse(source).body[1]) == 3
     assert count('def f(): """Summary."""; return 1') == 1
+    assert count('"""λλλλ"""; 1') == 1
     assert count('"""Module prose."""  # A comment') == 1

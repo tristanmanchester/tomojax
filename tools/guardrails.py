@@ -217,7 +217,8 @@ def _type_errors() -> dict[str, int]:
 
 def _code_line_count(source: str, node: ast.AST | None = None) -> int:
     """Count physical lines except docstrings; comments and code still count."""
-    lines = source.splitlines()
+    # AST column offsets count UTF-8 bytes, not Python string characters.
+    lines = source.encode("utf-8").splitlines()
     node = ast.parse(source) if node is None else node
     start = getattr(node, "lineno", 1)
     stop = getattr(node, "end_lineno", len(lines))
