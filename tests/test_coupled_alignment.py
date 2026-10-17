@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 # check-public-imports: allow-private
-from tomojax.alignment._pose import _coupled_objective
+from tomojax.alignment._pose import _coupled_objective, _coupled_program
 
 # check-public-imports: allow-private
 from tomojax.alignment._pose._coupled_linear import solve_coupled_normal
@@ -25,9 +25,6 @@ from tomojax.alignment._pose._pose_loop import _build_alignment_runtime_context
 @pytest.fixture(params=[None, 2], ids=["one_batch", "batches_of_two"])
 def views_per_batch(request, monkeypatch):
     """The program's batch size, or two views a batch: three views then end in a shifted batch."""
-    # check-public-imports: allow-private
-    from tomojax.alignment._pose import _coupled_program
-
     if request.param is None:
         yield
         return
@@ -539,3 +536,91 @@ def test_a_cached_update_that_does_not_fit_retries_without_columns(monkeypatch):
     monkeypatch.setattr(_coupled_objective, "_check_device_memory", check)
     objective = _coupled_objective.build_coupled_objective(_small_coupled_context())
     assert checks == [True, False] and not objective.pose_columns_cached
+
+
+@pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+def test_filtered_joint_increment_and_loss_match_dense_physical_model(solver, backend):
+    import tomojax as tj
+    from tomojax.alignment import AlignConfig
+    from tomojax.alignment.api import L2LossSpec
+    from tomojax.forward import project_joseph
+    from tomojax.geometry import stack_view_poses
+
+    rng = np.random.default_rng(2)
+    grid, detector = tj.Grid(3, 4, 2, 1, 1, 1), tj.Detector(7, 3, 1, 1)
+    geometry = tj.ParallelGeometry(grid, detector, [12, 57, 103])
+    volume = rng.uniform(0.2, 1, (3, 4, 2)).astype(np.float32)
+    poses = np.zeros((3, 6), np.float32)
+    poses[:, 3] = [0.02, -0.01, 0.03]
+
+    def project(x, p):
+        shifted = tj.Scan(np.zeros((3, 3, 7), np.float32), geometry).with_poses(p)
+        frames = stack_view_poses(shifted.geometry, 3)
+        return np.asarray(project_joseph(jnp.asarray(x), frames, grid, detector), np.float64)
+
+    wave = np.fft.rfftfreq(detector.nu) * detector.nu
+    response = np.exp(-2 * (0.4 / np.maximum(wave, 1e-12)) ** 2)
+
+    def filtered(y):
+        return np.fft.irfft(np.fft.rfft(y, axis=-1) * response, n=detector.nu, axis=-1)
+
+    measured = project(volume, poses) + rng.normal(0, 0.03, (3, 3, 7))
+    cfg = AlignConfig(
+        loss=L2LossSpec(),
+        gn_coupling="joint",
+        gn_joint_solver=solver,
+        gn_joint_iterations=100,
+        gn_joint_rtol=1e-6,
+        gn_damping=0.2,
+        gn_volume_damping=0.2,
+        gn_jacobian="central",
+        gn_difference_step=0.003,
+        ray_integrator="joseph",
+        projector_backend=backend,
+        gather_dtype="fp32",
+        pose_translation_frame="detector",
+        nonnegative=False,
+        tv_weight=0,
+        w_rot=0,
+        w_trans=0,
+    )
+    common = dict(
+        grid=grid,
+        detector=detector,
+        projections=jnp.asarray(measured, jnp.float32),
+        cfg=cfg,
+        n_views=3,
+        active_mask=jnp.array([0, 0, 0, 1, 0, 0], jnp.float32),
+    )
+    runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
+    objective = _coupled_objective.build_coupled_objective(
+        _pose_objective_context(runtime=runtime, **common),
+        refinement=_coupled_program.JointRefinement(0.4, 1e-3),
+    )
+    result = objective.update(jnp.asarray(poses), jnp.asarray(volume))
+    design = np.column_stack(
+        [
+            filtered(project(v.reshape(volume.shape), poses)).ravel()
+            for v in np.eye(volume.size, dtype=np.float32)
+        ]
+    )
+    columns = []
+    for view in range(3):
+        plus, minus = poses.copy(), poses.copy()
+        plus[view, 3] += 0.003
+        minus[view, 3] -= 0.003
+        columns.append(filtered((project(volume, plus) - project(volume, minus)) / 0.006).ravel())
+    design = np.column_stack([design, *columns])
+    residual = filtered(project(volume, poses) - measured).ravel()
+    expected = np.linalg.solve(
+        design.T @ design + 0.2 * np.eye(design.shape[1]), -design.T @ residual
+    )
+    actual = np.r_[np.asarray(result.increment[0]).ravel(), np.asarray(result.increment[1])[:, 3]]
+    np.testing.assert_allclose(actual, expected, rtol=0.003, atol=3e-5)
+    np.testing.assert_allclose(
+        objective.loss(jnp.asarray(poses), jnp.asarray(volume)),
+        0.5 * residual @ residual,
+        rtol=2e-5,
+    )
+    assert result.finite and result.relative_residual < 2e-5

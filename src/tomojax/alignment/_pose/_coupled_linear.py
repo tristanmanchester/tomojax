@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import NamedTuple
+from typing import NamedTuple, cast
 
 import jax
 import jax.numpy as jnp
@@ -33,6 +33,7 @@ def solve_coupled_normal(
     max_iters: int,
     rtol: float | jax.Array,
     dot: Callable[[BlockVector, BlockVector], jax.Array] = _dot,
+    volume_ramp: float | None = None,
 ) -> CoupledLinearResult:
     """Solve a positive (semi)definite block normal system by preconditioned CG.
 
@@ -45,10 +46,21 @@ def solve_coupled_normal(
     ``dot`` is the inner product of block vectors (one summing across devices,
     say, when each holds part of a block).
     """
-    zero = tuple(jnp.zeros_like(a) for a in rhs)
+    zero = cast("BlockVector", tuple(jnp.zeros_like(a) for a in rhs))
 
-    def precondition(r):
-        return tuple(a * d for a, d in zip(r, inverse_diagonal, strict=True))
+    def precondition(r: BlockVector) -> BlockVector:
+        if volume_ramp is None:
+            return r[0] * inverse_diagonal[0], r[1] * inverse_diagonal[1]
+        volume, pose = r
+        scale = jnp.sqrt(inverse_diagonal[0])
+        nx, ny, _ = volume.shape
+        fx = jnp.fft.fftfreq(nx)[:, None]
+        fy = jnp.fft.rfftfreq(ny)[None, :]
+        ramp = jnp.sqrt(fx * fx + fy * fy + 1 / (nx * ny))
+        ramp = ramp / (1 + volume_ramp * (nx * ny) ** 0.5 * ramp)
+        spectrum = jnp.fft.rfft2(scale * volume, axes=(0, 1))
+        filtered = jnp.fft.irfft2(spectrum * ramp[:, :, None], s=(nx, ny), axes=(0, 1))
+        return scale * filtered, pose * inverse_diagonal[1]
 
     z0 = precondition(rhs)
     gamma0 = dot(rhs, z0)
@@ -67,21 +79,28 @@ def solve_coupled_normal(
         denominator = dot(direction, normal_direction)
         valid = jnp.isfinite(denominator) & (denominator > 0) & jnp.isfinite(gamma)
         alpha = jnp.where(valid, gamma / jnp.where(valid, denominator, 1), 0)
-        updated = tuple(a + alpha * b for a, b in zip(x, direction, strict=True))
-        next_residual = tuple(
-            a - alpha * b for a, b in zip(residual, normal_direction, strict=True)
+        updated = cast(
+            "BlockVector", tuple(a + alpha * b for a, b in zip(x, direction, strict=True))
+        )
+        next_residual = cast(
+            "BlockVector",
+            tuple(a - alpha * b for a, b in zip(residual, normal_direction, strict=True)),
         )
         z = precondition(next_residual)
         next_gamma = dot(next_residual, z)
         beta = next_gamma / jnp.where(gamma > 0, gamma, 1)
-        next_direction = tuple(a + beta * b for a, b in zip(z, direction, strict=True))
+        next_direction = cast(
+            "BlockVector", tuple(a + beta * b for a, b in zip(z, direction, strict=True))
+        )
         failed = failed | ~valid | ~jnp.isfinite(next_gamma)
         return iteration + 1, updated, next_residual, next_direction, next_gamma, failed
 
     count, solution, _, _, _, failed = jax.lax.while_loop(
         condition, body, (jnp.int32(0), zero, rhs, z0, gamma0, jnp.bool_(False))
     )
-    true_residual = tuple(a - b for a, b in zip(rhs, normal(solution), strict=True))
+    true_residual = cast(
+        "BlockVector", tuple(a - b for a, b in zip(rhs, normal(solution), strict=True))
+    )
     relative = jnp.sqrt(dot(true_residual, true_residual) / jnp.maximum(rhs_squared, 1e-30))
     finite = ~failed & jnp.isfinite(relative)
     return CoupledLinearResult(solution, count, relative, finite)

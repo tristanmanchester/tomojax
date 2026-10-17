@@ -57,6 +57,14 @@ class _BatchOps(NamedTuple):
 
 
 @dataclass(frozen=True)
+class JointRefinement:
+    """Joint-only native-texture refinement; no alternating unfiltered solve."""
+
+    highpass_cycles: float
+    ramp_damping: float
+
+
+@dataclass(frozen=True)
 class CoupledSpec:
     """Only choices that change the compiled program, never measurement arrays."""
 
@@ -78,6 +86,7 @@ class CoupledSpec:
     has_smoothness: bool
     # The views shared among devices; the arrays then hold its padded views.
     split: ViewSplit | None = None
+    refinement: JointRefinement | None = None
 
 
 class CoupledArrays(NamedTuple):
@@ -194,49 +203,12 @@ def _pose_gram(ops: _BatchOps, n_views: int, width: int, indices: jax.Array) -> 
     )
 
 
-def _build_program(
-    spec: CoupledSpec, arrays: CoupledArrays
-) -> tuple[
-    Callable[[jax.Array, jax.Array], CoupledLinearResult],
-    Callable[[jax.Array, jax.Array], jax.Array],
-]:
-    # This factory executes during tracing, behind stable module-level jit
-    # functions. Its closures contain tracers rather than embedded scan arrays.
-    cfg, backend = spec, spec.backend
+def _projectors(
+    spec: CoupledSpec, arrays: CoupledArrays, masked: Callable
+) -> tuple[Callable, Callable]:
+    """Own the unchanged physical forward/transpose pair for a compiled objective."""
+    backend = spec.backend
     det_grid = None if backend == "pallas" else arrays.det_grid
-    mask, weights, active = arrays.mask, arrays.weights, arrays.active
-    # Only active derivative images are cached. Keep the small pose vectors
-    # and normal matrices full-width, so frozen nonzero poses and smoothness
-    # retain exactly the same coordinates throughout the linear solve.
-    indices = jnp.asarray(spec.active_columns, jnp.int32)
-    # A scalar mask means none: skip multiplying volumes by it, which would copy them.
-    unmasked = mask.ndim == 0
-
-    def masked(v):
-        return v if unmasked else mask * v
-
-    n_views = arrays.poses.shape[0]  # a device's share, with a split
-    cache_columns = spec.cache_columns
-    shares = _Shares(spec.split, n_views)
-    across = shares.across
-    counts = arrays.counts if arrays.counts is not None else jnp.ones(n_views, jnp.float32)
-    movable = counts[:, None] * active  # pose rows that may change
-    predict_columns = partial(
-        pose_prediction_and_columns,
-        grid=spec.grid,
-        detector=spec.detector,
-        det_grid=arrays.det_grid,
-        options=spec.jacobian,
-        column_indices=spec.active_columns,
-    )
-    regularisation = partial(_regularisation, spec=spec)
-    smoothness = partial(_smoothness, weights=arrays.smoothness)
-
-    def poses(p):
-        return apply_pose_updates(
-            arrays.poses, p, translation_frame=spec.jacobian.translation_frame
-        )
-
     joseph = {"joseph": "linear", "joseph_cubic": "cubic"}.get(spec.jacobian.integrator)
 
     cone_backend = "cuda" if backend == "pallas" else "jax"
@@ -314,6 +286,82 @@ def _build_program(
                 add, jnp.zeros((spec.grid.nx, spec.grid.ny, spec.grid.nz), jnp.float32), (t, y)
             )[0]
         )
+
+    return forward, adjoint
+
+
+def _filtered_operators(spec, arrays, forward, adjoint, columns):
+    if spec.refinement is None:
+        return arrays, forward, adjoint, columns
+    # Filtering commutes with the scalar uniform loss weight used by this
+    # recipe. Apply the same self-adjoint filter to data, predictions and
+    # every pose derivative; the physical forward/transpose pair is unchanged.
+    assert arrays.weights.ndim == 0
+    nu, nv = spec.detector.nu, spec.detector.nv
+    wave = jnp.fft.rfftfreq(nu) * nu
+    response = jnp.exp(-2 * (spec.refinement.highpass_cycles / jnp.maximum(wave, 1e-12)) ** 2)
+
+    def filtered(y):
+        return jnp.fft.irfft(jnp.fft.rfft(y, axis=-1) * response, n=nu, axis=-1)
+
+    def filtered_columns(*args: object, **kwargs: object):
+        residual, derivative = columns(*args, **kwargs)
+        return residual, filtered(derivative.reshape(-1, nv, nu)).reshape(derivative.shape)
+
+    return (
+        arrays._replace(projections=filtered(arrays.projections)),
+        lambda t, x, frames=None: filtered(forward(t, x, frames)),
+        lambda t, y, frames=None: adjoint(t, filtered(y), frames),
+        filtered_columns,
+    )
+
+
+def _build_program(
+    spec: CoupledSpec, arrays: CoupledArrays
+) -> tuple[
+    Callable[[jax.Array, jax.Array], CoupledLinearResult],
+    Callable[[jax.Array, jax.Array], jax.Array],
+]:
+    # This factory executes during tracing, behind stable module-level jit
+    # functions. Its closures contain tracers rather than embedded scan arrays.
+    cfg = spec
+    mask, weights, active = arrays.mask, arrays.weights, arrays.active
+    # Only active derivative images are cached. Keep the small pose vectors
+    # and normal matrices full-width, so frozen nonzero poses and smoothness
+    # retain exactly the same coordinates throughout the linear solve.
+    indices = jnp.asarray(spec.active_columns, jnp.int32)
+    # A scalar mask means none: skip multiplying volumes by it, which would copy them.
+    unmasked = mask.ndim == 0
+
+    def masked(v):
+        return v if unmasked else mask * v
+
+    n_views = arrays.poses.shape[0]  # a device's share, with a split
+    cache_columns = spec.cache_columns
+    shares = _Shares(spec.split, n_views)
+    across = shares.across
+    counts = arrays.counts if arrays.counts is not None else jnp.ones(n_views, jnp.float32)
+    movable = counts[:, None] * active  # pose rows that may change
+    predict_columns = partial(
+        pose_prediction_and_columns,
+        grid=spec.grid,
+        detector=spec.detector,
+        det_grid=arrays.det_grid,
+        options=spec.jacobian,
+        column_indices=spec.active_columns,
+    )
+    regularisation = partial(_regularisation, spec=spec)
+    smoothness = partial(_smoothness, weights=arrays.smoothness)
+
+    def poses(p):
+        return apply_pose_updates(
+            arrays.poses, p, translation_frame=spec.jacobian.translation_frame
+        )
+
+    raw_forward, raw_adjoint = _projectors(spec, arrays, masked)
+    arrays, forward, adjoint, predict_columns = _filtered_operators(
+        spec, arrays, raw_forward, raw_adjoint, predict_columns
+    )
 
     # Data-space work runs over batches of views: projecting, comparing and
     # transposing a batch before the next, so no projection-sized array is
@@ -460,6 +508,7 @@ def _build_program(
             max_iters=cfg.gn_joint_iterations,
             rtol=reduced_rtol,
             dot=block_dot,
+            volume_ramp=None if spec.refinement is None else spec.refinement.ramp_damping,
         )
         dx = free * reduced.increment[0]
         dp = movable * solve_pose(rhs[1] - pose_rows(dx)[0])
@@ -513,7 +562,14 @@ def _build_program(
             )
 
         def ones_body(start, valid, out):
-            return ops.transpose(start, valid, ops.project(start, jnp.ones_like(x)), out)
+            if spec.refinement is None:
+                return ops.transpose(start, valid, ops.project(start, jnp.ones_like(x)), out)
+            # A filtered normal need not have positive row sums. The raw
+            # matched normal supplies only the positive preconditioning scale.
+            t = take(poses(p), start)
+            y = raw_forward(t, jnp.ones_like(x), batch_frames(start))
+            y = y * batch_weights(start) ** 2 * valid[:, None, None]
+            return out + raw_adjoint(t, y, batch_frames(start))
 
         row_bound = across(over_batches(ones_body, volume_zeros))
         reg_bound = 12 * cfg.tv_weight / cfg.huber_delta if cfg.tv_weight else 0
@@ -539,6 +595,7 @@ def _build_program(
             max_iters=cfg.gn_joint_iterations,
             rtol=cfg.gn_joint_rtol,
             dot=block_dot,
+            volume_ramp=None if spec.refinement is None else spec.refinement.ramp_damping,
         )
 
     return update, loss

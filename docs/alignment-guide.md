@@ -81,6 +81,21 @@ in `Scan.poses`'s detector frame; it replaces, rather than adds to, existing pos
 `result.poses` is the `(views, 6)` pose table and `result.info` the solver's
 record.
 
+### Complex ptychography projections
+
+For an axial parallel scan of complex transmission, unwrap its phase and remove
+an air-supported phase plane before treating the negative phase as line
+integrals. The [ptychography example](../examples/align_ptychography.py) shows
+bounded preparation, pixel-unit geometry, `ProjectionMatchingConfig` and final
+Fourier reconstruction in physical units.
+
+This translation-only configuration jointly estimates a sparse volume and
+per-view motion, then attaches the poses without resampling measured projections.
+It can fit noise or model mismatch as motion, even on already aligned input.
+Inspect slices and pose estimates, and use half-dataset FSC and held-out residuals
+as diagnostics, not proof of physical accuracy. The stopping tolerance is not a
+pose-error bound.
+
 ### Align large scans at reduced resolution
 
 Pose parameters are physical lengths and angles, so they transfer between

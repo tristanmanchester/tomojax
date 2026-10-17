@@ -71,6 +71,42 @@ including compilation, lowering the volume error from 0.68 to 0.047.
 least-motion version too (see
 [where the aligned volume sits](../docs/alignment-guide.md#where-the-aligned-volume-sits)).
 
+## Prepare and align complex ptychography projections
+
+```bash
+uv sync --locked --extra cuda12 --extra fourier-cuda12 --no-dev
+uv run --no-sync python examples/align_ptychography.py /path/to/porous_glass_dataset.mat
+```
+
+[align_ptychography.py](align_ptychography.py) reads the PSI porous-glass MATLAB
+v7.3 scan, crops unreliable borders and prepares complex transmission in
+bounded device batches. Its core steps are public APIs:
+
+```python
+import tomojax as tj
+from tomojax.alignment import ProjectionMatchingConfig
+from tomojax.corrections import remove_phase_ramp, unwrap_phase
+
+phase = -remove_phase_ramp(unwrap_phase(objects), air_mask=air * abs(objects)**2)
+scan = tj.Scan(phase, geometry)  # (view, v, u), geometry in pixel units
+aligned = tj.align(scan, mode="pose", config=ProjectionMatchingConfig(iterations=20))
+reconstruction = tj.reconstruct(aligned.scan, "fourier")
+```
+
+The air mask must cover actual air, not sample pixels. The example's fixed crop
+and air strips describe this scan; they are not per-view alignment corrections.
+The joint estimator returns per-view translations without resampling the input.
+It can fit noise or model mismatch as motion, including on an already aligned
+scan; inspect pose estimates and physical slices rather than treating improved
+consistency or convergence as proof of physical accuracy.
+
+The released raw stack is already aligned; no supplied PSI aligned phase or
+reference image is used in inference. The example converts reconstructed phase
+to refractive-index decrement with `wavelength / (2*pi*pixel_size)` and reports
+read, preparation, alignment, inverse and whole-workflow
+times. It writes nothing unless `-o slices.npz` is supplied; that archive holds
+only central physical-scale slices and the returned detector-frame poses.
+
 ## Bring a real multi-orbit scan into register
 
 This one needs data: download a walnut from the FIPS collection (Der

@@ -17,7 +17,7 @@ from tomojax.core.devices import ViewSplit, shared_devices, view_split
 from tomojax.core.projector import get_detector_grid_device
 
 from ._coupled_linear import CoupledLinearResult
-from ._coupled_program import CoupledArrays, CoupledSpec, run_loss, run_update
+from ._coupled_program import CoupledArrays, CoupledSpec, JointRefinement, run_loss, run_update
 from ._pose_context import _PoseObjectiveContext
 from ._pose_jacobian import PoseJacobianOptions
 
@@ -168,7 +168,9 @@ class CoupledObjective:
     pose_columns_cached: bool
 
 
-def build_coupled_objective(ctx: _PoseObjectiveContext) -> CoupledObjective:
+def build_coupled_objective(
+    ctx: _PoseObjectiveContext, *, refinement: JointRefinement | None = None
+) -> CoupledObjective:
     cfg = ctx.cfg
     if not ctx.loss_adapter.supports_gauss_newton:
         raise ValueError("joint GN requires a least-squares alignment loss")
@@ -236,6 +238,7 @@ def build_coupled_objective(ctx: _PoseObjectiveContext) -> CoupledObjective:
         gn_joint_iterations=int(cfg.gn_joint_iterations),
         has_smoothness=bool(cfg.w_rot or cfg.w_trans),
         split=split,
+        refinement=refinement,
     )
     try:
         compiled = _check_device_memory(arrays, spec)

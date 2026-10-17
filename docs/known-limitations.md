@@ -12,6 +12,13 @@ shift against a detector-centre offset, detector-v shifts and abrupt jumps, is
 listed with how to check a result in the
 [alignment guide](alignment-guide.md#check-the-result).
 
+- Ptychography's joint projection matching estimates translations on axial
+  parallel scans, not rotations or laminographic motion. Sub-0.1-pixel recovery
+  and unbiased motion estimates are not established. Independent known-zero
+  tests confirm false motion that grows with noise and persists without it,
+  but do not establish that all pose differences on the measured PSI scan are
+  bias. The estimator does not reject changes on already aligned input. See the
+  [ptychography recipe](alignment-guide.md#complex-ptychography-projections).
 - On the six-cell free-voxel pilot at 32³, every cell misses the 0.01°
   rotation gate with the default Joseph integrator, and the noisy anisotropic
   cell misses it even with the exact one; see the
