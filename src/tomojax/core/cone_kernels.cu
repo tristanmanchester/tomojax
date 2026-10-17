@@ -108,8 +108,9 @@ __device__ __forceinline__ float plane_sum(
 // step through the planes together, each sampling only its own ray's planes: rays
 // entering through the volume's top or bottom start at different planes, and lanes
 // left on different planes would not share cache lines.
+template <bool Y_LAYOUT = false>
 __device__ float ray_sum(const float* __restrict__ vol, const float* c, float fu, float fv,
-                         int nx, int ny, int nz, bool live)
+                         int nx, int ny, int nz, bool live, const float* vol_y = nullptr)
 {
     float r0, r1, r2; ray_of(c, fu, fv, r0, r1, r2);
     int a = ray_axis(r0, r1, r2), b = a == 0 ? 1 : 0, cc = a == 2 ? 1 : 2;
@@ -140,6 +141,11 @@ __device__ float ray_sum(const float* __restrict__ vol, const float* c, float fu
     if ((busy & x) == 0 && a != 2)
         return plane_sum<1>(vol, k0, k1, first, last, Sa, Sb, Sc, inv, rb, rc, nb, nc,
                             nz, (long)ny * nz);
+    if constexpr (Y_LAYOUT) {
+        if (a == 2)
+            return plane_sum<1>(vol_y, k0, k1, first, last, Sa, Sb, Sc, inv, rb, rc, nb, nc,
+                                ny, (long)ny * nz);
+    }
     return plane_sum<0>(vol, k0, k1, first, last, Sa, Sb, Sc, inv, rb, rc, nb, nc, sa, sb, sc);
 }
 
@@ -265,6 +271,35 @@ extern "C" __global__ void cone_box_forward(const float* coeff, float* out, int 
     ray_of(c, (float)u, (float)v, r0, r1, r2);
     float ra=SEL(ray_axis(r0, r1, r2), r0, r1, r2);
     out[(long)blockIdx.x*nu*nv+j]=sum*path_w(r0, r1, r2, ra, sx, sy, sz);
+}
+
+// One ray per thread: grid (views, u tiles, v tiles); out (view, v, u).
+extern "C" __global__ void __launch_bounds__(GU * GV) cone_forward_y(
+    const float* __restrict__ coeff, const float* __restrict__ vol, const float* __restrict__ vol_y, float* __restrict__ out,
+    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz)
+{
+    int view = blockIdx.x;
+    const float* c = coeff + (long)view * NC;
+    // Choose lane traversal from the central ray; physical weights stay exact.
+    float cr0, cr1, cr2;
+    ray_of(c, (float)(blockIdx.y * GU + GU / 2),
+           (float)(blockIdx.z * GV + GV / 2), cr0, cr1, cr2);
+    int a = ray_axis(cr0, cr1, cr2), cc = a == 2 ? 1 : 2;
+    float ratio = __fdividef(SEL(cc, cr0, cr1, cr2), SEL(a, cr0, cr1, cr2));
+    float du = comp(c + 6, cc) - ratio * comp(c + 6, a);
+    float dv = comp(c + 9, cc) - ratio * comp(c + 9, a);
+    bool ufast = fabsf(du) > fabsf(dv);
+    int u = blockIdx.y * GU + (ufast ? threadIdx.x % GU : threadIdx.x / GV);
+    int v = blockIdx.z * GV + (ufast ? threadIdx.x / GU : threadIdx.x % GV);
+    bool live = u < nu && v < nv;
+    float fu = (float)u, fv = (float)v;
+    float sum = ray_sum<true>(vol, c, fu, fv, nx, ny, nz, live, vol_y);
+    if (!live) return;
+    float r0, r1, r2; ray_of(c, fu, fv, r0, r1, r2);
+    float ra = SEL(ray_axis(r0, r1, r2), r0, r1, r2);
+    // Written (view, v, u), as JAX holds projections: one store per ray, so the
+    // stride costs little, and no transposed copy of the projections is needed.
+    out[((long)view * nv + v) * nu + u] = sum * path_w(r0, r1, r2, ra, sx, sy, sz);
 }
 
 // Weight and transpose (view, v, u) images in coalesced 32x32 tiles,
