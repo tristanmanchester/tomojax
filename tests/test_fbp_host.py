@@ -255,17 +255,19 @@ def test_host_slabs_write_memmap_and_preserve_custom_scale(tmp_path):
     np.testing.assert_array_equal(source, data)
 
 
-@pytest.mark.parametrize("mapping", [False, True])
+@pytest.mark.parametrize("mapping", ["array", "memmap", "buffer"])
 def test_host_slabs_reject_overlapping_output_before_writing(tmp_path, mapping):
     grid, detector = Grid(5, 4, 3, 1, 1, 1), Detector(3, 4, 1, 1)
     geometry = ParallelGeometry(grid, detector, [0, 31, 73, 114, 155])
-    if mapping:
+    if mapping != "array":
         path = tmp_path / "same.bin"
         data = np.memmap(path, mode="w+", dtype=np.float32, shape=(5, 4, 3))
         out = np.memmap(path, mode="r+", dtype=np.float32, shape=data.shape)
     else:
         data = np.ones((5, 4, 3), dtype=np.float32)
         out = data.view()
+    if mapping == "buffer":
+        data, out = (np.asarray(memoryview(array)) for array in (data, out))
     data[:] = 1
     with pytest.raises(ValueError, match="overlap|separate files"):
         fbp_host(geometry, grid, detector, data, out=out)
