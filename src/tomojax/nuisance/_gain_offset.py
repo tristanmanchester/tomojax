@@ -8,6 +8,8 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 
+from ._weights import mask_weights
+
 
 @dataclass(frozen=True)
 class GainOffsetModel:
@@ -62,7 +64,7 @@ def estimate_gain_offset(
         raise ValueError("predicted and observed projections must have the same shape")
     if pred.ndim < 2:
         raise ValueError("projection stacks must include a view axis and detector axes")
-    weights = _mask_weights(mask, pred)
+    weights = mask_weights(mask, pred)
     pred_flat = pred.reshape((pred.shape[0], -1))
     obs_flat = obs.reshape((obs.shape[0], -1))
     weights_flat = weights.reshape((weights.shape[0], -1))
@@ -94,17 +96,6 @@ def estimate_gain_offset(
         gain=jnp.where(valid, gain, 1.0),
         offset=jnp.where(valid, offset, 0.0),
     )
-
-
-def _mask_weights(mask: jax.Array | None, predicted: jax.Array) -> jax.Array:
-    if mask is None:
-        return jnp.ones_like(predicted, dtype=jnp.float32)
-    weights = jnp.asarray(mask, dtype=jnp.float32)
-    if weights.shape == predicted.shape:
-        return weights
-    if weights.ndim == predicted.ndim - 1:
-        return jnp.broadcast_to(weights, predicted.shape)
-    raise ValueError("mask must match projection shape or detector shape")
 
 
 __all__ = ["GainOffsetModel", "estimate_gain_offset"]

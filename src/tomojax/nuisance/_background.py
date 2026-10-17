@@ -8,6 +8,8 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 
+from ._weights import mask_weights
+
 
 @dataclass(frozen=True)
 class BackgroundOffsetModel:
@@ -71,7 +73,7 @@ def estimate_background_offset(
         raise ValueError("predicted and observed projections must have the same shape")
     if pred.ndim != 3:
         raise ValueError("background fitting expects projections shaped (views, rows, cols)")
-    weights = _mask_weights(mask, pred)
+    weights = mask_weights(mask, pred)
     included = weights != 0.0
     residual = jnp.where(included, obs, 0.0) - jnp.where(included, pred, 0.0)
     ramp = _vertical_ramp(int(pred.shape[1])).reshape((1, pred.shape[1], 1))
@@ -107,17 +109,6 @@ def _vertical_ramp(rows: int) -> jax.Array:
     if int(rows) <= 1:
         return jnp.zeros((int(rows),), dtype=jnp.float32)
     return jnp.linspace(-1.0, 1.0, int(rows), dtype=jnp.float32)
-
-
-def _mask_weights(mask: jax.Array | None, predicted: jax.Array) -> jax.Array:
-    if mask is None:
-        return jnp.ones_like(predicted, dtype=jnp.float32)
-    weights = jnp.asarray(mask, dtype=jnp.float32)
-    if weights.shape == predicted.shape:
-        return weights
-    if weights.ndim == predicted.ndim - 1:
-        return jnp.broadcast_to(weights, predicted.shape)
-    raise ValueError("mask must match projection shape or detector shape")
 
 
 __all__ = ["BackgroundOffsetModel", "estimate_background_offset"]
