@@ -7,10 +7,13 @@ from dataclasses import dataclass, replace
 from itertools import groupby
 from pathlib import Path
 import re
-from typing import Literal, overload
+from typing import TYPE_CHECKING, Literal, overload
 
 import numpy as np
 from tifffile import TiffFile
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 TIFF_SUFFIXES = frozenset({".tif", ".tiff"})
 _NATURAL_SORT_PARTS = re.compile(r"(\d+)")
@@ -47,7 +50,7 @@ def tiff_files(path: Path) -> list[Path]:
 
 
 @dataclass(frozen=True)
-class _TiffFrames:
+class TiffFrames:
     """The pages of a TIFF stack, checked from their headers and read only as indexed.
 
     Holds no open file. A window of uncompressed pages is read through a memory map,
@@ -62,12 +65,18 @@ class _TiffFrames:
     cols: int
     first_row: int = 0
     first_col: int = 0
+    flip_rows: bool = False
 
     @classmethod
-    def open(cls, path: Path | str) -> _TiffFrames:
-        files = tiff_files(Path(path).absolute())  # capture the source before later cwd changes
+    def open(cls, path: Path | str) -> TiffFrames:
+        return cls.from_files(tiff_files(Path(path)))
+
+    @classmethod
+    def from_files(cls, files: Sequence[Path], *, flip_rows: bool = False) -> TiffFrames:
+        """Read only the selected headers, in metadata order, optionally with v up."""
+        files = [file.absolute() for file in files]  # independent of later cwd changes
         if not files:
-            raise ValueError(f"no TIFF files found under {path}")
+            raise ValueError("no TIFF files selected")
         pages: list[tuple[Path, int]] = []
         layouts = []
         maps = []
@@ -83,14 +92,20 @@ class _TiffFrames:
                     else:
                         maps.append(None)
         if not layouts:
-            raise ValueError(f"no TIFF frames found under {path}")
+            raise ValueError("no TIFF frames found in the selected files")
         shape, dtype = layouts[0]
         if len(shape) != 2 or len(set(layouts)) != 1:
             found = sorted({f"{shape} {dtype}" for shape, dtype in layouts})
-            raise ValueError(
-                f"{path}: TIFF frames must be 2-D images of one size and dtype: {found}"
-            )
-        return cls(tuple(pages), tuple(maps), shape, np.dtype(dtype), shape[0], shape[1])
+            raise ValueError(f"TIFF frames must be 2-D images of one size and dtype: {found}")
+        return cls(
+            tuple(pages),
+            tuple(maps),
+            shape,
+            np.dtype(dtype),
+            shape[0],
+            shape[1],
+            flip_rows=flip_rows,
+        )
 
     @property
     def shape(self) -> tuple[int, int, int]:
@@ -108,7 +123,7 @@ class _TiffFrames:
     def __len__(self) -> int:
         return len(self.pages)
 
-    def frames_at(self, which: np.ndarray | slice) -> _TiffFrames:
+    def frames_at(self, which: np.ndarray | slice) -> TiffFrames:
         """The stack of these frames only (a boolean mask, indices or slice), unread."""
         chosen = np.arange(len(self))[which]
         return replace(
@@ -117,7 +132,7 @@ class _TiffFrames:
             maps=tuple(self.maps[i] for i in chosen),
         )
 
-    def window(self, rows: slice, cols: slice) -> _TiffFrames:
+    def window(self, rows: slice, cols: slice) -> TiffFrames:
         """The stack of this block of every frame only, unread."""
         r0, r1, rs = rows.indices(self.rows)
         c0, c1, cs = cols.indices(self.cols)
@@ -142,8 +157,11 @@ class _TiffFrames:
             return self[np.asarray([which], np.int64)][0]
         chosen = np.arange(len(self))[which]
         out = np.empty((len(chosen), self.rows, self.cols), self.dtype)
+        first = (
+            self.page_shape[0] - self.first_row - self.rows if self.flip_rows else self.first_row
+        )
         window = (
-            slice(self.first_row, self.first_row + self.rows),
+            slice(first, first + self.rows),
             slice(self.first_col, self.first_col + self.cols),
         )
         for file, group in groupby(enumerate(chosen), key=lambda item: self.pages[item[1]][0]):
@@ -157,7 +175,8 @@ class _TiffFrames:
                         pixels = np.memmap(
                             file, mode="r", dtype=dtype, offset=offset, shape=self.page_shape
                         )
-                    out[destination] = pixels[window]
+                    image = pixels[window]
+                    out[destination] = image[::-1] if self.flip_rows else image
         return out
 
 
@@ -166,10 +185,10 @@ def read_tiff_frames(path: Path | str, *, lazy: Literal[False] = False) -> np.nd
 
 
 @overload
-def read_tiff_frames(path: Path | str, *, lazy: Literal[True]) -> _TiffFrames: ...
+def read_tiff_frames(path: Path | str, *, lazy: Literal[True]) -> TiffFrames: ...
 
 
-def read_tiff_frames(path: Path | str, *, lazy: bool = False) -> np.ndarray | _TiffFrames:
+def read_tiff_frames(path: Path | str, *, lazy: bool = False) -> np.ndarray | TiffFrames:
     """Grayscale TIFF pages as ``(frames, rows, columns)`` in the files' dtype.
 
     Files in a folder are naturally sorted, then every top-level page is read
@@ -198,5 +217,5 @@ def read_tiff_frames(path: Path | str, *, lazy: bool = False) -> np.ndarray | _T
     FileNotFoundError
         If the input contains no TIFF frames.
     """
-    stack = _TiffFrames.open(path)
+    stack = TiffFrames.open(path)
     return stack if lazy else np.asarray(stack)

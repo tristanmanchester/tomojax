@@ -63,10 +63,11 @@ def read_acquisition(
     """
     from ._esrf import read_esrf
     from ._nikon import read_nikon
+    from ._skyscan import read_skyscan
     from ._zeiss import read_zeiss
 
     target = Path(path)
-    for reader in (read_nikon, read_zeiss, read_esrf):
+    for reader in (read_nikon, read_zeiss, read_esrf, read_skyscan):
         acquisition = reader(target, data_path=data_path)
         if acquisition is not None:
             return acquisition

@@ -351,17 +351,20 @@ def load_frames(
     image_key_path: str | None = None,
     angles_path: str | None = None,
 ) -> Frames:
-    """Load raw detector frames from HDF5, NPZ, Nikon or TIFF data.
+    """Load detector frames and acquisition metadata from supported scan formats.
 
     An HDF5 file's ``image_key`` marks its flats (1) and darks (2), and its
     sample, flat and dark frames are read only as they are corrected. The
     frames, key and angles are found at their NXtomo paths or as the file's only datasets of
     that name (``data``, ``image_key``, ``rotation_angle``), or their paired GDA imaging
     paths; ``data_path``, ``image_key_path`` and ``angles_path`` name them otherwise.
-    Nikon scans are recognized by their XTekCT header and carry a white level.
+    Nikon, SkyScan, Zeiss and ESRF acquisitions are recognized by content and
+    supply their own geometry and calibration. SkyScan logs require geometrically
+    and flat-field corrected TIFF exports; their bit depth supplies the white level.
     A GDA command mislabeled as mm is read in degrees with a warning; discovered
     paths and this correction stay in source metadata.
-    TIFF frames need their ``angles`` (degrees), and
+    Generic TIFF stacks without acquisition metadata need ``angles`` (degrees),
+    ``flats`` or ``white_level``, and
     their ``detector`` unless pixels are unit length.
 
     ``flats`` and ``darks`` (arrays, HDF5 stacks, TIFF files or folders, or one level for
@@ -374,7 +377,7 @@ def load_frames(
     Parameters
     ----------
     path : str or path-like
-        HDF5, NPZ, Nikon scan, TIFF file or directory.
+        HDF5, NPZ, Nikon, SkyScan, Zeiss or ESRF acquisition, or generic TIFF stack.
     flats : array-like, float, str, path-like or None, optional
         Replacement flat frames, calibration stack path or constant open-beam level.
     darks : array-like, float, str, path-like or None, optional
