@@ -49,7 +49,7 @@ if TYPE_CHECKING:
     )
     from tomojax.corrections import Step
     from tomojax.geometry import Detector, Geometry, Grid, ScanGeometry
-    from tomojax.recon import FBPConfig, FourierConfig
+    from tomojax.recon import FBPConfig, FourierConfig, MLEMConfig, SIRTConfig
     from tomojax.recon.api import MethodConfig
 
 type Method = Literal["auto", "fbp", "fourier", "cgls", "fista", "spdhg", "sirt", "mlem"]
@@ -383,11 +383,12 @@ def _automatic_axial_setup(
 @contextmanager
 def reconstruct_slabs(
     frames: Frames,
-    method: Literal["fbp", "fourier"],
+    method: Literal["fbp", "fourier", "sirt", "mlem"],
     *,
     grid: Grid | None = None,
     corrections: Sequence[Step] = (),
-    config: FBPConfig | FourierConfig | None = None,
+    config: FBPConfig | FourierConfig | SIRTConfig | MLEMConfig | None = None,
+    warm_start: bool | None = None,
     epsilon: float = 1e-6,
 ) -> Iterator[Iterator[tuple[slice, Reconstruction]]]:
     """Correct raw frames and reconstruct bounded axial slabs without host projections.
@@ -400,23 +401,27 @@ def reconstruct_slabs(
     or closing the iterator; collecting them retains their volume and projections.
 
     This supports unposed axial parallel beams and whole-row line-integral
-    corrections such as Stripes, not Paganin or view rejection. FBPConfig selects
-    the FBP filter and backend; FourierConfig selects NumPy or CuPy and slab depth.
-    CUDA consumes corrected rows without a corrected-projection host round trip.
-    Raw reads are prefetched within bounded storage and calibration is reused.
-    The context drains pending work on normal completion, early exit or failure.
-    Raw frames and calibration arrays must remain unchanged inside the context.
+    corrections such as Stripes, not Paganin or view rejection. SIRT/OSEM also
+    require matching detector and voxel planes; ``warm_start=True`` uses FBP.
+    Method configurations retain the same meaning as in ``reconstruct``.
+    Raw reads are prefetched and calibration reused. The context drains pending
+    work on exit; raw frames and calibrations must remain unchanged inside it.
     """
     from tomojax._scan import detector_window, rebuild
     from tomojax.corrections import corrected_row_source
     from tomojax.geometry import ParallelGeometry, grid_volume_origin
-    from tomojax.recon.api import fbp_slabs, fourier_slabs, method_config
+    from tomojax.recon.api import method_config, reconstruct_slabs as array_slabs
 
     cfg = method_config(method, config=config)
-    if method not in {"fbp", "fourier"} or type(frames.geometry) is not ParallelGeometry:
+    if (
+        method not in {"fbp", "fourier", "sirt", "mlem"}
+        or type(frames.geometry) is not ParallelGeometry
+    ):
         raise ValueError(
-            "reconstruct_slabs supports FBP/Fourier with unposed axial ParallelGeometry"
+            "reconstruct_slabs requires FBP/Fourier/SIRT/MLEM and unposed axial ParallelGeometry"
         )
+    if warm_start is not None and method in {"fbp", "fourier"}:
+        raise ValueError(f"method {method!r} does not take warm_start")
     target = frames.geometry.grid if grid is None else grid
     origin = grid_volume_origin(target)
     with corrected_row_source(
@@ -434,22 +439,15 @@ def reconstruct_slabs(
             corrected = source(first, stop)
             return corrected.projections, corrected
 
-        if method == "fbp":
-            completed = fbp_slabs(
-                frames.geometry,
-                target,
-                frames.geometry.detector,
-                read,
-                config=cast("FBPConfig", cfg),
-            )
-        else:
-            completed = fourier_slabs(
-                frames.geometry,
-                target,
-                frames.geometry.detector,
-                read,
-                config=cast("FourierConfig", cfg),
-            )
+        completed = array_slabs(
+            method,
+            frames.geometry,
+            target,
+            frames.geometry.detector,
+            read,
+            config=cfg,
+            warm_start=bool(warm_start),
+        )
         with closing(completed) as prepared:
 
             def results():
@@ -472,11 +470,13 @@ def reconstruct_slabs(
                         "config": cfg,
                         "host_slabs": True,
                         "source_rows": (slab.rows.start, slab.rows.stop),
+                        **slab.info,
                     }
                     yield (
                         slice(slab.start, slab.stop),
                         Reconstruction(slab.volume, scan, method, info),
                     )
+                    del slab, scan  # Do not retain device rows while preparing the next slab.
 
             with closing(results()) as output:
                 yield output

@@ -9,7 +9,7 @@ import pytest
 import tomojax as tj
 from tomojax.corrections import RejectViews, Stripes
 from tomojax.geometry import grid_volume_origin
-from tomojax.recon import FBPConfig, FourierConfig, api
+from tomojax.recon import FBPConfig, FourierConfig, MLEMConfig, SIRTConfig, api
 
 CASES = [
     ("fourier", FourierConfig(backend="numpy", slices_per_batch=4)),
@@ -24,7 +24,7 @@ CASES = [
 
 @pytest.mark.parametrize(("method", "cfg"), CASES)
 def test_raw_slabs_match_corrected_scan_and_remain_reconstructible(tmp_path, method, cfg):
-    assert f"{method}_slabs" in api.__all__
+    assert "reconstruct_slabs" in api.__all__
     rng = np.random.default_rng(27)
     grid = tj.Grid(17, 19, 11, 0.9, 1.1, 0.6, vol_origin=(-7, -8, -3))
     detector = tj.Detector(23, 9, 1, 0.8, center=(0.7, 0.3))
@@ -78,3 +78,57 @@ def test_slab_context_closes_on_early_exit_and_rejects_view_selection(method, cf
         tj.reconstruct_slabs(frames, method, corrections=[RejectViews()], config=cfg),
     ):
         pass
+
+
+@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("method", ["sirt", "mlem"])
+@pytest.mark.parametrize("warm_start", [False, True])
+def test_iterative_slabs_preserve_updates_masks_and_ownership(method, backend, warm_start):
+    grid = tj.Grid(13, 15, 11, 0.8, 1.1, 0.5, vol_center=(0.3, -0.5, 2.0))
+    detector = tj.Detector(17, 11, 1, 0.5, center=(0.6, 2.0))
+    geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 13))
+    raw = np.random.default_rng(3).uniform(100, 800, (13, 11, 17)).astype(np.float32)
+    frames = tj.Frames(raw, geometry, white_level=1000)
+    support = np.ones((13, 15, 11), bool)
+    support[0, :, ::2] = False
+    settings = dict(iterations=2, subsets=3, support=support, projector_backend=backend)
+    cfg = (
+        SIRTConfig(lower_bound=0, upper_bound=0.5, **settings)
+        if method == "sirt"
+        else MLEMConfig(**settings)
+    )
+    expected = tj.reconstruct(frames.corrected(), method, config=cfg, warm_start=warm_start)
+    with tj.reconstruct_slabs(frames, method, config=cfg, warm_start=warm_start) as slabs:
+        collected = list(slabs)
+    actual = np.concatenate([item.volume for _, item in collected], axis=2)
+    np.testing.assert_allclose(actual, expected.volume, rtol=2e-5, atol=1e-6)
+    assert len(collected) > 1
+    assert np.count_nonzero(actual[~support]) == 0
+    for section, item in collected:
+        np.testing.assert_array_equal(
+            item.scan.projections, frames.corrected().projections[:, section]
+        )
+        np.testing.assert_allclose(grid_volume_origin(item.grid)[2], -0.5 + section.start * 0.5)
+        assert item.info["warm_start"] == warm_start
+        assert item.info["config"].support.shape == item.volume.shape
+    with tj.reconstruct_slabs(frames, method, config=cfg) as slabs:
+        _, retained = next(slabs)
+        saved = retained.volume.copy()
+    with pytest.raises(StopIteration):
+        next(slabs)
+    np.testing.assert_array_equal(retained.volume, saved)
+
+
+def test_iterative_slabs_refuse_coupled_planes():
+    grid = tj.Grid(9, 9, 3, 1, 1, 1)
+    geometry = tj.ParallelGeometry(grid, tj.Detector(13, 3, 1, 1), np.linspace(0, 180, 9))
+    frames = tj.Frames(np.full((9, 3, 13), 500, np.float32), geometry, white_level=1000)
+    for cfg, target in [
+        (SIRTConfig(projector_model="ray"), grid),
+        (SIRTConfig(), replace(grid, vz=0.5)),
+    ]:
+        with (
+            tj.reconstruct_slabs(frames, "sirt", config=cfg, grid=target) as slabs,
+            pytest.raises(ValueError, match="independent axial Joseph planes"),
+        ):
+            next(slabs)

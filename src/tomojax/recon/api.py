@@ -11,24 +11,24 @@ from typing import TYPE_CHECKING, Any, cast
 from tomojax import recon
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Generator
     from contextlib import AbstractContextManager
 
     import jax.numpy as jnp
     import numpy as np
 
     from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry
-    from tomojax.recon._fourier_stream import fourier_slabs
     from tomojax.recon.cgls import CGLSConfig, cgls
     from tomojax.recon.cgls_multires import cgls_multires
     from tomojax.recon.fbp import FBPConfig, default_fbp_scale, fbp, run_parallel_fbp_direct_pallas
-    from tomojax.recon.fbp_host import FBPHostConfig, fbp_host, fbp_slabs
+    from tomojax.recon.fbp_host import FBPHostConfig, fbp_host
     from tomojax.recon.filters import clear_filter_caches
     from tomojax.recon.fista_tv import FistaConfig, fista_tv
     from tomojax.recon.fourier import FourierConfig, fourier_reconstruct
     from tomojax.recon.mlem import MLEMConfig, mlem
     from tomojax.recon.sirt import SIRTConfig, sirt
     from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
-    from tomojax.recon.types import Regulariser
+    from tomojax.recon.types import ReconstructionSlab, Regulariser
 
 type MethodConfig = (
     recon.FBPConfig
@@ -66,10 +66,8 @@ _SOURCES = {
     "default_fbp_scale": "fbp",
     "fbp": "fbp",
     "fbp_host": "fbp_host",
-    "fbp_slabs": "fbp_host",
     "fista_tv": "fista_tv",
     "fourier_reconstruct": "fourier",
-    "fourier_slabs": "_fourier_stream",
     "mlem": "mlem",
     "run_parallel_fbp_direct_pallas": "fbp",
     "sirt": "sirt",
@@ -120,6 +118,43 @@ def method_config(
         )
     base = kind() if config is None else config
     return replace(base, **settings) if settings else base
+
+
+def reconstruct_slabs[T](
+    method: str,
+    geometry: ParallelGeometry,
+    grid: Grid,
+    detector: Detector,
+    read: Callable[[int, int], tuple[jnp.ndarray | np.ndarray, T]],
+    *,
+    config: MethodConfig,
+    warm_start: bool = False,
+) -> Generator[ReconstructionSlab[T], None, None]:
+    """Reconstruct owned axial slabs from bounded corrected detector-row reads."""
+    cfg = method_config(method, config=config)
+    if method in {"fbp", "fourier"}:
+        if warm_start:
+            raise ValueError(f"method {method!r} does not take warm_start")
+        if method == "fbp":
+            from .fbp_host import fbp_slabs
+
+            return fbp_slabs(geometry, grid, detector, read, config=cast("FBPConfig", cfg))
+        from ._fourier_stream import fourier_slabs
+
+        return fourier_slabs(geometry, grid, detector, read, config=cast("FourierConfig", cfg))
+    if method not in {"sirt", "mlem"}:
+        raise ValueError("reconstruct_slabs supports FBP/Fourier/SIRT/MLEM")
+    from ._iterative_slabs import iterative_slabs
+
+    return iterative_slabs(
+        geometry,
+        grid,
+        detector,
+        read,
+        method=method,
+        config=cast("SIRTConfig | MLEMConfig", cfg),
+        warm_start=warm_start,
+    )
 
 
 def reconstruct_arrays(
@@ -339,13 +374,12 @@ __all__ = [
     "default_fbp_scale",
     "fbp",
     "fbp_host",
-    "fbp_slabs",
     "fista_tv",
     "fourier_reconstruct",
-    "fourier_slabs",
     "method_config",
     "mlem",
     "reconstruct_arrays",
+    "reconstruct_slabs",
     "run_parallel_fbp_direct_pallas",
     "sirt",
     "spdhg_tv",
