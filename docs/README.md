@@ -22,6 +22,10 @@ pages before planning a workflow.
 
 ## Python reference and development
 
+Run `just docs` from a development checkout to build the Python API reference
+at `.artifacts/docs/index.html`, directly from the NumPy-style public docstrings.
+Run `just docstrings` to validate their structure and parameter coverage.
+
 Import through public module roots or their `api` facades. Files beginning with
 `_` and the `core` implementation are not stable application interfaces.
 

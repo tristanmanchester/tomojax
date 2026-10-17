@@ -29,6 +29,8 @@ You can also run each recipe's commands directly from the [justfile](justfile).
 | `just format` | Apply Ruff formatting and automatic lint fixes |
 | `just surface-check` | Read-only formatting/lint/import checks, CLI/accelerator smoke checks, and explicitly marked surface tests (excluding numerical/GPU markers) |
 | `just test` | CPU test suite, including numerical tests |
+| `just docstrings` | Validate NumPy-style public API docstrings |
+| `just docs` | Build the Python reference in `.artifacts/docs/` |
 | `just typecheck` | Configured public API, IO, CLI, and tool type checks |
 | `just imports` | Dependency layers and public-import guardrails |
 | `just examples` | Public projection/reconstruction example |
@@ -107,6 +109,14 @@ a ratchet to make a change pass; fix the change instead, or explain in the
 review why the debt is worth taking on.
 
 ## Documentation and figures
+
+Public API docstrings use NumPy-style Parameters, Returns (or Yields), and
+Raises sections, with shapes, frames and units at the boundary. Main workflow
+entry points include short Examples. `just docstrings` checks the exported
+callables and their public methods/properties, including documented `.api`
+facades. Constants and typing aliases have checked prose reference entries.
+Related APIs and extended prose are optional when the summary and parameters
+suffice. `just docs` builds the same surface into HTML.
 
 Start from the reader's task. Provide prerequisites, complete commands, expected
 outputs, and material limitations alongside each feature. Check commands against
