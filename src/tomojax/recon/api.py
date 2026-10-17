@@ -173,8 +173,10 @@ def reconstruct_arrays(
         if warm_start:
             raise ValueError("method 'fbp' does not take warm_start")
         return _fbp_result(geometry, grid, detector, projections, cfg, det_grid, out)
+    # The method name has ruled out the FBP and Fourier configurations above.
+    iterative = cast("CGLSConfig | FistaConfig | SPDHGConfig | SIRTConfig | MLEMConfig", cfg)
     return _iterative_result(
-        method, geometry, grid, detector, projections, cfg, det_grid, warm_start=warm_start
+        method, geometry, grid, detector, projections, iterative, det_grid, warm_start=warm_start
     )
 
 
