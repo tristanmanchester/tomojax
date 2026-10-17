@@ -205,3 +205,68 @@ def test_separately_allocated_norms_match_inline_cache(problem, monkeypatch):
     for _ in range(2):
         actual = mlem(geometry, grid, detector, data, config=cfg)[0]
         np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=2e-6)
+
+
+@pytest.mark.numerical
+def test_host_cone_updates_match_dense_transpose_without_consuming_inputs(problem, monkeypatch):
+    grid, detector, geometry, matrix = problem
+    if not isinstance(geometry, ConeSegments):
+        pytest.skip("coupled volume partition is for cone geometry")
+    host = import_module("tomojax.recon._mlem_host")
+    monkeypatch.setattr(host, "volume_depth", lambda *_: 1)
+    support = np.ones((3, 2, 2), bool)
+    support[0] = False
+    initial = np.full((3, 2, 2), 0.7, np.float32)
+    initial[0] = np.nan  # excluded values must not enter the likelihood
+    data = (matrix @ np.linspace(0.2, 1.1, 12)).reshape(5, 4, 5)
+    for iterations in (0, 2):
+        expected = np.where(support, initial, 0).ravel().astype(np.float64)
+        order = np.argsort(geometry.angles, kind="stable")
+        for _ in range(iterations):
+            for group in range(3):
+                a = matrix[(order[group::3, None] * 20 + np.arange(20)).ravel()]
+                measured = data[order[group::3]].ravel()
+                prediction = a @ expected
+                ratio = np.divide(
+                    measured, prediction, out=np.zeros_like(measured), where=prediction > 0
+                )
+                norm = a.sum(axis=0)
+                expected *= np.divide(a.T @ ratio, norm, out=np.ones(12), where=norm > 0)
+        expected[matrix.sum(axis=0) == 0] = 0
+        volume, info = mlem(
+            geometry,
+            grid,
+            detector,
+            data,
+            init_x=initial,
+            config=MLEMConfig(iterations=iterations, subsets=3, support=support, views_per_batch=2),
+        )
+        assert isinstance(volume, np.ndarray) and info["host_volume"]
+        np.testing.assert_allclose(volume.ravel(), expected, rtol=2e-5, atol=2e-6)
+    assert np.isnan(initial[0]).all()
+    np.testing.assert_array_equal(initial[1:], np.float32(0.7))
+
+
+@pytest.mark.numerical
+def test_large_cone_warm_start_is_planned_before_device_initialization(monkeypatch):
+    host = import_module("tomojax.recon._mlem_host")
+    grid = Grid(7, 5, 9, 0.8, 1.1, 0.6, vol_center=(0.1, -0.2, 0.3))
+    detector = Detector(11, 9, 0.9, 0.8)
+    angles = np.linspace(0, 360, 12, endpoint=False)
+    geometry = ConeSegments(
+        tuple(
+            ConeGeometry(grid, detector, angles, ConeBeam(20, 35, source_height=h))
+            for h in (-0.7, 1.2)
+        )
+    )
+    data = np.random.default_rng(925).uniform(0.1, 1, (24, 9, 11)).astype(np.float32)
+    scan = tj.Scan(data, geometry)
+    cfg = MLEMConfig(iterations=1, subsets=3, views_per_batch=3)
+    monkeypatch.setattr(host, "device_free_memory_bytes", lambda: 2**40)
+    assert host.volume_depth(grid, detector, 3) is None
+    expected = tj.reconstruct(scan, "mlem", config=cfg, warm_start=True)
+    monkeypatch.setattr(host, "device_free_memory_bytes", lambda: 1000)
+    assert host.volume_depth(grid, detector, 3) == 1
+    actual = tj.reconstruct(scan, "mlem", config=cfg, warm_start=True)
+    assert isinstance(actual.volume, np.ndarray)
+    np.testing.assert_allclose(actual.volume, expected.volume, rtol=4e-5, atol=2e-6)

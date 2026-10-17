@@ -233,103 +233,36 @@ def _device(array: object) -> jax.Array:
     return jax.device_put(np.asarray(array, np.float32))
 
 
-def mlem(
+def _run_device(
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
     projections: jax.Array | np.ndarray,
     *,
-    init_x: jax.Array | np.ndarray | None = None,
-    config: MLEMConfig | None = None,
-    det_grid: tuple[jax.Array, jax.Array] | None = None,
-) -> tuple[jax.Array, dict[str, object]]:
-    """MLEM or OSEM with the exact transpose; see :class:`MLEMConfig`.
-
-    Returns the FP32 volume and an iteration record, without a convergence
-    claim. Wholly unobserved voxels are zero; zero measurements drive
-    observed voxels to zero. Large host measurement stacks stream in bounded
-    view batches; device inputs and the output remain device resident.
-
-    Parameters
-    ----------
-    geometry : Geometry
-        Scan geometry, including view angles and any per-view poses.
-    grid : Grid
-        Reconstruction grid in ``(x, y, z)`` order, with physical voxel spacing.
-    detector : Detector
-        Detector dimensions and placement in the same length unit as the grid.
-    projections : array-like
-        Nonnegative linear Poisson measurements (not raw transmission counts),
-        with shape ``(views, detector.nv, detector.nu)``.
-    init_x : array-like or None, optional
-        Initial volume of shape ``(nx, ny, nz)``; None starts from one in observed support.
-    config : MLEMConfig or None, optional
-        Solver settings. None uses MLEMConfig defaults.
-    det_grid : tuple of array-like or None, optional
-        Explicit detector-coordinate arrays ``(u, v)``, each of shape ``(nv, nu)``.
-        None uses the canonical detector grid.
-
-    Returns
-    -------
-    volume : jax.Array
-        Float32 reconstruction of shape ``(nx, ny, nz)``.
-    info : dict
-        Solver diagnostics and effective work; a small residual or iteration
-        count does not establish reconstruction accuracy.
-
-    Raises
-    ------
-    ValueError
-        If shapes, geometry or solver settings are incompatible with this method.
-
-    Examples
-    --------
-    >>> import numpy as np
-    >>> import tomojax as tj
-    >>> from tomojax.recon import mlem, MLEMConfig, project
-    >>> grid = tj.Grid(4, 4, 1, 1.0, 1.0, 1.0)
-    >>> detector = tj.Detector(4, 1, 1.0, 1.0)
-    >>> geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 8, endpoint=False))
-    >>> data = project(geometry, np.ones((4, 4, 1), np.float32))
-    >>> volume, info = mlem(
-    ...     geometry,
-    ...     geometry.grid,
-    ...     geometry.detector,
-    ...     data,
-    ...     config=MLEMConfig(iterations=1),
-    ... )
-    >>> volume.shape
-    (4, 4, 1)
-    """
-    cfg = MLEMConfig() if config is None else config
+    config: MLEMConfig,
+    model: str | ConeModel,
+    backend: str,
+    initial: jax.Array | np.ndarray | None,
+    det_grid: tuple[jax.Array, jax.Array] | None,
+) -> jax.Array:
+    """The existing resident-volume update, retaining view-streaming and norm placement."""
     iterations, subsets, batch = map(
-        operator.index, (cfg.iterations, cfg.subsets, cfg.views_per_batch)
+        operator.index, (config.iterations, config.subsets, config.views_per_batch)
     )
-    if iterations < 0 or subsets < 1 or batch < 1:
-        raise ValueError(
-            "mlem: iterations must be nonnegative; subsets and views_per_batch positive"
-        )
-    shape = validate_grid(grid, "mlem grid")
-    n, _, _ = validate_projection_stack(projections, detector, geometry=geometry, context="mlem")
-    validate_detector_grid(det_grid, detector, context="mlem")
-    if subsets > n:
-        raise ValueError("mlem: subsets must not exceed the number of views")
-    if init_x is not None:
-        validate_volume(init_x, grid, context="mlem", name="init_x")
+    shape = (grid.nx, grid.ny, grid.nz)
+    n = projections.shape[0]
     support = (
-        None if cfg.support is None else jnp.broadcast_to(jnp.asarray(cfg.support, bool), shape)
+        None
+        if config.support is None
+        else jnp.broadcast_to(jnp.asarray(config.support, bool), shape)
     )
-    model, backend = resolve_geometry_projector(
-        geometry, cfg.projector_model, cfg.projector_backend, detector=detector,
-        det_grid=det_grid, context="mlem",
-    )  # fmt: skip
     axial = model == "joseph" and det_grid is None and independent_planes(geometry, grid, detector)
     order = np.argsort(np.asarray(getattr(geometry, "angles", np.arange(n))), kind="stable")
     count = (n + subsets - 1) // subsets
     indices = np.arange(subsets)[:, None] + subsets * np.arange(count)[None, :]
     valid = indices < n
     indices = order[np.minimum(indices, n - 1)].astype(np.int32)
-    initial = None if init_x is None else _device(init_x)
+    initial = None if initial is None else _device(initial)
     stream = should_stream(projections)
     if stream:
         validate_host_views(np.asarray(projections))
@@ -370,10 +303,136 @@ def mlem(
             volume.block_until_ready()  # Host registrations must outlive every callback.
     if not bool(good):
         raise ValueError("mlem: projections and initial volume must be finite and nonnegative")
+    return volume
+
+
+def mlem(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jax.Array | np.ndarray,
+    *,
+    init_x: jax.Array | np.ndarray | None = None,
+    config: MLEMConfig | None = None,
+    det_grid: tuple[jax.Array, jax.Array] | None = None,
+) -> tuple[jax.Array | np.ndarray, dict[str, object]]:
+    """MLEM or OSEM with the exact transpose; see :class:`MLEMConfig`.
+
+    Returns the FP32 volume and an iteration record, without a convergence
+    claim. Wholly unobserved voxels are zero; zero measurements drive
+    observed voxels to zero. Large host measurement stacks stream in bounded
+    view batches. Cone volumes too large for the device stay on host: every
+    subset projection sums all slabs before its coupled update. The fast
+    resident-volume path remains the default whenever its workspace fits.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Scan geometry, including view angles and any per-view poses.
+    grid : Grid
+        Reconstruction grid in ``(x, y, z)`` order, with physical voxel spacing.
+    detector : Detector
+        Detector dimensions and placement in the same length unit as the grid.
+    projections : array-like
+        Nonnegative linear Poisson measurements (not raw transmission counts),
+        with shape ``(views, detector.nv, detector.nu)``.
+    init_x : array-like or None, optional
+        Initial volume of shape ``(nx, ny, nz)``; None starts from one in observed support.
+    config : MLEMConfig or None, optional
+        Solver settings. None uses MLEMConfig defaults.
+    det_grid : tuple of array-like or None, optional
+        Explicit detector-coordinate arrays ``(u, v)``, each of shape ``(nv, nu)``.
+        None uses the canonical detector grid.
+
+    Returns
+    -------
+    volume : jax.Array or numpy.ndarray
+        Float32 reconstruction of shape ``(nx, ny, nz)``, host-owned when the
+        cone solver workspace does not fit the device.
+    info : dict
+        Solver diagnostics and effective work; a small residual or iteration
+        count does not establish reconstruction accuracy.
+
+    Raises
+    ------
+    ValueError
+        If shapes, geometry or solver settings are incompatible with this method.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> import tomojax as tj
+    >>> from tomojax.recon import mlem, MLEMConfig, project
+    >>> grid = tj.Grid(4, 4, 1, 1.0, 1.0, 1.0)
+    >>> detector = tj.Detector(4, 1, 1.0, 1.0)
+    >>> geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 8, endpoint=False))
+    >>> data = project(geometry, np.ones((4, 4, 1), np.float32))
+    >>> volume, info = mlem(
+    ...     geometry,
+    ...     geometry.grid,
+    ...     geometry.detector,
+    ...     data,
+    ...     config=MLEMConfig(iterations=1),
+    ... )
+    >>> volume.shape
+    (4, 4, 1)
+    """
+    cfg = MLEMConfig() if config is None else config
+    iterations, subsets, batch = map(
+        operator.index, (cfg.iterations, cfg.subsets, cfg.views_per_batch)
+    )
+    if iterations < 0 or subsets < 1 or batch < 1:
+        raise ValueError(
+            "mlem: iterations must be nonnegative; subsets and views_per_batch positive"
+        )
+    validate_grid(grid, "mlem grid")
+    n, _, _ = validate_projection_stack(projections, detector, geometry=geometry, context="mlem")
+    validate_detector_grid(det_grid, detector, context="mlem")
+    if subsets > n:
+        raise ValueError("mlem: subsets must not exceed the number of views")
+    if init_x is not None:
+        validate_volume(init_x, grid, context="mlem", name="init_x")
+    model, backend = resolve_geometry_projector(
+        geometry, cfg.projector_model, cfg.projector_backend, detector=detector,
+        det_grid=det_grid, context="mlem",
+    )  # fmt: skip
+    from ._mlem_host import solve as solve_host, volume_depth
+
+    depth = volume_depth(grid, detector, batch) if isinstance(model, ConeModel) else None
+    if depth is None:
+        volume = _run_device(
+            geometry,
+            grid,
+            detector,
+            projections,
+            config=cfg,
+            model=model,
+            backend=backend,
+            initial=init_x,
+            det_grid=det_grid,
+        )
+    else:
+        assert isinstance(model, ConeModel)
+        volume = solve_host(
+            grid,
+            detector,
+            projections,
+            model=model,
+            backend="cuda" if backend == "pallas" else "jax",
+            poses=stack_view_poses(geometry, n),
+            order=np.argsort(np.asarray(getattr(geometry, "angles", np.arange(n))), kind="stable"),
+            subsets=subsets,
+            iterations=iterations,
+            batch=batch,
+            depth=depth,
+            initial=init_x,
+            support=cfg.support,
+        )
     return volume, {
         "effective_iterations": iterations,
         "subset_updates": iterations * subsets,
         "termination": "iteration_limit",
         "projector_backend": backend,
         "projector_model": model,
+        **({"host_volume": True, "slices_per_batch": depth} if depth is not None else {}),
     }

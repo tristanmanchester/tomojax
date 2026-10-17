@@ -233,7 +233,9 @@ def reconstruct_arrays(
     ``warm_start`` for the iterative methods and the solver's own record. FDK
     and FBP volumes too large for the device come back as host NumPy arrays,
     made in slabs (``host_slabs``). Independent axial SIRT/MLEM planes and their
-    warm starts also use host slabs when needed. Fourier always returns host arrays in slabs.
+    warm starts also use host slabs when needed. Coupled cone MLEM uses host-owned
+    volume slabs when its device workspace does not fit. Fourier always returns
+    host arrays in slabs.
     ``out`` supplies writable float32 host storage for FBP/FDK or Fourier and
     forces host slabs; it is returned without allocating another full volume.
 
@@ -390,18 +392,28 @@ def _iterative_incore(
     """Initialize and dispatch an iterative solve with its method's data model."""
     start = None
     if warm_start:
+        from tomojax.core.geometry.cone import is_cone_beam
+        from tomojax.recon._mlem_host import initial_volume, volume_depth
         from tomojax.recon._warm_start import fbp_start
 
-        # On the solver's devices; an explicit detector grid takes one.
-        devices = getattr(cfg, "devices", None) if det_grid is None else None
-        start = fbp_start(
-            geometry, grid, detector, projections, config=recon.FBPConfig(devices=devices),
-            det_grid=det_grid,
-        )  # fmt: skip
-        if method == "mlem" or getattr(cfg, "nonnegative", False):
-            import jax.numpy as jnp
+        depth = (
+            volume_depth(grid, detector, cast("MLEMConfig", cfg).views_per_batch)
+            if method == "mlem" and is_cone_beam(geometry) and det_grid is None
+            else None
+        )
+        if depth is not None:
+            start = initial_volume(geometry, grid, detector, projections, depth=depth)
+        else:
+            # On the solver's devices; an explicit detector grid takes one.
+            devices = getattr(cfg, "devices", None) if det_grid is None else None
+            start = fbp_start(
+                geometry, grid, detector, projections, config=recon.FBPConfig(devices=devices),
+                det_grid=det_grid,
+            )  # fmt: skip
+            if method == "mlem" or getattr(cfg, "nonnegative", False):
+                import jax.numpy as jnp
 
-            start = jnp.maximum(start, 0.0)
+                start = jnp.maximum(start, 0.0)
     args = (geometry, grid, detector, projections)
     name = {
         "cgls": "cgls",
