@@ -15,7 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 
 if TYPE_CHECKING:
-    from tomojax.geometry import Detector, Grid
+    from tomojax.core.geometry.base import Detector, Grid
 
 _FORWARD = r"""
 extern "C" __global__ void axial_forward(

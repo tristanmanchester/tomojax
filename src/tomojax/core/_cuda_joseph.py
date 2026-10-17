@@ -5,11 +5,11 @@ their detector footprints, so every detector load and loop step serves several
 voxels. Weights use the same arithmetic as the forward projection. The kernel
 is compiled at run time with CuPy and launched on XLA's stream through
 ``buffer_callback``, inside compiled solver loops. Automatic dispatch uses it
-from 2**21 voxels, including coarse reconstruction and alignment grids. Smaller
-volumes retain the Pallas transpose to avoid the fixed callback/kernel setup
-cost for short operations. Axial batches use a bounded separable vertical
-prepass; other views retain this gather. Runs without CuPy and ``TOMOJAX_CUDA_KERNELS=0``
-also use Pallas; the environment override can force either implementation.
+from 2**21 voxels, or 2**19 for separable axial batches. Smaller volumes retain
+the Pallas transpose to avoid the fixed callback/kernel setup cost for short
+operations. Axial batches use a bounded separable vertical prepass; other views
+retain this gather. Runs without CuPy and ``TOMOJAX_CUDA_KERNELS=0`` also use
+Pallas; the environment override can force either implementation.
 """
 
 from __future__ import annotations
@@ -40,6 +40,8 @@ _THREADS = 128
 # requiring a full-resolution volume would exclude useful multiresolution work.
 # This is a size-only crossover, independent of scan identity and geometry.
 _MIN_VOXELS = 2**21
+# Separable axial kernels amortize their setup sooner than the generic gather.
+_MIN_AXIAL_VOXELS = 2**19
 
 _SOURCE = r"""
 extern "C" __global__ void joseph_gather(
@@ -121,15 +123,18 @@ extern "C" __global__ void joseph_gather(
 """
 
 
-def use_cuda_gather(grid: Grid) -> bool:
+def use_cuda_gather(grid: Grid, *, axial: bool = False) -> bool:
     """Return whether to use the CuPy gather for this volume.
 
     ``TOMOJAX_CUDA_KERNELS=1`` uses it for every size, ``0`` never.
+    ``axial=True`` allows the lower separable-kernel threshold; the caller must
+    still check the coefficients and workspace before selecting that kernel.
     """
     setting = os.environ.get("TOMOJAX_CUDA_KERNELS", "auto")
     if setting == "0" or not cuda_gather_available():
         return False
-    return setting == "1" or grid.nx * grid.ny * grid.nz >= _MIN_VOXELS
+    minimum = _MIN_AXIAL_VOXELS if axial else _MIN_VOXELS
+    return setting == "1" or grid.nx * grid.ny * grid.nz >= minimum
 
 
 @cache

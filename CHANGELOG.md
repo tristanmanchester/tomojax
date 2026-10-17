@@ -3,7 +3,8 @@
 ## Unreleased
 
 Axial Joseph projection and its exact transpose use separable CUDA kernels with
-bounded workspace; general and tilted geometries retain their existing kernels.
+bounded workspace, including smaller axial volumes; general and tilted geometries
+retain their existing kernels.
 Conservative axial footprints preserve nonzero interpolation weights at rounded boundaries.
 
 `tomojax.torch.Projector` provides optional CUDA PyTorch autograd operations
