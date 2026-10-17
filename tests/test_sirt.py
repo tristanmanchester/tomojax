@@ -13,6 +13,18 @@ from tomojax.geometry import ConeSegments
 from tomojax.recon import SIRTConfig, sirt
 
 
+def test_streamed_initialization_finishes_before_solve_workspace(monkeypatch):
+    from tomojax.recon.sirt import _initial_volume
+
+    waited = []
+    monkeypatch.setattr(jax, "block_until_ready", lambda value: waited.append(value) or value)
+    initial = _initial_volume(np.ones((2, 3, 4)), stream=True)
+    assert len(waited) == 1 and waited[0] is initial
+    assert _initial_volume(initial, stream=False) is initial
+    assert _initial_volume(None, stream=True) is None
+    assert len(waited) == 1
+
+
 @pytest.mark.numerical
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize(

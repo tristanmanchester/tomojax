@@ -183,6 +183,19 @@ def _solve(
     return jax.lax.fori_loop(0, iterations * subsets, update, initial)
 
 
+def _initial_volume(
+    value: jax.Array | np.ndarray | None, *, stream: bool
+) -> jax.Array | None:
+    """Release a streamed solve's pending initialization workspace before dispatch."""
+    if value is None:
+        return None
+    initial = jnp.asarray(value, jnp.float32)
+    # A warm FBP can still own large temporary buffers when XLA allocates the
+    # iterative executable's workspace. Its output is a dependency anyway;
+    # finish it first rather than requiring both workspaces simultaneously.
+    return jax.block_until_ready(initial) if stream else initial
+
+
 def _parameters(cfg: SIRTConfig, n: int) -> tuple[int, int, int, float, float]:
     """Validate iteration controls and bounds before choosing memory placement."""
     iterations = operator.index(cfg.iterations)
@@ -282,9 +295,9 @@ def sirt(
         else nullcontext(jnp.asarray(projections, jnp.float32))
     )
     with source as data:
+        initial = _initial_volume(init_x, stream=stream)
         volume = _solve(
-            poses, data,
-            None if init_x is None else jnp.asarray(init_x, jnp.float32),
+            poses, data, initial,
             None if cfg.support is None else jnp.asarray(cfg.support),
             det_grid, jnp.int32(iterations), jnp.float32(cfg.relaxation),
             jnp.float32(lower), jnp.float32(upper), grid=grid, detector=detector,
