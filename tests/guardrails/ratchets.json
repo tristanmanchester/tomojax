@@ -123,11 +123,11 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "type_errors": {
-    "reportArgumentType": 344,
+    "reportArgumentType": 308,
     "reportAssignmentType": 2,
     "reportAttributeAccessIssue": 161,
     "reportCallIssue": 13,
-    "reportGeneralTypeIssues": 10,
+    "reportGeneralTypeIssues": 8,
     "reportIndexIssue": 7,
     "reportInvalidTypeForm": 1,
     "reportOperatorIssue": 4,
