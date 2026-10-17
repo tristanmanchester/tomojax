@@ -61,7 +61,10 @@ In Python these are steps of `tomojax.corrections` (`BeamHardening`,
 records no grid: cone datasets without one reconstruct one voxel per detector
 pixel at the axis, the pixel size divided by the magnification
 `source_to_detector / source_to_axis`, and `tomojax recon --grid NX NY NZ`
-sets the number of voxels.
+sets the number of voxels while preserving the selected physical field of view
+(adjusting voxel sizes). For a small whole-volume preview, bin the detector
+with `preprocess` and use `recon --grid 64 64 64 --roi off`. In Python the same
+grid is `scan.grid.resampled((64, 64, 64))`, passed as `grid=` to reconstruction.
 
 ## Calibrate the rotation axis
 

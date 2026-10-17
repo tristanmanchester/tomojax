@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 import logging
 from typing import TYPE_CHECKING
 
@@ -33,14 +32,14 @@ ROI_HELP = (
 def region_grid(scan: Scan, *, roi: str, grid: tuple[int, int, int] | None) -> tuple[Grid, bool]:
     """The grid ``--roi`` and ``--grid`` choose, and whether to zero outside the cylinder.
 
-    ``--grid`` keeps the cropped grid's voxels and centre and sets its size;
-    the volume is then not zeroed.
+    ``--grid`` resamples the selected ROI to new voxel counts, preserving its
+    physical extent. Cylindrical support is retained at the new resolution.
     """
     geometry_type = "parallel" if scan.source is None else scan.source.geometry_type
     is_parallel = str(geometry_type).lower() == "parallel"
     chosen = _resolve_roi_grid(scan.grid, scan.detector, is_parallel=is_parallel, roi_mode=roi)
     if grid is not None:
-        return replace(chosen, nx=grid[0], ny=grid[1], nz=grid[2]), False
+        return chosen.resampled(grid), roi == "cyl"
     return chosen, roi == "cyl"
 
 

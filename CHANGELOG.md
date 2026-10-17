@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+Breaking: `tomojax recon/align --grid NX NY NZ` now changes resolution while
+preserving the physical field of view selected by `--roi`; it no longer crops
+by keeping voxel spacing fixed. Python shares this operation as
+`grid.resampled((nx, ny, nz))`. Cylindrical ROI support remains active when
+resampling its grid.
+
 Axial geometry loaded with a recorded zero tilt or vertical axis keeps the
 parallel-beam model. Centre-only alignment no longer turns axial data into
 laminography and selects an unsuitable automatic reconstruction.

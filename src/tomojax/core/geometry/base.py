@@ -7,7 +7,7 @@ them lightweight and JAX-friendly (no heavy runtime logic here).
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import operator
 from typing import Any, Protocol, TypedDict
 
@@ -105,6 +105,50 @@ class Grid:
                 "vol_center",
                 _coerce_fixed_tuple("vol_center", self.vol_center, 3),
             )
+
+    def resampled(self, shape: tuple[int, int, int]) -> Grid:
+        """Return a grid with new voxel counts and the same physical extent.
+
+        Voxel pitches change to preserve the outer cell edges and centre, not
+        the positions of the first and last voxel centres. Explicit origins
+        remain authoritative over ``vol_center``. No volume data is resampled.
+
+        Parameters
+        ----------
+        shape : tuple of int
+            Positive voxel counts ``(nx, ny, nz)`` for the returned grid.
+
+        Returns
+        -------
+        Grid
+            Grid covering the same physical box at the requested resolution.
+
+        Raises
+        ------
+        ValueError
+            If ``shape`` does not contain three positive counts.
+        TypeError
+            If a count is not an integer.
+
+        Examples
+        --------
+        >>> Grid(100, 80, 60, 0.2, 0.3, 0.4).resampled((50, 40, 30)).vx
+        0.4
+        """
+        nx, ny, nz = (operator.index(n) for n in shape)
+        if min(nx, ny, nz) < 1:
+            raise ValueError("shape must contain three positive voxel counts")
+        if (nx, ny, nz) == (self.nx, self.ny, self.nz):
+            return self
+        vx, vy, vz = self.nx * self.vx / nx, self.ny * self.vy / ny, self.nz * self.vz / nz
+        origin = self.vol_origin
+        if origin is not None:
+            origin = (
+                origin[0] + (vx - self.vx) / 2,
+                origin[1] + (vy - self.vy) / 2,
+                origin[2] + (vz - self.vz) / 2,
+            )
+        return replace(self, nx=nx, ny=ny, nz=nz, vx=vx, vy=vy, vz=vz, vol_origin=origin)
 
     def to_dict(self) -> GridDict:
         """Return JSON-compatible grid metadata."""

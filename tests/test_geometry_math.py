@@ -227,3 +227,22 @@ def test_cylindrical_mask_xy_uses_grid_world_coordinates() -> None:
     assert not np.array_equal(shifted_mask, centered_mask)
     assert shifted_mask[0, 5]
     assert not shifted_mask[5, 5]
+
+
+@pytest.mark.parametrize(
+    "placement",
+    [{}, {"vol_center": (3, -2, 1)}, {"vol_origin": (2, 4, -3), "vol_center": (9, 9, 9)}],
+)
+def test_grid_resampling_preserves_cell_edges_and_placement(placement):
+    from tomojax.geometry import grid_volume_origin
+
+    grid = Grid(11, 8, 5, 0.7, 1.3, 2.1, **placement)
+    resampled = grid.resampled((4, 13, 3))
+    old_pitch = np.array([grid.vx, grid.vy, grid.vz])
+    new_pitch = np.array([resampled.vx, resampled.vy, resampled.vz])
+    np.testing.assert_allclose(new_pitch * [4, 13, 3], old_pitch * [11, 8, 5])
+    np.testing.assert_allclose(
+        np.array(grid_volume_origin(resampled)) - new_pitch / 2,
+        np.array(grid_volume_origin(grid)) - old_pitch / 2,
+    )
+    assert grid.resampled((11, 8, 5)) is grid

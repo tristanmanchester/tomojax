@@ -87,7 +87,9 @@ uv run --no-sync tomojax preprocess raw.nxs -o binned.nxs --config preview.toml
 
 Binning reduces detector sampling, not the reconstruction grid. In Python,
 pass a coarser `grid=` to `tj.reconstruct` when you also want larger voxels;
-`--grid` on the CLI only changes the voxel counts, retaining their spacing.
+On the CLI, `--grid NX NY NZ` resamples the field of view selected by `--roi`
+to those counts, preserving its physical extent. Python uses
+`scan.grid.resampled((NX, NY, NZ))` to do the same without changing any data.
 
 For a small **axial parallel-beam** preview, use one voxel per binned detector
 pixel and retain the selected detector rows' height. This explicit grid avoids
@@ -191,7 +193,9 @@ software.
 Without grid/ROI overrides, automatic mode leaves region selection to the
 Python workflow. With an explicit method, the default `--roi auto` may crop
 to the detector field of view; `--roi off` preserves the recorded grid.
-`--grid NX NY NZ` changes dimensions while keeping the selected voxel spacing.
+`--grid NX NY NZ` changes voxel counts and spacing together, preserving the
+selected physical extent. Use `--roi off` to retain the whole recorded field of
+view, or let `--roi auto` restrict it to the measured detector window first.
 Automatic policies that cannot honor an override require an explicit method.
 Check both field of view and physical units before comparing reconstructions.
 `--roi cyl` also zeroes the volume outside the cylinder every view sees.
