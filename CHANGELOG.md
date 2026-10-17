@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+Laminography region estimation keeps the physical survey fixed while coarsening
+to fit memory, avoiding unbounded grid growth for shallow oblique axes.
+
 Inspection, previews and dataset validation share raw-frame HDF5 discovery,
 including APS Data Exchange and Diamond/GDA. Missing optional NXtomo labels
 no longer reject an otherwise readable acquisition; `validate_nxtomo` stays strict.
