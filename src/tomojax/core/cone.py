@@ -329,6 +329,17 @@ def _launch_forward(
         )
 
 
+def _separable_adjoint_kernel(grid: Grid, detector: Detector) -> str:
+    """Keep the wider tile for densely sampled detector-row stacks.
+
+    The compact tile's two-cell lanes save work on ordinary row stacks, but
+    cost more for wide resampling support. Use a conservative stack-size
+    threshold, tighter on small volumes where geometry caching amortizes less.
+    """
+    row_ratio = 2 if grid.nx * grid.ny * grid.nz < 2**21 else 4
+    return "sep_adjoint" if detector.nv > row_ratio * grid.nz else "sep_adjoint_cached"
+
+
 def _launch_adjoint(
     context: Any, out: Any, coeff: Any, images: Any, accumulate: Any, *, grid: Grid, det: Detector
 ) -> None:
@@ -337,6 +348,7 @@ def _launch_adjoint(
     views = int(coeff.shape[0])
     module = _module()
     with xla_stream(context, out):
+        separable_adjoint = module.get_function(_separable_adjoint_kernel(grid, det))
         target, initial = cp.asarray(out), cp.asarray(accumulate)
         if target.data.ptr != initial.data.ptr:
             target[...] = initial
@@ -371,7 +383,7 @@ def _launch_adjoint(
             i_part = weighted[start : start + count]
             for axis in (0, 1):
                 na, nb = extent[axis], extent[1 - axis]
-                module.get_function("sep_adjoint")(
+                separable_adjoint(
                     (-(-grid.nz // 64), -(-nb // 64), na),
                     (256,),
                     (*part, np.int32(axis), i_part, target, *dims),

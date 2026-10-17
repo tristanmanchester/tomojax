@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from tomojax.core import cone
 from tomojax.core.cone import beam_frame, cone_backproject, cone_project, frame_coefficients
 from tomojax.geometry import ConeBeam, ConeGeometry, Detector, Grid
 from tomojax.recon import CGLSConfig, cgls
@@ -119,13 +120,14 @@ def test_cuda_cone_dense_transpose_across_wide_contiguous_tiles(reverse_v):
 
 
 @pytest.mark.gpu
-def test_cuda_cone_cgls_recovers_an_image_across_wide_tiles():
+@pytest.mark.parametrize("tilt", [0.0, 20.0])
+def test_cuda_cone_cgls_recovers_an_image_across_wide_tiles(tilt):
     # A fixed-budget wide-grid image control, independent of the CUDA forward
     # implementation. Dense basis tests separately enforce transpose accuracy.
     grid = Grid(129, 67, 131, 0.7, 0.9, 1.1, vol_center=(0.3, -0.2, 0.1))
     detector = Detector(193, 191, 1.0, 1.2, center=(0.2, -0.1))
     geometry = ConeGeometry(
-        grid, detector, np.linspace(0, 360, 65, endpoint=False), ConeBeam(387, 580.5), tilt_deg=20
+        grid, detector, np.linspace(0, 360, 65, endpoint=False), ConeBeam(387, 580.5), tilt_deg=tilt
     )
     frames = np.broadcast_to(beam_frame(geometry.beam, detector), (65, 4, 3))
     coeff = frame_coefficients(jnp.asarray(geometry.poses(), jnp.float32), frames, grid, detector)
@@ -155,6 +157,37 @@ def test_cuda_cone_dense_transpose_on_separable_turntable_views(yaw):
     )
     frames = np.broadcast_to(beam_frame(geometry.beam, detector), (12, 4, 3))
     _check_dense_transpose(grid, detector, frames, jnp.asarray(geometry.poses(), jnp.float32))
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("kernel", ["sep_adjoint", "sep_adjoint_cached"])
+@pytest.mark.parametrize("pitch", [0.4, 2.0])
+def test_cuda_separable_transpose_kernels_with_wide_support_and_view_tail(
+    kernel, pitch, monkeypatch
+):
+    grid = Grid(5, 4, 3, 0.7, 1.1, 0.9, vol_center=(0.2, -0.1, 0.3))
+    detector = Detector(9, 9 if pitch < 1 else 5, 1.3, pitch, center=(0.3, -0.4))
+    geometry = ConeGeometry(
+        grid, detector, np.linspace(0, 360, 33, endpoint=False), ConeBeam(40, 60)
+    )
+    module = cone._module()
+    calls = []
+    selected = []
+
+    class Kernels:
+        def get_function(self, name):
+            if name in {"sep_adjoint", "sep_adjoint_cached"}:
+                selected.append(name)
+                name = kernel
+            calls.append(name)
+            return module.get_function(name)
+
+    monkeypatch.setattr(cone, "_module", Kernels)
+    frames = np.broadcast_to(beam_frame(geometry.beam, detector), (33, 4, 3))
+    _check_dense_transpose(grid, detector, frames, jnp.asarray(geometry.poses(), jnp.float32))
+    assert kernel in calls
+    expected = "sep_adjoint" if pitch < 1 else "sep_adjoint_cached"
+    assert selected and set(selected) == {expected}
 
 
 @pytest.mark.gpu
