@@ -9,6 +9,7 @@ import jax.numpy as jnp
 
 from tomojax.core.devices import view_split
 from tomojax.core.geometry.views import stack_view_poses
+from tomojax.geometry import ParallelGeometry
 from tomojax.geometry.api import detector_grid_from_geometry_inputs
 from tomojax.recon._projection import projection_operators, resolve_geometry_projector
 
@@ -19,8 +20,30 @@ if TYPE_CHECKING:
 
     from tomojax._typed_arrays import Device
     from tomojax.core.geometry.base import Geometry, Grid
+    from tomojax.geometry import Detector
 
 _BATCH = 32
+_AXIAL_STACK_BYTES = 64 * 1024**2
+
+
+def _view_batch_size(
+    grid: Grid,
+    detector: Detector,
+    n_views: int,
+    *,
+    axial_cuda: bool,
+) -> int:
+    """Use one axial CUDA batch only when its whole workspace is bounded.
+
+    Count both the detector images and the vertically resampled stack. Larger
+    problems retain the existing cap rather than introduce overlapping large
+    tails; CPU and non-axial projectors retain their existing batching too.
+    """
+    batch = max(1, min(_BATCH, n_views))
+    workspace = 4 * n_views * detector.nu * (detector.nv + grid.nz)
+    if axial_cuda and workspace <= _AXIAL_STACK_BYTES:
+        batch = max(1, n_views)
+    return batch
 
 
 def _operators(
@@ -38,7 +61,10 @@ def _operators(
     )
     n_views = len(geometry.angles)  # pyright: ignore[reportAttributeAccessIssue]
     poses = stack_view_poses(geometry, n_views)
-    batch = max(1, min(_BATCH, n_views))
+    axial_cuda = (
+        backend == "pallas" and model == "joseph" and isinstance(geometry, ParallelGeometry)
+    )
+    batch = _view_batch_size(grid, detector, n_views, axial_cuda=axial_cuda)
     split = view_split(devices, n_views)
     operators = projection_operators(
         poses, grid, detector, det_grid, backend, batch, model, split=split
