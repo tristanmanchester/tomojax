@@ -19,6 +19,16 @@ __device__ __forceinline__ bool crosses_zero(float lo, float hi) {
 __device__ __forceinline__ float pixel_bound(float x, int size) {
     return fminf(fmaxf(x, -2.f), (float)size + 1.f);
 }
+// Bound roundoff when inverting the vertical ray coordinate. Cancellation can
+// leave a positive forward weight outside the nominal integer support. The
+// margin changes candidates only; every weight retains the forward arithmetic.
+__device__ __forceinline__ float vertical_support_margin(
+    float idf, float Sc, float t, float rc0, float DVc, int nz, int nv)
+{
+    return 8.f * 1.1920928955078125e-7f * fabsf(idf) *
+        ((float)nz + fabsf(Sc) + fabsf(t) *
+         (fabsf(rc0) + fabsf(Sc) + (float)nv * fabsf(DVc)) + 1.f);
+}
 // Whether any of the block's nviews (<= blockDim.x) views is (non-)separable and has rays
 // sampled along axis a; every thread of the block must call it.
 __device__ __forceinline__ bool any_view(const float* coeff, const int* axis_box, int nviews,
@@ -239,6 +249,7 @@ extern "C" __global__ void sep_adjoint(
     __shared__ float R[ULEN][TC + 1];
     __shared__ float s_fb[ULEN], s_t[ULEN], s_rc0[ULEN], s_f0[ULEN], s_idf[ULEN];
     __shared__ int s_taps[ULEN];
+    __shared__ float s_margin[ULEN];
     __shared__ float cf[NC];
     __shared__ int skip;
     int b = 1 - a;
@@ -293,7 +304,10 @@ extern "C" __global__ void sep_adjoint(
                 float idf = 1.f / (t * DVc);
                 s_f0[i] = Sc + t * (rc0 - Sc); s_idf[i] = idf;
                 // A footprint wider than the image still needs at most nv rows.
-                float taps = fminf(2.f * fabsf(idf), (float)nv);
+                float margin = vertical_support_margin(idf, Sc, t, rc0, DVc, nz, nv);
+                s_margin[i] = margin;
+                // Widen both endpoints, keeping the tap count warp-uniform.
+                float taps = fminf(2.f * (fabsf(idf) + margin), (float)nv);
                 s_taps[i] = col_axis == a ? min((int)floorf(taps) + 1, nv) : 0;
             }
             __syncthreads();
@@ -303,7 +317,7 @@ extern "C" __global__ void sep_adjoint(
                 float v1 = (jcf - 1.f - s_f0[i]) * s_idf[i];
                 float v2 = (jcf + 1.f - s_f0[i]) * s_idf[i];
                 float lower = fminf(v1, v2);
-                int va = max((int)floorf(pixel_bound(lower, nv)) + 1, 0);
+                int va = max((int)floorf(pixel_bound(lower - s_margin[i], nv)) + 1, 0);
                 int taps = s_taps[i];   // the same for the whole warp: no divergence
                 const float* col = image + (long)(ulo + i) * nv;
                 float s = 0.f;
@@ -618,6 +632,7 @@ extern "C" __global__ void sep_adjoint_cached(
     __shared__ float s_fb[CACHED_ULEN], s_t[CACHED_ULEN], s_rc0[CACHED_ULEN];
     __shared__ float s_f0[CACHED_ULEN], s_idf[CACHED_ULEN];
     __shared__ int s_taps[CACHED_ULEN];
+    __shared__ float s_margin[CACHED_ULEN];
     __shared__ float all_cf[VMAX][12];
     __shared__ int all_skip[VMAX];
     __shared__ int2 all_foot[VMAX];
@@ -680,7 +695,10 @@ extern "C" __global__ void sep_adjoint_cached(
                 float idf = 1.f / (t * DVc);
                 s_f0[i] = Sc + t * (rc0 - Sc); s_idf[i] = idf;
                 // A footprint wider than the image still needs at most nv rows.
-                float taps = fminf(2.f * fabsf(idf), (float)nv);
+                float margin = vertical_support_margin(idf, Sc, t, rc0, DVc, nz, nv);
+                s_margin[i] = margin;
+                // Widen both endpoints, keeping the tap count warp-uniform.
+                float taps = fminf(2.f * (fabsf(idf) + margin), (float)nv);
                 s_taps[i] = col_axis == a ? min((int)floorf(taps) + 1, nv) : 0;
             }
             __syncthreads();
@@ -694,7 +712,7 @@ extern "C" __global__ void sep_adjoint_cached(
                     int jj = j + run * (TC / 2);
                     float jcf = (float)(c0 + jj);
                     float v1 = (jcf - 1.f - f0) * idf, v2 = (jcf + 1.f - f0) * idf;
-                    int va = max((int)floorf(pixel_bound(fminf(v1, v2), nv)) + 1, 0);
+                    int va = max((int)floorf(pixel_bound(fminf(v1, v2) - s_margin[i], nv)) + 1, 0);
                     float s = 0.f;
                     // Common interior footprints avoid repeated bounds checks;
                     // boundary and wider footprints keep every original tap.

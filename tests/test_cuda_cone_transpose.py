@@ -189,6 +189,23 @@ def test_cuda_separable_transpose_kernels_with_wide_support_and_view_tail(
     expected = "sep_adjoint" if pitch < 1 else "sep_adjoint_cached"
     assert selected and set(selected) == {expected}
 
+    # The inverse vertical bound rounds past a tiny positive forward weight.
+    grid, detector = Grid(64, 64, 64, 1, 1, 1), Detector(64, 64, 2, 2.3)
+    geometry = ConeGeometry(grid, detector, [74.5], ConeBeam(256, 512))
+    coeff = frame_coefficients(
+        jnp.asarray(geometry.poses(), jnp.float32),
+        np.asarray([beam_frame(geometry.beam, detector)]),
+        grid,
+        detector,
+    )
+    point, ray = (48, 22, 44), (0, 41, 44)
+    volume = jnp.zeros((64, 64, 64), jnp.float32).at[point].set(1)
+    images = jnp.zeros((1, 64, 64), jnp.float32).at[ray].set(1)
+    forward = float(cone_project(volume, coeff, grid, detector, backend="cuda")[ray])
+    backward = float(cone_backproject(images, coeff, grid, detector, backend="cuda")[point])
+    assert forward > 1e-6
+    np.testing.assert_allclose(backward, forward, rtol=2e-6, atol=0)
+
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("yaw", [56.4, 70.0, 80.0])
