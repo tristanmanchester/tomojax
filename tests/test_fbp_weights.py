@@ -288,3 +288,18 @@ def test_repeated_laminography_exposures_equal_their_mean_and_preserve_physical_
     assert np.linalg.norm(actual - expected) / np.linalg.norm(expected) < 2e-6
     reference = measured_truth(truth, poses)
     assert np.linalg.norm(actual - reference) / np.linalg.norm(reference) < 0.07
+
+
+@pytest.mark.numerical
+def test_filter_workspace_tiles_keep_odd_tail_views_and_scales(monkeypatch):
+    import importlib
+
+    module = importlib.import_module("tomojax.recon.fbp")
+    rng = np.random.default_rng(13)
+    rows = jnp.asarray(rng.normal(size=(17, 3, 19)).astype(np.float32))
+    scales = jnp.linspace(0.3, 1.7, 17)
+    spectrum = jnp.fft.rfftfreq(64)
+    reference = module._filter_rows_bounded(rows, scales, spectrum)
+    monkeypatch.setattr(module, "_FILTER_WORKSPACE_BYTES", 16 * 3 * 64 * 4)
+    tiled = module._filter_rows_bounded(rows, scales, spectrum)
+    np.testing.assert_array_equal(tiled, reference)

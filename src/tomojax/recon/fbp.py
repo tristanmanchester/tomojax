@@ -198,7 +198,7 @@ def _filter_views(
     redundancy count N depends on both detector frequencies; see ``_fbp_weights``.
     """
     if separable:
-        return fft_filter_rows(rows * view_scale[:, None, None], spectrum)
+        return _filter_rows_bounded(rows, view_scale, spectrum)
     n_u, n_v = 2 * (spectrum.shape[0] - 1), _fft_length(detector.nv)
     transformed = jnp.fft.rfft2(rows, s=(n_v, n_u))
     fu = jnp.fft.rfftfreq(n_u, detector.du).astype(jnp.float32)[None, None, :]
@@ -218,6 +218,31 @@ def _filter_views(
     ramp = jnp.where(row_ramp, jnp.abs(t_u) * spectrum, oblique)
     filtered = jnp.fft.irfft2(transformed * (ramp * weight / count), s=(n_v, n_u))
     return filtered[:, : detector.nv, : detector.nu]
+
+
+_FILTER_WORKSPACE_BYTES = 128 * 1024**2
+
+
+def _filter_rows_bounded(
+    rows: jnp.ndarray, view_scale: jnp.ndarray, spectrum: jnp.ndarray
+) -> jnp.ndarray:
+    """Bound FFT scratch without changing backprojection batches or their sums."""
+    n = rows.shape[0]
+    capacity = max(1, _FILTER_WORKSPACE_BYTES // (16 * rows.shape[1] * 2 * (spectrum.shape[0] - 1)))
+    if capacity >= n:
+        return fft_filter_rows(rows * view_scale[:, None, None], spectrum)
+    size = 1 << (capacity.bit_length() - 1)
+    batches = (n + size - 1) // size
+    padded = jnp.pad(rows, ((0, batches * size - n), (0, 0), (0, 0)))
+    weights = jnp.pad(view_scale, ((0, batches * size - n),))
+
+    def step(_: None, index: jnp.ndarray) -> tuple[None, jnp.ndarray]:
+        block = jax.lax.dynamic_slice_in_dim(padded, index * size, size)
+        scale = jax.lax.dynamic_slice_in_dim(weights, index * size, size)
+        return None, fft_filter_rows(block * scale[:, None, None], spectrum)
+
+    _, values = jax.lax.scan(step, None, jnp.arange(batches))
+    return values.reshape(batches * size, rows.shape[1], rows.shape[2])[:n]
 
 
 def _pad_detector(rows: jnp.ndarray, detector: Detector) -> jnp.ndarray:

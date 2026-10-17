@@ -223,3 +223,34 @@ def test_axial_slabs_release_each_result_before_solving_the_next(monkeypatch):
         solve=solve,
     )
     assert result is not None and len(previous) == 3 and previous[-1]() is None
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("warm_start", [False, True])
+def test_host_columns_belong_to_the_workflow_not_the_slab_or_next_scan(monkeypatch, warm_start):
+    import tomojax.backends
+
+    module = importlib.import_module("tomojax.recon.sirt")
+    grid = tj.Grid(7, 5, 5, 0.8, 1.1, 1.0)
+    detector = tj.Detector(9, 5, 0.9, 1.0)
+    truth = np.random.default_rng(17).uniform(size=(7, 5, 5)).astype(np.float32)
+    cfg = SIRTConfig(iterations=2, subsets=3, support=truth > 0.3, upper_bound=0.9)
+    monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: 10000)
+    original = module._axial_column
+    built = []
+
+    def column(*args, **kwargs):
+        built.append(int(args[1]))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(module, "_axial_column", column)
+    for offset in (0, 7):
+        geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 17) + offset)
+        scan = tj.Scan(np.asarray(tj.project(geometry, truth)), geometry)
+        monkeypatch.setattr(module, "_HOST_COLUMN_MIN_BYTES", 2**60)
+        reference = tj.reconstruct(scan, "sirt", config=cfg, warm_start=warm_start)
+        monkeypatch.setattr(module, "_HOST_COLUMN_MIN_BYTES", 0)
+        result = tj.reconstruct(scan, "sirt", config=cfg, warm_start=warm_start)
+        assert result.info["host_slabs"] and result.info["slices_per_batch"] == 2
+        np.testing.assert_allclose(result.volume, reference.volume, rtol=2e-6, atol=2e-6)
+    assert built == [0, 1, 2] * 2
