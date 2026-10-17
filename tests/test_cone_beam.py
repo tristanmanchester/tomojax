@@ -522,7 +522,7 @@ def test_import_reads_a_nikon_xtekct_scan(tmp_path: Path):
     n, views = 24, 60
     grid = Grid(n, n, n, 0.05, 0.05, 0.05)
     detector = Detector(40, 36, 0.075, 0.075)
-    beam = ConeBeam(12.0, 18.0)
+    beam = ConeBeam(12.0, 18.0, axis_offset=0.01)
     angles = np.linspace(0.0, 360.0, views, endpoint=False)
     geometry = ConeGeometry(grid, detector, angles, beam)
     shapes = _ellipsoids(n * 0.05)

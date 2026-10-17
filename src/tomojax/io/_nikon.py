@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import configparser
+from dataclasses import replace
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -20,18 +21,24 @@ from ._tiff import tiff_files
 if TYPE_CHECKING:
     from os import PathLike
 
+    from ._acquisition import RawAcquisition
+
 LOG = logging.getLogger(__name__)
 
 
 def _parameters(path: Path) -> dict[str, str]:
     parser = configparser.ConfigParser(strict=False, interpolation=None)
     parser.optionxform = str  # pyright: ignore[reportAttributeAccessIssue]
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text = path.read_text(encoding="utf-8-sig", errors="replace")
     parser.read_string(text if text.lstrip().startswith("[") else "[XTekCT]\n" + text)
     section = next((s for s in parser.sections() if s.lower() == "xtekct"), None)
     if section is None:
         raise ValueError(f"{path} has no [XTekCT] section")
-    return dict(parser[section])
+    params = dict(parser[section])
+    for name in parser.sections():
+        if name.lower() == "ctpro" and "AngleFile_Use" in parser[name]:
+            params["AngleFile_Use"] = parser[name]["AngleFile_Use"]
+    return params
 
 
 def _number(params: dict[str, str], key: str, default: float | None = None) -> float:
@@ -51,7 +58,7 @@ def _angles(file: Path, params: dict[str, str], views: int) -> np.ndarray:
     """Angles from this scan's ``_ctdata.txt``, else the nominal steps."""
     name = params.get("Name", "").strip() or file.stem
     ctdata = file.parent / f"{name}_ctdata.txt"
-    if ctdata.is_file():
+    if ctdata.is_file() and params.get("AngleFile_Use", "true").lower() != "false":
         rows: list[tuple[int, float]] = []
         for line in ctdata.read_text(encoding="utf-8", errors="replace").splitlines():
             parts = line.replace(",", " ").split()
@@ -68,6 +75,7 @@ def _angles(file: Path, params: dict[str, str], views: int) -> np.ndarray:
 
 
 def _projection_files(directory: Path, params: dict[str, str]) -> list[Path]:
+    directory = directory / params.get("InputFolderName", "").strip()
     name = params.get("Name", "").strip()
     prefix = name + params.get("InputSeparator", "_") if name else ""
     files = [
@@ -77,7 +85,60 @@ def _projection_files(directory: Path, params: dict[str, str]) -> list[Path]:
     ]
     if not files:
         raise ValueError(f"no projection TIFFs named {prefix}NNNN.tif in {directory}")
+    declared = int(_number(params, "Projections", len(files)))
+    closing = len(files) == declared + 1 and np.isclose(
+        abs(_number(params, "AngularStep", 0) * declared), 360.0
+    )
+    if closing:
+        LOG.warning(
+            "%s: excluding closing-turn frame %s after %d declared views",
+            directory,
+            files[-1].name,
+            declared,
+        )
+        files = files[:-1]
+    if len(files) != declared:
+        raise ValueError(
+            f"{directory}: {len(files)} projection files for {declared} declared views"
+        )
     return files
+
+
+def _axis(params: dict[str, str], detector: Detector, beam: ConeBeam) -> tuple[float, list[float]]:
+    """Nikon's calibrated rotation axis in our right/up detector frame.
+
+    Old COR values are detector-plane millimetres at the full panel's ends;
+    ObjectOffsetX is already in object-plane millimetres. ObjectRoll and
+    ObjectTilt are degrees, not a rotation of the detector itself.
+    """
+    bottom = _number(params, "CentreOfRotationBottom", 0.0)
+    top = _number(params, "CentreOfRotationTop", bottom)
+    offset = _number(params, "ObjectOffsetX", (bottom + top) / (2 * beam.magnification))
+    roll = (
+        np.deg2rad(float(params["ObjectRoll"]))
+        if "ObjectRoll" in params
+        else -np.arctan2(top - bottom, detector.nv * detector.dv)
+    )
+    tilt = np.deg2rad(_number(params, "ObjectTilt", 0.0))
+    return offset, [
+        -float(np.sin(roll)),
+        float(np.sin(tilt) * np.cos(roll)),
+        float(np.cos(tilt) * np.cos(roll)),
+    ]
+
+
+def _grid(params: dict[str, str], detector: Detector, beam: ConeBeam) -> Grid | None:
+    if not all(key in params for key in ("VoxelsX", "VoxelsY", "VoxelsZ")):
+        return None
+    voxel = detector.du / beam.magnification
+    return Grid(
+        nx=int(_number(params, "VoxelsX")),
+        ny=int(_number(params, "VoxelsY")),
+        nz=int(_number(params, "VoxelsZ")),
+        vx=_number(params, "VoxelSizeX", voxel),
+        vy=_number(params, "VoxelSizeY", voxel),
+        vz=_number(params, "VoxelSizeZ", voxel),
+    )
 
 
 def load_nikon_xtekct(
@@ -97,8 +158,9 @@ def load_nikon_xtekct(
     ``absorption`` is False, with image rows flipped so detector v points up.
     Lengths stay in the file's units (mm).
 
-    The axis offset and detector roll are left at zero: calibrate them with
-    :func:`tomojax.recon.calibrate_cone_axis` or ``tomojax align --mode cor``.
+    The calibrated rotation axis comes from ObjectOffsetX/Roll/Tilt, or the
+    older CentreOfRotationTop/Bottom detector-plane offsets. An extra closing
+    frame on a full turn is excluded according to the declared view count.
     ``reverse_angles`` negates the angles, for a stage turning the other way;
     check the handedness of the reconstruction on a known sample.
     """
@@ -136,17 +198,9 @@ def load_nikon_xtekct(
         ),
     )
     beam = ConeBeam(_number(params, "SrcToObject"), _number(params, "SrcToDetector"))
-    grid = None
-    if all(key in params for key in ("VoxelsX", "VoxelsY", "VoxelsZ")):
-        voxel = detector.du / beam.magnification
-        grid = Grid(
-            nx=int(_number(params, "VoxelsX")),
-            ny=int(_number(params, "VoxelsY")),
-            nz=int(_number(params, "VoxelsZ")),
-            vx=_number(params, "VoxelSizeX", voxel),
-            vy=_number(params, "VoxelSizeY", voxel),
-            vz=_number(params, "VoxelSizeZ", voxel),
-        )
+    offset, axis = _axis(params, detector, beam)
+    beam = replace(beam, axis_offset=offset)
+    grid = _grid(params, detector, beam)
     recorded = {
         key: params[key]
         for key in (
@@ -160,8 +214,14 @@ def load_nikon_xtekct(
     }
     metadata: dict[str, object] = {
         "cone_beam": beam.to_dict(),
+        "axis_unit_lab": axis,
         "ingest_source": "nikon_xtekct",
-        "nikon_xtekct": {"path": str(file), "white_level": white, **recorded},
+        "nikon_xtekct": {
+            "path": str(file),
+            "white_level": white,
+            "projection_count": len(files),
+            **recorded,
+        },
     }
     return ProjectionDataset(
         projections=projections,
@@ -174,6 +234,28 @@ def load_nikon_xtekct(
         source_path=str(file),
         source_format="nikon_xtekct",
     )
+
+
+def read_nikon(path: Path, *, data_path: str | None = None) -> RawAcquisition | None:
+    """Recognize the XTekCT section by content, irrespective of the file suffix."""
+    from ._acquisition import RawAcquisition
+
+    def matches(file: Path) -> bool:
+        with file.open("rb") as source:
+            header = source.read(4096).decode("utf-8-sig", errors="replace")
+        return header.lstrip().lower().startswith("[xtekct]")
+
+    candidates = [p for p in path.iterdir() if p.is_file()] if path.is_dir() else [path]
+    found = [p for p in candidates if matches(p)]
+    if not found:
+        return None
+    if len(found) != 1:
+        raise ValueError(f"{path}: several Nikon parameter files; name one explicitly")
+    if data_path is not None:
+        raise ValueError("a Nikon acquisition has no HDF5 data_path")
+    record = load_nikon_xtekct(found[0], absorption=False)
+    white = float(record.geometry_metadata["nikon_xtekct"]["white_level"])
+    return RawAcquisition(record=record, counts=record.projections, white_level=white)
 
 
 __all__ = ["load_nikon_xtekct"]

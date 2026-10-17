@@ -678,3 +678,63 @@ def test_hdf5_unfiltered_row_windows_use_direct_partial_chunk_reads(
     assert stack._efficient_row_windows is efficient
     part = stack.window(slice(3, 7), slice(2, 8))
     np.testing.assert_array_equal(np.asarray(part), data[:, 3:7, 2:8])
+
+
+def test_raw_acquisition_discovery_uses_content_and_rejects_ambiguous_directories(tmp_path):
+    image = np.array([[300, 300, 300], [150, 150, 150]], np.uint16)
+    for i in range(2):
+        iio.imwrite(tmp_path / f"object_{i + 1:04d}.tif", image)
+    path = tmp_path / "metadata.unrelated"
+    path.write_text(
+        "[XTekCT]\nName=object\nSrcToObject=12\nSrcToDetector=18\n"
+        "DetectorPixelSizeX=.1\nDetectorPixelSizeY=.1\nWhiteLevel=600\nAngularStep=90\n"
+    )
+    frames = tj.load_frames(path)
+    by_directory = tj.load(tmp_path)
+    np.testing.assert_allclose(by_directory.projections[0, :, 0], -np.log([0.25, 0.5]))
+    override = tj.Detector(3, 2, 0.2, 0.3)
+    explicit = tj.load_frames(path, detector=override, white_level=1200)
+    assert explicit.geometry.detector == override and explicit.white_level == 1200
+    np.testing.assert_array_equal(frames.counts[0], image[::-1])
+    path.rename(tmp_path / "metadata.also_unrelated")
+    assert tj.load_frames(tmp_path).geometry.detector == frames.geometry.detector
+    path.write_text((tmp_path / "metadata.also_unrelated").read_text())
+    with pytest.raises(ValueError, match="several Nikon"):
+        tj.load_frames(tmp_path)
+
+
+@pytest.mark.parametrize("modern", [False, True])
+def test_nikon_calibrated_axis_and_closing_turn_are_physical_metadata(
+    tmp_path: Path, modern: bool
+) -> None:
+    folder = tmp_path / "projections"
+    folder.mkdir()
+    for i in range(3):
+        iio.imwrite(folder / f"part_{i + 1:04d}.tif", np.full((4, 6), 400, np.uint16))
+    path = tmp_path / "scan.xtekct"
+    path.write_text(
+        "[XTekCT]\nName=part\nInputFolderName=projections\nProjections=2\n"
+        "SrcToObject=10\nSrcToDetector=20\nDetectorPixelSizeX=0.5\n"
+        "DetectorPixelSizeY=0.5\nAngularStep=180\nWhiteLevel=1000\n"
+        "CentreOfRotationTop=1\nCentreOfRotationBottom=-0.5\n"
+        + ("ObjectOffsetX=0.3\nObjectRoll=0\nObjectTilt=30\n" if modern else "")
+        + "[CTPro]\nAngleFile_Use=False\n"
+    )
+    (tmp_path / "part_ctdata.txt").write_text("1 20\n2 40\n")
+    frames = tj.load_frames(path)
+    geometry = frames.geometry
+    assert frames.counts.shape == (2, 4, 6)  # closing frame is not a third view
+    np.testing.assert_array_equal(geometry.angles, [0, 180])
+    axis = geometry.rotation_axis()
+    if modern:
+        assert geometry.beam.axis_offset == 0.3  # already object-plane millimetres
+        np.testing.assert_allclose(axis, [0, 0.5, np.sqrt(3) / 2], atol=1e-12)
+    else:
+        # Project two points on the physical rotation axis to the panel's ends:
+        # the recorded CORs are detector-plane millimetres, not pixel indices.
+        source = geometry.beam.source()
+        for detector_height, expected_cor in [(1.0, 1.0), (-1.0, -0.5)]:
+            z = detector_height / (2 * axis[2])
+            point = np.asarray(geometry.pose_for_view(0)) @ [0, 0, z, 1]
+            hit = source + 2 * (point[:3] - source)
+            np.testing.assert_allclose(hit[[0, 2]], [expected_cor, detector_height], atol=1e-12)
