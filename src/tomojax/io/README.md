@@ -7,6 +7,10 @@ with `tomojax.load_frames` and corrected with
 
 Import from here, not from `tomojax._data`.
 
+For explicit HDF5 crops, `tomojax.io.api.read_hdf5_array(dataset, slices)`
+preserves dtype and axes while decoding eligible gzip chunks in bounded parallel
+batches; the caller retains ownership of the open dataset.
+
 ## HDF5 acquisition metadata
 
 NXtomo angles are read from `/entry/sample/rotation_angle`, or from TomoJAX's

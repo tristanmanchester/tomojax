@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, MutableMapping
 from pathlib import Path
-from typing import Any, overload
+from typing import Any, Protocol, overload
 
 import numpy as np
 from numpy.typing import DTypeLike
@@ -18,7 +18,22 @@ class AttributeManager(MutableMapping[str, object]):
     def __iter__(self) -> Iterator[str]: ...
     def __len__(self) -> int: ...
 
+class _CreationProperties(Protocol):
+    def get_nfilters(self) -> int: ...
+
+class _ChunkInfo(Protocol):
+    byte_offset: int | None
+
+class _DatasetID(Protocol):
+    def get_create_plist(self) -> _CreationProperties: ...
+    def get_chunk_info_by_coord(self, origin: tuple[int, ...]) -> _ChunkInfo: ...
+    def read_direct_chunk(self, origin: tuple[int, ...]) -> tuple[int, bytes]: ...
+
 class Dataset:
+    file: File
+    id: _DatasetID
+    compression: str | None
+    fillvalue: object
     attrs: AttributeManager
     shape: tuple[int, ...]
     chunks: tuple[int, ...] | None
@@ -43,6 +58,7 @@ class Group:
     def __delitem__(self, name: str) -> None: ...
 
 class File(Group):
+    mode: str
     def __init__(self, name: str | Path, mode: str = "r", **kwargs: object) -> None: ...
     def __enter__(self) -> File: ...
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None: ...

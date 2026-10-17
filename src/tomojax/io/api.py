@@ -20,6 +20,7 @@ from tomojax.io._datasets import (
     validate_dataset,
     validate_nxtomo,
 )
+from tomojax.io._hdf5_array import read_hdf5_array
 from tomojax.io._inspection import inspect_dataset, projection_stats
 from tomojax.io._inspection_format import format_inspection_report
 from tomojax.io._inspection_types import (
@@ -55,6 +56,7 @@ __all__ = [
     "locate_frames",
     "normalize_json",
     "projection_stats",
+    "read_hdf5_array",
     "read_json_object",
     "read_tiff_frames",
     "save_dataset",
