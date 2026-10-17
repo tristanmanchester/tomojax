@@ -19,7 +19,14 @@ import jax.numpy as jnp
 from jax.sharding import PartitionSpec
 
 from tomojax.core.backend_policy import cuda_backend
-from tomojax.core.cone import ConeModel, cone_backproject, cone_model, cone_project, use_cuda_cone
+from tomojax.core.cone import (
+    ConeModel,
+    cone_backproject,
+    cone_model,
+    cone_project,
+    cone_project_ones,
+    use_cuda_cone,
+)
 from tomojax.core.devices import VIEWS, ViewSplit, pad_views
 from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.operator_norm import unit
@@ -225,6 +232,14 @@ class _Batches:
         assert self.coefficients is not None
         return jax.lax.dynamic_slice_in_dim(self.coefficients, start, self.size)
 
+    def project_ones(self, start: jax.Array, batch: jax.Array) -> jax.Array:
+        """Project uniform unit support, retaining the ordinary weights at its boundary."""
+        if isinstance(self.model, ConeModel):
+            return cone_project_ones(
+                self._coefficients(start), self.grid, self.detector, backend=self.cone_backend
+            )
+        return self.project(jnp.ones_like(self.zeros_volume()), start, batch)
+
     def project(self, volume: jax.Array, start: jax.Array, batch: jax.Array) -> jax.Array:
         grid, detector = self.grid, self.detector
         if isinstance(self.model, ConeModel):
@@ -409,7 +424,8 @@ def subset_operators(
     without storing a predicted sinogram. Cone source arrangements and detector
     centres stay attached to their original views.
     With ``stream``, data names a registered host source. Passing ``weights=None``
-    recomputes inverse row sums from ``row_support`` per batch instead of storing them.
+    recomputes inverse row sums from ``row_support`` per batch instead of storing them;
+    ``row_support=None`` denotes uniform unit support.
     """
     size = (int(poses.shape[0]) + subsets - 1) // subsets
     chunks = (size + batch_size - 1) // batch_size
@@ -432,7 +448,7 @@ def subset_operators(
         def adjoint(images):
             return _adjoint_views(selected, (images,), None, selected.zeros_volume())
 
-        def residual_adjoint(volume, data, weights, *, row_support: jax.Array):
+        def residual_adjoint(volume, data, weights, *, row_support: jax.Array | None):
             def body(chunk, output):
                 start, batch, counts = selected.select(chunk)
                 view_ids = jax.lax.dynamic_slice_in_dim(indices, start, selected.size)
@@ -445,7 +461,11 @@ def subset_operators(
                 )
                 residual = measured - selected.project(volume, start, batch)
                 if weights is None:
-                    row = selected.project(row_support, start, batch)
+                    row = (
+                        selected.project_ones(start, batch)
+                        if row_support is None
+                        else selected.project(row_support, start, batch)
+                    )
                     residual = jnp.where(row > 0, residual / jnp.where(row > 0, row, 1.0), 0.0)
                 else:
                     residual = residual * jax.lax.dynamic_slice(

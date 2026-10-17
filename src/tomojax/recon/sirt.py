@@ -174,7 +174,10 @@ def _solve(
         _, _, residual_adjoint = select(index)
         column = column_weights(index) if columns is None else columns[index]
         gradient = residual_adjoint(
-            x, data, None if rows is None else rows[index], row_support=mask
+            x,
+            data,
+            None if rows is None else rows[index],
+            row_support=None if support is None else mask,
         )
         return constrain(x + relaxation * column * gradient)
 
@@ -183,9 +186,7 @@ def _solve(
     return jax.lax.fori_loop(0, iterations * subsets, update, initial)
 
 
-def _initial_volume(
-    value: jax.Array | np.ndarray | None, *, stream: bool
-) -> jax.Array | None:
+def _initial_volume(value: jax.Array | np.ndarray | None, *, stream: bool) -> jax.Array | None:
     """Release a streamed solve's pending initialization workspace before dispatch."""
     if value is None:
         return None

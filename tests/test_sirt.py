@@ -27,13 +27,14 @@ def test_streamed_initialization_finishes_before_solve_workspace(monkeypatch):
 
 @pytest.mark.numerical
 @pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("uniform", [False, True])
 @pytest.mark.parametrize(
     ("subsets", "acceleration", "batch"),
     [(1, False, 2), (2, False, 2), (5, False, 2), (1, True, 2), (1, False, 4)],
 )
 @pytest.mark.parametrize("kind", ["parallel", "axial", "cone", "segments"])
 def test_sirt_dense_updates_with_bounds_support_and_tail(
-    monkeypatch, subsets, acceleration, batch, kind, stream
+    monkeypatch, subsets, acceleration, batch, kind, stream, uniform
 ):
     monkeypatch.setattr(
         importlib.import_module(sirt.__module__), "should_stream", lambda *a, **k: stream
@@ -67,7 +68,8 @@ def test_sirt_dense_updates_with_bounds_support_and_tail(
     rng = np.random.default_rng(12)
     truth = rng.uniform(0.1, 0.8, size=18)
     support = np.ones(18, np.float32)
-    support[[2, 7, 13]] = 0
+    if not uniform:
+        support[[2, 7, 13]] = 0
     truth *= support
     data = matrix @ truth
     expected = np.full(18, 0.2) * support
@@ -101,7 +103,7 @@ def test_sirt_dense_updates_with_bounds_support_and_tail(
             acceleration=acceleration,
             lower_bound=0.05,
             upper_bound=0.7,
-            support=support.reshape(shape),
+            support=None if uniform else support.reshape(shape),
             views_per_batch=batch,
         ),
     )

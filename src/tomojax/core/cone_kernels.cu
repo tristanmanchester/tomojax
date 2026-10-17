@@ -162,6 +162,111 @@ extern "C" __global__ void __launch_bounds__(GU * GV) cone_forward(
     out[((long)view * nv + v) * nu + u] = sum * path_w(r0, r1, r2, ra, sx, sy, sz);
 }
 
+// Uniform-volume row normalization: exact boundary taps, counted interior planes.
+
+__device__ __forceinline__ bool box_interior(int k, float Sa, float Sb, float Sc, float inv, float rb, float rc, int nb, int nc) {
+    float t=__fmul_rn(__fsub_rn((float)k, Sa), inv);
+    float fb=__fmaf_rn(t, rb, Sb), fc=__fmaf_rn(t, rc, Sc);
+    return fb>=0.f && fb<=(float)(nb-1) && fc>=0.f && fc<=(float)(nc-1);
+}
+__device__ __forceinline__ float box_boundary(int k, float Sa, float Sb, float Sc, float inv, float rb, float rc, int nb, int nc) {
+    float t=__fmul_rn(__fsub_rn((float)k, Sa), inv);
+    float fb=__fmaf_rn(t, rb, Sb), fc=__fmaf_rn(t, rc, Sc);
+    float fb0=floorf(fb), fc0=floorf(fc);
+    int b0=(int)fb0, c0=(int)fc0;
+    float wb1=fb-fb0, wc1=fc-fc0, wb0=1.f-wb1, wc0=1.f-wc1;
+    float s0=0.f, s1=0.f;
+    if ((unsigned)b0<(unsigned)nb && (unsigned)c0<(unsigned)nc)s0=wc0;
+    if ((unsigned)b0<(unsigned)nb && (unsigned)(c0+1)<(unsigned)nc)s0+=wc1;
+    if ((unsigned)(b0+1)<(unsigned)nb && (unsigned)c0<(unsigned)nc)s1=wc0;
+    if ((unsigned)(b0+1)<(unsigned)nb && (unsigned)(c0+1)<(unsigned)nc)s1+=wc1;
+    return wb0*s0+wb1*s1;
+}
+__device__ float box_sum(const float* c, float fu, float fv, int nx, int ny, int nz) {
+    float r0, r1, r2;
+    ray_of(c, fu, fv, r0, r1, r2);
+    int a=ray_axis(r0, r1, r2), b=a==0?1:0, cc=a==2?1:2;
+    int na=SEL(a, nx, ny, nz), nb=SEL(b, nx, ny, nz), nc=SEL(cc, nx, ny, nz);
+    float ra=SEL(a, r0, r1, r2), rb=SEL(b, r0, r1, r2), rc=SEL(cc, r0, r1, r2);
+    float Sa=c[a], Sb=c[b], Sc=c[cc], inv=__frcp_rn(ra);
+    // Retain ordinary FP's outer plane bounds.
+    float lo=-1e30f, hi=1e30f;
+    float slope=rb*inv, base=Sb-Sa*slope;
+    if (fabsf(slope)<1e-12f) {
+        if (base<=-1.f||base>=(float)nb)return 0.f;
+    } else {
+        float k1=(-1.f-base)/slope, k2=((float)nb-base)/slope;
+        lo=fmaxf(lo, fminf(k1, k2));
+        hi=fminf(hi, fmaxf(k1, k2));
+    }
+    slope=rc*inv;
+    base=Sc-Sa*slope;
+    if (fabsf(slope)<1e-12f) {
+        if (base<=-1.f||base>=(float)nc)return 0.f;
+    } else {
+        float k1=(-1.f-base)/slope, k2=((float)nc-base)/slope;
+        lo=fmaxf(lo, fminf(k1, k2));
+        hi=fminf(hi, fmaxf(k1, k2));
+    }
+    int k0=max((int)floorf(fminf(fmaxf(lo, -1.f), (float)na)), 0);
+    int k1=min((int)ceilf(fminf(fmaxf(hi, -1.f), (float)na)), na-1);
+    if (k0>k1)return 0.f;
+    // Real-affine bounds only propose an interior interval. Verify both endpoints
+    // with the exact ordinary-FP rounding; monotonicity makes every middle point safe.
+    double ilo=k0, ihi=k1;
+    double ds=(double)rb*(double)inv, db=(double)Sb-(double)Sa*ds;
+    if (ds==0.) {
+        if (db<0.||db>(double)(nb-1)) {
+            ilo=1.;
+            ihi=0.;
+        }
+    } else {
+        double p=-db/ds, q=((double)(nb-1)-db)/ds;
+        ilo=fmax(ilo, fmin(p, q));
+        ihi=fmin(ihi, fmax(p, q));
+    }
+    ds=(double)rc*(double)inv;
+    db=(double)Sc-(double)Sa*ds;
+    if (ds==0.) {
+        if (db<0.||db>(double)(nc-1)) {
+            ilo=1.;
+            ihi=0.;
+        }
+    } else {
+        double p=-db/ds, q=((double)(nc-1)-db)/ds;
+        ilo=fmax(ilo, fmin(p, q));
+        ihi=fmin(ihi, fmax(p, q));
+    }
+    int first=(int)ceil(fmin(fmax(ilo, (double)k0), (double)k1+1.));
+    int last=(int)floor(fmin(fmax(ihi, (double)k0-1.), (double)k1));
+    if (ilo>ihi) {
+        first=k1+1;
+        last=k1;
+    }
+    while (first<=last&&!box_interior(first, Sa, Sb, Sc, inv, rb, rc, nb, nc))++first;
+    while (first<=last&&!box_interior(last, Sa, Sb, Sc, inv, rb, rc, nb, nc))--last;
+    float sum=0.f;
+    if (first>last) {
+        for (int k=k0;k<=k1;++k)sum+=box_boundary(k, Sa, Sb, Sc, inv, rb, rc, nb, nc);
+        return sum;
+    }
+    for (int k=k0;k<first;++k)sum+=box_boundary(k, Sa, Sb, Sc, inv, rb, rc, nb, nc);
+    sum+=(float)(last-first+1);
+    for (int k=last+1;k<=k1;++k)sum+=box_boundary(k, Sa, Sb, Sc, inv, rb, rc, nb, nc);
+    return sum;
+}
+extern "C" __global__ void cone_box_forward(const float* coeff, float* out, int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz) {
+    int j=blockIdx.y*blockDim.x+threadIdx.x;
+    if (j>=nu*nv)return;
+    int u=j%nu, v=j/nu;
+    const float* c=coeff+(long)blockIdx.x*NC;
+    float sum=box_sum(c, (float)u, (float)v, nx, ny, nz);
+    float r0, r1, r2;
+    ray_of(c, (float)u, (float)v, r0, r1, r2);
+    float ra=SEL(ray_axis(r0, r1, r2), r0, r1, r2);
+    out[(long)blockIdx.x*nu*nv+j]=sum*path_w(r0, r1, r2, ra, sx, sy, sz);
+}
+
 // Weight and transpose (view, v, u) images in coalesced 32x32 tiles,
 // recording exact nonzero pixel bounds without reading images/rays a second time.
 // Views occupy grid x so their count is not limited by CUDA grid z.

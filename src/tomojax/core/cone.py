@@ -329,6 +329,22 @@ def _launch_forward(
         )
 
 
+def _launch_box_forward(context: Any, out: Any, coeff: Any, *, grid: Grid, det: Detector) -> None:
+    import cupy as cp
+
+    with xla_stream(context, out):
+        _module().get_function("cone_box_forward")(
+            (int(coeff.shape[0]), -(-(det.nu * det.nv) // 128)),
+            (128,),
+            (
+                cp.asarray(coeff), cp.asarray(out),
+                np.int32(grid.nx), np.int32(grid.ny), np.int32(grid.nz),
+                np.int32(det.nu), np.int32(det.nv),
+                np.float32(grid.vx), np.float32(grid.vy), np.float32(grid.vz),
+            ),
+        )  # fmt: skip
+
+
 def _separable_adjoint_kernel(grid: Grid, detector: Detector) -> str:
     """Keep the wider tile for densely sampled detector-row stacks.
 
@@ -512,6 +528,29 @@ def cone_project(
     if _resolve(backend) == "cuda":
         return _forward_cuda_vjp(jnp.asarray(volume, jnp.float32), coeff, grid, detector)
     return _forward_jax(jnp.asarray(volume, jnp.float32), coeff, grid, detector)
+
+
+def cone_project_ones(
+    coeff: jax.Array,
+    grid: Grid,
+    detector: Detector,
+    *,
+    backend: str = "auto",
+) -> jax.Array:
+    """Evaluate the same projector on uniform unit support without storing a volume.
+
+    CUDA counts fully supported planes and retains ordinary sampling arithmetic
+    at the box boundary. Coefficient derivatives remain zero, as in CUDA FP.
+    """
+    if _resolve(backend) != "cuda":
+        ones = jnp.ones((grid.nx, grid.ny, grid.nz), jnp.float32)
+        return cone_project(ones, coeff, grid, detector, backend="jax")
+    call = buffer_callback(
+        partial(_launch_box_forward, grid=grid, det=detector),
+        jax.ShapeDtypeStruct((coeff.shape[0], detector.nv, detector.nu), jnp.float32),
+        vmap_method="sequential",
+    )
+    return call(jax.lax.stop_gradient(coeff).astype(jnp.float32))
 
 
 def cone_backproject(

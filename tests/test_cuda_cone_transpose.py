@@ -11,6 +11,32 @@ from tomojax.geometry import ConeBeam, ConeGeometry, Detector, Grid
 from tomojax.recon import CGLSConfig, cgls
 
 
+@pytest.mark.gpu
+@pytest.mark.parametrize("shape", [(1, 5, 3), (23, 17, 11), (501, 3, 2)])
+def test_uniform_cone_rows_keep_near_parallel_boundary_weights(shape):
+    grid, detector = Grid(*shape, 0.7, 1.1, 0.9), Detector(7, 5, 1.0, 1.0)
+    coefficients = []
+    for axis in range(3):
+        b, c = (axis + 1) % 3, (axis + 2) % 3
+        for edge in (-1.1, -0.3, 0.0, shape[b] - 1.3, shape[b] - 0.3, shape[b] + 0.1):
+            row = np.zeros(25, np.float32)
+            row[axis], row[b], row[c] = -100, edge, 0.4
+            row[3:6] = row[:3]
+            row[3 + axis] += 400
+            row[3 + b] += 1e-4
+            row[6 + b], row[9 + c] = 0.9, 0.7
+            coefficients.append(row)
+    coeff = jnp.asarray(np.stack(coefficients))
+    expected = cone_project(jnp.ones(shape), coeff, grid, detector, backend="cuda")
+    actual = cone.cone_project_ones(coeff, grid, detector, backend="cuda")
+    np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=1e-6)
+    np.testing.assert_array_equal(np.asarray(actual) == 0, np.asarray(expected) == 0)
+    gradient = jax.grad(lambda x: cone.cone_project_ones(x, grid, detector, backend="cuda").sum())(
+        coeff
+    )
+    np.testing.assert_array_equal(gradient, jnp.zeros_like(coeff))
+
+
 def _frame(direction, roll, *, reverse_v=False):
     direction = np.asarray(direction, np.float32)
     direction /= np.linalg.norm(direction)
