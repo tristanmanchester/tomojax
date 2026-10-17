@@ -82,6 +82,11 @@ def _unknown_keywords(path: Path) -> list[str]:
         target = ".".join([module, *attributes])
         try:
             parameters = inspect.signature(_resolve(module, attributes)).parameters
+        except ModuleNotFoundError as error:
+            if error.name and not error.name.startswith("tomojax"):
+                continue  # an optional dependency (torch, say) is not installed here
+            unknown.append(f"line {node.lineno}: {target} (ModuleNotFoundError)")
+            continue
         except (AttributeError, ImportError, TypeError, ValueError) as error:
             unknown.append(f"line {node.lineno}: {target} ({type(error).__name__})")
             continue

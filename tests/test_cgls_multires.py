@@ -189,6 +189,7 @@ def test_host_pyramid_stays_on_the_host_and_streams(storage, tmp_path):
 
 @pytest.mark.gpu
 def test_host_multires_avoids_jax_and_matches_the_device_workflow():
+    _require_free_gpu()
     import subprocess
     import sys
 
@@ -223,3 +224,10 @@ def test_host_multires_rejects_nonfinite_unsampled_rays(strided):
     data[0, 0, 0] = np.nan
     with pytest.raises(ValueError, match="finite"):
         cgls_multires(geometry, grid, detector, data, factors=(3, 1), iterations_per_level=(1, 1))
+
+
+def _require_free_gpu() -> None:
+    """Skip when this process already holds the GPU the subprocess needs."""
+    cupy = pytest.importorskip("cupy")
+    if cupy.cuda.runtime.memGetInfo()[0] < 1 << 30:
+        pytest.skip("the test process holds the GPU; run this test on its own")
