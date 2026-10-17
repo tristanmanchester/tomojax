@@ -62,3 +62,37 @@ def test_training_uses_projector_gradients_but_not_test_targets():
     for a, b in zip(model.parameters(), other.parameters(), strict=True):
         torch.testing.assert_close(a, b)
     assert metrics["held_out_denoised_nrmse"] != other_metrics["held_out_denoised_nrmse"]
+
+
+def test_loss_balance_is_invariant_to_attenuation_units():
+    module = example()
+    torch = pytest.importorskip("torch")
+    inputs = [torch.arange(6, dtype=torch.float32).reshape(2, 3) / 8, torch.ones(2, 3)]
+    operators = [lambda value: value * 2, lambda value: value * 3]
+    targets = [torch.full((2, 3), value) for value in (0.4, 0.7)]
+    scale = torch.tensor(2.0)
+    norm = torch.stack([target.square().mean() for target in targets]).mean()
+    weight = module.projection_loss_weight(inputs, operators, targets, scale, norm)
+    rescaled = module.projection_loss_weight(
+        inputs, operators, [target * 7 for target in targets], scale * 7, norm * 49
+    )
+    image_norm = (inputs[0] - inputs[1]).square().mean().sqrt()
+    projection_norms = []
+    for source, factor in enumerate((3, 2)):
+        gradient = (factor * inputs[source] * scale - targets[1 - source]) * factor * scale / norm
+        projection_norms.append(gradient.square().mean().sqrt())
+    projection_norm = torch.stack(projection_norms).mean()
+    torch.testing.assert_close(weight, image_norm / projection_norm)
+    torch.testing.assert_close(weight, rescaled)
+
+
+@pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=pytest.mark.gpu)])
+def test_loss_balance_is_finite_at_an_exact_fit(device):
+    module = example()
+    torch = pytest.importorskip("torch")
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA-enabled PyTorch required")
+    images = [torch.ones(2, 3, device=device)] * 2
+    scale = torch.tensor(1.0, device=device)
+    weight = module.projection_loss_weight(images, [lambda value: value] * 2, images, scale, scale)
+    assert weight == 1

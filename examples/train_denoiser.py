@@ -6,9 +6,10 @@ Example (Diamond I12, Zenodo 3339629, full-resolution 64-row NXtomo cut)::
 
 Requires a CUDA-enabled PyTorch installation alongside TomoJAX. Two disjoint
 interleaved view sets supply input and target reconstructions plus projection targets;
-a third set is held out until final evaluation. No clean training image is
-needed. This is a single-scan demonstration, not a pretrained denoiser or a
-claim of unbiased recovery: truncation, rings, geometry error and shared
+a third set is held out until final evaluation. Image and projection losses
+are balanced once using their initial image gradients, without test views.
+No clean training image is needed. This is a single-scan demonstration, not a
+pretrained denoiser or a claim of unbiased recovery: truncation, rings, geometry error and shared
 flat-field errors violate the independent-noise model. Check image quality
 against an independent reference, not only the printed projection residual.
 """
@@ -21,6 +22,10 @@ import json
 import os
 from pathlib import Path
 import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
 
 # Let JAX and PyTorch share the GPU rather than reserve most of it for JAX.
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
@@ -86,10 +91,38 @@ def prepare(path: Path, *, binning: int, every: int, center: float | None) -> tj
     return replace(scan, geometry=replace(scan.geometry, grid=grid))
 
 
+def projection_loss_weight(
+    inputs: Sequence[torch.Tensor],
+    operators: Sequence[Callable[[torch.Tensor], torch.Tensor]],
+    targets: Sequence[torch.Tensor],
+    scale: torch.Tensor,
+    normalization: torch.Tensor,
+) -> torch.Tensor:
+    """Balance the initial gradients in normalized image units, using training views only."""
+    gradients = []
+    for source, target in ((0, 1), (1, 0)):
+        estimate = inputs[source].detach().requires_grad_(True)
+        losses = (
+            (estimate - inputs[target]).square().mean(),
+            (operators[target](estimate * scale) - targets[target]).square().mean() / normalization,
+        )
+        gradients.append(
+            torch.stack(
+                [torch.autograd.grad(loss, estimate)[0].square().mean().sqrt() for loss in losses]
+            )
+        )
+    image_gradient, projection_gradient = torch.stack(gradients).mean(dim=0)
+    # An already stationary loss has no gradient scale to match.
+    active = (image_gradient > 0) & (projection_gradient > 0)
+    return torch.where(
+        active, image_gradient / projection_gradient, torch.ones_like(image_gradient)
+    )
+
+
 def train(
     scan: tj.Scan, *, steps: int, learning_rate: float
 ) -> tuple[torch.Tensor, torch.Tensor, Denoiser, dict[str, float]]:
-    """Fit independent-half image and projection relative MSE, then test once."""
+    """Fit balanced independent-half image/projection losses, then test once."""
     first, second, test = split_views(scan)
     inputs = [
         torch.from_dlpack(tj.reconstruct(part, "fbp").volume).detach() for part in (first, second)
@@ -101,6 +134,7 @@ def train(
         torch.as_tensor(np.asarray(part.projections), device="cuda") for part in (first, second)
     ]
     normalization = torch.stack([target.square().mean() for target in targets]).mean()
+    projection_weight = projection_loss_weight(inputs, operators, targets, scale, normalization)
     model = Denoiser().cuda()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     torch.cuda.synchronize()
@@ -111,12 +145,13 @@ def train(
         optimizer.zero_grad(set_to_none=True)
         estimate = model(inputs[source]) * scale
         # Noise2Inverse image supervision emphasizes high-frequency noise that
-        # a projection-only loss barely sees. Both terms are relative MSEs.
+        # a projection-only loss barely sees. Fix their image-gradient balance
+        # at the identity: relative MSEs alone do not balance their effects.
         image_loss = (estimate / scale - inputs[target]).square().mean()
         projection_loss = (
             operators[target](estimate) - targets[target]
         ).square().mean() / normalization
-        loss = image_loss + projection_loss
+        loss = image_loss + projection_weight * projection_loss
         loss.backward()  # the projector's exact transpose supplies the image gradient
         optimizer.step()
         if (step + 1) % 25 == 0:
@@ -133,6 +168,7 @@ def train(
         norm = torch.linalg.vector_norm(measured)
         metrics = {
             "train_seconds": train_seconds,
+            "projection_loss_weight": float(projection_weight),
             "held_out_baseline_nrmse": float(
                 torch.linalg.vector_norm(held_out(baseline) - measured) / norm
             ),
