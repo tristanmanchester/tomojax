@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from itertools import groupby
 from pathlib import Path
 import re
@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Literal, overload
 
 import numpy as np
 from tifffile import TiffFile
+
+from tomojax._data import FrameStack
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -50,7 +52,7 @@ def tiff_files(path: Path) -> list[Path]:
 
 
 @dataclass(frozen=True)
-class TiffFrames:
+class TiffFrames(FrameStack):
     """The pages of a TIFF stack, checked from their headers and read only as indexed.
 
     Holds no open file. A window of uncompressed pages is read through a memory map,
@@ -60,11 +62,6 @@ class TiffFrames:
     pages: tuple[tuple[Path, int], ...]  # file and page index of each frame
     maps: tuple[tuple[int, np.dtype] | None, ...]  # data offset and dtype of mappable pages
     page_shape: tuple[int, int]
-    dtype: np.dtype
-    rows: int  # the window of each page read: rows and columns from these
-    cols: int
-    first_row: int = 0
-    first_col: int = 0
     flip_rows: bool = False
 
     @classmethod
@@ -101,70 +98,25 @@ class TiffFrames:
             tuple(pages),
             tuple(maps),
             shape,
-            np.dtype(dtype),
-            shape[0],
-            shape[1],
+            frames=np.arange(len(pages)),
+            dtype=np.dtype(dtype),
+            rows=shape[0],
+            cols=shape[1],
             flip_rows=flip_rows,
         )
 
     @property
-    def shape(self) -> tuple[int, int, int]:
-        return (len(self.pages), self.rows, self.cols)
-
-    @property
-    def ndim(self) -> int:
-        return 3
-
-    @property
     def _efficient_row_windows(self) -> bool:
         """Whether a window of rows reads only those rows (every page is mappable)."""
-        return all(m is not None for m in self.maps)
+        return all(self.maps[i] is not None for i in self.frames)
 
-    def __len__(self) -> int:
-        return len(self.pages)
-
-    def frames_at(self, which: np.ndarray | slice) -> TiffFrames:
-        """The stack of these frames only (a boolean mask, indices or slice), unread."""
-        chosen = np.arange(len(self))[which]
-        return replace(
-            self,
-            pages=tuple(self.pages[i] for i in chosen),
-            maps=tuple(self.maps[i] for i in chosen),
-        )
-
-    def window(self, rows: slice, cols: slice) -> TiffFrames:
-        """The stack of this block of every frame only, unread."""
-        r0, r1, rs = rows.indices(self.rows)
-        c0, c1, cs = cols.indices(self.cols)
-        if rs != 1 or cs != 1 or r1 <= r0 or c1 <= c0:
-            raise ValueError("a window of frames is a non-empty block of rows and columns")
-        return replace(
-            self,
-            rows=r1 - r0,
-            cols=c1 - c0,
-            first_row=self.first_row + r0,
-            first_col=self.first_col + c0,
-        )
-
-    def __array__(self, dtype: np.dtype | None = None, copy: bool | None = None) -> np.ndarray:
-        """Read this stack explicitly with ``np.asarray`` (always allocates host storage)."""
-        if copy is False:
-            raise ValueError("TIFF frames cannot be converted to an array without copying")
-        return np.asarray(self[:], dtype=dtype)
-
-    def __getitem__(self, which: slice | int | np.ndarray) -> np.ndarray:
-        if isinstance(which, int | np.integer):
-            return self[np.asarray([which], np.int64)][0]
-        chosen = np.arange(len(self))[which]
-        out = np.empty((len(chosen), self.rows, self.cols), self.dtype)
-        first = (
-            self.page_shape[0] - self.first_row - self.rows if self.flip_rows else self.first_row
-        )
-        window = (
-            slice(first, first + self.rows),
-            slice(self.first_col, self.first_col + self.cols),
-        )
-        for file, group in groupby(enumerate(chosen), key=lambda item: self.pages[item[1]][0]):
+    def _read(self, indices: np.ndarray, rows: slice, cols: slice) -> np.ndarray:
+        out = np.empty((len(indices), self.rows, self.cols), self.dtype)
+        if self.flip_rows:
+            start, stop, _ = rows.indices(self.page_shape[0])
+            rows = slice(self.page_shape[0] - stop, self.page_shape[0] - start)
+        window = (rows, cols)
+        for file, group in groupby(enumerate(indices), key=lambda item: self.pages[item[1]][0]):
             with TiffFile(file) as tiff:  # one open per run of pages in a file
                 for destination, index in group:
                     mapped = self.maps[index]

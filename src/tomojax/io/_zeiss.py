@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import olefile
 
+from tomojax._data import FrameStack
 from tomojax.geometry import ConeBeam, Detector, Grid
 
 from ._datasets import ProjectionDataset
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class _ZeissFrames:
+class _ZeissFrames(FrameStack):
     """A logical window of OLE image streams, in their recorded row order.
 
     Each indexing request opens its own container; neither discovery nor
@@ -27,53 +28,10 @@ class _ZeissFrames:
 
     path: str
     streams: tuple[str, ...]
-    frames: np.ndarray
     image_shape: tuple[int, int]
-    dtype: np.dtype
-    rows: int
-    cols: int
-    first_row: int = 0
-    first_col: int = 0
 
-    @property
-    def shape(self) -> tuple[int, int, int]:
-        return len(self.frames), self.rows, self.cols
-
-    @property
-    def ndim(self) -> int:
-        return 3
-
-    def __len__(self) -> int:
-        return len(self.frames)
-
-    def frames_at(self, which: np.ndarray | slice) -> _ZeissFrames:
-        return replace(self, frames=np.asarray(self.frames[which], np.int64))
-
-    def window(self, rows: slice, cols: slice) -> _ZeissFrames:
-        r0, r1, rs = rows.indices(self.rows)
-        c0, c1, cs = cols.indices(self.cols)
-        if rs != 1 or cs != 1 or r1 <= r0 or c1 <= c0:
-            raise ValueError("a window of frames is a non-empty block of rows and columns")
-        return replace(
-            self,
-            rows=r1 - r0,
-            cols=c1 - c0,
-            first_row=self.first_row + r0,
-            first_col=self.first_col + c0,
-        )
-
-    def __array__(self, dtype: np.dtype | None = None, copy: bool | None = None) -> np.ndarray:
-        if copy is False:
-            raise ValueError("Zeiss frames cannot be converted to an array without copying")
-        return np.asarray(self[:], dtype=dtype)
-
-    def __getitem__(self, which: slice | int | np.ndarray) -> np.ndarray:
-        if isinstance(which, int | np.integer):
-            return self[np.asarray([which], np.int64)][0]
-        indices = np.asarray(self.frames[which], np.int64)
+    def _read(self, indices: np.ndarray, rows: slice, cols: slice) -> np.ndarray:
         result = np.empty((len(indices), self.rows, self.cols), self.dtype)
-        rows = slice(self.first_row, self.first_row + self.rows)
-        cols = slice(self.first_col, self.first_col + self.cols)
         with olefile.OleFileIO(self.path) as container:
             for destination, index in enumerate(indices):
                 raw = container.openstream(self.streams[index]).read()
@@ -92,7 +50,13 @@ def _stack(
     if data_type not in types:
         raise ValueError(f"unsupported Zeiss image data type {data_type}")
     return _ZeissFrames(
-        str(path.absolute()), streams, np.arange(len(streams)), shape, types[data_type], *shape
+        str(path.absolute()),
+        streams,
+        shape,
+        frames=np.arange(len(streams)),
+        dtype=types[data_type],
+        rows=shape[0],
+        cols=shape[1],
     )
 
 

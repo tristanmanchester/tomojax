@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+
+from tomojax._data import FrameStack
 
 _TYPES = {
     "UnsignedByte": "u1",
@@ -45,17 +47,12 @@ def edf_header(path: Path) -> tuple[dict[str, str], int]:
 
 
 @dataclass(frozen=True)
-class EdfFrames:
+class EdfFrames(FrameStack):
     """A lazy stack of single-image EDF files; selections hold no open handles."""
 
     files: tuple[Path, ...]
     offsets: tuple[int, ...]
     page_shape: tuple[int, int]
-    dtype: np.dtype
-    rows: int
-    cols: int
-    first_row: int = 0
-    first_col: int = 0
     _efficient_row_windows = True
 
     @classmethod
@@ -80,51 +77,19 @@ class EdfFrames:
         if not layouts or len(set(layouts)) != 1:
             raise ValueError("EDF frames must have one image size and data type")
         shape, dtype = layouts[0]
-        return cls(paths, tuple(offsets), shape, dtype, *shape)
-
-    @property
-    def shape(self) -> tuple[int, int, int]:
-        return len(self.files), self.rows, self.cols
-
-    @property
-    def ndim(self) -> int:
-        return 3
-
-    def __len__(self) -> int:
-        return len(self.files)
-
-    def frames_at(self, which: np.ndarray | slice) -> EdfFrames:
-        selected = np.arange(len(self))[which]
-        return replace(
-            self,
-            files=tuple(self.files[i] for i in selected),
-            offsets=tuple(self.offsets[i] for i in selected),
+        return cls(
+            paths,
+            tuple(offsets),
+            shape,
+            frames=np.arange(len(paths)),
+            dtype=dtype,
+            rows=shape[0],
+            cols=shape[1],
         )
 
-    def window(self, rows: slice, cols: slice) -> EdfFrames:
-        r0, r1, rs = rows.indices(self.rows)
-        c0, c1, cs = cols.indices(self.cols)
-        if rs != 1 or cs != 1 or r1 <= r0 or c1 <= c0:
-            raise ValueError("a window of frames is a non-empty block of rows and columns")
-        return replace(
-            self,
-            rows=r1 - r0,
-            cols=c1 - c0,
-            first_row=self.first_row + r0,
-            first_col=self.first_col + c0,
-        )
-
-    def __array__(self, dtype: np.dtype | None = None, copy: bool | None = None) -> np.ndarray:
-        if copy is False:
-            raise ValueError("EDF frames cannot be converted to an array without copying")
-        return np.asarray(self[:], dtype=dtype)
-
-    def __getitem__(self, which: slice | int | np.ndarray) -> np.ndarray:
-        if isinstance(which, int | np.integer):
-            return self[np.asarray([which], np.int64)][0]
-        selected = np.arange(len(self))[which]
-        result = np.empty((len(selected), self.rows, self.cols), self.dtype)
-        for destination, index in enumerate(selected):
+    def _read(self, indices: np.ndarray, rows: slice, cols: slice) -> np.ndarray:
+        result = np.empty((len(indices), self.rows, self.cols), self.dtype)
+        for destination, index in enumerate(indices):
             pixels = np.memmap(
                 self.files[index],
                 mode="r",
@@ -132,8 +97,5 @@ class EdfFrames:
                 offset=self.offsets[index],
                 shape=self.page_shape,
             )
-            result[destination] = pixels[
-                self.first_row : self.first_row + self.rows,
-                self.first_col : self.first_col + self.cols,
-            ]
+            result[destination] = pixels[rows, cols]
         return result

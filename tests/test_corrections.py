@@ -738,3 +738,28 @@ def test_nikon_calibrated_axis_and_closing_turn_are_physical_metadata(
             point = np.asarray(geometry.pose_for_view(0)) @ [0, 0, z, 1]
             hit = source + 2 * (point[:3] - source)
             np.testing.assert_allclose(hit[[0, 2]], [expected_cor, detector_height], atol=1e-12)
+
+
+@pytest.mark.parametrize("suffix", [".nxs", ".tif"])
+def test_lazy_selections_compose_without_reading_storage(tmp_path, suffix):
+    values = np.arange(5 * 6 * 9, dtype=np.uint16).reshape(5, 6, 9)
+    path = tmp_path / f"frames{suffix}"
+    angles = np.arange(5, dtype=np.float32)
+    if suffix == ".nxs":
+        _write_frames(path, values, [0] * 5, angles.tolist())
+    else:
+        tifffile.imwrite(path, values, photometric="minisblack")
+    counts = tj.load_frames(path, angles=angles).counts
+    moved = path.rename(tmp_path / "unavailable")
+    selected = counts.frames_at(np.array([True, False, True, True, False]))
+    selected = selected.window(slice(1, 6), slice(2, 9)).window(slice(1, 4), slice(1, 5))
+    selected = selected.frames_at(slice(1, None))
+    moved.rename(path)
+    expected = values[[2, 3], 2:5, 3:7]
+    np.testing.assert_array_equal(selected[-1], expected[-1])
+    np.testing.assert_array_equal(np.asarray(selected, dtype=np.float32), expected)
+    assert selected[:0].shape == (0, 3, 4)
+    with pytest.raises(ValueError, match="without copying"):
+        np.array(selected, copy=False)
+    with pytest.raises(ValueError, match="non-empty block"):
+        selected.window(slice(None, None, -1), slice(None))
