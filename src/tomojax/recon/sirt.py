@@ -166,19 +166,23 @@ def _solve(
     rows = None if stream else jax.lax.map(row_weights, jnp.arange(subsets))
     # Avoid storing a volume for every subset on large scans. The exact subset
     # normalization is then recomputed at each update, not approximated by a
-    # rescaled full-scan normalization.
+    # rescaled full-scan normalization. Cone updates share its ray geometry
+    # with the residual transpose without sharing their accumulators.
     columns = jax.lax.map(column_weights, jnp.arange(subsets)) if cache_columns else None
 
     def update(step: jax.Array, x: jax.Array) -> jax.Array:
         index = step % subsets
         _, _, residual_adjoint = select(index)
-        column = column_weights(index) if columns is None else columns[index]
-        gradient = residual_adjoint(
-            x,
-            data,
-            None if rows is None else rows[index],
-            row_support=None if support is None else mask,
-        )
+        row_weights = None if rows is None else rows[index]
+        row_support = None if support is None else mask
+        if columns is None and not axial:
+            gradient, norm = residual_adjoint(
+                x, data, row_weights, row_support=row_support, return_column=True
+            )
+            column = _inverse(norm)
+        else:
+            column = column_weights(index) if columns is None else columns[index]
+            gradient = residual_adjoint(x, data, row_weights, row_support=row_support)
         return constrain(x + relaxation * column * gradient)
 
     if acceleration:

@@ -18,6 +18,7 @@ from tomojax.core.backend_policy import cuda_backend
 from tomojax.core.cone import (
     ConeModel,
     cone_backproject,
+    cone_backproject_pair,
     cone_model,
     cone_project,
     cone_project_ones,
@@ -312,6 +313,22 @@ class _Batches:
             update = sum_backproject_views_T(batch, grid, detector, images, det_grid=self.det_grid)
         return output + update
 
+    def backproject_pair(self, images, start, batch, outputs):
+        """Two exact transposes with common batch geometry and separate accumulators."""
+        if isinstance(self.model, ConeModel):
+            return cone_backproject_pair(
+                images,
+                self._coefficients(start),
+                self.grid,
+                self.detector,
+                backend=self.cone_backend,
+                accumulate=outputs,
+            )
+        return tuple(
+            self.backproject(image, start, batch, out)
+            for image, out in zip(images, outputs, strict=True)
+        )
+
     def zeros_volume(self) -> jax.Array:
         return jnp.zeros((self.grid.nx, self.grid.ny, self.grid.nz), dtype=jnp.float32)
 
@@ -449,7 +466,9 @@ def subset_operators(
         def adjoint(images):
             return _adjoint_views(selected, (images,), None, selected.zeros_volume())
 
-        def residual_adjoint(volume, data, weights, *, row_support: jax.Array | None):
+        def residual_adjoint(
+            volume, data, weights, *, row_support: jax.Array | None = None, return_column=False
+        ):
             def body(chunk, output):
                 start, batch, counts = selected.select(chunk)
                 view_ids = jax.lax.dynamic_slice_in_dim(indices, start, selected.size)
@@ -472,11 +491,18 @@ def subset_operators(
                     residual = residual * jax.lax.dynamic_slice(
                         weights, (start, 0, 0), (selected.size, weights.shape[1], detector.nu)
                     )
-                return selected.backproject(
-                    jnp.where(counts[:, None, None], residual, 0.0), start, batch, output
-                )
+                residual = jnp.where(counts[:, None, None], residual, 0.0)
+                if return_column:
+                    ones = jnp.broadcast_to(
+                        counts[:, None, None].astype(jnp.float32), residual.shape
+                    )
+                    return selected.backproject_pair((residual, ones), start, batch, output)
+                return selected.backproject(residual, start, batch, output)
 
-            return jax.lax.fori_loop(0, selected.count, body, selected.zeros_volume())
+            initial = selected.zeros_volume()
+            return jax.lax.fori_loop(
+                0, selected.count, body, (initial, initial) if return_column else initial
+            )
 
         return forward, adjoint, residual_adjoint
 
