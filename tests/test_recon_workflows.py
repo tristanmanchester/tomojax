@@ -366,3 +366,40 @@ def test_quicklook_transfers_only_the_central_slice_of_a_device_volume():
     volume = Volume()
     assert extract_central_slice(volume).shape == (6, 7)
     assert volume.selections == [(slice(None), slice(None), 2)]
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("method", ["mlem", "sirt"])
+def test_iterative_axial_slabs_bound_the_warm_initializer(monkeypatch, method):
+    grid = Grid(8, 9, 5, 0.8, 1.1, 1.3, vol_origin=(1.3, -2.7, 2.5 - 4 * 1.3 / 2))
+    detector = Detector(12, 5, 0.8, 1.3, (0.2, 2.5))
+    geometry = ParallelGeometry(grid, detector, np.linspace(0, 180, 31, endpoint=False))
+    truth = np.random.default_rng(17).uniform(size=(8, 9, 5)).astype(np.float32)
+    scan = tj.Scan(np.asarray(tj.project(geometry, truth)), geometry)
+    support = np.ones((8, 9, 5), bool)
+    support[0] = False
+    settings = (
+        {"support": support[:, :, :1]}
+        if method == "mlem"
+        else {
+            "support": support,
+            "lower_bound": 0,
+            "upper_bound": 2,
+        }
+    )
+    cfg = api.method_config(method, iterations=2, subsets=3, **settings)
+    expected = np.asarray(tj.reconstruct(scan, method, config=cfg, warm_start=True).volume)
+    per_row = 4 * (8 * 9 * 6 + 31 * 12 * 2)
+    monkeypatch.setattr(tj.backends, "device_free_memory_bytes", lambda: 5 * per_row)
+    warm = importlib.import_module("tomojax.recon._warm_start")
+    initialize, seen = warm.fbp_start, []
+
+    def bounded_initializer(geometry, grid, *args, **kwargs):
+        seen.append(grid.nz)
+        return initialize(geometry, grid, *args, **kwargs)
+
+    monkeypatch.setattr(warm, "fbp_start", bounded_initializer)
+    actual = tj.reconstruct(scan, method, config=cfg, warm_start=True)
+    assert seen == [2, 2, 1]
+    assert isinstance(actual.volume, np.ndarray)
+    np.testing.assert_allclose(actual.volume, expected, rtol=2e-5, atol=2e-6)
