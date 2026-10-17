@@ -165,11 +165,12 @@ extern "C" __global__ void __launch_bounds__(GU * GV) cone_forward(
 // Weight and transpose (view, v, u) images in coalesced 32x32 tiles,
 // recording exact nonzero pixel bounds without reading images/rays a second time.
 // Views occupy grid x so their count is not limited by CUDA grid z.
-extern "C" __global__ void weight_images_boxes_tiled(
-    const float* __restrict__ coeff, const float* __restrict__ img, float* __restrict__ out,
+template <int RHS>
+__device__ __forceinline__ void weight_images_boxes(
+    const float* __restrict__ coeff, const float* __restrict__ img, const float* __restrict__ img1, float* __restrict__ out,
     int nviews, int nu, int nv, float sx, float sy, float sz, int* __restrict__ partial)
 {
-    __shared__ float tile[32][33];
+    __shared__ float tile[RHS][32][33];
     __shared__ int warp_boxes[8][12];
     int view = blockIdx.x;
     const float* c = coeff + (long)view * NC;
@@ -185,10 +186,14 @@ extern "C" __global__ void weight_images_boxes_tiled(
             float r0, r1, r2; ray_of(c, (float)u, (float)v, r0, r1, r2);
             int a = ray_axis(r0, r1, r2);
             float ra = SEL(a, r0, r1, r2);
-            float value = img[((long)view * nv + v) * nu + u] * path_w(r0, r1, r2, ra, sx, sy, sz);
-            tile[threadIdx.y + j][threadIdx.x] = value;
+            float weight = path_w(r0, r1, r2, ra, sx, sy, sz);
+            long pixel = ((long)view * nv + v) * nu + u;
+            float value = img[pixel] * weight;
+            float value1 = RHS == 2 ? img1[pixel] * weight : 0.f;
+            tile[0][threadIdx.y + j][threadIdx.x] = value;
+            if (RHS == 2) tile[1][threadIdx.y + j][threadIdx.x] = value1;
             // Exact-zero contributions need no footprint, including shifted-batch padding.
-            if (value != 0.f) {
+            if (value != 0.f || value1 != 0.f) {
                 #pragma unroll
                 for (int q = 0; q < 3; ++q) if (q == a) {
                     lo[q][0] = min(lo[q][0], u); hi[q][0] = max(hi[q][0], u);
@@ -221,9 +226,26 @@ extern "C" __global__ void weight_images_boxes_tiled(
     #pragma unroll
     for (int j = 0; j < 32; j += 8) {
         int uo = u0 + j;
-        if (uo < nu && vo < nv)
-            out[((long)view * nu + uo) * nv + vo] = tile[threadIdx.x][threadIdx.y + j];
+        if (uo < nu && vo < nv) {
+            long pixel = ((long)view * nu + uo) * nv + vo;
+            float value = tile[0][threadIdx.x][threadIdx.y + j];
+            if (RHS == 2)
+                out[pixel + (long)nviews * nu * nv] = tile[1][threadIdx.x][threadIdx.y + j];
+            out[pixel] = value;
+        }
     }
+}
+extern "C" __global__ void weight_images_boxes_tiled(
+    const float* __restrict__ coeff, const float* __restrict__ img, float* __restrict__ out,
+    int nviews, int nu, int nv, float sx, float sy, float sz, int* __restrict__ partial)
+{
+    weight_images_boxes<1>(coeff, img, nullptr, out, nviews, nu, nv, sx, sy, sz, partial);
+}
+extern "C" __global__ void pair_weight_images_boxes_tiled(
+    const float* __restrict__ coeff, const float* __restrict__ img, const float* __restrict__ img1, float* __restrict__ out,
+    int nviews, int nu, int nv, float sx, float sy, float sz, int* __restrict__ partial)
+{
+    weight_images_boxes<2>(coeff, img, img1, out, nviews, nu, nv, sx, sy, sz, partial);
 }
 extern "C" __global__ void reduce_axis_boxes_tiled(
     const int* __restrict__ partial, int* __restrict__ boxes, int ntiles, int nu, int nv)
@@ -379,12 +401,13 @@ __device__ __forceinline__ void add4(float* p0, float x0, float* p1, float x1, f
 // current crossing in registers and adds them to the tile only as it moves on. img is
 // path-weighted; nviews <= VMAX.
 #define VMAX 32
-template <int PC>
+template <int PC, int RHS = 1>
 __device__ __forceinline__ void plane_tile(
     const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
-    const float* __restrict__ img, float* __restrict__ vol, int nx, int ny, int nz, int nu, int nv)
+    const float* __restrict__ img, float* __restrict__ vol, int nx, int ny, int nz, int nu, int nv,
+    float* __restrict__ vol1 = nullptr, const float* __restrict__ img1 = nullptr)
 {
-    __shared__ float acc[PB + 2][PC + 3];  // a cell of padding round the tile: no bounds tests
+    __shared__ float acc[RHS][PB + 2][PC + 3];  // a cell of padding round the tile: no bounds tests
     __shared__ float cf[VMAX][12];  // source, detector origin, u and v axes
     __shared__ int foot[VMAX][4];   // first column and row, rows, runs per column
     __shared__ int first[VMAX + 1]; // each view's first run in the block's list
@@ -393,7 +416,7 @@ __device__ __forceinline__ void plane_tile(
     int c0 = blockIdx.x * PC, b0 = blockIdx.y * PB, k = blockIdx.z;
     int nb0 = min(PB, nb - b0), nc0 = min(PC, nc - c0);
     if (!any_view(coeff, axis_box, nviews, a, false)) return;
-    for (int i = threadIdx.x; i < (PB + 2) * (PC + 3); i += blockDim.x) (&acc[0][0])[i] = 0.f;
+    for (int i = threadIdx.x; i < RHS * (PB + 2) * (PC + 3); i += blockDim.x) (&acc[0][0][0])[i] = 0.f;
     int t = threadIdx.x, runs_here = 0;
     if (t < nviews) {
         const float* c = coeff + (long)t * NC;
@@ -482,12 +505,16 @@ __device__ __forceinline__ void plane_tile(
         float rb = __fmaf_rn(fu, c[7], c[4]);
         float rc = __fmaf_rn(fu, c[8], c[5]);
         const float* col = image + (long)u * nv;
+        const float* col1 = RHS == 2 ? img1 + ((long)w * nu + u) * nv : nullptr;
         int cb = -100, ccj = -100;
-        float x00 = 0.f, x01 = 0.f, x10 = 0.f, x11 = 0.f;
+        float x00[RHS] = {}, x01[RHS] = {}, x10[RHS] = {}, x11[RHS] = {};
         // Load the run's pixels together: one wait for memory instead of VRUN.
-        float values[VRUN];
+        float values[RHS][VRUN];
         #pragma unroll
-        for (int i = 0; i < VRUN; ++i) values[i] = v0 + i < v1 ? __ldg(col + v0 + i) : 0.f;
+        for (int i = 0; i < VRUN; ++i) {
+            values[0][i] = v0 + i < v1 ? __ldg(col + v0 + i) : 0.f;
+            if (RHS == 2) values[1][i] = v0 + i < v1 ? __ldg(col1 + v0 + i) : 0.f;
+        }
         // The run's crossings of plane k first, independent of each other, so their
         // divisions overlap; then their cells, in order.
         float fbs[VRUN], fcs[VRUN];
@@ -511,23 +538,32 @@ __device__ __forceinline__ void plane_tile(
             float fb0 = floorf(fb), fc0 = floorf(fc);
             int jb = (int)fb0 - b0, jc = (int)fc0 - c0;
             if (jb < -1 || jb >= PB || jc < -1 || jc >= PC) continue;
-            float value = values[i];
             float wb1 = fb - fb0, wc1 = fc - fc0, wb0 = 1.f - wb1, wc0 = 1.f - wc1;
             if (jb != cb || jc != ccj) {
-                float* cell = &acc[cb + 1][ccj + 1];
                 bool next = jb == cb && jc == ccj + 1;
-                add4(cell, x00, cell + 1, next ? 0.f : x01,
-                     cell + (PC + 3), x10, cell + (PC + 4), next ? 0.f : x11);
-                x00 = next ? x01 : 0.f; x10 = next ? x11 : 0.f;
-                x01 = x11 = 0.f;
+                #pragma unroll
+                for (int r = 0; r < RHS; ++r) {
+                    float* cell = &acc[r][cb + 1][ccj + 1];
+                    add4(cell, x00[r], cell + 1, next ? 0.f : x01[r],
+                         cell + (PC + 3), x10[r], cell + (PC + 4), next ? 0.f : x11[r]);
+                    x00[r] = next ? x01[r] : 0.f; x10[r] = next ? x11[r] : 0.f;
+                    x01[r] = x11[r] = 0.f;
+                }
                 cb = jb; ccj = jc;
             }
-            x00 += value * wb0 * wc0; x01 += value * wb0 * wc1;
-            x10 += value * wb1 * wc0; x11 += value * wb1 * wc1;
+            #pragma unroll
+            for (int r = 0; r < RHS; ++r) {
+                float value = values[r][i];
+                x00[r] += value * wb0 * wc0; x01[r] += value * wb0 * wc1;
+                x10[r] += value * wb1 * wc0; x11[r] += value * wb1 * wc1;
+            }
         }
         if (cb > -100) {
-            float* cell = &acc[cb + 1][ccj + 1];
-            add4(cell, x00, cell + 1, x01, cell + (PC + 3), x10, cell + (PC + 4), x11);
+            #pragma unroll
+            for (int r = 0; r < RHS; ++r) {
+                float* cell = &acc[r][cb + 1][ccj + 1];
+                add4(cell, x00[r], cell + 1, x01[r], cell + (PC + 3), x10[r], cell + (PC + 4), x11[r]);
+            }
         }
     }
     __syncthreads();
@@ -535,8 +571,11 @@ __device__ __forceinline__ void plane_tile(
     long sa = SEL(a, s0, s1, 1L), sb = SEL(b, s0, s1, 1L), sc = SEL(cc, s0, s1, 1L);
     for (int i = threadIdx.x; i < PB * PC; i += blockDim.x) {
         int jb = i / PC, jc = i % PC;
-        if (jb < nb0 && jc < nc0)
-            vol[(long)k * sa + (long)(b0 + jb) * sb + (long)(c0 + jc) * sc] += acc[jb + 1][jc + 1];
+        if (jb < nb0 && jc < nc0) {
+            long offset = (long)k * sa + (long)(b0 + jb) * sb + (long)(c0 + jc) * sc;
+            vol[offset] += acc[0][jb + 1][jc + 1];
+            if (RHS == 2) vol1[offset] += acc[1][jb + 1][jc + 1];
+        }
     }
 }
 
@@ -775,4 +814,14 @@ extern "C" __global__ void sep_adjoint_cached(
         #pragma unroll
         for (int j = 0; j < TC / 4; ++j) if (c0 + my_c + j < nz) vol[base + j] += acc[j];
     }
+}
+
+// Two independent right-hand sides share ray coordinates; narrower tiles retain occupancy.
+extern "C" __global__ void __launch_bounds__(128, 8) pair_plane_adjoint(
+    const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
+    const float* __restrict__ img, const float* __restrict__ img1,
+    float* __restrict__ vol, float* __restrict__ vol1,
+    int nx, int ny, int nz, int nu, int nv)
+{
+    plane_tile<32, 2>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv, vol1, img1);
 }

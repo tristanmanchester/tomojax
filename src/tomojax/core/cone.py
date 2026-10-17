@@ -340,6 +340,40 @@ def _separable_adjoint_kernel(grid: Grid, detector: Detector) -> str:
     return "sep_adjoint" if detector.nv > row_ratio * grid.nz else "sep_adjoint_cached"
 
 
+def _weighted_images(
+    module: Any, coeff: Any, images: tuple[Any, ...], grid: Grid, det: Detector
+) -> tuple[Any, Any]:
+    import cupy as cp
+
+    views = int(coeff.shape[0])
+    paired = len(images) == 2
+    shape = ((2,) if paired else ()) + (views, det.nu, det.nv)
+    weighted = cp.empty(shape, cp.float32)  # optional channel, then (view, u, v)
+    tiles_u, tiles_v = -(-det.nu // 32), -(-det.nv // 32)
+    ntiles = tiles_u * tiles_v
+    # The first `views` entries are the final boxes; with several tiles per
+    # view the rest holds each tile's bounds. One tile writes its box directly.
+    boxes = cp.empty((views * (ntiles + 1 if ntiles > 1 else 1), 3, 4), cp.int32)
+    partial = boxes[views:] if ntiles > 1 else boxes
+    kernel = "pair_weight_images_boxes_tiled" if paired else "weight_images_boxes_tiled"
+    module.get_function(kernel)(
+        (views, tiles_u, tiles_v),
+        (32, 8),
+        (
+            coeff, *(cp.asarray(image) for image in images), weighted,
+            np.int32(views), np.int32(det.nu), np.int32(det.nv),
+            np.float32(grid.vx), np.float32(grid.vy), np.float32(grid.vz), partial,
+        ),
+    )  # fmt: skip
+    if ntiles > 1:
+        module.get_function("reduce_axis_boxes_tiled")(
+            (views,),
+            (32, 12),
+            (partial, boxes, np.int32(ntiles), np.int32(det.nu), np.int32(det.nv)),
+        )
+    return weighted, boxes[:views]
+
+
 def _launch_adjoint(
     context: Any, out: Any, coeff: Any, images: Any, accumulate: Any, *, grid: Grid, det: Detector
 ) -> None:
@@ -353,27 +387,7 @@ def _launch_adjoint(
         if target.data.ptr != initial.data.ptr:
             target[...] = initial
         coeff, images = cp.asarray(coeff), cp.asarray(images)
-        weighted = cp.empty((views, det.nu, det.nv), cp.float32)  # (view, u, v)
-        tiles_u, tiles_v = -(-det.nu // 32), -(-det.nv // 32)
-        ntiles = tiles_u * tiles_v
-        # The first `views` entries are the final boxes; with several tiles per
-        # view the rest holds each tile's bounds. One tile writes its box directly.
-        boxes = cp.empty((views * (ntiles + 1 if ntiles > 1 else 1), 3, 4), cp.int32)
-        partial = boxes[views:] if ntiles > 1 else boxes
-        module.get_function("weight_images_boxes_tiled")(
-            (views, tiles_u, tiles_v),
-            (32, 8),
-            (
-                coeff, images, weighted, np.int32(views), np.int32(det.nu), np.int32(det.nv),
-                np.float32(grid.vx), np.float32(grid.vy), np.float32(grid.vz), partial,
-            ),
-        )  # fmt: skip
-        if ntiles > 1:
-            module.get_function("reduce_axis_boxes_tiled")(
-                (views,),
-                (32, 12),
-                (partial, boxes, np.int32(ntiles), np.int32(det.nu), np.int32(det.nv)),
-            )
+        weighted, boxes = _weighted_images(module, coeff, (images,), grid, det)
         sizes = (grid.nx, grid.ny, grid.nz, det.nu, det.nv)
         dims = tuple(np.int32(x) for x in sizes)
         extent = (grid.nx, grid.ny, grid.nz)
@@ -397,6 +411,61 @@ def _launch_adjoint(
                     (-(-nc // tile_c), -(-nb // 32), extent[axis]),
                     (128,),
                     (*part, np.int32(axis), i_part, target, *dims),
+                )
+
+
+def _launch_adjoint_pair(
+    context: Any,
+    out: Any,
+    coeff: Any,
+    images0: Any,
+    images1: Any,
+    initial0: Any,
+    initial1: Any,
+    *,
+    grid: Grid,
+    det: Detector,
+) -> None:
+    import cupy as cp
+
+    module = _module()
+    with xla_stream(context, out[0]):
+        targets = tuple(cp.asarray(value) for value in out)
+        for target, value in zip(targets, (initial0, initial1), strict=True):
+            initial = cp.asarray(value)
+            if target.data.ptr != initial.data.ptr:
+                target[...] = initial
+        coeff = cp.asarray(coeff)
+        weighted, boxes = _weighted_images(module, coeff, (images0, images1), grid, det)
+        # Channel-major planes also feed the original separable kernels without copies.
+        separate = (weighted[0], weighted[1])
+        separable = module.get_function(_separable_adjoint_kernel(grid, det))
+        dims = tuple(np.int32(x) for x in (grid.nx, grid.ny, grid.nz, det.nu, det.nv))
+        extent = (grid.nx, grid.ny, grid.nz)
+        views = int(coeff.shape[0])
+        for start in range(0, views, _VIEW_CHUNK):
+            count = min(_VIEW_CHUNK, views - start)
+            part = (coeff[start : start + count], boxes[start : start + count], np.int32(count))
+            for axis in (0, 1):
+                shape = (-(-grid.nz // 64), -(-extent[1 - axis] // 64), extent[axis])
+                for image, target in zip(separate, targets, strict=True):
+                    separable(
+                        shape,
+                        (256,),
+                        (*part, np.int32(axis), image[start : start + count], target, *dims),
+                    )
+            for axis in (0, 1, 2):
+                nb, nc = (extent[i] for i in range(3) if i != axis)
+                module.get_function("pair_plane_adjoint")(
+                    (-(-nc // 32), -(-nb // 32), extent[axis]),
+                    (128,),
+                    (
+                        *part,
+                        np.int32(axis),
+                        *(image[start : start + count] for image in separate),
+                        *targets,
+                        *dims,
+                    ),
                 )
 
 
@@ -535,8 +604,40 @@ def cone_backproject(
     return _adjoint_jax(images, coeff, grid, detector, initial)
 
 
+def cone_backproject_pair(
+    images: tuple[jax.Array, jax.Array],
+    coeff: jax.Array,
+    grid: Grid,
+    detector: Detector,
+    *,
+    backend: str = "auto",
+    accumulate: tuple[jax.Array, jax.Array] | None = None,
+) -> tuple[jax.Array, jax.Array]:
+    """Two exact transposes sharing CUDA ray geometry, with independent accumulators."""
+    initial = (
+        (jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32),) * 2
+        if accumulate is None
+        else accumulate
+    )
+    if _resolve(backend) != "cuda":
+        first, second = (
+            cone_backproject(image, coeff, grid, detector, backend="jax", accumulate=value)
+            for image, value in zip(images, initial, strict=True)
+        )
+        return first, second
+    shape = jax.ShapeDtypeStruct((grid.nx, grid.ny, grid.nz), jnp.float32)
+    call = buffer_callback(
+        partial(_launch_adjoint_pair, grid=grid, det=detector),
+        (shape, shape),
+        input_output_aliases={3: 0, 4: 1},
+        vmap_method="sequential",
+    )
+    return call(coeff, *(jnp.asarray(x, jnp.float32) for x in (*images, *initial)))
+
+
 __all__ = [
     "cone_backproject",
+    "cone_backproject_pair",
     "cone_coefficients",
     "cone_project",
     "use_cuda_cone",
