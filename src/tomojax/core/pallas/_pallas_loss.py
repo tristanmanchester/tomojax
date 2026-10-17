@@ -28,10 +28,10 @@ from ._pallas_config import (
     _validate_public_sinogram_call,
     pallas_projector_actual_sinogram_variant_metadata,
 )
+from ._pallas_inline_call import inline_projector_call
 from ._pallas_kernels import (
     _projector_loss_grad_kernel,
     _projector_parallel_z_views_kernel,
-    _projector_residual_sse_kernel,
 )
 from ._pallas_stack_call import forward_project_residual_sse_T_pallas_with_state
 from ._pallas_stack_state import prepare_forward_project_views_T_pallas_state
@@ -468,8 +468,8 @@ def forward_project_residual_sse_T_pallas(
         )
 
     vol_origin = grid_volume_origin(grid)
-    kernel = functools.partial(
-        _projector_residual_sse_kernel,
+    call = inline_projector_call(
+        n_views=n_views,
         nx=nx,
         ny=ny,
         nz=nz,
@@ -492,23 +492,11 @@ def forward_project_residual_sse_T_pallas(
         kernel_variant_id=int(kernel_variant_id),
         layout_variant_id=int(layout_variant_id),
         unroll=unroll,
+        num_warps=int(num_warps_value),
+        interpret=bool(interpret),
+        residual=True,
     )
-    tile_grid_v = math.ceil(nv / tile_v)
-    tile_grid_u = math.ceil(nu / tile_u)
-    partials = pl.pallas_call(
-        kernel,
-        out_shape=jax.ShapeDtypeStruct((n_views, tile_grid_v, tile_grid_u), jnp.float32),
-        grid=(n_views, tile_grid_v, tile_grid_u),
-        in_specs=[
-            pl.no_block_spec,
-            pl.no_block_spec,
-            pl.no_block_spec,
-        ],
-        out_specs=pl.BlockSpec((1, 1, 1), lambda view, pv, pu: (view, pv, pu)),
-        interpret=interpret,
-        compiler_params=plt.CompilerParams(num_warps=num_warps_value),
-        name="tomojax_forward_project_residual_sse_T_pallas",
-    )(
+    partials = call(
         jnp.asarray(T_stack, dtype=jnp.float32),
         _prepare_volume_for_pallas_gather(volume, gather_dtype),
         jnp.asarray(target, dtype=jnp.float32),

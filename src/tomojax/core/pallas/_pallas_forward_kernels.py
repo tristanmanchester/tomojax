@@ -17,6 +17,7 @@ from ._pallas_sampling import _trilinear_load_z_integer
 def _projector_kernel(
     T_ref: Any,
     volume_ref: Any,
+    target_ref: Any | None,
     out_ref: Any,
     *,
     nx: int,
@@ -72,13 +73,19 @@ def _projector_kernel(
         n_steps=n_steps,
         kernel_variant_id=kernel_variant_id,
         unroll=unroll,
-        mask_detector=True,
+        mask_detector=target_ref is None,
     )
-    if layout_variant_id == _LAYOUT_VARIANT_IDS["detector_uv"]:
-        acc, in_detector = acc.T, in_detector.T
-    if stacked:
-        acc, in_detector = acc[jnp.newaxis, :, :], in_detector[jnp.newaxis, :, :]
-    plt.store(out_ref, acc.astype(jnp.float32), mask=in_detector)
+    if target_ref is None:
+        if layout_variant_id == _LAYOUT_VARIANT_IDS["detector_uv"]:
+            acc, in_detector = acc.T, in_detector.T
+        if stacked:
+            acc, in_detector = acc[jnp.newaxis, :, :], in_detector[jnp.newaxis, :, :]
+        plt.store(out_ref, acc.astype(jnp.float32), mask=in_detector)
+    else:
+        view_idx = pl.program_id(0)
+        target = plt.load(target_ref.at[view_idx, det_v, det_u], mask=in_detector, other=0.0)
+        residual = jnp.where(in_detector, acc.astype(jnp.float32) - target.astype(jnp.float32), 0.0)
+        out_ref[0, 0, 0] = jnp.sum(residual * residual).astype(jnp.float32)
 
 
 def _projector_parallel_z_views_kernel(

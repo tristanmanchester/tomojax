@@ -45,8 +45,8 @@
     "src/tomojax/cli/simulate.py::_build_parser": 158,
     "src/tomojax/core/pallas/_pallas_adjoint_kernels.py::_projector_loss_grad_kernel": 107,
     "src/tomojax/core/pallas/_pallas_forward_kernels.py::_projector_parallel_z_views_kernel": 107,
-    "src/tomojax/core/pallas/_pallas_loss.py::forward_project_residual_sse_T_pallas": 131,
-    "src/tomojax/core/pallas/_pallas_single_view.py::forward_project_view_T_pallas": 111,
+    "src/tomojax/core/pallas/_pallas_loss.py::forward_project_residual_sse_T_pallas": 119,
+    "src/tomojax/core/pallas/_pallas_single_view.py::forward_project_view_T_pallas": 102,
     "src/tomojax/core/pallas/_pallas_stack_bind.py::forward_project_views_T_pallas": 101,
     "src/tomojax/core/pallas/_pallas_stack_state.py::prepare_forward_project_views_T_pallas_state": 109,
     "src/tomojax/core/pallas/_pallas_trilinear.py::_kernel": 123,
@@ -118,7 +118,7 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "type_errors": {
-    "reportArgumentType": 292,
+    "reportArgumentType": 284,
     "reportAssignmentType": 2,
     "reportAttributeAccessIssue": 161,
     "reportCallIssue": 13,
@@ -129,7 +129,7 @@
     "reportOptionalCall": 2,
     "reportOptionalMemberAccess": 8,
     "reportOptionalSubscript": 1,
-    "reportPrivateUsage": 96,
+    "reportPrivateUsage": 95,
     "reportRedeclaration": 1,
     "reportReturnType": 20,
     "reportTypedDictNotRequiredAccess": 5

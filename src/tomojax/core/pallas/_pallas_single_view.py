@@ -30,7 +30,7 @@ from ._pallas_config import (
     _validate_public_call,
     pallas_projector_actual_variant_metadata,
 )
-from ._pallas_kernels import _projector_kernel
+from ._pallas_inline_call import inline_projector_call
 from ._pallas_ray_geometry import detector_tile
 from ._pallas_ray_integral import integrate_rays
 
@@ -403,8 +403,8 @@ def forward_project_view_T_pallas(
             unroll=unroll,
         )
     vol_origin = grid_volume_origin(grid)
-    kernel = functools.partial(
-        _projector_kernel,
+    call = inline_projector_call(
+        n_views=None,
         nx=nx,
         ny=ny,
         nz=nz,
@@ -427,21 +427,12 @@ def forward_project_view_T_pallas(
         kernel_variant_id=int(kernel_variant_id),
         layout_variant_id=int(layout_variant_id),
         unroll=unroll,
+        num_warps=int(num_warps_value),
+        interpret=bool(interpret),
+        residual=False,
     )
-    grid_shape = (math.ceil(nv / tile_v), math.ceil(nu / tile_u))
-    return pl.pallas_call(
-        kernel,
-        out_shape=jax.ShapeDtypeStruct((nv, nu), jnp.float32),
-        grid=grid_shape,
-        in_specs=[
-            pl.no_block_spec,
-            pl.no_block_spec,
-        ],
-        out_specs=pl.BlockSpec((tile_v, tile_u), lambda pv, pu: (pv, pu)),
-        interpret=interpret,
-        compiler_params=plt.CompilerParams(num_warps=num_warps_value),
-        name="tomojax_forward_project_view_T_pallas",
-    )(
+    return call(
         jnp.asarray(T, dtype=jnp.float32),
         _prepare_volume_for_pallas_gather(volume, gather_dtype),
+        None,
     )

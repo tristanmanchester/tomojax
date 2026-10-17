@@ -1,12 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-import functools
-import math
-
-import jax
-from jax.experimental import pallas as pl
-from jax.experimental.pallas import triton as plt
 import jax.numpy as jnp
 
 from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
@@ -20,7 +13,7 @@ from ._pallas_config import (
     _unsupported,
     _validate_public_sinogram_call,
 )
-from ._pallas_kernels import _projector_kernel
+from ._pallas_inline_call import inline_projector_call
 from ._pallas_stack_call import (
     forward_project_residual_sse_T_pallas_with_state,
     forward_project_views_T_pallas_with_state,
@@ -243,7 +236,7 @@ def forward_project_views_T_pallas(
             unroll=unroll,
         )
     vol_origin = grid_volume_origin(grid)
-    call = _cached_projector_views_pallas_call(
+    return inline_projector_call(
         nx=nx,
         ny=ny,
         nz=nz,
@@ -269,82 +262,8 @@ def forward_project_views_T_pallas(
         layout_variant_id=int(layout_variant_id),
         unroll=unroll,
         interpret=bool(interpret),
-    )
-    return call(
+    )(
         jnp.asarray(T_stack, dtype=jnp.float32),
         _prepare_volume_for_pallas_gather(volume, gather_dtype),
-    )
-
-
-@functools.lru_cache(maxsize=32)
-def _cached_projector_views_pallas_call(
-    *,
-    nx: int,
-    ny: int,
-    nz: int,
-    nv: int,
-    nu: int,
-    n_views: int,
-    du: float,
-    dv: float,
-    det_center_x: float,
-    det_center_z: float,
-    vol_origin_x: float,
-    vol_origin_y: float,
-    vol_origin_z: float,
-    vx: float,
-    vy: float,
-    vz: float,
-    step_size: float,
-    n_steps: int,
-    tile_v: int,
-    tile_u: int,
-    num_warps: int,
-    kernel_variant_id: int,
-    layout_variant_id: int,
-    unroll: int | None,
-    interpret: bool,
-) -> Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]:
-    kernel = functools.partial(
-        _projector_kernel,
-        stacked=True,
-        nx=int(nx),
-        ny=int(ny),
-        nz=int(nz),
-        nu=int(nu),
-        nv=int(nv),
-        du=float(du),
-        dv=float(dv),
-        det_center_x=float(det_center_x),
-        det_center_z=float(det_center_z),
-        vol_origin_x=float(vol_origin_x),
-        vol_origin_y=float(vol_origin_y),
-        vol_origin_z=float(vol_origin_z),
-        vx=float(vx),
-        vy=float(vy),
-        vz=float(vz),
-        step_size=float(step_size),
-        n_steps=int(n_steps),
-        tile_v=int(tile_v),
-        tile_u=int(tile_u),
-        kernel_variant_id=int(kernel_variant_id),
-        layout_variant_id=int(layout_variant_id),
-        unroll=unroll,
-    )
-    grid_shape = (int(n_views), math.ceil(int(nv) / int(tile_v)), math.ceil(int(nu) / int(tile_u)))
-    return pl.pallas_call(
-        kernel,
-        out_shape=jax.ShapeDtypeStruct((int(n_views), int(nv), int(nu)), jnp.float32),
-        grid=grid_shape,
-        in_specs=[
-            pl.no_block_spec,
-            pl.no_block_spec,
-        ],
-        out_specs=pl.BlockSpec(
-            (1, int(tile_v), int(tile_u)),
-            lambda view, pv, pu: (view, pv, pu),
-        ),
-        interpret=bool(interpret),
-        compiler_params=plt.CompilerParams(num_warps=int(num_warps)),
-        name="tomojax_forward_project_views_T_pallas",
+        None,
     )

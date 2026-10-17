@@ -278,3 +278,36 @@ def test_prepared_single_view_reuses_launch_without_capturing_ray_arrays(caplog)
             actual = pallas.forward_project_view_T_pallas_with_state(state, volume, interpret=True)
             np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=1e-5)
         assert not any("Compiling jit(" in record.message for record in caplog.records)
+
+
+@pytest.mark.parametrize("kind", ["single", "stack", "sse"])
+def test_inline_launch_reuses_compilation_with_new_poses(kind, caplog) -> None:
+    grid, detector = Grid(4, 4, 3, 1, 1, 1), Detector(5, 3, 1, 1)
+    poses = jnp.broadcast_to(jnp.eye(4, dtype=jnp.float32), (2, 4, 4))
+    volume = jnp.arange(48, dtype=jnp.float32).reshape(4, 4, 3)
+    target = jnp.ones((2, 3, 5), dtype=jnp.float32)
+    options = pallas.PallasProjectorOptions(interpret=True, tile_shape=(2, 4), num_warps=1)
+
+    def project(t):
+        if kind == "single":
+            return pallas.forward_project_view_T_pallas(
+                t[0], grid, detector, volume, options=options
+            )
+        if kind == "stack":
+            return pallas.forward_project_views_T_pallas(t, grid, detector, volume, options=options)
+        return pallas.forward_project_residual_sse_T_pallas(
+            t, grid, detector, volume, target, options=options
+        )
+
+    for _ in range(2):
+        jax.block_until_ready(project(poses))
+    shifted = poses.at[0, 0, 3].set(0.6)
+    reference = jax.vmap(lambda t: forward_project_view_T(t, grid, detector, volume))(shifted)
+    expected = reference[0] if kind == "single" else reference
+    if kind == "sse":
+        expected = jnp.sum((reference - target) ** 2)
+    caplog.clear()
+    with jax.log_compiles(True), caplog.at_level("WARNING"):
+        actual = project(shifted)
+        np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=1e-5)
+    assert not any("Compiling jit(" in record.message for record in caplog.records)
