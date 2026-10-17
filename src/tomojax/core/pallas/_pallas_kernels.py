@@ -10,7 +10,6 @@ from ._pallas_adjoint_kernels import (
 from ._pallas_forward_kernels import (
     _projector_kernel,
     _projector_parallel_z_views_kernel,
-    _projector_views_kernel,
 )
 from ._pallas_sampling import (
     _trilinear_atomic_add,
@@ -25,7 +24,6 @@ __all__ = [
     "_projector_loss_grad_kernel",
     "_projector_parallel_z_views_kernel",
     "_projector_residual_sse_kernel",
-    "_projector_views_kernel",
     "_trilinear_atomic_add",
     "_trilinear_load",
     "_trilinear_load_active",

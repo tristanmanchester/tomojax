@@ -31,6 +31,7 @@ from ._pallas_config import (
     pallas_projector_actual_variant_metadata,
 )
 from ._pallas_kernels import _projector_kernel
+from ._pallas_ray_geometry import detector_tile
 from ._pallas_ray_integral import integrate_rays
 
 
@@ -280,10 +281,7 @@ def _projector_kernel_cached(
     kernel_variant_id: int,
     unroll: int | None,
 ) -> None:
-    tile_v_start = pl.program_id(0) * tile_v
-    tile_u_start = pl.program_id(1) * tile_u
-    det_u = tile_u_start + jnp.arange(tile_u, dtype=jnp.int32)[jnp.newaxis, :]
-    det_v = tile_v_start + jnp.arange(tile_v, dtype=jnp.int32)[:, jnp.newaxis]
+    det_u, det_v = detector_tile((tile_v, tile_u), stacked=False)
     in_detector = (det_u < nu) & (det_v < nv)
     state_idx = jnp.clip(det_v * nu + det_u, 0, (nu * nv) - 1)
 

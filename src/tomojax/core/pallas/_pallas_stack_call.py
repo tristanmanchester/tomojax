@@ -20,6 +20,7 @@ from ._pallas_config import (
     _prepare_volume_for_pallas_gather,
     _unsupported,
 )
+from ._pallas_ray_geometry import detector_tile
 from ._pallas_ray_integral import integrate_rays
 
 
@@ -48,10 +49,7 @@ def _projector_views_kernel_cached(
     unroll: int | None,
 ) -> None:
     view_idx = pl.program_id(0)
-    tile_v_start = pl.program_id(1) * tile_v
-    tile_u_start = pl.program_id(2) * tile_u
-    det_u = tile_u_start + jnp.arange(tile_u, dtype=jnp.int32)[jnp.newaxis, :]
-    det_v = tile_v_start + jnp.arange(tile_v, dtype=jnp.int32)[:, jnp.newaxis]
+    det_u, det_v = detector_tile((tile_v, tile_u), stacked=True)
     in_detector = (det_u < nu) & (det_v < nv) & (view_idx < n_views)
     state_idx = view_idx * jnp.int32(nv * nu) + jnp.clip(det_v * nu + det_u, 0, (nu * nv) - 1)
 
@@ -105,10 +103,7 @@ def _projector_residual_sse_kernel_cached(
     unroll: int | None,
 ) -> None:
     view_idx = pl.program_id(0)
-    tile_v_start = pl.program_id(1) * tile_v
-    tile_u_start = pl.program_id(2) * tile_u
-    det_u = tile_u_start + jnp.arange(tile_u, dtype=jnp.int32)[jnp.newaxis, :]
-    det_v = tile_v_start + jnp.arange(tile_v, dtype=jnp.int32)[:, jnp.newaxis]
+    det_u, det_v = detector_tile((tile_v, tile_u), stacked=True)
     in_detector = (det_u < nu) & (det_v < nv) & (view_idx < n_views)
     state_idx = view_idx * jnp.int32(nv * nu) + jnp.clip(det_v * nu + det_u, 0, (nu * nv) - 1)
 

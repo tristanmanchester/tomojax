@@ -20,7 +20,7 @@ from ._pallas_config import (
     _unsupported,
     _validate_public_sinogram_call,
 )
-from ._pallas_kernels import _projector_views_kernel
+from ._pallas_kernels import _projector_kernel
 from ._pallas_stack_call import (
     forward_project_residual_sse_T_pallas_with_state,
     forward_project_views_T_pallas_with_state,
@@ -306,7 +306,8 @@ def _cached_projector_views_pallas_call(
     interpret: bool,
 ) -> Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]:
     kernel = functools.partial(
-        _projector_views_kernel,
+        _projector_kernel,
+        stacked=True,
         nx=int(nx),
         ny=int(ny),
         nz=int(nz),

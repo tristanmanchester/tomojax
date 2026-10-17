@@ -221,3 +221,38 @@ def test_empty_ray_tiles_produce_zero_projection(interpret, state_mode, unroll) 
     np.testing.assert_array_equal(single, np.zeros((3, 5)))
     np.testing.assert_array_equal(stack, np.zeros((1, 3, 5)))
     assert float(sse) == 15.0
+
+
+@pytest.mark.parametrize("interpret", [True, pytest.param(False, marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("layout", ["detector_vu", "detector_uv"])
+@pytest.mark.parametrize("unroll", [None, 2])
+def test_backprojection_replays_shifted_detector_rays(interpret, layout, unroll) -> None:
+    if not interpret and jax.default_backend() != "gpu":
+        pytest.skip("requires a CUDA GPU")
+    grid = Grid(5, 4, 3, 0.8, 1.1, 1.3)
+    detector = Detector(7, 5, 0.9, 1.2, (0.25, -0.4))
+    geometry = LaminographyGeometry(grid, detector, [37.0], tilt_deg=29)
+    pose = jnp.asarray(geometry.pose_for_view(0), dtype=jnp.float32)
+    pose = pose.at[:3, 3].set(jnp.array([0.2, -0.3, 0.4]))
+    image = jnp.asarray(np.random.default_rng(641).normal(size=(5, 7)), dtype=jnp.float32)
+    volume = jnp.zeros((5, 4, 3), dtype=jnp.float32)
+    expected = jax.jit(
+        jax.grad(
+            lambda x: jnp.vdot(
+                forward_project_view_T(pose, grid, detector, x, step_size=0.7), image
+            )
+        )
+    )(volume)
+    actual = pallas.backproject_view_T_pallas(
+        pose,
+        grid,
+        detector,
+        image,
+        step_size=0.7,
+        interpret=interpret,
+        tile_shape=(4, 4),
+        num_warps=1,
+        layout_variant=layout,
+        unroll=unroll,
+    )
+    np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=1e-5)
