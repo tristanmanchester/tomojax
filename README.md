@@ -50,7 +50,8 @@ uv run --no-sync tomojax inspect recon.nxs --preview previews
 slices (`projection.png` is the central projection). `recon.nxs` contains the
 projections, volume, and geometry metadata. The PNGs are display-scaled
 previews; use the stored volume for quantitative analysis. This CLI example
-uses FBP; the figure above uses the Python CGLS example.
+automatically selects Fourier inversion for its axial parallel geometry; the
+figure above uses the Python CGLS example.
 
 Every command reads an input and writes `-o OUTPUT`, refusing to replace an
 existing file without `--force`; `tomojax <command> --help` describes it, and
@@ -81,7 +82,7 @@ operation returns a result that carries its geometry:
 import tomojax as tj
 
 scan = tj.load("scan.nxs")                        # or a Nikon .xtekct
-recon = tj.reconstruct(scan)                      # FBP; FDK for cone beams
+recon = tj.reconstruct(scan)                      # choose from the geometry
 recon = tj.reconstruct(scan, "cgls", iterations=50)
 result = tj.align(scan, mode="cor-then-pose")     # result.scan carries the corrections
 tj.save("recon.nxs", tj.reconstruct(result.scan))
