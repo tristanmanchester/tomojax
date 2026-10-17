@@ -129,7 +129,33 @@ class MemoryEstimatesReport(TypedDict):
 
 
 class InspectionReport(TypedDict):
-    """Top-level dataset inspection report."""
+    """Top-level dataset inspection report.
+
+    Attributes
+    ----------
+    schema_version : int
+        Version of the inspection report schema.
+    input_path : str
+        Inspected input path.
+    projection : dict
+        Projection location, shape, dtype, statistics and nonfinite counts.
+    angles : dict
+        Rotation-angle discovery, units and angular coverage.
+    geometry : dict
+        Geometry family and recorded metadata keys.
+    detector_metadata : dict
+        Detector dimensions, sampling and centre.
+    flats_darks : dict
+        Calibration frame discovery and frame-label counts.
+    corrections : list of str
+        Recorded steps converting counts to line integrals.
+    alignment : dict
+        Saved alignment parameter and gauge information.
+    memory_estimates : dict
+        Heuristic reconstruction working-set estimates, not allocation guarantees.
+    volume : dict
+        Saved reconstruction shape, axis order and method.
+    """
 
     schema_version: int
     input_path: str

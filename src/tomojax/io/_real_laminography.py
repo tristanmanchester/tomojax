@@ -16,7 +16,15 @@ _THETAS_PATH = "entry/imaging_sum/smaract_zrot"
 
 @dataclass(frozen=True, slots=True)
 class RealLaminographyInput:
-    """Loaded real-laminography projections and stage angles, in degrees."""
+    """Loaded real-laminography projections and stage angles, in degrees.
+
+    Parameters
+    ----------
+    projections : numpy.ndarray
+        Float32 measured projections in (view, v, u) order.
+    angles : numpy.ndarray
+        Float32 stage rotation angles in degrees.
+    """
 
     projections: np.ndarray
     angles: np.ndarray
@@ -39,6 +47,31 @@ def load_real_laminography_input(
 
     Detector transforms are applied after loading in the historical runner
     order: transpose detector axes, then flip v, then flip u.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        Beamline NX/HDF5 file with imaging/data and imaging_sum/smaract_zrot.
+    flip_u : bool, optional
+        Reverse detector columns after transposition and v reversal.
+    flip_v : bool, optional
+        Reverse detector rows after transposition.
+    transpose_detector : bool, optional
+        Swap detector rows and columns before flips.
+
+    Returns
+    -------
+    RealLaminographyInput
+        Measured projections and degree-valued stage angles.
+
+    Raises
+    ------
+    ValueError
+        If projection and angle dimensions or view counts disagree.
+    KeyError
+        If required acquisition datasets are missing.
+    OSError
+        If the file cannot be read.
     """
     input_path = Path(path)
     with h5py.File(input_path, "r") as handle:

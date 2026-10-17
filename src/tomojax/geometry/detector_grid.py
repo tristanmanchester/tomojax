@@ -60,7 +60,24 @@ def detector_grid_from_calibration(
     native_du: float | None = None,
     native_dv: float | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """Build a detector grid from centre offsets and detector-plane roll."""
+    """Build a detector grid from centre offsets and detector-plane roll.
+
+    Parameters
+    ----------
+    detector : Detector
+        Detector dimensions and sampling; its centre is replaced by calibration offsets.
+    det_u_px, det_v_px : array-like, optional
+        Scalar detector-centre offsets in native pixels, after rotation.
+    detector_roll_deg : array-like, optional
+        Scalar detector-plane roll in degrees.
+    native_du, native_dv : float or None, optional
+        Native pixel pitches converting offsets to physical lengths; default to detector pitches.
+
+    Returns
+    -------
+    tuple of jax.Array
+        Detector-plane u and v coordinate grids in physical units, each shape (nv, nu).
+    """
     return transform_detector_grid(
         zero_center_detector_grid(detector),
         det_u_px=det_u_px,
@@ -93,6 +110,18 @@ def detector_grid_from_geometry_inputs(
 
     A zero roll returns None: the canonical grid is identical, and solvers use
     their fast batched operators only without an explicit grid.
+
+    Parameters
+    ----------
+    detector : Detector
+        Detector geometry with physical centre offsets.
+    geometry_inputs : mapping or object
+        Metadata with optional detector_roll_deg.
+
+    Returns
+    -------
+    tuple of jax.Array or None
+        Rolled detector grids, or None when roll is absent or zero.
     """
     roll = None
     if isinstance(geometry_inputs, dict):

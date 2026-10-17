@@ -15,7 +15,23 @@ if TYPE_CHECKING:
 
 
 def normalize_axis_unit(axis_unit_lab: Sequence[float]) -> tuple[float, float, float]:
-    """Return a validated unit axis vector in lab/world coordinates."""
+    """Return a validated unit axis vector in lab/world coordinates.
+
+    Parameters
+    ----------
+    axis_unit_lab : sequence of float
+        Finite nonzero three-component lab-frame vector.
+
+    Returns
+    -------
+    tuple of float
+        Normalized rotation-axis direction.
+
+    Raises
+    ------
+    ValueError
+        If the vector has invalid shape, nonfinite values or negligible norm.
+    """
     axis = np.asarray(axis_unit_lab, dtype=np.float64)
     if axis.shape != (3,):
         raise ValueError(f"axis_unit_lab must have shape (3,), got {axis.shape}")

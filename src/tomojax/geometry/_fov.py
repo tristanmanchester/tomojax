@@ -29,7 +29,15 @@ from tomojax.core.geometry import Detector, Grid, grid_volume_origin
 
 @dataclass(frozen=True)
 class RoiInfo:
-    """Derived physical FOV half-extents and recommended ROI grid dims."""
+    """Derived physical FOV half-extents and recommended ROI grid dims.
+
+    Parameters
+    ----------
+    r_u, r_v : float
+        Conservative in-plane and vertical field-of-view half-extents in physical units.
+    nx_roi, ny_roi, nz_roi : int
+        Recommended x, y and z voxel counts.
+    """
 
     r_u: float  # half-extent in the rotation plane after angle-invariant reduction (cx)
     r_v: float  # half-extent along z after center offset (cz)
@@ -114,8 +122,8 @@ def compute_roi(
 ) -> RoiInfo:
     """Compute conservative FOV half-extents and grid dims from detector.
 
-    - r_u = max(0, (nu/2-0.5)*du - |cx|) enforces angle-invariant coverage.
-    - r_v = max(0, (nv/2-0.5)*dv - |cz|) enforces vertical coverage.
+    - ``r_u = max(0, (nu/2-0.5)*du - |cx|)`` enforces angle-invariant coverage.
+    - ``r_v = max(0, (nv/2-0.5)*dv - |cz|)`` enforces vertical coverage.
     - nx_roi is the largest dim whose half-extent fits within the in-plane radius
       r_u; nz_roi similarly fits r_v.
     - ny_roi is also fit to r_u when `crop_y_to_u=True`, which matches the
@@ -303,6 +311,7 @@ def grid_from_detector_fov_slices(
 
     - (nx, ny) chosen as the largest equal dims that fit within r_u using (vx, vy).
     - nz chosen from r_v using vz, clipped by current nz.
+
     This matches a common 3D parallel-beam reconstruction: per-z 2D CT slices.
 
     Parameters

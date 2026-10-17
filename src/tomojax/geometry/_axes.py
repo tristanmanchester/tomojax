@@ -43,7 +43,23 @@ def _norm_axes(axes: str) -> str:
 
 
 def axes_to_perm(src: str, dst: str) -> tuple[int, int, int]:
-    """Return permutation bringing `src` axis order into `dst` order."""
+    """Return permutation bringing `src` axis order into `dst` order.
+
+    Parameters
+    ----------
+    src, dst : str
+        Source and destination permutations of xyz, case-insensitive.
+
+    Returns
+    -------
+    tuple of int
+        Axis permutation for numpy.transpose or jax.numpy.transpose.
+
+    Raises
+    ------
+    ValueError
+        If an axis order is not a permutation of xyz.
+    """
     s = _norm_axes(src)
     d = _norm_axes(dst)
     return cast("tuple[int, int, int]", tuple(s.index(axis) for axis in d))
@@ -61,6 +77,23 @@ def transpose_volume(volume: object, src: str, dst: str) -> object:
     """Transpose a volume from `src` axis order to `dst` order.
 
     Keeps numpy arrays as numpy and JAX arrays as JAX when possible.
+
+    Parameters
+    ----------
+    volume : array-like
+        Three-dimensional volume to transpose.
+    src, dst : str
+        Source and destination permutations of xyz, case-insensitive.
+
+    Returns
+    -------
+    numpy.ndarray or jax.Array
+        Volume in the requested order, preserving NumPy/JAX storage where possible.
+
+    Raises
+    ------
+    ValueError
+        If axis orders or volume dimensions are invalid.
     """
     perm = axes_to_perm(src, dst)
 
@@ -123,6 +156,18 @@ def infer_disk_axes(vol_shape: Sequence[int], grid: GridLike | None) -> str | No
     """Infer on-disk axis order using grid heuristics.
 
     Returns "xyz", "zyx", or None if ambiguous.
+
+    Parameters
+    ----------
+    vol_shape : sequence of int
+        On-disk volume dimensions.
+    grid : Grid, dict or None
+        Grid dimensions used to distinguish xyz from zyx.
+
+    Returns
+    -------
+    str or None
+        Inferred xyz or zyx order; None when missing, inconsistent or ambiguous.
     """
     if len(vol_shape) != 3:
         return None

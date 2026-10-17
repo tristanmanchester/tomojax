@@ -27,7 +27,29 @@ def _projection_dataset(file: h5py.File) -> h5py.Dataset | None:
 
 
 def save_projection_quicklook(input_path: PathLike, output_path: PathLike) -> Path:
-    """Save a percentile-scaled central projection PNG."""
+    """Save a percentile-scaled central projection PNG.
+
+    Parameters
+    ----------
+    input_path : str or pathlib.Path
+        HDF5 projection dataset.
+    output_path : str or pathlib.Path
+        PNG output path; parent directories are created.
+
+    Returns
+    -------
+    pathlib.Path
+        Written preview path.
+
+    Raises
+    ------
+    KeyError
+        If projection data cannot be found.
+    ValueError
+        If projections are not a three-dimensional stack.
+    OSError
+        If input or output cannot be accessed.
+    """
     in_path = Path(input_path)
     out_path = Path(output_path)
     with h5py.File(in_path, "r") as file:

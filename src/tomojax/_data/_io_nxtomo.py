@@ -56,6 +56,31 @@ def save_nxtomo(
     `metadata.volume` are always expected in internal `xyz` order; set
     `metadata.volume_axes_order` to control how that internal volume is serialized
     on disk.
+
+    Parameters
+    ----------
+    path : str
+        NXtomo output file; parent directories are created.
+    projections : numpy.ndarray
+        Projection stack in (view, v, u) order.
+    metadata : NXTomoMetadata or None, optional
+        Acquisition and reconstruction metadata; None uses defaults.
+    compression : str, optional
+        HDF5 dataset compression filter; defaults to lzf.
+    overwrite : bool, optional
+        Replace an existing file; False requires a new path.
+
+    Returns
+    -------
+    None
+        Write projections and metadata to the NXtomo container.
+
+    Raises
+    ------
+    ValueError
+        If projection shape or volume-axis metadata are invalid.
+    OSError
+        If output cannot be written or already exists with overwrite=False.
     """
     parent = Path(path).parent
     if str(parent) not in {"", "."}:
@@ -344,6 +369,27 @@ def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
     or when a saved volume allows a unit-grid fallback. Volumes are returned in
     internal ``xyz`` order. With ``lazy`` the projections are an
     :class:`~tomojax._data._io_frames.Hdf5Frames`, read only as indexed.
+
+    Parameters
+    ----------
+    path : str
+        NXtomo/HDF5 input file.
+    lazy : bool, optional
+        Keep projections lazy rather than materializing them; defaults to False.
+
+    Returns
+    -------
+    LoadedNXTomo
+        Projection payload and metadata, with any saved volume in internal xyz order.
+
+    Raises
+    ------
+    KeyError
+        If required NXtomo groups or projection data are absent.
+    ValueError
+        If per-frame metadata or volume-axis conventions are invalid.
+    OSError
+        If the input cannot be opened.
     """
     out: LoadedDataset = {}
     volume_raw: np.ndarray | None = None
@@ -429,7 +475,18 @@ def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
 
 
 def validate_nxtomo(path: str) -> ValidationReport:
-    """Lightweight schema checks. Returns a report dict; empty `issues` means OK."""
+    """Check the lightweight NXtomo schema and report any issues.
+
+    Parameters
+    ----------
+    path : str
+        NXtomo file to check.
+
+    Returns
+    -------
+    dict
+        Schema report; an empty issues list means no problems were found.
+    """
     report: ValidationReport = {"issues": []}
     try:
         with h5py.File(path, "r") as f:

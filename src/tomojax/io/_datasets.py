@@ -77,7 +77,29 @@ def save_projection_payload(
     projections: np.ndarray,
     metadata: NXTomoMetadata,
 ) -> None:
-    """Save a solver-facing projection payload with updated metadata."""
+    """Save a solver-facing projection payload with updated metadata.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        NXtomo output path.
+    projections : numpy.ndarray
+        Projection stack in (view, v, u) order.
+    metadata : NXTomoMetadata
+        Updated acquisition, geometry and reconstruction metadata.
+
+    Returns
+    -------
+    None
+        Write the NXtomo projection payload.
+
+    Raises
+    ------
+    ValueError
+        If projection or volume metadata are invalid.
+    OSError
+        If the file cannot be written.
+    """
     save_nxtomo(str(path), projections=projections, metadata=metadata)
 
 
@@ -330,7 +352,25 @@ class ProjectionDataset:
 
 
 def load_projection_payload(path: PathLike) -> ProjectionDataset:
-    """Load the solver-facing projection dataset for reconstruction/alignment."""
+    """Load the solver-facing projection dataset for reconstruction/alignment.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        TomoJAX projection dataset to load.
+
+    Returns
+    -------
+    ProjectionDataset
+        Normalized solver-facing projection dataset.
+
+    Raises
+    ------
+    ValueError
+        If the container format is unsupported.
+    OSError
+        If the file cannot be read.
+    """
     return load_dataset(path)
 
 
@@ -418,7 +458,27 @@ def save_dataset(path: PathLike, dataset: ProjectionDataset) -> None:
 
 
 def convert_dataset(input_path: PathLike, output_path: PathLike) -> None:
-    """Convert between supported TomoJAX dataset container formats."""
+    """Convert between supported TomoJAX dataset container formats.
+
+    Parameters
+    ----------
+    input_path : str or pathlib.Path
+        Input NXtomo/HDF5 or NPZ container.
+    output_path : str or pathlib.Path
+        Output container of the other format.
+
+    Returns
+    -------
+    None
+        Write the converted dataset with its metadata.
+
+    Raises
+    ------
+    ValueError
+        If the conversion is not NPZ to HDF5 or HDF5 to NPZ.
+    OSError
+        If a file cannot be read or written.
+    """
     in_path = Path(input_path)
     out_path = Path(output_path)
     input_suffix = in_path.suffix.lower()

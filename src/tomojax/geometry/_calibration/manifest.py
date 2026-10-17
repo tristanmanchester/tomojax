@@ -24,7 +24,17 @@ class GeometryCalibrationPatch(TypedDict):
 
 
 class CalibratedGeometryMetadataPatch(TypedDict):
-    """Typed detector and geometry metadata updates from calibration state."""
+    """Typed detector and geometry metadata updates from calibration state.
+
+    Attributes
+    ----------
+    detector : dict
+        Updated detector dimensions, pitches and physical centre.
+    geometry_meta : dict
+        Updated detector roll and axis metadata.
+    geometry_calibration : dict
+        Serialized calibration state.
+    """
 
     detector: DetectorDict
     geometry_meta: JsonObject
@@ -37,7 +47,29 @@ def build_calibrated_geometry_metadata_patch(
     detector: Mapping[str, object],
     geometry_meta: Mapping[str, object] | None = None,
 ) -> CalibratedGeometryMetadataPatch:
-    """Build detector and geometry metadata updates from a calibration state."""
+    """Build detector and geometry metadata updates from a calibration state.
+
+    Parameters
+    ----------
+    calibration_state : CalibrationState or mapping
+        Grouped calibration values or their serialized representation.
+    detector : mapping
+        Original detector metadata with nu, nv, du and dv.
+    geometry_meta : mapping or None, optional
+        Original geometry metadata to preserve and update.
+
+    Returns
+    -------
+    CalibratedGeometryMetadataPatch
+        Detector offsets converted from pixels to physical lengths, with calibration provenance.
+
+    Raises
+    ------
+    ValueError
+        If required detector metadata or calibration values are invalid.
+    TypeError
+        If detector dimensions or calibration offsets are not numeric.
+    """
     state = (
         calibration_state
         if isinstance(calibration_state, CalibrationState)

@@ -46,6 +46,7 @@ class LaminographyGeometry:
       object around this axis by `angles[i]`, in degrees.
 
     Frame convention:
+
     - pose_for_view(i) returns T_world_from_obj for the sample frame, where the
       object's +z axis equals the nominal rotation axis. At theta=0, T is the
       fixed alignment S (generally not identity) that maps e_z -> axis.

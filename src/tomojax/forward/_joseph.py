@@ -55,22 +55,38 @@ def project_joseph(
 ) -> jax.Array:
     """Project physical voxel-centre planes with zero-padded linear or cubic samples.
 
-    Args:
-        volume: Finite real volume in ``(nx, ny, nz)`` order, converted to FP32.
-        poses: Finite rigid world-from-object matrices with shape ``(views, 4, 4)``.
-            Keep poses rigid when optimizing (for example, parameterize rotations
-            and translations). Shapes and static metadata are validated; array
-            values must satisfy this contract, including under JIT.
-        grid: Physical voxel grid; its origin locates voxel (0, 0, 0)'s centre.
-        detector: Canonical physical detector grid, including detector offsets.
-        backend: Explicit JAX reference or NVIDIA CUDA implementation; no fallback.
-        interpolation: Bilinear (default) or Keys cubic convolution (a=-1/2).
-            Cubic uses a 4-by-4 stencil and can produce negative interpolated
-            values even for nonnegative inputs; it does not enforce positivity.
+    Parameters
+    ----------
+    volume : jax.Array
+        Finite real volume in (nx, ny, nz) order, converted to float32.
+    poses : jax.Array
+        Finite rigid world-from-object matrices, shape (views, 4, 4).
+        Keep poses rigid when optimizing, for example by parameterizing rotations
+        and translations. Shapes and static metadata are validated; array values
+        must satisfy this contract, including under JIT.
+    grid : Grid
+        Physical voxel grid; its origin locates voxel (0, 0, 0)'s centre.
+    detector : Detector
+        Canonical physical detector grid, including detector offsets.
+    backend : {'jax', 'pallas'}
+        Explicit JAX reference or NVIDIA CUDA implementation; no fallback.
+    interpolation : {'linear', 'cubic'}
+        Bilinear or Keys cubic convolution (a=-1/2). Cubic uses a 4-by-4 stencil
+        and can produce negative samples even for nonnegative inputs; it does
+        not enforce positivity.
 
-    Returns:
-        FP32 projection stack with shape ``(views, detector.nv, detector.nu)``.
+    Returns
+    -------
+    jax.Array
+        Float32 projection stack, shape (views, detector.nv, detector.nu).
 
+    Raises
+    ------
+    ValueError
+        If shapes, interpolation or backend are unsupported, including CUDA without a GPU.
+
+    Notes
+    -----
     The default linear discretization matches ``cgls(projector_model='joseph')``. It is distinct
     from the default trilinear ray model. CUDA supports JIT, vmap, JVP, VJP,
     jacfwd, jacrev and transposing a linearization, with first-order derivatives

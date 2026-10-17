@@ -20,7 +20,36 @@ def normalize_json(
     sort_mapping_keys: bool = False,
     catch_to_dict_errors: bool = False,
 ) -> JsonValue:
-    """Convert common runtime objects into strict JSON-compatible values."""
+    """Convert common runtime objects into strict JSON-compatible values.
+
+    Parameters
+    ----------
+    value : object
+        Runtime value, including mappings, dataclasses, paths and NumPy/JAX arrays.
+    namespace : bool, optional
+        Convert argparse namespaces to mappings; defaults to False.
+    sort_mapping_keys : bool, optional
+        Sort mapping keys by their string representation.
+    catch_to_dict_errors : bool, optional
+        Fall back to text if an object's to_dict method fails.
+
+    Returns
+    -------
+    JSON-compatible value
+        Normalized value; nonfinite floats and otherwise unsupported objects become strings.
+
+    Raises
+    ------
+    TypeError
+        If a NumPy or JAX value cannot be materialized as JSON data.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from tomojax.io.api import normalize_json
+    >>> normalize_json({"angles": np.array([0.0, 90.0]), "missing": float("nan")})
+    {'angles': [0.0, 90.0], 'missing': 'nan'}
+    """
     if value is None or isinstance(value, bool | int | str):
         return value
     if isinstance(value, float):
@@ -91,14 +120,45 @@ def normalize_json(
 
 
 def drop_none(payload: Mapping[str, object], **normalize_options: bool) -> dict[str, JsonValue]:
-    """Return a JSON-compatible dict without keys whose value is ``None``."""
+    """Return a JSON-compatible dict without keys whose value is ``None``.
+
+    Parameters
+    ----------
+    payload : mapping
+        Mapping whose top-level None values should be omitted.
+    **normalize_options : bool
+        Keyword settings forwarded to normalize_json.
+
+    Returns
+    -------
+    dict
+        Normalized mapping with absent top-level values omitted.
+    """
     return {
         str(k): normalize_json(v, **normalize_options) for k, v in payload.items() if v is not None
     }
 
 
 def read_json_object(path: Path) -> dict[str, JsonValue]:
-    """Read a JSON file that must contain an object."""
+    """Read a JSON file that must contain an object.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        JSON file containing an object.
+
+    Returns
+    -------
+    dict
+        Parsed JSON object.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the path does not exist.
+    ValueError
+        If the content is invalid JSON or not an object.
+    """
     if not path.exists():
         raise FileNotFoundError(path)
     try:

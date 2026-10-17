@@ -53,7 +53,49 @@ _GEOMETRY_PASSTHROUGH: dict[str, Callable[[Any], Any]] = {
 
 @dataclass(slots=True)
 class NXTomoMetadata:
-    """Portable metadata bundle for NXtomo persistence."""
+    """Portable metadata bundle for NXtomo persistence.
+
+    Parameters
+    ----------
+    angles : numpy.ndarray or None, optional
+        Per-frame rotation angles in degrees.
+    image_key : numpy.ndarray or None, optional
+        Frame labels: 0 sample, 1 flat, 2 dark, 3 other.
+    grid : Grid, dict or None, optional
+        Reconstruction voxel grid in physical units.
+    detector : Detector, dict or None, optional
+        Detector dimensions, pitches and physical centre.
+    geometry_type : str, optional
+        Geometry family; defaults to parallel.
+    geometry_meta : dict or None, optional
+        Additional geometry and acquisition metadata.
+    volume : numpy.ndarray, jax.Array or None, optional
+        Reconstructed volume in internal (x, y, z) order.
+    align_params : numpy.ndarray or None, optional
+        Saved per-view alignment parameters.
+    align_gauge : dict or None, optional
+        Gauge and frame conventions for alignment parameters.
+    geometry_calibration : dict or None, optional
+        Calibration state and provenance.
+    angle_offset_deg : numpy.ndarray or None, optional
+        Saved per-view angle corrections in degrees.
+    misalign_spec : dict or None, optional
+        Simulation misalignment metadata.
+    simulation_artefacts : dict or None, optional
+        Simulation artefact settings and provenance.
+    frame : str or None, optional
+        Coordinate-frame label.
+    sample_name : str or None, optional
+        Sample name; defaults to sample.
+    source_name : str or None, optional
+        Radiation source name; defaults to TomoJAX source.
+    source_type : str or None, optional
+        Radiation source type.
+    source_probe : str or None, optional
+        Probe label; defaults to x-ray.
+    volume_axes_order : str, optional
+        Axis permutation for on-disk volume storage; defaults to zyx.
+    """
 
     angles: np.ndarray | None = None
     image_key: np.ndarray | None = None
@@ -77,7 +119,18 @@ class NXTomoMetadata:
 
     @classmethod
     def from_dataset(cls, data: Mapping[str, DatasetValue]) -> NXTomoMetadata:
-        """Build metadata from a generic loaded dataset mapping."""
+        """Build metadata from a generic loaded dataset mapping.
+
+        Parameters
+        ----------
+        data : mapping
+            Loaded dataset fields and metadata.
+
+        Returns
+        -------
+        NXTomoMetadata
+            Typed dataset metadata or payload with copied array metadata.
+        """
         source_info = data.get("source")
         source_name = data.get("source_name")
         source_type = data.get("source_type")
@@ -133,7 +186,21 @@ _NXTOMO_METADATA_FIELDS = frozenset(NXTomoMetadata.__dataclass_fields__)
 
 @dataclass(slots=True)
 class LoadedNXTomo:
-    """Typed NXtomo payload returned by ``load_nxtomo()``."""
+    """Typed NXtomo payload returned by ``load_nxtomo()``.
+
+    Parameters
+    ----------
+    projections : numpy.ndarray or lazy HDF5 stack
+        Projection or detector-frame stack in (view, v, u) order.
+    metadata : NXTomoMetadata
+        Persisted acquisition and reconstruction metadata.
+    source : dict or None, optional
+        Radiation source metadata.
+    disk_volume_axes_order : str or None, optional
+        Original on-disk volume axis order.
+    volume_axes_source : str or None, optional
+        Origin of the volume-axis convention, recorded during loading.
+    """
 
     projections: np.ndarray | Hdf5Frames
     metadata: NXTomoMetadata
@@ -143,7 +210,23 @@ class LoadedNXTomo:
 
     @classmethod
     def from_dataset(cls, data: Mapping[str, DatasetValue]) -> LoadedNXTomo:
-        """Build a loaded payload from a generic dataset mapping."""
+        """Build a loaded payload from a generic dataset mapping.
+
+        Parameters
+        ----------
+        data : mapping
+            Loaded dataset fields and metadata.
+
+        Returns
+        -------
+        LoadedNXTomo
+            Typed dataset metadata or payload with copied array metadata.
+
+        Raises
+        ------
+        KeyError
+            If projections are absent.
+        """
         source_info = data.get("source")
         return cls(
             projections=_frames_or_array(data["projections"]),
@@ -189,7 +272,20 @@ class LoadedNXTomo:
         return value
 
     def get(self, key: str, default: DatasetValue | None = None) -> DatasetValue | None:
-        """Return a metadata or payload value by mapping-style key."""
+        """Return a metadata or payload value by mapping-style key.
+
+        Parameters
+        ----------
+        key : str
+            Payload, metadata or additional geometry key.
+        default : object, optional
+            Value for an absent metadata or geometry key; defaults to None.
+
+        Returns
+        -------
+        object
+            Stored value, or the default when that metadata key is absent.
+        """
         if key == "projections":
             return self.projections
         if key == "source":
@@ -205,7 +301,13 @@ class LoadedNXTomo:
         return geom_meta.get(key, default)
 
     def to_dataset_dict(self) -> LoadedDataset:
-        """Return this payload as a generic dataset mapping."""
+        """Return this payload as a generic dataset mapping.
+
+        Returns
+        -------
+        dict
+            Dataset mapping with projections materialized and typed geometry converted to mappings.
+        """
         data: LoadedDataset = {"projections": np.asarray(self.projections)}
         for field_name in _NXTOMO_METADATA_FIELDS:
             value = getattr(self.metadata, field_name)
@@ -224,11 +326,28 @@ class LoadedNXTomo:
         return data
 
     def copy_metadata(self) -> NXTomoMetadata:
-        """Return a writable metadata copy suitable for save/update workflows."""
+        """Return a writable metadata copy suitable for save/update workflows.
+
+        Returns
+        -------
+        NXTomoMetadata
+            Writable persistence metadata with copied array fields.
+        """
         return NXTomoMetadata.from_dataset(self.to_dataset_dict())
 
     def geometry_inputs(self) -> dict[str, DatasetValue]:
-        """Return the subset of metadata needed to materialize geometry."""
+        """Return the subset of metadata needed to materialize geometry.
+
+        Returns
+        -------
+        dict
+            Detector, angles, grid and additional geometry metadata for reconstruction.
+
+        Raises
+        ------
+        ValueError
+            If detector metadata or rotation angles are absent.
+        """
         detector = self.metadata.detector
         if detector is None:
             raise ValueError("NXtomo payload is missing detector metadata")

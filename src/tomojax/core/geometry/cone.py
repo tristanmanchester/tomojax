@@ -540,12 +540,27 @@ def require_parallel_beam(geometry: object, context: str) -> None:
 
 
 def view_frames(geometry: ScanGeometry) -> np.ndarray:
-    """Each view's source, detector centre and pixel steps in the object frame, ``(views, 12)``.
+    """Return source, detector centre and pixel steps for each cone-beam view.
 
     Rows are ``[source, centre, u * du, v * dv]`` (ASTRA's ``cone_vec`` order):
     pixel ``(row r, column c)`` of view i lies at ``centre + (c - nu / 2 + 1/2) u
     + (r - nv / 2 + 1/2) v``. Every segment of a :class:`ConeSegments`, in order,
     with the corrections of any pose wrapper around it.
+
+    Parameters
+    ----------
+    geometry : ScanGeometry
+        Cone-beam geometry, including segments and pose wrappers.
+
+    Returns
+    -------
+    numpy.ndarray
+        Object-frame source, detector centre and pixel vectors, shape (views, 12).
+
+    Raises
+    ------
+    ValueError
+        If geometry is not cone-beam.
     """
     from tomojax.core.geometry.views import stack_view_poses
 

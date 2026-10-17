@@ -144,7 +144,18 @@ def _sample_projection_values(dataset: h5py.Dataset) -> NDArray[np.float64]:
 
 
 def projection_stats(dataset: h5py.Dataset) -> tuple[ProjectionStatsReport, NonfiniteReport]:
-    """Return finite-value projection statistics and nonfinite counts for an HDF5 dataset."""
+    """Return finite-value projection statistics and nonfinite counts for an HDF5 dataset.
+
+    Parameters
+    ----------
+    dataset : h5py.Dataset
+        Projection stack to summarize in bounded view blocks.
+
+    Returns
+    -------
+    tuple of dict
+        Projection statistics and nonfinite-value counts.
+    """
     finite_count = 0
     finite_sum = 0.0
     finite_min = math.inf
@@ -526,7 +537,27 @@ def inspect_nxtomo(path: PathLike) -> InspectionReport:
 
 
 def inspect_dataset(path: PathLike) -> InspectionReport:
-    """Inspect a measured projection dataset before reconstruction."""
+    """Inspect a measured projection dataset before reconstruction.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        HDF5/NXtomo input dataset.
+
+    Returns
+    -------
+    InspectionReport
+        Projection, acquisition, geometry and estimated memory report.
+
+    Raises
+    ------
+    ValueError
+        If projections or acquisition metadata have invalid dimensions.
+    KeyError
+        If projection data cannot be found.
+    OSError
+        If the input cannot be opened.
+    """
     return inspect_nxtomo(Path(path))
 
 

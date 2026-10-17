@@ -118,7 +118,25 @@ def validate_calibration_gauges(
     *,
     hard_fail: bool = True,
 ) -> tuple[GaugeConflict, ...]:
-    """Validate hard gauge conflicts for estimated calibration variables."""
+    """Validate hard gauge conflicts for estimated calibration variables.
+
+    Parameters
+    ----------
+    variables : CalibrationState, iterable of CalibrationVariable or mapping
+        Calibration variables or a mapping of names to statuses.
+    hard_fail : bool, optional
+        Raise on coupled estimated variables; False returns conflicts instead.
+
+    Returns
+    -------
+    tuple of GaugeConflict
+        Conflicting estimated variable pairs, empty when gauges are determined.
+
+    Raises
+    ------
+    ValueError
+        If gauge conflicts exist and hard_fail is True.
+    """
     statuses = _variables_from_input(variables)
     estimated = {name for name, status in statuses.items() if status == "estimated"}
     conflicts = tuple(
