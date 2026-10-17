@@ -389,10 +389,16 @@ def test_binning_averages_pixels_and_keeps_the_detector_in_place():
         scan.binned(0)
     arrays = (scan.projections, np.asfortranarray(scan.projections), scan.projections[:, ::-1])
     view_strided = np.ascontiguousarray(scan.projections.swapaxes(0, 1)).swapaxes(0, 1)
-    for data in (*arrays, view_strided):
-        actual = replace(scan, projections=data).binned(2)
-        expected = data[:, :32, :40].reshape(24, 16, 2, 20, 2).mean(axis=(2, 4))
-        np.testing.assert_array_equal(actual.projections, expected)
+    for data in (*arrays, view_strided, scan.projections[:, :, ::-1]):
+        for factor in range(2, 9):
+            rows, cols = data.shape[1] // factor, data.shape[2] // factor
+            actual = replace(scan, projections=data).binned(factor)
+            expected = (
+                data[:, : rows * factor, : cols * factor]
+                .reshape(24, rows, factor, cols, factor)
+                .mean(axis=(2, 4))
+            )
+            np.testing.assert_array_equal(actual.projections, expected)
 
 
 def test_iterative_reconstruction_suggests_binning_a_detector_finer_than_the_grid() -> None:

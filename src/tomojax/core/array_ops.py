@@ -20,15 +20,27 @@ def mean_detector_pixels[T: (np.ndarray, jax.Array)](data: T, factor: int) -> T:
     data = data.astype(np.float32, copy=False)
     views, nv, nu = data.shape
     rows, cols = nv // factor, nu // factor
-    if isinstance(data, np.ndarray) and factor == 2 and data.strides[-1] == data.itemsize:
-        # Contiguous detector columns use a column-pair then row-pair FP32
-        # reduction, even when views are strided (for example ASTRA imports).
-        # Preserve that order; column-strided arrays can reduce in another order.
-        # NumPy's generic two-axis reduction cannot vectorize short blocks well.
-        pixels = data[:, : rows * 2, : cols * 2]
-        result = pixels[:, ::2, ::2] + pixels[:, ::2, 1::2]
-        result += pixels[:, 1::2, ::2] + pixels[:, 1::2, 1::2]
-        result *= 0.25
+    if isinstance(data, np.ndarray) and 1 < factor < 8 and data.strides[-1] == data.itemsize:
+        # NumPy reduces contiguous columns first, then rows; inner reductions
+        # shorter than eight are sequential. Vectorize across output pixels,
+        # preserving that FP32 order even for view-strided ASTRA imports.
+        # Larger or column-strided blocks can use a different reduction order.
+        pixels = data[:, : rows * factor, : cols * factor]
+        if factor == 2:
+            result = pixels[:, ::2, ::2] + pixels[:, ::2, 1::2]
+            result += pixels[:, 1::2, ::2] + pixels[:, 1::2, 1::2]
+        else:
+
+            def sum_columns(row: int) -> np.ndarray:
+                total = pixels[:, row::factor, ::factor].copy()
+                for col in range(1, factor):
+                    total += pixels[:, row::factor, col::factor]
+                return total
+
+            result = sum_columns(0)
+            for row in range(1, factor):
+                result += sum_columns(row)
+        result /= factor * factor
         return cast("T", result)
     blocks = data[:, : rows * factor, : cols * factor].reshape(views, rows, factor, cols, factor)
     return cast("T", blocks.mean(axis=(2, 4)))
