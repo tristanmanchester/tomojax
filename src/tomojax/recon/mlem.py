@@ -20,7 +20,8 @@ from tomojax.core.validation import (
     validate_projection_stack,
     validate_volume,
 )
-from tomojax.recon._host_stream import host_source, should_stream, validate_host_views
+from tomojax.recon._host_arrays import validate_host_views
+from tomojax.recon._host_stream import host_source, should_stream
 from tomojax.recon._projection import (
     ConeModel,
     ProjectorBackend,
