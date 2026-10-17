@@ -541,7 +541,7 @@ def tomojax.recon.mlem(
         init_x: 'jax.Array | np.ndarray | None' = None,
         config: 'MLEMConfig | None' = None,
         det_grid: 'tuple[jax.Array, jax.Array] | None' = None,
-    ) -> 'tuple[jax.Array, dict[str, object]]'
+    ) -> 'tuple[jax.Array | np.ndarray, dict[str, object]]'
 def tomojax.recon.project(
         geometry: 'Geometry',
         volume: 'jax.Array | np.ndarray',

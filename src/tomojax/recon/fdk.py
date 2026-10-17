@@ -570,6 +570,8 @@ def _fdk(
                     out, grid=grid, detector=virtual, scale=prep.scale, cuda=prep.cuda,
                     pad_lo=prep.pad_lo, pad_hi=prep.pad_hi,
                 )  # fmt: skip
+                # Keep only this batch and its prefetched successor live.
+                out.block_until_ready()
         return out
 
     split = view_split(cfg.devices, n_views)

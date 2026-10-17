@@ -48,6 +48,8 @@ can stream data and rows to retain reusable exact subset columns.
 `mlem` adds matched MLEM/OSEM reconstruction for nonnegative linear Poisson
 measurements, with angular subsets, a reconstruction support mask, and optional
 nonnegative FBP/FDK warm starts.
+Oversized cone MLEM/OSEM volumes and their FDK starts automatically use host-owned
+slabs, summing every slab's projection before each coupled matched update.
 
 Axial Joseph projection and its exact transpose use separable CUDA kernels with
 bounded workspace, including smaller axial volumes; general and tilted geometries
