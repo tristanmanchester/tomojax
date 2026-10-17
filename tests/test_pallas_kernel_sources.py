@@ -15,7 +15,7 @@ from tomojax.core import pallas_resolver, projector
 
 # check-public-imports: allow-private
 from tomojax.core.pallas import api as pallas_api
-from tomojax.geometry import Detector, Grid
+from tomojax.geometry import Detector, Grid, LaminographyGeometry
 
 
 def test_resolve_pallas_module_imports_public_facade() -> None:
@@ -342,3 +342,18 @@ def test_pallas_gather_errors_keep_backend_context(precision) -> None:
     with pytest.raises(pallas_api.PallasProjectorUnsupported) as pallas_error:
         pallas_api.pallas_projector_variant_metadata(gather_dtype=precision)
     assert str(pallas_error.value) == f"pallas_projector_unsupported: {jax_error.value}"
+
+
+@pytest.mark.parametrize("step_size", [None, 0.3, 1.7])
+def test_stack_traversal_metadata_matches_longest_view(step_size) -> None:
+    grid, detector = Grid(19, 13, 11, 0.8, 1.1, 0.7), Detector(25, 17, 0.9, 0.8)
+    geometry = LaminographyGeometry(grid, detector, [0, 37, 91], tilt_deg=37)
+    poses = np.asarray([geometry.pose_for_view(i) for i in range(3)], dtype=np.float32)
+    single = [
+        pallas_api.pallas_projector_traversal_metadata(t, grid, step_size=step_size) for t in poses
+    ]
+    stacked = pallas_api.pallas_projector_sinogram_traversal_metadata(
+        poses, grid, step_size=step_size
+    )
+    assert stacked["resolved_n_steps"] == single[0]["resolved_n_steps"]
+    assert stacked["effective_pallas_n_steps"] == max(x["effective_pallas_n_steps"] for x in single)

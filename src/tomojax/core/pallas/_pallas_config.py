@@ -107,22 +107,12 @@ def pallas_projector_sinogram_traversal_metadata(
     """Return resolved and max effective traversal counts for a Pallas pose stack."""
     step_size_value = float(grid.vy) if step_size is None else float(step_size)
     resolved_n_steps = _resolve_n_steps(grid, step_size_value, n_steps)
-    try:
-        T_host = np.asarray(T_stack, dtype=np.float32)
-    except Exception:
-        T_host = np.empty((0, 4, 4), dtype=np.float32)
-    if T_host.ndim != 3 or T_host.shape[1:] != (4, 4) or T_host.shape[0] == 0:
-        effective_n_steps = int(resolved_n_steps)
-    else:
-        effective_n_steps = max(
-            _resolve_effective_pallas_n_steps(
-                jnp.asarray(T_host[index]),
-                grid,
-                step_size_value,
-                resolved_n_steps,
-            )
-            for index in range(T_host.shape[0])
-        )
+    effective_n_steps = _resolve_effective_pallas_n_steps_for_stack(
+        T_stack,
+        grid,
+        step_size_value,
+        resolved_n_steps,
+    )
     return {
         "resolved_n_steps": int(resolved_n_steps),
         "effective_pallas_n_steps": int(effective_n_steps),
