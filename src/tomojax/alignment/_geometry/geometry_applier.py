@@ -42,7 +42,27 @@ def nominal_setup_geometry(geometry: Geometry) -> Geometry:
 
 @dataclass(frozen=True, slots=True)
 class BaseGeometryArrays:
-    """Array/static bundle used by differentiable alignment objectives."""
+    """Array/static bundle used by differentiable alignment objectives.
+
+    Parameters
+    ----------
+    angles : jax.Array
+        View-angle array in degrees.
+    nominal_pose_stack : jax.Array
+        Nominal object-to-world transforms with shape (views, 4, 4).
+    detector : Detector
+        Current-level detector dimensions and physical placement.
+    nominal_axis_unit : jax.Array
+        Nominal lab-frame rotation-axis unit vector of shape (3,); defaults to +z in
+        setup state.
+    nominal_tilt_deg : float | None, optional
+        Nominal laminography tilt in degrees, or None for other geometry.
+    tilt_about : str | None, optional
+        Laminography tilt axis name, or None for other geometry.
+    level_factor : int, optional
+        Current coarsening factor relative to the native grid and detector. Default is
+        1.
+    """
 
     angles: jnp.ndarray
     nominal_pose_stack: jnp.ndarray
@@ -60,7 +80,22 @@ class BaseGeometryArrays:
         *,
         level_factor: int = 1,
     ) -> BaseGeometryArrays:
-        """Build base arrays from a concrete geometry and detector."""
+        """Build base arrays from a concrete geometry and detector.
+
+        Parameters
+        ----------
+        geometry : Geometry
+            Nominal geometry with its view angles and poses.
+        detector : Detector
+            Current-level detector shape and placement.
+        level_factor : int, optional
+            Coarsening factor relative to the native detector. Default is 1.
+
+        Returns
+        -------
+        BaseGeometryArrays
+            View angles, poses, detector and nominal axis information for the level.
+        """
         thetas = jnp.asarray(geometry.angles, dtype=jnp.float32)
         n_views = int(thetas.shape[0])
         is_lamino = isinstance(geometry, LaminographyGeometry)
@@ -233,7 +268,20 @@ def apply_alignment_state(
     base: BaseGeometryArrays,
     state: AlignmentState,
 ) -> EffectiveGeometryArrays:
-    """Apply setup and pose state to base arrays without Python geometry mutation."""
+    """Apply setup and pose state to base arrays without Python geometry mutation.
+
+    Parameters
+    ----------
+    base : BaseGeometryArrays
+        Nominal view poses, detector and axis arrays.
+    state : AlignmentState
+        Setup and pose corrections to apply.
+
+    Returns
+    -------
+    EffectiveGeometryArrays
+        Updated pose stack, detector coordinates and lab-frame axis.
+    """
     setup = state.setup
     axis = _setup_axis_unit_for_base(base, setup)
     pose_stack = apply_pose_updates(

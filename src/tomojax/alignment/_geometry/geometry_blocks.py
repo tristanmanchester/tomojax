@@ -39,7 +39,23 @@ GEOMETRY_BLOCKS: tuple[tuple[str, tuple[str, ...]], ...] = (
 def normalize_geometry_dofs(
     values: Iterable[str] | None,
 ) -> tuple[str, ...]:
-    """Normalize detector/instrument geometry DOF names for staged alignment."""
+    """Normalize detector/instrument geometry DOF names for staged alignment.
+
+    Parameters
+    ----------
+    values : iterable of str or None
+        Setup-geometry parameter names. None selects no names.
+
+    Returns
+    -------
+    tuple of str
+        Distinct setup-geometry names in supplied order.
+
+    Raises
+    ------
+    ValueError
+        If names are unknown or duplicated.
+    """
     if values is None:
         return ()
     names = normalize_alignment_dofs(

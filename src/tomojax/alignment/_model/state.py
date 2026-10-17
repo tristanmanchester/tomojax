@@ -26,6 +26,24 @@ class SetupGeometryState:
     Detector centre offsets are always native/full-resolution detector pixels.
     Angular fields are stored in radians; degree-facing names are handled by the
     DOF registry and metadata export.
+
+    Parameters
+    ----------
+    det_u_px : jax.Array, optional
+        Detector-u centre offset in native/full-resolution pixels. Defaults to zero.
+    det_v_px : jax.Array, optional
+        Detector-v centre offset in native/full-resolution pixels. Defaults to zero.
+    detector_roll_rad : jax.Array, optional
+        Detector roll in radians. Defaults to zero.
+    axis_rot_x_rad : jax.Array, optional
+        Rotation-axis x correction in radians. Defaults to zero.
+    axis_rot_y_rad : jax.Array, optional
+        Rotation-axis y correction in radians. Defaults to zero.
+    tilt_rad : jax.Array, optional
+        Nominal axis tilt in radians. Defaults to zero.
+    nominal_axis_unit : jax.Array, optional
+        Nominal lab-frame rotation-axis unit vector of shape (3,); defaults to +z in
+        setup state.
     """
 
     det_u_px: jnp.ndarray = field(default_factory=lambda: _scalar(0.0))
@@ -63,7 +81,30 @@ class SetupGeometryState:
         tilt_deg: object = 0.0,
         nominal_axis_unit: object = (0.0, 0.0, 1.0),
     ) -> SetupGeometryState:
-        """Build setup state from degree-facing metadata values."""
+        """Build setup state from degree-facing metadata values.
+
+        Parameters
+        ----------
+        det_u_px : float, optional
+            Native/full-resolution detector-u pixel offset. Default is zero.
+        det_v_px : float, optional
+            Native/full-resolution detector-v pixel offset. Default is zero.
+        detector_roll_deg : float, optional
+            Detector roll in degrees. Default is zero.
+        axis_rot_x_deg : float, optional
+            Axis x rotation in degrees. Default is zero.
+        axis_rot_y_deg : float, optional
+            Axis y rotation in degrees. Default is zero.
+        tilt_deg : float, optional
+            Nominal tilt in degrees. Default is zero.
+        nominal_axis_unit : array-like, optional
+            Nominal lab-frame unit axis of shape (3,). Default is +z.
+
+        Returns
+        -------
+        SetupGeometryState
+            Setup state with angular fields converted to radians.
+        """
         return cls(
             det_u_px=_scalar(det_u_px),
             det_v_px=_scalar(det_v_px),
@@ -75,7 +116,13 @@ class SetupGeometryState:
         )
 
     def degrees_dict(self) -> dict[str, jnp.ndarray]:
-        """Return angular setup fields in degrees."""
+        """Return angular setup fields in degrees.
+
+        Returns
+        -------
+        dict
+            Detector roll, axis rotations and tilt as scalar JAX arrays in degrees.
+        """
         return {
             "detector_roll_deg": jnp.rad2deg(self.detector_roll_rad),
             "axis_rot_x_deg": jnp.rad2deg(self.axis_rot_x_rad),
@@ -84,7 +131,13 @@ class SetupGeometryState:
         }
 
     def axis_unit_lab(self) -> jnp.ndarray:
-        """Return the realised lab-frame rotation-axis unit vector."""
+        """Return the realised lab-frame rotation-axis unit vector.
+
+        Returns
+        -------
+        jax.Array
+            Lab-frame rotation-axis unit vector of shape (3,).
+        """
         deg = self.degrees_dict()
         nominal = axis_unit_from_rotations(
             self.nominal_axis_unit,
@@ -98,7 +151,23 @@ class SetupGeometryState:
         )
 
     def replace(self, **updates: object) -> SetupGeometryState:
-        """Return a copy with selected setup fields replaced."""
+        """Return a copy with selected setup fields replaced.
+
+        Parameters
+        ----------
+        **updates : object
+            Named fields to replace; all other fields retain their values.
+
+        Returns
+        -------
+        SetupGeometryState
+            New state with the requested changes.
+
+        Raises
+        ------
+        TypeError
+            If a keyword does not name a state field.
+        """
         values = {
             "det_u_px": self.det_u_px,
             "det_v_px": self.det_v_px,
@@ -112,7 +181,15 @@ class SetupGeometryState:
         return SetupGeometryState(**values)
 
     def tree_flatten(self) -> tuple[tuple[jnp.ndarray, ...], None]:
-        """Flatten this state for JAX pytree handling."""
+        """Flatten this state for JAX pytree handling.
+
+        Returns
+        -------
+        children : tuple
+            Scalar setup fields and the nominal axis vector.
+        aux_data : object
+            None; no static auxiliary data are needed.
+        """
         children = (
             self.det_u_px,
             self.det_v_px,
@@ -130,7 +207,20 @@ class SetupGeometryState:
         aux_data: object,
         children: tuple[jnp.ndarray, ...],
     ) -> SetupGeometryState:
-        """Rebuild setup state from JAX pytree children."""
+        """Rebuild setup state from JAX pytree children.
+
+        Parameters
+        ----------
+        aux_data : object
+            None; no static auxiliary data are needed.
+        children : tuple
+            Scalar setup fields and the nominal axis vector.
+
+        Returns
+        -------
+        SetupGeometryState
+            State reconstructed from its pytree representation.
+        """
         del aux_data
         return cls(*children)
 
@@ -138,7 +228,25 @@ class SetupGeometryState:
 @jax.tree_util.register_pytree_node_class
 @dataclass(frozen=True)
 class PoseState:
-    """Optimizer-time per-view pose state."""
+    """Optimizer-time per-view pose state.
+
+    Parameters
+    ----------
+    pose_params : jax.Array
+        Per-view corrections, columns (alpha, beta, phi, dx, dz, dy); angles are radians
+        and translations physical lengths.
+    motion_coeffs : jax.Array | None, optional
+        Coefficients of a polynomial or spline motion model; None for independent per-view
+         parameters.
+    translation_frame : PoseTranslationFrame, optional
+        Basis for physical translations, "object" or lab-frame "detector". Default is
+        'object'.
+
+    Raises
+    ------
+    ValueError
+        If translation_frame is not "object" or "detector".
+    """
 
     pose_params: jnp.ndarray
     motion_coeffs: jnp.ndarray | None = None
@@ -150,11 +258,38 @@ class PoseState:
 
     @classmethod
     def zeros(cls, n_views: int) -> PoseState:
-        """Return a zero pose table for the requested number of views."""
+        """Return a zero pose table for the requested number of views.
+
+        Parameters
+        ----------
+        n_views : int
+            Number of views in the scan.
+
+        Returns
+        -------
+        PoseState
+            Zero-valued state with a six-column pose table.
+        """
         return cls(jnp.zeros((int(n_views), POSE_WIDTH), dtype=jnp.float32))
 
     def replace(self, **updates: object) -> PoseState:
-        """Return a copy with selected pose fields replaced."""
+        """Return a copy with selected pose fields replaced.
+
+        Parameters
+        ----------
+        **updates : object
+            Named fields to replace; all other fields retain their values.
+
+        Returns
+        -------
+        PoseState
+            New state with the requested changes.
+
+        Raises
+        ------
+        TypeError
+            If a keyword does not name a state field.
+        """
         values = {
             "pose_params": self.pose_params,
             "motion_coeffs": self.motion_coeffs,
@@ -164,7 +299,15 @@ class PoseState:
         return PoseState(**values)
 
     def tree_flatten(self) -> tuple[tuple[jnp.ndarray, jnp.ndarray | None], PoseTranslationFrame]:
-        """Flatten this state for JAX pytree handling."""
+        """Flatten this state for JAX pytree handling.
+
+        Returns
+        -------
+        children : tuple
+            Pose table and optional motion coefficients.
+        aux_data : object
+            Translation-frame string.
+        """
         return (self.pose_params, self.motion_coeffs), self.translation_frame
 
     @classmethod
@@ -173,7 +316,20 @@ class PoseState:
         aux_data: PoseTranslationFrame,
         children: tuple[jnp.ndarray, jnp.ndarray | None],
     ) -> PoseState:
-        """Rebuild pose state from JAX pytree children."""
+        """Rebuild pose state from JAX pytree children.
+
+        Parameters
+        ----------
+        aux_data : object
+            Translation-frame string.
+        children : tuple
+            Pose table and optional motion coefficients.
+
+        Returns
+        -------
+        PoseState
+            State reconstructed from its pytree representation.
+        """
         pose_params, motion_coeffs = children
         return cls(pose_params=pose_params, motion_coeffs=motion_coeffs, translation_frame=aux_data)
 
@@ -181,7 +337,17 @@ class PoseState:
 @jax.tree_util.register_pytree_node_class
 @dataclass(frozen=True)
 class AlignmentState:
-    """Unified optimizer-time alignment state."""
+    """Unified optimizer-time alignment state.
+
+    Parameters
+    ----------
+    setup : SetupGeometryState
+        Global detector and axis calibration state.
+    pose : PoseState
+        Per-view pose-correction state.
+    volume : jax.Array | None, optional
+        Optional reconstruction in (x, y, z) order.
+    """
 
     setup: SetupGeometryState
     pose: PoseState
@@ -194,7 +360,20 @@ class AlignmentState:
         n_views: int,
         volume_shape: tuple[int, int, int] | None = None,
     ) -> AlignmentState:
-        """Return an alignment state with zero setup, pose, and optional volume."""
+        """Return an alignment state with zero setup, pose, and optional volume.
+
+        Parameters
+        ----------
+        n_views : int
+            Number of views in the scan.
+        volume_shape : tuple of int or None, optional
+            Optional (nx, ny, nz) shape for a zero volume. None leaves volume absent.
+
+        Returns
+        -------
+        AlignmentState
+            Zero-valued state with a six-column pose table.
+        """
         volume = (
             None
             if volume_shape is None
@@ -203,7 +382,23 @@ class AlignmentState:
         return cls(setup=SetupGeometryState(), pose=PoseState.zeros(n_views), volume=volume)
 
     def replace(self, **updates: object) -> AlignmentState:
-        """Return a copy with selected alignment fields replaced."""
+        """Return a copy with selected alignment fields replaced.
+
+        Parameters
+        ----------
+        **updates : object
+            Named fields to replace; all other fields retain their values.
+
+        Returns
+        -------
+        AlignmentState
+            New state with the requested changes.
+
+        Raises
+        ------
+        TypeError
+            If a keyword does not name a state field.
+        """
         values = {"setup": self.setup, "pose": self.pose, "volume": self.volume}
         values.update(updates)
         return AlignmentState(**values)
@@ -213,7 +408,18 @@ class AlignmentState:
         *,
         active_dofs: Iterable[str] = (),
     ) -> CalibrationState:
-        """Convert optimizer state into persisted calibration metadata."""
+        """Convert optimizer state into persisted calibration metadata.
+
+        Parameters
+        ----------
+        active_dofs : iterable of str, optional
+            Public parameter names to include in persisted metadata.
+
+        Returns
+        -------
+        CalibrationState
+            Persistable setup and per-view pose corrections with explicit units.
+        """
         active = {str(name) for name in active_dofs}
 
         def status(name: str) -> str:
@@ -279,7 +485,15 @@ class AlignmentState:
     def tree_flatten(
         self,
     ) -> tuple[tuple[SetupGeometryState, PoseState, jnp.ndarray | None], None]:
-        """Flatten this state for JAX pytree handling."""
+        """Flatten this state for JAX pytree handling.
+
+        Returns
+        -------
+        children : tuple
+            Setup state, pose state and optional volume.
+        aux_data : object
+            None; no static auxiliary data are needed.
+        """
         return (self.setup, self.pose, self.volume), None
 
     @classmethod
@@ -288,7 +502,20 @@ class AlignmentState:
         aux_data: object,
         children: tuple[SetupGeometryState, PoseState, jnp.ndarray | None],
     ) -> AlignmentState:
-        """Rebuild alignment state from JAX pytree children."""
+        """Rebuild alignment state from JAX pytree children.
+
+        Parameters
+        ----------
+        aux_data : object
+            None; no static auxiliary data are needed.
+        children : tuple
+            Setup state, pose state and optional volume.
+
+        Returns
+        -------
+        AlignmentState
+            State reconstructed from its pytree representation.
+        """
         del aux_data
         setup, pose, volume = children
         return cls(setup=setup, pose=pose, volume=volume)

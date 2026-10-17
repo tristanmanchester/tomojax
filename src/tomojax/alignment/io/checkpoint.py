@@ -54,7 +54,71 @@ class CheckpointError(ValueError):
 
 
 class CheckpointMetadata(TypedDict, total=False):
-    """Persisted JSON metadata stored inside an alignment checkpoint."""
+    """Persisted JSON metadata stored inside an alignment checkpoint.
+
+    Attributes
+    ----------
+    checkpoint_kind : Required[str]
+        File-kind identifier for an alignment checkpoint.
+    schema_version : Required[int]
+        Checkpoint layout schema version.
+    tomojax_version : str | None
+        TomoJAX version that wrote the checkpoint.
+    projection_shape : Required[list[int]]
+        Input shape (views, nv, nu).
+    projection_dtype : Required[str]
+        Input projection dtype name.
+    fingerprint : Required[str]
+        Run fingerprint of sampled projections and geometry settings.
+    reconstruction_grid : Required[dict[str, Any]]
+        Full-resolution reconstruction grid metadata.
+    detector : Required[dict[str, Any]]
+        Full-resolution detector metadata.
+    state_grid : Required[dict[str, Any]]
+        Grid on which the saved volume currently lives.
+    state_detector : Required[dict[str, Any]]
+        Detector at the current resolution level.
+    mode : Required[str]
+        Requested alignment mode.
+    levels : list[int] | None
+        Requested coarse-to-fine factors, or None for a single-resolution run.
+    multires_geometry_version : int
+        Version of the coarsened-geometry convention.
+    level_index : Required[int]
+        Zero-based current resolution-level index.
+    level_factor : Required[int]
+        Current resolution coarsening factor.
+    completed_outer_iterations_in_level : Required[int]
+        Outer iterations completed in the current level.
+    global_outer_iterations_completed : Required[int]
+        Outer iterations completed across all levels.
+    current_inner_iteration : int
+        Current reconstruction-iteration index.
+    prev_factor : int | None
+        Previously completed resolution factor, or None.
+    lipschitz : float | None
+        Most recent data-gradient Lipschitz estimate, or None.
+    small_impr_streak : int
+        Successive outer iterations with small improvement.
+    elapsed_offset : float
+        Elapsed seconds preceding the saved state.
+    config : Required[Any]
+        Serialized solver configuration.
+    schedule_metadata : Any
+        Schedule identity metadata.
+    schedule_state : ScheduleResumeState | None
+        Current stage and completed work for resuming the schedule.
+    geometry_calibration_state : Any
+        Final persisted setup-geometry state, when present.
+    level_complete : bool
+        Whether the current resolution level has finished.
+    run_complete : bool
+        Whether the entire run has finished.
+    factors_skipped_reason : str | None
+        Reason finer levels were skipped, or None.
+    has_motion_coeffs : bool
+        Whether the archive contains motion-model coefficients.
+    """
 
     checkpoint_kind: Required[str]
     schema_version: Required[int]
@@ -99,7 +163,25 @@ class ScheduleResumeState(TypedDict):
 
 @dataclass(slots=True)
 class AlignmentCheckpoint:
-    """Loaded alignment checkpoint arrays and metadata."""
+    """Loaded alignment checkpoint arrays and metadata.
+
+    Parameters
+    ----------
+    x : numpy.ndarray
+        Current reconstruction in (x, y, z) order on the current level grid.
+    pose_params : numpy.ndarray
+        Per-view corrections, columns (alpha, beta, phi, dx, dz, dy); angles are radians
+        and translations physical lengths.
+    motion_coeffs : numpy.ndarray | None
+        Coefficients of a polynomial or spline motion model; None for independent per-view
+         parameters.
+    loss_history : list[float]
+        Recorded objective values in iteration order.
+    outer_stats : list[dict[str, Any]]
+        Per-outer-iteration diagnostics in execution order.
+    metadata : CheckpointMetadata
+        Checkpoint identity, schema and progress metadata.
+    """
 
     x: np.ndarray
     pose_params: np.ndarray
@@ -151,7 +233,31 @@ def save_alignment_checkpoint(
     outer_stats: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     metadata: Mapping[str, Any],
 ) -> None:
-    """Atomically write an alignment checkpoint as `.npz` plus JSON metadata."""
+    """Atomically write an alignment checkpoint as `.npz` plus JSON metadata.
+
+    Parameters
+    ----------
+    path : str or path-like
+        Checkpoint or sidecar file path.
+    x : array-like
+        Current reconstruction of shape (nx, ny, nz).
+    pose_params : array-like
+        Per-view corrections with columns (alpha, beta, phi, dx, dz[, dy]); angles are
+        radians and translations physical lengths.
+    motion_coeffs : array-like or None, optional
+        Polynomial or spline motion coefficients; None for per-view motion.
+    loss_history : sequence of float, optional
+        Recorded losses in iteration order.
+    outer_stats : sequence of dict, optional
+        Per-iteration diagnostics in execution order.
+    metadata : mapping
+        Checkpoint identity, geometry and progress fields.
+
+    Raises
+    ------
+    OSError
+        If the destination cannot be created or replaced.
+    """
     out_path = Path(path)
     if out_path.parent != Path():
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -201,7 +307,23 @@ def _fsync_parent(path: Path) -> None:
 
 
 def load_alignment_checkpoint(path: str | os.PathLike[str]) -> AlignmentCheckpoint:
-    """Load an alignment checkpoint and convert malformed files to CheckpointError."""
+    """Load an alignment checkpoint and convert malformed files to CheckpointError.
+
+    Parameters
+    ----------
+    path : str or path-like
+        Checkpoint or sidecar file path.
+
+    Returns
+    -------
+    AlignmentCheckpoint
+        Loaded arrays, loss history and validated metadata.
+
+    Raises
+    ------
+    CheckpointError
+        If the file cannot be read or its contents are malformed.
+    """
     try:
         with np.load(path, allow_pickle=False) as z:
             files = set(z.files)
@@ -313,7 +435,20 @@ def validate_alignment_checkpoint(
     checkpoint: AlignmentCheckpoint,
     expected_metadata: Mapping[str, Any] | CheckpointMetadata,
 ) -> None:
-    """Validate that a checkpoint can resume the current alignment request."""
+    """Validate that a checkpoint can resume the current alignment request.
+
+    Parameters
+    ----------
+    checkpoint : AlignmentCheckpoint
+        Loaded checkpoint to compare with the requested run.
+    expected_metadata : mapping
+        Required identity and layout fields of the current alignment request.
+
+    Raises
+    ------
+    CheckpointError
+        If identity or layout fields do not match the current request.
+    """
     metadata = checkpoint.metadata
     _validate_kind_and_schema(metadata)
 

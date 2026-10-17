@@ -73,7 +73,23 @@ def _scoped_dofs_for_cfg(cfg: AlignConfig) -> ScopedAlignmentDofs:
 
 
 def resolved_schedule_for_config(cfg: AlignConfig) -> ResolvedAlignmentSchedule:
-    """Return the schedule ``cfg`` runs, including coupled pose-stage objectives."""
+    """Return the schedule ``cfg`` runs, including coupled pose-stage objectives.
+
+    Parameters
+    ----------
+    cfg : AlignConfig
+        Solver settings and schedule or explicit active parameter names.
+
+    Returns
+    -------
+    ResolvedAlignmentSchedule
+        Validated stages, active parameters and gauge decisions.
+
+    Raises
+    ------
+    ValueError
+        If the schedule or its parameter and gauge selections are incompatible.
+    """
     return _resolved_schedule_for_cfg(cfg)
 
 
@@ -106,6 +122,164 @@ def _resolved_schedule_for_cfg(cfg: AlignConfig) -> ResolvedAlignmentSchedule:
 
 @dataclass(kw_only=True)
 class AlignConfig:
+    """Configure reconstruction, pose updates and alignment schedules.
+
+    For ordinary scans use tomojax.align and its mode/quality choices. This
+    configuration exposes expert settings for the array-level solvers.
+
+    Parameters
+    ----------
+    quality : QualityTier, optional
+        Quality policy, "fast" or "reference". Reference forces the JAX reference
+        reconstruction settings. Default is 'fast'.
+    outer_iterations : int, optional
+        Maximum number of outer alignment/reconstruction iterations. Default is 5.
+    iterations : int, optional
+        Inner reconstruction iterations per outer iteration. Default is 10.
+    tv_weight : float, optional
+        Nonnegative volume regularization weight. Default is 0.005.
+    regulariser : Regulariser, optional
+        Volume regularization model, "tv" or "huber_tv". Default is 'huber_tv'.
+    huber_delta : float, optional
+        Positive transition scale for Huber-TV. Default is 0.01.
+    tv_prox_iterations : int, optional
+        Iterations per TV proximal solve. Default is 10.
+    reconstruction : Reconstruction, optional
+        Inner reconstruction method, "fista" or "spdhg". Default is 'fista'.
+    nonnegative : bool, optional
+        Constrain reconstructed voxel values to be nonnegative. Default is True.
+    seed : int, optional
+        Random seed for stochastic reconstruction. Default is 0.
+    recon_rel_tol : float | None, optional
+        Relative objective-change threshold for inner reconstruction stopping. None
+        disables the threshold.
+    recon_patience : int, optional
+        Successive small-change iterations required for reconstruction stopping. Default
+        is 2.
+    lr_rot : float, optional
+        Gradient-descent rotation step size in radians. Default is 0.001.
+    lr_trans : float, optional
+        Gradient-descent translation step size in physical length units. Default is 0.1.
+    views_per_batch : int, optional
+        View batch size; zero chooses it from free device memory at alignment startup.
+        Default is 0.
+    projector_unroll : int, optional
+        Unrolling factor for the reference projector loop. Default is 1.
+    checkpoint_projector : bool, optional
+        Recompute intermediate projector arrays during differentiation to save memory.
+        Default is True.
+    gather_dtype : str, optional
+        Reference gather precision: "auto", "fp32", "fp16" or "bf16". Default is 'auto'.
+    projector_backend : ProjectorBackendInput, optional
+        Projector implementation: "jax" or "pallas". Default is 'pallas'.
+    ray_integrator : Literal['sampled', 'exact', 'joseph', 'joseph_cubic'], optional
+        Ray model: "sampled", "exact", "joseph" or "joseph_cubic". Default is 'sampled'.
+    opt_method : str, optional
+        Pose optimizer: "gd", "gn" or "lbfgs". Default is 'gn'.
+    gn_damping : float, optional
+        Gauss-Newton pose damping; must be finite and positive for joint solves. Default
+        is 0.001.
+    gn_jacobian : Literal['autodiff', 'central'], optional
+        Pose derivatives, "autodiff" or "central" finite differences. Default is
+        'autodiff'.
+    gn_difference_step : float, optional
+        Positive central-difference displacement as a fraction of the smallest voxel
+        pitch. Default is 0.001.
+    gn_coupling : Literal['fixed_volume', 'joint'], optional
+        Gauss-Newton update model: "fixed_volume" or "joint" volume and poses. Default
+        is 'fixed_volume'.
+    gn_joint_solver : Literal['stacked', 'pose_eliminated'], optional
+        Joint linear-system formulation, "stacked" or "pose_eliminated". Default is
+        'stacked'.
+    gn_joint_iterations : int, optional
+        Positive limit on iterations of each joint linear solve. Default is 40.
+    gn_joint_rtol : float, optional
+        Relative tolerance between zero and one for each joint linear solve. Default is
+        0.0001.
+    gn_volume_damping : float, optional
+        Positive volume damping in the joint Gauss-Newton system. Default is 0.001.
+    lbfgs_maxiter : int, optional
+        Maximum L-BFGS iterations per pose update. Default is 20.
+    lbfgs_ftol : float, optional
+        L-BFGS objective-change stopping tolerance. Default is 1e-06.
+    lbfgs_gtol : float, optional
+        L-BFGS gradient stopping tolerance. Default is 1e-05.
+    lbfgs_maxls : int, optional
+        Maximum line-search steps per L-BFGS update. Default is 20.
+    lbfgs_memory_size : int, optional
+        Number of correction pairs retained by L-BFGS. Default is 10.
+    w_rot : float, optional
+        Rotation regularization weight for pose updates. Default is 0.0.
+    w_trans : float, optional
+        Translation regularization weight for pose updates. Default is 0.0.
+    schedule : str | AlignmentSchedule | None, optional
+        Named preset or explicit stage schedule. Mutually exclusive with optimise_dofs;
+        None uses the default pose schedule.
+    optimise_dofs : tuple[str, ...] | None, optional
+        Explicit active parameter names instead of a named schedule.
+    freeze : tuple[str, ...], optional
+        Parameter names held at their initial values; defaults to an empty tuple.
+    bounds : DofBounds | str | Mapping[str, object], optional
+        Bounds by parameter name as triples, a mapping or a CLI-style string. Pose
+        rotations use radians, translations physical units, setup angles degrees and
+        detector offsets native pixels. Defaults to no bounds.
+    gauge_policy : GaugePolicy, optional
+        Gauge handling: "reject", "anchor_mean", "prior_required" or "diagnose_only".
+        Default is 'reject'.
+    gauge_priors : Mapping[str, object] | None, optional
+        Named priors required by the selected gauge policy, or None.
+    pose_model : PoseModel, optional
+        Per-view motion representation: "per_view", "polynomial" or "spline". Default is
+        'per_view'.
+    pose_translation_frame : PoseTranslationFrame, optional
+        Translation basis: "object" or lab-frame "detector". Translations are physical
+        lengths, not pixels. Default is 'object'.
+    knot_spacing : int, optional
+        Positive view spacing between spline knots. Default is 8.
+    degree : int, optional
+        Polynomial degree, or spline degree 1, 2 or 3. Default is 3.
+    seed_translations : bool, optional
+        Initialize per-view detector shifts with a global search. Default is False.
+    mask_vol : str, optional
+        Reconstruction support used for projection: "off" or an xy cylinder ("cyl").
+        Default is 'off'.
+    log_summary : bool, optional
+        Log progress after each outer iteration. Default is False.
+    log_compact : bool, optional
+        Use a compact line when summary logging is enabled. Default is True.
+    lipschitz : float | None, optional
+        Fixed inner-FISTA data Lipschitz constant, or None for power estimation.
+    early_stop : bool, optional
+        Stop outer alignment iterations after sustained small improvement. Default is
+        True.
+    early_stop_rel_impr : float, optional
+        Relative loss-improvement threshold for outer stopping. Default is 0.001.
+    early_stop_patience : int, optional
+        Successive small-improvement outer iterations required to stop. Default is 2.
+    gn_accept_only_improving : bool, optional
+        Accept Gauss-Newton updates only when loss improves within tolerance. Default is
+        True.
+    gn_accept_tol : float, optional
+        Allowed loss increase as a fraction of the loss before a Gauss-Newton step.
+        Default is 0.0.
+    loss : AlignmentLossConfig, optional
+        Projection-domain loss specification or multiresolution loss schedule. Defaults
+        to soft Otsu-weighted L2.
+
+    Raises
+    ------
+    ValueError
+        If an option is unknown, inconsistent with the selected optimizer or
+        schedule, or outside its supported range.
+
+    Examples
+    --------
+    >>> from tomojax.alignment import AlignConfig
+    >>> config = AlignConfig(quality="reference", iterations=5)
+    >>> config.projector_backend
+    'jax'
+    """
+
     quality: QualityTier = "fast"
     outer_iterations: int = 5
     iterations: int = 10
@@ -309,6 +483,23 @@ def coupled_pose_config(**overrides: object) -> AlignConfig:
     detector shift. Pass keyword overrides for any
     :class:`AlignConfig` field. ``AlignConfig()`` itself keeps the older
     alternating defaults for compatibility.
+
+    Parameters
+    ----------
+    **overrides : object
+        Named AlignConfig fields replacing the recommended defaults.
+
+    Returns
+    -------
+    AlignConfig
+        Joint Gauss-Newton pose-alignment configuration.
+
+    Raises
+    ------
+    TypeError
+        If a keyword does not name an AlignConfig field.
+    ValueError
+        If the resulting settings are inconsistent or invalid.
     """
     settings: dict[str, object] = {
         "gn_coupling": "joint",

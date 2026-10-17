@@ -154,6 +154,17 @@ class OrbitHeights:
     scan (near 0: the data do not decide the height). ``planes`` counts usable
     plane pairs at the sampled fine-search minima. Unobservable orbits retain
     zero height and zero contrast.
+
+    Parameters
+    ----------
+    heights : numpy.ndarray
+        Height of each orbit above the first in physical length units; the first is
+        zero.
+    contrast : numpy.ndarray
+        Cost-dip contrast for each orbit, 1 - minimum / median; near zero means weak
+        height information.
+    planes : int
+        Count of usable epipolar plane pairs at fine-search minima.
     """
 
     heights: np.ndarray
@@ -179,6 +190,28 @@ def orbit_heights(
     lowest, refined by a quadratic through the lowest costs. The estimate is
     good to about half a pixel at the axis: a starting point for alignment.
     None for a single orbit.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Scan geometry with its view angles and physical detector placement.
+    projections : array-like
+        Line integrals with shape (views, nv, nu), in geometry view order.
+    pairs : int, optional
+        Number of view pairs used for each height search. Default is 32.
+    reach : float or None, optional
+        Search half-width in physical length units. None uses a sixteenth of detector
+        height at the axis.
+
+    Returns
+    -------
+    OrbitHeights or None
+        Relative heights and confidence diagnostics; None for a single orbit.
+
+    Raises
+    ------
+    ValueError
+        If the projection stack does not match the geometry.
     """
     if not isinstance(geometry, ConeSegments) or len(geometry.segments) < 2:
         return None

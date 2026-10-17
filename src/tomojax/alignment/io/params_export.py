@@ -112,7 +112,28 @@ def alignment_params_payload(
     gauge_metadata: dict[str, Any] | None = None,
     translation_frame: str = "object",
 ) -> dict[str, Any]:
-    """Build the JSON payload for exported alignment parameters."""
+    """Build the JSON payload for exported alignment parameters.
+
+    Parameters
+    ----------
+    pose_params : array-like
+        Per-view corrections with columns (alpha, beta, phi, dx, dz[, dy]); angles are
+        radians and translations physical lengths.
+    du : float
+        Physical detector-u pixel spacing, used for pixel-unit exports.
+    dv : float
+        Physical detector-v pixel spacing, used for pixel-unit exports.
+    gauge_metadata : dict or None, optional
+        Gauge information to include in the exported record.
+    translation_frame : {"object", "detector"}, optional
+        Basis for physical translations; detector means lab x/y/z axes, not pixels.
+        Default is 'object'.
+
+    Returns
+    -------
+    dict
+        Named pose columns, units, translation frame and any gauge information.
+    """
     du_f, dv_f = _validate_detector_spacing(du=du, dv=dv)
     _validate_translation_frame(translation_frame)
     payload = {
@@ -149,7 +170,30 @@ def save_alignment_params_json(
     gauge_metadata: dict[str, Any] | None = None,
     translation_frame: str = "object",
 ) -> None:
-    """Write per-view alignment parameters as a named JSON sidecar."""
+    """Write per-view alignment parameters as a named JSON sidecar.
+
+    Parameters
+    ----------
+    path : str or path-like
+        Checkpoint or sidecar file path.
+    pose_params : array-like
+        Per-view corrections with columns (alpha, beta, phi, dx, dz[, dy]); angles are
+        radians and translations physical lengths.
+    du : float
+        Physical detector-u pixel spacing, used for pixel-unit exports.
+    dv : float
+        Physical detector-v pixel spacing, used for pixel-unit exports.
+    gauge_metadata : dict or None, optional
+        Gauge information to include in the exported record.
+    translation_frame : {"object", "detector"}, optional
+        Basis for physical translations; detector means lab x/y/z axes, not pixels.
+        Default is 'object'.
+
+    Raises
+    ------
+    ValueError
+        If the pose table, detector spacings or translation frame are invalid.
+    """
     out_path = _ensure_parent(path)
     payload = alignment_params_payload(
         pose_params,
@@ -171,7 +215,28 @@ def save_alignment_params_csv(
     dv: float,
     translation_frame: str = "object",
 ) -> None:
-    """Write a CSV sidecar, adding an explicit frame column for detector poses."""
+    """Write a CSV sidecar, adding an explicit frame column for detector poses.
+
+    Parameters
+    ----------
+    path : str or path-like
+        Checkpoint or sidecar file path.
+    pose_params : array-like
+        Per-view corrections with columns (alpha, beta, phi, dx, dz[, dy]); angles are
+        radians and translations physical lengths.
+    du : float
+        Physical detector-u pixel spacing, used for pixel-unit exports.
+    dv : float
+        Physical detector-v pixel spacing, used for pixel-unit exports.
+    translation_frame : {"object", "detector"}, optional
+        Basis for physical translations; detector means lab x/y/z axes, not pixels.
+        Default is 'object'.
+
+    Raises
+    ------
+    ValueError
+        If the pose table, detector spacings or translation frame are invalid.
+    """
     _validate_translation_frame(translation_frame)
     out_path = _ensure_parent(path)
     records = alignment_param_records(pose_params, du=du, dv=dv)
