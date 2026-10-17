@@ -100,15 +100,15 @@ __device__ float sample(const float* x, int a, int k, int b, int c,
                        int nx, int ny, int nz, int nb, int nc) {
     if (b<0 || b>=nb || c<0 || c>=nc) return 0.f;
     int ix=a==0?k:(a==1?c:b), iy=a==0?b:(a==1?k:c), iz=a==0?c:(a==1?b:k);
-    return x[((long)ix*ny+iy)*nz+iz];
+    return x[((INDEX)ix*ny+iy)*nz+iz];
 }
 extern "C" __global__ void forward(const float* coeff, const float* x, float* out,
-        int nx,int ny,int nz,int nu,int nv) {
+        int nx,int ny,int nz,int nu,int nv,int nviews) {
     int tiles_v=(nv+15)/16;
-    int u=(blockIdx.x/tiles_v)*8+threadIdx.x/16;
-    int v=(blockIdx.x%tiles_v)*16+threadIdx.x%16;
+    int tile=blockIdx.x/nviews, view=blockIdx.x%nviews;
+    int u=(tile/tiles_v)*8+threadIdx.x/16;
+    int v=(tile%tiles_v)*16+threadIdx.x%16;
     bool valid=(u<nu && v<nv);
-    int view=blockIdx.y;
     const float* c=coeff+14*view;
     int a=(int)c[0];
     int na=a==0?nx:(a==1?ny:nz),nb=a==0?ny:(a==1?nz:nx),nc=a==0?nz:(a==1?nx:ny);
@@ -156,7 +156,8 @@ extern "C" __global__ void forward(const float* coeff, const float* x, float* ou
 
 
 @cache
-def forward_kernel() -> Any:
+def forward_kernel(*, narrow: bool) -> Any:
     import cupy as cp
 
-    return cp.RawModule(code=_FORWARD_SOURCE, options=("--fmad=false",)).get_function("forward")
+    source = _FORWARD_SOURCE.replace("INDEX", "int" if narrow else "long")
+    return cp.RawModule(code=source, options=("--fmad=false",)).get_function("forward")

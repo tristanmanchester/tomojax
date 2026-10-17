@@ -401,20 +401,24 @@ def test_native_cuda_cgls_matches_independent_damped_system(tilt):
 
 
 @pytest.mark.gpu
-def test_native_cuda_clipped_planes_keep_the_matched_pair():
+@pytest.mark.parametrize("narrow", [False, True])
+def test_native_cuda_clipped_planes_keep_the_matched_pair(narrow):
     import cupy as cp
 
+    from tomojax.core._joseph_cuda_kernels import forward_kernel
     from tomojax.core.joseph_cuda import JosephCUDA
     from tomojax.forward import project_joseph
 
     grid = Grid(17, 13, 11, 1.2, 0.8, 1.4, vol_center=(0.3, -0.2, 0.7))
     detector = Detector(23, 19, 0.7, 1.1, (0.1, -0.4))
-    geometry = LaminographyGeometry(grid, detector, [0, 0.000001, 31, 89.99999, 90, 153], 51)
-    poses = np.asarray([geometry.pose_for_view(i) for i in range(6)], np.float32)
+    angles = np.r_[[0, 0.000001, 31, 89.99999, 90, 153], np.linspace(0, 180, 61)]
+    geometry = LaminographyGeometry(grid, detector, angles, 51)
+    poses = np.asarray([geometry.pose_for_view(i) for i in range(len(angles))], np.float32)
     rng = np.random.default_rng(719)
     x = rng.normal(size=(17, 13, 11)).astype(np.float32)
-    y = rng.normal(size=(6, 19, 23)).astype(np.float32)
+    y = rng.normal(size=(len(angles), 19, 23)).astype(np.float32)
     operators = JosephCUDA(poses, grid, detector, views_per_batch=4)
+    operators.forward_kernel = forward_kernel(narrow=narrow)
     ax, aty = (
         cp.asnumpy(operators.forward(cp.asarray(x))),
         cp.asnumpy(operators.adjoint(cp.asarray(y))),

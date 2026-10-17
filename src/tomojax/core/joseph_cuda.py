@@ -28,7 +28,8 @@ class JosephCUDA:
         self.batch = min(int(views_per_batch), len(poses))
         self.coeff = cp.asarray(coefficients(poses, grid, detector, xp=np))
         self.args = tuple(np.int32(n) for n in (*self.shape, detector.nu, detector.nv))
-        self.forward_kernel, self.gather_kernel = forward_kernel(), gather_kernel()
+        self.forward_kernel = forward_kernel(narrow=grid.nx * grid.ny * grid.nz < 2**31)
+        self.gather_kernel = gather_kernel()
 
     def forward(self, volume: Any) -> Any:
         """Project a device volume; return (view, v, u) CuPy storage."""
@@ -37,13 +38,20 @@ class JosephCUDA:
         n, nv, nu = self.image_shape
         out = cp.empty(self.image_shape, cp.float32)
         tiles = -(-nu // 8) * -(-nv // 16)
-        # CUDA's grid.y is limited to 65535 even on recent devices.
-        for first in range(0, n, 65535):
-            stop = min(first + 65535, n)
+        # Interleave nearby views for volume-cache reuse; a flat grid avoids
+        # CUDA's grid.y limit for large detectors.
+        for first in range(0, n, 64):
+            stop = min(first + 64, n)
             self.forward_kernel(
-                (tiles, stop - first),
+                (tiles * (stop - first),),
                 (THREADS,),
-                (self.coeff[first:stop], volume, out[first:stop], *self.args),
+                (
+                    self.coeff[first:stop],
+                    volume,
+                    out[first:stop],
+                    *self.args,
+                    np.int32(stop - first),
+                ),
             )
         return out
 
