@@ -55,9 +55,10 @@ def _cache_sensitivities(
     if initial is not None:
         initial.block_until_ready()
     free = device_free_memory_bytes()
-    # A cache is only part of the compiled solve's live memory. Leave room
-    # for its working volumes/projections, and never use most of the free pool.
-    return free is not None and nbytes <= min(free // 2, free - workspace_bytes)
+    # A cache is only part of the compiled solve's live memory. Its separate
+    # allocation can use the remaining pool after reserving the working buffers;
+    # a fixed fraction would needlessly recompute norms when that reserve fits.
+    return free is not None and nbytes <= free - workspace_bytes
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -79,8 +80,8 @@ class MLEMConfig:
     attenuation data is possible, but does not give it Poisson statistics.
     The projectors are the same matched pair as :class:`CGLSConfig`, with
     nonnegative interpolation weights. A single sensitivity is retained; multiple
-    subset sensitivities are cached within 256 MiB, or up to half the available
-    memory with room for working buffers when reused across multiple sweeps;
+    subset sensitivities are cached within 256 MiB, or in available memory
+    after reserving working buffers when reused across multiple sweeps;
     otherwise they are recomputed to bound memory use. Exactly independent
     axial planes share their single-plane sensitivities.
     """

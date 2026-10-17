@@ -137,7 +137,8 @@ def test_large_sensitivity_cache_is_bounded_and_requires_reuse(monkeypatch):
         monkeypatch.setattr(module, "device_free_memory_bytes", lambda free=free: free)
         assert module._cache_sensitivities(2**30, 4, 4, workspace_bytes=2 * 2**30) == fits
         assert not module._cache_sensitivities(2**30, 4, 1, workspace_bytes=0)
-    assert not module._cache_sensitivities(3 * 2**30, 4, 4, workspace_bytes=0)
+    assert module._cache_sensitivities(3 * 2**30, 4, 4, workspace_bytes=2**30)
+    assert not module._cache_sensitivities(3 * 2**30, 4, 4, workspace_bytes=2 * 2**30)
     assert not module._cache_sensitivities(2**30, 4, 4, workspace_bytes=4 * 2**30)
     completed = []
     initial = type("Pending", (), {"block_until_ready": lambda self: completed.append(True)})()
