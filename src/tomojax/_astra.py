@@ -173,9 +173,7 @@ def _segment(
     # only departures from that calibrated orbit remain pose corrections.
     height = -float(np.mean(translation[:, 2]))
     translation[:, 2] += height
-    cone = ConeBeam(
-        sod, sdd, axis_offset=float(np.mean(translation[:, 0])), source_height=height
-    )
+    cone = ConeBeam(sod, sdd, axis_offset=float(np.mean(translation[:, 0])), source_height=height)
     axis_unit = (float(axis[0]), float(axis[1]), float(axis[2]))
     # ConeGeometry aligns +z to the axis, then turns by theta about it.
     aligned = ConeGeometry(grid, detector, [0.0], cone, axis_unit=axis_unit).poses()[0]
