@@ -646,7 +646,7 @@ def test_memmap_output_and_batch_size_independence(tmp_path, backend):
     reference = fourier_reconstruct(
         geometry, grid, detector, data, config=FourierConfig(slices_per_batch=7, backend=backend)
     )
-    assert reference.flags.f_contiguous and actual.flags.c_contiguous
+    assert reference.flags.c_contiguous and actual.flags.c_contiguous
     np.testing.assert_allclose(actual, reference, rtol=3e-5, atol=3e-6)
     np.testing.assert_array_equal(source, data)
 

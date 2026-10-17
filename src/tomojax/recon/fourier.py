@@ -79,8 +79,8 @@ def fourier_reconstruct(
     artifacts; no amplitude fitting, clipping or truncation correction is applied.
 
     Input and output stay in NumPy arrays or memmaps, with float32 output in
-    ``(nx, ny, nz)`` order. CUDA downloads match Fortran-order output storage.
-    New outputs are plane-contiguous; supplied output storage is preserved.
+    ``(nx, ny, nz)`` order. New outputs are C-contiguous for downstream volume
+    operations; supplied output storage is preserved.
     Their storage must not overlap. Completed slabs are
     written immediately, so a later failure may leave partial output. Input
     storage must remain unchanged during the call. This routine is not
@@ -100,7 +100,7 @@ def fourier_reconstruct(
         raise ValueError("fourier_reconstruct: grid and detector placement must be finite")
     depth = fourier_slab_depth(grid, detector, cfg.slices_per_batch, backend)
     order, flipped, angles = sorted_half_turn(np.asarray(geometry.angles))
-    output = validate_host_arrays(projections, out, shape, "fourier_reconstruct", order="F")
+    output = validate_host_arrays(projections, out, shape, "fourier_reconstruct")
     transpose_download = backend == "cupy" and output.flags.f_contiguous
     host_bytes = 4 * (grid.nx * grid.ny * grid.nz + nviews * detector.nu * grid.nz)
     positions = (origin[2] + np.arange(grid.nz) * grid.vz - detector.center[1]) / detector.dv + (
