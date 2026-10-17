@@ -139,3 +139,28 @@ def test_large_sensitivity_cache_is_bounded_and_requires_reuse(monkeypatch):
         assert not module._cache_sensitivities(300 * 2**20, 4, 1)
     monkeypatch.setattr(module, "device_free_memory_bytes", lambda: 16 * 2**30)
     assert not module._cache_sensitivities(1025 * 2**20, 4, 4)
+
+
+@pytest.mark.numerical
+def test_streamed_counts_match_resident_subsets_and_release_sources(problem, monkeypatch):
+    module = import_module("tomojax.recon.mlem")
+    host = import_module("tomojax.recon._host_stream")
+    grid, detector, geometry, matrix = problem
+    data = (matrix @ np.linspace(0.2, 1.1, 12)).reshape(5, 4, 5).astype(np.float32)
+    config = MLEMConfig(iterations=3, subsets=3, views_per_batch=1)
+    expected = mlem(geometry, grid, detector, data, config=config)[0]
+    original, reads = host._read, []
+
+    def read(key, start, weights_key, indices, *, size):
+        reads.append(np.asarray(indices).copy())
+        assert size == 1 and indices.shape == (1,)
+        return original(key, start, weights_key, indices, size=size)
+
+    monkeypatch.setattr(host, "_read", read)
+    monkeypatch.setattr(module, "should_stream", lambda _: True)
+    registered = set(host._SOURCES)
+    for scale in (1, 2):
+        actual = mlem(geometry, grid, detector, data * scale, config=config)[0]
+        np.testing.assert_allclose(actual, expected * scale, rtol=2e-6, atol=2e-6)
+        assert set(host._SOURCES) == registered
+    assert set(np.concatenate(reads)) == set(range(5))

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from functools import partial
 import operator
@@ -19,6 +20,7 @@ from tomojax.core.validation import (
     validate_projection_stack,
     validate_volume,
 )
+from tomojax.recon._host_stream import host_source, should_stream, validate_host_views
 from tomojax.recon._projection import (
     ConeModel,
     ProjectorBackend,
@@ -74,7 +76,10 @@ class MLEMConfig:
     projector_model: ProjectorModel = "auto"
 
 
-@partial(jax.jit, static_argnames=("grid", "detector", "backend", "batch_size", "model", "cache"))
+@partial(
+    jax.jit,
+    static_argnames=("grid", "detector", "backend", "batch_size", "model", "cache", "stream"),
+)
 def _solve(
     poses: jax.Array,
     data: jax.Array,
@@ -91,15 +96,16 @@ def _solve(
     batch_size: int,
     model: str | ConeModel,
     cache: bool,
+    stream: bool,
 ) -> tuple[jax.Array, jax.Array]:
     sensitivity, correction = poisson_operators(
-        poses, grid, detector, det_grid, backend, batch_size, model, indices, valid
+        poses, grid, detector, det_grid, backend, batch_size, model, indices, valid, stream=stream
     )
     shape = (grid.nx, grid.ny, grid.nz)
     x = jnp.ones(shape, jnp.float32) if initial is None else initial
     if support is not None:
         x = jnp.where(support, x, 0.0)
-    inputs_valid = jnp.all(jnp.isfinite(data) & (data >= 0))
+    inputs_valid = jnp.bool_(True) if stream else jnp.all(jnp.isfinite(data) & (data >= 0))
     inputs_valid &= jnp.all(jnp.isfinite(x) & (x >= 0)) & jnp.all(jnp.isfinite(poses))
     subsets = indices.shape[0]
     # A full subset stack on a large volume can exceed device memory. Retain
@@ -155,7 +161,8 @@ def mlem(
 
     Returns the FP32 volume and an iteration record, without a convergence
     claim. Wholly unobserved voxels are zero; zero measurements drive
-    observed voxels to zero. Input and output remain device resident.
+    observed voxels to zero. Large host measurement stacks stream in bounded
+    view batches; device inputs and the output remain device resident.
     """
     cfg = MLEMConfig() if config is None else config
     iterations, subsets, batch = map(
@@ -184,16 +191,24 @@ def mlem(
     indices = np.arange(subsets)[:, None] + subsets * np.arange(count)[None, :]
     valid = indices < n
     indices = order[np.minimum(indices, n - 1)].astype(np.int32)
-    data = _device(projections)
     initial = None if init_x is None else _device(init_x)
-    # Query after these persistent inputs occupy their device storage.
-    cache = _cache_sensitivities(int(subsets * np.prod(shape) * 4), subsets, iterations)
-    volume, good = _solve(
-        stack_view_poses(geometry, n), data, initial, support,
-        jax.device_put(indices), jax.device_put(valid), jnp.int32(iterations), det_grid,
-        grid=grid, detector=detector, backend=backend, batch_size=batch, model=model,
-        cache=cache,
-    )  # fmt: skip
+    stream = should_stream(projections)
+    if stream:
+        validate_host_views(np.asarray(projections))
+        if np.min(projections) < 0:
+            raise ValueError("mlem: projections must be nonnegative")
+    context = host_source(np.asarray(projections)) if stream else nullcontext(_device(projections))
+    with context as data:
+        # Query after these persistent inputs occupy their device storage.
+        cache = _cache_sensitivities(int(subsets * np.prod(shape) * 4), subsets, iterations)
+        volume, good = _solve(
+            stack_view_poses(geometry, n), data, initial, support,
+            jax.device_put(indices), jax.device_put(valid), jnp.int32(iterations), det_grid,
+            grid=grid, detector=detector, backend=backend, batch_size=batch, model=model,
+            cache=cache, stream=stream,
+        )  # fmt: skip
+        if stream:
+            volume.block_until_ready()  # Host registrations must outlive every callback.
     if not bool(good):
         raise ValueError("mlem: projections and initial volume must be finite and nonnegative")
     return volume, {

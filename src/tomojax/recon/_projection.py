@@ -638,6 +638,8 @@ def poisson_operators(
     model: str | ConeModel,
     indices: jax.Array,
     valid: jax.Array,
+    *,
+    stream: bool = False,
 ) -> tuple[
     Callable[[jax.Array], jax.Array], Callable[[jax.Array, jax.Array, jax.Array], jax.Array]
 ]:
@@ -647,6 +649,8 @@ def poisson_operators(
     marks padding. The returned functions take the subset index, and the
     second also takes the volume and the original-order measurement stack.
     Source arrangements are gathered with their views, including cone segments.
+    With ``stream``, measurements are a host-source key; only the requested
+    batch is gathered from its original-order host array.
     """
     ops = _Batches(
         poses, grid, detector, det_grid, backend, batch_size, model, "linear",
@@ -659,7 +663,12 @@ def poisson_operators(
 
     return (
         lambda i: _sensitivity(group(i)),
-        lambda i, volume, data: _correction(group(i), volume, data[indices[i]]),
+        lambda i, volume, data: _correction(
+            group(i),
+            volume,
+            data if stream else data[indices[i]],
+            indices=indices[i] if stream else None,
+        ),
     )
 
 
@@ -672,12 +681,24 @@ def _sensitivity(ops: _Batches) -> jax.Array:
     return jax.lax.fori_loop(0, ops.count, batch, ops.zeros_volume())
 
 
-def _correction(ops: _Batches, volume: jax.Array, data: jax.Array) -> jax.Array:
+def _correction(
+    ops: _Batches, volume: jax.Array, data: jax.Array, *, indices: jax.Array | None = None
+) -> jax.Array:
     def batch(k: jax.Array, output: jax.Array) -> jax.Array:
         start, poses, valid = ops.select(k)
         expected = ops.project(volume, start, poses)
         positive = expected > 0
-        ratio = ops.images(data, start) / jnp.where(positive, expected, 1.0)
+        measured = (
+            ops.images(data, start)
+            if indices is None
+            else read_views(
+                data,
+                start,
+                (ops.size, ops.detector.nv, ops.detector.nu),
+                indices=jax.lax.dynamic_slice_in_dim(indices, start, ops.size),
+            )
+        )
+        ratio = measured / jnp.where(positive, expected, 1.0)
         ratio = jnp.where(valid[:, None, None] & positive, ratio, 0.0)
         return ops.backproject(ratio, start, poses, output)
 
