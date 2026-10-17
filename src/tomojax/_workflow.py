@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
     from tomojax._loading import Frames
     from tomojax._typed_arrays import Device
-    from tomojax.alignment import AlignConfig
+    from tomojax.alignment import AlignConfig, ProjectionMatchingConfig
     from tomojax.alignment.api import (
         AlignmentMode,
         AlignmentPlan,
@@ -525,7 +525,7 @@ def align(
     freeze: Iterable[str] = (),
     grid: Grid | None = None,
     checkpoint: str | PathLike[str] | None = None,
-    config: AlignConfig | None = None,
+    config: AlignConfig | ProjectionMatchingConfig | None = None,
     devices: Device | Sequence[Device] | None = None,
 ) -> Alignment:
     """Estimate ``scan``'s geometry corrections and reconstruct with them.
@@ -543,11 +543,13 @@ def align(
     ``("dy",)``); ``levels`` sets the coarse-to-fine binning factors.
     ``config`` (a :class:`tomojax.alignment.AlignConfig`) holds expert solver
     settings and replaces the quality profile's defaults.
-    An initializer-only ``spectral_setup`` schedule does not reconstruct;
-    reconstruct its returned scan or compose it before a pose stage.
+    ``ProjectionMatchingConfig`` instead selects native-texture, translation-only
+    joint refinement for unposed axial scans, without resampling the input.
+    It may fit noise or model mismatch as motion; inspect poses and image quality.
+    Its image uses Fourier. Checkpoints and level/quality overrides are unsupported.
+    A ``spectral_setup`` initializer does not reconstruct; reconstruct its returned scan.
 
-    ``grid`` aligns and reconstructs on another grid than the scan's (a
-    region, or a different voxel size), as :func:`reconstruct` does.
+    ``grid`` overrides the scan's reconstruction grid, as :func:`reconstruct` does.
 
     ``checkpoint`` is a file the alignment saves its progress to after each
     outer iteration. When that file holds a checkpoint of the same alignment
@@ -574,6 +576,17 @@ def align(
     :attr:`Alignment.info` holds the mode, levels and resolved ``config`` with
     the solver's record (losses, gauge, any calibrated setup geometry).
     """
+    if config is not None:
+        from tomojax.alignment import ProjectionMatchingConfig
+
+        if isinstance(config, ProjectionMatchingConfig):
+            if mode not in {"auto", "pose"} or levels is not None or tuple(freeze):
+                raise ValueError("projection matching takes mode='pose', without levels or freeze")
+            if checkpoint is not None or quality != "fast":
+                raise ValueError(
+                    "projection matching does not take checkpoint or quality overrides"
+                )
+            return _align_projection_matching(scan, config=config, grid=grid, devices=devices)
     if mode == "auto":
         freeze = tuple(freeze)
         explicit = config is not None or levels is not None or bool(freeze)
@@ -602,6 +615,25 @@ def align(
         config=config,
         devices=devices,
     )
+
+
+def _align_projection_matching(
+    scan: Scan,
+    *,
+    config: ProjectionMatchingConfig,
+    grid: Grid | None,
+    devices: Device | Sequence[Device] | None,
+) -> Alignment:
+    from tomojax.alignment.api import match_projections
+    from tomojax.core.devices import sharing
+
+    if grid is not None:
+        scan = with_grid(scan, grid)
+    with sharing(devices):
+        poses, info = match_projections(scan.geometry, scan.projections, config=config)
+        corrected = scan.with_poses(poses)
+        volume = np.asarray(reconstruct(corrected, "fourier").volume)
+    return Alignment(volume, corrected, poses, {**info, "reconstruction": "fourier"})
 
 
 def _align_explicit(

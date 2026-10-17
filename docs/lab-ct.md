@@ -15,7 +15,8 @@ pixels and offsets, the reconstruction volume, the white level and the angles
 (from `<Name>_ctdata.txt` when present), and `tomojax inspect` describes and checks
 the result. Only TIFFs named `<Name>` plus the input separator and a number are
 projections; flat fields, thumbnails and reconstructions sharing the prefix are
-skipped:
+skipped. If a directory holds several parameter files, name the intended
+calibration file explicitly:
 
 ```bash
 uv run --no-sync tomojax import scan/part.xtekct -o scan.nxs
@@ -24,11 +25,12 @@ uv run --no-sync tomojax inspect scan.nxs
 
 Projections become line integrals, `-log(I / WhiteLevel)` (`--transmission`
 keeps intensities), with image rows flipped so that the detector's v axis points up.
-Lengths stay in the scanner's units, millimetres for Nikon. The axis offset and
-detector roll are left at zero for the next step. TomoJAX has not yet been
-checked against a real Nikon scan: confirm the handedness of the first
-reconstruction on a known sample, and use `--reverse-angles` if the stage
-turns the other way.
+Lengths stay in the scanner's units, millimetres for Nikon. The calibrated
+rotation axis is read from `ObjectOffsetX`, `ObjectRoll` and `ObjectTilt`, or
+the older `CentreOfRotationTop/Bottom` detector-plane offsets. The declared
+view count excludes an extra closing frame on a full turn, with a warning.
+Confirm handedness on a known sample; `--reverse-angles` reverses the stage
+direction.
 
 For other scanners, import the TIFF stack with the angles and the geometry,
 then flat- and dark-correct it:

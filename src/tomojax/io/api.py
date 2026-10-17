@@ -1,5 +1,6 @@
 """Public API for dataset IO and metadata normalization."""
 
+from tomojax.io._acquisition import read_acquisition
 from tomojax.io._angles import load_angles
 from tomojax.io._datasets import (
     LoadedNXTomo,
@@ -55,6 +56,7 @@ __all__ = [
     "locate_frames",
     "normalize_json",
     "projection_stats",
+    "read_acquisition",
     "read_json_object",
     "read_tiff_frames",
     "save_dataset",

@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.alignment._config import AlignConfig
+from tomojax.alignment._model.dofs import DOF_INDEX
 from tomojax.alignment._model.gauge import (
     GaugeFixMode,
     apply_alignment_gauge,
@@ -25,7 +26,38 @@ from tomojax.alignment._observer import ObserverCallback
 from tomojax.alignment._results import AlignResumeState
 from tomojax.core.cone import ConeModel
 from tomojax.core.geometry.base import Detector, Geometry, Grid
+from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.geometry import cylindrical_mask_xy
+
+
+def with_beam_translation(
+    active: tuple[bool, ...], geometry: object, cfg: AlignConfig
+) -> tuple[bool, ...]:
+    """Add dy (along the beam) to cone-beam alignment that estimates dx and dz.
+
+    A cone beam's magnification makes dy observable; parallel beams leave it
+    inactive. ``freeze=("dy",)`` keeps it fixed.
+    """
+    dx, dz, dy = (DOF_INDEX[name] for name in ("dx", "dz", "dy"))
+    if not is_cone_beam(geometry) or "dy" in cfg.freeze or not (active[dx] and active[dz]):
+        return active
+    return tuple(True if i == dy else value for i, value in enumerate(active))
+
+
+def validate_resume_config(resume_state: AlignResumeState, cfg: AlignConfig) -> None:
+    """Reject a resumed state whose iteration or physical convention changed."""
+    if resume_state.start_outer_iter < 0 or resume_state.start_outer_iter > int(
+        cfg.outer_iterations
+    ):
+        raise ValueError(
+            "align resume_state start_outer_iter must be between 0 and cfg.outer_iterations; "
+            f"got {resume_state.start_outer_iter} "
+            f"for outer_iterations={int(cfg.outer_iterations)}"
+        )
+    if resume_state.pose_translation_frame != cfg.pose_translation_frame:
+        raise ValueError("align resume_state pose_translation_frame differs from config")
+    if resume_state.ray_integrator != cfg.ray_integrator:
+        raise ValueError("align resume_state ray_integrator differs from config")
 
 
 def _build_alignment_volume_mask(

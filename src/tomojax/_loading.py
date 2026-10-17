@@ -59,14 +59,15 @@ def load(path: str | PathLike[str], *, poses: bool = True) -> Scan:
     file = Path(path)
     if not file.exists():
         raise FileNotFoundError(f"no such file: {file}")
+    discovered = _acquisition_frames(file)
+    if discovered is not None:
+        return _corrected_on_load(discovered, file)
     suffix = file.suffix.lower()
     if file.is_dir() or suffix in {".tif", ".tiff"}:
         raise ValueError(
             f"{file} is a TIFF stack, which holds no geometry: load it with "
             "tomojax.load_frames(path, angles=..., detector=...)"
         )
-    if suffix == ".xtekct":
-        return _corrected_on_load(load_frames(file), file)
     located = _located(file) if suffix in _HDF5 else None
     if located is not None and located.raw:
         return _corrected_on_load(_hdf5_frames(file, located, angles=None, poses=poses), file)
@@ -247,10 +248,10 @@ def load_frames(
     sample, flat and dark frames are read only as they are corrected. The
     frames, key and angles are found at their NXtomo paths or as the file's only datasets of
     that name (``data``, ``image_key``, ``rotation_angle``), or their paired GDA imaging
-    paths; ``data_path``,
-    ``image_key_path`` and ``angles_path`` name them otherwise. A Nikon scan
-    carries its white level. A GDA angular command mislabeled as mm is read in
-    degrees with a warning; discovered paths and this correction stay in source metadata.
+    paths; ``data_path``, ``image_key_path`` and ``angles_path`` name them otherwise.
+    Nikon scans are recognized by their XTekCT header and carry a white level.
+    A GDA command mislabeled as mm is read in degrees with a warning; discovered
+    paths and this correction stay in source metadata.
     TIFF frames need their ``angles`` (degrees), and
     their ``detector`` unless pixels are unit length.
 
@@ -265,8 +266,9 @@ def load_frames(
     if not file.exists():
         raise FileNotFoundError(f"no such file: {file}")
     suffix = file.suffix.lower()
-    if suffix == ".xtekct":
-        frames = _nikon_frames(file)
+    frames = _acquisition_frames(file, data_path=data_path)
+    if frames is not None:
+        pass
     elif file.is_dir() or suffix in {".tif", ".tiff"}:
         if geometry is not None and angles is None:
             angles = np.asarray(cast("Any", geometry).angles)
@@ -457,15 +459,21 @@ def _hdf5_frames(
     )
 
 
-def _nikon_frames(file: Path) -> Frames:
-    from tomojax.io import load_nikon_xtekct
+def _acquisition_frames(file: Path, *, data_path: str | None = None) -> Frames | None:
+    from tomojax.io.api import read_acquisition
 
-    record = load_nikon_xtekct(file, absorption=False)
-    white = float(record.geometry_metadata["nikon_xtekct"]["white_level"])
+    found = read_acquisition(file, data_path=data_path)
+    if found is None:
+        return None
+    record = found.record
     return Frames(
-        counts=record.projections,
+        counts=found.counts,
         geometry=geometry_of(record, poses=True),
-        white_level=white,
+        flats=found.flats,
+        darks=found.darks,
+        flat_positions=found.flat_positions,
+        white_level=found.white_level,
+        view_positions=found.view_positions,
         name=record.sample_name or "sample",
         source=record,
     )

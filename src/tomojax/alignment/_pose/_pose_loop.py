@@ -13,7 +13,7 @@ import numpy as np
 
 from tomojax.alignment._config import AlignConfig, _active_dof_mask_for_cfg, _active_dofs_for_cfg
 from tomojax.alignment._geometry.parametrizations import pad_pose_params
-from tomojax.alignment._model.dofs import DOF_INDEX, DOF_NAMES, POSE_WIDTH, bounds_vectors
+from tomojax.alignment._model.dofs import DOF_NAMES, POSE_WIDTH, bounds_vectors
 from tomojax.alignment._model.gauge import (
     active_gauge_dofs,
     normalize_gauge_fix,
@@ -45,7 +45,6 @@ from tomojax.backends import estimate_views_per_batch_info
 from tomojax.core import format_duration, progress_iter
 from tomojax.core.cone import cone_model
 from tomojax.core.geometry.base import Detector, Geometry, Grid
-from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import get_detector_grid_device
 from tomojax.core.validation import (
@@ -56,12 +55,15 @@ from tomojax.core.validation import (
     validate_volume,
 )
 
+from ._coupled_program import JointRefinement
 from ._pose_context import (
     AlignmentRuntimeContext,
     PoseConstraintContext,
     PoseMotionContext,
     _AlignSetupState,
     _build_alignment_volume_mask,
+    validate_resume_config,
+    with_beam_translation,
 )
 from ._pose_objective import PoseObjectiveBundle, _build_pose_objective_bundle
 from ._pose_steps import (
@@ -117,20 +119,6 @@ def _with_resolved_views_per_batch(
     return resolved
 
 
-def _with_beam_translation(
-    active: tuple[bool, ...], geometry: object, cfg: AlignConfig
-) -> tuple[bool, ...]:
-    """Add dy (along the beam) to cone-beam alignment that estimates dx and dz.
-
-    A cone beam's magnification makes dy observable; parallel beams leave it
-    inactive. ``freeze=("dy",)`` keeps it fixed.
-    """
-    dx, dz, dy = (DOF_INDEX[name] for name in ("dx", "dz", "dy"))
-    if not is_cone_beam(geometry) or "dy" in cfg.freeze or not (active[dx] and active[dz]):
-        return active
-    return tuple(True if i == dy else value for i, value in enumerate(active))
-
-
 def _prepare_align_setup(
     geometry: Geometry,
     grid: Grid,
@@ -156,10 +144,7 @@ def _prepare_align_setup(
     )
     cfg = _with_resolved_views_per_batch(cfg, n_views=n_views, grid=grid, detector=detector)
     if resume_state is not None:
-        if resume_state.pose_translation_frame != cfg.pose_translation_frame:
-            raise ValueError("align resume_state pose_translation_frame differs from config")
-        if resume_state.ray_integrator != cfg.ray_integrator:
-            raise ValueError("align resume_state ray_integrator differs from config")
+        validate_resume_config(resume_state, cfg)
         init_x = resume_state.x
         init_pose_params = resume_state.pose_params
     if init_x is not None:
@@ -184,7 +169,7 @@ def _prepare_align_setup(
         else jnp.zeros((n_views, POSE_WIDTH), dtype=jnp.float32)
     )
     active_mask_tuple = _active_dof_mask_for_cfg(cfg)
-    active_mask_tuple = _with_beam_translation(active_mask_tuple, geometry, cfg)
+    active_mask_tuple = with_beam_translation(active_mask_tuple, geometry, cfg)
     if init_pose_params is None:
         seeded = seeded_translation_params(geometry, grid, detector, projections, cfg)
         pose_params = pose_params if seeded is None else seeded
@@ -524,6 +509,7 @@ def _run_align_outer_iteration(
     backend_provenance: Mapping[str, object],
     profile_policy: Mapping[str, object],
     wall_start: float,
+    reconstruct_volume: bool = True,
 ) -> tuple[OuterStat, float | None]:
     stat = _initial_outer_stat(
         outer_idx=outer_idx,
@@ -535,20 +521,21 @@ def _run_align_outer_iteration(
         profile_policy=profile_policy,
     )
     outer_start = time.perf_counter()
-    state.x, state.l_prev, recon_stat = _run_reconstruction_step(
-        geometry=geometry,
-        grid=grid,
-        detector=detector,
-        projections=projections,
-        det_grid=det_grid,
-        pose_params=state.pose_params,
-        x=state.x,
-        cfg=cfg,
-        L_prev=state.l_prev,
-        outer_idx=outer_idx,
-        reconstruction=reconstruction,
-    )
-    stat.update(recon_stat)
+    if reconstruct_volume:
+        state.x, state.l_prev, recon_stat = _run_reconstruction_step(
+            geometry=geometry,
+            grid=grid,
+            detector=detector,
+            projections=projections,
+            det_grid=det_grid,
+            pose_params=state.pose_params,
+            x=state.x,
+            cfg=cfg,
+            L_prev=state.l_prev,
+            outer_idx=outer_idx,
+            reconstruction=reconstruction,
+        )
+        stat.update(recon_stat)
     if bool(stat.get("reconstruction_failed", False)):
         stat["outer_time"] = time.perf_counter() - outer_start
         stat["cumulative_time"] = time.perf_counter() - wall_start
@@ -726,6 +713,7 @@ def align(
     checkpoint_callback: AlignCheckpointCallback | None = None,
     det_grid_override: tuple[jnp.ndarray, jnp.ndarray] | None = None,
     anchor_translations: bool = False,
+    joint_refinement: JointRefinement | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray, AlignInfo]:
     """Alternating reconstruction + per-view pose alignment on small cases.
 
@@ -773,11 +761,6 @@ def align(
         final_gauge_stats = dict(initial_gauge_stats)
 
     start_outer_iter = int(resume_state.start_outer_iter) if resume_state is not None else 0
-    if start_outer_iter < 0 or start_outer_iter > int(cfg.outer_iterations):
-        raise ValueError(
-            "align resume_state start_outer_iter must be between 0 and cfg.outer_iterations; "
-            f"got {start_outer_iter} for outer_iterations={int(cfg.outer_iterations)}"
-        )
     runtime = _build_alignment_runtime_context(
         geometry=geometry,
         grid=grid,
@@ -798,6 +781,7 @@ def align(
         n_views=n_views,
         active_mask=active_mask,
         runtime=runtime,
+        refinement=joint_refinement,
     )
 
     motion_loss_and_grad = motion_ctx.loss_and_grad_for(objective.align_loss)
@@ -874,6 +858,7 @@ def align(
             backend_provenance=backend_provenance,
             profile_policy=profile_policy,
             wall_start=wall_start,
+            reconstruct_volume=joint_refinement is None,
         )
         if cfg.log_summary:
             _log_align_outer_summary(stat=stat, cfg=cfg, reconstruction=reconstruction)

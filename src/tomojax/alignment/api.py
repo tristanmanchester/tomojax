@@ -62,6 +62,7 @@ from tomojax.alignment._profiles import (
     profile_policy_from_config,
     resolve_profiled_cli_defaults,
 )
+from tomojax.alignment._projection_matching import ProjectionMatchingConfig, match_projections
 from tomojax.alignment.io.checkpoint import (
     AlignmentCheckpoint,
     CheckpointError,
@@ -129,6 +130,7 @@ __all__ = [
     "PWLSLossSpec",
     "PoseState",
     "PoseTranslationFrame",
+    "ProjectionMatchingConfig",
     "QualityTier",
     "ResolvedAlignmentSchedule",
     "SetupGeometryState",
@@ -150,6 +152,7 @@ __all__ = [
     "load_alignment_checkpoint",
     "loss_spec_name",
     "loss_spec_params",
+    "match_projections",
     "normalize_alignment_dofs",
     "normalize_bounds",
     "normalize_geometry_dofs",

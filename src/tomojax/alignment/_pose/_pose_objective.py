@@ -13,6 +13,7 @@ from tomojax.core.geometry.base import Detector, Geometry, Grid
 from tomojax.core.projector import forward_project_view_T
 
 from ._coupled_objective import CoupledObjective, build_coupled_objective
+from ._coupled_program import JointRefinement
 from ._pose_block import pose_block_solver
 from ._pose_context import AlignmentRuntimeContext, _pose_objective_context, _PoseObjectiveContext
 from ._pose_jacobian import build_pose_prediction_and_columns
@@ -309,6 +310,7 @@ def _build_pose_objective_bundle(
     n_views: int,
     active_mask: jnp.ndarray,
     runtime: AlignmentRuntimeContext,
+    refinement: JointRefinement | None = None,
 ) -> PoseObjectiveBundle:
     ctx = _pose_objective_context(
         grid=grid,
@@ -328,5 +330,7 @@ def _build_pose_objective_bundle(
         align_loss_jit=jax.jit(align_loss),
         loss_and_grad_manual=loss_and_grad_manual_jit,
         gn_update_all=_build_gn_update_all(ctx, gn_update_batch),
-        coupled=build_coupled_objective(ctx) if cfg.gn_coupling == "joint" else None,
+        coupled=build_coupled_objective(ctx, refinement=refinement)
+        if cfg.gn_coupling == "joint"
+        else None,
     )

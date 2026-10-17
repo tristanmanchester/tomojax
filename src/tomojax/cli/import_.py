@@ -139,7 +139,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             absorption=not cast("bool", args.transmission),
             reverse_angles=cast("bool", args.reverse_angles),
         )
-        hint = "; estimate the rotation axis with `tomojax align --mode cor`"
+        hint = "; check the rotation axis with `tomojax align --mode cor`"
     elif suffix in _DATASETS:
         record, hint = load_dataset(source), ""
     else:

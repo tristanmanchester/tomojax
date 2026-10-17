@@ -10,6 +10,8 @@ losses, gauges and the single-resolution solver are in
 
 from __future__ import annotations
 
+from tomojax.alignment._projection_matching import ProjectionMatchingConfig
+
 from ._modes import MODES, AlignmentPlan, alignment_plan
 from .pipeline import AlignConfig, align_multires
 
@@ -17,6 +19,7 @@ __all__ = [
     "MODES",
     "AlignConfig",
     "AlignmentPlan",
+    "ProjectionMatchingConfig",
     "align_multires",
     "alignment_plan",
 ]
