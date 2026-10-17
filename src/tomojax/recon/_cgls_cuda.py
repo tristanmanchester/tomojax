@@ -88,6 +88,11 @@ def solve(geometry, grid, detector, projections, initial, cfg: CGLSConfig):
     with _device(cp):
         if cfg.stream_projections is None:
             free, _total = cp.cuda.runtime.memGetInfo()
+            # Freed arrays stay in CuPy's pool, not in the driver's free count.
+            # A repeated solve can reuse them without falling back to JAX.
+            pool = cp.get_default_memory_pool()
+            if cp.cuda.get_allocator() == pool.malloc:
+                free += pool.free_bytes()
             if projections.nbytes > 0.4 * free:
                 return None
         shape = validate_grid(grid, "cgls grid")

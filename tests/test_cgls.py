@@ -358,7 +358,10 @@ x, info = cgls(geometry, g, d, np.zeros((7, 7, 9), np.float32),
 json.dumps(info, allow_nan=False)
 assert 'jax' not in sys.modules and info['execution_backend'] == 'cupy'
 assert isinstance(x, np.ndarray) and np.isfinite(x).all() and np.linalg.norm(x) < 7
-result = tj.reconstruct(tj.Scan(np.ones((7, 7, 9), np.float32), geometry), 'cgls', iterations=2)
+import cupy as cp
+from unittest.mock import patch
+with patch.object(cp.cuda.runtime, 'memGetInfo', return_value=(0, 1)):
+    result = tj.reconstruct(tj.Scan(np.ones((7, 7, 9), np.float32), geometry), 'cgls', iterations=2)
 assert 'jax' not in sys.modules and result.info['execution_backend'] == 'cupy'
 assert isinstance(result.volume, np.ndarray) and np.isfinite(result.volume).all()
 assert 'cupyx.scipy.sparse' not in sys.modules
