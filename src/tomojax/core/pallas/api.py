@@ -86,37 +86,9 @@ def _projector_kwargs(options: PallasProjectorOptions) -> dict[str, Any]:
 
 
 def _opts_with_overrides(
-    options: PallasProjectorOptions | None,
-    *,
-    step_size: float | None = None,
-    n_steps: int | None = None,
-    unroll: int | None = None,
-    gather_dtype: str | None = None,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
-    interpret: bool | None = None,
-    tile_shape: tuple[int, int] | None = None,
-    num_warps: int | None = None,
-    kernel_variant: str | None = None,
-    layout_variant: str | None = None,
-    state_mode: str | None = None,
+    options: PallasProjectorOptions | None, **overrides: Any
 ) -> PallasProjectorOptions:
-    changes: dict[str, object] = {
-        name: value
-        for name, value in (
-            ("step_size", step_size),
-            ("n_steps", n_steps),
-            ("unroll", unroll),
-            ("gather_dtype", gather_dtype),
-            ("det_grid", det_grid),
-            ("interpret", interpret),
-            ("tile_shape", tile_shape),
-            ("num_warps", num_warps),
-            ("kernel_variant", kernel_variant),
-            ("layout_variant", layout_variant),
-            ("state_mode", state_mode),
-        )
-        if value is not None
-    }
+    changes = {name: value for name, value in overrides.items() if value is not None}
     opts = _opts(options)
     return replace(opts, **changes) if changes else opts
 

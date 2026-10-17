@@ -84,12 +84,18 @@ def test_public_pallas_stack_entrypoint_accepts_legacy_kwargs(
 
     monkeypatch.setattr(pallas_api, "_forward_project_views_T_pallas", fake_project)
 
+    det_grid = (jnp.zeros(4), jnp.arange(4, dtype=jnp.float32))
     result = pallas_api.forward_project_views_T_pallas(
         jnp.eye(4, dtype=jnp.float32)[None, ...],
         Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0),
         Detector(nu=2, nv=2, du=1.0, dv=1.0),
         jnp.ones((2, 2, 2), dtype=jnp.float32),
-        options=pallas_api.PallasProjectorOptions(gather_dtype="fp32", tile_shape=(4, 4)),
+        options=pallas_api.PallasProjectorOptions(
+            gather_dtype="fp32", tile_shape=(4, 4), n_steps=11, interpret=True, det_grid=det_grid
+        ),
+        n_steps=None,
+        interpret=False,
+        det_grid=None,
         unroll=2,
         gather_dtype="bf16",
         tile_shape=(1, 2),
@@ -98,6 +104,9 @@ def test_public_pallas_stack_entrypoint_accepts_legacy_kwargs(
     )
 
     assert result.shape == (1, 2, 2)
+    assert captured["n_steps"] == 11
+    assert captured["interpret"] is False
+    assert captured["det_grid"] is det_grid
     assert captured["unroll"] == 2
     assert captured["gather_dtype"] == "bf16"
     assert captured["tile_shape"] == (1, 2)
