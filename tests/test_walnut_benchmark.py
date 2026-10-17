@@ -15,6 +15,7 @@ def walnut():
     spec = importlib.util.spec_from_file_location("walnut_benchmark_test", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    module.ROWS, module.COLS, module.VIEWS = 2, 4, 60
     return module
 
 
@@ -24,8 +25,9 @@ def _linear_field(shape):
 
 
 @pytest.mark.parametrize("every", [1, 3])
+@pytest.mark.parametrize("destination", [False, True])
 def test_orbit_load_keeps_view_order_orientation_and_correction(
-    walnut, monkeypatch, tmp_path, every
+    walnut, monkeypatch, tmp_path, every, destination
 ):
     for key, value in {"ROWS": 3, "COLS": 2, "VIEWS": 4}.items():
         monkeypatch.setattr(walnut, key, value)
@@ -34,7 +36,12 @@ def test_orbit_load_keeps_view_order_orientation_and_correction(
     frames.update({f"scan_{i:06d}": i * raw - 1 for i in range(1, 5)})
     monkeypatch.setattr(walnut.iio, "imread", lambda path: frames[path.stem])
     monkeypatch.setattr(walnut.np, "loadtxt", lambda _path: np.arange(48).reshape(4, 12))
-    data, geometry = walnut.load_orbit(tmp_path, 2, every=every)
+    owner = np.full((4, 3, 2), np.nan, np.float32)
+    out = owner[: len(range(4, 0, -every))].transpose(1, 0, 2) if destination else None
+    data, geometry = walnut.load_orbit(tmp_path, 2, every=every, out=out)
+    if destination:
+        assert np.shares_memory(data, owner)
+        assert np.isnan(owner[data.shape[1] :]).all()
     corrected = [-np.log(np.maximum(((i - 1) * raw - 1) / 3, 1e-6)) for i in range(4, 0, -every)]
     expected = np.stack([np.flipud(image).T for image in corrected], axis=1)
     np.testing.assert_array_equal(data, expected)
@@ -79,20 +86,31 @@ def test_volume_geometries_share_the_published_reference_voxel_centre_extent(wal
         assert upper - 0.5 * spacing == pytest.approx(25.0)
 
 
+def _decoded_orbit(_path, orbit, every, *, out):
+    out[:] = orbit
+    return out, np.full((out.shape[1], 12), every)
+
+
 def test_matching_projection_cache_reuses_the_decoded_request(walnut, tmp_path, monkeypatch):
     cache = tmp_path / "projections.npz"
-    monkeypatch.setattr(
-        walnut,
-        "load_orbit",
-        lambda _path, orbit, every: (np.full((2, 3, 4), orbit), np.full((3, 12), every)),
-    )
-    expected = walnut.load_orbits(tmp_path, [2], 20, cache=cache)
+    monkeypatch.setattr(walnut, "load_orbit", _decoded_orbit)
+    destinations = []
+
+    def into(*args, out):
+        destinations.append(out)
+        return _decoded_orbit(*args, out=out)
+
+    monkeypatch.setattr(walnut, "load_orbit", into)
+    expected = walnut.load_orbits(tmp_path, [3, 1, 2], 20, cache=cache)
+    assert all(np.shares_memory(out, expected[0]) for out in destinations)
+    assert expected[0].transpose(1, 0, 2).flags.c_contiguous
+    np.testing.assert_array_equal(expected[0][0, :, 0], np.repeat([3, 1, 2], 3))
 
     def unexpected_read(*_args):
         pytest.fail("matching cache reread the source projections")
 
     monkeypatch.setattr(walnut, "load_orbit", unexpected_read)
-    actual = walnut.load_orbits(tmp_path, [2], 20, cache=cache)
+    actual = walnut.load_orbits(tmp_path, [3, 1, 2], 20, cache=cache)
     for found, wanted in zip(actual, expected, strict=True):
         np.testing.assert_array_equal(found, wanted)
 
@@ -102,11 +120,7 @@ def test_projection_cache_cannot_silently_replace_a_different_requested_scan(
     walnut, tmp_path, monkeypatch, changed
 ):
     cache = tmp_path / "projections.npz"
-    monkeypatch.setattr(
-        walnut,
-        "load_orbit",
-        lambda _path, orbit, every: (np.full((2, 3, 4), orbit), np.full((3, 12), every)),
-    )
+    monkeypatch.setattr(walnut, "load_orbit", _decoded_orbit)
     walnut.load_orbits(tmp_path, [2], 20, cache=cache)
     if changed == "legacy":
         np.savez(cache, data=np.zeros((2, 3, 4)), vectors=np.zeros((3, 12)))

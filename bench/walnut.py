@@ -43,8 +43,13 @@ def _read(path: Path) -> np.ndarray:
     return np.transpose(np.flipud(np.asarray(iio.imread(path), np.float32)))
 
 
-def load_orbit(walnut: Path, orbit: int, every: int = 1) -> tuple[np.ndarray, np.ndarray]:
-    """ASTRA ``(rows, views, columns)`` absorption data and cone_vec vectors of one orbit."""
+def load_orbit(
+    walnut: Path, orbit: int, every: int = 1, *, out: np.ndarray | None = None
+) -> tuple[np.ndarray, np.ndarray]:
+    """ASTRA ``(rows, views, columns)`` absorption data and cone_vec vectors of one orbit.
+
+    Supply a float32 ``out`` in that layout to decode into an existing stack.
+    """
     folder = walnut / "Projections" / f"tubeV{orbit}"
     vectors = np.loadtxt(folder / "scan_geom_corrected.geom")[0:VIEWS:every]
     dark = np.ascontiguousarray(_read(folder / "di000000.tif"))
@@ -54,7 +59,9 @@ def load_orbit(walnut: Path, orbit: int, every: int = 1) -> tuple[np.ndarray, np
     indices = range(VIEWS, 0, -every)
     # Correct contiguous frames without full-frame arithmetic temporaries;
     # expose ASTRA's row/view/column axes as a view after loading.
-    data = np.empty((len(indices), ROWS, COLS), np.float32)
+    data = (
+        np.empty((len(indices), ROWS, COLS), np.float32) if out is None else out.transpose(1, 0, 2)
+    )
 
     def correct(item: tuple[int, int]) -> None:
         view, index = item
@@ -431,10 +438,21 @@ def load_orbits(
                     "use a different --cache path"
                 )
             return stored["data"], stored["vectors"]
-    parts = []
-    for orbit in orbits:
-        data, vectors = load_orbit(walnut, orbit, every)
-        if binning != 1:
+    if binning == 1:
+        # Decode into one view-major stack: retaining whole native orbits
+        # while concatenating would transiently double projection memory.
+        views = len(range(VIEWS, 0, -every))
+        data = np.empty((len(orbits) * views, ROWS, COLS), np.float32).transpose(1, 0, 2)
+        orbit_vectors = []
+        for index, orbit in enumerate(orbits):
+            span = slice(index * views, (index + 1) * views)
+            _, vectors = load_orbit(walnut, orbit, every, out=data[:, span, :])
+            orbit_vectors.append(vectors)
+        vectors = np.concatenate(orbit_vectors)
+    else:
+        parts = []
+        for orbit in orbits:
+            data, vectors = load_orbit(walnut, orbit, every)
             rows, _, cols = data.shape
             data = mean_detector_pixels(data.transpose(1, 0, 2), binning).transpose(1, 0, 2)
             # Cropping incomplete edge blocks moves the detector in its own
@@ -443,9 +461,9 @@ def load_orbits(
             dv = (binning * data.shape[0] - rows) / 2
             vectors[:, 3:6] += du * vectors[:, 6:9] + dv * vectors[:, 9:12]
             vectors[:, 6:12] *= binning
-        parts.append((data, vectors))
-    data = np.concatenate([d for d, _ in parts], axis=1)
-    vectors = np.concatenate([v for _, v in parts])
+            parts.append((data, vectors))
+        data = np.concatenate([d for d, _ in parts], axis=1)
+        vectors = np.concatenate([v for _, v in parts])
     if cache is not None:
         cache.parent.mkdir(parents=True, exist_ok=True)
         partial = cache.with_name(f"partial-{cache.name}")
