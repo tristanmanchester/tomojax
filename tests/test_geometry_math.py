@@ -207,7 +207,7 @@ def test_axis_pose_stack_accepts_array_like_inputs(as_array):
 
 def test_grid_from_detector_fov_slices_preserves_grid_when_no_crop_needed() -> None:
     grid = Grid(nx=32, ny=32, nz=16, vx=1.0, vy=1.0, vz=1.0, vol_origin=(10.0, 20.0, 30.0))
-    detector = Detector(nu=64, nv=64, du=1.0, dv=1.0)
+    detector = Detector(nu=128, nv=128, du=1.0, dv=1.0)
 
     cropped = grid_from_detector_fov_slices(grid, detector)
 

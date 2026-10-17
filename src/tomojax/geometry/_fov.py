@@ -6,7 +6,7 @@ simple, conservative bounds:
 
 - X-Y plane coverage over all rotation angles (around +z) yields a disk of
   radius r_u = (nu/2-0.5)*du reduced by any detector x-center offset |cx|.
-- Z coverage is bounded by r_v = (nv/2-0.5)*dv minus |cz|.
+- Z coverage intersects the grid with the measured detector rows, centred at cz.
 - For 3D, reconstruction is conceptually a stack of 2D slices at fixed z. Each
   slice's in-plane FOV (x-y) is circular with radius r_u. This motivates ROI
   choices where (nx, ny) are chosen from r_u and nz from r_v.
@@ -32,7 +32,7 @@ class RoiInfo:
     """Derived physical FOV half-extents and recommended ROI grid dims."""
 
     r_u: float  # half-extent in the rotation plane after angle-invariant reduction (cx)
-    r_v: float  # half-extent along z after center offset (cz)
+    r_v: float  # half-extent of the overlapping grid/detector z interval
     nx_roi: int
     ny_roi: int
     nz_roi: int
@@ -105,6 +105,23 @@ def _choose_shared_side(side_max: int, *orig_dims: int) -> int:
     return _match_parity_leq(int(side_max), target_parity)
 
 
+def _axial_interval(grid: Grid, detector: Detector) -> tuple[float, float]:
+    """The overlap of grid voxel centres and measured detector rows in world z."""
+    origin = grid_volume_origin(grid)[2]
+    half = (detector.nv - 1) * detector.dv / 2
+    low = max(origin, detector.center[1] - half)
+    high = min(origin + (grid.nz - 1) * grid.vz, detector.center[1] + half)
+    if high < low:
+        raise ValueError("volume grid and detector field of view do not overlap in z")
+    return low, high
+
+
+def _roi_center(grid: Grid, detector: Detector) -> tuple[float, float, float]:
+    """Keep axial crops at their measured height; in-plane FOV stays axis-centred."""
+    low, high = _axial_interval(grid, detector)
+    return 0.0, 0.0, (low + high) / 2
+
+
 def compute_roi(
     grid: Grid,
     detector: Detector,
@@ -115,7 +132,7 @@ def compute_roi(
     """Compute conservative FOV half-extents and grid dims from detector.
 
     - r_u = max(0, (nu/2-0.5)*du - |cx|) enforces angle-invariant coverage.
-    - r_v = max(0, (nv/2-0.5)*dv - |cz|) enforces vertical coverage.
+    - r_v is half the overlap of the volume and measured detector-row intervals.
     - nx_roi is the largest dim whose half-extent fits within the in-plane radius
       r_u; nz_roi similarly fits r_v.
     - ny_roi is also fit to r_u when `crop_y_to_u=True`, which matches the
@@ -125,11 +142,11 @@ def compute_roi(
     """
     # Detector pixel-center half extents (world units)
     u_half = ((float(detector.nu) / 2.0) - 0.5) * float(detector.du)
-    v_half = ((float(detector.nv) / 2.0) - 0.5) * float(detector.dv)
-    cx, cz = float(detector.center[0]), float(detector.center[1])
+    cx = float(detector.center[0])
+    z_low, z_high = _axial_interval(grid, detector)
 
     r_u = max(0.0, u_half - abs(cx))
-    r_v = max(0.0, v_half - abs(cz))
+    r_v = (z_high - z_low) / 2
 
     # Fit dims; clip to not exceed the current grid dims
     nx_fit = _fit_dim_to_half_extent(
@@ -169,8 +186,8 @@ def grid_from_detector_fov(
     """Return a new Grid cropped to the detector FOV bounding box.
 
     All three axes are cropped conservatively: x and y by the in-plane detector
-    radius `r_u`, and z by the detector height `r_v`. The cropped grid remains
-    centered at the origin using the same default centered-origin convention.
+    radius `r_u`, and z by the overlapping detector-height interval. In-plane
+    slices stay axis-centred; the axial centre follows the measured window.
     """
     info = compute_roi(grid, detector, crop_y_to_u=crop_y_to_u)
     # If detector already covers the full current grid, just return the original grid.
@@ -184,7 +201,7 @@ def grid_from_detector_fov(
         vy=float(grid.vy),
         vz=float(grid.vz),
         vol_origin=None,
-        vol_center=None,
+        vol_center=_roi_center(grid, detector),
     )
 
 
@@ -215,7 +232,7 @@ def grid_from_detector_fov_cube(
         vy=float(grid.vy),
         vz=float(grid.vz),
         vol_origin=None,
-        vol_center=None,
+        vol_center=_roi_center(grid, detector),
     )
 
 
@@ -262,5 +279,5 @@ def grid_from_detector_fov_slices(
         vy=float(grid.vy),
         vz=float(grid.vz),
         vol_origin=None,
-        vol_center=None,
+        vol_center=_roi_center(grid, detector),
     )

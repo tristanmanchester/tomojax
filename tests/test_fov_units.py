@@ -98,3 +98,16 @@ def test_cylinder_includes_voxels_exactly_on_a_diagonal_boundary(scale) -> None:
     coords = np.arange(11) - 5
     expected = coords[:, None] ** 2 + coords[None, :] ** 2 <= 25
     np.testing.assert_array_equal(cylindrical_mask_xy(grid, detector), expected)
+
+
+@pytest.mark.parametrize(
+    "crop", [grid_from_detector_fov, grid_from_detector_fov_cube, grid_from_detector_fov_slices]
+)
+def test_axial_roi_follows_off_centre_detector_rows(crop):
+    from tomojax.geometry import grid_volume_origin
+
+    grid = Grid(12, 12, 10, 1, 1, 1, vol_center=(0, 0, 1))
+    detector = Detector(12, 2, 1, 1, center=(0, 2))
+    result = crop(grid, detector)
+    assert result.nz == 2 and result.vz == 1
+    assert grid_volume_origin(result)[2] == 1.5
