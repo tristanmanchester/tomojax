@@ -108,3 +108,17 @@ def test_grid_override_reconstruction_recovers_a_known_image(kind):
     )
     image = np.asarray(result.volume)
     assert np.linalg.norm(image - truth) / np.linalg.norm(truth) < 2e-4
+
+
+@pytest.mark.parametrize("kind", ["parallel", "lamino"])
+def test_public_projection_matches_independent_view_groups(kind, monkeypatch):
+    monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
+    geometry = replace(_geometry(kind), angles=np.linspace(0, 180, 37, endpoint=False))
+    first = replace(geometry, angles=geometry.angles[:32])
+    last = replace(geometry, angles=geometry.angles[32:])
+    volume = jnp.arange(120, dtype=jnp.float32).reshape(6, 5, 4) / 120
+    images = jnp.arange(37 * 7 * 9, dtype=jnp.float32).reshape(37, 7, 9) / 1000
+    separate_fp = jnp.concatenate([tj.project(first, volume), tj.project(last, volume)])
+    separate_bp = tj.backproject(first, images[:32]) + tj.backproject(last, images[32:])
+    np.testing.assert_allclose(tj.project(geometry, volume), separate_fp, rtol=2e-6, atol=2e-6)
+    np.testing.assert_allclose(tj.backproject(geometry, images), separate_bp, rtol=2e-6, atol=2e-5)
