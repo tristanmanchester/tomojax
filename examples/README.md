@@ -78,9 +78,29 @@ uv sync --locked --extra cuda12 --extra fourier-cuda12 --no-dev
 uv run --no-sync python examples/align_ptychography.py /path/to/porous_glass_dataset.mat
 ```
 
-[align_ptychography.py](align_ptychography.py) reads the PSI porous-glass MATLAB
-v7.3 scan, crops unreliable borders and prepares complex transmission in
-bounded device batches. Its core steps are public APIs:
+[align_ptychography.py](align_ptychography.py) reads either PSI MATLAB example:
+`porous_glass_dataset.mat` (v7.3, measured and already aligned) or
+`example_data.mat` (v5, simulated with motion). The measured-data route crops
+unreliable borders; the smaller simulation uses its full detector. Both prepare
+complex transmission in bounded device batches. For a CPU-sized preview of the
+simulation, keep all angles but bin the **unwrapped phase**, not complex pixels:
+
+```bash
+JAX_PLATFORMS=cpu uv run --no-sync python examples/align_ptychography.py \
+  /path/to/example_data.mat --binning 4 --iterations 5 -o phase-slices.npz
+```
+
+The five-iteration run is a preview, not a convergence or accuracy guarantee.
+The same workflow in Python, from the checkout root, is:
+
+```python
+from examples.align_ptychography import run_example
+
+volume, poses, report = run_example("example_data.mat", binning=4, iterations=5)
+print(volume.shape, report["value_unit"])
+```
+
+Its core steps are public APIs:
 
 ```python
 import tomojax as tj
@@ -93,19 +113,53 @@ aligned = tj.align(scan, mode="pose", config=ProjectionMatchingConfig(iterations
 reconstruction = tj.reconstruct(aligned.scan, "fourier")
 ```
 
-The air mask must cover actual air, not sample pixels. The example's fixed crop
-and air strips describe this scan; they are not per-view alignment corrections.
+The air mask must cover actual air, not sample pixels. The example's measured-data
+crop and air strips describe these supplied scans; they are not per-view alignment
+corrections and must be reconsidered for other samples.
 The joint estimator returns per-view translations without resampling the input.
 It can fit noise or model mismatch as motion, including on an already aligned
 scan; inspect pose estimates and physical slices rather than treating improved
 consistency or convergence as proof of physical accuracy.
 
-The released raw stack is already aligned; no supplied PSI aligned phase or
-reference image is used in inference. The example converts reconstructed phase
-to refractive-index decrement with `wavelength / (2*pi*pixel_size)` and reports
-read, preparation, alignment, inverse and whole-workflow
+No supplied aligned phase or reference image is used in inference. For the
+measured file, wavelength and pixel size convert reconstructed phase to
+refractive-index decrement, `wavelength / (2*pi*pixel_size)`. The simulation has
+no physical calibration: its output is phase per original pixel (`rad/pixel`),
+not refractive index. Binning keeps geometry and detector-frame translations in
+original-pixel units; one output voxel spans `binning` original pixels.
+
+The example reports read, preparation, alignment, inverse and whole-workflow
 times. It writes nothing unless `-o slices.npz` is supplied; that archive holds
-only central physical-scale slices and the returned detector-frame poses.
+central `delta_xy/xz/yz` or `phase_per_pixel_xy/xz/yz` slices, poses and unit
+metadata. `pixel_size_m` is NaN when the input lacks physical calibration.
+Open all three planes and check `value_unit` before interpreting values.
+
+To keep the simulated example as a TomoJAX dataset and use the standard CLI,
+prepare phase in Python (do not apply an absorption logarithm):
+
+```python
+import numpy as np
+import tomojax as tj
+from tomojax.alignment import ProjectionMatchingConfig
+from examples.align_ptychography import read_psi_objects, prepare_phase, make_scan
+
+objects, angles, _, _ = read_psi_objects("example_data.mat")
+air = np.zeros(objects.shape[-2:], dtype=np.float32)
+air[:, :50] = air[:, -50:] = 1  # known air in this supplied example
+scan = make_scan(prepare_phase(objects, air), angles, binning=4)
+aligned = tj.align(scan, mode="pose", config=ProjectionMatchingConfig(iterations=5))
+tj.save("aligned-phase.nxs", aligned.scan)
+```
+
+```bash
+uv run --no-sync tomojax recon aligned-phase.nxs -o phase-recon.nxs --method fourier --roi off
+uv run --no-sync tomojax inspect phase-recon.nxs --preview phase-previews
+```
+
+These datasets retain original-pixel geometry: reconstructed values remain
+`rad/pixel`. The joint translation configuration is a Python API; `tomojax align`
+uses the general rigid-pose configuration, not this specialized estimator.
+
 
 ## Preview a real cone-beam orbit on a CPU
 

@@ -87,7 +87,10 @@ For an axial parallel scan of complex transmission, unwrap its phase and remove
 an air-supported phase plane before treating the negative phase as line
 integrals. The [ptychography example](../examples/align_ptychography.py) shows
 bounded preparation, pixel-unit geometry, `ProjectionMatchingConfig` and final
-Fourier reconstruction in physical units.
+Fourier reconstruction in physical units when the input supplies a wavelength
+and pixel size. The smaller simulated PSI MATLAB v5 example has no such scale;
+its CPU recipe reports phase per original pixel instead. See the
+[example commands](../examples/README.md#prepare-and-align-complex-ptychography-projections).
 
 This translation-only configuration jointly estimates a sparse volume and
 per-view motion, then attaches the poses without resampling measured projections.

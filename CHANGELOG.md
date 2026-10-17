@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+The ptychography example also accepts PSI MATLAB v5 simulations, with detector
+binning and iteration controls for CPU previews and explicit output units.
+
 `tj.reconstruct_slabs` now supports SIRT/OSEM on matching axial Joseph planes,
 including optional FBP initialization, without retaining the full output volume.
 
