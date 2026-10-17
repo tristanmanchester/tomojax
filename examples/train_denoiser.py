@@ -54,8 +54,12 @@ class Denoiser(nn.Module):
         nn.init.zeros_(self.layers[-1].bias)
 
     def forward(self, volume: torch.Tensor) -> torch.Tensor:
-        slices = volume.permute(2, 0, 1).unsqueeze(1)
-        return (slices + self.layers(slices)).squeeze(1).permute(1, 2, 0).contiguous()
+        slices = volume.permute(2, 0, 1).unsqueeze(1).contiguous(memory_format=torch.channels_last)
+        # Only the CNN uses mixed precision. The skip keeps attenuation and
+        # the exact projector/transpose in float32, including during inference.
+        with torch.autocast("cuda", dtype=torch.float16, enabled=volume.is_cuda):
+            residual = self.layers(slices)
+        return (slices + residual).squeeze(1).permute(1, 2, 0).contiguous()
 
 
 def split_views(scan: tj.Scan) -> tuple[tj.Scan, tj.Scan, tj.Scan]:
@@ -135,8 +139,9 @@ def train(
     ]
     normalization = torch.stack([target.square().mean() for target in targets]).mean()
     projection_weight = projection_loss_weight(inputs, operators, targets, scale, normalization)
-    model = Denoiser().cuda()
+    model = Denoiser().to(device="cuda", memory_format=torch.channels_last)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    scaler = torch.amp.GradScaler("cuda")
     torch.cuda.synchronize()
     started = time.perf_counter()
     for step in range(steps):
@@ -152,8 +157,10 @@ def train(
             operators[target](estimate) - targets[target]
         ).square().mean() / normalization
         loss = image_loss + projection_weight * projection_loss
-        loss.backward()  # the projector's exact transpose supplies the image gradient
-        optimizer.step()
+        # Scale small CNN gradients; the projector still applies its exact transpose.
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
         if (step + 1) % 25 == 0:
             print(f"step {step + 1}: training relative MSE {float(loss.detach()):.6f}", flush=True)
     torch.cuda.synchronize()

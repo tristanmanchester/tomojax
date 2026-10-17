@@ -96,3 +96,15 @@ def test_loss_balance_is_finite_at_an_exact_fit(device):
     scale = torch.tensor(1.0, device=device)
     weight = module.projection_loss_weight(images, [lambda value: value] * 2, images, scale, scale)
     assert weight == 1
+
+
+@pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=pytest.mark.gpu)])
+def test_denoiser_initial_identity_keeps_float32(device):
+    module = example()
+    torch = pytest.importorskip("torch")
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA-enabled PyTorch required")
+    volume = torch.arange(192, dtype=torch.float32, device=device).reshape(8, 8, 3) / 192
+    output = module.Denoiser().to(device=device, memory_format=torch.channels_last)(volume)
+    assert output.dtype == torch.float32
+    torch.testing.assert_close(output, volume, rtol=0, atol=0)
