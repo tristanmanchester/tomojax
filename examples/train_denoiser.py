@@ -8,6 +8,7 @@ Requires a CUDA-enabled PyTorch installation alongside TomoJAX. Two disjoint
 interleaved view sets supply input and target reconstructions plus projection targets;
 a third set is held out until final evaluation. Image and projection losses
 are balanced once using their initial image gradients, without test views.
+Large training stacks recompute CNN activations to reduce device-memory use.
 No clean training image is needed. This is a single-scan demonstration, not a
 pretrained denoiser or a claim of unbiased recovery: truncation, rings, geometry error and shared
 flat-field errors violate the independent-noise model. Check image quality
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import replace
+from functools import partial
 import json
 import os
 from pathlib import Path
@@ -66,16 +68,30 @@ class Denoiser(nn.Module):
             batch = min(batch, max(1, cache_bytes // pair_bytes))
         return batch
 
+    def _checkpoint_layers(self, slices: torch.Tensor) -> bool:
+        """Recompute large CNN activations, leaving memory for tomography."""
+        if not (self.training and torch.is_grad_enabled() and slices.is_cuda):
+            return False
+        # Budget two FP16 hidden maps; tomography and its gradients need the rest.
+        activation_bytes = 4 * self.layers[0].out_channels * slices.numel()
+        memory_bytes = torch.cuda.get_device_properties(slices.device).total_memory
+        return activation_bytes > memory_bytes // 4
+
     def forward(self, volume: torch.Tensor) -> torch.Tensor:
         slices = volume.permute(2, 0, 1).unsqueeze(1).contiguous(memory_format=torch.channels_last)
         batch = self._slice_batch_size(slices)
+        apply_layers: Callable[[torch.Tensor], torch.Tensor] = self.layers
+        if self._checkpoint_layers(slices):
+            from torch.utils.checkpoint import checkpoint
+
+            apply_layers = partial(checkpoint, self.layers, use_reentrant=False)
         # Only the CNN uses mixed precision. The skip keeps attenuation and
         # the exact projector/transpose in float32, including during inference.
         with torch.autocast("cuda", dtype=torch.float16, enabled=volume.is_cuda):
             residual = (
-                self.layers(slices)
+                apply_layers(slices)
                 if batch == slices.shape[0]
-                else torch.cat([self.layers(part) for part in slices.split(batch)])
+                else torch.cat([apply_layers(part) for part in slices.split(batch)])
             )
         return (slices + residual).squeeze(1).permute(1, 2, 0).contiguous()
 

@@ -116,6 +116,7 @@ def test_denoiser_identity_and_slice_batch_gradients(device, monkeypatch):
     full = model(volume)
     full_gradients = torch.autograd.grad(full.sum(), parameters)
     monkeypatch.setattr(model, "_slice_batch_size", lambda _: 2)
+    monkeypatch.setattr(model, "_checkpoint_layers", lambda _: True)
     split = model(volume)
     split_gradients = torch.autograd.grad(split.sum(), parameters)
     torch.testing.assert_close(split, full, rtol=2e-3, atol=2e-4)
