@@ -218,6 +218,7 @@ markers = [
     "surface: public API/CLI/import-boundary tests for the production feedback loop",
     "numerical: CPU numerical reconstruction/alignment tests that may compile JAX kernels",
     "gpu: requires GPU",
+    "fresh_gpu: needs a GPU no other process holds; run in its own pytest process",
     "pallas: requires Pallas-capable backend",
     "slow: slow tests",
 ]

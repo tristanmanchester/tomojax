@@ -342,9 +342,10 @@ def test_streamed_cgls_rejects_nonfinite_views():
         cgls(geometry, grid, detector, data, config=CGLSConfig(stream_projections=True))
 
 
+# Its child process needs CUDA, which the suite's own JAX would otherwise hold.
 @pytest.mark.gpu
+@pytest.mark.fresh_gpu
 def test_host_cuda_cgls_does_not_import_jax():
-    _require_free_gpu()
     import subprocess
     import sys
 
@@ -454,13 +455,3 @@ def test_native_cuda_inverse_support_keeps_rounded_boundary_weights():
     backprojected = float(operators.adjoint(images)[230, 251, 165])
     assert projected > 1e-6
     np.testing.assert_allclose(backprojected, projected, rtol=2e-6, atol=2e-10)
-
-
-def _require_free_gpu() -> None:
-    """Skip when this process already holds the GPU the subprocess needs."""
-    cupy = pytest.importorskip("cupy")
-    # Earlier tests leave blocks in this process's CuPy pools; give them back.
-    cupy.get_default_memory_pool().free_all_blocks()
-    cupy.get_default_pinned_memory_pool().free_all_blocks()
-    if cupy.cuda.runtime.memGetInfo()[0] < 1 << 30:
-        pytest.skip("the test process holds the GPU; run this test on its own")

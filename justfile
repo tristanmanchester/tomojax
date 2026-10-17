@@ -58,7 +58,8 @@ accelerator-smoke-cuda:
 # Every test with the GPU visible: unmarked tests take the CUDA paths too, which
 # CI's CPU runner and `-m gpu` alone never exercise.
 test-cuda: accelerator-smoke-cuda
-    uv run --no-sync pytest -q
+    uv run --no-sync pytest -q -m fresh_gpu
+    uv run --no-sync pytest -q -m "not fresh_gpu"
 
 benchmark-smoke:
     JAX_PLATFORMS=cpu uv run --no-sync python bench/compare_projectors.py --libraries tomojax --sizes 32 --views 30 --repeats 1
