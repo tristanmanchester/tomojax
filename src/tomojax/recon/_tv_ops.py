@@ -209,8 +209,77 @@ def tv_proximal(
     prox: clipping can change the direction of a coupled gradient vector.
     Box projection is nonexpansive, so the step ``1 / ||grad3||^2`` remains
     valid. Use the exact finite-grid norm, not its asymptotic 3D bound of 12.
-    Only three dual components persist between iterations.
+    Only three dual components persist between iterations. Large float32 CUDA
+    volumes use stream-owned tiles with the same finite-iteration derivatives.
     """
+    return _tv_execution(
+        x,
+        jnp.asarray(lam_over_L, dtype=x.dtype),
+        int(iterations),
+        nonnegative,
+        lower_bound,
+        upper_bound,
+    )
+
+
+_MIN_CUDA_BYTES = 64 << 20
+
+
+@functools.partial(jax.custom_jvp, nondiff_argnums=(2, 3, 4, 5))
+def _tv_execution(x, lam, iterations, nonnegative, lower_bound, upper_bound):
+    reference = functools.partial(
+        _tv_proximal_jax,
+        iterations=iterations,
+        nonnegative=nonnegative,
+        lower_bound=lower_bound,
+        upper_bound=upper_bound,
+    )
+    if iterations <= 0 or x.dtype != jnp.float32 or x.size * x.dtype.itemsize < _MIN_CUDA_BYTES:
+        return reference(x, lam)
+    import importlib.util
+    import os
+
+    if os.environ.get("TOMOJAX_CUDA_KERNELS") == "0" or importlib.util.find_spec("cupy") is None:
+        return reference(x, lam)
+    from ._cuda_tv import proximal
+
+    lower = max(
+        0.0 if nonnegative else -math.inf, lower_bound if lower_bound is not None else -math.inf
+    )
+    upper = upper_bound if upper_bound is not None else math.inf
+    cuda = functools.partial(
+        proximal,
+        iterations=iterations,
+        tau=1.0 / (gradient_norm_squared(x.shape) or 1.0),
+        lower=lower,
+        upper=upper,
+    )
+    return jax.lax.platform_dependent(x, lam, cuda=cuda, default=reference)
+
+
+@_tv_execution.defjvp
+def _tv_execution_jvp(iterations, nonnegative, lower_bound, upper_bound, primals, tangents):
+    reference = functools.partial(
+        _tv_proximal_jax,
+        iterations=iterations,
+        nonnegative=nonnegative,
+        lower_bound=lower_bound,
+        upper_bound=upper_bound,
+    )
+    _, tangent = jax.jvp(reference, primals, tangents)
+    return _tv_execution(*primals, iterations, nonnegative, lower_bound, upper_bound), tangent
+
+
+def _tv_proximal_jax(
+    x: jnp.ndarray,
+    lam_over_L: float | jax.Array,
+    iterations: int = 20,
+    *,
+    nonnegative: bool = False,
+    lower_bound: float | None = None,
+    upper_bound: float | None = None,
+) -> jnp.ndarray:
+    """Reference finite-iteration TV algebra, also used for all derivatives."""
     lam = jnp.asarray(lam_over_L, dtype=x.dtype)
     tau = jnp.asarray(1.0 / (gradient_norm_squared(x.shape) or 1.0), dtype=x.dtype)
 

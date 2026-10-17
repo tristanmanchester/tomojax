@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -23,6 +25,7 @@ from tomojax.recon import FistaConfig, fista_tv
 
 # check-public-imports: allow-private
 from tomojax.recon._tv_ops import (
+    _tv_proximal_jax,
     gradient_norm_squared,
     huber_tv_grad,
     huber_tv_value,
@@ -268,3 +271,62 @@ def test_box_constrained_tv_proximal_is_the_joint_minimizer():
     # Clipping the unconstrained proximal point is a different (worse) answer.
     clipped = np.maximum(np.asarray(tv_proximal(jnp.asarray(x), lam, iterations=500)), 0)
     assert np.max(np.abs(clipped.ravel() - reference)) > 0.01
+
+
+@pytest.mark.numerical
+@pytest.mark.skipif(jax.default_backend() != "gpu", reason="CUDA workspace")
+def test_cuda_tv_slabs_preserve_boundaries_and_input_ownership(monkeypatch):
+    pytest.importorskip("cupy")
+    monkeypatch.setattr("tomojax.recon._tv_ops._MIN_CUDA_BYTES", 0)
+    monkeypatch.delenv("TOMOJAX_CUDA_KERNELS", raising=False)
+    rng = np.random.default_rng(80231)
+    for shape in [(1, 1, 1), (1, 2, 31), (37, 3, 5), (5, 41, 3), (3, 5, 43)]:
+        host = rng.normal(size=shape).astype(np.float32)
+        for bounds in [dict(nonnegative=True), dict(lower_bound=-0.2, upper_bound=0.6)]:
+            reference = jax.jit(partial(_tv_proximal_jax, iterations=3, **bounds))
+            expected = reference(host, 0.071)
+            for donate in [False, True]:
+                run = jax.jit(
+                    partial(tv_proximal, iterations=3, **bounds),
+                    donate_argnums=(0,) if donate else (),
+                )
+                supplied = jnp.array(host, copy=True)
+                actual = run(supplied, 0.071)
+                np.testing.assert_allclose(actual, expected, rtol=3e-6, atol=3e-7)
+                if not donate:
+                    np.testing.assert_array_equal(supplied, host)
+    for radius in [0.0, -0.1]:
+        actual = jax.jit(partial(tv_proximal, lower_bound=-0.2, upper_bound=0.6))(host, radius)
+        np.testing.assert_array_equal(actual, np.clip(host, -0.2, 0.6))
+
+
+@pytest.mark.numerical
+def test_tv_platform_dispatch_preserves_input_and_radius_derivatives(monkeypatch):
+    monkeypatch.setattr("tomojax.recon._tv_ops._MIN_CUDA_BYTES", 0)
+    monkeypatch.delenv("TOMOJAX_CUDA_KERNELS", raising=False)
+    rng = np.random.default_rng(472)
+    # Keep the finite-difference points away from changes in the active box face.
+    x = jnp.asarray(rng.choice([-0.5, -0.25, 0.25, 0.5, 0.75, 1.0], (7, 5, 3)), jnp.float32)
+    direction = jnp.asarray(rng.normal(size=x.shape), jnp.float32)
+    radius, dradius = jnp.float32(0.007), jnp.float32(0.13)
+    for bounds in [dict(nonnegative=True), dict(lower_bound=-0.2, upper_bound=0.6)]:
+        actual = partial(tv_proximal, iterations=3, **bounds)
+        reference = partial(_tv_proximal_jax, iterations=3, **bounds)
+        value, tangent = jax.jit(lambda a, b, fn=actual: jax.jvp(fn, (a, b), (direction, dradius)))(
+            x, radius
+        )
+        expected, derivative = jax.jvp(reference, (x, radius), (direction, dradius))
+        np.testing.assert_allclose(value, expected, rtol=2e-6, atol=3e-7)
+        np.testing.assert_allclose(tangent, derivative, rtol=2e-6, atol=3e-7)
+        for fn in [actual, reference]:
+            gradients = jax.jit(
+                jax.grad(lambda a, b, fn=fn: jnp.sum(fn(a, b) * direction), (0, 1))
+            )(x, radius)
+            product = jnp.sum(gradients[0] * direction) + gradients[1] * dradius
+            np.testing.assert_allclose(product, jnp.sum(tangent * direction), rtol=3e-6, atol=3e-6)
+        eps = 0.0001
+        difference = (
+            actual(x + eps * direction, radius + eps * dradius)
+            - actual(x - eps * direction, radius - eps * dradius)
+        ) / (2 * eps)
+        np.testing.assert_allclose(tangent, difference, rtol=2e-3, atol=5e-4)
