@@ -29,6 +29,8 @@ from tomojax.recon._projection import (
 if TYPE_CHECKING:
     from tomojax.geometry import Detector, Geometry, Grid
 
+_SENSITIVITY_CACHE_BYTES = 256 * 2**20
+
 
 @dataclass(frozen=True, kw_only=True)
 class MLEMConfig:
@@ -90,27 +92,36 @@ def _solve(
     subsets = indices.shape[0]
     # A full subset stack on a large volume can exceed device memory. Retain
     # only one current sensitivity in that case, independent of subset count.
-    cache = subsets == 1 or subsets * np.prod(shape) * 4 <= 256 * 2**20
+    cache = subsets == 1 or subsets * np.prod(shape) * 4 <= _SENSITIVITY_CACHE_BYTES
     sensitivities = jax.lax.map(sensitivity, jnp.arange(subsets)) if cache else None
     # A wholly unobserved voxel has no likelihood information: choose zero,
     # not an arbitrary unit activity. Visibility must include every subset;
     # a voxel missed by one subset can still be measured by another.
     observed = (
-        jnp.any(sensitivities > 0, axis=0)
-        if sensitivities is not None
-        else jax.lax.fori_loop(
-            0, subsets, lambda i, seen: seen | (sensitivity(i) > 0), jnp.zeros(shape, bool)
-        )
+        jnp.any(sensitivities > 0, axis=0) if sensitivities is not None else jnp.zeros(shape, bool)
     )
-    x = jnp.where(observed, x, 0.0)
 
-    def step(k: jax.Array, volume: jax.Array) -> jax.Array:
+    def step(k: jax.Array, state: tuple[jax.Array, jax.Array]) -> tuple[jax.Array, jax.Array]:
+        volume, seen = state
         i = k % subsets
         norm = sensitivity(i) if sensitivities is None else sensitivities[i]
         update = correction(i, volume, data)
-        return volume * jnp.where(norm > 0, update / jnp.where(norm > 0, norm, 1), 1)
+        volume = volume * jnp.where(norm > 0, update / jnp.where(norm > 0, norm, 1), 1)
+        return volume, seen if cache else seen | (norm > 0)
 
-    return jax.lax.fori_loop(0, iterations * subsets, step, x), inputs_valid
+    # Unseen voxels cannot affect any ray, so zeroing them can wait until the
+    # end. Collecting visibility from each uncached norm avoids an extra full
+    # backprojection pass, without dropping voxels missed by only one subset.
+    x, observed = jax.lax.fori_loop(0, iterations * subsets, step, (x, observed))
+    if not cache:
+        observed = jax.lax.cond(
+            iterations == 0,
+            lambda: jax.lax.fori_loop(
+                0, subsets, lambda i, seen: seen | (sensitivity(i) > 0), jnp.zeros(shape, bool)
+            ),
+            lambda: observed,
+        )
+    return jnp.where(observed, x, 0.0), inputs_valid
 
 
 def _device(array: object) -> jax.Array:

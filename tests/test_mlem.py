@@ -1,6 +1,7 @@
 """Matched Poisson updates, angular subsets and reconstruction accuracy."""
 
 from dataclasses import replace
+from importlib import import_module
 
 import numpy as np
 import pytest
@@ -112,3 +113,20 @@ def test_unobserved_activity_is_zero_not_the_initial_constant(subsets):
         config=MLEMConfig(iterations=100, subsets=subsets),
     )  # fmt: skip
     np.testing.assert_allclose(np.asarray(volume), [[[0, 2, 0]]] * 3, atol=1e-5)
+
+
+@pytest.mark.numerical
+def test_uncached_sensitivities_preserve_visibility_and_updates(monkeypatch):
+    module = import_module("tomojax.recon.mlem")
+    geometry = tj.ParallelGeometry(Grid(3, 2, 3, 1, 1, 1), Detector(2, 1, 1, 1), [90, 0, 0])
+    data = np.array([2, 1, 3, 2, 3, 2], np.float32).reshape(3, 1, 2)
+    for iterations in (0, 1, 3):
+        config = MLEMConfig(iterations=iterations, subsets=2)
+        expected = tj.reconstruct(tj.Scan(data, geometry), "mlem", config=config).volume
+        with monkeypatch.context() as patch:
+            patch.setattr(module, "_SENSITIVITY_CACHE_BYTES", 0)
+            module._solve.clear_cache()
+            actual = tj.reconstruct(tj.Scan(data, geometry), "mlem", config=config).volume
+        module._solve.clear_cache()
+        np.testing.assert_array_equal(np.asarray(actual)[:, :, [0, 2]], 0)
+        np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=2e-6)
