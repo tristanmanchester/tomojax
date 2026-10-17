@@ -23,6 +23,24 @@ def _linear_field(shape):
     return 2 + 0.01 * coordinates[0] + 0.02 * coordinates[1] - 0.03 * coordinates[2]
 
 
+@pytest.mark.parametrize("every", [1, 3])
+def test_orbit_load_keeps_view_order_orientation_and_correction(
+    walnut, monkeypatch, tmp_path, every
+):
+    for key, value in {"ROWS": 3, "COLS": 2, "VIEWS": 4}.items():
+        monkeypatch.setattr(walnut, key, value)
+    raw = np.arange(6, dtype=np.float32).reshape(2, 3)
+    frames = dict(di000000=raw, io000000=raw + 2, io000001=raw + 4)
+    frames.update({f"scan_{i:06d}": i * raw - 1 for i in range(1, 5)})
+    monkeypatch.setattr(walnut.iio, "imread", lambda path: frames[path.stem])
+    monkeypatch.setattr(walnut.np, "loadtxt", lambda _path: np.arange(48).reshape(4, 12))
+    data, geometry = walnut.load_orbit(tmp_path, 2, every=every)
+    corrected = [-np.log(np.maximum(((i - 1) * raw - 1) / 3, 1e-6)) for i in range(4, 0, -every)]
+    expected = np.stack([np.flipud(image).T for image in corrected], axis=1)
+    np.testing.assert_array_equal(data, expected)
+    np.testing.assert_array_equal(geometry, np.arange(48).reshape(4, 12)[::every])
+
+
 @pytest.mark.parametrize("shape", [(6, 6, 6), (7, 5, 3)])
 def test_quality_samples_the_same_voxel_centres_at_integer_and_fractional_densities(walnut, shape):
     reference = _linear_field((11, 11, 11))
@@ -79,7 +97,7 @@ def test_matching_projection_cache_reuses_the_decoded_request(walnut, tmp_path, 
         np.testing.assert_array_equal(found, wanted)
 
 
-@pytest.mark.parametrize("changed", ["walnut", "orbits", "every", "legacy"])
+@pytest.mark.parametrize("changed", ["walnut", "orbits", "every", "binning", "legacy"])
 def test_projection_cache_cannot_silently_replace_a_different_requested_scan(
     walnut, tmp_path, monkeypatch, changed
 ):
@@ -97,5 +115,24 @@ def test_projection_cache_cannot_silently_replace_a_different_requested_scan(
     every = 10 if changed == "every" else 20
     before = cache.read_bytes()
     with pytest.raises(ValueError, match="projection cache does not match"):
-        walnut.load_orbits(source, orbits, every, cache=cache)
+        walnut.load_orbits(
+            source, orbits, every, cache=cache, binning=2 if changed == "binning" else 1
+        )
     assert cache.read_bytes() == before
+
+
+def test_orbit_prebinning_preserves_calibrated_pixel_centres(walnut, monkeypatch, tmp_path):
+    tj = walnut.tj
+    geometry = tj.ConeGeometry(
+        tj.Grid(3, 3, 3, 1, 1, 1),
+        tj.Detector(7, 5, 0.8, 0.7),
+        np.array([0.0, 37.0]),
+        tj.ConeBeam(40.0, 64.0, detector_roll_deg=11.0, detector_pitch_deg=3.0),
+    )
+    scan = tj.Scan(np.arange(70, dtype=np.float32).reshape(2, 5, 7), geometry)
+    data, pg, _ = scan.to_astra()
+    monkeypatch.setattr(walnut, "load_orbit", lambda *_args: (data.copy(), pg["Vectors"].copy()))
+    actual, vectors = walnut.load_orbits(tmp_path, [2], 1, binning=3)
+    expected, binned_pg, _ = scan.binned(3).to_astra()
+    np.testing.assert_array_equal(actual, expected)
+    np.testing.assert_allclose(vectors, binned_pg["Vectors"], atol=1e-12, rtol=0)

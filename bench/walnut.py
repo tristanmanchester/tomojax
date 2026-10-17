@@ -18,6 +18,7 @@ reverse order and transposed, dark- and flat-corrected and log-transformed.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 import json
 import logging
@@ -29,6 +30,7 @@ import imageio.v3 as iio
 import numpy as np
 
 import tomojax as tj
+from tomojax.core.array_ops import mean_detector_pixels
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -45,14 +47,31 @@ def load_orbit(walnut: Path, orbit: int, every: int = 1) -> tuple[np.ndarray, np
     """ASTRA ``(rows, views, columns)`` absorption data and cone_vec vectors of one orbit."""
     folder = walnut / "Projections" / f"tubeV{orbit}"
     vectors = np.loadtxt(folder / "scan_geom_corrected.geom")[0:VIEWS:every]
-    dark = _read(folder / "di000000.tif")
-    flat = np.mean([_read(folder / f"io00000{k}.tif") for k in (0, 1)], axis=0) - dark
+    dark = np.ascontiguousarray(_read(folder / "di000000.tif"))
+    flat = np.ascontiguousarray(
+        np.mean([_read(folder / f"io00000{k}.tif") for k in (0, 1)], axis=0) - dark
+    )
     indices = range(VIEWS, 0, -every)
-    data = np.empty((ROWS, len(indices), COLS), np.float32)
-    for view, index in enumerate(indices):
-        image = (_read(folder / f"scan_{index:06d}.tif") - dark) / flat
-        data[:, view, :] = -np.log(np.clip(image, 1e-6, None))
-    return data, vectors
+    # Correct contiguous frames without full-frame arithmetic temporaries;
+    # expose ASTRA's row/view/column axes as a view after loading.
+    data = np.empty((len(indices), ROWS, COLS), np.float32)
+
+    def correct(item: tuple[int, int]) -> None:
+        view, index = item
+        image = data[view]
+        image[:] = _read(folder / f"scan_{index:06d}.tif")
+        np.subtract(image, dark, out=image)
+        np.divide(image, flat, out=image)
+        np.maximum(image, 1e-6, out=image)
+        np.log(image, out=image)
+        np.negative(image, out=image)
+
+    # Two workers overlap TIFF reading and correction with bounded frame scratch.
+    # Each owns a disjoint frame; consuming map also propagates read errors.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        for _ in pool.map(correct, enumerate(indices)):
+            pass
+    return data.transpose(1, 0, 2), vectors
 
 
 def reference(walnut: Path, name: str = "full_AGD_50") -> np.ndarray | None:
@@ -312,18 +331,20 @@ def main() -> None:
 
     _archive(args.output)
     start = time.perf_counter()
-    data, vectors = load_orbits(args.walnut, args.orbits, args.every, cache=args.cache)
+    data, vectors = load_orbits(
+        args.walnut, args.orbits, args.every, cache=args.cache, binning=args.bin
+    )
     vol_geom = volume_geometry(args.voxels_per_mm)
     scan = tj.Scan.from_astra(
         data,
         {
             "type": "cone_vec",
-            "DetectorRowCount": ROWS,
-            "DetectorColCount": COLS,
+            "DetectorRowCount": data.shape[0],
+            "DetectorColCount": data.shape[2],
             "Vectors": vectors,
         },
         vol_geom,
-    ).binned(args.bin)
+    )
     summary: dict[str, Any] = {
         "walnut": args.walnut.name,
         "orbits": args.orbits,
@@ -395,21 +416,34 @@ def _save(path: Path | None, summary: dict[str, Any]) -> None:
 
 
 def load_orbits(
-    walnut: Path, orbits: list[int], every: int, *, cache: Path | None = None
+    walnut: Path, orbits: list[int], every: int, *, cache: Path | None = None, binning: int = 1
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Load the requested views; cached data must identify that same request."""
+    """Bin each orbit before joining; caches identify the same views and binning."""
     request = json.dumps(
-        {"walnut": str(walnut.resolve()), "orbits": orbits, "every": every}, sort_keys=True
+        {"walnut": str(walnut.resolve()), "orbits": orbits, "every": every, "binning": binning},
+        sort_keys=True,
     )
     if cache is not None and cache.exists():
         with np.load(cache) as stored:
             if "request" not in stored or stored["request"].item() != request:
                 raise ValueError(
-                    "projection cache does not match walnut, orbits and every; "
+                    "projection cache does not match walnut, orbits, every and binning; "
                     "use a different --cache path"
                 )
             return stored["data"], stored["vectors"]
-    parts = [load_orbit(walnut, orbit, every) for orbit in orbits]
+    parts = []
+    for orbit in orbits:
+        data, vectors = load_orbit(walnut, orbit, every)
+        if binning != 1:
+            rows, _, cols = data.shape
+            data = mean_detector_pixels(data.transpose(1, 0, 2), binning).transpose(1, 0, 2)
+            # Cropping incomplete edge blocks moves the detector in its own
+            # pixel basis, including calibrated detector tilt, before rescaling.
+            du = (binning * data.shape[2] - cols) / 2
+            dv = (binning * data.shape[0] - rows) / 2
+            vectors[:, 3:6] += du * vectors[:, 6:9] + dv * vectors[:, 9:12]
+            vectors[:, 6:12] *= binning
+        parts.append((data, vectors))
     data = np.concatenate([d for d, _ in parts], axis=1)
     vectors = np.concatenate([v for _, v in parts])
     if cache is not None:

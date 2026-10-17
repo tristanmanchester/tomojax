@@ -108,8 +108,9 @@ __device__ __forceinline__ float plane_sum(
 // step through the planes together, each sampling only its own ray's planes: rays
 // entering through the volume's top or bottom start at different planes, and lanes
 // left on different planes would not share cache lines.
+template <bool Y_LAYOUT = false>
 __device__ float ray_sum(const float* __restrict__ vol, const float* c, float fu, float fv,
-                         int nx, int ny, int nz, bool live)
+                         int nx, int ny, int nz, bool live, const float* vol_y = nullptr)
 {
     float r0, r1, r2; ray_of(c, fu, fv, r0, r1, r2);
     int a = ray_axis(r0, r1, r2), b = a == 0 ? 1 : 0, cc = a == 2 ? 1 : 2;
@@ -140,6 +141,11 @@ __device__ float ray_sum(const float* __restrict__ vol, const float* c, float fu
     if ((busy & x) == 0 && a != 2)
         return plane_sum<1>(vol, k0, k1, first, last, Sa, Sb, Sc, inv, rb, rc, nb, nc,
                             nz, (long)ny * nz);
+    if constexpr (Y_LAYOUT) {
+        if (a == 2)
+            return plane_sum<1>(vol_y, k0, k1, first, last, Sa, Sb, Sc, inv, rb, rc, nb, nc,
+                                ny, (long)ny * nz);
+    }
     return plane_sum<0>(vol, k0, k1, first, last, Sa, Sb, Sc, inv, rb, rc, nb, nc, sa, sb, sc);
 }
 
@@ -265,6 +271,35 @@ extern "C" __global__ void cone_box_forward(const float* coeff, float* out, int 
     ray_of(c, (float)u, (float)v, r0, r1, r2);
     float ra=SEL(ray_axis(r0, r1, r2), r0, r1, r2);
     out[(long)blockIdx.x*nu*nv+j]=sum*path_w(r0, r1, r2, ra, sx, sy, sz);
+}
+
+// One ray per thread: grid (views, u tiles, v tiles); out (view, v, u).
+extern "C" __global__ void __launch_bounds__(GU * GV) cone_forward_y(
+    const float* __restrict__ coeff, const float* __restrict__ vol, const float* __restrict__ vol_y, float* __restrict__ out,
+    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz)
+{
+    int view = blockIdx.x;
+    const float* c = coeff + (long)view * NC;
+    // Choose lane traversal from the central ray; physical weights stay exact.
+    float cr0, cr1, cr2;
+    ray_of(c, (float)(blockIdx.y * GU + GU / 2),
+           (float)(blockIdx.z * GV + GV / 2), cr0, cr1, cr2);
+    int a = ray_axis(cr0, cr1, cr2), cc = a == 2 ? 1 : 2;
+    float ratio = __fdividef(SEL(cc, cr0, cr1, cr2), SEL(a, cr0, cr1, cr2));
+    float du = comp(c + 6, cc) - ratio * comp(c + 6, a);
+    float dv = comp(c + 9, cc) - ratio * comp(c + 9, a);
+    bool ufast = fabsf(du) > fabsf(dv);
+    int u = blockIdx.y * GU + (ufast ? threadIdx.x % GU : threadIdx.x / GV);
+    int v = blockIdx.z * GV + (ufast ? threadIdx.x / GU : threadIdx.x % GV);
+    bool live = u < nu && v < nv;
+    float fu = (float)u, fv = (float)v;
+    float sum = ray_sum<true>(vol, c, fu, fv, nx, ny, nz, live, vol_y);
+    if (!live) return;
+    float r0, r1, r2; ray_of(c, fu, fv, r0, r1, r2);
+    float ra = SEL(ray_axis(r0, r1, r2), r0, r1, r2);
+    // Written (view, v, u), as JAX holds projections: one store per ray, so the
+    // stride costs little, and no transposed copy of the projections is needed.
+    out[((long)view * nv + v) * nu + u] = sum * path_w(r0, r1, r2, ra, sx, sy, sz);
 }
 
 // Weight and transpose (view, v, u) images in coalesced 32x32 tiles,
@@ -506,11 +541,12 @@ __device__ __forceinline__ void add4(float* p0, float x0, float* p1, float x1, f
 // current crossing in registers and adds them to the tile only as it moves on. img is
 // path-weighted; nviews <= VMAX.
 #define VMAX 32
-template <int PC, int RHS = 1>
+template <int PC, int RHS = 1, bool PACKED = false>
 __device__ __forceinline__ void plane_tile(
     const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
     const float* __restrict__ img, float* __restrict__ vol, int nx, int ny, int nz, int nu, int nv,
-    float* __restrict__ vol1 = nullptr, const float* __restrict__ img1 = nullptr)
+    float* __restrict__ vol1 = nullptr, const float* __restrict__ img1 = nullptr,
+    int z_start = 0, int z_capacity = 0)
 {
     __shared__ float acc[RHS][PB + 2][PC + 3];  // a cell of padding round the tile: no bounds tests
     __shared__ float cf[VMAX][12];  // source, detector origin, u and v axes
@@ -518,7 +554,7 @@ __device__ __forceinline__ void plane_tile(
     __shared__ int first[VMAX + 1]; // each view's first run in the block's list
     int b = a == 0 ? 1 : 0, cc = a == 2 ? 1 : 2;
     int nb = SEL(b, nx, ny, nz), nc = SEL(cc, nx, ny, nz);
-    int c0 = blockIdx.x * PC, b0 = blockIdx.y * PB, k = blockIdx.z;
+    int c0 = blockIdx.x * PC, b0 = blockIdx.y * PB, k = blockIdx.z + (PACKED ? z_start : 0);
     int nb0 = min(PB, nb - b0), nc0 = min(PC, nc - c0);
     if (!any_view(coeff, axis_box, nviews, a, false)) return;
     for (int i = threadIdx.x; i < RHS * (PB + 2) * (PC + 3); i += blockDim.x) (&acc[0][0][0])[i] = 0.f;
@@ -677,7 +713,11 @@ __device__ __forceinline__ void plane_tile(
     for (int i = threadIdx.x; i < PB * PC; i += blockDim.x) {
         int jb = i / PC, jc = i % PC;
         if (jb < nb0 && jc < nc0) {
-            long offset = (long)k * sa + (long)(b0 + jb) * sb + (long)(c0 + jc) * sc;
+            // Packed axis-2 planes retain physical k for every ray calculation;
+            // only the final output address uses the bounded scratch layout.
+            long offset = PACKED
+                ? ((long)(b0 + jb) * z_capacity + blockIdx.z) * ny + c0 + jc
+                : (long)k * sa + (long)(b0 + jb) * sb + (long)(c0 + jc) * sc;
             vol[offset] += acc[0][jb + 1][jc + 1];
             if (RHS == 2) vol1[offset] += acc[1][jb + 1][jc + 1];
         }
@@ -698,6 +738,16 @@ extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint_wide(
     const float* __restrict__ img, float* __restrict__ vol, int nx, int ny, int nz, int nu, int nv)
 {
     plane_tile<64>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv);
+}
+
+// Independent physical z slabs, stored with contiguous y for axis-2 output.
+extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint_packed(
+    const float* coeff, const int* axis_box, int nviews, int a,
+    const float* img, float* vol, int nx, int ny, int nz, int nu, int nv,
+    int z_start, int z_capacity)
+{
+    plane_tile<32, 1, true>(coeff, axis_box, nviews, a, img, vol,
+                            nx, ny, nz, nu, nv, nullptr, nullptr, z_start, z_capacity);
 }
 
 // One traversal accumulates the two spatial gradients and their plane moments.
@@ -929,4 +979,14 @@ extern "C" __global__ void __launch_bounds__(128, 8) pair_plane_adjoint(
     int nx, int ny, int nz, int nu, int nv)
 {
     plane_tile<32, 2>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv, vol1, img1);
+}
+
+// Two independent right-hand sides share the same bounded physical z slab.
+extern "C" __global__ void __launch_bounds__(128, 8) pair_plane_adjoint_packed(
+    const float* coeff, const int* axis_box, int nviews, int a,
+    const float* img, const float* img1, float* vol, float* vol1,
+    int nx, int ny, int nz, int nu, int nv, int z_start, int z_capacity)
+{
+    plane_tile<32, 2, true>(coeff, axis_box, nviews, a, img, vol,
+                           nx, ny, nz, nu, nv, vol1, img1, z_start, z_capacity);
 }

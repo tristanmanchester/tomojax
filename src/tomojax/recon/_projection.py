@@ -7,7 +7,6 @@ measurements remain host resident.
 
 from __future__ import annotations
 
-import copy
 from typing import TYPE_CHECKING, Literal
 
 import jax
@@ -15,20 +14,12 @@ import jax.numpy as jnp
 from jax.sharding import PartitionSpec
 
 from tomojax.core.backend_policy import cuda_backend
-from tomojax.core.cone import (
-    ConeModel,
-    cone_backproject,
-    cone_backproject_pair,
-    cone_model,
-    cone_project,
-    cone_project_ones,
-    use_cuda_cone,
-)
+from tomojax.core.cone import ConeModel, cone_model, use_cuda_cone
 from tomojax.core.devices import VIEWS, ViewSplit, pad_views
 from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.operator_norm import unit
-from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
 from tomojax.recon._host_stream import read_views
+from tomojax.recon._projection_batches import ViewBatches
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -108,7 +99,7 @@ def resolve_geometry_projector(
 
 def _on_devices[T](
     split: ViewSplit,
-    ops: _Batches,
+    ops: ViewBatches,
     local: Callable[..., T],
     *,
     shared: tuple[jax.Array, ...] = (),
@@ -139,7 +130,7 @@ def _on_devices[T](
 
 def _summed[T](
     split: ViewSplit | None,
-    ops: _Batches,
+    ops: ViewBatches,
     local: Callable[..., T],
     *,
     shared: tuple[jax.Array, ...] = (),
@@ -149,189 +140,10 @@ def _summed[T](
     if split is None:
         return local(ops, *shared, *views)
 
-    def on_device(share: _Batches, *arrays: jax.Array) -> T:
+    def on_device(share: ViewBatches, *arrays: jax.Array) -> T:
         return jax.lax.psum(local(share, *arrays), VIEWS)
 
     return _on_devices(split, ops, on_device, shared=shared, views=views, out_specs=PartitionSpec())
-
-
-class _Batches:
-    """Fixed-size view batches over one pose stack, with matched batch operators."""
-
-    def __init__(
-        self,
-        poses: jax.Array,
-        grid: Grid,
-        detector: Detector,
-        det_grid: tuple[jax.Array, jax.Array] | None,
-        backend: str,
-        batch_size: int,
-        model: str | ConeModel,
-        joseph_interpolation: str,
-        *,
-        absolute_weights: bool,
-    ) -> None:
-        self.batch_size = batch_size
-        self.lay_out(int(poses.shape[0]))
-        self.poses, self.grid, self.detector, self.det_grid = poses, grid, detector, det_grid
-        self.counts: jax.Array | None = None  # on a device's share: which views count
-        self.coefficients: jax.Array | None = None
-        self.backend, self.model = backend, model
-        self.interpolation, self.absolute_weights = joseph_interpolation, absolute_weights
-        if isinstance(model, ConeModel):
-            # Cone weights are non-negative, so |A|^T is the transpose itself.
-            self.coefficients = model.coefficients(poses, grid)
-            self.cone_backend = "cuda" if backend == "pallas" else "jax"
-        elif model == "joseph":
-            from tomojax.core.joseph import plane_coefficients
-
-            self.coefficients = plane_coefficients(poses, grid, detector)
-
-    def lay_out(self, n: int) -> None:
-        """Batch ``n`` views."""
-        self.n = n
-        self.size = min(self.batch_size, n)
-        self.count = (n + self.size - 1) // self.size
-
-    def per_view(self) -> tuple[jax.Array, ...]:
-        """The per-view arrays a device's share of the views is cut from."""
-        return (self.poses,) if self.coefficients is None else (self.poses, self.coefficients)
-
-    def share(self, per_view: tuple[jax.Array, ...], counts: jax.Array) -> _Batches:
-        """These operators over one device's ``per_view`` arrays, of which ``counts`` count."""
-        share = copy.copy(self)
-        share.poses, *coefficients = per_view
-        share.coefficients = coefficients[0] if coefficients else None
-        share.lay_out(int(share.poses.shape[0]))
-        share.counts = counts
-        return share
-
-    def select(self, chunk: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
-        start = jnp.minimum(chunk * self.size, self.n - self.size)
-        batch = jax.lax.dynamic_slice(self.poses, (start, 0, 0), (self.size, 4, 4))
-        # The final shifted batch overlaps earlier views. Its adjoint must count
-        # only new views; forward writes the same overlapping values again.
-        valid = start + jnp.arange(self.size) >= chunk * self.size
-        if self.counts is not None:
-            valid = valid & self.counted(start)
-        return start, batch, valid
-
-    def counted(self, start: jax.Array) -> jax.Array:
-        """Which views of the batch at ``start`` count, on a device's share."""
-        assert self.counts is not None
-        return jax.lax.dynamic_slice(self.counts, (start,), (self.size,))
-
-    def images(self, stack: jax.Array, start: jax.Array) -> jax.Array:
-        shape = (self.size, self.detector.nv, self.detector.nu)
-        return jax.lax.dynamic_slice(stack, (start, 0, 0), shape)
-
-    def _coefficients(self, start: jax.Array) -> jax.Array:
-        assert self.coefficients is not None
-        return jax.lax.dynamic_slice_in_dim(self.coefficients, start, self.size)
-
-    def project_ones(self, start: jax.Array, batch: jax.Array) -> jax.Array:
-        """Project uniform unit support, retaining the ordinary weights at its boundary."""
-        if isinstance(self.model, ConeModel):
-            return cone_project_ones(
-                self._coefficients(start), self.grid, self.detector, backend=self.cone_backend
-            )
-        if self.model == "joseph" and self.backend == "pallas":
-            from tomojax.core.joseph import project_ones_native
-
-            native = project_ones_native(self._coefficients(start), self.grid, self.detector)
-            if native is not None:
-                return native
-        return self.project(jnp.ones_like(self.zeros_volume()), start, batch)
-
-    def project(self, volume: jax.Array, start: jax.Array, batch: jax.Array) -> jax.Array:
-        grid, detector = self.grid, self.detector
-        if isinstance(self.model, ConeModel):
-            return cone_project(
-                volume, self._coefficients(start), grid, detector, backend=self.cone_backend
-            )
-        if self.model == "joseph":
-            from tomojax.core.joseph import forward_project_planes
-
-            return forward_project_planes(
-                self._coefficients(start),
-                volume,
-                grid,
-                detector,
-                backend=self.backend,
-                interpolation=self.interpolation,
-            )
-        if self.backend == "pallas":
-            from tomojax.core.pallas.api import (
-                PallasProjectorOptions,
-                forward_project_views_T_pallas,
-            )
-
-            return forward_project_views_T_pallas(
-                batch,
-                grid,
-                detector,
-                volume,
-                options=PallasProjectorOptions(tile_shape=(16, 4), num_warps=1),
-            )
-        return jax.vmap(
-            lambda t: forward_project_view_T(t, grid, detector, volume, det_grid=self.det_grid)
-        )(batch)
-
-    def backproject(
-        self, images: jax.Array, start: jax.Array, batch: jax.Array, output: jax.Array
-    ) -> jax.Array:
-        """Return ``output`` plus the batch transpose; Joseph on CUDA adds in place."""
-        grid, detector = self.grid, self.detector
-        if isinstance(self.model, ConeModel):
-            return cone_backproject(
-                images,
-                self._coefficients(start),
-                grid,
-                detector,
-                backend=self.cone_backend,
-                accumulate=output,
-            )
-        if self.model == "joseph":
-            from tomojax.core.joseph import sum_backproject_planes
-
-            return sum_backproject_planes(
-                self._coefficients(start),
-                images,
-                grid,
-                detector,
-                backend=self.backend,
-                interpolation=self.interpolation,
-                absolute_weights=self.absolute_weights,
-                accumulate=output,
-            )
-        if self.backend == "pallas":
-            from tomojax.core.pallas.api import sum_backproject_views_T_pallas
-
-            update = sum_backproject_views_T_pallas(
-                batch, grid, detector, images, tile_shape=(16, 4), num_warps=1
-            )
-        else:
-            update = sum_backproject_views_T(batch, grid, detector, images, det_grid=self.det_grid)
-        return output + update
-
-    def backproject_pair(self, images, start, batch, outputs):
-        """Two exact transposes with common batch geometry and separate accumulators."""
-        if isinstance(self.model, ConeModel):
-            return cone_backproject_pair(
-                images,
-                self._coefficients(start),
-                self.grid,
-                self.detector,
-                backend=self.cone_backend,
-                accumulate=outputs,
-            )
-        return tuple(
-            self.backproject(image, start, batch, out)
-            for image, out in zip(images, outputs, strict=True)
-        )
-
-    def zeros_volume(self) -> jax.Array:
-        return jnp.zeros((self.grid.nx, self.grid.ny, self.grid.nz), dtype=jnp.float32)
 
 
 def chunk_operators(
@@ -352,7 +164,7 @@ def chunk_operators(
     stack, and the block's ``poses`` must be the slice at that offset. Source
     arrangements stay attached to global view indices across segment boundaries.
     """
-    ops = _Batches(
+    ops = ViewBatches(
         poses, grid, detector, None, backend, batch_size, model, "linear",
         absolute_weights=False,
     )  # fmt: skip
@@ -382,7 +194,7 @@ def projection_operators(
     device. With a ``split``, the views are shared among its devices and the
     sinograms both take and return have its padded :attr:`ViewSplit.total` views.
     """
-    ops = _Batches(
+    ops = ViewBatches(
         poses,
         grid,
         detector,
@@ -413,7 +225,7 @@ def projection_operators(
             initial = ops.zeros_volume() if accumulate is None else accumulate
             return _adjoint_views(ops, stacks, combine, initial)
 
-        def local(share: _Batches, *stacks: jax.Array) -> jax.Array:
+        def local(share: ViewBatches, *stacks: jax.Array) -> jax.Array:
             return _adjoint_views(share, stacks, combine, share.zeros_volume())
 
         total = _summed(split, ops, local, views=stacks)
@@ -450,7 +262,7 @@ def subset_operators(
     chunks = (size + batch_size - 1) // batch_size
     # Keep the callback count while minimizing the final shifted batch's overlap.
     balanced_batch = (size + chunks - 1) // chunks
-    ops = _Batches(
+    ops = ViewBatches(
         poses, grid, detector, det_grid, backend, balanced_batch, model, "linear",
         absolute_weights=False,
     )  # fmt: skip
@@ -470,6 +282,8 @@ def subset_operators(
         def residual_adjoint(
             volume, data, weights, *, row_support: jax.Array | None = None, return_column=False
         ):
+            project = selected.projector(volume)
+
             def body(chunk, output):
                 start, batch, counts = selected.select(chunk)
                 view_ids = jax.lax.dynamic_slice_in_dim(indices, start, selected.size)
@@ -480,7 +294,7 @@ def subset_operators(
                     if stream
                     else data[view_ids]
                 )
-                residual = measured - selected.project(volume, start, batch)
+                residual = measured - project(start, batch)
                 if weights is None:
                     row = (
                         selected.project_ones(start, batch)
@@ -510,10 +324,12 @@ def subset_operators(
     return select
 
 
-def _forward_views(ops: _Batches, volume: jax.Array) -> jax.Array:
+def _forward_views(ops: ViewBatches, volume: jax.Array) -> jax.Array:
+    project = ops.projector(volume)
+
     def body(chunk: jax.Array, output: jax.Array) -> jax.Array:
         start, batch, _ = ops.select(chunk)
-        projected = ops.project(volume, start, batch)
+        projected = project(start, batch)
         if ops.counts is not None:  # a split's padding projects to zero
             projected = jnp.where(ops.counted(start)[:, None, None], projected, 0.0)
         return jax.lax.dynamic_update_slice(output, projected, (start, 0, 0))
@@ -523,7 +339,7 @@ def _forward_views(ops: _Batches, volume: jax.Array) -> jax.Array:
 
 
 def _adjoint_views(
-    ops: _Batches,
+    ops: ViewBatches,
     stacks: tuple[jax.Array, ...],
     combine: Callable[..., jax.Array] | None,
     initial: jax.Array,
@@ -538,7 +354,7 @@ def _adjoint_views(
     return jax.lax.fori_loop(0, ops.count, body, initial)
 
 
-def _measured(ops: _Batches, data: jax.Array, start: jax.Array, *, stream: bool) -> jax.Array:
+def _measured(ops: ViewBatches, data: jax.Array, start: jax.Array, *, stream: bool) -> jax.Array:
     """The batch at ``start`` of ``data``, or of the host source ``data`` names."""
     if stream:
         return read_views(data, start, (ops.size, ops.detector.nv, ops.detector.nu))
@@ -546,15 +362,16 @@ def _measured(ops: _Batches, data: jax.Array, start: jax.Array, *, stream: bool)
 
 
 def _residual_views(
-    ops: _Batches, volume: jax.Array | None, data: jax.Array, *, stream: bool
+    ops: ViewBatches, volume: jax.Array | None, data: jax.Array, *, stream: bool
 ) -> tuple[jax.Array, jax.Array]:
     """``0.5 ||A x - y||^2`` and ``A^T (A x - y)``, batch by batch; ``x = 0`` for None."""
+    project = None if volume is None else ops.projector(volume)
 
     def body(chunk: jax.Array, carry: tuple[jax.Array, jax.Array]) -> tuple[jax.Array, jax.Array]:
         value, gradient = carry
         start, batch, valid = ops.select(chunk)
         measured = _measured(ops, data, start, stream=stream)
-        projected = 0.0 if volume is None else ops.project(volume, start, batch)
+        projected = 0.0 if project is None else project(start, batch)
         residual = projected - measured
         residual = jnp.where(valid[:, None, None], residual, 0.0)
         value = value + 0.5 * jnp.vdot(residual, residual).real
@@ -585,7 +402,7 @@ def least_squares_operators(
     :meth:`ViewSplit.place`. Streamed data cannot be split.
     """
     assert not (stream and split is not None), "streamed data cannot be split"
-    ops = _Batches(
+    ops = ViewBatches(
         poses,
         grid,
         detector,
@@ -597,7 +414,7 @@ def least_squares_operators(
         absolute_weights=False,
     )
 
-    def at(share: _Batches, *arrays: jax.Array) -> tuple[jax.Array, jax.Array]:
+    def at(share: ViewBatches, *arrays: jax.Array) -> tuple[jax.Array, jax.Array]:
         *volume, data = arrays
         return _residual_views(share, volume[0] if volume else None, data, stream=stream)
 
@@ -688,7 +505,7 @@ def normal_equation_operators(
     from the host. Only volume-sized arrays and one batch are ever on the device.
     ``gradient(None, key)`` skips the forward projection of a known-zero volume.
     """
-    ops = _Batches(
+    ops = ViewBatches(
         poses,
         grid,
         detector,
@@ -700,7 +517,7 @@ def normal_equation_operators(
         absolute_weights=False,
     )
     magnitude = (
-        _Batches(
+        ViewBatches(
             poses,
             grid,
             detector,
@@ -717,25 +534,29 @@ def normal_equation_operators(
     shape = (ops.size, detector.nv, detector.nu)
 
     def normal(direction: jax.Array) -> tuple[jax.Array, jax.Array]:
+        project = ops.projector(direction)
+
         def body(
             chunk: jax.Array, carry: tuple[jax.Array, jax.Array]
         ) -> tuple[jax.Array, jax.Array]:
             energy, total = carry
             start, batch, valid = ops.select(chunk)
-            projected = jnp.where(valid[:, None, None], ops.project(direction, start, batch), 0.0)
+            projected = jnp.where(valid[:, None, None], project(start, batch), 0.0)
             energy = energy + jnp.vdot(projected, projected).real
             return energy, ops.backproject(projected, start, batch, total)
 
         return jax.lax.fori_loop(0, ops.count, body, (jnp.float32(0), ops.zeros_volume()))
 
     def gradient(volume: jax.Array | None, key: jax.Array) -> tuple[jax.Array, jax.Array]:
+        project = None if volume is None else ops.projector(volume)
+
         def body(
             chunk: jax.Array, carry: tuple[jax.Array, jax.Array]
         ) -> tuple[jax.Array, jax.Array]:
             total, scale = carry
             start, batch, valid = ops.select(chunk)
             measured = read_views(key, start, shape)
-            predicted = 0.0 if volume is None else ops.project(volume, start, batch)
+            predicted = 0.0 if project is None else project(start, batch)
             mask = valid[:, None, None]
             residual = jnp.where(mask, measured - predicted, 0.0)
             size = jnp.where(mask, jnp.abs(measured) + jnp.abs(predicted), 0.0)
@@ -774,13 +595,13 @@ def poisson_operators(
     With ``stream``, measurements are a host-source key; only the requested
     batch is gathered from its original-order host array.
     """
-    ops = _Batches(
+    ops = ViewBatches(
         poses, grid, detector, det_grid, backend, batch_size, model, "linear",
         absolute_weights=False,
     )  # fmt: skip
     per_view = tuple(array[indices] for array in ops.per_view())
 
-    def group(i: jax.Array) -> _Batches:
+    def group(i: jax.Array) -> ViewBatches:
         return ops.share(tuple(array[i] for array in per_view), valid[i])
 
     return (
@@ -794,7 +615,7 @@ def poisson_operators(
     )
 
 
-def _sensitivity(ops: _Batches) -> jax.Array:
+def _sensitivity(ops: ViewBatches) -> jax.Array:
     def batch(k: jax.Array, output: jax.Array) -> jax.Array:
         start, poses, valid = ops.select(k)
         ones = jnp.broadcast_to(valid[:, None, None], (ops.size, ops.detector.nv, ops.detector.nu))
@@ -804,11 +625,13 @@ def _sensitivity(ops: _Batches) -> jax.Array:
 
 
 def _correction(
-    ops: _Batches, volume: jax.Array, data: jax.Array, *, indices: jax.Array | None = None
+    ops: ViewBatches, volume: jax.Array, data: jax.Array, *, indices: jax.Array | None = None
 ) -> jax.Array:
+    project = ops.projector(volume)
+
     def batch(k: jax.Array, output: jax.Array) -> jax.Array:
         start, poses, valid = ops.select(k)
-        expected = ops.project(volume, start, poses)
+        expected = project(start, poses)
         positive = expected > 0
         measured = (
             ops.images(data, start)
