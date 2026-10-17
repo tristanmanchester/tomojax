@@ -35,12 +35,18 @@ def host_source(array: np.ndarray) -> Iterator[jax.Array]:
 
 
 def _read(
-    key: np.ndarray, start: np.ndarray, weights_key: np.ndarray | None, *, size: int
+    key: np.ndarray,
+    start: np.ndarray,
+    weights_key: np.ndarray | None,
+    indices: np.ndarray | None,
+    *,
+    size: int,
 ) -> np.ndarray:
     source, first = _SOURCES[int(key)], int(start)
-    views = np.ascontiguousarray(source[first : first + size], dtype=np.float32)
+    selection = slice(first, first + size) if indices is None else indices
+    views = np.ascontiguousarray(source[selection], dtype=np.float32)
     if weights_key is not None:
-        weights = _SOURCES[int(weights_key)][first : first + size]
+        weights = _SOURCES[int(weights_key)][selection]
         views = np.where(weights > 0, views, np.float32(0))
     if not np.isfinite(views).all():
         raise ValueError("streamed projections must be finite in FP32")
@@ -53,10 +59,15 @@ def read_views(
     shape: tuple[int, int, int],
     *,
     weights_key: jax.Array | None = None,
+    indices: jax.Array | None = None,
 ) -> jax.Array:
-    """Read a host batch, excluding zero-weight samples before finite checks."""
+    """Read a host batch, excluding zero-weight samples before finite checks.
+
+    ``indices`` selects exactly this batch's original view indices instead of
+    the contiguous range at ``start``; no whole subset is copied on the host.
+    """
     out = jax.ShapeDtypeStruct(shape, jnp.float32)
-    return jax.pure_callback(partial(_read, size=shape[0]), out, key, start, weights_key)
+    return jax.pure_callback(partial(_read, size=shape[0]), out, key, start, weights_key, indices)
 
 
 def validate_host_views(array: np.ndarray, *, weights: np.ndarray | None = None) -> None:

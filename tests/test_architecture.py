@@ -170,13 +170,22 @@ def _configuration_fields(command: str) -> set[str]:
         FBPConfig,
         FistaConfig,
         FourierConfig,
+        MLEMConfig,
         SIRTConfig,
         SPDHGConfig,
     )
 
     if command == "align":
         return {item.name for item in fields(AlignConfig) if item.init}
-    configs = (FBPConfig, FourierConfig, CGLSConfig, FistaConfig, SPDHGConfig, SIRTConfig)
+    configs = (
+        FBPConfig,
+        FourierConfig,
+        CGLSConfig,
+        FistaConfig,
+        SPDHGConfig,
+        SIRTConfig,
+        MLEMConfig,
+    )
     # Arrays and devices have no TOML form.
     return {item.name for c in configs for item in fields(c) if item.init} - {"support", "devices"}
 

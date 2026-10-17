@@ -34,8 +34,8 @@ if TYPE_CHECKING:
     from tomojax import Reconstruction, Scan
     from tomojax.recon.api import MethodConfig
 
-type _Method = Literal["auto", "fbp", "fourier", "cgls", "fista", "spdhg", "sirt"]
-_METHODS: tuple[_Method, ...] = ("fbp", "fourier", "cgls", "fista", "spdhg", "sirt")
+type _Method = Literal["auto", "fbp", "fourier", "cgls", "fista", "spdhg", "sirt", "mlem"]
+_METHODS: tuple[_Method, ...] = ("fbp", "fourier", "cgls", "fista", "spdhg", "sirt", "mlem")
 # The options that are tj.reconstruct keywords besides the method and grid.
 _KEYWORDS = ("filter", "iterations", "tv_weight", "nonnegative", "warm_start", "seed")
 # Configuration fields a TOML file cannot hold.
@@ -60,7 +60,7 @@ _PUBLIC = (
 _SETTINGS = (
     "Expert settings are --config keys, fields of the method's configuration:\n"
     "tomojax.recon.FBPConfig (fbp, and FDK for cone beams), FourierConfig, CGLSConfig,\n"
-    "FistaConfig, SPDHGConfig or SIRTConfig. Each replaces a default field; a\n"
+    "FistaConfig, SPDHGConfig, SIRTConfig or MLEMConfig. Each replaces a default field; a\n"
     "setting the method's class has no field for fails with the ones it has.\n"
     "Expert settings require an explicit --method rather than automatic selection.\n"
 )
@@ -92,7 +92,8 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "auto (default): choose from geometry; fbp: filtered backprojection/FDK; "
             "fourier: parallel Fourier inverse; "
-            "cgls: least squares; sirt: normalized algebraic updates; fista, spdhg: TV"
+            "cgls: least squares; sirt: normalized algebraic updates; fista, spdhg: TV; "
+            "mlem: linear Poisson MLEM/OSEM"
         ),
     )
     _ = p.add_argument(
@@ -106,7 +107,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         metavar="N",
-        help="Iterations of cgls and fista (default 50) and spdhg (400, a block of views each)",
+        help="Iterations: cgls/fista/mlem 50 by default; spdhg 400 (one block of views each)",
     )
     _ = p.add_argument(
         "--tv-weight",

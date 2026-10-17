@@ -11,10 +11,11 @@
 - `fista_tv`
 - `spdhg_tv`
 - `sirt` (SIRT, OS-SART and SART)
+- `mlem`, with ordered subsets in `MLEMConfig`
 - `calibrate_cone_axis`, the cone-beam axis-offset and roll calibration
 
 Each method's settings are a configuration class: `FBPConfig` (FBP and FDK),
-`FourierConfig`, `CGLSConfig`, `FistaConfig`, `SPDHGConfig` and `SIRTConfig`. Pass one as
+`FourierConfig`, `CGLSConfig`, `FistaConfig`, `SPDHGConfig`, `SIRTConfig` and `MLEMConfig`. Pass one as
 `tj.reconstruct(scan, "fista", config=FistaConfig(regulariser="huber_tv"))`;
 keywords such as `iterations=` replace the fields of the same name. The same
 fields are the keys of a `tomojax recon --config` TOML file
@@ -230,3 +231,10 @@ Near the FP32 noise floor, checks also run every 16 iterations: an atomic JAX
 transpose can keep the recurrence moving and evade an update-stagnation check.
 The componentwise cancellation test and requested convergence tolerance remain
 unchanged; a precision-limited result is still reported as `roundoff_limit`.
+
+`mlem` models nonnegative linear Poisson measurements, not raw transmission
+counts. `MLEMConfig(subsets=1)` is MLEM; larger values give angle-interleaved
+OSEM, with `iterations` counting full passes through the views. OSEM can cycle
+near convergence. The boolean `support` mask fixes excluded voxels to zero;
+initial zeros are absorbing under multiplicative updates. `warm_start=True`
+starts from FBP/FDK clipped to nonnegative values, retaining its zero set.

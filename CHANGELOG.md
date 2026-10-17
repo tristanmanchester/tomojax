@@ -11,6 +11,10 @@ Joseph solves share their exact two-dimensional normalization across rows
 and use host slabs when the workspace is too large. Full-data SIRT can opt
 into fixed FISTA acceleration with `SIRTConfig(acceleration=True)`.
 
+`mlem` adds matched MLEM/OSEM reconstruction for nonnegative linear Poisson
+measurements, with angular subsets, a reconstruction support mask, and optional
+nonnegative FBP/FDK warm starts.
+
 It just works (end of the sixth lab run): `tj.reconstruct(scan)` now defaults
 to `method="auto"` and `tj.align(scan)` to `mode="auto"`, choosing the method,
 workflow and Fourier backend from the scan and saying in the result when a

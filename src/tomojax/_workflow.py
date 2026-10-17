@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from tomojax.recon import FBPConfig, FourierConfig
     from tomojax.recon.api import MethodConfig
 
-type Method = Literal["auto", "fbp", "fourier", "cgls", "fista", "spdhg", "sirt"]
+type Method = Literal["auto", "fbp", "fourier", "cgls", "fista", "spdhg", "sirt", "mlem"]
 
 
 @dataclass(frozen=True)
@@ -224,7 +224,8 @@ def reconstruct(
         ``iterations`` (default 400) each update one block of views, in an
         order drawn with ``seed``.
 
-    ``warm_start`` starts iterative methods from FBP/FDK; ``grid`` overrides the scan's grid.
+    ``mlem`` is linear Poisson MLEM/OSEM, not transmission counts (``MLEMConfig``).
+    ``warm_start`` uses FBP/FDK for least squares; ``grid`` overrides the scan's output grid.
 
     ``out`` is a writable float32 array or memmap of shape ``(grid.nx, grid.ny,
     grid.nz)`` for ``fbp`` and ``fourier``: the volume is made in host slabs
