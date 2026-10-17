@@ -45,14 +45,23 @@ def load_orbit(walnut: Path, orbit: int, every: int = 1) -> tuple[np.ndarray, np
     """ASTRA ``(rows, views, columns)`` absorption data and cone_vec vectors of one orbit."""
     folder = walnut / "Projections" / f"tubeV{orbit}"
     vectors = np.loadtxt(folder / "scan_geom_corrected.geom")[0:VIEWS:every]
-    dark = _read(folder / "di000000.tif")
-    flat = np.mean([_read(folder / f"io00000{k}.tif") for k in (0, 1)], axis=0) - dark
+    dark = np.ascontiguousarray(_read(folder / "di000000.tif"))
+    flat = np.ascontiguousarray(
+        np.mean([_read(folder / f"io00000{k}.tif") for k in (0, 1)], axis=0) - dark
+    )
     indices = range(VIEWS, 0, -every)
-    data = np.empty((ROWS, len(indices), COLS), np.float32)
+    # Correct contiguous frames without full-frame arithmetic temporaries;
+    # expose ASTRA's row/view/column axes as a view after loading.
+    data = np.empty((len(indices), ROWS, COLS), np.float32)
     for view, index in enumerate(indices):
-        image = (_read(folder / f"scan_{index:06d}.tif") - dark) / flat
-        data[:, view, :] = -np.log(np.clip(image, 1e-6, None))
-    return data, vectors
+        image = np.ascontiguousarray(_read(folder / f"scan_{index:06d}.tif"))
+        np.subtract(image, dark, out=image)
+        np.divide(image, flat, out=image)
+        np.maximum(image, 1e-6, out=image)
+        np.log(image, out=image)
+        np.negative(image, out=image)
+        data[view] = image
+    return data.transpose(1, 0, 2), vectors
 
 
 def reference(walnut: Path, name: str = "full_AGD_50") -> np.ndarray | None:

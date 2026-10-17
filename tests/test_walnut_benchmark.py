@@ -23,6 +23,21 @@ def _linear_field(shape):
     return 2 + 0.01 * coordinates[0] + 0.02 * coordinates[1] - 0.03 * coordinates[2]
 
 
+def test_orbit_load_keeps_view_order_orientation_and_correction(walnut, monkeypatch, tmp_path):
+    for key, value in {"ROWS": 3, "COLS": 2, "VIEWS": 4}.items():
+        monkeypatch.setattr(walnut, key, value)
+    raw = np.arange(6, dtype=np.float32).reshape(2, 3)
+    frames = dict(di000000=raw, io000000=raw + 2, io000001=raw + 4)
+    frames.update(scan_000004=2 * raw + 1, scan_000002=3 * raw - 1)
+    monkeypatch.setattr(walnut.iio, "imread", lambda path: frames[path.stem])
+    monkeypatch.setattr(walnut.np, "loadtxt", lambda _path: np.arange(48).reshape(4, 12))
+    data, geometry = walnut.load_orbit(tmp_path, 2, every=2)
+    corrected = [-np.log(np.maximum(image / 3, 1e-6)) for image in (raw + 1, 2 * raw - 1)]
+    expected = np.stack([np.flipud(image).T for image in corrected], axis=1)
+    np.testing.assert_array_equal(data, expected)
+    np.testing.assert_array_equal(geometry, np.arange(48).reshape(4, 12)[::2])
+
+
 @pytest.mark.parametrize("shape", [(6, 6, 6), (7, 5, 3)])
 def test_quality_samples_the_same_voxel_centres_at_integer_and_fractional_densities(walnut, shape):
     reference = _linear_field((11, 11, 11))
