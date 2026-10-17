@@ -215,30 +215,53 @@ def _type_errors() -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
+def _code_line_count(source: str, node: ast.AST | None = None) -> int:
+    """Count physical lines except docstrings; comments and code still count."""
+    lines = source.splitlines()
+    node = ast.parse(source) if node is None else node
+    start = getattr(node, "lineno", 1)
+    stop = getattr(node, "end_lineno", len(lines))
+    prose: set[int] = set()
+    for child in ast.walk(node):
+        if isinstance(child, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+            if ast.get_docstring(child) is None:
+                continue
+            doc = child.body[0]
+            end = doc.end_lineno or doc.lineno
+            prose.update(range(doc.lineno, end + 1))
+            # A one-line definition, trailing statement or comment is still code.
+            if lines[doc.lineno - 1][: doc.col_offset].strip():
+                prose.discard(doc.lineno)
+            if lines[end - 1][doc.end_col_offset :].strip():
+                prose.discard(end)
+    return stop - start + 1 - len(prose)
+
+
 def _file_lines() -> dict[str, int]:
-    """Files over :data:`LONG_FILE_LINES`, with their length."""
+    """Files over :data:`LONG_FILE_LINES`, excluding docstring spans."""
     lengths = {
-        _relative(p): len(p.read_text(encoding="utf-8").splitlines()) for p in _python_files()
+        _relative(p): _code_line_count(p.read_text(encoding="utf-8")) for p in _python_files()
     }
     return {path: n for path, n in lengths.items() if n > LONG_FILE_LINES}
 
 
 def _function_lines() -> dict[str, int]:
-    """Functions over :data:`LONG_FUNCTION_LINES`, as ``path::qualified.name`` with their length."""
+    """Long functions as ``path::qualified.name``, excluding docstring spans."""
     found: dict[str, int] = {}
 
-    def visit(node: ast.AST, prefix: str, path: str) -> None:
+    def visit(node: ast.AST, prefix: str, path: str, source: str) -> None:
         for child in ast.iter_child_nodes(node):
             if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
                 name = f"{prefix}{child.name}"
                 if not isinstance(child, ast.ClassDef):
-                    length = (child.end_lineno or child.lineno) - child.lineno + 1
+                    length = _code_line_count(source, child)
                     if length > LONG_FUNCTION_LINES:
                         found[f"{path}::{name}"] = length
-                visit(child, f"{name}.", path)
+                visit(child, f"{name}.", path, source)
 
     for p in _python_files():
-        visit(ast.parse(p.read_text(encoding="utf-8")), "", _relative(p))
+        source = p.read_text(encoding="utf-8")
+        visit(ast.parse(source), "", _relative(p), source)
     return dict(sorted(found.items()))
 
 

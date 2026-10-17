@@ -93,7 +93,8 @@ surface, check the change against these rules.
   to it shows in review;
 - the measures in `tests/guardrails/ratchets.json` may fall but never rise:
   configuration fields, exported names, CLI flags, the length of every file
-  over 800 lines and every function over 100, lint suppressions, functions
+  over 800 lines and every function over 100 (excluding docstrings, but counting
+  comments and code), lint suppressions, functions
   over the complexity limits, type errors in modules CI does not yet
   type-check, public functions, methods and `*Config` classes taking options
   positionally, code that assumes the first device, private imports in tests,
