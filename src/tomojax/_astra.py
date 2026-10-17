@@ -10,8 +10,8 @@ turntable or a gantry: each ASTRA view becomes a rigid object pose.
 Conversion fits a circular orbit to those poses (a ``ConeGeometry``) and
 keeps what remains, the scan's departure from a perfect circle, as per-view
 pose corrections. The ASTRA world frame is TomoJAX's object frame, so volumes
-convert by transposing ``(z, y, x)`` arrays to ``(x, y, z)``; a vertical
-offset of the source from the volume becomes the grid's centre.
+convert by transposing ``(z, y, x)`` arrays to ``(x, y, z)``. The supplied
+grid is preserved, with source-height offsets represented in the view poses.
 """
 
 from __future__ import annotations
@@ -151,13 +151,12 @@ def _segment(
     arrangement: np.ndarray,
     grid: Grid,
     shape: tuple[int, int],
-    *,
-    move_grid: bool,
 ) -> tuple[ConeGeometry, np.ndarray]:
-    """The circle and per-view corrections of views sharing one arrangement.
+    """The circle and per-view corrections in the caller's volume coordinates.
 
-    ``move_grid`` lets a vertical offset of the volume from the source move
-    the grid; otherwise it stays in the corrections (segments share a grid).
+    Keep axial source offsets in the poses, not in a shifted volume grid.
+    Independently imported orbits must retain the same object coordinate frame
+    when combined; their reconstruction window is not a coordinate transform.
     """
     e_u, e_v, beam = axes
     sdd, cu, cv, du, dv = (float(v) for v in np.mean(arrangement, axis=0))
@@ -169,13 +168,6 @@ def _segment(
     translation = -np.einsum("nij,nj->ni", rotation, vectors[:, :3] + sod * beam)
     turn, theta = _orbit(rotation)
     axis = turn[:, 2]
-    if move_grid:
-        # A shift along the axis commutes with the rotation: it moves the grid
-        # instead (object coordinates X' = X + height z).
-        height = float(np.mean(translation @ axis))
-        translation = translation - height * rotation[:, :, 2]
-        cx, cy, cz = grid.vol_center or (0.0, 0.0, 0.0)
-        grid = replace(grid, vol_center=(cx, cy, cz + height))
     cone = ConeBeam(sod, sdd, axis_offset=float(np.mean(translation[:, 0])))
     axis_unit = (float(axis[0]), float(axis[1]), float(axis[2]))
     # ConeGeometry aligns +z to the axis, then turns by theta about it.
@@ -222,7 +214,6 @@ def from_astra(
             arrangement[run],
             grid,
             (rows, cols),
-            move_grid=len(runs) == 1,
         )
         for run in runs
     ]

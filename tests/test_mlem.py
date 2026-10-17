@@ -135,10 +135,16 @@ def test_large_sensitivity_cache_is_bounded_and_requires_reuse(monkeypatch):
     module = import_module("tomojax.recon.mlem")
     for free, fits in ((None, False), (2 * 2**30, False), (4 * 2**30, True)):
         monkeypatch.setattr(module, "device_free_memory_bytes", lambda free=free: free)
-        assert module._cache_sensitivities(300 * 2**20, 4, 4) == fits
-        assert not module._cache_sensitivities(300 * 2**20, 4, 1)
-    monkeypatch.setattr(module, "device_free_memory_bytes", lambda: 16 * 2**30)
-    assert not module._cache_sensitivities(1025 * 2**20, 4, 4)
+        assert module._cache_sensitivities(2**30, 4, 4, workspace_bytes=2 * 2**30) == fits
+        assert not module._cache_sensitivities(2**30, 4, 1, workspace_bytes=0)
+    assert module._cache_sensitivities(3 * 2**30, 4, 4, workspace_bytes=2**30)
+    assert not module._cache_sensitivities(3 * 2**30, 4, 4, workspace_bytes=2 * 2**30)
+    assert not module._cache_sensitivities(2**30, 4, 4, workspace_bytes=4 * 2**30)
+    completed = []
+    initial = type("Pending", (), {"block_until_ready": lambda self: completed.append(True)})()
+    monkeypatch.setattr(module, "device_free_memory_bytes", lambda: 4 * 2**30 if completed else 0)
+    assert module._cache_sensitivities(2**30, 4, 4, workspace_bytes=0, initial=initial)
+    assert completed
 
 
 @pytest.mark.numerical
@@ -164,3 +170,38 @@ def test_streamed_counts_match_resident_subsets_and_release_sources(problem, mon
         np.testing.assert_allclose(actual, expected * scale, rtol=2e-6, atol=2e-6)
         assert set(host._SOURCES) == registered
     assert set(np.concatenate(reads)) == set(range(5))
+
+
+@pytest.mark.numerical
+def test_single_plane_sensitivities_match_full_axial_norms(monkeypatch):
+    module = import_module("tomojax.recon.mlem")
+    monkeypatch.setattr(module, "_SENSITIVITY_CACHE_BYTES", 0)
+    monkeypatch.setattr(module, "device_free_memory_bytes", lambda: 2**30)
+    rng = np.random.default_rng(9)
+    grid = Grid(5, 4, 3, 0.8, 1.1, 1.3, vol_origin=(1.3, -2.7, 2.5 - 2 * 1.3 / 2))
+    detector = Detector(8, 3, 0.8, 1.3, (0.2, 2.5))
+    geometry = tj.ParallelGeometry(grid, detector, [11, 89, 141, 63, 122])
+    truth = rng.uniform(0.1, 1, (5, 4, 3)).astype(np.float32)
+    scan = tj.Scan(np.asarray(tj.project(geometry, truth)), geometry)
+    support = rng.uniform(size=truth.shape) > 0.3
+    for iterations in (0, 3):
+        cfg = MLEMConfig(iterations=iterations, subsets=3, support=support)
+        actual = tj.reconstruct(scan, "mlem", config=cfg).volume
+        with monkeypatch.context() as patch:
+            patch.setattr(module, "independent_planes", lambda *_: False)
+            expected = tj.reconstruct(scan, "mlem", config=cfg).volume
+        np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=2e-6)
+
+
+@pytest.mark.numerical
+def test_separately_allocated_norms_match_inline_cache(problem, monkeypatch):
+    module = import_module("tomojax.recon.mlem")
+    grid, detector, geometry, matrix = problem
+    data = (matrix @ np.linspace(0.2, 1.1, 12)).reshape(5, 4, 5).astype(np.float32)
+    cfg = MLEMConfig(iterations=3, subsets=3, views_per_batch=2)
+    expected = mlem(geometry, grid, detector, data, config=cfg)[0]
+    monkeypatch.setattr(module, "_SENSITIVITY_CACHE_BYTES", 0)
+    monkeypatch.setattr(module, "device_free_memory_bytes", lambda: 2**30)
+    for _ in range(2):
+        actual = mlem(geometry, grid, detector, data, config=cfg)[0]
+        np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=2e-6)

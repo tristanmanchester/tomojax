@@ -177,7 +177,8 @@ def reconstruct_arrays(
     arc. Returns the volume and its record: the ``config`` used,
     ``warm_start`` for the iterative methods and the solver's own record. FDK
     and FBP volumes too large for the device come back as host NumPy arrays,
-    made in slabs (``host_slabs``). Fourier always returns host arrays in slabs.
+    made in slabs (``host_slabs``). Independent axial SIRT/MLEM planes and their
+    warm starts also use host slabs when needed. Fourier always returns host arrays in slabs.
     ``out`` supplies writable float32 host storage for FBP/FDK or Fourier and
     forces host slabs; it is returned without allocating another full volume.
     """
@@ -216,6 +217,69 @@ def reconstruct_arrays(
 
 
 def _iterative_result(
+    method: str,
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray | np.ndarray,
+    cfg: CGLSConfig | FistaConfig | SPDHGConfig | SIRTConfig | MLEMConfig,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+    *,
+    warm_start: bool,
+) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
+    """Plan independent axial slabs before allocating a full warm initializer."""
+    if method in {"sirt", "mlem"}:
+        from tomojax.recon._axial_slabs import axial_slabs, independent_planes
+
+        algebraic = cast("SIRTConfig | MLEMConfig", cfg)
+        if (
+            algebraic.projector_model in {"auto", "joseph"}
+            and det_grid is None
+            and independent_planes(geometry, grid, detector)
+        ):
+            support = algebraic.support
+            if support is not None:
+                import jax.numpy as jnp
+
+                if method == "sirt":
+                    from tomojax.core.validation import validate_volume
+
+                    validate_volume(support, grid, context="sirt", name="support")
+                support = jnp.broadcast_to(jnp.asarray(support, bool), (grid.nx, grid.ny, grid.nz))
+
+            def solve(
+                local: ParallelGeometry,
+                data: jnp.ndarray | np.ndarray,
+                _initial: jnp.ndarray | np.ndarray | None,
+                local_support: jnp.ndarray | np.ndarray | None,
+            ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
+                return _iterative_incore(
+                    method, local, local.grid, local.detector, data,
+                    replace(algebraic, support=local_support), None, warm_start=warm_start,
+                )  # fmt: skip
+
+            # EM stores axial sensitivities as single planes; the cache policy
+            # separately reserves capacity for them after inputs are resident.
+            buffers = (
+                4
+                if method == "mlem"
+                else 3 + min(algebraic.subsets, 16) + 2 * getattr(algebraic, "acceleration", False)
+            )
+            result = axial_slabs(
+                geometry, grid, detector, projections, initial=None, support=support,
+                volume_buffers=buffers,
+                projection_buffers=2 if method == "mlem" else 2 + 2 / algebraic.subsets,
+                solve=solve,
+            )  # fmt: skip
+            if result is not None:
+                volume, record = result
+                return volume, {**record, "config": cfg, "warm_start": warm_start}
+    return _iterative_incore(
+        method, geometry, grid, detector, projections, cfg, det_grid, warm_start=warm_start
+    )
+
+
+def _iterative_incore(
     method: str,
     geometry: Geometry,
     grid: Grid,

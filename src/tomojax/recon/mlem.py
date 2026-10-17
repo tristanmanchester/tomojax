@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 import operator
 from typing import TYPE_CHECKING
@@ -20,6 +20,8 @@ from tomojax.core.validation import (
     validate_projection_stack,
     validate_volume,
 )
+from tomojax.geometry import grid_volume_origin
+from tomojax.recon._axial_slabs import independent_planes
 from tomojax.recon._host_arrays import validate_host_views
 from tomojax.recon._host_stream import host_source, should_stream
 from tomojax.recon._projection import (
@@ -36,13 +38,27 @@ if TYPE_CHECKING:
 _SENSITIVITY_CACHE_BYTES = 256 * 2**20
 
 
-def _cache_sensitivities(nbytes: int, subsets: int, iterations: int) -> bool:
+def _cache_sensitivities(
+    nbytes: int,
+    subsets: int,
+    iterations: int,
+    *,
+    workspace_bytes: int,
+    initial: jax.Array | None = None,
+) -> bool:
     if subsets == 1 or nbytes <= _SENSITIVITY_CACHE_BYTES:
         return True
     if iterations <= 1:
         return False  # A single sweep cannot reuse the extra cached volumes.
+    # An asynchronous initializer can still retain its inputs and temporaries.
+    # Finish it before measuring reusable memory for a large sensitivity cache.
+    if initial is not None:
+        initial.block_until_ready()
     free = device_free_memory_bytes()
-    return free is not None and nbytes <= min(free // 8, 1024 * 2**20)
+    # A cache is only part of the compiled solve's live memory. Its separate
+    # allocation can use the remaining pool after reserving the working buffers;
+    # a fixed fraction would needlessly recompute norms when that reserve fits.
+    return free is not None and nbytes <= free - workspace_bytes
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -64,9 +80,10 @@ class MLEMConfig:
     attenuation data is possible, but does not give it Poisson statistics.
     The projectors are the same matched pair as :class:`CGLSConfig`, with
     nonnegative interpolation weights. A single sensitivity is retained; multiple
-    subset sensitivities are cached within 256 MiB, or up to one eighth of
-    available memory (at most 1 GiB) when reused across multiple sweeps;
-    otherwise they are recomputed to bound memory use.
+    subset sensitivities are cached within 256 MiB, or in available memory
+    after reserving working buffers when reused across multiple sweeps;
+    otherwise they are recomputed to bound memory use. Exactly independent
+    axial planes share their single-plane sensitivities.
     """
 
     iterations: int = 50
@@ -77,9 +94,42 @@ class MLEMConfig:
     projector_model: ProjectorModel = "auto"
 
 
+@partial(jax.jit, static_argnames=("grid", "detector", "backend", "batch_size", "model", "axial"))
+def _normalizer(
+    poses: jax.Array,
+    indices: jax.Array,
+    valid: jax.Array,
+    det_grid: tuple[jax.Array, jax.Array] | None,
+    *,
+    grid: Grid,
+    detector: Detector,
+    backend: str,
+    batch_size: int,
+    model: str | ConeModel,
+    axial: bool,
+) -> jax.Array:
+    """Own a large norm stack separately from the iterative solver's workspace."""
+    if axial:
+        grid = replace(grid, nz=1, vol_origin=(*grid_volume_origin(grid)[:2], 0.0))
+        detector = replace(detector, nv=1, center=(detector.center[0], 0.0))
+    sensitivity, _ = poisson_operators(
+        poses, grid, detector, det_grid, backend, batch_size, model, indices, valid
+    )
+    return jax.lax.map(sensitivity, jnp.arange(indices.shape[0]))
+
+
 @partial(
     jax.jit,
-    static_argnames=("grid", "detector", "backend", "batch_size", "model", "cache", "stream"),
+    static_argnames=(
+        "grid",
+        "detector",
+        "backend",
+        "batch_size",
+        "model",
+        "cache",
+        "stream",
+        "axial",
+    ),
 )
 def _solve(
     poses: jax.Array,
@@ -98,10 +148,19 @@ def _solve(
     model: str | ConeModel,
     cache: bool,
     stream: bool,
+    axial: bool,
+    sensitivities: jax.Array | None = None,
 ) -> tuple[jax.Array, jax.Array]:
     sensitivity, correction = poisson_operators(
         poses, grid, detector, det_grid, backend, batch_size, model, indices, valid, stream=stream
     )
+    if axial:
+        # Equal axial rows share A.T 1, even when activity/support varies by plane.
+        normal_grid = replace(grid, nz=1, vol_origin=(*grid_volume_origin(grid)[:2], 0.0))
+        normal_detector = replace(detector, nv=1, center=(detector.center[0], 0.0))
+        sensitivity, _ = poisson_operators(
+            poses, normal_grid, normal_detector, None, backend, batch_size, model, indices, valid
+        )
     shape = (grid.nx, grid.ny, grid.nz)
     x = jnp.ones(shape, jnp.float32) if initial is None else initial
     if support is not None:
@@ -111,13 +170,18 @@ def _solve(
     subsets = indices.shape[0]
     # A full subset stack on a large volume can exceed device memory. Retain
     # only one current sensitivity in that case, independent of subset count.
-    sensitivities = jax.lax.map(sensitivity, jnp.arange(subsets)) if cache else None
+    if sensitivities is None and cache:
+        sensitivities = jax.lax.map(sensitivity, jnp.arange(subsets))
     # A wholly unobserved voxel has no likelihood information: choose zero,
     # not an arbitrary unit activity. Visibility must include every subset;
     # a voxel missed by one subset can still be measured by another.
-    observed = (
-        jnp.any(sensitivities > 0, axis=0) if sensitivities is not None else jnp.zeros(shape, bool)
-    )
+    observed = jnp.zeros(shape, bool)
+    if sensitivities is not None:
+        # A stack-shaped > 0 comparison can retain a second full zero stack
+        # alongside the map's writable cache. Compare one volume at a time.
+        observed = jax.lax.fori_loop(
+            0, subsets, lambda i, seen: seen | (sensitivities[i] > 0), observed
+        )
 
     def step(k: jax.Array, state: tuple[jax.Array, jax.Array]) -> tuple[jax.Array, jax.Array]:
         volume, seen = state
@@ -187,6 +251,7 @@ def mlem(
         geometry, cfg.projector_model, cfg.projector_backend, detector=detector,
         det_grid=det_grid, context="mlem",
     )  # fmt: skip
+    axial = model == "joseph" and det_grid is None and independent_planes(geometry, grid, detector)
     order = np.argsort(np.asarray(getattr(geometry, "angles", np.arange(n))), kind="stable")
     count = (n + subsets - 1) // subsets
     indices = np.arange(subsets)[:, None] + subsets * np.arange(count)[None, :]
@@ -201,12 +266,33 @@ def mlem(
     context = host_source(np.asarray(projections)) if stream else nullcontext(_device(projections))
     with context as data:
         # Query after these persistent inputs occupy their device storage.
-        cache = _cache_sensitivities(int(subsets * np.prod(shape) * 4), subsets, iterations)
+        volume_bytes = int(np.prod(shape)) * 4
+        norm_bytes = grid.nx * grid.ny * 4 if axial else volume_bytes
+        image_bytes = detector.nv * detector.nu * 4
+        # Four volume buffers cover the iterate, update, current norm and
+        # visibility/output workspace. Resident data also gathers one subset;
+        # streamed data needs only its current predicted/measured view batches.
+        workspace = 4 * volume_bytes + 2 * min(batch, count) * image_bytes
+        if not stream:
+            workspace += count * image_bytes
+        cache = _cache_sensitivities(
+            subsets * norm_bytes, subsets, iterations, workspace_bytes=workspace, initial=initial
+        )
+        poses = stack_view_poses(geometry, n)
+        device_indices, device_valid = jax.device_put((indices, valid))
+        norms = None
+        if cache and subsets * norm_bytes > _SENSITIVITY_CACHE_BYTES:
+            norms = _normalizer(
+                poses, device_indices, device_valid, det_grid, grid=grid, detector=detector,
+                backend=backend, batch_size=batch, model=model, axial=axial,
+            )  # fmt: skip
+            # Release builder scratch before allocating the iteration workspace.
+            norms.block_until_ready()
         volume, good = _solve(
-            stack_view_poses(geometry, n), data, initial, support,
-            jax.device_put(indices), jax.device_put(valid), jnp.int32(iterations), det_grid,
+            poses, data, initial, support,
+            device_indices, device_valid, jnp.int32(iterations), det_grid,
             grid=grid, detector=detector, backend=backend, batch_size=batch, model=model,
-            cache=cache, stream=stream,
+            cache=cache, stream=stream, axial=axial, sensitivities=norms,
         )  # fmt: skip
         if stream:
             volume.block_until_ready()  # Host registrations must outlive every callback.
