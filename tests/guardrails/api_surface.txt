@@ -12,6 +12,8 @@ class tomojax.ConeBeam(
         detector_pitch_deg: 'float' = 0.0,
         detector_yaw_deg: 'float' = 0.0,
         axis_offset: 'float' = 0.0,
+        *,
+        source_height: 'float' = 0.0,
     ) -> None
     .detector_frame(self, detector: 'Detector') -> 'tuple[np.ndarray, np.ndarray, np.ndarray]'
     .magnification
@@ -205,6 +207,8 @@ class tomojax.geometry.ConeBeam(
         detector_pitch_deg: 'float' = 0.0,
         detector_yaw_deg: 'float' = 0.0,
         axis_offset: 'float' = 0.0,
+        *,
+        source_height: 'float' = 0.0,
     ) -> None
     .detector_frame(self, detector: 'Detector') -> 'tuple[np.ndarray, np.ndarray, np.ndarray]'
     .magnification
