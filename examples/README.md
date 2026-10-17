@@ -71,6 +71,13 @@ including compilation, lowering the volume error from 0.68 to 0.047.
 least-motion version too (see
 [where the aligned volume sits](../docs/alignment-guide.md#where-the-aligned-volume-sits)).
 
+## Preview a real cone-beam orbit on a CPU
+
+[import_walnut.py](import_walnut.py) prepares a small single-orbit FIPS walnut
+scan for FDK or an iterative reconstruction, without ASTRA or a GPU. It uses
+shared TIFF/geometry loading with the multi-orbit example below. Follow the
+[complete Python and CLI commands](../docs/lab-ct.md#try-one-fips-walnut-orbit-on-a-cpu).
+
 ## Bring a real multi-orbit scan into register
 
 This one needs data: download a walnut from the FIPS collection (Der

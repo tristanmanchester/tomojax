@@ -212,6 +212,41 @@ as in a multi-orbit scan, each run becomes a segment of a `ConeSegments` scan
 are refused. Projections of the converted scan agree with ASTRA's to 0.03% on
 tilted, offset and jittered geometries.
 
+## Try one FIPS walnut orbit on a CPU
+
+Download and unpack a WalnutN directory from the FIPS collection linked in
+[the examples](../examples/README.md#bring-a-real-multi-orbit-scan-into-register).
+The importer handles its portrait TIFF orientation, reversed acquisition order,
+dark/flat correction and ASTRA vector geometry. It does not require ASTRA.
+Its defaults keep every twentieth view of the middle orbit, bin the detector
+12 × 12 and use 64³ voxels over the authors' 50.1 mm cube:
+
+```bash
+uv run --no-sync python examples/import_walnut.py ~/data/walnuts/Walnut1 -o orbit.nxs
+uv run --no-sync tomojax recon orbit.nxs -o fdk.nxs --method fbp --roi off
+uv run --no-sync tomojax recon orbit.nxs -o cgls.nxs --method cgls --iterations 20 --roi off
+uv run --no-sync tomojax inspect cgls.nxs --preview walnut-previews
+```
+
+In Python, after the same import:
+
+```python
+import tomojax as tj
+
+scan = tj.load("orbit.nxs")
+fdk = tj.reconstruct(scan, "fbp")
+cgls = tj.reconstruct(scan, "cgls", iterations=20)
+tj.save("walnut-cgls.nxs", cgls)
+```
+
+Open all three slice planes, not just the axial plane: a single circular orbit
+has cone artefacts away from that plane. The input uses the scanner's original
+geometry, not the authors' corrected geometry; this is a coarse preview, not a
+reference-quality reconstruction. `--orbit 1` or `--orbit 3` selects another
+orbit. Smaller `--every` and `--binning` and larger `--size` increase sampling,
+resolution, memory and runtime; leave the physical volume extent unchanged.
+For all three orbits together, use the alignment example below, not FDK.
+
 ## Multi-orbit scans
 
 A scan whose source and detector arrangement changes partway through, such as
