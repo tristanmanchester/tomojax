@@ -45,40 +45,19 @@ PUBLIC_SCHEDULE_PRESETS = (
 )
 
 
+def _stage_active_dofs(schedule: AlignmentSchedule | ResolvedAlignmentSchedule) -> tuple[str, ...]:
+    """Return the first-seen union for either declared or resolved stages."""
+    seen: list[str] = []
+    for stage in schedule.stages:
+        for dof in stage.active_dofs:
+            if dof not in seen:
+                seen.append(dof)
+    return tuple(seen)
+
+
 @dataclass(frozen=True, slots=True)
 class AlignmentStage:
-    """One declared stage in an alignment schedule.
-
-    Parameters
-    ----------
-    name : str
-        Public name used to identify this declaration.
-    active_dofs : tuple[str, ...]
-        Public parameter names optimized by this stage.
-    objective_kind : ObjectiveKind
-        Objective model: "fixed_volume", "joint_volume_pose", "bilevel_cv",
-        "all_data_bilevel" or "projection_consistency".
-    optimizer : OptimizerKind
-        Optimizer for the chosen objective: "lbfgs", "adam", "gd", "gn", "validation_lm"
-        or "spectral". The schedule validates supported combinations.
-    gauge_policy : GaugePolicy, optional
-        Gauge policy: "reject", "anchor_mean", "prior_required" or "diagnose_only".
-        Default is 'reject'.
-    maxiter : int, optional
-        Maximum optimizer iterations in this stage. Default is 12.
-    early_stop : bool, optional
-        Whether this stage may stop on small improvement. Default is True.
-    stage_role : StageRole, optional
-        Role in the schedule: "proposal", "setup", "reconstruction", "refine" or
-        "verify". Default is 'refine'.
-    differentiability : DifferentiabilityRequirement, optional
-        Required path: "gradient_safe", "performance_only" or "not_required". Default is
-        'gradient_safe'.
-    quality_tier : StageQualityTier, optional
-        Stage quality tier, "fast", "reference" or "verify". Default is 'fast'.
-    speed_claim_eligible : bool, optional
-        Whether this stage is eligible for performance comparisons. Default is True.
-    """
+    """One declared stage in an alignment schedule."""
 
     name: str
     active_dofs: tuple[str, ...]
@@ -93,47 +72,20 @@ class AlignmentStage:
     speed_claim_eligible: bool = True
 
     def active_view(self) -> ActiveParameterView:
-        """Return this stage's active parameters split by owner.
-
-        Returns
-        -------
-        ActiveParameterView
-            Active parameters split into setup and pose owners.
-        """
+        """Return this stage's active parameters split by owner."""
         return ActiveParameterView.from_dofs(self.active_dofs)
 
 
 @dataclass(frozen=True, slots=True)
 class AlignmentSchedule:
-    """Unresolved alignment schedule declaration.
-
-    Parameters
-    ----------
-    name : str
-        Public name used to identify this declaration.
-    stages : tuple[AlignmentStage, ...]
-        Ordered stage declarations to execute.
-    metadata : dict[str, object], optional
-        Associated JSON-compatible metadata.
-    """
+    """Unresolved alignment schedule declaration."""
 
     name: str
     stages: tuple[AlignmentStage, ...]
     metadata: dict[str, object] = field(default_factory=dict)
 
     def validate(self) -> AlignmentSchedule:
-        """Validate schedule invariants and return this schedule.
-
-        Returns
-        -------
-        AlignmentSchedule
-            This schedule, unchanged, after validation.
-
-        Raises
-        ------
-        ValueError
-            If stages are empty or parameter/objective/optimizer combinations are invalid.
-        """
+        """Validate schedule invariants and return this schedule."""
         if not self.stages:
             raise ValueError("alignment schedule must contain at least one stage")
         for stage in self.stages:
@@ -179,30 +131,12 @@ class AlignmentSchedule:
                 )
         return self
 
-    @property
-    def active_dofs(self) -> tuple[str, ...]:
-        """Return active DOFs from all stages in first-seen order.
-
-        Returns
-        -------
-        tuple of str
-            Distinct active parameter names in first-seen order.
-        """
-        seen: list[str] = []
-        for stage in self.stages:
-            for dof in stage.active_dofs:
-                if dof not in seen:
-                    seen.append(dof)
-        return tuple(seen)
+    active_dofs = property(
+        _stage_active_dofs, doc="Return active DOFs from all stages in first-seen order."
+    )
 
     def to_dict(self) -> dict[str, object]:
-        """Return a JSON-compatible schedule description.
-
-        Returns
-        -------
-        dict
-            Declared stages and metadata in JSON-compatible form.
-        """
+        """Return a JSON-compatible schedule description."""
         return {
             "name": self.name,
             "stages": [
@@ -278,25 +212,7 @@ class ResolvedAlignmentStage:
 
 @dataclass(frozen=True, slots=True)
 class ResolvedAlignmentSchedule:
-    """Executable alignment schedule after resolving presets and frozen DOFs.
-
-    Parameters
-    ----------
-    name : str
-        Public name used to identify this declaration.
-    source : ScheduleSource
-        Schedule origin: "preset", "direct", "default" or "expert".
-    stages : tuple[ResolvedAlignmentStage, ...]
-        Resolved stages with active parameters and gauge decisions.
-    requested_active_dofs : tuple[str, ...]
-        Requested parameter names before frozen parameters are removed.
-    frozen_dofs : tuple[str, ...]
-        Parameter names held fixed.
-    gauge_decision : GaugeDecision
-        Validated decision about parameter gauge couplings.
-    metadata : dict[str, object], optional
-        Associated JSON-compatible metadata.
-    """
+    """Executable alignment schedule after resolving presets and frozen DOFs."""
 
     name: str
     source: ScheduleSource
@@ -306,66 +222,30 @@ class ResolvedAlignmentSchedule:
     gauge_decision: GaugeDecision
     metadata: dict[str, object] = field(default_factory=dict)
 
-    @property
-    def active_dofs(self) -> tuple[str, ...]:
-        """Return active DOFs from all resolved stages in first-seen order.
-
-        Returns
-        -------
-        tuple of str
-            Distinct active parameter names in first-seen order.
-        """
-        seen: list[str] = []
-        for stage in self.stages:
-            for dof in stage.active_dofs:
-                if dof not in seen:
-                    seen.append(dof)
-        return tuple(seen)
+    active_dofs = property(
+        _stage_active_dofs, doc="Return active DOFs from all resolved stages in first-seen order."
+    )
 
     @property
     def active_pose_dofs(self) -> tuple[str, ...]:
-        """Return active pose DOFs in canonical pose order.
-
-        Returns
-        -------
-        tuple of str
-            Active pose names in canonical pose-column order.
-        """
+        """Return active pose DOFs in canonical pose order."""
         active = set(self.active_dofs)
         return tuple(name for name in DOF_NAMES if name in active)
 
     @property
     def active_geometry_dofs(self) -> tuple[str, ...]:
-        """Return active setup geometry DOFs in canonical setup order.
-
-        Returns
-        -------
-        tuple of str
-            Active setup names in canonical setup order.
-        """
+        """Return active setup geometry DOFs in canonical setup order."""
         active = set(self.active_dofs)
         return tuple(name for name in GEOMETRY_DOF_NAMES if name in active)
 
     @property
     def pose_mask(self) -> tuple[bool, ...]:
-        """Return a per-column mask for active pose parameters.
-
-        Returns
-        -------
-        tuple of bool
-            One flag per pose column (alpha, beta, phi, dx, dz, dy).
-        """
+        """Return a 5-column mask for active pose DOFs."""
         active = set(self.active_pose_dofs)
         return tuple(name in active for name in DOF_NAMES)  # type: ignore[return-value]
 
     def to_dict(self) -> dict[str, object]:
-        """Return a JSON-compatible resolved-schedule description.
-
-        Returns
-        -------
-        dict
-            Resolved stages, gauges and metadata in JSON-compatible form.
-        """
+        """Return a JSON-compatible resolved-schedule description."""
         return {
             "name": self.name,
             "source": self.source,
@@ -588,39 +468,7 @@ def resolve_alignment_schedule(
     outer_iterations: int | None = None,
     early_stop: bool | None = None,
 ) -> ResolvedAlignmentSchedule:
-    """Resolve public schedule/DOF inputs into executable staged alignment work.
-
-    Parameters
-    ----------
-    schedule : str or AlignmentSchedule or None, optional
-        Preset name or explicit schedule. None chooses defaults or optimise_dofs.
-    optimise_dofs : str or iterable of str or None, optional
-        Explicit active parameters, mutually exclusive with schedule.
-    freeze : str or iterable of str or None, optional
-        Named parameters held fixed, removed from active stage parameters.
-    gauge_policy : {"reject", "anchor_mean", "prior_required", "diagnose_only"}, optional
-        Policy for coupled parameter gauges. Default is 'reject'.
-    gauge_priors : mapping or None, optional
-        Named priors for gauge-policy validation.
-    opt_method : str, optional
-        Optimizer used when resolving direct/default pose stages. Default is 'gn'.
-    outer_iterations : int or None, optional
-        Override stage iteration budgets. None leaves schedule defaults.
-    early_stop : bool or None, optional
-        Override stage early-stopping settings. None leaves schedule defaults.
-
-    Returns
-    -------
-    ResolvedAlignmentSchedule
-        Executable stages, active parameters and gauge decisions.
-
-    Raises
-    ------
-    ValueError
-        If schedule, parameters or optimizer settings are inconsistent.
-    GaugePolicyError
-        If coupled parameters violate the requested gauge policy.
-    """
+    """Resolve public schedule/DOF inputs into executable staged alignment work."""
     frozen = normalize_alignment_dofs(
         freeze,
         option_name="freeze",

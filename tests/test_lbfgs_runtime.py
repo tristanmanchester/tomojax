@@ -202,3 +202,20 @@ def test_pose_lbfgs_reduces_known_fixed_volume_pose_error():
     # The volume is fixed, so there is no free object-frame gauge to fit away.
     np.testing.assert_allclose(result.pose_params[:, 3:], truth[:, 3:], atol=2e-4)
     np.testing.assert_array_equal(result.pose_params[:, :3], np.zeros((4, 3)))
+
+
+def test_lbfgs_initial_evaluation_failure_keeps_state_and_propagates_unknown_errors():
+    def objective(_z):
+        raise RuntimeError("bad start")
+
+    cfg = PoseLbfgsConfig(maxiter=2, ftol=1e-9, gtol=1e-6, maxls=2)
+    options = dict(z0=jnp.ones(2), value_fn=objective, cfg=cfg)
+    failed = _run_lbfgs_optax_loop(
+        **options, is_expected_failure=lambda exc: isinstance(exc, RuntimeError)
+    )
+    assert not failed.success and failed.nit == failed.eval_count == 0
+    assert failed.initial_value is None and failed.initial_grad_norm is None
+    assert failed.failure_message == "initial L-BFGS objective/gradient failed: bad start"
+    np.testing.assert_array_equal(failed.z, options["z0"])
+    with pytest.raises(RuntimeError, match="bad start"):
+        _run_lbfgs_optax_loop(**options)

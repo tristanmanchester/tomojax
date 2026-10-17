@@ -27,8 +27,9 @@ from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeome
     [("inline", "detector_vu"), ("inline", "detector_uv"), ("cached", "detector_vu")],
 )
 @pytest.mark.parametrize("tilted", [False, True])
+@pytest.mark.parametrize("unroll", [None, 2])
 def test_partial_detector_tiles_match_reference(
-    interpret: bool, state_mode: str, layout: str, tilted: bool
+    interpret: bool, state_mode: str, layout: str, tilted: bool, unroll: int | None
 ) -> None:
     if not interpret and jax.default_backend() != "gpu":
         pytest.skip("requires a CUDA GPU")
@@ -49,7 +50,7 @@ def test_partial_detector_tiles_match_reference(
         layout_variant=layout,
         tile_shape=(4, 8),
         num_warps=1,
-        unroll=2,
+        unroll=unroll,
     )
     metadata = pallas.pallas_projector_actual_sinogram_variant_metadata(
         poses,
@@ -190,3 +191,90 @@ def test_weighted_fused_loss_gradient_matches_autodiff(interpret, layout, unroll
     )
     np.testing.assert_allclose(actual_loss, expected_loss, rtol=2e-6)
     np.testing.assert_allclose(actual_gradient, expected_gradient, rtol=2e-5, atol=1e-5)
+
+
+@pytest.mark.parametrize("interpret", [True, pytest.param(False, marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("state_mode", ["inline", "cached"])
+@pytest.mark.parametrize("unroll", [None, 2])
+def test_empty_ray_tiles_produce_zero_projection(interpret, state_mode, unroll) -> None:
+    if not interpret and jax.default_backend() != "gpu":
+        pytest.skip("requires a CUDA GPU")
+    grid = Grid(3, 4, 2, 0.8, 1.1, 1.3)
+    detector = Detector(5, 3, 0.7, 1.2)
+    pose = jnp.eye(4, dtype=jnp.float32).at[0, 3].set(100.0)
+    volume = jnp.ones((3, 4, 2), dtype=jnp.float32)
+    options = pallas.PallasProjectorOptions(
+        interpret=interpret,
+        state_mode=state_mode,
+        unroll=unroll,
+        tile_shape=(4, 4),
+        num_warps=1,
+        kernel_variant="generic",
+    )
+    single = pallas.forward_project_view_T_pallas(pose, grid, detector, volume, options=options)
+    stack = pallas.forward_project_views_T_pallas(
+        pose[None], grid, detector, volume, options=options
+    )
+    sse = pallas.forward_project_residual_sse_T_pallas(
+        pose[None], grid, detector, volume, jnp.ones((1, 3, 5)), options=options
+    )
+    np.testing.assert_array_equal(single, np.zeros((3, 5)))
+    np.testing.assert_array_equal(stack, np.zeros((1, 3, 5)))
+    assert float(sse) == 15.0
+
+
+@pytest.mark.parametrize("interpret", [True, pytest.param(False, marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("layout", ["detector_vu", "detector_uv"])
+@pytest.mark.parametrize("unroll", [None, 2])
+def test_backprojection_replays_shifted_detector_rays(interpret, layout, unroll) -> None:
+    if not interpret and jax.default_backend() != "gpu":
+        pytest.skip("requires a CUDA GPU")
+    grid = Grid(5, 4, 3, 0.8, 1.1, 1.3)
+    detector = Detector(7, 5, 0.9, 1.2, (0.25, -0.4))
+    geometry = LaminographyGeometry(grid, detector, [37.0], tilt_deg=29)
+    pose = jnp.asarray(geometry.pose_for_view(0), dtype=jnp.float32)
+    pose = pose.at[:3, 3].set(jnp.array([0.2, -0.3, 0.4]))
+    image = jnp.asarray(np.random.default_rng(641).normal(size=(5, 7)), dtype=jnp.float32)
+    volume = jnp.zeros((5, 4, 3), dtype=jnp.float32)
+    expected = jax.jit(
+        jax.grad(
+            lambda x: jnp.vdot(
+                forward_project_view_T(pose, grid, detector, x, step_size=0.7), image
+            )
+        )
+    )(volume)
+    actual = pallas.backproject_view_T_pallas(
+        pose,
+        grid,
+        detector,
+        image,
+        step_size=0.7,
+        interpret=interpret,
+        tile_shape=(4, 4),
+        num_warps=1,
+        layout_variant=layout,
+        unroll=unroll,
+    )
+    np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=1e-5)
+
+
+def test_prepared_single_view_reuses_launch_without_capturing_ray_arrays(caplog) -> None:
+    grid, detector = Grid(4, 4, 3, 1, 1, 1), Detector(5, 3, 1, 1)
+    pose = jnp.eye(4, dtype=jnp.float32)
+    volume = jnp.arange(48, dtype=jnp.float32).reshape(4, 4, 3)
+    options = pallas.PallasProjectorOptions(interpret=True, tile_shape=(2, 4), num_warps=1)
+    bound = pallas.bind_forward_project_view_T_pallas(pose, grid, detector, options=options)
+    # The first Pallas trace lazily registers a JAX tracing context.
+    for _ in range(2):
+        jax.block_until_ready(bound(volume))
+    for shift in [0.0, 0.6]:
+        shifted = pose.at[0, 3].set(shift)
+        state = pallas.prepare_forward_project_view_T_pallas_state(
+            shifted, grid, detector, tile_shape=(2, 4), num_warps=1
+        )
+        expected = forward_project_view_T(shifted, grid, detector, volume)
+        caplog.clear()
+        with jax.log_compiles(True), caplog.at_level("WARNING"):
+            actual = pallas.forward_project_view_T_pallas_with_state(state, volume, interpret=True)
+            np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=1e-5)
+        assert not any("Compiling jit(" in record.message for record in caplog.records)

@@ -32,7 +32,8 @@ from ._helpers import make_projection_dataset, write_projection_dataset
 pytestmark = pytest.mark.surface
 
 
-def test_projection_dataset_roundtrips_nxtomo_with_solver_metadata(tmp_path: Path) -> None:
+@pytest.mark.parametrize("gtype", ["lamino", "laminography", " LAMINOGRAPHY "])
+def test_projection_dataset_roundtrips_nxtomo_with_solver_metadata(tmp_path: Path, gtype) -> None:
     path = tmp_path / "scan.nxs"
     detector = Detector(nu=4, nv=2, du=0.5, dv=0.75, center=(1.0, -2.0))
     grid = Grid(nx=4, ny=4, nz=2, vx=1.0, vy=1.0, vz=2.0)
@@ -40,7 +41,7 @@ def test_projection_dataset_roundtrips_nxtomo_with_solver_metadata(tmp_path: Pat
     dataset = make_projection_dataset(
         detector=detector,
         grid=grid,
-        geometry_type="lamino",
+        geometry_type=gtype,
         geometry_metadata={"tilt_deg": 55.0, "tilt_about": "x", "detector_roll_deg": 1.25},
     )
     dataset.angle_offset_deg = np.asarray([1.0, 2.0], dtype=np.float32)

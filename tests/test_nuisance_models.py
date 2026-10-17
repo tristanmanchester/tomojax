@@ -103,7 +103,8 @@ def test_gain_offset_zero_weight_excludes_nonfinite_pixels() -> None:
     np.testing.assert_allclose(np.asarray(fitted.offset), [1.0], rtol=1e-6)
 
 
-def test_background_offset_model_fits_constant_and_vertical_gradient() -> None:
+@pytest.mark.parametrize("mask", [None, np.ones((3, 2)), np.ones((2, 3, 2))])
+def test_background_offset_model_fits_constant_and_vertical_gradient(mask) -> None:
     predicted = jnp.zeros((2, 3, 2), dtype=jnp.float32)
     model = BackgroundOffsetModel(
         constant=jnp.asarray([1.0, -0.5], dtype=jnp.float32),
@@ -111,7 +112,7 @@ def test_background_offset_model_fits_constant_and_vertical_gradient() -> None:
     )
     observed = model.apply(predicted)
 
-    fitted = estimate_background_offset(predicted, observed, ridge=0.0)
+    fitted = estimate_background_offset(predicted, observed, mask=mask, ridge=0.0)
 
     np.testing.assert_allclose(np.asarray(fitted.constant), [1.0, -0.5], atol=1e-6)
     np.testing.assert_allclose(np.asarray(fitted.vertical_gradient), [0.25, 0.75], atol=1e-6)

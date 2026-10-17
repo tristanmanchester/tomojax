@@ -77,22 +77,7 @@ def normalize_dofs(
     option_name: str = "dofs",
 ) -> tuple[str, ...]:
     """Normalize named alignment DOFs from CLI/config/Python inputs."""
-    names: list[str] = []
-    seen: set[str] = set()
-    valid = ", ".join(DOF_NAMES)
-    for raw in _iter_dof_tokens(value):
-        name = str(raw).strip().lower()
-        if not name:
-            continue
-        if name not in DOF_INDEX:
-            raise ValueError(
-                f"Unknown alignment DOF for {option_name}: {name!r}; valid DOFs: {valid}"
-            )
-        if name in seen:
-            raise ValueError(f"Duplicate alignment DOF for {option_name}: {name!r}")
-        seen.add(name)
-        names.append(name)
-    return tuple(names)
+    return _normalize_dof_names(value, DOF_INDEX, option_name=option_name)
 
 
 def normalize_alignment_dofs(
@@ -119,21 +104,26 @@ def normalize_alignment_dofs(
     ValueError
         If names are unknown or duplicated.
     """
-    names: list[str] = []
-    seen: set[str] = set()
-    valid = ", ".join(ALL_ALIGNMENT_DOF_NAMES)
+    return _normalize_dof_names(value, ALL_ALIGNMENT_DOF_INDEX, option_name=option_name)
+
+
+def _normalize_dof_names(
+    value: str | Iterable[str] | None, allowed: Mapping[str, int], *, option_name: str
+) -> tuple[str, ...]:
+    """Normalize tokens once, keeping order and scope-specific error messages."""
+    names: dict[str, None] = {}
     for raw in _iter_dof_tokens(value):
-        name = str(raw).strip().lower()
+        name = raw.strip().lower()
         if not name:
             continue
-        if name not in ALL_ALIGNMENT_DOF_INDEX:
+        if name not in allowed:
             raise ValueError(
-                f"Unknown alignment DOF for {option_name}: {name!r}; valid DOFs: {valid}"
+                f"Unknown alignment DOF for {option_name}: {name!r}; "
+                f"valid DOFs: {', '.join(allowed)}"
             )
-        if name in seen:
+        if name in names:
             raise ValueError(f"Duplicate alignment DOF for {option_name}: {name!r}")
-        seen.add(name)
-        names.append(name)
+        names[name] = None
     return tuple(names)
 
 
@@ -303,25 +293,6 @@ def normalize_bounds(
 
     Returned angular setup bounds are stored in internal radians even though the
     public setup DOF names use `_deg` and accept degree values.
-
-    Parameters
-    ----------
-    value : object
-        Bounds as (name, lower, upper) triples, a mapping or a comma-separated
-        name:lower:upper string. Setup angles accept degrees; pose angles use radians
-        and translations use physical lengths.
-    option_name : str, optional
-        Option label included in validation error messages. Default is 'bounds'.
-
-    Returns
-    -------
-    DofBounds
-        Immutable (name, lower, upper) triples in internal units.
-
-    Raises
-    ------
-    ValueError
-        If names or bounds are invalid, nonfinite or reversed.
     """
     # Setup angles enter in degrees, but optimizers consume radians. Retain
     # that distinction when dataclasses.replace normalizes an existing config.

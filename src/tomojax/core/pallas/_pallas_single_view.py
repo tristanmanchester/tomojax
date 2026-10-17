@@ -30,8 +30,9 @@ from ._pallas_config import (
     _validate_public_call,
     pallas_projector_actual_variant_metadata,
 )
-from ._pallas_kernels import _projector_kernel, _trilinear_load_active
-from ._pallas_loop import paired_fori_loop, static_fori_loop
+from ._pallas_kernels import _projector_kernel
+from ._pallas_ray_geometry import detector_tile
+from ._pallas_ray_integral import integrate_rays
 
 
 def prepare_forward_project_view_T_pallas_state(
@@ -155,45 +156,7 @@ class BoundForwardProjectViewTPallas:
         self.state = state
         self.interpret = bool(interpret)
         self.unroll = unroll
-
-        tile_v, tile_u = state.tile_shape
-        kernel = functools.partial(
-            _projector_kernel_cached,
-            nx=int(state.nx),
-            ny=int(state.ny),
-            nz=int(state.nz),
-            nu=int(state.nu),
-            nv=int(state.nv),
-            dix=float(state.dix),
-            diy=float(state.diy),
-            diz=float(state.diz),
-            step_size=float(state.step_size),
-            n_steps=int(state.n_steps),
-            tile_v=int(tile_v),
-            tile_u=int(tile_u),
-            kernel_variant_id=int(state.kernel_variant_id),
-            unroll=unroll,
-        )
-        grid_shape = (math.ceil(state.nv / tile_v), math.ceil(state.nu / tile_u))
-        self._call: Callable[
-            [jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray],
-            jnp.ndarray,
-        ] = pl.pallas_call(
-            kernel,
-            out_shape=jax.ShapeDtypeStruct((state.nv, state.nu), jnp.float32),
-            grid=grid_shape,
-            in_specs=[
-                pl.no_block_spec,
-                pl.no_block_spec,
-                pl.no_block_spec,
-                pl.no_block_spec,
-                pl.no_block_spec,
-            ],
-            out_specs=pl.BlockSpec((tile_v, tile_u), lambda pv, pu: (pv, pu)),
-            interpret=interpret,
-            compiler_params=plt.CompilerParams(num_warps=state.num_warps),
-            name="tomojax_forward_project_view_T_pallas_bound_cached",
-        )
+        self._call = _projector_view_state_pallas_call(state, interpret=interpret, unroll=unroll)
 
     def __call__(self, volume: jnp.ndarray) -> jnp.ndarray:
         """Project ``volume`` with the cached single-view traversal state."""
@@ -253,25 +216,17 @@ def _projector_kernel_cached(
     volume_ref: Any,
     out_ref: Any,
     *,
-    nx: int,
-    ny: int,
-    nz: int,
-    nu: int,
-    nv: int,
-    dix: float,
-    diy: float,
-    diz: float,
+    volume_shape: tuple[int, int, int],
+    detector_shape: tuple[int, int],
+    ray_delta: tuple[float, float, float],
     step_size: float,
     n_steps: int,
-    tile_v: int,
-    tile_u: int,
+    tile_shape: tuple[int, int],
     kernel_variant_id: int,
     unroll: int | None,
 ) -> None:
-    tile_v_start = pl.program_id(0) * tile_v
-    tile_u_start = pl.program_id(1) * tile_u
-    det_u = tile_u_start + jnp.arange(tile_u, dtype=jnp.int32)[jnp.newaxis, :]
-    det_v = tile_v_start + jnp.arange(tile_v, dtype=jnp.int32)[:, jnp.newaxis]
+    nv, nu = detector_shape
+    det_u, det_v = detector_tile(tile_shape, stacked=False)
     in_detector = (det_u < nu) & (det_v < nv)
     state_idx = jnp.clip(det_v * nu + det_u, 0, (nu * nv) - 1)
 
@@ -280,47 +235,77 @@ def _projector_kernel_cached(
     iz0 = plt.load(iz0_ref.at[state_idx], mask=in_detector, other=0.0)
     n_steps_ray = plt.load(n_steps_ray_ref.at[state_idx], mask=in_detector, other=0)
 
-    step_size32 = jnp.float32(step_size)
-    dix32 = jnp.float32(dix)
-    diy32 = jnp.float32(diy)
-    diz32 = jnp.float32(diz)
-
-    def body(step_idx, carry):
-        acc, ix, iy, iz = carry
-        active = step_idx < n_steps_ray
-        sample = _trilinear_load_active(
-            volume_ref,
-            ix,
-            iy,
-            iz,
-            nx=nx,
-            ny=ny,
-            nz=nz,
-            active=active,
-            kernel_variant_id=kernel_variant_id,
-        )
-        return (
-            acc + sample.astype(jnp.float32) * active.astype(jnp.float32) * step_size32,
-            ix + dix32,
-            iy + diy32,
-            iz + diz32,
-        )
-
-    init = (
-        jnp.zeros_like(ix0, dtype=jnp.float32),
-        ix0,
-        iy0,
-        iz0,
+    acc = integrate_rays(
+        volume_ref,
+        (ix0, iy0, iz0),
+        (jnp.float32(ray_delta[0]), jnp.float32(ray_delta[1]), jnp.float32(ray_delta[2])),
+        n_steps_ray,
+        shape=volume_shape,
+        in_detector=in_detector,
+        step_size=step_size,
+        n_steps=n_steps,
+        kernel_variant_id=kernel_variant_id,
+        unroll=unroll,
     )
-    if unroll is None:
-        tile_steps = jnp.minimum(
-            jnp.max(jnp.where(in_detector, n_steps_ray, 0)),
-            jnp.asarray(n_steps, dtype=jnp.int32),
-        )
-        acc, _, _, _ = paired_fori_loop(tile_steps, body, init)
-    else:
-        acc, _, _, _ = static_fori_loop(n_steps, body, init, unroll=unroll)
     plt.store(out_ref, acc.astype(jnp.float32), mask=in_detector)
+
+
+def _projector_view_state_pallas_call(
+    state: PallasForwardProjectorTraversalState, *, interpret: bool, unroll: int | None
+) -> Callable[..., jnp.ndarray]:
+    # Only scalar launch metadata is cached, never traversal arrays or volumes.
+    metadata = state.traversal
+    return _cached_projector_view_state_pallas_call(
+        volume_shape=(int(metadata.nx), int(metadata.ny), int(metadata.nz)),
+        detector_shape=(int(metadata.nv), int(metadata.nu)),
+        ray_delta=(float(state.dix), float(state.diy), float(state.diz)),
+        step_size=float(metadata.step_size),
+        n_steps=int(metadata.n_steps),
+        tile_shape=(int(metadata.tile_shape[0]), int(metadata.tile_shape[1])),
+        num_warps=int(metadata.num_warps),
+        kernel_variant_id=int(metadata.kernel_variant_id),
+        interpret=bool(interpret),
+        unroll=unroll,
+    )
+
+
+@functools.lru_cache(maxsize=32)
+def _cached_projector_view_state_pallas_call(
+    *,
+    volume_shape: tuple[int, int, int],
+    detector_shape: tuple[int, int],
+    ray_delta: tuple[float, float, float],
+    step_size: float,
+    n_steps: int,
+    tile_shape: tuple[int, int],
+    num_warps: int,
+    kernel_variant_id: int,
+    interpret: bool,
+    unroll: int | None,
+) -> Callable[..., jnp.ndarray]:
+    nv, nu = detector_shape
+    tile_v, tile_u = tile_shape
+    kernel = functools.partial(
+        _projector_kernel_cached,
+        volume_shape=volume_shape,
+        detector_shape=detector_shape,
+        ray_delta=ray_delta,
+        step_size=step_size,
+        n_steps=n_steps,
+        tile_shape=tile_shape,
+        kernel_variant_id=kernel_variant_id,
+        unroll=unroll,
+    )
+    return pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(detector_shape, jnp.float32),
+        grid=(math.ceil(nv / tile_v), math.ceil(nu / tile_u)),
+        in_specs=[pl.no_block_spec] * 5,
+        out_specs=pl.BlockSpec(tile_shape, lambda pv, pu: (pv, pu)),
+        interpret=interpret,
+        compiler_params=plt.CompilerParams(num_warps=num_warps),
+        name="tomojax_forward_project_view_T_pallas_cached",
+    )
 
 
 def forward_project_view_T_pallas_with_state(
@@ -339,41 +324,7 @@ def forward_project_view_T_pallas_with_state(
             _unsupported("real Pallas lowering is unavailable on CPU; pass interpret=True")
         )
 
-    tile_v, tile_u = state.tile_shape
-    kernel = functools.partial(
-        _projector_kernel_cached,
-        nx=int(state.nx),
-        ny=int(state.ny),
-        nz=int(state.nz),
-        nu=int(state.nu),
-        nv=int(state.nv),
-        dix=float(state.dix),
-        diy=float(state.diy),
-        diz=float(state.diz),
-        step_size=float(state.step_size),
-        n_steps=int(state.n_steps),
-        tile_v=int(tile_v),
-        tile_u=int(tile_u),
-        kernel_variant_id=int(state.kernel_variant_id),
-        unroll=unroll,
-    )
-    grid_shape = (math.ceil(state.nv / tile_v), math.ceil(state.nu / tile_u))
-    return pl.pallas_call(
-        kernel,
-        out_shape=jax.ShapeDtypeStruct((state.nv, state.nu), jnp.float32),
-        grid=grid_shape,
-        in_specs=[
-            pl.no_block_spec,
-            pl.no_block_spec,
-            pl.no_block_spec,
-            pl.no_block_spec,
-            pl.no_block_spec,
-        ],
-        out_specs=pl.BlockSpec((tile_v, tile_u), lambda pv, pu: (pv, pu)),
-        interpret=interpret,
-        compiler_params=plt.CompilerParams(num_warps=state.num_warps),
-        name="tomojax_forward_project_view_T_pallas_cached",
-    )(
+    return _projector_view_state_pallas_call(state, interpret=interpret, unroll=unroll)(
         state.ix0,
         state.iy0,
         state.iz0,

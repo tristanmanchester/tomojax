@@ -13,6 +13,7 @@ from tomojax.geometry.api import VOLUME_AXES_ATTR
 
 from ._io_acquisition import ROTATION_ANGLE_PATHS, angles_in_degrees, checked_image_key
 from ._io_types import JsonObject, LoadedDataset, SourceInfo
+from .geometry_meta import normalize_geometry_type
 
 LOG = logging.getLogger(__name__)
 
@@ -62,19 +63,6 @@ def _ensure_group(root: h5py.Group, name: str, nx_class: str | None = None) -> h
 
 def _write_string_attr(obj: h5py.Group | h5py.Dataset, key: str, value: str) -> None:
     obj.attrs[key] = np.array(value, dtype=h5py.string_dtype(encoding="utf-8"))
-
-
-def _normalize_geometry_type(geometry_type: str | None) -> str:
-    gtype = "parallel" if geometry_type is None else str(geometry_type).strip().lower()
-    if gtype == "parallel":
-        return gtype
-    if gtype in {"lamino", "laminography"}:
-        return "lamino"
-    if gtype in {"cone", "cone_beam"}:
-        return "cone"
-    raise ValueError(
-        f"Unsupported geometry_type {geometry_type!r}; expected 'parallel', 'lamino' or 'cone'"
-    )
 
 
 def _load_json_mapping_attr(
@@ -165,7 +153,7 @@ def _load_geometry_metadata(
     geom_type = "parallel"
     if geom is not None and "type" in geom.attrs:
         raw_type = _attr_to_str(geom.attrs.get("type"), default="parallel")
-        geom_type = _normalize_geometry_type(raw_type)
+        geom_type = normalize_geometry_type(raw_type)
     out["geometry_type"] = geom_type
     if geom is None:
         return

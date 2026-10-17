@@ -37,11 +37,12 @@ class ProjectionRows:
 
 
 def _mapped_storage(array: np.ndarray) -> np.memmap | None:
+    """Find mapped ownership through NumPy and buffer-protocol views, without reading pixels."""
     current: object = array
-    while isinstance(current, np.ndarray):
+    while isinstance(current, np.ndarray | memoryview):
         if isinstance(current, np.memmap):
             return current
-        current = current.base
+        current = current.obj if isinstance(current, memoryview) else current.base
     return None
 
 
@@ -58,6 +59,7 @@ def validate_host_arrays(
 
     ``device_input`` also accepts a JAX array, which cannot overlap host storage.
     ``order`` selects storage only when allocating; caller-owned output is kept.
+    Mapped inputs and outputs must use separate files, including buffer views.
     """
     # Host-only inverses must not initialize the JAX import stack merely to
     # reject device arrays. Device callers already have JAX loaded.

@@ -17,8 +17,8 @@ from ._pallas_config import (
     _unsupported,
     _validate_cached_volume,
 )
-from ._pallas_kernels import _trilinear_load_active
-from ._pallas_loop import paired_fori_loop, static_fori_loop
+from ._pallas_ray_geometry import detector_tile
+from ._pallas_ray_integral import integrate_rays
 
 
 def _projector_views_kernel_cached(
@@ -46,10 +46,7 @@ def _projector_views_kernel_cached(
     unroll: int | None,
 ) -> None:
     view_idx = pl.program_id(0)
-    tile_v_start = pl.program_id(1) * tile_v
-    tile_u_start = pl.program_id(2) * tile_u
-    det_u = tile_u_start + jnp.arange(tile_u, dtype=jnp.int32)[jnp.newaxis, :]
-    det_v = tile_v_start + jnp.arange(tile_v, dtype=jnp.int32)[:, jnp.newaxis]
+    det_u, det_v = detector_tile((tile_v, tile_u), stacked=True)
     in_detector = (det_u < nu) & (det_v < nv) & (view_idx < n_views)
     state_idx = view_idx * jnp.int32(nv * nu) + jnp.clip(det_v * nu + det_u, 0, (nu * nv) - 1)
 
@@ -60,43 +57,18 @@ def _projector_views_kernel_cached(
     dix = plt.load(dix_ref.at[view_idx])
     diy = plt.load(diy_ref.at[view_idx])
     diz = plt.load(diz_ref.at[view_idx])
-    step_size32 = jnp.float32(step_size)
-
-    def body(step_idx, carry):
-        acc, ix, iy, iz = carry
-        active = step_idx < n_steps_ray
-        sample = _trilinear_load_active(
-            volume_ref,
-            ix,
-            iy,
-            iz,
-            nx=nx,
-            ny=ny,
-            nz=nz,
-            active=active,
-            kernel_variant_id=kernel_variant_id,
-        )
-        return (
-            acc + sample.astype(jnp.float32) * active.astype(jnp.float32) * step_size32,
-            ix + dix,
-            iy + diy,
-            iz + diz,
-        )
-
-    init = (
-        jnp.zeros_like(ix0, dtype=jnp.float32),
-        ix0,
-        iy0,
-        iz0,
+    acc = integrate_rays(
+        volume_ref,
+        (ix0, iy0, iz0),
+        (dix, diy, diz),
+        n_steps_ray,
+        shape=(nx, ny, nz),
+        in_detector=in_detector,
+        step_size=step_size,
+        n_steps=n_steps,
+        kernel_variant_id=kernel_variant_id,
+        unroll=unroll,
     )
-    if unroll is None:
-        tile_steps = jnp.minimum(
-            jnp.max(jnp.where(in_detector, n_steps_ray, 0)),
-            jnp.asarray(n_steps, dtype=jnp.int32),
-        )
-        acc, _, _, _ = paired_fori_loop(tile_steps, body, init)
-    else:
-        acc, _, _, _ = static_fori_loop(n_steps, body, init, unroll=unroll)
     plt.store(
         out_ref, acc.astype(jnp.float32)[jnp.newaxis, :, :], mask=in_detector[jnp.newaxis, :, :]
     )
@@ -128,10 +100,7 @@ def _projector_residual_sse_kernel_cached(
     unroll: int | None,
 ) -> None:
     view_idx = pl.program_id(0)
-    tile_v_start = pl.program_id(1) * tile_v
-    tile_u_start = pl.program_id(2) * tile_u
-    det_u = tile_u_start + jnp.arange(tile_u, dtype=jnp.int32)[jnp.newaxis, :]
-    det_v = tile_v_start + jnp.arange(tile_v, dtype=jnp.int32)[:, jnp.newaxis]
+    det_u, det_v = detector_tile((tile_v, tile_u), stacked=True)
     in_detector = (det_u < nu) & (det_v < nv) & (view_idx < n_views)
     state_idx = view_idx * jnp.int32(nv * nu) + jnp.clip(det_v * nu + det_u, 0, (nu * nv) - 1)
 
@@ -142,43 +111,18 @@ def _projector_residual_sse_kernel_cached(
     dix = plt.load(dix_ref.at[view_idx])
     diy = plt.load(diy_ref.at[view_idx])
     diz = plt.load(diz_ref.at[view_idx])
-    step_size32 = jnp.float32(step_size)
-
-    def body(step_idx, carry):
-        acc, ix, iy, iz = carry
-        active = step_idx < n_steps_ray
-        sample = _trilinear_load_active(
-            volume_ref,
-            ix,
-            iy,
-            iz,
-            nx=nx,
-            ny=ny,
-            nz=nz,
-            active=active,
-            kernel_variant_id=kernel_variant_id,
-        )
-        return (
-            acc + sample.astype(jnp.float32) * active.astype(jnp.float32) * step_size32,
-            ix + dix,
-            iy + diy,
-            iz + diz,
-        )
-
-    init = (
-        jnp.zeros_like(ix0, dtype=jnp.float32),
-        ix0,
-        iy0,
-        iz0,
+    acc = integrate_rays(
+        volume_ref,
+        (ix0, iy0, iz0),
+        (dix, diy, diz),
+        n_steps_ray,
+        shape=(nx, ny, nz),
+        in_detector=in_detector,
+        step_size=step_size,
+        n_steps=n_steps,
+        kernel_variant_id=kernel_variant_id,
+        unroll=unroll,
     )
-    if unroll is None:
-        tile_steps = jnp.minimum(
-            jnp.max(jnp.where(in_detector, n_steps_ray, 0)),
-            jnp.asarray(n_steps, dtype=jnp.int32),
-        )
-        acc, _, _, _ = paired_fori_loop(tile_steps, body, init)
-    else:
-        acc, _, _, _ = static_fori_loop(n_steps, body, init, unroll=unroll)
     target = plt.load(target_ref.at[view_idx, det_v, det_u], mask=in_detector, other=0.0)
     residual = jnp.where(in_detector, acc.astype(jnp.float32) - target.astype(jnp.float32), 0.0)
     out_ref[0, 0, 0] = jnp.sum(residual * residual).astype(jnp.float32)
