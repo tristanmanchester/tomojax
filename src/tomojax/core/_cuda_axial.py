@@ -114,6 +114,21 @@ extern "C" __global__ void axial_forward_vec4(
 """
 
 _TRANSPOSE = r"""
+__device__ __forceinline__ int2 axial_support(
+    float inverse, float coordinate, float offset, int samples)
+{
+    float radius = fabsf(inverse);
+    float center = inverse * (coordinate - offset);
+    // Inverting rounded forward coordinates can otherwise exclude a positive
+    // edge weight. Bound cancellation using the operands, not just center.
+    // Only candidate indices widen: the physical weights below stay unchanged.
+    float magnitude = radius * (fabsf(coordinate) + fabsf(offset)) + radius + 1.f;
+    float margin = 8.f * 1.1920928955078125e-7f * magnitude;
+    int first = max((int)floorf(center - radius - margin) + 1, 0);
+    int stop = min((int)ceilf(center + radius + margin), samples);
+    return make_int2(first, stop);
+}
+
 extern "C" __global__ void joseph_vertical(
     const float* __restrict__ coeff, const float* __restrict__ images,
     float* __restrict__ weighted, int nviews, int nz, int nu, int nv)
@@ -125,10 +140,9 @@ extern "C" __global__ void joseph_vertical(
     int a = (int)c[0];
     float vz = a == 0 ? c[6] : c[2], cz = a == 0 ? c[8] : c[4];
     float ivz = a == 0 ? c[13] : c[12];
-    float cv = ivz * ((float)z - cz), rv = fabsf(ivz);
-    int vs = max((int)floorf(cv - rv) + 1, 0), ve = min((int)ceilf(cv + rv), nv);
+    int2 support = axial_support(ivz, (float)z, cz, nv);
     float sum = 0.f;
-    for (int v=vs;v<ve;++v) {
+    for (int v=support.x;v<support.y;++v) {
         float qz = __fadd_rn(__fmul_rn(vz,(float)v),cz);
         float wz = fmaxf(1.f - fabsf(qz-(float)z),0.f);
         sum += images[((long)view*nu+u)*nv+v] * c[9] * wz;
@@ -158,10 +172,9 @@ extern "C" __global__ void joseph_axial(
             float kh=a==0?c[3]:c[7],ch=a==0?c[4]:c[8],uh=a==0?c[1]:c[5];
             float inv=a==0?c[10]:c[11];
             float h=__fadd_rn(__fmul_rn(kh,k),ch);
-            float cu=inv*(row-h),ru=fabsf(inv);
-            int us=max((int)floorf(cu-ru)+1,0),ue=min((int)ceilf(cu+ru),nu);
+            int2 support=axial_support(inv,row,h,nu);
             const float* image=weighted+(long)(first+w)*nu*nz;
-            for(int u=us;u<ue;++u) {
+            for(int u=support.x;u<support.y;++u) {
                 float q=__fadd_rn(__fmul_rn(uh,(float)u),h);
                 float wh=fmaxf(1.f-fabsf(q-row),0.f);
 #if VECTOR

@@ -13,7 +13,7 @@ from tomojax.core.joseph import adjoint_jax, forward_jax, plane_coefficients
 
 # check-public-imports: allow-private
 from tomojax.core.pallas._pallas_joseph import adjoint_pallas, forward_pallas
-from tomojax.geometry import Detector, Grid, grid_volume_origin
+from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
 from tomojax.recon import CGLSConfig, cgls
 
 
@@ -517,3 +517,19 @@ def test_axial_cuda_pair_matches_physical_matrix_near_axis(nz, fractional, v_cen
     np.testing.assert_allclose(
         jnp.vdot(fp(volume), data), jnp.vdot(volume, bp(data)), atol=1e-5, rtol=1e-5
     )
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize(("angle", "point"), [(8, (204, 230, 0)), (74.5, (255, 97, 0))])
+def test_axial_cuda_keeps_positive_footprint_edge(angle, point, monkeypatch):
+    monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
+    grid, detector = Grid(256, 256, 8, 1, 1, 1), Detector(256, 8, 1, 1)
+    pose = ParallelGeometry(grid, detector, [angle]).pose_for_view(0)
+    coeff = plane_coefficients(jnp.asarray([pose]), grid, detector)
+    ray = (0, 0, 188 if angle == 8 else 190)
+    x = jnp.zeros((256, 256, 8), jnp.float32).at[point].set(1)
+    y = jnp.zeros((1, 8, 256), jnp.float32).at[ray].set(1)
+    fp = jax.jit(lambda x: forward_pallas(coeff, x, grid, detector))(x)[ray]
+    bp = jax.jit(lambda y: adjoint_pallas(coeff, y, grid, detector))(y)[point]
+    assert fp > 1e-5
+    np.testing.assert_allclose(bp, fp, rtol=1e-6, atol=1e-9)
