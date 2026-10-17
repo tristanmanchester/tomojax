@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 # check-public-imports: allow-private
@@ -9,6 +10,7 @@ from tomojax.alignment._objectives import fixed_volume
 
 # check-public-imports: allow-private
 from tomojax.alignment._objectives.loss_kernels import (
+    _compute_otsu_threshold,
     _kde_probabilities,
     _loss_barron,
     _loss_swd,
@@ -138,3 +140,9 @@ def test_pallas_project_stack_propagates_unexpected_fast_path_errors(
             projector_backend="pallas",
             require_differentiable_projector=False,
         )
+
+
+def test_otsu_resolves_adjacent_float32_intensities():
+    values = np.array([1.0, np.nextafter(np.float32(1), np.float32(2))])
+    threshold = _compute_otsu_threshold(values.astype(np.float32))
+    assert values[0] < threshold < values[1]

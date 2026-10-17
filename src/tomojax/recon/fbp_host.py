@@ -59,6 +59,21 @@ class FBPHostConfig:
     their depth, then their view batch, after device allocation exhaustion.
     ``scale`` has the
     same meaning as in :class:`FBPConfig`.
+
+    Parameters
+    ----------
+    slices_per_batch : int | None, optional
+        Positive slab depth, or None to choose automatically as described above.
+    views_per_batch : int, optional
+        Number of views processed together to bound temporary storage. Default is
+        32.
+    filter : str, optional
+        Frequency filter: "ramp", "shepp-logan" or "hann". Default is 'ramp'.
+    scale : float | None, optional
+        Constant angular weight per view, or None for geometry-derived weights.
+    backprojector : Literal['auto', 'jax', 'pallas'], optional
+        Backprojection backend: "auto", "jax" or "pallas". Auto uses CUDA
+        acceleration when available. Default is 'auto'.
     """
 
     slices_per_batch: int | None = None
@@ -214,6 +229,32 @@ def fbp_host(
     Anisotropic spacing, detector offsets and shifted volume origins are
     supported. Filter tails use the same zero-extended measurement model as
     ``fbp``.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Scan geometry, including view angles and any per-view poses.
+    grid : Grid
+        Reconstruction grid in ``(x, y, z)`` order, with physical voxel spacing.
+    detector : Detector
+        Detector dimensions and placement in the same length unit as the grid.
+    projections : array-like
+        Measured line integrals with shape ``(views, detector.nv, detector.nu)``.
+    config : FBPHostConfig or None, optional
+        Solver settings. None uses FBPHostConfig defaults.
+    out : numpy.ndarray or None, optional
+        Writable float32 host storage of shape ``(nx, ny, nz)``, including a memmap.
+        Must not overlap input storage. None allocates a new output.
+
+    Returns
+    -------
+    numpy.ndarray
+        Float32 reconstruction of shape ``(nx, ny, nz)``. Returns out itself when supplied.
+
+    Raises
+    ------
+    ValueError
+        If shapes, geometry or solver settings are incompatible with this method.
     """
     require_parallel_beam(geometry, "fbp_host")
     cfg = FBPHostConfig() if config is None else config
@@ -375,6 +416,33 @@ def fbp_slabs[T](
     filtering itself still uses bounded view batches.
     The first configured device does the work, as for host-returning FBP.
     Closing the generator drains all pending downloads before releasing inputs.
+
+    Parameters
+    ----------
+    geometry : ParallelGeometry
+        Unposed axial parallel-beam scan geometry.
+    grid : Grid
+        Reconstruction grid, with physical spacing in ``(x, y, z)`` order.
+    detector : Detector
+        Detector shape and placement in the same length unit as the grid.
+    read : callable
+        Reader accepting a half-open measured row interval ``(first, stop)`` and
+        returning ``(projections, context)``. Projections contain every view of
+        those rows; context is retained until the slab completes.
+    config : FBPConfig
+        Reconstruction settings.
+
+    Yields
+    ------
+    ReconstructionSlab
+        Owned float32 host volume slab, its output z interval, measured row
+        interval, source projections and producer context.
+
+    Raises
+    ------
+    ValueError
+        If geometry is not unposed axial parallel geometry, or shapes, sampling
+        or settings are incompatible with this reconstruction.
     """
     if type(geometry) is not ParallelGeometry:
         raise ValueError("reconstruct_slabs requires unposed axial ParallelGeometry")

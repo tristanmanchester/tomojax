@@ -100,7 +100,25 @@ def normalize_alignment_dofs(
     *,
     option_name: str = "dofs",
 ) -> tuple[str, ...]:
-    """Normalize public alignment DOFs across pose and geometry scopes."""
+    """Normalize public alignment DOFs across pose and geometry scopes.
+
+    Parameters
+    ----------
+    value : str or iterable of str or None
+        Comma-separated or iterable parameter names. None selects no names.
+    option_name : str, optional
+        Option label included in validation error messages. Default is 'dofs'.
+
+    Returns
+    -------
+    tuple of str
+        Normalized distinct names, in supplied order.
+
+    Raises
+    ------
+    ValueError
+        If names are unknown or duplicated.
+    """
     names: list[str] = []
     seen: set[str] = set()
     valid = ", ".join(ALL_ALIGNMENT_DOF_NAMES)
@@ -285,6 +303,25 @@ def normalize_bounds(
 
     Returned angular setup bounds are stored in internal radians even though the
     public setup DOF names use `_deg` and accept degree values.
+
+    Parameters
+    ----------
+    value : object
+        Bounds as (name, lower, upper) triples, a mapping or a comma-separated
+        name:lower:upper string. Setup angles accept degrees; pose angles use radians
+        and translations use physical lengths.
+    option_name : str, optional
+        Option label included in validation error messages. Default is 'bounds'.
+
+    Returns
+    -------
+    DofBounds
+        Immutable (name, lower, upper) triples in internal units.
+
+    Raises
+    ------
+    ValueError
+        If names or bounds are invalid, nonfinite or reversed.
     """
     # Setup angles enter in degrees, but optimizers consume radians. Retain
     # that distinction when dataclasses.replace normalizes an existing config.

@@ -97,6 +97,58 @@ class SPDHGConfig:
     full-scan operator norm.
     Supplying overrides makes the caller responsible for the combined step
     sizes' stability.
+
+    Parameters
+    ----------
+    iterations : int, optional
+        Maximum number of solver updates. For SIRT and MLEM, an update is a complete
+        subset sweep. Default is 400.
+    tv_weight : float, optional
+        Nonnegative regularization weight. Default is 0.005.
+    regulariser : Regulariser, optional
+        Regularization model: "tv" or "huber_tv". Default is 'tv'.
+    huber_delta : float, optional
+        Positive Huber transition scale when regulariser is "huber_tv". Default is
+        0.01.
+    theta : float, optional
+        Extrapolation factor for the dual gradient. Default is 1.0.
+    views_per_batch : int, optional
+        Number of views processed together to bound temporary storage. Default is
+        16.
+    seed : int, optional
+        Random seed for stochastic block selection. Default is 0.
+    tau : float | None, optional
+        Positive primal step size, or None to estimate it.
+    sigma_data : float | None, optional
+        Positive data-dual step size, or None to estimate it.
+    sigma_tv : float | None, optional
+        Positive TV-dual step size, or None to estimate it.
+    projector_unroll : int, optional
+        Loop unrolling for the explicit-grid or ray-reference projector. Default is
+        1.
+    checkpoint_projector : bool, optional
+        Recompute intermediate projector values during differentiation on the
+        reference path. Default is True.
+    gather_dtype : str, optional
+        Gather precision on the reference path: "auto", "fp32", "fp16" or "bf16". Default is 'fp32'.
+    ray_integrator : str, optional
+        Reference ray integration rule; "sampled" is the default, "exact" uses exact
+        integration, and "joseph" selects Joseph sampling. Default is 'sampled'.
+    projector_model : ProjectorModel, optional
+        Projection model: "auto", "ray" or "joseph". Auto selects Joseph unless an
+        explicit detector grid requires rays. Default is 'auto'.
+    projector_backend : ProjectorBackend, optional
+        Execution backend: "auto", "jax" or "pallas". An explicit accelerator
+        request never silently falls back. Default is 'auto'.
+    nonnegative : bool, optional
+        Constrain the reconstruction to nonnegative values. Default is False.
+    support : array-like | None, optional
+        Volume support mask. Excluded voxels remain zero; None uses the entire grid.
+    log_every : int, optional
+        Number of iterations between logged objective samples. Default is 10.
+    stream_projections : bool | None, optional
+        Read host projections one view batch at a time. None selects streaming from
+        available device memory; False keeps them resident.
     """
 
     iterations: int = 400
@@ -670,7 +722,7 @@ def spdhg_tv(
     callback: LossCallback | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> tuple[jnp.ndarray, dict[str, object]]:
-    """SPDHG (stochastic Chambolle-Pock) with weighted L2 data term and TV-like regularization.
+    """Reconstruct with stochastic primal-dual weighted L2 and TV updates.
 
     ``weights`` must be real, nonnegative and finite when stored in FP32;
     zero weights exclude unmeasured samples, including nonfinite measurements.
@@ -690,6 +742,61 @@ def spdhg_tv(
     ``loss``. Only iterations whose objective was recorded under ``config.log_every``
     are eligible for callbacks; if a single logged sample exists, the callback
     fires once.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Scan geometry, including view angles and any per-view poses.
+    grid : Grid
+        Reconstruction grid in ``(x, y, z)`` order, with physical voxel spacing.
+    detector : Detector
+        Detector dimensions and placement in the same length unit as the grid.
+    projections : array-like
+        Measured line integrals with shape ``(views, detector.nv, detector.nu)``.
+    weights : array-like or None, optional
+        Real, nonnegative weights matching the projection shape; zero excludes
+        unmeasured samples. None weights all samples equally.
+    init_x : array-like or None, optional
+        Initial volume of shape ``(nx, ny, nz)``; None starts from zero.
+    config : SPDHGConfig or None, optional
+        Solver settings. None uses SPDHGConfig defaults.
+    callback : callable or None, optional
+        Callback receiving ``(step, loss)`` at the first and last logged samples.
+    det_grid : tuple of array-like or None, optional
+        Explicit detector-coordinate arrays ``(u, v)``, each of shape ``(nv, nu)``.
+        None uses the canonical detector grid.
+
+    Returns
+    -------
+    volume : jax.Array
+        Float32 reconstruction of shape ``(nx, ny, nz)``.
+    info : dict
+        Solver diagnostics and effective work; a small residual or iteration
+        count does not establish reconstruction accuracy.
+
+    Raises
+    ------
+    ValueError
+        If shapes, geometry or solver settings are incompatible with this method.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> import tomojax as tj
+    >>> from tomojax.recon import spdhg_tv, SPDHGConfig, project
+    >>> grid = tj.Grid(4, 4, 1, 1.0, 1.0, 1.0)
+    >>> detector = tj.Detector(4, 1, 1.0, 1.0)
+    >>> geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 8, endpoint=False))
+    >>> data = project(geometry, np.ones((4, 4, 1), np.float32))
+    >>> volume, info = spdhg_tv(
+    ...     geometry,
+    ...     geometry.grid,
+    ...     geometry.detector,
+    ...     data,
+    ...     config=SPDHGConfig(iterations=1),
+    ... )
+    >>> volume.shape
+    (4, 4, 1)
     """
     runtime = _prepare_spdhg_runtime(
         geometry,

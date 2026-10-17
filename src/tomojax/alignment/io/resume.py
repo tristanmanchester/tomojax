@@ -63,6 +63,21 @@ class AlignmentRun:
     the grid it reconstructs. ``levels`` are a multiresolution run's
     coarse-to-fine factors, or None for a single-resolution run.
     ``schedule_metadata``, when given, must match as well.
+
+    Parameters
+    ----------
+    projections : Any
+        Measured line-integral stack of shape (views, nv, nu).
+    geometry : ScanGeometry
+        Starting scan geometry, before calibration, carrying the reconstruction grid.
+    config : AlignConfig
+        Alignment solver settings.
+    mode : str
+        Alignment mode, as used by tomojax.align.
+    levels : Sequence[int] | None
+        Coarse-to-fine resolution factors, or None for a single-resolution run.
+    schedule_metadata : Mapping[str, Any] | None, optional
+        Schedule metadata that the checkpoint must also match, or None.
     """
 
     projections: Any
@@ -74,12 +89,24 @@ class AlignmentRun:
 
     @property
     def grid(self) -> Grid:
-        """The reconstruction grid, the geometry's."""
+        """The reconstruction grid, the geometry's.
+
+        Returns
+        -------
+        Grid
+            The starting geometry reconstruction grid.
+        """
         return self.geometry.grid
 
     @property
     def detector(self) -> Detector:
-        """The detector, the geometry's."""
+        """The detector, the geometry's.
+
+        Returns
+        -------
+        Detector
+            The starting geometry detector.
+        """
         return self.geometry.detector
 
     @cached_property
@@ -88,6 +115,11 @@ class AlignmentRun:
 
         The geometry's settings include its view angles and any per-view pose
         corrections.
+
+        Returns
+        -------
+        str
+            Hexadecimal run-identity fingerprint; not a checksum of every projection.
         """
         shape = tuple(int(n) for n in self.projections.shape)
         views = np.unique(np.linspace(0, shape[0] - 1, min(shape[0], _FINGERPRINT_VIEWS)).round())
@@ -129,6 +161,21 @@ def alignment_checkpoint_metadata(
 
     ``run_complete`` marks a single-resolution state as the finished run; a
     multiresolution state records that itself.
+
+    Parameters
+    ----------
+    run : AlignmentRun
+        Identity and settings of the alignment run.
+    state : AlignResumeState or AlignMultiresResumeState or None, optional
+        Solver progress to record. None records the initial run state.
+    run_complete : bool, optional
+        Mark a single-resolution run as finished. Multiresolution state carries its own
+        completion flag. Default is False.
+
+    Returns
+    -------
+    CheckpointMetadata
+        JSON-compatible run identity, geometry and progress metadata.
     """
     metadata: dict[str, Any] = {
         "checkpoint_kind": CHECKPOINT_KIND,
@@ -222,7 +269,25 @@ def write_alignment_checkpoint(
     *,
     run_complete: bool = False,
 ) -> None:
-    """Save ``state`` of ``run`` to ``path``, replacing the file there atomically."""
+    """Save ``state`` of ``run`` to ``path``, replacing the file there atomically.
+
+    Parameters
+    ----------
+    path : str or path-like
+        Checkpoint or sidecar file path.
+    run : AlignmentRun
+        Identity and settings of the alignment run.
+    state : AlignResumeState or AlignMultiresResumeState
+        Solver progress to save.
+    run_complete : bool, optional
+        Mark a single-resolution run as finished. Multiresolution state carries its own
+        completion flag. Default is False.
+
+    Raises
+    ------
+    OSError
+        If the checkpoint cannot be written or atomically replaced.
+    """
     save_alignment_checkpoint(
         path,
         x=state.x,
@@ -241,6 +306,23 @@ def resume_state_from_checkpoint(path: str | os.PathLike[str], run: AlignmentRun
     A multiresolution state for a run with levels, a single-resolution one
     otherwise. Raises :class:`CheckpointError` when the file is no checkpoint
     of ``run``.
+
+    Parameters
+    ----------
+    path : str or path-like
+        Checkpoint or sidecar file path.
+    run : AlignmentRun
+        Identity and settings of the alignment run.
+
+    Returns
+    -------
+    AlignResumeState or AlignMultiresResumeState
+        Progress compatible with run, using the appropriate resolution-state type.
+
+    Raises
+    ------
+    CheckpointError
+        If the checkpoint is malformed or does not match run.
     """
     checkpoint = load_alignment_checkpoint(path)
     validate_alignment_checkpoint(checkpoint, alignment_checkpoint_metadata(run))
@@ -320,6 +402,27 @@ def alignment_checkpointing(
     outer iteration; both are None without a ``path``. A file there that is
     no checkpoint of ``run`` raises :class:`CheckpointError` saying how it
     differs, and is left as it is.
+
+    Parameters
+    ----------
+    path : str or path-like or None
+        Checkpoint destination, or None to disable resume and saving.
+    run : AlignmentRun
+        Identity and settings of the alignment run.
+
+    Returns
+    -------
+    resume_state : AlignMultiresResumeState or None
+        Saved progress, or None when no checkpoint exists or path is None.
+    callback : callable or None
+        Callback writing future progress to path, or None when path is None.
+
+    Raises
+    ------
+    CheckpointError
+        If an existing file is malformed or belongs to a different run.
+    ValueError
+        If path is supplied but run has no multiresolution levels.
     """
     if path is None:
         return None, None

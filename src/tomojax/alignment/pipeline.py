@@ -55,6 +55,49 @@ def align(
     """Run single-resolution alignment, returning its least-motion estimate.
 
     See :func:`align_multires`; ``init_x`` only starts the volume estimate.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Nominal scan geometry with view angles and any existing per-view poses.
+    grid : Grid
+        Reconstruction grid with physical voxel spacing in ``(x, y, z)`` order.
+    detector : Detector
+        Detector shape and placement in the same length unit as the grid.
+    projections : array-like
+        Measured line integrals with shape ``(views, nv, nu)``.
+    config : AlignConfig or None, optional
+        Expert solver settings. None uses AlignConfig defaults.
+    init_x : array-like or None, optional
+        Initial volume of shape ``(nx, ny, nz)``. None initializes reconstruction.
+    init_pose_params : array-like or None, optional
+        Initial pose corrections in radians and physical length units, with
+        columns ``(alpha, beta, phi, dx, dz[, dy])``. None starts from zero.
+    observer : callable or None, optional
+        Receives ``(volume, pose_params, outer_stat)`` after outer iterations.
+        Returns "continue", "advance_level", "stop_run" or None to continue.
+    resume_state : AlignResumeState or None, optional
+        Previously saved progress; None starts a new solve.
+    checkpoint_callback : callable or None, optional
+        Receives a AlignResumeState to persist after outer iterations.
+    det_grid_override : tuple of array-like or None, optional
+        Explicit detector coordinates ``(u, v)`` of shape ``(nv, nu)``.
+        None uses the geometry's detector grid.
+
+    Returns
+    -------
+    volume : jax.Array
+        Reconstructed volume in ``(x, y, z)`` order, in the returned motion gauge.
+    pose_params : jax.Array
+        Per-view corrections with columns ``(alpha, beta, phi, dx, dz, dy)``.
+        Angles are radians, translations physical lengths in the configured frame.
+    info : AlignInfo
+        Loss history, work, stopping, geometry and gauge diagnostics.
+
+    Raises
+    ------
+    ValueError
+        If shapes, solver settings or requested degrees of freedom are incompatible.
     """
     x, params, info = _align_pose(
         geometry,
@@ -107,6 +150,66 @@ def align_multires(
     and no rigid shift left in the poses (``info["gauge"]`` records what was
     removed). In a parallel beam with detector-frame poses, a schedule that
     reports the detector centre also takes the poses' constant u shift into it.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Nominal scan geometry with view angles and any existing per-view poses.
+    grid : Grid
+        Reconstruction grid with physical voxel spacing in ``(x, y, z)`` order.
+    detector : Detector
+        Detector shape and placement in the same length unit as the grid.
+    projections : array-like
+        Measured line integrals with shape ``(views, nv, nu)``.
+    factors : iterable of int, optional
+        Coarse-to-fine resolution factors. Default is ``(2, 1)``.
+    config : AlignConfig or None, optional
+        Expert solver settings. None uses AlignConfig defaults.
+    observer : callable or None, optional
+        Receives ``(volume, pose_params, outer_stat)`` after outer iterations.
+        Returns "continue", "advance_level", "stop_run" or None to continue.
+    resume_state : AlignMultiresResumeState or None, optional
+        Previously saved progress; None starts a new solve.
+    checkpoint_callback : callable or None, optional
+        Receives a AlignMultiresResumeState to persist after outer iterations.
+
+    Returns
+    -------
+    volume : jax.Array
+        Reconstructed volume in ``(x, y, z)`` order, in the returned motion gauge.
+    pose_params : jax.Array
+        Per-view corrections with columns ``(alpha, beta, phi, dx, dz, dy)``.
+        Angles are radians, translations physical lengths in the configured frame.
+    info : AlignMultiresInfo
+        Loss history, work, stopping, geometry and gauge diagnostics.
+
+    Raises
+    ------
+    ValueError
+        If shapes, solver settings or requested degrees of freedom are incompatible.
+
+    Examples
+    --------
+    >>> import jax.numpy as jnp
+    >>> import numpy as np
+    >>> import tomojax as tj
+    >>> from tomojax.alignment import AlignConfig, align_multires
+    >>> from tomojax.recon import project
+    >>> grid = tj.Grid(4, 4, 2, 1.0, 1.0, 1.0)
+    >>> detector = tj.Detector(4, 2, 1.0, 1.0)
+    >>> geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 8, endpoint=False))
+    >>> data = project(geometry, jnp.ones((4, 4, 2)))
+    >>> config = AlignConfig(quality="reference", outer_iterations=1, iterations=1)
+    >>> volume, poses, info = align_multires(
+    ...     geometry,
+    ...     grid,
+    ...     detector,
+    ...     data,
+    ...     factors=(1,),
+    ...     config=config,
+    ... )
+    >>> volume.shape
+    (4, 4, 2)
     """
     return _align_multires(
         geometry,

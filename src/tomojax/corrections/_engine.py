@@ -56,7 +56,7 @@ def correct_frames(
     batch_views: int | None = None,
     binning: int = 1,
 ) -> Corrected:
-    """Line integrals from ``counts`` ``(views, rows, columns)``, and the records of how.
+    """Convert detector counts to line integrals and record each correction.
 
     ``flats`` are flat frames and ``flat_positions`` the number of views
     recorded before each (frames at one position are one set; None, one set);
@@ -64,6 +64,61 @@ def correct_frames(
     ``darks`` default to zero. ``view_positions`` places each view among the
     flats (by default view ``i`` at ``i + 1/2``). ``binning`` averages blocks of
     ``binning`` x ``binning`` detector pixels of the corrected line integrals.
+
+    Parameters
+    ----------
+    counts : array-like
+        Detector counts with shape ``(views, rows, columns)``. May be a lazy source.
+    flats : array-like or None
+        Open-beam frames with shape ``(frames, rows, columns)``, or None when
+        white_level supplies the open-beam count.
+    flat_positions : numpy.ndarray or None
+        Number of views recorded before each flat frame. Frames at the same
+        position form one set; None puts all frames in one set.
+    darks : array-like or None
+        Dark frames with shape ``(frames, rows, columns)``; None uses zero dark.
+    white_level : float or None
+        Positive open-beam count used when flats is None.
+    steps : sequence of Step
+        Corrections, run by domain and in the supplied order within each domain.
+    epsilon : float
+        Positive transmission floor before the logarithm.
+    view_positions : numpy.ndarray or None, optional
+        Position of each view among the flats. Defaults to ``i + 0.5`` for view i.
+
+    batch_views : int or None, optional
+        Positive view-batch size. None selects a memory-bounded size automatically.
+    binning : int, optional
+        Positive detector-block side length for mean binning of the corrected line
+        integrals. Default is 1; incomplete edge blocks are dropped.
+
+    Returns
+    -------
+    Corrected
+        Float32 host line integrals, correction records and kept input-view indices.
+
+    Raises
+    ------
+    ValueError
+        If calibration, positions, batching, binning or correction domains are invalid.
+    TypeError
+        If a correction is not a Step.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from tomojax.corrections import correct_frames
+    >>> result = correct_frames(
+    ...     np.full((2, 3, 4), 50),
+    ...     flats=None,
+    ...     flat_positions=None,
+    ...     darks=None,
+    ...     white_level=100,
+    ...     steps=(),
+    ...     epsilon=1e-6,
+    ... )
+    >>> result.projections.shape
+    (2, 3, 4)
     """
     batch_views = _validated_batch_views(batch_views)
     epsilon = _positive_finite(epsilon, "epsilon")
@@ -121,7 +176,17 @@ def correct_frames(
 
 
 class Corrected(NamedTuple):
-    """Corrected line integrals, the records of each step, and the input views they keep."""
+    """Corrected line integrals with records and input-view indices.
+
+    Parameters
+    ----------
+    projections : numpy.ndarray
+        Float32 corrected line integrals of shape ``(views, rows, columns)``.
+    records : tuple of Correction
+        Records in correction order.
+    kept : numpy.ndarray
+        Increasing indices of retained views in the original input stack.
+    """
 
     projections: np.ndarray
     records: tuple[Correction, ...]
@@ -131,7 +196,37 @@ class Corrected(NamedTuple):
 def correct_projections(
     projections: Any, steps: Sequence[Step], *, batch_views: int | None = None
 ) -> Corrected:
-    """``projections`` (line integrals) through ``steps``, and their records."""
+    """Correct a line-integral stack and record the steps applied.
+
+    Parameters
+    ----------
+    projections : array-like
+        Line integrals with shape ``(views, rows, columns)``; copied to float32.
+    steps : sequence of Step
+        Corrections acting on line integrals, in the order to run them.
+    batch_views : int or None, optional
+        Positive view-batch size. None selects a memory-bounded size automatically.
+
+    Returns
+    -------
+    Corrected
+        Corrected host line integrals, correction records and kept input-view indices.
+
+    Raises
+    ------
+    ValueError
+        If a step does not act on line integrals or batch_views is invalid.
+    TypeError
+        If a correction is not a Step.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from tomojax.corrections import BeamHardening, correct_projections
+    >>> result = correct_projections(np.ones((2, 3, 4)), [BeamHardening((1, 0.05))])
+    >>> result.projections.shape
+    (2, 3, 4)
+    """
     batch_views = _validated_batch_views(batch_views)
     ordered = _ordered(steps)
     if any(d != "line integrals" for d, _ in ordered):
@@ -639,6 +734,41 @@ def corrected_row_source(
     are supported; operations requiring neighboring rows must run on full frames.
     Raw inputs must be NumPy arrays or support lazy detector windows. The source
     and calibration arrays must remain unchanged until this context closes.
+
+    Parameters
+    ----------
+    counts : array-like
+        Detector counts with shape ``(views, rows, columns)``. May be a lazy source.
+    flats : array-like or None
+        Open-beam frames with shape ``(frames, rows, columns)``, or None when
+        white_level supplies the open-beam count.
+    flat_positions : numpy.ndarray or None
+        Number of views recorded before each flat frame. Frames at the same
+        position form one set; None puts all frames in one set.
+    darks : array-like or None
+        Dark frames with shape ``(frames, rows, columns)``; None uses zero dark.
+    white_level : float or None
+        Positive open-beam count used when flats is None.
+    steps : sequence of Step
+        Corrections, run by domain and in the supplied order within each domain.
+    epsilon : float, optional
+        Positive transmission floor before the logarithm. Default is 1e-6.
+    view_positions : numpy.ndarray or None, optional
+        Position of each view among the flats. Defaults to ``i + 0.5`` for view i.
+
+    Yields
+    ------
+    callable
+        Reader accepting a half-open row interval ``(first, stop)`` and returning
+        corrected rows with their correction records. Use within a ``with`` block.
+
+    Raises
+    ------
+    ValueError
+        If steps require full frames or select views, or calibration or positions
+        are invalid.
+    TypeError
+        If counts lack detector-window access or a correction is not a Step.
     """
     ordered = _ordered(steps)
     if any(

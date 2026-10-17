@@ -65,7 +65,19 @@ def normalize_mode(mode: str) -> AlignmentMode:
 
 @dataclass(frozen=True)
 class AlignmentPlan:
-    """What an alignment run executes: its configuration and resolution levels."""
+    """What an alignment run executes: its configuration and resolution levels.
+
+    Parameters
+    ----------
+    mode : str
+        Alignment mode: "pose", "cor", "cor-then-pose" or "full".
+    config : AlignConfig
+        Resolved solver configuration.
+    levels : tuple of int
+        Coarse-to-fine resolution factors.
+    pose_solver : {"coupled", "alternating"}
+        Joint volume/pose updates or alternating fixed-volume pose updates.
+    """
 
     mode: AlignmentMode
     config: AlignConfig
@@ -123,6 +135,42 @@ def alignment_plan(
     When ``geometry`` is a cone beam, fast coupled plans limit each inexact
     linear update to ten CG steps; nonlinear acceptance and outer convergence
     still decide progress. Without geometry context, budgets are conservative.
+
+    Parameters
+    ----------
+    mode : str
+        Alignment mode: "pose", "cor", "cor-then-pose" or "full".
+    grid : Grid
+        Full-resolution volume grid used to choose automatic levels.
+    quality : {"fast", "reference"}, optional
+        Solver quality policy. Default is "fast".
+    geometry : Geometry or None, optional
+        Scan context for geometry-specific iteration budgets. None uses
+        conservative budgets without beam-specific information.
+    levels : iterable of int or None, optional
+        Explicit coarse-to-fine factors. None chooses them from the mode and grid.
+    freeze : iterable of str, optional
+        Parameter names to hold fixed, in addition to config.freeze.
+    config : AlignConfig or None, optional
+        Expert settings. None chooses the quality policy's defaults.
+
+    Returns
+    -------
+    AlignmentPlan
+        Configuration, resolution levels and pose-solver choice for the run.
+
+    Raises
+    ------
+    ValueError
+        If mode, quality or requested configuration settings are invalid.
+
+    Examples
+    --------
+    >>> from tomojax import Grid
+    >>> from tomojax.alignment import alignment_plan
+    >>> plan = alignment_plan("pose", Grid(16, 16, 16, 1, 1, 1), quality="reference")
+    >>> plan.levels
+    (1,)
     """
     from tomojax.core.geometry.cone import is_cone_beam
 
@@ -200,6 +248,21 @@ class ConeSetup:
 
     ``geometry`` carries the calibrated axis offset and detector roll;
     ``config`` keeps only the pose stages, or is None when none remain.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Geometry with calibrated cone-axis offset and detector roll.
+    config : AlignConfig | None
+        Remaining pose-stage settings, or None when no pose stages remain.
+    axis_offset : float
+        Calibrated absolute cone-axis offset in physical length units.
+    detector_roll_deg : float
+        Calibrated absolute detector roll in degrees.
+    heights : tuple[float, ...]
+        Physical z coordinates of the calibration slab centres.
+    slab_offsets : tuple[float, ...]
+        Sharpest physical axis offset at each slab height.
     """
 
     geometry: Geometry
@@ -210,7 +273,13 @@ class ConeSetup:
     slab_offsets: tuple[float, ...]
 
     def to_dict(self) -> dict[str, float | list[float]]:
-        """The calibration, as alignment records keep it."""
+        """The calibration, as alignment records keep it.
+
+        Returns
+        -------
+        dict
+            Absolute calibrated values and per-slab estimates.
+        """
         return {
             "axis_offset": self.axis_offset,
             "detector_roll_deg": self.detector_roll_deg,
@@ -232,6 +301,29 @@ def cone_setup(
     (other than ``cor_then_pose``, which calibrates the axis first). Setup
     DOFs a cone beam cannot estimate (the axis direction) raise when named in
     ``optimise_dofs`` and are skipped with a warning in preset schedules.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Scan geometry with its view angles and physical detector placement.
+    grid : Grid
+        Volume grid with physical voxel spacing.
+    detector : Detector
+        Detector shape and placement in the same physical units as the grid.
+    projections : array-like
+        Line integrals with shape (views, nv, nu), in geometry view order.
+    config : AlignConfig
+        Alignment settings and requested setup/pose stages.
+
+    Returns
+    -------
+    ConeSetup or None
+        Calibrated cone geometry and remaining pose stages; None if setup is not needed.
+
+    Raises
+    ------
+    ValueError
+        If explicitly requested setup parameters cannot be estimated for cone beams.
     """
     from tomojax.core.geometry.cone import is_cone_beam
     from tomojax.geometry import ConeGeometry

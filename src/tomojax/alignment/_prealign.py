@@ -475,6 +475,21 @@ def implied_detector_offset(nominal: np.ndarray, aligned: np.ndarray) -> tuple[f
     view-dependent amount. Fitting each view's u displacement of the object origin
     as ``-offset + (R_i t)_x`` separates the two over the scan. Both returns are
     physical lengths, with the sign of ``Detector.center``.
+
+    Parameters
+    ----------
+    nominal : array-like
+        Nominal object-to-world transforms with shape (views, 4, 4).
+    aligned : numpy.ndarray
+        Aligned object-to-world transforms with shape (views, 4, 4).
+
+    Returns
+    -------
+    offset : float
+        Detector-u offset relative to nominal in physical length units, with
+        Detector.center sign.
+    residual : float
+        Root-mean-square fit residual in physical length units.
     """
     shift = np.asarray(aligned, np.float64)[:, 0, 3] - np.asarray(nominal, np.float64)[:, 0, 3]
     design = np.column_stack([-np.ones(len(shift)), np.asarray(nominal, np.float64)[:, 0, :3]])

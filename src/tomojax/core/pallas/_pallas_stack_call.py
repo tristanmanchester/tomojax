@@ -10,15 +10,12 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import triton as plt
 import jax.numpy as jnp
 
-from tomojax.core.geometry.base import Grid
-from tomojax.core.validation import validate_volume
-
 from ._pallas_config import (
     PallasForwardProjectorStackTraversalState,
     PallasProjectorUnsupported,
-    _ensure_float32_volume,
     _prepare_volume_for_pallas_gather,
     _unsupported,
+    _validate_cached_volume,
 )
 from ._pallas_kernels import _trilinear_load_active
 from ._pallas_loop import paired_fori_loop, static_fori_loop
@@ -339,20 +336,9 @@ def forward_project_views_T_pallas_with_state(
     unroll: int | None = None,
 ) -> jnp.ndarray:
     """Forward project a stack with prepared traversal state."""
-    nx, ny, nz = validate_volume(
-        volume,
-        Grid(nx=state.nx, ny=state.ny, nz=state.nz, vx=1.0, vy=1.0, vz=1.0),
-        context="forward_project_views_T_pallas_with_state",
-        name="volume",
+    _validate_cached_volume(
+        state.traversal, volume, context="forward_project_views_T_pallas_with_state"
     )
-    _ensure_float32_volume(volume)
-    if (nx, ny, nz) != (state.nx, state.ny, state.nz):
-        raise PallasProjectorUnsupported(
-            _unsupported(
-                "volume shape does not match cached traversal state: "
-                f"got {(nx, ny, nz)}, expected {(state.nx, state.ny, state.nz)}"
-            )
-        )
     if not interpret and jax.default_backend() == "cpu":
         raise PallasProjectorUnsupported(
             _unsupported("real Pallas lowering is unavailable on CPU; pass interpret=True")
@@ -395,20 +381,9 @@ def forward_project_residual_sse_T_pallas_with_state(
     unroll: int | None = None,
 ) -> jnp.ndarray:
     """Return residual SSE for a stack using prepared traversal state."""
-    nx, ny, nz = validate_volume(
-        volume,
-        Grid(nx=state.nx, ny=state.ny, nz=state.nz, vx=1.0, vy=1.0, vz=1.0),
-        context="forward_project_residual_sse_T_pallas_with_state",
-        name="volume",
+    _validate_cached_volume(
+        state.traversal, volume, context="forward_project_residual_sse_T_pallas_with_state"
     )
-    _ensure_float32_volume(volume)
-    if (nx, ny, nz) != (state.nx, state.ny, state.nz):
-        raise PallasProjectorUnsupported(
-            _unsupported(
-                "volume shape does not match cached traversal state: "
-                f"got {(nx, ny, nz)}, expected {(state.nx, state.ny, state.nz)}"
-            )
-        )
     if tuple(int(dim) for dim in target.shape) != (state.n_views, state.nv, state.nu):
         raise PallasProjectorUnsupported(
             _unsupported(

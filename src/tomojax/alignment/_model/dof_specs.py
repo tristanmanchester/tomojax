@@ -50,7 +50,33 @@ class ParameterScale:
 
 @dataclass(frozen=True, slots=True)
 class DofSpec:
-    """Registry entry for a public alignment DOF."""
+    """Registry entry for a public alignment DOF.
+
+    Parameters
+    ----------
+    name : str
+        Public name used to identify this declaration.
+    scope : DofScope
+        Parameter owner, "setup" or "pose".
+    unit : str
+        Internal physical unit of this parameter.
+    scale : ParameterScale
+        Affine whitening rule mapping physical values to optimizer coordinates.
+    state_attr : str | None, optional
+        Setup-state attribute storing this parameter, or None for pose parameters.
+    pose_index : int | None, optional
+        Column of the pose table storing this parameter, or None for setup parameters.
+    lower : float, optional
+        Default lower bound in internal units. Default is -inf.
+    upper : float, optional
+        Default upper bound in internal units. Default is inf.
+    display_unit : str | None, optional
+        Display/export unit, or None to use the internal unit.
+    gauge_group : str | None, optional
+        Gauge-coupling group name, or None when not grouped.
+    description : str, optional
+        Human-readable parameter description. Default is ''.
+    """
 
     name: str
     scope: DofScope
@@ -66,12 +92,24 @@ class DofSpec:
 
     @property
     def is_pose(self) -> bool:
-        """Return whether this DOF belongs to per-view pose state."""
+        """Return whether this DOF belongs to per-view pose state.
+
+        Returns
+        -------
+        bool
+            True for a per-view pose parameter.
+        """
         return self.scope == "pose"
 
     @property
     def is_setup(self) -> bool:
-        """Return whether this DOF belongs to setup geometry state."""
+        """Return whether this DOF belongs to setup geometry state.
+
+        Returns
+        -------
+        bool
+            True for a setup-geometry parameter.
+        """
         return self.scope == "setup"
 
 
@@ -166,7 +204,23 @@ def _bounds_overrides_for_active_dofs(
 
 
 def dof_spec(name: str) -> DofSpec:
-    """Return the registry entry for a public alignment DOF name."""
+    """Return the registry entry for a public alignment DOF name.
+
+    Parameters
+    ----------
+    name : str
+        Public parameter name, such as "alpha", "dx" or "det_u_px".
+
+    Returns
+    -------
+    DofSpec
+        Units, scaling, bounds and state ownership of the named parameter.
+
+    Raises
+    ------
+    ValueError
+        If name is not a registered alignment parameter.
+    """
     try:
         return DOF_SPECS[str(name)]
     except KeyError as exc:

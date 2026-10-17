@@ -15,7 +15,27 @@ type QualityTier = Literal["fast", "reference"]
 
 @dataclass(frozen=True, slots=True)
 class AlignmentProfilePolicy:
-    """The solver defaults an alignment ``quality`` stands for."""
+    """The solver defaults an alignment ``quality`` stands for.
+
+    Parameters
+    ----------
+    quality : QualityTier
+        Alignment quality tier, "fast" or "reference".
+    projector_backend : ProjectorBackend
+        Projector implementation, "jax" or "pallas".
+    gather_dtype : str
+        Precision used for projection gathers.
+    regulariser : Regulariser
+        Volume regularizer, "tv" or "huber_tv".
+    reconstruction : str
+        Inner reconstruction method, "fista" or "spdhg".
+    views_per_batch : int
+        View batch size; zero means automatic memory-based sizing.
+    checkpoint_projector : bool
+        Whether projector intermediates are recomputed during differentiation.
+    pose_model : str
+        Motion representation, "per_view", "polynomial" or "spline".
+    """
 
     quality: QualityTier
     projector_backend: ProjectorBackend
@@ -27,6 +47,13 @@ class AlignmentProfilePolicy:
     pose_model: str
 
     def to_dict(self) -> dict[str, object]:
+        """Return the solver policy as a dictionary.
+
+        Returns
+        -------
+        dict
+            Solver-policy fields in JSON-compatible form.
+        """
         return asdict(self)
 
 
@@ -63,7 +90,23 @@ def alignment_profile_policy(quality: QualityTier) -> AlignmentProfilePolicy:
 
 
 def profile_policy_from_config(cfg: object) -> AlignmentProfilePolicy:
-    """Build a policy snapshot from an already-normalized alignment config."""
+    """Build a policy snapshot from an already-normalized alignment config.
+
+    Parameters
+    ----------
+    cfg : AlignConfig
+        Normalized configuration whose effective policy is recorded.
+
+    Returns
+    -------
+    AlignmentProfilePolicy
+        Snapshot of the configuration effective solver policy.
+
+    Raises
+    ------
+    ValueError
+        If the configuration names an unsupported quality policy.
+    """
     return AlignmentProfilePolicy(
         quality=normalize_quality(getattr(cfg, "quality", "fast")),
         projector_backend=cast("ProjectorBackend", getattr(cfg, "projector_backend", "jax")),
@@ -82,7 +125,27 @@ def resolve_profiled_cli_defaults(
     current: Mapping[str, object],
     configured_keys: set[str],
 ) -> dict[str, object]:
-    """Apply profile defaults only for options the user/config did not specify."""
+    """Apply profile defaults only for options the user/config did not specify.
+
+    Parameters
+    ----------
+    quality : {"fast", "reference"}
+        Alignment quality policy.
+    current : mapping
+        Current CLI/config values before profile defaults are applied.
+    configured_keys : set of str
+        Fields explicitly provided by the user; these are not replaced.
+
+    Returns
+    -------
+    dict
+        Resolved settings and profile provenance, preserving explicit values.
+
+    Raises
+    ------
+    ValueError
+        If quality is not a supported policy.
+    """
     policy = alignment_profile_policy(quality)
     defaults = policy.to_dict()
     resolved = dict(current)

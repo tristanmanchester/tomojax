@@ -16,6 +16,16 @@ class Correction:
     stripe filter's width); ``found`` holds what the data showed while it ran
     (pixels with no light, non-finite values set to zero). Both are JSON, so
     the record is saved with the scan and read back with it.
+
+    Parameters
+    ----------
+    name : str
+        Correction name, such as ``"flat_dark"`` or ``"stripes"``.
+    settings : dict, optional
+        JSON-compatible settings used by the correction. Defaults to an empty dict.
+    found : dict, optional
+        JSON-compatible findings recorded while correcting the data.
+        Defaults to an empty dict.
     """
 
     name: str
@@ -28,10 +38,34 @@ class Correction:
         return f"{self.name}({', '.join(parts)})" if parts else self.name
 
     def to_dict(self) -> dict[str, Json]:
+        """Serialize the correction record to a dictionary.
+
+        Returns
+        -------
+        dict
+            Name, settings and findings, with copies of the two outer dictionaries.
+        """
         return {"name": self.name, "settings": dict(self.settings), "found": dict(self.found)}
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> Correction:
+        """Restore a correction record from a dictionary.
+
+        Parameters
+        ----------
+        value : dict
+            Record with a required ``name`` and optional ``settings`` and ``found``.
+
+        Returns
+        -------
+        Correction
+            Restored record; missing settings and findings become empty dictionaries.
+
+        Raises
+        ------
+        KeyError
+            If the name is absent.
+        """
         return cls(
             str(value["name"]), dict(value.get("settings") or {}), dict(value.get("found") or {})
         )

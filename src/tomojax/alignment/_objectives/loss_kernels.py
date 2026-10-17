@@ -336,7 +336,15 @@ def _loss_renyi_mi(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.nd
 
 
 def _compute_otsu_threshold(x: np.ndarray, nbins: int = 256) -> float:
-    x = np.asarray(x, np.float32)
+    """Choose a foreground threshold by maximizing between-class variance.
+
+    Histogram edges need more precision than the measured values: even a
+    valid FP32 view can span only two adjacent representable intensities,
+    while the histogram subdivides that interval into hundreds of bins.
+    Use float64 for both the histogram edges and the class moments rather
+    than collapsing distinct measurements or changing the requested bins.
+    """
+    x = np.asarray(x, np.float64)
     if not np.isfinite(x).any():
         return float(np.nan)
     vmin, vmax = float(np.min(x)), float(np.max(x))

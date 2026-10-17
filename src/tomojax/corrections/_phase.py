@@ -23,6 +23,25 @@ def unwrap_phase(projections: jax.Array) -> jax.Array:
     inconsistent: this returns their least-squares integral, not an exact
     pointwise unwrapping. Missing or low-amplitude pixels should be cropped
     before this operation; they are not inferred from neighbouring views.
+
+    Parameters
+    ----------
+    projections : array-like
+        Complex transmission or wrapped phase in radians, with detector axes last:
+        ``(..., rows, columns)``.
+
+    Returns
+    -------
+    jax.Array
+        Real phase in radians with the input shape and zero mean on each image.
+
+    Examples
+    --------
+    >>> import jax.numpy as jnp
+    >>> from tomojax.corrections import unwrap_phase
+    >>> phase = unwrap_phase(jnp.ones((2, 4, 4), dtype=jnp.complex64))
+    >>> phase.shape
+    (2, 4, 4)
     """
     values = jnp.asarray(projections)
     phase = jnp.angle(values) if jnp.iscomplexobj(values) else values.astype(jnp.float32)
@@ -61,6 +80,27 @@ def remove_phase_ramp(phase: jax.Array, *, air_mask: jax.Array) -> jax.Array:
     in pixel units, ``-phase * wavelength / (2*pi*pixel_size)`` then gives line
     integrals of the refractive-index decrement. Wavelength and pixel size
     must have the same units.
+
+    Parameters
+    ----------
+    phase : array-like
+        Real phase in radians with shape ``(..., rows, columns)``.
+    air_mask : array-like
+        Boolean air mask or nonnegative weights broadcastable to phase.shape.
+        Must cover enough noncollinear air pixels to determine a plane.
+
+    Returns
+    -------
+    jax.Array
+        Real phase with its fitted plane subtracted, in the input shape and units.
+
+    Examples
+    --------
+    >>> import jax.numpy as jnp
+    >>> from tomojax.corrections import remove_phase_ramp
+    >>> corrected = remove_phase_ramp(jnp.ones((4, 4)), air_mask=jnp.ones((4, 4)))
+    >>> corrected.shape
+    (4, 4)
     """
     phase = jnp.asarray(phase)
     weights = jnp.broadcast_to(jnp.asarray(air_mask, dtype=phase.dtype), phase.shape)

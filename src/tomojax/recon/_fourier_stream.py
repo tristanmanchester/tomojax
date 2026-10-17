@@ -61,6 +61,33 @@ def fourier_slabs[T](
     ``read`` supplies all views of a measured detector-row interval and an opaque
     producer context, retained until that output is complete. Returned arrays
     are never reused or donated. Input geometry and arrays must remain unchanged.
+
+    Parameters
+    ----------
+    geometry : ParallelGeometry
+        Unposed axial parallel-beam scan geometry.
+    grid : Grid
+        Reconstruction grid, with physical spacing in ``(x, y, z)`` order.
+    detector : Detector
+        Detector shape and placement in the same length unit as the grid.
+    read : callable
+        Reader accepting a half-open measured row interval ``(first, stop)`` and
+        returning ``(projections, context)``. Projections contain every view of
+        those rows; context is retained until the slab completes.
+    config : FourierConfig
+        Reconstruction settings.
+
+    Yields
+    ------
+    ReconstructionSlab
+        Owned float32 host volume slab, its output z interval, measured row
+        interval, source projections and producer context.
+
+    Raises
+    ------
+    ValueError
+        If geometry is not unposed axial parallel geometry, or shapes, sampling
+        or settings are incompatible with this reconstruction.
     """
     if type(geometry) is not ParallelGeometry:
         raise ValueError("reconstruct_slabs requires unposed axial ParallelGeometry")

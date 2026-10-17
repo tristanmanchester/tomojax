@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -107,22 +108,12 @@ def pallas_projector_sinogram_traversal_metadata(
     """Return resolved and max effective traversal counts for a Pallas pose stack."""
     step_size_value = float(grid.vy) if step_size is None else float(step_size)
     resolved_n_steps = _resolve_n_steps(grid, step_size_value, n_steps)
-    try:
-        T_host = np.asarray(T_stack, dtype=np.float32)
-    except Exception:
-        T_host = np.empty((0, 4, 4), dtype=np.float32)
-    if T_host.ndim != 3 or T_host.shape[1:] != (4, 4) or T_host.shape[0] == 0:
-        effective_n_steps = int(resolved_n_steps)
-    else:
-        effective_n_steps = max(
-            _resolve_effective_pallas_n_steps(
-                jnp.asarray(T_host[index]),
-                grid,
-                step_size_value,
-                resolved_n_steps,
-            )
-            for index in range(T_host.shape[0])
-        )
+    effective_n_steps = _resolve_effective_pallas_n_steps_for_stack(
+        T_stack,
+        grid,
+        step_size_value,
+        resolved_n_steps,
+    )
     return {
         "resolved_n_steps": int(resolved_n_steps),
         "effective_pallas_n_steps": int(effective_n_steps),
@@ -205,6 +196,74 @@ def _ensure_float32_volume(volume: jnp.ndarray) -> None:
         raise PallasProjectorUnsupported(_unsupported(f"volume dtype must be float32; got {dtype}"))
 
 
+def _validate_cached_volume(
+    state: PallasProjectorTraversalMetadata, volume: jnp.ndarray, *, context: str
+) -> None:
+    """Check volume shape and precision against prepared traversal metadata."""
+    nx, ny, nz = validate_volume(
+        volume,
+        Grid(nx=state.nx, ny=state.ny, nz=state.nz, vx=1.0, vy=1.0, vz=1.0),
+        context=context,
+        name="volume",
+    )
+    _ensure_float32_volume(volume)
+    if (nx, ny, nz) != (state.nx, state.ny, state.nz):
+        raise PallasProjectorUnsupported(
+            _unsupported(
+                "volume shape does not match cached traversal state: "
+                f"got {(nx, ny, nz)}, expected {(state.nx, state.ny, state.nz)}"
+            )
+        )
+
+
+def _traversal_call_parameters(
+    variant: dict[str, Any],
+    T: jnp.ndarray,
+    grid: Grid,
+    step_size: float | None,
+    n_steps: int | None,
+    *,
+    interpret: bool,
+    stacked: bool,
+) -> tuple[float, int, int, tuple[int, int], int, int, int]:
+    if variant["state_mode"] != "inline" and variant["layout_variant"] != "detector_vu":
+        raise PallasProjectorUnsupported(
+            _unsupported(
+                "cached traversal state currently supports layout_variant='detector_vu' only"
+            )
+        )
+    tile_v, tile_u = variant["tile_shape"]
+    if not interpret and jax.default_backend() == "cpu":
+        raise PallasProjectorUnsupported(
+            _unsupported("real Pallas lowering is unavailable on CPU; pass interpret=True")
+        )
+
+    step_size_value = float(grid.vy) if step_size is None else float(step_size)
+    n_steps_value = _resolve_n_steps(grid, step_size_value, n_steps)
+    resolve_effective = (
+        _resolve_effective_pallas_n_steps_for_stack
+        if stacked
+        else _resolve_effective_pallas_n_steps
+    )
+    effective_n_steps_value = resolve_effective(
+        T,
+        grid,
+        step_size_value,
+        n_steps_value,
+    )
+    kernel_variant_id = _KERNEL_VARIANT_IDS[str(variant["kernel_variant"])]
+    layout_variant_id = _LAYOUT_VARIANT_IDS[str(variant["layout_variant"])]
+    return (
+        step_size_value,
+        n_steps_value,
+        effective_n_steps_value,
+        (tile_v, tile_u),
+        int(variant["num_warps"]),
+        kernel_variant_id,
+        layout_variant_id,
+    )
+
+
 def _validate_public_call(
     T: jnp.ndarray,
     grid: Grid,
@@ -244,28 +303,6 @@ def _validate_public_call(
         state_mode=state_mode,
         gather_dtype=gather_dtype,
     )
-    if variant["state_mode"] != "inline" and variant["layout_variant"] != "detector_vu":
-        raise PallasProjectorUnsupported(
-            _unsupported(
-                "cached traversal state currently supports layout_variant='detector_vu' only"
-            )
-        )
-    tile_v, tile_u = variant["tile_shape"]
-    if not interpret and jax.default_backend() == "cpu":
-        raise PallasProjectorUnsupported(
-            _unsupported("real Pallas lowering is unavailable on CPU; pass interpret=True")
-        )
-
-    step_size_value = float(grid.vy) if step_size is None else float(step_size)
-    n_steps_value = _resolve_n_steps(grid, step_size_value, n_steps)
-    effective_n_steps_value = _resolve_effective_pallas_n_steps(
-        T,
-        grid,
-        step_size_value,
-        n_steps_value,
-    )
-    kernel_variant_id = _KERNEL_VARIANT_IDS[str(variant["kernel_variant"])]
-    layout_variant_id = _LAYOUT_VARIANT_IDS[str(variant["layout_variant"])]
     return (
         nx,
         ny,
@@ -273,16 +310,9 @@ def _validate_public_call(
         nv,
         nu,
         nx * ny * nz,
-        step_size_value,
-        n_steps_value,
-        effective_n_steps_value,
-        (
-            tile_v,
-            tile_u,
+        *_traversal_call_parameters(
+            variant, T, grid, step_size, n_steps, interpret=interpret, stacked=False
         ),
-        int(variant["num_warps"]),
-        kernel_variant_id,
-        layout_variant_id,
     )
 
 
@@ -331,28 +361,6 @@ def _validate_public_sinogram_call(
         state_mode=state_mode,
         gather_dtype=gather_dtype,
     )
-    if variant["state_mode"] != "inline" and variant["layout_variant"] != "detector_vu":
-        raise PallasProjectorUnsupported(
-            _unsupported(
-                "cached traversal state currently supports layout_variant='detector_vu' only"
-            )
-        )
-    tile_v, tile_u = variant["tile_shape"]
-    if not interpret and jax.default_backend() == "cpu":
-        raise PallasProjectorUnsupported(
-            _unsupported("real Pallas lowering is unavailable on CPU; pass interpret=True")
-        )
-
-    step_size_value = float(grid.vy) if step_size is None else float(step_size)
-    n_steps_value = _resolve_n_steps(grid, step_size_value, n_steps)
-    effective_n_steps_value = _resolve_effective_pallas_n_steps_for_stack(
-        T_stack,
-        grid,
-        step_size_value,
-        n_steps_value,
-    )
-    kernel_variant_id = _KERNEL_VARIANT_IDS[str(variant["kernel_variant"])]
-    layout_variant_id = _LAYOUT_VARIANT_IDS[str(variant["layout_variant"])]
     return (
         nx,
         ny,
@@ -361,13 +369,9 @@ def _validate_public_sinogram_call(
         nu,
         n_views,
         nx * ny * nz,
-        step_size_value,
-        n_steps_value,
-        effective_n_steps_value,
-        (tile_v, tile_u),
-        int(variant["num_warps"]),
-        kernel_variant_id,
-        layout_variant_id,
+        *_traversal_call_parameters(
+            variant, T_stack, grid, step_size, n_steps, interpret=interpret, stacked=True
+        ),
     )
 
 

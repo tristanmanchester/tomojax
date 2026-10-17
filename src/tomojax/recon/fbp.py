@@ -54,6 +54,29 @@ class FBPConfig:
     ``devices`` (one or several JAX devices) shares the views among them: each
     filters and backprojects its own, weighted for the whole scan, and the
     volumes are summed on the first. Not with an explicit ``det_grid``.
+
+    Parameters
+    ----------
+    filter : str, optional
+        Frequency filter: "ramp", "shepp-logan" or "hann". Default is 'ramp'.
+    scale : float | None, optional
+        Constant angular weight per view, or None for geometry-derived weights.
+    views_per_batch : int, optional
+        Number of views processed together to bound temporary storage. Default is 1.
+    projector_unroll : int, optional
+        Loop unrolling for the explicit-grid or ray-reference projector. Default is
+        1.
+    checkpoint_projector : bool, optional
+        Recompute intermediate projector values during differentiation on the
+        reference path. Default is True.
+    gather_dtype : str, optional
+        Gather precision on the reference path: "auto", "fp32", "fp16" or "bf16". Default is 'fp32'.
+    backprojector : Literal['auto', 'jax', 'pallas'], optional
+        Backprojection backend: "auto", "jax" or "pallas". Auto uses CUDA
+        acceleration when available. Default is 'auto'.
+    devices : jax.Device or sequence of jax.Device or None, optional
+        JAX device or sequence of devices. None uses the current default; multiple
+        devices divide the views and each hold the full volume.
     """
 
     filter: str = "ramp"
@@ -75,6 +98,21 @@ def default_fbp_scale(n_views: int) -> float:
     :func:`fbp` derives exact per-view weights by default; this constant is the
     uniform weight for an untilted half turn and the fallback for scans with too
     few views to define a rotation.
+
+    Parameters
+    ----------
+    n_views : int
+        Positive number of views in a uniform half turn.
+
+    Returns
+    -------
+    float
+        Angular weight ``pi / n_views``.
+
+    Raises
+    ------
+    ValueError
+        If n_views is not positive.
     """
     if int(n_views) <= 0:
         raise ValueError("n_views must be positive")
@@ -499,7 +537,32 @@ def run_parallel_fbp_direct_pallas(
     detector: Detector,
     filter: str,
 ) -> jnp.ndarray:
-    """Run unscaled z-parallel FBP, retaining filtered tails through the volume."""
+    """Run unscaled z-parallel FBP, retaining filtered tails through the volume.
+
+    Parameters
+    ----------
+    T_all : array-like
+        Object-to-world rigid poses of shape ``(views, 4, 4)`` for rotations about z.
+    proj : array-like
+        Line integrals of shape ``(views, nv, nu)``.
+    grid : Grid
+        Reconstruction grid with z slices aligned to detector rows.
+    detector : Detector
+        Canonical detector grid with rows aligned to voxel z slices.
+    filter : str
+        Frequency filter: "ramp", "shepp-logan" or "hann".
+
+    Returns
+    -------
+    jax.Array
+        Unscaled float32 backprojection of shape ``(nx, ny, nz)``. Angular
+        quadrature weights have not been applied.
+
+    Raises
+    ------
+    ValueError
+        If shapes, poses or detector-row alignment are incompatible.
+    """
     validate_grid(grid, "run_parallel_fbp_direct_pallas")
     n_views, _, _ = validate_projection_stack(
         proj, detector, context="run_parallel_fbp_direct_pallas"
@@ -736,6 +799,45 @@ def fbp(
     attenuation beyond the measured detector. This is not a correction for
     truncated objects. An explicit ``det_grid`` instead uses the ray-model
     adjoint with uniform weights.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Scan geometry, including view angles and any per-view poses.
+    grid : Grid
+        Reconstruction grid in ``(x, y, z)`` order, with physical voxel spacing.
+    detector : Detector
+        Detector dimensions and placement in the same length unit as the grid.
+    projections : array-like
+        Measured line integrals with shape ``(views, detector.nv, detector.nu)``.
+    config : FBPConfig or None, optional
+        Solver settings. None uses FBPConfig defaults.
+    det_grid : tuple of array-like or None, optional
+        Explicit detector-coordinate arrays ``(u, v)``, each of shape ``(nv, nu)``.
+        None uses the canonical detector grid.
+
+    Returns
+    -------
+    jax.Array
+        Float32 reconstruction of shape ``(nx, ny, nz)``.
+
+    Raises
+    ------
+    ValueError
+        If shapes, geometry or solver settings are incompatible with this method.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> import tomojax as tj
+    >>> from tomojax.recon import fbp, FBPConfig, project
+    >>> grid = tj.Grid(4, 4, 1, 1.0, 1.0, 1.0)
+    >>> detector = tj.Detector(4, 1, 1.0, 1.0)
+    >>> geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 8, endpoint=False))
+    >>> data = project(geometry, np.ones((4, 4, 1), np.float32))
+    >>> volume = fbp(geometry, geometry.grid, geometry.detector, np.asarray(data))
+    >>> volume.shape
+    (4, 4, 1)
     """
     cfg = FBPConfig() if config is None else config
     if cfg.backprojector not in ("auto", "jax", "pallas"):

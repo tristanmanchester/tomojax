@@ -5,10 +5,10 @@ from __future__ import annotations
 import operator
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core._gather import prepare_volume_for_gather, resolve_gather_target
 from tomojax.core.geometry.base import Detector, Grid
 
 from ._pallas_geometry_support import _supports_z_integer4, _supports_z_integer4_for_stack
@@ -19,58 +19,24 @@ _SUPPORTED_KERNEL_VARIANTS = frozenset({"auto", "generic", "z_integer4"})
 _SUPPORTED_LAYOUT_VARIANTS = frozenset({"detector_uv", "detector_vu"})
 _SUPPORTED_STATE_MODES = frozenset({"cached", "inline", "precompute_inclusive"})
 
-_GATHER_DTYPE_ALIASES = {
-    "fp32": "fp32",
-    "float32": "fp32",
-    "single": "fp32",
-    "bf16": "bf16",
-    "bfloat16": "bf16",
-    "fp16": "fp16",
-    "float16": "fp16",
-    "half": "fp16",
-}
-
 _KERNEL_VARIANT_IDS = {"generic": 0, "z_integer4": 1}
 _LAYOUT_VARIANT_IDS = {"detector_vu": 0, "detector_uv": 1}
 
 
 def _normalize_gather_dtype(gather_dtype: str) -> str:
-    if not isinstance(gather_dtype, str):
-        raise PallasProjectorUnsupported(
-            _unsupported(f"gather_dtype must be a string; got {type(gather_dtype).__name__}")
-        )
-    gd = gather_dtype.lower()
-    if gd == "auto":
-        platform = jax.default_backend()
-        if platform == "tpu":
-            return "bf16"
-        if platform == "gpu":
-            return "fp16"
-        return "fp32"
-    if gd not in _GATHER_DTYPE_ALIASES:
-        raise PallasProjectorUnsupported(
-            _unsupported(
-                "gather_dtype must be one of 'auto', 'fp32', 'float32', 'single', "
-                "'bf16', 'bfloat16', 'fp16', 'float16', or 'half'; "
-                f"got {gather_dtype!r}"
-            )
-        )
-    return _GATHER_DTYPE_ALIASES[gd]
+    target = _pallas_gather_jnp_dtype(gather_dtype)
+    return {jnp.float32: "fp32", jnp.bfloat16: "bf16", jnp.float16: "fp16"}[target]
 
 
 def _pallas_gather_jnp_dtype(gather_dtype: str) -> jnp.dtype:
-    normalized = _normalize_gather_dtype(gather_dtype)
-    if normalized == "bf16":
-        return jnp.bfloat16
-    if normalized == "fp16":
-        return jnp.float16
-    return jnp.float32
+    try:
+        return resolve_gather_target(gather_dtype)
+    except ValueError as exc:
+        raise PallasProjectorUnsupported(_unsupported(str(exc))) from None
 
 
 def _prepare_volume_for_pallas_gather(volume: jnp.ndarray, gather_dtype: str) -> jnp.ndarray:
-    target = _pallas_gather_jnp_dtype(gather_dtype)
-    vol_cast = volume if volume.dtype == target else volume.astype(target)
-    return jnp.ravel(vol_cast, order="C")
+    return prepare_volume_for_gather(volume, _normalize_gather_dtype(gather_dtype))
 
 
 def _normalize_tile_shape(tile_shape: tuple[int, int]) -> tuple[int, int]:

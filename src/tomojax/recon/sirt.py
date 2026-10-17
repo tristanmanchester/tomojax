@@ -55,6 +55,35 @@ class SIRTConfig:
     mask: zero excludes a voxel from reconstruction and fixes it to zero,
     including in the initial volume; nonzero includes it. Bounds apply only
     inside that support. Only nonnegative projector weights are used.
+
+    Parameters
+    ----------
+    iterations : int, optional
+        Maximum number of solver updates. For SIRT and MLEM, an update is a complete
+        subset sweep. Default is 50.
+    subsets : int, optional
+        Number of interleaved view subsets visited per sweep; one uses the
+        simultaneous method. Default is 1.
+    relaxation : float, optional
+        Update scale strictly between 0 and 2. Default is 1.0.
+    acceleration : bool, optional
+        Apply FISTA momentum to full-data SIRT; requires subsets=1 and relaxation <=
+        1. Default is False.
+    lower_bound : float | None, optional
+        Lower voxel-value bound, or None for no explicit lower bound.
+    upper_bound : float | None, optional
+        Upper voxel-value bound, or None for no upper bound.
+    support : array-like | None, optional
+        Volume support mask. Excluded voxels remain zero; None uses the entire grid.
+    views_per_batch : int, optional
+        Number of views processed together to bound temporary storage. Default is
+        64.
+    projector_backend : ProjectorBackend, optional
+        Execution backend: "auto", "jax" or "pallas". An explicit accelerator
+        request never silently falls back. Default is 'auto'.
+    projector_model : ProjectorModel, optional
+        Projection model: "auto", "ray" or "joseph". Auto selects Joseph unless an
+        explicit detector grid requires rays. Default is 'auto'.
     """
 
     iterations: int = 50
@@ -278,9 +307,62 @@ def sirt(
 ) -> tuple[jax.Array | np.ndarray, dict[str, object]]:
     """Matched FP32 SIRT/OS-SART; each iteration visits every subset once.
 
+    Supports parallel, tilted and cone-beam scans on the existing matched
+    projectors. Inputs and updates are FP32. An iteration is a complete sweep,
+    not one subset update. No residual-based stopping or quality claim is made.
     Large independent axial planes use host slabs. Large host projection stacks
     stream with exact row recomputation, also allowing reusable column weights
-    to fit in device memory. Returns the volume and full-sweep count.
+    to fit in device memory.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Scan geometry, including view angles and any per-view poses.
+    grid : Grid
+        Reconstruction grid in ``(x, y, z)`` order, with physical voxel spacing.
+    detector : Detector
+        Detector dimensions and placement in the same length unit as the grid.
+    projections : array-like
+        Measured line integrals with shape ``(views, detector.nv, detector.nu)``.
+    init_x : array-like or None, optional
+        Initial volume of shape ``(nx, ny, nz)``; None starts from zero.
+    config : SIRTConfig or None, optional
+        Solver settings. None uses SIRTConfig defaults.
+    det_grid : tuple of array-like or None, optional
+        Explicit detector-coordinate arrays ``(u, v)``, each of shape ``(nv, nu)``.
+        None uses the canonical detector grid.
+
+    Returns
+    -------
+    volume : jax.Array or numpy.ndarray
+        Float32 reconstruction of shape ``(nx, ny, nz)``.
+    info : dict
+        Solver diagnostics and effective work; a small residual or iteration
+        count does not establish reconstruction accuracy.
+
+    Raises
+    ------
+    ValueError
+        If shapes, geometry or solver settings are incompatible with this method.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> import tomojax as tj
+    >>> from tomojax.recon import sirt, SIRTConfig, project
+    >>> grid = tj.Grid(4, 4, 1, 1.0, 1.0, 1.0)
+    >>> detector = tj.Detector(4, 1, 1.0, 1.0)
+    >>> geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 8, endpoint=False))
+    >>> data = project(geometry, np.ones((4, 4, 1), np.float32))
+    >>> volume, info = sirt(
+    ...     geometry,
+    ...     geometry.grid,
+    ...     geometry.detector,
+    ...     data,
+    ...     config=SIRTConfig(iterations=1),
+    ... )
+    >>> volume.shape
+    (4, 4, 1)
     """
     cfg = SIRTConfig() if config is None else config
     validate_grid(grid, "sirt grid")

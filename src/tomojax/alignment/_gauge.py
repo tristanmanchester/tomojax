@@ -255,6 +255,35 @@ def least_motion_estimate(
     (more than 5% of its integral; the faint background a reconstruction
     leaves everywhere does not count), the grid edge already fixes the
     estimate: it is returned unchanged with gauge None.
+
+    Parameters
+    ----------
+    volume : array-like
+        Reconstructed volume in (x, y, z) order.
+    params : array-like
+        Per-view pose table with five or six columns in radians and physical lengths.
+    nominal : array-like
+        Nominal object-to-world transforms with shape (views, 4, 4).
+    grid : Grid
+        Volume grid with physical voxel spacing.
+    translation_frame : {"object", "detector"}
+        Basis for physical translations; detector means lab x/y/z axes, not pixels.
+    active : collection of str
+        Active pose parameter names; other parameters are left unchanged.
+    cone_beam : bool
+        Whether along-beam translation dy is observable in a cone beam.
+    detector_offset : bool, optional
+        Allow constant detector-u displacement to move into the detector centre. Default
+        is False.
+
+    Returns
+    -------
+    volume : numpy.ndarray
+        Volume in the least-motion gauge, or unchanged when the grid edge fixes it.
+    params : numpy.ndarray
+        Per-view pose corrections in the same gauge.
+    gauge : Gauge or None
+        Applied common motion and detector offset, or None if no change was made.
     """
     invisible = () if cone_beam or translation_frame == "object" else ("dy",)
     gauge = least_motion_gauge(

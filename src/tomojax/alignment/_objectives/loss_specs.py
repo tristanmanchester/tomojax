@@ -26,14 +26,30 @@ class L2LossSpec:
 
 @dataclass(frozen=True, slots=True)
 class L2OtsuLossSpec:
-    """Squared-error loss weighted by a soft Otsu foreground mask."""
+    """Squared-error loss weighted by a soft Otsu foreground mask.
+
+    Parameters
+    ----------
+    temp : float, optional
+        Soft-mask sigmoid temperature; smaller values sharpen the foreground weighting.
+        Default is 0.5.
+    """
 
     temp: float = 0.5
 
 
 @dataclass(frozen=True, slots=True)
 class PWLSLossSpec:
-    """Poisson-weighted least-squares projection loss."""
+    """Poisson-weighted least-squares projection loss.
+
+    Parameters
+    ----------
+    a : float, optional
+        Coefficient multiplying the nonnegative target in the variance model. Default is
+        1.0.
+    b : float, optional
+        Additive offset in the variance model. Default is 0.0.
+    """
 
     a: float = 1.0
     b: float = 0.0
@@ -144,7 +160,15 @@ type AlignmentLossSpec = (
 
 @dataclass(frozen=True, slots=True)
 class LossScheduleEntry:
-    """One level-specific loss override."""
+    """One level-specific loss override.
+
+    Parameters
+    ----------
+    level_factor : int
+        Current coarsening factor relative to the native grid and detector.
+    spec : AlignmentLossSpec
+        Loss specification for this level.
+    """
 
     level_factor: int
     spec: AlignmentLossSpec
@@ -152,7 +176,15 @@ class LossScheduleEntry:
 
 @dataclass(frozen=True, slots=True)
 class AlignmentLossSchedule:
-    """Default loss plus optional per-pyramid-level overrides."""
+    """Default loss plus optional per-pyramid-level overrides.
+
+    Parameters
+    ----------
+    default : AlignmentLossSpec
+        Loss used at levels without an explicit override.
+    by_level : tuple[LossScheduleEntry, ...]
+        Level-specific loss overrides.
+    """
 
     default: AlignmentLossSpec
     by_level: tuple[LossScheduleEntry, ...]
@@ -529,7 +561,23 @@ def canonicalize_loss_kind(kind: str) -> str:
 
 
 def loss_spec_name(spec: AlignmentLossSpec) -> str:
-    """Return the canonical loss name for a loss spec."""
+    """Return the canonical loss name for a loss spec.
+
+    Parameters
+    ----------
+    spec : AlignmentLossSpec
+        Typed projection-domain loss specification.
+
+    Returns
+    -------
+    str
+        Canonical registered name of the loss.
+
+    Raises
+    ------
+    TypeError
+        If the object is not a supported loss specification.
+    """
     for descriptor in _LOSS_SPEC_DESCRIPTORS:
         if descriptor.matches(spec):
             return descriptor.name(spec)
@@ -537,7 +585,23 @@ def loss_spec_name(spec: AlignmentLossSpec) -> str:
 
 
 def loss_spec_params(spec: AlignmentLossSpec) -> dict[str, float]:
-    """Return JSON-compatible scalar parameters for a loss spec."""
+    """Return JSON-compatible scalar parameters for a loss spec.
+
+    Parameters
+    ----------
+    spec : AlignmentLossSpec
+        Typed projection-domain loss specification.
+
+    Returns
+    -------
+    dict
+        Scalar parameters in JSON-compatible form.
+
+    Raises
+    ------
+    TypeError
+        If the object is not a supported loss specification.
+    """
     for descriptor in _LOSS_SPEC_DESCRIPTORS:
         if descriptor.matches(spec):
             return descriptor.params(spec)
@@ -553,7 +617,25 @@ def parse_loss_spec(
     kind: str,
     params: Mapping[str, float] | None = None,
 ) -> AlignmentLossSpec:
-    """Parse a named loss and scalar parameters into a typed spec."""
+    """Parse a named loss and scalar parameters into a typed spec.
+
+    Parameters
+    ----------
+    kind : str
+        Registered loss name, such as "l2", "l2_otsu" or "pwls".
+    params : mapping or None, optional
+        Scalar parameters for the named loss; None uses its defaults.
+
+    Returns
+    -------
+    AlignmentLossSpec
+        Typed specification for the requested loss.
+
+    Raises
+    ------
+    ValueError
+        If the loss name or one of its parameter names is unknown.
+    """
     canonical = canonicalize_loss_kind(kind)
     raw = {} if params is None else {str(k): float(v) for k, v in params.items()}
     entry = _LOSS_KIND_REGISTRY.get(canonical)
@@ -597,6 +679,26 @@ def parse_loss_schedule(
     String values use ``LEVEL:LOSS`` comma-separated entries, for example
     ``"4:phasecorr,2:ssim,1:l2_otsu"``. Mapping values are intended for TOML
     config files, for example ``{"4": "phasecorr", "2": "ssim"}``.
+
+    Parameters
+    ----------
+    value : str or mapping
+        Comma-separated LEVEL:LOSS entries or a mapping from levels to loss
+        specifications.
+    default : AlignmentLossSpec
+        Loss for pyramid levels without an explicit override.
+
+    Returns
+    -------
+    AlignmentLossSchedule
+        Default and level-specific loss specifications.
+
+    Raises
+    ------
+    ValueError
+        If the schedule syntax, factors or loss specifications are invalid.
+    TypeError
+        If value is not a string or mapping.
     """
     raw_entries: list[tuple[object, object]] = []
     if isinstance(value, Mapping):
@@ -643,7 +745,20 @@ def resolve_loss_for_level(
     loss_config: AlignmentLossConfig,
     level_factor: int,
 ) -> AlignmentLossSpec:
-    """Resolve the loss active at a pyramid level."""
+    """Resolve the loss active at a pyramid level.
+
+    Parameters
+    ----------
+    loss_config : AlignmentLossConfig
+        Loss specification or pyramid-level loss schedule.
+    level_factor : int
+        Current pyramid coarsening factor.
+
+    Returns
+    -------
+    AlignmentLossSpec
+        Level override when present, otherwise the default loss.
+    """
     if not isinstance(loss_config, AlignmentLossSchedule):
         return loss_config
     level = int(level_factor)
@@ -657,7 +772,20 @@ def validate_loss_schedule_levels(
     loss_config: AlignmentLossConfig,
     factors: Iterable[int],
 ) -> None:
-    """Validate that scheduled loss levels exist in the configured pyramid."""
+    """Validate that scheduled loss levels exist in the configured pyramid.
+
+    Parameters
+    ----------
+    loss_config : AlignmentLossConfig
+        Loss specification or pyramid-level loss schedule.
+    factors : iterable of int
+        Coarsening factors present in the configured pyramid.
+
+    Raises
+    ------
+    ValueError
+        If a loss override names a level outside the pyramid.
+    """
     if not isinstance(loss_config, AlignmentLossSchedule):
         return
     factor_list = [int(factor) for factor in factors]
