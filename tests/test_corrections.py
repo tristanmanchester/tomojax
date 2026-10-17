@@ -258,6 +258,10 @@ def test_a_nikon_scan_is_corrected_with_its_white_level(tmp_path: Path) -> None:
         "[XTekCT]\nName=part\nSrcToObject=12.0\nSrcToDetector=18.0\nDetectorPixelSizeX=0.1\n"
         "DetectorPixelSizeY=0.1\nWhiteLevel=60000\nInitialAngle=0\nAngularStep=90\n"
     )
+    frames = tj.load_frames(tmp_path / "part.xtekct")
+    assert not isinstance(frames.counts, np.ndarray) and frames.counts.dtype == np.uint16
+    window = frames.cropped(slice(0, 1), slice(0, 1)).selected([1])
+    np.testing.assert_array_equal(np.asarray(window.counts), [[[15000]]])
     scan = tj.load(tmp_path / "part.xtekct")
     # Detector v points up: the image's bottom row is the scan's first.
     np.testing.assert_allclose(
@@ -286,7 +290,7 @@ def test_nikon_import_takes_its_own_angles_and_numbered_projections(
     if measured:
         (tmp_path / "part_ctdata.txt").write_text("Projection Angle\n10 97\n2 7\n")
     frames = tj.load_frames(path)
-    np.testing.assert_array_equal(frames.counts[:, 0, 0], [500, 250])
+    np.testing.assert_array_equal(np.asarray(frames.counts)[:, 0, 0], [500, 250])
     np.testing.assert_array_equal(frames.geometry.angles, [7, 97] if measured else [5, 95])
 
 

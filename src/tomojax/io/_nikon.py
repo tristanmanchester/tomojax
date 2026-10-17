@@ -9,7 +9,6 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-import imageio.v3 as iio
 import numpy as np
 
 from tomojax.core.geometry.base import Detector, Grid
@@ -48,10 +47,6 @@ def _number(params: dict[str, str], key: str, default: float | None = None) -> f
             raise ValueError(f"the .xtekct file has no {key}")
         return float(default)
     return float(value)
-
-
-def _read(file: Path) -> np.ndarray:
-    return np.asarray(cast("object", iio.imread(file)), np.float32)
 
 
 def _angles(file: Path, params: dict[str, str], views: int) -> np.ndarray:
@@ -157,6 +152,7 @@ def load_nikon_xtekct(
     Projections become absorption ``-log(I / WhiteLevel)`` unless
     ``absorption`` is False, with image rows flipped so detector v points up.
     Lengths stay in the file's units (mm).
+    Use ``tomojax.load_frames`` to inspect metadata or crop before reading pixels.
 
     The calibrated rotation axis comes from ObjectOffsetX/Roll/Tilt, or the
     older CentreOfRotationTop/Bottom detector-plane offsets. An extra closing
@@ -185,29 +181,43 @@ def load_nikon_xtekct(
     OSError
         If the parameter file or a projection cannot be read.
     """
-    file = Path(path)
+    raw = _raw_nikon(Path(path))
+    projections = np.asarray(raw.counts, np.float32)
+    if absorption:
+        projections = -np.log(np.maximum(projections, 1.0) / raw.white_level)
+    return replace(
+        raw.record,
+        projections=projections,
+        angles=-raw.record.angles if reverse_angles else raw.record.angles,
+    )
+
+
+def _raw_nikon(file: Path) -> RawAcquisition:
+    from ._acquisition import RawAcquisition
+    from ._tiff import TiffFrames
+
     params = _parameters(file)
     files = _projection_files(file.parent, params)
-    first = _read(files[0])
-    nv, nu = int(first.shape[0]), int(first.shape[1])
-    projections = np.empty((len(files), nv, nu), np.float32)
+    counts = TiffFrames.from_files(files, flip_rows=True)
+    if len(counts) != len(files):
+        raise ValueError("Nikon projection TIFFs must hold one image per file")
     white = _number(params, "WhiteLevel", float(np.iinfo(np.uint16).max))
-    for i, tiff in enumerate(files):
-        image = _read(tiff) if i else first
-        if image.shape != (nv, nu):
-            raise ValueError(f"{tiff} is {image.shape}, expected {(nv, nu)}")
-        # TIFF rows run top to bottom; detector v runs up.
-        image = image[::-1]
-        projections[i] = -np.log(np.maximum(image, 1.0) / white) if absorption else image
+    record = _nikon_record(file, params, counts.shape, white)
+    return RawAcquisition(record=record, counts=counts, white_level=white)
+
+
+def _nikon_record(
+    file: Path, params: dict[str, str], shape: tuple[int, int, int], white: float
+) -> ProjectionDataset:
+    """Keep metadata independent of pixel storage, including in Scan.source."""
+    views, nv, nu = shape
     expected = (
         int(_number(params, "DetectorPixelsY", nv)),
         int(_number(params, "DetectorPixelsX", nu)),
     )
     if expected != (nv, nu):
         LOG.warning("projections are %s pixels; the .xtekct file lists %s", (nv, nu), expected)
-    angles = _angles(file, params, len(files))
-    if reverse_angles:
-        angles = -angles
+    angles = _angles(file, params, views)
     detector = Detector(
         nu=nu,
         nv=nv,
@@ -240,12 +250,12 @@ def load_nikon_xtekct(
         "nikon_xtekct": {
             "path": str(file),
             "white_level": white,
-            "projection_count": len(files),
+            "projection_count": views,
             **recorded,
         },
     }
     return ProjectionDataset(
-        projections=projections,
+        projections=np.broadcast_to(np.float32(0), shape),
         angles=angles.astype(np.float32),
         detector=detector,
         grid=grid,
@@ -259,7 +269,6 @@ def load_nikon_xtekct(
 
 def read_nikon(path: Path, *, data_path: str | None = None) -> RawAcquisition | None:
     """Recognize the XTekCT section by content, irrespective of the file suffix."""
-    from ._acquisition import RawAcquisition
 
     def matches(file: Path) -> bool:
         with file.open("rb") as source:
@@ -274,9 +283,7 @@ def read_nikon(path: Path, *, data_path: str | None = None) -> RawAcquisition | 
         raise ValueError(f"{path}: several Nikon parameter files; name one explicitly")
     if data_path is not None:
         raise ValueError("a Nikon acquisition has no HDF5 data_path")
-    record = load_nikon_xtekct(found[0], absorption=False)
-    white = float(record.geometry_metadata["nikon_xtekct"]["white_level"])
-    return RawAcquisition(record=record, counts=record.projections, white_level=white)
+    return _raw_nikon(found[0])
 
 
 __all__ = ["load_nikon_xtekct"]
