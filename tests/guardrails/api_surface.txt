@@ -393,6 +393,7 @@ class tomojax.recon.SIRTConfig(
         iterations: 'int' = 50,
         subsets: 'int' = 1,
         relaxation: 'float' = 1.0,
+        acceleration: 'bool' = False,
         lower_bound: 'float | None' = None,
         upper_bound: 'float | None' = None,
         support: 'jax.Array | np.ndarray | None' = None,

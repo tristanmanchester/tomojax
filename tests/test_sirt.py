@@ -13,9 +13,11 @@ from tomojax.recon import SIRTConfig, sirt
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("subsets", [1, 2, 5])
+@pytest.mark.parametrize(
+    ("subsets", "acceleration"), [(1, False), (2, False), (5, False), (1, True)]
+)
 @pytest.mark.parametrize("kind", ["parallel", "axial", "cone", "segments"])
-def test_sirt_matches_dense_updates_with_bounds_support_and_tail(subsets, kind):
+def test_sirt_matches_dense_updates_with_bounds_support_and_tail(subsets, acceleration, kind):
     grid = tj.Grid(3, 3, 2, 0.8, 1.2, 1.3)
     detector = tj.Detector(5, 4, 0.9, 1.1, (0.1, -0.2))
     if kind == "axial":
@@ -49,15 +51,23 @@ def test_sirt_matches_dense_updates_with_bounds_support_and_tail(subsets, kind):
     truth *= support
     data = matrix @ truth
     expected = np.full(18, 0.2) * support
+    extrapolated, time = expected.copy(), 1.0
+    relaxation = 1.0 if acceleration else 1.1
     for _ in range(4):
         for index in range(subsets):
             ids = np.arange(5)[index::subsets]
             a = matrix.reshape(5, -1, 18)[ids].reshape(-1, 18).astype(np.float64)
             b = data.reshape(5, -1)[ids].ravel()
             rows, columns = a @ support, a.sum(axis=0)
-            residual = np.divide(b - a @ expected, rows, out=np.zeros_like(b), where=rows > 0)
+            point = extrapolated if acceleration else expected
+            residual = np.divide(b - a @ point, rows, out=np.zeros_like(b), where=rows > 0)
             update = np.divide(a.T @ residual, columns, out=np.zeros(18), where=columns > 0)
-            expected = np.clip(expected + 1.1 * update, 0.05, 0.7) * support
+            current = np.clip(point + relaxation * update, 0.05, 0.7) * support
+            if acceleration:
+                next_time = (1 + np.sqrt(1 + 4 * time**2)) / 2
+                extrapolated = current + (time - 1) / next_time * (current - expected)
+                time = next_time
+            expected = current
     volume, info = sirt(
         geometry,
         grid,
@@ -67,7 +77,8 @@ def test_sirt_matches_dense_updates_with_bounds_support_and_tail(subsets, kind):
         config=SIRTConfig(
             iterations=4,
             subsets=subsets,
-            relaxation=1.1,
+            relaxation=relaxation,
+            acceleration=acceleration,
             lower_bound=0.05,
             upper_bound=0.7,
             support=support.reshape(shape),
@@ -95,8 +106,8 @@ def test_public_sirt_converges_on_consistent_data(subsets):
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("subsets", [1, 3])
-def test_axial_memory_slabs_preserve_the_full_constrained_solve(monkeypatch, subsets):
+@pytest.mark.parametrize(("subsets", "acceleration"), [(1, False), (3, False), (1, True)])
+def test_axial_memory_slabs_preserve_the_full_constrained_solve(monkeypatch, subsets, acceleration):
     import tomojax.backends
 
     grid = tj.Grid(5, 4, 3, 0.8, 1.2, 1.3, vol_center=(0.2, -0.3, 0.7))
@@ -106,7 +117,12 @@ def test_axial_memory_slabs_preserve_the_full_constrained_solve(monkeypatch, sub
     truth = rng.uniform(size=(5, 4, 3)).astype(np.float32)
     data = np.asarray(tj.project(geometry, truth))
     cfg = SIRTConfig(
-        iterations=5, subsets=subsets, lower_bound=0, upper_bound=0.9, support=truth > 0.3
+        iterations=5,
+        subsets=subsets,
+        acceleration=acceleration,
+        lower_bound=0,
+        upper_bound=0.9,
+        support=truth > 0.3,
     )
     initial = truth * 0.1
     full, _ = sirt(geometry, grid, detector, data, init_x=initial, config=cfg)
@@ -133,7 +149,14 @@ def test_axial_slabs_release_each_result_before_solving_the_next(monkeypatch):
 
     monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: 1)
     result = axial_slabs(
-        geometry, geometry.grid, geometry.detector, np.zeros((1, 3, 3)),
-        initial=None, support=None, volume_buffers=4, projection_buffers=2, solve=solve,
+        geometry,
+        geometry.grid,
+        geometry.detector,
+        np.zeros((1, 3, 3)),
+        initial=None,
+        support=None,
+        volume_buffers=4,
+        projection_buffers=2,
+        solve=solve,
     )
     assert result is not None and len(previous) == 3 and previous[-1]() is None

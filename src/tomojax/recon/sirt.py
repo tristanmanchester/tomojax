@@ -29,6 +29,8 @@ from tomojax.recon._projection import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry
 
 
@@ -43,6 +45,10 @@ class SIRTConfig:
     ``relaxation`` must be in (0, 2); ordered subsets can cycle on inconsistent
     data, so use fewer subsets or lower relaxation for the final refinement.
 
+    ``acceleration=True`` applies fixed FISTA momentum to full-data SIRT
+    (``subsets=1``, ``relaxation <= 1``), reducing the iterations needed for
+    the same weighted least-squares objective without changing the projector.
+
     ``lower_bound`` and ``upper_bound`` clip each update. ``support`` is a volume
     mask: zero excludes a voxel from reconstruction and fixes it to zero,
     including in the initial volume; nonzero includes it. Bounds apply only
@@ -52,6 +58,7 @@ class SIRTConfig:
     iterations: int = 50
     subsets: int = 1
     relaxation: float = 1.0
+    acceleration: bool = False
     lower_bound: float | None = None
     upper_bound: float | None = None
     support: jax.Array | np.ndarray | None = None
@@ -65,6 +72,26 @@ def _inverse(value: jax.Array) -> jax.Array:
     return jnp.where(positive, 1.0 / jnp.where(positive, value, 1.0), 0.0)
 
 
+def _accelerated_steps(
+    update: Callable[[jax.Array, jax.Array], jax.Array],
+    initial: jax.Array,
+    iterations: jax.Array,
+) -> jax.Array:
+    # Row/column normalization bounds the spectrum by one in the C^-1 norm.
+    # Box/support projection is coordinatewise in that norm, so the usual
+    # FISTA recurrence applies with a relaxation of at most one.
+    def step(
+        index: jax.Array, state: tuple[jax.Array, jax.Array, jax.Array]
+    ) -> tuple[jax.Array, jax.Array, jax.Array]:
+        previous, extrapolated, time = state
+        current = update(index, extrapolated)
+        next_time = (1.0 + jnp.sqrt(1.0 + 4.0 * time * time)) / 2.0
+        momentum = (time - 1.0) / next_time
+        return current, current + momentum * (current - previous), next_time
+
+    return jax.lax.fori_loop(0, iterations, step, (initial, initial, jnp.float32(1.0)))[0]
+
+
 @partial(
     jax.jit,
     static_argnames=(
@@ -76,6 +103,7 @@ def _inverse(value: jax.Array) -> jax.Array:
         "subsets",
         "cache_columns",
         "axial",
+        "acceleration",
     ),
 )
 def _solve(
@@ -97,6 +125,7 @@ def _solve(
     subsets: int,
     cache_columns: bool,
     axial: bool,
+    acceleration: bool,
 ) -> jax.Array:
     select = subset_operators(poses, grid, detector, det_grid, backend, batch, model, subsets)
     shape = (grid.nx, grid.ny, grid.nz)
@@ -141,6 +170,8 @@ def _solve(
         gradient = residual_adjoint(x, data, rows[index])
         return constrain(x + relaxation * column * gradient)
 
+    if acceleration:
+        return _accelerated_steps(update, initial, iterations)
     return jax.lax.fori_loop(0, iterations * subsets, update, initial)
 
 
@@ -174,6 +205,8 @@ def sirt(
         )
     if not math.isfinite(cfg.relaxation) or not 0 < cfg.relaxation < 2:
         raise ValueError("sirt: relaxation must be finite and in (0, 2)")
+    if cfg.acceleration and (subsets != 1 or cfg.relaxation > 1):
+        raise ValueError("sirt: acceleration requires subsets=1 and relaxation <= 1")
     lower = -np.inf if cfg.lower_bound is None else float(cfg.lower_bound)
     upper = np.inf if cfg.upper_bound is None else float(cfg.upper_bound)
     if lower > upper:
@@ -214,7 +247,7 @@ def sirt(
             projections,
             initial=init_x,
             support=cfg.support,
-            volume_buffers=3 + min(subsets, 16),
+            volume_buffers=3 + min(subsets, 16) + 2 * cfg.acceleration,
             projection_buffers=2 + 2 / subsets,
             solve=solve_slab,
         )
@@ -233,7 +266,7 @@ def sirt(
         jnp.float32(lower), jnp.float32(upper), grid=grid, detector=detector,
         backend=backend, batch=batch, model=model, subsets=subsets,
         cache_columns=subsets * grid.nx * grid.ny * (1 if axial else grid.nz) * 4 <= column_budget,
-        axial=axial,
+        axial=axial, acceleration=cfg.acceleration,
     )  # fmt: skip
     return volume, {
         "effective_iterations": iterations,
