@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 import operator
 from typing import TYPE_CHECKING
@@ -20,6 +20,8 @@ from tomojax.core.validation import (
     validate_projection_stack,
     validate_volume,
 )
+from tomojax.geometry import grid_volume_origin
+from tomojax.recon._axial_slabs import independent_planes
 from tomojax.recon._host_arrays import validate_host_views
 from tomojax.recon._host_stream import host_source, should_stream
 from tomojax.recon._projection import (
@@ -79,7 +81,8 @@ class MLEMConfig:
     nonnegative interpolation weights. A single sensitivity is retained; multiple
     subset sensitivities are cached within 256 MiB, or up to half the available
     memory with room for working buffers when reused across multiple sweeps;
-    otherwise they are recomputed to bound memory use.
+    otherwise they are recomputed to bound memory use. Exactly independent
+    axial planes share their single-plane sensitivities.
     """
 
     iterations: int = 50
@@ -92,7 +95,16 @@ class MLEMConfig:
 
 @partial(
     jax.jit,
-    static_argnames=("grid", "detector", "backend", "batch_size", "model", "cache", "stream"),
+    static_argnames=(
+        "grid",
+        "detector",
+        "backend",
+        "batch_size",
+        "model",
+        "cache",
+        "stream",
+        "axial",
+    ),
 )
 def _solve(
     poses: jax.Array,
@@ -111,10 +123,18 @@ def _solve(
     model: str | ConeModel,
     cache: bool,
     stream: bool,
+    axial: bool,
 ) -> tuple[jax.Array, jax.Array]:
     sensitivity, correction = poisson_operators(
         poses, grid, detector, det_grid, backend, batch_size, model, indices, valid, stream=stream
     )
+    if axial:
+        # Equal axial rows share A.T 1, even when activity/support varies by plane.
+        normal_grid = replace(grid, nz=1, vol_origin=(*grid_volume_origin(grid)[:2], 0.0))
+        normal_detector = replace(detector, nv=1, center=(detector.center[0], 0.0))
+        sensitivity, _ = poisson_operators(
+            poses, normal_grid, normal_detector, None, backend, batch_size, model, indices, valid
+        )
     shape = (grid.nx, grid.ny, grid.nz)
     x = jnp.ones(shape, jnp.float32) if initial is None else initial
     if support is not None:
@@ -204,6 +224,7 @@ def mlem(
         geometry, cfg.projector_model, cfg.projector_backend, detector=detector,
         det_grid=det_grid, context="mlem",
     )  # fmt: skip
+    axial = model == "joseph" and det_grid is None and independent_planes(geometry, grid, detector)
     order = np.argsort(np.asarray(getattr(geometry, "angles", np.arange(n))), kind="stable")
     count = (n + subsets - 1) // subsets
     indices = np.arange(subsets)[:, None] + subsets * np.arange(count)[None, :]
@@ -219,6 +240,7 @@ def mlem(
     with context as data:
         # Query after these persistent inputs occupy their device storage.
         volume_bytes = int(np.prod(shape)) * 4
+        norm_bytes = grid.nx * grid.ny * 4 if axial else volume_bytes
         image_bytes = detector.nv * detector.nu * 4
         # Four volume buffers cover the iterate, update, current norm and
         # visibility/output workspace. Resident data also gathers one subset;
@@ -227,13 +249,13 @@ def mlem(
         if not stream:
             workspace += count * image_bytes
         cache = _cache_sensitivities(
-            subsets * volume_bytes, subsets, iterations, workspace_bytes=workspace, initial=initial
+            subsets * norm_bytes, subsets, iterations, workspace_bytes=workspace, initial=initial
         )
         volume, good = _solve(
             stack_view_poses(geometry, n), data, initial, support,
             jax.device_put(indices), jax.device_put(valid), jnp.int32(iterations), det_grid,
             grid=grid, detector=detector, backend=backend, batch_size=batch, model=model,
-            cache=cache, stream=stream,
+            cache=cache, stream=stream, axial=axial,
         )  # fmt: skip
         if stream:
             volume.block_until_ready()  # Host registrations must outlive every callback.

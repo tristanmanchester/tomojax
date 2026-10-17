@@ -10,8 +10,8 @@ turntable or a gantry: each ASTRA view becomes a rigid object pose.
 Conversion fits a circular orbit to those poses (a ``ConeGeometry``) and
 keeps what remains, the scan's departure from a perfect circle, as per-view
 pose corrections. The ASTRA world frame is TomoJAX's object frame, so volumes
-convert by transposing ``(z, y, x)`` arrays to ``(x, y, z)``; a vertical
-offset of the source from the volume becomes the grid's centre.
+convert by transposing ``(z, y, x)`` arrays to ``(x, y, z)``. The supplied
+grid is preserved, with source-height offsets represented in the view poses.
 """
 
 from __future__ import annotations

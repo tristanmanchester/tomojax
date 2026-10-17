@@ -223,8 +223,10 @@ def _iterative_result(
                     replace(algebraic, support=local_support), None, warm_start=warm_start,
                 )  # fmt: skip
 
+            # EM stores axial sensitivities as single planes; the cache policy
+            # separately reserves capacity for them after inputs are resident.
             buffers = (
-                6
+                4
                 if method == "mlem"
                 else 3 + min(algebraic.subsets, 16) + 2 * getattr(algebraic, "acceleration", False)
             )
