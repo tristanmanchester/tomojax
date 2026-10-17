@@ -137,6 +137,8 @@ def test_axial_slabs_release_each_result_before_solving_the_next(monkeypatch):
     import weakref
 
     import tomojax.backends
+
+    # check-public-imports: allow-private
     from tomojax.recon._axial_slabs import axial_slabs
 
     geometry = tj.ParallelGeometry(tj.Grid(3, 3, 3, 1, 1, 1), tj.Detector(3, 3, 1, 1), [0])

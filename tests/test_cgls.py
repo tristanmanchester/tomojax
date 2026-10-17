@@ -408,6 +408,7 @@ def test_native_cuda_cgls_matches_independent_damped_system(tilt):
 def test_native_cuda_clipped_planes_keep_the_matched_pair(narrow):
     import cupy as cp
 
+    # check-public-imports: allow-private
     from tomojax.core._joseph_cuda_kernels import forward_kernel
     from tomojax.core.joseph_cuda import JosephCUDA
     from tomojax.forward import project_joseph
