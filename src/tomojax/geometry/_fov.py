@@ -29,7 +29,15 @@ from tomojax.core.geometry import Detector, Grid, grid_volume_origin
 
 @dataclass(frozen=True)
 class RoiInfo:
-    """Derived physical FOV half-extents and recommended ROI grid dims."""
+    """Derived physical FOV half-extents and recommended ROI grid dims.
+
+    Parameters
+    ----------
+    r_u, r_v : float
+        Conservative in-plane and vertical field-of-view half-extents in physical units.
+    nx_roi, ny_roi, nz_roi : int
+        Recommended x, y and z voxel counts.
+    """
 
     r_u: float  # half-extent in the rotation plane after angle-invariant reduction (cx)
     r_v: float  # half-extent along z after center offset (cz)
@@ -114,14 +122,30 @@ def compute_roi(
 ) -> RoiInfo:
     """Compute conservative FOV half-extents and grid dims from detector.
 
-    - r_u = max(0, (nu/2-0.5)*du - |cx|) enforces angle-invariant coverage.
-    - r_v = max(0, (nv/2-0.5)*dv - |cz|) enforces vertical coverage.
+    - ``r_u = max(0, (nu/2-0.5)*du - |cx|)`` enforces angle-invariant coverage.
+    - ``r_v = max(0, (nv/2-0.5)*dv - |cz|)`` enforces vertical coverage.
     - nx_roi is the largest dim whose half-extent fits within the in-plane radius
       r_u; nz_roi similarly fits r_v.
     - ny_roi is also fit to r_u when `crop_y_to_u=True`, which matches the
       parallel-beam x-y disk interpretation. Laminography callers can set
       `crop_y_to_u=False` to keep the full source y extent.
     - All dimensions are clipped by the current grid.
+
+    Parameters
+    ----------
+    grid : Grid
+        Input grid providing voxel pitches and maximum dimensions.
+    detector : Detector
+        Parallel-beam detector defining the physical field of view.
+    crop_y_to_u : bool, optional
+        Crop y to the detector-u bound as well as x; default is True.
+    match_parity : bool, optional
+        Preserve each input dimension's odd/even parity where possible.
+
+    Returns
+    -------
+    RoiInfo
+        Conservative physical half-extents and recommended voxel counts.
     """
     # Detector pixel-center half extents (world units)
     u_half = ((float(detector.nu) / 2.0) - 0.5) * float(detector.du)
@@ -160,6 +184,13 @@ def compute_roi(
     return RoiInfo(r_u=r_u, r_v=r_v, nx_roi=nx_roi, ny_roi=ny_roi, nz_roi=nz_roi)
 
 
+def _roi_grid(grid: Grid, nx: int, ny: int, nz: int) -> Grid:
+    """Keep an unchanged grid; otherwise centre the ROI at the same voxel pitches."""
+    if (nx, ny, nz) == (grid.nx, grid.ny, grid.nz):
+        return grid
+    return Grid(nx, ny, nz, grid.vx, grid.vy, grid.vz)
+
+
 def grid_from_detector_fov(
     grid: Grid,
     detector: Detector,
@@ -171,21 +202,23 @@ def grid_from_detector_fov(
     All three axes are cropped conservatively: x and y by the in-plane detector
     radius `r_u`, and z by the detector height `r_v`. The cropped grid remains
     centered at the origin using the same default centered-origin convention.
+
+    Parameters
+    ----------
+    grid : Grid
+        Input grid providing voxel pitches and maximum dimensions.
+    detector : Detector
+        Parallel-beam detector defining the physical field of view.
+    crop_y_to_u : bool, optional
+        Crop y to the detector-u bound as well as x; default is True.
+
+    Returns
+    -------
+    Grid
+        Cropped grid with unchanged pitches, centred at the origin when resized.
     """
     info = compute_roi(grid, detector, crop_y_to_u=crop_y_to_u)
-    # If detector already covers the full current grid, just return the original grid.
-    if (info.nx_roi, info.ny_roi, info.nz_roi) == (grid.nx, grid.ny, grid.nz):
-        return grid
-    return Grid(
-        nx=int(info.nx_roi),
-        ny=int(info.ny_roi),
-        nz=int(info.nz_roi),
-        vx=float(grid.vx),
-        vy=float(grid.vy),
-        vz=float(grid.vz),
-        vol_origin=None,
-        vol_center=None,
-    )
+    return _roi_grid(grid, info.nx_roi, info.ny_roi, info.nz_roi)
 
 
 def grid_from_detector_fov_cube(
@@ -200,23 +233,25 @@ def grid_from_detector_fov_cube(
     (`r_v`). When multiple fitted dimensions with different parities compete, the
     final side is adjusted downward by at most one voxel so the cubic output keeps
     a consistent, parity-preserving centered-origin convention where possible.
+
+    Parameters
+    ----------
+    grid : Grid
+        Input grid providing voxel pitches and maximum dimensions.
+    detector : Detector
+        Parallel-beam detector defining the physical field of view.
+    crop_y_to_u : bool, optional
+        Crop y to the detector-u bound as well as x; default is True.
+
+    Returns
+    -------
+    Grid
+        Cropped grid with unchanged pitches, centred at the origin when resized.
     """
     info = compute_roi(grid, detector, crop_y_to_u=crop_y_to_u, match_parity=True)
     side_max = min(int(info.nx_roi), int(info.ny_roi), int(info.nz_roi))
     side = _choose_shared_side(side_max, int(grid.nx), int(grid.ny), int(grid.nz))
-    # If the original grid already fits within the FOV and is cubic, return it
-    if grid.nx == grid.ny == grid.nz == side:
-        return grid
-    return Grid(
-        nx=side,
-        ny=side,
-        nz=side,
-        vx=float(grid.vx),
-        vy=float(grid.vy),
-        vz=float(grid.vz),
-        vol_origin=None,
-        vol_center=None,
-    )
+    return _roi_grid(grid, side, side, side)
 
 
 def cylindrical_mask_xy(grid: Grid, detector: Detector) -> np.ndarray:
@@ -225,6 +260,18 @@ def cylindrical_mask_xy(grid: Grid, detector: Detector) -> np.ndarray:
     Returns a 2D mask aligned to x and y axes where mask[x,y] is True if the
     voxel center lies within radius r_u in the X-Y plane. This is meant to be
     broadcast along z to mask a cylinder aligned with the z axis.
+
+    Parameters
+    ----------
+    grid : Grid
+        Input grid providing voxel pitches and maximum dimensions.
+    detector : Detector
+        Parallel-beam detector defining the physical field of view.
+
+    Returns
+    -------
+    numpy.ndarray
+        Boolean (grid.nx, grid.ny) mask, broadcastable along z.
     """
     info = compute_roi(grid, detector)
     nx, ny = int(grid.nx), int(grid.ny)
@@ -247,20 +294,29 @@ def grid_from_detector_fov_slices(
 
     - (nx, ny) chosen as the largest equal dims that fit within r_u using (vx, vy).
     - nz chosen from r_v using vz, clipped by current nz.
+
     This matches a common 3D parallel-beam reconstruction: per-z 2D CT slices.
+
+    Parameters
+    ----------
+    grid : Grid
+        Input grid providing voxel pitches and maximum dimensions.
+    detector : Detector
+        Parallel-beam detector defining the physical field of view.
+    crop_y_to_u : bool, optional
+        Crop y to the detector-u bound as well as x; default is True.
+
+    Returns
+    -------
+    Grid
+        Cropped grid with unchanged pitches, centred at the origin when resized.
     """
     info = compute_roi(grid, detector, crop_y_to_u=crop_y_to_u, match_parity=True)
     side_max = min(int(info.nx_roi), int(info.ny_roi))
     side = _choose_shared_side(side_max, int(grid.nx), int(grid.ny))
-    if int(grid.nx) == int(grid.ny) and int(grid.nx) <= side and int(grid.nz) <= int(info.nz_roi):
-        return grid
-    return Grid(
-        nx=min(int(grid.nx), side),
-        ny=min(int(grid.ny), side),
-        nz=min(int(grid.nz), int(info.nz_roi)),
-        vx=float(grid.vx),
-        vy=float(grid.vy),
-        vz=float(grid.vz),
-        vol_origin=None,
-        vol_center=None,
+    return _roi_grid(
+        grid,
+        min(int(grid.nx), side),
+        min(int(grid.ny), side),
+        min(int(grid.nz), int(info.nz_roi)),
     )

@@ -163,6 +163,27 @@ def load_nikon_xtekct(
     frame on a full turn is excluded according to the declared view count.
     ``reverse_angles`` negates the angles, for a stage turning the other way;
     check the handedness of the reconstruction on a known sample.
+
+    Parameters
+    ----------
+    path : str or path-like
+        Nikon .xtekct parameter file beside its projection TIFFs.
+    absorption : bool, optional
+        Convert counts to -log(I / WhiteLevel); defaults to True.
+    reverse_angles : bool, optional
+        Negate the recorded angles to reverse the stage convention.
+
+    Returns
+    -------
+    ProjectionDataset
+        Cone-beam scan with flipped detector rows, geometry in mm and recorded angles.
+
+    Raises
+    ------
+    ValueError
+        If required scan parameters or projection TIFFs are missing or inconsistent.
+    OSError
+        If the parameter file or a projection cannot be read.
     """
     file = Path(path)
     params = _parameters(file)

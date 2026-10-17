@@ -8,6 +8,7 @@ change, so the review shows what moved.
 from __future__ import annotations
 
 import argparse
+import ast
 import difflib
 import importlib.util
 import inspect
@@ -225,3 +226,23 @@ def test_cli_help_lists_only_the_options_most_runs_need(command: str) -> None:
 def test_version_matches_the_package_metadata() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert tomojax.__version__ == project["project"]["version"]
+
+
+def test_size_ratchets_exclude_only_docstrings():
+    source = "\n".join(
+        [
+            '"""Module prose."""',
+            "def f():",
+            '    """Summary.',
+            "    More prose.",
+            '    """',
+            "    # Keep comments in the measure.",
+            '    return "a runtime string"',
+        ]
+    )
+    count = _guardrails()._code_line_count
+    assert count(source) == 3
+    assert count(source, ast.parse(source).body[1]) == 3
+    assert count('def f(): """Summary."""; return 1') == 1
+    assert count('"""λλλλ"""; 1') == 1
+    assert count('"""Module prose."""  # A comment') == 1

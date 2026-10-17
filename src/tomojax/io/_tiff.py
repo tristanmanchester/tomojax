@@ -178,6 +178,25 @@ def read_tiff_frames(path: Path | str, *, lazy: bool = False) -> np.ndarray | _T
     ``lazy=True`` checks the headers and returns a stack read only as indexed
     (``np.asarray`` reads it all); a window of uncompressed pages reads only
     that window.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        Grayscale multipage TIFF or folder of TIFF files.
+    lazy : bool, optional
+        Inspect headers now and read pixels only when indexed; defaults to False.
+
+    Returns
+    -------
+    numpy.ndarray or lazy TIFF stack
+        Frames in (frame, row, column) order and the files' dtype.
+
+    Raises
+    ------
+    ValueError
+        If pages are not consistent two-dimensional grayscale frames.
+    FileNotFoundError
+        If the input contains no TIFF frames.
     """
     stack = _TiffFrames.open(path)
     return stack if lazy else np.asarray(stack)

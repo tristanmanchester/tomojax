@@ -208,11 +208,26 @@ def _gda_metadata(
 
 @dataclass(frozen=True)
 class LocatedFrames:
-    """An HDF5 file's frames, with each frame's ``image_key`` and angle (degrees) when found.
+    """Located HDF5 frames with optional frame labels and rotation angles.
 
     ``flats`` and ``darks`` are stacks of their own beside the frames, as in
     APS Data Exchange (``data_white``, ``data_dark``), when the file keeps
     them apart rather than marking them in ``image_key``.
+
+    Parameters
+    ----------
+    stack : lazy HDF5 stack
+        Located detector-frame stack, read only as indexed.
+    image_key : numpy.ndarray or None
+        Frame labels when present: sample, flat, dark or other.
+    angles : numpy.ndarray or None
+        One angle per frame, in degrees, when present.
+    flats : lazy HDF5 stack or None, optional
+        Separate open-beam frames, when not interleaved with the sample.
+    darks : lazy HDF5 stack or None, optional
+        Separate beam-off frames.
+    acquisition : dict or None, optional
+        Discovered acquisition paths and unit corrections.
     """
 
     stack: Hdf5Frames
@@ -224,7 +239,13 @@ class LocatedFrames:
 
     @property
     def raw(self) -> bool:
-        """Whether the file holds flat or dark frames: its frames are detector counts."""
+        """Whether the file holds flat or dark frames: its frames are detector counts.
+
+        Returns
+        -------
+        bool
+            True when flat or dark frames mark the data as detector counts.
+        """
         marked = self.image_key is not None and bool(np.isin(self.image_key, (1, 2)).any())
         return marked or self.flats is not None or self.darks is not None
 
@@ -246,6 +267,31 @@ def locate_frames(
     (``data_white``, ``data_dark``) are found when ``image_key`` marks none of that
     kind, and so are angles there (``theta``). Angles in radians (a ``units``
     attribute) are converted to degrees.
+
+    Parameters
+    ----------
+    path : str
+        HDF5 acquisition file.
+    data_path : str or None, optional
+        Explicit frame dataset path; None uses discovery.
+    image_key_path : str or None, optional
+        Explicit frame-label dataset path; None uses discovery.
+    angles_path : str or None, optional
+        Explicit rotation-angle dataset path; None uses discovery.
+
+    Returns
+    -------
+    LocatedFrames
+        Lazy frame stacks plus frame labels, angles and acquisition metadata.
+
+    Raises
+    ------
+    KeyError
+        If frames or an explicitly requested dataset cannot be found.
+    ValueError
+        If discovery is ambiguous or per-frame metadata are malformed.
+    OSError
+        If the file cannot be opened.
     """
     with h5py.File(path, "r") as file:
         where = data_path or next((p for p in _FRAME_PATHS if _dataset(file, p) is not None), None)

@@ -12,6 +12,12 @@ format:
 lint:
     uv run --no-sync ruff check src tests tools examples {{benchmark_scripts}}
 
+docstrings:
+    JAX_PLATFORMS=cpu uv run --no-sync python tools/check_docstrings.py
+
+docs:
+    JAX_PLATFORMS=cpu uv run --no-sync python tools/build_api_docs.py
+
 typecheck:
     uv run --no-sync basedpyright
 
@@ -68,6 +74,7 @@ ci:
     uv run --no-sync ruff format --check src tests tools examples {{benchmark_scripts}}
     uv run --no-sync ruff check src tests tools examples {{benchmark_scripts}}
     uv run --no-sync basedpyright
+    JAX_PLATFORMS=cpu uv run --no-sync python tools/check_docstrings.py
     uv run --no-sync lint-imports --config .importlinter
     uv run --no-sync python tools/check_public_imports.py
     rm -rf dist

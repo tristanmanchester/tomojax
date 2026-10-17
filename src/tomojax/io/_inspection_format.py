@@ -14,7 +14,18 @@ def _fmt_value(value: object, *, precision: int = 6) -> str:
 
 
 def format_inspection_report(report: InspectionReport) -> str:
-    """Format an inspection report for terminal output."""
+    """Format an inspection report for terminal output.
+
+    Parameters
+    ----------
+    report : InspectionReport
+        Structured dataset inspection report.
+
+    Returns
+    -------
+    str
+        Human-readable multiline summary for terminal output.
+    """
     projection = report["projection"]
     angles = report["angles"]
     geometry = report["geometry"]

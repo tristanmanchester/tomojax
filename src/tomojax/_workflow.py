@@ -62,6 +62,17 @@ class Reconstruction:
     ``volume`` is ``(nx, ny, nz)`` on :attr:`grid`, in the reciprocal of the
     geometry's length unit (a NumPy or JAX array; ``np.asarray`` gives NumPy).
     ``info`` records the method's settings.
+
+    Parameters
+    ----------
+    volume : numpy.ndarray or jax.Array
+        Volume in (x, y, z) order and reciprocal geometry-length units.
+    scan : Scan
+        Input scan, including the output grid and any inferred geometry.
+    method : str
+        Reconstruction method used.
+    info : mapping
+        Resolved method settings and solver records.
     """
 
     volume: np.ndarray | jax.Array
@@ -71,7 +82,13 @@ class Reconstruction:
 
     @property
     def grid(self) -> Grid:
-        """The grid the volume is on, the scan's."""
+        """The grid the volume is on, the scan's.
+
+        Returns
+        -------
+        Grid
+            Reconstruction grid carried by the scan.
+        """
         return self.scan.grid
 
 
@@ -84,6 +101,17 @@ class Alignment:
     reconstruct it, align it again or save it. ``poses`` are its ``(views, 6)``
     poses (see :attr:`Scan.poses`), always a table, zero where nothing moved;
     ``info`` is the solver's record.
+
+    Parameters
+    ----------
+    volume : numpy.ndarray or jax.Array
+        Reconstruction used by the alignment, in (x, y, z) order.
+    scan : Scan
+        Scan with estimated geometry and per-view corrections applied.
+    poses : numpy.ndarray
+        Complete (views, 6) correction table, zero where nothing moved.
+    info : mapping
+        Solver record and resolved alignment settings.
     """
 
     volume: np.ndarray | jax.Array
@@ -96,7 +124,30 @@ class Alignment:
 
 
 def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
-    """Load a reconstruction saved by :func:`save` or ``tomojax recon``."""
+    """Load a reconstruction saved by :func:`save` or ``tomojax recon``.
+
+    Parameters
+    ----------
+    path : str or path-like
+        Saved reconstruction dataset.
+
+    Returns
+    -------
+    Reconstruction
+        Volume, source scan and stored reconstruction settings.
+
+    Raises
+    ------
+    ValueError
+        If the dataset has no reconstructed volume.
+    FileNotFoundError
+        If the input does not exist.
+
+    Examples
+    --------
+    >>> import tomojax as tj
+    >>> recon = tj.load_reconstruction("recon.nxs")  # doctest: +SKIP
+    """
     scan = load(path)
     record = scan.source
     if record is None or record.volume is None:
@@ -112,11 +163,36 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
 
 
 def save(path: str | PathLike[str], item: Scan | Reconstruction | Alignment) -> None:
-    """Save a scan, reconstruction or alignment as a TomoJAX dataset (``.nxs``, ``.npz``).
+    """Save a scan, reconstruction or alignment as a TomoJAX dataset.
 
     Reconstructions and alignments are saved with their scan (projections,
     geometry and any pose corrections), so the file reloads with :func:`load`
     and :func:`load_reconstruction`.
+
+    Parameters
+    ----------
+    path : str or path-like
+        Output dataset path; an existing file is overwritten.
+    item : Scan, Reconstruction or Alignment
+        Scan or result to save with its geometry and metadata.
+
+    Returns
+    -------
+    None
+        Write the dataset to disk.
+
+    Raises
+    ------
+    TypeError
+        If item is not a scan, reconstruction or alignment.
+    ValueError
+        If the output format is unsupported.
+
+    Examples
+    --------
+    >>> import tomojax as tj
+    >>> scan = tj.load("scan.nxs")  # doctest: +SKIP
+    >>> tj.save("copy.nxs", scan)  # doctest: +SKIP
     """
     from tomojax.io import save_dataset
 
@@ -160,7 +236,35 @@ def project(
     grid: Grid | None = None,
     devices: Device | Sequence[Device] | None = None,
 ) -> jax.Array:
-    """Project ``volume`` through ``geometry``; see :func:`tomojax.recon.project`."""
+    """Project a volume through the supplied geometry.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Per-view geometry defining the matched projector.
+    volume : numpy.ndarray or jax.Array
+        Volume in (x, y, z) order.
+    grid : Grid or None, optional
+        Voxel grid; None uses the geometry's grid.
+    devices : jax.Device or sequence of jax.Device or None, optional
+        Devices sharing the views; None uses the current default device.
+
+    Returns
+    -------
+    jax.Array
+        Line-integral projections, shape (views, detector.nv, detector.nu).
+
+    Raises
+    ------
+    ValueError
+        If dimensions or geometry metadata do not match the operation.
+
+    Examples
+    --------
+    >>> import tomojax as tj
+    >>> scan = tj.load("scan.nxs")  # doctest: +SKIP
+    >>> projections = tj.project(scan.geometry, tj.reconstruct(scan).volume)  # doctest: +SKIP
+    """
     from tomojax.recon import project as _project
 
     return _project(geometry, volume, grid=grid, devices=devices)
@@ -173,7 +277,35 @@ def backproject(
     grid: Grid | None = None,
     devices: Device | Sequence[Device] | None = None,
 ) -> jax.Array:
-    """Apply the exact transpose of :func:`project`; see :func:`tomojax.recon.backproject`."""
+    """Apply the exact transpose of the forward projector.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Per-view geometry defining the matched projector.
+    projections : numpy.ndarray or jax.Array
+        Line integrals in (view, v, u) order.
+    grid : Grid or None, optional
+        Voxel grid; None uses the geometry's grid.
+    devices : jax.Device or sequence of jax.Device or None, optional
+        Devices sharing the views; None uses the current default device.
+
+    Returns
+    -------
+    jax.Array
+        Adjoint volume, shape (grid.nx, grid.ny, grid.nz).
+
+    Raises
+    ------
+    ValueError
+        If dimensions or geometry metadata do not match the operation.
+
+    Examples
+    --------
+    >>> import tomojax as tj
+    >>> scan = tj.load("scan.nxs")  # doctest: +SKIP
+    >>> volume = tj.backproject(scan.geometry, scan.projections)  # doctest: +SKIP
+    """
     from tomojax.recon import backproject as _backproject
 
     return _backproject(geometry, projections, grid=grid, devices=devices)
@@ -244,6 +376,49 @@ def reconstruct(
     :attr:`Reconstruction.info` holds ``config`` and solver records (iterations,
     termination, losses). Fourier's ``backend`` records the actual selected
     implementation separately from the requested configuration.
+
+    Parameters
+    ----------
+    scan : Scan
+        Measured line integrals with their acquisition geometry.
+    method : str, optional
+        One of auto, fbp, fourier, cgls, fista, spdhg, sirt or mlem.
+    grid : Grid or None, optional
+        Output grid; None retains the scan's grid.
+    out : numpy.ndarray or None, optional
+        Writable float32 output or memmap for fbp/fourier; must not overlap input.
+    config : reconstruction config or None, optional
+        Method-specific settings; explicit keywords replace its fields.
+    filter : str or None, optional
+        FBP filter: ramp, shepp-logan or hann; None uses the configuration.
+    iterations : int or None, optional
+        Iteration count; None uses the method default or configuration.
+    tv_weight : float or None, optional
+        Total-variation weight for fista/spdhg; None uses the configuration.
+    nonnegative : bool or None, optional
+        Nonnegative constraint where supported; None uses the configuration.
+    warm_start : bool or None, optional
+        Use FBP/FDK initialization for supported iterative methods.
+    seed : int or None, optional
+        Random seed for stochastic view ordering where supported.
+    devices : jax.Device or sequence of jax.Device or None, optional
+        Devices sharing views for supported methods; None uses the default device.
+
+    Returns
+    -------
+    Reconstruction
+        Volume with the actual scan geometry, method and solver records.
+
+    Raises
+    ------
+    ValueError
+        If the method, configuration or options are incompatible.
+
+    Examples
+    --------
+    >>> import tomojax as tj
+    >>> scan = tj.load("scan.nxs")  # doctest: +SKIP
+    >>> recon = tj.reconstruct(scan, "cgls", iterations=50)  # doctest: +SKIP
     """
     from tomojax.recon.api import method_config, reconstruct_arrays
 
@@ -398,7 +573,7 @@ def reconstruct_slabs(
     warm_start: bool | None = None,
     epsilon: float = 1e-6,
 ) -> Iterator[Iterator[tuple[slice, Reconstruction]]]:
-    """Correct raw frames and reconstruct bounded axial slabs without host projections.
+    """Correct raw frames and reconstruct bounded axial slabs.
 
     Use ``with reconstruct_slabs(frames, "fbp", ...) as slabs:`` and iterate
     over ``(z_slice, reconstruction)``. The slice indexes the requested output
@@ -411,8 +586,45 @@ def reconstruct_slabs(
     corrections such as Stripes, not Paganin or view rejection. SIRT/OSEM also
     require matching detector and voxel planes; ``warm_start=True`` uses FBP.
     Method configurations retain the same meaning as in ``reconstruct``.
-    Raw reads are prefetched and calibration reused. The context drains pending
-    work on exit; raw frames and calibrations must remain unchanged inside it.
+    CUDA consumes corrected rows without a corrected-projection host round trip.
+    Raw reads are prefetched within bounded storage and calibration is reused.
+    The context drains pending work on normal completion, early exit or failure.
+    Raw frames and calibration arrays must remain unchanged inside the context.
+
+    Parameters
+    ----------
+    frames : Frames
+        Raw detector frames for unposed axial parallel-beam geometry.
+    method : {'fbp', 'fourier', 'sirt', 'mlem'}
+        Slab reconstruction method.
+    grid : Grid or None, optional
+        Output grid; None uses the frames' grid.
+    corrections : sequence of Step, optional
+        Whole-row line-integral corrections applied before reconstruction.
+    config : FBPConfig or FourierConfig or SIRTConfig or MLEMConfig or None, optional
+        Method-specific settings, as for ``reconstruct``.
+    warm_start : bool or None, optional
+        Start SIRT/OSEM from FBP; None uses the method's default.
+    epsilon : float, optional
+        Positive finite lower bound for flat field and transmission.
+
+    Yields
+    ------
+    iterator of tuple of (slice, Reconstruction)
+        Context-managed slab iterator; each z slice indexes the requested grid.
+
+    Raises
+    ------
+    ValueError
+        If geometry, method, corrections or configuration do not support slabs.
+
+    Examples
+    --------
+    >>> import tomojax as tj
+    >>> frames = tj.load_frames("raw_scan.nxs")  # doctest: +SKIP
+    >>> with tj.reconstruct_slabs(frames, "fbp") as slabs:  # doctest: +SKIP
+    ...     for z_slice, recon in slabs:
+    ...         print(z_slice, recon.volume.shape)
     """
     from tomojax._scan import detector_window, rebuild
     from tomojax.corrections import corrected_row_source
@@ -500,6 +712,27 @@ def estimate_center(scan: Scan) -> Scan:
     16 views spanning 175 degrees); anything else raises ``ValueError``. The estimate
     can be wrong for very compact objects, so check the reconstruction. Source
     provenance, when present, records the inferred centre without changing the input.
+
+    Parameters
+    ----------
+    scan : Scan
+        Unposed axial parallel line integrals spanning at least 175 degrees.
+
+    Returns
+    -------
+    Scan
+        Scan with the inferred absolute physical detector-u centre; pixels are unchanged.
+
+    Raises
+    ------
+    ValueError
+        If geometry or angular coverage is unsupported, or fewer than 16 views exist.
+
+    Examples
+    --------
+    >>> import tomojax as tj
+    >>> scan = tj.estimate_center(tj.load("scan.nxs"))  # doctest: +SKIP
+    >>> recon = tj.reconstruct(scan)  # doctest: +SKIP
     """
     from tomojax.alignment.api import estimate_center as estimate_geometry_center
 
@@ -582,6 +815,44 @@ def align(
     :attr:`Alignment.poses` are the scan's poses, its own included.
     :attr:`Alignment.info` holds the mode, levels and resolved ``config`` with
     the solver's record (losses, gauge, any calibrated setup geometry).
+
+    Parameters
+    ----------
+    scan : Scan
+        Measured line integrals with their acquisition geometry.
+    mode : str, optional
+        Alignment mode: auto, pose, cor, cor-then-pose or full.
+    quality : {'fast', 'reference'}
+        Quality profile; reference is slower and more conservative.
+    levels : iterable of int or None, optional
+        Coarse-to-fine binning factors; None uses the mode's defaults.
+    freeze : iterable of str, optional
+        Names of parameters to keep fixed, such as ("dy",).
+    grid : Grid or None, optional
+        Alignment and reconstruction grid; None keeps the scan's grid.
+    checkpoint : str, path-like or None, optional
+        Progress file; compatible existing checkpoints resume automatically.
+    config : AlignConfig or None, optional
+        Expert solver settings, replacing the quality profile's defaults.
+    devices : jax.Device or sequence of jax.Device or None, optional
+        Devices sharing supported pose and reconstruction updates.
+
+    Returns
+    -------
+    Alignment
+        Reconstruction, corrected scan, full pose table and solver records.
+
+    Raises
+    ------
+    ValueError
+        If options, geometry or an existing checkpoint are incompatible.
+
+    Examples
+    --------
+    >>> import tomojax as tj
+    >>> scan = tj.load("scan.nxs")  # doctest: +SKIP
+    >>> result = tj.align(scan, mode="cor-then-pose")  # doctest: +SKIP
+    >>> recon = tj.reconstruct(result.scan)  # doctest: +SKIP
     """
     if config is not None:
         from tomojax.alignment import ProjectionMatchingConfig

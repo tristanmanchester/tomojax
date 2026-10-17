@@ -60,7 +60,13 @@ _TIFF_SUFFIXES = TIFF_SUFFIXES
 
 
 class ValidationReport(TypedDict):
-    """Public dataset validation result."""
+    """Public dataset validation result.
+
+    Attributes
+    ----------
+    issues : list of str
+        Validation problems; an empty list means none were found.
+    """
 
     issues: list[str]
 
@@ -71,7 +77,29 @@ def save_projection_payload(
     projections: np.ndarray,
     metadata: NXTomoMetadata,
 ) -> None:
-    """Save a solver-facing projection payload with updated metadata."""
+    """Save a solver-facing projection payload with updated metadata.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        NXtomo output path.
+    projections : numpy.ndarray
+        Projection stack in (view, v, u) order.
+    metadata : NXTomoMetadata
+        Updated acquisition, geometry and reconstruction metadata.
+
+    Returns
+    -------
+    None
+        Write the NXtomo projection payload.
+
+    Raises
+    ------
+    ValueError
+        If projection or volume metadata are invalid.
+    OSError
+        If the file cannot be written.
+    """
     save_nxtomo(str(path), projections=projections, metadata=metadata)
 
 
@@ -88,6 +116,31 @@ def build_geometry_from_dataset_metadata(
     the data. Keeping this wrapper in `tomojax.io` makes the command/data dependency
     explicit and gives the `ProjectionDataset` solver contract one replacement
     point.
+
+    Parameters
+    ----------
+    meta : mapping
+        Normalized geometry metadata, as returned by geometry_inputs.
+    grid_override : Grid, tuple of int, list of int or None, optional
+        Replacement grid or (nx, ny, nz) dimensions.
+    poses : bool, optional
+        Apply saved per-view alignment and angle corrections; defaults to False.
+    volume_shape : sequence of int or None, optional
+        Fallback (nx, ny, nz) dimensions when no grid is recorded.
+
+    Returns
+    -------
+    grid : Grid
+        Resolved reconstruction grid.
+    detector : Detector
+        Resolved detector geometry.
+    geometry : ScanGeometry
+        Per-view geometry, with saved corrections when requested.
+
+    Raises
+    ------
+    ValueError
+        If geometry metadata are incomplete or inconsistent.
     """
     return build_geometry_from_meta(
         cast("LoadedGeometryMeta", dict(meta)),
@@ -105,6 +158,39 @@ class ProjectionDataset:
     normalized metadata needed by reconstruction/alignment code, and the
     optional reconstructed volume when a processed container stores one.
     ``angles`` holds each view's rotation angle, in degrees.
+
+    Parameters
+    ----------
+    projections : numpy.ndarray
+        Measured projections in (view, v, u) order.
+    angles : numpy.ndarray
+        One rotation angle per view, in degrees.
+    volume : numpy.ndarray, jax.Array or None, optional
+        Reconstructed volume in (x, y, z) order, when present.
+    detector : Detector or None, optional
+        Detector pixel counts, pitches and physical centre.
+    grid : Grid or None, optional
+        Reconstruction voxel grid.
+    geometry_type : str, optional
+        Geometry family, such as parallel, lamino or cone.
+    geometry_metadata : dict, optional
+        Additional geometry and acquisition metadata.
+    angle_offset_deg : numpy.ndarray or None, optional
+        Per-view angular corrections in degrees.
+    align_params : numpy.ndarray or None, optional
+        Saved per-view alignment parameters, with convention in align_gauge.
+    align_gauge : dict or None, optional
+        Gauge and frame metadata for saved alignment parameters.
+    misalign_spec : dict or None, optional
+        Simulation misalignment record; angles already include simulated offsets.
+    source_path : str or None, optional
+        Original input path.
+    source_format : str or None, optional
+        Original container format.
+    sample_name : str or None, optional
+        Sample name retained on output.
+    _metadata : NXTomoMetadata or None, optional
+        Internal retained acquisition metadata; normally populated by from_nxtomo.
     """
 
     projections: np.ndarray
@@ -131,7 +217,25 @@ class ProjectionDataset:
         *,
         source_path: PathLike | None = None,
     ) -> ProjectionDataset:
-        """Build a public dataset from the lower-level NXtomo payload."""
+        """Build a public dataset from the lower-level NXtomo payload.
+
+        Parameters
+        ----------
+        payload : LoadedNXTomo
+            NXtomo projection payload and persistence metadata.
+        source_path : str, pathlib.Path or None, optional
+            Input path retained as provenance.
+
+        Returns
+        -------
+        ProjectionDataset
+            Normalized in-memory dataset with arrays and typed grid/detector metadata.
+
+        Raises
+        ------
+        ValueError
+            If grid or detector metadata have invalid coordinate dimensions.
+        """
         metadata = payload.metadata
         detector = metadata.detector
         grid = metadata.grid
@@ -169,11 +273,23 @@ class ProjectionDataset:
         )
 
     def to_nxtomo_metadata(self) -> NXTomoMetadata:
-        """Return NXtomo metadata for saving this public dataset."""
+        """Return NXtomo metadata for saving this public dataset.
+
+        Returns
+        -------
+        NXTomoMetadata
+            Persistence metadata reflecting the dataset's current fields.
+        """
         return self.copy_metadata()
 
     def copy_metadata(self) -> NXTomoMetadata:
-        """Return writable persistence metadata for save/update workflows."""
+        """Return writable persistence metadata for save/update workflows.
+
+        Returns
+        -------
+        NXTomoMetadata
+            Writable metadata with copied arrays and retained acquisition information.
+        """
         if self._metadata is None:
             metadata = NXTomoMetadata()
         else:
@@ -206,7 +322,18 @@ class ProjectionDataset:
         return metadata
 
     def geometry_inputs(self) -> dict[str, Any]:
-        """Return normalized geometry metadata for reconstruction/alignment."""
+        """Return normalized geometry metadata for reconstruction/alignment.
+
+        Returns
+        -------
+        dict
+            Normalized geometry, detector, angle and alignment metadata.
+
+        Raises
+        ------
+        ValueError
+            If detector metadata are missing.
+        """
         detector = self.detector
         if detector is None:
             raise ValueError("projection dataset is missing detector metadata")
@@ -225,7 +352,25 @@ class ProjectionDataset:
 
 
 def load_projection_payload(path: PathLike) -> ProjectionDataset:
-    """Load the solver-facing projection dataset for reconstruction/alignment."""
+    """Load the solver-facing projection dataset for reconstruction/alignment.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        TomoJAX projection dataset to load.
+
+    Returns
+    -------
+    ProjectionDataset
+        Normalized solver-facing projection dataset.
+
+    Raises
+    ------
+    ValueError
+        If the container format is unsupported.
+    OSError
+        If the file cannot be read.
+    """
     return load_dataset(path)
 
 
@@ -235,6 +380,25 @@ def load_dataset(path: PathLike) -> ProjectionDataset:
     Supported direct inputs are NXtomo/HDF5 (`.nxs`, `.h5`, `.hdf`, `.hdf5`) and TomoJAX
     `.npz` payloads. TIFF stacks need explicit angle metadata, so use
     :func:`load_tiff_stack`.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        NXtomo/HDF5 or TomoJAX NPZ dataset to read.
+
+    Returns
+    -------
+    ProjectionDataset
+        Measured projections, normalized metadata and any saved volume.
+
+    Raises
+    ------
+    ValueError
+        If the format is unsupported or TIFF angles must be supplied separately.
+    KeyError
+        If required datasets are missing.
+    OSError
+        If the input cannot be opened.
     """
     input_path = Path(path)
     suffix = input_path.suffix.lower()
@@ -250,7 +414,27 @@ def load_dataset(path: PathLike) -> ProjectionDataset:
 
 
 def save_dataset(path: PathLike, dataset: ProjectionDataset) -> None:
-    """Save a public projection dataset as NXtomo/HDF5 or NPZ."""
+    """Save a public projection dataset as NXtomo/HDF5 or NPZ.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        NXtomo/HDF5 or NPZ output path; existing files are overwritten.
+    dataset : ProjectionDataset
+        Projections, geometry and optional volume to persist.
+
+    Returns
+    -------
+    None
+        Write the dataset to disk without changing its metadata.
+
+    Raises
+    ------
+    ValueError
+        If the output suffix is not supported.
+    OSError
+        If the output cannot be written.
+    """
     output_path = Path(path)
     suffix = output_path.suffix.lower()
     # The metadata copy would duplicate a large volume that the writer only reads.
@@ -274,7 +458,27 @@ def save_dataset(path: PathLike, dataset: ProjectionDataset) -> None:
 
 
 def convert_dataset(input_path: PathLike, output_path: PathLike) -> None:
-    """Convert between supported TomoJAX dataset container formats."""
+    """Convert between supported TomoJAX dataset container formats.
+
+    Parameters
+    ----------
+    input_path : str or pathlib.Path
+        Input NXtomo/HDF5 or NPZ container.
+    output_path : str or pathlib.Path
+        Output container of the other format.
+
+    Returns
+    -------
+    None
+        Write the converted dataset with its metadata.
+
+    Raises
+    ------
+    ValueError
+        If the conversion is not NPZ to HDF5 or HDF5 to NPZ.
+    OSError
+        If a file cannot be read or written.
+    """
     in_path = Path(input_path)
     out_path = Path(output_path)
     input_suffix = in_path.suffix.lower()
@@ -303,7 +507,35 @@ def load_tiff_stack(
     geometry_type: str = "parallel",
     geometry_metadata: Mapping[str, Any] | None = None,
 ) -> ProjectionDataset:
-    """Load grayscale TIFF pages with explicit view ``angles``, in degrees."""
+    """Load grayscale TIFF pages with explicit view ``angles``, in degrees.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        Multipage TIFF or folder of naturally sorted TIFF files.
+    angles : array-like
+        Finite one-dimensional view angles in degrees, one per grayscale page.
+    detector : Detector or None, optional
+        Detector geometry to attach to the dataset.
+    grid : Grid or None, optional
+        Reconstruction grid to attach to the dataset.
+    geometry_type : str, optional
+        Geometry family; defaults to parallel.
+    geometry_metadata : mapping or None, optional
+        Additional geometry metadata.
+
+    Returns
+    -------
+    ProjectionDataset
+        Float32 TIFF samples and supplied metadata; no intensity correction is applied.
+
+    Raises
+    ------
+    ValueError
+        If pages are not consistent grayscale frames or angles do not match them.
+    FileNotFoundError
+        If the input contains no TIFF frames.
+    """
     input_path = Path(path)
     angles = np.asarray(angles, dtype=np.float32)
     if angles.ndim != 1:
@@ -330,7 +562,18 @@ def load_tiff_stack(
 
 
 def validate_dataset(path: PathLike) -> ValidationReport:
-    """Validate a user dataset path using the public IO boundary."""
+    """Validate a user dataset path using the public IO boundary.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        Dataset path to inspect for structural validity.
+
+    Returns
+    -------
+    ValidationReport
+        Issues found in the file or format; an empty issues list means none were found.
+    """
     input_path = Path(path)
     suffix = input_path.suffix.lower()
     if suffix in _HDF5_SUFFIXES:

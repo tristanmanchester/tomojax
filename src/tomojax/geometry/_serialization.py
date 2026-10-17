@@ -85,11 +85,53 @@ def _acquisition_from_dict(payload: object) -> AcquisitionParameters:
 
 
 def read_geometry_json(path: Path, pose: PoseParameters) -> GeometryState:
+    """Read saved scanner setup and attach the supplied per-view poses.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        Geometry-state JSON file.
+    pose : PoseParameters
+        Per-view pose state to attach to the saved setup and acquisition.
+
+    Returns
+    -------
+    GeometryState
+        Combined geometry state from the file and supplied poses.
+
+    Raises
+    ------
+    ValueError
+        If JSON, schema version or acquisition metadata are invalid.
+    KeyError
+        If required setup fields are missing.
+    OSError
+        If the file cannot be read.
+    """
     payload = cast("dict[str, object]", json.loads(path.read_text(encoding="utf-8")))
     return geometry_state_from_dict(payload, pose)
 
 
 def read_pose_params_csv(path: Path) -> PoseParameters:
+    """Read per-view pose parameters from CSV.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        CSV pose table; missing parameter columns default to zero.
+
+    Returns
+    -------
+    PoseParameters
+        Float64 pose vectors in row order, with radian rotations and pixel translations.
+
+    Raises
+    ------
+    ValueError
+        If a parameter value is not numeric.
+    OSError
+        If the file cannot be read.
+    """
     columns: dict[str, list[float]] = {field: [] for field in POSE_PARAMS_FIELDS if field != "view"}
     with path.open("r", newline="", encoding="utf-8") as fh:
         for row in csv.DictReader(fh):

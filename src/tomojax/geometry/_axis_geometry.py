@@ -17,7 +17,23 @@ AXIS_DIRECTION_DOFS: tuple[str, ...] = ("axis_rot_x_deg", "axis_rot_y_deg")
 
 
 def nominal_axis_unit_from_inputs(geometry_inputs: Mapping[str, object]) -> np.ndarray:
-    """Resolve the nominal lab-frame rotation axis from persisted geometry metadata."""
+    """Resolve the nominal lab-frame rotation axis from persisted geometry metadata.
+
+    Parameters
+    ----------
+    geometry_inputs : mapping
+        Persisted axis vector or geometry type and laminography tilt.
+
+    Returns
+    -------
+    numpy.ndarray
+        Normalized three-component lab-frame axis.
+
+    Raises
+    ------
+    ValueError
+        If the axis is not finite and nonzero, or the tilt convention is invalid.
+    """
     if geometry_inputs.get("axis_unit_lab") is not None:
         axis = np.asarray(geometry_inputs["axis_unit_lab"], dtype=np.float64)
     elif str(geometry_inputs.get("geometry_type", "parallel")).lower() in {
@@ -44,7 +60,20 @@ def axis_unit_from_rotations(
     axis_rot_x_deg: object,
     axis_rot_y_deg: object,
 ) -> jnp.ndarray:
-    """Apply x/y calibration rotations to a nominal lab-frame axis."""
+    """Apply x/y calibration rotations to a nominal lab-frame axis.
+
+    Parameters
+    ----------
+    nominal_axis_unit : array-like
+        Three-component nominal lab-frame unit axis.
+    axis_rot_x_deg, axis_rot_y_deg : array-like
+        Scalar x and y calibration rotations in degrees, applied in that order.
+
+    Returns
+    -------
+    jax.Array
+        Calibrated lab-frame unit axis, in float32.
+    """
     axis = jnp.asarray(nominal_axis_unit, dtype=jnp.float32)
     rx = jnp.deg2rad(jnp.asarray(axis_rot_x_deg, dtype=jnp.float32))
     ry = jnp.deg2rad(jnp.asarray(axis_rot_y_deg, dtype=jnp.float32))
@@ -141,6 +170,18 @@ def axis_pose_stack(
 
     Cache the compiled pose map so eager alignment calls do not repeatedly
     trace the nested axis-alignment conditionals or dispatch its small ops.
+
+    Parameters
+    ----------
+    angles : array-like
+        One-dimensional view angles in degrees.
+    axis_unit_lab : array-like
+        Three-component lab-frame rotation axis.
+
+    Returns
+    -------
+    jax.Array
+        Float32 world-from-object transforms, shape (views, 4, 4).
     """
     thetas = jnp.asarray(angles, dtype=jnp.float32)
     axis = jnp.asarray(axis_unit_lab, dtype=jnp.float32)

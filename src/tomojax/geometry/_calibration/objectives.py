@@ -13,7 +13,24 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class MetricSpec:
-    """A named metric and whether it is minimized or maximized."""
+    """A named metric and whether it is minimized or maximized.
+
+    Parameters
+    ----------
+    name : str
+        Metric name.
+    direction : {'minimize', 'maximize'}
+        Which direction indicates improvement.
+    domain : str, optional
+        Domain on which the metric is measured; defaults to projection.
+    description : str or None, optional
+        Human-readable metric description.
+
+    Raises
+    ------
+    ValueError
+        If direction is neither minimize nor maximize.
+    """
 
     name: str
     direction: str = "minimize"
@@ -25,7 +42,13 @@ class MetricSpec:
             raise ValueError("metric direction must be 'minimize' or 'maximize'")
 
     def to_dict(self) -> dict[str, JsonValue]:
-        """Return this metric spec as JSON-compatible metadata."""
+        """Return this metric spec as JSON-compatible metadata.
+
+        Returns
+        -------
+        dict
+            JSON-compatible diagnostic metadata with absent optional fields omitted.
+        """
         return drop_none(
             {
                 "name": self.name,
@@ -38,7 +61,21 @@ class MetricSpec:
 
 @dataclass(frozen=True)
 class CandidateScore:
-    """Score and diagnostics for one future calibration candidate."""
+    """Score and diagnostics for one future calibration candidate.
+
+    Parameters
+    ----------
+    parameters : mapping
+        Candidate geometry parameter values.
+    score : float
+        Measured primary metric.
+    rank : int or None, optional
+        Candidate rank, if assigned.
+    uncertainty : mapping or None, optional
+        Uncertainty diagnostics.
+    artifacts : mapping or None, optional
+        References to supporting artifacts.
+    """
 
     parameters: Mapping[str, object]
     score: float
@@ -47,7 +84,13 @@ class CandidateScore:
     artifacts: Mapping[str, object] | None = None
 
     def to_dict(self) -> dict[str, JsonValue]:
-        """Return this candidate score as JSON-compatible metadata."""
+        """Return this candidate score as JSON-compatible metadata.
+
+        Returns
+        -------
+        dict
+            JSON-compatible diagnostic metadata with absent optional fields omitted.
+        """
         return drop_none(
             {
                 "parameters": normalize_json(self.parameters),
@@ -61,7 +104,23 @@ class CandidateScore:
 
 @dataclass(frozen=True)
 class ObjectiveCard:
-    """Serializable objective contract for future geometry-calibration runs."""
+    """Serializable objective contract for future geometry-calibration runs.
+
+    Parameters
+    ----------
+    primary_metric : MetricSpec
+        Metric used to rank candidates.
+    secondary_metrics : tuple of MetricSpec, optional
+        Additional diagnostic metrics.
+    validation_split : mapping or None, optional
+        Fitting and validation data selection.
+    top_candidates : tuple of CandidateScore, optional
+        Selected candidates and their scores.
+    curvature : mapping or None, optional
+        Objective curvature diagnostics.
+    contact_sheet : str or None, optional
+        Path or reference to a candidate comparison image.
+    """
 
     primary_metric: MetricSpec
     secondary_metrics: tuple[MetricSpec, ...] = field(default_factory=tuple)
@@ -71,7 +130,13 @@ class ObjectiveCard:
     contact_sheet: str | None = None
 
     def to_dict(self) -> dict[str, JsonValue]:
-        """Return this objective card as JSON-compatible metadata."""
+        """Return this objective card as JSON-compatible metadata.
+
+        Returns
+        -------
+        dict
+            JSON-compatible diagnostic metadata with absent optional fields omitted.
+        """
         return drop_none(
             {
                 "primary_metric": self.primary_metric.to_dict(),

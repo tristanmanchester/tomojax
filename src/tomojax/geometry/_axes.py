@@ -43,7 +43,23 @@ def _norm_axes(axes: str) -> str:
 
 
 def axes_to_perm(src: str, dst: str) -> tuple[int, int, int]:
-    """Return permutation bringing `src` axis order into `dst` order."""
+    """Return permutation bringing `src` axis order into `dst` order.
+
+    Parameters
+    ----------
+    src, dst : str
+        Source and destination permutations of xyz, case-insensitive.
+
+    Returns
+    -------
+    tuple of int
+        Axis permutation for numpy.transpose or jax.numpy.transpose.
+
+    Raises
+    ------
+    ValueError
+        If an axis order is not a permutation of xyz.
+    """
     s = _norm_axes(src)
     d = _norm_axes(dst)
     return cast("tuple[int, int, int]", tuple(s.index(axis) for axis in d))
@@ -61,6 +77,23 @@ def transpose_volume(volume: object, src: str, dst: str) -> object:
     """Transpose a volume from `src` axis order to `dst` order.
 
     Keeps numpy arrays as numpy and JAX arrays as JAX when possible.
+
+    Parameters
+    ----------
+    volume : array-like
+        Three-dimensional volume to transpose.
+    src, dst : str
+        Source and destination permutations of xyz, case-insensitive.
+
+    Returns
+    -------
+    numpy.ndarray or jax.Array
+        Volume in the requested order, preserving NumPy/JAX storage where possible.
+
+    Raises
+    ------
+    ValueError
+        If axis orders or volume dimensions are invalid.
     """
     perm = axes_to_perm(src, dst)
 
@@ -101,33 +134,31 @@ def _grid_dims(grid: GridLike | None) -> tuple[int, int, int] | None:
     return None
 
 
-def is_shape_xyz(vol_shape: Sequence[int], grid: GridLike | None) -> bool:
-    dims = _grid_dims(grid)
-    if dims is None:
-        return False
-    if len(vol_shape) != 3:
-        return False
-    return tuple(int(s) for s in vol_shape) == dims
-
-
-def is_shape_zyx(vol_shape: Sequence[int], grid: GridLike | None) -> bool:
-    dims = _grid_dims(grid)
-    if dims is None:
-        return False
-    if len(vol_shape) != 3:
-        return False
-    return tuple(int(s) for s in vol_shape) == (dims[2], dims[1], dims[0])
-
-
 def infer_disk_axes(vol_shape: Sequence[int], grid: GridLike | None) -> str | None:
     """Infer on-disk axis order using grid heuristics.
 
     Returns "xyz", "zyx", or None if ambiguous.
+
+    Parameters
+    ----------
+    vol_shape : sequence of int
+        On-disk volume dimensions.
+    grid : Grid, dict or None
+        Grid dimensions used to distinguish xyz from zyx.
+
+    Returns
+    -------
+    str or None
+        Inferred xyz or zyx order; None when missing, inconsistent or ambiguous.
     """
     if len(vol_shape) != 3:
         return None
-    matches_xyz = is_shape_xyz(vol_shape, grid)
-    matches_zyx = is_shape_zyx(vol_shape, grid)
+    dims = _grid_dims(grid)
+    if dims is None:
+        return None
+    shape = tuple(int(s) for s in vol_shape)
+    matches_xyz = shape == dims
+    matches_zyx = shape == dims[::-1]
     if matches_xyz and matches_zyx:
         return None
     if matches_xyz:
@@ -147,7 +178,5 @@ __all__ = [
     "VOLUME_AXES_ATTR",
     "axes_to_perm",
     "infer_disk_axes",
-    "is_shape_xyz",
-    "is_shape_zyx",
     "transpose_volume",
 ]

@@ -24,6 +24,20 @@ def stack_view_poses(
     A geometry class may define ``stack_poses(n_views, dtype)`` to build the
     stack in one vectorised step (looked up on the class, so wrappers that
     forward attributes to a base geometry do not inherit it).
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Geometry implementing world-from-object poses.
+    n_views : int
+        Number of leading views to stack.
+    dtype : dtype, optional
+        Output dtype; defaults to float32.
+
+    Returns
+    -------
+    jax.Array
+        Pose stack with shape (n_views, 4, 4).
     """
     stack = getattr(type(geometry), "stack_poses", None)
     if callable(stack):

@@ -15,7 +15,23 @@ if TYPE_CHECKING:
 
 
 def normalize_axis_unit(axis_unit_lab: Sequence[float]) -> tuple[float, float, float]:
-    """Return a validated unit axis vector in lab/world coordinates."""
+    """Return a validated unit axis vector in lab/world coordinates.
+
+    Parameters
+    ----------
+    axis_unit_lab : sequence of float
+        Finite nonzero three-component lab-frame vector.
+
+    Returns
+    -------
+    tuple of float
+        Normalized rotation-axis direction.
+
+    Raises
+    ------
+    ValueError
+        If the vector has invalid shape, nonfinite values or negligible norm.
+    """
     axis = np.asarray(axis_unit_lab, dtype=np.float64)
     if axis.shape != (3,):
         raise ValueError(f"axis_unit_lab must have shape (3,), got {axis.shape}")
@@ -35,6 +51,22 @@ class RotationAxisGeometry:
     rays remain fixed in the world frame along +y and detector coordinates live in
     the world x/z detector plane. Only the per-view object pose changes: view
     ``i`` rotates the object about the axis by ``angles[i]``, in degrees.
+
+    Parameters
+    ----------
+    grid : Grid
+        Reconstruction voxel grid.
+    detector : Detector
+        Detector dimensions, pitches and physical centre.
+    angles : sequence of float
+        View rotation angles in degrees, in acquisition order.
+    axis_unit_lab : sequence of float
+        Nonzero finite lab-frame rotation-axis vector, normalized on construction.
+
+    Raises
+    ------
+    ValueError
+        If the rotation-axis vector is not finite, nonzero and three-dimensional.
     """
 
     grid: Grid
@@ -52,6 +84,21 @@ class RotationAxisGeometry:
         """Return the world-from-object pose for one view.
 
         Degree conversion uses host precision for lists and saved FP32 arrays alike.
+
+        Parameters
+        ----------
+        i : int
+            Zero-based view index.
+
+        Returns
+        -------
+        tuple of tuple of float
+            Row-major 4 x 4 homogeneous world-from-object transform.
+
+        Raises
+        ------
+        IndexError
+            If the view index is outside the angle sequence.
         """
         angle_deg = float(self.angles[i])
         theta = float(np.deg2rad(angle_deg))
@@ -64,6 +111,17 @@ class RotationAxisGeometry:
         return tuple(map(tuple, T))
 
     def rays_for_view(self, i: int) -> RayPair:
-        """Return detector rays for one view."""
+        """Return detector rays for one view.
+
+        Parameters
+        ----------
+        i : int
+            Zero-based view index.
+
+        Returns
+        -------
+        tuple of callable
+            Origin and unit-direction callbacks taking detector pixel indices (u, v).
+        """
         del i
         return _parallel_detector_rays(self.grid, self.detector)

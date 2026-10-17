@@ -157,7 +157,7 @@ class _Shares:
         return jax.lax.all_gather(rows, VIEWS, tiled=True)[: self.split.n]
 
     def mine(self, rows: jax.Array) -> jax.Array:
-        """This device's share of every view's rows."""
+        """Return this device's share of every view's rows."""
         if self.split is None:
             return rows
         padded = jnp.pad(rows, ((0, self.split.total - self.split.n), (0, 0)))

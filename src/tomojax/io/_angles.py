@@ -14,6 +14,23 @@ def load_angles(path: str | Path) -> np.ndarray:
     first column. Blank lines, ``#`` comments, and leading header lines are
     skipped. Once numeric data starts, a malformed row raises ``ValueError``
     with its line number. The caller must check the number of projection views.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        NPY, text or CSV sidecar with angles in its first column.
+
+    Returns
+    -------
+    numpy.ndarray
+        Finite nonempty float32 angles in degrees, in acquisition order.
+
+    Raises
+    ------
+    ValueError
+        If angles are empty, nonfinite, not a vector or contain malformed data rows.
+    OSError
+        If the file cannot be read.
     """
     sidecar = Path(path)
     if sidecar.suffix.lower() == ".npy":

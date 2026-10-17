@@ -56,6 +56,8 @@ benchmark = [
 dev = [
     "basedpyright>=1.34,<2",
     "import-linter>=2,<3",
+    "numpydoc>=1.11,<2",
+    "sphinx>=9,<10",
     "pre-commit>=4,<5",
     "pytest>=8,<9",
     "pytest-cov>=7,<8",
@@ -110,6 +112,8 @@ ignore = [
     "ANN401",
     "D105",
     "D107",
+    # Noun-phrase summaries remain valid for properties and result objects.
+    "D401",
     "PLR0913",
     "PLR2004",
     "TRY003",
@@ -125,7 +129,7 @@ combine-as-imports = true
 force-sort-within-sections = true
 
 [tool.ruff.lint.pydocstyle]
-convention = "google"
+convention = "numpy"
 
 [tool.ruff.lint.flake8-builtins]
 # `filter` names the FBP filter in tj.reconstruct and tomojax recon --filter.

@@ -32,6 +32,13 @@ class RegionEstimate:
     Projection samples, detector calibration and per-view poses are unchanged.
     ``info`` distinguishes a conditionally selected region from a broad survey;
     neither is a certificate of the object's physical support.
+
+    Parameters
+    ----------
+    scan : Scan
+        Scan with the proposed reconstruction grid; measurements are unchanged.
+    info : mapping
+        Selection evidence, uncertainty, memory budget and limitations.
     """
 
     scan: Scan
@@ -39,7 +46,13 @@ class RegionEstimate:
 
     @property
     def grid(self) -> Grid:
-        """The proposed reconstruction grid, also carried by ``scan``."""
+        """The proposed reconstruction grid, also carried by ``scan``.
+
+        Returns
+        -------
+        Grid
+            Proposed reconstruction grid carried by the scan.
+        """
         return self.scan.grid
 
 
@@ -264,6 +277,28 @@ def estimate_region(scan: Scan) -> RegionEstimate:
     this explicitly. The region is a conditional reconstruction choice, not physical
     support or an accuracy certificate. Inspect the reconstruction and independent views.
     No measured projections, poses, detector calibration or solver defaults are changed.
+
+    Parameters
+    ----------
+    scan : Scan
+        Calibrated oblique laminography scan of corrected line integrals.
+
+    Returns
+    -------
+    RegionEstimate
+        Resized scan and evidence distinguishing a selected region from a broad survey.
+
+    Raises
+    ------
+    ValueError
+        If the geometry is not calibrated oblique laminography.
+
+    Examples
+    --------
+    >>> import tomojax as tj
+    >>> scan = tj.load("laminography.nxs")  # doctest: +SKIP
+    >>> region = tj.estimate_region(scan)  # doctest: +SKIP
+    >>> recon = tj.reconstruct(region.scan, "cgls")  # doctest: +SKIP
     """
     if describe(scan.geometry)[0] != "lamino":
         raise ValueError("estimate_region requires a calibrated laminography scan")

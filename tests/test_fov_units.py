@@ -98,3 +98,12 @@ def test_cylinder_includes_voxels_exactly_on_a_diagonal_boundary(scale) -> None:
     coords = np.arange(11) - 5
     expected = coords[:, None] ** 2 + coords[None, :] ** 2 <= 25
     np.testing.assert_array_equal(cylindrical_mask_xy(grid, detector), expected)
+
+
+@pytest.mark.parametrize(
+    "crop", [grid_from_detector_fov, grid_from_detector_fov_cube, grid_from_detector_fov_slices]
+)
+def test_roi_keeps_placement_only_when_shape_is_unchanged(crop):
+    grid = Grid(9, 9, 9, 0.5, 0.5, 0.5, vol_origin=(2.0, 3.0, 4.0))
+    assert crop(grid, Detector(11, 11, 0.5, 0.5)) is grid
+    assert crop(grid, Detector(5, 5, 0.5, 0.5)) == Grid(5, 5, 5, 0.5, 0.5, 0.5)

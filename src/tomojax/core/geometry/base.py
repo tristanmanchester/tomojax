@@ -80,6 +80,24 @@ class Grid:
     ``vol_center`` can override that default centre while still deriving the
     voxel ``(0, 0, 0)`` location from the grid dimensions and voxel sizes. If
     both are provided, ``vol_origin`` is the authoritative placement.
+
+    Parameters
+    ----------
+    nx, ny, nz : int
+        Voxel counts along x, y and z.
+    vx, vy, vz : float
+        Voxel pitches in a consistent physical length unit.
+    vol_origin : tuple of float or None, optional
+        Physical centre of voxel (0, 0, 0); takes precedence over vol_center.
+    vol_center : tuple of float or None, optional
+        Physical grid centre when vol_origin is absent; defaults to (0, 0, 0).
+
+    Raises
+    ------
+    TypeError
+        If counts are not integers or placement coordinates are not real numbers.
+    ValueError
+        If a placement vector does not have three components.
     """
 
     nx: int
@@ -107,7 +125,13 @@ class Grid:
             )
 
     def to_dict(self) -> GridDict:
-        """Return JSON-compatible grid metadata."""
+        """Return JSON-compatible grid metadata.
+
+        Returns
+        -------
+        dict
+            Grid counts, voxel pitches and any explicit placement, ready for JSON.
+        """
         d = {
             "nx": int(self.nx),
             "ny": int(self.ny),
@@ -124,7 +148,18 @@ class Grid:
 
 
 def grid_volume_origin(grid: Grid) -> Vec3:
-    """Return the physical centre of voxel (0, 0, 0) for a grid."""
+    """Return the physical centre of voxel (0, 0, 0) for a grid.
+
+    Parameters
+    ----------
+    grid : Grid
+        Voxel grid with optional origin or centre.
+
+    Returns
+    -------
+    tuple of float
+        Physical (x, y, z) centre of voxel (0, 0, 0).
+    """
     if grid.vol_origin is not None:
         return grid.vol_origin
 
@@ -145,6 +180,22 @@ class Detector:
 
     ``center`` is the detector centre's ``(u, v)`` offset in its plane, in the
     same physical units as ``du`` and ``dv``.
+
+    Parameters
+    ----------
+    nu, nv : int
+        Detector column and row counts.
+    du, dv : float
+        Pixel pitches along u and v, in the geometry's physical length unit.
+    center : tuple of float, optional
+        Detector-plane (u, v) centre offset in physical units; defaults to zero.
+
+    Raises
+    ------
+    TypeError
+        If counts are not integers or centre coordinates are not real numbers.
+    ValueError
+        If center does not have two components.
     """
 
     nu: int
@@ -158,7 +209,13 @@ class Detector:
         object.__setattr__(self, "center", _coerce_fixed_tuple("center", self.center, 2))
 
     def to_dict(self) -> DetectorDict:
-        """Return JSON-compatible detector metadata."""
+        """Return JSON-compatible detector metadata.
+
+        Returns
+        -------
+        dict
+            Pixel counts, pitches and centre under the file key det_center.
+        """
         return {
             "nu": int(self.nu),
             "nv": int(self.nv),
@@ -169,7 +226,25 @@ class Detector:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Detector:
-        """Return the detector that a :meth:`to_dict` mapping describes."""
+        """Return the detector that a :meth:`to_dict` mapping describes.
+
+        Parameters
+        ----------
+        data : mapping
+            Metadata written by to_dict; absent det_center defaults to zero.
+
+        Returns
+        -------
+        Detector
+            Detector described by the metadata.
+
+        Raises
+        ------
+        KeyError
+            If pixel counts or pitches are missing.
+        ValueError
+            If the centre has the wrong number of coordinates.
+        """
         return cls(
             nu=int(data["nu"]),
             nv=int(data["nv"]),
@@ -216,7 +291,18 @@ class Geometry(Protocol):
     """
 
     def pose_for_view(self, i: int) -> PoseMatrix:
-        """Returns a 4x4 homogeneous transform world_from_object (row-major)."""
+        """Return a row-major world-from-object homogeneous transform.
+
+        Parameters
+        ----------
+        i : int
+            Zero-based view index.
+
+        Returns
+        -------
+        tuple of tuple of float
+            Row-major 4 x 4 homogeneous world-from-object transform.
+        """
 
 
 class ScanGeometry(Geometry, Protocol):
@@ -228,19 +314,48 @@ class ScanGeometry(Geometry, Protocol):
 
     @property
     def grid(self) -> Grid:
-        """The reconstruction grid."""
+        """The reconstruction grid.
+
+        Returns
+        -------
+        Grid
+            Reconstruction voxel grid.
+        """
         ...
 
     @property
     def detector(self) -> Detector:
-        """The detector."""
+        """The detector.
+
+        Returns
+        -------
+        Detector
+            Detector dimensions, pixel sizes and physical centre.
+        """
         ...
 
     @property
     def angles(self) -> Sequence[float]:
-        """Each view's rotation angle, in degrees."""
+        """Each view's rotation angle, in degrees.
+
+        Returns
+        -------
+        sequence of float
+            One rotation angle per view, in degrees.
+        """
         ...
 
     def rays_for_view(self, i: int) -> RayPair:
-        """World-frame ray callbacks for inspection (not used by the projectors)."""
+        """Return world-frame ray callbacks for inspection, not projection.
+
+        Parameters
+        ----------
+        i : int
+            Zero-based view index.
+
+        Returns
+        -------
+        tuple of callable
+            Origin and unit-direction callbacks taking detector pixel indices (u, v).
+        """
         ...
