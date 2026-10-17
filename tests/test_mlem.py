@@ -135,10 +135,10 @@ def test_large_sensitivity_cache_is_bounded_and_requires_reuse(monkeypatch):
     module = import_module("tomojax.recon.mlem")
     for free, fits in ((None, False), (2 * 2**30, False), (4 * 2**30, True)):
         monkeypatch.setattr(module, "device_free_memory_bytes", lambda free=free: free)
-        assert module._cache_sensitivities(300 * 2**20, 4, 4) == fits
-        assert not module._cache_sensitivities(300 * 2**20, 4, 1)
-    monkeypatch.setattr(module, "device_free_memory_bytes", lambda: 16 * 2**30)
-    assert not module._cache_sensitivities(1025 * 2**20, 4, 4)
+        assert module._cache_sensitivities(2**30, 4, 4, workspace_bytes=2 * 2**30) == fits
+        assert not module._cache_sensitivities(2**30, 4, 1, workspace_bytes=0)
+    assert not module._cache_sensitivities(3 * 2**30, 4, 4, workspace_bytes=0)
+    assert not module._cache_sensitivities(2**30, 4, 4, workspace_bytes=4 * 2**30)
 
 
 @pytest.mark.numerical

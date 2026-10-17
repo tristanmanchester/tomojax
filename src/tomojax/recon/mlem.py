@@ -36,13 +36,17 @@ if TYPE_CHECKING:
 _SENSITIVITY_CACHE_BYTES = 256 * 2**20
 
 
-def _cache_sensitivities(nbytes: int, subsets: int, iterations: int) -> bool:
+def _cache_sensitivities(
+    nbytes: int, subsets: int, iterations: int, *, workspace_bytes: int
+) -> bool:
     if subsets == 1 or nbytes <= _SENSITIVITY_CACHE_BYTES:
         return True
     if iterations <= 1:
         return False  # A single sweep cannot reuse the extra cached volumes.
     free = device_free_memory_bytes()
-    return free is not None and nbytes <= min(free // 8, 1024 * 2**20)
+    # A cache is only part of the compiled solve's live memory. Leave room
+    # for its working volumes/projections, and never use most of the free pool.
+    return free is not None and nbytes <= min(free // 2, free - workspace_bytes)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -64,8 +68,8 @@ class MLEMConfig:
     attenuation data is possible, but does not give it Poisson statistics.
     The projectors are the same matched pair as :class:`CGLSConfig`, with
     nonnegative interpolation weights. A single sensitivity is retained; multiple
-    subset sensitivities are cached within 256 MiB, or up to one eighth of
-    available memory (at most 1 GiB) when reused across multiple sweeps;
+    subset sensitivities are cached within 256 MiB, or up to half the available
+    memory with room for working buffers when reused across multiple sweeps;
     otherwise they are recomputed to bound memory use.
     """
 
@@ -115,9 +119,13 @@ def _solve(
     # A wholly unobserved voxel has no likelihood information: choose zero,
     # not an arbitrary unit activity. Visibility must include every subset;
     # a voxel missed by one subset can still be measured by another.
-    observed = (
-        jnp.any(sensitivities > 0, axis=0) if sensitivities is not None else jnp.zeros(shape, bool)
-    )
+    observed = jnp.zeros(shape, bool)
+    if sensitivities is not None:
+        # A stack-shaped > 0 comparison can retain a second full zero stack
+        # alongside the map's writable cache. Compare one volume at a time.
+        observed = jax.lax.fori_loop(
+            0, subsets, lambda i, seen: seen | (sensitivities[i] > 0), observed
+        )
 
     def step(k: jax.Array, state: tuple[jax.Array, jax.Array]) -> tuple[jax.Array, jax.Array]:
         volume, seen = state
@@ -201,7 +209,17 @@ def mlem(
     context = host_source(np.asarray(projections)) if stream else nullcontext(_device(projections))
     with context as data:
         # Query after these persistent inputs occupy their device storage.
-        cache = _cache_sensitivities(int(subsets * np.prod(shape) * 4), subsets, iterations)
+        volume_bytes = int(np.prod(shape)) * 4
+        image_bytes = detector.nv * detector.nu * 4
+        # Four volume buffers cover the iterate, update, current norm and
+        # visibility/output workspace. Resident data also gathers one subset;
+        # streamed data needs only its current predicted/measured view batches.
+        workspace = 4 * volume_bytes + 2 * min(batch, count) * image_bytes
+        if not stream:
+            workspace += count * image_bytes
+        cache = _cache_sensitivities(
+            subsets * volume_bytes, subsets, iterations, workspace_bytes=workspace
+        )
         volume, good = _solve(
             stack_view_poses(geometry, n), data, initial, support,
             jax.device_put(indices), jax.device_put(valid), jnp.int32(iterations), det_grid,
