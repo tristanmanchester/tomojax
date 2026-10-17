@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+Generic CUDA cone backprojection keeps inverse corner bounds conservative at
+FP32 pixel boundaries, retaining positive forward weights in its transpose.
+
 `tj.reconstruct(scan, "sirt")` adds matched SIRT and ordered-subset SART,
 with per-update lower/upper bounds and a reconstruction support mask. Axial
 Joseph solves share their exact two-dimensional normalization across rows

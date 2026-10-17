@@ -413,10 +413,17 @@ __device__ __forceinline__ void plane_tile(
             // The denominator is affine over the tile. If it crosses zero, its
             // footprint passes through infinity: the corners cannot bound it.
             bool unbounded = crosses_zero(denmin, denmax);
-            int ulo = unbounded ? ab[0] : max((int)ceilf(pixel_bound(umin, nu)), ab[0]);
-            int uhi = unbounded ? ab[1] : min((int)floorf(pixel_bound(umax, nu)), ab[1]);
-            int vlo = unbounded ? ab[2] : max((int)ceilf(pixel_bound(vmin, nv)), ab[2]);
-            int vhi = unbounded ? ab[3] : min((int)floorf(pixel_bound(vmax, nv)), ab[3]);
+            int ulo = ab[0], uhi = ab[1], vlo = ab[2], vhi = ab[3];
+            if (!unbounded) {
+                // Rounded forward crossings can lie just inside a voxel while
+                // an inverse corner rounds past an integer detector pixel.
+                // Round candidate bounds outwards; the forward cell and axis
+                // tests below still determine every interpolation weight.
+                ulo = max((int)floorf(pixel_bound(umin, nu)), ulo);
+                uhi = min((int)ceilf(pixel_bound(umax, nu)), uhi);
+                vlo = max((int)floorf(pixel_bound(vmin, nv)), vlo);
+                vhi = min((int)ceilf(pixel_bound(vmax, nv)), vhi);
+            }
             int wu = uhi - ulo + 1, wv = vhi - vlo + 1;
             if (wu > 0 && wv > 0) {
                 int runs = (wv + VRUN - 1) / VRUN;

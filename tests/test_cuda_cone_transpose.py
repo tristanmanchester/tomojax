@@ -297,3 +297,14 @@ def test_cuda_cone_dense_transpose_across_sparse_image_tile_seams(reverse_v):
             cone_backproject(images, coeff, grid, detector, backend="cuda", accumulate=initial)
         )
         np.testing.assert_allclose(actual, expected, rtol=0, atol=7e-7 * bound)
+
+
+@pytest.mark.gpu
+def test_cuda_cone_rounds_inverse_corner_bounds_outward():
+    grid, detector = Grid(1, 1, 1, 1, 1, 1), Detector(256, 256, 2, 2)
+    geometry = ConeGeometry(grid, detector, [45], ConeBeam(1024, 2048))
+    poses = geometry.poses().astype(np.float32)
+    poses[0, :3, :3] @= np.array([[1, 0, 0], [0, 1, -1e-6], [0, 1e-6, 1]], np.float32)
+    poses[0, :3, 3] = [75.462677, -215.025162, 33.546272]
+    frames = [beam_frame(geometry.beam, detector)]
+    _check_dense_transpose(grid, detector, frames, jnp.asarray(poses))
