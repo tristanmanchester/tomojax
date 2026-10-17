@@ -20,9 +20,11 @@ def mean_detector_pixels[T: (np.ndarray, jax.Array)](data: T, factor: int) -> T:
     data = data.astype(np.float32, copy=False)
     views, nv, nu = data.shape
     rows, cols = nv // factor, nu // factor
-    if isinstance(data, np.ndarray) and factor == 2 and data.flags.c_contiguous:
-        # Preserve the column-pair then row-pair FP32 reduction. NumPy's
-        # generic two-axis reduction cannot vectorize these short blocks well.
+    if isinstance(data, np.ndarray) and factor == 2 and data.strides[-1] == data.itemsize:
+        # Contiguous detector columns use a column-pair then row-pair FP32
+        # reduction, even when views are strided (for example ASTRA imports).
+        # Preserve that order; column-strided arrays can reduce in another order.
+        # NumPy's generic two-axis reduction cannot vectorize short blocks well.
         pixels = data[:, : rows * 2, : cols * 2]
         result = pixels[:, ::2, ::2] + pixels[:, ::2, 1::2]
         result += pixels[:, 1::2, ::2] + pixels[:, 1::2, 1::2]
