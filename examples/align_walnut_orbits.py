@@ -19,35 +19,8 @@ import argparse
 import logging
 from pathlib import Path
 
-import imageio.v3 as iio
-import numpy as np
-
+from _walnut import load_scan
 import tomojax as tj
-
-ROWS, COLUMNS, VIEWS = 972, 768, 1200
-
-
-def read(path: Path) -> np.ndarray:
-    """One TIFF as the scanner's portrait read-out, turned the way ASTRA expects."""
-    return np.transpose(np.flipud(np.asarray(iio.imread(path), np.float32)))
-
-
-def load_orbit(walnut: Path, orbit: int, every: int) -> tuple[np.ndarray, np.ndarray]:
-    """Line integrals ``(rows, views, columns)`` and ASTRA ``cone_vec`` rows of one orbit.
-
-    Projections are dark- and flat-corrected and log-transformed, and read in
-    reverse order to match the geometry file, as the authors' scripts do.
-    """
-    folder = walnut / "Projections" / f"tubeV{orbit}"
-    vectors = np.loadtxt(folder / "scan_geom_original.geom")[0:VIEWS:every]
-    dark = read(folder / "di000000.tif")
-    flat = np.mean([read(folder / f"io00000{k}.tif") for k in (0, 1)], axis=0) - dark
-    indices = range(VIEWS, 0, -every)
-    data = np.empty((ROWS, len(indices), COLUMNS), np.float32)
-    for view, index in enumerate(indices):
-        image = (read(folder / f"scan_{index:06d}.tif") - dark) / flat
-        data[:, view, :] = -np.log(np.clip(image, 1e-6, None))
-    return data, vectors
 
 
 def main() -> None:
@@ -56,21 +29,11 @@ def main() -> None:
     parser.add_argument("-o", "--output", type=Path, help="Save the reconstruction (.nxs)")
     parser.add_argument("--every", type=int, default=4, help="Use every Nth view")
     args = parser.parse_args()
-    logging.getLogger("tifffile").setLevel(logging.ERROR)  # a malformed tag, skipped
+    logging.getLogger("tifffile").setLevel(logging.CRITICAL)  # malformed optional tag, skipped
 
-    orbits = [load_orbit(args.walnut, orbit, args.every) for orbit in (1, 2, 3)]
-    data = np.concatenate([d for d, _ in orbits], axis=1)
-    vectors = np.concatenate([v for _, v in orbits])
-    # The reference reconstructions' volume: a 50.1 mm cube of 0.1 mm voxels.
-    window = {f"WindowMin{a}": -25.05 for a in "XYZ"} | {f"WindowMax{a}": 25.05 for a in "XYZ"}
-    scan = tj.Scan.from_astra(
-        data,
-        {"type": "cone_vec", "DetectorRowCount": ROWS, "DetectorColCount": COLUMNS,
-         "Vectors": vectors},
-        {"GridColCount": 501, "GridRowCount": 501, "GridSliceCount": 501, "option": window},
-    )  # fmt: skip
-    # The pixels sample the axis twice as finely as the voxels: bin them 2 x 2.
-    scan = scan.binned(2)
+    # The reference volume is a 50.1 mm cube of 0.1 mm voxels; detector
+    # pixels sample the axis twice as finely as the voxels, so bin them 2 x 2.
+    scan = load_scan(args.walnut, orbits=(1, 2, 3), every=args.every, binning=2, size=501)
     print(f"{len(scan.angles)} views of {scan.detector.nv} x {scan.detector.nu} pixels")
 
     # Per-view pose alignment of all three orbits together; levels 4 and 2 are

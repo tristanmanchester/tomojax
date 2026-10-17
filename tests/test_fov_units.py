@@ -104,6 +104,25 @@ def test_cylinder_includes_voxels_exactly_on_a_diagonal_boundary(scale) -> None:
     "crop", [grid_from_detector_fov, grid_from_detector_fov_cube, grid_from_detector_fov_slices]
 )
 def test_roi_keeps_placement_only_when_shape_is_unchanged(crop):
-    grid = Grid(9, 9, 9, 0.5, 0.5, 0.5, vol_origin=(2.0, 3.0, 4.0))
+    from tomojax.geometry import grid_volume_origin
+
+    # The grid sits off the axis in-plane but inside the detector's rows axially.
+    grid = Grid(9, 9, 9, 0.5, 0.5, 0.5, vol_origin=(2.0, 3.0, -2.0))
     assert crop(grid, Detector(11, 11, 0.5, 0.5)) is grid
-    assert crop(grid, Detector(5, 5, 0.5, 0.5)) == Grid(5, 5, 5, 0.5, 0.5, 0.5)
+    cropped = crop(grid, Detector(5, 5, 0.5, 0.5))
+    assert (cropped.nx, cropped.ny, cropped.nz) == (5, 5, 5)
+    origin = np.asarray(grid_volume_origin(cropped))
+    np.testing.assert_allclose(origin[:2] + 2 * 0.5, 0.0)  # in-plane centred on the axis
+
+
+@pytest.mark.parametrize(
+    "crop", [grid_from_detector_fov, grid_from_detector_fov_cube, grid_from_detector_fov_slices]
+)
+def test_axial_roi_follows_off_centre_detector_rows(crop):
+    from tomojax.geometry import grid_volume_origin
+
+    grid = Grid(12, 12, 10, 1, 1, 1, vol_center=(0, 0, 1))
+    detector = Detector(12, 2, 1, 1, center=(0, 2))
+    result = crop(grid, detector)
+    assert result.nz == 2 and result.vz == 1
+    assert grid_volume_origin(result)[2] == 1.5

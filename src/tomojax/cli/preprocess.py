@@ -60,7 +60,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "data", metavar="INPUT", help="Raw HDF5 file, Nikon .xtekct, or a TIFF file or folder"
     )
     add_output(parser, "Corrected scan to write (.nxs)")
-    add_config(parser)
+    add_config(parser, settings={"binning": 1})
     _ = parser.add_argument(
         "--flats", metavar="TIFF|LEVEL", help="Flat frames (TIFF file or folder), or one level"
     )
@@ -213,7 +213,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     from tomojax.io.api import load_angles, save_projection_quicklook
 
     parser = _build_parser()
-    args, _ = parse_args_with_config(parser, argv)
+    args, config_meta = parse_args_with_config(parser, argv)
+    settings = cast("dict[str, object]", config_meta["settings"])
     source, output = cast("str", args.data), cast("str", args.out)
     flats = _level_or_path(cast("str | None", args.flats))
     darks = _level_or_path(cast("str | None", args.darks))
@@ -251,7 +252,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             frames = frames.selected(keep)
         if crop is not None:
             frames = frames.cropped(*detector_block(crop))
-        scan = frames.corrected(*steps, epsilon=cast("float", args.epsilon))
+        scan = frames.corrected(
+            *steps,
+            epsilon=cast("float", args.epsilon),
+            binning=cast("int", settings.get("binning", 1)),
+        )
     except (KeyError, ValueError, OSError) as exc:
         return fail("preprocess", str(exc).strip("'\""))
     tj.save(output, scan)

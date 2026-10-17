@@ -107,6 +107,13 @@ read, preparation, alignment, inverse and whole-workflow
 times. It writes nothing unless `-o slices.npz` is supplied; that archive holds
 only central physical-scale slices and the returned detector-frame poses.
 
+## Preview a real cone-beam orbit on a CPU
+
+[import_walnut.py](import_walnut.py) prepares a small single-orbit FIPS walnut
+scan for FDK or an iterative reconstruction, without ASTRA or a GPU. It uses
+shared TIFF/geometry loading with the multi-orbit example below. Follow the
+[complete Python and CLI commands](../docs/lab-ct.md#try-one-fips-walnut-orbit-on-a-cpu).
+
 ## Bring a real multi-orbit scan into register
 
 This one needs data: download a walnut from the FIPS collection (Der

@@ -72,6 +72,7 @@ class tomojax.Grid(
         vol_origin: 'Vec3 | None' = None,
         vol_center: 'Vec3 | None' = None,
     ) -> None
+    .resampled(self, shape: 'tuple[int, int, int]') -> 'Grid'
     .to_dict(self) -> 'GridDict'
 class tomojax.LaminographyGeometry(
         grid: 'Grid',
@@ -252,6 +253,7 @@ class tomojax.geometry.Grid(
         vol_origin: 'Vec3 | None' = None,
         vol_center: 'Vec3 | None' = None,
     ) -> None
+    .resampled(self, shape: 'tuple[int, int, int]') -> 'Grid'
     .to_dict(self) -> 'GridDict'
 class tomojax.geometry.LaminographyGeometry(
         grid: 'Grid',

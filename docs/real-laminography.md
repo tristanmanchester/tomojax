@@ -46,8 +46,9 @@ uv run --no-sync tomojax import ./projections --angles angles.csv \
 
 `import` does not apply flat/dark correction or a logarithm. It records a
 centred detector and no grid. The grid is chosen at reconstruction, with
-voxels of the detector pitch: `tomojax recon --grid 256 256 128` reconstructs
-256 × 256 × 128 voxels of 0.65. `tomojax align --mode cor` estimates a
+voxels of the detector pitch by default. `tomojax recon --grid 256 256 128`
+resamples the selected field of view to 256 × 256 × 128 voxels; their spacing
+changes to preserve that physical extent. `tomojax align --mode cor` estimates a
 centre-of-rotation offset. Detector and voxel pitch share a physical length
 unit; Python's `Detector.center` also uses physical lengths, so an offset
 of 2 pixels at pitch 0.65 is a `center` of 1.3.

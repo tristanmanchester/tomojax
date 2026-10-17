@@ -322,17 +322,26 @@ def _base_geometry(
             axis_unit=None if axis is None else tuple(float(x) for x in axis),  # type: ignore[arg-type]
         )
     if meta.get("axis_unit_lab") is not None:
+        axis = normalize_axis_unit(meta["axis_unit_lab"])  # type: ignore[arg-type]
+        # Setup calibration records even an unchanged axial direction. Keep its
+        # canonical model: this has no laminographic missing cone and supports
+        # the same axial inverses as a scan without redundant axis metadata.
+        if axis == (0.0, 0.0, 1.0):
+            return ParallelGeometry(grid=grid, detector=detector, angles=angles)
         return RotationAxisGeometry(
             grid=grid,
             detector=detector,
             angles=angles,
-            axis_unit_lab=normalize_axis_unit(meta["axis_unit_lab"]),  # type: ignore[arg-type]
+            axis_unit_lab=axis,
         )
 
     if gtype == "parallel":
         return ParallelGeometry(grid=grid, detector=detector, angles=angles)
 
     tilt_deg = float(meta.get("tilt_deg", 30.0))
+    # An explicit zero tilt also has the canonical axial poses.
+    if tilt_deg == 0.0:
+        return ParallelGeometry(grid=grid, detector=detector, angles=angles)
     tilt_about = str(meta.get("tilt_about", "x"))
     return LaminographyGeometry(
         grid=grid,
@@ -351,7 +360,7 @@ def _with_detector_roll_metadata(
     if detector_roll is None:
         return geom
     roll = float(detector_roll)
-    if not np.isfinite(roll):
+    if not np.isfinite(roll) or roll == 0.0:
         return geom
     return DetectorRollGeometry(base=geom, detector_roll_deg=roll)
 

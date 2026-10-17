@@ -813,3 +813,23 @@ def test_inspect_and_preview_share_raw_acquisition_discovery(tmp_path, capsys, l
     np.testing.assert_array_equal(
         iio.imread(previews / "projection.png"), scale_to_uint8(sample * 2)
     )
+
+
+@pytest.mark.parametrize("roi", ["auto", "off", "cyl"])
+def test_cli_grid_resamples_the_cropped_scan_field_of_view(tmp_path, roi):
+    import tomojax as tj
+    from tomojax.geometry import grid_volume_origin
+
+    grid, detector = tj.Grid(12, 12, 10, 1, 1, 1), tj.Detector(12, 10, 1, 1)
+    scan = tj.Scan(
+        np.ones((20, 10, 12), np.float32),
+        tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 20, endpoint=False)),
+    ).cropped(slice(6, 8), slice(None))
+    src, out = tmp_path / "scan.nxs", tmp_path / "recon.nxs"
+    tj.save(src, scan)
+    assert main(["recon", str(src), "-o", str(out), "--grid", "6", "6", "2", "--roi", roi]) == 0
+    result = tj.load_reconstruction(out)
+    assert (result.grid.vx, result.grid.vy, result.grid.vz) == (2, 2, 5 if roi == "off" else 1)
+    assert grid_volume_origin(result.grid)[2] == (-2.5 if roi == "off" else 1.5)
+    if roi == "cyl":
+        assert not np.asarray(result.volume)[0, 0, :].any()

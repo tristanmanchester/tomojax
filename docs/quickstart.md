@@ -112,7 +112,38 @@ features can also be changed. Missing information at dead pixels is not recovere
 `corrected(..., binning=2)` averages 2 x 2 detector blocks of the line integrals,
 as `scan.binned(2)` does. With only `Stripes` and the like after the log, it
 bins slabs of rows read straight from an uncompressed file, so the unbinned
-stack never reaches host memory.
+stack never reaches host memory. The CLI accepts the same factor as an expert
+config key:
+
+```bash
+printf 'binning = 4\n' > preview.toml
+uv run --no-sync tomojax preprocess raw.nxs -o binned.nxs --config preview.toml
+```
+
+Binning reduces detector sampling, not the reconstruction grid. In Python,
+pass a coarser `grid=` to `tj.reconstruct` when you also want larger voxels;
+On the CLI, `--grid NX NY NZ` resamples the field of view selected by `--roi`
+to those counts, preserving its physical extent. Python uses
+`scan.grid.resampled((NX, NY, NZ))` to do the same without changing any data.
+
+For a small **axial parallel-beam** preview, use one voxel per binned detector
+pixel and retain the selected detector rows' height. This explicit grid avoids
+upsampling the binned data back onto the original fine grid:
+
+```python
+import tomojax as tj
+
+scan = tj.load_frames("raw.nxs").selected(slice(None, None, 4)).corrected(binning=8)
+scan = tj.estimate_center(scan)
+d = scan.detector
+grid = tj.Grid(d.nu, d.nu, d.nv, d.du, d.du, d.dv, vol_center=(0, 0, d.center[1]))
+tj.save("preview.nxs", tj.reconstruct(scan, grid=grid))
+```
+
+Inspect it with `tomojax inspect preview.nxs --preview previews`. Use enough
+views for the binned width; fewer views can create streaks. This grid recipe
+is not for cone beams or tilted axes, where magnification or the sample's
+extent along the axis also matters.
 
 For calibrated lens distortion, pass
 `RadialDistortion(center=(column, row), coefficients=(c0, c1, ...))` from
@@ -218,7 +249,9 @@ reads one disk slice at a time, avoiding a full-volume load.
 Without grid/ROI overrides, automatic mode leaves region selection to the
 Python workflow. With an explicit method, the default `--roi auto` may crop
 to the detector field of view; `--roi off` preserves the recorded grid.
-`--grid NX NY NZ` changes dimensions while keeping the selected voxel spacing.
+`--grid NX NY NZ` changes voxel counts and spacing together, preserving the
+selected physical extent. Use `--roi off` to retain the whole recorded field of
+view, or let `--roi auto` restrict it to the measured detector window first.
 Automatic policies that cannot honor an override require an explicit method.
 Check both field of view and physical units before comparing reconstructions.
 `--roi cyl` also zeroes the volume outside the cylinder every view sees.

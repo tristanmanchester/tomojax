@@ -420,3 +420,14 @@ def test_iterative_reconstruction_suggests_binning_a_detector_finer_than_the_gri
             tj.Scan(np.zeros((12, 40, 40), np.float32), tj.ConeGeometry(grid, fine, angles, beam)),
             "fbp",
         )
+
+
+def test_parallel_center_alignment_stays_axial_after_save(tmp_path):
+    scan = _shifted_scan(8)
+    result = tj.align(scan, mode="cor", levels=(1,))
+    tj.save(tmp_path / "aligned.nxs", result)
+    for aligned in (result.scan, tj.load(tmp_path / "aligned.nxs")):
+        nominal = tj.ParallelGeometry(aligned.grid, aligned.detector, aligned.angles)
+        expected = tj.project(nominal, _phantom(8))
+        np.testing.assert_allclose(tj.project(aligned.geometry, _phantom(8)), expected, atol=1e-5)
+        assert tj.reconstruct(aligned).method == "fbp"

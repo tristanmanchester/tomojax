@@ -130,8 +130,10 @@ result = tj.align(scan, mode="pose", grid=region)
 assert result.scan.grid == region
 ```
 
-On the command line, `--roi` (`auto`, `off`, `cube`, `bbox`, `cyl`) and `--grid`
-choose the grid.
+On the command line, `--roi` (`auto`, `off`, `cube`, `bbox`, `cyl`) selects
+the field of view; `--grid NX NY NZ` resamples that physical extent to the
+requested voxel counts. In Python, `scan.grid.resampled((NX, NY, NZ))` makes a
+coarser or finer grid of the same extent to pass as `grid=`.
 
 ### Resume an interrupted alignment
 

@@ -207,7 +207,7 @@ def test_axis_pose_stack_accepts_array_like_inputs(as_array):
 
 def test_grid_from_detector_fov_slices_preserves_grid_when_no_crop_needed() -> None:
     grid = Grid(nx=32, ny=32, nz=16, vx=1.0, vy=1.0, vz=1.0, vol_origin=(10.0, 20.0, 30.0))
-    detector = Detector(nu=64, nv=64, du=1.0, dv=1.0)
+    detector = Detector(nu=128, nv=128, du=1.0, dv=1.0)
 
     cropped = grid_from_detector_fov_slices(grid, detector)
 
@@ -238,3 +238,22 @@ def test_disk_axis_inference_preserves_ambiguity_and_missing_metadata():
     assert infer_disk_axes((3, 5, 3), {**grid, "nz": 3}) is None
     assert infer_disk_axes((3, 5), grid) is None
     assert infer_disk_axes((3, 5, 7), None) is None
+
+
+@pytest.mark.parametrize(
+    "placement",
+    [{}, {"vol_center": (3, -2, 1)}, {"vol_origin": (2, 4, -3), "vol_center": (9, 9, 9)}],
+)
+def test_grid_resampling_preserves_cell_edges_and_placement(placement):
+    from tomojax.geometry import grid_volume_origin
+
+    grid = Grid(11, 8, 5, 0.7, 1.3, 2.1, **placement)
+    resampled = grid.resampled((4, 13, 3))
+    old_pitch = np.array([grid.vx, grid.vy, grid.vz])
+    new_pitch = np.array([resampled.vx, resampled.vy, resampled.vz])
+    np.testing.assert_allclose(new_pitch * [4, 13, 3], old_pitch * [11, 8, 5])
+    np.testing.assert_allclose(
+        np.array(grid_volume_origin(resampled)) - new_pitch / 2,
+        np.array(grid_volume_origin(grid)) - old_pitch / 2,
+    )
+    assert grid.resampled((11, 8, 5)) is grid

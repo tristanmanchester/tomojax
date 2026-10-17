@@ -129,7 +129,7 @@ def build_parser() -> argparse.ArgumentParser:
         nargs=3,
         metavar=("NX", "NY", "NZ"),
         default=None,
-        help="Reconstruct NX x NY x NZ voxels of the scan's voxel size",
+        help="Resample the selected field of view to NX x NY x NZ voxels",
     )
     _ = p.add_argument(
         "--checkpoint",
