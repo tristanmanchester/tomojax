@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -317,3 +318,27 @@ def test_projector_traversal_without_det_grid_does_not_use_host_cache(
     )
 
     assert result.shape == (2, 2)
+
+
+@pytest.mark.parametrize(("backend", "auto"), [("cpu", "fp32"), ("gpu", "fp16"), ("tpu", "bf16")])
+def test_pallas_gather_aliases_match_projector_precision(monkeypatch, backend, auto) -> None:
+    monkeypatch.setattr(jax, "default_backend", lambda: backend)
+    for aliases, canonical, dtype in (
+        (("fp32", "float32", "single"), "fp32", jnp.float32),
+        (("fp16", "float16", "half"), "fp16", jnp.float16),
+        (("bf16", "bfloat16"), "bf16", jnp.bfloat16),
+    ):
+        for alias in aliases:
+            assert projector.resolve_gather_target(alias.upper()) == dtype
+            metadata = pallas_api.pallas_projector_variant_metadata(gather_dtype=alias.upper())
+            assert metadata["gather_dtype"] == canonical
+    assert pallas_api.pallas_projector_variant_metadata(gather_dtype="auto")["gather_dtype"] == auto
+
+
+@pytest.mark.parametrize("precision", [None, "unsupported"])
+def test_pallas_gather_errors_keep_backend_context(precision) -> None:
+    with pytest.raises(ValueError) as jax_error:
+        projector.resolve_gather_target(precision)
+    with pytest.raises(pallas_api.PallasProjectorUnsupported) as pallas_error:
+        pallas_api.pallas_projector_variant_metadata(gather_dtype=precision)
+    assert str(pallas_error.value) == f"pallas_projector_unsupported: {jax_error.value}"

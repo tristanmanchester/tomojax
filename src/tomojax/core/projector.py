@@ -17,6 +17,7 @@ import numpy as np
 from tomojax.core.backend_policy import cuda_backend
 from tomojax.core.pallas_resolver import resolve_pallas_callable
 
+from ._gather import prepare_volume_for_gather, resolve_gather_target
 from .backend_policy import ProjectorBackendInput, normalize_projector_backend
 from .compilation_cache import enable_persistent_compilation_cache
 from .geometry.base import Detector, Geometry, Grid, ScanGeometry, grid_volume_origin
@@ -134,35 +135,6 @@ def get_detector_grid_device(det: Detector) -> tuple[jnp.ndarray, jnp.ndarray]:
     """
     X_np, Z_np = _build_detector_grid(det)
     return jnp.asarray(X_np, dtype=jnp.float32), jnp.asarray(Z_np, dtype=jnp.float32)
-
-
-def _resolve_gather_target(gather_dtype: str) -> jnp.dtype:
-    """Resolve the gather/interpolation dtype for the forward projector."""
-    if not isinstance(gather_dtype, str):
-        raise ValueError(f"gather_dtype must be a string; got {type(gather_dtype).__name__}")
-    gd = gather_dtype.lower()
-    if gd == "auto":
-        platform = jax.default_backend()
-        if platform in ("gpu", "tpu"):
-            return jnp.bfloat16 if platform == "tpu" else jnp.float16
-        return jnp.float32
-    if gd in ("bf16", "bfloat16"):
-        return jnp.bfloat16
-    if gd in ("fp16", "float16", "half"):
-        return jnp.float16
-    if gd in ("fp32", "float32", "single"):
-        return jnp.float32
-    raise ValueError(
-        "gather_dtype must be one of 'auto', 'fp32', 'float32', 'single', "
-        "'bf16', 'bfloat16', 'fp16', 'float16', or 'half'; "
-        f"got {gather_dtype!r}"
-    )
-
-
-def _prepare_volume_for_gather(volume: jnp.ndarray, gather_dtype: str) -> jnp.ndarray:
-    target = _resolve_gather_target(gather_dtype)
-    vol_cast = volume if volume.dtype == target else volume.astype(target)
-    return jnp.ravel(vol_cast, order="C")
 
 
 def _resolve_detector_grid(
@@ -501,7 +473,7 @@ def forward_project_view_T(
     validate_detector(detector, "forward_project_view_T")
     validate_detector_grid(det_grid, detector, context="forward_project_view_T")
     validate_pose_matrix(T, context="forward_project_view_T")
-    recon_flat = _prepare_volume_for_gather(vol, gather_dtype)
+    recon_flat = prepare_volume_for_gather(vol, gather_dtype)
     ix0, iy0, iz0, dix, diy, diz, n_steps_ray, step_size32, n_steps, n_rays = (
         _projector_traversal_state(
             T,
@@ -590,7 +562,7 @@ def _backproject_rays(
         acc_flat = _trilinear_scatter_add(acc_flat, step_vals, ix, iy, iz, nx, ny, nz)
         return (acc_flat, ix + dix, iy + diy, iz + diz), None
 
-    acc_dtype = _resolve_gather_target(gather_dtype)
+    acc_dtype = resolve_gather_target(gather_dtype)
     init = (
         jnp.zeros((nx * ny * nz,), dtype=acc_dtype),
         ix0,
@@ -722,7 +694,7 @@ def sum_backproject_views_T(
 
     if int(n_views) == 1:
         return backproject_one(T_all[0], img[0])
-    if _resolve_gather_target(gather_dtype) != jnp.float32:
+    if resolve_gather_target(gather_dtype) != jnp.float32:
         # Half-precision transposes round each view's accumulation before the
         # fp32 reduction; combining those accumulators changes that contract.
         return jnp.sum(jax.vmap(backproject_one)(T_all, img), axis=0, dtype=jnp.float32)
