@@ -13,7 +13,7 @@ import numpy as np
 
 from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
 from tomojax.core.projector import _projector_traversal_state, _resolve_n_steps
-from tomojax.core.validation import validate_detector, validate_pose_matrix, validate_volume
+from tomojax.core.validation import validate_detector, validate_pose_matrix
 
 from ._pallas_config import (
     _KERNEL_VARIANT_IDS,
@@ -21,12 +21,12 @@ from ._pallas_config import (
     PallasProjectorTraversalMetadata,
     PallasProjectorUnsupported,
     _ensure_canonical_detector_grid,
-    _ensure_float32_volume,
     _normalize_gather_dtype,
     _normalize_state_mode,
     _prepare_volume_for_pallas_gather,
     _resolve_effective_pallas_n_steps,
     _unsupported,
+    _validate_cached_volume,
     _validate_public_call,
     pallas_projector_actual_variant_metadata,
 )
@@ -197,21 +197,9 @@ class BoundForwardProjectViewTPallas:
 
     def __call__(self, volume: jnp.ndarray) -> jnp.ndarray:
         """Project ``volume`` with the cached single-view traversal state."""
-        nx, ny, nz = validate_volume(
-            volume,
-            Grid(nx=self.state.nx, ny=self.state.ny, nz=self.state.nz, vx=1.0, vy=1.0, vz=1.0),
-            context="BoundForwardProjectViewTPallas.__call__",
-            name="volume",
+        _validate_cached_volume(
+            self.state.traversal, volume, context="BoundForwardProjectViewTPallas.__call__"
         )
-        _ensure_float32_volume(volume)
-        if (nx, ny, nz) != (self.state.nx, self.state.ny, self.state.nz):
-            raise PallasProjectorUnsupported(
-                _unsupported(
-                    "volume shape does not match cached traversal state: "
-                    f"got {(nx, ny, nz)}, expected "
-                    f"{(self.state.nx, self.state.ny, self.state.nz)}"
-                )
-            )
         return self._call(
             self.state.ix0,
             self.state.iy0,
@@ -343,20 +331,9 @@ def forward_project_view_T_pallas_with_state(
     unroll: int | None = None,
 ) -> jnp.ndarray:
     """Forward project with a prepared traversal state using the experimental Pallas path."""
-    nx, ny, nz = validate_volume(
-        volume,
-        Grid(nx=state.nx, ny=state.ny, nz=state.nz, vx=1.0, vy=1.0, vz=1.0),
-        context="forward_project_view_T_pallas_with_state",
-        name="volume",
+    _validate_cached_volume(
+        state.traversal, volume, context="forward_project_view_T_pallas_with_state"
     )
-    _ensure_float32_volume(volume)
-    if (nx, ny, nz) != (state.nx, state.ny, state.nz):
-        raise PallasProjectorUnsupported(
-            _unsupported(
-                "volume shape does not match cached traversal state: "
-                f"got {(nx, ny, nz)}, expected {(state.nx, state.ny, state.nz)}"
-            )
-        )
     if not interpret and jax.default_backend() == "cpu":
         raise PallasProjectorUnsupported(
             _unsupported("real Pallas lowering is unavailable on CPU; pass interpret=True")

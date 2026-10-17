@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import jax.numpy as jnp
@@ -71,6 +71,20 @@ def _opts(options: PallasProjectorOptions | None) -> PallasProjectorOptions:
     return PallasProjectorOptions() if options is None else options
 
 
+def _projector_kwargs(options: PallasProjectorOptions) -> dict[str, Any]:
+    """Forward shared kernel options without copying detector-coordinate arrays."""
+    return {
+        "step_size": options.step_size,
+        "n_steps": options.n_steps,
+        "gather_dtype": options.gather_dtype,
+        "det_grid": options.det_grid,
+        "tile_shape": options.tile_shape,
+        "num_warps": options.num_warps,
+        "kernel_variant": options.kernel_variant,
+        "layout_variant": options.layout_variant,
+    }
+
+
 def _opts_with_overrides(
     options: PallasProjectorOptions | None,
     *,
@@ -122,16 +136,9 @@ def forward_project_view_T_pallas(
         grid,
         detector,
         volume,
-        step_size=opts.step_size,
-        n_steps=opts.n_steps,
+        **_projector_kwargs(opts),
         unroll=opts.unroll,
-        gather_dtype=opts.gather_dtype,
-        det_grid=opts.det_grid,
         interpret=opts.interpret,
-        tile_shape=opts.tile_shape,
-        num_warps=opts.num_warps,
-        kernel_variant=opts.kernel_variant,
-        layout_variant=opts.layout_variant,
         state_mode=opts.state_mode,
     )
 
@@ -149,16 +156,9 @@ def bind_forward_project_view_T_pallas(
         T,
         grid,
         detector,
-        step_size=opts.step_size,
-        n_steps=opts.n_steps,
+        **_projector_kwargs(opts),
         unroll=opts.unroll,
-        gather_dtype=opts.gather_dtype,
-        det_grid=opts.det_grid,
         interpret=opts.interpret,
-        tile_shape=opts.tile_shape,
-        num_warps=opts.num_warps,
-        kernel_variant=opts.kernel_variant,
-        layout_variant=opts.layout_variant,
         block_state=opts.block_state,
     )
 
@@ -202,16 +202,9 @@ def forward_project_views_T_pallas(
         grid,
         detector,
         volume,
-        step_size=opts.step_size,
-        n_steps=opts.n_steps,
+        **_projector_kwargs(opts),
         unroll=opts.unroll,
-        gather_dtype=opts.gather_dtype,
-        det_grid=opts.det_grid,
         interpret=opts.interpret,
-        tile_shape=opts.tile_shape,
-        num_warps=opts.num_warps,
-        kernel_variant=opts.kernel_variant,
-        layout_variant=opts.layout_variant,
         state_mode=opts.state_mode,
     )
 
@@ -229,16 +222,9 @@ def bind_forward_project_views_T_pallas(
         T_stack,
         grid,
         detector,
-        step_size=opts.step_size,
-        n_steps=opts.n_steps,
+        **_projector_kwargs(opts),
         unroll=opts.unroll,
-        gather_dtype=opts.gather_dtype,
-        det_grid=opts.det_grid,
         interpret=opts.interpret,
-        tile_shape=opts.tile_shape,
-        num_warps=opts.num_warps,
-        kernel_variant=opts.kernel_variant,
-        layout_variant=opts.layout_variant,
         block_state=opts.block_state,
     )
 
@@ -258,16 +244,9 @@ def bind_forward_project_residual_sse_T_pallas(
         grid,
         detector,
         target,
-        step_size=opts.step_size,
-        n_steps=opts.n_steps,
+        **_projector_kwargs(opts),
         unroll=opts.unroll,
-        gather_dtype=opts.gather_dtype,
-        det_grid=opts.det_grid,
         interpret=opts.interpret,
-        tile_shape=opts.tile_shape,
-        num_warps=opts.num_warps,
-        kernel_variant=opts.kernel_variant,
-        layout_variant=opts.layout_variant,
         block_state=opts.block_state,
     )
 
@@ -316,16 +295,9 @@ def forward_project_loss_and_grad_T_pallas(
         volume,
         target,
         weights=weights,
-        step_size=opts.step_size,
-        n_steps=opts.n_steps,
+        **_projector_kwargs(opts),
         unroll=opts.unroll,
-        gather_dtype=opts.gather_dtype,
-        det_grid=opts.det_grid,
         interpret=opts.interpret,
-        tile_shape=opts.tile_shape,
-        num_warps=opts.num_warps,
-        kernel_variant=opts.kernel_variant,
-        layout_variant=opts.layout_variant,
         compute_loss=compute_loss,
     )
 
@@ -347,16 +319,9 @@ def forward_project_residual_sse_T_pallas(
         detector,
         volume,
         target,
-        step_size=opts.step_size,
-        n_steps=opts.n_steps,
+        **_projector_kwargs(opts),
         unroll=opts.unroll,
-        gather_dtype=opts.gather_dtype,
-        det_grid=opts.det_grid,
         interpret=opts.interpret,
-        tile_shape=opts.tile_shape,
-        num_warps=opts.num_warps,
-        kernel_variant=opts.kernel_variant,
-        layout_variant=opts.layout_variant,
         state_mode=opts.state_mode,
     )
 
@@ -376,14 +341,7 @@ def pallas_projector_unsupported_reason(
         grid,
         detector,
         volume,
-        step_size=opts.step_size,
-        n_steps=opts.n_steps,
-        gather_dtype=opts.gather_dtype,
-        det_grid=opts.det_grid,
-        tile_shape=opts.tile_shape,
-        num_warps=opts.num_warps,
-        kernel_variant=opts.kernel_variant,
-        layout_variant=opts.layout_variant,
+        **_projector_kwargs(opts),
         state_mode=opts.state_mode,
     )
 
@@ -403,14 +361,7 @@ def pallas_projector_sinogram_unsupported_reason(
         grid,
         detector,
         volume,
-        step_size=opts.step_size,
-        n_steps=opts.n_steps,
-        gather_dtype=opts.gather_dtype,
-        det_grid=opts.det_grid,
-        tile_shape=opts.tile_shape,
-        num_warps=opts.num_warps,
-        kernel_variant=opts.kernel_variant,
-        layout_variant=opts.layout_variant,
+        **_projector_kwargs(opts),
         state_mode=opts.state_mode,
     )
 

@@ -357,3 +357,68 @@ def test_stack_traversal_metadata_matches_longest_view(step_size) -> None:
     )
     assert stacked["resolved_n_steps"] == single[0]["resolved_n_steps"]
     assert stacked["effective_pallas_n_steps"] == max(x["effective_pallas_n_steps"] for x in single)
+
+
+@pytest.mark.parametrize("stack", [False, True])
+def test_pallas_binding_forwards_options_without_copying_detector_grid(monkeypatch, stack) -> None:
+    name = "bind_forward_project_views_T_pallas" if stack else "bind_forward_project_view_T_pallas"
+    captured = {}
+    sentinel = object()
+
+    def bind(*args, **kwargs):
+        captured.update(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(pallas_api, f"_{name}", bind)
+    coordinates = (jnp.arange(4, dtype=jnp.float32), jnp.zeros(4, dtype=jnp.float32))
+    options = pallas_api.PallasProjectorOptions(det_grid=coordinates, block_state=False, unroll=2)
+    pose, grid, detector, _ = _tiny_projection_case()
+    assert (
+        getattr(pallas_api, name)(pose[None] if stack else pose, grid, detector, options=options)
+        is sentinel
+    )
+    assert captured["det_grid"] is coordinates
+    assert captured["block_state"] is False and captured["unroll"] == 2
+    assert "state_mode" not in captured
+
+
+@pytest.mark.parametrize("stack", [False, True])
+def test_cached_pallas_volume_validation_preserves_context(stack) -> None:
+    pose, grid, detector, volume = _tiny_projection_case()
+    suffix = "views" if stack else "view"
+    bind = getattr(pallas_api, f"bind_forward_project_{suffix}_T_pallas")
+    project = getattr(pallas_api, f"forward_project_{suffix}_T_pallas_with_state")
+    bound = bind(pose[None] if stack else pose, grid, detector, options=_tiny_pallas_options())
+    for call, context in (
+        (
+            bound,
+            "forward_project_views_T_pallas_with_state"
+            if stack
+            else "BoundForwardProjectViewTPallas",
+        ),
+        (
+            lambda x: project(bound.state, x, interpret=True),
+            f"forward_project_{suffix}_T_pallas_with_state",
+        ),
+    ):
+        with pytest.raises(ValueError, match=context):
+            call(volume[:1])
+        with pytest.raises(
+            pallas_api.PallasProjectorUnsupported, match="volume dtype must be float32"
+        ):
+            call(volume.astype(jnp.float16))
+    support = (
+        pallas_api.pallas_projector_sinogram_unsupported_reason
+        if stack
+        else pallas_api.pallas_projector_unsupported_reason
+    )
+    reason = support(
+        pose[None] if stack else pose,
+        grid,
+        detector,
+        volume,
+        options=pallas_api.PallasProjectorOptions(
+            state_mode="cached", layout_variant="detector_uv"
+        ),
+    )
+    assert "cached traversal state currently supports layout_variant='detector_vu' only" in reason
