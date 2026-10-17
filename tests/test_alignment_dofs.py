@@ -137,3 +137,10 @@ def test_normalized_angular_bounds_survive_configuration_copies() -> None:
     for _ in range(3):
         cfg = replace(cfg, bounds=normalize_bounds(cfg.bounds))
         assert cfg.bounds == expected
+
+
+@pytest.mark.parametrize("value", [" ALPHA,dx,, DZ ", ["ALPHA,dx", " DZ "]])
+def test_dof_tokens_keep_order_and_reject_repeated_names(value):
+    assert normalize_alignment_dofs(value) == ("alpha", "dx", "dz")
+    with pytest.raises(ValueError, match="Duplicate alignment DOF for chosen: 'alpha'"):
+        normalize_alignment_dofs(["alpha", " ALPHA "], option_name="chosen")

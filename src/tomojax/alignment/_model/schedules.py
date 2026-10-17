@@ -45,6 +45,16 @@ PUBLIC_SCHEDULE_PRESETS = (
 )
 
 
+def _stage_active_dofs(schedule: AlignmentSchedule | ResolvedAlignmentSchedule) -> tuple[str, ...]:
+    """Return the first-seen union for either declared or resolved stages."""
+    seen: list[str] = []
+    for stage in schedule.stages:
+        for dof in stage.active_dofs:
+            if dof not in seen:
+                seen.append(dof)
+    return tuple(seen)
+
+
 @dataclass(frozen=True, slots=True)
 class AlignmentStage:
     """One declared stage in an alignment schedule."""
@@ -121,15 +131,9 @@ class AlignmentSchedule:
                 )
         return self
 
-    @property
-    def active_dofs(self) -> tuple[str, ...]:
-        """Return active DOFs from all stages in first-seen order."""
-        seen: list[str] = []
-        for stage in self.stages:
-            for dof in stage.active_dofs:
-                if dof not in seen:
-                    seen.append(dof)
-        return tuple(seen)
+    active_dofs = property(
+        _stage_active_dofs, doc="Return active DOFs from all stages in first-seen order."
+    )
 
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-compatible schedule description."""
@@ -218,15 +222,9 @@ class ResolvedAlignmentSchedule:
     gauge_decision: GaugeDecision
     metadata: dict[str, object] = field(default_factory=dict)
 
-    @property
-    def active_dofs(self) -> tuple[str, ...]:
-        """Return active DOFs from all resolved stages in first-seen order."""
-        seen: list[str] = []
-        for stage in self.stages:
-            for dof in stage.active_dofs:
-                if dof not in seen:
-                    seen.append(dof)
-        return tuple(seen)
+    active_dofs = property(
+        _stage_active_dofs, doc="Return active DOFs from all resolved stages in first-seen order."
+    )
 
     @property
     def active_pose_dofs(self) -> tuple[str, ...]:
