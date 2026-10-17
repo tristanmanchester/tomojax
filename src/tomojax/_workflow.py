@@ -329,8 +329,9 @@ def reconstruct(
     """Reconstruct ``scan`` with ``method``.
 
     ``auto`` (default) chooses Fourier inversion for unposed axial half-turn
-    scans, the guarded laminography workflow for oblique scans, and FBP/FDK
-    otherwise. An explicitly unrecorded axial centre may be inferred; oblique auto
+    scans, the guarded laminography workflow for oblique scans, matched CGLS
+    for segmented cone geometry, and FBP/FDK otherwise.
+    An explicitly unrecorded axial centre may be inferred; oblique auto
     may infer setup, support and a binned grid. The scan and ``info["automatic"]``
     record those choices and limitations. Explicit methods bypass this policy.
 

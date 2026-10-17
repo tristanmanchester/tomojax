@@ -9,6 +9,9 @@ Zeiss Xradia acquisitions are recognised by OLE content, with lazy raw counts,
 embedded reference images and physical calibration; fractional image shifts stay
 in the geometry rather than resampling the data. Per-view cone arrangements use
 matched CGLS under automatic reconstruction, not single-arrangement FDK.
+Use `tomojax preprocess scan.txrm -o scan.nxs`, or
+`tj.load_frames("scan.txrm").corrected(...)`; the
+[lab-CT guide](../../../docs/lab-ct.md#zeiss-xradia-preview) gives a binned CPU preview.
 
 Import from here, not from `tomojax._data`.
 
