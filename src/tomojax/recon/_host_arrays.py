@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-import jax
 import numpy as np
+
+if TYPE_CHECKING:
+    import jax
 
 
 @dataclass(frozen=True)
@@ -57,9 +59,14 @@ def validate_host_arrays(
     ``device_input`` also accepts a JAX array, which cannot overlap host storage.
     ``order`` selects storage only when allocating; caller-owned output is kept.
     """
-    valid = isinstance(projections, np.ndarray) or (
-        device_input and isinstance(projections, jax.Array)
-    )
+    # Host-only inverses must not initialize the JAX import stack merely to
+    # reject device arrays. Device callers already have JAX loaded.
+    host_input = isinstance(projections, np.ndarray)
+    valid = host_input
+    if device_input and not host_input:
+        import jax
+
+        valid = isinstance(projections, jax.Array)
     if not valid or projections.dtype.kind not in "buif":
         kinds = "NumPy or JAX" if device_input else "NumPy"
         raise TypeError(f"{context}: projections must be a real {kinds} array")
@@ -69,7 +76,7 @@ def validate_host_arrays(
         raise ValueError(f"{context}: out must be a float32 NumPy array with the volume shape")
     if not out.flags.writeable:
         raise ValueError(f"{context}: out must be writable")
-    if isinstance(projections, jax.Array):
+    if not host_input:
         return out
     if np.may_share_memory(projections, out):
         raise ValueError(f"{context}: input and output storage must not overlap")
@@ -79,3 +86,23 @@ def validate_host_arrays(
         if source is None or target is None or Path(source).samefile(target):
             raise ValueError(f"{context}: memory-mapped input and output require separate files")
     return out
+
+
+def validate_host_views(array: np.ndarray, *, weights: np.ndarray | None = None) -> None:
+    """Reject invalid active data before ordered solver callbacks can be poisoned."""
+    values = array.reshape(-1) if array.flags.c_contiguous else array.flat
+    active = (
+        None
+        if weights is None
+        else weights.reshape(-1)
+        if weights.flags.c_contiguous
+        else weights.flat
+    )
+    for start in range(0, array.size, 2**20):
+        chunk = values[start : start + 2**20]
+        if active is not None:
+            chunk = np.where(active[start : start + 2**20] > 0, chunk, 0)
+        with np.errstate(over="ignore", invalid="ignore"):
+            finite = np.isfinite(np.asarray(chunk, dtype=np.float32)).all()
+        if not finite:
+            raise ValueError("streamed projections must be finite in FP32")

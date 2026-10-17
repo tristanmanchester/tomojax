@@ -2,21 +2,19 @@
 
 from __future__ import annotations
 
-from functools import partial
+from functools import cache
 import math
 from typing import TYPE_CHECKING, Any, cast
 
-import jax
-import jax.image as jimage
-import jax.numpy as jnp
+import numpy as np
 
 from .geometry.base import Detector, Grid, grid_volume_origin
 from .validation import validate_detector, validate_grid, validate_projection_stack
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
 
-    import numpy as np
+    import jax.numpy as jnp
 
 
 def validate_scale_factor(factor: object) -> int:
@@ -125,43 +123,62 @@ def bin_volume(vol: jnp.ndarray, factor: int) -> jnp.ndarray:
     if vol.ndim != 3 or min(vol.shape) < 1:
         raise ValueError("bin_volume requires a nonempty (x, y, z) array")
     shape = tuple(math.ceil(n / f) for n in vol.shape)
+    import jax.image as jimage
+
     return jimage.resize(vol, shape, method="linear", antialias=True)
 
 
-@partial(jax.jit, static_argnames=("shape",))
-def _linear_resize(vol: jax.Array, shape: tuple[int, int, int]) -> jax.Array:
+def _linear_resize[Array: jnp.ndarray | np.ndarray](
+    vol: Array, shape: tuple[int, int, int], *, xp: Any
+) -> Array:
     """Half-pixel linear interpolation without dense, mostly-zero weight matrices."""
     for axis, size in enumerate(shape):
         old = vol.shape[axis]
         if size == old:
             continue
-        coordinate = (jnp.arange(size, dtype=jnp.result_type(0.0)) + 0.5) * (1 / (size / old)) - 0.5
-        coordinate = jnp.clip(coordinate, 0, old - 1)
-        lower = jnp.floor(coordinate).astype(jnp.int32)
-        upper = jnp.minimum(lower + 1, old - 1)
+        dtype = vol.dtype if xp is np else xp.result_type(0.0)
+        coordinate = (xp.arange(size, dtype=dtype) + 0.5) * (1 / (size / old)) - 0.5
+        coordinate = xp.clip(coordinate, 0, old - 1)
+        lower = xp.floor(coordinate).astype(xp.int32)
+        upper = xp.minimum(lower + 1, old - 1)
         broadcast = [1] * vol.ndim
         broadcast[axis] = size
         weight = (coordinate - lower).astype(vol.dtype).reshape(broadcast)
-        left = jnp.take(vol, lower, axis=axis, mode="clip")
-        right = jnp.take(vol, upper, axis=axis, mode="clip")
+        left = xp.take(vol, lower, axis=axis, mode="clip")
+        right = xp.take(vol, upper, axis=axis, mode="clip")
         vol = (1 - weight) * left + weight * right
     return vol
 
 
-def upsample_volume(
-    vol: jnp.ndarray, factor: int, target_shape: tuple[int, int, int]
-) -> jnp.ndarray:
-    """Resize `vol` to `target_shape`, regardless of the nominal scale factor."""
+@cache
+def _device_linear_resize() -> Callable[[jnp.ndarray, tuple[int, int, int]], jnp.ndarray]:
+    import jax
+    import jax.numpy as jnp
+
+    return jax.jit(
+        lambda vol, shape: _linear_resize(vol, shape, xp=jnp), static_argnames=("shape",)
+    )
+
+
+def upsample_volume[Array: jnp.ndarray | np.ndarray](
+    vol: Array, factor: int, target_shape: tuple[int, int, int]
+) -> Array:
+    """Resize to `target_shape`, retaining host/device storage for floating arrays."""
     validate_scale_factor(factor)
     out_shape = tuple(int(s) for s in target_shape)
     if len(out_shape) != 3 or any(s < 1 for s in out_shape):
         raise ValueError(f"target_shape must contain positive dimensions, got {target_shape!r}")
     if tuple(int(s) for s in vol.shape) == out_shape:
         return vol
-    if vol.dtype in (jnp.float32, jnp.float64):
-        return _linear_resize(vol, out_shape)
+    if vol.dtype in (np.float32, np.float64):
+        if isinstance(vol, np.ndarray):
+            return cast("Array", _linear_resize(vol, out_shape, xp=np))
+        return cast("Array", _device_linear_resize()(vol, out_shape))
+    import jax.image as jimage
+
     v = jimage.resize(vol, out_shape, method="linear", antialias=False)
-    return v.astype(vol.dtype)
+    converted = v.astype(vol.dtype)
+    return cast("Array", np.asarray(converted) if isinstance(vol, np.ndarray) else converted)
 
 
 def create_resolution_pyramid(

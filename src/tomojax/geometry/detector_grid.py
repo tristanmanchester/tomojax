@@ -5,16 +5,16 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING, cast
 
-import jax.numpy as jnp
-
-from tomojax.core.projector import get_detector_grid_device
-
 if TYPE_CHECKING:
+    import jax.numpy as jnp
+
     from tomojax.core.geometry import Detector
 
 
 def zero_center_detector_grid(detector: Detector) -> tuple[jnp.ndarray, jnp.ndarray]:
     """Return detector coordinates for the same detector shape with zero physical centre."""
+    from tomojax.core.projector import get_detector_grid_device
+
     zero_detector = dataclasses.replace(detector, center=(0.0, 0.0))
     return get_detector_grid_device(zero_detector)
 
@@ -38,6 +38,8 @@ def transform_detector_grid(
     The roll is applied around the detector centre before detector/ray-grid centre
     offsets are added, so centre and roll remain independent calibration variables.
     """
+    import jax.numpy as jnp
+
     Xr, Zr = base_grid
     roll_rad = jnp.deg2rad(jnp.asarray(detector_roll_deg, dtype=jnp.float32))
     cos_r = jnp.cos(roll_rad)

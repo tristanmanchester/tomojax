@@ -38,13 +38,13 @@ from tomojax.recon._projection import (
 
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
 from ._data_prox import weighted_l2_conjugate
+from ._host_arrays import validate_host_views
 from ._host_stream import (
     host_buffer,
     host_source,
     read_block,
     read_views,
     should_stream,
-    validate_host_views,
     write_block,
 )
 from ._solver_validation import validate_spdhg_config, validate_spdhg_weights

@@ -367,7 +367,7 @@ def test_cubic_cancellation_bound_uses_magnitudes_of_physical_weights(backend):
     if backend == "pallas" and jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
     # check-public-imports: allow-private
-    from tomojax.recon.cgls import _operators
+    from tomojax.recon._cgls_jax import _operators
 
     g, d, poses = problem()
     a = matrix(poses, g, d, "cubic")

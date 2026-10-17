@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 import math
+import subprocess
+import sys
 
 import jax
 import numpy as np
@@ -20,6 +22,23 @@ from tomojax.geometry import (
 from tomojax.recon import FourierConfig, fourier_reconstruct
 
 BACKENDS = ["numpy", pytest.param("cupy", marks=pytest.mark.gpu)]
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_host_fourier_does_not_import_unneeded_runtimes(backend):
+    code = f"""
+import sys, numpy as np
+from tomojax.geometry import Grid, Detector, ParallelGeometry
+from tomojax.recon import FourierConfig, fourier_reconstruct
+g, d = Grid(4, 4, 1, 1, 1, 1), Detector(4, 1, 1, 1)
+x = fourier_reconstruct(ParallelGeometry(g, d, [0., 90.]), g, d,
+    np.zeros((2, 1, 4), np.float32), config=FourierConfig(backend='{backend}'),
+    out=np.empty((4, 4, 1), np.float32))
+assert 'jax' not in sys.modules and np.all(x == 0)
+assert 'cupyx.scipy.fft' not in sys.modules
+assert 'cupyx.scipy.sparse' not in sys.modules
+"""
+    subprocess.run([sys.executable, "-c", code], check=True)
 
 
 @pytest.fixture
@@ -627,7 +646,7 @@ def test_memmap_output_and_batch_size_independence(tmp_path, backend):
     reference = fourier_reconstruct(
         geometry, grid, detector, data, config=FourierConfig(slices_per_batch=7, backend=backend)
     )
-    assert reference.flags.f_contiguous and actual.flags.c_contiguous
+    assert reference.flags.c_contiguous and actual.flags.c_contiguous
     np.testing.assert_allclose(actual, reference, rtol=3e-5, atol=3e-6)
     np.testing.assert_array_equal(source, data)
 
@@ -852,3 +871,18 @@ def test_automatic_slab_depth_bounds_padded_physical_support_and_preserves_overr
             with pytest.raises(RuntimeError, match="planning complete"):
                 fourier_reconstruct(geometry, grid, detector, data, config=cfg)
             assert depths[-1] == selected
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("nonuniform", [False, True])
+def test_cuda_fourier_coordinate_pass_matches_physical_reference(nonuniform):
+    grid = Grid(13, 10, 4, 1.4, 0.9, 1.2, vol_center=(0.3, -0.2, 0.5))
+    detector = Detector(17, 7, 0.7, 1.0, (0.2, -0.3))
+    angles = [4, 28, 62, 99, 146, 171] if nonuniform else np.linspace(3, 183, 17, endpoint=False)
+    geometry = ParallelGeometry(grid, detector, angles)
+    data = np.random.default_rng(837).normal(size=(len(angles), 7, 17)).astype(np.float32)
+    results = [
+        fourier_reconstruct(geometry, grid, detector, data, config=FourierConfig(backend=backend))
+        for backend in ("numpy", "cupy")
+    ]
+    np.testing.assert_allclose(results[1], results[0], rtol=3e-4, atol=2e-7)

@@ -1,6 +1,8 @@
 """Fourier inversion through the same context-carrying Python and CLI workflow."""
 
 from dataclasses import asdict, replace
+import subprocess
+import sys
 
 import jax
 import numpy as np
@@ -119,3 +121,17 @@ def test_auto_fourier_handles_missing_cupy_without_hiding_errors(monkeypatch):
     )
     with pytest.raises(RuntimeError, match="device discovery failed"):
         tj.reconstruct(scan, "fourier")
+
+
+def test_explicit_host_workflow_does_not_import_jax():
+    code = """
+import sys, numpy as np
+import tomojax as tj
+from tomojax.recon import FourierConfig
+g, d = tj.Grid(4, 4, 1, 1, 1, 1), tj.Detector(4, 1, 1, 1)
+scan = tj.Scan(np.zeros((2, 1, 4), np.float32), tj.ParallelGeometry(g, d, [0., 90.]))
+result = tj.reconstruct(scan, 'fourier', config=FourierConfig(backend='numpy'))
+assert 'jax' not in sys.modules and np.all(result.volume == 0)
+assert result.scan is scan and result.info['backend'] == 'numpy'
+"""
+    subprocess.run([sys.executable, "-c", code], check=True)

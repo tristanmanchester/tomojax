@@ -782,21 +782,21 @@ def _implied_detector_u_px(
 
 
 def _oversampling(scan: Scan) -> float:
-    """How many times finer than the voxels the detector samples the rotation axis.
+    """Voxel-to-detector pitch ratio, using the least magnified cone segment.
 
-    The lesser of the row and column ratios: a cone beam's pixel pitch divided
-    by its magnification (the least magnified segment's), a parallel beam's
-    pitch itself, against the voxel. A tilted axis mixes the grid's axes into
-    both, so laminography compares with the smallest voxel side.
+    Compare the lesser row/column ratio; tilted axes use the smallest voxel side.
     """
-    from tomojax.geometry import ConeSegments, beam_of
+    from tomojax.geometry import ConeSegments, LaminographyGeometry, RotationAxisGeometry, beam_of
 
     detector, grid, geometry = scan.detector, scan.grid, scan.geometry
-    kind, _, _, base = describe(geometry)
+    # Only the physical base matters here, not serialized poses or file metadata.
+    base: Any = geometry
+    while hasattr(base, "base"):
+        base = base.base
     parts = base.segments if isinstance(base, ConeSegments) else (base,)
     beams = [beam_of(part) for part in parts]
     magnification = min(1.0 if beam is None else float(beam.magnification) for beam in beams)
-    if kind == "lamino":
+    if isinstance(base, LaminographyGeometry | RotationAxisGeometry):
         across = along = min(grid.vx, grid.vy, grid.vz)
     else:
         across, along = min(grid.vx, grid.vy), grid.vz

@@ -13,7 +13,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.recon.cgls import _operators
+from tomojax.recon._cgls_jax import _operators
 
 
 def run_case(size: int, views: int, kind: str, batch: int, repeats: int) -> dict:

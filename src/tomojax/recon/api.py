@@ -4,44 +4,90 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import fields, replace
-from typing import TYPE_CHECKING, cast
+from importlib import import_module
+import sys
+from typing import TYPE_CHECKING, Any, cast
 
-import jax.numpy as jnp
-
-from tomojax.recon._fourier_stream import fourier_slabs
-from tomojax.recon._warm_start import fbp_start
-from tomojax.recon.cgls import CGLSConfig, cgls
-from tomojax.recon.cgls_multires import cgls_multires
-from tomojax.recon.fbp import FBPConfig, default_fbp_scale, fbp, run_parallel_fbp_direct_pallas
-from tomojax.recon.fbp_host import FBPHostConfig, fbp_host, fbp_slabs
-from tomojax.recon.filters import clear_filter_caches
-from tomojax.recon.fista_tv import FistaConfig, fista_tv
-from tomojax.recon.fourier import FourierConfig, fourier_reconstruct
-from tomojax.recon.mlem import MLEMConfig, mlem
-from tomojax.recon.sirt import SIRTConfig, sirt
-from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
-from tomojax.recon.types import Regulariser
+from tomojax import recon
 
 if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
+    import jax.numpy as jnp
     import numpy as np
 
     from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry
+    from tomojax.recon._fourier_stream import fourier_slabs
+    from tomojax.recon.cgls import CGLSConfig, cgls
+    from tomojax.recon.cgls_multires import cgls_multires
+    from tomojax.recon.fbp import FBPConfig, default_fbp_scale, fbp, run_parallel_fbp_direct_pallas
+    from tomojax.recon.fbp_host import FBPHostConfig, fbp_host, fbp_slabs
+    from tomojax.recon.filters import clear_filter_caches
+    from tomojax.recon.fista_tv import FistaConfig, fista_tv
+    from tomojax.recon.fourier import FourierConfig, fourier_reconstruct
+    from tomojax.recon.mlem import MLEMConfig, mlem
+    from tomojax.recon.sirt import SIRTConfig, sirt
+    from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
+    from tomojax.recon.types import Regulariser
 
 type MethodConfig = (
-    FBPConfig | FourierConfig | CGLSConfig | FistaConfig | SPDHGConfig | SIRTConfig | MLEMConfig
+    recon.FBPConfig
+    | recon.FourierConfig
+    | recon.CGLSConfig
+    | recon.FistaConfig
+    | recon.SPDHGConfig
+    | recon.SIRTConfig
+    | recon.MLEMConfig
 )
 
-_CONFIGS: dict[str, type[MethodConfig]] = {
-    "fbp": FBPConfig,
-    "fourier": FourierConfig,
-    "cgls": CGLSConfig,
-    "fista": FistaConfig,
-    "spdhg": SPDHGConfig,
-    "sirt": SIRTConfig,
-    "mlem": MLEMConfig,
+_CONFIGS = {
+    "fbp": "FBPConfig",
+    "fourier": "FourierConfig",
+    "cgls": "CGLSConfig",
+    "fista": "FistaConfig",
+    "spdhg": "SPDHGConfig",
+    "sirt": "SIRTConfig",
+    "mlem": "MLEMConfig",
 }
+
+_SOURCES = {
+    "CGLSConfig": "cgls",
+    "FBPConfig": "fbp",
+    "FBPHostConfig": "fbp_host",
+    "FistaConfig": "fista_tv",
+    "FourierConfig": "fourier",
+    "MLEMConfig": "mlem",
+    "Regulariser": "types",
+    "SIRTConfig": "sirt",
+    "SPDHGConfig": "spdhg_tv",
+    "cgls": "cgls",
+    "cgls_multires": "cgls_multires",
+    "clear_filter_caches": "filters",
+    "default_fbp_scale": "fbp",
+    "fbp": "fbp",
+    "fbp_host": "fbp_host",
+    "fbp_slabs": "fbp_host",
+    "fista_tv": "fista_tv",
+    "fourier_reconstruct": "fourier",
+    "fourier_slabs": "_fourier_stream",
+    "mlem": "mlem",
+    "run_parallel_fbp_direct_pallas": "fbp",
+    "sirt": "sirt",
+    "spdhg_tv": "spdhg_tv",
+}
+
+
+def __getattr__(name: str) -> Any:
+    source = _SOURCES.get(name)
+    if source is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(f"tomojax.recon.{source}"), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 def method_config(
@@ -57,9 +103,10 @@ def method_config(
     of another class, or a setting its class has no field for, raises
     :class:`ValueError` naming the valid ones.
     """
-    kind = _CONFIGS.get(method)
-    if kind is None:
+    name = _CONFIGS.get(method)
+    if name is None:
         raise ValueError(f"method must be one of {', '.join(_CONFIGS)}; got {method!r}")
+    kind = cast("type[MethodConfig]", getattr(recon, name))
     if config is not None and not isinstance(config, kind):
         raise ValueError(
             f"method {method!r} takes a {kind.__name__}, not a {type(config).__name__}"
@@ -100,7 +147,8 @@ def reconstruct_arrays(
     forces host slabs; it is returned without allocating another full volume.
     """
     cfg = method_config(method, config=config)
-    if isinstance(cfg, FourierConfig):
+    if method == "fourier":
+        cfg = cast("FourierConfig", cfg)
         import numpy as np
 
         from tomojax.recon._fourier_backend import resolve_fourier_backend
@@ -108,7 +156,7 @@ def reconstruct_arrays(
         if warm_start:
             raise ValueError("method 'fourier' does not take warm_start")
         backend = resolve_fourier_backend(cfg.backend)
-        volume = fourier_reconstruct(
+        volume = recon.fourier_reconstruct(
             cast("ParallelGeometry", geometry),
             grid,
             detector,
@@ -117,19 +165,21 @@ def reconstruct_arrays(
             out=out,
         )
         return volume, {"config": cfg, "host_slabs": True, "backend": backend}
-    if out is not None and not isinstance(cfg, FBPConfig):
+    if out is not None and method != "fbp":
         raise ValueError(f"method {method!r} does not take out")
     det_grid = _detector_grid(geometry, detector)
-    if isinstance(cfg, FBPConfig):
+    if method == "fbp":
+        cfg = cast("FBPConfig", cfg)
         if warm_start:
             raise ValueError("method 'fbp' does not take warm_start")
         return _fbp_result(geometry, grid, detector, projections, cfg, det_grid, out)
     return _iterative_result(
-        geometry, grid, detector, projections, cfg, det_grid, warm_start=warm_start
+        method, geometry, grid, detector, projections, cfg, det_grid, warm_start=warm_start
     )
 
 
 def _iterative_result(
+    method: str,
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
@@ -142,25 +192,28 @@ def _iterative_result(
     """Initialize and dispatch an iterative solve with its method's data model."""
     start = None
     if warm_start:
+        from tomojax.recon._warm_start import fbp_start
+
         # On the solver's devices; an explicit detector grid takes one.
         devices = getattr(cfg, "devices", None) if det_grid is None else None
         start = fbp_start(
-            geometry, grid, detector, projections, config=FBPConfig(devices=devices),
+            geometry, grid, detector, projections, config=recon.FBPConfig(devices=devices),
             det_grid=det_grid,
         )  # fmt: skip
-        if isinstance(cfg, MLEMConfig) or getattr(cfg, "nonnegative", False):
+        if method == "mlem" or getattr(cfg, "nonnegative", False):
+            import jax.numpy as jnp
+
             start = jnp.maximum(start, 0.0)
     args = (geometry, grid, detector, projections)
-    if isinstance(cfg, CGLSConfig):
-        volume, record = cgls(*args, init_x=start, config=cfg, det_grid=det_grid)
-    elif isinstance(cfg, FistaConfig):
-        volume, record = fista_tv(*args, init_x=start, config=cfg, det_grid=det_grid)
-    elif isinstance(cfg, SIRTConfig):
-        volume, record = sirt(*args, init_x=start, config=cfg, det_grid=det_grid)
-    elif isinstance(cfg, MLEMConfig):
-        volume, record = mlem(*args, init_x=start, config=cfg, det_grid=det_grid)
-    else:
-        volume, record = spdhg_tv(*args, init_x=start, config=cfg, det_grid=det_grid)
+    name = {
+        "cgls": "cgls",
+        "fista": "fista_tv",
+        "spdhg": "spdhg_tv",
+        "sirt": "sirt",
+        "mlem": "mlem",
+    }[method]
+    solve = getattr(sys.modules[__name__], name)
+    volume, record = solve(*args, init_x=start, config=cfg, det_grid=det_grid)
     return volume, {"config": cfg, "warm_start": warm_start, **record}
 
 
@@ -179,14 +232,14 @@ def _fbp_result(
     if out is not None or (det_grid is None and _too_large_for_the_device(geometry, grid, config)):
         volume = _host_fbp(geometry, grid, detector, projections, config, out=out)
         return volume, {"config": config, "host_slabs": True}
-    volume = fbp(geometry, grid, detector, projections, config=config, det_grid=det_grid)
+    volume = recon.fbp(geometry, grid, detector, projections, config=config, det_grid=det_grid)
     return volume, {"config": config}
 
 
 def _detector_grid(
     geometry: Geometry, detector: Detector
 ) -> tuple[jnp.ndarray, jnp.ndarray] | None:
-    from tomojax.geometry.api import detector_grid_from_geometry_inputs
+    from tomojax.geometry.detector_grid import detector_grid_from_geometry_inputs
 
     return detector_grid_from_geometry_inputs(detector, geometry)
 
@@ -231,10 +284,10 @@ def _host_fbp(
     if beam_of(geometry) is not None:
         return _host_fdk(geometry, grid, detector, projections, cfg, out=out)
     logging.info("Reconstructing %dx%dx%d in z-slabs on the host", grid.nx, grid.ny, grid.nz)
-    host = FBPHostConfig(filter=cfg.filter, scale=cfg.scale, backprojector=cfg.backprojector)
+    host = recon.FBPHostConfig(filter=cfg.filter, scale=cfg.scale, backprojector=cfg.backprojector)
     # Slabs are not shared among devices; the first selected one does the work.
     with _first_device(cfg):
-        return fbp_host(
+        return recon.fbp_host(
             cast("ParallelGeometry", geometry), grid, detector, projections, config=host, out=out
         )
 

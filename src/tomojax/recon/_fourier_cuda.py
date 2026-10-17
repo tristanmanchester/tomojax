@@ -174,3 +174,48 @@ def mass_deapod_kernel():
     import cupy
 
     return cupy.RawKernel(_MASS_SOURCE, "mass_deapod", options=("--fmad=false",))
+
+
+_COORDINATE_SOURCE = r"""
+extern "C" __global__ void coordinates(
+    double* angle, float* radial, float2* phase, float2* detector_phase,
+    const double* knots, int nviews, int uniform, int px, int py, int mirror,
+    double vx, double vy, double ox, double oy, double du, double center, int nfft,
+    double first_angle, long long count)
+{
+    long long m = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (m >= count) return;
+    const double pi = 3.1415926535897932384626433832795;
+    int qy = py / 2 + 1;
+    int ix = mirror ? px / 2 : m / qy;
+    int iy = mirror ? m + 1 : m % qy;
+    double fx = (ix < (px + 1) / 2 ? ix : ix - px) / (px * vx);
+    double fy = (iy < (py + 1) / 2 ? iy : iy - py) / (py * vy);
+    if (mirror) fy = -fy;
+    double r = sqrt(fx * fx + fy * fy) * (nfft * du);
+    double a = fmod(atan2(-fy, fx) - first_angle, 2 * pi);
+    if (a < 0) a += 2 * pi;
+    if (uniform) angle[m] = a * (nviews / pi);
+    else {
+        int lo = 0, hi = 2 * nviews;
+        while (hi - lo > 1) {
+            int mid = (lo + hi) / 2;
+            if (knots[mid] <= a) lo = mid; else hi = mid;
+        }
+        angle[m] = lo + (a - knots[lo]) / (knots[hi] - knots[lo]);
+    }
+    radial[m] = (float)r;
+    double p = 2 * pi * (fx * ox + fy * oy);
+    phase[m] = make_float2((float)cos(p), (float)sin(p));
+    p = -2 * pi * r * center / (nfft * du);
+    detector_phase[m] = make_float2((float)cos(p), (float)sin(p));
+}
+"""
+
+
+@functools.lru_cache(maxsize=1)
+def coordinates_kernel():
+    """Build immutable physical Fourier coordinates in one FP64 device pass."""
+    import cupy
+
+    return cupy.RawKernel(_COORDINATE_SOURCE, "coordinates", options=("--fmad=false",))
