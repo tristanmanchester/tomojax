@@ -58,9 +58,8 @@ class _BatchOps(NamedTuple):
 
 @dataclass(frozen=True)
 class JointRefinement:
-    """Joint-only native-texture refinement; no alternating unfiltered solve."""
+    """Joint-only refinement with profiled detector backgrounds."""
 
-    highpass_cycles: float
     ramp_damping: float
 
 
@@ -293,16 +292,19 @@ def _projectors(
 def _filtered_operators(spec, arrays, forward, adjoint, columns):
     if spec.refinement is None:
         return arrays, forward, adjoint, columns
-    # Filtering commutes with the scalar uniform loss weight used by this
-    # recipe. Apply the same self-adjoint filter to data, predictions and
-    # every pose derivative; the physical forward/transpose pair is unchanged.
+    # Profile row offsets and one shared detector-u slope per view. Removing
+    # only these nuisance directions retains the low-frequency object signal
+    # needed to capture large shifts. A broad high-pass also removed that signal.
+    # The two orthogonal projections commute: the centred ramp has zero row
+    # means. Apply their self-adjoint product to every side of the likelihood.
     assert arrays.weights.ndim == 0
     nu, nv = spec.detector.nu, spec.detector.nv
-    wave = jnp.fft.rfftfreq(nu) * nu
-    response = jnp.exp(-2 * (spec.refinement.highpass_cycles / jnp.maximum(wave, 1e-12)) ** 2)
+    ramp = jnp.broadcast_to(jnp.arange(nu, dtype=jnp.float32) - (nu - 1) / 2, (nv, nu))
+    ramp = ramp / jnp.linalg.norm(ramp)
 
     def filtered(y):
-        return jnp.fft.irfft(jnp.fft.rfft(y, axis=-1) * response, n=nu, axis=-1)
+        centred = y - jnp.mean(y, axis=-1, keepdims=True)
+        return centred - jnp.sum(centred * ramp, axis=(-2, -1), keepdims=True) * ramp
 
     def filtered_columns(*args: object, **kwargs: object):
         residual, derivative = columns(*args, **kwargs)

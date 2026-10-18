@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Native projection matching refines correlation and first-moment starts against
+one likelihood, profiling detector backgrounds without discarding low-frequency
+motion information.
+
 The ptychography example also accepts PSI MATLAB v5 simulations, with detector
 binning and iteration controls for CPU previews and explicit output units.
 

@@ -448,7 +448,7 @@ def test_shift_search_recovers_large_view_shifts(kind):
     clean = project_joseph(jnp.asarray(volume), poses, grid, detector)
     rng = np.random.default_rng(4)
     truth = rng.uniform(-5, 5, (len(angles), 2))
-    data = _prealign._shift_views(clean, jnp.asarray(truth, jnp.float32))
+    data = _prealign.shift_views(clean, jnp.asarray(truth, jnp.float32))
     found = estimate_view_shifts(geometry, grid, detector, data) / [detector.du, detector.dv]
     rotations = np.asarray(poses, np.float64)[:, :3, :3]
     spacing = (detector.du, detector.dv)
@@ -483,7 +483,7 @@ def test_shift_correlation_recovers_finite_support_translations(sigma, cropped):
     measured = jnp.asarray(1.4 * np.stack([field(*shift) for shift in shifts]) + 0.3)
     model = jnp.asarray(np.repeat(field(0.0, 0.0)[None], len(shifts), axis=0))
 
-    actual = _prealign._correlation_peaks(measured, model, max_u=12, max_v=8)
+    actual = _prealign.correlation_peaks(measured, model, max_u=12, max_v=8)
 
     np.testing.assert_allclose(actual, shifts, atol=0.15, rtol=0.0)
 
@@ -504,7 +504,7 @@ def test_shift_correlation_refines_coupled_detector_axes(widths):
     measured = jnp.asarray(np.stack([field(*shift) for shift in truth]))
     model = jnp.asarray(np.repeat(field(0.0, 0.0)[None], len(truth), axis=0))
 
-    actual = _prealign._correlation_peaks(measured, model, max_u=8, max_v=8)
+    actual = _prealign.correlation_peaks(measured, model, max_u=8, max_v=8)
 
     np.testing.assert_allclose(actual, truth, atol=0.15, rtol=0.0)
 
@@ -524,7 +524,7 @@ def test_shift_correlation_keeps_an_unobservable_axis_stationary(axis):
     measured = jnp.asarray(np.stack([field(shift) for shift in shifts]))
     model = jnp.asarray(np.repeat(field(0.0)[None], len(shifts), axis=0))
 
-    actual = _prealign._correlation_peaks(measured, model, max_u=5, max_v=5)
+    actual = _prealign.correlation_peaks(measured, model, max_u=5, max_v=5)
 
     np.testing.assert_allclose(actual, truth, atol=0.15, rtol=0.0)
     np.testing.assert_array_equal(actual[:, 1 if axis == "u" else 0], 0.0)
@@ -541,7 +541,7 @@ def test_shift_correlation_has_no_wrapped_overlap_at_search_bounds(sign_u, sign_
     source = (slice(max(-dv, 0), min(nv - dv, nv)), slice(max(-du, 0), min(nu - du, nu)))
     measured[target] = model[source]
 
-    actual = _prealign._correlation_peaks(
+    actual = _prealign.correlation_peaks(
         jnp.asarray(measured[None]), jnp.asarray(model[None]), max_u=max_u, max_v=max_v
     )
 
@@ -550,7 +550,7 @@ def test_shift_correlation_has_no_wrapped_overlap_at_search_bounds(sign_u, sign_
 
 def test_shift_correlation_keeps_constant_views_stationary():
     images = jnp.full((2, 13, 16), 1.2, jnp.float32)
-    actual = _prealign._correlation_peaks(images, images, max_u=4, max_v=3)
+    actual = _prealign.correlation_peaks(images, images, max_u=4, max_v=3)
     np.testing.assert_array_equal(actual, np.zeros((2, 2)))
 
 
@@ -592,7 +592,7 @@ def test_reprojection_seed_recovers_a_detector_centre_offset(kind):
     poses = stack_view_poses(geometry, len(angles))
     clean = project_joseph(jnp.asarray(volume), poses, grid, detector)
     shift = jnp.tile(jnp.asarray([[2.3, 0.0]], jnp.float32), (len(angles), 1))
-    data = _prealign._shift_views(clean, shift)
+    data = _prealign.shift_views(clean, shift)
     seed = reprojection_det_u_seed(data, geometry, grid, detector)
     assert seed.status == "ok_reprojection"
     assert abs(seed.det_u_px + 2.3) < 0.1
@@ -620,7 +620,7 @@ def test_reprojection_seed_recovers_a_detector_centre_offset_in_a_segmented_cone
     clean = cone_project(jnp.asarray(volume), coefficients, grid, detector, backend="jax")
     shift = jnp.tile(jnp.asarray([[2.3, 0.0]], jnp.float32), (32, 1))
 
-    seed = reprojection_det_u_seed(_prealign._shift_views(clean, shift), geometry, grid, detector)
+    seed = reprojection_det_u_seed(_prealign.shift_views(clean, shift), geometry, grid, detector)
 
     assert abs(seed.det_u_px + 2.3) < 0.15
 
@@ -949,9 +949,9 @@ def test_cone_shift_search_removes_a_rigid_shift_in_each_arrangement(
         _prealign, "_quick_reconstruction", lambda *args: jnp.zeros((grid.nx, grid.ny, grid.nz))
     )
     monkeypatch.setattr(
-        _prealign, "_reprojector", lambda *args: lambda views, volume: targets[views]
+        _prealign, "reprojector", lambda *args: lambda views, volume: targets[views]
     )
-    monkeypatch.setattr(_prealign, "_correlation_peaks", lambda *args, **kwargs: shifts)
+    monkeypatch.setattr(_prealign, "correlation_peaks", lambda *args, **kwargs: shifts)
     actual = estimate_view_shifts(geometry, grid, detector, targets, iters=1)
     np.testing.assert_allclose(actual, 0, atol=2e-7)
 
@@ -962,8 +962,8 @@ def test_shift_search_declines_unsettled_proposals(monkeypatch):
     shifts = np.array([[2, 0], [-2, 0], [2, 0], [-2, 0]], np.float32)
     steps = iter((shifts, -shifts))
     monkeypatch.setattr(_prealign, "_quick_reconstruction", lambda *a: None)
-    monkeypatch.setattr(_prealign, "_reprojector", lambda *a: lambda c, x: data[c])
-    monkeypatch.setattr(_prealign, "_correlation_peaks", lambda *a, **k: next(steps))
+    monkeypatch.setattr(_prealign, "reprojector", lambda *a: lambda c, x: data[c])
+    monkeypatch.setattr(_prealign, "correlation_peaks", lambda *a, **k: next(steps))
     actual = estimate_view_shifts(geometry, grid, detector, data, iters=2)
     np.testing.assert_array_equal(actual, np.zeros_like(shifts))
 
@@ -999,8 +999,8 @@ def test_unsettled_search_uses_physical_phase_seed_in_acquisition_order(monkeypa
     peaks = np.array([[2, 0], [-2, 0], [2, 0], [-2, 0], [2, 0], [-2, 0], [2, 0]])
     steps = iter((peaks, -peaks))
     monkeypatch.setattr(_prealign, "_quick_reconstruction", lambda *a: None)
-    monkeypatch.setattr(_prealign, "_reprojector", lambda *a: lambda c, x: data[c])
-    monkeypatch.setattr(_prealign, "_correlation_peaks", lambda *a, **k: next(steps))
+    monkeypatch.setattr(_prealign, "reprojector", lambda *a: lambda c, x: data[c])
+    monkeypatch.setattr(_prealign, "correlation_peaks", lambda *a, **k: next(steps))
     actual = estimate_view_shifts(geometry, grid, detector, data, iters=2)
     expected = np.column_stack(
         [np.interp(np.arange(7), [0, 3, 6], physical[[1, 2, 0], i]) for i in range(2)]

@@ -36,7 +36,7 @@ _CHUNK = 32
 
 
 @jax.jit
-def _shift_views(images: jax.Array, shifts: jax.Array) -> jax.Array:
+def shift_views(images: jax.Array, shifts: jax.Array) -> jax.Array:
     """Move each view by ``shifts`` pixels (u, v) with linear interpolation and zero fill."""
     _, nv, nu = images.shape
     v, u = jnp.meshgrid(
@@ -51,7 +51,7 @@ def _shift_views(images: jax.Array, shifts: jax.Array) -> jax.Array:
 
 
 @partial(jax.jit, static_argnames=("max_u", "max_v"))
-def _correlation_peaks(
+def correlation_peaks(
     measured: jax.Array, model: jax.Array, *, max_u: int, max_v: int
 ) -> jax.Array:
     """Return the sub-pixel shift (u, v) carrying each model view onto the measured view."""
@@ -251,7 +251,7 @@ def _phase_view_shifts(
     return shifts
 
 
-def _reprojector(
+def reprojector(
     geometry: Geometry, poses: jax.Array, grid: Grid, detector: Detector
 ) -> Callable[[slice, jax.Array], jax.Array]:
     """Return ``(views, volume) -> projections`` for the geometry's beam."""
@@ -319,7 +319,7 @@ def estimate_view_shifts(
     poses = stack_view_poses(geometry, n)
     nominal = np.asarray(poses, np.float64)
     translation_basis = _detector_translation_map(geometry, detector, nominal) @ nominal[:, :3, :3]
-    reproject = _reprojector(geometry, poses, grid, detector)
+    reproject = reprojector(geometry, poses, grid, detector)
 
     max_u = max(1, int(max_shift_fraction * detector.nu))
     max_v = max(1, int(max_shift_fraction * detector.nv))
@@ -330,7 +330,7 @@ def estimate_view_shifts(
         return np.asarray(
             jnp.concatenate(
                 [
-                    _correlation_peaks(
+                    correlation_peaks(
                         data[c],
                         reproject(c, volume),
                         max_u=max_u,
@@ -347,7 +347,7 @@ def estimate_view_shifts(
     change = 0.0
     for iteration in range(int(iters)):
         corrected = jnp.concatenate(
-            [_shift_views(data[c], jnp.asarray(-shifts[c], jnp.float32)) for c in chunks]
+            [shift_views(data[c], jnp.asarray(-shifts[c], jnp.float32)) for c in chunks]
         )
         volume = _quick_reconstruction(geometry, grid, detector, corrected)
         del corrected
@@ -384,13 +384,13 @@ def reprojection_residual(
     """
     data = jnp.asarray(projections, dtype=jnp.float32)
     n = int(data.shape[0])
-    reproject = _reprojector(geometry, stack_view_poses(geometry, n), grid, detector)
+    reproject = reprojector(geometry, stack_view_poses(geometry, n), grid, detector)
     chunks = [slice(s, min(s + _CHUNK, n)) for s in range(0, n, _CHUNK)]
 
     def residual(shift_px: float) -> float:
         offset = jnp.asarray([[-shift_px, 0.0]], jnp.float32)
         corrected = jnp.concatenate(
-            [_shift_views(data[c], jnp.broadcast_to(offset, (c.stop - c.start, 2))) for c in chunks]
+            [shift_views(data[c], jnp.broadcast_to(offset, (c.stop - c.start, 2))) for c in chunks]
         )
         norm = float(jnp.linalg.norm(corrected))
         if norm == 0.0:
