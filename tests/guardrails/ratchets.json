@@ -114,7 +114,7 @@
   "type_errors": {
     "reportArgumentType": 276,
     "reportAssignmentType": 2,
-    "reportAttributeAccessIssue": 159,
+    "reportAttributeAccessIssue": 127,
     "reportCallIssue": 12,
     "reportGeneralTypeIssues": 7,
     "reportIndexIssue": 7,
