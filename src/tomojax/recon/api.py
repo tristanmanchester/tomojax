@@ -390,30 +390,27 @@ def _iterative_incore(
     solver: Callable[..., tuple[jnp.ndarray | np.ndarray, dict[str, object]]] | None = None,
 ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
     """Initialize and dispatch an iterative solve with its method's data model."""
+    if method == "mlem":
+        from .mlem import run_mlem
+
+        volume, record = run_mlem(
+            geometry, projections, grid=grid, detector=detector, config=cast("MLEMConfig", cfg),
+            det_grid=det_grid, warm_start=warm_start,
+        )  # fmt: skip
+        return volume, {"config": cfg, "warm_start": warm_start, **record}
     start = None
     if warm_start:
-        from tomojax.core.geometry.cone import is_cone_beam
-        from tomojax.recon._mlem_host import initial_volume, volume_depth
         from tomojax.recon._warm_start import fbp_start
 
-        depth = (
-            volume_depth(grid, detector, cast("MLEMConfig", cfg).views_per_batch)
-            if method == "mlem" and is_cone_beam(geometry) and det_grid is None
-            else None
-        )
-        if depth is not None:
-            start = initial_volume(geometry, grid, detector, projections, depth=depth)
-        else:
-            # On the solver's devices; an explicit detector grid takes one.
-            devices = getattr(cfg, "devices", None) if det_grid is None else None
-            start = fbp_start(
-                geometry, grid, detector, projections, config=recon.FBPConfig(devices=devices),
-                det_grid=det_grid,
-            )  # fmt: skip
-            if method == "mlem" or getattr(cfg, "nonnegative", False):
-                import jax.numpy as jnp
+        devices = getattr(cfg, "devices", None) if det_grid is None else None
+        start = fbp_start(
+            geometry, grid, detector, projections, config=recon.FBPConfig(devices=devices),
+            det_grid=det_grid,
+        )  # fmt: skip
+        if getattr(cfg, "nonnegative", False):
+            import jax.numpy as jnp
 
-                start = jnp.maximum(start, 0.0)
+            start = jnp.maximum(start, 0.0)
     args = (geometry, grid, detector, projections)
     name = {
         "cgls": "cgls",

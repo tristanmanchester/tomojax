@@ -208,12 +208,16 @@ def test_separately_allocated_norms_match_inline_cache(problem, monkeypatch):
 
 
 @pytest.mark.numerical
-def test_host_cone_updates_match_dense_transpose_without_consuming_inputs(problem, monkeypatch):
+@pytest.mark.parametrize("free", [1, 2**40])
+def test_host_cone_updates_match_dense_transpose_without_consuming_inputs(
+    problem, monkeypatch, free
+):
     grid, detector, geometry, matrix = problem
     if not isinstance(geometry, ConeSegments):
         pytest.skip("coupled volume partition is for cone geometry")
     host = import_module("tomojax.recon._mlem_host")
-    monkeypatch.setattr(host, "volume_depth", lambda *_: 1)
+    monkeypatch.setattr(host, "volume_depth", lambda *_, **__: 1)
+    monkeypatch.setattr(host, "device_free_memory_bytes", lambda: free)
     support = np.ones((3, 2, 2), bool)
     support[0] = False
     initial = np.full((3, 2, 2), 0.7, np.float32)
@@ -267,6 +271,14 @@ def test_large_cone_warm_start_is_planned_before_device_initialization(monkeypat
     expected = tj.reconstruct(scan, "mlem", config=cfg, warm_start=True)
     monkeypatch.setattr(host, "device_free_memory_bytes", lambda: 1000)
     assert host.volume_depth(grid, detector, 3) == 1
+    initializer, owned = host.initial_volume, []
+
+    def initialize(*args, **kwargs):
+        owned.append(initializer(*args, **kwargs))
+        return owned[-1]
+
+    monkeypatch.setattr(host, "initial_volume", initialize)
     actual = tj.reconstruct(scan, "mlem", config=cfg, warm_start=True)
+    assert actual.volume is owned[0]
     assert isinstance(actual.volume, np.ndarray)
     np.testing.assert_allclose(actual.volume, expected.volume, rtol=4e-5, atol=2e-6)

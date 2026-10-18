@@ -322,7 +322,8 @@ def mlem(
     claim. Wholly unobserved voxels are zero; zero measurements drive
     observed voxels to zero. Large host measurement stacks stream in bounded
     view batches. Cone volumes too large for the device stay on host: every
-    subset projection sums all slabs before its coupled update. The fast
+    subset projection sums all slabs before its coupled update. Subset ratios
+    stay on the device when they fit alongside the slab workspace. The fast
     resident-volume path remains the default whenever its workspace fits.
 
     Parameters
@@ -377,7 +378,25 @@ def mlem(
     >>> volume.shape
     (4, 4, 1)
     """
-    cfg = MLEMConfig() if config is None else config
+    return run_mlem(
+        geometry, projections, grid=grid, detector=detector, init_x=init_x,
+        config=MLEMConfig() if config is None else config, det_grid=det_grid,
+    )  # fmt: skip
+
+
+def run_mlem(
+    geometry: Geometry,
+    projections: jax.Array | np.ndarray,
+    *,
+    grid: Grid,
+    detector: Detector,
+    init_x: jax.Array | np.ndarray | None = None,
+    config: MLEMConfig,
+    det_grid: tuple[jax.Array, jax.Array] | None = None,
+    warm_start: bool = False,
+) -> tuple[jax.Array | np.ndarray, dict[str, object]]:
+    """Own workflow initialization inside the solver, never copying a private host start."""
+    cfg = config
     iterations, subsets, batch = map(
         operator.index, (cfg.iterations, cfg.subsets, cfg.views_per_batch)
     )
@@ -398,8 +417,22 @@ def mlem(
     )  # fmt: skip
     from ._mlem_host import solve as solve_host, volume_depth
 
-    depth = volume_depth(grid, detector, batch) if isinstance(model, ConeModel) else None
+    depth = (
+        volume_depth(grid, detector, batch, subset_views=(n + subsets - 1) // subsets)
+        if isinstance(model, ConeModel)
+        else None
+    )
     if depth is None:
+        if warm_start:
+            from ._warm_start import fbp_start
+            from .fbp import FBPConfig
+
+            init_x = jnp.maximum(
+                fbp_start(
+                    geometry, grid, detector, projections, config=FBPConfig(), det_grid=det_grid
+                ),
+                0,
+            )
         volume = _run_device(
             geometry,
             grid,
@@ -427,6 +460,7 @@ def mlem(
             depth=depth,
             initial=init_x,
             support=cfg.support,
+            warm_geometry=geometry if warm_start else None,
         )
     return volume, {
         "effective_iterations": iterations,
