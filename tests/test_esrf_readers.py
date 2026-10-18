@@ -37,7 +37,8 @@ def _check_inspection(path, frames, previews, capsys):
     assert report["projection"]["stats"]["mean"] == pytest.approx(float(counts.mean()))
     assert report["detector_metadata"]["du"] == frames.source.detector.du
     assert report["flats_darks"]["flat_count"] == len(frames.flats)
-    np.testing.assert_allclose(report["angles"]["coverage_deg"], np.ptp(frames.source.angles))
+    if report["angles"]["coverage_deg"] is not None:
+        np.testing.assert_allclose(report["angles"]["coverage_deg"], np.ptp(frames.source.angles))
     np.testing.assert_array_equal(
         iio.imread(previews / "projection.png"), scale_to_uint8(counts[len(counts) // 2])
     )
@@ -66,7 +67,12 @@ def test_edf_acquisition_metadata_calibration_and_lazy_windows(tmp_path, capsys)
     )
     metadata = tmp_path / "renamed.txt"
     metadata.write_text("\n".join(f"{k}={v}" for k, v in fields.items()))
-    frames = tj.load_frames(metadata)
+    overrides = {"detector": tj.Detector(5, 3, 0.0125, 0.0125), "angles": [0, -45, -90, -135]}
+    with pytest.raises(ValueError, match="angles="):
+        tj.load_frames(metadata)
+    with pytest.raises(ValueError, match="angles="):
+        tj.load_frames(metadata, detector=overrides["detector"])
+    frames = tj.load_frames(metadata, **overrides)
     assert frames.counts.shape == (4, 3, 5)
     np.testing.assert_array_equal(frames.flat_positions, [0, 4])
     np.testing.assert_array_equal(frames.darks, dark[None])
@@ -75,7 +81,7 @@ def test_edf_acquisition_metadata_calibration_and_lazy_windows(tmp_path, capsys)
         np.asarray(frames.counts)[[3, 1], 1:3, 2:5],
     )
     _check_inspection(metadata, frames, tmp_path / "previews", capsys)
-    scan = tj.load(metadata)
+    scan = frames.corrected()
     np.testing.assert_allclose(scan.projections, 0.2, atol=2e-7)
     np.testing.assert_allclose(scan.detector.du, 0.0125)
     np.testing.assert_array_equal(scan.angles, [0, -45, -90, -135])
@@ -85,7 +91,7 @@ def test_edf_acquisition_metadata_calibration_and_lazy_windows(tmp_path, capsys)
         + "".join(f"<{k}>{v}</{k}>" for k, v in fields.items())
         + "</acquisition></tomodb2>"
     )
-    np.testing.assert_array_equal(tj.load_frames(tmp_path).counts[:], frames.counts[:])
+    np.testing.assert_array_equal(tj.load_frames(tmp_path, **overrides).counts[:], frames.counts[:])
     metadata.write_text(metadata.read_text().replace("<Dim_1>5", "<Dim_1>50"))
     assert "cropped or resized" in validate_dataset(tmp_path)["issues"][0]
     with pytest.raises(ValueError, match="cropped or resized"):
@@ -118,6 +124,8 @@ def test_bliss_raw_sequence_units_keys_and_virtual_pixels(tmp_path, capsys):
                 np.pi / 2 if i == 6 else 0
             )
             entry["measurement/calc_hrsrot"].attrs["units"] = "radian"
+            entry["instrument/positioners/hrsrot"] = [12345, 54321]
+            entry["instrument/positioners/hrsrot"].attrs["units"] = "channel"
         file["broken_link"] = h5py.ExternalLink("absent.h5", "/entry")
     with h5py.File(tmp_path / "pixels.h5", "w") as file:
         file["data"] = np.full((2, 3, 5), 60, np.float32)
@@ -126,22 +134,30 @@ def test_bliss_raw_sequence_units_keys_and_virtual_pixels(tmp_path, capsys):
         layout = h5py.VirtualLayout((2, 3, 5), np.float32)
         layout[:] = h5py.VirtualSource("pixels.h5", "data", shape=(2, 3, 5))
         file.create_virtual_dataset("4.1/measurement/camera", layout)
-    frames = tj.load_frames(path)
+    detector = tj.Detector(5, 3, 0.01, 0.02)
+    with pytest.raises(ValueError, match="detector="):
+        tj.load_frames(path)
+    frames = tj.load_frames(path, detector=detector)
     np.testing.assert_array_equal(frames.flat_positions, [0, 0, 2, 2])
     np.testing.assert_array_equal(
         frames.counts.frames_at(np.array([3, 0, 2])).window(slice(1, 3), slice(2, 4))[:],
         np.full((3, 2, 2), 60),
     )
     _check_inspection(path, frames, tmp_path / "previews", capsys)
-    scan = tj.load(path)
+    scan = frames.corrected()
     np.testing.assert_allclose(scan.projections, np.log(2), atol=1e-7)
-    np.testing.assert_allclose([scan.detector.du, scan.detector.dv], [0.01, 0.02])
     np.testing.assert_array_equal(scan.angles, [0, -45, -90, -135])
     meta = frames.source.geometry_metadata["acquisition"]
     assert meta["sample_detector_distance"] == 130
     assert meta["source_sample_distance"] == 145000
+    with h5py.File(path, "a") as file:
+        for view in (4, 6):
+            del file[f"{view}.1/measurement/calc_hrsrot"]
+    with pytest.raises(ValueError, match="angles="):
+        tj.load_frames(path, detector=detector)
+    tj.load_frames(path, detector=detector, angles=[0, -45, -90, -135])
     with h5py.File(tmp_path / "pixels.h5", "w") as file:
         file["data"] = np.empty((0,), np.float32)
-    assert "missing Bliss virtual detector pixels" in validate_dataset(path)["issues"][0]
-    with pytest.raises(ValueError, match="missing Bliss virtual detector pixels"):
+    assert "missing virtual detector pixels" in validate_dataset(path)["issues"][0]
+    with pytest.raises(ValueError, match="missing virtual detector pixels"):
         tj.load_frames(path)

@@ -15,6 +15,7 @@ import numpy as np
 
 from tomojax.cli._options import add_config, add_output, check_paths, fail, hide_expert
 from tomojax.cli.config import parse_args_with_config
+from tomojax.geometry import Detector
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -44,13 +45,14 @@ def _build_parser() -> argparse.ArgumentParser:
             "to reconstruct, with each view's flat interpolated between the flat sets "
             "around it. INPUT may be HDF5 with image_key calibration, or a Nikon, "
             "SkyScan, Zeiss or ESRF acquisition with its own metadata. Generic TIFF "
-            "stacks need --angles and --flats; corrected SkyScan exports do not. "
+            "stacks need --angles, --flats and a detector in --config; "
+            "SkyScan exports need explicit white and dark levels. "
             "The scan written records each correction."
         ),
         epilog=(
             "Examples:\n"
             "  tomojax preprocess raw.nxs -o scan.nxs\n"
-            "  tomojax preprocess skyscan/ -o scan.nxs\n"
+            "  tomojax preprocess skyscan/ --flats WHITE --darks DARK -o scan.nxs\n"
             "  tomojax preprocess raw.nxs -o scan.nxs --remove-stripes 9 --zingers\n"
             "  tomojax preprocess frames/ --flats flats/ --darks darks/ --angles angles.csv "
             "-o scan.nxs\n"
@@ -62,7 +64,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "data", metavar="INPUT", help="Acquisition file/folder (including SkyScan), or TIFF stack"
     )
     add_output(parser, "Corrected scan to write (.nxs)")
-    add_config(parser, settings={"binning": 1})
+    add_config(parser, settings={"binning": 1, "detector": None})
     _ = parser.add_argument(
         "--flats", metavar="TIFF|LEVEL", help="Flat frames (TIFF file or folder), or one level"
     )
@@ -183,6 +185,16 @@ def _level_or_path(value: str | None) -> float | str | None:
         return value
 
 
+def _detector(settings: dict[str, object]) -> Detector | None:
+    """The same explicit detector override accepted by load_frames, from TOML."""
+    value = settings.get("detector")
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not {"nu", "nv", "du", "dv", "det_center"} <= value.keys():
+        raise ValueError("detector in --config needs nu, nv, du, dv and det_center")
+    return Detector.from_dict(value)
+
+
 def _steps(args: argparse.Namespace) -> list[Step]:
     """The correction steps the options ask for, in the order they run."""
     from tomojax.corrections import BeamHardening, Paganin, RejectViews, Stripes, Zingers
@@ -240,6 +252,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             flats=flats,
             darks=darks,
             angles=None if angles is None else load_angles(Path(angles)),
+            detector=_detector(settings),
             data_path=cast("str | None", args.data_path),
             image_key_path=cast("str | None", args.image_key_path),
             angles_path=cast("str | None", args.angles_path),

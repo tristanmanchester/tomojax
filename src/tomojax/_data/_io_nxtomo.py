@@ -14,6 +14,7 @@ from tomojax.geometry.api import (
     VOLUME_AXES_ATTR,
     axes_to_perm,
     infer_disk_axes,
+    nominal_axis_unit_from_inputs,
     transpose_volume,
 )
 
@@ -64,7 +65,8 @@ def save_nxtomo(
     projections : numpy.ndarray
         Projection stack in (view, v, u) order.
     metadata : NXTomoMetadata or None, optional
-        Acquisition and reconstruction metadata; None uses defaults.
+        Acquisition and reconstruction metadata; absent angles stay absent.
+        None writes projections without detector or angular calibration.
     compression : str, optional
         HDF5 dataset compression filter; defaults to lzf.
     overwrite : bool, optional
@@ -167,32 +169,38 @@ def _write_detector_section(
     if meta.detector is not None:
         det_dict = meta.detector if isinstance(meta.detector, dict) else meta.detector.to_dict()
         det.attrs["detector_meta_json"] = json.dumps(det_dict)
-        det.create_dataset("x_pixel_size", data=np.asarray(det_dict.get("du", 1.0)))
+        det.create_dataset("x_pixel_size", data=np.asarray(det_dict["du"]))
         det["x_pixel_size"].attrs["units"] = "pixel"
-        det.create_dataset("y_pixel_size", data=np.asarray(det_dict.get("dv", 1.0)))
+        det.create_dataset("y_pixel_size", data=np.asarray(det_dict["dv"]))
         det["y_pixel_size"].attrs["units"] = "pixel"
     return det
 
 
 def _write_sample_section(entry: h5py.Group, meta: NXTomoMetadata, *, n_views: int) -> None:
     sample = _ensure_group(entry, "sample", "NXsample")
-    trans = _ensure_group(sample, "transformations", "NXtransformations")
-    if meta.angles is None:
-        angles = np.zeros((n_views,), dtype=np.float32)
-    else:
-        angles = np.asarray(meta.angles, dtype=np.float32)
-        if angles.shape != (n_views,):
-            raise ValueError("angles must be (n_views,)")
-    d_angle = trans.create_dataset("rotation_angle", data=angles)
-    d_angle.attrs["units"] = "degree"
-    _write_string_attr(d_angle, "transformation_type", "rotation")
-    trans.create_dataset("rotation_axis", data=np.asarray([0.0, 0.0, 1.0], dtype=np.float32))
-    _write_string_attr(trans, "depends_on", "rotation_angle")
     sample_name_str = "sample" if meta.sample_name is None else str(meta.sample_name)
     sample.create_dataset(
         "name",
         data=np.array(sample_name_str, dtype=h5py.string_dtype(encoding="utf-8")),
     )
+    if meta.angles is None:
+        return  # A conversion must not turn absent measurements into zero angles.
+    angles = np.asarray(meta.angles, dtype=np.float32)
+    if angles.shape != (n_views,):
+        raise ValueError("angles must be (n_views,)")
+    trans = _ensure_group(sample, "transformations", "NXtransformations")
+    d_angle = trans.create_dataset("rotation_angle", data=angles)
+    d_angle.attrs["units"] = "degree"
+    _write_string_attr(d_angle, "transformation_type", "rotation")
+    # The public NX fields must agree with the saved tilted/arbitrary-axis model.
+    # If that model is incomplete, do not manufacture an axial direction.
+    inputs = dict(meta.geometry_meta or {})
+    gtype = normalize_geometry_type(meta.geometry_type)
+    inputs["geometry_type"] = "lamino" if gtype == "cone" else gtype
+    if gtype == "parallel" or "tilt_deg" in inputs or "axis_unit_lab" in inputs:
+        axis = nominal_axis_unit_from_inputs(inputs)
+        trans.create_dataset("rotation_axis", data=np.asarray(axis, dtype=np.float32))
+    _write_string_attr(trans, "depends_on", "rotation_angle")
 
 
 def _write_source_section(inst: h5py.Group, meta: NXTomoMetadata) -> None:
@@ -365,8 +373,8 @@ def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
     """Load an NXtomo dataset and TomoJAX extras.
 
     Returns a ``LoadedNXTomo`` payload with typed accessors for projections and
-    persisted metadata. ``grid`` is present when the file stores grid metadata
-    or when a saved volume allows a unit-grid fallback. Volumes are returned in
+    persisted metadata. ``grid`` is present only when the file stores grid
+    metadata; a saved volume does not establish physical voxels. Volumes are returned in
     internal ``xyz`` order. With ``lazy`` the projections are an
     :class:`~tomojax._data._io_frames.Hdf5Frames`, read only as indexed.
 
@@ -406,7 +414,8 @@ def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
             where = "/entry/projections"
         else:
             raise KeyError("Could not find projections dataset under /entry")
-        proj = Hdf5Frames.open(path, where) if lazy else f[where][...]
+        stack = Hdf5Frames.open(path, where)
+        proj = stack if lazy else np.asarray(stack)
         out["projections"] = proj
         n_views = proj.shape[0]
         image_key = _load_image_key(entry, n_views=n_views, path=path)
@@ -416,7 +425,7 @@ def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
         )
         _load_geometry_metadata(out, entry, path=path)
         _load_grid_metadata(out, entry, path=path)
-        _load_detector_metadata(out, entry, proj, path=path)
+        _load_detector_metadata(out, entry, path=path)
         _load_source_metadata(out, entry)
         volume_raw, volume_axes_attr = _load_processing_metadata(out, entry, path=path)
         _load_sample_metadata(out, entry)

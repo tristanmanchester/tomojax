@@ -105,3 +105,31 @@ def test_auto_alignment_records_center_and_resolves_only_its_limitation(monkeypa
     center = info["center_estimation"]
     assert center["input"] == list(scan.detector.center) and center["status"] == "estimated"
     assert abs(center["output"][0] - true_u) <= 0.3 * scan.detector.du
+
+
+def test_loading_estimates_missing_center_from_recorded_pitch_and_preserves_it(tmp_path):
+    import h5py
+
+    scan, true_u, _ = _scan()
+    path = tmp_path / "external.data"
+    with h5py.File(path, "w") as file:
+        file["exchange/data"] = 10000 * np.exp(-0.1 * scan.projections)
+        file["exchange/data_white"] = np.full((1, 8, 64), 10000, np.float32)
+        file["exchange/data_dark"] = np.zeros((1, 8, 64), np.float32)
+        file["exchange/theta"] = scan.angles
+        for name, pitch in (("x", scan.detector.du), ("y", scan.detector.dv)):
+            data = file.create_dataset(
+                "measurement/instrument/detector/actual_pixel_size_" + name, data=pitch
+            )
+            data.attrs["units"] = "mm"
+    frames = tj.load_frames(path)
+    assert abs(frames.geometry.detector.center[0] - true_u) <= 0.3 * scan.detector.du
+    assert frames.source.geometry_metadata["detector_center_status"] == "inferred"
+    assert tj.load(path).detector == frames.geometry.detector
+    result = frames.cropped(slice(2, 4), slice(None)).corrected()
+    np.testing.assert_allclose(result.projections, 0.1 * scan.projections[:, 2:4], atol=2e-7)
+    saved = tmp_path / "calibrated.nxs"
+    tj.save(saved, result)
+    loaded = tj.load(saved)
+    assert loaded.detector == result.detector
+    assert loaded.source.geometry_metadata["detector_center_status"] == "inferred"

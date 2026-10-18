@@ -30,7 +30,9 @@ def test_standard_nxtomo_angles_are_loaded_and_found_before_other_detectors(
         handle.create_dataset("unrelated/rotation_angle", data=np.zeros(4 if raw else 2))
     np.testing.assert_allclose(load_nxtomo(str(path)).angles, [0, 0, 90, 0] if raw else [0, 90])
     np.testing.assert_allclose(tj.load(path).angles, [0, 90])
-    np.testing.assert_allclose(tj.load_frames(path).geometry.angles, [0, 90])
+    np.testing.assert_allclose(
+        tj.load_frames(path, **({} if raw else {"flats": 100, "darks": 0})).geometry.angles, [0, 90]
+    )
     angle_path = (
         "/entry/sample/rotation_angle"
         if standard_path
@@ -183,7 +185,9 @@ def test_external_hdf5_layouts_decode_the_same_angles_and_calibration(tmp_path, 
             angles = handle.create_dataset("exchange/theta", data=[0, np.pi / 2])
         angles.attrs["units"] = "radians"
     frames = (
-        tj.load_frames(path, white_level=1000) if layout == "beamline" else tj.load_frames(path)
+        tj.load_frames(path, white_level=1000, detector=tj.Detector(3, 2, 1, 1), darks=0)
+        if layout == "beamline"
+        else tj.load_frames(path, detector=tj.Detector(3, 2, 1, 1), darks=0)
     )
     scan = frames.corrected()
     np.testing.assert_allclose(scan.angles, [0, 90], atol=1e-5)
@@ -207,7 +211,10 @@ def test_separate_fields_fill_only_calibrations_missing_from_image_key(tmp_path,
     located = locate_frames(str(path))
     assert (located.flats is None) == (marked == 1)
     assert (located.darks is None) == (marked == 2)
-    for scan in (tj.load(path), tj.load_frames(path).corrected()):
+    for read in (tj.load, tj.load_frames):
+        with pytest.raises(ValueError, match="detector="):
+            read(path)
+    for scan in (tj.load_frames(path, detector=tj.Detector(3, 2, 1, 1)).corrected(),):
         np.testing.assert_array_equal(scan.angles, [0, 90])
         np.testing.assert_allclose(scan.projections[:, 0, 0], -np.log([0.5, 0.25]), rtol=1e-6)
 
@@ -252,7 +259,7 @@ def _write_beamline_frames(path):
         entry = handle.create_group("entry1/tomo")
         entry.create_dataset("data", data=np.stack([np.full((2, 2), v) for v in (500, 1000, 250)]))
         entry.create_dataset("image_key", data=[0, 1, 0])
-        entry.create_dataset("rotation_angle", data=[0.0, np.nan, 90.0])
+        entry.create_dataset("rotation_angle", data=[0.0, np.nan, 90.0]).attrs["units"] = "deg"
 
 
 @pytest.mark.parametrize("name", ["image_key", "rotation_angle"])
@@ -276,11 +283,19 @@ def test_beamline_metadata_shape_still_disambiguates_different_detectors(tmp_pat
         entry = handle.create_group("entry2/tomo")
         entry.create_dataset("data", data=np.zeros((4, 2, 2)))
         entry.create_dataset("image_key", data=[0, 0, 0, 0])
-        entry.create_dataset("rotation_angle", data=[0, 45, 90, 135])
-    first = tj.load_frames(path, data_path="/entry1/tomo/data").corrected()
+        entry.create_dataset("rotation_angle", data=[0, 45, 90, 135]).attrs["units"] = "deg"
+    first = tj.load_frames(
+        path, data_path="/entry1/tomo/data", detector=tj.Detector(2, 2, 1, 1), darks=0
+    ).corrected()
     np.testing.assert_array_equal(first.angles, [0, 90])
     np.testing.assert_allclose(first.projections[:, 0, 0], -np.log([0.5, 0.25]))
-    second = tj.load_frames(path, data_path="/entry2/tomo/data", white_level=1)
+    second = tj.load_frames(
+        path,
+        data_path="/entry2/tomo/data",
+        white_level=1,
+        detector=tj.Detector(2, 2, 1, 1),
+        darks=0,
+    )
     assert second.views == 4
     np.testing.assert_array_equal(second.geometry.angles, [0, 45, 90, 135])
 
@@ -294,19 +309,19 @@ def test_ambiguous_beamline_metadata_requires_an_explicit_path(tmp_path, name, m
         if not matching:
             entry = handle["entry1/tomo"]
             del entry[name]
-            entry.create_dataset(name, data=np.zeros(4, np.int32))
+            entry.create_dataset(name, data=np.zeros(4, np.int32)).attrs["units"] = "deg"
         handle.create_dataset(f"entry2/{name}", data=np.zeros(3 if matching else 5, np.int32))
     with pytest.raises(KeyError, match=f"several '{name}' datasets"):
-        tj.load_frames(path)
+        tj.load_frames(path, darks=0)
     keyword = "image_key_path" if name == "image_key" else "angles_path"
-    arguments = {keyword: f"/entry1/tomo/{name}"}
+    arguments = {keyword: f"/entry1/tomo/{name}", "detector": tj.Detector(2, 2, 1, 1)}
     if matching:
-        scan = tj.load_frames(path, **arguments).corrected()
+        scan = tj.load_frames(path, **arguments, darks=0).corrected()
         np.testing.assert_array_equal(scan.angles, [0, 90])
         np.testing.assert_allclose(scan.projections[:, 0, 0], -np.log([0.5, 0.25]))
     else:
         with pytest.raises(ValueError, match="shape"):
-            tj.load_frames(path, **arguments)
+            tj.load_frames(path, **arguments, darks=0)
 
 
 def test_a_missing_beamline_image_key_remains_supported(tmp_path):
@@ -315,7 +330,7 @@ def test_a_missing_beamline_image_key_remains_supported(tmp_path):
     with h5py.File(path, "a") as handle:
         del handle["entry1/tomo/image_key"]
         handle["entry1/tomo/rotation_angle"][...] = [0, 45, 90]
-    frames = tj.load_frames(path, white_level=1000)
+    frames = tj.load_frames(path, white_level=1000, detector=tj.Detector(2, 2, 1, 1), darks=0)
     assert frames.views == 3 and frames.flats is None
     np.testing.assert_array_equal(frames.geometry.angles, [0, 45, 90])
 
@@ -327,6 +342,79 @@ def test_data_exchange_angles_take_priority_over_unmatched_rotation_datasets(tmp
         handle.create_dataset("exchange/data_white", data=np.full((1, 2, 2), 1000))
         handle.create_dataset("exchange/theta", data=[0, np.pi / 2]).attrs["units"] = "rad"
         handle.create_dataset("unrelated/rotation_angle", data=[0, 45, 90])
-    scan = tj.load_frames(path).corrected()
+    scan = tj.load_frames(path, detector=tj.Detector(2, 2, 1, 1), darks=0).corrected()
     np.testing.assert_allclose(scan.angles, [0, 90], atol=1e-5)
     np.testing.assert_allclose(scan.projections, np.log(2.0))
+
+
+def test_missing_angles_are_not_replaced_by_zero_views(tmp_path):
+    path = tmp_path / "scan.nxs"
+    write_projection_dataset(path)
+    with h5py.File(path, "a") as handle:
+        del handle["entry/sample/transformations/rotation_angle"]
+    assert load_nxtomo(str(path)).metadata.angles is None
+    for read in (tj.load, tj.load_frames):
+        with pytest.raises(ValueError, match="angles="):
+            read(path)
+    frames = tj.load_frames(path, angles=[11, 72], flats=100, darks=0)
+    np.testing.assert_array_equal(frames.geometry.angles, [11, 72])
+
+
+@pytest.mark.parametrize("raw", [False, True])
+def test_missing_laminography_tilt_requires_geometry_before_materialisation(tmp_path, raw):
+    path = tmp_path / "scan.nxs"
+    (write_raw_nxtomo if raw else write_projection_dataset)(path)
+    with h5py.File(path, "a") as handle:
+        handle["entry/geometry"].attrs["type"] = "lamino"
+    for read in (tj.load, tj.load_frames):
+        with pytest.raises(ValueError, match="geometry=.*tilt_deg"):
+            read(path)
+    detector = tj.Detector(2 if raw else 4, 2, 0.7, 0.8, (1.2, -0.3))
+    geometry = tj.LaminographyGeometry(
+        tj.Grid(4, 4, 2, 0.7, 0.7, 0.8), detector, [0, 90], tilt_deg=57
+    )
+    frames = tj.load_frames(path, geometry=geometry, **({} if raw else {"flats": 100, "darks": 0}))
+    assert frames.geometry is geometry
+
+
+def test_npz_detector_without_center_stays_incomplete_until_overridden(tmp_path):
+    path = tmp_path / "old.npz"
+    np.savez(
+        path,
+        projections=np.ones((2, 2, 3), np.float32),
+        thetas_deg=[0, 90],
+        detector={"nu": 3, "nv": 2, "du": 0.2, "dv": 0.3},
+    )
+    for read in (tj.load, tj.load_frames):
+        with pytest.raises(ValueError, match="detector="):
+            read(path)
+    detector = tj.Detector(3, 2, 0.2, 0.3, (0.1, -0.2))
+    assert tj.load_frames(path, detector=detector, flats=100, darks=0).geometry.detector == detector
+
+
+def test_container_conversion_does_not_create_absent_rotation_measurements(tmp_path):
+    from tomojax.io.api import convert_dataset
+
+    path = tmp_path / "without_angles.npz"
+    np.savez(
+        path, projections=np.ones((2, 2, 3), np.float32), detector=tj.Detector(3, 2, 1, 1).to_dict()
+    )
+    output = tmp_path / "converted.nxs"
+    convert_dataset(path, output)
+    with pytest.raises(ValueError, match="angles="):
+        tj.load(output)
+    np.testing.assert_array_equal(
+        tj.load_frames(output, angles=[2, 82], flats=100, darks=0).geometry.angles, [2, 82]
+    )
+
+
+def test_generic_motor_without_units_requires_explicit_angles(tmp_path):
+    path = tmp_path / "beamline.h5"
+    _write_beamline_frames(path)
+    with h5py.File(path, "a") as handle:
+        del handle["entry1/tomo/rotation_angle"].attrs["units"]
+    assert locate_frames(str(path)).angles is None
+    with pytest.raises(ValueError, match="angles="):
+        tj.load_frames(path, detector=tj.Detector(2, 2, 1, 1), darks=0)
+    frames = tj.load_frames(path, angles=[11, 72], detector=tj.Detector(2, 2, 1, 1), darks=0)
+    np.testing.assert_array_equal(frames.geometry.angles, [11, 72])

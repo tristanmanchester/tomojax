@@ -82,6 +82,7 @@ def test_raw_multipage_calibration_matches_in_memory_frames(tmp_path: Path) -> N
         angles=[0.0, 60.0, 120.0],
         flats=tmp_path / "flats.tif",
         darks=tmp_path / "darks.tif",
+        detector=tj.Detector(7, 5, 1, 1),
     )
     reference = tj.Frames(counts, frames.geometry, flats=flats, darks=darks).corrected()
 

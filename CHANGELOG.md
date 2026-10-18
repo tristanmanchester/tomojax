@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+Container conversion preserves missing angles/centre calibration rather than
+creating measurements; saved NXtomo rotation axes now reflect the recorded tilt.
+Nikon loading no longer invents a full-turn angle schedule or a 16-bit white
+level, and an incomplete measured angle sidecar requires explicit angles.
+
+External NXtomo/Data Exchange raw exports are recognised by file content,
+including arbitrary NXtomo entry names; recorded physical pixel sizes and
+source labels are retained without inventing a detector centre.
+
+NXtomo and generic frame loading no longer invent detector pixel sizes/centre
+or zero view angles; laminography loading no longer supplies a 30° tilt. Errors
+name the `load_frames` override to supply; CLI preprocessing accepts a detector
+table in `--config`.
+
 The ptychography example also accepts PSI MATLAB v5 simulations, with detector
 binning and iteration controls for CPU previews and explicit output units.
 

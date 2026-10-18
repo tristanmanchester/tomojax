@@ -11,6 +11,7 @@ layers =
     tomojax._laminography
     tomojax._region
     tomojax._loading
+    tomojax._loading_geometry
     tomojax._scan
     tomojax._astra
     tomojax.alignment

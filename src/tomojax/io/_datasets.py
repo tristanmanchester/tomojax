@@ -238,13 +238,15 @@ class ProjectionDataset:
         """
         metadata = payload.metadata
         detector = metadata.detector
+        if isinstance(detector, dict) and not {"du", "dv", "det_center"} <= detector.keys():
+            # NPZ can carry an incomplete record too. Preserve its absence so
+            # load_frames can apply an explicit detector before materialisation.
+            detector = None
         grid = metadata.grid
         return cls(
             projections=np.asarray(payload.projections),
             angles=np.asarray(
-                np.zeros(payload.projections.shape[0], dtype=np.float32)
-                if metadata.angles is None
-                else metadata.angles,
+                np.empty(0, dtype=np.float32) if metadata.angles is None else metadata.angles,
                 dtype=np.float32,
             ),
             volume=None if metadata.volume is None else np.asarray(metadata.volume),
@@ -335,8 +337,25 @@ class ProjectionDataset:
             If detector metadata are missing.
         """
         detector = self.detector
-        if detector is None:
-            raise ValueError("projection dataset is missing detector metadata")
+        if (
+            detector is None
+            or self.geometry_metadata.get("detector_center_status") == "not_recorded"
+        ):
+            raise ValueError(
+                "Missing detector pixel sizes or centre: pass detector=... or geometry=... "
+                "to tomojax.load_frames"
+            )
+        if self.geometry_metadata.get("axis_status") == "not_recorded":
+            raise ValueError(
+                "Missing calibrated rotation axis: pass geometry=... to tomojax.load_frames"
+            )
+        if self.grid is None and self.geometry_metadata.get("grid_status") == "unresolved":
+            raise ValueError(
+                "Unresolved recorded volume grid: pass grid=... or geometry=... "
+                "to tomojax.load_frames"
+            )
+        if self.angles.shape != (self.projections.shape[0],):
+            raise ValueError("Missing view angles: pass angles=... to tomojax.load_frames")
         payload: dict[str, Any] = {
             "detector": detector.to_dict(),
             "angles": np.asarray(self.angles, dtype=np.float32),

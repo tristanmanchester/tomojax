@@ -47,20 +47,24 @@ listed with how to check a result in the
 
 - TIFF `import` packages data; it does not apply flat/dark correction or a log.
   Reconstruction expects line integrals (log attenuation).
-- `tomojax preprocess` of TIFF frames records unit detector spacing and parallel
-  geometry. `tomojax import` them with their geometry first, or pass
-  `geometry=` to `tj.load_frames`; see the
+- `tomojax preprocess` of generic TIFF frames requires a `detector` table in
+  `--config` (`nu`, `nv`, `du`, `dv`, `det_center`). For non-parallel geometry,
+  pass `geometry=` to `tj.load_frames`; see the
   [real scan guide](real-laminography.md#prepare-tiff-data).
-- NXtomo and Data Exchange files not written by TomoJAX get a parallel beam
-  with a centred detector, and unit pixels unless the NXtomo detector records
-  `x_pixel_size` and `y_pixel_size`. Pass `detector=` or `geometry=` to
-  `tj.load_frames` to set the measured geometry; see the
+- Missing detector pixel sizes require `detector=` or `geometry=`. For axial
+  acquisitions with recorded pitch, loading estimates an absent rotation centre
+  from corrected rows and records its provenance; at least a usable half-turn
+  is needed. Failed estimates require explicit `detector=` and never return the
+  internal zero seed. Missing angles require `angles=`. See the
   [quickstart](quickstart.md#correct-raw-detector-frames).
-- A float stack with no flats or `image_key` is taken to be line integrals
-  already: TomoJAX cannot tell raw float counts from corrected data. Correct
-  such frames with `tj.load_frames(path, flats=...)`.
-- A laminography dataset without explicit tilt metadata currently uses 30° when
-  building geometry. Inspect and set measured geometry before reconstruction.
+- Content-discovered external acquisitions remain detector counts even when
+  stored as floats. Missing flat/dark calibration requires `flats=` or
+  `white_level=`, and `darks=`; a floating dtype is not evidence of correction.
+  External NXtomo also requires frame labels (`image_key_path=`); Data Exchange
+  defines its separate `data` array as projections. TomoJAX dataset containers
+  store line integrals unless explicitly labelled as raw.
+- A laminography dataset without explicit tilt or axis metadata requires
+  `geometry=` in `tj.load_frames`; no 30° tilt is assumed.
 - `tomojax inspect --preview` PNGs are display-scaled central slices. Use the
   floating-point dataset volume for quantitative analysis and honour its
   recorded axis order.
@@ -151,3 +155,17 @@ listed with how to check a result in the
 ## Next steps
 
 See [`alignment-guide.md`](alignment-guide.md) to choose an alignment mode.
+
+ESRF raw Bliss and SPEC EDF metadata do not establish a calibrated detector
+centre: it must be estimated from data or supplied. SPEC scan range alone also
+needs explicit `angles=`; accumulated darks without `DARK_N` need `darks=`.
+Available raw Bliss/EDF real samples are incomplete; complete-workflow coverage
+currently comes from ESRF NXtomo exports, not those native layouts.
+
+HDF5 virtual detector stacks require all referenced pixel files and mapped
+regions to be present; missing sources are errors, not zero-filled exposures.
+
+Nikon reconstruction ROI offsets (`OffsetX/Y/Z`) are retained, but their
+nonzero vendor coordinate mapping is not established: choose `grid=` or
+`geometry=` explicitly instead of silently loading a centred ROI. Missing
+detector offsets or axis calibration likewise require explicit geometry.

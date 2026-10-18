@@ -8,20 +8,20 @@ experimental. See [installation](installation.md) and [measurement scope](measur
 |---|---|---|
 | Dataset inspection and validation | Supported | `tomojax inspect scan.nxs` (`--json` for a JSON report; exit status 1 when invalid) |
 | Preview PNGs (central projection and central volume slices) | Supported | `tomojax inspect recon.nxs --preview previews` |
-| TIFF stack import | Supported | `tomojax import ./tiffs --angles angles.csv --pixel-size ... -o scan.nxs` |
+| TIFF stack import | Supported | `tomojax import ./tiffs --angles angles.csv --pixel-size ... --geometry parallel --config calibration.toml -o scan.nxs` |
 | Dataset container conversion (`.npz`, `.nxs`, `.h5`) | Supported | `tomojax import scan.npz -o scan.nxs` |
 | HDF5 flat/dark correction (NXtomo `image_key`, or APS Data Exchange `data_white`/`data_dark`; flat sets before and after interpolated) | Supported | `tomojax preprocess raw.nxs -o corrected.nxs`, or `tj.load("raw.nxs")` |
 | Frame corrections in Python (crop, select views, correction steps) | Supported | `tj.load_frames(path).cropped(...).selected(...).corrected(*steps)`; `Scan.corrected(*steps)` for line-integral steps |
 | TIFF flat/dark preprocessing | Supported | `tomojax preprocess ./projections -o corrected.nxs --flats ./flats --darks ./darks --angles angles.csv` |
 | FBP, CGLS, FISTA-TV, SPDHG-TV from corrected projections | Supported | `tomojax recon corrected.nxs -o recon.nxs --method fbp\|cgls\|fista\|spdhg` |
 | Fourier-slice inverse of supported parallel scans | Supported | `tomojax recon corrected.nxs -o recon.nxs --method fourier`; matching available CUDA or NumPy, with explicit backend configuration |
-| Cone-beam (lab CT) scans: FDK and iterative reconstruction | Supported | `tomojax import ./tiffs --geometry cone --source-to-axis ... --source-to-detector ... --pixel-size ... --angles angles.csv -o scan.nxs`, then `tomojax recon` (automatic FDK for one arrangement; `--method fbp` selects it explicitly) |
+| Cone-beam (lab CT) scans: FDK and iterative reconstruction | Supported | `tomojax import ./tiffs --geometry cone --source-to-axis ... --source-to-detector ... --pixel-size ... --angles angles.csv --config calibration.toml -o scan.nxs`, then `tomojax recon` (automatic FDK for one arrangement; `--method fbp` selects it explicitly) |
 | Per-projection 5-DOF pose alignment | Experimental | `tomojax align corrected.nxs -o aligned.nxs --mode pose` |
 | Cone-beam 6-DOF pose alignment (adds `dy` along the beam) | Experimental | `tomojax align cone_scan.nxs -o aligned.nxs --mode pose` |
 | Ring (stripe), zinger, outlier-view and beam-hardening corrections; Paganin phase retrieval | Supported | `tomojax preprocess raw.nxs -o scan.nxs --remove-stripes 9 --zingers --reject-outliers --beam-hardening 1,0.05` (and the expert `--paganin`), or `tomojax.corrections` steps |
 | Volume export as TIFF slices or raw (`uint16` or `float32`) | Supported | `tomojax export recon.nxs -o slices/`; `tomojax export recon.nxs -o recon.raw --dtype uint16` |
-| Nikon (X-Tek) scan import, including its calibrated rotation axis | Supported | `tj.load("scan/part.xtekct")`, or `tomojax import scan/part.xtekct -o scan.nxs` |
-| Zeiss Xradia projection acquisitions with embedded calibration | Supported | `tj.load_frames("scan.txrm").corrected(...)`, or `tomojax preprocess scan.txrm -o scan.nxs`; [CPU preview](lab-ct.md#zeiss-xradia-preview) |
+| Nikon (X-Tek) scan import, including its calibrated rotation axis | Supported | `tj.load_frames("scan/part.xtekct", darks=0).corrected()`, or `tomojax preprocess scan/part.xtekct --darks 0 -o scan.nxs` |
+| Zeiss Xradia projection acquisitions with embedded calibration | Supported | `tj.load_frames("scan.txrm", darks=0).corrected(...)`, or `tomojax preprocess scan.txrm --darks 0 -o scan.nxs`; [CPU preview](lab-ct.md#zeiss-xradia-preview) |
 | Multi-orbit cone-beam scans (`ConeSegments`): iterative reconstruction and pose alignment | Supported; alignment experimental | `tj.Scan.from_astra(...)` or `tj.Scan.combine([...])`, then `tj.reconstruct(scan, "cgls")` and `tj.align(scan)`; `orbit_heights` in `tomojax.alignment.api` |
 | Cone-beam axis-offset (centre of rotation) and detector-roll calibration | Experimental | `tomojax align cone_scan.nxs -o calibrated.nxs --mode cor`; `calibrate_cone_axis` in Python |
 | Detector-centre/COR alignment | Experimental | `tomojax align corrected.nxs -o aligned.nxs --mode cor` |
@@ -39,7 +39,70 @@ certificates. Choose an explicit mode/method when supplying expert solver settin
 
 ## Scope
 
+NXtomo and generic TIFF/HDF5 frame loading requires recorded or explicitly
+supplied detector pixel sizes and view angles. External NXtomo/Data Exchange
+use their format-defined axial parallel model. If the pitch is recorded but the
+rotation centre is absent, loading estimates detector-u from a few corrected
+rows with the half-turn Fourier method and records `inferred` provenance;
+vertical zero defines the free axial origin. Insufficient coverage/contrast
+requires explicit `detector=`. Laminography requires a recorded tilt/axis or
+`geometry=`. Nikon and Zeiss files lacking dark calibration require `darks=`; zero is
+only an explicit choice for already corrected counts. SkyScan additionally
+requires `flats=`/`white_level=` rather than deriving it from bit depth.
+TIFF line-integral import requires explicit `--geometry`, `--pixel-size` and
+`detector_center = [u, v]` in `--config`; laminography also needs `tilt_deg`.
+For raw frames without an explicit grid, detector binning also reduces output
+resolution. Axial-parallel crops follow the measured row window; other models
+retain their output box. File/caller-supplied grids and `Scan.binned()` retain
+their chosen sampling.
+
+Missing values produce an error
+naming the override, not centred unit pixels or a 30° tilt.
+
 Workflows outside the table above are research or expert diagnostics.
+
+## Acquisition metadata
+
+`load_frames` recognises these raw exports by content, even with a renamed file.
+A partial detector record is retained for inspection, not completed with a
+zero rotation centre. Missing axial centres may be estimated from data; an
+unavailable pitch or failed estimate requires `detector=`/`geometry=`. Physical
+pitches below are normalised to millimetres.
+
+| Export | Frames and calibration | Angles and detector metadata |
+|---|---|---|
+| ESRF raw Bliss step sequence | Sequence-owned detector blocks, image keys and flat positions; external/virtual pixel links checked | Unit-labelled angular commands before raw motors; `technique/optic/sample_pixel_size`; distances from `technique/scan`; missing axial centre is estimated or supplied |
+| ESRF SPEC EDF | Ordered EDF files, reference files, accumulated darks divided by recorded `DARK_N` | `.info`/XML `PixelSize` and propagation `Distance`; caller supplies `angles=` (range alone has no origin), and `detector=` if needed |
+| External NXtomo (including ESRF exports) | A group declaring `NXtomo`, with `instrument/detector/data` and `image_key`; the entry name is unrestricted | `sample/rotation_angle` (or `sample/transformations/rotation_angle`), recorded angular units; detector `x_pixel_size`/`y_pixel_size` with length units |
+| Data Exchange (including PSI TOMCAT and Elettra SYRMEP TomoBank exports) | `/exchange/data`, `data_white`, `data_dark`, or interleaved `image_key` | `/exchange/theta`; `/measurement/instrument/detector/actual_pixel_size_x` and `_y` with `unit`/`units` when present; sample/source/beamline labels are retained |
+
+These readers do not turn an estimated motor position into a calibrated
+rotation centre, or infer pixel pitch from image dimensions. Data Exchange
+exports lacking facility labels remain Data Exchange, not a guessed beamline.
+This support does not establish support for every native TOMCAT/SYRMEP layout.
+Real-file coverage includes ESRF NXtomo converted by nxtomomill, TOMCAT/SYRMEP
+Data Exchange, Diamond I12 HDF5 and K11 GDA, Nikon TIFF acquisitions, Zeiss TXRM,
+SkyScan logs/TIFFs, and TomoJAX NPZ/NXtomo round trips. Available raw Bliss/EDF
+samples are incomplete and are rejected; a complete raw Bliss/EDF workflow and
+native TOMCAT GigaFRoST are not established by those checks.
+Missing calibration does not disable content recognition: supply `flats=`/
+`white_level=` and `darks=`. NXtomo/Data Exchange angular fields use their
+format-defined degree convention when units are absent; generic motor datasets
+without units require explicit `angles=`.
+
+SkyScan logs supply distances, camera pitch/binning, optional resize and the
+vertical optical-axis line, but not a calibrated horizontal centre. Supply
+`detector=`/`geometry=` plus explicit flat/white and dark calibration.
+
+Zeiss reads `ImageInfo/Angles`, object-plane `pixelsize`, `XrayGeometry`,
+cone distances, both `alignment/*-shifts` and `AutoRecon/CenterShift`;
+missing calibration requires `geometry=` rather than zero image shifts.
+The embedded reference must record its own `ReferenceData/DataType`.
+
+Nikon detector pitch/offsets and source distances come from the `.xtekct`
+fields; its axis requires either the recorded modern offset/roll/tilt or both
+legacy COR endpoints. Reconstruction dimensions, pitches and zero offsets
+are read together; nonzero vendor ROI offsets require a caller-chosen grid.
 
 ## Numerical and accelerator scope
 

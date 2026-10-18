@@ -99,7 +99,18 @@ def test_import_cli_writes_standard_dataset_from_tiffs(tmp_path: Path) -> None:
     write_tiff_stack(stack, [1.0, 2.0], shape=(2, 4))
     write_angle_csv(angles, [0.0, 90.0])
 
-    args = ["import", str(stack), "--angles", str(angles), "-o", str(out_path)]
+    config = tmp_path / "calibration.toml"
+    config.write_text('detector_center = [0.12, -0.3]\ngeometry = "parallel"\n')
+    args = [
+        "import",
+        str(stack),
+        "--angles",
+        str(angles),
+        "-o",
+        str(out_path),
+        "--config",
+        str(config),
+    ]
     assert main([*args, "--pixel-size", "0.5", "0.75", "--name", "rock"]) == 0
 
     dataset = load_dataset(out_path)
@@ -107,13 +118,46 @@ def test_import_cli_writes_standard_dataset_from_tiffs(tmp_path: Path) -> None:
     assert dataset.detector is not None
     assert dataset.detector.du == pytest.approx(0.5)
     assert dataset.detector.dv == pytest.approx(0.75)
+    assert dataset.detector.center == (0.12, -0.3)
     assert dataset.sample_name == "rock"
 
     with pytest.raises(SystemExit) as exc_info:
         main(args)
     assert exc_info.value.code == 2
-    assert main([*args, "--force"]) == 0
+    with pytest.raises(SystemExit):
+        main([*args, "--force"])  # missing pixel size is not unit calibration
+    assert main([*args, "--force", "--pixel-size", "1"]) == 0
     assert load_dataset(out_path).detector.du == pytest.approx(1.0)  # pyright: ignore[reportOptionalMemberAccess]
+
+
+def test_import_requires_explicit_detector_center_model_and_lamino_tilt(tmp_path, capsys):
+    write_tiff_stack(tmp_path / "views", [1.0, 2.0], shape=(2, 4))
+    write_angle_csv(tmp_path / "angles.csv", [0, 90])
+    config, output = tmp_path / "calibration.toml", tmp_path / "scan.nxs"
+    args = [
+        "import",
+        str(tmp_path / "views"),
+        "--angles",
+        str(tmp_path / "angles.csv"),
+        "--pixel-size",
+        ".5",
+        "--config",
+        str(config),
+        "-o",
+        str(output),
+    ]
+    for text, required in (
+        ("", "--geometry"),
+        ('geometry = "parallel"', "detector_center"),
+        ('geometry = "lamino"\ndetector_center = [0, 0]', "tilt_deg"),
+    ):
+        config.write_text(text)
+        with pytest.raises(SystemExit):
+            main(args)
+        assert required in capsys.readouterr().err and not output.exists()
+    config.write_text(config.read_text() + "\ntilt_deg = 47.0\n")
+    assert main(args) == 0
+    assert load_dataset(output).geometry_inputs()["tilt_deg"] == 47
 
 
 def test_import_cli_needs_angles_for_tiffs(

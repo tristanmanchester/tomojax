@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import replace
 import importlib
 import json
-import logging
 from typing import TYPE_CHECKING, Any
 
 import h5py
@@ -87,8 +86,11 @@ def test_frame_center_provenance_preserves_explicit_overrides(tmp_path, recorded
     if not recorded:
         with h5py.File(path, "r+") as handle:
             del handle["entry/instrument/detector"].attrs["detector_meta_json"]
-    frames = tj.load_frames(path)
-    status = "recorded" if recorded else "not_recorded"
+    if not recorded:
+        with pytest.raises(ValueError, match="detector="):
+            tj.load_frames(path)
+    frames = tj.load_frames(path, **({} if recorded else {"detector": tiny_detector(nu=2)}))
+    status = "recorded" if recorded else "provided"
     assert frames.source.geometry_metadata["detector_center_status"] == status
     for kwargs in ({"detector": frames.geometry.detector}, {"geometry": frames.geometry}):
         explicit = tj.load_frames(path, **kwargs)
@@ -125,14 +127,15 @@ def test_flats_before_and_after_are_interpolated_by_position(tmp_path: Path) -> 
     assert settings["flat_sets"] == 2 and settings["flat_positions"] == [0.0, 4.0]
 
 
-def test_no_darks_warns_and_uses_zero(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_missing_dark_requires_explicit_calibration(tmp_path: Path) -> None:
     frames = np.stack([np.full((2, 2), v, np.float32) for v in (8, 4)])
     _write_frames(tmp_path / "scan.nxs", frames, [1, 0], [0, 0])
-    with caplog.at_level(logging.WARNING):
-        scan = tj.load(tmp_path / "scan.nxs")
-    assert "no dark fields" in caplog.text
+    for load in (tj.load, tj.load_frames):
+        with pytest.raises(ValueError, match="darks="):
+            load(tmp_path / "scan.nxs")
+    scan = tj.load_frames(tmp_path / "scan.nxs", darks=0).corrected()
     np.testing.assert_allclose(np.asarray(scan.projections), np.log(2.0), rtol=1e-6)
-    assert scan.corrections[0].settings["darks"] == 0
+    assert scan.corrections[0].settings["darks"] == 1
 
 
 def test_counts_without_flats_are_refused(tmp_path: Path) -> None:
@@ -140,11 +143,11 @@ def test_counts_without_flats_are_refused(tmp_path: Path) -> None:
     _write_frames(tmp_path / "scan.nxs", frames, [0, 0], [0, 90])
     with pytest.raises(ValueError, match="integer detector counts and no flat frames"):
         tj.load(tmp_path / "scan.nxs")
-    with pytest.raises(ValueError, match="no flat fields: pass flats"):
+    with pytest.raises(ValueError, match="No flat fields: pass flats"):
         tj.load_frames(tmp_path / "scan.nxs").corrected()
-    scan = tj.load_frames(tmp_path / "scan.nxs", white_level=200).corrected()
+    scan = tj.load_frames(tmp_path / "scan.nxs", white_level=200, darks=0).corrected()
     np.testing.assert_allclose(np.asarray(scan.projections), np.log(2.0), rtol=1e-6)
-    assert scan.corrections[0].settings == {"white_level": 200.0, "darks": 0}
+    assert scan.corrections[0].settings == {"white_level": 200.0, "darks": 1}
 
 
 @pytest.mark.parametrize("suffix", [".tif", ".hdf"])
@@ -165,7 +168,9 @@ def test_tiff_stacks_go_through_load_frames(tmp_path: Path, suffix: str) -> None
         tj.load(views)
     with pytest.raises(ValueError, match="angles"):
         tj.load_frames(views / "view_0000.tif")
-    frames = tj.load_frames(views, angles=[0, 90], flats=flat, darks=dark)
+    frames = tj.load_frames(
+        views, angles=[0, 90], flats=flat, darks=dark, detector=tiny_detector(nu=3)
+    )
     assert not any(isinstance(field, np.ndarray) for field in (frames.flats, frames.darks))
     scan = frames.corrected()
     np.testing.assert_allclose(np.asarray(scan.projections)[:, 0, 0], -np.log([0.5, 0.25]))
@@ -196,7 +201,7 @@ def test_batches_give_the_same_result(tmp_path: Path) -> None:
         [np.full((2, 3, 4), 1200, np.uint16), counts, np.full((1, 3, 4), 1300, np.uint16)]
     )
     _write_frames(tmp_path / "scan.nxs", stack, [1, 1, *[0] * 7, 1], list(range(10)))
-    frames = tj.load_frames(tmp_path / "scan.nxs")
+    frames = tj.load_frames(tmp_path / "scan.nxs", darks=0)
     whole = frames.corrected(BeamHardening((1.0, 0.1)))
     batched = frames.corrected(BeamHardening((1.0, 0.1)), batch_views=2)
     np.testing.assert_allclose(
@@ -255,20 +260,21 @@ def test_a_nikon_scan_is_corrected_with_its_white_level(tmp_path: Path) -> None:
     for i in range(2):
         iio.imwrite(tmp_path / f"part_{i + 1:04d}.tif", image)
     (tmp_path / "part.xtekct").write_text(
-        "[XTekCT]\nName=part\nSrcToObject=12.0\nSrcToDetector=18.0\nDetectorPixelSizeX=0.1\n"
+        "[XTekCT]\nDetectorOffsetX=0\nDetectorOffsetY=0\n"
+        "CentreOfRotationTop=0\nCentreOfRotationBottom=0\nName=part\nSrcToObject=12.0\nSrcToDetector=18.0\nDetectorPixelSizeX=0.1\n"
         "DetectorPixelSizeY=0.1\nWhiteLevel=60000\nInitialAngle=0\nAngularStep=90\n"
     )
-    frames = tj.load_frames(tmp_path / "part.xtekct")
+    frames = tj.load_frames(tmp_path / "part.xtekct", darks=0)
     assert not isinstance(frames.counts, np.ndarray) and frames.counts.dtype == np.uint16
     window = frames.cropped(slice(0, 1), slice(0, 1)).selected([1])
     np.testing.assert_array_equal(np.asarray(window.counts), [[[15000]]])
-    scan = tj.load(tmp_path / "part.xtekct")
+    scan = frames.corrected()
     # Detector v points up: the image's bottom row is the scan's first.
     np.testing.assert_allclose(
         np.asarray(scan.projections)[0, :, 0], -np.log([0.25, 0.5]), rtol=1e-6
     )
     assert scan.corrections[0] == Correction(
-        "flat_dark", {"white_level": 60000.0, "darks": 0}, {"pixels_without_light": 0}
+        "flat_dark", {"white_level": 60000.0, "darks": 1}, {"pixels_without_light": 0}
     )
     assert type(scan.geometry).__name__ == "ConeGeometry"
 
@@ -283,15 +289,39 @@ def test_nikon_import_takes_its_own_angles_and_numbered_projections(
         iio.imwrite(tmp_path / f"part_{suffix}.TIFF", np.full((1, 1), 123, np.uint16))
     path = tmp_path / "renamed.xtekct"
     path.write_text(
-        "[XTekCT]\nName=part\nSrcToObject=12\nSrcToDetector=18\nDetectorPixelSizeX=0.1\n"
+        "[XTekCT]\nDetectorOffsetX=0\nDetectorOffsetY=0\n"
+        "CentreOfRotationTop=0\nCentreOfRotationBottom=0\nName=part\nSrcToObject=12\nSrcToDetector=18\nDetectorPixelSizeX=0.1\n"
         "DetectorPixelSizeY=0.1\nWhiteLevel=1000\nInitialAngle=5\nAngularStep=90\n"
     )
     (tmp_path / "another_ctdata.txt").write_text("Projection Angle\n1 -60\n2 -30\n")
     if measured:
         (tmp_path / "part_ctdata.txt").write_text("Projection Angle\n10 97\n2 7\n")
-    frames = tj.load_frames(path)
+    frames = tj.load_frames(path, darks=0)
     np.testing.assert_array_equal(np.asarray(frames.counts)[:, 0, 0], [500, 250])
     np.testing.assert_array_equal(frames.geometry.angles, [7, 97] if measured else [5, 95])
+
+    # A partial measured sidecar cannot silently become a nominal uniform scan.
+    (tmp_path / "part_ctdata.txt").write_text("Projection Angle\n1 7\n")
+    with pytest.raises(ValueError, match="angles="):
+        tj.load_frames(path, darks=0)
+    (tmp_path / "part_ctdata.txt").unlink()
+    text = path.read_text()
+    for field, argument in {
+        "InitialAngle": "angles=",
+        "AngularStep": "angles=",
+        "WhiteLevel": "white_level=",
+        "DetectorOffsetX": "detector=",
+        "CentreOfRotationTop": "geometry=",
+    }.items():
+        path.write_text("\n".join(line for line in text.splitlines() if not line.startswith(field)))
+        with pytest.raises(ValueError, match=argument):
+            tj.load_frames(path, darks=0)
+        explicit = tj.load_frames(
+            path, geometry=frames.geometry, white_level=1000, darks=0
+        ).corrected()
+        np.testing.assert_allclose(explicit.projections[:, 0, 0], -np.log([0.5, 0.25]))
+        tj.save(tmp_path / "explicit.nxs", explicit)
+        assert tj.load(tmp_path / "explicit.nxs").geometry is not None
 
 
 def test_big_endian_counts_are_corrected_like_native_ones() -> None:
@@ -318,6 +348,8 @@ def test_stripes_removes_pixel_offsets_the_flats_miss(tmp_path: Path) -> None:
         stack,
         angles=np.linspace(0.0, 360.0, views, endpoint=False),
         flats=np.full((nv, nu), 1000.0),
+        darks=0,
+        detector=tj.Detector(nu, nv, 1, 1),
     )
     plain = np.asarray(frames.corrected().projections)
     cleaned = frames.corrected(Stripes(9))
@@ -346,7 +378,9 @@ def test_reject_views_drops_outliers_and_their_geometry(tmp_path: Path) -> None:
         [1, *[0] * views],
         [0, *np.linspace(0, 180, views, endpoint=False)],
     )
-    scan = tj.load_frames(tmp_path / "scan.nxs").corrected(RejectViews(), BeamHardening((1.0, 0.1)))
+    scan = tj.load_frames(tmp_path / "scan.nxs", darks=0).corrected(
+        RejectViews(), BeamHardening((1.0, 0.1))
+    )
     keep = np.delete(np.arange(views), [0, 4, 8, 11])
     assert scan.projections.shape == (8, 2, 3)
     np.testing.assert_allclose(scan.angles, np.linspace(0, 180, views, endpoint=False)[keep])
@@ -355,7 +389,12 @@ def test_reject_views_drops_outliers_and_their_geometry(tmp_path: Path) -> None:
     rejected = scan.corrections[-2]
     assert rejected.name == "reject_views" and rejected.found["rejected"] == [0, 4, 8, 11]
     # A scan of line integrals rejects views the same way, numbered in that scan.
-    again = tj.load(tmp_path / "scan.nxs").selected(slice(2, None)).corrected(RejectViews())
+    again = (
+        tj.load_frames(tmp_path / "scan.nxs", darks=0)
+        .corrected()
+        .selected(slice(2, None))
+        .corrected(RejectViews())
+    )
     assert again.corrections[-1].found["rejected"] == [2, 6, 9]
     assert again.projections.shape[0] == 7
 
@@ -363,7 +402,7 @@ def test_reject_views_drops_outliers_and_their_geometry(tmp_path: Path) -> None:
 def test_selected_views_keep_their_geometry_and_flats(tmp_path: Path) -> None:
     frames = np.stack([np.full((2, 2), v, np.float32) for v in (10, 8, 8, 8, 8, 20)])
     _write_frames(tmp_path / "scan.nxs", frames, [1, 0, 0, 0, 0, 1], [0, 0, 45, 90, 135, 0])
-    loaded = tj.load_frames(tmp_path / "scan.nxs")
+    loaded = tj.load_frames(tmp_path / "scan.nxs", darks=0)
     picked = loaded.selected([0, 3])
     np.testing.assert_allclose(picked.geometry.angles, [0, 135])
     flats = 10 + 10 * np.asarray([0.5, 3.5]) / 4  # interpolated at their places in the scan
@@ -449,7 +488,7 @@ def test_cropping_reads_a_block_and_moves_the_detector(tmp_path: Path) -> None:
         [np.full((1, 6, 8), 1000, np.uint16), rng.integers(100, 900, (3, 6, 8)).astype(np.uint16)]
     )
     _write_frames(tmp_path / "scan.nxs", stack, [1, 0, 0, 0], [0, 0, 60, 120])
-    frames = tj.load_frames(tmp_path / "scan.nxs")
+    frames = tj.load_frames(tmp_path / "scan.nxs", darks=0)
     part = frames.cropped(slice(1, 4), slice(2, 7))
     assert part.counts.shape == (3, 3, 5) and part.flats.shape == (1, 3, 5)
     np.testing.assert_array_equal(np.asarray(part.counts[0:3]), stack[1:, 1:4, 2:7])
@@ -474,13 +513,18 @@ def test_frames_are_found_in_other_hdf5_layouts(tmp_path: Path) -> None:
         angles = entry.create_dataset("data/rotation_angle", data=np.radians([0, 0, 0, 90, 90]))
         angles.attrs["units"] = "rad"
         handle.create_dataset("extra/images", data=stack)  # an unrelated stack
-    scan = tj.load(tmp_path / "beamline.nxs")
+    scan = tj.load_frames(tmp_path / "beamline.nxs", detector=tiny_detector(nu=3)).corrected()
     np.testing.assert_allclose(scan.angles, [0.0, 90.0])
     np.testing.assert_allclose(
         np.asarray(scan.projections)[:, 0, 0], -np.log([0.5, 0.25]), rtol=1e-6
     )
     assert scan.detector.nu == 3 and scan.detector.du == 1.0
-    named = tj.load_frames(tmp_path / "beamline.nxs", data_path="/extra/images", angles=[0, 45])
+    named = tj.load_frames(
+        tmp_path / "beamline.nxs",
+        data_path="/extra/images",
+        angles=[0, 45],
+        detector=tiny_detector(nu=3),
+    )
     assert named.views == 2 and len(named.flats) == 2  # the file's one image_key fits it
     np.testing.assert_allclose(named.geometry.angles, [0, 45])
     with pytest.raises(KeyError, match="no dataset"):
@@ -501,13 +545,13 @@ def test_gda_frames_use_paired_rotation_and_key(tmp_path, caplog, command):
         entry.create_dataset("imaging/smaract_zrot_value", data=np.arange(4) * 1e6)
         handle.create_dataset("other/data", data=stack)
         handle.create_dataset("other/image_key", data=[0, 0, 0, 0])
-    frames = tj.load_frames(path)
+    frames = tj.load_frames(path, detector=tiny_detector(nu=3))
     assert frames.views == 2 and len(frames.flats) == len(frames.darks) == 1
     assert frames.counts.dataset == "/entry7/imaging/data"
     np.testing.assert_array_equal(frames.geometry.angles, [0, 90])
     acquisition = frames.source.geometry_metadata["acquisition"]
     assert acquisition["geometry_status"] == "not_recorded"
-    assert frames.source.geometry_metadata["detector_center_status"] == "not_recorded"
+    assert frames.source.geometry_metadata["detector_center_status"] == "provided"
     assert ("interpreting it as degrees" in caplog.text) == command
     np.testing.assert_allclose(frames.corrected().projections[:, 0, 0], -np.log([0.5, 0.25]))
     explicit = tj.load_frames(path, geometry=frames.geometry)
@@ -541,7 +585,7 @@ def test_tiff_frames_take_a_measured_geometry(tmp_path: Path) -> None:
         [0.0, 120.0, 240.0],
         tilt_deg=30.0,
     )
-    scan = tj.load_frames(tmp_path, flats=100, geometry=geometry).corrected()
+    scan = tj.load_frames(tmp_path, flats=100, darks=0, geometry=geometry).corrected()
     assert scan.geometry is geometry and scan.detector.du == 0.65
     np.testing.assert_allclose(np.asarray(scan.projections)[:, 0, 0], -np.log([0.5, 0.25, 0.4]))
 
@@ -556,7 +600,7 @@ def test_aps_data_exchange_files_load_with_their_flats_and_darks(tmp_path: Path)
         handle.create_dataset("exchange/data_dark", data=np.full((2, 2, 3), 100, np.uint16))
         handle.create_dataset("exchange/theta", data=np.asarray([0.0, 90.0], np.float32))
         handle.create_dataset("defaults/NDArrayUniqueId", data=np.arange(5))
-    scan = tj.load(tmp_path / "aps.h5")
+    scan = tj.load_frames(tmp_path / "aps.h5", detector=tiny_detector(nu=3)).corrected()
     np.testing.assert_allclose(
         np.asarray(scan.projections)[:, 0, 0], -np.log([0.5, 0.125]), rtol=1e-6
     )
@@ -607,7 +651,7 @@ def test_row_slabs_match_view_batches_and_optional_binning(
     counts[5] //= 4  # a view for RejectViews to drop
     stack = np.concatenate([np.full((1, rows, cols), 1000, np.uint16), counts])
     _write_frames(tmp_path / "scan.nxs", stack, [1, *[0] * views], [0.0, *range(0, views * 15, 15)])
-    frames = tj.load_frames(tmp_path / "scan.nxs")
+    frames = tj.load_frames(tmp_path / "scan.nxs", darks=0)
     if source == "array":
         frames = replace(frames, counts=np.asarray(frames.counts), flats=np.asarray(frames.flats))
     elif source == "tiff":
@@ -690,21 +734,22 @@ def test_raw_acquisition_discovery_uses_content_and_rejects_ambiguous_directorie
         iio.imwrite(tmp_path / f"object_{i + 1:04d}.tif", image)
     path = tmp_path / "metadata.unrelated"
     path.write_text(
-        "[XTekCT]\nName=object\nSrcToObject=12\nSrcToDetector=18\n"
-        "DetectorPixelSizeX=.1\nDetectorPixelSizeY=.1\nWhiteLevel=600\nAngularStep=90\n"
+        "[XTekCT]\nDetectorOffsetX=0\nDetectorOffsetY=0\n"
+        "CentreOfRotationTop=0\nCentreOfRotationBottom=0\nName=object\nSrcToObject=12\nSrcToDetector=18\n"
+        "DetectorPixelSizeX=.1\nDetectorPixelSizeY=.1\nWhiteLevel=600\nInitialAngle=0\nAngularStep=90\n"
     )
-    frames = tj.load_frames(path)
-    by_directory = tj.load(tmp_path)
+    frames = tj.load_frames(path, darks=0)
+    by_directory = tj.load_frames(tmp_path, darks=0).corrected()
     np.testing.assert_allclose(by_directory.projections[0, :, 0], -np.log([0.25, 0.5]))
     override = tj.Detector(3, 2, 0.2, 0.3)
-    explicit = tj.load_frames(path, detector=override, white_level=1200)
+    explicit = tj.load_frames(path, detector=override, white_level=1200, darks=0)
     assert explicit.geometry.detector == override and explicit.white_level == 1200
     np.testing.assert_array_equal(frames.counts[0], image[::-1])
     path.rename(tmp_path / "metadata.also_unrelated")
-    assert tj.load_frames(tmp_path).geometry.detector == frames.geometry.detector
+    assert tj.load_frames(tmp_path, darks=0).geometry.detector == frames.geometry.detector
     path.write_text((tmp_path / "metadata.also_unrelated").read_text())
     with pytest.raises(ValueError, match="several Nikon"):
-        tj.load_frames(tmp_path)
+        tj.load_frames(tmp_path, darks=0)
 
 
 @pytest.mark.parametrize("modern", [False, True])
@@ -717,15 +762,16 @@ def test_nikon_calibrated_axis_and_closing_turn_are_physical_metadata(
         iio.imwrite(folder / f"part_{i + 1:04d}.tif", np.full((4, 6), 400, np.uint16))
     path = tmp_path / "scan.xtekct"
     path.write_text(
-        "[XTekCT]\nName=part\nInputFolderName=projections\nProjections=2\n"
+        "[XTekCT]\nDetectorOffsetX=0\nDetectorOffsetY=0\n"
+        "CentreOfRotationTop=0\nCentreOfRotationBottom=0\nName=part\nInputFolderName=projections\nProjections=2\n"
         "SrcToObject=10\nSrcToDetector=20\nDetectorPixelSizeX=0.5\n"
-        "DetectorPixelSizeY=0.5\nAngularStep=180\nWhiteLevel=1000\n"
+        "DetectorPixelSizeY=0.5\nInitialAngle=0\nAngularStep=180\nWhiteLevel=1000\n"
         "CentreOfRotationTop=1\nCentreOfRotationBottom=-0.5\n"
         + ("ObjectOffsetX=0.3\nObjectRoll=0\nObjectTilt=30\n" if modern else "")
         + "[CTPro]\nAngleFile_Use=False\n"
     )
     (tmp_path / "part_ctdata.txt").write_text("1 20\n2 40\n")
-    frames = tj.load_frames(path)
+    frames = tj.load_frames(path, darks=0)
     geometry = frames.geometry
     assert frames.counts.shape == (2, 4, 6)  # closing frame is not a third view
     np.testing.assert_array_equal(geometry.angles, [0, 180])
@@ -743,6 +789,21 @@ def test_nikon_calibrated_axis_and_closing_turn_are_physical_metadata(
             hit = source + 2 * (point[:3] - source)
             np.testing.assert_allclose(hit[[0, 2]], [expected_cor, detector_height], atol=1e-12)
 
+    # Unknown vendor ROI coordinates may not silently turn into a centred grid.
+    path.write_text(
+        path.read_text().replace(
+            "[CTPro]",
+            "VoxelsX=6\nVoxelsY=6\nVoxelsZ=4\n"
+            "VoxelSizeX=.25\nVoxelSizeY=.25\nVoxelSizeZ=.25\n"
+            "OffsetX=1\nOffsetY=0\nOffsetZ=0\n[CTPro]",
+        )
+    )
+    with pytest.raises(ValueError, match="grid="):
+        tj.load_frames(path, darks=0)
+    chosen = tj.load_frames(path, darks=0, grid=geometry.grid)
+    assert chosen.geometry.grid == geometry.grid
+    assert chosen.source.geometry_metadata["nikon_xtekct"]["volume"]["OffsetX"] == 1
+
 
 @pytest.mark.parametrize("suffix", [".nxs", ".tif"])
 def test_lazy_selections_compose_without_reading_storage(tmp_path, suffix):
@@ -753,7 +814,9 @@ def test_lazy_selections_compose_without_reading_storage(tmp_path, suffix):
         _write_frames(path, values, [0] * 5, angles.tolist())
     else:
         tifffile.imwrite(path, values, photometric="minisblack")
-    counts = tj.load_frames(path, angles=angles).counts
+    counts = tj.load_frames(
+        path, angles=angles, detector=tiny_detector(nu=9, nv=6), flats=1000, darks=0
+    ).counts
     moved = path.rename(tmp_path / "unavailable")
     selected = counts.frames_at(np.array([True, False, True, True, False]))
     selected = selected.window(slice(1, 6), slice(2, 9)).window(slice(1, 4), slice(1, 5))
@@ -767,3 +830,27 @@ def test_lazy_selections_compose_without_reading_storage(tmp_path, suffix):
         np.array(selected, copy=False)
     with pytest.raises(ValueError, match="non-empty block"):
         selected.window(slice(None, None, -1), slice(None))
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("tilted", [False, True])
+def test_only_detector_derived_output_grids_follow_crop_and_bin(tmp_path, explicit, tilted):
+    path = tmp_path / "raw.nxs"
+    _write_frames(path, np.full((3, 6, 8), 500, np.uint16), [0, 0, 0], [0, 60, 120])
+    with h5py.File(path, "a") as handle:
+        if not explicit:
+            del handle["entry"].attrs["grid_meta_json"]
+        if tilted:
+            geometry = handle.require_group("entry/geometry")
+            geometry.attrs["type"] = "lamino"
+            geometry.attrs["geometry_meta_json"] = '{"tilt_deg": 47}'
+    frames = tj.load_frames(path, flats=1000, darks=0)
+    scan = frames.cropped(slice(2, 6), slice(1, 7)).corrected(binning=2)
+    assert scan.projections.shape == (3, 2, 3)
+    np.testing.assert_allclose(scan.projections, np.log(2), atol=1e-7)
+    if explicit:
+        assert scan.grid == frames.geometry.grid
+    elif tilted:
+        assert scan.grid == frames.geometry.grid.resampled((4, 4, 3))
+    else:
+        assert scan.grid == tj.Grid(3, 3, 2, 2, 2, 2, vol_center=(0, 0, 1))

@@ -41,10 +41,14 @@ def test_numpy_real_levels_preserve_python_calibration(
                 grid=tj.Grid(4, 4, 2, 1.0, 1.0, 1.0),
             ),
         )
-    reference = tj.load_frames(path, angles=[0.0, 90.0], flats=100.0, darks=10.0).corrected()
+    reference = tj.load_frames(
+        path, detector=tj.Detector(4, 2, 1, 1), angles=[0.0, 90.0], flats=100.0, darks=10.0
+    ).corrected()
     levels = {"flats": 100.0, "darks": 10.0}
     levels[field] = dtype(levels[field])
-    actual = tj.load_frames(path, angles=[0.0, 90.0], **levels).corrected()
+    actual = tj.load_frames(
+        path, detector=tj.Detector(4, 2, 1, 1), angles=[0.0, 90.0], **levels
+    ).corrected()
     np.testing.assert_array_equal(actual.projections, reference.projections)
     np.testing.assert_allclose(
         actual.projections[:, 0, 0], -np.log(np.asarray([40.0, 60.0]) / 90.0), rtol=1e-6

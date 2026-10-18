@@ -15,6 +15,44 @@ from ._frame_stack import FrameStack
 from ._io_acquisition import ROTATION_ANGLE_PATHS, angles_in_degrees, checked_image_key
 
 
+def _check_virtual(data: Any, checked: set[tuple[str, str]] | None = None) -> None:
+    """Do not let HDF5's VDS fill value stand in for absent detector pixels."""
+    if not data.is_virtual:
+        return
+    checked = set() if checked is None else checked
+    identity = (str(Path(data.file.filename).resolve()), data.name)
+    if identity in checked:
+        return
+    checked.add(identity)
+    sources: dict[Path, list[Any]] = {}
+    for source in data.virtual_sources():
+        path = (
+            Path(data.file.filename)
+            if source.file_name == "."
+            else Path(data.file.filename).parent / source.file_name
+        )
+        sources.setdefault(path, []).append(source)
+    for path, mappings in sources.items():
+        try:
+            with h5py.File(path, "r") as backing:
+                for source in mappings:
+                    pixels = cast(Any, backing[source.dset_name])
+                    if source.src_space.get_select_type() == cast(Any, h5py).h5s.SEL_ALL:
+                        missing = pixels.size < source.vspace.get_select_npoints()
+                    else:
+                        bounds = source.src_space.get_select_bounds()[1]
+                        missing = pixels.ndim != len(bounds) or any(
+                            n <= end for n, end in zip(pixels.shape, bounds, strict=True)
+                        )
+                    if missing:
+                        raise ValueError(
+                            f"{path}:{source.dset_name}: missing virtual detector pixels"
+                        )
+                    _check_virtual(pixels, checked)
+        except (OSError, KeyError) as exc:
+            raise ValueError(f"{data.name}: missing virtual detector pixels in {path}") from exc
+
+
 @dataclass(frozen=True)
 class Hdf5Frames(FrameStack):
     """Frames ``frames`` of the 3-D dataset ``dataset`` in ``path``, read on indexing.
@@ -42,6 +80,7 @@ class Hdf5Frames(FrameStack):
                 raise ValueError(f"{path}:{dataset} is not a 3-D stack of frames")
             n, rows, cols = (int(s) for s in data.shape)
             layout = cast(Any, data)  # h5py's typing omits the storage layout
+            _check_virtual(layout)
             # Unfiltered data supports direct reads of partial chunks. __getitem__
             # bypasses the chunk cache so narrow windows do not fetch whole frames.
             windows = not layout.is_virtual and layout.id.get_create_plist().get_nfilters() == 0
@@ -335,13 +374,34 @@ def _degrees(
     frames: int,
     key: np.ndarray | None,
     units_override: str | None = None,
-) -> np.ndarray:
+) -> np.ndarray | None:
     values = _read(file, where, path)
-    units = file[where].attrs.get("units", b"")
+    units = file[where].attrs.get("units", file[where].attrs.get("unit", b""))
     units = units.decode() if isinstance(units, bytes) else str(units)
-    return angles_in_degrees(
+    degrees = angles_in_degrees(
         values, units_override or units, frames=frames, path=path, image_key=key
     )
+    if not units_override and not units.strip() and not _degree_convention(file, where):
+        # A generic motor dataset has no implied angular unit. Keep the angle
+        # record incomplete so load_frames(..., angles=...) can replace it.
+        return None
+    return degrees
+
+
+def _degree_convention(file: h5py.File, where: str) -> bool:
+    """NXtomo and Data Exchange prescribe degrees; arbitrary HDF5 names do not."""
+    if where == "/exchange/theta" or where in ROTATION_ANGLE_PATHS:
+        return True
+    root = "/" + where.strip("/").split("/")[0]
+    definition = file.get(root + "/definition")
+    if not isinstance(definition, h5py.Dataset):
+        return False
+    value = np.asarray(definition[()]).item()
+    value = value.decode() if isinstance(value, bytes) else str(value)
+    return value == "NXtomo" and where in {
+        root + "/sample/rotation_angle",
+        root + "/sample/transformations/rotation_angle",
+    }
 
 
 def _only(

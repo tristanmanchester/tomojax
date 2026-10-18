@@ -16,9 +16,9 @@ The report ends with `Valid: yes`, or lists the issues that would stop a
 reconstruction. Confirm the number and order of views, angles in degrees, detector dimensions
 and pitch, volume grid and pitch, and the geometry type. For laminography, check
 `tilt_deg` and `tilt_about` in geometry metadata. `tilt_deg` is a departure from
-the nominal tomography axis, not an angle to the beam. A missing laminography
-tilt currently defaults to 30° when geometry is built; that is not a measurement
-of your scanner.
+the nominal tomography axis, not an angle to the beam. Missing laminography
+tilt requires an explicit `geometry=` with the measured tilt or axis; no 30°
+default is inserted.
 
 For raw NXtomo or Data Exchange frames with flats and darks, follow
 [preprocessing](quickstart.md#correct-raw-detector-frames). Nonstandard HDF5
@@ -41,11 +41,12 @@ For a parallel scan, package an attenuation stack with explicit geometry:
 
 ```bash
 uv run --no-sync tomojax import ./projections --angles angles.csv \
-  --pixel-size 0.65 -o corrected.nxs
+  --pixel-size 0.65 --geometry parallel --config calibration.toml -o corrected.nxs
 ```
 
-`import` does not apply flat/dark correction or a logarithm. It records a
-centred detector and no grid. The grid is chosen at reconstruction, with
+`calibration.toml` must contain `detector_center = [u, v]`, in physical
+length units. `import` does not apply flat/dark correction or a logarithm.
+It records the supplied detector and no grid. The grid is chosen at reconstruction, with
 voxels of the detector pitch by default. `tomojax recon --grid 256 256 128`
 resamples the selected field of view to 256 × 256 × 128 voxels; their spacing
 changes to preserve that physical extent. `tomojax align --mode cor` estimates a
@@ -82,23 +83,26 @@ This writes line integrals, recording the correction. Use
 tomography. Do not pass already-log-transformed data into this raw-intensity
 path.
 
-On the command line, import the frames with their geometry, record the
-measured tilt, then correct them. `tomojax import` has no tilt option, and a
-laminography dataset without a recorded tilt gets 30°, so set it before
-`tomojax preprocess`:
+For already-corrected laminography projections, the command-line import reads
+the measured tilt and centre from TOML. For example (replace all calibration
+values with those of the acquisition):
+
+```toml
+# calibration.toml
+geometry = "lamino"
+pixel_size = [0.65]
+detector_center = [0.0, 0.0]
+tilt_deg = 30.0
+tilt_about = "x"
+```
 
 ```bash
-uv run --no-sync tomojax import ./projections --angles angles.csv \
-  --geometry lamino --pixel-size 0.65 -o raw.nxs
-uv run --no-sync python -c "
-from tomojax.io import load_dataset, save_dataset
-scan = load_dataset('raw.nxs')
-scan.geometry_metadata.update(tilt_deg=30.0, tilt_about='x')
-save_dataset('raw-tilt.nxs', scan)
-"
-uv run --no-sync tomojax preprocess raw-tilt.nxs -o corrected-lamino.nxs \
-  --flats ./flats --darks ./darks
+uv run --no-sync tomojax import ./corrected-projections --angles angles.csv \
+  --config calibration.toml -o corrected-lamino.nxs
 ```
+
+Use the Python raw-intensity workflow above when the frames still need flat/dark
+correction. Missing tilt or centre is an error, not a default calibration.
 
 Replace 30° with the measured tilt. To check that it was kept, run
 `uv run --no-sync python -c "import tomojax as tj; print(tj.load('corrected-lamino.nxs').geometry.tilt_deg)"`,

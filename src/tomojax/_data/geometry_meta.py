@@ -310,7 +310,9 @@ def _base_geometry(
     if gtype == "cone":
         beam_meta = meta.get("cone_beam")
         if not isinstance(beam_meta, dict):
-            raise ValueError("cone geometry metadata needs a 'cone_beam' mapping")
+            raise ValueError(
+                "Missing cone-beam distances: pass geometry=... to tomojax.load_frames"
+            )
         axis = meta.get("axis_unit_lab")
         return ConeGeometry(
             grid=grid,
@@ -338,7 +340,12 @@ def _base_geometry(
     if gtype == "parallel":
         return ParallelGeometry(grid=grid, detector=detector, angles=angles)
 
-    tilt_deg = float(meta.get("tilt_deg", 30.0))
+    if "tilt_deg" not in meta:
+        raise ValueError(
+            "Missing laminography tilt: pass geometry=... with an explicit tilt_deg "
+            "or axis_unit_lab to tomojax.load_frames"
+        )
+    tilt_deg = float(meta["tilt_deg"])
     # An explicit zero tilt also has the canonical axial poses.
     if tilt_deg == 0.0:
         return ParallelGeometry(grid=grid, detector=detector, angles=angles)

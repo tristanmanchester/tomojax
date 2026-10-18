@@ -34,7 +34,11 @@ class RawAcquisition:
 
 
 def read_acquisition(
-    path: str | PathLike[str], *, data_path: str | None = None
+    path: str | PathLike[str],
+    *,
+    data_path: str | None = None,
+    image_key_path: str | None = None,
+    angles_path: str | None = None,
 ) -> RawAcquisition | None:
     """Recognize a vendor acquisition by content and read its raw metadata/stacks.
 
@@ -49,6 +53,10 @@ def read_acquisition(
         Acquisition file or folder.
     data_path : str or None, optional
         Explicit dataset path for formats that hold several candidate stacks.
+    image_key_path : str or None, optional
+        Explicit frame-label dataset for external HDF5 acquisitions.
+    angles_path : str or None, optional
+        Explicit rotation-angle dataset for external HDF5 acquisitions.
 
     Returns
     -------
@@ -62,6 +70,7 @@ def read_acquisition(
         If a recognized acquisition is incomplete or ambiguous.
     """
     from ._esrf import read_esrf
+    from ._hdf5_acquisition import read_hdf5_acquisition
     from ._nikon import read_nikon
     from ._skyscan import read_skyscan
     from ._zeiss import read_zeiss
@@ -71,4 +80,6 @@ def read_acquisition(
         acquisition = reader(target, data_path=data_path)
         if acquisition is not None:
             return acquisition
-    return None
+    return read_hdf5_acquisition(
+        target, data_path=data_path, image_key_path=image_key_path, angles_path=angles_path
+    )

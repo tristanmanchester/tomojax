@@ -613,6 +613,7 @@ def tomojax.io.load_nikon_xtekct(
         *,
         absorption: 'bool' = True,
         reverse_angles: 'bool' = False,
+        darks: 'np.ndarray | float | None' = None,
     ) -> 'ProjectionDataset'
 def tomojax.io.load_tiff_stack(
         path: 'PathLike',

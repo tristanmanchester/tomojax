@@ -18,12 +18,12 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
+from tomojax._loading_geometry import frame_geometry, frame_output_grid
 from tomojax._scan import (
     Scan,
     binned_geometry,
     check_shape,
     detector_window,
-    geometry_of,
     rebuild,
     scan_from_record,
     view_indices,
@@ -116,7 +116,7 @@ def load(path: str | PathLike[str], *, poses: bool = True) -> Scan:
 
 
 def _corrected_on_load(frames: Frames, file: Path) -> Scan:
-    scan = frames.corrected()
+    scan = _estimate_missing_center(_require_calibration(frames)).corrected()
     LOG.info("%s: corrected detector frames to line integrals: %s", file.name,
              ", ".join(str(c) for c in scan.corrections))  # fmt: skip
     return scan
@@ -220,7 +220,8 @@ class Frames:
         unbinned stack on the host unless a step such as ``RejectViews`` or a
         non-row step needs it. Pixels where the flat does not exceed the dark by
         three standard errors of their means take no absorption; the flat-field
-        record counts them.
+        record counts them. Detector-derived output grids follow this resolution;
+        grids supplied by the file or caller remain unchanged.
 
         Parameters
         ----------
@@ -261,12 +262,15 @@ class Frames:
             self.geometry if len(done.kept) == self.views else views_of(self.geometry, done.kept)
         )
         geometry = binned_geometry(geometry, binning) if binning > 1 else geometry
+        geometry = frame_output_grid(geometry, self.source, binning=binning)
         return Scan(done.projections, geometry, self.name, done.records, self.source)
 
     def cropped(self, rows: slice, cols: slice) -> Frames:
         """These frames' block of detector ``rows`` and ``cols``, the detector moved to match.
 
         A lazily read file reads only that block, of the flats and darks too.
+        An automatically chosen axial-parallel output grid follows the window;
+        an explicit grid, or a non-axial output box, is retained.
 
         Parameters
         ----------
@@ -298,7 +302,7 @@ class Frames:
             counts=counts,
             flats=flats,
             darks=darks,
-            geometry=rebuild(self.geometry, detector=window),
+            geometry=frame_output_grid(rebuild(self.geometry, detector=window), self.source),
         )
 
     def selected(self, views: slice | Sequence[int] | np.ndarray) -> Frames:
@@ -354,20 +358,26 @@ def load_frames(
     """Load detector frames and acquisition metadata from supported scan formats.
 
     An HDF5 file's ``image_key`` marks its flats (1) and darks (2), and its
-    sample, flat and dark frames are read only as they are corrected. The
+    sample, flat and dark frames are read only as they are corrected (including
+    a few sampled rows when an absent axial rotation centre needs estimating). The
     frames, key and angles are found at their NXtomo paths or as the file's only datasets of
     that name (``data``, ``image_key``, ``rotation_angle``), or their paired GDA imaging
     paths; ``data_path``, ``image_key_path`` and ``angles_path`` name them otherwise.
     Nikon, SkyScan, Zeiss and ESRF acquisitions are recognized by content and
     supply their own geometry and calibration. SkyScan logs require geometrically
-    and flat-field corrected TIFF exports; their bit depth supplies the white level.
+    and flat-field corrected TIFF exports; their storage bit depth is not a
+    measured white level, so supply ``white_level=`` (or ``flats=``) explicitly.
     Zeiss Xradia projection files keep their embedded reference images,
     physical calibration and per-view image shifts in the geometry.
     A GDA command mislabeled as mm is read in degrees with a warning; discovered
     paths and this correction stay in source metadata.
     Generic TIFF stacks without acquisition metadata need ``angles`` (degrees),
     ``flats`` or ``white_level``, and
-    their ``detector`` unless pixels are unit length.
+    their ``detector`` (including pixel sizes and centre). Missing detector
+    pixel pitch is never replaced by unit pixels. Axial acquisitions with recorded
+    pitch use the half-turn Fourier estimator for an absent rotation centre,
+    recording inferred provenance; failed estimates require ``detector=``.
+    Missing dark fields require ``darks=``; use ``darks=0`` only for already dark-corrected counts.
 
     ``flats`` and ``darks`` (arrays, HDF5 stacks, TIFF files or folders, or one level for
     every pixel), ``angles``, ``detector``, ``grid``, ``white_level`` and a
@@ -425,66 +435,113 @@ def load_frames(
     if not file.exists():
         raise FileNotFoundError(f"no such file: {file}")
     suffix = file.suffix.lower()
-    frames = _acquisition_frames(file, data_path=data_path)
+    overrides: dict[str, Any] = {
+        "angles": angles,
+        "detector": detector,
+        "grid": grid,
+        "geometry": geometry,
+    }
+    frames = _acquisition_frames(
+        file,
+        data_path=data_path,
+        image_key_path=image_key_path,
+        angles_path=angles_path,
+        **overrides,
+    )
     if frames is not None:
         pass
     elif file.is_dir() or suffix in {".tif", ".tiff"}:
-        if geometry is not None and angles is None:
-            angles = np.asarray(cast("Any", geometry).angles)
-        frames = _tiff_frames(file, angles=angles, detector=detector)
+        frames = _tiff_frames(file, **overrides)
     elif suffix in _HDF5:
         from tomojax.io.api import locate_frames
 
         located = locate_frames(
             str(file), data_path=data_path, image_key_path=image_key_path, angles_path=angles_path
         )
-        frames = _hdf5_frames(file, located, angles=angles, poses=True)
+        frames = _hdf5_frames(file, located, poses=True, **overrides)
     else:
         from tomojax.io import load_dataset
 
-        record = load_dataset(file)
+        record, resolved = frame_geometry(load_dataset(file), **overrides)
         frames = Frames(
             record.projections,
-            geometry_of(record, poses=True),
+            resolved,
             name=record.sample_name or "sample",
             source=record,
         )
-    frames = _with_fields(frames, flats=flats, darks=darks, white_level=white_level)
-    if (
-        angles is not None or detector is not None or grid is not None
-    ) and frames.source is not None:
-        record = replace(
-            frames.source,
-            angles=frames.source.angles if angles is None else np.asarray(angles, np.float32),
-            detector=detector or frames.source.detector,
-            grid=grid or frames.source.grid,
+    return _estimate_missing_center(
+        _require_calibration(
+            _with_fields(frames, flats=flats, darks=darks, white_level=white_level)
         )
-        frames = replace(frames, geometry=geometry_of(record, poses=True), source=record)
-    if geometry is not None:
-        source = frames.source
-        if source is not None and "acquisition" in source.geometry_metadata:
-            source = replace(
-                source,
-                geometry_metadata={
-                    **source.geometry_metadata,
-                    "acquisition": {
-                        **source.geometry_metadata["acquisition"],
-                        "geometry_status": "provided",
-                        "geometry_note": "Geometry supplied explicitly by caller.",
-                    },
-                },
+    )
+
+
+@dataclass
+class _CorrectedRows:
+    """Array-shaped row access for the centre estimator, without a full host stack."""
+
+    frames: Frames
+
+    @property
+    def shape(self) -> tuple[int, int, int]:
+        return self.frames.counts.shape
+
+    def __getitem__(self, key: tuple[slice, np.ndarray, slice]) -> np.ndarray:
+        views, rows, cols = key
+        corrected = [
+            np.asarray(
+                self.frames.cropped(slice(int(row), int(row) + 1), slice(None))
+                .corrected()
+                .projections
             )
-        frames = replace(frames, geometry=geometry, source=source)
-    if (geometry is not None or detector is not None) and frames.source is not None:
-        frames = replace(
-            frames,
-            source=replace(
-                frames.source,
-                geometry_metadata={
-                    **frames.source.geometry_metadata,
-                    "detector_center_status": "provided",
-                },
-            ),
+            for row in rows
+        ]
+        return np.concatenate(corrected, axis=1)[views, :, cols]
+
+
+def _estimate_missing_center(frames: Frames) -> Frames:
+    """Resolve an internal axial centre seed, or fail rather than expose its zero."""
+    from tomojax.alignment.api import estimate_center
+
+    source = frames.source
+    if source is None or source.geometry_metadata.get("detector_center_status") != "pending":
+        return frames
+    try:
+        geometry = estimate_center(
+            cast("Any", frames.geometry), cast("Any", _CorrectedRows(frames))
+        )
+    except ValueError as exc:
+        raise ValueError(
+            f"Cannot estimate the detector centre: {exc}; pass detector=... or geometry=... "
+            "to tomojax.load_frames"
+        ) from exc
+    source = replace(
+        source,
+        detector=geometry.detector,
+        geometry_metadata={
+            **source.geometry_metadata,
+            "detector_center_status": "inferred",
+            "detector_center_calibration": {
+                "status": "estimated",
+                "method": "half_turn_fourier",
+                "input": list(frames.geometry.detector.center),
+                "output": list(geometry.detector.center),
+                "unit": "geometry_length",
+                "axial_origin": "detector_midplane",
+            },
+        },
+    )
+    return replace(frames, geometry=geometry, source=source)
+
+
+def _require_calibration(frames: Frames) -> Frames:
+    """Missing file calibration requires a caller choice, not a numerical guess."""
+    if frames.flats is None and frames.white_level is None:
+        raise ValueError("No flat fields: pass flats=... or white_level=... to tomojax.load_frames")
+    if frames.darks is None:
+        raise ValueError(
+            "No dark fields: pass darks=... to tomojax.load_frames "
+            "(darks=0 only for counts already dark-corrected)"
         )
     return frames
 
@@ -554,13 +611,15 @@ def _hdf5_frames(
     *,
     angles: Sequence[float] | np.ndarray | None,
     poses: bool,
+    detector: Detector | None = None,
+    grid: Grid | None = None,
+    geometry: ScanGeometry | None = None,
 ) -> Frames:
     """The sample frames, flats and darks of an HDF5 file, split by ``image_key``.
 
     The geometry is the NXtomo file's (``tomojax`` metadata) when it has one,
-    else parallel-beam with unit pixels.
+    else incomplete until the caller supplies detector/geometry metadata.
     """
-    from tomojax.geometry import Detector
     from tomojax.io import ProjectionDataset
     from tomojax.io.api import LoadedNXTomo, NXTomoMetadata, load_nxtomo
 
@@ -571,6 +630,8 @@ def _hdf5_frames(
     if not sample.any():
         raise ValueError(f"{file} holds no sample frames (image_key 0)")
     views, rows, cols = int(sample.sum()), stack.rows, stack.cols
+    if geometry is not None and angles is None:
+        angles = np.asarray(cast("Any", geometry).angles)
     if angles is not None:
         view_angles = np.asarray(angles, np.float64)
     elif located.angles is not None:
@@ -583,7 +644,6 @@ def _hdf5_frames(
         metadata = load_nxtomo(str(file), lazy=True).metadata
     except KeyError:  # not laid out as NXtomo: the frames alone
         metadata = NXTomoMetadata(
-            detector=Detector(nu=cols, nv=rows, du=1.0, dv=1.0),
             geometry_meta={"detector_center_status": "not_recorded"},
         )
         if located.acquisition is not None:
@@ -598,7 +658,13 @@ def _hdf5_frames(
     metadata = replace(metadata, angles=view_angles.astype(np.float32), image_key=None)
     # The geometry needs the views' shape, not their values: read none of them.
     placeholder = LoadedNXTomo(np.broadcast_to(np.float32(0), (views, rows, cols)), metadata)
-    record = ProjectionDataset.from_nxtomo(placeholder, source_path=file)
+    record, resolved = frame_geometry(
+        ProjectionDataset.from_nxtomo(placeholder, source_path=file),
+        detector=detector,
+        grid=grid,
+        geometry=geometry,
+        poses=poses,
+    )
     flats = stack.frames_at(key == 1) if (key == 1).any() else None
     darks = stack.frames_at(key == 2) if (key == 2).any() else None
     if located.flats is not None:  # kept apart from the frames: one set
@@ -607,7 +673,7 @@ def _hdf5_frames(
         darks = located.darks
     return Frames(
         counts=stack.frames_at(sample),
-        geometry=geometry_of(record, poses=poses),
+        geometry=resolved,
         flats=flats,
         darks=darks,
         flat_positions=None
@@ -618,16 +684,25 @@ def _hdf5_frames(
     )
 
 
-def _acquisition_frames(file: Path, *, data_path: str | None = None) -> Frames | None:
+def _acquisition_frames(
+    file: Path,
+    *,
+    data_path: str | None = None,
+    image_key_path: str | None = None,
+    angles_path: str | None = None,
+    **overrides: Any,
+) -> Frames | None:
     from tomojax.io.api import read_acquisition
 
-    found = read_acquisition(file, data_path=data_path)
+    found = read_acquisition(
+        file, data_path=data_path, image_key_path=image_key_path, angles_path=angles_path
+    )
     if found is None:
         return None
-    record = found.record
+    record, resolved = frame_geometry(found.record, **overrides)
     return Frames(
         counts=found.counts,
-        geometry=geometry_of(record, poses=True),
+        geometry=resolved,
         flats=found.flats,
         darks=found.darks,
         flat_positions=found.flat_positions,
@@ -639,12 +714,18 @@ def _acquisition_frames(file: Path, *, data_path: str | None = None) -> Frames |
 
 
 def _tiff_frames(
-    file: Path, *, angles: Sequence[float] | np.ndarray | None, detector: Detector | None
+    file: Path,
+    *,
+    angles: Sequence[float] | np.ndarray | None,
+    detector: Detector | None,
+    grid: Grid | None = None,
+    geometry: ScanGeometry | None = None,
 ) -> Frames:
-    from tomojax.geometry import Detector
     from tomojax.io import ProjectionDataset
     from tomojax.io.api import read_tiff_frames
 
+    if geometry is not None and angles is None:
+        angles = np.asarray(cast("Any", geometry).angles)
     if angles is None:
         raise ValueError(
             f"{file} is a TIFF stack, which holds no angles: pass angles=... (degrees)"
@@ -657,11 +738,12 @@ def _tiff_frames(
     record = ProjectionDataset(
         projections=np.broadcast_to(np.float32(0), counts.shape),
         angles=angles,
-        detector=detector or Detector(nu=cols, nv=rows, du=1.0, dv=1.0),
+        detector=detector,
         source_path=str(file),
         source_format="tiff_stack",
     )
-    return Frames(counts, geometry_of(record, poses=True), source=record)
+    record, resolved = frame_geometry(record, grid=grid, geometry=geometry)
+    return Frames(counts, resolved, source=record)
 
 
 __all__ = ["Frames", "load", "load_frames"]

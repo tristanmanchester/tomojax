@@ -333,10 +333,12 @@ def test_import_records_cone_beam_geometry(tmp_path: Path):
 
     write_tiff_stack(tmp_path / "tiffs", [1.0, 2.0, 3.0, 4.0], shape=(4, 6))
     write_angle_csv(tmp_path / "angles.csv", [0.0, 90.0, 180.0, 270.0])
+    config = tmp_path / "calibration.toml"
+    config.write_text("detector_center = [0.0, 0.0]\ndetector_roll = 0.5\n")
     args = ["import", str(tmp_path / "tiffs"), "-o", str(tmp_path / "scan.nxs"), "--force"]
-    args += ["--angles"]
+    args += ["--config", str(config), "--pixel-size", "1", "--angles"]
     args += [str(tmp_path / "angles.csv"), "--geometry", "cone", "--source-to-axis", "50"]
-    assert main([*args, "--source-to-detector", "80", "--detector-roll", "0.5"]) == 0
+    assert main([*args, "--source-to-detector", "80"]) == 0
     loaded = load_dataset(tmp_path / "scan.nxs")
     _, _, geometry = build_geometry_from_dataset_metadata(loaded.geometry_inputs())
     assert isinstance(geometry, ConeGeometry)
@@ -514,7 +516,7 @@ def test_align_cor_mode_writes_the_calibrated_cone_beam(tmp_path: Path):
     assert abs(calibrated.beam.detector_roll_deg + 0.5) < 0.15
 
 
-def test_import_reads_a_nikon_xtekct_scan(tmp_path: Path):
+def test_preprocess_reads_a_nikon_xtekct_scan(tmp_path: Path):
     import imageio.v3 as iio
 
     from tomojax.cli.main import main
@@ -534,14 +536,17 @@ def test_import_reads_a_nikon_xtekct_scan(tmp_path: Path):
     rows = "\n".join(f"{i + 1}\t{angle:.4f}\t0" for i, angle in enumerate(angles))
     (tmp_path / "part_ctdata.txt").write_text(f"Projection\tAngle(deg)\tUnused\n\n{rows}\n")
     (tmp_path / "part.xtekct").write_text(
-        "[XTekCT]\nName=part\nInputSeparator=_\nSrcToObject=12.0\nSrcToDetector=18.0\n"
+        "[XTekCT]\nDetectorOffsetX=0\nDetectorOffsetY=0\n"
+        "CentreOfRotationTop=0\nCentreOfRotationBottom=0\nName=part\nInputSeparator=_\nSrcToObject=12.0\nSrcToDetector=18.0\n"
         "DetectorPixelsX=40\nDetectorPixelsY=36\nDetectorPixelSizeX=0.075\n"
         "DetectorPixelSizeY=0.075\nDetectorOffsetX=0\nDetectorOffsetY=0\n"
+        "OffsetX=0\nOffsetY=0\nOffsetZ=0\n"
         f"VoxelsX={n}\nVoxelsY={n}\nVoxelsZ={n}\nVoxelSizeX=0.05\nVoxelSizeY=0.05\n"
         f"VoxelSizeZ=0.05\nWhiteLevel={white}\nProjections={views}\nInitialAngle=0\n"
         "AngularStep=99\nObjectOffsetX=0.01\n"
     )
-    assert main(["import", str(tmp_path / "part.xtekct"), "-o", str(tmp_path / "part.nxs")]) == 0
+    assert main(["preprocess", str(tmp_path / "part.xtekct"), "--darks", "0",
+                 "-o", str(tmp_path / "part.nxs")]) == 0  # fmt: skip
     loaded = load_dataset(tmp_path / "part.nxs")
     _, _, ingested = build_geometry_from_dataset_metadata(loaded.geometry_inputs())
     assert isinstance(ingested, ConeGeometry) and ingested.beam == beam

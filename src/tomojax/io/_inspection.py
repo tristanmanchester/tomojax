@@ -527,10 +527,12 @@ def inspect_nxtomo(path: PathLike) -> InspectionReport:
 def _acquisition_report(path: PathLike, raw: RawAcquisition) -> InspectionReport:
     record = raw.record
     counts = cast("_ProjectionStack", raw.counts)
-    projection = _projection_report(str(path), counts)
+    projection = _projection_report(getattr(raw.counts, "dataset", str(path)), counts)
     n, nv, nu = counts.shape
     angles = record.angles
     detector = record.detector
+    acquisition = record.geometry_metadata.get("acquisition", {})
+    pitches = acquisition.get("detector_pixel_size", [None, None])
     flat_count = len(raw.flats) if raw.flats is not None else int(raw.white_level is not None)
     dark_count = 0 if raw.darks is None else len(raw.darks)
     grid_shape = (
@@ -541,13 +543,13 @@ def _acquisition_report(path: PathLike, raw: RawAcquisition) -> InspectionReport
         "input_path": str(path),
         "projection": projection,
         "angles": {
-            "found": True,
-            "path": None,
+            "found": bool(len(angles)),
+            "path": acquisition.get("angles_path"),
             "count": len(angles),
             "units": "deg",
-            "min_deg": float(angles.min()),
-            "max_deg": float(angles.max()),
-            "coverage_deg": float(np.ptp(angles)),
+            "min_deg": float(angles.min()) if len(angles) else None,
+            "max_deg": float(angles.max()) if len(angles) else None,
+            "coverage_deg": float(np.ptp(angles)) if len(angles) else None,
         },
         "geometry": {
             "found": True,
@@ -557,16 +559,16 @@ def _acquisition_report(path: PathLike, raw: RawAcquisition) -> InspectionReport
         },
         "detector_metadata": {
             "found": detector is not None,
-            "nu": None if detector is None else detector.nu,
-            "nv": None if detector is None else detector.nv,
-            "du": None if detector is None else detector.du,
-            "dv": None if detector is None else detector.dv,
+            "nu": nu if detector is None else detector.nu,
+            "nv": nv if detector is None else detector.nv,
+            "du": pitches[0] if detector is None else detector.du,
+            "dv": pitches[1] if detector is None else detector.dv,
             "center": None if detector is None else list(detector.center),
         },
         "flats_darks": {
-            "image_key_found": False,
-            "image_key_path": None,
-            "image_key_counts": {},
+            "image_key_found": bool(acquisition.get("image_key_path")),
+            "image_key_path": acquisition.get("image_key_path"),
+            "image_key_counts": acquisition.get("image_key_counts", {}),
             "sample_count": n,
             "flats_present": flat_count > 0,
             "darks_present": dark_count > 0,

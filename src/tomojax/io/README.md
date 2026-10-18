@@ -9,8 +9,8 @@ Zeiss Xradia acquisitions are recognised by OLE content, with lazy raw counts,
 embedded reference images and physical calibration; fractional image shifts stay
 in the geometry rather than resampling the data. Per-view cone arrangements use
 matched CGLS under automatic reconstruction, not single-arrangement FDK.
-Use `tomojax preprocess scan.txrm -o scan.nxs`, or
-`tj.load_frames("scan.txrm").corrected(...)`; the
+Use `tomojax preprocess scan.txrm --darks 0 -o scan.nxs`, or
+`tj.load_frames("scan.txrm", darks=0).corrected(...)`; the
 [lab-CT guide](../../../docs/lab-ct.md#zeiss-xradia-preview) gives a binned CPU preview.
 
 Import from here, not from `tomojax._data`.
@@ -32,7 +32,9 @@ strict NXtomo schema check.
 
 Both raw-frame and processed NXtomo loading convert rotation angles labelled
 `rad`, `radian` or `radians` to degrees. `deg`, `degree`, `degrees` and missing
-units mean degrees. Angles must be a real one-dimensional vector with one
+units mean degrees at the format-defined NXtomo/Data Exchange angular paths;
+generic unitless motors require an explicit `angles=` override. Angles must be a
+real one-dimensional vector with one
 entry per frame and finite sample-view angles (calibration frames may have
 NaN angles); unknown units fail rather than being guessed. An
 `image_key` must be an integer vector with one entry per frame and labels in
@@ -60,8 +62,10 @@ preprocessing use this same parser. It accepts leading headers, blank lines,
 and comments; empty/nonfinite data and malformed rows after numeric data starts
 raise `ValueError`. The caller checks that angle count matches projection count.
 
-`tomojax import` records a centred detector; `tomojax align --mode cor`
-estimates the offset. Python `Detector.center` stores physical lengths, so an
+`tomojax import` requires a detector centre in its TOML configuration
+(`detector_center = [u, v]`), plus explicit geometry family and pixel size.
+Laminography requires `tilt_deg`; optional cone detector roll/pitch/yaw also
+belong in the configuration. Python `Detector.center` stores physical lengths, so an
 offset in pixels is multiplied by `du`/`dv`. See the
 [real scan guide](../../../docs/real-laminography.md) for measured geometry and
 for the distinction between raw intensities and corrected absorption.
@@ -71,20 +75,26 @@ for the distinction between raw intensities and corrected absorption.
 `tomojax.load_frames` and `tomojax.load` recognize a SkyScan acquisition log by
 content, either explicitly or in its folder. Numbered sample TIFFs are read
 lazily; scout images and the separate drift-reference acquisition are excluded.
-Geometry and the bit-depth white level come from the log, in millimetres, with
+Distances, camera calibration and the vertical optical-axis line come from
+the log, in millimetres, with
 detector v pointing up. Geometric and flat-field corrections must be enabled in
 the export. Camera rotation, aspect and random-movement settings remain in the
 source metadata but are not reapplied: corrected pixel coordinates are assumed,
 not independently certified by the reader.
 
-Keep the log beside its numbered TIFFs. No external angles or flats are needed.
+The log does not establish a horizontal rotation centre: supply `detector=`
+(or a complete `geometry=`). Missing binning/resize metadata remains unknown.
+Keep the log beside its numbered TIFFs. Supply measured flats/white level and
+darks explicitly: storage bit depth does not establish calibration. The example
+below chooses white 65536 and dark 0; use the actual levels for your export.
 For a modest preview, bin detector counts and independently choose a smaller
 reconstruction grid, preserving the metadata's physical extent:
 
 ```python
 import tomojax as tj
 
-scan = tj.load_frames("skyscan/").corrected(binning=4)
+detector = tj.Detector(nu, nv, du, dv, (center_u, center_v))  # measured calibration
+scan = tj.load_frames("skyscan/", detector=detector, white_level=65536, darks=0).corrected(binning=4)
 grid = scan.grid.resampled((256, 256, 256))
 result = tj.reconstruct(scan, method="fbp", grid=grid)  # FDK for this cone geometry
 tj.save("grains-recon.nxs", result)
@@ -94,8 +104,14 @@ Alternatively, the equivalent CLI workflow writes the corrected scan, then the
 volume and a central-slice preview (use fresh output names):
 
 ```sh
-printf 'binning = 4\n' > preview.toml
-tomojax preprocess skyscan/ --config preview.toml -o grains.nxs
+# preview.toml includes binning = 4 and a calibrated [detector] table
+tomojax preprocess skyscan/ --flats 65536 --darks 0 --config preview.toml -o grains.nxs
 tomojax recon grains.nxs --method fbp --roi off --grid 256 256 256 \
   -o grains-recon.nxs --preview grains.png
 ```
+
+External NXtomo and Data Exchange raw exports are content-discovered, including
+renamed files and NXtomo entries other than `/entry`. Recorded physical pixel
+sizes are retained in millimetres; an absent axial rotation centre is estimated
+from corrected rows when a usable half-turn is available, otherwise supply
+`detector=`/`geometry=` in `load_frames`. The support matrix lists metadata paths.
