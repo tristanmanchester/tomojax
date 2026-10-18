@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import sys
 
 import numpy as np
 import pytest
@@ -17,6 +18,44 @@ def walnut():
     spec.loader.exec_module(module)
     module.ROWS, module.COLS, module.VIEWS = 2, 4, 60
     return module
+
+
+@pytest.mark.parametrize("posed", [False, True])
+def test_alignment_scores_calibrated_heights_and_fixes_one_global_gauge(walnut, monkeypatch, posed):
+    import tomojax as tj
+    from tomojax.geometry.api import stack_view_poses, view_frames
+
+    monkeypatch.setitem(sys.modules, "walnut", walnut)
+    path = Path(__file__).resolve().parents[1] / "bench" / "walnut_alignment.py"
+    spec = importlib.util.spec_from_file_location("walnut_alignment_test", path)
+    alignment = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(alignment)
+    grid, detector = tj.Grid(3, 4, 3, 1, 1, 1), tj.Detector(5, 4, 1, 1)
+
+    def scan(offsets, tilt=0):
+        parts = []
+        for height, offset in zip((-3, 0, 3), offsets, strict=True):
+            beam = tj.ConeBeam(80, 120, source_height=height + offset)
+            geometry = tj.ConeGeometry(grid, detector, [0, 41, 133], beam, tilt_deg=tilt)
+            parts.append(tj.Scan(np.zeros((3, 4, 5), np.float32), geometry))
+        return tj.Scan.combine(parts)
+
+    original, corrected = scan((0, 0, 0)), scan((0, 0.4, 0.8))
+    assert original.poses is None and corrected.poses is None
+    motion = alignment.object_motion(corrected, original)
+    np.testing.assert_allclose(motion[:, 2, 3], np.repeat([0, -0.4, -0.8], 3), atol=1e-6)
+    original = scan((0, 0, 0), tilt=23)
+    params = np.zeros((9, 6), np.float32)
+    if posed:
+        params[:, :3] = [0.013, -0.019, 0.031]
+        original = original.with_poses(params)
+    world = np.asarray(stack_view_poses(original.geometry, 9))
+    params[:, [3, 5, 4]] = np.einsum("nij,j->ni", world[:, :3, :3], [0.13, 0.31, -0.23])
+    moved = original.with_poses(params)
+    fixed = alignment._orbit_one_fixed(moved, original)
+    np.testing.assert_allclose(
+        view_frames(fixed.geometry), view_frames(original.geometry), atol=2e-5
+    )
 
 
 def _linear_field(shape):
