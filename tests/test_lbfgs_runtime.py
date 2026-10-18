@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+from unittest.mock import Mock
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -89,7 +92,10 @@ def test_reusable_lbfgs_kernels_consume_new_objective_inputs():
     assert [x.weak_type for x in jax.tree.leaves(state)] == [
         x.weak_type for x in jax.tree.leaves(next_state)
     ]
+    evaluate = Mock(wraps=kernels.evaluate)
+    kernels = replace(kernels, evaluate=evaluate)
     for target in [jnp.asarray([1.0, 2.0, -3.0]), jnp.asarray([-2.0, 0.5, 4.0])]:
+        evaluate.reset_mock()
         result = _run_lbfgs_optax_loop(
             z0=jnp.zeros(3),
             value_fn=objective,
@@ -98,6 +104,7 @@ def test_reusable_lbfgs_kernels_consume_new_objective_inputs():
             objective_args=(target,),
         )
         assert result.success
+        assert evaluate.call_count == result.nit + 1
         np.testing.assert_allclose(result.best_z, target, atol=1e-5)
 
 

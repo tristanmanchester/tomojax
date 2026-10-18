@@ -25,7 +25,7 @@
   "long_files": {
     "src/tomojax/alignment/_pose/_pose_loop.py": 892,
     "src/tomojax/alignment/_stages/_reconstruction_stage.py": 1028,
-    "src/tomojax/alignment/optimizers.py": 883,
+    "src/tomojax/alignment/optimizers.py": 887,
     "src/tomojax/recon/fista_tv.py": 823
   },
   "long_functions": {
@@ -39,7 +39,7 @@
     "src/tomojax/alignment/_stages/_stage_multires.py::_run_one_multires_level": 117,
     "src/tomojax/alignment/_stages/_stage_runners.py::_run_multires_level_stages": 143,
     "src/tomojax/alignment/_stages/_stage_runners.py::_run_pose_alignment_stage": 106,
-    "src/tomojax/alignment/optimizers.py::_run_lbfgs_optax_loop": 190,
+    "src/tomojax/alignment/optimizers.py::_run_lbfgs_optax_loop": 194,
     "src/tomojax/alignment/optimizers.py::run_active_validation_lm": 106,
     "src/tomojax/alignment/optimizers.py::run_pose_lbfgs": 186,
     "src/tomojax/cli/simulate.py::_build_parser": 158,

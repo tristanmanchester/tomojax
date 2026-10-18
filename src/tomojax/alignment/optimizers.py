@@ -477,9 +477,13 @@ def _run_lbfgs_optax_loop(  # noqa: PLR0912, PLR0915
         for iteration in range(int(cfg.maxiter)):
             if success:
                 break
-            value, grad = kernels.evaluate(z, opt_state, objective_args)
-            value_f = float(value)
-            grad_norm = float(jnp.linalg.norm(grad))
+            if iteration == 0:
+                value, grad = initial_value_jax, initial_grad
+                value_f, grad_norm = initial_value, initial_grad_norm
+            else:
+                value, grad = kernels.evaluate(z, opt_state, objective_args)
+                value_f = float(value)
+                grad_norm = float(jnp.linalg.norm(grad))
             if not math.isfinite(value_f) or not math.isfinite(grad_norm):
                 return LbfgsLoopResult(
                     z=z,
