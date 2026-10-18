@@ -5,7 +5,6 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
-from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -16,8 +15,7 @@ from tomojax.core.geometry.views import host_view_poses
 from tomojax.core.joseph_cuda import JosephCUDA
 from tomojax.core.validation import validate_grid, validate_pose_stack, validate_projection_stack
 
-if TYPE_CHECKING:
-    from .cgls import CGLSConfig
+from .cgls import CGLSConfig, resident_bytes
 
 
 def available(geometry, projections, initial, cfg: CGLSConfig, det_grid) -> bool:
@@ -93,7 +91,7 @@ def solve(geometry, grid, detector, projections, initial, cfg: CGLSConfig):
             pool = cp.get_default_memory_pool()
             if cp.cuda.get_allocator() == pool.malloc:
                 free += pool.free_bytes()
-            if projections.nbytes > 0.4 * free:
+            if resident_bytes(grid, projections.shape) > free:
                 return None
         shape = validate_grid(grid, "cgls grid")
         n, _, _ = validate_projection_stack(

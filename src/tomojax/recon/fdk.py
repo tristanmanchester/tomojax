@@ -3,7 +3,7 @@
 Each projection is cosine-weighted, ramp-filtered along detector rows on the
 isocentre plane, and backprojected voxel by voxel with the ``(SOD / U)^2``
 distance weight, where U is the voxel's distance from the source along the
-detector normal. Full turns weight each view by half its angular step;
+detector normal. Full turns share angular measure across conjugate views;
 shorter arcs of at least a half turn plus the fan angle use Parker weights
 with a virtual fan spanning the acquired arc, retaining overscan measurements.
 
@@ -27,13 +27,14 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.core.cone import cone_coefficients, use_cuda_cone
+from tomojax.core.cone import ConeModel, use_cuda_cone
 from tomojax.core.devices import as_devices, view_split
 from tomojax.core.geometry.base import grid_volume_origin
-from tomojax.core.geometry.cone import beam_of
+from tomojax.core.geometry.cone import cone_parts
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import validate_grid, validate_projection_stack
 from tomojax.recon._fdk_angles import grouped_angles, ordered_arc
+from tomojax.recon._fdk_coverage import full_turn_weights
 from tomojax.recon._fdk_cuda import backproject_cuda
 from tomojax.recon._host_arrays import validate_host_arrays
 from tomojax.recon.filters import get_fbp_filter_np
@@ -71,8 +72,8 @@ class FDKConfig:
         Execution backend: "auto", "jax" or "cuda". Auto uses CUDA when available.
         Default is 'auto'.
     views_per_batch : int, optional
-        Number of views processed together to bound temporary storage. Default is
-        64.
+        Maximum views processed together. Batches also cap FP32 input storage at
+        64 MiB (or one view) to bound host transfer staging. Default is 64.
     devices : jax.Device or sequence of jax.Device or None, optional
         JAX device or sequence of devices. None uses the current default; multiple
         devices divide the views and each hold the full volume.
@@ -95,37 +96,18 @@ def _fan_angles(beam: ConeBeam, detector: Detector) -> np.ndarray:
     )
 
 
-def _full_turn_column_weights(beam: ConeBeam, detector: Detector) -> np.ndarray:
-    """``(nu,)`` weights of a full turn: 1/2, or Wang's for an offset detector.
-
-    A full turn measures each ray twice, once from each side, so each column
-    takes half the angular measure. When the detector is offset so that the
-    rotation axis projects off its centre, columns beyond the short side's
-    reach are measured once and weigh 1, and a sin^2 ramp across the overlap
-    (0 at the short edge, 1/2 at the axis, 1 at the mirrored column) keeps the
-    weights of each ray's two measurements summing to one.
-    """
-    gamma = _fan_angles(beam, detector)
-    lo, hi = float(gamma.min()), float(gamma.max())
-    pixel = float(detector.du) / float(beam.source_to_detector)
-    if lo > pixel or hi < -pixel:
-        raise ValueError("FDK needs the rotation axis to project onto the detector")
-    if abs(hi + lo) <= pixel:
-        return np.full(detector.nu, 0.5)
-    side = 1.0 if hi + lo > 0 else -1.0
-    overlap = max(min(-lo, hi), pixel)
-    x = side * gamma
-    ramp = np.sin(np.pi / 4 * (1 + np.clip(x / overlap, -1.0, 1.0))) ** 2
-    return np.where(x >= overlap, 1.0, ramp)
-
-
 def _full_turn(geometry: Geometry, n_views: int) -> bool:
     angles, _, _ = grouped_angles(geometry, n_views)
     return ordered_arc(angles)[2]
 
 
 def _virtual_columns(
-    geometry: Geometry, beam: ConeBeam, detector: Detector, n_views: int
+    geometry: Geometry,
+    beam: ConeBeam,
+    detector: Detector,
+    n_views: int,
+    *,
+    full_turn: bool | None = None,
 ) -> tuple[int, int]:
     """Columns to add below and above an offset detector, mirroring it about the axis.
 
@@ -133,7 +115,9 @@ def _virtual_columns(
     side covers; voxels on the short side then project past the detector, where
     the filtered rows (zero data, nonzero ramp tail) must still be read.
     """
-    if not _full_turn(geometry, n_views) or not _windowable(beam):
+    if full_turn is None:
+        full_turn = _full_turn(geometry, n_views)
+    if not full_turn or not _windowable(beam):
         return 0, 0
     axis = (float(beam.axis_offset) * beam.magnification - float(detector.center[0])) / float(
         detector.du
@@ -145,53 +129,53 @@ def _virtual_columns(
     return (pad, 0) if above > below else (0, pad)
 
 
-def _extended(beam: ConeBeam, detector: Detector, pad_lo: int, pad_hi: int) -> Detector:
-    """``detector`` with ``pad_lo`` columns added below u and ``pad_hi`` above."""
-    from dataclasses import replace
-
-    if not (pad_lo or pad_hi):
-        return detector
-    _, u_dir, _ = beam.detector_frame(detector)
-    shift = (pad_hi - pad_lo) / 2 * float(detector.du) * u_dir
-    return replace(
-        detector,
-        nu=detector.nu + pad_lo + pad_hi,
-        center=(detector.center[0] + shift[0], detector.center[1] + shift[2]),
-    )
-
-
 def view_weights(geometry: Geometry, detector: Detector, n_views: int) -> np.ndarray:
     """Return ``(views, nu)`` FDK angular weights.
 
-    Full turns weigh each view by its angular measure, halved (Wang's weights
-    for an offset detector); short scans use Parker weights. Views repeating
+    Full turns share each ray's angular measure with its conjugate view's
+    detector coverage; short scans use Parker weights. Views repeating
     an angle (several turns, at several heights say) share its measure, so a
     scan of several turns averages their reconstructions. Angle labels may
     wrap at 360 degrees or differ by whole turns without changing the weights.
     """
-    beam = beam_of(geometry)
-    if beam is None:
+    parts = cone_parts(geometry, detector)
+    if parts is None:
         raise ValueError("view_weights needs a cone-beam geometry")
     angles, view_angle, repeats = grouped_angles(geometry, n_views)
-    weights = _distinct_view_weights(beam, detector, angles)
-    return weights[view_angle] / repeats[view_angle][:, None]
+    ordering = ordered_arc(angles)
+    if ordering[2]:
+        fans, pixels, counts = [], [], []
+        for count, beam, own in parts:
+            size = n_views if count is None else count
+            counts.append(size)
+            fans.append(np.broadcast_to(_fan_angles(beam, own), (size, own.nu)))
+            pixels.append(np.full(size, float(own.du) / float(beam.source_to_detector)))
+        return full_turn_weights(
+            angles, view_angle, repeats, np.concatenate(fans), np.concatenate(pixels), tuple(counts)
+        )
+    weights, first = [], 0
+    for count, beam, own in parts:
+        stop = n_views if count is None else first + count
+        selected = view_angle[first:stop]
+        weights.append(_distinct_view_weights(beam, own, selected, ordering))
+        first = stop
+    return np.concatenate(weights) / repeats[view_angle][:, None]
 
 
-def _distinct_view_weights(beam: ConeBeam, detector: Detector, angles: np.ndarray) -> np.ndarray:
+def _distinct_view_weights(
+    beam: ConeBeam,
+    detector: Detector,
+    selected: np.ndarray,
+    ordering: tuple[np.ndarray, np.ndarray, bool],
+) -> np.ndarray:
     """:func:`view_weights` for views at distinct ``angles`` (radians)."""
-    n_views = len(angles)
-    order, sorted_angles, full_turn = ordered_arc(angles)
+    order, sorted_angles, _ = ordering
+    n_views = len(order)
     gaps = np.diff(sorted_angles)
     step = float(np.median(gaps))
     arc = float(sorted_angles[-1] - sorted_angles[0]) + step
     # Angular measure of each view: half the gap to each neighbour.
     measure = np.empty(n_views)
-    if full_turn:
-        wrapped = np.concatenate(
-            [sorted_angles[-1:] - 2 * np.pi, sorted_angles, sorted_angles[:1] + 2 * np.pi]
-        )
-        measure[order] = 0.5 * (wrapped[2:] - wrapped[:-2])
-        return measure[:, None] * _full_turn_column_weights(beam, detector)[None, :]
     padded = np.concatenate([[sorted_angles[0] - step], sorted_angles, [sorted_angles[-1] + step]])
     measure[order] = 0.5 * (padded[2:] - padded[:-2])
     # Parker weights over the fan angle of each detector column.
@@ -216,8 +200,9 @@ def _distinct_view_weights(beam: ConeBeam, detector: Detector, angles: np.ndarra
     delta = max(delta, (arc - np.pi) / 2)
     beta = np.empty((n_views, 1))
     beta[order, 0] = sorted_angles - sorted_angles[0]
+    beta = beta[selected]
     g = gamma[None, :]
-    weight = np.ones((n_views, detector.nu))
+    weight = np.ones((len(selected), detector.nu))
     rise = beta < 2 * (delta - g)
     weight = np.where(rise, np.sin(np.pi / 4 * beta / np.maximum(delta - g, 1e-12)) ** 2, weight)
     end = np.pi + 2 * delta
@@ -226,7 +211,7 @@ def _distinct_view_weights(beam: ConeBeam, detector: Detector, angles: np.ndarra
         fall, np.sin(np.pi / 4 * (end - beta) / np.maximum(delta + g, 1e-12)) ** 2, weight
     )
     weight = np.where(beta > end, 0.0, weight)
-    return weight * measure[:, None]
+    return weight * measure[selected, None]
 
 
 def _cosine_weights(beam: ConeBeam, detector: Detector) -> np.ndarray:
@@ -239,6 +224,33 @@ def _cosine_weights(beam: ConeBeam, detector: Detector) -> np.ndarray:
     pixel = centre + u[None, :, None] * u_dir + v[:, None, None] * v_dir
     ray = pixel - beam.source()
     return np.abs(ray @ normal) / np.linalg.norm(ray, axis=-1)
+
+
+def _cosines(parts: tuple[tuple[int | None, ConeBeam, Detector], ...], n_views: int) -> np.ndarray:
+    """Shared cosine image, or compact per-view ray coordinates in detector axes."""
+    if len(parts) == 1:
+        return np.asarray(_cosine_weights(parts[0][1], parts[0][2]), np.float32)
+    values = []
+    for count, beam, detector in parts:
+        centre, u, v = beam.detector_frame(detector)
+        ray = centre - beam.source()
+        coordinates = np.array([ray @ u, ray @ v, abs(ray @ np.cross(u, v))], np.float32)
+        values.append(np.broadcast_to(coordinates, (n_views if count is None else count, 3)))
+    return np.concatenate(values)[..., None]
+
+
+def _batch_cosines(
+    cosine: jax.Array, start: jax.Array | int, count: int, detector: Detector
+) -> jax.Array:
+    if cosine.ndim == 2:
+        return cosine
+    parameters = jax.lax.dynamic_slice_in_dim(cosine, start, count)[..., 0]
+    u = (jnp.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du
+    v = (jnp.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv
+    x = parameters[:, 0, None, None] + u[None, None, :]
+    y = parameters[:, 1, None, None] + v[None, :, None]
+    z = parameters[:, 2, None, None]
+    return z / jnp.sqrt(x * x + y * y + z * z)
 
 
 def _filter_operator(spectrum: np.ndarray, nu: int, pad_lo: int, pad_hi: int) -> np.ndarray:
@@ -340,6 +352,8 @@ def _fdk_batch(
     # The batch's views of the scan's coefficients and weights.
     coeff = jax.lax.dynamic_slice_in_dim(coeff, start, views.shape[0])
     weights = jax.lax.dynamic_slice_in_dim(weights, start, views.shape[0])
+    measured = replace(detector, nu=views.shape[-1])
+    cosine = _batch_cosines(cosine, start, views.shape[0], measured)
     if operator is not None:
         rows = views * cosine * weights[:, None, :]
         return backproject_cuda(rows, coeff, grid, detector, scale, out, operator)
@@ -348,11 +362,19 @@ def _fdk_batch(
     return backproject(filtered, coeff, grid, detector, scale, out)
 
 
+@jax.jit
+def _virtual_coefficients(coeff: jax.Array, pad_lo: int) -> jax.Array:
+    """Translate a detector corner and its projected column origin together."""
+    coeff = coeff.at[:, 3:6].add(-pad_lo * coeff[:, 6:9])
+    return coeff.at[:, 23].add(pad_lo)
+
+
 @dataclass(frozen=True)
 class _Prepared:
     """Per-scan FDK weights and filter on the device; see :func:`_prepare`."""
 
     cuda: bool
+    detector: Detector
     weights: jax.Array
     cosine: jax.Array
     kernel: jax.Array
@@ -363,19 +385,46 @@ class _Prepared:
     # The filter as a matrix (see _filter_operator), for the CUDA kernel's rows.
     operator: jax.Array | None = None
 
-    def backprojected(self, beam: ConeBeam, detector: Detector) -> Detector:
-        """The detector the filtered rows cover, with its virtual columns."""
-        return _extended(beam, detector, self.pad_lo, self.pad_hi)
+    def coefficients(
+        self, geometry: Geometry, grid: Grid, detector: Detector, poses: jax.Array
+    ) -> jax.Array:
+        parts = cone_parts(geometry, detector)
+        assert parts is not None
+        coeff = ConeModel(parts).coefficients(poses, grid)
+        # Virtual columns translate the detector origin in its own plane, even
+        # when its u axis has a y component (which Detector.center cannot hold).
+        if self.pad_lo:
+            coeff = _virtual_coefficients(coeff, self.pad_lo)
+        return coeff
+
+    def window(self, first: int, stop: int) -> _Prepared:
+        """A physical row window, without moving any calibrated detector plane."""
+        cosine = self.cosine
+        if cosine.ndim == 2:
+            cosine = cosine[first:stop]
+        else:
+            shift = first + (stop - first - 1) / 2 - (self.detector.nv - 1) / 2
+            cosine = cosine.at[:, 1, 0].add(shift * self.detector.dv)
+        return replace(
+            self,
+            detector=replace(self.detector, nv=stop - first),
+            cosine=cosine,
+        )
+
+    def virtual(self, detector: Detector) -> Detector:
+        """Pixel count of the filtered images; their placement is in coefficients."""
+        return replace(detector, nu=detector.nu + self.pad_lo + self.pad_hi)
 
     def on(self, device: Device | None, views: range) -> _Prepared:
         """These weights for ``views`` alone, and the filter, on ``device``."""
         put = partial(jax.device_put, device=device)
         operator = None if self.operator is None else put(self.operator)
         weights = put(self.weights[views.start : views.stop])
+        cosine = self.cosine if self.cosine.ndim == 2 else self.cosine[views.start : views.stop]
         return replace(
             self,
             weights=weights,
-            cosine=put(self.cosine),
+            cosine=put(cosine),
             kernel=put(self.kernel),
             operator=operator,
         )
@@ -395,38 +444,57 @@ def _prepare(
     band of a rolled detector gets the same ones.
     """
     columns = detector if columns is None else columns
-    beam = beam_of(geometry)
-    if beam is None:
+    parts = cone_parts(geometry, detector)
+    if parts is None:
         raise ValueError("fdk needs a cone-beam geometry; use fbp for parallel beams")
     if cfg.backend not in {"auto", "jax", "cuda"}:
         raise ValueError("fdk backend must be 'auto', 'jax' or 'cuda'")
     cuda = use_cuda_cone() if cfg.backend == "auto" else cfg.backend == "cuda"
     if cuda and not use_cuda_cone():
         raise ValueError("fdk: the CUDA kernel needs CuPy on a CUDA device")
-    du_iso = float(detector.du) / beam.magnification
-    pad_lo, pad_hi = _virtual_columns(geometry, beam, columns, n_views)
+    magnification = parts[0][1].magnification
+    du_iso = float(detector.du) / magnification
+    column_parts = cone_parts(geometry, columns)
+    assert column_parts is not None
+    full_turn = _full_turn(geometry, n_views)
+    padding = [
+        _virtual_columns(geometry, beam, own, n_views, full_turn=full_turn)
+        for _, beam, own in column_parts
+    ]
+    pad_lo, pad_hi = np.max(padding, axis=0).tolist()
+    # A shared detector-pitch ramp is linear in magnification. Fold each
+    # view's remaining inverse magnification into its angular weight.
+    weights = view_weights(geometry, columns, n_views)
+    weights *= magnification / ConeModel(parts).magnification(n_views)[:, None]
     # The kernel spans the virtual row too, so its tail does not wrap around.
     width = detector.nu + pad_lo + pad_hi
     kernel = get_fbp_filter_np(cfg.filter, width, du_iso, "float32")
     operator = None
     if cuda and width <= _DENSE_FILTER_MAX:
         operator = jax.device_put(_filter_operator(kernel, detector.nu, pad_lo, pad_hi))
+    # Prefetch and the runtime's pinned transfer pool may retain several input
+    # buffers. A view count alone does not bound them at large detector sizes.
+    transfer_views = max(1, (64 * 2**20) // (4 * detector.nu * detector.nv))
     return _Prepared(
         cuda=cuda,
+        detector=detector,
         # device_put, unlike jnp.asarray, compiles nothing for a new shape.
-        weights=jax.device_put(np.asarray(view_weights(geometry, columns, n_views), np.float32)),
-        cosine=jax.device_put(np.asarray(_cosine_weights(beam, detector), np.float32)),
+        weights=jax.device_put(np.asarray(weights, np.float32)),
+        cosine=jax.device_put(_cosines(parts, n_views)),
         kernel=jax.device_put(kernel),
         operator=operator,
-        scale=1.0 / beam.magnification,
-        batch=max(1, int(cfg.views_per_batch)),
+        scale=1.0 / magnification,
+        batch=max(1, min(int(cfg.views_per_batch), transfer_views)),
         pad_lo=pad_lo,
         pad_hi=pad_hi,
     )
 
 
 def _device_views(
-    projections: jax.Array | np.ndarray, start: int, stop: int, device: Device | None = None
+    projections: jax.Array | np.ndarray | _RowView,
+    start: int,
+    stop: int,
+    device: Device | None = None,
 ) -> jax.Array:
     part = projections[start:stop]
     if isinstance(part, jax.Array):
@@ -459,9 +527,8 @@ def _filter_views(prep: _Prepared, projections: jax.Array | np.ndarray, n_views:
         stop = min(start + prep.batch, n_views)
         views = _device_views(projections, start, stop)
         weights = prep.weights[start:stop]
-        parts.append(
-            _filter_jit(views, prep.cosine, weights, prep.kernel, prep.pad_lo, prep.pad_hi)
-        )
+        cosine = _batch_cosines(prep.cosine, start, stop - start, prep.detector)
+        parts.append(_filter_jit(views, cosine, weights, prep.kernel, prep.pad_lo, prep.pad_hi))
     return jnp.concatenate(parts, axis=0)
 
 
@@ -469,11 +536,9 @@ def _backproject_filtered(
     geometry: Geometry, grid: Grid, detector: Detector, filtered: jax.Array, prep: _Prepared
 ) -> jax.Array:
     """Backproject filtered projections from :func:`_filter_views` into ``grid``."""
-    beam = beam_of(geometry)
-    assert beam is not None
     n_views = int(filtered.shape[0])
-    detector = prep.backprojected(beam, detector)
-    coeff = cone_coefficients(stack_view_poses(geometry, n_views), grid, detector, beam)
+    coeff = prep.coefficients(geometry, grid, detector, stack_view_poses(geometry, n_views))
+    detector = prep.virtual(detector)
     out = jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
     for start in range(0, n_views, prep.batch):
         stop = min(start + prep.batch, n_views)
@@ -497,7 +562,10 @@ def fdk(
     ``projections`` are ``(views, nv, nu)`` line integrals; NumPy and memmap
     stacks stream to the device ``views_per_batch`` views at a time. Full turns
     on an offset detector (the axis projecting off its centre) get Wang's
-    weights and reconstruct the field the detector's long side covers.
+    weights from the conjugate views and reconstruct the field the detector's long side covers.
+    Each view retains its own calibrated source/detector arrangement; angular
+    quadrature covers the whole scan, independently of segment boundaries.
+    Noncircular trajectories retain FDK's approximate character.
 
     Parameters
     ----------
@@ -532,19 +600,33 @@ def _fdk(
     projections: jax.Array | np.ndarray,
     *,
     config: FDKConfig | None = None,
-    columns: Detector | None = None,
 ) -> jax.Array:
     cfg = FDKConfig() if config is None else config
-    beam = beam_of(geometry)
-    if beam is None:
+    parts = cone_parts(geometry, detector)
+    if parts is None:
         raise ValueError("fdk needs a cone-beam geometry; use fbp for parallel beams")
     validate_grid(grid, "fdk grid")
     n_views, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fdk projections"
     )
-    prep = _prepare(geometry, detector, n_views, cfg, columns)
-    virtual = prep.backprojected(beam, detector)
-    coeff = cone_coefficients(stack_view_poses(geometry, n_views), grid, virtual, beam)
+    prep = _prepare(geometry, detector, n_views, cfg)
+    coeff = prep.coefficients(geometry, grid, detector, stack_view_poses(geometry, n_views))
+    return _accumulate(grid, projections, prep, coeff, cfg.devices)
+
+
+def _accumulate(
+    grid: Grid,
+    projections: jax.Array | np.ndarray | _RowView,
+    prep: _Prepared,
+    coeff: jax.Array,
+    devices: Device | Sequence[Device] | None,
+) -> jax.Array:
+    """Filter and sum validated views using coefficients in this volume's voxel frame."""
+    n_views = int(coeff.shape[0])
+    virtual = prep.virtual(prep.detector)
+    # Physical placement is already in coeff. Equal-sized slabs share the
+    # filtering/backprojection executable, rather than compiling every origin.
+    kernel_grid = replace(grid, vol_origin=None, vol_center=None)
 
     def backprojected(device: Device | None, views: range) -> jax.Array:
         """The weighted backprojection of ``views``, on ``device`` (JAX's default for None)."""
@@ -567,14 +649,14 @@ def _fdk(
                     pending = copier.submit(read, starts[index + 1])
                 out = _fdk_batch(
                     batch, start, share, here.cosine, here.weights, here.kernel, here.operator,
-                    out, grid=grid, detector=virtual, scale=prep.scale, cuda=prep.cuda,
+                    out, grid=kernel_grid, detector=virtual, scale=prep.scale, cuda=prep.cuda,
                     pad_lo=prep.pad_lo, pad_hi=prep.pad_hi,
                 )  # fmt: skip
                 # Keep only this batch and its prefetched successor live.
                 out.block_until_ready()
         return out
 
-    split = view_split(cfg.devices, n_views)
+    split = view_split(devices, n_views)
     whole = range(n_views)
     return backprojected(None, whole) if split is None else split.summed(backprojected)
 
@@ -603,8 +685,8 @@ def _slab_rows(
     geometry: Geometry, grid: Grid, detector: Detector, poses: np.ndarray, z0: int, z1: int
 ) -> tuple[int, int]:
     """Detector rows that the z-slab ``[z0, z1)`` projects onto in any view."""
-    beam = beam_of(geometry)
-    assert beam is not None
+    parts = cone_parts(geometry, detector)
+    assert parts is not None
     origin = np.asarray(grid_volume_origin(grid))
     spacing = np.asarray([grid.vx, grid.vy, grid.vz])
     lo = origin - spacing / 2
@@ -615,17 +697,21 @@ def _slab_rows(
     )
     # A box projects inside the hull of its projected corners.
     world = np.einsum("nij,kj->nki", poses[:, :3, :3], corners) + poses[:, None, :3, 3]
-    centre, u_dir, v_dir = beam.detector_frame(detector)
-    normal = np.cross(u_dir, v_dir)
-    source = beam.source()
-    ray = world - source
-    hit = source + ray * (((centre - source) @ normal) / (ray @ normal))[..., None]
-    rows = ((hit - centre) @ v_dir) / detector.dv + (detector.nv - 1) / 2
+    low, high, start = math.inf, -math.inf, 0
+    for count, beam, own in parts:
+        stop = len(poses) if count is None else start + count
+        centre, u_dir, v_dir = beam.detector_frame(own)
+        normal = np.cross(u_dir, v_dir)
+        source = beam.source()
+        ray = world[start:stop] - source
+        hit = source + ray * (((centre - source) @ normal) / (ray @ normal))[..., None]
+        rows = ((hit - centre) @ v_dir) / own.dv + (own.nv - 1) / 2
+        low, high, start = min(low, float(rows.min())), max(high, float(rows.max())), stop
     # Keep one measured border row even when the slab is entirely outside.
     # Backprojection still samples zero beyond that row, as with the full
     # detector, without constructing an empty or negative-height detector.
-    first = max(0, min(detector.nv - 1, int(np.floor(rows.min())) - 1))
-    stop = max(first + 1, min(detector.nv, int(np.ceil(rows.max())) + 2))
+    first = max(0, min(detector.nv - 1, math.floor(low) - 1))
+    stop = max(first + 1, min(detector.nv, math.ceil(high) + 2))
     return first, stop
 
 
@@ -690,9 +776,9 @@ def fdk_host(
     """FDK with host input and output, reconstructed in z slabs on the device.
 
     Accepts NumPy arrays and memmaps; ``out`` may be a writable ``(nx, ny, nz)``
-    FP32 memmap. Each slab filters only the detector rows it projects onto (all
-    rows for a pitched or yawed detector), so projections and volume can both
-    exceed device memory. With several ``config.fdk.devices``, each device
+    FP32 memmap. Each slab filters a bounded band containing the rows it projects
+    onto in any calibrated view, so projections and volume can both exceed device
+    memory. With several ``config.fdk.devices``, each device
     reconstructs its own slabs, so the volume may exceed every one of them.
 
     Input and output storage must not overlap. Input storage must remain
@@ -730,8 +816,7 @@ def fdk_host(
     from tomojax.backends import device_free_memory_bytes
 
     cfg = FDKHostConfig() if config is None else config
-    beam = beam_of(geometry)
-    if beam is None:
+    if cone_parts(geometry, detector) is None:
         raise ValueError("fdk_host needs a cone-beam geometry; use fbp_host for parallel beams")
     depth = cfg.slices_per_batch
     if depth is not None:
@@ -767,6 +852,15 @@ def fdk_host(
     return result
 
 
+@jax.jit
+def _window_coefficients(coeff: jax.Array, row: int, z: int) -> jax.Array:
+    """Translate full-grid coefficients by integer voxel/pixel offsets only."""
+    coeff = coeff.at[:, 2].add(-z)
+    coeff = coeff.at[:, 5].add(-z)
+    coeff = coeff.at[:, 3:6].add(row * coeff[:, 9:12])
+    return coeff.at[:, 24].add(-row)
+
+
 @dataclass(frozen=True)
 class _Slabs:
     """A scan's FDK in z slabs, into ``result``; see :func:`fdk_host`."""
@@ -778,20 +872,21 @@ class _Slabs:
     poses: np.ndarray
     result: np.ndarray
 
-    def reconstruct(self, z0: int, z1: int, fdk: FDKConfig) -> np.ndarray:
-        """Slices ``[z0, z1)``, from the detector rows they project onto where it can tell."""
-        beam = beam_of(self.geometry)
-        assert beam is not None
+    def reconstruct(self, z0: int, z1: int, prep: _Prepared, coeff: jax.Array) -> np.ndarray:
+        """Slices ``[z0, z1)``, filtering only their physical detector-row window."""
         slab = _slab_grid(self.grid, z0, z1)
-        if _windowable(beam):
-            r0, r1 = _slab_rows(self.geometry, slab, self.detector, self.poses, 0, z1 - z0)
-            rows = _detector_window(beam, self.detector, r0, r1)
-        else:
-            r0, r1, rows = 0, self.detector.nv, self.detector
-        # The full detector sets per-column weights, the same for every slab.
+        r0, r1 = _slab_rows(self.geometry, self.grid, self.detector, self.poses, z0, z1)
+        # Bucket storage heights, not ray coordinates: neighbouring slabs
+        # reuse executables instead of compiling every slightly different band.
+        quantum = min(64, max(1, self.detector.nv // 8))
+        rows = min(self.detector.nv, -(-(r1 - r0) // quantum) * quantum)
+        r0 = min(r0, self.detector.nv - rows)
+        r1 = r0 + rows
         views = _RowView(self.projections, r0, r1)
-        volume = _fdk(self.geometry, slab, rows, views, config=fdk, columns=self.detector)
-        return np.asarray(volume)
+        volume = _accumulate(
+            slab, views, prep.window(r0, r1), _window_coefficients(coeff, r0, z0), None
+        )
+        return np.asarray(volume.T).T
 
     def run(
         self,
@@ -806,15 +901,23 @@ class _Slabs:
         All of a slab's work stays on ``device``, its weights and coefficients
         too: another thread's on the same GPU changes the order of its sums.
         """
+        if not slabs:
+            return
         if device is not None:
             fdk = replace(fdk, devices=device)
+        with jax.default_device(device):
+            prep = _prepare(self.geometry, self.detector, len(self.projections), fdk)
+            coeff = prep.coefficients(
+                self.geometry, self.grid, self.detector, jnp.asarray(self.poses, jnp.float32)
+            )
         pending: Future[None] | None = None
         for z0, z1 in slabs:
             with jax.default_device(device):
-                volume = self.reconstruct(z0, z1, fdk)
+                volume = self.reconstruct(z0, z1, prep, coeff)
             if pending is not None:
                 pending.result()
             pending = writer.submit(self.store, z0, z1, volume)
+            del volume
         if pending is not None:
             pending.result()
 

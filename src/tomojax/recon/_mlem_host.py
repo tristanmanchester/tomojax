@@ -28,14 +28,22 @@ if TYPE_CHECKING:
 type _Slab = tuple[int, int, Grid, jax.Array]
 
 
-def volume_depth(grid: Grid, detector: Detector, batch: int) -> int | None:
+def volume_depth(
+    grid: Grid, detector: Detector, batch: int, *, subset_views: int = 0
+) -> int | None:
     """Keep the resident solve when its working set fits; otherwise bound z slabs."""
     free = device_free_memory_bytes()
     plane = 4 * grid.nx * grid.ny
     fixed = 2 * batch * detector.nu * detector.nv * 4 + 256 * 2**20
     if free is None or 5 * plane * grid.nz + fixed <= 0.85 * free:
         return None
-    fitting = max(1, int((0.75 * free - fixed) / (4 * plane)))
+    ratio_bytes = subset_views * detector.nu * detector.nv * 4
+    reserve = ratio_bytes if ratio_bytes <= 0.45 * free else 0
+    fitting = max(1, int((0.75 * free - fixed - reserve) / (4 * plane)))
+    # Device capacity alone permits slabs whose host staging and pinned copy
+    # pools add several volume-sized temporaries over a solve. Bound transfers
+    # independently, even when the GPU can hold a much larger working slab.
+    fitting = min(fitting, max(1, (128 * 2**20) // plane))
     return min(grid.nz, 2 ** (fitting.bit_length() - 1))
 
 
@@ -100,6 +108,32 @@ def _parts(grid: Grid, model: ConeModel, poses: jax.Array, depth: int) -> list[_
     return result
 
 
+@partial(jax.jit, donate_argnums=(0,))
+def _add_predictions(expected: jax.Array, values: jax.Array, start: jax.Array) -> jax.Array:
+    offset = (start, 0, 0)
+    previous = jax.lax.dynamic_slice(expected, offset, values.shape)
+    return jax.lax.dynamic_update_slice(expected, previous + values, offset)
+
+
+@partial(jax.jit, donate_argnums=(0,))
+def _divide_predictions(expected: jax.Array, measured: jax.Array, start: jax.Array) -> jax.Array:
+    offset = (start, 0, 0)
+    prediction = jax.lax.dynamic_slice(expected, offset, measured.shape)
+    positive = prediction > 0
+    ratio = jnp.where(positive, measured / jnp.where(positive, prediction, 1), 0)
+    return jax.lax.dynamic_update_slice(expected, ratio, offset)
+
+
+def _device_slab(volume: np.ndarray, start: int, stop: int) -> jax.Array:
+    """Transfer a contiguous ZYX view, retaining XYZ logical coordinates on device."""
+    return jax.device_put(volume[:, :, start:stop].T).T
+
+
+def _store_slab(volume: np.ndarray, start: int, stop: int, value: jax.Array) -> None:
+    """Write a slab without a host-side C/F packing array."""
+    volume[:, :, start:stop].T[:] = np.asarray(value.T)
+
+
 def _ratios(
     volume: np.ndarray,
     projections: np.ndarray,
@@ -108,21 +142,37 @@ def _ratios(
     detector: Detector,
     batch: int,
     backend: str,
-) -> np.ndarray:
-    expected = np.zeros((len(indices), detector.nv, detector.nu), np.float32)
+) -> jax.Array | np.ndarray:
+    shape = (len(indices), detector.nv, detector.nu)
+    free = device_free_memory_bytes()
+    ratio_bytes = int(np.prod(shape)) * 4
+    largest = max(grid.nx * grid.ny * grid.nz for _, _, grid, _ in slabs)
+    scratch = 4 * 4 * largest + 2 * batch * detector.nv * detector.nu * 4 + 256 * 2**20
+    resident = free is not None and ratio_bytes + scratch <= 0.85 * free
+    expected = jnp.zeros(shape, jnp.float32) if resident else np.zeros(shape, np.float32)
     for start, stop, grid, coefficients in slabs:
-        piece = jax.device_put(np.ascontiguousarray(volume[:, :, start:stop]))
+        piece = _device_slab(volume, start, stop)
         for first in range(0, len(indices), batch):
             selected = indices[first : first + batch]
             values = _forward(
                 piece, coefficients[selected], grid=grid, detector=detector, backend=backend
             )
-            expected[first : first + len(selected)] += np.asarray(values)
+            if isinstance(expected, jax.Array):
+                expected = _add_predictions(expected, values, jnp.int32(first))
+            else:
+                expected[first : first + len(selected)] += np.asarray(values)
+        if isinstance(expected, jax.Array):
+            expected.block_until_ready()  # Release this slab's host staging before the next.
         del piece, values
     for first in range(0, len(indices), batch):
         selected = indices[first : first + batch]
-        prediction = expected[first : first + len(selected)]
         measured = np.asarray(projections[selected], np.float32)
+        if isinstance(expected, jax.Array):
+            expected = _divide_predictions(expected, jax.device_put(measured), jnp.int32(first))
+            expected.block_until_ready()  # At most one advanced-indexed measurement copy lives.
+            del measured
+            continue
+        prediction = expected[first : first + len(selected)]
         positive = prediction > 0
         np.divide(measured, prediction, out=prediction, where=positive)
         prediction[~positive] = 0
@@ -132,7 +182,7 @@ def _ratios(
 def _update(
     volume: np.ndarray,
     seen: np.ndarray,
-    ratios: np.ndarray,
+    ratios: jax.Array | np.ndarray,
     indices: np.ndarray,
     slabs: list[_Slab],
     detector: Detector,
@@ -153,13 +203,13 @@ def _update(
                 grid=grid, detector=detector, backend=backend, model=model,
             )  # fmt: skip
         if apply:
-            piece = jax.device_put(np.ascontiguousarray(volume[:, :, start:stop]))
+            piece = _device_slab(volume, start, stop)
             value, visible = _updated(piece, correction, norm)
-            volume[:, :, start:stop] = np.asarray(value)
+            _store_slab(volume, start, stop, value)
             del piece, value
         else:
             visible = norm > 0
-        seen[:, :, start:stop] |= np.asarray(visible)
+        seen[:, :, start:stop] |= np.packbits(np.asarray(visible.T).T, axis=0)
         del visible, correction, norm, ratio
 
 
@@ -178,6 +228,7 @@ def solve(
     depth: int,
     initial: jax.Array | np.ndarray | None,
     support: jax.Array | np.ndarray | None,
+    warm_geometry: Geometry | None = None,
 ) -> np.ndarray:
     """Run the validated EM configuration with one host subset and device slab at a time."""
     data = np.asarray(projections)
@@ -185,7 +236,14 @@ def solve(
     if np.min(data) < 0 or not np.isfinite(np.asarray(poses)).all():
         raise ValueError("mlem: projections must be finite and nonnegative, and poses finite")
     shape = (grid.nx, grid.ny, grid.nz)
-    volume = np.ones(shape, np.float32) if initial is None else np.array(initial, np.float32)
+    if warm_geometry is not None:
+        volume = initial_volume(warm_geometry, grid, detector, data, depth=depth)
+    else:
+        volume = (
+            np.ones(shape, np.float32, order="F")
+            if initial is None
+            else np.array(initial, np.float32, order="F")
+        )
     if support is not None:
         mask = np.broadcast_to(np.asarray(support, bool), shape)
         for first in range(0, grid.nx, 16):
@@ -193,7 +251,7 @@ def solve(
     validate_host_views(volume)
     if np.min(volume) < 0:
         raise ValueError("mlem: initial volume must be finite and nonnegative")
-    seen = np.zeros(shape, bool)
+    seen = np.zeros(((grid.nx + 7) // 8, grid.ny, grid.nz), np.uint8)
     slabs = _parts(grid, model, poses, depth)
     for _ in range(max(1, iterations)):
         for group in range(subsets):
@@ -208,7 +266,9 @@ def solve(
                 apply=iterations > 0,
             )  # fmt: skip
             del ratios
-    np.multiply(volume, seen, out=volume)
+    for start, stop, _, _ in slabs:
+        visible = np.unpackbits(seen[:, :, start:stop], axis=0, count=grid.nx)
+        np.multiply(volume[:, :, start:stop], visible, out=volume[:, :, start:stop])
     return volume
 
 
@@ -220,15 +280,13 @@ def initial_volume(
     *,
     depth: int,
 ) -> np.ndarray:
-    """The unchanged segmented FDK initializer, assembled without a full device volume."""
-    from ._warm_start import fbp_start
-    from .fbp import FBPConfig
+    """The per-view FDK initializer, assembled without a full device volume."""
+    from .fdk import FDKHostConfig, fdk_host
 
-    output = np.empty((grid.nx, grid.ny, grid.nz), np.float32)
-    for start in range(0, grid.nz, depth):
-        stop = min(start + depth, grid.nz)
-        local = slab_grid(grid, start, stop)
-        image = fbp_start(geometry, local, detector, projections, config=FBPConfig(), det_grid=None)
-        output[:, :, start:stop] = np.maximum(np.asarray(image), 0)
-        del image
+    output = np.empty((grid.nx, grid.ny, grid.nz), np.float32, order="F")
+    fdk_host(
+        geometry, grid, detector, np.asarray(projections),
+        config=FDKHostConfig(slices_per_batch=depth), out=output,
+    )  # fmt: skip
+    np.maximum(output, 0, out=output)
     return output

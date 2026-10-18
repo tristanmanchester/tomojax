@@ -386,3 +386,88 @@ def test_cuda_fdk_texture_alignment_preserves_physical_interpolation_weights(gen
     quantized = np.floor(float(np.float32(row)) * 256 + 0.5) / 256
     expected = max(0.0, 1.0 - abs(quantized)) + 2.0 * max(0.0, 1.0 - abs(quantized - 1.0))
     np.testing.assert_array_equal(samples, [expected, expected])
+
+
+@pytest.mark.parametrize("backend", ["jax", CUDA])
+def test_per_view_arrangements_use_global_quadrature_and_physical_cosines(backend):
+    from tomojax.geometry import ConeSegments
+
+    geometry, grid, detector, data = scan(nz=17)
+    parts, expected = [], np.zeros((grid.nx, grid.ny, grid.nz), np.float32)
+    cfg = FDKConfig(backend=backend, views_per_batch=3)
+    for index, angle in enumerate(geometry.angles):
+        own = replace(detector, center=(0.3 * np.sin(angle), 0.2 * index))
+        beam = ConeBeam(
+            30 + index,
+            45 + 2 * index,
+            detector_roll_deg=2 * index,
+            detector_yaw_deg=index,
+            detector_pitch_deg=-index,
+        )
+        segment = replace(geometry, detector=own, beam=beam, angles=[angle])
+        parts.append(segment)
+    segmented = ConeSegments(tuple(parts))
+    from tomojax.recon.fdk import view_weights
+
+    weights = view_weights(segmented, parts[0].detector, len(data))
+    for index, segment in enumerate(parts):
+        # Isolate each view's physical cosine/geometry, retaining the complete
+        # acquisition's redundancy weights rather than inventing other panels.
+        full = replace(segment, angles=geometry.angles)
+        local = view_weights(full, segment.detector, len(data))
+        isolated = np.zeros_like(data)
+        isolated[index] = data[index] * (weights[index] / local[index])[None, :]
+        expected += np.asarray(fdk(full, grid, segment.detector, isolated, config=cfg))
+    actual = np.asarray(
+        fdk(segmented, grid, parts[0].detector, data, config=replace(cfg, views_per_batch=1))
+    )
+    batched = np.asarray(fdk(segmented, grid, parts[0].detector, data, config=cfg))
+    host = fdk_host(
+        segmented, grid, parts[0].detector, data, config=FDKHostConfig(slices_per_batch=3, fdk=cfg)
+    )
+    np.testing.assert_allclose(actual, expected, rtol=3e-5, atol=3e-6)
+    # CUDA normalizes half textures to each batch/row-window peak. Bound its
+    # image error, not pointwise relative error at signed reconstruction zeros.
+    tolerance = 1e-3 if backend == "cuda" else 1e-5
+    assert np.linalg.norm(batched - actual) < tolerance * np.linalg.norm(actual)
+    assert np.linalg.norm(host - batched) < tolerance * np.linalg.norm(batched)
+
+
+def test_prepared_batches_bound_input_transfer_storage():
+    from importlib import import_module
+
+    geometry, _, detector, _ = scan()
+    detector = replace(detector, nu=2048, nv=1024)
+    prep = import_module("tomojax.recon.fdk")._prepare(
+        geometry, detector, 8, FDKConfig(backend="jax")
+    )
+    assert 4 * detector.nu * detector.nv * prep.batch <= 64 * 2**20
+
+
+@pytest.mark.parametrize("backend", ["jax", CUDA])
+@pytest.mark.parametrize("rows", [5, 80])
+def test_pitched_detector_slabs_read_bounded_physical_row_windows(monkeypatch, backend, rows):
+    from importlib import import_module
+
+    geometry, grid, detector, data = scan(nz=17, roll=17)
+    detector = replace(detector, nv=rows)
+    data = np.random.default_rng(132).normal(size=(8, rows, detector.nu)).astype(np.float32)
+    geometry = replace(
+        geometry, detector=detector,
+        beam=replace(geometry.beam, detector_yaw_deg=13, detector_pitch_deg=9),
+    )  # fmt: skip
+    module = import_module("tomojax.recon.fdk")
+    read, heights = module._RowView.__getitem__, []
+
+    def window(self, views):
+        heights.append(self.shape[1])
+        return read(self, views)
+
+    monkeypatch.setattr(module._RowView, "__getitem__", window)
+    cfg = FDKConfig(backend=backend, views_per_batch=3)
+    expected = np.asarray(fdk(geometry, grid, detector, data, config=cfg))
+    actual = fdk_host(
+        geometry, grid, detector, data, config=FDKHostConfig(slices_per_batch=3, fdk=cfg)
+    )
+    assert min(heights) < detector.nv
+    np.testing.assert_allclose(actual, expected, atol=2e-3 if backend == "cuda" else 3e-6)

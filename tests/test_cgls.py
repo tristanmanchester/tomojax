@@ -333,6 +333,34 @@ def test_streamed_cgls_solves_the_same_least_squares_problem(tmp_path, damping):
     np.testing.assert_allclose(results[True][0], results[False][0], rtol=1e-4, atol=1e-5)
 
 
+def test_auto_streaming_reserves_volume_state(monkeypatch):
+    from dataclasses import replace
+
+    import tomojax.backends
+    from tomojax.geometry import ConeBeam, ConeGeometry
+
+    # The same small sinogram fits comfortably; only the volume state changes.
+    monkeypatch.setattr(jax, "default_backend", lambda: "gpu")
+    monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: 6000)
+    detector = Detector(5, 4, 1, 1)
+    data = np.ones((3, 4, 5), np.float32)
+    for size, expected in [(3, "cgls"), (8, "streamed_normal_equations")]:
+        grid = Grid(size, size, size, 1, 1, 1)
+        geometry = ConeGeometry(grid, detector, [0, 60, 120], ConeBeam(30, 50))
+        config = CGLSConfig(iterations=2, projector_backend="jax")
+        automatic, info = cgls(geometry, grid, detector, data, config=config)
+        assert info["formulation"] == expected
+        resident, info = cgls(
+            geometry,
+            grid,
+            detector,
+            data,
+            config=replace(config, stream_projections=False),
+        )
+        assert info["formulation"] == "cgls"
+        np.testing.assert_allclose(automatic, resident, rtol=2e-5, atol=2e-6)
+
+
 def test_streamed_cgls_rejects_nonfinite_views():
     grid, detector = Grid(6, 6, 4, 1, 1, 1), Detector(8, 6, 1, 1)
     geometry = LaminographyGeometry(grid, detector, np.linspace(0, 360, 8, endpoint=False), 30)

@@ -195,21 +195,16 @@ def astra_vectors(case: dict[str, Any]) -> np.ndarray:
 
 def tigre_geometry(case: dict[str, Any]) -> tuple[Any, np.ndarray]:
     """The scan as a TIGRE cone geometry, with TIGRE's angles."""
-    import tigre
+    from tigre_cone import geometry
+
+    from tomojax.geometry import Detector, Grid
 
     n = case["size"]
-    geo = tigre.geometry(mode="cone", default=False)
-    geo.mode = "cone"
-    geo.DSD, geo.DSO = case["sdd"], case["sod"]
-    geo.nDetector = np.array([case["nv"], case["nu"]])
-    geo.dDetector = np.array([1.0, 1.0])
-    geo.sDetector = geo.nDetector * geo.dDetector
-    geo.nVoxel = np.array([n, n, n])
-    geo.dVoxel = np.array([1.0, 1.0, 1.0])
-    geo.sVoxel = geo.nVoxel * geo.dVoxel
-    geo.offOrigin, geo.offDetector, geo.accuracy = np.zeros(3), np.zeros(2), 0.5
-    # TIGRE's angle convention, checked against the analytic data: -90 - theta.
-    return geo, np.deg2rad(-90.0 - case["angles"]).astype(np.float32)
+    return geometry(
+        astra_vectors(case),
+        grid=Grid(n, n, n, 1.0, 1.0, 1.0),
+        detector=Detector(case["nu"], case["nv"], 1.0, 1.0),
+    )
 
 
 def run_astra(

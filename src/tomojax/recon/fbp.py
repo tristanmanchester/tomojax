@@ -15,7 +15,7 @@ from tomojax.backends.api import is_oom_error
 from tomojax.core import progress_iter
 from tomojax.core.devices import as_devices, view_split
 from tomojax.core.geometry import Detector, Geometry, Grid, grid_volume_origin
-from tomojax.core.geometry.cone import beam_of
+from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.geometry.parallel import ParallelGeometry
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import (
@@ -867,7 +867,7 @@ def fbp(
     cfg = FBPConfig() if config is None else config
     if cfg.backprojector not in ("auto", "jax", "pallas"):
         raise ValueError("FBP backprojector must be 'auto', 'jax', or 'pallas'")
-    if beam_of(geometry) is not None:
+    if is_cone_beam(geometry):
         # Cone beams: FDK, with the same filter and the CUDA kernel for "pallas".
         if det_grid is not None:
             raise ValueError("fbp: cone-beam geometry needs the canonical detector grid")

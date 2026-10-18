@@ -126,6 +126,19 @@ def test_cone_projector_has_a_matched_transpose(kind, backend):
     np.testing.assert_allclose(accumulated, aty + x, rtol=1e-5, atol=1e-5)
 
 
+def test_cone_grid_translation_moves_endpoints_without_changing_the_rays():
+    geometry, grid, detector, poses = _scan("perturbed", n=8, views=3)
+    expected = np.asarray(cone_coefficients(poses, grid, detector, geometry.beam)).copy()
+    shift = np.array([0.24, -0.55, 0.18])
+    moved = replace(
+        grid, vol_origin=tuple(np.asarray(grid_volume_origin(grid)) + shift), vol_center=None
+    )
+    expected[:, :3] -= shift / [grid.vx, grid.vy, grid.vz]
+    expected[:, 3:6] -= shift / [grid.vx, grid.vy, grid.vz]
+    actual = cone_coefficients(poses, moved, detector, geometry.beam)
+    np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=1e-5)
+
+
 @pytest.mark.gpu
 @pytest.mark.parametrize("kind", ["turntable", "perturbed", "tilted", "steep"])
 def test_cuda_cone_kernels_agree_with_the_jax_reference(kind):
@@ -220,8 +233,9 @@ def test_fdk_reconstructs_full_and_short_scans(backend):
 
 
 @pytest.mark.parametrize("backend", ["jax", cuda])
-def test_fdk_reconstructs_a_full_turn_on_an_offset_detector(backend):
-    # The axis projects 5.5 columns from one edge: the far side is measured once
+@pytest.mark.parametrize("offset", [9.25, 10.0])
+def test_fdk_reconstructs_a_full_turn_on_an_offset_detector(backend, offset):
+    # The axis projects within 6.25 columns of one edge: the far side is measured once
     # per turn and the near side's filtered tail lies beyond the detector.
     n = 32
     grid = Grid(n, n, n, 1.0, 1.0, 1.0)
@@ -229,12 +243,37 @@ def test_fdk_reconstructs_a_full_turn_on_an_offset_detector(backend):
     truth = _voxelise(grid, shapes)
     angles = np.linspace(0.0, 360.0, 120, endpoint=False)
     errors = []
-    for detector in (Detector(48, 48, 1.0, 1.0), Detector(32, 48, 1.0, 1.0, (10.0, 0.0))):
+    for detector in (Detector(48, 48, 1.0, 1.0), Detector(32, 48, 1.0, 1.0, (offset, 0.0))):
         geometry = ConeGeometry(grid, detector, angles, ConeBeam(96, 144))
         config = FDKConfig(backend=backend)
         volume = fdk(geometry, grid, detector, _analytic(shapes, geometry), config=config)
         errors.append(np.linalg.norm(np.asarray(volume) - truth) / np.linalg.norm(truth))
     assert errors[1] < 1.05 * errors[0] < 0.1
+
+
+@pytest.mark.parametrize("backend", ["jax", cuda])
+@pytest.mark.parametrize(("columns", "centre", "amplitude"), [(48, 0.2, 3.0), (32, 10.0, 2.0)])
+def test_fdk_changing_panels_recover_independent_ellipsoids(backend, columns, centre, amplitude):
+    from tomojax.geometry import ConeSegments
+
+    grid, beam = Grid(32, 32, 32, 1, 1, 1), ConeBeam(96, 144)
+    shapes = _ellipsoids(32.0)
+    parts = tuple(
+        ConeGeometry(
+            grid,
+            Detector(columns, 48, 1, 1, (centre + amplitude * np.sin(3 * np.deg2rad(a)), 0)),
+            [a],
+            beam,
+        )
+        for a in np.linspace(0, 360, 120, endpoint=False)
+    )
+    geometry = ConeSegments(parts)
+    data = np.concatenate([_analytic(shapes, part) for part in parts])
+    image = np.asarray(
+        fdk(geometry, grid, geometry.detector, data, config=FDKConfig(backend=backend))
+    )
+    truth = _voxelise(grid, shapes)
+    assert np.linalg.norm(image - truth) < 0.08 * np.linalg.norm(truth)
 
 
 @pytest.mark.parametrize("backend", ["jax", cuda])

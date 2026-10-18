@@ -193,6 +193,22 @@ def _start_gpu_runtimes(*, tomojax: bool, astra: bool) -> None:
         astra_toolbox.use_cuda()
 
 
+def _sum_squares(array: np.ndarray) -> float:
+    """Accumulate large image energies without FP32 BLAS reduction/order bias."""
+    total = 0.0
+    # Buffer only the conversion chunk, not another full FP64 volume. External
+    # loop also accepts the noncontiguous sampled centres of native volumes.
+    for chunk in np.nditer(
+        array,
+        flags=["external_loop", "buffered"],
+        op_flags=["readonly"],
+        op_dtypes=[np.float64],
+        buffersize=2**18,
+    ):
+        total += float(np.dot(chunk, chunk))
+    return total
+
+
 def compare(volume: np.ndarray, truth: np.ndarray) -> dict[str, float]:
     """Compare on the reconstructed voxel centres, over the walnut's support.
 
@@ -216,12 +232,13 @@ def compare(volume: np.ndarray, truth: np.ndarray) -> dict[str, float]:
     support = truth > 0.1 * float(np.percentile(truth, 99.9))
     difference = volume - truth
     peak = float(np.percentile(truth, 99.9))
+    error_energy = _sum_squares(difference)
     return {
-        "relative_l2": float(np.linalg.norm(difference) / np.linalg.norm(truth)),
+        "relative_l2": float(np.sqrt(error_energy / _sum_squares(truth))),
         "relative_l2_in_walnut": float(
-            np.linalg.norm(difference[support]) / np.linalg.norm(truth[support])
+            np.sqrt(_sum_squares(difference[support]) / _sum_squares(truth[support]))
         ),
-        "psnr_db": float(20 * np.log10(peak / np.sqrt(np.mean(difference**2)))),
+        "psnr_db": float(20 * np.log10(peak / np.sqrt(error_energy / difference.size))),
     }
 
 

@@ -313,8 +313,8 @@ class ConeSegments:
     Segments share the reconstruction grid and the detector's pixel count; their
     views follow one another. Multi-orbit scans (a source at several heights),
     stacked scans of a tall sample and tiled fields of view are segmented. The
-    iterative solvers and projectors take them; FDK, which assumes one circular
-    orbit, does not.
+    iterative solvers and projectors take them. FDK retains every arrangement
+    but is only an approximate inverse for noncircular trajectories.
 
     Parameters
     ----------

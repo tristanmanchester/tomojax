@@ -208,12 +208,16 @@ def test_separately_allocated_norms_match_inline_cache(problem, monkeypatch):
 
 
 @pytest.mark.numerical
-def test_host_cone_updates_match_dense_transpose_without_consuming_inputs(problem, monkeypatch):
+@pytest.mark.parametrize("free", [1, 2**40])
+def test_host_cone_updates_match_dense_transpose_without_consuming_inputs(
+    problem, monkeypatch, free
+):
     grid, detector, geometry, matrix = problem
     if not isinstance(geometry, ConeSegments):
         pytest.skip("coupled volume partition is for cone geometry")
     host = import_module("tomojax.recon._mlem_host")
-    monkeypatch.setattr(host, "volume_depth", lambda *_: 1)
+    monkeypatch.setattr(host, "volume_depth", lambda *_, **__: 1)
+    monkeypatch.setattr(host, "device_free_memory_bytes", lambda: free)
     support = np.ones((3, 2, 2), bool)
     support[0] = False
     initial = np.full((3, 2, 2), 0.7, np.float32)
@@ -242,6 +246,7 @@ def test_host_cone_updates_match_dense_transpose_without_consuming_inputs(proble
             config=MLEMConfig(iterations=iterations, subsets=3, support=support, views_per_batch=2),
         )
         assert isinstance(volume, np.ndarray) and info["host_volume"]
+        assert volume.flags.f_contiguous
         np.testing.assert_allclose(volume.ravel(), expected, rtol=2e-5, atol=2e-6)
     assert np.isnan(initial[0]).all()
     np.testing.assert_array_equal(initial[1:], np.float32(0.7))
@@ -264,9 +269,30 @@ def test_large_cone_warm_start_is_planned_before_device_initialization(monkeypat
     cfg = MLEMConfig(iterations=1, subsets=3, views_per_batch=3)
     monkeypatch.setattr(host, "device_free_memory_bytes", lambda: 2**40)
     assert host.volume_depth(grid, detector, 3) is None
-    expected = tj.reconstruct(scan, "mlem", config=cfg, warm_start=True)
     monkeypatch.setattr(host, "device_free_memory_bytes", lambda: 1000)
     assert host.volume_depth(grid, detector, 3) == 1
+    initializer, owned, starts = host.initial_volume, [], []
+
+    def initialize(*args, **kwargs):
+        owned.append(initializer(*args, **kwargs))
+        starts.append(owned[-1].copy())
+        return owned[-1]
+
+    monkeypatch.setattr(host, "initial_volume", initialize)
     actual = tj.reconstruct(scan, "mlem", config=cfg, warm_start=True)
+    assert actual.volume is owned[0]
     assert isinstance(actual.volume, np.ndarray)
-    np.testing.assert_allclose(actual.volume, expected.volume, rtol=4e-5, atol=2e-6)
+    # Cropped FDK half textures have their own peak scale. Compare the exact
+    # EM updates from identical input, independently of that initializer rounding.
+    monkeypatch.setattr(host, "device_free_memory_bytes", lambda: 2**40)
+    expected, _ = mlem(geometry, grid, detector, data, init_x=starts[0], config=cfg)
+    np.testing.assert_allclose(actual.volume, expected, rtol=4e-5, atol=2e-6)
+
+
+def test_host_slab_planner_bounds_transfer_storage_independently_of_device_capacity(monkeypatch):
+    host = import_module("tomojax.recon._mlem_host")
+    monkeypatch.setattr(host, "device_free_memory_bytes", lambda: 8 * 2**30)
+    grid, detector = Grid(1001, 1001, 1001, 1, 1, 1), Detector(768, 972, 1, 1)
+    depth = host.volume_depth(grid, detector, 32, subset_views=900)
+    assert depth is not None and depth > 1
+    assert 4 * grid.nx * grid.ny * depth <= 128 * 2**20

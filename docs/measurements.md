@@ -25,6 +25,19 @@ Commands, adapters and physical conventions are in the
 [benchmark guide](../bench/README.md). Raw records are kept out of the
 repository; each result names the command, commit and date to rerun it.
 
+## Real-scan comparison criteria
+
+Use the same calibrated geometry and physical output grid for each library,
+and compare iterative methods at matched reconstruction error rather than a
+fixed iteration count. For Nikon seeds, no reference volume is available:
+report data residuals from one common calibrated ASTRA forward projector for
+all libraries, together with their volume differences. Compare iterative times
+at matched residual; compare FDK times with both diagnostics reported. Neither
+is a claim of physical accuracy on Nikon. Physical accuracy checks use the
+walnut reference and independent analytic phantoms. The Zeiss vendor comparison
+uses a fixed registered valid-data region and an intensity-affine fit, not an
+absolute-intensity truth volume.
+
 ## Reconstruction against ASTRA
 
 Measured 2026-10-05 on commit `6fa1585`. The matrix has 27 cells: Gaussian,

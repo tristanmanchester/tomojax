@@ -92,3 +92,39 @@ def test_overscan_conjugate_rays_partition_one(arc):
         np.testing.assert_allclose(
             weights[:-shift, column] + weights[shift:, 2 - column], 1, atol=2e-12
         )
+
+
+def test_changing_and_repeated_panels_share_actual_conjugate_rays():
+    from tomojax.geometry import ConeSegments
+
+    # A five-degree fan has an exact conjugate 190 degrees later. Some panels
+    # do not contain -5 degrees; repetitions differ between angular nodes.
+    step = 10
+    du = 120 * np.tan(np.deg2rad(5))
+    parts, labels, offsets = [], [], []
+    for angle in range(0, 360, step):
+        for offset in [2] if angle % 30 == 0 else [0, 2]:
+            parts.append(
+                ConeGeometry(
+                    Grid(3, 3, 3, 1, 1, 1),
+                    Detector(5, 3, du, 1, (offset * du, 0)),
+                    [angle],
+                    ConeBeam(60, 120),
+                )
+            )
+            labels.append(angle)
+            offsets.append(offset)
+    scan = ConeSegments(tuple(parts))
+    weights = view_weights(scan, scan.detector, len(parts)) / np.deg2rad(step)
+    for angle in range(0, 360, step):
+        total = sum(
+            weights[i, 3 - offset]
+            for i, (a, offset) in enumerate(zip(labels, offsets, strict=True))
+            if a == angle
+        )
+        total += sum(
+            weights[i, 1 - offset]
+            for i, (a, offset) in enumerate(zip(labels, offsets, strict=True))
+            if a == (angle + 190) % 360 and offset <= 1
+        )
+        np.testing.assert_allclose(total, 1, atol=2e-12)

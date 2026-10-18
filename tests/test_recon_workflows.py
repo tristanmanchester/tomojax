@@ -220,7 +220,7 @@ def _segments(counts=(4, 7)):
 
 
 @pytest.mark.parametrize("method", ["cgls", "fista"])
-def test_public_warm_start_weights_segments_then_applies_the_solver_constraints(
+def test_public_warm_start_retains_arrangements_then_applies_the_solver_constraints(
     monkeypatch, method
 ):
     segments = _segments()
@@ -246,30 +246,22 @@ def test_public_warm_start_weights_segments_then_applies_the_solver_constraints(
     volume, info = api.reconstruct_arrays(
         method, segments, segments.grid, detector, projections, config=config, warm_start=True
     )
-    expected = (-4.0 * 4 + 1.0 * 7) / 11
+    expected = -4.0
     np.testing.assert_allclose(volume, expected if method == "cgls" else 0.0, atol=1e-7)
     assert info["warm_start"] and info["initial_image_test"]
-    start = 0
-    for segment, (part, own_detector, data, cfg) in zip(segments.segments, captured, strict=True):
-        n = len(segment.angles)
-        assert part.beam == segment.beam and cfg == FDKConfig()
-        expected_center = (
-            np.array(detector.center)
-            + np.array(segment.detector.center)
-            - np.array(segments.detector.center)
-        )
-        np.testing.assert_allclose(own_detector.center, expected_center)
-        np.testing.assert_array_equal(data, projections[start : start + n])
-        start += n
+    assert len(captured) == 1
+    part, own_detector, data, cfg = captured[0]
+    assert part is segments and own_detector == detector and cfg == FDKConfig()
+    np.testing.assert_array_equal(data, projections)
 
 
 @pytest.mark.parametrize("frame", ["object", "detector"])
 def test_segmented_start_matches_individual_fdk_with_all_pose_corrections(monkeypatch, frame):
-    segments = _segments((12, 16))
+    segments = _segments((12, 12))
     rng = np.random.default_rng(5)
-    poses = rng.normal(0, 0.03, (28, 6)).astype(np.float32)
+    poses = rng.normal(0, 0.03, (24, 6)).astype(np.float32)
     geometry = _CorrectedGeometry(segments, poses, frame)
-    data = rng.random((28, 10, 12)).astype(np.float32)
+    data = rng.random((24, 10, 12)).astype(np.float32)
 
     # Compare like for like: CUDA FDK interpolates with half-float textures.
     def initialize(*args, config):
@@ -308,8 +300,9 @@ def test_segmented_start_matches_individual_fdk_with_all_pose_corrections(monkey
 def test_segmented_warm_start_rejects_invalid_scans(monkeypatch, case, views, message):
     geometry = _segments()
     if case == "short_arc":
-        short = replace(geometry.segments[1], angles=[0, 30, 60, 90])
-        geometry = tj.geometry.ConeSegments((geometry.segments[0], short))
+        geometry = tj.geometry.ConeSegments(
+            tuple(replace(segment, angles=[0, 30, 60, 90]) for segment in geometry.segments)
+        )
     elif case == "rolled":
         geometry = _CorrectedGeometry(geometry, np.zeros((11, 6)), "object", detector_roll_deg=1.0)
     else:

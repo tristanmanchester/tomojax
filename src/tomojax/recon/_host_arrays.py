@@ -91,8 +91,18 @@ def validate_host_arrays(
 
 
 def validate_host_views(array: np.ndarray, *, weights: np.ndarray | None = None) -> None:
-    """Reject invalid active data before ordered solver callbacks can be poisoned."""
-    values = array.reshape(-1) if array.flags.c_contiguous else array.flat
+    """Reject invalid active data before ordered solver callbacks can be poisoned.
+
+    Unweighted contiguous arrays can be read in either storage order. Weighted
+    values must instead keep the same logical order as their activity mask,
+    even when the two arrays have different physical layouts.
+    """
+    if weights is None and (array.flags.c_contiguous or array.flags.f_contiguous):
+        # A view, not a full-volume copy. In particular, do not pack F-order
+        # host slabs into C order merely to check that their values are finite.
+        values = array.ravel(order="K")
+    else:
+        values = array.reshape(-1) if array.flags.c_contiguous else array.flat
     active = (
         None
         if weights is None

@@ -60,8 +60,9 @@ class CGLSConfig:
 
     ``stream_projections`` solves the equivalent normal equations with NumPy or
     memmap projections read from host memory one view batch at a time, so only
-    volume-sized arrays occupy the device; ``None`` streams when the stack would
-    take more than 40% of free device memory. The normal residual then follows
+    volume-sized arrays occupy the device; ``None`` reserves space for the
+    resident solver state and verification scratch, streaming when they would
+    exceed free device memory. The normal residual then follows
     a recurrence between recomputations, each of which streams the data once.
 
     ``devices`` (two or more JAX devices) shares the views among them, each
@@ -121,6 +122,19 @@ class CGLSConfig:
             from tomojax.core.devices import as_devices
 
             object.__setattr__(self, "devices", as_devices(self.devices))
+
+
+def resident_bytes(grid: Grid, projection_shape: Sequence[int]) -> int:
+    """Conservative FP32 resident CGLS state, including residual verification.
+
+    Reserve six volumes for the iterate, direction, gradients, cancellation
+    bound and update scratch; four sinograms for data, residual, prediction
+    and recomputation scratch. Counting just the input misses the largest
+    allocations, even when that input occupies well below half the device.
+    Both execution runtimes use this bound before transferring host data.
+    """
+    volume = grid.nx * grid.ny * grid.nz
+    return 4 * (6 * volume + 4 * math.prod(projection_shape))
 
 
 def validate_model(cfg: CGLSConfig) -> None:
