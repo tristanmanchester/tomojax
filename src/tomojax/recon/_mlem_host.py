@@ -28,6 +28,8 @@ if TYPE_CHECKING:
 
 type _Slab = tuple[int, int, Grid, jax.Array]
 
+_MEASURED_BATCH_BYTES = 32 * 2**20
+
 
 def volume_depth(grid: Grid, detector: Detector, batch: int) -> int | None:
     """Keep the resident solve when its working set fits; otherwise bound z slabs."""
@@ -120,13 +122,17 @@ def _ratios(
             )
             expected[first : first + len(selected)] += np.asarray(values)
         del piece, values
-    for first in range(0, len(indices), batch):
-        selected = indices[first : first + batch]
+    # Measurement copies need not share the projector's numerical batch size.
+    view_bytes = detector.nv * detector.nu * max(4, projections.dtype.itemsize)
+    measured_batch = max(1, min(batch, _MEASURED_BATCH_BYTES // view_bytes))
+    for first in range(0, len(indices), measured_batch):
+        selected = indices[first : first + measured_batch]
         prediction = expected[first : first + len(selected)]
         measured = np.asarray(projections[selected], np.float32)
         positive = prediction > 0
         np.divide(measured, prediction, out=prediction, where=positive)
         prediction[~positive] = 0
+        del measured, positive
     return expected
 
 
