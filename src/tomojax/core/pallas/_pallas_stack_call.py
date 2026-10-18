@@ -2,13 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import functools
-import math
-from typing import Any
 
 import jax
-from jax.experimental import pallas as pl
-from jax.experimental.pallas import triton as plt
 import jax.numpy as jnp
+
+from tomojax.core._sampled_cuda import run
 
 from ._pallas_config import (
     PallasForwardProjectorStackTraversalState,
@@ -17,67 +15,6 @@ from ._pallas_config import (
     _unsupported,
     _validate_cached_volume,
 )
-from ._pallas_ray_geometry import detector_tile
-from ._pallas_ray_integral import integrate_rays
-
-
-def _projector_views_kernel_cached(
-    ix0_ref: Any,
-    iy0_ref: Any,
-    iz0_ref: Any,
-    n_steps_ray_ref: Any,
-    dix_ref: Any,
-    diy_ref: Any,
-    diz_ref: Any,
-    volume_ref: Any,
-    target_ref: Any | None,
-    out_ref: Any,
-    *,
-    nx: int,
-    ny: int,
-    nz: int,
-    nu: int,
-    nv: int,
-    n_views: int,
-    step_size: float,
-    n_steps: int,
-    tile_v: int,
-    tile_u: int,
-    kernel_variant_id: int,
-    unroll: int | None,
-) -> None:
-    view_idx = pl.program_id(0)
-    det_u, det_v = detector_tile((tile_v, tile_u), stacked=True)
-    in_detector = (det_u < nu) & (det_v < nv) & (view_idx < n_views)
-    state_idx = view_idx * jnp.int32(nv * nu) + jnp.clip(det_v * nu + det_u, 0, (nu * nv) - 1)
-
-    ix0 = plt.load(ix0_ref.at[state_idx], mask=in_detector, other=0.0)
-    iy0 = plt.load(iy0_ref.at[state_idx], mask=in_detector, other=0.0)
-    iz0 = plt.load(iz0_ref.at[state_idx], mask=in_detector, other=0.0)
-    n_steps_ray = plt.load(n_steps_ray_ref.at[state_idx], mask=in_detector, other=0)
-    dix = plt.load(dix_ref.at[view_idx])
-    diy = plt.load(diy_ref.at[view_idx])
-    diz = plt.load(diz_ref.at[view_idx])
-    acc = integrate_rays(
-        volume_ref,
-        (ix0, iy0, iz0),
-        (dix, diy, diz),
-        n_steps_ray,
-        shape=(nx, ny, nz),
-        in_detector=in_detector,
-        step_size=step_size,
-        n_steps=n_steps,
-        kernel_variant_id=kernel_variant_id,
-        unroll=unroll,
-    )
-    if target_ref is None:
-        plt.store(
-            out_ref, acc.astype(jnp.float32)[jnp.newaxis, :, :], mask=in_detector[jnp.newaxis, :, :]
-        )
-    else:
-        target = plt.load(target_ref.at[view_idx, det_v, det_u], mask=in_detector, other=0.0)
-        residual = jnp.where(in_detector, acc.astype(jnp.float32) - target.astype(jnp.float32), 0.0)
-        out_ref[0, 0, 0] = jnp.sum(residual * residual).astype(jnp.float32)
 
 
 @functools.lru_cache(maxsize=32)
@@ -99,38 +36,20 @@ def _cached_projector_state_pallas_call(
     interpret: bool,
     residual: bool,
 ) -> Callable[..., jnp.ndarray]:
-    kernel = functools.partial(
-        _projector_views_kernel_cached,
-        nx=int(nx),
-        ny=int(ny),
-        nz=int(nz),
-        nu=int(nu),
-        nv=int(nv),
-        n_views=int(n_views),
-        step_size=float(step_size),
-        n_steps=int(n_steps),
-        tile_v=int(tile_v),
-        tile_u=int(tile_u),
-        kernel_variant_id=int(kernel_variant_id),
-        unroll=unroll,
-    )
-    grid_shape = (int(n_views), math.ceil(int(nv) / int(tile_v)), math.ceil(int(nu) / int(tile_u)))
-    output_tile = (1, 1, 1) if residual else (1, int(tile_v), int(tile_u))
-    output_shape = tuple(n * tile for n, tile in zip(grid_shape, output_tile, strict=True))
-    return pl.pallas_call(
-        kernel,
-        out_shape=jax.ShapeDtypeStruct(output_shape, jnp.float32),
-        grid=grid_shape,
-        in_specs=[pl.no_block_spec] * 8 + [pl.no_block_spec if residual else None],
-        out_specs=pl.BlockSpec(output_tile, lambda view, pv, pu: (view, pv, pu)),
-        interpret=bool(interpret),
-        compiler_params=plt.CompilerParams(num_warps=int(num_warps)),
-        name=(
-            "tomojax_forward_project_residual_sse_T_pallas_cached_state"
-            if residual
-            else "tomojax_forward_project_views_T_pallas_cached_state"
-        ),
-    )
+    params = locals()
+
+    @jax.jit
+    def call(ix, iy, iz, count, dx, dy, dz, volume, target):
+        return run(
+            dx[:, None],
+            volume,
+            target,
+            mode=3 if residual else 0,
+            params=params,
+            state=(ix, iy, iz, count, dx, dy, dz),
+        )
+
+    return call
 
 
 def forward_project_views_T_pallas_with_state(

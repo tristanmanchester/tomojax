@@ -43,8 +43,6 @@
     "src/tomojax/alignment/optimizers.py::run_active_validation_lm": 106,
     "src/tomojax/alignment/optimizers.py::run_pose_lbfgs": 186,
     "src/tomojax/cli/simulate.py::_build_parser": 158,
-    "src/tomojax/core/pallas/_pallas_adjoint_kernels.py::_projector_loss_grad_kernel": 107,
-    "src/tomojax/core/pallas/_pallas_forward_kernels.py::_projector_parallel_z_views_kernel": 107,
     "src/tomojax/core/pallas/_pallas_loss.py::forward_project_residual_sse_T_pallas": 119,
     "src/tomojax/core/pallas/_pallas_single_view.py::forward_project_view_T_pallas": 102,
     "src/tomojax/core/pallas/_pallas_stack_bind.py::forward_project_views_T_pallas": 101,
@@ -126,7 +124,7 @@
     "reportOptionalCall": 2,
     "reportOptionalMemberAccess": 8,
     "reportOptionalSubscript": 1,
-    "reportPrivateUsage": 95,
+    "reportPrivateUsage": 87,
     "reportRedeclaration": 1,
     "reportReturnType": 20,
     "reportTypedDictNotRequiredAccess": 5
