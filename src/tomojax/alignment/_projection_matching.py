@@ -59,7 +59,7 @@ class ProjectionMatchingConfig:
 
 
 def _profile_seed(profiles: np.ndarray) -> np.ndarray:
-    measured = np.asarray(ndimage.gaussian_filter1d(profiles, 1, axis=1, order=1))
+    measured = cast("np.ndarray", ndimage.gaussian_filter1d(profiles, 1, axis=1, order=1))
     nv = measured.shape[1]
     radius = nv // 4
     lags = np.arange(-radius, radius + 1)
@@ -104,7 +104,7 @@ def _vertical_shifts(projections: np.ndarray) -> np.ndarray:
     """Continuous common-profile fit, retaining a per-profile gain and affine background."""
     profiles = projections.sum(axis=2, dtype=np.float64)
     shifts = _profile_seed(profiles)
-    measured = np.asarray(ndimage.gaussian_filter1d(profiles, 2, axis=1, order=1))
+    measured = cast("np.ndarray", ndimage.gaussian_filter1d(profiles, 2, axis=1, order=1))
     nv = measured.shape[1]
     z = np.arange(nv)
     margin = nv // 8

@@ -2,13 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import functools
-import math
 
 import jax
-from jax.experimental import pallas as pl
-from jax.experimental.pallas import triton as plt
 import jax.numpy as jnp
 
+from tomojax.core._sampled_cuda import run
 from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
 from tomojax.core.projector import _resolve_n_steps
 from tomojax.core.validation import (
@@ -30,7 +28,6 @@ from ._pallas_config import (
     _safe_detector_tile_shape,
     _unsupported,
 )
-from ._pallas_kernels import _backproject_kernel
 
 
 @functools.lru_cache(maxsize=32)
@@ -62,52 +59,15 @@ def _cached_backproject_view_pallas_call(
     n_views: int = 1,
     stacked: bool = False,
 ) -> Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray]:
-    kernel = functools.partial(
-        _backproject_kernel,
-        nx=int(nx),
-        ny=int(ny),
-        nz=int(nz),
-        nu=int(nu),
-        nv=int(nv),
-        du=float(du),
-        dv=float(dv),
-        det_center_x=float(det_center_x),
-        det_center_z=float(det_center_z),
-        vol_origin_x=float(vol_origin_x),
-        vol_origin_y=float(vol_origin_y),
-        vol_origin_z=float(vol_origin_z),
-        vx=float(vx),
-        vy=float(vy),
-        vz=float(vz),
-        step_size=float(step_size),
-        n_steps=int(n_steps),
-        tile_v=int(tile_v),
-        tile_u=int(tile_u),
-        layout_variant_id=int(layout_variant_id),
-        unroll=unroll,
-        interpret=bool(interpret),
-        stacked=stacked,
-    )
-    grid_shape = (math.ceil(int(nv) / int(tile_v)), math.ceil(int(nu) / int(tile_u)))
-    if stacked:
-        grid_shape = (n_views, *grid_shape)
-    return pl.pallas_call(
-        kernel,
-        out_shape=jax.ShapeDtypeStruct((int(nx) * int(ny) * int(nz),), jnp.float32),
-        grid=grid_shape,
-        in_specs=[
-            pl.no_block_spec,
-            pl.no_block_spec,
-            pl.no_block_spec,
-        ],
-        out_specs=pl.no_block_spec,
-        input_output_aliases={2: 0},
-        interpret=bool(interpret),
-        compiler_params=plt.CompilerParams(num_warps=int(num_warps)),
-        name="tomojax_backproject_views_T_pallas"
-        if stacked
-        else "tomojax_backproject_view_T_pallas",
-    )
+    params = locals()
+
+    @jax.jit
+    def call(poses, images, initial):
+        if not stacked:
+            poses, images = poses[None], images[None]
+        return run(poses, poses, images, initial=initial, mode=1, params=params)
+
+    return call
 
 
 def backproject_view_T_pallas(

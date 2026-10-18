@@ -203,7 +203,18 @@ def _complex_functions() -> list[str]:
 
 def _type_errors() -> dict[str, int]:
     """Type errors over all of ``src`` by rule, from basedpyright (CI checks only part)."""
-    command = [sys.executable, "-m", "basedpyright", str(SRC), "--outputjson"]
+    # Running basedpyright with this interpreter does not select it for analysis.
+    # Bind package/stub discovery to the same environment, rather than whichever
+    # unrelated Python executable happens to be first on PATH.
+    command = [
+        sys.executable,
+        "-m",
+        "basedpyright",
+        str(SRC),
+        "--outputjson",
+        "--pythonpath",
+        sys.executable,
+    ]
     output = subprocess.run(command, check=False, capture_output=True, text=True).stdout
     counts: dict[str, int] = {}
     # Missing optional packages (CuPy, ASTRA...) depend on the environment.

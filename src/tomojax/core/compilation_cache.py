@@ -2,7 +2,9 @@
 
 Compiled solver and projector programs are reused across Python processes, so a
 repeated script or CLI run skips XLA compilation for shapes it has seen before.
-CuPy and Triton cache their kernels the same way.
+CuPy and Triton cache their kernels the same way. Python versions use separate
+subdirectories: JAX uses standard-library Zstandard on Python 3.14 and zlib
+on older interpreters without the optional zstandard package.
 
 - A cache directory configured through JAX (``JAX_COMPILATION_CACHE_DIR`` or
   ``jax.config``) is left untouched.
@@ -16,17 +18,20 @@ from functools import cache
 import logging
 import os
 from pathlib import Path
+import sys
 
 import jax
 
 
 def default_cache_dir() -> Path:
-    """Return the directory TomoJAX uses when the user has not chosen one."""
+    """Return the interpreter-specific directory within TomoJAX's cache root."""
     override = os.environ.get("TOMOJAX_JAX_CACHE_DIR")
     if override:
-        return Path(override).expanduser()
-    base = Path(os.environ.get("XDG_CACHE_HOME") or "~/.cache").expanduser()
-    return base / "tomojax" / "jax_cache"
+        root = Path(override).expanduser()
+    else:
+        base = Path(os.environ.get("XDG_CACHE_HOME") or "~/.cache").expanduser()
+        root = base / "tomojax" / "jax_cache"
+    return root / str(sys.implementation.cache_tag)
 
 
 @cache

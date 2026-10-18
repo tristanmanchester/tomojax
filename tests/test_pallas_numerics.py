@@ -3,18 +3,16 @@
 from __future__ import annotations
 
 import jax
-from jax.experimental import pallas as pl
-from jax.experimental.pallas import triton as plt
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from scipy.ndimage import map_coordinates
 
 # check-public-imports: allow-private
-from tomojax.core.pallas import api as pallas
+from tomojax.core._sampled_cuda import run as sampled_run
 
 # check-public-imports: allow-private
-from tomojax.core.pallas._pallas_sampling import _trilinear_load_active
+from tomojax.core.pallas import api as pallas
 
 # check-public-imports: allow-private
 from tomojax.core.projector import forward_project_view_T
@@ -119,30 +117,25 @@ def test_sampler_zero_extension_matches_scipy(interpret, shape, dtype, integer_z
     active = np.arange(coords.shape[1]) % 11 != 0
     volume = jnp.asarray(np.random.default_rng(271).normal(size=shape), dtype=dtype)
 
-    def kernel(volume_ref, coords_ref, active_ref, out_ref):
-        lane = pl.program_id(0) * 32 + jnp.arange(32)
-        result = _trilinear_load_active(
-            volume_ref,
-            plt.load(coords_ref.at[0, lane]),
-            plt.load(coords_ref.at[1, lane]),
-            plt.load(coords_ref.at[2, lane]),
-            nx=shape[0],
-            ny=shape[1],
-            nz=shape[2],
-            active=plt.load(active_ref.at[lane]),
-            kernel_variant_id=int(integer_z),
-        )
-        out_ref[:] = result
-
-    actual = pl.pallas_call(
-        kernel,
-        out_shape=jax.ShapeDtypeStruct((coords.shape[1],), jnp.float32),
-        grid=(coords.shape[1] // 32,),
-        in_specs=[pl.no_block_spec] * 3,
-        out_specs=pl.BlockSpec((32,), lambda i: (i,)),
+    count = coords.shape[1]
+    params = dict(zip(("nx", "ny", "nz"), shape, strict=True))
+    params.update(
+        nv=1,
+        nu=count,
+        tile_v=1,
+        tile_u=32,
+        num_warps=1,
+        step_size=1.0,
+        n_steps=1,
+        kernel_variant_id=int(integer_z),
         interpret=interpret,
-        compiler_params=plt.CompilerParams(num_warps=1),
-    )(volume.ravel(), jnp.asarray(coords), jnp.asarray(active))
+    )
+    state = (
+        *tuple(jnp.asarray(x) for x in coords),
+        jnp.asarray(active, jnp.int32),
+        *tuple(jnp.zeros(1, jnp.float32) for _ in range(3)),
+    )
+    actual = sampled_run(jnp.zeros((1, 1)), volume, mode=0, params=params, state=state).ravel()
     expected = map_coordinates(
         np.asarray(volume, dtype=np.float32), coords, order=1, mode="grid-constant", cval=0
     )
@@ -311,3 +304,55 @@ def test_inline_launch_reuses_compilation_with_new_poses(kind, caplog) -> None:
         actual = project(shifted)
         np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=1e-5)
     assert not any("Compiling jit(" in record.message for record in caplog.records)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("mode", [1, 2])
+def test_sampled_cuda_accumulates_without_mutating_initial(mode) -> None:
+    if jax.default_backend() != "gpu":
+        pytest.skip("requires a CUDA GPU")
+    grid, detector = Grid(4, 3, 2, 1, 1, 1), Detector(5, 3, 1, 1)
+    poses = jnp.eye(4, dtype=jnp.float32)[None]
+    volume = jnp.arange(24, dtype=jnp.float32).reshape(4, 3, 2) / 24
+    target = jnp.ones((1, 3, 5), jnp.float32)
+    initial = jnp.full((24,), 2.3, jnp.float32)
+    params = dict(
+        nx=4,
+        ny=3,
+        nz=2,
+        nv=3,
+        nu=5,
+        vx=1,
+        vy=1,
+        vz=1,
+        du=1,
+        dv=1,
+        det_center_x=0,
+        det_center_z=0,
+        vol_origin_x=-1.5,
+        vol_origin_y=-1,
+        vol_origin_z=-0.5,
+        tile_v=2,
+        tile_u=4,
+        num_warps=1,
+        step_size=0.7,
+        n_steps=12,
+    )
+
+    def project(x):
+        return forward_project_view_T(poses[0], grid, detector, x, step_size=0.7, n_steps=12)[None]
+
+    def objective(x):
+        prediction = project(x)
+        return (
+            jnp.vdot(prediction, target) if mode == 1 else 0.5 * jnp.sum((prediction - target) ** 2)
+        )
+
+    expected = jax.grad(objective)(volume).ravel() + initial
+    call = jax.jit(
+        lambda x, acc: sampled_run(poses, x, target, jnp.ones(1), acc, mode=mode, params=params)
+    )
+    actual = call(volume, initial)
+    actual = actual[1] if mode == 2 else actual
+    np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=1e-5)
+    np.testing.assert_array_equal(initial, jnp.full((24,), 2.3, jnp.float32))

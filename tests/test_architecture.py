@@ -16,7 +16,7 @@ import json
 from pathlib import Path
 import sys
 import tomllib
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -246,3 +246,14 @@ def test_size_ratchets_exclude_only_docstrings():
     assert count('def f(): """Summary."""; return 1') == 1
     assert count('"""λλλλ"""; 1') == 1
     assert count('"""Module prose."""  # A comment') == 1
+
+
+def test_type_ratchet_uses_running_interpreter(monkeypatch):
+    guardrails = _guardrails()
+
+    def run(command, **_kwargs: object):
+        assert command[command.index("--pythonpath") + 1] == sys.executable
+        return SimpleNamespace(stdout='{"generalDiagnostics": []}')
+
+    monkeypatch.setattr(guardrails.subprocess, "run", run)
+    assert guardrails._type_errors() == {}

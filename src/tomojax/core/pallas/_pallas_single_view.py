@@ -2,15 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import functools
-import math
-from typing import Any
 
 import jax
-from jax.experimental import pallas as pl
-from jax.experimental.pallas import triton as plt
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core._sampled_cuda import run
 from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
 from tomojax.core.projector import _projector_traversal_state, _resolve_n_steps
 from tomojax.core.validation import validate_detector, validate_pose_matrix
@@ -31,8 +28,6 @@ from ._pallas_config import (
     pallas_projector_actual_variant_metadata,
 )
 from ._pallas_inline_call import inline_projector_call
-from ._pallas_ray_geometry import detector_tile
-from ._pallas_ray_integral import integrate_rays
 
 
 def prepare_forward_project_view_T_pallas_state(
@@ -208,48 +203,6 @@ def bind_forward_project_view_T_pallas(
     return BoundForwardProjectViewTPallas(state, interpret=interpret, unroll=unroll)
 
 
-def _projector_kernel_cached(
-    ix0_ref: Any,
-    iy0_ref: Any,
-    iz0_ref: Any,
-    n_steps_ray_ref: Any,
-    volume_ref: Any,
-    out_ref: Any,
-    *,
-    volume_shape: tuple[int, int, int],
-    detector_shape: tuple[int, int],
-    ray_delta: tuple[float, float, float],
-    step_size: float,
-    n_steps: int,
-    tile_shape: tuple[int, int],
-    kernel_variant_id: int,
-    unroll: int | None,
-) -> None:
-    nv, nu = detector_shape
-    det_u, det_v = detector_tile(tile_shape, stacked=False)
-    in_detector = (det_u < nu) & (det_v < nv)
-    state_idx = jnp.clip(det_v * nu + det_u, 0, (nu * nv) - 1)
-
-    ix0 = plt.load(ix0_ref.at[state_idx], mask=in_detector, other=0.0)
-    iy0 = plt.load(iy0_ref.at[state_idx], mask=in_detector, other=0.0)
-    iz0 = plt.load(iz0_ref.at[state_idx], mask=in_detector, other=0.0)
-    n_steps_ray = plt.load(n_steps_ray_ref.at[state_idx], mask=in_detector, other=0)
-
-    acc = integrate_rays(
-        volume_ref,
-        (ix0, iy0, iz0),
-        (jnp.float32(ray_delta[0]), jnp.float32(ray_delta[1]), jnp.float32(ray_delta[2])),
-        n_steps_ray,
-        shape=volume_shape,
-        in_detector=in_detector,
-        step_size=step_size,
-        n_steps=n_steps,
-        kernel_variant_id=kernel_variant_id,
-        unroll=unroll,
-    )
-    plt.store(out_ref, acc.astype(jnp.float32), mask=in_detector)
-
-
 def _projector_view_state_pallas_call(
     state: PallasForwardProjectorTraversalState, *, interpret: bool, unroll: int | None
 ) -> Callable[..., jnp.ndarray]:
@@ -283,29 +236,28 @@ def _cached_projector_view_state_pallas_call(
     interpret: bool,
     unroll: int | None,
 ) -> Callable[..., jnp.ndarray]:
-    nv, nu = detector_shape
-    tile_v, tile_u = tile_shape
-    kernel = functools.partial(
-        _projector_kernel_cached,
-        volume_shape=volume_shape,
-        detector_shape=detector_shape,
-        ray_delta=ray_delta,
+    params: dict[str, int | float | None] = dict(zip(("nx", "ny", "nz"), volume_shape, strict=True))
+    params.update(
+        nv=detector_shape[0],
+        nu=detector_shape[1],
+        tile_v=tile_shape[0],
+        tile_u=tile_shape[1],
         step_size=step_size,
         n_steps=n_steps,
-        tile_shape=tile_shape,
+        num_warps=num_warps,
         kernel_variant_id=kernel_variant_id,
+        interpret=interpret,
         unroll=unroll,
     )
-    return pl.pallas_call(
-        kernel,
-        out_shape=jax.ShapeDtypeStruct(detector_shape, jnp.float32),
-        grid=(math.ceil(nv / tile_v), math.ceil(nu / tile_u)),
-        in_specs=[pl.no_block_spec] * 5,
-        out_specs=pl.BlockSpec(tile_shape, lambda pv, pu: (pv, pu)),
-        interpret=interpret,
-        compiler_params=plt.CompilerParams(num_warps=num_warps),
-        name="tomojax_forward_project_view_T_pallas_cached",
-    )
+
+    @jax.jit
+    def call(ix, iy, iz, count, volume):
+        dx, dy, dz = (jnp.array([x], jnp.float32) for x in ray_delta)
+        return run(
+            dx[:, None], volume, mode=0, params=params, state=(ix, iy, iz, count, dx, dy, dz)
+        )[0]
+
+    return call
 
 
 def forward_project_view_T_pallas_with_state(

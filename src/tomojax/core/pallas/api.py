@@ -51,7 +51,11 @@ from ._pallas_views import (
 
 @dataclass(frozen=True, slots=True)
 class PallasProjectorOptions:
-    """Runtime and kernel options shared by public Pallas projector entry points."""
+    """Runtime and kernel options shared by public projector entry points.
+
+    ``interpret`` runs the portable JAX reference. CUDA uses at least
+    ``num_warps`` warps, increasing that count when needed to cover a detector tile.
+    """
 
     step_size: float | None = None
     n_steps: int | None = None

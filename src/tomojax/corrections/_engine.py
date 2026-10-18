@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import partial
 import logging
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import jax
 import jax.numpy as jnp
@@ -343,7 +343,7 @@ def _flat_fields(
             settings["flat_positions"] = [float(p) for p in sets]
     light = stack - dark
     floor = np.maximum(epsilon, 3 * np.sqrt(variance + dark_variance))
-    usable = (np.isfinite(light) & (light > floor)).all(axis=0)
+    usable = cast("np.ndarray", (np.isfinite(light) & (light > floor)).all(axis=0))
     found: dict[str, Json] = {"pixels_without_light": int(np.count_nonzero(~usable))}
     fields = _Fields(stack.astype(np.float32), sets, dark.astype(np.float32), usable)
     return fields, (Correction("flat_dark", settings, found),)
