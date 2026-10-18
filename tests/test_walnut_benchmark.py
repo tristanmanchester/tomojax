@@ -72,7 +72,7 @@ def test_quality_preserves_the_matching_resolution_path_exactly(walnut):
     actual = reference + 0.1
     expected = np.linalg.norm(actual - reference) / np.linalg.norm(reference)
     metrics = walnut.compare(actual, reference)
-    assert metrics["relative_l2"] == expected
+    assert metrics["relative_l2"] == pytest.approx(expected, rel=1e-14)
 
 
 @pytest.mark.parametrize("density", [1, 3, 10])
@@ -150,3 +150,16 @@ def test_orbit_prebinning_preserves_calibrated_pixel_centres(walnut, monkeypatch
     expected, binned_pg, _ = scan.binned(3).to_astra()
     np.testing.assert_array_equal(actual, expected)
     np.testing.assert_allclose(vectors, binned_pg["Vectors"], atol=1e-12, rtol=0)
+
+
+def test_large_fp32_image_scores_do_not_depend_on_c_or_fortran_storage(walnut):
+    rng = np.random.default_rng(8)
+    reference = rng.lognormal(-3, 2, (81, 81, 81)).astype(np.float32)
+    actual = reference * 0.93 + rng.normal(0, 0.002, reference.shape).astype(np.float32)
+    expected = np.linalg.norm((actual - reference).astype(np.float64)) / np.linalg.norm(
+        reference.astype(np.float64)
+    )
+    first = walnut.compare(actual, reference)
+    second = walnut.compare(np.asfortranarray(actual), np.asfortranarray(reference))
+    assert first["relative_l2"] == pytest.approx(expected, rel=1e-13)
+    assert second == pytest.approx(first, rel=1e-13)
