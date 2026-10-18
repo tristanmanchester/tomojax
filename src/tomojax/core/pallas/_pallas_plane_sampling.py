@@ -9,10 +9,14 @@ from tomojax.core._plane_interpolation import cubic_weights_and_derivatives
 from tomojax.core.joseph import select_axis
 
 
-def cubic_sample(volume_ref, axis, k, qb, qc, nb, nc, valid):
+def cubic_sample(volume_ref, axis, k, qb, qc, nb, nc, valid, *, absolute_weights=False):
     ib, ic = jnp.floor(qb).astype(jnp.int32), jnp.floor(qc).astype(jnp.int32)
     wb, db = cubic_weights_and_derivatives(qb - ib)
     wc, dc = cubic_weights_and_derivatives(qc - ic)
+    if absolute_weights:
+        db = tuple(jnp.sign(w) * d for w, d in zip(wb, db, strict=True))
+        dc = tuple(jnp.sign(w) * d for w, d in zip(wc, dc, strict=True))
+        wb, wc = tuple(jnp.abs(w) for w in wb), tuple(jnp.abs(w) for w in wc)
     value = grad_b = grad_c = jnp.zeros_like(qb)
     for row in range(4):
         b = ib + row - 1

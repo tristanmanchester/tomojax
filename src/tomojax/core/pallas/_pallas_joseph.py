@@ -12,6 +12,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import jax
+from jax.custom_batching import sequential_vmap
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import triton as plt
 import jax.numpy as jnp
@@ -37,6 +38,7 @@ def _fp_kernel(
     det_shape: tuple[int, int],
     block: int,
     interpolation: str = "linear",
+    absolute_weights: bool = False,
 ) -> None:
     nx, ny, nz = shape
     nv, nu = det_shape
@@ -79,7 +81,9 @@ def _fp_kernel(
                 sample(ib + 1, ic) * (1 - wc) + sample(ib + 1, ic + 1) * wc
             ) * wb
         else:
-            val, _, _ = cubic_sample(volume_ref, a, k, qb, qc, nb, nc, valid)
+            val, _, _ = cubic_sample(
+                volume_ref, a, k, qb, qc, nb, nc, valid, absolute_weights=absolute_weights
+            )
         return accum + val * weight
 
     # Planes where a ray's sample lies outside the interpolation support add
@@ -113,7 +117,10 @@ def _fp_kernel(
 
 # Jit once per static configuration: every call site then reuses one traced
 # and lowered kernel instead of re-tracing the kernel body.
-@partial(jax.jit, static_argnames=("grid", "detector", "block", "interpret", "interpolation"))
+@partial(
+    jax.jit,
+    static_argnames=("grid", "detector", "block", "interpret", "interpolation", "absolute_weights"),
+)
 def forward_pallas(
     coeff: jax.Array,
     volume: jax.Array,
@@ -123,6 +130,7 @@ def forward_pallas(
     block: int = 128,
     interpret: bool = False,
     interpolation: str = "linear",
+    absolute_weights: bool = False,
 ) -> jax.Array:
     """Project voxel-centre planes with the selected interpolation and masked loads."""
     validate_interpolation(interpolation)
@@ -139,6 +147,7 @@ def forward_pallas(
                 det_shape=(detector.nv, detector.nu),
                 block=block,
                 interpolation=interpolation,
+                absolute_weights=absolute_weights,
             ),
             out_shape=jax.ShapeDtypeStruct((views, count), jnp.float32),
             grid=(
@@ -278,7 +287,8 @@ def adjoint_pallas(
     """
     validate_interpolation(interpolation)
 
-    def pallas(_: None) -> jax.Array:
+    def pallas(operands) -> jax.Array:
+        coeff, images, accumulate = operands
         count = grid.nx * grid.ny * grid.nz
         operands = [coeff, _swap_detector_axes(images), _has_unit_rows(coeff)]
         in_specs = [pl.no_block_spec, pl.no_block_spec, pl.no_block_spec]
@@ -308,17 +318,32 @@ def adjoint_pallas(
         )(*operands)
         return out.reshape((grid.nx, grid.ny, grid.nz))
 
-    if interpolation == "linear" and not absolute_weights and not interpret and block == 32:
-        from tomojax.core._cuda_axial import axial_coefficients
+    if not absolute_weights and not interpret and block == 32:
+        from tomojax.core._cuda_axial import axial_coefficients, transpose_axial_cuda
         from tomojax.core._cuda_joseph import gather_transpose_cuda, use_cuda_gather
 
-        def native(_: None) -> jax.Array:
+        def native(operands) -> jax.Array:
+            coeff, images, accumulate = operands
+            if interpolation == "cubic":
+                count = grid.nx * grid.ny * grid.nz
+                initial = (
+                    jnp.zeros((count,), jnp.float32)
+                    if accumulate is None
+                    else accumulate.astype(jnp.float32).reshape(count)
+                )
+                return transpose_axial_cuda(
+                    coeff,
+                    _swap_detector_axes(images),
+                    initial,
+                    grid=grid,
+                    interpolation=interpolation,
+                ).reshape((grid.nx, grid.ny, grid.nz))
             return gather_transpose_cuda(
                 coeff, _swap_detector_axes(images), grid, detector, accumulate
             )
 
-        if use_cuda_gather(grid):
-            return native(None)
+        if interpolation == "linear" and use_cuda_gather(grid):
+            return native((coeff, images, accumulate))
         # Below the generic crossover, only the separable pair is worthwhile.
         # Match its 128 MiB scratch cap so an oversized batch cannot silently
         # select the generic CUDA gather on a small grid.
@@ -326,8 +351,18 @@ def adjoint_pallas(
             use_cuda_gather(grid, axial=True)
             and coeff.shape[0] * detector.nu * grid.nz <= 32 * 1024**2
         ):
-            return jax.lax.cond(axial_coefficients(coeff), native, pallas, operand=None)
-    return pallas(None)
+
+            @sequential_vmap
+            def dispatch(coeff, images, accumulate):
+                # A batched cond executes both branches. Keep each geometry's
+                # decision scalar so a fast specialization replaces the general
+                # kernel rather than adding another full transpose to it.
+                return jax.lax.cond(
+                    axial_coefficients(coeff), native, pallas, (coeff, images, accumulate)
+                )
+
+            return dispatch(coeff, images, accumulate)
+    return pallas((coeff, images, accumulate))
 
 
 def _swap_kernel(images_ref: Any, out_ref: Any, *, det_shape: tuple[int, int]) -> None:

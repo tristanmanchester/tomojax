@@ -226,12 +226,14 @@ def _map_columns[T](fn: Callable[..., T], views: jax.Array, spec: CoupledSpec) -
 
 
 def physical_projectors(
-    spec: CoupledSpec, arrays: CoupledArrays, masked: Callable
+    spec: CoupledSpec, arrays: CoupledArrays, masked: Callable, *, absolute_weights: bool = False
 ) -> tuple[Callable, Callable]:
-    """Own the unchanged physical forward/transpose pair for a compiled objective."""
+    """Physical forward/transpose, or their absolute weights for sensitivity bounds."""
     backend = spec.backend
     det_grid = None if backend == "pallas" else arrays.det_grid
     joseph = {"joseph": "linear", "joseph_cubic": "cubic"}.get(spec.jacobian.integrator)
+    # Nonnegative stencils already equal their absolute values; keep their fast paths.
+    absolute_weights = absolute_weights and joseph == "cubic"
 
     cone_backend = "cuda" if backend == "pallas" else "jax"
 
@@ -248,6 +250,7 @@ def physical_projectors(
                 spec.detector,
                 backend=backend,
                 interpolation=joseph,
+                absolute_weights=absolute_weights,
             )
         if spec.jacobian.integrator == "exact":
             return exact_forward(
@@ -292,6 +295,7 @@ def physical_projectors(
                     backend=backend,
                     interpolation=joseph,
                     accumulate=initial,
+                    absolute_weights=absolute_weights,
                 )
             )
         if spec.jacobian.integrator == "exact":
@@ -421,6 +425,7 @@ def _build_program(
         )
 
     raw_forward, raw_adjoint = physical_projectors(spec, arrays, masked)
+    bound_forward, bound_adjoint = physical_projectors(spec, arrays, masked, absolute_weights=True)
     arrays, forward, adjoint, predict_columns = filtered_operators(
         spec, arrays, raw_forward, raw_adjoint, predict_columns
     )
@@ -624,14 +629,13 @@ def _build_program(
             )
 
         def ones_body(start, valid, out):
-            if spec.refinement is None:
-                return ops.transpose(start, valid, ops.project(start, jnp.ones_like(x)), out)
-            # A filtered normal need not have positive row sums. The raw
-            # matched normal supplies only the positive preconditioning scale.
+            # Neither filtering nor signed cubic weights preserve positive
+            # normal row sums. |A|^T W^2 |A| 1 supplies a positive raw scale;
+            # the physical normal and its exact transpose remain unchanged.
             t = take(poses(p), start)
-            y = raw_forward(t, jnp.ones_like(x), batch_frames(start))
+            y = bound_forward(t, jnp.ones_like(x), batch_frames(start))
             y = y * batch_weights(start) ** 2 * valid[:, None, None]
-            return out + raw_adjoint(t, y, batch_frames(start))
+            return out + bound_adjoint(t, y, batch_frames(start))
 
         row_bound = across(over_batches(ones_body, volume_zeros))
         reg_bound = 12 * cfg.tv_weight / cfg.huber_delta if cfg.tv_weight else 0

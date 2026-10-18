@@ -114,10 +114,23 @@ extern "C" __global__ void axial_forward_vec4(
 """
 
 _TRANSPOSE = r"""
+__device__ __forceinline__ float axial_weight(float distance)
+{
+    float r = fabsf(distance);
+#if CUBIC
+    if(r<1.f) return 1.f+r*r*(1.5f*r-2.5f);
+    // Factored roots preserve the small negative lobe near the support edge.
+    if(r<2.f) return -.5f*(r-1.f)*(r-2.f)*(r-2.f);
+    return 0.f;
+#else
+    return fmaxf(1.f-r,0.f);
+#endif
+}
+
 __device__ __forceinline__ int2 axial_support(
     float inverse, float coordinate, float offset, int samples)
 {
-    float radius = fabsf(inverse);
+    float radius = (CUBIC ? 2.f : 1.f) * fabsf(inverse);
     float center = inverse * (coordinate - offset);
     // Inverting rounded forward coordinates can otherwise exclude a positive
     // edge weight. Bound cancellation using the operands, not just center.
@@ -144,7 +157,7 @@ extern "C" __global__ void joseph_vertical(
     float sum = 0.f;
     for (int v=support.x;v<support.y;++v) {
         float qz = __fadd_rn(__fmul_rn(vz,(float)v),cz);
-        float wz = fmaxf(1.f - fabsf(qz-(float)z),0.f);
+        float wz = axial_weight(qz-(float)z);
         sum += images[((long)view*nu+u)*nv+v] * c[9] * wz;
     }
     weighted[id] = sum;
@@ -176,7 +189,7 @@ extern "C" __global__ void joseph_axial(
             const float* image=weighted+(long)(first+w)*nu*nz;
             for(int u=support.x;u<support.y;++u) {
                 float q=__fadd_rn(__fmul_rn(uh,(float)u),h);
-                float wh=fmaxf(1.f-fabsf(q-row),0.f);
+                float wh=axial_weight(q-row);
 #if VECTOR
                 #pragma unroll
                 for(int j=0;j<R;j+=4) {
@@ -220,10 +233,14 @@ def _forward_kernel(tile_v: int, *, vector: bool) -> Any:
 
 
 @cache
-def _transpose_module(*, vector: bool) -> Any:
+def _transpose_module(*, vector: bool, cubic: bool) -> Any:
     import cupy as cp
 
-    source = _TRANSPOSE.replace("RUN", "8" if vector else "4").replace("VECTOR", str(int(vector)))
+    source = (
+        _TRANSPOSE.replace("RUN", "8" if vector else "4")
+        .replace("VECTOR", str(int(vector)))
+        .replace("CUBIC", str(int(cubic)))
+    )
     return cp.RawModule(code=source)
 
 
@@ -286,7 +303,14 @@ def forward_axial_cuda(
 
 
 def _transpose_launch(
-    context: Any, out: Any, coeff: Any, images: Any, initial: Any, *, shape: tuple[int, int, int]
+    context: Any,
+    out: Any,
+    coeff: Any,
+    images: Any,
+    initial: Any,
+    *,
+    shape: tuple[int, int, int],
+    cubic: bool,
 ) -> None:
     import cupy as cp
 
@@ -304,7 +328,7 @@ def _transpose_launch(
         # extents retain guarded scalar reads, including the last partial run.
         vector = nz % 8 == 0
         run, threads = (8, 256) if vector else (4, 128)
-        module = _transpose_module(vector=vector)
+        module = _transpose_module(vector=vector, cubic=cubic)
         module.get_function("joseph_vertical")(
             (-(-(views * nu * nz) // 256),),
             (256,),
@@ -319,12 +343,17 @@ def _transpose_launch(
 
 
 def transpose_axial_cuda(
-    coeff: jax.Array, images_uv: jax.Array, initial: jax.Array, *, grid: Grid
+    coeff: jax.Array,
+    images_uv: jax.Array,
+    initial: jax.Array,
+    *,
+    grid: Grid,
+    interpolation: str = "linear",
 ) -> jax.Array:
-    """Add the exact axial transpose to a flat initial volume."""
+    """Add the exact linear or Keys-cubic axial transpose to a flat initial volume."""
     shape = (grid.nx, grid.ny, grid.nz)
     call = buffer_callback(
-        partial(_transpose_launch, shape=shape),
+        partial(_transpose_launch, shape=shape, cubic=interpolation == "cubic"),
         jax.ShapeDtypeStruct(initial.shape, jnp.float32),
         input_output_aliases={2: 0},
         vmap_method="sequential",
