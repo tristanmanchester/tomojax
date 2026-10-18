@@ -196,7 +196,7 @@ def test_cuda_separable_transpose_kernels_with_wide_support_and_view_tail(
     geometry = ConeGeometry(
         grid, detector, np.linspace(0, 360, 33, endpoint=False), ConeBeam(40, 60)
     )
-    module = cone._module()
+    module = cone.cuda_module()
     calls = []
     selected = []
 
@@ -208,7 +208,7 @@ def test_cuda_separable_transpose_kernels_with_wide_support_and_view_tail(
             calls.append(name)
             return module.get_function(name)
 
-    monkeypatch.setattr(cone, "_module", Kernels)
+    monkeypatch.setattr(cone, "cuda_module", Kernels)
     frames = np.broadcast_to(beam_frame(geometry.beam, detector), (33, 4, 3))
     _check_dense_transpose(grid, detector, frames, jnp.asarray(geometry.poses(), jnp.float32))
     assert kernel in calls

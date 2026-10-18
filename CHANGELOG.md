@@ -16,6 +16,10 @@ or zero view angles; laminography loading no longer supplies a 30° tilt. Errors
 name the `load_frames` override to supply; CLI preprocessing accepts a detector
 table in `--config`.
 
+CUDA cone projection supports first-order pose and volume autodiff, including
+prepared volume layouts. Bilinear-cell derivatives now preserve constants at
+interpolation knots and include the entering edge of zero-extended support.
+
 The ptychography example also accepts PSI MATLAB v5 simulations, with detector
 binning and iteration controls for CPU previews and explicit output units.
 

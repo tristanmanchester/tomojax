@@ -752,9 +752,10 @@ extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint_packed(
 
 // One traversal accumulates the two spatial gradients and their plane moments.
 // Six physical pose directions are then contractions, not six extra ray traversals.
-extern "C" __global__ void cone_pose_columns(
+template <bool TRANSPOSE>
+__device__ void cone_pose_derivative(
     const float* __restrict__ coeff, const float* __restrict__ tangent,
-    const float* __restrict__ vol, float* __restrict__ out,
+    const float* __restrict__ vol, float* __restrict__ out, const float* cotangent,
     int nx, int ny, int nz, int nu, int nv, int width, float sx, float sy, float sz)
 {
     int view = blockIdx.x;
@@ -771,11 +772,11 @@ extern "C" __global__ void cone_pose_columns(
     float Sa=c[a], Sb=c[b], Sc=c[cc], inv=__frcp_rn(ra);
     float slopeb=rb*inv, slopec=rc*inv;
     float lo=0.f, hi=(float)(na-1), base=Sb-Sa*slopeb;
-    if(fabsf(slopeb)<1e-12f) { if(base<=-1.f || base>=(float)nb) live=false; }
+    if(fabsf(slopeb)<1e-12f) { if(base < -1.f || base > (float)nb) live=false; }
     else { float k0=(-1.f-base)/slopeb,k1=((float)nb-base)/slopeb;
         lo=fmaxf(lo,fminf(k0,k1)); hi=fminf(hi,fmaxf(k0,k1)); }
     base=Sc-Sa*slopec;
-    if(fabsf(slopec)<1e-12f) { if(base<=-1.f || base>=(float)nc) live=false; }
+    if(fabsf(slopec)<1e-12f) { if(base < -1.f || base > (float)nc) live=false; }
     else { float k0=(-1.f-base)/slopec,k1=((float)nc-base)/slopec;
         lo=fmaxf(lo,fminf(k0,k1)); hi=fminf(hi,fmaxf(k0,k1)); }
     int k0=max((int)floorf(fminf(lo,(float)na)),0),k1=min((int)ceilf(fmaxf(hi,-1.f)),na-1);
@@ -802,24 +803,70 @@ extern "C" __global__ void cone_pose_columns(
         float db=s1-s0,dc=wb0*(v01-v00)+wb1*(v11-v10);
         gb+=db;gc+=dc;gtb+=t*db;gtc+=t*dc;
     }
-    if(u>=nu || v>=nv)return;
+    if(!TRANSPOSE && (u>=nu || v>=nv))return;
     long pixel=((long)view*(width+1)*nv+v)*nu+u, stride=(long)nv*nu;
     float w=path_w(r0,r1,r2,ra,sx,sy,sz);
-    out[pixel]=sum*w;
+    if(!TRANSPOSE) out[pixel]=sum*w;
     float length2=(r0*sx)*(r0*sx)+(r1*sy)*(r1*sy)+(r2*sz)*(r2*sz);
-    const float* dc=tangent+(long)view*width*12;
-    for(int q=0;q<width;++q) {
-        const float* d=dc+q*12;
-        float dr0=d[3]+fu*d[6]+fv*d[9]-d[0];
-        float dr1=d[4]+fu*d[7]+fv*d[10]-d[1];
-        float dr2=d[5]+fu*d[8]+fv*d[11]-d[2];
-        float dra=SEL(a,dr0,dr1,dr2),drb=SEL(b,dr0,dr1,dr2),drc=SEL(cc,dr0,dr1,dr2);
-        // df_b = dS_b - (r_b/r_a)dS_a + t(dr_b - (r_b/r_a)dr_a).
-        float derivative=(d[b]-slopeb*d[a])*gb+(d[cc]-slopec*d[a])*gc
-                         +(drb-slopeb*dra)*gtb+(drc-slopec*dra)*gtc;
-        float dlog=(r0*dr0*sx*sx+r1*dr1*sy*sy+r2*dr2*sz*sz)/length2-dra*inv;
-        out[pixel+(q+1)*stride]=w*(derivative+sum*dlog);
+    // Separate source and ray derivatives, then apply pixel-source geometry.
+    // Scalar components avoid dynamically indexed local arrays spilling the
+    // six accumulated moments to per-thread device memory.
+    float gsa=-slopeb*gb-slopec*gc, gra=-slopeb*gtb-slopec*gtc-sum*inv;
+    float gs0=a==0?gsa:gb, gs1=SEL(a,gb,gsa,gc), gs2=a==2?gsa:gc;
+    float gr0=sum*r0*sx*sx/length2+(a==0?gra:gtb);
+    float gr1=sum*r1*sy*sy/length2+SEL(a,gtb,gra,gtc);
+    float gr2=sum*r2*sz*sz/length2+(a==2?gra:gtc);
+    if(TRANSPOSE) {
+        // Reduce each detector tile before atomically accumulating twelve
+        // coefficients. Scratch is constant, independent of the image size.
+        __shared__ float partial[12][4];
+        float value=(u<nu && v<nv)?cotangent[((long)view*nv+v)*nu+u]*w:0.f;
+        int lane=threadIdx.x%32, warp=threadIdx.x/32;
+        #pragma unroll
+        for(int q=0;q<12;++q) {
+            int axis=q%3;
+            float gs=SEL(axis,gs0,gs1,gs2), gr=SEL(axis,gr0,gr1,gr2);
+            float grad=q<3?gs-gr:gr*(q<6?1.f:(q<9?fu:fv));
+            grad*=value;
+            for(int offset=16;offset;offset/=2)
+                grad+=__shfl_down_sync(0xffffffffu,grad,offset);
+            if(lane==0) partial[q][warp]=grad;
+        }
+        __syncthreads();
+        if(threadIdx.x<12) {
+            int q=threadIdx.x;
+            atomicAdd(out+(long)view*NC+q,
+                      (partial[q][0]+partial[q][1])+(partial[q][2]+partial[q][3]));
+        }
+    } else {
+        const float* dc=tangent+(long)view*width*12;
+        for(int q=0;q<width;++q) {
+            const float* d=dc+q*12;
+            float derivative=0.f;
+            #pragma unroll
+            for(int i=0;i<3;++i) {
+                float dr=d[3+i]+fu*d[6+i]+fv*d[9+i]-d[i];
+                derivative+=SEL(i,gs0,gs1,gs2)*d[i]+SEL(i,gr0,gr1,gr2)*dr;
+            }
+            out[pixel+(q+1)*stride]=w*derivative;
+        }
     }
+}
+
+extern "C" __global__ void cone_pose_columns(
+    const float* coeff, const float* tangent, const float* vol, float* out,
+    int nx, int ny, int nz, int nu, int nv, int width, float sx, float sy, float sz)
+{
+    cone_pose_derivative<false>(coeff,tangent,vol,out,nullptr,
+                               nx,ny,nz,nu,nv,width,sx,sy,sz);
+}
+
+extern "C" __global__ void cone_pose_vjp(
+    const float* coeff, const float* vol, const float* cotangent, float* out,
+    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz)
+{
+    cone_pose_derivative<true>(coeff,nullptr,vol,out,cotangent,
+                              nx,ny,nz,nu,nv,0,sx,sy,sz);
 }
 
 // Compact separable tiles cache all view metadata and process two z cells per lane.

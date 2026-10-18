@@ -88,7 +88,7 @@ def test_frozen_columns_use_no_cache_space_and_preserve_the_update(monkeypatch, 
     runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
     ctx = _pose_objective_context(runtime=runtime, **common)
     captured = []
-    monkeypatch.setattr(_coupled_objective, "_pose_cache_limit", lambda: 3 * 5 * 6 * 2 * 4)
+    monkeypatch.setattr(_coupled_objective, "_pose_cache_limit", lambda: 3 * 5 * 6 * (1 + 2) * 4)
     monkeypatch.setattr(
         _coupled_objective,
         "_check_device_memory",
@@ -565,13 +565,18 @@ def test_a_cached_update_that_does_not_fit_retries_without_columns(monkeypatch):
 
 @pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
 @pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
-def test_filtered_joint_increment_and_loss_match_dense_physical_model(solver, backend):
+@pytest.mark.parametrize("stream", [False, True])
+def test_filtered_joint_increment_and_loss_match_dense_physical_model(
+    monkeypatch, solver, backend, stream
+):
     import tomojax as tj
     from tomojax.alignment import AlignConfig
     from tomojax.alignment.api import L2LossSpec
     from tomojax.forward import project_joseph
     from tomojax.geometry import stack_view_poses
 
+    if stream:
+        monkeypatch.setattr(_coupled_objective, "_POSE_CACHE_BYTES", 0)
     rng = np.random.default_rng(2)
     grid, detector = tj.Grid(3, 4, 2, 1, 1, 1), tj.Detector(7, 3, 1, 1)
     geometry = tj.ParallelGeometry(grid, detector, [12, 57, 103])

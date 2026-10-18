@@ -316,10 +316,14 @@ def _plane_samples(
     fc = _component(S, frame["c"]) + t * _component(ray, frame["c"])
     fl_b, fl_c = jnp.floor(fb), jnp.floor(fc)
     indices, weights = [], []
+    # The selected bilinear cell has a partition-of-unity derivative, including
+    # at integer coordinates. Differentiating max(1-abs(x), 0) instead gives
+    # half a tap at the support endpoint and a spurious gradient on constants.
+    wb, wc = fb - fl_b, fc - fl_c
     for db in (0.0, 1.0):
         for dc in (0.0, 1.0):
             jb, jc = fl_b + db, fl_c + dc
-            w = jnp.maximum(1 - jnp.abs(fb - jb), 0) * jnp.maximum(1 - jnp.abs(fc - jc), 0)
+            w = (wb if db else 1 - wb) * (wc if dc else 1 - wc)
             jb_i, jc_i = jb.astype(jnp.int32), jc.astype(jnp.int32)
             valid = (
                 (jb_i >= 0) & (jb_i < frame["nb"]) & (jc_i >= 0) & (jc_i < frame["nc"])
@@ -392,7 +396,8 @@ def use_cuda_cone() -> bool:
 
 
 @cache
-def _module() -> Any:
+def cuda_module() -> Any:
+    """Shared cone CUDA kernels, compiled lazily on the active device."""
     import cupy as cp
 
     source = files("tomojax.core").joinpath("cone_kernels.cu").read_text(encoding="utf-8")
@@ -424,7 +429,7 @@ def _launch_forward(
         )  # fmt: skip
         # Views vary fastest, rows slowest: the blocks running at once cover one band
         # of rows (one slab of the volume) in many views, which then shares the L2.
-        _module().get_function("cone_forward" if packed is None else "cone_forward_y")(
+        cuda_module().get_function("cone_forward" if packed is None else "cone_forward_y")(
             (views, -(-det.nu // 32), -(-det.nv // 16)), (512,), args
         )
 
@@ -433,7 +438,7 @@ def _launch_box_forward(context: Any, out: Any, coeff: Any, *, grid: Grid, det: 
     import cupy as cp
 
     with xla_stream(context, out):
-        _module().get_function("cone_box_forward")(
+        cuda_module().get_function("cone_box_forward")(
             (int(coeff.shape[0]), -(-(det.nu * det.nv) // 128)),
             (128,),
             (
@@ -505,7 +510,7 @@ def _launch_adjoint(
     import cupy as cp
 
     views = int(coeff.shape[0])
-    module = _module()
+    module = cuda_module()
     with xla_stream(context, out):
         separable_adjoint = module.get_function(_separable_adjoint_kernel(grid, det))
         target, initial = cp.asarray(out), cp.asarray(accumulate)
@@ -563,7 +568,7 @@ def _launch_adjoint_pair(
 ) -> None:
     import cupy as cp
 
-    module = _module()
+    module = cuda_module()
     with xla_stream(context, out[0]):
         targets = tuple(cp.asarray(value) for value in out)
         for target, value in zip(targets, (initial0, initial1), strict=True):
@@ -612,13 +617,22 @@ def _launch_adjoint_pair(
             )  # fmt: skip
 
 
-def _forward_cuda(volume: jax.Array, coeff: jax.Array, grid: Grid, detector: Detector) -> jax.Array:
+def forward_cuda(
+    volume: jax.Array,
+    coeff: jax.Array,
+    grid: Grid,
+    detector: Detector,
+    *,
+    packed: jax.Array | None = None,
+) -> jax.Array:
+    """Raw CUDA projection; AD rules wrap this same launch."""
     call = buffer_callback(
         partial(_launch_forward, grid=grid, det=detector),
         jax.ShapeDtypeStruct((coeff.shape[0], detector.nv, detector.nu), jnp.float32),
         vmap_method="sequential",
     )
-    return call(coeff, volume.astype(jnp.float32))
+    args = (coeff, volume.astype(jnp.float32))
+    return call(*args) if packed is None else call(*args, packed)
 
 
 def _launch_pose_columns(
@@ -627,16 +641,38 @@ def _launch_pose_columns(
     import cupy as cp
 
     with xla_stream(context, out):
-        _module().get_function("cone_pose_columns")(
-            (coeff.shape[0], -(-det.nu // 16), -(-det.nv // 8)),
-            (128,),
-            (
-                cp.asarray(coeff), cp.asarray(tangent), cp.asarray(volume), cp.asarray(out),
-                np.int32(grid.nx), np.int32(grid.ny), np.int32(grid.nz),
-                np.int32(det.nu), np.int32(det.nv), np.int32(tangent.shape[1]),
-                np.float32(grid.vx), np.float32(grid.vy), np.float32(grid.vz),
-            ),
+        coeff, tangent, volume, target = (cp.asarray(x) for x in (coeff, tangent, volume, out))
+        batch = np.broadcast_shapes(coeff.shape[:-2], tangent.shape[:-3], volume.shape[:-3])
+        views, width = coeff.shape[-2], tangent.shape[-2]
+        coeff = cp.broadcast_to(coeff, (*batch, views, NC))
+        tangent = cp.broadcast_to(tangent, (*batch, views, width, 12))
+        kernel = cuda_module().get_function("cone_pose_columns")
+        shape = (grid.nx, grid.ny, grid.nz)
+        dimensions = (
+            np.int32(grid.nx), np.int32(grid.ny), np.int32(grid.nz),
+            np.int32(det.nu), np.int32(det.nv), np.int32(width),
+            np.float32(grid.vx), np.float32(grid.vy), np.float32(grid.vz),
         )  # fmt: skip
+
+        def launch(c: Any, d: Any, x: Any, y: Any) -> None:
+            kernel(
+                (c.shape[0], -(-det.nu // 16), -(-det.nv // 8)),
+                (128,),
+                (c, d, x, y, *dimensions),
+            )
+
+        if volume.size == grid.nx * grid.ny * grid.nz:
+            # vmap over views or directions shares the volume: concatenate only
+            # the tiny geometry arrays and launch all rays together.
+            launch(
+                coeff.reshape(-1, NC), tangent.reshape(-1, width, 12), volume.reshape(shape), target
+            )
+        else:
+            # Independently mapped volumes must not be broadcast/materialized.
+            # Their batches share a callback, retaining ordinary vmap semantics.
+            volume = cp.broadcast_to(volume, (*batch, *shape))
+            for index in np.ndindex(batch):
+                launch(coeff[index], tangent[index], volume[index], target[index])
 
 
 def cone_pose_columns(
@@ -654,7 +690,7 @@ def cone_pose_columns(
         jax.ShapeDtypeStruct(
             (coeff.shape[0], 1 + tangent.shape[1], detector.nv, detector.nu), jnp.float32
         ),
-        vmap_method="sequential",
+        vmap_method="expand_dims",
     )
     return call(coeff, tangent, volume.astype(jnp.float32))
 
@@ -697,66 +733,15 @@ def _resolve(backend: str) -> str:
     return backend
 
 
-@partial(jax.custom_vjp, nondiff_argnums=(2, 3))
-def _forward_cuda_vjp(
-    volume: jax.Array, coeff: jax.Array, grid: Grid, detector: Detector
-) -> jax.Array:
-    return _forward_cuda(volume, coeff, grid, detector)
-
-
-def _forward_cuda_fwd(
-    volume: jax.Array, coeff: jax.Array, grid: Grid, detector: Detector
-) -> tuple[jax.Array, jax.Array]:
-    return _forward_cuda(volume, coeff, grid, detector), coeff
-
-
-def _forward_cuda_bwd(
-    grid: Grid, detector: Detector, coeff: jax.Array, cotangent: jax.Array
-) -> tuple[jax.Array, jax.Array]:
-    zeros = jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
-    return _adjoint_cuda(cotangent, coeff, grid, detector, zeros), jnp.zeros_like(coeff)
-
-
-_forward_cuda_vjp.defvjp(_forward_cuda_fwd, _forward_cuda_bwd)
-
-
-@partial(jax.custom_vjp, nondiff_argnums=(3, 4))
-def _packed_forward(
-    volume: jax.Array, packed: jax.Array, coeff: jax.Array, grid: Grid, detector: Detector
-) -> jax.Array:
-    call = buffer_callback(
-        partial(_launch_forward, grid=grid, det=detector),
-        jax.ShapeDtypeStruct((coeff.shape[0], detector.nv, detector.nu), jnp.float32),
-        vmap_method="sequential",
-    )
-    return call(coeff, volume, packed)
-
-
-def _packed_forward_fwd(
-    volume: jax.Array, packed: jax.Array, coeff: jax.Array, grid: Grid, detector: Detector
-) -> tuple[jax.Array, jax.Array]:
-    return _packed_forward(volume, packed, coeff, grid, detector), coeff
-
-
-def _packed_forward_bwd(
-    grid: Grid, detector: Detector, coeff: jax.Array, cotangent: jax.Array
-) -> tuple[jax.Array, None, jax.Array]:
-    volume, coefficients = _forward_cuda_bwd(grid, detector, coeff, cotangent)
-    # The cache is derived, not an independent input. The exact transpose acts
-    # on the original volume, without saving either volume for backward.
-    return volume, None, coefficients
-
-
-_packed_forward.defvjp(_packed_forward_fwd, _packed_forward_bwd)
-
-
 def prepare_cone_projection(
     volume: jax.Array, grid: Grid, detector: Detector
 ) -> Callable[[jax.Array], jax.Array]:
     """A CUDA projector owning one volume and its packed layout across view batches."""
+    from tomojax.core._cone_autodiff import differentiable_forward
+
     volume = volume.astype(jnp.float32)
     packed = jax.lax.stop_gradient(volume.transpose(0, 2, 1).reshape(-1))
-    return lambda coeff: _packed_forward(volume, packed, coeff, grid, detector)
+    return lambda coeff: differentiable_forward(coeff, volume, grid, detector, packed=packed)
 
 
 def cone_project(
@@ -769,12 +754,15 @@ def cone_project(
 ) -> jax.Array:
     """Project a volume through every view's coefficients; returns ``(views, nv, nu)``.
 
-    The JAX backend differentiates in the volume and the coefficients (hence
-    the poses). The CUDA backend differentiates in the volume only, through
-    its matched transpose.
+    Both backends differentiate in the volume and coefficients (hence poses).
+    CUDA supports first-order AD with the matched volume transpose. Pose
+    derivatives hold the dominant ray axis and interpolation cell fixed; use
+    JAX for higher derivatives.
     """
     if _resolve(backend) == "cuda":
-        return _forward_cuda_vjp(jnp.asarray(volume, jnp.float32), coeff, grid, detector)
+        from tomojax.core._cone_autodiff import differentiable_forward
+
+        return differentiable_forward(coeff, jnp.asarray(volume, jnp.float32), grid, detector)
     return _forward_jax(jnp.asarray(volume, jnp.float32), coeff, grid, detector)
 
 
@@ -788,7 +776,8 @@ def cone_project_ones(
     """Evaluate the same projector on uniform unit support without storing a volume.
 
     CUDA counts fully supported planes and retains ordinary sampling arithmetic
-    at the box boundary. Coefficient derivatives remain zero, as in CUDA FP.
+    at the box boundary. This normalization-only shortcut does not differentiate
+    in the coefficients; use cone_project on a unit volume for pose derivatives.
     """
     if _resolve(backend) != "cuda":
         ones = jnp.ones((grid.nx, grid.ny, grid.nz), jnp.float32)

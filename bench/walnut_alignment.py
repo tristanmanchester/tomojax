@@ -24,9 +24,7 @@ import numpy as np
 from walnut import ROWS, VIEWS, compare, load_orbits, reference, volume_geometry
 
 import tomojax as tj
-
-# check-public-imports: allow-private
-from tomojax._scan import record_of, scan_from_record
+from tomojax.geometry.api import stack_view_poses, view_frames
 
 
 def _scan(walnut: Path, data: np.ndarray, name: str, every: int, binning: int) -> tj.Scan:
@@ -37,6 +35,28 @@ def _scan(walnut: Path, data: np.ndarray, name: str, every: int, binning: int) -
     return tj.Scan.from_astra(data, proj | {"Vectors": vectors}, volume_geometry()).binned(binning)
 
 
+def object_motion(scan: tj.Scan, original: tj.Scan) -> np.ndarray:
+    """Rigid object transforms relative to the original physical beam frames.
+
+    Calibrated source heights belong to geometry, not to editable pose tables;
+    two differently calibrated scans can both have ``poses is None``.
+    """
+    reference, changed = view_frames(original.geometry), view_frames(scan.geometry)
+
+    def basis(rows: np.ndarray) -> np.ndarray:
+        u, v = rows[:, 6:9], rows[:, 9:12]
+        u = u / np.linalg.norm(u, axis=1, keepdims=True)
+        v = v / np.linalg.norm(v, axis=1, keepdims=True)
+        return np.stack([u, v, np.cross(u, v)], axis=2)
+
+    # Invert the rigid change of the source/detector frame to obtain object motion.
+    rotation = basis(reference) @ basis(changed).transpose(0, 2, 1)
+    result = np.broadcast_to(np.eye(4), (len(reference), 4, 4)).copy()
+    result[:, :3, :3] = rotation
+    result[:, :3, 3] = reference[:, :3] - np.einsum("nij,nj->ni", rotation, changed[:, :3])
+    return result
+
+
 def _orbit_one_fixed(scan: tj.Scan, original: tj.Scan) -> tj.Scan:
     """``scan`` with its translation corrections moved so orbit 1's average none.
 
@@ -44,12 +64,16 @@ def _orbit_one_fixed(scan: tj.Scan, original: tj.Scan) -> tj.Scan:
     where the scanner recorded it. This expresses an alignment in that
     convention, to compare its volume voxel by voxel with the reference.
     """
-    poses, recorded = np.asarray(scan.poses), np.asarray(original.poses)
     per = len(scan.angles) // 3
-    offset = (poses - recorded)[:per, 3:].mean(axis=0)
-    record = record_of(scan)
-    record.align_params = poses - np.concatenate([np.zeros(3), offset])
-    return tj.Scan(scan.projections, scan_from_record(record, poses=True).geometry)
+    motion = object_motion(scan, original)
+    shift = -np.einsum("nji,nj->ni", motion[:, :3, :3], motion[:, :3, 3])
+    offset = shift[:per].mean(axis=0)
+    # Right-compose one object-frame translation, expressed in each view's lab
+    # coordinates for Scan.with_poses. Keep every calibrated arrangement intact.
+    world = np.asarray(stack_view_poses(scan.geometry, len(scan.angles)))
+    poses = np.zeros((len(scan.angles), 6), np.float32) if scan.poses is None else scan.poses.copy()
+    poses[:, [3, 5, 4]] += np.einsum("nij,j->ni", world[:, :3, :3], offset)
+    return scan.with_poses(poses)
 
 
 def _figures(out: Path, volumes: dict[str, np.ndarray], summary: dict[str, Any]) -> None:
@@ -124,7 +148,7 @@ def _figures(out: Path, volumes: dict[str, np.ndarray], summary: dict[str, Any])
 def _save(
     summary: dict[str, Any],
     volumes: dict[str, np.ndarray | None],
-    poses: dict[str, np.ndarray | None],
+    poses: dict[str, np.ndarray],
     *,
     output: Path | None,
     slices: Path | None,
@@ -218,10 +242,10 @@ def main() -> None:
     }
     aligned = _orbit_one_fixed(result.scan, original)
 
-    recorded = np.asarray(original.poses)[:, 4]
     per = len(original.angles) // 3
-    tomojax = np.asarray(aligned.poses)[:, 4] - recorded
-    authors = np.asarray(corrected.poses)[:, 4] - recorded
+    aligned_motion = object_motion(aligned, original)
+    corrected_motion = object_motion(corrected, original)
+    tomojax, authors = aligned_motion[:, 2, 3], corrected_motion[:, 2, 3]
     summary["heights_mm"] = {
         "views_per_orbit": per,
         "tomojax": tomojax.tolist(),
@@ -234,9 +258,8 @@ def main() -> None:
     truth = reference(args.walnut)
     volumes = {"reference": truth}
     poses = {
-        "original_poses": original.poses,
-        "aligned_poses": aligned.poses,
-        "corrected_poses": corrected.poses,
+        "aligned_object_transforms": aligned_motion,
+        "corrected_object_transforms": corrected_motion,
     }
 
     def save() -> None:

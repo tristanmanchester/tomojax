@@ -40,7 +40,7 @@ import zlib
 import imageio.v3 as iio
 import numpy as np
 from walnut import COLS, ROWS, VIEWS, compare, volume_geometry
-from walnut_alignment import _orbit_one_fixed
+from walnut_alignment import _orbit_one_fixed, object_motion
 
 import tomojax as tj
 
@@ -213,11 +213,10 @@ def evaluate(n: int, fetched: dict[str, Any], args: argparse.Namespace) -> dict[
     result = tj.align(original, levels=args.levels)
     summary: dict[str, Any] = {"walnut": n, "align_seconds": time.perf_counter() - start}
     aligned = _orbit_one_fixed(result.scan, original)
-    recorded = np.asarray(original.poses)[:, 4]
     per = len(original.angles) // 3
     heights = {
-        "tomojax": (np.asarray(aligned.poses)[:, 4] - recorded).reshape(3, per).mean(axis=1),
-        "authors": (np.asarray(corrected.poses)[:, 4] - recorded).reshape(3, per).mean(axis=1),
+        name: object_motion(item, original)[:, 2, 3].reshape(3, per).mean(axis=1)
+        for name, item in (("tomojax", aligned), ("authors", corrected))
     }
     summary["orbit_heights_mm"] = {k: [round(float(h), 4) for h in v] for k, v in heights.items()}
     options = {"iterations": args.iterations, "tv_weight": 0.0, "nonnegative": True}
