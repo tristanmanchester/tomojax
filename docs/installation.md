@@ -1,7 +1,8 @@
 # Install TomoJAX
 
-TomoJAX supports Linux, with CPU or CUDA 12 dependencies. This checkout currently
-requires Python 3.12. Python 3.15 cannot yet be validated: h5py and CuPy do not
+TomoJAX supports Linux, with CPU or CUDA 12 dependencies, and requires Python
+3.12 or newer. Fresh CPU wheel and sdist installations are checked on CPython
+3.12, 3.13 and 3.14. Python 3.15 cannot yet be validated: h5py and CuPy do not
 publish Python 3.15 wheels, and building h5py needs a system HDF5 installation.
 
 ## Install a published release
@@ -101,8 +102,10 @@ uv run --no-sync python tools/smoke_installed_wheel.py --python 3.12 --extra cud
 uv run --no-sync python tools/smoke_installed_wheel.py --python 3.12 --artifact sdist
 ```
 
+Repeat with `--python 3.13` and `--python 3.14` to check those interpreters.
 `--find-links /path/to/wheelhouse` runs without network access or a package
-cache, using dependency wheels from that directory. An sdist install also needs
-the build backend there. Without that option, dependencies come from the package
-index. The pull-request workflow runs lint, types, CPU tests and these package
-checks on CPU; CUDA checks run separately on NVIDIA hardware.
+cache, using dependency wheels from that directory and an already available
+interpreter. An sdist install also needs the build backend there. Without that option, dependencies come from the package
+index. The pull-request workflow runs lint, types and the numerical CPU suite
+on Python 3.12, plus separate uncached wheel/sdist jobs on Python 3.12–3.14.
+CUDA checks run separately on NVIDIA hardware.

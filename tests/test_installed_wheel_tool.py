@@ -43,6 +43,7 @@ def test_installed_package_smoke_isolated_and_uncached(tmp_path, monkeypatch, ex
         )
         == 0
     )
+    assert "--offline" in calls[0][0]
     install = calls[1][0]
     assert all(flag in install for flag in ("--no-cache", "--offline", "--no-index"))
     assert install[-1] == f"{artifact}[{extra}]"
@@ -61,9 +62,18 @@ def test_installed_package_smoke_fails_on_install_error(tmp_path, monkeypatch):
     module = runpy.run_path(str(tools / "smoke_installed_wheel.py"))
     (tmp_path / "tomojax-0.3.0.whl").touch()
 
+    calls = []
+
     def run(args, **kwargs):
-        return subprocess.CompletedProcess(args, 1, stdout="", stderr="missing dependency")
+        calls.append(args)
+        return subprocess.CompletedProcess(
+            args,
+            int(args[:3] == ["uv", "pip", "install"]),
+            stdout="",
+            stderr="missing dependency",
+        )
 
     monkeypatch.setattr(subprocess, "run", run)
     with pytest.raises(RuntimeError, match="missing dependency"):
         module["main"](["--dist", str(tmp_path)])
+    assert len(calls) == 2

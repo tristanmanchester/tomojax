@@ -68,7 +68,8 @@ def main(argv: list[str] | None = None) -> int:
         venv, work = root / "venv", root / "work"
         work.mkdir()
         env = _clean_env(extra=args.extra, root=root)
-        _run(["uv", "venv", "--python", args.python, str(venv)], cwd=root, env=env)
+        offline = ["--offline"] if args.find_links is not None else []
+        _run(["uv", "venv", *offline, "--python", args.python, str(venv)], cwd=root, env=env)
         python, tomojax = venv / "bin/python", venv / "bin/tomojax"
         install = ["uv", "pip", "install", "--no-cache", "--python", str(python)]
         if args.find_links is not None:
