@@ -112,8 +112,9 @@ def test_loading_estimates_missing_center_from_recorded_pitch_and_preserves_it(t
 
     scan, true_u, _ = _scan()
     path = tmp_path / "external.data"
+    counts = 10000 * np.exp(-0.1 * scan.projections)
     with h5py.File(path, "w") as file:
-        file["exchange/data"] = 10000 * np.exp(-0.1 * scan.projections)
+        file["exchange/data"] = counts
         file["exchange/data_white"] = np.full((1, 8, 64), 10000, np.float32)
         file["exchange/data_dark"] = np.zeros((1, 8, 64), np.float32)
         file["exchange/theta"] = scan.angles
@@ -127,9 +128,23 @@ def test_loading_estimates_missing_center_from_recorded_pitch_and_preserves_it(t
     assert frames.source.geometry_metadata["detector_center_status"] == "inferred"
     assert tj.load(path).detector == frames.geometry.detector
     result = frames.cropped(slice(2, 4), slice(None)).corrected()
-    np.testing.assert_allclose(result.projections, 0.1 * scan.projections[:, 2:4], atol=2e-7)
+    expected = -np.log(counts[:, 2:4].astype(np.float64) / 10000)
+    np.testing.assert_allclose(result.projections, expected, atol=2e-7)
     saved = tmp_path / "calibrated.nxs"
     tj.save(saved, result)
     loaded = tj.load(saved)
     assert loaded.detector == result.detector
     assert loaded.source.geometry_metadata["detector_center_status"] == "inferred"
+
+
+def test_estimate_center_retains_signed_phase_contrast_across_rows():
+    from scipy.ndimage import gaussian_filter1d
+
+    scan, true_u, _ = _scan(views=181)
+    # Signed edge contrast can cancel across rows; its matched correlations cannot.
+    phase = gaussian_filter1d(scan.projections, 1, axis=-1, order=2)
+    phase *= np.asarray([1, -1] * 4)[None, :, None]
+    phase += np.random.default_rng(17).normal(0, 0.015, phase.shape)
+    phase += np.sin(np.deg2rad(scan.angles))[:, None, None]
+    result = tj.estimate_center(replace(scan, projections=phase))
+    assert abs(result.detector.center[0] - true_u) < 0.15 * scan.detector.du

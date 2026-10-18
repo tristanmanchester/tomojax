@@ -6,6 +6,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
+from scipy.ndimage import gaussian_filter1d
 
 from tomojax.core.validation import validate_projection_stack
 from tomojax.geometry import ParallelGeometry
@@ -14,7 +15,6 @@ from .initializers import (
     DetectorCenterSeed,
     projection_com_det_u_seed,
     projection_pair_det_u_seed,
-    sinogram_det_u_seed,
     train_heldout_view_indices,
 )
 
@@ -24,18 +24,116 @@ if TYPE_CHECKING:
     from tomojax.geometry import Geometry
 
 
-def estimate_center(geometry: Geometry, projections: np.ndarray | jax.Array) -> ParallelGeometry:
-    """Estimate an axial parallel detector's absolute physical u centre from line integrals.
+def _opposite_pairs(angles: np.ndarray) -> list[tuple[int, int, float]]:
+    """At most sixteen uniformly distributed near-opposite view pairs."""
+    angles = np.mod(np.asarray(angles, np.float64), 360)
+    if len(angles) < 2:
+        return []
+    order = np.argsort(angles, kind="stable")
+    targets = (angles + 180) % 360
+    right = np.searchsorted(angles[order], targets)
+    candidates = np.column_stack((order[(right - 1) % len(order)], order[right % len(order)]))
+    distances = np.abs((angles[candidates] - targets[:, None] + 180) % 360 - 180)
+    which = np.argmin(distances, axis=1)
+    pairs: dict[tuple[int, int], float] = {}
+    for i, (j, error) in enumerate(
+        zip(
+            candidates[np.arange(len(angles)), which],
+            distances[np.arange(len(angles)), which],
+            strict=True,
+        )
+    ):
+        if i != j and error <= 2:
+            pair = (i, int(j)) if angles[i] <= angles[j] else (int(j), i)
+            pairs[pair] = float(error)
+    if not pairs:
+        return []
+    # Prefer genuinely opposing views over more numerous angularly mismatched
+    # endpoints. Equal errors differ slightly when angles are stored as float32.
+    best = min(pairs.values())
+    ordered = sorted(
+        (p for p, error in pairs.items() if error <= best + 1e-4),
+        key=lambda p: (angles[p[0]], angles[p[1]]),
+    )
+    picks = np.linspace(0, len(ordered) - 1, min(16, len(ordered))).round().astype(int)
+    return [(*ordered[i], pairs[ordered[i]]) for i in picks]
 
-    Vo's half-turn Fourier estimator on up to three detector rows. Geometry only:
-    nothing is reconstructed. Non-axial, posed and partial-arc geometries raise.
+
+def _angular_sample(angles: np.ndarray, index: int, shift: float) -> list[tuple[int, float]]:
+    """Locally interpolate/extrapolate one view to an exactly opposing direction."""
+    if abs(shift) < 1e-4:
+        return [(index, 1.0)]
+    delta = (angles - angles[index] + 180) % 360 - 180
+    local = np.flatnonzero((np.abs(delta) > 1e-4) & (np.abs(delta) <= 2))
+    if not len(local):
+        return []
+    directed = local[delta[local] * shift > 0]
+    candidates = directed if len(directed) else local
+    neighbor = int(candidates[np.argmin(np.abs(delta[candidates]))])
+    weight = float(shift / delta[neighbor])
+    return [(index, 1 - weight), (neighbor, weight)]
+
+
+def _sample_pairs(
+    angles: np.ndarray,
+) -> list[tuple[list[tuple[int, float]], list[tuple[int, float]], float]]:
+    pairs = []
+    for i, j, error in _opposite_pairs(angles):
+        # Share the interpolation distance between both ends instead of treating
+        # a nearly opposite pair as exact (which confounds angle and centre).
+        delta = float((angles[j] - angles[i]) % 360 - 180)
+        first = _angular_sample(angles, i, delta / 2)
+        second = _angular_sample(angles, j, -delta / 2)
+        if first and second:
+            pairs.append((first, second, error))
+    return pairs
+
+
+def _paired_offset(first: np.ndarray, second: np.ndarray, angle_error: float) -> float | None:
+    """Correlate corresponding rows, not their averages (phase contrast can cancel)."""
+    if not np.isfinite(first).all() or not np.isfinite(second).all():
+        return None
+    if np.ptp(first, axis=-1).max() == 0 or np.ptp(second, axis=-1).max() == 0:
+        return None
+    nu = first.shape[-1]
+    # Angular mismatch moves features by up to radius * delta-angle. Marginalize
+    # that unresolved bandwidth rather than trying to correlate fine texture.
+    sigma = max(0.5, nu * np.deg2rad(angle_error) / 4)
+    # Derivatives remove row backgrounds without introducing the padded-edge
+    # bias of subtracting a finite detector mean before linear correlation.
+    a = gaussian_filter1d(first, sigma, axis=-1, order=1)
+    b = gaussian_filter1d(second[:, ::-1], sigma, axis=-1, order=1)
+    size = 1 << (2 * nu - 2).bit_length()
+    spectrum = (np.fft.rfft(a, n=size) * np.conj(np.fft.rfft(b, n=size))).sum(axis=0)
+    correlation = np.fft.irfft(spectrum, n=size)
+    correlation = np.r_[correlation[-nu + 1 :], correlation[:nu]]
+    peak = int(np.argmax(correlation))
+    if peak == 0 or peak == len(correlation) - 1:
+        return None  # No overlapping detector support at an endpoint maximum.
+    left, middle, right = correlation[peak - 1 : peak + 2]
+    curvature = left - 2 * middle + right
+    if curvature >= 0:
+        return None
+    lag = peak - (nu - 1) + 0.5 * (left - right) / curvature
+    return -0.5 * float(lag)
+
+
+def estimate_center(geometry: Geometry, projections: np.ndarray | jax.Array) -> ParallelGeometry:
+    """Estimate an axial parallel detector's absolute physical u centre from projections.
+
+    Opposing projections agree after detector-u reflection and a shift of twice
+    the centre offset. Gradient correlations of up to 64 corresponding rows are summed,
+    retaining signed phase contrast rather than assuming positive absorption.
+    At most sixteen near-opposite pairs (within two degrees) and their angular
+    neighbors are read. Linear angular resampling removes the mismatch. Geometry
+    only: nothing is reconstructed. Non-axial and posed geometries raise.
 
     Parameters
     ----------
     geometry : Geometry
         Scan geometry with its view angles and physical detector placement.
     projections : array-like
-        Line integrals with shape (views, nv, nu), in geometry view order.
+        Projections with shape (views, nv, nu), in geometry view order.
 
     Returns
     -------
@@ -45,8 +143,8 @@ def estimate_center(geometry: Geometry, projections: np.ndarray | jax.Array) -> 
     Raises
     ------
     ValueError
-        If the scan is non-axial, posed, lacks half-turn coverage or has incompatible
-        data.
+        If the scan is non-axial, posed, lacks usable near-opposite projections,
+        or has incompatible data.
     """
     if type(geometry) is not ParallelGeometry:
         raise ValueError("estimate_center requires an unposed axial ParallelGeometry")
@@ -54,14 +152,25 @@ def estimate_center(geometry: Geometry, projections: np.ndarray | jax.Array) -> 
     validate_projection_stack(
         projections, geometry.detector, geometry=geometry, context="estimate_center"
     )
-    seed = sinogram_det_u_seed(projections, np.asarray(geometry.angles))
-    if seed is None:
-        raise ValueError(
-            "estimate_center needs a usable half-turn (at least 16 views spanning 175 degrees) "
-            "and finite, nonconstant sampled sinograms"
-        )
+    pairs = _sample_pairs(np.asarray(geometry.angles, np.float64))
     detector = geometry.detector
-    moved = replace(detector, center=(seed.det_u_px * detector.du, detector.center[1]))
+    offsets = []
+    if pairs:
+        views = np.unique([i for first, second, _ in pairs for i, _ in first + second])
+        rows = np.linspace(0, detector.nv - 1, min(64, detector.nv)).round().astype(int)
+        # One bounded gather for device arrays and lazy corrected detector rows.
+        data = np.asarray(projections[views[:, None], rows[None, :], :], np.float64)
+        for first, second, error in pairs:
+            a = sum(weight * data[np.searchsorted(views, i)] for i, weight in first)
+            b = sum(weight * data[np.searchsorted(views, i)] for i, weight in second)
+            offset = _paired_offset(np.asarray(a), np.asarray(b), error)
+            if offset is not None:
+                offsets.append(offset)
+    if not offsets:
+        raise ValueError(
+            "estimate_center needs finite, nonconstant near-opposite projections (within 2 degrees)"
+        )
+    moved = replace(detector, center=(float(np.median(offsets)) * detector.du, detector.center[1]))
     return replace(geometry, detector=moved)
 
 

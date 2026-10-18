@@ -43,7 +43,7 @@ NXtomo and generic TIFF/HDF5 frame loading requires recorded or explicitly
 supplied detector pixel sizes and view angles. External NXtomo/Data Exchange
 use their format-defined axial parallel model. If the pitch is recorded but the
 rotation centre is absent, loading estimates detector-u from a few corrected
-rows with the half-turn Fourier method and records `inferred` provenance;
+rows with opposite-view gradient correlation and records `inferred` provenance;
 vertical zero defines the free axial origin. Insufficient coverage/contrast
 requires explicit `detector=`. Laminography requires a recorded tilt/axis or
 `geometry=`. Nikon and Zeiss files lacking dark calibration require `darks=`; zero is

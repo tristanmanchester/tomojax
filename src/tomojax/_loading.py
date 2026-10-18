@@ -375,7 +375,7 @@ def load_frames(
     ``flats`` or ``white_level``, and
     their ``detector`` (including pixel sizes and centre). Missing detector
     pixel pitch is never replaced by unit pixels. Axial acquisitions with recorded
-    pitch use the half-turn Fourier estimator for an absent rotation centre,
+    pitch use the opposite-view correlation estimator for an absent rotation centre,
     recording inferred provenance; failed estimates require ``detector=``.
     Missing dark fields require ``darks=``; use ``darks=0`` only for already dark-corrected counts.
 
@@ -486,17 +486,16 @@ class _CorrectedRows:
     def shape(self) -> tuple[int, int, int]:
         return self.frames.counts.shape
 
-    def __getitem__(self, key: tuple[slice, np.ndarray, slice]) -> np.ndarray:
+    def __getitem__(self, key: tuple[slice | np.ndarray, np.ndarray, slice]) -> np.ndarray:
         views, rows, cols = key
+        selected = self.frames.selected(views.ravel() if isinstance(views, np.ndarray) else views)
         corrected = [
             np.asarray(
-                self.frames.cropped(slice(int(row), int(row) + 1), slice(None))
-                .corrected()
-                .projections
+                selected.cropped(slice(int(row), int(row) + 1), slice(None)).corrected().projections
             )
-            for row in rows
+            for row in rows.ravel()
         ]
-        return np.concatenate(corrected, axis=1)[views, :, cols]
+        return np.concatenate(corrected, axis=1)[:, :, cols]
 
 
 def _estimate_missing_center(frames: Frames) -> Frames:
@@ -523,7 +522,7 @@ def _estimate_missing_center(frames: Frames) -> Frames:
             "detector_center_status": "inferred",
             "detector_center_calibration": {
                 "status": "estimated",
-                "method": "half_turn_fourier",
+                "method": "opposite_view_correlation",
                 "input": list(frames.geometry.detector.center),
                 "output": list(geometry.detector.center),
                 "unit": "geometry_length",

@@ -171,16 +171,16 @@ use their format-defined axial parallel-beam model and recorded angles. They
 need recorded physical detector pitches; missing pitch requires `detector=` or
 `geometry=`, never unit pixels. With pitch available but no rotation centre,
 loading estimates detector-u from a few corrected rows and records `inferred`
-provenance. This needs a usable half-turn and contrast; otherwise supply a
+provenance. This needs usable near-opposite views and contrast; otherwise supply a
 calibrated detector, including its centre. The vertical origin is chosen at the
 axial detector midplane, not estimated from the projections.
 
 An explicit `detector=tj.Detector(nu, nv, du, dv, center=(u, v))` or full
 `geometry=` remains authoritative and is not automatically recalibrated.
 For an already loaded unposed axial scan, `tj.estimate_center(scan)` estimates
-physical detector-u without a
-volume solve; inspect the result, especially for very compact objects that
-can produce false Fourier minima.
+physical detector-u from row-gradient correlations without a volume solve.
+Near-opposite views are resampled in angle before matching. Inspect the result:
+repetitive structure, motion and truncation can make the estimate ambiguous.
 
 ### Retrieve phase from propagation-based phase contrast
 
