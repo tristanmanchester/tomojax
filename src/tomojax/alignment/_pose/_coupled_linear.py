@@ -3,26 +3,24 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import NamedTuple, cast
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
 
-type BlockVector = tuple[jax.Array, jax.Array]
+from ._coupled_vectors import DEVICE, BlockPlacement, BlockVector, Predicate, Scalar
 
 
 class CoupledLinearResult(NamedTuple):
     increment: BlockVector
-    iterations: jax.Array
-    relative_residual: jax.Array
-    finite: jax.Array
+    iterations: Scalar
+    relative_residual: Scalar
+    finite: Predicate
 
 
-def _dot(left: BlockVector, right: BlockVector) -> jax.Array:
-    return sum(
-        jnp.vdot(a, b, precision=jax.lax.Precision.HIGHEST).real
-        for a, b in zip(left, right, strict=True)
-    )
+def _relative_residual(normal, solution, rhs, squared, scratch, placement, dot):
+    residual = placement.combine(placement.reset(scratch, rhs), normal(solution), other_scale=-1)
+    return placement.array.sqrt(dot(residual, residual) / placement.array.maximum(squared, 1e-30))
 
 
 def solve_coupled_normal(
@@ -32,7 +30,8 @@ def solve_coupled_normal(
     *,
     max_iters: int,
     rtol: float | jax.Array,
-    dot: Callable[[BlockVector, BlockVector], jax.Array] = _dot,
+    dot: Callable[[BlockVector, BlockVector], Scalar] | None = None,
+    placement: BlockPlacement = DEVICE,
     volume_ramp: float | None = None,
 ) -> CoupledLinearResult:
     """Solve a positive (semi)definite block normal system by preconditioned CG.
@@ -46,7 +45,10 @@ def solve_coupled_normal(
     ``dot`` is the inner product of block vectors (one summing across devices,
     say, when each holds part of a block).
     """
-    zero = cast("BlockVector", tuple(jnp.zeros_like(a) for a in rhs))
+    xp = placement.array
+    dot = placement.dot if dot is None else dot
+    zero = placement.zeros(rhs)
+    residual = placement.own(rhs)
 
     def precondition(r: BlockVector) -> BlockVector:
         if volume_ramp is None:
@@ -62,10 +64,10 @@ def solve_coupled_normal(
         filtered = jnp.fft.irfft2(spectrum * ramp[:, :, None], s=(nx, ny), axes=(0, 1))
         return scale * filtered, pose * inverse_diagonal[1]
 
-    z0 = precondition(rhs)
+    z0 = precondition(residual)
     gamma0 = dot(rhs, z0)
     rhs_squared = dot(rhs, rhs)
-    threshold = jnp.square(jnp.asarray(rtol, rhs_squared.dtype)) * rhs_squared
+    threshold = xp.square(xp.asarray(rtol, xp.asarray(rhs_squared).dtype)) * rhs_squared
 
     def condition(state):
         iteration, _, residual, _, gamma, failed = state
@@ -77,30 +79,74 @@ def solve_coupled_normal(
         iteration, x, residual, direction, gamma, failed = state
         normal_direction = normal(direction)
         denominator = dot(direction, normal_direction)
-        valid = jnp.isfinite(denominator) & (denominator > 0) & jnp.isfinite(gamma)
-        alpha = jnp.where(valid, gamma / jnp.where(valid, denominator, 1), 0)
-        updated = cast(
-            "BlockVector", tuple(a + alpha * b for a, b in zip(x, direction, strict=True))
-        )
-        next_residual = cast(
-            "BlockVector",
-            tuple(a - alpha * b for a, b in zip(residual, normal_direction, strict=True)),
-        )
+        valid = xp.isfinite(denominator) & (denominator > 0) & xp.isfinite(gamma)
+        alpha = xp.where(valid, gamma / xp.where(valid, denominator, 1), 0)
+        updated = placement.combine(x, direction, other_scale=alpha)
+        next_residual = placement.combine(residual, normal_direction, other_scale=-alpha)
+        # The host preconditioned vector replaces this borrowed normal output,
+        # so they never occupy full-volume scratch at the same time.
+        del normal_direction
         z = precondition(next_residual)
         next_gamma = dot(next_residual, z)
-        beta = next_gamma / jnp.where(gamma > 0, gamma, 1)
-        next_direction = cast(
-            "BlockVector", tuple(a + beta * b for a, b in zip(z, direction, strict=True))
-        )
-        failed = failed | ~valid | ~jnp.isfinite(next_gamma)
+        beta = next_gamma / xp.where(gamma > 0, gamma, 1)
+        next_direction = placement.combine(direction, z, scale=beta)
+        failed = failed | ~valid | ~xp.isfinite(next_gamma)
         return iteration + 1, updated, next_residual, next_direction, next_gamma, failed
 
-    count, solution, _, _, _, failed = jax.lax.while_loop(
-        condition, body, (jnp.int32(0), zero, rhs, z0, gamma0, jnp.bool_(False))
+    count, solution, residual, direction, _, failed = placement.while_loop(
+        condition, body, (xp.int32(0), zero, residual, z0, gamma0, xp.bool_(False))
     )
-    true_residual = cast(
-        "BlockVector", tuple(a - b for a, b in zip(rhs, normal(solution), strict=True))
-    )
-    relative = jnp.sqrt(dot(true_residual, true_residual) / jnp.maximum(rhs_squared, 1e-30))
-    finite = ~failed & jnp.isfinite(relative)
+    del direction, z0
+    relative = _relative_residual(normal, solution, rhs, rhs_squared, residual, placement, dot)
+    finite = ~failed & xp.isfinite(relative)
     return CoupledLinearResult(solution, count, relative, finite)
+
+
+def solve_schur_normal(
+    normal,
+    schur,
+    rhs,
+    volume_inverse,
+    cross,
+    pose_rows,
+    solve_pose,
+    *,
+    free,
+    movable,
+    max_iters,
+    rtol,
+    placement=DEVICE,
+    dot=None,
+    volume_ramp=None,
+):
+    """Eliminate pose blocks, retaining the full system's stopping scale.
+
+    ``cross`` returns a fresh owned volume; it becomes the reduced RHS and
+    finally residual scratch. Normal products remain borrowed and read-only.
+    """
+    xp = placement.array
+    dot = placement.dot if dot is None else dot
+    empty = xp.zeros((0,), rhs[0].dtype)
+    reduced_rhs = placement.multiply(cross(solve_pose(rhs[1])), free)
+    reduced_rhs, _ = placement.combine((reduced_rhs, empty), (rhs[0], empty), scale=-1)
+    squared = dot(rhs, rhs)
+    reduced_squared = dot((reduced_rhs, empty), (reduced_rhs, empty))
+    # Back-substitution makes the full residual the volume Schur residual.
+    # Match the stacked solve's absolute threshold, not the reduced RHS norm.
+    reduced = solve_coupled_normal(
+        schur,
+        (reduced_rhs, empty),
+        (volume_inverse, empty),
+        max_iters=max_iters,
+        rtol=rtol * xp.sqrt(squared / xp.maximum(reduced_squared, 1e-30)),
+        placement=placement,
+        dot=dot,
+        volume_ramp=volume_ramp,
+    )
+    dx = placement.multiply(reduced.increment[0], free)
+    dp = movable * solve_pose(rhs[1] - pose_rows(dx))
+    scratch = (reduced_rhs, placement.own((rhs[1],))[0])
+    relative = _relative_residual(normal, (dx, dp), rhs, squared, scratch, placement, dot)
+    return CoupledLinearResult(
+        (dx, dp), reduced.iterations, relative, reduced.finite & xp.isfinite(relative)
+    )

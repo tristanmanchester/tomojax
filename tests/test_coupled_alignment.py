@@ -12,9 +12,9 @@ import pytest
 # check-public-imports: allow-private
 from tomojax.alignment._pose import (
     _coupled_host,
-    _coupled_host_linear,
     _coupled_objective,
     _coupled_program,
+    _coupled_vectors,
     _pose_steps,
 )
 
@@ -368,19 +368,31 @@ def test_joint_trial_preserves_the_image_and_direction_for_backtracking(nonnegat
 
 
 @pytest.mark.numerical
-def test_coupled_solve_reports_actual_residual_at_budget_and_handles_zero_rhs():
-    matrix = jnp.diag(jnp.array([1.0, 3.0, 8.0, 15.0]))
+@pytest.mark.parametrize("placement", [_coupled_vectors.HOST, _coupled_vectors.DEVICE])
+def test_coupled_solve_reports_actual_residual_at_budget_and_handles_zero_rhs(placement):
+    xp = placement.array
+    matrix = xp.diag(xp.array([1.0, 3.0, 8.0, 15.0], dtype=xp.float32))
 
     def normal(blocks):
-        result = matrix @ jnp.concatenate(blocks)
+        result = matrix @ xp.concatenate(blocks)
         return result[:2], result[2:]
 
-    rhs = (jnp.ones(2), jnp.ones(2))
-    result = solve_coupled_normal(normal, rhs, rhs, max_iters=1, rtol=1e-6)
+    rhs = (xp.ones(2, xp.float32), xp.ones(2, xp.float32))
+    result = solve_coupled_normal(normal, rhs, rhs, max_iters=1, rtol=1e-6, placement=placement)
     assert int(result.iterations) == 1 and result.relative_residual > 1e-2
-    zero = (jnp.zeros(2), jnp.zeros(2))
-    result = solve_coupled_normal(normal, zero, rhs, max_iters=10, rtol=1e-6)
+    zero = (xp.zeros(2, xp.float32), xp.zeros(2, xp.float32))
+    result = solve_coupled_normal(normal, zero, rhs, max_iters=10, rtol=1e-6, placement=placement)
     assert result.finite and result.iterations == 0 and result.relative_residual == 0
+    failed = solve_coupled_normal(
+        lambda block: tuple(-a for a in normal(block)),
+        rhs,
+        rhs,
+        max_iters=2,
+        rtol=1e-6,
+        placement=placement,
+    )
+    assert not failed.finite and failed.iterations == 1
+    np.testing.assert_allclose(failed.relative_residual, 1)
 
 
 @pytest.mark.numerical
@@ -727,7 +739,9 @@ def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth, i
 
 
 @pytest.mark.parametrize("budget", [2, 100])
-def test_host_cg_matches_dense_system_without_modifying_inputs(budget):
+@pytest.mark.parametrize("placement", [_coupled_vectors.HOST, _coupled_vectors.DEVICE])
+def test_cg_placements_match_dense_system_without_modifying_inputs(budget, placement):
+    xp = placement.array
     rng = np.random.default_rng(50)
     design = rng.normal(size=(31, 21)).astype(np.float32)
     matrix = design.T @ design + np.eye(21, dtype=np.float32)
@@ -741,12 +755,21 @@ def test_host_cg_matches_dense_system_without_modifying_inputs(budget):
     saved_rhs = tuple(a.copy() for a in rhs)
 
     def normal(pair):
-        out = matrix @ np.concatenate([a.ravel() for a in pair])
-        out.setflags(write=False)
-        return out[:12].reshape(2, 3, 2), out[12:].reshape(3, 3)
+        out = xp.asarray(matrix) @ xp.concatenate([a.ravel() for a in pair])
+        blocks = out[:12].reshape(2, 3, 2), out[12:].reshape(3, 3)
+        if placement.host:
+            blocks = tuple(np.asfortranarray(a) for a in blocks)
+            for block in blocks:
+                block.setflags(write=False)
+        return blocks
 
-    result = _coupled_host_linear.solve_host_normal(
-        normal, rhs, inverse, max_iters=budget, rtol=1e-5
+    result = solve_coupled_normal(
+        normal,
+        tuple(xp.asarray(a) for a in rhs),
+        tuple(xp.asarray(a) for a in inverse),
+        max_iters=budget,
+        rtol=1e-5,
+        placement=placement,
     )
     x = np.concatenate([a.ravel() for a in result.increment])
     np.testing.assert_array_equal(saved, b)

@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Literal, NamedTuple
 import jax
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec
+from jax.typing import ArrayLike
 
 from tomojax.alignment._geometry.parametrizations import apply_pose_updates
 from tomojax.core.cone import cone_backproject, cone_project, frame_coefficients
@@ -25,13 +26,15 @@ from tomojax.core.devices import VIEWS, ViewSplit
 from tomojax.core.joseph import (
     forward_project_planes,
     plane_coefficients,
+    project_ones_native,
     sum_backproject_planes,
 )
 from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
 from tomojax.core.trilinear import exact_adjoint, exact_forward
 from tomojax.recon.fista_tv_core import FistaCoreConfig, regulariser_value_arrays
 
-from ._coupled_linear import CoupledLinearResult, solve_coupled_normal
+from ._coupled_linear import CoupledLinearResult, solve_coupled_normal, solve_schur_normal
+from ._coupled_vectors import BlockVector
 from ._pose_block import pose_block_solver
 from ._pose_jacobian import PoseJacobianOptions, pose_prediction_and_columns
 
@@ -118,7 +121,7 @@ def pose_smoothness(p: jax.Array, *, weights: jax.Array) -> jax.Array:
     return jnp.sum(jnp.square(d2 * weights))
 
 
-def _dot(a: jax.Array, b: jax.Array) -> jax.Array:
+def _dot(a: ArrayLike, b: ArrayLike) -> jax.Array:
     return jnp.vdot(a, b, precision=jax.lax.Precision.HIGHEST).real
 
 
@@ -163,7 +166,7 @@ class _Shares:
         padded = jnp.pad(rows, ((0, self.split.total - self.split.n), (0, 0)))
         return jax.lax.dynamic_slice_in_dim(padded, jax.lax.axis_index(VIEWS) * self.n, self.n)
 
-    def dot(self, a: tuple[jax.Array, jax.Array], b: tuple[jax.Array, jax.Array]) -> jax.Array:
+    def dot(self, a: BlockVector, b: BlockVector) -> jax.Array:
         """The inner product of (volume, pose rows) pairs, each device holding its views' rows."""
         return _dot(a[0], b[0]) + self.across(_dot(a[1], b[1]))
 
@@ -324,6 +327,46 @@ def physical_projectors(
     return forward, adjoint
 
 
+def _unit_prediction(spec, arrays, poses, forward, shape):
+    """Use implicit unit support when its exact native operator is available."""
+    if (
+        spec.backend == "pallas"
+        and spec.jacobian.integrator == "joseph"
+        and not spec.jacobian.cone_beam
+        and arrays.mask.ndim == 0
+    ):
+        coefficients = plane_coefficients(poses, spec.grid, spec.detector, arrays.det_grid)
+        prediction = project_ones_native(coefficients, spec.grid, spec.detector)
+        if prediction is not None:
+            return prediction
+    return forward(poses, jnp.ones(shape, jnp.float32), arrays.frames)
+
+
+def positive_sensitivity(spec, arrays, poses, masked, shape, valid, out):
+    """Accumulate |A|^T W^2 |A|1, without filtering the positive metric."""
+    forward, adjoint = physical_projectors(spec, arrays, masked, absolute_weights=True)
+    y = _unit_prediction(spec, arrays, poses, forward, shape)
+    y = y * arrays.weights**2 * valid[:, None, None]
+    return adjoint(poses, y, arrays.frames, out)
+
+
+@partial(jax.jit, static_argnames=("nonnegative",))
+def free_volume_support(x, gradient, mask, *, nonnegative):
+    """KKT support: a zero voxel can move only if its gradient points inward."""
+    return ((x > 0) | (gradient < 0)) & (mask != 0) if nonnegative else mask != 0
+
+
+def volume_metric_inverse(bound, *, spec, array=jnp):
+    regularisation = 12 * spec.tv_weight / spec.huber_delta if spec.tv_weight else 0
+    return 1 / array.maximum(
+        bound + regularisation + spec.gn_volume_damping, spec.gn_volume_damping
+    )
+
+
+def pose_metric_inverse(diagonal, smoothness, damping):
+    return 1 / (diagonal + 12 * smoothness**2 + damping)
+
+
 def filtered_operators(spec, arrays, forward, adjoint, columns):
     if spec.refinement is None:
         return arrays, forward, adjoint, columns
@@ -427,7 +470,6 @@ def _build_program(
         )
 
     raw_forward, raw_adjoint = physical_projectors(spec, arrays, masked)
-    bound_forward, bound_adjoint = physical_projectors(spec, arrays, masked, absolute_weights=True)
     arrays, forward, adjoint, predict_columns = filtered_operators(
         spec, arrays, raw_forward, raw_adjoint, predict_columns
     )
@@ -514,9 +556,9 @@ def _build_program(
             pose_adjoint,
         )
 
-    dot, block_dot = _dot, shares.dot
+    block_dot = shares.dot
 
-    def solve_pose_eliminated(ops, p, x, free, rhs, normal, reg_hessian, volume_inverse):
+    def solve_pose_eliminated(ops, p, free, rhs, normal, reg_hessian, volume_inverse):
         """Eliminate the per-view pose blocks exactly and solve for the volume by CG."""
         gram = _pose_gram(ops, n_views, p.shape[1], indices)
         solve_pose = shares.pose_solver(
@@ -524,14 +566,14 @@ def _build_program(
             arrays.smoothness * active,
             has_smoothness=spec.has_smoothness,
         )
-        dp_rhs = solve_pose(rhs[1])
 
-        def pose_only(start, valid, out):
-            return ops.transpose(
-                start, valid, ops.pose_forward(start, ops.batch_columns(start), dp_rhs), out
-            )
+        def cross(dp):
+            def body(start, valid, out):
+                return ops.transpose(
+                    start, valid, ops.pose_forward(start, ops.batch_columns(start), dp), out
+                )
 
-        reduced_rhs = rhs[0] - free * across(over_batches(pose_only, volume_zeros))
+            return across(over_batches(body, volume_zeros))
 
         def pose_rows(dx):  # C^T W A dx, and the batches' W A dx
             def body(start, _valid, carry):
@@ -558,30 +600,21 @@ def _build_program(
                 increment[1],
             )
 
-        full_squared = block_dot(rhs, rhs)
-        # After exact pose back-substitution, the full residual is the
-        # volume Schur residual. Use the same absolute stopping threshold
-        # as stacked CG rather than rescaling it by the eliminated RHS.
-        reduced_rtol = cfg.gn_joint_rtol * jnp.sqrt(
-            full_squared / jnp.maximum(dot(reduced_rhs, reduced_rhs), 1e-30)
-        )
-        empty = jnp.zeros((0,), x.dtype)
-        reduced = solve_coupled_normal(
+        return solve_schur_normal(
+            normal,
             reduced_normal,
-            (reduced_rhs, empty),
-            (volume_inverse, empty),
+            rhs,
+            volume_inverse,
+            cross,
+            lambda dx: pose_rows(dx)[0],
+            solve_pose,
+            free=free,
+            movable=movable,
             max_iters=cfg.gn_joint_iterations,
-            rtol=reduced_rtol,
+            rtol=cfg.gn_joint_rtol,
             dot=block_dot,
             volume_ramp=None if spec.refinement is None else spec.refinement.ramp_damping,
         )
-        dx = free * reduced.increment[0]
-        dp = movable * solve_pose(rhs[1] - pose_rows(dx)[0])
-        actual = normal((dx, dp))
-        residual = (rhs[0] - actual[0], rhs[1] - actual[1])
-        relative = jnp.sqrt(block_dot(residual, residual) / jnp.maximum(full_squared, 1e-30))
-        finite = reduced.finite & jnp.isfinite(relative)
-        return CoupledLinearResult((dx, dp), reduced.iterations, relative, finite)
 
     def update(p, x):
         ops = batch_ops(poses(p), p, x)
@@ -608,12 +641,7 @@ def _build_program(
         gx, gp = over_batches(gradient_body, (volume_zeros, jnp.zeros_like(p)))
         gx = across(gx) + reg_grad
         gp = (gp + smooth_grad) * movable
-        # KKT-active zero voxels cannot move below zero. Release them when
-        # the local gradient points into the feasible region.
-        if cfg.nonnegative:
-            free = ((x > 0) | (gx < 0)).astype(x.dtype) * (mask != 0)
-        else:  # every voxel free: a scalar, not a volume of ones
-            free = jnp.float32(1) if unmasked else (mask != 0).astype(x.dtype)
+        free = free_volume_support(x, gx, mask, nonnegative=cfg.nonnegative)
 
         def normal(increment):  # y = W A dx + C dp, then (A^T W y, C^T y), batch by batch
             dx, dp = free * increment[0], movable * increment[1]
@@ -631,22 +659,16 @@ def _build_program(
             )
 
         def ones_body(start, valid, out):
-            # Neither filtering nor signed cubic weights preserve positive
-            # normal row sums. |A|^T W^2 |A| 1 supplies a positive raw scale;
-            # the physical normal and its exact transpose remain unchanged.
-            t = take(poses(p), start)
-            y = bound_forward(t, jnp.ones_like(x), batch_frames(start))
-            y = y * batch_weights(start) ** 2 * valid[:, None, None]
-            return out + bound_adjoint(t, y, batch_frames(start))
+            batch = arrays._replace(weights=batch_weights(start), frames=batch_frames(start))
+            return positive_sensitivity(
+                spec, batch, take(poses(p), start), masked, x.shape, valid, out
+            )
 
         row_bound = across(over_batches(ones_body, volume_zeros))
-        reg_bound = 12 * cfg.tv_weight / cfg.huber_delta if cfg.tv_weight else 0
-        volume_inverse = 1 / jnp.maximum(
-            row_bound + reg_bound + cfg.gn_volume_damping, cfg.gn_volume_damping
-        )
-        rhs = (-free * gx, -gp)
+        volume_inverse = volume_metric_inverse(row_bound, spec=spec)
+        rhs = (-(free * gx), -gp)
         if cfg.gn_joint_solver == "pose_eliminated":
-            return solve_pose_eliminated(ops, p, x, free, rhs, normal, reg_hessian, volume_inverse)
+            return solve_pose_eliminated(ops, p, free, rhs, normal, reg_hessian, volume_inverse)
         pose_diagonal = (
             jnp.sum(ops.cached**2, axis=2)
             if ops.cached is not None
@@ -655,7 +677,7 @@ def _build_program(
             )
         )
         pose_diagonal = jnp.zeros_like(p).at[:, indices].set(pose_diagonal)
-        pose_inverse = 1 / (pose_diagonal + 12 * arrays.smoothness**2 + cfg.gn_damping)
+        pose_inverse = pose_metric_inverse(pose_diagonal, arrays.smoothness, cfg.gn_damping)
         return solve_coupled_normal(
             normal,
             rhs,

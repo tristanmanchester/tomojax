@@ -18,18 +18,21 @@ import numpy as np
 
 from tomojax.alignment._geometry.parametrizations import apply_pose_updates
 from tomojax.backends.host_stream import host_source, read_views
-from tomojax.core.joseph import plane_coefficients, project_ones_native
 
-from ._coupled_host_linear import HostBlock, host_dot, solve_host_normal
-from ._coupled_linear import CoupledLinearResult
+from ._coupled_linear import CoupledLinearResult, solve_coupled_normal, solve_schur_normal
 from ._coupled_program import (
     CoupledArrays,
     CoupledSpec,
     filtered_operators,
+    free_volume_support,
     physical_projectors,
+    pose_metric_inverse,
     pose_smoothness,
+    positive_sensitivity,
+    volume_metric_inverse,
     volume_regularisation,
 )
+from ._coupled_vectors import HOST, BlockVector
 from ._pose_block import pose_block_solver
 from ._pose_jacobian import pose_prediction_and_columns
 
@@ -73,29 +76,6 @@ def _data_increment(mode, t, dx, dp, gram, batch, forward, pose_forward, pose_ad
     if mode == "normal":
         y += pose_forward(dp)
     return y
-
-
-def _unit_prediction(spec, arrays, poses, forward, shape):
-    """Use implicit unit support when its exact native operator is available."""
-    if (
-        spec.backend == "pallas"
-        and spec.jacobian.integrator == "joseph"
-        and not spec.jacobian.cone_beam
-        and arrays.mask.ndim == 0
-    ):
-        coefficients = plane_coefficients(poses, spec.grid, spec.detector, arrays.det_grid)
-        prediction = project_ones_native(coefficients, spec.grid, spec.detector)
-        if prediction is not None:
-            return prediction
-    return forward(poses, jnp.ones(shape, jnp.float32), arrays.frames)
-
-
-def _sensitivity(spec, arrays, poses, masked, shape, valid, out):
-    """Accumulate |A|^T W^2 |A|1, without filtering the positive metric."""
-    forward, adjoint = physical_projectors(spec, arrays, masked, absolute_weights=True)
-    y = _unit_prediction(spec, arrays, poses, forward, shape)
-    y = y * arrays.weights**2 * valid[:, None, None]
-    return adjoint(poses, y, arrays.frames, out)
 
 
 @partial(jax.jit, static_argnames=("spec", "mode", "weighted", "batch_size"))
@@ -147,7 +127,8 @@ def _pass(
         t, q = take(poses, start), take(p, start)
         ax, rows, blocks, loss = carry
         if mode == "bound":
-            return _sensitivity(spec, batch, t, masked, shape, valid, ax), rows, blocks, loss
+            ax = positive_sensitivity(spec, batch, t, masked, shape, valid, ax)
+            return ax, rows, blocks, loss
         if mode == "loss":
             residual = weights * (forward(t, x, batch.frames) - batch.projections)
             loss += 0.5 * jnp.sum(residual**2 * valid[:, None, None])
@@ -209,11 +190,6 @@ def _finish_product(ax, dx, free, damping, regularisation):
     return free * (ax + damping * dx + regularisation)
 
 
-@jax.jit
-def _free_voxels(x, gradient):
-    return (x > 0) | (gradient < 0)
-
-
 class _HostSystem:
     """Own the resident image and tiny pose factorisation of one linear update."""
 
@@ -233,15 +209,15 @@ class _HostSystem:
         active = np.asarray(arrays.active)
         counts = 1 if arrays.counts is None else np.asarray(arrays.counts)[:, None]
         self.movable = counts * active
-        self.free = (
-            np.array(_free_voxels(x, jax.device_put(gx)), order="C")
-            if spec.nonnegative
-            else np.bool_(True)
+        device_gradient = jax.device_put(gx) if spec.nonnegative else jnp.float32(0)
+        self.free = np.array(
+            free_volume_support(x, device_gradient, arrays.mask, nonnegative=spec.nonnegative),
+            order="C",
         )
-        self.free = self.free & (np.asarray(arrays.mask) != 0)
         np.multiply(gx, self.free, out=gx)
         np.negative(gx, out=gx)
         self.rhs = (gx, -(gp + np.asarray(sg)) * self.movable)
+        self.pose_diagonal = np.diagonal(gram, axis1=1, axis2=2)
         self.gram = jnp.asarray(gram) + spec.gn_damping * jnp.eye(p.shape[1], dtype=p.dtype)
         self.solve_pose = jax.jit(
             pose_block_solver(
@@ -251,14 +227,7 @@ class _HostSystem:
             )
         )
         bound, _, _, _ = self.run("bound")
-        reg_bound = 12 * spec.tv_weight / spec.huber_delta if spec.tv_weight else 0
-        for start in range(0, bound.shape[0], 8):
-            chunk = bound[start : start + 8]
-            np.maximum(
-                chunk + reg_bound + spec.gn_volume_damping, spec.gn_volume_damping, out=chunk
-            )
-            np.reciprocal(chunk, out=chunk)
-        self.inverse = bound
+        self.inverse = HOST.map_owned(bound, partial(volume_metric_inverse, spec=spec, array=np))
 
     def run(self, mode, dx=None, dp=None):
         # Explicit transfer avoids a staged identity and its second full-volume
@@ -297,7 +266,7 @@ class _HostSystem:
             ax = np.array(results[0], order="C")
         return ax, np.asarray(results[1]), np.asarray(results[2]), float(results[3])
 
-    def normal(self, pair: HostBlock) -> HostBlock:
+    def normal(self, pair: BlockVector) -> BlockVector:
         dx = pair[0]
         dp = pair[1] * self.movable
         ax, ap, _, _ = self.run("normal", dx, dp)
@@ -306,7 +275,7 @@ class _HostSystem:
         ) * self.movable
         return ax, ap
 
-    def schur(self, pair: HostBlock) -> HostBlock:
+    def schur(self, pair: BlockVector) -> BlockVector:
         dx = pair[0]
         if self.spec.has_smoothness:
             _, rows, _, _ = self.run("rows", dx)
@@ -319,55 +288,37 @@ class _HostSystem:
     def solve(self):
         spec = self.spec
         if spec.gn_joint_solver == "stacked":
-            diagonal = np.asarray(jnp.diagonal(self.gram, axis1=1, axis2=2))
-            pose_inverse = 1 / (diagonal + 12 * np.asarray(self.arrays.smoothness) ** 2)
-            result = solve_host_normal(
+            pose_inverse = pose_metric_inverse(
+                self.pose_diagonal, np.asarray(self.arrays.smoothness), spec.gn_damping
+            )
+            result = solve_coupled_normal(
                 self.normal,
                 self.rhs,
                 (self.inverse, pose_inverse),
                 max_iters=spec.gn_joint_iterations,
+                placement=HOST,
                 rtol=spec.gn_joint_rtol,
             )
-            return CoupledLinearResult(
-                (jax.device_put(result.increment[0]), jnp.asarray(result.increment[1])),
-                jnp.int32(result.iterations),
-                jnp.float32(result.relative_residual),
-                jnp.bool_(result.finite),
+        else:
+            result = solve_schur_normal(
+                self.normal,
+                self.schur,
+                self.rhs,
+                self.inverse,
+                lambda dp: self.run("cross", dp=dp)[0],
+                lambda dx: self.run("rows", dx)[1],
+                lambda dp: np.asarray(self.solve_pose(jnp.asarray(dp))),
+                free=self.free,
+                movable=self.movable,
+                placement=HOST,
+                max_iters=spec.gn_joint_iterations,
+                rtol=spec.gn_joint_rtol,
             )
-        dp_rhs = np.asarray(self.solve_pose(jnp.asarray(self.rhs[1])))
-        cross, _, _, _ = self.run("cross", dp=dp_rhs)
-        # Initialisation products are owned host arrays: reuse this one rather
-        # than retaining another full-volume reduced RHS and expression scratch.
-        np.multiply(cross, self.free, out=cross)
-        np.subtract(self.rhs[0], cross, out=cross)
-        reduced_rhs = cross
-        squared = host_dot(self.rhs, self.rhs)
-        reduced_squared = host_dot((reduced_rhs, self.empty), (reduced_rhs, self.empty))
-        result = solve_host_normal(
-            self.schur,
-            (reduced_rhs, self.empty),
-            (self.inverse, self.empty),
-            max_iters=spec.gn_joint_iterations,
-            rtol=spec.gn_joint_rtol * np.sqrt(squared / max(reduced_squared, 1e-30)),
-        )
-        dx = result.increment[0]
-        np.multiply(dx, self.free, out=dx)
-        _, rows, _, _ = self.run("rows", dx)
-        dp = self.movable * np.asarray(self.solve_pose(jnp.asarray(self.rhs[1] - rows)))
-        actual = self.normal((dx, dp))
-        residual_squared = 0.0
-        for original, projected in zip(self.rhs, actual, strict=True):
-            for start in range(0, original.shape[0], 8):
-                difference = (original[start : start + 8] - projected[start : start + 8]).ravel()
-                residual_squared += float(
-                    np.einsum("i,i->", difference, difference, dtype=np.float64)
-                )
-        relative = np.sqrt(residual_squared / max(squared, 1e-30))
         return CoupledLinearResult(
-            (jax.device_put(dx), jnp.asarray(dp)),
+            (jax.device_put(result.increment[0]), jnp.asarray(result.increment[1])),
             jnp.int32(result.iterations),
-            jnp.float32(relative),
-            jnp.bool_(result.finite and np.isfinite(relative)),
+            jnp.float32(result.relative_residual),
+            jnp.bool_(result.finite),
         )
 
 
