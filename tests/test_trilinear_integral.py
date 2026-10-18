@@ -259,7 +259,8 @@ def test_public_exact_alignment_scores_its_actual_operator_and_resumes(problem, 
 
 @pytest.mark.numerical
 @pytest.mark.parametrize("axis", [0, 2])
-def test_cardinal_right_cell_derivative(axis):
+@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+def test_cardinal_right_cell_derivative(axis, backend):
     g = Grid(3, 3, 3, 0.5, 1.0, 2.0)
     d = Detector(3, 3, 0.5, 2.0)
     x = jnp.arange(27, dtype=jnp.float32).reshape(3, 3, 3) / 10
@@ -273,7 +274,7 @@ def test_cardinal_right_cell_derivative(axis):
     np.testing.assert_allclose(jac, expected, rtol=2e-6, atol=2e-6)
     directions = jnp.zeros((1, 5, 4, 4), jnp.float32).at[:, 0].set(dt)
     _, grad, hess, _ = exact_pose_normal_equations(
-        t, directions, g, d, x, jnp.zeros_like(y), jnp.ones_like(y)
+        t, directions, g, d, x, jnp.zeros_like(y), jnp.ones_like(y), backend=backend
     )
     np.testing.assert_allclose(grad[0, 0], jnp.sum(y * expected), rtol=2e-6, atol=2e-6)
     np.testing.assert_allclose(hess[0, 0, 0], jnp.sum(expected**2), rtol=2e-6, atol=2e-6)

@@ -72,7 +72,7 @@ def exact_forward(
     _validate_backend(backend, detector, det_grid)
     poses, volume = _real_fp32(poses), _real_fp32(volume)
     if backend == "pallas":
-        from tomojax.core.pallas._pallas_trilinear import coefficients, run
+        from tomojax.core._trilinear_cuda import coefficients, run
 
         return run(coefficients(poses, grid, detector), volume, grid, detector)
     return jax.lax.map(
@@ -97,7 +97,7 @@ def exact_adjoint(
     _validate_backend(backend, detector, det_grid)
     poses, images = _real_fp32(poses), _real_fp32(images)
     if backend == "pallas":
-        from tomojax.core.pallas._pallas_trilinear import coefficients, run
+        from tomojax.core._trilinear_cuda import coefficients, run
 
         return run(coefficients(poses, grid, detector), images, grid, detector, mode="adjoint")
     initial = jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
@@ -150,7 +150,7 @@ def exact_pose_normal_equations(
         _real_fp32(x) for x in (poses, volume, targets, weights, pose_directions)
     )
     if backend == "pallas":
-        from tomojax.core.pallas._pallas_trilinear import coefficients, normal_equations
+        from tomojax.core._trilinear_cuda import coefficients, normal_equations
 
         def coefficients_jvp(direction: jax.Array) -> jax.Array:
             return jax.jvp(lambda t: coefficients(t, grid, detector), (poses,), (direction,))[1]
