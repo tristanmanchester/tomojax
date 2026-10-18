@@ -1,11 +1,13 @@
 """Compressed detector crops read only their intersecting storage segments."""
 
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import pytest
 import tifffile
 
+import tomojax as tj
 from tomojax.io.api import read_tiff_frames
 
 
@@ -33,3 +35,24 @@ def test_compressed_crop_decodes_only_intersecting_segments(tmp_path, monkeypatc
     if flipped:
         expected = [1, 2, 3] if tiled else [0]
     assert calls == [expected, expected]
+
+
+def test_folder_sidecar_discovery_does_not_probe_each_tiff(tmp_path, monkeypatch):
+    values = np.arange(2 * 5 * 7, dtype=np.uint16).reshape(2, 5, 7)
+    for i, view in enumerate(values):
+        tifffile.imwrite(tmp_path / f"view{i}.tif", view)
+    original = Path.open
+
+    def sidecar_only(path, *args, **kwargs):
+        assert path.suffix != ".tif", "TIFF pixels must not be probed as vendor text"
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", sidecar_only)
+    frames = tj.load_frames(
+        tmp_path,
+        angles=[0, 180],
+        detector=tj.Detector(7, 5, 1, 1),
+        white_level=100,
+        darks=0,
+    )
+    np.testing.assert_array_equal(np.asarray(frames.counts), values)

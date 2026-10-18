@@ -14,6 +14,7 @@ import numpy as np
 from tomojax.core.geometry.base import Detector, Grid
 from tomojax.core.geometry.cone import ConeBeam
 
+from ._acquisition import metadata_candidates
 from ._datasets import ProjectionDataset
 from ._tiff import tiff_files
 
@@ -335,7 +336,7 @@ def read_nikon(path: Path, *, data_path: str | None = None) -> RawAcquisition | 
             header = source.read(4096).decode("utf-8-sig", errors="replace")
         return header.lstrip().lower().startswith("[xtekct]")
 
-    candidates = [p for p in path.iterdir() if p.is_file()] if path.is_dir() else [path]
+    candidates = metadata_candidates(path)
     found = [p for p in candidates if matches(p)]
     if not found:
         return None

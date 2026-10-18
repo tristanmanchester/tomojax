@@ -9,7 +9,7 @@ import numpy as np
 
 from tomojax.geometry import ConeBeam, Grid
 
-from ._acquisition import RawAcquisition
+from ._acquisition import RawAcquisition, metadata_candidates
 from ._datasets import ProjectionDataset
 from ._tiff import TiffFrames, tiff_files
 
@@ -27,7 +27,7 @@ def _parameters(path: Path) -> configparser.ConfigParser | None:
 
 
 def _acquisition_log(path: Path) -> tuple[Path, configparser.ConfigParser] | None:
-    candidates = sorted(p for p in path.iterdir() if p.is_file()) if path.is_dir() else [path]
+    candidates = sorted(metadata_candidates(path))
     found = [(p, params) for p in candidates if (params := _parameters(p)) is not None]
     if not found:
         return None

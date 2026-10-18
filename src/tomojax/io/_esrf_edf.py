@@ -9,6 +9,7 @@ from xml.etree import ElementTree
 
 import numpy as np
 
+from ._acquisition import metadata_candidates
 from ._datasets import ProjectionDataset
 from ._edf import EdfFrames
 
@@ -133,7 +134,7 @@ def _acquisition(owner: Path, fields: dict[str, str]) -> RawAcquisition:
 def read_edf_scan(path: Path) -> RawAcquisition | None:
     """Recognize SPEC metadata by content; EDF image names only locate its frames."""
     if path.is_dir():
-        candidates = [(f, m) for f in path.iterdir() if (m := _metadata(f)) is not None]
+        candidates = [(f, m) for f in metadata_candidates(path) if (m := _metadata(f)) is not None]
         # SPEC .info overrides the corresponding acquisition XML, as in edf2nx.
         info_stems = {p.stem for p, _ in candidates if p.suffix == ".info"}
         candidates = [

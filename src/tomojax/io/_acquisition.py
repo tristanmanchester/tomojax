@@ -33,6 +33,24 @@ class RawAcquisition:
     view_positions: np.ndarray | None = None
 
 
+def metadata_candidates(path: Path) -> list[Path]:
+    """Directory sidecars, without reopening known TIFF image entries.
+
+    A directly supplied file is always content-probed, regardless of suffix.
+    Folder image names identify pixel storage; other names remain eligible for
+    content discovery, including renamed parameter files.
+    """
+    if not path.is_dir():
+        return [path]
+    from ._tiff import TIFF_SUFFIXES
+
+    return [
+        file
+        for file in path.iterdir()
+        if file.suffix.lower() not in TIFF_SUFFIXES and file.is_file()
+    ]
+
+
 def read_acquisition(
     path: str | PathLike[str],
     *,
