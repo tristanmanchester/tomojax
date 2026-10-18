@@ -16,8 +16,15 @@ from scipy.ndimage import gaussian_filter
 from tomojax._region import estimate_region
 from tomojax._scan import describe, record_of
 from tomojax.alignment import alignment_plan
-from tomojax.alignment.api import AlignConfig, AlignmentSchedule, AlignmentStage
-from tomojax.geometry import RotationAxisGeometry
+from tomojax.alignment.api import (
+    AlignConfig,
+    AlignmentSchedule,
+    AlignmentStage,
+    align as align_arrays,
+)
+from tomojax.core.geometry.base import grid_volume_origin
+from tomojax.core.multires import upsample_volume
+from tomojax.geometry import Grid, RotationAxisGeometry
 from tomojax.recon import FistaConfig, project
 
 if TYPE_CHECKING:
@@ -211,26 +218,97 @@ def _select_motion(work, fit, validation, region_info, final_config, align, reco
     }
 
 
+def _native_grid(coarse: Grid, native: Grid) -> Grid:
+    """Refine a support box to native pitch, preserving both physical faces."""
+    extent = np.array((coarse.nx * coarse.vx, coarse.ny * coarse.vy, coarse.nz * coarse.vz))
+    shape = np.ceil(extent / (native.vx, native.vy, native.vz)).astype(int)
+    pitch = extent / shape
+    origin = (
+        np.asarray(grid_volume_origin(coarse)) + (pitch - (coarse.vx, coarse.vy, coarse.vz)) / 2
+    )
+    return Grid(
+        *map(int, shape), *map(float, pitch), vol_origin=tuple(origin), vol_center=coarse.vol_center
+    )
+
+
+def _native_refinement(native: Scan, working_detector, coarse):
+    """Continue the selected image/pose estimate on every original detector sample.
+
+    Region selection owns the physical support; native sampling restores the
+    input voxel pitch over that same box. The physical calibration delta
+    is lifted separately so dropped edge pixels cannot move the native centre.
+    """
+    calibrated = coarse.scan.with_poses(None)
+    detector = replace(
+        native.detector,
+        center=tuple(
+            a + b - c
+            for a, b, c in zip(
+                native.detector.center,
+                calibrated.detector.center,
+                working_detector.center,
+                strict=True,
+            )
+        ),
+    )
+    grid = _native_grid(calibrated.grid, native.grid)
+    geometry = RotationAxisGeometry(
+        grid,
+        detector,
+        native.angles.tolist(),
+        np.asarray(calibrated.geometry.axis_unit_lab).tolist(),
+    )
+    scan = replace(native, geometry=geometry, source=calibrated.source)
+    config = replace(
+        alignment_plan("pose", scan.grid, geometry=geometry).config,
+        seed_translations=False,
+        outer_iterations=2,
+        gn_joint_iterations=20,
+    )
+    volume, poses, info = align_arrays(
+        geometry,
+        scan.grid,
+        detector,
+        cast("Any", scan.projections),
+        config=config,
+        init_x=upsample_volume(coarse.volume, 1, (grid.nx, grid.ny, grid.nz)),
+        init_pose_params=coarse.scan.poses,
+    )
+    return replace(
+        coarse,
+        volume=volume,
+        scan=scan.with_poses(np.asarray(poses)),
+        method="joint_volume_pose",
+        info={**coarse.info, "native_alignment": dict(info)},
+    )
+
+
+def _previous_alignment_status(scan: Scan) -> dict[str, object]:
+    """Retain earlier support/setup limitations when reusing calibrated poses."""
+    status, reasons = "ok", []
+    if scan.source is not None:
+        for field in ("alignment_info", "reconstruction_info"):
+            previous = scan.source.geometry_metadata.get(field, {}).get("automatic", {})
+            if previous.get("status") == "limited":
+                status = "limited"
+                reasons.extend(previous.get("reasons", []))
+    return {"status": status, "reasons": list(dict.fromkeys(reasons))}
+
+
 def reconstruct_laminography(scan: Scan, *, align: Callable, reconstruct: Callable):
     """Select setup, support and motion internally, then reconstruct all input views.
 
     Previously posed scans retain their geometry and use only the final solver.
-    Automatic unposed scans use at most 320 detector pixels across; the returned
-    scan and diagnostic record make that working resolution explicit.
+    Setup and support selection use at most 320 detector pixels across. The
+    selected image and poses then initialize a joint native-detector refinement;
+    native voxel pitch is restored over the region estimator's physical support.
     """
     started = time.perf_counter()
     posed = scan.poses is not None
+    native, working_detector, factor = scan, scan.detector, 1
     automatic: dict[str, object] = {"method": "fista", "status": "ok", "reasons": []}
     if posed:
-        automatic["geometry"] = "preserved_pose_corrections"
-        reasons = []
-        if scan.source is not None:
-            for field in ("alignment_info", "reconstruction_info"):
-                previous = scan.source.geometry_metadata.get(field, {}).get("automatic", {})
-                if previous.get("status") == "limited":
-                    automatic["status"] = "limited"
-                    reasons.extend(previous.get("reasons", []))
-        automatic["reasons"] = list(dict.fromkeys(reasons))
+        automatic.update(_previous_alignment_status(scan), geometry="preserved_pose_corrections")
     elif float(cast("float", describe(scan.geometry)[1].get("detector_roll_deg", 0))) != 0:
         automatic.update(
             status="limited",
@@ -241,6 +319,7 @@ def reconstruct_laminography(scan: Scan, *, align: Callable, reconstruct: Callab
         while max(scan.detector.nu, scan.detector.nv) // factor > 320:
             factor *= 2
         scan = scan.binned(factor) if factor > 1 else scan
+        working_detector = scan.detector
         n = len(scan.angles)
         keep = np.linspace(0, n - 1, min(800, n)).astype(int)
         validation = keep[np.arange(len(keep)) % 5 == 2]
@@ -274,6 +353,13 @@ def reconstruct_laminography(scan: Scan, *, align: Callable, reconstruct: Callab
     automatic["preparation_seconds"] = time.perf_counter() - started
     automatic["warning"] = "Held projection consistency is not physical pose or support truth."
     result = reconstruct(scan, "fista", config=_final_config(scan))
+    coarse_pitch = (result.scan.grid.vx, result.scan.grid.vy, result.scan.grid.vz)
+    native_pitch = (native.grid.vx, native.grid.vy, native.grid.vz)
+    if not posed and (
+        factor > 1 or any(a > b for a, b in zip(coarse_pitch, native_pitch, strict=True))
+    ):
+        result = _native_refinement(native, working_detector, result)
+        automatic.update(method="joint_volume_pose", detector_binning=1, setup_binning=factor)
     if not posed:
         # Keep the bounded outcome on the scan too, so direct reuse need not
         # save/reload the Alignment to retain its limitations.

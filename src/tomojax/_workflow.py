@@ -332,7 +332,8 @@ def reconstruct(
     scans, the guarded laminography workflow for oblique scans, matched CGLS
     for segmented cone geometry, and FBP/FDK otherwise.
     An explicitly unrecorded axial centre may be inferred; oblique auto
-    may infer setup, support and a binned grid. The scan and ``info["automatic"]``
+    may infer setup and support on a coarse grid before native refinement.
+    The scan and ``info["automatic"]``
     record those choices and limitations. Explicit methods bypass this policy.
 
     ``fbp``
