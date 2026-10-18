@@ -8,7 +8,7 @@ from jax.experimental.buffer_callback import buffer_callback
 import jax.numpy as jnp
 import numpy as np
 
-from ._cuda_joseph import xla_stream
+from .cuda import initialize_buffer, launch_kernel
 from .geometry.base import grid_volume_origin
 
 
@@ -36,26 +36,24 @@ def coefficients(poses, grid, detector):
 
 
 @cache
-def _module(mode):
-    import cupy as cp
-
+def _source(mode):
     source = Path(__file__).with_name("_trilinear_kernels.cu").read_text()
-    return cp.RawModule(code=f"#define MODE {mode}\n" + source, options=("--fmad=false",))
+    return f"#define MODE {mode}\n" + source
 
 
 def _launch(context, out, cf, data, *, shape, detector, mode):
-    import cupy as cp
-
     nv, nu = detector
-    with xla_stream(context, out):
-        output, data, coeff = cp.asarray(out), cp.asarray(data), cp.asarray(cf)
-        if mode == 1:
-            output.fill(0)
-        _module(mode).get_function("integrate")(
-            (cf.shape[0] * -(-nu * nv // 128),),
-            (128,),
-            (coeff, data, data, output, *map(np.int32, (*shape, nu, nv, cf.shape[0]))),
-        )
+    if mode == 1:
+        initialize_buffer(out, stream=context.stream)
+    launch_kernel(
+        _source(mode),
+        "integrate",
+        options=("--fmad=false",),
+        stream=context.stream,
+        grid=(cf.shape[0] * -(-nu * nv // 128),),
+        block=(128,),
+        arguments=(cf, data, data, out, *map(np.int32, (*shape, nu, nv, cf.shape[0]))),
+    )
 
 
 def run(cf, data, grid, detector, *, mode="forward"):
@@ -74,21 +72,30 @@ def run(cf, data, grid, detector, *, mode="forward"):
         partial(_launch, shape=shape, detector=(detector.nv, detector.nu), mode=operation),
         jax.ShapeDtypeStruct(output_shape, jnp.float32),
         vmap_method="sequential",
+        command_buffer_compatible=True,
     )(cf, data)
 
 
 def _launch_normals(context, outputs, cf, volume, directions, targets, weights, *, shape, detector):
-    import cupy as cp
-
     nv, nu = detector
     tiles = -(-nu * nv // 128)
-    with xla_stream(context, outputs[0]):
-        _module(3).get_function("normals")(
-            (cf.shape[0] * tiles,),
-            (128,),
-            tuple(cp.asarray(x) for x in (cf, volume, directions, targets, weights, *outputs))
-            + tuple(map(np.int32, (*shape, nu, nv, tiles, cf.shape[0]))),
-        )
+    launch_kernel(
+        _source(3),
+        "normals",
+        options=("--fmad=false",),
+        stream=context.stream,
+        grid=(cf.shape[0] * tiles,),
+        block=(128,),
+        arguments=(
+            cf,
+            volume,
+            directions,
+            targets,
+            weights,
+            *outputs,
+            *map(np.int32, (*shape, nu, nv, tiles, cf.shape[0])),
+        ),
+    )
 
 
 def normal_equations(cf, volume, directions, targets, weights, grid, detector):
@@ -104,6 +111,7 @@ def normal_equations(cf, volume, directions, targets, weights, grid, detector):
             jax.ShapeDtypeStruct(targets.shape, jnp.float32),
         ),
         vmap_method="sequential",
+        command_buffer_compatible=True,
     )(cf, volume, directions, targets, weights)
     totals = jnp.sum(partials, axis=1)
     rows, cols = jnp.triu_indices(5)

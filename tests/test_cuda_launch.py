@@ -74,3 +74,26 @@ def test_persistent_binary_is_reused_and_source_changes_recompile(tmp_path, monk
         result = _operation(increment)(jnp.zeros(129, jnp.float32))
         np.testing.assert_array_equal(result, np.full(129, 20 * increment))
         assert len(calls) == expected_compiles
+
+
+def test_initialization_copies_or_zeros_without_mutating_live_inputs():
+    if jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    for zero in (False, True):
+        for alias in (False, True):
+
+            def launch(context, out, value, zero=zero):
+                cuda.initialize_buffer(out, stream=context.stream, source=None if zero else value)
+
+            operation = jax.jit(
+                buffer_callback(
+                    launch,
+                    jax.ShapeDtypeStruct((129,), jnp.float32),
+                    input_output_aliases={0: 0} if alias else {},
+                    command_buffer_compatible=True,
+                )
+            )
+            for value in (1, 3):
+                data = jnp.full(129, value, jnp.float32)
+                np.testing.assert_array_equal(operation(data), np.full(129, 0 if zero else value))
+                np.testing.assert_array_equal(data, np.full(129, value))

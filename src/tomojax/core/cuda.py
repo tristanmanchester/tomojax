@@ -12,6 +12,7 @@ import ctypes as C
 from functools import cache
 import hashlib
 from importlib.util import find_spec
+import math
 import os
 from pathlib import Path
 import tempfile
@@ -57,6 +58,8 @@ def _libraries() -> tuple[C.CDLL, C.CDLL]:
             C.c_void_p,
         ),
         "cuGetErrorString": (C.c_int, C.POINTER(C.c_char_p)),
+        "cuMemsetD8Async": (C.c_void_p, C.c_ubyte, C.c_size_t, C.c_void_p),
+        "cuMemcpyDtoDAsync_v2": (C.c_void_p, C.c_void_p, C.c_size_t, C.c_void_p),
     }
     for name, args in signatures.items():
         getattr(driver, name).argtypes = args
@@ -242,3 +245,29 @@ def launch_kernel(
         grid = (*grid, 1, 1)[:3]
         block = (*block, 1, 1)[:3]
         _check(_libraries()[0].cuLaunchKernel(func, *grid, *block, 0, int(stream), params, None))
+
+
+def initialize_buffer(buffer: _Buffer, *, stream: int, source: _Buffer | None = None) -> None:
+    """Initialize contiguous JAX-owned output storage on its execution stream.
+
+    Parameters
+    ----------
+    buffer : callback buffer
+        Output storage to initialize; no storage is allocated by this operation.
+    stream : int
+        CUDA stream handle from the callback context.
+    source : callback buffer or None, optional
+        Same-sized initializer to copy, unless JAX aliased its storage with the
+        output. None fills the output with zeros. The caller owns both buffers.
+    """
+    target = buffer.__cuda_array_interface__
+    address = target["data"][0]
+    size = math.prod(target["shape"]) * np.dtype(target["typestr"]).itemsize
+    with _current(stream):
+        driver, _ = _libraries()
+        if source is None:
+            _check(driver.cuMemsetD8Async(address, 0, size, int(stream)))
+        else:
+            initial = source.__cuda_array_interface__["data"][0]
+            if address != initial:
+                _check(driver.cuMemcpyDtoDAsync_v2(address, initial, size, int(stream)))

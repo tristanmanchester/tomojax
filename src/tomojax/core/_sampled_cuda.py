@@ -1,6 +1,8 @@
 """CUDA sampled-ray forward, transpose and fused weighted residual gradient."""
 
 from functools import cache, partial
+from importlib.metadata import version
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -9,16 +11,18 @@ from jax.experimental.buffer_callback import buffer_callback
 import jax.numpy as jnp
 import numpy as np
 
-from ._cuda_joseph import xla_stream
+from .cuda import initialize_buffer, launch_kernel
 
 
 @cache
-def _kernel(constants):
-    import cupy as cp
-
+def _source(constants):
     defines = "\n".join(f"#define {key} {value}" for key, value in constants)
     source = Path(__file__).with_name("_sampled_kernels.cu").read_text()
-    return cp.RawKernel(defines + "\n" + source, "integrate", options=("--fmad=false",))
+    # CUDA12 wheels carry the matching half/bfloat headers. Their version joins
+    # the source cache key so a header upgrade cannot reuse an old binary.
+    headers = files("nvidia.cuda_runtime") / "include"
+    release = version("nvidia-cuda-runtime-cu12")
+    return f"// CUDA runtime headers {release}\n{defines}\n{source}", str(headers)
 
 
 def _constants(params, dtype, mode, cached):
@@ -85,19 +89,28 @@ def _launch(
     tiles,
     mode,
 ):
-    import cupy as cp
-
     out, gradient = outputs if mode == 2 else (outputs, outputs)
-    with xla_stream(context, out):
-        if mode in (1, 2):
-            gradient, initial = cp.asarray(gradient), cp.asarray(initial)
-            if gradient.data.ptr != initial.data.ptr:
-                gradient[...] = initial
-        args = tuple(cp.asarray(x) for x in (poses, volume, targets, weights, out, gradient))
-        args += (np.int32(poses.shape[0]),)
-        if state:
-            args += tuple(cp.asarray(x) for x in state)
-        _kernel(constants)((poses.shape[0] * tiles,), (block,), args)
+    if mode in (1, 2):
+        initialize_buffer(gradient, stream=context.stream, source=initial)
+    source, headers = _source(constants)
+    launch_kernel(
+        source,
+        "integrate",
+        options=("--fmad=false", "-I" + headers),
+        stream=context.stream,
+        grid=(poses.shape[0] * tiles,),
+        block=(block,),
+        arguments=(
+            poses,
+            volume,
+            targets,
+            weights,
+            out,
+            gradient,
+            np.int32(poses.shape[0]),
+            *state,
+        ),
+    )
 
 
 def run(poses, volume, target=None, weights=None, initial=None, *, mode, params, state=()):
@@ -122,6 +135,7 @@ def run(poses, volume, target=None, weights=None, initial=None, *, mode, params,
         output,
         input_output_aliases=aliases,
         vmap_method="sequential",
+        command_buffer_compatible=True,
     )
     return call(
         poses,

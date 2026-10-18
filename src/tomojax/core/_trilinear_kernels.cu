@@ -1,6 +1,6 @@
 // Exact zero-extended trilinear ray integrals and their matched transpose.
 // Two Gauss nodes integrate the cubic density polynomial in each voxel cell.
-#include <math_constants.h>
+#define RAY_INFINITY (__int_as_float(0x7f800000))
 
 __device__ void ray_integral(const float* cf, const float* volume, const float* image,
     float* output, int view, int ray, int nx, int ny, int nz, int nu, int nv,
@@ -8,7 +8,7 @@ __device__ void ray_integral(const float* cf, const float* volume, const float* 
     int u = ray % nu, v = ray / nu;
     float q[3], d[3], safe[3], crossing[3], period[3];
     int shape[3] = {nx, ny, nz};
-    float entry = -CUDART_INF_F, end_ray = CUDART_INF_F;
+    float entry = -RAY_INFINITY, end_ray = RAY_INFINITY;
     #pragma unroll
     for (int a = 0; a < 3; ++a) {
         q[a] = (cf[a] + cf[3+a] * (float)u) + cf[6+a] * (float)v;
@@ -17,8 +17,8 @@ __device__ void ray_integral(const float* cf, const float* volume, const float* 
         safe[a] = moving ? d[a] : 1.f;
         float lo = (-1.f - q[a]) / safe[a], hi = ((float)shape[a] - q[a]) / safe[a];
         bool inside = q[a] >= -1.f && q[a] <= (float)shape[a];
-        entry = fmaxf(entry, moving ? fminf(lo,hi) : (inside ? -CUDART_INF_F : CUDART_INF_F));
-        end_ray = fminf(end_ray, moving ? fmaxf(lo,hi) : (inside ? CUDART_INF_F : -CUDART_INF_F));
+        entry = fmaxf(entry, moving ? fminf(lo,hi) : (inside ? -RAY_INFINITY : RAY_INFINITY));
+        end_ray = fminf(end_ray, moving ? fmaxf(lo,hi) : (inside ? RAY_INFINITY : -RAY_INFINITY));
     }
     if (ray >= nu * nv || !isfinite(entry) || !isfinite(end_ray) || end_ray <= entry) return;
     #pragma unroll
@@ -26,8 +26,8 @@ __device__ void ray_integral(const float* cf, const float* volume, const float* 
         float start = q[a] + d[a] * entry;
         float plane = d[a] > 0.f ? floorf(start) + 1.f : ceilf(start) - 1.f;
         bool moving = fabsf(d[a]) > 1.e-12f;
-        crossing[a] = moving ? (plane - q[a]) / safe[a] : CUDART_INF_F;
-        period[a] = moving ? 1.f / fabsf(safe[a]) : CUDART_INF_F;
+        crossing[a] = moving ? (plane - q[a]) / safe[a] : RAY_INFINITY;
+        period[a] = moving ? 1.f / fabsf(safe[a]) : RAY_INFINITY;
     }
     float ray_value = MODE == 1 ? image[(long)view * nu * nv + ray] : 0.f;
     float current = entry;
