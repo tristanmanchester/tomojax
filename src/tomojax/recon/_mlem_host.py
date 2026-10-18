@@ -17,6 +17,7 @@ import numpy as np
 
 from tomojax.backends import device_free_memory_bytes
 from tomojax.core.cone import ConeModel, cone_project
+from tomojax.core.host_transfer import copy_to_host, upload_host
 from tomojax.geometry import grid_volume_origin
 
 from ._host_arrays import validate_host_views
@@ -111,7 +112,7 @@ def _ratios(
 ) -> np.ndarray:
     expected = np.zeros((len(indices), detector.nv, detector.nu), np.float32)
     for start, stop, grid, coefficients in slabs:
-        piece = jax.device_put(np.ascontiguousarray(volume[:, :, start:stop]))
+        piece = upload_host(volume[:, :, start:stop], next(iter(coefficients.devices())))
         for first in range(0, len(indices), batch):
             selected = indices[first : first + batch]
             values = _forward(
@@ -147,15 +148,17 @@ def _update(
         correction, norm = jnp.zeros(shape, jnp.float32), jnp.zeros(shape, jnp.float32)
         for first in range(0, len(indices), batch):
             selected = indices[first : first + batch]
-            ratio = jax.device_put(ratios[first : first + len(selected)])
+            ratio = upload_host(
+                ratios[first : first + len(selected)], next(iter(coefficients.devices()))
+            )
             correction, norm = _adjoint(
                 ratio, coefficients[selected], correction, norm,
                 grid=grid, detector=detector, backend=backend, model=model,
             )  # fmt: skip
         if apply:
-            piece = jax.device_put(np.ascontiguousarray(volume[:, :, start:stop]))
+            piece = upload_host(volume[:, :, start:stop], next(iter(coefficients.devices())))
             value, visible = _updated(piece, correction, norm)
-            volume[:, :, start:stop] = np.asarray(value)
+            copy_to_host(value, volume[:, :, start:stop])
             del piece, value
         else:
             visible = norm > 0
