@@ -12,7 +12,13 @@ from scipy.spatial.transform import Rotation
 from tomojax.core import _cuda_joseph as cuda
 
 # check-public-imports: allow-private
-from tomojax.core.joseph import adjoint_jax, forward_jax, plane_coefficients
+from tomojax.core.joseph import (
+    adjoint_jax,
+    forward_jax,
+    forward_project_planes,
+    plane_coefficients,
+    sum_backproject_planes,
+)
 
 # check-public-imports: allow-private
 from tomojax.core.pallas._pallas_joseph import adjoint_pallas, forward_pallas
@@ -93,6 +99,40 @@ def problem(voxel=(0.8, 1.1, 1.3), spacing=(0.7, 1.2)):
     ).as_matrix()
     poses[:, :3, 3] = [0.13, -0.17, 0.29]
     return grid, detector, poses
+
+
+@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+def test_absolute_cubic_sensitivity_bounds_the_signed_physical_normal(backend):
+    grid = Grid(5, 3, 7, 0.8, 1.1, 1.2)
+    detector = Detector(9, 3, 0.7, 1.2, (0.17, -0.23))
+    poses = np.broadcast_to(np.eye(4), (6, 4, 4)).copy()
+    poses[:, :3, :3] = Rotation.from_euler(
+        "z", np.arange(6)[:, None] * 29, degrees=True
+    ).as_matrix()
+    poses[:, 2, 3] = np.linspace(-0.49, 0.49, 6)
+    a = matrix(poses, grid, detector, "cubic")
+    # Halo voxels can have a negative raw normal row sum, not a tiny sensitivity.
+    assert np.min(a.T @ a.sum(axis=1)) < 0
+    weights = np.linspace(0.5, 1.7, a.shape[0]).reshape(6, 3, 9).astype(np.float32)
+    coeff = plane_coefficients(jnp.asarray(poses), grid, detector)
+    options = dict(backend=backend, interpolation="cubic", absolute_weights=True)
+
+    @jax.jit
+    def sensitivity(x):
+        projected = forward_project_planes(coeff, x, grid, detector, **options)
+        return projected, sum_backproject_planes(
+            coeff, weights**2 * projected, grid, detector, **options
+        )
+
+    projected, bound = sensitivity(jnp.ones((5, 3, 7), jnp.float32))
+    expected_projection = np.abs(a).sum(axis=1)
+    expected_bound = np.abs(a).T @ (weights.ravel() ** 2 * expected_projection)
+    np.testing.assert_allclose(projected.ravel(), expected_projection, rtol=2e-5, atol=2e-6)
+    np.testing.assert_allclose(bound.ravel(), expected_bound, rtol=2e-5, atol=2e-6)
+    assert np.min(bound) >= 0
+    weighted = weights.ravel()[:, None] * a
+    majorizer = np.diag(np.asarray(bound).ravel()) - weighted.T @ weighted
+    assert np.linalg.eigvalsh(majorizer).min() > -1e-5
 
 
 @pytest.mark.gpu

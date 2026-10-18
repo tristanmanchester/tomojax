@@ -172,11 +172,30 @@ def forward_project_planes(
     *,
     backend: str,
     interpolation: str = "linear",
+    absolute_weights: bool = False,
 ) -> jax.Array:
-    """Apply a prepared plane model using the selected JAX or CUDA implementation."""
+    """Apply a prepared plane model, or abs(A) for positive sensitivity bounds."""
     if backend == "jax":
-        return forward_jax(coefficients, volume, grid, detector, interpolation=interpolation)
+        return forward_jax(
+            coefficients,
+            volume,
+            grid,
+            detector,
+            interpolation=interpolation,
+            absolute_weights=absolute_weights,
+        )
     if backend == "pallas":
+        if absolute_weights:
+            from .pallas._pallas_joseph import forward_pallas
+
+            return forward_pallas(
+                coefficients,
+                volume,
+                grid,
+                detector,
+                interpolation=interpolation,
+                absolute_weights=True,
+            )
         from .pallas._pallas_joseph_autodiff import differentiable_forward
 
         return differentiable_forward(

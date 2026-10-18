@@ -37,6 +37,7 @@ def _fp_kernel(
     det_shape: tuple[int, int],
     block: int,
     interpolation: str = "linear",
+    absolute_weights: bool = False,
 ) -> None:
     nx, ny, nz = shape
     nv, nu = det_shape
@@ -79,7 +80,9 @@ def _fp_kernel(
                 sample(ib + 1, ic) * (1 - wc) + sample(ib + 1, ic + 1) * wc
             ) * wb
         else:
-            val, _, _ = cubic_sample(volume_ref, a, k, qb, qc, nb, nc, valid)
+            val, _, _ = cubic_sample(
+                volume_ref, a, k, qb, qc, nb, nc, valid, absolute_weights=absolute_weights
+            )
         return accum + val * weight
 
     # Planes where a ray's sample lies outside the interpolation support add
@@ -113,7 +116,10 @@ def _fp_kernel(
 
 # Jit once per static configuration: every call site then reuses one traced
 # and lowered kernel instead of re-tracing the kernel body.
-@partial(jax.jit, static_argnames=("grid", "detector", "block", "interpret", "interpolation"))
+@partial(
+    jax.jit,
+    static_argnames=("grid", "detector", "block", "interpret", "interpolation", "absolute_weights"),
+)
 def forward_pallas(
     coeff: jax.Array,
     volume: jax.Array,
@@ -123,6 +129,7 @@ def forward_pallas(
     block: int = 128,
     interpret: bool = False,
     interpolation: str = "linear",
+    absolute_weights: bool = False,
 ) -> jax.Array:
     """Project voxel-centre planes with the selected interpolation and masked loads."""
     validate_interpolation(interpolation)
@@ -139,6 +146,7 @@ def forward_pallas(
                 det_shape=(detector.nv, detector.nu),
                 block=block,
                 interpolation=interpolation,
+                absolute_weights=absolute_weights,
             ),
             out_shape=jax.ShapeDtypeStruct((views, count), jnp.float32),
             grid=(
