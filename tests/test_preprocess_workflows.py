@@ -59,20 +59,36 @@ def test_a_raw_nxtomo_file_becomes_a_scan_that_records_its_corrections(tmp_path,
     assert scan.detector.nu == 2 // binning and scan.detector.nv == 2 // binning
 
 
+def _detector_config(tmp_path, *, nu=2, nv=2):
+    config = tmp_path / "geometry.toml"
+    config.write_text(
+        f"[detector]\nnu = {nu}\nnv = {nv}\ndu = 1.0\ndv = 1.0\ndet_center = [0.0, 0.0]\n"
+    )
+    return config
+
+
 def test_tiff_frames_with_flats_darks_and_angles(tmp_path: Path) -> None:
     write_tiff_stack(tmp_path / "frames", [5.0, 9.0])
     write_tiff_stack(tmp_path / "flats", [11.0])
     write_tiff_stack(tmp_path / "darks", [1.0])
     write_angle_csv(tmp_path / "angles.csv", [0.0, 90.0])
     out = tmp_path / "scan.nxs"
-    common = ["--flats", tmp_path / "flats", "--angles", tmp_path / "angles.csv"]
+    config = _detector_config(tmp_path)
+    common = [
+        "--config",
+        config,
+        "--flats",
+        tmp_path / "flats",
+        "--angles",
+        tmp_path / "angles.csv",
+    ]
     assert _preprocess(tmp_path / "frames", "-o", out, *common, "--darks", tmp_path / "darks") == 0
     np.testing.assert_allclose(
         load_dataset(out).projections[:, 0, 0], -np.log([0.4, 0.8]), rtol=1e-6
     )
     # Levels stand in for frames: a flat of 11 everywhere, darks of 1.
     assert _preprocess(tmp_path / "frames", "-o", out, "--force", "--flats", 11, "--darks", 1,
-                       "--angles", tmp_path / "angles.csv") == 0  # fmt: skip
+                       "--angles", tmp_path / "angles.csv", "--config", config) == 0  # fmt: skip
     np.testing.assert_allclose(
         load_dataset(out).projections[:, 0, 0], -np.log([0.4, 0.8]), rtol=1e-6
     )
@@ -85,24 +101,31 @@ def test_tiff_frames_need_flats_and_angles(
     write_tiff_stack(tmp_path / "frames", [5.0, 9.0])
     write_tiff_stack(tmp_path / "flats", [11.0])
     write_angle_csv(tmp_path / "angles.csv", [0.0, 90.0])
-    args = ["--flats", tmp_path / "flats", "--angles", tmp_path / "angles.csv"]
+    args = [
+        "--config",
+        _detector_config(tmp_path),
+        "--flats",
+        tmp_path / "flats",
+        "--angles",
+        tmp_path / "angles.csv",
+    ]
     del args[args.index(omitted) : args.index(omitted) + 2]
     assert _preprocess(tmp_path / "frames", "-o", tmp_path / "scan.nxs", *args) == 1
-    assert ("no flat fields" if omitted == "--flats" else "angles") in capsys.readouterr().err
+    assert ("No flat fields" if omitted == "--flats" else "angles") in capsys.readouterr().err
     assert not (tmp_path / "scan.nxs").exists()
 
 
-def test_detector_pixels_from_the_record_then_nxtomo_sizes_then_unit(tmp_path: Path) -> None:
+def test_detector_requires_a_record_or_an_explicit_override(tmp_path: Path) -> None:
     write_raw_nxtomo(tmp_path / "raw.nxs")
-    record = {"nu": 2, "nv": 2, "du": 2.0, "dv": 3.0, "det_center": [4.0, -5.0]}
-    cases = [(record, (0.5, 0.75), (2.0, 3.0, (4.0, -5.0))), (None, (0.5, 0.75), (0.5, 0.75, (0.0, 0.0))),
-             (None, None, (1.0, 1.0, (0.0, 0.0)))]  # fmt: skip
-    for i, (meta, sizes, (du, dv, centre)) in enumerate(cases):
-        _set_detector(tmp_path / "raw.nxs", record=meta, sizes=sizes)
-        assert _preprocess(tmp_path / "raw.nxs", "-o", tmp_path / f"scan{i}.nxs") == 0
-        detector = load_dataset(tmp_path / f"scan{i}.nxs").detector
-        assert detector is not None
-        assert (detector.du, detector.dv, detector.center) == (du, dv, centre)
+    for i, sizes in enumerate(((0.5, 0.75), None)):
+        _set_detector(tmp_path / "raw.nxs", record=None, sizes=sizes)
+        out = tmp_path / f"scan{i}.nxs"
+        assert _preprocess(tmp_path / "raw.nxs", "-o", out) == 1
+        assert (
+            _preprocess(tmp_path / "raw.nxs", "-o", out, "--config", _detector_config(tmp_path))
+            == 0
+        )
+        assert tj.load(out).detector == tj.Detector(2, 2, 1, 1)
 
 
 def test_views_and_a_detector_block(tmp_path: Path) -> None:
@@ -135,9 +158,9 @@ def test_steps_from_the_command_line(tmp_path: Path) -> None:
         iio.imwrite(tmp_path / "frames" / f"p_{i:03d}.tif", image.astype(np.float32))
     write_angle_csv(tmp_path / "angles.csv", list(np.linspace(0.0, 360.0, views, endpoint=False)))
     out = tmp_path / "scan.nxs"
-    assert _preprocess(tmp_path / "frames", "-o", out, "--flats", 1000, "--angles", tmp_path / "angles.csv",
+    assert _preprocess(tmp_path / "frames", "-o", out, "--darks", 0, "--flats", 1000, "--angles", tmp_path / "angles.csv",
                        "--zingers", "--remove-stripes", 9, "--beam-hardening", "1,0.05",
-                       "--reject-outliers") == 0  # fmt: skip
+                       "--reject-outliers", "--config", _detector_config(tmp_path, nu=nu, nv=nv)) == 0  # fmt: skip
     scan = tj.load(out)
     names = [c.name for c in scan.corrections]
     assert names == ["flat_dark", "zingers", "log", "reject_views", "stripes", "beam_hardening"]

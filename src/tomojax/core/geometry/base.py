@@ -275,7 +275,7 @@ class Detector:
         Parameters
         ----------
         data : mapping
-            Metadata written by to_dict; absent det_center defaults to zero.
+            Complete metadata written by to_dict, including det_center.
 
         Returns
         -------
@@ -287,14 +287,18 @@ class Detector:
         KeyError
             If pixel counts or pitches are missing.
         ValueError
-            If the centre has the wrong number of coordinates.
+            If the centre is missing or has the wrong number of coordinates.
         """
+        if "det_center" not in data:
+            raise ValueError(
+                "Missing detector centre: pass detector=... or geometry=... to tomojax.load_frames"
+            )
         return cls(
             nu=int(data["nu"]),
             nv=int(data["nv"]),
             du=float(data["du"]),
             dv=float(data["dv"]),
-            center=data.get("det_center", (0.0, 0.0)),
+            center=data["det_center"],
         )
 
 

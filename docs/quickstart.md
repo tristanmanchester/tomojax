@@ -26,24 +26,28 @@ normalised transmission, and already-corrected attenuation are different
 inputs: establish which you have. TomoJAX corrects raw frames itself when the
 file says they are raw: an NXtomo `image_key` marking flats or darks, an APS
 Data Exchange file with `data_white` or `data_dark` beside `/exchange/data`,
-or a Nikon scan. It refuses integer counts with no flats rather than guess.
+or a Nikon scan. Missing flats/white level or darks require explicit
+`flats=`/`white_level=` and `darks=` in `load_frames`; use zero darks only
+when the counts are already dark-corrected.
 
 ## ESRF acquisitions
 
-`tj.load("scan_folder")` reads uncompressed single-image EDF projections with
-SPEC acquisition `.info` or XML metadata, including accumulated darks and
-flat sets; accumulated dark means retain fractional counts. Reconstruction
-`.par` files are not acquisition metadata.
-`tj.load("raw_bliss.h5")` reads a basic, half-turn or full-turn Bliss sequence,
-including linked detector data, when unique or selected by the recorded default.
-For other sequences use `tj.load_frames("raw_bliss.h5", data_path="1.1").corrected()`. Both readers use effective sample
-pixels and preserve recorded distances in millimetres; they construct parallel
-geometry. Missing virtual detector pixels and mismatched EDF dimensions are
-errors. Helical and multi-volume Bliss sequences are not yet supported.
+`tj.load_frames("scan_folder", detector=..., angles=...)` reads uncompressed
+single-image EDF projections with SPEC `.info` or XML acquisition metadata.
+`PixelSize` records the effective pitch in micrometres, but the scan range alone
+does not establish the starting angle or a calibrated rotation centre.
+
+`tj.load_frames("raw_bliss.h5", detector=...)` reads a basic, half-turn or full-turn
+Bliss sequence, including its flats/darks and recorded angular positions. Select
+among several sequences with `data_path="1.1"`. Effective sample pixels and
+recorded distances are retained in millimetres; neither reader substitutes a
+centred detector for missing axis calibration. Missing virtual detector pixels
+and mismatched EDF dimensions are errors. Helical and multi-volume Bliss
+sequences are not yet supported.
 
 ## Correct raw detector frames
 
-For an HDF5 scan containing sample, flat, and dark frames:
+For an HDF5 scan containing sample, flat, dark frames and measured geometry:
 
 ```bash
 uv run --no-sync tomojax preprocess raw.nxs -o corrected.nxs
@@ -63,6 +67,13 @@ closed shutter), `--beam-hardening 1,0.05`; `--select-views`, `--reject-views`
 and `--crop` keep part of the scan. Already-corrected data should skip this
 step; applying the logarithm again changes the data.
 
+Missing detector pitch or an unsuccessful centre estimate requires `detector=`
+in `tj.load_frames`, or a
+`[detector]` table in the preprocessing TOML config with `nu`, `nv`, `du`, `dv`
+and `det_center = [u, v]` in consistent length units. Missing view angles
+require `angles=`; missing laminography tilt requires a complete `geometry=`.
+Centred unit pixels and a 30° tilt are not assumed.
+
 In Python, `tj.load("raw.nxs")` makes the same correction, and records it in
 `scan.corrections`. For other corrections, load the frames and pass steps from
 `tomojax.corrections`:
@@ -78,7 +89,8 @@ tj.save("corrected.nxs", scan)
 ```
 
 HDF5 and TIFF sample, flat and dark stacks are read lazily, as they are
-corrected: crop or select first to read less. `np.asarray(frames.counts)` reads
+corrected (except sampled rows used for missing-centre estimation): crop or
+select first to read less. `np.asarray(frames.counts)` reads
 the current selection into memory.
 
 The views are corrected on the GPU a batch at a time, read from the file as
@@ -154,18 +166,21 @@ not the rotation axis; estimate the axis after this correction. Correct
 before cropping if the warp needs pixels outside the crop, and convert the
 calibration after a crop or binning (see `help(RadialDistortion)`).
 
-A file written by TomoJAX carries its geometry. Other NXtomo and Data Exchange
-files get a parallel beam with a centred detector, the file's angles, and the
-NXtomo detector's `x_pixel_size` and `y_pixel_size` when it has them. Without
-them TomoJAX takes unit pixels, so the reconstruction's length unit is the
-pixel. To set the geometry, pass the measured detector,
-`tj.load_frames("raw.h5", detector=tj.Detector(nu=2048, nv=2048, du=0.65, dv=0.65))`,
-or a whole `geometry=`, with your own detector shape and pitch. Then estimate
-the centre of rotation with `tomojax align --mode cor` (see the
-[alignment guide](alignment-guide.md)). For an unposed axial parallel scan,
-`scan = tj.estimate_center(scan)` estimates physical detector-u without a
-volume solve; inspect the result, especially for very compact objects that
-can produce false Fourier minima.
+A file written by TomoJAX carries its geometry. External NXtomo and Data Exchange
+use their format-defined axial parallel-beam model and recorded angles. They
+need recorded physical detector pitches; missing pitch requires `detector=` or
+`geometry=`, never unit pixels. With pitch available but no rotation centre,
+loading estimates detector-u from a few corrected rows and records `inferred`
+provenance. This needs usable near-opposite views and contrast; otherwise supply a
+calibrated detector, including its centre. The vertical origin is chosen at the
+axial detector midplane, not estimated from the projections.
+
+An explicit `detector=tj.Detector(nu, nv, du, dv, center=(u, v))` or full
+`geometry=` remains authoritative and is not automatically recalibrated.
+For an already loaded unposed axial scan, `tj.estimate_center(scan)` estimates
+physical detector-u from row-gradient correlations without a volume solve.
+Near-opposite views are resampled in angle before matching. Inspect the result:
+repetitive structure, motion and truncation can make the estimate ambiguous.
 
 ### Retrieve phase from propagation-based phase contrast
 

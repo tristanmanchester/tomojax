@@ -10,38 +10,40 @@ calls are at the end.
 ## Import
 
 A Nikon (X-Tek) scan is an `.xtekct` parameter file beside its projection
-TIFFs. `tomojax import` reads the source and detector distances, the detector
+TIFFs. `tomojax preprocess` reads the source and detector distances, the detector
 pixels and offsets, the reconstruction volume, the white level and the angles
 (from `<Name>_ctdata.txt` when present), and `tomojax inspect` describes and checks
 the result. Only TIFFs named `<Name>` plus the input separator and a number are
 projections; flat fields, thumbnails and reconstructions sharing the prefix are
 skipped. If a directory holds several parameter files, name the intended
-calibration file explicitly:
+calibration file explicitly. The examples choose zero dark level; use that
+only for already dark-corrected counts, otherwise supply measured darks:
 
 ```bash
-uv run --no-sync tomojax import scan/part.xtekct -o scan.nxs
+uv run --no-sync tomojax preprocess scan/part.xtekct --darks 0 -o scan.nxs
 uv run --no-sync tomojax inspect scan.nxs
 ```
 
-Projections become line integrals, `-log(I / WhiteLevel)` (`--transmission`
-keeps intensities), with image rows flipped so that the detector's v axis points up.
+Projections become line integrals, `-log((I - D) / (WhiteLevel - D))`, with
+image rows flipped so that the detector's v axis points up.
 Lengths stay in the scanner's units, millimetres for Nikon. The calibrated
 rotation axis is read from `ObjectOffsetX`, `ObjectRoll` and `ObjectTilt`, or
 the older `CentreOfRotationTop/Bottom` detector-plane offsets. The declared
 view count excludes an extra closing frame on a full turn, with a warning.
-Confirm handedness on a known sample; `--reverse-angles` reverses the stage
-direction.
+Confirm handedness on a known sample; explicit `angles=` in `load_frames`
+can replace the recorded stage convention.
 
 Zeiss Xradia projection acquisitions can be corrected directly, without a TIFF
 export; see the [Zeiss preview](#zeiss-xradia-preview) below. For scanners without
-a reader, import the TIFF stack with the angles and the geometry, then flat- and
-dark-correct it:
+a reader, provide the measured `ConeGeometry` to `tj.load_frames(...,
+geometry=..., flats=..., darks=...)`. Already-corrected TIFF line integrals can
+be packaged on the command line; `calibration.toml` supplies the measured
+`detector_center = [u, v]` in physical length units:
 
 ```bash
 uv run --no-sync tomojax import projections/ --angles angles.csv --geometry cone \
   --source-to-axis 120.5 --source-to-detector 980.0 --pixel-size 0.2 \
-  -o raw.nxs
-uv run --no-sync tomojax preprocess raw.nxs -o scan.nxs --flats flats/ --darks darks/
+  --config calibration.toml -o scan.nxs
 ```
 
 `--flats` and `--darks` take TIFF frames, or one level for every pixel
@@ -60,8 +62,8 @@ width that covers the defect. A faint offset on a steep gradient can remain.
 `--zingers` replaces bright specks.
 In Python these are steps of `tomojax.corrections` (`BeamHardening`,
 `Stripes`, `Zingers`) passed to `tj.load_frames(path).corrected(...)`.
-`tomojax import --detector-roll`, `--detector-pitch`, `--detector-yaw` and
-`--axis-offset` take values the scanner reports. A TIFF import
+`tomojax import --axis-offset` and TOML keys `detector_roll`,
+`detector_pitch`, `detector_yaw` take values the scanner reports. A TIFF import
 records no grid: cone datasets without one reconstruct one voxel per detector
 pixel at the axis, the pixel size divided by the magnification
 `source_to_detector / source_to_axis`, and `tomojax recon --grid NX NY NZ`
@@ -76,8 +78,10 @@ Use the **projection acquisition** (usually `.txrm`), not a reconstructed `.txm`
 volume or a single scout image. TomoJAX reads the embedded reference image,
 angles, detector calibration and source distances. Fractional per-view image
 shifts stay in the geometry rather than resampling the measured pixels. If no
-dark reference is stored, correction uses zero and warns; supply measured darks
-with `--darks` or `load_frames(..., darks=...)` when available.
+dark reference is stored, supply measured darks
+with `--darks` or `load_frames(..., darks=...)`; absent dark calibration is an
+error, not an assumed zero. The examples below explicitly choose zero for
+already dark-corrected counts.
 
 This is a coarse, whole-volume CPU preview. It keeps every eighth view, bins
 16 x 16 detector pixels and resamples the original physical volume to 64³ voxels.
@@ -86,7 +90,7 @@ require both start and stop indices:
 
 ```bash
 printf 'binning = 16\n' > preview.toml
-uv run --no-sync tomojax preprocess scan.txrm -o corrected.nxs \
+uv run --no-sync tomojax preprocess scan.txrm --darks 0 -o corrected.nxs \
   --select-views 0:801:8 --config preview.toml
 uv run --no-sync tomojax recon corrected.nxs -o preview.nxs \
   --method cgls --iterations 10 --grid 64 64 64 --roi off
@@ -98,7 +102,7 @@ The equivalent Python route is:
 ```python
 import tomojax as tj
 
-scan = tj.load_frames("scan.txrm").selected(slice(None, None, 8)).corrected(binning=16)
+scan = tj.load_frames("scan.txrm", darks=0).selected(slice(None, None, 8)).corrected(binning=16)
 grid = scan.grid.resampled((64, 64, 64))
 recon = tj.reconstruct(scan, "cgls", iterations=10, grid=grid)
 tj.save("preview.nxs", recon)
@@ -220,7 +224,7 @@ give the protocol, errors and the 1024³ FDK.
 ```python
 import tomojax as tj
 
-scan = tj.load("scan/part.xtekct")
+scan = tj.load_frames("scan/part.xtekct", darks=0).corrected()
 calibrated = tj.align(scan, mode="cor").scan      # axis offset and detector roll
 recon = tj.reconstruct(calibrated)                # FDK
 tj.save("part-recon.nxs", recon)

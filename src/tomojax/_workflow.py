@@ -708,16 +708,16 @@ def estimate_center(scan: Scan) -> Scan:
     Returns the scan with its absolute physical detector-u centre set, available as
     ``result.detector.center[0]``; no pixels are shifted. For a cropped or binned
     preview, add ``result.detector.center[0] - preview.detector.center[0]`` to the
-    full scan's centre rather than copying the preview's. Needs corrected line
-    integrals of an unposed axial :class:`ParallelGeometry` over a half turn (at least
-    16 views spanning 175 degrees); anything else raises ``ValueError``. The estimate
-    can be wrong for very compact objects, so check the reconstruction. Source
+    full scan's centre rather than copying the preview's. Needs corrected
+    projections of an unposed axial :class:`ParallelGeometry` with usable
+    near-opposite views (within two degrees). The estimate uses row-wise
+    gradient correlations and can be ambiguous for repetitive structure; check the image. Source
     provenance, when present, records the inferred centre without changing the input.
 
     Parameters
     ----------
     scan : Scan
-        Unposed axial parallel line integrals spanning at least 175 degrees.
+        Unposed axial parallel projections with near-opposite views.
 
     Returns
     -------
@@ -727,7 +727,7 @@ def estimate_center(scan: Scan) -> Scan:
     Raises
     ------
     ValueError
-        If geometry or angular coverage is unsupported, or fewer than 16 views exist.
+        If geometry is unsupported or no usable near-opposite views exist.
 
     Examples
     --------
@@ -747,7 +747,7 @@ def estimate_center(scan: Scan) -> Scan:
                 "detector_center_status": "inferred",
                 "detector_center_calibration": {
                     "status": "estimated",
-                    "method": "half_turn_fourier",
+                    "method": "opposite_view_correlation",
                     "input": list(scan.detector.center),
                     "output": list(geometry.detector.center),
                     "unit": "geometry_length",

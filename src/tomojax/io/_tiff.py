@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from io import DEFAULT_BUFFER_SIZE
 from itertools import groupby
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Literal, overload
+from typing import TYPE_CHECKING, Literal, cast, overload
 
 import numpy as np
 from tifffile import TiffFile
@@ -15,7 +16,9 @@ from tifffile import TiffFile
 from tomojax._data import FrameStack
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
+
+    from tifffile import TiffFrame, TiffPage
 
 TIFF_SUFFIXES = frozenset({".tif", ".tiff"})
 _NATURAL_SORT_PARTS = re.compile(r"(\d+)")
@@ -51,17 +54,59 @@ def tiff_files(path: Path) -> list[Path]:
     raise FileNotFoundError(path)
 
 
+def _decoded_window(page: TiffPage | TiffFrame, rows: slice, cols: slice) -> np.ndarray:
+    """Decode only strips/tiles intersecting a contiguous grayscale window."""
+    key = cast("TiffPage", page.keyframe)
+    height, width = key.imagelength, key.imagewidth
+    r0, r1, _ = rows.indices(height)
+    c0, c1, _ = cols.indices(width)
+    if r0 == c0 == 0 and r1 == height and c1 == width:
+        return page.asarray()  # tifffile batches/parallelizes full-page decoding.
+    tile_rows = key.tilelength if key.is_tiled else key.rowsperstrip
+    tile_cols = key.tilewidth if key.is_tiled else width
+    across = (width + tile_cols - 1) // tile_cols
+    indices = [
+        r * across + c
+        for r in range(r0 // tile_rows, (r1 - 1) // tile_rows + 1)
+        for c in range(c0 // tile_cols, (c1 - 1) // tile_cols + 1)
+    ]
+    offsets = [page.dataoffsets[i] for i in indices]
+    counts = [page.databytecounts[i] for i in indices]
+    encoded = cast(
+        "Iterator[tuple[bytes | None, int]]",
+        page.parent.filehandle.read_segments(offsets, counts, indices, flat=True),
+    )
+    options = {}
+    if key.compression in {6, 7, 34892, 33007}:
+        options = {"jpegtables": page.jpegtables, "jpegheader": key.jpegheader}
+    result = np.zeros((r1 - r0, c1 - c0), key.dtype)
+    for payload, index in encoded:
+        pixels, origin, _ = key.decode(payload, index, **options)
+        if pixels is None:  # TIFF permits omitted, zero-filled segments.
+            continue
+        _, _, row, col, _ = origin
+        block = pixels[0, :, :, 0]
+        ra, rb = max(r0, row), min(r1, row + block.shape[0])
+        ca, cb = max(c0, col), min(c1, col + block.shape[1])
+        result[ra - r0 : rb - r0, ca - c0 : cb - c0] = block[
+            ra - row : rb - row, ca - col : cb - col
+        ]
+    return result
+
+
 @dataclass(frozen=True)
 class TiffFrames(FrameStack):
     """The pages of a TIFF stack, checked from their headers and read only as indexed.
 
     Holds no open file. A window of uncompressed pages is read through a memory map,
-    so only its rows are touched; other pages are decoded whole and then cropped.
+    so only its rows are touched; other windows decode only intersecting strips/tiles.
+    File buffering is bounded independently of the filesystem's preferred block size.
     """
 
     pages: tuple[tuple[Path, int], ...]  # file and page index of each frame
     maps: tuple[tuple[int, np.dtype] | None, ...]  # data offset and dtype of mappable pages
     page_shape: tuple[int, int]
+    segment_rows: tuple[int, ...]
     flip_rows: bool = False
 
     @classmethod
@@ -77,13 +122,20 @@ class TiffFrames(FrameStack):
         pages: list[tuple[Path, int]] = []
         layouts = []
         maps = []
+        segment_rows = []
         for file in files:
-            with TiffFile(file) as tiff:
+            # Some filesystems advertise multi-MiB blocks. Default buffering would
+            # prefetch that much pixel data just to inspect each small TIFF header.
+            with (
+                file.open("rb", buffering=DEFAULT_BUFFER_SIZE) as stream,
+                TiffFile(stream) as tiff,
+            ):
                 for index, page in enumerate(tiff.pages):
                     pages.append((file, index))
                     layouts.append((page.shape, page.dtype))
-                    key = page.keyframe
-                    if key is not None and key.is_memmappable:
+                    key = cast("TiffPage", page.keyframe)
+                    segment_rows.append(key.tilelength if key.is_tiled else key.rowsperstrip)
+                    if key.is_memmappable:
                         dtype = np.dtype(key.dtype).newbyteorder(tiff.byteorder)
                         maps.append((page.dataoffsets[0], dtype))
                     else:
@@ -98,6 +150,7 @@ class TiffFrames(FrameStack):
             tuple(pages),
             tuple(maps),
             shape,
+            tuple(segment_rows),
             frames=np.arange(len(pages)),
             dtype=np.dtype(dtype),
             rows=shape[0],
@@ -107,8 +160,11 @@ class TiffFrames(FrameStack):
 
     @property
     def _efficient_row_windows(self) -> bool:
-        """Whether a window of rows reads only those rows (every page is mappable)."""
-        return all(self.maps[i] is not None for i in self.frames)
+        """Whether row windows avoid decoding a whole detector panel."""
+        return all(
+            self.maps[i] is not None or self.segment_rows[i] < self.page_shape[0]
+            for i in self.frames
+        )
 
     def _read(self, indices: np.ndarray, rows: slice, cols: slice) -> np.ndarray:
         out = np.empty((len(indices), self.rows, self.cols), self.dtype)
@@ -117,17 +173,22 @@ class TiffFrames(FrameStack):
             rows = slice(self.page_shape[0] - stop, self.page_shape[0] - start)
         window = (rows, cols)
         for file, group in groupby(enumerate(indices), key=lambda item: self.pages[item[1]][0]):
-            with TiffFile(file) as tiff:  # one open per run of pages in a file
+            # Keep the same bounded read-ahead for sparse windows; large segment
+            # reads still pass directly through BufferedReader without subdivision.
+            with (
+                file.open("rb", buffering=DEFAULT_BUFFER_SIZE) as stream,
+                TiffFile(stream) as tiff,
+            ):  # one open per run of pages in a file
                 for destination, index in group:
                     mapped = self.maps[index]
                     if mapped is None:
-                        pixels = tiff.pages[self.pages[index][1]].asarray()
+                        image = _decoded_window(tiff.pages[self.pages[index][1]], rows, cols)
                     else:
                         offset, dtype = mapped
                         pixels = np.memmap(
                             file, mode="r", dtype=dtype, offset=offset, shape=self.page_shape
                         )
-                    image = pixels[window]
+                        image = pixels[window]
                     out[destination] = image[::-1] if self.flip_rows else image
         return out
 
@@ -147,8 +208,8 @@ def read_tiff_frames(path: Path | str, *, lazy: bool = False) -> np.ndarray | Ti
     in file order. Every page must be a 2-D image of the first page's size and
     dtype; colour images are rejected rather than read as extra view axes.
     ``lazy=True`` checks the headers and returns a stack read only as indexed
-    (``np.asarray`` reads it all); a window of uncompressed pages reads only
-    that window.
+    (``np.asarray`` reads it all); windows read only their mapped pixels or
+    intersecting compressed strips/tiles.
 
     Parameters
     ----------

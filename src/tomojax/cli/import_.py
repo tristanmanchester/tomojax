@@ -6,13 +6,14 @@ import argparse
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from tomojax.cli._options import add_output, check_paths
+from tomojax.cli._options import add_config, add_output, check_paths
+from tomojax.cli.config import parse_args_with_config
 from tomojax.geometry import ConeBeam, Detector
-from tomojax.io import load_dataset, load_nikon_xtekct, load_tiff_stack, save_dataset
+from tomojax.io import load_dataset, load_tiff_stack, save_dataset
 from tomojax.io.api import load_angles
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from tomojax.io import ProjectionDataset
 
@@ -23,18 +24,19 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="tomojax import",
         description=(
-            "Write a TomoJAX dataset (.nxs, or .npz) from a Nikon .xtekct scan, a TIFF "
-            "projection stack, or another TomoJAX dataset. Nikon scans carry their own "
-            "geometry; TIFF stacks need --angles and, for cone beam, the distances."
+            "Write a TomoJAX dataset (.nxs, or .npz) from a TIFF line-integral "
+            "stack or another TomoJAX dataset. Raw acquisitions use tomojax preprocess. "
+            "TIFF stacks need --angles, --pixel-size, --geometry and detector_center in --config."
         ),
         epilog=(
             "Lengths (--pixel-size, --source-to-axis, --source-to-detector, --axis-offset) "
             "share one unit, which is the reconstruction's length unit.\n\n"
             "Exit status: 0 success, 1 failure, 2 usage error.\n\nExamples:\n"
-            "  tomojax import scan/scan.xtekct -o scan.nxs\n"
-            "  tomojax import projections/ --angles angles.csv --pixel-size 0.65 -o scan.nxs\n"
+            "  tomojax import projections/ --angles angles.csv --pixel-size 0.65 "
+            "--geometry parallel --config calibration.toml -o scan.nxs\n"
             "  tomojax import projections/ --angles angles.csv --geometry cone \\\n"
-            "      --source-to-axis 120 --source-to-detector 800 --pixel-size 0.2 -o scan.nxs\n"
+            "      --source-to-axis 120 --source-to-detector 800 --pixel-size 0.2 "
+            "--config calibration.toml -o scan.nxs\n"
             "  tomojax import scan.npz -o scan.nxs"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -42,22 +44,32 @@ def _build_parser() -> argparse.ArgumentParser:
     _ = parser.add_argument(
         "data",
         metavar="INPUT",
-        help="Nikon .xtekct file, TIFF file or directory of TIFFs, or a .nxs/.npz dataset",
+        help="TIFF line-integral stack, or a .nxs/.npz dataset",
     )
     add_output(parser, "Dataset to write (.nxs, .h5 or .npz)")
+    add_config(
+        parser,
+        settings={
+            "detector_center": None,
+            "tilt_deg": None,
+            "tilt_about": "x",
+            "detector_roll": 0.0,
+            "detector_pitch": 0.0,
+            "detector_yaw": 0.0,
+        },
+    )
     tiff = parser.add_argument_group("TIFF stacks")
     _ = tiff.add_argument(
         "--angles",
         metavar="FILE",
         help="Rotation angles in degrees: .npy, or text/CSV with one per line (required)",
     )
-    _ = tiff.add_argument("--geometry", choices=["parallel", "lamino", "cone"], default="parallel")
+    _ = tiff.add_argument("--geometry", choices=["parallel", "lamino", "cone"])
     _ = tiff.add_argument(
         "--pixel-size",
         type=float,
         nargs="+",
         metavar=("SIZE", "SIZE_V"),
-        default=[1.0],
         help="Detector pixel size (one value, or u then v)",
     )
     _ = tiff.add_argument("--source-to-axis", type=float, help="Cone beam: source to axis")
@@ -69,43 +81,28 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Cone beam: rotation axis offset from the central ray (tomojax align --mode cor "
         "estimates it)",
     )
-    for angle in ("roll", "pitch", "yaw"):
-        _ = tiff.add_argument(
-            f"--detector-{angle}",
-            type=float,
-            default=0.0,
-            help=f"Cone beam: detector {angle}, degrees",
-        )
-    nikon = parser.add_argument_group("Nikon scans")
-    _ = nikon.add_argument(
-        "--transmission",
-        action="store_true",
-        help="Keep transmission intensities instead of -log(I / WhiteLevel)",
-    )
-    _ = nikon.add_argument(
-        "--reverse-angles",
-        action="store_true",
-        help="Negate the stage angles (for a stage turning the other way)",
-    )
     _ = parser.add_argument("--name", help="Sample name to record")
     return parser
 
 
-def _tiff_stack(parser: argparse.ArgumentParser, args: argparse.Namespace) -> ProjectionDataset:
-    angles = cast("str | None", args.angles)
-    if angles is None:
-        parser.error("TIFF stacks need --angles")
-    sizes = cast("list[float]", args.pixel_size)
-    if len(sizes) > 2:
-        parser.error("--pixel-size takes one value, or two (u then v)")
-    du, dv = sizes[0], sizes[-1]
-    geometry = cast("str", args.geometry)
-    record = load_tiff_stack(
-        cast("str", args.data), angles=load_angles(Path(angles)), geometry_type=geometry
-    )
-    nv, nu = cast("tuple[int, int, int]", record.projections.shape)[1:]
-    record.detector = Detector(nu=nu, nv=nv, du=du, dv=dv)
-    record.geometry_metadata = {"ingest_source": "tiff_stack"}
+def _geometry_metadata(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    settings: Mapping[str, object],
+    *,
+    geometry: str,
+) -> dict[str, object]:
+    metadata: dict[str, object] = {
+        "ingest_source": "tiff_stack",
+        "detector_center_status": "provided",
+    }
+    if geometry == "lamino":
+        if settings.get("tilt_deg") is None:
+            parser.error("Laminography needs tilt_deg in --config")
+        metadata.update(
+            tilt_deg=float(cast("float", settings["tilt_deg"])),
+            tilt_about=str(settings.get("tilt_about", "x")),
+        )
     if geometry == "cone":
         sod = cast("float | None", args.source_to_axis)
         sdd = cast("float | None", args.source_to_detector)
@@ -115,40 +112,63 @@ def _tiff_stack(parser: argparse.ArgumentParser, args: argparse.Namespace) -> Pr
             beam = ConeBeam(
                 sod,
                 sdd,
-                detector_roll_deg=cast("float", args.detector_roll),
-                detector_pitch_deg=cast("float", args.detector_pitch),
-                detector_yaw_deg=cast("float", args.detector_yaw),
+                detector_roll_deg=float(cast("float", settings.get("detector_roll", 0.0))),
+                detector_pitch_deg=float(cast("float", settings.get("detector_pitch", 0.0))),
+                detector_yaw_deg=float(cast("float", settings.get("detector_yaw", 0.0))),
                 axis_offset=cast("float", args.axis_offset),
             )
         except ValueError as exc:
             parser.error(str(exc))
-        record.geometry_metadata["cone_beam"] = beam.to_dict()
+        metadata["cone_beam"] = beam.to_dict()
+    return metadata
+
+
+def _tiff_stack(
+    parser: argparse.ArgumentParser, args: argparse.Namespace, settings: Mapping[str, object]
+) -> ProjectionDataset:
+    angles = cast("str | None", args.angles)
+    if angles is None:
+        parser.error("TIFF stacks need --angles")
+    sizes = cast("list[float] | None", args.pixel_size)
+    if sizes is None:
+        parser.error("TIFF stacks need --pixel-size")
+    if len(sizes) > 2:
+        parser.error("--pixel-size takes one value, or two (u then v)")
+    du, dv = sizes[0], sizes[-1]
+    geometry = cast("str | None", args.geometry)
+    if geometry is None:
+        parser.error("TIFF stacks need --geometry")
+    if settings.get("detector_center") is None:
+        parser.error("TIFF stacks need detector_center = [u, v] in --config")
+    center = tuple(float(v) for v in cast("Sequence[float]", settings["detector_center"]))
+    if len(center) != 2:
+        parser.error("detector_center must contain u and v in the pixel-size length unit")
+    metadata = _geometry_metadata(parser, args, settings, geometry=geometry)
+    record = load_tiff_stack(
+        cast("str", args.data), angles=load_angles(Path(angles)), geometry_type=geometry
+    )
+    nv, nu = cast("tuple[int, int, int]", record.projections.shape)[1:]
+    record.detector = Detector(nu=nu, nv=nv, du=du, dv=dv, center=(center[0], center[1]))
+    record.geometry_metadata = metadata
     return record
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run ``tomojax import``."""
     parser = _build_parser()
-    args = parser.parse_args(argv)
+    args, config_meta = parse_args_with_config(parser, argv)
+    settings = cast("Mapping[str, object]", config_meta["settings"])
     source, output = cast("str", args.data), cast("str", args.out)
     check_paths(parser, inputs=[source], outputs=[output], force=cast("bool", args.force))
     suffix = Path(source).suffix.lower()
     if suffix == ".xtekct":
-        record = load_nikon_xtekct(
-            source,
-            absorption=not cast("bool", args.transmission),
-            reverse_angles=cast("bool", args.reverse_angles),
-        )
-        hint = "; check the rotation axis with `tomojax align --mode cor`"
-    elif suffix in _DATASETS:
-        record, hint = load_dataset(source), ""
-    else:
-        record, hint = _tiff_stack(parser, args), ""
+        parser.error("Raw Nikon counts need tomojax preprocess INPUT --darks ... -o OUTPUT")
+    record = load_dataset(source) if suffix in _DATASETS else _tiff_stack(parser, args, settings)
     name = cast("str | None", args.name)
     if name is not None:
         record.sample_name = name
     save_dataset(output, record)
-    print(f"wrote {output} ({record.projections.shape[0]} projections){hint}")
+    print(f"wrote {output} ({record.projections.shape[0]} projections)")
     return 0
 
 

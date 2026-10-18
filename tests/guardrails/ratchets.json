@@ -15,7 +15,7 @@
   },
   "cli_flags": {
     "inspect": 4,
-    "import": 15,
+    "import": 12,
     "preprocess": 21,
     "recon": 18,
     "align": 16,
@@ -106,7 +106,6 @@
     "src/tomojax/io/_inspection_format.py::PLR0915::format_inspection_report",
     "src/tomojax/io/_json.py::C901::normalize_json",
     "src/tomojax/io/_json.py::PLR0911::normalize_json",
-    "src/tomojax/io/_zeiss.py::C901::read_zeiss",
     "src/tomojax/recon/cgls_multires.py::C901::cgls_multires",
     "src/tomojax/recon/fista_tv.py::C901::grad_data_term",
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline",
@@ -115,7 +114,7 @@
   "type_errors": {
     "reportArgumentType": 281,
     "reportAssignmentType": 2,
-    "reportAttributeAccessIssue": 161,
+    "reportAttributeAccessIssue": 159,
     "reportCallIssue": 13,
     "reportGeneralTypeIssues": 7,
     "reportIndexIssue": 7,

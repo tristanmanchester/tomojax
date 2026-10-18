@@ -105,3 +105,46 @@ def test_auto_alignment_records_center_and_resolves_only_its_limitation(monkeypa
     center = info["center_estimation"]
     assert center["input"] == list(scan.detector.center) and center["status"] == "estimated"
     assert abs(center["output"][0] - true_u) <= 0.3 * scan.detector.du
+
+
+def test_loading_estimates_missing_center_from_recorded_pitch_and_preserves_it(tmp_path):
+    import h5py
+
+    scan, true_u, _ = _scan()
+    path = tmp_path / "external.data"
+    counts = 10000 * np.exp(-0.1 * scan.projections)
+    with h5py.File(path, "w") as file:
+        file["exchange/data"] = counts
+        file["exchange/data_white"] = np.full((1, 8, 64), 10000, np.float32)
+        file["exchange/data_dark"] = np.zeros((1, 8, 64), np.float32)
+        file["exchange/theta"] = scan.angles
+        for name, pitch in (("x", scan.detector.du), ("y", scan.detector.dv)):
+            data = file.create_dataset(
+                "measurement/instrument/detector/actual_pixel_size_" + name, data=pitch
+            )
+            data.attrs["units"] = "mm"
+    frames = tj.load_frames(path)
+    assert abs(frames.geometry.detector.center[0] - true_u) <= 0.3 * scan.detector.du
+    assert frames.source.geometry_metadata["detector_center_status"] == "inferred"
+    assert tj.load(path).detector == frames.geometry.detector
+    result = frames.cropped(slice(2, 4), slice(None)).corrected()
+    expected = -np.log(counts[:, 2:4].astype(np.float64) / 10000)
+    np.testing.assert_allclose(result.projections, expected, atol=2e-7)
+    saved = tmp_path / "calibrated.nxs"
+    tj.save(saved, result)
+    loaded = tj.load(saved)
+    assert loaded.detector == result.detector
+    assert loaded.source.geometry_metadata["detector_center_status"] == "inferred"
+
+
+def test_estimate_center_retains_signed_phase_contrast_across_rows():
+    from scipy.ndimage import gaussian_filter1d
+
+    scan, true_u, _ = _scan(views=181)
+    # Signed edge contrast can cancel across rows; its matched correlations cannot.
+    phase = gaussian_filter1d(scan.projections, 1, axis=-1, order=2)
+    phase *= np.asarray([1, -1] * 4)[None, :, None]
+    phase += np.random.default_rng(17).normal(0, 0.015, phase.shape)
+    phase += np.sin(np.deg2rad(scan.angles))[:, None, None]
+    result = tj.estimate_center(replace(scan, projections=phase))
+    assert abs(result.detector.center[0] - true_u) < 0.15 * scan.detector.du

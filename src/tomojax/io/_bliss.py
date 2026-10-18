@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import h5py
 import numpy as np
 
 from tomojax._data import Hdf5Frames
-from tomojax.core.geometry import Detector
 
 from ._datasets import ProjectionDataset
 from ._frame_blocks import FrameBlocks
@@ -119,31 +118,6 @@ def _sequence(file: Any, data_path: str | None) -> tuple[Any, list[Any]] | None:
     return root, steps
 
 
-def _check_virtual(data: Any) -> None:
-    if not data.is_virtual:
-        return
-    for source in data.virtual_sources():
-        path = (
-            Path(data.file.filename)
-            if source.file_name == "."
-            else Path(data.file.filename).parent / source.file_name
-        )
-        with h5py.File(path, "r") as backing:
-            pixels = cast(Any, backing[source.dset_name])
-            if source.src_space.get_select_type() == cast(Any, h5py).h5s.SEL_ALL:
-                missing = pixels.size < source.vspace.get_select_npoints()
-            else:
-                bounds = source.src_space.get_select_bounds()[1]
-                missing = pixels.ndim != len(bounds) or any(
-                    n <= end for n, end in zip(pixels.shape, bounds, strict=True)
-                )
-            if missing:
-                raise ValueError(
-                    f"{path}:{source.dset_name}: missing Bliss virtual detector pixels"
-                )
-            _check_virtual(pixels)
-
-
 def _detector_stack(entry: Any, detector_name: str | None) -> Hdf5Frames:
     data: Any
     found: list[Any]
@@ -164,16 +138,16 @@ def _detector_stack(entry: Any, detector_name: str | None) -> Hdf5Frames:
         data = found[0]
     if data is None or data.ndim != 3:
         raise ValueError(f"{entry.name}: missing Bliss detector stack")
-    _check_virtual(data)
     return Hdf5Frames.open(str(data.file.filename), data.name)
 
 
 def _angles(entry: Any, root: Any, n: int) -> np.ndarray:
     declared = np.atleast_1d(_value(root, "technique/tomoconfig/rotation", []))
     names = tuple(_text(v) for v in declared) or _ROTATIONS
-    # calc_ counters are angular commands; raw/channel counters may be encoders.
-    for prefix in ("instrument/positioners", "", "measurement"):
-        for name in (*("calc_" + v for v in names), *names):
+    # Prefer converted commands across all locations before considering motors.
+    # A static positioner or raw channel must not hide a measured angular series.
+    for name in (*("calc_" + v for v in names), *names):
+        for prefix in ("instrument/positioners", "", "measurement"):
             path = f"{prefix}/{name}".strip("/")
             if path not in entry:
                 continue
@@ -181,15 +155,19 @@ def _angles(entry: Any, root: Any, n: int) -> np.ndarray:
             angles = np.asarray(data[()], np.float64)
             if angles.size not in (1, n):
                 continue
-            unit = _text(data.attrs.get("unit", data.attrs.get("units", "degree")))
+            unit = _text(data.attrs.get("unit", data.attrs.get("units", ""))).lower()
+            if unit in ("", "channel"):
+                # Encoder channels and unlabelled motors have no established
+                # degree scale; leave angles incomplete for a caller override.
+                continue
             if unit in ("rad", "radian", "radians"):
                 angles = np.rad2deg(angles)
-            elif unit not in ("degree", "degrees", "deg", "channel"):
+            elif unit not in ("degree", "degrees", "deg"):
                 raise ValueError(f"{data.name}: unsupported rotation unit {unit!r}")
             if bool(_value(root, "technique/tomoconfig/rotation_is_clockwise", False)):
                 angles = -angles
             return np.broadcast_to(angles, (n,)).astype(np.float32)
-    raise ValueError(f"{entry.name}: missing Bliss rotation angles")
+    return np.empty(0, np.float32)
 
 
 def _collect_steps(root: Any, steps: list[Any]):
@@ -222,24 +200,25 @@ def _read_sequence(root: Any, steps: list[Any]) -> RawAcquisition:
     blocks, angles, positions = _collect_steps(root, steps)
     counts = FrameBlocks.join(blocks[0])
     pixel = _length(root, "technique/optic/sample_pixel_size", default_unit="um")
-    if pixel is None:
-        raise ValueError(f"{root.name}: missing effective sample pixel size")
-    du, dv = np.broadcast_to(pixel, (2,))
     metadata: dict[str, Any] = {"layout": "esrf_bliss", "data_path": root.name, "length_unit": "mm"}
     for key in ("sample_detector_distance", "source_sample_distance"):
         value = _length(root, f"technique/scan/{key}", default_unit="mm")
         if value is not None:
             metadata[key] = float(value)
-    detector_pixel = _length(root, "technique/detector/pixel_size", default_unit="um")
-    if detector_pixel is not None:
-        metadata["detector_pixel_size"] = np.broadcast_to(detector_pixel, (2,)).tolist()
+    # The effective sample pitch sets projection scale; the camera pitch does not.
+    metadata["detector_pixel_size"] = (
+        [None, None] if pixel is None else np.broadcast_to(pixel, (2,)).tolist()
+    )
+    camera_pixel = _length(root, "technique/detector/pixel_size", default_unit="um")
+    if camera_pixel is not None:
+        metadata["camera_pixel_size"] = np.broadcast_to(camera_pixel, (2,)).tolist()
     record = ProjectionDataset(
         projections=np.broadcast_to(np.float32(0), counts.shape),
         angles=angles,
-        detector=Detector(counts.shape[2], counts.shape[1], float(du), float(dv)),
+        detector=None,
         source_path=str(root.file.filename),
         source_format="esrf_bliss",
-        geometry_metadata={"acquisition": metadata},
+        geometry_metadata={"acquisition": metadata, "detector_center_status": "not_recorded"},
     )
     return RawAcquisition(
         record,

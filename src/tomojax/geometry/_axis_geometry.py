@@ -40,8 +40,10 @@ def nominal_axis_unit_from_inputs(geometry_inputs: Mapping[str, object]) -> np.n
         "lamino",
         "laminography",
     }:
+        if "tilt_deg" not in geometry_inputs:
+            raise ValueError("Missing laminography tilt_deg or axis_unit_lab")
         axis = laminography_axis_unit(
-            float(geometry_inputs.get("tilt_deg", 30.0)),
+            float(geometry_inputs["tilt_deg"]),
             str(geometry_inputs.get("tilt_about", "x")),
         )
     else:

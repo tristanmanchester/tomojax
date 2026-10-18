@@ -7,9 +7,9 @@ from pathlib import Path
 
 import numpy as np
 
-from tomojax.geometry import ConeBeam, Detector, Grid
+from tomojax.geometry import ConeBeam, Grid
 
-from ._acquisition import RawAcquisition
+from ._acquisition import RawAcquisition, metadata_candidates
 from ._datasets import ProjectionDataset
 from ._tiff import TiffFrames, tiff_files
 
@@ -27,7 +27,7 @@ def _parameters(path: Path) -> configparser.ConfigParser | None:
 
 
 def _acquisition_log(path: Path) -> tuple[Path, configparser.ConfigParser] | None:
-    candidates = sorted(p for p in path.iterdir() if p.is_file()) if path.is_dir() else [path]
+    candidates = sorted(metadata_candidates(path))
     found = [(p, params) for p in candidates if (params := _parameters(p)) is not None]
     if not found:
         return None
@@ -87,39 +87,59 @@ def read_skyscan(path: Path, *, data_path: str | None = None) -> RawAcquisition 
     nv, nu = counts.shape[1:]
     if (nv, nu) != (int(acquisition["Number of Rows"]), int(acquisition["Number of Columns"])):
         raise ValueError(f"{file}: projection dimensions disagree with acquisition metadata")
-    bin_u, bin_v = (float(value) for value in acquisition.get("Camera binning", "1x1").split("x"))
-    pitch = float(system["Camera Pixel Size (um)"]) * 1e-3
-    resize = acquisition.getfloat("Resized in image", 1.0)
-    du, dv = pitch * bin_u * resize, pitch * bin_v * resize
-    axis = acquisition.getfloat("Optical Axis (line)", nv / 2)
-    detector = Detector(nu, nv, du, dv, center=(0.0, (axis - nv / 2) * dv))
-    beam = ConeBeam(
-        float(acquisition["Object to Source (mm)"]),
-        float(acquisition["Camera to Source (mm)"]),
+    binning = acquisition.get("Camera binning")
+    resize = acquisition.getfloat("Resized in image", fallback=None)
+    camera_pitch = system.getfloat("Camera Pixel Size (um)", fallback=None)
+    pitches = [None, None]
+    if binning is not None and resize is not None and camera_pitch is not None:
+        pitches = [camera_pitch * 1e-3 * float(v) * resize for v in binning.split("x")]
+    # Optical Axis supplies only vertical placement, not horizontal axis calibration.
+    # Preserve the partial record; the caller must provide a complete detector.
+    axis = acquisition.getfloat("Optical Axis (line)", fallback=None)
+    sod = acquisition.getfloat("Object to Source (mm)", fallback=None)
+    sdd = acquisition.getfloat("Camera to Source (mm)", fallback=None)
+    beam = ConeBeam(sod, sdd) if sod is not None and sdd is not None else None
+    image_pixel = acquisition.getfloat("Image Pixel Size (um)", fallback=None)
+    voxel = None if image_pixel is None else image_pixel * 1e-3
+    ratio = None if binning is None else [float(v) for v in binning.split("x")]
+    grid = (
+        None
+        if ratio is None or voxel is None
+        else Grid(nu, nu, nv, voxel, voxel, voxel * ratio[1] / ratio[0])
     )
-    voxel = float(acquisition["Image Pixel Size (um)"]) * 1e-3
-    grid = Grid(nu, nu, nv, voxel, voxel, voxel * dv / du)
     indices = np.asarray([int(p.stem[len(prefix) :]) for p in files], np.float64)
-    direction = acquisition.get("Rotation Direction", "CC").strip().upper()
-    if direction not in {"CC", "CW"}:
+    direction = acquisition.get("Rotation Direction", "").strip().upper()
+    if direction and direction not in {"CC", "CW"}:
         raise ValueError(f"unknown SkyScan rotation direction {direction!r}")
-    angles = indices * float(acquisition["Rotation Step (deg)"])
+    angles = (
+        indices * float(acquisition["Rotation Step (deg)"])
+        if direction and "Rotation Step (deg)" in acquisition
+        else np.empty(0, np.float64)
+    )
     if direction == "CW":
         angles = -angles
-    white = float(2 ** int(acquisition["Depth (bits)"]))
     record = ProjectionDataset(
         projections=np.broadcast_to(np.float32(0), counts.shape),
         angles=angles.astype(np.float32),
-        detector=detector,
+        detector=None,
         grid=grid,
         geometry_type="cone",
         geometry_metadata={
-            "cone_beam": beam.to_dict(),
+            "cone_beam": None if beam is None else beam.to_dict(),
             "ingest_source": "skyscan",
+            "detector_center_status": "not_recorded",
+            "acquisition": {
+                "detector_pixel_size": pitches,
+                "camera_pixel_size_um": camera_pitch,
+                "camera_binning": binning,
+                "resize": resize,
+                "optical_axis_line": axis,
+            },
             "skyscan": {section: dict(params[section]) for section in params.sections()},
         },
         sample_name=prefix,
         source_path=str(file),
         source_format="skyscan",
     )
-    return RawAcquisition(record, counts, white_level=white)
+    # Bit depth describes storage, not the calibrated incident-beam level.
+    return RawAcquisition(record, counts)

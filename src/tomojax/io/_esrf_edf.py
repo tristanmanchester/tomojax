@@ -9,8 +9,7 @@ from xml.etree import ElementTree
 
 import numpy as np
 
-from tomojax.core.geometry import Detector
-
+from ._acquisition import metadata_candidates
 from ._datasets import ProjectionDataset
 from ._edf import EdfFrames
 
@@ -39,7 +38,7 @@ def _metadata(path: Path) -> dict[str, str] | None:
             if "=" in line
             for key, value in (line.split("=", 1),)
         }
-    return fields if {"tomo_n", "scanrange", "pixelsize"} <= fields.keys() else None
+    return fields if {"tomo_n", "dim_1", "dim_2"} <= fields.keys() else None
 
 
 def _projection_files(owner: Path, fields: dict[str, str]) -> list[Path]:
@@ -69,9 +68,14 @@ def _calibrations(owner: Path, fields: dict[str, str]):
     if not dark_files:
         dark_files = [f for f in files if re.fullmatch(r"dark(?:HST)?\d*\.edf", f.name)]
     darks = EdfFrames.open(dark_files) if dark_files else None
-    if accumulated and int(fields.get("dark_n", 0)) > 0:
+    if accumulated:
         # SPEC darkend files contain sums, unlike already reduced dark.edf.
-        darks = np.asarray(darks, np.float32) * (len(dark_files) / int(fields["dark_n"]))
+        # Without the exposure count, the summed field is not a dark level.
+        darks = (
+            np.asarray(darks, np.float32) * (len(dark_files) / int(fields["dark_n"]))
+            if int(fields.get("dark_n", 0)) > 0
+            else None
+        )
     references = [
         (int(m[2]), int(m[1]), f)
         for f in files
@@ -91,7 +95,7 @@ def _acquisition(owner: Path, fields: dict[str, str]) -> RawAcquisition:
     from ._acquisition import RawAcquisition
 
     counts = EdfFrames.open(_projection_files(owner, fields))
-    n, rows, cols = counts.shape
+    _, rows, cols = counts.shape
     recorded = (int(fields["dim_2"]), int(fields["dim_1"]))
     if recorded != (rows, cols):
         raise ValueError(
@@ -99,25 +103,30 @@ def _acquisition(owner: Path, fields: dict[str, str]) -> RawAcquisition:
             "cropped or resized images need updated geometry metadata"
         )
     # SPEC records effective pixels in micrometres, propagation distance in mm.
-    pixel = float(fields["pixelsize"]) * 1e-3
+    pixel = float(fields["pixelsize"]) * 1e-3 if "pixelsize" in fields else None
     flats, darks, positions = _calibrations(owner, fields)
-    acquisition: dict[str, str | float] = {
+    acquisition: dict[str, object] = {
         "layout": "esrf_edf",
         "metadata_path": str(owner),
         "length_unit": "mm",
+        "detector_pixel_size": [pixel, pixel],
+        "scan_range_deg": float(fields["scanrange"]) if "scanrange" in fields else None,
     }
     if "distance" in fields:
         acquisition["sample_detector_distance"] = float(fields["distance"])
     record = ProjectionDataset(
         projections=np.broadcast_to(np.float32(0), counts.shape),
-        # Continuous SPEC scans have stale motor positions in individual EDF
-        # headers. Like edf2nx, use the acquisition range, excluding its endpoint.
-        angles=np.linspace(0, float(fields["scanrange"]), n, endpoint=False, dtype=np.float32),
-        detector=Detector(cols, rows, pixel, pixel),
+        # A scan range does not establish its starting angle; continuous scans
+        # can also have stale motor positions in individual EDF headers.
+        angles=np.empty(0, np.float32),
+        detector=None,
         source_path=str(owner),
         source_format="esrf_edf",
         sample_name=fields.get("scanname", owner.stem),
-        geometry_metadata={"acquisition": acquisition},
+        geometry_metadata={
+            "acquisition": acquisition,
+            "detector_center_status": "not_recorded",
+        },
     )
     return RawAcquisition(record, counts, flats=flats, darks=darks, flat_positions=positions)
 
@@ -125,7 +134,7 @@ def _acquisition(owner: Path, fields: dict[str, str]) -> RawAcquisition:
 def read_edf_scan(path: Path) -> RawAcquisition | None:
     """Recognize SPEC metadata by content; EDF image names only locate its frames."""
     if path.is_dir():
-        candidates = [(f, m) for f in path.iterdir() if (m := _metadata(f)) is not None]
+        candidates = [(f, m) for f in metadata_candidates(path) if (m := _metadata(f)) is not None]
         # SPEC .info overrides the corresponding acquisition XML, as in edf2nx.
         info_stems = {p.stem for p, _ in candidates if p.suffix == ".info"}
         candidates = [

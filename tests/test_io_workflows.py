@@ -50,6 +50,9 @@ def test_projection_dataset_roundtrips_nxtomo_with_solver_metadata(tmp_path: Pat
 
     save_dataset(path, dataset)
     loaded = load_dataset(path)
+    with h5py.File(path) as file:
+        axis = file["entry/sample/transformations/rotation_axis"][()]
+    np.testing.assert_allclose(axis, [0, np.sin(np.deg2rad(55)), np.cos(np.deg2rad(55))])
 
     assert isinstance(loaded, ProjectionDataset)
     np.testing.assert_allclose(loaded.projections, dataset.projections)

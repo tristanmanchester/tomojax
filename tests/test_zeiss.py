@@ -142,13 +142,13 @@ def test_zeiss_content_geometry_and_raw_calibration(tmp_path):
     streams.update({f"ImageData1/Image{i + 1}": value.tobytes() for i, value in enumerate(counts)})
     streams["ReferenceData/Image"] = reference.tobytes()
     write_ole(path, streams)
-    frames = tj.load_frames(path)
+    frames = tj.load_frames(path, darks=0)
     assert not isinstance(frames.counts, np.ndarray)
     np.testing.assert_array_equal(np.asarray(frames.counts), counts)
     np.testing.assert_array_equal(np.asarray(frames.flats)[0], reference)
     crop = frames.selected([1, 2]).cropped(slice(2, 6), slice(3, 9))
     np.testing.assert_array_equal(np.asarray(crop.counts), counts[1:, 2:6, 3:9])
-    scan = tj.load(path)
+    scan = tj.load_frames(path, darks=0).corrected()
     np.testing.assert_allclose(scan.projections, -np.log(counts / reference), rtol=2e-6)
     np.testing.assert_array_equal(scan.angles, [0, 90, 180])
     assert scan.grid.vx == pytest.approx(0.01)
@@ -158,17 +158,34 @@ def test_zeiss_content_geometry_and_raw_calibration(tmp_path):
     assert scan.geometry.beam.source_to_detector == 60
     streams["alignment/x-shifts"] = np.array([0.25, 0.5, -0.25], "<f4").tobytes()
     write_ole(path, streams)
-    segments = tj.load_frames(path).geometry.segments
+    segments = tj.load_frames(path, darks=0).geometry.segments
     np.testing.assert_allclose(
         [s.detector.center[0] for s in segments], [0.001875, 0.005625, -0.005625]
     )
     streams["ImageInfo/XrayGeometry"] = np.array([0], "<u4").tobytes()
     write_ole(path, streams)
-    parallel = tj.load(path)
+    parallel = tj.load_frames(path, darks=0).corrected()
     transforms = np.asarray(stack_view_poses(parallel.geometry, 3))
     np.testing.assert_allclose(transforms[:, 0, 3], [-0.00125, -0.00375, 0.00375], atol=1e-8)
     np.testing.assert_allclose(transforms[:, 2, 3], 0.005, atol=1e-8)
     streams["ImageInfo/AcquisitionMode"] = np.array([1], "<u4").tobytes()
     write_ole(path, streams)
     with pytest.raises(ValueError, match="not detector frames"):
-        tj.load_frames(path)
+        tj.load_frames(path, darks=0)
+
+    streams["ImageInfo/AcquisitionMode"] = np.array([0], "<u4").tobytes()
+    for key in (
+        "AutoRecon/CenterShift",
+        "alignment/y-shifts",
+        "ImageInfo/pixelsize",
+        "ImageInfo/XrayGeometry",
+    ):
+        partial = {name: value for name, value in streams.items() if name != key}
+        write_ole(path, partial)
+        with pytest.raises(ValueError, match="detector=|geometry="):
+            tj.load_frames(path, darks=0)
+        explicit = tj.load_frames(path, geometry=frames.geometry, darks=0)
+        np.testing.assert_array_equal(explicit.counts[:], counts)
+    write_ole(path, {k: v for k, v in streams.items() if k != "ReferenceData/DataType"})
+    with pytest.raises(ValueError, match="flats="):
+        tj.load_frames(path, darks=0)

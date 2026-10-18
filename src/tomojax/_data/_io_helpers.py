@@ -8,7 +8,6 @@ from typing import cast
 import h5py
 import numpy as np
 
-from tomojax.core.geometry.base import DetectorDict
 from tomojax.geometry.api import VOLUME_AXES_ATTR
 
 from ._io_acquisition import ROTATION_ANGLE_PATHS, angles_in_degrees, checked_image_key
@@ -96,17 +95,6 @@ def _load_json_mapping_attr(
     return loaded
 
 
-def _default_detector_meta(projections: np.ndarray) -> DetectorDict:
-    nv, nu = int(projections.shape[1]), int(projections.shape[2])
-    return {
-        "nu": nu,
-        "nv": nv,
-        "du": 1.0,
-        "dv": 1.0,
-        "det_center": [0.0, 0.0],
-    }
-
-
 def _detector_group(entry: h5py.Group) -> h5py.Group | None:
     inst_grp = entry.get("instrument")
     if inst_grp is None:
@@ -127,14 +115,10 @@ def _load_image_key(entry: h5py.Group, *, n_views: int, path: str) -> np.ndarray
 
 def _load_rotation_angles(
     entry: h5py.Group, *, n_views: int, path: str, image_key: np.ndarray
-) -> np.ndarray:
+) -> np.ndarray | None:
     angles = next((entry.file[p] for p in ROTATION_ANGLE_PATHS if p in entry.file), None)
     if angles is None:
-        _axes_log_warning(
-            "load_nxtomo: missing rotation_angle for %s; defaulting to zeros",
-            path,
-        )
-        return np.zeros((n_views,), dtype=np.float32)
+        return None
     if not isinstance(angles, h5py.Dataset):
         raise ValueError(f"{path}: rotation angles must be a dataset")
     units = _attr_to_str(angles.attrs.get("units"), default="") or ""
@@ -182,7 +166,6 @@ def _load_grid_metadata(out: LoadedDataset, entry: h5py.Group, *, path: str) -> 
 def _load_detector_metadata(
     out: LoadedDataset,
     entry: h5py.Group,
-    projections: np.ndarray,
     *,
     path: str,
 ) -> None:
@@ -204,16 +187,12 @@ def _load_detector_metadata(
         else "not_recorded",
     )
     out["geometry_meta"] = geometry_meta
-    if detector_dict is None:
-        detector_dict = _default_detector_meta(projections)
-        # NXtomo's own pixel sizes, when the file has no TomoJAX detector record.
+    if detector_dict is None or not {"du", "dv", "det_center"} <= detector_dict.keys():
+        # A partial calibration cannot construct a Detector. Retain recorded
+        # pixel pitches for inspection, without fabricating the absent centre.
         sizes = [_pixel_size(det_grp, name) for name in ("x_pixel_size", "y_pixel_size")]
-        if sizes[0] is not None:
-            detector_dict["du"] = sizes[0]
-        if sizes[1] is not None:
-            detector_dict["dv"] = sizes[1]
-        if None in sizes:
-            _axes_log_warning("load_nxtomo: no detector pixel size in %s; taking unit pixels", path)
+        geometry_meta["detector_pixel_size"] = list(sizes)
+        detector_dict = None
     out["detector"] = detector_dict
 
 
