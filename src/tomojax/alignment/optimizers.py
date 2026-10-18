@@ -151,7 +151,14 @@ class _LbfgsKernels:
             )
             return optax.apply_updates(z, updates), next_state
 
-        return cls(solver.init, evaluate, update)
+        def init(z: jnp.ndarray) -> object:
+            # Optax's initial diagnostic scalars are weakly typed, unlike its updates.
+            # Match updated state types so the first line search does not retrace.
+            return jax.tree.map(
+                lambda value: jnp.asarray(value, dtype=jnp.asarray(value).dtype), solver.init(z)
+            )
+
+        return cls(init, evaluate, update)
 
 
 @dataclass(frozen=True)

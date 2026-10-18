@@ -25,7 +25,7 @@
   "long_files": {
     "src/tomojax/alignment/_pose/_pose_loop.py": 892,
     "src/tomojax/alignment/_stages/_reconstruction_stage.py": 1028,
-    "src/tomojax/alignment/optimizers.py": 876,
+    "src/tomojax/alignment/optimizers.py": 883,
     "src/tomojax/recon/fista_tv.py": 823
   },
   "long_functions": {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -82,6 +83,12 @@ def test_reusable_lbfgs_kernels_consume_new_objective_inputs():
 
     config = PoseLbfgsConfig(maxiter=10, maxls=10, ftol=1e-9, gtol=1e-5)
     kernels = _LbfgsKernels.build(objective, config)
+    state = kernels.init(jnp.zeros(3))
+    value, grad = kernels.evaluate(jnp.zeros(3), state, (jnp.ones(3),))
+    _, next_state = kernels.update(jnp.zeros(3), state, value, grad, (jnp.ones(3),))
+    assert [x.weak_type for x in jax.tree.leaves(state)] == [
+        x.weak_type for x in jax.tree.leaves(next_state)
+    ]
     for target in [jnp.asarray([1.0, 2.0, -3.0]), jnp.asarray([-2.0, 0.5, 4.0])]:
         result = _run_lbfgs_optax_loop(
             z0=jnp.zeros(3),
