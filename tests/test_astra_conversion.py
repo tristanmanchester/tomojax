@@ -204,8 +204,9 @@ def test_a_multi_orbit_astra_scan_becomes_segments_that_project_like_astra():
     np.testing.assert_allclose(proj_back["Vectors"], proj_geom["Vectors"], atol=1e-4)
     recon = tj.reconstruct(scan, "cgls", iterations=10)
     assert np.isfinite(np.asarray(recon.volume)).all()
-    with pytest.raises(ValueError, match="one source-detector arrangement per segment"):
-        tj.reconstruct(scan, "fbp")
+    # FDK weights each segment's own source-detector arrangement.
+    fdk = tj.reconstruct(scan, "fbp")
+    assert np.isfinite(np.asarray(fdk.volume)).all()
 
 
 def _two_orbit_scan() -> tj.Scan:
