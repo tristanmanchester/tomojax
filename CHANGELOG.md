@@ -20,6 +20,10 @@ CUDA cone projection supports first-order pose and volume autodiff, including
 prepared volume layouts. Bilinear-cell derivatives now preserve constants at
 interpolation knots and include the entering edge of zero-extended support.
 
+Native projection matching refines correlation and first-moment starts against
+one likelihood, profiling detector backgrounds without discarding low-frequency
+motion information.
+
 The ptychography example also accepts PSI MATLAB v5 simulations, with detector
 binning and iteration controls for CPU previews and explicit output units.
 

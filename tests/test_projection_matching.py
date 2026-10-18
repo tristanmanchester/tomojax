@@ -61,3 +61,33 @@ def test_public_matching_recovers_motion_without_resampling_input():
     assert np.sqrt(np.mean(np.sum(residual**2, axis=1))) < 0.05
     np.testing.assert_array_equal(result.scan.poses, result.poses)
     np.testing.assert_array_equal(result.volume, tj.reconstruct(result.scan, "fourier").volume)
+
+
+@pytest.mark.gpu
+def test_large_motion_from_independent_gaussian_line_integrals():
+    import tomojax as tj
+    from tomojax.alignment import ProjectionMatchingConfig
+    from tomojax.geometry import stack_view_poses
+
+    n, nu, nv = 48, 96, 40
+    angles = np.linspace(0, 180, n, endpoint=False)
+    u, v = np.arange(nu) - (nu - 1) / 2, np.arange(nv) - (nv - 1) / 2
+    truth = np.column_stack([6 * np.sin(np.arange(n) * 1.9), 2 * np.cos(np.arange(n) * 0.7)])
+    data = np.zeros((n, nv, nu))
+    # Analytic Gaussian line integrals, independent of the voxel projector.
+    for x, y, amplitude, radius in [(-14, -5, 1, 4), (8, 5, 1.4, 5), (1, -10, 0.8, 3)]:
+        centre = x * np.cos(np.deg2rad(angles)) + y * np.sin(np.deg2rad(angles))
+        du = u[None, None, :] - truth[:, 0, None, None] - centre[:, None, None]
+        dv = v[None, :, None] - truth[:, 1, None, None]
+        data += amplitude * np.exp(-(du**2 + dv**2) / (2 * radius**2))
+    geometry = tj.ParallelGeometry(
+        tj.Grid(nu, nu, nv, 0.7, 0.7, 1.2), tj.Detector(nu, nv, 0.7, 1.2), angles
+    )
+    scan = tj.Scan(data.astype(np.float32), geometry)
+    result = tj.align(scan, mode="pose", config=ProjectionMatchingConfig())
+    pitch = np.array([geometry.detector.du, geometry.detector.dv])
+    error = np.asarray(result.poses)[:, 3:5] - truth * pitch
+    frame = np.asarray(stack_view_poses(geometry, n))[:, [0, 2], :3].reshape(-1, 3)
+    error -= (frame @ np.linalg.lstsq(frame, error.ravel(), rcond=None)[0]).reshape(-1, 2)
+    assert np.sqrt(np.mean(np.sum((error / pitch) ** 2, axis=1))) < 0.01
+    assert result.scan.projections is scan.projections

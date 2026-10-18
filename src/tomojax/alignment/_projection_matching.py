@@ -12,7 +12,6 @@ import numpy as np
 from scipy import fft, interpolate, ndimage, optimize
 
 from tomojax._data.geometry_meta import AugmentedGeometry
-from tomojax.core.array_ops import mean_detector_pixels
 from tomojax.geometry import (
     Detector,
     Grid,
@@ -25,7 +24,7 @@ from tomojax.recon import FBPConfig, backproject, fbp, project
 from ._modes import alignment_plan
 from ._pose._coupled_program import JointRefinement
 from ._pose._pose_loop import align as refine_poses
-from ._prealign import estimate_view_shifts
+from ._prealign import correlation_peaks, reprojector, shift_views
 
 if TYPE_CHECKING:
     import jax
@@ -40,8 +39,10 @@ class ProjectionMatchingConfig:
     """Joint translation alignment of axial parallel-beam scans.
 
     Axial mass profiles estimate vertical motion; five native detector rows
-    estimate horizontal motion using a positive joint volume/pose solve with
-    a matched high-pass objective. The full scan is retained without resampling.
+    estimate horizontal motion by refining correlation and first-moment starts
+    against one joint volume/pose likelihood, profiling detector offsets and
+    slopes without discarding low-frequency texture. The full scan is retained
+    without resampling.
     This estimator can fit noise or model mismatch as motion, including on
     already aligned input; reconstruction consistency alone does not establish
     pose accuracy or image preservation.
@@ -51,8 +52,9 @@ class ProjectionMatchingConfig:
     Parameters
     ----------
     iterations : int, optional
-        Cap on joint volume/pose refinement, not on the conjugate-gradient inner
-        solve; exhausting it does not imply convergence. Default is 20.
+        Cap on each start's joint volume/pose refinement, not on the
+        conjugate-gradient inner solve; exhausting it does not imply convergence.
+        Default is 20.
     """
 
     iterations: int = 20
@@ -169,33 +171,127 @@ def _sample_rows(geometry: ParallelGeometry, data: np.ndarray, vertical: np.ndar
     return sparse, samples, row_ids
 
 
-def _capture(geometry: ParallelGeometry, data: np.ndarray) -> np.ndarray:
-    _, nv, nu = data.shape
-    detector = geometry.detector
-    # The established global capture search uses block means only for its seed;
-    # all subsequent updates retain the native detector texture.
-    centre_xy = _xy_center(geometry.grid)
+def _correlation_seed(geometry: ParallelGeometry, samples: np.ndarray) -> np.ndarray:
+    """Search horizontal texture with the independently registered axial rows fixed."""
+    n, nv, width = samples.shape
+    original = geometry.detector
     factor = 4
-    binned = mean_detector_pixels(data, factor)
-    cu = detector.center[0] + detector.du * (factor * (nu // factor) - nu) / 2
-    cv = detector.center[1] + detector.dv * (factor * (nv // factor) - nv) / 2
-    coarse_detector = Detector(
-        nu // factor, nv // factor, factor * detector.du, factor * detector.dv, (cu, cv)
+    nu = width // factor
+    du = factor * original.du
+    centre_u = original.center[0] + original.du * (factor * nu - width) / 2
+    detector = Detector(nu, nv, du, original.dv, (centre_u, original.center[1]))
+    grid = Grid(
+        nu,
+        nu,
+        nv,
+        du,
+        du,
+        original.dv,
+        vol_center=(*_xy_center(geometry.grid), original.center[1]),
     )
-    coarse_grid = Grid(
-        nu // factor,
-        nu // factor,
-        nv // factor,
-        factor * detector.du,
-        factor * detector.du,
-        factor * detector.dv,
-        vol_center=(*centre_xy, 0),
+    coarse = ParallelGeometry(grid, detector, geometry.angles)
+    nominal = stack_view_poses(coarse, n)
+    reproject = reprojector(coarse, nominal, grid, detector)
+    frame = np.asarray(nominal)[:, 0, :3]
+    inverse = np.linalg.pinv(frame)
+    measured = jnp.asarray(samples[:, :, : nu * factor].reshape(n, nv, nu, factor).mean(-1))
+    shifts = np.zeros((n, 2), np.float32)
+    chunks = [slice(i, min(i + 32, n)) for i in range(0, n, 32)]
+    for _ in range(16):
+        corrected = jnp.concatenate(
+            [shift_views(measured[c], jnp.asarray(-shifts[c])) for c in chunks]
+        )
+        volume = fbp(coarse, grid, detector, corrected, config=FBPConfig(filter="hann"))
+        peaks = np.asarray(
+            jnp.concatenate(
+                [
+                    correlation_peaks(
+                        measured[c], reproject(c, volume), max_u=max(1, nu // 4), max_v=0
+                    )
+                    for c in chunks
+                ]
+            )
+        )
+        horizontal = peaks[:, 0].astype(np.float64)
+        horizontal -= frame @ (inverse @ horizontal)
+        updated = np.column_stack([horizontal, np.zeros(n)]).astype(np.float32)
+        change = float(np.max(np.abs(updated - shifts)))
+        shifts = updated
+        if change <= 0.05:
+            break
+    return shifts[:, 0] * du
+
+
+def _moment_seed(geometry: ParallelGeometry, data: np.ndarray, vertical: np.ndarray) -> np.ndarray:
+    """First Radon moments supply a global start, not a final pose estimate."""
+    n, nv, nu = data.shape
+    z = np.arange(nv)
+    rows = z[nv // 4 : 3 * nv // 4]
+    mass = data.sum(axis=2, dtype=np.float64)
+    moment = np.einsum("nvu,u->nv", data, np.arange(nu) - (nu - 1) / 2, dtype=np.float64)
+    totals = np.stack(
+        [
+            interpolate.CubicSpline(z, np.column_stack([mass[i], moment[i]]))(
+                rows + vertical[i]
+            ).sum(axis=0)
+            for i in range(n)
+        ]
     )
-    coarse = ParallelGeometry(coarse_grid, coarse_detector, geometry.angles)
-    seed = estimate_view_shifts(coarse, coarse_grid, coarse_detector, binned)
-    poses = np.zeros((len(data), 6), np.float32)
-    poses[:, 3] = seed[:, 0]
-    return poses
+    return geometry.detector.du * totals[:, 1] / totals[:, 0] + geometry.detector.center[0]
+
+
+def _horizontal_fit(
+    sparse: ParallelGeometry,
+    samples: np.ndarray,
+    seeds: tuple[np.ndarray, np.ndarray],
+    *,
+    iterations: int,
+):
+    """Refine both physical starts against one likelihood, retaining its minimum."""
+    grid, detector = sparse.grid, sparse.detector
+    measured = jnp.asarray(samples)
+    ones = jnp.ones((grid.nx, grid.ny, grid.nz), jnp.float32)
+    bound = float(jnp.max(backproject(sparse, project(sparse, ones))))
+    del ones
+    plan = alignment_plan("pose", grid, freeze=("alpha", "beta", "phi", "dz"), levels=(1,))
+    solver = replace(
+        plan.config,
+        iterations=1,
+        outer_iterations=iterations,
+        gn_joint_iterations=20,
+        early_stop_rel_impr=1e-4,
+        seed_translations=False,
+        gn_volume_damping=1e-3 * bound,
+    )
+    nominal = np.asarray(stack_view_poses(sparse, len(samples)))
+    frame = nominal[:, 0, :3]
+    inverse = np.linalg.pinv(frame)
+    fits = []
+    for name, horizontal in zip(("correlation", "moment"), seeds, strict=True):
+        seed = np.zeros((len(samples), 6), np.float32)
+        seed[:, 3] = horizontal - frame @ (inverse @ horizontal)
+        posed = AugmentedGeometry(sparse, seed, translation_frame="detector")
+        initial = jnp.maximum(fbp(posed, grid, detector, measured, config=FBPConfig()), 0)
+        volume, increment, info = refine_poses(
+            posed,
+            grid,
+            detector,
+            measured,
+            cfg=solver,
+            init_x=initial,
+            joint_refinement=JointRefinement(ramp_damping=1e-3),
+        )
+        fits.append((name, seed + np.asarray(increment), info))
+        del volume, initial
+    best = min(fits, key=lambda fit: fit[2]["loss"][-1])
+    return (
+        best[1],
+        best[2],
+        {
+            "selected": best[0],
+            "losses": {name: info["loss"][-1] for name, _, info in fits},
+        },
+    )
 
 
 def match_projections(
@@ -204,7 +300,8 @@ def match_projections(
     """Estimate translations from native projection texture.
 
     Owns the sparse native reconstruction grid and temporary volumes. Only the
-    coupled objective is filtered; input projections and final inverse are not.
+    coupled likelihood profiles detector backgrounds; input projections and the
+    final inverse are unchanged.
 
     Parameters
     ----------
@@ -236,36 +333,11 @@ def match_projections(
     start = time.perf_counter()
     vertical = _vertical_shifts(data)
     sparse, samples, row_ids = _sample_rows(geometry, data, vertical)
-    grid, detector = sparse.grid, sparse.detector
-    seed = _capture(geometry, data)
-    posed = AugmentedGeometry(sparse, seed, translation_frame="detector")
-    measured = jnp.asarray(samples)
-    initial = jnp.maximum(fbp(posed, grid, detector, measured, config=FBPConfig()), 0)
-    ones = jnp.ones((grid.nx, grid.ny, grid.nz), jnp.float32)
-    bound = float(jnp.max(backproject(sparse, project(sparse, ones))))
-    del ones
-    plan = alignment_plan("pose", grid, freeze=("alpha", "beta", "phi", "dz"), levels=(1,))
-    solver = replace(
-        plan.config,
-        iterations=1,
-        outer_iterations=config.iterations,
-        gn_joint_iterations=20,
-        early_stop_rel_impr=1e-4,
-        seed_translations=False,
-        gn_volume_damping=1e-3 * bound,
+    seeds = (_correlation_seed(sparse, samples), _moment_seed(geometry, data, vertical))
+    poses, joint_info, initialization = _horizontal_fit(
+        sparse, samples, seeds, iterations=config.iterations
     )
-    volume, increment, joint_info = refine_poses(
-        posed,
-        grid,
-        detector,
-        measured,
-        cfg=solver,
-        init_x=initial,
-        joint_refinement=JointRefinement(highpass_cycles=5.12, ramp_damping=1e-3),
-    )
-    poses = seed + np.asarray(increment)
     poses[:, 4] = vertical * geometry.detector.dv
-    del volume, initial, measured
     # Choose the minimum-motion object-frame gauge using estimates only.
     nominal = np.asarray(stack_view_poses(geometry, n))
     frame = nominal[:, [0, 2], :3].reshape(-1, 3)
@@ -277,5 +349,6 @@ def match_projections(
         "estimation_seconds": time.perf_counter() - start,
         "sample_rows": row_ids.tolist(),
         "joint": dict(joint_info),
+        "initialization": initialization,
         "pose_translation_frame": "detector",
     }

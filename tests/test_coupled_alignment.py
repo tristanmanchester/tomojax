@@ -566,7 +566,7 @@ def test_a_cached_update_that_does_not_fit_retries_without_columns(monkeypatch):
 @pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
 @pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
 @pytest.mark.parametrize("stream", [False, True])
-def test_filtered_joint_increment_and_loss_match_dense_physical_model(
+def test_affine_joint_increment_and_loss_match_dense_physical_model(
     monkeypatch, solver, backend, stream
 ):
     import tomojax as tj
@@ -589,11 +589,12 @@ def test_filtered_joint_increment_and_loss_match_dense_physical_model(
         frames = stack_view_poses(shifted.geometry, 3)
         return np.asarray(project_joseph(jnp.asarray(x), frames, grid, detector), np.float64)
 
-    wave = np.fft.rfftfreq(detector.nu) * detector.nu
-    response = np.exp(-2 * (0.4 / np.maximum(wave, 1e-12)) ** 2)
+    ramp = np.broadcast_to(np.linspace(-1, 1, detector.nu), (detector.nv, detector.nu))
 
     def filtered(y):
-        return np.fft.irfft(np.fft.rfft(y, axis=-1) * response, n=detector.nu, axis=-1)
+        centred = y - y.mean(axis=-1, keepdims=True)
+        slope = (centred * ramp).sum(axis=(-2, -1), keepdims=True) / np.sum(ramp**2)
+        return centred - slope * ramp
 
     measured = project(volume, poses) + rng.normal(0, 0.03, (3, 3, 7))
     cfg = AlignConfig(
@@ -626,7 +627,7 @@ def test_filtered_joint_increment_and_loss_match_dense_physical_model(
     runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
     objective = _coupled_objective.build_coupled_objective(
         _pose_objective_context(runtime=runtime, **common),
-        refinement=_coupled_program.JointRefinement(0.4, 1e-3),
+        refinement=_coupled_program.JointRefinement(1e-3),
     )
     result = objective.update(jnp.asarray(poses), jnp.asarray(volume))
     design = np.column_stack(
