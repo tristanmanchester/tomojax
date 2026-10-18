@@ -130,14 +130,17 @@ def test_host_slabs_validate_grid_before_allocating_or_writing(invalid):
         fdk_host(geometry, grid, detector, data)
 
 
-@pytest.mark.parametrize("layout", ["fortran", "reversed"])
-def test_host_slabs_preserve_writable_noncontiguous_output(layout):
+@pytest.mark.parametrize("backend", ["jax", CUDA])
+@pytest.mark.parametrize("layout", ["allocated", "C", "F", "reversed"])
+def test_host_slabs_preserve_writable_output(layout, backend):
     geometry, grid, detector, data = scan()
     shape = (grid.nx, grid.ny, grid.nz)
-    out = np.empty(shape, np.float32, order="F")
+    out = np.empty(shape, np.float32, order="C" if layout == "C" else "F")
+    if layout == "allocated":
+        out = None
     if layout == "reversed":
         out = np.empty(shape, np.float32)[::-1, :, ::-1]
-    cfg = FDKConfig(backend="jax", views_per_batch=3)
+    cfg = FDKConfig(backend=backend, views_per_batch=3)
     reference = np.asarray(fdk(geometry, grid, detector, data, config=cfg))
     result = fdk_host(
         geometry,
@@ -147,8 +150,8 @@ def test_host_slabs_preserve_writable_noncontiguous_output(layout):
         config=FDKHostConfig(slices_per_batch=np.int64(2), fdk=cfg),
         out=out,
     )
-    assert result is out
-    np.testing.assert_allclose(out, reference, atol=3e-6)
+    assert result.flags.f_contiguous if out is None else result is out
+    np.testing.assert_allclose(result, reference, atol=3e-6)
 
 
 @pytest.mark.parametrize("backend", ["jax", CUDA])

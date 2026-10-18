@@ -17,15 +17,19 @@ import numpy as np
 
 from tomojax.backends import device_free_memory_bytes
 from tomojax.core.cone import ConeModel, cone_project
+from tomojax.core.host_transfer import copy_to_host, upload_host
 from tomojax.geometry import grid_volume_origin
 
 from ._host_arrays import validate_host_views
 
 if TYPE_CHECKING:
+    from tomojax._typed_arrays import Device
     from tomojax.geometry import Detector, Geometry, Grid
 
 
 type _Slab = tuple[int, int, Grid, jax.Array]
+
+_MEASURED_BATCH_BYTES = 32 * 2**20
 
 
 def volume_depth(
@@ -124,14 +128,14 @@ def _divide_predictions(expected: jax.Array, measured: jax.Array, start: jax.Arr
     return jax.lax.dynamic_update_slice(expected, ratio, offset)
 
 
-def _device_slab(volume: np.ndarray, start: int, stop: int) -> jax.Array:
+def _device_slab(volume: np.ndarray, start: int, stop: int, device: Device) -> jax.Array:
     """Transfer a contiguous ZYX view, retaining XYZ logical coordinates on device."""
-    return jax.device_put(volume[:, :, start:stop].T).T
+    return upload_host(volume[:, :, start:stop].T, device).T
 
 
 def _store_slab(volume: np.ndarray, start: int, stop: int, value: jax.Array) -> None:
     """Write a slab without a host-side C/F packing array."""
-    volume[:, :, start:stop].T[:] = np.asarray(value.T)
+    copy_to_host(value.T, volume[:, :, start:stop].T)
 
 
 def _ratios(
@@ -151,7 +155,7 @@ def _ratios(
     resident = free is not None and ratio_bytes + scratch <= 0.85 * free
     expected = jnp.zeros(shape, jnp.float32) if resident else np.zeros(shape, np.float32)
     for start, stop, grid, coefficients in slabs:
-        piece = _device_slab(volume, start, stop)
+        piece = _device_slab(volume, start, stop, next(iter(coefficients.devices())))
         for first in range(0, len(indices), batch):
             selected = indices[first : first + batch]
             values = _forward(
@@ -164,18 +168,22 @@ def _ratios(
         if isinstance(expected, jax.Array):
             expected.block_until_ready()  # Release this slab's host staging before the next.
         del piece, values
-    for first in range(0, len(indices), batch):
-        selected = indices[first : first + batch]
+    view_bytes = detector.nv * detector.nu * max(4, projections.dtype.itemsize)
+    measured_batch = max(1, min(batch, _MEASURED_BATCH_BYTES // view_bytes))
+    for first in range(0, len(indices), measured_batch):
+        selected = indices[first : first + measured_batch]
         measured = np.asarray(projections[selected], np.float32)
         if isinstance(expected, jax.Array):
-            expected = _divide_predictions(expected, jax.device_put(measured), jnp.int32(first))
+            uploaded = upload_host(measured, next(iter(expected.devices())))
+            expected = _divide_predictions(expected, uploaded, jnp.int32(first))
             expected.block_until_ready()  # At most one advanced-indexed measurement copy lives.
-            del measured
+            del measured, uploaded
             continue
         prediction = expected[first : first + len(selected)]
         positive = prediction > 0
         np.divide(measured, prediction, out=prediction, where=positive)
         prediction[~positive] = 0
+        del measured, positive
     return expected
 
 
@@ -197,13 +205,15 @@ def _update(
         correction, norm = jnp.zeros(shape, jnp.float32), jnp.zeros(shape, jnp.float32)
         for first in range(0, len(indices), batch):
             selected = indices[first : first + batch]
-            ratio = jax.device_put(ratios[first : first + len(selected)])
+            ratio = ratios[first : first + len(selected)]
+            if isinstance(ratio, np.ndarray):
+                ratio = upload_host(ratio, next(iter(coefficients.devices())))
             correction, norm = _adjoint(
                 ratio, coefficients[selected], correction, norm,
                 grid=grid, detector=detector, backend=backend, model=model,
             )  # fmt: skip
         if apply:
-            piece = _device_slab(volume, start, stop)
+            piece = _device_slab(volume, start, stop, next(iter(coefficients.devices())))
             value, visible = _updated(piece, correction, norm)
             _store_slab(volume, start, stop, value)
             del piece, value

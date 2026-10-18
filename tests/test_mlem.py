@@ -218,6 +218,7 @@ def test_host_cone_updates_match_dense_transpose_without_consuming_inputs(
     host = import_module("tomojax.recon._mlem_host")
     monkeypatch.setattr(host, "volume_depth", lambda *_, **__: 1)
     monkeypatch.setattr(host, "device_free_memory_bytes", lambda: free)
+    monkeypatch.setattr(host, "_MEASURED_BATCH_BYTES", 1)
     support = np.ones((3, 2, 2), bool)
     support[0] = False
     initial = np.full((3, 2, 2), 0.7, np.float32)
