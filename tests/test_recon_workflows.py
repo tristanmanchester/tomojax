@@ -17,7 +17,7 @@ from tomojax.recon import FBPConfig, FDKConfig, FistaConfig, api, fbp, fista_tv
 # check-public-imports: allow-private
 from tomojax.recon._fbp_detector_grid import _run_fbp_generic_with_oom_fallback
 from tomojax.recon.api import clear_filter_caches, default_fbp_scale
-from tomojax.recon.fdk import fdk
+from tomojax.recon.fdk import fdk, view_weights
 from tomojax.recon.filters import get_filter_np
 
 
@@ -272,19 +272,25 @@ def test_segmented_start_matches_individual_fdk_with_all_pose_corrections(monkey
     actual, _ = api.reconstruct_arrays(
         "fista", geometry, segments.grid, segments.detector, data, config=config, warm_start=True
     )
+    weights = view_weights(geometry, segments.detector, len(data))
     offset = 0
     expected = np.zeros((5, 4, 3), np.float32)
     for segment in segments.segments:
         n = len(segment.angles)
         own = _CorrectedGeometry(segment, poses[offset : offset + n], frame)
+        # Isolate the poses, not a different acquisition: each panel shares
+        # redundancy with the full scan's conjugate panels. Separate FDKs
+        # therefore need the same angular measure, not a per-turn average.
+        local = view_weights(own, segment.detector, n)
+        measured = data[offset : offset + n] * (weights[offset : offset + n] / local)[:, None, :]
         image = fdk(
             own,
             segments.grid,
             segment.detector,
-            data[offset : offset + n],
+            measured,
             config=FDKConfig(backend="jax"),
         )
-        expected += np.asarray(image) * (n / len(data))
+        expected += np.asarray(image)
         offset += n
     np.testing.assert_allclose(actual, expected, atol=2e-6, rtol=2e-6)
 
