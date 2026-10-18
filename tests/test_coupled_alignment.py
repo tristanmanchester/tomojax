@@ -458,6 +458,8 @@ def _joint_huber_constraints_and_resume(integrator, solver):
 
 
 def _small_coupled_context():
+    from dataclasses import replace
+
     from tomojax.alignment import AlignConfig
 
     # check-public-imports: allow-private
@@ -471,6 +473,8 @@ def _small_coupled_context():
     geometry = ParallelGeometry(grid, det, [0.0, 60.0, 120.0])
     projections = jnp.asarray(np.random.default_rng(3).uniform(0, 1, (3, 4, 5)), jnp.float32)
     cfg = AlignConfig(gn_coupling="joint", gather_dtype="fp32", projector_backend="jax")
+    # Compare placements after an accurate solve, rather than at the loose default CG stop.
+    cfg = replace(cfg, gn_damping=0.2, gn_volume_damping=0.2, gn_joint_rtol=1e-6)
     common = dict(
         grid=grid,
         detector=det,
@@ -659,7 +663,8 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
 
 @pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
 @pytest.mark.parametrize("smooth", [0.0, 0.03])
-def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth):
+@pytest.mark.parametrize("integrator", ["joseph", "joseph_cubic"])
+def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth, integrator):
     from dataclasses import replace
     from functools import partial
 
@@ -677,10 +682,10 @@ def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth):
     cfg = AlignConfig(
         gn_coupling="joint",
         gn_joint_solver=solver,
-        ray_integrator="joseph",
+        ray_integrator=integrator,
         projector_backend="pallas" if jax.default_backend() == "gpu" else "jax",
         gather_dtype="fp32",
-        gn_joint_iterations=100,
+        gn_joint_iterations=5 if integrator == "joseph_cubic" else 100,
         gn_joint_rtol=1e-6,
         gn_damping=0.2,
         gn_volume_damping=0.2,
@@ -718,7 +723,7 @@ def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth):
     for a, e in zip(actual.increment, expected.increment, strict=True):
         np.testing.assert_allclose(a, e, rtol=3e-3, atol=3e-5)
     np.testing.assert_allclose(loss(p, x), objective.loss(p, x), rtol=2e-6)
-    assert actual.relative_residual < 2e-5
+    np.testing.assert_allclose(actual.relative_residual, expected.relative_residual, atol=2e-5)
 
 
 @pytest.mark.parametrize("budget", [2, 100])

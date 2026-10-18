@@ -90,6 +90,14 @@ def _unit_prediction(spec, arrays, poses, forward, shape):
     return forward(poses, jnp.ones(shape, jnp.float32), arrays.frames)
 
 
+def _sensitivity(spec, arrays, poses, masked, shape, valid, out):
+    """Accumulate |A|^T W^2 |A|1, without filtering the positive metric."""
+    forward, adjoint = physical_projectors(spec, arrays, masked, absolute_weights=True)
+    y = _unit_prediction(spec, arrays, poses, forward, shape)
+    y = y * arrays.weights**2 * valid[:, None, None]
+    return adjoint(poses, y, arrays.frames, out)
+
+
 @partial(jax.jit, static_argnames=("spec", "mode", "weighted", "batch_size"))
 def _pass(
     arrays: CoupledArrays,
@@ -139,8 +147,7 @@ def _pass(
         t, q = take(poses, start), take(p, start)
         ax, rows, blocks, loss = carry
         if mode == "bound":
-            y = weights**2 * _unit_prediction(spec, batch, t, raw_forward, shape)
-            return raw_adjoint(t, y * valid[:, None, None], batch.frames, ax), rows, blocks, loss
+            return _sensitivity(spec, batch, t, masked, shape, valid, ax), rows, blocks, loss
         if mode == "loss":
             residual = weights * (forward(t, x, batch.frames) - batch.projections)
             loss += 0.5 * jnp.sum(residual**2 * valid[:, None, None])
