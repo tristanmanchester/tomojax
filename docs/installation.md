@@ -1,85 +1,108 @@
 # Install TomoJAX
 
-TomoJAX currently requires Python 3.12. The commands below install the checked-out
-source, including unreleased changes on its current branch. They do not assume
-that a package index release contains those changes.
+TomoJAX supports Linux, with CPU or CUDA 12 dependencies. This checkout currently
+requires Python 3.12. Python 3.15 cannot yet be validated: h5py and CuPy do not
+publish Python 3.15 wheels, and building h5py needs a system HDF5 installation.
 
-## Install from a checkout
+## Install a published release
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and Git, then:
-
-```bash
-git clone https://github.com/tristanmanchester/tomojax.git
-cd tomojax
-uv sync --locked --extra cpu --no-dev
-uv run --no-sync tomojax --help
-```
-
-Run subsequent `uv` commands from this directory. `--no-sync` uses the environment
-you selected without changing its installed extras. You can also activate `.venv`
-and run `tomojax` directly. Development tools are optional; see
-[contributing](../CONTRIBUTING.md) if you want to change the code.
-
-## Use CUDA on Linux
-
-A working NVIDIA driver is required. Select the CUDA extra instead of the CPU
-installation above, then check both JAX device discovery and the real kernels:
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then create
+an environment in a new working directory. No Git checkout is needed:
 
 ```bash
-uv sync --locked --extra cuda12 --no-dev
-uv run --no-sync python -c "import jax; print(jax.devices())"
-TOMOJAX_REQUIRE_CUDA=1 uv run --no-sync python tools/smoke_accelerator.py
+uv venv --python 3.12
+uv pip install --python .venv/bin/python "tomojax[cpu]"
+.venv/bin/tomojax --help
 ```
 
-The smoke check must succeed on a CUDA device; a CPU-only result does not verify
-the accelerator implementation. JAX 0.11.2 and an Ada RTX 4070 Laptop GPU are
-tested. The Pallas kernels depend on JAX's deprecated Triton backend, so the
-package constrains JAX below 0.12. Other GPU families are not yet covered by the
-published validation. See [accelerator scope](support-matrix.md#numerical-and-accelerator-scope).
+These commands select a published package-index release, not unreleased source.
+To test changes that have not been published, use the local wheel instructions
+below instead. You can also use `python -m venv .venv` followed by
+`.venv/bin/python -m pip install "tomojax[cpu]"` with an existing Python.
 
-The `cuda12` extra also installs CuPy, which compiles a CUDA C gather for the
-Joseph transpose at first use (cached on disk). It is used for volumes of 2²⁴
-voxels (256³) and more, where it makes laminography backprojection about 1.6
-times faster; smaller volumes keep the Pallas kernel because the CuPy start-up
-costs about 0.3 s per process. `TOMOJAX_CUDA_KERNELS=1` forces it for every
-size and `0` disables it.
+## Use CUDA 12
 
-The optional CuPy Fourier inverse also needs its own extra:
+A working NVIDIA driver is required. In a fresh environment, select the CUDA
+extra instead of `cpu`, and explicitly require the CUDA backend:
 
 ```bash
-uv sync --locked --extra cuda12 --extra fourier-cuda12 --no-dev
+uv venv --python 3.12
+uv pip install --python .venv/bin/python "tomojax[cuda12]"
+JAX_PLATFORMS=cuda .venv/bin/python -c "import jax; print(jax.devices()); assert jax.default_backend() == 'gpu'"
 ```
 
-This extra does not change the default reconstruction algorithm. The Fourier
-inverse supports uniform parallel scans only; it is not a laminography solver.
+`JAX_PLATFORMS=cuda` fails if CUDA cannot initialise; a CPU fallback is not a
+successful CUDA installation. Keep it set when verifying your first
+reconstruction. The CUDA 12 extra includes JAX's CUDA dependencies and CuPy.
+TomoJAX's CUDA C kernels compile at first use and are cached on disk. Published
+accelerator validation is limited to an Ada RTX 4070 Laptop GPU; see the
+[support matrix](support-matrix.md#numerical-and-accelerator-scope).
 
-## Install a wheel
+The optional `fourier-cuda12` extra installs CuPy alone for a CPU installation
+that needs the Fourier inverse's CUDA path; it is redundant with `cuda12`.
+The Fourier inverse supports uniform parallel scans, not laminography.
 
-To distribute this checkout as a wheel without an editable source install:
+## Build and install an unreleased wheel
+
+From the source checkout, build both the sdist and its wheel:
 
 ```bash
 uv build
-uv venv --python 3.12 /tmp/tomojax-user
-uv pip install --python /tmp/tomojax-user/bin/python dist/tomojax-0.3.0-py3-none-any.whl
-/tmp/tomojax-user/bin/tomojax --help
 ```
 
-Use a new environment path and the wheel filename produced by your build.
-The example paths use POSIX conventions. The wheel's default dependencies
-provide the CPU path; request its `cuda12` extra for a Linux CUDA installation.
-The repository's installed-wheel check runs a short simulate, inspect and
-reconstruct workflow outside the source tree.
+Use the wheel filename produced by the build. The commands below install that
+wheel and its CPU dependencies into a new environment outside the checkout:
+
+```bash
+mkdir /tmp/tomojax-user
+cd /tmp/tomojax-user
+uv venv --python 3.12
+uv pip install --python .venv/bin/python "/absolute/path/to/tomojax/dist/tomojax-0.3.0-py3-none-any.whl[cpu]"
+.venv/bin/tomojax --help
+```
+
+Replace the absolute path with your build's path. For CUDA, replace `[cpu]`
+with `[cuda12]`. Installing the generated `.tar.gz` instead of the wheel builds
+a wheel in an isolated build environment. Both distributions include the GPL
+licence; the wheel includes the CUDA source and typing marker. Development
+setup remains separate: see [contributing](../CONTRIBUTING.md).
 
 ## Verify a useful result
 
-Follow the [first reconstruction](../README.md#first-reconstruction) or run:
+Run these commands from the directory containing the installed environment:
 
 ```bash
-uv run --no-sync python tools/smoke_cli_workflow.py
-uv run --no-sync python examples/simulate_and_reconstruct.py
+.venv/bin/tomojax simulate -o synthetic.nxs --size 32 --views 60
+.venv/bin/tomojax recon synthetic.nxs -o recon.nxs
+.venv/bin/tomojax inspect recon.nxs --preview previews
 ```
 
-If the CLI is missing, check that you are using the selected environment. If JAX
-reports CPU on an intended CUDA installation, resolve driver/JAX device discovery
-before diagnosing TomoJAX kernel performance. The small examples also run with
-`JAX_PLATFORMS=cpu` to explicitly select the CPU.
+This is the README's first reconstruction: automatic Fourier inversion of a
+small parallel scan, ending with `Valid: yes` and three central slice PNGs.
+No external scan data is needed. Existing outputs are refused; use a new
+working directory or `--force` to replace them. Set `JAX_PLATFORMS=cpu` to
+explicitly select the CPU, or `JAX_PLATFORMS=cuda` to require CUDA for this run.
+
+If the CLI is missing, check the environment path. If CUDA discovery fails,
+resolve the NVIDIA driver/JAX installation before diagnosing kernel performance.
+
+## Maintainer package checks
+
+After building, the installed-package smoke tool creates a disposable environment
+outside the checkout, installs without a package cache, checks dependencies and
+module provenance, requires the selected device, and runs the commands above.
+It checks the saved reconstruction against the simulated volume and requires
+finite values and all previews. It does not import TomoJAX from the source checkout.
+
+```bash
+uv run --no-sync twine check --strict dist/*
+uv run --no-sync python tools/smoke_installed_wheel.py --python 3.12 --extra cpu
+uv run --no-sync python tools/smoke_installed_wheel.py --python 3.12 --extra cuda12
+uv run --no-sync python tools/smoke_installed_wheel.py --python 3.12 --artifact sdist
+```
+
+`--find-links /path/to/wheelhouse` runs without network access or a package
+cache, using dependency wheels from that directory. An sdist install also needs
+the build backend there. Without that option, dependencies come from the package
+index. The pull-request workflow runs lint, types, CPU tests and these package
+checks on CPU; CUDA checks run separately on NVIDIA hardware.

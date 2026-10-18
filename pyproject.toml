@@ -9,6 +9,15 @@ description = "TomoJAX — CT projector, reconstruction, and alignment"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = "GPL-3.0-only"
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Scientific/Engineering :: Physics",
+]
 authors = [{ name = "Tristan Manchester", email = "tristan.manchester@diamond.ac.uk" }]
 dependencies = [
     "h5py>=3.14.0,<4",

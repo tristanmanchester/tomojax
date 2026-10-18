@@ -45,7 +45,8 @@ keep release artifacts elsewhere. GPU tests are separate from CPU CI and must
 be run on suitable hardware for kernel or accelerator behavior changes.
 
 The installed-wheel check imports outside the checkout and exercises simulation,
-inspection, validation, FBP reconstruction, and labelled slice export. A source
+the README’s automatic reconstruction, and labelled slice export. It installs
+without a package cache; `--extra cuda12` also requires a real CUDA device. A source
 import passing is not enough to establish that the wheel works.
 
 ## Engineering conventions

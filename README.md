@@ -11,39 +11,40 @@ control over geometry and differentiation in a Python workflow. Synchrotron
 geometries use parallel rays; lab scans use a point source and flat detector
 (`ConeGeometry`), reconstructed with FDK or the iterative solvers. Alignment
 needs scan-specific validation. See the
-[support matrix](docs/support-matrix.md) and [known limitations](docs/known-limitations.md)
+[support matrix](https://github.com/tristanmanchester/tomojax/blob/main/docs/support-matrix.md) and [known limitations](https://github.com/tristanmanchester/tomojax/blob/main/docs/known-limitations.md)
 before choosing it for an experiment.
 
-![Central xy and xz slices of a synthetic phantom, its CGLS reconstruction, and absolute error, with shared attenuation scales.](images/reconstruction-example.png)
+![Central xy and xz slices of a synthetic phantom, its CGLS reconstruction, and absolute error, with shared attenuation scales.](https://github.com/tristanmanchester/tomojax/raw/main/images/reconstruction-example.png)
 
 64³ voxels, 90 parallel views, 40 CGLS iterations. This example uses the same
 Joseph model for simulation and reconstruction; it demonstrates the API, not
-independent reconstruction accuracy. [Reproduce the figure](examples/README.md#reproduce-the-readme-figure).
+independent reconstruction accuracy. [Reproduce the figure](https://github.com/tristanmanchester/tomojax/blob/main/examples/README.md#reproduce-the-readme-figure).
 
-![Truth, a nominal-pose reconstruction, and a jointly aligned reconstruction of a laminography scan with random per-view motion.](images/alignment-example.png)
+![Truth, a nominal-pose reconstruction, and a jointly aligned reconstruction of a laminography scan with random per-view motion.](https://github.com/tristanmanchester/tomojax/raw/main/images/alignment-example.png)
 
 `tomojax align` and `tomojax.alignment` solve the volume and each view's pose
 together. Here a 96³ laminography scan with ±1° and ±2 px of random per-view
 motion goes from 0.68 to 0.047 relative error, with rotations recovered to
 0.0022°, in 18 s on a laptop GPU including compilation. The measurements are
-analytic integrals of continuous objects. [Reproduce it](examples/README.md#align-a-scan-with-per-view-motion).
+analytic integrals of continuous objects. [Reproduce it](https://github.com/tristanmanchester/tomojax/blob/main/examples/README.md#align-a-scan-with-per-view-motion).
 
 ## First reconstruction
 
-You need Git and [uv](https://docs.astral.sh/uv/getting-started/installation/).
-The package currently requires **Python 3.12**; uv can install it. These commands
-install this checkout with CPU dependencies, generate a small scan, and write
-three central slices. No scan data or GPU is required.
+On Linux, install [uv](https://docs.astral.sh/uv/getting-started/installation/).
+For a published release, install the CPU wheel into a fresh environment:
 
 ```bash
-git clone https://github.com/tristanmanchester/tomojax.git
-cd tomojax
-uv sync --locked --extra cpu --no-dev
+uv venv --python 3.12
+uv pip install --python .venv/bin/python "tomojax[cpu]"
 
-uv run --no-sync tomojax simulate -o synthetic.nxs --size 32 --views 60
-uv run --no-sync tomojax recon synthetic.nxs -o recon.nxs
-uv run --no-sync tomojax inspect recon.nxs --preview previews
+.venv/bin/tomojax simulate -o synthetic.nxs --size 32 --views 60
+.venv/bin/tomojax recon synthetic.nxs -o recon.nxs
+.venv/bin/tomojax inspect recon.nxs --preview previews
 ```
+
+No scan data or GPU is required. To try unreleased changes, first
+[build and install a wheel](https://github.com/tristanmanchester/tomojax/blob/main/docs/installation.md#build-and-install-an-unreleased-wheel)
+instead of installing from the package index, then run the same three commands.
 
 `inspect` describes the file, checks it and ends with `Valid: yes`. Open
 `previews/slice_x.png`, `slice_y.png`, and `slice_z.png`, the volume's central
@@ -55,23 +56,23 @@ figure above uses the Python CGLS example.
 
 Every command reads an input and writes `-o OUTPUT`, refusing to replace an
 existing file without `--force`; `tomojax <command> --help` describes it, and
-the [CLI overview](src/tomojax/cli/README.md) lists the commands.
+the [CLI overview](https://github.com/tristanmanchester/tomojax/blob/main/src/tomojax/cli/README.md) lists the commands.
 
 For CUDA installation, wheel installation, and device checks, see
-[installation](docs/installation.md). For your own scan, start with
-[the quickstart](docs/quickstart.md).
+[installation](https://github.com/tristanmanchester/tomojax/blob/main/docs/installation.md). For your own scan, start with
+[the quickstart](https://github.com/tristanmanchester/tomojax/blob/main/docs/quickstart.md).
 
 ## Choose a workflow
 
 | Task | Start here |
 | --- | --- |
-| Load and correct an NXtomo, APS Data Exchange, Nikon `.xtekct` or TIFF scan, then reconstruct it | [Quickstart](docs/quickstart.md) |
-| Supply measured geometry for parallel or laminography data, including TIFF stacks | [Real scan guide](docs/real-laminography.md) |
-| Import, calibrate and reconstruct a lab cone-beam CT scan, including multi-orbit scans | [Lab cone-beam CT](docs/lab-ct.md) |
-| Simulate data or use the Python API | [Synthetic workflow](docs/synthetic-tomography.md), [runnable examples](examples/README.md) |
-| Correct per-view motion or the centre of rotation | [Alignment guide](docs/alignment-guide.md) (experimental; check the recovered geometry) |
-| Reconstruct scans larger than the GPU, or use several GPUs | [Large scans and several GPUs](docs/large-scans.md) |
-| Check supported models and limitations | [Support matrix](docs/support-matrix.md), [known limitations](docs/known-limitations.md) |
+| Load and correct an NXtomo, APS Data Exchange, Nikon `.xtekct` or TIFF scan, then reconstruct it | [Quickstart](https://github.com/tristanmanchester/tomojax/blob/main/docs/quickstart.md) |
+| Supply measured geometry for parallel or laminography data, including TIFF stacks | [Real scan guide](https://github.com/tristanmanchester/tomojax/blob/main/docs/real-laminography.md) |
+| Import, calibrate and reconstruct a lab cone-beam CT scan, including multi-orbit scans | [Lab cone-beam CT](https://github.com/tristanmanchester/tomojax/blob/main/docs/lab-ct.md) |
+| Simulate data or use the Python API | [Synthetic workflow](https://github.com/tristanmanchester/tomojax/blob/main/docs/synthetic-tomography.md), [runnable examples](https://github.com/tristanmanchester/tomojax/blob/main/examples/README.md) |
+| Correct per-view motion or the centre of rotation | [Alignment guide](https://github.com/tristanmanchester/tomojax/blob/main/docs/alignment-guide.md) (experimental; check the recovered geometry) |
+| Reconstruct scans larger than the GPU, or use several GPUs | [Large scans and several GPUs](https://github.com/tristanmanchester/tomojax/blob/main/docs/large-scans.md) |
+| Check supported models and limitations | [Support matrix](https://github.com/tristanmanchester/tomojax/blob/main/docs/support-matrix.md), [known limitations](https://github.com/tristanmanchester/tomojax/blob/main/docs/known-limitations.md) |
 
 ## Python
 
@@ -104,22 +105,22 @@ save its progress and resume after an interruption:
 use the same physical length unit. The building blocks behind these are in
 `tomojax.recon`, `tomojax.alignment`, `tomojax.corrections`,
 `tomojax.geometry`, `tomojax.io`, `tomojax.forward` and `tomojax.datasets`.
-Start with the [complete example](examples/simulate_and_reconstruct.py) or
-browse the [documentation index](docs/README.md).
+Start with the [complete example](https://github.com/tristanmanchester/tomojax/blob/main/examples/simulate_and_reconstruct.py) or
+browse the [documentation index](https://github.com/tristanmanchester/tomojax/blob/main/docs/README.md).
 
 ## Evidence
 
 Measured speed, accuracy and memory against ASTRA and TIGRE, failed cases
-included, are in the [measurements](docs/measurements.md). Volumes larger than
+included, are in the [measurements](https://github.com/tristanmanchester/tomojax/blob/main/docs/measurements.md). Volumes larger than
 the GPU stream through it in slabs: SIRT of a whole Diamond I12 scan, 1801 views
 of 2160 × 2560 pixels into a 56.6 GB volume, ran on an 8 GB laptop GPU with
 1.4 GB of GPU memory at 1.13 times the per-voxel time of a scan that fits
-([large scans](docs/large-scans.md)).
+([large scans](https://github.com/tristanmanchester/tomojax/blob/main/docs/large-scans.md)).
 
 ## Development and license
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for environment setup, engineering
+See [CONTRIBUTING.md](https://github.com/tristanmanchester/tomojax/blob/main/CONTRIBUTING.md) for environment setup, engineering
 conventions, tests, and package checks. Changes on this branch are recorded in
-the [changelog](CHANGELOG.md).
+the [changelog](https://github.com/tristanmanchester/tomojax/blob/main/CHANGELOG.md).
 
-TomoJAX is licensed under [GPL-3.0-only](LICENSE).
+TomoJAX is licensed under [GPL-3.0-only](https://github.com/tristanmanchester/tomojax/blob/main/LICENSE).

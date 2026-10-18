@@ -37,7 +37,7 @@ test-cov:
 package:
     rm -rf dist
     uv build
-    uv run --no-sync twine check dist/*
+    uv run --no-sync twine check --strict dist/*
     uv run --no-sync python tools/smoke_installed_wheel.py
 
 guardrails:
@@ -80,7 +80,7 @@ ci:
     uv run --no-sync python tools/check_public_imports.py
     rm -rf dist
     uv build
-    uv run --no-sync twine check dist/*
+    uv run --no-sync twine check --strict dist/*
     uv run --no-sync python tools/smoke_installed_wheel.py
     uv run --no-sync python tools/smoke_cli_workflow.py
     uv run --no-sync python examples/simulate_and_reconstruct.py
