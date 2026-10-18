@@ -24,8 +24,8 @@
   },
   "long_files": {
     "src/tomojax/alignment/_pose/_pose_loop.py": 892,
-    "src/tomojax/alignment/_stages/_reconstruction_stage.py": 1029,
-    "src/tomojax/alignment/optimizers.py": 876,
+    "src/tomojax/alignment/_stages/_reconstruction_stage.py": 1028,
+    "src/tomojax/alignment/optimizers.py": 887,
     "src/tomojax/recon/fista_tv.py": 823
   },
   "long_functions": {
@@ -39,7 +39,7 @@
     "src/tomojax/alignment/_stages/_stage_multires.py::_run_one_multires_level": 117,
     "src/tomojax/alignment/_stages/_stage_runners.py::_run_multires_level_stages": 143,
     "src/tomojax/alignment/_stages/_stage_runners.py::_run_pose_alignment_stage": 106,
-    "src/tomojax/alignment/optimizers.py::_run_lbfgs_optax_loop": 190,
+    "src/tomojax/alignment/optimizers.py::_run_lbfgs_optax_loop": 194,
     "src/tomojax/alignment/optimizers.py::run_active_validation_lm": 106,
     "src/tomojax/alignment/optimizers.py::run_pose_lbfgs": 186,
     "src/tomojax/cli/simulate.py::_build_parser": 158,
@@ -55,8 +55,8 @@
     "src/tomojax/recon/_cgls_jax.py::cgls": 113,
     "src/tomojax/recon/fista_tv.py::_prepare_fista_runtime": 108,
     "src/tomojax/recon/fista_tv.py::grad_data_term": 153,
-    "src/tomojax/recon/fista_tv_core.py::_projection_loss_and_explicit_grad": 138,
-    "src/tomojax/recon/fista_tv_core.py::fista_tv_core_arrays": 123,
+    "src/tomojax/recon/fista_tv_core.py::_projection_loss_and_explicit_grad": 127,
+    "src/tomojax/recon/fista_tv_core.py::fista_tv_core_arrays": 120,
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 106
   },
   "suppressions": {
@@ -112,10 +112,10 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "type_errors": {
-    "reportArgumentType": 281,
+    "reportArgumentType": 276,
     "reportAssignmentType": 2,
     "reportAttributeAccessIssue": 159,
-    "reportCallIssue": 13,
+    "reportCallIssue": 12,
     "reportGeneralTypeIssues": 7,
     "reportIndexIssue": 7,
     "reportInvalidTypeForm": 1,
@@ -125,7 +125,7 @@
     "reportOptionalSubscript": 1,
     "reportPrivateUsage": 87,
     "reportRedeclaration": 1,
-    "reportReturnType": 20,
+    "reportReturnType": 19,
     "reportTypedDictNotRequiredAccess": 5
   },
   "positional_options": [],
@@ -133,5 +133,5 @@
   "string_normalisers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 117
+  "test_private_imports": 118
 }
