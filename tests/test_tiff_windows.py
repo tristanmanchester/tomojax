@@ -37,14 +37,17 @@ def test_compressed_crop_decodes_only_intersecting_segments(tmp_path, monkeypatc
     assert calls == [expected, expected]
 
 
-def test_folder_sidecar_discovery_does_not_probe_each_tiff(tmp_path, monkeypatch):
+def test_tiff_reads_are_binary_and_bounded_not_sidecar_probes(tmp_path, monkeypatch):
     values = np.arange(2 * 5 * 7, dtype=np.uint16).reshape(2, 5, 7)
     for i, view in enumerate(values):
         tifffile.imwrite(tmp_path / f"view{i}.tif", view)
     original = Path.open
+    buffers = []
 
     def sidecar_only(path, *args, **kwargs):
-        assert path.suffix != ".tif", "TIFF pixels must not be probed as vendor text"
+        if path.suffix == ".tif":
+            assert args[0] == "rb", "TIFF pixels must not be probed as vendor text"
+            buffers.append(kwargs.get("buffering", -1))
         return original(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "open", sidecar_only)
@@ -56,3 +59,5 @@ def test_folder_sidecar_discovery_does_not_probe_each_tiff(tmp_path, monkeypatch
         darks=0,
     )
     np.testing.assert_array_equal(np.asarray(frames.counts), values)
+    assert len(buffers) == 2 * len(values)  # headers, then indexed pixels
+    assert all(0 < size <= 64 * 1024 for size in buffers)

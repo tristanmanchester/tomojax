@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from io import DEFAULT_BUFFER_SIZE
 from itertools import groupby
 from pathlib import Path
 import re
@@ -99,6 +100,7 @@ class TiffFrames(FrameStack):
 
     Holds no open file. A window of uncompressed pages is read through a memory map,
     so only its rows are touched; other windows decode only intersecting strips/tiles.
+    File buffering is bounded independently of the filesystem's preferred block size.
     """
 
     pages: tuple[tuple[Path, int], ...]  # file and page index of each frame
@@ -122,7 +124,12 @@ class TiffFrames(FrameStack):
         maps = []
         segment_rows = []
         for file in files:
-            with TiffFile(file) as tiff:
+            # Some filesystems advertise multi-MiB blocks. Default buffering would
+            # prefetch that much pixel data just to inspect each small TIFF header.
+            with (
+                file.open("rb", buffering=DEFAULT_BUFFER_SIZE) as stream,
+                TiffFile(stream) as tiff,
+            ):
                 for index, page in enumerate(tiff.pages):
                     pages.append((file, index))
                     layouts.append((page.shape, page.dtype))
@@ -166,7 +173,12 @@ class TiffFrames(FrameStack):
             rows = slice(self.page_shape[0] - stop, self.page_shape[0] - start)
         window = (rows, cols)
         for file, group in groupby(enumerate(indices), key=lambda item: self.pages[item[1]][0]):
-            with TiffFile(file) as tiff:  # one open per run of pages in a file
+            # Keep the same bounded read-ahead for sparse windows; large segment
+            # reads still pass directly through BufferedReader without subdivision.
+            with (
+                file.open("rb", buffering=DEFAULT_BUFFER_SIZE) as stream,
+                TiffFile(stream) as tiff,
+            ):  # one open per run of pages in a file
                 for destination, index in group:
                     mapped = self.maps[index]
                     if mapped is None:
