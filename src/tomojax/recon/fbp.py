@@ -288,10 +288,10 @@ def _run_fbp_streamed(
     n, nv, nu = projections.shape
     b = min(batch_size, n)
     if cache_filtered and backend == "pallas" and separable and z_mode == "integer":
-        from ._fbp_pallas import backproject_filtered_pallas
+        from ._fbp_cuda import backproject_filtered_cuda
 
         filtered = _filter_axial_stack(projections, view_scale, spectrum, detector, b)
-        return backproject_filtered_pallas(
+        return backproject_filtered_cuda(
             poses, filtered, grid=grid, detector=detector, z_mode=z_mode
         )
 
@@ -370,9 +370,9 @@ def _backproject_into(
 ) -> jnp.ndarray:
     """Add filtered views to ``accum``; the CUDA kernel adds in place."""
     if backend == "pallas":
-        from ._fbp_pallas import backproject_filtered_pallas
+        from ._fbp_cuda import backproject_filtered_cuda
 
-        return backproject_filtered_pallas(
+        return backproject_filtered_cuda(
             poses, filtered, grid=grid, detector=detector, z_mode=z_mode, accumulate=accum
         )
     return accum + _backproject_voxels_jax(poses, filtered, grid=grid, detector=detector)
