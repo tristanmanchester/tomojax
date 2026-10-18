@@ -381,6 +381,13 @@ def _fdk_batch(
     return backproject(filtered, coeff, grid, detector, scale, out)
 
 
+@jax.jit
+def _virtual_coefficients(coeff: jax.Array, pad_lo: int) -> jax.Array:
+    """Translate a detector corner and its projected column origin together."""
+    coeff = coeff.at[:, 3:6].add(-pad_lo * coeff[:, 6:9])
+    return coeff.at[:, 23].add(pad_lo)
+
+
 @dataclass(frozen=True)
 class _Prepared:
     """Per-scan FDK weights and filter on the device; see :func:`_prepare`."""
@@ -406,8 +413,7 @@ class _Prepared:
         # Virtual columns translate the detector origin in its own plane, even
         # when its u axis has a y component (which Detector.center cannot hold).
         if self.pad_lo:
-            coeff = coeff.at[:, 3:6].add(-self.pad_lo * coeff[:, 6:9])
-            coeff = coeff.at[:, 23].add(self.pad_lo)
+            coeff = _virtual_coefficients(coeff, self.pad_lo)
         return coeff
 
     def window(self, first: int, stop: int) -> _Prepared:
@@ -885,9 +891,7 @@ class _Slabs:
     poses: np.ndarray
     result: np.ndarray
 
-    def reconstruct(
-        self, z0: int, z1: int, prep: _Prepared, coeff: jax.Array
-    ) -> np.ndarray:
+    def reconstruct(self, z0: int, z1: int, prep: _Prepared, coeff: jax.Array) -> np.ndarray:
         """Slices ``[z0, z1)``, filtering only their physical detector-row window."""
         slab = _slab_grid(self.grid, z0, z1)
         r0, r1 = _slab_rows(self.geometry, self.grid, self.detector, self.poses, z0, z1)

@@ -233,8 +233,9 @@ def test_fdk_reconstructs_full_and_short_scans(backend):
 
 
 @pytest.mark.parametrize("backend", ["jax", cuda])
-def test_fdk_reconstructs_a_full_turn_on_an_offset_detector(backend):
-    # The axis projects 5.5 columns from one edge: the far side is measured once
+@pytest.mark.parametrize("offset", [9.25, 10.0])
+def test_fdk_reconstructs_a_full_turn_on_an_offset_detector(backend, offset):
+    # The axis projects within 6.25 columns of one edge: the far side is measured once
     # per turn and the near side's filtered tail lies beyond the detector.
     n = 32
     grid = Grid(n, n, n, 1.0, 1.0, 1.0)
@@ -242,7 +243,7 @@ def test_fdk_reconstructs_a_full_turn_on_an_offset_detector(backend):
     truth = _voxelise(grid, shapes)
     angles = np.linspace(0.0, 360.0, 120, endpoint=False)
     errors = []
-    for detector in (Detector(48, 48, 1.0, 1.0), Detector(32, 48, 1.0, 1.0, (10.0, 0.0))):
+    for detector in (Detector(48, 48, 1.0, 1.0), Detector(32, 48, 1.0, 1.0, (offset, 0.0))):
         geometry = ConeGeometry(grid, detector, angles, ConeBeam(96, 144))
         config = FDKConfig(backend=backend)
         volume = fdk(geometry, grid, detector, _analytic(shapes, geometry), config=config)
