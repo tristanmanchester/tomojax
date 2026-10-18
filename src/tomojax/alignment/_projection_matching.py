@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
 import numpy as np
-from scipy import fft, interpolate, ndimage, optimize
+from scipy import fft, interpolate, ndimage
 
 from tomojax._data.geometry_meta import AugmentedGeometry
 from tomojax.geometry import (
@@ -25,6 +25,7 @@ from ._modes import alignment_plan
 from ._pose._coupled_program import JointRefinement
 from ._pose._pose_loop import align as refine_poses
 from ._prealign import correlation_peaks, reprojector, shift_views
+from ._profile_likelihood import fit_profile_likelihood
 
 if TYPE_CHECKING:
     import jax
@@ -38,23 +39,21 @@ LOG = logging.getLogger(__name__)
 class ProjectionMatchingConfig:
     """Joint translation alignment of axial parallel-beam scans.
 
-    Axial mass profiles estimate vertical motion; five native detector rows
-    estimate horizontal motion by refining correlation and first-moment starts
-    against one joint volume/pose likelihood, profiling detector offsets and
-    slopes without discarding low-frequency texture. The full scan is retained
-    without resampling.
-    This estimator can fit noise or model mismatch as motion, including on
-    already aligned input; reconstruction consistency alone does not establish
-    pose accuracy or image preservation.
+    Vertical shifts use noise-weighted axial mass profiles. Horizontal shifts
+    use five native detector rows and joint volume/pose refinement from
+    correlation and first-moment starts. The full scan is retained without
+    resampling.
 
-    No trajectory prior or supplied aligned reference enters inference.
+    Read per-view vertical standard deviations from
+    ``info["vertical_uncertainty"]``, in detector length units.
+    These condition on the fitted template and covariance and do not cover
+    horizontal alignment.
 
     Parameters
     ----------
     iterations : int, optional
-        Cap on each start's joint volume/pose refinement, not on the
-        conjugate-gradient inner solve; exhausting it does not imply convergence.
-        Default is 20.
+        Maximum joint volume/pose refinement updates per start, not inner
+        conjugate-gradient iterations. Default is 20.
     """
 
     iterations: int = 20
@@ -99,46 +98,6 @@ def _profile_seed(profiles: np.ndarray) -> np.ndarray:
             ]
         )
         reference = np.nan_to_num(np.nanmedian(aligned, axis=0))
-    return shifts
-
-
-def _vertical_shifts(projections: np.ndarray) -> np.ndarray:
-    """Continuous common-profile fit, retaining a per-profile gain and affine background."""
-    profiles = projections.sum(axis=2, dtype=np.float64)
-    shifts = _profile_seed(profiles)
-    measured = cast("np.ndarray", ndimage.gaussian_filter1d(profiles, 2, axis=1, order=1))
-    nv = measured.shape[1]
-    z = np.arange(nv)
-    margin = nv // 8
-    fixed = z[margin:-margin]
-    basis = np.column_stack([np.ones(len(fixed)), np.linspace(-1, 1, len(fixed))])
-    inverse = np.linalg.pinv(basis)
-
-    def detrend(x):
-        return x - basis @ (inverse @ x)
-
-    targets = np.asarray([detrend(p[fixed]) for p in measured])
-    splines = [interpolate.CubicSpline(z, p, extrapolate=False) for p in measured]
-    for _ in range(3):
-        aligned = np.asarray([s(z + d) for s, d in zip(splines, shifts, strict=True)])
-        reference = interpolate.CubicSpline(z, np.nan_to_num(np.nanmedian(aligned, axis=0)))
-        for i, target in enumerate(targets):
-
-            def objective(s, reference=reference, target=target):
-                p = detrend(reference(fixed - s))
-                residual = target - (target @ p) / (p @ p) * p
-                return residual @ residual
-
-            shifts[i] = cast(
-                "optimize.OptimizeResult",
-                optimize.minimize_scalar(
-                    objective,
-                    bounds=(shifts[i] - 2, shifts[i] + 2),
-                    method="bounded",
-                    options={"xatol": 1e-7},
-                ),
-            ).x
-        shifts -= shifts.mean()
     return shifts
 
 
@@ -331,7 +290,9 @@ def match_projections(
     if min(nv, nu) < 20:
         raise ValueError("native projection matching needs at least 20 detector rows and columns")
     start = time.perf_counter()
-    vertical = _vertical_shifts(data)
+    profiles = data.sum(axis=2, dtype=np.float64)
+    vertical_fit = fit_profile_likelihood(profiles, _profile_seed(profiles))
+    vertical = vertical_fit.shifts
     sparse, samples, row_ids = _sample_rows(geometry, data, vertical)
     seeds = (_correlation_seed(sparse, samples), _moment_seed(geometry, data, vertical))
     poses, joint_info, initialization = _horizontal_fit(
@@ -348,6 +309,14 @@ def match_projections(
         "config": config,
         "estimation_seconds": time.perf_counter() - start,
         "sample_rows": row_ids.tolist(),
+        "vertical_uncertainty": {
+            "standard_deviation": (vertical_fit.standard_error * geometry.detector.dv).tolist(),
+            "relative_noise_variance": vertical_fit.relative_noise_variance.tolist(),
+            "translation_frame": "detector",
+            "units": "geometry_length",
+            "scope": "Local vertical likelihood conditional on the fitted profile template and "
+            "stationary covariance; horizontal uncertainty is not estimated.",
+        },
         "joint": dict(joint_info),
         "initialization": initialization,
         "pose_translation_frame": "detector",
