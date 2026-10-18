@@ -37,7 +37,9 @@ def test_compressed_crop_decodes_only_intersecting_segments(tmp_path, monkeypatc
     assert calls == [expected, expected]
 
 
-def test_tiff_reads_are_binary_and_bounded_not_sidecar_probes(tmp_path, monkeypatch):
+@pytest.mark.parametrize("default_buffer_size", [8192, 128 * 1024])
+def test_tiff_binary_reads_are_bounded(tmp_path, monkeypatch, default_buffer_size):
+    monkeypatch.setattr("tomojax.io._tiff.DEFAULT_BUFFER_SIZE", default_buffer_size)
     values = np.arange(2 * 5 * 7, dtype=np.uint16).reshape(2, 5, 7)
     for i, view in enumerate(values):
         tifffile.imwrite(tmp_path / f"view{i}.tif", view)
@@ -60,4 +62,4 @@ def test_tiff_reads_are_binary_and_bounded_not_sidecar_probes(tmp_path, monkeypa
     )
     np.testing.assert_array_equal(np.asarray(frames.counts), values)
     assert len(buffers) == 2 * len(values)  # headers, then indexed pixels
-    assert all(0 < size <= 64 * 1024 for size in buffers)
+    assert buffers == [8 * 1024] * (2 * len(values))

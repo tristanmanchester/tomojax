@@ -21,6 +21,8 @@ if TYPE_CHECKING:
     from tifffile import TiffFrame, TiffPage
 
 TIFF_SUFFIXES = frozenset({".tif", ".tiff"})
+# Python 3.14 increased the default buffer; keep sparse read-ahead bounded.
+_BUFFER_LIMIT = 8 * 1024
 _NATURAL_SORT_PARTS = re.compile(r"(\d+)")
 
 type _NaturalSortPart = tuple[int, str] | tuple[int, int, str]
@@ -127,7 +129,7 @@ class TiffFrames(FrameStack):
             # Some filesystems advertise multi-MiB blocks. Default buffering would
             # prefetch that much pixel data just to inspect each small TIFF header.
             with (
-                file.open("rb", buffering=DEFAULT_BUFFER_SIZE) as stream,
+                file.open("rb", buffering=min(DEFAULT_BUFFER_SIZE, _BUFFER_LIMIT)) as stream,
                 TiffFile(stream) as tiff,
             ):
                 for index, page in enumerate(tiff.pages):
@@ -176,7 +178,7 @@ class TiffFrames(FrameStack):
             # Keep the same bounded read-ahead for sparse windows; large segment
             # reads still pass directly through BufferedReader without subdivision.
             with (
-                file.open("rb", buffering=DEFAULT_BUFFER_SIZE) as stream,
+                file.open("rb", buffering=min(DEFAULT_BUFFER_SIZE, _BUFFER_LIMIT)) as stream,
                 TiffFile(stream) as tiff,
             ):  # one open per run of pages in a file
                 for destination, index in group:
