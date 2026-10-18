@@ -10,7 +10,7 @@ from jax.experimental.buffer_callback import buffer_callback
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.core.cone import xla_stream
+from tomojax.core.cuda import launch_kernel
 from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
 
 _SOURCE = r"""
@@ -154,11 +154,9 @@ extern "C" __global__ void backproject_vec4(
 
 
 @cache
-def _kernel(
+def _source(
     grid: Grid, detector: Detector, mode: int, run: int, *, accumulate: bool, vector: bool
-) -> Any:
-    import cupy as cp
-
+) -> str:
     integers = {"nx": grid.nx, "ny": grid.ny, "nz": grid.nz, "nu": detector.nu, "nv": detector.nv}
     ox, oy, oz = grid_volume_origin(grid)
     floats = {
@@ -178,31 +176,25 @@ def _kernel(
         f"constexpr float {key} = {np.float32(value):.9e}f;\n" for key, value in floats.items()
     )
     first_row = round((oz - detector.center[1]) / detector.dv + (detector.nv - 1) / 2)
-    return cp.RawKernel(
+    return (
         constants
         + f"#define MODE {mode}\n#define RUN {run}\n#define ACCUMULATE {int(accumulate)}\n"
         + f"#define FIRST_ROW {first_row}\n"
-        + (_VECTOR_SOURCE if vector else _SOURCE),
-        "backproject_vec4" if vector else "backproject",
-        options=("--fmad=false",),
+        + (_VECTOR_SOURCE if vector else _SOURCE)
     )
 
 
 def _launch(context, out, poses, images, *initial: Any, grid, detector, mode, run, vector):
-    import cupy as cp
-
     count = grid.nx * grid.ny * grid.nz
-    with xla_stream(context, out):
-        target = cp.asarray(out)
-        _kernel(grid, detector, mode, run, accumulate=bool(initial), vector=vector)(
-            (-(-count // (128 * (4 * -(-run // 4) if vector else run))),),
-            (128,),
-            (
-                cp.asarray(poses), cp.asarray(images),
-                cp.asarray(initial[0]) if initial else target,
-                target, np.int32(poses.shape[0]),
-            ),
-        )  # fmt: skip
+    launch_kernel(
+        _source(grid, detector, mode, run, accumulate=bool(initial), vector=vector),
+        "backproject_vec4" if vector else "backproject",
+        options=("--fmad=false",),
+        stream=context.stream,
+        grid=(-(-count // (128 * (4 * -(-run // 4) if vector else run))),),
+        block=(128,),
+        arguments=(poses, images, initial[0] if initial else out, out, np.int32(poses.shape[0])),
+    )
 
 
 def backproject_filtered_cuda(
