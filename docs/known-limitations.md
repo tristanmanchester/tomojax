@@ -79,7 +79,8 @@ listed with how to check a result in the
   call the fused loss or pose normal equations.
 - Cone-beam scans: FDK assumes a circular source orbit (it is exact only in
   the orbit plane, with cone artefacts growing away from it) and supports full
-  turns, including offset-detector (half-fan) turns with Wang's weights, and
+  turns, including offset-detector (half-fan) turns weighted by actual
+  conjugate-panel coverage, and
   Parker-weighted short scans on a centred detector (an offset detector in a
   short scan logs a warning). The iterative solvers model any per-view poses exactly. Cone-beam
   projection needs the canonical detector grid (no `detector_roll_deg`
@@ -146,7 +147,9 @@ listed with how to check a result in the
   cone-beam transpose remains slower than ASTRA's
   approximate voxel-driven backprojector, most of all when the detector
   samples finer than the grid; bin such detectors (`Scan.binned`).
-  The TIGRE adapter only compares centred isotropic parallel scans so far.
+  The TIGRE benchmark adapter also represents calibrated cone vectors,
+  including detector offsets and per-view rotations; comparisons must retain
+  those calibrations rather than substituting a circular centred scan.
 
 ## Next steps
 
