@@ -203,6 +203,21 @@ def _pose_gram(ops: _BatchOps, n_views: int, width: int, indices: jax.Array) -> 
     )
 
 
+def _map_columns(fn: Callable, views: jax.Array, spec: CoupledSpec) -> jax.Array:
+    """Bound vmapped cone columns while sharing one volume and CUDA launch."""
+    batch = None
+    if (
+        spec.backend == "pallas"
+        and spec.jacobian.cone_beam
+        and spec.jacobian.jacobian == "autodiff"
+    ):
+        # Only column images occupy additional batch scratch; ray work stays in
+        # registers. Limit each batch of column images to 16 MiB, even for large detectors.
+        per_view = 4 * (1 + len(spec.active_columns)) * spec.detector.nu * spec.detector.nv
+        batch = max(1, min(32, 16 * 1024**2 // per_view))
+    return jax.lax.map(fn, views, batch_size=batch)
+
+
 def _projectors(
     spec: CoupledSpec, arrays: CoupledArrays, masked: Callable
 ) -> tuple[Callable, Callable]:
@@ -418,7 +433,7 @@ def _build_program(
                 * active[indices, None]
             )
 
-        cached = jax.lax.map(columns, jnp.arange(n_views)) if cache_columns else None
+        cached = _map_columns(columns, jnp.arange(n_views), spec) if cache_columns else None
 
         def view_columns(i):
             return cached[i] if cached is not None else columns(i)
@@ -426,7 +441,7 @@ def _build_program(
         def batch_columns(start):
             if cached is not None:
                 return take(cached, start)
-            return jax.lax.map(columns, start + jnp.arange(size))
+            return _map_columns(columns, start + jnp.arange(size), spec)
 
         def project(start, dx):
             return batch_weights(start) * forward(take(t, start), dx, batch_frames(start))

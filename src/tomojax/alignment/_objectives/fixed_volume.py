@@ -190,10 +190,10 @@ def _cone_project_poses(
     return cone_project(volume, coeff, grid, detector, backend=backend)
 
 
-def _cone_projector_backend(requested: ProjectorBackendInput, *, differentiable: bool) -> str:
+def _cone_projector_backend(requested: ProjectorBackendInput) -> str:
     from tomojax.core.cone import use_cuda_cone
 
-    if normalize_projector_backend(requested) == "jax" or differentiable or not use_cuda_cone():
+    if normalize_projector_backend(requested) == "jax" or not use_cuda_cone():
         return "jax"
     return "cuda"
 
@@ -220,9 +220,7 @@ def project_stack(
     if n_views == 0:
         return jnp.zeros((0, detector.nv, detector.nu), dtype=jnp.float32)
     if frames is not None:
-        cone_backend = _cone_projector_backend(
-            backend, differentiable=require_differentiable_projector
-        )
+        cone_backend = _cone_projector_backend(backend)
         return _cone_project_poses(pose_stack, grid, detector, volume, frames, cone_backend)
     if ray_integrator == "sampled" and backend == "pallas" and not require_differentiable_projector:
         fallback_reason = _pallas_sinogram_fallback_reason(
@@ -334,7 +332,7 @@ def project_and_score_stack(
         )
     )
 
-    cone_backend = _cone_projector_backend(backend, differentiable=require_differentiable_projector)
+    cone_backend = _cone_projector_backend(backend)
 
     def vm_project(T: jnp.ndarray, start: jnp.ndarray | int) -> jnp.ndarray:
         """Project the views ``start, start + 1, ...`` at poses ``T``."""
@@ -473,20 +471,16 @@ def alignment_projector_backend_provenance(
     """Report which projector backend is used by an alignment objective."""
     requested = normalize_projector_backend(projector_backend)
     if frames is not None:
-        actual = _cone_projector_backend(requested, differentiable=require_differentiable_projector)
+        actual = _cone_projector_backend(requested)
         reason = None
         if requested == "pallas" and actual == "jax":
-            reason = (
-                "cone pose derivatives require the JAX projector"
-                if require_differentiable_projector
-                else "CUDA cone kernels are unavailable"
-            )
+            reason = "CUDA cone kernels are unavailable"
         return backend_provenance(
             requested_backend=requested,
             actual_backend="pallas" if actual == "cuda" else "jax",
             api_surface=api_surface,
             fallback_reason=reason,
-            differentiability="performance_only" if actual == "cuda" else "gradient_safe",
+            differentiability="gradient_safe",
         )
     if requested == "jax":
         return backend_provenance(

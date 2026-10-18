@@ -146,3 +146,43 @@ def test_otsu_resolves_adjacent_float32_intensities():
     values = np.array([1.0, np.nextafter(np.float32(1), np.float32(2))])
     threshold = _compute_otsu_threshold(values.astype(np.float32))
     assert values[0] < threshold < values[1]
+
+
+@pytest.mark.gpu
+def test_cone_alignment_objective_uses_cuda_pose_derivatives():
+    from tomojax.core.cone import cone_model, use_cuda_cone
+    from tomojax.geometry import ConeBeam, ConeGeometry, stack_view_poses
+
+    if not use_cuda_cone():
+        pytest.skip("requires CUDA cone kernels")
+    grid, detector = Grid(7, 6, 5, 0.7, 1.1, 0.9), Detector(9, 7, 1.3, 0.8)
+    geometry = ConeGeometry(grid, detector, [13.7, 78.1, 147.3], ConeBeam(80, 160), tilt_deg=53)
+    poses = stack_view_poses(geometry, 3)
+    volume = jnp.asarray(np.random.default_rng(19).uniform(size=(7, 6, 5)), jnp.float32)
+    options = dict(
+        grid=grid,
+        detector=detector,
+        volume=volume,
+        det_grid=(jnp.zeros((7, 9)), jnp.zeros((7, 9))),
+        frames=jnp.asarray(cone_model(geometry).frames(3)),
+        require_differentiable_projector=True,
+    )
+    provenance = fixed_volume.alignment_projector_backend_provenance(
+        pose_stack=poses, projector_backend="pallas", api_surface="test", **options
+    )
+    assert provenance.actual_backend == "pallas"
+    assert provenance.differentiability == "gradient_safe"
+
+    def value_grad(backend):
+        def loss(t):
+            predictions = fixed_volume.project_stack(
+                pose_stack=t, projector_backend=backend, **options
+            )
+            return jnp.sum(jnp.square(predictions - 0.5))
+
+        return jax.jit(jax.value_and_grad(loss))(poses)
+
+    for actual, expected in zip(value_grad("pallas"), value_grad("jax"), strict=True):
+        np.testing.assert_allclose(
+            actual, expected, rtol=0, atol=2e-4 * float(jnp.max(jnp.abs(expected)))
+        )

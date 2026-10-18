@@ -86,10 +86,11 @@ listed with how to check a result in the
   replay grid; detector roll is part of `ConeBeam`). The CUDA kernels need
   CuPy; without it the JAX reference runs, about ten times slower. On CUDA
   the matched transpose is slower than ASTRA's approximate backprojector (see
-  [measurements](measurements.md#cone-beam-projection-and-fdk)). Pose
-  derivatives come from the JAX reference; the CUDA forward differentiates in
-  the volume only, so alignment's Gauss-Newton columns use central differences
-  on CUDA. Cone-beam setup calibration estimates the axis offset and detector
+  [measurements](measurements.md#cone-beam-projection-and-fdk)). CUDA forward
+  projection supports first-order pose and volume derivatives;
+  Gauss–Newton evaluates analytic pose columns in one ray traversal. Derivatives
+  hold the dominant ray axis and bilinear cell fixed; use the JAX reference for
+  higher derivatives. Cone-beam setup calibration estimates the axis offset and detector
   roll (`calibrate_cone_axis`, also `tomojax align --mode cor`) from slab
   sharpness, which needs in-plane structure at the slab heights and a scan of
   at least 180 degrees plus the fan angle; it does not estimate detector pitch
