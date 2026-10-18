@@ -114,6 +114,14 @@ def test_repeated_alignment_reconstruction_keeps_updating_voxels_and_resumes(
 
 
 def test_align_multires_public_execution_emits_observer_and_resume_metadata() -> None:
+    traces = []
+
+    @jax.jit
+    def caller_program(value):
+        traces.append(None)
+        return value + 1
+
+    assert float(caller_program(jnp.zeros(()))) == 1
     grid = Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0)
     detector = Detector(nu=2, nv=2, du=1.0, dv=1.0)
     geometry = ParallelGeometry(
@@ -156,8 +164,7 @@ def test_align_multires_public_execution_emits_observer_and_resume_metadata() ->
         checkpoint_callback=checkpoint_states.append,
     )
 
-    assert x.shape == (2, 2, 2)
-    assert pose_params.shape == (2, 6)
+    assert (x.shape, pose_params.shape) == ((2, 2, 2), (2, 6))
     assert bool(jnp.all(jnp.isfinite(x)))
     assert bool(jnp.all(jnp.isfinite(pose_params)))
     assert info["loss"]
@@ -186,12 +193,13 @@ def test_align_multires_public_execution_emits_observer_and_resume_metadata() ->
     assert final_state.global_outer_iterations_completed == 1
     assert final_state.stage_name == "direct_pose"
     assert final_state.stage_completed is True
-    assert final_state.x.shape == (2, 2, 2)
-    assert final_state.pose_params.shape == (2, 6)
+    assert (final_state.x.shape, final_state.pose_params.shape) == ((2, 2, 2), (2, 6))
     assert final_state.loss == info["loss"]
     assert final_state.outer_stats == info["outer_stats"]
     assert isinstance(final_state.geometry_calibration_state, dict)
     assert "detector" in final_state.geometry_calibration_state
+    assert float(caller_program(jnp.ones(()))) == 2
+    assert len(traces) == 1  # Alignment must not invalidate the caller's programs.
 
 
 def test_align_multires_executes_a_setup_then_pose_schedule_with_real_stages() -> None:
