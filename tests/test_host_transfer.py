@@ -35,3 +35,15 @@ def test_host_transfers_preserve_owned_views(source_order, target_order):
     np.testing.assert_array_equal(target, source * np.float32(1.000001))
     np.testing.assert_array_equal(np.asarray(value), source)
     np.testing.assert_array_equal(storage[1::2], np.full_like(storage[1::2], -17))
+
+
+@pytest.mark.parametrize("axis", [0, 1, 2])
+def test_host_transfers_copy_pitched_windows_without_touching_padding(axis):
+    base = np.arange(7 * 9 * 13, dtype=np.float32).reshape(7, 9, 13) / 100
+    window = tuple(slice(2, -2) if k == axis else slice(None) for k in range(3))
+    target = np.full_like(base, -19)
+    value = upload_host(base[window], jax.devices()[0])
+    copy_to_host(value * jnp.float32(1.000001), target[window])
+    expected = np.full_like(base, -19)
+    expected[window] = base[window] * np.float32(1.000001)
+    np.testing.assert_array_equal(target, expected)
