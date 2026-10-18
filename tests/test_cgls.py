@@ -10,9 +10,15 @@ import numpy as np
 import pytest
 
 # check-public-imports: allow-private
+from tomojax.core.geometry.views import stack_view_poses
+
+# check-public-imports: allow-private
 from tomojax.core.projector import forward_project_view_T
 from tomojax.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.recon import CGLSConfig, cgls
+
+# check-public-imports: allow-private
+from tomojax.recon._cgls_jax import _operators
 
 
 @pytest.mark.numerical
@@ -275,12 +281,7 @@ def test_pallas_cgls_matches_dense_damped_solution():
 def test_bright_region_does_not_hide_weak_region_updates(backend, model):
     if backend == "pallas" and jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
-    # check-public-imports: allow-private
-    from tomojax.core.geometry.views import stack_view_poses
     from tomojax.geometry import ParallelGeometry
-
-    # check-public-imports: allow-private
-    from tomojax.recon._cgls_jax import _operators
 
     grid = Grid(4, 3, 2, 1.0, 1.0, 1.0)
     detector = Detector(9, 2, 1.0, 1.0)
@@ -313,6 +314,31 @@ def test_bright_region_does_not_hide_weak_region_updates(backend, model):
     assert info["converged"]
     assert info["normal_residual_is_recomputed"]
     assert info["residual_recomputations"] >= 1
+
+
+def test_cancellation_estimate_does_not_stop_decreasing_normal_residual():
+    from tomojax.geometry import ParallelGeometry
+
+    # Fixed CPU arithmetic reproduces the premature roundoff stop independently
+    # of the GPU reduction ordering in the existing bright/weak-region test.
+    with jax.default_device(jax.devices("cpu")[0]):
+        grid, detector = Grid(4, 3, 2, 1, 1, 1), Detector(9, 2, 1, 1)
+        geometry = ParallelGeometry(grid, detector, [0, 31, 67, 95, 147])
+        poses = stack_view_poses(geometry, 5)
+        initial = np.zeros((4, 3, 2), np.float32)
+        initial[:, :, 0] = 1e7
+        truth = initial.copy()
+        truth[:, :, 1] = 0.01 * np.arange(1, 13).reshape(4, 3)
+        project = jax.jit(
+            lambda t, x: _operators(t, grid, detector, None, "jax", 5, "joseph")[0](x)
+        )
+        data = project(poses, jnp.asarray(truth))
+        config = CGLSConfig(rtol=1e-7, projector_backend="jax", views_per_batch=5)
+        actual, info = cgls(geometry, grid, detector, data, init_x=initial, config=config)
+    np.testing.assert_array_equal(np.asarray(actual)[:, :, 0], initial[:, :, 0])
+    np.testing.assert_allclose(np.asarray(actual)[:, :, 1], truth[:, :, 1], rtol=2e-4, atol=1e-7)
+    assert info["converged"] and info["normal_residual_is_recomputed"]
+    assert info["normal_residual_norm"] <= info["normal_residual_tolerance"]
 
 
 @pytest.mark.parametrize("damping", [0.0, 0.3])

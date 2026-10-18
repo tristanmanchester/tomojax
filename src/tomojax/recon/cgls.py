@@ -26,7 +26,7 @@ class CGLSConfig:
     adjoint. Stop when the normal-residual norm falls below
     ``atol + rtol * initial_normal_residual_norm`` or after ``iterations`` updates.
     ``roundoff_limit`` indicates voxelwise update stagnation or a normal gradient
-    within an FP32 cancellation estimate, without claiming the requested tolerance.
+    stagnating within an FP32 cancellation estimate, without claiming the requested tolerance.
     Before reporting convergence or roundoff, recompute the data and normal
     residuals. A premature convergence indication from recursive residual drift
     restarts the conjugate direction. Periodic checks near the FP32 noise floor
