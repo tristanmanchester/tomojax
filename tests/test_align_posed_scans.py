@@ -177,9 +177,9 @@ def test_align_recovers_the_misregistration_of_a_multi_orbit_scan():
 
 
 def _fine_level_does_not_fit(monkeypatch, n):
-    """Make the joint update at grid size ``n`` report that it needs 16 GiB; count checks."""
+    """Make both device and host-staged updates refuse grid size ``n``; count checks."""
     # check-public-imports: allow-private
-    import tomojax.alignment._pose._coupled_objective as coupled
+    from tomojax.alignment._pose import _coupled_host as host, _coupled_objective as coupled
 
     checked = coupled._check_device_memory
     sizes = []
@@ -191,6 +191,14 @@ def _fine_level_does_not_fit(monkeypatch, n):
         return checked(arrays, spec)
 
     monkeypatch.setattr(coupled, "_check_device_memory", check)
+    host_build = host.build_host_objective
+
+    def no_host(arrays, spec):
+        if spec.grid.nx == n:
+            raise coupled.AlignmentMemoryError(2**34, 2**30)
+        return host_build(arrays, spec)
+
+    monkeypatch.setattr(host, "build_host_objective", no_host)
     return sizes
 
 

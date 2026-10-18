@@ -14,6 +14,7 @@ import numpy as np
 
 from tomojax.backends import device_free_memory_bytes
 from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.host_stream import host_source, should_stream
 from tomojax.core.validation import (
     validate_detector_grid,
     validate_grid,
@@ -23,7 +24,6 @@ from tomojax.core.validation import (
 from tomojax.geometry import grid_volume_origin
 from tomojax.recon._axial_slabs import independent_planes
 from tomojax.recon._host_arrays import validate_host_views
-from tomojax.recon._host_stream import host_source, should_stream
 from tomojax.recon._projection import (
     ConeModel,
     ProjectorBackend,

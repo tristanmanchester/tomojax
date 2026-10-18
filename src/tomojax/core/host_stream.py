@@ -9,15 +9,21 @@ device.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from contextlib import contextmanager
 from functools import partial
 import itertools
+from typing import TYPE_CHECKING, cast
 
 import jax
 from jax.experimental import io_callback
 import jax.numpy as jnp
 import numpy as np
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from numpy.typing import ArrayLike
+
 
 _SOURCES: dict[int, np.ndarray] = {}
 _KEYS = itertools.count(1)
@@ -77,7 +83,7 @@ def should_stream(projections: object, *, fraction: float = 0.4) -> bool:
     from tomojax.backends import device_free_memory_bytes
 
     free = device_free_memory_bytes()
-    nbytes = int(np.prod(np.shape(projections))) * 4
+    nbytes = int(np.prod(np.shape(cast("ArrayLike", projections)))) * 4
     return free is not None and nbytes > fraction * free
 
 
@@ -93,7 +99,7 @@ def _read_block(key: np.ndarray, start: np.ndarray, *, size: int) -> np.ndarray:
     return np.array(_SOURCES[int(key)][first : first + size], dtype=np.float32)
 
 
-def _write_block(key: np.ndarray, start: np.ndarray, block: np.ndarray) -> np.ndarray:
+def _write_block(key: np.ndarray, start: np.ndarray, block: np.ndarray) -> np.int32:
     first = int(start)
     _SOURCES[int(key)][first : first + block.shape[0]] = block
     return np.int32(0)

@@ -25,7 +25,7 @@ from ._pose_jacobian import PoseJacobianOptions
 # projection, and the joint solve applies them in every conjugate-gradient
 # iteration, so cache them whenever that many sinograms fit in this share of
 # free device memory. The complete working set is still checked below, and a
-# cached update that cannot fit retries without columns before giving up a level.
+# cached update that cannot fit retries without columns before staging the solve.
 _POSE_CACHE_FRACTION = 0.5
 # Fallback cap when free device memory cannot be queried.
 _POSE_CACHE_BYTES = 512 * 1024**2
@@ -69,10 +69,9 @@ def _free_device_memory(array: jax.Array) -> int | None:
     device = next(iter(array.devices()))
     if device.platform != "gpu":
         return None
-    stats = device.memory_stats() or {}
-    if "bytes_limit" not in stats:
-        return None
-    return int(stats["bytes_limit"]) - int(stats.get("bytes_in_use", 0))
+    from tomojax.backends import device_free_memory_bytes
+
+    return device_free_memory_bytes(device=device)
 
 
 def _check_device_memory(arrays: CoupledArrays, spec: CoupledSpec) -> Callable | None:
@@ -85,7 +84,7 @@ def _check_device_memory(arrays: CoupledArrays, spec: CoupledSpec) -> Callable |
     use, so it is compiled once. Recheck current free memory at dispatch: an
     intervening reconstruction can retain another volume after this admission.
     """
-    available = _free_device_memory(arrays.projections)
+    available = _free_device_memory(arrays.poses)
     if available is None:
         return None
     grid, detector = spec.grid, spec.detector
@@ -106,6 +105,9 @@ def _check_device_memory(arrays: CoupledArrays, spec: CoupledSpec) -> Callable |
     if analysis is None:
         return compiled
     needed = int(analysis.temp_size_in_bytes) + int(analysis.output_size_in_bytes)
+    # A host scan has not occupied device memory yet; include its input
+    # transfer as well as XLA's temporaries in the admission decision.
+    needed += sum(a.nbytes for a in jax.tree.leaves(arrays) if isinstance(a, np.ndarray))
     if needed > available:
         raise AlignmentMemoryError(needed, available)
 
@@ -240,20 +242,31 @@ def build_coupled_objective(
         split=split,
         refinement=refinement,
     )
-    try:
-        compiled = _check_device_memory(arrays, spec)
-    except AlignmentMemoryError as error:
-        if not spec.cache_columns:
-            raise
-        # This is the same linear update, only with derivative projections
-        # recomputed during its solve. Do not discard a level just for its cache.
-        LOG.info("Cached pose update does not fit (%s); recomputing columns instead", error)
-        spec = replace(spec, cache_columns=False)
-        compiled = _check_device_memory(arrays, spec)
+    return _prepare_execution(arrays, spec)
+
+
+def _prepare_execution(arrays: CoupledArrays, spec: CoupledSpec) -> CoupledObjective:
+    """Admit a device program, or stage the same system without its large temporaries."""
+    for cached in (True, False) if spec.cache_columns else (False,):
+        spec = replace(spec, cache_columns=cached)
+        try:
+            compiled = _check_device_memory(arrays, spec)
+            break
+        except AlignmentMemoryError as error:
+            if cached:
+                LOG.info("Cached pose update does not fit (%s); recomputing columns instead", error)
+                continue
+            if spec.split is not None or spec.refinement is not None:
+                raise
+            from ._coupled_host import build_host_objective
+
+            LOG.info("Device joint update does not fit (%s); staging Krylov vectors on host", error)
+            update, loss = build_host_objective(arrays, spec)
+            return CoupledObjective(update, loss, spec.backend, False)
     update = (
         partial(run_update, arrays, spec=spec) if compiled is None else partial(compiled, arrays)
     )
     loss = partial(run_loss, arrays, spec=spec)
-    if split is not None:
-        update, loss = _on_devices(update, loss, split)
-    return CoupledObjective(update, loss, backend, spec.cache_columns)
+    if spec.split is not None:
+        update, loss = _on_devices(update, loss, spec.split)
+    return CoupledObjective(update, loss, spec.backend, spec.cache_columns)

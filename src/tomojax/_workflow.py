@@ -1023,8 +1023,6 @@ def _run_alignment(
     scan: Scan, plan: AlignmentPlan, checkpoint: str | PathLike[str] | None
 ) -> tuple[Geometry, np.ndarray | jax.Array, np.ndarray, str, dict[str, object]]:
     """Calibrated geometry, volume, ``(views, 6)`` poses, their frame and record of ``plan``."""
-    import jax.numpy as jnp
-
     from tomojax.alignment.api import (
         AlignmentRun,
         align_multires,
@@ -1034,7 +1032,9 @@ def _run_alignment(
     )
 
     geometry, grid, detector = scan.geometry, scan.grid, scan.detector
-    projections = jnp.asarray(scan.projections, jnp.float32)
+    # Keep host scans there through the resolution pyramid; each solver owns
+    # its placement and may stream a native stack larger than device memory.
+    projections = cast("Any", scan.projections)
     cfg: AlignConfig | None = plan.config
     record: dict[str, object] = {"mode": plan.mode, "levels": list(plan.levels)}
     record["config"] = plan.config
