@@ -14,6 +14,7 @@ import pytest
 from tomojax.alignment.optimizers import (
     PoseLbfgsConfig,
     PoseOptimizationContext,
+    _LbfgsKernels,
     _run_lbfgs_optax_loop,
     run_pose_lbfgs,
 )
@@ -78,9 +79,6 @@ def test_lbfgs_compiled_state_updates_converge_on_quadratic(explicit_gradient):
 
 @pytest.mark.numerical
 def test_reusable_lbfgs_kernels_consume_new_objective_inputs():
-    # check-public-imports: allow-private
-    from tomojax.alignment.optimizers import _LbfgsKernels
-
     def objective(z, target):
         return 0.5 * jnp.sum((z - target) ** 2)
 
@@ -233,3 +231,37 @@ def test_lbfgs_initial_evaluation_failure_keeps_state_and_propagates_unknown_err
     np.testing.assert_array_equal(failed.z, options["z0"])
     with pytest.raises(RuntimeError, match="bad start"):
         _run_lbfgs_optax_loop(**options)
+
+
+@pytest.mark.parametrize("stage", ["initial", "evaluate", "update"])
+def test_lbfgs_failure_results_preserve_the_last_valid_state(stage):
+    def objective(z):
+        return jnp.sum(z**2)
+
+    cfg = PoseLbfgsConfig(maxiter=2, ftol=1e-9, gtol=1e-6, maxls=5)
+    z = expected_z = jnp.ones(2)
+    kernels = _LbfgsKernels.build(objective, cfg)
+    if stage == "initial":
+        kernels = replace(kernels, evaluate=lambda *_: (jnp.nan, jnp.ones(2)))
+    elif stage == "evaluate":
+        initial = kernels.evaluate(z, kernels.init(z), ())
+        expected_z, _ = kernels.update(z, kernels.init(z), *initial, ())
+        kernels = replace(kernels, evaluate=Mock(side_effect=[initial, RuntimeError("later")]))
+    else:
+        kernels = replace(kernels, update=lambda z, state, *_: (z * jnp.nan, state))
+    result = _run_lbfgs_optax_loop(
+        z0=z,
+        value_fn=objective,
+        cfg=cfg,
+        kernels=kernels,
+        is_expected_failure=lambda exc: isinstance(exc, RuntimeError),
+    )
+    assert not result.success and result.nit == int(stage == "evaluate")
+    np.testing.assert_array_equal(result.z, expected_z)
+    if stage == "initial":
+        assert result.best_z is None and result.eval_count == 1
+        assert np.isnan(result.initial_value) and result.failure_initial_loss is None
+    else:
+        np.testing.assert_array_equal(result.best_z, result.z)
+        assert result.initial_value == result.failure_initial_loss == 2.0
+        assert result.eval_count == (3 if result.nit else 2)

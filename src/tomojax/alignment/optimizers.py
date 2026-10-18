@@ -408,6 +408,33 @@ def _run_lbfgs_optax_loop(  # noqa: PLR0912, PLR0915
     eval_count = 0
     total_line_search_steps = 0
     z = z0
+    initial_value: float | None = None
+    initial_grad_norm: float | None = None
+    nit, last_grad_norm, last_step_norm = 0, math.inf, 0.0
+
+    def finish(
+        *,
+        success: bool,
+        message: str,
+        failure_message: str | None = None,
+        failure_initial_loss: float | None = None,
+    ) -> LbfgsLoopResult:
+        return LbfgsLoopResult(
+            z=z,
+            best_z=best_z,
+            best_value=best_value,
+            eval_count=eval_count,
+            total_line_search_steps=total_line_search_steps,
+            initial_value=initial_value,
+            initial_grad_norm=initial_grad_norm,
+            success=success,
+            message=message,
+            nit=nit,
+            last_grad_norm=last_grad_norm,
+            last_step_norm=last_step_norm,
+            failure_message=failure_message,
+            failure_initial_loss=failure_initial_loss,
+        )
 
     def record_value(value: float, z_value: jnp.ndarray) -> None:
         nonlocal best_value, best_z, eval_count
@@ -428,37 +455,19 @@ def _run_lbfgs_optax_loop(  # noqa: PLR0912, PLR0915
         record_value(initial_value, z)
     except Exception as exc:
         if expected_failure(exc):
-            return LbfgsLoopResult(
-                z=z,
-                best_z=best_z,
-                best_value=best_value,
-                eval_count=eval_count,
-                total_line_search_steps=total_line_search_steps,
-                initial_value=None,
-                initial_grad_norm=None,
+            initial_value = initial_grad_norm = None
+            return finish(
                 success=False,
                 message="initial L-BFGS objective/gradient failed",
-                nit=0,
-                last_grad_norm=math.inf,
-                last_step_norm=0.0,
                 failure_message=f"initial L-BFGS objective/gradient failed: {exc}",
             )
         raise
 
+    last_grad_norm = initial_grad_norm
     if not math.isfinite(initial_value) or not math.isfinite(initial_grad_norm):
-        return LbfgsLoopResult(
-            z=z,
-            best_z=best_z,
-            best_value=best_value,
-            eval_count=eval_count,
-            total_line_search_steps=total_line_search_steps,
-            initial_value=initial_value,
-            initial_grad_norm=initial_grad_norm,
+        return finish(
             success=False,
             message="initial L-BFGS objective/gradient is non-finite",
-            nit=0,
-            last_grad_norm=initial_grad_norm,
-            last_step_norm=0.0,
             failure_message="initial L-BFGS objective/gradient is non-finite",
             failure_initial_loss=initial_value if math.isfinite(initial_value) else None,
         )
@@ -469,9 +478,6 @@ def _run_lbfgs_optax_loop(  # noqa: PLR0912, PLR0915
         if success
         else "Optax L-BFGS reached maxiter"
     )
-    nit = 0
-    last_grad_norm = initial_grad_norm
-    last_step_norm = 0.0
 
     try:
         for iteration in range(int(cfg.maxiter)):
@@ -485,19 +491,9 @@ def _run_lbfgs_optax_loop(  # noqa: PLR0912, PLR0915
                 value_f = float(value)
                 grad_norm = float(jnp.linalg.norm(grad))
             if not math.isfinite(value_f) or not math.isfinite(grad_norm):
-                return LbfgsLoopResult(
-                    z=z,
-                    best_z=best_z,
-                    best_value=best_value,
-                    eval_count=eval_count,
-                    total_line_search_steps=total_line_search_steps,
-                    initial_value=initial_value,
-                    initial_grad_norm=initial_grad_norm,
+                return finish(
                     success=False,
                     message="non-finite L-BFGS objective/gradient",
-                    nit=nit,
-                    last_grad_norm=last_grad_norm,
-                    last_step_norm=last_step_norm,
                     failure_message="non-finite L-BFGS objective/gradient",
                     failure_initial_loss=initial_value,
                 )
@@ -510,19 +506,9 @@ def _run_lbfgs_optax_loop(  # noqa: PLR0912, PLR0915
 
             z_next, opt_state = kernels.update(z, opt_state, value, grad, objective_args)
             if not bool(jnp.all(jnp.isfinite(z_next))):
-                return LbfgsLoopResult(
-                    z=z,
-                    best_z=best_z,
-                    best_value=best_value,
-                    eval_count=eval_count,
-                    total_line_search_steps=total_line_search_steps,
-                    initial_value=initial_value,
-                    initial_grad_norm=initial_grad_norm,
+                return finish(
                     success=False,
                     message="non-finite L-BFGS parameter update",
-                    nit=nit,
-                    last_grad_norm=last_grad_norm,
-                    last_step_norm=last_step_norm,
                     failure_message="non-finite L-BFGS parameter update",
                     failure_initial_loss=initial_value,
                 )
@@ -551,38 +537,15 @@ def _run_lbfgs_optax_loop(  # noqa: PLR0912, PLR0915
                     message = f"Optax L-BFGS relative objective change {rel_change:.3e} <= ftol"
     except Exception as exc:
         if expected_failure(exc):
-            return LbfgsLoopResult(
-                z=z,
-                best_z=best_z,
-                best_value=best_value,
-                eval_count=eval_count,
-                total_line_search_steps=total_line_search_steps,
-                initial_value=initial_value,
-                initial_grad_norm=initial_grad_norm,
+            return finish(
                 success=False,
                 message=f"L-BFGS failed during optimization: {exc}",
-                nit=nit,
-                last_grad_norm=last_grad_norm,
-                last_step_norm=last_step_norm,
                 failure_message=f"L-BFGS failed during optimization: {exc}",
                 failure_initial_loss=initial_value,
             )
         raise
 
-    return LbfgsLoopResult(
-        z=z,
-        best_z=best_z,
-        best_value=best_value,
-        eval_count=eval_count,
-        total_line_search_steps=total_line_search_steps,
-        initial_value=initial_value,
-        initial_grad_norm=initial_grad_norm,
-        success=success,
-        message=message,
-        nit=nit,
-        last_grad_norm=last_grad_norm,
-        last_step_norm=last_step_norm,
-    )
+    return finish(success=success, message=message)
 
 
 def run_pose_lbfgs(  # noqa: PLR0912, PLR0915
