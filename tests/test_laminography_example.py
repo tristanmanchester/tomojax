@@ -193,3 +193,42 @@ def test_automatic_binning_is_only_an_initializer(monkeypatch, nu):
     assert result.info["automatic"]["setup_binning"] == (1 if nu == 320 else 2)
     np.testing.assert_array_equal(result.scan.poses, seed + 0.001)
     assert result.method == "joint_volume_pose"
+
+
+@pytest.mark.parametrize("operation", [tj.align, tj.reconstruct])
+def test_automatic_explicit_region_preserves_faces_and_final_sampling(monkeypatch, operation):
+    from tomojax import _workflow as workflow
+    from tomojax.geometry import grid_volume_origin
+
+    grid = tj.Grid(7, 9, 5, 0.7, 1.1, 0.9, vol_origin=(1.2, -4, 0.5))
+    geometry = tj.LaminographyGeometry(
+        tj.Grid(4, 4, 4, 1, 1, 1), tj.Detector(322, 7, 1, 1), np.arange(25), tilt_deg=30
+    )
+    scan = tj.Scan(np.ones((25, 7, 322), np.float32), geometry)
+
+    def seed(s, **kwargs):
+        g = automatic.RotationAxisGeometry(s.grid, s.detector, s.angles, (0, 0.5, 0.866))
+        return tj.Alignment(None, replace(s, geometry=g), np.zeros((len(s.angles), 6)), {})
+
+    def reconstruct(s, *args, **kwargs):
+        assert (s.grid.nx, s.grid.ny, s.grid.nz) == (4, 5, 3)
+        for g in (grid, s.grid):
+            pitch = np.array((g.vx, g.vy, g.vz))
+            lower = np.asarray(grid_volume_origin(g)) - pitch / 2
+            upper = lower + pitch * (g.nx, g.ny, g.nz)
+            np.testing.assert_allclose(lower, (0.85, -4.55, 0.05))
+            np.testing.assert_allclose(upper, (5.75, 5.35, 4.55))
+        return tj.Reconstruction(np.ones((4, 5, 3), np.float32), s, "fista", {})
+
+    monkeypatch.setattr(workflow, "_align_explicit", seed)
+    monkeypatch.setattr(workflow, "reconstruct", reconstruct)
+    monkeypatch.setattr(automatic, "estimate_region", lambda s: pytest.fail("supplied region"))
+    monkeypatch.setattr(automatic, "_select_motion", lambda s, *args: (s, {}))
+    monkeypatch.setattr(
+        automatic, "align_arrays", lambda *args, **kw: (kw["init_x"], kw["init_pose_params"], {})
+    )
+    result = operation(scan, grid=grid)
+    assert result.scan.grid == grid and result.volume.shape == (7, 9, 5)
+    assert result.scan.projections is scan.projections
+    assert result.info["automatic"]["region"]["status"] == "provided_region"
+    assert result.info["automatic"]["setup_binning"] == 2

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+Automatic laminography accepts an explicit `grid=` region, retaining its physical
+faces and final voxel sampling while estimating setup and motion.
+
 Container conversion preserves missing angles/centre calibration rather than
 creating measurements; saved NXtomo rotation axes now reflect the recorded tilt.
 Nikon loading no longer invents a full-turn angle schedule or a 16-bit white

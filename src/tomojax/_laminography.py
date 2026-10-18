@@ -6,7 +6,7 @@ those operations without importing the workflow facade back into itself.
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 import time
 from typing import TYPE_CHECKING, Any, cast
 
@@ -14,7 +14,7 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 
 from tomojax._region import estimate_region
-from tomojax._scan import describe, record_of
+from tomojax._scan import describe, record_of, with_grid
 from tomojax.alignment import alignment_plan
 from tomojax.alignment.api import (
     AlignConfig,
@@ -22,7 +22,7 @@ from tomojax.alignment.api import (
     AlignmentStage,
     align as align_arrays,
 )
-from tomojax.core.multires import upsample_volume
+from tomojax.core.multires import scale_grid, upsample_volume
 from tomojax.geometry import Grid, RotationAxisGeometry, grid_volume_origin
 from tomojax.recon import FistaConfig, project
 
@@ -61,7 +61,7 @@ def _final_config(scan: Scan) -> FistaConfig:
     )
 
 
-def _seed(scan: Scan, calibration: np.ndarray, align: Callable):
+def _seed(scan: Scan, calibration: np.ndarray, align: Callable, grid: Grid | None = None):
     original = scan
     if describe(scan.geometry)[0] == "parallel":
         scan = replace(
@@ -112,11 +112,20 @@ def _seed(scan: Scan, calibration: np.ndarray, align: Callable):
     axis = np.asarray(seed_scan.with_poses(None).geometry.axis_unit_lab)
     if abs(axis[1]) < 1e-3:
         return scan, {"status": "axial_or_unresolved"}, setup_info
-    region = estimate_region(seed_scan)
-    base = cast("RotationAxisGeometry", region.scan.with_poses(None).geometry)
+    if grid is None:
+        region = estimate_region(seed_scan)
+        seed_scan, region_info = region.scan, dict(region.info)
+    else:
+        seed_scan = with_grid(seed_scan, grid)
+        region_info = {
+            "status": "provided_region",
+            "grid": asdict(grid),
+            "warning": "Caller-supplied reconstruction region, not inferred physical support.",
+        }
+    base = cast("RotationAxisGeometry", seed_scan.with_poses(None).geometry)
     geometry = RotationAxisGeometry(
-        region.grid,
-        region.scan.detector,
+        seed_scan.grid,
+        seed_scan.detector,
         scan.angles.tolist(),
         np.asarray(base.axis_unit_lab).tolist(),
     )
@@ -134,7 +143,7 @@ def _seed(scan: Scan, calibration: np.ndarray, align: Callable):
             # A calibrated result must not advertise its input's absent centre.
             metadata["detector_center_status"] = "inferred"
         work = replace(work, source=replace(work.source, geometry_metadata=metadata))
-    return work, dict(region.info), setup_info
+    return work, region_info, setup_info
 
 
 def _axis_limitation(
@@ -230,7 +239,7 @@ def _native_grid(coarse: Grid, native: Grid) -> Grid:
     )
 
 
-def _native_refinement(native: Scan, working_detector, coarse):
+def _native_refinement(native: Scan, working_detector, coarse, grid: Grid | None = None):
     """Continue the selected image/pose estimate on every original detector sample.
 
     Region selection owns the physical support; native sampling restores the
@@ -250,7 +259,7 @@ def _native_refinement(native: Scan, working_detector, coarse):
             )
         ),
     )
-    grid = _native_grid(calibrated.grid, native.grid)
+    grid = grid or _native_grid(calibrated.grid, native.grid)
     geometry = RotationAxisGeometry(
         grid,
         detector,
@@ -294,15 +303,21 @@ def _previous_alignment_status(scan: Scan) -> dict[str, object]:
     return {"status": status, "reasons": list(dict.fromkeys(reasons))}
 
 
-def reconstruct_laminography(scan: Scan, *, align: Callable, reconstruct: Callable):
+def reconstruct_laminography(
+    scan: Scan, *, align: Callable, reconstruct: Callable, grid: Grid | None = None
+):
     """Select setup, support and motion internally, then reconstruct all input views.
 
     Previously posed scans retain their geometry and use only the final solver.
     Setup and support selection use at most 320 detector pixels across. The
     selected image and poses then initialize a joint native-detector refinement;
     native voxel pitch is restored over the region estimator's physical support.
+    A supplied grid instead fixes the physical region and final sampling; only
+    its initialization is coarsened, without treating the bounds as inferred.
     """
     started = time.perf_counter()
+    if grid is not None:
+        scan = with_grid(scan, grid)
     posed = scan.poses is not None
     native, working_detector, factor = scan, scan.detector, 1
     automatic: dict[str, object] = {"method": "fista", "status": "ok", "reasons": []}
@@ -324,7 +339,8 @@ def reconstruct_laminography(scan: Scan, *, align: Callable, reconstruct: Callab
         validation = keep[np.arange(len(keep)) % 5 == 2]
         fit = keep[np.arange(len(keep)) % 5 != 2]
         calibration = np.setdiff1d(np.arange(n), validation)
-        work, region_info, setup_info = _seed(scan, calibration, align)
+        region_grid = scale_grid(grid, factor) if grid is not None else None
+        work, region_info, setup_info = _seed(scan, calibration, align, region_grid)
         if region_info["status"] == "axial_or_unresolved":
             result = reconstruct(work, "fbp")
             automatic.update(
@@ -357,7 +373,7 @@ def reconstruct_laminography(scan: Scan, *, align: Callable, reconstruct: Callab
     if not posed and (
         factor > 1 or any(a > b for a, b in zip(coarse_pitch, native_pitch, strict=True))
     ):
-        result = _native_refinement(native, working_detector, result)
+        result = _native_refinement(native, working_detector, result, grid)
         automatic.update(method="joint_volume_pose", detector_binning=1, setup_binning=factor)
     if not posed:
         # Keep the bounded outcome on the scan too, so direct reuse need not

@@ -185,6 +185,9 @@ must improve both ordinary and high-pass held projection error to be retained.
 The selected image and poses then initialize joint refinement on all native
 detector samples at the input voxel pitch, retaining the selected physical support.
 The image itself must still fit the device; a broad unresolved support can exceed capacity.
+Pass an explicit `grid=` to `tj.align` or `tj.reconstruct` to choose the physical
+region and final sampling while retaining automatic setup and motion. The outcome
+labels this region as supplied, not inferred physical support.
 
 Inspect the saved automatic outcome: an unresolved support or unsupported setup
 is reported as `limited`, with reasons. Held consistency does not establish

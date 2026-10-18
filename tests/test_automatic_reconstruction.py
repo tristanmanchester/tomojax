@@ -53,7 +53,7 @@ def test_explicit_method_bypasses_automatic_geometry_policy():
     result = tj.reconstruct(scan, "fbp", config=FBPConfig())
     assert "automatic" not in result.info and result.scan is scan
     with pytest.raises(ValueError, match="choose method='fista'"):
-        tj.reconstruct(scan, grid=replace(grid, nx=3))
+        tj.reconstruct(scan, iterations=3)
 
 
 @pytest.mark.parametrize(
