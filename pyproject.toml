@@ -25,6 +25,7 @@ classifiers = [
 authors = [{ name = "Tristan Manchester", email = "tristan.manchester@diamond.ac.uk" }]
 dependencies = [
     "h5py>=3.14.0,<4",
+    "imagecodecs>=2026.10.10",
     "imageio[tifffile]>=2.37.3,<3",
     "tifffile>=2026.9.20",
     "jax>=0.11.2,<0.12",

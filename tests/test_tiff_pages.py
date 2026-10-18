@@ -142,7 +142,7 @@ def test_invalid_detector_page_metadata_is_checked_before_decoding(
         read_tiff_frames(path)
 
 
-@pytest.mark.parametrize("compression", [None, "deflate"])
+@pytest.mark.parametrize("compression", [None, "deflate", "lzw"])
 def test_tiled_detector_tails_decode_into_the_same_view_pixels(tmp_path: Path, compression) -> None:
     expected = np.arange(3 * 17 * 33, dtype=np.uint16).reshape(3, 17, 33)
     path = tmp_path / "tiled.tif"

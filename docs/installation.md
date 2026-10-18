@@ -2,8 +2,12 @@
 
 TomoJAX supports Linux, with CPU or CUDA 12 dependencies, and requires Python
 3.12 or newer. Fresh CPU wheel and sdist installations are checked on CPython
-3.12, 3.13 and 3.14. Python 3.15 cannot yet be validated: h5py and CuPy do not
+3.12, 3.13 and 3.14; fresh CUDA 12 wheel installations are checked on CPython
+3.12 and 3.14. These checks use no package cache and run the README reconstruction
+outside the checkout. Python 3.15 cannot yet be validated: h5py and CuPy do not
 publish Python 3.15 wheels, and building h5py needs a system HDF5 installation.
+Both CPU and CUDA installations include imagecodecs for compressed TIFF inputs,
+including LZW-compressed beamline images.
 
 ## Install a published release
 
@@ -92,8 +96,9 @@ resolve the NVIDIA driver/JAX installation before diagnosing kernel performance.
 After building, the installed-package smoke tool creates a disposable environment
 outside the checkout, installs without a package cache, checks dependencies and
 module provenance, requires the selected device, and runs the commands above.
-It checks the saved reconstruction against the simulated volume and requires
-finite values and all previews. It does not import TomoJAX from the source checkout.
+It reads an LZW-compressed TIFF, checks the saved reconstruction against the
+simulated volume, and requires finite values and all previews. It does not import
+TomoJAX from the source checkout.
 
 ```bash
 uv run --no-sync twine check --strict dist/*
@@ -102,7 +107,8 @@ uv run --no-sync python tools/smoke_installed_wheel.py --python 3.12 --extra cud
 uv run --no-sync python tools/smoke_installed_wheel.py --python 3.12 --artifact sdist
 ```
 
-Repeat with `--python 3.13` and `--python 3.14` to check those interpreters.
+Repeat the CPU wheel/sdist checks with `--python 3.13` and `--python 3.14`, and
+the CUDA wheel check with `--python 3.14`.
 `--find-links /path/to/wheelhouse` runs without network access or a package
 cache, using dependency wheels from that directory and an already available
 interpreter. An sdist install also needs the build backend there. Without that option, dependencies come from the package

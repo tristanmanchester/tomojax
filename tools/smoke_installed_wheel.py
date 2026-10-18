@@ -89,6 +89,21 @@ def main(argv: list[str] | None = None) -> int:
             env=env,
         )
         _run([str(tomojax), "--help"], cwd=work, env=env)
+        _run(
+            [
+                str(python),
+                "-c",
+                "import numpy as np; import tifffile; "
+                "from tomojax.io.api import read_tiff_frames; "
+                "pixels = np.arange(120, dtype=np.uint16).reshape(2, 6, 10); "
+                "tifffile.imwrite('compressed.tif', pixels, "
+                "photometric='minisblack', compression='lzw'); "
+                "np.testing.assert_array_equal(read_tiff_frames('compressed.tif'), pixels); "
+                "print('Compressed TIFF: LZW decoded successfully')",
+            ],
+            cwd=work,
+            env=env,
+        )
         for step in workflow_steps(work):
             _run([str(tomojax), *step], cwd=work, env=env)
         verify_workflow_outputs(work)
