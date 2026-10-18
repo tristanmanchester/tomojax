@@ -112,8 +112,11 @@ a failure can leave a partly written volume. A 1024³ laminography volume takes 
 ### Stream raw axial frames
 
 For an unposed axial parallel scan, `tj.reconstruct_slabs` corrects raw rows
-and reconstructs them without storing the full corrected stack. Choose `"fbp"`
-or `"fourier"`; pass `FBPConfig` or `FourierConfig` through `config=` when needed.
+and reconstructs them without storing the full corrected stack. Choose `"fbp"`,
+`"fourier"`, `"sirt"` or `"mlem"`, with that method's configuration through
+`config=` when needed; `warm_start=True` starts SIRT and MLEM from FBP. The whole
+Diamond I12 scan, a 56.6 GB SIRT volume, took 24 minutes with
+[1.4 GB of GPU memory](measurements.md#scans-larger-than-the-gpu).
 For example, write owned blocks directly to plane-contiguous storage:
 
 ```python

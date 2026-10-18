@@ -110,7 +110,11 @@ browse the [documentation index](docs/README.md).
 ## Evidence
 
 Measured speed, accuracy and memory against ASTRA and TIGRE, failed cases
-included, are in the [measurements](docs/measurements.md).
+included, are in the [measurements](docs/measurements.md). Volumes larger than
+the GPU stream through it in slabs: SIRT of a whole Diamond I12 scan, 1801 views
+of 2160 × 2560 pixels into a 56.6 GB volume, ran on an 8 GB laptop GPU with
+1.4 GB of GPU memory at 1.13 times the per-voxel time of a scan that fits
+([large scans](docs/large-scans.md)).
 
 ## Development and license
 
