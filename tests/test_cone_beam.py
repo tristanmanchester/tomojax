@@ -126,6 +126,19 @@ def test_cone_projector_has_a_matched_transpose(kind, backend):
     np.testing.assert_allclose(accumulated, aty + x, rtol=1e-5, atol=1e-5)
 
 
+def test_cone_grid_translation_moves_endpoints_without_changing_the_rays():
+    geometry, grid, detector, poses = _scan("perturbed", n=8, views=3)
+    expected = np.asarray(cone_coefficients(poses, grid, detector, geometry.beam)).copy()
+    shift = np.array([0.24, -0.55, 0.18])
+    moved = replace(
+        grid, vol_origin=tuple(np.asarray(grid_volume_origin(grid)) + shift), vol_center=None
+    )
+    expected[:, :3] -= shift / [grid.vx, grid.vy, grid.vz]
+    expected[:, 3:6] -= shift / [grid.vx, grid.vy, grid.vz]
+    actual = cone_coefficients(poses, moved, detector, geometry.beam)
+    np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=1e-5)
+
+
 @pytest.mark.gpu
 @pytest.mark.parametrize("kind", ["turntable", "perturbed", "tilted", "steep"])
 def test_cuda_cone_kernels_agree_with_the_jax_reference(kind):

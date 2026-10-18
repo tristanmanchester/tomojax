@@ -410,6 +410,20 @@ class _Prepared:
             coeff = coeff.at[:, 23].add(self.pad_lo)
         return coeff
 
+    def window(self, first: int, stop: int) -> _Prepared:
+        """A physical row window, without moving any calibrated detector plane."""
+        cosine = self.cosine
+        if cosine.ndim == 2:
+            cosine = cosine[first:stop]
+        else:
+            shift = first + (stop - first - 1) / 2 - (self.detector.nv - 1) / 2
+            cosine = cosine.at[:, 1, 0].add(shift * self.detector.dv)
+        return replace(
+            self,
+            detector=replace(self.detector, nv=stop - first),
+            cosine=cosine,
+        )
+
     def virtual(self, detector: Detector) -> Detector:
         """Pixel count of the filtered images; their placement is in coefficients."""
         return replace(detector, nu=detector.nu + self.pad_lo + self.pad_hi)
@@ -490,7 +504,10 @@ def _prepare(
 
 
 def _device_views(
-    projections: jax.Array | np.ndarray, start: int, stop: int, device: Device | None = None
+    projections: jax.Array | np.ndarray | _RowView,
+    start: int,
+    stop: int,
+    device: Device | None = None,
 ) -> jax.Array:
     part = projections[start:stop]
     if isinstance(part, jax.Array):
@@ -596,7 +613,6 @@ def _fdk(
     projections: jax.Array | np.ndarray,
     *,
     config: FDKConfig | None = None,
-    columns: Detector | None = None,
 ) -> jax.Array:
     cfg = FDKConfig() if config is None else config
     parts = cone_parts(geometry, detector)
@@ -606,9 +622,21 @@ def _fdk(
     n_views, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fdk projections"
     )
-    prep = _prepare(geometry, detector, n_views, cfg, columns)
-    virtual = prep.virtual(detector)
+    prep = _prepare(geometry, detector, n_views, cfg)
     coeff = prep.coefficients(geometry, grid, detector, stack_view_poses(geometry, n_views))
+    return _accumulate(grid, projections, prep, coeff, cfg.devices)
+
+
+def _accumulate(
+    grid: Grid,
+    projections: jax.Array | np.ndarray | _RowView,
+    prep: _Prepared,
+    coeff: jax.Array,
+    devices: Device | Sequence[Device] | None,
+) -> jax.Array:
+    """Filter and sum validated views using coefficients in this volume's voxel frame."""
+    n_views = int(coeff.shape[0])
+    virtual = prep.virtual(prep.detector)
     # Physical placement is already in coeff. Equal-sized slabs share the
     # filtering/backprojection executable, rather than compiling every origin.
     kernel_grid = replace(grid, vol_origin=None, vol_center=None)
@@ -641,7 +669,7 @@ def _fdk(
                 out.block_until_ready()
         return out
 
-    split = view_split(cfg.devices, n_views)
+    split = view_split(devices, n_views)
     whole = range(n_views)
     return backprojected(None, whole) if split is None else split.summed(backprojected)
 
@@ -672,8 +700,6 @@ def _slab_rows(
     """Detector rows that the z-slab ``[z0, z1)`` projects onto in any view."""
     parts = cone_parts(geometry, detector)
     assert parts is not None
-    assert len(parts) == 1
-    beam = parts[0][1]
     origin = np.asarray(grid_volume_origin(grid))
     spacing = np.asarray([grid.vx, grid.vy, grid.vz])
     lo = origin - spacing / 2
@@ -684,17 +710,21 @@ def _slab_rows(
     )
     # A box projects inside the hull of its projected corners.
     world = np.einsum("nij,kj->nki", poses[:, :3, :3], corners) + poses[:, None, :3, 3]
-    centre, u_dir, v_dir = beam.detector_frame(detector)
-    normal = np.cross(u_dir, v_dir)
-    source = beam.source()
-    ray = world - source
-    hit = source + ray * (((centre - source) @ normal) / (ray @ normal))[..., None]
-    rows = ((hit - centre) @ v_dir) / detector.dv + (detector.nv - 1) / 2
+    low, high, start = math.inf, -math.inf, 0
+    for count, beam, own in parts:
+        stop = len(poses) if count is None else start + count
+        centre, u_dir, v_dir = beam.detector_frame(own)
+        normal = np.cross(u_dir, v_dir)
+        source = beam.source()
+        ray = world[start:stop] - source
+        hit = source + ray * (((centre - source) @ normal) / (ray @ normal))[..., None]
+        rows = ((hit - centre) @ v_dir) / own.dv + (own.nv - 1) / 2
+        low, high, start = min(low, float(rows.min())), max(high, float(rows.max())), stop
     # Keep one measured border row even when the slab is entirely outside.
     # Backprojection still samples zero beyond that row, as with the full
     # detector, without constructing an empty or negative-height detector.
-    first = max(0, min(detector.nv - 1, int(np.floor(rows.min())) - 1))
-    stop = max(first + 1, min(detector.nv, int(np.ceil(rows.max())) + 2))
+    first = max(0, min(detector.nv - 1, math.floor(low) - 1))
+    stop = max(first + 1, min(detector.nv, math.ceil(high) + 2))
     return first, stop
 
 
@@ -759,9 +789,9 @@ def fdk_host(
     """FDK with host input and output, reconstructed in z slabs on the device.
 
     Accepts NumPy arrays and memmaps; ``out`` may be a writable ``(nx, ny, nz)``
-    FP32 memmap. Each slab filters only the detector rows it projects onto (all
-    rows for a pitched or yawed detector), so projections and volume can both
-    exceed device memory. With several ``config.fdk.devices``, each device
+    FP32 memmap. Each slab filters a bounded band containing the rows it projects
+    onto in any calibrated view, so projections and volume can both exceed device
+    memory. With several ``config.fdk.devices``, each device
     reconstructs its own slabs, so the volume may exceed every one of them.
 
     Input and output storage must not overlap. Input storage must remain
@@ -835,6 +865,15 @@ def fdk_host(
     return result
 
 
+@jax.jit
+def _window_coefficients(coeff: jax.Array, row: int, z: int) -> jax.Array:
+    """Translate full-grid coefficients by integer voxel/pixel offsets only."""
+    coeff = coeff.at[:, 2].add(-z)
+    coeff = coeff.at[:, 5].add(-z)
+    coeff = coeff.at[:, 3:6].add(row * coeff[:, 9:12])
+    return coeff.at[:, 24].add(-row)
+
+
 @dataclass(frozen=True)
 class _Slabs:
     """A scan's FDK in z slabs, into ``result``; see :func:`fdk_host`."""
@@ -846,21 +885,23 @@ class _Slabs:
     poses: np.ndarray
     result: np.ndarray
 
-    def reconstruct(self, z0: int, z1: int, fdk: FDKConfig) -> np.ndarray:
-        """Slices ``[z0, z1)``, from the detector rows they project onto where it can tell."""
-        parts = cone_parts(self.geometry, self.detector)
-        assert parts is not None
-        beam = parts[0][1]
+    def reconstruct(
+        self, z0: int, z1: int, prep: _Prepared, coeff: jax.Array
+    ) -> np.ndarray:
+        """Slices ``[z0, z1)``, filtering only their physical detector-row window."""
         slab = _slab_grid(self.grid, z0, z1)
-        if len(parts) == 1 and _windowable(beam):
-            r0, r1 = _slab_rows(self.geometry, slab, self.detector, self.poses, 0, z1 - z0)
-            rows = _detector_window(beam, self.detector, r0, r1)
-        else:
-            r0, r1, rows = 0, self.detector.nv, self.detector
-        # The full detector sets per-column weights, the same for every slab.
+        r0, r1 = _slab_rows(self.geometry, self.grid, self.detector, self.poses, z0, z1)
+        # Bucket storage heights, not ray coordinates: neighbouring slabs
+        # reuse executables instead of compiling every slightly different band.
+        quantum = min(64, max(1, self.detector.nv // 8))
+        rows = min(self.detector.nv, -(-(r1 - r0) // quantum) * quantum)
+        r0 = min(r0, self.detector.nv - rows)
+        r1 = r0 + rows
         views = _RowView(self.projections, r0, r1)
-        volume = _fdk(self.geometry, slab, rows, views, config=fdk, columns=self.detector)
-        return np.asarray(volume)
+        volume = _accumulate(
+            slab, views, prep.window(r0, r1), _window_coefficients(coeff, r0, z0), None
+        )
+        return np.asarray(volume.T).T
 
     def run(
         self,
@@ -875,15 +916,23 @@ class _Slabs:
         All of a slab's work stays on ``device``, its weights and coefficients
         too: another thread's on the same GPU changes the order of its sums.
         """
+        if not slabs:
+            return
         if device is not None:
             fdk = replace(fdk, devices=device)
+        with jax.default_device(device):
+            prep = _prepare(self.geometry, self.detector, len(self.projections), fdk)
+            coeff = prep.coefficients(
+                self.geometry, self.grid, self.detector, jnp.asarray(self.poses, jnp.float32)
+            )
         pending: Future[None] | None = None
         for z0, z1 in slabs:
             with jax.default_device(device):
-                volume = self.reconstruct(z0, z1, fdk)
+                volume = self.reconstruct(z0, z1, prep, coeff)
             if pending is not None:
                 pending.result()
             pending = writer.submit(self.store, z0, z1, volume)
+            del volume
         if pending is not None:
             pending.result()
 

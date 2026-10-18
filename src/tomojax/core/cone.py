@@ -29,7 +29,7 @@ Two implementations agree to FP32 rounding:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cache, partial
 from importlib.resources import files
 from numbers import Real
@@ -79,7 +79,10 @@ def frame_coefficients(
     """
     poses = jnp.asarray(poses, jnp.float32)
     frames = jnp.broadcast_to(jnp.asarray(frames, jnp.float32), (poses.shape[0], 4, 3))
-    return _coefficients(poses, frames, grid=grid, detector=detector)
+    # A physical slab origin is numerical input, not a new kernel shape.
+    origin = jnp.asarray(grid_volume_origin(grid), jnp.float32)
+    kernel_grid = replace(grid, vol_origin=None, vol_center=None)
+    return _coefficients(poses, frames, origin, grid=kernel_grid, detector=detector)
 
 
 @dataclass(frozen=True)
@@ -223,11 +226,10 @@ def _layout_hint(
 
 @partial(jax.jit, static_argnames=("grid", "detector"))
 def _coefficients(
-    poses: jax.Array, frames: jax.Array, *, grid: Grid, detector: Detector
+    poses: jax.Array, frames: jax.Array, origin: jax.Array, *, grid: Grid, detector: Detector
 ) -> jax.Array:
     """:func:`frame_coefficients`: ``frames`` are ``(views, 4, 3)``."""
     rot, trans = poses[:, :3, :3], poses[:, :3, 3]
-    origin = jnp.asarray(grid_volume_origin(grid), jnp.float32)
     spacing = jnp.asarray([grid.vx, grid.vy, grid.vz], jnp.float32)
     centre, u_dir, v_dir, source = frames[:, 0], frames[:, 1], frames[:, 2], frames[:, 3]
     corner = (

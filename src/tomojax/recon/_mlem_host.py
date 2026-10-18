@@ -40,6 +40,10 @@ def volume_depth(
     ratio_bytes = subset_views * detector.nu * detector.nv * 4
     reserve = ratio_bytes if ratio_bytes <= 0.45 * free else 0
     fitting = max(1, int((0.75 * free - fixed - reserve) / (4 * plane)))
+    # Device capacity alone permits slabs whose host staging and pinned copy
+    # pools add several volume-sized temporaries over a solve. Bound transfers
+    # independently, even when the GPU can hold a much larger working slab.
+    fitting = min(fitting, max(1, (128 * 2**20) // plane))
     return min(grid.nz, 2 ** (fitting.bit_length() - 1))
 
 
@@ -120,6 +124,16 @@ def _divide_predictions(expected: jax.Array, measured: jax.Array, start: jax.Arr
     return jax.lax.dynamic_update_slice(expected, ratio, offset)
 
 
+def _device_slab(volume: np.ndarray, start: int, stop: int) -> jax.Array:
+    """Transfer a contiguous ZYX view, retaining XYZ logical coordinates on device."""
+    return jax.device_put(volume[:, :, start:stop].T).T
+
+
+def _store_slab(volume: np.ndarray, start: int, stop: int, value: jax.Array) -> None:
+    """Write a slab without a host-side C/F packing array."""
+    volume[:, :, start:stop].T[:] = np.asarray(value.T)
+
+
 def _ratios(
     volume: np.ndarray,
     projections: np.ndarray,
@@ -137,7 +151,7 @@ def _ratios(
     resident = free is not None and ratio_bytes + scratch <= 0.85 * free
     expected = jnp.zeros(shape, jnp.float32) if resident else np.zeros(shape, np.float32)
     for start, stop, grid, coefficients in slabs:
-        piece = jax.device_put(np.ascontiguousarray(volume[:, :, start:stop]))
+        piece = _device_slab(volume, start, stop)
         for first in range(0, len(indices), batch):
             selected = indices[first : first + batch]
             values = _forward(
@@ -155,6 +169,8 @@ def _ratios(
         measured = np.asarray(projections[selected], np.float32)
         if isinstance(expected, jax.Array):
             expected = _divide_predictions(expected, jax.device_put(measured), jnp.int32(first))
+            expected.block_until_ready()  # At most one advanced-indexed measurement copy lives.
+            del measured
             continue
         prediction = expected[first : first + len(selected)]
         positive = prediction > 0
@@ -187,13 +203,13 @@ def _update(
                 grid=grid, detector=detector, backend=backend, model=model,
             )  # fmt: skip
         if apply:
-            piece = jax.device_put(np.ascontiguousarray(volume[:, :, start:stop]))
+            piece = _device_slab(volume, start, stop)
             value, visible = _updated(piece, correction, norm)
-            volume[:, :, start:stop] = np.asarray(value)
+            _store_slab(volume, start, stop, value)
             del piece, value
         else:
             visible = norm > 0
-        seen[:, :, start:stop] |= np.packbits(np.asarray(visible), axis=0)
+        seen[:, :, start:stop] |= np.packbits(np.asarray(visible.T).T, axis=0)
         del visible, correction, norm, ratio
 
 
@@ -221,9 +237,13 @@ def solve(
         raise ValueError("mlem: projections must be finite and nonnegative, and poses finite")
     shape = (grid.nx, grid.ny, grid.nz)
     if warm_geometry is not None:
-        volume = initial_volume(warm_geometry, grid, detector, projections, depth=depth)
+        volume = initial_volume(warm_geometry, grid, detector, data, depth=depth)
     else:
-        volume = np.ones(shape, np.float32) if initial is None else np.array(initial, np.float32)
+        volume = (
+            np.ones(shape, np.float32, order="F")
+            if initial is None
+            else np.array(initial, np.float32, order="F")
+        )
     if support is not None:
         mask = np.broadcast_to(np.asarray(support, bool), shape)
         for first in range(0, grid.nx, 16):
@@ -260,16 +280,13 @@ def initial_volume(
     *,
     depth: int,
 ) -> np.ndarray:
-    """The unchanged segmented FDK initializer, assembled without a full device volume."""
-    from ._warm_start import fbp_start
-    from .fbp import FBPConfig
+    """The per-view FDK initializer, assembled without a full device volume."""
+    from .fdk import FDKHostConfig, fdk_host
 
-    output = np.empty((grid.nx, grid.ny, grid.nz), np.float32)
-    for start in range(0, grid.nz, depth):
-        stop = min(start + depth, grid.nz)
-        local = slab_grid(grid, start, stop)
-        image = fbp_start(geometry, local, detector, projections, config=FBPConfig(), det_grid=None)
-        output[:, :, start:stop] = np.asarray(image)
-        np.maximum(output[:, :, start:stop], 0, out=output[:, :, start:stop])
-        del image
+    output = np.empty((grid.nx, grid.ny, grid.nz), np.float32, order="F")
+    fdk_host(
+        geometry, grid, detector, np.asarray(projections),
+        config=FDKHostConfig(slices_per_batch=depth), out=output,
+    )  # fmt: skip
+    np.maximum(output, 0, out=output)
     return output
