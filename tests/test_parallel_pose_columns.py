@@ -18,11 +18,11 @@ from tomojax.geometry import Detector, Grid, LaminographyGeometry, stack_view_po
 def test_parallel_pose_columns_match_reference(integrator, indices):
     if jax.default_backend() != "gpu":
         pytest.skip("CUDA required")
-    grid = Grid(7, 6, 5, 0.7, 1.1, 0.9, vol_center=(0.23, -0.17, 0.31))
+    grid = Grid(77, 6, 5, 0.7, 1.1, 0.9, vol_center=(0.23, -0.17, 0.31))
     detector = Detector(9, 7, 0.8, 1.3, (0.15, -0.21))
     nominal = stack_view_poses(LaminographyGeometry(grid, detector, [47], tilt_deg=31), 1)[0]
     rng = np.random.default_rng(543)
-    volume = jnp.asarray(rng.uniform(-0.1, 1.1, (7, 6, 5)), jnp.float32)
+    volume = jnp.asarray(rng.uniform(-0.1, 1.1, (77, 6, 5)), jnp.float32)
     target = jnp.asarray(rng.normal(size=(7, 9)), jnp.float32)
     weight = jnp.asarray(rng.uniform(0.05, 0.99, target.shape), jnp.float32).at[0].set(0)
     params = jnp.asarray([0.012, -0.018, 0.031, 0.11, -0.07, 0.04], jnp.float32)
@@ -76,12 +76,12 @@ def test_parallel_pose_columns_match_reference(integrator, indices):
 def test_fused_columns_keep_cell_and_support_boundary_derivatives(interpolation):
     if jax.default_backend() != "gpu":
         pytest.skip("CUDA required")
-    grid, detector = Grid(5, 4, 3, 1, 1, 1), Detector(1, 1, 1, 1)
+    grid, detector = Grid(73, 4, 3, 1, 1, 1), Detector(1, 1, 1, 1)
     coeff = jnp.asarray(
         [[0, 0, 0, 0, b, 0, 0, 0, 1, 1, 0, 0, 0, 0] for b in [-2, -1, 0, 1, 3, 4]], jnp.float32
     )
     tangent = jnp.zeros((6, 2, 14), jnp.float32).at[:, 0, 4].set(1).at[:, 1, 8].set(1)
-    volume = jnp.ones((5, 4, 3), jnp.float32)
+    volume = jnp.ones((73, 4, 3), jnp.float32)
     function = partial(
         plane_pose_columns, grid=grid, detector=detector, interpolation=interpolation
     )

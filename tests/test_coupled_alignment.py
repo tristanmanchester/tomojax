@@ -672,7 +672,7 @@ def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth):
         gn_coupling="joint",
         gn_joint_solver=solver,
         ray_integrator="joseph",
-        projector_backend="jax",
+        projector_backend="pallas" if jax.default_backend() == "gpu" else "jax",
         gather_dtype="fp32",
         gn_joint_iterations=100,
         gn_joint_rtol=1e-6,
@@ -692,7 +692,11 @@ def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth):
     )
     runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
     ctx = _pose_objective_context(runtime=runtime, **common)
-    ctx = replace(ctx, volume_mask=jnp.ones_like(x).at[0, 0, 0].set(0))
+    if smooth:
+        ctx = replace(ctx, volume_mask=jnp.ones_like(x).at[0, 0, 0].set(0))
+    else:
+        # Exercise implicit unit-support row sums even on this tiny CUDA grid.
+        monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
     monkeypatch.setattr(_coupled_host, "_pass", partial(_coupled_host._pass, batch_size=2))
     captured = []
     monkeypatch.setattr(

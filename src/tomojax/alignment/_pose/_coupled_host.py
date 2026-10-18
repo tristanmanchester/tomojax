@@ -18,6 +18,7 @@ import numpy as np
 
 from tomojax.alignment._geometry.parametrizations import apply_pose_updates
 from tomojax.core.host_stream import host_source, read_views
+from tomojax.core.joseph import plane_coefficients, project_ones_native
 
 from ._coupled_host_linear import HostBlock, host_dot, solve_host_normal
 from ._coupled_linear import CoupledLinearResult
@@ -74,6 +75,21 @@ def _data_increment(mode, t, dx, dp, gram, batch, forward, pose_forward, pose_ad
     return y
 
 
+def _unit_prediction(spec, arrays, poses, forward, shape):
+    """Use implicit unit support when its exact native operator is available."""
+    if (
+        spec.backend == "pallas"
+        and spec.jacobian.integrator == "joseph"
+        and not spec.jacobian.cone_beam
+        and arrays.mask.ndim == 0
+    ):
+        coefficients = plane_coefficients(poses, spec.grid, spec.detector, arrays.det_grid)
+        prediction = project_ones_native(coefficients, spec.grid, spec.detector)
+        if prediction is not None:
+            return prediction
+    return forward(poses, jnp.ones(shape, jnp.float32), arrays.frames)
+
+
 @partial(jax.jit, static_argnames=("spec", "mode", "weighted", "batch_size"))
 def _pass(
     arrays: CoupledArrays,
@@ -123,7 +139,7 @@ def _pass(
         t, q = take(poses, start), take(p, start)
         ax, rows, blocks, loss = carry
         if mode == "bound":
-            y = weights**2 * raw_forward(t, jnp.ones(shape, jnp.float32), batch.frames)
+            y = weights**2 * _unit_prediction(spec, batch, t, raw_forward, shape)
             return raw_adjoint(t, y * valid[:, None, None], batch.frames, ax), rows, blocks, loss
         if mode == "loss":
             residual = weights * (forward(t, x, batch.frames) - batch.projections)
