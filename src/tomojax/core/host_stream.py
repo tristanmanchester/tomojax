@@ -76,15 +76,21 @@ def read_views(
     return jax.pure_callback(partial(_read, size=shape[0]), out, key, start, weights_key, indices)
 
 
-def should_stream(projections: object, *, fraction: float = 0.4) -> bool:
-    """Stream host arrays that would take more than ``fraction`` of free device memory."""
+def should_stream(projections: object, *, fraction: float = 0.4, reserve_bytes: int = 0) -> bool:
+    """Stream host data that exceeds the remaining device budget.
+
+    ``reserve_bytes`` accounts for solver state and scratch beyond arrays
+    already resident on the device. Only ``fraction`` of the remainder is
+    available for measurements, leaving room for their batched products.
+    Resident device data is never copied back just to change its placement.
+    """
     if isinstance(projections, jax.Array) or jax.default_backend() != "gpu":
         return False
     from tomojax.backends import device_free_memory_bytes
 
     free = device_free_memory_bytes()
     nbytes = int(np.prod(np.shape(cast("ArrayLike", projections)))) * 4
-    return free is not None and nbytes > fraction * free
+    return free is not None and nbytes > fraction * max(0, free - reserve_bytes)
 
 
 @contextmanager

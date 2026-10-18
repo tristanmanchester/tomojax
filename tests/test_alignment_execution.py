@@ -552,3 +552,44 @@ def test_pose_steps_reduce_the_declared_objective(optimizer, settings):
     if optimizer == "gn":
         assert np.linalg.norm(found - truth) < 0.2 * np.linalg.norm(initial_shifts - truth)
         assert float(jnp.linalg.norm(jax.grad(objective)(found))) < 1e-3
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("adjusted", [False, True])
+@pytest.mark.parametrize("integrator", ["sampled", "joseph", "joseph_cubic"])
+def test_alignment_reconstruction_streams_host_data_without_changing_the_solve(
+    monkeypatch, adjusted, integrator
+):
+    grid, detector = Grid(3, 4, 2, 0.7, 1.1, 0.9), Detector(5, 3, 0.6, 0.8)
+    geometry = ParallelGeometry(grid, detector, np.array([13.0, 56.0, 91.0]))
+    if adjusted:
+        geometry = PoseAdjustedGeometry(geometry=geometry, pose_params=jnp.full((3, 5), 0.01))
+    cfg = AlignConfig(
+        iterations=3,
+        tv_weight=0.02,
+        huber_delta=0.2,
+        views_per_batch=2,
+        ray_integrator=integrator,
+        projector_backend="pallas" if jax.default_backend() == "gpu" else "jax",
+    )
+    step = reconstruction_stage._ReconstructionStepInputs(
+        recon_geometry=geometry,
+        grid=grid,
+        detector=detector,
+        projections=np.ones((3, 3, 5), np.float32),
+        det_grid=reconstruction_stage.get_detector_grid_device(detector),
+        x=jnp.full((3, 4, 2), 0.1),
+        cfg=cfg,
+        L_prev=100.0,
+        outer_idx=1,
+    )
+    policy = reconstruction_stage.reconstruction_quality_policy("final")
+    monkeypatch.setattr(reconstruction_stage, "reconstruction_quality_policy", lambda _: policy)
+    monkeypatch.setattr(reconstruction_stage, "should_stream", lambda *a, **k: False)
+    expected, expected_info = reconstruction_stage._run_huber_fista_core_reconstruction(step)
+    monkeypatch.setattr(reconstruction_stage, "should_stream", lambda *a, **k: True)
+    actual, actual_info = reconstruction_stage._run_huber_fista_core_reconstruction(step)
+    np.testing.assert_allclose(actual, expected, rtol=3e-6, atol=2e-6)
+    assert actual_info["effective_iterations"] == expected_info["effective_iterations"] == 12
+    assert actual_info["actual_backend"] == expected_info["actual_backend"]
+    np.testing.assert_allclose(actual_info["loss"], expected_info["loss"], rtol=3e-6)

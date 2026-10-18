@@ -24,7 +24,7 @@
   },
   "long_files": {
     "src/tomojax/alignment/_pose/_pose_loop.py": 892,
-    "src/tomojax/alignment/_stages/_reconstruction_stage.py": 1029,
+    "src/tomojax/alignment/_stages/_reconstruction_stage.py": 1028,
     "src/tomojax/alignment/optimizers.py": 876,
     "src/tomojax/recon/fista_tv.py": 823
   },
@@ -58,8 +58,8 @@
     "src/tomojax/recon/_cgls_jax.py::cgls": 113,
     "src/tomojax/recon/fista_tv.py::_prepare_fista_runtime": 108,
     "src/tomojax/recon/fista_tv.py::grad_data_term": 153,
-    "src/tomojax/recon/fista_tv_core.py::_projection_loss_and_explicit_grad": 138,
-    "src/tomojax/recon/fista_tv_core.py::fista_tv_core_arrays": 123,
+    "src/tomojax/recon/fista_tv_core.py::_projection_loss_and_explicit_grad": 127,
+    "src/tomojax/recon/fista_tv_core.py::fista_tv_core_arrays": 120,
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 106
   },
   "suppressions": {
@@ -118,10 +118,10 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "type_errors": {
-    "reportArgumentType": 284,
+    "reportArgumentType": 283,
     "reportAssignmentType": 2,
     "reportAttributeAccessIssue": 161,
-    "reportCallIssue": 13,
+    "reportCallIssue": 12,
     "reportGeneralTypeIssues": 8,
     "reportIndexIssue": 7,
     "reportInvalidTypeForm": 1,
@@ -131,7 +131,7 @@
     "reportOptionalSubscript": 1,
     "reportPrivateUsage": 95,
     "reportRedeclaration": 1,
-    "reportReturnType": 20,
+    "reportReturnType": 19,
     "reportTypedDictNotRequiredAccess": 5
   },
   "positional_options": [],

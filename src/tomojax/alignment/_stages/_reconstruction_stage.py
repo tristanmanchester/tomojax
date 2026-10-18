@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from contextlib import nullcontext
+from dataclasses import dataclass, replace
 import functools
 import hashlib
 import logging
@@ -25,6 +26,7 @@ from tomojax.core.backend_policy import normalize_projector_backend
 from tomojax.core.devices import shared_devices
 from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.host_stream import host_source, should_stream
 from tomojax.core.operator_norm import estimate_normal_norm
 from tomojax.core.pallas_resolver import resolve_pallas_callable
 from tomojax.core.projector import get_detector_grid_device
@@ -765,6 +767,11 @@ def _run_spdhg_reconstruction(
 def _run_huber_fista_core_reconstruction(
     step: _ReconstructionStepInputs,
 ) -> tuple[jnp.ndarray, Mapping[str, object]]:
+    """Reconstruct with a six-image reserve for iterates, gradient and TV scratch.
+
+    Measurement-only admission can otherwise fill the device before the first
+    FISTA update allocates its momentum and transpose workspace.
+    """
     cfg = step.cfg
     n_views = int(step.projections.shape[0])
     poses = _huber_fista_pose_stack(step, n_views=n_views)
@@ -813,43 +820,40 @@ def _run_huber_fista_core_reconstruction(
         if backend_plan.actual_backend == "pallas" or backend_plan.detector_grid_folded_into_pose
         else step.det_grid
     )
+    stream = should_stream(step.projections, reserve_bytes=6 * step.x.nbytes)
+    core_cfg = replace(core_cfg, stream_projections=stream)
     effective_backend = backend_plan.actual_backend
     if not is_pose_adjusted:
         effective_backend = effective_fista_core_backend(
             core_cfg,
             T_all=backend_plan.T_all,
-            grid=step.grid,
-            detector=step.detector,
-            volume=step.x,
             det_grid=det_grid_for_core,
         )
-    if isinstance(step.recon_geometry, PoseAdjustedGeometry):
-        x_core, loss, _data_loss, _regulariser_value, effective_iters = (
-            _run_huber_fista_core_dynamic_geometry(
-                step.x,
-                backend_plan.T_all,
-                None if det_grid_for_core is None else det_grid_for_core[0],
-                None if det_grid_for_core is None else det_grid_for_core[1],
-                step.projections,
-                jnp.asarray(L_core, dtype=jnp.float32),
-                grid=step.grid,
-                detector=step.detector,
-                cfg=core_cfg,
-            )
+    if is_pose_adjusted:
+        run = functools.partial(
+            _run_huber_fista_core_dynamic_geometry,
+            step.x,
+            backend_plan.T_all,
+            None if det_grid_for_core is None else det_grid_for_core[0],
+            None if det_grid_for_core is None else det_grid_for_core[1],
         )
     else:
-        x_core, loss, _data_loss, _regulariser_value, effective_iters = (
-            _run_huber_fista_core_fixed_geometry(
-                step.x,
-                backend_plan.T_all,
-                det_grid_for_core,
-                step.projections,
-                jnp.asarray(L_core, dtype=jnp.float32),
-                grid=step.grid,
-                detector=step.detector,
-                cfg=core_cfg,
-            )
+        run = functools.partial(
+            _run_huber_fista_core_fixed_geometry, step.x, backend_plan.T_all, det_grid_for_core
         )
+    source = host_source(np.asarray(step.projections)) if stream else nullcontext(step.projections)
+    with source as data:
+        result = run(
+            data,
+            jnp.asarray(L_core, dtype=jnp.float32),
+            grid=step.grid,
+            detector=step.detector,
+            cfg=core_cfg,
+        )
+        # Host sources cannot be unregistered while asynchronous reads remain.
+        if stream:
+            jax.block_until_ready(result)
+    x_core, loss, _data_loss, _regulariser_value, effective_iters = result
     return x_core, _huber_fista_core_info(
         cfg=cfg,
         loss=loss,
