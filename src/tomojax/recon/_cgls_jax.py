@@ -20,7 +20,7 @@ from tomojax.core.validation import (
     validate_projection_stack,
     validate_volume,
 )
-from tomojax.recon._host_stream import host_source, should_stream
+from tomojax.recon._host_stream import host_source
 from tomojax.recon._projection import (
     ConeModel,
     normal_equation_operators,
@@ -28,7 +28,7 @@ from tomojax.recon._projection import (
     resolve_geometry_projector,
 )
 from tomojax.recon._quadratic import gradient_energy, gradient_normal, regularization_normal
-from tomojax.recon.cgls import CGLSConfig, validate_model
+from tomojax.recon.cgls import CGLSConfig, resident_bytes, validate_model
 
 if TYPE_CHECKING:
     from tomojax.geometry import Detector, Geometry, Grid
@@ -390,19 +390,24 @@ def _placement(
     projections: jnp.ndarray | np.ndarray,
     n: int,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+    *,
+    grid: Grid,
 ) -> tuple[ViewSplit | None, bool]:
     """How the projections are held: shared among devices, or streamed from the host."""
     split = view_split(cfg.devices, n)
     refuse_streaming(split, cfg.stream_projections, "cgls")
     if split is not None:
         return split, False  # each device holds its share
-    stream = not isinstance(projections, jax.Array) and det_grid is None
-    stream &= (
-        bool(cfg.stream_projections)
-        if cfg.stream_projections is not None
-        else should_stream(projections)
-    )
-    return None, stream
+    if isinstance(projections, jax.Array) or det_grid is not None:
+        return None, False
+    if cfg.stream_projections is not None:
+        return None, bool(cfg.stream_projections)
+    if jax.default_backend() != "gpu":
+        return None, False
+    from tomojax.backends import device_free_memory_bytes
+
+    free = device_free_memory_bytes()
+    return None, free is not None and resident_bytes(grid, np.shape(projections)) > free
 
 
 def _laid_out(
@@ -460,7 +465,7 @@ def cgls(
     validate_detector_grid(det_grid, detector, context="cgls")
     if init_x is not None:
         validate_volume(init_x, grid, context="cgls", name="init_x")
-    split, stream = _placement(cfg, projections, n, det_grid)
+    split, stream = _placement(cfg, projections, n, det_grid, grid=grid)
     initial = None if init_x is None else _as_float32(init_x)
     poses = stack_view_poses(geometry, n)
     validate_pose_stack(poses, n, context="cgls")
