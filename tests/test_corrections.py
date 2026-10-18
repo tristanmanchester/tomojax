@@ -789,7 +789,7 @@ def test_nikon_calibrated_axis_and_closing_turn_are_physical_metadata(
             hit = source + 2 * (point[:3] - source)
             np.testing.assert_allclose(hit[[0, 2]], [expected_cor, detector_height], atol=1e-12)
 
-    # Unknown vendor ROI coordinates may not silently turn into a centred grid.
+    # Vendor reconstruction ROIs do not change acquisition rays or our FOV grid.
     path.write_text(
         path.read_text().replace(
             "[CTPro]",
@@ -798,10 +798,12 @@ def test_nikon_calibrated_axis_and_closing_turn_are_physical_metadata(
             "OffsetX=1\nOffsetY=0\nOffsetZ=0\n[CTPro]",
         )
     )
-    with pytest.raises(ValueError, match="grid="):
-        tj.load_frames(path, darks=0)
-    chosen = tj.load_frames(path, darks=0, grid=geometry.grid)
-    assert chosen.geometry.grid == geometry.grid
+    default = tj.load_frames(path, darks=0)
+    assert default.geometry.grid == geometry.grid and default.source.grid is None
+    assert default.geometry.beam == geometry.beam
+    custom = tj.Grid(3, 3, 2, 0.5, 0.5, 0.5, vol_center=(1, 0, 0))
+    chosen = tj.load_frames(path, darks=0, grid=custom)
+    assert chosen.geometry.grid == custom
     assert chosen.source.geometry_metadata["nikon_xtekct"]["volume"]["OffsetX"] == 1
 
 

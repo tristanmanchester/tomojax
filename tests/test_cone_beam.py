@@ -550,7 +550,10 @@ def test_preprocess_reads_a_nikon_xtekct_scan(tmp_path: Path):
     loaded = load_dataset(tmp_path / "part.nxs")
     _, _, ingested = build_geometry_from_dataset_metadata(loaded.geometry_inputs())
     assert isinstance(ingested, ConeGeometry) and ingested.beam == beam
-    assert ingested.detector.du == 0.075 and loaded.grid == grid
+    assert ingested.detector.du == 0.075 and loaded.grid == ingested.grid
+    assert (ingested.grid.nx, ingested.grid.ny, ingested.grid.nz) == (40, 40, 36)
+    assert ingested.grid.vx == pytest.approx(0.05)
+    assert loaded.geometry_metadata["nikon_xtekct"]["volume"]["VoxelsX"] == n
     np.testing.assert_allclose(loaded.angles, angles, atol=1e-4)  # from _ctdata.txt
     np.testing.assert_allclose(loaded.projections, data, atol=3e-4)
     volume = fdk(ingested, grid, ingested.detector, loaded.projections)

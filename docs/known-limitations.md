@@ -165,7 +165,7 @@ currently comes from ESRF NXtomo exports, not those native layouts.
 HDF5 virtual detector stacks require all referenced pixel files and mapped
 regions to be present; missing sources are errors, not zero-filled exposures.
 
-Nikon reconstruction ROI offsets (`OffsetX/Y/Z`) are retained, but their
-nonzero vendor coordinate mapping is not established: choose `grid=` or
-`geometry=` explicitly instead of silently loading a centred ROI. Missing
-detector offsets or axis calibration likewise require explicit geometry.
+Nikon vendor reconstruction regions (including `OffsetX/Y/Z`) remain source
+metadata and are not applied: their coordinate mapping is not established.
+TomoJAX uses its own acquisition field-of-view grid unless `grid=` is supplied.
+Missing detector offsets or axis calibration require explicit geometry.

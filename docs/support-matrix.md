@@ -104,8 +104,9 @@ The embedded reference must record its own `ReferenceData/DataType`.
 
 Nikon detector pitch/offsets and source distances come from the `.xtekct`
 fields; its axis requires either the recorded modern offset/roll/tilt or both
-legacy COR endpoints. Reconstruction dimensions, pitches and zero offsets
-are read together; nonzero vendor ROI offsets require a caller-chosen grid.
+legacy COR endpoints. Vendor reconstruction dimensions, pitches and ROI offsets
+remain source metadata, not an applied reconstruction region: TomoJAX uses its
+field-of-view grid unless the caller supplies `grid=`.
 
 ## Numerical and accelerator scope
 

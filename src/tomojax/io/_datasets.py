@@ -349,11 +349,6 @@ class ProjectionDataset:
             raise ValueError(
                 "Missing calibrated rotation axis: pass geometry=... to tomojax.load_frames"
             )
-        if self.grid is None and self.geometry_metadata.get("grid_status") == "unresolved":
-            raise ValueError(
-                "Unresolved recorded volume grid: pass grid=... or geometry=... "
-                "to tomojax.load_frames"
-            )
         if self.angles.shape != (self.projections.shape[0],):
             raise ValueError("Missing view angles: pass angles=... to tomojax.load_frames")
         payload: dict[str, Any] = {

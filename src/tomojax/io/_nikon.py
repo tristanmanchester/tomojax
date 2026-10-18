@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
-from tomojax.core.geometry.base import Detector, Grid
+from tomojax.core.geometry.base import Detector
 from tomojax.core.geometry.cone import ConeBeam
 
 from ._acquisition import metadata_candidates
@@ -135,25 +135,6 @@ def _axis(
     ]
 
 
-def _grid(params: dict[str, str]) -> Grid | None:
-    keys = ("VoxelsX", "VoxelsY", "VoxelsZ", "VoxelSizeX", "VoxelSizeY", "VoxelSizeZ")
-    offsets = ("OffsetX", "OffsetY", "OffsetZ")
-    if not all(key in params for key in (*keys, *offsets)):
-        return None
-    # A nonzero vendor ROI offset needs an established coordinate-frame mapping;
-    # retaining it as provenance is not permission to silently centre that ROI.
-    if any(_number(params, key) != 0 for key in offsets):
-        return None
-    return Grid(
-        nx=int(_number(params, "VoxelsX")),
-        ny=int(_number(params, "VoxelsY")),
-        nz=int(_number(params, "VoxelsZ")),
-        vx=_number(params, "VoxelSizeX"),
-        vy=_number(params, "VoxelSizeY"),
-        vz=_number(params, "VoxelSizeZ"),
-    )
-
-
 def load_nikon_xtekct(
     path: str | PathLike[str],
     *,
@@ -164,7 +145,7 @@ def load_nikon_xtekct(
     """Load a Nikon scan as a cone-beam dataset.
 
     Reads source and detector distances, detector pixels and offsets, the
-    reconstruction volume and the white level from ``path`` (an ``.xtekct``
+    white level from ``path`` (an ``.xtekct``
     file), the projections ``<Name>_NNNN.tif`` beside it, and the angles from
     ``<Name>_ctdata.txt`` when present (else ``InitialAngle`` and ``AngularStep``).
     Without ``Name``, the angle sidecar uses the parameter file's basename.
@@ -178,6 +159,9 @@ def load_nikon_xtekct(
     Lengths stay in the file's units (mm).
     Use ``tomojax.load_frames`` to inspect metadata or crop before reading pixels.
 
+    Vendor reconstruction dimensions, pitches and ROI offsets are retained in
+    source metadata, not applied: TomoJAX derives its numerical field-of-view
+    grid from the acquisition unless the caller supplies a grid.
     The calibrated rotation axis comes from ObjectOffsetX/Roll/Tilt, or the
     older CentreOfRotationTop/Bottom detector-plane offsets. An extra closing
     frame on a full turn is excluded according to the declared view count.
@@ -277,7 +261,6 @@ def _nikon_record(
         if calibrated is not None:
             offset, axis = calibrated
             beam = replace(beam, axis_offset=offset)
-    grid = _grid(params)
     recorded = {
         key: params[key]
         for key in (
@@ -294,9 +277,7 @@ def _nikon_record(
     }
     metadata: dict[str, object] = {
         "axis_status": "recorded" if axis is not None else "not_recorded",
-        "grid_status": (
-            "recorded" if grid is not None else "unresolved" if "VoxelsX" in params else "derived"
-        ),
+        "grid_status": "derived",
         "ingest_source": "nikon_xtekct",
         "nikon_xtekct": {
             "path": str(file),
@@ -319,7 +300,7 @@ def _nikon_record(
         projections=np.broadcast_to(np.float32(0), shape),
         angles=angles.astype(np.float32),
         detector=detector,
-        grid=grid,
+        grid=None,
         geometry_type="cone",
         geometry_metadata=cast("dict[str, object]", metadata),
         sample_name=params.get("Name") or None,
