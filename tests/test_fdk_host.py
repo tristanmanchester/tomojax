@@ -406,13 +406,18 @@ def test_per_view_arrangements_use_global_quadrature_and_physical_cosines(backen
         )
         segment = replace(geometry, detector=own, beam=beam, angles=[angle])
         parts.append(segment)
-        # Independent full-arc reconstructions with only this view nonzero.
-        isolated = np.zeros_like(data)
-        isolated[index] = data[index]
-        expected += np.asarray(
-            fdk(replace(segment, angles=geometry.angles), grid, own, isolated, config=cfg)
-        )
     segmented = ConeSegments(tuple(parts))
+    from tomojax.recon.fdk import view_weights
+
+    weights = view_weights(segmented, parts[0].detector, len(data))
+    for index, segment in enumerate(parts):
+        # Isolate each view's physical cosine/geometry, retaining the complete
+        # acquisition's redundancy weights rather than inventing other panels.
+        full = replace(segment, angles=geometry.angles)
+        local = view_weights(full, segment.detector, len(data))
+        isolated = np.zeros_like(data)
+        isolated[index] = data[index] * (weights[index] / local[index])[None, :]
+        expected += np.asarray(fdk(full, grid, segment.detector, isolated, config=cfg))
     actual = np.asarray(
         fdk(segmented, grid, parts[0].detector, data, config=replace(cfg, views_per_batch=1))
     )

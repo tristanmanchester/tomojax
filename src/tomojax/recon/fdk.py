@@ -3,7 +3,7 @@
 Each projection is cosine-weighted, ramp-filtered along detector rows on the
 isocentre plane, and backprojected voxel by voxel with the ``(SOD / U)^2``
 distance weight, where U is the voxel's distance from the source along the
-detector normal. Full turns weight each view by half its angular step;
+detector normal. Full turns share angular measure across conjugate views;
 shorter arcs of at least a half turn plus the fan angle use Parker weights
 with a virtual fan spanning the acquired arc, retaining overscan measurements.
 
@@ -34,6 +34,7 @@ from tomojax.core.geometry.cone import cone_parts
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import validate_grid, validate_projection_stack
 from tomojax.recon._fdk_angles import grouped_angles, ordered_arc
+from tomojax.recon._fdk_coverage import full_turn_weights
 from tomojax.recon._fdk_cuda import backproject_cuda
 from tomojax.recon._host_arrays import validate_host_arrays
 from tomojax.recon.filters import get_fbp_filter_np
@@ -95,30 +96,6 @@ def _fan_angles(beam: ConeBeam, detector: Detector) -> np.ndarray:
     )
 
 
-def _full_turn_column_weights(beam: ConeBeam, detector: Detector) -> np.ndarray:
-    """``(nu,)`` weights of a full turn: 1/2, or Wang's for an offset detector.
-
-    A full turn measures each ray twice, once from each side, so each column
-    takes half the angular measure. When the detector is offset so that the
-    rotation axis projects off its centre, columns beyond the short side's
-    reach are measured once and weigh 1, and a sin^2 ramp across the overlap
-    (0 at the short edge, 1/2 at the axis, 1 at the mirrored column) keeps the
-    weights of each ray's two measurements summing to one.
-    """
-    gamma = _fan_angles(beam, detector)
-    lo, hi = float(gamma.min()), float(gamma.max())
-    pixel = float(detector.du) / float(beam.source_to_detector)
-    if lo > pixel or hi < -pixel:
-        raise ValueError("FDK needs the rotation axis to project onto the detector")
-    if abs(hi + lo) <= pixel:
-        return np.full(detector.nu, 0.5)
-    side = 1.0 if hi + lo > 0 else -1.0
-    overlap = max(min(-lo, hi), pixel)
-    x = side * gamma
-    ramp = np.sin(np.pi / 4 * (1 + np.clip(x / overlap, -1.0, 1.0))) ** 2
-    return np.where(x >= overlap, 1.0, ramp)
-
-
 def _full_turn(geometry: Geometry, n_views: int) -> bool:
     angles, _, _ = grouped_angles(geometry, n_views)
     return ordered_arc(angles)[2]
@@ -155,8 +132,8 @@ def _virtual_columns(
 def view_weights(geometry: Geometry, detector: Detector, n_views: int) -> np.ndarray:
     """Return ``(views, nu)`` FDK angular weights.
 
-    Full turns weigh each view by its angular measure, halved (Wang's weights
-    for an offset detector); short scans use Parker weights. Views repeating
+    Full turns share each ray's angular measure with its conjugate view's
+    detector coverage; short scans use Parker weights. Views repeating
     an angle (several turns, at several heights say) share its measure, so a
     scan of several turns averages their reconstructions. Angle labels may
     wrap at 360 degrees or differ by whole turns without changing the weights.
@@ -166,6 +143,16 @@ def view_weights(geometry: Geometry, detector: Detector, n_views: int) -> np.nda
         raise ValueError("view_weights needs a cone-beam geometry")
     angles, view_angle, repeats = grouped_angles(geometry, n_views)
     ordering = ordered_arc(angles)
+    if ordering[2]:
+        fans, pixels, counts = [], [], []
+        for count, beam, own in parts:
+            size = n_views if count is None else count
+            counts.append(size)
+            fans.append(np.broadcast_to(_fan_angles(beam, own), (size, own.nu)))
+            pixels.append(np.full(size, float(own.du) / float(beam.source_to_detector)))
+        return full_turn_weights(
+            angles, view_angle, repeats, np.concatenate(fans), np.concatenate(pixels), tuple(counts)
+        )
     weights, first = [], 0
     for count, beam, own in parts:
         stop = n_views if count is None else first + count
@@ -182,19 +169,13 @@ def _distinct_view_weights(
     ordering: tuple[np.ndarray, np.ndarray, bool],
 ) -> np.ndarray:
     """:func:`view_weights` for views at distinct ``angles`` (radians)."""
-    order, sorted_angles, full_turn = ordering
+    order, sorted_angles, _ = ordering
     n_views = len(order)
     gaps = np.diff(sorted_angles)
     step = float(np.median(gaps))
     arc = float(sorted_angles[-1] - sorted_angles[0]) + step
     # Angular measure of each view: half the gap to each neighbour.
     measure = np.empty(n_views)
-    if full_turn:
-        wrapped = np.concatenate(
-            [sorted_angles[-1:] - 2 * np.pi, sorted_angles, sorted_angles[:1] + 2 * np.pi]
-        )
-        measure[order] = 0.5 * (wrapped[2:] - wrapped[:-2])
-        return measure[selected, None] * _full_turn_column_weights(beam, detector)[None, :]
     padded = np.concatenate([[sorted_angles[0] - step], sorted_angles, [sorted_angles[-1] + step]])
     measure[order] = 0.5 * (padded[2:] - padded[:-2])
     # Parker weights over the fan angle of each detector column.
@@ -581,7 +562,7 @@ def fdk(
     ``projections`` are ``(views, nv, nu)`` line integrals; NumPy and memmap
     stacks stream to the device ``views_per_batch`` views at a time. Full turns
     on an offset detector (the axis projecting off its centre) get Wang's
-    weights and reconstruct the field the detector's long side covers.
+    weights from the conjugate views and reconstruct the field the detector's long side covers.
     Each view retains its own calibrated source/detector arrangement; angular
     quadrature covers the whole scan, independently of segment boundaries.
     Noncircular trajectories retain FDK's approximate character.

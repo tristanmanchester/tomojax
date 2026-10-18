@@ -252,6 +252,31 @@ def test_fdk_reconstructs_a_full_turn_on_an_offset_detector(backend, offset):
 
 
 @pytest.mark.parametrize("backend", ["jax", cuda])
+@pytest.mark.parametrize(("columns", "centre", "amplitude"), [(48, 0.2, 3.0), (32, 10.0, 2.0)])
+def test_fdk_changing_panels_recover_independent_ellipsoids(backend, columns, centre, amplitude):
+    from tomojax.geometry import ConeSegments
+
+    grid, beam = Grid(32, 32, 32, 1, 1, 1), ConeBeam(96, 144)
+    shapes = _ellipsoids(32.0)
+    parts = tuple(
+        ConeGeometry(
+            grid,
+            Detector(columns, 48, 1, 1, (centre + amplitude * np.sin(3 * np.deg2rad(a)), 0)),
+            [a],
+            beam,
+        )
+        for a in np.linspace(0, 360, 120, endpoint=False)
+    )
+    geometry = ConeSegments(parts)
+    data = np.concatenate([_analytic(shapes, part) for part in parts])
+    image = np.asarray(
+        fdk(geometry, grid, geometry.detector, data, config=FDKConfig(backend=backend))
+    )
+    truth = _voxelise(grid, shapes)
+    assert np.linalg.norm(image - truth) < 0.08 * np.linalg.norm(truth)
+
+
+@pytest.mark.parametrize("backend", ["jax", cuda])
 @pytest.mark.parametrize("host", [False, True])
 @pytest.mark.parametrize("kind", ["short", "offset_full"])
 def test_fdk_equivalent_angle_labels_preserve_analytic_phantom_recovery(backend, host, kind):
