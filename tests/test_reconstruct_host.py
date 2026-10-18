@@ -9,7 +9,7 @@ import pytest
 
 import tomojax as tj
 import tomojax.backends
-from tomojax.core.host_stream import should_stream
+from tomojax.backends.host_stream import should_stream
 
 
 def test_measurement_placement_reserves_solver_workspace(monkeypatch):

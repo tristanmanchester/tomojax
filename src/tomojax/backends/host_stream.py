@@ -86,7 +86,7 @@ def should_stream(projections: object, *, fraction: float = 0.4, reserve_bytes: 
     """
     if isinstance(projections, jax.Array) or jax.default_backend() != "gpu":
         return False
-    from tomojax.backends import device_free_memory_bytes
+    from tomojax.backends._memory import device_free_memory_bytes
 
     free = device_free_memory_bytes()
     nbytes = int(np.prod(np.shape(cast("ArrayLike", projections)))) * 4

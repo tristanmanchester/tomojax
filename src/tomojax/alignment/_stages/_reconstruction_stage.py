@@ -22,11 +22,11 @@ from tomojax.alignment._quality_policy import (
 )
 from tomojax.alignment._results import record_reconstruction_info as _record_reconstruction_info
 from tomojax.backends import estimate_views_per_batch_info
+from tomojax.backends.host_stream import host_source, should_stream
 from tomojax.core.backend_policy import normalize_projector_backend
 from tomojax.core.devices import shared_devices
 from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.geometry.views import stack_view_poses
-from tomojax.core.host_stream import host_source, should_stream
 from tomojax.core.operator_norm import estimate_normal_norm
 from tomojax.core.pallas_resolver import resolve_pallas_callable
 from tomojax.core.projector import get_detector_grid_device

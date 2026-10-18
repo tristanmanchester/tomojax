@@ -10,8 +10,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.backends.host_stream import read_views
 from tomojax.core.backend_policy import normalize_projector_backend
-from tomojax.core.host_stream import read_views
 from tomojax.core.pallas_resolver import resolve_pallas_callable, resolve_pallas_module
 from tomojax.core.projector import (
     RAY_INTEGRATORS,
@@ -58,7 +58,7 @@ class FistaCoreConfig:
     compute_iteration_loss: bool = True
     compute_final_data_loss: bool = True
     compute_final_regulariser_value: bool = True
-    # Projections are a live core.host_stream source key, not a device stack.
+    # Projections are a live backends.host_stream source key, not a device stack.
     stream_projections: bool = False
 
     def __post_init__(self) -> None:

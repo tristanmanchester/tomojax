@@ -22,9 +22,8 @@ from tomojax.alignment.api import (
     AlignmentStage,
     align as align_arrays,
 )
-from tomojax.core.geometry.base import grid_volume_origin
 from tomojax.core.multires import upsample_volume
-from tomojax.geometry import Grid, RotationAxisGeometry
+from tomojax.geometry import Grid, RotationAxisGeometry, grid_volume_origin
 from tomojax.recon import FistaConfig, project
 
 if TYPE_CHECKING:

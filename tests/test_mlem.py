@@ -150,7 +150,7 @@ def test_large_sensitivity_cache_is_bounded_and_requires_reuse(monkeypatch):
 @pytest.mark.numerical
 def test_streamed_counts_match_resident_subsets_and_release_sources(problem, monkeypatch):
     module = import_module("tomojax.recon.mlem")
-    host = import_module("tomojax.core.host_stream")
+    host = import_module("tomojax.backends.host_stream")
     grid, detector, geometry, matrix = problem
     data = (matrix @ np.linspace(0.2, 1.1, 12)).reshape(5, 4, 5).astype(np.float32)
     config = MLEMConfig(iterations=3, subsets=3, views_per_batch=1)

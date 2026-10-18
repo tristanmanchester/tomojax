@@ -13,11 +13,11 @@ import jax
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec
 
+from tomojax.backends.host_stream import read_views
 from tomojax.core.backend_policy import cuda_backend
 from tomojax.core.cone import ConeModel, cone_model, use_cuda_cone
 from tomojax.core.devices import VIEWS, ViewSplit, pad_views
 from tomojax.core.geometry.cone import is_cone_beam
-from tomojax.core.host_stream import read_views
 from tomojax.core.operator_norm import unit
 from tomojax.recon._projection_batches import ViewBatches
 

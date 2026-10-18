@@ -17,7 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.alignment._geometry.parametrizations import apply_pose_updates
-from tomojax.core.host_stream import host_source, read_views
+from tomojax.backends.host_stream import host_source, read_views
 from tomojax.core.joseph import plane_coefficients, project_ones_native
 
 from ._coupled_host_linear import HostBlock, host_dot, solve_host_normal

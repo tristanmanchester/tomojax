@@ -12,9 +12,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.core.geometry.cone import is_cone_beam
-from tomojax.core.geometry.views import stack_view_poses
-from tomojax.core.host_stream import (
+from tomojax.backends.host_stream import (
     host_buffer,
     host_source,
     read_block,
@@ -22,6 +20,8 @@ from tomojax.core.host_stream import (
     should_stream,
     write_block,
 )
+from tomojax.core.geometry.cone import is_cone_beam
+from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import (
     forward_project_view_T,
     get_detector_grid_device,

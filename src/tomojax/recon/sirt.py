@@ -13,8 +13,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.backends.host_stream import host_source, should_stream
 from tomojax.core.geometry.views import stack_view_poses
-from tomojax.core.host_stream import host_source, should_stream
 from tomojax.core.validation import (
     validate_detector_grid,
     validate_grid,
