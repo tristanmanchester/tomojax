@@ -48,6 +48,7 @@ class _BatchOps(NamedTuple):
     """One pose stack's operators over a batch of views starting at ``start``."""
 
     cached: jax.Array | None  # every view's pose columns, when they fit
+    residual: jax.Array | None  # the weighted residual computed with cached columns
     view_columns: Callable  # view i's weighted pose columns
     batch_columns: Callable  # the batch's pose columns
     project: Callable  # (start, dx) -> W A dx over the batch
@@ -203,7 +204,7 @@ def _pose_gram(ops: _BatchOps, n_views: int, width: int, indices: jax.Array) -> 
     )
 
 
-def _map_columns(fn: Callable, views: jax.Array, spec: CoupledSpec) -> jax.Array:
+def _map_columns[T](fn: Callable[..., T], views: jax.Array, spec: CoupledSpec) -> T:
     """Bound vmapped cone columns while sharing one volume and CUDA launch."""
     batch = None
     if (
@@ -319,8 +320,11 @@ def _filtered_operators(spec, arrays, forward, adjoint, columns):
     def filtered(y):
         return jnp.fft.irfft(jnp.fft.rfft(y, axis=-1) * response, n=nu, axis=-1)
 
-    def filtered_columns(*args: object, **kwargs: object):
-        residual, derivative = columns(*args, **kwargs)
+    def filtered_columns(params, nominal, frame, volume, target, weight):
+        prediction, derivative = columns(
+            params, nominal, frame, volume, jnp.zeros_like(target), weight
+        )
+        residual = filtered(prediction.reshape(nv, nu)).ravel() - weight.ravel() * target.ravel()
         return residual, filtered(derivative.reshape(-1, nv, nu)).reshape(derivative.shape)
 
     return (
@@ -329,6 +333,35 @@ def _filtered_operators(spec, arrays, forward, adjoint, columns):
         lambda t, y, frames=None: adjoint(t, filtered(y), frames),
         filtered_columns,
     )
+
+
+def _pose_column_cache(p, x, *, spec: CoupledSpec, arrays: CoupledArrays, predict_columns):
+    """Cache the primal residual and active columns together, or stream columns."""
+    indices = jnp.asarray(spec.active_columns, jnp.int32)
+
+    def residual_columns(i):
+        residual, derivative = predict_columns(
+            p[i],
+            arrays.poses[i],
+            None if arrays.frames is None else arrays.frames[i],
+            x,
+            arrays.projections[i],
+            arrays.weights if arrays.weights.ndim == 0 else arrays.weights[i],
+        )
+        return residual, derivative * arrays.active[indices, None]
+
+    def columns(i):
+        return residual_columns(i)[1]
+
+    # The primal comes for free with analytic columns. Reuse it for the
+    # gradient instead of projecting x a second time; both die after this update.
+    residual, cached = (
+        _map_columns(residual_columns, jnp.arange(arrays.poses.shape[0]), spec)
+        if spec.cache_columns
+        else (None, None)
+    )
+
+    return residual, cached, columns
 
 
 def _build_program(
@@ -352,7 +385,6 @@ def _build_program(
         return v if unmasked else mask * v
 
     n_views = arrays.poses.shape[0]  # a device's share, with a split
-    cache_columns = spec.cache_columns
     shares = _Shares(spec.split, n_views)
     across = shares.across
     counts = arrays.counts if arrays.counts is not None else jnp.ones(n_views, jnp.float32)
@@ -420,20 +452,9 @@ def _build_program(
     highest = jax.lax.Precision.HIGHEST
 
     def batch_ops(t, p, x):  # the batch operators of one pose stack; see _BatchOps
-        def columns(i):
-            return (
-                predict_columns(
-                    p[i],
-                    arrays.poses[i],
-                    None if arrays.frames is None else arrays.frames[i],
-                    masked(x),
-                    arrays.projections[i],
-                    weights if weights.ndim == 0 else weights[i],
-                )[1]
-                * active[indices, None]
-            )
-
-        cached = _map_columns(columns, jnp.arange(n_views), spec) if cache_columns else None
+        residual, cached, columns = _pose_column_cache(
+            p, masked(x), spec=spec, arrays=arrays, predict_columns=predict_columns
+        )
 
         def view_columns(i):
             return cached[i] if cached is not None else columns(i)
@@ -461,7 +482,14 @@ def _build_program(
             return jax.lax.dynamic_update_slice_in_dim(out, rows, start, axis=0)
 
         return _BatchOps(
-            cached, view_columns, batch_columns, project, transpose, pose_forward, pose_adjoint
+            cached,
+            residual,
+            view_columns,
+            batch_columns,
+            project,
+            transpose,
+            pose_forward,
+            pose_adjoint,
         )
 
     dot, block_dot = _dot, shares.dot
@@ -544,7 +572,11 @@ def _build_program(
         def gradient_body(start, valid, carry):
             gx, gp = carry
             measured = batch_weights(start) * take(arrays.projections, start)
-            residual = ops.project(start, x) - measured
+            residual = (
+                ops.project(start, x) - measured
+                if ops.residual is None
+                else take(ops.residual, start).reshape(size, spec.detector.nv, spec.detector.nu)
+            )
             cols = ops.batch_columns(start)
             return (
                 ops.transpose(start, valid, residual, gx),

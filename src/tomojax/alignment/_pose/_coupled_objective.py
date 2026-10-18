@@ -79,8 +79,8 @@ def _check_device_memory(arrays: CoupledArrays, spec: CoupledSpec) -> Callable |
     """Raise :class:`AlignmentMemoryError` if the update cannot fit on its GPU.
 
     The update keeps about a dozen volume-sized and a few projection-sized
-    arrays, plus the cached pose columns and per-pixel weights. Only when that
-    estimate comes within a factor of two of free memory is the update compiled
+    arrays, plus the cached residual/pose columns and per-pixel weights. Only when
+    that estimate comes within a factor of two of free memory is the update compiled
     ahead to read XLA's own figure; the compiled update is then returned for
     use, so it is compiled once. Recheck current free memory at dispatch: an
     intervening reconstruction can retain another volume after this admission.
@@ -95,7 +95,7 @@ def _check_device_memory(arrays: CoupledArrays, spec: CoupledSpec) -> Callable |
         n_views //= spec.split.mesh.size
     sinogram = 4 * n_views * detector.nu * detector.nv
     sinograms = (
-        3 + (len(spec.active_columns) if spec.cache_columns else 0) + (arrays.weights.ndim > 0)
+        3 + (1 + len(spec.active_columns) if spec.cache_columns else 0) + (arrays.weights.ndim > 0)
     )
     if _MEMORY_MARGIN * (13 * volume + sinograms * sinogram) < available:
         return None
@@ -219,7 +219,7 @@ def build_coupled_objective(
     # Each device caches its own views' columns.
     views = ctx.n_views if split is None else split.total // split.mesh.size
     active_columns = tuple(int(i) for i in np.flatnonzero(np.asarray(ctx.active_mask)))
-    cache_columns = views * ctx.nv * ctx.nu * len(active_columns) * 4 <= _pose_cache_limit()
+    cache_columns = views * ctx.nv * ctx.nu * (1 + len(active_columns)) * 4 <= _pose_cache_limit()
     spec = CoupledSpec(
         grid=ctx.grid,
         detector=ctx.detector,
