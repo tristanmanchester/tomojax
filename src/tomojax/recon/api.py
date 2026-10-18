@@ -227,9 +227,9 @@ def reconstruct_arrays(
 
     ``config`` is the method's configuration (see :func:`method_config`).
     ``warm_start`` starts the iterative methods from the FBP
-    reconstruction. Cone segments start from the view-count-weighted mean of
-    their individual FDK images; each segment must cover an FDK-compatible
-    arc. Returns the volume and its record: the ``config`` used,
+    reconstruction, with calibrated per-view cone arrangements retained. The
+    whole cone scan must cover an FDK-compatible arc. Returns the volume and its
+    record: the ``config`` used,
     ``warm_start`` for the iterative methods and the solver's own record. FDK
     and FBP volumes too large for the device come back as host NumPy arrays,
     made in slabs (``host_slabs``). Independent axial SIRT/MLEM planes and their
@@ -436,7 +436,7 @@ def _fbp_result(
     """Choose FBP storage, respecting caller-owned output and device capacity."""
     if out is not None and det_grid is not None:
         raise ValueError("host output does not support explicit detector grids")
-    if out is not None or (det_grid is None and _too_large_for_the_device(geometry, grid, config)):
+    if out is not None or (det_grid is None and _too_large_for_the_device(grid, config)):
         volume = _host_fbp(geometry, grid, detector, projections, config, out=out)
         return volume, {"config": config, "host_slabs": True}
     volume = recon.fbp(geometry, grid, detector, projections, config=config, det_grid=det_grid)
@@ -461,13 +461,10 @@ def _first_device(cfg: FBPConfig) -> AbstractContextManager[object]:
     return jax.default_device(devices[0]) if devices else nullcontext()
 
 
-def _too_large_for_the_device(geometry: Geometry, grid: Grid, cfg: FBPConfig) -> bool:
+def _too_large_for_the_device(grid: Grid, cfg: FBPConfig) -> bool:
     """Whether an FBP volume would take more than 40% of free device memory."""
     from tomojax.backends import device_free_memory_bytes
-    from tomojax.core.geometry.cone import ConeSegments
 
-    if isinstance(geometry, ConeSegments):
-        return False  # FDK refuses segmented scans with its own message.
     # View-shared reconstruction holds the whole volume on every device.
     with _first_device(cfg):
         free = device_free_memory_bytes()
@@ -486,9 +483,9 @@ def _host_fbp(
     """Bounded slabs for either beam type, keeping the result on the host."""
     import logging
 
-    from tomojax.core.geometry.cone import beam_of
+    from tomojax.core.geometry.cone import is_cone_beam
 
-    if beam_of(geometry) is not None:
+    if is_cone_beam(geometry):
         return _host_fdk(geometry, grid, detector, projections, cfg, out=out)
     logging.info("Reconstructing %dx%dx%d in z-slabs on the host", grid.nx, grid.ny, grid.nz)
     host = recon.FBPHostConfig(filter=cfg.filter, scale=cfg.scale, backprojector=cfg.backprojector)

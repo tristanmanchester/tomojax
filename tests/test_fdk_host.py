@@ -386,3 +386,53 @@ def test_cuda_fdk_texture_alignment_preserves_physical_interpolation_weights(gen
     quantized = np.floor(float(np.float32(row)) * 256 + 0.5) / 256
     expected = max(0.0, 1.0 - abs(quantized)) + 2.0 * max(0.0, 1.0 - abs(quantized - 1.0))
     np.testing.assert_array_equal(samples, [expected, expected])
+
+
+@pytest.mark.parametrize("backend", ["jax", CUDA])
+def test_per_view_arrangements_use_global_quadrature_and_physical_cosines(backend):
+    from tomojax.geometry import ConeSegments
+
+    geometry, grid, detector, data = scan()
+    parts, expected = [], np.zeros((grid.nx, grid.ny, grid.nz), np.float32)
+    cfg = FDKConfig(backend=backend, views_per_batch=3)
+    for index, angle in enumerate(geometry.angles):
+        own = replace(detector, center=(0.3 * np.sin(angle), 0.2 * index))
+        beam = ConeBeam(
+            30 + index,
+            45 + 2 * index,
+            detector_roll_deg=2 * index,
+            detector_yaw_deg=index,
+            detector_pitch_deg=-index,
+        )
+        segment = replace(geometry, detector=own, beam=beam, angles=[angle])
+        parts.append(segment)
+        # Independent full-arc reconstructions with only this view nonzero.
+        isolated = np.zeros_like(data)
+        isolated[index] = data[index]
+        expected += np.asarray(
+            fdk(replace(segment, angles=geometry.angles), grid, own, isolated, config=cfg)
+        )
+    segmented = ConeSegments(tuple(parts))
+    actual = np.asarray(
+        fdk(segmented, grid, parts[0].detector, data, config=replace(cfg, views_per_batch=1))
+    )
+    batched = np.asarray(fdk(segmented, grid, parts[0].detector, data, config=cfg))
+    host = fdk_host(
+        segmented, grid, parts[0].detector, data, config=FDKHostConfig(slices_per_batch=3, fdk=cfg)
+    )
+    np.testing.assert_allclose(actual, expected, rtol=3e-5, atol=3e-6)
+    # CUDA normalizes half textures to each batch's peak. Bound its image
+    # error, not pointwise relative error at signed reconstruction zeros.
+    assert np.linalg.norm(batched - actual) < 1e-3 * np.linalg.norm(actual)
+    np.testing.assert_allclose(host, batched, rtol=3e-3, atol=5e-5)
+
+
+def test_prepared_batches_bound_input_transfer_storage():
+    from importlib import import_module
+
+    geometry, _, detector, _ = scan()
+    detector = replace(detector, nu=2048, nv=1024)
+    prep = import_module("tomojax.recon.fdk")._prepare(
+        geometry, detector, 8, FDKConfig(backend="jax")
+    )
+    assert 4 * detector.nu * detector.nv * prep.batch <= 64 * 2**20

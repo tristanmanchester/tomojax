@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+FDK and iterative FDK starts retain per-view cone arrangements, with angular
+weights across the whole scan rather than requiring every segment to span an arc.
+
 The ptychography example also accepts PSI MATLAB v5 simulations, with detector
 binning and iteration controls for CPU previews and explicit output units.
 
