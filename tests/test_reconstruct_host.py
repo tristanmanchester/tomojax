@@ -11,6 +11,18 @@ import tomojax as tj
 import tomojax.backends
 
 
+@pytest.mark.parametrize("order", ["C", "F"])
+def test_host_validation_preserves_mask_coordinates_across_layouts(order):
+    check = importlib.import_module("tomojax.recon._host_arrays").validate_host_views
+    data = np.array([[0, np.nan], [0, 0]], np.float32, order=order)
+    check(data, weights=np.array([[1, 0], [1, 1]], np.float32))
+    data[0, 1] = 1
+    check(data)
+    data[1, 0] = np.inf
+    with pytest.raises(ValueError, match="finite"):
+        check(data)
+
+
 def _scan(kind, nz=19):
     grid = tj.Grid(9, 7, nz, 0.8, 1.2, 0.7, vol_center=(1.2, -0.4, 0.31))
     detector = tj.Detector(11, 20, 0.9, 1.0, (0.23, -0.19))
