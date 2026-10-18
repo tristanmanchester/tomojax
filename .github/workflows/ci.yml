@@ -1,12 +1,21 @@
 name: CI
 
-# Pre-release, `just ci` and `just test-cuda` run locally before each push;
-# this runs on demand (`gh workflow run CI`) and on release tags. Restore
-# push and pull_request triggers when the project takes outside changes.
 on:
-  workflow_dispatch:
+  pull_request:
   push:
+    branches: [main]
     tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JAX_PLATFORMS: cpu
 
 jobs:
   product-spine:
@@ -39,6 +48,9 @@ jobs:
       - name: Typecheck
         run: uv run --no-sync basedpyright
 
+      - name: Public docstrings
+        run: uv run --no-sync python tools/check_docstrings.py
+
       - name: Import boundaries
         run: |
           uv run --no-sync lint-imports --config .importlinter
@@ -48,8 +60,7 @@ jobs:
         run: |
           rm -rf dist
           uv build
-          uv run --no-sync twine check dist/*
-          uv run --no-sync python tools/smoke_installed_wheel.py
+          uv run --no-sync twine check --strict dist/*
 
       - name: CLI smoke workflow
         run: uv run --no-sync python tools/smoke_cli_workflow.py
@@ -63,7 +74,7 @@ jobs:
         run: uv run --no-sync python tools/smoke_accelerator.py
 
       - name: Tests
-        run: uv run --no-sync pytest -q tests --cov
+        run: uv run --no-sync pytest -q tests -m "not gpu" --cov
 
       - name: Analytic accuracy benchmarks
         env:
@@ -74,3 +85,27 @@ jobs:
           uv run --no-sync python bench/adjoint_benchmark.py --sizes 16 --repeats 1
           uv run --no-sync python bench/adjoint_benchmark.py --stack --sizes 16 --batches 2 --repeats 1
           uv run --no-sync python bench/workflow_benchmark.py --sizes 16 --geometries parallel --methods fista spdhg --repeats 1
+
+  installed-package:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup uv and Python
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: false
+
+      - name: Build release artifacts
+        run: uv build
+
+      - name: Uncached wheel and sdist workflows
+        run: |
+          uv run --no-project --python "${{ matrix.python }}" python tools/smoke_installed_wheel.py --extra cpu
+          uv run --no-project --python "${{ matrix.python }}" python tools/smoke_installed_wheel.py --extra cpu --artifact sdist

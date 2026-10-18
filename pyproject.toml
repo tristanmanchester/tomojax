@@ -7,11 +7,25 @@ name = "tomojax"
 version = "0.3.0"
 description = "TomoJAX — CT projector, reconstruction, and alignment"
 readme = "README.md"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12"
 license = "GPL-3.0-only"
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Scientific/Engineering :: Physics",
+]
 authors = [{ name = "Tristan Manchester", email = "tristan.manchester@diamond.ac.uk" }]
 dependencies = [
     "h5py>=3.14.0,<4",
+    "imagecodecs>=2026.10.10",
     "imageio[tifffile]>=2.37.3,<3",
     "tifffile>=2026.9.20",
     "jax>=0.11.2,<0.12",

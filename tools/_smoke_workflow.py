@@ -12,9 +12,8 @@ def workflow_steps(root: Path) -> list[list[str]]:
     """Return CLI steps that produce and inspect a small reconstructed volume."""
     scan, recon = root / "synthetic.nxs", root / "recon.nxs"
     return [
-        ["simulate", "-o", str(scan), "--size", "16", "--views", "16"],
-        ["inspect", str(scan)],
-        ["recon", str(scan), "-o", str(recon), "--method", "fbp", "--roi", "off"],
+        ["simulate", "-o", str(scan), "--size", "32", "--views", "60"],
+        ["recon", str(scan), "-o", str(recon)],
         ["inspect", str(recon), "--preview", str(root / "previews")],
     ]
 
