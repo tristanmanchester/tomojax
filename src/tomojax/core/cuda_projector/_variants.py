@@ -1,4 +1,4 @@
-"""Pallas option normalization and kernel variant selection."""
+"""CUDA option normalization and kernel variant selection."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ import numpy as np
 from tomojax.core._gather import prepare_volume_for_gather, resolve_gather_target
 from tomojax.core.geometry.base import Detector, Grid
 
-from ._pallas_geometry_support import _supports_z_integer4, _supports_z_integer4_for_stack
-from ._pallas_state import PallasProjectorUnsupported, _unsupported
+from ._geometry_support import _supports_z_integer4, _supports_z_integer4_for_stack
+from ._state import CudaProjectorUnsupported, _unsupported
 
 _SUPPORTED_NUM_WARPS = frozenset({1, 2, 4, 8})
 _SUPPORTED_KERNEL_VARIANTS = frozenset({"auto", "generic", "z_integer4"})
@@ -24,18 +24,18 @@ _LAYOUT_VARIANT_IDS = {"detector_vu": 0, "detector_uv": 1}
 
 
 def _normalize_gather_dtype(gather_dtype: str) -> str:
-    target = _pallas_gather_jnp_dtype(gather_dtype)
+    target = _cuda_gather_jnp_dtype(gather_dtype)
     return {jnp.float32: "fp32", jnp.bfloat16: "bf16", jnp.float16: "fp16"}[target]
 
 
-def _pallas_gather_jnp_dtype(gather_dtype: str) -> jnp.dtype:
+def _cuda_gather_jnp_dtype(gather_dtype: str) -> jnp.dtype:
     try:
         return resolve_gather_target(gather_dtype)
     except ValueError as exc:
-        raise PallasProjectorUnsupported(_unsupported(str(exc))) from None
+        raise CudaProjectorUnsupported(_unsupported(str(exc))) from None
 
 
-def _prepare_volume_for_pallas_gather(volume: jnp.ndarray, gather_dtype: str) -> jnp.ndarray:
+def _prepare_volume_for_cuda_gather(volume: jnp.ndarray, gather_dtype: str) -> jnp.ndarray:
     return prepare_volume_for_gather(volume, _normalize_gather_dtype(gather_dtype))
 
 
@@ -44,11 +44,11 @@ def _normalize_tile_shape(tile_shape: tuple[int, int]) -> tuple[int, int]:
         tile_v = operator.index(tile_shape[0])
         tile_u = operator.index(tile_shape[1])
     except Exception as exc:
-        raise PallasProjectorUnsupported(
+        raise CudaProjectorUnsupported(
             _unsupported(f"tile_shape must be two positive integers; got {tile_shape!r}")
         ) from exc
     if tile_v <= 0 or tile_u <= 0:
-        raise PallasProjectorUnsupported(
+        raise CudaProjectorUnsupported(
             _unsupported(f"tile_shape must be two positive integers; got {tile_shape!r}")
         )
     return int(tile_v), int(tile_u)
@@ -58,13 +58,13 @@ def _normalize_num_warps(num_warps: int) -> int:
     try:
         value = operator.index(num_warps)
     except Exception as exc:
-        raise PallasProjectorUnsupported(
+        raise CudaProjectorUnsupported(
             _unsupported(
                 f"num_warps must be one of {sorted(_SUPPORTED_NUM_WARPS)}; got {num_warps!r}"
             )
         ) from exc
     if value not in _SUPPORTED_NUM_WARPS:
-        raise PallasProjectorUnsupported(
+        raise CudaProjectorUnsupported(
             _unsupported(
                 f"num_warps must be one of {sorted(_SUPPORTED_NUM_WARPS)}; got {num_warps!r}"
             )
@@ -95,12 +95,12 @@ def _safe_detector_tile_shape(
 
 def _normalize_kernel_variant(kernel_variant: str) -> str:
     if not isinstance(kernel_variant, str):
-        raise PallasProjectorUnsupported(
+        raise CudaProjectorUnsupported(
             _unsupported(f"kernel_variant must be a string; got {type(kernel_variant).__name__}")
         )
     value = kernel_variant.lower()
     if value not in _SUPPORTED_KERNEL_VARIANTS:
-        raise PallasProjectorUnsupported(
+        raise CudaProjectorUnsupported(
             _unsupported(
                 "kernel_variant must be one of "
                 f"{sorted(_SUPPORTED_KERNEL_VARIANTS)}; got {kernel_variant!r}"
@@ -111,12 +111,12 @@ def _normalize_kernel_variant(kernel_variant: str) -> str:
 
 def _normalize_layout_variant(layout_variant: str) -> str:
     if not isinstance(layout_variant, str):
-        raise PallasProjectorUnsupported(
+        raise CudaProjectorUnsupported(
             _unsupported(f"layout_variant must be a string; got {type(layout_variant).__name__}")
         )
     value = layout_variant.lower()
     if value not in _SUPPORTED_LAYOUT_VARIANTS:
-        raise PallasProjectorUnsupported(
+        raise CudaProjectorUnsupported(
             _unsupported(
                 "layout_variant must be one of "
                 f"{sorted(_SUPPORTED_LAYOUT_VARIANTS)}; got {layout_variant!r}"
@@ -127,12 +127,12 @@ def _normalize_layout_variant(layout_variant: str) -> str:
 
 def _normalize_state_mode(state_mode: str) -> str:
     if not isinstance(state_mode, str):
-        raise PallasProjectorUnsupported(
+        raise CudaProjectorUnsupported(
             _unsupported(f"state_mode must be a string; got {type(state_mode).__name__}")
         )
     value = state_mode.lower()
     if value not in _SUPPORTED_STATE_MODES:
-        raise PallasProjectorUnsupported(
+        raise CudaProjectorUnsupported(
             _unsupported(
                 f"state_mode must be one of {sorted(_SUPPORTED_STATE_MODES)}; got {state_mode!r}"
             )
@@ -140,7 +140,7 @@ def _normalize_state_mode(state_mode: str) -> str:
     return value
 
 
-def pallas_projector_variant_metadata(
+def cuda_projector_variant_metadata(
     *,
     tile_shape: tuple[int, int] = (8, 16),
     num_warps: int = 4,
@@ -149,7 +149,7 @@ def pallas_projector_variant_metadata(
     state_mode: str = "inline",
     gather_dtype: str = "fp32",
 ) -> dict[str, Any]:
-    """Return normalized metadata for the Pallas variant this module can run."""
+    """Return normalized metadata for the CUDA variant this module can run."""
     tile_v, tile_u = _normalize_tile_shape(tile_shape)
     actual_kernel_variant = _normalize_kernel_variant(kernel_variant)
     return {
@@ -162,7 +162,7 @@ def pallas_projector_variant_metadata(
     }
 
 
-def pallas_projector_actual_variant_metadata(
+def cuda_projector_actual_variant_metadata(
     T: jnp.ndarray,
     grid: Grid,
     detector: Detector,
@@ -175,9 +175,9 @@ def pallas_projector_actual_variant_metadata(
     state_mode: str = "inline",
     gather_dtype: str = "fp32",
 ) -> dict[str, Any]:
-    """Return normalized metadata for the selected Pallas variant."""
+    """Return normalized metadata for the selected CUDA variant."""
     requested_kernel_variant = _normalize_kernel_variant(kernel_variant)
-    metadata = pallas_projector_variant_metadata(
+    metadata = cuda_projector_variant_metadata(
         tile_shape=tile_shape,
         num_warps=num_warps,
         kernel_variant=kernel_variant,
@@ -200,7 +200,7 @@ def pallas_projector_actual_variant_metadata(
     return metadata
 
 
-def pallas_projector_actual_sinogram_variant_metadata(
+def cuda_projector_actual_sinogram_variant_metadata(
     T_stack: jnp.ndarray,
     grid: Grid,
     detector: Detector,
@@ -213,9 +213,9 @@ def pallas_projector_actual_sinogram_variant_metadata(
     state_mode: str = "inline",
     gather_dtype: str = "fp32",
 ) -> dict[str, Any]:
-    """Return normalized metadata for the selected batched-sinogram Pallas variant."""
+    """Return normalized metadata for the selected batched-sinogram CUDA variant."""
     requested_kernel_variant = _normalize_kernel_variant(kernel_variant)
-    metadata = pallas_projector_variant_metadata(
+    metadata = cuda_projector_variant_metadata(
         tile_shape=tile_shape,
         num_warps=num_warps,
         kernel_variant=kernel_variant,
@@ -252,7 +252,7 @@ def _select_kernel_variant(
         return "z_integer4" if supports_z_integer else "generic"
     if requested_kernel_variant == "z_integer4" and supports_z_integer:
         return "z_integer4"
-    raise PallasProjectorUnsupported(
+    raise CudaProjectorUnsupported(
         _unsupported("kernel_variant='z_integer4' requires canonical integer-z detector geometry")
     )
 
@@ -271,13 +271,13 @@ def _select_kernel_variant_for_stack(
     except Exception:
         if requested_kernel_variant == "auto":
             return "generic"
-        raise PallasProjectorUnsupported(
+        raise CudaProjectorUnsupported(
             _unsupported("kernel_variant='z_integer4' requires host-visible pose stack")
         ) from None
     if T_host.ndim != 3 or T_host.shape[1:] != (4, 4):
         if requested_kernel_variant == "auto":
             return "generic"
-        raise PallasProjectorUnsupported(
+        raise CudaProjectorUnsupported(
             _unsupported("kernel_variant='z_integer4' requires pose stack shape (n_views, 4, 4)")
         )
     supports_all = _supports_z_integer4_for_stack(T_host, grid, detector, det_grid)
@@ -285,7 +285,7 @@ def _select_kernel_variant_for_stack(
         return "z_integer4" if supports_all else "generic"
     if requested_kernel_variant == "z_integer4" and supports_all:
         return "z_integer4"
-    raise PallasProjectorUnsupported(
+    raise CudaProjectorUnsupported(
         _unsupported(
             "kernel_variant='z_integer4' requires all views to use integer-z detector geometry"
         )
@@ -295,11 +295,11 @@ def _select_kernel_variant_for_stack(
 __all__ = [
     "_KERNEL_VARIANT_IDS",
     "_LAYOUT_VARIANT_IDS",
+    "_cuda_gather_jnp_dtype",
     "_normalize_gather_dtype",
     "_normalize_kernel_variant",
-    "_pallas_gather_jnp_dtype",
-    "_prepare_volume_for_pallas_gather",
-    "pallas_projector_actual_sinogram_variant_metadata",
-    "pallas_projector_actual_variant_metadata",
-    "pallas_projector_variant_metadata",
+    "_prepare_volume_for_cuda_gather",
+    "cuda_projector_actual_sinogram_variant_metadata",
+    "cuda_projector_actual_variant_metadata",
+    "cuda_projector_variant_metadata",
 ]

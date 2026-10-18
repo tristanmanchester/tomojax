@@ -177,7 +177,7 @@ def test_cuda_cone_cgls_recovers_an_image_across_wide_tiles(tilt):
         grid,
         detector,
         data,
-        config=CGLSConfig(iterations=30, projector_backend="pallas"),
+        config=CGLSConfig(iterations=30, projector_backend="cuda"),
     )
     assert np.linalg.norm(np.asarray(volume) - truth) / np.linalg.norm(truth) < 0.02
 
@@ -282,7 +282,7 @@ def test_cuda_cone_cgls_recovers_the_image_with_unbounded_footprints(tilt):
         grid,
         detector,
         data,
-        config=CGLSConfig(iterations=120, projector_backend="pallas"),
+        config=CGLSConfig(iterations=120, projector_backend="cuda"),
     )
     assert info["converged"]
     assert np.linalg.norm(np.asarray(volume) - truth) / np.linalg.norm(truth) < 1e-4

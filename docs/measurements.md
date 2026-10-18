@@ -10,10 +10,9 @@ Failed cases are reported with the rest.
 
 Unless a section says otherwise, measurements use one NVIDIA GeForce RTX 4070
 Laptop GPU (Ada, 8 GB) on Linux with Python 3.12, JAX 0.11.2, ASTRA 2.5 and
-TIGRE 3.1.3. The Pallas kernels use JAX's deprecated Triton backend, so the
-package constrains JAX below 0.12 (`pyproject.toml`); other GPU families have
-not been measured. The several-GPU results use four H100 80 GB GPUs in one
-machine on Modal. Objects are synthetic except the FIPS walnuts, a real lab
+TIGRE 3.1.3. The several-GPU results use four H100 80 GB GPUs in one machine on
+Modal.
+Objects are synthetic except the FIPS walnuts, a real lab
 cone-beam scan.
 
 *Cold* time is a fresh process through the first accepted result, including

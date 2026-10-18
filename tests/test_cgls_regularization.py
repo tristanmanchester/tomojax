@@ -59,7 +59,7 @@ def test_quadratic_gradient_matches_physical_edges_and_free_boundaries(shape):
     np.testing.assert_allclose(automatic, gradient_normal(jnp.asarray(volume), spacing), rtol=2e-6)
 
 
-@pytest.mark.parametrize("backend", ["jax", "pallas"])
+@pytest.mark.parametrize("backend", ["jax", "cuda"])
 @pytest.mark.parametrize(
     ("model", "interpolation"), [("ray", "linear"), ("joseph", "linear"), ("joseph", "cubic")]
 )
@@ -67,7 +67,7 @@ def test_quadratic_gradient_matches_physical_edges_and_free_boundaries(shape):
 def test_gradient_regularized_cgls_matches_dense_augmented_system(
     backend, model, interpolation, warm_start
 ):
-    if backend == "pallas" and jax.default_backend() != "gpu":
+    if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
     shape, spacing = (3, 2, 2), (0.8, 1.2, 0.7)
     grid = Grid(*shape, *spacing)

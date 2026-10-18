@@ -76,7 +76,7 @@ class SPDHGConfig:
     """Configuration for stochastic primal-dual TV reconstruction.
 
     ``projector_model`` and ``projector_backend`` choose the projection operator as
-    in :class:`FistaConfig`: ``"auto"`` uses Joseph plane sampling with Pallas on
+    in :class:`FistaConfig`: ``"auto"`` uses Joseph plane sampling with CUDA on
     CUDA unless an explicit detector grid or the exact ray integrator requires
     the ray-model reference path. ``gather_dtype``, ``projector_unroll`` and
     ``checkpoint_projector`` apply to the reference path only.
@@ -138,7 +138,7 @@ class SPDHGConfig:
         Projection model: "auto", "ray" or "joseph". Auto selects Joseph unless an
         explicit detector grid requires rays. Default is 'auto'.
     projector_backend : ProjectorBackend, optional
-        Execution backend: "auto", "jax" or "pallas". An explicit accelerator
+        Execution backend: "auto", "jax" or "cuda". An explicit accelerator
         request never silently falls back. Default is 'auto'.
     nonnegative : bool, optional
         Constrain the reconstruction to nonnegative values. Default is False.
@@ -316,7 +316,7 @@ def _batched_projector(
             geometry, model, backend, detector=detector, det_grid=det_grid, context="spdhg_tv"
         )
     if det_grid is not None or config.ray_integrator != "sampled":
-        if model == "joseph" or backend == "pallas":
+        if model == "joseph" or backend == "cuda":
             raise ValueError(
                 "spdhg_tv: explicit detector grids and exact integration require "
                 "projector_model='ray' and projector_backend='jax'"

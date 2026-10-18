@@ -1,4 +1,4 @@
-"""Geometry eligibility checks for specialized Pallas projector variants."""
+"""Geometry eligibility checks for specialized CUDA projector variants."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
 from tomojax.core.projector import _build_detector_grid
 from tomojax.core.validation import validate_detector_grid
 
-from ._pallas_state import PallasProjectorUnsupported, _unsupported
+from ._state import CudaProjectorUnsupported, _unsupported
 
 
 def _ensure_canonical_detector_grid(
@@ -22,10 +22,10 @@ def _ensure_canonical_detector_grid(
         validate_detector_grid(
             det_grid,
             detector,
-            context="forward_project_view_T_pallas",
+            context="forward_project_view_T_cuda",
         )
     except ValueError as exc:
-        raise PallasProjectorUnsupported(_unsupported(str(exc))) from exc
+        raise CudaProjectorUnsupported(_unsupported(str(exc))) from exc
 
     Xr_expected, Zr_expected = _build_detector_grid(detector)
     Xr, Zr = det_grid
@@ -33,11 +33,11 @@ def _ensure_canonical_detector_grid(
         Xr_host = np.asarray(Xr, dtype=np.float32)
         Zr_host = np.asarray(Zr, dtype=np.float32)
     except Exception as exc:
-        raise PallasProjectorUnsupported(
+        raise CudaProjectorUnsupported(
             _unsupported("det_grid must be None or the canonical eager detector grid")
         ) from exc
     if not (np.array_equal(Xr_host, Xr_expected) and np.array_equal(Zr_host, Zr_expected)):
-        raise PallasProjectorUnsupported(
+        raise CudaProjectorUnsupported(
             _unsupported("det_grid must be None or get_detector_grid_device(detector)")
         )
 
@@ -66,7 +66,7 @@ def _supports_z_integer4_for_stack(
     if det_grid is not None:
         try:
             _ensure_canonical_detector_grid(detector, det_grid)
-        except PallasProjectorUnsupported:
+        except CudaProjectorUnsupported:
             return False
     try:
         T_host = np.asarray(T_stack, dtype=np.float64)

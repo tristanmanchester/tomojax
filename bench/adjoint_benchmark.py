@@ -65,15 +65,15 @@ def run_stack_case(size: int, views: int, kind: str, repeats: int, backend: str 
         np.random.default_rng(37).normal(size=case.analytic.shape), dtype=jnp.float32
     )
     backproject_one, backproject_stack = backproject_view_T, sum_backproject_views_T
-    if backend == "pallas":
-        from tomojax.core.pallas.api import (
-            backproject_view_T_pallas,
-            sum_backproject_views_T_pallas,
+    if backend == "cuda":
+        from tomojax.core.cuda_projector.api import (
+            backproject_view_T_cuda,
+            sum_backproject_views_T_cuda,
         )
 
         backproject_one, backproject_stack = (
-            backproject_view_T_pallas,
-            sum_backproject_views_T_pallas,
+            backproject_view_T_cuda,
+            sum_backproject_views_T_cuda,
         )
     independent = jax.jit(
         lambda y: jnp.sum(
@@ -115,7 +115,7 @@ def main() -> int:
         "--stack", action="store_true", help="compare batch accumulation and temporary storage"
     )
     parser.add_argument("--batches", default="4,16")
-    parser.add_argument("--backend", choices=["jax", "pallas"], default="jax")
+    parser.add_argument("--backend", choices=["jax", "cuda"], default="jax")
     parser.add_argument(
         "--geometries",
         nargs="+",
@@ -125,8 +125,8 @@ def main() -> int:
     parser.add_argument("--max-relative-error", type=float, default=2e-5)
     parser.add_argument("--output", type=Path, default=Path("bench/results/adjoint.json"))
     args = parser.parse_args()
-    if args.backend == "pallas" and not args.stack:
-        parser.error("--backend pallas currently requires --stack")
+    if args.backend == "cuda" and not args.stack:
+        parser.error("--backend cuda currently requires --stack")
     sizes = [int(size) for size in args.sizes.split(",")]
     batches = [int(batch) for batch in args.batches.split(",")]
     if min(sizes) < 1 or min(batches) < 1 or args.repeats < 1:

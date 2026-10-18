@@ -69,7 +69,7 @@ def score_pose_stack_candidates(
     det_grid: tuple[jnp.ndarray, jnp.ndarray],
     targets: jnp.ndarray,
     loss_adapter: LossAdapter,
-    projector_backend: ProjectorBackendInput = "pallas",
+    projector_backend: ProjectorBackendInput = "cuda",
     gather_dtype: str = "auto",
     views_per_batch: int = 0,
     projector_unroll: int = 1,

@@ -195,13 +195,13 @@ def test_resume_cannot_silently_change_translation_frame(multires):
 @pytest.mark.numerical
 @pytest.mark.parametrize("kind", ["parallel", "anisotropic", "lamino"])
 @pytest.mark.parametrize("multires", [False, True])
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 @pytest.mark.parametrize("motion", ["translation", "rigid"])
 def test_public_alignment_and_checkpoint_keep_detector_frame_at_ninety_degrees(
     kind, multires, backend, motion
 ):
-    if backend == "pallas" and jax.default_backend() != "gpu":
-        pytest.skip("requires the CUDA Pallas reconstruction path")
+    if backend == "cuda" and jax.default_backend() != "gpu":
+        pytest.skip("requires the CUDA CUDA reconstruction path")
     geometry, grid, detector = _geometry(12, kind, np.array([17.0, 90.0, 143.0], np.float32))
     volume = jnp.zeros((grid.nx, grid.ny, grid.nz)).at[3:8, 3:7, 1:4].set(1)
     volume = volume.at[7:9, 5:7, 3:5].set(0.6)
@@ -791,8 +791,8 @@ def _cone_detector_coordinates(frames, points):
     return np.stack([np.sum(hit * u, axis=1), np.sum(hit * v, axis=1)], axis=1)
 
 
-def _skip_pallas_without_gpu(backend):
-    if backend == "pallas" and jax.default_backend() != "gpu":
+def _skip_cuda_without_gpu(backend):
+    if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("CUDA required")
 
 
@@ -824,9 +824,9 @@ def _cone_proposal_config(backend, *, dof="dx"):
 
 @pytest.mark.numerical
 @pytest.mark.parametrize("perturbation", [("dx", 3, 1.0), ("phi", 2, 0.02)])
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 def test_public_cone_proposal_stage_recovers_known_pose(cone_proposal_case, backend, perturbation):
-    _skip_pallas_without_gpu(backend)
+    _skip_cuda_without_gpu(backend)
     geometry, grid, detector, poses, frames, volume, _ = cone_proposal_case
     dof, column, step = perturbation
     truth_params = jnp.zeros((len(poses), 6), jnp.float32).at[:, column].set(step)
@@ -854,9 +854,9 @@ def test_public_cone_proposal_stage_recovers_known_pose(cone_proposal_case, back
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 def test_zero_volume_proposal_retains_poses_without_scoring(cone_proposal_case, backend):
-    _skip_pallas_without_gpu(backend)
+    _skip_cuda_without_gpu(backend)
     geometry, grid, detector, poses, _, volume, targets = cone_proposal_case
     volume = jnp.zeros_like(volume)
     initial = jnp.zeros((len(poses), 6)).at[:, 3].set(jnp.arange(len(poses)) * 0.1)

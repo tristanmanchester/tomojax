@@ -5,31 +5,31 @@ import jax.numpy as jnp
 from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
 from tomojax.core.validation import validate_projection_stack
 
-from ._pallas_config import (
-    PallasForwardProjectorStackTraversalState,
-    PallasProjectorUnsupported,
+from ._config import (
+    CudaForwardProjectorStackTraversalState,
+    CudaProjectorUnsupported,
     _normalize_state_mode,
-    _prepare_volume_for_pallas_gather,
+    _prepare_volume_for_cuda_gather,
     _unsupported,
     _validate_public_sinogram_call,
 )
-from ._pallas_inline_call import inline_projector_call
-from ._pallas_stack_call import (
-    forward_project_residual_sse_T_pallas_with_state,
-    forward_project_views_T_pallas_with_state,
+from ._inline_call import inline_projector_call
+from ._stack_call import (
+    forward_project_residual_sse_T_cuda_with_state,
+    forward_project_views_T_cuda_with_state,
 )
-from ._pallas_stack_state import (
-    block_forward_project_views_T_pallas_state,
-    prepare_forward_project_views_T_pallas_state,
+from ._stack_state import (
+    block_forward_project_views_T_cuda_state,
+    prepare_forward_project_views_T_cuda_state,
 )
 
 
-class BoundForwardProjectViewsTPallas:
-    """Fixed pose-stack Pallas projector callable for repeated-volume workflows."""
+class BoundForwardProjectViewsTCuda:
+    """Fixed pose-stack CUDA projector callable for repeated-volume workflows."""
 
     def __init__(
         self,
-        state: PallasForwardProjectorStackTraversalState,
+        state: CudaForwardProjectorStackTraversalState,
         *,
         interpret: bool = False,
         unroll: int | None = None,
@@ -40,7 +40,7 @@ class BoundForwardProjectViewsTPallas:
 
     def __call__(self, volume: jnp.ndarray) -> jnp.ndarray:
         """Project ``volume`` for the cached pose stack."""
-        return forward_project_views_T_pallas_with_state(
+        return forward_project_views_T_cuda_with_state(
             self.state,
             volume,
             interpret=self.interpret,
@@ -48,12 +48,12 @@ class BoundForwardProjectViewsTPallas:
         )
 
 
-class BoundForwardProjectResidualSseTPallas:
-    """Fixed pose-stack Pallas residual callable for repeated-volume workflows."""
+class BoundForwardProjectResidualSseTCuda:
+    """Fixed pose-stack CUDA residual callable for repeated-volume workflows."""
 
     def __init__(
         self,
-        state: PallasForwardProjectorStackTraversalState,
+        state: CudaForwardProjectorStackTraversalState,
         target: jnp.ndarray,
         *,
         interpret: bool = False,
@@ -66,7 +66,7 @@ class BoundForwardProjectResidualSseTPallas:
 
     def __call__(self, volume: jnp.ndarray) -> jnp.ndarray:
         """Return residual SSE for ``volume`` against the cached target stack."""
-        return forward_project_residual_sse_T_pallas_with_state(
+        return forward_project_residual_sse_T_cuda_with_state(
             self.state,
             volume,
             self.target,
@@ -75,7 +75,7 @@ class BoundForwardProjectResidualSseTPallas:
         )
 
 
-def bind_forward_project_views_T_pallas(
+def bind_forward_project_views_T_cuda(
     T_stack: jnp.ndarray,
     grid: Grid,
     detector: Detector,
@@ -91,9 +91,9 @@ def bind_forward_project_views_T_pallas(
     kernel_variant: str = "auto",
     layout_variant: str = "detector_vu",
     block_state: bool = True,
-) -> BoundForwardProjectViewsTPallas:
+) -> BoundForwardProjectViewsTCuda:
     """Bind fixed pose-stack traversal state once and return a sinogram callable."""
-    state = prepare_forward_project_views_T_pallas_state(
+    state = prepare_forward_project_views_T_cuda_state(
         T_stack,
         grid,
         detector,
@@ -107,11 +107,11 @@ def bind_forward_project_views_T_pallas(
         layout_variant=layout_variant,
     )
     if block_state:
-        block_forward_project_views_T_pallas_state(state)
-    return BoundForwardProjectViewsTPallas(state, interpret=interpret, unroll=unroll)
+        block_forward_project_views_T_cuda_state(state)
+    return BoundForwardProjectViewsTCuda(state, interpret=interpret, unroll=unroll)
 
 
-def bind_forward_project_residual_sse_T_pallas(
+def bind_forward_project_residual_sse_T_cuda(
     T_stack: jnp.ndarray,
     grid: Grid,
     detector: Detector,
@@ -128,21 +128,21 @@ def bind_forward_project_residual_sse_T_pallas(
     kernel_variant: str = "auto",
     layout_variant: str = "detector_vu",
     block_state: bool = True,
-) -> BoundForwardProjectResidualSseTPallas:
+) -> BoundForwardProjectResidualSseTCuda:
     """Bind fixed pose-stack traversal state once and return a residual SSE callable."""
     validate_projection_stack(
         target,
         detector,
-        context="bind_forward_project_residual_sse_T_pallas",
+        context="bind_forward_project_residual_sse_T_cuda",
     )
     if int(target.shape[0]) != int(T_stack.shape[0]):
-        raise PallasProjectorUnsupported(
+        raise CudaProjectorUnsupported(
             _unsupported(
                 "target view count does not match pose stack: "
                 f"got {int(target.shape[0])}, expected {int(T_stack.shape[0])}"
             )
         )
-    state = prepare_forward_project_views_T_pallas_state(
+    state = prepare_forward_project_views_T_cuda_state(
         T_stack,
         grid,
         detector,
@@ -156,8 +156,8 @@ def bind_forward_project_residual_sse_T_pallas(
         layout_variant=layout_variant,
     )
     if block_state:
-        block_forward_project_views_T_pallas_state(state)
-    return BoundForwardProjectResidualSseTPallas(
+        block_forward_project_views_T_cuda_state(state)
+    return BoundForwardProjectResidualSseTCuda(
         state,
         target,
         interpret=interpret,
@@ -165,7 +165,7 @@ def bind_forward_project_residual_sse_T_pallas(
     )
 
 
-def forward_project_views_T_pallas(
+def forward_project_views_T_cuda(
     T_stack: jnp.ndarray,
     grid: Grid,
     detector: Detector,
@@ -183,7 +183,7 @@ def forward_project_views_T_pallas(
     layout_variant: str = "detector_vu",
     state_mode: str = "inline",
 ) -> jnp.ndarray:
-    """Forward project a stack of views using one experimental batched Pallas launch."""
+    """Forward project a stack of views using one experimental batched CUDA launch."""
     (
         nx,
         ny,
@@ -216,7 +216,7 @@ def forward_project_views_T_pallas(
         state_mode=state_mode,
     )
     if _normalize_state_mode(state_mode) != "inline":
-        state = prepare_forward_project_views_T_pallas_state(
+        state = prepare_forward_project_views_T_cuda_state(
             T_stack,
             grid,
             detector,
@@ -229,7 +229,7 @@ def forward_project_views_T_pallas(
             kernel_variant=kernel_variant,
             layout_variant=layout_variant,
         )
-        return forward_project_views_T_pallas_with_state(
+        return forward_project_views_T_cuda_with_state(
             state,
             volume,
             interpret=interpret,
@@ -264,6 +264,6 @@ def forward_project_views_T_pallas(
         interpret=bool(interpret),
     )(
         jnp.asarray(T_stack, dtype=jnp.float32),
-        _prepare_volume_for_pallas_gather(volume, gather_dtype),
+        _prepare_volume_for_cuda_gather(volume, gather_dtype),
         None,
     )

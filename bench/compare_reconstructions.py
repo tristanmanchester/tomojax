@@ -37,28 +37,28 @@ SUITE_TARGETS = {
 }
 METHODS = (
     "tomojax_fourier_cupy",
-    "tomojax_fbp_pallas",
-    "tomojax_fbp_host_pallas",
-    "tomojax_fbp_joseph_cgls_pallas",
+    "tomojax_fbp_cuda",
+    "tomojax_fbp_host_cuda",
+    "tomojax_fbp_joseph_cgls_cuda",
     "astra_fbp3d_cupy",
     "astra_fbp2d",
     "astra_fbp_cgls",
     "tigre_fbp",
     "tomojax_fista",
     "tomojax_cgls_jax",
-    "tomojax_cgls_pallas",
-    "tomojax_multires_cgls_pallas",
+    "tomojax_cgls_cuda",
+    "tomojax_multires_cgls_cuda",
     "tomojax_joseph_cgls_jax",
-    "tomojax_joseph_cgls_pallas",
-    "tomojax_multires_joseph_cgls_pallas",
+    "tomojax_joseph_cgls_cuda",
+    "tomojax_multires_joseph_cgls_cuda",
     "astra_cgls",
     "astra_sirt",
     "tigre_cgls",
 )
 DIRECT_METHODS = {
     "tomojax_fourier_cupy",
-    "tomojax_fbp_pallas",
-    "tomojax_fbp_host_pallas",
+    "tomojax_fbp_cuda",
+    "tomojax_fbp_host_cuda",
     "astra_fbp3d_cupy",
     "astra_fbp2d",
     "tigre_fbp",
@@ -151,7 +151,7 @@ def solve_tomojax(
             "regulariser": "none",
             "positivity": False,
         }
-    if method == "tomojax_fbp_host_pallas":
+    if method == "tomojax_fbp_host_cuda":
         from tomojax.recon import FBPHostConfig, fbp_host
 
         result = fbp_host(
@@ -159,10 +159,10 @@ def solve_tomojax(
             case.grid,
             case.detector,
             case.analytic,
-            config=FBPHostConfig(slices_per_batch=16, views_per_batch=32, backprojector="pallas"),
+            config=FBPHostConfig(slices_per_batch=16, views_per_batch=32, backprojector="cuda"),
         )
         return result, {
-            "backend": "Pallas_FBP_host_slabs",
+            "backend": "Cuda_FBP_host_slabs",
             "filter": "ramp",
             "filter_support": "volume",
             "slices_per_batch": 16,
@@ -170,7 +170,7 @@ def solve_tomojax(
             "regulariser": "none",
             "positivity": False,
         }
-    if method == "tomojax_fbp_pallas":
+    if method == "tomojax_fbp_cuda":
         import jax.numpy as jnp
 
         from tomojax.recon import FBPConfig, fbp
@@ -180,16 +180,16 @@ def solve_tomojax(
             case.grid,
             case.detector,
             jnp.asarray(case.analytic),
-            config=FBPConfig(backprojector="pallas"),
+            config=FBPConfig(backprojector="cuda"),
         )
         return np.asarray(result), {
-            "backend": "Pallas_FBP",
+            "backend": "Cuda_FBP",
             "filter": "ramp",
             "filter_support": "volume",
             "regulariser": "none",
             "positivity": False,
         }
-    if method in {"tomojax_multires_cgls_pallas", "tomojax_multires_joseph_cgls_pallas"}:
+    if method in {"tomojax_multires_cgls_cuda", "tomojax_multires_joseph_cgls_cuda"}:
         from tomojax.recon import CGLSConfig, cgls_multires
 
         factors, budgets = multires_schedule((case.grid.nx, case.grid.ny, case.grid.nz), iterations)
@@ -203,7 +203,7 @@ def solve_tomojax(
             config=CGLSConfig(
                 rtol=0.0,
                 views_per_batch=batch,
-                projector_backend="pallas",
+                projector_backend="cuda",
                 projector_model="joseph" if "joseph" in method else "ray",
             ),
         )
@@ -211,7 +211,7 @@ def solve_tomojax(
     if method.startswith(("tomojax_cgls_", "tomojax_joseph_cgls_", "tomojax_fbp_joseph_cgls_")):
         from tomojax.recon import CGLSConfig, cgls
 
-        if method == "tomojax_fbp_joseph_cgls_pallas":
+        if method == "tomojax_fbp_joseph_cgls_cuda":
             import jax.numpy as jnp
 
             from tomojax.recon import FBPConfig, fbp
@@ -222,9 +222,9 @@ def solve_tomojax(
                 case.grid,
                 case.detector,
                 jnp.asarray(case.analytic),
-                config=FBPConfig(backprojector="pallas"),
+                config=FBPConfig(backprojector="cuda"),
             )
-            if method == "tomojax_fbp_joseph_cgls_pallas"
+            if method == "tomojax_fbp_joseph_cgls_cuda"
             else None
         )
         result, info = cgls(
@@ -410,7 +410,7 @@ def run_worker(args: argparse.Namespace) -> dict[str, Any]:
             "status": "unsupported_comparison",
             "reason": "This adapter is validated only for centred isotropic parallel scans",
         }
-    if args.method in {"tomojax_fourier_cupy", "tomojax_fbp_host_pallas"} and args.kind == "lamino":
+    if args.method in {"tomojax_fourier_cupy", "tomojax_fbp_host_cuda"} and args.kind == "lamino":
         return {
             **record,
             "status": "unsupported_comparison",
@@ -722,7 +722,7 @@ def main() -> int:
             "Cold search includes startup and all failed smaller budgets. Repeated selected-budget "
             "times exclude offline budget selection and cannot alone satisfy the end-to-end goal. "
             "Memory covers the entire worker, not only its selected-budget solve. "
-            "Fixtures load without importing JAX/Pallas; workers import their own solvers. "
+            "Fixtures load without importing JAX/Cuda; workers import their own solvers. "
             "Failed methods retain warm attempts at their last budget, never accepted-result times."
         ),
         "records": [],

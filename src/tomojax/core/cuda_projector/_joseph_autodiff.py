@@ -11,8 +11,8 @@ import jax
 from jax.experimental.hijax import GradAccum, HiPrim, ShapedArray, Zero, instantiate_zeros
 import jax.numpy as jnp
 
-from ._pallas_joseph import adjoint_pallas, forward_pallas
-from ._pallas_joseph_derivatives import coefficient_vjp, projection_jvp
+from ._joseph import adjoint_cuda, forward_cuda
+from ._joseph_derivatives import coefficient_vjp, projection_jvp
 
 
 class _PlaneTangent(HiPrim):
@@ -31,7 +31,7 @@ class _PlaneTangent(HiPrim):
     def expand(self, coeff, volume, dcoeff, dvolume):
         if not self.has_dcoeff:
             if self.has_dvolume:
-                return forward_pallas(
+                return forward_cuda(
                     coeff, dvolume, self.grid, self.detector, interpolation=self.interpolation
                 )
             return jnp.zeros(self.out_aval.shape, jnp.float32)
@@ -62,7 +62,7 @@ class _PlaneTangent(HiPrim):
             )
         if self.has_dvolume and isinstance(dvolume_accum, GradAccum):
             dvolume_accum.accum(
-                adjoint_pallas(
+                adjoint_cuda(
                     coeff, cotangent, self.grid, self.detector, interpolation=self.interpolation
                 )
             )
@@ -79,7 +79,7 @@ class _PlaneProjector(HiPrim):
         super().__init__()
 
     def expand(self, coeff, volume):
-        return forward_pallas(
+        return forward_cuda(
             coeff, volume, self.grid, self.detector, interpolation=self.interpolation
         )
 
@@ -93,7 +93,7 @@ class _PlaneProjector(HiPrim):
             coefficient_vjp(
                 coeff, volume, cotangent, self.grid, self.detector, interpolation=self.interpolation
             ),
-            adjoint_pallas(
+            adjoint_cuda(
                 coeff, cotangent, self.grid, self.detector, interpolation=self.interpolation
             ),
         )
@@ -124,7 +124,7 @@ class _PlaneProjector(HiPrim):
             raise ValueError("Joseph projection is linear only in volume; use jax.vjp for poses")
         if isinstance(volume_accum, GradAccum):
             volume_accum.accum(
-                adjoint_pallas(
+                adjoint_cuda(
                     coeff,
                     instantiate_zeros(cotangent),
                     self.grid,

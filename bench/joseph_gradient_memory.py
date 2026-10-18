@@ -25,7 +25,7 @@ def worker(args: argparse.Namespace) -> int:
     if args.method == "fused_cuda":
 
         def fn(x: jax.Array, t: jax.Array, y: jax.Array) -> tuple:
-            return joseph_l2_value_and_grad(x, t, y, case.grid, case.detector, backend="pallas")
+            return joseph_l2_value_and_grad(x, t, y, case.grid, case.detector, backend="cuda")
 
     else:
 

@@ -11,28 +11,28 @@ from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
 from tomojax.core.projector import _resolve_n_steps
 from tomojax.core.validation import validate_pose_stack, validate_projection_stack, validate_volume
 
-from ._pallas_config import (
+from ._config import (
     _KERNEL_VARIANT_IDS,
     _LAYOUT_VARIANT_IDS,
-    PallasProjectorUnsupported,
+    CudaProjectorUnsupported,
     _ensure_canonical_detector_grid,
     _ensure_float32_volume,
     _normalize_num_warps,
     _normalize_state_mode,
-    _prepare_volume_for_pallas_gather,
-    _resolve_effective_pallas_n_steps_for_stack,
+    _prepare_volume_for_cuda_gather,
+    _resolve_effective_cuda_n_steps_for_stack,
     _supports_parallel_z_rotation_stack,
     _unsupported,
     _validate_public_sinogram_call,
-    pallas_projector_actual_sinogram_variant_metadata,
+    cuda_projector_actual_sinogram_variant_metadata,
 )
-from ._pallas_inline_call import inline_projector_call
-from ._pallas_stack_call import forward_project_residual_sse_T_pallas_with_state
-from ._pallas_stack_state import prepare_forward_project_views_T_pallas_state
+from ._inline_call import inline_projector_call
+from ._stack_call import forward_project_residual_sse_T_cuda_with_state
+from ._stack_state import prepare_forward_project_views_T_cuda_state
 
 
 @functools.lru_cache(maxsize=32)
-def _cached_loss_grad_pallas_call(
+def _cached_loss_grad_cuda_call(
     *,
     nx: int,
     ny: int,
@@ -73,7 +73,7 @@ def _cached_loss_grad_pallas_call(
     return call
 
 
-def forward_project_loss_and_grad_T_pallas(
+def forward_project_loss_and_grad_T_cuda(
     T_all: jnp.ndarray,
     grid: Grid,
     detector: Detector,
@@ -93,18 +93,18 @@ def forward_project_loss_and_grad_T_pallas(
     layout_variant: str = "detector_vu",
     compute_loss: bool = True,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """Return projection loss and explicit gradient using one Pallas kernel."""
+    """Return projection loss and explicit gradient using one CUDA kernel."""
     vol = jnp.asarray(volume)
-    nx, ny, nz = validate_volume(vol, grid, context="forward_project_loss_and_grad_T_pallas")
+    nx, ny, nz = validate_volume(vol, grid, context="forward_project_loss_and_grad_T_cuda")
     _ensure_float32_volume(vol)
     n_views, _, _ = validate_projection_stack(
         target,
         detector,
-        context="forward_project_loss_and_grad_T_pallas target",
+        context="forward_project_loss_and_grad_T_cuda target",
     )
-    validate_pose_stack(T_all, n_views, context="forward_project_loss_and_grad_T_pallas")
+    validate_pose_stack(T_all, n_views, context="forward_project_loss_and_grad_T_cuda")
     _ensure_canonical_detector_grid(detector, det_grid)
-    variant = pallas_projector_actual_sinogram_variant_metadata(
+    variant = cuda_projector_actual_sinogram_variant_metadata(
         T_all,
         grid,
         detector,
@@ -121,8 +121,8 @@ def forward_project_loss_and_grad_T_pallas(
     kernel_variant_id = _KERNEL_VARIANT_IDS[str(variant["kernel_variant"])]
     layout_variant_id = _LAYOUT_VARIANT_IDS[str(variant["layout_variant"])]
     if not interpret and jax.default_backend() == "cpu":
-        raise PallasProjectorUnsupported(
-            _unsupported("real Pallas lowering is unavailable on CPU; pass interpret=True")
+        raise CudaProjectorUnsupported(
+            _unsupported("real CUDA lowering is unavailable on CPU; pass interpret=True")
         )
     step_size_value = float(grid.vy) if step_size is None else float(step_size)
     n_steps_value = _resolve_n_steps(grid, step_size_value, n_steps)
@@ -132,13 +132,13 @@ def forward_project_loss_and_grad_T_pallas(
     else:
         weights_arr = jnp.asarray(weights, dtype=jnp.float32).reshape((int(n_views), 1, 1))
     grad_init = jnp.zeros((int(nx) * int(ny) * int(nz),), dtype=jnp.float32)
-    effective_n_steps_value = _resolve_effective_pallas_n_steps_for_stack(
+    effective_n_steps_value = _resolve_effective_cuda_n_steps_for_stack(
         T_all,
         grid,
         step_size_value,
         n_steps_value,
     )
-    call = _cached_loss_grad_pallas_call(
+    call = _cached_loss_grad_cuda_call(
         nx=int(nx),
         ny=int(ny),
         nz=int(nz),
@@ -168,7 +168,7 @@ def forward_project_loss_and_grad_T_pallas(
     )
     partial_loss, grad_flat = call(
         jnp.asarray(T_all, dtype=jnp.float32),
-        _prepare_volume_for_pallas_gather(vol, str(variant["gather_dtype"])),
+        _prepare_volume_for_cuda_gather(vol, str(variant["gather_dtype"])),
         jnp.asarray(target, dtype=jnp.float32),
         weights_arr,
         grad_init,
@@ -177,7 +177,7 @@ def forward_project_loss_and_grad_T_pallas(
 
 
 @functools.lru_cache(maxsize=32)
-def _cached_parallel_z_views_pallas_call(
+def _cached_parallel_z_views_cuda_call(
     *,
     nx: int,
     ny: int,
@@ -215,7 +215,7 @@ def _cached_parallel_z_views_pallas_call(
     return call
 
 
-def forward_project_parallel_z_views_pallas(
+def forward_project_parallel_z_views_cuda(
     T_stack: jnp.ndarray,
     grid: Grid,
     detector: Detector,
@@ -263,7 +263,7 @@ def forward_project_parallel_z_views_pallas(
         state_mode="inline",
     )
     if not _supports_parallel_z_rotation_stack(T_stack, grid, detector, det_grid):
-        raise PallasProjectorUnsupported(
+        raise CudaProjectorUnsupported(
             _unsupported(
                 "parallel z-axis specialization requires zero-translation ParallelGeometry poses"
             )
@@ -273,7 +273,7 @@ def forward_project_parallel_z_views_pallas(
     cos = T[:, 0, 0]
     sin = T[:, 1, 0]
     vol_origin = grid_volume_origin(grid)
-    call = _cached_parallel_z_views_pallas_call(
+    call = _cached_parallel_z_views_cuda_call(
         nx=nx,
         ny=ny,
         nz=nz,
@@ -298,10 +298,10 @@ def forward_project_parallel_z_views_pallas(
         unroll=unroll,
         interpret=bool(interpret),
     )
-    return call(cos, sin, _prepare_volume_for_pallas_gather(volume, gather_dtype))
+    return call(cos, sin, _prepare_volume_for_cuda_gather(volume, gather_dtype))
 
 
-def forward_project_residual_sse_T_pallas(
+def forward_project_residual_sse_T_cuda(
     T_stack: jnp.ndarray,
     grid: Grid,
     detector: Detector,
@@ -355,17 +355,17 @@ def forward_project_residual_sse_T_pallas(
     validate_projection_stack(
         target,
         detector,
-        context="forward_project_residual_sse_T_pallas",
+        context="forward_project_residual_sse_T_cuda",
     )
     if int(target.shape[0]) != int(n_views):
-        raise PallasProjectorUnsupported(
+        raise CudaProjectorUnsupported(
             _unsupported(
                 "target view count does not match pose stack: "
                 f"got {int(target.shape[0])}, expected {int(n_views)}"
             )
         )
     if _normalize_state_mode(state_mode) != "inline":
-        state = prepare_forward_project_views_T_pallas_state(
+        state = prepare_forward_project_views_T_cuda_state(
             T_stack,
             grid,
             detector,
@@ -378,7 +378,7 @@ def forward_project_residual_sse_T_pallas(
             kernel_variant=kernel_variant,
             layout_variant=layout_variant,
         )
-        return forward_project_residual_sse_T_pallas_with_state(
+        return forward_project_residual_sse_T_cuda_with_state(
             state,
             volume,
             target,
@@ -417,7 +417,7 @@ def forward_project_residual_sse_T_pallas(
     )
     partials = call(
         jnp.asarray(T_stack, dtype=jnp.float32),
-        _prepare_volume_for_pallas_gather(volume, gather_dtype),
+        _prepare_volume_for_cuda_gather(volume, gather_dtype),
         jnp.asarray(target, dtype=jnp.float32),
     )
     return jnp.sum(partials, dtype=jnp.float32)

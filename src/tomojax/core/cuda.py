@@ -214,6 +214,31 @@ def _loaded(
     return module, func
 
 
+def broadcast_offset(shape: tuple[int, ...], prefix: tuple[int, ...], *, item_size: int) -> str:
+    """Describe an input offset for a flattened CUDA callback batch.
+
+    Parameters
+    ----------
+    shape : tuple of int
+        Broadcast output batch shape.
+    prefix : tuple of int
+        Input batch shape, with singleton dimensions where it is broadcast.
+    item_size : int
+        Number of array elements in one unbatched input.
+
+    Returns
+    -------
+    str
+        CUDA C expression using the kernel's flattened ``batch`` index.
+    """
+    terms = [
+        f"((batch/{math.prod(shape[i + 1 :])})%{size})*{math.prod(prefix[i + 1 :]) * item_size}L"
+        for i, (actual, size) in enumerate(zip(prefix, shape, strict=True))
+        if actual != 1
+    ]
+    return "+".join(terms) or "0"
+
+
 def launch_kernel(
     source: str,
     name: str,

@@ -43,10 +43,10 @@
     "src/tomojax/alignment/optimizers.py::run_active_validation_lm": 106,
     "src/tomojax/alignment/optimizers.py::run_pose_lbfgs": 186,
     "src/tomojax/cli/simulate.py::_build_parser": 158,
-    "src/tomojax/core/pallas/_pallas_loss.py::forward_project_residual_sse_T_pallas": 119,
-    "src/tomojax/core/pallas/_pallas_single_view.py::forward_project_view_T_pallas": 102,
-    "src/tomojax/core/pallas/_pallas_stack_bind.py::forward_project_views_T_pallas": 101,
-    "src/tomojax/core/pallas/_pallas_stack_state.py::prepare_forward_project_views_T_pallas_state": 109,
+    "src/tomojax/core/cuda_projector/_loss.py::forward_project_residual_sse_T_cuda": 119,
+    "src/tomojax/core/cuda_projector/_single_view.py::forward_project_view_T_cuda": 102,
+    "src/tomojax/core/cuda_projector/_stack_bind.py::forward_project_views_T_cuda": 101,
+    "src/tomojax/core/cuda_projector/_stack_state.py::prepare_forward_project_views_T_cuda_state": 109,
     "src/tomojax/core/projector.py::forward_project_view_T": 112,
     "src/tomojax/datasets/_impl/simulate.py::simulate": 115,
     "src/tomojax/io/_inspection_format.py::format_inspection_report": 117,
@@ -112,7 +112,7 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "type_errors": {
-    "reportArgumentType": 276,
+    "reportArgumentType": 275,
     "reportAssignmentType": 2,
     "reportAttributeAccessIssue": 159,
     "reportCallIssue": 12,
@@ -123,7 +123,7 @@
     "reportOptionalCall": 2,
     "reportOptionalMemberAccess": 8,
     "reportOptionalSubscript": 1,
-    "reportPrivateUsage": 87,
+    "reportPrivateUsage": 86,
     "reportRedeclaration": 1,
     "reportReturnType": 18,
     "reportTypedDictNotRequiredAccess": 5

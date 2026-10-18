@@ -30,8 +30,8 @@ import jax
 import numpy as np
 from physical_case import Case
 
+from tomojax.core.cuda_projector import api as cuda
 from tomojax.core.geometry.base import grid_volume_origin
-from tomojax.core.pallas import api as pallas
 from tomojax.core.projector import forward_project_view_T
 from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 
@@ -239,7 +239,7 @@ def cuda_sync() -> Callable[[Any], None]:
 
 
 def run_tomojax(case: Case, repeats: int) -> list[dict]:
-    """Time the JAX reference and actual Pallas stack kernel on identical inputs."""
+    """Time the JAX reference and actual Cuda stack kernel on identical inputs."""
     poses, volume = jax.device_put((case.poses, case.volume))
     jax.block_until_ready((poses, volume))
     reference = jax.jit(
@@ -247,13 +247,13 @@ def run_tomojax(case: Case, repeats: int) -> list[dict]:
     )
     calls = {"jax": reference}
     if jax.default_backend() == "gpu":
-        calls["pallas"] = jax.jit(
-            lambda x: pallas.forward_project_views_T_pallas(
+        calls["cuda"] = jax.jit(
+            lambda x: cuda.forward_project_views_T_cuda(
                 poses,
                 case.grid,
                 case.detector,
                 x,
-                options=pallas.PallasProjectorOptions(tile_shape=(16, 4), num_warps=1),
+                options=cuda.CudaProjectorOptions(tile_shape=(16, 4), num_warps=1),
             )
         )
     records = []

@@ -12,7 +12,7 @@ and the full command list are in [CONTRIBUTING.md](../CONTRIBUTING.md).
 - `numerical` identifies reconstruction/alignment checks that may compile JAX
   kernels. These remain part of the full CPU gate.
 - `gpu` requires real accelerator execution; ordinary CPU runs cannot validate it.
-- `pallas` and `slow` further describe applicable tests; use the full suite before
+- `cuda` and `slow` further describe applicable tests; use the full suite before
   inferring that a focused selection covers an implementation change.
 
 ## What the suite checks

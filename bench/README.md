@@ -7,7 +7,7 @@ package. The results and their protocols are in the
 Raw records, failed attempts included, are kept in [`reference/`](reference).
 
 The complete reconstruction comparison loads fixtures through the lightweight
-`physical_case` container, so external workers do not import JAX or Pallas
+`physical_case` container, so external workers do not import JAX or CUDA
 merely to read scan metadata or build ASTRA geometry. Each worker records its
 loaded solver modules so this can be audited. Earlier cold measurements that
 imported `compare_projectors` in every worker included unrelated solver
@@ -149,7 +149,7 @@ used by iterative solvers is a different operator from voxel-driven FBP.
 
 All three scripts return a nonzero exit status on a failed accuracy gate.
 The default relative L2 limits are 6% for the small forward-phantom matrix,
-2% for FBP, and `2e-5` for the explicit adjoint versus autodiff. Pallas must also
+2% for FBP, and `2e-5` for the explicit adjoint versus autodiff. CUDA must also
 agree with the JAX reference within `5e-5`. Thresholds can be tightened with
 `--max-relative-error`. Coarse grids or too few reconstruction angles may fail
 legitimately. Requested but unavailable libraries and runtime failures fail the
@@ -162,7 +162,7 @@ just test-cuda
 XLA_PYTHON_CLIENT_PREALLOCATE=false compute-sanitizer \
   --tool memcheck --error-exitcode=99 \
   .venv/bin/python -m pytest -q -m gpu \
-  tests/test_pallas_numerics.py tests/test_projector_adjoint.py tests/test_fbp_accuracy.py
+  tests/test_cuda_numerics.py tests/test_projector_adjoint.py tests/test_fbp_accuracy.py
 ```
 
 The existing `fista_projection_benchmark.py` exercises weighted loss/gradient and
@@ -214,7 +214,7 @@ the `gaussian-v1` suite and its acceptance thresholds are defined in
 ```bash
 uv run --no-sync python bench/compare_reconstructions.py \
   --sizes 64 128 256 --views 180 --repeats 7 \
-  --methods tomojax_fista tomojax_cgls_jax tomojax_cgls_pallas astra_cgls astra_sirt tigre_cgls
+  --methods tomojax_fista tomojax_cgls_jax tomojax_cgls_cuda astra_cgls astra_sirt tigre_cgls
 ```
 
 Each method/case runs in an isolated process using identical host inputs. Data
@@ -252,7 +252,7 @@ minimum memory requirement. Failed execution, timeouts, quality failures, and
 unsupported adapter comparisons remain explicit records and give a nonzero exit.
 The TIGRE adapter currently supports only the validated centered parallel scan.
 
-The optional `tomojax_multires_cgls_pallas` method uses the fixed two-level
+The optional `tomojax_multires_cgls_cuda` method uses the fixed two-level
 policy in the goal document, counts both levels within the same total iteration
 budget, and includes preprocessing and interpolation in each complete solve.
 That policy was developed on Gaussian phantoms; use the separate structured
@@ -261,10 +261,10 @@ datasets to check its limitations without changing the policy:
 ```bash
 uv run --no-sync python bench/compare_reconstructions.py \
   --suite structured-v1 --sizes 64 128 256 --batch 180 --repeats 7 \
-  --methods tomojax_cgls_pallas tomojax_multires_cgls_pallas astra_cgls
+  --methods tomojax_cgls_cuda tomojax_multires_cgls_cuda astra_cgls
 uv run --no-sync python bench/compare_reconstructions.py \
   --suite structured-noisy-v1 --sizes 64 128 256 --batch 180 --repeats 7 \
-  --methods tomojax_cgls_pallas tomojax_multires_cgls_pallas astra_cgls
+  --methods tomojax_cgls_cuda tomojax_multires_cgls_cuda astra_cgls
 ```
 
 These suites use analytic chord lengths through five fixed ellipsoids. The noisy
@@ -277,10 +277,10 @@ The current serial worker ordering does not control laptop thermal drift.
 Independent noise seeds, dose-dependent noise, real data, direct external FBP
 baselines and interleaved comparisons remain required for broad claims.
 
-The Pallas adjoint shared-accumulator experiment is separately reproducible:
+The CUDA adjoint shared-accumulator experiment is separately reproducible:
 
 ```bash
-uv run --no-sync python bench/adjoint_benchmark.py --stack --backend pallas \
+uv run --no-sync python bench/adjoint_benchmark.py --stack --backend cuda \
   --sizes 32,64,128 --batches 4,16 --repeats 7
 ```
 
@@ -290,7 +290,6 @@ reports compiler temporary bytes, which are distinct from process peak memory.
 ## References
 
 - [JAX benchmarking guidance](https://docs.jax.dev/en/latest/benchmarking.html)
-- [Pallas grids, shapes, and partial blocks](https://docs.jax.dev/en/latest/pallas/grid_blockspec.html)
 - [ASTRA 3D geometry conventions](https://astra-toolbox.com/docs/geom3d.html)
 - [ASTRA 3D projector and direct API](https://astra-toolbox.com/docs/proj3d.html)
 - [CERN TIGRE source and installation](https://github.com/CERN/TIGRE)
@@ -310,7 +309,7 @@ accuracy and complete reconstruction quality, not just kernel throughput:
 uv run --no-sync python bench/operator_models.py --sizes 64 128 256 --repeats 9
 uv run --no-sync python bench/compare_reconstructions.py --sizes 64 128 \
   --batch 180 --repeats 7 --suite structured-v1 \
-  --methods tomojax_joseph_cgls_pallas tomojax_multires_joseph_cgls_pallas astra_cgls
+  --methods tomojax_joseph_cgls_cuda tomojax_multires_joseph_cgls_cuda astra_cgls
 ```
 
 The resident operator comparison uses dynamic poses and includes coefficient
@@ -571,7 +570,7 @@ The same fixed-quality runner also supports single-pass methods:
 ```bash
 uv run --no-sync python bench/compare_reconstructions.py --sizes 64 128 \
   --batch 180 --repeats 7 --suite structured-v1 \
-  --methods tomojax_fbp_pallas astra_fbp3d_cupy astra_fbp2d tigre_fbp
+  --methods tomojax_fbp_cuda astra_fbp3d_cupy astra_fbp2d tigre_fbp
 ```
 
 `astra_fbp3d_cupy` combines a CuPy/cuFFT discrete Ram-Lak filter with ASTRA's
@@ -594,12 +593,12 @@ the memory sampler includes their process allocations.
 calls CERN TIGRE's public `fbp` with its default Ram-Lak filter. These two
 adapters currently support centred isotropic parallel fixtures only. Their
 orientation and physical scaling are checked using an off-centre Gaussian on
-non-square axial slices. The TomoJAX Pallas FBP API also handles the shifted,
+non-square axial slices. The TomoJAX CUDA FBP API also handles the shifted,
 anisotropic parallel fixture, but does not expose a tilted voxel-driven FBP.
 The filtered ASTRA BP can run tilted scans, where it is an approximate
 initializer whose reconstruction error is still subject to the full gate.
 
-`tomojax_fbp_host_pallas` calls the public `fbp_host` API with a fixed policy of
+`tomojax_fbp_host_cuda` calls the public `fbp_host` API with a fixed policy of
 16 output slices and 32 filtering views per batch. Input and output stay in
 host memory; transfers, slab assembly and output writes are included in every
 call. The same policy applies to all sizes, suites and supported geometries.
@@ -633,12 +632,12 @@ acquisition. Earlier `direct-*` records predate this correction and remain as
 historical measurements.
 
 
-`tomojax_fbp_joseph_cgls_pallas` and `astra_fbp_cgls` also compose FBP with a
+`tomojax_fbp_joseph_cgls_cuda` and `astra_fbp_cgls` also compose FBP with a
 subsequent CGLS solve. Each budget and repeat starts by recomputing FBP, so its
 cost and transfers are included. TomoJAX's initializer stays on the GPU; native
 ASTRA CGLS requires the host handoff even though its direct BP accepts GPU data.
 The TomoJAX composition supports parallel and shifted anisotropic cases; tilted
-Pallas FBP is recorded as unsupported. CGLS budget fields count refinement
+CUDA FBP is recorded as unsupported. CGLS budget fields count refinement
 updates and the record explicitly identifies FBP initialization. These
 compositions do not change the default public solver or the acceptance gates.
 
@@ -661,7 +660,7 @@ projection model or conditioning of large scans. The retained record is
 ```bash
 uv run --no-sync python bench/compare_reconstructions.py \
   --suite gaussian-v1 --sizes 256 512 --views 720 --geometries parallel \
-  --repeats 7 --methods tomojax_fbp_host_pallas tomojax_fbp_pallas astra_fbp3d_cupy astra_fbp2d tigre_fbp \
+  --repeats 7 --methods tomojax_fbp_host_cuda tomojax_fbp_cuda astra_fbp3d_cupy astra_fbp2d tigre_fbp \
   --output bench/results/large-fbp.json
 ```
 

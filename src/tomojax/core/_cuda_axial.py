@@ -14,6 +14,8 @@ from jax.experimental.buffer_callback import buffer_callback
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core.cuda import initialize_buffer, launch_kernel
+
 if TYPE_CHECKING:
     from tomojax.core.geometry.base import Detector, Grid
 
@@ -222,17 +224,6 @@ def axial_coefficients(coeff: jax.Array) -> jax.Array:
 
 
 @cache
-def _forward_kernel(tile_v: int, *, vector: bool) -> Any:
-    import cupy as cp
-
-    source = _FORWARD_VEC4 if vector else _FORWARD
-    name = "axial_forward_vec4" if vector else "axial_forward"
-    return cp.RawModule(
-        code=source.replace("TV", str(tile_v)), options=("--fmad=false",)
-    ).get_function(name)
-
-
-@cache
 def _transpose_module(*, vector: bool, cubic: bool) -> Any:
     import cupy as cp
 
@@ -242,64 +233,6 @@ def _transpose_module(*, vector: bool, cubic: bool) -> Any:
         .replace("CUBIC", str(int(cubic)))
     )
     return cp.RawModule(code=source)
-
-
-def _forward_launch(
-    context: Any,
-    out: Any,
-    coeff: Any,
-    volume: Any,
-    *,
-    grid: Grid,
-    detector: Detector,
-    vector: bool,
-) -> None:
-    import cupy as cp
-
-    from tomojax.core._cuda_joseph import xla_stream
-
-    with xla_stream(context, out):
-        rows = 4 if vector else 1
-        cap = 8 if vector else (32 if grid.nz >= 512 else 16)
-        tile_v = min(cap, 1 << ((int(detector.nv) // rows).bit_length() - 1))
-        tiles = -(-detector.nu // (128 // tile_v)) * -(-detector.nv // (rows * tile_v))
-        dims = tuple(np.int32(n) for n in (grid.nx, grid.ny, grid.nz, detector.nu, detector.nv))
-        coeff, volume, out = (cp.asarray(a) for a in (coeff, volume, out))
-        kernel = _forward_kernel(tile_v, vector=vector)
-        # Bound concurrent view footprints without adding JAX callback boundaries.
-        batch = 16 if vector else coeff.shape[0]
-        for first in range(0, coeff.shape[0], batch):
-            kernel(
-                (min(batch, coeff.shape[0] - first), tiles),
-                (128,),
-                (coeff[first:], volume, out[first:], *dims),
-            )
-
-
-def forward_axial_cuda(
-    coeff: jax.Array, volume: jax.Array, *, grid: Grid, detector: Detector
-) -> jax.Array:
-    """Project coefficients for which :func:`axial_coefficients` is true."""
-
-    def launch(_: None, *, vector: bool) -> jax.Array:
-        call = buffer_callback(
-            partial(_forward_launch, grid=grid, detector=detector, vector=vector),
-            jax.ShapeDtypeStruct((coeff.shape[0], detector.nv, detector.nu), jnp.float32),
-            vmap_method="sequential",
-        )
-        return call(coeff, volume)
-
-    if grid.nz % 4 == 0 and detector.nv >= 4:
-        # Four consecutive detector rows can share horizontal geometry and
-        # aligned float4 voxel loads only when they coincide with axial voxels.
-        x = coeff[:, 0] == 0
-        scale = jnp.where(x, coeff[:, 6], coeff[:, 2])
-        offset = jnp.where(x, coeff[:, 8], coeff[:, 4])
-        aligned = jnp.all((scale == 1) & (offset == 4 * jnp.floor(offset * 0.25)))
-        return jax.lax.cond(
-            aligned, partial(launch, vector=True), partial(launch, vector=False), None
-        )
-    return launch(None, vector=False)
 
 
 def _transpose_launch(
@@ -359,3 +292,144 @@ def transpose_axial_cuda(
         vmap_method="sequential",
     )
     return call(coeff, images_uv, initial)
+
+
+@cache
+def _forward_source(generic: str, scalar_tile: int, vector_tile: int) -> str:
+    parts = [generic]
+    for kernel, tile in (
+        (_FORWARD, scalar_tile),
+        (_FORWARD_VEC4, vector_tile),
+    ):
+        if not tile:
+            continue
+        text = kernel.replace("TV", str(tile))
+        text = text.replace("int nu, int nv)", "int nu, int nv, int first)")
+        text = text.replace("int nu,int nv)", "int nu,int nv,int first)")
+        parts.append(text.replace("int view=blockIdx.x,", "int view=blockIdx.x+first,"))
+    return "\n".join(parts)
+
+
+def forward_dispatch_cuda(
+    coeff: jax.Array,
+    volume: jax.Array,
+    grid: Grid,
+    detector: Detector,
+    *,
+    generic_source: str,
+) -> jax.Array:
+    """Select generic, scalar axial or four-row axial FP without extra compilation."""
+    nv, nu = detector.nv, detector.nu
+    threads = 32 if nv == 1 else 128
+    tile_v = min(16, 1 << (nv.bit_length() - 1))
+    scalar_tile = min(32 if grid.nz >= 512 else 16, 1 << (nv.bit_length() - 1))
+    vector = grid.nz % 4 == 0 and nv >= 4
+    vector_tile = min(8, 1 << ((nv // 4).bit_length() - 1)) if vector else 0
+    text = _forward_source(generic_source, scalar_tile, vector_tile)
+    shape = jax.ShapeDtypeStruct((coeff.shape[0], nv, nu), jnp.float32)
+
+    def call(c: jax.Array, x: jax.Array, mode: int) -> jax.Array:
+        def launch(context: Any, out: Any, cf: Any, image: Any) -> None:
+            dims = (grid.nx, grid.ny, grid.nz, nu, nv)
+            if mode == 0:
+                tiles = -(-nu // (threads // tile_v)) * -(-nv // tile_v)
+                launch_kernel(
+                    text,
+                    "forward",
+                    options=("--fmad=false",),
+                    stream=context.stream,
+                    grid=(tiles * cf.shape[0],),
+                    block=(threads,),
+                    arguments=(cf, image, out, *map(np.int32, (*dims, cf.shape[0]))),
+                )
+            else:
+                rows, tile = (4, vector_tile) if mode == 2 else (1, scalar_tile)
+                tiles = -(-nu // (128 // tile)) * -(-nv // (rows * tile))
+                batch = 16 if mode == 2 else cf.shape[0]
+                for first in range(0, cf.shape[0], batch):
+                    launch_kernel(
+                        text,
+                        "axial_forward_vec4" if mode == 2 else "axial_forward",
+                        options=("--fmad=false",),
+                        stream=context.stream,
+                        grid=(min(batch, cf.shape[0] - first), tiles),
+                        block=(128,),
+                        arguments=(cf, image, out, *map(np.int32, (*dims, first))),
+                    )
+
+        return buffer_callback(
+            launch, shape, command_buffer_compatible=True, vmap_method="sequential"
+        )(c, x)
+
+    def axial(values: tuple[jax.Array, jax.Array]) -> jax.Array:
+        c, x = values
+        if not vector:
+            return call(c, x, 1)
+        is_x = c[:, 0] == 0
+        scale = jnp.where(is_x, c[:, 6], c[:, 2])
+        offset = jnp.where(is_x, c[:, 8], c[:, 4])
+        aligned = jnp.all((scale == 1) & (offset == 4 * jnp.floor(offset * 0.25)))
+        return jax.lax.cond(
+            aligned,
+            lambda args: call(args[0], args[1], 2),
+            lambda args: call(args[0], args[1], 1),
+            (c, x),
+        )
+
+    return jax.lax.cond(
+        axial_coefficients(coeff),
+        axial,
+        lambda args: call(args[0], args[1], 0),
+        (coeff, volume),
+    )
+
+
+@cache
+def _transpose_source(*, vector: bool, cubic: bool) -> str:
+    text = _TRANSPOSE.replace("RUN", "8" if vector else "4")
+    text = text.replace("VECTOR", str(int(vector))).replace("CUBIC", str(int(cubic)))
+    return text.replace("images[((long)view*nu+u)*nv+v]", "images[((long)view*nv+v)*nu+u]")
+
+
+def transpose_axial_vu_cuda(
+    coeff: jax.Array, images: jax.Array, initial: jax.Array, *, grid: Grid, interpolation: str
+) -> jax.Array:
+    """Add the exact axial transpose using direct VU input and JAX-owned scratch."""
+    views, nv, nu = images.shape
+    nx, ny, nz = grid.nx, grid.ny, grid.nz
+    vector = nz % 8 == 0
+    run, threads = (8, 256) if vector else (4, 128)
+    text = _transpose_source(vector=vector, cubic=interpolation == "cubic")
+
+    def launch(context: Any, outputs: Any, c: Any, y: Any, x: Any) -> None:
+        out, weighted = outputs
+        initialize_buffer(out, stream=context.stream, source=x)
+        launch_kernel(
+            text,
+            "joseph_vertical",
+            stream=context.stream,
+            grid=(-(-(views * nu * nz) // 256),),
+            block=(256,),
+            arguments=(c, y, weighted, *map(np.int32, (views, nz, nu, nv))),
+        )
+        runs = nx * ny * -(-nz // run)
+        launch_kernel(
+            text,
+            "joseph_axial",
+            stream=context.stream,
+            grid=(-(-runs // threads),),
+            block=(threads,),
+            arguments=(c, weighted, out, *map(np.int32, (views, nx, ny, nz, nu))),
+        )
+
+    result, _ = buffer_callback(
+        launch,
+        (
+            jax.ShapeDtypeStruct(initial.shape, jnp.float32),
+            jax.ShapeDtypeStruct((views, nu, nz), jnp.float32),
+        ),
+        input_output_aliases={2: 0},
+        command_buffer_compatible=True,
+        vmap_method="sequential",
+    )(coeff, images, initial)
+    return result.reshape((nx, ny, nz))

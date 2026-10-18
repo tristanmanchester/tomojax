@@ -102,8 +102,8 @@ def test_fused_pose_update_matches_explicit_jacobian_and_reuses_residual(interpo
     g, d = case["grid"], case["detector"]
     x, nominal, y = (jnp.asarray(case[k]) for k in ("volume", "nominal", "data"))
     p = jnp.asarray(case["truth"]) + 0.1
-    predict, normal_explicit, accept = workflow_functions(g, d, "pallas", interpolation, "explicit")
-    _, normal_fused, _ = workflow_functions(g, d, "pallas", interpolation, "fused")
+    predict, normal_explicit, accept = workflow_functions(g, d, "cuda", interpolation, "explicit")
+    _, normal_fused, _ = workflow_functions(g, d, "cuda", interpolation, "fused")
     expected, reference_residual = normal_explicit(p, nominal, x, y)
     actual, residual = normal_fused(p, nominal, x, y)
     np.testing.assert_allclose(actual, expected, rtol=3e-4, atol=2e-4)
@@ -115,13 +115,13 @@ def test_fused_pose_update_matches_explicit_jacobian_and_reuses_residual(interpo
     np.testing.assert_allclose(loss, evaluated, rtol=2e-6)
 
 
-@pytest.mark.parametrize("backend", ["jax", "pallas"])
+@pytest.mark.parametrize("backend", ["jax", "cuda"])
 def test_streamed_line_search_matches_stacked_candidates_and_ties(backend):
     import jax
     import jax.numpy as jnp
     from pose_recovery import workflow_functions
 
-    if backend == "pallas" and jax.default_backend() != "gpu":
+    if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
     case = fixture(16, 5, "lamino", 325, 0.005, 0.25)
     g, d = case["grid"], case["detector"]

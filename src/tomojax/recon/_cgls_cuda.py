@@ -184,7 +184,7 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
         "residual_recomputations": recomputations,
         "initial_normal_residual_norm": initial_norm,
         "normal_residual_tolerance": float(tolerance),
-        "projector_backend": "pallas",
+        "projector_backend": "cuda",
         "execution_backend": "cupy",
         "projector_model": "joseph",
         "joseph_interpolation": "linear",

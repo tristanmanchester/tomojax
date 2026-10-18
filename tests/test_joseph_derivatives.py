@@ -10,10 +10,10 @@ import pytest
 from tests.test_joseph_projector import matrix, problem
 
 # check-public-imports: allow-private
-from tomojax.core.joseph import forward_jax, forward_project_planes, plane_coefficients
+from tomojax.core.cuda_projector._joseph_derivatives import l2_loss_and_grads
 
 # check-public-imports: allow-private
-from tomojax.core.pallas._pallas_joseph_derivatives import l2_loss_and_grads
+from tomojax.core.joseph import forward_jax, forward_project_planes, plane_coefficients
 
 pytestmark = pytest.mark.gpu
 
@@ -38,6 +38,43 @@ def assert_close_tree(actual, expected, tolerance=3e-5):
         np.testing.assert_allclose(a, b, atol=tolerance, rtol=tolerance)
 
 
+@pytest.mark.parametrize("interpolation", ["linear", "cubic"])
+def test_nested_broadcast_projection_and_jvp_match_reference(interpolation):
+    g, d, poses, x, _ = arrays()
+    cf = plane_coefficients(poses, g, d)
+    coefficients = jnp.stack([cf, cf.at[:, 4].add(0.2), cf.at[:, 8].add(-0.3)])
+    volumes = jnp.stack([x, 2 * x])
+    rng = np.random.default_rng(980)
+    dc = jnp.asarray(rng.normal(size=(3, 2, *cf.shape)), jnp.float32)
+    dx = jnp.asarray(rng.normal(size=(2, *x.shape)), jnp.float32)
+
+    def evaluate(backend):
+        def operation(c, v, dc, dv):
+            return jax.jvp(
+                lambda c, v: forward_project_planes(
+                    c, v, g, d, backend=backend, interpolation=interpolation
+                ),
+                (c, v),
+                (dc, dv),
+            )
+
+        nested = jax.vmap(jax.vmap(operation, in_axes=(None, 0, 0, 0)), in_axes=(0, None, 0, None))
+        return jax.jit(nested)(coefficients, volumes, dc, dx)
+
+    assert_close_tree(evaluate("cuda"), evaluate("jax"), tolerance=4e-5)
+
+
+def test_empty_projection_and_jvp_batch():
+    g, d, poses, x, _ = arrays()
+    cf = plane_coefficients(poses, g, d)
+
+    def operation(c):
+        return jax.jvp(lambda c: forward_project_planes(c, x, g, d, backend="cuda"), (c,), (c,))
+
+    value, tangent = jax.jit(jax.vmap(operation))(jnp.empty((0, *cf.shape), jnp.float32))
+    assert value.shape == tangent.shape == (0, cf.shape[0], d.nv, d.nu)
+
+
 @pytest.mark.parametrize(
     ("voxel", "spacing"),
     [((0.8, 1.1, 1.3), (0.7, 1.2)), ((2.0, 0.4, 1.3), (0.3, 0.5)), ((0.5, 0.6, 0.7), (1.4, 1.8))],
@@ -53,9 +90,7 @@ def test_reverse_and_fused_loss_match_reference_with_tail_tiles(voxel, spacing, 
         return 0.5 * jnp.sum((pred - y) ** 2)
 
     expected = jax.jit(jax.value_and_grad(lambda t, v: loss(t, v, "jax"), argnums=(0, 1)))(poses, x)
-    actual = jax.jit(jax.value_and_grad(lambda t, v: loss(t, v, "pallas"), argnums=(0, 1)))(
-        poses, x
-    )
+    actual = jax.jit(jax.value_and_grad(lambda t, v: loss(t, v, "cuda"), argnums=(0, 1)))(poses, x)
     assert_close_tree(actual, expected)
 
     @jax.jit
@@ -89,7 +124,7 @@ def test_jvp_and_linearized_transpose_match_reference(active, interpolation):
     args = (x,) if active == "volume" else (cf,) if active == "coefficients" else (cf, x)
     tangents = (dx,) if active == "volume" else (dc,) if active == "coefficients" else (dc, dx)
     expected = jax.jvp(function("jax"), args, tangents)
-    fn = function("pallas")
+    fn = function("cuda")
     assert_close_tree(jax.jit(lambda *ts: jax.jvp(fn, args, ts))(*tangents), expected)
     primal, linear = jax.linearize(fn, *args)
     assert_close_tree((primal, jax.jit(linear)(*tangents)), expected)
@@ -115,7 +150,7 @@ def test_batching_of_forward_reverse_and_pose_jacobians(interpolation):
     volumes = jnp.stack([x, 0.37 * x, -0.8 * x])
     for derivative in (False, True):
         functions = []
-        for backend in ("pallas", "jax"):
+        for backend in ("cuda", "jax"):
 
             def loss(v, backend=backend, interpolation=interpolation):
                 return jnp.sum(jnp.sin(fp(v, backend)) * y)
@@ -130,8 +165,8 @@ def test_batching_of_forward_reverse_and_pose_jacobians(interpolation):
 
     shift = jnp.array([0.11, -0.03, 0.21], jnp.float32)
     wanted = jax.jit(jax.jacfwd(lambda s: shifted(s, "jax")))(shift)
-    assert_close_tree(jax.jit(jax.jacfwd(lambda s: shifted(s, "pallas")))(shift), wanted)
-    assert_close_tree(jax.jit(jax.jacrev(lambda s: shifted(s, "pallas")))(shift), wanted)
+    assert_close_tree(jax.jit(jax.jacfwd(lambda s: shifted(s, "cuda")))(shift), wanted)
+    assert_close_tree(jax.jit(jax.jacrev(lambda s: shifted(s, "cuda")))(shift), wanted)
 
 
 @pytest.mark.parametrize("interpolation", ["linear", "cubic"])
@@ -140,7 +175,7 @@ def test_linear_transpose_and_zero_derivatives(interpolation):
     cf = plane_coefficients(poses, g, d)
 
     def fn(v):
-        return forward_project_planes(cf, v, g, d, backend="pallas", interpolation=interpolation)
+        return forward_project_planes(cf, v, g, d, backend="cuda", interpolation=interpolation)
 
     expected = jax.linear_transpose(
         lambda v: forward_jax(cf, v, g, d, interpolation=interpolation), x
@@ -162,7 +197,7 @@ def test_pose_tangent_matches_independent_physical_finite_difference(interpolati
 
     def fn(t):
         cf = plane_coefficients(shifted.at[:, :3, 3].add(t * direction), g, d)
-        return forward_project_planes(cf, x, g, d, backend="pallas", interpolation=interpolation)
+        return forward_project_planes(cf, x, g, d, backend="cuda", interpolation=interpolation)
 
     actual = jax.jit(lambda: jax.jvp(fn, (jnp.float32(0),), (jnp.float32(1),))[1])()
     epsilon = 1e-6
@@ -188,7 +223,7 @@ def test_rigid_rotation_tangent_matches_independent_physical_finite_difference(i
 
     def fn(theta):
         cf = plane_coefficients(turn(theta, jnp) @ poses, g, d)
-        return forward_project_planes(cf, x, g, d, backend="pallas", interpolation=interpolation)
+        return forward_project_planes(cf, x, g, d, backend="cuda", interpolation=interpolation)
 
     theta = jnp.float32(0.071)
     actual = jax.jit(lambda: jax.jvp(fn, (theta,), (jnp.float32(1),))[1])()
@@ -207,7 +242,7 @@ def test_cubic_derivatives_remain_accurate_near_zero_residual():
     g, d, poses, x, _ = arrays()
     cf = plane_coefficients(poses, g, d)
     target = jax.jit(
-        lambda v: forward_project_planes(cf, v, g, d, backend="pallas", interpolation="cubic")
+        lambda v: forward_project_planes(cf, v, g, d, backend="cuda", interpolation="cubic")
     )(x) * jnp.float32(0.99999)
 
     def loss(t, v, backend):
@@ -217,8 +252,6 @@ def test_cubic_derivatives_remain_accurate_near_zero_residual():
         return 0.5 * jnp.sum((pred - target) ** 2)
 
     expected = jax.jit(jax.value_and_grad(lambda t, v: loss(t, v, "jax"), argnums=(0, 1)))(poses, x)
-    actual = jax.jit(jax.value_and_grad(lambda t, v: loss(t, v, "pallas"), argnums=(0, 1)))(
-        poses, x
-    )
+    actual = jax.jit(jax.value_and_grad(lambda t, v: loss(t, v, "cuda"), argnums=(0, 1)))(poses, x)
     for a, b in zip(jax.tree.leaves(actual), jax.tree.leaves(expected), strict=True):
         assert np.linalg.norm(np.asarray(a) - b) < 1e-5 * np.linalg.norm(b)

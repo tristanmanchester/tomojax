@@ -270,7 +270,7 @@ def test_align_multires_executes_a_setup_then_pose_schedule_with_real_stages() -
     assert final_state.outer_stats == outer_stats
 
 
-def test_pose_adjusted_pallas_fallback_keeps_folded_detector_grid_out_of_jax_core(
+def test_pose_adjusted_cuda_fallback_keeps_folded_detector_grid_out_of_jax_core(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     grid = Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0)
@@ -285,7 +285,7 @@ def test_pose_adjusted_pallas_fallback_keeps_folded_detector_grid_out_of_jax_cor
     cfg = AlignConfig(
         outer_iterations=1,
         iterations=1,
-        projector_backend="pallas",
+        projector_backend="cuda",
         views_per_batch=1,
         checkpoint_projector=False,
         early_stop=False,
@@ -295,7 +295,7 @@ def test_pose_adjusted_pallas_fallback_keeps_folded_detector_grid_out_of_jax_cor
     captured: dict[str, object] = {}
 
     def resolve_backend(*, det_grid, **_kwargs):
-        return ("pallas", None) if det_grid is None else ("jax", "det_grid_unsupported")
+        return ("cuda", None) if det_grid is None else ("jax", "det_grid_unsupported")
 
     def run_dynamic(x0, _T_all, det_u, det_v, _projections, _L_value, **_kwargs):
         captured["det_u"] = det_u
@@ -343,7 +343,7 @@ def test_pose_adjusted_pallas_fallback_keeps_folded_detector_grid_out_of_jax_cor
     assert info["detector_grid_folded_into_pose"] is True
 
 
-def test_alignment_pallas_backend_probe_uses_options_api(
+def test_alignment_cuda_backend_probe_uses_options_api(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     grid = Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0)
@@ -359,17 +359,17 @@ def test_alignment_pallas_backend_probe_uses_options_api(
         captured["options"] = options
 
     def resolve(name: str, *, missing_reason: str):
-        if name == "pallas_projector_sinogram_unsupported_reason":
+        if name == "cuda_projector_sinogram_unsupported_reason":
             return support_fn, None
-        if name == "PallasProjectorOptions":
+        if name == "CudaProjectorOptions":
             return Options, None
         return None, missing_reason
 
     monkeypatch.setattr(reconstruction_stage.jax, "default_backend", lambda: "gpu")
-    monkeypatch.setattr(reconstruction_stage, "resolve_pallas_callable", resolve)
+    monkeypatch.setattr(reconstruction_stage, "resolve_cuda_callable", resolve)
 
     backend, reason = reconstruction_stage._resolve_reconstruction_projector_backend(
-        requested_backend="pallas",
+        requested_backend="cuda",
         T_all=jnp.eye(4, dtype=jnp.float32)[None, ...],
         grid=grid,
         detector=detector,
@@ -378,7 +378,7 @@ def test_alignment_pallas_backend_probe_uses_options_api(
         gather_dtype="fp32",
     )
 
-    assert backend == "pallas"
+    assert backend == "cuda"
     assert reason is None
     assert isinstance(captured["options"], Options)
     options_kwargs = captured["options_kwargs"]
@@ -387,7 +387,7 @@ def test_alignment_pallas_backend_probe_uses_options_api(
     assert options_kwargs["state_mode"] == "cached"
 
 
-def test_fixed_geometry_reconstruction_reports_effective_auto_pallas_backend(
+def test_fixed_geometry_reconstruction_reports_effective_auto_cuda_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     grid = Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0)
@@ -425,7 +425,7 @@ def test_fixed_geometry_reconstruction_reports_effective_auto_pallas_backend(
     monkeypatch.setattr(
         reconstruction_stage,
         "effective_fista_core_backend",
-        lambda *_args, **_kwargs: "pallas",
+        lambda *_args, **_kwargs: "cuda",
     )
 
     _x, info = reconstruction_stage._run_huber_fista_core_reconstruction(
@@ -443,7 +443,7 @@ def test_fixed_geometry_reconstruction_reports_effective_auto_pallas_backend(
     )
 
     assert info["requested_backend"] == "jax"
-    assert info["actual_backend"] == "pallas"
+    assert info["actual_backend"] == "cuda"
 
 
 @pytest.mark.parametrize("shape", [(64, 61, 32), (33, 29, 17)])
@@ -570,7 +570,7 @@ def test_alignment_reconstruction_streams_host_data_without_changing_the_solve(
         huber_delta=0.2,
         views_per_batch=2,
         ray_integrator=integrator,
-        projector_backend="pallas" if jax.default_backend() == "gpu" else "jax",
+        projector_backend="cuda" if jax.default_backend() == "gpu" else "jax",
     )
     step = reconstruction_stage._ReconstructionStepInputs(
         recon_geometry=geometry,

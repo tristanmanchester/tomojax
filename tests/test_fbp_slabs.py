@@ -10,7 +10,7 @@ import pytest
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 from tomojax.recon.api import FBPConfig, fbp, reconstruct_slabs
 
-BACKENDS = ["jax", pytest.param("pallas", marks=pytest.mark.gpu)]
+BACKENDS = ["jax", pytest.param("cuda", marks=pytest.mark.gpu)]
 
 
 @pytest.mark.parametrize("kind", ["integer", "strided", "fractional", "outside", "one_row"])

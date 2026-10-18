@@ -42,7 +42,7 @@ def validate_plane_geometry(poses: jax.Array, grid: Grid, detector: Detector) ->
 def select_axis(
     axis: jax.Array, x: jax.Array | int, y: jax.Array | int, z: jax.Array | int
 ) -> jax.Array:
-    """Select an integer coordinate; explicit dtypes also support Triton lowering."""
+    """Select an integer coordinate with explicit dtypes."""
     return jnp.where(
         axis == 0,
         jnp.asarray(x, jnp.int32),
@@ -184,11 +184,11 @@ def forward_project_planes(
             interpolation=interpolation,
             absolute_weights=absolute_weights,
         )
-    if backend == "pallas":
+    if backend == "cuda":
         if absolute_weights:
-            from .pallas._pallas_joseph import forward_pallas
+            from .cuda_projector._joseph import forward_cuda
 
-            return forward_pallas(
+            return forward_cuda(
                 coefficients,
                 volume,
                 grid,
@@ -196,12 +196,12 @@ def forward_project_planes(
                 interpolation=interpolation,
                 absolute_weights=True,
             )
-        from .pallas._pallas_joseph_autodiff import differentiable_forward
+        from .cuda_projector._joseph_autodiff import differentiable_forward
 
         return differentiable_forward(
             coefficients, volume, grid, detector, interpolation=interpolation
         )
-    raise ValueError("Plane projection backend must be 'jax' or 'pallas'")
+    raise ValueError("Plane projection backend must be 'jax' or 'cuda'")
 
 
 def sum_backproject_planes(
@@ -229,10 +229,10 @@ def sum_backproject_planes(
             absolute_weights=absolute_weights,
         )
         return volume if accumulate is None else accumulate + volume
-    if backend == "pallas":
-        from .pallas._pallas_joseph import adjoint_pallas
+    if backend == "cuda":
+        from .cuda_projector._joseph import adjoint_cuda
 
-        return adjoint_pallas(
+        return adjoint_cuda(
             coefficients,
             images,
             grid,
@@ -241,7 +241,7 @@ def sum_backproject_planes(
             absolute_weights=absolute_weights,
             accumulate=accumulate,
         )
-    raise ValueError("Plane projection backend must be 'jax' or 'pallas'")
+    raise ValueError("Plane projection backend must be 'jax' or 'cuda'")
 
 
 def plane_pose_columns(
@@ -259,7 +259,7 @@ def plane_pose_columns(
     ``tangent`` holds ``(views, directions, 14)`` coefficient derivatives.
     CUDA shares each voxel sample among all directions in one ray traversal.
     """
-    if backend == "pallas":
+    if backend == "cuda":
         from ._cuda_joseph import cuda_gather_available
         from ._cuda_joseph_columns import pose_columns_cuda
 
@@ -291,8 +291,8 @@ def plane_l2_value_and_grad(
     interpolation: str = "linear",
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Return half squared error, coefficient gradient and volume gradient."""
-    if backend == "pallas":
-        from .pallas._pallas_joseph_derivatives import l2_loss_and_grads
+    if backend == "cuda":
+        from .cuda_projector._joseph_derivatives import l2_loss_and_grads
 
         return l2_loss_and_grads(
             coefficients, volume, target, grid, detector, interpolation=interpolation
@@ -308,7 +308,7 @@ def plane_l2_value_and_grad(
             coefficients, volume
         )
         return value, coefficient_grad, volume_grad
-    raise ValueError("Plane projection backend must be 'jax' or 'pallas'")
+    raise ValueError("Plane projection backend must be 'jax' or 'cuda'")
 
 
 def plane_l2_normal_equations(
@@ -323,14 +323,14 @@ def plane_l2_normal_equations(
     interpolation: str = "linear",
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
     """Per-view loss, directional gradient, Gauss-Newton matrix and residuals."""
-    if backend == "pallas":
-        from .pallas._pallas_joseph_normals import pose_normal_equations
+    if backend == "cuda":
+        from .cuda_projector._joseph_derivatives import pose_normal_equations
 
         return pose_normal_equations(
             coefficients, volume, target, directions, grid, detector, interpolation=interpolation
         )
     if backend != "jax":
-        raise ValueError("Plane projection backend must be 'jax' or 'pallas'")
+        raise ValueError("Plane projection backend must be 'jax' or 'cuda'")
 
     def project(cf: jax.Array) -> jax.Array:
         return forward_jax(cf, volume, grid, detector, interpolation=interpolation)

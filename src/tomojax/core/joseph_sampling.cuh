@@ -2,7 +2,7 @@
 __device__ __forceinline__ float joseph_cubic_weight(float distance) {
     float r = fabsf(distance);
     if (r < 1.f) return 1.f + r*r * (1.5f*r - 2.5f);
-    if (r < 2.f) return -.5f * (r-1.f) * (r-2.f) * (r-2.f);
+    if (r < 2.f) return -.5f * (r-1.f) * ((r-2.f) * (r-2.f));
     return 0.f;
 }
 
@@ -17,7 +17,7 @@ __device__ __forceinline__ float joseph_sample(
 }
 
 __device__ __forceinline__ void joseph_cubic_weights(float t, float* w, float* d) {
-    w[0] = -.5f * t * (1-t) * (1-t);
+    w[0] = -.5f * t * ((1-t) * (1-t));
     w[1] = 1 + t*t * (1.5f*t - 2.5f);
     w[2] = t * (.5f + t * (2 - 1.5f*t));
     w[3] = -.5f * t*t * (1-t);

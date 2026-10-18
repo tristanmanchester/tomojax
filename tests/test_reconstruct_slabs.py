@@ -18,7 +18,7 @@ CASES = [
     pytest.param(
         "fourier", FourierConfig(backend="cupy", slices_per_batch=4), marks=pytest.mark.gpu
     ),
-    pytest.param("fbp", FBPConfig(backprojector="pallas"), marks=pytest.mark.gpu),
+    pytest.param("fbp", FBPConfig(backprojector="cuda"), marks=pytest.mark.gpu),
 ]
 
 
@@ -80,7 +80,7 @@ def test_slab_context_closes_on_early_exit_and_rejects_view_selection(method, cf
         pass
 
 
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 @pytest.mark.parametrize("method", ["sirt", "mlem"])
 @pytest.mark.parametrize("warm_start", [False, True])
 def test_iterative_slabs_preserve_updates_masks_and_ownership(method, backend, warm_start):

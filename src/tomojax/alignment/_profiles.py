@@ -22,7 +22,7 @@ class AlignmentProfilePolicy:
     quality : QualityTier
         Alignment quality tier, "fast" or "reference".
     projector_backend : ProjectorBackend
-        Projector implementation, "jax" or "pallas".
+        Projector implementation, "jax" or "cuda".
     gather_dtype : str
         Precision used for projection gathers.
     regulariser : Regulariser
@@ -79,7 +79,7 @@ def alignment_profile_policy(quality: QualityTier) -> AlignmentProfilePolicy:
         )
     return AlignmentProfilePolicy(
         quality="fast",
-        projector_backend="pallas",
+        projector_backend="cuda",
         gather_dtype="auto",
         regulariser="huber_tv",
         reconstruction="fista",

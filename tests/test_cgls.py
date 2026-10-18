@@ -20,12 +20,12 @@ from tomojax.recon import CGLSConfig, cgls
 @pytest.mark.parametrize(
     ("model", "interpolation"), [("ray", "linear"), ("joseph", "linear"), ("joseph", "cubic")]
 )
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 def test_underdetermined_cgls_preserves_initial_null_component(
     warm_start, model, interpolation, backend
 ):
     """A small data residual must not hide a different unmeasured image component."""
-    if backend == "pallas" and jax.default_backend() != "gpu":
+    if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
     from tomojax.forward import project_joseph
 
@@ -235,7 +235,7 @@ def test_cgls_rejects_nonfinite_input():
 
 
 @pytest.mark.gpu
-def test_pallas_cgls_matches_dense_damped_solution():
+def test_cuda_cgls_matches_dense_damped_solution():
     if jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
     grid, detector, geometry, matrix = small_problem()
@@ -257,11 +257,11 @@ def test_pallas_cgls_matches_dense_damped_solution():
             rtol=1e-7,
             damping=damping,
             views_per_batch=3,
-            projector_backend="pallas",
+            projector_backend="cuda",
         ),
     )
     np.testing.assert_allclose(actual.ravel(), expected, rtol=3e-4, atol=3e-5)
-    assert info["projector_backend"] == "pallas"
+    assert info["projector_backend"] == "cuda"
     normal_residual = (
         matrix.T @ (data.ravel() - matrix @ np.asarray(actual).ravel())
         - damping**2 * np.asarray(actual).ravel()
@@ -270,10 +270,10 @@ def test_pallas_cgls_matches_dense_damped_solution():
     assert info["termination"] in {"converged", "roundoff_limit"}
 
 
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 @pytest.mark.parametrize("model", ["ray", "joseph"])
 def test_bright_region_does_not_hide_weak_region_updates(backend, model):
-    if backend == "pallas" and jax.default_backend() != "gpu":
+    if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
     # check-public-imports: allow-private
     from tomojax.core.geometry.views import stack_view_poses
@@ -386,7 +386,7 @@ g, d = Grid(4, 4, 3, 1, 1, 1), Detector(9, 7, 1, 1)
 geometry = LaminographyGeometry(g, d, np.linspace(0, 180, 7, endpoint=False), tilt_deg=23)
 x, info = cgls(geometry, g, d, np.zeros((7, 7, 9), np.float32),
     init_x=np.ones((4, 4, 3), np.float32),
-    config=CGLSConfig(iterations=2, projector_backend='pallas', views_per_batch=3))
+    config=CGLSConfig(iterations=2, projector_backend='cuda', views_per_batch=3))
 json.dumps(info, allow_nan=False)
 assert 'jax' not in sys.modules and info['execution_backend'] == 'cupy'
 assert isinstance(x, np.ndarray) and np.isfinite(x).all() and np.linalg.norm(x) < 7
@@ -429,7 +429,7 @@ def test_native_cuda_cgls_matches_independent_damped_system(tilt):
         d,
         data,
         config=CGLSConfig(
-            iterations=100, rtol=1e-6, damping=0.3, projector_backend="pallas", views_per_batch=3
+            iterations=100, rtol=1e-6, damping=0.3, projector_backend="cuda", views_per_batch=3
         ),
     )
     assert info["execution_backend"] == "cupy"

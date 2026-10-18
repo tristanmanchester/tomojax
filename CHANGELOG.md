@@ -9,6 +9,10 @@ Projection matching now weights vertical mass profiles by learned correlated
 noise and reports conditional vertical standard deviations in detector length
 units; horizontal uncertainties and capture failures are not covered.
 
+CUDA kernels replace the deprecated Pallas/Triton backend; select `backend="cuda"`
+(or `projector_backend`/`backprojector="cuda"`) instead of `"pallas"`. The JAX
+upper version pin is removed.
+
 Container conversion preserves missing angles/centre calibration rather than
 creating measurements; saved NXtomo rotation axes now reflect the recorded tilt.
 Nikon loading no longer invents a full-turn angle schedule or a 16-bit white

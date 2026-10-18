@@ -25,10 +25,10 @@ def problem():
 
 
 @pytest.mark.parametrize("explicit_coordinates", [False, True])
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 def test_multires_recovers_original_fine_system(explicit_coordinates, backend):
-    if backend == "pallas" and (jax.default_backend() != "gpu" or explicit_coordinates):
-        pytest.skip("Pallas requires CUDA and canonical coordinates")
+    if backend == "cuda" and (jax.default_backend() != "gpu" or explicit_coordinates):
+        pytest.skip("CUDA requires CUDA and canonical coordinates")
     grid, detector, geometry, truth = problem()
     coordinates = None
     if explicit_coordinates:
@@ -81,7 +81,7 @@ def test_single_level_is_the_unmodified_public_solver():
         init_x=initial,
         config=config,
     )
-    # Both JAX scatter and Pallas atomics may sum in a different GPU order.
+    # Both JAX scatter and CUDA atomics may sum in a different GPU order.
     np.testing.assert_allclose(result, direct, rtol=1e-5, atol=3e-6)
     assert info["fine_effective_iterations"] == direct_info["effective_iterations"]
     assert info["normal_residual_norm"] == pytest.approx(
@@ -205,7 +205,7 @@ grid, det = Grid(9, 7, 5, .8, 1.2, 1.1), Detector(13, 11, .7, .9, (.2, -.1))
 geom = LaminographyGeometry(grid, det, [13, 39, 77, 111, 153], 31)
 data = rng.normal(size=(5, 11, 13)).astype(np.float32)
 kwargs = dict(factors=(3, 1), iterations_per_level=(4, 7),
-              config=CGLSConfig(rtol=0, damping=.1, projector_backend='pallas'))
+              config=CGLSConfig(rtol=0, damping=.1, projector_backend='cuda'))
 host, info = cgls_multires(geom, grid, det, data, **kwargs)
 assert 'jax' not in sys.modules and 'cupyx.scipy.sparse' not in sys.modules
 assert isinstance(host, np.ndarray) and info['execution_backend'] == 'cupy'

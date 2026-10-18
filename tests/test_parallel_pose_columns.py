@@ -39,7 +39,7 @@ def test_parallel_pose_columns_match_reference(integrator, indices):
             plane_pose_columns,
             grid=grid,
             detector=detector,
-            backend="pallas",
+            backend="cuda",
             interpolation=interpolation,
         )
     )(coeff[None], volume, tangent[None])[0]
@@ -85,6 +85,6 @@ def test_fused_columns_keep_cell_and_support_boundary_derivatives(interpolation)
     function = partial(
         plane_pose_columns, grid=grid, detector=detector, interpolation=interpolation
     )
-    actual = jax.jit(partial(function, backend="pallas"))(coeff, volume, tangent)
+    actual = jax.jit(partial(function, backend="cuda"))(coeff, volume, tangent)
     expected = jax.jit(partial(function, backend="jax"))(coeff, volume, tangent)
     np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=1e-6)

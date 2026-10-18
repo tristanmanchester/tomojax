@@ -61,9 +61,7 @@ def _operators(
     )
     n_views = len(geometry.angles)  # pyright: ignore[reportAttributeAccessIssue]
     poses = stack_view_poses(geometry, n_views)
-    axial_cuda = (
-        backend == "pallas" and model == "joseph" and isinstance(geometry, ParallelGeometry)
-    )
+    axial_cuda = backend == "cuda" and model == "joseph" and isinstance(geometry, ParallelGeometry)
     batch = _view_batch_size(grid, detector, n_views, axial_cuda=axial_cuda)
     split = view_split(devices, n_views)
     operators = projection_operators(

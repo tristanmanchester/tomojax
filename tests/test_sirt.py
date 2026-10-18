@@ -28,13 +28,13 @@ def test_streamed_initialization_finishes_before_solve_workspace(monkeypatch):
 @pytest.mark.parametrize(
     ("free", "masked", "iterations", "device_data", "backend", "expected"),
     [
-        (1440, False, 2, False, "pallas", (True, True)),
-        (1167, False, 2, False, "pallas", (False, False)),
-        (1440, True, 2, False, "pallas", (False, False)),
-        (1440, False, 1, False, "pallas", (False, False)),
-        (1440, False, 2, True, "pallas", (False, False)),
+        (1440, False, 2, False, "cuda", (True, True)),
+        (1167, False, 2, False, "cuda", (False, False)),
+        (1440, True, 2, False, "cuda", (False, False)),
+        (1440, False, 1, False, "cuda", (False, False)),
+        (1440, False, 2, True, "cuda", (False, False)),
         (1440, False, 2, False, "jax", (False, False)),
-        (None, False, 2, False, "pallas", (False, True)),
+        (None, False, 2, False, "cuda", (False, True)),
     ],
 )
 def test_streamed_columns_reserve_workspace_and_preserve_other_paths(

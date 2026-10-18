@@ -24,11 +24,11 @@ from tomojax.alignment._results import record_reconstruction_info as _record_rec
 from tomojax.backends import estimate_views_per_batch_info
 from tomojax.backends.host_stream import host_source, should_stream
 from tomojax.core.backend_policy import normalize_projector_backend
+from tomojax.core.cuda_projector_resolver import resolve_cuda_callable
 from tomojax.core.devices import shared_devices
 from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.operator_norm import estimate_normal_norm
-from tomojax.core.pallas_resolver import resolve_pallas_callable
 from tomojax.core.projector import get_detector_grid_device
 from tomojax.recon.fista_tv import FistaConfig, fista_tv, huber_tv_lipschitz
 from tomojax.recon.fista_tv_core import (
@@ -137,16 +137,16 @@ def _resolve_reconstruction_projector_backend(
     except Exception:
         backend = "unknown"
     if backend != "gpu":
-        return "jax", f"pallas alignment reconstruction requires gpu backend; got {backend}"
-    support_fn, reason = resolve_pallas_callable(
-        "pallas_projector_sinogram_unsupported_reason",
-        missing_reason="pallas_sinogram_support_check_missing",
+        return "jax", f"cuda alignment reconstruction requires gpu backend; got {backend}"
+    support_fn, reason = resolve_cuda_callable(
+        "cuda_projector_sinogram_unsupported_reason",
+        missing_reason="cuda_sinogram_support_check_missing",
     )
     if support_fn is not None:
         try:
-            options_cls, options_reason = resolve_pallas_callable(
-                "PallasProjectorOptions",
-                missing_reason="pallas_projector_options_missing",
+            options_cls, options_reason = resolve_cuda_callable(
+                "CudaProjectorOptions",
+                missing_reason="cuda_projector_options_missing",
             )
             if options_cls is None:
                 reason = options_reason
@@ -167,7 +167,7 @@ def _resolve_reconstruction_projector_backend(
             reason = f"{type(exc).__name__}: {exc}"
     if reason:
         return "jax", reason
-    return "pallas", None
+    return "cuda", None
 
 
 def _is_oom_error_message(message: str) -> bool:
@@ -614,7 +614,7 @@ def _resolve_huber_fista_backend_plan(
     )
     detector_grid_folded_into_pose = False
     detector_grid_fold_reason = None
-    if actual_backend == "jax" and fallback_reason and requested_backend == "pallas":
+    if actual_backend == "jax" and fallback_reason and requested_backend == "cuda":
         T_folded = _fold_rigid_detector_grid_into_pose_stack(
             T_all,
             step.detector,
@@ -630,7 +630,7 @@ def _resolve_huber_fista_backend_plan(
                 det_grid=None,
                 gather_dtype=str(cfg.gather_dtype),
             )
-            if folded_backend == "pallas":
+            if folded_backend == "cuda":
                 return _HuberFistaBackendPlan(
                     T_all=T_folded,
                     requested_backend=requested_backend,
@@ -787,7 +787,7 @@ def _run_huber_fista_core_reconstruction(
     is_pose_adjusted = isinstance(step.recon_geometry, PoseAdjustedGeometry)
     if (
         is_pose_adjusted
-        and backend_plan.actual_backend == "pallas"
+        and backend_plan.actual_backend == "cuda"
         and getattr(cfg, "ray_integrator", "sampled") == "sampled"
     ):
         backend_plan = _HuberFistaBackendPlan(
@@ -817,7 +817,7 @@ def _run_huber_fista_core_reconstruction(
 
     det_grid_for_core = (
         None
-        if backend_plan.actual_backend == "pallas" or backend_plan.detector_grid_folded_into_pose
+        if backend_plan.actual_backend == "cuda" or backend_plan.detector_grid_folded_into_pose
         else step.det_grid
     )
     stream = should_stream(step.projections, reserve_bytes=6 * step.x.nbytes)

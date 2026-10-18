@@ -100,7 +100,7 @@ class MLEMConfig:
         Number of views processed together to bound temporary storage. Default is
         32.
     projector_backend : ProjectorBackend, optional
-        Execution backend: "auto", "jax" or "pallas". An explicit accelerator
+        Execution backend: "auto", "jax" or "cuda". An explicit accelerator
         request never silently falls back. Default is 'auto'.
     projector_model : ProjectorModel, optional
         Projection model: "auto", "ray" or "joseph". Auto selects Joseph unless an
@@ -451,7 +451,7 @@ def run_mlem(
             detector,
             projections,
             model=model,
-            backend="cuda" if backend == "pallas" else "jax",
+            backend=backend,
             poses=stack_view_poses(geometry, n),
             order=np.argsort(np.asarray(getattr(geometry, "angles", np.arange(n))), kind="stable"),
             subsets=subsets,

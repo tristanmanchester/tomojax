@@ -39,9 +39,9 @@ def problem(monkeypatch):
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 def test_exact_integral_and_adjoint_match_independent_matrix(problem, backend):
-    if backend == "pallas" and jax.default_backend() != "gpu":
+    if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("CUDA required")
     grid, detector, poses, volume, matrix, _ = problem
     project = jax.jit(lambda t, x: exact_forward(t, grid, detector, x, backend=backend))
@@ -97,9 +97,9 @@ def test_exact_pose_derivatives_match_independent_rigid_perturbations(problem):
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 def test_exact_weighted_normals_match_dense_pose_jacobian(problem, backend):
-    if backend == "pallas" and jax.default_backend() != "gpu":
+    if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("CUDA required")
     grid, detector, poses, volume, _, _ = problem
     directions = np.zeros((3, 5, 4, 4), np.float32)
@@ -148,9 +148,9 @@ def test_exact_integrator_rejects_complex_data_and_invalid_backend(problem):
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 def test_exact_fista_matches_dense_projected_steps(problem, backend):
-    if backend == "pallas" and jax.default_backend() != "gpu":
+    if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("CUDA required")
     from tomojax.recon.fista_tv_core import FistaCoreConfig, fista_tv_core_arrays
 
@@ -259,7 +259,7 @@ def test_public_exact_alignment_scores_its_actual_operator_and_resumes(problem, 
 
 @pytest.mark.numerical
 @pytest.mark.parametrize("axis", [0, 2])
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 def test_cardinal_right_cell_derivative(axis, backend):
     g = Grid(3, 3, 3, 0.5, 1.0, 2.0)
     d = Detector(3, 3, 0.5, 2.0)

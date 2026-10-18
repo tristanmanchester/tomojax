@@ -31,9 +31,9 @@ def scan(kind="fractional"):
 
 @pytest.mark.parametrize("kind", ["integer", "fractional", "outside", "one_row"])
 @pytest.mark.parametrize("depth", [1, 4, 20])
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 def test_host_slabs_match_full_physical_reconstruction(kind, depth, backend):
-    if backend == "pallas" and jax.default_backend() != "gpu":
+    if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
     grid, detector, geometry, data = scan(kind)
     reference = np.asarray(
@@ -290,9 +290,9 @@ def test_host_slabs_reject_invalid_configuration(field, value):
 
 
 @pytest.mark.parametrize("depth", [None, 1, 4, 20])
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 def test_host_slabs_reconstruct_laminography_like_fbp(depth, backend):
-    if backend == "pallas" and jax.default_backend() != "gpu":
+    if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
     grid, detector, geometry, data = scan()
     angles = np.linspace(0.0, 360.0, 5, endpoint=False) + 7.0
@@ -387,7 +387,7 @@ def test_host_slabs_recover_independent_gaussian_attenuation(length_scale):
 
 
 @pytest.mark.parametrize("input_on_host", [True, False])
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 @pytest.mark.parametrize(
     ("kind", "expected"),
     [
@@ -403,7 +403,7 @@ def test_fbp_only_hoists_rows_for_the_exact_builtin_parallel_geometry(
     """A custom parallel subclass may move z differently in each view."""
     import jax.numpy as jnp
 
-    if backend == "pallas" and jax.default_backend() != "gpu":
+    if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
     module = importlib.import_module("tomojax.recon.fbp")
     grid, detector, geometry, data = scan("integer" if kind == "integer" else "fractional")

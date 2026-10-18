@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from tomojax.geometry import Detector, Grid
 
 type ProjectorModel = Literal["auto", "joseph", "ray"]
-type ProjectorBackend = Literal["auto", "jax", "pallas"]
+type ProjectorBackend = Literal["auto", "jax", "cuda"]
 
 
 def resolve_projector(
@@ -39,23 +39,23 @@ def resolve_projector(
 ) -> tuple[str, str]:
     """Resolve ``auto`` choices; explicit choices must be supported, never replaced.
 
-    ``auto`` selects Joseph plane sampling with Pallas kernels on CUDA. Explicit
-    detector grids need the ray model, and Pallas needs CUDA and the canonical
+    ``auto`` selects Joseph plane sampling with CUDA kernels on CUDA. Explicit
+    detector grids need the ray model, and CUDA needs CUDA and the canonical
     detector grid.
     """
     if model not in {"auto", "joseph", "ray"}:
         raise ValueError(f"{context}: projector_model must be 'auto', 'joseph' or 'ray'")
-    if backend not in {"auto", "jax", "pallas"}:
-        raise ValueError(f"{context}: projector_backend must be 'auto', 'jax' or 'pallas'")
+    if backend not in {"auto", "jax", "cuda"}:
+        raise ValueError(f"{context}: projector_backend must be 'auto', 'jax' or 'cuda'")
     if model == "auto":
         model = "ray" if det_grid is not None else "joseph"
     if model == "joseph" and det_grid is not None:
         raise ValueError(f"{context}: Joseph sampling requires the canonical detector grid")
     cuda = cuda_backend()
     if backend == "auto":
-        backend = "pallas" if cuda and det_grid is None else "jax"
-    if backend == "pallas" and (not cuda or det_grid is not None):
-        raise ValueError(f"{context}: Pallas requires CUDA and the canonical detector grid")
+        backend = "cuda" if cuda and det_grid is None else "jax"
+    if backend == "cuda" and (not cuda or det_grid is not None):
+        raise ValueError(f"{context}: CUDA requires CUDA and the canonical detector grid")
     return model, backend
 
 
@@ -72,7 +72,7 @@ def resolve_geometry_projector(
 
     Cone beams use Joseph plane sampling (``model`` must be ``auto`` or
     ``joseph``) and the canonical detector grid; ``detector`` is the one the
-    solver projects onto (a binned one, say). Their ``pallas`` backend is
+    solver projects onto (a binned one, say). Their ``cuda`` backend is
     the CUDA cone kernels, chosen by ``auto`` when CuPy and a CUDA device are
     available.
     """
@@ -85,12 +85,12 @@ def resolve_geometry_projector(
             f"{context}: cone-beam geometry uses Joseph plane sampling; "
             "projector_model must be 'auto' or 'joseph'"
         )
-    if backend not in {"auto", "jax", "pallas"}:
-        raise ValueError(f"{context}: projector_backend must be 'auto', 'jax' or 'pallas'")
+    if backend not in {"auto", "jax", "cuda"}:
+        raise ValueError(f"{context}: projector_backend must be 'auto', 'jax' or 'cuda'")
     cuda = use_cuda_cone()
     if backend == "auto":
-        backend = "pallas" if cuda else "jax"
-    if backend == "pallas" and not cuda:
+        backend = "cuda" if cuda else "jax"
+    if backend == "cuda" and not cuda:
         raise ValueError(f"{context}: the CUDA cone kernels need CuPy on a CUDA device")
     cone = cone_model(geometry, detector)
     assert cone is not None

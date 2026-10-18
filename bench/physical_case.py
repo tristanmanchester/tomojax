@@ -1,6 +1,6 @@
 """Solver-independent fixture containers for isolated comparison workers.
 
-Loading a scan must not initialize a competing solver or import JAX/Pallas in
+Loading a scan must not initialize a competing solver or import JAX/Cuda in
 an ASTRA/TIGRE worker. Only NumPy and lightweight physical metadata belong here.
 """
 

@@ -100,7 +100,7 @@ def _seed(scan: Scan, calibration: np.ndarray, align: Callable, grid: Grid | Non
         iterations=1,
         outer_iterations=1,
         tv_weight=0,
-        projector_backend="pallas",
+        projector_backend="cuda",
         ray_integrator="joseph",
     )
     seeded = align(scan.selected(calibration), mode="full", levels=(1,), config=cfg)

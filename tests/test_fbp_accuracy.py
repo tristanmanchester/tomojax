@@ -58,7 +58,7 @@ def test_fbp_reconstructs_analytic_gaussian_in_physical_units(spacing: float, nu
     "backend",
     [
         "jax",
-        pytest.param("pallas", marks=pytest.mark.gpu),
+        pytest.param("cuda", marks=pytest.mark.gpu),
         pytest.param("helper", marks=pytest.mark.gpu),
     ],
 )
@@ -107,12 +107,12 @@ def test_fbp_keeps_filtered_tails_at_shifted_volume_corners(
             expected += view_weight * weight * np.sum(kernel * row, axis=-1)
     assert outside_samples > expected.size
     if backend == "helper":
-        from tomojax.recon.api import run_parallel_fbp_direct_pallas
+        from tomojax.recon.api import run_parallel_fbp_direct_cuda
 
         poses = np.array([geometry.pose_for_view(i) for i in range(len(angles))], np.float32)
         poses[:, 0, 3] = 2.2
         actual = np.asarray(
-            run_parallel_fbp_direct_pallas(poses, data, grid=grid, detector=detector, filter="ramp")
+            run_parallel_fbp_direct_cuda(poses, data, grid=grid, detector=detector, filter="ramp")
         )[:, :, 0] * (np.pi / len(angles))
     else:
         actual = np.asarray(
@@ -121,7 +121,7 @@ def test_fbp_keeps_filtered_tails_at_shifted_volume_corners(
     np.testing.assert_allclose(actual, expected, rtol=4e-5, atol=2e-6)
 
 
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 @pytest.mark.parametrize("batch", [1, 3, 8])
 @pytest.mark.parametrize("separable", [True, False])
 def test_streamed_fbp_matches_whole_stack_with_partial_batches(
@@ -132,7 +132,7 @@ def test_streamed_fbp_matches_whole_stack_with_partial_batches(
     # check-public-imports: allow-private
     from tomojax.recon.fbp import _run_fbp_streamed
 
-    if backend == "pallas" and jax.default_backend() != "gpu":
+    if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("requires a CUDA GPU")
     grid = Grid(7, 6, 3, 0.8, 1.2, 0.7)
     detector = Detector(13, 9, 0.9, 1.0, (0.17, 0.21))
@@ -281,7 +281,7 @@ def test_fixed_rows_preserve_a_common_nonbinary_translation() -> None:
         np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-6)
 
 
-def test_explicit_pallas_fbp_requires_cuda_arrays() -> None:
+def test_explicit_cuda_fbp_requires_cuda_arrays() -> None:
     import jax
 
     if jax.default_backend() == "gpu":
@@ -295,7 +295,7 @@ def test_explicit_pallas_fbp_requires_cuda_arrays() -> None:
             grid,
             detector,
             jnp.ones((2, 3, 6)),
-            config=FBPConfig(backprojector="pallas"),
+            config=FBPConfig(backprojector="cuda"),
         )
 
 
@@ -329,7 +329,7 @@ def test_fbp_tiles_recover_independent_off_axis_gaussian(vz, n, nz, nu):
     assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.008
 
 
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 @pytest.mark.parametrize("z_mode", ["integer", "fixed", "general"])
 @pytest.mark.parametrize("shape", [(10, 6), (11, 7)])
 @pytest.mark.parametrize("padding", [(1024, 0), (0, 1024), (512, 512)])
@@ -340,7 +340,7 @@ def test_fbp_interpolation_preserves_physical_fractions_under_zero_padding(
     import jax
     from scipy.ndimage import map_coordinates
 
-    if backend == "pallas" and jax.default_backend() != "gpu":
+    if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
     nu, nv = shape
     # Dyadic grid positions isolate interpolation from coordinate-grid rounding.

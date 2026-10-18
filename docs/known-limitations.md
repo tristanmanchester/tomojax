@@ -111,7 +111,7 @@ listed with how to check a result in the
   measurements of a truncated object. With explicit detector coordinates
   (`det_grid`), FBP uses the ray-model adjoint, uniform `pi / n` weights and the
   supplied detector support.
-- Pallas projector paths are optional accelerator backends. Parallel FBP selects
+- CUDA projector paths are optional accelerator backends. Parallel FBP selects
   CUDA C kernels automatically on CUDA; `FBPConfig(backprojector="jax")` selects JAX.
   Reference/JAX paths and independent analytic data both validate correctness.
 - `fourier_reconstruct` is an opt-in, non-differentiable Fourier-slice inverse
@@ -136,12 +136,10 @@ listed with how to check a result in the
   views, which the default pose parameters leave out, so the solve may place
   it a voxel or so from another estimate of the same scan (four of the 42
   FIPS walnuts, by 1 to 1.25 voxels); the images are as sharp either way.
-- Pallas currently uses JAX's deprecated Triton backend. JAX 0.11.2 is tested
-  on CPU and an Ada CUDA GPU, with the dependency constrained below 0.12.
-  Migration and additional GPU coverage are still required before widening
-  compatibility. See the [test environment](measurements.md#test-environment).
-- `just accelerator-smoke` verifies the Pallas projector in interpret mode on
-  CPU and attempts a real Pallas run only when JAX reports a non-CPU backend.
+- CUDA projectors compile C kernels with NVRTC. Install `tomojax[cuda12]` and
+  a working NVIDIA driver; see [installation](installation.md).
+- `just accelerator-smoke` verifies the portable reference mode on
+  CPU and attempts CUDA kernels when JAX reports a CUDA backend.
   Real CUDA coverage therefore depends on the host CUDA/JAX installation, not
   only this package. Use `just accelerator-smoke-cuda` on CUDA hosts that must
   prove the real accelerator path is available. `just test-cuda` additionally
