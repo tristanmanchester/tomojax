@@ -98,10 +98,8 @@ def test_fixed_geometry_core_respects_explicit_jax_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(jax, "default_backend", lambda: "gpu")
-    grid = Grid(nx=64, ny=64, nz=64, vx=1.0, vy=1.0, vz=1.0)
     detector = Detector(nu=64, nv=64, du=1.0, dv=1.0)
     pose_stack = jnp.broadcast_to(jnp.eye(4, dtype=jnp.float32), (16, 4, 4))
-    volume = jnp.ones((64, 64, 64), dtype=jnp.float32)
     cfg = FistaCoreConfig(forward_projector="jax", backprojector="jax")
     canonical_det_grid = get_detector_grid_device(detector)
 
@@ -109,9 +107,6 @@ def test_fixed_geometry_core_respects_explicit_jax_backend(
         effective_fista_core_backend(
             cfg,
             T_all=pose_stack,
-            grid=grid,
-            detector=detector,
-            volume=volume,
             det_grid=None,
         )
         == "jax"
@@ -120,9 +115,6 @@ def test_fixed_geometry_core_respects_explicit_jax_backend(
         effective_fista_core_backend(
             cfg,
             T_all=pose_stack,
-            grid=grid,
-            detector=detector,
-            volume=volume,
             det_grid=canonical_det_grid,
         )
         == "jax"
@@ -131,9 +123,6 @@ def test_fixed_geometry_core_respects_explicit_jax_backend(
         effective_fista_core_backend(
             cfg,
             T_all=pose_stack,
-            grid=grid,
-            detector=detector,
-            volume=volume,
             det_grid=(canonical_det_grid[0] + jnp.float32(0.25), canonical_det_grid[1]),
         )
         == "jax"
@@ -149,19 +138,13 @@ def test_fixed_geometry_auto_backend_stays_jax_when_fused_pallas_is_missing(
         "resolve_pallas_callable",
         lambda _name, *, missing_reason: (None, missing_reason),
     )
-    grid = Grid(nx=64, ny=64, nz=64, vx=1.0, vy=1.0, vz=1.0)
-    detector = Detector(nu=64, nv=64, du=1.0, dv=1.0)
     pose_stack = jnp.broadcast_to(jnp.eye(4, dtype=jnp.float32), (16, 4, 4))
-    volume = jnp.ones((64, 64, 64), dtype=jnp.float32)
     cfg = FistaCoreConfig(forward_projector="jax", backprojector="jax")
 
     assert (
         effective_fista_core_backend(
             cfg,
             T_all=pose_stack,
-            grid=grid,
-            detector=detector,
-            volume=volume,
             det_grid=None,
         )
         == "jax"

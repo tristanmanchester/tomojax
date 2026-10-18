@@ -332,7 +332,8 @@ def reconstruct(
     scans, the guarded laminography workflow for oblique scans, matched CGLS
     for segmented cone geometry, and FBP/FDK otherwise.
     An explicitly unrecorded axial centre may be inferred; oblique auto
-    may infer setup, support and a binned grid. The scan and ``info["automatic"]``
+    may infer setup and support on a coarse grid before native refinement.
+    The scan and ``info["automatic"]``
     record those choices and limitations. Explicit methods bypass this policy.
 
     ``fbp``
@@ -1023,8 +1024,6 @@ def _run_alignment(
     scan: Scan, plan: AlignmentPlan, checkpoint: str | PathLike[str] | None
 ) -> tuple[Geometry, np.ndarray | jax.Array, np.ndarray, str, dict[str, object]]:
     """Calibrated geometry, volume, ``(views, 6)`` poses, their frame and record of ``plan``."""
-    import jax.numpy as jnp
-
     from tomojax.alignment.api import (
         AlignmentRun,
         align_multires,
@@ -1034,7 +1033,9 @@ def _run_alignment(
     )
 
     geometry, grid, detector = scan.geometry, scan.grid, scan.detector
-    projections = jnp.asarray(scan.projections, jnp.float32)
+    # Keep host scans there through the resolution pyramid; each solver owns
+    # its placement and may stream a native stack larger than device memory.
+    projections = cast("Any", scan.projections)
     cfg: AlignConfig | None = plan.config
     record: dict[str, object] = {"mode": plan.mode, "levels": list(plan.levels)}
     record["config"] = plan.config

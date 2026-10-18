@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 import logging
 import math
 import time
@@ -646,6 +647,13 @@ def _run_alignment_step(
     return pose_params_out, motion_coeffs_out, gauge_stats, total_loss, rel_impr, stat
 
 
+@partial(jax.jit, static_argnames=("nonnegative",))
+def _joint_trial_volume(volume, increment, scale, *, nonnegative):
+    """Create one candidate buffer, without full-volume scale or clipping temporaries."""
+    candidate = volume + scale * increment
+    return jnp.maximum(candidate, 0) if nonnegative else candidate
+
+
 def _run_coupled_alignment_step(
     *,
     cfg: AlignConfig,
@@ -667,9 +675,7 @@ def _run_coupled_alignment_step(
     volume_out, params_out, after, scale = vol, pose_params_in, before, 0.0
     if bool(result.finite) and math.isfinite(before):
         for trial_scale in (1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.015625):
-            trial_volume = vol + trial_scale * dx
-            if cfg.nonnegative:
-                trial_volume = jnp.maximum(trial_volume, 0)
+            trial_volume = _joint_trial_volume(vol, dx, trial_scale, nonnegative=cfg.nonnegative)
             trial_params, _ = constraints.apply_full_constraints_with_stats(
                 pose_params_in + trial_scale * dp
             )
@@ -683,6 +689,8 @@ def _run_coupled_alignment_step(
                     trial_scale,
                 )
                 break
+            # A rejected image must be released before allocating the next one.
+            del trial_volume
     _, gauge_stats = constraints.apply_full_constraints_with_stats(params_out)
     stat: OuterStat = {
         "objective_kind": "joint_volume_pose",

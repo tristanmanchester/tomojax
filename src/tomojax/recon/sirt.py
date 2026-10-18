@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.host_stream import host_source, should_stream
 from tomojax.core.validation import (
     validate_detector_grid,
     validate_grid,
@@ -21,7 +22,6 @@ from tomojax.core.validation import (
     validate_volume,
 )
 from tomojax.recon._axial_slabs import axial_slabs, independent_planes
-from tomojax.recon._host_stream import host_source, should_stream
 from tomojax.recon._projection import (
     ConeModel,
     ProjectorBackend,

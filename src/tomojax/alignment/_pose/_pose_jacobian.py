@@ -14,6 +14,7 @@ import jax.numpy as jnp
 from tomojax.alignment._geometry.parametrizations import apply_pose_update
 from tomojax.core.backend_policy import cuda_backend
 from tomojax.core.cone import cone_pose_columns, cone_project, frame_coefficients, use_cuda_cone
+from tomojax.core.joseph import plane_coefficients, plane_pose_columns
 from tomojax.core.projector import forward_project_view_T
 
 from ._pose_context import _PoseObjectiveContext
@@ -130,6 +131,36 @@ def _difference_steps(grid: Grid, fraction: float, width: int) -> jax.Array:
     return jnp.asarray([displacement / radius] * 3 + [displacement] * (width - 3), jnp.float32)
 
 
+def _parallel_autodiff_columns(
+    params, nominal, volume, target, weight, indices, *, grid, detector, det_grid, options
+):
+    """Share a physical ray traversal among the active coefficient tangents.
+
+    Mapping the complete projector's JVP launches a separate ray traversal for
+    every pose coordinate. Only the small coefficient map needs that transform;
+    the ray kernel can accumulate all its directions from each voxel sample.
+    """
+
+    def coefficients(p):
+        pose = apply_pose_update(nominal, p, translation_frame=options.translation_frame)
+        return plane_coefficients(pose[None], grid, detector, det_grid)[0]
+
+    coeff = coefficients(params)
+    directions = jnp.eye(params.size, dtype=params.dtype)[indices]
+    tangent = jax.vmap(lambda d: jax.jvp(coefficients, (params,), (d,))[1])(directions)
+
+    images = plane_pose_columns(
+        coeff[None],
+        volume,
+        tangent[None],
+        grid,
+        detector,
+        backend="pallas",
+        interpolation="cubic" if options.integrator == "joseph_cubic" else "linear",
+    )[0].reshape(1 + len(indices), -1)
+    return weight.ravel() * (images[0] - target.ravel()), weight.ravel() * images[1:]
+
+
 def pose_prediction_and_columns(
     p5_i,
     t_nom_i,
@@ -157,6 +188,19 @@ def pose_prediction_and_columns(
 
     joseph = options.integrator.startswith("joseph")
     central = options.jacobian == "central"
+    if joseph and not central and not options.cone_beam and cuda_backend():
+        return _parallel_autodiff_columns(
+            p5_i,
+            t_nom_i,
+            vol,
+            target,
+            weight,
+            indices,
+            grid=grid,
+            detector=detector,
+            det_grid=det_grid,
+            options=options,
+        )
     cone_backend = "jax" if options.cone_beam and not central else "pallas"
     if options.cone_beam and use_cuda_cone():
         if not central:
@@ -209,21 +253,29 @@ def pose_prediction_and_columns(
         pose = apply_pose_update(t_nom_i, p5, translation_frame=options.translation_frame)
         return _pred_flat(pose, vol)
 
-    def f(p5):
-        return weight.ravel() * (predict(p5) - target.ravel())
+    return _reference_columns(
+        predict, p5_i, target, weight, indices, difference_steps, central=central
+    )
 
-    prediction = f(p5_i)
-    directions = jnp.eye(width, dtype=jnp.float32)[indices]
+
+def _reference_columns(predict, params, target, weight, indices, steps, *, central):
+    """Differentiate the physical prediction, weighting after finite differences."""
+
+    def residual(p):
+        return weight.ravel() * (predict(p) - target.ravel())
+
+    prediction = residual(params)
+    directions = jnp.eye(params.shape[-1], dtype=jnp.float32)[indices]
     if central:
 
         def column(direction, step):
             return (
                 weight.ravel()
-                * (predict(p5_i + step * direction) - predict(p5_i - step * direction))
+                * (predict(params + step * direction) - predict(params - step * direction))
                 / (2 * step)
             )
 
-        columns = jax.vmap(column)(directions, difference_steps)
+        columns = jax.vmap(column)(directions, steps)
     else:
-        columns = jax.vmap(lambda d: jax.jvp(f, (p5_i,), (d,))[1])(directions)
+        columns = jax.vmap(lambda d: jax.jvp(residual, (params,), (d,))[1])(directions)
     return prediction, columns

@@ -9,6 +9,17 @@ import pytest
 
 import tomojax as tj
 import tomojax.backends
+from tomojax.core.host_stream import should_stream
+
+
+def test_measurement_placement_reserves_solver_workspace(monkeypatch):
+    data = np.ones((4, 4, 4), np.float32)
+    monkeypatch.setattr(jax, "default_backend", lambda: "gpu")
+    monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: 1024)
+    assert not should_stream(data)
+    assert should_stream(data, reserve_bytes=512)
+    assert should_stream(data, reserve_bytes=2048)
+    assert not should_stream(jax.device_put(data), reserve_bytes=2048)
 
 
 def _scan(kind, nz=19):

@@ -105,14 +105,14 @@ class CoupledArrays(NamedTuple):
     counts: jax.Array | None = None
 
 
-def _regularisation(x: jax.Array, *, spec: CoupledSpec) -> jax.Array:
+def volume_regularisation(x: jax.Array, *, spec: CoupledSpec) -> jax.Array:
     if spec.tv_weight == 0:
         return jnp.float32(0)
     config = FistaCoreConfig(regulariser=spec.regulariser, huber_delta=spec.huber_delta)
     return spec.tv_weight * regulariser_value_arrays(x, config)
 
 
-def _smoothness(p: jax.Array, *, weights: jax.Array) -> jax.Array:
+def pose_smoothness(p: jax.Array, *, weights: jax.Array) -> jax.Array:
     """The weighted squared second differences of the poses along the views."""
     d2 = p[:-2] - 2 * p[1:-1] + p[2:]
     return jnp.sum(jnp.square(d2 * weights))
@@ -203,7 +203,13 @@ def _pose_gram(ops: _BatchOps, n_views: int, width: int, indices: jax.Array) -> 
     )
 
 
-def _projectors(
+def _finish_adjoint(value, masked, initial, accumulate):
+    """Mask only the new transpose contribution, never the existing sum."""
+    value = masked(value)
+    return value if accumulate is None or initial is not None else accumulate + value
+
+
+def physical_projectors(
     spec: CoupledSpec, arrays: CoupledArrays, masked: Callable
 ) -> tuple[Callable, Callable]:
     """Own the unchanged physical forward/transpose pair for a compiled objective."""
@@ -245,15 +251,23 @@ def _projectors(
             t,
         )
 
-    def adjoint(t, y, frames=None):
+    def adjoint(t, y, frames=None, accumulate=None):
+        # With no support multiplication the physical kernel can own the
+        # accumulator, avoiding a second full volume for each view batch.
+        initial = accumulate if arrays.mask.ndim == 0 else None
+
+        finish = partial(_finish_adjoint, masked=masked, initial=initial, accumulate=accumulate)
+
         if spec.jacobian.cone_beam:
             assert frames is not None
             coeff = frame_coefficients(t, frames, spec.grid, spec.detector)
-            return masked(
-                cone_backproject(y, coeff, spec.grid, spec.detector, backend=cone_backend)
+            return finish(
+                cone_backproject(
+                    y, coeff, spec.grid, spec.detector, backend=cone_backend, accumulate=initial
+                )
             )
         if joseph is not None:
-            return masked(
+            return finish(
                 sum_backproject_planes(
                     plane_coefficients(t, spec.grid, spec.detector, arrays.det_grid),
                     y,
@@ -261,12 +275,14 @@ def _projectors(
                     spec.detector,
                     backend=backend,
                     interpolation=joseph,
+                    accumulate=initial,
                 )
             )
         if spec.jacobian.integrator == "exact":
-            return masked(
-                exact_adjoint(t, spec.grid, spec.detector, y, backend=backend, det_grid=det_grid)
+            value = exact_adjoint(
+                t, spec.grid, spec.detector, y, backend=backend, det_grid=det_grid
             )
+            return _finish_adjoint(value, masked, None, accumulate)
 
         # Accumulate one volume, never a volume stack per view.
         def add(x, pair):
@@ -281,16 +297,15 @@ def _projectors(
                 unroll=spec.jacobian.unroll,
             ), None
 
-        return masked(
-            jax.lax.scan(
-                add, jnp.zeros((spec.grid.nx, spec.grid.ny, spec.grid.nz), jnp.float32), (t, y)
-            )[0]
-        )
+        value = jax.lax.scan(
+            add, jnp.zeros((spec.grid.nx, spec.grid.ny, spec.grid.nz), jnp.float32), (t, y)
+        )[0]
+        return _finish_adjoint(value, masked, None, accumulate)
 
     return forward, adjoint
 
 
-def _filtered_operators(spec, arrays, forward, adjoint, columns):
+def filtered_operators(spec, arrays, forward, adjoint, columns):
     if spec.refinement is None:
         return arrays, forward, adjoint, columns
     # Filtering commutes with the scalar uniform loss weight used by this
@@ -311,7 +326,7 @@ def _filtered_operators(spec, arrays, forward, adjoint, columns):
     return (
         arrays._replace(projections=filtered(arrays.projections)),
         lambda t, x, frames=None: filtered(forward(t, x, frames)),
-        lambda t, y, frames=None: adjoint(t, filtered(y), frames),
+        lambda t, y, frames=None, accumulate=None: adjoint(t, filtered(y), frames, accumulate),
         filtered_columns,
     )
 
@@ -350,16 +365,16 @@ def _build_program(
         options=spec.jacobian,
         column_indices=spec.active_columns,
     )
-    regularisation = partial(_regularisation, spec=spec)
-    smoothness = partial(_smoothness, weights=arrays.smoothness)
+    regularisation = partial(volume_regularisation, spec=spec)
+    smoothness = partial(pose_smoothness, weights=arrays.smoothness)
 
     def poses(p):
         return apply_pose_updates(
             arrays.poses, p, translation_frame=spec.jacobian.translation_frame
         )
 
-    raw_forward, raw_adjoint = _projectors(spec, arrays, masked)
-    arrays, forward, adjoint, predict_columns = _filtered_operators(
+    raw_forward, raw_adjoint = physical_projectors(spec, arrays, masked)
+    arrays, forward, adjoint, predict_columns = filtered_operators(
         spec, arrays, raw_forward, raw_adjoint, predict_columns
     )
 
@@ -433,7 +448,7 @@ def _build_program(
 
         def transpose(start, valid, y, out):
             y = batch_weights(start) * y * valid[:, None, None]
-            return out + adjoint(take(t, start), y, batch_frames(start))
+            return adjoint(take(t, start), y, batch_frames(start), accumulate=out)
 
         def pose_forward(start, cols, dp):
             return jnp.einsum(

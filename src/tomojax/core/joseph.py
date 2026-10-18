@@ -225,6 +225,42 @@ def sum_backproject_planes(
     raise ValueError("Plane projection backend must be 'jax' or 'pallas'")
 
 
+def plane_pose_columns(
+    coefficients: jax.Array,
+    volume: jax.Array,
+    tangent: jax.Array,
+    grid: Grid,
+    detector: Detector,
+    *,
+    backend: str,
+    interpolation: str = "linear",
+) -> jax.Array:
+    """Values and directional derivatives, shaped ``(views, 1 + directions, nv, nu)``.
+
+    ``tangent`` holds ``(views, directions, 14)`` coefficient derivatives.
+    CUDA shares each voxel sample among all directions in one ray traversal.
+    """
+    if backend == "pallas":
+        from ._cuda_joseph import cuda_gather_available
+        from ._cuda_joseph_columns import pose_columns_cuda
+
+        if cuda_gather_available():
+            return pose_columns_cuda(
+                coefficients, volume, tangent, grid, detector, interpolation=interpolation
+            )
+
+    def project(cf: jax.Array) -> jax.Array:
+        return forward_project_planes(
+            cf, volume, grid, detector, backend=backend, interpolation=interpolation
+        )
+
+    value = project(coefficients)
+    columns = jax.vmap(
+        lambda dc: jax.jvp(project, (coefficients,), (dc,))[1], in_axes=1, out_axes=1
+    )(tangent)
+    return jnp.concatenate((value[:, None], columns), axis=1)
+
+
 def plane_l2_value_and_grad(
     coefficients: jax.Array,
     volume: jax.Array,

@@ -14,6 +14,14 @@ import numpy as np
 
 from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.host_stream import (
+    host_buffer,
+    host_source,
+    read_block,
+    read_views,
+    should_stream,
+    write_block,
+)
 from tomojax.core.projector import (
     forward_project_view_T,
     get_detector_grid_device,
@@ -39,14 +47,6 @@ from tomojax.recon._projection import (
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
 from ._data_prox import weighted_l2_conjugate
 from ._host_arrays import validate_host_views
-from ._host_stream import (
-    host_buffer,
-    host_source,
-    read_block,
-    read_views,
-    should_stream,
-    write_block,
-)
 from ._solver_validation import validate_spdhg_config, validate_spdhg_weights
 from ._spdhg_steps import SPDHGStepSizes, resolve_spdhg_step_sizes
 from ._tv_ops import (

@@ -147,3 +147,49 @@ def test_recipe_declines_unresolved_axis_only_without_supplied_geometry(
     if declined:
         reason = "search boundary" if failure == "boundary" else "depth parallax"
         assert work is scan and reason in region["reason"]
+
+
+@pytest.mark.parametrize("nu", [320, 322, 323])
+def test_automatic_binning_is_only_an_initializer(monkeypatch, nu):
+    grid = tj.Grid(4, 5, 6, 2, 3, 4, vol_center=(0.2, -0.1, 0.7))
+    detector = tj.Detector(nu, 7, 0.8, 1.1, (0.13, -0.21))
+    native_grid = tj.Grid(8, 10, 12, 1, 1.5, 2, vol_center=grid.vol_center)
+    geometry = tj.LaminographyGeometry(native_grid, detector, [0, 90, 180], tilt_deg=30.9)
+    scan = tj.Scan(np.ones((3, 7, nu), np.float32), geometry)
+    initial = np.full((4, 5, 6), 0.2, np.float32)
+    seed = np.zeros((3, 6), np.float32)
+    seed[:, 3] = [0.1, 0.2, -0.3]
+
+    def calibrate(working, *_):
+        d = replace(working.detector, center=(working.detector.center[0] + 0.7, -0.6))
+        g = automatic.RotationAxisGeometry(grid, d, working.angles, (0, 0.5, np.sqrt(0.75)))
+        return replace(working, geometry=g).with_poses(seed), {"status": "broad_uncertain"}, {}
+
+    monkeypatch.setattr(automatic, "_seed", calibrate)
+    monkeypatch.setattr(automatic, "_select_motion", lambda work, *args: (work, {}))
+
+    def refine(g, out_grid, det, projections, *, config, init_x, init_pose_params):
+        assert projections is scan.projections
+        assert (out_grid.nx, out_grid.ny, out_grid.nz) == (8, 10, 12)
+        np.testing.assert_allclose((out_grid.vx, out_grid.vy, out_grid.vz), (1, 1.5, 2))
+        np.testing.assert_allclose(out_grid.vol_center, grid.vol_center)
+        assert det.nu == nu and det.nv == 7
+        np.testing.assert_allclose(det.center, (0.83, -0.6 if nu == 320 else -0.05))
+        np.testing.assert_allclose(g.axis_unit_lab, (0, 0.5, np.sqrt(0.75)))
+        assert config.gn_coupling == "joint" and not config.seed_translations
+        np.testing.assert_allclose(init_x, np.full((8, 10, 12), 0.2), atol=1e-7)
+        np.testing.assert_array_equal(init_pose_params, seed)
+        return init_x + 0.01, seed + 0.001, {"completed_outer_iterations": 2}
+
+    monkeypatch.setattr(automatic, "align_arrays", refine)
+    result = automatic.reconstruct_laminography(
+        scan,
+        align=lambda *args, **kwargs: pytest.fail("unexpected alignment facade call"),
+        reconstruct=lambda s, *a, **kw: tj.Reconstruction(initial, s, "fista", {}),
+    )
+    assert result.scan.projections is scan.projections
+    assert result.volume.shape == (8, 10, 12)
+    assert result.info["automatic"]["detector_binning"] == 1
+    assert result.info["automatic"]["setup_binning"] == (1 if nu == 320 else 2)
+    np.testing.assert_array_equal(result.scan.poses, seed + 0.001)
+    assert result.method == "joint_volume_pose"

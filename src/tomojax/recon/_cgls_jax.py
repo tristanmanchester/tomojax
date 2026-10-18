@@ -13,6 +13,7 @@ import numpy as np
 
 from tomojax.core.devices import ViewSplit, refuse_streaming, view_split
 from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.host_stream import host_source, should_stream
 from tomojax.core.validation import (
     validate_detector_grid,
     validate_grid,
@@ -20,7 +21,6 @@ from tomojax.core.validation import (
     validate_projection_stack,
     validate_volume,
 )
-from tomojax.recon._host_stream import host_source, should_stream
 from tomojax.recon._projection import (
     ConeModel,
     normal_equation_operators,

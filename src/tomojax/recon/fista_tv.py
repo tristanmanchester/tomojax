@@ -13,6 +13,7 @@ import numpy as np
 from tomojax.core.devices import ViewSplit, as_devices, refuse_streaming, view_split
 from tomojax.core.geometry.cone import is_cone_beam, require_parallel_beam
 from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.host_stream import host_source, should_stream
 from tomojax.core.operator_norm import estimate_normal_norm
 from tomojax.core.projector import (
     RAY_INTEGRATORS,
@@ -39,7 +40,6 @@ from ._fista_initialization import (
     validate_initialization,
 )
 from ._fista_owned import FistaScanState, run_owned_fista, use_owned_fista
-from ._host_stream import host_source, should_stream
 from ._projection import (
     ConeModel,
     ProjectorBackend,

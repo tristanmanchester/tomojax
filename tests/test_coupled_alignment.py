@@ -10,7 +10,13 @@ import numpy as np
 import pytest
 
 # check-public-imports: allow-private
-from tomojax.alignment._pose import _coupled_objective, _coupled_program
+from tomojax.alignment._pose import (
+    _coupled_host,
+    _coupled_host_linear,
+    _coupled_objective,
+    _coupled_program,
+    _pose_steps,
+)
 
 # check-public-imports: allow-private
 from tomojax.alignment._pose._coupled_linear import solve_coupled_normal
@@ -350,6 +356,17 @@ def test_coupled_proposal_must_be_scored_with_its_volume_update():
     assert 10 + delta[0] > 0  # joint trial is feasible for a nonnegative volume
 
 
+@pytest.mark.parametrize("nonnegative", [False, True])
+def test_joint_trial_preserves_the_image_and_direction_for_backtracking(nonnegative):
+    x, dx = jnp.arange(12).reshape(2, 2, 3).astype(jnp.float32), jnp.full((2, 2, 3), -3.0)
+    for scale in (1.0, 0.5):
+        expected = np.asarray(x) - 3 * scale
+        actual = _pose_steps._joint_trial_volume(x, dx, scale, nonnegative=nonnegative)
+        np.testing.assert_array_equal(actual, np.maximum(expected, 0) if nonnegative else expected)
+    np.testing.assert_array_equal(x, np.arange(12).reshape(2, 2, 3))
+    np.testing.assert_array_equal(dx, -3.0)
+
+
 @pytest.mark.numerical
 def test_coupled_solve_reports_actual_residual_at_budget_and_handles_zero_rhs():
     matrix = jnp.diag(jnp.array([1.0, 3.0, 8.0, 15.0]))
@@ -473,6 +490,10 @@ def test_memory_check_compiles_the_update_unless_far_below_the_limit(monkeypatch
     stats = dict(bytes_limit=1000, bytes_in_use=100, largest_free_block_bytes=0)
     device = SimpleNamespace(platform="gpu", memory_stats=lambda: stats)
     assert coupled._free_device_memory(SimpleNamespace(devices=lambda: (device,))) == 900
+    with monkeypatch.context() as direct:
+        direct.setattr(device, "memory_stats", lambda: None)
+        direct.setattr("tomojax.backends.device_free_memory_bytes", lambda **_: 800)
+        assert coupled._free_device_memory(SimpleNamespace(devices=lambda: (device,))) == 800
     ctx = _small_coupled_context()
     assert coupled._pose_cache_limit() > 0  # the columns are cached
     volume, sinogram = 4 * 4**3, 4 * 3 * 4 * 5
@@ -484,7 +505,7 @@ def test_memory_check_compiles_the_update_unless_far_below_the_limit(monkeypatch
     lower = coupled.run_update.lower
 
     def counting_lower(*args, **kwargs):
-        lowered.append(True)
+        lowered.append((args[0], kwargs["spec"]))
         return lower(*args, **kwargs)
 
     monkeypatch.setattr(coupled.run_update, "lower", counting_lower)
@@ -507,9 +528,13 @@ def test_memory_check_compiles_the_update_unless_far_below_the_limit(monkeypatch
     # estimate, which a shortcut without the columns or a margin would miss.
     free(int(1.5 * estimate))
     assert 13 * volume + 3 * sinogram < 1.5 * estimate
-    with pytest.raises(coupled.AlignmentMemoryError, match="GiB is free") as error:
-        coupled.build_coupled_objective(ctx)
+    # The memory guard still refuses the oversized compiled update; the
+    # objective can now stage the same equations on the host instead.
+    assert_update_matches(coupled.build_coupled_objective(ctx))
     assert lowered
+    arrays, spec = lowered[-1]
+    with pytest.raises(coupled.AlignmentMemoryError, match="GiB is free") as error:
+        coupled._check_device_memory(arrays, spec)
     assert error.value.available == int(1.5 * estimate) and error.value.needed > 1.5 * estimate
     # When it fits, the update compiled for the check is the one used.
     monkeypatch.setattr(coupled, "_MEMORY_MARGIN", 1000)
@@ -624,3 +649,103 @@ def test_filtered_joint_increment_and_loss_match_dense_physical_model(solver, ba
         rtol=2e-5,
     )
     assert result.finite and result.relative_residual < 2e-5
+
+
+@pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
+@pytest.mark.parametrize("smooth", [0.0, 0.03])
+def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth):
+    from dataclasses import replace
+    from functools import partial
+
+    import tomojax as tj
+    from tomojax.alignment import AlignConfig
+    from tomojax.alignment.api import PWLSLossSpec
+
+    grid, det = tj.Grid(3, 2, 3, 0.8, 1.1, 0.7), tj.Detector(5, 4, 0.7, 0.9, (0.13, -0.21))
+    geometry = tj.LaminographyGeometry(grid, det, [13, 47, 103], tilt_deg=23)
+    x = (
+        jnp.asarray(np.random.default_rng(9).uniform(0.2, 1, (3, 2, 3)), jnp.float32)
+        .at[0, 0, 0]
+        .set(0)
+    )
+    cfg = AlignConfig(
+        gn_coupling="joint",
+        gn_joint_solver=solver,
+        ray_integrator="joseph",
+        projector_backend="pallas" if jax.default_backend() == "gpu" else "jax",
+        gather_dtype="fp32",
+        gn_joint_iterations=100,
+        gn_joint_rtol=1e-6,
+        gn_damping=0.2,
+        gn_volume_damping=0.2,
+        loss=PWLSLossSpec(a=0.3, b=0.8),
+        w_rot=smooth,
+        w_trans=smooth,
+    )
+    common = dict(
+        grid=grid,
+        detector=det,
+        projections=tj.project(geometry, x) * 0.9,
+        cfg=cfg,
+        n_views=3,
+        active_mask=jnp.asarray([1, 0, 1, 1, 1, 0], jnp.float32),
+    )
+    runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
+    ctx = _pose_objective_context(runtime=runtime, **common)
+    if smooth:
+        ctx = replace(ctx, volume_mask=jnp.ones_like(x).at[0, 0, 0].set(0))
+    else:
+        # Exercise implicit unit-support row sums even on this tiny CUDA grid.
+        monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
+    monkeypatch.setattr(_coupled_host, "_pass", partial(_coupled_host._pass, batch_size=2))
+    captured = []
+    monkeypatch.setattr(
+        _coupled_objective, "_check_device_memory", lambda a, s: captured.append((a, s))
+    )
+    objective = _coupled_objective.build_coupled_objective(ctx)
+    arrays, spec = captured[0]
+    p = jnp.zeros((3, 6), jnp.float32).at[:, 3].set(jnp.asarray([0.03, -0.01, 0.02]))
+    expected = objective.update(p, x)
+    update, loss = _coupled_host.build_host_objective(arrays, replace(spec, cache_columns=False))
+    actual = update(p, x)
+    assert actual.finite and expected.finite
+    for a, e in zip(actual.increment, expected.increment, strict=True):
+        np.testing.assert_allclose(a, e, rtol=3e-3, atol=3e-5)
+    np.testing.assert_allclose(loss(p, x), objective.loss(p, x), rtol=2e-6)
+    assert actual.relative_residual < 2e-5
+
+
+@pytest.mark.parametrize("budget", [2, 100])
+def test_host_cg_matches_dense_system_without_modifying_inputs(budget):
+    rng = np.random.default_rng(50)
+    design = rng.normal(size=(31, 21)).astype(np.float32)
+    matrix = design.T @ design + np.eye(21, dtype=np.float32)
+    b = rng.normal(size=21).astype(np.float32)
+    rhs = (b[:12].reshape(2, 3, 2), b[12:].reshape(3, 3))
+    diagonal = 1 / np.diag(matrix)
+    inverse = (diagonal[:12].reshape(2, 3, 2), diagonal[12:].reshape(3, 3))
+    if budget == 100:
+        rhs = tuple(np.asfortranarray(a) for a in rhs)
+    saved = b.copy()
+    saved_rhs = tuple(a.copy() for a in rhs)
+
+    def normal(pair):
+        out = matrix @ np.concatenate([a.ravel() for a in pair])
+        out.setflags(write=False)
+        return out[:12].reshape(2, 3, 2), out[12:].reshape(3, 3)
+
+    result = _coupled_host_linear.solve_host_normal(
+        normal, rhs, inverse, max_iters=budget, rtol=1e-5
+    )
+    x = np.concatenate([a.ravel() for a in result.increment])
+    np.testing.assert_array_equal(saved, b)
+    for a, original in zip(rhs, saved_rhs, strict=True):
+        np.testing.assert_array_equal(a, original)
+    assert result.finite
+    expected_residual = np.linalg.norm(matrix @ x - b) / np.linalg.norm(b)
+    np.testing.assert_allclose(result.relative_residual, expected_residual, rtol=0.01, atol=2e-7)
+    if budget == 100:
+        np.testing.assert_allclose(x, np.linalg.solve(matrix, b), rtol=1e-3, atol=1e-5)
+    else:
+        assert result.iterations == budget
+        assert result.relative_residual > 1e-5

@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core.backend_policy import normalize_projector_backend
+from tomojax.core.host_stream import read_views
 from tomojax.core.pallas_resolver import resolve_pallas_callable, resolve_pallas_module
 from tomojax.core.projector import (
     RAY_INTEGRATORS,
@@ -57,6 +58,8 @@ class FistaCoreConfig:
     compute_iteration_loss: bool = True
     compute_final_data_loss: bool = True
     compute_final_regulariser_value: bool = True
+    # Projections are a live core.host_stream source key, not a device stack.
+    stream_projections: bool = False
 
     def __post_init__(self) -> None:
         if not math.isfinite(self.lipschitz) or self.lipschitz <= 0:
@@ -118,6 +121,9 @@ def fista_tv_core_arrays(
     count suitable for differentiating tiny bilevel reference problems.
     ``L_override`` must be positive and bound the full objective gradient.
     Nonzero regularization requires Huber-TV; nonsmooth TV belongs to ``fista_tv``.
+    With ``cfg.stream_projections``, ``projections`` is a registered host-source
+    key. Its lifetime must include completion of all returned device arrays;
+    the reconstruction remains differentiable in the volume, not the host data.
     If final data diagnostics are disabled, ``data_loss`` is the last evaluated
     data term, or zero when none was computed; it never includes regularization.
     """
@@ -126,13 +132,10 @@ def fista_tv_core_arrays(
     x_init = _project_constraints(jnp.asarray(x0, dtype=jnp.float32), cfg)
     L = jnp.asarray(cfg.lipschitz if L_override is None else L_override, dtype=jnp.float32)
     lam = jnp.asarray(cfg.tv_weight, dtype=jnp.float32)
-    weights = _view_weights(projections, view_weights)
+    weights = _view_weights(int(T_all.shape[0]), view_weights)
     data_forward_projector, data_backprojector = _resolve_fista_core_data_projectors(
         cfg,
         T_all=T_all,
-        grid=grid,
-        detector=detector,
-        volume=x_init,
         det_grid=det_grid,
     )
 
@@ -146,6 +149,7 @@ def fista_tv_core_arrays(
             volume=_apply_support(x, cfg.support),
             det_grid=det_grid,
             projections=projections,
+            stream_projections=cfg.stream_projections,
             weights=weights,
             checkpoint_projector=cfg.checkpoint_projector,
             projector_unroll=cfg.projector_unroll,
@@ -168,6 +172,7 @@ def fista_tv_core_arrays(
             volume=_apply_support(x, cfg.support),
             det_grid=det_grid,
             projections=projections,
+            stream_projections=cfg.stream_projections,
             weights=weights,
             checkpoint_projector=cfg.checkpoint_projector,
             projector_unroll=cfg.projector_unroll,
@@ -183,9 +188,7 @@ def fista_tv_core_arrays(
             sampled_step_size=sampled_step,
             compute_loss=bool(cfg.compute_iteration_loss or cfg.compute_final_data_loss),
         )
-        if cfg.support is not None:
-            grad = grad * jnp.asarray(cfg.support, dtype=grad.dtype)
-        return loss, grad
+        return loss, _apply_support(grad, cfg.support)
 
     def body(
         carry: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray],
@@ -247,9 +250,7 @@ def projection_loss_arrays(
 ) -> jnp.ndarray:
     """Return the weighted projection data term for differentiable recon callers."""
     masked = _apply_support(jnp.asarray(volume, dtype=jnp.float32), cfg.support)
-    forward_projector, _ = _resolve_fista_core_data_projectors(
-        cfg, T_all=T_all, grid=grid, detector=detector, volume=masked, det_grid=det_grid
-    )
+    forward_projector, _ = _resolve_fista_core_data_projectors(cfg, T_all=T_all, det_grid=det_grid)
     return _projection_loss(
         T_all=T_all,
         grid=grid,
@@ -257,7 +258,8 @@ def projection_loss_arrays(
         volume=masked,
         det_grid=det_grid,
         projections=projections,
-        weights=_view_weights(projections, view_weights),
+        weights=_view_weights(int(T_all.shape[0]), view_weights),
+        stream_projections=cfg.stream_projections,
         checkpoint_projector=bool(cfg.checkpoint_projector),
         projector_unroll=int(cfg.projector_unroll),
         gather_dtype=str(cfg.gather_dtype),
@@ -463,6 +465,7 @@ def _projection_loss(
     pallas_unroll: int | None,
     ray_integrator: str = "sampled",
     sampled_step_size: float | None = None,
+    stream_projections: bool = False,
 ) -> jnp.ndarray:
     n_views = int(T_all.shape[0])
     if n_views == 0:
@@ -476,7 +479,11 @@ def _projection_loss(
     ) -> tuple[jnp.ndarray, None]:
         start_shifted, valid_mask, _view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice_in_dim(T_all, start_shifted, b)
-        y_chunk = jax.lax.dynamic_slice_in_dim(projections, start_shifted, b)
+        y_chunk = (
+            read_views(projections, start_shifted, (b, detector.nv, detector.nu))
+            if stream_projections
+            else jax.lax.dynamic_slice_in_dim(projections, start_shifted, b)
+        )
         w_chunk = jax.lax.dynamic_slice_in_dim(weights, start_shifted, b)
         pred = _project_chunk(
             T_chunk=T_chunk,
@@ -507,10 +514,9 @@ def _projection_loss(
 
 
 def _view_weights(
-    projections: jnp.ndarray,
+    n_views: int,
     view_weights: jnp.ndarray | None,
 ) -> jnp.ndarray:
-    n_views = int(projections.shape[0])
     weights = (
         jnp.ones((n_views,), dtype=jnp.float32)
         if view_weights is None
@@ -544,13 +550,19 @@ def _projection_loss_and_explicit_grad(
     ray_integrator: str = "sampled",
     sampled_step_size: float | None = None,
     compute_loss: bool = True,
+    stream_projections: bool = False,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     if sampled_step_size is None and forward_projector == "pallas":
         sampled_step_size = float(grid.vy) * float(pallas_step_size_scale)
     n_views = int(T_all.shape[0])
     if n_views == 0:
         return jnp.asarray(0.0, dtype=jnp.float32), jnp.zeros_like(volume)
-    if ray_integrator == "sampled" and forward_projector == "pallas" and backprojector == "pallas":
+    if (
+        ray_integrator == "sampled"
+        and forward_projector == "pallas"
+        and backprojector == "pallas"
+        and not stream_projections
+    ):
         if _fixed_geometry_is_available(T_all, det_grid):
             loss_grad_fn, fallback_reason = resolve_pallas_callable(
                 "forward_project_loss_and_grad_T_pallas",
@@ -582,7 +594,6 @@ def _projection_loss_and_explicit_grad(
         backprojector = "jax"
     b = _chunk_size(n_views, views_per_batch)
     num_chunks = (n_views + b - 1) // b
-    backproject_fn = _resolve_sum_backproject_views(backprojector)
 
     def body(
         carry: tuple[jnp.ndarray, jnp.ndarray],
@@ -591,7 +602,11 @@ def _projection_loss_and_explicit_grad(
         loss_acc, grad_acc = carry
         start_shifted, valid_mask, _view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice_in_dim(T_all, start_shifted, b)
-        y_chunk = jax.lax.dynamic_slice_in_dim(projections, start_shifted, b)
+        y_chunk = (
+            read_views(projections, start_shifted, (b, detector.nv, detector.nu))
+            if stream_projections
+            else jax.lax.dynamic_slice_in_dim(projections, start_shifted, b)
+        )
         w_chunk = jax.lax.dynamic_slice_in_dim(weights, start_shifted, b)
         valid = valid_mask[:, None, None]
         pred = _project_chunk(
@@ -618,40 +633,20 @@ def _projection_loss_and_explicit_grad(
             if compute_loss
             else jnp.asarray(0.0, dtype=jnp.float32)
         )
-        if ray_integrator in {"joseph", "joseph_cubic"}:
-            from tomojax.core.joseph import plane_coefficients, sum_backproject_planes
-
-            # The matched plane transpose, accumulated in place; the ray
-            # model's transpose would not be this forward model's adjoint.
-            grad_acc = sum_backproject_planes(
-                plane_coefficients(T_chunk, grid, detector, det_grid),
-                grad_resid,
-                grid,
-                detector,
-                backend=backprojector,
-                interpolation="cubic" if ray_integrator == "joseph_cubic" else "linear",
-                accumulate=grad_acc,
-            )
-            return (loss_acc + loss_batch, grad_acc), None
-        if ray_integrator == "exact":
-            from tomojax.core.trilinear import exact_adjoint
-
-            grad_batch = exact_adjoint(
-                T_chunk, grid, detector, grad_resid, backend=backprojector, det_grid=det_grid
-            )
-        else:
-            grad_batch = backproject_fn(
-                T_chunk,
-                grid,
-                detector,
-                grad_resid,
-                # Transpose the requested sampling, including JAX fallback.
-                step_size=sampled_step_size,
-                unroll=1 if backprojector == "pallas" else int(projector_unroll),
-                gather_dtype=gather_dtype,
-                det_grid=det_grid,
-            )
-        return (loss_acc + loss_batch, grad_acc + grad_batch), None
+        grad_acc = _accumulate_backprojection(
+            T_chunk,
+            grad_resid,
+            grad_acc,
+            grid=grid,
+            detector=detector,
+            det_grid=det_grid,
+            backprojector=backprojector,
+            ray_integrator=ray_integrator,
+            sampled_step_size=sampled_step_size,
+            projector_unroll=projector_unroll,
+            gather_dtype=gather_dtype,
+        )
+        return (loss_acc + loss_batch, grad_acc), None
 
     init = (jnp.asarray(0.0, dtype=jnp.float32), jnp.zeros_like(volume))
     (loss, grad), _ = jax.lax.scan(
@@ -660,6 +655,54 @@ def _projection_loss_and_explicit_grad(
         jnp.arange(num_chunks, dtype=jnp.int32),
     )
     return loss, grad
+
+
+def _accumulate_backprojection(
+    poses: jnp.ndarray,
+    residual: jnp.ndarray,
+    accumulate: jnp.ndarray,
+    *,
+    grid: Grid,
+    detector: Detector,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+    backprojector: str,
+    ray_integrator: str,
+    sampled_step_size: float | None,
+    projector_unroll: int,
+    gather_dtype: str,
+) -> jnp.ndarray:
+    """Accumulate the selected forward model's exact transpose, not a surrogate."""
+    if ray_integrator in {"joseph", "joseph_cubic"}:
+        from tomojax.core.joseph import plane_coefficients, sum_backproject_planes
+
+        return sum_backproject_planes(
+            plane_coefficients(poses, grid, detector, det_grid),
+            residual,
+            grid,
+            detector,
+            backend=backprojector,
+            interpolation="cubic" if ray_integrator == "joseph_cubic" else "linear",
+            accumulate=accumulate,
+        )
+    if ray_integrator == "exact":
+        from tomojax.core.trilinear import exact_adjoint
+
+        batch = exact_adjoint(
+            poses, grid, detector, residual, backend=backprojector, det_grid=det_grid
+        )
+    else:
+        batch = _resolve_sum_backproject_views(backprojector)(
+            poses,
+            grid,
+            detector,
+            residual,
+            # Transpose the requested sampling, including JAX fallback.
+            step_size=sampled_step_size,
+            unroll=1 if backprojector == "pallas" else int(projector_unroll),
+            gather_dtype=gather_dtype,
+            det_grid=det_grid,
+        )
+    return accumulate + batch
 
 
 def _resolve_sum_backproject_views(backprojector: str) -> Callable[..., jnp.ndarray]:
@@ -690,18 +733,12 @@ def effective_fista_core_backend(
     cfg: FistaCoreConfig,
     *,
     T_all: jnp.ndarray,
-    grid: Grid,
-    detector: Detector,
-    volume: jnp.ndarray,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
 ) -> str:
     """Return the effective data projector backend selected by the core."""
     forward_projector, backprojector = _resolve_fista_core_data_projectors(
         cfg,
         T_all=T_all,
-        grid=grid,
-        detector=detector,
-        volume=volume,
         det_grid=det_grid,
     )
     return "pallas" if forward_projector == "pallas" and backprojector == "pallas" else "jax"
@@ -711,13 +748,9 @@ def _resolve_fista_core_data_projectors(
     cfg: FistaCoreConfig,
     *,
     T_all: jnp.ndarray,
-    grid: Grid,
-    detector: Detector,
-    volume: jnp.ndarray,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
 ) -> tuple[str, str]:
     # Explicit backend requests must not change with benchmark dimensions.
-    del grid, detector, volume
     if cfg.ray_integrator in {"exact", "joseph", "joseph_cubic"}:
         # Exact and Joseph CUDA operators consume dynamic poses directly. They expose a
         # matched explicit adjoint, not automatic higher derivatives; use the

@@ -178,11 +178,13 @@ tomojax align scan.nxs -o aligned.nxs
 
 Missing axis metadata triggers a data-driven signed-axis search, not an assumed
 tilt. Automatic unposed laminography uses a bounded working detector, excludes
-internal validation views from setup and motion fitting, and selects a region
+internal validation views from candidate setup and motion fitting, and selects a region
 before reconstructing all input views. Resolved regions compare the motion seed
 with joint refinement; broad regions compare it with zero motion. A candidate
 must improve both ordinary and high-pass held projection error to be retained.
-The returned scan carries the actual geometry, poses and working resolution.
+The selected image and poses then initialize joint refinement on all native
+detector samples at the input voxel pitch, retaining the selected physical support.
+The image itself must still fit the device; a broad unresolved support can exceed capacity.
 
 Inspect the saved automatic outcome: an unresolved support or unsupported setup
 is reported as `limited`, with reasons. Held consistency does not establish

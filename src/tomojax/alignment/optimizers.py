@@ -151,7 +151,14 @@ class _LbfgsKernels:
             )
             return optax.apply_updates(z, updates), next_state
 
-        return cls(solver.init, evaluate, update)
+        def init(z: jnp.ndarray) -> object:
+            # Optax's initial diagnostic scalars are weakly typed, unlike its updates.
+            # Match updated state types so the first line search does not retrace.
+            return jax.tree.map(
+                lambda value: jnp.asarray(value, dtype=jnp.asarray(value).dtype), solver.init(z)
+            )
+
+        return cls(init, evaluate, update)
 
 
 @dataclass(frozen=True)
@@ -470,9 +477,13 @@ def _run_lbfgs_optax_loop(  # noqa: PLR0912, PLR0915
         for iteration in range(int(cfg.maxiter)):
             if success:
                 break
-            value, grad = kernels.evaluate(z, opt_state, objective_args)
-            value_f = float(value)
-            grad_norm = float(jnp.linalg.norm(grad))
+            if iteration == 0:
+                value, grad = initial_value_jax, initial_grad
+                value_f, grad_norm = initial_value, initial_grad_norm
+            else:
+                value, grad = kernels.evaluate(z, opt_state, objective_args)
+                value_f = float(value)
+                grad_norm = float(jnp.linalg.norm(grad))
             if not math.isfinite(value_f) or not math.isfinite(grad_norm):
                 return LbfgsLoopResult(
                     z=z,
