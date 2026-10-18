@@ -13,7 +13,7 @@ import numpy as np
 
 from tomojax.core.devices import ViewSplit, refuse_streaming, view_split
 from tomojax.core.geometry.views import stack_view_poses
-from tomojax.core.host_stream import host_source, should_stream
+from tomojax.core.host_stream import host_source
 from tomojax.core.validation import (
     validate_detector_grid,
     validate_grid,

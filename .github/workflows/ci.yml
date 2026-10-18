@@ -1,11 +1,12 @@
 name: CI
 
+# Pre-release, `just ci` and `just test-cuda` run locally before each push;
+# this runs on demand (`gh workflow run CI`) and on release tags. Restore
+# push and pull_request triggers when the project takes outside changes.
 on:
-  pull_request:
-  push:
-    branches: [main]
-    tags: ["v*"]
   workflow_dispatch:
+  push:
+    tags: ["v*"]
 
 permissions:
   contents: read
