@@ -534,30 +534,34 @@ __device__ __forceinline__ void add4(float* p0, float x0, float* p1, float x1, f
 }
 
 // Non-separable views, rays sampled along axis a: grid (c tiles, b tiles, planes k).
-// Each block owns a PB x PC tile of plane k. Each of its views' footprints on the tile is
-// found by a thread of its own, and the views' runs of VRUN rows of one detector column
-// are then walked as one list, without a barrier per view. Each run's crossings of plane k
+// Each block owns contiguous plane tiles. Each view's footprint on their union is
+// found by a thread of its own, and the views' runs of rows of one detector column
+// are then walked as one list, without a barrier per view. Each run's crossings of a plane
 // step monotonically through the tile, so its thread keeps the 2 x 2 cells around the
 // current crossing in registers and adds them to the tile only as it moves on. img is
 // path-weighted; nviews <= VMAX.
 #define VMAX 32
-template <int PC, int RHS = 1, bool PACKED = false>
+template <int PC, int RHS = 1, bool PACKED = false, int PLANES = 1>
 __device__ __forceinline__ void plane_tile(
     const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
     const float* __restrict__ img, float* __restrict__ vol, int nx, int ny, int nz, int nu, int nv,
     float* __restrict__ vol1 = nullptr, const float* __restrict__ img1 = nullptr,
     int z_start = 0, int z_capacity = 0)
 {
-    __shared__ float acc[RHS][PB + 2][PC + 3];  // a cell of padding round the tile: no bounds tests
+    // Two planes share ray arithmetic and pixel loads. Their 15-row tiles
+    // retain the single-plane shared-memory footprint and occupancy.
+    constexpr int ROWS = PLANES == 1 ? PB : 15;
+    constexpr int RUN = PLANES == 1 ? VRUN : 4;
+    __shared__ float acc[RHS][PLANES][ROWS + 2][PC + 3];  // a cell of padding round the tile: no bounds tests
     __shared__ float cf[VMAX][12];  // source, detector origin, u and v axes
     __shared__ int foot[VMAX][4];   // first column and row, rows, runs per column
     __shared__ int first[VMAX + 1]; // each view's first run in the block's list
     int b = a == 0 ? 1 : 0, cc = a == 2 ? 1 : 2;
-    int nb = SEL(b, nx, ny, nz), nc = SEL(cc, nx, ny, nz);
-    int c0 = blockIdx.x * PC, b0 = blockIdx.y * PB, k = blockIdx.z + (PACKED ? z_start : 0);
-    int nb0 = min(PB, nb - b0), nc0 = min(PC, nc - c0);
+    int na = SEL(a, nx, ny, nz), nb = SEL(b, nx, ny, nz), nc = SEL(cc, nx, ny, nz);
+    int c0 = blockIdx.x * PC, b0 = blockIdx.y * ROWS, k = blockIdx.z * PLANES + (PACKED ? z_start : 0);
+    int nb0 = min(ROWS, nb - b0), nc0 = min(PC, nc - c0);
     if (!any_view(coeff, axis_box, nviews, a, false)) return;
-    for (int i = threadIdx.x; i < RHS * (PB + 2) * (PC + 3); i += blockDim.x) (&acc[0][0][0])[i] = 0.f;
+    for (int i = threadIdx.x; i < RHS * PLANES * (ROWS + 2) * (PC + 3); i += blockDim.x) (&acc[0][0][0][0])[i] = 0.f;
     int t = threadIdx.x, runs_here = 0;
     if (t < nviews) {
         const float* c = coeff + (long)t * NC;
@@ -572,11 +576,11 @@ __device__ __forceinline__ void plane_tile(
             float umin = 1e30f, umax = -1e30f, vmin = 1e30f, vmax = -1e30f;
             float denmin = 1e30f, denmax = -1e30f;
             #pragma unroll
-            for (int q = 0; q < 4; ++q) {
+            for (int q = 0; q < 4 * PLANES; ++q) {
                 // Corners of the tile's part inside the volume (see sep_adjoint).
                 float pb = q & 1 ? (float)(b0 + nb0) : (float)(b0 - 1);
                 float pc = q & 2 ? (float)(c0 + nc0) : (float)(c0 - 1);
-                float pk = (float)k;
+                float pk = PLANES == 1 ? (float)k : (float)min(k + q / 4, na - 1);
                 float d0 = (a == 0 ? pk : pb) - c[0];
                 float d1 = (a == 1 ? pk : (a == 0 ? pb : pc)) - c[1];
                 float d2 = (a == 2 ? pk : pc) - c[2];
@@ -604,7 +608,7 @@ __device__ __forceinline__ void plane_tile(
             }
             int wu = uhi - ulo + 1, wv = vhi - vlo + 1;
             if (wu > 0 && wv > 0) {
-                int runs = (wv + VRUN - 1) / VRUN;
+                int runs = (wv + RUN - 1) / RUN;
                 runs_here = wu * runs;
                 foot[t][0] = ulo; foot[t][1] = vlo; foot[t][2] = wv; foot[t][3] = runs;
             }
@@ -625,7 +629,7 @@ __device__ __forceinline__ void plane_tile(
     if (total == 0) return;
     int w = 0, cw = -1, ulo = 0, vlo = 0, wv = 0, runs = 1;
     const float* image = img;
-    float Sa = 0.f, Sb = 0.f, Sc = 0.f, DVa = 0.f, DVb = 0.f, DVc = 0.f, K = 0.f;
+    float Sa = 0.f, Sb = 0.f, Sc = 0.f, DVa = 0.f, DVb = 0.f, DVc = 0.f;
     for (int p = t; p < total; p += blockDim.x) {
         while (p >= first[w + 1]) ++w;
         const float* c = cf[w];
@@ -635,10 +639,9 @@ __device__ __forceinline__ void plane_tile(
             image = img + (long)w * nu * nv;
             Sa = c[0]; Sb = c[1]; Sc = c[2];
             DVa = c[9]; DVb = c[10]; DVc = c[11];
-            K = __fsub_rn((float)k, Sa);
         }
         int q = p - first[w];
-        int u = ulo + q / runs, v0 = vlo + VRUN * (q % runs), v1 = min(v0 + VRUN, vlo + wv);
+        int u = ulo + q / runs, v0 = vlo + RUN * (q % runs), v1 = min(v0 + RUN, vlo + wv);
         float fu = (float)u;
         // Keep the detector-column position, not position minus source: ray_of
         // adds the v displacement first, then subtracts the source.
@@ -647,79 +650,91 @@ __device__ __forceinline__ void plane_tile(
         float rc = __fmaf_rn(fu, c[8], c[5]);
         const float* col = image + (long)u * nv;
         const float* col1 = RHS == 2 ? img1 + ((long)w * nu + u) * nv : nullptr;
-        int cb = -100, ccj = -100;
-        float x00[RHS] = {}, x01[RHS] = {}, x10[RHS] = {}, x11[RHS] = {};
-        // Load the run's pixels together: one wait for memory instead of VRUN.
-        float values[RHS][VRUN];
+        // Load the run's pixels together: one wait for memory instead of RUN.
+        float values[RHS][RUN];
         #pragma unroll
-        for (int i = 0; i < VRUN; ++i) {
+        for (int i = 0; i < RUN; ++i) {
             values[0][i] = v0 + i < v1 ? __ldg(col + v0 + i) : 0.f;
             if (RHS == 2) values[1][i] = v0 + i < v1 ? __ldg(col1 + v0 + i) : 0.f;
         }
         // The run's crossings of plane k first, independent of each other, so their
         // divisions overlap; then their cells, in order.
-        float fbs[VRUN], fcs[VRUN];
+        float fbs[PLANES][RUN], fcs[PLANES][RUN];
         #pragma unroll
-        for (int i = 0; i < VRUN; ++i) {
+        for (int i = 0; i < RUN; ++i) {
             float fv = (float)(v0 + i);
             float r_a = __fsub_rn(__fmaf_rn(fv, DVa, ra), Sa);
             float r_b = __fsub_rn(__fmaf_rn(fv, DVb, rb), Sb);
             float r_c = __fsub_rn(__fmaf_rn(fv, DVc, rc), Sc);
             float aa = fabsf(r_a), ab = fabsf(r_b), ac = fabsf(r_c);
-            float t_ = __fmul_rn(K, __frcp_rn(r_a));
+            float inverse = __frcp_rn(r_a);
             bool hit = v0 + i < v1
                 && (a == 0 ? aa >= ab : aa > ab)
                 && (a == 2 ? aa > ac : aa >= ac);
-            fbs[i] = hit ? __fmaf_rn(t_, r_b, Sb) : -1e9f;  // off the tile: skipped below
-            fcs[i] = __fmaf_rn(t_, r_c, Sc);
+            #pragma unroll
+            for (int plane = 0; plane < PLANES; ++plane) {
+                // Preserve each plane's original FP32 crossing, not a recurrence.
+                float K = __fsub_rn((float)(k + plane), Sa);
+                float t_ = __fmul_rn(K, inverse);
+                fbs[plane][i] = hit && (PLANES == 1 || k + plane < na) ? __fmaf_rn(t_, r_b, Sb) : -1e9f;
+                fcs[plane][i] = __fmaf_rn(t_, r_c, Sc);
+            }
         }
         #pragma unroll
-        for (int i = 0; i < VRUN; ++i) {
-            float fb = fbs[i], fc = fcs[i];
-            float fb0 = floorf(fb), fc0 = floorf(fc);
-            int jb = (int)fb0 - b0, jc = (int)fc0 - c0;
-            if (jb < -1 || jb >= PB || jc < -1 || jc >= PC) continue;
-            float wb1 = fb - fb0, wc1 = fc - fc0, wb0 = 1.f - wb1, wc0 = 1.f - wc1;
-            if (jb != cb || jc != ccj) {
-                bool next = jb == cb && jc == ccj + 1;
+        for (int plane = 0; plane < PLANES; ++plane) {
+            int cb = -100, ccj = -100;
+            float x00[RHS] = {}, x01[RHS] = {}, x10[RHS] = {}, x11[RHS] = {};
+            #pragma unroll
+            for (int i = 0; i < RUN; ++i) {
+                float fb = fbs[plane][i], fc = fcs[plane][i];
+                float fb0 = floorf(fb), fc0 = floorf(fc);
+                int jb = (int)fb0 - b0, jc = (int)fc0 - c0;
+                if (jb < -1 || jb >= ROWS || jc < -1 || jc >= PC) continue;
+                float wb1 = fb - fb0, wc1 = fc - fc0, wb0 = 1.f - wb1, wc0 = 1.f - wc1;
+                if (jb != cb || jc != ccj) {
+                    bool next = jb == cb && jc == ccj + 1;
+                    #pragma unroll
+                    for (int r = 0; r < RHS; ++r) {
+                        float* cell = &acc[r][plane][cb + 1][ccj + 1];
+                        add4(cell, x00[r], cell + 1, next ? 0.f : x01[r],
+                             cell + (PC + 3), x10[r], cell + (PC + 4), next ? 0.f : x11[r]);
+                        x00[r] = next ? x01[r] : 0.f; x10[r] = next ? x11[r] : 0.f;
+                        x01[r] = x11[r] = 0.f;
+                    }
+                    cb = jb; ccj = jc;
+                }
                 #pragma unroll
                 for (int r = 0; r < RHS; ++r) {
-                    float* cell = &acc[r][cb + 1][ccj + 1];
-                    add4(cell, x00[r], cell + 1, next ? 0.f : x01[r],
-                         cell + (PC + 3), x10[r], cell + (PC + 4), next ? 0.f : x11[r]);
-                    x00[r] = next ? x01[r] : 0.f; x10[r] = next ? x11[r] : 0.f;
-                    x01[r] = x11[r] = 0.f;
+                    float value = values[r][i];
+                    x00[r] += value * wb0 * wc0; x01[r] += value * wb0 * wc1;
+                    x10[r] += value * wb1 * wc0; x11[r] += value * wb1 * wc1;
                 }
-                cb = jb; ccj = jc;
             }
-            #pragma unroll
-            for (int r = 0; r < RHS; ++r) {
-                float value = values[r][i];
-                x00[r] += value * wb0 * wc0; x01[r] += value * wb0 * wc1;
-                x10[r] += value * wb1 * wc0; x11[r] += value * wb1 * wc1;
-            }
-        }
-        if (cb > -100) {
-            #pragma unroll
-            for (int r = 0; r < RHS; ++r) {
-                float* cell = &acc[r][cb + 1][ccj + 1];
-                add4(cell, x00[r], cell + 1, x01[r], cell + (PC + 3), x10[r], cell + (PC + 4), x11[r]);
+            if (cb > -100) {
+                #pragma unroll
+                for (int r = 0; r < RHS; ++r) {
+                    float* cell = &acc[r][plane][cb + 1][ccj + 1];
+                    add4(cell, x00[r], cell + 1, x01[r], cell + (PC + 3), x10[r], cell + (PC + 4), x11[r]);
+                }
             }
         }
     }
     __syncthreads();
     long s0 = (long)ny * nz, s1 = nz;
     long sa = SEL(a, s0, s1, 1L), sb = SEL(b, s0, s1, 1L), sc = SEL(cc, s0, s1, 1L);
-    for (int i = threadIdx.x; i < PB * PC; i += blockDim.x) {
+    for (int i = threadIdx.x; i < ROWS * PC; i += blockDim.x) {
         int jb = i / PC, jc = i % PC;
         if (jb < nb0 && jc < nc0) {
-            // Packed axis-2 planes retain physical k for every ray calculation;
-            // only the final output address uses the bounded scratch layout.
-            long offset = PACKED
-                ? ((long)(b0 + jb) * z_capacity + blockIdx.z) * ny + c0 + jc
-                : (long)k * sa + (long)(b0 + jb) * sb + (long)(c0 + jc) * sc;
-            vol[offset] += acc[0][jb + 1][jc + 1];
-            if (RHS == 2) vol1[offset] += acc[1][jb + 1][jc + 1];
+            #pragma unroll
+            for (int plane = 0; plane < PLANES; ++plane) if (PLANES == 1 || k + plane < na) {
+                // Packed axis-2 planes retain physical k for every ray calculation;
+                // only the final output address uses the bounded scratch layout.
+                long offset = PACKED
+                    ? ((long)(b0 + jb) * z_capacity + blockIdx.z * PLANES + plane) * ny + c0 + jc
+                    : (long)(k + plane) * sa + (long)(b0 + jb) * sb + (long)(c0 + jc) * sc;
+                vol[offset] += acc[0][plane][jb + 1][jc + 1];
+                if (RHS == 2) vol1[offset] += acc[1][plane][jb + 1][jc + 1];
+            }
         }
     }
 }
@@ -728,7 +743,7 @@ extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint(
     const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
     const float* __restrict__ img, float* __restrict__ vol, int nx, int ny, int nz, int nu, int nv)
 {
-    plane_tile<32>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv);
+    plane_tile<32, 1, false, 2>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv);
 }
 
 // Wider contiguous-z tiles amortize footprints and tile boundaries; the strided
@@ -737,7 +752,7 @@ extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint_wide(
     const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
     const float* __restrict__ img, float* __restrict__ vol, int nx, int ny, int nz, int nu, int nv)
 {
-    plane_tile<64>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv);
+    plane_tile<64, 1, false, 2>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv);
 }
 
 // Independent physical z slabs, stored with contiguous y for axis-2 output.

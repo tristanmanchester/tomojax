@@ -146,6 +146,15 @@ def test_cuda_cone_dense_transpose_across_wide_contiguous_tiles(reverse_v):
 
 
 @pytest.mark.gpu
+def test_cuda_cone_dense_transpose_across_row_and_plane_tile_tails():
+    grid = Grid(17, 5, 7, 0.7, 1.1, 0.9, vol_center=(0.2, -0.1, 0.3))
+    detector = Detector(29, 17, 1.3, 0.8, center=(0.3, -0.2))
+    # Cross row-tile boundaries and odd plane tails on each dominant axis.
+    frames = [_frame(direction, 0.13) for direction in ((1, 0, 0.3), (0.2, 1, 0), (0.1, 0.2, 1))]
+    _check_dense_transpose(grid, detector, frames)
+
+
+@pytest.mark.gpu
 @pytest.mark.parametrize("tilt", [0.0, 20.0])
 def test_cuda_cone_cgls_recovers_an_image_across_wide_tiles(tilt):
     # A fixed-budget wide-grid image control, independent of the CUDA forward

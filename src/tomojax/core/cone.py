@@ -543,7 +543,7 @@ def _launch_adjoint(
                 wide = axis != 2 and grid.nz >= 128
                 tile_c = 64 if wide else 32
                 module.get_function("plane_adjoint_wide" if wide else "plane_adjoint")(
-                    (-(-nc // tile_c), -(-nb // 32), extent[axis]),
+                    (-(-nc // tile_c), -(-nb // 15), -(-extent[axis] // 2)),
                     (128,),
                     (*part, np.int32(axis), i_part, target, *dims),
                 )
