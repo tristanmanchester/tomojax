@@ -77,7 +77,11 @@ grid is `scan.grid.resampled((64, 64, 64))`, passed as `grid=` to reconstruction
 Use the **projection acquisition** (usually `.txrm`), not a reconstructed `.txm`
 volume or a single scout image. TomoJAX reads the embedded reference image,
 angles, detector calibration and source distances. Fractional per-view image
-shifts stay in the geometry rather than resampling the measured pixels. If no
+shifts stay in the geometry rather than resampling the measured pixels. For a
+separate reference image, pass `--flats reference_Front.xrm` or
+`load_frames("scan.txrm", flats="reference_Front.xrm", darks=0)`.
+If no flat is available, supply a measured `white_level=`; one is not inferred
+from the detector's bit depth. If no
 dark reference is stored, supply measured darks
 with `--darks` or `load_frames(..., darks=...)`; absent dark calibration is an
 error, not an assumed zero. The examples below explicitly choose zero for

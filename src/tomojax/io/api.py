@@ -2,6 +2,7 @@
 
 from tomojax.io._acquisition import read_acquisition
 from tomojax.io._angles import load_angles
+from tomojax.io._calibration import read_calibration_frames
 from tomojax.io._datasets import (
     LoadedNXTomo,
     LocatedFrames,
@@ -58,6 +59,7 @@ __all__ = [
     "normalize_json",
     "projection_stats",
     "read_acquisition",
+    "read_calibration_frames",
     "read_hdf5_array",
     "read_json_object",
     "read_tiff_frames",

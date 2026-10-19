@@ -9,7 +9,7 @@
     "tomojax.datasets": 13,
     "tomojax.geometry.api": 44,
     "tomojax.recon.api": 24,
-    "tomojax.io.api": 33,
+    "tomojax.io.api": 34,
     "tomojax.alignment.api": 78,
     "tomojax.datasets.api": 15
   },

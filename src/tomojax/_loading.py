@@ -379,8 +379,8 @@ def load_frames(
     recording inferred provenance; failed estimates require ``detector=``.
     Missing dark fields require ``darks=``; use ``darks=0`` only for already dark-corrected counts.
 
-    ``flats`` and ``darks`` (arrays, HDF5 stacks, TIFF files or folders, or one level for
-    every pixel), ``angles``, ``detector``, ``grid``, ``white_level`` and a
+    ``flats`` and ``darks`` (arrays, HDF5 stacks, TIFF files or folders, Zeiss XRM
+    images, or one level for every pixel), ``angles``, ``detector``, ``grid``, ``white_level`` and a
     whole ``geometry`` (of every sample view; then TIFFs need no ``angles``)
     replace what the file holds. HDF5 calibration paths use the same automatic
     dataset discovery as the input and stay lazy; every frame in their stack
@@ -578,11 +578,9 @@ def _count(n: int, noun: str) -> str:
 
 def _frames_of(value: np.ndarray | float | str | PathLike[str], name: str) -> Any:
     if isinstance(value, str | os.PathLike):
-        from tomojax.io.api import locate_frames, read_tiff_frames
+        from tomojax.io.api import read_calibration_frames
 
-        if Path(value).suffix.lower() in _HDF5:
-            return locate_frames(str(value)).stack
-        return read_tiff_frames(Path(value), lazy=True)
+        return read_calibration_frames(Path(value))
     frames = np.asarray(value)
     if frames.ndim == 2:
         frames = frames[None]
