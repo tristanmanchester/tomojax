@@ -58,8 +58,8 @@ volume.flush()
 
 For explicit slab-depth control, use `fdk_host` with
 `FDKHostConfig(slices_per_batch=...)`; by default slabs take about a third of
-the free GPU memory. FDK refuses multi-orbit
-`ConeSegments` scans; reconstruct those with an iterative method.
+the free GPU memory. FDK accepts per-view cone geometry, including
+`ConeSegments`; noncircular trajectories retain FDK's approximation.
 
 ### Parallel beam and laminography
 
@@ -109,7 +109,13 @@ computation when spare device memory permits. All writes finish before return;
 a failure can leave a partly written volume. A 1024³ laminography volume takes about
 [37 s on an 8 GB laptop GPU](measurements.md#scans-larger-than-the-gpu).
 
-### Stream raw axial frames
+### Stream raw frames
+
+For cone-beam FDK, `tj.reconstruct_slabs(frames, "fbp")` corrects only the
+detector-row band needed by each output slab, using bounded device batches.
+Neither the full corrected stack nor the whole output volume needs to fit in
+host memory. One corrected row band and any retained blocks must fit in host
+memory. Angular weights use the complete acquisition, not the row crop.
 
 For an unposed axial parallel scan, `tj.reconstruct_slabs` corrects raw rows
 and reconstructs them without storing the full corrected stack. Choose `"fbp"`,

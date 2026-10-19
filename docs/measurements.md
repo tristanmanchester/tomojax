@@ -28,14 +28,13 @@ repository; each result names the command, commit and date to rerun it.
 
 Use the same calibrated geometry and physical output grid for each library,
 and compare iterative methods at matched reconstruction error rather than a
-fixed iteration count. For Nikon seeds, no reference volume is available:
-report data residuals from one common calibrated ASTRA forward projector for
-all libraries, together with their volume differences. Compare iterative times
-at matched residual; compare FDK times with both diagnostics reported. Neither
-is a claim of physical accuracy on Nikon. Physical accuracy checks use the
-walnut reference and independent analytic phantoms. The Zeiss vendor comparison
-uses a fixed registered valid-data region and an intensity-affine fit, not an
-absolute-intensity truth volume.
+fixed iteration count. Nikon and Zeiss comparisons use data residuals from one
+common calibrated ASTRA forward projector for all libraries, together with
+volume differences. Compare iterative times at matched residual; compare FDK
+times with both diagnostics reported. Physical accuracy checks use the walnut
+reference and independent analytic phantoms. The Zeiss vendor comparison uses
+a fixed registered valid-data region and an intensity-affine fit as an image
+diagnostic, not as a truth volume or an acceptance threshold.
 
 ## Reconstruction against ASTRA
 
@@ -161,6 +160,100 @@ ASTRA's.
 way) in z-slabs in 8.0 s with the projections and volume in RAM, 11.1 s on the
 first call (2026-10-07, commit `95f0530`). ASTRA's `FDK_CUDA` took 20.3 s and
 TIGRE's `fdk` 30.7 s from arrays in RAM.
+
+### Full-view walnut SIRT
+
+Measured 2026-10-19 on `20f4a966` (TomoJAX), `9a743fc0` (ASTRA one orbit),
+`e280d938` (ASTRA three orbits) and `e3bc2f63` (TIGRE). Walnut 1 uses all
+1200 views of orbit 2 or all 3600 views of the three orbits, binned 2 × 2 onto
+a 486 × 384 detector, and a 501³ grid with 0.1 mm voxels. Load the projections
+with `bench/walnut.py`'s `load_orbits(walnut_path, [2], 1, binning=2)` or
+`load_orbits(walnut_path, [1, 2, 3], 1, binning=2)` and use
+`volume_geometry(10)` with `tj.Scan.from_astra`. The TomoJAX call is:
+
+```python
+from tomojax.recon import SIRTConfig
+
+result = tj.reconstruct(
+    scan, "sirt", iterations=12, warm_start=True,
+    config=SIRTConfig(lower_bound=0, subsets=1, acceleration=True),
+)
+volume = np.asarray(result.volume)
+```
+
+Each solve includes its library's FDK initializer. TomoJAX uses 12 iterations
+with `SIRTConfig(lower_bound=0, acceleration=True)`; ASTRA and TIGRE use 24
+nonnegative SIRT iterations. The one-orbit ASTRA call is `SIRT3D_CUDA`; the three-orbit
+call uses the same recurrence with ASTRA forward/backprojection in 512-view
+batches. Cold includes imports, loading and the first solve with fresh
+compilation caches; warm repeats the solve in that process. The filesystem
+cache is not cleared.
+
+| Orbits | Library | Cold / warm (s) | Common-projector relative residual | Full / walnut-support relative L2 error |
+|---|---|---:|---:|---:|
+| One | TomoJAX | 58.02 / 53.47 | 0.024742 | 0.106162 / 0.074939 |
+| One | ASTRA | 70.36 / 67.27 | 0.025998 | 0.109991 / 0.077235 |
+| One | TIGRE | 364.27 / 363.06 | 0.044170 | 0.142517 / 0.098411 |
+| Three | TomoJAX | 179.07 / 174.22 | 0.026222 | 0.067624 / 0.045780 |
+| Three | ASTRA | 237.79 / 234.35 | 0.027558 | 0.072746 / 0.049110 |
+| Three | TIGRE | 1171.20 / 1120.54 | 0.045232 | 0.113725 / 0.076657 |
+
+The residual uses one calibrated ASTRA forward projector for all three libraries.
+Both image errors use the authors' reference, without intensity fitting.
+
+### Full-view Nikon and Zeiss SIRT
+
+Measured 2026-10-19 on `272684c7` (TomoJAX and Zeiss ASTRA) and `35f4055f`
+(Nikon ASTRA). Nikon uses all 1571 views and a 500³ grid with 0.1880371266 mm
+voxels; Zeiss uses all 801 views and a 512³ grid with 0.0833853988647461 mm
+voxels. The input is
+`tj.load_frames(path, darks=0, grid=grid).corrected(binning=2)`, where `path`
+is the Nikon seeds XTekCT file or the Zeiss HDtomo `tomo-A.txrm` file and
+`grid` is `tj.Grid(n, n, n, pitch, pitch, pitch)` with those dimensions.
+Each solve starts from its library's FDK. TomoJAX uses the same 12-iteration
+accelerated SIRT call above; ASTRA uses 24 nonnegative iterations with its
+forward/backprojectors in 512-view batches.
+
+| Scan | Library | Cold / warm (s) | Common-projector relative residual | Volume difference to ASTRA |
+|---|---|---:|---:|---:|
+| Nikon | TomoJAX | 95.52 / 89.63 | 0.028788 | 0.013977 |
+| Nikon | ASTRA | 135.89 / 125.78 | 0.030057 | — |
+| Zeiss | TomoJAX | 43.86 / 36.15 | 0.187915 | 0.025439 |
+| Zeiss | ASTRA | 69.11 / 62.76 | 0.189497 | — |
+
+Cold includes imports, loading and the first host volume with fresh compilation
+caches; warm repeats the solve. Filesystem caches are not cleared. Loading took
+3.03 / 10.04 s for Nikon TomoJAX / ASTRA, and 4.99 / 5.77 s for Zeiss.
+The same calibrated ASTRA forward projector scores both libraries. Volume
+differences are full-volume relative L2, without intensity fitting. On the
+fixed Zeiss vendor region, intensity-affine NRMSE is 0.353989 for TomoJAX
+and 0.351702 for ASTRA; this is an image diagnostic, not an acceptance gate.
+
+### Full-view Nikon OSEM
+
+Measured 2026-10-19 on `44170fc0` (TomoJAX and TIGRE) and `20f4a966`
+(ASTRA). All 1571 views of the Nikon seeds scan use the same load call,
+2 × 2 detector binning and 500³ physical grid as above. Solve inputs are
+clipped at zero. The TomoJAX call is
+`tj.reconstruct(scan, "mlem", iterations=8, warm_start=True,
+config=MLEMConfig(subsets=4))`, with `MLEMConfig` from `tomojax.recon`.
+Each outer iteration visits four ordered subsets. TomoJAX and TIGRE start
+from FDK; ASTRA starts from a uniform positive volume. The ASTRA and TIGRE
+adapters apply ordered-subset updates using their forward and backprojectors.
+
+| Library | Outer iterations | Cold / warm (s) | Common-projector relative residual | Volume difference to ASTRA |
+|---|---:|---:|---:|---:|
+| TomoJAX | 8 | 100.71 / 94.96 | 0.026650 | 0.319973 |
+| ASTRA | 48 | 260.40 / 256.31 | 0.026732 | — |
+| TIGRE | 8 | 210.11 / 196.94 | 0.026848 | 0.313299 |
+
+Cold includes imports, loading and the first host volume with fresh compilation
+caches; warm repeats the solve in that process. The filesystem cache is not
+cleared. Loading took 3.48, 10.09 and 3.83 s respectively. Residuals use the
+same calibrated ASTRA forward projector and the original corrected data,
+including negative samples. Volume differences are full-volume relative L2,
+without intensity fitting. There is no physical truth volume for this scan;
+these are image diagnostics, not reconstruction errors.
 
 ## FIPS walnuts (real lab cone-beam CT)
 
@@ -340,7 +433,14 @@ All on the 8 GB laptop GPU:
 | SPDHG-TV, 3072 views, streamed, 192 iterations (one view block each) | 297 s, 4.3 GB peak, with its 3.2 GB dual in host memory; bitwise identical to the device-resident solver | 2026-10-06, `9d4c4d1` |
 | SIRT from raw frames with `tj.reconstruct_slabs`, the whole Diamond I12 scan below: 1801 views of 2160 × 2560 pixels (39.8 GB corrected), a 2560² × 2160 volume (56.6 GB) | 1436 s of solving, 1.41 GB peak GPU memory and 3.7 GB host memory; 1.13 times the per-voxel time of an 8-row reconstruction that fits | 2026-10-17, `440cc563` |
 | `tj.reconstruct` of 352 rows of the same scan, returned as one 9.23 GB array | 211 s, 0.78 GB peak GPU memory, 17 GB host memory; 1.04 times the per-voxel time of 8 rows | 2026-10-17, `440cc563` |
-| OSEM of the FIPS walnut at full resolution: all 3600 views of three orbits, a 1001³ volume, 4 subsets × 1 iteration from FDK | 278 s, 5.4 GB peak GPU memory, 26 GB host memory; 0.38 times the per-voxel time of the 501³ reconstruction that fits; errors against the authors' reference equal those of the earlier route to within 1e−4 | 2026-10-18, `9941c53f` |
+| OSEM of the FIPS walnut at full resolution: all 3600 views of 972 × 768 pixels, a 1001³ volume, 4 subsets × 1 iteration from FDK | First / repeat solve 289.61 / 288.80 s; imports, loading and first solve 297.41 s; peak GPU 4688 MiB, host 15.962 GB; full / walnut-support relative L2 error 0.124385 / 0.094026 | 2026-10-19, `508631fa` |
+
+The walnut call is `tj.reconstruct(scan, "mlem", warm_start=True,
+config=MLEMConfig(iterations=1, subsets=4))`, using all three corrected
+geometries, unbinned projections clipped at zero, and 0.05 mm voxels. The
+volume is scored at the published 0.1 mm voxel centres. The first call uses
+a fresh `TOMOJAX_JAX_CACHE_DIR` and `XLA_PYTHON_CLIENT_PREALLOCATE=false`;
+the repeat uses the same process after releasing the first volume.
 
 The Diamond rows use `SIRTConfig(iterations=3, subsets=15, lower_bound=0)`
 with `warm_start=True` (an FBP start) on frames from

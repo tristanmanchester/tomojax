@@ -41,7 +41,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     with _temporary_argv([f"tomojax {command}", *tail]):
         try:
             return int(run() or 0)
-        except _expected_errors() as exc:
+        except (OSError, ValueError, KeyError) as exc:
             print(f"tomojax {command}: error: {exc}", file=sys.stderr)
             return 1
 
@@ -72,12 +72,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _ = parser.add_argument("--version", action="store_true", help="Print the version and exit")
     return parser
-
-
-def _expected_errors() -> tuple[type[BaseException], ...]:
-    from tomojax.alignment.api import CheckpointError
-
-    return (OSError, ValueError, KeyError, CheckpointError)
 
 
 @contextmanager

@@ -257,3 +257,40 @@ def test_align_config_files_name_the_new_key_for_a_retired_one(
         _ = main(["align", "scan.nxs", "-o", str(tmp_path / "out.nxs"), "--config", str(config)])
     assert exc.value.code == 2
     assert capsys.readouterr().err.rstrip().endswith(f"was renamed '{new}'")
+
+
+def test_recon_parser_defers_loading_expert_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    import tomojax.cli.recon as recon_cli
+
+    calls = []
+
+    def settings() -> dict[str, object]:
+        calls.append(True)
+        return {"chunk_views": 8}
+
+    monkeypatch.setattr(recon_cli, "_settings", settings)
+    parser = recon_cli.build_parser()
+    parser.parse_args(["scan.nxs", "-o", "recon.nxs"])
+    parser.format_help()
+    assert not calls
+    for _ in range(2):
+        with pytest.raises(SystemExit, match="0"):
+            parser.parse_args(["--config-keys"])
+    assert calls == [True]
+
+
+def test_recon_help_does_not_import_jax() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from tomojax.cli.main import main; "
+            "import atexit; atexit.register(lambda: print('JAX_IMPORTED', 'jax' in sys.modules)); "
+            "main(['recon', '--help'])",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "JAX_IMPORTED False" in result.stdout

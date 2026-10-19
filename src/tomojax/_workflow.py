@@ -515,8 +515,6 @@ def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstructio
         scan, method=method, reasons=reasons
     )
     result = reconstruct(scan, method, **options)
-    if result.info.get("backend") == "numpy":
-        reasons.append("CUDA Fourier is not active; NumPy execution cannot promise GPU throughput.")
     automatic = {
         "method": method,
         "status": "limited" if reasons else "ok",
@@ -578,7 +576,7 @@ def reconstruct_slabs(
     warm_start: bool | None = None,
     epsilon: float = 1e-6,
 ) -> Iterator[Iterator[tuple[slice, Reconstruction]]]:
-    """Correct raw frames and reconstruct bounded axial slabs.
+    """Correct raw frames and reconstruct bounded z slabs.
 
     Use ``with reconstruct_slabs(frames, "fbp", ...) as slabs:`` and iterate
     over ``(z_slice, reconstruction)``. The slice indexes the requested output
@@ -587,7 +585,7 @@ def reconstruct_slabs(
     Volumes are owned float32 host arrays. Results remain valid after advancing
     or closing the iterator; collecting them retains their volume and projections.
 
-    This supports unposed axial parallel beams and whole-row line-integral
+    This supports cone-beam FDK, unposed axial parallel beams and whole-row line-integral
     corrections such as Stripes, not Paganin or view rejection. SIRT/OSEM also
     require matching detector and voxel planes; ``warm_start=True`` uses FBP.
     Method configurations retain the same meaning as in ``reconstruct``.
@@ -595,11 +593,13 @@ def reconstruct_slabs(
     Raw reads are prefetched within bounded storage and calibration is reused.
     The context drains pending work on normal completion, early exit or failure.
     Raw frames and calibration arrays must remain unchanged inside the context.
+    Cone FDK corrects host row bands in device-sized view batches and retains
+    the complete acquisition's weights while reconstructing each slab.
 
     Parameters
     ----------
     frames : Frames
-        Raw detector frames for unposed axial parallel-beam geometry.
+        Raw detector frames for cone FDK or unposed axial parallel-beam geometry.
     method : {'fbp', 'fourier', 'sirt', 'mlem'}
         Slab reconstruction method.
     grid : Grid or None, optional
@@ -632,17 +632,18 @@ def reconstruct_slabs(
     ...         print(z_slice, recon.volume.shape)
     """
     from tomojax._scan import detector_window, rebuild
+    from tomojax.core.geometry.cone import is_cone_beam
     from tomojax.corrections import corrected_row_source
     from tomojax.geometry import ParallelGeometry, grid_volume_origin
     from tomojax.recon.api import method_config, reconstruct_slabs as array_slabs
 
     cfg = method_config(method, config=config)
-    if (
-        method not in {"fbp", "fourier", "sirt", "mlem"}
-        or type(frames.geometry) is not ParallelGeometry
+    cone = is_cone_beam(frames.geometry)
+    if method not in {"fbp", "fourier", "sirt", "mlem"} or not (
+        type(frames.geometry) is ParallelGeometry or (cone and method == "fbp")
     ):
         raise ValueError(
-            "reconstruct_slabs requires FBP/Fourier/SIRT/MLEM and unposed axial ParallelGeometry"
+            "reconstruct_slabs requires cone FBP or unposed axial FBP/Fourier/SIRT/MLEM"
         )
     if warm_start is not None and method in {"fbp", "fourier"}:
         raise ValueError(f"method {method!r} does not take warm_start")
@@ -659,6 +660,7 @@ def reconstruct_slabs(
         view_positions=frames.view_positions,
         exposure_times=frames.exposure_times,
         flat_exposure_times=frames.flat_exposure_times,
+        host=cone,
     ) as source:
 
         def read(first: int, stop: int):

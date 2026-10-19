@@ -41,11 +41,12 @@ from tomojax.recon._host_arrays import validate_host_arrays
 from tomojax.recon.filters import get_fbp_filter_np
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Generator, Sequence
 
     from tomojax._typed_arrays import Device
     from tomojax.core.geometry.base import Detector, Geometry, Grid
     from tomojax.core.geometry.cone import ConeBeam
+    from tomojax.recon.types import ReconstructionSlab
 
 LOG = logging.getLogger(__name__)
 
@@ -591,17 +592,6 @@ def fdk(
     ValueError
         If shapes, geometry or solver settings are incompatible with this method.
     """
-    return _fdk(geometry, grid, detector, projections, config=config)
-
-
-def _fdk(
-    geometry: Geometry,
-    grid: Grid,
-    detector: Detector,
-    projections: jax.Array | np.ndarray,
-    *,
-    config: FDKConfig | None = None,
-) -> jax.Array:
     cfg = FDKConfig() if config is None else config
     parts = cone_parts(geometry, detector)
     if parts is None:
@@ -766,6 +756,83 @@ def _slab_grid(grid: Grid, z0: int, z1: int) -> Grid:
     )
 
 
+def _storage_rows(
+    geometry: Geometry, grid: Grid, detector: Detector, poses: np.ndarray, z0: int, z1: int
+) -> tuple[int, int]:
+    """Bucket a slab's measured rows without changing any physical coordinates."""
+    r0, r1 = _slab_rows(geometry, grid, detector, poses, z0, z1)
+    quantum = min(64, max(1, detector.nv // 8))
+    rows = min(detector.nv, -(-(r1 - r0) // quantum) * quantum)
+    r0 = min(r0, detector.nv - rows)
+    return r0, r0 + rows
+
+
+def fdk_slabs[T](
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    read: Callable[[int, int], tuple[np.ndarray | jax.Array, T]],
+    *,
+    config: FDKConfig,
+) -> Generator[ReconstructionSlab[T], None, None]:
+    """Yield owned FDK slabs from corrected row bands without whole host arrays.
+
+    ``read(first, stop)`` supplies all views of those measured rows and its
+    retained context. Weights use the complete acquisition, not the row crop.
+    At most 32 output planes are reconstructed together on the first configured
+    device. Closing the iterator releases its inputs; completed slabs stay valid.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Cone-beam acquisition with view angles.
+    grid : Grid
+        Physical output grid.
+    detector : Detector
+        Full acquisition detector.
+    read : callable
+        Corrected row-band reader returning projections and retained context.
+    config : FDKConfig
+        Filter, batching and backend settings.
+
+    Yields
+    ------
+    ReconstructionSlab
+        Owned host volume with its measured rows and producer context.
+    """
+    from tomojax.backends import device_free_memory_bytes
+    from tomojax.recon.types import ReconstructionSlab
+
+    validate_grid(grid, "FDK slab grid")
+    n_views = len(getattr(geometry, "angles", ()))
+    ordered_arc(grouped_angles(geometry, n_views)[0])
+    devices = as_devices(config.devices)
+    device = devices[0] if devices else None
+    with jax.default_device(device):
+        free = device_free_memory_bytes() or 2 * 1024**3
+        depth = max(1, min(32, int(free // (3 * 4 * grid.nx * grid.ny))))
+        poses = np.asarray(stack_view_poses(geometry, n_views), np.float64)
+        prep = _prepare(geometry, detector, n_views, replace(config, devices=device))
+        coeff = prep.coefficients(geometry, grid, detector, jnp.asarray(poses, jnp.float32))
+        for start in range(0, grid.nz, depth):
+            stop = min(start + depth, grid.nz)
+            r0, r1 = _storage_rows(geometry, grid, detector, poses, start, stop)
+            projections, context = read(r0, r1)
+            slab = _slab_grid(grid, start, stop)
+            volume = _accumulate(
+                slab,
+                projections,
+                prep.window(r0, r1),
+                _window_coefficients(coeff, r0, start),
+                None,
+            )
+            owned = np.empty((grid.nx, grid.ny, stop - start), np.float32, order="F")
+            copy_to_host(volume.T, owned.T)
+            del volume
+            yield ReconstructionSlab(start, stop, slice(r0, r1), projections, owned, context)
+            del projections, owned, context
+
+
 def fdk_host(
     geometry: Geometry,
     grid: Grid,
@@ -877,13 +944,7 @@ class _Slabs:
     def reconstruct(self, z0: int, z1: int, prep: _Prepared, coeff: jax.Array) -> jax.Array:
         """Slices ``[z0, z1)``, filtering only their physical detector-row window."""
         slab = _slab_grid(self.grid, z0, z1)
-        r0, r1 = _slab_rows(self.geometry, self.grid, self.detector, self.poses, z0, z1)
-        # Bucket storage heights, not ray coordinates: neighbouring slabs
-        # reuse executables instead of compiling every slightly different band.
-        quantum = min(64, max(1, self.detector.nv // 8))
-        rows = min(self.detector.nv, -(-(r1 - r0) // quantum) * quantum)
-        r0 = min(r0, self.detector.nv - rows)
-        r1 = r0 + rows
+        r0, r1 = _storage_rows(self.geometry, self.grid, self.detector, self.poses, z0, z1)
         views = _RowView(self.projections, r0, r1)
         return _accumulate(
             slab, views, prep.window(r0, r1), _window_coefficients(coeff, r0, z0), None
@@ -948,4 +1009,4 @@ class _RowView:
         return self.shape[0]
 
 
-__all__ = ["FDKConfig", "FDKHostConfig", "fdk", "fdk_host", "view_weights"]
+__all__ = ["FDKConfig", "FDKHostConfig", "fdk", "fdk_host", "fdk_slabs", "view_weights"]

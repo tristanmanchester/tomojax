@@ -796,10 +796,11 @@ def corrected_row_source(
     view_positions: np.ndarray | None = None,
     exposure_times: np.ndarray | float | None = None,
     flat_exposure_times: np.ndarray | float | None = None,
-) -> Iterator[Callable[[int, int], CorrectedRows]]:
+    host: bool = False,
+) -> Iterator[Callable[[int, int], CorrectedRows | Corrected]]:
     """Read corrected detector-row intervals without a materialized projection stack.
 
-    Each request returns owned JAX projections, independent of later reads and
+    Each request returns owned projections, independent of later reads and
     context closure. Only whole-row line-integral steps without view selection
     are supported; operations requiring neighboring rows must run on full frames.
     Raw inputs must be NumPy arrays or support lazy detector windows. The source
@@ -829,6 +830,9 @@ def corrected_row_source(
         Sample exposure durations in seconds, one per view or a common duration.
     flat_exposure_times : numpy.ndarray or float or None, optional
         Flat exposure durations in seconds, one per flat or a common duration.
+    host : bool, optional
+        Return NumPy bands using bounded device view batches, instead of keeping
+        the whole corrected band on the device. Default is False.
 
     Yields
     ------
@@ -870,20 +874,24 @@ def corrected_row_source(
     )
     if at.shape != (views,) or not np.isfinite(at).all():
         raise ValueError(f"view_positions needs one finite position for each of the {views} views")
-    interpolation = tuple(
-        jax.device_put(value)
-        for value in _interpolation(at, fields.positions, exposure_scales=view_scales)
-    )
-    reader = _RowReader(counts)
+    interpolation = _interpolation(at, fields.positions, exposure_scales=view_scales)
+    device_interpolation = None if host else tuple(jax.device_put(v) for v in interpolation)
+    reader = None if host else _RowReader(counts)
     line_steps = tuple(steps)
 
-    def correct(first: int, stop: int) -> CorrectedRows:
+    def correct(first: int, stop: int) -> CorrectedRows | Corrected:
+        if host:
+            return _correct_host_rows(
+                counts, fields, interpolation, records[0], first, stop, line_steps, epsilon
+            )
+        assert reader is not None
+        assert device_interpolation is not None
         raw = reader.read(first, stop)
         raw = raw.astype(raw.dtype.newbyteorder("="), copy=False)
         selected = (fields.flats[:, first:stop], fields.dark[first:stop], fields.usable[first:stop])
         done = _first_pass(
             jax.device_put(raw),
-            *interpolation,
+            *device_interpolation,
             *(jax.device_put(np.ascontiguousarray(value)) for value in selected),
             epsilon=epsilon,
             line_steps=line_steps,
@@ -898,4 +906,41 @@ def corrected_row_source(
     try:
         yield correct
     finally:
-        reader.close()
+        if reader is not None:
+            reader.close()
+
+
+def _correct_host_rows(
+    counts: Any,
+    fields: _Fields,
+    interpolation: tuple[np.ndarray, ...],
+    flat_record: Correction,
+    first: int,
+    stop: int,
+    steps: tuple[Step, ...],
+    epsilon: float,
+) -> Corrected:
+    """Correct a host band with bounded raw reads and device workspaces."""
+    rows = slice(first, stop)
+    raw = counts[:, rows] if isinstance(counts, np.ndarray) else counts.window(rows, slice(None))
+    selected = _Fields(
+        fields.flats[:, rows], fields.positions, fields.dark[rows], fields.usable[rows]
+    )
+    output = np.empty(raw.shape, np.float32)
+    batch = _frame_batch_size(raw.shape[0], raw.shape[1], raw.shape[2], ())
+    tally = _correct_view_batches(raw, output, selected, interpolation, batch, epsilon=epsilon)
+    output, kept, rest = _run_rest(output, steps, None)
+    flat = Correction(
+        "flat_dark",
+        flat_record.settings,
+        {"pixels_without_light": int(np.count_nonzero(~selected.usable))},
+    )
+    log = Correction(
+        "log",
+        {"epsilon": epsilon},
+        {
+            "nonpositive_transmission": int(tally[0]),
+            "nonfinite_set_to_zero": int(tally[1]),
+        },
+    )
+    return Corrected(output, (flat, log, *rest), kept)

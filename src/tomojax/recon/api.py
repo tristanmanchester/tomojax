@@ -148,7 +148,7 @@ def method_config(
 
 def reconstruct_slabs[T](
     method: str,
-    geometry: ParallelGeometry,
+    geometry: Geometry,
     grid: Grid,
     detector: Detector,
     read: Callable[[int, int], tuple[jnp.ndarray | np.ndarray, T]],
@@ -162,8 +162,8 @@ def reconstruct_slabs[T](
     ----------
     method : {'fbp', 'fourier', 'sirt', 'mlem'}
         Reconstruction method.
-    geometry : ParallelGeometry
-        Unposed axial parallel-beam geometry.
+    geometry : Geometry
+        Cone-beam FDK or unposed axial parallel-beam geometry.
     grid : Grid
         Output grid.
     detector : Detector
@@ -191,18 +191,38 @@ def reconstruct_slabs[T](
         if warm_start:
             raise ValueError(f"method {method!r} does not take warm_start")
         if method == "fbp":
+            from tomojax.core.geometry.cone import is_cone_beam
+
+            if is_cone_beam(geometry):
+                from .fdk import fdk_slabs
+
+                return fdk_slabs(
+                    geometry, grid, detector, read, config=_fdk_config(cast("FBPConfig", cfg))
+                )
             from .fbp_host import fbp_slabs
 
-            return fbp_slabs(geometry, grid, detector, read, config=cast("FBPConfig", cfg))
+            return fbp_slabs(
+                cast("ParallelGeometry", geometry),
+                grid,
+                detector,
+                read,
+                config=cast("FBPConfig", cfg),
+            )
         from ._fourier_stream import fourier_slabs
 
-        return fourier_slabs(geometry, grid, detector, read, config=cast("FourierConfig", cfg))
+        return fourier_slabs(
+            cast("ParallelGeometry", geometry),
+            grid,
+            detector,
+            read,
+            config=cast("FourierConfig", cfg),
+        )
     if method not in {"sirt", "mlem"}:
         raise ValueError("reconstruct_slabs supports FBP/Fourier/SIRT/MLEM")
     from ._iterative_slabs import iterative_slabs
 
     return iterative_slabs(
-        geometry,
+        cast("ParallelGeometry", geometry),
         grid,
         detector,
         read,
@@ -510,7 +530,7 @@ def _host_fdk(
 
     import numpy as np
 
-    from tomojax.recon.fdk import FDKConfig, FDKHostConfig, fdk_host
+    from tomojax.recon.fdk import FDKHostConfig, fdk_host
 
     logging.info(
         "Reconstructing %dx%dx%d in z-slabs on the host",
@@ -518,11 +538,17 @@ def _host_fdk(
         grid.ny,
         grid.nz,
     )
-    # As fbp's own FDK: the same filter, and the CUDA kernel for "cuda".
-    backend = cfg.backprojector
-    fdk = FDKConfig(filter=cfg.filter, backend=backend, devices=cfg.devices)
     data = np.asarray(projections, np.float32)
-    return fdk_host(geometry, grid, detector, data, config=FDKHostConfig(fdk=fdk), out=out)
+    return fdk_host(
+        geometry, grid, detector, data, config=FDKHostConfig(fdk=_fdk_config(cfg)), out=out
+    )
+
+
+def _fdk_config(cfg: FBPConfig) -> recon.FDKConfig:
+    """Use the same filter and CUDA backend for public FBP on cone beams."""
+    from tomojax.recon.fdk import FDKConfig
+
+    return FDKConfig(filter=cfg.filter, backend=cfg.backprojector, devices=cfg.devices)
 
 
 __all__ = [

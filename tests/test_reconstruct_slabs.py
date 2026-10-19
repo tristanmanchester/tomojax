@@ -8,7 +8,7 @@ import pytest
 
 import tomojax as tj
 from tomojax.corrections import RejectViews, Stripes
-from tomojax.geometry import grid_volume_origin
+from tomojax.geometry import ConeSegments, grid_volume_origin
 from tomojax.recon import FBPConfig, FourierConfig, MLEMConfig, SIRTConfig, api
 
 CASES = [
@@ -132,3 +132,81 @@ def test_iterative_slabs_refuse_coupled_planes():
             pytest.raises(ValueError, match="independent axial Joseph planes"),
         ):
             next(slabs)
+
+
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
+def test_cone_raw_slabs_preserve_acquisition_weights_and_owned_rows(backend):
+    class Windowed:
+        def __init__(self, data, requests):
+            self.data, self.requests = data, requests
+            self.shape, self.dtype = data.shape, data.dtype
+
+        def window(self, rows, cols):
+            return Windowed(self.data[:, rows, cols], self.requests)
+
+        def __getitem__(self, views):
+            out = self.data[views]
+            self.requests.append(out.shape)
+            return out
+
+        def __array__(self, *args, **kwargs):
+            raise AssertionError("Raw input must be read in bounded windows")
+
+    grid = tj.Grid(7, 9, 37, 0.8, 1.0, 0.3, vol_center=(0.2, -0.1, 0.1))
+    detector = tj.Detector(23, 65, 1.0, 0.5, (0.7, -0.3))
+    geometry = tj.ConeGeometry(
+        grid,
+        detector,
+        np.linspace(0, 360, 16, endpoint=False),
+        tj.ConeBeam(30, 45, detector_roll_deg=1.5),
+    )
+    geometry = ConeSegments(
+        (
+            replace(geometry, angles=geometry.angles[:8]),
+            replace(
+                geometry, angles=geometry.angles[8:], detector=replace(detector, center=(1.1, 0.2))
+            ),
+        )
+    )
+    raw = np.random.default_rng(91).uniform(200, 900, (16, 65, 23)).astype(">f4")
+    eager = tj.Frames(raw, geometry, white_level=1000)
+    requests = []
+    frames = replace(eager, counts=Windowed(raw, requests))
+    cfg, step = FBPConfig(backprojector=backend), Stripes(5, varying=True)
+    expected = tj.reconstruct(eager.corrected(step), "fbp", config=cfg).volume
+    with tj.reconstruct_slabs(frames, "fbp", config=cfg, corrections=[step]) as slabs:
+        collected = list(slabs)
+    assert len(collected) == 2
+    assert max(shape[1] for shape in requests) < detector.nv
+    actual = np.concatenate([r.volume for _, r in collected], axis=2)
+    if backend == "jax":
+        np.testing.assert_allclose(actual, expected, rtol=3e-5, atol=2e-6)
+    else:
+        # CUDA normalizes half textures to each row window, as in fdk_host.
+        assert np.linalg.norm(actual - expected) < 1e-3 * np.linalg.norm(expected)
+    for section, recon in collected:
+        rows = slice(*recon.info["source_rows"])
+        independent = eager.cropped(rows, slice(None)).corrected(step)
+        assert isinstance(recon.scan.projections, np.ndarray)
+        np.testing.assert_allclose(recon.scan.projections, independent.projections, atol=1e-6)
+        assert recon.scan.corrections == independent.corrections
+        np.testing.assert_allclose(
+            grid_volume_origin(recon.grid)[2],
+            grid_volume_origin(grid)[2] + section.start * grid.vz,
+        )
+
+
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
+def test_cone_raw_slab_early_close_keeps_completed_result(backend):
+    grid, detector = tj.Grid(5, 5, 35, 1, 1, 0.2), tj.Detector(9, 21, 1, 1)
+    geometry = tj.ConeGeometry(
+        grid, detector, np.linspace(0, 360, 8, endpoint=False), tj.ConeBeam(30, 45)
+    )
+    frames = tj.Frames(np.full((8, 21, 9), 500, np.uint16), geometry, white_level=1000)
+    with tj.reconstruct_slabs(frames, "fbp", config=FBPConfig(backprojector=backend)) as slabs:
+        _, retained = next(slabs)
+        saved = retained.volume.copy()
+    with pytest.raises(StopIteration):
+        next(slabs)
+    np.testing.assert_array_equal(retained.volume, saved)
+    np.testing.assert_allclose(retained.scan.projections, np.log(2), atol=1e-6)
