@@ -236,6 +236,44 @@ fixed Zeiss vendor region, intensity-affine NRMSE is 0.353989 for TomoJAX,
 0.351702 for ASTRA and 0.343797 for TIGRE; this is an image diagnostic,
 not an acceptance gate.
 
+### CuO FDK at fourfold binning
+
+Measured 2026-10-20 on `75435039`. Both Zeiss CuO scans use all 3201 views
+with 4 × 4 detector binning: spl1 has a 509³ grid and CuO2 a 507³ grid.
+Load `frames = tj.load_frames(path, darks=0)`, then
+`scan = frames.corrected(binning=4)` and call
+`tj.reconstruct(scan, "fbp", grid=frames.geometry.grid.resampled((n, n, n)))`
+with the corresponding grid size. ASTRA uses `FDK_CUDA`; TIGRE uses
+`tigre.algorithms.fdk(data, geo, angles, dowang=False)`, with the same calibrated
+geometry. No library changes its geometry or input to match another image.
+
+| Scan | Library | Cold / warm (s) | Common-projector relative residual | Full-volume difference to ASTRA |
+|---|---|---:|---:|---:|
+| spl1 | TomoJAX | 33.52 / 3.76 | 0.057908 | 0.126512 |
+| spl1 | ASTRA | 32.78 / 4.74 | 0.104623 | — |
+| spl1 | TIGRE | 38.01 / 11.59 | 0.104608 | 0.000039 |
+| CuO2 | TomoJAX | 39.70 / 4.12 | 0.078255 | 0.126404 |
+| CuO2 | ASTRA | 53.71 / 10.31 | 0.120631 | — |
+| CuO2 | TIGRE | 50.14 / 12.38 | 0.120616 | 0.000039 |
+
+Cold includes loading and the first host image in a fresh process with fresh
+compilation caches; warm repeats the solve. Filesystem caches are not cleared.
+Loading and setup take 25.13 / 27.49 / 23.25 s for spl1 TomoJAX / ASTRA / TIGRE,
+and 30.13 / 44.41 / 29.63 s for CuO2. TomoJAX's spl1 cold workflow is slower
+than ASTRA's despite its faster warm solve.
+
+All views use the same calibrated ASTRA residual. Full-volume differences are
+relative L2 without intensity fitting, not physical error. On spl1, differences
+in virtual padding, filter discretization and full-turn coverage weights account
+for the difference between TomoJAX and ASTRA. The fixed vendor comparison uses
+501 complete four-plane blocks, covering 2004 native planes, and one global
+affine intensity fit: NRMSE 0.154591 / 0.154654 / 0.154651 for TomoJAX / ASTRA /
+TIGRE. This is an image diagnostic, not ground truth. CuO2 has no vendor volume.
+On the full spl1 grid, TomoJAX–ASTRA relative L2 is 0.005718 within the
+vendor-defined sample mask, 0.007387 inside the horizontal cylinder seen by
+all views and 0.619622 outside it; 99.67% of the squared difference is outside.
+The sample mask includes pores and is independent of both library images.
+
 ### Full-view Nikon OSEM
 
 Measured 2026-10-19 on `44170fc0` (TomoJAX and TIGRE) and `20f4a966`
@@ -296,6 +334,27 @@ and makes TomoJAX's reconstruction 3.5 times faster and ASTRA's 2.4 times. The
 FleX-ray's rotation axis also leans 0.5° across the detector, so every view
 takes the transpose's general path, about 1.3 times slower than its path for
 an upright axis.
+
+### Full-view ordered subsets
+
+Measured 2026-10-20 on `75435039`: all 3600 views, 2 × 2 detector binning,
+a 501³ grid with 0.1 mm voxels, and nonnegative OS-SART from FDK. The call is
+`tj.reconstruct(scan, "sirt", iterations=1, warm_start=True,
+config=SIRTConfig(subsets=17, lower_bound=0))`. ASTRA uses 16 interleaved
+subsets, its native forward/backprojectors, and column normalization recomputed
+at each update; its FDK start averages the three physical turns.
+
+| Library | Cold / warm (s) | Full / walnut-support relative L2 error |
+|---|---:|---:|
+| TomoJAX, 17 subsets | 36.27 / 26.62 | 0.082527 / 0.055488 |
+| ASTRA, 16 subsets | 31.59 / 22.54 | 0.083874 / 0.056272 |
+
+Times are means of two interleaved fresh-process measurements; cold includes
+loading and setup, warm repeats the whole solve, including FDK and normalization.
+Filesystem caches are not cleared. TomoJAX has lower error but is 18.1% slower
+warm. A separate profile spends 16.91 s in its exact transpose versus 7.63 s
+in ASTRA's backprojection; this identifies an implementation cost, not a lower
+bound on every exact-transpose implementation.
 
 ### Orbit registration
 
@@ -441,6 +500,9 @@ All on the 8 GB laptop GPU:
 | SIRT from raw frames with `tj.reconstruct_slabs`, the whole Diamond I12 scan below: 1801 views of 2160 × 2560 pixels (39.8 GB corrected), a 2560² × 2160 volume (56.6 GB) | 1436 s of solving, 1.41 GB peak GPU memory and 3.7 GB host memory; 1.13 times the per-voxel time of an 8-row reconstruction that fits | 2026-10-17, `440cc563` |
 | `tj.reconstruct` of 352 rows of the same scan, returned as one 9.23 GB array | 211 s, 0.78 GB peak GPU memory, 17 GB host memory; 1.04 times the per-voxel time of 8 rows | 2026-10-17, `440cc563` |
 | OSEM of the FIPS walnut at full resolution: all 3600 views of 972 × 768 pixels, a 1001³ volume, 4 subsets × 1 iteration from FDK | First / repeat solve 289.61 / 288.80 s; imports, loading and first solve 297.41 s; peak GPU 4688 MiB, host 15.962 GB; full / walnut-support relative L2 error 0.124385 / 0.094026 | 2026-10-19, `508631fa` |
+| FDK from raw CuO-spl1 frames: all 3201 views of 2036² pixels, a 2036³ volume, 32-plane output slabs | First / repeat correction and reconstruction 847.16 / 786.11 s; imports and loading 15.78 s; peak GPU 6056 MiB, host 12.634 GB, including scoring | 2026-10-20, `9be6e5ad` |
+| ASTRA FDK on the same raw CuO-spl1 frames and output slabs | First / repeat correction and reconstruction 847.16 / 838.56 s; imports and loading 13.67 s; peak GPU 3036 MiB, host 13.193 GB, including scoring | 2026-10-20, `76a1f412` |
+| FDK from raw CuO2 frames: all 3201 views of 2028² pixels, a 2028³ volume, 32-plane output slabs | First correction and reconstruction 1053.93 s; imports and loading 16.17 s; peak GPU 4494 MiB, host 14.240 GB, including scoring | 2026-10-20, `75435039` |
 
 The walnut call is `tj.reconstruct(scan, "mlem", warm_start=True,
 config=MLEMConfig(iterations=1, subsets=4))`, using all three corrected
@@ -448,6 +510,46 @@ geometries, unbinned projections clipped at zero, and 0.05 mm voxels. The
 volume is scored at the published 0.1 mm voxel centres. The first call uses
 a fresh `TOMOJAX_JAX_CACHE_DIR` and `XLA_PYTHON_CLIENT_PREALLOCATE=false`;
 the repeat uses the same process after releasing the first volume.
+
+The CuO call is `tj.load_frames("Tristan Manchester_Copper_oxyde_spl1.txrm",
+darks=0)`, followed by `tj.reconstruct_slabs(frames, "fbp")`. Consume and
+release each block before advancing the iterator; no whole volume is retained.
+The grid uses the recorded 1.12756 µm sampling without binning. The first
+process uses fresh compilation caches and `XLA_PYTHON_CLIENT_PREALLOCATE=false`.
+Times sum the correction and reconstruction stages between scoring operations.
+Including interleaved scoring, the first / repeat passes take 1455.72 / 1365.08 s,
+with imports and loading additional to the first pass.
+
+CuO's relative projection residual is 0.0586312 on 256 fixed, evenly spaced
+views, using the full detector and an ASTRA forward projection summed over
+the physical output slabs. Reconstruction uses all 3201 views. The vendor
+comparison covers all 2005 planes with one fixed spatial registration and one
+whole-volume affine intensity fit: normalized RMSE 0.209660. It is a diagnostic,
+not physical ground truth; the reconstructed pores are visibly less sharp
+than the vendor's. Both metrics and the six retained native cuts agree exactly
+between repeats.
+
+ASTRA uses `FDK_CUDA` in 256-view batches on the same 32-plane output slabs,
+preserving the complete acquisition's preweighting and angular scale. Its
+first / repeat scored passes take 1304.22 / 1314.98 s, with imports and loading
+additional to the first pass. Its projection residual is 0.1171325 and vendor
+NRMSE 0.209232, both repeatable. First correction and reconstruction times are
+roughly equal; TomoJAX's repeated reconstruction is 6.3% shorter, but ASTRA's
+scored passes are shorter. The lower TomoJAX projection residual does not
+establish better physical image accuracy.
+On six native axial cuts, the relative difference between the images is 0.143371
+across the cuts and 0.008441 within an independently vendor-defined sample mask.
+99.41% of their squared difference lies outside the horizontal cylinder seen
+by every view. These are cut diagnostics, not a full-volume image comparison.
+
+CuO2 uses the same load and slab calls with `CuO_2_tomo-B.txrm` and the
+recorded 1.13365 µm sampling. Its first scored pass takes 1376.31 s, with
+imports and loading additional. The same 256-view projection score is
+0.0790636. There is no vendor volume, repeated pass or native library comparison
+for this scan; this is a capacity and data-fit measurement.
+
+A native iterative solve was not run: one 2036³ float32 volume alone needs
+33.76 GB, above the 24 GB host-memory limit.
 
 The Diamond rows use `SIRTConfig(iterations=3, subsets=15, lower_bound=0)`
 with `warm_start=True` (an FBP start) on frames from
