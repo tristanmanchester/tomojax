@@ -190,6 +190,56 @@ cache is not cleared.
 The residual uses one calibrated ASTRA forward projector for both libraries.
 Both image errors use the authors' reference, without intensity fitting.
 
+### Full-view Nikon and Zeiss SIRT
+
+Measured 2026-10-19 on `272684c7` (TomoJAX and Zeiss ASTRA) and `35f4055f`
+(Nikon ASTRA), with
+`bash artifacts/agent08_zeiss_ooc/diagnostic_and_sirt_next.sh` and
+`bash artifacts/agent08_zeiss_ooc/controls_and_sirt.sh`. Nikon uses all 1571
+views and a 500³ grid; Zeiss uses all 801 views and a 512³ grid. Both use
+2 × 2 detector binning. Each solve starts from its library's FDK.
+TomoJAX uses 12 accelerated nonnegative SIRT iterations; ASTRA uses 24
+nonnegative iterations with its forward/backprojectors in 512-view batches.
+
+| Scan | Library | Cold / warm (s) | Common-projector relative residual | Volume difference to ASTRA |
+|---|---|---:|---:|---:|
+| Nikon | TomoJAX | 95.52 / 89.63 | 0.028788 | 0.013977 |
+| Nikon | ASTRA | 135.89 / 125.78 | 0.030057 | — |
+| Zeiss | TomoJAX | 43.86 / 36.15 | 0.187915 | 0.025439 |
+| Zeiss | ASTRA | 69.11 / 62.76 | 0.189497 | — |
+
+Cold includes imports, loading and the first host volume with fresh compilation
+caches; warm repeats the solve. Filesystem caches are not cleared. Loading took
+3.03 / 10.04 s for Nikon TomoJAX / ASTRA, and 4.99 / 5.77 s for Zeiss.
+The same calibrated ASTRA forward projector scores both libraries. Volume
+differences are full-volume relative L2, without intensity fitting. On the
+fixed Zeiss vendor region, intensity-affine NRMSE is 0.353989 for TomoJAX
+and 0.351702 for ASTRA; this is an image diagnostic, not an acceptance gate.
+
+### Full-view Nikon OSEM
+
+Measured 2026-10-19 on `44170fc0` (TomoJAX and TIGRE) and `20f4a966`
+(ASTRA), with `bash artifacts/agent08_zeiss_ooc/qualify_and_matrix.sh` and
+`bash artifacts/agent08_matrix/nikon_osem48.sh`. All 1571 views of the Nikon
+seeds scan use 2 × 2 detector binning and a 500³ physical grid. Each outer
+iteration visits four ordered subsets. TomoJAX and TIGRE start from FDK;
+ASTRA starts from a uniform positive volume. The ASTRA and TIGRE adapters
+apply ordered-subset updates using their forward and backprojectors.
+
+| Library | Outer iterations | Cold / warm (s) | Common-projector relative residual | Volume difference to ASTRA |
+|---|---:|---:|---:|---:|
+| TomoJAX | 8 | 100.71 / 94.96 | 0.026650 | 0.319973 |
+| ASTRA | 48 | 260.40 / 256.31 | 0.026732 | — |
+| TIGRE | 8 | 210.11 / 196.94 | 0.026848 | 0.313299 |
+
+Cold includes imports, loading and the first host volume with fresh compilation
+caches; warm repeats the solve in that process. The filesystem cache is not
+cleared. Loading took 3.48, 10.09 and 3.83 s respectively. Residuals use the
+same calibrated ASTRA forward projector and the original corrected data,
+including negative samples. Volume differences are full-volume relative L2,
+without intensity fitting. There is no physical truth volume for this scan;
+these are image diagnostics, not reconstruction errors.
+
 ## FIPS walnuts (real lab cone-beam CT)
 
 `bench/walnut.py` reconstructs the walnut collection of Der Sarkissian et al.
