@@ -13,7 +13,7 @@ from tomojax.core.geometry.base import Detector, Geometry, Grid
 from tomojax.core.projector import forward_project_view_T
 
 from ._coupled_objective import CoupledObjective, build_coupled_objective
-from ._coupled_program import JointRefinement
+from ._matching_model import JointRefinement
 from ._pose_block import pose_block_solver
 from ._pose_context import AlignmentRuntimeContext, _pose_objective_context, _PoseObjectiveContext
 from ._pose_jacobian import build_pose_prediction_and_columns

@@ -6,7 +6,6 @@ from collections.abc import Callable
 from typing import NamedTuple
 
 import jax
-import jax.numpy as jnp
 
 from ._coupled_vectors import DEVICE, BlockPlacement, BlockVector, Predicate, Scalar
 
@@ -54,14 +53,15 @@ def solve_coupled_normal(
         if volume_ramp is None:
             return r[0] * inverse_diagonal[0], r[1] * inverse_diagonal[1]
         volume, pose = r
-        scale = jnp.sqrt(inverse_diagonal[0])
+        fft = placement.fft
+        scale = xp.sqrt(inverse_diagonal[0])
         nx, ny, _ = volume.shape
-        fx = jnp.fft.fftfreq(nx)[:, None]
-        fy = jnp.fft.rfftfreq(ny)[None, :]
-        ramp = jnp.sqrt(fx * fx + fy * fy + 1 / (nx * ny))
+        fx = fft.fftfreq(nx).astype(volume.dtype)[:, None]
+        fy = fft.rfftfreq(ny).astype(volume.dtype)[None, :]
+        ramp = xp.sqrt(fx * fx + fy * fy + 1 / (nx * ny))
         ramp = ramp / (1 + volume_ramp * (nx * ny) ** 0.5 * ramp)
-        spectrum = jnp.fft.rfft2(scale * volume, axes=(0, 1))
-        filtered = jnp.fft.irfft2(spectrum * ramp[:, :, None], s=(nx, ny), axes=(0, 1))
+        spectrum = fft.rfft2(scale * volume, axes=(0, 1))
+        filtered = xp.asarray(fft.irfft2(spectrum * ramp[:, :, None], s=(nx, ny), axes=(0, 1)))
         return scale * filtered, pose * inverse_diagonal[1]
 
     z0 = precondition(residual)

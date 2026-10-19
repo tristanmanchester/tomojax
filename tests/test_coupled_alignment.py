@@ -15,6 +15,7 @@ from tomojax.alignment._pose import (
     _coupled_objective,
     _coupled_program,
     _coupled_vectors,
+    _matching_model,
     _pose_steps,
 )
 
@@ -579,16 +580,33 @@ def test_a_cached_update_that_does_not_fit_retries_without_columns(monkeypatch):
     assert checks == [True, False] and not objective.pose_columns_cached
 
 
+@pytest.fixture(params=["device", "host", "shared"])
+def joint_placement(request, monkeypatch):
+    """Run one constrained model through each supported placement."""
+    if request.param == "shared":
+        if len(jax.devices()) < 2:
+            pytest.skip("multiple devices required")
+        monkeypatch.setattr(_coupled_objective, "shared_devices", jax.devices)
+    if request.param == "host":
+        monkeypatch.setattr(
+            _coupled_objective,
+            "_check_device_memory",
+            lambda *_: (_ for _ in ()).throw(_coupled_objective.AlignmentMemoryError(2, 1)),
+        )
+
+
 @pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
 @pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 @pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.usefixtures("joint_placement")
 def test_affine_joint_increment_and_loss_match_dense_physical_model(
     monkeypatch, solver, backend, stream
 ):
+    from scipy import signal
+
     import tomojax as tj
     from tomojax.alignment import AlignConfig
     from tomojax.alignment.api import L2LossSpec
-    from tomojax.forward import project_joseph
     from tomojax.geometry import stack_view_poses
 
     if stream:
@@ -603,9 +621,14 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
     def project(x, p):
         shifted = tj.Scan(np.zeros((3, 3, 7), np.float32), geometry).with_poses(p)
         frames = stack_view_poses(shifted.geometry, 3)
-        return np.asarray(project_joseph(jnp.asarray(x), frames, grid, detector), np.float64)
+        model = _matching_model.projectors(grid, detector, backend="jax", masked=lambda v: v)
+        return np.asarray(model.forward(frames, jnp.asarray(x)), np.float64)
 
-    ramp = np.broadcast_to(np.linspace(-1, 1, detector.nu), (detector.nv, detector.nu))
+    native = np.arange(2 * detector.nu, dtype=np.float64) - (2 * detector.nu - 1) / 2
+    spectrum = np.fft.fft(native) * np.exp(1j * np.pi * np.fft.fftfreq(native.size))
+    ramp = np.broadcast_to(
+        signal.resample(spectrum, detector.nu, domain="freq").real, (detector.nv, detector.nu)
+    )
 
     def filtered(y):
         centred = y - y.mean(axis=-1, keepdims=True)
@@ -643,7 +666,7 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
     runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
     objective = _coupled_objective.build_coupled_objective(
         _pose_objective_context(runtime=runtime, **common),
-        refinement=_coupled_program.JointRefinement(1e-3),
+        refinement=_matching_model.JointRefinement(native_width=2 * detector.nu),
     )
     result = objective.update(jnp.asarray(poses), jnp.asarray(volume))
     design = np.column_stack(
@@ -660,9 +683,11 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
         columns.append(filtered((project(volume, plus) - project(volume, minus)) / 0.006).ravel())
     design = np.column_stack([design, *columns])
     residual = filtered(project(volume, poses) - measured).ravel()
-    expected = np.linalg.solve(
-        design.T @ design + 0.2 * np.eye(design.shape[1]), -design.T @ residual
-    )
+    normal = design.T @ design + 0.2 * np.eye(design.shape[1])
+    gauge = np.zeros((design.shape[1], 2))
+    gauge[-3:] = np.asarray(stack_view_poses(geometry, 3))[:, 0, :2]
+    kkt = np.block([[normal, gauge], [gauge.T, np.zeros((2, 2))]])
+    expected = np.linalg.solve(kkt, np.r_[-design.T @ residual, [0, 0]])[:-2]
     actual = np.r_[np.asarray(result.increment[0]).ravel(), np.asarray(result.increment[1])[:, 3]]
     np.testing.assert_allclose(actual, expected, rtol=0.003, atol=3e-5)
     np.testing.assert_allclose(
@@ -783,3 +808,86 @@ def test_cg_placements_match_dense_system_without_modifying_inputs(budget, place
     else:
         assert result.iterations == budget
         assert result.relative_residual > 1e-5
+
+
+@pytest.mark.parametrize("width", [7, 8])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
+def test_finite_sampling_and_paired_derivatives_match_dense_oracle(width, backend):
+    from scipy import signal
+
+    from tomojax.forward import project_joseph
+    from tomojax.geometry import Detector, Grid, ParallelGeometry, stack_view_poses
+
+    rng = np.random.default_rng(6341)
+    grid = Grid(5, 4, 2, 0.7, 0.8, 1.2)
+    detector = Detector(width, 2, 0.7, 1.2, (0.13, -0.07))
+    poses = stack_view_poses(ParallelGeometry(grid, detector, [0, 43, 135]), 3)
+    poses = poses.at[:, 0, 3].set(jnp.array([0.21, -0.37, 0.13]))
+    x = jnp.asarray(rng.normal(size=(5, 4, 2)), jnp.float32)
+    y, z = (jnp.asarray(rng.normal(size=(3, 2, width)), jnp.float32) for _ in range(2))
+    model = _matching_model.projectors(grid, detector, backend=backend, masked=lambda value: value)
+    # Independently form the finite Shannon matrix on the physical fine detector.
+    fine, length, pitch = 2 * width, 4 * width + 1, detector.du / 2
+    begin = (length - fine) // 2
+    centre = detector.center[0] + pitch * ((length - fine) / 2 - begin)
+    extended = Detector(length, 2, pitch, detector.dv, (centre, detector.center[1]))
+    rays = np.asarray(project_joseph(x, poses.at[:, 0, 3].set(0), grid, extended))
+    delta = begin + np.arange(fine)[:, None] - np.arange(length)[None, :]
+    shift = np.asarray(poses[:, 0, 3]) / pitch
+    sinc = np.sinc(delta[None] - shift[:, None, None])
+    translated = np.einsum("nij,nvj->nvi", sinc, rays)
+    phase = np.exp(1j * np.pi * np.fft.fftfreq(fine))
+    expected = signal.resample(np.fft.fft(translated) * phase, width, axis=-1, domain="freq").real
+    np.testing.assert_allclose(model.forward(poses, x), expected, rtol=3e-6, atol=2e-6)
+    fixed = model.fixed_pose(poses)
+    value, du, ddu = fixed.value_and_derivatives(x)
+    np.testing.assert_allclose(fixed.forward(x), (value, du), rtol=2e-6, atol=2e-6)
+    np.testing.assert_allclose(jnp.vdot(value, y), jnp.vdot(x, model.adjoint(poses, y)), atol=3e-6)
+    np.testing.assert_allclose(
+        jnp.vdot(value, y) + jnp.vdot(du, z),
+        jnp.vdot(x, fixed.adjoint(y, z)),
+        rtol=3e-6,
+        atol=5e-6,
+    )
+    h = 0.003
+    plus, minus = poses.at[:, 0, 3].add(h), poses.at[:, 0, 3].add(-h)
+    np.testing.assert_allclose(
+        du, (model.forward(plus, x) - model.forward(minus, x)) / (2 * h), atol=5e-4, rtol=3e-3
+    )
+    np.testing.assert_allclose(
+        ddu,
+        (model.derivative(plus, x) - model.derivative(minus, x)) / (2 * h),
+        atol=1e-3,
+        rtol=3e-3,
+    )
+    # The coupled positive metric must use this model's unit image, not bare Joseph.
+    absolute = _matching_model.projectors(
+        grid, detector, backend=backend, masked=lambda v: v, absolute=True
+    )
+    spec = SimpleNamespace(
+        grid=grid,
+        detector=detector,
+        backend=backend,
+        active_columns=(3, 5),
+        refinement=_matching_model.JointRefinement(native_width=2 * width),
+        jacobian=SimpleNamespace(
+            cone_beam=False, translation_frame="detector", integrator="joseph"
+        ),
+    )
+    arrays = SimpleNamespace(mask=jnp.float32(1), weights=jnp.float32(1), frames=None)
+    bound = _coupled_program.positive_sensitivity(
+        spec, arrays, poses, lambda v: v, x.shape, jnp.ones(3), jnp.zeros_like(x)
+    )
+    expected_bound = absolute.adjoint(poses, absolute.forward(poses, jnp.ones_like(x)))
+    np.testing.assert_allclose(bound, expected_bound, rtol=2e-6, atol=2e-6)
+    assert np.all(np.abs(value) <= np.asarray(absolute.forward(poses, jnp.abs(x))) + 2e-6)
+    # Native affine nuisance follows the same map, including odd native widths.
+    native = 2 * width + 1
+    backgrounds = rng.normal(size=(3, 2, 1)) + rng.normal(size=(3, 1, 1)) * np.linspace(
+        -1, 1, native
+    )
+    filtered = _matching_model.nuisance_filter(native, detector)
+    np.testing.assert_allclose(
+        filtered(_matching_model.resample_rows(backgrounds.astype(np.float32), width)), 0, atol=2e-6
+    )
+    np.testing.assert_allclose(jnp.vdot(filtered(y), z), jnp.vdot(y, filtered(z)), atol=2e-6)

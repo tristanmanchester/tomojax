@@ -23,8 +23,10 @@ from ._coupled_linear import CoupledLinearResult, solve_coupled_normal, solve_sc
 from ._coupled_program import (
     CoupledArrays,
     CoupledSpec,
+    constrained_pose_inverse,
     filtered_operators,
     free_volume_support,
+    physical_columns,
     physical_projectors,
     pose_metric_inverse,
     pose_smoothness,
@@ -34,7 +36,6 @@ from ._coupled_program import (
 )
 from ._coupled_vectors import HOST, BlockVector
 from ._pose_block import pose_block_solver
-from ._pose_jacobian import pose_prediction_and_columns
 
 
 def _view_batch(arrays, start, size, spec, weighted):
@@ -113,14 +114,7 @@ def _pass(
             return v if arrays.mask.ndim == 0 else arrays.mask * v
 
         raw_forward, raw_adjoint = physical_projectors(spec, batch, masked)
-        predict = partial(
-            pose_prediction_and_columns,
-            grid=spec.grid,
-            detector=spec.detector,
-            det_grid=arrays.det_grid,
-            options=spec.jacobian,
-            column_indices=spec.active_columns,
-        )
+        predict = physical_columns(spec, batch)
         batch, forward, adjoint, predict = filtered_operators(
             spec, batch, raw_forward, raw_adjoint, predict
         )
@@ -216,15 +210,20 @@ class _HostSystem:
         )
         np.multiply(gx, self.free, out=gx)
         np.negative(gx, out=gx)
-        self.rhs = (gx, -(gp + np.asarray(sg)) * self.movable)
+        project_pose = constrained_pose_inverse(
+            lambda value: value, spec, arrays, lambda value: value
+        )
+        self.project_pose = jax.jit(project_pose) if spec.refinement is not None else project_pose
+        self.rhs = (gx, -np.asarray(self.project_pose((gp + np.asarray(sg)) * self.movable)))
         self.pose_diagonal = np.diagonal(gram, axis1=1, axis2=2)
         self.gram = jnp.asarray(gram) + spec.gn_damping * jnp.eye(p.shape[1], dtype=p.dtype)
+        solve_pose = pose_block_solver(
+            self.gram,
+            arrays.smoothness * arrays.active,
+            has_smoothness=spec.has_smoothness,
+        )
         self.solve_pose = jax.jit(
-            pose_block_solver(
-                self.gram,
-                arrays.smoothness * arrays.active,
-                has_smoothness=spec.has_smoothness,
-            )
+            constrained_pose_inverse(solve_pose, spec, arrays, lambda value: value)
         )
         bound, _, _, _ = self.run("bound")
         self.inverse = HOST.map_owned(bound, partial(volume_metric_inverse, spec=spec, array=np))
@@ -268,16 +267,16 @@ class _HostSystem:
 
     def normal(self, pair: BlockVector) -> BlockVector:
         dx = pair[0]
-        dp = pair[1] * self.movable
+        dp = np.asarray(self.project_pose(pair[1] * self.movable))
         ax, ap, _, _ = self.run("normal", dx, dp)
         ap = (
             ap + np.asarray(self.smooth_hessian(jnp.asarray(dp))) + self.spec.gn_damping * dp
         ) * self.movable
-        return ax, ap
+        return ax, np.asarray(self.project_pose(ap))
 
     def schur(self, pair: BlockVector) -> BlockVector:
         dx = pair[0]
-        if self.spec.has_smoothness:
+        if self.spec.has_smoothness or self.spec.refinement is not None:
             _, rows, _, _ = self.run("rows", dx)
             dp = -np.asarray(self.solve_pose(jnp.asarray(rows)))
             ax, _, _, _ = self.run("normal", dx, dp)
@@ -298,6 +297,7 @@ class _HostSystem:
                 max_iters=spec.gn_joint_iterations,
                 placement=HOST,
                 rtol=spec.gn_joint_rtol,
+                volume_ramp=None if spec.refinement is None else spec.refinement.ramp_damping,
             )
         else:
             result = solve_schur_normal(
@@ -313,9 +313,13 @@ class _HostSystem:
                 placement=HOST,
                 max_iters=spec.gn_joint_iterations,
                 rtol=spec.gn_joint_rtol,
+                volume_ramp=None if spec.refinement is None else spec.refinement.ramp_damping,
             )
         return CoupledLinearResult(
-            (jax.device_put(result.increment[0]), jnp.asarray(result.increment[1])),
+            (
+                jax.device_put(result.increment[0]),
+                jnp.asarray(self.project_pose(result.increment[1])),
+            ),
             jnp.int32(result.iterations),
             jnp.float32(result.relative_residual),
             jnp.bool_(result.finite),

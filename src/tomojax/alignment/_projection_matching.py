@@ -22,7 +22,7 @@ from tomojax.geometry import (
 from tomojax.recon import FBPConfig, backproject, fbp, project
 
 from ._modes import alignment_plan
-from ._pose._coupled_program import JointRefinement
+from ._pose._matching_model import JointRefinement, resample_rows
 from ._pose._pose_loop import align as refine_poses
 from ._prealign import correlation_peaks, reprojector, shift_views
 from ._profile_likelihood import fit_profile_likelihood
@@ -40,8 +40,8 @@ class ProjectionMatchingConfig:
     """Joint translation alignment of axial parallel-beam scans.
 
     Vertical shifts use noise-weighted axial mass profiles. Horizontal shifts
-    use five native detector rows and joint volume/pose refinement from
-    correlation and first-moment starts. The full scan is retained without
+    use five detector rows with matched low-pass sampling and joint image/pose
+    refinement from native correlation and first-moment starts. The full scan is retained without
     resampling.
 
     Read per-view vertical standard deviations from
@@ -207,8 +207,21 @@ def _horizontal_fit(
     iterations: int,
 ):
     """Refine both physical starts against one likelihood, retaining its minimum."""
-    grid, detector = sparse.grid, sparse.detector
-    measured = jnp.asarray(samples)
+    native_width = samples.shape[-1]
+    width = native_width // 2
+    pitch = sparse.detector.du * native_width / width
+    detector = replace(sparse.detector, nu=width, du=pitch)
+    grid = Grid(
+        width,
+        width,
+        sparse.grid.nz,
+        pitch,
+        pitch,
+        sparse.grid.vz,
+        vol_center=(*_xy_center(sparse.grid), detector.center[1]),
+    )
+    sparse = ParallelGeometry(grid, detector, sparse.angles)
+    measured = jnp.asarray(resample_rows(samples, width))
     ones = jnp.ones((grid.nx, grid.ny, grid.nz), jnp.float32)
     bound = float(jnp.max(backproject(sparse, project(sparse, ones))))
     del ones
@@ -221,6 +234,7 @@ def _horizontal_fit(
         early_stop_rel_impr=1e-4,
         seed_translations=False,
         gn_volume_damping=1e-3 * bound,
+        tv_weight=0,
     )
     nominal = np.asarray(stack_view_poses(sparse, len(samples)))
     frame = nominal[:, 0, :3]
@@ -238,7 +252,7 @@ def _horizontal_fit(
             measured,
             cfg=solver,
             init_x=initial,
-            joint_refinement=JointRefinement(ramp_damping=1e-3),
+            joint_refinement=JointRefinement(native_width=native_width),
         )
         fits.append((name, seed + np.asarray(increment), info))
         del volume, initial
@@ -258,7 +272,7 @@ def match_projections(
 ) -> tuple[np.ndarray, dict[str, object]]:
     """Estimate translations from native projection texture.
 
-    Owns the sparse native reconstruction grid and temporary volumes. Only the
+    Owns the sparse alignment grid and temporary volumes. Only the
     coupled likelihood profiles detector backgrounds; input projections and the
     final inverse are unchanged.
 

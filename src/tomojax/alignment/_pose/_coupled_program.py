@@ -33,8 +33,10 @@ from tomojax.core.projector import forward_project_view_T, sum_backproject_views
 from tomojax.core.trilinear import exact_adjoint, exact_forward
 from tomojax.recon.fista_tv_core import FistaCoreConfig, regulariser_value_arrays
 
+from . import _matching_model
 from ._coupled_linear import CoupledLinearResult, solve_coupled_normal, solve_schur_normal
 from ._coupled_vectors import BlockVector
+from ._matching_model import JointRefinement
 from ._pose_block import pose_block_solver
 from ._pose_jacobian import PoseJacobianOptions, pose_prediction_and_columns
 
@@ -58,13 +60,6 @@ class _BatchOps(NamedTuple):
     transpose: Callable  # (start, valid, y, out) -> out + A^T W y over its new views
     pose_forward: Callable  # (start, cols, dp) -> C dp over the batch
     pose_adjoint: Callable  # (start, cols, y, out) -> out with the batch's rows C^T y
-
-
-@dataclass(frozen=True)
-class JointRefinement:
-    """Joint-only refinement with profiled detector backgrounds."""
-
-    ramp_damping: float
 
 
 @dataclass(frozen=True)
@@ -227,6 +222,19 @@ def physical_projectors(
     spec: CoupledSpec, arrays: CoupledArrays, masked: Callable, *, absolute_weights: bool = False
 ) -> tuple[Callable, Callable]:
     """Physical forward/transpose, or their absolute weights for sensitivity bounds."""
+    if spec.refinement is not None:
+        assert not spec.jacobian.cone_beam
+        assert spec.jacobian.translation_frame == "detector"
+        assert set(spec.active_columns) <= {3, 5}
+        model = _matching_model.projectors(
+            spec.grid, spec.detector, backend=spec.backend, masked=masked, absolute=absolute_weights
+        )
+        return model.forward, model.adjoint
+    return _geometric_projectors(spec, arrays, masked, absolute_weights=absolute_weights)
+
+
+def _geometric_projectors(spec, arrays, masked, *, absolute_weights):
+    """The exact/sample/Joseph physical models in the scan's current geometry."""
     backend = spec.backend
     det_grid = None if backend == "cuda" else arrays.det_grid
     joseph = {"joseph": "linear", "joseph_cubic": "cubic"}.get(spec.jacobian.integrator)
@@ -326,7 +334,8 @@ def physical_projectors(
 def _unit_prediction(spec, arrays, poses, forward, shape):
     """Use implicit unit support when its exact native operator is available."""
     if (
-        spec.backend == "cuda"
+        spec.refinement is None
+        and spec.backend == "cuda"
         and spec.jacobian.integrator == "joseph"
         and not spec.jacobian.cone_beam
         and arrays.mask.ndim == 0
@@ -366,19 +375,10 @@ def pose_metric_inverse(diagonal, smoothness, damping):
 def filtered_operators(spec, arrays, forward, adjoint, columns):
     if spec.refinement is None:
         return arrays, forward, adjoint, columns
-    # Profile row offsets and one shared detector-u slope per view. Removing
-    # only these nuisance directions retains the low-frequency object signal
-    # needed to capture large shifts. A broad high-pass also removed that signal.
-    # The two orthogonal projections commute: the centred ramp has zero row
-    # means. Apply their self-adjoint product to every side of the likelihood.
+    # Profile the native backgrounds after the same sampling as the data/model.
     assert arrays.weights.ndim == 0
     nu, nv = spec.detector.nu, spec.detector.nv
-    ramp = jnp.broadcast_to(jnp.arange(nu, dtype=jnp.float32) - (nu - 1) / 2, (nv, nu))
-    ramp = ramp / jnp.linalg.norm(ramp)
-
-    def filtered(y):
-        centred = y - jnp.mean(y, axis=-1, keepdims=True)
-        return centred - jnp.sum(centred * ramp, axis=(-2, -1), keepdims=True) * ramp
+    filtered = _matching_model.nuisance_filter(spec.refinement.native_width, spec.detector)
 
     def filtered_columns(params, nominal, frame, volume, target, weight):
         prediction, derivative = columns(
@@ -393,6 +393,32 @@ def filtered_operators(spec, arrays, forward, adjoint, columns):
         lambda t, y, frames=None, accumulate=None: adjoint(t, filtered(y), frames, accumulate),
         filtered_columns,
     )
+
+
+def physical_columns(spec: CoupledSpec, arrays: CoupledArrays) -> Callable:
+    """Bind columns from the same physical model used by every volume product."""
+    if spec.refinement is not None:
+        return _matching_model.pose_columns(
+            spec.grid, spec.detector, backend=spec.backend, indices=spec.active_columns
+        )
+    return partial(
+        pose_prediction_and_columns,
+        grid=spec.grid,
+        detector=spec.detector,
+        det_grid=arrays.det_grid,
+        options=spec.jacobian,
+        column_indices=spec.active_columns,
+    )
+
+
+def constrained_pose_inverse(solve, spec, arrays, across):
+    """Apply the matching model's global gauge, not a per-batch constraint."""
+    if spec.refinement is None:
+        return solve
+    counts = arrays.counts
+    if counts is None:
+        counts = jnp.ones(arrays.poses.shape[0], jnp.float32)
+    return _matching_model.constrain_pose_inverse(solve, arrays.poses, counts, across)
 
 
 def _pose_column_cache(p, x, *, spec: CoupledSpec, arrays: CoupledArrays, predict_columns):
@@ -449,14 +475,8 @@ def _build_program(
     across = shares.across
     counts = arrays.counts if arrays.counts is not None else jnp.ones(n_views, jnp.float32)
     movable = counts[:, None] * active  # pose rows that may change
-    predict_columns = partial(
-        pose_prediction_and_columns,
-        grid=spec.grid,
-        detector=spec.detector,
-        det_grid=arrays.det_grid,
-        options=spec.jacobian,
-        column_indices=spec.active_columns,
-    )
+    predict_columns = physical_columns(spec, arrays)
+    project_pose = constrained_pose_inverse(lambda value: value, spec, arrays, across)
     regularisation = partial(volume_regularisation, spec=spec)
     smoothness = partial(pose_smoothness, weights=arrays.smoothness)
 
@@ -563,6 +583,8 @@ def _build_program(
             has_smoothness=spec.has_smoothness,
         )
 
+        solve_pose = constrained_pose_inverse(solve_pose, spec, arrays, across)
+
         def cross(dp):
             def body(start, valid, out):
                 return ops.transpose(
@@ -636,11 +658,11 @@ def _build_program(
 
         gx, gp = over_batches(gradient_body, (volume_zeros, jnp.zeros_like(p)))
         gx = across(gx) + reg_grad
-        gp = (gp + smooth_grad) * movable
+        gp = project_pose((gp + smooth_grad) * movable)
         free = free_volume_support(x, gx, mask, nonnegative=cfg.nonnegative)
 
         def normal(increment):  # y = W A dx + C dp, then (A^T W y, C^T y), batch by batch
-            dx, dp = free * increment[0], movable * increment[1]
+            dx, dp = free * increment[0], project_pose(movable * increment[1])
 
             def body(start, valid, carry):
                 ax, ap = carry
@@ -651,7 +673,7 @@ def _build_program(
             ax, ap = over_batches(body, (volume_zeros, jnp.zeros_like(p)))
             return (
                 free * (across(ax) + reg_hessian(dx) + cfg.gn_volume_damping * dx),
-                movable * (ap + smooth_hessian(dp) + cfg.gn_damping * dp),
+                project_pose(movable * (ap + smooth_hessian(dp) + cfg.gn_damping * dp)),
             )
 
         def ones_body(start, valid, out):
@@ -674,7 +696,7 @@ def _build_program(
         )
         pose_diagonal = jnp.zeros_like(p).at[:, indices].set(pose_diagonal)
         pose_inverse = pose_metric_inverse(pose_diagonal, arrays.smoothness, cfg.gn_damping)
-        return solve_coupled_normal(
+        result = solve_coupled_normal(
             normal,
             rhs,
             (volume_inverse, pose_inverse),
@@ -683,6 +705,7 @@ def _build_program(
             dot=block_dot,
             volume_ramp=None if spec.refinement is None else spec.refinement.ramp_damping,
         )
+        return result._replace(increment=(result.increment[0], project_pose(result.increment[1])))
 
     return update, loss
 
