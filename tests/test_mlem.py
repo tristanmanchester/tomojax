@@ -209,8 +209,9 @@ def test_separately_allocated_norms_match_inline_cache(problem, monkeypatch):
 
 @pytest.mark.numerical
 @pytest.mark.parametrize("free", [1, 2**40])
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_host_cone_updates_match_dense_transpose_without_consuming_inputs(
-    problem, monkeypatch, free
+    problem, monkeypatch, free, dtype
 ):
     grid, detector, geometry, matrix = problem
     if not isinstance(geometry, ConeSegments):
@@ -218,11 +219,12 @@ def test_host_cone_updates_match_dense_transpose_without_consuming_inputs(
     host = import_module("tomojax.recon._mlem_host")
     monkeypatch.setattr(host, "volume_depth", lambda *_, **__: 1)
     monkeypatch.setattr(host, "device_free_memory_bytes", lambda: free)
+    monkeypatch.setattr(host, "_MEASURED_BATCH_BYTES", 1)
     support = np.ones((3, 2, 2), bool)
     support[0] = False
     initial = np.full((3, 2, 2), 0.7, np.float32)
     initial[0] = np.nan  # excluded values must not enter the likelihood
-    data = (matrix @ np.linspace(0.2, 1.1, 12)).reshape(5, 4, 5)
+    data = (matrix @ np.linspace(0.2, 1.1, 12)).reshape(5, 4, 5).astype(dtype)
     for iterations in (0, 2):
         expected = np.where(support, initial, 0).ravel().astype(np.float64)
         order = np.argsort(geometry.angles, kind="stable")
@@ -250,6 +252,32 @@ def test_host_cone_updates_match_dense_transpose_without_consuming_inputs(
         np.testing.assert_allclose(volume.ravel(), expected, rtol=2e-5, atol=2e-6)
     assert np.isnan(initial[0]).all()
     np.testing.assert_array_equal(initial[1:], np.float32(0.7))
+
+
+def test_host_prediction_buffer_is_zero_and_survives_donated_updates():
+    import jax.numpy as jnp
+
+    host = import_module("tomojax.recon._mlem_host")
+    values = jnp.full((2, 3, 5), 0.25, jnp.float32)
+    prediction = host._prediction_buffer((7, 3, 5), next(iter(values.devices())))
+    np.testing.assert_array_equal(np.asarray(prediction), 0)
+    prediction = host._add_predictions(prediction, values, jnp.int32(3))
+    prediction = host._divide_predictions(prediction, values * 2, jnp.int32(3))
+    np.testing.assert_array_equal(np.asarray(prediction)[:, 0, 0], [0, 0, 0, 2, 2, 0, 0])
+
+
+def test_packed_device_visibility_unions_overlapping_odd_width_slabs():
+    import jax.numpy as jnp
+
+    host = import_module("tomojax.recon._mlem_host")
+    expected = np.zeros((9, 3, 9), bool)
+    seen = jnp.zeros((2, 3, 9), jnp.uint8)
+    rng = np.random.default_rng(381)
+    for start in (0, 3, 5):
+        visible = rng.random((9, 3, 4)) > 0.5
+        seen = host._merge_visibility(seen, jnp.asarray(visible), jnp.int32(start))
+        expected[:, :, start : start + 4] |= visible
+    np.testing.assert_array_equal(np.asarray(seen), np.packbits(expected, axis=0))
 
 
 @pytest.mark.numerical

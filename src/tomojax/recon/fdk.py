@@ -32,6 +32,7 @@ from tomojax.core.devices import as_devices, view_split
 from tomojax.core.geometry.base import grid_volume_origin
 from tomojax.core.geometry.cone import cone_parts
 from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.host_transfer import copy_to_host, upload_host
 from tomojax.core.validation import validate_grid, validate_projection_stack
 from tomojax.recon._fdk_angles import grouped_angles, ordered_arc
 from tomojax.recon._fdk_coverage import full_turn_weights
@@ -494,12 +495,12 @@ def _device_views(
     projections: jax.Array | np.ndarray | _RowView,
     start: int,
     stop: int,
-    device: Device | None = None,
+    device: Device,
 ) -> jax.Array:
     part = projections[start:stop]
     if isinstance(part, jax.Array):
         return jax.device_put(part.astype(jnp.float32), device)
-    return jax.device_put(np.asarray(part, np.float32), device)
+    return upload_host(np.asarray(part, np.float32), device)
 
 
 _filter_jit = jax.jit(_filter, static_argnames=("pad_lo", "pad_hi"))
@@ -525,7 +526,7 @@ def _filter_views(prep: _Prepared, projections: jax.Array | np.ndarray, n_views:
     parts = []
     for start in range(0, n_views, prep.batch):
         stop = min(start + prep.batch, n_views)
-        views = _device_views(projections, start, stop)
+        views = _device_views(projections, start, stop, next(iter(prep.weights.devices())))
         weights = prep.weights[start:stop]
         cosine = _batch_cosines(prep.cosine, start, stop - start, prep.detector)
         parts.append(_filter_jit(views, cosine, weights, prep.kernel, prep.pad_lo, prep.pad_hi))
@@ -633,11 +634,12 @@ def _accumulate(
         here = prep.on(device, views)
         share = jax.device_put(coeff[views.start : views.stop], device)
         out = jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32, device=device)
+        target = next(iter(out.devices()))
         starts = list(range(0, len(views), prep.batch))
 
         def read(start: int) -> jax.Array:
             first = views.start + start
-            return _device_views(projections, first, min(first + prep.batch, views.stop), device)
+            return _device_views(projections, first, min(first + prep.batch, views.stop), target)
 
         # Copy the next batch to the device while the current one is filtered
         # and backprojected.
@@ -801,7 +803,7 @@ def fdk_host(
         Solver settings. None uses FDKHostConfig defaults.
     out : numpy.ndarray or None, optional
         Writable float32 host storage of shape ``(nx, ny, nz)``, including a memmap.
-        Must not overlap input storage. None allocates a new output.
+        Must not overlap input storage. None allocates a new Fortran-order output.
 
     Returns
     -------
@@ -835,7 +837,7 @@ def fdk_host(
         projections, detector, geometry=geometry, context="fdk_host projections"
     )
     ordered_arc(grouped_angles(geometry, n_views)[0])
-    result = validate_host_arrays(projections, out, shape, "fdk_host")
+    result = validate_host_arrays(projections, out, shape, "fdk_host", order="F")
     if depth is None:
         free = device_free_memory_bytes() or 2 * 1024**3
         depth = max(1, int(free // (3 * max(1, 4 * grid.nx * grid.ny))))
@@ -872,7 +874,7 @@ class _Slabs:
     poses: np.ndarray
     result: np.ndarray
 
-    def reconstruct(self, z0: int, z1: int, prep: _Prepared, coeff: jax.Array) -> np.ndarray:
+    def reconstruct(self, z0: int, z1: int, prep: _Prepared, coeff: jax.Array) -> jax.Array:
         """Slices ``[z0, z1)``, filtering only their physical detector-row window."""
         slab = _slab_grid(self.grid, z0, z1)
         r0, r1 = _slab_rows(self.geometry, self.grid, self.detector, self.poses, z0, z1)
@@ -883,10 +885,9 @@ class _Slabs:
         r0 = min(r0, self.detector.nv - rows)
         r1 = r0 + rows
         views = _RowView(self.projections, r0, r1)
-        volume = _accumulate(
+        return _accumulate(
             slab, views, prep.window(r0, r1), _window_coefficients(coeff, r0, z0), None
         )
-        return np.asarray(volume.T).T
 
     def run(
         self,
@@ -921,8 +922,8 @@ class _Slabs:
         if pending is not None:
             pending.result()
 
-    def store(self, z0: int, z1: int, volume: np.ndarray) -> None:
-        self.result[:, :, z0:z1] = volume
+    def store(self, z0: int, z1: int, volume: jax.Array) -> None:
+        copy_to_host(volume.T, self.result[:, :, z0:z1].T)
 
 
 class _RowView:
