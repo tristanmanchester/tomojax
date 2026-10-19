@@ -501,7 +501,18 @@ def segments_of(geometry: object) -> ConeSegments | None:
 
 
 def is_cone_beam(geometry: object) -> bool:
-    """Whether ``geometry`` traces diverging rays (a cone beam, or cone segments)."""
+    """Whether a geometry traces diverging rays.
+
+    Parameters
+    ----------
+    geometry : object
+        Any geometry, including posed or segmented cone-beam geometries.
+
+    Returns
+    -------
+    bool
+        True for a cone beam or cone segments, False for parallel rays.
+    """
     return segments_of(geometry) is not None or beam_of(geometry) is not None
 
 
