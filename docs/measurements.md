@@ -29,14 +29,13 @@ repository; each result names the command, commit and date to rerun it.
 
 Use the same calibrated geometry and physical output grid for each library,
 and compare iterative methods at matched reconstruction error rather than a
-fixed iteration count. For Nikon seeds, no reference volume is available:
-report data residuals from one common calibrated ASTRA forward projector for
-all libraries, together with their volume differences. Compare iterative times
-at matched residual; compare FDK times with both diagnostics reported. Neither
-is a claim of physical accuracy on Nikon. Physical accuracy checks use the
-walnut reference and independent analytic phantoms. The Zeiss vendor comparison
-uses a fixed registered valid-data region and an intensity-affine fit, not an
-absolute-intensity truth volume.
+fixed iteration count. Nikon and Zeiss comparisons use data residuals from one
+common calibrated ASTRA forward projector for all libraries, together with
+volume differences. Compare iterative times at matched residual; compare FDK
+times with both diagnostics reported. Physical accuracy checks use the walnut
+reference and independent analytic phantoms. The Zeiss vendor comparison uses
+a fixed registered valid-data region and an intensity-affine fit as an image
+diagnostic, not as a truth volume or an acceptance threshold.
 
 ## Reconstruction against ASTRA
 
