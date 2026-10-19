@@ -20,6 +20,20 @@ grayscale range; scale bars are 200 µm. Missing-cone artefacts remain.
 uv run python examples/gallery/k11_ruby_sphere.py k11-54013.nxs k11-ruby-sphere.png
 ```
 
+## Glass spheres between PEKK plates
+
+![An in-plane view of the glass-sphere layer and two enlarged cross-sections between PEKK plates.](../images/gallery/k11-glass-layer.png)
+
+Glass spheres between PEKK plates in Diamond K11 laminography scan 54286.
+The stored 2.16 µm pixels are binned 4 × 4 to reconstruct 8.64 µm voxels with
+the default `tj.align` workflow. An in-plane slice through the layer is shown
+beside two enlarged cross-sections; scale bars are 200 µm. Missing-cone
+artefacts remain.
+
+```bash
+uv run python examples/gallery/k11_glass_layer.py k11-54286.nxs k11-glass-layer.png
+```
+
 ## Laminography alignment of a chip package
 
 ![Solder-ball and die slices of the phantom, a nominal-geometry reconstruction and an aligned one, above recovered and true per-view shifts.](../images/gallery/chip-laminography.png)
