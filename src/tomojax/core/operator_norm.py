@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 
+from tomojax.core.backend_policy import cuda_backend
 from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
 
 if TYPE_CHECKING:
@@ -29,15 +30,19 @@ def _absolute_cubic_normal(
     det_grid: tuple[jax.Array, jax.Array] | None,
 ) -> jax.Array:
     """Apply |A|.T |A|, which bounds the signed cubic normal componentwise."""
-    from .joseph import adjoint_jax, forward_jax, plane_coefficients
+    from .joseph import forward_project_planes, plane_coefficients, sum_backproject_planes
 
     coefficients = plane_coefficients(poses, grid, detector, det_grid)
-    projected = forward_jax(
-        coefficients, volume, grid, detector, interpolation="cubic", absolute_weights=True
-    )
-    return adjoint_jax(
+    # The reference AD transpose retains a plane-by-ray tape. Use the same
+    # bounded-workspace pair as the ordinary normal on CUDA, including |A|.
+    backend = "cuda" if cuda_backend() else "jax"
+    projected = forward_project_planes(
+        coefficients, volume, grid, detector,
+        backend=backend, interpolation="cubic", absolute_weights=True,
+    )  # fmt: skip
+    return sum_backproject_planes(
         coefficients, projected * valid, grid, detector,
-        interpolation="cubic", absolute_weights=True,
+        backend=backend, interpolation="cubic", absolute_weights=True,
     )  # fmt: skip
 
 

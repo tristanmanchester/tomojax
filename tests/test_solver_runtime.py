@@ -218,7 +218,7 @@ def test_shared_power_method_matches_dense_operator_with_tail_and_support():
 @pytest.mark.parametrize("tilt", [False, True])
 @pytest.mark.parametrize("ray_integrator", ["sampled", "joseph_cubic"])
 def test_positive_normal_bound_dominates_dense_spectrum_for_irregular_geometry(
-    tilt, ray_integrator
+    tilt, ray_integrator, monkeypatch
 ):
     grid = Grid(2, 3, 2, 0.8, 1.1, 1.3)
     detector = Detector(5, 3, 0.6, 1.2, (0.17, 0.23))
@@ -240,6 +240,11 @@ def test_positive_normal_bound_dominates_dense_spectrum_for_irregular_geometry(
 
     matrix = np.asarray(jax.jacfwd(project)(jnp.zeros(12))).astype(np.float64)
     expected = np.max(np.abs(matrix).T @ np.abs(matrix) @ np.ones(12))
+    if jax.default_backend() == "gpu":
+        monkeypatch.setattr(
+            "tomojax.core.joseph.adjoint_jax",
+            lambda *a, **kw: pytest.fail("CUDA norm must not retain the reference plane tape"),
+        )
     actual = float(
         estimate_normal_norm(
             poses,
