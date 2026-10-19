@@ -30,7 +30,13 @@ or a Nikon scan. Missing flats/white level or darks require explicit
 `flats=`/`white_level=` and `darks=` in `load_frames`; use zero darks only
 when the counts are already dark-corrected.
 
-## ESRF acquisitions
+## Beamline exports
+
+For executable first-slice recipes for ESRF NXtomo, TOMCAT/SYRMEP Data Exchange
+and the mixed I13 TIFF folder, start with [beamline exports](beamline-exports.md).
+The examples distinguish file metadata from explicitly supplied calibration.
+
+### Raw ESRF acquisitions
 
 `tj.load_frames("scan_folder", detector=..., angles=...)` reads uncompressed
 single-image EDF projections with SPEC `.info` or XML acquisition metadata.

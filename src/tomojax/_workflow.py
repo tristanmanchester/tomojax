@@ -333,6 +333,8 @@ def reconstruct(
     for segmented cone geometry, and FBP/FDK otherwise.
     An explicitly unrecorded axial centre may be inferred; oblique auto
     may infer setup and support on a coarse grid before native refinement.
+    An explicit ``grid`` fixes the region and final voxel sampling instead;
+    automatic setup and motion still run.
     The scan and ``info["automatic"]``
     record those choices and limitations. Explicit methods bypass this policy.
 
@@ -478,6 +480,7 @@ def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstructio
         isinstance(acquisition, dict) and acquisition.get("geometry_status") == "not_recorded"
     )
     if isinstance(base, LaminographyGeometry | RotationAxisGeometry) or unknown_axis:
+        grid = options.pop("grid", None)
         if options:
             raise ValueError(
                 "automatic geometry reconstruction does not take expert overrides; "
@@ -485,7 +488,7 @@ def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstructio
             )
         from tomojax._laminography import reconstruct_laminography
 
-        return reconstruct_laminography(scan, align=align, reconstruct=reconstruct)
+        return reconstruct_laminography(scan, align=align, reconstruct=reconstruct, grid=grid)
     reasons = []
     method: Method = "fbp"
     if isinstance(base, ConeSegments):
@@ -792,6 +795,8 @@ def align(
     A ``spectral_setup`` initializer does not reconstruct; reconstruct its returned scan.
 
     ``grid`` overrides the scan's reconstruction grid, as :func:`reconstruct` does.
+    In automatic laminography it fixes the region and final voxel sampling,
+    while setup and motion remain automatic; it is not inferred support.
 
     ``checkpoint`` is a file the alignment saves its progress to after each
     outer iteration. When that file holds a checkpoint of the same alignment
@@ -870,12 +875,12 @@ def align(
     if mode == "auto":
         freeze = tuple(freeze)
         explicit = config is not None or levels is not None or bool(freeze)
-        explicit = explicit or grid is not None or checkpoint is not None or quality != "fast"
+        explicit = explicit or checkpoint is not None or quality != "fast"
         if not explicit and describe(scan.geometry)[0] != "cone":
             from tomojax.core.devices import sharing
 
             with sharing(devices):
-                return _align_automatically(scan)
+                return _align_automatically(scan, grid=grid)
         if explicit and describe(scan.geometry)[0] != "cone":
             from tomojax._laminography import uses_laminography_workflow
 
@@ -976,14 +981,16 @@ def _align_explicit(
     )
 
 
-def _align_automatically(scan: Scan) -> Alignment:
+def _align_automatically(scan: Scan, *, grid: Grid | None = None) -> Alignment:
     """Geometry-aware policy; every numerical operation below has an explicit mode."""
     from tomojax._laminography import reconstruct_laminography, uses_laminography_workflow
 
+    if grid is not None:
+        scan = with_grid(scan, grid)
     if scan.poses is not None:
         return align(scan, mode="pose")
     if uses_laminography_workflow(scan):
-        result = reconstruct_laminography(scan, align=align, reconstruct=reconstruct)
+        result = reconstruct_laminography(scan, align=align, reconstruct=reconstruct, grid=grid)
         poses = result.scan.poses
         if poses is None:
             poses = np.zeros((len(result.scan.angles), 6), np.float32)
