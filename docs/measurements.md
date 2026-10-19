@@ -204,7 +204,8 @@ Both image errors use the authors' reference, without intensity fitting.
 ### Full-view Nikon and Zeiss SIRT
 
 Measured 2026-10-19 on `272684c7` (TomoJAX and Zeiss ASTRA) and `35f4055f`
-(Nikon ASTRA). Nikon uses all 1571 views and a 500³ grid with 0.1880371266 mm
+(Nikon ASTRA), with TIGRE on `e3bc2f63` (Nikon) and `6149357d` (Zeiss).
+Nikon uses all 1571 views and a 500³ grid with 0.1880371266 mm
 voxels; Zeiss uses all 801 views and a 512³ grid with 0.0833853988647461 mm
 voxels. The input is
 `tj.load_frames(path, darks=0, grid=grid).corrected(binning=2)`, where `path`
@@ -212,22 +213,28 @@ is the Nikon seeds XTekCT file or the Zeiss HDtomo `tomo-A.txrm` file and
 `grid` is `tj.Grid(n, n, n, pitch, pitch, pitch)` with those dimensions.
 Each solve starts from its library's FDK. TomoJAX uses the same 12-iteration
 accelerated SIRT call above; ASTRA uses 24 nonnegative iterations with its
-forward/backprojectors in 512-view batches.
+forward/backprojectors in 512-view batches. TIGRE uses
+`tigre.algorithms.sirt(data, geo, angles, 24, init=initial, verbose=False)`,
+with `initial = tigre.algorithms.fdk(data, geo, angles, dowang=False)`.
 
 | Scan | Library | Cold / warm (s) | Common-projector relative residual | Volume difference to ASTRA |
 |---|---|---:|---:|---:|
 | Nikon | TomoJAX | 95.52 / 89.63 | 0.028788 | 0.013977 |
 | Nikon | ASTRA | 135.89 / 125.78 | 0.030057 | — |
+| Nikon | TIGRE | 504.23 / 493.43 | 0.056112 | 0.102748 |
 | Zeiss | TomoJAX | 43.86 / 36.15 | 0.187915 | 0.025439 |
 | Zeiss | ASTRA | 69.11 / 62.76 | 0.189497 | — |
+| Zeiss | TIGRE | 291.57 / 290.02 | 0.207728 | 0.137740 |
 
 Cold includes imports, loading and the first host volume with fresh compilation
 caches; warm repeats the solve. Filesystem caches are not cleared. Loading took
-3.03 / 10.04 s for Nikon TomoJAX / ASTRA, and 4.99 / 5.77 s for Zeiss.
-The same calibrated ASTRA forward projector scores both libraries. Volume
+3.03 / 10.04 / 3.02 s for Nikon TomoJAX / ASTRA / TIGRE, and
+4.99 / 5.77 / 2.05 s for Zeiss.
+The same calibrated ASTRA forward projector scores all three libraries. Volume
 differences are full-volume relative L2, without intensity fitting. On the
-fixed Zeiss vendor region, intensity-affine NRMSE is 0.353989 for TomoJAX
-and 0.351702 for ASTRA; this is an image diagnostic, not an acceptance gate.
+fixed Zeiss vendor region, intensity-affine NRMSE is 0.353989 for TomoJAX,
+0.351702 for ASTRA and 0.343797 for TIGRE; this is an image diagnostic,
+not an acceptance gate.
 
 ### Full-view Nikon OSEM
 
