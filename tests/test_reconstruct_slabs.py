@@ -168,8 +168,22 @@ def test_cone_raw_slabs_preserve_acquisition_weights_and_owned_rows(backend):
             ),
         )
     )
-    raw = np.random.default_rng(91).uniform(200, 900, (16, 65, 23)).astype(">f4")
-    eager = tj.Frames(raw, geometry, white_level=1000)
+    exposures, flat_exposures = np.linspace(0.7, 1.6, 16), np.array([0.3, 1.1, 0.5])
+    raw = np.random.default_rng(91).uniform(200, 900, (16, 65, 23))
+    raw = (11 + raw * exposures[:, None, None]).astype(">f4")
+    flats = np.broadcast_to(
+        (11 + np.array([1000, 1100, 900]) * flat_exposures)[:, None, None], (3, 65, 23)
+    ).copy()
+    eager = tj.Frames(
+        raw,
+        geometry,
+        flats=flats,
+        darks=np.full((1, 65, 23), 11),
+        flat_positions=np.array([0, 7, 16]),
+        view_positions=np.linspace(0.2, 15.8, 16),
+        exposure_times=exposures,
+        flat_exposure_times=flat_exposures,
+    )
     requests = []
     frames = replace(eager, counts=Windowed(raw, requests))
     cfg, step = FBPConfig(backprojector=backend), Stripes(5, varying=True)
