@@ -29,7 +29,14 @@ class _Buffer(Protocol):
 
 @cache
 def _libraries() -> tuple[C.CDLL, C.CDLL]:
-    driver = C.CDLL("libcuda.so.1")
+    try:
+        driver = C.CDLL("libcuda.so.1")
+    except OSError as exc:
+        raise RuntimeError(
+            "TomoJAX CUDA kernels cannot load libcuda.so.1. Install a compatible NVIDIA "
+            "driver and expose it to this process (including inside containers); "
+            "Python CUDA wheels do not provide the driver."
+        ) from exc
     try:
         spec = find_spec("nvidia.cuda_nvrtc")
     except ModuleNotFoundError:
@@ -39,7 +46,16 @@ def _libraries() -> tuple[C.CDLL, C.CDLL]:
         path = str(
             Path(cast("list[str]", spec.submodule_search_locations)[0]) / "lib/libnvrtc.so.12"
         )
-    nvrtc = C.CDLL(path)
+    try:
+        nvrtc = C.CDLL(path)
+    except OSError as exc:
+        raise RuntimeError(
+            f"TomoJAX CUDA kernels cannot load CUDA 12 NVRTC ({path}). "
+            "Install the CUDA dependencies in this Python environment with "
+            "python -m pip install 'tomojax[cuda12]' (including the NVIDIA "
+            "nvidia-cuda-runtime-cu12 and nvidia-cuda-nvrtc-cu12 wheels), "
+            "or provide a working CUDA 12 toolkit on the library search path."
+        ) from exc
     # ctypes defaults correctly return the integer CUDA status, but pointers need
     # explicit declarations so handles cannot be silently narrowed to 32 bits.
     signatures = {

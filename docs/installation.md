@@ -39,6 +39,8 @@ JAX_PLATFORMS=cuda .venv/bin/python -c "import jax; print(jax.devices()); assert
 `JAX_PLATFORMS=cuda` fails if CUDA cannot initialise; a CPU fallback is not a
 successful CUDA installation. Keep it set when verifying your first
 reconstruction. The CUDA 12 extra includes JAX's CUDA dependencies and CuPy.
+It also supplies NVIDIA's CUDA runtime and NVRTC wheels for kernel compilation;
+these wheels do not replace the system NVIDIA driver.
 TomoJAX's CUDA C kernels compile at first use and are cached on disk. Published
 accelerator validation is limited to an Ada RTX 4070 Laptop GPU; see the
 [support matrix](support-matrix.md#numerical-and-accelerator-scope).

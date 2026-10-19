@@ -10,7 +10,6 @@ import pytest
 
 from tomojax.core import cuda
 
-pytestmark = pytest.mark.gpu
 _SOURCE = """extern "C" __global__ void add(const float* x,float* y,int n) {
     int i=blockIdx.x*blockDim.x+threadIdx.x;
     if(i<n) y[i]=x[i]+INCREMENT;
@@ -36,6 +35,7 @@ def _operation(increment=1):
     return jax.jit(lambda x: jax.lax.fori_loop(0, 20, lambda _, y: add(y), x))
 
 
+@pytest.mark.gpu
 def test_launch_preserves_buffers_and_context_across_threads():
     if jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
@@ -55,6 +55,7 @@ def test_launch_preserves_buffers_and_context_across_threads():
             list(pool.map(run, range(1, 5)))
 
 
+@pytest.mark.gpu
 def test_persistent_binary_is_reused_and_source_changes_recompile(tmp_path, monkeypatch):
     if jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
@@ -76,6 +77,7 @@ def test_persistent_binary_is_reused_and_source_changes_recompile(tmp_path, monk
         assert len(calls) == expected_compiles
 
 
+@pytest.mark.gpu
 def test_initialization_copies_or_zeros_without_mutating_live_inputs():
     if jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
@@ -97,3 +99,18 @@ def test_initialization_copies_or_zeros_without_mutating_live_inputs():
                 data = jnp.full(129, value, jnp.float32)
                 np.testing.assert_array_equal(operation(data), np.full(129, 0 if zero else value))
                 np.testing.assert_array_equal(data, np.full(129, value))
+
+
+@pytest.mark.parametrize("library", ["libcuda.so.1", "libnvrtc.so.12"])
+def test_missing_cuda_dependency_is_actionable(monkeypatch, library):
+    def load(path):
+        if path == library:
+            raise OSError("missing library")
+        return object()
+
+    monkeypatch.setattr(cuda.C, "CDLL", load)
+    monkeypatch.setattr(cuda, "find_spec", lambda _: None)
+    remedy = "NVIDIA driver" if library == "libcuda.so.1" else r"tomojax\[cuda12\]"
+    with pytest.raises(RuntimeError, match=remedy) as error:
+        cuda._libraries.__wrapped__()
+    assert isinstance(error.value.__cause__, OSError)
