@@ -151,6 +151,16 @@ def _mask_slab(volume: jax.Array, seen: jax.Array) -> jax.Array:
     return volume * jnp.unpackbits(seen, axis=0, count=volume.shape[0])
 
 
+def _prediction_buffer(shape: tuple[int, int, int], device: Device) -> jax.Array:
+    """Allocate only the prediction buffer, without growing an XLA memory arena."""
+    if device.platform != "gpu":
+        return jnp.zeros(shape, jnp.float32, device=device)
+    import cupy as cp
+
+    with cp.cuda.Device(device.local_hardware_id):
+        return jax.dlpack.from_dlpack(cp.zeros(shape, np.float32))
+
+
 def _ratios(
     volume: np.ndarray,
     projections: np.ndarray,
@@ -166,7 +176,8 @@ def _ratios(
     largest = max(grid.nx * grid.ny * grid.nz for _, _, grid, _ in slabs)
     scratch = 4 * 4 * largest + 2 * batch * detector.nv * detector.nu * 4 + 256 * 2**20
     resident = free is not None and ratio_bytes + scratch <= 0.85 * free
-    expected = jnp.zeros(shape, jnp.float32) if resident else np.zeros(shape, np.float32)
+    device = next(iter(slabs[0][3].devices()))
+    expected = _prediction_buffer(shape, device) if resident else np.zeros(shape, np.float32)
     for start, stop, grid, coefficients in slabs:
         piece = _device_slab(volume, start, stop, next(iter(coefficients.devices())))
         for first in range(0, len(indices), batch):
