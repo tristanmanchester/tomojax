@@ -34,7 +34,7 @@ from tomojax.alignment._objectives.loss_adapters import build_loss_adapter
 from tomojax.alignment._objectives.validation_residuals import (
     FoldValidation,
     accumulate_validation_normals,
-    validation_loss,
+    validation_scorer,
 )
 from tomojax.alignment._quality_policy import (
     reconstruction_quality_policy,
@@ -44,7 +44,7 @@ from tomojax.alignment.optimizers import ValidationLmConfig, run_active_validati
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
 
     from tomojax.alignment._config import AlignConfig
     from tomojax.alignment._model.dofs import DofBounds
@@ -171,8 +171,7 @@ def _run_setup_validation_objective(
             time.monotonic() - stage_start,
         )
 
-    def score_candidate(z_candidate: jnp.ndarray) -> float:
-        return float(sum(validation_loss(v, z_candidate) for _, v, _ in fold_cache))
+    score_candidate = _candidate_scorer(fold_cache)
 
     opt_result = run_active_validation_lm(
         state=setup_state,
@@ -197,6 +196,16 @@ def _run_setup_validation_objective(
         residual_count=residual_count,
         fold_cache=fold_cache,
     )
+
+
+def _candidate_scorer(folds: list[FoldEvaluation]) -> Callable[[jnp.ndarray], float]:
+    """Own each frozen fold's compiled loss for the candidate search."""
+    scorers = tuple(validation_scorer(validation) for _, validation, _ in folds)
+
+    def score(z_candidate: jnp.ndarray) -> float:
+        return float(sum(scorer(z_candidate) for scorer in scorers))
+
+    return score
 
 
 def _build_geometry_stage_stat(

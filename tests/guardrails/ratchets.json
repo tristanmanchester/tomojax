@@ -35,7 +35,7 @@
     "src/tomojax/alignment/_pose/_pose_loop.py::align": 196,
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::_run_reconstruction_step": 166,
     "src/tomojax/alignment/_stages/_setup_stage.py::_optimize_setup_geometry_bilevel_for_level": 148,
-    "src/tomojax/alignment/_stages/_setup_stage.py::_run_setup_validation_objective": 104,
+    "src/tomojax/alignment/_stages/_setup_stage.py::_run_setup_validation_objective": 103,
     "src/tomojax/alignment/_stages/_stage_multires.py::_run_one_multires_level": 117,
     "src/tomojax/alignment/_stages/_stage_runners.py::_run_multires_level_stages": 143,
     "src/tomojax/alignment/_stages/_stage_runners.py::_run_pose_alignment_stage": 106,
@@ -114,7 +114,7 @@
   "type_errors": {
     "reportArgumentType": 276,
     "reportAssignmentType": 2,
-    "reportAttributeAccessIssue": 159,
+    "reportAttributeAccessIssue": 127,
     "reportCallIssue": 12,
     "reportGeneralTypeIssues": 7,
     "reportIndexIssue": 7,

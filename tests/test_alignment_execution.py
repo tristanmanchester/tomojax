@@ -9,17 +9,39 @@ from tomojax import project
 from tomojax.alignment import AlignConfig, align_multires
 
 # check-public-imports: allow-private
+from tomojax.alignment._objectives import validation_residuals as validation
+
+# check-public-imports: allow-private
 from tomojax.alignment._objectives.recon_layer import PoseAdjustedGeometry
 
 # check-public-imports: allow-private
 from tomojax.alignment._stages import _reconstruction_stage as reconstruction_stage
 from tomojax.alignment.api import L2LossSpec, align
-
-# check-public-imports: allow-private
 from tomojax.core.projector import forward_project_view_T
 from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 
 from ._helpers import cor_then_polish_schedule
+
+
+def test_validation_scorer_reuses_one_program_for_changing_candidates(monkeypatch):
+    traces = []
+
+    def chunk(z, index, data):
+        traces.append(None)
+        assert isinstance(data.volume, jax.core.Tracer)
+        assert isinstance(data.targets, jax.core.Tracer)
+        return data.volume * (z[0] + index) - data.targets
+
+    data = validation._ResidualData(jnp.array([1.0, 2.0]), jnp.array([0.3, 0.4]), None)
+    monkeypatch.setattr(
+        validation, "_validation_residuals", lambda _: validation._Residuals(chunk, 3, data)
+    )
+    score = validation.validation_scorer(None)
+    for value in (0.1, -0.7, 2.0):
+        residuals = np.array([1.0, 2.0]) * (value + np.arange(3)[:, None]) - [0.3, 0.4]
+        expected = 0.5 * np.sum(residuals**2)
+        assert float(score(jnp.array([value]))) == pytest.approx(expected, rel=2e-6)
+    assert len(traces) == 1
 
 
 @pytest.mark.numerical
@@ -114,6 +136,14 @@ def test_repeated_alignment_reconstruction_keeps_updating_voxels_and_resumes(
 
 
 def test_align_multires_public_execution_emits_observer_and_resume_metadata() -> None:
+    traces = []
+
+    @jax.jit
+    def caller_program(value):
+        traces.append(None)
+        return value + 1
+
+    assert float(caller_program(jnp.zeros(()))) == 1
     grid = Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0)
     detector = Detector(nu=2, nv=2, du=1.0, dv=1.0)
     geometry = ParallelGeometry(
@@ -156,8 +186,7 @@ def test_align_multires_public_execution_emits_observer_and_resume_metadata() ->
         checkpoint_callback=checkpoint_states.append,
     )
 
-    assert x.shape == (2, 2, 2)
-    assert pose_params.shape == (2, 6)
+    assert (x.shape, pose_params.shape) == ((2, 2, 2), (2, 6))
     assert bool(jnp.all(jnp.isfinite(x)))
     assert bool(jnp.all(jnp.isfinite(pose_params)))
     assert info["loss"]
@@ -186,12 +215,13 @@ def test_align_multires_public_execution_emits_observer_and_resume_metadata() ->
     assert final_state.global_outer_iterations_completed == 1
     assert final_state.stage_name == "direct_pose"
     assert final_state.stage_completed is True
-    assert final_state.x.shape == (2, 2, 2)
-    assert final_state.pose_params.shape == (2, 6)
+    assert (final_state.x.shape, final_state.pose_params.shape) == ((2, 2, 2), (2, 6))
     assert final_state.loss == info["loss"]
     assert final_state.outer_stats == info["outer_stats"]
     assert isinstance(final_state.geometry_calibration_state, dict)
     assert "detector" in final_state.geometry_calibration_state
+    assert float(caller_program(jnp.ones(()))) == 2
+    assert len(traces) == 1  # Alignment must not invalidate the caller's programs.
 
 
 def test_align_multires_executes_a_setup_then_pose_schedule_with_real_stages() -> None:

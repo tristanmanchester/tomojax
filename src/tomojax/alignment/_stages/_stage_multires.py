@@ -237,15 +237,14 @@ def _run_multires_levels(
 
 
 def _release_completed_level_accelerator_state(state: MultiresRunState) -> None:
-    """Drop per-level JAX executable/cache state before compiling the next level."""
-    if state.x_init is not None:
-        jax.block_until_ready(state.x_init)
-    if state.pose_params is not None:
-        jax.block_until_ready(state.pose_params)
+    """Release unreachable level state without invalidating reusable programs.
+
+    JAX's compilation caches are process-wide, including the caller's programs.
+    Per-level arrays instead become collectible when their owners leave scope;
+    synchronize the surviving state before collecting those owners.
+    """
+    jax.block_until_ready((state.x_init, state.pose_params))
     gc.collect()
-    clear_caches = getattr(jax, "clear_caches", None)
-    if callable(clear_caches):
-        clear_caches()
 
 
 def _setup_dofs_requested(cfg: AlignConfig | None) -> bool:
