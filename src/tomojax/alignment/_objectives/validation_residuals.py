@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -61,8 +61,17 @@ class FoldValidation:
 class _Residuals:
     """One fold's weighted residuals, a chunk of views at a time, as a function of ``z``."""
 
-    chunk: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]
+    chunk: Callable[[jnp.ndarray, jnp.ndarray, _ResidualData], jnp.ndarray]
     chunks: int
+    data: _ResidualData
+
+
+class _ResidualData(NamedTuple):
+    """Large fold arrays passed to the compiled scorer, not embedded in it."""
+
+    volume: jnp.ndarray
+    targets: jnp.ndarray
+    mask: jnp.ndarray | None
 
 
 def accumulate_validation_normals(fold: FoldValidation, z: jnp.ndarray) -> ValidationNormalResult:
@@ -81,7 +90,7 @@ def accumulate_validation_normals(fold: FoldValidation, z: jnp.ndarray) -> Valid
         carry: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray], i: jnp.ndarray
     ) -> tuple[tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray], None]:
         loss_acc, grad_acc, hess_acc, count_acc = carry
-        r, lin = jax.linearize(lambda zz: chunk(zz, i), z0)
+        r, lin = jax.linearize(lambda zz: chunk(zz, i, residuals.data), z0)
         cols = jax.vmap(lin)(eye)
         return (
             loss_acc + jnp.float32(0.5) * jnp.vdot(r, r).real,
@@ -96,21 +105,31 @@ def accumulate_validation_normals(fold: FoldValidation, z: jnp.ndarray) -> Valid
     return ValidationNormalResult(loss, grad, hess, count, diagnostics)
 
 
-def validation_loss(fold: FoldValidation, z: jnp.ndarray) -> jnp.ndarray:
-    """One fixed fold volume's validation loss at ``z``: one projection, no linearisation."""
-    z0 = jnp.asarray(z, dtype=jnp.float32).reshape(-1)
+def validation_scorer(fold: FoldValidation) -> Callable[[jnp.ndarray], jnp.ndarray]:
+    """Compile one fixed fold's loss, with candidate parameters passed dynamically.
+
+    Keep the scorer for the candidate search. Building a new scan for every
+    candidate repeatedly loads equivalent executables instead of reusing one
+    program owned by the frozen fold.
+    """
     residuals = _validation_residuals(fold)
     if residuals is None:
-        return jnp.asarray(0.0, jnp.float32)
+        return lambda _z: jnp.asarray(0.0, jnp.float32)
     chunk = residuals.chunk
 
-    def body(total: jnp.ndarray, i: jnp.ndarray) -> tuple[jnp.ndarray, None]:
-        r = chunk(z0, i)
-        return total + jnp.float32(0.5) * jnp.vdot(r, r).real, None
+    @jax.jit
+    def score(z: jnp.ndarray, data: _ResidualData) -> jnp.ndarray:
+        z0 = jnp.asarray(z, dtype=jnp.float32).reshape(-1)
 
-    steps = jnp.arange(residuals.chunks, dtype=jnp.int32)
-    total, _ = jax.lax.scan(body, jnp.asarray(0.0, jnp.float32), steps)
-    return total
+        def body(total: jnp.ndarray, i: jnp.ndarray) -> tuple[jnp.ndarray, None]:
+            r = chunk(z0, i, data)
+            return total + jnp.float32(0.5) * jnp.vdot(r, r).real, None
+
+        steps = jnp.arange(residuals.chunks, dtype=jnp.int32)
+        total, _ = jax.lax.scan(body, jnp.asarray(0.0, jnp.float32), steps)
+        return total
+
+    return lambda z: score(z, residuals.data)
 
 
 def _validation_residuals(fold: FoldValidation) -> _Residuals | None:
@@ -129,7 +148,9 @@ def _validation_residuals(fold: FoldValidation) -> _Residuals | None:
     val_base = subset_base_geometry(fold.base, val_idx)
     targets = jnp.asarray(fold.projections, dtype=jnp.float32)[val_idx]
 
-    def residual_chunk(z_candidate: jnp.ndarray, i: jnp.ndarray) -> jnp.ndarray:
+    def residual_chunk(
+        z_candidate: jnp.ndarray, i: jnp.ndarray, data: _ResidualData
+    ) -> jnp.ndarray:
         state = fold.active_view.unpack(fold.frozen_state, z_candidate)
         val_state = state.replace(
             pose=state.pose.replace(pose_params=state.pose.pose_params[val_idx])
@@ -138,7 +159,7 @@ def _validation_residuals(fold: FoldValidation) -> _Residuals | None:
         start_shifted, valid_mask, _view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice(effective.pose_stack, (start_shifted, 0, 0), (b, 4, 4))
         y_chunk = jax.lax.dynamic_slice(
-            targets, (start_shifted, 0, 0), (b, detector.nv, detector.nu)
+            data.targets, (start_shifted, 0, 0), (b, detector.nv, detector.nu)
         )
         global_idx = jax.lax.dynamic_slice(val_idx, (start_shifted,), (b,))
         view_weight = jax.lax.dynamic_slice(val_mask, (start_shifted,), (b,))
@@ -148,7 +169,7 @@ def _validation_residuals(fold: FoldValidation) -> _Residuals | None:
                 T,
                 fold.grid,
                 detector,
-                fold.fold_volume,
+                data.volume,
                 use_checkpoint=fold.checkpoint_projector,
                 unroll=int(fold.projector_unroll),
                 gather_dtype=fold.gather_dtype,
@@ -157,14 +178,14 @@ def _validation_residuals(fold: FoldValidation) -> _Residuals | None:
             )
 
         pred = jax.vmap(project_one)(T_chunk)
-        mask_state = getattr(loss_adapter.state, "mask", None)
-        image_mask = None if mask_state is None else mask_state[global_idx]
+        image_mask = None if data.mask is None else data.mask[global_idx]
         weights = loss_adapter.gauss_newton_weights(y_chunk, image_mask)
         resid = (pred - y_chunk).astype(jnp.float32) * weights
         resid = resid * valid_mask[:, None, None] * view_weight[:, None, None]
         return resid.reshape(-1)
 
-    return _Residuals(residual_chunk, (n_views + b - 1) // b)
+    data = _ResidualData(fold.fold_volume, targets, getattr(loss_adapter.state, "mask", None))
+    return _Residuals(residual_chunk, (n_views + b - 1) // b, data)
 
 
 def _chunk_size(n_views: int, views_per_batch: int | None) -> int:

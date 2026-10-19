@@ -9,17 +9,39 @@ from tomojax import project
 from tomojax.alignment import AlignConfig, align_multires
 
 # check-public-imports: allow-private
+from tomojax.alignment._objectives import validation_residuals as validation
+
+# check-public-imports: allow-private
 from tomojax.alignment._objectives.recon_layer import PoseAdjustedGeometry
 
 # check-public-imports: allow-private
 from tomojax.alignment._stages import _reconstruction_stage as reconstruction_stage
 from tomojax.alignment.api import L2LossSpec, align
-
-# check-public-imports: allow-private
 from tomojax.core.projector import forward_project_view_T
 from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 
 from ._helpers import cor_then_polish_schedule
+
+
+def test_validation_scorer_reuses_one_program_for_changing_candidates(monkeypatch):
+    traces = []
+
+    def chunk(z, index, data):
+        traces.append(None)
+        assert isinstance(data.volume, jax.core.Tracer)
+        assert isinstance(data.targets, jax.core.Tracer)
+        return data.volume * (z[0] + index) - data.targets
+
+    data = validation._ResidualData(jnp.array([1.0, 2.0]), jnp.array([0.3, 0.4]), None)
+    monkeypatch.setattr(
+        validation, "_validation_residuals", lambda _: validation._Residuals(chunk, 3, data)
+    )
+    score = validation.validation_scorer(None)
+    for value in (0.1, -0.7, 2.0):
+        residuals = np.array([1.0, 2.0]) * (value + np.arange(3)[:, None]) - [0.3, 0.4]
+        expected = 0.5 * np.sum(residuals**2)
+        assert float(score(jnp.array([value]))) == pytest.approx(expected, rel=2e-6)
+    assert len(traces) == 1
 
 
 @pytest.mark.numerical
