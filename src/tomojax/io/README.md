@@ -13,6 +13,9 @@ Use `tomojax preprocess scan.txrm --darks 0 -o scan.nxs`, or
 `tj.load_frames("scan.txrm", darks=0).corrected(...)`; the
 [lab-CT guide](../../../docs/lab-ct.md#zeiss-xradia-preview) gives a binned CPU preview.
 Pass separate flat or dark images with `flats="reference_Front.xrm"` or `darks=...`.
+Sample and flat exposure durations normalize dark-subtracted counts before
+timestamp interpolation of multiple reference sets. Large OLE images retain only
+allocation metadata and read the requested rows, without reopening their directory.
 
 Import from here, not from `tomojax._data`.
 

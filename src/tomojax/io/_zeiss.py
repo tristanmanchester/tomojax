@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -33,6 +34,12 @@ class _ZeissFrames(FrameStack):
     starts: tuple[int, ...]
     sector_size: int
     fat: np.ndarray | None = field(repr=False, compare=False)
+    exposures: np.ndarray | None = field(default=None, repr=False, compare=False)
+
+    @property
+    def exposure_times(self) -> np.ndarray | None:
+        """Recorded durations for this selection, in seconds."""
+        return None if self.exposures is None else self.exposures[self.frames]
 
     def _read(self, indices: np.ndarray, rows: slice, cols: slice) -> np.ndarray:
         result = np.empty((len(indices), self.rows, self.cols), self.dtype)
@@ -93,7 +100,13 @@ def _stream_range(
 
 
 def _stack(
-    container: Any, path: Path, streams: tuple[str, ...], shape: tuple[int, int], data_type: int
+    container: Any,
+    path: Path,
+    streams: tuple[str, ...],
+    shape: tuple[int, int],
+    data_type: int,
+    *,
+    exposures: np.ndarray | None = None,
 ) -> _ZeissFrames:
     # Xradia's codes are not NumPy's dtype numbers. Both representations are
     # little-endian, including the independently typed reference image.
@@ -109,6 +122,7 @@ def _stack(
         tuple(int(entry.isectStart) for entry in entries),
         int(container.sectorsize),
         fat,
+        exposures,
         frames=np.arange(len(streams)),
         dtype=types[data_type],
         rows=shape[0],
@@ -139,7 +153,75 @@ def _images(container: Any, path: Path) -> _ZeissFrames:
     )
     dtype = int(_scalar(container, "ImageInfo/DataType"))
     streams = tuple(f"ImageData{i // 100 + 1}/Image{i + 1}" for i in range(count))
-    return _stack(container, path, streams, shape, dtype)
+    return _stack(
+        container,
+        path,
+        streams,
+        shape,
+        dtype,
+        exposures=_exposures(container, "ImageInfo", count),
+    )
+
+
+def _exposures(container: Any, prefix: str, count: int) -> np.ndarray | None:
+    for name in (f"{prefix}/ExpTimes", f"{prefix}/ExpTime", f"{prefix.rsplit('/', 1)[0]}/ExpTime"):
+        if container.exists(name):
+            return np.broadcast_to(_values(container, name, "<f4"), (count,)).copy()
+    return None
+
+
+def _dates(container: Any, name: str) -> np.ndarray:
+    """Xradia date records are forty-byte local timestamps, including padding."""
+    result = []
+    for raw in _values(container, name, "S40"):
+        value = bytes(raw).split(b"\0", 1)[0].decode("ascii")
+        fmt = "%m/%d/%Y %H:%M:%S.%f" if "." in value else "%m/%d/%Y %H:%M:%S"
+        result.append((datetime.strptime(value, fmt) - datetime(1970, 1, 1)).total_seconds())
+    return np.asarray(result, np.float64)
+
+
+def _references(
+    container: Any, path: Path, counts: _ZeissFrames
+) -> tuple[_ZeissFrames | None, np.ndarray | None, np.ndarray | None]:
+    """Read flat counts with their durations and acquisition timestamps."""
+    prefix = "MultiReferenceData"
+    required = (
+        f"{prefix}/Image1",
+        f"{prefix}/DataType",
+        f"{prefix}/TotalRefImages",
+        f"{prefix}/ImageInfo/Date",
+        "ImageInfo/Date",
+    )
+    if all(container.exists(name) for name in required):
+        number = int(_scalar(container, f"{prefix}/TotalRefImages"))
+        exposure = _exposures(container, f"{prefix}/ImageInfo", number)
+        if exposure is not None and counts.exposure_times is not None:
+            flat_time = _dates(container, f"{prefix}/ImageInfo/Date")
+            view_time = _dates(container, "ImageInfo/Date")
+            if flat_time.shape != (number,) or view_time.shape != (len(counts),):
+                raise ValueError(
+                    "Zeiss reference timestamps need one entry per image; pass flats=..."
+                )
+            flats = _stack(
+                container,
+                path,
+                tuple(f"{prefix}/Image{i + 1}" for i in range(number)),
+                counts.image_shape,
+                int(_scalar(container, f"{prefix}/DataType")),
+                exposures=exposure,
+            )
+            return flats, flat_time - view_time[0], view_time - view_time[0]
+    if container.exists("ReferenceData/Image") and container.exists("ReferenceData/DataType"):
+        flats = _stack(
+            container,
+            path,
+            ("ReferenceData/Image",),
+            counts.image_shape,
+            int(_scalar(container, "ReferenceData/DataType")),
+            exposures=_exposures(container, "ReferenceData/ImageInfo", 1),
+        )
+        return flats, None, None
+    return None, None, None
 
 
 def read_zeiss_images(path: Path) -> _ZeissFrames | None:
@@ -290,10 +372,13 @@ def read_zeiss(path: Path, *, data_path: str | None = None) -> RawAcquisition | 
             raise ValueError(f"{path} is a Zeiss image/scout (mode {mode}), not detector frames")
         counts = _images(container, path)
         record = _record(container, path, counts.shape)
-        flats = None
-        if container.exists("ReferenceData/Image") and container.exists("ReferenceData/DataType"):
-            reference_type = int(_scalar(container, "ReferenceData/DataType"))
-            flats = _stack(
-                container, path, ("ReferenceData/Image",), counts.image_shape, reference_type
-            )
-    return RawAcquisition(record, counts, flats=flats)
+        flats, flat_positions, view_positions = _references(container, path, counts)
+    return RawAcquisition(
+        record,
+        counts,
+        flats=flats,
+        flat_positions=flat_positions,
+        view_positions=view_positions,
+        exposure_times=counts.exposure_times,
+        flat_exposure_times=None if flats is None else flats.exposure_times,
+    )

@@ -102,6 +102,8 @@ cone distances, both `alignment/*-shifts` and `AutoRecon/CenterShift`;
 missing calibration requires `geometry=` rather than zero image shifts.
 The embedded reference uses `ReferenceData/DataType`; separate XRM flat/dark
 files use their own `ImageInfo/DataType`. Both are read lazily.
+`MultiReferenceData/ImageN` references use their recorded exposure durations and
+timestamps; the same count-rate correction handles separate XRM references.
 
 Nikon detector pitch/offsets and source distances come from the `.xtekct`
 fields; its axis requires either the recorded modern offset/roll/tilt or both

@@ -292,3 +292,60 @@ def test_external_zeiss_reference_is_lazy_and_needs_no_sample_geometry(tmp_path,
     np.testing.assert_allclose(small.projections, -np.log(counts[1:, 2:6, 3:9] / 2500), rtol=2e-6)
     with pytest.raises(ValueError, match="not detector frames"):
         tj.load_frames(path, darks=0)
+
+
+def test_multireferences_use_recorded_times_and_exposures(tmp_path):
+    path = tmp_path / "timed.txrm"
+    fields = {
+        "NoOfImages": 3,
+        "ImageHeight": 4,
+        "ImageWidth": 6,
+        "DataType": 5,
+        "AcquisitionMode": 0,
+    }
+    streams = {f"ImageInfo/{k}": np.array([v], "<u4").tobytes() for k, v in fields.items()}
+
+    def stamps(seconds):
+        return b"".join(f"01/01/2026 00:00:{s:02d}.000".encode().ljust(40, b"\0") for s in seconds)
+
+    streams.update(
+        {
+            "ImageInfo/ExpTimes": np.array([1, 2, 3], "<f4").tobytes(),
+            "ImageInfo/Date": stamps([1, 5, 9]),
+            "MultiReferenceData/TotalRefImages": np.array([2], "<u4").tobytes(),
+            "MultiReferenceData/DataType": np.array([10], "<u4").tobytes(),
+            "MultiReferenceData/ImageInfo/ExpTimes": np.array([2, 4], "<f4").tobytes(),
+            "MultiReferenceData/ImageInfo/Date": stamps([0, 10]),
+        }
+    )
+    streams.update(
+        {
+            f"ImageData1/Image{i + 1}": np.full((4, 6), v, "<u2").tobytes()
+            for i, v in enumerate([55, 150, 285])
+        }
+    )
+    streams.update(
+        {
+            f"MultiReferenceData/Image{i + 1}": np.full((4, 6), v, "<f4").tobytes()
+            for i, v in enumerate([200, 800])
+        }
+    )
+    write_ole(path, streams)
+    geometry = tj.ParallelGeometry(tj.Grid(6, 6, 4, 1, 1, 1), tj.Detector(6, 4, 1, 1), [0, 90, 180])
+    frames = tj.load_frames(path, geometry=geometry, darks=0)
+    np.testing.assert_array_equal(frames.flat_positions, [-1, 9])
+    np.testing.assert_array_equal(frames.view_positions, [0, 4, 8])
+    np.testing.assert_allclose(frames.corrected().projections, -np.log(0.5), atol=2e-7)
+    reference = tmp_path / "reference.xrm"
+    fields.update(NoOfImages=1, DataType=10, AcquisitionMode=14)
+    separate = {f"ImageInfo/{k}": np.array([v], "<u4").tobytes() for k, v in fields.items()}
+    separate.update(
+        {
+            "ImageInfo/ExpTimes": np.array([4], "<f4").tobytes(),
+            "ImageData1/Image1": np.full((4, 6), 800, "<f4").tobytes(),
+        }
+    )
+    write_ole(reference, separate)
+    explicit = tj.load_frames(path, geometry=geometry, flats=reference, darks=0).corrected()
+    expected = -np.log(np.array([55, 150, 285]) / (np.array([1, 2, 3]) * 200))
+    np.testing.assert_allclose(explicit.projections[:, 0, 0], expected, atol=2e-7)

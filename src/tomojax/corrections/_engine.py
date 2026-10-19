@@ -53,6 +53,8 @@ def correct_frames(
     steps: Sequence[Step],
     epsilon: float,
     view_positions: np.ndarray | None = None,
+    exposure_times: np.ndarray | float | None = None,
+    flat_exposure_times: np.ndarray | float | None = None,
     batch_views: int | None = None,
     binning: int = 1,
 ) -> Corrected:
@@ -85,6 +87,11 @@ def correct_frames(
         Positive transmission floor before the logarithm.
     view_positions : numpy.ndarray or None, optional
         Position of each view among the flats. Defaults to ``i + 0.5`` for view i.
+    exposure_times : numpy.ndarray or float or None, optional
+        Sample exposure durations in seconds, one per view or a common duration.
+    flat_exposure_times : numpy.ndarray or float or None, optional
+        Flat exposure durations in seconds. Supply both exposure arrays to compare
+        dark-subtracted count rates rather than integrated counts.
 
     batch_views : int or None, optional
         Positive view-batch size. None selects a memory-bounded size automatically.
@@ -127,15 +134,21 @@ def correct_frames(
     binning = int(binning)
     views, rows, cols = (int(s) for s in counts.shape)
     ordered = _ordered(steps)
+    view_scales, flat_scales = _exposure_scales(exposure_times, flat_exposure_times, views, flats)
     fields, field_record = _flat_fields(
-        flats, flat_positions, darks, white_level, (rows, cols), epsilon
+        flats, flat_positions, darks, white_level, (rows, cols), epsilon, flat_scales=flat_scales
     )
+    if flat_scales is not None and exposure_times is not None:
+        field_record[0].settings["sample_exposure_range_s"] = [
+            float(np.min(exposure_times)),
+            float(np.max(exposure_times)),
+        ]
     at = (
         np.arange(views) + 0.5 if view_positions is None else np.asarray(view_positions, np.float64)
     )
     if at.shape != (views,) or not np.isfinite(at).all():
         raise ValueError(f"view_positions needs one finite position for each of the {views} views")
-    interpolation = _interpolation(at, fields.positions)
+    interpolation = _interpolation(at, fields.positions, exposure_scales=view_scales)
     line = [s for d, s in ordered if d == "line integrals"]
     head, tail = _split_at_break(line)
     counts_steps = tuple(s for d, s in ordered if d == "counts")
@@ -285,10 +298,10 @@ def _ordered(steps: Sequence[Step]) -> list[tuple[str, Step]]:
 
 
 class _Fields:
-    """The flat sets (``(sets, rows, columns)``), their positions and the dark field.
+    """Dark-subtracted illumination sets, their positions and the additive dark field.
 
-    ``usable`` (``(rows, columns)``) marks the pixels where every set's flat stands clear
-    of the dark.
+    ``flats`` has shape ``(sets, rows, columns)`` in counts, or counts per second
+    when exposures are supplied. ``usable`` marks pixels with measured illumination.
     """
 
     def __init__(
@@ -304,6 +317,8 @@ def _flat_fields(
     white_level: float | None,
     shape: tuple[int, int],
     epsilon: float,
+    *,
+    flat_scales: np.ndarray | None = None,
 ) -> tuple[_Fields, tuple[Correction, ...]]:
     """The mean flat of each set, the mean dark, and the record of them.
 
@@ -334,18 +349,34 @@ def _flat_fields(
             )
         sets = np.unique(where)
         moments = [
-            _moments(flats, shape, "flats", None if len(sets) == 1 else np.flatnonzero(where == p))
+            _moments(
+                flats,
+                shape,
+                "flats",
+                None if len(sets) == 1 else np.flatnonzero(where == p),
+                scales=flat_scales,
+                offset=dark if flat_scales is not None else None,
+            )
             for p in sets
         ]
         stack, variance = (np.stack(part) for part in zip(*moments, strict=True))
         settings = {"flats": len(flats), "darks": dark_frames, "flat_sets": len(sets)}
+        if flat_scales is not None:
+            settings["flat_exposure_times"] = (1 / flat_scales).tolist()
         if len(sets) > 1:
             settings["flat_positions"] = [float(p) for p in sets]
-    light = stack - dark
-    floor = np.maximum(epsilon, 3 * np.sqrt(variance + dark_variance))
+    light = stack - dark if flat_scales is None else stack
+    dark_scale = (
+        np.ones(len(sets))
+        if flat_scales is None
+        else np.asarray([np.mean(flat_scales[where == p]) for p in sets])
+    )
+    floor = np.maximum(
+        epsilon, 3 * np.sqrt(variance + dark_variance * dark_scale[:, None, None] ** 2)
+    )
     usable = cast("np.ndarray", (np.isfinite(light) & (light > floor)).all(axis=0))
     found: dict[str, Json] = {"pixels_without_light": int(np.count_nonzero(~usable))}
-    fields = _Fields(stack.astype(np.float32), sets, dark.astype(np.float32), usable)
+    fields = _Fields(light.astype(np.float32), sets, dark.astype(np.float32), usable)
     return fields, (Correction("flat_dark", settings, found),)
 
 
@@ -357,7 +388,13 @@ def _check_stack(frames: Any, shape: tuple[int, int], name: str) -> None:
 
 
 def _moments(
-    frames: Any, shape: tuple[int, int], name: str, indices: np.ndarray | None = None
+    frames: Any,
+    shape: tuple[int, int],
+    name: str,
+    indices: np.ndarray | None = None,
+    *,
+    scales: np.ndarray | None = None,
+    offset: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """The mean of frames and the variance of that mean, in float64 over bounded batches."""
     _check_stack(frames, shape, name)
@@ -367,6 +404,8 @@ def _moments(
     for start in range(0, count, batch):
         which = slice(start, start + batch) if indices is None else indices[start : start + batch]
         values = np.asarray(frames[which], np.float64)
+        if scales is not None:
+            values = (values - (0 if offset is None else offset)) * scales[which, None, None]
         total += values.sum(axis=0)
         squares += np.einsum("ijk,ijk->jk", values, values)
     mean = total / count
@@ -375,7 +414,32 @@ def _moments(
     return mean, np.maximum(0.0, squares - total * mean) / (count * (count - 1))
 
 
-def _interpolation(q: np.ndarray, positions: np.ndarray) -> tuple[np.ndarray, ...]:
+def _exposure_scales(
+    sample: np.ndarray | float | None, flat: np.ndarray | float | None, views: int, flats: Any
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Convert measured durations to count-rate factors; white levels stay in counts."""
+    if flats is None or (sample is None and flat is None):
+        return np.ones(views, np.float32), None
+    if sample is None or flat is None:
+        raise ValueError(
+            "Exposure correction needs both exposure_times=... and flat_exposure_times=... "
+            "in tomojax.load_frames"
+        )
+    rates = []
+    for name, value, count in (
+        ("exposure_times", sample, views),
+        ("flat_exposure_times", flat, len(flats)),
+    ):
+        times = np.broadcast_to(np.asarray(value, np.float64), (count,))
+        if not np.all(np.isfinite(times) & (times > 0)):
+            raise ValueError(f"{name} must contain positive finite durations in seconds")
+        rates.append(1 / times)
+    return rates[0].astype(np.float32), rates[1]
+
+
+def _interpolation(
+    q: np.ndarray, positions: np.ndarray, *, exposure_scales: np.ndarray | None = None
+) -> tuple[np.ndarray, ...]:
     """For each view at ``q``, the flat sets either side of it and the weight of the later one.
 
     ``positions`` are the views recorded before each set; views before the
@@ -386,7 +450,8 @@ def _interpolation(q: np.ndarray, positions: np.ndarray) -> tuple[np.ndarray, ..
     span = positions[hi] - positions[lo]
     t = np.where(span > 0, (q - positions[lo]) / np.where(span > 0, span, 1), 0.0)
     t = np.where(q >= positions[-1], 1.0, np.clip(t, 0.0, 1.0)) if len(positions) > 1 else t
-    return lo.astype(np.int32), hi.astype(np.int32), t.astype(np.float32)
+    scales = np.ones(len(q), np.float32) if exposure_scales is None else exposure_scales
+    return lo.astype(np.int32), hi.astype(np.int32), t.astype(np.float32), scales
 
 
 @partial(
@@ -398,6 +463,7 @@ def _first_pass(
     lo: jax.Array,
     hi: jax.Array,
     t: jax.Array,
+    exposure_scale: jax.Array,
     flats: jax.Array,
     dark: jax.Array,
     usable: jax.Array,
@@ -413,7 +479,7 @@ def _first_pass(
         x = step.apply(x)
     weight = t[:, None, None]
     flat = (1 - weight) * flats[lo] + weight * flats[hi]
-    transmission = (x - dark) / jnp.maximum(flat - dark, epsilon)
+    transmission = (x - dark) * exposure_scale[:, None, None] / jnp.maximum(flat, epsilon)
     # No light is no measurement: take no absorption, rather than spread the ratio
     # of two noise values through the steps that follow.
     transmission = jnp.where(usable, transmission, 1.0)
@@ -438,7 +504,7 @@ def _correct_view_batches(
 ) -> np.ndarray:
     """Run ``_first_pass`` over batches of views into ``out``; the tally of what it found."""
     flats, dark, usable = (jax.device_put(a) for a in (fields.flats, fields.dark, fields.usable))
-    lo, hi, t = interpolation
+    lo, hi, t, exposure_scale = interpolation
     tally = np.zeros(2, np.int64)  # non-positive transmission, non-finite results
 
     def collect(start: int, stop: int, result: jax.Array, *bad: jax.Array) -> None:
@@ -448,7 +514,8 @@ def _correct_view_batches(
     pending = None
     for start, stop, raw in _batches(counts, counts.shape[0], batch):
         done = _first_pass(
-            jnp.asarray(raw), lo[start:stop], hi[start:stop], t[start:stop], flats, dark, usable,
+            jnp.asarray(raw), lo[start:stop], hi[start:stop], t[start:stop],
+            exposure_scale[start:stop], flats, dark, usable,
             **settings,
         )  # fmt: skip
         done[0].copy_to_host_async()
@@ -503,7 +570,7 @@ def _correct_row_slabs(
     factor = settings["factor"]
     out = np.empty((views, rows // factor, cols // factor), np.float32)
     flats, dark, usable = (jax.device_put(a) for a in (fields.flats, fields.dark, fields.usable))
-    lo, hi, t = (jax.device_put(q) for q in interpolation)
+    lo, hi, t, exposure_scale = (jax.device_put(q) for q in interpolation)
     tally = np.zeros(2, np.int64)
 
     def collect(start: int, stop: int, result: jax.Array, *bad: jax.Array) -> None:
@@ -522,7 +589,8 @@ def _correct_row_slabs(
     for start in range(0, rows - rows % factor, slab):
         stop = min(start + slab, rows - rows % factor)
         done = _first_pass(
-            jnp.asarray(read(start, stop)), lo, hi, t, flats[:, start:stop], dark[start:stop],
+            jnp.asarray(read(start, stop)), lo, hi, t, exposure_scale,
+            flats[:, start:stop], dark[start:stop],
             usable[start:stop], line_steps=steps, **settings,
         )  # fmt: skip
         done[0].copy_to_host_async()
@@ -726,6 +794,8 @@ def corrected_row_source(
     steps: Sequence[Step],
     epsilon: float = 1e-6,
     view_positions: np.ndarray | None = None,
+    exposure_times: np.ndarray | float | None = None,
+    flat_exposure_times: np.ndarray | float | None = None,
 ) -> Iterator[Callable[[int, int], CorrectedRows]]:
     """Read corrected detector-row intervals without a materialized projection stack.
 
@@ -755,6 +825,10 @@ def corrected_row_source(
         Positive transmission floor before the logarithm. Default is 1e-6.
     view_positions : numpy.ndarray or None, optional
         Position of each view among the flats. Defaults to ``i + 0.5`` for view i.
+    exposure_times : numpy.ndarray or float or None, optional
+        Sample exposure durations in seconds, one per view or a common duration.
+    flat_exposure_times : numpy.ndarray or float or None, optional
+        Flat exposure durations in seconds, one per flat or a common duration.
 
     Yields
     ------
@@ -782,13 +856,24 @@ def corrected_row_source(
         raise TypeError("streamed counts must be NumPy arrays or support detector windows")
     epsilon = _positive_finite(epsilon, "epsilon")
     views, rows, cols = counts.shape
-    fields, records = _flat_fields(flats, flat_positions, darks, white_level, (rows, cols), epsilon)
+    view_scales, flat_scales = _exposure_scales(exposure_times, flat_exposure_times, views, flats)
+    fields, records = _flat_fields(
+        flats, flat_positions, darks, white_level, (rows, cols), epsilon, flat_scales=flat_scales
+    )
+    if flat_scales is not None and exposure_times is not None:
+        records[0].settings["sample_exposure_range_s"] = [
+            float(np.min(exposure_times)),
+            float(np.max(exposure_times)),
+        ]
     at = (
         np.arange(views) + 0.5 if view_positions is None else np.asarray(view_positions, np.float64)
     )
     if at.shape != (views,) or not np.isfinite(at).all():
         raise ValueError(f"view_positions needs one finite position for each of the {views} views")
-    interpolation = tuple(jax.device_put(value) for value in _interpolation(at, fields.positions))
+    interpolation = tuple(
+        jax.device_put(value)
+        for value in _interpolation(at, fields.positions, exposure_scales=view_scales)
+    )
     reader = _RowReader(counts)
     line_steps = tuple(steps)
 

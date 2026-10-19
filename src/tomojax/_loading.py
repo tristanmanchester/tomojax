@@ -153,6 +153,10 @@ class Frames:
         Calibrated open-beam count level, instead of flat frames.
     view_positions : numpy.ndarray or None, optional
         Sample positions in flat-position units; default is i + 1/2.
+    exposure_times : numpy.ndarray or float or None, optional
+        Sample exposure durations in seconds, one per view or a common duration.
+    flat_exposure_times : numpy.ndarray or float or None, optional
+        Flat exposure durations in seconds, one per flat or a common duration.
     name : str, optional
         Sample name.
     source : ProjectionDataset or None, optional
@@ -171,6 +175,8 @@ class Frames:
     flat_positions: np.ndarray | None = None
     white_level: float | None = None
     view_positions: np.ndarray | None = None
+    exposure_times: np.ndarray | float | None = None
+    flat_exposure_times: np.ndarray | float | None = None
     name: str = "sample"
     source: ProjectionDataset | None = field(default=None, compare=False)
 
@@ -251,6 +257,8 @@ class Frames:
             flats=self.flats,
             flat_positions=self.flat_positions,
             view_positions=self.view_positions,
+            exposure_times=self.exposure_times,
+            flat_exposure_times=self.flat_exposure_times,
             darks=self.darks,
             white_level=self.white_level,
             steps=steps,
@@ -338,6 +346,11 @@ class Frames:
             counts=counts,
             geometry=views_of(self.geometry, kept),
             view_positions=np.asarray(at, np.float64)[kept],
+            exposure_times=(
+                None
+                if self.exposure_times is None
+                else np.broadcast_to(self.exposure_times, (self.views,))[kept]
+            ),
         )
 
 
@@ -351,6 +364,8 @@ def load_frames(
     grid: Grid | None = None,
     geometry: ScanGeometry | None = None,
     white_level: float | None = None,
+    exposure_times: np.ndarray | float | None = None,
+    flat_exposure_times: np.ndarray | float | None = None,
     data_path: str | None = None,
     image_key_path: str | None = None,
     angles_path: str | None = None,
@@ -404,6 +419,10 @@ def load_frames(
         Complete sample-view geometry, overriding individual metadata.
     white_level : float or None, optional
         Replacement calibrated open-beam level, used instead of flats.
+    exposure_times : numpy.ndarray or float or None, optional
+        Sample exposure durations in seconds, replacing file metadata.
+    flat_exposure_times : numpy.ndarray or float or None, optional
+        Flat exposure durations in seconds, replacing file metadata.
     data_path : str or None, optional
         Explicit HDF5 frame dataset path; None discovers it.
     image_key_path : str or None, optional
@@ -471,7 +490,14 @@ def load_frames(
         )
     return _estimate_missing_center(
         _require_calibration(
-            _with_fields(frames, flats=flats, darks=darks, white_level=white_level)
+            _with_fields(
+                frames,
+                flats=flats,
+                darks=darks,
+                white_level=white_level,
+                exposure_times=exposure_times,
+                flat_exposure_times=flat_exposure_times,
+            )
         )
     )
 
@@ -551,6 +577,8 @@ def _with_fields(
     flats: np.ndarray | float | str | PathLike[str] | None,
     darks: np.ndarray | float | str | PathLike[str] | None,
     white_level: float | None,
+    exposure_times: np.ndarray | float | None = None,
+    flat_exposure_times: np.ndarray | float | None = None,
 ) -> Frames:
     """``frames`` with the flat and dark fields given in place of the file's."""
     changes: dict[str, Any] = {}
@@ -558,10 +586,12 @@ def _with_fields(
     if isinstance(flats, numbers.Real):  # one level for every pixel: a white level
         white_level = float(flats)
     elif flats is not None:
+        flat_frames = _frames_of(flats, "flats")
         changes |= {
-            "flats": _frames_of(flats, "flats"),
+            "flats": flat_frames,
             "flat_positions": None,
             "white_level": None,
+            "flat_exposure_times": getattr(flat_frames, "exposure_times", None),
         }
     if white_level is not None:
         changes |= {"flats": None, "flat_positions": None, "white_level": float(white_level)}
@@ -569,6 +599,10 @@ def _with_fields(
         changes["darks"] = np.full((1, *shape), float(darks), np.float32)
     elif darks is not None:
         changes["darks"] = _frames_of(darks, "darks")
+    if exposure_times is not None:
+        changes["exposure_times"] = exposure_times
+    if flat_exposure_times is not None:
+        changes["flat_exposure_times"] = flat_exposure_times
     return replace(frames, **changes)
 
 
@@ -705,6 +739,8 @@ def _acquisition_frames(
         flat_positions=found.flat_positions,
         white_level=found.white_level,
         view_positions=found.view_positions,
+        exposure_times=found.exposure_times,
+        flat_exposure_times=found.flat_exposure_times,
         name=record.sample_name or "sample",
         source=record,
     )
