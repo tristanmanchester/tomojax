@@ -15,6 +15,7 @@ from tomojax.core.geometry.views import host_view_poses
 from tomojax.core.joseph_cuda import JosephCUDA
 from tomojax.core.validation import validate_grid, validate_pose_stack, validate_projection_stack
 
+from ._cgls_stopping import precision_stalled
 from .cgls import CGLSConfig, resident_bytes
 
 
@@ -132,6 +133,7 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
     norm2 = float(gamma)
     eps = np.finfo(np.float32).eps
     while count < cfg.iterations and norm2 > tolerance**2 and not failed and not roundoff:
+        previous = norm2, verified
         projected = ops.forward(direction)
         direction_norm2 = cp.sum(direction * direction)
         denominator = cp.sum(projected * projected) + cp.multiply(damp2, direction_norm2)
@@ -154,12 +156,22 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
         norm2, roundoff, small_update = float(stats[0]), bool(stats[1]), bool(stats[2])
         failed = not np.isfinite(norm2)
         candidate = bool(norm2 <= tolerance**2)
-        periodic = count % 16 == 0 and norm2 <= eps * initial_norm**2
+        # Keep verifying after a near-precision check, not sixteen steps later.
+        periodic = (count % 16 == 0 or previous[1]) and norm2 <= eps * initial_norm**2
         verified = roundoff or small_update or candidate or periodic
         restart = False
         if verified and not failed:
             residual, gradient, gamma_new, norm2, restart, roundoff = _verify(
-                cp, ops, data, x, gradient, gamma_new, damp2, candidate=candidate, roundoff=roundoff
+                cp,
+                ops,
+                data,
+                x,
+                gradient,
+                gamma_new,
+                damp2,
+                candidate=candidate,
+                roundoff=roundoff,
+                previous=previous,
             )
             failed = not np.isfinite(norm2)
             recomputations += 1
@@ -196,7 +208,7 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
     return x, info
 
 
-def _verify(cp, ops, data, x, gradient, gamma, damp2, *, candidate: bool, roundoff: bool):
+def _verify(cp, ops, data, x, gradient, gamma, damp2, *, candidate: bool, roundoff: bool, previous):
     """Replace the recurrence with the measured residual before accepting a stop."""
     prediction = ops.forward(x)
     cancellation = ops.adjoint(cp.abs(data) + cp.abs(prediction)) + cp.multiply(damp2, cp.abs(x))
@@ -208,4 +220,5 @@ def _verify(cp, ops, data, x, gradient, gamma, damp2, *, candidate: bool, roundo
     checks = cp.asnumpy(cp.stack((exact_gamma, at_precision, gap)))
     norm2, at_precision, gap = float(checks[0]), bool(checks[1]), float(checks[2])
     restart = candidate or roundoff or at_precision or gap > 0.01 * float(gamma)
-    return residual, exact, exact_gamma, norm2, restart, roundoff or at_precision
+    stalled = precision_stalled(norm2, previous[0], previous[1], at_precision)
+    return residual, exact, exact_gamma, norm2, restart, roundoff or stalled

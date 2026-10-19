@@ -21,6 +21,7 @@ from tomojax.core.validation import (
     validate_projection_stack,
     validate_volume,
 )
+from tomojax.recon._cgls_stopping import precision_stalled
 from tomojax.recon._projection import (
     ConeModel,
     normal_equation_operators,
@@ -176,23 +177,22 @@ def _solve(
             jnp.abs(alpha * state.direction)
             <= jnp.finfo(jnp.float32).eps * jnp.maximum(jnp.abs(x), jnp.finfo(jnp.float32).tiny)
         )
-        small_global_update = alpha * alpha * direction_norm2 <= jnp.finfo(
-            jnp.float32
-        ).eps ** 2 * jnp.sum(x * x)
+        small_update = alpha * alpha * direction_norm2 <= jnp.finfo(jnp.float32).eps ** 2 * jnp.sum(
+            x * x
+        )
         convergence_candidate = gamma_new <= threshold * threshold
         # Atomic transpose reductions can keep a noisy conjugate recurrence
         # moving even after it reaches the FP32 cancellation floor. Check the
         # true residual periodically once its norm is small, before that noise
         # gets amplified. This does not relax the requested stopping tolerance.
         near_precision = gamma_new <= jnp.finfo(jnp.float32).eps * gamma
-        periodic_check = ((state.iteration + 1) % 16 == 0) & near_precision
-        verify = roundoff | small_global_update | convergence_candidate | periodic_check
+        check_due = ((state.iteration + 1) % 16 == 0) | state.residual_verified
+        verify = roundoff | small_update | convergence_candidate | (check_due & near_precision)
 
         def recompute(
             _recurrence: jax.Array, gradient: jax.Array
         ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
-            # The exact residual always replaces the recurrence residual, so
-            # the branch never holds both sinograms.
+            # Replace the recurrence without retaining a second sinogram.
             prediction = forward(x)
             # A componentwise cancellation estimate keeps a bright, already
             # solved region from setting another region's precision limit.
@@ -207,12 +207,13 @@ def _solve(
             exact_residual = data - prediction
             exact_gradient = adjoint(exact_residual) - penalty_gradient(x)
             exact_gamma = jnp.sum(exact_gradient * exact_gradient)
-            at_precision = jnp.all(
+            bounded = jnp.all(
                 jnp.abs(exact_gradient) <= 8 * jnp.finfo(jnp.float32).eps * cancellation
             )
             gap2 = jnp.sum((exact_gradient - gradient) ** 2)
-            restart = convergence_candidate | roundoff | at_precision | (gap2 > 0.01 * gamma_new)
-            return exact_residual, exact_gradient, exact_gamma, restart, roundoff | at_precision
+            restart = convergence_candidate | roundoff | bounded | (gap2 > 0.01 * gamma_new)
+            stalled = precision_stalled(exact_gamma, state.gamma, state.residual_verified, bounded)
+            return exact_residual, exact_gradient, exact_gamma, restart, roundoff | stalled
 
         residual, gradient, gamma_new, restart, roundoff = jax.lax.cond(
             verify,
@@ -287,7 +288,6 @@ def _solve_streamed(
     gamma = jnp.sum(gradient * gradient)
     finite = jnp.all(jnp.isfinite(poses)) & jnp.all(jnp.isfinite(x0))
     threshold = atol + rtol * jnp.sqrt(gamma)
-    # ``residual`` holds the normal residual (gradient) here: no sinogram is kept.
     state = _State(
         jnp.int32(0),
         x0,
@@ -326,13 +326,13 @@ def _solve_streamed(
             jnp.abs(alpha * state.direction)
             <= jnp.finfo(jnp.float32).eps * jnp.maximum(jnp.abs(x), jnp.finfo(jnp.float32).tiny)
         )
-        small_global_update = alpha * alpha * direction_norm2 <= jnp.finfo(
-            jnp.float32
-        ).eps ** 2 * jnp.sum(x * x)
+        small_update = alpha * alpha * direction_norm2 <= jnp.finfo(jnp.float32).eps ** 2 * jnp.sum(
+            x * x
+        )
         convergence_candidate = gamma_new <= threshold * threshold
         near_precision = gamma_new <= jnp.finfo(jnp.float32).eps * gamma
-        periodic_check = ((state.iteration + 1) % 16 == 0) & near_precision
-        verify = roundoff | small_global_update | convergence_candidate | periodic_check
+        check_due = ((state.iteration + 1) % 16 == 0) | state.residual_verified
+        verify = roundoff | small_update | convergence_candidate | (check_due & near_precision)
 
         def recompute(recurrence: jax.Array) -> tuple[jax.Array, ...]:
             data_gradient, cancellation = exact(x, key)
@@ -343,12 +343,13 @@ def _solve_streamed(
                     jnp.abs(x), spacing, absolute_weights=True
                 )
             exact_gamma = jnp.sum(exact_gradient * exact_gradient)
-            at_precision = jnp.all(
+            bounded = jnp.all(
                 jnp.abs(exact_gradient) <= 8 * jnp.finfo(jnp.float32).eps * cancellation
             )
             gap2 = jnp.sum((exact_gradient - recurrence) ** 2)
-            restart = convergence_candidate | roundoff | at_precision | (gap2 > 0.01 * gamma_new)
-            return exact_gradient, exact_gamma, restart, roundoff | at_precision
+            restart = convergence_candidate | roundoff | bounded | (gap2 > 0.01 * gamma_new)
+            stalled = precision_stalled(exact_gamma, state.gamma, state.residual_verified, bounded)
+            return exact_gradient, exact_gamma, restart, roundoff | stalled
 
         gradient, gamma_new, restart, roundoff = jax.lax.cond(
             verify,

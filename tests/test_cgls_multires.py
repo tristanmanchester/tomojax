@@ -101,6 +101,27 @@ def test_multires_gradient_penalty_solves_the_same_physical_fine_objective():
         projector_backend="jax",
     )
     expected, _ = cgls(geometry, grid, detector, data, config=config)
+    basis = np.eye(45).reshape(5, 3, 3, 45)
+    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(5)])
+    matrix = (
+        np.asarray(
+            jax.vmap(
+                lambda x: jax.vmap(lambda t: forward_project_view_T(t, grid, detector, x))(poses)
+            )(jnp.asarray(np.moveaxis(basis, -1, 0), jnp.float32))
+        )
+        .reshape(45, -1)
+        .T
+    )
+    differences = np.concatenate(
+        [
+            (np.diff(basis, axis=axis) / step).reshape(-1, 45)
+            for axis, step in enumerate((grid.vx, grid.vy, grid.vz))
+        ]
+    )
+    augmented = np.concatenate([matrix, 0.2 * np.eye(45), 0.7 * differences])
+    rhs = np.pad(np.asarray(data).ravel(), (0, augmented.shape[0] - data.size))
+    dense = np.linalg.lstsq(augmented, rhs, rcond=None)[0].reshape(initial.shape)
+    np.testing.assert_allclose(expected, dense, rtol=3e-4, atol=3e-5)
     actual, info = cgls_multires(
         geometry,
         grid,
