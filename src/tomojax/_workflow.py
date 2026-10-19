@@ -632,9 +632,9 @@ def reconstruct_slabs(
     ...         print(z_slice, recon.volume.shape)
     """
     from tomojax._scan import detector_window, rebuild
-    from tomojax.core.geometry.cone import is_cone_beam
     from tomojax.corrections import corrected_row_source
     from tomojax.geometry import ParallelGeometry, grid_volume_origin
+    from tomojax.geometry.api import is_cone_beam
     from tomojax.recon.api import method_config, reconstruct_slabs as array_slabs
 
     cfg = method_config(method, config=config)

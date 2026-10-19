@@ -15,7 +15,7 @@ from tomojax.core.geometry import (
     grid_volume_origin,
     normalize_axis_unit,
 )
-from tomojax.core.geometry.cone import view_frames
+from tomojax.core.geometry.cone import is_cone_beam, view_frames
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.geometry._axes import (
     CORE_X_AXIS,
@@ -115,6 +115,7 @@ __all__ = [
     "grid_from_detector_fov_slices",
     "grid_volume_origin",
     "infer_disk_axes",
+    "is_cone_beam",
     "nominal_axis_unit_from_inputs",
     "normalize_axis_unit",
     "read_geometry_json",
