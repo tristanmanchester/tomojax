@@ -5,13 +5,30 @@ import struct
 
 import numpy as np
 import pytest
+import tifffile
 
 import tomojax as tj
 from tomojax.geometry import stack_view_poses
 
 
+def _regular_sectors(regular, entries, ids, start, fat):
+    regular_payload = bytearray()
+    for name, data in regular.items():
+        first = start + len(regular_payload) // 512
+        count = (len(data) + 511) // 512
+        order = [*range(0, count, 2), *range(1, count, 2)]
+        entries[ids[name]].update(start=first + order[0], size=len(data))
+        block = bytearray(count * 512)
+        for i, physical in enumerate(order):
+            fat[first + physical] = first + order[i + 1] if i + 1 < count else 0xFFFFFFFE
+            chunk = data[i * 512 : (i + 1) * 512]
+            block[physical * 512 : physical * 512 + len(chunk)] = chunk
+        regular_payload.extend(block)
+    return regular_payload
+
+
 def write_ole(path, streams):
-    """Create small nested streams using one FAT and one MiniFAT sector."""
+    """Create nested streams with fragmented regular sectors and one MiniFAT."""
     free, end, fat_sector = 0xFFFFFFFF, 0xFFFFFFFE, 0xFFFFFFFD
     names = {""}
     for name in streams:
@@ -49,9 +66,12 @@ def write_ole(path, streams):
         children.sort(key=lambda i: (len(entries[i]["name"]), entries[i]["name"].upper()))
         entries[index]["child"] = tree(children)
     payload = bytearray()
+    regular = {}
     mini_fat = [free] * 128
     for name, data in streams.items():
-        assert 0 < len(data) < 4096
+        if len(data) >= 4096:
+            regular[name] = data
+            continue
         first = len(payload) // 64
         count = (len(data) + 63) // 64
         entries[ids[name]].update(start=first, size=len(data))
@@ -61,11 +81,13 @@ def write_ole(path, streams):
     dirs = (len(entries) + 3) // 4
     minis = (len(payload) + 511) // 512
     entries[0].update(start=dirs, size=len(payload))
-    mini_at, fat_at = dirs + minis, dirs + minis + 1
     fat = [free] * 128
     for first, count in ((0, dirs), (dirs, minis)):
         for i in range(count):
             fat[first + i] = first + i + 1 if i < count - 1 else end
+    regular_payload = _regular_sectors(regular, entries, ids, dirs + minis, fat)
+    mini_at = dirs + minis + len(regular_payload) // 512
+    fat_at = mini_at + 1
     fat[mini_at], fat[fat_at] = end, fat_sector
     directory = bytearray()
     for e in entries:
@@ -114,7 +136,12 @@ def write_ole(path, streams):
     )
     header += struct.pack("<109I", fat_at, *([free] * 108))
     Path(path).write_bytes(
-        header + directory + payload + struct.pack("<128I", *mini_fat) + struct.pack("<128I", *fat)
+        header
+        + directory
+        + payload
+        + regular_payload
+        + struct.pack("<128I", *mini_fat)
+        + struct.pack("<128I", *fat)
     )
 
 
@@ -189,3 +216,149 @@ def test_zeiss_content_geometry_and_raw_calibration(tmp_path):
     write_ole(path, {k: v for k, v in streams.items() if k != "ReferenceData/DataType"})
     with pytest.raises(ValueError, match="flats="):
         tj.load_frames(path, darks=0)
+
+
+def test_zeiss_fragmented_sector_windows_match_pixels_without_full_stream_reads(
+    tmp_path, monkeypatch
+):
+    import olefile
+
+    from tomojax.io.api import read_calibration_frames
+
+    counts = np.arange(2 * 48 * 127, dtype="<u2").reshape(2, 48, 127)
+    path = tmp_path / "large.xrm"
+    fields = {"NoOfImages": 2, "ImageHeight": 48, "ImageWidth": 127, "DataType": 5}
+    streams = {f"ImageInfo/{k}": np.array([v], "<u4").tobytes() for k, v in fields.items()}
+    streams.update({f"ImageData1/Image{i + 1}": a.tobytes() for i, a in enumerate(counts)})
+    write_ole(path, streams)
+    original = olefile.OleFileIO.openstream
+    loadfat = olefile.OleFileIO.loadfat
+
+    def checked_fat(self, header):
+        loadfat(self, header)
+        expected = self.sect2array(self.getsect(struct.unpack_from("<I", header, 76)[0]))
+        for sectors in (header[76:512], self.sect2array(header[76:512])):
+            table, size = self.fat, len(self.fat)
+            assert self.loadfat_sect(sectors) == olefile.FREESECT
+            assert self.fat is table, "FAT growth must not copy the accumulated table"
+            assert self.fat[size:] == expected
+            del self.fat[size:]
+
+    monkeypatch.setattr(olefile.OleFileIO, "loadfat", checked_fat)
+
+    def openstream(self, name):
+        assert not str(name).startswith("ImageData"), "a row crop must not load an entire image"
+        return original(self, name)
+
+    monkeypatch.setattr(olefile.OleFileIO, "openstream", openstream)
+    frames = read_calibration_frames(path)
+
+    def no_reopen(*args, **kwargs):
+        raise AssertionError("a batch must not parse the whole container's FAT again")
+
+    monkeypatch.setattr(olefile, "OleFileIO", no_reopen)
+    for rows, cols in [
+        (slice(3, 11), slice(7, 120)),
+        (slice(47, 48), slice(125, 127)),
+        (slice(None), slice(None)),
+    ]:
+        got = frames.frames_at(np.array([1, 0, 1])).window(rows, cols)[:]
+        np.testing.assert_array_equal(got, counts[[1, 0, 1], rows, cols])
+
+
+def test_external_zeiss_reference_is_lazy_and_needs_no_sample_geometry(tmp_path, monkeypatch):
+    import olefile
+
+    reference = np.stack([np.full((8, 12), value, "<f4") for value in (2400, 2600)])
+    path = tmp_path / "reference.data"
+    fields = {
+        "NoOfImages": 2,
+        "ImageHeight": 8,
+        "ImageWidth": 12,
+        "DataType": 10,
+        "AcquisitionMode": 1,
+    }
+    streams = {f"ImageInfo/{k}": np.array([v], "<u4").tobytes() for k, v in fields.items()}
+    streams.update({f"ImageData1/Image{i + 1}": a.tobytes() for i, a in enumerate(reference)})
+    write_ole(path, streams)
+    counts = np.arange(192, dtype=np.uint16).reshape(2, 8, 12) + 500
+    tifffile.imwrite(tmp_path / "counts.tif", counts, photometric="minisblack")
+    opened = []
+    original = olefile.OleFileIO.openstream
+
+    def openstream(self, name):
+        opened.append(name)
+        return original(self, name)
+
+    monkeypatch.setattr(olefile.OleFileIO, "openstream", openstream)
+    frames = tj.load_frames(
+        tmp_path / "counts.tif",
+        angles=[0, 90],
+        detector=tj.Detector(12, 8, 1, 1),
+        flats=path,
+        darks=0,
+    )
+    assert not any(str(name).startswith("ImageData") for name in opened)
+    assert not isinstance(frames.flats, np.ndarray)
+    np.testing.assert_array_equal(frames.flats[:], reference)
+    small = frames.selected([1]).cropped(slice(2, 6), slice(3, 9)).corrected()
+    np.testing.assert_allclose(small.projections, -np.log(counts[1:, 2:6, 3:9] / 2500), rtol=2e-6)
+    with pytest.raises(ValueError, match="not detector frames"):
+        tj.load_frames(path, darks=0)
+
+
+def test_multireferences_use_recorded_times_and_exposures(tmp_path):
+    path = tmp_path / "timed.txrm"
+    fields = {
+        "NoOfImages": 3,
+        "ImageHeight": 4,
+        "ImageWidth": 6,
+        "DataType": 5,
+        "AcquisitionMode": 0,
+    }
+    streams = {f"ImageInfo/{k}": np.array([v], "<u4").tobytes() for k, v in fields.items()}
+
+    def stamps(seconds):
+        return b"".join(f"01/01/2026 00:00:{s:02d}.000".encode().ljust(40, b"\0") for s in seconds)
+
+    streams.update(
+        {
+            "ImageInfo/ExpTimes": np.array([1, 2, 3], "<f4").tobytes(),
+            "ImageInfo/Date": stamps([1, 5, 9]),
+            "MultiReferenceData/TotalRefImages": np.array([2], "<u4").tobytes(),
+            "MultiReferenceData/DataType": np.array([10], "<u4").tobytes(),
+            "MultiReferenceData/ImageInfo/ExpTimes": np.array([2, 4], "<f4").tobytes(),
+            "MultiReferenceData/ImageInfo/Date": stamps([0, 10]),
+        }
+    )
+    streams.update(
+        {
+            f"ImageData1/Image{i + 1}": np.full((4, 6), v, "<u2").tobytes()
+            for i, v in enumerate([55, 150, 285])
+        }
+    )
+    streams.update(
+        {
+            f"MultiReferenceData/Image{i + 1}": np.full((4, 6), v, "<f4").tobytes()
+            for i, v in enumerate([200, 800])
+        }
+    )
+    write_ole(path, streams)
+    geometry = tj.ParallelGeometry(tj.Grid(6, 6, 4, 1, 1, 1), tj.Detector(6, 4, 1, 1), [0, 90, 180])
+    frames = tj.load_frames(path, geometry=geometry, darks=0)
+    np.testing.assert_array_equal(frames.flat_positions, [-1, 9])
+    np.testing.assert_array_equal(frames.view_positions, [0, 4, 8])
+    np.testing.assert_allclose(frames.corrected().projections, -np.log(0.5), atol=2e-7)
+    reference = tmp_path / "reference.xrm"
+    fields.update(NoOfImages=1, DataType=10, AcquisitionMode=14)
+    separate = {f"ImageInfo/{k}": np.array([v], "<u4").tobytes() for k, v in fields.items()}
+    separate.update(
+        {
+            "ImageInfo/ExpTimes": np.array([4], "<f4").tobytes(),
+            "ImageData1/Image1": np.full((4, 6), 800, "<f4").tobytes(),
+        }
+    )
+    write_ole(reference, separate)
+    explicit = tj.load_frames(path, geometry=geometry, flats=reference, darks=0).corrected()
+    expected = -np.log(np.array([55, 150, 285]) / (np.array([1, 2, 3]) * 200))
+    np.testing.assert_allclose(explicit.projections[:, 0, 0], expected, atol=2e-7)

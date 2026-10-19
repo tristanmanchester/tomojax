@@ -6,12 +6,16 @@ with `tomojax.load_frames` and corrected with
 [`tomojax.corrections`](../corrections/README.md).
 
 Zeiss Xradia acquisitions are recognised by OLE content, with lazy raw counts,
-embedded reference images and physical calibration; fractional image shifts stay
-in the geometry rather than resampling the data. Per-view cone arrangements use
+embedded or explicitly selected XRM reference images and physical calibration;
+fractional image shifts stay in the geometry rather than resampling the data. Per-view cone arrangements use
 matched CGLS under automatic reconstruction, not single-arrangement FDK.
 Use `tomojax preprocess scan.txrm --darks 0 -o scan.nxs`, or
 `tj.load_frames("scan.txrm", darks=0).corrected(...)`; the
 [lab-CT guide](../../../docs/lab-ct.md#zeiss-xradia-preview) gives a binned CPU preview.
+Pass separate flat or dark images with `flats="reference_Front.xrm"` or `darks=...`.
+Sample and flat exposure durations normalize dark-subtracted counts before
+timestamp interpolation of multiple reference sets. Large OLE images retain only
+allocation metadata and read the requested rows, without reopening their directory.
 
 Import from here, not from `tomojax._data`.
 

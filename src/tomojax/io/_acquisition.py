@@ -31,6 +31,8 @@ class RawAcquisition:
     flat_positions: np.ndarray | None = None
     white_level: float | None = None
     view_positions: np.ndarray | None = None
+    exposure_times: np.ndarray | None = None
+    flat_exposure_times: np.ndarray | None = None
 
 
 def metadata_candidates(path: Path) -> list[Path]:

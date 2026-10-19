@@ -657,6 +657,8 @@ def reconstruct_slabs(
         steps=corrections,
         epsilon=epsilon,
         view_positions=frames.view_positions,
+        exposure_times=frames.exposure_times,
+        flat_exposure_times=frames.flat_exposure_times,
     ) as source:
 
         def read(first: int, stop: int):

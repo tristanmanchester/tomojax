@@ -66,10 +66,10 @@ def _build_parser() -> argparse.ArgumentParser:
     add_output(parser, "Corrected scan to write (.nxs)")
     add_config(parser, settings={"binning": 1, "detector": None})
     _ = parser.add_argument(
-        "--flats", metavar="TIFF|LEVEL", help="Flat frames (TIFF file or folder), or one level"
+        "--flats", metavar="PATH|LEVEL", help="Flat frames (HDF5, TIFF or XRM), or one level"
     )
     _ = parser.add_argument(
-        "--darks", metavar="TIFF|LEVEL", help="Dark frames (TIFF file or folder), or one level"
+        "--darks", metavar="PATH|LEVEL", help="Dark frames (HDF5, TIFF or XRM), or one level"
     )
     _ = parser.add_argument(
         "--angles", metavar="FILE", help="Angles in degrees (.npy, or one per line)"

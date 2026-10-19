@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+import array
+from dataclasses import dataclass, field, replace
+from datetime import datetime
+from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -18,41 +21,125 @@ if TYPE_CHECKING:
     from ._acquisition import RawAcquisition
 
 
+class _OleFile(olefile.OleFileIO):
+    """Build large allocation tables without copying their accumulated prefix."""
+
+    fat: array.array[int]
+
+    def loadfat_sect(self, sect: Any) -> int | None:
+        # Keep olefile's sector decoding, reads and enclosing DIFAT validation.
+        # Only table accumulation differs: extend is linear in the new block.
+        sectors = sect if isinstance(sect, array.array) else self.sect2array(sect)
+        last = None
+        for value in sectors:
+            last = int(value) & 0xFFFFFFFF
+            if last in (olefile.ENDOFCHAIN, olefile.FREESECT):
+                break
+            self.fat.extend(self.sect2array(self.getsect(last)))
+        return last
+
+
 @dataclass(frozen=True)
 class _ZeissFrames(FrameStack):
     """A logical window of OLE image streams, in their recorded row order.
 
-    Each indexing request opens its own container; neither discovery nor
-    cropping reads image pixels. OLE streams are decoded one image at a time.
+    Each indexing request opens its own file; neither discovery nor
+    cropping reads image pixels. Reads touch only the requested image rows.
     """
 
     path: str
     streams: tuple[str, ...]
     image_shape: tuple[int, int]
+    starts: tuple[int, ...]
+    sector_size: int
+    fat: np.ndarray | None = field(repr=False, compare=False)
+    exposures: np.ndarray | None = field(default=None, repr=False, compare=False)
+
+    @property
+    def exposure_times(self) -> np.ndarray | None:
+        """Recorded durations for this selection, in seconds."""
+        return None if self.exposures is None else self.exposures[self.frames]
 
     def _read(self, indices: np.ndarray, rows: slice, cols: slice) -> np.ndarray:
         result = np.empty((len(indices), self.rows, self.cols), self.dtype)
-        with olefile.OleFileIO(self.path) as container:
+        source: Any
+        with _OleFile(self.path) if self.fat is None else Path(self.path).open("rb") as source:
+            row_bytes = self.image_shape[1] * self.dtype.itemsize
             for destination, index in enumerate(indices):
-                raw = container.openstream(self.streams[index]).read()
-                frame = np.frombuffer(raw, dtype=self.dtype).reshape(self.image_shape)
-                result[destination] = frame[rows, cols]
+                offset, size = rows.start * row_bytes, self.rows * row_bytes
+                if self.fat is None:
+                    stream = source.openstream(self.streams[index])
+                    stream.seek(offset)
+                    raw = stream.read(size)
+                else:
+                    raw = _stream_range(
+                        source, self.fat, self.sector_size, self.starts[index], offset, size
+                    )
+                frame = np.frombuffer(raw, dtype=self.dtype).reshape(self.rows, self.image_shape[1])
+                result[destination] = frame[:, cols]
                 del frame, raw
         return result
 
 
+def _stream_entry(container: Any, name: str) -> Any:
+    entry = container.root
+    for part in name.split("/"):
+        entry = next(child for child in entry.kids if child.name.casefold() == part.casefold())
+    return entry
+
+
+def _stream_range(
+    file: Any, fat: np.ndarray, sector_size: int, sector: int, offset: int, size: int
+) -> bytearray:
+    """Read a logical byte range, coalescing adjacent physical FAT sectors.
+
+    OleFileIO.openstream materializes an entire stream. Its directory and FAT
+    locate the image bytes without decoding the rows outside a requested slab.
+    The retained FAT is metadata only; each batch opens just the backing file.
+    """
+    first, head = divmod(offset, sector_size)
+    for _ in range(first):
+        sector = int(fat[sector])
+    sectors = np.empty((head + size + sector_size - 1) // sector_size, np.int64)
+    for index in range(len(sectors)):
+        sectors[index] = sector
+        sector = int(fat[sector])
+    boundaries = np.r_[0, np.flatnonzero(np.diff(sectors) != 1) + 1, len(sectors)]
+    result = bytearray(size)
+    target = memoryview(result)
+    for start, stop in pairwise(boundaries):
+        begin = max(0, int(start) * sector_size - head)
+        end = min(size, int(stop) * sector_size - head)
+        physical = (int(sectors[start]) + 1) * sector_size + (head if start == 0 else 0)
+        file.seek(physical)
+        target[begin:end] = file.read(end - begin)
+    return result
+
+
 def _stack(
-    path: Path, streams: tuple[str, ...], shape: tuple[int, int], data_type: int
+    container: Any,
+    path: Path,
+    streams: tuple[str, ...],
+    shape: tuple[int, int],
+    data_type: int,
+    *,
+    exposures: np.ndarray | None = None,
 ) -> _ZeissFrames:
     # Xradia's codes are not NumPy's dtype numbers. Both representations are
     # little-endian, including the independently typed reference image.
     types = {5: np.dtype("<u2"), 10: np.dtype("<f4")}
     if data_type not in types:
         raise ValueError(f"unsupported Zeiss image data type {data_type}")
+    entries = [_stream_entry(container, name) for name in streams]
+    fat = None if entries[0].size < container.minisectorcutoff else np.asarray(container.fat)
     return _ZeissFrames(
         str(path.absolute()),
         streams,
         shape,
+        tuple(int(entry.isectStart) for entry in entries),
+        int(container.sectorsize),
+        fat,
+        exposures,
         frames=np.arange(len(streams)),
         dtype=types[data_type],
         rows=shape[0],
@@ -66,6 +153,106 @@ def _values(container: Any, name: str, dtype: str) -> np.ndarray:
 
 def _scalar(container: Any, name: str, dtype: str = "<u4") -> float:
     return float(_values(container, name, dtype).item())
+
+
+def _is_ole(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    with path.open("rb") as file:
+        return file.read(8) == olefile.MAGIC
+
+
+def _images(container: Any, path: Path) -> _ZeissFrames:
+    count = int(_scalar(container, "ImageInfo/NoOfImages"))
+    shape = (
+        int(_scalar(container, "ImageInfo/ImageHeight")),
+        int(_scalar(container, "ImageInfo/ImageWidth")),
+    )
+    dtype = int(_scalar(container, "ImageInfo/DataType"))
+    streams = tuple(f"ImageData{i // 100 + 1}/Image{i + 1}" for i in range(count))
+    return _stack(
+        container,
+        path,
+        streams,
+        shape,
+        dtype,
+        exposures=_exposures(container, "ImageInfo", count),
+    )
+
+
+def _exposures(container: Any, prefix: str, count: int) -> np.ndarray | None:
+    for name in (f"{prefix}/ExpTimes", f"{prefix}/ExpTime", f"{prefix.rsplit('/', 1)[0]}/ExpTime"):
+        if container.exists(name):
+            return np.broadcast_to(_values(container, name, "<f4"), (count,)).copy()
+    return None
+
+
+def _dates(container: Any, name: str) -> np.ndarray:
+    """Xradia date records are forty-byte local timestamps, including padding."""
+    result = []
+    for raw in _values(container, name, "S40"):
+        value = bytes(raw).split(b"\0", 1)[0].decode("ascii")
+        fmt = "%m/%d/%Y %H:%M:%S.%f" if "." in value else "%m/%d/%Y %H:%M:%S"
+        result.append((datetime.strptime(value, fmt) - datetime(1970, 1, 1)).total_seconds())
+    return np.asarray(result, np.float64)
+
+
+def _references(
+    container: Any, path: Path, counts: _ZeissFrames
+) -> tuple[_ZeissFrames | None, np.ndarray | None, np.ndarray | None]:
+    """Read flat counts with their durations and acquisition timestamps."""
+    prefix = "MultiReferenceData"
+    required = (
+        f"{prefix}/Image1",
+        f"{prefix}/DataType",
+        f"{prefix}/TotalRefImages",
+        f"{prefix}/ImageInfo/Date",
+        "ImageInfo/Date",
+    )
+    if all(container.exists(name) for name in required):
+        number = int(_scalar(container, f"{prefix}/TotalRefImages"))
+        exposure = _exposures(container, f"{prefix}/ImageInfo", number)
+        if exposure is not None and counts.exposure_times is not None:
+            flat_time = _dates(container, f"{prefix}/ImageInfo/Date")
+            view_time = _dates(container, "ImageInfo/Date")
+            if flat_time.shape != (number,) or view_time.shape != (len(counts),):
+                raise ValueError(
+                    "Zeiss reference timestamps need one entry per image; pass flats=..."
+                )
+            flats = _stack(
+                container,
+                path,
+                tuple(f"{prefix}/Image{i + 1}" for i in range(number)),
+                counts.image_shape,
+                int(_scalar(container, f"{prefix}/DataType")),
+                exposures=exposure,
+            )
+            return flats, flat_time - view_time[0], view_time - view_time[0]
+    if container.exists("ReferenceData/Image") and container.exists("ReferenceData/DataType"):
+        flats = _stack(
+            container,
+            path,
+            ("ReferenceData/Image",),
+            counts.image_shape,
+            int(_scalar(container, "ReferenceData/DataType")),
+            exposures=_exposures(container, "ReferenceData/ImageInfo", 1),
+        )
+        return flats, None, None
+    return None, None, None
+
+
+def read_zeiss_images(path: Path) -> _ZeissFrames | None:
+    """Read an explicitly selected calibration stack without projection geometry.
+
+    Single XRM reference images use image/scout acquisition modes. Their image
+    dimensions and type are sufficient for calibration, unlike sample scans.
+    """
+    if not _is_ole(path):
+        return None
+    with _OleFile(str(path)) as container:
+        if not container.exists("ImageInfo/NoOfImages"):
+            return None
+        return _images(container, path)
 
 
 def _offsets(container: Any, count: int) -> np.ndarray | None:
@@ -190,12 +377,9 @@ def read_zeiss(path: Path, *, data_path: str | None = None) -> RawAcquisition | 
     """
     from ._acquisition import RawAcquisition
 
-    if not path.is_file():
+    if not _is_ole(path):
         return None
-    with path.open("rb") as file:
-        if file.read(8) != olefile.MAGIC:
-            return None
-    with olefile.OleFileIO(str(path)) as container:
+    with _OleFile(str(path)) as container:
         if not container.exists("ImageInfo/NoOfImages"):
             return None
         if data_path is not None:
@@ -203,16 +387,15 @@ def read_zeiss(path: Path, *, data_path: str | None = None) -> RawAcquisition | 
         mode = int(_scalar(container, "ImageInfo/AcquisitionMode"))
         if mode != 0:
             raise ValueError(f"{path} is a Zeiss image/scout (mode {mode}), not detector frames")
-        count = int(_scalar(container, "ImageInfo/NoOfImages"))
-        rows = int(_scalar(container, "ImageInfo/ImageHeight"))
-        cols = int(_scalar(container, "ImageInfo/ImageWidth"))
-        shape = (rows, cols)
-        dtype = int(_scalar(container, "ImageInfo/DataType"))
-        record = _record(container, path, (count, rows, cols))
-        images = tuple(f"ImageData{i // 100 + 1}/Image{i + 1}" for i in range(count))
-        counts = _stack(path, images, shape, dtype)
-        flats = None
-        if container.exists("ReferenceData/Image") and container.exists("ReferenceData/DataType"):
-            reference_type = int(_scalar(container, "ReferenceData/DataType"))
-            flats = _stack(path, ("ReferenceData/Image",), shape, reference_type)
-    return RawAcquisition(record, counts, flats=flats)
+        counts = _images(container, path)
+        record = _record(container, path, counts.shape)
+        flats, flat_positions, view_positions = _references(container, path, counts)
+    return RawAcquisition(
+        record,
+        counts,
+        flats=flats,
+        flat_positions=flat_positions,
+        view_positions=view_positions,
+        exposure_times=counts.exposure_times,
+        flat_exposure_times=None if flats is None else flats.exposure_times,
+    )
