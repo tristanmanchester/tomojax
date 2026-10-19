@@ -23,6 +23,8 @@ from jax.sharding import Mesh, NamedSharding, PartitionSpec
 import numpy as np
 
 if TYPE_CHECKING:
+    from jax.typing import ArrayLike
+
     from tomojax._typed_arrays import Device
 
 VIEWS = "views"  # the mesh axis the views are split along
@@ -84,11 +86,11 @@ class ViewSplit:
         """``arrays`` (an array or a pytree of them) whole on every device, wherever they were."""
         return jax.device_put(arrays, NamedSharding(self.mesh, PartitionSpec()))
 
-    def take(self, stack: jax.Array) -> jax.Array:
+    def take(self, stack: jax.Array | np.ndarray) -> jax.Array:
         """The ``n`` real views of a :meth:`place`-d stack, on :attr:`first`."""
         return jax.device_put(stack[: self.n], self.first)
 
-    def gather(self, volume: jax.Array) -> jax.Array:
+    def gather(self, volume: ArrayLike) -> jax.Array:
         """A volume every device holds, on :attr:`first`."""
         return jax.device_put(volume, self.first)
 
