@@ -138,6 +138,19 @@ def _store_slab(volume: np.ndarray, start: int, stop: int, value: jax.Array) -> 
     copy_to_host(value.T, volume[:, :, start:stop].T)
 
 
+@partial(jax.jit, donate_argnums=(0,))
+def _merge_visibility(seen: jax.Array, visible: jax.Array, start: jax.Array) -> jax.Array:
+    packed = jnp.packbits(visible, axis=0)
+    offset = (0, 0, start)
+    previous = jax.lax.dynamic_slice(seen, offset, packed.shape)
+    return jax.lax.dynamic_update_slice(seen, previous | packed, offset)
+
+
+@jax.jit
+def _mask_slab(volume: jax.Array, seen: jax.Array) -> jax.Array:
+    return volume * jnp.unpackbits(seen, axis=0, count=volume.shape[0])
+
+
 def _ratios(
     volume: np.ndarray,
     projections: np.ndarray,
@@ -189,7 +202,7 @@ def _ratios(
 
 def _update(
     volume: np.ndarray,
-    seen: np.ndarray,
+    seen: jax.Array | np.ndarray,
     ratios: jax.Array | np.ndarray,
     indices: np.ndarray,
     slabs: list[_Slab],
@@ -199,7 +212,7 @@ def _update(
     model: ConeModel,
     *,
     apply: bool,
-) -> None:
+) -> jax.Array | np.ndarray:
     for start, stop, grid, coefficients in slabs:
         shape = (grid.nx, grid.ny, grid.nz)
         correction, norm = jnp.zeros(shape, jnp.float32), jnp.zeros(shape, jnp.float32)
@@ -219,8 +232,12 @@ def _update(
             del piece, value
         else:
             visible = norm > 0
-        seen[:, :, start:stop] |= np.packbits(np.asarray(visible.T).T, axis=0)
+        if isinstance(seen, jax.Array):
+            seen = _merge_visibility(seen, visible, jnp.int32(start))
+        else:
+            seen[:, :, start:stop] |= np.packbits(np.asarray(visible.T).T, axis=0)
         del visible, correction, norm, ratio
+    return seen
 
 
 def solve(
@@ -261,7 +278,17 @@ def solve(
     validate_host_views(volume)
     if np.min(volume) < 0:
         raise ValueError("mlem: initial volume must be finite and nonnegative")
-    seen = np.zeros(((grid.nx + 7) // 8, grid.ny, grid.nz), np.uint8)
+    seen_shape = ((grid.nx + 7) // 8, grid.ny, grid.nz)
+    device = next(iter(poses.devices()))
+    free = device_free_memory_bytes()
+    # A bit per voxel is often small even when the FP32 volume is not. Keep
+    # a conservative device reserve; larger masks retain bounded host slabs.
+    resident_seen = device.platform == "gpu" and int(np.prod(seen_shape)) <= 0.05 * (free or 0)
+    seen = (
+        jnp.zeros(seen_shape, jnp.uint8, device=device)
+        if resident_seen
+        else np.zeros(seen_shape, np.uint8, order="F")
+    )
     slabs = _parts(grid, model, poses, depth)
     for _ in range(max(1, iterations)):
         for group in range(subsets):
@@ -271,14 +298,21 @@ def solve(
                 if iterations
                 else np.zeros((len(indices), detector.nv, detector.nu), np.float32)
             )
-            _update(
+            seen = _update(
                 volume, seen, ratios, indices, slabs, detector, batch, backend, model,
                 apply=iterations > 0,
             )  # fmt: skip
             del ratios
     for start, stop, _, _ in slabs:
-        visible = np.unpackbits(seen[:, :, start:stop], axis=0, count=grid.nx)
-        np.multiply(volume[:, :, start:stop], visible, out=volume[:, :, start:stop])
+        if isinstance(seen, jax.Array):
+            piece = _device_slab(volume, start, stop, device)
+            value = _mask_slab(piece, seen[:, :, start:stop])
+            _store_slab(volume, start, stop, value)
+            del piece, value
+        else:
+            visible = np.unpackbits(seen[:, :, start:stop], axis=0, count=grid.nx)
+            np.multiply(volume[:, :, start:stop], visible, out=volume[:, :, start:stop])
+            del visible
     return volume
 
 

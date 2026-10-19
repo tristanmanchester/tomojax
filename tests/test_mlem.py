@@ -253,6 +253,20 @@ def test_host_cone_updates_match_dense_transpose_without_consuming_inputs(
     np.testing.assert_array_equal(initial[1:], np.float32(0.7))
 
 
+def test_packed_device_visibility_unions_overlapping_odd_width_slabs():
+    import jax.numpy as jnp
+
+    host = import_module("tomojax.recon._mlem_host")
+    expected = np.zeros((9, 3, 9), bool)
+    seen = jnp.zeros((2, 3, 9), jnp.uint8)
+    rng = np.random.default_rng(381)
+    for start in (0, 3, 5):
+        visible = rng.random((9, 3, 4)) > 0.5
+        seen = host._merge_visibility(seen, jnp.asarray(visible), jnp.int32(start))
+        expected[:, :, start : start + 4] |= visible
+    np.testing.assert_array_equal(np.asarray(seen), np.packbits(expected, axis=0))
+
+
 @pytest.mark.numerical
 def test_large_cone_warm_start_is_planned_before_device_initialization(monkeypatch):
     host = import_module("tomojax.recon._mlem_host")
