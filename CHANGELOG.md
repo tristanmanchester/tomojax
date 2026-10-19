@@ -13,6 +13,23 @@ CUDA kernels replace the deprecated Pallas/Triton backend; select `backend="cuda
 (or `projector_backend`/`backprojector="cuda"`) instead of `"pallas"`. The JAX
 upper version pin is removed.
 
+`tj.reconstruct_slabs(frames, "fbp")` reconstructs cone-beam scans with FDK,
+correcting only the detector rows each output slab needs, so neither the
+corrected stack nor the volume has to fit in host memory.
+
+Zeiss `.txrm` loading reads calibration images and detector rows lazily and
+supports embedded `MultiReferenceData` references. Flat fields are normalised by
+exposure time and multiple references are interpolated at their timestamps;
+`load_frames` and `correct_frames` take `exposure_times=` and
+`flat_exposure_times=` for calibration arrays. Large Zeiss containers open
+faster.
+
+CGLS stops at its precision limit only when consecutive checks agree, which
+prevents multiresolution CGLS from diverging on weakly determined regions.
+
+Importing TomoJAX and running `tomojax --help` no longer load the accelerator
+libraries.
+
 Container conversion preserves missing angles/centre calibration rather than
 creating measurements; saved NXtomo rotation axes now reflect the recorded tilt.
 Nikon loading no longer invents a full-turn angle schedule or a 16-bit white
