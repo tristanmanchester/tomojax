@@ -126,7 +126,7 @@ def huber_tv_value(u: jnp.ndarray, delta: float) -> jnp.ndarray:
     return jnp.sum(jnp.where(norm <= delta_arr, quadratic, linear))
 
 
-def huber_tv_grad(u: jnp.ndarray, delta: float) -> jnp.ndarray:
+def _huber_tv_grad(u: jnp.ndarray, delta: float) -> jnp.ndarray:
     """Return the gradient of isotropic Huber-TV under ``grad3``/``div3``."""
     delta_arr = jnp.asarray(delta, dtype=u.dtype)
     gx, gy, gz = grad3(u)
@@ -136,6 +136,35 @@ def huber_tv_grad(u: jnp.ndarray, delta: float) -> jnp.ndarray:
     qy = gy / denom
     qz = gz / denom
     return -div3(qx, qy, qz)
+
+
+_HUBER_TILE_BYTES = 64 << 20
+
+
+def huber_tv_grad(u: jnp.ndarray, delta: float) -> jnp.ndarray:
+    """Huber gradient with bounded vector-field scratch and exact derivatives.
+
+    Each output uses one neighbour along each axis. Haloed slabs preserve the
+    Neumann boundary and mixed components without storing full gradient fields.
+    """
+    if 5 * u.size * u.dtype.itemsize <= _HUBER_TILE_BYTES:
+        return _huber_tv_grad(u, delta)
+    axis = max(range(3), key=u.shape.__getitem__)
+    length = u.shape[axis]
+    plane_bytes = u.dtype.itemsize * u.size // length
+    core = min(length, max(1, _HUBER_TILE_BYTES // (8 * plane_bytes)))
+    width = min(length, core + 2)
+
+    def body(i, out):
+        first = jnp.minimum(i * core, length - core)
+        start = jnp.clip(first - 1, 0, length - width)
+        tile = jax.lax.dynamic_slice_in_dim(u, start, width, axis=axis)
+        gradient = _huber_tv_grad(tile, delta)
+        local = jax.lax.dynamic_slice_in_dim(gradient, first - start, core, axis=axis)
+        # The final short slab may overwrite overlap with the same exact values.
+        return jax.lax.dynamic_update_slice_in_dim(out, local, first, axis=axis)
+
+    return jax.lax.fori_loop(0, (length + core - 1) // core, body, jnp.zeros_like(u))
 
 
 def project_tv_duals(
