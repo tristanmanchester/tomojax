@@ -3,12 +3,13 @@
 import numpy as np
 import pytest
 from scipy import ndimage
+from scipy.signal import lfilter
+
+# check-public-imports: allow-private
+from tomojax.alignment import _profile_likelihood as likelihood, _projection_matching as matching
 
 
 def test_vertical_registration_retains_subpixel_texture():
-    # check-public-imports: allow-private
-    from tomojax.alignment._projection_matching import _vertical_shifts
-
     rng = np.random.default_rng(71)
     nu, nv, count = 128, 96, 17
     u, v = np.arange(nu), np.arange(nv)
@@ -16,7 +17,8 @@ def test_vertical_registration_retains_subpixel_texture():
     profile = sum(np.exp(-(((v - c) / w) ** 2)) for c, w in [(23, 5), (45, 7), (73, 4)])
     shifts = rng.uniform(-1, 1, count)
     data = np.stack([np.interp(v - s, v, profile)[:, None] * model for s in shifts])
-    vertical = _vertical_shifts(data)
+    profiles = data.sum(axis=2)
+    vertical = likelihood.fit_profile_likelihood(profiles, matching._profile_seed(profiles)).shifts
     np.testing.assert_allclose(vertical, shifts - shifts.mean(), atol=0.025)
 
 
@@ -48,6 +50,11 @@ def test_public_matching_recovers_motion_without_resampling_input():
     ).astype(np.float32)
     scan = tj.Scan(moved, geometry)
     result = tj.align(scan, mode="pose", config=ProjectionMatchingConfig())
+    uncertainty = result.info["vertical_uncertainty"]
+    standard = np.asarray(uncertainty["standard_deviation"])
+    assert standard.shape == (n,) and np.all(np.isfinite(standard)) and np.all(standard > 0)
+    assert uncertainty["translation_frame"] == "detector"
+    assert uncertainty["units"] == "geometry_length"
     assert result.scan.projections is moved
     assert result.volume.shape == volume.shape
     # Compare after removing only the common object translation gauge.
@@ -91,3 +98,36 @@ def test_large_motion_from_independent_gaussian_line_integrals():
     error -= (frame @ np.linalg.lstsq(frame, error.ravel(), rcond=None)[0]).reshape(-1, 2)
     assert np.sqrt(np.mean(np.sum((error / pitch) ** 2, axis=1))) < 0.01
     assert result.scan.projections is scan.projections
+
+
+@pytest.mark.parametrize("motion", [False, True])
+def test_correlated_profile_likelihood_is_calibrated(motion):
+    rng = np.random.default_rng(72401)
+    count, width, rho = 160, 192, 0.7
+    axis = np.arange(width, dtype=float)
+    frequency = np.array([1 / 23, 1 / 37, 1 / 57])
+    phase = rng.uniform(-np.pi, np.pi, 3)
+    truth = 2 * np.sin(np.arange(count) * 2 * np.pi / count) + rng.normal(0, 0.4, count)
+    truth = (truth - truth.mean()) if motion else np.zeros(count)
+    signal = np.sin((axis[None, :, None] - truth[:, None, None]) * 2 * np.pi * frequency + phase)
+    gain = rng.uniform(0.8, 1.2, count)
+    background = rng.normal(0, 0.3, (count, 2))
+    noise = lfilter([1], [1, -rho], rng.normal(size=(count, width)), axis=1)
+    data = gain[:, None] * (signal @ np.array([0.7, 1, 0.4]))
+    data += background[:, 0, None] + background[:, 1, None] * axis / width
+    amplitude = np.where(np.arange(count) < count // 2, 0.08, 0.24) if motion else 0.15
+    data += np.asarray(amplitude).reshape(-1, 1) * np.sqrt(1 - rho**2) * noise
+    result = likelihood.fit_profile_likelihood(data, truth + rng.normal(0, 0.25, count))
+    standardized = (result.shifts - truth) / result.standard_error
+    assert 0.7 < np.sqrt(np.mean(standardized**2)) < 1.3
+    assert 0.55 < np.mean(abs(standardized) <= 1) < 0.8
+    if motion:
+        first, second = np.array_split(result.relative_noise_variance, 2)
+        assert 6 < second.mean() / first.mean() < 12
+        for group in np.array_split(standardized, 2):
+            assert 0.5 < np.mean(abs(group) <= 1) < 0.85
+    projector = np.eye(count) - np.ones((count, count)) / count
+    expected = np.diag((projector * result.ungauged_variance) @ projector)
+    np.testing.assert_allclose(result.standard_error**2, expected)
+    assert abs(result.shifts.mean()) < 1e-12
+    assert np.linalg.eigvalsh(result.covariance).min() > 0

@@ -9,7 +9,7 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 # check-public-imports: allow-private
-from tomojax.core import _cuda_joseph as cuda
+from tomojax.core import _cuda_axial as axial, _cuda_joseph as cuda
 
 # check-public-imports: allow-private
 from tomojax.core.joseph import (
@@ -623,9 +623,6 @@ def test_axial_cuda_keeps_positive_footprint_edge(angle, point, monkeypatch):
 
 @pytest.mark.gpu
 def test_batched_cubic_transpose_executes_only_each_geometry_branch(monkeypatch):
-    # check-public-imports: allow-private
-    from tomojax.core import _cuda_axial as axial
-
     monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "auto")
     monkeypatch.setattr(cuda, "_MIN_AXIAL_VOXELS", 1)
     grid, detector = Grid(5, 6, 3, 0.8, 1.1, 1.3), Detector(7, 5, 0.7, 1.2)
