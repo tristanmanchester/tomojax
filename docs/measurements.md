@@ -341,7 +341,15 @@ All on the 8 GB laptop GPU:
 | SPDHG-TV, 3072 views, streamed, 192 iterations (one view block each) | 297 s, 4.3 GB peak, with its 3.2 GB dual in host memory; bitwise identical to the device-resident solver | 2026-10-06, `9d4c4d1` |
 | SIRT from raw frames with `tj.reconstruct_slabs`, the whole Diamond I12 scan below: 1801 views of 2160 × 2560 pixels (39.8 GB corrected), a 2560² × 2160 volume (56.6 GB) | 1436 s of solving, 1.41 GB peak GPU memory and 3.7 GB host memory; 1.13 times the per-voxel time of an 8-row reconstruction that fits | 2026-10-17, `440cc563` |
 | `tj.reconstruct` of 352 rows of the same scan, returned as one 9.23 GB array | 211 s, 0.78 GB peak GPU memory, 17 GB host memory; 1.04 times the per-voxel time of 8 rows | 2026-10-17, `440cc563` |
-| OSEM of the FIPS walnut at full resolution: all 3600 views of three orbits, a 1001³ volume, 4 subsets × 1 iteration from FDK | 278 s, 5.4 GB peak GPU memory, 26 GB host memory; 0.38 times the per-voxel time of the 501³ reconstruction that fits; errors against the authors' reference equal those of the earlier route to within 1e−4 | 2026-10-18, `9941c53f` |
+| OSEM of the FIPS walnut at full resolution: all 3600 views of 972 × 768 pixels, a 1001³ volume, 4 subsets × 1 iteration from FDK | First / repeat solve 289.61 / 288.80 s; imports, loading and first solve 297.41 s; peak GPU 4688 MiB, host 15.962 GB; full / walnut-support relative L2 error 0.124385 / 0.094026 | 2026-10-19, `508631fa` |
+
+The walnut call is `tj.reconstruct(scan, "mlem", warm_start=True,
+config=MLEMConfig(iterations=1, subsets=4))`, using all three corrected
+geometries, unbinned projections clipped at zero, and 0.05 mm voxels. The
+volume is scored at the published 0.1 mm voxel centres. The command was
+`python artifacts/agent08_memory/native_transfer_policy.py --transfer-policy direct
+--size 1001 --repeat 1`, with a fresh `TOMOJAX_JAX_CACHE_DIR` and
+`XLA_PYTHON_CLIENT_PREALLOCATE=false`.
 
 The Diamond rows use `SIRTConfig(iterations=3, subsets=15, lower_bound=0)`
 with `warm_start=True` (an FBP start) on frames from
