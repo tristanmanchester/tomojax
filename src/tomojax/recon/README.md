@@ -118,7 +118,7 @@ and speed, and the [reconstruction comparison](../../../docs/measurements.md#rec
 its accuracy-gated results.
 
 `cgls` solves unconstrained least squares with a matched discrete adjoint and
-optional scalar damping and quadratic smoothness. It supports JAX and CUDA Pallas execution. Iteration
+optional scalar damping and quadratic smoothness. It supports JAX and CUDA execution. Iteration
 budgets are dynamic, so changing the budget reuses compiled code. Use FISTA or
 SPDHG for TV regularization and nonnegativity constraints.
 
@@ -192,7 +192,7 @@ level raises `FloatingPointError`.
 
 CGLS, FISTA-TV and SPDHG-TV share one projector choice. The default
 `projector_model="auto"` uses bilinear voxel-centre plane integration (Joseph)
-with Pallas kernels on CUDA; its matched CUDA transpose gathers into voxels
+with CUDA kernels on CUDA; its matched CUDA transpose gathers into voxels
 without scattered atomic writes, and JAX provides an independently
 differentiated reference transpose. `projector_model="ray"` selects the
 trilinear ray marcher, which is also used automatically with explicit detector

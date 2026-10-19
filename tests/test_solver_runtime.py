@@ -181,7 +181,8 @@ def test_repeated_solver_calls_use_new_arrays(solver, model):
 
 
 @pytest.mark.numerical
-def test_shared_power_method_matches_dense_operator_with_tail_and_support():
+@pytest.mark.parametrize("ray_integrator", ["sampled", "joseph", "joseph_cubic"])
+def test_shared_power_method_matches_dense_operator_with_tail_and_support(ray_integrator):
     grid = Grid(2, 3, 2, 0.8, 1.1, 1.3)
     detector = Detector(4, 3, 0.9, 1.2, (0.17, 0.23))
     for offset in [0.0, 11.0]:
@@ -192,7 +193,11 @@ def test_shared_power_method_matches_dense_operator_with_tail_and_support():
         def project(flat, poses=poses, support=support):
             return jax.vmap(
                 lambda t: forward_project_view_T(
-                    t, grid, detector, flat.reshape((2, 3, 2)) * support
+                    t,
+                    grid,
+                    detector,
+                    flat.reshape((2, 3, 2)) * support,
+                    ray_integrator=ray_integrator,
                 )
             )(poses).ravel()
 
@@ -210,15 +215,18 @@ def test_shared_power_method_matches_dense_operator_with_tail_and_support():
             unroll=1,
             checkpoint=True,
             gather_dtype="fp32",
+            ray_integrator=ray_integrator,
         )
         np.testing.assert_allclose(actual, expected, rtol=3e-5)
 
 
 @pytest.mark.numerical
+@pytest.mark.parametrize("masked", [False, True])
+@pytest.mark.parametrize("batch_size", [1, 2])
 @pytest.mark.parametrize("tilt", [False, True])
-@pytest.mark.parametrize("ray_integrator", ["sampled", "joseph_cubic"])
+@pytest.mark.parametrize("ray_integrator", ["sampled", "joseph", "joseph_cubic"])
 def test_positive_normal_bound_dominates_dense_spectrum_for_irregular_geometry(
-    tilt, ray_integrator
+    tilt, ray_integrator, monkeypatch, batch_size, masked
 ):
     grid = Grid(2, 3, 2, 0.8, 1.1, 1.3)
     detector = Detector(5, 3, 0.6, 1.2, (0.17, 0.23))
@@ -229,17 +237,28 @@ def test_positive_normal_bound_dominates_dense_spectrum_for_irregular_geometry(
         else ParallelGeometry(grid, detector, angles)
     )
     poses = jnp.asarray([geometry.pose_for_view(i) for i in range(3)])
-    support = jnp.linspace(-1.0, 0.7, 12).reshape((2, 3, 2))
+    support = jnp.linspace(-1.0, 0.7, 12).reshape((2, 3, 2)) if masked else None
 
     def project(flat):
         return jax.vmap(
             lambda t: forward_project_view_T(
-                t, grid, detector, flat.reshape((2, 3, 2)) * support, ray_integrator=ray_integrator
+                t,
+                grid,
+                detector,
+                flat.reshape((2, 3, 2)) * (1 if support is None else support),
+                ray_integrator=ray_integrator,
             )
         )(poses).ravel()
 
     matrix = np.asarray(jax.jacfwd(project)(jnp.zeros(12))).astype(np.float64)
     expected = np.max(np.abs(matrix).T @ np.abs(matrix) @ np.ones(12))
+    if jax.default_backend() == "gpu":
+        monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
+        for operation in ("forward_jax", "adjoint_jax"):
+            monkeypatch.setattr(
+                f"tomojax.core.joseph.{operation}",
+                lambda *a, **kw: pytest.fail("CUDA norm must use the bounded-workspace pair"),
+            )
     actual = float(
         estimate_normal_norm(
             poses,
@@ -248,7 +267,7 @@ def test_positive_normal_bound_dominates_dense_spectrum_for_irregular_geometry(
             support,
             grid=grid,
             detector=detector,
-            batch_size=2,
+            batch_size=batch_size,
             iterations=1,
             unroll=1,
             checkpoint=True,

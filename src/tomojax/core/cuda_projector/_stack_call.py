@@ -8,17 +8,17 @@ import jax.numpy as jnp
 
 from tomojax.core._sampled_cuda import run
 
-from ._pallas_config import (
-    PallasForwardProjectorStackTraversalState,
-    PallasProjectorUnsupported,
-    _prepare_volume_for_pallas_gather,
+from ._config import (
+    CudaForwardProjectorStackTraversalState,
+    CudaProjectorUnsupported,
+    _prepare_volume_for_cuda_gather,
     _unsupported,
     _validate_cached_volume,
 )
 
 
 @functools.lru_cache(maxsize=32)
-def _cached_projector_state_pallas_call(
+def _cached_projector_state_cuda_call(
     *,
     nx: int,
     ny: int,
@@ -52,8 +52,8 @@ def _cached_projector_state_pallas_call(
     return call
 
 
-def forward_project_views_T_pallas_with_state(
-    state: PallasForwardProjectorStackTraversalState,
+def forward_project_views_T_cuda_with_state(
+    state: CudaForwardProjectorStackTraversalState,
     volume: jnp.ndarray,
     *,
     interpret: bool = False,
@@ -61,14 +61,14 @@ def forward_project_views_T_pallas_with_state(
 ) -> jnp.ndarray:
     """Forward project a stack with prepared traversal state."""
     _validate_cached_volume(
-        state.traversal, volume, context="forward_project_views_T_pallas_with_state"
+        state.traversal, volume, context="forward_project_views_T_cuda_with_state"
     )
     if not interpret and jax.default_backend() == "cpu":
-        raise PallasProjectorUnsupported(
-            _unsupported("real Pallas lowering is unavailable on CPU; pass interpret=True")
+        raise CudaProjectorUnsupported(
+            _unsupported("real CUDA lowering is unavailable on CPU; pass interpret=True")
         )
     tile_v, tile_u = state.tile_shape
-    call = _cached_projector_state_pallas_call(
+    call = _cached_projector_state_cuda_call(
         nx=int(state.nx),
         ny=int(state.ny),
         nz=int(state.nz),
@@ -93,13 +93,13 @@ def forward_project_views_T_pallas_with_state(
         state.dix,
         state.diy,
         state.diz,
-        _prepare_volume_for_pallas_gather(volume, state.gather_dtype),
+        _prepare_volume_for_cuda_gather(volume, state.gather_dtype),
         None,
     )[:, : int(state.nv), : int(state.nu)]
 
 
-def forward_project_residual_sse_T_pallas_with_state(
-    state: PallasForwardProjectorStackTraversalState,
+def forward_project_residual_sse_T_cuda_with_state(
+    state: CudaForwardProjectorStackTraversalState,
     volume: jnp.ndarray,
     target: jnp.ndarray,
     *,
@@ -108,10 +108,10 @@ def forward_project_residual_sse_T_pallas_with_state(
 ) -> jnp.ndarray:
     """Return residual SSE for a stack using prepared traversal state."""
     _validate_cached_volume(
-        state.traversal, volume, context="forward_project_residual_sse_T_pallas_with_state"
+        state.traversal, volume, context="forward_project_residual_sse_T_cuda_with_state"
     )
     if tuple(int(dim) for dim in target.shape) != (state.n_views, state.nv, state.nu):
-        raise PallasProjectorUnsupported(
+        raise CudaProjectorUnsupported(
             _unsupported(
                 "target shape does not match cached traversal state: "
                 f"got {tuple(int(dim) for dim in target.shape)}, "
@@ -119,11 +119,11 @@ def forward_project_residual_sse_T_pallas_with_state(
             )
         )
     if not interpret and jax.default_backend() == "cpu":
-        raise PallasProjectorUnsupported(
-            _unsupported("real Pallas lowering is unavailable on CPU; pass interpret=True")
+        raise CudaProjectorUnsupported(
+            _unsupported("real CUDA lowering is unavailable on CPU; pass interpret=True")
         )
     tile_v, tile_u = state.tile_shape
-    call = _cached_projector_state_pallas_call(
+    call = _cached_projector_state_cuda_call(
         nx=int(state.nx),
         ny=int(state.ny),
         nz=int(state.nz),
@@ -148,7 +148,7 @@ def forward_project_residual_sse_T_pallas_with_state(
         state.dix,
         state.diy,
         state.diz,
-        _prepare_volume_for_pallas_gather(volume, state.gather_dtype),
+        _prepare_volume_for_cuda_gather(volume, state.gather_dtype),
         jnp.asarray(target, dtype=jnp.float32),
     )
     return jnp.sum(partials, dtype=jnp.float32)

@@ -7,7 +7,7 @@ from typing import Literal
 
 from .validation import option_name
 
-type ProjectorBackend = Literal["jax", "pallas"]
+type ProjectorBackend = Literal["jax", "cuda"]
 type ProjectorBackendInput = ProjectorBackend | str
 
 
@@ -51,9 +51,9 @@ def normalize_projector_backend(value: ProjectorBackendInput) -> ProjectorBacken
     backend = option_name(value)
     if backend in {"jax", "default"}:
         return "jax"
-    if backend == "pallas":
-        return "pallas"
-    raise ValueError("projector_backend must be one of 'jax' or 'pallas'")
+    if backend == "cuda":
+        return "cuda"
+    raise ValueError("projector_backend must be one of 'jax' or 'cuda'")
 
 
 def backend_provenance(

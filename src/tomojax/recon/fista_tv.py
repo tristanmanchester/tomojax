@@ -160,7 +160,7 @@ class FistaConfig:
     """Configuration for public FISTA/TV reconstruction.
 
     ``projector_model``/``projector_backend`` follow :class:`CGLSConfig`: ``"auto"``
-    uses batched Joseph (also for ``ray_integrator="joseph"``), with Pallas on CUDA.
+    uses batched Joseph (also for ``ray_integrator="joseph"``), with CUDA on CUDA.
     Explicit grids/exact integration use the reference path, alone honouring
     ``gather_dtype``, ``projector_unroll``, ``checkpoint_projector`` and ``grad_mode``.
     ``views_per_batch=None`` batches 64 views, or one on the reference path.
@@ -249,7 +249,7 @@ class FistaConfig:
         Projection model: "auto", "ray" or "joseph". Auto selects Joseph unless an
         explicit detector grid requires rays. Default is 'auto'.
     projector_backend : ProjectorBackend, optional
-        Execution backend: "auto", "jax" or "pallas". An explicit accelerator
+        Execution backend: "auto", "jax" or "cuda". An explicit accelerator
         request never silently falls back. Default is 'auto'.
     stream_projections : bool | None, optional
         Read host projections one view batch at a time. None selects streaming from
@@ -660,7 +660,7 @@ def _batched_projector(
     if det_grid is None and cfg.ray_integrator == "joseph" and model == "auto":
         model = "joseph"
     elif det_grid is not None or cfg.ray_integrator != "sampled":
-        if model == "joseph" or backend == "pallas":
+        if model == "joseph" or backend == "cuda":
             raise ValueError(
                 "fista_tv: explicit detector grids and exact integration require "
                 "projector_model='ray' and projector_backend='jax'"

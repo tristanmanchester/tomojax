@@ -105,7 +105,7 @@ def test_gpu_compute_capability_probe_logs_subprocess_failure(
     assert "nvidia-smi missing" in caplog.text
 
 
-def test_pallas_support_probe_logs_debug_before_jax_fallback(
+def test_cuda_support_probe_logs_debug_before_jax_fallback(
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -114,7 +114,7 @@ def test_pallas_support_probe_logs_debug_before_jax_fallback(
 
     monkeypatch.setattr(
         fixed_volume,
-        "resolve_pallas_callable",
+        "resolve_cuda_callable",
         lambda *_args, **_kwargs: (raise_support, None),
     )
 
@@ -122,7 +122,7 @@ def test_pallas_support_probe_logs_debug_before_jax_fallback(
         logging.DEBUG,
         logger="tomojax.alignment._objectives.fixed_volume",
     ):
-        reason = fixed_volume._pallas_sinogram_fallback_reason(
+        reason = fixed_volume._cuda_sinogram_fallback_reason(
             pose_stack=jnp.eye(4, dtype=jnp.float32)[None, :, :],
             grid=Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0),
             detector=Detector(nu=2, nv=2, du=1.0, dv=1.0),
@@ -135,4 +135,4 @@ def test_pallas_support_probe_logs_debug_before_jax_fallback(
         )
 
     assert reason == "RuntimeError: support probe failed"
-    assert "Pallas sinogram support probe failed" in caplog.text
+    assert "CUDA sinogram support probe failed" in caplog.text

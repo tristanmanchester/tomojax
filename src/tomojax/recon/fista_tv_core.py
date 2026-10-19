@@ -12,7 +12,7 @@ import numpy as np
 
 from tomojax.backends.host_stream import read_views
 from tomojax.core.backend_policy import normalize_projector_backend
-from tomojax.core.pallas_resolver import resolve_pallas_callable, resolve_pallas_module
+from tomojax.core.cuda_projector_resolver import resolve_cuda_callable, resolve_cuda_module
 from tomojax.core.projector import (
     RAY_INTEGRATORS,
     forward_project_view_T,
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 class FistaCoreConfig:
     """Configuration for the array-level FISTA core.
 
-    A Pallas sampling step is preserved if dynamic poses or detector coordinates
+    A CUDA sampling step is preserved if dynamic poses or detector coordinates
     require a JAX fallback.
     """
 
@@ -50,10 +50,10 @@ class FistaCoreConfig:
     support: jnp.ndarray | None = None
     forward_projector: str = "jax"
     backprojector: str = "jax"
-    pallas_tile_shape: tuple[int, int] = (16, 4)
-    pallas_num_warps: int = 1
-    pallas_step_size_scale: float = 1.0
-    pallas_unroll: int | None = 1
+    cuda_tile_shape: tuple[int, int] = (16, 4)
+    cuda_num_warps: int = 1
+    cuda_step_size_scale: float = 1.0
+    cuda_unroll: int | None = 1
     ray_integrator: str = "sampled"
     compute_iteration_loss: bool = True
     compute_final_data_loss: bool = True
@@ -156,10 +156,10 @@ def fista_tv_core_arrays(
             gather_dtype=cfg.gather_dtype,
             views_per_batch=cfg.views_per_batch,
             forward_projector=data_forward_projector,
-            pallas_tile_shape=cfg.pallas_tile_shape,
-            pallas_num_warps=cfg.pallas_num_warps,
-            pallas_step_size_scale=cfg.pallas_step_size_scale,
-            pallas_unroll=cfg.pallas_unroll,
+            cuda_tile_shape=cfg.cuda_tile_shape,
+            cuda_num_warps=cfg.cuda_num_warps,
+            cuda_step_size_scale=cfg.cuda_step_size_scale,
+            cuda_unroll=cfg.cuda_unroll,
             ray_integrator=cfg.ray_integrator,
             sampled_step_size=sampled_step,
         )
@@ -180,10 +180,10 @@ def fista_tv_core_arrays(
             views_per_batch=cfg.views_per_batch,
             forward_projector=data_forward_projector,
             backprojector=data_backprojector,
-            pallas_tile_shape=cfg.pallas_tile_shape,
-            pallas_num_warps=cfg.pallas_num_warps,
-            pallas_step_size_scale=cfg.pallas_step_size_scale,
-            pallas_unroll=cfg.pallas_unroll,
+            cuda_tile_shape=cfg.cuda_tile_shape,
+            cuda_num_warps=cfg.cuda_num_warps,
+            cuda_step_size_scale=cfg.cuda_step_size_scale,
+            cuda_unroll=cfg.cuda_unroll,
             ray_integrator=cfg.ray_integrator,
             sampled_step_size=sampled_step,
             compute_loss=bool(cfg.compute_iteration_loss or cfg.compute_final_data_loss),
@@ -265,10 +265,10 @@ def projection_loss_arrays(
         gather_dtype=str(cfg.gather_dtype),
         views_per_batch=int(cfg.views_per_batch),
         forward_projector=forward_projector,
-        pallas_tile_shape=cfg.pallas_tile_shape,
-        pallas_num_warps=int(cfg.pallas_num_warps),
-        pallas_step_size_scale=float(cfg.pallas_step_size_scale),
-        pallas_unroll=cfg.pallas_unroll,
+        cuda_tile_shape=cfg.cuda_tile_shape,
+        cuda_num_warps=int(cfg.cuda_num_warps),
+        cuda_step_size_scale=float(cfg.cuda_step_size_scale),
+        cuda_unroll=cfg.cuda_unroll,
         ray_integrator=cfg.ray_integrator,
         sampled_step_size=_requested_sampled_step(grid, cfg),
     )
@@ -313,7 +313,7 @@ def fista_objective_arrays(
 
 def _requested_sampled_step(grid: Grid, cfg: FistaCoreConfig) -> float | None:
     # Backend fallback must not change the requested discretization.
-    return grid.vy * cfg.pallas_step_size_scale if cfg.forward_projector == "pallas" else None
+    return grid.vy * cfg.cuda_step_size_scale if cfg.forward_projector == "cuda" else None
 
 
 def _project_stack(
@@ -328,10 +328,10 @@ def _project_stack(
     gather_dtype: str,
     views_per_batch: int = 1,
     forward_projector: str = "jax",
-    pallas_tile_shape: tuple[int, int] = (16, 4),
-    pallas_num_warps: int = 1,
-    pallas_step_size_scale: float = 1.0,
-    pallas_unroll: int | None = 1,
+    cuda_tile_shape: tuple[int, int] = (16, 4),
+    cuda_num_warps: int = 1,
+    cuda_step_size_scale: float = 1.0,
+    cuda_unroll: int | None = 1,
     ray_integrator: str = "sampled",
 ) -> jnp.ndarray:
     n_views = int(T_all.shape[0])
@@ -356,10 +356,10 @@ def _project_stack(
             projector_unroll=projector_unroll,
             gather_dtype=gather_dtype,
             forward_projector=forward_projector,
-            pallas_tile_shape=pallas_tile_shape,
-            pallas_num_warps=pallas_num_warps,
-            pallas_step_size_scale=pallas_step_size_scale,
-            pallas_unroll=pallas_unroll,
+            cuda_tile_shape=cuda_tile_shape,
+            cuda_num_warps=cuda_num_warps,
+            cuda_step_size_scale=cuda_step_size_scale,
+            cuda_unroll=cuda_unroll,
             ray_integrator=ray_integrator,
         )
         return out.at[view_idx].set(pred), None
@@ -380,10 +380,10 @@ def _project_chunk(
     projector_unroll: int,
     gather_dtype: str,
     forward_projector: str,
-    pallas_tile_shape: tuple[int, int],
-    pallas_num_warps: int,
-    pallas_step_size_scale: float,
-    pallas_unroll: int | None,
+    cuda_tile_shape: tuple[int, int],
+    cuda_num_warps: int,
+    cuda_step_size_scale: float,
+    cuda_unroll: int | None,
     ray_integrator: str = "sampled",
     sampled_step_size: float | None = None,
 ) -> jnp.ndarray:
@@ -418,31 +418,31 @@ def _project_chunk(
                 det_grid=det_grid,
             )
         )(T_chunk)
-    if forward_projector == "pallas":
-        pallas_project, fallback_reason = resolve_pallas_callable(
-            "forward_project_views_T_pallas",
-            missing_reason="pallas_batched_callable_missing",
+    if forward_projector == "cuda":
+        cuda_project, fallback_reason = resolve_cuda_callable(
+            "forward_project_views_T_cuda",
+            missing_reason="cuda_batched_callable_missing",
         )
-        if pallas_project is None:
-            raise RuntimeError(fallback_reason or "pallas_projector_unavailable")
-        return pallas_project(
+        if cuda_project is None:
+            raise RuntimeError(fallback_reason or "cuda_projector_unavailable")
+        return cuda_project(
             T_chunk,
             grid,
             detector,
             volume,
-            options=_pallas_projector_options(
-                step_size=float(grid.vy) * float(pallas_step_size_scale),
-                unroll=pallas_unroll,
+            options=_cuda_projector_options(
+                step_size=float(grid.vy) * float(cuda_step_size_scale),
+                unroll=cuda_unroll,
                 gather_dtype=gather_dtype,
                 det_grid=det_grid,
-                tile_shape=tuple(pallas_tile_shape),
-                num_warps=int(pallas_num_warps),
+                tile_shape=tuple(cuda_tile_shape),
+                num_warps=int(cuda_num_warps),
                 kernel_variant="auto",
                 layout_variant="detector_vu",
                 state_mode="cached",
             ),
         )
-    raise ValueError("FistaCoreConfig.forward_projector must be one of 'jax' or 'pallas'")
+    raise ValueError("FistaCoreConfig.forward_projector must be one of 'jax' or 'cuda'")
 
 
 def _projection_loss(
@@ -459,10 +459,10 @@ def _projection_loss(
     gather_dtype: str,
     views_per_batch: int,
     forward_projector: str,
-    pallas_tile_shape: tuple[int, int],
-    pallas_num_warps: int,
-    pallas_step_size_scale: float,
-    pallas_unroll: int | None,
+    cuda_tile_shape: tuple[int, int],
+    cuda_num_warps: int,
+    cuda_step_size_scale: float,
+    cuda_unroll: int | None,
     ray_integrator: str = "sampled",
     sampled_step_size: float | None = None,
     stream_projections: bool = False,
@@ -495,10 +495,10 @@ def _projection_loss(
             projector_unroll=projector_unroll,
             gather_dtype=gather_dtype,
             forward_projector=forward_projector,
-            pallas_tile_shape=pallas_tile_shape,
-            pallas_num_warps=pallas_num_warps,
-            pallas_step_size_scale=pallas_step_size_scale,
-            pallas_unroll=pallas_unroll,
+            cuda_tile_shape=cuda_tile_shape,
+            cuda_num_warps=cuda_num_warps,
+            cuda_step_size_scale=cuda_step_size_scale,
+            cuda_unroll=cuda_unroll,
             ray_integrator=ray_integrator,
             sampled_step_size=sampled_step_size,
         )
@@ -543,33 +543,33 @@ def _projection_loss_and_explicit_grad(
     views_per_batch: int,
     forward_projector: str,
     backprojector: str,
-    pallas_tile_shape: tuple[int, int],
-    pallas_num_warps: int,
-    pallas_step_size_scale: float = 1.0,
-    pallas_unroll: int | None = 1,
+    cuda_tile_shape: tuple[int, int],
+    cuda_num_warps: int,
+    cuda_step_size_scale: float = 1.0,
+    cuda_unroll: int | None = 1,
     ray_integrator: str = "sampled",
     sampled_step_size: float | None = None,
     compute_loss: bool = True,
     stream_projections: bool = False,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
-    if sampled_step_size is None and forward_projector == "pallas":
-        sampled_step_size = float(grid.vy) * float(pallas_step_size_scale)
+    if sampled_step_size is None and forward_projector == "cuda":
+        sampled_step_size = float(grid.vy) * float(cuda_step_size_scale)
     n_views = int(T_all.shape[0])
     if n_views == 0:
         return jnp.asarray(0.0, dtype=jnp.float32), jnp.zeros_like(volume)
     if (
         ray_integrator == "sampled"
-        and forward_projector == "pallas"
-        and backprojector == "pallas"
+        and forward_projector == "cuda"
+        and backprojector == "cuda"
         and not stream_projections
     ):
         if _fixed_geometry_is_available(T_all, det_grid):
-            loss_grad_fn, fallback_reason = resolve_pallas_callable(
-                "forward_project_loss_and_grad_T_pallas",
-                missing_reason="pallas_loss_grad_callable_missing",
+            loss_grad_fn, fallback_reason = resolve_cuda_callable(
+                "forward_project_loss_and_grad_T_cuda",
+                missing_reason="cuda_loss_grad_callable_missing",
             )
             if loss_grad_fn is None:
-                raise RuntimeError(fallback_reason or "pallas_projector_unavailable")
+                raise RuntimeError(fallback_reason or "cuda_projector_unavailable")
             return loss_grad_fn(
                 T_all,
                 grid,
@@ -578,13 +578,13 @@ def _projection_loss_and_explicit_grad(
                 projections,
                 weights=jnp.sqrt(weights),
                 compute_loss=bool(compute_loss),
-                options=_pallas_projector_options(
-                    step_size=float(grid.vy) * float(pallas_step_size_scale),
-                    unroll=pallas_unroll,
+                options=_cuda_projector_options(
+                    step_size=float(grid.vy) * float(cuda_step_size_scale),
+                    unroll=cuda_unroll,
                     gather_dtype=gather_dtype,
                     det_grid=det_grid,
-                    tile_shape=pallas_tile_shape,
-                    num_warps=pallas_num_warps,
+                    tile_shape=cuda_tile_shape,
+                    num_warps=cuda_num_warps,
                     kernel_variant="auto",
                     layout_variant="detector_vu",
                     state_mode="cached",
@@ -619,10 +619,10 @@ def _projection_loss_and_explicit_grad(
             projector_unroll=projector_unroll,
             gather_dtype=gather_dtype,
             forward_projector=forward_projector,
-            pallas_tile_shape=pallas_tile_shape,
-            pallas_num_warps=pallas_num_warps,
-            pallas_step_size_scale=pallas_step_size_scale,
-            pallas_unroll=pallas_unroll,
+            cuda_tile_shape=cuda_tile_shape,
+            cuda_num_warps=cuda_num_warps,
+            cuda_step_size_scale=cuda_step_size_scale,
+            cuda_unroll=cuda_unroll,
             ray_integrator=ray_integrator,
             sampled_step_size=sampled_step_size,
         )
@@ -698,7 +698,7 @@ def _accumulate_backprojection(
             residual,
             # Transpose the requested sampling, including JAX fallback.
             step_size=sampled_step_size,
-            unroll=1 if backprojector == "pallas" else int(projector_unroll),
+            unroll=1 if backprojector == "cuda" else int(projector_unroll),
             gather_dtype=gather_dtype,
             det_grid=det_grid,
         )
@@ -708,24 +708,24 @@ def _accumulate_backprojection(
 def _resolve_sum_backproject_views(backprojector: str) -> Callable[..., jnp.ndarray]:
     if backprojector == "jax":
         return sum_backproject_views_T
-    if backprojector == "pallas":
-        backproject_fn, fallback_reason = resolve_pallas_callable(
-            "sum_backproject_views_T_pallas",
-            missing_reason="pallas_sum_backproject_callable_missing",
+    if backprojector == "cuda":
+        backproject_fn, fallback_reason = resolve_cuda_callable(
+            "sum_backproject_views_T_cuda",
+            missing_reason="cuda_sum_backproject_callable_missing",
         )
         if backproject_fn is None:
-            raise RuntimeError(fallback_reason or "pallas_projector_unavailable")
+            raise RuntimeError(fallback_reason or "cuda_projector_unavailable")
         return backproject_fn
-    raise ValueError("FistaCoreConfig.backprojector must be one of 'jax' or 'pallas'")
+    raise ValueError("FistaCoreConfig.backprojector must be one of 'jax' or 'cuda'")
 
 
-def _pallas_projector_options(**kwargs: object) -> object:
-    capability = resolve_pallas_module()
+def _cuda_projector_options(**kwargs: object) -> object:
+    capability = resolve_cuda_module()
     if capability.module is None:
-        raise RuntimeError(capability.unavailable_reason or "pallas_projector_unavailable")
-    options_cls = getattr(capability.module, "PallasProjectorOptions", None)
+        raise RuntimeError(capability.unavailable_reason or "cuda_projector_unavailable")
+    options_cls = getattr(capability.module, "CudaProjectorOptions", None)
     if options_cls is None or not callable(options_cls):
-        raise RuntimeError("pallas_projector_options_missing")
+        raise RuntimeError("cuda_projector_options_missing")
     return options_cls(**kwargs)
 
 
@@ -741,7 +741,7 @@ def effective_fista_core_backend(
         T_all=T_all,
         det_grid=det_grid,
     )
-    return "pallas" if forward_projector == "pallas" and backprojector == "pallas" else "jax"
+    return "cuda" if forward_projector == "cuda" and backprojector == "cuda" else "jax"
 
 
 def _resolve_fista_core_data_projectors(
@@ -758,8 +758,8 @@ def _resolve_fista_core_data_projectors(
         return cfg.forward_projector, cfg.backprojector
     fixed_geometry_available = _fixed_geometry_is_available(T_all, det_grid)
     if (
-        cfg.forward_projector == "pallas"
-        and cfg.backprojector == "pallas"
+        cfg.forward_projector == "cuda"
+        and cfg.backprojector == "cuda"
         and not fixed_geometry_available
     ):
         return "jax", "jax"

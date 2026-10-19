@@ -18,9 +18,9 @@ from tomojax.core.validation import (
     validate_projection_stack,
 )
 
-from ._pallas_config import (
+from ._config import (
     _LAYOUT_VARIANT_IDS,
-    PallasProjectorUnsupported,
+    CudaProjectorUnsupported,
     _ensure_canonical_detector_grid,
     _normalize_layout_variant,
     _normalize_num_warps,
@@ -31,7 +31,7 @@ from ._pallas_config import (
 
 
 @functools.lru_cache(maxsize=32)
-def _cached_backproject_view_pallas_call(
+def _cached_backproject_view_cuda_call(
     *,
     nx: int,
     ny: int,
@@ -70,7 +70,7 @@ def _cached_backproject_view_pallas_call(
     return call
 
 
-def backproject_view_T_pallas(
+def backproject_view_T_cuda(
     T: jnp.ndarray,
     grid: Grid,
     detector: Detector,
@@ -85,13 +85,13 @@ def backproject_view_T_pallas(
     num_warps: int = 1,
     layout_variant: str = "detector_vu",
 ) -> jnp.ndarray:
-    """Backproject one view using an experimental atomic Pallas adjoint kernel."""
+    """Backproject one view using an experimental atomic CUDA adjoint kernel."""
     img = jnp.asarray(image, dtype=jnp.float32)
-    nx, ny, nz = validate_grid(grid, "backproject_view_T_pallas")
-    nv, nu = validate_detector(detector, "backproject_view_T_pallas")
-    validate_detector_image(img, detector, context="backproject_view_T_pallas", name="image")
-    validate_pose_matrix(T, context="backproject_view_T_pallas")
-    return _backproject_pallas(
+    nx, ny, nz = validate_grid(grid, "backproject_view_T_cuda")
+    nv, nu = validate_detector(detector, "backproject_view_T_cuda")
+    validate_detector_image(img, detector, context="backproject_view_T_cuda", name="image")
+    validate_pose_matrix(T, context="backproject_view_T_cuda")
+    return _backproject_cuda(
         T,
         grid,
         detector,
@@ -108,7 +108,7 @@ def backproject_view_T_pallas(
     )
 
 
-def _backproject_pallas(
+def _backproject_cuda(
     poses: jnp.ndarray,
     grid: Grid,
     detector: Detector,
@@ -135,13 +135,13 @@ def _backproject_pallas(
     num_warps_value = _normalize_num_warps(num_warps)
     layout_variant_id = _LAYOUT_VARIANT_IDS[_normalize_layout_variant(layout_variant)]
     if not interpret and jax.default_backend() == "cpu":
-        raise PallasProjectorUnsupported(
-            _unsupported("real Pallas lowering is unavailable on CPU; pass interpret=True")
+        raise CudaProjectorUnsupported(
+            _unsupported("real CUDA lowering is unavailable on CPU; pass interpret=True")
         )
     step_size_value = float(grid.vy) if step_size is None else float(step_size)
     n_steps_value = _resolve_n_steps(grid, step_size_value, n_steps)
     vol_origin = grid_volume_origin(grid)
-    call = _cached_backproject_view_pallas_call(
+    call = _cached_backproject_view_cuda_call(
         nx=nx,
         ny=ny,
         nz=nz,
@@ -173,7 +173,7 @@ def _backproject_pallas(
     return out.reshape((int(nx), int(ny), int(nz)))
 
 
-def sum_backproject_views_T_pallas(
+def sum_backproject_views_T_cuda(
     T_all: jnp.ndarray,
     grid: Grid,
     detector: Detector,
@@ -197,14 +197,14 @@ def sum_backproject_views_T_pallas(
     n_views, _, _ = validate_projection_stack(
         images,
         detector,
-        context="sum_backproject_views_T_pallas",
+        context="sum_backproject_views_T_cuda",
     )
-    validate_pose_stack(T_all, n_views, context="sum_backproject_views_T_pallas")
+    validate_pose_stack(T_all, n_views, context="sum_backproject_views_T_cuda")
     _ensure_canonical_detector_grid(detector, det_grid)
-    validate_grid(grid, "sum_backproject_views_T_pallas")
+    validate_grid(grid, "sum_backproject_views_T_cuda")
     img = jnp.asarray(images, dtype=jnp.float32)
 
-    return _backproject_pallas(
+    return _backproject_cuda(
         T_all,
         grid,
         detector,

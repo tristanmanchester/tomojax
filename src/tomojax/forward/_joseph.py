@@ -37,10 +37,10 @@ def _inputs(volume, poses, grid, detector, backend):
     if poses.ndim != 3 or poses.shape[0] < 1:
         raise ValueError(f"{context}: poses must have nonempty shape (views, 4, 4)")
     validate_pose_stack(poses, poses.shape[0], context=context)
-    if backend not in {"jax", "pallas"}:
-        raise ValueError(f"{context}: backend must be 'jax' or 'pallas'")
-    if backend == "pallas" and not cuda_backend():
-        raise ValueError(f"{context}: backend='pallas' requires an NVIDIA CUDA device")
+    if backend not in {"jax", "cuda"}:
+        raise ValueError(f"{context}: backend must be 'jax' or 'cuda'")
+    if backend == "cuda" and not cuda_backend():
+        raise ValueError(f"{context}: backend='cuda' requires an NVIDIA CUDA device")
     return volume.astype(jnp.float32), poses.astype(jnp.float32)
 
 
@@ -50,7 +50,7 @@ def project_joseph(
     grid: Grid,
     detector: Detector,
     *,
-    backend: Literal["jax", "pallas"] = "jax",
+    backend: Literal["jax", "cuda"] = "jax",
     interpolation: Literal["linear", "cubic"] = "linear",
 ) -> jax.Array:
     """Project physical voxel-centre planes with zero-padded linear or cubic samples.
@@ -68,7 +68,7 @@ def project_joseph(
         Physical voxel grid; its origin locates voxel (0, 0, 0)'s centre.
     detector : Detector
         Canonical physical detector grid, including detector offsets.
-    backend : {'jax', 'pallas'}
+    backend : {'jax', 'cuda'}
         Explicit JAX reference or NVIDIA CUDA implementation; no fallback.
     interpolation : {'linear', 'cubic'}
         Bilinear or Keys cubic convolution (a=-1/2). Cubic uses a 4-by-4 stencil
@@ -114,7 +114,7 @@ def joseph_l2_value_and_grad(
     grid: Grid,
     detector: Detector,
     *,
-    backend: Literal["jax", "pallas"] = "jax",
+    backend: Literal["jax", "cuda"] = "jax",
     interpolation: Literal["linear", "cubic"] = "linear",
 ) -> tuple[jax.Array, tuple[jax.Array, jax.Array]]:
     """Return half squared error and ``(volume_gradient, pose_gradient)``.
@@ -153,7 +153,7 @@ def joseph_pose_normal_equations(
     grid: Grid,
     detector: Detector,
     *,
-    backend: Literal["jax", "pallas"] = "jax",
+    backend: Literal["jax", "cuda"] = "jax",
     interpolation: Literal["linear", "cubic"] = "linear",
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
     """Return per-view least-squares loss, gradient, Gauss-Newton matrix, residual.

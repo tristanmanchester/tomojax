@@ -49,11 +49,11 @@ def explicit(poses, x, y, directions, g, d, interpolation):
     )
 
 
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 @pytest.mark.parametrize("interpolation", ["linear", "cubic"])
 @pytest.mark.parametrize("count", [1, 5, 16])
 def test_normal_equations_match_explicit_per_view_jacobians(backend, interpolation, count):
-    if backend == "pallas" and jax.default_backend() != "gpu":
+    if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
     g, d, poses, x, y, directions = inputs(count)
     expected = explicit(poses, x, y, directions, g, d, interpolation)
@@ -97,7 +97,7 @@ def test_normal_equations_match_independent_physical_translation_tangent(interpo
     ) - np.asarray(y).reshape(len(poses), -1)
     actual = jax.jit(
         lambda: joseph_pose_normal_equations(
-            x, poses, direction, y, g, d, backend="pallas", interpolation=interpolation
+            x, poses, direction, y, g, d, backend="cuda", interpolation=interpolation
         )
     )()
     np.testing.assert_allclose(
@@ -115,7 +115,7 @@ def test_batched_normal_equations_and_zero_pose_directions():
     g, d, poses, x, y, directions = inputs()
     fn = jax.jit(
         lambda v, ds: joseph_pose_normal_equations(
-            v, poses, ds, y, g, d, backend="pallas", interpolation="cubic"
+            v, poses, ds, y, g, d, backend="cuda", interpolation="cubic"
         )
     )
     volumes = jnp.stack([x, -0.7 * x])

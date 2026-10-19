@@ -2,7 +2,7 @@
 
 Compiled solver and projector programs are reused across Python processes, so a
 repeated script or CLI run skips XLA compilation for shapes it has seen before.
-CuPy and Triton cache their kernels the same way. Python versions use separate
+CUDA kernel binaries are also cached on disk. Python versions use separate
 subdirectories: JAX uses standard-library Zstandard on Python 3.14 and zlib
 on older interpreters without the optional zstandard package.
 

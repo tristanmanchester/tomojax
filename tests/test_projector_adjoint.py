@@ -65,11 +65,9 @@ def test_adjoint_matches_autodiff_for_gather_precision(gather_dtype: str) -> Non
 
 @pytest.mark.parametrize("interpret", [True, pytest.param(False, marks=pytest.mark.gpu)])
 @pytest.mark.parametrize("unroll", [None, 2])
-def test_pallas_adjoint_and_weighted_loss_match_autodiff(
-    interpret: bool, unroll: int | None
-) -> None:
+def test_adjoint_and_weighted_loss_match_autodiff(interpret: bool, unroll: int | None) -> None:
     # check-public-imports: allow-private
-    from tomojax.core.pallas import api as pallas
+    from tomojax.core.cuda_projector import api as cuda
 
     if not interpret and jax.default_backend() != "gpu":
         pytest.skip("requires a CUDA GPU")
@@ -88,7 +86,7 @@ def test_pallas_adjoint_and_weighted_loss_match_autodiff(
 
     expected_bp = jax.jit(lambda y: jax.vjp(project, volume)[1](y)[0])(images)
     actual_bp = sum(
-        pallas.backproject_view_T_pallas(
+        cuda.backproject_view_T_cuda(
             poses[i],
             grid,
             detector,
@@ -105,14 +103,14 @@ def test_pallas_adjoint_and_weighted_loss_match_autodiff(
     expected_loss, expected_grad = jax.jit(
         jax.value_and_grad(lambda x: 0.5 * jnp.sum(((project(x) - images) * weights) ** 2))
     )(volume)
-    actual_loss, actual_grad = pallas.forward_project_loss_and_grad_T_pallas(
+    actual_loss, actual_grad = cuda.forward_project_loss_and_grad_T_cuda(
         poses,
         grid,
         detector,
         volume,
         images,
         weights=weights,
-        options=pallas.PallasProjectorOptions(
+        options=cuda.CudaProjectorOptions(
             step_size=0.4,
             interpret=interpret,
             tile_shape=(4, 4),
@@ -167,9 +165,9 @@ def test_stack_adjoint_matches_sum_with_general_geometry(gather_dtype: str) -> N
 @pytest.mark.gpu
 @pytest.mark.parametrize("views", [1, 3, 17])
 @pytest.mark.parametrize("layout", ["detector_vu", "detector_uv"])
-def test_pallas_shared_adjoint_matches_independent_transpose(views, layout):
+def test_cuda_shared_adjoint_matches_independent_transpose(views, layout):
     # check-public-imports: allow-private
-    from tomojax.core.pallas import api as pallas
+    from tomojax.core.cuda_projector import api as cuda
 
     if jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
@@ -184,9 +182,7 @@ def test_pallas_shared_adjoint_matches_independent_transpose(views, layout):
 
     expected = jax.jit(lambda y: jax.vjp(project, volume)[1](y)[0])(images)
     actual = jax.jit(
-        lambda y: pallas.sum_backproject_views_T_pallas(
-            poses, grid, detector, y, layout_variant=layout
-        )
+        lambda y: cuda.sum_backproject_views_T_cuda(poses, grid, detector, y, layout_variant=layout)
     )(images)
     np.testing.assert_allclose(actual, expected, rtol=1e-4, atol=1e-5)
     assert float(jnp.linalg.norm(actual - expected) / jnp.linalg.norm(expected)) < 3e-6

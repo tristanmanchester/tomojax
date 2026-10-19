@@ -30,7 +30,7 @@ from the root:
 - `tomojax.core.projector` and `tomojax.core.operators`: reference JAX projection
   and adjoint operators used by forward, reconstruction, simulation, and
   alignment workflows.
-- `tomojax.core.pallas`: optional Pallas fast paths and their support checks.
+- `tomojax.core.cuda_projector`: optional CUDA fast paths and their support checks.
   They are performance implementations, not a separate public domain API.
 - `tomojax.core.validation`: shape, dtype, and geometry validation shared across
   numerical modules.
@@ -50,10 +50,10 @@ workflow policy stays outside core.
 
 - Public imports go through `tomojax.core`, not private `_logging`.
 - Progress reporting is opt-in via `TOMOJAX_PROGRESS`.
-- Missing optional dependencies must not prevent execution.
+- Missing CUDA dependencies must not prevent CPU/reference execution.
 - Geometry and projector contracts are source-level foundations for the rest of
   the package, but the core root should not become a broad facade for them.
-- Pallas implementations must be optional fast paths with explicit fallback
+- CUDA implementations must be optional fast paths with explicit fallback
   reasons; unexpected kernel errors should not be silently swallowed.
 - Domain orchestration belongs outside core. Core modules should expose reusable
   math and validation primitives, not alignment, reconstruction, data-loading, or
@@ -65,7 +65,7 @@ Core contracts are covered through focused subsystem tests rather than a single
 core-only suite:
 
 - `tests/test_geometry_math.py` covers geometry math helpers.
-- `tests/test_pallas_kernel_sources.py` covers optional Pallas kernel contracts
+- `tests/test_cuda_kernel_sources.py` covers optional CUDA kernel contracts
   and resolver import behavior.
 - `tests/test_numerical_engines.py` and `tests/test_recon_workflows.py` cover
   projector behavior through forward and reconstruction workflows.

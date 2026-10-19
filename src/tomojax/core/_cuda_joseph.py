@@ -6,10 +6,10 @@ voxels. Weights use the same arithmetic as the forward projection. The kernel
 is compiled at run time with CuPy and launched on XLA's stream through
 ``buffer_callback``, inside compiled solver loops. Automatic dispatch uses it
 from 2**21 voxels, or 2**19 for separable axial batches. Smaller volumes retain
-the Pallas transpose to avoid the fixed callback/kernel setup cost for short
-operations. Axial batches use a bounded separable vertical prepass; other views
+the allocator-free CUDA transpose to avoid CuPy initialization overhead.
+Axial batches use a bounded separable vertical prepass; other views
 retain this gather. Runs without CuPy and ``TOMOJAX_CUDA_KERNELS=0`` also use
-Pallas; the environment override can force either implementation.
+that allocator-free path; the environment override can force either implementation.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from tomojax.core.backend_policy import cuda_backend
 if TYPE_CHECKING:
     from tomojax.core.geometry.base import Detector, Grid
 
-# Keep tiny grids on Pallas: CuPy import, kernel loading and the callback
+# Keep tiny grids on the allocator-free path: CuPy import, kernel loading and the callback
 # program incur a fixed cost that the persistent compile cache cannot reuse.
 # Medium grids already amortize that setup over ordinary solver iterations;
 # requiring a full-resolution volume would exclude useful multiresolution work.

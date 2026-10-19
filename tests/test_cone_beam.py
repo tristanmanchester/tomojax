@@ -191,7 +191,7 @@ def test_cone_projection_is_differentiable_in_the_poses():
     assert float(jnp.linalg.norm(tangent - central) / jnp.linalg.norm(central)) < 0.05
 
 
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 def test_cgls_solves_a_cone_beam_scan(backend):
     n = 24
     grid = Grid(n, n, n, 1.0, 1.0, 1.0)

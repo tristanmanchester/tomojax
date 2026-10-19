@@ -110,7 +110,7 @@ def test_frozen_columns_use_no_cache_space_and_preserve_the_update(monkeypatch, 
 
 @pytest.mark.numerical
 @pytest.mark.usefixtures("views_per_batch")
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 def test_fp32_cone_joint_update_is_unchanged_with_x64_enabled(backend):
     import tomojax as tj
     from tomojax.alignment import AlignConfig
@@ -166,7 +166,7 @@ def test_fp32_cone_joint_update_is_unchanged_with_x64_enabled(backend):
 @pytest.mark.parametrize("scan_variant", [0, 1])
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 @pytest.mark.parametrize("integrator", ["exact", "joseph"])
 def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
     monkeypatch, stream, backend, solver, scan_variant, integrator
@@ -178,7 +178,7 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
     from tomojax.alignment.api import PWLSLossSpec
     from tomojax.geometry import Detector, Grid, LaminographyGeometry, stack_view_poses
 
-    if backend == "pallas" and jax.default_backend() != "gpu":
+    if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("CUDA required")
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "bench"))
     from public_alignment_benchmark import physical_poses
@@ -580,7 +580,7 @@ def test_a_cached_update_that_does_not_fit_retries_without_columns(monkeypatch):
 
 
 @pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 @pytest.mark.parametrize("stream", [False, True])
 def test_affine_joint_increment_and_loss_match_dense_physical_model(
     monkeypatch, solver, backend, stream
@@ -695,7 +695,7 @@ def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth, i
         gn_coupling="joint",
         gn_joint_solver=solver,
         ray_integrator=integrator,
-        projector_backend="pallas" if jax.default_backend() == "gpu" else "jax",
+        projector_backend="cuda" if jax.default_backend() == "gpu" else "jax",
         gather_dtype="fp32",
         gn_joint_iterations=5 if integrator == "joseph_cubic" else 100,
         gn_joint_rtol=1e-6,

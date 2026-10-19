@@ -414,7 +414,7 @@ def main() -> int:
     parser.add_argument("--margin", type=float, default=0.25)
     parser.add_argument("--iters", type=int, default=30)
     parser.add_argument("--repeats", type=int, default=3)
-    parser.add_argument("--backend", choices=["jax", "pallas"], default="pallas")
+    parser.add_argument("--backend", choices=["jax", "cuda"], default="cuda")
     parser.add_argument("--interpolation", choices=["linear", "cubic"], default="cubic")
     parser.add_argument("--normal-method", choices=["explicit", "fused"], default="fused")
     parser.add_argument("--line-search", choices=["stacked", "streamed"], default="streamed")
@@ -434,8 +434,8 @@ def main() -> int:
         or min(args.noise, args.margin) < 0
     ):
         parser.error("invalid size, views, budget, noise or margin")
-    if args.backend == "pallas" and jax.default_backend() != "gpu":
-        parser.error("Pallas requires CUDA")
+    if args.backend == "cuda" and jax.default_backend() != "gpu":
+        parser.error("Cuda requires CUDA")
     parameters = vars(args).copy()
     parameters.pop("output")
     payload = {

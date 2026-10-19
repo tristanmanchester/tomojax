@@ -79,8 +79,8 @@ def main() -> int:
                 json.dumps(
                     {
                         "cuda_driver": cuda_driver,
-                        "pallas_interpret": "not_run",
-                        "pallas_real": "failed_cuda_driver",
+                        "cuda_interpret": "not_run",
+                        "cuda_real": "failed_cuda_driver",
                     },
                     indent=2,
                 )
@@ -90,7 +90,7 @@ def main() -> int:
     import jax
 
     from tomojax.core import projector
-    from tomojax.core.pallas import api as pallas_api
+    from tomojax.core.cuda_projector import api as cuda_api
 
     transform, grid, detector, volume = _tiny_projection_case()
     expected = projector.forward_project_view_T(
@@ -102,12 +102,12 @@ def main() -> int:
     )
     _ = expected.block_until_ready()
 
-    interpret_options = pallas_api.PallasProjectorOptions(
+    interpret_options = cuda_api.CudaProjectorOptions(
         interpret=True,
         tile_shape=(1, 1),
         num_warps=1,
     )
-    interpreted = pallas_api.forward_project_view_T_pallas(
+    interpreted = cuda_api.forward_project_view_T_cuda(
         transform,
         grid,
         detector,
@@ -115,11 +115,11 @@ def main() -> int:
         options=interpret_options,
     )
     _ = interpreted.block_until_ready()
-    _assert_close("Pallas interpret projector", interpreted, expected)
+    _assert_close("CUDA interpret projector", interpreted, expected)
 
     backend = jax.default_backend()
-    force_real = os.environ.get("TOMOJAX_FORCE_REAL_PALLAS_SMOKE") == "1"
-    real_pallas_status = "skipped_cpu_backend"
+    force_real = os.environ.get("TOMOJAX_FORCE_REAL_CUDA_SMOKE") == "1"
+    real_cuda_status = "skipped_cpu_backend"
     if require_cuda and backend == "cpu":
         print(
             json.dumps(
@@ -127,8 +127,8 @@ def main() -> int:
                     "backend": backend,
                     "devices": [str(device) for device in jax.devices()],
                     "cuda_driver": cuda_driver,
-                    "pallas_interpret": "passed",
-                    "pallas_real": "failed_cpu_backend",
+                    "cuda_interpret": "passed",
+                    "cuda_real": "failed_cpu_backend",
                 },
                 indent=2,
             )
@@ -136,8 +136,8 @@ def main() -> int:
         return 1
 
     if backend != "cpu" or force_real:
-        real_options = pallas_api.PallasProjectorOptions(tile_shape=(1, 1), num_warps=1)
-        reason = pallas_api.pallas_projector_unsupported_reason(
+        real_options = cuda_api.CudaProjectorOptions(tile_shape=(1, 1), num_warps=1)
+        reason = cuda_api.cuda_projector_unsupported_reason(
             transform,
             grid,
             detector,
@@ -145,8 +145,8 @@ def main() -> int:
             options=real_options,
         )
         if reason is not None:
-            raise RuntimeError(f"real Pallas projector unsupported on backend {backend}: {reason}")
-        actual = pallas_api.forward_project_view_T_pallas(
+            raise RuntimeError(f"real CUDA projector unsupported on backend {backend}: {reason}")
+        actual = cuda_api.forward_project_view_T_cuda(
             transform,
             grid,
             detector,
@@ -154,8 +154,8 @@ def main() -> int:
             options=real_options,
         )
         _ = actual.block_until_ready()
-        _assert_close("Real Pallas projector", actual, expected)
-        real_pallas_status = "passed"
+        _assert_close("Real CUDA projector", actual, expected)
+        real_cuda_status = "passed"
 
     print(
         json.dumps(
@@ -163,8 +163,8 @@ def main() -> int:
                 "backend": backend,
                 "devices": [str(device) for device in jax.devices()],
                 "cuda_driver": cuda_driver,
-                "pallas_interpret": "passed",
-                "pallas_real": real_pallas_status,
+                "cuda_interpret": "passed",
+                "cuda_real": real_cuda_status,
             },
             indent=2,
         )

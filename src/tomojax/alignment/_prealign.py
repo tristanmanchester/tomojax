@@ -264,7 +264,7 @@ def reprojector(
     from tomojax.core.joseph import forward_project_planes, plane_coefficients
 
     coefficients = plane_coefficients(poses, grid, detector)
-    backend = "pallas" if jax.default_backend() == "gpu" else "jax"
+    backend = "cuda" if jax.default_backend() == "gpu" else "jax"
     return lambda views, volume: forward_project_planes(
         coefficients[views], volume, grid, detector, backend=backend
     )

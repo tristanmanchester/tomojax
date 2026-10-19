@@ -62,13 +62,13 @@ def run_case(size: int, n_views: int, repeats: int) -> dict:
             detector=detector,
             backend=backend,
             batch_size=n_views,
-            z_mode="integer" if backend == "pallas" else "general",
+            z_mode="integer" if backend == "cuda" else "general",
             separable=True,
         )
 
     kernels = {"jax": kernel_for("jax")}
     if jax.default_backend() == "gpu":
-        kernels["pallas"] = kernel_for("pallas")
+        kernels["cuda"] = kernel_for("cuda")
     records = []
     reference = None
     for backend, kernel in kernels.items():

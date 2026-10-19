@@ -91,16 +91,14 @@ def run(backends: list[str], seeds: int) -> list[dict[str, Any]]:
 def main() -> int:
     """Write the declared numerical stress experiment and its full results."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--backends", nargs="+", choices=["jax", "pallas"], default=["jax", "pallas"]
-    )
+    parser.add_argument("--backends", nargs="+", choices=["jax", "cuda"], default=["jax", "cuda"])
     parser.add_argument("--seeds", type=int, default=20)
     parser.add_argument("--output", type=Path, default=Path("bench/results/cgls-stability.json"))
     args = parser.parse_args()
     if args.seeds < 1:
         parser.error("seeds must be positive")
-    if "pallas" in args.backends and jax.default_backend() != "gpu":
-        parser.error("Pallas requires CUDA; use --backends jax on CPU")
+    if "cuda" in args.backends and jax.default_backend() != "gpu":
+        parser.error("Cuda requires CUDA; use --backends jax on CPU")
     result = {
         "environment": environment(),
         "suite": "cgls-dense-stability-v1",

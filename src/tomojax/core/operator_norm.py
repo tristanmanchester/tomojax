@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 
+from tomojax.core.backend_policy import cuda_backend
 from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
 
 if TYPE_CHECKING:
@@ -20,24 +21,43 @@ def unit(vector: jax.Array) -> tuple[jax.Array, jax.Array]:
     return vector / jnp.where(length == 0, 1.0, length), length
 
 
-def _absolute_cubic_normal(
+def _joseph_normal(
     poses: jax.Array,
     volume: jax.Array,
     valid: jax.Array,
     grid: Grid,
     detector: Detector,
     det_grid: tuple[jax.Array, jax.Array] | None,
+    *,
+    interpolation: str,
+    absolute_weights: bool,
+    accumulate: jax.Array,
+    unit_volume: bool,
 ) -> jax.Array:
-    """Apply |A|.T |A|, which bounds the signed cubic normal componentwise."""
-    from .joseph import adjoint_jax, forward_jax, plane_coefficients
+    """Apply the Joseph normal or its componentwise absolute-weight bound."""
+    from .joseph import (
+        forward_project_planes,
+        plane_coefficients,
+        project_ones_native,
+        sum_backproject_planes,
+    )
 
     coefficients = plane_coefficients(poses, grid, detector, det_grid)
-    projected = forward_jax(
-        coefficients, volume, grid, detector, interpolation="cubic", absolute_weights=True
-    )
-    return adjoint_jax(
+    # Keep both sides on the bounded-workspace pair, including unit-volume
+    # forwards used by the row-sum bound.
+    backend = "cuda" if cuda_backend() else "jax"
+    projected = None
+    if unit_volume and backend == "cuda" and interpolation == "linear":
+        projected = project_ones_native(coefficients, grid, detector)
+    if projected is None:
+        projected = forward_project_planes(
+            coefficients, volume, grid, detector,
+            backend=backend, interpolation=interpolation, absolute_weights=absolute_weights,
+        )  # fmt: skip
+    return sum_backproject_planes(
         coefficients, projected * valid, grid, detector,
-        interpolation="cubic", absolute_weights=True,
+        backend=backend, interpolation=interpolation, absolute_weights=absolute_weights,
+        accumulate=accumulate,
     )  # fmt: skip
 
 
@@ -98,9 +118,18 @@ def estimate_normal_norm(
             shifted = jnp.maximum(0, start - (b - valid))
             batch = jax.lax.dynamic_slice_in_dim(poses, shifted, b)
             mask = (jnp.arange(b) >= b - valid)[:, None, None]
-            if upper_bound and ray_integrator == "joseph_cubic":
-                return acc + _absolute_cubic_normal(
-                    batch, masked, mask, grid, detector, det_grid
+            if ray_integrator in {"joseph", "joseph_cubic"}:
+                return _joseph_normal(
+                    batch,
+                    masked,
+                    mask,
+                    grid,
+                    detector,
+                    det_grid,
+                    interpolation="cubic" if ray_integrator == "joseph_cubic" else "linear",
+                    absolute_weights=upper_bound and ray_integrator == "joseph_cubic",
+                    accumulate=acc,
+                    unit_volume=upper_bound and support is None,
                 ), None
             projected = jax.vmap(
                 lambda t: forward_project_view_T(

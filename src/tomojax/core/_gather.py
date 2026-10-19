@@ -1,4 +1,4 @@
-"""Shared gather precision and volume layout for JAX and Pallas projectors."""
+"""Shared gather precision and volume layout for JAX and CUDA projectors."""
 
 from __future__ import annotations
 

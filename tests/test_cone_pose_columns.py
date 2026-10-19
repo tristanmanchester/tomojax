@@ -94,7 +94,7 @@ def test_cuda_columns_retain_individual_central_differences(
         def prediction(q):
             pose = apply_pose_update(nominal, q, translation_frame="object")
             image = forward_project_view_T(
-                pose, grid, detector, volume, frames=frame, projector_backend="pallas"
+                pose, grid, detector, volume, frames=frame, projector_backend="cuda"
             )
             return image.ravel()
 

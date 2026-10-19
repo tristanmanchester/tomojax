@@ -6,15 +6,15 @@ import jax
 
 from tomojax.core.projector_autodiff import FirstOrderProjector
 
-from ._pallas_joseph import adjoint_pallas, forward_pallas
-from ._pallas_joseph_derivatives import coefficient_vjp, projection_jvp
+from ._joseph import adjoint_cuda, forward_cuda
+from ._joseph_derivatives import coefficient_vjp, projection_jvp
 
 
 class _PlaneProjector(FirstOrderProjector):
     interpolation: str
 
     def expand(self, coeff, volume):
-        return forward_pallas(
+        return forward_cuda(
             coeff, volume, self.grid, self.detector, interpolation=self.interpolation
         )
 
@@ -40,7 +40,7 @@ class _PlaneProjector(FirstOrderProjector):
         )
 
     def adjoint(self, coeff, cotangent):
-        return adjoint_pallas(
+        return adjoint_cuda(
             coeff, cotangent, self.grid, self.detector, interpolation=self.interpolation
         )
 

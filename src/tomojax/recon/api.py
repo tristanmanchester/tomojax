@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry
     from tomojax.recon.cgls import CGLSConfig, cgls
     from tomojax.recon.cgls_multires import cgls_multires
-    from tomojax.recon.fbp import FBPConfig, default_fbp_scale, fbp, run_parallel_fbp_direct_pallas
+    from tomojax.recon.fbp import FBPConfig, default_fbp_scale, fbp, run_parallel_fbp_direct_cuda
     from tomojax.recon.fbp_host import FBPHostConfig, fbp_host
     from tomojax.recon.filters import clear_filter_caches
     from tomojax.recon.fista_tv import FistaConfig, fista_tv
@@ -69,7 +69,7 @@ _SOURCES = {
     "fista_tv": "fista_tv",
     "fourier_reconstruct": "fourier",
     "mlem": "mlem",
-    "run_parallel_fbp_direct_pallas": "fbp",
+    "run_parallel_fbp_direct_cuda": "fbp",
     "sirt": "sirt",
     "spdhg_tv": "spdhg_tv",
 }
@@ -518,8 +518,8 @@ def _host_fdk(
         grid.ny,
         grid.nz,
     )
-    # As fbp's own FDK: the same filter, and the CUDA kernel for "pallas".
-    backend = {"auto": "auto", "jax": "jax", "pallas": "cuda"}[cfg.backprojector]
+    # As fbp's own FDK: the same filter, and the CUDA kernel for "cuda".
+    backend = cfg.backprojector
     fdk = FDKConfig(filter=cfg.filter, backend=backend, devices=cfg.devices)
     data = np.asarray(projections, np.float32)
     return fdk_host(geometry, grid, detector, data, config=FDKHostConfig(fdk=fdk), out=out)
@@ -547,7 +547,7 @@ __all__ = [
     "mlem",
     "reconstruct_arrays",
     "reconstruct_slabs",
-    "run_parallel_fbp_direct_pallas",
+    "run_parallel_fbp_direct_cuda",
     "sirt",
     "spdhg_tv",
 ]

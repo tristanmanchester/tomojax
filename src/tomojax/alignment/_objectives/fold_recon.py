@@ -38,7 +38,7 @@ class FoldReconstructionConfig:
     gather_dtype: str = "fp32"
     lipschitz: float | None = None
     ray_integrator: str = "sampled"
-    projector_backend: Literal["auto", "jax", "pallas"] = "auto"
+    projector_backend: Literal["auto", "jax", "cuda"] = "auto"
 
 
 def reconstruct_train_fold_nograd(

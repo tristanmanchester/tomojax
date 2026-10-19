@@ -1,4 +1,4 @@
-"""Facade for the optional Pallas projector backend."""
+"""Facade for the optional CUDA projector backend."""
 
 from __future__ import annotations
 
@@ -10,47 +10,47 @@ if TYPE_CHECKING:
 
     from tomojax.core.geometry.base import Detector, Grid
 
-from ._pallas_config import (
-    PallasForwardProjectorStackTraversalState,
-    PallasForwardProjectorTraversalState,
-    PallasProjectorTraversalMetadata,
-    PallasProjectorUnsupported,
-    pallas_projector_actual_sinogram_variant_metadata,
-    pallas_projector_actual_variant_metadata,
-    pallas_projector_sinogram_traversal_metadata,
-    pallas_projector_sinogram_unsupported_reason as _pallas_projector_sinogram_unsupported_reason,
-    pallas_projector_traversal_metadata,
-    pallas_projector_unsupported_reason as _pallas_projector_unsupported_reason,
-    pallas_projector_variant_metadata,
+from ._config import (
+    CudaForwardProjectorStackTraversalState,
+    CudaForwardProjectorTraversalState,
+    CudaProjectorTraversalMetadata,
+    CudaProjectorUnsupported,
+    cuda_projector_actual_sinogram_variant_metadata,
+    cuda_projector_actual_variant_metadata,
+    cuda_projector_sinogram_traversal_metadata,
+    cuda_projector_sinogram_unsupported_reason as _cuda_projector_sinogram_unsupported_reason,
+    cuda_projector_traversal_metadata,
+    cuda_projector_unsupported_reason as _cuda_projector_unsupported_reason,
+    cuda_projector_variant_metadata,
 )
-from ._pallas_single_view import (
-    BoundForwardProjectViewTPallas,
-    bind_forward_project_view_T_pallas as _bind_forward_project_view_T_pallas,
-    block_forward_project_view_T_pallas_state,
-    forward_project_view_T_pallas as _forward_project_view_T_pallas,
-    forward_project_view_T_pallas_with_state,
-    prepare_forward_project_view_T_pallas_state,
+from ._single_view import (
+    BoundForwardProjectViewTCuda,
+    bind_forward_project_view_T_cuda as _bind_forward_project_view_T_cuda,
+    block_forward_project_view_T_cuda_state,
+    forward_project_view_T_cuda as _forward_project_view_T_cuda,
+    forward_project_view_T_cuda_with_state,
+    prepare_forward_project_view_T_cuda_state,
 )
-from ._pallas_views import (
-    BoundForwardProjectResidualSseTPallas,
-    BoundForwardProjectViewsTPallas,
-    backproject_view_T_pallas,
-    bind_forward_project_residual_sse_T_pallas as _bind_forward_project_residual_sse_T_pallas,
-    bind_forward_project_views_T_pallas as _bind_forward_project_views_T_pallas,
-    block_forward_project_views_T_pallas_state,
-    forward_project_loss_and_grad_T_pallas as _forward_project_loss_and_grad_T_pallas,
-    forward_project_parallel_z_views_pallas,
-    forward_project_residual_sse_T_pallas as _forward_project_residual_sse_T_pallas,
-    forward_project_residual_sse_T_pallas_with_state,
-    forward_project_views_T_pallas as _forward_project_views_T_pallas,
-    forward_project_views_T_pallas_with_state,
-    prepare_forward_project_views_T_pallas_state,
-    sum_backproject_views_T_pallas,
+from ._views import (
+    BoundForwardProjectResidualSseTCuda,
+    BoundForwardProjectViewsTCuda,
+    backproject_view_T_cuda,
+    bind_forward_project_residual_sse_T_cuda as _bind_forward_project_residual_sse_T_cuda,
+    bind_forward_project_views_T_cuda as _bind_forward_project_views_T_cuda,
+    block_forward_project_views_T_cuda_state,
+    forward_project_loss_and_grad_T_cuda as _forward_project_loss_and_grad_T_cuda,
+    forward_project_parallel_z_views_cuda,
+    forward_project_residual_sse_T_cuda as _forward_project_residual_sse_T_cuda,
+    forward_project_residual_sse_T_cuda_with_state,
+    forward_project_views_T_cuda as _forward_project_views_T_cuda,
+    forward_project_views_T_cuda_with_state,
+    prepare_forward_project_views_T_cuda_state,
+    sum_backproject_views_T_cuda,
 )
 
 
 @dataclass(frozen=True, slots=True)
-class PallasProjectorOptions:
+class CudaProjectorOptions:
     """Runtime and kernel options shared by public projector entry points.
 
     ``interpret`` runs the portable JAX reference. CUDA uses at least
@@ -71,11 +71,11 @@ class PallasProjectorOptions:
     block_state: bool = True
 
 
-def _opts(options: PallasProjectorOptions | None) -> PallasProjectorOptions:
-    return PallasProjectorOptions() if options is None else options
+def _opts(options: CudaProjectorOptions | None) -> CudaProjectorOptions:
+    return CudaProjectorOptions() if options is None else options
 
 
-def _projector_kwargs(options: PallasProjectorOptions) -> dict[str, Any]:
+def _projector_kwargs(options: CudaProjectorOptions) -> dict[str, Any]:
     """Forward shared kernel options without copying detector-coordinate arrays."""
     return {
         "step_size": options.step_size,
@@ -90,24 +90,24 @@ def _projector_kwargs(options: PallasProjectorOptions) -> dict[str, Any]:
 
 
 def _opts_with_overrides(
-    options: PallasProjectorOptions | None, **overrides: Any
-) -> PallasProjectorOptions:
+    options: CudaProjectorOptions | None, **overrides: Any
+) -> CudaProjectorOptions:
     changes = {name: value for name, value in overrides.items() if value is not None}
     opts = _opts(options)
     return replace(opts, **changes) if changes else opts
 
 
-def forward_project_view_T_pallas(
+def forward_project_view_T_cuda(
     T: jnp.ndarray,
     grid: Grid,
     detector: Detector,
     volume: jnp.ndarray,
     *,
-    options: PallasProjectorOptions | None = None,
+    options: CudaProjectorOptions | None = None,
 ) -> jnp.ndarray:
-    """Forward project one view using the configured Pallas projector options."""
+    """Forward project one view using the configured CUDA projector options."""
     opts = _opts(options)
-    return _forward_project_view_T_pallas(
+    return _forward_project_view_T_cuda(
         T,
         grid,
         detector,
@@ -119,16 +119,16 @@ def forward_project_view_T_pallas(
     )
 
 
-def bind_forward_project_view_T_pallas(
+def bind_forward_project_view_T_cuda(
     T: jnp.ndarray,
     grid: Grid,
     detector: Detector,
     *,
-    options: PallasProjectorOptions | None = None,
-) -> BoundForwardProjectViewTPallas:
-    """Bind fixed single-view Pallas traversal state using one options object."""
+    options: CudaProjectorOptions | None = None,
+) -> BoundForwardProjectViewTCuda:
+    """Bind fixed single-view CUDA traversal state using one options object."""
     opts = _opts(options)
-    return _bind_forward_project_view_T_pallas(
+    return _bind_forward_project_view_T_cuda(
         T,
         grid,
         detector,
@@ -139,13 +139,13 @@ def bind_forward_project_view_T_pallas(
     )
 
 
-def forward_project_views_T_pallas(
+def forward_project_views_T_cuda(
     T_stack: jnp.ndarray,
     grid: Grid,
     detector: Detector,
     volume: jnp.ndarray,
     *,
-    options: PallasProjectorOptions | None = None,
+    options: CudaProjectorOptions | None = None,
     step_size: float | None = None,
     n_steps: int | None = None,
     unroll: int | None = None,
@@ -158,7 +158,7 @@ def forward_project_views_T_pallas(
     layout_variant: str | None = None,
     state_mode: str | None = None,
 ) -> jnp.ndarray:
-    """Forward project a stack of views using one configured Pallas options object."""
+    """Forward project a stack of views using one configured CUDA options object."""
     opts = _opts_with_overrides(
         options,
         step_size=step_size,
@@ -173,7 +173,7 @@ def forward_project_views_T_pallas(
         layout_variant=layout_variant,
         state_mode=state_mode,
     )
-    return _forward_project_views_T_pallas(
+    return _forward_project_views_T_cuda(
         T_stack,
         grid,
         detector,
@@ -185,16 +185,16 @@ def forward_project_views_T_pallas(
     )
 
 
-def bind_forward_project_views_T_pallas(
+def bind_forward_project_views_T_cuda(
     T_stack: jnp.ndarray,
     grid: Grid,
     detector: Detector,
     *,
-    options: PallasProjectorOptions | None = None,
-) -> BoundForwardProjectViewsTPallas:
-    """Bind fixed stack traversal state using one Pallas options object."""
+    options: CudaProjectorOptions | None = None,
+) -> BoundForwardProjectViewsTCuda:
+    """Bind fixed stack traversal state using one CUDA options object."""
     opts = _opts(options)
-    return _bind_forward_project_views_T_pallas(
+    return _bind_forward_project_views_T_cuda(
         T_stack,
         grid,
         detector,
@@ -205,17 +205,17 @@ def bind_forward_project_views_T_pallas(
     )
 
 
-def bind_forward_project_residual_sse_T_pallas(
+def bind_forward_project_residual_sse_T_cuda(
     T_stack: jnp.ndarray,
     grid: Grid,
     detector: Detector,
     target: jnp.ndarray,
     *,
-    options: PallasProjectorOptions | None = None,
-) -> BoundForwardProjectResidualSseTPallas:
-    """Bind fixed stack residual state using one Pallas options object."""
+    options: CudaProjectorOptions | None = None,
+) -> BoundForwardProjectResidualSseTCuda:
+    """Bind fixed stack residual state using one CUDA options object."""
     opts = _opts(options)
-    return _bind_forward_project_residual_sse_T_pallas(
+    return _bind_forward_project_residual_sse_T_cuda(
         T_stack,
         grid,
         detector,
@@ -227,7 +227,7 @@ def bind_forward_project_residual_sse_T_pallas(
     )
 
 
-def forward_project_loss_and_grad_T_pallas(
+def forward_project_loss_and_grad_T_cuda(
     T_all: jnp.ndarray,
     grid: Grid,
     detector: Detector,
@@ -236,7 +236,7 @@ def forward_project_loss_and_grad_T_pallas(
     *,
     weights: jnp.ndarray | None = None,
     compute_loss: bool = True,
-    options: PallasProjectorOptions | None = None,
+    options: CudaProjectorOptions | None = None,
     step_size: float | None = None,
     n_steps: int | None = None,
     unroll: int | None = None,
@@ -249,7 +249,7 @@ def forward_project_loss_and_grad_T_pallas(
     layout_variant: str | None = None,
     state_mode: str | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """Return Pallas projection loss/gradient using one shared options object."""
+    """Return CUDA projection loss/gradient using one shared options object."""
     opts = _opts_with_overrides(
         options,
         step_size=step_size,
@@ -264,7 +264,7 @@ def forward_project_loss_and_grad_T_pallas(
         layout_variant=layout_variant,
         state_mode=state_mode,
     )
-    return _forward_project_loss_and_grad_T_pallas(
+    return _forward_project_loss_and_grad_T_cuda(
         T_all,
         grid,
         detector,
@@ -278,18 +278,18 @@ def forward_project_loss_and_grad_T_pallas(
     )
 
 
-def forward_project_residual_sse_T_pallas(
+def forward_project_residual_sse_T_cuda(
     T_stack: jnp.ndarray,
     grid: Grid,
     detector: Detector,
     volume: jnp.ndarray,
     target: jnp.ndarray,
     *,
-    options: PallasProjectorOptions | None = None,
+    options: CudaProjectorOptions | None = None,
 ) -> jnp.ndarray:
-    """Return Pallas residual SSE using one shared options object."""
+    """Return CUDA residual SSE using one shared options object."""
     opts = _opts(options)
-    return _forward_project_residual_sse_T_pallas(
+    return _forward_project_residual_sse_T_cuda(
         T_stack,
         grid,
         detector,
@@ -302,17 +302,17 @@ def forward_project_residual_sse_T_pallas(
     )
 
 
-def pallas_projector_unsupported_reason(
+def cuda_projector_unsupported_reason(
     T: jnp.ndarray,
     grid: Grid,
     detector: Detector,
     volume: jnp.ndarray,
     *,
-    options: PallasProjectorOptions | None = None,
+    options: CudaProjectorOptions | None = None,
 ) -> str | None:
-    """Return why single-view Pallas projection is unsupported, if it is."""
+    """Return why single-view CUDA projection is unsupported, if it is."""
     opts = _opts(options)
-    return _pallas_projector_unsupported_reason(
+    return _cuda_projector_unsupported_reason(
         T,
         grid,
         detector,
@@ -322,17 +322,17 @@ def pallas_projector_unsupported_reason(
     )
 
 
-def pallas_projector_sinogram_unsupported_reason(
+def cuda_projector_sinogram_unsupported_reason(
     T_stack: jnp.ndarray,
     grid: Grid,
     detector: Detector,
     volume: jnp.ndarray,
     *,
-    options: PallasProjectorOptions | None = None,
+    options: CudaProjectorOptions | None = None,
 ) -> str | None:
-    """Return why batched Pallas projection is unsupported, if it is."""
+    """Return why batched CUDA projection is unsupported, if it is."""
     opts = _opts(options)
-    return _pallas_projector_sinogram_unsupported_reason(
+    return _cuda_projector_sinogram_unsupported_reason(
         T_stack,
         grid,
         detector,
@@ -343,36 +343,36 @@ def pallas_projector_sinogram_unsupported_reason(
 
 
 __all__ = [
-    "BoundForwardProjectResidualSseTPallas",
-    "BoundForwardProjectViewTPallas",
-    "BoundForwardProjectViewsTPallas",
-    "PallasForwardProjectorStackTraversalState",
-    "PallasForwardProjectorTraversalState",
-    "PallasProjectorOptions",
-    "PallasProjectorTraversalMetadata",
-    "PallasProjectorUnsupported",
-    "backproject_view_T_pallas",
-    "bind_forward_project_residual_sse_T_pallas",
-    "bind_forward_project_view_T_pallas",
-    "bind_forward_project_views_T_pallas",
-    "block_forward_project_view_T_pallas_state",
-    "block_forward_project_views_T_pallas_state",
-    "forward_project_loss_and_grad_T_pallas",
-    "forward_project_parallel_z_views_pallas",
-    "forward_project_residual_sse_T_pallas",
-    "forward_project_residual_sse_T_pallas_with_state",
-    "forward_project_view_T_pallas",
-    "forward_project_view_T_pallas_with_state",
-    "forward_project_views_T_pallas",
-    "forward_project_views_T_pallas_with_state",
-    "pallas_projector_actual_sinogram_variant_metadata",
-    "pallas_projector_actual_variant_metadata",
-    "pallas_projector_sinogram_traversal_metadata",
-    "pallas_projector_sinogram_unsupported_reason",
-    "pallas_projector_traversal_metadata",
-    "pallas_projector_unsupported_reason",
-    "pallas_projector_variant_metadata",
-    "prepare_forward_project_view_T_pallas_state",
-    "prepare_forward_project_views_T_pallas_state",
-    "sum_backproject_views_T_pallas",
+    "BoundForwardProjectResidualSseTCuda",
+    "BoundForwardProjectViewTCuda",
+    "BoundForwardProjectViewsTCuda",
+    "CudaForwardProjectorStackTraversalState",
+    "CudaForwardProjectorTraversalState",
+    "CudaProjectorOptions",
+    "CudaProjectorTraversalMetadata",
+    "CudaProjectorUnsupported",
+    "backproject_view_T_cuda",
+    "bind_forward_project_residual_sse_T_cuda",
+    "bind_forward_project_view_T_cuda",
+    "bind_forward_project_views_T_cuda",
+    "block_forward_project_view_T_cuda_state",
+    "block_forward_project_views_T_cuda_state",
+    "cuda_projector_actual_sinogram_variant_metadata",
+    "cuda_projector_actual_variant_metadata",
+    "cuda_projector_sinogram_traversal_metadata",
+    "cuda_projector_sinogram_unsupported_reason",
+    "cuda_projector_traversal_metadata",
+    "cuda_projector_unsupported_reason",
+    "cuda_projector_variant_metadata",
+    "forward_project_loss_and_grad_T_cuda",
+    "forward_project_parallel_z_views_cuda",
+    "forward_project_residual_sse_T_cuda",
+    "forward_project_residual_sse_T_cuda_with_state",
+    "forward_project_view_T_cuda",
+    "forward_project_view_T_cuda_with_state",
+    "forward_project_views_T_cuda",
+    "forward_project_views_T_cuda_with_state",
+    "prepare_forward_project_view_T_cuda_state",
+    "prepare_forward_project_views_T_cuda_state",
+    "sum_backproject_views_T_cuda",
 ]

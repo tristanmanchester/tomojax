@@ -16,77 +16,77 @@ from tomojax.core.validation import (
     validate_volume,
 )
 
-from ._pallas_geometry_support import (
+from ._geometry_support import (
     _ensure_canonical_detector_grid,
     _supports_parallel_z_rotation_stack,
 )
-from ._pallas_state import (
-    PallasForwardProjectorStackTraversalState,
-    PallasForwardProjectorTraversalState,
-    PallasProjectorTraversalMetadata,
-    PallasProjectorUnsupported,
+from ._state import (
+    CudaForwardProjectorStackTraversalState,
+    CudaForwardProjectorTraversalState,
+    CudaProjectorTraversalMetadata,
+    CudaProjectorUnsupported,
     _unsupported,
 )
-from ._pallas_variants import (
+from ._variants import (
     _KERNEL_VARIANT_IDS,
     _LAYOUT_VARIANT_IDS,
+    _cuda_gather_jnp_dtype,
     _normalize_gather_dtype,
     _normalize_kernel_variant,
     _normalize_layout_variant,
     _normalize_num_warps,
     _normalize_state_mode,
     _normalize_tile_shape,
-    _pallas_gather_jnp_dtype,
-    _prepare_volume_for_pallas_gather,
+    _prepare_volume_for_cuda_gather,
     _safe_detector_tile_shape,
-    pallas_projector_actual_sinogram_variant_metadata,
-    pallas_projector_actual_variant_metadata,
-    pallas_projector_variant_metadata,
+    cuda_projector_actual_sinogram_variant_metadata,
+    cuda_projector_actual_variant_metadata,
+    cuda_projector_variant_metadata,
 )
 
 __all__ = [
     "_KERNEL_VARIANT_IDS",
     "_LAYOUT_VARIANT_IDS",
-    "PallasForwardProjectorStackTraversalState",
-    "PallasForwardProjectorTraversalState",
-    "PallasProjectorTraversalMetadata",
-    "PallasProjectorUnsupported",
+    "CudaForwardProjectorStackTraversalState",
+    "CudaForwardProjectorTraversalState",
+    "CudaProjectorTraversalMetadata",
+    "CudaProjectorUnsupported",
+    "_cuda_gather_jnp_dtype",
     "_normalize_gather_dtype",
     "_normalize_kernel_variant",
     "_normalize_layout_variant",
     "_normalize_num_warps",
     "_normalize_state_mode",
     "_normalize_tile_shape",
-    "_pallas_gather_jnp_dtype",
-    "_prepare_volume_for_pallas_gather",
-    "_resolve_effective_pallas_n_steps",
-    "_resolve_effective_pallas_n_steps_for_stack",
+    "_prepare_volume_for_cuda_gather",
+    "_resolve_effective_cuda_n_steps",
+    "_resolve_effective_cuda_n_steps_for_stack",
     "_safe_detector_tile_shape",
     "_supports_parallel_z_rotation_stack",
     "_unsupported",
     "_validate_public_call",
     "_validate_public_sinogram_call",
-    "pallas_projector_actual_sinogram_variant_metadata",
-    "pallas_projector_actual_variant_metadata",
-    "pallas_projector_sinogram_traversal_metadata",
-    "pallas_projector_sinogram_unsupported_reason",
-    "pallas_projector_traversal_metadata",
-    "pallas_projector_unsupported_reason",
-    "pallas_projector_variant_metadata",
+    "cuda_projector_actual_sinogram_variant_metadata",
+    "cuda_projector_actual_variant_metadata",
+    "cuda_projector_sinogram_traversal_metadata",
+    "cuda_projector_sinogram_unsupported_reason",
+    "cuda_projector_traversal_metadata",
+    "cuda_projector_unsupported_reason",
+    "cuda_projector_variant_metadata",
 ]
 
 
-def pallas_projector_traversal_metadata(
+def cuda_projector_traversal_metadata(
     T: jnp.ndarray,
     grid: Grid,
     *,
     step_size: float | None = None,
     n_steps: int | None = None,
 ) -> dict[str, int]:
-    """Return resolved JAX and effective Pallas traversal counts."""
+    """Return resolved JAX and effective CUDA traversal counts."""
     step_size_value = float(grid.vy) if step_size is None else float(step_size)
     resolved_n_steps = _resolve_n_steps(grid, step_size_value, n_steps)
-    effective_n_steps = _resolve_effective_pallas_n_steps(
+    effective_n_steps = _resolve_effective_cuda_n_steps(
         T,
         grid,
         step_size_value,
@@ -94,21 +94,21 @@ def pallas_projector_traversal_metadata(
     )
     return {
         "resolved_n_steps": int(resolved_n_steps),
-        "effective_pallas_n_steps": int(effective_n_steps),
+        "effective_cuda_n_steps": int(effective_n_steps),
     }
 
 
-def pallas_projector_sinogram_traversal_metadata(
+def cuda_projector_sinogram_traversal_metadata(
     T_stack: jnp.ndarray,
     grid: Grid,
     *,
     step_size: float | None = None,
     n_steps: int | None = None,
 ) -> dict[str, int]:
-    """Return resolved and max effective traversal counts for a Pallas pose stack."""
+    """Return resolved and max effective traversal counts for a CUDA pose stack."""
     step_size_value = float(grid.vy) if step_size is None else float(step_size)
     resolved_n_steps = _resolve_n_steps(grid, step_size_value, n_steps)
-    effective_n_steps = _resolve_effective_pallas_n_steps_for_stack(
+    effective_n_steps = _resolve_effective_cuda_n_steps_for_stack(
         T_stack,
         grid,
         step_size_value,
@@ -116,11 +116,11 @@ def pallas_projector_sinogram_traversal_metadata(
     )
     return {
         "resolved_n_steps": int(resolved_n_steps),
-        "effective_pallas_n_steps": int(effective_n_steps),
+        "effective_cuda_n_steps": int(effective_n_steps),
     }
 
 
-def _resolve_effective_pallas_n_steps(
+def _resolve_effective_cuda_n_steps(
     T: jnp.ndarray,
     grid: Grid,
     step_size: float,
@@ -154,7 +154,7 @@ def _resolve_effective_pallas_n_steps(
     return max(1, min(int(resolved_n_steps), effective_n_steps))
 
 
-def _resolve_effective_pallas_n_steps_for_stack(
+def _resolve_effective_cuda_n_steps_for_stack(
     T_stack: jnp.ndarray,
     grid: Grid,
     step_size: float,
@@ -193,11 +193,11 @@ def _resolve_effective_pallas_n_steps_for_stack(
 def _ensure_float32_volume(volume: jnp.ndarray) -> None:
     dtype = getattr(volume, "dtype", None)
     if dtype != jnp.dtype(jnp.float32):
-        raise PallasProjectorUnsupported(_unsupported(f"volume dtype must be float32; got {dtype}"))
+        raise CudaProjectorUnsupported(_unsupported(f"volume dtype must be float32; got {dtype}"))
 
 
 def _validate_cached_volume(
-    state: PallasProjectorTraversalMetadata, volume: jnp.ndarray, *, context: str
+    state: CudaProjectorTraversalMetadata, volume: jnp.ndarray, *, context: str
 ) -> None:
     """Check volume shape and precision against prepared traversal metadata."""
     nx, ny, nz = validate_volume(
@@ -208,7 +208,7 @@ def _validate_cached_volume(
     )
     _ensure_float32_volume(volume)
     if (nx, ny, nz) != (state.nx, state.ny, state.nz):
-        raise PallasProjectorUnsupported(
+        raise CudaProjectorUnsupported(
             _unsupported(
                 "volume shape does not match cached traversal state: "
                 f"got {(nx, ny, nz)}, expected {(state.nx, state.ny, state.nz)}"
@@ -227,23 +227,21 @@ def _traversal_call_parameters(
     stacked: bool,
 ) -> tuple[float, int, int, tuple[int, int], int, int, int]:
     if variant["state_mode"] != "inline" and variant["layout_variant"] != "detector_vu":
-        raise PallasProjectorUnsupported(
+        raise CudaProjectorUnsupported(
             _unsupported(
                 "cached traversal state currently supports layout_variant='detector_vu' only"
             )
         )
     tile_v, tile_u = variant["tile_shape"]
     if not interpret and jax.default_backend() == "cpu":
-        raise PallasProjectorUnsupported(
-            _unsupported("real Pallas lowering is unavailable on CPU; pass interpret=True")
+        raise CudaProjectorUnsupported(
+            _unsupported("real CUDA lowering is unavailable on CPU; pass interpret=True")
         )
 
     step_size_value = float(grid.vy) if step_size is None else float(step_size)
     n_steps_value = _resolve_n_steps(grid, step_size_value, n_steps)
     resolve_effective = (
-        _resolve_effective_pallas_n_steps_for_stack
-        if stacked
-        else _resolve_effective_pallas_n_steps
+        _resolve_effective_cuda_n_steps_for_stack if stacked else _resolve_effective_cuda_n_steps
     )
     effective_n_steps_value = resolve_effective(
         T,
@@ -284,14 +282,14 @@ def _validate_public_call(
     nx, ny, nz = validate_volume(
         volume,
         grid,
-        context="forward_project_view_T_pallas",
+        context="forward_project_view_T_cuda",
         name="volume",
     )
-    nv, nu = validate_detector(detector, "forward_project_view_T_pallas")
-    validate_pose_matrix(T, context="forward_project_view_T_pallas")
+    nv, nu = validate_detector(detector, "forward_project_view_T_cuda")
+    validate_pose_matrix(T, context="forward_project_view_T_cuda")
     _ensure_float32_volume(volume)
     _ensure_canonical_detector_grid(detector, det_grid)
-    variant = pallas_projector_actual_variant_metadata(
+    variant = cuda_projector_actual_variant_metadata(
         T,
         grid,
         detector,
@@ -336,20 +334,20 @@ def _validate_public_sinogram_call(
     nx, ny, nz = validate_volume(
         volume,
         grid,
-        context="forward_project_views_T_pallas",
+        context="forward_project_views_T_cuda",
         name="volume",
     )
-    nv, nu = validate_detector(detector, "forward_project_views_T_pallas")
+    nv, nu = validate_detector(detector, "forward_project_views_T_cuda")
     shape = getattr(T_stack, "shape", None)
     if shape is None or len(shape) != 3:
-        validate_pose_stack(T_stack, 0, context="forward_project_views_T_pallas")
+        validate_pose_stack(T_stack, 0, context="forward_project_views_T_cuda")
     n_views = int(shape[0])
     if n_views <= 0:
-        raise PallasProjectorUnsupported(_unsupported("pose stack must contain at least one view"))
-    validate_pose_stack(T_stack, n_views, context="forward_project_views_T_pallas")
+        raise CudaProjectorUnsupported(_unsupported("pose stack must contain at least one view"))
+    validate_pose_stack(T_stack, n_views, context="forward_project_views_T_cuda")
     _ensure_float32_volume(volume)
     _ensure_canonical_detector_grid(detector, det_grid)
-    variant = pallas_projector_actual_sinogram_variant_metadata(
+    variant = cuda_projector_actual_sinogram_variant_metadata(
         T_stack,
         grid,
         detector,
@@ -375,7 +373,7 @@ def _validate_public_sinogram_call(
     )
 
 
-def pallas_projector_unsupported_reason(
+def cuda_projector_unsupported_reason(
     T: jnp.ndarray,
     grid: Grid,
     detector: Detector,
@@ -409,14 +407,14 @@ def pallas_projector_unsupported_reason(
             layout_variant=layout_variant,
             state_mode=state_mode,
         )
-    except PallasProjectorUnsupported as exc:
+    except CudaProjectorUnsupported as exc:
         return str(exc)
     except ValueError as exc:
         return _unsupported(str(exc))
     return None
 
 
-def pallas_projector_sinogram_unsupported_reason(
+def cuda_projector_sinogram_unsupported_reason(
     T_stack: jnp.ndarray,
     grid: Grid,
     detector: Detector,
@@ -432,7 +430,7 @@ def pallas_projector_sinogram_unsupported_reason(
     layout_variant: str = "detector_vu",
     state_mode: str = "inline",
 ) -> str | None:
-    """Return an unsupported reason for batched sinogram Pallas."""
+    """Return an unsupported reason for batched sinogram CUDA."""
     try:
         _validate_public_sinogram_call(
             T_stack,
@@ -450,7 +448,7 @@ def pallas_projector_sinogram_unsupported_reason(
             layout_variant=layout_variant,
             state_mode=state_mode,
         )
-    except PallasProjectorUnsupported as exc:
+    except CudaProjectorUnsupported as exc:
         return str(exc)
     except ValueError as exc:
         return _unsupported(str(exc))

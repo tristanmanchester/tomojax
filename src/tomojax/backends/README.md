@@ -11,9 +11,9 @@ and accelerator capability probes.
 - `estimate_views_per_batch(...)`
 - `estimate_views_per_batch_info(...)`
 - `default_gather_dtype()`
-- `PallasModuleCapability`
-- `resolve_pallas_module()`
-- `resolve_pallas_callable(...)`
+- `CudaModuleCapability`
+- `resolve_cuda_module()`
+- `resolve_cuda_callable(...)`
 - `run_resolved_command(...)`
 - `check_output_resolved_command(...)`
 
@@ -21,7 +21,7 @@ and accelerator capability probes.
 
 - Public imports go through `tomojax.backends`, not private `_memory` or
   `_subprocesses`.
-- Optional Pallas projector access is owned by `tomojax.core.pallas_resolver`;
+- Optional CUDA projector access is owned by `tomojax.core.cuda_projector_resolver`;
   this package re-exports that resolver for backend-facing callers.
 - Subprocess probes resolve executables and run with `shell=False`.
 - Memory estimates are conservative and deterministic when

@@ -15,7 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core.backend_policy import cuda_backend
-from tomojax.core.pallas_resolver import resolve_pallas_callable
+from tomojax.core.cuda_projector_resolver import resolve_cuda_callable
 
 from ._gather import prepare_volume_for_gather, resolve_gather_target
 from .backend_policy import ProjectorBackendInput, normalize_projector_backend
@@ -327,10 +327,10 @@ def _trilinear_scatter_add(acc_flat, ray_vals, ix_f, iy_f, iz_f, nx, ny, nz):
     return acc_flat + scatter(ray_vals)[0]
 
 
-def _pallas_unsupported_exception_type() -> type[Exception] | None:
-    unsupported_exc, _reason = resolve_pallas_callable(
-        "PallasProjectorUnsupported",
-        missing_reason="pallas_unsupported_exception_missing",
+def _cuda_unsupported_exception_type() -> type[Exception] | None:
+    unsupported_exc, _reason = resolve_cuda_callable(
+        "CudaProjectorUnsupported",
+        missing_reason="cuda_unsupported_exception_missing",
     )
     if isinstance(unsupported_exc, type) and issubclass(unsupported_exc, Exception):
         return unsupported_exc
@@ -340,7 +340,7 @@ def _pallas_unsupported_exception_type() -> type[Exception] | None:
 def _cone_backend(projector_backend: object) -> str:
     from tomojax.core.cone import use_cuda_cone
 
-    return "cuda" if projector_backend == "pallas" and use_cuda_cone() else "jax"
+    return "cuda" if projector_backend == "cuda" and use_cuda_cone() else "jax"
 
 
 def _cone_views(
@@ -404,7 +404,7 @@ def forward_project_view_T(
     in the object frame. This avoids a matmul per step and keeps gradients clean.
     ``frames``, the view's cone-beam lab frame (see
     :func:`tomojax.core.cone.beam_frame`), selects the cone-beam Joseph
-    projector: ``projector_backend`` ``"pallas"`` runs its CUDA kernels,
+    projector: ``projector_backend`` ``"cuda"`` runs its CUDA kernels,
     ``"jax"`` the differentiable reference.
     """
     if frames is not None:
@@ -429,17 +429,17 @@ def forward_project_view_T(
         )[0]
     if ray_integrator != "sampled":
         raise ValueError(f"ray_integrator must be one of {RAY_INTEGRATORS}")
-    if backend == "pallas":
-        pallas_project, fallback_reason = resolve_pallas_callable(
-            "forward_project_view_T_pallas",
-            missing_reason="pallas_single_view_callable_missing",
+    if backend == "cuda":
+        cuda_project, fallback_reason = resolve_cuda_callable(
+            "forward_project_view_T_cuda",
+            missing_reason="cuda_single_view_callable_missing",
         )
-        if pallas_project is not None:
-            unsupported_exc = _pallas_unsupported_exception_type()
+        if cuda_project is not None:
+            unsupported_exc = _cuda_unsupported_exception_type()
             try:
-                options_cls, _options_reason = resolve_pallas_callable(
-                    "PallasProjectorOptions",
-                    missing_reason="pallas_options_missing",
+                options_cls, _options_reason = resolve_cuda_callable(
+                    "CudaProjectorOptions",
+                    missing_reason="cuda_options_missing",
                 )
                 options = (
                     options_cls(
@@ -452,7 +452,7 @@ def forward_project_view_T(
                     if options_cls is not None
                     else None
                 )
-                return pallas_project(
+                return cuda_project(
                     T,
                     grid,
                     detector,
@@ -465,7 +465,7 @@ def forward_project_view_T(
                 fallback_reason = f"{type(exc).__name__}: {exc}"
         if fallback_reason is not None:
             LOG.debug(
-                "Falling back to JAX single-view projector after Pallas rejection: %s",
+                "Falling back to JAX single-view projector after CUDA rejection: %s",
                 fallback_reason,
             )
     vol = volume
@@ -658,7 +658,7 @@ def sum_backproject_views_T(
         from tomojax.core.joseph import sum_backproject_planes
 
         coeff, interpolation = _joseph_operands(T_all, grid, detector, det_grid, ray_integrator)
-        backend = "pallas" if cuda_backend() else "jax"
+        backend = "cuda" if cuda_backend() else "jax"
         return sum_backproject_planes(
             coeff,
             jnp.asarray(images, jnp.float32),

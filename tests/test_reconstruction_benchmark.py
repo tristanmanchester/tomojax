@@ -161,7 +161,7 @@ def test_process_memory_filters_other_gpu_processes(benchmark, tmp_path):
     assert benchmark.read_peak_memory(path, 123)["sampled_process_peak_mib"] is None
 
 
-def test_external_fixture_and_geometry_never_import_jax_or_pallas(tmp_path):
+def test_external_fixture_and_geometry_never_import_jax_or_cuda(tmp_path):
     fixture = tmp_path / "physical.npz"
     poses = np.repeat(np.eye(4, dtype=np.float32)[None], 2, axis=0)
     poses[1, :2, :2] = [[0, -1], [1, 0]]
@@ -185,7 +185,7 @@ import sys
 import types
 class RejectSolverImport(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname.split('.')[0] in {'jax', 'jaxlib'} or fullname.startswith('tomojax.core.pallas'):
+        if fullname.split('.')[0] in {'jax', 'jaxlib'} or fullname.startswith('tomojax.core.cuda_projector'):
             raise AssertionError('unrelated solver imported: '+fullname)
 sys.meta_path.insert(0, RejectSolverImport())
 sys.path.insert(0, sys.argv[1])
@@ -230,7 +230,7 @@ def test_resume_rejects_partial_failed_budget_repeats(benchmark, tmp_path):
     previous = json.loads(json.dumps(expected))
     previous["records"][0] = {
         "case": "parallel-64-180",
-        "method": "tomojax_fbp_pallas",
+        "method": "tomojax_fbp_cuda",
         "status": "target_not_reached",
         "failed_budget_repeats": [{"accepted": False}],
     }
@@ -293,7 +293,7 @@ def test_failed_direct_reconstruction_keeps_search_and_warm_attempts_separate(
     args = argparse.Namespace(
         fixture=tmp_path / "unused",
         kind="parallel",
-        method="tomojax_fbp_pallas",
+        method="tomojax_fbp_cuda",
         started=time.perf_counter(),
         batch=3,
         max_iters=256,
@@ -321,7 +321,7 @@ def resume_record():
         "arguments": {
             "sizes": [64, 128],
             "geometries": ["parallel"],
-            "methods": ["tomojax_fbp_pallas"],
+            "methods": ["tomojax_fbp_cuda"],
             "views": 180,
             "batch": 16,
             "fourier_slices": 16,
@@ -332,7 +332,7 @@ def resume_record():
         "records": [
             {
                 "case": "parallel-64-180",
-                "method": "tomojax_fbp_pallas",
+                "method": "tomojax_fbp_cuda",
                 "status": "accepted",
                 "repeats": [{"accepted": True}] * 2,
             }
@@ -396,7 +396,7 @@ def test_resume_skips_completed_cases_and_preserves_failures(benchmark, monkeypa
         "--geometries",
         "parallel",
         "--methods",
-        "tomojax_fbp_pallas",
+        "tomojax_fbp_cuda",
         "--repeats",
         "2",
         "--timeout",

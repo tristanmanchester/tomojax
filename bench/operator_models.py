@@ -29,7 +29,7 @@ def run_case(size: int, views: int, kind: str, batch: int, repeats: int) -> dict
         for index, name, argument in [(0, "forward", volume), (1, "adjoint", data)]:
             function = jax.jit(
                 lambda t, x, index=index, model=model: _operators(
-                    t, case.grid, case.detector, None, "pallas", batch, model
+                    t, case.grid, case.detector, None, "cuda", batch, model
                 )[index](x)
             )
             operations.append((f"{model}_{name}", function, argument))
@@ -83,7 +83,7 @@ def main() -> int:
     if min(args.sizes) < 8 or min(args.views, args.batch, args.repeats) < 1:
         parser.error("sizes must be >=8 and views/batch/repeats must be positive")
     if jax.default_backend() != "gpu":
-        parser.error("Pallas comparisons require a CUDA GPU")
+        parser.error("Cuda comparisons require a CUDA GPU")
     payload = {
         "environment": environment(),
         "scope": (

@@ -34,7 +34,7 @@ def run_case(size: int, views: int, kind: str, interpolation: str, repeats: int)
 
     def project(p: jax.Array, x: jax.Array) -> jax.Array:
         return project_joseph(
-            x, jax.vmap(pose)(p, nominal), g, d, backend="pallas", interpolation=interpolation
+            x, jax.vmap(pose)(p, nominal), g, d, backend="cuda", interpolation=interpolation
         )
 
     def explicit(p: jax.Array, x: jax.Array, y: jax.Array) -> tuple:
@@ -54,7 +54,7 @@ def run_case(size: int, views: int, kind: str, interpolation: str, repeats: int)
         matrices = jax.vmap(pose)(p, nominal)
         directions = jax.vmap(jax.jacfwd(pose))(p, nominal)
         return joseph_pose_normal_equations(
-            x, matrices, directions, y, g, d, backend="pallas", interpolation=interpolation
+            x, matrices, directions, y, g, d, backend="cuda", interpolation=interpolation
         )
 
     _, fp_timing = measure(project, (parameters, volume), repeats)

@@ -23,10 +23,10 @@ from tomojax.geometry import Detector, Grid, ParallelGeometry
 
 def test_backend_policy_normalizes_aliases_and_reports_fallback_status() -> None:
     assert normalize_projector_backend(" default ") == "jax"
-    assert normalize_projector_backend("PALLAS") == "pallas"
+    assert normalize_projector_backend("CUDA") == "cuda"
 
     provenance = backend_provenance(
-        requested_backend="pallas",
+        requested_backend="cuda",
         actual_backend="jax",
         api_surface="unit-test",
         fallback_reason="unsupported detector tile",
@@ -36,7 +36,7 @@ def test_backend_policy_normalizes_aliases_and_reports_fallback_status() -> None
     assert provenance.status == "fallback"
     assert provenance.eligible_for_speed_claim is False
     assert provenance.to_dict() == {
-        "requested_backend": "pallas",
+        "requested_backend": "cuda",
         "actual_backend": "jax",
         "status": "fallback",
         "fallback_reason": "unsupported detector tile",
@@ -46,7 +46,7 @@ def test_backend_policy_normalizes_aliases_and_reports_fallback_status() -> None
     }
 
     with pytest.raises(ValueError, match="projector_backend must be one of"):
-        normalize_projector_backend("cuda")
+        normalize_projector_backend("pallas")
 
 
 def test_core_validation_errors_include_context_expected_shape_and_fix() -> None:

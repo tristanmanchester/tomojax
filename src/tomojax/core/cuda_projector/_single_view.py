@@ -12,25 +12,25 @@ from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
 from tomojax.core.projector import _projector_traversal_state, _resolve_n_steps
 from tomojax.core.validation import validate_detector, validate_pose_matrix
 
-from ._pallas_config import (
+from ._config import (
     _KERNEL_VARIANT_IDS,
-    PallasForwardProjectorTraversalState,
-    PallasProjectorTraversalMetadata,
-    PallasProjectorUnsupported,
+    CudaForwardProjectorTraversalState,
+    CudaProjectorTraversalMetadata,
+    CudaProjectorUnsupported,
     _ensure_canonical_detector_grid,
     _normalize_gather_dtype,
     _normalize_state_mode,
-    _prepare_volume_for_pallas_gather,
-    _resolve_effective_pallas_n_steps,
+    _prepare_volume_for_cuda_gather,
+    _resolve_effective_cuda_n_steps,
     _unsupported,
     _validate_cached_volume,
     _validate_public_call,
-    pallas_projector_actual_variant_metadata,
+    cuda_projector_actual_variant_metadata,
 )
-from ._pallas_inline_call import inline_projector_call
+from ._inline_call import inline_projector_call
 
 
-def prepare_forward_project_view_T_pallas_state(
+def prepare_forward_project_view_T_cuda_state(
     T: jnp.ndarray,
     grid: Grid,
     detector: Detector,
@@ -43,13 +43,13 @@ def prepare_forward_project_view_T_pallas_state(
     num_warps: int = 4,
     kernel_variant: str = "auto",
     layout_variant: str = "detector_vu",
-) -> PallasForwardProjectorTraversalState:
-    """Prepare fixed-geometry traversal state for the experimental cached Pallas path."""
-    nv, nu = validate_detector(detector, "prepare_forward_project_view_T_pallas_state")
-    validate_pose_matrix(T, context="prepare_forward_project_view_T_pallas_state")
+) -> CudaForwardProjectorTraversalState:
+    """Prepare fixed-geometry traversal state for the experimental cached CUDA path."""
+    nv, nu = validate_detector(detector, "prepare_forward_project_view_T_cuda_state")
+    validate_pose_matrix(T, context="prepare_forward_project_view_T_cuda_state")
     normalized_gather_dtype = _normalize_gather_dtype(gather_dtype)
     _ensure_canonical_detector_grid(detector, det_grid)
-    variant = pallas_projector_actual_variant_metadata(
+    variant = cuda_projector_actual_variant_metadata(
         T,
         grid,
         detector,
@@ -62,7 +62,7 @@ def prepare_forward_project_view_T_pallas_state(
         gather_dtype=gather_dtype,
     )
     if variant["layout_variant"] != "detector_vu":
-        raise PallasProjectorUnsupported(
+        raise CudaProjectorUnsupported(
             _unsupported(
                 "cached traversal state currently supports layout_variant='detector_vu' only"
             )
@@ -70,7 +70,7 @@ def prepare_forward_project_view_T_pallas_state(
 
     step_size_value = float(grid.vy) if step_size is None else float(step_size)
     resolved_n_steps = _resolve_n_steps(grid, step_size_value, n_steps)
-    effective_n_steps = _resolve_effective_pallas_n_steps(
+    effective_n_steps = _resolve_effective_cuda_n_steps(
         T,
         grid,
         step_size_value,
@@ -97,11 +97,11 @@ def prepare_forward_project_view_T_pallas_state(
     )
     expected_rays = int(nv) * int(nu)
     if int(n_rays) != expected_rays:
-        raise PallasProjectorUnsupported(
+        raise CudaProjectorUnsupported(
             _unsupported(f"cached traversal state expected {expected_rays} rays; got {n_rays}")
         )
-    return PallasForwardProjectorTraversalState(
-        traversal=PallasProjectorTraversalMetadata(
+    return CudaForwardProjectorTraversalState(
+        traversal=CudaProjectorTraversalMetadata(
             ix0=jnp.ravel(jnp.asarray(ix0, dtype=jnp.float32), order="C"),
             iy0=jnp.ravel(jnp.asarray(iy0, dtype=jnp.float32), order="C"),
             iz0=jnp.ravel(jnp.asarray(iz0, dtype=jnp.float32), order="C"),
@@ -126,48 +126,48 @@ def prepare_forward_project_view_T_pallas_state(
     )
 
 
-def block_forward_project_view_T_pallas_state(
-    state: PallasForwardProjectorTraversalState,
-) -> PallasForwardProjectorTraversalState:
+def block_forward_project_view_T_cuda_state(
+    state: CudaForwardProjectorTraversalState,
+) -> CudaForwardProjectorTraversalState:
     """Block until prepared traversal-state arrays are materialized."""
     jax.block_until_ready((state.ix0, state.iy0, state.iz0, state.n_steps_ray))
     return state
 
 
-class BoundForwardProjectViewTPallas:
-    """Fixed-geometry Pallas projector callable for repeated-volume workflows."""
+class BoundForwardProjectViewTCuda:
+    """Fixed-geometry CUDA projector callable for repeated-volume workflows."""
 
     def __init__(
         self,
-        state: PallasForwardProjectorTraversalState,
+        state: CudaForwardProjectorTraversalState,
         *,
         interpret: bool = False,
         unroll: int | None = None,
     ) -> None:
         if not interpret and jax.default_backend() == "cpu":
-            raise PallasProjectorUnsupported(
-                _unsupported("real Pallas lowering is unavailable on CPU; pass interpret=True")
+            raise CudaProjectorUnsupported(
+                _unsupported("real CUDA lowering is unavailable on CPU; pass interpret=True")
             )
         self.state = state
         self.interpret = bool(interpret)
         self.unroll = unroll
-        self._call = _projector_view_state_pallas_call(state, interpret=interpret, unroll=unroll)
+        self._call = _projector_view_state_cuda_call(state, interpret=interpret, unroll=unroll)
 
     def __call__(self, volume: jnp.ndarray) -> jnp.ndarray:
         """Project ``volume`` with the cached single-view traversal state."""
         _validate_cached_volume(
-            self.state.traversal, volume, context="BoundForwardProjectViewTPallas.__call__"
+            self.state.traversal, volume, context="BoundForwardProjectViewTCuda.__call__"
         )
         return self._call(
             self.state.ix0,
             self.state.iy0,
             self.state.iz0,
             self.state.n_steps_ray,
-            _prepare_volume_for_pallas_gather(volume, self.state.gather_dtype),
+            _prepare_volume_for_cuda_gather(volume, self.state.gather_dtype),
         )
 
 
-def bind_forward_project_view_T_pallas(
+def bind_forward_project_view_T_cuda(
     T: jnp.ndarray,
     grid: Grid,
     detector: Detector,
@@ -183,9 +183,9 @@ def bind_forward_project_view_T_pallas(
     kernel_variant: str = "auto",
     layout_variant: str = "detector_vu",
     block_state: bool = True,
-) -> BoundForwardProjectViewTPallas:
+) -> BoundForwardProjectViewTCuda:
     """Bind fixed geometry once and return a callable that projects volumes."""
-    state = prepare_forward_project_view_T_pallas_state(
+    state = prepare_forward_project_view_T_cuda_state(
         T,
         grid,
         detector,
@@ -199,16 +199,16 @@ def bind_forward_project_view_T_pallas(
         layout_variant=layout_variant,
     )
     if block_state:
-        block_forward_project_view_T_pallas_state(state)
-    return BoundForwardProjectViewTPallas(state, interpret=interpret, unroll=unroll)
+        block_forward_project_view_T_cuda_state(state)
+    return BoundForwardProjectViewTCuda(state, interpret=interpret, unroll=unroll)
 
 
-def _projector_view_state_pallas_call(
-    state: PallasForwardProjectorTraversalState, *, interpret: bool, unroll: int | None
+def _projector_view_state_cuda_call(
+    state: CudaForwardProjectorTraversalState, *, interpret: bool, unroll: int | None
 ) -> Callable[..., jnp.ndarray]:
     # Only scalar launch metadata is cached, never traversal arrays or volumes.
     metadata = state.traversal
-    return _cached_projector_view_state_pallas_call(
+    return _cached_projector_view_state_cuda_call(
         volume_shape=(int(metadata.nx), int(metadata.ny), int(metadata.nz)),
         detector_shape=(int(metadata.nv), int(metadata.nu)),
         ray_delta=(float(state.dix), float(state.diy), float(state.diz)),
@@ -223,7 +223,7 @@ def _projector_view_state_pallas_call(
 
 
 @functools.lru_cache(maxsize=32)
-def _cached_projector_view_state_pallas_call(
+def _cached_projector_view_state_cuda_call(
     *,
     volume_shape: tuple[int, int, int],
     detector_shape: tuple[int, int],
@@ -260,32 +260,32 @@ def _cached_projector_view_state_pallas_call(
     return call
 
 
-def forward_project_view_T_pallas_with_state(
-    state: PallasForwardProjectorTraversalState,
+def forward_project_view_T_cuda_with_state(
+    state: CudaForwardProjectorTraversalState,
     volume: jnp.ndarray,
     *,
     interpret: bool = False,
     unroll: int | None = None,
 ) -> jnp.ndarray:
-    """Forward project with a prepared traversal state using the experimental Pallas path."""
+    """Forward project with a prepared traversal state using the experimental CUDA path."""
     _validate_cached_volume(
-        state.traversal, volume, context="forward_project_view_T_pallas_with_state"
+        state.traversal, volume, context="forward_project_view_T_cuda_with_state"
     )
     if not interpret and jax.default_backend() == "cpu":
-        raise PallasProjectorUnsupported(
-            _unsupported("real Pallas lowering is unavailable on CPU; pass interpret=True")
+        raise CudaProjectorUnsupported(
+            _unsupported("real CUDA lowering is unavailable on CPU; pass interpret=True")
         )
 
-    return _projector_view_state_pallas_call(state, interpret=interpret, unroll=unroll)(
+    return _projector_view_state_cuda_call(state, interpret=interpret, unroll=unroll)(
         state.ix0,
         state.iy0,
         state.iz0,
         state.n_steps_ray,
-        _prepare_volume_for_pallas_gather(volume, state.gather_dtype),
+        _prepare_volume_for_cuda_gather(volume, state.gather_dtype),
     )
 
 
-def forward_project_view_T_pallas(
+def forward_project_view_T_cuda(
     T: jnp.ndarray,
     grid: Grid,
     detector: Detector,
@@ -303,7 +303,7 @@ def forward_project_view_T_pallas(
     layout_variant: str = "detector_vu",
     state_mode: str = "inline",
 ) -> jnp.ndarray:
-    """Forward project one view using the experimental detector-tiled Pallas path."""
+    """Forward project one view using the experimental detector-tiled CUDA path."""
     (
         nx,
         ny,
@@ -335,7 +335,7 @@ def forward_project_view_T_pallas(
         state_mode=state_mode,
     )
     if _normalize_state_mode(state_mode) != "inline":
-        state = prepare_forward_project_view_T_pallas_state(
+        state = prepare_forward_project_view_T_cuda_state(
             T,
             grid,
             detector,
@@ -348,7 +348,7 @@ def forward_project_view_T_pallas(
             kernel_variant=kernel_variant,
             layout_variant=layout_variant,
         )
-        return forward_project_view_T_pallas_with_state(
+        return forward_project_view_T_cuda_with_state(
             state,
             volume,
             interpret=interpret,
@@ -385,6 +385,6 @@ def forward_project_view_T_pallas(
     )
     return call(
         jnp.asarray(T, dtype=jnp.float32),
-        _prepare_volume_for_pallas_gather(volume, gather_dtype),
+        _prepare_volume_for_cuda_gather(volume, gather_dtype),
         None,
     )

@@ -37,7 +37,7 @@ from tomojax.recon.fista_tv_core import (
     projection_loss_arrays,
 )
 
-VariantName = Literal["jax_jax", "pallas_jax", "pallas_pallas"]
+VariantName = Literal["jax_jax", "cuda_jax", "cuda_cuda"]
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,7 @@ class CaseSpec:
     voxel_size: tuple[float, float, float]
     use_support: bool
     use_weights: bool
-    pallas_eligible: bool
+    cuda_eligible: bool
     fista_iters: int
     phantom_profile: str
 
@@ -162,7 +162,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--variants",
         default="auto",
-        help="Comma list: jax_jax,pallas_jax,pallas_pallas or auto.",
+        help="Comma list: jax_jax,cuda_jax,cuda_cuda or auto.",
     )
     parser.add_argument("--output-dir", default="bench/profiles")
     parser.add_argument(
@@ -274,7 +274,7 @@ def make_custom_spec(
         voxel_size=(1.0, 1.0, 1.0),
         use_support=False,
         use_weights=False,
-        pallas_eligible=True,
+        cuda_eligible=True,
         fista_iters=3,
         phantom_profile="default",
     )
@@ -304,7 +304,7 @@ def make_gpu_target_specs(rng: np.random.Generator) -> list[CaseSpec]:
                 voxel_size=(1.0, 1.0, 1.0),
                 use_support=False,
                 use_weights=False,
-                pallas_eligible=True,
+                cuda_eligible=True,
                 fista_iters=fista_iters,
                 phantom_profile="gpu_target_double_plus30",
             )
@@ -350,20 +350,20 @@ def make_spec(
         detector_shape = tuple(int(v) for v in rng.choice([(8, 8), (8, 10), (10, 8)]))
         n_views = int(rng.choice([4, 5, 7]))
 
-    pallas_eligible = family in {
+    cuda_eligible = family in {
         "canonical_small",
         "canonical_medium",
         "weighted_medium",
         "support_medium",
     }
-    detector_roll_deg = 0.0 if pallas_eligible else float(rng.uniform(-7.5, 7.5))
+    detector_roll_deg = 0.0 if cuda_eligible else float(rng.uniform(-7.5, 7.5))
     detector_center = (
         float(rng.uniform(-0.4, 0.4)),
         float(rng.uniform(-0.4, 0.4)),
     )
     voxel_size = (
         (1.0, 1.0, 1.0)
-        if pallas_eligible
+        if cuda_eligible
         else tuple(float(v) for v in rng.uniform(0.85, 1.25, size=3))
     )
     views_per_batch_choices = [1, 2, 3, 4]
@@ -382,7 +382,7 @@ def make_spec(
         voxel_size=voxel_size,
         use_support=use_support,
         use_weights=use_weights,
-        pallas_eligible=pallas_eligible,
+        cuda_eligible=cuda_eligible,
         fista_iters=2 if suite == "smoke" else 3,
         phantom_profile="default",
     )
@@ -635,7 +635,7 @@ def resolve_variants(raw: str, suite: str) -> list[VariantName]:
     if raw != "auto":
         return [v.strip() for v in raw.split(",") if v.strip()]  # type: ignore[list-item]
     if suite in {"accelerator", "gpu-target"} and jax.default_backend() != "cpu":
-        return ["jax_jax", "pallas_jax", "pallas_pallas"]
+        return ["jax_jax", "cuda_jax", "cuda_cuda"]
     return ["jax_jax"]
 
 
@@ -677,9 +677,9 @@ def run_case(
         for variant in variants:
             if variant == "jax_jax":
                 continue
-            pallas_unavailable = not data.spec.pallas_eligible or jax.default_backend() == "cpu"
-            if variant.startswith("pallas") and pallas_unavailable:
-                records.append(skip_record(data, variant, "pallas_ineligible_or_cpu_backend"))
+            cuda_unavailable = not data.spec.cuda_eligible or jax.default_backend() == "cpu"
+            if variant.startswith("cuda") and cuda_unavailable:
+                records.append(skip_record(data, variant, "cuda_ineligible_or_cpu_backend"))
                 continue
             try:
                 loss, grad, record = run_loss_grad_variant(
@@ -732,8 +732,8 @@ def run_loss_grad_variant(
         support=data.support,
         forward_projector=forward,
         backprojector=back,
-        pallas_tile_shape=(8, 8),
-        pallas_num_warps=1,
+        cuda_tile_shape=(8, 8),
+        cuda_num_warps=1,
         compute_iteration_loss=True,
         compute_final_data_loss=True,
         compute_final_regulariser_value=False,
@@ -759,8 +759,8 @@ def run_loss_grad_variant(
             views_per_batch=cfg.views_per_batch,
             forward_projector=cfg.forward_projector,
             backprojector=cfg.backprojector,
-            pallas_tile_shape=cfg.pallas_tile_shape,
-            pallas_num_warps=cfg.pallas_num_warps,
+            cuda_tile_shape=cfg.cuda_tile_shape,
+            cuda_num_warps=cfg.cuda_num_warps,
             compute_loss=True,
         )
         if cfg.support is not None:
@@ -980,7 +980,7 @@ def base_record(data: CaseData, variant: str) -> dict[str, Any]:
         "detector_shape": list(spec.detector_shape),
         "n_views": spec.n_views,
         "views_per_batch": spec.views_per_batch,
-        "pallas_eligible": spec.pallas_eligible,
+        "cuda_eligible": spec.cuda_eligible,
         "use_support": spec.use_support,
         "use_weights": spec.use_weights,
         "detector_roll_deg": spec.detector_roll_deg,

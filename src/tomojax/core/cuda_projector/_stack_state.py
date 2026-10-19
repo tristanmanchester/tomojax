@@ -6,19 +6,19 @@ import jax.numpy as jnp
 from tomojax.core.geometry.base import Detector, Grid
 from tomojax.core.projector import _projector_traversal_state
 
-from ._pallas_config import (
+from ._config import (
     _KERNEL_VARIANT_IDS,
     _LAYOUT_VARIANT_IDS,
-    PallasForwardProjectorStackTraversalState,
-    PallasProjectorTraversalMetadata,
-    PallasProjectorUnsupported,
+    CudaForwardProjectorStackTraversalState,
+    CudaProjectorTraversalMetadata,
+    CudaProjectorUnsupported,
     _normalize_gather_dtype,
     _unsupported,
     _validate_public_sinogram_call,
 )
 
 
-def prepare_forward_project_views_T_pallas_state(
+def prepare_forward_project_views_T_cuda_state(
     T_stack: jnp.ndarray,
     grid: Grid,
     detector: Detector,
@@ -31,8 +31,8 @@ def prepare_forward_project_views_T_pallas_state(
     num_warps: int = 4,
     kernel_variant: str = "auto",
     layout_variant: str = "detector_vu",
-) -> PallasForwardProjectorStackTraversalState:
-    """Prepare fixed pose-stack traversal state for repeated Pallas sinogram calls."""
+) -> CudaForwardProjectorStackTraversalState:
+    """Prepare fixed pose-stack traversal state for repeated CUDA sinogram calls."""
     (
         nx,
         ny,
@@ -65,7 +65,7 @@ def prepare_forward_project_views_T_pallas_state(
         state_mode="cached",
     )
     if layout_variant_id != _LAYOUT_VARIANT_IDS["detector_vu"]:
-        raise PallasProjectorUnsupported(
+        raise CudaProjectorUnsupported(
             _unsupported("cached pose-stack traversal state supports detector_vu only")
         )
 
@@ -90,7 +90,7 @@ def prepare_forward_project_views_T_pallas_state(
         )
         expected_rays = int(nv) * int(nu)
         if int(n_rays) != expected_rays:
-            raise PallasProjectorUnsupported(
+            raise CudaProjectorUnsupported(
                 _unsupported(f"cached traversal state expected {expected_rays} rays; got {n_rays}")
             )
         ix_all.append(jnp.ravel(jnp.asarray(ix0, dtype=jnp.float32), order="C"))
@@ -101,8 +101,8 @@ def prepare_forward_project_views_T_pallas_state(
         diy_all.append(jnp.ravel(jnp.asarray(diy, dtype=jnp.float32), order="C")[0])
         diz_all.append(jnp.ravel(jnp.asarray(diz, dtype=jnp.float32), order="C")[0])
 
-    return PallasForwardProjectorStackTraversalState(
-        traversal=PallasProjectorTraversalMetadata(
+    return CudaForwardProjectorStackTraversalState(
+        traversal=CudaProjectorTraversalMetadata(
             ix0=jnp.concatenate(ix_all, axis=0),
             iy0=jnp.concatenate(iy_all, axis=0),
             iz0=jnp.concatenate(iz_all, axis=0),
@@ -130,9 +130,9 @@ def prepare_forward_project_views_T_pallas_state(
     )
 
 
-def block_forward_project_views_T_pallas_state(
-    state: PallasForwardProjectorStackTraversalState,
-) -> PallasForwardProjectorStackTraversalState:
+def block_forward_project_views_T_cuda_state(
+    state: CudaForwardProjectorStackTraversalState,
+) -> CudaForwardProjectorStackTraversalState:
     """Block until prepared stack traversal-state arrays are materialized."""
     jax.block_until_ready((state.ix0, state.iy0, state.iz0, state.n_steps_ray, state.dix))
     return state

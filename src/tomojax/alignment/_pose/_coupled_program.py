@@ -73,7 +73,7 @@ class CoupledSpec:
 
     grid: Grid
     detector: Detector
-    backend: Literal["jax", "pallas"]
+    backend: Literal["jax", "cuda"]
     jacobian: PoseJacobianOptions
     active_columns: tuple[int, ...]
     cache_columns: bool
@@ -215,11 +215,7 @@ def _finish_adjoint(value, masked, initial, accumulate):
 def _map_columns[T](fn: Callable[..., T], views: jax.Array, spec: CoupledSpec) -> T:
     """Bound vmapped cone columns while sharing one volume and CUDA launch."""
     batch = None
-    if (
-        spec.backend == "pallas"
-        and spec.jacobian.cone_beam
-        and spec.jacobian.jacobian == "autodiff"
-    ):
+    if spec.backend == "cuda" and spec.jacobian.cone_beam and spec.jacobian.jacobian == "autodiff":
         # Only column images occupy additional batch scratch; ray work stays in
         # registers. Limit each batch of column images to 16 MiB, even for large detectors.
         per_view = 4 * (1 + len(spec.active_columns)) * spec.detector.nu * spec.detector.nv
@@ -232,12 +228,12 @@ def physical_projectors(
 ) -> tuple[Callable, Callable]:
     """Physical forward/transpose, or their absolute weights for sensitivity bounds."""
     backend = spec.backend
-    det_grid = None if backend == "pallas" else arrays.det_grid
+    det_grid = None if backend == "cuda" else arrays.det_grid
     joseph = {"joseph": "linear", "joseph_cubic": "cubic"}.get(spec.jacobian.integrator)
     # Nonnegative stencils already equal their absolute values; keep their fast paths.
     absolute_weights = absolute_weights and joseph == "cubic"
 
-    cone_backend = "cuda" if backend == "pallas" else "jax"
+    cone_backend = backend
 
     def forward(t, x, frames=None):
         if spec.jacobian.cone_beam:  # each view in its lab frame
@@ -330,7 +326,7 @@ def physical_projectors(
 def _unit_prediction(spec, arrays, poses, forward, shape):
     """Use implicit unit support when its exact native operator is available."""
     if (
-        spec.backend == "pallas"
+        spec.backend == "cuda"
         and spec.jacobian.integrator == "joseph"
         and not spec.jacobian.cone_beam
         and arrays.mask.ndim == 0

@@ -40,8 +40,8 @@ if TYPE_CHECKING:
 class FBPConfig:
     """Configuration for filtered backprojection.
 
-    ``backprojector='auto'`` uses the voxel-driven Pallas kernel on CUDA and JAX
-    otherwise. ``'jax'`` forces the reference; ``'pallas'`` requires CUDA input
+    ``backprojector='auto'`` uses the voxel-driven CUDA kernel on CUDA and JAX
+    otherwise. ``'jax'`` forces the reference; ``'cuda'`` requires CUDA input
     and never silently changes backend.
 
     ``scale=None`` weights each view exactly for the scanned arc (see
@@ -71,8 +71,8 @@ class FBPConfig:
         reference path. Default is True.
     gather_dtype : str, optional
         Gather precision on the reference path: "auto", "fp32", "fp16" or "bf16". Default is 'fp32'.
-    backprojector : Literal['auto', 'jax', 'pallas'], optional
-        Backprojection backend: "auto", "jax" or "pallas". Auto uses CUDA
+    backprojector : Literal['auto', 'jax', 'cuda'], optional
+        Backprojection backend: "auto", "jax" or "cuda". Auto uses CUDA
         acceleration when available. Default is 'auto'.
     devices : jax.Device or sequence of jax.Device or None, optional
         JAX device or sequence of devices. None uses the current default; multiple
@@ -85,7 +85,7 @@ class FBPConfig:
     projector_unroll: int = 1
     checkpoint_projector: bool = True
     gather_dtype: str = "fp32"
-    backprojector: Literal["auto", "jax", "pallas"] = "auto"
+    backprojector: Literal["auto", "jax", "cuda"] = "auto"
     devices: Device | Sequence[Device] | None = None  # kept as a tuple
 
     def __post_init__(self) -> None:
@@ -287,7 +287,7 @@ def _run_fbp_streamed(
     """Bound filter batches; a bounded axial consumer may retain filtered rows."""
     n, nv, nu = projections.shape
     b = min(batch_size, n)
-    if cache_filtered and backend == "pallas" and separable and z_mode == "integer":
+    if cache_filtered and backend == "cuda" and separable and z_mode == "integer":
         from ._fbp_cuda import backproject_filtered_cuda
 
         filtered = _filter_axial_stack(projections, view_scale, spectrum, detector, b)
@@ -369,7 +369,7 @@ def _backproject_into(
     z_mode: str,
 ) -> jnp.ndarray:
     """Add filtered views to ``accum``; the CUDA kernel adds in place."""
-    if backend == "pallas":
+    if backend == "cuda":
         from ._fbp_cuda import backproject_filtered_cuda
 
         return backproject_filtered_cuda(
@@ -544,7 +544,7 @@ def _fbp_from_host(
 
 
 def supports_parallel_fbp_z_integer(grid: Grid, detector: Detector) -> bool:
-    """Return whether the detector rows align with z-slices for direct Pallas FBP."""
+    """Return whether the detector rows align with z-slices for direct CUDA FBP."""
     tol = 1e-5
     origin_z = float(grid_volume_origin(grid)[2])
     first = (origin_z - float(detector.center[1])) / float(detector.dv)
@@ -554,7 +554,7 @@ def supports_parallel_fbp_z_integer(grid: Grid, detector: Detector) -> bool:
     return abs(first - round(first)) + (grid.nz - 1) * abs(step - round(step)) <= tol
 
 
-def run_parallel_fbp_direct_pallas(
+def run_parallel_fbp_direct_cuda(
     T_all: jnp.ndarray,
     proj: jnp.ndarray,
     *,
@@ -588,21 +588,19 @@ def run_parallel_fbp_direct_pallas(
     ValueError
         If shapes, poses or detector-row alignment are incompatible.
     """
-    validate_grid(grid, "run_parallel_fbp_direct_pallas")
+    validate_grid(grid, "run_parallel_fbp_direct_cuda")
     n_views, _, _ = validate_projection_stack(
-        proj, detector, context="run_parallel_fbp_direct_pallas"
+        proj, detector, context="run_parallel_fbp_direct_cuda"
     )
-    validate_pose_stack(T_all, n_views, context="run_parallel_fbp_direct_pallas")
+    validate_pose_stack(T_all, n_views, context="run_parallel_fbp_direct_cuda")
     if not supports_parallel_fbp_z_integer(grid, detector):
-        raise ValueError(
-            "Pallas integer-row FBP requires detector rows aligned with voxel z-slices"
-        )
+        raise ValueError("CUDA integer-row FBP requires detector rows aligned with voxel z-slices")
     poses = np.asarray(T_all)
     if not (
         np.allclose(poses[:, 2, :], [0, 0, 1, 0], atol=1e-7, rtol=0)
         and np.allclose(poses[:, :2, 2], 0, atol=1e-7, rtol=0)
     ):
-        raise ValueError("Pallas integer-row FBP requires z-axis rotations without z translation")
+        raise ValueError("CUDA integer-row FBP requires z-axis rotations without z translation")
     ox, oy, _ = grid_volume_origin(grid)
     xx, yy = np.meshgrid([ox, ox + (grid.nx - 1) * grid.vx], [oy, oy + (grid.ny - 1) * grid.vy])
     coordinates = (
@@ -621,7 +619,7 @@ def run_parallel_fbp_direct_pallas(
         jnp.float32(0),
         grid=grid,
         detector=detector,
-        backend="pallas",
+        backend="cuda",
         batch_size=_parallel_filter_batch_size(n_views, detector.nv, 2 * (ramp.shape[0] - 1)),
         z_mode="integer",
         separable=True,
@@ -788,7 +786,7 @@ def _plan(
         spectrum=spectrum,
         grid=grid,
         detector=filter_detector,
-        backend="pallas" if cuda and cfg.backprojector != "jax" else "jax",
+        backend="cuda" if cuda and cfg.backprojector != "jax" else "jax",
         batch=_parallel_filter_batch_size(
             n_views, filter_detector.nv * n_fft_v, 2 * (spectrum.shape[0] - 1)
         ),
@@ -810,7 +808,7 @@ def fbp(
     """Filtered backprojection for parallel rays rotating about a fixed axis.
 
     Cone-beam geometries are reconstructed with :func:`tomojax.recon.fdk.fdk`
-    using the same filter; ``backprojector="pallas"`` selects its CUDA kernel.
+    using the same filter; ``backprojector="cuda"`` selects its CUDA kernel.
 
     Projections: (n_views, nv, nu) -> attenuation volume (nx, ny, nz).
     The rotation axis, arc and angular spacing are fitted from the view poses,
@@ -865,15 +863,15 @@ def fbp(
     (4, 4, 1)
     """
     cfg = FBPConfig() if config is None else config
-    if cfg.backprojector not in ("auto", "jax", "pallas"):
-        raise ValueError("FBP backprojector must be 'auto', 'jax', or 'pallas'")
+    if cfg.backprojector not in ("auto", "jax", "cuda"):
+        raise ValueError("FBP backprojector must be 'auto', 'jax', or 'cuda'")
     if is_cone_beam(geometry):
-        # Cone beams: FDK, with the same filter and the CUDA kernel for "pallas".
+        # Cone beams: FDK, with the same filter and the CUDA kernel for "cuda".
         if det_grid is not None:
             raise ValueError("fbp: cone-beam geometry needs the canonical detector grid")
         from tomojax.recon.fdk import FDKConfig, fdk
 
-        backend = {"auto": "auto", "jax": "jax", "pallas": "cuda"}[cfg.backprojector]
+        backend = cfg.backprojector
         return fdk(
             geometry,
             grid,
@@ -906,8 +904,8 @@ def fbp(
         device.platform == "gpu" and device.client.platform_version.lower().startswith("cuda")
         for device in (T_all.devices() if on_host else proj.devices())
     )
-    if cfg.backprojector == "pallas" and not cuda:
-        raise ValueError("Pallas FBP requires CUDA arrays")
+    if cfg.backprojector == "cuda" and not cuda:
+        raise ValueError("CUDA FBP requires CUDA arrays")
     plan = _plan(geometry, grid, detector, T_all, proj, cfg, cuda=cuda)
     split = view_split(cfg.devices, n_views)
     whole = range(n_views)

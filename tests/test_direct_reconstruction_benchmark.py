@@ -90,7 +90,7 @@ def test_external_fbp_recovers_offset_gaussian_and_length_units(adapters, method
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("method", ["tomojax_fbp_joseph_cgls_pallas", "astra_fbp_cgls"])
+@pytest.mark.parametrize("method", ["tomojax_fbp_joseph_cgls_cuda", "astra_fbp_cgls"])
 def test_fbp_initialization_then_one_update_passes_the_existing_gaussian_gate(adapters, method):
     if jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")

@@ -52,7 +52,7 @@ class ViewBatches:
         if isinstance(model, ConeModel):
             # Cone weights are non-negative, so |A|^T is the transpose itself.
             self.coefficients = model.coefficients(poses, grid)
-            self.cone_backend = "cuda" if backend == "pallas" else "jax"
+            self.cone_backend = backend
         elif model == "joseph":
             from tomojax.core.joseph import plane_coefficients
 
@@ -106,7 +106,7 @@ class ViewBatches:
             return cone_project_ones(
                 self._coefficients(start), self.grid, self.detector, backend=self.cone_backend
             )
-        if self.model == "joseph" and self.backend == "pallas":
+        if self.model == "joseph" and self.backend == "cuda":
             from tomojax.core.joseph import project_ones_native
 
             native = project_ones_native(self._coefficients(start), self.grid, self.detector)
@@ -131,18 +131,18 @@ class ViewBatches:
                 backend=self.backend,
                 interpolation=self.interpolation,
             )
-        if self.backend == "pallas":
-            from tomojax.core.pallas.api import (
-                PallasProjectorOptions,
-                forward_project_views_T_pallas,
+        if self.backend == "cuda":
+            from tomojax.core.cuda_projector.api import (
+                CudaProjectorOptions,
+                forward_project_views_T_cuda,
             )
 
-            return forward_project_views_T_pallas(
+            return forward_project_views_T_cuda(
                 batch,
                 grid,
                 detector,
                 volume,
-                options=PallasProjectorOptions(tile_shape=(16, 4), num_warps=1),
+                options=CudaProjectorOptions(tile_shape=(16, 4), num_warps=1),
             )
         return jax.vmap(
             lambda t: forward_project_view_T(t, grid, detector, volume, det_grid=self.det_grid)
@@ -193,10 +193,10 @@ class ViewBatches:
                 absolute_weights=self.absolute_weights,
                 accumulate=output,
             )
-        if self.backend == "pallas":
-            from tomojax.core.pallas.api import sum_backproject_views_T_pallas
+        if self.backend == "cuda":
+            from tomojax.core.cuda_projector.api import sum_backproject_views_T_cuda
 
-            update = sum_backproject_views_T_pallas(
+            update = sum_backproject_views_T_cuda(
                 batch, grid, detector, images, tile_shape=(16, 4), num_warps=1
             )
         else:

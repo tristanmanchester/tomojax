@@ -28,7 +28,7 @@ dependencies = [
     "imagecodecs>=2026.10.10",
     "imageio[tifffile]>=2.37.3,<3",
     "tifffile>=2026.9.20",
-    "jax>=0.11.2,<0.12",
+    "jax>=0.11.2",
     "numpy>=2.3.2,<3",
     "olefile>=0.47,<1",
     "optax>=0.2.5,<0.3",
@@ -37,11 +37,11 @@ dependencies = [
 
 [project.optional-dependencies]
 cpu = [
-    "jax>=0.11.2,<0.12",
+    "jax>=0.11.2",
 ]
 cuda12 = [
-    "jax[cuda12]>=0.11.2,<0.12 ; platform_system == 'Linux'",
-    # Compiles TomoJAX's CUDA C kernels at run time; without it Pallas kernels are used.
+    "jax[cuda12]>=0.11.2 ; platform_system == 'Linux'",
+    # Compiles TomoJAX's CUDA C kernels at run time; without it Cuda kernels are used.
     "cupy-cuda12x>=14.2,<14.3 ; platform_system == 'Linux'",
 ]
 fourier-cuda12 = [
@@ -233,7 +233,7 @@ markers = [
     "numerical: CPU numerical reconstruction/alignment tests that may compile JAX kernels",
     "gpu: requires GPU",
     "fresh_gpu: needs a GPU no other process holds; run in its own pytest process",
-    "pallas: requires Pallas-capable backend",
+    "cuda: requires Cuda-capable backend",
     "slow: slow tests",
 ]
 
@@ -241,7 +241,7 @@ markers = [
 branch = true
 source = ["src/tomojax"]
 omit = [
-    "src/tomojax/core/pallas/*",
+    "src/tomojax/core/cuda_projector/*",
 ]
 
 [tool.coverage.report]

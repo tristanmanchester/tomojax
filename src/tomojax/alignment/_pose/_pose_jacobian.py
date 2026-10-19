@@ -155,7 +155,7 @@ def _parallel_autodiff_columns(
         tangent[None],
         grid,
         detector,
-        backend="pallas",
+        backend="cuda",
         interpolation="cubic" if options.integrator == "joseph_cubic" else "linear",
     )[0].reshape(1 + len(indices), -1)
     return weight.ravel() * (images[0] - target.ravel()), weight.ravel() * images[1:]
@@ -201,7 +201,7 @@ def pose_prediction_and_columns(
             det_grid=det_grid,
             options=options,
         )
-    cone_backend = "jax" if options.cone_beam and not central else "pallas"
+    cone_backend = "jax" if options.cone_beam and not central else "cuda"
     if options.cone_beam and use_cuda_cone():
         if not central:
             return _cone_autodiff_columns(
@@ -245,7 +245,7 @@ def pose_prediction_and_columns(
             gather_dtype=options.gather_dtype,
             det_grid=det_grid,
             # Joseph CUDA kernels' pose derivatives avoid a per-plane JAX tape.
-            projector_backend="pallas" if joseph and cuda_backend() else "jax",
+            projector_backend="cuda" if joseph and cuda_backend() else "jax",
             ray_integrator=options.integrator,
         ).ravel()
 

@@ -44,7 +44,7 @@ def test_two_transposes_match_dense_basis_with_mixed_views_and_chunk_tail(backen
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 def test_uncached_sirt_preserves_masked_subset_updates(monkeypatch, backend):
     grid, detector = tj.Grid(5, 4, 3, 0.7, 1.1, 0.9), tj.Detector(7, 5, 1.3, 0.8)
     geometry = tj.ConeGeometry(

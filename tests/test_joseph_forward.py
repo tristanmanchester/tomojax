@@ -11,10 +11,10 @@ from tests.test_joseph_projector import matrix, problem
 from tomojax.forward import joseph_l2_value_and_grad, project_joseph
 
 
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 @pytest.mark.parametrize("interpolation", ["linear", "cubic"])
 def test_public_joseph_matches_physical_matrix_and_loss_derivative(backend, interpolation):
-    if backend == "pallas" and jax.default_backend() != "gpu":
+    if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
     g, d, poses = problem()
     rng = np.random.default_rng(10)
@@ -132,7 +132,7 @@ def test_explicit_cuda_never_silently_falls_back():
         pytest.skip("requires CPU to test explicit CUDA rejection")
     g, d, poses = problem()
     with pytest.raises(ValueError, match="requires an NVIDIA CUDA"):
-        project_joseph(np.zeros((g.nx, g.ny, g.nz)), poses, g, d, backend="pallas")
+        project_joseph(np.zeros((g.nx, g.ny, g.nz)), poses, g, d, backend="cuda")
 
 
 @pytest.mark.parametrize("interpolation", ["nearest", "CUBIC", "automatic"])

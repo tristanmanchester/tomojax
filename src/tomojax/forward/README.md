@@ -51,7 +51,7 @@ physical path length between planes. This differs from the default trilinear
 ray operator. Supply finite rigid world-from-object matrices `(views, 4, 4)`;
 voxel origins and detector centres retain their physical units.
 
-The explicit `backend="pallas"` runs on NVIDIA CUDA and supports first-order
+The explicit `backend="cuda"` runs on NVIDIA CUDA and supports first-order
 `jax.grad`, `jax.jvp`, `jax.jacfwd`, `jax.jacrev`, `jax.linearize`, transposing
 that linearization, and `jax.vmap`. The input volume and geometry are retained
 for reverse mode; the kernel recomputes sample derivatives without saving a
@@ -67,11 +67,11 @@ import jax
 from tomojax.forward import joseph_l2_value_and_grad, project_joseph
 
 project = jax.jit(
-    lambda volume, poses: project_joseph(volume, poses, grid, detector, backend="pallas")
+    lambda volume, poses: project_joseph(volume, poses, grid, detector, backend="cuda")
 )
 loss_and_grad = jax.jit(
     lambda volume, poses, data: joseph_l2_value_and_grad(
-        volume, poses, data, grid, detector, backend="pallas"
+        volume, poses, data, grid, detector, backend="cuda"
     )
 )
 prediction = project(volume, poses)
@@ -88,7 +88,7 @@ setting) but does not call these fused functions.
 
 
 `joseph_pose_normal_equations(volume, poses, pose_directions, data, grid, detector,
-backend="pallas", interpolation="cubic")` computes per-view raw least-squares
+backend="cuda", interpolation="cubic")` computes per-view raw least-squares
 loss, parameter gradient, Gauss–Newton matrix and residual images. Supply
 `pose_directions` as `(views, 4, 4, P)`, for 1–16 matrix-pose directions in your
 parameter units. For a function `make_pose(parameters, nominal_pose)`,
@@ -109,7 +109,7 @@ Allowed: `tomojax.core`, `tomojax.geometry`, `tomojax.motion`,
 `tomojax.nuisance`, `tomojax.backends`.
 
 Forbidden: private files from other modules, reconstruction/alignment
-orchestration, Pallas fast paths without JAX-reference equivalence tests.
+orchestration, CUDA fast paths without JAX-reference equivalence tests.
 
 ## Invariants
 

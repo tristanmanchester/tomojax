@@ -265,7 +265,7 @@ def test_tilted_fbp_recovers_every_measured_frequency(span: float, n_views: int,
 
 
 @pytest.mark.parametrize(("span", "n_views"), [(360.0, 120), (180.0, 60)])
-@pytest.mark.parametrize("backend", ["jax", pytest.param("pallas", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 def test_repeated_laminography_exposures_equal_their_mean_and_preserve_physical_truth(
     span, n_views, backend
 ):

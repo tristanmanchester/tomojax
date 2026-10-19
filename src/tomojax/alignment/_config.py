@@ -171,7 +171,7 @@ class AlignConfig:
     gather_dtype : str, optional
         Reference gather precision: "auto", "fp32", "fp16" or "bf16". Default is 'auto'.
     projector_backend : ProjectorBackendInput, optional
-        Projector implementation: "jax" or "pallas". Default is 'pallas'.
+        Projector implementation: "jax" or "cuda". Default is 'cuda'.
     ray_integrator : Literal['sampled', 'exact', 'joseph', 'joseph_cubic'], optional
         Ray model: "sampled", "exact", "joseph" or "joseph_cubic". Default is 'sampled'.
     opt_method : str, optional
@@ -302,7 +302,7 @@ class AlignConfig:
     projector_unroll: int = 1
     checkpoint_projector: bool = True
     gather_dtype: str = "auto"
-    projector_backend: ProjectorBackendInput = "pallas"
+    projector_backend: ProjectorBackendInput = "cuda"
     ray_integrator: Literal["sampled", "exact", "joseph", "joseph_cubic"] = field(
         default="sampled", kw_only=True
     )

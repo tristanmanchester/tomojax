@@ -79,7 +79,7 @@ class SIRTConfig:
         Number of views processed together to bound temporary storage. Default is
         64.
     projector_backend : ProjectorBackend, optional
-        Execution backend: "auto", "jax" or "pallas". An explicit accelerator
+        Execution backend: "auto", "jax" or "cuda". An explicit accelerator
         request never silently falls back. Default is 'auto'.
     projector_model : ProjectorModel, optional
         Projection model: "auto", "ray" or "joseph". Auto selects Joseph unless an
@@ -286,7 +286,7 @@ def _storage(
     if (
         not cache
         and free is not None
-        and backend == "pallas"
+        and backend == "cuda"
         and cfg.projector_model != "ray"
         and not axial
         and cfg.support is None

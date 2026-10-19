@@ -35,12 +35,12 @@ def _real_fp32(value: jax.Array) -> jax.Array:
 
 
 def _validate_backend(backend: str, detector: Detector, det_grid: object) -> None:
-    if backend not in {"jax", "pallas"}:
-        raise ValueError("exact trilinear integration: backend must be 'jax' or 'pallas'")
-    if backend == "pallas":
+    if backend not in {"jax", "cuda"}:
+        raise ValueError("exact trilinear integration: backend must be 'jax' or 'cuda'")
+    if backend == "cuda":
         if not cuda_backend():
-            raise ValueError("exact trilinear integration: Pallas requires an NVIDIA CUDA device")
-        from tomojax.core.pallas._pallas_config import _ensure_canonical_detector_grid
+            raise ValueError("exact trilinear integration: CUDA requires an NVIDIA CUDA device")
+        from tomojax.core.cuda_projector._config import _ensure_canonical_detector_grid
 
         _ensure_canonical_detector_grid(detector, det_grid)
 
@@ -51,7 +51,7 @@ def exact_forward(
     detector: Detector,
     volume: jax.Array,
     *,
-    backend: Literal["jax", "pallas"] = "jax",
+    backend: Literal["jax", "cuda"] = "jax",
     det_grid: tuple[jax.Array, jax.Array] | None = None,
 ) -> jax.Array:
     """Integrate each parallel ray exactly within each trilinear interpolation cell.
@@ -71,7 +71,7 @@ def exact_forward(
     validate_detector_grid(det_grid, detector, context="exact_forward")
     _validate_backend(backend, detector, det_grid)
     poses, volume = _real_fp32(poses), _real_fp32(volume)
-    if backend == "pallas":
+    if backend == "cuda":
         from tomojax.core._trilinear_cuda import coefficients, run
 
         return run(coefficients(poses, grid, detector), volume, grid, detector)
@@ -86,7 +86,7 @@ def exact_adjoint(
     detector: Detector,
     images: jax.Array,
     *,
-    backend: Literal["jax", "pallas"] = "jax",
+    backend: Literal["jax", "cuda"] = "jax",
     det_grid: tuple[jax.Array, jax.Array] | None = None,
 ) -> jax.Array:
     """Apply the matched FP32 transpose, accumulating views into one volume."""
@@ -96,7 +96,7 @@ def exact_adjoint(
     validate_detector_grid(det_grid, detector, context="exact_adjoint")
     _validate_backend(backend, detector, det_grid)
     poses, images = _real_fp32(poses), _real_fp32(images)
-    if backend == "pallas":
+    if backend == "cuda":
         from tomojax.core._trilinear_cuda import coefficients, run
 
         return run(coefficients(poses, grid, detector), images, grid, detector, mode="adjoint")
@@ -125,7 +125,7 @@ def exact_pose_normal_equations(
     targets: jax.Array,
     weights: jax.Array,
     *,
-    backend: Literal["jax", "pallas"] = "jax",
+    backend: Literal["jax", "cuda"] = "jax",
     det_grid: tuple[jax.Array, jax.Array] | None = None,
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
     """Return per-view weighted loss, gradient, Hessian approximation and residual.
@@ -149,7 +149,7 @@ def exact_pose_normal_equations(
     poses, volume, targets, weights, pose_directions = (
         _real_fp32(x) for x in (poses, volume, targets, weights, pose_directions)
     )
-    if backend == "pallas":
+    if backend == "cuda":
         from tomojax.core._trilinear_cuda import coefficients, normal_equations
 
         def coefficients_jvp(direction: jax.Array) -> jax.Array:

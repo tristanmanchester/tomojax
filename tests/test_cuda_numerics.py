@@ -12,7 +12,7 @@ from scipy.ndimage import map_coordinates
 from tomojax.core._sampled_cuda import run as sampled_run
 
 # check-public-imports: allow-private
-from tomojax.core.pallas import api as pallas
+from tomojax.core.cuda_projector import api as cuda
 
 # check-public-imports: allow-private
 from tomojax.core.projector import forward_project_view_T
@@ -42,7 +42,7 @@ def test_partial_detector_tiles_match_reference(
     rng = np.random.default_rng(731)
     volume = jnp.asarray(rng.normal(size=(6, 5, 3)), dtype=jnp.float32)
     target = jnp.asarray(rng.normal(size=(2, 7, 9)), dtype=jnp.float32)
-    options = pallas.PallasProjectorOptions(
+    options = cuda.CudaProjectorOptions(
         interpret=interpret,
         state_mode=state_mode,
         layout_variant=layout,
@@ -50,7 +50,7 @@ def test_partial_detector_tiles_match_reference(
         num_warps=1,
         unroll=unroll,
     )
-    metadata = pallas.pallas_projector_actual_sinogram_variant_metadata(
+    metadata = cuda.cuda_projector_actual_sinogram_variant_metadata(
         poses,
         grid,
         detector,
@@ -60,11 +60,11 @@ def test_partial_detector_tiles_match_reference(
     )
     assert metadata["tile_shape"] == [4, 8]
     expected = jax.jit(jax.vmap(lambda t: forward_project_view_T(t, grid, detector, volume)))(poses)
-    actual = pallas.forward_project_views_T_pallas(poses, grid, detector, volume, options=options)
+    actual = cuda.forward_project_views_T_cuda(poses, grid, detector, volume, options=options)
     np.testing.assert_allclose(actual, expected, atol=1e-5, rtol=2e-5)
-    single = pallas.forward_project_view_T_pallas(poses[1], grid, detector, volume, options=options)
+    single = cuda.forward_project_view_T_cuda(poses[1], grid, detector, volume, options=options)
     np.testing.assert_allclose(single, expected[1], atol=1e-5, rtol=2e-5)
-    actual_sse = pallas.forward_project_residual_sse_T_pallas(
+    actual_sse = cuda.forward_project_residual_sse_T_cuda(
         poses, grid, detector, volume, target, options=options
     )
     expected_sse = jnp.sum((expected - target) ** 2)
@@ -89,16 +89,16 @@ def test_auto_variant_preserves_small_geometry_effects(interpret: bool, near_int
     volume = jnp.asarray(
         np.random.default_rng(17).normal(size=(grid.nx, grid.ny, grid.nz)), dtype=jnp.float32
     )
-    options = pallas.PallasProjectorOptions(
+    options = cuda.CudaProjectorOptions(
         interpret=interpret, step_size=0.8, tile_shape=(4, 4), num_warps=1
     )
     expected = jax.jit(lambda x: forward_project_view_T(pose, grid, detector, x, step_size=0.8))(
         volume
     )
-    actual = pallas.forward_project_views_T_pallas(
-        pose[None], grid, detector, volume, options=options
-    )[0]
-    single = pallas.forward_project_view_T_pallas(pose, grid, detector, volume, options=options)
+    actual = cuda.forward_project_views_T_cuda(pose[None], grid, detector, volume, options=options)[
+        0
+    ]
+    single = cuda.forward_project_view_T_cuda(pose, grid, detector, volume, options=options)
     np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=1e-5)
     np.testing.assert_allclose(single, expected, rtol=2e-5, atol=1e-5)
 
@@ -166,14 +166,14 @@ def test_weighted_fused_loss_gradient_matches_autodiff(interpret, layout, unroll
         return 0.5 * jnp.sum(((prediction - target) * weights) ** 2)
 
     expected_loss, expected_gradient = jax.jit(jax.value_and_grad(loss))(volume)
-    actual_loss, actual_gradient = pallas.forward_project_loss_and_grad_T_pallas(
+    actual_loss, actual_gradient = cuda.forward_project_loss_and_grad_T_cuda(
         poses,
         grid,
         detector,
         volume,
         target,
         weights=weights,
-        options=pallas.PallasProjectorOptions(
+        options=cuda.CudaProjectorOptions(
             interpret=interpret,
             step_size=0.7,
             tile_shape=(4, 4),
@@ -196,7 +196,7 @@ def test_empty_ray_tiles_produce_zero_projection(interpret, state_mode, unroll) 
     detector = Detector(5, 3, 0.7, 1.2)
     pose = jnp.eye(4, dtype=jnp.float32).at[0, 3].set(100.0)
     volume = jnp.ones((3, 4, 2), dtype=jnp.float32)
-    options = pallas.PallasProjectorOptions(
+    options = cuda.CudaProjectorOptions(
         interpret=interpret,
         state_mode=state_mode,
         unroll=unroll,
@@ -204,11 +204,9 @@ def test_empty_ray_tiles_produce_zero_projection(interpret, state_mode, unroll) 
         num_warps=1,
         kernel_variant="generic",
     )
-    single = pallas.forward_project_view_T_pallas(pose, grid, detector, volume, options=options)
-    stack = pallas.forward_project_views_T_pallas(
-        pose[None], grid, detector, volume, options=options
-    )
-    sse = pallas.forward_project_residual_sse_T_pallas(
+    single = cuda.forward_project_view_T_cuda(pose, grid, detector, volume, options=options)
+    stack = cuda.forward_project_views_T_cuda(pose[None], grid, detector, volume, options=options)
+    sse = cuda.forward_project_residual_sse_T_cuda(
         pose[None], grid, detector, volume, jnp.ones((1, 3, 5)), options=options
     )
     np.testing.assert_array_equal(single, np.zeros((3, 5)))
@@ -236,7 +234,7 @@ def test_backprojection_replays_shifted_detector_rays(interpret, layout, unroll)
             )
         )
     )(volume)
-    actual = pallas.backproject_view_T_pallas(
+    actual = cuda.backproject_view_T_cuda(
         pose,
         grid,
         detector,
@@ -255,20 +253,20 @@ def test_prepared_single_view_reuses_launch_without_capturing_ray_arrays(caplog)
     grid, detector = Grid(4, 4, 3, 1, 1, 1), Detector(5, 3, 1, 1)
     pose = jnp.eye(4, dtype=jnp.float32)
     volume = jnp.arange(48, dtype=jnp.float32).reshape(4, 4, 3)
-    options = pallas.PallasProjectorOptions(interpret=True, tile_shape=(2, 4), num_warps=1)
-    bound = pallas.bind_forward_project_view_T_pallas(pose, grid, detector, options=options)
-    # The first Pallas trace lazily registers a JAX tracing context.
+    options = cuda.CudaProjectorOptions(interpret=True, tile_shape=(2, 4), num_warps=1)
+    bound = cuda.bind_forward_project_view_T_cuda(pose, grid, detector, options=options)
+    # The first CUDA trace lazily registers a JAX tracing context.
     for _ in range(2):
         jax.block_until_ready(bound(volume))
     for shift in [0.0, 0.6]:
         shifted = pose.at[0, 3].set(shift)
-        state = pallas.prepare_forward_project_view_T_pallas_state(
+        state = cuda.prepare_forward_project_view_T_cuda_state(
             shifted, grid, detector, tile_shape=(2, 4), num_warps=1
         )
         expected = forward_project_view_T(shifted, grid, detector, volume)
         caplog.clear()
         with jax.log_compiles(True), caplog.at_level("WARNING"):
-            actual = pallas.forward_project_view_T_pallas_with_state(state, volume, interpret=True)
+            actual = cuda.forward_project_view_T_cuda_with_state(state, volume, interpret=True)
             np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=1e-5)
         assert not any("Compiling jit(" in record.message for record in caplog.records)
 
@@ -279,16 +277,14 @@ def test_inline_launch_reuses_compilation_with_new_poses(kind, caplog) -> None:
     poses = jnp.broadcast_to(jnp.eye(4, dtype=jnp.float32), (2, 4, 4))
     volume = jnp.arange(48, dtype=jnp.float32).reshape(4, 4, 3)
     target = jnp.ones((2, 3, 5), dtype=jnp.float32)
-    options = pallas.PallasProjectorOptions(interpret=True, tile_shape=(2, 4), num_warps=1)
+    options = cuda.CudaProjectorOptions(interpret=True, tile_shape=(2, 4), num_warps=1)
 
     def project(t):
         if kind == "single":
-            return pallas.forward_project_view_T_pallas(
-                t[0], grid, detector, volume, options=options
-            )
+            return cuda.forward_project_view_T_cuda(t[0], grid, detector, volume, options=options)
         if kind == "stack":
-            return pallas.forward_project_views_T_pallas(t, grid, detector, volume, options=options)
-        return pallas.forward_project_residual_sse_T_pallas(
+            return cuda.forward_project_views_T_cuda(t, grid, detector, volume, options=options)
+        return cuda.forward_project_residual_sse_T_cuda(
             t, grid, detector, volume, target, options=options
         )
 

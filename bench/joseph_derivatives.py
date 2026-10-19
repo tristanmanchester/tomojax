@@ -93,25 +93,25 @@ def run_case(
     volume, poses, target = (jnp.asarray(a) for a in (case.volume, case.poses, case.analytic))
 
     def loss(
-        v: jax.Array, t: jax.Array, y: jax.Array, backend: Literal["jax", "pallas"]
+        v: jax.Array, t: jax.Array, y: jax.Array, backend: Literal["jax", "cuda"]
     ) -> jax.Array:
         return 0.5 * jnp.sum(
             (project_joseph(v, t, g, d, backend=backend, interpolation=interpolation) - y) ** 2
         )
 
     _, fp = measure(
-        lambda v, t: project_joseph(v, t, g, d, backend="pallas", interpolation=interpolation),
+        lambda v, t: project_joseph(v, t, g, d, backend="cuda", interpolation=interpolation),
         (volume, poses),
         repeats,
     )
     general, general_timing = measure(
-        jax.value_and_grad(lambda v, t, y: loss(v, t, y, "pallas"), argnums=(0, 1)),
+        jax.value_and_grad(lambda v, t, y: loss(v, t, y, "cuda"), argnums=(0, 1)),
         (volume, poses, target),
         repeats,
     )
     fused, fused_timing = measure(
         lambda v, t, y: joseph_l2_value_and_grad(
-            v, t, y, g, d, backend="pallas", interpolation=interpolation
+            v, t, y, g, d, backend="cuda", interpolation=interpolation
         ),
         (volume, poses, target),
         repeats,

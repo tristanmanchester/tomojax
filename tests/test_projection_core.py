@@ -129,13 +129,13 @@ def test_fixed_geometry_core_respects_explicit_jax_backend(
     )
 
 
-def test_fixed_geometry_auto_backend_stays_jax_when_fused_pallas_is_missing(
+def test_fixed_geometry_auto_backend_stays_jax_when_fused_cuda_is_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(jax, "default_backend", lambda: "gpu")
     monkeypatch.setattr(
         fista_tv_core,
-        "resolve_pallas_callable",
+        "resolve_cuda_callable",
         lambda _name, *, missing_reason: (None, missing_reason),
     )
     pose_stack = jnp.broadcast_to(jnp.eye(4, dtype=jnp.float32), (16, 4, 4))
@@ -246,8 +246,8 @@ def test_joseph_core_gradient_is_the_matched_plane_transpose(integrator, interpo
         views_per_batch=batch,
         forward_projector="jax",
         backprojector="jax",
-        pallas_tile_shape=(16, 4),
-        pallas_num_warps=1,
+        cuda_tile_shape=(16, 4),
+        cuda_num_warps=1,
         ray_integrator=integrator,
     )
     np.testing.assert_allclose(grad, expected, rtol=2e-5, atol=2e-6)
@@ -267,9 +267,9 @@ def test_sampled_objective_uses_the_requested_step_when_geometry_is_traced(geome
     weights = jnp.asarray([0.4, 0.0, 1.3])
     cfg = FistaCoreConfig(
         tv_weight=0,
-        forward_projector="pallas",
-        backprojector="pallas",
-        pallas_step_size_scale=scale,
+        forward_projector="cuda",
+        backprojector="cuda",
+        cuda_step_size_scale=scale,
         views_per_batch=2,
     )
 

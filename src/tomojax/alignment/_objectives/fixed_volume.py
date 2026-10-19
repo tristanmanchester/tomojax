@@ -16,7 +16,7 @@ from tomojax.core.backend_policy import (
     backend_provenance,
     normalize_projector_backend,
 )
-from tomojax.core.pallas_resolver import resolve_pallas_callable
+from tomojax.core.cuda_projector_resolver import resolve_cuda_callable
 from tomojax.core.projector import forward_project_view_T
 
 from .loss_adapters import LossAdapter, build_loss_adapter
@@ -222,8 +222,8 @@ def project_stack(
     if frames is not None:
         cone_backend = _cone_projector_backend(backend)
         return _cone_project_poses(pose_stack, grid, detector, volume, frames, cone_backend)
-    if ray_integrator == "sampled" and backend == "pallas" and not require_differentiable_projector:
-        fallback_reason = _pallas_sinogram_fallback_reason(
+    if ray_integrator == "sampled" and backend == "cuda" and not require_differentiable_projector:
+        fallback_reason = _cuda_sinogram_fallback_reason(
             pose_stack=pose_stack,
             grid=grid,
             detector=detector,
@@ -231,20 +231,20 @@ def project_stack(
             det_grid=det_grid,
             gather_dtype=gather_dtype,
         )
-        pallas_project, callable_reason = resolve_pallas_callable(
-            "forward_project_views_T_pallas",
-            missing_reason="pallas_batched_callable_missing",
+        cuda_project, callable_reason = resolve_cuda_callable(
+            "forward_project_views_T_cuda",
+            missing_reason="cuda_batched_callable_missing",
         )
         fallback_reason = fallback_reason or callable_reason
-        if pallas_project is not None and fallback_reason is None:
-            unsupported_exc = _pallas_unsupported_exception_type()
+        if cuda_project is not None and fallback_reason is None:
+            unsupported_exc = _cuda_unsupported_exception_type()
             try:
-                options = _pallas_projector_options(
+                options = _cuda_projector_options(
                     gather_dtype=gather_dtype,
                     det_grid=det_grid,
                     state_mode="cached",
                 )
-                return pallas_project(
+                return cuda_project(
                     pose_stack,
                     grid,
                     detector,
@@ -255,7 +255,7 @@ def project_stack(
                 fallback_reason = f"{type(exc).__name__}: {exc}"
         if fallback_reason is not None:
             LOG.debug(
-                "Falling back to JAX projector after Pallas projection rejection: %s",
+                "Falling back to JAX projector after CUDA projection rejection: %s",
                 fallback_reason,
             )
     b = _chunk_size(n_views, views_per_batch)
@@ -356,11 +356,11 @@ def project_and_score_stack(
     if (
         ray_integrator == "sampled"
         and frames is None
-        and backend == "pallas"
+        and backend == "cuda"
         and use_plain_l2_fast_path
         and not require_differentiable_projector
     ):
-        fallback_reason = _pallas_sinogram_fallback_reason(
+        fallback_reason = _cuda_sinogram_fallback_reason(
             pose_stack=pose_stack,
             grid=grid,
             detector=detector,
@@ -368,20 +368,20 @@ def project_and_score_stack(
             det_grid=det_grid,
             gather_dtype=gather_dtype,
         )
-        pallas_score, callable_reason = resolve_pallas_callable(
-            "forward_project_residual_sse_T_pallas",
-            missing_reason="pallas_residual_sse_callable_missing",
+        cuda_score, callable_reason = resolve_cuda_callable(
+            "forward_project_residual_sse_T_cuda",
+            missing_reason="cuda_residual_sse_callable_missing",
         )
         fallback_reason = fallback_reason or callable_reason
-        if pallas_score is not None and fallback_reason is None:
-            unsupported_exc = _pallas_unsupported_exception_type()
+        if cuda_score is not None and fallback_reason is None:
+            unsupported_exc = _cuda_unsupported_exception_type()
             try:
-                options = _pallas_projector_options(
+                options = _cuda_projector_options(
                     gather_dtype=gather_dtype,
                     det_grid=det_grid,
                     state_mode="cached",
                 )
-                return jnp.float32(0.5) * pallas_score(
+                return jnp.float32(0.5) * cuda_score(
                     pose_stack,
                     grid,
                     detector,
@@ -393,7 +393,7 @@ def project_and_score_stack(
                 fallback_reason = f"{type(exc).__name__}: {exc}"
         if fallback_reason is not None:
             LOG.debug(
-                "Falling back to JAX projector after Pallas residual scoring rejection: %s",
+                "Falling back to JAX projector after CUDA residual scoring rejection: %s",
                 fallback_reason,
             )
     if num_chunks == 1:
@@ -473,11 +473,11 @@ def alignment_projector_backend_provenance(
     if frames is not None:
         actual = _cone_projector_backend(requested)
         reason = None
-        if requested == "pallas" and actual == "jax":
+        if requested == "cuda" and actual == "jax":
             reason = "CUDA cone kernels are unavailable"
         return backend_provenance(
             requested_backend=requested,
-            actual_backend="pallas" if actual == "cuda" else "jax",
+            actual_backend=actual,
             api_surface=api_surface,
             fallback_reason=reason,
             differentiability="gradient_safe",
@@ -499,13 +499,13 @@ def alignment_projector_backend_provenance(
         )
     if require_differentiable_projector:
         return backend_provenance(
-            requested_backend="pallas",
+            requested_backend="cuda",
             actual_backend="jax",
             api_surface=api_surface,
             fallback_reason="alignment objectives require gradient-safe projector semantics",
             differentiability="gradient_safe",
         )
-    reason = _pallas_sinogram_fallback_reason(
+    reason = _cuda_sinogram_fallback_reason(
         pose_stack=pose_stack,
         grid=grid,
         detector=detector,
@@ -514,15 +514,15 @@ def alignment_projector_backend_provenance(
         gather_dtype=gather_dtype,
     )
     return backend_provenance(
-        requested_backend="pallas",
-        actual_backend=("jax" if reason else "pallas"),
+        requested_backend="cuda",
+        actual_backend=("jax" if reason else "cuda"),
         api_surface=api_surface,
         fallback_reason=reason,
         differentiability="performance_only",
     )
 
 
-def _pallas_sinogram_fallback_reason(
+def _cuda_sinogram_fallback_reason(
     *,
     pose_stack: jnp.ndarray,
     grid: Grid,
@@ -531,9 +531,9 @@ def _pallas_sinogram_fallback_reason(
     det_grid: tuple[jnp.ndarray, jnp.ndarray],
     gather_dtype: str,
 ) -> str | None:
-    support_fn, reason = resolve_pallas_callable(
-        "pallas_projector_sinogram_unsupported_reason",
-        missing_reason="pallas_sinogram_support_check_missing",
+    support_fn, reason = resolve_cuda_callable(
+        "cuda_projector_sinogram_unsupported_reason",
+        missing_reason="cuda_sinogram_support_check_missing",
     )
     if support_fn is not None:
         try:
@@ -542,7 +542,7 @@ def _pallas_sinogram_fallback_reason(
                 grid,
                 detector,
                 volume,
-                options=_pallas_projector_options(
+                options=_cuda_projector_options(
                     gather_dtype=gather_dtype,
                     det_grid=det_grid,
                     state_mode="cached",
@@ -551,21 +551,21 @@ def _pallas_sinogram_fallback_reason(
         except Exception as exc:
             reason = f"{type(exc).__name__}: {exc}"
             LOG.debug(
-                "Pallas sinogram support probe failed; falling back to JAX projector: %s",
+                "CUDA sinogram support probe failed; falling back to JAX projector: %s",
                 reason,
             )
     return reason
 
 
-def _pallas_projector_options(
+def _cuda_projector_options(
     *,
     gather_dtype: str,
     det_grid: tuple[jnp.ndarray, jnp.ndarray],
     state_mode: str,
 ) -> object | None:
-    options_cls, _reason = resolve_pallas_callable(
-        "PallasProjectorOptions",
-        missing_reason="pallas_options_missing",
+    options_cls, _reason = resolve_cuda_callable(
+        "CudaProjectorOptions",
+        missing_reason="cuda_options_missing",
     )
     if options_cls is None:
         return None
@@ -576,10 +576,10 @@ def _pallas_projector_options(
     )
 
 
-def _pallas_unsupported_exception_type() -> type[Exception]:
-    unsupported_exc, _reason = resolve_pallas_callable(
-        "PallasProjectorUnsupported",
-        missing_reason="pallas_unsupported_exception_missing",
+def _cuda_unsupported_exception_type() -> type[Exception]:
+    unsupported_exc, _reason = resolve_cuda_callable(
+        "CudaProjectorUnsupported",
+        missing_reason="cuda_unsupported_exception_missing",
     )
     if isinstance(unsupported_exc, type) and issubclass(unsupported_exc, Exception):
         return unsupported_exc

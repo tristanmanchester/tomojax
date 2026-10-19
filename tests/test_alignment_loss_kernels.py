@@ -71,26 +71,26 @@ def test_swd_loss_subsampling_uses_supplied_rng_key() -> None:
     assert float(first) != pytest.approx(float(other_key))
 
 
-def test_pallas_project_stack_records_unsupported_fallback(
+def test_cuda_project_stack_records_unsupported_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class UnsupportedPallas(ValueError):
+    class UnsupportedCuda(ValueError):
         pass
 
     def resolve(name: str, *, missing_reason: str):
-        if name == "pallas_projector_sinogram_unsupported_reason":
+        if name == "cuda_projector_sinogram_unsupported_reason":
             return (lambda *_args, **_kwargs: None), None
-        if name == "PallasProjectorUnsupported":
-            return UnsupportedPallas, None
-        if name == "forward_project_views_T_pallas":
+        if name == "CudaProjectorUnsupported":
+            return UnsupportedCuda, None
+        if name == "forward_project_views_T_cuda":
             return (
                 lambda *_args, **_kwargs: (_ for _ in ()).throw(
-                    UnsupportedPallas("tile shape not supported")
+                    UnsupportedCuda("tile shape not supported")
                 )
             ), None
         return None, missing_reason
 
-    monkeypatch.setattr(fixed_volume, "resolve_pallas_callable", resolve)
+    monkeypatch.setattr(fixed_volume, "resolve_cuda_callable", resolve)
     monkeypatch.setattr(
         fixed_volume,
         "forward_project_view_T",
@@ -103,7 +103,7 @@ def test_pallas_project_stack_records_unsupported_fallback(
         detector=Detector(nu=2, nv=2, du=1.0, dv=1.0),
         volume=jnp.ones((2, 2, 2), dtype=jnp.float32),
         det_grid=(jnp.zeros((2, 2), dtype=jnp.float32), jnp.zeros((2, 2), dtype=jnp.float32)),
-        projector_backend="pallas",
+        projector_backend="cuda",
         require_differentiable_projector=False,
     )
 
@@ -111,21 +111,21 @@ def test_pallas_project_stack_records_unsupported_fallback(
     assert float(jnp.sum(result)) == pytest.approx(4.0)
 
 
-def test_pallas_project_stack_propagates_unexpected_fast_path_errors(
+def test_cuda_project_stack_propagates_unexpected_fast_path_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def resolve(name: str, *, missing_reason: str):
-        if name == "pallas_projector_sinogram_unsupported_reason":
+        if name == "cuda_projector_sinogram_unsupported_reason":
             return (lambda *_args, **_kwargs: None), None
-        if name == "PallasProjectorUnsupported":
+        if name == "CudaProjectorUnsupported":
             return ValueError, None
-        if name == "forward_project_views_T_pallas":
+        if name == "forward_project_views_T_cuda":
             return (
                 lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("broken kernel"))
             ), None
         return None, missing_reason
 
-    monkeypatch.setattr(fixed_volume, "resolve_pallas_callable", resolve)
+    monkeypatch.setattr(fixed_volume, "resolve_cuda_callable", resolve)
 
     with pytest.raises(RuntimeError, match="broken kernel"):
         fixed_volume.project_stack(
@@ -137,7 +137,7 @@ def test_pallas_project_stack_propagates_unexpected_fast_path_errors(
                 jnp.zeros((2, 2), dtype=jnp.float32),
                 jnp.zeros((2, 2), dtype=jnp.float32),
             ),
-            projector_backend="pallas",
+            projector_backend="cuda",
             require_differentiable_projector=False,
         )
 
@@ -168,9 +168,9 @@ def test_cone_alignment_objective_uses_cuda_pose_derivatives():
         require_differentiable_projector=True,
     )
     provenance = fixed_volume.alignment_projector_backend_provenance(
-        pose_stack=poses, projector_backend="pallas", api_surface="test", **options
+        pose_stack=poses, projector_backend="cuda", api_surface="test", **options
     )
-    assert provenance.actual_backend == "pallas"
+    assert provenance.actual_backend == "cuda"
     assert provenance.differentiability == "gradient_safe"
 
     def value_grad(backend):
@@ -182,7 +182,7 @@ def test_cone_alignment_objective_uses_cuda_pose_derivatives():
 
         return jax.jit(jax.value_and_grad(loss))(poses)
 
-    for actual, expected in zip(value_grad("pallas"), value_grad("jax"), strict=True):
+    for actual, expected in zip(value_grad("cuda"), value_grad("jax"), strict=True):
         np.testing.assert_allclose(
             actual, expected, rtol=0, atol=2e-4 * float(jnp.max(jnp.abs(expected)))
         )
