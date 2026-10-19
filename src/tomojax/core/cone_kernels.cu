@@ -903,7 +903,8 @@ extern "C" __global__ void sep_adjoint_cached(
     int nb = a == 0 ? ny : nx;
     int c0 = blockIdx.x * TC, b0 = blockIdx.y * TB, k = blockIdx.z;
     unsigned tid = threadIdx.x;
-    int my_b = b0 + tid / 4, my_c = (tid % 4) * (TC / 4);
+    // Eight-cell stripes spread the four z lanes across shared-memory banks.
+    int my_b = b0 + tid / 4, my_c = (tid % 4) * (TC / 8);
     float my_bf = (float)my_b;
     if (!any_view(coeff, axis_box, nviews, a, true)) return;
     for (int i = tid; i < nviews * 12; i += blockDim.x)
@@ -1019,7 +1020,10 @@ extern "C" __global__ void sep_adjoint_cached(
                     float wb = trif(s_fb[i], my_bf);
                     if (wb == 0.f) continue;
                     #pragma unroll
-                    for (int j = 0; j < TC / 4; ++j) acc[j] += wb * R[i][my_c + j];
+                    for (int j = 0; j < TC / 4; ++j) {
+                        int offset = j % (TC / 8) + (j / (TC / 8)) * (TC / 2);
+                        acc[j] += wb * R[i][my_c + offset];
+                    }
                 }
             }
         }
@@ -1029,7 +1033,10 @@ extern "C" __global__ void sep_adjoint_cached(
         int ix = a == 0 ? k : my_b, iy = a == 0 ? my_b : k;
         long base = ((long)ix * ny + iy) * nz + c0 + my_c;
         #pragma unroll
-        for (int j = 0; j < TC / 4; ++j) if (c0 + my_c + j < nz) vol[base + j] += acc[j];
+        for (int j = 0; j < TC / 4; ++j) {
+            int offset = j % (TC / 8) + (j / (TC / 8)) * (TC / 2);
+            if (c0 + my_c + offset < nz) vol[base + offset] += acc[j];
+        }
     }
 }
 
