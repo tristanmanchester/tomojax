@@ -232,6 +232,19 @@ def test_zeiss_fragmented_sector_windows_match_pixels_without_full_stream_reads(
     streams.update({f"ImageData1/Image{i + 1}": a.tobytes() for i, a in enumerate(counts)})
     write_ole(path, streams)
     original = olefile.OleFileIO.openstream
+    loadfat = olefile.OleFileIO.loadfat
+
+    def checked_fat(self, header):
+        loadfat(self, header)
+        expected = self.sect2array(self.getsect(struct.unpack_from("<I", header, 76)[0]))
+        for sectors in (header[76:512], self.sect2array(header[76:512])):
+            table, size = self.fat, len(self.fat)
+            assert self.loadfat_sect(sectors) == olefile.FREESECT
+            assert self.fat is table, "FAT growth must not copy the accumulated table"
+            assert self.fat[size:] == expected
+            del self.fat[size:]
+
+    monkeypatch.setattr(olefile.OleFileIO, "loadfat", checked_fat)
 
     def openstream(self, name):
         assert not str(name).startswith("ImageData"), "a row crop must not load an entire image"

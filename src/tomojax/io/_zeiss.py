@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import array
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from itertools import pairwise
@@ -20,11 +21,29 @@ if TYPE_CHECKING:
     from ._acquisition import RawAcquisition
 
 
+class _OleFile(olefile.OleFileIO):
+    """Build large allocation tables without copying their accumulated prefix."""
+
+    fat: array.array[int]
+
+    def loadfat_sect(self, sect: Any) -> int | None:
+        # Keep olefile's sector decoding, reads and enclosing DIFAT validation.
+        # Only table accumulation differs: extend is linear in the new block.
+        sectors = sect if isinstance(sect, array.array) else self.sect2array(sect)
+        last = None
+        for value in sectors:
+            last = int(value) & 0xFFFFFFFF
+            if last in (olefile.ENDOFCHAIN, olefile.FREESECT):
+                break
+            self.fat.extend(self.sect2array(self.getsect(last)))
+        return last
+
+
 @dataclass(frozen=True)
 class _ZeissFrames(FrameStack):
     """A logical window of OLE image streams, in their recorded row order.
 
-    Each indexing request opens its own container; neither discovery nor
+    Each indexing request opens its own file; neither discovery nor
     cropping reads image pixels. Reads touch only the requested image rows.
     """
 
@@ -44,9 +63,7 @@ class _ZeissFrames(FrameStack):
     def _read(self, indices: np.ndarray, rows: slice, cols: slice) -> np.ndarray:
         result = np.empty((len(indices), self.rows, self.cols), self.dtype)
         source: Any
-        with (
-            olefile.OleFileIO(self.path) if self.fat is None else Path(self.path).open("rb")
-        ) as source:
+        with _OleFile(self.path) if self.fat is None else Path(self.path).open("rb") as source:
             row_bytes = self.image_shape[1] * self.dtype.itemsize
             for destination, index in enumerate(indices):
                 offset, size = rows.start * row_bytes, self.rows * row_bytes
@@ -232,7 +249,7 @@ def read_zeiss_images(path: Path) -> _ZeissFrames | None:
     """
     if not _is_ole(path):
         return None
-    with olefile.OleFileIO(str(path)) as container:
+    with _OleFile(str(path)) as container:
         if not container.exists("ImageInfo/NoOfImages"):
             return None
         return _images(container, path)
@@ -362,7 +379,7 @@ def read_zeiss(path: Path, *, data_path: str | None = None) -> RawAcquisition | 
 
     if not _is_ole(path):
         return None
-    with olefile.OleFileIO(str(path)) as container:
+    with _OleFile(str(path)) as container:
         if not container.exists("ImageInfo/NoOfImages"):
             return None
         if data_path is not None:
