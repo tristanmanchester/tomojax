@@ -165,16 +165,18 @@ TIGRE's `fdk` 30.7 s from arrays in RAM.
 
 ### Full-view walnut SIRT
 
-Measured 2026-10-19 on `20f4a966` (TomoJAX) and `9a743fc0` (ASTRA), with
-`bash artifacts/agent08_matrix/tomojax_sirt12.sh` and
-`bash artifacts/agent08_matrix/astra_sirt24.sh`. Walnut 1 uses all 1200 views
+Measured 2026-10-19 on `20f4a966` (TomoJAX), `9a743fc0` (ASTRA one orbit)
+and `e280d938` (ASTRA three orbits), with
+`bash artifacts/agent08_matrix/tomojax_sirt12.sh`,
+`bash artifacts/agent08_matrix/astra_sirt24.sh` and
+`bash artifacts/agent08_matrix/astra_sirt24_batch512.sh`. Walnut 1 uses all 1200 views
 of orbit 2 or all 3600 views of the three orbits, binned 2 × 2 onto a
 486 × 384 detector, and a 501³ grid with 0.1 mm voxels.
 
 Each solve includes its library's FDK initializer. TomoJAX uses 12 iterations
 with `SIRTConfig(lower_bound=0, acceleration=True)`; ASTRA uses 24 nonnegative
 SIRT iterations. The one-orbit ASTRA call is `SIRT3D_CUDA`; the three-orbit
-call uses the same recurrence with ASTRA forward/backprojection in 128-view
+call uses the same recurrence with ASTRA forward/backprojection in 512-view
 batches. Cold includes imports, loading and the first solve with fresh
 compilation caches; warm repeats the solve in that process. The filesystem
 cache is not cleared.
@@ -184,7 +186,7 @@ cache is not cleared.
 | One | TomoJAX | 58.02 / 53.47 | 0.024742 | 0.106162 / 0.074939 |
 | One | ASTRA | 70.36 / 67.27 | 0.025998 | 0.109991 / 0.077235 |
 | Three | TomoJAX | 179.07 / 174.22 | 0.026222 | 0.067624 / 0.045780 |
-| Three | ASTRA | 256.13 / 249.52 | 0.027558 | 0.072746 / 0.049110 |
+| Three | ASTRA | 237.79 / 234.35 | 0.027558 | 0.072746 / 0.049110 |
 
 The residual uses one calibrated ASTRA forward projector for both libraries.
 Both image errors use the authors' reference, without intensity fitting.
