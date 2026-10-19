@@ -209,8 +209,9 @@ def test_separately_allocated_norms_match_inline_cache(problem, monkeypatch):
 
 @pytest.mark.numerical
 @pytest.mark.parametrize("free", [1, 2**40])
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_host_cone_updates_match_dense_transpose_without_consuming_inputs(
-    problem, monkeypatch, free
+    problem, monkeypatch, free, dtype
 ):
     grid, detector, geometry, matrix = problem
     if not isinstance(geometry, ConeSegments):
@@ -223,7 +224,7 @@ def test_host_cone_updates_match_dense_transpose_without_consuming_inputs(
     support[0] = False
     initial = np.full((3, 2, 2), 0.7, np.float32)
     initial[0] = np.nan  # excluded values must not enter the likelihood
-    data = (matrix @ np.linspace(0.2, 1.1, 12)).reshape(5, 4, 5)
+    data = (matrix @ np.linspace(0.2, 1.1, 12)).reshape(5, 4, 5).astype(dtype)
     for iterations in (0, 2):
         expected = np.where(support, initial, 0).ravel().astype(np.float64)
         order = np.argsort(geometry.angles, kind="stable")

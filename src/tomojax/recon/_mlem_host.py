@@ -17,7 +17,7 @@ import numpy as np
 
 from tomojax.backends import device_free_memory_bytes
 from tomojax.core.cone import ConeModel, cone_project
-from tomojax.core.host_transfer import copy_to_host, upload_host
+from tomojax.core.host_transfer import copy_to_host, upload_host, upload_host_views
 from tomojax.geometry import grid_volume_origin
 
 from ._host_arrays import validate_host_views
@@ -185,13 +185,13 @@ def _ratios(
     measured_batch = max(1, min(batch, _MEASURED_BATCH_BYTES // view_bytes))
     for first in range(0, len(indices), measured_batch):
         selected = indices[first : first + measured_batch]
-        measured = np.asarray(projections[selected], np.float32)
         if isinstance(expected, jax.Array):
-            uploaded = upload_host(measured, next(iter(expected.devices())))
+            uploaded = upload_host_views(projections, selected, next(iter(expected.devices())))
             expected = _divide_predictions(expected, uploaded, jnp.int32(first))
-            expected.block_until_ready()  # At most one advanced-indexed measurement copy lives.
-            del measured, uploaded
+            expected.block_until_ready()  # Bound the upload buffer and any fallback host packing.
+            del uploaded
             continue
+        measured = np.asarray(projections[selected], np.float32)
         prediction = expected[first : first + len(selected)]
         positive = prediction > 0
         np.divide(measured, prediction, out=prediction, where=positive)
