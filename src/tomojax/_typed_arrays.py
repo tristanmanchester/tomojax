@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
-import jax
-import jax.numpy as jnp
 import numpy as np
 from numpy.typing import NDArray
+
+if TYPE_CHECKING:
+    import jax
 
 type FloatArray = NDArray[np.floating[Any]]
 type Float32Array = NDArray[np.float32]
@@ -35,6 +36,8 @@ def commit_array[T](value: T) -> T:
     Explicit commitment aliases the same pixels; NumPy and lazy inputs are
     returned unchanged. It does not change the caller's default device.
     """
+    import jax
+
     if isinstance(value, jax.Array):
         return cast("T", jax.device_put(value, value.sharding))
     return value
@@ -42,6 +45,8 @@ def commit_array[T](value: T) -> T:
 
 def jax_float32_array(value: object) -> jax.Array:
     """Convert an array-like value to a JAX float32 array."""
+    import jax.numpy as jnp
+
     return cast("jax.Array", jnp.asarray(value, dtype=np.float32))
 
 

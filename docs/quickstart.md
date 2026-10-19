@@ -240,7 +240,8 @@ uv run --no-sync tomojax inspect recon.nxs --preview previews
 The default `--method auto` selects a reconstruction from the geometry and
 reports any limitations; use an explicit `--method` for a fixed solver.
 `recon.nxs` stores the volume and copies the projections. The manifest records
-the selected method, reconstruction settings and automatic outcome. `previews/`
+the selected method, reconstruction settings and automatic outcome. CPU execution
+is supported and does not by itself mark the automatic outcome as limited. `previews/`
 contains PNGs of the central projection (`projection.png`) and the volume's
 three central planes (`slice_z.png`, `slice_y.png`, `slice_x.png`). PNG contrast is scaled for
 display; read the stored floating-point volume for quantitative work.

@@ -11,19 +11,6 @@ from tomojax.core.geometry.base import Grid, GridDict
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-try:  # pragma: no cover - JAX might be absent in build docs
-    import jax  # type: ignore
-    import jax.numpy as jnp  # type: ignore
-
-    _jax_array_types = (jax.Array,)  # type: ignore[attr-defined]
-except Exception:  # pragma: no cover - non-JAX contexts
-    jax = None  # type: ignore[assignment]
-    jnp = None  # type: ignore[assignment]
-    _jax_array_types: tuple[type[object], ...] = ()
-
-_JAX_ARRAY_TYPES = _jax_array_types
-
-
 INTERNAL_VOLUME_AXES = "xyz"
 DISK_VOLUME_AXES = "zyx"
 VOLUME_AXES_ATTR = "volume_axes_order"
@@ -97,20 +84,16 @@ def transpose_volume(volume: object, src: str, dst: str) -> object:
     """
     perm = axes_to_perm(src, dst)
 
-    if _JAX_ARRAY_TYPES and isinstance(
-        volume,
-        _JAX_ARRAY_TYPES,
-    ):  # pragma: no cover - exercised in GPU envs
-        if jnp is None:
-            raise RuntimeError("JAX array transpose requested but jax.numpy is unavailable")
-        if perm == (0, 1, 2):
-            return volume
-        return cast("object", jnp.transpose(volume, axes=perm))
-
     if isinstance(volume, np.ndarray):
         if perm == (0, 1, 2):
             return cast("object", volume)
         return cast("object", volume.transpose(perm))
+
+    import jax
+    import jax.numpy as jnp
+
+    if isinstance(volume, jax.Array):
+        return volume if perm == (0, 1, 2) else jnp.transpose(volume, axes=perm)
 
     arr = np.asarray(volume)
     if perm == (0, 1, 2):

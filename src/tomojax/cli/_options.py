@@ -11,12 +11,13 @@ input or an existing output).
 from __future__ import annotations
 
 import argparse
+from functools import cached_property
 from pathlib import Path
 import sys
 from typing import TYPE_CHECKING, NoReturn, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
 
 EXPERT_EPILOG = (
     "Expert settings are TOML keys for --config; --config-keys lists them with their defaults."
@@ -68,11 +69,16 @@ class _ConfigKeys(argparse.Action):
         self,
         option_strings: Sequence[str],
         dest: str,
-        settings: Mapping[str, object] | None = None,
+        settings: Mapping[str, object] | Callable[[], Mapping[str, object]] | None = None,
         **kwargs: object,
     ) -> None:
         super().__init__(option_strings, dest, nargs=0, default=argparse.SUPPRESS, **kwargs)  # type: ignore[arg-type]
-        self.settings: Mapping[str, object] = settings or {}
+        self._settings = settings
+
+    @cached_property
+    def settings(self) -> Mapping[str, object]:
+        """Resolve method defaults only for config validation or listing."""
+        return (self._settings() if callable(self._settings) else self._settings) or {}
 
     def __call__(self, parser: argparse.ArgumentParser, *_args: object) -> NoReturn:
         entries: dict[str, str] = {}
@@ -109,13 +115,16 @@ def _toml(value: object) -> str:
 
 
 def add_config(
-    parser: argparse.ArgumentParser, *, settings: Mapping[str, object] | None = None
+    parser: argparse.ArgumentParser,
+    *,
+    settings: Mapping[str, object] | Callable[[], Mapping[str, object]] | None = None,
 ) -> None:
     """Add ``--config FILE`` and ``--config-keys``.
 
     A config file's keys are the parser's options, and ``settings``: expert
     settings with no option, by name and default, which
-    :func:`tomojax.cli.config.parse_args_with_config` returns as given.
+    :func:`tomojax.cli.config.parse_args_with_config` returns as given. A callable
+    defers loading method defaults until config validation or listing needs them.
     """
     _ = parser.add_argument(
         "--config", metavar="FILE", help="Read option defaults (and expert settings) from TOML"

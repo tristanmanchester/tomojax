@@ -31,7 +31,7 @@ def test_default_reconstruction_matches_explicit_inverse_and_reports_coverage(
     actual = tj.reconstruct(scan)
     np.testing.assert_array_equal(actual.volume, expected.volume)
     assert actual.scan is scan and actual.method == expected.method
-    limited = raw or not complete or actual.info.get("backend") == "numpy"
+    limited = raw or not complete
     assert actual.info["automatic"]["status"] == ("limited" if limited else "ok")
     assert bool(actual.info["automatic"]["reasons"]) == limited
     if raw:

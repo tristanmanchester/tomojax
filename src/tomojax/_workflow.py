@@ -515,8 +515,6 @@ def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstructio
         scan, method=method, reasons=reasons
     )
     result = reconstruct(scan, method, **options)
-    if result.info.get("backend") == "numpy":
-        reasons.append("CUDA Fourier is not active; NumPy execution cannot promise GPU throughput.")
     automatic = {
         "method": method,
         "status": "limited" if reasons else "ok",

@@ -84,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _ = p.add_argument("data", metavar="INPUT", help="Scan to reconstruct (.nxs, .h5, .npz)")
     add_output(p, "Output .nxs: the volume, with the scan's projections and geometry")
-    add_config(p, settings=_settings())
+    add_config(p, settings=_settings)
     _ = p.add_argument(
         "--method",
         choices=("auto", *_METHODS),

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
+import sys
 
 import h5py
 import imageio.v3 as iio
@@ -83,7 +85,22 @@ def test_inspect_cli_previews_a_reconstruction(tmp_path: Path) -> None:
     save_dataset(path, dataset)
     previews = tmp_path / "previews"
 
-    assert main(["inspect", str(path), "--preview", str(previews)]) == 0
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from tomojax.cli.main import main; "
+            "assert main(sys.argv[1:]) == 0; assert 'jax' not in sys.modules",
+            "inspect",
+            str(path),
+            "--preview",
+            str(previews),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
     names = sorted(p.name for p in previews.iterdir())
     assert names == ["projection.png", "slice_x.png", "slice_y.png", "slice_z.png"]
     with pytest.raises(SystemExit) as exc_info:
