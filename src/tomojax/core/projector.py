@@ -8,7 +8,10 @@ import functools
 import logging
 import math
 import operator
-from typing import cast
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
@@ -327,9 +330,15 @@ def _trilinear_scatter_add(acc_flat, ray_vals, ix_f, iy_f, iz_f, nx, ny, nz):
     return acc_flat + scatter(ray_vals)[0]
 
 
-def cuda_unsupported_exception_type() -> type[Exception] | None:
-    """The CUDA projector's rejection exception, or None when that module is absent."""
-    unsupported_exc, _reason = resolve_cuda_callable(
+def cuda_unsupported_exception_type(
+    resolve: Callable[..., tuple[object, str | None]] = resolve_cuda_callable,
+) -> type[Exception] | None:
+    """The CUDA projector's rejection exception, or None when that module is absent.
+
+    ``resolve`` is the caller's CUDA-callable resolver, so the exception comes
+    from the same module as the callables the caller obtained.
+    """
+    unsupported_exc, _reason = resolve(
         "CudaProjectorUnsupported",
         missing_reason="cuda_unsupported_exception_missing",
     )
