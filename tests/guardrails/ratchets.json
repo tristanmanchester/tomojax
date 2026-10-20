@@ -60,12 +60,7 @@
     "pyright: ignore": 14
   },
   "complex_functions": [
-    "src/tomojax/_data/_io_helpers.py::C901::_load_processing_metadata",
-    "src/tomojax/_data/_io_nxtomo.py::C901::load_nxtomo",
     "src/tomojax/_data/_io_nxtomo.py::C901::validate_nxtomo",
-    "src/tomojax/_data/_io_nxtomo.py::PLR0912::load_nxtomo",
-    "src/tomojax/_data/_io_nxtomo.py::PLR0912::validate_nxtomo",
-    "src/tomojax/_data/_io_nxtomo.py::PLR0915::load_nxtomo",
     "src/tomojax/_json.py::C901::normalize_json",
     "src/tomojax/_json.py::PLR0911::normalize_json",
     "src/tomojax/alignment/_config.py::C901::_normalize_optimizer_options",
@@ -98,12 +93,12 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "type_errors": {
-    "reportArgumentType": 272,
+    "reportArgumentType": 271,
     "reportAssignmentType": 2,
-    "reportAttributeAccessIssue": 127,
+    "reportAttributeAccessIssue": 116,
     "reportCallIssue": 12,
     "reportGeneralTypeIssues": 7,
-    "reportIndexIssue": 7,
+    "reportIndexIssue": 6,
     "reportInvalidTypeForm": 1,
     "reportOperatorIssue": 4,
     "reportOptionalCall": 2,

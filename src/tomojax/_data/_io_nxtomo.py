@@ -430,57 +430,55 @@ def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
         volume_raw, volume_axes_attr = _load_processing_metadata(out, entry, path=path)
         _load_sample_metadata(out, entry)
 
-        # Normalize volume axes if present
         if volume_raw is not None:
-            grid_hint = out.get("grid")
-            attr_norm = None
-            if volume_axes_attr:
-                try:
-                    axes_to_perm(INTERNAL_VOLUME_AXES, volume_axes_attr)
-                    attr_norm = volume_axes_attr.lower()
-                except ValueError:
-                    _axes_log_warning(
-                        "Ignoring malformed volume_axes_order=%r on %s",
-                        volume_axes_attr,
-                        path,
-                    )
-            disk_axes = attr_norm or infer_disk_axes(volume_raw.shape, grid_hint)
-            source = "attr" if attr_norm else "heuristic"
-            volume_np = np.asarray(volume_raw)
-            disk_order: str
-            if disk_axes == DISK_VOLUME_AXES:
-                if source == "heuristic":
-                    _axes_log_warning(
-                        "load_nxtomo: inferred disk volume axes zyx for %s; "
-                        "transposing to internal xyz",
-                        path,
-                    )
-                volume_np = np.asarray(
-                    transpose_volume(volume_np, DISK_VOLUME_AXES, INTERNAL_VOLUME_AXES)
-                )
-                disk_order = DISK_VOLUME_AXES
-            elif disk_axes == INTERNAL_VOLUME_AXES:
-                if source == "heuristic":
-                    _axes_log_warning(
-                        "load_nxtomo: inferred disk volume axes xyz for %s",
-                        path,
-                    )
-                disk_order = INTERNAL_VOLUME_AXES
-            elif disk_axes is None:
-                disk_order = "unknown"
-                _axes_log_warning(
-                    "load_nxtomo: unable to infer volume axis order for %s (shape %s)",
-                    path,
-                    volume_raw.shape,
-                )
-            else:
-                volume_np = np.asarray(transpose_volume(volume_np, disk_axes, INTERNAL_VOLUME_AXES))
-                disk_order = disk_axes
+            volume_np, disk_order, source = _volume_in_internal_axes(
+                volume_raw, volume_axes_attr, grid_hint=out.get("grid"), path=path
+            )
             out["volume"] = volume_np
             out["volume_axes_order"] = None
             out["disk_volume_axes_order"] = disk_order
             out["volume_axes_source"] = source
     return LoadedNXTomo.from_dataset(out)
+
+
+def _volume_in_internal_axes(
+    volume_raw: np.ndarray, volume_axes_attr: str | None, *, grid_hint: object, path: str
+) -> tuple[np.ndarray, str, str]:
+    """A saved volume in internal xyz order, with the disk order and how it was found.
+
+    The order comes from the saved ``volume_axes_order`` attribute when it is
+    valid, else from the volume's shape against the grid; a malformed attribute
+    and every inferred order are logged.
+    """
+    attr_norm = None
+    if volume_axes_attr:
+        try:
+            axes_to_perm(INTERNAL_VOLUME_AXES, volume_axes_attr)
+            attr_norm = volume_axes_attr.lower()
+        except ValueError:
+            _axes_log_warning(
+                "Ignoring malformed volume_axes_order=%r on %s", volume_axes_attr, path
+            )
+    disk_axes = attr_norm or infer_disk_axes(volume_raw.shape, grid_hint)
+    source = "attr" if attr_norm else "heuristic"
+    volume_np = np.asarray(volume_raw)
+    if disk_axes is None:
+        _axes_log_warning(
+            "load_nxtomo: unable to infer volume axis order for %s (shape %s)",
+            path,
+            volume_raw.shape,
+        )
+        return volume_np, "unknown", source
+    if source == "heuristic":
+        _axes_log_warning(
+            "load_nxtomo: inferred disk volume axes %s for %s%s",
+            disk_axes,
+            path,
+            "; transposing to internal xyz" if disk_axes == DISK_VOLUME_AXES else "",
+        )
+    if disk_axes != INTERNAL_VOLUME_AXES:
+        volume_np = np.asarray(transpose_volume(volume_np, disk_axes, INTERNAL_VOLUME_AXES))
+    return volume_np, disk_axes, source
 
 
 def validate_nxtomo(path: str) -> ValidationReport:
@@ -525,26 +523,11 @@ def validate_nxtomo(path: str) -> ValidationReport:
                 else:
                     n_views = d.shape[0]
             if "instrument/detector/image_key" in e:
-                ik = e["instrument/detector/image_key"]
-                if ik.ndim != 1:
-                    report["issues"].append("instrument/detector/image_key must be 1D (n_views,)")
-                elif n_views is not None and ik.shape[0] != n_views:
-                    report["issues"].append("image_key length must match #views in detector/data")
-                if ik.dtype.kind not in {"i", "u"}:
-                    report["issues"].append("image_key must use integer dtype")
-                elif ik.ndim == 1:
-                    invalid_values, invalid_counts = np.unique(
-                        ik[~np.isin(ik, np.asarray([0, 1, 2, 3], dtype=ik.dtype))],
-                        return_counts=True,
+                report["issues"].extend(
+                    _image_key_issues(
+                        cast("h5py.Dataset", e["instrument/detector/image_key"]), frames=n_views
                     )
-                    if invalid_values.size > 0:
-                        formatted = ", ".join(
-                            f"{int(value)} ({int(count)} frame{'s' if int(count) != 1 else ''})"
-                            for value, count in zip(invalid_values, invalid_counts, strict=True)
-                        )
-                        report["issues"].append(
-                            "image_key values must be in {0, 1, 2, 3}; found " + formatted
-                        )
+                )
             if angle_path is not None:
                 report["issues"].extend(
                     _rotation_angle_issues(
@@ -554,6 +537,29 @@ def validate_nxtomo(path: str) -> ValidationReport:
     except OSError as exc:
         report["issues"].append(f"Unable to read HDF5 file: {exc}")
     return report
+
+
+def _image_key_issues(image_key: h5py.Dataset, *, frames: int | None) -> list[str]:
+    """Shape, dtype and value issues in an image_key dataset."""
+    issues = []
+    if image_key.ndim != 1:
+        issues.append("instrument/detector/image_key must be 1D (n_views,)")
+    elif frames is not None and image_key.shape[0] != frames:
+        issues.append("image_key length must match #views in detector/data")
+    if image_key.dtype.kind not in {"i", "u"}:
+        issues.append("image_key must use integer dtype")
+    elif image_key.ndim == 1:
+        allowed = np.asarray([0, 1, 2, 3], dtype=image_key.dtype)
+        invalid_values, invalid_counts = np.unique(
+            image_key[~np.isin(image_key, allowed)], return_counts=True
+        )
+        if invalid_values.size > 0:
+            formatted = ", ".join(
+                f"{int(value)} ({int(count)} frame{'s' if int(count) != 1 else ''})"
+                for value, count in zip(invalid_values, invalid_counts, strict=True)
+            )
+            issues.append("image_key values must be in {0, 1, 2, 3}; found " + formatted)
+    return issues
 
 
 def _rotation_angle_issues(angles: h5py.Dataset, *, frames: int | None, path: str) -> list[str]:

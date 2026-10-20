@@ -227,6 +227,14 @@ def _load_source_metadata(out: LoadedDataset, entry: h5py.Group) -> None:
         out["source_probe"] = source_info["probe"]
 
 
+_PROCESSING_JSON_SECTIONS = (
+    ("align", "gauge_fix_json", "align_gauge", "alignment gauge fix"),
+    ("align", "misalign_spec_json", "misalign_spec", "misalignment spec"),
+    ("calibration", "geometry_calibration_json", "geometry_calibration", "geometry calibration"),
+    ("simulation", "artefacts_json", "simulation_artefacts", "simulation artefacts"),
+)
+
+
 def _load_processing_metadata(
     out: LoadedDataset,
     entry: h5py.Group,
@@ -251,42 +259,15 @@ def _load_processing_metadata(
     if align_grp is not None:
         if "thetas" in align_grp:
             out["align_params"] = align_grp["thetas"][...]
-        align_gauge = _load_json_mapping_attr(
-            align_grp.attrs.get("gauge_fix_json"),
-            path=path,
-            context="alignment gauge fix",
-        )
-        if align_gauge is not None:
-            out["align_gauge"] = align_gauge
         if "angle_offset_deg" in align_grp:
             out["angle_offset_deg"] = align_grp["angle_offset_deg"][...]
-        misalign_spec = _load_json_mapping_attr(
-            align_grp.attrs.get("misalign_spec_json"),
-            path=path,
-            context="misalignment spec",
-        )
-        if misalign_spec is not None:
-            out["misalign_spec"] = misalign_spec
-
-    calibration_grp = tomojax_grp.get("calibration")
-    if calibration_grp is not None:
-        geometry_calibration = _load_json_mapping_attr(
-            calibration_grp.attrs.get("geometry_calibration_json"),
-            path=path,
-            context="geometry calibration",
-        )
-        if geometry_calibration is not None:
-            out["geometry_calibration"] = geometry_calibration
-
-    simulation_grp = tomojax_grp.get("simulation")
-    if simulation_grp is not None:
-        simulation_artefacts = _load_json_mapping_attr(
-            simulation_grp.attrs.get("artefacts_json"),
-            path=path,
-            context="simulation artefacts",
-        )
-        if simulation_artefacts is not None:
-            out["simulation_artefacts"] = simulation_artefacts
+    for group, attr, key, context in _PROCESSING_JSON_SECTIONS:
+        section = tomojax_grp.get(group)
+        if section is None:
+            continue
+        mapping = _load_json_mapping_attr(section.attrs.get(attr), path=path, context=context)
+        if mapping is not None:
+            out[key] = mapping
 
     return volume_raw, volume_axes_attr
 
