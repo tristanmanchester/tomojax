@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from contextlib import ExitStack
 from functools import partial
+import math
 
 import jax
 import jax.numpy as jnp
@@ -184,6 +185,61 @@ def _finish_product(ax, dx, free, damping, regularisation):
     return free * (ax + damping * dx + regularisation)
 
 
+@partial(jax.jit, static_argnames=("spec",))
+def _regularisation_derivative(x, direction, *, spec):
+    """Gradient or Hessian product, without retained volume-sized factors."""
+    gradient = partial(jax.grad(volume_regularisation), spec=spec)
+    if direction is None:
+        return gradient(x)
+    return jax.jvp(gradient, (x,), (direction,))[1]
+
+
+_REGULARISATION_TILE_BYTES = 64 << 20
+
+
+@partial(jax.jit, donate_argnums=(0,), static_argnames=("spec",))
+def _finish_regularised_product(ax, direction, x, free, damping, *, spec):
+    """Add a local regulariser derivative in slabs, reusing the data product.
+
+    Each output depends on at most one neighbour along any coordinate, even
+    for the mixed gradient components. One-cell halos therefore preserve the
+    full-volume Hessian while bounding its gradient-field scratch. ``None``
+    for the direction adds the gradient instead, without retaining HVP factors.
+    """
+    axis = max(range(3), key=x.shape.__getitem__)
+    length = x.shape[axis]
+    plane_bytes = 4 * math.prod(x.shape) // length
+    core = min(length, max(1, _REGULARISATION_TILE_BYTES // (8 * plane_bytes)))
+    width = min(length, core + 2)
+
+    def take(value, start, size):
+        return jax.lax.dynamic_slice_in_dim(value, start, size, axis=axis)
+
+    def body(i, out):
+        first = jnp.minimum(i * core, length - core)
+        start = jnp.clip(first - 1, 0, length - width)
+        curvature = _regularisation_derivative(
+            take(x, start, width),
+            None if direction is None else take(direction, start, width),
+            spec=spec,
+        )
+        previous = take(out, first, core)
+        local = previous if direction is None else previous + damping * take(direction, first, core)
+        local += take(curvature, first - start, core)
+        local *= free if free.ndim == 0 else take(free, first, core)
+        valid_shape = [1, 1, 1]
+        valid_shape[axis] = core
+        valid = (first + jnp.arange(core) >= i * core).reshape(valid_shape)
+        return jax.lax.dynamic_update_slice_in_dim(
+            out, jnp.where(valid, local, previous), first, axis=axis
+        )
+
+    return jax.lax.fori_loop(0, (length + core - 1) // core, body, ax)
+
+
+_regularisation_value = jax.jit(volume_regularisation, static_argnames=("spec",))
+
+
 class _HostSystem:
     """Own the resident image and tiny pose factorisation of one linear update."""
 
@@ -192,12 +248,12 @@ class _HostSystem:
         self.empty = np.empty((0,), np.float32)
         self.gram = jnp.zeros((p.shape[0], p.shape[1], p.shape[1]), jnp.float32)
         gx, gp, gram, _ = self.run("gradient")
-        self.regularisation = partial(volume_regularisation, spec=spec)
         if spec.tv_weight:
-            reg_grad, self.reg_hessian = jax.linearize(jax.grad(self.regularisation), x)
-            gx += np.asarray(reg_grad)
-        else:
-            self.reg_hessian = None
+            gx += np.asarray(
+                _finish_regularised_product(
+                    jnp.zeros_like(x), None, x, jnp.float32(1), 0.0, spec=spec
+                )
+            )
         smooth = partial(pose_smoothness, weights=arrays.smoothness)
         sg, self.smooth_hessian = jax.linearize(jax.grad(smooth), p)
         active = np.asarray(arrays.active)
@@ -248,16 +304,23 @@ class _HostSystem:
             weighted=self.weighted,
         )
         if mode in {"normal", "schur"}:
-            regularisation = (
-                jnp.float32(0) if self.reg_hessian is None else self.reg_hessian(direction)
-            )
-            product = _finish_product(
-                results[0],
-                direction,
-                jax.device_put(self.free),
-                self.spec.gn_volume_damping,
-                regularisation,
-            )
+            if self.spec.tv_weight:
+                product = _finish_regularised_product(
+                    results[0],
+                    direction,
+                    self.x,
+                    jax.device_put(self.free),
+                    self.spec.gn_volume_damping,
+                    spec=self.spec,
+                )
+            else:
+                product = _finish_product(
+                    results[0],
+                    direction,
+                    jax.device_put(self.free),
+                    self.spec.gn_volume_damping,
+                    jnp.float32(0),
+                )
             ax = np.asarray(product, order="C")
         else:
             # Initialisation products are subsequently edited on the host;
@@ -357,7 +420,7 @@ def build_host_objective(arrays: CoupledArrays, spec: CoupledSpec) -> tuple[Call
             )[3]
             return (
                 float(result)
-                + float(volume_regularisation(x, spec=spec))
+                + float(_regularisation_value(x, spec=spec))
                 + float(pose_smoothness(p, weights=arrays.smoothness))
             )
 

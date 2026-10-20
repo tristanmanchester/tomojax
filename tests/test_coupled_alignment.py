@@ -752,6 +752,36 @@ def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth, i
     )
     objective = _coupled_objective.build_coupled_objective(ctx)
     arrays, spec = captured[0]
+    gradient = jax.grad(partial(_coupled_program.volume_regularisation, spec=spec))
+    expected_gradient, hessian = jax.linearize(gradient, x)
+    direction = jnp.linspace(-1, 1, x.size).reshape(x.shape)
+    np.testing.assert_allclose(
+        _coupled_host._regularisation_derivative(x, None, spec=spec), expected_gradient, atol=2e-8
+    )
+    np.testing.assert_allclose(
+        _coupled_host._regularisation_derivative(x, direction, spec=spec),
+        hessian(direction),
+        rtol=2e-6,
+        atol=2e-8,
+    )
+    monkeypatch.setattr(_coupled_host, "_REGULARISATION_TILE_BYTES", 384)
+    _coupled_host._finish_regularised_product.clear_cache()
+    probe = jnp.tile(x, (3, 1, 1))
+    probe_spec = replace(spec, grid=replace(grid, nx=probe.shape[0]))
+    derivative = jax.grad(partial(_coupled_program.volume_regularisation, spec=probe_spec))
+    tangent = jnp.linspace(-1, 1, probe.size).reshape(probe.shape)
+    free = tangent > -0.5
+    curvature = jax.jvp(derivative, (probe,), (tangent,))[1]
+    product = _coupled_host._finish_regularised_product(
+        jnp.ones_like(probe), tangent, probe, free, 0.1, spec=probe_spec
+    )
+    np.testing.assert_allclose(
+        product, free * (1 + 0.1 * tangent + curvature), rtol=2e-6, atol=2e-8
+    )
+    initial = _coupled_host._finish_regularised_product(
+        jnp.zeros_like(probe), None, probe, jnp.float32(1), 0.0, spec=probe_spec
+    )
+    np.testing.assert_allclose(initial, derivative(probe), rtol=2e-6, atol=2e-8)
     p = jnp.zeros((3, 6), jnp.float32).at[:, 3].set(jnp.asarray([0.03, -0.01, 0.02]))
     expected = objective.update(p, x)
     update, loss = _coupled_host.build_host_objective(arrays, replace(spec, cache_columns=False))

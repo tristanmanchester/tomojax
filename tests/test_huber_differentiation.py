@@ -330,3 +330,23 @@ def test_tv_platform_dispatch_preserves_input_and_radius_derivatives(monkeypatch
             - actual(x - eps * direction, radius - eps * dradius)
         ) / (2 * eps)
         np.testing.assert_allclose(tangent, difference, rtol=2e-3, atol=5e-4)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("shape", [(7, 3, 2), (2, 7, 3), (2, 3, 7), (1, 7, 1)])
+def test_tiled_huber_gradient_and_derivatives_match_value_oracle(monkeypatch, shape):
+    monkeypatch.setattr("tomojax.recon._tv_ops._HUBER_TILE_BYTES", 384)
+    rng = np.random.default_rng(97)
+    x = jnp.asarray(rng.normal(size=shape), jnp.float32)
+    v = jnp.asarray(rng.normal(size=shape), jnp.float32)
+    reference = jax.grad(lambda u: huber_tv_value(u, 0.7))
+
+    def tiled(u):
+        return huber_tv_grad(u, 0.7)
+
+    np.testing.assert_allclose(jax.jit(tiled)(x), reference(x), rtol=2e-6, atol=2e-6)
+    jvp = jax.jit(lambda u, d: jax.jvp(tiled, (u,), (d,))[1])(x, v)
+    vjp = jax.jit(lambda u, d: jax.vjp(tiled, u)[1](d)[0])(x, v)
+    expected = jax.jvp(reference, (x,), (v,))[1]
+    np.testing.assert_allclose(jvp, expected, rtol=2e-6, atol=2e-6)
+    np.testing.assert_allclose(vjp, expected, rtol=2e-6, atol=2e-6)
