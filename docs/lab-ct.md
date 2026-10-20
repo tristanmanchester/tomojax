@@ -52,9 +52,11 @@ Use one length unit throughout (the pixel size and both distances).
 `--pixel-size` takes one value for square pixels, or the u then v sizes.
 
 `tomojax preprocess` also corrects lab-CT artefacts.
-`--beam-hardening 1,0.05` linearises beam hardening, mapping each line
-integral p to `p + 0.05 p²` (calibrate the coefficients on a single-material
-sample). `--stripes 9` removes rings: it subtracts each detector
+`--beam-hardening fit` linearises single-material beam hardening with a curve
+fitted to the scan itself, and `--beam-hardening recorded` with the vendor's
+recorded one (Nikon's coefficients); the
+[corrections reference](../src/tomojax/corrections/README.md#beam-hardening)
+describes both and the spectrum model. `--stripes 9` removes rings: it subtracts each detector
 pixel's constant offset, comparing its values sorted over views with those of
 its 9 neighbouring columns. Structure symmetric about the rotation axis also
 looks stationary, so a narrow centred feature can be altered: use the smallest

@@ -40,6 +40,18 @@ Each bounded ASTRA solve releases its idle GPU workspace before the next initial
 
 Exporting host cone geometry to ASTRA does not start a JAX device runtime.
 
+`BeamHardening` corrects single-material beam hardening with the physical
+class of curves, a positive mixture of exponentials in declared units, instead
+of a free polynomial; `BeamHardening(coefficients=...)` and
+`tomojax preprocess --beam-hardening C1,C2,...` are removed. Its curve can be
+self-calibrated from the scan (`BeamHardening.fit`, `--beam-hardening fit`),
+taken from Nikon's recorded coefficients (`BeamHardening.recorded`,
+`--beam-hardening recorded`), converted from any polynomial, or computed from a
+tube spectrum and xraylib attenuation (`tube_spectrum`,
+`BeamHardening.from_spectrum`, the `spectra` extra). Nikon, Zeiss and Bruker
+beam hardening settings and tube settings are recorded with loaded scans.
+`tj.reconstruct(scan, "polychromatic")` fits the image and the curve together.
+
 Projection matching fits a band-limited projection model matched to the
 detector sampling. Large motion in noisy scans is recovered more accurately, and
 the PSI nanotomography workflow takes about 40% less time.

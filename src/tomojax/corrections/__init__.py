@@ -14,10 +14,11 @@ see :class:`Step`.
 from __future__ import annotations
 
 from ._engine import Corrected, correct_frames, correct_projections, corrected_row_source
+from ._hardening import BeamHardening
 from ._phase import remove_phase_ramp, unwrap_phase
 from ._records import Correction
+from ._spectrum import tube_spectrum
 from ._steps import (
-    BeamHardening,
     Paganin,
     RadialDistortion,
     RejectViews,
@@ -40,5 +41,6 @@ __all__ = [
     "correct_projections",
     "corrected_row_source",
     "remove_phase_ramp",
+    "tube_spectrum",
     "unwrap_phase",
 ]

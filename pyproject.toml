@@ -50,6 +50,9 @@ fourier-cuda12 = [
 progress = [
     "tqdm>=4.67.1,<5",
 ]
+spectra = [
+    "xraylib>=4.1,<5",
+]
 
 [project.scripts]
 tomojax = "tomojax.cli.main:main"

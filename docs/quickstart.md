@@ -69,7 +69,7 @@ names; `--data-path`,
 `--image-key-path` and `--angles-path` (expert settings, `--config-keys`) name
 them otherwise. Options add corrections: `--zingers`, `--stripes 9`
 (rings), `--reject-views` (views that jump from their neighbours, such as a
-closed shutter), `--beam-hardening 1,0.05`; `--select-views` and `--crop` keep
+closed shutter), `--beam-hardening fit`; `--select-views` and `--crop` keep
 part of the scan. Already-corrected data should skip this
 step; applying the logarithm again changes the data.
 

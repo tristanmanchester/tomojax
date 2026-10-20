@@ -179,6 +179,7 @@ def _configuration_fields(command: str) -> set[str]:
         FistaConfig,
         FourierConfig,
         MLEMConfig,
+        PolychromaticConfig,
         SIRTConfig,
         SPDHGConfig,
     )
@@ -193,6 +194,7 @@ def _configuration_fields(command: str) -> set[str]:
         SPDHGConfig,
         SIRTConfig,
         MLEMConfig,
+        PolychromaticConfig,
     )
     # Arrays and devices have no TOML form.
     return {item.name for c in configs for item in fields(c) if item.init} - {"support", "devices"}

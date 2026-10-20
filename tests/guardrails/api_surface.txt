@@ -404,6 +404,14 @@ class tomojax.recon.MLEMConfig(
         projector_backend: 'ProjectorBackend' = 'auto',
         projector_model: 'ProjectorModel' = 'auto',
     ) -> None
+class tomojax.recon.PolychromaticConfig(
+        *,
+        iterations: 'int' = 8,
+        inner_iterations: 'int' = 8,
+        rates: 'tuple[float, ...] | None' = None,
+        weights: 'tuple[float, ...] | None' = None,
+        threshold: 'float | None' = None,
+    ) -> None
 class tomojax.recon.SIRTConfig(
         *,
         iterations: 'int' = 50,
@@ -542,6 +550,14 @@ def tomojax.recon.mlem(
         config: 'MLEMConfig | None' = None,
         det_grid: 'tuple[jax.Array, jax.Array] | None' = None,
     ) -> 'tuple[jax.Array | np.ndarray, dict[str, object]]'
+def tomojax.recon.polychromatic(
+        geometry: 'Geometry',
+        grid: 'Grid',
+        detector: 'Detector',
+        projections: 'jax.Array | np.ndarray',
+        *,
+        config: 'PolychromaticConfig | None' = None,
+    ) -> 'tuple[jax.Array, dict[str, object]]'
 def tomojax.recon.project(
         geometry: 'Geometry',
         volume: 'jax.Array | np.ndarray',

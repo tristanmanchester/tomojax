@@ -34,8 +34,19 @@ if TYPE_CHECKING:
     from tomojax import Reconstruction, Scan
     from tomojax.recon.api import MethodConfig
 
-type _Method = Literal["auto", "fbp", "fourier", "cgls", "fista", "spdhg", "sirt", "mlem"]
-_METHODS: tuple[_Method, ...] = ("fbp", "fourier", "cgls", "fista", "spdhg", "sirt", "mlem")
+type _Method = Literal[
+    "auto", "fbp", "fourier", "cgls", "fista", "spdhg", "sirt", "mlem", "polychromatic"
+]
+_METHODS: tuple[_Method, ...] = (
+    "fbp",
+    "fourier",
+    "cgls",
+    "fista",
+    "spdhg",
+    "sirt",
+    "mlem",
+    "polychromatic",
+)
 # The options that are tj.reconstruct keywords besides the method and grid.
 _KEYWORDS = ("filter", "iterations", "tv_weight", "nonnegative", "warm_start", "seed")
 # Configuration fields a TOML file cannot hold.
@@ -60,8 +71,8 @@ _PUBLIC = (
 _SETTINGS = (
     "Expert settings are --config keys, fields of the method's configuration:\n"
     "tomojax.recon.FBPConfig (fbp, and FDK for cone beams), FourierConfig, CGLSConfig,\n"
-    "FistaConfig, SPDHGConfig, SIRTConfig or MLEMConfig. Each replaces a default field; a\n"
-    "setting the method's class has no field for fails with the ones it has.\n"
+    "FistaConfig, SPDHGConfig, SIRTConfig, MLEMConfig or PolychromaticConfig. Each replaces\n"
+    "a default field; a setting the method's class has no field for fails with the ones it has.\n"
     "Expert settings require an explicit --method rather than automatic selection.\n"
 )
 _EPILOG = (
@@ -93,7 +104,8 @@ def build_parser() -> argparse.ArgumentParser:
             "auto (default): choose from geometry; fbp: filtered backprojection/FDK; "
             "fourier: parallel Fourier inverse; "
             "cgls: least squares; sirt: normalized algebraic updates; fista, spdhg: TV; "
-            "mlem: linear Poisson MLEM/OSEM"
+            "mlem: linear Poisson MLEM/OSEM; polychromatic: least squares with a fitted "
+            "beam hardening curve"
         ),
     )
     _ = p.add_argument(

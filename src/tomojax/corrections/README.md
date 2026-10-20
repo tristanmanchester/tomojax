@@ -39,7 +39,7 @@ Steps, each a frozen dataclass of its settings:
 | `Paganin(delta_beta, distance, energy_kev, pixel_size)` | transmission | single-material phase retrieval; distance and pixel size at the sample in metres, energy in keV | `--paganin DELTA_BETA,DISTANCE,ENERGY_KEV,PIXEL` (expert) |
 | `Stripes(width=9, varying=False)` | line integrals | constant pixel offsets, or selected intensity-dependent responses with `varying=True` | `--stripes WIDTH` (constant offsets) |
 | `RejectViews(z=6.0, neighbours=5, min_jump=0.05)` | line integrals | drops views whose median jumps from their neighbours', and their geometry | `--reject-views [Z]` |
-| `BeamHardening(coefficients=(1.0,))` | line integrals | linearisation `p -> c1 p + c2 p^2 + ...` | `--beam-hardening C1,C2,...` |
+| `BeamHardening(rates, weights, energy_kev=None)` | line integrals | single-material linearisation, see below | `--beam-hardening fit` or `recorded` |
 
 Also exported:
 
@@ -59,6 +59,78 @@ view-to-view differences are anomalous. Unselected centred features are
 preserved, but their constant-offset stripes are left too; sparse views or
 sharp moving edges can cause false detections. Selected dead pixels receive
 only the neighbouring mean; their missing angular information is not recovered.
+
+## Beam hardening
+
+A polychromatic beam hardens as it crosses material, so thick paths look less
+attenuating than they are: cupping and dark streaks between dense features.
+Through one material the measured line integral is
+`q = g(p) = -ln sum_j w_j exp(-k_j p)`, where `p` is the material's line
+integral and the mixture of rates `k_j` with weights `w_j` is the detected
+spectrum seen through the material. Every curve one material can make has this
+form, and every such curve is increasing, concave and linear at large `p`.
+`BeamHardening` replaces each `q` by `p = g^-1(q)`, through a tabulated inverse
+accurate to float32.
+
+The units of `p` are declared: with `energy_kev=None` the curve's slope at zero
+is one, so thin paths keep their attenuation and the corrected image is in the
+unhardened beam's mean attenuation; with `energy_kev` the rates are relative
+to the material's attenuation at that energy, and so is the image.
+
+The curve comes from one of four sources:
+
+- `BeamHardening.fit(scan)` self-calibrates: it reconstructs the scan by
+  FBP/FDK, divides the image into air and material levels (peaks of its
+  histogram that have an interior, so a second material is a level and
+  cupping within one material is not), flattens each level to its mean,
+  projects that with the scan's own projector for each ray's material line
+  integral and fits the curve to the measured line integrals against those,
+  weighting each ray by its Poisson precision. The curve is that of the
+  material whose rays, crossing it alone, cover the most path; other
+  materials are corrected as denser or lighter versions of it. A second pass
+  repeats this on the data the first fit corrected. When no material stands
+  out from the background, give the attenuation that separates them as
+  `threshold=`. The curve's slope at zero, which sets the unit-slope gauge,
+  rests on the shortest paths through the material, so fit on the scan whose
+  image scale matters, with voxels as fine as its pixels:
+
+  ```python
+  from tomojax.corrections import BeamHardening
+
+  step = BeamHardening.fit(scan)
+  scan = scan.corrected(step)
+  ```
+
+- `BeamHardening.recorded(scan)` applies the linearisation the vendor recorded:
+  Nikon CT Pro's `CoefX0`-`CoefX4` polynomial, as the closest physical curve.
+  Zeiss's beam hardening constant and Bruker's percentage are recorded with the
+  scan (`scan.source.geometry_metadata["beam_hardening"]`, with the tube voltage
+  and filter) but not applied, because their formulas are unpublished.
+- `BeamHardening.from_polynomial(coefficients, upto=q_max)` turns any
+  polynomial linearisation `p = c0 + c1 q + c2 q^2 + ...` into the closest
+  physical curve over `0 <= q <= upto`.
+- `BeamHardening.from_spectrum(energies, weights, material)` builds the curve of
+  a sample material (a chemical formula or NIST name) seen by a detected
+  spectrum, with attenuation from xraylib (`pip install 'tomojax[spectra]'`).
+  `tube_spectrum(kv, filters=..., detector=...)` models a tungsten-target tube's
+  spectrum behind its filters, as detected by a scintillator:
+
+  ```python
+  from tomojax.corrections import BeamHardening, tube_spectrum
+
+  energies, weights = tube_spectrum(
+      90, filters=[("Be", 0.3), ("Al", 0.5), ("Cu", 0.2)], detector=("CsI", 0.6, 4.51)
+  )
+  step = BeamHardening.from_spectrum(energies, weights, "Al", energy_kev=60)
+  ```
+
+`tj.reconstruct(scan, "polychromatic")` fits the curve and the image together
+instead (see [`tomojax.recon`](../recon/README.md)); its curve is
+`BeamHardening(**reconstruction.info["beam_hardening"])`.
+
+A second material, scatter and photon starvation break the single-material
+model; the fitted curve then averages over them. `step.curve(p)` and
+`step.inverse(q)` evaluate the curve on the host for plotting it against data.
 
 ## Complex transmission images
 
@@ -101,6 +173,8 @@ the workflow modules, which sit above it in the import layers
 
 ## Tests
 
+- `tests/test_beam_hardening.py` covers the curve and its inverse, each
+  coefficient source, the vendor records and the joint fit.
 - `tests/test_corrections.py` covers loading frames (NXtomo, other HDF5
   layouts, APS Data Exchange, Nikon, TIFF), flat interpolation, each step,
   view selection and cropping, and the saved records.

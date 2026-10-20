@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from tomojax.recon.fista_tv import FistaConfig
     from tomojax.recon.fourier import FourierConfig
     from tomojax.recon.mlem import MLEMConfig
+    from tomojax.recon.polychromatic import PolychromaticConfig
     from tomojax.recon.sirt import SIRTConfig
     from tomojax.recon.spdhg_tv import SPDHGConfig
     from tomojax.recon.types import ReconstructionSlab
@@ -39,6 +40,7 @@ type MethodConfig = (
     | recon.SPDHGConfig
     | recon.SIRTConfig
     | recon.MLEMConfig
+    | recon.PolychromaticConfig
 )
 
 _CONFIGS = {
@@ -49,6 +51,7 @@ _CONFIGS = {
     "spdhg": "SPDHGConfig",
     "sirt": "SIRTConfig",
     "mlem": "MLEMConfig",
+    "polychromatic": "PolychromaticConfig",
 }
 
 _SOURCES = {
@@ -82,8 +85,9 @@ def method_config(
 
     ``fbp`` (FDK for cone beams) takes an :class:`FBPConfig`, ``cgls`` a
     :class:`CGLSConfig`, ``fista`` a :class:`FistaConfig` and ``spdhg`` an
-    :class:`SPDHGConfig`; ``sirt`` takes :class:`SIRTConfig`, and ``fourier``
-    :class:`FourierConfig`. Each setting
+    :class:`SPDHGConfig`; ``sirt`` takes :class:`SIRTConfig`, ``mlem``
+    :class:`MLEMConfig`, ``polychromatic`` :class:`PolychromaticConfig` and
+    ``fourier`` :class:`FourierConfig`. Each setting
     replaces the field of its name, as :func:`dataclasses.replace` does. A config
     of another class, or a setting its class has no field for, raises
     :class:`ValueError` naming the valid ones; so does ``warm_start`` for the
@@ -93,7 +97,7 @@ def method_config(
     ----------
     method : str
         Reconstruction method: "fbp", "fourier", "cgls", "fista", "spdhg",
-        "sirt" or "mlem".
+        "sirt", "mlem" or "polychromatic".
     config : MethodConfig or None, optional
         Existing configuration of the method's type. None uses its defaults.
     warm_start : bool or None, optional
@@ -306,6 +310,13 @@ def reconstruct_arrays(
     if method == "fbp":
         cfg = cast("FBPConfig", cfg)
         return _fbp_result(geometry, grid, detector, projections, cfg, det_grid, out)
+    if method == "polychromatic":
+        if warm_start:
+            raise ValueError("method 'polychromatic' does not take warm_start")
+        volume, record = recon.polychromatic(
+            geometry, grid, detector, projections, config=cast("PolychromaticConfig", cfg)
+        )
+        return volume, {"config": cfg, **record}
     # The method name has ruled out the FBP and Fourier configurations above.
     iterative = cast("CGLSConfig | FistaConfig | SPDHGConfig | SIRTConfig | MLEMConfig", cfg)
     return _iterative_result(
