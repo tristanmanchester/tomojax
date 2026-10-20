@@ -2,8 +2,10 @@
 
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
+import pytest
+
+plt = pytest.importorskip("matplotlib.pyplot")
 
 
 def test_ruby_gallery_preserves_region_and_labels_scale(monkeypatch, tmp_path):
