@@ -130,7 +130,8 @@ def run(
         reference = methods.uncorrected(_frames(slice_id, 2), METADATA[2]).volume[:, :, 0]
         segmentation = d2.segmentation(slice_id)
         frames = _frames(slice_id, 3)
-        record: dict = {"case": f"slice{slice_id:05d}"}
+        first = any(slice_id in r for r in d2.FIRST_DETECTOR)
+        record: dict = {"case": f"slice{slice_id:05d}", "detector": 1 if first else 2}
         filler = segmentation == d2.FILLER
         images = {}
         for name in names:
@@ -169,7 +170,8 @@ def summary(records: list[dict], names: list[str]) -> dict:
     """Per method: spread of the class ratios across slices, medians of the rest.
 
     ``*_change`` is the 25th, 50th and 75th percentile over slices of the
-    magnitude's relative change against uncorrected.
+    magnitude's relative change against uncorrected. The two detectors give
+    different 60:90 ratios, so the wall ratio's spread is also given per detector.
     """
     keys = ("light_vs_filler", "low_z_spread", "filler_cupping", "reference_cupping")
     out = {}
@@ -181,6 +183,14 @@ def summary(records: list[dict], names: list[str]) -> dict:
         for c in ("wall", "filler", "light"):
             ratios = np.array([r[name]["ratio"][c] for r in rows if c in r[name]["ratio"]])
             entry[f"{c}_ratio_cv"] = float(ratios.std() / abs(ratios.mean()))
+        walls = {r["detector"]: [] for r in rows}
+        for r in rows:
+            if "wall" in r[name]["ratio"]:
+                walls[r["detector"]].append(r[name]["ratio"]["wall"])
+        if len(walls) > 1:
+            entry["wall_ratio_cv_by_detector"] = {
+                str(k): float(np.std(v) / abs(np.mean(v))) for k, v in sorted(walls.items())
+            }
         for key in (*keys, "wall_sectors"):
             entry[key] = float(np.median([abs(r[name][key]) for r in rows if key in r[name]]))
             change = [
