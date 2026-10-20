@@ -83,59 +83,10 @@ def normalize_geometry_type(geometry_type: str | None) -> str:
 
 
 @dataclass
-class AugmentedGeometry:
-    """Geometry wrapper that applies saved per-view pose corrections.
-
-    ``translation_frame`` follows `tomojax.alignment.api.apply_pose_update`: object
-    translations compose after the nominal pose; detector translations add to
-    its lab translation.
-    """
+class _WrappedGeometry:
+    """A geometry that answers for ``base`` except where a subclass changes the poses."""
 
     base: ScanGeometry
-    align_params: np.ndarray
-    translation_frame: str = "object"
-
-    @property
-    def grid(self) -> Grid:
-        """The base geometry's reconstruction grid."""
-        return self.base.grid
-
-    @property
-    def detector(self) -> Detector:
-        """The base geometry's detector."""
-        return self.base.detector
-
-    @property
-    def angles(self) -> Sequence[float]:
-        """The base geometry's view angles."""
-        return self.base.angles
-
-    def pose_for_view(self, i: int) -> PoseMatrix:
-        """Return nominal pose with saved pose correction applied."""
-        T_nom = np.asarray(self.base.pose_for_view(i), dtype=np.float32)
-        T_delta = _se3_from_pose_params_np(self.align_params[i])
-        T = T_nom @ T_delta
-        if self.translation_frame == "detector":
-            T[:3, 3] = T_nom[:3, 3] + T_delta[:3, 3]
-        return tuple(map(tuple, T))
-
-    def rays_for_view(self, i: int) -> RayPair:
-        """Return ray callbacks from the wrapped base geometry."""
-        return self.base.rays_for_view(i)
-
-    def __getattr__(self, name: str) -> object:
-        # Only once built: unpickling looks attributes up before ``base`` is set.
-        if name == "base" or "base" not in self.__dict__:
-            raise AttributeError(name)
-        return getattr(self.base, name)
-
-
-@dataclass
-class DetectorRollGeometry:
-    """Geometry wrapper that preserves calibrated detector roll metadata."""
-
-    base: ScanGeometry
-    detector_roll_deg: float
 
     @property
     def grid(self) -> Grid:
@@ -165,6 +116,35 @@ class DetectorRollGeometry:
         if name == "base" or "base" not in self.__dict__:
             raise AttributeError(name)
         return getattr(self.base, name)
+
+
+@dataclass
+class AugmentedGeometry(_WrappedGeometry):
+    """Geometry wrapper that applies saved per-view pose corrections.
+
+    ``translation_frame`` follows `tomojax.alignment.api.apply_pose_update`: object
+    translations compose after the nominal pose; detector translations add to
+    its lab translation.
+    """
+
+    align_params: np.ndarray
+    translation_frame: str = "object"
+
+    def pose_for_view(self, i: int) -> PoseMatrix:
+        """Return nominal pose with saved pose correction applied."""
+        T_nom = np.asarray(self.base.pose_for_view(i), dtype=np.float32)
+        T_delta = _se3_from_pose_params_np(self.align_params[i])
+        T = T_nom @ T_delta
+        if self.translation_frame == "detector":
+            T[:3, 3] = T_nom[:3, 3] + T_delta[:3, 3]
+        return tuple(map(tuple, T))
+
+
+@dataclass
+class DetectorRollGeometry(_WrappedGeometry):
+    """Geometry wrapper that preserves calibrated detector roll metadata."""
+
+    detector_roll_deg: float
 
 
 def _rot_x_np(a: float) -> np.ndarray:
