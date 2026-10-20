@@ -122,8 +122,8 @@ def _advance(
             length=last - first,
             cfg=cfg,
         )
-        x[:, :, first:last] = operator.get(new_x)
-        z[:, :, first:last] = operator.get(new_z)
+        operator.get_into(new_x, x[:, :, first:last])
+        operator.get_into(new_z, z[:, :, first:last])
         regulariser += float(value)
         new_x.delete()
         new_z.delete()
@@ -171,7 +171,7 @@ def fista_tv_core_host(
     )
     for first, last in operator.slabs():
         tile = operator.put(initial[:, :, first:last])
-        x[:, :, first:last] = operator.get(project(tile))
+        operator.get_into(project(tile), x[:, :, first:last])
         tile.delete()
     z = x.copy(order="F")
     prediction = np.empty(operator.projection_shape, np.float32)
