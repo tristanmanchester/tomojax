@@ -534,8 +534,10 @@ def test_memory_check_compiles_the_update_unless_far_below_the_limit(monkeypatch
     def assert_update_matches(objective):
         result = objective.update(p, x)
         for a, b in zip(result.increment, expected.increment, strict=True):
-            # Within rounding: GPU atomics sum in no fixed order.
-            np.testing.assert_allclose(a, b, rtol=1e-3, atol=1e-6)
+            # Within rounding of the whole increment: GPU atomics sum in no
+            # fixed order and the joint solve amplifies it, so near-zero
+            # elements carry the rounding of the largest.
+            np.testing.assert_allclose(a, b, rtol=0, atol=1e-4 * float(np.abs(b).max()))
 
     # Far below the limit, the estimate is trusted.
     free(4 * estimate)

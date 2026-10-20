@@ -331,14 +331,15 @@ def _trilinear_scatter_add(acc_flat, ray_vals, ix_f, iy_f, iz_f, nx, ny, nz):
 
 
 def cuda_unsupported_exception_type(
-    resolve: Callable[..., tuple[object, str | None]] = resolve_cuda_callable,
+    resolve: Callable[..., tuple[object, str | None]] | None = None,
 ) -> type[Exception] | None:
     """The CUDA projector's rejection exception, or None when that module is absent.
 
-    ``resolve`` is the caller's CUDA-callable resolver, so the exception comes
-    from the same module as the callables the caller obtained.
+    ``resolve`` is the caller's CUDA-callable resolver (by default this
+    module's), so the exception comes from the same module as the callables
+    the caller obtained.
     """
-    unsupported_exc, _reason = resolve(
+    unsupported_exc, _reason = (resolve or resolve_cuda_callable)(
         "CudaProjectorUnsupported",
         missing_reason="cuda_unsupported_exception_missing",
     )
