@@ -79,6 +79,9 @@ class Operators(ExitStack):
         import astra
         import cupy as cp
 
+        workspace = cp.cuda.MemoryPool()
+        self.callback(workspace.free_all_blocks)
+        self.enter_context(cp.cuda.using_allocator(workspace.malloc))
         self.cp, self.astra, self.data = cp, astra, data
         self.shape = (vg["GridSliceCount"], vg["GridRowCount"], vg["GridColCount"])
         self.parts = []

@@ -87,7 +87,7 @@ def test_full_image_difference_scores_noncontiguous_planes():
 @pytest.mark.parametrize("resident", [False, True])
 def test_bounded_cgls_matches_native_astra(iterations, resident):
     astra = pytest.importorskip("astra")
-    pytest.importorskip("cupy")
+    cp = pytest.importorskip("cupy")
     import tomojax as tj
 
     rng = np.random.default_rng(531)
@@ -101,6 +101,7 @@ def test_bounded_cgls_matches_native_astra(iterations, resident):
     data = rng.uniform(0.01, 1, (23, 21, 27)).astype(np.float32)
     initial = rng.uniform(0.001, 0.02, (17, 15, 13)).astype(np.float32)
     expected = native(data, vectors, vg, method="cgls", iterations=iterations, initial=initial)
+    pool_bytes = cp.get_default_memory_pool().total_bytes()
     for batch in (7, 23):
         with Operators(
             data, vectors, vg, [slice(i, i + batch) for i in range(0, 23, batch)]
@@ -113,3 +114,4 @@ def test_bounded_cgls_matches_native_astra(iterations, resident):
             assert ops.work["host_to_device_bytes"] == initial.nbytes + uploads * data.nbytes
             assert ops.work["device_to_host_bytes"] == initial.nbytes + downloads * data.nbytes
         np.testing.assert_allclose(actual, expected, rtol=3e-5, atol=1e-6)
+    assert cp.get_default_memory_pool().total_bytes() == pool_bytes

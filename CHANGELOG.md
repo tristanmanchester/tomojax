@@ -6,6 +6,7 @@ OSEM balances view batches within each subset to reduce repeated projection work
 
 The full-view cone benchmark reports matched-grid image diagnostics, ASTRA
 iterative work counts, and memory-bounded CGLS and ordered-subset baselines.
+Each bounded ASTRA solve releases its idle GPU workspace before the next initializer.
 
 Exporting host cone geometry to ASTRA does not start a JAX device runtime.
 
