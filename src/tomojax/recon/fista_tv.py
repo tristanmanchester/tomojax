@@ -30,6 +30,7 @@ from tomojax.core.validation import (
     validate_projection_stack,
     validate_volume,
 )
+from tomojax.core.view_chunks import chunk_schedule, chunk_size
 
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
 from ._fista_initialization import (
@@ -128,31 +129,6 @@ class _FistaResult:
             "regulariser": self.regulariser,
             "huber_delta": self.huber_delta,
         }
-
-
-def _effective_view_chunk_size(n_views: int, views_per_batch: int | None) -> int:
-    requested = (
-        int(views_per_batch) if (views_per_batch is not None and int(views_per_batch) > 0) else 1
-    )
-    return max(1, min(requested, int(n_views)))
-
-
-def _view_chunk_schedule(
-    i: jnp.ndarray,
-    *,
-    n_views: int,
-    chunk_size: int,
-) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    i = jnp.asarray(i, dtype=jnp.int32)
-    b = jnp.int32(chunk_size)
-    start = i * b
-    remaining = jnp.maximum(0, jnp.int32(n_views) - start)
-    valid = jnp.minimum(b, remaining)
-    shift = b - valid
-    start_shifted = jnp.maximum(0, start - shift)
-    idx = jnp.arange(chunk_size, dtype=jnp.int32)
-    valid_mask = idx >= (b - valid)
-    return start_shifted, valid_mask, start_shifted + idx
 
 
 @dataclass(kw_only=True)
@@ -382,7 +358,7 @@ def grad_data_term(  # noqa: PLR0915
             in_axes=(0, None),
         )
         n = int(T_all.shape[0])
-        b = _effective_view_chunk_size(n, views_per_batch)
+        b = chunk_size(n, views_per_batch, default=1)
         m = (n + b - 1) // b
 
         def body(
@@ -390,7 +366,7 @@ def grad_data_term(  # noqa: PLR0915
             i: jnp.ndarray,
         ) -> tuple[tuple[jnp.ndarray, jnp.ndarray], None]:
             loss_acc, grad_acc = carry
-            start_shifted, valid_mask, _view_idx = _view_chunk_schedule(
+            start_shifted, valid_mask, _view_idx = chunk_schedule(
                 i,
                 n_views=n,
                 chunk_size=b,
@@ -504,9 +480,7 @@ def power_method_L(
     if T_all is None:
         T_all = stack_view_poses(geometry, n_views)
     validate_pose_stack(T_all, n_views, context="power_method_L geometry")
-    batch_size = (
-        1 if grad_mode == "stream" else _effective_view_chunk_size(n_views, views_per_batch)
-    )
+    batch_size = 1 if grad_mode == "stream" else chunk_size(n_views, views_per_batch, default=1)
     if initial is None:
         initial = jnp.ones((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
     return float(

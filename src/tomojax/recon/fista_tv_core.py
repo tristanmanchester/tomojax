@@ -18,6 +18,7 @@ from tomojax.core.projector import (
     forward_project_view_T,
     sum_backproject_views_T,
 )
+from tomojax.core.view_chunks import chunk_schedule, chunk_size
 from tomojax.recon._tv_ops import huber_tv_grad, huber_tv_value, isotropic_tv_value
 
 if TYPE_CHECKING:
@@ -337,14 +338,14 @@ def _project_stack(
     n_views = int(T_all.shape[0])
     if n_views == 0:
         return jnp.zeros((0, detector.nv, detector.nu), dtype=jnp.float32)
-    b = _chunk_size(n_views, views_per_batch)
+    b = chunk_size(n_views, views_per_batch, default=1)
     num_chunks = (n_views + b - 1) // b
 
     def body(
         out: jnp.ndarray,
         i: jnp.ndarray,
     ) -> tuple[jnp.ndarray, None]:
-        start_shifted, _valid_mask, view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
+        start_shifted, _valid_mask, view_idx = chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice_in_dim(T_all, start_shifted, b)
         pred = _project_chunk(
             T_chunk=T_chunk,
@@ -470,14 +471,14 @@ def _projection_loss(
     n_views = int(T_all.shape[0])
     if n_views == 0:
         return jnp.asarray(0.0, dtype=jnp.float32)
-    b = _chunk_size(n_views, views_per_batch)
+    b = chunk_size(n_views, views_per_batch, default=1)
     num_chunks = (n_views + b - 1) // b
 
     def body(
         loss_acc: jnp.ndarray,
         i: jnp.ndarray,
     ) -> tuple[jnp.ndarray, None]:
-        start_shifted, valid_mask, _view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
+        start_shifted, valid_mask, _view_idx = chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice_in_dim(T_all, start_shifted, b)
         y_chunk = (
             read_views(projections, start_shifted, (b, detector.nv, detector.nu))
@@ -592,7 +593,7 @@ def _projection_loss_and_explicit_grad(
             )
         forward_projector = "jax"
         backprojector = "jax"
-    b = _chunk_size(n_views, views_per_batch)
+    b = chunk_size(n_views, views_per_batch, default=1)
     num_chunks = (n_views + b - 1) // b
 
     def body(
@@ -600,7 +601,7 @@ def _projection_loss_and_explicit_grad(
         i: jnp.ndarray,
     ) -> tuple[tuple[jnp.ndarray, jnp.ndarray], None]:
         loss_acc, grad_acc = carry
-        start_shifted, valid_mask, _view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
+        start_shifted, valid_mask, _view_idx = chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice_in_dim(T_all, start_shifted, b)
         y_chunk = (
             read_views(projections, start_shifted, (b, detector.nv, detector.nu))
@@ -777,29 +778,6 @@ def _fixed_geometry_is_available(
     except Exception:
         return False
     return arr.ndim == 3 and arr.shape[1:] == (4, 4) and bool(np.isfinite(arr).all())
-
-
-def _chunk_size(n_views: int, views_per_batch: int | None) -> int:
-    b = int(views_per_batch) if views_per_batch is not None and int(views_per_batch) > 0 else 1
-    return max(1, min(int(b), int(n_views)))
-
-
-def _chunk_schedule(
-    i: jnp.ndarray,
-    *,
-    n_views: int,
-    chunk_size: int,
-) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    i = jnp.asarray(i, dtype=jnp.int32)
-    b = jnp.int32(chunk_size)
-    start = i * b
-    remaining = jnp.maximum(0, jnp.int32(n_views) - start)
-    valid = jnp.minimum(b, remaining)
-    shift = b - valid
-    start_shifted = jnp.maximum(0, start - shift)
-    idx = jnp.arange(chunk_size, dtype=jnp.int32)
-    valid_mask = (idx >= (b - valid)).astype(jnp.float32)
-    return start_shifted, valid_mask, start_shifted + idx
 
 
 def _apply_support(x: jnp.ndarray, support: jnp.ndarray | None) -> jnp.ndarray:

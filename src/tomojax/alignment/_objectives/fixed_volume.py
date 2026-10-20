@@ -18,6 +18,7 @@ from tomojax.core.backend_policy import (
 )
 from tomojax.core.cuda_projector_resolver import resolve_cuda_callable
 from tomojax.core.projector import forward_project_view_T
+from tomojax.core.view_chunks import chunk_schedule, chunk_size
 
 from .loss_adapters import LossAdapter, build_loss_adapter
 
@@ -258,7 +259,7 @@ def project_stack(
                 "Falling back to JAX projector after CUDA projection rejection: %s",
                 fallback_reason,
             )
-    b = _chunk_size(n_views, views_per_batch)
+    b = chunk_size(n_views, views_per_batch, default=n_views)
     num_chunks = (n_views + b - 1) // b
     vm_project = jax.vmap(
         lambda T: forward_project_view_T(
@@ -278,7 +279,7 @@ def project_stack(
         out: jnp.ndarray,
         i: jnp.ndarray,
     ) -> tuple[jnp.ndarray, None]:
-        start_shifted, _vmask, view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
+        start_shifted, _vmask, view_idx = chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice_in_dim(pose_stack, start_shifted, b)
         pred = vm_project(T_chunk)
         return out.at[view_idx].set(pred), None
@@ -314,7 +315,7 @@ def project_and_score_stack(
     n_views = int(pose_stack.shape[0])
     if n_views == 0:
         return jnp.asarray(0.0, dtype=jnp.float32)
-    b = _chunk_size(n_views, views_per_batch)
+    b = chunk_size(n_views, views_per_batch, default=n_views)
     num_chunks = (n_views + b - 1) // b
     nv, nu = (int(n) for n in targets.shape[1:3])
     loss_mask = getattr(loss_adapter.state, "mask", None)
@@ -415,7 +416,7 @@ def project_and_score_stack(
         loss_acc: jnp.ndarray,
         i: jnp.ndarray,
     ) -> tuple[jnp.ndarray, None]:
-        start_shifted, valid_mask, _view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
+        start_shifted, valid_mask, _view_idx = chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice_in_dim(pose_stack, start_shifted, b)
         y_chunk = jax.lax.dynamic_slice_in_dim(targets, start_shifted, b)
         idx_chunk = jax.lax.dynamic_slice_in_dim(local_indices, start_shifted, b)
@@ -438,7 +439,7 @@ def project_and_score_stack(
         loss_acc: jnp.ndarray,
         i: jnp.ndarray,
     ) -> tuple[jnp.ndarray, None]:
-        start_shifted, valid_mask, _view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
+        start_shifted, valid_mask, _view_idx = chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice_in_dim(pose_stack, start_shifted, b)
         y_chunk = jax.lax.dynamic_slice_in_dim(targets, start_shifted, b)
         pred = vm_project(T_chunk, start_shifted)
@@ -584,33 +585,6 @@ def _cuda_unsupported_exception_type() -> type[Exception]:
     if isinstance(unsupported_exc, type) and issubclass(unsupported_exc, Exception):
         return unsupported_exc
     return ValueError
-
-
-def _chunk_size(n_views: int, views_per_batch: int | None) -> int:
-    b = (
-        int(views_per_batch)
-        if views_per_batch is not None and int(views_per_batch) > 0
-        else int(n_views)
-    )
-    return max(1, min(int(b), int(n_views)))
-
-
-def _chunk_schedule(
-    i: jnp.ndarray,
-    *,
-    n_views: int,
-    chunk_size: int,
-) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    i = jnp.asarray(i, dtype=jnp.int32)
-    b = jnp.int32(chunk_size)
-    start = i * b
-    remaining = jnp.maximum(0, jnp.int32(n_views) - start)
-    valid = jnp.minimum(b, remaining)
-    shift = b - valid
-    start_shifted = jnp.maximum(0, start - shift)
-    idx = jnp.arange(chunk_size, dtype=jnp.int32)
-    valid_mask = (idx >= (b - valid)).astype(jnp.float32)
-    return start_shifted, valid_mask, start_shifted + idx
 
 
 def score_projection_stack(

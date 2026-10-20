@@ -14,6 +14,7 @@ from tomojax.alignment._geometry.geometry_applier import (
     subset_base_geometry,
 )
 from tomojax.core.projector import forward_project_view_T
+from tomojax.core.view_chunks import chunk_schedule, chunk_size
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -142,7 +143,7 @@ def _validation_residuals(fold: FoldValidation) -> _Residuals | None:
     n_views = int(val_idx.shape[0])
     if n_views == 0:
         return None
-    b = _chunk_size(n_views, fold.views_per_batch)
+    b = chunk_size(n_views, fold.views_per_batch, default=n_views)
     val_idx = jnp.asarray(val_idx, dtype=jnp.int32).reshape((n_views,))
     val_mask = jnp.asarray(fold.val_mask, dtype=jnp.float32).reshape((n_views,))
     val_base = subset_base_geometry(fold.base, val_idx)
@@ -156,7 +157,7 @@ def _validation_residuals(fold: FoldValidation) -> _Residuals | None:
             pose=state.pose.replace(pose_params=state.pose.pose_params[val_idx])
         )
         effective = apply_alignment_state(val_base, val_state)
-        start_shifted, valid_mask, _view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
+        start_shifted, valid_mask, _view_idx = chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice(effective.pose_stack, (start_shifted, 0, 0), (b, 4, 4))
         y_chunk = jax.lax.dynamic_slice(
             data.targets, (start_shifted, 0, 0), (b, detector.nv, detector.nu)
@@ -186,30 +187,3 @@ def _validation_residuals(fold: FoldValidation) -> _Residuals | None:
 
     data = _ResidualData(fold.fold_volume, targets, getattr(loss_adapter.state, "mask", None))
     return _Residuals(residual_chunk, (n_views + b - 1) // b, data)
-
-
-def _chunk_size(n_views: int, views_per_batch: int | None) -> int:
-    b = (
-        int(views_per_batch)
-        if views_per_batch is not None and int(views_per_batch) > 0
-        else int(n_views)
-    )
-    return max(1, min(int(b), int(n_views)))
-
-
-def _chunk_schedule(
-    i: jnp.ndarray,
-    *,
-    n_views: int,
-    chunk_size: int,
-) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    i = jnp.asarray(i, dtype=jnp.int32)
-    b = jnp.int32(chunk_size)
-    start = i * b
-    remaining = jnp.maximum(0, jnp.int32(n_views) - start)
-    valid = jnp.minimum(b, remaining)
-    shift = b - valid
-    start_shifted = jnp.maximum(0, start - shift)
-    idx = jnp.arange(chunk_size, dtype=jnp.int32)
-    valid_mask = (idx >= (b - valid)).astype(jnp.float32)
-    return start_shifted, valid_mask, start_shifted + idx
