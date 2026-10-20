@@ -26,9 +26,9 @@ def test_skyscan_log_drives_geometry_and_selects_only_sample_tiffs(tmp_path: Pat
         "Geometrical Correction=ON\nFlat Field Correction=ON\nRandom Movement=ON (10)\n"
     )
     with pytest.raises(ValueError, match="detector="):
-        tj.load_frames(path, white_level=65536, darks=0)
+        tj.load_frames(path, flats=65536, darks=0)
     detector = tj.Detector(8, 6, 0.04, 0.04, (0, -0.06))
-    frames = tj.load_frames(path, detector=detector, white_level=65536, darks=0)
+    frames = tj.load_frames(path, detector=detector, flats=65536, darks=0)
     assert frames.source is not None and frames.source.source_format == "skyscan"
     metadata = frames.source.geometry_metadata["skyscan"]
     assert metadata["System"]["cameraxyratio"] == ".998"
@@ -45,7 +45,7 @@ def test_skyscan_log_drives_geometry_and_selects_only_sample_tiffs(tmp_path: Pat
     # A content-recognized drift-reference log must not hide the sample stack.
     (tmp_path / "reference.metadata").write_text(path.read_text().replace("Files=3", "Files=4"))
     np.testing.assert_allclose(
-        tj.load_frames(tmp_path, detector=detector, white_level=65536, darks=0).geometry.angles,
+        tj.load_frames(tmp_path, detector=detector, flats=65536, darks=0).geometry.angles,
         [0, 0.2],
     )
     cropped = frames.cropped(slice(1, 5), slice(2, 7)).selected([1])
@@ -56,6 +56,6 @@ def test_skyscan_log_drives_geometry_and_selects_only_sample_tiffs(tmp_path: Pat
     assert frames.source.geometry_metadata["acquisition"]["resize"] is None
     path.write_text(path.read_text().replace("Rotation Direction=CC\n", ""))
     with pytest.raises(ValueError, match="angles="):
-        tj.load_frames(path, detector=detector, white_level=65536, darks=0)
-    explicit = tj.load_frames(path, detector=detector, angles=[0, 0.2], white_level=65536, darks=0)
+        tj.load_frames(path, detector=detector, flats=65536, darks=0)
+    explicit = tj.load_frames(path, detector=detector, angles=[0, 0.2], flats=65536, darks=0)
     np.testing.assert_allclose(explicit.corrected().projections, scan.projections)

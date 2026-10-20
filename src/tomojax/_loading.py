@@ -107,7 +107,7 @@ def load(path: str | PathLike[str], *, poses: bool = True) -> Scan:
     if np.issubdtype(np.asarray(record.projections).dtype, np.integer):
         raise ValueError(
             f"{file} holds integer detector counts and no flat frames (image_key 1): "
-            "load them with tomojax.load_frames(path, flats=... or white_level=...)"
+            "load them with tomojax.load_frames(path, flats=...)"
         )
     scan = scan_from_record(record, poses=poses)
     if located is not None and located.image_key is not None and np.any(located.image_key != 0):
@@ -363,7 +363,6 @@ def load_frames(
     detector: Detector | None = None,
     grid: Grid | None = None,
     geometry: ScanGeometry | None = None,
-    white_level: float | None = None,
     exposure_times: np.ndarray | float | None = None,
     flat_exposure_times: np.ndarray | float | None = None,
     data_path: str | None = None,
@@ -381,13 +380,13 @@ def load_frames(
     Nikon, SkyScan, Zeiss and ESRF acquisitions are recognized by content and
     supply their own geometry and calibration. SkyScan logs require geometrically
     and flat-field corrected TIFF exports; their storage bit depth is not a
-    measured white level, so supply ``white_level=`` (or ``flats=``) explicitly.
+    measured white level, so supply ``flats=`` (frames or one level) explicitly.
     Zeiss Xradia projection files keep their embedded reference images,
     physical calibration and per-view image shifts in the geometry.
     A GDA command mislabeled as mm is read in degrees with a warning; discovered
     paths and this correction stay in source metadata.
     Generic TIFF stacks without acquisition metadata need ``angles`` (degrees),
-    ``flats`` or ``white_level``, and
+    ``flats`` (frames or one level) and
     their ``detector`` (including pixel sizes and centre). Missing detector
     pixel pitch is never replaced by unit pixels. Axial acquisitions with recorded
     pitch use the opposite-view correlation estimator for an absent rotation centre,
@@ -395,7 +394,7 @@ def load_frames(
     Missing dark fields require ``darks=``; use ``darks=0`` only for already dark-corrected counts.
 
     ``flats`` and ``darks`` (arrays, HDF5 stacks, TIFF files or folders, Zeiss XRM
-    images, or one level for every pixel), ``angles``, ``detector``, ``grid``, ``white_level`` and a
+    images, or one level for every pixel), ``angles``, ``detector``, ``grid`` and a
     whole ``geometry`` (of every sample view; then TIFFs need no ``angles``)
     replace what the file holds. HDF5 calibration paths use the same automatic
     dataset discovery as the input and stay lazy; every frame in their stack
@@ -417,8 +416,6 @@ def load_frames(
         Replacement reconstruction grid.
     geometry : ScanGeometry or None, optional
         Complete sample-view geometry, overriding individual metadata.
-    white_level : float or None, optional
-        Replacement calibrated open-beam level, used instead of flats.
     exposure_times : numpy.ndarray or float or None, optional
         Sample exposure durations in seconds, replacing file metadata.
     flat_exposure_times : numpy.ndarray or float or None, optional
@@ -494,7 +491,6 @@ def load_frames(
                 frames,
                 flats=flats,
                 darks=darks,
-                white_level=white_level,
                 exposure_times=exposure_times,
                 flat_exposure_times=flat_exposure_times,
             )
@@ -562,7 +558,9 @@ def _estimate_missing_center(frames: Frames) -> Frames:
 def _require_calibration(frames: Frames) -> Frames:
     """Missing file calibration requires a caller choice, not a numerical guess."""
     if frames.flats is None and frames.white_level is None:
-        raise ValueError("No flat fields: pass flats=... or white_level=... to tomojax.load_frames")
+        raise ValueError(
+            "No flat fields: pass flats=... (frames or one level) to tomojax.load_frames"
+        )
     if frames.darks is None:
         raise ValueError(
             "No dark fields: pass darks=... to tomojax.load_frames "
@@ -576,7 +574,6 @@ def _with_fields(
     *,
     flats: np.ndarray | float | str | PathLike[str] | None,
     darks: np.ndarray | float | str | PathLike[str] | None,
-    white_level: float | None,
     exposure_times: np.ndarray | float | None = None,
     flat_exposure_times: np.ndarray | float | None = None,
 ) -> Frames:
@@ -584,7 +581,7 @@ def _with_fields(
     changes: dict[str, Any] = {}
     shape = tuple(int(n) for n in frames.counts.shape[1:])
     if isinstance(flats, numbers.Real):  # one level for every pixel: a white level
-        white_level = float(flats)
+        changes |= {"flats": None, "flat_positions": None, "white_level": float(flats)}
     elif flats is not None:
         flat_frames = _frames_of(flats, "flats")
         changes |= {
@@ -593,8 +590,6 @@ def _with_fields(
             "white_level": None,
             "flat_exposure_times": getattr(flat_frames, "exposure_times", None),
         }
-    if white_level is not None:
-        changes |= {"flats": None, "flat_positions": None, "white_level": float(white_level)}
     if isinstance(darks, numbers.Real):
         changes["darks"] = np.full((1, *shape), float(darks), np.float32)
     elif darks is not None:

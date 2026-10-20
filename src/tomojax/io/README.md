@@ -98,7 +98,7 @@ reconstruction grid, preserving the metadata's physical extent:
 import tomojax as tj
 
 detector = tj.Detector(nu, nv, du, dv, (center_u, center_v))  # measured calibration
-scan = tj.load_frames("skyscan/", detector=detector, white_level=65536, darks=0).corrected(binning=4)
+scan = tj.load_frames("skyscan/", detector=detector, flats=65536, darks=0).corrected(binning=4)
 grid = scan.grid.resampled((256, 256, 256))
 result = tj.reconstruct(scan, method="fbp", grid=grid)  # FDK for this cone geometry
 tj.save("grains-recon.nxs", result)

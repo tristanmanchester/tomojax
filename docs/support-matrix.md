@@ -48,7 +48,7 @@ vertical zero defines the free axial origin. Insufficient coverage/contrast
 requires explicit `detector=`. Laminography requires a recorded tilt/axis or
 `geometry=`. Nikon and Zeiss files lacking dark calibration require `darks=`; zero is
 only an explicit choice for already corrected counts. SkyScan additionally
-requires `flats=`/`white_level=` rather than deriving it from bit depth.
+requires `flats=` (frames or one level) rather than deriving it from bit depth.
 Compressed TIFF crops decode only their intersecting strips/tiles. In folders,
 TIFF-suffixed entries are image storage, not acquisition text sidecars.
 TIFF line-integral import requires explicit `--geometry`, `--pixel-size` and
@@ -88,8 +88,8 @@ SkyScan logs/TIFFs, Diamond I13 compressed TIFF folders with explicit calibratio
 and TomoJAX NPZ/NXtomo round trips. Available raw Bliss/EDF
 samples are incomplete and are rejected; a complete raw Bliss/EDF workflow and
 native TOMCAT GigaFRoST are not established by those checks.
-Missing calibration does not disable content recognition: supply `flats=`/
-`white_level=` and `darks=`. NXtomo/Data Exchange angular fields use their
+Missing calibration does not disable content recognition: supply `flats=` (frames
+or one level) and `darks=`. NXtomo/Data Exchange angular fields use their
 format-defined degree convention when units are absent; generic motor datasets
 without units require explicit `angles=`.
 

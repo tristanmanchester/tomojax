@@ -158,7 +158,6 @@ def tomojax.load_frames(
         detector: 'Detector | None' = None,
         grid: 'Grid | None' = None,
         geometry: 'ScanGeometry | None' = None,
-        white_level: 'float | None' = None,
         exposure_times: 'np.ndarray | float | None' = None,
         flat_exposure_times: 'np.ndarray | float | None' = None,
         data_path: 'str | None' = None,

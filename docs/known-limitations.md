@@ -58,8 +58,8 @@ listed with how to check a result in the
   internal zero seed. Missing angles require `angles=`. See the
   [quickstart](quickstart.md#correct-raw-detector-frames).
 - Content-discovered external acquisitions remain detector counts even when
-  stored as floats. Missing flat/dark calibration requires `flats=` or
-  `white_level=`, and `darks=`; a floating dtype is not evidence of correction.
+  stored as floats. Missing flat/dark calibration requires `flats=` (frames or
+  one level) and `darks=`; a floating dtype is not evidence of correction.
   External NXtomo also requires frame labels (`image_key_path=`); Data Exchange
   defines its separate `data` array as projections. TomoJAX dataset containers
   store line integrals unless explicitly labelled as raw.

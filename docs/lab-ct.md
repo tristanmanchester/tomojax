@@ -84,7 +84,7 @@ Sample and reference exposure times are used to compare dark-subtracted count
 rates. Multiple embedded references are interpolated at their acquisition
 timestamps. Raw pixels remain unchanged. If supplying calibration arrays rather
 than XRM files, also pass their `flat_exposure_times=` in seconds.
-If no flat is available, supply a measured `white_level=`; one is not inferred
+If no flat is available, supply the measured open-beam level as `flats=`; one is not inferred
 from the detector's bit depth. If no
 dark reference is stored, supply measured darks
 with `--darks` or `load_frames(..., darks=...)`; absent dark calibration is an

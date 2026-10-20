@@ -145,7 +145,7 @@ def test_counts_without_flats_are_refused(tmp_path: Path) -> None:
         tj.load(tmp_path / "scan.nxs")
     with pytest.raises(ValueError, match="No flat fields: pass flats"):
         tj.load_frames(tmp_path / "scan.nxs").corrected()
-    scan = tj.load_frames(tmp_path / "scan.nxs", white_level=200, darks=0).corrected()
+    scan = tj.load_frames(tmp_path / "scan.nxs", flats=200, darks=0).corrected()
     np.testing.assert_allclose(np.asarray(scan.projections), np.log(2.0), rtol=1e-6)
     assert scan.corrections[0].settings == {"white_level": 200.0, "darks": 1}
 
@@ -309,16 +309,14 @@ def test_nikon_import_takes_its_own_angles_and_numbered_projections(
     for field, argument in {
         "InitialAngle": "angles=",
         "AngularStep": "angles=",
-        "WhiteLevel": "white_level=",
+        "WhiteLevel": "flats=",
         "DetectorOffsetX": "detector=",
         "CentreOfRotationTop": "geometry=",
     }.items():
         path.write_text("\n".join(line for line in text.splitlines() if not line.startswith(field)))
         with pytest.raises(ValueError, match=argument):
             tj.load_frames(path, darks=0)
-        explicit = tj.load_frames(
-            path, geometry=frames.geometry, white_level=1000, darks=0
-        ).corrected()
+        explicit = tj.load_frames(path, geometry=frames.geometry, flats=1000, darks=0).corrected()
         np.testing.assert_allclose(explicit.projections[:, 0, 0], -np.log([0.5, 0.25]))
         tj.save(tmp_path / "explicit.nxs", explicit)
         assert tj.load(tmp_path / "explicit.nxs").geometry is not None
@@ -742,7 +740,7 @@ def test_raw_acquisition_discovery_uses_content_and_rejects_ambiguous_directorie
     by_directory = tj.load_frames(tmp_path, darks=0).corrected()
     np.testing.assert_allclose(by_directory.projections[0, :, 0], -np.log([0.25, 0.5]))
     override = tj.Detector(3, 2, 0.2, 0.3)
-    explicit = tj.load_frames(path, detector=override, white_level=1200, darks=0)
+    explicit = tj.load_frames(path, detector=override, flats=1200, darks=0)
     assert explicit.geometry.detector == override and explicit.white_level == 1200
     np.testing.assert_array_equal(frames.counts[0], image[::-1])
     path.rename(tmp_path / "metadata.also_unrelated")

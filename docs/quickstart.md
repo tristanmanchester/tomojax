@@ -27,7 +27,7 @@ inputs: establish which you have. TomoJAX corrects raw frames itself when the
 file says they are raw: an NXtomo `image_key` marking flats or darks, an APS
 Data Exchange file with `data_white` or `data_dark` beside `/exchange/data`,
 or a Nikon scan. Missing flats/white level or darks require explicit
-`flats=`/`white_level=` and `darks=` in `load_frames`; use zero darks only
+`flats=` (frames or one level) and `darks=` in `load_frames`; use zero darks only
 when the counts are already dark-corrected.
 
 ## Beamline exports

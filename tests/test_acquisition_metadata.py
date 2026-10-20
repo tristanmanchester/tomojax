@@ -185,7 +185,7 @@ def test_external_hdf5_layouts_decode_the_same_angles_and_calibration(tmp_path, 
             angles = handle.create_dataset("exchange/theta", data=[0, np.pi / 2])
         angles.attrs["units"] = "radians"
     frames = (
-        tj.load_frames(path, white_level=1000, detector=tj.Detector(3, 2, 1, 1), darks=0)
+        tj.load_frames(path, flats=1000, detector=tj.Detector(3, 2, 1, 1), darks=0)
         if layout == "beamline"
         else tj.load_frames(path, detector=tj.Detector(3, 2, 1, 1), darks=0)
     )
@@ -292,7 +292,7 @@ def test_beamline_metadata_shape_still_disambiguates_different_detectors(tmp_pat
     second = tj.load_frames(
         path,
         data_path="/entry2/tomo/data",
-        white_level=1,
+        flats=1,
         detector=tj.Detector(2, 2, 1, 1),
         darks=0,
     )
@@ -330,7 +330,7 @@ def test_a_missing_beamline_image_key_remains_supported(tmp_path):
     with h5py.File(path, "a") as handle:
         del handle["entry1/tomo/image_key"]
         handle["entry1/tomo/rotation_angle"][...] = [0, 45, 90]
-    frames = tj.load_frames(path, white_level=1000, detector=tj.Detector(2, 2, 1, 1), darks=0)
+    frames = tj.load_frames(path, flats=1000, detector=tj.Detector(2, 2, 1, 1), darks=0)
     assert frames.views == 3 and frames.flats is None
     np.testing.assert_array_equal(frames.geometry.angles, [0, 45, 90])
 

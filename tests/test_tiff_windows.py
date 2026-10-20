@@ -57,7 +57,7 @@ def test_tiff_binary_reads_are_bounded(tmp_path, monkeypatch, default_buffer_siz
         tmp_path,
         angles=[0, 180],
         detector=tj.Detector(7, 5, 1, 1),
-        white_level=100,
+        flats=100,
         darks=0,
     )
     np.testing.assert_array_equal(np.asarray(frames.counts), values)

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+`tj.load_frames` takes the open-beam level as `flats=<level>`, as the command line
+does; the `white_level=` keyword is gone.
+
 `FBPConfig` loses `projector_unroll`, `checkpoint_projector` and `gather_dtype`; the
 explicit-detector-grid path always used their defaults.
 
