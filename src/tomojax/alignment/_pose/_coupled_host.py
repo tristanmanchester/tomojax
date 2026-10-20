@@ -378,9 +378,12 @@ class _HostSystem:
                 rtol=spec.gn_joint_rtol,
                 volume_ramp=None if spec.refinement is None else spec.refinement.ramp_damping,
             )
+        # Project before transfer, without allocating another host image.
+        dx = np.asarray(result.increment[0])
+        dx *= self.free
         return CoupledLinearResult(
             (
-                jax.device_put(result.increment[0]),
+                jax.device_put(dx),
                 jnp.asarray(self.project_pose(result.increment[1])),
             ),
             jnp.int32(result.iterations),

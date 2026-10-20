@@ -63,6 +63,9 @@ tube spectrum and xraylib attenuation (`tube_spectrum`,
 beam hardening settings and tube settings are recorded with loaded scans.
 `tj.reconstruct(scan, "polychromatic")` fits the image and the curve together.
 
+Joint alignment keeps inactive image coordinates fixed when its solver uses a
+nonlocal preconditioner.
+
 Projection matching fits a band-limited projection model matched to the
 detector sampling. Large motion in noisy scans is recovered more accurately, and
 the PSI nanotomography workflow takes about 40% less time.
