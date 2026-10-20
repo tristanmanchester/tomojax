@@ -2,11 +2,14 @@
 
 from pathlib import Path
 import sys
+from types import SimpleNamespace
+import weakref
 
 import numpy as np
 from scipy import fft, ndimage
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench"))
+import nanotomo_metrics as metrics
 from nanotomo_metrics import (
     fourier_shell_correlation,
     interleaved_views,
@@ -129,3 +132,30 @@ def test_repeated_angle_observations_never_leak_into_both_fsc_halves():
     np.testing.assert_array_equal(second, [2, 3, 5])
     assert not set(angles[first]) & set(angles[second])
     np.testing.assert_array_equal(np.sort(np.r_[first, second]), np.arange(len(angles)))
+
+
+def test_half_data_releases_spatial_volumes_before_fft(monkeypatch):
+    import tomojax as tj
+
+    references = []
+    rng = np.random.default_rng(25)
+
+    def reconstruct(*args, **kwargs):
+        volume = rng.normal(size=(7, 8, 9)).astype(np.float32)
+        references.append(weakref.ref(volume))
+        return SimpleNamespace(volume=volume)
+
+    transform = metrics.fft.rfftn
+
+    def checked_fft(*args, **kwargs):
+        assert all(reference() is None for reference in references)
+        return transform(*args, **kwargs)
+
+    monkeypatch.setattr(tj, "reconstruct", reconstruct)
+    monkeypatch.setattr(metrics.fft, "rfftn", checked_fft)
+    scan = SimpleNamespace(
+        angles=np.arange(4),
+        grid=SimpleNamespace(nx=7, ny=8, nz=9, vx=1, vy=1, vz=1),
+        selected=lambda _: None,
+    )
+    metrics.half_dataset_fsc(scan, region=(slice(None), slice(None), slice(1, -1)))
