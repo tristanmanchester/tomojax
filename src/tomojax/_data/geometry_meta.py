@@ -17,6 +17,7 @@ from tomojax.core.geometry import (
     RotationAxisGeometry,
     normalize_axis_unit,
 )
+from tomojax.core.geometry.transforms import rot_x, rot_y, rot_z
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -147,35 +148,11 @@ class DetectorRollGeometry(_WrappedGeometry):
     detector_roll_deg: float
 
 
-def _rot_x_np(a: float) -> np.ndarray:
-    c, s = np.cos(a), np.sin(a)
-    return np.array(
-        [[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]],
-        dtype=np.float32,
-    )
-
-
-def _rot_y_np(b: float) -> np.ndarray:
-    c, s = np.cos(b), np.sin(b)
-    return np.array(
-        [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]],
-        dtype=np.float32,
-    )
-
-
-def _rot_z_np(p: float) -> np.ndarray:
-    c, s = np.cos(p), np.sin(p)
-    return np.array(
-        [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]],
-        dtype=np.float32,
-    )
-
-
 def _se3_from_pose_params_np(pose_params: np.ndarray) -> np.ndarray:
     row = np.asarray(pose_params, dtype=np.float32)
     alpha, beta, phi, dx, dz = row[:5]
     dy = row[5] if row.size > 5 else 0.0
-    R = _rot_y_np(float(beta)) @ _rot_x_np(float(alpha)) @ _rot_z_np(float(phi))
+    R = rot_y(float(beta)) @ rot_x(float(alpha)) @ rot_z(float(phi))
     T = np.eye(4, dtype=np.float32)
     T[:3, :3] = R
     T[:3, 3] = np.array([dx, dy, dz], dtype=np.float32)

@@ -8,33 +8,17 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core.geometry.transforms import rot_x, rot_y, rot_z
+
 type PoseTranslationFrame = Literal["object", "detector"]
-
-
-def rot_x(a: jnp.ndarray) -> jnp.ndarray:
-    """Return a right-handed x-axis rotation matrix."""
-    c, s = jnp.cos(a), jnp.sin(a)
-    return jnp.array([[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]], dtype=jnp.float32)
-
-
-def rot_y(b: jnp.ndarray) -> jnp.ndarray:
-    """Return a right-handed y-axis rotation matrix."""
-    c, s = jnp.cos(b), jnp.sin(b)
-    return jnp.array([[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]], dtype=jnp.float32)
-
-
-def rot_z(p: jnp.ndarray) -> jnp.ndarray:
-    """Return a right-handed z-axis rotation matrix."""
-    c, s = jnp.cos(p), jnp.sin(p)
-    return jnp.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], dtype=jnp.float32)
 
 
 def compose_R(alpha: jnp.ndarray, beta: jnp.ndarray, phi: jnp.ndarray) -> jnp.ndarray:
     """Compose the alignment Euler-like rotation matrix."""
     # Match the original repo: R = R_y(beta) R_x(alpha) R_z(phi).
     return jnp.matmul(
-        jnp.matmul(rot_y(beta), rot_x(alpha), precision=jax.lax.Precision.HIGHEST),
-        rot_z(phi),
+        jnp.matmul(rot_y(beta, xp=jnp), rot_x(alpha, xp=jnp), precision=jax.lax.Precision.HIGHEST),
+        rot_z(phi, xp=jnp),
         precision=jax.lax.Precision.HIGHEST,
     )
 
