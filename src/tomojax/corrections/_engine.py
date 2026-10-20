@@ -323,8 +323,9 @@ def _flat_fields(
     """The mean flat of each set, the mean dark, and the record of them.
 
     A pixel is usable where the flat exceeds the dark by at least ``epsilon`` and
-    three standard errors of the two calibration means: elsewhere (outside the
-    beam, or dead) the ratio is noise, and ``_first_pass`` takes it as no absorption.
+    three standard errors of the two calibration means. Elsewhere the ratio is
+    noise: ``_first_pass`` interpolates interior gaps along each detector row and
+    takes pixels outside its measured span as no absorption.
     """
     if darks is None and flats is not None:
         LOG.warning("no dark fields: correcting with a dark field of zero")
@@ -456,7 +457,14 @@ def _interpolation(
 
 @partial(
     jax.jit,
-    static_argnames=("epsilon", "counts_steps", "transmission_steps", "line_steps", "factor"),
+    static_argnames=(
+        "epsilon",
+        "counts_steps",
+        "transmission_steps",
+        "line_steps",
+        "factor",
+        "fill_gaps",
+    ),
 )
 def _first_pass(
     raw: jax.Array,
@@ -473,6 +481,7 @@ def _first_pass(
     transmission_steps: tuple[Step, ...] = (),
     line_steps: tuple[Step, ...] = (),
     factor: int = 1,
+    fill_gaps: bool = True,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     x = raw.astype(jnp.float32)
     for step in counts_steps:
@@ -480,9 +489,11 @@ def _first_pass(
     weight = t[:, None, None]
     flat = (1 - weight) * flats[lo] + weight * flats[hi]
     transmission = (x - dark) * exposure_scale[:, None, None] / jnp.maximum(flat, epsilon)
-    # No light is no measurement: take no absorption, rather than spread the ratio
-    # of two noise values through the steps that follow.
+    # An unresolved calibration is not a measured transmission. Fill interior
+    # gaps before any transmission step can spread the ratio of two noise values.
     transmission = jnp.where(usable, transmission, 1.0)
+    if fill_gaps:
+        transmission = _interpolate_unmeasured(transmission, usable)
     for step in transmission_steps:
         transmission = step.apply(transmission)
     nonpositive = jnp.sum(transmission <= 0)
@@ -492,6 +503,28 @@ def _first_pass(
     bad = ~jnp.isfinite(p)
     p = jnp.where(bad, 0.0, p)
     return (mean_detector_pixels(p, factor) if factor > 1 else p), nonpositive, jnp.sum(bad)
+
+
+def _interpolate_unmeasured(transmission: jax.Array, usable: jax.Array) -> jax.Array:
+    """Fill bracketed calibration gaps from the same view's measured neighbours.
+
+    Only columns between two measured pixels are interpolated. A row with no
+    measured pixels, and the unilluminated margins of any row, retain the neutral
+    transmission supplied by calibration. Measured pixels, including low-gain
+    ones, retain their calibrated transmission.
+    """
+    cols = transmission.shape[-1]
+    column = jnp.arange(cols)
+    left = jax.lax.associative_scan(jnp.maximum, jnp.where(usable, column, -1), axis=1)
+    right = jax.lax.associative_scan(
+        jnp.minimum, jnp.where(usable, column, cols), axis=1, reverse=True
+    )
+    lower = jnp.take_along_axis(transmission, jnp.clip(left, 0, cols - 1)[None], axis=2)
+    upper = jnp.take_along_axis(transmission, jnp.clip(right, 0, cols - 1)[None], axis=2)
+    weight = (column - left) / jnp.maximum(right - left, 1)
+    filled = lower + weight[None] * (upper - lower)
+    interior = ~usable & (left >= 0) & (right < cols)
+    return jnp.where(interior[None], filled, transmission)
 
 
 def _correct_view_batches(
@@ -506,6 +539,7 @@ def _correct_view_batches(
     flats, dark, usable = (jax.device_put(a) for a in (fields.flats, fields.dark, fields.usable))
     lo, hi, t, exposure_scale = interpolation
     tally = np.zeros(2, np.int64)  # non-positive transmission, non-finite results
+    fill_gaps = not bool(fields.usable.all())
 
     def collect(start: int, stop: int, result: jax.Array, *bad: jax.Array) -> None:
         out[start:stop] = np.asarray(result)
@@ -516,6 +550,7 @@ def _correct_view_batches(
         done = _first_pass(
             jnp.asarray(raw), lo[start:stop], hi[start:stop], t[start:stop],
             exposure_scale[start:stop], flats, dark, usable,
+            fill_gaps=fill_gaps,
             **settings,
         )  # fmt: skip
         done[0].copy_to_host_async()
@@ -591,7 +626,8 @@ def _correct_row_slabs(
         done = _first_pass(
             jnp.asarray(read(start, stop)), lo, hi, t, exposure_scale,
             flats[:, start:stop], dark[start:stop],
-            usable[start:stop], line_steps=steps, **settings,
+            usable[start:stop], line_steps=steps,
+            fill_gaps=not bool(fields.usable[start:stop].all()), **settings,
         )  # fmt: skip
         done[0].copy_to_host_async()
         if pending is not None:
@@ -895,6 +931,7 @@ def corrected_row_source(
             *(jax.device_put(np.ascontiguousarray(value)) for value in selected),
             epsilon=epsilon,
             line_steps=line_steps,
+            fill_gaps=not bool(selected[2].all()),
         )
         flat = Correction(
             "flat_dark",

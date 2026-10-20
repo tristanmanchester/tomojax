@@ -14,9 +14,11 @@ HDF5 and TIFF sample and calibration frames stay lazy until correction, so
 `Frames.cropped` reads only that detector window of all three. Flat and dark
 means are accumulated in float64 over bounded batches. A pixel whose flat does
 not exceed the dark by `epsilon` and three standard errors of their means (or
-whose calibration is not finite) is unmeasured: it takes no absorption, rather
-than a ratio of noise that phase retrieval would spread, and the `flat_dark`
-record counts these pixels.
+whose calibration is not finite) is unmeasured. Interior gaps are interpolated
+in transmission along the same detector row in each view, before phase retrieval
+or the log; pixels outside the row's measured span take no absorption. The
+`flat_dark` record counts unmeasured pixels. Interpolation cannot recover features
+narrower than the missing span.
 
 `Frames.corrected(..., binning=f)` averages blocks of the corrected line
 integrals on the device, so no unbinned stack reaches the host. When only
