@@ -2140,6 +2140,9 @@ fourier-cuda12 = [
 progress = [
     { name = "tqdm" },
 ]
+spectra = [
+    { name = "xraylib" },
+]
 
 [package.dev-dependencies]
 benchmark = [
@@ -2177,8 +2180,9 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.16.1,<2" },
     { name = "tifffile", specifier = ">=2026.9.20" },
     { name = "tqdm", marker = "extra == 'progress'", specifier = ">=4.67.1,<5" },
+    { name = "xraylib", marker = "extra == 'spectra'", specifier = ">=4.1,<5" },
 ]
-provides-extras = ["cpu", "cuda12", "fourier-cuda12", "progress"]
+provides-extras = ["cpu", "cuda12", "fourier-cuda12", "progress", "spectra"]
 
 [package.metadata.requires-dev]
 benchmark = [
@@ -2261,4 +2265,45 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/15/ba/1f6e8c957e4932be060dcdc482d339c12e0216351478add3645cdaa53c05/virtualenv-21.3.3.tar.gz", hash = "sha256:f5bda277e553b1c2b3c1a8debfc30496e1288cc93ce6b7b71b3280047e317328", size = 7613784, upload-time = "2026-05-13T18:01:30.19Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f4/34/a9dbe051de88a63eb7408ea66630bac38e72f7f6077d4be58737106860d9/virtualenv-21.3.3-py3-none-any.whl", hash = "sha256:7d5987d8369e098e41406efb780a3d4ca79280097293899e351a6407ee153ab3", size = 7594554, upload-time = "2026-05-13T18:01:27.815Z" },
+]
+
+[[package]]
+name = "xraylib"
+version = "4.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/06/22/437d6051b1557615bdbe2b6a52e8659248eff7f42abff888c3b51c00439e/xraylib-4.3.0.tar.gz", hash = "sha256:328bdccff6b7ea511757d6eb22ab7983de13b41e70369a0967e2c543c2bfed1e", size = 13206051, upload-time = "2026-08-19T07:19:54.319Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c7/60/9fc7725a92044a336268f1e87bc7b07f83b1308e1271d0f8399b84c59fa2/xraylib-4.3.0-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:4badce3540e3be741b17aea87d54887b027381fab2c89defd021f9b0975b2b6f", size = 15952912, upload-time = "2026-08-19T07:18:41.594Z" },
+    { url = "https://files.pythonhosted.org/packages/de/7b/be8c143ce158cad54e9a2cf069726b97c0e9f1f5aa9781215d074a05e46a/xraylib-4.3.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:9d42eddf58fe4c54d41c7a5bbe7392553e0aa02a773007c102c27bdaa8dd490f", size = 16171929, upload-time = "2026-08-19T07:18:43.826Z" },
+    { url = "https://files.pythonhosted.org/packages/19/fd/18d1fc841549cace5c2cfae22306a44f78568dd44a77c51f4229f897233a/xraylib-4.3.0-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:70f4cb986f6ea0fe41bf6af9ae4c2f693c3254dfd0f33cf6f3c59578169fd1ab", size = 16286640, upload-time = "2026-08-19T07:18:46.583Z" },
+    { url = "https://files.pythonhosted.org/packages/f0/b2/e9feecd39c5d9d101d6d40626eef8c839547e78f35c6b6c9336052534330/xraylib-4.3.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:049664064b624d53fe8aeaeb5e3de027de265a3997a27ca39f48554047aa5813", size = 16332584, upload-time = "2026-08-19T07:18:48.914Z" },
+    { url = "https://files.pythonhosted.org/packages/1c/f3/92484af953188e9c0d2bd72ba58e3046bebb43a177fffb2736f44a170a84/xraylib-4.3.0-cp312-cp312-win_amd64.whl", hash = "sha256:f9924557840ef573b0b615327728305d43ecc1300c4c61529910ef8b8002f7b5", size = 15010823, upload-time = "2026-08-19T07:18:51.501Z" },
+    { url = "https://files.pythonhosted.org/packages/4d/6c/8ad804513e461d4248a727ad8447a6e279a8d07afd794d223203fbf40913/xraylib-4.3.0-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:72751fb135b30d3d56ffe67a23d4e41590c2d99665c18dc22af407b080b754ef", size = 15952396, upload-time = "2026-08-19T07:18:53.989Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/fa/31e988cb1799fa71a410b5fc6659061e7131598d7e9e4107cc1899e64c99/xraylib-4.3.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:78933d4e245260c39e57a5fcfc18e0c77b7a859f5c046eeea20e308230fb1f5c", size = 16171251, upload-time = "2026-08-19T07:18:56.398Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/28/69463fbb70b588310a8d6a18f154d89a50cd8ee3f9bc39670e55eb1da215/xraylib-4.3.0-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:a144b78bcbae04598bbc12d6366e4cb3fe3ce89c5bccde445c8b9091eba20329", size = 16285899, upload-time = "2026-08-19T07:18:58.655Z" },
+    { url = "https://files.pythonhosted.org/packages/62/e4/a5f3eab7bbc28f023fd4870f4bf25debcbc7d16945b7bc013c02e4d694e5/xraylib-4.3.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:52d77621886f7e34a9c5611a02de674a08054bf1e4652f669b6c8041b1c766fb", size = 16331760, upload-time = "2026-08-19T07:19:01.091Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/2e/c6e05a5957efa3e76aa3ade4aec43c2b3631294f9c7a33771b0b635cb579/xraylib-4.3.0-cp313-cp313-win_amd64.whl", hash = "sha256:cd20bfa8689169f2425aa6477a5715c99f4420fdafdbc29619a20515de6219ba", size = 15009716, upload-time = "2026-08-19T07:19:03.642Z" },
+    { url = "https://files.pythonhosted.org/packages/56/e8/793e4091af4941134d8a7b2e08db1ea54d9358edd4a41360363ad7a004c3/xraylib-4.3.0-cp314-cp314-macosx_10_15_x86_64.whl", hash = "sha256:2a9fbdc02615654d14904a6a59b77a3e744d62f15ec587f6da9fc6ce85dd2719", size = 15952723, upload-time = "2026-08-19T07:19:05.937Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/26/2504092a4cf822ab912c5c06b82abad61ec9984d0b8f7982a32578162b83/xraylib-4.3.0-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:22775991cbee4899f2de5bc1f943fd334c7ec0a6eb6e6cfaac41ec2266733e78", size = 16172500, upload-time = "2026-08-19T07:19:08.784Z" },
+    { url = "https://files.pythonhosted.org/packages/1c/71/c0c69fdce2d1f3f9579ce74c802b0d869f512443e1e2acec7ad35a42ab27/xraylib-4.3.0-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:e8b42246097e749ebea45b23948463e592f78fd5e0f52019603154880edf8121", size = 16287879, upload-time = "2026-08-19T07:19:11.15Z" },
+    { url = "https://files.pythonhosted.org/packages/8a/da/f7ffc76084446a98143bd28f0c0b6bc3d835ef6fb59917935d02bef5f043/xraylib-4.3.0-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:79ecd1d2c06b54080ceeaa0136704fefc719f4d5b64df331d027b4d323b28a45", size = 16329428, upload-time = "2026-08-19T07:19:13.463Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/16/418fad6d3d214c47bafef7fb9405e21b8f7704ff1f68625f007d520435c4/xraylib-4.3.0-cp314-cp314-win_amd64.whl", hash = "sha256:8c35072eb881f6681f07349e8bd2916f6f1f9610a2cc4ffde2ae29e579e43cbb", size = 15032036, upload-time = "2026-08-19T07:19:16.078Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/23/5bdbf77805248d6fc678a7f544757e0bba33b49a1a1b83dba2a517d6e011/xraylib-4.3.0-cp314-cp314t-macosx_10_15_x86_64.whl", hash = "sha256:272a92f08b5705ceaa5531dd246602af4dc9a0ead02b5835b1a42f69ef7c6e90", size = 15962143, upload-time = "2026-08-19T07:19:18.329Z" },
+    { url = "https://files.pythonhosted.org/packages/8e/1e/9b6984cc662851584767520978681d38f87107a37d9363fa65ed47067beb/xraylib-4.3.0-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:b484a7dc5cd695456a99041c37acfb02a73ddb2e9e496b2c5019f64172ec500b", size = 16182743, upload-time = "2026-08-19T07:19:21.806Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/92/a644b47c5cb21d562ed7994c38a5942be2754bbeebf0bf9d622427e186f0/xraylib-4.3.0-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:13966fc338e221e7dd73de667054e0afa62406ca416610e9de0c5079477123c6", size = 16288214, upload-time = "2026-08-19T07:19:24.003Z" },
+    { url = "https://files.pythonhosted.org/packages/07/47/1a5b8794f3ba69d712f768134af08bb2c797964c447d0a6a94141f16cb3d/xraylib-4.3.0-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:47649e87d29397ff08389b392aaddb49e8664a1f35d944c4631f83cf8e8b2002", size = 16330835, upload-time = "2026-08-19T07:19:26.069Z" },
+    { url = "https://files.pythonhosted.org/packages/64/d7/fcb21f9809081426be110139218454241188c9971f8aca7f33a2cd1df3ed/xraylib-4.3.0-cp314-cp314t-win_amd64.whl", hash = "sha256:afc93bddc1754727581d33be6f24bdd5aae0b04a0f80235918422349942e85ed", size = 15035132, upload-time = "2026-08-19T07:19:28.312Z" },
+    { url = "https://files.pythonhosted.org/packages/31/0d/e806fdee13cbedcfcd9161119169531c4564528816ac7dc16bf3551d79b3/xraylib-4.3.0-cp315-cp315-macosx_10_15_x86_64.whl", hash = "sha256:c2fa7156c70e5b352607d8f175083e9e1ec49acaaebfe982a229f3386278a566", size = 15954223, upload-time = "2026-08-19T07:19:30.56Z" },
+    { url = "https://files.pythonhosted.org/packages/72/16/45743052af1cbfd89b53d09a8f16af1a3993ccc57fec3744a4746b2f9bfe/xraylib-4.3.0-cp315-cp315-macosx_11_0_arm64.whl", hash = "sha256:2baa1955a4b314b9ea1fe767b3620e6a852ee548918447460c4bc8c73104cae0", size = 16172484, upload-time = "2026-08-19T07:19:32.971Z" },
+    { url = "https://files.pythonhosted.org/packages/14/e2/adda7e7370e85776967c07b438d267318db84d103c2d84ecd7eb54a37099/xraylib-4.3.0-cp315-cp315-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:195c55357e95d6144e8b68a8cbe15d3ea49bccf433549b4a8a05d6b185d947d2", size = 16287872, upload-time = "2026-08-19T07:19:35.339Z" },
+    { url = "https://files.pythonhosted.org/packages/8e/93/1c3c1f91bae2bdf1b783d4c6edf59b64ae81512ee09c8b153414f4ac26f0/xraylib-4.3.0-cp315-cp315-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:a63fcc53c09c8fcc4648c5fb05d428e37ff6864027c2c5c2c198baf68e70ec1a", size = 16329535, upload-time = "2026-08-19T07:19:37.651Z" },
+    { url = "https://files.pythonhosted.org/packages/a2/22/aa4d8f322be25cbafe03ae855ea047dee8bedd46b2213318e88bfbb1f97a/xraylib-4.3.0-cp315-cp315-win_amd64.whl", hash = "sha256:21bfbcbca94bef01976ce5abfbc6e696d2d94ecb5d505980d1ac350d18b628ee", size = 15032302, upload-time = "2026-08-19T07:19:39.952Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/44/f6acaf2d4415f6f5da7f38b4bbff2e7df2614856006e539de3cd1b9bfcda/xraylib-4.3.0-cp315-cp315t-macosx_10_15_x86_64.whl", hash = "sha256:a0f7d13c05ca558e54cf46aa96faa759c109384efcbd4fd0b56fe4e616280644", size = 15961200, upload-time = "2026-08-19T07:19:42.083Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/c7/a7b3979b5df1c49ccae0b2591373fef65cad47aba1b768097be8277b4db3/xraylib-4.3.0-cp315-cp315t-macosx_11_0_arm64.whl", hash = "sha256:04e97ec9eb30651199b4a4df6615d923da8ec8840ddd69eea578ea55bc234543", size = 16182911, upload-time = "2026-08-19T07:19:44.539Z" },
+    { url = "https://files.pythonhosted.org/packages/48/d1/0562a946e69d31daf831b1e9d3de0f50e558a3f4cf25be1a95c9f975af58/xraylib-4.3.0-cp315-cp315t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:e79fc63842919d605d8d38ca9961b3275abb0591e08cd644f5e457b704256612", size = 16286936, upload-time = "2026-08-19T07:19:47.483Z" },
+    { url = "https://files.pythonhosted.org/packages/36/6f/d9b81ee20910eb10992592c74457f73fdb0057c59b6b248dd835f4fefc7e/xraylib-4.3.0-cp315-cp315t-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:ae32b280b5eb739995ec03e0c7808e419eb07dcc588fc28d3788183124302698", size = 16333031, upload-time = "2026-08-19T07:19:49.845Z" },
+    { url = "https://files.pythonhosted.org/packages/8a/38/1e32f1ff2d9a715099f6ddf28d9d14d29cdf7ecdcff4e4b29a33edfef910/xraylib-4.3.0-cp315-cp315t-win_amd64.whl", hash = "sha256:b49275169791b645ac21c007e3256063d68d8d5b26cec17652bb4607afd44a44", size = 15035586, upload-time = "2026-08-19T07:19:52.084Z" },
 ]
