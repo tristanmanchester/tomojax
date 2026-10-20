@@ -197,10 +197,13 @@ def test_cuda_cone_dense_transpose_on_separable_turntable_views(yaw):
 @pytest.mark.gpu
 @pytest.mark.parametrize("kernel", ["sep_adjoint", "sep_adjoint_cached"])
 @pytest.mark.parametrize("pitch", [0.4, 2.0])
+@pytest.mark.parametrize("nz", [3, 67])
 def test_cuda_separable_transpose_kernels_with_wide_support_and_view_tail(
-    kernel, pitch, monkeypatch
+    kernel, pitch, nz, monkeypatch
 ):
-    grid = Grid(5, 4, 3, 0.7, 1.1, 0.9, vol_center=(0.2, -0.1, 0.3))
+    # Keep illuminated voxels at the far z end, across the 64-cell tile boundary.
+    z_center = 0.3 - (nz - 3) * 0.9 / 2
+    grid = Grid(5, 4, nz, 0.7, 1.1, 0.9, vol_center=(0.2, -0.1, z_center))
     detector = Detector(9, 9 if pitch < 1 else 5, 1.3, pitch, center=(0.3, -0.4))
     geometry = ConeGeometry(
         grid, detector, np.linspace(0, 360, 33, endpoint=False), ConeBeam(40, 60)
@@ -221,7 +224,7 @@ def test_cuda_separable_transpose_kernels_with_wide_support_and_view_tail(
     frames = np.broadcast_to(beam_frame(geometry.beam, detector), (33, 4, 3))
     _check_dense_transpose(grid, detector, frames, jnp.asarray(geometry.poses(), jnp.float32))
     assert kernel in calls
-    expected = "sep_adjoint" if pitch < 1 else "sep_adjoint_cached"
+    expected = "sep_adjoint" if nz == 3 and pitch < 1 else "sep_adjoint_cached"
     assert selected and set(selected) == {expected}
 
     # The inverse vertical bound rounds past a tiny positive forward weight.
