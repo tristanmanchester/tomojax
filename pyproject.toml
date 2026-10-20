@@ -196,7 +196,6 @@ include = [
     "src/tomojax/backends/api.py",
     "src/tomojax/cli",
     "src/tomojax/core/api.py",
-    "src/tomojax/datasets/api.py",
     "src/tomojax/forward/api.py",
     "src/tomojax/geometry/api.py",
     "src/tomojax/io",

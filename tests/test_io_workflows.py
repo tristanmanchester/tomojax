@@ -21,10 +21,9 @@ from tomojax.io import (
 from tomojax.io.api import (
     convert_dataset,
     load_nxtomo,
-    load_real_laminography_input,
     locate_frames,
     projection_stats,
-    save_projection_payload,
+    save_nxtomo,
 )
 
 from ._helpers import make_projection_dataset, write_projection_dataset
@@ -72,9 +71,7 @@ def test_projection_dataset_roundtrips_nxtomo_with_solver_metadata(tmp_path: Pat
 def test_projection_payload_save_load_preserves_metadata_copy(tmp_path: Path) -> None:
     path = tmp_path / "payload.nxs"
     dataset = make_projection_dataset(geometry_metadata={"axis_unit_lab": [0.0, 0.0, 1.0]})
-    save_projection_payload(
-        path, projections=dataset.projections, metadata=dataset.to_nxtomo_metadata()
-    )
+    save_nxtomo(path, projections=dataset.projections, metadata=dataset.to_nxtomo_metadata())
 
     payload = load_dataset(path)
 
@@ -228,7 +225,7 @@ def test_saving_unknown_axis_volume_reports_actionable_error(tmp_path: Path) -> 
     loaded = load_nxtomo(str(path))
 
     with pytest.raises(ValueError, match="Set metadata.volume_axes_order before saving"):
-        save_projection_payload(
+        save_nxtomo(
             out_path,
             projections=loaded.projections,
             metadata=loaded.copy_metadata(),
@@ -258,7 +255,7 @@ def test_unknown_axis_in_place_save_preserves_existing_volume(tmp_path: Path) ->
     loaded = load_nxtomo(str(path))
 
     with pytest.raises(ValueError, match="Set metadata.volume_axes_order before saving"):
-        save_projection_payload(
+        save_nxtomo(
             path,
             projections=loaded.projections,
             metadata=loaded.copy_metadata(),
@@ -279,7 +276,7 @@ def test_copy_metadata_preserves_disk_volume_axes_order(tmp_path: Path) -> None:
     loaded = load_nxtomo(str(original_path))
     assert loaded.disk_volume_axes_order == "zyx"
 
-    save_projection_payload(
+    save_nxtomo(
         resaved_path,
         projections=loaded.projections,
         metadata=loaded.copy_metadata(),
@@ -448,43 +445,6 @@ def test_projection_stats_keep_exact_stats_when_percentile_sample_has_no_finite_
     assert stats["p50"] is None
     assert stats["p99"] is None
     assert nonfinite["nan_count"] == 1024 * 1024
-
-
-def _write_real_lamino_fixture(path: Path) -> tuple[np.ndarray, np.ndarray]:
-    projections = np.arange(2 * 3 * 4, dtype=np.float32).reshape(2, 3, 4)
-    thetas = np.asarray([10.0, 20.0], dtype=np.float32)
-    with h5py.File(path, "w") as handle:
-        handle.create_dataset("entry/imaging/data", data=projections)
-        handle.create_dataset("entry/imaging_sum/smaract_zrot", data=thetas)
-    return projections, thetas
-
-
-def test_real_laminography_loader_reads_angles_and_detector_orientation(tmp_path: Path) -> None:
-    path = tmp_path / "real_lamino.nxs"
-    projections, thetas = _write_real_lamino_fixture(path)
-
-    loaded = load_real_laminography_input(path)
-    transposed = load_real_laminography_input(path, transpose_detector=True)
-    flipped_u = load_real_laminography_input(path, flip_u=True)
-    flipped_v = load_real_laminography_input(path, flip_v=True)
-
-    np.testing.assert_array_equal(loaded.projections, projections)
-    np.testing.assert_array_equal(loaded.angles, thetas)
-    np.testing.assert_array_equal(transposed.projections, np.transpose(projections, (0, 2, 1)))
-    np.testing.assert_array_equal(flipped_u.projections, projections[:, :, ::-1])
-    np.testing.assert_array_equal(flipped_v.projections, projections[:, ::-1, :])
-
-
-def test_real_laminography_loader_rejects_angle_count_mismatch(tmp_path: Path) -> None:
-    path = tmp_path / "bad_real_lamino.nxs"
-    with h5py.File(path, "w") as handle:
-        handle.create_dataset("entry/imaging/data", data=np.zeros((2, 3, 4), dtype=np.float32))
-        handle.create_dataset(
-            "entry/imaging_sum/smaract_zrot", data=np.zeros((3,), dtype=np.float32)
-        )
-
-    with pytest.raises(ValueError, match="projection count 2 does not match angle count 3"):
-        load_real_laminography_input(path)
 
 
 def test_only_a_nonzero_saved_detector_roll_builds_an_explicit_grid() -> None:

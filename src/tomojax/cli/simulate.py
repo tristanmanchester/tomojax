@@ -16,7 +16,6 @@ from tomojax.datasets import (
     SimulationArtefacts,
     simulate_to_file,
 )
-from tomojax.datasets.api import validate_simulation_artefacts
 
 from ._runtime import transfer_guard_context
 
@@ -291,7 +290,7 @@ def _parse_command(argv: Sequence[str] | None) -> SimulateCommand:
 
 
 def _build_artefacts(args: argparse.Namespace) -> SimulationArtefacts | None:
-    """Build validated optional artefact config from parsed arguments."""
+    """Build the optional artefact configuration from parsed arguments."""
     artefacts = SimulationArtefacts(
         poisson_scale=cast("float", args.poisson_scale),
         gaussian_sigma=cast("float", args.gaussian_sigma),
@@ -309,7 +308,6 @@ def _build_artefacts(args: argparse.Namespace) -> SimulationArtefacts | None:
         intensity_drift_amplitude=cast("float", args.intensity_drift_amplitude),
         intensity_drift_mode=cast("IntensityDriftModeName", args.intensity_drift_mode),
     )
-    validate_simulation_artefacts(artefacts)
     if not artefacts.has_enabled():
         return None
     return artefacts

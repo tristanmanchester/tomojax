@@ -239,7 +239,11 @@ def test_public_warm_start_retains_arrangements_then_applies_the_solver_constrai
         return init_x, {"initial_image_test": True}
 
     monkeypatch.setattr(importlib.import_module("tomojax.recon.fdk"), "fdk", filter_part)
-    monkeypatch.setattr(api, {"cgls": "cgls", "fista": "fista_tv"}[method], solve)
+    monkeypatch.setattr(
+        importlib.import_module("tomojax.recon"),
+        {"cgls": "cgls", "fista": "fista_tv"}[method],
+        solve,
+    )
     config = api.method_config(method)
     if method != "cgls":
         config = replace(config, nonnegative=True)

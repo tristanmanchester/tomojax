@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+The `.api` modules hold only expert helpers: `tomojax.geometry.api`,
+`tomojax.recon.api` and `tomojax.io.api` no longer repeat the names their
+package roots export, and `tomojax.datasets.api` is removed (`tomojax.datasets`
+has everything). Names nothing used are gone: the geometry JSON/CSV readers,
+calibration objective cards and axis-index constants, `tomojax.io.load_nikon_xtekct`
+(`tj.load` reads `.xtekct`), `load_projection_payload`/`save_projection_payload`
+(use `load_dataset`/`save_nxtomo`) and the unused real-laminography loader.
+
 Projection matching fits a band-limited projection model matched to the
 detector sampling. Large motion in noisy scans is recovered more accurately, and
 the PSI nanotomography workflow takes about 40% less time.

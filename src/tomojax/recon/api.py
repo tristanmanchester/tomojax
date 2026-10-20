@@ -1,11 +1,14 @@
-"""Public API for reconstruction routines."""
+"""Expert reconstruction helpers: method configuration, array and slab solvers.
+
+The solvers and their configuration classes are exported by
+:mod:`tomojax.recon`; :func:`tomojax.reconstruct` is the workflow entry point.
+"""
 
 from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import fields, replace
 from importlib import import_module
-import sys
 from typing import TYPE_CHECKING, Any, cast
 
 from tomojax import recon
@@ -18,17 +21,15 @@ if TYPE_CHECKING:
     import numpy as np
 
     from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry
-    from tomojax.recon.cgls import CGLSConfig, cgls
-    from tomojax.recon.cgls_multires import cgls_multires
-    from tomojax.recon.fbp import FBPConfig, default_fbp_scale, fbp, run_parallel_fbp_direct_cuda
-    from tomojax.recon.fbp_host import FBPHostConfig, fbp_host
+    from tomojax.recon.cgls import CGLSConfig
+    from tomojax.recon.fbp import FBPConfig, default_fbp_scale, run_parallel_fbp_direct_cuda
     from tomojax.recon.filters import clear_filter_caches
-    from tomojax.recon.fista_tv import FistaConfig, fista_tv
-    from tomojax.recon.fourier import FourierConfig, fourier_reconstruct
-    from tomojax.recon.mlem import MLEMConfig, mlem
-    from tomojax.recon.sirt import SIRTConfig, sirt
-    from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
-    from tomojax.recon.types import ReconstructionSlab, Regulariser
+    from tomojax.recon.fista_tv import FistaConfig
+    from tomojax.recon.fourier import FourierConfig
+    from tomojax.recon.mlem import MLEMConfig
+    from tomojax.recon.sirt import SIRTConfig
+    from tomojax.recon.spdhg_tv import SPDHGConfig
+    from tomojax.recon.types import ReconstructionSlab
 
 type MethodConfig = (
     recon.FBPConfig
@@ -51,27 +52,9 @@ _CONFIGS = {
 }
 
 _SOURCES = {
-    "CGLSConfig": "cgls",
-    "FBPConfig": "fbp",
-    "FBPHostConfig": "fbp_host",
-    "FistaConfig": "fista_tv",
-    "FourierConfig": "fourier",
-    "MLEMConfig": "mlem",
-    "Regulariser": "types",
-    "SIRTConfig": "sirt",
-    "SPDHGConfig": "spdhg_tv",
-    "cgls": "cgls",
-    "cgls_multires": "cgls_multires",
     "clear_filter_caches": "filters",
     "default_fbp_scale": "fbp",
-    "fbp": "fbp",
-    "fbp_host": "fbp_host",
-    "fista_tv": "fista_tv",
-    "fourier_reconstruct": "fourier",
-    "mlem": "mlem",
     "run_parallel_fbp_direct_cuda": "fbp",
-    "sirt": "sirt",
-    "spdhg_tv": "spdhg_tv",
 }
 
 
@@ -439,7 +422,7 @@ def _iterative_incore(
         "sirt": "sirt",
         "mlem": "mlem",
     }[method]
-    solve = getattr(sys.modules[__name__], name) if solver is None else solver
+    solve = getattr(recon, name) if solver is None else solver
     volume, record = solve(*args, init_x=start, config=cfg, det_grid=det_grid)
     return volume, {"config": cfg, "warm_start": warm_start, **record}
 
@@ -552,28 +535,11 @@ def _fdk_config(cfg: FBPConfig) -> recon.FDKConfig:
 
 
 __all__ = [
-    "CGLSConfig",
-    "FBPConfig",
-    "FBPHostConfig",
-    "FistaConfig",
-    "FourierConfig",
-    "MLEMConfig",
-    "Regulariser",
-    "SIRTConfig",
-    "SPDHGConfig",
-    "cgls",
-    "cgls_multires",
+    "MethodConfig",
     "clear_filter_caches",
     "default_fbp_scale",
-    "fbp",
-    "fbp_host",
-    "fista_tv",
-    "fourier_reconstruct",
     "method_config",
-    "mlem",
     "reconstruct_arrays",
     "reconstruct_slabs",
     "run_parallel_fbp_direct_cuda",
-    "sirt",
-    "spdhg_tv",
 ]

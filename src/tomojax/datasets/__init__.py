@@ -1,21 +1,23 @@
-"""High-frequency deterministic synthetic dataset entry points."""
+"""Deterministic synthetic scans and phantoms for the ``tomojax simulate`` workflow."""
 
 from __future__ import annotations
 
-from tomojax.datasets.api import (
-    SimConfig,
-    SimulatedData,
-    SimulationArtefacts,
+from tomojax.datasets._impl.artefacts import SimulationArtefacts
+from tomojax.datasets._impl.phantoms import (
     blobs,
     cube,
     lamino_disk,
-    make_phantom,
     random_cubes_spheres,
     rotated_centered_cube,
     shepp_logan_3d,
+    sphere,
+)
+from tomojax.datasets._impl.simulate import (
+    SimConfig,
+    SimulatedData,
+    make_phantom,
     simulate,
     simulate_to_file,
-    sphere,
 )
 
 __all__ = [

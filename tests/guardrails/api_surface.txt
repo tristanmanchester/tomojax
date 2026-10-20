@@ -612,13 +612,6 @@ def tomojax.io.build_geometry_from_dataset_metadata(
         volume_shape: 'Sequence[int] | None' = None,
     ) -> 'tuple[Grid, Detector, ScanGeometry]'
 def tomojax.io.load_dataset(path: 'PathLike') -> 'ProjectionDataset'
-def tomojax.io.load_nikon_xtekct(
-        path: 'str | PathLike[str]',
-        *,
-        absorption: 'bool' = True,
-        reverse_angles: 'bool' = False,
-        darks: 'np.ndarray | float | None' = None,
-    ) -> 'ProjectionDataset'
 def tomojax.io.load_tiff_stack(
         path: 'PathLike',
         *,

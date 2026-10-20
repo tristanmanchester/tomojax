@@ -32,7 +32,10 @@ PUBLIC_DATA = {
     "tomojax.alignment.MODES": (
         "Explicit workflow alignment modes: pose, cor, cor-then-pose and full."
     ),
-    "tomojax.recon.api.Regulariser": "Regularizer name: tv or huber_tv.",
+    "tomojax.recon.api.MethodConfig": (
+        "A method's configuration: FBPConfig, FourierConfig, CGLSConfig, FistaConfig, "
+        "SPDHGConfig, SIRTConfig or MLEMConfig."
+    ),
     "tomojax.io.api.JsonValue": (
         "Recursive JSON value: null, boolean, number, string, list or mapping."
     ),
@@ -61,9 +64,6 @@ PUBLIC_DATA = {
     ),
     "tomojax.alignment.api.PoseTranslationFrame": "Translation frame: object or detector.",
     "tomojax.alignment.api.QualityTier": "Alignment quality profile: fast or reference.",
-    "tomojax.geometry.api.CORE_X_AXIS": "Axis index 0 in an internal xyz volume.",
-    "tomojax.geometry.api.CORE_Y_AXIS": "Axis index 1 in an internal xyz volume.",
-    "tomojax.geometry.api.CORE_Z_AXIS": "Axis index 2 in an internal xyz volume.",
     "tomojax.geometry.api.DISK_VOLUME_AXES": "Default on-disk volume axis order, zyx.",
     "tomojax.geometry.api.INTERNAL_VOLUME_AXES": "Internal Python volume axis order, xyz.",
     "tomojax.geometry.api.VOLUME_AXES_ATTR": (

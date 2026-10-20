@@ -36,12 +36,10 @@ __all__ = [
     "convert_dataset",
     "load_dataset",
     "load_nxtomo",
-    "load_projection_payload",
     "load_tiff_stack",
     "locate_frames",
     "save_dataset",
     "save_nxtomo",
-    "save_projection_payload",
     "validate_dataset",
     "validate_nxtomo",
 ]
@@ -69,38 +67,6 @@ class ValidationReport(TypedDict):
     """
 
     issues: list[str]
-
-
-def save_projection_payload(
-    path: PathLike,
-    *,
-    projections: np.ndarray,
-    metadata: NXTomoMetadata,
-) -> None:
-    """Save a solver-facing projection payload with updated metadata.
-
-    Parameters
-    ----------
-    path : str or pathlib.Path
-        NXtomo output path.
-    projections : numpy.ndarray
-        Projection stack in (view, v, u) order.
-    metadata : NXTomoMetadata
-        Updated acquisition, geometry and reconstruction metadata.
-
-    Returns
-    -------
-    None
-        Write the NXtomo projection payload.
-
-    Raises
-    ------
-    ValueError
-        If projection or volume metadata are invalid.
-    OSError
-        If the file cannot be written.
-    """
-    save_nxtomo(str(path), projections=projections, metadata=metadata)
 
 
 def build_geometry_from_dataset_metadata(
@@ -363,29 +329,6 @@ class ProjectionDataset:
         _merge_dataset_solver_metadata(payload, self)
         _merge_geometry_metadata_dict(payload, self.geometry_metadata)
         return payload
-
-
-def load_projection_payload(path: PathLike) -> ProjectionDataset:
-    """Load the solver-facing projection dataset for reconstruction/alignment.
-
-    Parameters
-    ----------
-    path : str or pathlib.Path
-        TomoJAX projection dataset to load.
-
-    Returns
-    -------
-    ProjectionDataset
-        Normalized solver-facing projection dataset.
-
-    Raises
-    ------
-    ValueError
-        If the container format is unsupported.
-    OSError
-        If the file cannot be read.
-    """
-    return load_dataset(path)
 
 
 def load_dataset(path: PathLike) -> ProjectionDataset:

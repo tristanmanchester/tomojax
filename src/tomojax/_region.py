@@ -14,8 +14,7 @@ from scipy.signal.windows import tukey
 
 from tomojax._scan import Scan, describe, with_grid
 from tomojax.backends import device_free_memory_bytes
-from tomojax.geometry import Grid
-from tomojax.geometry.api import stack_view_poses
+from tomojax.geometry import Grid, stack_view_poses
 from tomojax.recon import backproject, project
 from tomojax.recon.api import reconstruct_arrays
 

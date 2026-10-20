@@ -16,7 +16,7 @@ import tomojax.cli.simulate as simulate_cli
 from tomojax.geometry import stack_view_poses
 from tomojax.geometry.api import CalibrationState, CalibrationVariable
 from tomojax.io import build_geometry_from_dataset_metadata, load_dataset, save_dataset
-from tomojax.io.api import save_projection_payload
+from tomojax.io.api import save_nxtomo
 from tomojax.recon.quicklook import scale_to_uint8
 
 from ._helpers import (
@@ -458,7 +458,7 @@ def test_inspect_cli_previews_central_slices_of_xyz_disk_volumes(tmp_path: Path)
     dataset.volume = volume
     metadata = dataset.to_nxtomo_metadata()
     metadata.volume_axes_order = "xyz"
-    save_projection_payload(path, projections=dataset.projections, metadata=metadata)
+    save_nxtomo(path, projections=dataset.projections, metadata=metadata)
 
     assert main(["inspect", str(path), "--preview", str(previews)]) == 0
 

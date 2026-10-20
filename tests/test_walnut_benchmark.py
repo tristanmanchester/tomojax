@@ -23,7 +23,8 @@ def walnut():
 @pytest.mark.parametrize("posed", [False, True])
 def test_alignment_scores_calibrated_heights_and_fixes_one_global_gauge(walnut, monkeypatch, posed):
     import tomojax as tj
-    from tomojax.geometry.api import stack_view_poses, view_frames
+    from tomojax.geometry import stack_view_poses
+    from tomojax.geometry.api import view_frames
 
     monkeypatch.setitem(sys.modules, "walnut", walnut)
     path = Path(__file__).resolve().parents[1] / "bench" / "walnut_alignment.py"

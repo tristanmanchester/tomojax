@@ -19,8 +19,6 @@ from ._datasets import ProjectionDataset
 from ._tiff import tiff_files
 
 if TYPE_CHECKING:
-    from os import PathLike
-
     from ._acquisition import RawAcquisition
 
 LOG = logging.getLogger(__name__)
@@ -135,85 +133,6 @@ def _axis(
     ]
 
 
-def load_nikon_xtekct(
-    path: str | PathLike[str],
-    *,
-    absorption: bool = True,
-    reverse_angles: bool = False,
-    darks: np.ndarray | float | None = None,
-) -> ProjectionDataset:
-    """Load a Nikon scan as a cone-beam dataset.
-
-    Reads source and detector distances, detector pixels and offsets, the
-    white level from ``path`` (an ``.xtekct``
-    file), the projections ``<Name>_NNNN.tif`` beside it, and the angles from
-    ``<Name>_ctdata.txt`` when present (else ``InitialAngle`` and ``AngularStep``).
-    Without ``Name``, the angle sidecar uses the parameter file's basename.
-    Missing nominal angle settings or an incomplete measured sidecar require
-    ``angles=`` through ``load_frames``; a missing WhiteLevel requires
-    ``white_level=`` or measured ``flats=`` instead of the integer dtype maximum.
-    Dark calibration is not stored in this format; supply ``darks`` explicitly
-    (zero only for already dark-corrected counts). Projections become
-    absorption ``-log((I - dark) / (WhiteLevel - dark))`` unless
-    ``absorption`` is False, with image rows flipped so detector v points up.
-    Lengths stay in the file's units (mm).
-    Use ``tomojax.load_frames`` to inspect metadata or crop before reading pixels.
-
-    Vendor reconstruction dimensions, pitches and ROI offsets are retained in
-    source metadata, not applied: TomoJAX derives its numerical field-of-view
-    grid from the acquisition unless the caller supplies a grid.
-    The calibrated rotation axis comes from ObjectOffsetX/Roll/Tilt, or the
-    older CentreOfRotationTop/Bottom detector-plane offsets. An extra closing
-    frame on a full turn is excluded according to the declared view count.
-    ``reverse_angles`` negates the angles, for a stage turning the other way;
-    check the handedness of the reconstruction on a known sample.
-
-    Parameters
-    ----------
-    path : str or path-like
-        Nikon .xtekct parameter file beside its projection TIFFs.
-    absorption : bool, optional
-        Convert counts to -log(I / WhiteLevel); defaults to True.
-    reverse_angles : bool, optional
-        Negate the recorded angles to reverse the stage convention.
-    darks : numpy.ndarray, float or None, optional
-        Measured dark level or frames, required when absorption is True.
-
-    Returns
-    -------
-    ProjectionDataset
-        Cone-beam scan with flipped detector rows, geometry in mm and recorded angles.
-
-    Raises
-    ------
-    ValueError
-        If required scan parameters or projection TIFFs are missing or inconsistent.
-    OSError
-        If the parameter file or a projection cannot be read.
-    """
-    raw = _raw_nikon(Path(path))
-    if absorption:
-        if raw.white_level is None:
-            raise ValueError("Missing WhiteLevel: use tomojax.load_frames(path, white_level=...)")
-        if darks is None:
-            raise ValueError("Missing dark calibration: pass darks=... or use load_frames")
-    projections = np.asarray(raw.counts, np.float32)
-    if absorption:
-        assert raw.white_level is not None
-        assert darks is not None
-        dark = np.asarray(darks, np.float32)
-        if dark.ndim == 3:
-            dark = dark.mean(axis=0)
-        projections = -np.log(
-            np.maximum((projections - dark) / np.maximum(raw.white_level - dark, 1e-6), 1e-6)
-        )
-    return replace(
-        raw.record,
-        projections=projections,
-        angles=-raw.record.angles if reverse_angles else raw.record.angles,
-    )
-
-
 def _raw_nikon(file: Path) -> RawAcquisition:
     from ._acquisition import RawAcquisition
     from ._tiff import TiffFrames
@@ -326,6 +245,3 @@ def read_nikon(path: Path, *, data_path: str | None = None) -> RawAcquisition | 
     if data_path is not None:
         raise ValueError("a Nikon acquisition has no HDF5 data_path")
     return _raw_nikon(found[0])
-
-
-__all__ = ["load_nikon_xtekct"]

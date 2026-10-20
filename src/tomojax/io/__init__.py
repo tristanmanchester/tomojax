@@ -1,17 +1,15 @@
-"""Public IO entry points for TomoJAX datasets.
+"""Projection datasets on disk: load, save, validate and convert them.
 
-Use :mod:`tomojax.io.api` for inspection, JSON, and Nexus-wrangling helpers
-that are useful but not part of the package-root surface. Raw detector frames
-are read with :func:`tomojax.load_frames` and corrected with
-:mod:`tomojax.corrections`.
+Raw detector frames are read with :func:`tomojax.load_frames` and corrected
+with :mod:`tomojax.corrections`. Expert helpers (acquisition readers, NXtomo
+containers, inspection, JSON) are in :mod:`tomojax.io.api`.
 """
 
-from tomojax.io.api import (
+from tomojax.io._datasets import (
     ProjectionDataset,
     ValidationReport,
     build_geometry_from_dataset_metadata,
     load_dataset,
-    load_nikon_xtekct,
     load_tiff_stack,
     save_dataset,
     validate_dataset,
@@ -22,7 +20,6 @@ __all__ = [
     "ValidationReport",
     "build_geometry_from_dataset_metadata",
     "load_dataset",
-    "load_nikon_xtekct",
     "load_tiff_stack",
     "save_dataset",
     "validate_dataset",

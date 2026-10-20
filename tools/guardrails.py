@@ -52,7 +52,6 @@ EXPERT_MODULES = (
     "tomojax.recon.api",
     "tomojax.io.api",
     "tomojax.alignment.api",
-    "tomojax.datasets.api",
 )
 CLI_COMMANDS = ("inspect", "import", "preprocess", "recon", "align", "export", "simulate")
 # Files and functions longer than these are recorded with their length, which

@@ -1,25 +1,13 @@
 # tomojax.geometry
 
-`tomojax.geometry` provides geometry metadata, setup/pose state, gauge
-canonicalisation, detector/axis calibration primitives, and field-of-view
-helpers.
+`tomojax.geometry` describes a scan: the reconstruction `Grid`, the `Detector`,
+the geometry classes `ParallelGeometry`, `LaminographyGeometry`,
+`ConeGeometry` (with `ConeBeam`) and `ConeSegments`, and field-of-view helpers
+such as `compute_roi`, `grid_from_detector_fov` and `cylindrical_mask_xy`.
 
-## Public API
+`tomojax.geometry.api` holds the expert helpers alignment, IO and the solvers
+build on: volume axis order constants and `transpose_volume`, calibration
+state (`CalibrationState`, `GeometryState`, `validate_calibration_gauges`),
+axis poses and detector grids.
 
-- Axis order constants and helpers.
-- Concrete geometry metadata: `Grid`, `Detector`, `Geometry`,
-  `ParallelGeometry`, `LaminographyGeometry`, `RotationAxisGeometry`, and the
-  cone-beam `ConeBeam`, `ConeGeometry` and `ConeSegments`.
-- FOV helpers such as `compute_roi`, `grid_from_detector_fov`, and
-  `cylindrical_mask_xy`.
-- State types: `ScalarParameter`, `SetupParameters`, `PoseParameters`,
-  `AcquisitionParameters`, and `GeometryState`.
-- Calibration/gauge helpers for detector grids, axis state, and calibrated
-  metadata patches.
-- JSON/CSV artifact helpers for geometry and pose state.
-
-## Dependency policy
-
-Import the geometry classes and field-of-view helpers from `tomojax.geometry`,
-and the state, calibration, axis and artifact helpers from
-`tomojax.geometry.api`, not from private implementation files.
+Import from these two modules, not from private implementation files.

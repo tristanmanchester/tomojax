@@ -24,7 +24,8 @@ import numpy as np
 from walnut import ROWS, VIEWS, compare, load_orbits, reference, volume_geometry
 
 import tomojax as tj
-from tomojax.geometry.api import stack_view_poses, view_frames
+from tomojax.geometry import stack_view_poses
+from tomojax.geometry.api import view_frames
 
 
 def _scan(walnut: Path, data: np.ndarray, name: str, every: int, binning: int) -> tj.Scan:

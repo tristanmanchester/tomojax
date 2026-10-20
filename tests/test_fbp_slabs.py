@@ -8,7 +8,8 @@ import numpy as np
 import pytest
 
 from tomojax.geometry import Detector, Grid, ParallelGeometry
-from tomojax.recon.api import FBPConfig, fbp, reconstruct_slabs
+from tomojax.recon import FBPConfig, fbp
+from tomojax.recon.api import reconstruct_slabs
 
 BACKENDS = ["jax", pytest.param("cuda", marks=pytest.mark.gpu)]
 
