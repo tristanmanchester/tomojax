@@ -281,7 +281,7 @@ def _field(geometry: Geometry, grid: Grid, shape: tuple[int, ...]) -> np.ndarray
         backproject(geometry, np.ones(shape, np.float32), grid=grid.resampled(counts))
     )
     scale = [n / c for n, c in zip((grid.nx, grid.ny, grid.nz), counts, strict=True)]
-    reach = zoom(reach, scale, order=1, mode="nearest", grid_mode=True)
+    reach = np.asarray(zoom(reach, scale, order=1, mode="nearest", grid_mode=True))
     return reach >= _SEEN * reach.max()
 
 
