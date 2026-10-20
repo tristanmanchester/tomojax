@@ -11,7 +11,7 @@ import numpy as np
 from tomojax.core._gather import prepare_volume_for_gather, resolve_gather_target
 from tomojax.core.geometry.base import Detector, Grid
 
-from ._geometry_support import _supports_z_integer4, _supports_z_integer4_for_stack
+from ._geometry_support import _supports_z_integer4_for_stack
 from ._state import CudaProjectorUnsupported, _unsupported
 
 _SUPPORTED_NUM_WARPS = frozenset({1, 2, 4, 8})
@@ -162,44 +162,6 @@ def cuda_projector_variant_metadata(
     }
 
 
-def cuda_projector_actual_variant_metadata(
-    T: jnp.ndarray,
-    grid: Grid,
-    detector: Detector,
-    *,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
-    tile_shape: tuple[int, int] = (8, 16),
-    num_warps: int = 4,
-    kernel_variant: str = "auto",
-    layout_variant: str = "detector_vu",
-    state_mode: str = "inline",
-    gather_dtype: str = "fp32",
-) -> dict[str, Any]:
-    """Return normalized metadata for the selected CUDA variant."""
-    requested_kernel_variant = _normalize_kernel_variant(kernel_variant)
-    metadata = cuda_projector_variant_metadata(
-        tile_shape=tile_shape,
-        num_warps=num_warps,
-        kernel_variant=kernel_variant,
-        layout_variant=layout_variant,
-        state_mode=state_mode,
-        gather_dtype=gather_dtype,
-    )
-    metadata["kernel_variant"] = _select_kernel_variant(
-        T,
-        grid,
-        detector,
-        det_grid,
-        requested_kernel_variant,
-    )
-    metadata["tile_shape"] = _safe_detector_tile_shape(
-        metadata["tile_shape"],
-        detector,
-        max_generic_tile_u=8 if metadata["kernel_variant"] == "generic" else None,
-    )
-    return metadata
-
-
 def cuda_projector_actual_sinogram_variant_metadata(
     T_stack: jnp.ndarray,
     grid: Grid,
@@ -236,25 +198,6 @@ def cuda_projector_actual_sinogram_variant_metadata(
         max_generic_tile_u=8 if metadata["kernel_variant"] == "generic" else None,
     )
     return metadata
-
-
-def _select_kernel_variant(
-    T: jnp.ndarray,
-    grid: Grid,
-    detector: Detector,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
-    requested_kernel_variant: str,
-) -> str:
-    if requested_kernel_variant == "generic":
-        return "generic"
-    supports_z_integer = _supports_z_integer4(T, grid, detector, det_grid)
-    if requested_kernel_variant == "auto":
-        return "z_integer4" if supports_z_integer else "generic"
-    if requested_kernel_variant == "z_integer4" and supports_z_integer:
-        return "z_integer4"
-    raise CudaProjectorUnsupported(
-        _unsupported("kernel_variant='z_integer4' requires canonical integer-z detector geometry")
-    )
 
 
 def _select_kernel_variant_for_stack(
@@ -300,6 +243,5 @@ __all__ = [
     "_normalize_kernel_variant",
     "_prepare_volume_for_cuda_gather",
     "cuda_projector_actual_sinogram_variant_metadata",
-    "cuda_projector_actual_variant_metadata",
     "cuda_projector_variant_metadata",
 ]

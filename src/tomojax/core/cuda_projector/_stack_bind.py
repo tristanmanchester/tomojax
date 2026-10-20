@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 
 from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
-from tomojax.core.validation import validate_projection_stack
+from tomojax.core.validation import validate_pose_matrix, validate_projection_stack
 
 from ._config import (
     CudaForwardProjectorStackTraversalState,
@@ -267,3 +269,16 @@ def forward_project_views_T_cuda(
         _prepare_volume_for_cuda_gather(volume, gather_dtype),
         None,
     )
+
+
+def forward_project_view_T_cuda(
+    T: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    volume: jnp.ndarray,
+    **options: Any,
+) -> jnp.ndarray:
+    """Forward project one view: the pose stack of that single view."""
+    validate_pose_matrix(T, context="forward_project_view_T_cuda")
+    T_stack = jnp.asarray(T, dtype=jnp.float32)[None]
+    return forward_project_views_T_cuda(T_stack, grid, detector, volume, **options)[0]

@@ -23,6 +23,14 @@ keeps the others); `tomojax simulate --n-views`, `--rotation-deg` and `--tilt-de
 the `SimConfig` fields; `tomojax import` reads `detector_roll_deg`, `detector_pitch_deg`
 and `detector_yaw_deg`, as `ConeBeam` names them.
 
+`tomojax.core.cuda_projector` projects one view as a pose stack of one view: the
+single-view cached-state entry points (`bind_forward_project_view_T_cuda`,
+`prepare_forward_project_view_T_cuda_state`, `forward_project_view_T_cuda_with_state`,
+`block_forward_project_view_T_cuda_state`, `BoundForwardProjectViewTCuda`,
+`CudaForwardProjectorTraversalState`, `cuda_projector_actual_variant_metadata`) are gone;
+the `views` forms take a stack of one. `forward_project_view_T_cuda` and
+`cuda_projector_unsupported_reason` remain.
+
 `tomojax.recon.api.method_config` takes `warm_start=` and rejects it for the direct
 methods, so every entry point checks a method's options in one place.
 

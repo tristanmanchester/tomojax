@@ -39,19 +39,6 @@ class CudaProjectorTraversalMetadata:
 
 
 @dataclass(frozen=True)
-class CudaForwardProjectorTraversalState:
-    """Prepared single-view traversal state for fixed-geometry CUDA benchmarking."""
-
-    traversal: CudaProjectorTraversalMetadata
-    dix: float
-    diy: float
-    diz: float
-
-    def __getattr__(self, name: str) -> object:
-        return getattr(self.traversal, name)
-
-
-@dataclass(frozen=True)
 class CudaForwardProjectorStackTraversalState:
     """Prepared pose-stack traversal state for fixed pose-stack CUDA benchmarking."""
 
@@ -67,7 +54,6 @@ class CudaForwardProjectorStackTraversalState:
 
 __all__ = [
     "CudaForwardProjectorStackTraversalState",
-    "CudaForwardProjectorTraversalState",
     "CudaProjectorTraversalMetadata",
     "CudaProjectorUnsupported",
 ]

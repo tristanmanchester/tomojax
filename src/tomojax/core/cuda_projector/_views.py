@@ -13,6 +13,7 @@ from ._stack_bind import (
     BoundForwardProjectViewsTCuda,
     bind_forward_project_residual_sse_T_cuda,
     bind_forward_project_views_T_cuda,
+    forward_project_view_T_cuda,
     forward_project_views_T_cuda,
 )
 from ._stack_call import (
@@ -35,6 +36,7 @@ __all__ = [
     "forward_project_parallel_z_views_cuda",
     "forward_project_residual_sse_T_cuda",
     "forward_project_residual_sse_T_cuda_with_state",
+    "forward_project_view_T_cuda",
     "forward_project_views_T_cuda",
     "forward_project_views_T_cuda_with_state",
     "prepare_forward_project_views_T_cuda_state",

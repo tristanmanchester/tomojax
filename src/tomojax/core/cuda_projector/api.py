@@ -12,23 +12,12 @@ if TYPE_CHECKING:
 
 from ._config import (
     CudaForwardProjectorStackTraversalState,
-    CudaForwardProjectorTraversalState,
     CudaProjectorTraversalMetadata,
     CudaProjectorUnsupported,
     cuda_projector_actual_sinogram_variant_metadata,
-    cuda_projector_actual_variant_metadata,
     cuda_projector_sinogram_unsupported_reason as _cuda_projector_sinogram_unsupported_reason,
     cuda_projector_traversal_metadata,
-    cuda_projector_unsupported_reason as _cuda_projector_unsupported_reason,
     cuda_projector_variant_metadata,
-)
-from ._single_view import (
-    BoundForwardProjectViewTCuda,
-    bind_forward_project_view_T_cuda as _bind_forward_project_view_T_cuda,
-    block_forward_project_view_T_cuda_state,
-    forward_project_view_T_cuda as _forward_project_view_T_cuda,
-    forward_project_view_T_cuda_with_state,
-    prepare_forward_project_view_T_cuda_state,
 )
 from ._views import (
     BoundForwardProjectResidualSseTCuda,
@@ -41,6 +30,7 @@ from ._views import (
     forward_project_parallel_z_views_cuda,
     forward_project_residual_sse_T_cuda as _forward_project_residual_sse_T_cuda,
     forward_project_residual_sse_T_cuda_with_state,
+    forward_project_view_T_cuda as _forward_project_view_T_cuda,
     forward_project_views_T_cuda as _forward_project_views_T_cuda,
     forward_project_views_T_cuda_with_state,
     prepare_forward_project_views_T_cuda_state,
@@ -115,26 +105,6 @@ def forward_project_view_T_cuda(
         unroll=opts.unroll,
         interpret=opts.interpret,
         state_mode=opts.state_mode,
-    )
-
-
-def bind_forward_project_view_T_cuda(
-    T: jnp.ndarray,
-    grid: Grid,
-    detector: Detector,
-    *,
-    options: CudaProjectorOptions | None = None,
-) -> BoundForwardProjectViewTCuda:
-    """Bind fixed single-view CUDA traversal state using one options object."""
-    opts = _opts(options)
-    return _bind_forward_project_view_T_cuda(
-        T,
-        grid,
-        detector,
-        **_projector_kwargs(opts),
-        unroll=opts.unroll,
-        interpret=opts.interpret,
-        block_state=opts.block_state,
     )
 
 
@@ -309,15 +279,11 @@ def cuda_projector_unsupported_reason(
     *,
     options: CudaProjectorOptions | None = None,
 ) -> str | None:
-    """Return why single-view CUDA projection is unsupported, if it is."""
-    opts = _opts(options)
-    return _cuda_projector_unsupported_reason(
-        T,
-        grid,
-        detector,
-        volume,
-        **_projector_kwargs(opts),
-        state_mode=opts.state_mode,
+    """Return why CUDA projection of one view is unsupported, if it is."""
+    import jax.numpy as jnp
+
+    return cuda_projector_sinogram_unsupported_reason(
+        jnp.asarray(T, dtype=jnp.float32)[None], grid, detector, volume, options=options
     )
 
 
@@ -343,21 +309,16 @@ def cuda_projector_sinogram_unsupported_reason(
 
 __all__ = [
     "BoundForwardProjectResidualSseTCuda",
-    "BoundForwardProjectViewTCuda",
     "BoundForwardProjectViewsTCuda",
     "CudaForwardProjectorStackTraversalState",
-    "CudaForwardProjectorTraversalState",
     "CudaProjectorOptions",
     "CudaProjectorTraversalMetadata",
     "CudaProjectorUnsupported",
     "backproject_view_T_cuda",
     "bind_forward_project_residual_sse_T_cuda",
-    "bind_forward_project_view_T_cuda",
     "bind_forward_project_views_T_cuda",
-    "block_forward_project_view_T_cuda_state",
     "block_forward_project_views_T_cuda_state",
     "cuda_projector_actual_sinogram_variant_metadata",
-    "cuda_projector_actual_variant_metadata",
     "cuda_projector_sinogram_unsupported_reason",
     "cuda_projector_traversal_metadata",
     "cuda_projector_unsupported_reason",
@@ -367,10 +328,8 @@ __all__ = [
     "forward_project_residual_sse_T_cuda",
     "forward_project_residual_sse_T_cuda_with_state",
     "forward_project_view_T_cuda",
-    "forward_project_view_T_cuda_with_state",
     "forward_project_views_T_cuda",
     "forward_project_views_T_cuda_with_state",
-    "prepare_forward_project_view_T_cuda_state",
     "prepare_forward_project_views_T_cuda_state",
     "sum_backproject_views_T_cuda",
 ]

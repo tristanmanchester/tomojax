@@ -11,7 +11,6 @@ from tomojax.core.geometry.base import Detector, Grid
 from tomojax.core.projector import _resolve_n_steps
 from tomojax.core.validation import (
     validate_detector,
-    validate_pose_matrix,
     validate_pose_stack,
     validate_volume,
 )
@@ -22,7 +21,6 @@ from ._geometry_support import (
 )
 from ._state import (
     CudaForwardProjectorStackTraversalState,
-    CudaForwardProjectorTraversalState,
     CudaProjectorTraversalMetadata,
     CudaProjectorUnsupported,
     _unsupported,
@@ -40,7 +38,6 @@ from ._variants import (
     _prepare_volume_for_cuda_gather,
     _safe_detector_tile_shape,
     cuda_projector_actual_sinogram_variant_metadata,
-    cuda_projector_actual_variant_metadata,
     cuda_projector_variant_metadata,
 )
 
@@ -48,7 +45,6 @@ __all__ = [
     "_KERNEL_VARIANT_IDS",
     "_LAYOUT_VARIANT_IDS",
     "CudaForwardProjectorStackTraversalState",
-    "CudaForwardProjectorTraversalState",
     "CudaProjectorTraversalMetadata",
     "CudaProjectorUnsupported",
     "_cuda_gather_jnp_dtype",
@@ -63,13 +59,10 @@ __all__ = [
     "_safe_detector_tile_shape",
     "_supports_parallel_z_rotation_stack",
     "_unsupported",
-    "_validate_public_call",
     "_validate_public_sinogram_call",
     "cuda_projector_actual_sinogram_variant_metadata",
-    "cuda_projector_actual_variant_metadata",
     "cuda_projector_sinogram_unsupported_reason",
     "cuda_projector_traversal_metadata",
-    "cuda_projector_unsupported_reason",
     "cuda_projector_variant_metadata",
 ]
 
@@ -199,56 +192,6 @@ def _traversal_call_parameters(
     )
 
 
-def _validate_public_call(
-    T: jnp.ndarray,
-    grid: Grid,
-    detector: Detector,
-    volume: jnp.ndarray,
-    *,
-    step_size: float | None,
-    n_steps: int | None,
-    gather_dtype: str,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
-    interpret: bool,
-    tile_shape: tuple[int, int],
-    num_warps: int,
-    kernel_variant: str,
-    layout_variant: str,
-    state_mode: str,
-) -> tuple[int, int, int, int, int, int, float, int, int, tuple[int, int], int, int, int]:
-    nx, ny, nz = validate_volume(
-        volume,
-        grid,
-        context="forward_project_view_T_cuda",
-        name="volume",
-    )
-    nv, nu = validate_detector(detector, "forward_project_view_T_cuda")
-    validate_pose_matrix(T, context="forward_project_view_T_cuda")
-    _ensure_float32_volume(volume)
-    _ensure_canonical_detector_grid(detector, det_grid)
-    variant = cuda_projector_actual_variant_metadata(
-        T,
-        grid,
-        detector,
-        det_grid=det_grid,
-        tile_shape=tile_shape,
-        num_warps=num_warps,
-        kernel_variant=kernel_variant,
-        layout_variant=layout_variant,
-        state_mode=state_mode,
-        gather_dtype=gather_dtype,
-    )
-    return (
-        nx,
-        ny,
-        nz,
-        nv,
-        nu,
-        nx * ny * nz,
-        *_traversal_call_parameters(variant, T, grid, step_size, n_steps, interpret=interpret),
-    )
-
-
 def _validate_public_sinogram_call(
     T_stack: jnp.ndarray,
     grid: Grid,
@@ -306,47 +249,6 @@ def _validate_public_sinogram_call(
             variant, T_stack, grid, step_size, n_steps, interpret=interpret
         ),
     )
-
-
-def cuda_projector_unsupported_reason(
-    T: jnp.ndarray,
-    grid: Grid,
-    detector: Detector,
-    volume: jnp.ndarray,
-    *,
-    step_size: float | None = None,
-    n_steps: int | None = None,
-    gather_dtype: str = "fp32",
-    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
-    tile_shape: tuple[int, int] = (8, 16),
-    num_warps: int = 4,
-    kernel_variant: str = "auto",
-    layout_variant: str = "detector_vu",
-    state_mode: str = "inline",
-) -> str | None:
-    """Return an unsupported reason, or ``None`` if eligible."""
-    try:
-        _validate_public_call(
-            T,
-            grid,
-            detector,
-            volume,
-            step_size=step_size,
-            n_steps=n_steps,
-            gather_dtype=gather_dtype,
-            det_grid=det_grid,
-            interpret=False,
-            tile_shape=tile_shape,
-            num_warps=num_warps,
-            kernel_variant=kernel_variant,
-            layout_variant=layout_variant,
-            state_mode=state_mode,
-        )
-    except CudaProjectorUnsupported as exc:
-        return str(exc)
-    except ValueError as exc:
-        return _unsupported(str(exc))
-    return None
 
 
 def cuda_projector_sinogram_unsupported_reason(
