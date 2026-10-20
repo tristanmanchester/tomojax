@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, TypedDict, cast
 
+from tomojax._json import JsonValue, normalize_json
 from tomojax.core.geometry.base import DetectorDict
-from tomojax.geometry._calibration.json import JsonValue, normalize_json
 from tomojax.geometry._calibration.state import CalibrationState
 
 if TYPE_CHECKING:

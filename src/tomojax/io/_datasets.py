@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 
     import jax
 
-    from tomojax.io._json import JsonValue
+    from tomojax._json import JsonValue
 
 type PathLike = str | Path
 

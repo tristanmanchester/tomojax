@@ -1,3 +1,5 @@
+"""JSON normalisation shared by metadata, manifests and calibration records."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping

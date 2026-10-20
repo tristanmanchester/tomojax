@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+`tomojax.recon.api.method_config` takes `warm_start=` and rejects it for the direct
+methods, so every entry point checks a method's options in one place.
+
 The `.api` modules hold only expert helpers: `tomojax.geometry.api`,
 `tomojax.recon.api` and `tomojax.io.api` no longer repeat the names their
 package roots export, and `tomojax.datasets.api` is removed (`tomojax.datasets`

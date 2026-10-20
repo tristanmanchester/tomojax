@@ -72,7 +72,11 @@ def __dir__() -> list[str]:
 
 
 def method_config(
-    method: str, *, config: MethodConfig | None = None, **settings: object
+    method: str,
+    *,
+    config: MethodConfig | None = None,
+    warm_start: bool | None = None,
+    **settings: object,
 ) -> MethodConfig:
     """Build a method configuration from defaults or named replacements.
 
@@ -82,7 +86,8 @@ def method_config(
     :class:`FourierConfig`. Each setting
     replaces the field of its name, as :func:`dataclasses.replace` does. A config
     of another class, or a setting its class has no field for, raises
-    :class:`ValueError` naming the valid ones.
+    :class:`ValueError` naming the valid ones; so does ``warm_start`` for the
+    direct methods (fbp, fourier), which start from nothing.
 
     Parameters
     ----------
@@ -91,6 +96,8 @@ def method_config(
         "sirt" or "mlem".
     config : MethodConfig or None, optional
         Existing configuration of the method's type. None uses its defaults.
+    warm_start : bool or None, optional
+        Whether the caller asked for a warm start; only the iterative methods take one.
     **settings : object
         Named fields replacing the corresponding configuration values.
 
@@ -114,6 +121,8 @@ def method_config(
     if name is None:
         raise ValueError(f"method must be one of {', '.join(_CONFIGS)}; got {method!r}")
     kind = cast("type[MethodConfig]", getattr(recon, name))
+    if warm_start is not None and method in {"fbp", "fourier"}:
+        raise ValueError(f"method {method!r} does not take warm_start")
     if config is not None and not isinstance(config, kind):
         raise ValueError(
             f"method {method!r} takes a {kind.__name__}, not a {type(config).__name__}"
@@ -169,10 +178,8 @@ def reconstruct_slabs[T](
     ValueError
         If the method or a setting does not support slabs.
     """
-    cfg = method_config(method, config=config)
+    cfg = method_config(method, config=config, warm_start=warm_start or None)
     if method in {"fbp", "fourier"}:
-        if warm_start:
-            raise ValueError(f"method {method!r} does not take warm_start")
         if method == "fbp":
             from tomojax.core.geometry.cone import is_cone_beam
 
@@ -276,15 +283,13 @@ def reconstruct_arrays(
         If method, configuration, shapes or geometry are incompatible, warm_start
         is requested for a noniterative method, or out is unsupported.
     """
-    cfg = method_config(method, config=config)
+    cfg = method_config(method, config=config, warm_start=warm_start or None)
     if method == "fourier":
         cfg = cast("FourierConfig", cfg)
         import numpy as np
 
         from tomojax.recon._fourier_backend import resolve_fourier_backend
 
-        if warm_start:
-            raise ValueError("method 'fourier' does not take warm_start")
         backend = resolve_fourier_backend(cfg.backend)
         volume = recon.fourier_reconstruct(
             cast("ParallelGeometry", geometry),
@@ -300,8 +305,6 @@ def reconstruct_arrays(
     det_grid = _detector_grid(geometry, detector)
     if method == "fbp":
         cfg = cast("FBPConfig", cfg)
-        if warm_start:
-            raise ValueError("method 'fbp' does not take warm_start")
         return _fbp_result(geometry, grid, detector, projections, cfg, det_grid, out)
     # The method name has ruled out the FBP and Fourier configurations above.
     iterative = cast("CGLSConfig | FistaConfig | SPDHGConfig | SIRTConfig | MLEMConfig", cfg)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-from tomojax.geometry._calibration.json import JsonValue, drop_none
+from tomojax._json import JsonValue, drop_none
 
 ThetaSign = Literal[-1, 1]
 

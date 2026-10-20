@@ -14,7 +14,7 @@ from dataclasses import dataclass, fields, replace
 import logging
 import os
 import sys
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 
@@ -239,11 +239,11 @@ class _Run:
             if settings:
                 raise ValueError("expert reconstruction settings require an explicit --method")
             return None
-        config = method_config(self.method, config=None, **settings)
-        options = {k: v for k, v in self.keywords().items() if k != "warm_start"}
+        expert = cast("dict[str, Any]", dict(settings))
+        config = method_config(self.method, config=None, warm_start=self.warm_start, **expert)
+        options = cast("dict[str, Any]", self.keywords())
+        options.pop("warm_start", None)
         _ = method_config(self.method, config=config, **options)
-        if self.method in {"fbp", "fourier"} and self.warm_start is not None:
-            raise ValueError(f"method {self.method!r} does not take warm_start")
         return config
 
 

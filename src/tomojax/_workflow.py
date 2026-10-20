@@ -441,9 +441,7 @@ def reconstruct(
     if method == "auto":
         options = {"grid": grid, "out": out, "config": config, "warm_start": warm_start, **given}
         return _automatic_reconstruct(scan, {k: v for k, v in options.items() if v is not None})
-    cfg = method_config(method, config=config, **given)
-    if warm_start is not None and method in {"fbp", "fourier"}:
-        raise ValueError(f"method {method!r} does not take warm_start")
+    cfg = method_config(method, config=config, warm_start=warm_start, **given)
     if grid is not None:
         scan = with_grid(scan, grid)
     if method not in {"fbp", "fourier"}:
@@ -637,7 +635,7 @@ def reconstruct_slabs(
     from tomojax.geometry.api import is_cone_beam
     from tomojax.recon.api import method_config, reconstruct_slabs as array_slabs
 
-    cfg = method_config(method, config=config)
+    cfg = method_config(method, config=config, warm_start=warm_start)
     cone = is_cone_beam(frames.geometry)
     if method not in {"fbp", "fourier", "sirt", "mlem"} or not (
         type(frames.geometry) is ParallelGeometry or (cone and method == "fbp")
@@ -645,8 +643,6 @@ def reconstruct_slabs(
         raise ValueError(
             "reconstruct_slabs requires cone FBP or unposed axial FBP/Fourier/SIRT/MLEM"
         )
-    if warm_start is not None and method in {"fbp", "fourier"}:
-        raise ValueError(f"method {method!r} does not take warm_start")
     target = frames.geometry.grid if grid is None else grid
     origin = grid_volume_origin(target)
     with corrected_row_source(
