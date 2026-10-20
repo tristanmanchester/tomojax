@@ -9,11 +9,15 @@ so a volume larger than memory never stays resident.
 from __future__ import annotations
 
 import mmap
+import os
 from pathlib import Path
 import tempfile
 from typing import Any
+import weakref
 
 import numpy as np
+
+_DESCRIPTORS: dict[int, int] = {}  # open files of the work volumes alive, by id
 
 
 def scratch_directory(array: np.ndarray | None) -> Path | None:
@@ -29,9 +33,62 @@ def host_volume(shape: tuple[int, int, int], directory: Path | None = None) -> n
     """
     if directory is None:
         return np.zeros(shape, np.float32, order="F")
-    # The mapping keeps the unlinked file alive after its descriptor closes.
-    with tempfile.TemporaryFile(dir=directory) as handle:
-        return np.memmap(handle, np.float32, "w+", shape=shape, order="F")
+    with tempfile.NamedTemporaryFile(dir=directory) as handle:
+        array = np.memmap(handle.name, np.float32, "w+", shape=shape, order="F")
+        descriptor = os.open(handle.name, os.O_RDWR)
+    # The descriptor keeps the unlinked file open for slab reads and writes.
+    _DESCRIPTORS[id(array)] = descriptor
+    weakref.finalize(array, lambda key: os.close(_DESCRIPTORS.pop(key)), id(array))
+    return array
+
+
+def slab_file(array: np.ndarray) -> tuple[int, int] | None:
+    """A new descriptor for a Fortran-ordered memmap's file, and the offset of its first byte.
+
+    None for arrays that are not memory-mapped files. The caller closes the descriptor.
+    """
+    mapping = getattr(array, "_mmap", None)
+    kept, name = _DESCRIPTORS.get(id(array)), getattr(array, "filename", None)
+    if mapping is None or not array.flags.f_contiguous:
+        return None
+    if kept is not None:
+        descriptor = os.dup(kept)
+    elif name is not None:
+        descriptor = os.open(name, os.O_RDWR)
+    else:
+        return None
+    offset = int(getattr(array, "offset", 0))
+    start = offset - offset % mmap.ALLOCATIONGRANULARITY
+    return descriptor, start + array.ctypes.data - np.frombuffer(mapping, np.uint8).ctypes.data
+
+
+def read_at(descriptor: int, out: np.ndarray, position: int, *, drop: bool = False) -> None:
+    """Fill the contiguous ``out`` from the file at byte ``position``.
+
+    With ``drop`` the bytes read leave the page cache.
+    """
+    view, done = memoryview(out).cast("B"), 0
+    while done < len(view):
+        count = os.preadv(descriptor, [view[done:]], position + done)
+        if count == 0:
+            raise EOFError(f"volume file ends before byte {position + len(view)}")
+        done += count
+    if drop:
+        os.posix_fadvise(descriptor, position, len(view), os.POSIX_FADV_DONTNEED)
+
+
+def write_at(descriptor: int, block: np.ndarray, position: int, *, drop: bool = False) -> None:
+    """Write the contiguous ``block`` to the file at byte ``position``.
+
+    With ``drop`` the bytes reach the disk and leave the page cache before
+    this returns, so writes to a slow disk cannot fill memory.
+    """
+    view, done = memoryview(block).cast("B"), 0
+    while done < len(view):
+        done += os.pwrite(descriptor, view[done:], position + done)
+    if drop:
+        os.fdatasync(descriptor)
+        os.posix_fadvise(descriptor, position, len(view), os.POSIX_FADV_DONTNEED)
 
 
 def release(array: np.ndarray, start: int = 0, stop: int | None = None) -> None:

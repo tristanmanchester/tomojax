@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 from importlib import import_module
+import os
 
 import numpy as np
 import pytest
@@ -196,6 +197,15 @@ def test_host_volume_storage_fills_checks_and_unlinks_work_files(tmp_path):
     host_volume.fill(named, work)
     assert isinstance(work, np.memmap) and [p.name for p in tmp_path.iterdir()] == ["v.npy"]
     np.testing.assert_array_equal(named, 1.5)
+    block = np.arange(12, dtype=np.float32).reshape(2, 2, 3)  # planes 5 and 6, (z, y, x)
+    for array in (named, work):  # file reads and writes meet the mapped volume
+        descriptor, first = host_volume.slab_file(array)
+        host_volume.write_at(descriptor, block, first + 5 * 24, drop=True)
+        back = np.empty_like(block)
+        host_volume.read_at(descriptor, back, first + 5 * 24, drop=True)
+        os.close(descriptor)
+        np.testing.assert_array_equal(np.asarray(array[:, :, 5:7]).T, back)
+        np.testing.assert_array_equal(back, block)
     data = np.ones((20, 2, 2), np.float32)
     host_volume.check_rows(data, "test", nonnegative=True)
     data[17, 1, 0] = -1
