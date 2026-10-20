@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+Host-volume upload buffers remain independent of caller arrays on CPU.
+
 Cone-beam CGLS, SIRT/OS-SART and MLEM/OSEM reconstruct volumes larger than
 the GPU: the volumes stay in host memory, or in memory-mapped files given as
 `out=`, and are streamed through the device in z slabs, each projected onto

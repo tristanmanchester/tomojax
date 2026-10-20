@@ -61,9 +61,17 @@ class HostPlaneOperator:
             yield first, min(first + self.slab_depth, self.shape[2])
 
     def put(self, value: np.ndarray) -> jax.Array:
-        """Copy a host array to an owned, C-contiguous FP32 device buffer."""
+        """Copy a host array to an owned, C-contiguous FP32 device buffer.
+
+        CPU runtimes may retain NumPy storage despite ``may_alias=False``;
+        a private host buffer keeps subsequent caller edits independent.
+        """
         self.host_to_device_bytes += value.size * 4
-        return jax.device_put(np.asarray(value, dtype=np.float32, order="C"), may_alias=False)
+        ready = np.asarray(value, dtype=np.float32, order="C")
+        device = next(iter(self.coefficients.devices()))
+        if device.platform == "cpu":
+            ready = ready.copy()
+        return jax.device_put(ready, device=device, may_alias=False)
 
     def get(self, value: jax.Array) -> np.ndarray:
         """Copy a device array to independent host storage."""

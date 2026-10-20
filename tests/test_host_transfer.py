@@ -35,6 +35,10 @@ def test_host_transfers_preserve_owned_views(source_order, target_order):
     np.testing.assert_array_equal(target, source * np.float32(1.000001))
     np.testing.assert_array_equal(np.asarray(value), source)
     np.testing.assert_array_equal(storage[1::2], np.full_like(storage[1::2], -17))
+    expected = np.asarray(value).copy()
+    source.setflags(write=True)
+    source[:] = -5
+    np.testing.assert_array_equal(value, expected)
 
 
 @pytest.mark.parametrize("axis", [0, 1, 2])

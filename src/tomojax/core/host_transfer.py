@@ -53,11 +53,12 @@ def upload_host(array: np.ndarray, device: Device) -> jax.Array:
     """Upload without array-sized pinned staging; never donate the caller's input.
 
     Regular row windows copy directly; other strided inputs are packed once.
-    CUDA copies complete on the current CuPy stream before returning, so the
-    caller may immediately reuse host storage.
+    CPU uploads own a private host copy. CUDA copies complete on the current
+    CuPy stream before returning. On either platform the caller may immediately
+    reuse host storage without changing the uploaded values.
     """
     if device.platform != "gpu":
-        return jax.device_put(array, device)
+        return jax.device_put(np.array(array, copy=True), device)
     import cupy as cp
 
     layout = _pitched_rows(array)
