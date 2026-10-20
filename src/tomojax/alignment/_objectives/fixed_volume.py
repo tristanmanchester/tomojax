@@ -227,7 +227,7 @@ def project_stack(
         )
         fallback_reason = fallback_reason or callable_reason
         if cuda_project is not None and fallback_reason is None:
-            unsupported_exc = cuda_unsupported_exception_type() or ValueError
+            unsupported_exc = cuda_unsupported_exception_type(resolve_cuda_callable) or ValueError
             try:
                 options = _cuda_projector_options(
                     gather_dtype=gather_dtype,
@@ -364,7 +364,7 @@ def project_and_score_stack(
         )
         fallback_reason = fallback_reason or callable_reason
         if cuda_score is not None and fallback_reason is None:
-            unsupported_exc = cuda_unsupported_exception_type() or ValueError
+            unsupported_exc = cuda_unsupported_exception_type(resolve_cuda_callable) or ValueError
             try:
                 options = _cuda_projector_options(
                     gather_dtype=gather_dtype,
