@@ -42,7 +42,8 @@ def problem(request):
 
 @pytest.mark.numerical
 @pytest.mark.parametrize("subsets", [1, 2, 3])
-def test_mlem_dense_subset_updates_with_support(problem, subsets):
+@pytest.mark.parametrize("batch", [2, 4])
+def test_mlem_dense_subset_updates_with_support(problem, subsets, batch):
     grid, detector, geometry, matrix = problem
     support = np.ones((3, 2, 2), bool)
     support[0] = False
@@ -64,7 +65,7 @@ def test_mlem_dense_subset_updates_with_support(problem, subsets):
         detector,
         data.reshape(5, 4, 5),
         init_x=np.full((3, 2, 2), 0.7, np.float32),
-        config=MLEMConfig(iterations=3, subsets=subsets, support=support, views_per_batch=2),
+        config=MLEMConfig(iterations=3, subsets=subsets, support=support, views_per_batch=batch),
     )
     np.testing.assert_allclose(np.asarray(volume).ravel(), expected, rtol=2e-5, atol=2e-6)
     assert info["subset_updates"] == 3 * subsets

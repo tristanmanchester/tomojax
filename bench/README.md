@@ -400,6 +400,66 @@ uv run --no-sync python bench/compare_cone.py --size 256 --views 360 \
   --output bench/results/cone-256.json
 ```
 
+### Full-view iterative frontiers
+
+[`cone_matrix.py`](cone_matrix.py) measures one solver configuration per fresh
+process, then repeats it warm. It includes initialization, normalization and
+host transfers. `cold_with_loading` starts before numerical-library imports;
+compilation caches are private and the filesystem cache is not cleared. Quality
+scoring is outside the solver timer.
+
+| Case | Input | Detector binning | Output grid |
+|---|---|---:|---|
+| `walnut1` | FIPS Walnut1 directory, orbit 2 | 2 | 501³, 0.1 mm |
+| `walnut3` | Same walnut, all three orbits | 2 | 501³, 0.1 mm |
+| `nikon` | Nikon seeds `.xtekct` | 2 | 500³, 0.1880371266 mm |
+| `zeiss` | Zeiss HDTomo `.txrm` | 2 | 512³, 0.0833853988647461 mm |
+| `cuo` | Zeiss CuO `.txrm` | 4 | Recorded field of view, fourfold grid binning |
+
+```bash
+export XLA_PYTHON_CLIENT_PREALLOCATE=false
+uv run --no-sync python bench/cone_matrix.py walnut3 ~/data/walnuts/Walnut1 \
+  --library astra --method ossart --iterations 1 --subsets 16 \
+  --norms recompute --output bench/results/walnut3-astra-os.json
+uv run --no-sync python bench/cone_matrix.py walnut3 ~/data/walnuts/Walnut1 \
+  --library tomojax --method ossart --iterations 1 --subsets 17 \
+  --output bench/results/walnut3-tomojax-os.json
+uv run --no-sync python bench/cone_matrix.py cuo /path/to/scan.txrm \
+  --library astra --method cgls --iterations 3 --storage host \
+  --output bench/results/cuo-astra-cgls.json
+```
+
+Vary iterations, subsets and starts on both sides; compare the fastest points
+that meet the same quality target, not equal iteration counts. Walnut targets
+must pass both full-volume and reference-support errors against the authors'
+reconstruction. Nikon, Zeiss and CuO use one calibrated ASTRA forward projector
+for data residuals. `--save-volume temporary.npy` and `--compare-to temporary.npy`
+add a full-volume image difference; delete the temporary volume after the pair.
+Those differences and residuals are diagnostics, not physical accuracy claims.
+
+ASTRA `--storage native` uses its named CGLS/SIRT algorithms; `--storage host`
+CGLS uses an explicit FP32 recurrence with residuals and search projections on
+the host. `--storage device-residual` keeps residuals on the GPU and only search
+projections on the host; use `--batch 128` for the three-orbit walnut. OS-SART
+and OSEM are explicit normalized updates over ASTRA's native forward and
+backprojectors. `--norms resident`, `host` and `recompute` change only
+column-normalization storage; include the fastest fitting policy in the
+frontier. OSEM clips solve inputs at zero but scores the original log data;
+`--start default` uses a positive uniform volume. Three-orbit ASTRA FDK starts
+average the three physical orbits. The records include ASTRA iterative view
+counts and host/device payload bytes for explicit recurrences.
+
+NVTX ranges `cone-solve-0`, `cone-solve-1`, etc. identify individual solves in
+Nsight Systems. For example, prefix a benchmark command with
+`nsys profile --trace=cuda,nvtx -o cone` and extract its first warm solve with:
+
+```bash
+nsys stats --report cuda_gpu_kern_sum,cuda_gpu_mem_size_sum \
+  --filter-nvtx cone-solve-1 cone.nsys-rep
+```
+
+Use profiles to count work and attribute costs; measure latency without the profiler.
+
 ## Several GPUs
 
 [`scaling.py`](scaling.py) times TomoJAX, ASTRA and TIGRE on one GPU and on

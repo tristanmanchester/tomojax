@@ -580,13 +580,18 @@ def view_frames(geometry: ScanGeometry) -> np.ndarray:
     ValueError
         If geometry is not cone-beam.
     """
-    from tomojax.core.geometry.views import stack_view_poses
+    from tomojax.core.geometry.views import host_view_poses
 
     parts = cone_parts(geometry)
     if parts is None:
         raise ValueError("view_frames needs cone-beam views")
     n_views = len(cast("Any", geometry).angles)
-    poses = np.asarray(stack_view_poses(geometry, n_views), np.float64)
+    poses = host_view_poses(geometry, n_views)
+    if poses is None:
+        poses = np.asarray([geometry.pose_for_view(i) for i in range(n_views)], np.float32)
+    # Geometry export stays on the host, with the same rounded physical poses
+    # used by the projector's coefficient preparation.
+    poses = poses.astype(np.float64)
     rows, start = [], 0
     for count, beam, detector in parts:
         stop = start + (n_views if count is None else count)
