@@ -52,7 +52,7 @@ def test_installed_package_smoke_isolated_and_uncached(tmp_path, monkeypatch, ex
         assert kwargs["env"]["JAX_PLATFORMS"] == ("cuda" if extra == "cuda12" else "cpu")
         assert kwargs["cwd"] != tools.parent
     commands = [args[1:] for args, _ in calls if str(args[0]).endswith("/tomojax")]
-    assert commands[1][3:] == ["--size", "32", "--views", "60"]
+    assert commands[1][3:] == ["--size", "32", "--n-views", "60"]
     assert len(commands[2]) == 4  # README's automatic reconstruction, not forced FBP.
 
 

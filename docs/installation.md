@@ -79,7 +79,7 @@ setup remains separate: see [contributing](../CONTRIBUTING.md).
 Run these commands from the directory containing the installed environment:
 
 ```bash
-.venv/bin/tomojax simulate -o synthetic.nxs --size 32 --views 60
+.venv/bin/tomojax simulate -o synthetic.nxs --size 32 --n-views 60
 .venv/bin/tomojax recon synthetic.nxs -o recon.nxs
 .venv/bin/tomojax inspect recon.nxs --preview previews
 ```

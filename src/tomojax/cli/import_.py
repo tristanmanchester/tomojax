@@ -53,9 +53,9 @@ def _build_parser() -> argparse.ArgumentParser:
             "detector_center": None,
             "tilt_deg": None,
             "tilt_about": "x",
-            "detector_roll": 0.0,
-            "detector_pitch": 0.0,
-            "detector_yaw": 0.0,
+            "detector_roll_deg": 0.0,
+            "detector_pitch_deg": 0.0,
+            "detector_yaw_deg": 0.0,
         },
     )
     tiff = parser.add_argument_group("TIFF stacks")
@@ -112,9 +112,9 @@ def _geometry_metadata(
             beam = ConeBeam(
                 sod,
                 sdd,
-                detector_roll_deg=float(cast("float", settings.get("detector_roll", 0.0))),
-                detector_pitch_deg=float(cast("float", settings.get("detector_pitch", 0.0))),
-                detector_yaw_deg=float(cast("float", settings.get("detector_yaw", 0.0))),
+                detector_roll_deg=float(cast("float", settings.get("detector_roll_deg", 0.0))),
+                detector_pitch_deg=float(cast("float", settings.get("detector_pitch_deg", 0.0))),
+                detector_yaw_deg=float(cast("float", settings.get("detector_yaw_deg", 0.0))),
                 axis_offset=cast("float", args.axis_offset),
             )
         except ValueError as exc:

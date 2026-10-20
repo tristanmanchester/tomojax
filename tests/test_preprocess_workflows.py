@@ -141,9 +141,7 @@ def test_views_and_a_detector_block(tmp_path: Path) -> None:
     np.testing.assert_allclose(np.asarray(scan.projections), [[[-np.log(0.8)]]], rtol=1e-6)
     np.testing.assert_allclose(scan.angles, [90.0])
     assert (scan.detector.nu, scan.detector.nv, scan.detector.center) == (1, 1, (9.0, 18.5))
-    assert _preprocess(tmp_path / "raw.nxs", "-o", out, "--force", "--reject-views", "0") == 0
-    np.testing.assert_allclose(tj.load(out).angles, [90.0])
-    assert _preprocess(tmp_path / "raw.nxs", "-o", out, "--force", "--reject-views", "0:2") == 1
+    assert _preprocess(tmp_path / "raw.nxs", "-o", out, "--force", "--select-views", "0:3") == 1
 
 
 def test_steps_from_the_command_line(tmp_path: Path) -> None:
@@ -159,8 +157,8 @@ def test_steps_from_the_command_line(tmp_path: Path) -> None:
     write_angle_csv(tmp_path / "angles.csv", list(np.linspace(0.0, 360.0, views, endpoint=False)))
     out = tmp_path / "scan.nxs"
     assert _preprocess(tmp_path / "frames", "-o", out, "--darks", 0, "--flats", 1000, "--angles", tmp_path / "angles.csv",
-                       "--zingers", "--remove-stripes", 9, "--beam-hardening", "1,0.05",
-                       "--reject-outliers", "--config", _detector_config(tmp_path, nu=nu, nv=nv)) == 0  # fmt: skip
+                       "--zingers", "--stripes", 9, "--beam-hardening", "1,0.05",
+                       "--reject-views", "--config", _detector_config(tmp_path, nu=nu, nv=nv)) == 0  # fmt: skip
     scan = tj.load(out)
     names = [c.name for c in scan.corrections]
     assert names == ["flat_dark", "zingers", "log", "reject_views", "stripes", "beam_hardening"]

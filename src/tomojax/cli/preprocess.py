@@ -27,11 +27,10 @@ _PUBLIC = (
     "--darks",
     "--angles",
     "--select-views",
-    "--reject-views",
     "--crop",
-    "--reject-outliers",
+    "--reject-views",
     "--zingers",
-    "--remove-stripes",
+    "--stripes",
     "--beam-hardening",
     "--preview",
 )
@@ -53,11 +52,11 @@ def _build_parser() -> argparse.ArgumentParser:
             "Examples:\n"
             "  tomojax preprocess raw.nxs -o scan.nxs\n"
             "  tomojax preprocess skyscan/ --flats WHITE --darks DARK -o scan.nxs\n"
-            "  tomojax preprocess raw.nxs -o scan.nxs --remove-stripes 9 --zingers\n"
+            "  tomojax preprocess raw.nxs -o scan.nxs --stripes 9 --zingers --reject-views\n"
             "  tomojax preprocess frames/ --flats flats/ --darks darks/ --angles angles.csv "
             "-o scan.nxs\n"
             "  tomojax preprocess raw.nxs -o scan.nxs --crop 100:900,50:1950 "
-            "--reject-views 12,57:61"
+            "--select-views 0:1200:4"
         ),
     )
     _ = parser.add_argument(
@@ -80,13 +79,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Keep only these views, as indices and ranges (for example 0:90,120:180:2)",
     )
     _ = parser.add_argument(
-        "--reject-views", metavar="RANGES", help="Drop these views (for example 12,57:61)"
-    )
-    _ = parser.add_argument(
         "--crop", metavar="Y0:Y1,X0:X1", help="Keep this detector block (rows y, then columns x)"
     )
     _ = parser.add_argument(
-        "--reject-outliers",
+        "--reject-views",
         type=float,
         nargs="?",
         const=6.0,
@@ -103,7 +99,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "(a fraction of the open beam; 0.1)",
     )
     _ = parser.add_argument(
-        "--remove-stripes",
+        "--stripes",
         type=int,
         metavar="WIDTH",
         help="Remove rings: each pixel's offset against a median over WIDTH columns (e.g. 9)",
@@ -201,8 +197,8 @@ def _steps(args: argparse.Namespace) -> list[Step]:
 
     zingers = cast("float | None", args.zingers)
     paganin = cast("tuple[float, ...] | None", args.paganin)
-    outliers = cast("float | None", args.reject_outliers)
-    stripes = cast("int | None", args.remove_stripes)
+    outliers = cast("float | None", args.reject_views)
+    stripes = cast("int | None", args.stripes)
     hardening = cast("tuple[float, ...] | None", args.beam_hardening)
     steps: list[Step] = []
     if zingers is not None:
@@ -233,7 +229,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     flats = _level_or_path(cast("str | None", args.flats))
     darks = _level_or_path(cast("str | None", args.darks))
     angles, preview = cast("str | None", args.angles), cast("str | None", args.preview)
-    select, reject = cast("str | None", args.select_views), cast("str | None", args.reject_views)
+    select = cast("str | None", args.select_views)
     crop = cast("str | None", args.crop)
     check_paths(
         parser,
@@ -257,14 +253,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             image_key_path=cast("str | None", args.image_key_path),
             angles_path=cast("str | None", args.angles_path),
         )
-        keep = np.ones(frames.views, bool)
         if select is not None:
-            keep[:] = False
-            keep[view_ranges(select, frames.views)] = True
-        if reject is not None:
-            keep[view_ranges(reject, frames.views)] = False
-        if not keep.all():
-            frames = frames.selected(keep)
+            frames = frames.selected(view_ranges(select, frames.views))
         if crop is not None:
             frames = frames.cropped(*detector_block(crop))
         scan = frames.corrected(

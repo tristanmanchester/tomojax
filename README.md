@@ -37,7 +37,7 @@ For a published release, install the CPU wheel into a fresh environment:
 uv venv --python 3.12
 uv pip install --python .venv/bin/python "tomojax[cpu]"
 
-.venv/bin/tomojax simulate -o synthetic.nxs --size 32 --views 60
+.venv/bin/tomojax simulate -o synthetic.nxs --size 32 --n-views 60
 .venv/bin/tomojax recon synthetic.nxs -o recon.nxs
 .venv/bin/tomojax inspect recon.nxs --preview previews
 ```

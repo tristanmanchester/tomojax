@@ -518,7 +518,7 @@ def test_simulate_cli_routes_loadable_synthetic_dataset(
                 "--detector",
                 "2",
                 "2",
-                "--views",
+                "--n-views",
                 "8",
                 "--phantom",
                 "sphere",

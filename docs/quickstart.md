@@ -67,10 +67,10 @@ NXtomo paths, at the Data Exchange paths (`/exchange/data` with `data_white`,
 `data_dark` and `theta` beside it), or as the file's only datasets of those
 names; `--data-path`,
 `--image-key-path` and `--angles-path` (expert settings, `--config-keys`) name
-them otherwise. Options add corrections: `--zingers`, `--remove-stripes 9`
-(rings), `--reject-outliers` (views that jump from their neighbours, such as a
-closed shutter), `--beam-hardening 1,0.05`; `--select-views`, `--reject-views`
-and `--crop` keep part of the scan. Already-corrected data should skip this
+them otherwise. Options add corrections: `--zingers`, `--stripes 9`
+(rings), `--reject-views` (views that jump from their neighbours, such as a
+closed shutter), `--beam-hardening 1,0.05`; `--select-views` and `--crop` keep
+part of the scan. Already-corrected data should skip this
 step; applying the logarithm again changes the data.
 
 Missing detector pitch or an unsuccessful centre estimate requires `detector=`

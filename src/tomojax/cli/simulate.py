@@ -41,11 +41,11 @@ class SimulateCommand:
 
 _PUBLIC = (
     "--size",
-    "--views",
+    "--n-views",
     "--geometry",
     "--phantom",
-    "--rotation",
-    "--tilt",
+    "--rotation-deg",
+    "--tilt-deg",
     "--source-to-axis",
     "--source-to-detector",
     "--poisson-scale",
@@ -65,8 +65,8 @@ def _build_parser() -> argparse.ArgumentParser:
         epilog=(
             "Examples:\n"
             "  tomojax simulate -o phantom.nxs\n"
-            "  tomojax simulate -o cone.nxs --geometry cone --size 128 --views 360\n"
-            "  tomojax simulate -o lamino.nxs --geometry lamino --tilt 30 --poisson-scale 1000"
+            "  tomojax simulate -o cone.nxs --geometry cone --size 128 --n-views 360\n"
+            "  tomojax simulate -o lamino.nxs --geometry lamino --tilt-deg 30 --poisson-scale 1000"
         ),
     )
     add_output(parser, "Dataset to write (.nxs)")
@@ -79,8 +79,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Volume edge in voxels, and the detector size",
     )
     _ = parser.add_argument(
-        "--views",
-        dest="n_views",
+        "--n-views",
         type=int,
         default=None,
         metavar="N",
@@ -95,16 +94,14 @@ def _build_parser() -> argparse.ArgumentParser:
         default="shepp",
     )
     _ = parser.add_argument(
-        "--rotation",
-        dest="rotation_deg",
+        "--rotation-deg",
         type=float,
         default=None,
         metavar="DEG",
         help="Rotation range (default 180 for parallel, 360 otherwise)",
     )
     _ = parser.add_argument(
-        "--tilt",
-        dest="tilt_deg",
+        "--tilt-deg",
         type=float,
         default=None,
         metavar="DEG",
@@ -150,12 +147,10 @@ def _build_parser() -> argparse.ArgumentParser:
     _ = parser.add_argument("--tilt-about", choices=["x", "z"], default="x")
     _ = parser.add_argument(
         "--single-rotate",
-        dest="single_rotate",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=True,
-        help="Rotate the single cube randomly in 3D (default: on)",
+        help="Rotate the single cube randomly in 3D",
     )
-    _ = parser.add_argument("--no-single-rotate", dest="single_rotate", action="store_false")
     _ = parser.add_argument(
         "--single-size",
         type=float,

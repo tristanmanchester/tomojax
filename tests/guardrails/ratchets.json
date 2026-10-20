@@ -15,11 +15,11 @@
   "cli_flags": {
     "inspect": 4,
     "import": 12,
-    "preprocess": 21,
+    "preprocess": 20,
     "recon": 18,
     "align": 16,
     "export": 6,
-    "simulate": 46
+    "simulate": 45
   },
   "long_files": {
     "src/tomojax/alignment/_pose/_pose_loop.py": 892,
@@ -41,7 +41,7 @@
     "src/tomojax/alignment/optimizers.py::_run_lbfgs_optax_loop": 157,
     "src/tomojax/alignment/optimizers.py::run_active_validation_lm": 106,
     "src/tomojax/alignment/optimizers.py::run_pose_lbfgs": 186,
-    "src/tomojax/cli/simulate.py::_build_parser": 158,
+    "src/tomojax/cli/simulate.py::_build_parser": 153,
     "src/tomojax/core/cuda_projector/_loss.py::forward_project_residual_sse_T_cuda": 119,
     "src/tomojax/core/cuda_projector/_single_view.py::forward_project_view_T_cuda": 102,
     "src/tomojax/core/cuda_projector/_stack_bind.py::forward_project_views_T_cuda": 101,

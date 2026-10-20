@@ -54,7 +54,7 @@ Use one length unit throughout (the pixel size and both distances).
 `tomojax preprocess` also corrects lab-CT artefacts.
 `--beam-hardening 1,0.05` linearises beam hardening, mapping each line
 integral p to `p + 0.05 p²` (calibrate the coefficients on a single-material
-sample). `--remove-stripes 9` removes rings: it subtracts each detector
+sample). `--stripes 9` removes rings: it subtracts each detector
 pixel's constant offset, comparing its values sorted over views with those of
 its 9 neighbouring columns. Structure symmetric about the rotation axis also
 looks stationary, so a narrow centred feature can be altered: use the smallest
@@ -62,8 +62,8 @@ width that covers the defect. A faint offset on a steep gradient can remain.
 `--zingers` replaces bright specks.
 In Python these are steps of `tomojax.corrections` (`BeamHardening`,
 `Stripes`, `Zingers`) passed to `tj.load_frames(path).corrected(...)`.
-`tomojax import --axis-offset` and TOML keys `detector_roll`,
-`detector_pitch`, `detector_yaw` take values the scanner reports. A TIFF import
+`tomojax import --axis-offset` and TOML keys `detector_roll_deg`,
+`detector_pitch_deg`, `detector_yaw_deg` take values the scanner reports. A TIFF import
 records no grid: cone datasets without one reconstruct one voxel per detector
 pixel at the axis, the pixel size divided by the magnification
 `source_to_detector / source_to_axis`, and `tomojax recon --grid NX NY NZ`

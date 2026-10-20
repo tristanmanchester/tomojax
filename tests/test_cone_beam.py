@@ -373,7 +373,7 @@ def test_import_records_cone_beam_geometry(tmp_path: Path):
     write_tiff_stack(tmp_path / "tiffs", [1.0, 2.0, 3.0, 4.0], shape=(4, 6))
     write_angle_csv(tmp_path / "angles.csv", [0.0, 90.0, 180.0, 270.0])
     config = tmp_path / "calibration.toml"
-    config.write_text("detector_center = [0.0, 0.0]\ndetector_roll = 0.5\n")
+    config.write_text("detector_center = [0.0, 0.0]\ndetector_roll_deg = 0.5\n")
     args = ["import", str(tmp_path / "tiffs"), "-o", str(tmp_path / "scan.nxs"), "--force"]
     args += ["--config", str(config), "--pixel-size", "1", "--angles"]
     args += [str(tmp_path / "angles.csv"), "--geometry", "cone", "--source-to-axis", "50"]

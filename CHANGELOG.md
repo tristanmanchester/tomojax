@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+Command-line options are named after the Python objects they build:
+`tomojax preprocess --stripes WIDTH` is the `Stripes` step and `--reject-views [Z]`
+the `RejectViews` step (the option that dropped listed views is gone; `--select-views`
+keeps the others); `tomojax simulate --n-views`, `--rotation-deg` and `--tilt-deg` are
+the `SimConfig` fields; `tomojax import` reads `detector_roll_deg`, `detector_pitch_deg`
+and `detector_yaw_deg`, as `ConeBeam` names them.
+
 `tomojax.recon.api.method_config` takes `warm_start=` and rejects it for the direct
 methods, so every entry point checks a method's options in one place.
 
