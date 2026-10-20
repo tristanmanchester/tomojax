@@ -109,17 +109,28 @@ def fourier_shell_correlation(
     """
     if first.shape != second.shape or first.ndim != 3:
         raise ValueError("FSC requires two matching three-dimensional volumes")
+    fa = fft.rfftn(apodized(first, taper=taper), workers=-1)
+    fb = fft.rfftn(apodized(second, taper=taper), workers=-1)
+    return _fsc_from_spectra(fa, fb, first.shape, spacing, taper, shell_width)
+
+
+def _fsc_from_spectra(
+    fa: np.ndarray,
+    fb: np.ndarray,
+    shape: tuple[int, ...],
+    spacing: Sequence[float],
+    taper: float,
+    shell_width: int,
+) -> dict[str, Any]:
+    """Accumulate physical shells after the spatial volumes have been released."""
     spacing = np.asarray(spacing, dtype=float)
     if spacing.shape != (3,) or np.any(spacing <= 0):
         raise ValueError("spacing must contain three positive physical voxel lengths")
     if not 0 <= taper <= 1 or shell_width < 1:
         raise ValueError("taper must be in [0, 1] and shell_width positive")
-    shape = first.shape
     df = float(shell_width * np.max(1 / (np.asarray(shape) * spacing)))
     nyquist = float(np.min(0.5 / spacing))
     count = int(np.floor(nyquist / df)) + 1
-    fa = fft.rfftn(apodized(first, taper=taper), workers=-1)
-    fb = fft.rfftn(apodized(second, taper=taper), workers=-1)
     fx, fy = (fft.fftfreq(shape[i], spacing[i]) for i in range(2))
     fz = fft.rfftfreq(shape[2], spacing[2])
     radius2 = fy[:, None] ** 2 + fz[None, :] ** 2
@@ -323,7 +334,8 @@ def half_dataset_fsc(
     ``config``, ``region`` and grid; no image registration, clipping or fitted
     amplitude is applied to improve FSC. A region is in volume ``(x,y,z)`` axes
     and must use unit strides. Full volumes are discarded after scoring; only
-    scalar timings, split indices and FSC arrays are returned. Timing includes
+    scalar timings, split indices and FSC arrays are returned. Each spatial
+    volume is released before transforming the next half. Timing includes
     both reconstructions, device-to-host transfers and the Fourier diagnostic,
     but not the preceding phase preparation or alignment. The grid shape and
     exact scoring region are recorded so guarded and full-volume results cannot
@@ -335,15 +347,23 @@ def half_dataset_fsc(
         raise ValueError("FSC regions must use unit strides to preserve physical voxel spacing")
     start = time.perf_counter()
     halves = interleaved_views(scan.angles)
-    volumes, times = [], []
+    grid = scan.grid
+    shape = (grid.nx, grid.ny, grid.nz)
+    spectra, times = [], []
+    # Keep the first spectrum, not its spatial volume, while making the second.
+    # The ROI may be a view of a much larger volume; release that backing array
+    # before allocating the FFT output and scratch space.
     for indices in halves:
         before = time.perf_counter()
         volume = np.asarray(tj.reconstruct(scan.selected(indices), method, config=config).volume)
-        volumes.append(volume if region is None else volume[region])
         times.append(time.perf_counter() - before)
-    grid = scan.grid
-    result = fourier_shell_correlation(
-        *volumes, spacing=(grid.vx, grid.vy, grid.vz), taper=taper, shell_width=shell_width
+        windowed = apodized(volume if region is None else volume[region], taper=taper)
+        del volume
+        shape = windowed.shape
+        spectra.append(fft.rfftn(windowed, workers=-1))
+        del windowed
+    result = _fsc_from_spectra(
+        spectra[0], spectra[1], shape, (grid.vx, grid.vy, grid.vz), taper, shell_width
     )
     return {
         **result,
@@ -351,7 +371,7 @@ def half_dataset_fsc(
         "method": method,
         "grid_shape": [grid.nx, grid.ny, grid.nz],
         "region": None if region is None else [[s.start, s.stop, s.step] for s in region],
-        "scored_shape": list(volumes[0].shape),
+        "scored_shape": list(shape),
         "reconstruction_seconds": times,
         "whole_seconds": time.perf_counter() - start,
     }

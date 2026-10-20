@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+Half-data FSC benchmarking releases each reconstructed spatial volume before
+forming its Fourier spectrum, reducing host memory without changing the score.
+
 Projection matching fits a band-limited projection model matched to the
 detector sampling. Large motion in noisy scans is recovered more accurately, and
 the PSI nanotomography workflow takes about 40% less time.
