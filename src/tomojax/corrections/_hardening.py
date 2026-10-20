@@ -172,9 +172,10 @@ class BeamHardening(Step):
         mean, the scan's own projector turns that into each ray's material
         line integral, and the curve is fitted to the measured line integrals
         against those (weighted least squares in transmission, each ray
-        weighted by its Poisson precision). The curve is the material whose
-        rays, crossing it alone, cover the most path; other materials are
-        corrected as denser or lighter versions of it. Later passes
+        weighted by its Poisson precision). The curve is the most common
+        material's, fitted on the rays that cross it alone; other materials
+        are corrected as denser or lighter versions of it, and a phase too
+        rare to be a level (a thin metal rod) keeps its own values. Later passes
         reconstruct the data corrected by the previous fit, so the levels see
         less cupping. The result is in the unit-initial-slope gauge.
 

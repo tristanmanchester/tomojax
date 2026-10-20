@@ -59,16 +59,18 @@ _SMALLEST_LEVEL = 0.01
 # of its voxels has all its neighbours in it.
 _INTERIOR = 0.25
 # Rays fitting the curve cross other levels for at most this share of their material.
-_MIXED = 0.1
+_MIXED = 0.02
 # Rays fitting the curve cross at least this many voxels of material.
 _GRAZING = 3.0
 # A voxel is in the field of view if it takes this share of the largest
 # backprojection of ones.
 _SEEN = 0.9
 _FIELD_VOXELS = 1 << 18
-_BINS = 128
-# Voxels Otsu's histogram samples, and the smallest step a Gauss-Newton update halves to.
-_OTSU_SAMPLES = 4_000_000
+# Histogram bins per standard deviation of the image's noise, and the most bins.
+_BINS_PER_NOISE = 2
+_MOST_BINS = 1 << 14
+# Voxels the histogram samples, and the smallest step a Gauss-Newton update halves to.
+_SAMPLES = 4_000_000
 _SMALLEST_STEP = 1e-3
 # Levenberg-Marquardt damping of the spectrum, relative to its best-seen parameter.
 _DAMPING = 1e-4
@@ -270,41 +272,53 @@ def _levels(
 ) -> tuple[np.ndarray, list[float], float]:
     """The background (level 0) and material levels of a reconstruction, voxel by voxel.
 
-    The voxel values fall into levels, each a peak of their histogram: a level
-    is split at the deepest valley between two peaks that stand at least twice
-    as high as it, when the denser peak's voxels attenuate more than
-    ``_DENSER`` times the lighter's. Shading within one material and partial
-    volumes at edges make no peak of their own, so they stay in a level; air
-    and a material, or two materials, do not. A level must also have an
-    interior (``_INTERIOR``), which a ring of edge voxels lacks. The lowest
-    level is the background: below ``threshold`` when one is given, else below
-    the first such valley. Voxels outside ``seen`` take level -1. Returns each
-    voxel's level, the material levels' mean attenuations relative to the most
-    populous one's, and that one's.
+    The voxel values fall into levels, each a peak of their histogram, binned
+    at the image's noise (:func:`_valley`): a level is split at a valley
+    between two peaks that stand at least twice as high as it, when the denser
+    peak's voxels attenuate more than ``_DENSER`` times the lighter's. Shading
+    within one material and partial volumes at edges make no peak of their
+    own, so they stay in a level; air and a material, or two materials, do
+    not. A level must also have an interior (``_INTERIOR``), which a ring of
+    edge voxels lacks. The lowest level is the background: below
+    ``threshold`` when one is given, else below the lowest such valley.
+    Voxels outside ``seen``, and those of a phase too rare to be a level (a
+    thin metal rod), take level -1. Returns each voxel's level, the material
+    levels' mean attenuations relative to the most populous one's, and that one's.
     """
     smooth = np.nan_to_num(image)
     finite = smooth[np.isfinite(image) & seen]
-    values = finite[:: max(1, finite.size // _OTSU_SAMPLES)]
+    values = finite[:: max(1, finite.size // _SAMPLES)]
+    width = _noise(smooth, seen) / _BINS_PER_NOISE
     bounds = [float(values.min()) - 1.0, float(values.max()) + 1.0]
-    background = _valley(values, values.size) if threshold is None else threshold
-    if background is None:
-        raise ValueError(
-            "no material stands out from the background in the reconstruction; "
-            "give the attenuation that separates them as threshold="
-        )
-    bounds.insert(1, float(background))
+    # Lower bounds of the ranges of rare phases.
+    rare: set[float] = set()
+    pool, background = values, threshold
+    while background is None:
+        found = _valley(pool, values.size, width)
+        if found is None:
+            raise ValueError(
+                "no material stands out from the background in the reconstruction; "
+                "give the attenuation that separates them as threshold="
+            )
+        if found[1]:
+            rare.add(found[0])
+            bounds.insert(1, found[0])
+            pool = pool[pool <= found[0]]
+        else:
+            background = found[0]
+    bounds = sorted([*bounds, float(background)])
     settled: set[tuple[float, float]] = set()
     while len(bounds) <= _LEVELS:
         first, found = (1 if threshold is not None else 0), None
         for low, high in list(pairwise(bounds))[first:]:
-            if (low, high) in settled:
+            if (low, high) in settled or low in rare:
                 continue
-            found = _valley(values[(values > low) & (values <= high)], values.size)
-            if (
-                found is not None
-                and min(
-                    _interior((smooth > low) & (smooth <= found) & seen),
-                    _interior((smooth > found) & (smooth <= high) & seen),
+            found = _valley(values[(values > low) & (values <= high)], values.size, width)
+            if found is not None and (
+                found[1]
+                or min(
+                    _interior((smooth > low) & (smooth <= found[0]) & seen),
+                    _interior((smooth > found[0]) & (smooth <= high) & seen),
                 )
                 >= _INTERIOR
             ):
@@ -313,14 +327,29 @@ def _levels(
             found = None
         if found is None:
             break
-        bounds = sorted([*bounds, found])
-    level = np.where(seen, np.digitize(smooth, bounds[1:-1]), -1)
+        if found[1]:
+            rare.add(found[0])
+        bounds = sorted([*bounds, found[0]])
+    kept = np.asarray([low not in rare for low in bounds[:-1]])
+    renumber = np.where(kept, np.cumsum(kept) - 1, -1)
+    level = np.where(seen, renumber[np.digitize(smooth, bounds[1:-1])], -1)
     inside = level >= 0
-    counts = np.bincount(level[inside], minlength=len(bounds) - 1)
-    means = np.bincount(level[inside], np.nan_to_num(image)[inside], minlength=len(bounds) - 1)
+    counts = np.bincount(level[inside], minlength=int(kept.sum()))
+    means = np.bincount(level[inside], np.nan_to_num(image)[inside], minlength=int(kept.sum()))
     means = means / np.maximum(counts, 1)
     reference = means[1 + np.argmax(counts[1:])]
     return level, [float(m / reference) for m in means[1:]], float(reference)
+
+
+def _noise(image: np.ndarray, seen: np.ndarray) -> float:
+    """The standard deviation of the image's noise, from differences of neighbouring voxels.
+
+    Edges make few of the differences, so their median absolute value is the noise's.
+    """
+    step = max(1, image.shape[2] // 16)
+    planes, inside = image[:, :, ::step], seen[:, :, ::step]
+    difference = np.diff(planes, axis=0)[inside[1:] & inside[:-1]]
+    return 1.4826 * float(np.median(np.abs(difference))) / np.sqrt(2)
 
 
 def _interior(mask: np.ndarray) -> float:
@@ -342,32 +371,40 @@ def _interior_mask(mask: np.ndarray) -> np.ndarray:
     return inside
 
 
-def _valley(values: np.ndarray, total: int) -> float | None:
-    """Where to split ``values`` between two distinct peaks of their histogram, if anywhere.
+def _valley(values: np.ndarray, total: int, width: float) -> tuple[float, bool] | None:
+    """The lowest split of ``values`` between two distinct peaks of their histogram, if any.
 
-    Each side must hold ``_SMALLEST_LEVEL`` of the ``total`` voxels.
+    The histogram has bins of ``width``, smoothed over ``_BINS_PER_NOISE``
+    of them. A valley is a run of bins under half the highest bin on either
+    side, split at its lowest bin; the voxels above the split must attenuate
+    more than ``_DENSER`` times those below. Each side must hold
+    ``_SMALLEST_LEVEL`` of the ``total`` voxels, except that a denser side
+    holding fewer is a rare phase, returned with True.
     """
     from scipy.ndimage import gaussian_filter1d
 
-    if values.size < 2 * _SMALLEST_LEVEL * total:
+    if values.size < _SMALLEST_LEVEL * total:
         return None
-    counts, edges = np.histogram(values, _BINS)
-    smooth = gaussian_filter1d(counts.astype(np.float64), 1.5)
-    middle = int(np.clip(np.searchsorted(edges, otsu(values)) - 1, 1, _BINS - 2))
-    left, right = int(np.argmax(smooth[:middle])), middle + int(np.argmax(smooth[middle:]))
-    if right - left < 2:
-        return None
-    deepest = left + int(np.argmin(smooth[left : right + 1]))
-    valley = smooth[deepest]
-    if min(smooth[left], smooth[right]) < 2 * valley:
-        return None
-    split = float(edges[deepest + 1])
-    light, dense = values[values <= split], values[values > split]
-    if min(light.size, dense.size) < _SMALLEST_LEVEL * total:
-        return None
-    if light.mean() > 0 and dense.mean() <= _DENSER * light.mean():
-        return None
-    return split
+    span = (float(values.min()), float(values.max()))
+    bins = int(np.clip(np.ceil((span[1] - span[0]) / max(width, 1e-30)), 2, _MOST_BINS))
+    counts, edges = np.histogram(values, bins, span)
+    moments, _ = np.histogram(values, bins, span, weights=values.astype(np.float64))
+    smooth = gaussian_filter1d(counts.astype(np.float64), _BINS_PER_NOISE)
+    rise = np.maximum.accumulate(smooth)
+    fall = np.maximum.accumulate(smooth[::-1])[::-1]
+    deep = np.minimum(rise, fall) >= 2 * smooth
+    below, moment = np.cumsum(counts), np.cumsum(moments)
+    runs = np.flatnonzero(np.diff(np.r_[0, deep.astype(np.int8), 0])).reshape(-1, 2)
+    for start, stop in runs:
+        bottom = int(start + np.argmin(smooth[start:stop]))
+        light, dense = int(below[bottom]), values.size - int(below[bottom])
+        if light < _SMALLEST_LEVEL * total or dense == 0:
+            continue
+        light_mean = moment[bottom] / light
+        if light_mean > 0 and (moment[-1] - moment[bottom]) / dense <= _DENSER * light_mean:
+            continue
+        return float(edges[bottom + 1]), dense < _SMALLEST_LEVEL * total
+    return None
 
 
 def _inverted(
@@ -378,20 +415,6 @@ def _inverted(
         batch = jnp.asarray(measured[first : first + 64])
         out[first : first + 64] = np.asarray(mixture.invert(rates, weights, batch))
     return out
-
-
-def otsu(image: np.ndarray) -> float:
-    """Otsu's threshold of the finite values of ``image``."""
-    values = image[np.isfinite(image)].ravel()
-    values = values[:: max(1, values.size // _OTSU_SAMPLES)]
-    hist, edges = np.histogram(values, 1024)
-    centres = 0.5 * (edges[:-1] + edges[1:])
-    below = np.cumsum(hist).astype(np.float64)
-    above = below[-1] - below
-    moment = np.cumsum(hist * centres)
-    mean_below = moment / np.maximum(below, 1)
-    mean_above = (moment[-1] - moment) / np.maximum(above, 1)
-    return float(centres[np.argmax(below * above * (mean_below - mean_above) ** 2)])
 
 
 @partial(jax.jit, static_argnames=("forward", "adjoint", "inner"))

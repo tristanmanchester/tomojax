@@ -46,12 +46,13 @@ def test_polynomials_become_the_closest_physical_curve() -> None:
 
 
 def _phantom(
-    curve: BeamHardening, *, n: int = 48, seed: int = 0, insert: bool = False
+    curve: BeamHardening, *, n: int = 48, seed: int = 0, insert: bool = False, rod: bool = False
 ) -> tuple[tj.Scan, np.ndarray]:
     rng = np.random.default_rng(seed)
     grid = tj.Grid(n, n, 1, 1.0, 1.0, 1.0)
     detector = tj.Detector(n + n // 2, 1, 1.0, 1.0)
-    geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, n + n // 2, endpoint=False))
+    views = np.linspace(0, 180, 4 * n if rod else n + n // 2, endpoint=False)
+    geometry = tj.ParallelGeometry(grid, detector, views)
     y, x = np.mgrid[:n, :n] - (n - 1) / 2
     r = n / 2
     shape = (x / (0.8 * r)) ** 2 + (y / (0.5 * r)) ** 2 < 1
@@ -60,6 +61,8 @@ def _phantom(
     truth = (shape * 6.0 / n).astype(np.float32)[:, :, None]
     if insert:  # a denser phase of the same material
         truth[(x + 0.4 * r) ** 2 + y**2 < (0.18 * r) ** 2] *= 2.5
+    if rod:  # a thin rod 30 times denser, too rare to be a level
+        truth[(x - 0.1 * r) ** 2 + (y + 0.25 * r) ** 2 < 6] = 180.0 / n
     q = curve.curve(np.asarray(tj.project(geometry, truth)))
     q = -np.log(rng.poisson(5e4 * np.exp(-q)) / 5e4)
     return tj.Scan(q.astype(np.float32), geometry), truth
@@ -84,9 +87,13 @@ def test_self_calibration_takes_a_second_material_as_a_level_of_its_own() -> Non
     q = np.linspace(0.0, float(np.percentile(scan.projections, 99)), 12)
     fitted = BeamHardening.fit(scan)
     np.testing.assert_allclose(fitted.inverse(q), BROAD.inverse(q), rtol=0.04, atol=0.02)
-    flat = tj.Scan(np.full_like(scan.projections, 0.1), scan.geometry)
+    rodded, _ = _phantom(BROAD, n=64, insert=True, rod=True)
+    fitted = BeamHardening.fit(rodded)
+    np.testing.assert_allclose(fitted.inverse(q), BROAD.inverse(q), rtol=0.1, atol=0.03)
+    counts = np.random.default_rng(1).poisson(5e4, scan.projections.shape)
+    air = tj.Scan(-np.log(counts / 5e4).astype(np.float32), scan.geometry)
     with pytest.raises(ValueError, match="stands out"):
-        BeamHardening.fit(flat)
+        BeamHardening.fit(air)
 
 
 def test_joint_fit_lowers_the_misfit_and_keeps_the_curve() -> None:

@@ -81,13 +81,15 @@ The curve comes from one of four sources:
 
 - `BeamHardening.fit(scan)` self-calibrates: it reconstructs the scan by
   FBP/FDK, divides the image into air and material levels (peaks of its
-  histogram that have an interior, so a second material is a level and
-  cupping within one material is not), flattens each level to its mean,
-  projects that with the scan's own projector for each ray's material line
-  integral and fits the curve to the measured line integrals against those,
-  weighting each ray by its Poisson precision. The curve is that of the
-  material whose rays, crossing it alone, cover the most path; other
-  materials are corrected as denser or lighter versions of it. A second pass
+  histogram, binned at the image's noise, that have an interior, so a second
+  material is a level and cupping within one material is not; a phase too
+  rare to be a level, such as a thin metal rod, keeps its own values),
+  flattens each level to its mean, projects that with the scan's own
+  projector for each ray's material line integral and fits the curve to the
+  measured line integrals against those, weighting each ray by its Poisson
+  precision. The curve is that of the most common material, fitted on the
+  rays that cross it alone; other materials are corrected as denser or
+  lighter versions of it. A second pass
   repeats this on the data the first fit corrected. When no material stands
   out from the background, give the attenuation that separates them as
   `threshold=`. The curve's slope at zero, which sets the unit-slope gauge,
