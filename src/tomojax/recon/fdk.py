@@ -381,11 +381,19 @@ class _Prepared:
     cosine: jax.Array
     kernel: jax.Array
     scale: float
-    batch: int
+    views_per_batch: int
     pad_lo: int = 0
     pad_hi: int = 0
     # The filter as a matrix (see _filter_operator), for the CUDA kernel's rows.
     operator: jax.Array | None = None
+
+    @property
+    def batch(self) -> int:
+        """Bound transfers for the current row window, up to the configured view cap."""
+        # Prefetch and transfer staging can retain several input buffers.
+        # Size these for the measured rows, not the uncropped detector.
+        transfer_views = max(1, (64 * 2**20) // (4 * self.detector.nu * self.detector.nv))
+        return max(1, min(self.views_per_batch, transfer_views))
 
     def coefficients(
         self, geometry: Geometry, grid: Grid, detector: Detector, poses: jax.Array
@@ -474,9 +482,6 @@ def _prepare(
     operator = None
     if cuda and width <= _DENSE_FILTER_MAX:
         operator = jax.device_put(_filter_operator(kernel, detector.nu, pad_lo, pad_hi))
-    # Prefetch and the runtime's pinned transfer pool may retain several input
-    # buffers. A view count alone does not bound them at large detector sizes.
-    transfer_views = max(1, (64 * 2**20) // (4 * detector.nu * detector.nv))
     return _Prepared(
         cuda=cuda,
         detector=detector,
@@ -486,7 +491,7 @@ def _prepare(
         kernel=jax.device_put(kernel),
         operator=operator,
         scale=1.0 / magnification,
-        batch=max(1, min(int(cfg.views_per_batch), transfer_views)),
+        views_per_batch=int(cfg.views_per_batch),
         pad_lo=pad_lo,
         pad_hi=pad_hi,
     )
@@ -726,8 +731,6 @@ def _detector_window(
     the detector's own u and v. Needs :func:`_windowable` beams, whose detector
     axes stay in the plane of ``detector.center``.
     """
-    from dataclasses import replace
-
     rows, cols = (r1 - r0) // f, (detector.nu if c1 is None else c1) // f
     su = ((f * cols - 1) / 2 - (detector.nu - 1) / 2) * detector.du
     sv = (r0 + (f * rows - 1) / 2 - (detector.nv - 1) / 2) * detector.dv
@@ -745,8 +748,6 @@ def _detector_window(
 
 def _slab_grid(grid: Grid, z0: int, z1: int) -> Grid:
     """Grid of z slices ``[z0, z1)``."""
-    from dataclasses import replace
-
     origin = grid_volume_origin(grid)
     return replace(
         grid,

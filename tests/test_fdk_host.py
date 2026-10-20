@@ -436,15 +436,19 @@ def test_per_view_arrangements_use_global_quadrature_and_physical_cosines(backen
     assert np.linalg.norm(host - batched) < tolerance * np.linalg.norm(batched)
 
 
-def test_prepared_batches_bound_input_transfer_storage():
+@pytest.mark.parametrize("limit", [7, 64])
+def test_prepared_batches_bound_input_transfer_storage(limit):
     from importlib import import_module
 
     geometry, _, detector, _ = scan()
     detector = replace(detector, nu=2048, nv=1024)
     prep = import_module("tomojax.recon.fdk")._prepare(
-        geometry, detector, 8, FDKConfig(backend="jax")
+        geometry, detector, 8, FDKConfig(backend="jax", views_per_batch=limit)
     )
-    assert 4 * detector.nu * detector.nv * prep.batch <= 64 * 2**20
+    assert prep.batch == min(limit, 8)
+    window = prep.window(3, 259)
+    assert window.batch == min(limit, 32)
+    assert window.window(3, 67).batch == limit
 
 
 @pytest.mark.parametrize("backend", ["jax", CUDA])
