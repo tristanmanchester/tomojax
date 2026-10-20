@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+Projection matching fits a band-limited projection model matched to the
+detector sampling. Large motion in noisy scans is recovered more accurately, and
+the PSI nanotomography workflow takes about 40% less time.
+
+FDK sizes its view batches for the detector rows each slab reads, so streamed
+cone-beam reconstruction of full-size detectors is about 20% faster.
+
 Automatic laminography accepts an explicit `grid=` region, retaining its physical
 faces and final voxel sampling while estimating setup and motion.
 

@@ -548,8 +548,8 @@ imports and loading additional. The same 256-view projection score is
 0.0790636. There is no vendor volume, repeated pass or native library comparison
 for this scan; this is a capacity and data-fit measurement.
 
-A native iterative solve was not run: one 2036³ float32 volume alone needs
-33.76 GB, above the 24 GB host-memory limit.
+Iterative methods at native resolution need the whole 2036³ float32 volume,
+33.76 GB, in memory, more than this machine's 30 GB of RAM.
 
 The Diamond rows use `SIRTConfig(iterations=3, subsets=15, lower_bound=0)`
 with `warm_start=True` (an FBP start) on frames from
