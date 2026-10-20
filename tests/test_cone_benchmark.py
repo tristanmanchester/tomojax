@@ -65,12 +65,13 @@ def test_subset_normalization_storage_preserves_dense_updates(method, policy):
     np.testing.assert_allclose(actual.transpose(2, 1, 0).ravel(), expected, rtol=2e-6, atol=2e-7)
 
 
-def test_host_cgls_matches_dense_least_squares():
+@pytest.mark.parametrize("resident", [False, True])
+def test_bounded_cgls_matches_dense_least_squares(resident):
     ops = DenseOperators()
     matrix = np.concatenate(ops.matrices).astype(np.float64)
     data = np.concatenate([d.ravel() for d in ops.data]).astype(np.float64)
     expected = np.linalg.lstsq(matrix, data, rcond=None)[0]
-    actual = cgls(ops, None, iterations=20).transpose(2, 1, 0).ravel()
+    actual = cgls(ops, None, iterations=20, resident_residual=resident).transpose(2, 1, 0).ravel()
     np.testing.assert_allclose(actual, expected, rtol=1e-4, atol=2e-6)
 
 
@@ -83,7 +84,8 @@ def test_full_image_difference_scores_noncontiguous_planes():
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("iterations", [1, 4])
-def test_bounded_cgls_matches_native_astra(iterations):
+@pytest.mark.parametrize("resident", [False, True])
+def test_bounded_cgls_matches_native_astra(iterations, resident):
     astra = pytest.importorskip("astra")
     pytest.importorskip("cupy")
     import tomojax as tj
@@ -103,7 +105,11 @@ def test_bounded_cgls_matches_native_astra(iterations):
         with Operators(
             data, vectors, vg, [slice(i, i + batch) for i in range(0, 23, batch)]
         ) as ops:
-            actual = cgls(ops, initial, iterations=iterations)
+            actual = cgls(ops, initial, iterations=iterations, resident_residual=resident)
             assert ops.work["forward_views"] == 23 * (iterations + 1)
             assert ops.work["backprojected_views"] == 23 * (iterations + 1)
+            uploads = 1 + iterations * (1 if resident else 2)
+            downloads = iterations if resident else 2 * iterations + 1
+            assert ops.work["host_to_device_bytes"] == initial.nbytes + uploads * data.nbytes
+            assert ops.work["device_to_host_bytes"] == initial.nbytes + downloads * data.nbytes
         np.testing.assert_allclose(actual, expected, rtol=3e-5, atol=1e-6)

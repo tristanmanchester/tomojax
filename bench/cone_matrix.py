@@ -100,7 +100,12 @@ def astra_reconstruct(
         groups = [order[i::count] for i in range(count)]
     with Operators(data, vectors, vg, groups) as ops:
         if args.method == "cgls":
-            image = cgls(ops, initial, iterations=args.iterations)
+            image = cgls(
+                ops,
+                initial,
+                iterations=args.iterations,
+                resident_residual=args.storage == "device-residual",
+            )
         else:
             image = ordered_subsets(
                 ops,
@@ -214,6 +219,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     from dataclasses import replace
 
     from _measure import GpuSampler
+    from cupy.cuda import nvtx
     import numpy as np
 
     sampler = GpuSampler(period=0.02)
@@ -236,13 +242,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "image_reference": "authors full_AGD_50" if args.case.startswith("walnut") else None,
         }
         for repeat in range(args.repeats + 1):
+            nvtx.RangePush(f"cone-solve-{repeat}")
             begin = time.perf_counter()
-            if args.library == "astra":
-                image, work = astra_reconstruct(scan, grid, vectors, args)
-                record["iterative_work"] = work
-            else:
-                image = tomojax_reconstruct(scan, grid, args)
-            record["seconds"].append(time.perf_counter() - begin)
+            try:
+                if args.library == "astra":
+                    image, work = astra_reconstruct(scan, grid, vectors, args)
+                    record["iterative_work"] = work
+                else:
+                    image = tomojax_reconstruct(scan, grid, args)
+                record["seconds"].append(time.perf_counter() - begin)
+            finally:
+                nvtx.RangePop()
             if repeat == 0:
                 record["cold_with_loading"] = time.perf_counter() - _STARTED
             if not np.isfinite(image).all():
@@ -273,9 +283,9 @@ def main() -> None:
     parser.add_argument("--start", choices=("fdk", "default"), default="fdk")
     parser.add_argument(
         "--storage",
-        choices=("native", "host"),
+        choices=("native", "host", "device-residual"),
         default="native",
-        help="ASTRA CGLS/SIRT recurrence storage",
+        help="ASTRA recurrence storage; device-residual keeps CGLS residuals on the GPU",
     )
     parser.add_argument(
         "--norms",

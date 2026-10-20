@@ -126,8 +126,14 @@ class Operators(ExitStack):
         self.work["backprojected_views"] += part[2][1]
 
 
-def cgls(ops: Operators, initial: np.ndarray | None, *, iterations: int) -> np.ndarray:
-    """CGLS with host residuals and search projections; FP32 GPU reductions."""
+def cgls(
+    ops: Operators,
+    initial: np.ndarray | None,
+    *,
+    iterations: int,
+    resident_residual: bool = False,
+) -> np.ndarray:
+    """CGLS with host search projections and host or device residuals."""
     cp = ops.cp
     x = (
         cp.zeros(ops.shape, cp.float32)
@@ -139,7 +145,7 @@ def cgls(ops: Operators, initial: np.ndarray | None, *, iterations: int) -> np.n
         r = ops.measured(part)
         if initial is not None:
             r -= ops.forward(x, part)
-        residual.append(ops.download(r))
+        residual.append(r if resident_residual else ops.download(r))
         ops.back(r, part, scratch)
         gradient += scratch
         del r
@@ -154,13 +160,15 @@ def cgls(ops: Operators, initial: np.ndarray | None, *, iterations: int) -> np.n
         alpha = gamma / denominator
         x += alpha * direction
         gradient.fill(0)
-        for part, host_r, q in zip(ops.parts, residual, projections, strict=True):
-            r, device_q = ops.upload(host_r), ops.upload(q)
+        for part, stored_r, q in zip(ops.parts, residual, projections, strict=True):
+            r = stored_r if resident_residual else ops.upload(stored_r)
+            device_q = ops.upload(q)
             r -= alpha * device_q
             del device_q
             ops.back(r, part, scratch)
             gradient += scratch
-            ops.download(r, out=host_r)
+            if not resident_residual:
+                ops.download(r, out=stored_r)
             del r
         gamma_new = cp.sum(gradient * gradient)
         direction *= gamma_new / gamma

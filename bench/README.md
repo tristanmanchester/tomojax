@@ -427,13 +427,26 @@ Those differences and residuals are diagnostics, not physical accuracy claims.
 
 ASTRA `--storage native` uses its named CGLS/SIRT algorithms; `--storage host`
 CGLS uses an explicit FP32 recurrence with residuals and search projections on
-the host. OS-SART and OSEM are explicit normalized updates over ASTRA's native
-forward and backprojectors. `--norms resident`, `host` and `recompute` change
-only column-normalization storage; include the fastest fitting policy in the
+the host. `--storage device-residual` keeps residuals on the GPU and only search
+projections on the host; use `--batch 128` for the three-orbit walnut. OS-SART
+and OSEM are explicit normalized updates over ASTRA's native forward and
+backprojectors. `--norms resident`, `host` and `recompute` change only
+column-normalization storage; include the fastest fitting policy in the
 frontier. OSEM clips solve inputs at zero but scores the original log data;
 `--start default` uses a positive uniform volume. Three-orbit ASTRA FDK starts
 average the three physical orbits. The records include ASTRA iterative view
 counts and host/device payload bytes for explicit recurrences.
+
+NVTX ranges `cone-solve-0`, `cone-solve-1`, etc. identify individual solves in
+Nsight Systems. For example, prefix a benchmark command with
+`nsys profile --trace=cuda,nvtx -o cone` and extract its first warm solve with:
+
+```bash
+nsys stats --report cuda_gpu_kern_sum,cuda_gpu_mem_size_sum \
+  --filter-nvtx cone-solve-1 cone.nsys-rep
+```
+
+Use profiles to count work and attribute costs; measure latency without the profiler.
 
 ## Several GPUs
 
