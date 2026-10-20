@@ -595,8 +595,11 @@ def poisson_operators(
     With ``stream``, measurements are a host-source key; only the requested
     batch is gathered from its original-order host array.
     """
+    size = int(indices.shape[1])
+    chunks = (size + batch_size - 1) // batch_size
+    balanced_batch = (size + chunks - 1) // chunks
     ops = ViewBatches(
-        poses, grid, detector, det_grid, backend, batch_size, model, "linear",
+        poses, grid, detector, det_grid, backend, balanced_batch, model, "linear",
         absolute_weights=False,
     )  # fmt: skip
     per_view = tuple(array[indices] for array in ops.per_view())

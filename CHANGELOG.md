@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+OSEM balances view batches within each subset to reduce repeated projection work.
+
 The full-view cone benchmark reports matched-grid image diagnostics, ASTRA
 iterative work counts, and memory-bounded CGLS and ordered-subset baselines.
 
