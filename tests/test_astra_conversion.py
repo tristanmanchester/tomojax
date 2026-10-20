@@ -220,13 +220,22 @@ def _two_orbit_scan() -> tj.Scan:
     return tj.Scan.combine([tj.Scan(empty, low), tj.Scan(empty, high)])
 
 
-def test_astra_export_keeps_pose_metadata_on_host(monkeypatch):
-    from tomojax.core.geometry import views
+def test_astra_export_keeps_pose_metadata_on_host():
+    import subprocess
+    import sys
 
-    monkeypatch.setattr(views, "stack_view_poses", lambda *args: pytest.fail("device pose export"))
-    for scan in (_posed_cone_scan(), _two_orbit_scan()):
-        _, geometry, _ = scan.to_astra()
-        assert np.isfinite(geometry["Vectors"]).all()
+    code = """
+import sys, numpy as np, tomojax as tj
+for segmented in (False, True):
+    grid, detector = tj.Grid(7, 5, 3, 1, 1, 1), tj.Detector(9, 7, 1, 1)
+    scans = [tj.Scan(np.ones((3, 7, 9), np.float32), tj.ConeGeometry(
+        grid, detector, [0, 45, 135], tj.ConeBeam(30, 50, source_height=h))) for h in (0, 3)]
+    scan = tj.Scan.combine(scans) if segmented else scans[0]
+    scan = scan.with_poses(np.full((len(scan.angles), 6), .001, np.float32))
+    assert np.isfinite(scan.to_astra()[1]["Vectors"]).all()
+assert "jax" not in sys.modules
+"""
+    subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
 
 
 def test_combined_scans_project_each_segment_with_its_own_arrangement():

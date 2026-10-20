@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+The full-view cone benchmark reports matched-grid image diagnostics, ASTRA
+iterative work counts, and memory-bounded CGLS and ordered-subset baselines.
+
 Exporting host cone geometry to ASTRA does not start a JAX device runtime.
 
 Projection matching fits a band-limited projection model matched to the
