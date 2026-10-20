@@ -401,14 +401,16 @@ extern "C" __global__ void reduce_axis_boxes_tiled(
     if (threadIdx.x == 0) boxes[(long)blockIdx.x * 12 + q] = value;
 }
 
-// Separable views, the columns whose plane axis is a: grid (z tiles, row tiles, planes).
-// img is path-weighted; axis_box holds each plane axis's nonzero pixel bounds.
-extern "C" __global__ void sep_adjoint(
+// Separable views, the columns whose plane axis is a: grid (z tiles of ZT planes, row
+// tiles, planes). img is path-weighted; axis_box holds each plane axis's nonzero pixel
+// bounds. Every voxel's sum runs in the same order whatever ZT is.
+template <int ZT>
+__device__ __forceinline__ void sep_adjoint_tile(
     const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
     const float* __restrict__ img, float* __restrict__ vol,
     int nx, int ny, int nz, int nu, int nv)
 {
-    __shared__ float R[ULEN][TC + 1];
+    __shared__ float R[ULEN][ZT + 1];
     __shared__ float s_fb[ULEN], s_t[ULEN], s_rc0[ULEN], s_f0[ULEN], s_idf[ULEN];
     __shared__ int s_taps[ULEN];
     __shared__ float s_margin[ULEN];
@@ -416,14 +418,14 @@ extern "C" __global__ void sep_adjoint(
     __shared__ int skip;
     int b = 1 - a;
     int nb = a == 0 ? ny : nx;
-    int c0 = blockIdx.x * TC, b0 = blockIdx.y * TB, k = blockIdx.z;
+    int c0 = blockIdx.x * ZT, b0 = blockIdx.y * TB, k = blockIdx.z;
     int tid = threadIdx.x;
-    int my_b = b0 + tid / 4, my_c = (tid % 4) * (TC / 4);
+    int my_b = b0 + tid / 4, my_c = (tid % 4) * (ZT / 4);
     float my_bf = (float)my_b;
     if (!any_view(coeff, axis_box, nviews, a, true)) return;
-    float acc[TC / 4];
+    float acc[ZT / 4];
     #pragma unroll
-    for (int j = 0; j < TC / 4; ++j) acc[j] = 0.f;
+    for (int j = 0; j < ZT / 4; ++j) acc[j] = 0.f;
     for (int w = 0; w < nviews; ++w) {
         __syncthreads();
         if (tid < NC) cf[tid] = coeff[(long)w * NC + tid];
@@ -473,7 +475,7 @@ extern "C" __global__ void sep_adjoint(
                 s_taps[i] = col_axis == a ? min((int)floorf(taps) + 1, nv) : 0;
             }
             __syncthreads();
-            for (int i = tid / TC, j = tid % TC; i < ulen; i += blockDim.x / TC) {
+            for (int i = tid / ZT, j = tid % ZT; i < ulen; i += blockDim.x / ZT) {
                 float jcf = (float)(c0 + j);
                 float t = s_t[i], rc0 = s_rc0[i];
                 float v1 = (jcf - 1.f - s_f0[i]) * s_idf[i];
@@ -506,7 +508,7 @@ extern "C" __global__ void sep_adjoint(
                     float wb = trif(s_fb[i], my_bf);
                     if (wb == 0.f) continue;
                     #pragma unroll
-                    for (int j = 0; j < TC / 4; ++j) acc[j] += wb * R[i][my_c + j];
+                    for (int j = 0; j < ZT / 4; ++j) acc[j] += wb * R[i][my_c + j];
                 }
             }
         }
@@ -516,8 +518,25 @@ extern "C" __global__ void sep_adjoint(
         int ix = a == 0 ? k : my_b, iy = a == 0 ? my_b : k;
         long base = ((long)ix * ny + iy) * nz + c0 + my_c;
         #pragma unroll
-        for (int j = 0; j < TC / 4; ++j) if (c0 + my_c + j < nz) vol[base + j] += acc[j];
+        for (int j = 0; j < ZT / 4; ++j) if (c0 + my_c + j < nz) vol[base + j] += acc[j];
     }
+}
+
+extern "C" __global__ void sep_adjoint(
+    const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
+    const float* __restrict__ img, float* __restrict__ vol,
+    int nx, int ny, int nz, int nu, int nv)
+{
+    sep_adjoint_tile<TC>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv);
+}
+
+// At most 32 planes: one 32-plane tile instead of a half-idle 64-plane one.
+extern "C" __global__ void sep_adjoint_thin(
+    const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
+    const float* __restrict__ img, float* __restrict__ vol,
+    int nx, int ny, int nz, int nu, int nv)
+{
+    sep_adjoint_tile<32>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv);
 }
 
 // Adds x0..x3 to four padded shared cells. Pair the two rows of each column:
@@ -886,12 +905,13 @@ extern "C" __global__ void cone_pose_vjp(
 
 // Compact separable tiles cache all view metadata and process two z cells per lane.
 #define CACHED_ULEN 78
-extern "C" __global__ void sep_adjoint_cached(
+template <int ZT>
+__device__ __forceinline__ void sep_adjoint_cached_tile(
     const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
     const float* __restrict__ img, float* __restrict__ vol,
     int nx, int ny, int nz, int nu, int nv)
 {
-    __shared__ float R[CACHED_ULEN][TC + 1];
+    __shared__ float R[CACHED_ULEN][ZT + 1];
     __shared__ float s_fb[CACHED_ULEN], s_t[CACHED_ULEN], s_rc0[CACHED_ULEN];
     __shared__ float s_f0[CACHED_ULEN], s_idf[CACHED_ULEN];
     __shared__ int s_taps[CACHED_ULEN];
@@ -901,10 +921,10 @@ extern "C" __global__ void sep_adjoint_cached(
     __shared__ int2 all_foot[VMAX];
     int b = 1 - a;
     int nb = a == 0 ? ny : nx;
-    int c0 = blockIdx.x * TC, b0 = blockIdx.y * TB, k = blockIdx.z;
+    int c0 = blockIdx.x * ZT, b0 = blockIdx.y * TB, k = blockIdx.z;
     unsigned tid = threadIdx.x;
-    // Eight-cell stripes spread the four z lanes across shared-memory banks.
-    int my_b = b0 + tid / 4, my_c = (tid % 4) * (TC / 8);
+    // Stripes of ZT / 8 cells spread the four z lanes across shared-memory banks.
+    int my_b = b0 + tid / 4, my_c = (tid % 4) * (ZT / 8);
     float my_bf = (float)my_b;
     if (!any_view(coeff, axis_box, nviews, a, true)) return;
     for (int i = tid; i < nviews * 12; i += blockDim.x)
@@ -930,9 +950,9 @@ extern "C" __global__ void sep_adjoint_cached(
     }
 
     __syncthreads();
-    float acc[TC / 4];
+    float acc[ZT / 4];
     #pragma unroll
-    for (int j = 0; j < TC / 4; ++j) acc[j] = 0.f;
+    for (int j = 0; j < ZT / 4; ++j) acc[j] = 0.f;
     for (int w = 0; w < nviews; ++w) {
         if (all_skip[w]) continue;
         const float* c = all_cf[w];
@@ -966,14 +986,14 @@ extern "C" __global__ void sep_adjoint_cached(
                 s_taps[i] = col_axis == a ? min((int)floorf(taps) + 1, nv) : 0;
             }
             __syncthreads();
-            const float* col = image + (long)(ulo + tid / (TC / 2)) * nv;
-            for (int i = tid / (TC / 2), j = tid % (TC / 2); i < ulen;
-                 i += blockDim.x / (TC / 2), col += (blockDim.x / (TC / 2)) * nv) {
+            const float* col = image + (long)(ulo + tid / (ZT / 2)) * nv;
+            for (int i = tid / (ZT / 2), j = tid % (ZT / 2); i < ulen;
+                 i += blockDim.x / (ZT / 2), col += (blockDim.x / (ZT / 2)) * nv) {
                 float t = s_t[i], rc0 = s_rc0[i], f0 = s_f0[i], idf = s_idf[i];
                 int taps = s_taps[i];
                 #pragma unroll
                 for (int run = 0; run < 2; ++run) {
-                    int jj = j + run * (TC / 2);
+                    int jj = j + run * (ZT / 2);
                     float jcf = (float)(c0 + jj);
                     float v1 = (jcf - 1.f - f0) * idf, v2 = (jcf + 1.f - f0) * idf;
                     int va = max((int)floorf(pixel_bound(fminf(v1, v2) - s_margin[i], nv)) + 1, 0);
@@ -1020,8 +1040,8 @@ extern "C" __global__ void sep_adjoint_cached(
                     float wb = trif(s_fb[i], my_bf);
                     if (wb == 0.f) continue;
                     #pragma unroll
-                    for (int j = 0; j < TC / 4; ++j) {
-                        int offset = j % (TC / 8) + (j / (TC / 8)) * (TC / 2);
+                    for (int j = 0; j < ZT / 4; ++j) {
+                        int offset = j % (ZT / 8) + (j / (ZT / 8)) * (ZT / 2);
                         acc[j] += wb * R[i][my_c + offset];
                     }
                 }
@@ -1033,11 +1053,28 @@ extern "C" __global__ void sep_adjoint_cached(
         int ix = a == 0 ? k : my_b, iy = a == 0 ? my_b : k;
         long base = ((long)ix * ny + iy) * nz + c0 + my_c;
         #pragma unroll
-        for (int j = 0; j < TC / 4; ++j) {
-            int offset = j % (TC / 8) + (j / (TC / 8)) * (TC / 2);
+        for (int j = 0; j < ZT / 4; ++j) {
+            int offset = j % (ZT / 8) + (j / (ZT / 8)) * (ZT / 2);
             if (c0 + my_c + offset < nz) vol[base + offset] += acc[j];
         }
     }
+}
+
+extern "C" __global__ void sep_adjoint_cached(
+    const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
+    const float* __restrict__ img, float* __restrict__ vol,
+    int nx, int ny, int nz, int nu, int nv)
+{
+    sep_adjoint_cached_tile<TC>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv);
+}
+
+// At most 32 planes, as sep_adjoint_thin.
+extern "C" __global__ void sep_adjoint_cached_thin(
+    const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
+    const float* __restrict__ img, float* __restrict__ vol,
+    int nx, int ny, int nz, int nu, int nv)
+{
+    sep_adjoint_cached_tile<32>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv);
 }
 
 // Two independent right-hand sides share ray coordinates; narrower tiles retain occupancy.

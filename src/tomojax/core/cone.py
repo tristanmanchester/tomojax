@@ -406,50 +406,57 @@ def cuda_module() -> Any:
     return cp.RawModule(code=source)
 
 
-def _launch_forward(
-    context: Any,
-    out: Any,
-    coeff: Any,
-    volume: Any,
-    packed: Any = None,
-    *,
-    grid: Grid,
-    det: Detector,
+def forward_into(
+    out: Any, coeff: Any, volume: Any, packed: Any = None, *, grid: Grid, det: Detector
 ) -> None:
+    """Launch the forward kernels on CuPy's current stream: ``out`` is ``(views, nv, nu)``.
+
+    The arrays are CuPy arrays (or CUDA buffers) on the current device; ``packed``
+    is the optional ``(x, z, y)`` copy of ``volume`` used by axis-2 rays.
+    """
     import cupy as cp
 
     views = int(coeff.shape[0])
+    inputs = (cp.asarray(coeff), cp.asarray(volume))
+    if packed is not None:
+        inputs += (cp.asarray(packed),)
+    args = (
+        *inputs, cp.asarray(out),
+        np.int32(grid.nx), np.int32(grid.ny), np.int32(grid.nz),
+        np.int32(det.nu), np.int32(det.nv),
+        np.float32(grid.vx), np.float32(grid.vy), np.float32(grid.vz),
+    )  # fmt: skip
+    # Views vary fastest, rows slowest: the blocks running at once cover one band
+    # of rows (one slab of the volume) in many views, which then shares the L2.
+    cuda_module().get_function("cone_forward" if packed is None else "cone_forward_y")(
+        (views, -(-det.nu // 32), -(-det.nv // 16)), (512,), args
+    )
+
+
+def _launch_forward(context: Any, out: Any, *args: Any, **options: Any) -> None:
     with xla_stream(context, out):
-        inputs = (cp.asarray(coeff), cp.asarray(volume))
-        if packed is not None:
-            inputs += (cp.asarray(packed),)
-        args = (
-            *inputs, cp.asarray(out),
+        forward_into(out, *args, **options)
+
+
+def box_forward_into(out: Any, coeff: Any, *, grid: Grid, det: Detector) -> None:
+    """Launch the uniform-support forward on CuPy's current stream (see :func:`forward_into`)."""
+    import cupy as cp
+
+    cuda_module().get_function("cone_box_forward")(
+        (int(coeff.shape[0]), -(-(det.nu * det.nv) // 128)),
+        (128,),
+        (
+            cp.asarray(coeff), cp.asarray(out),
             np.int32(grid.nx), np.int32(grid.ny), np.int32(grid.nz),
             np.int32(det.nu), np.int32(det.nv),
             np.float32(grid.vx), np.float32(grid.vy), np.float32(grid.vz),
-        )  # fmt: skip
-        # Views vary fastest, rows slowest: the blocks running at once cover one band
-        # of rows (one slab of the volume) in many views, which then shares the L2.
-        cuda_module().get_function("cone_forward" if packed is None else "cone_forward_y")(
-            (views, -(-det.nu // 32), -(-det.nv // 16)), (512,), args
-        )
+        ),
+    )  # fmt: skip
 
 
-def _launch_box_forward(context: Any, out: Any, coeff: Any, *, grid: Grid, det: Detector) -> None:
-    import cupy as cp
-
+def _launch_box_forward(context: Any, out: Any, *args: Any, **options: Any) -> None:
     with xla_stream(context, out):
-        cuda_module().get_function("cone_box_forward")(
-            (int(coeff.shape[0]), -(-(det.nu * det.nv) // 128)),
-            (128,),
-            (
-                cp.asarray(coeff), cp.asarray(out),
-                np.int32(grid.nx), np.int32(grid.ny), np.int32(grid.nz),
-                np.int32(det.nu), np.int32(det.nv),
-                np.float32(grid.vx), np.float32(grid.vy), np.float32(grid.vz),
-            ),
-        )  # fmt: skip
+        box_forward_into(out, *args, **options)
 
 
 def _separable_adjoint_kernel(grid: Grid, detector: Detector) -> str:
@@ -458,9 +465,12 @@ def _separable_adjoint_kernel(grid: Grid, detector: Detector) -> str:
     The compact tile's two-cell lanes save work on ordinary row stacks, but
     cost more for wide resampling support. Use a conservative stack-size
     threshold, tighter on small volumes where geometry caching amortizes less.
+    Both tiles span 64 planes; up to 32 planes use their 32-plane versions
+    (one tile either way), so no lanes compute planes outside the volume.
     """
     row_ratio = 2 if grid.nx * grid.ny * grid.nz < 2**21 else 4
-    return "sep_adjoint" if detector.nv > row_ratio * grid.nz else "sep_adjoint_cached"
+    name = "sep_adjoint" if detector.nv > row_ratio * grid.nz else "sep_adjoint_cached"
+    return name + "_thin" if grid.nz <= 32 else name
 
 
 def _weighted_images(
@@ -497,8 +507,7 @@ def _weighted_images(
     return weighted, boxes[:views]
 
 
-def _launch_adjoint(
-    context: Any,
+def adjoint_into(
     out: Any,
     coeff: Any,
     images: Any,
@@ -509,54 +518,62 @@ def _launch_adjoint(
     packed_capacity: int = 0,
     layout_hint: tuple[tuple[float, float, float], float] | None = None,
 ) -> None:
+    """Set ``out`` to ``accumulate`` plus the exact transpose, on CuPy's current stream.
+
+    ``images`` is ``(views, nv, nu)``; ``out`` and ``accumulate`` are
+    ``(nx, ny, nz)`` and may be the same array.
+    """
     import cupy as cp
 
     views = int(coeff.shape[0])
     module = cuda_module()
+    separable_adjoint = module.get_function(_separable_adjoint_kernel(grid, det))
+    target, initial = cp.asarray(out), cp.asarray(accumulate)
+    if target.data.ptr != initial.data.ptr:
+        target[...] = initial
+    coeff, images = cp.asarray(coeff), cp.asarray(images)
+    weighted, boxes = _weighted_images(module, coeff, (images,), grid, det)
+    packed_capacity = packed_capacity or _cone_output.device_capacity(
+        grid, det, views, layout_hint, rhs=1
+    )
+    sizes = (grid.nx, grid.ny, grid.nz, det.nu, det.nv)
+    dims = tuple(np.int32(x) for x in sizes)
+    extent = (grid.nx, grid.ny, grid.nz)
+    for start in range(0, views, _VIEW_CHUNK):
+        count = min(_VIEW_CHUNK, views - start)
+        part = (coeff[start : start + count], boxes[start : start + count], np.int32(count))
+        i_part = weighted[start : start + count]
+        for axis in (0, 1):
+            na, nb = extent[axis], extent[1 - axis]
+            separable_adjoint(
+                (-(-grid.nz // 64), -(-nb // 64), na),
+                (256,),
+                (*part, np.int32(axis), i_part, target, *dims),
+            )
+        for axis in (0, 1) if packed_capacity else (0, 1, 2):
+            # In-plane axes (b, c): the other two, in order.
+            nb, nc = (extent[i] for i in range(3) if i != axis)
+            wide = axis != 2 and grid.nz >= 128
+            tile_c = 64 if wide else 32
+            module.get_function("plane_adjoint_wide" if wide else "plane_adjoint")(
+                (-(-nc // tile_c), -(-nb // 15), -(-extent[axis] // 2)),
+                (128,),
+                (*part, np.int32(axis), i_part, target, *dims),
+            )
+    if packed_capacity:
+        _cone_output.accumulate(
+            module, coeff, boxes=boxes, images=(weighted,), targets=(target,),
+            grid=grid, detector=det, capacity=packed_capacity, view_chunk=_VIEW_CHUNK,
+        )  # fmt: skip
+
+
+def _launch_adjoint(context: Any, out: Any, *args: Any, **options: Any) -> None:
     with xla_stream(context, out):
-        separable_adjoint = module.get_function(_separable_adjoint_kernel(grid, det))
-        target, initial = cp.asarray(out), cp.asarray(accumulate)
-        if target.data.ptr != initial.data.ptr:
-            target[...] = initial
-        coeff, images = cp.asarray(coeff), cp.asarray(images)
-        weighted, boxes = _weighted_images(module, coeff, (images,), grid, det)
-        packed_capacity = packed_capacity or _cone_output.device_capacity(
-            grid, det, views, layout_hint, rhs=1
-        )
-        sizes = (grid.nx, grid.ny, grid.nz, det.nu, det.nv)
-        dims = tuple(np.int32(x) for x in sizes)
-        extent = (grid.nx, grid.ny, grid.nz)
-        for start in range(0, views, _VIEW_CHUNK):
-            count = min(_VIEW_CHUNK, views - start)
-            part = (coeff[start : start + count], boxes[start : start + count], np.int32(count))
-            i_part = weighted[start : start + count]
-            for axis in (0, 1):
-                na, nb = extent[axis], extent[1 - axis]
-                separable_adjoint(
-                    (-(-grid.nz // 64), -(-nb // 64), na),
-                    (256,),
-                    (*part, np.int32(axis), i_part, target, *dims),
-                )
-            for axis in (0, 1) if packed_capacity else (0, 1, 2):
-                # In-plane axes (b, c): the other two, in order.
-                nb, nc = (extent[i] for i in range(3) if i != axis)
-                wide = axis != 2 and grid.nz >= 128
-                tile_c = 64 if wide else 32
-                module.get_function("plane_adjoint_wide" if wide else "plane_adjoint")(
-                    (-(-nc // tile_c), -(-nb // 15), -(-extent[axis] // 2)),
-                    (128,),
-                    (*part, np.int32(axis), i_part, target, *dims),
-                )
-        if packed_capacity:
-            _cone_output.accumulate(
-                module, coeff, boxes=boxes, images=(weighted,), targets=(target,),
-                grid=grid, detector=det, capacity=packed_capacity, view_chunk=_VIEW_CHUNK,
-            )  # fmt: skip
+        adjoint_into(out, *args, **options)
 
 
-def _launch_adjoint_pair(
-    context: Any,
-    out: Any,
+def adjoint_pair_into(
+    out: tuple[Any, Any],
     coeff: Any,
     images0: Any,
     images1: Any,
@@ -568,55 +585,63 @@ def _launch_adjoint_pair(
     packed_capacity: int = 0,
     layout_hint: tuple[tuple[float, float, float], float] | None = None,
 ) -> None:
+    """Two exact transposes sharing ray geometry, on CuPy's current stream.
+
+    ``out[i]`` becomes ``initial{i}`` plus the transpose of ``images{i}``.
+    """
     import cupy as cp
 
     module = cuda_module()
-    with xla_stream(context, out[0]):
-        targets = tuple(cp.asarray(value) for value in out)
-        for target, value in zip(targets, (initial0, initial1), strict=True):
-            initial = cp.asarray(value)
-            if target.data.ptr != initial.data.ptr:
-                target[...] = initial
-        coeff = cp.asarray(coeff)
-        weighted, boxes = _weighted_images(module, coeff, (images0, images1), grid, det)
-        packed_capacity = packed_capacity or _cone_output.device_capacity(
-            grid, det, int(coeff.shape[0]), layout_hint, rhs=2
-        )
-        # Channel-major planes also feed the original separable kernels without copies.
-        separate = (weighted[0], weighted[1])
-        separable = module.get_function(_separable_adjoint_kernel(grid, det))
-        dims = tuple(np.int32(x) for x in (grid.nx, grid.ny, grid.nz, det.nu, det.nv))
-        extent = (grid.nx, grid.ny, grid.nz)
-        views = int(coeff.shape[0])
-        for start in range(0, views, _VIEW_CHUNK):
-            count = min(_VIEW_CHUNK, views - start)
-            part = (coeff[start : start + count], boxes[start : start + count], np.int32(count))
-            for axis in (0, 1):
-                shape = (-(-grid.nz // 64), -(-extent[1 - axis] // 64), extent[axis])
-                for image, target in zip(separate, targets, strict=True):
-                    separable(
-                        shape,
-                        (256,),
-                        (*part, np.int32(axis), image[start : start + count], target, *dims),
-                    )
-            for axis in (0, 1) if packed_capacity else (0, 1, 2):
-                nb, nc = (extent[i] for i in range(3) if i != axis)
-                module.get_function("pair_plane_adjoint")(
-                    (-(-nc // 32), -(-nb // 32), extent[axis]),
-                    (128,),
-                    (
-                        *part,
-                        np.int32(axis),
-                        *(image[start : start + count] for image in separate),
-                        *targets,
-                        *dims,
-                    ),
+    targets = tuple(cp.asarray(value) for value in out)
+    for target, value in zip(targets, (initial0, initial1), strict=True):
+        initial = cp.asarray(value)
+        if target.data.ptr != initial.data.ptr:
+            target[...] = initial
+    coeff = cp.asarray(coeff)
+    weighted, boxes = _weighted_images(module, coeff, (images0, images1), grid, det)
+    packed_capacity = packed_capacity or _cone_output.device_capacity(
+        grid, det, int(coeff.shape[0]), layout_hint, rhs=2
+    )
+    # Channel-major planes also feed the original separable kernels without copies.
+    separate = (weighted[0], weighted[1])
+    separable = module.get_function(_separable_adjoint_kernel(grid, det))
+    dims = tuple(np.int32(x) for x in (grid.nx, grid.ny, grid.nz, det.nu, det.nv))
+    extent = (grid.nx, grid.ny, grid.nz)
+    views = int(coeff.shape[0])
+    for start in range(0, views, _VIEW_CHUNK):
+        count = min(_VIEW_CHUNK, views - start)
+        part = (coeff[start : start + count], boxes[start : start + count], np.int32(count))
+        for axis in (0, 1):
+            shape = (-(-grid.nz // 64), -(-extent[1 - axis] // 64), extent[axis])
+            for image, target in zip(separate, targets, strict=True):
+                separable(
+                    shape,
+                    (256,),
+                    (*part, np.int32(axis), image[start : start + count], target, *dims),
                 )
-        if packed_capacity:
-            _cone_output.accumulate(
-                module, coeff, boxes=boxes, images=separate, targets=targets,
-                grid=grid, detector=det, capacity=packed_capacity, view_chunk=_VIEW_CHUNK,
-            )  # fmt: skip
+        for axis in (0, 1) if packed_capacity else (0, 1, 2):
+            nb, nc = (extent[i] for i in range(3) if i != axis)
+            module.get_function("pair_plane_adjoint")(
+                (-(-nc // 32), -(-nb // 32), extent[axis]),
+                (128,),
+                (
+                    *part,
+                    np.int32(axis),
+                    *(image[start : start + count] for image in separate),
+                    *targets,
+                    *dims,
+                ),
+            )
+    if packed_capacity:
+        _cone_output.accumulate(
+            module, coeff, boxes=boxes, images=separate, targets=targets,
+            grid=grid, detector=det, capacity=packed_capacity, view_chunk=_VIEW_CHUNK,
+        )  # fmt: skip
+
+
+def _launch_adjoint_pair(context: Any, out: Any, *args: Any, **options: Any) -> None:
+    with xla_stream(context, out[0]):
+        adjoint_pair_into(out, *args, **options)
 
 
 def forward_cuda(
