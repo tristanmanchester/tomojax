@@ -30,19 +30,6 @@ class Device(Protocol):
     def local_hardware_id(self) -> int: ...
 
 
-def commit_array[T](value: T) -> T:
-    """Keep a JAX array's existing placement when operating in another context.
-
-    Explicit commitment aliases the same pixels; NumPy and lazy inputs are
-    returned unchanged. It does not change the caller's default device.
-    """
-    import jax
-
-    if isinstance(value, jax.Array):
-        return cast("T", jax.device_put(value, value.sharding))
-    return value
-
-
 def jax_float32_array(value: object) -> jax.Array:
     """Convert an array-like value to a JAX float32 array."""
     import jax.numpy as jnp
@@ -63,11 +50,6 @@ def numpy_float32_array(value: object) -> Float32Array:
 def numpy_float64_array(value: object) -> Float64Array:
     """Convert an array-like value to a NumPy float64 array."""
     return cast("Float64Array", np.asarray(value, dtype=np.float64))
-
-
-def numpy_int64_array(value: object) -> Int64Array:
-    """Convert an array-like value to a NumPy int64 array."""
-    return cast("Int64Array", np.asarray(value, dtype=np.int64))
 
 
 def object_list(value: object) -> list[object]:
