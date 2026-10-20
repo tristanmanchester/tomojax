@@ -9,7 +9,10 @@ import jax
 import jax.numpy as jnp
 
 from tomojax.core.backend_policy import cuda_backend
-from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
+from tomojax.core.projector import (
+    project_views,
+    sum_backproject_views_T,
+)
 
 if TYPE_CHECKING:
     from tomojax.core.geometry.base import Detector, Grid
@@ -131,19 +134,17 @@ def estimate_normal_norm(
                     accumulate=acc,
                     unit_volume=upper_bound and support is None,
                 ), None
-            projected = jax.vmap(
-                lambda t: forward_project_view_T(
-                    t,
-                    grid,
-                    detector,
-                    masked,
-                    det_grid=det_grid,
-                    ray_integrator=ray_integrator,
-                    unroll=unroll,
-                    use_checkpoint=checkpoint,
-                    gather_dtype=gather_dtype,
-                )
-            )(batch)
+            projected = project_views(
+                batch,
+                grid,
+                detector,
+                masked,
+                det_grid=det_grid,
+                ray_integrator=ray_integrator,
+                unroll=unroll,
+                use_checkpoint=checkpoint,
+                gather_dtype=gather_dtype,
+            )
             adjoint = sum_backproject_views_T(
                 batch,
                 grid,

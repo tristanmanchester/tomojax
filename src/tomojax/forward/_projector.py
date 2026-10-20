@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 
 from tomojax.core.geometry import Detector, Grid
-from tomojax.core.projector import forward_project_view_T
+from tomojax.core.projector import project_views
 from tomojax.geometry.api import (
     axis_pose_stack,
     axis_unit_from_rotations,
@@ -145,21 +145,18 @@ def project_parallel_reference_from_input(
         geometry_input,
     )
 
-    def project_one(t_view: jax.Array) -> jax.Array:
-        return forward_project_view_T(
-            t_view,
-            core.grid,
-            core.detector,
-            vol,
-            step_size=core.step_size,
-            n_steps=core.n_steps,
-            use_checkpoint=core.checkpoint_projector,
-            unroll=core.projector_unroll,
-            gather_dtype=core.gather_dtype,
-            det_grid=core.det_grid,
-        )
-
-    return jax.vmap(project_one)(core.t_all).astype(jnp.float32)
+    return project_views(
+        core.t_all,
+        core.grid,
+        core.detector,
+        vol,
+        step_size=core.step_size,
+        n_steps=core.n_steps,
+        use_checkpoint=core.checkpoint_projector,
+        unroll=core.projector_unroll,
+        gather_dtype=core.gather_dtype,
+        det_grid=core.det_grid,
+    ).astype(jnp.float32)
 
 
 def core_projection_geometry_from_state(

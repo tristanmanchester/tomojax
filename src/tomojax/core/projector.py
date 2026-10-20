@@ -8,7 +8,7 @@ import functools
 import logging
 import math
 import operator
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -641,6 +641,21 @@ def backproject_view_T(
         gather_dtype=gather_dtype,
         det_grid=det_grid,
     )
+
+
+def project_views(
+    T_stack: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    volume: jnp.ndarray,
+    **options: Any,
+) -> jnp.ndarray:
+    """Project ``volume`` into every view of ``T_stack`` with :func:`forward_project_view_T`.
+
+    ``options`` are forward_project_view_T's keywords; the views are mapped with
+    ``jax.vmap`` so each is the single-view projection exactly.
+    """
+    return jax.vmap(lambda T: forward_project_view_T(T, grid, detector, volume, **options))(T_stack)
 
 
 def sum_backproject_views_T(

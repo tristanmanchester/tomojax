@@ -28,7 +28,7 @@
   },
   "long_functions": {
     "src/tomojax/alignment/_model/schedules.py::resolve_alignment_schedule": 165,
-    "src/tomojax/alignment/_objectives/fixed_volume.py::project_and_score_stack": 162,
+    "src/tomojax/alignment/_objectives/fixed_volume.py::project_and_score_stack": 160,
     "src/tomojax/alignment/_pose/_coupled_program.py::_build_program": 257,
     "src/tomojax/alignment/_pose/_pose_loop.py::align": 196,
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::_run_reconstruction_step": 166,
@@ -51,7 +51,7 @@
     "src/tomojax/recon/_cgls_jax.py::_solve_streamed": 112,
     "src/tomojax/recon/_cgls_jax.py::cgls": 105,
     "src/tomojax/recon/fista_tv.py::_prepare_fista_runtime": 108,
-    "src/tomojax/recon/fista_tv.py::grad_data_term": 153,
+    "src/tomojax/recon/fista_tv.py::grad_data_term": 149,
     "src/tomojax/recon/fista_tv_core.py::_projection_loss_and_explicit_grad": 127,
     "src/tomojax/recon/fista_tv_core.py::fista_tv_core_arrays": 120,
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 106

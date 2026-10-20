@@ -15,7 +15,7 @@ from tomojax.core.backend_policy import normalize_projector_backend
 from tomojax.core.cuda_projector_resolver import resolve_cuda_callable, resolve_cuda_module
 from tomojax.core.projector import (
     RAY_INTEGRATORS,
-    forward_project_view_T,
+    project_views,
     sum_backproject_views_T,
 )
 from tomojax.core.view_chunks import chunk_schedule, chunk_size
@@ -406,19 +406,17 @@ def _project_chunk(
             interpolation="cubic" if ray_integrator == "joseph_cubic" else "linear",
         )
     if forward_projector == "jax":
-        return jax.vmap(
-            lambda T: forward_project_view_T(
-                T,
-                grid,
-                detector,
-                volume,
-                step_size=sampled_step_size,
-                use_checkpoint=checkpoint_projector,
-                unroll=int(projector_unroll),
-                gather_dtype=gather_dtype,
-                det_grid=det_grid,
-            )
-        )(T_chunk)
+        return project_views(
+            T_chunk,
+            grid,
+            detector,
+            volume,
+            step_size=sampled_step_size,
+            use_checkpoint=checkpoint_projector,
+            unroll=int(projector_unroll),
+            gather_dtype=gather_dtype,
+            det_grid=det_grid,
+        )
     if forward_projector == "cuda":
         cuda_project, fallback_reason = resolve_cuda_callable(
             "forward_project_views_T_cuda",
