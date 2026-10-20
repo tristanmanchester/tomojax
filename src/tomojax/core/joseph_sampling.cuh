@@ -27,9 +27,9 @@ __device__ __forceinline__ void joseph_cubic_weights(float t, float* w, float* d
     d[3] = t * (1.5f*t - 1);
 }
 
-template<bool Cubic>
+template<bool Cubic, bool Absolute = false, typename Volume>
 __device__ __forceinline__ void joseph_value_derivatives(
-    const float* x, int a, int k, float qb, float qc,
+    Volume x, int a, int k, float qb, float qc,
     int nx, int ny, int nz, int nb, int nc,
     float& value, float& db, float& dc) {
     int ib = (int)floorf(qb), ic = (int)floorf(qc);
@@ -46,6 +46,14 @@ __device__ __forceinline__ void joseph_value_derivatives(
     } else {
         float wb[4], wc[4], gb[4], gc[4];
         joseph_cubic_weights(tb,wb,gb); joseph_cubic_weights(tc,wc,gc);
+        if (Absolute) {
+            #pragma unroll
+            for (int i=0;i<4;i++) {
+                gb[i] *= wb[i] < 0.f ? -1.f : 1.f;
+                gc[i] *= wc[i] < 0.f ? -1.f : 1.f;
+                wb[i] = fabsf(wb[i]); wc[i] = fabsf(wc[i]);
+            }
+        }
         value = db = dc = 0.f;
         #pragma unroll
         for (int b=0;b<4;b++) {

@@ -212,7 +212,7 @@ def _implicit_reconstruct_arrays(
     cg_iters: int,
     cg_tol: float,
     damping: float,
-) -> FistaCoreResult:
+) -> FistaCoreResult[jnp.ndarray]:
     # Solve once. Attach the implicit derivative to the resulting volume while
     # preserving the diagnostics from that same solve.
     result = fista_tv_core_arrays(

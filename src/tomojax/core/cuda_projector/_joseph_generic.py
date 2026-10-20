@@ -22,9 +22,10 @@ if TYPE_CHECKING:
 def source(name: str, **constants: int | str) -> str:
     """Specialize a kernel's layout, retaining runtime volume/detector dimensions."""
     text = Path(__file__).with_name(name + ".cu").read_text()
-    if '#include "joseph_sampling.cuh"' in text:
-        header = Path(__file__).parents[1].joinpath("joseph_sampling.cuh").read_text()
-        text = text.replace('#include "joseph_sampling.cuh"', header)
+    for header_name in ("joseph_sampling.cuh", "joseph_gather.cuh"):
+        if f'#include "{header_name}"' in text:
+            header = Path(__file__).parents[1].joinpath(header_name).read_text()
+            text = text.replace(f'#include "{header_name}"', header)
     return "\n".join(f"#define {key} {value}" for key, value in constants.items()) + "\n" + text
 
 
