@@ -17,7 +17,11 @@ from tomojax.core.backend_policy import (
     normalize_projector_backend,
 )
 from tomojax.core.cuda_projector_resolver import resolve_cuda_callable
-from tomojax.core.projector import forward_project_view_T
+from tomojax.core.projector import (
+    cone_views,
+    cuda_unsupported_exception_type,
+    forward_project_view_T,
+)
 from tomojax.core.view_chunks import chunk_schedule, chunk_size
 
 from .loss_adapters import LossAdapter, build_loss_adapter
@@ -176,21 +180,6 @@ class FixedVolumeProjectionObjective(AlignmentObjective):
         )
 
 
-def _cone_project_poses(
-    poses: jnp.ndarray,
-    grid: Grid,
-    detector: Detector,
-    volume: jnp.ndarray,
-    frames: jnp.ndarray,
-    backend: str,
-) -> jnp.ndarray:
-    """Cone projections in lab ``frames`` with ``backend`` (see _cone_projector_backend)."""
-    from tomojax.core.cone import cone_project, frame_coefficients
-
-    coeff = frame_coefficients(poses, frames, grid, detector)
-    return cone_project(volume, coeff, grid, detector, backend=backend)
-
-
 def _cone_projector_backend(requested: ProjectorBackendInput) -> str:
     from tomojax.core.cone import use_cuda_cone
 
@@ -222,7 +211,7 @@ def project_stack(
         return jnp.zeros((0, detector.nv, detector.nu), dtype=jnp.float32)
     if frames is not None:
         cone_backend = _cone_projector_backend(backend)
-        return _cone_project_poses(pose_stack, grid, detector, volume, frames, cone_backend)
+        return cone_views(pose_stack, grid, detector, volume, frames, cone_backend)
     if ray_integrator == "sampled" and backend == "cuda" and not require_differentiable_projector:
         fallback_reason = _cuda_sinogram_fallback_reason(
             pose_stack=pose_stack,
@@ -238,7 +227,7 @@ def project_stack(
         )
         fallback_reason = fallback_reason or callable_reason
         if cuda_project is not None and fallback_reason is None:
-            unsupported_exc = _cuda_unsupported_exception_type()
+            unsupported_exc = cuda_unsupported_exception_type() or ValueError
             try:
                 options = _cuda_projector_options(
                     gather_dtype=gather_dtype,
@@ -341,7 +330,7 @@ def project_and_score_stack(
             return parallel_project(T)
         # One batched cone call per chunk, not one launch per view.
         chunk = jax.lax.dynamic_slice_in_dim(frames, start, T.shape[0])
-        return _cone_project_poses(T, grid, detector, volume, chunk, cone_backend)
+        return cone_views(T, grid, detector, volume, chunk, cone_backend)
 
     local_indices = (
         jnp.arange(n_views, dtype=jnp.int32)
@@ -375,7 +364,7 @@ def project_and_score_stack(
         )
         fallback_reason = fallback_reason or callable_reason
         if cuda_score is not None and fallback_reason is None:
-            unsupported_exc = _cuda_unsupported_exception_type()
+            unsupported_exc = cuda_unsupported_exception_type() or ValueError
             try:
                 options = _cuda_projector_options(
                     gather_dtype=gather_dtype,
@@ -575,16 +564,6 @@ def _cuda_projector_options(
         det_grid=det_grid,
         state_mode=state_mode,
     )
-
-
-def _cuda_unsupported_exception_type() -> type[Exception]:
-    unsupported_exc, _reason = resolve_cuda_callable(
-        "CudaProjectorUnsupported",
-        missing_reason="cuda_unsupported_exception_missing",
-    )
-    if isinstance(unsupported_exc, type) and issubclass(unsupported_exc, Exception):
-        return unsupported_exc
-    return ValueError
 
 
 def score_projection_stack(

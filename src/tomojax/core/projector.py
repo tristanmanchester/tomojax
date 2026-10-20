@@ -327,7 +327,8 @@ def _trilinear_scatter_add(acc_flat, ray_vals, ix_f, iy_f, iz_f, nx, ny, nz):
     return acc_flat + scatter(ray_vals)[0]
 
 
-def _cuda_unsupported_exception_type() -> type[Exception] | None:
+def cuda_unsupported_exception_type() -> type[Exception] | None:
+    """The CUDA projector's rejection exception, or None when that module is absent."""
     unsupported_exc, _reason = resolve_cuda_callable(
         "CudaProjectorUnsupported",
         missing_reason="cuda_unsupported_exception_missing",
@@ -343,7 +344,7 @@ def _cone_backend(projector_backend: object) -> str:
     return "cuda" if projector_backend == "cuda" and use_cuda_cone() else "jax"
 
 
-def _cone_views(
+def cone_views(
     poses: jnp.ndarray,
     grid: Grid,
     detector: Detector,
@@ -351,6 +352,7 @@ def _cone_views(
     frames: jnp.ndarray | np.ndarray,
     projector_backend: object = "jax",
 ) -> jnp.ndarray:
+    """Cone-beam projections of ``volume`` for a pose stack and its lab ``frames``."""
     from tomojax.core.cone import cone_project, frame_coefficients
 
     coeff = frame_coefficients(poses, frames, grid, detector)
@@ -408,7 +410,7 @@ def forward_project_view_T(
     ``"jax"`` the differentiable reference.
     """
     if frames is not None:
-        return _cone_views(T[None], grid, detector, volume, frames, projector_backend)[0]
+        return cone_views(T[None], grid, detector, volume, frames, projector_backend)[0]
     backend = normalize_projector_backend(projector_backend)
     if ray_integrator == "exact":
         if step_size is not None or n_steps is not None:
@@ -435,7 +437,7 @@ def forward_project_view_T(
             missing_reason="cuda_single_view_callable_missing",
         )
         if cuda_project is not None:
-            unsupported_exc = _cuda_unsupported_exception_type()
+            unsupported_exc = cuda_unsupported_exception_type()
             try:
                 options_cls, _options_reason = resolve_cuda_callable(
                     "CudaProjectorOptions",
@@ -752,7 +754,7 @@ def forward_project_view(
     if frames is not None:
         if det_grid is not None or ray_integrator == "exact":
             raise ValueError("cone-beam projection needs the canonical grid and Joseph sampling")
-        return _cone_views(T[None], grid, detector, volume, frames)[0]
+        return cone_views(T[None], grid, detector, volume, frames)[0]
     return forward_project_view_T(
         T,
         grid,
