@@ -71,3 +71,29 @@ def test_region_submatrix_and_columns(backend, interpolation, absolute, origin, 
     np.testing.assert_allclose(accumulated, columns + 0.25, rtol=2e-6, atol=2e-6)
     lhs, rhs = jnp.vdot(expected, images), jnp.vdot(tile, transpose - initial)
     np.testing.assert_allclose(lhs, rhs, rtol=3e-5, atol=2e-5)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("interpolation", ["linear", "cubic"])
+def test_partial_blocks_outside_detector_field(interpolation):
+    if jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    grid, detector = Grid(81, 77, 65, 1, 1, 1), Detector(13, 11, 1, 1)
+    poses = stack_view_poses(
+        LaminographyGeometry(grid, detector, np.linspace(0, 360, 33), tilt_deg=-35), 33
+    )
+    coefficients = plane_coefficients(poses, grid, detector)
+    rng = np.random.default_rng(49712)
+    images = jnp.asarray(rng.normal(size=(33, 11, 13)), jnp.float32)
+    full = sum_backproject_planes(
+        coefficients, images, grid, detector, backend="cuda", interpolation=interpolation
+    )
+    for origin in [(0, 0, 0), (35, 31, 27), (70, 68, 62)]:
+        shape = (11, 9, 3)
+        region = PlaneRegion(
+            grid=grid, detector=detector, backend="cuda",
+            volume_origin=origin, interpolation=interpolation,
+        )  # fmt: skip
+        actual = region.transpose(coefficients, images, accumulate=jnp.zeros(shape, jnp.float32))
+        index = tuple(slice(o, o + n) for o, n in zip(origin, shape, strict=True))
+        np.testing.assert_allclose(actual, full[index], rtol=3e-6, atol=2e-6)

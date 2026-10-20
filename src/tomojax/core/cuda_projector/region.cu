@@ -92,11 +92,41 @@ extern "C" __global__ void region_columns(const float* coeff,const float* tangen
     }
 }
 
+// Round in the forward kernel's order. Sign-selected endpoints enclose every
+// sample in the detector/major-plane rectangle, including at rounding knots.
+__device__ __forceinline__ void region_coordinate_bounds(
+        float u,float v,float k,float offset,int u0,int u1,int v0,int v1,int k0,int k1,
+        float& lower,float& upper) {
+    float ul=(float)(u<0.f?u1:u0),uh=(float)(u<0.f?u0:u1);
+    float vl=(float)(v<0.f?v1:v0),vh=(float)(v<0.f?v0:v1);
+    float kl=(float)(k<0.f?k1:k0),kh=(float)(k<0.f?k0:k1);
+    lower=__fadd_rn(__fadd_rn(__fmul_rn(u,ul),__fmul_rn(v,vl)),
+                    __fadd_rn(__fmul_rn(k,kl),offset));
+    upper=__fadd_rn(__fadd_rn(__fmul_rn(u,uh),__fmul_rn(v,vh)),
+                    __fadd_rn(__fmul_rn(k,kh),offset));
+}
+
+__device__ __forceinline__ bool region_block_visible(
+        const float* c,int x0,int x1,int y0,int y1,int z0,int z1,
+        int u0,int u1,int v0,int v1) {
+    int a=(int)c[0];
+    int k0=a==0?x0:(a==1?y0:z0),k1=a==0?x1:(a==1?y1:z1);
+    int b0=a==0?y0:(a==1?z0:x0),b1=a==0?y1:(a==1?z1:x1);
+    int t0=a==0?z0:(a==1?x0:y0),t1=a==0?z1:(a==1?x1:y1);
+    float blo,bhi,clo,chi;
+    region_coordinate_bounds(c[1],c[2],c[3],c[4],u0,u1,v0,v1,k0,k1,blo,bhi);
+    region_coordinate_bounds(c[5],c[6],c[7],c[8],u0,u1,v0,v1,k0,k1,clo,chi);
+    const float radius=CUBIC?2.f:1.f;
+    return !(blo>(float)b1+radius || bhi<(float)b0-radius ||
+             clo>(float)t1+radius || chi<(float)t0-radius);
+}
+
 extern "C" __global__ void region_adjoint(const float* coeff,const float* images,
         const float* initial,float* out,int views,int nx,int ny,int nz,
         int ox,int oy,int oz,int full_nu,int full_nv,int nu,int nv,int u0,int v0) {
     const int R=RUN,VB=32;
     __shared__ float cf[VB*14];
+    __shared__ bool visible[VB];
     long run=(long)blockIdx.x*blockDim.x+threadIdx.x;
     int runs_z=(nz+R-1)/R;
     bool valid=run<(long)nx*ny*runs_z;
@@ -107,7 +137,18 @@ extern "C" __global__ void region_adjoint(const float* coeff,const float* images
         __syncthreads();
         for(int i=threadIdx.x;i<VB*14;i+=blockDim.x) cf[i]=first*14+i<views*14?coeff[first*14+i]:0.f;
         __syncthreads();
+        if(threadIdx.x<min(VB,views-first)) {
+            long begin=(long)blockIdx.x*blockDim.x;
+            long end=min(begin+blockDim.x-1,(long)nx*ny*runs_z-1);
+            int x0=begin/((long)ny*runs_z),x1=end/((long)ny*runs_z);
+            int y0=x0==x1?(begin/runs_z)%ny:0;
+            int y1=x0==x1?(end/runs_z)%ny:ny-1;
+            visible[threadIdx.x]=region_block_visible(cf+threadIdx.x*14,
+                x0+ox,x1+ox,y0+oy,y1+oy,oz,oz+nz-1,u0,u0+nu-1,v0,v0+nv-1);
+        }
+        __syncthreads();
         for(int view=0;view<min(VB,views-first);++view) {
+            if(!visible[view]) continue;
             const float* c=cf+view*14;
             DetectorRegion image={images+(long)(first+view)*nu*nv,nu,nv,u0,v0};
             bool unit=((c[2]==0.f && c[5]==0.f && fabsf(c[6])==1.f)
