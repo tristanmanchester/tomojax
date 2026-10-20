@@ -6,16 +6,15 @@ The solvers and their configuration classes are exported by
 
 from __future__ import annotations
 
-from contextlib import nullcontext
 from dataclasses import fields, replace
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, cast
 
 from tomojax import recon
+from tomojax.recon._fbp_storage import fbp_volume, fdk_config
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
-    from contextlib import AbstractContextManager
 
     import jax.numpy as jnp
     import numpy as np
@@ -191,7 +190,7 @@ def reconstruct_slabs[T](
                 from .fdk import fdk_slabs
 
                 return fdk_slabs(
-                    geometry, grid, detector, read, config=_fdk_config(cast("FBPConfig", cfg))
+                    geometry, grid, detector, read, config=fdk_config(cast("FBPConfig", cfg))
                 )
             from .fbp_host import fbp_slabs
 
@@ -316,7 +315,7 @@ def reconstruct_arrays(
     det_grid = _detector_grid(geometry, detector)
     if method == "fbp":
         cfg = cast("FBPConfig", cfg)
-        return _fbp_result(geometry, grid, detector, projections, cfg, det_grid, out)
+        return fbp_volume(geometry, grid, detector, projections, cfg, det_grid, out)
     if method == "polychromatic":
         if warm_start:
             raise ValueError("method 'polychromatic' does not take warm_start")
@@ -453,111 +452,12 @@ def _iterative_incore(
     return volume, {"config": cfg, "warm_start": warm_start, **record}
 
 
-def _fbp_result(
-    geometry: Geometry,
-    grid: Grid,
-    detector: Detector,
-    projections: jnp.ndarray | np.ndarray,
-    config: FBPConfig,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
-    out: np.ndarray | None,
-) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
-    """Choose FBP storage, respecting caller-owned output and device capacity."""
-    if out is not None and det_grid is not None:
-        raise ValueError("host output does not support explicit detector grids")
-    if out is not None or (det_grid is None and _too_large_for_the_device(grid, config)):
-        volume = _host_fbp(geometry, grid, detector, projections, config, out=out)
-        return volume, {"config": config, "host_slabs": True}
-    volume = recon.fbp(geometry, grid, detector, projections, config=config, det_grid=det_grid)
-    return volume, {"config": config}
-
-
 def _detector_grid(
     geometry: Geometry, detector: Detector
 ) -> tuple[jnp.ndarray, jnp.ndarray] | None:
     from tomojax.geometry.detector_grid import detector_grid_from_geometry_inputs
 
     return detector_grid_from_geometry_inputs(detector, geometry)
-
-
-def _first_device(cfg: FBPConfig) -> AbstractContextManager[object]:
-    """Make the configuration's first device the default, or leave JAX's own."""
-    import jax
-
-    from tomojax.core.devices import as_devices
-
-    devices = as_devices(cfg.devices)
-    return jax.default_device(devices[0]) if devices else nullcontext()
-
-
-def _too_large_for_the_device(grid: Grid, cfg: FBPConfig) -> bool:
-    """Whether an FBP volume would take more than 40% of free device memory."""
-    from tomojax.backends import device_free_memory_bytes
-
-    # View-shared reconstruction holds the whole volume on every device.
-    with _first_device(cfg):
-        free = device_free_memory_bytes()
-    return free is not None and 4 * grid.nx * grid.ny * grid.nz > 0.4 * free
-
-
-def _host_fbp(
-    geometry: Geometry,
-    grid: Grid,
-    detector: Detector,
-    projections: jnp.ndarray | np.ndarray,
-    cfg: FBPConfig,
-    *,
-    out: np.ndarray | None = None,
-) -> np.ndarray:
-    """Bounded slabs for either beam type, keeping the result on the host."""
-    import logging
-
-    from tomojax.core.geometry.cone import is_cone_beam
-
-    if is_cone_beam(geometry):
-        return _host_fdk(geometry, grid, detector, projections, cfg, out=out)
-    logging.info("Reconstructing %dx%dx%d in z-slabs on the host", grid.nx, grid.ny, grid.nz)
-    host = recon.FBPHostConfig(filter=cfg.filter, scale=cfg.scale, backprojector=cfg.backprojector)
-    # Slabs are not shared among devices; the first selected one does the work.
-    with _first_device(cfg):
-        return recon.fbp_host(
-            cast("ParallelGeometry", geometry), grid, detector, projections, config=host, out=out
-        )
-
-
-def _host_fdk(
-    geometry: Geometry,
-    grid: Grid,
-    detector: Detector,
-    projections: jnp.ndarray | np.ndarray,
-    cfg: FBPConfig,
-    *,
-    out: np.ndarray | None = None,
-) -> np.ndarray:
-    """FDK in z-slabs with the volume on the host (see :func:`fdk_host`)."""
-    import logging
-
-    import numpy as np
-
-    from tomojax.recon.fdk import FDKHostConfig, fdk_host
-
-    logging.info(
-        "Reconstructing %dx%dx%d in z-slabs on the host",
-        grid.nx,
-        grid.ny,
-        grid.nz,
-    )
-    data = np.asarray(projections, np.float32)
-    return fdk_host(
-        geometry, grid, detector, data, config=FDKHostConfig(fdk=_fdk_config(cfg)), out=out
-    )
-
-
-def _fdk_config(cfg: FBPConfig) -> recon.FDKConfig:
-    """Use the same filter and CUDA backend for public FBP on cone beams."""
-    from tomojax.recon.fdk import FDKConfig
-
-    return FDKConfig(filter=cfg.filter, backend=cfg.backprojector, devices=cfg.devices)
 
 
 __all__ = [
