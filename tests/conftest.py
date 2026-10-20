@@ -40,3 +40,9 @@ def _release_compiled_programs() -> Iterator[None]:
     import jax
 
     jax.clear_caches()
+    # Return the freed heap to the system: glibc otherwise keeps several GB of
+    # per-module scratch, so one process grows by the sum of every module's peak.
+    if sys.platform == "linux":
+        import ctypes
+
+        ctypes.CDLL("libc.so.6").malloc_trim(0)

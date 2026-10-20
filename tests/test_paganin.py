@@ -12,10 +12,15 @@ from tomojax.corrections import Paganin
 
 
 def _reference(values: np.ndarray, step: Paganin, guard: int = 512) -> np.ndarray:
-    """The filter on views extended by ``guard`` repeated-edge pixels, far beyond its range."""
+    """The filter on views extended by ``guard`` repeated-edge pixels, far beyond its range.
+
+    A one-pixel axis stays unpadded: its edge padding is constant, so only its
+    zero frequency would contribute, exactly as without the padding.
+    """
     _, rows, cols = values.shape
+    guard_v, guard_u = (guard if rows > 1 else 0), (guard if cols > 1 else 0)
     padded = np.pad(
-        values.astype(np.float64), ((0, 0), (guard, guard), (guard, guard)), mode="edge"
+        values.astype(np.float64), ((0, 0), (guard_v, guard_v), (guard_u, guard_u)), mode="edge"
     )
     kv = 2 * np.pi * np.fft.fftfreq(padded.shape[1], step.pixel_size)
     ku = 2 * np.pi * np.fft.fftfreq(padded.shape[2], step.pixel_size)
@@ -24,7 +29,7 @@ def _reference(values: np.ndarray, step: Paganin, guard: int = 512) -> np.ndarra
     response = 1 / (1 + scale * (kv[:, None] ** 2 + ku[None, :] ** 2))
     spectrum = np.asarray(fft2(padded), dtype=np.complex128)
     filtered = np.asarray(ifft2(spectrum * response), dtype=np.complex128).real
-    return filtered[:, guard : guard + rows, guard : guard + cols]
+    return filtered[:, guard_v : guard_v + rows, guard_u : guard_u + cols]
 
 
 @pytest.mark.parametrize("shape", [(1, 1, 33), (1, 33, 1)])
@@ -79,7 +84,8 @@ def test_paganin_reverse_derivative_matches_dense_transpose(shape: tuple[int, ..
     values = np.random.default_rng(53).uniform(0.05, 1.0, shape).astype(np.float32)
     cotangent = np.random.default_rng(54).normal(size=shape).astype(np.float32)
     basis = np.eye(values.size).reshape(values.size, *shape[1:])
-    forward = _reference(basis, step).reshape(values.size, values.size).T
+    # One padded view at a time: the dense matrix is small, its padded basis is not.
+    forward = np.stack([_reference(b[None], step).ravel() for b in basis]).T
     expected = (forward.T @ cotangent.ravel()).reshape(shape)
     actual = jax.jit(jax.grad(lambda x: jnp.vdot(step.apply(x), cotangent)))(jnp.asarray(values))
     np.testing.assert_allclose(actual, expected, rtol=3e-6, atol=1e-5)
