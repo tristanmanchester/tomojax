@@ -66,28 +66,33 @@ def _resolve_roi_grid(
     if roi_mode == "off":
         return grid
     try:
-        roi = compute_roi(grid, detector, crop_y_to_u=is_parallel)
-        det_smaller = (roi.nx_roi, roi.ny_roi, roi.nz_roi) != (grid.nx, grid.ny, grid.nz)
-        if roi_mode == "auto" and det_smaller:
-            if is_parallel:
-                return grid_from_detector_fov_slices(grid, detector, crop_y_to_u=True)
-            return grid_from_detector_fov(grid, detector, crop_y_to_u=False)
-        if roi_mode == "cube":
-            return grid_from_detector_fov_cube(grid, detector, crop_y_to_u=is_parallel)
-        if roi_mode == "cyl":
-            return grid_from_detector_fov_slices(grid, detector, crop_y_to_u=is_parallel)
-        if roi_mode == "bbox":
-            return grid_from_detector_fov(grid, detector, crop_y_to_u=is_parallel)
-        return grid
+        return _roi_grid(grid, detector, is_parallel=is_parallel, roi_mode=roi_mode)
     except Exception as exc:
-        if roi_mode == "auto":
-            logging.warning(
-                "--roi=auto could not be applied; continuing without ROI crop: %s",
-                exc,
-                exc_info=True,
-            )
+        if roi_mode != "auto":
+            raise ValueError(f"Failed to apply requested --roi={roi_mode!r}") from exc
+        logging.warning(
+            "--roi=auto could not be applied; continuing without ROI crop: %s",
+            exc,
+            exc_info=True,
+        )
+        return grid
+
+
+def _roi_grid(grid: Grid, detector: Detector, *, is_parallel: bool, roi_mode: str) -> Grid:
+    """The grid ``roi_mode`` asks for; ``auto`` crops only when the detector sees less."""
+    if roi_mode == "auto":
+        roi = compute_roi(grid, detector, crop_y_to_u=is_parallel)
+        if (roi.nx_roi, roi.ny_roi, roi.nz_roi) == (grid.nx, grid.ny, grid.nz):
             return grid
-        raise ValueError(f"Failed to apply requested --roi={roi_mode!r}") from exc
+        if is_parallel:
+            return grid_from_detector_fov_slices(grid, detector, crop_y_to_u=True)
+        return grid_from_detector_fov(grid, detector, crop_y_to_u=False)
+    crop = {
+        "cube": grid_from_detector_fov_cube,
+        "cyl": grid_from_detector_fov_slices,
+        "bbox": grid_from_detector_fov,
+    }.get(roi_mode)
+    return grid if crop is None else crop(grid, detector, crop_y_to_u=is_parallel)
 
 
 __all__ = ["ROI_CHOICES", "ROI_HELP", "cylinder_support", "region_grid", "zero_outside_cylinder"]

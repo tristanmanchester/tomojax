@@ -254,16 +254,11 @@ class LoadedNXTomo:
             return False
         if key == "projections":
             return True
-        if key == "source":
-            return self.source is not None
-        if key == "disk_volume_axes_order":
-            return self.disk_volume_axes_order is not None
-        if key == "volume_axes_source":
-            return self.volume_axes_source is not None
+        if key in ("source", "disk_volume_axes_order", "volume_axes_source"):
+            return getattr(self, key) is not None
         if key in _NXTOMO_METADATA_FIELDS:
             return getattr(self.metadata, key) is not None
-        geom_meta = self.metadata.geometry_meta or {}
-        return key in geom_meta
+        return key in (self.metadata.geometry_meta or {})
 
     def __getitem__(self, key: str) -> DatasetValue:
         value = self.get(key)
