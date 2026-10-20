@@ -344,9 +344,6 @@ class tomojax.recon.FBPConfig(
         filter: 'str' = 'ramp',
         scale: 'float | None' = None,
         views_per_batch: 'int' = 1,
-        projector_unroll: 'int' = 1,
-        checkpoint_projector: 'bool' = True,
-        gather_dtype: 'str' = 'fp32',
         backprojector: "Literal['auto', 'jax', 'cuda']" = 'auto',
         devices: 'Device | Sequence[Device] | None' = None,
     ) -> None

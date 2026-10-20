@@ -47,9 +47,8 @@ class FBPConfig:
     ``scale=None`` weights each view exactly for the scanned arc (see
     :func:`fbp`). A number instead weights every view by that constant and
     filters along u only, the convention before exact weights; ``pi / n`` gives
-    the uniform half-turn result. ``views_per_batch``, ``projector_unroll``,
-    ``checkpoint_projector`` and ``gather_dtype`` apply only with an explicit
-    ``det_grid``, which uses the ray-model adjoint.
+    the uniform half-turn result. ``views_per_batch`` bounds the views held at
+    once by the host and explicit ``det_grid`` paths.
 
     ``devices`` (one or several JAX devices) shares the views among them: each
     filters and backprojects its own, weighted for the whole scan, and the
@@ -63,14 +62,6 @@ class FBPConfig:
         Constant angular weight per view, or None for geometry-derived weights.
     views_per_batch : int, optional
         Number of views processed together to bound temporary storage. Default is 1.
-    projector_unroll : int, optional
-        Loop unrolling for the explicit-grid or ray-reference projector. Default is
-        1.
-    checkpoint_projector : bool, optional
-        Recompute intermediate projector values during differentiation on the
-        reference path. Default is True.
-    gather_dtype : str, optional
-        Gather precision on the reference path: "auto", "fp32", "fp16" or "bf16". Default is 'fp32'.
     backprojector : Literal['auto', 'jax', 'cuda'], optional
         Backprojection backend: "auto", "jax" or "cuda". Auto uses CUDA
         acceleration when available. Default is 'auto'.
@@ -82,9 +73,6 @@ class FBPConfig:
     filter: str = "ramp"
     scale: float | None = None
     views_per_batch: int = 1
-    projector_unroll: int = 1
-    checkpoint_projector: bool = True
-    gather_dtype: str = "fp32"
     backprojector: Literal["auto", "jax", "cuda"] = "auto"
     devices: Device | Sequence[Device] | None = None  # kept as a tuple
 

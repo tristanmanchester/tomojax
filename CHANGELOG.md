@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+`FBPConfig` loses `projector_unroll`, `checkpoint_projector` and `gather_dtype`; the
+explicit-detector-grid path always used their defaults.
+
 Command-line options are named after the Python objects they build:
 `tomojax preprocess --stripes WIDTH` is the `Stripes` step and `--reject-views [Z]`
 the `RejectViews` step (the option that dropped listed views is gone; `--select-views`

@@ -34,20 +34,16 @@ def _bp_one(
     detector: Detector,
     filtered: jnp.ndarray,
     *,
-    projector_unroll: int = 1,
-    checkpoint_projector: bool = True,
-    gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
     """Backproject one view with the explicit discrete adjoint."""
-    del checkpoint_projector
     discrete_adjoint = backproject_view_T(
         T,
         grid,
         detector,
         filtered.astype(jnp.float32),
-        unroll=int(projector_unroll),
-        gather_dtype=gather_dtype,
+        unroll=1,
+        gather_dtype="fp32",
         det_grid=det_grid,
     )
     # Convert the Euclidean transpose into a physical backprojection: detector
@@ -57,13 +53,7 @@ def _bp_one(
 
 _bp_one_jit = jax.jit(
     _bp_one,
-    static_argnames=(
-        "grid",
-        "detector",
-        "projector_unroll",
-        "checkpoint_projector",
-        "gather_dtype",
-    ),
+    static_argnames=("grid", "detector"),
 )
 
 
@@ -73,9 +63,6 @@ def _bp_batch_sum(
     *,
     grid: Grid,
     detector: Detector,
-    projector_unroll: int = 1,
-    checkpoint_projector: bool = True,
-    gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
     """Backproject a fixed-size chunk while keeping peak memory at one volume."""
@@ -85,16 +72,7 @@ def _bp_batch_sum(
         inputs: tuple[jnp.ndarray, jnp.ndarray],
     ) -> tuple[jnp.ndarray, None]:
         T, F = inputs
-        bp = _bp_one_jit(
-            T,
-            grid,
-            detector,
-            F,
-            projector_unroll=projector_unroll,
-            checkpoint_projector=checkpoint_projector,
-            gather_dtype=gather_dtype,
-            det_grid=det_grid,
-        )
+        bp = _bp_one_jit(T, grid, detector, F, det_grid=det_grid)
         return accum + bp, None
 
     init = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
@@ -104,13 +82,7 @@ def _bp_batch_sum(
 
 _bp_batch_sum_jit = jax.jit(
     _bp_batch_sum,
-    static_argnames=(
-        "grid",
-        "detector",
-        "projector_unroll",
-        "checkpoint_projector",
-        "gather_dtype",
-    ),
+    static_argnames=("grid", "detector"),
 )
 
 
@@ -122,9 +94,6 @@ def _run_fbp_fast_path(
     grid: Grid,
     detector: Detector,
     filter: str,
-    projector_unroll: int,
-    checkpoint_projector: bool,
-    gather_dtype: str,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
 ) -> jnp.ndarray:
     """Run FBP as one compiled scan over padded view chunks."""
@@ -165,9 +134,6 @@ def _run_fbp_fast_path(
                 filt_chunk,
                 grid=grid,
                 detector=detector,
-                projector_unroll=projector_unroll,
-                checkpoint_projector=checkpoint_projector,
-                gather_dtype=gather_dtype,
                 det_grid=det_grid_in,
             )
             return accum + acc_chunk, None
@@ -187,9 +153,6 @@ def _run_fbp_with_backoff(
     grid: Grid,
     detector: Detector,
     filter: str,
-    projector_unroll: int,
-    checkpoint_projector: bool,
-    gather_dtype: str,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     view_progress: Iterator[int],
 ) -> jnp.ndarray:
@@ -222,9 +185,6 @@ def _run_fbp_with_backoff(
                 filt_chunk,
                 grid=grid,
                 detector=detector,
-                projector_unroll=projector_unroll,
-                checkpoint_projector=checkpoint_projector,
-                gather_dtype=gather_dtype,
                 det_grid=det_grid,
             )
             # Device work is asynchronous. Commit the accumulator and progress
@@ -289,9 +249,6 @@ def fbp_on_detector_grid(
             grid=grid,
             detector=detector,
             filter=cfg.filter,
-            projector_unroll=cfg.projector_unroll,
-            checkpoint_projector=cfg.checkpoint_projector,
-            gather_dtype=cfg.gather_dtype,
             det_grid=det_grid,
         )
 
@@ -303,9 +260,6 @@ def fbp_on_detector_grid(
             grid=grid,
             detector=detector,
             filter=cfg.filter,
-            projector_unroll=cfg.projector_unroll,
-            checkpoint_projector=cfg.checkpoint_projector,
-            gather_dtype=cfg.gather_dtype,
             det_grid=det_grid,
             view_progress=view_progress,
         )

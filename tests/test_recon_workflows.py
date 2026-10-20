@@ -127,9 +127,6 @@ def test_fbp_chunk_backoff_preserves_accumulator_and_progress_on_async_oom(
         grid=Grid(2, 2, 1, 1.0, 1.0, 1.0),
         detector=Detector(1, 1, 1.0, 1.0),
         filter="ramp",
-        projector_unroll=1,
-        checkpoint_projector=True,
-        gather_dtype="fp32",
         det_grid=None,
         view_progress=progress,
     )
