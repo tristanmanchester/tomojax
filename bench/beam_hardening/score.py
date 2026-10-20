@@ -137,13 +137,17 @@ def _radius(image: np.ndarray, case: dict, i: int, x: np.ndarray, y: np.ndarray)
     return float(np.median(found)) if found else None
 
 
-def score_volume(volume: np.ndarray, case: dict, truth_mu: dict[str, float]) -> dict:
-    """Image metrics of a ``(nx, ny, nz)`` volume against a case in one gauge."""
+def slab(volume: np.ndarray, case: dict) -> np.ndarray:
+    """Mean of the scored slices: the central half, or a plate 0.5 mm clear of its faces."""
     g, nz = GEOMETRIES[case.get("geometry", "cone")], volume.shape[2]
     z = (np.arange(nz) - (nz - 1) / 2) * g["voxel"]
-    # The central half of the slices, or of a plate's thickness clear of its faces by 0.5 mm.
     half = min(z.max() / 2, case["shapes"][0].get("half_height", np.inf) - 0.5)
-    image = np.asarray(volume[:, :, np.abs(z) <= max(half, g["voxel"])], np.float64).mean(axis=2)
+    return np.asarray(volume[:, :, np.abs(z) <= max(half, g["voxel"])], np.float64).mean(axis=2)
+
+
+def score_volume(volume: np.ndarray, case: dict, truth_mu: dict[str, float]) -> dict:
+    """Image metrics of a ``(nx, ny, nz)`` volume against a case in one gauge."""
+    image = slab(volume, case)
     x, y = coordinates(case)
     owner = _owned(case, x, y)
     shapes = case["shapes"]

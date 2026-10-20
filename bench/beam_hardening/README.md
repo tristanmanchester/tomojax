@@ -18,7 +18,10 @@ python bench/beam_hardening/run.py mono --methods none
 
 Each writes a JSON report (`--output`, by default `beam_hardening.json` in
 `$LAB_ARTIFACTS` or the current directory) with every case's metrics and a
-summary per method.
+summary per method, and one figure per case in `<output>-figures/`: every
+method beside the reference on the reference's grey window, with radial
+profiles (walnut: each image times its best scale; mono: each curve's
+deviation from a straight line).
 
 ## Families
 
@@ -50,7 +53,9 @@ are read against it; line-integral scores are unaffected.
 unfiltered scan (mode 3) is corrected and compared with the 90 kV
 Thoraeus-filtered high-dose scan (mode 2) of the same slice, on the published
 segmentation's tube wall and filler and on its objects split into light
-(food) and dense (lava stone) ones.
+(food) and dense (lava stone) ones. Slices 2831-5000 and 5871 onwards were
+taken on a replacement detector (the paper's Table 2), whose 60:90 ratios
+differ from the first detector's, so statistics across slices mix the two.
 
 **walnut** and **mono**: do-no-harm checks (`donoharm.py`).
 

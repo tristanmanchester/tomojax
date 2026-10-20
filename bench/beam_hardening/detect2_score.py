@@ -33,10 +33,15 @@ Single-material corrections cannot be right for the dense objects, whose
 from __future__ import annotations
 
 import time
+from typing import TYPE_CHECKING
 
 import detect2 as d2
+import figures as plots
 import methods
 import numpy as np
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 METADATA = {
     3: {
@@ -112,14 +117,22 @@ def compare(image: np.ndarray, reference: np.ndarray, segmentation: np.ndarray) 
     return result
 
 
-def run(split: str, names: list[str], chosen: list[int] | None = None) -> list[dict]:
-    """Score every method on every slice of the split, or on the ``chosen`` ones."""
+def run(
+    split: str, names: list[str], chosen: list[int] | None = None, figures: Path | None = None
+) -> list[dict]:
+    """Score every method on every slice of the split, or on the ``chosen`` ones.
+
+    Each slice's figure shows the images divided by their filler's median,
+    so the 60 and 90 kV scans share a window, with profiles about the tube's centre.
+    """
     records = []
     for slice_id in chosen or d2.slices(split):
         reference = methods.uncorrected(_frames(slice_id, 2), METADATA[2]).volume[:, :, 0]
         segmentation = d2.segmentation(slice_id)
         frames = _frames(slice_id, 3)
         record: dict = {"case": f"slice{slice_id:05d}"}
+        filler = segmentation == d2.FILLER
+        images = {}
         for name in names:
             start = time.perf_counter()
             try:
@@ -133,8 +146,22 @@ def run(split: str, names: list[str], chosen: list[int] | None = None) -> list[d
                 "declined": result.declined,
                 **compare(image, reference, segmentation),
             }
+            images[name] = image / np.median(image[filler])
         records.append(record)
         print(record, flush=True)
+        if figures is not None:
+            figures.mkdir(parents=True, exist_ok=True)
+            x, y = np.nonzero(segmentation == d2.WALL)
+            title = f"2DeteCT slice {slice_id}: 60 kV methods against 90 kV filtered"
+            plots.save(
+                figures / f"{record['case']}.png",
+                reference / np.median(reference[filler]),
+                images,
+                (x.mean(), y.mean()),
+                d2.VOXEL,
+                title,
+                window=(0.0, 6.0),
+            )
     return records
 
 

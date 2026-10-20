@@ -23,6 +23,7 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
+import figures as plots
 import methods
 import numpy as np
 
@@ -50,8 +51,8 @@ def _peak_gb() -> float:
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6
 
 
-def walnut(names: list[str]) -> list[dict]:
-    """Relative L2 error inside the walnut for every method."""
+def walnut(names: list[str], figures: Path | None = None) -> list[dict]:
+    """Relative L2 error inside the walnut for every method, and its central slice."""
     import tomojax as tj
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -85,6 +86,7 @@ def walnut(names: list[str]) -> list[dict]:
         "material": "H2O",
     }
     record: dict = {"case": "walnut1-orbit2-bin2"}
+    images = {}
     for name in names:
         try:
             result = methods.METHODS[name](frames, metadata, None)
@@ -99,7 +101,14 @@ def walnut(names: list[str]) -> list[dict]:
         record[name]["scaled_in_walnut"] = float(np.linalg.norm(v * scale - t) / np.linalg.norm(t))
         record[name]["scale"] = float(scale)
         record[name] |= {"declined": result.declined, "peak_rss_gb": _peak_gb()}
+        images[name] = scale * volume[:, :, volume.shape[2] // 2]
         del result
+    if figures is not None:
+        figures.mkdir(parents=True, exist_ok=True)
+        middle = truth[:, :, truth.shape[2] // 2]
+        centre = ((middle.shape[0] - 1) / 2, (middle.shape[1] - 1) / 2)
+        title = "Walnut 1, central slice; each image times its best scale to the reference"
+        plots.save(figures / "walnut1.png", middle, images, centre, 0.1, title)
     return [record]
 
 
@@ -124,8 +133,8 @@ def curve(
     return centres, deviation, float(slope)
 
 
-def mono(names: list[str]) -> list[dict]:
-    """Linearity of every method's curve on each monochromatic scan."""
+def mono(names: list[str], figures: Path | None = None) -> list[dict]:
+    """Linearity of every method's curve on each monochromatic scan, drawn as curves."""
     import h5py
 
     import tomojax as tj
@@ -158,6 +167,11 @@ def mono(names: list[str]) -> list[dict]:
                 continue
             nonlinearity = float(np.abs(parts[0][1]).max())
             noise = float(np.abs(parts[1][1] - parts[2][1]).max() / 2)
+            if figures is not None:
+                figures.mkdir(parents=True, exist_ok=True)
+                lines = {v: p[:2] for v, p in zip(("all", "even", "odd"), parts, strict=True)}
+                limit = max(3 * noise, 0.005)
+                plots.curves(figures / f"{key}-{name}.png", lines, limit, f"{key}: {name}")
             record[name] = {
                 "nonlinearity": nonlinearity,
                 "noise": noise,

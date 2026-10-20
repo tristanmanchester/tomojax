@@ -107,8 +107,10 @@ def test_line_integral_bias_ignores_noise(bench):
     assert abs(scaled["all"] - 0.3) < 1e-9 and scaled["shape"] < 1e-9  # a gauge, not a shape
 
 
-def test_curve_finds_nonlinearity(bench):
+def test_curve_finds_nonlinearity(bench, tmp_path):
     q = np.linspace(0.0, 3.0, 10000)
     assert np.abs(bench["donoharm"].curve(q, 2 * q)[1]).max() < 1e-12
     centres, deviation, _ = bench["donoharm"].curve(q, q + 0.1 * q**2)
     assert np.abs(deviation).max() > 0.02
+    bench["donoharm"].plots.curves(tmp_path / "c.png", {"all": (centres, deviation)}, 0.005, "t")
+    assert (tmp_path / "c.png").stat().st_size > 0
