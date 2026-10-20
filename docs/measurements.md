@@ -548,8 +548,10 @@ imports and loading additional. The same 256-view projection score is
 0.0790636. There is no vendor volume, repeated pass or native library comparison
 for this scan; this is a capacity and data-fit measurement.
 
-Iterative methods at native resolution need the whole 2036³ float32 volume,
-33.76 GB, in memory, more than this machine's 30 GB of RAM.
+At native resolution the 2036³ float32 volume, 33.76 GB, is more than this
+machine's 30 GB of RAM; iterative cone methods can keep it in a memory-mapped
+file given as `out=` and stream it through the GPU in z slabs
+(`bench/out_of_core.py`).
 
 The Diamond rows use `SIRTConfig(iterations=3, subsets=15, lower_bound=0)`
 with `warm_start=True` (an FBP start) on frames from
