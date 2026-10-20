@@ -15,12 +15,12 @@ from ._config import (
     _KERNEL_VARIANT_IDS,
     _LAYOUT_VARIANT_IDS,
     CudaProjectorUnsupported,
+    _effective_cuda_n_steps,
     _ensure_canonical_detector_grid,
     _ensure_float32_volume,
     _normalize_num_warps,
     _normalize_state_mode,
     _prepare_volume_for_cuda_gather,
-    _resolve_effective_cuda_n_steps_for_stack,
     _supports_parallel_z_rotation_stack,
     _unsupported,
     _validate_public_sinogram_call,
@@ -132,7 +132,7 @@ def forward_project_loss_and_grad_T_cuda(
     else:
         weights_arr = jnp.asarray(weights, dtype=jnp.float32).reshape((int(n_views), 1, 1))
     grad_init = jnp.zeros((int(nx) * int(ny) * int(nz),), dtype=jnp.float32)
-    effective_n_steps_value = _resolve_effective_cuda_n_steps_for_stack(
+    effective_n_steps_value = _effective_cuda_n_steps(
         T_all,
         grid,
         step_size_value,

@@ -52,6 +52,7 @@ __all__ = [
     "CudaProjectorTraversalMetadata",
     "CudaProjectorUnsupported",
     "_cuda_gather_jnp_dtype",
+    "_effective_cuda_n_steps",
     "_normalize_gather_dtype",
     "_normalize_kernel_variant",
     "_normalize_layout_variant",
@@ -59,8 +60,6 @@ __all__ = [
     "_normalize_state_mode",
     "_normalize_tile_shape",
     "_prepare_volume_for_cuda_gather",
-    "_resolve_effective_cuda_n_steps",
-    "_resolve_effective_cuda_n_steps_for_stack",
     "_safe_detector_tile_shape",
     "_supports_parallel_z_rotation_stack",
     "_unsupported",
@@ -68,7 +67,6 @@ __all__ = [
     "_validate_public_sinogram_call",
     "cuda_projector_actual_sinogram_variant_metadata",
     "cuda_projector_actual_variant_metadata",
-    "cuda_projector_sinogram_traversal_metadata",
     "cuda_projector_sinogram_unsupported_reason",
     "cuda_projector_traversal_metadata",
     "cuda_projector_unsupported_reason",
@@ -83,87 +81,33 @@ def cuda_projector_traversal_metadata(
     step_size: float | None = None,
     n_steps: int | None = None,
 ) -> dict[str, int]:
-    """Return resolved JAX and effective CUDA traversal counts."""
+    """Return the resolved JAX and effective CUDA traversal counts of a pose or a pose stack.
+
+    ``T`` is one ``(4, 4)`` pose or a ``(views, 4, 4)`` stack; the effective
+    count is the longest traversal of any view.
+    """
     step_size_value = float(grid.vy) if step_size is None else float(step_size)
     resolved_n_steps = _resolve_n_steps(grid, step_size_value, n_steps)
-    effective_n_steps = _resolve_effective_cuda_n_steps(
-        T,
-        grid,
-        step_size_value,
-        resolved_n_steps,
-    )
+    effective_n_steps = _effective_cuda_n_steps(T, grid, step_size_value, resolved_n_steps)
     return {
         "resolved_n_steps": int(resolved_n_steps),
         "effective_cuda_n_steps": int(effective_n_steps),
     }
 
 
-def cuda_projector_sinogram_traversal_metadata(
-    T_stack: jnp.ndarray,
-    grid: Grid,
-    *,
-    step_size: float | None = None,
-    n_steps: int | None = None,
-) -> dict[str, int]:
-    """Return resolved and max effective traversal counts for a CUDA pose stack."""
-    step_size_value = float(grid.vy) if step_size is None else float(step_size)
-    resolved_n_steps = _resolve_n_steps(grid, step_size_value, n_steps)
-    effective_n_steps = _resolve_effective_cuda_n_steps_for_stack(
-        T_stack,
-        grid,
-        step_size_value,
-        resolved_n_steps,
-    )
-    return {
-        "resolved_n_steps": int(resolved_n_steps),
-        "effective_cuda_n_steps": int(effective_n_steps),
-    }
-
-
-def _resolve_effective_cuda_n_steps(
+def _effective_cuda_n_steps(
     T: jnp.ndarray,
     grid: Grid,
     step_size: float,
     resolved_n_steps: int,
 ) -> int:
+    """Steps that cover the longest ray of one pose or a pose stack through the grid."""
     try:
         T_host = np.asarray(T, dtype=np.float32)
     except Exception:
         return int(resolved_n_steps)
-    if T_host.shape != (4, 4):
-        return int(resolved_n_steps)
-
-    ray_dir = T_host[:3, :3].T[:, 1]
-    support_lengths = np.asarray(
-        [
-            (int(grid.nx) + 1) * float(grid.vx),
-            (int(grid.ny) + 1) * float(grid.vy),
-            (int(grid.nz) + 1) * float(grid.vz),
-        ],
-        dtype=np.float64,
-    )
-    abs_dir = np.abs(ray_dir.astype(np.float64))
-    active_axes = abs_dir > 1e-8
-    if not np.any(active_axes):
-        return int(resolved_n_steps)
-
-    max_path_length = float(np.min(support_lengths[active_axes] / abs_dir[active_axes]))
-    # Preserve a small fp32/slab-boundary guard; per-ray n_steps_ray still masks
-    # the exact active samples.
-    effective_n_steps = math.ceil(max_path_length / float(step_size)) + 2
-    return max(1, min(int(resolved_n_steps), effective_n_steps))
-
-
-def _resolve_effective_cuda_n_steps_for_stack(
-    T_stack: jnp.ndarray,
-    grid: Grid,
-    step_size: float,
-    resolved_n_steps: int,
-) -> int:
-    try:
-        T_host = np.asarray(T_stack, dtype=np.float32)
-    except Exception:
-        return int(resolved_n_steps)
+    if T_host.ndim == 2:
+        T_host = T_host[np.newaxis]
     if T_host.ndim != 3 or T_host.shape[1:] != (4, 4) or T_host.shape[0] == 0:
         return int(resolved_n_steps)
 
@@ -186,6 +130,8 @@ def _resolve_effective_cuda_n_steps_for_stack(
         axis=1,
     )
     max_path_length = float(np.max(path_lengths))
+    # Preserve a small fp32/slab-boundary guard; per-ray n_steps_ray still masks
+    # the exact active samples.
     effective_n_steps = math.ceil(max_path_length / float(step_size)) + 2
     return max(1, min(int(resolved_n_steps), effective_n_steps))
 
@@ -224,7 +170,6 @@ def _traversal_call_parameters(
     n_steps: int | None,
     *,
     interpret: bool,
-    stacked: bool,
 ) -> tuple[float, int, int, tuple[int, int], int, int, int]:
     if variant["state_mode"] != "inline" and variant["layout_variant"] != "detector_vu":
         raise CudaProjectorUnsupported(
@@ -240,15 +185,7 @@ def _traversal_call_parameters(
 
     step_size_value = float(grid.vy) if step_size is None else float(step_size)
     n_steps_value = _resolve_n_steps(grid, step_size_value, n_steps)
-    resolve_effective = (
-        _resolve_effective_cuda_n_steps_for_stack if stacked else _resolve_effective_cuda_n_steps
-    )
-    effective_n_steps_value = resolve_effective(
-        T,
-        grid,
-        step_size_value,
-        n_steps_value,
-    )
+    effective_n_steps_value = _effective_cuda_n_steps(T, grid, step_size_value, n_steps_value)
     kernel_variant_id = _KERNEL_VARIANT_IDS[str(variant["kernel_variant"])]
     layout_variant_id = _LAYOUT_VARIANT_IDS[str(variant["layout_variant"])]
     return (
@@ -308,9 +245,7 @@ def _validate_public_call(
         nv,
         nu,
         nx * ny * nz,
-        *_traversal_call_parameters(
-            variant, T, grid, step_size, n_steps, interpret=interpret, stacked=False
-        ),
+        *_traversal_call_parameters(variant, T, grid, step_size, n_steps, interpret=interpret),
     )
 
 
@@ -368,7 +303,7 @@ def _validate_public_sinogram_call(
         n_views,
         nx * ny * nz,
         *_traversal_call_parameters(
-            variant, T_stack, grid, step_size, n_steps, interpret=interpret, stacked=True
+            variant, T_stack, grid, step_size, n_steps, interpret=interpret
         ),
     )
 

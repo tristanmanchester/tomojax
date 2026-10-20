@@ -361,9 +361,13 @@ def test_stack_traversal_metadata_matches_longest_view(step_size) -> None:
     single = [
         cuda_api.cuda_projector_traversal_metadata(t, grid, step_size=step_size) for t in poses
     ]
-    stacked = cuda_api.cuda_projector_sinogram_traversal_metadata(poses, grid, step_size=step_size)
+    stacked = cuda_api.cuda_projector_traversal_metadata(poses, grid, step_size=step_size)
     assert stacked["resolved_n_steps"] == single[0]["resolved_n_steps"]
     assert stacked["effective_cuda_n_steps"] == max(x["effective_cuda_n_steps"] for x in single)
+    assert (
+        cuda_api.cuda_projector_traversal_metadata(poses[:1], grid, step_size=step_size)
+        == single[0]
+    )
 
 
 @pytest.mark.parametrize("stack", [False, True])

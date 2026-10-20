@@ -17,11 +17,11 @@ from ._config import (
     CudaForwardProjectorTraversalState,
     CudaProjectorTraversalMetadata,
     CudaProjectorUnsupported,
+    _effective_cuda_n_steps,
     _ensure_canonical_detector_grid,
     _normalize_gather_dtype,
     _normalize_state_mode,
     _prepare_volume_for_cuda_gather,
-    _resolve_effective_cuda_n_steps,
     _unsupported,
     _validate_cached_volume,
     _validate_public_call,
@@ -70,7 +70,7 @@ def prepare_forward_project_view_T_cuda_state(
 
     step_size_value = float(grid.vy) if step_size is None else float(step_size)
     resolved_n_steps = _resolve_n_steps(grid, step_size_value, n_steps)
-    effective_n_steps = _resolve_effective_cuda_n_steps(
+    effective_n_steps = _effective_cuda_n_steps(
         T,
         grid,
         step_size_value,
