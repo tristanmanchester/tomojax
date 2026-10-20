@@ -372,6 +372,18 @@ mismatch diagnostic. These fixtures supplement the frozen benchmark suites and
 do not replace their thresholds. Run simulation separately from timed solvers
 to avoid GPU contention.
 
+## Beam hardening validation
+
+[`beam_hardening/`](beam_hardening/README.md) scores beam hardening
+corrections against references they never see: gVXR-rendered polychromatic
+phantoms in cone-beam CT and laminography, 2DeteCT's 60 kV scans against the
+90 kV filtered scans of the same slices, the 40 kV walnut and monochromatic
+synchrotron scans. One command per family:
+
+```bash
+uv run --no-sync python bench/beam_hardening/run.py simulation --split dev --methods none,oracle,spectrum
+```
+
 
 ## Cone-beam comparison
 
