@@ -141,55 +141,6 @@ class Step:
 
 
 @dataclass(frozen=True)
-class BeamHardening(Step):
-    """Linearise line integrals with a polynomial: ``p -> c1 p + c2 p^2 + ...``.
-
-    ``coefficients`` are ``(c1, c2, ...)``, with no constant term, as fitted
-    from a step wedge or a homogeneous object; ``(1, 0.05)`` adds 5% of ``p^2``.
-
-    Parameters
-    ----------
-    coefficients : tuple of float, optional
-        Polynomial coefficients ``(c1, c2, ...)`` without a constant term.
-        The default ``(1.0,)`` leaves the line integrals unchanged.
-
-    Raises
-    ------
-    ValueError
-        If coefficients are empty or nonfinite.
-    """
-
-    domain: ClassVar[Domain] = "line integrals"
-    coefficients: tuple[float, ...] = (1.0,)
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "coefficients", tuple(float(c) for c in self.coefficients))
-        if not self.coefficients:
-            raise ValueError("BeamHardening needs at least one coefficient")
-        if not np.isfinite(self.coefficients).all():
-            raise ValueError("BeamHardening coefficients must be finite")
-
-    def apply(self, batch: jax.Array) -> jax.Array:
-        """Linearize a batch of detector images.
-
-        Parameters
-        ----------
-        batch : jax.Array
-            Float32 line integrals of shape ``(views, rows, columns)``.
-            Rows and columns form each detector image.
-
-        Returns
-        -------
-        jax.Array
-            Corrected line integrals, retaining the input shape.
-        """
-        out = jnp.zeros_like(batch)
-        for c in reversed(self.coefficients):  # Horner's rule, from the highest power
-            out = (out + c) * batch
-        return out
-
-
-@dataclass(frozen=True)
 class Stripes(Step):
     """Correct detector stripes that reconstruct as rings.
 

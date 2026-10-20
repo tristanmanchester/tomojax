@@ -26,6 +26,8 @@ from tomojax.io.api import locate_frames, read_tiff_frames
 
 from ._helpers import tiny_detector, tiny_grid, write_projection_dataset, write_raw_nxtomo
 
+HARD = BeamHardening(rates=(0.5, 2.0), weights=(0.5, 0.5))
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -179,11 +181,13 @@ def test_tiff_stacks_go_through_load_frames(tmp_path: Path, suffix: str) -> None
 
 def test_corrections_are_saved_with_the_scan(tmp_path: Path) -> None:
     write_raw_nxtomo(tmp_path / "raw.nxs")
-    scan = tj.load(tmp_path / "raw.nxs").corrected(BeamHardening((1.0, 0.05)))
+    scan = tj.load(tmp_path / "raw.nxs").corrected(HARD)
     tj.save(tmp_path / "scan.nxs", scan)
     again = tj.load(tmp_path / "scan.nxs")
     assert again.corrections == scan.corrections
-    assert again.corrections[-1] == Correction("beam_hardening", {"coefficients": [1.0, 0.05]})
+    assert again.corrections[-1] == Correction(
+        "beam_hardening", {"rates": [0.4, 1.6], "weights": [0.5, 0.5], "energy_kev": None}
+    )
     np.testing.assert_allclose(np.asarray(again.projections), np.asarray(scan.projections))
 
 
@@ -202,8 +206,8 @@ def test_batches_give_the_same_result(tmp_path: Path) -> None:
     )
     _write_frames(tmp_path / "scan.nxs", stack, [1, 1, *[0] * 7, 1], list(range(10)))
     frames = tj.load_frames(tmp_path / "scan.nxs", darks=0)
-    whole = frames.corrected(BeamHardening((1.0, 0.1)))
-    batched = frames.corrected(BeamHardening((1.0, 0.1)), batch_views=2)
+    whole = frames.corrected(HARD)
+    batched = frames.corrected(HARD, batch_views=2)
     np.testing.assert_allclose(
         np.asarray(batched.projections), np.asarray(whole.projections), rtol=1e-6
     )
@@ -225,10 +229,8 @@ def test_beam_hardening_is_the_polynomial(tmp_path: Path) -> None:
     write_raw_nxtomo(tmp_path / "raw.nxs")
     scan = tj.load(tmp_path / "raw.nxs")
     p = np.asarray(scan.projections)
-    hardened = scan.corrected(BeamHardening((1.0, 0.05)))
-    np.testing.assert_allclose(np.asarray(hardened.projections), p + 0.05 * p**2, rtol=1e-6)
-    with pytest.raises(ValueError, match="at least one coefficient"):
-        BeamHardening(())
+    hardened = scan.corrected(HARD)
+    np.testing.assert_allclose(np.asarray(hardened.projections), HARD.inverse(p), rtol=1e-6)
 
 
 def test_scan_corrected_refuses_steps_before_the_log(tmp_path: Path) -> None:
@@ -359,9 +361,9 @@ def test_stripes_removes_pixel_offsets_the_flats_miss(tmp_path: Path) -> None:
     assert np.delete(error, [10, 31, 45]).max() < 2e-3
     assert cleaned.corrections[-1] == Correction("stripes", {"width": 9, "varying": False})
     # A step after a whole-row step runs on its result.
-    both = frames.corrected(Stripes(9), BeamHardening((1.0, 0.05)), batch_views=7)
+    both = frames.corrected(Stripes(9), HARD, batch_views=7)
     p = np.asarray(cleaned.projections)
-    np.testing.assert_allclose(np.asarray(both.projections), p + 0.05 * p**2, rtol=1e-5, atol=1e-6)
+    np.testing.assert_allclose(np.asarray(both.projections), HARD.inverse(p), rtol=1e-5, atol=1e-6)
     with pytest.raises(ValueError, match=">= 3"):
         Stripes(2)
 
@@ -376,14 +378,12 @@ def test_reject_views_drops_outliers_and_their_geometry(tmp_path: Path) -> None:
         [1, *[0] * views],
         [0, *np.linspace(0, 180, views, endpoint=False)],
     )
-    scan = tj.load_frames(tmp_path / "scan.nxs", darks=0).corrected(
-        RejectViews(), BeamHardening((1.0, 0.1))
-    )
+    scan = tj.load_frames(tmp_path / "scan.nxs", darks=0).corrected(RejectViews(), HARD)
     keep = np.delete(np.arange(views), [0, 4, 8, 11])
     assert scan.projections.shape == (8, 2, 3)
     np.testing.assert_allclose(scan.angles, np.linspace(0, 180, views, endpoint=False)[keep])
     p = -np.log(counts[keep] / 1000.0)
-    np.testing.assert_allclose(np.asarray(scan.projections), p + 0.1 * p**2, rtol=1e-5)
+    np.testing.assert_allclose(np.asarray(scan.projections), HARD.inverse(p), rtol=1e-5)
     rejected = scan.corrections[-2]
     assert rejected.name == "reject_views" and rejected.found["rejected"] == [0, 4, 8, 11]
     # A scan of line integrals rejects views the same way, numbered in that scan.

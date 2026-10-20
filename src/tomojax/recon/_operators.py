@@ -46,7 +46,7 @@ def _view_batch_size(
     return batch
 
 
-def _operators(
+def matched_operators(
     geometry: Geometry,
     grid: Grid | None,
     context: str,
@@ -107,7 +107,7 @@ def project(
     ValueError
         If the array shape does not match the grid or scan geometry.
     """
-    grid, split, (forward, _) = _operators(geometry, grid, "project", devices)
+    grid, split, (forward, _) = matched_operators(geometry, grid, "project", devices)
     if tuple(volume.shape) != (grid.nx, grid.ny, grid.nz):
         raise ValueError(
             f"project: volume shape {tuple(volume.shape)} does not match the grid "
@@ -153,7 +153,7 @@ def backproject(
     ValueError
         If the array shape does not match the grid or scan geometry.
     """
-    grid, split, (_, adjoint) = _operators(geometry, grid, "backproject", devices)
+    grid, split, (_, adjoint) = matched_operators(geometry, grid, "backproject", devices)
     detector = geometry.detector
     expected = (len(geometry.angles), detector.nv, detector.nu)  # pyright: ignore[reportAttributeAccessIssue]
     if tuple(projections.shape) != expected:

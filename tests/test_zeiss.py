@@ -218,6 +218,22 @@ def test_zeiss_content_geometry_and_raw_calibration(tmp_path):
         tj.load_frames(path, darks=0)
 
 
+def test_zeiss_beam_hardening_settings_come_from_the_scan_and_its_reconstruction(tmp_path):
+    fields = {"NoOfImages": 1, "ImageWidth": 2, "ImageHeight": 2, "DataType": 5}
+    streams = {f"ImageInfo/{k}": np.array([v], "<u4").tobytes() for k, v in fields.items()}
+    streams["ImageData1/Image1"] = np.ones(4, "<u2").tobytes()
+    streams["ImageInfo/AcquisitionMode"] = np.array([0], "<u4").tobytes()
+    streams["ImageInfo/XrayVoltage"] = np.array([139.8, 140.0, 140.1], "<f4").tobytes()
+    streams["ImageInfo/SourceFilterName"] = b"HE2" + bytes(257)
+    write_ole(tmp_path / "scan.txrm", streams)
+    recon = {"ReconSettings/BeamHardening": np.array([0.05], "<f4").tobytes()}
+    write_ole(tmp_path / "scan_recon.txm", recon)
+    geometry = tj.ParallelGeometry(tj.Grid(2, 2, 2, 1, 1, 1), tj.Detector(2, 2, 1, 1), [0.0])
+    frames = tj.load_frames(tmp_path / "scan.txrm", darks=0, flats=1.0, geometry=geometry)
+    hardening = frames.source.geometry_metadata["beam_hardening"]
+    assert hardening == {"vendor": "zeiss", "kv": 140.0, "filter": "HE2", "constant": 0.05}
+
+
 def test_zeiss_fragmented_sector_windows_match_pixels_without_full_stream_reads(
     tmp_path, monkeypatch
 ):

@@ -7,6 +7,7 @@ import configparser
 from dataclasses import replace
 import logging
 from pathlib import Path
+import re
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
@@ -34,9 +35,42 @@ def _parameters(path: Path) -> dict[str, str]:
         raise ValueError(f"{path} has no [XTekCT] section")
     params = dict(parser[section])
     for name in parser.sections():
-        if name.lower() == "ctpro" and "AngleFile_Use" in parser[name]:
-            params["AngleFile_Use"] = parser[name]["AngleFile_Use"]
+        for key in ("AngleFile_Use", "Filter_Material", "Filter_ThicknessMM", "XraykV"):
+            if name.lower() in {"ctpro", "xrays"} and key in parser[name]:
+                params[key] = parser[name][key]
     return params
+
+
+def _beam_hardening(file: Path, params: dict[str, str]) -> dict[str, object] | None:
+    """CT Pro's linearisation ``sum_n CoefXn q^n`` (lowest power first) and the tube settings.
+
+    The preset index comes from the ``.ctprofile.xml`` beside the scan, when present.
+    """
+    keys = [f"CoefX{n}" for n in range(5)]
+    if not all(params.get(key, "").strip() for key in keys):
+        return None
+    record: dict[str, object] = {
+        "vendor": "nikon",
+        "coefficients": [float(params[key]) for key in keys],
+    }
+    lut = params.get("BeamHardeningLUTFile", "").strip()
+    if lut:
+        record["lut"] = lut
+    name = params.get("Name", "").strip() or file.stem
+    profile = file.parent / f"{name}.ctprofile.xml"
+    if profile.is_file():
+        found = re.search(
+            r"<BeamHardeningPreset>\s*(\d+)\s*</BeamHardeningPreset>",
+            profile.read_text(encoding="utf-8-sig", errors="replace"),
+        )
+        if found:
+            record["preset"] = int(found.group(1))
+    if params.get("XraykV", "").strip():
+        record["kv"] = float(params["XraykV"])
+    material = params.get("Filter_Material", "").strip()
+    if material and material.lower() != "none":
+        record["filter"] = [material, float(params.get("Filter_ThicknessMM") or 0.0)]
+    return record
 
 
 def _number(params: dict[str, str], key: str, default: float | None = None) -> float:
@@ -215,6 +249,9 @@ def _nikon_record(
         metadata["cone_beam"] = beam.to_dict()
     if axis is not None:
         metadata["axis_unit_lab"] = axis
+    hardening = _beam_hardening(file, params)
+    if hardening is not None:
+        metadata["beam_hardening"] = hardening
     return ProjectionDataset(
         projections=np.broadcast_to(np.float32(0), shape),
         angles=angles.astype(np.float32),

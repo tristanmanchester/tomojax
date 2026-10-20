@@ -106,9 +106,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _ = parser.add_argument(
         "--beam-hardening",
-        type=_numbers,
-        metavar="C1,C2,...",
-        help="Linearise beam hardening: p -> C1 p + C2 p^2 + ... (for example 1,0.05)",
+        choices=("fit", "recorded"),
+        help="Linearise single-material beam hardening with a curve fitted to the scan "
+        "(fit: segment a first reconstruction and reproject it) or the vendor's recorded one",
     )
     _ = parser.add_argument(
         "--preview", metavar="PNG", help="Write the central corrected projection as a PNG"
@@ -193,13 +193,12 @@ def _detector(settings: dict[str, object]) -> Detector | None:
 
 def _steps(args: argparse.Namespace) -> list[Step]:
     """The correction steps the options ask for, in the order they run."""
-    from tomojax.corrections import BeamHardening, Paganin, RejectViews, Stripes, Zingers
+    from tomojax.corrections import Paganin, RejectViews, Stripes, Zingers
 
     zingers = cast("float | None", args.zingers)
     paganin = cast("tuple[float, ...] | None", args.paganin)
     outliers = cast("float | None", args.reject_views)
     stripes = cast("int | None", args.stripes)
-    hardening = cast("tuple[float, ...] | None", args.beam_hardening)
     steps: list[Step] = []
     if zingers is not None:
         steps.append(Zingers(threshold=zingers))
@@ -211,8 +210,6 @@ def _steps(args: argparse.Namespace) -> list[Step]:
         steps.append(RejectViews(z=outliers))
     if stripes is not None:
         steps.append(Stripes(width=stripes))
-    if hardening is not None:
-        steps.append(BeamHardening(hardening))
     return steps
 
 
@@ -262,6 +259,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             epsilon=cast("float", args.epsilon),
             binning=cast("int", settings.get("binning", 1)),
         )
+        if args.beam_hardening is not None:
+            from tomojax.corrections import BeamHardening
+
+            fitted = args.beam_hardening == "fit"
+            scan = scan.corrected(
+                BeamHardening.fit(scan) if fitted else BeamHardening.recorded(scan)
+            )
     except (KeyError, ValueError, OSError) as exc:
         return fail("preprocess", str(exc).strip("'\""))
     tj.save(output, scan)

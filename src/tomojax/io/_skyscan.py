@@ -57,6 +57,26 @@ def _projection_files(file: Path, params: configparser.ConfigParser) -> tuple[li
     return files, len(files) == expected
 
 
+def _beam_hardening(file: Path, params: configparser.ConfigParser) -> dict[str, object]:
+    """NRecon's beam hardening percentage, from the ``<prefix>_rec.log`` beside the scan."""
+    acquisition = params["Acquisition"]
+    record: dict[str, object] = {"vendor": "bruker"}
+    kv = acquisition.getfloat("Source Voltage (kV)", fallback=None)
+    if kv is not None:
+        record["kv"] = kv
+    if acquisition.get("Filter", "").strip():
+        record["filter"] = acquisition["Filter"].strip()
+    log = file.with_name(f"{acquisition['Filename Prefix'].strip()}_rec.log")
+    if log.is_file():
+        reconstruction = configparser.ConfigParser(interpolation=None)
+        reconstruction.read_string(log.read_text(encoding="utf-8-sig", errors="replace"))
+        for section in reconstruction.sections():
+            for key, value in reconstruction[section].items():
+                if key.startswith("beam hardening"):
+                    record["percent"] = float(value)
+    return record
+
+
 def read_skyscan(path: Path, *, data_path: str | None = None) -> RawAcquisition | None:
     """Recognize a SkyScan log by content and retain its ordered TIFF counts lazily.
 
@@ -136,6 +156,7 @@ def read_skyscan(path: Path, *, data_path: str | None = None) -> RawAcquisition 
                 "optical_axis_line": axis,
             },
             "skyscan": {section: dict(params[section]) for section in params.sections()},
+            "beam_hardening": _beam_hardening(file, params),
         },
         sample_name=prefix,
         source_path=str(file),

@@ -136,10 +136,18 @@ def test_empty_calibration_stacks_are_refused_before_reading_counts(field):
         frames.corrected()
 
 
-@pytest.mark.parametrize("value", [np.nan, np.inf, -np.inf])
-def test_beam_hardening_coefficients_must_be_finite(value: float) -> None:
-    with pytest.raises(ValueError, match="coefficients.*finite"):
-        BeamHardening((1.0, value))
+@pytest.mark.parametrize(
+    ("rates", "weights"),
+    [
+        ((1.0, np.nan), (0.5, 0.5)),
+        ((1.0, 0.0), (0.5, 0.5)),
+        ((1.0, 2.0), (0.5, -0.1)),
+        ((1.0,), (0.0,)),
+    ],
+)
+def test_beam_hardening_mixture_must_be_physical(rates, weights) -> None:
+    with pytest.raises(ValueError, match="finite|positive"):
+        BeamHardening(rates=rates, weights=weights)
 
 
 @pytest.mark.parametrize(
@@ -216,8 +224,9 @@ def test_valid_corrections_match_independent_flat_interpolation_and_log(batch):
         flat_positions=np.asarray([6.0, 0.0, 0.0]),
         view_positions=views,
     )
-    corrected = frames.corrected(BeamHardening((1.0, 0.05)), batch_views=batch)
-    p = -np.log(transmission)
-    reference = np.broadcast_to((p + 0.05 * p**2)[:, None, None], (6, 4, 4))
+    step = BeamHardening(rates=(0.5, 2.0), weights=(0.5, 0.5))
+    corrected = frames.corrected(step, batch_views=batch)
+    p = step.inverse(-np.log(transmission))
+    reference = np.broadcast_to(p[:, None, None], (6, 4, 4))
     np.testing.assert_allclose(corrected.projections, reference, rtol=2e-6)
     assert corrected.corrections[0].settings["flat_sets"] == 2

@@ -155,6 +155,40 @@ def _scalar(container: Any, name: str, dtype: str = "<u4") -> float:
     return float(_values(container, name, dtype).item())
 
 
+def _text(container: Any, name: str) -> str:
+    return container.openstream(name).read().split(b"\0", 1)[0].decode("latin-1").strip()
+
+
+def _beam_hardening(container: Any, path: Path) -> dict[str, object] | None:
+    """The reconstructor's beam hardening constant and the tube settings of a scan.
+
+    XMReconstructor stores its settings in the reconstruction, so the
+    ``<name>_recon.txm`` beside an acquisition is read when the acquisition has none.
+    """
+    record: dict[str, object] = {"vendor": "zeiss"}
+    if container.exists("ImageInfo/XrayVoltage"):  # float32 for each view in every version
+        voltage = _values(container, "ImageInfo/XrayVoltage", "<f4")
+        record["kv"] = round(float(np.median(voltage)), 2)
+    if container.exists("ImageInfo/SourceFilterName"):
+        record["filter"] = _text(container, "ImageInfo/SourceFilterName")
+    recon = path.with_name(f"{path.stem}_recon.txm")
+    sources = [container]
+    if not container.exists("ReconSettings/BeamHardening") and _is_ole(recon):
+        sources.append(_OleFile(str(recon)))
+    try:
+        for source in sources:
+            if source.exists("ReconSettings/BeamHardening"):
+                constant = _scalar(source, "ReconSettings/BeamHardening", "<f4")
+                record["constant"] = round(constant, 6)
+                if source.exists("ReconSettings/BeamHardeningFileName"):
+                    record["configuration"] = _text(source, "ReconSettings/BeamHardeningFileName")
+                break
+    finally:
+        for source in sources[1:]:
+            source.close()
+    return record if len(record) > 1 else None
+
+
 def _is_ole(path: Path) -> bool:
     if not path.is_file():
         return False
@@ -353,6 +387,9 @@ def _record(container: Any, path: Path, shape: tuple[int, int, int]) -> Projecti
         "path": str(path),
         "detector_offset_pixels": None if shifts is None else shifts.tolist(),
     }
+    hardening = _beam_hardening(container, path)
+    if hardening is not None:
+        metadata["beam_hardening"] = hardening
     return ProjectionDataset(
         projections=np.broadcast_to(np.float32(0), (count, rows, cols)),
         angles=angles,

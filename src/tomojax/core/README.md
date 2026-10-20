@@ -37,6 +37,10 @@ from the root:
 - `tomojax.core.backend_policy`: backend normalization and provenance helpers.
 - `tomojax.core.multires`: multiresolution scheduling primitives consumed by
   alignment and reconstruction orchestration.
+- `tomojax.core.hardening`: the single-material beam hardening curve, a
+  positive mixture of exponentials, with its inverse and its fit to path
+  lengths, shared by `tomojax.corrections.BeamHardening` and polychromatic
+  reconstruction.
 
 ## Dependencies
 
