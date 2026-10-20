@@ -195,9 +195,12 @@ def test_cuda_cone_dense_transpose_on_separable_turntable_views(yaw):
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("kernel", ["sep_adjoint", "sep_adjoint_cached"])
+@pytest.mark.parametrize(
+    ("kernel", "nz"),
+    [(k, nz) for k in ("sep_adjoint", "sep_adjoint_cached") for nz in (3, 67)]
+    + [("sep_adjoint_thin", 3), ("sep_adjoint_cached_thin", 3)],  # thin tiles: 32 planes
+)
 @pytest.mark.parametrize("pitch", [0.4, 2.0])
-@pytest.mark.parametrize("nz", [3, 67])
 def test_cuda_separable_transpose_kernels_with_wide_support_and_view_tail(
     kernel, pitch, nz, monkeypatch
 ):
@@ -214,7 +217,7 @@ def test_cuda_separable_transpose_kernels_with_wide_support_and_view_tail(
 
     class Kernels:
         def get_function(self, name):
-            if name in {"sep_adjoint", "sep_adjoint_cached"}:
+            if name.startswith("sep_adjoint"):
                 selected.append(name)
                 name = kernel
             calls.append(name)
@@ -225,7 +228,9 @@ def test_cuda_separable_transpose_kernels_with_wide_support_and_view_tail(
     _check_dense_transpose(grid, detector, frames, jnp.asarray(geometry.poses(), jnp.float32))
     assert kernel in calls
     expected = "sep_adjoint" if nz == 3 and pitch < 1 else "sep_adjoint_cached"
-    assert selected and set(selected) == {expected}
+    assert selected and set(selected) == {expected + "_thin" * (nz == 3)}
+    if kernel.endswith("_thin"):
+        return  # the case below has 64 planes; thin tiles share its arithmetic
 
     # The inverse vertical bound rounds past a tiny positive forward weight.
     grid, detector = Grid(64, 64, 64, 1, 1, 1), Detector(64, 64, 2, 2.3)

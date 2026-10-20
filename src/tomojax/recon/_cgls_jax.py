@@ -21,7 +21,8 @@ from tomojax.core.validation import (
     validate_projection_stack,
     validate_volume,
 )
-from tomojax.recon._cgls_stopping import precision_stalled
+from tomojax.recon._cgls_host import solve_on_host
+from tomojax.recon._cgls_stopping import precision_stalled, termination
 from tomojax.recon._projection import (
     ConeModel,
     normal_equation_operators,
@@ -45,6 +46,16 @@ class _State(NamedTuple):
     roundoff: jax.Array
     residual_verified: jax.Array
     residual_recomputations: jax.Array
+
+
+def _running(state: _State, *, max_iters: jax.Array, threshold: jax.Array) -> jax.Array:
+    """Whether the CGLS loop continues: budget left, tolerance unmet, no breakdown or roundoff."""
+    return (
+        (state.iteration < max_iters)
+        & (state.gamma > threshold * threshold)
+        & ~state.failed
+        & ~state.roundoff
+    )
 
 
 def _checked_inputs(
@@ -141,13 +152,7 @@ def _solve(
         jnp.int32(0),
     )
 
-    def condition(state: _State) -> jax.Array:
-        return (
-            (state.iteration < max_iters)
-            & (state.gamma > threshold * threshold)
-            & ~state.failed
-            & ~state.roundoff
-        )
+    condition = partial(_running, max_iters=max_iters, threshold=threshold)
 
     def step(state: _State) -> _State:
         projected = forward(state.direction)
@@ -300,13 +305,7 @@ def _solve_streamed(
         jnp.int32(0),
     )
 
-    def condition(state: _State) -> jax.Array:
-        return (
-            (state.iteration < max_iters)
-            & (state.gamma > threshold * threshold)
-            & ~state.failed
-            & ~state.roundoff
-        )
+    condition = partial(_running, max_iters=max_iters, threshold=threshold)
 
     def step(state: _State) -> _State:
         energy, applied = normal(state.direction)
@@ -433,7 +432,8 @@ def cgls(
     init_x: jnp.ndarray | np.ndarray | None = None,
     config: CGLSConfig | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
-) -> tuple[jnp.ndarray, dict[str, object]]:
+    out: np.ndarray | None = None,
+) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
     """Reconstruct with CGLS and return volume plus convergence diagnostics.
 
     Inputs and the solve use FP32. The method supports arbitrary posed parallel
@@ -452,13 +452,9 @@ def cgls(
             raise ValueError(f"cgls: {name} must be finite and nonnegative")
     validate_model(cfg)
     model, backend = resolve_geometry_projector(
-        geometry,
-        cfg.projector_model,
-        cfg.projector_backend,
-        detector=detector,
-        det_grid=det_grid,
-        context="cgls",
-    )
+        geometry, cfg.projector_model, cfg.projector_backend,
+        detector=detector, det_grid=det_grid, context="cgls",
+    )  # fmt: skip
     if isinstance(model, ConeModel) and cfg.joseph_interpolation != "linear":
         raise ValueError("cgls: cone-beam geometry supports joseph_interpolation='linear' only")
     _ = validate_grid(grid, "cgls grid")
@@ -467,9 +463,15 @@ def cgls(
     if init_x is not None:
         validate_volume(init_x, grid, context="cgls", name="init_x")
     split, stream = _placement(cfg, projections, n, det_grid, grid=grid)
-    initial = None if init_x is None else _as_float32(init_x)
     poses = stack_view_poses(geometry, n)
     validate_pose_stack(poses, n, context="cgls")
+    hosted = solve_on_host(
+        geometry, grid, detector, projections, init_x, cfg,
+        model=model, backend=backend, poses=poses, shared=split is not None, out=out,
+    )  # fmt: skip
+    if hosted is not None:
+        return hosted
+    initial = None if init_x is None else _as_float32(init_x)
     if model == "joseph":
         from tomojax.core.joseph import validate_plane_geometry
 
@@ -493,16 +495,9 @@ def cgls(
     else:
         data, poses, initial = _laid_out(split, projections, poses, initial)
         result, initial_norm, threshold, inputs_finite = _solve(
-            poses,
-            data,
-            initial,
-            det_grid,
-            *budget,
-            jnp.float32(cfg.damping),
-            zero_start=initial is None,
-            split=split,
-            **options,
-        )
+            poses, data, initial, det_grid, *budget, jnp.float32(cfg.damping),
+            zero_start=initial is None, split=split, **options,
+        )  # fmt: skip
     finite, count, gamma, failed, roundoff, first_norm, tolerance, verified, recomputations = (
         jax.device_get(
             (
@@ -524,13 +519,9 @@ def cgls(
     info = {
         "effective_iterations": int(count),
         "converged": converged,
-        "termination": "numerical_breakdown"
-        if failed
-        else "converged"
-        if converged
-        else "roundoff_limit"
-        if roundoff
-        else "iteration_limit",
+        "termination": termination(
+            failed=bool(failed), converged=converged, roundoff=bool(roundoff)
+        ),
         "normal_residual_norm": float(np.sqrt(gamma)),
         "normal_residual_is_recomputed": bool(verified),
         "residual_recomputations": int(recomputations),

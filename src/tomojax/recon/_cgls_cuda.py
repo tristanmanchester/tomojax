@@ -15,7 +15,7 @@ from tomojax.core.geometry.views import host_view_poses
 from tomojax.core.joseph_cuda import JosephCUDA
 from tomojax.core.validation import validate_grid, validate_pose_stack, validate_projection_stack
 
-from ._cgls_stopping import precision_stalled
+from ._cgls_stopping import precision_stalled, termination
 from .cgls import CGLSConfig, resident_bytes
 
 
@@ -184,13 +184,7 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
     info = {
         "effective_iterations": count,
         "converged": converged,
-        "termination": "numerical_breakdown"
-        if failed
-        else "converged"
-        if converged
-        else "roundoff_limit"
-        if roundoff
-        else "iteration_limit",
+        "termination": termination(failed=failed, converged=converged, roundoff=bool(roundoff)),
         "normal_residual_norm": float(np.sqrt(norm2)),
         "normal_residual_is_recomputed": bool(verified),
         "residual_recomputations": recomputations,

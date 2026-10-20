@@ -208,19 +208,23 @@ def test_separately_allocated_norms_match_inline_cache(problem, monkeypatch):
         np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=2e-6)
 
 
+@pytest.fixture
+def host_slabs(monkeypatch):
+    """Force cone EM onto one-plane host slabs."""
+    monkeypatch.setattr(import_module("tomojax.recon.mlem"), "host_volumes", lambda *_: True)
+    monkeypatch.setattr(
+        import_module("tomojax.recon._cone_slabs"), "slab_depth", lambda *_, **__: 1
+    )
+
+
 @pytest.mark.numerical
-@pytest.mark.parametrize("free", [1, 2**40])
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_host_cone_updates_match_dense_transpose_without_consuming_inputs(
-    problem, monkeypatch, free, dtype
+    problem, host_slabs, dtype
 ):
     grid, detector, geometry, matrix = problem
     if not isinstance(geometry, ConeSegments):
         pytest.skip("coupled volume partition is for cone geometry")
-    host = import_module("tomojax.recon._mlem_host")
-    monkeypatch.setattr(host, "volume_depth", lambda *_, **__: 1)
-    monkeypatch.setattr(host, "device_free_memory_bytes", lambda: free)
-    monkeypatch.setattr(host, "_MEASURED_BATCH_BYTES", 1)
     support = np.ones((3, 2, 2), bool)
     support[0] = False
     initial = np.full((3, 2, 2), 0.7, np.float32)
@@ -255,35 +259,8 @@ def test_host_cone_updates_match_dense_transpose_without_consuming_inputs(
     np.testing.assert_array_equal(initial[1:], np.float32(0.7))
 
 
-def test_host_prediction_buffer_is_zero_and_survives_donated_updates():
-    import jax.numpy as jnp
-
-    host = import_module("tomojax.recon._mlem_host")
-    values = jnp.full((2, 3, 5), 0.25, jnp.float32)
-    prediction = host._prediction_buffer((7, 3, 5), next(iter(values.devices())))
-    np.testing.assert_array_equal(np.asarray(prediction), 0)
-    prediction = host._add_predictions(prediction, values, jnp.int32(3))
-    prediction = host._divide_predictions(prediction, values * 2, jnp.int32(3))
-    np.testing.assert_array_equal(np.asarray(prediction)[:, 0, 0], [0, 0, 0, 2, 2, 0, 0])
-
-
-def test_packed_device_visibility_unions_overlapping_odd_width_slabs():
-    import jax.numpy as jnp
-
-    host = import_module("tomojax.recon._mlem_host")
-    expected = np.zeros((9, 3, 9), bool)
-    seen = jnp.zeros((2, 3, 9), jnp.uint8)
-    rng = np.random.default_rng(381)
-    for start in (0, 3, 5):
-        visible = rng.random((9, 3, 4)) > 0.5
-        seen = host._merge_visibility(seen, jnp.asarray(visible), jnp.int32(start))
-        expected[:, :, start : start + 4] |= visible
-    np.testing.assert_array_equal(np.asarray(seen), np.packbits(expected, axis=0))
-
-
 @pytest.mark.numerical
-def test_large_cone_warm_start_is_planned_before_device_initialization(monkeypatch):
-    host = import_module("tomojax.recon._mlem_host")
+def test_host_cone_warm_start_fills_out_before_em(monkeypatch, tmp_path):
     grid = Grid(7, 5, 9, 0.8, 1.1, 0.6, vol_center=(0.1, -0.2, 0.3))
     detector = Detector(11, 9, 0.9, 0.8)
     angles = np.linspace(0, 360, 12, endpoint=False)
@@ -294,34 +271,15 @@ def test_large_cone_warm_start_is_planned_before_device_initialization(monkeypat
         )
     )
     data = np.random.default_rng(925).uniform(0.1, 1, (24, 9, 11)).astype(np.float32)
-    scan = tj.Scan(data, geometry)
     cfg = MLEMConfig(iterations=1, subsets=3, views_per_batch=3)
-    monkeypatch.setattr(host, "device_free_memory_bytes", lambda: 2**40)
-    assert host.volume_depth(grid, detector, 3) is None
-    monkeypatch.setattr(host, "device_free_memory_bytes", lambda: 1000)
-    assert host.volume_depth(grid, detector, 3) == 1
-    initializer, owned, starts = host.initial_volume, [], []
+    from tomojax.recon.fdk import fdk_host
 
-    def initialize(*args, **kwargs):
-        owned.append(initializer(*args, **kwargs))
-        starts.append(owned[-1].copy())
-        return owned[-1]
-
-    monkeypatch.setattr(host, "initial_volume", initialize)
-    actual = tj.reconstruct(scan, "mlem", config=cfg, warm_start=True)
-    assert actual.volume is owned[0]
-    assert isinstance(actual.volume, np.ndarray)
-    # Cropped FDK half textures have their own peak scale. Compare the exact
-    # EM updates from identical input, independently of that initializer rounding.
-    monkeypatch.setattr(host, "device_free_memory_bytes", lambda: 2**40)
-    expected, _ = mlem(geometry, grid, detector, data, init_x=starts[0], config=cfg)
-    np.testing.assert_allclose(actual.volume, expected, rtol=4e-5, atol=2e-6)
-
-
-def test_host_slab_planner_bounds_transfer_storage_independently_of_device_capacity(monkeypatch):
-    host = import_module("tomojax.recon._mlem_host")
-    monkeypatch.setattr(host, "device_free_memory_bytes", lambda: 8 * 2**30)
-    grid, detector = Grid(1001, 1001, 1001, 1, 1, 1), Detector(768, 972, 1, 1)
-    depth = host.volume_depth(grid, detector, 32, subset_views=900)
-    assert depth is not None and depth > 1
-    assert 4 * grid.nx * grid.ny * depth <= 128 * 2**20
+    start = np.maximum(fdk_host(geometry, grid, detector, data), 0)
+    expected, _ = mlem(geometry, grid, detector, data, init_x=start, config=cfg)
+    out = np.lib.format.open_memmap(
+        tmp_path / "x.npy", "w+", np.float32, (7, 5, 9), fortran_order=True
+    )
+    monkeypatch.setattr(import_module("tomojax.recon._cone_slabs"), "slab_depth", lambda *_: 2)
+    actual = tj.reconstruct(tj.Scan(data, geometry), "mlem", config=cfg, warm_start=True, out=out)
+    assert actual.volume is out and actual.info["host_volume"]
+    np.testing.assert_allclose(out, expected, rtol=4e-5, atol=2e-6)

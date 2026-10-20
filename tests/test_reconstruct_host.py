@@ -87,7 +87,7 @@ def test_out_is_filled_and_returned(tmp_path, kind, storage):
 def test_out_is_refused_where_it_cannot_be_honoured():
     scan = _scan("parallel")
     out = np.zeros((9, 7, 19), np.float32)
-    with pytest.raises(ValueError, match="method 'cgls' does not take out"):
+    with pytest.raises(ValueError, match="method .cgls. takes out for cone-beam geometry only"):
         tj.reconstruct(scan, "cgls", out=out)
     grid = tj.Grid(13, 20, 11, 1, 1, 1)
     with pytest.raises(ValueError, match="must not overlap"):
