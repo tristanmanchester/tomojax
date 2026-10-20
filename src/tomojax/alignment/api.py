@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from tomojax.alignment._config import coupled_pose_config, resolved_schedule_for_config
-from tomojax.alignment._consistency import OrbitHeights, orbit_heights
+from tomojax.alignment._consistency import orbit_heights
 from tomojax.alignment._gauge import least_motion_estimate
 from tomojax.alignment._geometry.detector_center import estimate_center
 from tomojax.alignment._geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
@@ -15,7 +15,7 @@ from tomojax.alignment._geometry.parametrizations import (
     pad_pose_params,
     se3_from_pose_params,
 )
-from tomojax.alignment._model.dof_specs import DofSpec, dof_spec
+from tomojax.alignment._model.dof_specs import dof_spec
 from tomojax.alignment._model.dofs import (
     POSE_WIDTH,
     DofBounds,
@@ -36,17 +36,14 @@ from tomojax.alignment._modes import (
     MODES,
     AlignmentMode,
     AlignmentPlan,
-    ConeSetup,
     alignment_plan,
     cone_setup,
 )
 from tomojax.alignment._objectives.loss_specs import (
     AlignmentLossConfig,
-    AlignmentLossSchedule,
     AlignmentLossSpec,
     L2LossSpec,
     L2OtsuLossSpec,
-    LossScheduleEntry,
     PWLSLossSpec,
     loss_spec_name,
     loss_spec_params,
@@ -57,7 +54,6 @@ from tomojax.alignment._objectives.loss_specs import (
 )
 from tomojax.alignment._prealign import implied_detector_offset
 from tomojax.alignment._profiles import (
-    AlignmentProfilePolicy,
     QualityTier,
     profile_policy_from_config,
     resolve_profiled_cli_defaults,
@@ -105,11 +101,9 @@ __all__ = [
     "AlignResumeState",
     "AlignmentCheckpoint",
     "AlignmentLossConfig",
-    "AlignmentLossSchedule",
     "AlignmentLossSpec",
     "AlignmentMode",
     "AlignmentPlan",
-    "AlignmentProfilePolicy",
     "AlignmentRun",
     "AlignmentSchedule",
     "AlignmentStage",
@@ -117,15 +111,11 @@ __all__ = [
     "BaseGeometryArrays",
     "CheckpointError",
     "CheckpointMetadata",
-    "ConeSetup",
     "DofBounds",
-    "DofSpec",
     "GaugePolicy",
     "GaugePolicyError",
     "L2LossSpec",
     "L2OtsuLossSpec",
-    "LossScheduleEntry",
-    "OrbitHeights",
     "OuterStat",
     "PWLSLossSpec",
     "PoseState",

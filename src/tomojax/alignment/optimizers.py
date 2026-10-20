@@ -115,7 +115,7 @@ class _LbfgsKernels:
     def build(
         cls,
         value_fn: Callable[..., jnp.ndarray],
-        cfg: PoseLbfgsConfig | ActiveLbfgsConfig,
+        cfg: PoseLbfgsConfig,
         value_and_grad_fn: Callable[..., tuple[jnp.ndarray, jnp.ndarray]] | None = None,
     ) -> _LbfgsKernels:
         optax = _optax_module()
@@ -393,7 +393,7 @@ def _run_lbfgs_optax_loop(  # noqa: PLR0912, PLR0915
     *,
     z0: jnp.ndarray,
     value_fn: Callable[[jnp.ndarray], jnp.ndarray],
-    cfg: PoseLbfgsConfig | ActiveLbfgsConfig,
+    cfg: PoseLbfgsConfig,
     is_expected_failure: Callable[[Exception], bool] | None = None,
     value_and_grad_fn: Callable[[jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]] | None = None,
     kernels: _LbfgsKernels | None = None,
@@ -735,17 +735,6 @@ def run_pose_lbfgs(  # noqa: PLR0912, PLR0915
         accepted=bool(accepted),
         stats=stats,
     )
-
-
-@dataclass(frozen=True)
-class ActiveLbfgsConfig:
-    """Configuration for active-state L-BFGS."""
-
-    maxiter: int = 12
-    ftol: float = 1e-6
-    gtol: float = 1e-5
-    maxls: int = 20
-    memory_size: int = 10
 
 
 @dataclass(frozen=True)

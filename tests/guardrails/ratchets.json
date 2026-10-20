@@ -10,7 +10,7 @@
     "tomojax.geometry.api": 18,
     "tomojax.recon.api": 7,
     "tomojax.io.api": 20,
-    "tomojax.alignment.api": 78
+    "tomojax.alignment.api": 72
   },
   "cli_flags": {
     "inspect": 4,
@@ -24,7 +24,7 @@
   "long_files": {
     "src/tomojax/alignment/_pose/_pose_loop.py": 892,
     "src/tomojax/alignment/_stages/_reconstruction_stage.py": 1028,
-    "src/tomojax/alignment/optimizers.py": 850,
+    "src/tomojax/alignment/optimizers.py": 840,
     "src/tomojax/recon/fista_tv.py": 823
   },
   "long_functions": {
