@@ -133,10 +133,28 @@ def _spectrum(params: jax.Array) -> tuple[jax.Array, jax.Array]:
     return log_w, jnp.exp(log_k - log_mean)
 
 
+def _log_transmission(u: jax.Array, log_w: jax.Array, rates: jax.Array) -> jax.Array:
+    """``ln sum_j w_j exp(-k_j u)``, one component at a time so no ray holds them all."""
+    terms = log_w.shape[0]
+    top = jax.lax.fori_loop(
+        0, terms, lambda j, t: jnp.maximum(t, log_w[j] - rates[j] * u), jnp.full_like(u, -jnp.inf)
+    )
+    total = jax.lax.fori_loop(
+        0, terms, lambda j, t: t + jnp.exp(log_w[j] - rates[j] * u - top), jnp.zeros_like(u)
+    )
+    return top + jnp.log(total)
+
+
+def _share(
+    j: int | jax.Array, u: jax.Array, log_w: jax.Array, rates: jax.Array, log_t: jax.Array
+) -> jax.Array:
+    """Component ``j``'s share of the transmission ``exp(log_t)`` along each ray."""
+    return jnp.exp(log_w[j] - rates[j] * u - log_t)
+
+
 def _curve(u: jax.Array, params: jax.Array) -> jax.Array:
     """``g(u)`` of the spectrum ``params``, in the unit-initial-slope gauge."""
-    log_w, rates = _spectrum(params)
-    return -jax.scipy.special.logsumexp(log_w - u[..., None] * rates, axis=-1)
+    return -_log_transmission(u, *_spectrum(params))
 
 
 def spectrum_weights(params: np.ndarray) -> tuple[tuple[float, ...], tuple[float, ...]]:
@@ -430,18 +448,43 @@ def _gauss_newton_step(
 ) -> tuple[jax.Array, jax.Array]:
     """The linearised least-squares step in (image, spectrum), by CGLS."""
     root = jnp.sqrt(jnp.clip(jnp.exp(-measured), 1e-6, 1.0))
-    curve = _curve
-    value, slope = jax.jvp(lambda u: curve(u, beta), (projected,), (jnp.ones_like(projected),))
-    _, pullback = jax.vjp(lambda b: curve(projected, b), beta)
+    log_w, rates = _spectrum(beta)
+    terms = log_w.shape[0]
+    log_t = _log_transmission(projected, log_w, rates)
+    value = -log_t
+    # The derivatives of g, ln w_j and k_j entering as -share_j and u share_j,
+    # are summed one component at a time like the curve itself.
+    slope = jax.lax.fori_loop(
+        0,
+        terms,
+        lambda j, a: a + rates[j] * _share(j, projected, log_w, rates, log_t),
+        jnp.zeros_like(projected),
+    )
+    _, spectrum_tangent = jax.linearize(_spectrum, beta)
+    _, spectrum_cotangent = jax.vjp(_spectrum, beta)
 
     def spectrum_columns(direction: jax.Array) -> jax.Array:
-        return jax.jvp(lambda b: curve(projected, b), (beta,), (direction,))[1]
+        d_log_w, d_rates = spectrum_tangent(direction)
+
+        def add(j: int, a: jax.Array) -> jax.Array:
+            change = projected * d_rates[j] - d_log_w[j]
+            return a + change * _share(j, projected, log_w, rates, log_t)
+
+        return jax.lax.fori_loop(0, terms, add, jnp.zeros_like(projected))
+
+    def pullback(weighted: jax.Array) -> jax.Array:
+        def add(j: int, a: tuple[jax.Array, jax.Array]) -> tuple[jax.Array, jax.Array]:
+            share = weighted * _share(j, projected, log_w, rates, log_t)
+            return a[0].at[j].set(-jnp.sum(share)), a[1].at[j].set(jnp.vdot(share, projected))
+
+        zero = jnp.zeros_like(log_w)
+        return spectrum_cotangent(jax.lax.fori_loop(0, terms, add, (zero, zero)))[0]
 
     # Each spectrum column scaled to unit norm, with Levenberg-Marquardt damping
     # in the spectrum's own units so that a parameter the data hardly see (the
     # width of a component as narrow as one rate) cannot take a long step.
     eye = jnp.eye(beta.shape[0], dtype=beta.dtype)
-    norms = jax.vmap(lambda e: jnp.sqrt(jnp.sum((root * spectrum_columns(e)) ** 2)))(eye)
+    norms = jax.lax.map(lambda e: jnp.sqrt(jnp.sum((root * spectrum_columns(e)) ** 2)), eye)
     scale = 1.0 / jnp.maximum(norms, 1e-12)
     damping = jnp.sqrt(_DAMPING) * jnp.max(norms) * scale
 
@@ -450,7 +493,7 @@ def _gauss_newton_step(
 
     def transpose(s: tuple[jax.Array, jax.Array]) -> tuple[jax.Array, jax.Array]:
         weighted = root * s[0]
-        return adjoint(slope * weighted), pullback(weighted)[0] * scale + damping * s[1]
+        return adjoint(slope * weighted), pullback(weighted) * scale + damping * s[1]
 
     def dot(a: tuple[jax.Array, jax.Array], b: tuple[jax.Array, jax.Array]) -> jax.Array:
         return jnp.vdot(a[0], b[0]) + jnp.vdot(a[1], b[1])
