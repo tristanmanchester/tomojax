@@ -124,10 +124,12 @@ listed with how to check a result in the
   `fourier-cuda12` extra; the NumPy reference is the default. Full
   projection/output storage stays on the host,
   while FFT plans, slab arrays and allocator caches add device memory.
-- The iterative solvers need the whole volume and a few volume-sized work
-  arrays on the GPU, so a volume larger than the GPU can be reconstructed only
-  by FBP or FDK in host slabs. Several GPUs (`devices=`) add speed, not room
-  for a larger volume, except in FDK's host slabs. SPDHG-TV and `fbp_host` run
+- Most iterative solvers need the whole volume and several work arrays on the
+  GPU. Cone-beam MLEM/OSEM can keep the volume in host memory; unposed axial
+  parallel SIRT/MLEM can run in independent slabs. Raw-frame FBP and FDK with
+  `tj.reconstruct_slabs` need neither the whole corrected stack nor the output
+  volume in host memory. Several GPUs (`devices=`) share views, not the storage
+  of a device-resident volume. SPDHG-TV and `fbp_host` run
   on one GPU, the `tomojax` commands always use one, and the GPUs must belong
   to one process. [Large scans and several GPUs](large-scans.md) says which
   solvers stream projections from host memory and what each GPU holds.
