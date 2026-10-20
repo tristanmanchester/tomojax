@@ -76,11 +76,11 @@ def host_view_poses(
     # Subclasses may override pose_for_view (for example to add calibrated
     # shifts). Only specialize the exact built-in implementation.
     if type(geometry) is ParallelGeometry:
-        thetas = np.asarray(geometry.angles[: int(n_views)], dtype=np.float32)
-        phi = np.deg2rad(thetas).astype(np.float32)
-        c = np.cos(phi).astype(np.float32)
-        s = np.sin(phi).astype(np.float32)
-        poses = np.zeros((int(n_views), 4, 4), dtype=np.float32)
+        # Round the pose once, not the encoder angles and radians along the way.
+        thetas = np.asarray(geometry.angles[: int(n_views)], dtype=np.float64)
+        phi = np.deg2rad(thetas)
+        c, s = np.cos(phi), np.sin(phi)
+        poses = np.zeros((int(n_views), 4, 4), dtype=np.float64)
         poses[:, 0, 0] = c
         poses[:, 0, 1] = -s
         poses[:, 1, 0] = s

@@ -55,7 +55,7 @@ class ParallelGeometry:
         IndexError
             If the view index is outside the angle sequence.
         """
-        phi = float(np.deg2rad(self.angles[i]))
+        phi = np.deg2rad(float(self.angles[i]))
         T = rotz(phi)
         return tuple(map(tuple, T))  # 4x4
 

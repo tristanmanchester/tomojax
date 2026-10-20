@@ -11,13 +11,14 @@ from tomojax.recon import FourierConfig
 
 @pytest.mark.parametrize("backend", ["numpy", pytest.param("cupy", marks=pytest.mark.gpu)])
 @pytest.mark.parametrize("nx", [32, 33])
-def test_fourier_translation_poses_recover_analytic_gaussian(backend, nx):
+@pytest.mark.parametrize("angle_dtype", [np.float32, np.float64])
+def test_fourier_translation_poses_recover_analytic_gaussian(backend, nx, angle_dtype):
     if backend == "cupy" and jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
     grid = tj.Grid(nx, 27, 9, 1.4, 1.2, 0.8, vol_center=(0.4, -0.3, 0.1))
     detector = tj.Detector(65, 31, 1.0, 0.7, center=(-2.3, -0.4))
-    angles = np.concatenate((np.arange(0, 180, 3), np.arange(180, 360, 3)))
-    theta = np.deg2rad(angles)
+    angles = np.arange(-270, 90, 3, dtype=angle_dtype)
+    theta = np.deg2rad(angles.astype(np.float64))
     poses = np.zeros((len(angles), 6), dtype=np.float32)
     poses[:, 3] = 3.3 * np.sin(2.7 * theta)
     poses[:, 4] = 2.1 * np.cos(1.3 * theta)

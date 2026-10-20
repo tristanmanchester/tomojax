@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+Parallel-beam poses retain encoder-angle precision through trigonometry,
+allowing translation-corrected full-turn scans with float32 angles in Fourier reconstruction.
+
 Half-data FSC benchmarking releases each reconstructed spatial volume before
 forming its Fourier spectrum, reducing host memory without changing the score.
 
