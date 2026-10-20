@@ -220,6 +220,15 @@ def _two_orbit_scan() -> tj.Scan:
     return tj.Scan.combine([tj.Scan(empty, low), tj.Scan(empty, high)])
 
 
+def test_astra_export_keeps_pose_metadata_on_host(monkeypatch):
+    from tomojax.core.geometry import views
+
+    monkeypatch.setattr(views, "stack_view_poses", lambda *args: pytest.fail("device pose export"))
+    for scan in (_posed_cone_scan(), _two_orbit_scan()):
+        _, geometry, _ = scan.to_astra()
+        assert np.isfinite(geometry["Vectors"]).all()
+
+
 def test_combined_scans_project_each_segment_with_its_own_arrangement():
     scan = _two_orbit_scan()
     volume = _volume(10)

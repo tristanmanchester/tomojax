@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+Exporting host cone geometry to ASTRA does not start a JAX device runtime.
+
 Projection matching fits a band-limited projection model matched to the
 detector sampling. Large motion in noisy scans is recovered more accurately, and
 the PSI nanotomography workflow takes about 40% less time.
