@@ -55,7 +55,7 @@ from tomojax.core.validation import (
     validate_volume,
 )
 
-from ._coupled_program import JointRefinement
+from ._matching_model import JointRefinement
 from ._pose_context import (
     AlignmentRuntimeContext,
     PoseConstraintContext,

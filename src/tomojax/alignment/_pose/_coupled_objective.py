@@ -17,7 +17,8 @@ from tomojax.core.devices import ViewSplit, shared_devices, view_split
 from tomojax.core.projector import get_detector_grid_device
 
 from ._coupled_linear import CoupledLinearResult
-from ._coupled_program import CoupledArrays, CoupledSpec, JointRefinement, run_loss, run_update
+from ._coupled_program import CoupledArrays, CoupledSpec, run_loss, run_update
+from ._matching_model import JointRefinement
 from ._pose_context import _PoseObjectiveContext
 from ._pose_jacobian import PoseJacobianOptions
 
@@ -256,7 +257,7 @@ def _prepare_execution(arrays: CoupledArrays, spec: CoupledSpec) -> CoupledObjec
             if cached:
                 LOG.info("Cached pose update does not fit (%s); recomputing columns instead", error)
                 continue
-            if spec.split is not None or spec.refinement is not None:
+            if spec.split is not None:
                 raise
             from ._coupled_host import build_host_objective
 

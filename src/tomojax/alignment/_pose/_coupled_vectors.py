@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 import numpy as np
+from scipy import fft as host_fft
 
 type BlockVector = tuple[jax.Array | np.ndarray, ...]
 type Scalar = jax.Array | np.ndarray | np.floating | np.integer | float | int
@@ -50,6 +51,10 @@ class BlockPlacement:
     @property
     def array(self):
         return np if self.host else jnp
+
+    @property
+    def fft(self):
+        return host_fft if self.host else jnp.fft
 
     def zeros(self, block) -> BlockVector:
         if self.host:
