@@ -412,7 +412,7 @@ scoring is outside the solver timer.
 |---|---|---:|---|
 | `walnut1` | FIPS Walnut1 directory, orbit 2 | 2 | 501³, 0.1 mm |
 | `walnut3` | Same walnut, all three orbits | 2 | 501³, 0.1 mm |
-| `nikon` | Nikon seeds `.xtekct` | 2 | 500³, 0.1880371266 mm |
+| `nikon` | Nikon seeds `47209 testscan korn01_recon.xtekct` | 2 | 500³, 0.1880371266 mm |
 | `zeiss` | Zeiss HDTomo `.txrm` | 2 | 512³, 0.0833853988647461 mm |
 | `cuo` | Zeiss CuO `.txrm` | 4 | Recorded field of view, fourfold grid binning |
 
