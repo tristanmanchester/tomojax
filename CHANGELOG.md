@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+Host-managed Joseph projection and FISTA copy directly into caller-owned host
+buffers. CUDA downloads with different layouts or dtypes use bounded scratch.
+
 Projection matching fits a band-limited projection model matched to the
 detector sampling. Large motion in noisy scans is recovered more accurately, and
 the PSI nanotomography workflow takes about 40% less time.

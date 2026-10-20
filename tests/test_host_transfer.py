@@ -61,3 +61,36 @@ def test_indexed_host_upload_preserves_view_order_and_dtype_conversion(layout, d
     indices = np.array([len(source) - 1, 0, 2, 0])
     value = upload_host_views(source, indices, jax.devices()[0])
     np.testing.assert_array_equal(np.asarray(value), source[indices].astype(np.float32))
+
+
+@pytest.mark.parametrize("shape", [(), (0, 3), (7, 5, 3), (2, 3, 4, 5)])
+@pytest.mark.parametrize("layout", ["C", "F", "reversed"])
+def test_download_casting_and_transposed_device_layout(shape, layout):
+    source = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    value = jax.jit(lambda x: x.T)(jnp.asarray(source))
+    expected = source.T
+    target = np.empty(expected.shape, dtype=np.float64, order="F" if layout == "F" else "C")
+    if layout == "reversed" and shape:
+        target = target[::-1]
+    copy_to_host(value, target, casting="safe")
+    np.testing.assert_array_equal(target, expected)
+    with pytest.raises(TypeError):
+        copy_to_host(value, target)
+    np.testing.assert_array_equal(np.asarray(value), expected)
+
+
+@pytest.mark.gpu
+def test_download_layout_conversion_crosses_scratch_tile_boundary():
+    source = np.broadcast_to(np.arange(257, dtype=np.float32), (257, 257, 257))
+    value = jax.jit(lambda x: x.transpose(2, 0, 1))(jnp.asarray(source))
+    target = np.empty(source.shape, np.float32, order="F")[::-1]
+    copy_to_host(value, target)
+    np.testing.assert_array_equal(target, source.transpose(2, 0, 1))
+
+
+def test_download_broadcasts_without_modifying_host_padding():
+    source = jnp.arange(5, dtype=jnp.float32)
+    target = np.full((3, 2, 5), -1, dtype=np.float32)
+    copy_to_host(source, target[:, 0])
+    np.testing.assert_array_equal(target[:, 0], np.broadcast_to(np.arange(5), (3, 5)))
+    np.testing.assert_array_equal(target[:, 1], -1)

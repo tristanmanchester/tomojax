@@ -10,6 +10,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from .host_transfer import copy_to_host
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -65,8 +67,14 @@ class HostPlaneOperator:
 
     def get(self, value: jax.Array) -> np.ndarray:
         """Copy a device array to independent host storage."""
+        out = np.empty(value.shape, dtype=np.float32, order="C")
+        self.get_into(value, out)
+        return out
+
+    def get_into(self, value: jax.Array, out: np.ndarray) -> None:
+        """Copy FP32 device values directly into caller-owned host storage."""
         self.device_to_host_bytes += value.size * 4
-        return np.array(value, dtype=np.float32, order="C")
+        copy_to_host(value, out, casting="unsafe")
 
     def _groups(self, directions: int = 0) -> Iterator[tuple[int, int]]:
         n_views, nv, nu = self.projection_shape
@@ -129,7 +137,7 @@ class HostPlaneOperator:
                     )
                 accumulator.block_until_ready()
                 tile.delete()
-            out[start:stop] = self.get(accumulator)
+            self.get_into(accumulator, out[start:stop])
             accumulator.delete()
 
     def transpose_slabs(self, images: np.ndarray) -> Iterator[tuple[int, int, jax.Array]]:

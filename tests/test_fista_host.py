@@ -102,3 +102,17 @@ def test_detector_capacity_must_hold_one_window():
     region = PlaneRegion(grid=Grid(1, 1, 1, 1, 1, 1), detector=Detector(3, 2, 1, 1), backend="jax")
     with pytest.raises(ValueError, match="one detector window"):
         HostPlaneOperator(jnp.zeros((1, 14)), region=region, slab_depth=1, detector_bytes=23)
+
+
+def test_host_plane_download_owns_result_and_preserves_strided_padding():
+    region = PlaneRegion(grid=Grid(1, 1, 1, 1, 1, 1), detector=Detector(3, 2, 1, 1), backend="jax")
+    operator = HostPlaneOperator(jnp.zeros((1, 14)), region=region, slab_depth=1, detector_bytes=24)
+    value = jnp.arange(6, dtype=jnp.float32).reshape(2, 3).T
+    storage = np.full((3, 4), -17, np.float64)
+    operator.get_into(value, storage[:, ::2])
+    owned = operator.get(value)
+    owned[:] = -3
+    np.testing.assert_array_equal(storage[:, ::2], np.arange(6).reshape(2, 3).T)
+    np.testing.assert_array_equal(storage[:, 1::2], -17)
+    np.testing.assert_array_equal(np.asarray(value), np.arange(6).reshape(2, 3).T)
+    assert operator.device_to_host_bytes == 48
