@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+Cone-beam CGLS, SIRT/OS-SART and MLEM/OSEM reconstruct volumes larger than
+the GPU: the volumes stay in host memory, or in memory-mapped files given as
+`out=`, and are streamed through the device in z slabs, each projected onto
+and transposed from the detector rows it reaches. The projector pair stays
+the exact transpose, and results match the device-resident solvers to FP32
+rounding. `cgls`, `sirt`, `mlem` and `tj.reconstruct` accept `out=` for cone
+beams.
+
 `tj.load_frames` takes the open-beam level as `flats=<level>`, as the command line
 does; the `white_level=` keyword is gone.
 

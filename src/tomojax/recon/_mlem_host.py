@@ -1,257 +1,34 @@
-"""Host-owned cone EM volumes with coupled, bounded device workspaces.
+"""Cone OSEM with the volume in host memory, updated one z slab at a time.
 
-All slab projections are summed before a subset's Poisson ratio is formed.
-Its adjoint then visits every slab, so this is one coupled reconstruction,
-not independent slice reconstruction. Caller inputs are never donated.
+Each subset update is one sweep (see :mod:`._cone_slabs`): the slabs' exact
+projections are summed in the ring of detector rows before each row's Poisson
+ratio is formed, and each slab is updated from the transposes of the ratios
+and of unit images, so this is one coupled reconstruction, not independent
+slices. Caller inputs are never modified.
 """
 
 from __future__ import annotations
 
-from dataclasses import replace
-from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-import jax
-import jax.numpy as jnp
 import numpy as np
 
-from tomojax.backends import device_free_memory_bytes
-from tomojax.core.cone import ConeModel, cone_project
-from tomojax.core.host_transfer import copy_to_host, upload_host, upload_host_views
-from tomojax.geometry import grid_volume_origin
+from tomojax.core.host_volume import fill, release_planes
 
-from ._host_arrays import validate_host_views
+from ._cone_slabs import cone_problem, host_projections
+from ._host_arrays import validate_host_arrays
 
 if TYPE_CHECKING:
-    from tomojax._typed_arrays import Device
+    import jax
+
+    from tomojax.core.cone import ConeModel
     from tomojax.geometry import Detector, Geometry, Grid
 
-
-type _Slab = tuple[int, int, Grid, jax.Array]
-
-_MEASURED_BATCH_BYTES = 32 * 2**20
-
-
-def volume_depth(
-    grid: Grid, detector: Detector, batch: int, *, subset_views: int = 0
-) -> int | None:
-    """Keep the resident solve when its working set fits; otherwise bound z slabs."""
-    free = device_free_memory_bytes()
-    plane = 4 * grid.nx * grid.ny
-    fixed = 2 * batch * detector.nu * detector.nv * 4 + 256 * 2**20
-    if free is None or 5 * plane * grid.nz + fixed <= 0.85 * free:
-        return None
-    ratio_bytes = subset_views * detector.nu * detector.nv * 4
-    reserve = ratio_bytes if ratio_bytes <= 0.45 * free else 0
-    fitting = max(1, int((0.75 * free - fixed - reserve) / (4 * plane)))
-    # Device capacity alone permits slabs whose host staging and pinned copy
-    # pools add several volume-sized temporaries over a solve. Bound transfers
-    # independently, even when the GPU can hold a much larger working slab.
-    fitting = min(fitting, max(1, (128 * 2**20) // plane))
-    return min(grid.nz, 2 ** (fitting.bit_length() - 1))
-
-
-def slab_grid(grid: Grid, start: int, stop: int) -> Grid:
-    """A z window in the original object frame, without changing physical sampling."""
-    origin = grid_volume_origin(grid)
-    return replace(
-        grid,
-        nz=stop - start,
-        vol_origin=(*origin[:2], origin[2] + start * grid.vz),
-        vol_center=None,
-    )
-
-
-@partial(jax.jit, static_argnames=("grid", "detector", "backend"))
-def _forward(
-    volume: jax.Array, coefficients: jax.Array, *, grid: Grid, detector: Detector, backend: str
-) -> jax.Array:
-    return cone_project(volume, coefficients, grid, detector, backend=backend)
-
-
-@partial(
-    jax.jit,
-    static_argnames=("grid", "detector", "backend", "model"),
-    donate_argnums=(2, 3),
-)
-def _adjoint(
-    ratio: jax.Array,
-    coefficients: jax.Array,
-    correction: jax.Array,
-    norm: jax.Array,
-    *,
-    grid: Grid,
-    detector: Detector,
-    backend: str,
-    model: ConeModel,
-) -> tuple[jax.Array, jax.Array]:
-    return model.backproject_pair(
-        (ratio, jnp.ones_like(ratio)), coefficients,
-        grid=grid, detector=detector, backend=backend, accumulate=(correction, norm),
-    )  # fmt: skip
-
-
-@jax.jit
-def _updated(
-    volume: jax.Array, correction: jax.Array, norm: jax.Array
-) -> tuple[jax.Array, jax.Array]:
-    positive = norm > 0
-    return volume * jnp.where(positive, correction / jnp.where(positive, norm, 1), 1), positive
-
-
-def _parts(grid: Grid, model: ConeModel, poses: jax.Array, depth: int) -> list[_Slab]:
-    result = []
-    for start in range(0, grid.nz, depth):
-        stop = min(start + depth, grid.nz)
-        local = slab_grid(grid, start, stop)
-        coefficients = model.coefficients(poses, local)
-        # Coefficients already carry the physical origin. Equal-sized kernels
-        # share one executable rather than recompiling for each slab position.
-        kernel_grid = replace(local, vol_origin=None, vol_center=None)
-        result.append((start, stop, kernel_grid, coefficients))
-    return result
-
-
-@partial(jax.jit, donate_argnums=(0,))
-def _add_predictions(expected: jax.Array, values: jax.Array, start: jax.Array) -> jax.Array:
-    offset = (start, 0, 0)
-    previous = jax.lax.dynamic_slice(expected, offset, values.shape)
-    return jax.lax.dynamic_update_slice(expected, previous + values, offset)
-
-
-@partial(jax.jit, donate_argnums=(0,))
-def _divide_predictions(expected: jax.Array, measured: jax.Array, start: jax.Array) -> jax.Array:
-    offset = (start, 0, 0)
-    prediction = jax.lax.dynamic_slice(expected, offset, measured.shape)
-    positive = prediction > 0
-    ratio = jnp.where(positive, measured / jnp.where(positive, prediction, 1), 0)
-    return jax.lax.dynamic_update_slice(expected, ratio, offset)
-
-
-def _device_slab(volume: np.ndarray, start: int, stop: int, device: Device) -> jax.Array:
-    """Transfer a contiguous ZYX view, retaining XYZ logical coordinates on device."""
-    return upload_host(volume[:, :, start:stop].T, device).T
-
-
-def _store_slab(volume: np.ndarray, start: int, stop: int, value: jax.Array) -> None:
-    """Write a slab without a host-side C/F packing array."""
-    copy_to_host(value.T, volume[:, :, start:stop].T)
-
-
-@partial(jax.jit, donate_argnums=(0,))
-def _merge_visibility(seen: jax.Array, visible: jax.Array, start: jax.Array) -> jax.Array:
-    packed = jnp.packbits(visible, axis=0)
-    offset = (0, 0, start)
-    previous = jax.lax.dynamic_slice(seen, offset, packed.shape)
-    return jax.lax.dynamic_update_slice(seen, previous | packed, offset)
-
-
-@jax.jit
-def _mask_slab(volume: jax.Array, seen: jax.Array) -> jax.Array:
-    return volume * jnp.unpackbits(seen, axis=0, count=volume.shape[0])
-
-
-def _prediction_buffer(shape: tuple[int, int, int], device: Device) -> jax.Array:
-    """Allocate only the prediction buffer, without growing an XLA memory arena."""
-    if device.platform != "gpu":
-        return jnp.zeros(shape, jnp.float32, device=device)
-    import cupy as cp
-
-    with cp.cuda.Device(device.local_hardware_id):
-        return jax.dlpack.from_dlpack(cp.zeros(shape, np.float32))
-
-
-def _ratios(
-    volume: np.ndarray,
-    projections: np.ndarray,
-    indices: np.ndarray,
-    slabs: list[_Slab],
-    detector: Detector,
-    batch: int,
-    backend: str,
-) -> jax.Array | np.ndarray:
-    shape = (len(indices), detector.nv, detector.nu)
-    free = device_free_memory_bytes()
-    ratio_bytes = int(np.prod(shape)) * 4
-    largest = max(grid.nx * grid.ny * grid.nz for _, _, grid, _ in slabs)
-    scratch = 4 * 4 * largest + 2 * batch * detector.nv * detector.nu * 4 + 256 * 2**20
-    resident = free is not None and ratio_bytes + scratch <= 0.85 * free
-    device = next(iter(slabs[0][3].devices()))
-    expected = _prediction_buffer(shape, device) if resident else np.zeros(shape, np.float32)
-    for start, stop, grid, coefficients in slabs:
-        piece = _device_slab(volume, start, stop, next(iter(coefficients.devices())))
-        for first in range(0, len(indices), batch):
-            selected = indices[first : first + batch]
-            values = _forward(
-                piece, coefficients[selected], grid=grid, detector=detector, backend=backend
-            )
-            if isinstance(expected, jax.Array):
-                expected = _add_predictions(expected, values, jnp.int32(first))
-            else:
-                expected[first : first + len(selected)] += np.asarray(values)
-        if isinstance(expected, jax.Array):
-            expected.block_until_ready()  # Release this slab's host staging before the next.
-        del piece, values
-    view_bytes = detector.nv * detector.nu * max(4, projections.dtype.itemsize)
-    measured_batch = max(1, min(batch, _MEASURED_BATCH_BYTES // view_bytes))
-    for first in range(0, len(indices), measured_batch):
-        selected = indices[first : first + measured_batch]
-        if isinstance(expected, jax.Array):
-            uploaded = upload_host_views(projections, selected, next(iter(expected.devices())))
-            expected = _divide_predictions(expected, uploaded, jnp.int32(first))
-            expected.block_until_ready()  # Bound the upload buffer and any fallback host packing.
-            del uploaded
-            continue
-        measured = np.asarray(projections[selected], np.float32)
-        prediction = expected[first : first + len(selected)]
-        positive = prediction > 0
-        np.divide(measured, prediction, out=prediction, where=positive)
-        prediction[~positive] = 0
-        del measured, positive
-    return expected
-
-
-def _update(
-    volume: np.ndarray,
-    seen: jax.Array | np.ndarray,
-    ratios: jax.Array | np.ndarray,
-    indices: np.ndarray,
-    slabs: list[_Slab],
-    detector: Detector,
-    batch: int,
-    backend: str,
-    model: ConeModel,
-    *,
-    apply: bool,
-) -> jax.Array | np.ndarray:
-    for start, stop, grid, coefficients in slabs:
-        shape = (grid.nx, grid.ny, grid.nz)
-        correction, norm = jnp.zeros(shape, jnp.float32), jnp.zeros(shape, jnp.float32)
-        for first in range(0, len(indices), batch):
-            selected = indices[first : first + batch]
-            ratio = ratios[first : first + len(selected)]
-            if isinstance(ratio, np.ndarray):
-                ratio = upload_host(ratio, next(iter(coefficients.devices())))
-            correction, norm = _adjoint(
-                ratio, coefficients[selected], correction, norm,
-                grid=grid, detector=detector, backend=backend, model=model,
-            )  # fmt: skip
-        if apply:
-            piece = _device_slab(volume, start, stop, next(iter(coefficients.devices())))
-            value, visible = _updated(piece, correction, norm)
-            _store_slab(volume, start, stop, value)
-            del piece, value
-        else:
-            visible = norm > 0
-        if isinstance(seen, jax.Array):
-            seen = _merge_visibility(seen, visible, jnp.int32(start))
-        else:
-            seen[:, :, start:stop] |= np.packbits(np.asarray(visible.T).T, axis=0)
-        del visible, correction, norm, ratio
-    return seen
+    from ._cone_slabs import Batch
 
 
 def solve(
+    geometry: Geometry,
     grid: Grid,
     detector: Detector,
     projections: jax.Array | np.ndarray,
@@ -263,85 +40,98 @@ def solve(
     subsets: int,
     iterations: int,
     batch: int,
-    depth: int,
     initial: jax.Array | np.ndarray | None,
     support: jax.Array | np.ndarray | None,
-    warm_geometry: Geometry | None = None,
-) -> np.ndarray:
-    """Run the validated EM configuration with one host subset and device slab at a time."""
-    data = np.asarray(projections)
-    validate_host_views(data)
-    if np.min(data) < 0 or not np.isfinite(np.asarray(poses)).all():
-        raise ValueError("mlem: projections must be finite and nonnegative, and poses finite")
-    shape = (grid.nx, grid.ny, grid.nz)
-    if warm_geometry is not None:
-        volume = initial_volume(warm_geometry, grid, detector, data, depth=depth)
+    warm_start: bool = False,
+    out: np.ndarray | None = None,
+) -> tuple[Any, dict[str, object]]:
+    """Run validated EM settings; return the volume (``out`` if given) and its storage record.
+
+    Voxels no subset sees are zero; zero initial voxels stay zero.
+    """
+    data = host_projections(projections, "mlem", nonnegative=True)
+    if not np.isfinite(np.asarray(poses)).all():
+        raise ValueError("mlem: poses must be finite")
+    problem = cone_problem(
+        geometry, grid, detector, data, model=model, backend=backend, poses=poses,
+        batch=batch, channels=1, views=-(-data.shape[0] // subsets),
+        resident=0 if out is not None or warm_start else 1,
+    )  # fmt: skip
+    if warm_start:
+        from ._warm_start import fbp_start
+        from .fbp import FBPConfig
+
+        x = validate_host_arrays(data, out, (grid.nx, grid.ny, grid.nz), "mlem", order="F")
+        fbp_start(geometry, grid, detector, data, config=FBPConfig(), det_grid=None, out=x)
     else:
-        volume = (
-            np.ones(shape, np.float32, order="F")
-            if initial is None
-            else np.array(initial, np.float32, order="F")
-        )
-    if support is not None:
-        mask = np.broadcast_to(np.asarray(support, bool), shape)
-        for first in range(0, grid.nx, 16):
-            np.copyto(volume[first : first + 16], 0, where=~mask[first : first + 16])
-    validate_host_views(volume)
-    if np.min(volume) < 0:
-        raise ValueError("mlem: initial volume must be finite and nonnegative")
-    seen_shape = ((grid.nx + 7) // 8, grid.ny, grid.nz)
-    device = next(iter(poses.devices()))
-    free = device_free_memory_bytes()
-    # A bit per voxel is often small even when the FP32 volume is not. Keep
-    # a conservative device reserve; larger masks retain bounded host slabs.
-    resident_seen = device.platform == "gpu" and int(np.prod(seen_shape)) <= 0.05 * (free or 0)
-    seen = (
-        jnp.zeros(seen_shape, jnp.uint8, device=device)
-        if resident_seen
-        else np.zeros(seen_shape, np.uint8, order="F")
-    )
-    slabs = _parts(grid, model, poses, depth)
+        x = problem.iterate(initial, out, "mlem")
+        if initial is None:
+            fill(x, 1.0)
+    xp = np if isinstance(x, np.ndarray) else problem.engine.xp
+    _constrain(x, support, problem.plan.depth, nonnegative=warm_start, xp=xp)
+    em = _HostEM(problem, x, updating=iterations > 0)
     for _ in range(max(1, iterations)):
         for group in range(subsets):
-            indices = order[group::subsets]
-            ratios = (
-                _ratios(volume, data, indices, slabs, detector, batch, backend)
-                if iterations
-                else np.zeros((len(indices), detector.nv, detector.nu), np.float32)
-            )
-            seen = _update(
-                volume, seen, ratios, indices, slabs, detector, batch, backend, model,
-                apply=iterations > 0,
+            problem.sweep.run(
+                order[group::subsets], source=em.source, finish=em.finish, sink=em.sink,
+                transposed=int(em.updating), ones=True, keep=problem.keep,
+                prefetch=lambda k: em.volume.prefetch(*problem.plan.planes(k)),
             )  # fmt: skip
-            del ratios
-    for start, stop, _, _ in slabs:
-        if isinstance(seen, jax.Array):
-            piece = _device_slab(volume, start, stop, device)
-            value = _mask_slab(piece, seen[:, :, start:stop])
-            _store_slab(volume, start, stop, value)
-            del piece, value
-        else:
-            visible = np.unpackbits(seen[:, :, start:stop], axis=0, count=grid.nx)
-            np.multiply(volume[:, :, start:stop], visible, out=volume[:, :, start:stop])
-            del visible
-    return volume
+    em.volume.close()
+    for z0 in range(0, grid.nz, problem.plan.depth):
+        z1 = min(grid.nz, z0 + problem.plan.depth)
+        x[:, :, z0:z1] *= xp.asarray(np.unpackbits(em.seen[:, :, z0:z1], axis=0, count=grid.nx))
+        release_planes(x, z0, z1)
+    record = {"host_volume": not problem.on_device, "slices_per_batch": problem.plan.depth}
+    return problem.result(x), record
 
 
-def initial_volume(
-    geometry: Geometry,
-    grid: Grid,
-    detector: Detector,
-    projections: jax.Array | np.ndarray,
-    *,
-    depth: int,
-) -> np.ndarray:
-    """The per-view FDK initializer, assembled without a full device volume."""
-    from .fdk import FDKHostConfig, fdk_host
+def _constrain(x: Any, support: Any, depth: int, *, nonnegative: bool, xp: Any) -> None:
+    """Clip a warm start at zero and zero voxels outside the support; check the start."""
+    mask = None if support is None else np.broadcast_to(np.asarray(support, bool), x.shape)
+    for z0 in range(0, x.shape[2], depth):
+        planes = x[:, :, z0 : z0 + depth]
+        if nonnegative:
+            xp.maximum(planes, 0, out=planes)
+        if mask is not None:
+            planes[~xp.asarray(mask[:, :, z0 : z0 + depth])] = 0
+        if not bool(xp.isfinite(planes).all()) or float(xp.min(planes)) < 0:
+            raise ValueError("mlem: initial volume must be finite and nonnegative")
+        release_planes(x, z0, z0 + depth)
 
-    output = np.empty((grid.nx, grid.ny, grid.nz), np.float32, order="F")
-    fdk_host(
-        geometry, grid, detector, np.asarray(projections),
-        config=FDKHostConfig(slices_per_batch=depth), out=output,
-    )  # fmt: skip
-    np.maximum(output, 0, out=output)
-    return output
+
+class _HostEM:
+    """One host EM volume's subset sweeps, recording which voxels any subset sees."""
+
+    def __init__(self, problem: Any, x: np.ndarray, *, updating: bool) -> None:
+        self.problem, self.plan, self.xp = problem, problem.plan, problem.engine.xp
+        self.volume, self.updating = problem.volume(x), updating
+        grid = self.plan.grid
+        self.seen = np.zeros(((grid.nx + 7) // 8, grid.ny, grid.nz), np.uint8, order="F")
+
+    def source(self, k: int) -> tuple[Any, ...]:
+        retain = not self.problem.keep
+        return (self.volume.get(*self.plan.planes(k), retain=retain),) if self.updating else ()
+
+    def finish(self, batch: Batch, first: int, stop: int, rows: tuple[Any, ...]) -> None:
+        """Rows become measured / predicted ratios, zero where nothing is predicted."""
+        if self.updating:
+            xp, predicted = self.xp, rows[0]
+            measured = self.problem.measured(batch, first, stop)
+            positive = predicted > 0
+            predicted[...] = xp.where(positive, measured / xp.where(positive, predicted, 1), 0)
+
+    def sink(self, k: int, accumulated: tuple[Any, ...], sources: tuple[Any, ...]) -> None:
+        """Multiply slab ``k`` by its correction; unseen voxels keep their values until masked."""
+        xp, (z0, z1) = self.xp, self.plan.planes(k)
+        norm = accumulated[-1][:, :, : z1 - z0]
+        visible = norm > 0
+        visible = visible.get() if hasattr(visible, "get") else visible
+        self.seen[:, :, z0:z1] |= np.packbits(visible, axis=0)
+        if self.updating:
+            updated = accumulated[0][:, :, : z1 - z0]
+            norm[norm <= 0] = xp.inf
+            updated /= norm
+            updated[xp.isinf(norm)] = 1
+            updated *= (sources or (self.volume.view(z0, z1),))[0][:, :, : z1 - z0]
+            self.volume.put(z0, z1, updated, scratch=accumulated[1])

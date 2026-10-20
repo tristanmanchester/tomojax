@@ -154,6 +154,7 @@ def cgls(
     init_x: jnp.ndarray | np.ndarray | None = None,
     config: CGLSConfig | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+    out: np.ndarray | None = None,
 ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
     """Reconstruct with matched CGLS and report convergence diagnostics.
 
@@ -162,6 +163,12 @@ def cgls(
     tracing; device arrays, streaming, and other models use the compiled JAX
     solver. Both paths use the same stationarity and roundoff checks. This
     public solver returns host diagnostics and is not differentiable.
+
+    Cone-beam volumes whose working set exceeds the device, or given ``out``,
+    are solved with their volumes in host memory, streamed through the device
+    in z slabs; the result is then a Fortran-ordered NumPy volume (``out``
+    itself if given). With a memory-mapped ``out``, the three work volumes
+    are temporary files in its directory.
 
     Parameters
     ----------
@@ -180,6 +187,9 @@ def cgls(
     det_grid : tuple of array-like or None, optional
         Explicit detector-coordinate arrays ``(u, v)``, each of shape ``(nv, nu)``.
         None uses the canonical detector grid.
+    out : numpy.ndarray or None, optional
+        Writable float32 ``(nx, ny, nz)`` host storage for a cone-beam result,
+        including a memmap; it must not overlap the projections.
 
     Returns
     -------
@@ -228,12 +238,13 @@ def cgls(
         raise ValueError("cgls: projector_model must be 'auto', 'joseph' or 'ray'")
     from ._cgls_cuda import available, solve
 
-    if available(geometry, projections, init_x, cfg, det_grid):
+    if out is None and available(geometry, projections, init_x, cfg, det_grid):
         result = solve(geometry, grid, detector, projections, init_x, cfg)
         if result is not None:
             return result
     from ._cgls_jax import cgls as solve_jax
 
     return solve_jax(
-        geometry, grid, detector, projections, init_x=init_x, config=cfg, det_grid=det_grid
-    )
+        geometry, grid, detector, projections, init_x=init_x, config=cfg, det_grid=det_grid,
+        out=out,
+    )  # fmt: skip

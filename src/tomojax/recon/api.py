@@ -246,8 +246,9 @@ def reconstruct_arrays(
     warm starts also use host slabs when needed. Coupled cone MLEM uses host-owned
     volume slabs when its device workspace does not fit. Fourier always returns
     host arrays in slabs.
-    ``out`` supplies writable float32 host storage for FBP/FDK or Fourier and
-    forces host slabs; it is returned without allocating another full volume.
+    ``out`` supplies writable float32 host storage for FBP/FDK, Fourier, and
+    cone-beam CGLS, SIRT and MLEM, and forces host slabs; it is returned
+    without allocating another full volume.
 
     Parameters
     ----------
@@ -267,8 +268,9 @@ def reconstruct_arrays(
     warm_start : bool, optional
         Start iterative reconstruction from FBP or FDK. Default is False.
     out : numpy.ndarray or None, optional
-        Writable float32 ``(nx, ny, nz)`` host storage for FBP/FDK or Fourier.
-        None lets the method select storage; other methods do not accept out.
+        Writable float32 ``(nx, ny, nz)`` host storage for FBP/FDK, Fourier, or
+        cone-beam CGLS, SIRT and MLEM. None lets the method select storage;
+        other methods do not accept out.
 
     Returns
     -------
@@ -300,8 +302,13 @@ def reconstruct_arrays(
             out=out,
         )
         return volume, {"config": cfg, "host_slabs": True, "backend": backend}
-    if out is not None and method != "fbp":
+    if out is not None and method not in {"fbp", "cgls", "sirt", "mlem"}:
         raise ValueError(f"method {method!r} does not take out")
+    if out is not None and method != "fbp":
+        from tomojax.core.geometry.cone import is_cone_beam
+
+        if not is_cone_beam(geometry):
+            raise ValueError(f"method {method!r} takes out for cone-beam geometry only")
     det_grid = _detector_grid(geometry, detector)
     if method == "fbp":
         cfg = cast("FBPConfig", cfg)
@@ -309,8 +316,9 @@ def reconstruct_arrays(
     # The method name has ruled out the FBP and Fourier configurations above.
     iterative = cast("CGLSConfig | FistaConfig | SPDHGConfig | SIRTConfig | MLEMConfig", cfg)
     return _iterative_result(
-        method, geometry, grid, detector, projections, iterative, det_grid, warm_start=warm_start
-    )
+        method, geometry, grid, detector, projections, iterative, det_grid,
+        warm_start=warm_start, out=out,
+    )  # fmt: skip
 
 
 def _iterative_result(
@@ -323,6 +331,7 @@ def _iterative_result(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     *,
     warm_start: bool,
+    out: np.ndarray | None = None,
 ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
     """Plan independent axial slabs before allocating a full warm initializer."""
     if method in {"sirt", "mlem"}:
@@ -379,8 +388,9 @@ def _iterative_result(
                 volume, record = result
                 return volume, {**record, "config": cfg, "warm_start": warm_start}
     return _iterative_incore(
-        method, geometry, grid, detector, projections, cfg, det_grid, warm_start=warm_start
-    )
+        method, geometry, grid, detector, projections, cfg, det_grid,
+        warm_start=warm_start, out=out,
+    )  # fmt: skip
 
 
 def _iterative_incore(
@@ -394,6 +404,7 @@ def _iterative_incore(
     *,
     warm_start: bool,
     solver: Callable[..., tuple[jnp.ndarray | np.ndarray, dict[str, object]]] | None = None,
+    out: np.ndarray | None = None,
 ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
     """Initialize and dispatch an iterative solve with its method's data model."""
     if method == "mlem":
@@ -401,7 +412,7 @@ def _iterative_incore(
 
         volume, record = run_mlem(
             geometry, projections, grid=grid, detector=detector, config=cast("MLEMConfig", cfg),
-            det_grid=det_grid, warm_start=warm_start,
+            det_grid=det_grid, warm_start=warm_start, out=out,
         )  # fmt: skip
         return volume, {"config": cfg, "warm_start": warm_start, **record}
     start = None
@@ -411,7 +422,7 @@ def _iterative_incore(
         devices = getattr(cfg, "devices", None) if det_grid is None else None
         start = fbp_start(
             geometry, grid, detector, projections, config=recon.FBPConfig(devices=devices),
-            det_grid=det_grid,
+            det_grid=det_grid, out=out,
         )  # fmt: skip
         if getattr(cfg, "nonnegative", False):
             import jax.numpy as jnp
@@ -426,7 +437,8 @@ def _iterative_incore(
         "mlem": "mlem",
     }[method]
     solve = getattr(recon, name) if solver is None else solver
-    volume, record = solve(*args, init_x=start, config=cfg, det_grid=det_grid)
+    storage = {} if out is None else {"out": out}
+    volume, record = solve(*args, init_x=start, config=cfg, det_grid=det_grid, **storage)
     return volume, {"config": cfg, "warm_start": warm_start, **record}
 
 

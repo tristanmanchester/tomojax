@@ -25,3 +25,12 @@ def precision_stalled(
     the cancellation floor before two measured gradients can be compared.
     """
     return bounded & previous_verified & (norm2 >= previous_norm2)
+
+
+def termination(*, failed: bool, converged: bool, roundoff: bool) -> str:
+    """The reported reason a CGLS solve stopped."""
+    if failed:
+        return "numerical_breakdown"
+    if converged:
+        return "converged"
+    return "roundoff_limit" if roundoff else "iteration_limit"

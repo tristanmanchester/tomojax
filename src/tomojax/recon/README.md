@@ -233,6 +233,42 @@ transpose can keep the recurrence moving and evade an update-stagnation check.
 The componentwise cancellation test and requested convergence tolerance remain
 unchanged; a precision-limited result is still reported as `roundoff_limit`.
 
+Cone-beam CGLS, SIRT and MLEM switch to slab sweeps when the solver's working
+set would not fit on the device, or when `out=` is given. Each z slab of the
+volume is projected onto, and transposed from, the band of detector rows its
+rays can reach, with one set of per-view coefficients, so the slabs sum to the
+exact matched projector pair and the results match the device-resident solvers
+to FP32 rounding. A sweep projects the slabs in order into a ring of those rows
+on the device and transposes each slab as soon as every slab reaching its rows
+has been projected; no projection-sized array is stored. CGLS then solves the
+normal equations with four host volumes (iterate, normal residual, direction
+and its normal image), reading the measurements only for its initial and
+recomputed residuals. SIRT, OS-SART and OSEM update one volume a slab at a
+time, once per subset: it stays on the device when it fits there beside the
+sweep (the result is then a JAX array), and otherwise in host memory. Host
+results are Fortran-ordered NumPy volumes, or `out` itself:
+
+```python
+import numpy as np
+from tomojax.recon import SIRTConfig, sirt
+
+out = np.lib.format.open_memmap(
+    "volume.npy", "w+", np.float32, (grid.nx, grid.ny, grid.nz), fortran_order=True
+)
+volume, info = sirt(
+    geometry, grid, detector, projections, config=SIRTConfig(subsets=8), out=out
+)
+```
+
+With a memory-mapped `out`, CGLS keeps its three work volumes in temporary
+files in the same directory, and pages of mapped volumes are released after
+each slab so they do not stay resident. SIRT from a zero start never reads
+what `out` held: its first sweep overwrites it. The ring holds every view of a sweep
+over the tallest band of rows a slab reaches; when it cannot fit on the
+device even for one-plane slabs, the solve raises `MemoryError` and more SIRT
+subsets reduce it. `info` records `slices_per_batch` and the bytes moved to
+and from the device.
+
 `mlem` models nonnegative linear Poisson measurements, not raw transmission
 counts. `MLEMConfig(subsets=1)` is MLEM; larger values give angle-interleaved
 OSEM, with `iterations` counting full passes through the views. OSEM can cycle

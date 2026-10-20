@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -27,17 +29,19 @@ def gradient_energy(volume: jax.Array, spacing: tuple[float, float, float]) -> j
 
 
 def gradient_normal(
-    volume: jax.Array,
+    volume: Any,
     spacing: tuple[float, float, float],
     *,
     absolute_weights: bool = False,
-) -> jax.Array:
+    xp: Any = jnp,
+) -> Any:
     """Apply D.T D, or abs(D.T D) for a componentwise roundoff estimate.
 
     Only edges within the volume contribute. Constant volumes therefore have
     zero energy even at the boundary, and singleton axes contribute nothing.
+    ``xp`` is the array module of ``volume`` (JAX by default, or NumPy or CuPy).
     """
-    result = jnp.zeros_like(volume)
+    result = xp.zeros_like(volume)
     for axis, step in enumerate(spacing):
         if volume.shape[axis] == 1:
             continue
@@ -47,9 +51,9 @@ def gradient_normal(
             left[axis], right[axis] = slice(None, -1), slice(1, None)
             edge = (volume[tuple(left)] + volume[tuple(right)]) / step**2
         else:
-            edge = jnp.diff(volume, axis=axis) / step**2
+            edge = xp.diff(volume, axis=axis) / step**2
         lower, upper = [(0, 0)] * 3, [(0, 0)] * 3
         lower[axis], upper[axis] = (1, 0), (0, 1)
-        from_left, from_right = jnp.pad(edge, lower), jnp.pad(edge, upper)
+        from_left, from_right = xp.pad(edge, lower), xp.pad(edge, upper)
         result = result + (from_left + from_right if absolute_weights else from_left - from_right)
     return result

@@ -22,6 +22,7 @@ from tomojax.core.validation import (
     validate_volume,
 )
 from tomojax.recon._axial_slabs import axial_slabs, independent_planes
+from tomojax.recon._cone_slabs import RowReader, host_volumes
 from tomojax.recon._projection import (
     ConeModel,
     ProjectorBackend,
@@ -317,6 +318,7 @@ def sirt(
     init_x: jax.Array | np.ndarray | None = None,
     config: SIRTConfig | None = None,
     det_grid: tuple[jax.Array, jax.Array] | None = None,
+    out: np.ndarray | None = None,
 ) -> tuple[jax.Array | np.ndarray, dict[str, object]]:
     """Matched FP32 SIRT/OS-SART; each iteration visits every subset once.
 
@@ -326,7 +328,10 @@ def sirt(
     Large independent axial planes use host slabs and invocation-owned host
     normalizers. Large host projection stacks
     stream with exact row recomputation, also allowing reusable column weights
-    to fit in device memory.
+    to fit in device memory. Cone-beam solves whose working set exceeds the
+    device, or given ``out``, update the volume a z slab at a time; it stays
+    on the device when it fits beside that sweep, and otherwise in host memory
+    as a Fortran-ordered NumPy volume (``out`` if given).
 
     Parameters
     ----------
@@ -345,6 +350,9 @@ def sirt(
     det_grid : tuple of array-like or None, optional
         Explicit detector-coordinate arrays ``(u, v)``, each of shape ``(nv, nu)``.
         None uses the canonical detector grid.
+    out : numpy.ndarray or None, optional
+        Writable float32 ``(nx, ny, nz)`` host storage for a cone-beam result,
+        including a memmap; it must not overlap the projections.
 
     Returns
     -------
@@ -379,8 +387,9 @@ def sirt(
     (4, 4, 1)
     """
     return SIRTCall().solve(
-        geometry, grid, detector, projections, init_x=init_x, config=config, det_grid=det_grid
-    )
+        geometry, grid, detector, projections, init_x=init_x, config=config, det_grid=det_grid,
+        out=out,
+    )  # fmt: skip
 
 
 _HOST_COLUMN_MIN_BYTES = 128 * 1024**2
@@ -430,6 +439,7 @@ class SIRTCall:
         init_x: jax.Array | np.ndarray | None = None,
         config: SIRTConfig | None = None,
         det_grid: tuple[jax.Array, jax.Array] | None = None,
+        out: np.ndarray | None = None,
     ) -> tuple[jax.Array | np.ndarray, dict[str, object]]:
         """Solve this invocation, retaining normalizers across its axial slabs."""
         cfg = SIRTConfig() if config is None else config
@@ -453,10 +463,23 @@ class SIRTCall:
         axial = (
             model == "joseph" and det_grid is None and independent_planes(geometry, grid, detector)
         )
+        cone, rows = isinstance(model, ConeModel), isinstance(projections, RowReader)
+        if (out is not None or rows) and not cone:
+            raise ValueError("sirt: out and row readers need a cone-beam geometry")
+        hosted = out is not None or rows or host_volumes(grid, 5 + 2 * cfg.acceleration, backend)
         if axial:
             result = self._slabs(geometry, grid, detector, projections, init_x, cfg)
             if result is not None:
                 return result
+        elif isinstance(model, ConeModel) and hosted:
+            from ._sirt_host import solve as solve_host
+
+            return solve_host(
+                geometry, grid, detector, projections,
+                None if init_x is None else np.asarray(init_x), cfg,
+                model=model, backend=backend, poses=stack_view_poses(geometry, n),
+                bounds=(lower, upper), out=out,
+            )  # fmt: skip
         initial, stream, cache_columns = _storage(
             projections,
             init_x,

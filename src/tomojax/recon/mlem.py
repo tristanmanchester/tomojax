@@ -23,6 +23,7 @@ from tomojax.core.validation import (
 )
 from tomojax.geometry import grid_volume_origin
 from tomojax.recon._axial_slabs import independent_planes
+from tomojax.recon._cone_slabs import RowReader, host_volumes
 from tomojax.recon._host_arrays import validate_host_views
 from tomojax.recon._projection import (
     ConeModel,
@@ -315,15 +316,16 @@ def mlem(
     init_x: jax.Array | np.ndarray | None = None,
     config: MLEMConfig | None = None,
     det_grid: tuple[jax.Array, jax.Array] | None = None,
+    out: np.ndarray | None = None,
 ) -> tuple[jax.Array | np.ndarray, dict[str, object]]:
     """MLEM or OSEM with the exact transpose; see :class:`MLEMConfig`.
 
     Returns the FP32 volume and an iteration record, without a convergence
     claim. Wholly unobserved voxels are zero; zero measurements drive
     observed voxels to zero. Large host measurement stacks stream in bounded
-    view batches. Cone volumes too large for the device stay on host: every
-    subset projection sums all slabs before its coupled update. Subset ratios
-    stay on the device when they fit alongside the slab workspace. The fast
+    view batches. Cone solves whose workspace exceeds the device, or given
+    ``out``, update the volume a z slab at a time, as for cone SIRT; every
+    subset projection sums all slabs before its coupled update. The
     resident-volume path remains the default whenever its workspace fits.
 
     Parameters
@@ -344,6 +346,9 @@ def mlem(
     det_grid : tuple of array-like or None, optional
         Explicit detector-coordinate arrays ``(u, v)``, each of shape ``(nv, nu)``.
         None uses the canonical detector grid.
+    out : numpy.ndarray or None, optional
+        Writable float32 ``(nx, ny, nz)`` host storage for a cone-beam result,
+        including a memmap; it must not overlap the projections.
 
     Returns
     -------
@@ -380,7 +385,7 @@ def mlem(
     """
     return run_mlem(
         geometry, projections, grid=grid, detector=detector, init_x=init_x,
-        config=MLEMConfig() if config is None else config, det_grid=det_grid,
+        config=MLEMConfig() if config is None else config, det_grid=det_grid, out=out,
     )  # fmt: skip
 
 
@@ -394,6 +399,7 @@ def run_mlem(
     config: MLEMConfig,
     det_grid: tuple[jax.Array, jax.Array] | None = None,
     warm_start: bool = False,
+    out: np.ndarray | None = None,
 ) -> tuple[jax.Array | np.ndarray, dict[str, object]]:
     """Own workflow initialization inside the solver, never copying a private host start."""
     cfg = config
@@ -415,14 +421,20 @@ def run_mlem(
         geometry, cfg.projector_model, cfg.projector_backend, detector=detector,
         det_grid=det_grid, context="mlem",
     )  # fmt: skip
-    from ._mlem_host import solve as solve_host, volume_depth
+    storage, rows = {}, isinstance(projections, RowReader)
+    if isinstance(model, ConeModel) and (out is not None or rows or host_volumes(grid, 5, backend)):
+        from ._mlem_host import solve as solve_host
 
-    depth = (
-        volume_depth(grid, detector, batch, subset_views=(n + subsets - 1) // subsets)
-        if isinstance(model, ConeModel)
-        else None
-    )
-    if depth is None:
+        volume, storage = solve_host(
+            geometry, grid, detector, projections, model=model, backend=backend,
+            poses=stack_view_poses(geometry, n),
+            order=np.argsort(np.asarray(getattr(geometry, "angles", np.arange(n))), kind="stable"),
+            subsets=subsets, iterations=iterations, batch=batch, initial=init_x,
+            support=cfg.support, warm_start=warm_start, out=out,
+        )  # fmt: skip
+    elif out is not None or rows:
+        raise ValueError("mlem: out and row readers need a cone-beam geometry")
+    else:
         if warm_start:
             from ._warm_start import fbp_start
             from .fbp import FBPConfig
@@ -444,29 +456,11 @@ def run_mlem(
             initial=init_x,
             det_grid=det_grid,
         )
-    else:
-        assert isinstance(model, ConeModel)
-        volume = solve_host(
-            grid,
-            detector,
-            projections,
-            model=model,
-            backend=backend,
-            poses=stack_view_poses(geometry, n),
-            order=np.argsort(np.asarray(getattr(geometry, "angles", np.arange(n))), kind="stable"),
-            subsets=subsets,
-            iterations=iterations,
-            batch=batch,
-            depth=depth,
-            initial=init_x,
-            support=cfg.support,
-            warm_geometry=geometry if warm_start else None,
-        )
     return volume, {
         "effective_iterations": iterations,
         "subset_updates": iterations * subsets,
         "termination": "iteration_limit",
         "projector_backend": backend,
         "projector_model": model,
-        **({"host_volume": True, "slices_per_batch": depth} if depth is not None else {}),
+        **storage,
     }

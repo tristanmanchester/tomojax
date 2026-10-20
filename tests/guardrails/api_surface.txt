@@ -464,6 +464,7 @@ def tomojax.recon.cgls(
         init_x: 'jnp.ndarray | np.ndarray | None' = None,
         config: 'CGLSConfig | None' = None,
         det_grid: 'tuple[jnp.ndarray, jnp.ndarray] | None' = None,
+        out: 'np.ndarray | None' = None,
     ) -> 'tuple[jnp.ndarray | np.ndarray, dict[str, object]]'
 def tomojax.recon.cgls_multires(
         geometry: 'Geometry',
@@ -541,6 +542,7 @@ def tomojax.recon.mlem(
         init_x: 'jax.Array | np.ndarray | None' = None,
         config: 'MLEMConfig | None' = None,
         det_grid: 'tuple[jax.Array, jax.Array] | None' = None,
+        out: 'np.ndarray | None' = None,
     ) -> 'tuple[jax.Array | np.ndarray, dict[str, object]]'
 def tomojax.recon.project(
         geometry: 'Geometry',
@@ -558,6 +560,7 @@ def tomojax.recon.sirt(
         init_x: 'jax.Array | np.ndarray | None' = None,
         config: 'SIRTConfig | None' = None,
         det_grid: 'tuple[jax.Array, jax.Array] | None' = None,
+        out: 'np.ndarray | None' = None,
     ) -> 'tuple[jax.Array | np.ndarray, dict[str, object]]'
 def tomojax.recon.spdhg_tv(
         geometry: 'Geometry',

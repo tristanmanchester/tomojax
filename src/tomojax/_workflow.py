@@ -364,9 +364,12 @@ def reconstruct(
     ``warm_start`` uses FBP/FDK for least squares; ``grid`` overrides the scan's output grid.
 
     ``out`` is a writable float32 array or memmap of shape ``(grid.nx, grid.ny,
-    grid.nz)`` for ``fbp`` and ``fourier``: the volume is made in host slabs
-    straight into it and returned as ``volume``. It must not overlap the scan,
-    and a later failure can leave it partly written.
+    grid.nz)`` for ``fbp``, ``fourier``, and ``cgls``, ``sirt`` and ``mlem`` on
+    cone beams: the volume is made in host slabs straight into it and returned
+    as ``volume``. It must not overlap the scan, and a later failure can leave
+    it partly written. Cone CGLS, SIRT and MLEM also use host slabs on their
+    own when their volumes would not fit on the device; with a memmapped
+    ``out``, CGLS keeps its three work volumes in temporary files beside it.
 
     ``config`` is from :mod:`tomojax.recon`; keywords replace its fields.
     Mismatched config classes or unknown keywords raise ``ValueError``.
@@ -390,7 +393,8 @@ def reconstruct(
     grid : Grid or None, optional
         Output grid; None retains the scan's grid.
     out : numpy.ndarray or None, optional
-        Writable float32 output or memmap for fbp/fourier; must not overlap input.
+        Writable float32 output or memmap for fbp/fourier and cone cgls/sirt/mlem;
+        must not overlap input.
     config : reconstruction config or None, optional
         Method-specific settings; explicit keywords replace its fields.
     filter : str or None, optional
