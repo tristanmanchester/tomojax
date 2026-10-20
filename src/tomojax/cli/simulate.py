@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 import math
 import os
 from typing import TYPE_CHECKING, Literal, cast
@@ -11,11 +11,7 @@ from typing import TYPE_CHECKING, Literal, cast
 from tomojax.cli._options import add_config, add_output, check_paths, hide_expert
 from tomojax.cli.config import parse_args_with_config
 from tomojax.core import log_jax_env, setup_logging
-from tomojax.datasets import (
-    SimConfig,
-    SimulationArtefacts,
-    simulate_to_file,
-)
+from tomojax.datasets import SimConfig, SimulationArtefacts, simulate_to_file
 
 from ._runtime import transfer_guard_context
 
@@ -26,7 +22,6 @@ GeometryName = Literal["parallel", "lamino", "cone"]
 TiltAxis = Literal["x", "z"]
 PhantomName = Literal["shepp", "cube", "sphere", "blobs", "random_shapes", "lamino_disk"]
 TransferGuardName = Literal["off", "log", "disallow"]
-IntensityDriftModeName = Literal["none", "linear", "sinusoidal"]
 
 
 @dataclass(frozen=True)
@@ -285,27 +280,11 @@ def _parse_command(argv: Sequence[str] | None) -> SimulateCommand:
 
 
 def _build_artefacts(args: argparse.Namespace) -> SimulationArtefacts | None:
-    """Build the optional artefact configuration from parsed arguments."""
+    """The artefacts the options ask for, or None when every one is off."""
     artefacts = SimulationArtefacts(
-        poisson_scale=cast("float", args.poisson_scale),
-        gaussian_sigma=cast("float", args.gaussian_sigma),
-        dead_pixel_fraction=cast("float", args.dead_pixel_fraction),
-        dead_pixel_value=cast("float", args.dead_pixel_value),
-        hot_pixel_fraction=cast("float", args.hot_pixel_fraction),
-        hot_pixel_value=cast("float", args.hot_pixel_value),
-        zinger_fraction=cast("float", args.zinger_fraction),
-        zinger_value=cast("float", args.zinger_value),
-        stripe_fraction=cast("float", args.stripe_fraction),
-        stripe_gain_sigma=cast("float", args.stripe_gain_sigma),
-        dropped_view_fraction=cast("float", args.dropped_view_fraction),
-        dropped_view_fill=cast("float", args.dropped_view_fill),
-        detector_blur_sigma=cast("float", args.detector_blur_sigma),
-        intensity_drift_amplitude=cast("float", args.intensity_drift_amplitude),
-        intensity_drift_mode=cast("IntensityDriftModeName", args.intensity_drift_mode),
+        **{field.name: getattr(args, field.name) for field in fields(SimulationArtefacts)}
     )
-    if not artefacts.has_enabled():
-        return None
-    return artefacts
+    return artefacts if artefacts.has_enabled() else None
 
 
 def main(argv: Sequence[str] | None = None) -> None:
