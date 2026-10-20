@@ -300,6 +300,105 @@ including negative samples. Volume differences are full-volume relative L2,
 without intensity fitting. There is no physical truth volume for this scan;
 these are image diagnostics, not reconstruction errors.
 
+### Full-view CGLS
+
+Measured 2026-10-20 on `e2cd2101`, with ASTRA 2.5.0. Walnut uses all 1200 views
+of orbit 2, detector binning 2 × 2 and a 501³ grid of 0.1 mm voxels. Nikon and
+Zeiss use the full-view inputs and physical grids above; the Nikon input is
+`47209 testscan korn01_recon.xtekct`. Both libraries start from their own FDK.
+TomoJAX uses three iterations and ASTRA four. ASTRA's native CGLS fits Walnut
+and Zeiss; Nikon uses an explicit FP32 recurrence over ASTRA's projectors,
+with GPU residuals, host search projections and 128-view batches.
+
+| Scan | Library | Cold / warm (s) | Full / support image error, or common-projector fit | Volume difference to ASTRA |
+|---|---|---:|---:|---:|
+| Walnut, one orbit | TomoJAX | 27.48 / 18.84 | 0.184222 / 0.087821 | 0.013025 |
+| Walnut, one orbit | ASTRA | 22.28 / 16.30 | 0.182273 / 0.086669 | — |
+| Nikon | TomoJAX | 31.74 / 26.74 | 0.034928 | 0.027400 |
+| Nikon | ASTRA | 33.74 / 26.14 | 0.029934 | — |
+| Zeiss | TomoJAX | 17.87 / 12.24 | 0.163861 | 0.042137 |
+| Zeiss | ASTRA | 16.53 / 12.90 | 0.155535 | — |
+
+Each pair uses two fresh processes per library in ASTRA–TomoJAX–TomoJAX–ASTRA
+order, with two warm solves per process. The table averages all four warm
+samples. Cold includes numerical imports, loading and the first host volume
+with fresh compilation caches; warm includes FDK, setup, transfers and the host
+volume. Filesystem caches are not cleared. Scoring is outside the timer.
+
+Walnut errors use the authors' reference, in the full volume and its fixed
+support. Nikon and Zeiss match data fit, not physical reconstruction error:
+all original corrected log projections are scored with one common calibrated
+ASTRA forward projector. Full-volume differences use no alignment or intensity
+fit. The fixed orthogonal sections retain the same structures; differences
+include smooth background fields, support boundaries, edges and streaks.
+TomoJAX is 15.6% slower warm on Walnut, 2.3% slower on Nikon and 5.1% faster on
+Zeiss at these quality targets.
+
+Set `WALNUT`, `NIKON` and `ZEISS` to those inputs. These commands configure one
+fresh process each; run each pair in the order above, with separate output
+filenames for the two processes:
+
+```bash
+export XLA_PYTHON_CLIENT_PREALLOCATE=false
+python bench/cone_matrix.py walnut1 "$WALNUT" --library astra \
+  --method cgls --iterations 4 --storage native --repeats 2 \
+  --output bench/results/walnut1-astra.json
+python bench/cone_matrix.py walnut1 "$WALNUT" --library tomojax \
+  --method cgls --iterations 3 --repeats 2 \
+  --output bench/results/walnut1-tomojax.json
+python bench/cone_matrix.py nikon "$NIKON" --library astra \
+  --method cgls --iterations 4 --storage device-residual --batch 128 --repeats 2 \
+  --output bench/results/nikon-astra.json
+python bench/cone_matrix.py nikon "$NIKON" --library tomojax \
+  --method cgls --iterations 3 --repeats 2 \
+  --output bench/results/nikon-tomojax.json
+python bench/cone_matrix.py zeiss "$ZEISS" --library astra \
+  --method cgls --iterations 4 --storage native --repeats 2 \
+  --output bench/results/zeiss-astra.json
+python bench/cone_matrix.py zeiss "$ZEISS" --library tomojax \
+  --method cgls --iterations 3 --repeats 2 \
+  --output bench/results/zeiss-tomojax.json
+```
+
+Add `--save-volume reference.npy` to the first ASTRA process and
+`--compare-to reference.npy` to the TomoJAX processes to reproduce the image
+differences, then delete the temporary volume.
+
+### One-orbit walnut ordered subsets
+
+Measured 2026-10-20 on `e2cd2101`, with the same full-view one-orbit input and
+501³ grid as CGLS above. Each solve starts from FDK and makes one pass through
+its subsets. OS-SART is nonnegative; OSEM clips solve inputs at zero. ASTRA
+computes each subset's column normalization when it is used.
+
+| Method | Library and subsets | Cold / warm (s) | Full / walnut-support relative L2 error | Volume difference to ASTRA |
+|---|---|---:|---:|---:|
+| OS-SART | TomoJAX, 12 | 16.75 / 9.95 | 0.121031 / 0.083891 | 0.012251 |
+| OS-SART | ASTRA, 16 | 12.29 / 8.38 | 0.116176 / 0.081108 | — |
+| OSEM | TomoJAX, 12 | 14.41 / 8.50 | 0.097780 / 0.071995 | 0.009635 |
+| OSEM | ASTRA, 14 | 10.32 / 6.52 | 0.094714 / 0.069006 | — |
+
+These use the same interleaved fresh-process protocol, with one warm solve per
+process: the reported warm time averages two samples per library. Author
+errors and full-volume differences use no intensity fitting. TomoJAX is
+18.8% slower warm for OS-SART and 30.4% slower for OSEM at these settings.
+Both ASTRA settings have lower author errors than the TomoJAX settings.
+
+```bash
+python bench/cone_matrix.py walnut1 "$WALNUT" --library astra \
+  --method ossart --iterations 1 --subsets 16 --norms recompute \
+  --output bench/results/walnut1-astra-os.json
+python bench/cone_matrix.py walnut1 "$WALNUT" --library tomojax \
+  --method ossart --iterations 1 --subsets 12 \
+  --output bench/results/walnut1-tomojax-os.json
+python bench/cone_matrix.py walnut1 "$WALNUT" --library astra \
+  --method osem --iterations 1 --subsets 14 --norms recompute \
+  --output bench/results/walnut1-astra-osem.json
+python bench/cone_matrix.py walnut1 "$WALNUT" --library tomojax \
+  --method osem --iterations 1 --subsets 12 \
+  --output bench/results/walnut1-tomojax-osem.json
+```
+
 ## FIPS walnuts (real lab cone-beam CT)
 
 `bench/walnut.py` reconstructs the walnut collection of Der Sarkissian et al.
@@ -355,6 +454,14 @@ Filesystem caches are not cleared. TomoJAX has lower error but is 18.1% slower
 warm. A separate profile spends 16.91 s in its exact transpose versus 7.63 s
 in ASTRA's backprojection; this identifies an implementation cost, not a lower
 bound on every exact-transpose implementation.
+
+That profile records 408 launches of TomoJAX's paired residual-and-normalization
+transpose kernel, versus 256 ASTRA iterative backprojection launches. TomoJAX
+also launches 68 data forwards (4.67 s) and 68 uniform-volume forwards (0.42 s);
+ASTRA's forwards, including row normalization, take 6.84 s. FDK backprojection
+takes 2.41 / 3.76 s for TomoJAX / ASTRA, and GPU host/device copy time is
+0.53 / 1.53 s. These are diagnostic kernel times, not the uninstrumented
+whole-solve timings in the table.
 
 ### Orbit registration
 
