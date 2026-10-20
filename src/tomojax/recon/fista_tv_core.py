@@ -71,10 +71,10 @@ class FistaCoreConfig:
 
 
 @dataclass(frozen=True, slots=True)
-class FistaCoreResult:
+class FistaCoreResult[Array: jnp.ndarray | np.ndarray]:
     """Array-level FISTA result and diagnostics."""
 
-    x: jnp.ndarray
+    x: Array
     loss: jnp.ndarray
     data_loss: jnp.ndarray
     regulariser_value: jnp.ndarray
@@ -113,7 +113,7 @@ def fista_tv_core_arrays(
     cfg: FistaCoreConfig,
     L_override: jnp.ndarray | float | None = None,
     view_weights: jnp.ndarray | None = None,
-) -> FistaCoreResult:
+) -> FistaCoreResult[jnp.ndarray]:
     """Array-level unrolled FISTA/HUBER-TV core.
 
     This is intentionally stricter than the public `fista_tv` API: arrays in,
