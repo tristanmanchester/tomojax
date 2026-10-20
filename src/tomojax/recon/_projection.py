@@ -586,14 +586,14 @@ def poisson_operators(
 ) -> tuple[
     Callable[[jax.Array], jax.Array], Callable[[jax.Array, jax.Array, jax.Array], jax.Array]
 ]:
-    """Subset ``A.T 1`` and ``A.T (data / A volume)`` without whole predicted stacks.
+    """Subset ``A.T 1`` and ``A.T (data / A volume)`` with batch-sized image buffers.
 
     ``indices`` is a (subsets, views) table into the original scan; ``valid``
     marks padding. The returned functions take the subset index, and the
     second also takes the volume and the original-order measurement stack.
     Source arrangements are gathered with their views, including cone segments.
-    With ``stream``, measurements are a host-source key; only the requested
-    batch is gathered from its original-order host array.
+    Only the current batch is gathered from the original-order measurement
+    stack. With ``stream``, measurements are a host-source key instead.
     """
     size = int(indices.shape[1])
     chunks = (size + batch_size - 1) // batch_size
@@ -612,8 +612,9 @@ def poisson_operators(
         lambda i, volume, data: _correction(
             group(i),
             volume,
-            data if stream else data[indices[i]],
-            indices=indices[i] if stream else None,
+            data,
+            indices=indices[i],
+            stream=stream,
         ),
     )
 
@@ -628,7 +629,12 @@ def _sensitivity(ops: ViewBatches) -> jax.Array:
 
 
 def _correction(
-    ops: ViewBatches, volume: jax.Array, data: jax.Array, *, indices: jax.Array | None = None
+    ops: ViewBatches,
+    volume: jax.Array,
+    data: jax.Array,
+    *,
+    indices: jax.Array,
+    stream: bool,
 ) -> jax.Array:
     project = ops.projector(volume)
 
@@ -636,15 +642,16 @@ def _correction(
         start, poses, valid = ops.select(k)
         expected = project(start, poses)
         positive = expected > 0
+        view_ids = jax.lax.dynamic_slice_in_dim(indices, start, ops.size)
         measured = (
-            ops.images(data, start)
-            if indices is None
-            else read_views(
+            read_views(
                 data,
                 start,
                 (ops.size, ops.detector.nv, ops.detector.nu),
-                indices=jax.lax.dynamic_slice_in_dim(indices, start, ops.size),
+                indices=view_ids,
             )
+            if stream
+            else data[view_ids]
         )
         ratio = measured / jnp.where(positive, expected, 1.0)
         ratio = jnp.where(valid[:, None, None] & positive, ratio, 0.0)

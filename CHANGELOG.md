@@ -41,6 +41,8 @@ Half-data FSC benchmarking releases each reconstructed spatial volume before
 forming its Fourier spectrum, reducing host memory without changing the score.
 
 OSEM balances view batches within each subset to reduce repeated projection work.
+MLEM/OSEM gather resident measurements one view batch at a time rather than
+allocating a copy of the whole subset.
 
 The full-view cone benchmark reports matched-grid image diagnostics, ASTRA
 iterative work counts, and memory-bounded CGLS and ordered-subset baselines.
