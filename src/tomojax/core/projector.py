@@ -8,7 +8,7 @@ import functools
 import logging
 import math
 import operator
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -442,50 +442,17 @@ def forward_project_view_T(
     if ray_integrator != "sampled":
         raise ValueError(f"ray_integrator must be one of {RAY_INTEGRATORS}")
     if backend == "cuda":
-        cuda_project, fallback_reason = resolve_cuda_callable(
-            "forward_project_view_T_cuda",
-            missing_reason="cuda_single_view_callable_missing",
-        )
-        if cuda_project is not None:
-            unsupported_exc = cuda_unsupported_exception_type()
-            try:
-                options_cls, _options_reason = resolve_cuda_callable(
-                    "CudaProjectorOptions",
-                    missing_reason="cuda_options_missing",
-                )
-                options = (
-                    options_cls(
-                        step_size=step_size,
-                        n_steps=n_steps,
-                        unroll=unroll,
-                        gather_dtype=gather_dtype,
-                        det_grid=det_grid,
-                    )
-                    if options_cls is not None
-                    else None
-                )
-                return cuda_project(
-                    T,
-                    grid,
-                    detector,
-                    volume,
-                    options=options,
-                )
-            except Exception as exc:
-                if unsupported_exc is None or not isinstance(exc, unsupported_exc):
-                    raise
-                fallback_reason = f"{type(exc).__name__}: {exc}"
-        if fallback_reason is not None:
-            LOG.debug(
-                "Falling back to JAX single-view projector after CUDA rejection: %s",
-                fallback_reason,
-            )
-    vol = volume
-    nx, ny, nz = validate_volume(vol, grid, context="forward_project_view_T", name="volume")
+        projected = _sampled_view_cuda(
+            T, grid, detector, volume, step_size=step_size, n_steps=n_steps, unroll=unroll,
+            gather_dtype=gather_dtype, det_grid=det_grid,
+        )  # fmt: skip
+        if projected is not None:
+            return projected
+    nx, ny, nz = validate_volume(volume, grid, context="forward_project_view_T", name="volume")
     validate_detector(detector, "forward_project_view_T")
     validate_detector_grid(det_grid, detector, context="forward_project_view_T")
     validate_pose_matrix(T, context="forward_project_view_T")
-    recon_flat = prepare_volume_for_gather(vol, gather_dtype)
+    recon_flat = prepare_volume_for_gather(volume, gather_dtype)
     ix0, iy0, iz0, dix, diy, diz, n_steps_ray, step_size32, n_steps, n_rays = (
         _projector_traversal_state(
             T,
@@ -515,6 +482,50 @@ def forward_project_view_T(
     )
     acc, _, _, _ = carry_final
     return acc.reshape((detector.nv, detector.nu))
+
+
+def _sampled_view_cuda(
+    T: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    volume: jnp.ndarray,
+    *,
+    step_size: float | None,
+    n_steps: int | None,
+    unroll: int | None,
+    gather_dtype: str,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+) -> jnp.ndarray | None:
+    """One view by the CUDA sampled projector, or None when it is absent or declines."""
+    cuda_project, reason = resolve_cuda_callable(
+        "forward_project_view_T_cuda",
+        missing_reason="cuda_single_view_callable_missing",
+    )
+    if cuda_project is not None:
+        unsupported_exc = cuda_unsupported_exception_type()
+        try:
+            options_cls, _options_reason = resolve_cuda_callable(
+                "CudaProjectorOptions",
+                missing_reason="cuda_options_missing",
+            )
+            options = (
+                options_cls(
+                    step_size=step_size,
+                    n_steps=n_steps,
+                    unroll=unroll,
+                    gather_dtype=gather_dtype,
+                    det_grid=det_grid,
+                )
+                if options_cls is not None
+                else None
+            )
+            return cuda_project(T, grid, detector, volume, options=options)
+        except Exception as exc:
+            if unsupported_exc is None or not isinstance(exc, unsupported_exc):
+                raise
+            reason = f"{type(exc).__name__}: {exc}"
+    LOG.debug("Falling back to JAX single-view projector after CUDA rejection: %s", reason)
+    return None
 
 
 def _backproject_view_accum_T(
@@ -641,6 +652,21 @@ def backproject_view_T(
         gather_dtype=gather_dtype,
         det_grid=det_grid,
     )
+
+
+def project_views(
+    T_stack: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    volume: jnp.ndarray,
+    **options: Any,
+) -> jnp.ndarray:
+    """Project ``volume`` into every view of ``T_stack`` with :func:`forward_project_view_T`.
+
+    ``options`` are forward_project_view_T's keywords; the views are mapped with
+    ``jax.vmap`` so each is the single-view projection exactly.
+    """
+    return jax.vmap(lambda T: forward_project_view_T(T, grid, detector, volume, **options))(T_stack)
 
 
 def sum_backproject_views_T(

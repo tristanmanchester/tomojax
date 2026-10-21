@@ -249,25 +249,25 @@ def test_backprojection_replays_shifted_detector_rays(interpret, layout, unroll)
     np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=1e-5)
 
 
-def test_prepared_single_view_reuses_launch_without_capturing_ray_arrays(caplog) -> None:
+def test_prepared_stack_reuses_launch_without_capturing_ray_arrays(caplog) -> None:
     grid, detector = Grid(4, 4, 3, 1, 1, 1), Detector(5, 3, 1, 1)
     pose = jnp.eye(4, dtype=jnp.float32)
     volume = jnp.arange(48, dtype=jnp.float32).reshape(4, 4, 3)
     options = cuda.CudaProjectorOptions(interpret=True, tile_shape=(2, 4), num_warps=1)
-    bound = cuda.bind_forward_project_view_T_cuda(pose, grid, detector, options=options)
+    bound = cuda.bind_forward_project_views_T_cuda(pose[None], grid, detector, options=options)
     # The first CUDA trace lazily registers a JAX tracing context.
     for _ in range(2):
         jax.block_until_ready(bound(volume))
     for shift in [0.0, 0.6]:
         shifted = pose.at[0, 3].set(shift)
-        state = cuda.prepare_forward_project_view_T_cuda_state(
-            shifted, grid, detector, tile_shape=(2, 4), num_warps=1
+        state = cuda.prepare_forward_project_views_T_cuda_state(
+            shifted[None], grid, detector, tile_shape=(2, 4), num_warps=1
         )
         expected = forward_project_view_T(shifted, grid, detector, volume)
         caplog.clear()
         with jax.log_compiles(True), caplog.at_level("WARNING"):
-            actual = cuda.forward_project_view_T_cuda_with_state(state, volume, interpret=True)
-            np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=1e-5)
+            actual = cuda.forward_project_views_T_cuda_with_state(state, volume, interpret=True)
+            np.testing.assert_allclose(actual[0], expected, rtol=2e-6, atol=1e-5)
         assert not any("Compiling jit(" in record.message for record in caplog.records)
 
 

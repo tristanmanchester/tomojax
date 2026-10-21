@@ -20,6 +20,7 @@ from tomojax.core.projector import (
     backproject_view_T,
     forward_project_view_T,
     get_detector_grid_device,
+    project_views,
     sum_backproject_views_T,
 )
 from tomojax.core.validation import (
@@ -343,19 +344,15 @@ def grad_data_term(  # noqa: PLR0915
         compiled graph is a single-sized loop body regardless of the number of chunks.
         """
         masked_vol = vol * vol_mask if vol_mask is not None else vol
-        vm_project = jax.vmap(
-            lambda T, v: forward_project_view_T(
-                T,
-                grid,
-                detector,
-                v,
-                use_checkpoint=checkpoint_projector,
-                unroll=int(projector_unroll),
-                gather_dtype=gather_dtype,
-                det_grid=det_grid,
-                ray_integrator=ray_integrator,
-            ),
-            in_axes=(0, None),
+        vm_project = functools.partial(
+            project_views,
+            grid=grid,
+            detector=detector,
+            use_checkpoint=checkpoint_projector,
+            unroll=int(projector_unroll),
+            gather_dtype=gather_dtype,
+            det_grid=det_grid,
+            ray_integrator=ray_integrator,
         )
         n = int(T_all.shape[0])
         b = chunk_size(n, views_per_batch, default=1)
@@ -373,7 +370,7 @@ def grad_data_term(  # noqa: PLR0915
             )
             T_chunk = jax.lax.dynamic_slice_in_dim(T_all, start_shifted, b)
             y_chunk = jax.lax.dynamic_slice_in_dim(projections, start_shifted, b)
-            pred = vm_project(T_chunk, masked_vol)
+            pred = vm_project(T_chunk, volume=masked_vol)
             mask = valid_mask[:, None, None]
             resid = (pred - y_chunk).astype(jnp.float32) * mask
             loss_batch = 0.5 * jnp.vdot(resid, resid).real

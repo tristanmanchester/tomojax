@@ -370,9 +370,7 @@ def test_stack_traversal_metadata_matches_longest_view(step_size) -> None:
     )
 
 
-@pytest.mark.parametrize("stack", [False, True])
-def test_cuda_binding_forwards_options_without_copying_detector_grid(monkeypatch, stack) -> None:
-    name = "bind_forward_project_views_T_cuda" if stack else "bind_forward_project_view_T_cuda"
+def test_cuda_binding_forwards_options_without_copying_detector_grid(monkeypatch) -> None:
     captured = {}
     sentinel = object()
 
@@ -380,12 +378,12 @@ def test_cuda_binding_forwards_options_without_copying_detector_grid(monkeypatch
         captured.update(kwargs)
         return sentinel
 
-    monkeypatch.setattr(cuda_api, f"_{name}", bind)
+    monkeypatch.setattr(cuda_api, "_bind_forward_project_views_T_cuda", bind)
     coordinates = (jnp.arange(4, dtype=jnp.float32), jnp.zeros(4, dtype=jnp.float32))
     options = cuda_api.CudaProjectorOptions(det_grid=coordinates, block_state=False, unroll=2)
     pose, grid, detector, _ = _tiny_projection_case()
     assert (
-        getattr(cuda_api, name)(pose[None] if stack else pose, grid, detector, options=options)
+        cuda_api.bind_forward_project_views_T_cuda(pose[None], grid, detector, options=options)
         is sentinel
     )
     assert captured["det_grid"] is coordinates
@@ -396,21 +394,14 @@ def test_cuda_binding_forwards_options_without_copying_detector_grid(monkeypatch
 @pytest.mark.parametrize("stack", [False, True])
 def test_cached_cuda_volume_validation_preserves_context(stack) -> None:
     pose, grid, detector, volume = _tiny_projection_case()
-    suffix = "views" if stack else "view"
-    bind = getattr(cuda_api, f"bind_forward_project_{suffix}_T_cuda")
-    project = getattr(cuda_api, f"forward_project_{suffix}_T_cuda_with_state")
-    bound = bind(pose[None] if stack else pose, grid, detector, options=_tiny_cuda_options())
-    for call, context in (
-        (
-            bound,
-            "forward_project_views_T_cuda_with_state" if stack else "BoundForwardProjectViewTCuda",
-        ),
-        (
-            lambda x: project(bound.state, x, interpret=True),
-            f"forward_project_{suffix}_T_cuda_with_state",
-        ),
+    bound = cuda_api.bind_forward_project_views_T_cuda(
+        pose[None], grid, detector, options=_tiny_cuda_options()
+    )
+    for call in (
+        bound,
+        lambda x: cuda_api.forward_project_views_T_cuda_with_state(bound.state, x, interpret=True),
     ):
-        with pytest.raises(ValueError, match=context):
+        with pytest.raises(ValueError, match="forward_project_views_T_cuda_with_state"):
             call(volume[:1])
         with pytest.raises(cuda_api.CudaProjectorUnsupported, match="volume dtype must be float32"):
             call(volume.astype(jnp.float16))

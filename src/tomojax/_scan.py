@@ -717,4 +717,69 @@ def with_grid(scan: Scan, grid: Grid) -> Scan:
     return replace(scan, geometry=rebuild(scan.geometry, grid=grid))
 
 
-__all__ = ["Scan"]
+@dataclass(frozen=True)
+class Reconstruction:
+    """A reconstructed volume, the scan it came from and how it was made.
+
+    ``volume`` is ``(nx, ny, nz)`` on :attr:`grid`, in the reciprocal of the
+    geometry's length unit (a NumPy or JAX array; ``np.asarray`` gives NumPy).
+    ``info`` records the method's settings.
+
+    Parameters
+    ----------
+    volume : numpy.ndarray or jax.Array
+        Volume in (x, y, z) order and reciprocal geometry-length units.
+    scan : Scan
+        Input scan, including the output grid and any inferred geometry.
+    method : str
+        Reconstruction method used.
+    info : mapping
+        Resolved method settings and solver records.
+    """
+
+    volume: np.ndarray | jax.Array
+    scan: Scan
+    method: str
+    info: Mapping[str, object]
+
+    @property
+    def grid(self) -> Grid:
+        """The grid the volume is on, the scan's.
+
+        Returns
+        -------
+        Grid
+            Reconstruction grid carried by the scan.
+        """
+        return self.scan.grid
+
+
+@dataclass(frozen=True)
+class Alignment:
+    """The result of :func:`align`.
+
+    ``volume`` is the reconstruction the alignment converged with. ``scan`` is
+    the input scan with the estimated geometry and per-view poses applied:
+    reconstruct it, align it again or save it. ``poses`` are its ``(views, 6)``
+    poses (see :attr:`Scan.poses`), always a table, zero where nothing moved;
+    ``info`` is the solver's record.
+
+    Parameters
+    ----------
+    volume : numpy.ndarray or jax.Array
+        Reconstruction used by the alignment, in (x, y, z) order.
+    scan : Scan
+        Scan with estimated geometry and per-view corrections applied.
+    poses : numpy.ndarray
+        Complete (views, 6) correction table, zero where nothing moved.
+    info : mapping
+        Solver record and resolved alignment settings.
+    """
+
+    volume: np.ndarray | jax.Array
+    scan: Scan
+    poses: np.ndarray
+    info: Mapping[str, object]
+
+
+__all__ = ["Alignment", "Reconstruction", "Scan"]

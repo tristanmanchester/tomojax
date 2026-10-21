@@ -23,8 +23,8 @@ from tomojax.backends.host_stream import (
 from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import (
-    forward_project_view_T,
     get_detector_grid_device,
+    project_views,
     sum_backproject_views_T,
 )
 from tomojax.core.validation import (
@@ -499,21 +499,17 @@ def _make_spdhg_chunk_operators(
         )
 
     def project_chunk(vol: jnp.ndarray, _start: jnp.ndarray, T_chunk: jnp.ndarray) -> jnp.ndarray:
-        vm_project = jax.vmap(
-            lambda T, v: forward_project_view_T(
-                T,
-                grid,
-                detector,
-                v,
-                use_checkpoint=cfg.checkpoint_projector,
-                unroll=int(cfg.projector_unroll),
-                gather_dtype=cfg.gather_dtype,
-                det_grid=runtime.detector_grid,
-                ray_integrator=cfg.ray_integrator,
-            ),
-            in_axes=(0, None),
+        return project_views(
+            T_chunk,
+            grid,
+            detector,
+            vol,
+            use_checkpoint=cfg.checkpoint_projector,
+            unroll=int(cfg.projector_unroll),
+            gather_dtype=cfg.gather_dtype,
+            det_grid=runtime.detector_grid,
+            ray_integrator=cfg.ray_integrator,
         )
-        return vm_project(T_chunk, vol)
 
     def backproject_chunk(
         images: jnp.ndarray, _start: jnp.ndarray, T_chunk: jnp.ndarray, total: jnp.ndarray

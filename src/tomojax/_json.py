@@ -52,73 +52,59 @@ def normalize_json(
     >>> normalize_json({"angles": np.array([0.0, 90.0]), "missing": float("nan")})
     {'angles': [0.0, 90.0], 'missing': 'nan'}
     """
-    if value is None or isinstance(value, bool | int | str):
-        return value
-    if isinstance(value, float):
-        return value if math.isfinite(value) else str(value)
-    if isinstance(value, Path):
-        return str(value)
-    if namespace and _is_argparse_namespace(value):
-        return normalize_json(
-            vars(value),
-            namespace=namespace,
-            sort_mapping_keys=sort_mapping_keys,
-            catch_to_dict_errors=catch_to_dict_errors,
-        )
-    if is_dataclass(value) and not isinstance(value, type):
-        return normalize_json(
-            asdict(value),
-            namespace=namespace,
-            sort_mapping_keys=sort_mapping_keys,
-            catch_to_dict_errors=catch_to_dict_errors,
-        )
+    options = {
+        "namespace": namespace,
+        "sort_mapping_keys": sort_mapping_keys,
+        "catch_to_dict_errors": catch_to_dict_errors,
+    }
+    scalar = _scalar_json(value)
+    if scalar is not _UNHANDLED:
+        return cast("JsonValue", scalar)
+    plain = _plain_container(value, namespace=namespace)
+    if plain is not _UNHANDLED:
+        return normalize_json(plain, **options)
     if isinstance(value, Mapping):
         items: Iterable[tuple[object, object]] = cast("Mapping[object, object]", value).items()
         if sort_mapping_keys:
             items = sorted(items, key=lambda item: str(item[0]))
-        return {
-            str(k): normalize_json(
-                v,
-                namespace=namespace,
-                sort_mapping_keys=sort_mapping_keys,
-                catch_to_dict_errors=catch_to_dict_errors,
-            )
-            for k, v in items
-        }
+        return {str(k): normalize_json(v, **options) for k, v in items}
     if isinstance(value, tuple | list | set | frozenset):
-        return [
-            normalize_json(
-                v,
-                namespace=namespace,
-                sort_mapping_keys=sort_mapping_keys,
-                catch_to_dict_errors=catch_to_dict_errors,
-            )
-            for v in cast("Iterable[object]", value)
-        ]
+        return [normalize_json(v, **options) for v in cast("Iterable[object]", value)]
+    leaf = _leaf_container(value, catch_to_dict_errors=catch_to_dict_errors)
+    return str(value) if leaf is _UNHANDLED else normalize_json(leaf, **options)
 
+
+def _scalar_json(value: object) -> object:
+    """``value`` when JSON holds it as is, text for a path or a nonfinite float."""
+    if value is None or isinstance(value, bool | int | str):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else str(value)
+    return str(value) if isinstance(value, Path) else _UNHANDLED
+
+
+def _plain_container(value: object, *, namespace: bool) -> object:
+    """An argparse namespace's or a dataclass's fields as a dict, else ``_UNHANDLED``."""
+    if namespace and _is_argparse_namespace(value):
+        return vars(value)
+    if is_dataclass(value) and not isinstance(value, type):
+        return asdict(value)
+    return _UNHANDLED
+
+
+def _leaf_container(value: object, *, catch_to_dict_errors: bool) -> object:
+    """An array's nested lists or an object's ``to_dict()``, else ``_UNHANDLED``."""
     array_value = _normalize_array(value)
     if array_value is not _UNHANDLED:
-        return normalize_json(
-            array_value,
-            namespace=namespace,
-            sort_mapping_keys=sort_mapping_keys,
-            catch_to_dict_errors=catch_to_dict_errors,
-        )
-
+        return array_value
     to_dict = getattr(value, "to_dict", None)
     if callable(to_dict):
         try:
-            return normalize_json(
-                to_dict(),
-                namespace=namespace,
-                sort_mapping_keys=sort_mapping_keys,
-                catch_to_dict_errors=catch_to_dict_errors,
-            )
+            return to_dict()
         except Exception:
             if not catch_to_dict_errors:
                 raise
-
-    return str(value)
+    return _UNHANDLED
 
 
 def drop_none(payload: Mapping[str, object], **normalize_options: bool) -> dict[str, JsonValue]:

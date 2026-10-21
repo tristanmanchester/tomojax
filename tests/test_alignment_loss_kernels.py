@@ -93,8 +93,8 @@ def test_cuda_project_stack_records_unsupported_fallback(
     monkeypatch.setattr(fixed_volume, "resolve_cuda_callable", resolve)
     monkeypatch.setattr(
         fixed_volume,
-        "forward_project_view_T",
-        lambda *_args, **_kwargs: jnp.ones((2, 2), dtype=jnp.float32),
+        "project_views",
+        lambda *_args, **_kwargs: jnp.ones((1, 2, 2), dtype=jnp.float32),
     )
 
     result = fixed_volume.project_stack(

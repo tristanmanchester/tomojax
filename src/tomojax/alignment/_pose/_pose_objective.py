@@ -11,6 +11,7 @@ from tomojax.alignment._geometry.parametrizations import apply_pose_update, appl
 from tomojax.alignment._objectives.fixed_volume import project_and_score_stack
 from tomojax.core.geometry.base import Detector, Geometry, Grid
 from tomojax.core.projector import forward_project_view_T
+from tomojax.core.view_chunks import chunk_schedule
 
 from ._coupled_objective import CoupledObjective, build_coupled_objective
 from ._matching_model import JointRefinement
@@ -28,20 +29,6 @@ class PoseObjectiveBundle:
     ]
     gn_update_all: Callable[[jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]]
     coupled: CoupledObjective | None = None
-
-
-def _objective_chunk_schedule(
-    ctx: _PoseObjectiveContext, i: jnp.ndarray
-) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    i = jnp.asarray(i, dtype=jnp.int32)
-    start = i * jnp.int32(ctx.chunk_size)
-    remaining = jnp.maximum(0, jnp.int32(ctx.n_views) - start)
-    valid = jnp.minimum(jnp.int32(ctx.chunk_size), remaining)
-    shift = jnp.int32(ctx.chunk_size) - valid
-    start_shifted = jnp.maximum(0, start - shift)
-    idx = jnp.arange(ctx.chunk_size, dtype=jnp.int32)
-    vmask = (idx >= (jnp.int32(ctx.chunk_size) - valid)).astype(jnp.float32)
-    return start_shifted, vmask, start_shifted + idx
 
 
 def _objective_apply_vol_mask(ctx: _PoseObjectiveContext, vol: jnp.ndarray) -> jnp.ndarray:
@@ -186,7 +173,9 @@ def _build_manual_loss_and_grad(
             carry: tuple[jnp.ndarray, jnp.ndarray], i: jnp.ndarray
         ) -> tuple[tuple[jnp.ndarray, jnp.ndarray], None]:
             total, grad = carry
-            start_shifted, vmask, view_idx_chunk = _objective_chunk_schedule(ctx, i)
+            start_shifted, vmask, view_idx_chunk = chunk_schedule(
+                i, n_views=ctx.n_views, chunk_size=ctx.chunk_size
+            )
             params_chunk = jax.lax.dynamic_slice_in_dim(pose_params, start_shifted, ctx.chunk_size)
             t_nom_chunk = jax.lax.dynamic_slice_in_dim(
                 ctx.pose_stack, start_shifted, ctx.chunk_size
@@ -254,7 +243,9 @@ def _build_gn_update_all(
             carry: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray], i: jnp.ndarray
         ) -> tuple[tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray], None]:
             system_acc, rhs_acc, loss_acc = carry
-            start_shifted, vmask, view_idx_chunk = _objective_chunk_schedule(ctx, i)
+            start_shifted, vmask, view_idx_chunk = chunk_schedule(
+                i, n_views=ctx.n_views, chunk_size=ctx.chunk_size
+            )
             params_chunk = jax.lax.dynamic_slice_in_dim(pose_params, start_shifted, ctx.chunk_size)
             t_chunk = jax.lax.dynamic_slice_in_dim(ctx.pose_stack, start_shifted, ctx.chunk_size)
             y_chunk = jax.lax.dynamic_slice_in_dim(ctx.projections, start_shifted, ctx.chunk_size)

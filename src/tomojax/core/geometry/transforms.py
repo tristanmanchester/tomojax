@@ -5,6 +5,8 @@ Provides jit-agnostic helpers for geometry composition and conversions.
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 
 
@@ -38,6 +40,24 @@ def invert(T: np.ndarray) -> np.ndarray:
     Ti[:3, :3] = Ri
     Ti[:3, 3] = -Ri @ t
     return Ti
+
+
+def rot_x(angle: Any, *, xp: Any = np) -> Any:
+    """Right-handed rotation about x as a float32 3x3 matrix in array namespace ``xp``."""
+    c, s = xp.cos(angle), xp.sin(angle)
+    return xp.array([[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]], dtype=xp.float32)
+
+
+def rot_y(angle: Any, *, xp: Any = np) -> Any:
+    """Right-handed rotation about y as a float32 3x3 matrix in array namespace ``xp``."""
+    c, s = xp.cos(angle), xp.sin(angle)
+    return xp.array([[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]], dtype=xp.float32)
+
+
+def rot_z(angle: Any, *, xp: Any = np) -> Any:
+    """Right-handed rotation about z as a float32 3x3 matrix in array namespace ``xp``."""
+    c, s = xp.cos(angle), xp.sin(angle)
+    return xp.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], dtype=xp.float32)
 
 
 def rotz(phi: float) -> np.ndarray:

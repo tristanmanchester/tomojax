@@ -77,24 +77,21 @@ def _free_bytes_from_memory_info(info: object) -> int | None:
         mapping = cast("Mapping[str, object]", info)
         for key in ("free", "free_bytes", "bytes_free", "available", "bytes_available"):
             if key in mapping:
-                try:
-                    return int(cast("int", mapping[key]))
-                except (TypeError, ValueError):
-                    return None
+                return _byte_count(mapping[key])
         if "bytes_limit" in mapping and "bytes_in_use" in mapping:
-            try:
-                limit, used = (cast("int", mapping[k]) for k in ("bytes_limit", "bytes_in_use"))
-                return max(0, int(limit) - int(used))
-            except (TypeError, ValueError):
-                return None
+            limit, used = _byte_count(mapping["bytes_limit"]), _byte_count(mapping["bytes_in_use"])
+            return None if limit is None or used is None else max(0, limit - used)
         return None
-
     if isinstance(info, tuple | list) and len(info) >= 1:
-        try:
-            return int(cast("object", info[0]))
-        except (TypeError, ValueError):
-            return None
+        return _byte_count(cast("object", info[0]))
     return None
+
+
+def _byte_count(value: object) -> int | None:
+    try:
+        return int(cast("int", value))
+    except (TypeError, ValueError):
+        return None
 
 
 def _cuda_free_memory_bytes(device: Device) -> int | None:

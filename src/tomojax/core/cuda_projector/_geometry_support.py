@@ -42,21 +42,6 @@ def _ensure_canonical_detector_grid(
         )
 
 
-def _supports_z_integer4(
-    T: jnp.ndarray,
-    grid: Grid,
-    detector: Detector,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
-) -> bool:
-    try:
-        T_host = np.asarray(T, dtype=np.float64)
-    except Exception:
-        return False
-    if T_host.shape != (4, 4):
-        return False
-    return _supports_z_integer4_for_stack(T_host[None], grid, detector, det_grid)
-
-
 def _supports_z_integer4_for_stack(
     T_stack: jnp.ndarray,
     grid: Grid,
@@ -131,6 +116,5 @@ def _supports_parallel_z_rotation_stack(
 __all__ = [
     "_ensure_canonical_detector_grid",
     "_supports_parallel_z_rotation_stack",
-    "_supports_z_integer4",
     "_supports_z_integer4_for_stack",
 ]

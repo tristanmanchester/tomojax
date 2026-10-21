@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import functools
 import logging
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -20,7 +21,7 @@ from tomojax.core.cuda_projector_resolver import resolve_cuda_callable
 from tomojax.core.projector import (
     cone_views,
     cuda_unsupported_exception_type,
-    forward_project_view_T,
+    project_views,
 )
 from tomojax.core.view_chunks import chunk_schedule, chunk_size
 
@@ -250,18 +251,16 @@ def project_stack(
             )
     b = chunk_size(n_views, views_per_batch, default=n_views)
     num_chunks = (n_views + b - 1) // b
-    vm_project = jax.vmap(
-        lambda T: forward_project_view_T(
-            T,
-            grid,
-            detector,
-            volume,
-            use_checkpoint=checkpoint_projector,
-            unroll=int(projector_unroll),
-            gather_dtype=gather_dtype,
-            det_grid=det_grid,
-            ray_integrator=ray_integrator,
-        )
+    vm_project = functools.partial(
+        project_views,
+        grid=grid,
+        detector=detector,
+        volume=volume,
+        use_checkpoint=checkpoint_projector,
+        unroll=int(projector_unroll),
+        gather_dtype=gather_dtype,
+        det_grid=det_grid,
+        ray_integrator=ray_integrator,
     )
 
     def body(
@@ -308,18 +307,16 @@ def project_and_score_stack(
     num_chunks = (n_views + b - 1) // b
     nv, nu = (int(n) for n in targets.shape[1:3])
     loss_mask = getattr(loss_adapter.state, "mask", None)
-    parallel_project = jax.vmap(
-        lambda T: forward_project_view_T(
-            T,
-            grid,
-            detector,
-            volume,
-            use_checkpoint=checkpoint_projector,
-            unroll=int(projector_unroll),
-            gather_dtype=gather_dtype,
-            det_grid=det_grid,
-            ray_integrator=ray_integrator,
-        )
+    parallel_project = functools.partial(
+        project_views,
+        grid=grid,
+        detector=detector,
+        volume=volume,
+        use_checkpoint=checkpoint_projector,
+        unroll=int(projector_unroll),
+        gather_dtype=gather_dtype,
+        det_grid=det_grid,
+        ray_integrator=ray_integrator,
     )
 
     cone_backend = _cone_projector_backend(backend)
