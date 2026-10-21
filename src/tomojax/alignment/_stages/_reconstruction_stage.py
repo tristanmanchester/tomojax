@@ -276,7 +276,7 @@ def _reconstruction_step_stat(
     L_prev: float | None,
 ) -> tuple[OuterStat, float | None]:
     info_mapping = info_rec if isinstance(info_rec, Mapping) else {}
-    requested_backend = str(getattr(cfg, "projector_backend", "jax"))
+    requested_backend = str(getattr(cfg, "backend", "jax"))
     actual_recon_backend = str(info_mapping.get("actual_backend") or "jax")
     fallback_reason = info_mapping.get("fallback_reason")
     stat: OuterStat = {
@@ -395,7 +395,7 @@ def _retry_info_after_nonfinite_core(
         },
         "fallback_reason": "huber_fista_core_nonfinite_retry_public_stream",
         "actual_backend": "jax",
-        "requested_backend": str(getattr(cfg, "projector_backend", "jax")),
+        "requested_backend": str(getattr(cfg, "backend", "jax")),
         "regulariser": str(getattr(cfg, "regulariser", "")),
         "iteration_loss_computed": bool(quality_policy.compute_iteration_loss),
         "data_loss_computed": bool(quality_policy.compute_final_data_loss),
@@ -416,7 +416,7 @@ def _public_fista_info_after_core_bypass(
         "recon_public_fista_fallback": True,
         "fallback_reason": fallback_reason,
         "actual_backend": "jax",
-        "requested_backend": str(getattr(cfg, "projector_backend", "jax")),
+        "requested_backend": str(getattr(cfg, "backend", "jax")),
         "regulariser": str(getattr(cfg, "regulariser", "")),
         "iteration_loss_computed": bool(quality_policy.compute_iteration_loss),
         "data_loss_computed": bool(quality_policy.compute_final_data_loss),
@@ -556,7 +556,7 @@ def _run_public_fista_reconstruction(
     cone = is_cone_beam(step.recon_geometry)
     fista_cfg = FistaConfig(
         projector_model="auto" if cone else "ray",  # cone beams: Joseph, on CUDA if there
-        projector_backend="auto" if cone else "jax",
+        backend="auto" if cone else "jax",
         iterations=scaled_reconstruction_iterations(cfg.iterations, quality_policy),
         tv_weight=cfg.tv_weight,
         regulariser=cfg.regulariser,
@@ -602,7 +602,7 @@ def _resolve_huber_fista_backend_plan(
     T_all: jnp.ndarray,
 ) -> _HuberFistaBackendPlan:
     cfg = step.cfg
-    requested_backend = str(getattr(cfg, "projector_backend", "jax"))
+    requested_backend = str(getattr(cfg, "backend", "jax"))
     actual_backend, fallback_reason = _resolve_reconstruction_projector_backend(
         requested_backend=requested_backend,
         T_all=T_all,

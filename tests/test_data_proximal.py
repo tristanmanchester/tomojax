@@ -182,7 +182,7 @@ def test_weighted_data_extreme_masked_outliers_keep_dense_reconstruction_and_tru
             tv_weight=0,
             log_every=2000,
             projector_model="joseph",
-            projector_backend="jax",
+            backend="jax",
             stream_projections=stream,
         ),
     )

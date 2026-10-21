@@ -68,7 +68,7 @@ def fdk_config(cfg: FBPConfig) -> FDKConfig:
     """Use the same filter and CUDA backend for public FBP on cone beams."""
     from .fdk import FDKConfig
 
-    return FDKConfig(filter=cfg.filter, backend=cfg.backprojector, devices=cfg.devices)
+    return FDKConfig(filter=cfg.filter, backend=cfg.backend, devices=cfg.devices)
 
 
 def _host_fbp(
@@ -94,7 +94,7 @@ def _host_fbp(
         data = np.asarray(projections, np.float32)
         host = FDKHostConfig(slices_per_batch=slab_planes, fdk=fdk_config(cfg))
         return fdk_host(geometry, grid, detector, data, config=host, out=out)
-    host = FBPHostConfig(filter=cfg.filter, scale=cfg.scale, backprojector=cfg.backprojector)
+    host = FBPHostConfig(filter=cfg.filter, scale=cfg.scale, backend=cfg.backend)
     # Slabs are not shared among devices; the first selected one does the work.
     with first_device(cfg):
         return fbp_host(

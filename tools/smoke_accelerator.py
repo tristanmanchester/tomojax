@@ -98,7 +98,7 @@ def main() -> int:
         grid,
         detector,
         volume,
-        projector_backend="jax",
+        backend="jax",
     )
     _ = expected.block_until_ready()
 

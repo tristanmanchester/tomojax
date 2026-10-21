@@ -219,7 +219,7 @@ def test_single_view_cuda_interpret_matches_jax_reference() -> None:
         grid,
         detector,
         volume,
-        projector_backend="jax",
+        backend="jax",
     )
     actual = cuda_api.forward_project_view_T_cuda(
         transform,
@@ -241,7 +241,7 @@ def test_cuda_residual_sse_interpret_matches_jax_reference_loss() -> None:
         grid,
         detector,
         volume,
-        projector_backend="jax",
+        backend="jax",
     )
 
     actual = cuda_api.forward_project_residual_sse_T_cuda(
@@ -281,7 +281,7 @@ def test_single_view_cuda_unsupported_falls_back_to_jax(
         Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0),
         Detector(nu=2, nv=2, du=1.0, dv=1.0),
         jnp.ones((2, 2, 2), dtype=jnp.float32),
-        projector_backend="cuda",
+        backend="cuda",
     )
 
     assert result.shape == (2, 2)
@@ -307,7 +307,7 @@ def test_single_view_cuda_unexpected_errors_propagate(
             Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0),
             Detector(nu=2, nv=2, du=1.0, dv=1.0),
             jnp.ones((2, 2, 2), dtype=jnp.float32),
-            projector_backend="cuda",
+            backend="cuda",
         )
 
 

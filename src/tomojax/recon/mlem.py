@@ -100,7 +100,7 @@ class MLEMConfig:
     views_per_batch : int, optional
         Number of views processed together to bound temporary storage. Default is
         32.
-    projector_backend : ProjectorBackend, optional
+    backend : ProjectorBackend, optional
         Execution backend: "auto", "jax" or "cuda". An explicit accelerator
         request never silently falls back. Default is 'auto'.
     projector_model : ProjectorModel, optional
@@ -112,7 +112,7 @@ class MLEMConfig:
     subsets: int = 1
     support: jax.Array | np.ndarray | None = None
     views_per_batch: int = 32
-    projector_backend: ProjectorBackend = "auto"
+    backend: ProjectorBackend = "auto"
     projector_model: ProjectorModel = "auto"
 
 
@@ -416,7 +416,7 @@ def run_mlem(
     if init_x is not None:
         validate_volume(init_x, grid, context="mlem", name="init_x")
     model, backend = resolve_geometry_projector(
-        geometry, cfg.projector_model, cfg.projector_backend, detector=detector,
+        geometry, cfg.projector_model, cfg.backend, detector=detector,
         det_grid=det_grid, context="mlem",
     )  # fmt: skip
     storage, rows = {}, isinstance(projections, RowReader)

@@ -21,7 +21,7 @@ class AlignmentProfilePolicy:
     ----------
     quality : QualityTier
         Alignment quality tier, "fast" or "reference".
-    projector_backend : ProjectorBackend
+    backend : ProjectorBackend
         Projector implementation, "jax" or "cuda".
     gather_dtype : str
         Precision used for projection gathers.
@@ -38,7 +38,7 @@ class AlignmentProfilePolicy:
     """
 
     quality: QualityTier
-    projector_backend: ProjectorBackend
+    backend: ProjectorBackend
     gather_dtype: str
     regulariser: Regulariser
     reconstruction: str
@@ -69,7 +69,7 @@ def alignment_profile_policy(quality: QualityTier) -> AlignmentProfilePolicy:
     if normalize_quality(quality) == "reference":
         return AlignmentProfilePolicy(
             quality="reference",
-            projector_backend="jax",
+            backend="jax",
             gather_dtype="fp32",
             regulariser="tv",
             reconstruction="fista",
@@ -79,7 +79,7 @@ def alignment_profile_policy(quality: QualityTier) -> AlignmentProfilePolicy:
         )
     return AlignmentProfilePolicy(
         quality="fast",
-        projector_backend="cuda",
+        backend="cuda",
         gather_dtype="auto",
         regulariser="huber_tv",
         reconstruction="fista",
@@ -109,7 +109,7 @@ def profile_policy_from_config(cfg: object) -> AlignmentProfilePolicy:
     """
     return AlignmentProfilePolicy(
         quality=normalize_quality(getattr(cfg, "quality", "fast")),
-        projector_backend=cast("ProjectorBackend", getattr(cfg, "projector_backend", "jax")),
+        backend=cast("ProjectorBackend", getattr(cfg, "backend", "jax")),
         gather_dtype=str(getattr(cfg, "gather_dtype", "fp32")),
         regulariser=cast("Regulariser", getattr(cfg, "regulariser", "tv")),
         reconstruction=str(getattr(cfg, "reconstruction", "fista")),
@@ -150,7 +150,7 @@ def resolve_profiled_cli_defaults(
     defaults = policy.to_dict()
     resolved = dict(current)
     for key in (
-        "projector_backend",
+        "backend",
         "gather_dtype",
         "regulariser",
         "reconstruction",

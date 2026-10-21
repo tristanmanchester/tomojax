@@ -38,7 +38,7 @@ def _fixture():
         iterations=1,
         outer_iterations=1,
         tv_weight=0,
-        projector_backend="jax",
+        backend="jax",
     )
     return scan, cfg, basis, truth
 

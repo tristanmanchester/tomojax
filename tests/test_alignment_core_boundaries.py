@@ -108,7 +108,7 @@ def test_align_config_resolves_stage_dofs() -> None:
         opt_method="lbfgs",
         schedule="pose_dx_dz_after_phi",
         freeze=("dx",),
-        projector_backend="jax",
+        backend="jax",
         gather_dtype="FP32",
         gauge_policy="anchor_mean",
     )

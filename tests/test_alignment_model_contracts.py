@@ -244,7 +244,7 @@ def test_sinogram_real_spectrum_metric_matches_the_full_spectrum(columns):
 
 
 _COR_CONFIG = AlignConfig(
-    outer_iterations=1, iterations=1, tv_weight=0, ray_integrator="joseph", projector_backend="jax"
+    outer_iterations=1, iterations=1, tv_weight=0, ray_integrator="joseph", backend="jax"
 )
 
 
@@ -335,7 +335,7 @@ def test_public_cor_reconstructs_with_the_configured_integrator_and_batches(monk
     seen = []
 
     def record(*args, config, **kwargs):
-        seen.append((config.ray_integrator, config.views_per_batch, config.projector_backend))
+        seen.append((config.ray_integrator, config.views_per_batch, config.backend))
         return fista_tv(*args, config=config, **kwargs)
 
     monkeypatch.setattr("tomojax.alignment._stages._setup_stage.fista_tv", record)

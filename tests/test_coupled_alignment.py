@@ -129,7 +129,7 @@ def test_fp32_cone_joint_update_is_unchanged_with_x64_enabled(backend):
         gn_damping=0.2,
         gn_volume_damping=0.2,
         gather_dtype="fp32",
-        projector_backend=backend,
+        backend=backend,
         w_rot=0.03,
         w_trans=0.02,
     )
@@ -229,7 +229,7 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
         gn_jacobian="central",
         gn_difference_step=0.003 if scan_variant == 0 else np.asarray(0.003),
         ray_integrator=integrator,
-        projector_backend=backend,
+        backend=backend,
         gather_dtype="fp32",
         pose_translation_frame="detector",
         tv_weight=0,
@@ -428,7 +428,7 @@ def _joint_huber_constraints_and_resume(integrator, solver):
         gn_jacobian="central",
         gather_dtype="fp32",
         ray_integrator=integrator,
-        projector_backend="jax",
+        backend="jax",
         tv_weight=0.002,
         outer_iterations=2,
         iterations=2,
@@ -485,7 +485,7 @@ def _small_coupled_context():
     grid, det = Grid(4, 4, 4, 1.0, 1.0, 1.0), Detector(5, 4, 1.0, 1.0)
     geometry = ParallelGeometry(grid, det, [0.0, 60.0, 120.0])
     projections = jnp.asarray(np.random.default_rng(3).uniform(0, 1, (3, 4, 5)), jnp.float32)
-    cfg = AlignConfig(gn_coupling="joint", gather_dtype="fp32", projector_backend="jax")
+    cfg = AlignConfig(gn_coupling="joint", gather_dtype="fp32", backend="jax")
     # Compare placements after an accurate solve, rather than at the loose default CG stop.
     cfg = replace(cfg, gn_damping=0.2, gn_volume_damping=0.2, gn_joint_rtol=1e-6)
     common = dict(
@@ -653,7 +653,7 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
         gn_jacobian="central",
         gn_difference_step=0.003,
         ray_integrator="joseph",
-        projector_backend=backend,
+        backend=backend,
         gather_dtype="fp32",
         pose_translation_frame="detector",
         nonnegative=False,
@@ -727,7 +727,7 @@ def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth, i
         gn_coupling="joint",
         gn_joint_solver=solver,
         ray_integrator=integrator,
-        projector_backend="cuda" if jax.default_backend() == "gpu" else "jax",
+        backend="cuda" if jax.default_backend() == "gpu" else "jax",
         gather_dtype="fp32",
         gn_joint_iterations=5 if integrator == "joseph_cubic" else 100,
         gn_joint_rtol=1e-6,

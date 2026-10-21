@@ -100,7 +100,7 @@ class FixedVolumeProjectionObjective(AlignmentObjective):
     projector_unroll: int = 1
     checkpoint_projector: bool = True
     gather_dtype: str = "fp32"
-    projector_backend: ProjectorBackendInput = "jax"
+    backend: ProjectorBackendInput = "jax"
     require_differentiable_projector: bool = True
     ray_integrator: str = "sampled"
     kind: ObjectiveKind = "fixed_volume"
@@ -154,7 +154,7 @@ class FixedVolumeProjectionObjective(AlignmentObjective):
             checkpoint_projector=self.checkpoint_projector,
             gather_dtype=self.gather_dtype,
             view_indices=jnp.arange(int(self.projections.shape[0]), dtype=jnp.int32),
-            projector_backend=self.projector_backend,
+            backend=self.backend,
             require_differentiable_projector=self.require_differentiable_projector,
             ray_integrator=self.ray_integrator,
         )
@@ -164,7 +164,7 @@ class FixedVolumeProjectionObjective(AlignmentObjective):
             detector=self.detector,
             volume=self.volume,
             det_grid=effective.det_grid,
-            projector_backend=self.projector_backend,
+            backend=self.backend,
             require_differentiable_projector=self.require_differentiable_projector,
             gather_dtype=self.gather_dtype,
             api_surface="alignment.fixed_volume_objective",
@@ -200,13 +200,13 @@ def project_stack(
     projector_unroll: int = 1,
     checkpoint_projector: bool = True,
     gather_dtype: str = "fp32",
-    projector_backend: ProjectorBackendInput = "jax",
+    backend: ProjectorBackendInput = "jax",
     require_differentiable_projector: bool = True,
     ray_integrator: str = "sampled",
     frames: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
     """Project all views for a fixed volume in bounded-size batches."""
-    backend = normalize_projector_backend(projector_backend)
+    backend = normalize_projector_backend(backend)
     n_views = int(pose_stack.shape[0])
     if n_views == 0:
         return jnp.zeros((0, detector.nv, detector.nu), dtype=jnp.float32)
@@ -292,14 +292,14 @@ def project_and_score_stack(
     gather_dtype: str = "fp32",
     view_mask: jnp.ndarray | None = None,
     view_indices: jnp.ndarray | None = None,
-    projector_backend: ProjectorBackendInput = "jax",
+    backend: ProjectorBackendInput = "jax",
     require_differentiable_projector: bool = True,
     loss_rng_key: jnp.ndarray | None = None,
     ray_integrator: str = "sampled",
     frames: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
     """Project and score views in parallel rays, or in cone-beam lab ``frames``."""
-    backend = normalize_projector_backend(projector_backend)
+    backend = normalize_projector_backend(backend)
     n_views = int(pose_stack.shape[0])
     if n_views == 0:
         return jnp.asarray(0.0, dtype=jnp.float32)
@@ -448,7 +448,7 @@ def alignment_projector_backend_provenance(
     detector: Detector,
     volume: jnp.ndarray,
     det_grid: tuple[jnp.ndarray, jnp.ndarray],
-    projector_backend: ProjectorBackendInput,
+    backend: ProjectorBackendInput,
     require_differentiable_projector: bool,
     api_surface: str,
     gather_dtype: str = "fp32",
@@ -456,7 +456,7 @@ def alignment_projector_backend_provenance(
     frames: jnp.ndarray | None = None,
 ) -> BackendProvenance:
     """Report which projector backend is used by an alignment objective."""
-    requested = normalize_projector_backend(projector_backend)
+    requested = normalize_projector_backend(backend)
     if frames is not None:
         actual = _cone_projector_backend(requested)
         reason = None

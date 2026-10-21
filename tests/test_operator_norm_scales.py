@@ -50,7 +50,7 @@ def test_auto_step_fista_recovers_same_one_voxel_image_in_any_length_units(scale
             iterations=1,
             tv_weight=0,
             projector_model=model,
-            projector_backend="jax",
+            backend="jax",
             power_iterations=3,
         ),
     )
@@ -71,9 +71,7 @@ def test_spdhg_auto_steps_use_the_physical_data_norm_without_floors(scale, model
         grid,
         detector,
         jnp.zeros((1, 1, 1)),
-        config=SPDHGConfig(
-            iterations=0, tv_weight=0.1, projector_model=model, projector_backend="jax"
-        ),
+        config=SPDHGConfig(iterations=0, tv_weight=0.1, projector_model=model, backend="jax"),
     )
     # One axis-aligned voxel has A=[scale], with the 5% spectral safety margin.
     np.testing.assert_allclose(info["A_norm"], 1.05 * scale, rtol=3e-6)
@@ -129,7 +127,7 @@ def test_spdhg_zero_combined_operator_has_defined_auto_steps_and_retains_start(t
         detector,
         jnp.ones((1, 1, 1)),
         init_x=jnp.ones((1, 1, 1)),
-        config=SPDHGConfig(iterations=3, tv_weight=tv_weight, projector_backend="jax"),
+        config=SPDHGConfig(iterations=3, tv_weight=tv_weight, backend="jax"),
     )
     np.testing.assert_array_equal(actual, 1)
     assert info["A_norm"] == 0
@@ -153,7 +151,7 @@ def test_spdhg_rejects_nonfinite_estimated_norm_instead_of_returning_nan_iterate
             grid,
             detector,
             jnp.zeros((1, 1, 1)),
-            config=SPDHGConfig(iterations=1, projector_model="joseph", projector_backend="jax"),
+            config=SPDHGConfig(iterations=1, projector_model="joseph", backend="jax"),
         )
 
 
@@ -181,7 +179,7 @@ def test_huber_fista_step_uses_exact_finite_grid_gradient_norm(voxels):
             regulariser="huber_tv",
             huber_delta=2,
             projector_model="joseph",
-            projector_backend="jax",
+            backend="jax",
         ),
     )
     np.testing.assert_allclose(info["lipschitz"], lipschitz, rtol=3e-6)

@@ -14,11 +14,11 @@ from tomojax.recon import FBPConfig, FourierConfig, MLEMConfig, SIRTConfig, api
 CASES = [
     ("fourier", FourierConfig(backend="numpy", slices_per_batch=4)),
     ("fourier", FourierConfig(backend="auto")),
-    ("fbp", FBPConfig(backprojector="jax")),
+    ("fbp", FBPConfig(backend="jax")),
     pytest.param(
         "fourier", FourierConfig(backend="cupy", slices_per_batch=4), marks=pytest.mark.gpu
     ),
-    pytest.param("fbp", FBPConfig(backprojector="cuda"), marks=pytest.mark.gpu),
+    pytest.param("fbp", FBPConfig(backend="cuda"), marks=pytest.mark.gpu),
 ]
 
 
@@ -91,7 +91,7 @@ def test_iterative_slabs_preserve_updates_masks_and_ownership(method, backend, w
     frames = tj.Frames(raw, geometry, white_level=1000)
     support = np.ones((13, 15, 11), bool)
     support[0, :, ::2] = False
-    settings = dict(iterations=2, subsets=3, support=support, projector_backend=backend)
+    settings = dict(iterations=2, subsets=3, support=support, backend=backend)
     cfg = (
         SIRTConfig(lower_bound=0, upper_bound=0.5, **settings)
         if method == "sirt"
@@ -186,7 +186,7 @@ def test_cone_raw_slabs_preserve_acquisition_weights_and_owned_rows(backend):
     )
     requests = []
     frames = replace(eager, counts=Windowed(raw, requests))
-    cfg, step = FBPConfig(backprojector=backend), Stripes(5, varying=True)
+    cfg, step = FBPConfig(backend=backend), Stripes(5, varying=True)
     expected = tj.reconstruct(eager.corrected(step), "fbp", config=cfg).volume
     with tj.reconstruct_slabs(frames, "fbp", config=cfg, corrections=[step]) as slabs:
         collected = list(slabs)
@@ -217,7 +217,7 @@ def test_cone_raw_slab_early_close_keeps_completed_result(backend):
         grid, detector, np.linspace(0, 360, 8, endpoint=False), tj.ConeBeam(30, 45)
     )
     frames = tj.Frames(np.full((8, 21, 9), 500, np.uint16), geometry, white_level=1000)
-    with tj.reconstruct_slabs(frames, "fbp", config=FBPConfig(backprojector=backend)) as slabs:
+    with tj.reconstruct_slabs(frames, "fbp", config=FBPConfig(backend=backend)) as slabs:
         _, retained = next(slabs)
         saved = retained.volume.copy()
     with pytest.raises(StopIteration):

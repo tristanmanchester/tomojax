@@ -46,7 +46,7 @@ def resolve_projector(
     if model not in {"auto", "joseph", "ray"}:
         raise ValueError(f"{context}: projector_model must be 'auto', 'joseph' or 'ray'")
     if backend not in {"auto", "jax", "cuda"}:
-        raise ValueError(f"{context}: projector_backend must be 'auto', 'jax' or 'cuda'")
+        raise ValueError(f"{context}: backend must be 'auto', 'jax' or 'cuda'")
     if model == "auto":
         model = "ray" if det_grid is not None else "joseph"
     if model == "joseph" and det_grid is not None:
@@ -86,7 +86,7 @@ def resolve_geometry_projector(
             "projector_model must be 'auto' or 'joseph'"
         )
     if backend not in {"auto", "jax", "cuda"}:
-        raise ValueError(f"{context}: projector_backend must be 'auto', 'jax' or 'cuda'")
+        raise ValueError(f"{context}: backend must be 'auto', 'jax' or 'cuda'")
     cuda = use_cuda_cone()
     if backend == "auto":
         backend = "cuda" if cuda else "jax"

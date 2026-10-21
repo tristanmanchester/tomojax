@@ -110,7 +110,7 @@ def test_half_data_pipeline_preserves_pose_corrections_and_physical_spacing():
         rng.normal(size=(len(angles), 8, 12)).astype(np.float32),
         tj.ParallelGeometry(grid, detector, angles),
     ).with_poses(poses)
-    config = FBPConfig(backprojector="jax")
+    config = FBPConfig(backend="jax")
     region = (slice(None), slice(None), slice(1, -1))
     result = half_dataset_fsc(scan, config=config, taper=0, region=region)
     expected = [

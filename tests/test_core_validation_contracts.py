@@ -45,7 +45,7 @@ def test_backend_policy_normalizes_aliases_and_reports_fallback_status() -> None
         "eligible_for_speed_claim": False,
     }
 
-    with pytest.raises(ValueError, match="projector_backend must be one of"):
+    with pytest.raises(ValueError, match="backend must be one of"):
         normalize_projector_backend("pallas")
 
 

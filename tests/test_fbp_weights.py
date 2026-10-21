@@ -253,7 +253,7 @@ def test_tilted_fbp_recovers_every_measured_frequency(span: float, n_views: int,
             grid,
             detector,
             jnp.asarray(projections),
-            config=FBPConfig(backprojector="jax"),
+            config=FBPConfig(backend="jax"),
         )
     )
     reference = measured_truth(truth, poses)
@@ -282,7 +282,7 @@ def test_repeated_laminography_exposures_equal_their_mean_and_preserve_physical_
     repeated_geometry = LaminographyGeometry(
         grid, detector, np.repeat(geometry.angles, 3)[order], tilt_deg=30
     )
-    cfg = FBPConfig(backprojector=backend)
+    cfg = FBPConfig(backend=backend)
     expected = np.asarray(fbp(geometry, grid, detector, averaged, config=cfg))
     actual = np.asarray(fbp(repeated_geometry, grid, detector, repeated[order], config=cfg))
     assert np.linalg.norm(actual - expected) / np.linalg.norm(expected) < 2e-6

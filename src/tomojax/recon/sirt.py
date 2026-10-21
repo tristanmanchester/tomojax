@@ -79,7 +79,7 @@ class SIRTConfig:
     views_per_batch : int, optional
         Number of views processed together to bound temporary storage. Default is
         64.
-    projector_backend : ProjectorBackend, optional
+    backend : ProjectorBackend, optional
         Execution backend: "auto", "jax" or "cuda". An explicit accelerator
         request never silently falls back. Default is 'auto'.
     projector_model : ProjectorModel, optional
@@ -95,7 +95,7 @@ class SIRTConfig:
     upper_bound: float | None = None
     support: jax.Array | np.ndarray | None = None
     views_per_batch: int = 64
-    projector_backend: ProjectorBackend = "auto"
+    backend: ProjectorBackend = "auto"
     projector_model: ProjectorModel = "auto"
 
 
@@ -455,7 +455,7 @@ class SIRTCall:
         model, backend = resolve_geometry_projector(
             geometry,
             cfg.projector_model,
-            cfg.projector_backend,
+            cfg.backend,
             detector=detector,
             det_grid=det_grid,
             context="sirt",

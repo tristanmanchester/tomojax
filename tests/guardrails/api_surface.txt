@@ -316,7 +316,7 @@ class tomojax.recon.CGLSConfig(
         atol: 'float' = 0.0,
         damping: 'float' = 0.0,
         views_per_batch: 'int' = 64,
-        projector_backend: "Literal['auto', 'jax', 'cuda']" = 'auto',
+        backend: "Literal['auto', 'jax', 'cuda']" = 'auto',
         projector_model: "Literal['auto', 'ray', 'joseph']" = 'auto',
         joseph_interpolation: "Literal['linear', 'cubic']" = 'linear',
         gradient_damping: 'float' = 0.0,
@@ -343,7 +343,7 @@ class tomojax.recon.FBPConfig(
         filter: 'str' = 'ramp',
         scale: 'float | None' = None,
         views_per_batch: 'int' = 1,
-        backprojector: "Literal['auto', 'jax', 'cuda']" = 'auto',
+        backend: "Literal['auto', 'jax', 'cuda']" = 'auto',
         devices: 'Device | Sequence[Device] | None' = None,
     ) -> None
 class tomojax.recon.FBPHostConfig(
@@ -352,7 +352,7 @@ class tomojax.recon.FBPHostConfig(
         views_per_batch: 'int' = 32,
         filter: 'str' = 'ramp',
         scale: 'float | None' = None,
-        backprojector: "Literal['auto', 'jax', 'cuda']" = 'auto',
+        backend: "Literal['auto', 'jax', 'cuda']" = 'auto',
     ) -> None
 class tomojax.recon.FDKConfig(
         *,
@@ -386,7 +386,7 @@ class tomojax.recon.FistaConfig(
         upper_bound: 'float | None' = None,
         ray_integrator: 'str' = 'sampled',
         projector_model: 'ProjectorModel' = 'auto',
-        projector_backend: 'ProjectorBackend' = 'auto',
+        backend: 'ProjectorBackend' = 'auto',
         stream_projections: 'bool | None' = None,
         devices: 'Device | Sequence[Device] | None' = None,
     ) -> None
@@ -401,7 +401,7 @@ class tomojax.recon.MLEMConfig(
         subsets: 'int' = 1,
         support: 'jax.Array | np.ndarray | None' = None,
         views_per_batch: 'int' = 32,
-        projector_backend: 'ProjectorBackend' = 'auto',
+        backend: 'ProjectorBackend' = 'auto',
         projector_model: 'ProjectorModel' = 'auto',
     ) -> None
 class tomojax.recon.SIRTConfig(
@@ -414,7 +414,7 @@ class tomojax.recon.SIRTConfig(
         upper_bound: 'float | None' = None,
         support: 'jax.Array | np.ndarray | None' = None,
         views_per_batch: 'int' = 64,
-        projector_backend: 'ProjectorBackend' = 'auto',
+        backend: 'ProjectorBackend' = 'auto',
         projector_model: 'ProjectorModel' = 'auto',
     ) -> None
 class tomojax.recon.SPDHGConfig(
@@ -434,7 +434,7 @@ class tomojax.recon.SPDHGConfig(
         gather_dtype: 'str' = 'fp32',
         ray_integrator: 'str' = 'sampled',
         projector_model: 'ProjectorModel' = 'auto',
-        projector_backend: 'ProjectorBackend' = 'auto',
+        backend: 'ProjectorBackend' = 'auto',
         nonnegative: 'bool' = False,
         support: 'jnp.ndarray | None' = None,
         log_every: 'int' = 10,
@@ -644,7 +644,7 @@ class tomojax.alignment.AlignConfig(
         projector_unroll: 'int' = 1,
         checkpoint_projector: 'bool' = True,
         gather_dtype: 'str' = 'auto',
-        projector_backend: 'ProjectorBackendInput' = 'cuda',
+        backend: 'ProjectorBackendInput' = 'cuda',
         ray_integrator: "Literal['sampled', 'exact', 'joseph', 'joseph_cubic']" = 'sampled',
         opt_method: 'str' = 'gn',
         gn_damping: 'float' = 0.001,

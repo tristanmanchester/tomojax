@@ -170,7 +170,7 @@ class AlignConfig:
         Default is True.
     gather_dtype : str, optional
         Reference gather precision: "auto", "fp32", "fp16" or "bf16". Default is 'auto'.
-    projector_backend : ProjectorBackendInput, optional
+    backend : ProjectorBackendInput, optional
         Projector implementation: "jax" or "cuda". Default is 'cuda'.
     ray_integrator : Literal['sampled', 'exact', 'joseph', 'joseph_cubic'], optional
         Ray model: "sampled", "exact", "joseph" or "joseph_cubic". Default is 'sampled'.
@@ -276,7 +276,7 @@ class AlignConfig:
     --------
     >>> from tomojax.alignment import AlignConfig
     >>> config = AlignConfig(quality="reference", iterations=5)
-    >>> config.projector_backend
+    >>> config.backend
     'jax'
     """
 
@@ -302,7 +302,7 @@ class AlignConfig:
     projector_unroll: int = 1
     checkpoint_projector: bool = True
     gather_dtype: str = "auto"
-    projector_backend: ProjectorBackendInput = "cuda"
+    backend: ProjectorBackendInput = "cuda"
     ray_integrator: Literal["sampled", "exact", "joseph", "joseph_cubic"] = field(
         default="sampled", kw_only=True
     )
@@ -378,7 +378,7 @@ class AlignConfig:
         self.stage_quality_tier = self.quality
         if self.quality == "reference":
             policy = alignment_profile_policy(self.quality)
-            self.projector_backend = policy.projector_backend
+            self.backend = policy.backend
             self.gather_dtype = policy.gather_dtype
             self.regulariser = policy.regulariser
             self.reconstruction = cast("Reconstruction", policy.reconstruction)
@@ -393,7 +393,7 @@ class AlignConfig:
             )
 
     def _normalize_backend_options(self) -> None:
-        self.projector_backend = normalize_projector_backend(self.projector_backend)
+        self.backend = normalize_projector_backend(self.backend)
         self.gather_dtype = str(self.gather_dtype).strip().lower()
 
     def _normalize_optimizer_options(self) -> None:

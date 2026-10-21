@@ -452,7 +452,7 @@ def cgls(
             raise ValueError(f"cgls: {name} must be finite and nonnegative")
     validate_model(cfg)
     model, backend = resolve_geometry_projector(
-        geometry, cfg.projector_model, cfg.projector_backend,
+        geometry, cfg.projector_model, cfg.backend,
         detector=detector, det_grid=det_grid, context="cgls",
     )  # fmt: skip
     if isinstance(model, ConeModel) and cfg.joseph_interpolation != "linear":

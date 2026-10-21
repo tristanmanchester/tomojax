@@ -71,7 +71,7 @@ def test_underdetermined_cgls_preserves_initial_null_component(
             iterations=100,
             rtol=1e-7,
             views_per_batch=1,
-            projector_backend=backend,
+            backend=backend,
             projector_model=model,
             joseph_interpolation=interpolation,
         ),
@@ -128,7 +128,7 @@ def test_cgls_matches_dense_lstsq_with_tail_batches(stream, damping, warm_start)
             rtol=1e-7,
             damping=damping,
             views_per_batch=3,
-            projector_backend="jax",
+            backend="jax",
             stream_projections=stream,
         ),
     )
@@ -162,7 +162,7 @@ def test_unattainable_tolerance_stops_at_roundoff_without_diverging():
                 rtol=0,
                 damping=0.7,
                 views_per_batch=3,
-                projector_backend="jax",
+                backend="jax",
             ),
         )
         np.testing.assert_allclose(volume.ravel(), expected, rtol=2e-4, atol=3e-5)
@@ -207,7 +207,7 @@ def test_changed_data_geometry_and_budget_reuse_compiled_solver():
                 projector_model="ray",
                 iterations=iterations,
                 views_per_batch=3,
-                projector_backend="jax",
+                backend="jax",
             ),
         )
         np.testing.assert_allclose(result.ravel(), truth, rtol=2e-4, atol=2e-5)
@@ -225,7 +225,7 @@ def test_changed_data_geometry_and_budget_reuse_compiled_solver():
         CGLSConfig(rtol=-0.1),
         CGLSConfig(damping=np.inf),
         CGLSConfig(atol=np.nan),
-        CGLSConfig(projector_backend="invalid"),
+        CGLSConfig(backend="invalid"),
     ],
 )
 def test_cgls_rejects_invalid_configuration(bad_config):
@@ -263,7 +263,7 @@ def test_cuda_cgls_matches_dense_damped_solution():
             rtol=1e-7,
             damping=damping,
             views_per_batch=3,
-            projector_backend="cuda",
+            backend="cuda",
         ),
     )
     np.testing.assert_allclose(actual.ravel(), expected, rtol=3e-4, atol=3e-5)
@@ -306,7 +306,7 @@ def test_bright_region_does_not_hide_weak_region_updates(backend, model):
             rtol=1e-6,
             views_per_batch=5,
             projector_model=model,
-            projector_backend=backend,
+            backend=backend,
         ),
     )
     np.testing.assert_array_equal(np.asarray(actual)[:, :, 0], initial[:, :, 0])
@@ -333,7 +333,7 @@ def test_cancellation_estimate_does_not_stop_decreasing_normal_residual():
             lambda t, x: _operators(t, grid, detector, None, "jax", 5, "joseph")[0](x)
         )
         data = project(poses, jnp.asarray(truth))
-        config = CGLSConfig(rtol=1e-7, projector_backend="jax", views_per_batch=5)
+        config = CGLSConfig(rtol=1e-7, backend="jax", views_per_batch=5)
         actual, info = cgls(geometry, grid, detector, data, init_x=initial, config=config)
     np.testing.assert_array_equal(np.asarray(actual)[:, :, 0], initial[:, :, 0])
     np.testing.assert_allclose(np.asarray(actual)[:, :, 1], truth[:, :, 1], rtol=2e-4, atol=1e-7)
@@ -373,7 +373,7 @@ def test_auto_streaming_reserves_volume_state(monkeypatch):
     for size, expected in [(3, "cgls"), (8, "streamed_normal_equations")]:
         grid = Grid(size, size, size, 1, 1, 1)
         geometry = ConeGeometry(grid, detector, [0, 60, 120], ConeBeam(30, 50))
-        config = CGLSConfig(iterations=2, projector_backend="jax")
+        config = CGLSConfig(iterations=2, backend="jax")
         automatic, info = cgls(geometry, grid, detector, data, config=config)
         assert info["formulation"] == expected
         resident, info = cgls(
@@ -412,7 +412,7 @@ g, d = Grid(4, 4, 3, 1, 1, 1), Detector(9, 7, 1, 1)
 geometry = LaminographyGeometry(g, d, np.linspace(0, 180, 7, endpoint=False), tilt_deg=23)
 x, info = cgls(geometry, g, d, np.zeros((7, 7, 9), np.float32),
     init_x=np.ones((4, 4, 3), np.float32),
-    config=CGLSConfig(iterations=2, projector_backend='cuda', views_per_batch=3))
+    config=CGLSConfig(iterations=2, backend='cuda', views_per_batch=3))
 json.dumps(info, allow_nan=False)
 assert 'jax' not in sys.modules and info['execution_backend'] == 'cupy'
 assert isinstance(x, np.ndarray) and np.isfinite(x).all() and np.linalg.norm(x) < 7
@@ -455,7 +455,7 @@ def test_native_cuda_cgls_matches_independent_damped_system(tilt):
         d,
         data,
         config=CGLSConfig(
-            iterations=100, rtol=1e-6, damping=0.3, projector_backend="cuda", views_per_batch=3
+            iterations=100, rtol=1e-6, damping=0.3, backend="cuda", views_per_batch=3
         ),
     )
     assert info["execution_backend"] == "cupy"

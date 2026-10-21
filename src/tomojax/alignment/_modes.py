@@ -43,7 +43,7 @@ MODES: tuple[AlignmentMode, ...] = ("pose", "cor", "cor-then-pose", "full")
 
 _SCHEDULES = {"cor": "cor", "cor-then-pose": "cor_then_pose", "full": "setup_safe"}
 _PROFILE_KEYS = (
-    "projector_backend",
+    "backend",
     "gather_dtype",
     "regulariser",
     "reconstruction",

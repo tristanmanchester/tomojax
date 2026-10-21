@@ -136,7 +136,7 @@ class _FistaResult:
 class FistaConfig:
     """Configuration for public FISTA/TV reconstruction.
 
-    ``projector_model``/``projector_backend`` follow :class:`CGLSConfig`: ``"auto"``
+    ``projector_model``/``backend`` follow :class:`CGLSConfig`: ``"auto"``
     uses batched Joseph (also for ``ray_integrator="joseph"``), with CUDA on CUDA.
     Explicit grids/exact integration use the reference path, alone honouring
     ``gather_dtype``, ``projector_unroll``, ``checkpoint_projector`` and ``grad_mode``.
@@ -225,7 +225,7 @@ class FistaConfig:
     projector_model : ProjectorModel, optional
         Projection model: "auto", "ray" or "joseph". Auto selects Joseph unless an
         explicit detector grid requires rays. Default is 'auto'.
-    projector_backend : ProjectorBackend, optional
+    backend : ProjectorBackend, optional
         Execution backend: "auto", "jax" or "cuda". An explicit accelerator
         request never silently falls back. Default is 'auto'.
     stream_projections : bool | None, optional
@@ -258,7 +258,7 @@ class FistaConfig:
     upper_bound: float | None = None
     ray_integrator: str = "sampled"
     projector_model: ProjectorModel = "auto"
-    projector_backend: ProjectorBackend = "auto"
+    backend: ProjectorBackend = "auto"
     stream_projections: bool | None = None
     devices: Device | Sequence[Device] | None = None  # kept as a tuple
 
@@ -616,7 +616,7 @@ def _batched_projector(
     detector: Detector | None = None,
 ) -> tuple[str | ConeModel, str, int] | None:
     """Choose batched operators, or None for the ray-model reference path."""
-    model, backend = cfg.projector_model, cfg.projector_backend
+    model, backend = cfg.projector_model, cfg.backend
     requested = 64 if cfg.views_per_batch is None else int(cfg.views_per_batch)
     if is_cone_beam(geometry):
         if cfg.ray_integrator == "exact":
@@ -634,7 +634,7 @@ def _batched_projector(
         if model == "joseph" or backend == "cuda":
             raise ValueError(
                 "fista_tv: explicit detector grids and exact integration require "
-                "projector_model='ray' and projector_backend='jax'"
+                "projector_model='ray' and backend='jax'"
             )
         return None
     model, backend = resolve_projector(model, backend, context="fista_tv")

@@ -130,7 +130,7 @@ def test_public_lbfgs_reuses_problem_across_volumes_and_motion_models(pose_model
         lipschitz=100.0,
         opt_method="lbfgs",
         lbfgs_maxiter=2,
-        projector_backend="jax",
+        backend="jax",
         gather_dtype="fp32",
         views_per_batch=2,
         loss=L2LossSpec(),

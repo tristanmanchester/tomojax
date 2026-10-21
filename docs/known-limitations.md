@@ -112,7 +112,7 @@ listed with how to check a result in the
   (`det_grid`), FBP uses the ray-model adjoint, uniform `pi / n` weights and the
   supplied detector support.
 - CUDA projector paths are optional accelerator backends. Parallel FBP selects
-  CUDA C kernels automatically on CUDA; `FBPConfig(backprojector="jax")` selects JAX.
+  CUDA C kernels automatically on CUDA; `FBPConfig(backend="jax")` selects JAX.
   Reference/JAX paths and independent analytic data both validate correctness.
 - `fourier_reconstruct` is an opt-in, non-differentiable Fourier-slice inverse
   for built-in parallel half-turn scans, including nonuniform encoder angles,

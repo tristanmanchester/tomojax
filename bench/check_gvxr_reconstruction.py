@@ -59,7 +59,7 @@ def check_fixture(path: Path, iterations: int) -> dict:
                         iterations=iterations,
                         rtol=0.0,
                         views_per_batch=len(data["poses"]),
-                        projector_backend="cuda",
+                        backend="cuda",
                         projector_model=method,
                     ),
                 )
