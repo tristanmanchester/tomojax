@@ -3,7 +3,7 @@ from __future__ import annotations
 from itertools import product
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import h5py
 import numpy as np
@@ -404,7 +404,7 @@ def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
     volume_axes_attr: str | None = None
 
     with h5py.File(path, "r") as f:
-        entry = f["/entry"]
+        entry = cast("h5py.Group", f["/entry"])
         det_grp = _detector_group(entry)
         if det_grp is not None and "data" in det_grp:
             where = "/entry/instrument/detector/data"
@@ -459,7 +459,7 @@ def _volume_in_internal_axes(
             _axes_log_warning(
                 "Ignoring malformed volume_axes_order=%r on %s", volume_axes_attr, path
             )
-    disk_axes = attr_norm or infer_disk_axes(volume_raw.shape, grid_hint)
+    disk_axes = attr_norm or infer_disk_axes(volume_raw.shape, cast("Any", grid_hint))
     source = "attr" if attr_norm else "heuristic"
     volume_np = np.asarray(volume_raw)
     if disk_axes is None:
@@ -500,28 +500,9 @@ def validate_nxtomo(path: str) -> ValidationReport:
             if "/entry" not in f:
                 report["issues"].append("Missing /entry")
                 return report
-            e = f["/entry"]
-            definition = _attr_to_str(e.attrs.get("definition"))
-            if definition != "NXtomo":
-                report["issues"].append("entry/definition must be 'NXtomo'")
-            # Required datasets
-            if "instrument/detector/data" not in e:
-                report["issues"].append("Missing instrument/detector/data")
-            angle_path = next((p for p in ROTATION_ANGLE_PATHS if p in f), None)
-            if angle_path is None:
-                report["issues"].append("Missing sample rotation_angle")
-            if "instrument/detector/image_key" not in e:
-                report["issues"].append("Missing instrument/detector/image_key")
-            if "sample" not in e or "name" not in e["sample"]:
-                report["issues"].append("Missing sample/name")
-            # Basic shapes
-            n_views = None
-            if "instrument/detector/data" in e:
-                d = e["instrument/detector/data"]
-                if d.ndim != 3:
-                    report["issues"].append("instrument/detector/data must be 3D (n_views, nv, nu)")
-                else:
-                    n_views = d.shape[0]
+            e = cast("h5py.Group", f["/entry"])
+            issues, angle_path, n_views = _required_entry_issues(f, e)
+            report["issues"].extend(issues)
             if "instrument/detector/image_key" in e:
                 report["issues"].extend(
                     _image_key_issues(
@@ -537,6 +518,30 @@ def validate_nxtomo(path: str) -> ValidationReport:
     except OSError as exc:
         report["issues"].append(f"Unable to read HDF5 file: {exc}")
     return report
+
+
+def _required_entry_issues(f: h5py.File, e: h5py.Group) -> tuple[list[str], str | None, int | None]:
+    """Missing or misshapen required NXtomo members, the angle path and the view count."""
+    issues = []
+    if _attr_to_str(e.attrs.get("definition")) != "NXtomo":
+        issues.append("entry/definition must be 'NXtomo'")
+    if "instrument/detector/data" not in e:
+        issues.append("Missing instrument/detector/data")
+    angle_path = next((p for p in ROTATION_ANGLE_PATHS if p in f), None)
+    if angle_path is None:
+        issues.append("Missing sample rotation_angle")
+    if "instrument/detector/image_key" not in e:
+        issues.append("Missing instrument/detector/image_key")
+    if "sample" not in e or "name" not in e["sample"]:
+        issues.append("Missing sample/name")
+    n_views = None
+    if "instrument/detector/data" in e:
+        d = e["instrument/detector/data"]
+        if d.ndim != 3:
+            issues.append("instrument/detector/data must be 3D (n_views, nv, nu)")
+        else:
+            n_views = d.shape[0]
+    return issues, angle_path, n_views
 
 
 def _image_key_issues(image_key: h5py.Dataset, *, frames: int | None) -> list[str]:

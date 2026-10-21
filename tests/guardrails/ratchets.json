@@ -60,9 +60,6 @@
     "pyright: ignore": 14
   },
   "complex_functions": [
-    "src/tomojax/_data/_io_nxtomo.py::C901::validate_nxtomo",
-    "src/tomojax/_json.py::C901::normalize_json",
-    "src/tomojax/_json.py::PLR0911::normalize_json",
     "src/tomojax/alignment/_config.py::C901::_normalize_optimizer_options",
     "src/tomojax/alignment/_config.py::PLR0912::_normalize_optimizer_options",
     "src/tomojax/alignment/_model/schedules.py::C901::resolve_alignment_schedule",
@@ -91,14 +88,14 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "type_errors": {
-    "reportArgumentType": 269,
+    "reportArgumentType": 259,
     "reportAssignmentType": 2,
-    "reportAttributeAccessIssue": 116,
+    "reportAttributeAccessIssue": 114,
     "reportCallIssue": 12,
     "reportGeneralTypeIssues": 7,
     "reportIndexIssue": 6,
     "reportInvalidTypeForm": 1,
-    "reportOperatorIssue": 4,
+    "reportOperatorIssue": 2,
     "reportOptionalCall": 2,
     "reportOptionalMemberAccess": 8,
     "reportOptionalSubscript": 1,
