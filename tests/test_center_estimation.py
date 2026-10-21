@@ -9,8 +9,8 @@ import tomojax as tj
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 
 
-def _scan(*, pitch=0.8, views=180):
-    angles = 350 + np.linspace(0, 180, views, endpoint=False)
+def _scan(*, pitch=0.8, views=180, span=180):
+    angles = 350 + np.linspace(0, span, views, endpoint=False)
     detector = Detector(64, 8, pitch, 1.3, (2.7, -4.2))
     grid = Grid(80, 80, 8, pitch, pitch, 1.3, vol_center=(0, 0, -4.2))
     true_u = -5.25 * pitch
@@ -36,6 +36,27 @@ def _scan(*, pitch=0.8, views=180):
         true_u,
         truth,
     )
+
+
+def test_encoder_variations_do_not_concentrate_centre_pairs_in_one_sector():
+    from tomojax.alignment.api import estimate_center
+
+    scan, true_u, _ = _scan(views=360, span=360)
+    angles = scan.angles.copy()
+    angles[180:] += np.linspace(0, 0.005, 180)
+    selected = []
+
+    class Rows:
+        shape = scan.projections.shape
+
+        def __getitem__(self, key):
+            selected.extend(key[0].ravel())
+            return scan.projections[key]
+
+    result = estimate_center(replace(scan.geometry, angles=angles), Rows())
+    directions = np.sort(angles[selected] % 180)
+    assert np.max(np.diff(np.r_[directions, directions[0] + 180])) < 20
+    assert abs(result.detector.center[0] - true_u) < 0.3 * scan.detector.du
 
 
 def test_estimate_center_returns_the_scan_with_its_physical_centre():

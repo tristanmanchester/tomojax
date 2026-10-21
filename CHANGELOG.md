@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+Centre estimation spreads opposing view pairs across the scan instead of
+concentrating them in one sector because of small encoder-angle variations.
+
 Whole-row transmission corrections run before the logarithm in batched and
 streamed-row workflows; detector binning averages the corrected line integrals.
 

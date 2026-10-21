@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from tomojax.geometry import Geometry
 
 
-def _opposite_pairs(angles: np.ndarray) -> list[tuple[int, int, float]]:
+def _opposite_pairs(angles: np.ndarray, width: int) -> list[tuple[int, int, float]]:
     """At most sixteen uniformly distributed near-opposite view pairs."""
     angles = np.mod(np.asarray(angles, np.float64), 360)
     if len(angles) < 2:
@@ -48,14 +48,24 @@ def _opposite_pairs(angles: np.ndarray) -> list[tuple[int, int, float]]:
             pairs[pair] = float(error)
     if not pairs:
         return []
-    # Prefer genuinely opposing views over more numerous angularly mismatched
-    # endpoints. Equal errors differ slightly when angles are stored as float32.
+    # Small encoder variations must not concentrate all evidence in one sector.
+    # Admit pairs within half a detector-edge pixel of the best angular match:
+    # radius (width / 2) times the extra angle is at most half a pixel.
+    # Local angular resampling below removes the remaining mismatch.
     best = min(pairs.values())
+    tolerance = np.rad2deg(1.0 / width)
     ordered = sorted(
-        (p for p, error in pairs.items() if error <= best + 1e-4),
+        (p for p, error in pairs.items() if error <= best + tolerance),
         key=lambda p: (angles[p[0]], angles[p[1]]),
     )
-    picks = np.linspace(0, len(ordered) - 1, min(16, len(ordered))).round().astype(int)
+    # Spread the evidence in angle, not in acquisition density.
+    directions = np.asarray([angles[p[0]] for p in ordered])
+    targets = np.linspace(directions[0], directions[-1], min(16, len(ordered)))
+    right = np.clip(np.searchsorted(directions, targets), 0, len(ordered) - 1)
+    left = np.maximum(right - 1, 0)
+    picks = np.unique(
+        np.where(targets - directions[left] <= directions[right] - targets, left, right)
+    )
     return [(*ordered[i], pairs[ordered[i]]) for i in picks]
 
 
@@ -76,9 +86,10 @@ def _angular_sample(angles: np.ndarray, index: int, shift: float) -> list[tuple[
 
 def _sample_pairs(
     angles: np.ndarray,
+    width: int,
 ) -> list[tuple[list[tuple[int, float]], list[tuple[int, float]], float]]:
     pairs = []
-    for i, j, error in _opposite_pairs(angles):
+    for i, j, error in _opposite_pairs(angles, width):
         # Share the interpolation distance between both ends instead of treating
         # a nearly opposite pair as exact (which confounds angle and centre).
         delta = float((angles[j] - angles[i]) % 360 - 180)
@@ -124,9 +135,11 @@ def estimate_center(geometry: Geometry, projections: np.ndarray | jax.Array) -> 
     Opposing projections agree after detector-u reflection and a shift of twice
     the centre offset. Gradient correlations of up to 64 corresponding rows are summed,
     retaining signed phase contrast rather than assuming positive absorption.
-    At most sixteen near-opposite pairs (within two degrees) and their angular
-    neighbors are read. Linear angular resampling removes the mismatch. Geometry
-    only: nothing is reconstructed. Non-axial and posed geometries raise.
+    At most sixteen near-opposite pairs (within two degrees), spread across the
+    scan, and their angular neighbors are read. Pairs within half a detector-edge
+    pixel of the best angular match are eligible. Linear angular resampling
+    removes the mismatch. Nothing is reconstructed. Non-axial and posed
+    geometries raise.
 
     Parameters
     ----------
@@ -152,8 +165,8 @@ def estimate_center(geometry: Geometry, projections: np.ndarray | jax.Array) -> 
     validate_projection_stack(
         projections, geometry.detector, geometry=geometry, context="estimate_center"
     )
-    pairs = _sample_pairs(np.asarray(geometry.angles, np.float64))
     detector = geometry.detector
+    pairs = _sample_pairs(np.asarray(geometry.angles, np.float64), detector.nu)
     offsets = []
     if pairs:
         views = np.unique([i for first, second, _ in pairs for i, _ in first + second])
