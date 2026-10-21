@@ -147,7 +147,33 @@ def check_rows(data: np.ndarray, context: str, *, nonnegative: bool = False) -> 
         release(data)
 
 
-type _Block = tuple[np.ndarray | _Spilled, bool]  # payload and whether it is compressed
+class SlabPayload(Protocol):
+    """A stored block's immutable bytes, wherever they are held."""
+
+    @property
+    def nbytes(self) -> int:
+        """Bytes stored."""
+        ...
+
+    @property
+    def resident_nbytes(self) -> int:
+        """Bytes held in host memory."""
+        ...
+
+    def read(self) -> np.ndarray:
+        """The bytes as a ``uint8`` array, which the caller does not modify."""
+        ...
+
+
+class PayloadStorage(Protocol):
+    """Where a :class:`SlabStore` puts the encoded bytes of the blocks it writes."""
+
+    def put(self, data: np.ndarray) -> SlabPayload:
+        """An immutable payload holding a copy of the contiguous ``uint8`` ``data``."""
+        ...
+
+
+type _Block = tuple[SlabPayload, bool]  # payload and whether it is compressed
 
 
 class SlabSource(Protocol):
@@ -175,19 +201,24 @@ class SlabStore:
     them, so a copy is a cheap snapshot. Reads return new Fortran-ordered arrays
     and writes copy their input. ``store[:, :, z0:z1]`` reads and assigns whole
     planes; nothing converts the whole volume implicitly, and :meth:`materialize`
-    does so on request.
+    does so on request. ``storage`` holds the encoded bytes of written blocks
+    (private anonymous memory by default).
     """
 
     def __init__(
-        self, shape: tuple[int, int, int], *, depth: int, reference: SlabSource | None = None
+        self,
+        shape: tuple[int, int, int],
+        *,
+        depth: int,
+        reference: SlabSource | None = None,
+        storage: PayloadStorage | None = None,
     ) -> None:
         if reference is not None and reference.shape != tuple(shape):
             raise ValueError(f"reference shape {reference.shape} differs from {tuple(shape)}")
         self.shape = (int(shape[0]), int(shape[1]), int(shape[2]))
         self.depth, self.reference = depth, reference
-        self._blocks: list[tuple[np.ndarray | _Spilled, bool] | None] = [None] * -(
-            -shape[2] // depth
-        )
+        self.storage: PayloadStorage = storage or MEMORY_STORAGE
+        self._blocks: list[_Block | None] = [None] * -(-shape[2] // depth)
 
     dtype = np.dtype(np.float32)
 
@@ -204,7 +235,7 @@ class SlabStore:
     @property
     def resident_nbytes(self) -> int:
         """Bytes of the stored blocks held in memory (not spilled)."""
-        return sum(b[0].nbytes for b in self._blocks if b and not isinstance(b[0], _Spilled))
+        return sum(b[0].resident_nbytes for b in self._blocks if b is not None)
 
     def spill(self, directory: Path) -> None:
         """Move the blocks held in memory to an unnamed file in ``directory``.
@@ -216,16 +247,18 @@ class SlabStore:
         """
         target = None
         for k, stored in enumerate(self._blocks):
-            if stored is not None and not isinstance(stored[0], _Spilled):
+            if stored is not None and stored[0].resident_nbytes:
                 target = target or _SpillFile(directory)
-                self._blocks[k] = (target.append(stored[0]), stored[1])
+                self._blocks[k] = (target.put(stored[0].read()), stored[1])
 
     def __array__(self, *_: Any, **__: Any) -> np.ndarray:
         raise TypeError("SlabStore is not converted implicitly; call materialize()")
 
     def copy(self) -> SlabStore:
         """A snapshot sharing the stored blocks; later writes to either leave the other."""
-        result = SlabStore(self.shape, depth=self.depth, reference=self.reference)
+        result = SlabStore(
+            self.shape, depth=self.depth, reference=self.reference, storage=self.storage
+        )
         result._blocks = self._blocks.copy()
         return result
 
@@ -295,9 +328,7 @@ class SlabStore:
         b0, b1 = k * self.depth, min(self.shape[2], (k + 1) * self.depth)
         shape = (*self.shape[:2], b1 - b0)
         stored = self._blocks[k]
-        payload = None if stored is None else stored[0]
-        if isinstance(payload, _Spilled):
-            payload = payload.read()
+        payload = None if stored is None else stored[0].read()
         if stored is None or payload is None:
             block = np.zeros(shape, np.float32, order="F")
         elif stored[1]:
@@ -326,7 +357,28 @@ class SlabStore:
             shuffle=imagecodecs.BLOSC2.FILTER.SHUFFLE, splitmode=imagecodecs.BLOSC2.SPLIT.NEVER,
         )  # fmt: skip
         compressed = len(packed) < words.nbytes
-        return _owned(packed if compressed else words), compressed
+        data = np.frombuffer(packed, np.uint8) if compressed else words.view(np.uint8)
+        return self.storage.put(data), compressed
+
+
+class _Memory:
+    """A copy of a block's bytes in its own private anonymous mapping, freed with it."""
+
+    def __init__(self, data: np.ndarray) -> None:
+        self.data = _owned(data)
+        self.nbytes = self.resident_nbytes = self.data.nbytes
+
+    def read(self) -> np.ndarray:
+        return self.data
+
+
+class _MemoryStorage:
+    def put(self, data: np.ndarray) -> SlabPayload:
+        return _Memory(data)
+
+
+MEMORY_STORAGE: PayloadStorage = _MemoryStorage()
+"""The default storage: each payload in its own private anonymous mapping, read without a copy."""
 
 
 class _SpillFile:
@@ -338,14 +390,16 @@ class _SpillFile:
         self.size = 0
         weakref.finalize(self, os.close, self.descriptor)
 
-    def append(self, payload: np.ndarray) -> _Spilled:
-        write_at(self.descriptor, payload, self.size, drop=True)
-        self.size += payload.nbytes
-        return _Spilled(self, self.size - payload.nbytes, payload.nbytes)
+    def put(self, data: np.ndarray) -> SlabPayload:
+        write_at(self.descriptor, data, self.size, drop=True)
+        self.size += data.nbytes
+        return _Spilled(self, self.size - data.nbytes, data.nbytes)
 
 
 class _Spilled:
     """A block's bytes at ``position`` in a spill file."""
+
+    resident_nbytes = 0
 
     def __init__(self, file: _SpillFile, position: int, nbytes: int) -> None:
         self.file, self.position, self.nbytes = file, position, nbytes
