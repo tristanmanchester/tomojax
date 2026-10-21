@@ -10,7 +10,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .host_transfer import copy_to_host
+from .host_transfer import copy_to_host, upload_host
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -63,15 +63,12 @@ class HostPlaneOperator:
     def put(self, value: np.ndarray) -> jax.Array:
         """Copy a host array to an owned, C-contiguous FP32 device buffer.
 
-        CPU runtimes may retain NumPy storage despite ``may_alias=False``;
-        a private host buffer keeps subsequent caller edits independent.
+        The copy is complete on return; subsequent caller edits are independent.
         """
         self.host_to_device_bytes += value.size * 4
         ready = np.asarray(value, dtype=np.float32, order="C")
         device = next(iter(self.coefficients.devices()))
-        if device.platform == "cpu":
-            ready = ready.copy()
-        return jax.device_put(ready, device=device, may_alias=False)
+        return upload_host(ready, device)
 
     def get(self, value: jax.Array) -> np.ndarray:
         """Copy a device array to independent host storage."""
