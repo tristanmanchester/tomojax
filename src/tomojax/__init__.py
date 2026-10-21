@@ -26,10 +26,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from tomojax._loading import Frames, load, load_frames
     from tomojax._region import RegionEstimate, estimate_region
-    from tomojax._scan import Scan
+    from tomojax._scan import Alignment, Reconstruction, Scan
     from tomojax._workflow import (
-        Alignment,
-        Reconstruction,
         align,
         backproject,
         estimate_center,
@@ -51,9 +49,9 @@ if TYPE_CHECKING:
 from tomojax._version import __version__
 
 _SOURCES = {
-    "Alignment": "tomojax._workflow",
+    "Alignment": "tomojax._scan",
     "Frames": "tomojax._loading",
-    "Reconstruction": "tomojax._workflow",
+    "Reconstruction": "tomojax._scan",
     "RegionEstimate": "tomojax._region",
     "Scan": "tomojax._scan",
     "align": "tomojax._workflow",
