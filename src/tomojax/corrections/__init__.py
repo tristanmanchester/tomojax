@@ -17,6 +17,7 @@ from ._engine import Corrected, correct_frames, correct_projections, corrected_r
 from ._hardening import BeamHardening
 from ._phase import remove_phase_ramp, unwrap_phase
 from ._records import Correction
+from ._rings import Rings
 from ._spectrum import tube_spectrum
 from ._steps import (
     Paganin,
@@ -34,6 +35,7 @@ __all__ = [
     "Paganin",
     "RadialDistortion",
     "RejectViews",
+    "Rings",
     "Step",
     "Stripes",
     "Zingers",
