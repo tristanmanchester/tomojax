@@ -362,7 +362,14 @@ class Rings(Step):
 
     @property
     def mirror_axis(self) -> float | None:
-        """The rotation-axis column the mirror stages use, or None."""
+        """The rotation-axis column the mirror stages use.
+
+        Returns
+        -------
+        float or None
+            Detector column on the half-pixel grid, or None when the geometry is
+            not a stationary parallel-beam full turn.
+        """
         return self._axis
 
     def record(self) -> Correction:
