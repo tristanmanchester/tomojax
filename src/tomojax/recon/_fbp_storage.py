@@ -24,14 +24,21 @@ def fbp_volume(
     config: FBPConfig,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     out: np.ndarray | None,
+    *,
+    slab_planes: int | None = None,
 ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
-    """FBP (FDK for cone beams) and its record, in ``out`` or host slabs when too large."""
+    """FBP (FDK for cone beams) and its record, in ``out`` or host slabs when too large.
+
+    ``slab_planes`` fixes the depth of host FDK slabs; None sizes them from free memory.
+    """
     from .fbp import fbp
 
     if out is not None and det_grid is not None:
         raise ValueError("host output does not support explicit detector grids")
     if out is not None or (det_grid is None and too_large_for_the_device(grid, config)):
-        volume = _host_fbp(geometry, grid, detector, projections, config, out=out)
+        volume = _host_fbp(
+            geometry, grid, detector, projections, config, out=out, slab_planes=slab_planes
+        )
         return volume, {"config": config, "host_slabs": True}
     volume = fbp(geometry, grid, detector, projections, config=config, det_grid=det_grid)
     return volume, {"config": config}
@@ -72,6 +79,7 @@ def _host_fbp(
     cfg: FBPConfig,
     *,
     out: np.ndarray | None = None,
+    slab_planes: int | None = None,
 ) -> np.ndarray:
     """Bounded slabs for either beam type, keeping the result on the host."""
     import numpy as np
@@ -84,7 +92,7 @@ def _host_fbp(
     logging.info("Reconstructing %dx%dx%d in z-slabs on the host", grid.nx, grid.ny, grid.nz)
     if is_cone_beam(geometry):
         data = np.asarray(projections, np.float32)
-        host = FDKHostConfig(fdk=fdk_config(cfg))
+        host = FDKHostConfig(slices_per_batch=slab_planes, fdk=fdk_config(cfg))
         return fdk_host(geometry, grid, detector, data, config=host, out=out)
     host = FBPHostConfig(filter=cfg.filter, scale=cfg.scale, backprojector=cfg.backprojector)
     # Slabs are not shared among devices; the first selected one does the work.

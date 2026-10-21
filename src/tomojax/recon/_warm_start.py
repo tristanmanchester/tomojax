@@ -10,6 +10,8 @@ from tomojax.core.validation import validate_projection_stack
 
 from ._fbp_storage import fbp_volume
 
+_SLAB_PLANES = 64  # host FDK slab depth for warm starts
+
 if TYPE_CHECKING:
     import numpy as np
 
@@ -36,4 +38,9 @@ def fbp_start(
     validate_projection_stack(
         projections, detector, geometry=geometry, context="warm_start projections"
     )
-    return fbp_volume(geometry, grid, detector, projections, config, det_grid, out)[0]
+    # Thin host slabs: XLA keeps the device memory FDK used, and host solvers
+    # allocate their own through CuPy next.
+    volume, _ = fbp_volume(
+        geometry, grid, detector, projections, config, det_grid, out, slab_planes=_SLAB_PLANES
+    )
+    return volume
