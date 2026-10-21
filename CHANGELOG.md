@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Flat-field correction interpolates statistically unmeasured interior pixels in
+transmission from the same view's neighbouring columns, instead of inserting air
+stripes. Stable low-gain pixels and unilluminated detector margins are unchanged.
+
 Cone-beam CGLS, SIRT/OS-SART and MLEM/OSEM reconstruct volumes larger than
 the GPU: the volumes stay in host memory, or in memory-mapped files given as
 `out=`, and are streamed through the device in z slabs, each projected onto

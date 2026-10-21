@@ -94,10 +94,11 @@ its CPU recipe reports phase per original pixel instead. See the
 
 This translation-only configuration jointly estimates a sparse volume and
 per-view motion, then attaches the poses without resampling measured projections.
-It can fit noise or model mismatch as motion, even on already aligned input.
-Inspect slices and pose estimates, and use half-dataset FSC and held-out residuals
-as diagnostics, not proof of physical accuracy. The stopping tolerance is not a
-pose-error bound.
+Individual vertical shifts can be wrong by tens of pixels even when the image
+and half-dataset FSC improve. On already aligned input, fitting noise as motion
+can worsen the reconstruction. Compare with the unaligned image and inspect
+individual pose estimates; FSC and held-out residuals are diagnostics, not proof
+of physical accuracy. The stopping tolerance is not a pose-error bound.
 
 With `ProjectionMatchingConfig`, per-view vertical standard deviations are in
 `result.info["vertical_uncertainty"]["standard_deviation"]`, in the detector's

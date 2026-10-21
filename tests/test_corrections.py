@@ -633,6 +633,34 @@ def test_pixels_without_a_resolved_flat_take_no_absorption() -> None:
     assert scan.corrections[0].found == {"pixels_without_light": 2 * rows}
 
 
+@pytest.mark.parametrize("batch_views", [None, 1])
+@pytest.mark.parametrize("factor", [1, 2])
+@pytest.mark.parametrize("steps", [(), (Stripes(3),)])
+def test_unmeasured_interior_pixels_keep_interpolated_angular_variation(
+    batch_views: int | None, factor: int, steps: tuple[Step, ...]
+) -> None:
+    transmission = np.broadcast_to(
+        0.2 + 0.1 * np.arange(3)[:, None, None] + 0.02 * np.arange(8), (3, 4, 8)
+    ).copy()
+    light = np.full((4, 8), 100.0)
+    light[0, 1] = 10.0  # Stable low gain is still a measured pixel.
+    light[0, 3:5] = light[1, :2] = light[2] = 0.0
+    geometry = tj.ParallelGeometry(
+        tiny_grid(nx=8, ny=8, nz=4), tiny_detector(nu=8, nv=4), [0, 60, 120]
+    )
+    frames = tj.Frames(
+        10 + light * transmission,
+        geometry,
+        flats=(10 + light)[None],
+        darks=np.full((1, 4, 8), 10.0),
+    )
+    scan = frames.corrected(*steps, batch_views=batch_views, binning=factor)
+    transmission[:, 1, :2] = transmission[:, 2] = 1.0
+    expected = tj.Scan(-np.log(transmission), geometry).corrected(*steps).projections
+    expected = expected.reshape(3, 4 // factor, factor, 8 // factor, factor).mean((2, 4))
+    np.testing.assert_allclose(scan.projections, expected, rtol=2e-6, atol=2e-7)
+
+
 @pytest.mark.parametrize("source", ["array", "hdf5", "tiff"])
 @pytest.mark.parametrize("steps", [(), (Stripes(5),), (Stripes(5), RejectViews())])
 @pytest.mark.parametrize("factor", [1, 2])
