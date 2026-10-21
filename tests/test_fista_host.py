@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from tomojax.core.host_planes import HostPlaneOperator
+from tomojax.core.host_volume import SlabStore
 from tomojax.core.joseph import plane_coefficients
 from tomojax.core.joseph_regions import PlaneRegion
 from tomojax.geometry import Detector, Grid, LaminographyGeometry, stack_view_poses
@@ -76,6 +77,15 @@ def test_host_fista_matches_array_core(backend, depth, iterations, interpolation
         detector_bytes=detector.nu * detector.nv * 4 * (1 if depth == 1 else 3),
     )
     actual = fista_tv_core_host(operator, initial, projections=data, cfg=cfg, view_weights=weights)
+    reference = SlabStore(initial.shape, depth=2)
+    reference[:, :, :] = initial * np.float32(0.5)
+    stored = SlabStore(initial.shape, depth=2, reference=reference)
+    stored[:, :, :] = initial
+    kept = fista_tv_core_host(operator, stored, projections=data, cfg=cfg, view_weights=weights)
+    np.testing.assert_array_equal(kept.x.materialize(), actual.x)  # the same arithmetic
+    np.testing.assert_array_equal(kept.loss, actual.loss)
+    np.testing.assert_array_equal(stored.materialize(), initial)
+    assert kept.x.reference is reference  # no chain of references across calls
     for name in ("x", "loss", "data_loss", "regulariser_value"):
         np.testing.assert_allclose(
             getattr(actual, name), getattr(expected, name), rtol=4e-6, atol=3e-6

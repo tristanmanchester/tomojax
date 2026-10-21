@@ -10,11 +10,35 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core.host_volume import SlabStore
+
 from ._tv_ops import grad3, huber_tv_grad, project_box
 from .fista_tv_core import FistaCoreConfig, FistaCoreResult
 
 if TYPE_CHECKING:
     from tomojax.core.host_planes import HostPlaneOperator
+
+
+class _Pair:
+    """FISTA's image ``x`` and point ``z`` in stores, ``z`` kept as its XOR with ``x``.
+
+    Indexing reads ``z``; the two change together through :meth:`write`.
+    """
+
+    def __init__(self, x: SlabStore) -> None:
+        self.x, self.shape = x, x.shape
+        self._difference = SlabStore(x.shape, depth=x.depth)
+
+    def __getitem__(self, key: tuple[slice, slice, slice | int]) -> np.ndarray:
+        z = self.x[key]
+        words = z.reshape(-1, order="F").view(np.uint32)
+        words ^= self._difference[key].reshape(-1, order="F").view(np.uint32)
+        return z
+
+    def write(self, first: int, last: int, x: np.ndarray, z: np.ndarray) -> None:
+        self.x.write(first, last, x)
+        words = np.bitwise_xor(x.view(np.uint32), z.view(np.uint32))
+        self._difference.write(first, last, words.view(np.float32))
 
 
 @partial(jax.jit, static_argnames=("offset", "length", "cfg"))
@@ -92,8 +116,8 @@ def _weighted_residual(
 
 def _advance(
     operator: HostPlaneOperator,
-    x: np.ndarray,
-    z: np.ndarray,
+    x: np.ndarray | SlabStore,
+    z: np.ndarray | _Pair,
     residual: np.ndarray,
     support: np.ndarray | None,
     *,
@@ -122,8 +146,11 @@ def _advance(
             length=last - first,
             cfg=cfg,
         )
-        operator.get_into(new_x, x[:, :, first:last])
-        operator.get_into(new_z, z[:, :, first:last])
+        if isinstance(z, _Pair):
+            z.write(first, last, operator.get(new_x), operator.get(new_z))
+        else:
+            operator.get_into(new_x, x[:, :, first:last])
+            operator.get_into(new_z, z[:, :, first:last])
         regulariser += float(value)
         new_x.delete()
         new_z.delete()
@@ -135,16 +162,18 @@ def _advance(
 
 def fista_tv_core_host(
     operator: HostPlaneOperator,
-    initial: np.ndarray,
+    initial: np.ndarray | SlabStore,
     *,
     projections: np.ndarray,
     cfg: FistaCoreConfig,
     view_weights: np.ndarray | None = None,
-) -> FistaCoreResult[np.ndarray]:
+) -> FistaCoreResult[np.ndarray | SlabStore]:
     """Run the array-core FISTA recurrence using two private host images.
 
     The input image and projections are borrowed and never modified. The result
-    image is a Fortran-contiguous NumPy array; diagnostics are small JAX arrays.
+    image is a Fortran-contiguous NumPy array, or a :class:`SlabStore` for a
+    store ``initial``, whose iterates then stay in lossless stores coded against
+    the same fixed reference as ``initial``; diagnostics are small JAX arrays.
     Only volume slabs and bounded detector groups are placed on the device.
     This host-managed runner is not differentiable; the array core remains the
     differentiable interface.
@@ -162,7 +191,11 @@ def fista_tv_core_host(
         if view_weights is None
         else np.maximum(np.asarray(view_weights, np.float32), 0)
     )
-    x = np.empty(operator.shape, np.float32, order="F")
+    x = (
+        SlabStore(operator.shape, depth=initial.depth, reference=initial.reference)
+        if isinstance(initial, SlabStore)
+        else np.empty(operator.shape, np.float32, order="F")
+    )
     project = partial(
         project_box,
         nonnegative=cfg.nonnegative,
@@ -171,9 +204,12 @@ def fista_tv_core_host(
     )
     for first, last in operator.slabs():
         tile = operator.put(initial[:, :, first:last])
-        operator.get_into(project(tile), x[:, :, first:last])
+        if isinstance(x, SlabStore):
+            x.write(first, last, operator.get(project(tile)))
+        else:
+            operator.get_into(project(tile), x[:, :, first:last])
         tile.delete()
-    z = x.copy(order="F")
+    z = _Pair(x) if isinstance(x, SlabStore) else x.copy(order="F")
     prediction = np.empty(operator.projection_shape, np.float32)
     history = np.zeros(cfg.iterations, np.float32)
     last_data, t = np.float32(0), np.float32(1)
