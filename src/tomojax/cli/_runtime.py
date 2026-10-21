@@ -30,25 +30,8 @@ def transfer_guard_context(mode: str | None = None) -> AbstractContextManager[ob
         return nullcontext()
     try:
         import jax
-    except Exception as exc:
-        _warn_transfer_guard_demotion(mode, str(exc))
-        return nullcontext()
 
-    transfer_guard = getattr(jax, "transfer_guard", None)
-    if transfer_guard is not None:
-        try:
-            return cast("AbstractContextManager[object]", transfer_guard(mode))
-        except Exception as exc:
-            _warn_transfer_guard_demotion(mode, str(exc))
-            return nullcontext()
-    try:
-        from jax.experimental import transfer_guard as experimental_transfer_guard  # type: ignore
-
-        try:
-            return cast("AbstractContextManager[object]", experimental_transfer_guard(mode))
-        except Exception as exc:
-            _warn_transfer_guard_demotion(mode, str(exc))
-            return nullcontext()
+        return cast("AbstractContextManager[object]", jax.transfer_guard(mode))
     except Exception as exc:
         _warn_transfer_guard_demotion(mode, str(exc))
         return nullcontext()

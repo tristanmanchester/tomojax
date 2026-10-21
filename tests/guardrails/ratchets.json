@@ -56,7 +56,7 @@
   },
   "suppressions": {
     "noqa": 8,
-    "type: ignore": 33,
+    "type: ignore": 32,
     "pyright: ignore": 14
   },
   "complex_functions": [
@@ -80,8 +80,6 @@
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::PLR0915::_run_reconstruction_step",
     "src/tomojax/alignment/optimizers.py::C901::_run_lbfgs_optax_loop",
     "src/tomojax/alignment/optimizers.py::C901::run_pose_lbfgs",
-    "src/tomojax/backends/_memory.py::PLR0911::_free_bytes_from_memory_info",
-    "src/tomojax/cli/_runtime.py::PLR0911::transfer_guard_context",
     "src/tomojax/core/_logging.py::PLR0911::format_duration",
     "src/tomojax/datasets/_impl/artefacts.py::C901::apply_simulation_artefacts",
     "src/tomojax/datasets/_impl/artefacts.py::PLR0915::apply_simulation_artefacts",
@@ -93,7 +91,7 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "type_errors": {
-    "reportArgumentType": 271,
+    "reportArgumentType": 269,
     "reportAssignmentType": 2,
     "reportAttributeAccessIssue": 116,
     "reportCallIssue": 12,
