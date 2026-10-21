@@ -276,11 +276,9 @@ def _run_device(
         norm_bytes = grid.nx * grid.ny * 4 if axial else volume_bytes
         image_bytes = detector.nv * detector.nu * 4
         # Four volume buffers cover the iterate, update, current norm and
-        # visibility/output workspace. Resident data also gathers one subset;
-        # streamed data needs only its current predicted/measured view batches.
+        # visibility/output workspace. Both resident and streamed data need
+        # only the current predicted/measured view batches.
         workspace = 4 * volume_bytes + 2 * min(batch, count) * image_bytes
-        if not stream:
-            workspace += count * image_bytes
         cache = _cache_sensitivities(
             subsets * norm_bytes, subsets, iterations, workspace_bytes=workspace, initial=initial
         )

@@ -149,18 +149,21 @@ def test_large_sensitivity_cache_is_bounded_and_requires_reuse(monkeypatch):
 
 
 @pytest.mark.numerical
-def test_streamed_counts_match_resident_subsets_and_release_sources(problem, monkeypatch):
+@pytest.mark.parametrize(("subsets", "batch"), [(1, 2), (3, 1)])
+def test_streamed_counts_match_resident_subsets_and_release_sources(
+    problem, monkeypatch, subsets, batch
+):
     module = import_module("tomojax.recon.mlem")
     host = import_module("tomojax.backends.host_stream")
     grid, detector, geometry, matrix = problem
     data = (matrix @ np.linspace(0.2, 1.1, 12)).reshape(5, 4, 5).astype(np.float32)
-    config = MLEMConfig(iterations=3, subsets=3, views_per_batch=1)
+    config = MLEMConfig(iterations=3, subsets=subsets, views_per_batch=batch)
     expected = mlem(geometry, grid, detector, data, config=config)[0]
     original, reads = host._read, []
 
     def read(key, start, weights_key, indices, *, size):
         reads.append(np.asarray(indices).copy())
-        assert size == 1 and indices.shape == (1,)
+        assert size == batch and indices.shape == (batch,)
         return original(key, start, weights_key, indices, size=size)
 
     monkeypatch.setattr(host, "_read", read)
