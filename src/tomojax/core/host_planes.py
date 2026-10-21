@@ -4,18 +4,22 @@ from __future__ import annotations
 
 from dataclasses import replace
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .host_transfer import copy_to_host, upload_host
+from .host_transfer import copy_to_host, upload_host, upload_host_slabs
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from .joseph_regions import PlaneRegion
+
+
+class _VolumeSource(Protocol):
+    def __getitem__(self, index: tuple[slice, slice, slice], /) -> np.ndarray: ...
 
 
 class HostPlaneOperator:
@@ -70,6 +74,29 @@ class HostPlaneOperator:
         device = next(iter(self.coefficients.devices()))
         return upload_host(ready, device)
 
+    def put_volume(
+        self, volume: _VolumeSource, first: int, last: int, support: np.ndarray | None = None
+    ) -> jax.Array:
+        """Assemble a device volume slab from host windows of at most 64 MiB.
+
+        One xy plane is the minimum window. Support is applied in those same
+        windows, without materializing a whole masked device-sized host slab.
+        """
+        shape = (*self.shape[:2], last - first)
+        self.host_to_device_bytes += 4 * shape[0] * shape[1] * shape[2]
+        depth = max(1, (64 << 20) // (4 * shape[0] * shape[1]))
+
+        def parts() -> Iterator[tuple[int, np.ndarray]]:
+            for begin in range(first, last, depth):
+                end = min(last, begin + depth)
+                value = volume[:, :, begin:end]
+                if support is not None:
+                    value = value * support[:, :, begin:end]
+                yield begin - first, np.asarray(value, np.float32, order="C")
+                del value
+
+        return upload_host_slabs(shape, parts(), next(iter(self.coefficients.devices())))
+
     def get(self, value: jax.Array) -> np.ndarray:
         """Copy a device array to independent host storage."""
         out = np.empty(value.shape, dtype=np.float32, order="C")
@@ -93,14 +120,14 @@ class HostPlaneOperator:
         return replace(self.region, volume_origin=(0, 0, first))
 
     def project(
-        self, volume: np.ndarray, *, out: np.ndarray, support: np.ndarray | None = None
+        self, volume: _VolumeSource, *, out: np.ndarray, support: np.ndarray | None = None
     ) -> None:
         """Write the full forward product into ``out``, without modifying inputs."""
         self._forward(volume, out=out, tangent=None, support=support)
 
     def columns(
         self,
-        volume: np.ndarray,
+        volume: _VolumeSource,
         *,
         tangent: jax.Array,
         out: np.ndarray,
@@ -111,7 +138,7 @@ class HostPlaneOperator:
 
     def _forward(
         self,
-        volume: np.ndarray,
+        volume: _VolumeSource,
         *,
         out: np.ndarray,
         tangent: jax.Array | None,
@@ -123,10 +150,7 @@ class HostPlaneOperator:
         for start, stop in self._groups(directions):
             accumulator = jnp.zeros(out[start:stop].shape, jnp.float32)
             for first, last in self.slabs():
-                host_tile = volume[:, :, first:last]
-                if support is not None:
-                    host_tile = host_tile * support[:, :, first:last]
-                tile = self.put(host_tile)
+                tile = self.put_volume(volume, first, last, support)
                 region = self._region(first)
                 if tangent is None:
                     accumulator = _add_projection(

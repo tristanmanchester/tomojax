@@ -4,7 +4,8 @@
 
 Host-volume upload buffers remain independent of caller arrays on CPU.
 Host-slab uploads share JAX's CUDA allocation pool without retaining full-sized
-pinned host copies or competing CuPy allocations.
+pinned host copies or competing CuPy allocations. Device volume slabs are
+assembled from bounded host windows, including masked inputs.
 
 The checkpoint helper supports single-resolution alignment and preserves
 early stopping when resuming a completed run. Loading checkpoint metadata

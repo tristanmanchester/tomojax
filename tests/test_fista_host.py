@@ -123,3 +123,29 @@ def test_host_plane_transfers_own_buffers_and_preserve_strided_padding():
     uploaded = operator.put(source).block_until_ready()
     source[:] = -5
     np.testing.assert_array_equal(uploaded, np.arange(16))
+
+
+@pytest.mark.parametrize("masked", [False, True])
+def test_volume_upload_reads_bounded_owned_plane_windows(masked):
+    shape = (2049, 4096, 3)  # An xy plane exceeds half the host window budget.
+    region = PlaneRegion(grid=Grid(*shape, 1, 1, 1), detector=Detector(1, 1, 1, 1), backend="jax")
+    operator = HostPlaneOperator(jnp.zeros((1, 14)), region=region, slab_depth=3, detector_bytes=4)
+    read = []
+    buffer = np.empty((*shape[:2], 1), np.float32)
+
+    class Source:
+        def __getitem__(self, index):
+            first, last = index[2].start, index[2].stop
+            assert last - first == 1
+            read.append(first)
+            buffer.fill(first + 1)
+            return buffer
+
+    support = np.broadcast_to(np.float32(0.5), shape) if masked else None
+    value = operator.put_volume(Source(), 0, 3, support)
+    buffer.fill(-17)
+    expected = np.arange(1, 4, dtype=np.float32) * (0.5 if masked else 1)
+    np.testing.assert_array_equal(np.asarray(value[0, 0]), expected)
+    np.testing.assert_array_equal(np.asarray(value[-1, -1]), expected)
+    assert read == [0, 1, 2]
+    assert operator.host_to_device_bytes == 4 * np.prod(shape)
