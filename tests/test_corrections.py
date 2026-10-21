@@ -215,14 +215,14 @@ def test_batches_give_the_same_result(tmp_path: Path) -> None:
 
 def test_automatic_batch_budget_preserves_workspace_steps() -> None:
     # check-public-imports: allow-private
-    from tomojax.corrections._engine import _frame_batch_size
+    from tomojax.corrections._engine import frame_batch_size
 
-    assert _frame_batch_size(1000, 512, 512, ()) == 32
-    assert _frame_batch_size(7, 512, 512, ()) == 7
-    assert _frame_batch_size(10, 4096, 4096, ()) == 1
+    assert frame_batch_size(1000, 512, 512, ()) == 32
+    assert frame_batch_size(7, 512, 512, ()) == 7
+    assert frame_batch_size(10, 4096, 4096, ()) == 1
     phase = Paganin(delta_beta=100, distance=0.1, energy_kev=20, pixel_size=1e-6)
     pixels = 512 * 512 + phase.workspace_pixels(512, 512)
-    assert _frame_batch_size(1000, 512, 512, (phase,)) == (256 << 20) // (4 * pixels)
+    assert frame_batch_size(1000, 512, 512, (phase,)) == (256 << 20) // (4 * pixels)
 
 
 def test_beam_hardening_is_the_polynomial(tmp_path: Path) -> None:

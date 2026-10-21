@@ -13,10 +13,11 @@ see :class:`Step`.
 
 from __future__ import annotations
 
-from ._engine import Corrected, correct_frames, correct_projections, corrected_row_source
+from ._engine import Corrected, correct_frames, correct_projections
 from ._hardening import BeamHardening
 from ._phase import remove_phase_ramp, unwrap_phase
 from ._records import Correction
+from ._rows import corrected_row_source
 from ._spectrum import tube_spectrum
 from ._steps import (
     Paganin,

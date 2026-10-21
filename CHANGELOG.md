@@ -13,6 +13,12 @@ field of `CGLSConfig`, `SIRTConfig`, `MLEMConfig`, `FistaConfig`, `SPDHGConfig`,
 `backend=` as well. `FistaCoreConfig` keeps `forward_projector` and `backprojector`,
 which name its two operators.
 
+Centre estimation spreads opposing view pairs across the scan instead of
+concentrating them in one sector because of small encoder-angle variations.
+
+Whole-row transmission corrections run before the logarithm in batched and
+streamed-row workflows; detector binning averages the corrected line integrals.
+
 Flat-field correction interpolates statistically unmeasured interior pixels in
 transmission from the same view's neighbouring columns, instead of inserting air
 stripes. Stable low-gain pixels and unilluminated detector margins are unchanged.
