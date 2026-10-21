@@ -16,8 +16,6 @@ if TYPE_CHECKING:
 
     import jax
 
-    from tomojax.geometry import Detector, Geometry, Grid
-
 
 class _Source(Protocol):
     @property
@@ -25,16 +23,10 @@ class _Source(Protocol):
 
 
 class _Scan(Protocol):
-    """What the self-calibration reads from a :class:`tomojax.Scan`."""
+    """What :meth:`BeamHardening.recorded` reads from a :class:`tomojax.Scan`."""
 
     @property
     def projections(self) -> np.ndarray | jax.Array: ...
-    @property
-    def geometry(self) -> Geometry: ...
-    @property
-    def grid(self) -> Grid: ...
-    @property
-    def detector(self) -> Detector: ...
     @property
     def source(self) -> _Source | None: ...
 
@@ -59,11 +51,12 @@ class BeamHardening(Step):
     its attenuation at ``energy_kev``, and the corrected line integrals are
     that energy's.
 
-    The coefficients come from :meth:`fit` (self-calibration from a first
-    reconstruction), :meth:`recorded` (the vendor's recorded linearisation),
-    :meth:`from_polynomial` (any polynomial linearisation) or
-    :meth:`from_spectrum` (the source spectrum, filters and detector).
-    ``BeamHardening()`` leaves line integrals unchanged.
+    The coefficients come from :meth:`recorded` (the vendor's recorded
+    linearisation), :meth:`from_polynomial` (any polynomial linearisation) or
+    :meth:`from_spectrum` (the source spectrum, filters and detector). The
+    curve is only as good as the stated tube settings and material: the
+    scan is not used to check it. ``BeamHardening()`` leaves line integrals
+    unchanged.
 
     Parameters
     ----------
@@ -88,7 +81,7 @@ class BeamHardening(Step):
     >>> step = BeamHardening(rates=(0.5, 2.0), weights=(0.5, 0.5))
     >>> step.rates
     (0.4, 1.6)
-    >>> float(step.inverse(step.curve(3.0)))
+    >>> round(float(step.inverse(step.curve(3.0))), 9)
     3.0
     """
 
@@ -156,70 +149,6 @@ class BeamHardening(Step):
         return mixture.inverse(self.rates, self.weights, np.asarray(q))
 
     @classmethod
-    def fit(
-        cls,
-        scan: _Scan,
-        *,
-        threshold: float | None = None,
-        iterations: int = 2,
-    ) -> BeamHardening:
-        """Self-calibrate from the scan: segment a reconstruction and reproject it.
-
-        Each pass reconstructs the scan by FBP (FDK for cone beams) and divides
-        the image into air and material levels, each a peak of the histogram
-        with an interior, so that a second material is a level of its own and
-        cupping within one material is not. Each level is flattened to its
-        mean, the scan's own projector turns that into each ray's material
-        line integral, and the curve is fitted to the measured line integrals
-        against those (weighted least squares in transmission, each ray
-        weighted by its Poisson precision). The curve is the most common
-        material's, fitted on the rays that cross it alone; other materials
-        are corrected as denser or lighter versions of it, and a phase too
-        rare to be a level (a thin metal rod) keeps its own values. Later passes
-        reconstruct the data corrected by the previous fit, so the levels see
-        less cupping. The result is in the unit-initial-slope gauge.
-
-        The object should sit inside the reconstruction grid in every view,
-        clear of the background. Scatter, a truncated object and materials
-        whose spectral shapes differ (metal in plastic) bias the curve. The
-        gauge rests on the shortest paths through the material, so a binned
-        scan, or voxels coarser than the pixels, can change the image's scale.
-
-        Parameters
-        ----------
-        scan : Scan
-            Line integrals with their geometry and reconstruction grid.
-        threshold : float or None, optional
-            Attenuation separating the material from the background (air,
-            pores) in the reconstruction; None takes the deepest valley of its
-            histogram between them.
-        iterations : int, optional
-            Reconstruct-segment-fit passes, at least one. Default is 2.
-
-        Returns
-        -------
-        BeamHardening
-            The fitted linearisation.
-
-        Raises
-        ------
-        ValueError
-            If ``iterations`` is not positive, no material stands out from the
-            background, or no ray crosses one material alone.
-        """
-        from tomojax.recon.polychromatic import segmented_curve
-
-        rates, weights, _ = segmented_curve(
-            scan.geometry,
-            scan.grid,
-            scan.detector,
-            np.asarray(scan.projections, np.float32),
-            threshold=threshold,
-            iterations=iterations,
-        )
-        return cls(rates=rates, weights=weights)
-
-    @classmethod
     def recorded(cls, scan: _Scan) -> BeamHardening:
         """The linearisation the scan's vendor recorded, as the closest physical curve.
 
@@ -252,7 +181,7 @@ class BeamHardening(Step):
         if settings.get("vendor") != "nikon":
             raise ValueError(
                 f"{settings.get('vendor')} records beam hardening setting {settings}, whose "
-                "formula is not published; fit the curve with BeamHardening.fit(scan)"
+                "formula is not published; give the curve with BeamHardening.from_spectrum"
             )
         coefficients = [float(c) for c in cast("list[float]", settings["coefficients"])]
         if coefficients[:2] == [0.0, 1.0] and not any(coefficients[2:]):
@@ -266,8 +195,8 @@ class BeamHardening(Step):
 
         Vendors record beam hardening as a polynomial in the measured line
         integral (Nikon's ``CoefX0`` to ``CoefX4``). This fits the mixture whose
-        inverse best matches it for ``0 <= q <= upto`` (weighted as
-        :meth:`fit` weights rays), then rescales it to unit initial slope; a
+        inverse best matches it for ``0 <= q <= upto`` (each line integral
+        weighted by its Poisson precision), then rescales it to unit initial slope; a
         polynomial that is not the inverse of a physical curve (one with zero
         initial slope, say) is replaced by the closest one that is.
 

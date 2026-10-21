@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     from tomojax.recon.fista_tv import FistaConfig, fista_tv
     from tomojax.recon.fourier import FourierConfig, fourier_reconstruct
     from tomojax.recon.mlem import MLEMConfig, mlem
-    from tomojax.recon.polychromatic import PolychromaticConfig, polychromatic
     from tomojax.recon.sirt import SIRTConfig, sirt
     from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
 
@@ -43,8 +42,6 @@ _SOURCES = {
     "FourierConfig": "fourier",
     "MLEMConfig": "mlem",
     "mlem": "mlem",
-    "PolychromaticConfig": "polychromatic",
-    "polychromatic": "polychromatic",
     "SPDHGConfig": "spdhg_tv",
     "SIRTConfig": "sirt",
     "sirt": "sirt",
@@ -71,7 +68,6 @@ __all__ = [
     "FistaConfig",
     "FourierConfig",
     "MLEMConfig",
-    "PolychromaticConfig",
     "SIRTConfig",
     "SPDHGConfig",
     "backproject",
@@ -85,7 +81,6 @@ __all__ = [
     "fista_tv",
     "fourier_reconstruct",
     "mlem",
-    "polychromatic",
     "project",
     "sirt",
     "spdhg_tv",

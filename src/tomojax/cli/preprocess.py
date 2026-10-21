@@ -106,9 +106,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _ = parser.add_argument(
         "--beam-hardening",
-        choices=("fit", "recorded"),
-        help="Linearise single-material beam hardening with a curve fitted to the scan "
-        "(fit: segment a first reconstruction and reproject it) or the vendor's recorded one",
+        choices=("recorded",),
+        help="Linearise single-material beam hardening with the curve the vendor recorded",
     )
     _ = parser.add_argument(
         "--preview", metavar="PNG", help="Write the central corrected projection as a PNG"
@@ -262,10 +261,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.beam_hardening is not None:
             from tomojax.corrections import BeamHardening
 
-            fitted = args.beam_hardening == "fit"
-            scan = scan.corrected(
-                BeamHardening.fit(scan) if fitted else BeamHardening.recorded(scan)
-            )
+            scan = scan.corrected(BeamHardening.recorded(scan))
     except (KeyError, ValueError, OSError) as exc:
         return fail("preprocess", str(exc).strip("'\""))
     tj.save(output, scan)

@@ -39,7 +39,7 @@ Steps, each a frozen dataclass of its settings:
 | `Paganin(delta_beta, distance, energy_kev, pixel_size)` | transmission | single-material phase retrieval; distance and pixel size at the sample in metres, energy in keV | `--paganin DELTA_BETA,DISTANCE,ENERGY_KEV,PIXEL` (expert) |
 | `Stripes(width=9, varying=False)` | line integrals | constant pixel offsets, or selected intensity-dependent responses with `varying=True` | `--stripes WIDTH` (constant offsets) |
 | `RejectViews(z=6.0, neighbours=5, min_jump=0.05)` | line integrals | drops views whose median jumps from their neighbours', and their geometry | `--reject-views [Z]` |
-| `BeamHardening(rates, weights, energy_kev=None)` | line integrals | single-material linearisation, see below | `--beam-hardening fit` or `recorded` |
+| `BeamHardening(rates, weights, energy_kev=None)` | line integrals | single-material linearisation, see below | `--beam-hardening recorded` |
 
 Also exported:
 
@@ -77,31 +77,10 @@ is one, so thin paths keep their attenuation and the corrected image is in the
 unhardened beam's mean attenuation; with `energy_kev` the rates are relative
 to the material's attenuation at that energy, and so is the image.
 
-The curve comes from one of four sources:
-
-- `BeamHardening.fit(scan)` self-calibrates: it reconstructs the scan by
-  FBP/FDK, divides the image into air and material levels (peaks of its
-  histogram, binned at the image's noise, that have an interior, so a second
-  material is a level and cupping within one material is not; a phase too
-  rare to be a level, such as a thin metal rod, keeps its own values),
-  flattens each level to its mean, projects that with the scan's own
-  projector for each ray's material line integral and fits the curve to the
-  measured line integrals against those, weighting each ray by its Poisson
-  precision. The curve is that of the most common material, fitted on the
-  rays that cross it alone; other materials are corrected as denser or
-  lighter versions of it. A second pass
-  repeats this on the data the first fit corrected. When no material stands
-  out from the background, give the attenuation that separates them as
-  `threshold=`. The curve's slope at zero, which sets the unit-slope gauge,
-  rests on the shortest paths through the material, so fit on the scan whose
-  image scale matters, with voxels as fine as its pixels:
-
-  ```python
-  from tomojax.corrections import BeamHardening
-
-  step = BeamHardening.fit(scan)
-  scan = scan.corrected(step)
-  ```
+The curve comes from one of three sources, each only as good as the tube
+settings and sample material it is given: the scan itself is not used to check
+it, so a curve computed for the wrong spectrum or material makes the image
+worse rather than better.
 
 - `BeamHardening.recorded(scan)` applies the linearisation the vendor recorded:
   Nikon CT Pro's `CoefX0`-`CoefX4` polynomial, as the closest physical curve.
@@ -126,12 +105,8 @@ The curve comes from one of four sources:
   step = BeamHardening.from_spectrum(energies, weights, "Al", energy_kev=60)
   ```
 
-`tj.reconstruct(scan, "polychromatic")` fits the curve and the image together
-instead (see [`tomojax.recon`](../recon/README.md)); its curve is
-`BeamHardening(**reconstruction.info["beam_hardening"])`.
-
 A second material, scatter and photon starvation break the single-material
-model; the fitted curve then averages over them. `step.curve(p)` and
+model; one curve cannot correct them. `step.curve(p)` and
 `step.inverse(q)` evaluate the curve on the host for plotting it against data.
 
 ## Complex transmission images
@@ -176,7 +151,7 @@ the workflow modules, which sit above it in the import layers
 ## Tests
 
 - `tests/test_beam_hardening.py` covers the curve and its inverse, each
-  coefficient source, the vendor records and the joint fit.
+  coefficient source and the vendor records.
 - `tests/test_corrections.py` covers loading frames (NXtomo, other HDF5
   layouts, APS Data Exchange, Nikon, TIFF), flat interpolation, each step,
   view selection and cropping, and the saved records.

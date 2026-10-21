@@ -39,8 +39,7 @@ from the root:
   alignment and reconstruction orchestration.
 - `tomojax.core.hardening`: the single-material beam hardening curve, a
   positive mixture of exponentials, with its inverse and its fit to path
-  lengths, shared by `tomojax.corrections.BeamHardening` and polychromatic
-  reconstruction.
+  lengths, used by `tomojax.corrections.BeamHardening`.
 
 ## Dependencies
 

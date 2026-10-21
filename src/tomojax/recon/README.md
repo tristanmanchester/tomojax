@@ -12,13 +12,11 @@
 - `spdhg_tv`
 - `sirt` (SIRT, OS-SART and SART)
 - `mlem`, with ordered subsets in `MLEMConfig`
-- `polychromatic`, least squares with a single-material beam hardening curve
-  fitted together with the image
 - `calibrate_cone_axis`, the cone-beam axis-offset and roll calibration
 
 Each method's settings are a configuration class: `FBPConfig` (FBP and FDK),
-`FourierConfig`, `CGLSConfig`, `FistaConfig`, `SPDHGConfig`, `SIRTConfig`, `MLEMConfig`
-and `PolychromaticConfig`. Pass one as
+`FourierConfig`, `CGLSConfig`, `FistaConfig`, `SPDHGConfig`, `SIRTConfig` and
+`MLEMConfig`. Pass one as
 `tj.reconstruct(scan, "fista", config=FistaConfig(regulariser="huber_tv"))`;
 keywords such as `iterations=` replace the fields of the same name. The same
 fields are the keys of a `tomojax recon --config` TOML file
@@ -278,27 +276,4 @@ OSEM, with `iterations` counting full passes through the views. OSEM can cycle
 near convergence. The boolean `support` mask fixes excluded voxels to zero;
 initial zeros are absorbing under multiplicative updates. `warm_start=True`
 starts from FBP/FDK clipped to nonnegative values, retaining its zero set.
-
-`polychromatic` (`tj.reconstruct(scan, "polychromatic")`) models the measured
-line integrals of one material as `q = g(A x)`, with `g` the beam hardening
-curve of [`BeamHardening`](../corrections/README.md#beam-hardening), and fits
-the image `x` and the curve together by weighted least squares, each ray
-weighted by its Poisson precision `exp(-q)`. Each of `iterations` Gauss–Newton
-steps linearises `g` and runs `inner_iterations` conjugate-gradient updates of
-the image and the curve's spectrum together; the image block is the matched
-projector and its exact transpose applied to pointwise weights. The curve
-starts from the segment–reproject self-calibration of `BeamHardening.fit`, or
-from `PolychromaticConfig(rates=..., weights=...)`, because from a linear curve
-the spectrum cannot start to move. The image is in the unhardened beam's mean
-attenuation and, like CGLS, fits noise as the number of updates grows.
-`info["beam_hardening"]` holds the fitted curve, `info["misfit"]` the weighted
-misfit after each step and `info["rays"]` the number of rays:
-
-```python
-import tomojax as tj
-from tomojax.corrections import BeamHardening
-
-result = tj.reconstruct(scan, "polychromatic", iterations=8)
-step = BeamHardening(**result.info["beam_hardening"])
-```
 

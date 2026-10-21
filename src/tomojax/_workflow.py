@@ -52,9 +52,7 @@ if TYPE_CHECKING:
     from tomojax.recon import FBPConfig, FourierConfig, MLEMConfig, SIRTConfig
     from tomojax.recon.api import MethodConfig
 
-type Method = Literal[
-    "auto", "fbp", "fourier", "cgls", "fista", "spdhg", "sirt", "mlem", "polychromatic"
-]
+type Method = Literal["auto", "fbp", "fourier", "cgls", "fista", "spdhg", "sirt", "mlem"]
 
 
 @dataclass(frozen=True)
@@ -362,11 +360,6 @@ def reconstruct(
         ``iterations`` (default 400) each update one block of views, in an
         order drawn with ``seed``.
 
-    ``polychromatic``
-        Fits the image and a single-material beam hardening curve together
-        (:class:`~tomojax.recon.PolychromaticConfig`); ``info["beam_hardening"]``
-        holds the curve, as :class:`~tomojax.corrections.BeamHardening` takes it.
-
     ``mlem`` is linear Poisson MLEM/OSEM, not transmission counts (``MLEMConfig``).
     ``warm_start`` uses FBP/FDK for least squares; ``grid`` overrides the scan's output grid.
 
@@ -396,7 +389,7 @@ def reconstruct(
     scan : Scan
         Measured line integrals with their acquisition geometry.
     method : str, optional
-        One of auto, fbp, fourier, cgls, fista, spdhg, sirt, mlem or polychromatic.
+        One of auto, fbp, fourier, cgls, fista, spdhg, sirt or mlem.
     grid : Grid or None, optional
         Output grid; None retains the scan's grid.
     out : numpy.ndarray or None, optional
