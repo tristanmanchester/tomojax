@@ -248,6 +248,24 @@ def test_slab_store_keeps_every_word_and_shares_blocks():
         np.asarray(store)
 
 
+def test_slab_store_spills_blocks_to_an_unnamed_file(tmp_path):
+    host_volume = import_module("tomojax.core.host_volume")
+    values = np.random.default_rng(4).standard_normal((6, 4, 10)).astype(np.float32)
+    store = host_volume.SlabStore(values.shape, depth=3)
+    store[:, :, :] = values
+    before = store.copy()
+    store.spill(tmp_path)
+    assert store.resident_nbytes == 0 and store.encoded_nbytes == before.resident_nbytes > 0
+    assert list(tmp_path.iterdir()) == []  # the file has no name
+    after = store.copy()
+    store[:, :, 2:4] = np.zeros((6, 4, 2), np.float32)  # back in memory
+    for kept in (before, after):
+        np.testing.assert_array_equal(kept.materialize(), values)
+    expected = values.copy()
+    expected[:, :, 2:4] = 0
+    np.testing.assert_array_equal(store.materialize(), expected)
+
+
 def test_row_reader_reads_each_row_once_per_sweep(host):
     host(2)
     geometry = _geometry("cone")

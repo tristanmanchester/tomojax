@@ -147,6 +147,9 @@ def check_rows(data: np.ndarray, context: str, *, nonnegative: bool = False) -> 
         release(data)
 
 
+type _Block = tuple[np.ndarray | _Spilled, bool]  # payload and whether it is compressed
+
+
 class SlabSource(Protocol):
     """A fixed FP32 ``(nx, ny, nz)`` volume read a slab of z planes at a time."""
 
@@ -182,7 +185,9 @@ class SlabStore:
             raise ValueError(f"reference shape {reference.shape} differs from {tuple(shape)}")
         self.shape = (int(shape[0]), int(shape[1]), int(shape[2]))
         self.depth, self.reference = depth, reference
-        self._blocks: list[tuple[np.ndarray, bool] | None] = [None] * -(-shape[2] // depth)
+        self._blocks: list[tuple[np.ndarray | _Spilled, bool] | None] = [None] * -(
+            -shape[2] // depth
+        )
 
     dtype = np.dtype(np.float32)
 
@@ -193,8 +198,27 @@ class SlabStore:
 
     @property
     def encoded_nbytes(self) -> int:
-        """Bytes of the stored blocks."""
-        return sum(block[0].nbytes for block in self._blocks if block is not None)
+        """Bytes of the stored blocks, wherever they are."""
+        return sum(b[0].nbytes for b in self._blocks if b is not None)
+
+    @property
+    def resident_nbytes(self) -> int:
+        """Bytes of the stored blocks held in memory (not spilled)."""
+        return sum(b[0].nbytes for b in self._blocks if b and not isinstance(b[0], _Spilled))
+
+    def spill(self, directory: Path) -> None:
+        """Move the blocks held in memory to an unnamed file in ``directory``.
+
+        Each block is written once and read back on demand, without staying
+        in the page cache; later writes are held in memory again. Copies made
+        before keep their memory blocks, and copies made after share the file,
+        which closes when no store refers to it.
+        """
+        target = None
+        for k, stored in enumerate(self._blocks):
+            if stored is not None and not isinstance(stored[0], _Spilled):
+                target = target or _SpillFile(directory)
+                self._blocks[k] = (target.append(stored[0]), stored[1])
 
     def __array__(self, *_: Any, **__: Any) -> np.ndarray:
         raise TypeError("SlabStore is not converted implicitly; call materialize()")
@@ -271,22 +295,25 @@ class SlabStore:
         b0, b1 = k * self.depth, min(self.shape[2], (k + 1) * self.depth)
         shape = (*self.shape[:2], b1 - b0)
         stored = self._blocks[k]
-        if stored is None:
+        payload = None if stored is None else stored[0]
+        if isinstance(payload, _Spilled):
+            payload = payload.read()
+        if stored is None or payload is None:
             block = np.zeros(shape, np.float32, order="F")
         elif stored[1]:
             import imagecodecs
 
             block = np.empty(shape, np.float32, order="F")
             flat = block.reshape(-1, order="F").view(np.uint8)
-            imagecodecs.blosc2_decode(stored[0], out=memoryview(flat), numthreads=4)
+            imagecodecs.blosc2_decode(payload, out=memoryview(flat), numthreads=4)
         else:
-            block = np.array(stored[0].view(np.float32).reshape(shape, order="F"), order="F")
+            block = np.array(payload.view(np.float32).reshape(shape, order="F"), order="F")
         if self.reference is not None:
             words = block.reshape(-1, order="F").view(np.uint32)
             words ^= self.reference.read(b0, b1).reshape(-1, order="F").view(np.uint32)
         return block
 
-    def _encode(self, block: np.ndarray, b0: int, b1: int) -> tuple[np.ndarray, bool] | None:
+    def _encode(self, block: np.ndarray, b0: int, b1: int) -> _Block | None:
         words = np.array(block.reshape(-1, order="F").view(np.uint32))
         if self.reference is not None:
             words ^= self.reference.read(b0, b1).reshape(-1, order="F").view(np.uint32)
@@ -300,6 +327,33 @@ class SlabStore:
         )  # fmt: skip
         compressed = len(packed) < words.nbytes
         return _owned(packed if compressed else words), compressed
+
+
+class _SpillFile:
+    """An unnamed file of spilled blocks, closed with its last block."""
+
+    def __init__(self, directory: Path) -> None:
+        with tempfile.NamedTemporaryFile(dir=directory) as handle:
+            self.descriptor = os.open(handle.name, os.O_RDWR)
+        self.size = 0
+        weakref.finalize(self, os.close, self.descriptor)
+
+    def append(self, payload: np.ndarray) -> _Spilled:
+        write_at(self.descriptor, payload, self.size, drop=True)
+        self.size += payload.nbytes
+        return _Spilled(self, self.size - payload.nbytes, payload.nbytes)
+
+
+class _Spilled:
+    """A block's bytes at ``position`` in a spill file."""
+
+    def __init__(self, file: _SpillFile, position: int, nbytes: int) -> None:
+        self.file, self.position, self.nbytes = file, position, nbytes
+
+    def read(self) -> np.ndarray:
+        data = np.empty(self.nbytes, np.uint8)
+        read_at(self.file.descriptor, data, self.position, drop=True)
+        return data
 
 
 def _owned(data: Any) -> np.ndarray:
