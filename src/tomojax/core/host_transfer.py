@@ -57,8 +57,8 @@ def _allocate(value: jax.Array, *, shape: tuple[int, ...]) -> jax.Array:
     return jnp.broadcast_to(value, shape)
 
 
-def _private_device_buffer(
-    shape: tuple[int, ...], dtype: np.dtype[np.generic], device: Device
+def allocate_device(
+    shape: tuple[int, ...], *, dtype: np.dtype[np.generic], device: Device
 ) -> jax.Array:
     """Allocate private storage in JAX's pool, ready for a synchronous host copy."""
     value = jax.device_put(np.zeros((), dtype=dtype), device=device)
@@ -87,7 +87,7 @@ def upload_host(array: np.ndarray, device: Device) -> jax.Array:
         else array
     )
     with cp.cuda.Device(device.local_hardware_id):
-        result = _private_device_buffer(source.shape, source.dtype, device)
+        result = allocate_device(source.shape, dtype=source.dtype, device=device)
         target = cp.from_dlpack(result)
         stream = cp.cuda.get_current_stream()
         if source.flags.c_contiguous:
@@ -124,7 +124,7 @@ def upload_host_slabs(
     import cupy as cp
 
     with cp.cuda.Device(device.local_hardware_id):
-        result = _private_device_buffer(shape, np.dtype(np.float32), device)
+        result = allocate_device(shape, dtype=np.dtype(np.float32), device=device)
         target = cp.from_dlpack(result)
         stream = cp.cuda.get_current_stream()
         for first, values in slabs:
@@ -204,8 +204,8 @@ def upload_host_views(array: np.ndarray, indices: np.ndarray, device: Device) ->
     import cupy as cp
 
     with cp.cuda.Device(device.local_hardware_id):
-        result = _private_device_buffer(
-            (len(indices), *array.shape[1:]), np.dtype(np.float32), device
+        result = allocate_device(
+            (len(indices), *array.shape[1:]), dtype=np.dtype(np.float32), device=device
         )
         target = cp.from_dlpack(result)
         stream = cp.cuda.get_current_stream()

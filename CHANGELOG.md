@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Lossless slab stores can share a bounded CUDA byte pool with host-memory
+fallback. Snapshots retain their payloads, and streamed FISTA keeps the
+caller-selected storage for its image and momentum.
+
 Flat-field correction interpolates statistically unmeasured interior pixels in
 transmission from the same view's neighbouring columns, instead of inserting air
 stripes. Stable low-gain pixels and unilluminated detector margins are unchanged.
