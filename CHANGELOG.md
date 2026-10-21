@@ -8,7 +8,10 @@ the GPU: the volumes stay in host memory, or in memory-mapped files given as
 and transposed from the detector rows it reaches. The projector pair stays
 the exact transpose, and results match the device-resident solvers to FP32
 rounding. `cgls`, `sirt`, `mlem` and `tj.reconstruct` accept `out=` for cone
-beams.
+beams. Memory-mapped volumes are read and written a whole slab at a time and
+leave the page cache behind them, so a volume larger than memory on a slow
+disk cannot fill it. Host FDK slabs, used for large FBP volumes and warm
+starts, no longer take twice their size on the device while being copied out.
 
 `tj.load_frames` takes the open-beam level as `flats=<level>`, as the command line
 does; the `white_level=` keyword is gone.
