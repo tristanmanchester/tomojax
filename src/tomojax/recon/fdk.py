@@ -985,7 +985,7 @@ class _Slabs:
             pending.result()
 
     def store(self, z0: int, z1: int, volume: jax.Array) -> None:
-        copy_to_host(volume.T, self.result[:, :, z0:z1].T)
+        copy_to_host(volume, self.result[:, :, z0:z1])
 
 
 class _RowView:
