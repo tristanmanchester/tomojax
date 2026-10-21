@@ -73,7 +73,7 @@ def _disk() -> dict[str, int]:
     return {"read": values["read_bytes"], "written": values["write_bytes"]}
 
 
-def _cuo(args: argparse.Namespace, record: dict) -> None:
+def _cuo(args: argparse.Namespace, record: dict, memory: _Memory) -> None:
     frames = tj.load_frames(args.path, darks=0)
     if args.scratch is not None:
         args.binning = 1
@@ -87,9 +87,12 @@ def _cuo(args: argparse.Namespace, record: dict) -> None:
         result = tj.reconstruct(scan, "sirt", grid=grid, config=config)
         record["solve_s"] = time.perf_counter() - start
         record["info"] = {k: v for k, v in result.info.items() if isinstance(v, int | float | bool)}
-        subset = scan.selected(slice(0, None, 8))
-        predicted = np.asarray(tj.project(subset.geometry, result.volume, grid=grid))
-        error = np.linalg.norm(predicted - subset.projections) / np.linalg.norm(subset.projections)
+        record["peak_host_anonymous_bytes_solving"] = memory.peak
+        subset, volume = scan.selected(slice(0, None, 8)), result.volume
+        del scan, result  # scoring needs only every eighth view
+        predicted = np.array(tj.project(subset.geometry, volume, grid=grid))
+        predicted -= subset.projections
+        error = np.linalg.norm(predicted) / np.linalg.norm(subset.projections)
         record["residual_every_eighth_view"] = float(error)
         record["grid"] = [grid.nx, grid.ny, grid.nz]
         return
@@ -171,7 +174,7 @@ def _sphere_projections(geometry: ConeGeometry) -> np.ndarray:
     return data
 
 
-def _synthetic(args: argparse.Namespace, record: dict) -> None:
+def _synthetic(args: argparse.Namespace, record: dict, memory: _Memory) -> None:
     size, magnification = args.size, 3.03
     distance = 10279 * size / 2036  # the CuO scan's cone angle
     grid = Grid(size, size, size, 1.0, 1.0, 1.0)
@@ -199,6 +202,7 @@ def _synthetic(args: argparse.Namespace, record: dict) -> None:
         record["solve_s"] = time.perf_counter() - start
         record["disk"] = {key: after[key] - disk[key] for key in disk}
         record["info"] = {k: v for k, v in info.items() if isinstance(v, int | float | bool)}
+        record["peak_host_anonymous_bytes_solving"] = memory.peak
         error = norm = 0.0
         for z0 in range(0, size, 64):
             truth = _sphere_planes(size, z0, min(size, z0 + 64))
@@ -232,7 +236,7 @@ def main() -> None:
     record: dict = {"environment": environment(), "case": vars(args)}
     gpu, memory, start = GpuSampler(period=0.25), _Memory(), time.perf_counter()
     try:
-        (_cuo if args.case == "cuo" else _synthetic)(args, record)
+        (_cuo if args.case == "cuo" else _synthetic)(args, record, memory)
     finally:
         record["gpu"] = gpu.window(start, time.perf_counter())
         gpu.close()

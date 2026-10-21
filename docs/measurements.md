@@ -846,17 +846,21 @@ All on the 8 GB laptop GPU:
 | SPDHG-TV, 3072 views, streamed, 192 iterations (one view block each) | 297 s, 4.3 GB peak, with its 3.2 GB dual in host memory; bitwise identical to the device-resident solver | 2026-10-06, `9d4c4d1` |
 | SIRT from raw frames with `tj.reconstruct_slabs`, the whole Diamond I12 scan below: 1801 views of 2160 × 2560 pixels (39.8 GB corrected), a 2560² × 2160 volume (56.6 GB) | 1436 s of solving, 1.41 GB peak GPU memory and 3.7 GB host memory; 1.13 times the per-voxel time of an 8-row reconstruction that fits | 2026-10-17, `440cc563` |
 | `tj.reconstruct` of 352 rows of the same scan, returned as one 9.23 GB array | 211 s, 0.78 GB peak GPU memory, 17 GB host memory; 1.04 times the per-voxel time of 8 rows | 2026-10-17, `440cc563` |
-| OSEM of the FIPS walnut at full resolution: all 3600 views of 972 × 768 pixels, a 1001³ volume, 4 subsets × 1 iteration from FDK | First / repeat solve 289.61 / 288.80 s; imports, loading and first solve 297.41 s; peak GPU 4688 MiB, host 15.962 GB; full / walnut-support relative L2 error 0.124385 / 0.094026 | 2026-10-19, `508631fa` |
+| OSEM of the FIPS walnut at full resolution: all 3600 views of 972 × 768 pixels, a 1001³ volume, 4 subsets × 1 iteration from FDK | First / repeat solve 230.65 / 241.81 s in 128-plane host slabs; loading 7.52 s; peak GPU 5798 MiB, host 15.57 GB anonymous; full / walnut-support relative L2 error 0.124385 / 0.094026 | 2026-10-21, `30f9f1df` |
 | FDK from raw CuO-spl1 frames: all 3201 views of 2036² pixels, a 2036³ volume, 32-plane output slabs | First / repeat correction and reconstruction 847.16 / 786.11 s; imports and loading 15.78 s; peak GPU 6056 MiB, host 12.634 GB, including scoring | 2026-10-20, `9be6e5ad` |
 | ASTRA FDK on the same raw CuO-spl1 frames and output slabs | First / repeat correction and reconstruction 847.16 / 838.56 s; imports and loading 13.67 s; peak GPU 3036 MiB, host 13.193 GB, including scoring | 2026-10-20, `76a1f412` |
 | FDK from raw CuO2 frames: all 3201 views of 2028² pixels, a 2028³ volume, 32-plane output slabs | First correction and reconstruction 1053.93 s; imports and loading 16.17 s; peak GPU 4494 MiB, host 14.240 GB, including scoring | 2026-10-20, `75435039` |
+| OS-SART of CuO-spl1 at twofold binning: all 3201 views of 1018² pixels corrected into memory (13.3 GB), a 1018³ volume kept on the GPU, 3 iterations × 8 subsets from zero | 441 s solving, 30 s correcting; peak GPU 7484 MiB, host 13.78 GB while solving (15.40 GB with scoring); relative residual 0.0319 on every eighth view | 2026-10-20, `30f9f1df` |
+| SIRT of a synthetic 1300³ volume (8.79 GB, more than the GPU) in host memory: 180 cone views of 1300² pixels, 3 iterations | 62.8 s solving in 128-plane slabs; peak GPU 6160 MiB, host 11.47 GB | 2026-10-20, `5cf50e6b` |
+| CGLS of the same synthetic 1300³ volume with it and its three work volumes memory-mapped on a USB hard disk (35 GB), 2 iterations | 1514 s solving in 128-plane slabs; peak GPU 6476 MiB, host 14.55 GB anonymous; 113 GB read and 114 GB written, creating the files included; normal residual 7.79e8 → 8.69e7 | 2026-10-21, `30f9f1df` |
+| OS-SART of native CuO-spl1 from raw frames: all 3201 views of 2036² pixels, corrected as the sweeps reach them, a 2036³ volume (33.76 GB) memory-mapped on a USB hard disk, 1 iteration × 4 subsets from zero | 2131 s solving, 2295 s in all; peak GPU 6398 MiB, host 9.39 GB anonymous (12.07 GB resident); 207 GB read (106 GB of raw frames, 101 GB of volume), 135 GB written | 2026-10-20, `5cf50e6b` |
 
 The walnut call is `tj.reconstruct(scan, "mlem", warm_start=True,
 config=MLEMConfig(iterations=1, subsets=4))`, using all three corrected
 geometries, unbinned projections clipped at zero, and 0.05 mm voxels. The
-volume is scored at the published 0.1 mm voxel centres. The first call uses
-a fresh `TOMOJAX_JAX_CACHE_DIR` and `XLA_PYTHON_CLIENT_PREALLOCATE=false`;
-the repeat uses the same process after releasing the first volume.
+volume is scored at the published 0.1 mm voxel centres. Both calls use
+`XLA_PYTHON_CLIENT_PREALLOCATE=false`; the repeat uses the same process after
+releasing the first volume.
 
 The CuO call is `tj.load_frames("Tristan Manchester_Copper_oxyde_spl1.txrm",
 darks=0)`, followed by `tj.reconstruct_slabs(frames, "fbp")`. Consume and
@@ -895,10 +899,28 @@ imports and loading additional. The same 256-view projection score is
 0.0790636. There is no vendor volume, repeated pass or native library comparison
 for this scan; this is a capacity and data-fit measurement.
 
+The OS-SART rows of CuO-spl1 are `python bench/out_of_core.py cuo
+"Tristan Manchester_Copper_oxyde_spl1.txrm" --binning 2 --iterations 3
+--subsets 8`, which corrects the projections with `Frames.corrected(binning=2)`
+and calls `tj.reconstruct(scan, "sirt", grid=..., config=SIRTConfig(iterations=3,
+subsets=8))`, and the same script at native resolution with `--iterations 1
+--subsets 4 --scratch DIR`. The synthetic rows are `python bench/out_of_core.py
+synthetic --size 1300 --views 180 --method sirt --iterations 3` (and `--method
+cgls --iterations 2 --scratch DIR`), spheres in a cylinder seen with the CuO
+cone angle. Each CGLS iteration reads the four volumes six times and writes
+them four times between them.
+
 At native resolution the 2036³ float32 volume, 33.76 GB, is more than this
-machine's 30 GB of RAM; iterative cone methods can keep it in a memory-mapped
-file given as `out=` and stream it through the GPU in z slabs
-(`bench/out_of_core.py`).
+machine's 30 GB of RAM. In the native OS-SART row it is a memory-mapped file
+in `DIR` given as `out=`, written by the first sweep and read and rewritten
+once by each later one, in 32-plane slabs (the 8 GB GPU holds no thicker ones
+beside a subset's 800 views). The corrected projections (53 GB) are never
+stored: each sweep corrects 64-row bands of every view from the raw frames, a
+band ahead on a worker thread. The raw frames are on the internal NVMe disk,
+the volume on a USB hard disk; exFAT has no sparse files, so creating the
+volume writes it once more. One iteration of four subsets from zero is a
+capacity measurement, not a converged reconstruction; its central planes show
+the sample cylinder as the twofold-binned reconstruction does.
 
 The Diamond rows use `SIRTConfig(iterations=3, subsets=15, lower_bound=0)`
 with `warm_start=True` (an FBP start) on frames from

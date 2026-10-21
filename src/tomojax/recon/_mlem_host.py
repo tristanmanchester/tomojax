@@ -52,18 +52,20 @@ def solve(
     data = host_projections(projections, "mlem", nonnegative=True)
     if not np.isfinite(np.asarray(poses)).all():
         raise ValueError("mlem: poses must be finite")
+    x = None
+    if warm_start:
+        from ._warm_start import fbp_start
+        from .fbp import FBPConfig
+
+        # Before planning the sweeps: XLA keeps the device memory FDK has used.
+        x = validate_host_arrays(data, out, (grid.nx, grid.ny, grid.nz), "mlem", order="F")
+        fbp_start(geometry, grid, detector, data, config=FBPConfig(), det_grid=None, out=x)
     problem = cone_problem(
         geometry, grid, detector, data, model=model, backend=backend, poses=poses,
         batch=batch, channels=1, views=-(-data.shape[0] // subsets),
         resident=0 if out is not None or warm_start else 1,
     )  # fmt: skip
-    if warm_start:
-        from ._warm_start import fbp_start
-        from .fbp import FBPConfig
-
-        x = validate_host_arrays(data, out, (grid.nx, grid.ny, grid.nz), "mlem", order="F")
-        fbp_start(geometry, grid, detector, data, config=FBPConfig(), det_grid=None, out=x)
-    else:
+    if x is None:
         x = problem.iterate(initial, out, "mlem")
         if initial is None:
             fill(x, 1.0)

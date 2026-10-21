@@ -17,6 +17,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from functools import cache
 import math
+import os
 from typing import TYPE_CHECKING, Any
 
 import jax
@@ -27,9 +28,12 @@ from tomojax.core.host_volume import (
     check_rows,
     fill,
     host_volume,
+    read_at,
     release,
     release_planes,
     scratch_directory,
+    slab_file,
+    write_at,
 )
 from tomojax.geometry import grid_volume_origin
 
@@ -257,16 +261,26 @@ class HostVolume:
         self.array, self.engine, self.depth = array, engine, depth
         mapped = getattr(array, "_mmap", None) is not None
         self._worker = ThreadPoolExecutor(1) if mapped else None
+        self._file = slab_file(array) if mapped else None
         self._reads: dict[tuple[int, int], Future[np.ndarray]] = {}
         self._writes: list[Future[None]] = []
         self._held: dict[tuple[int, int], np.ndarray] = {}
 
     def _read(self, z0: int, z1: int) -> np.ndarray:
+        nx, ny, _ = self.array.shape
+        if self._file is not None:  # one large read, not page faults
+            block = np.empty((z1 - z0, ny, nx), np.float32)
+            read_at(self._file[0], block, self._file[1] + z0 * nx * ny * 4, drop=True)
+            return block
         block = np.ascontiguousarray(self.array[:, :, z0:z1].T)
         release_planes(self.array, z0, z1)
         return block
 
     def _write(self, z0: int, z1: int, block: np.ndarray) -> None:
+        nx, ny, _ = self.array.shape
+        if self._file is not None:  # whole pages are not read before they are written
+            write_at(self._file[0], block, self._file[1] + z0 * nx * ny * 4, drop=True)
+            return
         self.array[:, :, z0:z1].T[...] = block
         release_planes(self.array, z0, z1)
 
@@ -282,6 +296,9 @@ class HostVolume:
         if self._worker is not None:
             self._worker.shutdown()
             self._worker = None
+        if self._file is not None:
+            os.close(self._file[0])
+            self._file = None
 
     def view(self, z0: int, z1: int) -> Any:
         """Planes ``[z0, z1)`` on the device as a strided ``(nx, ny, z1 - z0)`` view.
