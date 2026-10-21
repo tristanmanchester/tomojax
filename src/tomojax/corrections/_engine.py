@@ -1,25 +1,18 @@
-"""Running corrections: batches of views through the device, slabs of rows for whole-row steps.
+"""Correct counts in view batches and complete sinogram rows in bounded slabs.
 
-Frames are corrected in one compiled pass over batches of views: the counts
-steps, then ``(I - D) / (F - D)`` with each view's flat interpolated between
-the flat sets around it, the transmission steps, ``-log``, and the line-integral
-steps up to the first that needs whole detector rows. Such a step, and every
-step after it, then runs over the result: a whole-row step on slabs of rows
-(every view), the others on batches of views again. Batches are read from the
-host (NumPy, memmap or a lazily read file) while the device works on the last.
+Counts steps precede flat/dark calibration, then transmission steps precede
+-log, and line-integral steps follow it. Whole-row steps use every view of a
+row at once; other steps use batches of views. A pre-log row step stages
+transmission, not line integrals, when the pipeline needs both kinds of batch.
 
-When only whole-row steps follow the ``-log``, they can share the first pass
-on slabs read from a row-efficient source. With ``binning`` the detector means
-are taken on the device, so no unbinned stack reaches the host in that path.
-Both paths materialise the final corrected host stack; fusion avoids the
-intermediate host/device round trip, not the final stack's memory cost.
+A row-efficient source can fuse calibration, row corrections and log without
+an intermediate host stack. Detector binning always averages the corrected
+line integrals. Both paths materialise the final corrected host stack.
 """
 
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
-from dataclasses import dataclass
 from functools import partial
 import logging
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
@@ -34,7 +27,7 @@ from ._records import Correction, Json
 from ._steps import DOMAINS, Step
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Sequence
+    from collections.abc import Sequence
 
 LOG = logging.getLogger(__name__)
 
@@ -128,14 +121,14 @@ def correct_frames(
     (2, 3, 4)
     """
     batch_views = _validated_batch_views(batch_views)
-    epsilon = _positive_finite(epsilon, "epsilon")
+    epsilon = positive_finite(epsilon, "epsilon")
     if isinstance(binning, bool) or not isinstance(binning, int | np.integer) or binning < 1:
         raise ValueError(f"binning needs a whole factor of at least 1, not {binning!r}")
     binning = int(binning)
     views, rows, cols = (int(s) for s in counts.shape)
-    ordered = _ordered(steps)
-    view_scales, flat_scales = _exposure_scales(exposure_times, flat_exposure_times, views, flats)
-    fields, field_record = _flat_fields(
+    ordered = ordered_steps(steps)
+    view_scales, flat_scales = exposure_scales(exposure_times, flat_exposure_times, views, flats)
+    fields, field_record = flat_fields(
         flats, flat_positions, darks, white_level, (rows, cols), epsilon, flat_scales=flat_scales
     )
     if flat_scales is not None and exposure_times is not None:
@@ -148,32 +141,43 @@ def correct_frames(
     )
     if at.shape != (views,) or not np.isfinite(at).all():
         raise ValueError(f"view_positions needs one finite position for each of the {views} views")
-    interpolation = _interpolation(at, fields.positions, exposure_scales=view_scales)
+    interpolation = flat_weights(at, fields.positions, exposure_scales=view_scales)
     line = [s for d, s in ordered if d == "line integrals"]
     head, tail = _split_at_break(line)
     counts_steps = tuple(s for d, s in ordered if d == "counts")
     transmission_steps = tuple(s for d, s in ordered if d == "transmission")
+    transmission_head, transmission_tail = _split_at_break(list(transmission_steps))
     settings = {"epsilon": float(epsilon), "factor": binning}
     slab = _row_slab(counts, ordered, batch_views, binning)
     if slab is not None:
         out, tally = _correct_row_slabs(
-            counts, fields, interpolation, tuple(line), slab=slab, **settings
+            counts,
+            fields,
+            interpolation,
+            tuple(line),
+            slab=slab,
+            transmission_steps=transmission_steps,
+            **settings,
         )
         kept, tail_records, head = np.arange(views), (), line
     else:
         # Binned on the device while the batches come back, unless the tail needs full frames.
-        factor = 1 if tail else binning
+        factor = 1 if tail or transmission_tail else binning
         out = np.empty((views, rows // factor, cols // factor), np.float32)
-        batch = batch_views or _frame_batch_size(
+        batch = batch_views or frame_batch_size(
             views, rows, cols, (*counts_steps, *transmission_steps, *head)
         )
-        tally = _correct_view_batches(
+        tally = correct_view_batches(
             counts, out, fields, interpolation, batch, counts_steps=counts_steps,
-            transmission_steps=transmission_steps, line_steps=tuple(head),
-            epsilon=float(epsilon), factor=factor,
+            transmission_steps=tuple(transmission_head),
+            line_steps=() if transmission_tail else tuple(head),
+            epsilon=float(epsilon), factor=factor, take_log=not transmission_tail,
         )  # fmt: skip
-        out, kept, tail_records = _run_rest(out, tail, batch_views)
-        if tail and binning > 1:
+        if transmission_tail:
+            out, _, _ = apply_steps(out, transmission_tail, batch_views)
+            out, tally = log_batches(out, tuple(head), epsilon, batch_views)
+        out, kept, tail_records = apply_steps(out, tail, batch_views)
+        if (tail or transmission_tail) and binning > 1:
             out = _binned(out, binning, batch_views)
     found: dict[str, Json] = {
         "nonpositive_transmission": int(tally[0]),
@@ -241,7 +245,7 @@ def correct_projections(
     (2, 3, 4)
     """
     batch_views = _validated_batch_views(batch_views)
-    ordered = _ordered(steps)
+    ordered = ordered_steps(steps)
     if any(d != "line integrals" for d, _ in ordered):
         wrong = [type(s).__name__ for d, s in ordered if d != "line integrals"]
         raise ValueError(
@@ -250,11 +254,11 @@ def correct_projections(
             "them to Frames.corrected"
         )
     out = np.array(projections, np.float32, copy=True)
-    out, kept, records = _run_rest(out, [s for _, s in ordered], batch_views)
+    out, kept, records = apply_steps(out, [s for _, s in ordered], batch_views)
     return Corrected(out, records, kept)
 
 
-def _frame_batch_size(views: int, rows: int, cols: int, steps: Sequence[Step]) -> int:
+def frame_batch_size(views: int, rows: int, cols: int, steps: Sequence[Step]) -> int:
     """Bound streaming batches while retaining room for workspace-heavy steps."""
     workspace = max((s.workspace_pixels(rows, cols) for s in steps), default=0)
     # Smaller simple-frame batches overlap file reads and transfers more cheaply
@@ -273,14 +277,14 @@ def _validated_batch_views(value: int | None) -> int | None:
     return int(value)
 
 
-def _positive_finite(value: float, name: str) -> float:
+def positive_finite(value: float, name: str) -> float:
     value = float(value)
     if not np.isfinite(value) or value <= 0:
         raise ValueError(f"{name} must be finite and positive, not {value!r}")
     return value
 
 
-def _ordered(steps: Sequence[Step]) -> list[tuple[str, Step]]:
+def ordered_steps(steps: Sequence[Step]) -> list[tuple[str, Step]]:
     """``steps`` by domain (counts, transmission, line integrals), in order within each."""
     for step in steps:
         if not isinstance(step, Step):
@@ -289,15 +293,14 @@ def _ordered(steps: Sequence[Step]) -> list[tuple[str, Step]]:
             )
         if step.domain not in DOMAINS:
             raise ValueError(f"{type(step).__name__} has an unknown domain {step.domain!r}")
-        if (step.whole_rows or step.selects_views) and step.domain != "line integrals":
-            raise ValueError(
-                f"{type(step).__name__}: steps on whole rows or selecting views act on "
-                "line integrals only"
-            )
+        if step.selects_views and step.domain != "line integrals":
+            raise ValueError("view-selecting corrections act on line integrals only")
+        if step.whole_rows and step.domain == "counts":
+            raise ValueError("whole-row corrections act on transmission or line integrals")
     return [(d, s) for d in DOMAINS for s in steps if s.domain == d]
 
 
-class _Fields:
+class Fields:
     """Dark-subtracted illumination sets, their positions and the additive dark field.
 
     ``flats`` has shape ``(sets, rows, columns)`` in counts, or counts per second
@@ -310,7 +313,7 @@ class _Fields:
         self.flats, self.positions, self.dark, self.usable = flats, positions, dark, usable
 
 
-def _flat_fields(
+def flat_fields(
     flats: Any,
     positions: np.ndarray | None,
     darks: Any,
@@ -319,12 +322,12 @@ def _flat_fields(
     epsilon: float,
     *,
     flat_scales: np.ndarray | None = None,
-) -> tuple[_Fields, tuple[Correction, ...]]:
+) -> tuple[Fields, tuple[Correction, ...]]:
     """The mean flat of each set, the mean dark, and the record of them.
 
     A pixel is usable where the flat exceeds the dark by at least ``epsilon`` and
     three standard errors of the two calibration means. Elsewhere the ratio is
-    noise: ``_first_pass`` interpolates interior gaps along each detector row and
+    noise: ``first_pass`` interpolates interior gaps along each detector row and
     takes pixels outside its measured span as no absorption.
     """
     if darks is None and flats is not None:
@@ -338,7 +341,7 @@ def _flat_fields(
                 "no flat fields: pass flats (frames of the beam without the object) or "
                 "white_level (the counts of an unattenuated pixel) to tomojax.load_frames"
             )
-        level = _positive_finite(white_level, "white_level")
+        level = positive_finite(white_level, "white_level")
         stack, variance, sets = np.full((1, *shape), level), np.zeros((1, *shape)), np.zeros(1)
         settings: dict[str, Any] = {"white_level": level, "darks": dark_frames}
     else:
@@ -377,7 +380,7 @@ def _flat_fields(
     )
     usable = cast("np.ndarray", (np.isfinite(light) & (light > floor)).all(axis=0))
     found: dict[str, Json] = {"pixels_without_light": int(np.count_nonzero(~usable))}
-    fields = _Fields(light.astype(np.float32), sets, dark.astype(np.float32), usable)
+    fields = Fields(light.astype(np.float32), sets, dark.astype(np.float32), usable)
     return fields, (Correction("flat_dark", settings, found),)
 
 
@@ -415,7 +418,7 @@ def _moments(
     return mean, np.maximum(0.0, squares - total * mean) / (count * (count - 1))
 
 
-def _exposure_scales(
+def exposure_scales(
     sample: np.ndarray | float | None, flat: np.ndarray | float | None, views: int, flats: Any
 ) -> tuple[np.ndarray, np.ndarray | None]:
     """Convert measured durations to count-rate factors; white levels stay in counts."""
@@ -438,7 +441,7 @@ def _exposure_scales(
     return rates[0].astype(np.float32), rates[1]
 
 
-def _interpolation(
+def flat_weights(
     q: np.ndarray, positions: np.ndarray, *, exposure_scales: np.ndarray | None = None
 ) -> tuple[np.ndarray, ...]:
     """For each view at ``q``, the flat sets either side of it and the weight of the later one.
@@ -464,9 +467,10 @@ def _interpolation(
         "line_steps",
         "factor",
         "fill_gaps",
+        "take_log",
     ),
 )
-def _first_pass(
+def first_pass(
     raw: jax.Array,
     lo: jax.Array,
     hi: jax.Array,
@@ -482,6 +486,7 @@ def _first_pass(
     line_steps: tuple[Step, ...] = (),
     factor: int = 1,
     fill_gaps: bool = True,
+    take_log: bool = True,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     x = raw.astype(jnp.float32)
     for step in counts_steps:
@@ -496,6 +501,20 @@ def _first_pass(
         transmission = _interpolate_unmeasured(transmission, usable)
     for step in transmission_steps:
         transmission = step.apply(transmission)
+    if not take_log:
+        return transmission, jnp.asarray(0), jnp.asarray(0)
+    return _log_transmission(transmission, epsilon=epsilon, line_steps=line_steps, factor=factor)
+
+
+@partial(jax.jit, static_argnames=("epsilon", "line_steps", "factor"))
+def _log_transmission(
+    transmission: jax.Array,
+    *,
+    epsilon: float,
+    line_steps: tuple[Step, ...] = (),
+    factor: int = 1,
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Floor and log transmission, then run the phase prefix and bin its result."""
     nonpositive = jnp.sum(transmission <= 0)
     p = -jnp.log(jnp.maximum(transmission, epsilon))
     for step in line_steps:
@@ -527,15 +546,15 @@ def _interpolate_unmeasured(transmission: jax.Array, usable: jax.Array) -> jax.A
     return jnp.where(interior[None], filled, transmission)
 
 
-def _correct_view_batches(
+def correct_view_batches(
     counts: Any,
     out: np.ndarray,
-    fields: _Fields,
+    fields: Fields,
     interpolation: tuple[np.ndarray, ...],
     batch: int,
     **settings: Any,
 ) -> np.ndarray:
-    """Run ``_first_pass`` over batches of views into ``out``; the tally of what it found."""
+    """Run ``first_pass`` over batches of views into ``out``; the tally of what it found."""
     flats, dark, usable = (jax.device_put(a) for a in (fields.flats, fields.dark, fields.usable))
     lo, hi, t, exposure_scale = interpolation
     tally = np.zeros(2, np.int64)  # non-positive transmission, non-finite results
@@ -547,7 +566,7 @@ def _correct_view_batches(
 
     pending = None
     for start, stop, raw in _batches(counts, counts.shape[0], batch):
-        done = _first_pass(
+        done = first_pass(
             jnp.asarray(raw), lo[start:stop], hi[start:stop], t[start:stop],
             exposure_scale[start:stop], flats, dark, usable,
             fill_gaps=fill_gaps,
@@ -560,6 +579,22 @@ def _correct_view_batches(
     if pending is not None:
         collect(*pending)
     return tally
+
+
+def log_batches(
+    out: np.ndarray, steps: tuple[Step, ...], epsilon: float, batch_views: int | None
+) -> tuple[np.ndarray, np.ndarray]:
+    """Replace a host transmission stack by line integrals, counting log findings."""
+    views, rows, cols = out.shape
+    batch = batch_views or frame_batch_size(views, rows, cols, steps)
+    tally = np.zeros(2, np.int64)
+    for first in range(0, views, batch):
+        done, nonpositive, bad = _log_transmission(
+            jnp.asarray(out[first : first + batch]), epsilon=epsilon, line_steps=steps
+        )
+        out[first : first + batch] = np.asarray(done)
+        tally += (int(nonpositive), int(bad))
+    return out, tally
 
 
 def _row_slab(
@@ -581,7 +616,7 @@ def _row_slab(
         and not getattr(counts, "_bulk_row_reads", False)
     ):
         return None
-    if any(d != "line integrals" or not s.whole_rows or s.selects_views for d, s in ordered):
+    if any(d == "counts" or not s.whole_rows or s.selects_views for d, s in ordered):
         return None
     if not isinstance(counts, np.ndarray) and not getattr(counts, "_efficient_row_windows", False):
         return None
@@ -593,7 +628,7 @@ def _row_slab(
 
 def _correct_row_slabs(
     counts: Any,
-    fields: _Fields,
+    fields: Fields,
     interpolation: tuple[np.ndarray, ...],
     steps: tuple[Step, ...],
     *,
@@ -623,7 +658,7 @@ def _correct_row_slabs(
     pending = None
     for start in range(0, rows - rows % factor, slab):
         stop = min(start + slab, rows - rows % factor)
-        done = _first_pass(
+        done = first_pass(
             jnp.asarray(read(start, stop)), lo, hi, t, exposure_scale,
             flats[:, start:stop], dark[start:stop],
             usable[start:stop], line_steps=steps,
@@ -656,7 +691,7 @@ def _split_at_break(steps: list[Step]) -> tuple[list[Step], list[Step]]:
     return steps, []
 
 
-def _run_rest(
+def apply_steps(
     out: np.ndarray, steps: Sequence[Step], batch_views: int | None
 ) -> tuple[np.ndarray, np.ndarray, tuple[Correction, ...]]:
     """``steps`` over ``out``: whole-row steps on slabs of rows, the others on views.
@@ -675,7 +710,7 @@ def _run_rest(
             records.append(step.record())
             i += 1
         elif step.selects_views:
-            batch = batch_views or _frame_batch_size(views, rows, cols, (step,))
+            batch = batch_views or frame_batch_size(views, rows, cols, (step,))
             stats = np.concatenate([
                 np.asarray(_statistic(step, jnp.asarray(out[v0 : v0 + batch])))
                 for v0 in range(0, views, batch)
@@ -692,7 +727,7 @@ def _run_rest(
             while j < len(steps) and not (steps[j].whole_rows or steps[j].selects_views):
                 j += 1
             run = tuple(steps[i:j])
-            batch = batch_views or _frame_batch_size(views, rows, cols, run)
+            batch = batch_views or frame_batch_size(views, rows, cols, run)
             for v0 in range(0, views, batch):
                 out[v0 : v0 + batch] = np.asarray(_apply(run, jnp.asarray(out[v0 : v0 + batch])))
             records.extend(s.record() for s in run)
@@ -744,240 +779,3 @@ def _batches(counts: Any, views: int, batch: int) -> Any:
             if k + 1 < len(starts):
                 pending = reader.submit(read, starts[k + 1])
             yield start, min(start + batch, views), frames
-
-
-@dataclass
-class CorrectedRows:
-    """Owned device projections and their records, completed only when requested."""
-
-    projections: jax.Array
-    flat: Correction
-    steps: tuple[Step, ...]
-    epsilon: float
-    counts: tuple[jax.Array, jax.Array]
-    raw: np.ndarray
-
-    @property
-    def records(self) -> tuple[Correction, ...]:
-        """Correction records for these measured rows, including any sampling halo."""
-        log = Correction(
-            "log",
-            {"epsilon": self.epsilon},
-            {
-                "nonpositive_transmission": int(self.counts[0]),
-                "nonfinite_set_to_zero": int(self.counts[1]),
-            },
-        )
-        return (self.flat, log, *(step.record() for step in self.steps))
-
-
-class _RowReader:
-    """One current raw block and one prefetched block; requests own their small copies."""
-
-    def __init__(self, counts: Any) -> None:
-        self.counts = counts
-        views, rows, cols = counts.shape
-        self.batch = max(1, min(rows, (1 << 30) // (views * cols * counts.dtype.itemsize)))
-        self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tomojax-raw-rows")
-        self.current = self.future = None
-        self.first = self.next_first = -1
-
-    def _read(self, first: int) -> np.ndarray:
-        stop = min(first + self.batch, self.counts.shape[1])
-        return self.counts.window(slice(first, stop), slice(None))[:]
-
-    def read(self, first: int, stop: int) -> np.ndarray:
-        if isinstance(self.counts, np.ndarray):
-            return np.ascontiguousarray(self.counts[:, first:stop])
-        views, rows, cols = self.counts.shape
-        output = np.empty((views, stop - first, cols), dtype=self.counts.dtype)
-        at = first
-        while at < stop:
-            block = at // self.batch * self.batch
-            if block != self.first:
-                if block != self.next_first:
-                    if self.future is not None and not self.future.cancel():
-                        self.future.result()
-                    self.future = self.pool.submit(self._read, block)
-                assert self.future is not None
-                self.current = self.future.result()
-                self.first = block
-                self.next_first = block + self.batch
-                self.future = (
-                    self.pool.submit(self._read, self.next_first)
-                    if self.next_first < rows
-                    else None
-                )
-            end = min(stop, block + self.batch)
-            assert self.current is not None
-            output[:, at - first : end - first] = self.current[:, at - block : end - block]
-            at = end
-        return output
-
-    def close(self) -> None:
-        self.pool.shutdown(wait=True, cancel_futures=True)
-        self.current = self.future = None
-
-
-@contextmanager
-def corrected_row_source(
-    counts: Any,
-    *,
-    flats: Any,
-    flat_positions: np.ndarray | None,
-    darks: Any,
-    white_level: float | None,
-    steps: Sequence[Step],
-    epsilon: float = 1e-6,
-    view_positions: np.ndarray | None = None,
-    exposure_times: np.ndarray | float | None = None,
-    flat_exposure_times: np.ndarray | float | None = None,
-    host: bool = False,
-) -> Iterator[Callable[[int, int], CorrectedRows | Corrected]]:
-    """Read corrected detector-row intervals without a materialized projection stack.
-
-    Each request returns owned projections, independent of later reads and
-    context closure. Only whole-row line-integral steps without view selection
-    are supported; operations requiring neighboring rows must run on full frames.
-    Raw inputs must be NumPy arrays or support lazy detector windows. The source
-    and calibration arrays must remain unchanged until this context closes.
-
-    Parameters
-    ----------
-    counts : array-like
-        Detector counts with shape ``(views, rows, columns)``. May be a lazy source.
-    flats : array-like or None
-        Open-beam frames with shape ``(frames, rows, columns)``, or None when
-        white_level supplies the open-beam count.
-    flat_positions : numpy.ndarray or None
-        Number of views recorded before each flat frame. Frames at the same
-        position form one set; None puts all frames in one set.
-    darks : array-like or None
-        Dark frames with shape ``(frames, rows, columns)``; None uses zero dark.
-    white_level : float or None
-        Positive open-beam count used when flats is None.
-    steps : sequence of Step
-        Corrections, run by domain and in the supplied order within each domain.
-    epsilon : float, optional
-        Positive transmission floor before the logarithm. Default is 1e-6.
-    view_positions : numpy.ndarray or None, optional
-        Position of each view among the flats. Defaults to ``i + 0.5`` for view i.
-    exposure_times : numpy.ndarray or float or None, optional
-        Sample exposure durations in seconds, one per view or a common duration.
-    flat_exposure_times : numpy.ndarray or float or None, optional
-        Flat exposure durations in seconds, one per flat or a common duration.
-    host : bool, optional
-        Return NumPy bands using bounded device view batches, instead of keeping
-        the whole corrected band on the device. Default is False.
-
-    Yields
-    ------
-    callable
-        Reader accepting a half-open row interval ``(first, stop)`` and returning
-        corrected rows with their correction records. Use within a ``with`` block.
-
-    Raises
-    ------
-    ValueError
-        If steps require full frames or select views, or calibration or positions
-        are invalid.
-    TypeError
-        If counts lack detector-window access or a correction is not a Step.
-    """
-    ordered = _ordered(steps)
-    if any(
-        domain != "line integrals" or not step.whole_rows or step.selects_views
-        for domain, step in ordered
-    ):
-        raise ValueError(
-            "streamed corrections require whole-row line-integral steps without view selection"
-        )
-    if not isinstance(counts, np.ndarray) and not hasattr(counts, "window"):
-        raise TypeError("streamed counts must be NumPy arrays or support detector windows")
-    epsilon = _positive_finite(epsilon, "epsilon")
-    views, rows, cols = counts.shape
-    view_scales, flat_scales = _exposure_scales(exposure_times, flat_exposure_times, views, flats)
-    fields, records = _flat_fields(
-        flats, flat_positions, darks, white_level, (rows, cols), epsilon, flat_scales=flat_scales
-    )
-    if flat_scales is not None and exposure_times is not None:
-        records[0].settings["sample_exposure_range_s"] = [
-            float(np.min(exposure_times)),
-            float(np.max(exposure_times)),
-        ]
-    at = (
-        np.arange(views) + 0.5 if view_positions is None else np.asarray(view_positions, np.float64)
-    )
-    if at.shape != (views,) or not np.isfinite(at).all():
-        raise ValueError(f"view_positions needs one finite position for each of the {views} views")
-    interpolation = _interpolation(at, fields.positions, exposure_scales=view_scales)
-    device_interpolation = None if host else tuple(jax.device_put(v) for v in interpolation)
-    reader = None if host else _RowReader(counts)
-    line_steps = tuple(steps)
-
-    def correct(first: int, stop: int) -> CorrectedRows | Corrected:
-        if host:
-            return _correct_host_rows(
-                counts, fields, interpolation, records[0], first, stop, line_steps, epsilon
-            )
-        assert reader is not None
-        assert device_interpolation is not None
-        raw = reader.read(first, stop)
-        raw = raw.astype(raw.dtype.newbyteorder("="), copy=False)
-        selected = (fields.flats[:, first:stop], fields.dark[first:stop], fields.usable[first:stop])
-        done = _first_pass(
-            jax.device_put(raw),
-            *device_interpolation,
-            *(jax.device_put(np.ascontiguousarray(value)) for value in selected),
-            epsilon=epsilon,
-            line_steps=line_steps,
-            fill_gaps=not bool(selected[2].all()),
-        )
-        flat = Correction(
-            "flat_dark",
-            records[0].settings,
-            {"pixels_without_light": int(np.count_nonzero(~selected[2]))},
-        )
-        return CorrectedRows(done[0], flat, line_steps, epsilon, (done[1], done[2]), raw)
-
-    try:
-        yield correct
-    finally:
-        if reader is not None:
-            reader.close()
-
-
-def _correct_host_rows(
-    counts: Any,
-    fields: _Fields,
-    interpolation: tuple[np.ndarray, ...],
-    flat_record: Correction,
-    first: int,
-    stop: int,
-    steps: tuple[Step, ...],
-    epsilon: float,
-) -> Corrected:
-    """Correct a host band with bounded raw reads and device workspaces."""
-    rows = slice(first, stop)
-    raw = counts[:, rows] if isinstance(counts, np.ndarray) else counts.window(rows, slice(None))
-    selected = _Fields(
-        fields.flats[:, rows], fields.positions, fields.dark[rows], fields.usable[rows]
-    )
-    output = np.empty(raw.shape, np.float32)
-    batch = _frame_batch_size(raw.shape[0], raw.shape[1], raw.shape[2], ())
-    tally = _correct_view_batches(raw, output, selected, interpolation, batch, epsilon=epsilon)
-    output, kept, rest = _run_rest(output, steps, None)
-    flat = Correction(
-        "flat_dark",
-        flat_record.settings,
-        {"pixels_without_light": int(np.count_nonzero(~selected.usable))},
-    )
-    log = Correction(
-        "log",
-        {"epsilon": epsilon},
-        {
-            "nonpositive_transmission": int(tally[0]),
-            "nonfinite_set_to_zero": int(tally[1]),
-        },
-    )
-    return Corrected(output, (flat, log, *rest), kept)

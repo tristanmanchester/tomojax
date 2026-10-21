@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+Whole-row transmission corrections run before the logarithm in batched and
+streamed-row workflows; detector binning averages the corrected line integrals.
+
 Flat-field correction interpolates statistically unmeasured interior pixels in
 transmission from the same view's neighbouring columns, instead of inserting air
 stripes. Stable low-gain pixels and unilluminated detector margins are unchanged.
