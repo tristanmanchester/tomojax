@@ -128,9 +128,7 @@ def score_case(arrays: dict, info: dict, names: list[str], figures: Path | None 
         metrics = score.score_volume(result.volume, case, mu)
         if result.projections is not None:
             metrics["line_integral"] = score.score_line_integrals(result.projections, paths, mu)
-        record[name] = {"seconds": seconds, "declined": result.declined, **metrics}
-        if result.info:
-            record[name]["info"] = result.info
+        record[name] = {"seconds": seconds, **metrics}
         images[name] = score.slab(result.volume, case) / mu[level]
     if lamino and "mu" in record.get("exact", {}):
         _against_exact(record)

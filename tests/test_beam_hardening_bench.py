@@ -116,6 +116,15 @@ def test_curve_finds_nonlinearity(bench, tmp_path):
     assert (tmp_path / "c.png").stat().st_size > 0
 
 
+def test_gauges_read_the_spectrum(bench):
+    # Two energies with attenuation 0.4 and 0.1 mm^-1, equal detected weight.
+    arrays = {"energies": np.array([30.0, 60.0]), "weights": np.array([0.5, 0.5])}
+    arrays["mu_grid"] = np.interp(np.arange(1.0, 301.0), [30.0, 60.0], [0.4, 0.1])[None]
+    gauge = bench["score"].gauge_mu
+    assert gauge(["m"], arrays, ("slope",))["m"] == pytest.approx(0.25)
+    assert gauge(["m"], arrays, ("energy", 60.0))["m"] == pytest.approx(0.1)
+
+
 def test_laminography_images_are_scored_against_the_exact_control(bench):
     record = {"exact": {"mu": {"glass": {"bias": 0.067}}, "cupping": 0.02}}
     record["spectrum"] = {"mu": {"glass": {"bias": 0.067}}, "cupping": 0.05}

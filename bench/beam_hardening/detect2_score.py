@@ -144,7 +144,6 @@ def run(
             image = np.asarray(result.volume)[:, :, 0]
             record[name] = {
                 "seconds": time.perf_counter() - start,
-                "declined": result.declined,
                 **compare(image, reference, segmentation),
             }
             images[name] = image / np.median(image[filler])

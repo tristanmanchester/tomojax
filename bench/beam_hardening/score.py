@@ -67,16 +67,21 @@ def fractions(case: dict, supersample: int = 5) -> np.ndarray:
 
 
 def gauge_mu(materials: list[str], arrays: dict, gauge: tuple) -> dict[str, float]:
-    """True attenuation (mm^-1) of each material in a method's gauge."""
+    """True attenuation (mm^-1) of each material in a method's gauge.
+
+    ``("slope",)``: the unhardened beam's mean attenuation; ``("energy", keV)``:
+    attenuation at that energy.
+    """
+    grid = np.arange(1.0, 301.0)
+    detected = {
+        m: np.interp(arrays["energies"], grid, arrays["mu_grid"][k])
+        for k, m in enumerate(materials)
+    }
     if gauge[0] == "slope":
-        grid = np.arange(1.0, 301.0)
-        return {
-            m: float(np.interp(arrays["energies"], grid, arrays["mu_grid"][k]) @ arrays["weights"])
-            for k, m in enumerate(materials)
-        }
+        return {m: float(mu @ arrays["weights"]) for m, mu in detected.items()}
     if gauge[0] == "energy":
         return {
-            m: float(np.interp(gauge[1], np.arange(1.0, 301.0), arrays["mu_grid"][k]))
+            m: float(np.interp(gauge[1], grid, arrays["mu_grid"][k]))
             for k, m in enumerate(materials)
         }
     raise ValueError(f"unknown gauge {gauge!r}")

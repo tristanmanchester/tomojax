@@ -100,7 +100,7 @@ def walnut(names: list[str], figures: Path | None = None) -> list[dict]:
         scale = (v @ t) / (v @ v)
         record[name]["scaled_in_walnut"] = float(np.linalg.norm(v * scale - t) / np.linalg.norm(t))
         record[name]["scale"] = float(scale)
-        record[name] |= {"declined": result.declined, "peak_rss_gb": _peak_gb()}
+        record[name] |= {"peak_rss_gb": _peak_gb()}
         images[name] = scale * volume[:, :, volume.shape[2] // 2]
         del result
     if figures is not None:
@@ -161,7 +161,7 @@ def mono(names: list[str], figures: Path | None = None) -> list[dict]:
                 if result.projections is None:
                     record[name] = {"error": "no corrected line integrals"}
                     break
-                parts.append((*curve(measured[subset], result.projections), result.declined))
+                parts.append(curve(measured[subset], result.projections))
                 del result
             if len(parts) < 3:
                 continue
@@ -176,7 +176,6 @@ def mono(names: list[str], figures: Path | None = None) -> list[dict]:
                 "nonlinearity": nonlinearity,
                 "noise": noise,
                 "slope": parts[0][2],
-                "declined": parts[0][3],
                 "linear": nonlinearity <= max(3 * noise, 0.005),
                 "peak_rss_gb": _peak_gb(),
             }

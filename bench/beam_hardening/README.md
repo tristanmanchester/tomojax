@@ -76,5 +76,6 @@ most attenuation: exact for one material, and what a correctly calibrated
 single-material correction gives for several. `exact` reconstructs the
 noiseless true line integrals: the floor of every metric.
 
-The methods under test (`selfcal`, `spectrum`, `joint`) call
-`tomojax.corrections.BeamHardening` and `tj.reconstruct(scan, "polychromatic")`.
+The method under test, `spectrum`, applies
+`tomojax.corrections.BeamHardening.from_spectrum` for the recorded tube
+settings and the sample's named material.
