@@ -10,6 +10,7 @@ assembled from bounded host windows, including masked inputs.
 The checkpoint helper supports single-resolution alignment and preserves
 early stopping when resuming a completed run. Loading checkpoint metadata
 does not allocate its volume; arrays are read when accessed.
+Checkpoint writes read the reconstruction in bounded z windows.
 
 Cone-beam CGLS, SIRT/OS-SART and MLEM/OSEM reconstruct volumes larger than
 the GPU: the volumes stay in host memory, or in memory-mapped files given as

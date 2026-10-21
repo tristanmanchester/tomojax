@@ -189,3 +189,28 @@ def test_checkpoint_metadata_is_lazy_and_arrays_keep_the_open_file(tmp_path, mon
     with pytest.raises(CheckpointError, match="cannot resume this alignment"):
         align_api.alignment_checkpointing(path, _run(mode="full"))
     assert "x" not in accesses
+
+
+def test_checkpoint_writes_bounded_windows_from_a_reused_source(tmp_path):
+    bits = np.array([0x80000000, 0x7F800000, 0x7FC01234], np.uint32)
+    buffer = np.empty((2049, 4096, 1), np.float32)
+    reads = []
+
+    class Source:
+        shape = (2049, 4096, 3)
+
+        def __getitem__(self, index):
+            first, last = index[2].start, index[2].stop
+            assert last - first == 1
+            reads.append(first)
+            buffer.view(np.uint32).fill(bits[first])
+            return buffer
+
+    path = tmp_path / "windows.npz"
+    align_api.save_alignment_checkpoint(path, x=Source(), pose_params=np.zeros((1, 6)), metadata={})
+    buffer.fill(1)
+    with np.load(path, allow_pickle=False) as archive:
+        saved = archive["x"].view(np.uint32)
+        assert saved.shape == Source.shape and reads == [0, 1, 2]
+        for z in range(3):
+            assert np.all(saved[:, :, z] == bits[z])

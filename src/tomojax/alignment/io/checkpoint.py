@@ -15,6 +15,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, Required, TypedDict, cast
 from uuid import uuid4
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import numpy as np
 
@@ -318,6 +319,8 @@ def save_alignment_checkpoint(
 ) -> None:
     """Atomically write an alignment checkpoint as `.npz` plus JSON metadata.
 
+    The reconstruction is read in bounded z windows rather than copied whole.
+
     Parameters
     ----------
     path : str or path-like
@@ -356,7 +359,6 @@ def save_alignment_checkpoint(
     try:
         with tmp_path.open("wb") as fh:
             arrays: dict[str, Any] = {
-                "x": np.asarray(x, dtype=np.float32),
                 "pose_params": np.asarray(pose_params, dtype=np.float32),
                 "loss_history": np.asarray(loss_history, dtype=np.float64),
                 "metadata_json": np.asarray(metadata_json),
@@ -366,7 +368,11 @@ def save_alignment_checkpoint(
                 arrays["motion_coeffs"] = np.asarray(motion_coeffs, dtype=np.float32)
             else:
                 arrays["motion_coeffs"] = np.zeros((0,), dtype=np.float32)
-            np.savez_compressed(fh, **arrays)
+            with ZipFile(fh, "w", compression=ZIP_DEFLATED) as archive:
+                _write_volume(archive, x)
+                for name, array in arrays.items():
+                    with archive.open(f"{name}.npy", "w", force_zip64=True) as member:
+                        np.lib.format.write_array(member, array, allow_pickle=False)
             fh.flush()
             os.fsync(fh.fileno())
         tmp_path.replace(out_path)
@@ -375,6 +381,23 @@ def save_alignment_checkpoint(
         with suppress(OSError):
             tmp_path.unlink()
         raise
+
+
+def _write_volume(archive: ZipFile, volume: Any) -> None:
+    """Write a standard NPY member, packing at most 64 MiB or one xy plane."""
+    if not hasattr(volume, "shape"):
+        volume = np.asarray(volume, dtype=np.float32)
+    shape = tuple(int(length) for length in volume.shape)
+    depth = max(1, (64 << 20) // (4 * shape[0] * shape[1]))
+    with archive.open("x.npy", "w", force_zip64=True) as member:
+        np.lib.format.write_array_header_2_0(
+            member, {"descr": np.dtype(np.float32).str, "fortran_order": True, "shape": shape}
+        )
+        for first in range(0, shape[2], depth):
+            last = min(first + depth, shape[2])
+            values = np.asarray(volume[:, :, first:last], np.float32, order="F")
+            member.write(memoryview(values.ravel(order="F")).cast("B"))
+            del values
 
 
 def _fsync_parent(path: Path) -> None:
