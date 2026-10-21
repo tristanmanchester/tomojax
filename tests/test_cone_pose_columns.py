@@ -94,7 +94,7 @@ def test_cuda_columns_retain_individual_central_differences(
         def prediction(q):
             pose = apply_pose_update(nominal, q, translation_frame="object")
             image = forward_project_view_T(
-                pose, grid, detector, volume, frames=frame, projector_backend="cuda"
+                pose, grid, detector, volume, frames=frame, backend="cuda"
             )
             return image.ravel()
 
@@ -156,9 +156,7 @@ def test_cuda_analytic_pose_columns_match_jax(width, translation_frame, directio
     @jax.jit
     def predict(p):
         pose = apply_pose_update(nominal, p, translation_frame=translation_frame)
-        image = forward_project_view_T(
-            pose, grid, detector, volume, frames=frame, projector_backend="jax"
-        )
+        image = forward_project_view_T(pose, grid, detector, volume, frames=frame, backend="jax")
         return weight.ravel() * (image.ravel() - target.ravel())
 
     actual = candidate(params, nominal, frame, volume, target, weight)

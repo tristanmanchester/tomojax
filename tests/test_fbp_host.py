@@ -36,15 +36,13 @@ def test_host_slabs_match_full_physical_reconstruction(kind, depth, backend):
     if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
     grid, detector, geometry, data = scan(kind)
-    reference = np.asarray(
-        fbp(geometry, grid, detector, data, config=FBPConfig(backprojector="jax"))
-    )
+    reference = np.asarray(fbp(geometry, grid, detector, data, config=FBPConfig(backend="jax")))
     actual = fbp_host(
         geometry,
         grid,
         detector,
         data,
-        config=FBPHostConfig(slices_per_batch=depth, views_per_batch=3, backprojector=backend),
+        config=FBPHostConfig(slices_per_batch=depth, views_per_batch=3, backend=backend),
     )
     assert isinstance(actual, np.ndarray)
     assert actual.dtype == np.float32
@@ -69,7 +67,7 @@ def test_host_slabs_reuse_compilation_and_bound_device_shapes(
         return kernel(accum, poses, projections, *args, **kwargs)
 
     monkeypatch.setattr(module, "_fbp_accumulate_batch", record)
-    cfg = FBPHostConfig(slices_per_batch=depth, views_per_batch=2, backprojector="jax")
+    cfg = FBPHostConfig(slices_per_batch=depth, views_per_batch=2, backend="jax")
     actual = fbp_host(geometry, grid, detector, data, config=cfg)
     assert len(calls) == count
     assert all(shape[0] == 2 and shape[1] <= row_bound for shape, _, _ in calls)
@@ -146,9 +144,7 @@ def test_axial_cuda_staging_respects_memory_and_physical_rows(monkeypatch, kind,
     grid, detector, geometry, data = scan(kind)
     geometry = replace(geometry, angles=np.linspace(0, 180, 20, endpoint=False))
     data = np.tile(data, (4, 1, 1))
-    expected = np.asarray(
-        fbp(geometry, grid, detector, data, config=FBPConfig(backprojector="jax"))
-    )
+    expected = np.asarray(fbp(geometry, grid, detector, data, config=FBPConfig(backend="jax")))
     module = importlib.import_module("tomojax.recon.fbp_host")
     original, seen = module._fbp_from_host, []
 
@@ -280,7 +276,7 @@ def test_host_slabs_reject_overlapping_output_before_writing(tmp_path, mapping):
         ("slices_per_batch", 0),
         ("views_per_batch", -1),
         ("scale", np.nan),
-        ("backprojector", "invalid"),
+        ("backend", "invalid"),
     ],
 )
 def test_host_slabs_reject_invalid_configuration(field, value):
@@ -297,13 +293,13 @@ def test_host_slabs_reconstruct_laminography_like_fbp(depth, backend):
     grid, detector, geometry, data = scan()
     angles = np.linspace(0.0, 360.0, 5, endpoint=False) + 7.0
     tilted = LaminographyGeometry(grid, detector, angles, tilt_deg=30)
-    reference = np.asarray(fbp(tilted, grid, detector, data, config=FBPConfig(backprojector="jax")))
+    reference = np.asarray(fbp(tilted, grid, detector, data, config=FBPConfig(backend="jax")))
     actual = fbp_host(
         tilted,
         grid,
         detector,
         data,
-        config=FBPHostConfig(slices_per_batch=depth, views_per_batch=2, backprojector=backend),
+        config=FBPHostConfig(slices_per_batch=depth, views_per_batch=2, backend=backend),
     )
     assert actual.flags.c_contiguous
     np.testing.assert_allclose(actual, reference, atol=4e-6, rtol=5e-5)
@@ -341,7 +337,7 @@ def test_host_slabs_slice_device_projections_in_place(monkeypatch, kind, tilted,
     grid, detector, geometry, data = scan(kind)
     if tilted:
         geometry = LaminographyGeometry(grid, detector, geometry.angles, tilt_deg=30)
-    config = FBPHostConfig(slices_per_batch=4, views_per_batch=3, backprojector=backend)
+    config = FBPHostConfig(slices_per_batch=4, views_per_batch=3, backend=backend)
     expected = fbp_host(geometry, grid, detector, data, config=config)
     module = importlib.import_module("tomojax.recon.fbp_host")
     queried = []
@@ -418,9 +414,7 @@ def test_fbp_only_hoists_rows_for_the_exact_builtin_parallel_geometry(
         geometry = Translated(grid, detector, geometry.angles)
     elif kind == "lamino":
         geometry = LaminographyGeometry(grid, detector, geometry.angles, tilt_deg=17)
-    reference = np.asarray(
-        fbp(geometry, grid, detector, data, config=FBPConfig(backprojector="jax"))
-    )
+    reference = np.asarray(fbp(geometry, grid, detector, data, config=FBPConfig(backend="jax")))
     plan = module._plan
     modes = []
 
@@ -431,7 +425,7 @@ def test_fbp_only_hoists_rows_for_the_exact_builtin_parallel_geometry(
 
     monkeypatch.setattr(module, "_plan", record)
     projections = data if input_on_host else jnp.asarray(data)
-    volume = fbp(geometry, grid, detector, projections, config=FBPConfig(backprojector=backend))
+    volume = fbp(geometry, grid, detector, projections, config=FBPConfig(backend=backend))
     assert modes == [expected]
     assert np.isfinite(np.asarray(volume)).all()
     np.testing.assert_allclose(volume, reference, atol=4e-6, rtol=5e-5)

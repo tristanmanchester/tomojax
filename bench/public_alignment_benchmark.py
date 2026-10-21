@@ -339,7 +339,7 @@ def one_run(
         gn_coupling=gn_coupling,
         gn_joint_solver=gn_joint_solver,
         pose_translation_frame="detector",
-        projector_backend="cuda",
+        backend="cuda",
         gather_dtype="fp32",
         gn_jacobian=gn_jacobian,
         outer_iterations=OUTERS,

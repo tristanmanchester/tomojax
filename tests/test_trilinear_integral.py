@@ -213,7 +213,7 @@ def test_public_exact_alignment_scores_its_actual_operator_and_resumes(problem, 
     poses = stack_view_poses(geometry, 3)
     target = jnp.asarray(oracle(volume, poses, grid, detector), jnp.float32)
     cfg = AlignConfig(
-        projector_backend="jax",
+        backend="jax",
         gather_dtype="fp32",
         ray_integrator="exact",
         outer_iterations=2,

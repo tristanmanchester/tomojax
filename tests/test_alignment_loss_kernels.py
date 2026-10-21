@@ -103,7 +103,7 @@ def test_cuda_project_stack_records_unsupported_fallback(
         detector=Detector(nu=2, nv=2, du=1.0, dv=1.0),
         volume=jnp.ones((2, 2, 2), dtype=jnp.float32),
         det_grid=(jnp.zeros((2, 2), dtype=jnp.float32), jnp.zeros((2, 2), dtype=jnp.float32)),
-        projector_backend="cuda",
+        backend="cuda",
         require_differentiable_projector=False,
     )
 
@@ -137,7 +137,7 @@ def test_cuda_project_stack_propagates_unexpected_fast_path_errors(
                 jnp.zeros((2, 2), dtype=jnp.float32),
                 jnp.zeros((2, 2), dtype=jnp.float32),
             ),
-            projector_backend="cuda",
+            backend="cuda",
             require_differentiable_projector=False,
         )
 
@@ -168,16 +168,14 @@ def test_cone_alignment_objective_uses_cuda_pose_derivatives():
         require_differentiable_projector=True,
     )
     provenance = fixed_volume.alignment_projector_backend_provenance(
-        pose_stack=poses, projector_backend="cuda", api_surface="test", **options
+        pose_stack=poses, backend="cuda", api_surface="test", **options
     )
     assert provenance.actual_backend == "cuda"
     assert provenance.differentiability == "gradient_safe"
 
     def value_grad(backend):
         def loss(t):
-            predictions = fixed_volume.project_stack(
-                pose_stack=t, projector_backend=backend, **options
-            )
+            predictions = fixed_volume.project_stack(pose_stack=t, backend=backend, **options)
             return jnp.sum(jnp.square(predictions - 0.5))
 
         return jax.jit(jax.value_and_grad(loss))(poses)

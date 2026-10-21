@@ -235,7 +235,7 @@ def test_object_frame_gauge_keeps_all_visible_translation_components(kind, publi
             optimise_dofs=active,
             gauge_policy="anchor_mean",
             pose_translation_frame="object",
-            projector_backend="jax",
+            backend="jax",
             ray_integrator="joseph",
         )
         resume = AlignMultiresResumeState(

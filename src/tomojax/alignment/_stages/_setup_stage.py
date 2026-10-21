@@ -318,7 +318,7 @@ def _refresh_setup_reconstruction(
                 lipschitz=cfg.lipschitz,
                 nonnegative=bool(cfg.nonnegative),
                 ray_integrator=cfg.ray_integrator,
-                projector_backend="jax" if cfg.projector_backend == "jax" else "auto",
+                backend="jax" if cfg.backend == "jax" else "auto",
                 views_per_batch=int(cfg.views_per_batch) or None,
             ),
         )
@@ -337,7 +337,7 @@ def _refresh_setup_reconstruction(
         init_x=init_x,
         config=FistaConfig(
             projector_model="ray",
-            projector_backend="jax",
+            backend="jax",
             iterations=scaled_reconstruction_iterations(cfg.iterations, quality_policy),
             tv_weight=float(cfg.tv_weight),
             regulariser=cfg.regulariser,
@@ -698,7 +698,7 @@ def _optimize_setup_geometry_bilevel_for_level(
         checkpoint_projector=bool(cfg.checkpoint_projector),
         gather_dtype=str(cfg.gather_dtype),
         ray_integrator=cfg.ray_integrator,
-        projector_backend="jax" if cfg.projector_backend == "jax" else "auto",
+        backend="jax" if cfg.backend == "jax" else "auto",
     )
     seed_diagnostics = _setup_seed_diagnostics(
         geometry=geometry,

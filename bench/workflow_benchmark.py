@@ -67,7 +67,7 @@ def run_case(size: int, kind: str, method: str, args: argparse.Namespace) -> dic
             outer_iterations=args.outer_iters,
             iterations=args.inner_iters,
             lipschitz=lipschitz,
-            projector_backend="jax",
+            backend="jax",
             gather_dtype="fp32",
             views_per_batch=args.batch,
             loss=L2LossSpec(),

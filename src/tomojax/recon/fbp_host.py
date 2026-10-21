@@ -71,7 +71,7 @@ class FBPHostConfig:
         Frequency filter: "ramp", "shepp-logan" or "hann". Default is 'ramp'.
     scale : float | None, optional
         Constant angular weight per view, or None for geometry-derived weights.
-    backprojector : Literal['auto', 'jax', 'cuda'], optional
+    backend : Literal['auto', 'jax', 'cuda'], optional
         Backprojection backend: "auto", "jax" or "cuda". Auto uses CUDA
         acceleration when available. Default is 'auto'.
     """
@@ -80,7 +80,7 @@ class FBPHostConfig:
     views_per_batch: int = 32
     filter: str = "ramp"
     scale: float | None = None
-    backprojector: Literal["auto", "jax", "cuda"] = "auto"
+    backend: Literal["auto", "jax", "cuda"] = "auto"
 
 
 def _axial_depth(nz: int, requested: int | None) -> int:
@@ -262,8 +262,8 @@ def fbp_host(
     views = operator.index(cfg.views_per_batch)
     if (slices is not None and slices < 1) or views < 1:
         raise ValueError("fbp_host: slices_per_batch and views_per_batch must be positive")
-    if cfg.backprojector not in {"auto", "jax", "cuda"}:
-        raise ValueError("fbp_host: backprojector must be 'auto', 'jax' or 'cuda'")
+    if cfg.backend not in {"auto", "jax", "cuda"}:
+        raise ValueError("fbp_host: backend must be 'auto', 'jax' or 'cuda'")
     shape = validate_fbp_geometry(geometry, grid, detector, cfg.scale, "fbp_host")
     n_views, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fbp_host projections"
@@ -275,9 +275,9 @@ def fbp_host(
         d.platform == "gpu" and d.client.platform_version.lower().startswith("cuda")
         for d in poses.devices()
     )
-    if cfg.backprojector == "cuda" and not cuda:
+    if cfg.backend == "cuda" and not cuda:
         raise ValueError("fbp_host: CUDA requires CUDA")
-    backend = "cuda" if cuda and cfg.backprojector != "jax" else "jax"
+    backend = "cuda" if cuda and cfg.backend != "jax" else "jax"
     if type(geometry) is not ParallelGeometry:
         return _general_slabs(poses, grid, detector, projections, cfg, out, backend, slices, views)
     depth = _axial_depth(grid.nz, slices)
@@ -448,8 +448,8 @@ def fbp_slabs[T](
         raise ValueError("reconstruct_slabs requires unposed axial ParallelGeometry")
     _ = validate_fbp_geometry(geometry, grid, detector, config.scale, "reconstruct_slabs")
     _ = validate_detector(detector, "reconstruct_slabs detector")
-    if config.backprojector not in {"auto", "jax", "cuda"}:
-        raise ValueError("FBP backprojector must be 'auto', 'jax' or 'cuda'")
+    if config.backend not in {"auto", "jax", "cuda"}:
+        raise ValueError("FBP backend must be 'auto', 'jax' or 'cuda'")
     batches = (grid.nz + 7) // 8
     depth = (grid.nz + batches - 1) // batches
     devices = as_devices(config.devices)
@@ -460,9 +460,9 @@ def fbp_slabs[T](
             d.platform == "gpu" and d.client.platform_version.lower().startswith("cuda")
             for d in poses.devices()
         )
-        if config.backprojector == "cuda" and not cuda:
+        if config.backend == "cuda" and not cuda:
             raise ValueError("FBP CUDA backprojection requires CUDA")
-        backend = "cuda" if cuda and config.backprojector != "jax" else "jax"
+        backend = "cuda" if cuda and config.backend != "jax" else "jax"
         if backend == "cuda" and _slab_layout(grid, detector, depth)[-1]:
             depth = min(depth, 4)
         host_poses = np.asarray(poses, np.float32)

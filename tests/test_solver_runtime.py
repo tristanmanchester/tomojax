@@ -65,7 +65,7 @@ def test_spdhg_small_weights_preserve_the_dense_weighted_minimizer(stream, weigh
             sigma_tv=0.1,
             log_every=2000,
             projector_model="joseph",
-            projector_backend="jax",
+            backend="jax",
             stream_projections=stream,
         ),
     )
@@ -115,7 +115,7 @@ def test_spdhg_zero_weight_mask_recovers_dense_weighted_solution(tilted, stream,
             tv_weight=0,
             log_every=2000,
             projector_model="joseph",
-            projector_backend="jax",
+            backend="jax",
             stream_projections=stream,
         ),
     )
@@ -153,7 +153,7 @@ def test_repeated_solver_calls_use_new_arrays(solver, model):
                 nonnegative=False,
                 support=support,
                 projector_model=model,
-                projector_backend="jax",
+                backend="jax",
             )
             actual, _ = fista_tv(geometry, grid, detector, data, config=cfg)
             expected = support.ravel() * (matrix.T @ data.ravel()) / 20.0
@@ -169,7 +169,7 @@ def test_repeated_solver_calls_use_new_arrays(solver, model):
                 nonnegative=False,
                 support=support,
                 projector_model=model,
-                projector_backend="jax",
+                backend="jax",
             )
             actual, _ = spdhg_tv(geometry, grid, detector, data, weights=weights, config=cfg)
             dual = 0.2 * data * weights / (0.2 + weights)
@@ -296,7 +296,7 @@ def test_fista_streams_host_projections_like_device_projections(tmp_path, batch)
             tv_weight=0.01,
             nonnegative=True,
             projector_model="joseph",
-            projector_backend="jax",
+            backend="jax",
             views_per_batch=batch,
             stream_projections=stream,
         )
@@ -324,7 +324,7 @@ def test_spdhg_streams_data_weights_and_duals_from_host(tmp_path, weighted):
             tv_weight=0.01,
             views_per_batch=4,
             projector_model="joseph",
-            projector_backend="jax",
+            backend="jax",
             stream_projections=stream,
         )
         w = None if weights is None else (weights if stream else jnp.asarray(weights))
@@ -356,7 +356,7 @@ def test_spdhg_partial_steps_match_dense_first_update_and_preserve_each_override
         views_per_batch=3,
         log_every=1,
         projector_model=model,
-        projector_backend="jax",
+        backend="jax",
     )
     weights = np.random.default_rng(91).uniform(0.5, 1.5, data.shape).astype(np.float32)
     _, automatic = spdhg_tv(geometry, grid, detector, data, weights=weights, config=config)
@@ -411,7 +411,7 @@ def test_spdhg_partial_tv_step_controls_dense_primal_update(model, regulariser):
         views_per_batch=3,
         log_every=1,
         projector_model=model,
-        projector_backend="jax",
+        backend="jax",
     )
     for given in [{"sigma_tv": 0.19}, {"tau": 0.07, "sigma_data": 0.13, "sigma_tv": 0.19}]:
         volume, info = spdhg_tv(
@@ -474,7 +474,7 @@ def test_spdhg_disabled_tv_cannot_corrupt_finite_data_diagnostics(regulariser, s
             sigma_tv=0.1,
             log_every=1,
             stream_projections=stream,
-            projector_backend="jax",
+            backend="jax",
         ),
     )
     # Each ray sees one plane of length scale: this warm start is already an
@@ -502,7 +502,7 @@ def test_spdhg_masked_invalid_data_preserve_solution_and_diagnostics(stream, mis
         tv_weight=0,
         log_every=10,
         projector_model="joseph",
-        projector_backend="jax",
+        backend="jax",
         stream_projections=stream,
     )
     reference, ref_info = spdhg_tv(geometry, grid, detector, data, weights=weights, config=cfg)
@@ -532,7 +532,7 @@ def test_spdhg_all_missing_data_preserve_finite_warm_start(stream):
             tv_weight=0,
             log_every=1,
             stream_projections=stream,
-            projector_backend="jax",
+            backend="jax",
         ),
     )
     np.testing.assert_array_equal(actual, initial)
@@ -551,7 +551,7 @@ def test_spdhg_streaming_still_rejects_unmasked_nonfinite_data(weighted, invalid
         views_per_batch=3,
         tv_weight=0,
         stream_projections=True,
-        projector_backend="jax",
+        backend="jax",
     )
     with pytest.raises(ValueError, match="finite"):
         spdhg_tv(geometry, grid, detector, data, weights=weights, config=cfg)
@@ -595,7 +595,7 @@ def test_fista_disabled_tv_does_not_evaluate_regulariser(monkeypatch, regularise
                 tv_weight=0.0,
                 regulariser=regulariser,
                 projector_model=model,
-                projector_backend="jax",
+                backend="jax",
                 stream_projections=stream,
             ),
         )
@@ -700,7 +700,7 @@ def test_spdhg_automatic_steps_stay_stable_when_one_view_measures_the_volume():
             tv_weight=0,
             views_per_batch=1,
             projector_model="joseph",
-            projector_backend="jax",
+            backend="jax",
             seed=8,
             log_every=0,
         ),
@@ -830,7 +830,7 @@ def test_spdhg_runs_with_global_x64_and_returns_fp32():
                 nonnegative=True,
                 views_per_batch=2,
                 projector_model="joseph",
-                projector_backend="jax",
+                backend="jax",
                 log_every=0,
             ),
         )
@@ -850,6 +850,6 @@ def test_fista_joseph_integrator_uses_the_matched_batched_operators():
     actual, _ = fista_tv(geometry, grid, detector, data, config=config)
     # Explicit ray model keeps the reference implementation; a fixed bound
     # isolates the operators from their norm estimates.
-    reference = replace(config, projector_model="ray", projector_backend="jax")
+    reference = replace(config, projector_model="ray", backend="jax")
     expected, _ = fista_tv(geometry, grid, detector, data, config=reference)
     np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=2e-6)

@@ -51,7 +51,7 @@ def test_tv_solver_reduces_residual_and_recovers_phantom(
                 power_iterations=5,
                 views_per_batch=4,
                 projector_model=model,
-                projector_backend="jax",
+                backend="jax",
             ),
         )
         residual_limit, volume_limit = 0.005, 0.04
@@ -68,7 +68,7 @@ def test_tv_solver_reduces_residual_and_recovers_phantom(
                 views_per_batch=4,
                 seed=18,
                 projector_model=model,
-                projector_backend="jax",
+                backend="jax",
             ),
         )
         residual_limit, volume_limit = 0.03, 0.08
@@ -102,7 +102,7 @@ def test_tv_reconstruction_small_signal_scales_match_dense_solution(stream, regu
             tv_prox_iterations=30,
             lipschitz=np.linalg.norm(matrix, 2) ** 2,
             projector_model="joseph",
-            projector_backend="jax",
+            backend="jax",
             stream_projections=stream,
             regulariser=regulariser,
         )
@@ -112,7 +112,7 @@ def test_tv_reconstruction_small_signal_scales_match_dense_solution(stream, regu
             views_per_batch=3,
             log_every=0,
             projector_model="joseph",
-            projector_backend="jax",
+            backend="jax",
             stream_projections=stream,
             regulariser=regulariser,
         )

@@ -115,9 +115,9 @@ def test_fbp_keeps_filtered_tails_at_shifted_volume_corners(
             run_parallel_fbp_direct_cuda(poses, data, grid=grid, detector=detector, filter="ramp")
         )[:, :, 0] * (np.pi / len(angles))
     else:
-        actual = np.asarray(
-            fbp(geometry, grid, detector, data, config=FBPConfig(backprojector=backend))
-        )[:, :, 0]
+        actual = np.asarray(fbp(geometry, grid, detector, data, config=FBPConfig(backend=backend)))[
+            :, :, 0
+        ]
     np.testing.assert_allclose(actual, expected, rtol=4e-5, atol=2e-6)
 
 
@@ -295,7 +295,7 @@ def test_explicit_cuda_fbp_requires_cuda_arrays() -> None:
             grid,
             detector,
             jnp.ones((2, 3, 6)),
-            config=FBPConfig(backprojector="cuda"),
+            config=FBPConfig(backend="cuda"),
         )
 
 

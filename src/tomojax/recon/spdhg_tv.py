@@ -75,7 +75,7 @@ _SPDHGBackprojectChunk = Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.nd
 class SPDHGConfig:
     """Configuration for stochastic primal-dual TV reconstruction.
 
-    ``projector_model`` and ``projector_backend`` choose the projection operator as
+    ``projector_model`` and ``backend`` choose the projection operator as
     in :class:`FistaConfig`: ``"auto"`` uses Joseph plane sampling with CUDA on
     CUDA unless an explicit detector grid or the exact ray integrator requires
     the ray-model reference path. ``gather_dtype``, ``projector_unroll`` and
@@ -137,7 +137,7 @@ class SPDHGConfig:
     projector_model : ProjectorModel, optional
         Projection model: "auto", "ray" or "joseph". Auto selects Joseph unless an
         explicit detector grid requires rays. Default is 'auto'.
-    projector_backend : ProjectorBackend, optional
+    backend : ProjectorBackend, optional
         Execution backend: "auto", "jax" or "cuda". An explicit accelerator
         request never silently falls back. Default is 'auto'.
     nonnegative : bool, optional
@@ -170,7 +170,7 @@ class SPDHGConfig:
     gather_dtype: str = "fp32"
     ray_integrator: str = "sampled"
     projector_model: ProjectorModel = "auto"
-    projector_backend: ProjectorBackend = "auto"
+    backend: ProjectorBackend = "auto"
 
     # constraints
     nonnegative: bool = False
@@ -305,7 +305,7 @@ def _batched_projector(
     detector: Detector | None = None,
 ) -> tuple[str | ConeModel, str] | None:
     """Choose batched operators, or None for the ray-model reference path."""
-    model, backend = config.projector_model, config.projector_backend
+    model, backend = config.projector_model, config.backend
     if is_cone_beam(geometry):
         if config.ray_integrator == "exact":
             raise ValueError(
@@ -319,7 +319,7 @@ def _batched_projector(
         if model == "joseph" or backend == "cuda":
             raise ValueError(
                 "spdhg_tv: explicit detector grids and exact integration require "
-                "projector_model='ray' and projector_backend='jax'"
+                "projector_model='ray' and backend='jax'"
             )
         return None
     model, backend = resolve_projector(model, backend, context="spdhg_tv")

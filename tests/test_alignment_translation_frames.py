@@ -181,7 +181,7 @@ def test_resume_cannot_silently_change_translation_frame(multires):
     geometry, grid, detector = _geometry(8, "parallel", np.array([0.0, 90.0], np.float32))
     data = jnp.zeros((2, detector.nv, detector.nu))
     volume, params = jnp.zeros((8, 8, 8)), jnp.zeros((2, 5))
-    cfg = AlignConfig(pose_translation_frame="detector", projector_backend="jax")
+    cfg = AlignConfig(pose_translation_frame="detector", backend="jax")
     if multires:
         resume = AlignMultiresResumeState(volume, params)
         with pytest.raises(ValueError, match="pose_translation_frame differs"):
@@ -222,7 +222,7 @@ def test_public_alignment_and_checkpoint_keep_detector_frame_at_ninety_degrees(
     saved = []
     cfg = AlignConfig(
         pose_translation_frame="detector",
-        projector_backend=backend,
+        backend=backend,
         optimise_dofs=("dx", "dz") if motion == "translation" else None,
         outer_iterations=8,
         iterations=1,
@@ -730,7 +730,7 @@ def test_cor_then_pose_reports_the_constant_detector_shift_as_the_centre():
         schedule="cor_then_pose",
         freeze=("alpha", "beta", "phi"),  # isolate the translation split
         pose_translation_frame="detector",
-        projector_backend="jax",
+        backend="jax",
         outer_iterations=8,
         iterations=1,
         lipschitz=1e12,  # keeps the known volume fixed
@@ -814,7 +814,7 @@ def _cone_proposal_config(backend, *, dof="dx"):
     return AlignConfig(
         schedule=schedule,
         ray_integrator="joseph",
-        projector_backend=backend,
+        backend=backend,
         pose_translation_frame="detector",
         seed_translations=False,
         tv_weight=0,

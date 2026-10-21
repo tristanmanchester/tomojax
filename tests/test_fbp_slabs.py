@@ -31,7 +31,7 @@ def test_owned_fbp_slabs_keep_measured_rows_and_physical_geometry(kind, backend)
         detector = replace(detector, nv=1)
     geometry = ParallelGeometry(grid, detector, np.linspace(0, 179, 73))
     data = np.random.default_rng(132).normal(size=(73, detector.nv, detector.nu)).astype(np.float32)
-    cfg = FBPConfig(backprojector=backend, filter="hann", scale=0.41)
+    cfg = FBPConfig(backend=backend, filter="hann", scale=0.41)
     expected = np.asarray(fbp(geometry, grid, detector, data, config=cfg))
 
     def read(first, stop):
@@ -59,9 +59,7 @@ def test_owned_fbp_slabs_survive_early_context_closure(backend):
         return jax.numpy.full((4, stop - first, 17), first + 1, dtype="float32"), None
 
     with closing(
-        reconstruct_slabs(
-            "fbp", geometry, grid, detector, read, config=FBPConfig(backprojector=backend)
-        )
+        reconstruct_slabs("fbp", geometry, grid, detector, read, config=FBPConfig(backend=backend))
     ) as output:
         first = next(output)
         saved = first.volume.copy()

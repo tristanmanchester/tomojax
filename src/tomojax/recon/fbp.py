@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 class FBPConfig:
     """Configuration for filtered backprojection.
 
-    ``backprojector='auto'`` uses the voxel-driven CUDA kernel on CUDA and JAX
+    ``backend='auto'`` uses the voxel-driven CUDA kernel on CUDA and JAX
     otherwise. ``'jax'`` forces the reference; ``'cuda'`` requires CUDA input
     and never silently changes backend.
 
@@ -62,7 +62,7 @@ class FBPConfig:
         Constant angular weight per view, or None for geometry-derived weights.
     views_per_batch : int, optional
         Number of views processed together to bound temporary storage. Default is 1.
-    backprojector : Literal['auto', 'jax', 'cuda'], optional
+    backend : Literal['auto', 'jax', 'cuda'], optional
         Backprojection backend: "auto", "jax" or "cuda". Auto uses CUDA
         acceleration when available. Default is 'auto'.
     devices : jax.Device or sequence of jax.Device or None, optional
@@ -73,7 +73,7 @@ class FBPConfig:
     filter: str = "ramp"
     scale: float | None = None
     views_per_batch: int = 1
-    backprojector: Literal["auto", "jax", "cuda"] = "auto"
+    backend: Literal["auto", "jax", "cuda"] = "auto"
     devices: Device | Sequence[Device] | None = None  # kept as a tuple
 
     def __post_init__(self) -> None:
@@ -774,7 +774,7 @@ def _plan(
         spectrum=spectrum,
         grid=grid,
         detector=filter_detector,
-        backend="cuda" if cuda and cfg.backprojector != "jax" else "jax",
+        backend="cuda" if cuda and cfg.backend != "jax" else "jax",
         batch=_parallel_filter_batch_size(
             n_views, filter_detector.nv * n_fft_v, 2 * (spectrum.shape[0] - 1)
         ),
@@ -796,7 +796,7 @@ def fbp(
     """Filtered backprojection for parallel rays rotating about a fixed axis.
 
     Cone-beam geometries are reconstructed with :func:`tomojax.recon.fdk.fdk`
-    using the same filter; ``backprojector="cuda"`` selects its CUDA kernel.
+    using the same filter; ``backend="cuda"`` selects its CUDA kernel.
 
     Projections: (n_views, nv, nu) -> attenuation volume (nx, ny, nz).
     The rotation axis, arc and angular spacing are fitted from the view poses,
@@ -851,15 +851,15 @@ def fbp(
     (4, 4, 1)
     """
     cfg = FBPConfig() if config is None else config
-    if cfg.backprojector not in ("auto", "jax", "cuda"):
-        raise ValueError("FBP backprojector must be 'auto', 'jax', or 'cuda'")
+    if cfg.backend not in ("auto", "jax", "cuda"):
+        raise ValueError("FBP backend must be 'auto', 'jax', or 'cuda'")
     if is_cone_beam(geometry):
         # Cone beams: FDK, with the same filter and the CUDA kernel for "cuda".
         if det_grid is not None:
             raise ValueError("fbp: cone-beam geometry needs the canonical detector grid")
         from tomojax.recon.fdk import FDKConfig, fdk
 
-        backend = cfg.backprojector
+        backend = cfg.backend
         return fdk(
             geometry,
             grid,
@@ -892,7 +892,7 @@ def fbp(
         device.platform == "gpu" and device.client.platform_version.lower().startswith("cuda")
         for device in (T_all.devices() if on_host else proj.devices())
     )
-    if cfg.backprojector == "cuda" and not cuda:
+    if cfg.backend == "cuda" and not cuda:
         raise ValueError("CUDA FBP requires CUDA arrays")
     plan = _plan(geometry, grid, detector, T_all, proj, cfg, cuda=cuda)
     split = view_split(cfg.devices, n_views)

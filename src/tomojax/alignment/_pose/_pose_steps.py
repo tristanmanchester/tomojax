@@ -703,21 +703,19 @@ def _run_coupled_alignment_step(
         "joint_linear_iterations": int(result.iterations),
         "joint_linear_relative_residual": float(result.relative_residual),
         "joint_linear_finite": bool(result.finite),
-        "joint_projector_backend": objective.projector_backend,
+        "joint_projector_backend": objective.backend,
         "joint_pose_columns_cached": objective.pose_columns_cached,
         "backend_provenance": {
-            "requested_backend": cfg.projector_backend,
-            "actual_backend": objective.projector_backend,
-            "status": "selected"
-            if cfg.projector_backend == objective.projector_backend
-            else "fallback",
+            "requested_backend": cfg.backend,
+            "actual_backend": objective.backend,
+            "status": "selected" if cfg.backend == objective.backend else "fallback",
             "fallback_reason": None
-            if cfg.projector_backend == objective.projector_backend
+            if cfg.backend == objective.backend
             else "joint normal equations use the matched JAX operator for this geometry/integrator",
             "api_surface": "alignment.joint_objective",
             "differentiability": "explicit_volume_transpose",
             "pose_jacobian_backend": "jax",
-            "eligible_for_speed_claim": cfg.projector_backend == objective.projector_backend,
+            "eligible_for_speed_claim": cfg.backend == objective.backend,
         },
         "objective_provenance": {
             "outer_loss_source": "AlignmentLossSpec",

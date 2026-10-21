@@ -85,7 +85,7 @@ class CGLSConfig:
     views_per_batch : int, optional
         Number of views processed together to bound temporary storage. Default is
         64.
-    projector_backend : Literal['auto', 'jax', 'cuda'], optional
+    backend : Literal['auto', 'jax', 'cuda'], optional
         Execution backend: "auto", "jax" or "cuda". An explicit accelerator
         request never silently falls back. Default is 'auto'.
     projector_model : Literal['auto', 'ray', 'joseph'], optional
@@ -110,7 +110,7 @@ class CGLSConfig:
     atol: float = 0.0
     damping: float = 0.0
     views_per_batch: int = 64
-    projector_backend: Literal["auto", "jax", "cuda"] = "auto"
+    backend: Literal["auto", "jax", "cuda"] = "auto"
     projector_model: Literal["auto", "ray", "joseph"] = "auto"
     joseph_interpolation: Literal["linear", "cubic"] = "linear"
     gradient_damping: float = 0.0
@@ -232,8 +232,8 @@ def cgls(
         if not math.isfinite(value) or value < 0:
             raise ValueError(f"cgls: {name} must be finite and nonnegative")
     validate_model(cfg)
-    if cfg.projector_backend not in {"auto", "jax", "cuda"}:
-        raise ValueError("cgls: projector_backend must be 'auto', 'jax' or 'cuda'")
+    if cfg.backend not in {"auto", "jax", "cuda"}:
+        raise ValueError("cgls: backend must be 'auto', 'jax' or 'cuda'")
     if cfg.projector_model not in {"auto", "ray", "joseph"}:
         raise ValueError("cgls: projector_model must be 'auto', 'joseph' or 'ray'")
     from ._cgls_cuda import available, solve

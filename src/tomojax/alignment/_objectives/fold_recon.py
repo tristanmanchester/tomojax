@@ -38,7 +38,7 @@ class FoldReconstructionConfig:
     gather_dtype: str = "fp32"
     lipschitz: float | None = None
     ray_integrator: str = "sampled"
-    projector_backend: Literal["auto", "jax", "cuda"] = "auto"
+    backend: Literal["auto", "jax", "cuda"] = "auto"
 
 
 def reconstruct_train_fold_nograd(
@@ -93,7 +93,7 @@ def reconstruct_train_fold_nograd(
                 lipschitz=cfg.lipschitz,
                 nonnegative=bool(cfg.nonnegative),
                 ray_integrator=cfg.ray_integrator,
-                projector_backend=cfg.projector_backend,
+                backend=cfg.backend,
                 views_per_batch=cfg.views_per_batch,
             ),
         )
@@ -111,7 +111,7 @@ def reconstruct_train_fold_nograd(
         init_x=init_x,
         config=FistaConfig(
             projector_model="ray",
-            projector_backend="jax",
+            backend="jax",
             iterations=max(1, int(cfg.iterations)),
             tv_weight=float(cfg.tv_weight),
             regulariser=cfg.regulariser,

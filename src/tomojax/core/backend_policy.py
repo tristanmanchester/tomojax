@@ -53,7 +53,7 @@ def normalize_projector_backend(value: ProjectorBackendInput) -> ProjectorBacken
         return "jax"
     if backend == "cuda":
         return "cuda"
-    raise ValueError("projector_backend must be one of 'jax' or 'cuda'")
+    raise ValueError("backend must be one of 'jax' or 'cuda'")
 
 
 def backend_provenance(

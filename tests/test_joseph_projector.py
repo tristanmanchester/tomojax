@@ -222,7 +222,7 @@ def test_plane_cgls_matches_independent_damped_system_with_tail_batch(
             rtol=1e-7,
             damping=damping,
             views_per_batch=4,
-            projector_backend=backend,
+            backend=backend,
             projector_model="joseph",
             joseph_interpolation=interpolation,
         ),

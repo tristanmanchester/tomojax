@@ -204,7 +204,7 @@ def test_cgls_solves_a_cone_beam_scan(backend):
         jnp.asarray(geometry.poses(), jnp.float32), grid, detector, geometry.beam
     )
     data = cone_project(truth, coeff, grid, detector, backend="jax")
-    config = CGLSConfig(iterations=60, projector_backend=backend)
+    config = CGLSConfig(iterations=60, backend=backend)
     volume, _ = cgls(geometry, grid, detector, data, config=config)
     assert np.linalg.norm(np.asarray(volume) - truth) / np.linalg.norm(truth) < 0.05
 
@@ -444,7 +444,7 @@ def test_cone_pose_alignment_recovers_each_degree_of_freedom(dof):
         gather_dtype="fp32",
         gn_jacobian="central",
         ray_integrator="joseph",
-        projector_backend="jax",
+        backend="jax",
     )
     _, params, _ = align(geometry, grid, detector, data, config=config, init_x=volume)
     # Alignment reports the least-motion estimate: a common phi or dz is the

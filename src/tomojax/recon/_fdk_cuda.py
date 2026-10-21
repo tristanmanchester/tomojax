@@ -1,4 +1,4 @@
-"""The CUDA FDK backprojector: texture-filtered half-float views, voxel by voxel.
+"""The CUDA FDK backend: texture-filtered half-float views, voxel by voxel.
 
 ``buffer_callback`` launches it on XLA's stream of the GPU holding the buffers,
 so each of several GPUs runs its own launches (see :func:`xla_stream`). Its

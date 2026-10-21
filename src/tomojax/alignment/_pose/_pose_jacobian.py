@@ -233,7 +233,7 @@ def pose_prediction_and_columns(
     def _pred_flat(t_i: jnp.ndarray, masked_vol: jnp.ndarray) -> jnp.ndarray:
         if options.cone_beam:
             return forward_project_view_T(
-                t_i, grid, detector, masked_vol, projector_backend=cone_backend, frames=frame_i
+                t_i, grid, detector, masked_vol, backend=cone_backend, frames=frame_i
             ).ravel()
         return forward_project_view_T(
             t_i,
@@ -245,7 +245,7 @@ def pose_prediction_and_columns(
             gather_dtype=options.gather_dtype,
             det_grid=det_grid,
             # Joseph CUDA kernels' pose derivatives avoid a per-plane JAX tape.
-            projector_backend="cuda" if joseph and cuda_backend() else "jax",
+            backend="cuda" if joseph and cuda_backend() else "jax",
             ray_integrator=options.integrator,
         ).ravel()
 

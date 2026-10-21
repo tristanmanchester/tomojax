@@ -6,6 +6,13 @@ Lossless slab stores can share a bounded CUDA byte pool with host-memory
 fallback. Snapshots retain their payloads, and streamed FISTA keeps the
 caller-selected storage for its image and momentum.
 
+The projector backend is selected by one field everywhere: `backend` replaces
+`FBPConfig.backprojector`, `FBPHostConfig.backprojector` and the `projector_backend`
+field of `CGLSConfig`, `SIRTConfig`, `MLEMConfig`, `FistaConfig`, `SPDHGConfig`,
+`AlignConfig` and the alignment profiles; the core projector functions take
+`backend=` as well. `FistaCoreConfig` keeps `forward_projector` and `backprojector`,
+which name its two operators.
+
 Flat-field correction interpolates statistically unmeasured interior pixels in
 transmission from the same view's neighbouring columns, instead of inserting air
 stripes. Stable low-gain pixels and unilluminated detector margins are unchanged.

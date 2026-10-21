@@ -169,7 +169,7 @@ def test_spdhg_accepts_real_zero_weight_masks(dtype, device):
             sigma_data=0.1,
             sigma_tv=0.1,
             log_every=1,
-            projector_backend="jax",
+            backend="jax",
         ),
     )
     np.testing.assert_array_equal(volume, 0)
@@ -284,7 +284,7 @@ def test_fista_auto_step_is_finite_for_zero_operator(model, warm_start):
             tv_weight=0,
             support=jnp.zeros((2, 3, 2)),
             projector_model=model,
-            projector_backend="jax",
+            backend="jax",
         ),
     )
     np.testing.assert_array_equal(volume, initial if warm_start else np.zeros((2, 3, 2)))

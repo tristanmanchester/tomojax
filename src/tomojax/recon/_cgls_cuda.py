@@ -24,7 +24,7 @@ def available(geometry, projections, initial, cfg: CGLSConfig, det_grid) -> bool
     if (
         not isinstance(projections, np.ndarray)
         or (initial is not None and not isinstance(initial, np.ndarray))
-        or cfg.projector_backend == "jax"
+        or cfg.backend == "jax"
         or cfg.projector_model == "ray"
         or cfg.joseph_interpolation != "linear"
         or cfg.gradient_damping

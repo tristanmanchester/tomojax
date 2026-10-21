@@ -78,7 +78,7 @@ def run_tomojax(case: dict[str, Any], volume: np.ndarray, data: np.ndarray, gpus
 
     def cgls(iterations: int) -> tuple[np.ndarray, dict[str, Any]]:
         result = tj.reconstruct(scan, "cgls", iterations=iterations, devices=devices)
-        keys = ("effective_iterations", "termination", "projector_backend", "projector_model")
+        keys = ("effective_iterations", "termination", "backend", "projector_model")
         values = {k: result.info.get(k) for k in keys}
         plain = (str, int, float, bool, type(None))
         info = {k: v if isinstance(v, plain) else type(v).__name__ for k, v in values.items()}

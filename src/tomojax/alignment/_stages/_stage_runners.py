@@ -139,7 +139,7 @@ def _apply_pose_proposal_stage(
         det_grid=effective.det_grid,
         targets=projections,
         loss_adapter=adapter,
-        projector_backend=cfg.projector_backend,
+        backend=cfg.backend,
         gather_dtype=cfg.gather_dtype,
         views_per_batch=cfg.views_per_batch,
         projector_unroll=cfg.projector_unroll,

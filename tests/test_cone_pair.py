@@ -59,7 +59,7 @@ def test_uncached_sirt_preserves_masked_subset_updates(monkeypatch, backend):
         lower_bound=0,
         upper_bound=0.8,
         views_per_batch=2,
-        projector_backend=backend,
+        backend=backend,
     )
     cached, _ = sirt(geometry, grid, detector, data, init_x=truth * 0.1, config=cfg)
     monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: 1)

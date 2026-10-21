@@ -87,7 +87,7 @@ def run_case(size: int, n_views: int, repeats: int) -> dict:
         )
         output, timing = measure(
             lambda backend=backend: fbp(
-                geometry, grid, detector, projections, config=FBPConfig(backprojector=backend)
+                geometry, grid, detector, projections, config=FBPConfig(backend=backend)
             ),
             jax_sync,
             repeats,

@@ -183,7 +183,7 @@ def test_public_fista_partial_view_batches_run_under_global_x64(grad_mode):
         iterations=1,
         tv_weight=0,
         projector_model="ray",
-        projector_backend="jax",
+        backend="jax",
         ray_integrator="sampled",
         views_per_batch=2,
         power_iterations=3,

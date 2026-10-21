@@ -107,7 +107,7 @@ def test_gradient_regularized_cgls_matches_dense_augmented_system(
             damping=damping,
             gradient_damping=gradient_damping,
             views_per_batch=3,
-            projector_backend=backend,
+            backend=backend,
             projector_model=model,
             joseph_interpolation=interpolation,
         ),

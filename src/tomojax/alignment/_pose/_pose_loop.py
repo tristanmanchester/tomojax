@@ -810,7 +810,7 @@ def align(
         detector=detector,
         volume=loop_state.x,
         det_grid=runtime.det_grid,
-        projector_backend=cfg.projector_backend,
+        backend=cfg.backend,
         require_differentiable_projector=True,
         api_surface="alignment.pose_objective",
         ray_integrator=cfg.ray_integrator,

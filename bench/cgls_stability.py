@@ -60,7 +60,7 @@ def run(backends: list[str], seeds: int) -> list[dict[str, Any]]:
                         rtol=1e-7,
                         damping=damping,
                         views_per_batch=3,
-                        projector_backend=backend,
+                        backend=backend,
                     ),
                 )
                 x = np.asarray(actual).ravel()

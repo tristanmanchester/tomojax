@@ -348,10 +348,10 @@ def cuda_unsupported_exception_type(
     return None
 
 
-def _cone_backend(projector_backend: object) -> str:
+def _cone_backend(backend: object) -> str:
     from tomojax.core.cone import use_cuda_cone
 
-    return "cuda" if projector_backend == "cuda" and use_cuda_cone() else "jax"
+    return "cuda" if backend == "cuda" and use_cuda_cone() else "jax"
 
 
 def cone_views(
@@ -360,13 +360,13 @@ def cone_views(
     detector: Detector,
     volume: jnp.ndarray,
     frames: jnp.ndarray | np.ndarray,
-    projector_backend: object = "jax",
+    backend: object = "jax",
 ) -> jnp.ndarray:
     """Cone-beam projections of ``volume`` for a pose stack and its lab ``frames``."""
     from tomojax.core.cone import cone_project, frame_coefficients
 
     coeff = frame_coefficients(poses, frames, grid, detector)
-    return cone_project(volume, coeff, grid, detector, backend=_cone_backend(projector_backend))
+    return cone_project(volume, coeff, grid, detector, backend=_cone_backend(backend))
 
 
 def _cone_backproject_views(
@@ -404,7 +404,7 @@ def forward_project_view_T(
     unroll: int | None = None,
     gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
-    projector_backend: ProjectorBackendInput = "jax",
+    backend: ProjectorBackendInput = "jax",
     ray_integrator: str = "sampled",
     frames: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
@@ -416,12 +416,12 @@ def forward_project_view_T(
     in the object frame. This avoids a matmul per step and keeps gradients clean.
     ``frames``, the view's cone-beam lab frame (see
     :func:`tomojax.core.cone.beam_frame`), selects the cone-beam Joseph
-    projector: ``projector_backend`` ``"cuda"`` runs its CUDA kernels,
+    projector: ``backend`` ``"cuda"`` runs its CUDA kernels,
     ``"jax"`` the differentiable reference.
     """
     if frames is not None:
-        return cone_views(T[None], grid, detector, volume, frames, projector_backend)[0]
-    backend = normalize_projector_backend(projector_backend)
+        return cone_views(T[None], grid, detector, volume, frames, backend)[0]
+    backend = normalize_projector_backend(backend)
     if ray_integrator == "exact":
         if step_size is not None or n_steps is not None:
             raise ValueError("exact ray integration does not accept a step size or sample count")
@@ -776,7 +776,7 @@ def forward_project_view(
     gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
     ray_integrator: str = "sampled",
-    projector_backend: ProjectorBackendInput = "jax",
+    backend: ProjectorBackendInput = "jax",
 ) -> jnp.ndarray:
     """Wrapper that fetches pose from geometry and calls the pose-aware variant.
 
@@ -802,7 +802,7 @@ def forward_project_view(
         unroll=unroll,
         gather_dtype=gather_dtype,
         det_grid=det_grid,
-        projector_backend=projector_backend,
+        backend=backend,
         ray_integrator=ray_integrator,
     )
 

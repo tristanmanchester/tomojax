@@ -167,7 +167,7 @@ def _on_devices(
 class CoupledObjective:
     update: Callable[[jax.Array, jax.Array], CoupledLinearResult]
     loss: Callable[[jax.Array, jax.Array], jax.Array]
-    projector_backend: str
+    backend: str
     pose_columns_cached: bool
 
 
@@ -181,16 +181,14 @@ def build_coupled_objective(
         raise ValueError("joint GN requires gather_dtype='fp32' for matched linear operators")
     # CUDA exact and Joseph integration accept dynamic rigid poses. The
     # sampled reference keeps its matched explicit transpose and bounded view loop.
-    backend = (
-        "cuda" if cfg.projector_backend == "cuda" and jax.default_backend() == "gpu" else "jax"
-    )
+    backend = "cuda" if cfg.backend == "cuda" and jax.default_backend() == "gpu" else "jax"
     if cfg.ray_integrator not in {"exact", "joseph", "joseph_cubic"}:
         backend = "jax"
     if ctx.cone is not None:
         # Cone beams: the CUDA kernels where available.
         from tomojax.core.cone import use_cuda_cone
 
-        backend = "cuda" if cfg.projector_backend != "jax" and use_cuda_cone() else "jax"
+        backend = "cuda" if cfg.backend != "jax" and use_cuda_cone() else "jax"
     canonical = get_detector_grid_device(ctx.detector)
     if (
         backend == "cuda"

@@ -159,7 +159,7 @@ def solve_tomojax(
             case.grid,
             case.detector,
             case.analytic,
-            config=FBPHostConfig(slices_per_batch=16, views_per_batch=32, backprojector="cuda"),
+            config=FBPHostConfig(slices_per_batch=16, views_per_batch=32, backend="cuda"),
         )
         return result, {
             "backend": "Cuda_FBP_host_slabs",
@@ -180,7 +180,7 @@ def solve_tomojax(
             case.grid,
             case.detector,
             jnp.asarray(case.analytic),
-            config=FBPConfig(backprojector="cuda"),
+            config=FBPConfig(backend="cuda"),
         )
         return np.asarray(result), {
             "backend": "Cuda_FBP",
@@ -203,7 +203,7 @@ def solve_tomojax(
             config=CGLSConfig(
                 rtol=0.0,
                 views_per_batch=batch,
-                projector_backend="cuda",
+                backend="cuda",
                 projector_model="joseph" if "joseph" in method else "ray",
             ),
         )
@@ -222,7 +222,7 @@ def solve_tomojax(
                 case.grid,
                 case.detector,
                 jnp.asarray(case.analytic),
-                config=FBPConfig(backprojector="cuda"),
+                config=FBPConfig(backend="cuda"),
             )
             if method == "tomojax_fbp_joseph_cgls_cuda"
             else None
@@ -237,7 +237,7 @@ def solve_tomojax(
                 iterations=iterations,
                 rtol=0.0,
                 views_per_batch=batch,
-                projector_backend=method.rsplit("_", 1)[-1],
+                backend=method.rsplit("_", 1)[-1],
                 projector_model="joseph" if "joseph" in method else "ray",
             ),
         )
