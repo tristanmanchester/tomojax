@@ -402,7 +402,7 @@ class Zingers(Step):
             for i in range(self.size)
             for j in range(self.size)
         ]
-        median = _bitonic_median_of(shifted) if self.size >= 5 else _median_of(shifted)
+        median = bitonic_median(shifted) if self.size >= 5 else _median_of(shifted)
         return jnp.where(batch - median > self.threshold, median, batch)
 
 
@@ -716,7 +716,7 @@ def _sliding_median(values: jax.Array, width: int) -> jax.Array:
     window = [padded[:, k : k + columns + even] for k in range(width)]
     # Wide stripe windows otherwise trace a quadratic sorting network. Reuse
     # the median-only network, keeping the even-window midpoint convention.
-    median = _bitonic_median_of(window) if width >= 15 and not even else _median_of(window)
+    median = bitonic_median(window) if width >= 15 and not even else _median_of(window)
     return 0.5 * (median[:, :-1] + median[:, 1:]) if even else median
 
 
@@ -730,7 +730,7 @@ def _median_of(window: list[jax.Array]) -> jax.Array:
     return window[n // 2] if n % 2 else 0.5 * (window[n // 2 - 1] + window[n // 2])
 
 
-def _bitonic_median_of(window: list[jax.Array]) -> jax.Array:
+def bitonic_median(window: list[jax.Array]) -> jax.Array:
     """An odd window's median, without tracing comparisons unrelated to it.
 
     Larger spatial windows benefit from a shallower bitonic network

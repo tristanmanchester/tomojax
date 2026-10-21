@@ -19,6 +19,12 @@ concentrating them in one sector because of small encoder-angle variations.
 Whole-row transmission corrections run before the logarithm in batched and
 streamed-row workflows; detector binning averages the corrected line integrals.
 
+New correction step `Rings(geometry)` for ring artefacts: each detector column's offset and
+transmission-dependent response are fitted on the view-sorted sinogram against an adaptive
+reference from neighbouring columns and inverted. On a stationary parallel-beam full turn it
+also corrects large stripes (Vo, Atwood and Drakopoulos 2018) and broad rings, keeping their
+mirror-symmetric part only as far as the antisymmetric part shows detector errors.
+
 Flat-field correction interpolates statistically unmeasured interior pixels in
 transmission from the same view's neighbouring columns, instead of inserting air
 stripes. Stable low-gain pixels and unilluminated detector margins are unchanged.
