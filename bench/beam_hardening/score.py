@@ -67,16 +67,21 @@ def fractions(case: dict, supersample: int = 5) -> np.ndarray:
 
 
 def gauge_mu(materials: list[str], arrays: dict, gauge: tuple) -> dict[str, float]:
-    """True attenuation (mm^-1) of each material in a method's gauge."""
+    """True attenuation (mm^-1) of each material in a method's gauge.
+
+    ``("slope",)``: the unhardened beam's mean attenuation; ``("energy", keV)``:
+    attenuation at that energy.
+    """
+    grid = np.arange(1.0, 301.0)
+    detected = {
+        m: np.interp(arrays["energies"], grid, arrays["mu_grid"][k])
+        for k, m in enumerate(materials)
+    }
     if gauge[0] == "slope":
-        grid = np.arange(1.0, 301.0)
-        return {
-            m: float(np.interp(arrays["energies"], grid, arrays["mu_grid"][k]) @ arrays["weights"])
-            for k, m in enumerate(materials)
-        }
+        return {m: float(mu @ arrays["weights"]) for m, mu in detected.items()}
     if gauge[0] == "energy":
         return {
-            m: float(np.interp(gauge[1], np.arange(1.0, 301.0), arrays["mu_grid"][k]))
+            m: float(np.interp(gauge[1], grid, arrays["mu_grid"][k]))
             for k, m in enumerate(materials)
         }
     raise ValueError(f"unknown gauge {gauge!r}")
@@ -137,13 +142,17 @@ def _radius(image: np.ndarray, case: dict, i: int, x: np.ndarray, y: np.ndarray)
     return float(np.median(found)) if found else None
 
 
-def score_volume(volume: np.ndarray, case: dict, truth_mu: dict[str, float]) -> dict:
-    """Image metrics of a ``(nx, ny, nz)`` volume against a case in one gauge."""
+def slab(volume: np.ndarray, case: dict) -> np.ndarray:
+    """Mean of the scored slices: the central half, or a plate 0.5 mm clear of its faces."""
     g, nz = GEOMETRIES[case.get("geometry", "cone")], volume.shape[2]
     z = (np.arange(nz) - (nz - 1) / 2) * g["voxel"]
-    # The central half of the slices, or of a plate's thickness clear of its faces by 0.5 mm.
     half = min(z.max() / 2, case["shapes"][0].get("half_height", np.inf) - 0.5)
-    image = np.asarray(volume[:, :, np.abs(z) <= max(half, g["voxel"])], np.float64).mean(axis=2)
+    return np.asarray(volume[:, :, np.abs(z) <= max(half, g["voxel"])], np.float64).mean(axis=2)
+
+
+def score_volume(volume: np.ndarray, case: dict, truth_mu: dict[str, float]) -> dict:
+    """Image metrics of a ``(nx, ny, nz)`` volume against a case in one gauge."""
+    image = slab(volume, case)
     x, y = coordinates(case)
     owner = _owned(case, x, y)
     shapes = case["shapes"]

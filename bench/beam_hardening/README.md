@@ -18,7 +18,10 @@ python bench/beam_hardening/run.py mono --methods none
 
 Each writes a JSON report (`--output`, by default `beam_hardening.json` in
 `$LAB_ARTIFACTS` or the current directory) with every case's metrics and a
-summary per method.
+summary per method, and one figure per case in `<output>-figures/`: every
+method beside the reference on the reference's grey window, with radial
+profiles (walnut: each image times its best scale; mono: each curve's
+deviation from a straight line).
 
 ## Families
 
@@ -43,14 +46,18 @@ Filtered backprojection is not quantitative in laminography, so the bench
 reconstructs these with 50 CGLS iterations, and scores the plate's central
 slab clear of its faces. Laminography never measures the frequencies within
 the tilt angle of the axis, which a plate is made of: the `exact` control's
-attenuation is 1-7 % off (3-5 % at 400 iterations), and image scores there
-are read against it; line-integral scores are unaffected.
+attenuation is 1-7 % off (3-5 % at 400 iterations). The `exact` control
+therefore always runs there, and every method's mu bias and cupping are
+scored against its image (the values against the truth are kept under
+`vs_truth`); line-integral scores are unaffected.
 
 **2detect**: 2DeteCT slices (`detect2.py`, `detect2_score.py`). The 60 kV
 unfiltered scan (mode 3) is corrected and compared with the 90 kV
 Thoraeus-filtered high-dose scan (mode 2) of the same slice, on the published
 segmentation's tube wall and filler and on its objects split into light
-(food) and dense (lava stone) ones.
+(food) and dense (lava stone) ones. Slices 2831-5000 and 5871 onwards were
+taken on a replacement detector (the paper's Table 2), whose 60:90 ratios
+differ from the first detector's, so statistics across slices mix the two.
 
 **walnut** and **mono**: do-no-harm checks (`donoharm.py`).
 
@@ -69,5 +76,6 @@ most attenuation: exact for one material, and what a correctly calibrated
 single-material correction gives for several. `exact` reconstructs the
 noiseless true line integrals: the floor of every metric.
 
-The methods under test (`selfcal`, `spectrum`, `joint`) call
-`tomojax.corrections.BeamHardening` and `tj.reconstruct(scan, "polychromatic")`.
+The method under test, `spectrum`, applies
+`tomojax.corrections.BeamHardening.from_spectrum` for the recorded tube
+settings and the sample's named material.

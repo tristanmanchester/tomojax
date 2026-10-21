@@ -12,7 +12,8 @@ laminography. ``2detect`` corrects the 60 kV unfiltered scans and
 scores them against the 90 kV filtered scans of the same slices; its held-out
 split is the out-of-distribution slices. ``walnut`` and ``mono`` are the
 do-no-harm checks (see ``donoharm.py``). The JSON report has every case's
-metrics and each method's summary.
+metrics and each method's summary; a figure per case, every image on the
+reference's window beside radial profiles, goes in ``<output>-figures/``.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import cases  # noqa: E402
+import figures as plots  # noqa: E402
 import methods  # noqa: E402
 import score  # noqa: E402
 
@@ -74,8 +76,8 @@ def recorded(spectrum: dict, material: str) -> dict:
     return {**{k: spectrum[k] for k in keys}, "material": cases.MATERIALS[material][0]}
 
 
-def score_case(arrays: dict, info: dict, names: list[str]) -> dict:
-    """Run every method on one rendered case and score it."""
+def score_case(arrays: dict, info: dict, names: list[str], figures: Path | None = None) -> dict:
+    """Run every method on one rendered case, score it, and draw it into ``figures``."""
     import tomojax as tj
 
     case, materials = info["case"], info["materials"]
@@ -101,13 +103,20 @@ def score_case(arrays: dict, info: dict, names: list[str]) -> dict:
             arrays["energies"], np.arange(1.0, 301.0), arrays["mu_grid"][materials.index(main)]
         ),
     }
+    images: dict[str, np.ndarray] = {}
+    # Figures show every image in units of the largest region's material.
+    fractions = score.fractions(case)
+    level = case["shapes"][int(np.argmax(fractions.sum(axis=(1, 2))))]["material"]
     record = {
         "case": case["name"],
         "family": case["family"],
         "kv": case["spectrum"]["kv"],
         "checks": info["checks"],
     }
-    for name in names:
+    # Laminography never measures part of frequency space, so even exact line
+    # integrals reconstruct off: image scores there are read against that floor.
+    lamino = case["geometry"] == "lamino"
+    for name in [*names, "exact"] if lamino and "exact" not in names else names:
         start = time.perf_counter()
         try:
             result = methods.METHODS[name](frames, recorded(case["spectrum"], main), truth)
@@ -119,13 +128,45 @@ def score_case(arrays: dict, info: dict, names: list[str]) -> dict:
         metrics = score.score_volume(result.volume, case, mu)
         if result.projections is not None:
             metrics["line_integral"] = score.score_line_integrals(result.projections, paths, mu)
-        record[name] = {"seconds": seconds, "declined": result.declined, **metrics}
-        if result.info:
-            record[name]["info"] = result.info
+        record[name] = {"seconds": seconds, **metrics}
+        images[name] = score.slab(result.volume, case) / mu[level]
+    if lamino and "mu" in record.get("exact", {}):
+        _against_exact(record)
+    if figures is not None:
+        shapes = case["shapes"]
+        relative = {s["material"]: slope.get(s["material"], 0.0) / slope[level] for s in shapes}
+        truth = sum(f * relative[s["material"]] for f, s in zip(fractions, shapes, strict=True))
+        g = cases.GEOMETRIES[case["geometry"]]
+        outer = max(shapes, key=lambda s: s["radius"])
+        centre = tuple(c / g["voxel"] + (g["grid"] - 1) / 2 for c in outer["centre"])
+        title = f"{case['name']}: {case['spectrum']['kv']:.0f} kV, in units of {level}"
+        figures.mkdir(parents=True, exist_ok=True)
+        path = figures / f"{case['name']}.png"
+        plots.save(path, truth, images, centre, g["voxel"], title, window=(0.0, 1.5))
     return record
 
 
-def simulation(split: str, indices: list[int], names: list[str], geometry: str) -> list[dict]:
+def _against_exact(record: dict) -> None:
+    """Score each method's mu bias and cupping relative to the exact control's image.
+
+    The truth-relative values move to ``vs_truth``; line integrals are unchanged.
+    """
+    floor = {m: v["bias"] for m, v in record["exact"]["mu"].items()}
+    cupping = record["exact"].get("cupping")
+    for row in record.values():
+        if not isinstance(row, dict) or "mu" not in row:
+            continue
+        row["vs_truth"] = {"mu": {m: v["bias"] for m, v in row["mu"].items()}}
+        for m, v in row["mu"].items():
+            v["bias"] = (1 + v["bias"]) / (1 + floor[m]) - 1
+        if "cupping" in row and cupping is not None:
+            row["vs_truth"]["cupping"] = row["cupping"]
+            row["cupping"] -= cupping
+
+
+def simulation(
+    split: str, indices: list[int], names: list[str], geometry: str, figures: Path | None = None
+) -> list[dict]:
     """Render, score and delete each case; the next case renders while one is scored."""
     records = []
     with tempfile.TemporaryDirectory(dir=os.environ.get("LAB_ARTIFACTS")) as folder:
@@ -141,7 +182,8 @@ def simulation(split: str, indices: list[int], names: list[str], geometry: str) 
             with np.load(path) as archive:
                 arrays = {k: archive[k] for k in archive.files}
             path.unlink()
-            records.append(score_case(arrays, json.loads(str(arrays.pop("info"))), names))
+            info = json.loads(str(arrays.pop("info")))
+            records.append(score_case(arrays, info, names, figures))
             print(json.dumps(records[-1]), flush=True)
     return records
 
@@ -231,20 +273,23 @@ def main() -> None:
     )
     args = parser.parse_args()
     names = args.methods.split(",")
+    figures = args.output.with_name(f"{args.output.stem}-figures")
     if args.family in ("simulation", "lamino"):
         geometry = "cone" if args.family == "simulation" else "lamino"
         default = "0-23" if geometry == "cone" else "0-11"
-        records = simulation(args.split, _indices(args.cases or default), names, geometry)
+        indices = _indices(args.cases or default)
+        records = simulation(args.split, indices, names, geometry, figures)
         totals = summary(records, names)
     elif args.family == "2detect":
         import detect2_score
 
-        records = detect2_score.run(args.split, names, _indices(args.cases) if args.cases else None)
+        chosen = _indices(args.cases) if args.cases else None
+        records = detect2_score.run(args.split, names, chosen, figures)
         totals = detect2_score.summary(records, names)
     else:
         import donoharm
 
-        records = getattr(donoharm, args.family)(names)
+        records = getattr(donoharm, args.family)(names, figures)
         totals = {name: [r.get(name) for r in records] for name in names}
     report = {
         "family": args.family,

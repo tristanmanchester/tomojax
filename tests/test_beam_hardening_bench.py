@@ -18,7 +18,7 @@ def bench():
     try:
         yield {
             name: importlib.import_module(name)
-            for name in ("cases", "score", "simulate", "donoharm")
+            for name in ("cases", "score", "simulate", "donoharm", "run")
         }
     finally:
         sys.path.remove(str(BENCH))
@@ -107,8 +107,28 @@ def test_line_integral_bias_ignores_noise(bench):
     assert abs(scaled["all"] - 0.3) < 1e-9 and scaled["shape"] < 1e-9  # a gauge, not a shape
 
 
-def test_curve_finds_nonlinearity(bench):
+def test_curve_finds_nonlinearity(bench, tmp_path):
     q = np.linspace(0.0, 3.0, 10000)
     assert np.abs(bench["donoharm"].curve(q, 2 * q)[1]).max() < 1e-12
     centres, deviation, _ = bench["donoharm"].curve(q, q + 0.1 * q**2)
     assert np.abs(deviation).max() > 0.02
+    bench["donoharm"].plots.curves(tmp_path / "c.png", {"all": (centres, deviation)}, 0.005, "t")
+    assert (tmp_path / "c.png").stat().st_size > 0
+
+
+def test_gauges_read_the_spectrum(bench):
+    # Two energies with attenuation 0.4 and 0.1 mm^-1, equal detected weight.
+    arrays = {"energies": np.array([30.0, 60.0]), "weights": np.array([0.5, 0.5])}
+    arrays["mu_grid"] = np.interp(np.arange(1.0, 301.0), [30.0, 60.0], [0.4, 0.1])[None]
+    gauge = bench["score"].gauge_mu
+    assert gauge(["m"], arrays, ("slope",))["m"] == pytest.approx(0.25)
+    assert gauge(["m"], arrays, ("energy", 60.0))["m"] == pytest.approx(0.1)
+
+
+def test_laminography_images_are_scored_against_the_exact_control(bench):
+    record = {"exact": {"mu": {"glass": {"bias": 0.067}}, "cupping": 0.02}}
+    record["spectrum"] = {"mu": {"glass": {"bias": 0.067}}, "cupping": 0.05}
+    bench["run"]._against_exact(record)
+    assert record["spectrum"]["mu"]["glass"]["bias"] == pytest.approx(0.0)
+    assert record["spectrum"]["cupping"] == pytest.approx(0.03)
+    assert record["spectrum"]["vs_truth"] == {"mu": {"glass": 0.067}, "cupping": 0.05}
