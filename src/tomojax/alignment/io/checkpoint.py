@@ -8,12 +8,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from contextlib import suppress
-from dataclasses import dataclass
+from functools import cached_property
 import json
 import os
 from pathlib import Path
+from threading import RLock
 from typing import Any, Required, TypedDict, cast
 from uuid import uuid4
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import numpy as np
 
@@ -161,9 +163,12 @@ class ScheduleResumeState(TypedDict):
     completed_outer_iterations_in_stage: int
 
 
-@dataclass(slots=True)
 class AlignmentCheckpoint:
-    """Loaded alignment checkpoint arrays and metadata.
+    """Alignment checkpoint arrays and metadata.
+
+    A loaded checkpoint reads arrays on first access and keeps them in memory.
+    It owns the open file until its arrays are read or the checkpoint is released.
+    Replacing that file's path does not change this checkpoint.
 
     Parameters
     ----------
@@ -183,12 +188,91 @@ class AlignmentCheckpoint:
         Checkpoint identity, schema and progress metadata.
     """
 
-    x: np.ndarray
-    pose_params: np.ndarray
-    motion_coeffs: np.ndarray | None
-    loss_history: list[float]
-    outer_stats: list[dict[str, Any]]
-    metadata: CheckpointMetadata
+    def __init__(
+        self,
+        x: np.ndarray,
+        pose_params: np.ndarray,
+        motion_coeffs: np.ndarray | None,
+        loss_history: list[float],
+        outer_stats: list[dict[str, Any]],
+        metadata: CheckpointMetadata,
+    ) -> None:
+        self.__dict__.update(x=x, pose_params=pose_params, motion_coeffs=motion_coeffs)
+        self.loss_history, self.outer_stats, self.metadata = loss_history, outer_stats, metadata
+        self._archive: np.lib.npyio.NpzFile | None = None
+        self._lock = RLock()
+
+    def _read_array(self, name: str) -> np.ndarray | None:
+        # cached_property alone permits duplicate concurrent reads on Python 3.12+.
+        with self._lock:
+            if name in self.__dict__:
+                return self.__dict__[name]
+            try:
+                if name == "motion_coeffs" and not self.metadata.get("has_motion_coeffs", False):
+                    value = None
+                else:
+                    assert self._archive is not None
+                    raw = self._archive[name]
+                    value = (
+                        pad_pose_params(raw)
+                        if name == "pose_params"
+                        else np.asarray(raw, dtype=np.float32)
+                    )
+                self.__dict__[name] = value
+                required = {"x", "pose_params"}
+                if self.metadata.get("has_motion_coeffs", False):
+                    required.add("motion_coeffs")
+                if required <= self.__dict__.keys() and self._archive is not None:
+                    self._archive.close()
+                    self._archive = None
+                return value
+            except Exception as exc:
+                raise CheckpointError(f"could not read checkpoint array {name}: {exc}") from exc
+
+    @cached_property
+    def x(self) -> np.ndarray:
+        """The FP32 reconstruction on the checkpoint's grid.
+
+        Returns
+        -------
+        numpy.ndarray
+            Volume in (x, y, z) order.
+        """
+        return cast("np.ndarray", self._read_array("x"))
+
+    @cached_property
+    def pose_params(self) -> np.ndarray:
+        """The FP32 six-column pose correction table.
+
+        Returns
+        -------
+        numpy.ndarray
+            Corrections in radians and physical length units.
+        """
+        return cast("np.ndarray", self._read_array("pose_params"))
+
+    @cached_property
+    def motion_coeffs(self) -> np.ndarray | None:
+        """The motion-model coefficients.
+
+        Returns
+        -------
+        numpy.ndarray or None
+            Coefficients, or None for independent view poses.
+        """
+        return self._read_array("motion_coeffs")
+
+
+class _LoadedCheckpoint(AlignmentCheckpoint):
+    def __init__(
+        self,
+        archive: np.lib.npyio.NpzFile,
+        metadata: CheckpointMetadata,
+        loss_history: list[float],
+        outer_stats: list[dict[str, Any]],
+    ) -> None:
+        self._archive, self._lock = archive, RLock()
+        self.loss_history, self.outer_stats, self.metadata = loss_history, outer_stats, metadata
 
 
 def normalize_json(value: Any) -> Any:
@@ -235,6 +319,8 @@ def save_alignment_checkpoint(
 ) -> None:
     """Atomically write an alignment checkpoint as `.npz` plus JSON metadata.
 
+    The reconstruction is read in bounded z windows rather than copied whole.
+
     Parameters
     ----------
     path : str or path-like
@@ -273,7 +359,6 @@ def save_alignment_checkpoint(
     try:
         with tmp_path.open("wb") as fh:
             arrays: dict[str, Any] = {
-                "x": np.asarray(x, dtype=np.float32),
                 "pose_params": np.asarray(pose_params, dtype=np.float32),
                 "loss_history": np.asarray(loss_history, dtype=np.float64),
                 "metadata_json": np.asarray(metadata_json),
@@ -283,7 +368,11 @@ def save_alignment_checkpoint(
                 arrays["motion_coeffs"] = np.asarray(motion_coeffs, dtype=np.float32)
             else:
                 arrays["motion_coeffs"] = np.zeros((0,), dtype=np.float32)
-            np.savez_compressed(fh, **arrays)
+            with ZipFile(fh, "w", compression=ZIP_DEFLATED) as archive:
+                _write_volume(archive, x)
+                for name, array in arrays.items():
+                    with archive.open(f"{name}.npy", "w", force_zip64=True) as member:
+                        np.lib.format.write_array(member, array, allow_pickle=False)
             fh.flush()
             os.fsync(fh.fileno())
         tmp_path.replace(out_path)
@@ -292,6 +381,23 @@ def save_alignment_checkpoint(
         with suppress(OSError):
             tmp_path.unlink()
         raise
+
+
+def _write_volume(archive: ZipFile, volume: Any) -> None:
+    """Write a standard NPY member, packing at most 64 MiB or one xy plane."""
+    if not hasattr(volume, "shape"):
+        volume = np.asarray(volume, dtype=np.float32)
+    shape = tuple(int(length) for length in volume.shape)
+    depth = max(1, (64 << 20) // (4 * shape[0] * shape[1]))
+    with archive.open("x.npy", "w", force_zip64=True) as member:
+        np.lib.format.write_array_header_2_0(
+            member, {"descr": np.dtype(np.float32).str, "fortran_order": True, "shape": shape}
+        )
+        for first in range(0, shape[2], depth):
+            last = min(first + depth, shape[2])
+            values = np.asarray(volume[:, :, first:last], np.float32, order="F")
+            member.write(memoryview(values.ravel(order="F")).cast("B"))
+            del values
 
 
 def _fsync_parent(path: Path) -> None:
@@ -317,57 +423,54 @@ def load_alignment_checkpoint(path: str | os.PathLike[str]) -> AlignmentCheckpoi
     Returns
     -------
     AlignmentCheckpoint
-        Loaded arrays, loss history and validated metadata.
+        Array fields loaded on first access, with loss history and metadata.
 
     Raises
     ------
     CheckpointError
-        If the file cannot be read or its contents are malformed.
+        If the header cannot be read or is malformed. Malformed arrays raise
+        CheckpointError when accessed.
     """
+    z = None
     try:
-        with np.load(path, allow_pickle=False) as z:
-            files = set(z.files)
-            required = {
-                "x",
-                "pose_params",
-                "loss_history",
-                "metadata_json",
-                "outer_stats_json",
-            }
-            missing = sorted(required - files)
-            if missing:
-                raise CheckpointError(
-                    f"corrupt checkpoint: missing required field(s): {', '.join(missing)}"
-                )
-
-            metadata = _load_json_scalar(z["metadata_json"], field="metadata_json")
-            outer_stats = _load_json_scalar(z["outer_stats_json"], field="outer_stats_json")
-            if not isinstance(metadata, dict):
-                raise CheckpointError("corrupt checkpoint: metadata_json must contain an object")
-            if not isinstance(outer_stats, list):
-                raise CheckpointError("corrupt checkpoint: outer_stats_json must contain a list")
-
-            has_motion_coeffs = bool(metadata.get("has_motion_coeffs", False))
-            if has_motion_coeffs:
-                if "motion_coeffs" not in files:
-                    raise CheckpointError(
-                        "corrupt checkpoint: metadata declares motion_coeffs but "
-                        "the array is missing"
-                    )
-                motion_coeffs = np.asarray(z["motion_coeffs"], dtype=np.float32)
-            else:
-                motion_coeffs = None
-            return AlignmentCheckpoint(
-                x=np.asarray(z["x"], dtype=np.float32),
-                pose_params=pad_pose_params(z["pose_params"]),
-                motion_coeffs=motion_coeffs,
-                loss_history=[float(v) for v in np.asarray(z["loss_history"]).reshape(-1)],
-                outer_stats=[dict(item) for item in outer_stats],
-                metadata=cast("CheckpointMetadata", dict(metadata)),
+        z = np.load(path, allow_pickle=False)
+        files = set(z.files)
+        required = {
+            "x",
+            "pose_params",
+            "loss_history",
+            "metadata_json",
+            "outer_stats_json",
+        }
+        missing = sorted(required - files)
+        if missing:
+            raise CheckpointError(
+                f"corrupt checkpoint: missing required field(s): {', '.join(missing)}"
             )
-    except CheckpointError:
-        raise
+
+        metadata = _load_json_scalar(z["metadata_json"], field="metadata_json")
+        outer_stats = _load_json_scalar(z["outer_stats_json"], field="outer_stats_json")
+        if not isinstance(metadata, dict):
+            raise CheckpointError("corrupt checkpoint: metadata_json must contain an object")
+        if not isinstance(outer_stats, list):
+            raise CheckpointError("corrupt checkpoint: outer_stats_json must contain a list")
+
+        if metadata.get("has_motion_coeffs", False) and "motion_coeffs" not in files:
+            raise CheckpointError(
+                "corrupt checkpoint: metadata declares motion_coeffs but the array is missing"
+            )
+        return _LoadedCheckpoint(
+            z,
+            metadata=cast("CheckpointMetadata", dict(metadata)),
+            loss_history=[float(v) for v in np.asarray(z["loss_history"]).reshape(-1)],
+            outer_stats=[dict(item) for item in outer_stats],
+        )
     except Exception as exc:
+        close = getattr(z, "close", None)
+        if close is not None:
+            close()
+        if isinstance(exc, CheckpointError):
+            raise
         raise CheckpointError(f"could not read checkpoint {path}: {exc}") from exc
 
 

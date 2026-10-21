@@ -6,6 +6,16 @@ Flat-field correction interpolates statistically unmeasured interior pixels in
 transmission from the same view's neighbouring columns, instead of inserting air
 stripes. Stable low-gain pixels and unilluminated detector margins are unchanged.
 
+Host-volume upload buffers remain independent of caller arrays on CPU.
+Host-slab uploads share JAX's CUDA allocation pool without retaining full-sized
+pinned host copies or competing CuPy allocations. Device volume slabs are
+assembled from bounded host windows, including masked inputs.
+
+The checkpoint helper supports single-resolution alignment and preserves
+early stopping when resuming a completed run. Loading checkpoint metadata
+does not allocate its volume; arrays are read when accessed.
+Checkpoint writes read the reconstruction in bounded z windows.
+
 Cone-beam CGLS, SIRT/OS-SART and MLEM/OSEM reconstruct volumes larger than
 the GPU: the volumes stay in host memory, or in memory-mapped files given as
 `out=`, and are streamed through the device in z slabs, each projected onto

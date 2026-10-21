@@ -158,3 +158,59 @@ def test_legacy_checkpoint_sampling_is_rejected_only_for_multires(multires):
             validate_alignment_checkpoint(checkpoint, checkpoint.metadata)
     else:
         validate_alignment_checkpoint(checkpoint, metadata)
+
+
+def test_checkpoint_metadata_is_lazy_and_arrays_keep_the_open_file(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    path = tmp_path / "state.npz"
+    run, state = _run(), _state(x=np.ones((2, 3, 4), np.float32))
+    align_api.write_alignment_checkpoint(path, run, state)
+    read = np.lib.npyio.NpzFile.__getitem__
+    accesses = []
+
+    def track(archive, key):
+        accesses.append(key)
+        return read(archive, key)
+
+    monkeypatch.setattr(np.lib.npyio.NpzFile, "__getitem__", track)
+    loaded = align_api.load_alignment_checkpoint(path)
+    assert loaded.metadata["level_index"] == 1
+    assert not {"x", "pose_params", "motion_coeffs"}.intersection(accesses)
+    align_api.write_alignment_checkpoint(path, run, _state())
+    with ThreadPoolExecutor(2) as pool:
+        first, second = list(pool.map(lambda _: loaded.x, range(2)))
+    assert first is second and accesses.count("x") == 1
+    np.testing.assert_array_equal(first, state.x)
+    np.testing.assert_array_equal(loaded.pose_params, state.pose_params)
+    assert loaded.motion_coeffs is None
+    assert np.count_nonzero(align_api.load_alignment_checkpoint(path).x) == 0
+    accesses.clear()
+    with pytest.raises(CheckpointError, match="cannot resume this alignment"):
+        align_api.alignment_checkpointing(path, _run(mode="full"))
+    assert "x" not in accesses
+
+
+def test_checkpoint_writes_bounded_windows_from_a_reused_source(tmp_path):
+    bits = np.array([0x80000000, 0x7F800000, 0x7FC01234], np.uint32)
+    buffer = np.empty((2049, 4096, 1), np.float32)
+    reads = []
+
+    class Source:
+        shape = (2049, 4096, 3)
+
+        def __getitem__(self, index):
+            first, last = index[2].start, index[2].stop
+            assert last - first == 1
+            reads.append(first)
+            buffer.view(np.uint32).fill(bits[first])
+            return buffer
+
+    path = tmp_path / "windows.npz"
+    align_api.save_alignment_checkpoint(path, x=Source(), pose_params=np.zeros((1, 6)), metadata={})
+    buffer.fill(1)
+    with np.load(path, allow_pickle=False) as archive:
+        saved = archive["x"].view(np.uint32)
+        assert saved.shape == Source.shape and reads == [0, 1, 2]
+        for z in range(3):
+            assert np.all(saved[:, :, z] == bits[z])

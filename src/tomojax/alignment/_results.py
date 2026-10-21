@@ -253,6 +253,9 @@ class AlignResumeState:
          parameters.
     start_outer_iter : int, optional
         Number of completed outer iterations to resume after. Default is 0.
+    run_complete : bool, optional
+        Whether the solver reached its iteration limit or stopping criterion.
+        Default is False; observer interruptions can resume.
     loss : list[float], optional
         Recorded objective values in iteration order; defaults to an empty list.
     outer_stats : list[OuterStat], optional
@@ -273,6 +276,7 @@ class AlignResumeState:
     pose_params: jnp.ndarray
     motion_coeffs: jnp.ndarray | None = None
     start_outer_iter: int = 0
+    run_complete: bool = False
     loss: list[float] = field(default_factory=list)
     outer_stats: list[OuterStat] = field(default_factory=list)
     lipschitz: float | None = None

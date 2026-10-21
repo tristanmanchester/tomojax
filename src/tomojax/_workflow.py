@@ -974,6 +974,7 @@ def _run_alignment(
     """Calibrated geometry, volume, ``(views, 6)`` poses, their frame and record of ``plan``."""
     from tomojax.alignment.api import (
         AlignmentRun,
+        AlignMultiresResumeState,
         align_multires,
         alignment_checkpointing,
         cone_setup,
@@ -1010,7 +1011,7 @@ def _run_alignment(
         projections,
         factors=plan.levels,
         config=cfg,
-        resume_state=resume,
+        resume_state=cast("AlignMultiresResumeState | None", resume),
         checkpoint_callback=write,
     )
     poses = np.asarray(pad_pose_params(params), np.float32)

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from functools import partial
 from itertools import product
 import math
 from typing import TYPE_CHECKING, Literal
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 if TYPE_CHECKING:
@@ -49,21 +51,44 @@ def _pitched_rows(array: np.ndarray) -> tuple[int, int, int] | None:
     return width, pitch or width, rows
 
 
+@partial(jax.jit, static_argnames=("shape",))
+def _allocate(value: jax.Array, *, shape: tuple[int, ...]) -> jax.Array:
+    # A dynamic parameter makes this a fresh output, not a reusable constant.
+    return jnp.broadcast_to(value, shape)
+
+
+def _private_device_buffer(
+    shape: tuple[int, ...], dtype: np.dtype[np.generic], device: Device
+) -> jax.Array:
+    """Allocate private storage in JAX's pool, ready for a synchronous host copy."""
+    value = jax.device_put(np.zeros((), dtype=dtype), device=device)
+    result = _allocate(value, shape=shape)
+    result.block_until_ready()
+    return result
+
+
 def upload_host(array: np.ndarray, device: Device) -> jax.Array:
     """Upload without array-sized pinned staging; never donate the caller's input.
 
     Regular row windows copy directly; other strided inputs are packed once.
-    CUDA copies complete on the current CuPy stream before returning, so the
-    caller may immediately reuse host storage.
+    CPU uploads own a private host copy. CUDA storage belongs to JAX's allocator;
+    copies complete on the current CuPy stream before returning. On either
+    platform the caller may immediately reuse host storage.
     """
     if device.platform != "gpu":
-        return jax.device_put(array, device)
+        return jax.device_put(np.array(array, copy=True), device)
     import cupy as cp
 
+    dtype = jax.dtypes.canonicalize_dtype(array.dtype)
     layout = _pitched_rows(array)
-    source = np.ascontiguousarray(array) if layout is None else array
+    source = (
+        np.ascontiguousarray(array, dtype=dtype)
+        if layout is None or array.dtype != dtype
+        else array
+    )
     with cp.cuda.Device(device.local_hardware_id):
-        target = cp.empty(source.shape, source.dtype)
+        result = _private_device_buffer(source.shape, source.dtype, device)
+        target = cp.from_dlpack(result)
         stream = cp.cuda.get_current_stream()
         if source.flags.c_contiguous:
             cp.cuda.runtime.memcpyAsync(
@@ -78,7 +103,40 @@ def upload_host(array: np.ndarray, device: Device) -> jax.Array:
                 cp.cuda.runtime.memcpyHostToDevice, stream.ptr,
             )  # fmt: skip
         stream.synchronize()
-        return jax.dlpack.from_dlpack(target)
+        return result
+
+
+def upload_host_slabs(
+    shape: tuple[int, int, int], slabs: Iterator[tuple[int, np.ndarray]], device: Device
+) -> jax.Array:
+    """Assemble a private FP32 device volume from disjoint C-order z slabs.
+
+    Each pair gives the starting plane and its values. The slabs cover ``shape``
+    in order. Only the current host slab is retained, and its copy completes
+    before requesting the next one.
+    """
+    if device.platform != "gpu":
+        output = np.empty(shape, np.float32)
+        for first, values in slabs:
+            output[:, :, first : first + values.shape[2]] = values
+            del values
+        return jax.device_put(output, device)
+    import cupy as cp
+
+    with cp.cuda.Device(device.local_hardware_id):
+        result = _private_device_buffer(shape, np.dtype(np.float32), device)
+        target = cp.from_dlpack(result)
+        stream = cp.cuda.get_current_stream()
+        for first, values in slabs:
+            width = values.shape[2] * 4
+            cp.cuda.runtime.memcpy2DAsync(
+                target.data.ptr + first * 4, shape[2] * 4,
+                values.ctypes.data, width, width, shape[0] * shape[1],
+                cp.cuda.runtime.memcpyHostToDevice, stream.ptr,
+            )  # fmt: skip
+            stream.synchronize()
+            del values
+    return result
 
 
 def copy_to_host(
@@ -146,7 +204,10 @@ def upload_host_views(array: np.ndarray, indices: np.ndarray, device: Device) ->
     import cupy as cp
 
     with cp.cuda.Device(device.local_hardware_id):
-        target = cp.empty((len(indices), *array.shape[1:]), np.float32)
+        result = _private_device_buffer(
+            (len(indices), *array.shape[1:]), np.dtype(np.float32), device
+        )
+        target = cp.from_dlpack(result)
         stream = cp.cuda.get_current_stream()
         width, pitch, rows = layout
         for position, index in enumerate(indices):
@@ -157,4 +218,4 @@ def upload_host_views(array: np.ndarray, indices: np.ndarray, device: Device) ->
                 cp.cuda.runtime.memcpyHostToDevice, stream.ptr,
             )  # fmt: skip
         stream.synchronize()
-        return jax.dlpack.from_dlpack(target)
+        return result

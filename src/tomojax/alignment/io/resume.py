@@ -52,7 +52,7 @@ LOG = logging.getLogger(__name__)
 _FINGERPRINT_VIEWS = 16
 
 type ResumeState = AlignResumeState | AlignMultiresResumeState
-type CheckpointCallback = Callable[[AlignMultiresResumeState], None]
+type CheckpointCallback = Callable[[ResumeState], None]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -208,7 +208,9 @@ def _progress(
     if isinstance(state, AlignMultiresResumeState):
         return _multires_progress(run, state)
     completed = 0 if state is None else int(state.start_outer_iter)
-    finished = state is not None and completed >= int(run.config.outer_iterations)
+    finished = state is not None and (
+        state.run_complete or completed >= int(run.config.outer_iterations)
+    )
     return {
         "state_grid": normalize_json(run.grid.to_dict()),
         "state_detector": normalize_json(run.detector.to_dict()),
@@ -224,7 +226,7 @@ def _progress(
         "schedule_state": None,
         "geometry_calibration_state": None,
         "level_complete": bool(run_complete or finished),
-        "run_complete": bool(run_complete),
+        "run_complete": bool(run_complete or finished),
     }
 
 
@@ -349,7 +351,9 @@ def resume_state_from_checkpoint(path: str | os.PathLike[str], run: AlignmentRun
     }
     if run.levels is None:
         start = int(metadata.get("completed_outer_iterations_in_level", 0))
-        return AlignResumeState(start_outer_iter=start, **shared)
+        return AlignResumeState(
+            start_outer_iter=start, run_complete=bool(metadata.get("run_complete", False)), **shared
+        )
     schedule = _schedule_resume_state_from_checkpoint(metadata)
     prev_factor = metadata.get("prev_factor")
     calibration = metadata.get("geometry_calibration_state")
@@ -394,12 +398,14 @@ def _schedule_resume_state_from_checkpoint(metadata: CheckpointMetadata) -> Sche
 def alignment_checkpointing(
     path: str | os.PathLike[str] | None,
     run: AlignmentRun,
-) -> tuple[AlignMultiresResumeState | None, CheckpointCallback | None]:
-    """Resume a multiresolution ``run`` from ``path``, and checkpoint it there.
+) -> tuple[ResumeState | None, CheckpointCallback | None]:
+    """Resume ``run`` from ``path``, and checkpoint it there.
 
     Returns the state to resume from, None when there is no file at ``path``,
-    and the ``align_multires`` callback writing a checkpoint there after each
-    outer iteration; both are None without a ``path``. A file there that is
+    and a callback writing a checkpoint there after each outer iteration.
+    A run without levels uses the single-resolution ``align`` state; one with
+    levels uses ``align_multires``. Both returns are None without a ``path``.
+    A file there that is
     no checkpoint of ``run`` raises :class:`CheckpointError` saying how it
     differs, and is left as it is.
 
@@ -412,7 +418,7 @@ def alignment_checkpointing(
 
     Returns
     -------
-    resume_state : AlignMultiresResumeState or None
+    resume_state : AlignResumeState or AlignMultiresResumeState or None
         Saved progress, or None when no checkpoint exists or path is None.
     callback : callable or None
         Callback writing future progress to path, or None when path is None.
@@ -421,18 +427,14 @@ def alignment_checkpointing(
     ------
     CheckpointError
         If an existing file is malformed or belongs to a different run.
-    ValueError
-        If path is supplied but run has no multiresolution levels.
     """
     if path is None:
         return None, None
-    if run.levels is None:
-        raise ValueError("alignment_checkpointing takes a multiresolution run (with levels)")
     file = Path(path)
     resume = None
     if file.exists():
         try:
-            resume = cast("AlignMultiresResumeState", resume_state_from_checkpoint(file, run))
+            resume = resume_state_from_checkpoint(file, run)
         except CheckpointError as error:
             raise CheckpointError(
                 f"{file} cannot resume this alignment ({error}); remove it or choose "
@@ -440,7 +442,7 @@ def alignment_checkpointing(
             ) from error
         LOG.info("Resuming alignment from checkpoint %s", file)
 
-    def write(state: AlignMultiresResumeState) -> None:
+    def write(state: ResumeState) -> None:
         write_alignment_checkpoint(file, run, state)
 
     return resume, write

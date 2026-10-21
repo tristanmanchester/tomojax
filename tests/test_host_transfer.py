@@ -10,6 +10,27 @@ import pytest
 from tomojax.core.host_transfer import copy_to_host, upload_host, upload_host_views
 
 
+@pytest.mark.parametrize(
+    "dtype", [np.bool_, np.uint8, np.int32, np.float32, np.float64, np.complex64]
+)
+def test_upload_outputs_are_independent_and_use_jax_dtype(dtype):
+    source = (np.arange(48).reshape(4, 4, 3) / 7).astype(dtype)
+    expected = source.astype(jax.dtypes.canonicalize_dtype(source.dtype), copy=True)
+    value = upload_host(source, jax.devices()[0])
+    other = upload_host(np.zeros_like(source), jax.devices()[0])
+    assert value.unsafe_buffer_pointer() != other.unsafe_buffer_pointer()
+    source.fill(0)
+    assert value.dtype == expected.dtype
+    np.testing.assert_array_equal(value, expected)
+    np.testing.assert_array_equal(other, np.zeros_like(expected))
+
+
+def test_upload_preserves_float32_bits():
+    bits = np.array([0, 0x80000000, 0x7F800000, 0xFF800000, 0x7FC1ABCD], np.uint32)
+    value = upload_host(bits.view(np.float32), jax.devices()[0])
+    np.testing.assert_array_equal(np.asarray(value).view(np.uint32), bits)
+
+
 @pytest.mark.parametrize("source_order", ["C", "F", "strided"])
 @pytest.mark.parametrize("target_order", ["C", "F", "strided"])
 def test_host_transfers_preserve_owned_views(source_order, target_order):
@@ -35,6 +56,10 @@ def test_host_transfers_preserve_owned_views(source_order, target_order):
     np.testing.assert_array_equal(target, source * np.float32(1.000001))
     np.testing.assert_array_equal(np.asarray(value), source)
     np.testing.assert_array_equal(storage[1::2], np.full_like(storage[1::2], -17))
+    expected = np.asarray(value).copy()
+    source.setflags(write=True)
+    source[:] = -5
+    np.testing.assert_array_equal(value, expected)
 
 
 @pytest.mark.parametrize("axis", [0, 1, 2])
