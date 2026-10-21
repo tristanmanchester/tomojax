@@ -72,6 +72,9 @@ multi-material scans self-calibration and a joint image-and-curve fit erased
 objects and amplified streaks. Nikon, Zeiss and Bruker beam hardening settings
 and tube settings are recorded with loaded scans.
 
+Joint alignment keeps inactive image coordinates fixed when its solver uses a
+nonlocal preconditioner.
+
 Projection matching fits a band-limited projection model matched to the
 detector sampling. Large motion in noisy scans is recovered more accurately, and
 the PSI nanotomography workflow takes about 40% less time.

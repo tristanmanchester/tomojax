@@ -456,6 +456,11 @@ def _build_program(
     Callable[[jax.Array, jax.Array], CoupledLinearResult],
     Callable[[jax.Array, jax.Array], jax.Array],
 ]:
+    """Build the loss and updates in the free image subspace.
+
+    Nonlocal preconditioners may fill inactive null directions of the normal
+    system; returned image increments are projected onto the free coordinates.
+    """
     # This factory executes during tracing, behind stable module-level jit
     # functions. Its closures contain tracers rather than embedded scan arrays.
     cfg = spec
@@ -696,7 +701,7 @@ def _build_program(
         )
         pose_diagonal = jnp.zeros_like(p).at[:, indices].set(pose_diagonal)
         pose_inverse = pose_metric_inverse(pose_diagonal, arrays.smoothness, cfg.gn_damping)
-        result = solve_coupled_normal(
+        step = solve_coupled_normal(
             normal,
             rhs,
             (volume_inverse, pose_inverse),
@@ -705,7 +710,7 @@ def _build_program(
             dot=block_dot,
             volume_ramp=None if spec.refinement is None else spec.refinement.ramp_damping,
         )
-        return result._replace(increment=(result.increment[0], project_pose(result.increment[1])))
+        return step._replace(increment=(free * step.increment[0], project_pose(step.increment[1])))
 
     return update, loss
 

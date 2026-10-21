@@ -99,6 +99,16 @@ Inspect slices and pose estimates, and use half-dataset FSC and held-out residua
 as diagnostics, not proof of physical accuracy. The stopping tolerance is not a
 pose-error bound.
 
+With `ProjectionMatchingConfig`, per-view vertical standard deviations are in
+`result.info["vertical_uncertainty"]["standard_deviation"]`, in the detector's
+length units. They describe the local vertical fit with its profile template
+and noise covariance held fixed. They do not cover a wrong initial alignment
+or image-model bias. Horizontal and full-procedure uncertainties are not reported.
+
+`result.info["initialization"]["losses"]` contains the final losses from the two
+starts. Similar losses can indicate an ambiguous horizontal fit; they are not
+pose-error bounds.
+
 ### Align large scans at reduced resolution
 
 Pose parameters are physical lengths and angles, so they transfer between

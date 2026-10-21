@@ -604,6 +604,8 @@ def joint_placement(request, monkeypatch):
 def test_affine_joint_increment_and_loss_match_dense_physical_model(
     monkeypatch, solver, backend, stream
 ):
+    from dataclasses import replace
+
     from scipy import signal
 
     import tomojax as tj
@@ -617,6 +619,8 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
     grid, detector = tj.Grid(3, 4, 2, 1, 1, 1), tj.Detector(7, 3, 1, 1)
     geometry = tj.ParallelGeometry(grid, detector, [12, 57, 103])
     volume = rng.uniform(0.2, 1, (3, 4, 2)).astype(np.float32)
+    support = np.ones_like(volume)
+    support[0, 0, 0] = not stream
     poses = np.zeros((3, 6), np.float32)
     poses[:, 3] = [0.02, -0.01, 0.03]
 
@@ -624,7 +628,7 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
         shifted = tj.Scan(np.zeros((3, 3, 7), np.float32), geometry).with_poses(p)
         frames = stack_view_poses(shifted.geometry, 3)
         model = _matching_model.projectors(grid, detector, backend="jax", masked=lambda v: v)
-        return np.asarray(model.forward(frames, jnp.asarray(x)), np.float64)
+        return np.asarray(model.forward(frames, jnp.asarray(x) * support), np.float64)
 
     native = np.arange(2 * detector.nu, dtype=np.float64) - (2 * detector.nu - 1) / 2
     spectrum = np.fft.fft(native) * np.exp(1j * np.pi * np.fft.fftfreq(native.size))
@@ -666,8 +670,9 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
         active_mask=jnp.array([0, 0, 0, 1, 0, 0], jnp.float32),
     )
     runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
+    ctx = replace(_pose_objective_context(runtime=runtime, **common), volume_mask=support)
     objective = _coupled_objective.build_coupled_objective(
-        _pose_objective_context(runtime=runtime, **common),
+        ctx,
         refinement=_matching_model.JointRefinement(native_width=2 * detector.nu),
     )
     result = objective.update(jnp.asarray(poses), jnp.asarray(volume))
