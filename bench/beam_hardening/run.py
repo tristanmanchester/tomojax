@@ -113,7 +113,10 @@ def score_case(arrays: dict, info: dict, names: list[str], figures: Path | None 
         "kv": case["spectrum"]["kv"],
         "checks": info["checks"],
     }
-    for name in names:
+    # Laminography never measures part of frequency space, so even exact line
+    # integrals reconstruct off: image scores there are read against that floor.
+    lamino = case["geometry"] == "lamino"
+    for name in [*names, "exact"] if lamino and "exact" not in names else names:
         start = time.perf_counter()
         try:
             result = methods.METHODS[name](frames, recorded(case["spectrum"], main), truth)
@@ -129,6 +132,8 @@ def score_case(arrays: dict, info: dict, names: list[str], figures: Path | None 
         if result.info:
             record[name]["info"] = result.info
         images[name] = score.slab(result.volume, case) / mu[level]
+    if lamino and "mu" in record.get("exact", {}):
+        _against_exact(record)
     if figures is not None:
         shapes = case["shapes"]
         relative = {s["material"]: slope.get(s["material"], 0.0) / slope[level] for s in shapes}
@@ -141,6 +146,24 @@ def score_case(arrays: dict, info: dict, names: list[str], figures: Path | None 
         path = figures / f"{case['name']}.png"
         plots.save(path, truth, images, centre, g["voxel"], title, window=(0.0, 1.5))
     return record
+
+
+def _against_exact(record: dict) -> None:
+    """Score each method's mu bias and cupping relative to the exact control's image.
+
+    The truth-relative values move to ``vs_truth``; line integrals are unchanged.
+    """
+    floor = {m: v["bias"] for m, v in record["exact"]["mu"].items()}
+    cupping = record["exact"].get("cupping")
+    for row in record.values():
+        if not isinstance(row, dict) or "mu" not in row:
+            continue
+        row["vs_truth"] = {"mu": {m: v["bias"] for m, v in row["mu"].items()}}
+        for m, v in row["mu"].items():
+            v["bias"] = (1 + v["bias"]) / (1 + floor[m]) - 1
+        if "cupping" in row and cupping is not None:
+            row["vs_truth"]["cupping"] = row["cupping"]
+            row["cupping"] -= cupping
 
 
 def simulation(

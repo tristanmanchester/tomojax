@@ -46,8 +46,10 @@ Filtered backprojection is not quantitative in laminography, so the bench
 reconstructs these with 50 CGLS iterations, and scores the plate's central
 slab clear of its faces. Laminography never measures the frequencies within
 the tilt angle of the axis, which a plate is made of: the `exact` control's
-attenuation is 1-7 % off (3-5 % at 400 iterations), and image scores there
-are read against it; line-integral scores are unaffected.
+attenuation is 1-7 % off (3-5 % at 400 iterations). The `exact` control
+therefore always runs there, and every method's mu bias and cupping are
+scored against its image (the values against the truth are kept under
+`vs_truth`); line-integral scores are unaffected.
 
 **2detect**: 2DeteCT slices (`detect2.py`, `detect2_score.py`). The 60 kV
 unfiltered scan (mode 3) is corrected and compared with the 90 kV

@@ -18,7 +18,7 @@ def bench():
     try:
         yield {
             name: importlib.import_module(name)
-            for name in ("cases", "score", "simulate", "donoharm")
+            for name in ("cases", "score", "simulate", "donoharm", "run")
         }
     finally:
         sys.path.remove(str(BENCH))
@@ -114,3 +114,12 @@ def test_curve_finds_nonlinearity(bench, tmp_path):
     assert np.abs(deviation).max() > 0.02
     bench["donoharm"].plots.curves(tmp_path / "c.png", {"all": (centres, deviation)}, 0.005, "t")
     assert (tmp_path / "c.png").stat().st_size > 0
+
+
+def test_laminography_images_are_scored_against_the_exact_control(bench):
+    record = {"exact": {"mu": {"glass": {"bias": 0.067}}, "cupping": 0.02}}
+    record["spectrum"] = {"mu": {"glass": {"bias": 0.067}}, "cupping": 0.05}
+    bench["run"]._against_exact(record)
+    assert record["spectrum"]["mu"]["glass"]["bias"] == pytest.approx(0.0)
+    assert record["spectrum"]["cupping"] == pytest.approx(0.03)
+    assert record["spectrum"]["vs_truth"] == {"mu": {"glass": 0.067}, "cupping": 0.05}
