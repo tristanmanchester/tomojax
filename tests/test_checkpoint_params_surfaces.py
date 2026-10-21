@@ -158,3 +158,34 @@ def test_legacy_checkpoint_sampling_is_rejected_only_for_multires(multires):
             validate_alignment_checkpoint(checkpoint, checkpoint.metadata)
     else:
         validate_alignment_checkpoint(checkpoint, metadata)
+
+
+def test_checkpoint_metadata_is_lazy_and_arrays_keep_the_open_file(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    path = tmp_path / "state.npz"
+    run, state = _run(), _state(x=np.ones((2, 3, 4), np.float32))
+    align_api.write_alignment_checkpoint(path, run, state)
+    read = np.lib.npyio.NpzFile.__getitem__
+    accesses = []
+
+    def track(archive, key):
+        accesses.append(key)
+        return read(archive, key)
+
+    monkeypatch.setattr(np.lib.npyio.NpzFile, "__getitem__", track)
+    loaded = align_api.load_alignment_checkpoint(path)
+    assert loaded.metadata["level_index"] == 1
+    assert not {"x", "pose_params", "motion_coeffs"}.intersection(accesses)
+    align_api.write_alignment_checkpoint(path, run, _state())
+    with ThreadPoolExecutor(2) as pool:
+        first, second = list(pool.map(lambda _: loaded.x, range(2)))
+    assert first is second and accesses.count("x") == 1
+    np.testing.assert_array_equal(first, state.x)
+    np.testing.assert_array_equal(loaded.pose_params, state.pose_params)
+    assert loaded.motion_coeffs is None
+    assert np.count_nonzero(align_api.load_alignment_checkpoint(path).x) == 0
+    accesses.clear()
+    with pytest.raises(CheckpointError, match="cannot resume this alignment"):
+        align_api.alignment_checkpointing(path, _run(mode="full"))
+    assert "x" not in accesses

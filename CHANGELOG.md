@@ -4,6 +4,10 @@
 
 Host-volume upload buffers remain independent of caller arrays on CPU.
 
+The checkpoint helper supports single-resolution alignment and preserves
+early stopping when resuming a completed run. Loading checkpoint metadata
+does not allocate its volume; arrays are read when accessed.
+
 Cone-beam CGLS, SIRT/OS-SART and MLEM/OSEM reconstruct volumes larger than
 the GPU: the volumes stay in host memory, or in memory-mapped files given as
 `out=`, and are streamed through the device in z slabs, each projected onto

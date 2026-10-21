@@ -386,31 +386,66 @@ class _AlignLoopState:
     observer_action: ObserverAction
 
 
-def _emit_alignment_checkpoint(
+def _finish_align_iteration(
     *,
-    checkpoint_callback: AlignCheckpointCallback | None,
+    cfg: AlignConfig,
     state: _AlignLoopState,
+    stat: OuterStat,
+    rel_impr: float | None,
+    outer_idx: int,
+    observer_fn: ObserverCallback | None,
+    checkpoint_callback: AlignCheckpointCallback | None,
     wall_start: float,
-    pose_translation_frame: str,
-    ray_integrator: str,
-) -> None:
-    if checkpoint_callback is None:
-        return
-    checkpoint_callback(
-        AlignResumeState(
-            x=state.x,
-            pose_params=state.pose_params,
-            motion_coeffs=state.motion_coeffs,
-            start_outer_iter=len(state.outer_stats),
-            loss=list(state.loss_hist),
-            outer_stats=[dict(stat) for stat in state.outer_stats],
-            lipschitz=(float(state.l_prev) if state.l_prev is not None else None),
-            small_impr_streak=int(state.small_impr_streak),
-            elapsed_offset=float(time.perf_counter() - wall_start),
-            pose_translation_frame=pose_translation_frame,
-            ray_integrator=ray_integrator,
+) -> bool:
+    """Record completion separately from an interruption, then save the ungauged state."""
+    interrupted = False
+    if observer_fn is not None:
+        action = _normalize_observer_action(observer_fn(state.x, state.pose_params, dict(stat)))
+        state.observer_action = action
+        stat["observer_action"] = action
+        stat["observer_stop"] = action != "continue"
+        if action != "continue":
+            state.stopped_by_observer = action == "stop_run"
+            interrupted = True
+    interrupted = interrupted or bool(stat.get("reconstruction_failed", False))
+    converged = False
+    if not interrupted and cfg.early_stop:
+        if rel_impr is None:
+            state.small_impr_streak = 0
+        else:
+            rel = rel_impr if math.isfinite(rel_impr) and rel_impr >= 0 else 0.0
+            state.small_impr_streak = (
+                state.small_impr_streak + 1 if rel < float(cfg.early_stop_rel_impr) else 0
+            )
+            converged = state.small_impr_streak >= int(cfg.early_stop_patience)
+            if converged and cfg.log_summary:
+                logging.info(
+                    "Early stop after %d outer iters (%s elapsed): "
+                    "rel_impr=%.3e < %.3e for %d consecutive outers",
+                    outer_idx,
+                    format_duration(stat.get("cumulative_time")),
+                    float(rel_impr),
+                    float(cfg.early_stop_rel_impr),
+                    int(cfg.early_stop_patience),
+                )
+    if checkpoint_callback is not None:
+        checkpoint_callback(
+            AlignResumeState(
+                x=state.x,
+                pose_params=state.pose_params,
+                motion_coeffs=state.motion_coeffs,
+                start_outer_iter=len(state.outer_stats),
+                run_complete=converged or outer_idx >= int(cfg.outer_iterations),
+                loss=list(state.loss_hist),
+                outer_stats=[dict(stat) for stat in state.outer_stats],
+                lipschitz=(float(state.l_prev) if state.l_prev is not None else None),
+                small_impr_streak=int(state.small_impr_streak),
+                elapsed_offset=float(time.perf_counter() - wall_start),
+                pose_translation_frame=cfg.pose_translation_frame,
+                ray_integrator=cfg.ray_integrator,
+            )
         )
-    )
+    return interrupted or converged
 
 
 def _initial_outer_stat(
@@ -435,61 +470,6 @@ def _initial_outer_stat(
         "quality_tier": str(cfg.stage_quality_tier),
         "profile_policy": dict(profile_policy),
     }
-
-
-def _observer_break_decision(
-    *,
-    observer_fn: ObserverCallback | None,
-    state: _AlignLoopState,
-    stat: OuterStat,
-) -> bool:
-    if observer_fn is None:
-        return False
-    observer_action = _normalize_observer_action(
-        observer_fn(state.x, state.pose_params, dict(stat))
-    )
-    state.observer_action = observer_action
-    stat["observer_action"] = observer_action
-    stat["observer_stop"] = observer_action != "continue"
-    if observer_action == "continue":
-        return False
-    state.stopped_by_observer = observer_action == "stop_run"
-    return True
-
-
-def _early_stop_break_decision(
-    *,
-    cfg: AlignConfig,
-    state: _AlignLoopState,
-    stat: OuterStat,
-    rel_impr: float | None,
-    outer_idx: int,
-) -> bool:
-    if not cfg.early_stop:
-        return False
-    if rel_impr is None:
-        state.small_impr_streak = 0
-        return False
-    rel_for_patience = rel_impr
-    if (not math.isfinite(rel_for_patience)) or (rel_for_patience < 0.0):
-        rel_for_patience = 0.0
-    if rel_for_patience < float(cfg.early_stop_rel_impr):
-        state.small_impr_streak += 1
-    else:
-        state.small_impr_streak = 0
-    if state.small_impr_streak < int(cfg.early_stop_patience):
-        return False
-    if cfg.log_summary:
-        logging.info(
-            "Early stop after %d outer iters (%s elapsed): "
-            "rel_impr=%.3e < %.3e for %d consecutive outers",
-            outer_idx,
-            format_duration(stat.get("cumulative_time")),
-            float(rel_impr),
-            float(cfg.early_stop_rel_impr),
-            int(cfg.early_stop_patience),
-        )
-    return True
 
 
 def _run_align_outer_iteration(
@@ -761,6 +741,9 @@ def align(
         final_gauge_stats = dict(initial_gauge_stats)
 
     start_outer_iter = int(resume_state.start_outer_iter) if resume_state is not None else 0
+    outer_limit = int(cfg.outer_iterations)
+    if resume_state is not None and resume_state.run_complete:
+        outer_limit = start_outer_iter
     runtime = _build_alignment_runtime_context(
         geometry=geometry,
         grid=grid,
@@ -835,10 +818,10 @@ def align(
     ).to_dict()
     profile_policy = profile_policy_from_config(cfg).to_dict()
 
-    iter_range = range(start_outer_iter, int(cfg.outer_iterations))
+    iter_range = range(start_outer_iter, outer_limit)
     for it in progress_iter(
         iter_range,
-        total=max(0, int(cfg.outer_iterations) - start_outer_iter),
+        total=max(0, outer_limit - start_outer_iter),
         desc="Align: outer iters",
     ):
         outer_idx = it + 1
@@ -862,25 +845,15 @@ def align(
         )
         if cfg.log_summary:
             _log_align_outer_summary(stat=stat, cfg=cfg, reconstruction=reconstruction)
-        should_break = _observer_break_decision(
-            observer_fn=observer_fn,
-            state=loop_state,
-            stat=stat,
-        )
-        should_break = should_break or bool(stat.get("reconstruction_failed", False))
-        should_break = should_break or _early_stop_break_decision(
+        should_break = _finish_align_iteration(
             cfg=cfg,
             state=loop_state,
             stat=stat,
             rel_impr=rel_impr,
             outer_idx=outer_idx,
-        )
-        _emit_alignment_checkpoint(
-            pose_translation_frame=cfg.pose_translation_frame,
+            observer_fn=observer_fn,
             checkpoint_callback=checkpoint_callback,
-            state=loop_state,
             wall_start=wall_start,
-            ray_integrator=cfg.ray_integrator,
         )
         if should_break:
             break
