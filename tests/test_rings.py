@@ -84,6 +84,15 @@ def test_unsorted_fit_preserves_smooth_ring_free_data(geometry: object) -> None:
     assert np.linalg.norm(fixed - clean) < 1e-5 * np.linalg.norm(clean)
 
 
+@pytest.mark.parametrize("shell", [False, True])
+def test_full_turn_prior_preserves_clean_scene_contrasts(shell: bool) -> None:
+    u = np.arange(N) - (N - 1) / 2
+    radii = np.sqrt(np.maximum(np.array([90, 75])[:, None] ** 2 - u * u, 0))
+    clean = np.tile(0.8 * (radii[0] - radii[1]) / 15, (180, 1)) if shell else _sinogram(360, 180)
+    fixed = np.asarray(Rings(_geometry(360, 180)).apply(jnp.asarray(clean[:, None], jnp.float32)))
+    assert np.linalg.norm(fixed[:, 0] - clean) < 2e-4 * np.linalg.norm(clean)
+
+
 @pytest.mark.parametrize("segmented", [False, True])
 def test_irregular_view_order_and_separate_trajectories(segmented: bool) -> None:
     rng = np.random.default_rng(19)

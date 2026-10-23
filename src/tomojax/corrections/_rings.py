@@ -300,7 +300,7 @@ def _fill(q: jax.Array, window: int = 30) -> jax.Array:
     return jnp.where(usable, weight * q + (1 - weight) * filled, q)
 
 
-def _large_stripes(q: jax.Array, window: int = 100, ratio: float = 3.0) -> jax.Array:
+def _large_stripes(q: jax.Array, axis: float, window: int = 100, ratio: float = 3.0) -> jax.Array:
     """Vo et al. 2018, algorithms 4 and 5, with our response model as the correction.
 
     Each column's level (mean of its sorted values, 5% of the views cut at either end) less its
@@ -308,6 +308,8 @@ def _large_stripes(q: jax.Array, window: int = 100, ratio: float = 3.0) -> jax.A
     beyond the fitted ends by more than ``ratio``/2 spans flagged on each side whose extreme lies
     beyond them by ``ratio`` spans. Only the flagged columns, grown by two, lose their level
     against the +-window quadratic of their neighbours, faded out over eight more columns.
+    The flagged response uses the reflection-aware significance prior too: an even scene
+    contrast alone is not evidence of a detector calibration error.
     """
     views, n = q.shape
     ranked = jnp.sort(q, axis=0)
@@ -332,7 +334,8 @@ def _large_stripes(q: jax.Array, window: int = 100, ratio: float = 3.0) -> jax.A
         jnp.stack([wide[8 + j : 8 + j + n] * (1 - abs(j) / 9) for j in range(-8, 9)]), axis=0
     )
     alpha, beta, xm = _fit(ranked, _correlate(ranked, _quadratic_taps(window, 1)))
-    return q - (weight * (alpha + beta * xm))[None, :]
+    response = regularize(weight * (alpha + beta * xm), axis, "significance")
+    return q - response[None, :]
 
 
 def _row(
@@ -344,7 +347,7 @@ def _row(
     closing: bool,
 ) -> jax.Array:
     """Full-turn fits without sorting away the spatial smoothness at the axis."""
-    out = _large_stripes(_fill(q))
+    out = _large_stripes(_fill(q), axis)
     for _ in range(2):
         fitted = jnp.concatenate([0.5 * (out[:1] + out[-1:]), out[1:-1]]) if closing else out
         level, beta, xm, *_ = _fit_unsorted(fitted, _reference(fitted), neighbours, weights)
@@ -532,8 +535,9 @@ class Rings(Step):
     Opposed columns see the same lines over a full turn. Their fitted odd
     component therefore supplies a stationary detector-field spectrum; the
     even component is regularised locally in an undecimated multiscale frame,
-    accounting for correlation between reflected neighbours. Fine corrections
-    use per-scale simultaneous significance and broad corrections a Wiener gain.
+    accounting for correlation between reflected neighbours. Flagged large and
+    fine corrections use per-scale simultaneous significance; the final broad
+    correction uses a Wiener gain.
     The variance and effective degrees are estimated, not a calibrated
     scan-wide confidence bound. DC power is inferred from the lowest measured
     odd-frequency band. Purely even detector errors and rotationally symmetric
