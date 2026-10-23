@@ -30,7 +30,8 @@ CHECKPOINT_KIND = "tomojax.alignment.checkpoint"
 # 4: a run is identified by its mode, configuration, levels, grid and a
 #    fingerprint of its projections and geometry; the command line's
 #    "cli_options" and the geometry type and metadata are gone.
-SCHEMA_VERSION = 4
+# 5: volume arrays are C-ordered (z, y, x).
+SCHEMA_VERSION = 5
 MULTIRES_GEOMETRY_VERSION = 2
 # Metadata a checkpoint must share with the run it resumes.
 # The fingerprint covers the grid and detector too, so it comes last: a
@@ -173,7 +174,7 @@ class AlignmentCheckpoint:
     Parameters
     ----------
     x : numpy.ndarray
-        Current reconstruction in (x, y, z) order on the current level grid.
+        Current reconstruction in (z, y, x) order on the current level grid.
     pose_params : numpy.ndarray
         Per-view corrections, columns (alpha, beta, phi, dx, dz, dy); angles are radians
         and translations physical lengths.
@@ -236,7 +237,7 @@ class AlignmentCheckpoint:
         Returns
         -------
         numpy.ndarray
-            Volume in (x, y, z) order.
+            Volume in (z, y, x) order.
         """
         return cast("np.ndarray", self._read_array("x"))
 
@@ -326,7 +327,7 @@ def save_alignment_checkpoint(
     path : str or path-like
         Checkpoint or sidecar file path.
     x : array-like
-        Current reconstruction of shape (nx, ny, nz).
+        Current reconstruction of shape (nz, ny, nx).
     pose_params : array-like
         Per-view corrections with columns (alpha, beta, phi, dx, dz[, dy]); angles are
         radians and translations physical lengths.
@@ -388,15 +389,15 @@ def _write_volume(archive: ZipFile, volume: Any) -> None:
     if not hasattr(volume, "shape"):
         volume = np.asarray(volume, dtype=np.float32)
     shape = tuple(int(length) for length in volume.shape)
-    depth = max(1, (64 << 20) // (4 * shape[0] * shape[1]))
+    depth = max(1, (64 << 20) // (4 * shape[1] * shape[2]))
     with archive.open("x.npy", "w", force_zip64=True) as member:
         np.lib.format.write_array_header_2_0(
-            member, {"descr": np.dtype(np.float32).str, "fortran_order": True, "shape": shape}
+            member, {"descr": np.dtype(np.float32).str, "fortran_order": False, "shape": shape}
         )
-        for first in range(0, shape[2], depth):
-            last = min(first + depth, shape[2])
-            values = np.asarray(volume[:, :, first:last], np.float32, order="F")
-            member.write(memoryview(values.ravel(order="F")).cast("B"))
+        for first in range(0, shape[0], depth):
+            last = min(first + depth, shape[0])
+            values = np.asarray(volume[first:last, :, :], np.float32, order="C")
+            member.write(memoryview(values.ravel()).cast("B"))
             del values
 
 
@@ -581,9 +582,9 @@ def validate_alignment_checkpoint(
     if not isinstance(state_grid, Mapping):
         raise CheckpointError("corrupt checkpoint: metadata is missing state_grid")
     expected_x_shape = (
-        int(state_grid["nx"]),
-        int(state_grid["ny"]),
         int(state_grid["nz"]),
+        int(state_grid["ny"]),
+        int(state_grid["nx"]),
     )
     if tuple(checkpoint.x.shape) != expected_x_shape:
         raise CheckpointError(

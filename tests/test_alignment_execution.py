@@ -60,7 +60,7 @@ def test_alignment_automatic_step_bound_respects_physical_length_units(tilt):
             else ParallelGeometry(grid, detector, angles)
         )
         poses = jnp.asarray([geometry.pose_for_view(i) for i in range(3)])
-        truth = jnp.linspace(0.2, 1.0, 24).reshape((3, 4, 2))
+        truth = jnp.linspace(0.2, 1.0, 24).reshape((2, 4, 3))
         data = jax.vmap(lambda t, g=grid, d=detector, x=truth: forward_project_view_T(t, g, d, x))(
             poses
         )
@@ -488,7 +488,7 @@ def test_finite_volume_is_not_rejected_by_fraction_rounding(shape) -> None:
 def test_alignment_partial_view_batches_run_under_global_x64() -> None:
     grid, detector = Grid(3, 4, 2, 0.8, 1.1, 1.3), Detector(5, 3, 0.6, 1.2)
     geometry = ParallelGeometry(grid, detector, np.array([13, 33, 68, 110, 142], np.float32))
-    volume = np.linspace(0.2, 1, 24, dtype=np.float32).reshape(3, 4, 2)
+    volume = np.linspace(0.2, 1, 24, dtype=np.float32).reshape(2, 4, 3)
     data = np.asarray(project(geometry, volume))
     config = AlignConfig(
         outer_iterations=1,
@@ -517,7 +517,7 @@ def _shifted_laminography_scan(truth):
     detector = Detector(11, 9, 0.7, 0.9, (0.13, -0.21))
     geometry = LaminographyGeometry(grid, detector, np.linspace(13, 157, len(truth)), tilt_deg=23.0)
     axes = [(np.arange(n) - (n - 1) / 2) * h for n, h in [(7, 0.8), (6, 1.1), (5, 1.3)]]
-    x, y, z = np.meshgrid(*axes, indexing="ij")
+    z, y, x = np.meshgrid(*axes[::-1], indexing="ij")
     volume = jnp.asarray(
         sum(
             np.exp(-((x - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2) / width)

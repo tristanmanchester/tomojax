@@ -71,10 +71,11 @@ def test_frozen_columns_use_no_cache_space_and_preserve_the_update(monkeypatch, 
 
     grid, detector = tj.Grid(4, 3, 5, 0.7, 1.1, 0.8), tj.Detector(5, 6, 0.8, 0.9)
     geometry = tj.LaminographyGeometry(grid, detector, [13, 47, 103], tilt_deg=23)
-    x = jnp.asarray(np.random.default_rng(9).uniform(0.2, 1.0, (4, 3, 5)), jnp.float32)
+    x = jnp.asarray(np.random.default_rng(9).uniform(0.2, 1.0, (5, 3, 4)), jnp.float32)
     cfg = AlignConfig(
         gn_coupling="joint",
         gn_joint_solver=solver,
+        mask_vol="cyl",
         ray_integrator="joseph",
         gather_dtype="fp32",
     )
@@ -263,7 +264,7 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
         * weight[:, None]
     )
     displacement = cfg.gn_difference_step * min(grid.vx, grid.vy, grid.vz)
-    radius = 0.5 * np.linalg.norm(np.array(x.shape) * [grid.vx, grid.vy, grid.vz])
+    radius = 0.5 * np.linalg.norm(np.array(x.shape) * [grid.vz, grid.vy, grid.vx])
     steps = np.array([displacement / radius] * 3 + [displacement] * 3)
     j = np.zeros((target.size, p.size))
     for i in range(p.size):
@@ -618,7 +619,7 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
     rng = np.random.default_rng(2)
     grid, detector = tj.Grid(3, 4, 2, 1, 1, 1), tj.Detector(7, 3, 1, 1)
     geometry = tj.ParallelGeometry(grid, detector, [12, 57, 103])
-    volume = rng.uniform(0.2, 1, (3, 4, 2)).astype(np.float32)
+    volume = rng.uniform(0.2, 1, (2, 4, 3)).astype(np.float32)
     support = np.ones_like(volume)
     support[0, 0, 0] = not stream
     poses = np.zeros((3, 6), np.float32)
@@ -860,7 +861,7 @@ def test_finite_sampling_and_paired_derivatives_match_dense_oracle(width, backen
     detector = Detector(width, 2, 0.7, 1.2, (0.13, -0.07))
     poses = stack_view_poses(ParallelGeometry(grid, detector, [0, 43, 135]), 3)
     poses = poses.at[:, 0, 3].set(jnp.array([0.21, -0.37, 0.13]))
-    x = jnp.asarray(rng.normal(size=(5, 4, 2)), jnp.float32)
+    x = jnp.asarray(rng.normal(size=(2, 4, 5)), jnp.float32)
     y, z = (jnp.asarray(rng.normal(size=(3, 2, width)), jnp.float32) for _ in range(2))
     model = _matching_model.projectors(grid, detector, backend=backend, masked=lambda value: value)
     # Independently form the finite Shannon matrix on the physical fine detector.
@@ -928,3 +929,25 @@ def test_finite_sampling_and_paired_derivatives_match_dense_oracle(width, backen
         filtered(_matching_model.resample_rows(backgrounds.astype(np.float32), width)), 0, atol=2e-6
     )
     np.testing.assert_allclose(jnp.vdot(filtered(y), z), jnp.vdot(y, filtered(z)), atol=2e-6)
+
+
+@pytest.mark.parametrize("placement", [_coupled_vectors.HOST, _coupled_vectors.DEVICE])
+def test_joint_ramp_preconditioner_filters_xy_not_z(placement):
+    rhs = np.random.default_rng(52).normal(size=(3, 5, 7)).astype(np.float32)
+    fy, fx = np.meshgrid(np.fft.fftfreq(5), np.fft.fftfreq(7), indexing="ij")
+    ramp = np.sqrt(fx**2 + fy**2 + 1 / 35)
+    ramp /= 1 + 0.01 * np.sqrt(35) * ramp
+    filtered = np.fft.ifft2(np.fft.fft2(rhs) * ramp).real
+    expected = filtered * np.sum(rhs * filtered) / np.sum(filtered**2)
+    xp = placement.array
+    blocks = (xp.asarray(rhs), xp.zeros((0,), xp.float32))
+    result = solve_coupled_normal(
+        lambda pair: tuple(value.copy() for value in pair),
+        blocks,
+        tuple(xp.ones_like(value) for value in blocks),
+        max_iters=1,
+        rtol=0,
+        placement=placement,
+        volume_ramp=0.01,
+    )
+    np.testing.assert_allclose(result.increment[0], expected, rtol=2e-5, atol=1e-6)

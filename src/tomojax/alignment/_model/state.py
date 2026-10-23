@@ -346,7 +346,7 @@ class AlignmentState:
     pose : PoseState
         Per-view pose-correction state.
     volume : jax.Array | None, optional
-        Optional reconstruction in (x, y, z) order.
+        Optional reconstruction in (z, y, x) order.
     """
 
     setup: SetupGeometryState
@@ -367,7 +367,7 @@ class AlignmentState:
         n_views : int
             Number of views in the scan.
         volume_shape : tuple of int or None, optional
-            Optional (nx, ny, nz) shape for a zero volume. None leaves volume absent.
+            Optional (nz, ny, nx) shape for a zero volume. None leaves volume absent.
 
         Returns
         -------

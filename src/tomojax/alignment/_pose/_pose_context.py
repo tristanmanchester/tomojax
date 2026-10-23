@@ -73,7 +73,7 @@ def _build_alignment_volume_mask(
         raise ValueError("align mask_vol must be one of 'off' or 'cyl'")
     try:
         m_xy = cylindrical_mask_xy(grid, detector)
-        return jnp.asarray(m_xy, dtype=jnp.float32)[:, :, None]
+        return jnp.asarray(m_xy, dtype=jnp.float32)[None, :, :]
     except Exception as exc:
         raise ValueError(f"Failed to apply requested mask_vol={mask_mode!r}") from exc
 

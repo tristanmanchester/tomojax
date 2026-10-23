@@ -121,7 +121,7 @@ def bin_volume(vol: jnp.ndarray, factor: int) -> jnp.ndarray:
     if f == 1:
         return vol
     if vol.ndim != 3 or min(vol.shape) < 1:
-        raise ValueError("bin_volume requires a nonempty (x, y, z) array")
+        raise ValueError("bin_volume requires a nonempty (z, y, x) array")
     shape = tuple(math.ceil(n / f) for n in vol.shape)
     import jax.image as jimage
 
@@ -132,7 +132,9 @@ def _linear_resize[Array: jnp.ndarray | np.ndarray](
     vol: Array, shape: tuple[int, int, int], *, xp: Any
 ) -> Array:
     """Half-pixel linear interpolation without dense, mostly-zero weight matrices."""
-    for axis, size in enumerate(shape):
+    # Keep physical x, y, z interpolation order on a zyx array.
+    for axis in (2, 1, 0):
+        size = shape[axis]
         old = vol.shape[axis]
         if size == old:
             continue
@@ -163,7 +165,7 @@ def _device_linear_resize() -> Callable[[jnp.ndarray, tuple[int, int, int]], jnp
 def upsample_volume[Array: jnp.ndarray | np.ndarray](
     vol: Array, factor: int, target_shape: tuple[int, int, int]
 ) -> Array:
-    """Resize to `target_shape`, retaining host/device storage for floating arrays."""
+    """Resize to zyx `target_shape`, retaining host/device storage for floating arrays."""
     validate_scale_factor(factor)
     out_shape = tuple(int(s) for s in target_shape)
     if len(out_shape) != 3 or any(s < 1 for s in out_shape):

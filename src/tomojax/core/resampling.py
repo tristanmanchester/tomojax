@@ -46,7 +46,7 @@ def _resample_cuda(volume: jax.Array, words: jax.Array) -> jax.Array:
 
 
 def affine_resample(volume: np.ndarray | jax.Array, matrix: np.ndarray) -> np.ndarray:
-    """Resample a 3D volume at ``matrix @ [i, j, k, 1]``.
+    """Resample a zyx volume at ``matrix @ [iz, iy, ix, 1]``.
 
     ``matrix`` is the homogeneous 4-by-4 output-index-to-input-index map.
     Trilinear interpolation blends zero-valued samples outside the input grid,

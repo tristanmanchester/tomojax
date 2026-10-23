@@ -19,7 +19,7 @@ pytestmark = pytest.mark.numerical
 
 def _matrix(shape, motion):
     spacing = np.asarray([0.7, 1.3, 0.9])
-    origin = np.asarray([0.23, -0.17, 0.31]) - (np.asarray(shape) - 1) * spacing / 2
+    origin = np.asarray([0.23, -0.17, 0.31]) - (np.asarray(shape[::-1]) - 1) * spacing / 2
     rotation = Rotation.from_rotvec([0.02, -0.013, 0.007] if motion == "rigid" else [0, 0, 0])
     rotation = rotation.as_matrix()
     shift = {
@@ -31,7 +31,8 @@ def _matrix(shape, motion):
     matrix = np.eye(4)
     matrix[:3, :3] = rotation * spacing[None, :] / spacing[:, None]
     matrix[:3, 3] = (rotation @ origin + shift - origin) / spacing
-    return matrix
+    order = [2, 1, 0, 3]
+    return matrix[np.ix_(order, order)]
 
 
 def _eight_taps(volume, matrix):

@@ -69,27 +69,27 @@ def test_volume_resize_preserves_constant_density_and_world_linear_interior():
     coarse = scale_grid(grid, 3)
 
     def affine_volume(g):
-        x, y, z = np.meshgrid(
+        z, y, x = np.meshgrid(
             *[
                 o + np.arange(n) * d
                 for o, n, d in zip(
-                    grid_volume_origin(g), (g.nx, g.ny, g.nz), (g.vx, g.vy, g.vz), strict=True
+                    grid_volume_origin(g)[::-1], (g.nz, g.ny, g.nx), (g.vz, g.vy, g.vx), strict=True
                 )
             ],
             indexing="ij",
         )
         return 0.2 * x - 0.4 * y + 0.6 * z
 
-    upsampled = upsample_volume(jnp.asarray(affine_volume(coarse)), 3, (17, 15, 13))
+    upsampled = upsample_volume(jnp.asarray(affine_volume(coarse)), 3, (13, 15, 17))
     # Resize uses half-pixel centres and extends the nearest value outside the
     # coarse centres; only the interior is expected to reproduce affine data.
     np.testing.assert_allclose(
         upsampled[2:-2, 2:-2, 2:-2], affine_volume(grid)[2:-2, 2:-2, 2:-2], rtol=2e-6, atol=2e-6
     )
-    downsampled = bin_volume(jnp.full((17, 15, 13), 2.75), 3)
-    assert downsampled.shape == (coarse.nx, coarse.ny, coarse.nz)
+    downsampled = bin_volume(jnp.full((13, 15, 17), 2.75), 3)
+    assert downsampled.shape == (coarse.nz, coarse.ny, coarse.nx)
     np.testing.assert_allclose(downsampled, 2.75, rtol=1e-6)
-    np.testing.assert_allclose(upsample_volume(downsampled, 3, (17, 15, 13)), 2.75, rtol=1e-6)
+    np.testing.assert_allclose(upsample_volume(downsampled, 3, (13, 15, 17)), 2.75, rtol=1e-6)
 
 
 @pytest.mark.parametrize(

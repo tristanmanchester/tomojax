@@ -37,7 +37,7 @@ def _run(**changes: object) -> AlignmentRun:
 
 def _state(**changes: object) -> AlignMultiresResumeState:
     fields: dict[str, object] = {
-        "x": np.zeros((2, 3, 4), np.float32),
+        "x": np.zeros((4, 3, 2), np.float32),
         "pose_params": np.zeros((5, 6), np.float32),
         "level_index": 1,
         "level_factor": 1,
@@ -53,7 +53,7 @@ def test_checkpoint_metadata_records_the_run_and_its_progress() -> None:
     metadata = alignment_checkpoint_metadata(_run(), _state(level_index=0, level_factor=2))
 
     assert metadata["checkpoint_kind"] == "tomojax.alignment.checkpoint"
-    assert metadata["schema_version"] == 4
+    assert metadata["schema_version"] == 5
     assert metadata["projection_shape"] == [5, 6, 7]
     assert metadata["reconstruction_grid"]["nz"] == 4 and metadata["detector"]["nu"] == 7
     assert metadata["mode"] == "pose" and metadata["levels"] == [2, 1]
@@ -96,7 +96,7 @@ def test_checkpoint_resume_rejects_non_mapping_schedule_state() -> None:
 def test_checkpoint_validation_requires_exact_config_defaults() -> None:
     metadata = alignment_checkpoint_metadata(_run(), _state())
     checkpoint = AlignmentCheckpoint(
-        x=np.zeros((2, 3, 4), dtype=np.float32),
+        x=np.zeros((4, 3, 2), dtype=np.float32),
         pose_params=np.zeros((5, 5), dtype=np.float32),
         motion_coeffs=None,
         loss_history=[],
@@ -116,17 +116,18 @@ def test_alignment_params_schema_uses_current_identifier() -> None:
     assert payload["schema"] == "tomojax.alignment_params"
 
 
-def test_checkpoints_written_before_the_settings_rename_do_not_resume() -> None:
+@pytest.mark.parametrize("schema", [2, 4])
+def test_checkpoints_from_an_older_schema_do_not_resume(schema) -> None:
     metadata = alignment_checkpoint_metadata(_run(), _state())
     checkpoint = AlignmentCheckpoint(
-        x=np.zeros((2, 3, 4), dtype=np.float32),
+        x=np.zeros((4, 3, 2), dtype=np.float32),
         pose_params=np.zeros((5, 5), dtype=np.float32),
         motion_coeffs=None,
         loss_history=[],
         outer_stats=[],
-        metadata={**metadata, "schema_version": 2},
+        metadata={**metadata, "schema_version": schema},
     )
-    with pytest.raises(CheckpointError, match="schema version 2 predates this version"):
+    with pytest.raises(CheckpointError, match=f"schema version {schema} predates this version"):
         validate_alignment_checkpoint(checkpoint, metadata)
     checkpoint.metadata["schema_version"] = 99
     with pytest.raises(CheckpointError, match="unsupported schema version 99"):
@@ -140,7 +141,7 @@ def test_legacy_checkpoint_sampling_is_rejected_only_for_multires(multires):
         metadata["levels"] = None
         metadata.pop("multires_geometry_version")
     checkpoint = AlignmentCheckpoint(
-        x=np.zeros((2, 3, 4), dtype=np.float32),
+        x=np.zeros((4, 3, 2), dtype=np.float32),
         pose_params=np.zeros((5, 5), dtype=np.float32),
         motion_coeffs=None,
         loss_history=[],
@@ -164,7 +165,7 @@ def test_checkpoint_metadata_is_lazy_and_arrays_keep_the_open_file(tmp_path, mon
     from concurrent.futures import ThreadPoolExecutor
 
     path = tmp_path / "state.npz"
-    run, state = _run(), _state(x=np.ones((2, 3, 4), np.float32))
+    run, state = _run(), _state(x=np.ones((4, 3, 2), np.float32))
     align_api.write_alignment_checkpoint(path, run, state)
     read = np.lib.npyio.NpzFile.__getitem__
     accesses = []
@@ -193,14 +194,14 @@ def test_checkpoint_metadata_is_lazy_and_arrays_keep_the_open_file(tmp_path, mon
 
 def test_checkpoint_writes_bounded_windows_from_a_reused_source(tmp_path):
     bits = np.array([0x80000000, 0x7F800000, 0x7FC01234], np.uint32)
-    buffer = np.empty((2049, 4096, 1), np.float32)
+    buffer = np.empty((1, 4096, 2049), np.float32)
     reads = []
 
     class Source:
-        shape = (2049, 4096, 3)
+        shape = (3, 4096, 2049)
 
         def __getitem__(self, index):
-            first, last = index[2].start, index[2].stop
+            first, last = index[0].start, index[0].stop
             assert last - first == 1
             reads.append(first)
             buffer.view(np.uint32).fill(bits[first])
@@ -211,6 +212,7 @@ def test_checkpoint_writes_bounded_windows_from_a_reused_source(tmp_path):
     buffer.fill(1)
     with np.load(path, allow_pickle=False) as archive:
         saved = archive["x"].view(np.uint32)
+        assert saved.flags.c_contiguous
         assert saved.shape == Source.shape and reads == [0, 1, 2]
         for z in range(3):
-            assert np.all(saved[:, :, z] == bits[z])
+            assert np.all(saved[z, :, :] == bits[z])

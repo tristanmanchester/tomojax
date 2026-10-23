@@ -244,7 +244,7 @@ class AlignResumeState:
     Parameters
     ----------
     x : jax.Array
-        Current reconstruction in (x, y, z) order on the current level grid.
+        Current reconstruction in (z, y, x) order on the current level grid.
     pose_params : jax.Array
         Per-view corrections, columns (alpha, beta, phi, dx, dz, dy); angles are radians
         and translations physical lengths.
@@ -293,7 +293,7 @@ class AlignMultiresResumeState:
     Parameters
     ----------
     x : jax.Array
-        Current reconstruction in (x, y, z) order on the current level grid.
+        Current reconstruction in (z, y, x) order on the current level grid.
     pose_params : jax.Array
         Per-view corrections, columns (alpha, beta, phi, dx, dz, dy); angles are radians
         and translations physical lengths.

@@ -98,7 +98,7 @@ def _pass(
     n, width = p.shape
     size = min(batch_size, n)
     indices = jnp.asarray(spec.active_columns, jnp.int32)
-    shape = (spec.grid.nx, spec.grid.ny, spec.grid.nz)
+    shape = (spec.grid.nz, spec.grid.ny, spec.grid.nx)
     counts = arrays.counts if arrays.counts is not None else jnp.ones(n, jnp.float32)
     poses = apply_pose_updates(arrays.poses, p, translation_frame=spec.jacobian.translation_frame)
 

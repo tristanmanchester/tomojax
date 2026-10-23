@@ -159,7 +159,7 @@ def test_train_fold_keeps_the_requested_ray_integrator():
     def project(flat):
         return jax.vmap(
             lambda t: forward_project_view_T(
-                t, grid, detector, flat.reshape(2, 1, 1), ray_integrator="exact"
+                t, grid, detector, flat.reshape(1, 1, 2), ray_integrator="exact"
             )
         )(effective.pose_stack)
 
