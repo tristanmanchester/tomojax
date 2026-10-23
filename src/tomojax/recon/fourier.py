@@ -46,6 +46,8 @@ class FourierConfig:
     row preparation, device transfers, FFT execution and output writes, retaining
     at most two pending device slabs. A bounded cache retains immutable
     geometry arrays; each call owns its working buffers.
+    Host transfer buffers use exact-sized pinned allocations. Upload staging is
+    reused after its copy completes; returned output slabs keep independent storage.
     Fractional detector rows are interpolated on CUDA from at most two measured
     source rows per requested slice; entire projection stacks are not uploaded.
 
@@ -294,7 +296,9 @@ def _run_host_pipeline(
         try:
             for start in range(0, nz, depth):
                 try:
+                    assert prepared is not None
                     data = prepared.result()
+                    prepared = None
                 except BaseException:
                     # A later invalid input must still commit completed slabs.
                     for first, job in pending:
@@ -305,6 +309,7 @@ def _run_host_pipeline(
                 if stop < nz:
                     prepared = reader.submit(prepare, stop)
                 pending.append((start, plan.enqueue(data, count=stop - start)))
+                del data
                 if len(pending) >= 2:
                     finish(*pending.pop(0))
             for first, job in pending:

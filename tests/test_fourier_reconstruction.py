@@ -604,7 +604,10 @@ def test_detector_rows_zero_extend_and_ignore_unused_nonfinite_samples(row_grid)
     np.testing.assert_array_equal(rows[:, 0, 0], [0, 0, 3, 5, 7, 0, 0])
 
 
-def test_unmeasured_axial_slices_are_zero(backend):
+def test_unmeasured_axial_slices_are_zero(backend, monkeypatch):
+    import tomojax.recon.fourier as implementation
+
+    monkeypatch.setattr(implementation, "_HOST_PIPELINE_MIN_BYTES", 0)
     grid = Grid(9, 7, 5, 1.0, 1.0, 1.0)
     detector = Detector(9, 1, 1.0, 1.0)
     geometry = ParallelGeometry(grid, detector, np.arange(10) * 18)
