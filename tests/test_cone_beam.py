@@ -53,12 +53,12 @@ def _voxelise(grid: Grid, shapes: list, supersample: int = 3) -> np.ndarray:
         origin[i] + (np.arange(n)[:, None] + offsets[None, :]).ravel() * spacing[i]
         for i, n in enumerate((grid.nx, grid.ny, grid.nz))
     ]
-    points = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1)
+    points = np.stack(np.meshgrid(*axes[::-1], indexing="ij")[::-1], axis=-1)
     inside = sum(
         amp * (np.einsum("...i,ij,...j->...", points - c, m, points - c) <= 1)
         for amp, c, m in shapes
     )
-    shape = (grid.nx, supersample, grid.ny, supersample, grid.nz, supersample)
+    shape = (grid.nz, supersample, grid.ny, supersample, grid.nx, supersample)
     return np.asarray(inside, np.float64).reshape(shape).mean(axis=(1, 3, 5)).astype(np.float32)
 
 
@@ -115,7 +115,7 @@ def test_cone_projector_has_a_matched_transpose(kind, backend):
     geometry, grid, detector, poses = _scan(kind)
     coeff = cone_coefficients(jnp.asarray(poses, jnp.float32), grid, detector, geometry.beam)
     rng = np.random.default_rng(0)
-    x = jnp.asarray(rng.random((grid.nx, grid.ny, grid.nz)), jnp.float32)
+    x = jnp.asarray(rng.random((grid.nz, grid.ny, grid.nx)), jnp.float32)
     y = jnp.asarray(rng.random((len(poses), detector.nv, detector.nu)), jnp.float32)
     ax = cone_project(x, coeff, grid, detector, backend=backend)
     aty = cone_backproject(y, coeff, grid, detector, backend=backend)
@@ -147,7 +147,7 @@ def test_cuda_cone_kernels_agree_with_the_jax_reference(kind):
     geometry, grid, detector, poses = _scan(kind, n=40, views=36)
     coeff = cone_coefficients(jnp.asarray(poses, jnp.float32), grid, detector, geometry.beam)
     rng = np.random.default_rng(2)
-    x = jnp.asarray(rng.random((grid.nx, grid.ny, grid.nz)), jnp.float32)
+    x = jnp.asarray(rng.random((grid.nz, grid.ny, grid.nx)), jnp.float32)
     y = jnp.asarray(rng.random((len(poses), detector.nv, detector.nu)), jnp.float32)
     for function, value in ((cone_project, x), (cone_backproject, y)):
         expected = function(value, coeff, grid, detector, backend="jax")
@@ -177,7 +177,7 @@ def test_cone_projection_matches_analytic_line_integrals(backend):
 
 def test_cone_projection_is_differentiable_in_the_poses():
     geometry, grid, detector, poses = _scan("perturbed", n=12, views=3)
-    x = jnp.asarray(np.random.default_rng(3).random((grid.nx, grid.ny, grid.nz)), jnp.float32)
+    x = jnp.asarray(np.random.default_rng(3).random((grid.nz, grid.ny, grid.nx)), jnp.float32)
 
     def project(shift: jax.Array) -> jax.Array:
         moved = jnp.asarray(poses, jnp.float32).at[:, :3, 3].add(shift)
@@ -484,7 +484,7 @@ def _blob_scan(n: int, views: int, beam: ConeBeam) -> tuple[ConeGeometry, np.nda
     grid = Grid(n, n, n, 1.0, 1.0, 1.0)
     detector = Detector(int(1.6 * n), int(1.6 * n), 1.0, 1.0)
     rng = np.random.default_rng(0)
-    axes = np.meshgrid(*(np.arange(n) - (n - 1) / 2,) * 3, indexing="ij")
+    axes = np.meshgrid(*(np.arange(n) - (n - 1) / 2,) * 3, indexing="ij")[::-1]
     volume = np.zeros((n, n, n), np.float32)
     for _ in range(40):
         centre, radius = rng.uniform(-0.35 * n, 0.35 * n, 3), rng.uniform(1.5, 0.06 * n)
@@ -645,7 +645,7 @@ def test_export_writes_volume_slices_and_raw_files(tmp_path: Path):
     from tomojax.cli.main import main
     from tomojax.io import ProjectionDataset
 
-    volume = np.random.default_rng(5).random((6, 5, 4)).astype(np.float32)  # (x, y, z)
+    volume = np.random.default_rng(5).random((4, 5, 6)).astype(np.float32)  # (z, y, x)
     detector = Detector(6, 4, 1.0, 1.0)
     dataset = ProjectionDataset(
         projections=np.zeros((2, 4, 6), np.float32),
@@ -656,14 +656,12 @@ def test_export_writes_volume_slices_and_raw_files(tmp_path: Path):
     )
     save_dataset(tmp_path / "recon.nxs", dataset)
     assert main(["export", str(tmp_path / "recon.nxs"), "-o", str(tmp_path / "tif")]) == 0
-    np.testing.assert_array_equal(
-        iio.imread(tmp_path / "tif" / "slice_00002.tif"), volume[:, :, 2].T
-    )
+    np.testing.assert_array_equal(iio.imread(tmp_path / "tif" / "slice_00002.tif"), volume[2])
     raw = tmp_path / "recon.raw"
     args = ["export", str(tmp_path / "recon.nxs"), "-o", str(raw)]
     assert main([*args, "--dtype", "uint16", "--range", "0", "1"]) == 0
     stored = np.fromfile(raw, "<u2").reshape(4, 5, 6)
-    np.testing.assert_array_equal(stored, np.round(volume.transpose(2, 1, 0) * 65535))
+    np.testing.assert_array_equal(stored, np.round(volume * 65535))
     info = json.loads(raw.with_suffix(".json").read_text())
     assert info["shape_zyx"] == [4, 5, 6] and info["voxel_size_xyz"] == [0.5, 0.5, 0.25]
 

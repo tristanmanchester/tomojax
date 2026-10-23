@@ -23,7 +23,7 @@ def test_two_transposes_match_dense_basis_with_mixed_views_and_chunk_tail(backen
     poses[::2] = poses[::2] @ rotation
     frames = np.broadcast_to(beam_frame(geometry.beam, detector), (33, 4, 3))
     coeff = frame_coefficients(jnp.asarray(poses), frames, grid, detector)
-    shape = (grid.nx, grid.ny, grid.nz)
+    shape = (grid.nz, grid.ny, grid.nx)
     basis = jnp.eye(np.prod(shape), dtype=jnp.float32).reshape((-1, *shape))
     forward = jax.jit(jax.vmap(lambda x: cone_project(x, coeff, grid, detector, backend=backend)))
     matrix = np.asarray(forward(basis), np.float64).reshape((np.prod(shape), -1))
@@ -50,7 +50,7 @@ def test_uncached_sirt_preserves_masked_subset_updates(monkeypatch, backend):
     geometry = tj.ConeGeometry(
         grid, detector, np.linspace(0, 180, 7), tj.ConeBeam(30, 50), tilt_deg=23
     )
-    truth = np.random.default_rng(46).uniform(size=(5, 4, 3)).astype(np.float32)
+    truth = np.random.default_rng(46).uniform(size=(3, 4, 5)).astype(np.float32)
     data = np.asarray(tj.project(geometry, truth))
     cfg = SIRTConfig(
         iterations=3,

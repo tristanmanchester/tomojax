@@ -32,7 +32,6 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from functools import cache, partial
 from importlib.resources import files
-from numbers import Real
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -41,13 +40,10 @@ from jax.experimental.buffer_callback import buffer_callback
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.core import _cone_output
 from tomojax.core._cuda_joseph import xla_stream
 from tomojax.core.geometry.base import grid_volume_origin
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from tomojax.core.geometry.base import Detector, Grid
     from tomojax.core.geometry.cone import ConeBeam
 
@@ -94,19 +90,6 @@ class ConeModel:
     """
 
     parts: tuple[tuple[int | None, ConeBeam, Detector], ...]
-    # Fixed host geometry can prepare an alternate layout; unknown poses retain
-    # the ordinary path, without reading device state or changing physical weights.
-    layout_hint: tuple[tuple[float, float, float], float] | None = None
-
-    def forward_workspace_bytes(self, grid: Grid, n_views: int, detector: Detector) -> int:
-        """One packed volume when known axis-2 ray work amortizes its two copy passes."""
-        if self.layout_hint is None:
-            return 0
-        spacing, fraction = self.layout_hint
-        if spacing != (grid.vx, grid.vy, grid.vz) or grid.nz <= 1:
-            return 0
-        work = n_views * fraction * detector.nu * detector.nv
-        return 4 * grid.nx * grid.ny * grid.nz if work > 2 * grid.nx * grid.ny else 0
 
     def backproject(
         self,
@@ -118,12 +101,10 @@ class ConeModel:
         backend: str,
         accumulate: jax.Array,
     ) -> jax.Array:
-        """Accumulate a batch transpose with geometry-owned storage planning."""
-        if _resolve(backend) == "cuda":
-            return _adjoint_cuda(
-                images, coeff, grid, detector, accumulate, layout_hint=self.layout_hint
-            )
-        return cone_backproject(images, coeff, grid, detector, backend="jax", accumulate=accumulate)
+        """Accumulate a batch through the exact cone transpose."""
+        return cone_backproject(
+            images, coeff, grid, detector, backend=backend, accumulate=accumulate
+        )
 
     def backproject_pair(
         self,
@@ -135,13 +116,9 @@ class ConeModel:
         backend: str,
         accumulate: tuple[jax.Array, jax.Array],
     ) -> tuple[jax.Array, jax.Array]:
-        """Accumulate two batch transposes sharing one bounded workspace."""
-        if _resolve(backend) == "cuda":
-            return _adjoint_pair_cuda(
-                images, coeff, grid, detector, accumulate, layout_hint=self.layout_hint
-            )
+        """Accumulate two batch transposes sharing ray geometry and image workspace."""
         return cone_backproject_pair(
-            images, coeff, grid, detector, backend="jax", accumulate=accumulate
+            images, coeff, grid, detector, backend=backend, accumulate=accumulate
         )
 
     @property
@@ -186,42 +163,7 @@ def cone_model(geometry: object, detector: Detector | None = None) -> ConeModel 
     parts = cone_parts(geometry, detector)
     if parts is None:
         return None
-    model = ConeModel(parts)
-    return ConeModel(parts, _layout_hint(geometry, model))
-
-
-def _layout_hint(
-    geometry: Any, model: ConeModel
-) -> tuple[tuple[float, float, float], float] | None:
-    """Scheduling only: never transfer device/traced poses to choose a layout."""
-    from tomojax.core.geometry.views import host_view_poses
-
-    def host_only(value: Any) -> bool:
-        return all(
-            isinstance(a, Real) or (isinstance(a, np.ndarray) and a.dtype.kind in "fiu")
-            for a in jax.tree_util.tree_leaves(value)
-        )
-
-    angles = getattr(geometry, "angles", None)
-    if angles is None or not host_only(angles):
-        # A pose wrapper may omit this table; a device table must not be read here.
-        return None
-    n = len(angles)
-    poses = host_view_poses(geometry, n)
-    if poses is None:
-        rows = []
-        for i in range(n):
-            pose = geometry.pose_for_view(i)
-            if not host_only(pose):
-                return None
-            rows.append(np.asarray(pose, np.float32))
-        poses = np.asarray(rows)
-    grid = geometry.grid
-    spacing = (grid.vx, grid.vy, grid.vz)
-    frames = model.frames(n)
-    rays = np.einsum("nji,nj->ni", poses[:, :3, :3], frames[:, 0] - frames[:, 3]) / spacing
-    axis2 = np.abs(rays[:, 2]) > np.maximum(np.abs(rays[:, 0]), np.abs(rays[:, 1]))
-    return spacing, float(np.mean(axis2))
+    return ConeModel(parts)
 
 
 @partial(jax.jit, static_argnames=("grid", "detector"))
@@ -280,7 +222,7 @@ def _ray_frame(ray: jax.Array, grid: Grid) -> dict[str, jax.Array]:
     b = jnp.where(a == 0, 1, 0)
     c = jnp.where(a == 2, 1, 2)
     sizes = jnp.asarray([grid.nx, grid.ny, grid.nz], jnp.int32)
-    strides = jnp.asarray([grid.ny * grid.nz, grid.nz, 1], jnp.int32)
+    strides = jnp.asarray([1, grid.nx, grid.nx * grid.ny], jnp.int32)
     return {
         "a": a, "b": b, "c": c,
         "na": sizes[a], "nb": sizes[b], "nc": sizes[c],
@@ -382,7 +324,7 @@ def _adjoint_jax(
 
     planes = max(grid.nx, grid.ny, grid.nz)
     total, _ = jax.lax.scan(step, flat, jnp.arange(planes, dtype=jnp.float32))
-    return total.reshape(grid.nx, grid.ny, grid.nz)
+    return total.reshape(grid.nz, grid.ny, grid.nx)
 
 
 # ----------------------------------------------------------------------------- CUDA
@@ -406,29 +348,24 @@ def cuda_module() -> Any:
     return cp.RawModule(code=source)
 
 
-def forward_into(
-    out: Any, coeff: Any, volume: Any, packed: Any = None, *, grid: Grid, det: Detector
-) -> None:
+def forward_into(out: Any, coeff: Any, volume: Any, *, grid: Grid, det: Detector) -> None:
     """Launch the forward kernels on CuPy's current stream: ``out`` is ``(views, nv, nu)``.
 
-    The arrays are CuPy arrays (or CUDA buffers) on the current device; ``packed``
-    is the optional ``(x, z, y)`` copy of ``volume`` used by axis-2 rays.
+    The arrays are CuPy arrays (or CUDA buffers) on the current device;
+    ``volume`` is C-ordered ``(nz, ny, nx)``.
     """
     import cupy as cp
 
     views = int(coeff.shape[0])
-    inputs = (cp.asarray(coeff), cp.asarray(volume))
-    if packed is not None:
-        inputs += (cp.asarray(packed),)
     args = (
-        *inputs, cp.asarray(out),
+        cp.asarray(coeff), cp.asarray(volume), cp.asarray(out),
         np.int32(grid.nx), np.int32(grid.ny), np.int32(grid.nz),
         np.int32(det.nu), np.int32(det.nv),
         np.float32(grid.vx), np.float32(grid.vy), np.float32(grid.vz),
     )  # fmt: skip
     # Views vary fastest, rows slowest: the blocks running at once cover one band
     # of rows (one slab of the volume) in many views, which then shares the L2.
-    cuda_module().get_function("cone_forward" if packed is None else "cone_forward_y")(
+    cuda_module().get_function("cone_forward")(
         (views, -(-det.nu // 32), -(-det.nv // 16)), (512,), args
     )
 
@@ -515,13 +452,11 @@ def adjoint_into(
     *,
     grid: Grid,
     det: Detector,
-    packed_capacity: int = 0,
-    layout_hint: tuple[tuple[float, float, float], float] | None = None,
 ) -> None:
     """Set ``out`` to ``accumulate`` plus the exact transpose, on CuPy's current stream.
 
     ``images`` is ``(views, nv, nu)``; ``out`` and ``accumulate`` are
-    ``(nx, ny, nz)`` and may be the same array.
+    ``(nz, ny, nx)`` and may be the same array.
     """
     import cupy as cp
 
@@ -533,9 +468,6 @@ def adjoint_into(
         target[...] = initial
     coeff, images = cp.asarray(coeff), cp.asarray(images)
     weighted, boxes = _weighted_images(module, coeff, (images,), grid, det)
-    packed_capacity = packed_capacity or _cone_output.device_capacity(
-        grid, det, views, layout_hint, rhs=1
-    )
     sizes = (grid.nx, grid.ny, grid.nz, det.nu, det.nv)
     dims = tuple(np.int32(x) for x in sizes)
     extent = (grid.nx, grid.ny, grid.nz)
@@ -550,7 +482,7 @@ def adjoint_into(
                 (256,),
                 (*part, np.int32(axis), i_part, target, *dims),
             )
-        for axis in (0, 1) if packed_capacity else (0, 1, 2):
+        for axis in (0, 1, 2):
             # In-plane axes (b, c): the other two, in order.
             nb, nc = (extent[i] for i in range(3) if i != axis)
             wide = axis != 2 and grid.nz >= 128
@@ -560,11 +492,6 @@ def adjoint_into(
                 (128,),
                 (*part, np.int32(axis), i_part, target, *dims),
             )
-    if packed_capacity:
-        _cone_output.accumulate(
-            module, coeff, boxes=boxes, images=(weighted,), targets=(target,),
-            grid=grid, detector=det, capacity=packed_capacity, view_chunk=_VIEW_CHUNK,
-        )  # fmt: skip
 
 
 def _launch_adjoint(context: Any, out: Any, *args: Any, **options: Any) -> None:
@@ -582,8 +509,6 @@ def adjoint_pair_into(
     *,
     grid: Grid,
     det: Detector,
-    packed_capacity: int = 0,
-    layout_hint: tuple[tuple[float, float, float], float] | None = None,
 ) -> None:
     """Two exact transposes sharing ray geometry, on CuPy's current stream.
 
@@ -599,9 +524,6 @@ def adjoint_pair_into(
             target[...] = initial
     coeff = cp.asarray(coeff)
     weighted, boxes = _weighted_images(module, coeff, (images0, images1), grid, det)
-    packed_capacity = packed_capacity or _cone_output.device_capacity(
-        grid, det, int(coeff.shape[0]), layout_hint, rhs=2
-    )
     # Channel-major planes also feed the original separable kernels without copies.
     separate = (weighted[0], weighted[1])
     separable = module.get_function(_separable_adjoint_kernel(grid, det))
@@ -619,7 +541,7 @@ def adjoint_pair_into(
                     (256,),
                     (*part, np.int32(axis), image[start : start + count], target, *dims),
                 )
-        for axis in (0, 1) if packed_capacity else (0, 1, 2):
+        for axis in (0, 1, 2):
             nb, nc = (extent[i] for i in range(3) if i != axis)
             module.get_function("pair_plane_adjoint")(
                 (-(-nc // 32), -(-nb // 32), extent[axis]),
@@ -632,11 +554,6 @@ def adjoint_pair_into(
                     *dims,
                 ),
             )
-    if packed_capacity:
-        _cone_output.accumulate(
-            module, coeff, boxes=boxes, images=separate, targets=targets,
-            grid=grid, detector=det, capacity=packed_capacity, view_chunk=_VIEW_CHUNK,
-        )  # fmt: skip
 
 
 def _launch_adjoint_pair(context: Any, out: Any, *args: Any, **options: Any) -> None:
@@ -649,8 +566,6 @@ def forward_cuda(
     coeff: jax.Array,
     grid: Grid,
     detector: Detector,
-    *,
-    packed: jax.Array | None = None,
 ) -> jax.Array:
     """Raw CUDA projection; AD rules wrap this same launch."""
     call = buffer_callback(
@@ -659,7 +574,7 @@ def forward_cuda(
         vmap_method="sequential",
     )
     args = (coeff, volume.astype(jnp.float32))
-    return call(*args) if packed is None else call(*args, packed)
+    return call(*args)
 
 
 def _launch_pose_columns(
@@ -674,7 +589,7 @@ def _launch_pose_columns(
         coeff = cp.broadcast_to(coeff, (*batch, views, NC))
         tangent = cp.broadcast_to(tangent, (*batch, views, width, 12))
         kernel = cuda_module().get_function("cone_pose_columns")
-        shape = (grid.nx, grid.ny, grid.nz)
+        shape = (grid.nz, grid.ny, grid.nx)
         dimensions = (
             np.int32(grid.nx), np.int32(grid.ny), np.int32(grid.nz),
             np.int32(det.nu), np.int32(det.nv), np.int32(width),
@@ -728,19 +643,14 @@ def _adjoint_cuda(
     grid: Grid,
     detector: Detector,
     accumulate: jax.Array,
-    *,
-    packed_capacity: int = 0,
-    layout_hint: tuple[tuple[float, float, float], float] | None = None,
 ) -> jax.Array:
     call = buffer_callback(
         partial(
             _launch_adjoint,
             grid=grid,
             det=detector,
-            packed_capacity=packed_capacity,
-            layout_hint=layout_hint,
         ),
-        jax.ShapeDtypeStruct((grid.nx, grid.ny, grid.nz), jnp.float32),
+        jax.ShapeDtypeStruct((grid.nz, grid.ny, grid.nx), jnp.float32),
         input_output_aliases={2: 0},
         vmap_method="sequential",
     )
@@ -758,17 +668,6 @@ def _resolve(backend: str) -> str:
     if backend == "cuda" and not use_cuda_cone():
         raise ValueError("the CUDA cone kernels need CuPy on a CUDA device")
     return backend
-
-
-def prepare_cone_projection(
-    volume: jax.Array, grid: Grid, detector: Detector
-) -> Callable[[jax.Array], jax.Array]:
-    """A CUDA projector owning one volume and its packed layout across view batches."""
-    from tomojax.core._cone_autodiff import differentiable_forward
-
-    volume = volume.astype(jnp.float32)
-    packed = jax.lax.stop_gradient(volume.transpose(0, 2, 1).reshape(-1))
-    return lambda coeff: differentiable_forward(coeff, volume, grid, detector, packed=packed)
 
 
 def cone_project(
@@ -807,7 +706,7 @@ def cone_project_ones(
     in the coefficients; use cone_project on a unit volume for pose derivatives.
     """
     if _resolve(backend) != "cuda":
-        ones = jnp.ones((grid.nx, grid.ny, grid.nz), jnp.float32)
+        ones = jnp.ones((grid.nz, grid.ny, grid.nx), jnp.float32)
         return cone_project(ones, coeff, grid, detector, backend="jax")
     call = buffer_callback(
         partial(_launch_box_forward, grid=grid, det=detector),
@@ -828,7 +727,7 @@ def cone_backproject(
 ) -> jax.Array:
     """Return ``accumulate`` plus the exact transpose of :func:`cone_project`."""
     initial = (
-        jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
+        jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32)
         if accumulate is None
         else jnp.asarray(accumulate, jnp.float32)
     )
@@ -849,7 +748,7 @@ def cone_backproject_pair(
 ) -> tuple[jax.Array, jax.Array]:
     """Two exact transposes sharing CUDA ray geometry, with independent accumulators."""
     if accumulate is None:
-        zero = jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
+        zero = jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32)
         initial = zero, zero
     else:
         initial = accumulate
@@ -868,18 +767,13 @@ def _adjoint_pair_cuda(
     grid: Grid,
     detector: Detector,
     initial: tuple[jax.Array, jax.Array],
-    *,
-    packed_capacity: int = 0,
-    layout_hint: tuple[tuple[float, float, float], float] | None = None,
 ) -> tuple[jax.Array, jax.Array]:
-    shape = jax.ShapeDtypeStruct((grid.nx, grid.ny, grid.nz), jnp.float32)
+    shape = jax.ShapeDtypeStruct((grid.nz, grid.ny, grid.nx), jnp.float32)
     call = buffer_callback(
         partial(
             _launch_adjoint_pair,
             grid=grid,
             det=detector,
-            packed_capacity=packed_capacity,
-            layout_hint=layout_hint,
         ),
         (shape, shape),
         input_output_aliases={3: 0, 4: 1},

@@ -42,10 +42,8 @@ def _coefficient_vjp(coeff, volume, cotangent, grid, detector):
 
 
 class _ConeProjector(FirstOrderProjector):
-    def expand(self, coeff, volume, *packed: jax.Array):
-        return forward_cuda(
-            volume, coeff, self.grid, self.detector, packed=packed[0] if packed else None
-        )
+    def expand(self, coeff, volume):
+        return forward_cuda(volume, coeff, self.grid, self.detector)
 
     def coefficient_jvp(self, coeff, volume, dcoeff, dvolume):
         result = cone.cone_pose_columns(
@@ -62,9 +60,9 @@ class _ConeProjector(FirstOrderProjector):
         return cone.cone_backproject(cotangent, coeff, self.grid, self.detector, backend="cuda")
 
 
-def differentiable_forward(coeff, volume, grid, detector, *, packed=None):
-    """CUDA projection with first-order pose/volume derivatives and optional cache."""
-    args = (coeff, volume) if packed is None else (coeff, volume, packed)
+def differentiable_forward(coeff, volume, grid, detector):
+    """CUDA projection with first-order pose/volume derivatives."""
+    args = (coeff, volume)
     return _ConeProjector(tuple(jax.typeof(arg) for arg in args), grid=grid, detector=detector)(
         *args
     )

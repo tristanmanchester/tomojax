@@ -69,7 +69,7 @@ def test_cuda_columns_retain_individual_central_differences(
     if direction == (0.2, 0.7, -0.8):
         params = jnp.asarray([0.012, -0.018, 0.031, 0.11, -0.07, 0.04][:width])
     rng = np.random.default_rng(533)
-    volume = jnp.asarray(rng.uniform(-0.1, 1.1, (grid.nx, grid.ny, grid.nz)), jnp.float32)
+    volume = jnp.asarray(rng.uniform(-0.1, 1.1, (grid.nz, grid.ny, grid.nx)), jnp.float32)
     target = jnp.asarray(rng.normal(size=(detector.nv, detector.nu)), jnp.float32)
     weight = jnp.asarray(rng.uniform(0.05, 0.99, target.shape), jnp.float32)
     if grid_case == "tie":
@@ -137,7 +137,7 @@ def test_cuda_analytic_pose_columns_match_jax(width, translation_frame, directio
     nominal = jnp.eye(4).at[:3, 3].set(jnp.asarray([0.11, 0.09, -0.13]))
     params = jnp.asarray([0.013, -0.019, 0.031, 0.11, -0.07, 0.04][:width])
     rng = np.random.default_rng(177)
-    volume = jnp.asarray(rng.uniform(-0.1, 1.1, (7, 6, 5)), jnp.float32)
+    volume = jnp.asarray(rng.uniform(-0.1, 1.1, (5, 6, 7)), jnp.float32)
     target = jnp.asarray(rng.normal(size=(7, 9)), jnp.float32)
     weight = jnp.asarray(rng.uniform(0.1, 1, (7, 9)), jnp.float32).at[0].set(0)
     options = PoseJacobianOptions(
@@ -185,7 +185,7 @@ def test_central_pose_columns_do_not_depend_on_measurement_offsets(cone):
         jnp.asarray([[0, 40, 0], [1, 0, 0], [0, 0, 1], [0, -80, 0]], jnp.float32) if cone else None
     )
     rng = np.random.default_rng(687)
-    volume = jnp.asarray(rng.uniform(0.2, 1.1, (grid.nx, grid.ny, grid.nz)), jnp.float32)
+    volume = jnp.asarray(rng.uniform(0.2, 1.1, (grid.nz, grid.ny, grid.nx)), jnp.float32)
     params = jnp.asarray([0.012, -0.018, 0.031, 0.11, -0.07, 0.04], jnp.float32)
     weight = jnp.asarray(rng.uniform(0.1, 1, (detector.nv, detector.nu)), jnp.float32).at[0].set(0)
     target = jnp.asarray(rng.normal(size=weight.shape), jnp.float32)
@@ -212,9 +212,8 @@ def test_central_pose_columns_do_not_depend_on_measurement_offsets(cone):
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("packed", [False, True])
 @pytest.mark.parametrize("distance", [80.0, 8000.0])
-def test_cuda_forward_pose_and_volume_ad_match_reference(packed, distance):
+def test_cuda_forward_pose_and_volume_ad_match_reference(distance):
     from tomojax.core import cone
 
     if not cone.use_cuda_cone():
@@ -226,7 +225,7 @@ def test_cuda_forward_pose_and_volume_ad_match_reference(packed, distance):
     )
     nominal = stack_view_poses(geometry, 3)
     rng = np.random.default_rng(892)
-    volume = jnp.asarray(rng.uniform(-0.1, 1.1, (7, 6, 5)), jnp.float32)
+    volume = jnp.asarray(rng.uniform(-0.1, 1.1, (5, 6, 7)), jnp.float32)
     params = jnp.asarray(rng.normal(0, 0.02, (3, 6)), jnp.float32)
     tangent = jnp.asarray(rng.normal(0, 0.1, params.shape), jnp.float32)
     dvolume = jnp.asarray(rng.normal(size=volume.shape), jnp.float32)
@@ -239,8 +238,6 @@ def test_cuda_forward_pose_and_volume_ad_match_reference(packed, distance):
         return cone.cone_coefficients(poses, grid, detector, geometry.beam)
 
     def project_coeff(coeff, x, backend):
-        if packed and backend == "cuda":
-            return cone.prepare_cone_projection(x, grid, detector)(coeff)
         return cone.cone_project(x, coeff, grid, detector, backend=backend)
 
     def project(p, x, backend):
@@ -358,7 +355,7 @@ def test_cone_column_batching_keeps_independent_volumes_and_view_order(shared):
     geometry = ConeGeometry(grid, detector, [13.7, 78.1, 147.3], ConeBeam(80, 160), tilt_deg=53)
     coeff = cone.cone_coefficients(stack_view_poses(geometry, 3), grid, detector, geometry.beam)
     rng = np.random.default_rng(19)
-    volume = jnp.asarray(rng.uniform(size=(2, 7, 6, 5)), jnp.float32)
+    volume = jnp.asarray(rng.uniform(size=(2, 5, 6, 7)), jnp.float32)
     directions = jnp.asarray(rng.normal(0, 0.1, (2, 3, 2, 12)), jnp.float32)
 
     def columns(x, c, d):
