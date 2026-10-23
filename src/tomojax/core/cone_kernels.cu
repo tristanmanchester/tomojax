@@ -388,7 +388,7 @@ __device__ __forceinline__ void sep_adjoint_tile(
     __shared__ int skip;
     int b = 1 - a;
     int nb = a == 0 ? ny : nx;
-    int c0 = blockIdx.x * ZT, b0 = blockIdx.y * TB, k = blockIdx.z;
+    int c0 = blockIdx.z * ZT, b0 = blockIdx.x * TB, k = blockIdx.y;
     int tid = threadIdx.x;
     int my_b = b0 + tid / 4, my_c = (tid % 4) * (ZT / 4);
     float my_bf = (float)my_b;
@@ -483,6 +483,23 @@ __device__ __forceinline__ void sep_adjoint_tile(
             }
         }
     }
+    // R is no longer read by the accumulation phase. Reuse it to
+    // exchange the register-z owners for contiguous-x output lanes.
+    if (a == 1) {
+        __syncthreads();
+        #pragma unroll
+        for (int j = 0; j < ZT / 4; ++j) {
+            int offset = j;
+            R[tid / 4][my_c + offset] = acc[j];
+        }
+        __syncthreads();
+        for (int i = tid; i < TB * ZT; i += blockDim.x) {
+            int jb = i % TB, jc = i / TB;
+            if (b0 + jb < nx && c0 + jc < nz && k < ny)
+                vol[((long)(c0 + jc) * ny + k) * nx + b0 + jb] += R[jb][jc];
+        }
+        return;
+    }
     int na = a == 0 ? nx : ny;
     if (my_b < nb && k < na) {
         int ix = a == 0 ? k : my_b, iy = a == 0 ? my_b : k;
@@ -546,7 +563,8 @@ __device__ __forceinline__ void plane_tile(
     __shared__ int first[VMAX + 1]; // each view's first run in the block's list
     int b = a == 0 ? 1 : 0, cc = a == 2 ? 1 : 2;
     int na = SEL(a, nx, ny, nz), nb = SEL(b, nx, ny, nz), nc = SEL(cc, nx, ny, nz);
-    int c0 = blockIdx.x * PC, b0 = blockIdx.y * ROWS, k = blockIdx.z * PLANES;
+    int c0 = blockIdx.z * PC, b0 = (a == 0 ? blockIdx.y : blockIdx.x) * ROWS;
+    int k = (a == 0 ? blockIdx.x : blockIdx.y) * PLANES;
     int nb0 = min(ROWS, nb - b0), nc0 = min(PC, nc - c0);
     if (!any_view(coeff, axis_box, nviews, a, false)) return;
     for (int i = threadIdx.x; i < RHS * PLANES * (ROWS + 2) * (PC + 3); i += blockDim.x) (&acc[0][0][0][0])[i] = 0.f;
@@ -710,17 +728,17 @@ __device__ __forceinline__ void plane_tile(
     __syncthreads();
     long s0 = 1, s1 = nx, s2 = (long)nx * ny;
     long sa = SEL(a, s0, s1, s2), sb = SEL(b, s0, s1, s2), sc = SEL(cc, s0, s1, s2);
-    for (int i = threadIdx.x; i < ROWS * PC; i += blockDim.x) {
-        int jb = i % ROWS, jc = i / ROWS;
-        if (jb < nb0 && jc < nc0) {
-            #pragma unroll
-            for (int plane = 0; plane < PLANES; ++plane) if (PLANES == 1 || k + plane < na) {
-                long offset = (long)(k + plane) * sa + (long)(b0 + jb) * sb + (long)(c0 + jc) * sc;
-                vol[offset] += acc[0][plane][jb + 1][jc + 1];
-                if (RHS == 2) vol1[offset] += acc[1][plane][jb + 1][jc + 1];
-            }
+    for (int i = threadIdx.x; i < PLANES * ROWS * PC; i += blockDim.x) {
+        int plane = a == 0 ? i % PLANES : i / (ROWS * PC);
+        int jb = a == 0 ? (i / PLANES) % ROWS : i % ROWS;
+        int jc = a == 0 ? i / (PLANES * ROWS) : (i / ROWS) % PC;
+        if (jb < nb0 && jc < nc0 && k + plane < na) {
+            long offset = (long)(k + plane) * sa + (long)(b0 + jb) * sb + (long)(c0 + jc) * sc;
+            vol[offset] += acc[0][plane][jb + 1][jc + 1];
+            if (RHS == 2) vol1[offset] += acc[1][plane][jb + 1][jc + 1];
         }
     }
+
 }
 
 extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint(
@@ -876,7 +894,7 @@ __device__ __forceinline__ void sep_adjoint_cached_tile(
     __shared__ int2 all_foot[VMAX];
     int b = 1 - a;
     int nb = a == 0 ? ny : nx;
-    int c0 = blockIdx.x * ZT, b0 = blockIdx.y * TB, k = blockIdx.z;
+    int c0 = blockIdx.z * ZT, b0 = blockIdx.x * TB, k = blockIdx.y;
     unsigned tid = threadIdx.x;
     // Stripes of ZT / 8 cells spread the four z lanes across shared-memory banks.
     int my_b = b0 + tid / 4, my_c = (tid % 4) * (ZT / 8);
@@ -1003,6 +1021,23 @@ __device__ __forceinline__ void sep_adjoint_cached_tile(
             }
         }
     }
+    // R is no longer read by the accumulation phase. Reuse it to
+    // exchange the register-z owners for contiguous-x output lanes.
+    if (a == 1) {
+        __syncthreads();
+        #pragma unroll
+        for (int j = 0; j < ZT / 4; ++j) {
+            int offset = j % (ZT / 8) + (j / (ZT / 8)) * (ZT / 2);
+            R[tid / 4][my_c + offset] = acc[j];
+        }
+        __syncthreads();
+        for (int i = tid; i < TB * ZT; i += blockDim.x) {
+            int jb = i % TB, jc = i / TB;
+            if (b0 + jb < nx && c0 + jc < nz && k < ny)
+                vol[((long)(c0 + jc) * ny + k) * nx + b0 + jb] += R[jb][jc];
+        }
+        return;
+    }
     int na = a == 0 ? nx : ny;
     if (my_b < nb && k < na) {
         int ix = a == 0 ? k : my_b, iy = a == 0 ? my_b : k;
@@ -1040,4 +1075,226 @@ extern "C" __global__ void __launch_bounds__(128, 8) pair_plane_adjoint(
     int nx, int ny, int nz, int nu, int nv)
 {
     plane_tile<32, 2>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv, vol1, img1);
+}
+
+// Two 32-plane row tiles and cached geometry stay within 24 KiB per block.
+#define PAIRED_ULEN 77
+template <int ZT>
+__device__ __forceinline__ void pair_sep_adjoint_cached_tile(
+    const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
+    const float* __restrict__ img, const float* __restrict__ img1,
+    float* __restrict__ vol, float* __restrict__ vol1,
+    int nx, int ny, int nz, int nu, int nv)
+{
+    __shared__ float R[PAIRED_ULEN][ZT + 1], R1[PAIRED_ULEN][ZT + 1];
+    __shared__ float s_fb[PAIRED_ULEN], s_t[PAIRED_ULEN], s_rc0[PAIRED_ULEN];
+    __shared__ float s_f0[PAIRED_ULEN], s_idf[PAIRED_ULEN];
+    __shared__ int s_taps[PAIRED_ULEN];
+    __shared__ float s_margin[PAIRED_ULEN];
+    __shared__ float all_cf[VMAX][12];
+    __shared__ int all_skip[VMAX];
+    __shared__ int2 all_foot[VMAX];
+    int b = 1 - a;
+    int nb = a == 0 ? ny : nx;
+    int c0 = blockIdx.z * ZT, b0 = blockIdx.x * TB, k = blockIdx.y;
+    unsigned tid = threadIdx.x;
+    // Stripes of ZT / 8 cells spread the four z lanes across shared-memory banks.
+    int my_b = b0 + tid / 4, my_c = (tid % 4) * (ZT / 8);
+    float my_bf = (float)my_b;
+    if (!any_view(coeff, axis_box, nviews, a, true)) return;
+    for (int i = tid; i < nviews * 12; i += blockDim.x)
+        (&all_cf[0][0])[i] = coeff[(i / 12) * NC + i % 12];
+    // Bounds depend on the lateral tile, not z. Cache them with each view.
+    for (int i = tid; i < nviews; i += blockDim.x) {
+        const float* c = coeff + i * NC;
+        const int* ab = axis_box + (i * 3 + a) * 4;
+        all_skip[i] = !separable(c) || ab[1] < ab[0];
+        float K = (float)k - c[a], Sb = c[b];
+        float ra0 = c[3 + a] - c[a], rb0 = c[3 + b] - c[b];
+        float DUa = c[6 + a], DUb = c[6 + b];
+        // Clip the far tile edge to the volume before projecting its bounds.
+        float g1 = (float)b0 - 1.f - Sb, g2 = (float)min(b0 + TB, nb) - Sb;
+        float den1 = g1 * DUa - K * DUb, den2 = g2 * DUa - K * DUb;
+        int lo = ab[0], hi = ab[1];
+        if (!crosses_zero(den1, den2)) {
+            float u1 = (K * rb0 - g1 * ra0) / den1, u2 = (K * rb0 - g2 * ra0) / den2;
+            lo = max((int)floorf(pixel_bound(fminf(u1, u2), nu)) - 1, ab[0]);
+            hi = min((int)ceilf(pixel_bound(fmaxf(u1, u2), nu)) + 1, ab[1]);
+        }
+        all_foot[i] = make_int2(lo, hi);
+    }
+
+    __syncthreads();
+    float acc[ZT / 4], acc1[ZT / 4];
+    #pragma unroll
+    for (int j = 0; j < ZT / 4; ++j) acc[j] = acc1[j] = 0.f;
+    for (int w = 0; w < nviews; ++w) {
+        if (all_skip[w]) continue;
+        const float* c = all_cf[w];
+        float Sa = c[a], Sb = c[b], Sc = c[2], DVc = c[11];
+        float K = (float)k - Sa;
+        float ra0 = c[3 + a] - c[a], rb0 = c[3 + b] - c[b], DUa = c[6 + a], DUb = c[6 + b];
+        int ulo_all = all_foot[w].x, uhi = all_foot[w].y;
+        const float* image = img + (long)w * nu * nv;
+        const float* image1 = img1 + (long)w * nu * nv;
+        for (int ulo = ulo_all; ulo <= uhi; ulo += PAIRED_ULEN) {
+            int ulen = min(PAIRED_ULEN, uhi - ulo + 1);
+            __syncthreads();
+            for (int i = tid; i < ulen; i += blockDim.x) {
+                float fu = (float)(ulo + i);
+                float r0 = (c[3] + fu * c[6]) - c[0], r1 = (c[4] + fu * c[7]) - c[1];
+                int col_axis = fabsf(r1) > fabsf(r0) ? 1 : 0;
+                float ra = a == 0 ? r0 : r1, rb = a == 0 ? r1 : r0;
+                float t = K * (1.0f / ra);
+                float rc0 = c[5] + fu * c[8];
+                // Columns sampled along the other axis contribute nothing here.
+                s_t[i] = t; s_fb[i] = col_axis == a ? Sb + t * rb : -1e30f; s_rc0[i] = rc0;
+                // z cells step with v at 1/idf per row (either sign). Cell j takes
+                // the rows strictly between (j - 1 - f0) idf and (j + 1 - f0) idf,
+                // at most taps of them.
+                float idf = 1.f / (t * DVc);
+                s_f0[i] = Sc + t * (rc0 - Sc); s_idf[i] = idf;
+                // A footprint wider than the image still needs at most nv rows.
+                float margin = vertical_support_margin(idf, Sc, t, rc0, DVc, nz, nv);
+                s_margin[i] = margin;
+                // Widen both endpoints, keeping the tap count warp-uniform.
+                float taps = fminf(2.f * (fabsf(idf) + margin), (float)nv);
+                s_taps[i] = col_axis == a ? min((int)floorf(taps) + 1, nv) : 0;
+            }
+            __syncthreads();
+            const float* col = image + (long)(ulo + tid / ZT) * nv;
+            const float* col1 = image1 + (long)(ulo + tid / ZT) * nv;
+            for (int i = tid / ZT, j = tid % ZT; i < ulen;
+                 i += blockDim.x / ZT, col += (blockDim.x / ZT) * nv,
+                 col1 += (blockDim.x / ZT) * nv) {
+                float t = s_t[i], rc0 = s_rc0[i], f0 = s_f0[i], idf = s_idf[i];
+                int taps = s_taps[i];
+                {
+                    int jj = j;
+                    float jcf = (float)(c0 + jj);
+                    float v1 = (jcf - 1.f - f0) * idf, v2 = (jcf + 1.f - f0) * idf;
+                    int va = max((int)floorf(pixel_bound(fminf(v1, v2) - s_margin[i], nv)) + 1, 0);
+                    float s = 0.f, s1 = 0.f;
+                    // Common interior footprints avoid repeated bounds checks;
+                    // boundary and wider footprints keep every original tap.
+                    if (taps == 2 && va + 1 < nv) {
+                        {
+                            float weight = trif(Sc + t * ((rc0 + (float)va * DVc) - Sc), jcf);
+                            s += __ldg(col + va) * weight; s1 += __ldg(col1 + va) * weight;
+                        }
+                        {
+                            float weight = trif(Sc + t * ((rc0 + (float)(va + 1) * DVc) - Sc), jcf);
+                            s += __ldg(col + va + 1) * weight; s1 += __ldg(col1 + va + 1) * weight;
+                        }
+                    } else if (taps == 3 && va + 2 < nv) {
+                        {
+                            float weight = trif(Sc + t * ((rc0 + (float)va * DVc) - Sc), jcf);
+                            s += __ldg(col + va) * weight; s1 += __ldg(col1 + va) * weight;
+                        }
+                        {
+                            float weight = trif(Sc + t * ((rc0 + (float)(va + 1) * DVc) - Sc), jcf);
+                            s += __ldg(col + va + 1) * weight; s1 += __ldg(col1 + va + 1) * weight;
+                        }
+                        {
+                            float weight = trif(Sc + t * ((rc0 + (float)(va + 2) * DVc) - Sc), jcf);
+                            s += __ldg(col + va + 2) * weight; s1 += __ldg(col1 + va + 2) * weight;
+                        }
+                    } else if (taps <= 3) {
+                        if (taps > 0 && va < nv)
+                            {
+                                float weight = trif(Sc + t * ((rc0 + (float)va * DVc) - Sc), jcf);
+                                s += __ldg(col + va) * weight; s1 += __ldg(col1 + va) * weight;
+                            }
+                        if (taps > 1 && va + 1 < nv)
+                            {
+                                float weight = trif(Sc + t * ((rc0 + (float)(va + 1) * DVc) - Sc), jcf);
+                                s += __ldg(col + va + 1) * weight; s1 += __ldg(col1 + va + 1) * weight;
+                            }
+                        if (taps > 2 && va + 2 < nv)
+                            {
+                                float weight = trif(Sc + t * ((rc0 + (float)(va + 2) * DVc) - Sc), jcf);
+                                s += __ldg(col + va + 2) * weight; s1 += __ldg(col1 + va + 2) * weight;
+                            }
+                    } else {
+                        #pragma unroll 4
+                        for (int q = 0; q < taps; ++q) {
+                            int vv = va + q;
+                            if (vv < 0 || vv >= nv) continue;
+                            {
+                                float weight = trif(Sc + t * ((rc0 + (float)vv * DVc) - Sc), jcf);
+                                s += __ldg(col + vv) * weight; s1 += __ldg(col1 + vv) * weight;
+                            }
+                        }
+                    }
+                    R[i][jj] = s; R1[i][jj] = s1;
+                }
+            }
+            __syncthreads();
+            if (my_b < nb) {
+                float h1 = my_bf - 1.f - Sb, h2 = my_bf + 1.f - Sb;
+                float den1 = h1 * DUa - K * DUb, den2 = h2 * DUa - K * DUb;
+                int ia = 0, ib = ulen - 1;
+                if (!crosses_zero(den1, den2)) {
+                    float w1 = (K * rb0 - h1 * ra0) / den1;
+                    float w2 = (K * rb0 - h2 * ra0) / den2;
+                    ia = max((int)floorf(pixel_bound(fminf(w1, w2), nu)) - 1 - ulo, 0);
+                    ib = min((int)ceilf(pixel_bound(fmaxf(w1, w2), nu)) + 1 - ulo, ulen - 1);
+                }
+                for (int i = ia; i <= ib; ++i) {
+                    float wb = trif(s_fb[i], my_bf);
+                    if (wb == 0.f) continue;
+                    #pragma unroll
+                    for (int j = 0; j < ZT / 4; ++j) {
+                        int offset = j % (ZT / 8) + (j / (ZT / 8)) * (ZT / 2);
+                        acc[j] += wb * R[i][my_c + offset];
+                        acc1[j] += wb * R1[i][my_c + offset];
+                    }
+                }
+            }
+        }
+    }
+    // R is no longer read by the accumulation phase. Reuse it to
+    // exchange the register-z owners for contiguous-x output lanes.
+    if (a == 1) {
+        __syncthreads();
+        #pragma unroll
+        for (int j = 0; j < ZT / 4; ++j) {
+            int offset = j % (ZT / 8) + (j / (ZT / 8)) * (ZT / 2);
+            R[tid / 4][my_c + offset] = acc[j];
+            R1[tid / 4][my_c + offset] = acc1[j];
+        }
+        __syncthreads();
+        for (int i = tid; i < TB * ZT; i += blockDim.x) {
+            int jb = i % TB, jc = i / TB;
+            if (b0 + jb < nx && c0 + jc < nz && k < ny) {
+                long address = ((long)(c0 + jc) * ny + k) * nx + b0 + jb;
+                vol[address] += R[jb][jc]; vol1[address] += R1[jb][jc];
+            }
+        }
+        return;
+    }
+    int na = a == 0 ? nx : ny;
+    if (my_b < nb && k < na) {
+        int ix = a == 0 ? k : my_b, iy = a == 0 ? my_b : k;
+        long base = ((long)(c0 + my_c) * ny + iy) * nx + ix;
+        #pragma unroll
+        for (int j = 0; j < ZT / 4; ++j) {
+            int offset = j % (ZT / 8) + (j / (ZT / 8)) * (ZT / 2);
+            if (c0 + my_c + offset < nz) {
+                long address = base + (long)offset * nx * ny;
+                vol[address] += acc[j]; vol1[address] += acc1[j];
+            }
+        }
+    }
+}
+
+
+extern "C" __global__ void __launch_bounds__(256) pair_sep_adjoint_cached(
+    const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
+    const float* __restrict__ img, const float* __restrict__ img1,
+    float* __restrict__ vol, float* __restrict__ vol1,
+    int nx, int ny, int nz, int nu, int nv)
+{
+    pair_sep_adjoint_cached_tile<32>(coeff, axis_box, nviews, a, img, img1, vol, vol1,
+                                     nx, ny, nz, nu, nv);
 }

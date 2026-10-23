@@ -478,7 +478,7 @@ def adjoint_into(
         for axis in (0, 1):
             na, nb = extent[axis], extent[1 - axis]
             separable_adjoint(
-                (-(-grid.nz // 64), -(-nb // 64), na),
+                (-(-nb // 64), na, -(-grid.nz // 64)),
                 (256,),
                 (*part, np.int32(axis), i_part, target, *dims),
             )
@@ -488,7 +488,11 @@ def adjoint_into(
             wide = axis != 2 and grid.nz >= 128
             tile_c = 64 if wide else 32
             module.get_function("plane_adjoint_wide" if wide else "plane_adjoint")(
-                (-(-nc // tile_c), -(-nb // 15), -(-extent[axis] // 2)),
+                (
+                    (-(-extent[axis] // 2), -(-nb // 15), -(-nc // tile_c))
+                    if axis == 0
+                    else (-(-nb // 15), -(-extent[axis] // 2), -(-nc // tile_c))
+                ),
                 (128,),
                 (*part, np.int32(axis), i_part, target, *dims),
             )
@@ -526,7 +530,9 @@ def adjoint_pair_into(
     weighted, boxes = _weighted_images(module, coeff, (images0, images1), grid, det)
     # Channel-major planes also feed the original separable kernels without copies.
     separate = (weighted[0], weighted[1])
-    separable = module.get_function(_separable_adjoint_kernel(grid, det))
+    name = _separable_adjoint_kernel(grid, det)
+    paired_separable = name.startswith("sep_adjoint_cached")
+    separable = module.get_function("pair_sep_adjoint_cached" if paired_separable else name)
     dims = tuple(np.int32(x) for x in (grid.nx, grid.ny, grid.nz, det.nu, det.nv))
     extent = (grid.nx, grid.ny, grid.nz)
     views = int(coeff.shape[0])
@@ -534,17 +540,35 @@ def adjoint_pair_into(
         count = min(_VIEW_CHUNK, views - start)
         part = (coeff[start : start + count], boxes[start : start + count], np.int32(count))
         for axis in (0, 1):
-            shape = (-(-grid.nz // 64), -(-extent[1 - axis] // 64), extent[axis])
-            for image, target in zip(separate, targets, strict=True):
+            depth = 32 if paired_separable else 64
+            shape = (-(-extent[1 - axis] // 64), extent[axis], -(-grid.nz // depth))
+            if paired_separable:
                 separable(
                     shape,
                     (256,),
-                    (*part, np.int32(axis), image[start : start + count], target, *dims),
+                    (
+                        *part,
+                        np.int32(axis),
+                        *(image[start : start + count] for image in separate),
+                        *targets,
+                        *dims,
+                    ),
                 )
+            else:
+                for image, target in zip(separate, targets, strict=True):
+                    separable(
+                        shape,
+                        (256,),
+                        (*part, np.int32(axis), image[start : start + count], target, *dims),
+                    )
         for axis in (0, 1, 2):
             nb, nc = (extent[i] for i in range(3) if i != axis)
             module.get_function("pair_plane_adjoint")(
-                (-(-nc // 32), -(-nb // 32), extent[axis]),
+                (
+                    (extent[axis], -(-nb // 32), -(-nc // 32))
+                    if axis == 0
+                    else (-(-nb // 32), extent[axis], -(-nc // 32))
+                ),
                 (128,),
                 (
                     *part,
