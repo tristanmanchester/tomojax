@@ -261,7 +261,7 @@ def _core_projection_geometry_from_arrays(
     n_steps: int | None = None,
 ) -> CoreProjectionGeometry:
     """Build core Grid/Detector/T_all for supported parallel acquisition arrays."""
-    nx, ny, nz = _volume_shape(volume_shape)
+    nz, ny, nx = _volume_shape(volume_shape)
     theta = jnp.asarray(theta_rad, dtype=jnp.float32)
     alpha = _pose_array_like(alpha_rad, theta, name="alpha_rad")
     beta = _pose_array_like(beta_rad, theta, name="beta_rad")
@@ -271,7 +271,7 @@ def _core_projection_geometry_from_arrays(
         raise ValueError("theta_rad, dx_px, and dz_px must be one-dimensional")
     if theta.shape != dx.shape or theta.shape != dz.shape:
         raise ValueError("theta_rad, dx_px, and dz_px must have matching shapes")
-    rows, cols = detector_shape or (nx, nz)
+    rows, cols = detector_shape or (nz, nx)
     grid = Grid(nx=nx, ny=ny, nz=nz, vx=1.0, vy=1.0, vz=1.0)
     detector = Detector(nu=int(cols), nv=int(rows), du=1.0, dv=1.0)
     roll = jnp.asarray(detector_roll_rad, dtype=jnp.float32)

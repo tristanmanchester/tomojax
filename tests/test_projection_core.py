@@ -176,14 +176,15 @@ def test_forward_adapter_rejects_mismatched_pose_arrays() -> None:
         )
 
 
-def test_core_projection_geometry_uses_explicit_detector_shape() -> None:
+@pytest.mark.parametrize("detector_shape", [None, (5, 6)])
+def test_core_projection_geometry_uses_volume_or_explicit_detector_shape(detector_shape) -> None:
     core = core_projection_geometry_from_input(
-        (2, 3, 4),
+        (4, 3, 2),
         ProjectionArrayGeometryInput(
             theta_rad=jnp.asarray([0.0], dtype=jnp.float32),
             dx_px=jnp.asarray([0.0], dtype=jnp.float32),
             dz_px=jnp.asarray([0.0], dtype=jnp.float32),
-            detector_shape=(5, 6),
+            detector_shape=detector_shape,
         ),
         checkpoint_projector=False,
         projector_unroll=2,
@@ -191,10 +192,11 @@ def test_core_projection_geometry_uses_explicit_detector_shape() -> None:
     )
 
     assert core.grid == Grid(nx=2, ny=3, nz=4, vx=1.0, vy=1.0, vz=1.0)
-    assert core.detector == Detector(nu=6, nv=5, du=1.0, dv=1.0)
+    nv, nu = detector_shape or (4, 2)
+    assert core.detector == Detector(nu=nu, nv=nv, du=1.0, dv=1.0)
     assert core.t_all.shape == (1, 4, 4)
-    assert core.det_grid[0].shape == (30,)
-    assert core.det_grid[1].shape == (30,)
+    assert core.det_grid[0].shape == (nv * nu,)
+    assert core.det_grid[1].shape == (nv * nu,)
     assert core.provenance()["n_steps"] == 7
     assert core.provenance()["checkpoint_projector"] is False
     assert core.provenance()["projector_unroll"] == 2
@@ -220,7 +222,7 @@ def test_joseph_core_gradient_is_the_matched_plane_transpose(integrator, interpo
     geometry = LaminographyGeometry(grid, detector, np.linspace(0, 360, 9, endpoint=False), 30)
     poses = stack_view_poses(geometry, 9)
     rng = np.random.default_rng(3)
-    volume = jnp.asarray(rng.random((6, 5, 4)), jnp.float32)
+    volume = jnp.asarray(rng.random((4, 5, 6)), jnp.float32)
     data = jnp.asarray(rng.random((9, 5, 7)), jnp.float32)
     coeff = plane_coefficients(poses, grid, detector)
     residual = (
@@ -262,7 +264,7 @@ def test_sampled_objective_uses_the_requested_step_when_geometry_is_traced(geome
     geometry = LaminographyGeometry(grid, detector, [13, 71, 127], tilt_deg=17)
     poses = jnp.asarray([geometry.pose_for_view(i) for i in range(3)], jnp.float32)
     coordinates = get_detector_grid_device(detector)
-    volume = jnp.asarray([0.2, 1.0, 0.7, 0.4]).reshape(2, 2, 1)
+    volume = jnp.asarray([0.2, 1.0, 0.7, 0.4]).reshape(1, 2, 2)
     data = jnp.full((3, 3, 5), 0.1)
     weights = jnp.asarray([0.4, 0.0, 1.3])
     cfg = FistaCoreConfig(

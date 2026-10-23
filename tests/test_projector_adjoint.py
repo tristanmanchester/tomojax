@@ -27,7 +27,7 @@ def test_explicit_adjoint_matches_autodiff_for_long_oblique_rays(n_steps: int | 
     shape = (48, 39, 5)
     grid, detector, pose = _oblique_case(shape)
     rng = np.random.default_rng(19)
-    volume = jnp.asarray(rng.normal(size=shape), dtype=jnp.float32)
+    volume = jnp.asarray(rng.normal(size=shape[::-1]), dtype=jnp.float32)
     image = jnp.asarray(rng.normal(size=(detector.nv, detector.nu)), dtype=jnp.float32)
 
     def project(x: jax.Array) -> jax.Array:
@@ -47,7 +47,7 @@ def test_explicit_adjoint_matches_autodiff_for_long_oblique_rays(n_steps: int | 
 def test_adjoint_matches_autodiff_for_gather_precision(gather_dtype: str) -> None:
     grid, detector, pose = _oblique_case((5, 4, 3))
     rng = np.random.default_rng(32)
-    volume = jnp.asarray(rng.normal(size=(5, 4, 3)), dtype=jnp.float32)
+    volume = jnp.asarray(rng.normal(size=(3, 4, 5)), dtype=jnp.float32)
     image = jnp.asarray(rng.normal(size=(detector.nv, detector.nu)), dtype=jnp.float32)
 
     # Include several nonzero traversal samples and allow the expected accumulation
@@ -74,7 +74,7 @@ def test_adjoint_and_weighted_loss_match_autodiff(interpret: bool, unroll: int |
     shape = (5, 4, 3)
     grid, detector, pose = _oblique_case(shape)
     rng = np.random.default_rng(45)
-    volume = jnp.asarray(rng.normal(size=shape), dtype=jnp.float32)
+    volume = jnp.asarray(rng.normal(size=shape[::-1]), dtype=jnp.float32)
     images = jnp.asarray(rng.normal(size=(2, detector.nv, detector.nu)), dtype=jnp.float32)
     poses = jnp.stack([pose, pose.at[0, 3].add(0.4)])
     weights = jnp.asarray([0.3, 1.7], dtype=jnp.float32)[:, None, None]
@@ -175,7 +175,7 @@ def test_cuda_shared_adjoint_matches_independent_transpose(views, layout):
     rng = np.random.default_rng(219)
     poses = jnp.stack([pose.at[0, 3].add(i * 0.17) for i in range(views)])
     images = jnp.asarray(rng.normal(size=(views, detector.nv, detector.nu)), dtype=jnp.float32)
-    volume = jnp.asarray(rng.normal(size=(7, 6, 5)), dtype=jnp.float32)
+    volume = jnp.asarray(rng.normal(size=(5, 6, 7)), dtype=jnp.float32)
 
     def project(x):
         return jax.vmap(lambda t: forward_project_view_T(t, grid, detector, x))(poses)

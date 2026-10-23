@@ -31,7 +31,7 @@ def test_joseph_integrators_match_the_plane_projector_and_its_transpose(
 ) -> None:
     grid, detector, poses = scan()
     rng = np.random.default_rng(5)
-    volume = jnp.asarray(rng.normal(size=(7, 6, 5)), jnp.float32)
+    volume = jnp.asarray(rng.normal(size=(5, 6, 7)), jnp.float32)
     images = jnp.asarray(rng.normal(size=(3, 6, 9)), jnp.float32)
     expected = project_joseph(volume, poses, grid, detector, interpolation=interpolation)
     actual = jnp.stack(
@@ -57,7 +57,7 @@ def test_joseph_integrators_accept_affine_detector_grids() -> None:
     from tomojax.core.projector import get_detector_grid_device
 
     grid, detector, poses = scan()
-    volume = jnp.asarray(np.random.default_rng(9).normal(size=(7, 6, 5)), jnp.float32)
+    volume = jnp.asarray(np.random.default_rng(9).normal(size=(5, 6, 7)), jnp.float32)
     shifted = Detector(9, 6, 0.9, 1.2, (0.17 + 0.35, -0.21 - 0.4))
     # A lattice offset from the nominal detector equals a detector with that centre.
     x, z = get_detector_grid_device(detector)

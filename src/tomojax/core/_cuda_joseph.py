@@ -156,8 +156,8 @@ def gather_transpose_cuda(
             lambda _: transpose_axial_cuda(coeff, images_uv, initial, grid=grid),
             generic,
             operand=None,
-        ).reshape(shape)
-    return generic(None).reshape(shape)
+        ).reshape(shape[::-1])
+    return generic(None).reshape(shape[::-1])
 
 
 def _launch_uniform(context: Any, out: Any, coeff: Any, *, grid: Grid, detector: Detector) -> None:
@@ -167,7 +167,7 @@ def _launch_uniform(context: Any, out: Any, coeff: Any, *, grid: Grid, detector:
     with xla_stream(context, out):
         geometry, target = cp.asarray(coeff), cp.asarray(out)
         kernel = forward_kernel(narrow=grid.nx * grid.ny * grid.nz < 2**31, uniform=True)
-        tiles = -(-detector.nu // 8) * -(-detector.nv // 16)
+        tiles = -(-detector.nu // 128) * detector.nv
         for start in range(0, coeff.shape[0], 64):
             stop = min(start + 64, coeff.shape[0])
             # The uniform specialization never dereferences its volume argument.

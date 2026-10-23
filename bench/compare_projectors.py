@@ -66,11 +66,11 @@ def _sample_volume(
         stop = min(start + 32, shape[0])
         coords = np.stack(
             np.meshgrid(
-                origin[0] + np.arange(start, stop) * voxel[0],
+                origin[2] + np.arange(start, stop) * voxel[2],
                 origin[1] + np.arange(shape[1]) * voxel[1],
-                origin[2] + np.arange(shape[2]) * voxel[2],
+                origin[0] + np.arange(shape[2]) * voxel[0],
                 indexing="ij",
-            ),
+            )[::-1],
             axis=-1,
         )
         values = np.zeros((stop - start, shape[1], shape[2]), dtype=np.float64)
@@ -120,9 +120,9 @@ def make_case(size: int, n_views: int, kind: str, *, phantom: str = "gaussian") 
         raise ValueError(f"Unknown phantom: {phantom}")
     grid, detector, poses, angles = make_geometry(size, n_views, kind)
     origin = np.asarray(grid_volume_origin(grid))
-    shape = (grid.nx, grid.ny, grid.nz)
+    shape = (grid.nz, grid.ny, grid.nx)
     voxel = np.asarray([grid.vx, grid.vy, grid.vz])
-    extent = np.asarray(shape) * voxel
+    extent = np.asarray(shape[::-1]) * voxel
     u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du + detector.center[0]
     v = (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv + detector.center[1]
     uu, vv = np.meshgrid(u, v)
@@ -294,7 +294,7 @@ def run_astra(case: Case, repeats: int) -> list[dict]:
 
     vg, pg = astra_geometries(case)
     projector = astra.create_projector("cuda3d", pg, vg)
-    volume = np.ascontiguousarray(case.volume.transpose(2, 1, 0))
+    volume = np.ascontiguousarray(case.volume)
     output = np.empty((case.detector.nv, len(case.poses), case.detector.nu), dtype=np.float32)
     sync = cuda_sync()
     records = []
@@ -349,7 +349,7 @@ def run_tigre(case: Case, repeats: int) -> list[dict]:
             }
         ]
     g = case.grid
-    volume = np.ascontiguousarray(case.volume.transpose(2, 1, 0))
+    volume = np.ascontiguousarray(case.volume)
     geo = tigre.geometry(mode="parallel", nVoxel=np.asarray(volume.shape))
     geo.dVoxel = np.asarray([g.vz, g.vy, g.vx])
     geo.sVoxel = geo.nVoxel * geo.dVoxel

@@ -9,7 +9,7 @@ __device__ __forceinline__ float joseph_sample(RegionVolume x,int a,int k,int b,
     int iy=(a==0?b:(a==1?k:c))-x.oy;
     int iz=(a==0?c:(a==1?b:k))-x.oz;
     if(ix<0 || ix>=x.nx || iy<0 || iy>=x.ny || iz<0 || iz>=x.nz) return 0.f;
-    return x.data[((long)ix*x.ny+iy)*x.nz+iz];
+    return x.data[((long)iz*x.ny+iy)*x.nx+ix];
 }
 struct DetectorRegion {
     const float* data;
@@ -130,8 +130,8 @@ extern "C" __global__ void region_adjoint(const float* coeff,const float* images
     long run=(long)blockIdx.x*blockDim.x+threadIdx.x;
     int runs_z=(nz+R-1)/R;
     bool valid=run<(long)nx*ny*runs_z;
-    int ix=valid?run/((long)ny*runs_z):0,iy=valid?(run/runs_z)%ny:0;
-    int iz0=valid?R*(int)(run%runs_z):0;
+    int ix=valid?run%nx:0,iy=valid?(run/nx)%ny:0;
+    int iz0=valid?R*(int)(run/((long)nx*ny)):0;
     float total[R]={};
     for(int first=0;first<views;first+=VB) {
         __syncthreads();
@@ -140,11 +140,14 @@ extern "C" __global__ void region_adjoint(const float* coeff,const float* images
         if(threadIdx.x<min(VB,views-first)) {
             long begin=(long)blockIdx.x*blockDim.x;
             long end=min(begin+blockDim.x-1,(long)nx*ny*runs_z-1);
-            int x0=begin/((long)ny*runs_z),x1=end/((long)ny*runs_z);
-            int y0=x0==x1?(begin/runs_z)%ny:0;
-            int y1=x0==x1?(end/runs_z)%ny:ny-1;
+            int rz0=begin/((long)nx*ny),rz1=end/((long)nx*ny);
+            int z0=R*rz0,z1=min(nz-1,R*rz1+R-1);
+            int y0=rz0==rz1?(begin/nx)%ny:0;
+            int y1=rz0==rz1?(end/nx)%ny:ny-1;
+            int x0=begin/nx==end/nx?begin%nx:0;
+            int x1=begin/nx==end/nx?end%nx:nx-1;
             visible[threadIdx.x]=region_block_visible(cf+threadIdx.x*14,
-                x0+ox,x1+ox,y0+oy,y1+oy,oz,oz+nz-1,u0,u0+nu-1,v0,v0+nv-1);
+                x0+ox,x1+ox,y0+oy,y1+oy,z0+oz,z1+oz,u0,u0+nu-1,v0,v0+nv-1);
         }
         __syncthreads();
         for(int view=0;view<min(VB,views-first);++view) {
@@ -158,8 +161,8 @@ extern "C" __global__ void region_adjoint(const float* coeff,const float* images
         }
     }
     if(valid) {
-        long base=((long)ix*ny+iy)*nz+iz0;
+        long base=((long)iz0*ny+iy)*nx+ix;
         #pragma unroll
-        for(int j=0;j<R;++j) if(iz0+j<nz) out[base+j]=initial[base+j]+total[j];
+        for(int j=0;j<R;++j) if(iz0+j<nz) out[base+(long)j*nx*ny]=initial[base+(long)j*nx*ny]+total[j];
     }
 }

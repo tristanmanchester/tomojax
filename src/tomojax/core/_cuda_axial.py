@@ -44,12 +44,12 @@ extern "C" __global__ void axial_forward(
             start=max(0,(int)floorf(fminf(fmaxf(fminf(l,h),-1.f),(float)na+1.f))-1);
             stop=min(na,(int)ceilf(fminf(fmaxf(fmaxf(l,h),-1.f),(float)na+1.f))+2);
         }
-        long stride=a==0?nz:(long)ny*nz;
+        long stride=a==0?nx:1;
         for(int k=start;k<stop;++k) {
             float q=p+(slope*(float)k+offset);
             int h0=(int)floorf(q);float wh=q-(float)h0;
             bool loh=(unsigned)h0<(unsigned)nh,hih=(unsigned)(h0+1)<(unsigned)nh;
-            long base=(a==0?(long)k*ny:(long)k)*nz+z0;
+            long base=(long)z0*ny*nx+(a==0?k:(long)k*nx);
             float x00=0.f,x10=0.f;
             if(loh && loz) x00=x[base+(long)h0*stride];
             if(hih && loz) x10=x[base+(long)(h0+1)*stride];
@@ -57,8 +57,8 @@ extern "C" __global__ void axial_forward(
             if(wz==0.f) value=x00*(1.f-wh)+x10*wh;
             else {
                 float x01=0.f,x11=0.f;
-                if(loh && hiz) x01=x[base+(long)h0*stride+1];
-                if(hih && hiz) x11=x[base+(long)(h0+1)*stride+1];
+                if(loh && hiz) x01=x[base+(long)h0*stride+(long)nx*ny];
+                if(hih && hiz) x11=x[base+(long)(h0+1)*stride+(long)nx*ny];
                 // Preserve the forward operator's axis-dependent grouping.
                 value=a==0?(x00*(1.f-wz)+x01*wz)*(1.f-wh)
                             +(x10*(1.f-wz)+x11*wz)*wh
@@ -95,15 +95,17 @@ extern "C" __global__ void axial_forward_vec4(
             start=max(0,(int)floorf(fminf(fmaxf(fminf(l,h),-1.f),(float)na+1.f))-1);
             stop=min(na,(int)ceilf(fminf(fmaxf(fmaxf(l,h),-1.f),(float)na+1.f))+2);
         }
-        long stride=a==0?nz:(long)ny*nz;
+        long stride=a==0?nx:1;
         for(int k=start;k<stop;++k) {
             float q=p+(slope*(float)k+offset);
             int h0=(int)floorf(q);float wh=q-(float)h0;
             bool loh=(unsigned)h0<(unsigned)nh,hih=(unsigned)(h0+1)<(unsigned)nh;
-            long base=(a==0?(long)k*ny:(long)k)*nz+z;
+            long base=(long)z*ny*nx+(a==0?k:(long)k*nx);
             float4 lo={0.f,0.f,0.f,0.f},hi=lo;
-            if(loh) lo=reinterpret_cast<const float4*>(x+base+(long)h0*stride)[0];
-            if(hih) hi=reinterpret_cast<const float4*>(x+base+(long)(h0+1)*stride)[0];
+            long step=(long)nx*ny, at=base+(long)h0*stride;
+            if(loh) lo=make_float4(x[at],x[at+step],x[at+2*step],x[at+3*step]);
+            at+=stride;
+            if(hih) hi=make_float4(x[at],x[at+step],x[at+2*step],x[at+3*step]);
             total[0]+=(lo.x*(1.f-wh)+hi.x*wh)*c[9];
             total[1]+=(lo.y*(1.f-wh)+hi.y*wh)*c[9];
             total[2]+=(lo.z*(1.f-wh)+hi.z*wh)*c[9];
@@ -173,7 +175,7 @@ extern "C" __global__ void joseph_axial(
     long run=(long)blockIdx.x*blockDim.x+threadIdx.x;
     int rz=(nz+R-1)/R;
     bool live=run<(long)nx*ny*rz;
-    int ix=live?run/((long)ny*rz):0,iy=live?(run/rz)%ny:0,z=live?R*(run%rz):0;
+    int ix=live?run%nx:0,iy=live?(run/nx)%ny:0,z=live?R*(run/((long)nx*ny)):0;
     float total[R]={};
     __shared__ float cf[VB*14];
     for(int first=0;first<nviews;first+=VB) {
@@ -207,9 +209,9 @@ extern "C" __global__ void joseph_axial(
         }
     }
     if(live) {
-        long base=((long)ix*ny+iy)*nz+z;
+        long base=((long)z*ny+iy)*nx+ix;
         #pragma unroll
-        for(int j=0;j<R;++j) if(z+j<nz) out[base+j]+=total[j];
+        for(int j=0;j<R;++j) if(z+j<nz) out[base+(long)j*nx*ny]+=total[j];
     }
 }
 """
@@ -321,10 +323,10 @@ def forward_dispatch_cuda(
     """Select generic, scalar axial or four-row axial FP without extra compilation."""
     nv, nu = detector.nv, detector.nu
     threads = 32 if nv == 1 else 128
-    tile_v = min(16, 1 << (nv.bit_length() - 1))
-    scalar_tile = min(32 if grid.nz >= 512 else 16, 1 << (nv.bit_length() - 1))
+    tile_v = 1
+    scalar_tile = 1
     vector = grid.nz % 4 == 0 and nv >= 4
-    vector_tile = min(8, 1 << ((nv // 4).bit_length() - 1)) if vector else 0
+    vector_tile = 1 if vector else 0
     text = _forward_source(generic_source, scalar_tile, vector_tile)
     shape = jax.ShapeDtypeStruct((coeff.shape[0], nv, nu), jnp.float32)
 
@@ -432,4 +434,4 @@ def transpose_axial_vu_cuda(
         command_buffer_compatible=True,
         vmap_method="sequential",
     )(coeff, images, initial)
-    return result.reshape((nx, ny, nz))
+    return result.reshape((nz, ny, nx))

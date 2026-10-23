@@ -100,7 +100,7 @@ def exact_adjoint(
         from tomojax.core._trilinear_cuda import coefficients, run
 
         return run(coefficients(poses, grid, detector), images, grid, detector, mode="adjoint")
-    initial = jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
+    initial = jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32)
 
     def add_view(
         accumulator: jax.Array, inputs: tuple[jax.Array, jax.Array]

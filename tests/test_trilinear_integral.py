@@ -28,7 +28,7 @@ def problem(monkeypatch):
     ).as_matrix()
     poses[:, :3, 3] = [0.13, -0.27, 0.09]
     rng = np.random.default_rng(579)
-    volume = rng.uniform(0.2, 1.3, (3, 4, 2)).astype(np.float32)
+    volume = rng.uniform(0.2, 1.3, (2, 4, 3)).astype(np.float32)
     matrix = np.column_stack(
         [
             oracle(v.reshape(volume.shape), poses, grid, detector).ravel()
@@ -268,8 +268,8 @@ def test_cardinal_right_cell_derivative(axis, backend):
     dt = jnp.zeros_like(t).at[:, axis, 3].set(1)
     # Complete aligned y-rays integrate each y-centred hat to exactly vy.
     integrals = np.pad(np.asarray(x).sum(axis=1) * g.vy, ((0, 1), (0, 1)))
-    step = np.diff(integrals, axis=axis // 2)
-    expected = -(step[:, :3] / g.vx if axis == 0 else step[:3, :] / g.vz).T[None]
+    step = np.diff(integrals, axis=1 - axis // 2)
+    expected = -(step[:3, :] / g.vx if axis == 0 else step[:, :3] / g.vz)[None]
     y, jac = jax.jvp(lambda p: exact_forward(p, g, d, x), (t,), (dt,))
     np.testing.assert_allclose(jac, expected, rtol=2e-6, atol=2e-6)
     directions = jnp.zeros((1, 5, 4, 4), jnp.float32).at[:, 0].set(dt)

@@ -14,7 +14,7 @@ from tomojax.forward import joseph_pose_normal_equations, project_joseph
 def inputs(count=5):
     g, d, poses = problem()
     rng = np.random.default_rng(189)
-    x = jnp.asarray(rng.normal(size=(g.nx, g.ny, g.nz)), jnp.float32)
+    x = jnp.asarray(rng.normal(size=(g.nz, g.ny, g.nx)), jnp.float32)
     y = jnp.asarray(rng.normal(size=(len(poses), d.nv, d.nu)), jnp.float32)
     # Arbitrary combinations of physical rigid tangents. Overcomplete bases
     # deliberately produce singular positive-semidefinite normal matrices.

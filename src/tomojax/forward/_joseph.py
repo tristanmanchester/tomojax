@@ -58,7 +58,7 @@ def project_joseph(
     Parameters
     ----------
     volume : jax.Array
-        Finite real volume in (nx, ny, nz) order, converted to float32.
+        Finite real volume in (nz, ny, nx) order, converted to float32.
     poses : jax.Array
         Finite rigid world-from-object matrices, shape (views, 4, 4).
         Keep poses rigid when optimizing, for example by parameterizing rotations

@@ -34,7 +34,7 @@ def _apply(c, x, *cache):
     args = (c, x, *cache)
     return _DenseProjector(
         tuple(jax.typeof(a) for a in args),
-        grid=Grid(2, 3, 4, 1, 1, 1),
+        grid=Grid(4, 3, 2, 1, 1, 1),
         detector=Detector(4, 3, 1, 1),
     )(*args)
 

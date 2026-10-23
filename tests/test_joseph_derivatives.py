@@ -27,7 +27,7 @@ def cuda_only():
 def arrays(voxel=(0.8, 1.1, 1.3), spacing=(0.7, 1.2)):
     grid, detector, poses = problem(voxel, spacing)
     rng = np.random.default_rng(531)
-    x = jnp.asarray(rng.normal(size=(grid.nx, grid.ny, grid.nz)), jnp.float32)
+    x = jnp.asarray(rng.normal(size=(grid.nz, grid.ny, grid.nx)), jnp.float32)
     y = jnp.asarray(rng.normal(size=(len(poses), detector.nv, detector.nu)), jnp.float32)
     poses = jnp.asarray(poses)
     return grid, detector, poses, x, y

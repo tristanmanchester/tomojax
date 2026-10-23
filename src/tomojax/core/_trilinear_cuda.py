@@ -62,7 +62,7 @@ def run(cf, data, grid, detector, *, mode="forward"):
     n = cf.shape[0]
     shape = (grid.nx, grid.ny, grid.nz)
     output_shape = (
-        shape
+        shape[::-1]
         if operation == 1
         else (7, n, detector.nv, detector.nu)
         if operation == 2

@@ -40,7 +40,7 @@ def forward(
 ) -> jax.Array:
     """Sum bilinear or cubic plane samples in the reference plane order."""
     threads = 32 if detector.nv == 1 else 128
-    tile_v = min(16, 1 << (detector.nv.bit_length() - 1))
+    tile_v = 1
     tile_u = threads // tile_v
     tiles = ((detector.nu + tile_u - 1) // tile_u) * ((detector.nv + tile_v - 1) // tile_v)
     views = coeff.shape[0]
@@ -122,7 +122,7 @@ def adjoint(
 
     return buffer_callback(
         launch,
-        jax.ShapeDtypeStruct(shape, jnp.float32),
+        jax.ShapeDtypeStruct(shape[::-1], jnp.float32),
         input_output_aliases={2: 0},
         command_buffer_compatible=True,
         vmap_method="sequential",

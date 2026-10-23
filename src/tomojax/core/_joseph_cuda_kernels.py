@@ -71,9 +71,9 @@ extern "C" __global__ void joseph_gather(
     long run = (long)blockIdx.x * blockDim.x + threadIdx.x;
     int runs_z = (nz + R - 1) / R;
     bool valid = run < (long)nx * ny * runs_z;
-    int ix = valid ? run / ((long)ny * runs_z) : 0;
-    int iy = valid ? (run / runs_z) % ny : 0;
-    int iz0 = valid ? R * (int)(run % runs_z) : 0;
+    int ix = valid ? run % nx : 0;
+    int iy = valid ? (run / nx) % ny : 0;
+    int iz0 = valid ? R * (int)(run / ((long)nx * ny)) : 0;
     float total[R];
     #pragma unroll
     for (int j = 0; j < R; ++j) total[j] = 0.f;
@@ -94,10 +94,10 @@ extern "C" __global__ void joseph_gather(
         }
     }
     if (valid) {
-        long base = ((long)ix * ny + iy) * nz + iz0;
+        long base = ((long)iz0 * ny + iy) * nx + ix;
         #pragma unroll
         for (int j = 0; j < R; ++j)
-            if (iz0 + j < nz) out[base + j] += total[j];
+            if (iz0 + j < nz) out[base + (long)j*nx*ny] += total[j];
     }
 }
 """
@@ -117,14 +117,14 @@ __device__ float sample(const float* x, int a, int k, int b, int c,
     if (b<0 || b>=nb || c<0 || c>=nc) return 0.f;
     if (UNIFORM) return 1.f;
     int ix=a==0?k:(a==1?c:b), iy=a==0?b:(a==1?k:c), iz=a==0?c:(a==1?b:k);
-    return x[((INDEX)ix*ny+iy)*nz+iz];
+    return x[((INDEX)iz*ny+iy)*nx+ix];
 }
 extern "C" __global__ void forward(const float* coeff, const float* x, float* out,
         int nx,int ny,int nz,int nu,int nv,int nviews) {
-    int tiles_v=(nv+15)/16;
+    int tiles_v=nv;
     int tile=blockIdx.x/nviews, view=blockIdx.x%nviews;
-    int u=(tile/tiles_v)*8+threadIdx.x/16;
-    int v=(tile%tiles_v)*16+threadIdx.x%16;
+    int u=(tile/tiles_v)*128+threadIdx.x;
+    int v=tile%tiles_v;
     bool valid=(u<nu && v<nv);
     const float* c=coeff+14*view;
     int a=(int)c[0];
