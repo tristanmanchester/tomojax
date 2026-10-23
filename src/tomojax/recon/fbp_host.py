@@ -18,10 +18,11 @@ from tomojax.backends.api import is_oom_error
 from tomojax.core.devices import as_devices
 from tomojax.core.geometry.cone import require_parallel_beam
 from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.host_transfer import copy_to_host, upload_host
 from tomojax.core.validation import validate_detector, validate_projection_stack
 from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
 
-from ._host_arrays import ProjectionRows, validate_host_arrays
+from ._host_arrays import ProjectionRows, empty_host_array, validate_host_arrays
 from .fbp import (
     FBPConfig,
     _fbp_from_host,  # pyright: ignore[reportPrivateUsage]
@@ -143,7 +144,17 @@ def _stage_rows(
         return window
     device = next(iter(devices))
     free = device_free_memory_bytes(device=device) or 0
-    return jax.device_put(window[:], device) if size <= free // 4 else window
+    if size > free // 4:
+        return window
+    stop = window.start + window.rows
+    # Regular row windows copy directly; only conversion or zero extension
+    # needs a private packed source. No full-stack staging is retained.
+    host = (
+        window.projections[:, window.start : stop]
+        if window.start >= 0 and stop <= window.projections.shape[1]
+        else window[:]
+    )
+    return upload_host(np.asarray(host, dtype=np.float32), device)
 
 
 class _VolumeWriter:
@@ -157,16 +168,16 @@ class _VolumeWriter:
         return self
 
     def __call__(self, volume: jax.Array, target: np.ndarray, count: int) -> None:
+        def store() -> None:
+            # The closure owns the device slab until its synchronous copy ends;
+            # no array-sized JAX host mirror outlives that transfer.
+            copy_to_host(volume[:count], target)
+
         if self.pool is None:
-            target[...] = np.asarray(volume)[:count]
+            store()
             return
         if self.pending is not None:
             self.pending.result()
-        volume.copy_to_host_async()
-
-        def store() -> None:
-            target[...] = np.asarray(volume)[:count]
-
         self.pending = self.pool.submit(store)
 
     def __exit__(self, *args: object) -> None:
@@ -205,7 +216,7 @@ def fbp_host(
 
     Accept NumPy arrays, including memmaps, or device arrays and return a float32
     NumPy array. Automatically allocated output uses C order with contiguous
-    axial (z) slabs.
+    axial (z) slabs in owned demand-paged host storage.
     ``out`` may be a writable memmap. Writes complete before returning, but
     a later failure can leave a partially written output. Input storage must
     remain unchanged until the call finishes. This host-returning routine is
@@ -272,7 +283,9 @@ def fbp_host(
     local_grid, local_detector, first, step, integer = _slab_layout(grid, detector, depth)
     rows = local_detector.nv
     ramp = rfft_filter_array(cfg.filter, local_detector.nu, detector.du, jnp.float32)
-    output = validate_host_arrays(projections, out, shape, device_input=True)
+    output = validate_host_arrays(
+        projections, out, shape, device_input=True, allocate=empty_host_array
+    )
     host_poses = np.asarray(poses, np.float32)
     params = np.zeros((n_views, 6), np.float32)
     slab_bytes = 4 * grid.nx * grid.ny * depth
@@ -315,6 +328,7 @@ def fbp_host(
             # Only one previous slab can remain pending while this slab computes.
             target = output[start : start + count]
             write(volume, target, count)
+            del volume
     return output
 
 
@@ -330,7 +344,9 @@ def _general_slabs(
     views: int,
 ) -> np.ndarray:
     """Reconstruct z-slabs, streaming every view batch once per slab."""
-    output = validate_host_arrays(projections, out, (grid.nz, grid.ny, grid.nx), device_input=True)
+    output = validate_host_arrays(
+        projections, out, (grid.nz, grid.ny, grid.nx), device_input=True, allocate=empty_host_array
+    )
     view_scale, params, arc_length, separable = _view_weights(poses, cfg.scale)
     host_poses = np.asarray(poses, np.float32)
     detector_f = _filter_detector(grid, detector, host_poses, pad_v=not separable)
@@ -366,7 +382,7 @@ def _general_slabs(
                 check_finite=True,
             )
             target = output[start : start + count]
-            target[...] = np.asarray(volume)[:count]
+            copy_to_host(volume[:count], target)
         except Exception as error:
             if not is_oom_error(error):
                 raise

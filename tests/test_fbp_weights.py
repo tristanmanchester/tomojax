@@ -112,7 +112,7 @@ def test_missing_early_views_preserve_gaussian_attenuation() -> None:
     u = np.arange(detector.nu) - (detector.nu - 1) / 2
     profile = np.sqrt(2 * np.pi) * sigma * np.exp(-(u**2) / (2 * sigma**2))
     projections = jnp.asarray(np.broadcast_to(profile, (len(angles), 1, detector.nu)))
-    actual = np.asarray(fbp(geometry, grid, detector, projections))[:, :, 0]
+    actual = np.asarray(fbp(geometry, grid, detector, projections))[0]
     x = np.arange(n) - (n - 1) / 2
     truth = np.exp(-(x[:, None] ** 2 + x[None, :] ** 2) / (2 * sigma**2))
     assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.005
@@ -223,7 +223,7 @@ def gaussian_case(span: float, n_views: int, start: float = 0.0) -> tuple:
         line = np.sqrt(2 * np.pi) * sigma * np.exp(-distance2 / (2 * sigma**2))
         projections[i] = line.reshape(detector.nu, detector.nv).T
     axes = [np.arange(n) - (n - 1) / 2] * 3
-    xx, yy, zz = np.meshgrid(*axes, indexing="ij")
+    zz, yy, xx = np.meshgrid(*axes, indexing="ij")
     truth = np.exp(-((xx - centre[0]) ** 2 + (yy - centre[1]) ** 2 + (zz - centre[2]) ** 2) / 18)
     return geometry, grid, detector, poses, projections, truth
 
@@ -232,7 +232,8 @@ def measured_truth(truth: np.ndarray, poses: np.ndarray) -> np.ndarray:
     """Keep only frequencies lying in some view's projection plane."""
     shape = [2 * s for s in truth.shape]
     spectrum = np.fft.fftn(truth, shape, axes=(0, 1, 2))
-    k = np.stack(np.meshgrid(*[np.fft.fftfreq(s) for s in shape], indexing="ij"), axis=-1)
+    kz, ky, kx = np.meshgrid(*[np.fft.fftfreq(s) for s in shape], indexing="ij")
+    k = np.stack((kx, ky, kz), axis=-1)
     norm = np.linalg.norm(k, axis=-1, keepdims=True)
     direction = k / np.where(norm == 0, 1, norm)
     rays = poses[:, 1, :3]

@@ -140,10 +140,13 @@ def test_host_slabs_read_and_convert_only_bounded_view_batches():
 @pytest.mark.gpu
 @pytest.mark.parametrize("kind", ["integer", "fractional", "outside"])
 @pytest.mark.parametrize("free", [0, 2**30])
-def test_axial_cuda_staging_respects_memory_and_physical_rows(monkeypatch, kind, free):
+@pytest.mark.parametrize("dtype", [np.float32, np.float64, np.int16])
+def test_axial_cuda_staging_respects_memory_and_physical_rows(monkeypatch, kind, free, dtype):
     grid, detector, geometry, data = scan(kind)
     geometry = replace(geometry, angles=np.linspace(0, 180, 20, endpoint=False))
-    data = np.tile(data, (4, 1, 1))
+    data = np.tile(data, (4, 1, 1)).astype(dtype)[:, :, ::-1]
+    data.flags.writeable = False
+    saved = data.copy()
     expected = np.asarray(fbp(geometry, grid, detector, data, config=FBPConfig(backend="jax")))
     module = importlib.import_module("tomojax.recon.fbp_host")
     original, seen = module._fbp_from_host, []
@@ -157,6 +160,7 @@ def test_axial_cuda_staging_respects_memory_and_physical_rows(monkeypatch, kind,
     cfg = FBPHostConfig(slices_per_batch=4, views_per_batch=3)
     actual = fbp_host(geometry, grid, detector, data, config=cfg)
     assert seen == [bool(free)] * 3
+    np.testing.assert_array_equal(data, saved)
     np.testing.assert_allclose(actual, expected, atol=4e-6, rtol=5e-5)
 
 
