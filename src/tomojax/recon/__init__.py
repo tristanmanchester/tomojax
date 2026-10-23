@@ -12,7 +12,7 @@ from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from tomojax.recon._operators import backproject, project
+    from tomojax.recon._operators import Projector, backproject, project
     from tomojax.recon.cgls import CGLSConfig, cgls
     from tomojax.recon.cgls_multires import cgls_multires
     from tomojax.recon.cone_axis import ConeAxisCalibration, ConeAxisConfig, calibrate_cone_axis
@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
 
 _SOURCES = {
+    "Projector": "_operators",
     "backproject": "_operators",
     "project": "_operators",
     "CGLSConfig": "cgls",
@@ -68,6 +69,7 @@ __all__ = [
     "FistaConfig",
     "FourierConfig",
     "MLEMConfig",
+    "Projector",
     "SIRTConfig",
     "SPDHGConfig",
     "backproject",

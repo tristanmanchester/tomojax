@@ -5,7 +5,6 @@ Import this module explicitly; importing :mod:`tomojax` does not load PyTorch.
 
 from __future__ import annotations
 
-import copy
 from typing import TYPE_CHECKING, Any
 
 import jax
@@ -13,7 +12,7 @@ import jax.dlpack
 import torch
 from torch.utils import dlpack
 
-from tomojax.recon import backproject, project
+from tomojax.recon import Projector as _Projector
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -69,28 +68,21 @@ class Projector(torch.nn.Module):
 
     def __init__(self, geometry: ScanGeometry, *, grid: Grid | None = None) -> None:
         super().__init__()
-        self.geometry = copy.deepcopy(geometry)
-        self.grid = self.geometry.grid if grid is None else copy.deepcopy(grid)
-        self.volume_shape = (self.grid.nx, self.grid.ny, self.grid.nz)
-        self.projection_shape = (
-            len(self.geometry.angles),
-            self.geometry.detector.nv,
-            self.geometry.detector.nu,
-        )
-        # Build through the public operators, preserving their geometry dispatch
-        # and batching. The outer jit keeps their construction off the hot path.
-        self._forward = jax.jit(lambda x: project(self.geometry, x, grid=self.grid))
-        self._adjoint = jax.jit(lambda y: backproject(self.geometry, y, grid=self.grid))
+        self._operator = _Projector(geometry, grid=grid)
+        self.geometry = self._operator.geometry
+        self.grid = self._operator.grid
+        self.volume_shape = self._operator.volume_shape
+        self.projection_shape = self._operator.projection_shape
 
     def forward(self, volume: torch.Tensor) -> torch.Tensor:
         """Project a CUDA float32 volume; its gradient uses the exact transpose."""
         self._validate(volume, self.volume_shape)
-        return _Projection.apply(volume, self._forward, self._adjoint)
+        return _Projection.apply(volume, self._operator, self._operator.adjoint)
 
     def adjoint(self, projections: torch.Tensor) -> torch.Tensor:
         """Backproject with the exact transpose; its gradient uses the projector."""
         self._validate(projections, self.projection_shape)
-        return _Projection.apply(projections, self._adjoint, self._forward)
+        return _Projection.apply(projections, self._operator.adjoint, self._operator)
 
     @staticmethod
     def _validate(values: torch.Tensor, shape: tuple[int, int, int]) -> None:

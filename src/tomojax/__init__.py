@@ -45,10 +45,12 @@ if TYPE_CHECKING:
         LaminographyGeometry,
         ParallelGeometry,
     )
+    from tomojax.recon import Projector
 
 from tomojax._version import __version__
 
 _SOURCES = {
+    "Projector": "tomojax.recon",
     "Alignment": "tomojax._scan",
     "Frames": "tomojax._loading",
     "Reconstruction": "tomojax._scan",
@@ -82,6 +84,7 @@ __all__ = [
     "Grid",
     "LaminographyGeometry",
     "ParallelGeometry",
+    "Projector",
     "Reconstruction",
     "RegionEstimate",
     "Scan",

@@ -1,9 +1,9 @@
 {
   "align_config_fields": 58,
   "exported_names": {
-    "tomojax": 23,
+    "tomojax": 24,
     "tomojax.geometry": 18,
-    "tomojax.recon": 26,
+    "tomojax.recon": 27,
     "tomojax.io": 7,
     "tomojax.alignment": 6,
     "tomojax.datasets": 13,
@@ -57,7 +57,7 @@
   "suppressions": {
     "noqa": 8,
     "type: ignore": 32,
-    "pyright: ignore": 14
+    "pyright: ignore": 12
   },
   "complex_functions": [
     "src/tomojax/alignment/_config.py::C901::_normalize_optimizer_options",

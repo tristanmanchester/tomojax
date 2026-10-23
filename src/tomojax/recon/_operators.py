@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from typing import TYPE_CHECKING
 
 import jax
@@ -19,8 +20,7 @@ if TYPE_CHECKING:
     import numpy as np
 
     from tomojax._typed_arrays import Device
-    from tomojax.core.geometry.base import Geometry, Grid
-    from tomojax.geometry import Detector
+    from tomojax.geometry import Detector, Grid, ScanGeometry
 
 _BATCH = 32
 _AXIAL_STACK_BYTES = 64 * 1024**2
@@ -47,7 +47,7 @@ def _view_batch_size(
 
 
 def matched_operators(
-    geometry: Geometry,
+    geometry: ScanGeometry,
     grid: Grid | None,
     context: str,
     devices: Device | Sequence[Device] | None = None,
@@ -59,7 +59,7 @@ def matched_operators(
     model, backend = resolve_geometry_projector(
         geometry, "auto", "auto", detector=detector, det_grid=det_grid, context=context
     )
-    n_views = len(geometry.angles)  # pyright: ignore[reportAttributeAccessIssue]
+    n_views = len(geometry.angles)
     poses = stack_view_poses(geometry, n_views)
     axial_cuda = backend == "cuda" and model == "joseph" and isinstance(geometry, ParallelGeometry)
     batch = _view_batch_size(grid, detector, n_views, axial_cuda=axial_cuda)
@@ -70,8 +70,119 @@ def matched_operators(
     return grid, split, operators
 
 
+class Projector:
+    """A fixed-geometry projector and its exact transpose.
+
+    Construct once and call ``operator(volume)`` for forward projection or
+    ``operator.adjoint(projections)`` for the transpose. Geometry and grid are
+    snapshotted at construction. Each direction compiles on first use and
+    reuses its compiled program on subsequent calls. Both directions support
+    JAX transformations and differentiation.
+
+    Parameters
+    ----------
+    geometry : ScanGeometry
+        Parallel, laminography or cone-beam geometry, including per-view poses.
+    grid : Grid or None, optional
+        Volume grid; None uses the geometry's grid.
+    devices : jax.Device or sequence of jax.Device or None, optional
+        Devices sharing the views. None uses the current default device.
+
+    Attributes
+    ----------
+    geometry : ScanGeometry
+        Snapshot of the supplied scan geometry.
+    grid : Grid
+        The volume grid used by both directions.
+    volume_shape : tuple of int
+        Expected volume shape, ``(nx, ny, nz)``.
+    projection_shape : tuple of int
+        Expected projection shape, ``(views, nv, nu)``.
+
+    Examples
+    --------
+    >>> import tomojax as tj
+    >>> scan = tj.load("scan.nxs")  # doctest: +SKIP
+    >>> operator = tj.Projector(scan.geometry)  # doctest: +SKIP
+    >>> simulated = operator(tj.reconstruct(scan).volume)  # doctest: +SKIP
+    >>> transpose = operator.adjoint(scan.projections)  # doctest: +SKIP
+    """
+
+    def __init__(
+        self,
+        geometry: ScanGeometry,
+        *,
+        grid: Grid | None = None,
+        devices: Device | Sequence[Device] | None = None,
+    ) -> None:
+        self.geometry = copy.deepcopy(geometry)
+        self.grid, self._split, (forward, adjoint) = matched_operators(
+            self.geometry, grid, "Projector", devices
+        )
+        self.volume_shape = (self.grid.nx, self.grid.ny, self.grid.nz)
+        self.projection_shape = (
+            len(self.geometry.angles),
+            self.geometry.detector.nv,
+            self.geometry.detector.nu,
+        )
+        # Compile the complete batched loop, not individual operations, so its
+        # output buffer is updated in place rather than duplicated per batch.
+        self._forward = jax.jit(forward)
+        self._adjoint = jax.jit(adjoint)
+
+    def __call__(self, volume: jax.Array | np.ndarray) -> jax.Array:
+        """Project a volume with shape ``volume_shape`` into line integrals.
+
+        Parameters
+        ----------
+        volume : numpy.ndarray or jax.Array
+            Volume in reciprocal geometry-length units, shape ``(nx, ny, nz)``.
+
+        Returns
+        -------
+        jax.Array
+            Line integrals with shape ``(views, nv, nu)``.
+
+        Raises
+        ------
+        ValueError
+            If the volume shape does not match the grid.
+        """
+        self._validate(volume, self.volume_shape, "project: volume")
+        projections = self._forward(jnp.asarray(volume, jnp.float32))
+        return projections if self._split is None else self._split.take(projections)
+
+    def adjoint(self, projections: jax.Array | np.ndarray) -> jax.Array:
+        """Apply the exact transpose, not an approximate reconstruction.
+
+        Parameters
+        ----------
+        projections : numpy.ndarray or jax.Array
+            Line integrals with shape ``(views, nv, nu)``.
+
+        Returns
+        -------
+        jax.Array
+            Adjoint volume with shape ``(nx, ny, nz)``.
+
+        Raises
+        ------
+        ValueError
+            If the projection shape does not match the geometry.
+        """
+        self._validate(projections, self.projection_shape, "backproject: projections")
+        if self._split is None:
+            return self._adjoint(jnp.asarray(projections, jnp.float32))
+        return self._split.gather(self._adjoint(self._split.place(projections)))
+
+    @staticmethod
+    def _validate(values, shape: tuple[int, int, int], context: str) -> None:
+        if tuple(values.shape) != shape:
+            raise ValueError(f"{context} shape {tuple(values.shape)} does not match {shape}")
+
+
 def project(
-    geometry: Geometry,
+    geometry: ScanGeometry,
     volume: jax.Array | np.ndarray,
     *,
     grid: Grid | None = None,
@@ -88,7 +199,7 @@ def project(
 
     Parameters
     ----------
-    geometry : Geometry
+    geometry : ScanGeometry
         Parallel, laminography or cone-beam scan geometry, with any per-view poses.
     volume : array-like
         Volume of shape ``(nx, ny, nz)`` in reciprocal geometry-length units.
@@ -107,20 +218,11 @@ def project(
     ValueError
         If the array shape does not match the grid or scan geometry.
     """
-    grid, split, (forward, _) = matched_operators(geometry, grid, "project", devices)
-    if tuple(volume.shape) != (grid.nx, grid.ny, grid.nz):
-        raise ValueError(
-            f"project: volume shape {tuple(volume.shape)} does not match the grid "
-            f"{(grid.nx, grid.ny, grid.nz)}"
-        )
-    # Compiled whole, the loop fills its output in place: run op by op, the zero
-    # start and the result would be two sinogram-sized arrays.
-    projections = jax.jit(forward)(jnp.asarray(volume, jnp.float32))
-    return projections if split is None else split.take(projections)
+    return Projector(geometry, grid=grid, devices=devices)(volume)
 
 
 def backproject(
-    geometry: Geometry,
+    geometry: ScanGeometry,
     projections: jax.Array | np.ndarray,
     *,
     grid: Grid | None = None,
@@ -134,7 +236,7 @@ def backproject(
 
     Parameters
     ----------
-    geometry : Geometry
+    geometry : ScanGeometry
         Parallel, laminography or cone-beam scan geometry, with any per-view poses.
     projections : array-like
         Projection stack of shape ``(views, nv, nu)``.
@@ -153,17 +255,7 @@ def backproject(
     ValueError
         If the array shape does not match the grid or scan geometry.
     """
-    grid, split, (_, adjoint) = matched_operators(geometry, grid, "backproject", devices)
-    detector = geometry.detector
-    expected = (len(geometry.angles), detector.nv, detector.nu)  # pyright: ignore[reportAttributeAccessIssue]
-    if tuple(projections.shape) != expected:
-        raise ValueError(
-            f"backproject: projections shape {tuple(projections.shape)} does not match the "
-            f"geometry {expected} (views, rows, columns)"
-        )
-    if split is None:
-        return jax.jit(adjoint)(jnp.asarray(projections, jnp.float32))
-    return split.gather(jax.jit(adjoint)(split.place(projections)))
+    return Projector(geometry, grid=grid, devices=devices).adjoint(projections)
 
 
-__all__ = ["backproject", "project"]
+__all__ = ["Projector", "backproject", "project"]

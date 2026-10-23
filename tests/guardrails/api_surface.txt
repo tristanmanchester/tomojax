@@ -91,6 +91,13 @@ class tomojax.LaminographyGeometry(
 class tomojax.ParallelGeometry(grid: 'Grid', detector: 'Detector', angles: 'Sequence[float]') -> None
     .pose_for_view(self, i: 'int') -> 'PoseMatrix'
     .rays_for_view(self, i: 'int') -> 'RayPair'
+class tomojax.Projector(
+        geometry: 'ScanGeometry',
+        *,
+        grid: 'Grid | None' = None,
+        devices: 'Device | Sequence[Device] | None' = None,
+    ) -> 'None'
+    .adjoint(self, projections: 'jax.Array | np.ndarray') -> 'jax.Array'
 class tomojax.Reconstruction(
         volume: 'np.ndarray | jax.Array',
         scan: 'Scan',
@@ -140,7 +147,7 @@ def tomojax.align(
         devices: 'Device | Sequence[Device] | None' = None,
     ) -> 'Alignment'
 def tomojax.backproject(
-        geometry: 'Geometry',
+        geometry: 'ScanGeometry',
         projections: 'np.ndarray | jax.Array',
         *,
         grid: 'Grid | None' = None,
@@ -166,7 +173,7 @@ def tomojax.load_frames(
     ) -> 'Frames'
 def tomojax.load_reconstruction(path: 'str | PathLike[str]') -> 'Reconstruction'
 def tomojax.project(
-        geometry: 'Geometry',
+        geometry: 'ScanGeometry',
         volume: 'np.ndarray | jax.Array',
         *,
         grid: 'Grid | None' = None,
@@ -404,6 +411,13 @@ class tomojax.recon.MLEMConfig(
         backend: 'ProjectorBackend' = 'auto',
         projector_model: 'ProjectorModel' = 'auto',
     ) -> None
+class tomojax.recon.Projector(
+        geometry: 'ScanGeometry',
+        *,
+        grid: 'Grid | None' = None,
+        devices: 'Device | Sequence[Device] | None' = None,
+    ) -> 'None'
+    .adjoint(self, projections: 'jax.Array | np.ndarray') -> 'jax.Array'
 class tomojax.recon.SIRTConfig(
         *,
         iterations: 'int' = 50,
@@ -441,7 +455,7 @@ class tomojax.recon.SPDHGConfig(
         stream_projections: 'bool | None' = None,
     ) -> None
 def tomojax.recon.backproject(
-        geometry: 'Geometry',
+        geometry: 'ScanGeometry',
         projections: 'jax.Array | np.ndarray',
         *,
         grid: 'Grid | None' = None,
@@ -545,7 +559,7 @@ def tomojax.recon.mlem(
         out: 'np.ndarray | None' = None,
     ) -> 'tuple[jax.Array | np.ndarray, dict[str, object]]'
 def tomojax.recon.project(
-        geometry: 'Geometry',
+        geometry: 'ScanGeometry',
         volume: 'jax.Array | np.ndarray',
         *,
         grid: 'Grid | None' = None,

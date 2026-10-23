@@ -167,7 +167,7 @@ def _json_value(value: object) -> object:
 
 
 def project(
-    geometry: Geometry,
+    geometry: ScanGeometry,
     volume: np.ndarray | jax.Array,
     *,
     grid: Grid | None = None,
@@ -177,7 +177,7 @@ def project(
 
     Parameters
     ----------
-    geometry : Geometry
+    geometry : ScanGeometry
         Per-view geometry defining the matched projector.
     volume : numpy.ndarray or jax.Array
         Volume in (x, y, z) order.
@@ -208,7 +208,7 @@ def project(
 
 
 def backproject(
-    geometry: Geometry,
+    geometry: ScanGeometry,
     projections: np.ndarray | jax.Array,
     *,
     grid: Grid | None = None,
@@ -218,7 +218,7 @@ def backproject(
 
     Parameters
     ----------
-    geometry : Geometry
+    geometry : ScanGeometry
         Per-view geometry defining the matched projector.
     projections : numpy.ndarray or jax.Array
         Line integrals in (view, v, u) order.

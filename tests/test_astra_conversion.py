@@ -295,3 +295,44 @@ def test_independently_imported_orbits_keep_one_object_frame(tmp_path):
         tj.save(tmp_path / f"calibrated_{len(scan.angles)}.npz", restored)
         loaded = tj.load(tmp_path / f"calibrated_{len(scan.angles)}.npz")
         np.testing.assert_allclose(loaded.to_astra()[1]["Vectors"], vectors, atol=1e-6)
+
+
+@pytest.mark.gpu
+@pytest.mark.fresh_gpu
+def test_positive_object_angles_project_one_phantom_in_all_three_libraries(monkeypatch):
+    import importlib
+    from pathlib import Path
+
+    astra = pytest.importorskip("astra")
+    tigre = pytest.importorskip("tigre")
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "bench"))
+    adapter = importlib.import_module("tigre_cone")
+    grid = tj.Grid(32, 32, 32, 1.0, 1.0, 1.0)
+    detector = tj.Detector(48, 40, 1.0, 1.0)
+    geometry = tj.ConeGeometry(grid, detector, [0, 27, 90, 177, 271], tj.ConeBeam(80, 130))
+    volume = _volume(32)
+    empty = np.zeros((5, detector.nv, detector.nu), np.float32)
+    _, projection_geometry, volume_geometry = tj.Scan(empty, geometry).to_astra()
+    # The object turns +90 about z; the source in its fixed frame turns -90.
+    np.testing.assert_allclose(
+        projection_geometry["Vectors"][[0, 2], :3], [[0, -80, 0], [-80, 0, 0]], atol=1e-5
+    )
+    external_volume = np.ascontiguousarray(volume.transpose(2, 1, 0))
+    volume_id = astra.data3d.create("-vol", volume_geometry, external_volume)
+    sino_id = None
+    try:
+        sino_id, projected = astra.create_sino3d_gpu(
+            volume_id, projection_geometry, volume_geometry
+        )
+        astra_projection = projected.transpose(1, 0, 2).copy()
+    finally:
+        astra.data3d.delete(volume_id)
+        if sino_id is not None:
+            astra.data3d.delete(sino_id)
+    geo, angles = adapter.geometry(projection_geometry["Vectors"], grid=grid, detector=detector)
+    projected = tigre.Ax(external_volume, geo, angles, projection_type="interpolated")
+    # Finish external kernels before JAX claims an allocator pool: TIGRE refuses
+    # an otherwise idle GPU when another allocator reserves half its memory.
+    ours = np.asarray(tj.Projector(geometry)(volume))
+    assert np.linalg.norm(ours - astra_projection) / np.linalg.norm(ours) < 2e-3
+    assert np.linalg.norm(ours - projected) / np.linalg.norm(ours) < 1e-2
