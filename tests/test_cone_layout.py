@@ -50,10 +50,12 @@ def test_native_cone_projection_and_subset_batching(tilt):
     np.testing.assert_allclose(gradient, expected_gradient, rtol=2e-5, atol=1e-4)
     config = SIRTConfig(iterations=2, subsets=3, views_per_batch=8)
     updated = sirt(geometry, grid, detector, images, config=config)[0]
-    coeff = cone.cone_coefficients(geometry.poses(), grid, detector, geometry.beam)
-    expected = jax.jit(lambda x: cone.cone_project(x, coeff, grid, detector, backend="cuda"))(
-        volume
-    )
+
+    def direct(x):
+        coeff = cone.cone_coefficients(geometry.poses(), grid, detector, geometry.beam)
+        return cone.cone_project(x, coeff, grid, detector, backend="cuda")
+
+    expected = jax.jit(direct)(volume)
     reference = sirt(geometry, grid, detector, images, config=replace(config, views_per_batch=16))[
         0
     ]
