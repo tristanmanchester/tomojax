@@ -322,6 +322,27 @@ def test_host_slabs_match_full_fdk_with_nonseparable_geometry(backend, kind):
 
 
 @pytest.mark.gpu
+@pytest.mark.parametrize("shape", [(9, 3, 35), (17, 5, 257)])
+def test_cuda_fdk_accumulates_partial_output_tiles(shape):
+    import importlib
+
+    module = importlib.import_module("tomojax.recon._fdk_cuda")
+    nx, ny, nz = shape
+    coeff = np.zeros((1, 25), np.float32)
+    coeff[0, 1] = -1.0
+    coeff[0, [14, 16, 17, 22]] = 1.0
+    # Constant detector data leaves only the depth weight 1 / (y + 1)**2.
+    grid = Grid(nx, ny, nz, 1.0, 1.0, 1.0)
+    detector = Detector(nx + 2, nz + 2, 1.0, 1.0)
+    images = jax.device_put(np.ones((1, nz + 2, nx + 2), np.float32))
+    out = jax.device_put(np.full((nz, ny, nx), 0.25, np.float32))
+    actual = module.backproject_cuda(images, jax.device_put(coeff), grid, detector, 1.0, out)
+    expected = 0.25 + 1.0 / (np.arange(ny, dtype=np.float32) + 1.0) ** 2
+    expected = np.broadcast_to(expected[None, :, None], actual.shape)
+    np.testing.assert_allclose(actual, expected, rtol=2e-6)
+
+
+@pytest.mark.gpu
 @pytest.mark.parametrize("general", [False, True])
 @pytest.mark.parametrize(
     "row",
