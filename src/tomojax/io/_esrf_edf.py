@@ -42,22 +42,37 @@ def _metadata(path: Path) -> dict[str, str] | None:
 
 
 def _projection_files(owner: Path, fields: dict[str, str]) -> list[Path]:
+    declared = fields.get("scanname", fields.get("prefix"))
+    # Match the recorded prefix before parsing the image number: scan names
+    # themselves can end in digits, and other scans can share this directory.
+    pattern = (
+        rf"({re.escape(declared.rstrip('_'))}_?)(\d+)\.edf" if declared else r"(.+?)(\d+)\.edf"
+    )
     groups: dict[str, dict[int, Path]] = {}
     for file in owner.parent.iterdir():
-        match = re.fullmatch(r"(.+?)(\d+)\.edf", file.name, re.IGNORECASE)
-        if match and not file.name.startswith(("ref", "dark")) and "_slice_" not in file.name:
+        match = re.fullmatch(pattern, file.name, re.IGNORECASE)
+        calibration = re.search(
+            r"(?:^|_)(?:ref(?:HST)?|dark(?:end|HST)?|avgdarkfile)_?\d+(?:_\d+)?\.edf$",
+            file.name,
+            re.IGNORECASE,
+        )
+        if match and not calibration and "_slice_" not in file.name:
             prefix, index = match.groups()
             groups.setdefault(prefix.rstrip("_"), {})[int(index)] = file
-    declared = fields.get("scanname", owner.stem).rstrip("_")
-    if declared in groups:
-        frames = groups[declared]
+    name = (declared or owner.stem).rstrip("_")
+    if name in groups:
+        frames = groups[name]
     elif len(groups) == 1:
         frames = next(iter(groups.values()))
     else:
         raise ValueError(f"{owner}: cannot identify one EDF projection series")
     # Extra closing/alignment images are not tomography projections.
     first = min(frames)
-    return [frames[i] for i in range(first, first + int(fields["tomo_n"]))]
+    indices = range(first, first + int(fields["tomo_n"]))
+    missing = next((i for i in indices if i not in frames), None)
+    if missing is not None:
+        raise ValueError(f"{owner}: missing EDF projection {missing} in the declared series")
+    return [frames[i] for i in indices]
 
 
 def _calibrations(owner: Path, fields: dict[str, str]):
@@ -143,5 +158,10 @@ def read_edf_scan(path: Path) -> RawAcquisition | None:
         if len(candidates) > 1:
             raise ValueError(f"{path}: several EDF acquisition records; select the metadata file")
         return _acquisition(*candidates[0]) if candidates else None
+    from ._pyhst import read_pyhst
+
+    pyhst = read_pyhst(path)
+    if pyhst is not None:
+        return pyhst
     fields = _metadata(path)
     return _acquisition(path, fields) if fields is not None else None
