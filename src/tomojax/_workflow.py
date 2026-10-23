@@ -180,7 +180,7 @@ def project(
     geometry : ScanGeometry
         Per-view geometry defining the matched projector.
     volume : numpy.ndarray or jax.Array
-        Volume in (x, y, z) order.
+        Volume in (z, y, x) order, or (y, x) for a single slice.
     grid : Grid or None, optional
         Voxel grid; None uses the geometry's grid.
     devices : jax.Device or sequence of jax.Device or None, optional
@@ -189,7 +189,8 @@ def project(
     Returns
     -------
     jax.Array
-        Line-integral projections, shape (views, detector.nv, detector.nu).
+        Line-integral projections, shape (views, detector.nv, detector.nu);
+        single-slice 2D input returns (views, detector.nu).
 
     Raises
     ------
@@ -221,7 +222,7 @@ def backproject(
     geometry : ScanGeometry
         Per-view geometry defining the matched projector.
     projections : numpy.ndarray or jax.Array
-        Line integrals in (view, v, u) order.
+        Line integrals in (view, v, u) order, or (view, u) for a single slice.
     grid : Grid or None, optional
         Voxel grid; None uses the geometry's grid.
     devices : jax.Device or sequence of jax.Device or None, optional
@@ -230,7 +231,8 @@ def backproject(
     Returns
     -------
     jax.Array
-        Adjoint volume, shape (grid.nx, grid.ny, grid.nz).
+        Adjoint volume, shape (grid.nz, grid.ny, grid.nx);
+        single-slice 2D input returns (grid.ny, grid.nx).
 
     Raises
     ------

@@ -18,6 +18,9 @@ def geometry(kind):
         grid = tj.Grid(3, 4, 4, 0.8, 1.1, 1.3)
         detector = tj.Detector(5, 4, 0.9, 1.3, (0.2, 0))
     angles = [7.0, 41.0, 93.0]
+    if kind == "slice":
+        grid = tj.Grid(3, 4, 1, 0.8, 1.1, 1.3)
+        detector = tj.Detector(5, 1, 0.9, 1.3)
     if kind == "cone":
         return tj.ConeGeometry(grid, detector, angles, tj.ConeBeam(15.0, 25.0))
     if kind == "lamino":
@@ -25,7 +28,7 @@ def geometry(kind):
     return tj.ParallelGeometry(grid, detector, angles)
 
 
-@pytest.mark.parametrize("kind", ["parallel", "cone", "lamino", "axial"])
+@pytest.mark.parametrize("kind", ["parallel", "cone", "lamino", "axial", "slice"])
 @pytest.mark.filterwarnings("ignore:Input #0 requires gradient and is not a double precision")
 def test_matched_autograd(kind, monkeypatch):
     if kind == "axial":
@@ -35,6 +38,8 @@ def test_matched_autograd(kind, monkeypatch):
     torch.manual_seed(3)
     x = torch.rand(operator.volume_shape, device="cuda", requires_grad=True)
     y = torch.rand(operator.projection_shape, device="cuda", requires_grad=True)
+    if kind == "slice":
+        x, y = x.squeeze(0), y.squeeze(1)
     projected, transposed = operator(x), operator.adjoint(y)
     expected = tj.project(geom, jax.dlpack.from_dlpack(x.detach(), copy=False))
     np.testing.assert_allclose(projected.detach().cpu(), np.asarray(expected), rtol=2e-6, atol=2e-6)
@@ -76,6 +81,6 @@ def test_dlpack_shares_storage_and_respects_torch_stream(monkeypatch):
     assert incoming and outgoing
     assert all(a == b for a, b in incoming + outgoing)
     with pytest.raises(ValueError, match="contiguous"):
-        operator(torch.zeros(2, 4, 3, device="cuda").permute(2, 1, 0))
+        operator(torch.zeros(3, 4, 2, device="cuda").permute(2, 1, 0))
     with pytest.raises(ValueError, match="float32"):
         operator(x.double())

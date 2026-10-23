@@ -91,7 +91,7 @@ def test_grid_override_keeps_original_angles_poses_and_projection_storage(kind, 
         [result.scan.geometry.pose_for_view(i) for i in range(6)], original_poses
     )
     assert scan.grid == geometry.grid and scan.projections is projections
-    np.testing.assert_array_equal(result.volume, np.zeros((5, 4, 3), np.float32))
+    np.testing.assert_array_equal(result.volume, np.zeros((3, 4, 5), np.float32))
     assert tj.reconstruct(scan, "cgls", iterations=0, grid=scan.grid).scan is scan
 
 
@@ -100,7 +100,7 @@ def test_grid_override_reconstruction_recovers_a_known_image(kind):
     geometry = _geometry(kind)
     region = tj.Grid(5, 4, 3, 1.1, 0.9, 1.3)
     reference_geometry = replace(geometry, grid=region)
-    x, y, z = np.meshgrid(np.arange(5) - 2, np.arange(4) - 1.5, np.arange(3) - 1, indexing="ij")
+    z, y, x = np.meshgrid(np.arange(3) - 1, np.arange(4) - 1.5, np.arange(5) - 2, indexing="ij")
     truth = np.exp(-((x - 0.3) ** 2 + (y + 0.2) ** 2 + (z - 0.1) ** 2)).astype(np.float32)
     data = tj.project(reference_geometry, truth)
     result = tj.reconstruct(
@@ -116,7 +116,8 @@ def test_public_projection_matches_independent_view_groups(kind, monkeypatch):
     geometry = replace(_geometry(kind), angles=np.linspace(0, 180, 37, endpoint=False))
     first = replace(geometry, angles=geometry.angles[:32])
     last = replace(geometry, angles=geometry.angles[32:])
-    volume = jnp.arange(120, dtype=jnp.float32).reshape(6, 5, 4) / 120
+    z, y, x = jnp.indices((4, 5, 6), dtype=jnp.float32)
+    volume = (20 * x + 4 * y + z) / 120
     images = jnp.arange(37 * 7 * 9, dtype=jnp.float32).reshape(37, 7, 9) / 1000
     separate_fp = jnp.concatenate([tj.project(first, volume), tj.project(last, volume)])
     separate_bp = tj.backproject(first, images[:32]) + tj.backproject(last, images[32:])

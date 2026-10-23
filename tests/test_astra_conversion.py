@@ -17,7 +17,7 @@ pytestmark = pytest.mark.numerical
 
 def _volume(n: int) -> np.ndarray:
     c = (np.arange(n) - (n - 1) / 2) / (n / 6)
-    x, y, z = np.meshgrid(c, c, c, indexing="ij")
+    z, y, x = np.meshgrid(c, c, c, indexing="ij")
     blob = np.exp(-((x - 0.6) ** 2 + (y + 0.3) ** 2 + (z - 0.4) ** 2) * 1.5)
     return (blob + 0.6 * np.exp(-((x + 0.9) ** 2 * 3 + (y - 0.5) ** 2 + z**2))).astype(np.float32)
 
@@ -151,7 +151,7 @@ def test_from_astra_projects_like_astra(mirrored):
     astra = pytest.importorskip("astra")
     n, rows, cols, views = 32, 28, 40, 40
     vol_geom = astra.create_vol_geom(n, n, n)
-    volume_zyx = np.transpose(_volume(n), (2, 1, 0)).copy()
+    volume_zyx = _volume(n)
     angles = np.linspace(0, 2 * np.pi, views, endpoint=False)
     vectors = astra.geom_2vec(
         astra.create_proj_geom("cone", 1.1, 1.0, rows, cols, angles, 70.0, 50.0)
@@ -172,7 +172,7 @@ def test_from_astra_projects_like_astra(mirrored):
 
     scan = tj.Scan.from_astra(data, proj_geom, vol_geom)
 
-    ours = np.asarray(tj.project(scan.geometry, np.transpose(volume_zyx, (2, 1, 0))))
+    ours = np.asarray(tj.project(scan.geometry, volume_zyx))
     assert np.linalg.norm(ours - np.asarray(scan.projections)) / np.linalg.norm(data) < 2e-3
 
 
@@ -181,7 +181,7 @@ def test_a_multi_orbit_astra_scan_becomes_segments_that_project_like_astra():
     astra = pytest.importorskip("astra")
     n, rows, cols, views = 32, 40, 40, 30
     vol_geom = astra.create_vol_geom(n, n, n)
-    volume_zyx = np.transpose(_volume(n), (2, 1, 0)).copy()
+    volume_zyx = _volume(n)
     angles = np.linspace(0, 2 * np.pi, views, endpoint=False)
     circle = astra.create_proj_geom("cone", 1.0, 1.0, rows, cols, angles, 70.0, 50.0)
     orbits = []
@@ -198,7 +198,7 @@ def test_a_multi_orbit_astra_scan_becomes_segments_that_project_like_astra():
 
     assert isinstance(scan.geometry, tj.geometry.ConeSegments)
     assert len(scan.geometry.segments) == 3
-    ours = np.asarray(tj.project(scan.geometry, np.transpose(volume_zyx, (2, 1, 0))))
+    ours = np.asarray(tj.project(scan.geometry, volume_zyx))
     assert np.linalg.norm(ours - np.asarray(scan.projections)) / np.linalg.norm(data) < 2e-3
     back, proj_back, vol_back = scan.to_astra()
     np.testing.assert_allclose(proj_back["Vectors"], proj_geom["Vectors"], atol=1e-4)
@@ -317,7 +317,7 @@ def test_positive_object_angles_project_one_phantom_in_all_three_libraries(monke
     np.testing.assert_allclose(
         projection_geometry["Vectors"][[0, 2], :3], [[0, -80, 0], [-80, 0, 0]], atol=1e-5
     )
-    external_volume = np.ascontiguousarray(volume.transpose(2, 1, 0))
+    external_volume = np.ascontiguousarray(volume)
     volume_id = astra.data3d.create("-vol", volume_geometry, external_volume)
     sino_id = None
     try:

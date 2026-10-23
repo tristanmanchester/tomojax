@@ -51,8 +51,10 @@ class _Projection(torch.autograd.Function):
 class Projector(torch.nn.Module):
     """A fixed-geometry CUDA projector and its exact transpose, with autograd.
 
-    ``operator(volume)`` maps ``(nx, ny, nz)`` to ``(views, v, u)``;
-    ``operator.adjoint(projections)`` maps back. Inputs must be contiguous
+    ``operator(volume)`` maps ``(nz, ny, nx)`` to ``(views, v, u)``;
+    ``operator.adjoint(projections)`` maps back. When ``grid.nz == detector.nv == 1``,
+    2D inputs map ``(ny, nx)`` to ``(views, nu)`` and back, without copies.
+    Inputs must be contiguous
     CUDA float32 tensors with 16-byte-aligned storage (standard allocations).
     Clone an unaligned offset view before passing it. The DLPack boundary
     shares storage in both directions;
@@ -76,19 +78,17 @@ class Projector(torch.nn.Module):
 
     def forward(self, volume: torch.Tensor) -> torch.Tensor:
         """Project a CUDA float32 volume; its gradient uses the exact transpose."""
-        self._validate(volume, self.volume_shape)
+        self._validate(volume)
         return _Projection.apply(volume, self._operator, self._operator.adjoint)
 
     def adjoint(self, projections: torch.Tensor) -> torch.Tensor:
         """Backproject with the exact transpose; its gradient uses the projector."""
-        self._validate(projections, self.projection_shape)
+        self._validate(projections)
         return _Projection.apply(projections, self._operator.adjoint, self._operator)
 
     @staticmethod
-    def _validate(values: torch.Tensor, shape: tuple[int, int, int]) -> None:
+    def _validate(values: torch.Tensor) -> None:
         if not values.is_cuda or not values.is_floating_point() or values.element_size() != 4:
             raise ValueError("Projector inputs must be CUDA float32 tensors")
-        if tuple(values.shape) != shape:
-            raise ValueError(f"Projector expected shape {shape}, got {tuple(values.shape)}")
         if not values.is_contiguous():
             raise ValueError("Projector inputs must be contiguous; call tensor.contiguous()")

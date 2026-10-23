@@ -79,6 +79,11 @@ class Projector:
     reuses its compiled program on subsequent calls. Both directions support
     JAX transformations and differentiation.
 
+    When ``grid.nz == detector.nv == 1``, a volume can also be supplied as
+    ``(ny, nx)``: its projections have shape ``(views, nu)``. Conversely,
+    ``adjoint`` maps that 2D sinogram to ``(ny, nx)``. Explicit 3D inputs
+    preserve their singleton axes; these are the same matched operators.
+
     Parameters
     ----------
     geometry : ScanGeometry
@@ -95,7 +100,7 @@ class Projector:
     grid : Grid
         The volume grid used by both directions.
     volume_shape : tuple of int
-        Expected volume shape, ``(nx, ny, nz)``.
+        Expected volume shape, ``(nz, ny, nx)``.
     projection_shape : tuple of int
         Expected projection shape, ``(views, nv, nu)``.
 
@@ -119,7 +124,7 @@ class Projector:
         self.grid, self._split, (forward, adjoint) = matched_operators(
             self.geometry, grid, "Projector", devices
         )
-        self.volume_shape = (self.grid.nx, self.grid.ny, self.grid.nz)
+        self.volume_shape = (self.grid.nz, self.grid.ny, self.grid.nx)
         self.projection_shape = (
             len(self.geometry.angles),
             self.geometry.detector.nv,
@@ -129,6 +134,7 @@ class Projector:
         # output buffer is updated in place rather than duplicated per batch.
         self._forward = jax.jit(forward)
         self._adjoint = jax.jit(adjoint)
+        self._single_slice = self.grid.nz == self.geometry.detector.nv == 1
 
     def __call__(self, volume: jax.Array | np.ndarray) -> jax.Array:
         """Project a volume with shape ``volume_shape`` into line integrals.
@@ -136,21 +142,28 @@ class Projector:
         Parameters
         ----------
         volume : numpy.ndarray or jax.Array
-            Volume in reciprocal geometry-length units, shape ``(nx, ny, nz)``.
+            Volume in reciprocal geometry-length units, shape ``(nz, ny, nx)``
+            or ``(ny, nx)`` for a single slice.
 
         Returns
         -------
         jax.Array
-            Line integrals with shape ``(views, nv, nu)``.
+            Line integrals with shape ``(views, nv, nu)``, or ``(views, nu)``
+            for a squeezed single slice.
 
         Raises
         ------
         ValueError
             If the volume shape does not match the grid.
         """
+        squeezed = self._single_slice and volume.ndim == 2
+        if squeezed:
+            volume = volume[None, :, :]
         self._validate(volume, self.volume_shape, "project: volume")
         projections = self._forward(jnp.asarray(volume, jnp.float32))
-        return projections if self._split is None else self._split.take(projections)
+        if self._split is not None:
+            projections = self._split.take(projections)
+        return projections[:, 0, :] if squeezed else projections
 
     def adjoint(self, projections: jax.Array | np.ndarray) -> jax.Array:
         """Apply the exact transpose, not an approximate reconstruction.
@@ -158,22 +171,29 @@ class Projector:
         Parameters
         ----------
         projections : numpy.ndarray or jax.Array
-            Line integrals with shape ``(views, nv, nu)``.
+            Line integrals with shape ``(views, nv, nu)``, or ``(views, nu)``
+            for a squeezed single slice.
 
         Returns
         -------
         jax.Array
-            Adjoint volume with shape ``(nx, ny, nz)``.
+            Adjoint volume with shape ``(nz, ny, nx)``, or ``(ny, nx)``
+            for a squeezed single-slice input.
 
         Raises
         ------
         ValueError
             If the projection shape does not match the geometry.
         """
+        squeezed = self._single_slice and projections.ndim == 2
+        if squeezed:
+            projections = projections[:, None, :]
         self._validate(projections, self.projection_shape, "backproject: projections")
         if self._split is None:
-            return self._adjoint(jnp.asarray(projections, jnp.float32))
-        return self._split.gather(self._adjoint(self._split.place(projections)))
+            volume = self._adjoint(jnp.asarray(projections, jnp.float32))
+        else:
+            volume = self._split.gather(self._adjoint(self._split.place(projections)))
+        return volume[0] if squeezed else volume
 
     @staticmethod
     def _validate(values, shape: tuple[int, int, int], context: str) -> None:
@@ -190,7 +210,7 @@ def project(
 ) -> jax.Array:
     """Project a volume through the scan geometry.
 
-    ``volume`` is ``(nx, ny, nz)`` on ``grid`` (the geometry's own by default),
+    ``volume`` is ``(nz, ny, nx)`` on ``grid`` (the geometry's own by default),
     in the reciprocal of the geometry's length unit. Works for parallel,
     laminography and cone-beam geometries, with per-view poses and a rolled
     detector; :func:`backproject` is its exact transpose. ``devices`` (one or
@@ -202,7 +222,8 @@ def project(
     geometry : ScanGeometry
         Parallel, laminography or cone-beam scan geometry, with any per-view poses.
     volume : array-like
-        Volume of shape ``(nx, ny, nz)`` in reciprocal geometry-length units.
+        Volume of shape ``(nz, ny, nx)`` (single slice: ``(ny, nx)``),
+        in reciprocal geometry-length units.
     grid : Grid or None, optional
         Volume grid. None uses geometry.grid.
     devices : jax.Device or sequence of jax.Device or None, optional
@@ -211,7 +232,7 @@ def project(
     Returns
     -------
     jax.Array
-        Line integrals of shape ``(views, nv, nu)``.
+        Line integrals of shape ``(views, nv, nu)`` (single slice: ``(views, nu)``).
 
     Raises
     ------
@@ -239,7 +260,7 @@ def backproject(
     geometry : ScanGeometry
         Parallel, laminography or cone-beam scan geometry, with any per-view poses.
     projections : array-like
-        Projection stack of shape ``(views, nv, nu)``.
+        Projection stack of shape ``(views, nv, nu)`` (single slice: ``(views, nu)``).
     grid : Grid or None, optional
         Volume grid. None uses geometry.grid.
     devices : jax.Device or sequence of jax.Device or None, optional
@@ -248,7 +269,8 @@ def backproject(
     Returns
     -------
     jax.Array
-        Adjoint volume of shape ``(nx, ny, nz)``, not a reconstruction.
+        Adjoint volume of shape ``(nz, ny, nx)`` (single slice: ``(ny, nx)``),
+        not a reconstruction.
 
     Raises
     ------

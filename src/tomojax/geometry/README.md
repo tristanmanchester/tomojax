@@ -39,3 +39,20 @@ a beam turn of `-angle`. `Scan.to_astra()` supplies the physical vectors; the
 benchmark TIGRE adapter represents those same vectors as TIGRE's source,
 detector offsets and intrinsic ZYZ angles. Do not negate stored scan angles
 or mirror a sinogram in addition to this conversion.
+
+## Single slices
+
+A two-dimensional image has shape `(ny, nx)` and its sinogram `(view, nu)`.
+With `grid.nz == detector.nv == 1`, `Projector`, `tj.project`, `tj.backproject`
+and the PyTorch bridge accept these squeezed arrays. Their results have the
+same rank as their inputs: a 2D image produces a 2D sinogram and its adjoint is
+2D; explicit `(1, ny, nx)` and `(view, 1, nu)` inputs keep their singleton axes.
+There is no separate 2D projector or interpolation rule.
+
+`Scan` accepts a `(view, nu)` sinogram and stores it as `(view, 1, nu)`;
+`tj.load` normalizes a single sinogram in the same way. A grid inferred from a
+single detector row has one z slice. Explicit geometry remains authoritative.
+The containers always have fixed rank: `Scan.projections` is `(view, v, u)` and
+`Reconstruction.volume` is `(z, y, x)`. After reconstructing a single slice,
+use `recon.volume[0]` for its `(y, x)` image. Saving, loading, corrections and
+alignment therefore use the same array convention for 2D and 3D scans.

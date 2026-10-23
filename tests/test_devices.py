@@ -21,7 +21,7 @@ N, VIEWS = 16, 37  # views that do not divide among the devices
 
 def _phantom() -> np.ndarray:
     c = (np.arange(N) - (N - 1) / 2) / (N / 4)
-    x, y, z = np.meshgrid(c, c, c, indexing="ij")
+    z, y, x = np.meshgrid(c, c, c, indexing="ij")
     volume = np.exp(-((x - 0.3) ** 2 + y**2 + (z + 0.2) ** 2) * 2)
     return (volume + 0.5 * (x**2 + y**2 < 0.5)).astype(np.float32)
 
