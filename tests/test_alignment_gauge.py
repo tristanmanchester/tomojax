@@ -331,12 +331,8 @@ def test_physical_gauge_translation_moves_the_matching_zyx_axis(axis):
     grid = tj.Grid(7, 6, 5, 0.7, 1.1, 1.3, vol_origin=(-2, 3, -4))
     volume = np.zeros((5, 6, 7), np.float32)
     volume[2, 3, 4] = 1
-    shift = np.zeros(3)
-    shift[axis] = (grid.vx, grid.vy, grid.vz)[axis]
-    expected = np.zeros_like(volume)
-    position = np.array([2, 3, 4])
-    position[2 - axis] -= 1
-    expected[tuple(position)] = 1
+    shift = np.eye(3)[axis] * (grid.vx, grid.vy, grid.vz)
+    expected = np.roll(volume, -1, axis=2 - axis)
     np.testing.assert_allclose(
         apply_to_volume(volume, grid, Gauge(np.eye(3), shift)), expected, atol=1e-6
     )

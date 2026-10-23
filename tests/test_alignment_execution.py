@@ -608,7 +608,7 @@ def test_alignment_reconstruction_streams_host_data_without_changing_the_solve(
         detector=detector,
         projections=np.ones((3, 3, 5), np.float32),
         det_grid=reconstruction_stage.get_detector_grid_device(detector),
-        x=jnp.full((3, 4, 2), 0.1),
+        x=jnp.full((2, 4, 3), 0.1),
         cfg=cfg,
         L_prev=100.0,
         outer_idx=1,
