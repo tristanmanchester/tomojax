@@ -15,7 +15,7 @@ from tomojax.geometry import ParallelGeometry, grid_volume_origin
 from ._fourier_backend import FourierPlan, fourier_slab_depth, is_cuda_oom, resolve_fourier_backend
 from ._fourier_grid import sample_projection_rows, sorted_half_turn
 from ._fourier_rows import ProjectionRows, prepare_projection_rows
-from ._host_arrays import validate_host_arrays
+from ._host_arrays import empty_host_array, validate_host_arrays
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -92,7 +92,8 @@ def fourier_reconstruct(
 
     Input and output stay in NumPy arrays or memmaps, with float32 output in
     ``(nz, ny, nx)`` order. New outputs are C-contiguous for downstream volume
-    operations; supplied output storage is preserved.
+    operations, backed by owned demand-paged host storage; supplied output storage
+    is preserved.
     Their storage must not overlap. Completed slabs are
     written immediately, so a later failure may leave partial output. Input
     storage must remain unchanged during the call. This routine is not
@@ -153,7 +154,9 @@ def fourier_reconstruct(
     order, flipped, angles = sorted_half_turn(np.asarray(geometry.angles))
     plan_detector, shifts, positions = _sampling_coordinates(geometry, grid, detector, order)
     depth = fourier_slab_depth(grid, plan_detector, cfg.slices_per_batch, backend)
-    output = validate_host_arrays(projections, out, shape, "fourier_reconstruct")
+    output = validate_host_arrays(
+        projections, out, shape, "fourier_reconstruct", allocate=empty_host_array
+    )
     host_bytes = 4 * (grid.nx * grid.ny * grid.nz + nviews * detector.nu * grid.nz)
 
     def prepare(start: int) -> np.ndarray | ProjectionRows:

@@ -76,3 +76,27 @@ def test_async_fourier_owns_upload_and_retained_outputs_without_global_watchers(
     gc.collect()
     assert uploaded() is None
     np.testing.assert_array_equal(result, 2 * expected[:1])
+
+
+def test_fourier_output_mapping_follows_escaped_buffer_views():
+    from tomojax.geometry import Detector, Grid, ParallelGeometry
+    from tomojax.recon import FourierConfig, fourier_reconstruct
+
+    grid, detector = Grid(4, 5, 2, 1, 1, 1), Detector(7, 2, 1, 1)
+    geometry = ParallelGeometry(grid, detector, [0.0, 90.0])
+    output = fourier_reconstruct(
+        geometry,
+        grid,
+        detector,
+        np.ones((2, 2, 7), np.float32),
+        config=FourierConfig(backend="numpy"),
+    )
+    retained = np.frombuffer(memoryview(output), dtype=np.float32)
+    expected, owner = retained.copy(), weakref.ref(output.base)
+    del output
+    gc.collect()
+    assert owner() is not None
+    np.testing.assert_array_equal(retained, expected)
+    del retained
+    gc.collect()
+    assert owner() is None

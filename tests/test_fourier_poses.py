@@ -43,13 +43,10 @@ def test_fourier_translation_poses_recover_analytic_gaussian(backend, nx, angle_
         scan, "fourier", config=FourierConfig(backend=backend, slices_per_batch=4)
     )
     origin = grid_volume_origin(grid)
-    x, y, z = np.meshgrid(
-        *(
-            origin[i] + np.arange(n) * pitch
-            for i, (n, pitch) in enumerate(
-                zip((grid.nx, grid.ny, grid.nz), (grid.vx, grid.vy, grid.vz), strict=True)
-            )
-        ),
+    z, y, x = np.meshgrid(
+        origin[2] + np.arange(grid.nz) * grid.vz,
+        origin[1] + np.arange(grid.ny) * grid.vy,
+        origin[0] + np.arange(grid.nx) * grid.vx,
         indexing="ij",
     )
     truth = np.exp(-0.5 * ((x - 1.2) ** 2 + (y + 2) ** 2 + (z - 0.7) ** 2) / sigma**2)
@@ -64,7 +61,7 @@ def test_fourier_rejects_rotational_pose_corrections_before_writing():
     )
     poses = np.zeros((8, 6), np.float32)
     poses[1, 0] = 0.01
-    out = np.full((8, 8, 2), 123, np.float32)
+    out = np.full((2, 8, 8), 123, np.float32)
     with pytest.raises(ValueError, match="translation-only"):
         tj.reconstruct(
             scan.with_poses(poses), "fourier", config=FourierConfig(backend="numpy"), out=out
