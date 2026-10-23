@@ -570,9 +570,11 @@ def test_preprocess_reads_a_nikon_xtekct_scan(tmp_path: Path):
     data = _analytic(shapes, geometry)
     white = 60000.0
     for i, image in enumerate(np.exp(-data) * white):
-        # Detector images store their top row first.
-        iio.imwrite(tmp_path / f"part_{i + 1:04d}.tif", np.round(image[::-1]).astype(np.uint16))
-    rows = "\n".join(f"{i + 1}\t{angle:.4f}\t0" for i, angle in enumerate(angles))
+        # Nikon TIFFs use a top-right panel origin and opposite angular sense.
+        iio.imwrite(
+            tmp_path / f"part_{i + 1:04d}.tif", np.round(image[::-1, ::-1]).astype(np.uint16)
+        )
+    rows = "\n".join(f"{i + 1}\t{180 - angle:.4f}\t0" for i, angle in enumerate(angles))
     (tmp_path / "part_ctdata.txt").write_text(f"Projection\tAngle(deg)\tUnused\n\n{rows}\n")
     (tmp_path / "part.xtekct").write_text(
         "[XTekCT]\nDetectorOffsetX=0\nDetectorOffsetY=0\n"
@@ -581,8 +583,8 @@ def test_preprocess_reads_a_nikon_xtekct_scan(tmp_path: Path):
         "DetectorPixelSizeY=0.075\nDetectorOffsetX=0\nDetectorOffsetY=0\n"
         "OffsetX=0\nOffsetY=0\nOffsetZ=0\n"
         f"VoxelsX={n}\nVoxelsY={n}\nVoxelsZ={n}\nVoxelSizeX=0.05\nVoxelSizeY=0.05\n"
-        f"VoxelSizeZ=0.05\nWhiteLevel={white}\nProjections={views}\nInitialAngle=0\n"
-        "AngularStep=99\nObjectOffsetX=0.01\n"
+        f"VoxelSizeZ=0.05\nWhiteLevel={white}\nProjections={views}\nInitialAngle=180\n"
+        "AngularStep=-6\nObjectOffsetX=-0.01\n"
     )
     assert main(["preprocess", str(tmp_path / "part.xtekct"), "--darks", "0",
                  "-o", str(tmp_path / "part.nxs")]) == 0  # fmt: skip
@@ -593,7 +595,7 @@ def test_preprocess_reads_a_nikon_xtekct_scan(tmp_path: Path):
     assert (ingested.grid.nx, ingested.grid.ny, ingested.grid.nz) == (40, 40, 36)
     assert ingested.grid.vx == pytest.approx(0.05)
     assert loaded.geometry_metadata["nikon_xtekct"]["volume"]["VoxelsX"] == n
-    np.testing.assert_allclose(loaded.angles, angles, atol=1e-4)  # from _ctdata.txt
+    np.testing.assert_allclose(loaded.angles, angles, atol=1e-4)  # nominal XTekCT schedule
     np.testing.assert_allclose(loaded.projections, data, atol=3e-4)
     volume = fdk(ingested, grid, ingested.detector, loaded.projections)
     truth = _voxelise(grid, shapes)

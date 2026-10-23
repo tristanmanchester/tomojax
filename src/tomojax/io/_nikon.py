@@ -1,4 +1,9 @@
-"""Read Nikon (X-Tek) lab CT scans: an ``.xtekct`` parameter file and TIFF projections."""
+"""Read Nikon (X-Tek) lab CT scans: an ``.xtekct`` file and TIFF projections.
+
+``InitialAngle`` and ``AngularStep`` set nominal angles; ``.ang`` and
+``_ctdata.txt`` sidecars are not used. Nikon's top-right panel is converted to
+right/up detector coordinates with its object rotation, without a reflection.
+"""
 # pyright: reportUnknownMemberType=false, reportAny=false
 
 from __future__ import annotations
@@ -14,6 +19,7 @@ import numpy as np
 
 from tomojax.core.geometry.base import Detector
 from tomojax.core.geometry.cone import ConeBeam
+from tomojax.core.geometry.transforms import align_u_to_v
 
 from ._acquisition import metadata_candidates
 from ._datasets import ProjectionDataset
@@ -83,24 +89,8 @@ def _number(params: dict[str, str], key: str, default: float | None = None) -> f
     return float(value)
 
 
-def _angles(file: Path, params: dict[str, str], views: int) -> np.ndarray:
-    """Angles from this scan's ``_ctdata.txt``, else the nominal steps."""
-    name = params.get("Name", "").strip() or file.stem
-    ctdata = file.parent / f"{name}_ctdata.txt"
-    if ctdata.is_file() and params.get("AngleFile_Use", "true").lower() != "false":
-        rows: list[tuple[int, float]] = []
-        for line in ctdata.read_text(encoding="utf-8", errors="replace").splitlines():
-            parts = line.replace(",", " ").split()
-            try:
-                rows.append((int(parts[0]), float(parts[1])))
-            except (IndexError, ValueError):
-                continue
-        if len(rows) == views:
-            return np.asarray([angle for _, angle in sorted(rows)], np.float64)
-        LOG.warning(
-            "%s lists %d angles for %d projections; pass angles=...", ctdata, len(rows), views
-        )
-        return np.empty(0, np.float64)
+def _angles(params: dict[str, str], views: int) -> np.ndarray:
+    """InitialAngle and AngularStep set the nominal schedule; sidecars are not used."""
     if not {"InitialAngle", "AngularStep"} <= params.keys():
         return np.empty(0, np.float64)
     start = _number(params, "InitialAngle")
@@ -141,11 +131,12 @@ def _projection_files(directory: Path, params: dict[str, str]) -> list[Path]:
 def _axis(
     params: dict[str, str], height: float, beam: ConeBeam
 ) -> tuple[float, list[float]] | None:
-    """Nikon's calibrated rotation axis in our right/up detector frame.
+    """Nikon's axis in the right/up detector frame, matching CIL's Nikon reader.
 
     Old COR values are detector-plane millimetres at the full panel's ends;
-    ObjectOffsetX is already in object-plane millimetres. ObjectRoll and
-    ObjectTilt are degrees, not a rotation of the detector itself.
+    ObjectOffsetX is already in object-plane millimetres. Both horizontal
+    offsets have the opposite sign to our rightward detector u. ObjectRoll
+    and ObjectTilt are degrees, not a rotation of the detector itself.
     """
     modern = {"ObjectOffsetX", "ObjectRoll", "ObjectTilt"} <= params.keys()
     legacy = {"CentreOfRotationBottom", "CentreOfRotationTop"} <= params.keys()
@@ -161,8 +152,8 @@ def _axis(
         else -np.arctan2(top - bottom, height)
     )
     tilt = np.deg2rad(_number(params, "ObjectTilt", 0.0))
-    return offset, [
-        -float(np.sin(roll)),
+    return -offset, [
+        float(np.sin(roll)),
         float(np.sin(tilt) * np.cos(roll)),
         float(np.cos(tilt) * np.cos(roll)),
     ]
@@ -174,12 +165,54 @@ def _raw_nikon(file: Path) -> RawAcquisition:
 
     params = _parameters(file)
     files = _projection_files(file.parent, params)
-    counts = TiffFrames.from_files(files, flip_rows=True)
+    # Nikon uses a top-right panel origin, not the top-left image convention.
+    counts = TiffFrames.from_files(files, flip_rows=True, flip_cols=True)
     if len(counts) != len(files):
         raise ValueError("Nikon projection TIFFs must hold one image per file")
     white = _number(params, "WhiteLevel") if "WhiteLevel" in params else None
     record = _nikon_record(file, params, counts.shape, white)
     return RawAcquisition(record=record, counts=counts, white_level=white)
+
+
+def _geometry(
+    params: dict[str, str], nv: int, nu: int
+) -> tuple[Detector | None, ConeBeam | None, list[float] | None, float]:
+    """Convert the recorded panel and axis, retaining CIL's object-frame zero angle.
+
+    The angle origin includes the in-plane rotation after axis alignment;
+    panel offsets can change that frame even with a vertical rotation axis.
+    """
+    detector_keys = (
+        "DetectorPixelSizeX",
+        "DetectorPixelSizeY",
+        "DetectorOffsetX",
+        "DetectorOffsetY",
+    )
+    detector = None
+    if all(key in params for key in detector_keys):
+        du, dv, u, v = (_number(params, key) for key in detector_keys)
+        detector = Detector(nu, nv, du, dv, center=(-u, v))
+    beam = (
+        ConeBeam(_number(params, "SrcToObject"), _number(params, "SrcToDetector"))
+        if {"SrcToObject", "SrcToDetector"} <= params.keys()
+        else None
+    )
+    axis = None
+    if beam is not None and "DetectorPixelSizeY" in params:
+        calibrated = _axis(params, nv * _number(params, "DetectorPixelSizeY"), beam)
+        if calibrated is not None:
+            offset, axis = calibrated
+            beam = replace(beam, axis_offset=offset)
+    # CIL first aligns the axis to z, then the source-to-panel centre line
+    # to +y. Absorb that second rotation in our object angle, not in pixels.
+    origin = 180.0
+    if detector is not None and beam is not None and axis is not None:
+        align = align_u_to_v(np.asarray(axis), np.array([0.0, 0.0, 1.0]))
+        direction = align @ np.array(
+            [detector.center[0], beam.source_to_detector, detector.center[1]]
+        )
+        origin -= float(np.rad2deg(np.arctan2(direction[0], direction[1])))
+    return detector, beam, axis, origin
 
 
 def _nikon_record(
@@ -193,28 +226,17 @@ def _nikon_record(
     )
     if expected != (nv, nu):
         LOG.warning("projections are %s pixels; the .xtekct file lists %s", (nv, nu), expected)
-    angles = _angles(file, params, views)
+    angles = _angles(params, views)
     detector_keys = (
         "DetectorPixelSizeX",
         "DetectorPixelSizeY",
         "DetectorOffsetX",
         "DetectorOffsetY",
     )
-    detector = None
-    if all(key in params for key in detector_keys):
-        du, dv, u, v = (_number(params, key) for key in detector_keys)
-        detector = Detector(nu, nv, du, dv, center=(u, v))
-    beam = (
-        ConeBeam(_number(params, "SrcToObject"), _number(params, "SrcToDetector"))
-        if {"SrcToObject", "SrcToDetector"} <= params.keys()
-        else None
-    )
-    axis = None
-    if beam is not None and "DetectorPixelSizeY" in params:
-        calibrated = _axis(params, nv * _number(params, "DetectorPixelSizeY"), beam)
-        if calibrated is not None:
-            offset, axis = calibrated
-            beam = replace(beam, axis_offset=offset)
+    detector, beam, axis, origin = _geometry(params, nv, nu)
+    # CIL NikonDataReader: angle = 180 - (InitialAngle + step * view).
+    # Together with both panel-axis reversals this preserves physical chirality.
+    angles = origin - angles
     recorded = {
         key: params[key]
         for key in (

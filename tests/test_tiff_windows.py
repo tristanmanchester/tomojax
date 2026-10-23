@@ -12,8 +12,11 @@ from tomojax.io.api import read_tiff_frames
 
 
 @pytest.mark.parametrize("flipped", [False, True])
+@pytest.mark.parametrize("flip_cols", [False, True])
 @pytest.mark.parametrize("tiled", [False, True])
-def test_compressed_crop_decodes_only_intersecting_segments(tmp_path, monkeypatch, tiled, flipped):
+def test_compressed_crop_decodes_only_intersecting_segments(
+    tmp_path, monkeypatch, tiled, flipped, flip_cols
+):
     values = np.arange(3 * 35 * 49, dtype=np.uint16).reshape(3, 35, 49)
     path = tmp_path / "windows.tif"
     layout = {"tile": (16, 16)} if tiled else {"rowsperstrip": 4}
@@ -27,13 +30,15 @@ def test_compressed_crop_decodes_only_intersecting_segments(tmp_path, monkeypatc
 
     monkeypatch.setattr(tifffile.FileHandle, "read_segments", selected_segments)
     stack = read_tiff_frames(path, lazy=True).frames_at(np.array([2, 0]))
-    stack = replace(stack, flip_rows=flipped)
-    oriented = values[:, ::-1] if flipped else values
+    stack = replace(stack, flip_rows=flipped, flip_cols=flip_cols)
+    oriented = values[:, :: -1 if flipped else 1, :: -1 if flip_cols else 1]
     crop = stack.window(slice(31, 35), slice(30, 49))
     np.testing.assert_array_equal(np.asarray(crop), oriented[[2, 0], 31:35, 30:49])
     expected = [5, 6, 7, 9, 10, 11] if tiled else [7, 8]
     if flipped:
         expected = [1, 2, 3] if tiled else [0]
+    if tiled and flip_cols:
+        expected = [0, 1] if flipped else [4, 5, 8, 9]
     assert calls == [expected, expected]
 
 
