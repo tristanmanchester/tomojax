@@ -32,7 +32,6 @@ _PUBLIC = (
     "--zingers",
     "--stripes",
     "--rings",
-    "--beam-hardening",
     "--preview",
 )
 
@@ -109,11 +108,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "--rings",
         action="store_true",
         help="Correct pixel gain and response errors using the acquisition geometry",
-    )
-    _ = parser.add_argument(
-        "--beam-hardening",
-        choices=("recorded",),
-        help="Linearise single-material beam hardening with the curve the vendor recorded",
     )
     _ = parser.add_argument(
         "--preview", metavar="PNG", help="Write the central corrected projection as a PNG"
@@ -269,10 +263,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             epsilon=cast("float", args.epsilon),
             binning=cast("int", settings.get("binning", 1)),
         )
-        if args.beam_hardening is not None:
-            from tomojax.corrections import BeamHardening
-
-            scan = scan.corrected(BeamHardening.recorded(scan))
     except (KeyError, ValueError, OSError) as exc:
         return fail("preprocess", str(exc).strip("'\""))
     tj.save(output, scan)

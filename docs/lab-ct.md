@@ -56,13 +56,13 @@ Use one length unit throughout (the pixel size and both distances).
 `--pixel-size` takes one value for square pixels, or the u then v sizes.
 
 `tomojax preprocess` also corrects lab-CT artefacts.
-`--beam-hardening recorded` linearises single-material beam hardening with the
-vendor's recorded curve (Nikon's coefficients); the
+Beam-hardening correction uses an explicit polynomial or spectrum through the
+Python `BeamHardening` step; the
 [corrections reference](../src/tomojax/corrections/README.md#beam-hardening)
-describes it and the spectrum model, which are only as good as the tube settings
-and material they are given. `--stripes 9` removes rings: it subtracts each detector
-pixel's constant offset, comparing its values sorted over views with those of
-its 9 neighbouring columns. Structure symmetric about the rotation axis also
+describes these models. Vendor settings are retained unapplied: their intensity
+domains and scaling conventions are not established. `--stripes 9` removes rings:
+it subtracts each detector pixel's constant offset, comparing its values sorted
+over views with those of its 9 neighbouring columns. Structure symmetric about the rotation axis also
 looks stationary, so a narrow centred feature can be altered: use the smallest
 width that covers the defect. A faint offset on a steep gradient can remain.
 `--zingers` replaces bright specks.

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+Removed `BeamHardening.recorded` and `--beam-hardening recorded`: vendor settings
+are retained unapplied; use `BeamHardening.from_polynomial` for an explicit curve.
+
 Lossless slab stores can share a bounded CUDA byte pool with host-memory
 fallback. Snapshots retain their payloads, and streamed FISTA keeps the
 caller-selected storage for its image and momentum.
@@ -121,8 +124,7 @@ buffers. CUDA downloads with different layouts or dtypes use bounded scratch.
 class of curves, a positive mixture of exponentials in declared units, instead
 of a free polynomial; `BeamHardening(coefficients=...)` and
 `tomojax preprocess --beam-hardening C1,C2,...` are removed. Its curve is
-taken from Nikon's recorded coefficients (`BeamHardening.recorded`,
-`--beam-hardening recorded`), converted from any polynomial, or computed from a
+converted from an explicit polynomial or computed from a
 tube spectrum and xraylib attenuation (`tube_spectrum`,
 `BeamHardening.from_spectrum`, the `spectra` extra), and is only as good as the
 stated tube settings and material: nothing fits it to the scan, since on real

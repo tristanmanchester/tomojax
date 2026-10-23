@@ -42,7 +42,7 @@ Steps, each a frozen dataclass of its settings:
 | `Stripes(width=9, varying=False)` | line integrals | constant pixel offsets, or selected intensity-dependent responses with `varying=True` | `--stripes WIDTH` (constant offsets) |
 | `Rings(geometry=None)` | line integrals | each column's offset and transmission-dependent response, separated from object structure statistically or by full-turn parallel geometry | `--rings` |
 | `RejectViews(z=6.0, neighbours=5, min_jump=0.05)` | line integrals | drops views whose median jumps from their neighbours', and their geometry | `--reject-views [Z]` |
-| `BeamHardening(rates, weights, energy_kev=None)` | line integrals | single-material linearisation, see below | `--beam-hardening recorded` |
+| `BeamHardening(rates, weights, energy_kev=None)` | line integrals | single-material linearisation, see below | Python only |
 
 Also exported:
 
@@ -102,17 +102,16 @@ is one, so thin paths keep their attenuation and the corrected image is in the
 unhardened beam's mean attenuation; with `energy_kev` the rates are relative
 to the material's attenuation at that energy, and so is the image.
 
-The curve comes from one of three sources, each only as good as the tube
-settings and sample material it is given: the scan itself is not used to check
-it, so a curve computed for the wrong spectrum or material makes the image
+The curve comes from an explicit polynomial or spectrum, each only as good as
+the tube settings and sample material it is given: the scan itself is not used
+to check it, so a curve computed for the wrong spectrum or material makes the image
 worse rather than better.
 
-- `BeamHardening.recorded(scan)` applies the linearisation the vendor recorded:
-  Nikon CT Pro's `CoefX0`-`CoefX4` polynomial, as the closest physical curve.
-  Zeiss's beam hardening constant and Bruker's percentage are recorded with the
-  scan (`scan.source.geometry_metadata["beam_hardening"]`, with the tube voltage
-  and filter) but not applied, because their formulas are unpublished.
-- `BeamHardening.from_polynomial(coefficients, upto=q_max)` turns any
+Nikon coefficients, Zeiss constants and Bruker percentages are retained unapplied
+in `scan.source.geometry_metadata["beam_hardening"]`, alongside tube settings.
+Their vendor intensity domains and scaling conventions are not established.
+
+- `BeamHardening.from_polynomial(coefficients, upto=q_max)` turns an explicit
   polynomial linearisation `p = c0 + c1 q + c2 q^2 + ...` into the closest
   physical curve over `0 <= q <= upto`.
 - `BeamHardening.from_spectrum(energies, weights, material)` builds the curve of

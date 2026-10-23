@@ -29,6 +29,13 @@ from ._helpers import (
 pytestmark = pytest.mark.surface
 
 
+def test_preprocess_rejects_unverified_vendor_hardening(capsys):
+    with pytest.raises(SystemExit) as error:
+        main(["preprocess", "raw.nxs", "-o", "scan.nxs", "--beam-hardening", "recorded"])
+    assert error.value.code == 2
+    assert "unrecognized arguments: --beam-hardening recorded" in capsys.readouterr().err
+
+
 def test_inspect_cli_describes_and_checks_a_dataset(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

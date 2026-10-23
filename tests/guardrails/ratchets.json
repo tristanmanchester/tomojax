@@ -15,7 +15,7 @@
   "cli_flags": {
     "inspect": 4,
     "import": 12,
-    "preprocess": 21,
+    "preprocess": 20,
     "recon": 18,
     "align": 16,
     "export": 6,

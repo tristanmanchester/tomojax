@@ -82,4 +82,5 @@ def test_nikon_records_unapplied_hardening_and_tube_settings(tmp_path, polynomia
         "vendor": "nikon", "scale": 139, "scaling": 1000, "preset": 2, "kv": 100.0,
         **({"coefficients": [0, 0.75, 0.25, 0, 0]} if polynomial else {}),
     }  # fmt: skip
-    np.testing.assert_allclose(scan.projections, -np.log(20000 / 60000), rtol=1e-6)
+    np.testing.assert_allclose(scan.projections, np.log(3.0), rtol=1e-7)
+    assert not hasattr(BeamHardening, "recorded")

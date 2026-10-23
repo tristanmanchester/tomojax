@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar, Protocol, cast
+from typing import TYPE_CHECKING, ClassVar
 
 import numpy as np
 
@@ -15,20 +15,6 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     import jax
-
-
-class _Source(Protocol):
-    @property
-    def geometry_metadata(self) -> dict[str, object]: ...
-
-
-class _Scan(Protocol):
-    """What :meth:`BeamHardening.recorded` reads from a :class:`tomojax.Scan`."""
-
-    @property
-    def projections(self) -> np.ndarray | jax.Array: ...
-    @property
-    def source(self) -> _Source | None: ...
 
 
 @dataclass(frozen=True)
@@ -51,12 +37,11 @@ class BeamHardening(Step):
     its attenuation at ``energy_kev``, and the corrected line integrals are
     that energy's.
 
-    The coefficients come from :meth:`recorded` (the vendor's recorded
-    linearisation), :meth:`from_polynomial` (any polynomial linearisation) or
-    :meth:`from_spectrum` (the source spectrum, filters and detector). The
-    curve is only as good as the stated tube settings and material: the
-    scan is not used to check it. ``BeamHardening()`` leaves line integrals
-    unchanged.
+    The coefficients come from :meth:`from_polynomial` (an explicit polynomial
+    linearisation) or :meth:`from_spectrum` (the source spectrum, filters and
+    detector). The curve is only as good as the stated tube settings and
+    material: the scan is not used to check it. ``BeamHardening()`` leaves line
+    integrals unchanged.
 
     Parameters
     ----------
@@ -149,54 +134,13 @@ class BeamHardening(Step):
         return mixture.inverse(self.rates, self.weights, np.asarray(q))
 
     @classmethod
-    def recorded(cls, scan: _Scan) -> BeamHardening:
-        """The linearisation the scan's vendor recorded, as the closest physical curve.
-
-        Nikon CT Pro records ``p = sum_n CoefXn q^n`` in the ``.xtekct`` file;
-        it becomes :meth:`from_polynomial` over the scan's measured line
-        integrals (identity coefficients give ``BeamHardening()``). Zeiss's
-        constant and Bruker's percentage are recorded with the scan's metadata
-        (``scan.source.geometry_metadata["beam_hardening"]``) but enter
-        formulas their vendors do not publish, so they are not applied.
-
-        Parameters
-        ----------
-        scan : Scan
-            A scan loaded from a vendor's files.
-
-        Returns
-        -------
-        BeamHardening
-            The vendor's linearisation.
-
-        Raises
-        ------
-        ValueError
-            If the scan records no linearisation TomoJAX can apply.
-        """
-        source = scan.source
-        settings = None if source is None else source.geometry_metadata.get("beam_hardening")
-        if not isinstance(settings, dict):
-            raise ValueError("the scan records no beam hardening linearisation")
-        if settings.get("vendor") != "nikon":
-            raise ValueError(
-                f"{settings.get('vendor')} records beam hardening setting {settings}, whose "
-                "formula is not published; give the curve with BeamHardening.from_spectrum"
-            )
-        coefficients = [float(c) for c in cast("list[float]", settings["coefficients"])]
-        if coefficients[:2] == [0.0, 1.0] and not any(coefficients[2:]):
-            return cls()
-        measured = np.asarray(scan.projections, np.float32)
-        return cls.from_polynomial(coefficients, upto=float(np.nanmax(measured)))
-
-    @classmethod
     def from_polynomial(cls, coefficients: Sequence[float], *, upto: float) -> BeamHardening:
         """The physical curve closest to a polynomial linearisation ``p = sum_n c_n q^n``.
 
-        Vendors record beam hardening as a polynomial in the measured line
-        integral (Nikon's ``CoefX0`` to ``CoefX4``). This fits the mixture whose
-        inverse best matches it for ``0 <= q <= upto`` (each line integral
-        weighted by its Poisson precision), then rescales it to unit initial slope; a
+        The coefficients specify a polynomial in the measured line integral.
+        This fits the mixture whose inverse best matches it for ``0 <= q <= upto``
+        (each line integral weighted by its Poisson precision), then rescales it to
+        unit initial slope; a
         polynomial that is not the inverse of a physical curve (one with zero
         initial slope, say) is replaced by the closest one that is.
 
