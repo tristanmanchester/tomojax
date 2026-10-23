@@ -45,7 +45,7 @@ from tomojax.datasets._impl.phantoms import (
 )
 
 if TYPE_CHECKING:
-    from tomojax.core.geometry.base import DetectorDict, GridDict
+    from tomojax.core.geometry.base import DetectorDict, Geometry, GridDict
 
 
 class SimMetadata(TypedDict, total=False):
@@ -175,6 +175,55 @@ def make_phantom(cfg: SimConfig) -> jnp.ndarray:
     return jnp.asarray(vol, dtype=jnp.float32)
 
 
+def _project_phantom(
+    geom: Geometry, grid: Grid, det: Detector, vol: jax.Array, beam: ConeBeam | None, n_views: int
+) -> jax.Array:
+    """Project one device phantom in native (z, y, x) order."""
+    # Choose a default mixed-precision gather on accelerators
+    gather = default_gather_dtype()
+
+    # Fast path: build all poses and optionally vmapped/jitted projector
+    T_all = stack_view_poses(geom, n_views)
+    det_grid = get_detector_grid_device(det)
+
+    use_fast = (n_views >= 8) and (os.environ.get("TOMOJAX_PROGRESS", "0") != "1")
+    if beam is not None:
+        coefficients = cone_coefficients(T_all, grid, det, beam)
+        proj = jnp.concatenate(
+            [
+                cone_project(vol, coefficients[start : start + 32], grid, det)
+                for start in range(0, n_views, 32)
+            ]
+        )
+    elif use_fast:
+
+        @jax.jit
+        def project_all(vol_in: jnp.ndarray) -> jnp.ndarray:
+            def f(T: jnp.ndarray) -> jnp.ndarray:
+                return forward_project_view_T(
+                    T,
+                    grid,
+                    det,
+                    vol_in,
+                    use_checkpoint=True,
+                    gather_dtype=gather,
+                    det_grid=det_grid,
+                )
+
+            return jax.vmap(f, in_axes=0)(T_all)
+
+        proj = project_all(vol)
+    else:
+        # Fallback path with per-view progress logging
+        projs = []
+        for i in progress_iter(range(n_views), total=n_views, desc="Simulate: views"):
+            p = forward_project_view(geom, grid, det, vol, view_index=i, gather_dtype=gather)
+            projs.append(p)
+        proj = jnp.stack(projs, axis=0)
+
+    return proj
+
+
 def simulate(cfg: SimConfig) -> SimulatedData:
     """Generate projections and metadata from a simulation config."""
     grid = Grid(cfg.nx, cfg.ny, cfg.nz, cfg.vx, cfg.vy, cfg.vz)
@@ -224,48 +273,7 @@ def simulate(cfg: SimConfig) -> SimulatedData:
         raise ValueError("geometry must be 'parallel', 'lamino' or 'cone'")
 
     vol = make_phantom(cfg)
-
-    # Choose a default mixed-precision gather on accelerators
-    gather = default_gather_dtype()
-
-    # Fast path: build all poses and optionally vmapped/jitted projector
-    T_all = stack_view_poses(geom, cfg.n_views)
-    det_grid = get_detector_grid_device(det)
-
-    use_fast = (cfg.n_views >= 8) and (os.environ.get("TOMOJAX_PROGRESS", "0") != "1")
-    if beam is not None:
-        coefficients = cone_coefficients(T_all, grid, det, beam)
-        proj = jnp.concatenate(
-            [
-                cone_project(vol, coefficients[start : start + 32], grid, det)
-                for start in range(0, cfg.n_views, 32)
-            ]
-        )
-    elif use_fast:
-
-        @jax.jit
-        def project_all(vol_in: jnp.ndarray) -> jnp.ndarray:
-            def f(T: jnp.ndarray) -> jnp.ndarray:
-                return forward_project_view_T(
-                    T,
-                    grid,
-                    det,
-                    vol_in,
-                    use_checkpoint=True,
-                    gather_dtype=gather,
-                    det_grid=det_grid,
-                )
-
-            return jax.vmap(f, in_axes=0)(T_all)
-
-        proj = project_all(vol)
-    else:
-        # Fallback path with per-view progress logging
-        projs = []
-        for i in progress_iter(range(cfg.n_views), total=cfg.n_views, desc="Simulate: views"):
-            p = forward_project_view(geom, grid, det, vol, view_index=i, gather_dtype=gather)
-            projs.append(p)
-        proj = jnp.stack(projs, axis=0)
+    proj = _project_phantom(geom, grid, det, vol, beam, cfg.n_views)
 
     artefacts = normalise_simulation_artefacts(cfg.artefacts)
     artefact_metadata: ArtefactMetadata | None = None

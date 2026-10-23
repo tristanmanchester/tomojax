@@ -278,9 +278,9 @@ def grid_from_detector_fov_cube(
 
 
 def cylindrical_mask_xy(grid: Grid, detector: Detector) -> np.ndarray:
-    """Boolean mask (nx, ny) for cylindrical FOV in the X-Y plane.
+    """Boolean mask (ny, nx) for cylindrical FOV in the X-Y plane.
 
-    Returns a 2D mask aligned to x and y axes where mask[x,y] is True if the
+    Returns a 2D mask aligned to x and y axes where mask[y, x] is True if the
     voxel center lies within radius r_u in the X-Y plane. This is meant to be
     broadcast along z to mask a cylinder aligned with the z axis.
 
@@ -294,7 +294,7 @@ def cylindrical_mask_xy(grid: Grid, detector: Detector) -> np.ndarray:
     Returns
     -------
     numpy.ndarray
-        Boolean (grid.nx, grid.ny) mask, broadcastable along z.
+        Boolean (grid.ny, grid.nx) mask, broadcastable along z.
     """
     info = compute_roi(grid, detector)
     nx, ny = int(grid.nx), int(grid.ny)
@@ -304,7 +304,7 @@ def cylindrical_mask_xy(grid: Grid, detector: Detector) -> np.ndarray:
     y = np.arange(ny, dtype=np.float64) * vy + origin[1]
     tolerance = 8 * np.finfo(np.float64).eps * info.r_u
     # hypot avoids squaring physical lengths, which can underflow or overflow.
-    return np.hypot(x[:, None], y[None, :]) <= info.r_u + tolerance
+    return np.hypot(x[None, :], y[:, None]) <= info.r_u + tolerance
 
 
 def grid_from_detector_fov_slices(

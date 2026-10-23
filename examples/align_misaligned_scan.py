@@ -53,7 +53,7 @@ def misaligned_scan(
         for _ in range(60)
     ]
     centres = (np.arange(size) - (size - 1) / 2).astype(np.float64)
-    x, y, z = np.meshgrid(centres, centres, centres, indexing="ij")
+    z, y, x = np.meshgrid(centres, centres, centres, indexing="ij")
     truth = sum(
         a
         * np.exp(
@@ -142,11 +142,11 @@ def plot(volumes: dict[str, np.ndarray], metrics: dict[str, object], path: Path)
         "nominal": f"Nominal poses (CGLS)\nerror {metrics['nominal_cgls_relative_l2']:.3f}",
         "aligned": f"Jointly aligned\nerror {metrics['aligned_relative_l2']:.3f}",
     }
-    centre = volumes["truth"].shape[2] // 2
+    centre = volumes["truth"].shape[0] // 2
     high = float(np.percentile(volumes["truth"], 99.9))
     fig, axes = plt.subplots(1, 3, figsize=(10, 3.6), constrained_layout=True)
     for axis, (key, title) in zip(axes, titles.items(), strict=True):
-        axis.imshow(volumes[key][:, :, centre].T, origin="lower", cmap="gray", vmin=0, vmax=high)
+        axis.imshow(volumes[key][centre], origin="lower", cmap="gray", vmin=0, vmax=high)
         axis.set_title(title, fontsize=10)
         axis.set_xticks([])
         axis.set_yticks([])

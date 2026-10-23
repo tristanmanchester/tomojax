@@ -101,7 +101,7 @@ save its progress and resume after an interruption:
 
 `tj.Scan(projections, geometry)` builds a scan from arrays, and
 `tj.project(geometry, volume)` simulates one for any geometry. Volumes use
-`(x, y, z)` and projections `(view, v, u)`; detector and voxel spacings must
+`(z, y, x)` and projections `(view, v, u)`; detector and voxel spacings must
 use the same physical length unit. The building blocks behind these are in
 `tomojax.recon`, `tomojax.alignment`, `tomojax.corrections`,
 `tomojax.geometry`, `tomojax.io`, `tomojax.forward` and `tomojax.datasets`.

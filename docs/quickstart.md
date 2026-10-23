@@ -273,7 +273,7 @@ recon = tj.load_reconstruction("recon.nxs")  # Or keep the tj.reconstruct result
 slices = Path("slices")
 slices.mkdir()  # Refuse an existing directory rather than overwrite slices.
 for z in range(recon.scan.grid.nz):
-    plane = np.asarray(recon.volume[:, :, z], dtype=np.float32).T
+    plane = np.asarray(recon.volume[z], dtype=np.float32)
     tifffile.imwrite(slices / f"slice_{z:04d}.tif", plane)
 ```
 
@@ -318,16 +318,16 @@ import numpy as np
 
 g = scan.grid
 out = np.memmap(
-    "volume.dat", mode="w+", dtype=np.float32, shape=(g.nx, g.ny, g.nz), order="F"
+    "volume.dat", mode="w+", dtype=np.float32, shape=(g.nz, g.ny, g.nx), order="C"
 )
 recon = tj.reconstruct(scan, "fbp", out=out)
 out.flush()  # Include this in timings that promise persisted output.
 ```
 
-Fortran order keeps axial slices together for parallel FBP, FDK and Fourier,
-avoiding page-strided file writes. Oblique/posed FBP writes x-slabs instead;
-use C order there. Use separate input/output files. A failed reconstruction may
-leave partial output. `out` is not supported by the iterative methods.
+C order keeps axial slices together for parallel FBP, FDK and Fourier,
+avoiding page-strided file writes. Use separate input/output files. A failed
+reconstruction may leave partial output. Cone-beam CGLS, SIRT and MLEM also
+accept `out`.
 
 Expert settings are fields of the method's configuration class
 (`tomojax.recon.FBPConfig`, `FourierConfig`, `CGLSConfig`, `FistaConfig` or `SPDHGConfig`),

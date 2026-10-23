@@ -44,7 +44,7 @@ def gaussian_case(scale, width=55):
     geometry = ParallelGeometry(grid, detector, angles)
     poses = np.array([geometry.pose_for_view(i) for i in range(60)], np.float32)
     x, y, z = [(np.arange(n) - (n - 1) / 2) * 0.7 for n in [33, 35, 5]]
-    xx, yy, zz = np.meshgrid(x, y, z, indexing="ij")
+    zz, yy, xx = np.meshgrid(z, y, x, indexing="ij")
     truth = np.exp(
         -0.5 * ((xx - 0.8) ** 2 / 3.1**2 + (yy + 1.2) ** 2 / 3.1**2 + (zz - 0.5) ** 2 / 0.9**2)
     )

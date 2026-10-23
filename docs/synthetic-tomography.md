@@ -61,9 +61,9 @@ The method and keywords of `tj.reconstruct` match the `tomojax recon` options:
 `"cgls"`, `iterations=`, `tv_weight=` and `nonnegative=` are `--method cgls`,
 `--iterations`, `--tv-weight` and `--nonnegative`.
 
-Python volumes use `(x, y, z)` and projections `(view, v, u)`. All spacings use
+Python volumes use `(z, y, x)` and projections `(view, v, u)`. All spacings use
 one consistent physical length unit; projected values integrate attenuation
-over that length. On-disk volumes may use a different labelled axis order.
+over that length. Saved volumes use the same `(z, y, x)` order.
 
 This example deliberately uses matched simulation and reconstruction models.
 For independent analytic fixtures and failure-inclusive comparisons, see the

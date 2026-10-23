@@ -3,20 +3,12 @@ from __future__ import annotations
 from itertools import product
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import h5py
 import numpy as np
 
-from tomojax.geometry.api import (
-    DISK_VOLUME_AXES,
-    INTERNAL_VOLUME_AXES,
-    VOLUME_AXES_ATTR,
-    axes_to_perm,
-    infer_disk_axes,
-    nominal_axis_unit_from_inputs,
-    transpose_volume,
-)
+from tomojax.geometry.api import nominal_axis_unit_from_inputs
 
 from ._io_acquisition import ROTATION_ANGLE_PATHS, angle_scale_degrees
 from ._io_frames import Hdf5Frames
@@ -54,9 +46,7 @@ def save_nxtomo(
 
     `metadata` owns the persistence contract: geometry, detector/grid definitions,
     optional reconstructed volume, and TomoJAX-specific extras. Volume inputs in
-    `metadata.volume` are always expected in internal `xyz` order; set
-    `metadata.volume_axes_order` to control how that internal volume is serialized
-    on disk.
+    `metadata.volume` use `(z, y, x)` order, on disk and in memory.
 
     Parameters
     ----------
@@ -97,8 +87,8 @@ def save_nxtomo(
     n_views, nv, nu = proj.shape
     geometry_type_norm = normalize_geometry_type(meta.geometry_type)
 
-    disk_axes = meta.volume_axes_order.lower()
-    _validate_volume_save_options(meta, disk_axes=disk_axes)
+    if meta.volume is not None and meta.volume.ndim != 3:
+        raise ValueError("volume must be 3D (nz, ny, nx)")
 
     with h5py.File(path, mode) as f:
         entry = _ensure_group(f, "entry", "NXentry")
@@ -125,7 +115,7 @@ def save_nxtomo(
 
         _write_source_section(inst, meta)
         _write_grid_metadata(entry, meta)
-        _write_volume_section(entry, meta, disk_axes=disk_axes, compression=compression)
+        _write_volume_section(entry, meta, compression=compression)
         _write_tomojax_metadata_sections(entry, meta, compression=compression)
 
 
@@ -232,28 +222,25 @@ def _write_volume_section(
     entry: h5py.Group,
     meta: NXTomoMetadata,
     *,
-    disk_axes: str,
     compression: str,
 ) -> None:
     if meta.volume is None:
         return
-    _validate_volume_save_options(meta, disk_axes=disk_axes)
     processing = _ensure_group(entry, "processing", "NXprocess")
     tj = _ensure_group(processing, "tomojax", "NXcollection")
-    axes = axes_to_perm(INTERNAL_VOLUME_AXES, disk_axes)
-    direct = isinstance(meta.volume, np.ndarray) and axes == (0, 1, 2)
+    direct = isinstance(meta.volume, np.ndarray) and meta.volume.flags.c_contiguous
     vol = tj.create_dataset(
         "volume",
-        shape=tuple(meta.volume.shape[axis] for axis in axes),
+        shape=meta.volume.shape,
         dtype=meta.volume.dtype,
         data=meta.volume if direct else None,
         chunks=True,
         compression=compression,
     )
     if not direct:
-        _write_in_tiles(vol, meta.volume, axes)
+        _write_in_tiles(vol, meta.volume)
     vol.attrs["long_name"] = "volume"
-    _write_string_attr(tj, VOLUME_AXES_ATTR, disk_axes)
+    _write_string_attr(tj, "volume_axes_order", "zyx")
     if meta.frame is not None:
         _write_string_attr(tj, "frame", str(meta.frame))
 
@@ -262,13 +249,11 @@ def _write_volume_section(
 _TILE_BYTES = 64 * 1024**2
 
 
-def _write_in_tiles(
-    target: h5py.Dataset, source: np.ndarray | jax.Array, axes: tuple[int, ...]
-) -> None:
-    """Write ``source`` transposed by ``axes`` in tiles of whole chunks, at most 64 MiB each.
+def _write_in_tiles(target: h5py.Dataset, source: np.ndarray | jax.Array) -> None:
+    """Write ``source`` in tiles of whole chunks, at most 64 MiB each.
 
-    A device array or memmap is read, and a transposed volume reordered, a tile at a
-    time, never as a second copy of the whole volume.
+    Device and noncontiguous host arrays are read one tile at a time, never
+    as a second copy of the whole volume.
     """
     chunks = target.chunks
     assert chunks is not None  # created chunked
@@ -285,29 +270,7 @@ def _write_in_tiles(
             slice(lo, min(lo + step, n))
             for lo, step, n in zip(start, tile, target.shape, strict=True)
         )
-        # Disk axis k is source axis axes[k].
-        part = source[tuple(region[axes.index(j)] for j in range(3))]
-        target[region] = np.asarray(part).transpose(axes)
-
-
-def _validate_volume_save_options(meta: NXTomoMetadata, *, disk_axes: str) -> None:
-    if meta.volume is None:
-        return
-    if disk_axes == "unknown":
-        raise ValueError(
-            "Cannot save volume with unknown axis orientation. "
-            "The loaded file lacks axis metadata. "
-            "Set metadata.volume_axes_order before saving."
-        )
-    try:
-        axes_to_perm(INTERNAL_VOLUME_AXES, disk_axes)
-    except ValueError as exc:  # pragma: no cover - defensive
-        raise ValueError(
-            "metadata.volume_axes_order must be a permutation of 'xyz', "
-            f"got {meta.volume_axes_order!r}"
-        ) from exc
-    if meta.volume.ndim != 3:
-        raise ValueError("volume must be 3D (nx, ny, nz)")
+        target[region] = np.asarray(source[region])
 
 
 def _write_tomojax_metadata_sections(
@@ -375,7 +338,7 @@ def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
     Returns a ``LoadedNXTomo`` payload with typed accessors for projections and
     persisted metadata. ``grid`` is present only when the file stores grid
     metadata; a saved volume does not establish physical voxels. Volumes are returned in
-    internal ``xyz`` order. With ``lazy`` the projections are an
+    ``(z, y, x)`` order. With ``lazy`` the projections are an
     :class:`~tomojax._data._io_frames.Hdf5Frames`, read only as indexed.
 
     Parameters
@@ -388,7 +351,7 @@ def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
     Returns
     -------
     LoadedNXTomo
-        Projection payload and metadata, with any saved volume in internal xyz order.
+        Projection payload and metadata, with any saved volume in (z, y, x) order.
 
     Raises
     ------
@@ -435,7 +398,6 @@ def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
                 volume_raw, volume_axes_attr, grid_hint=out.get("grid"), path=path
             )
             out["volume"] = volume_np
-            out["volume_axes_order"] = None
             out["disk_volume_axes_order"] = disk_order
             out["volume_axes_source"] = source
     return LoadedNXTomo.from_dataset(out)
@@ -444,7 +406,7 @@ def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
 def _volume_in_internal_axes(
     volume_raw: np.ndarray, volume_axes_attr: str | None, *, grid_hint: object, path: str
 ) -> tuple[np.ndarray, str, str]:
-    """A saved volume in internal xyz order, with the disk order and how it was found.
+    """A saved volume in (z, y, x) order, with the disk order and how it was found.
 
     The order comes from the saved ``volume_axes_order`` attribute when it is
     valid, else from the volume's shape against the grid; a malformed attribute
@@ -453,32 +415,39 @@ def _volume_in_internal_axes(
     attr_norm = None
     if volume_axes_attr:
         try:
-            axes_to_perm(INTERNAL_VOLUME_AXES, volume_axes_attr)
+            _volume_permutation(volume_axes_attr)
             attr_norm = volume_axes_attr.lower()
         except ValueError:
             _axes_log_warning(
                 "Ignoring malformed volume_axes_order=%r on %s", volume_axes_attr, path
             )
-    disk_axes = attr_norm or infer_disk_axes(volume_raw.shape, cast("Any", grid_hint))
+    disk_axes = attr_norm or _infer_volume_axes(volume_raw.shape, grid_hint)
     source = "attr" if attr_norm else "heuristic"
     volume_np = np.asarray(volume_raw)
     if disk_axes is None:
-        _axes_log_warning(
-            "load_nxtomo: unable to infer volume axis order for %s (shape %s)",
-            path,
-            volume_raw.shape,
-        )
-        return volume_np, "unknown", source
+        raise ValueError(f"{path}: volume axis order is unknown; declare volume_axes_order")
     if source == "heuristic":
-        _axes_log_warning(
-            "load_nxtomo: inferred disk volume axes %s for %s%s",
-            disk_axes,
-            path,
-            "; transposing to internal xyz" if disk_axes == DISK_VOLUME_AXES else "",
-        )
-    if disk_axes != INTERNAL_VOLUME_AXES:
-        volume_np = np.asarray(transpose_volume(volume_np, disk_axes, INTERNAL_VOLUME_AXES))
+        _axes_log_warning("load_nxtomo: inferred disk volume axes %s for %s", disk_axes, path)
+    if disk_axes != "zyx":
+        volume_np = np.ascontiguousarray(volume_np.transpose(_volume_permutation(disk_axes)))
     return volume_np, disk_axes, source
+
+
+def _volume_permutation(axes: str) -> tuple[int, int, int]:
+    """Reader-only permutation from a declared storage order to zyx."""
+    axes = axes.lower()
+    if len(axes) != 3 or set(axes) != {"x", "y", "z"}:
+        raise ValueError(f"volume axes must be a permutation of xyz, got {axes!r}")
+    return axes.index("z"), axes.index("y"), axes.index("x")
+
+
+def _infer_volume_axes(shape: tuple[int, ...], grid: object) -> str | None:
+    """Infer an undeclared file order only when its physical grid disambiguates it."""
+    if not isinstance(grid, dict) or not all(axis in grid for axis in ("nx", "ny", "nz")):
+        return None
+    dims = tuple(int(grid[axis]) for axis in ("nx", "ny", "nz"))
+    candidates = [axes for axes, sizes in (("xyz", dims), ("zyx", dims[::-1])) if shape == sizes]
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def validate_nxtomo(path: str) -> ValidationReport:

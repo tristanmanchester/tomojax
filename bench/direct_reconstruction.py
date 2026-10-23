@@ -146,7 +146,7 @@ def astra_fbp3d(case: Any, *, filter_batch: int | None = None) -> tuple[np.ndarr
             (np.pi / len(case.poses)) * detector.du * detector.dv / (grid.vx * grid.vy * grid.vz)
         )
         result *= np.float32(scale)
-        host = cp.asnumpy(result).transpose(2, 1, 0).copy()
+        host = cp.asnumpy(result)
     finally:
         if volume_id is not None:
             astra.data3d.delete(volume_id)
@@ -193,12 +193,12 @@ def astra_fbp2d(case: Any) -> tuple[np.ndarray, dict]:
         config.update(ProjectionDataId=sino, ReconstructionDataId=volume)
         config["option"] = {"FilterType": "ram-lak"}
         algorithm = astra.algorithm.create(config)
-        result = np.empty((grid.nx, grid.ny, grid.nz), dtype=np.float32)
+        result = np.empty((grid.nz, grid.ny, grid.nx), dtype=np.float32)
         for z in range(grid.nz):
             astra.data2d.store(sino, np.ascontiguousarray(case.analytic[:, z, :]))
             astra.algorithm.run(algorithm)
             # ASTRA 2D image rows run downwards in y; 3D array rows run upwards.
-            result[:, :, z] = astra.data2d.get(volume).T[:, ::-1]
+            result[z] = astra.data2d.get(volume)[::-1, :]
     finally:
         if algorithm is not None:
             astra.algorithm.delete(algorithm)

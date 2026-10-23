@@ -42,7 +42,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "TomoJAX Python reference",
         "========================",
         "",
-        "Volumes use ``(x, y, z)`` and projections use ``(view, v, u)``.",
+        "Volumes use ``(z, y, x)`` and projections use ``(view, v, u)``.",
         "Lengths share one physical unit; rotation angles are in degrees unless stated otherwise.",
         "",
         ".. toctree::",

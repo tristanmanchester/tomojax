@@ -23,7 +23,7 @@ backprojection = operator.adjoint(projections)
 ```
 
 The same interface accepts cone-beam and laminography geometries, including
-calibrated poses. Volumes use TomoJAX's `(x, y, z)` order and geometry lengths
+calibrated poses. Volumes use TomoJAX's `(z, y, x)` order and geometry lengths
 must use consistent units. The geometry is fixed at construction; gradients
 are with respect to tensors, not poses. Both directions support autograd.
 

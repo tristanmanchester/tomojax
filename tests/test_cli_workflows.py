@@ -16,7 +16,6 @@ import tomojax.cli.simulate as simulate_cli
 from tomojax.geometry import stack_view_poses
 from tomojax.geometry.api import CalibrationState, CalibrationVariable
 from tomojax.io import build_geometry_from_dataset_metadata, load_dataset, save_dataset
-from tomojax.io.api import save_nxtomo
 from tomojax.recon.quicklook import scale_to_uint8
 
 from ._helpers import (
@@ -88,7 +87,7 @@ def test_inspect_cli_exits_1_for_an_invalid_dataset(
 def test_inspect_cli_previews_a_reconstruction(tmp_path: Path) -> None:
     path = tmp_path / "recon.nxs"
     dataset = make_projection_dataset()
-    dataset.volume = np.arange(4 * 4 * 2, dtype=np.float32).reshape(4, 4, 2)
+    dataset.volume = np.arange(4 * 4 * 2, dtype=np.float32).reshape(2, 4, 4)
     save_dataset(path, dataset)
     previews = tmp_path / "previews"
 
@@ -219,7 +218,7 @@ def _fake_reconstruct(
         if error is not None:
             raise error
         calls.update(method=method, grid=grid, config=config, **keywords)
-        volume = np.zeros((grid.nx, grid.ny, grid.nz), np.float32)
+        volume = np.zeros((grid.nz, grid.ny, grid.nx), np.float32)
         return tomojax.Reconstruction(volume, scan, method, {"config": config})
 
     monkeypatch.setattr(tomojax, "reconstruct", fake)
@@ -248,7 +247,7 @@ def test_recon_cli_routes_tiny_workflow(monkeypatch: pytest.MonkeyPatch, tmp_pat
     }
     loaded = load_dataset(recon)
     assert loaded.volume is not None
-    assert loaded.volume.shape == (4, 4, 2)
+    assert loaded.volume.shape == (2, 4, 4)
 
 
 def test_main_formats_expected_subcommand_errors(
@@ -302,12 +301,13 @@ def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> No
 
     loaded = load_dataset(recon)
     assert loaded.volume is not None
-    assert loaded.volume.shape == (4, 4, 2)
+    assert loaded.volume.shape == (2, 4, 4)
     assert np.isfinite(loaded.volume).all()
     assert loaded.grid is not None
     assert (loaded.grid.nx, loaded.grid.ny, loaded.grid.nz) == (4, 4, 2)
     assert loaded.detector is not None
-    assert loaded.copy_metadata().volume_axes_order == "zyx"
+    with h5py.File(recon) as handle:
+        assert handle["entry/processing/tomojax"].attrs["volume_axes_order"] == "zyx"
     assert loaded.geometry_metadata["reconstruction_method"] == "fbp"
 
     resolved = json.loads(manifest.read_text(encoding="utf-8"))["resolved_config"]
@@ -321,7 +321,7 @@ def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> No
         "grid_changed": False,
         "cylindrical_output_mask": False,
     }
-    assert resolved["volume_shape"] == [4, 4, 2]
+    assert resolved["volume_shape"] == [2, 4, 4]
 
 
 @pytest.mark.parametrize("warm_start", [False, True])
@@ -345,7 +345,7 @@ def test_recon_cli_runs_cgls_like_the_python_solver(tmp_path: Path, *, warm_star
     assert main([*command, *args, "--manifest", str(manifest)]) == 0
     loaded = load_dataset(recon)
     assert loaded.volume is not None
-    assert loaded.volume.shape == (4, 4, 2)
+    assert loaded.volume.shape == (2, 4, 4)
     resolved = json.loads(manifest.read_text(encoding="utf-8"))["resolved_config"]
     assert resolved["method"] == "cgls"
     assert resolved["reconstruction"]["warm_start"] == warm_start
@@ -369,7 +369,7 @@ def test_recon_cli_auto_roi_does_not_depend_on_physical_units(tmp_path: Path, sc
     actual = tj.load_reconstruction(recon_path)
     assert (actual.grid.nx, actual.grid.ny, actual.grid.nz) == (9, 9, 3)
     assert (actual.grid.vx, actual.grid.vy, actual.grid.vz) == (scale, scale, scale)
-    np.testing.assert_array_equal(actual.volume, np.zeros((9, 9, 3), np.float32))
+    np.testing.assert_array_equal(actual.volume, np.zeros((3, 9, 9), np.float32))
 
 
 def test_recon_cli_cylinder_constrains_fista_to_the_field_of_view(tmp_path: Path) -> None:
@@ -461,10 +461,13 @@ def test_inspect_cli_previews_central_slices_of_xyz_disk_volumes(tmp_path: Path)
             for z in range(volume.shape[2]):
                 volume[x, y, z] = (100 * x) + (10 * y) + z
     dataset = make_projection_dataset()
-    dataset.volume = volume
-    metadata = dataset.to_nxtomo_metadata()
-    metadata.volume_axes_order = "xyz"
-    save_nxtomo(path, projections=dataset.projections, metadata=metadata)
+    dataset.volume = volume.transpose(2, 1, 0)
+    save_dataset(path, dataset)
+    with h5py.File(path, "r+") as file:
+        group = file["entry/processing/tomojax"]
+        del group["volume"]
+        group.create_dataset("volume", data=volume)
+        group.attrs["volume_axes_order"] = "xyz"
 
     assert main(["inspect", str(path), "--preview", str(previews)]) == 0
 
@@ -504,7 +507,7 @@ def test_simulate_cli_routes_loadable_synthetic_dataset(
             angles=np.linspace(0.0, 180.0, int(config.n_views), endpoint=False, dtype=np.float32),
         )
         dataset.volume = np.zeros(
-            (int(config.nx), int(config.ny), int(config.nz)), dtype=np.float32
+            (int(config.nz), int(config.ny), int(config.nx)), dtype=np.float32
         )
         save_dataset(out, dataset)
         return out
@@ -553,7 +556,7 @@ def _fake_alignment(
         calls.append(
             {"shape": tuple(projections.shape), "factors": list(factors), "config": config}
         )
-        volume = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+        volume = jnp.zeros((grid.nz, grid.ny, grid.nx), dtype=jnp.float32)
         params = np.zeros((int(projections.shape[0]), 6), np.float32) if poses is None else poses
         return volume, jnp.asarray(params), {"loss": [0.0], "outer_stats": [], **(info or {})}
 
@@ -578,7 +581,7 @@ def test_align_cli_mode_cor_writes_alignment_outputs(
     ]
     loaded = load_dataset(aligned)
     assert loaded.volume is not None
-    assert loaded.volume.shape == (4, 4, 2)
+    assert loaded.volume.shape == (2, 4, 4)
     record = json.loads(manifest.read_text())["resolved_config"]
     assert record["alignment"]["mode"] == "cor"
     assert record["alignment"]["config"]["schedule"] == "cor"
@@ -802,7 +805,7 @@ def test_cli_defaults_defer_policy_and_report_limitations(
 
         assert kwargs["grid"] is None and kwargs["config"] is None
         assert (args[0] if command == "recon" else kwargs["mode"]) == "auto"
-        volume = np.zeros((scan.grid.nx, scan.grid.ny, scan.grid.nz), np.float32)
+        volume = np.zeros((scan.grid.nz, scan.grid.ny, scan.grid.nx), np.float32)
         if command == "recon":
             return tj.Reconstruction(volume, scan, "fbp", {"automatic": automatic})
         info = {"automatic": automatic, "config": FistaConfig()}
@@ -899,4 +902,4 @@ def test_cli_grid_resamples_the_cropped_scan_field_of_view(tmp_path, roi):
     assert (result.grid.vx, result.grid.vy, result.grid.vz) == (2, 2, 5 if roi == "off" else 1)
     assert grid_volume_origin(result.grid)[2] == (-2.5 if roi == "off" else 1.5)
     if roi == "cyl":
-        assert not np.asarray(result.volume)[0, 0, :].any()
+        assert not np.asarray(result.volume)[:, 0, 0].any()

@@ -131,7 +131,7 @@ def test_reconstruct_on_another_grid() -> None:
     scan = tj.Scan(np.asarray(tj.project(geometry, _phantom(16))), geometry)
     region = tj.Grid(8, 8, 16, 1.0, 1.0, 1.0)
     recon = tj.reconstruct(scan, grid=region)
-    assert np.asarray(recon.volume).shape == (8, 8, 16) and recon.grid == region
+    assert np.asarray(recon.volume).shape == (16, 8, 8) and recon.grid == region
 
 
 @pytest.mark.parametrize("kind", ["parallel", "lamino", "cone"])
@@ -282,7 +282,7 @@ def test_align_on_another_grid() -> None:
 
     result = tj.align(scan, grid=region, levels=(1,), config=_few_iterations(scan))
 
-    assert np.asarray(result.volume).shape == (10, 10, 8)
+    assert np.asarray(result.volume).shape == (8, 10, 10)
     assert result.scan.grid == region
     assert tj.reconstruct(result.scan).grid == region
 
@@ -431,3 +431,38 @@ def test_parallel_center_alignment_stays_axial_after_save(tmp_path):
         expected = tj.project(nominal, _phantom(8))
         np.testing.assert_allclose(tj.project(aligned.geometry, _phantom(8)), expected, atol=1e-5)
         assert tj.reconstruct(aligned).method == "fbp"
+
+
+@pytest.mark.parametrize("method", ["fbp", "fourier"])
+def test_reconstruction_fills_non_cubic_zyx_output_without_replacing_it(tmp_path, method):
+    grid, detector = tj.Grid(7, 5, 3, 1, 1, 1), tj.Detector(9, 3, 1, 1)
+    geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 24, endpoint=False))
+    scan = tj.Scan(np.zeros((24, 3, 9), np.float32), geometry)
+    out = np.lib.format.open_memmap(
+        tmp_path / "volume.npy", mode="w+", dtype=np.float32, shape=(3, 5, 7)
+    )
+    result = tj.reconstruct(scan, method, out=out)
+    assert result.volume is out and result.volume.flags.c_contiguous
+    np.testing.assert_array_equal(result.volume, 0)
+
+
+def test_single_sinogram_scan_promotes_rows_without_replacing_geometry():
+    grid, detector = tj.Grid(7, 5, 1, 0.7, 0.8, 0.9), tj.Detector(9, 1, 0.7, 0.9)
+    geometry = tj.ParallelGeometry(grid, detector, [0.0, 90.0])
+    for data in (np.arange(18, dtype=np.float32).reshape(2, 9), jax.numpy.ones((2, 9))):
+        scan = tj.Scan(data, geometry)
+        assert scan.geometry is geometry and scan.projections.shape == (2, 1, 9)
+        np.testing.assert_array_equal(scan.projections[:, 0], data)
+
+
+def test_single_slice_operator_output_feeds_scan_and_reconstruction():
+    grid, detector = tj.Grid(9, 7, 1, 1.0, 1.0, 1.0), tj.Detector(15, 1, 1.0, 1.0)
+    geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 24, endpoint=False))
+    truth = np.zeros((7, 9), np.float32)
+    truth[2:5, 2:6] = 1
+    sinogram = tj.project(geometry, truth)
+    assert sinogram.shape == (24, 15)
+    scan = tj.Scan(sinogram, geometry)
+    actual = tj.reconstruct(scan, "cgls", iterations=20).volume
+    assert actual.shape == (1, 7, 9)
+    assert np.linalg.norm(np.asarray(actual)[0] - truth) / np.linalg.norm(truth) < 0.06

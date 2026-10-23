@@ -42,7 +42,7 @@ def main() -> None:
     plain = tj.estimate_center(frames.corrected())
     steps = (Stripes(), Stripes(51, varying=True))
     cleaned = replace(frames.corrected(*steps), geometry=plain.geometry)
-    reference = tifffile.imread(args.reference).T.astype(np.float32)
+    reference = tifffile.imread(args.reference).astype(np.float32)
     n = reference.shape[0]
     centres = np.arange(n) - n / 2 + 0.5
     inside = np.hypot(*np.meshgrid(centres, centres, indexing="ij")) < 0.42 * n
@@ -55,7 +55,7 @@ def main() -> None:
         ("TomoJAX FBP", plain),
         ("with Stripes() and Stripes(51, varying=True)", cleaned),
     ):
-        image = np.asarray(tj.reconstruct(scan, "fbp").volume[:, :, args.row], np.float32)
+        image = np.asarray(tj.reconstruct(scan, "fbp").volume[args.row], np.float32)
         slices[f"{title}\ncorrelation {correlation(image):.3f}"] = image
     slices["authors' reconstruction (Savu)"] = reference
 
@@ -66,7 +66,7 @@ def main() -> None:
     fig, axes = plt.subplots(2, 3, figsize=(9.0, 6.5), gridspec_kw={"height_ratios": (1, 1)})
     for (title, image), (top_ax, bottom_ax) in zip(slices.items(), axes.T, strict=True):
         low, high = np.percentile(image[zoom], (1, 99.5))
-        top_ax.imshow(image.T, origin="lower", vmin=low, vmax=high)
+        top_ax.imshow(image, origin="lower", vmin=low, vmax=high)
         top_ax.add_patch(
             plt.Rectangle(
                 (zoom[0].start, zoom[1].start),
@@ -77,7 +77,7 @@ def main() -> None:
                 lw=0.8,
             )
         )
-        bottom_ax.imshow(image[zoom].T, origin="lower", vmin=low, vmax=high)
+        bottom_ax.imshow(image[zoom], origin="lower", vmin=low, vmax=high)
         top_ax.set_title(title)
         for ax in (top_ax, bottom_ax):
             ax.set_axis_off()

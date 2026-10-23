@@ -598,7 +598,7 @@ phase and blur that the projector does not model, not photon noise.
 
 Three NumPy/SciPy phantoms in [`phantoms/`](phantoms) are recognisable
 samples with sharp edges, fine features and several materials. Each function
-returns an `(n, n, n)` volume of attenuation in mm^-1 in `(x, y, z)` order and
+returns an `(n, n, n)` volume of attenuation in mm^-1 in `(z, y, x)` order and
 a metadata dict with the voxel size, field of view, energy, materials and
 seed. The object is fixed in mm, so `n` only sets the voxel size and a 2n grid
 gives the same object at twice the resolution. Edges are antialiased by

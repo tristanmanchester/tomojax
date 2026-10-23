@@ -18,7 +18,7 @@ from typing import Any
 
 import numpy as np
 
-VERSION = "gvxr-materials-v1"
+VERSION = "gvxr-materials-v2"
 ENERGIES_KEV = np.array([40, 60, 80, 100, 120], dtype=np.float64)
 PHOTON_FRACTIONS = np.array([0.12, 0.26, 0.30, 0.22, 0.10])
 MATERIALS = (
@@ -145,7 +145,8 @@ def generate(size: int, views: int, tilt: float, photons: float, seed: int) -> t
     )
     camera = np.stack([u, np.zeros_like(u), v], axis=-1)
     coordinates = np.stack(
-        np.meshgrid(*[(np.arange(size) - (size - 1) / 2) * spacing] * 3, indexing="ij"), axis=-1
+        np.meshgrid(*[(np.arange(size) - (size - 1) / 2) * spacing] * 3, indexing="ij")[::-1],
+        axis=-1,
     )
     raw_mono, raw_poly, ref_mono, ref_poly = [], [], [], []
     gvxr.createNewContext("EGL")

@@ -37,10 +37,10 @@ MARGIN = 0.3  # mm clear of edges for interior statistics
 
 
 def coordinates(case: dict) -> tuple[np.ndarray, np.ndarray]:
-    """Voxel-centre x and y (mm) of the case's grid, indexed ``[ix, iy]``."""
+    """Voxel-centre x and y (mm) of the case's grid, indexed ``[iy, ix]``."""
     g = GEOMETRIES[case.get("geometry", "cone")]
     axis = (np.arange(g["grid"]) - (g["grid"] - 1) / 2) * g["voxel"]
-    return np.meshgrid(axis, axis, indexing="ij")
+    return np.meshgrid(axis, axis, indexing="xy")
 
 
 def _owned(case: dict, x: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -53,7 +53,7 @@ def _owned(case: dict, x: np.ndarray, y: np.ndarray) -> np.ndarray:
 
 
 def fractions(case: dict, supersample: int = 5) -> np.ndarray:
-    """Area fraction of every shape's own region in each voxel, ``(shapes, nx, ny)``."""
+    """Area fraction of every shape's own region in each voxel, ``(shapes, ny, nx)``."""
     x, y = coordinates(case)
     voxel = GEOMETRIES[case.get("geometry", "cone")]["voxel"]
     offsets = (np.arange(supersample) - (supersample - 1) / 2) * voxel / supersample
@@ -144,14 +144,14 @@ def _radius(image: np.ndarray, case: dict, i: int, x: np.ndarray, y: np.ndarray)
 
 def slab(volume: np.ndarray, case: dict) -> np.ndarray:
     """Mean of the scored slices: the central half, or a plate 0.5 mm clear of its faces."""
-    g, nz = GEOMETRIES[case.get("geometry", "cone")], volume.shape[2]
+    g, nz = GEOMETRIES[case.get("geometry", "cone")], volume.shape[0]
     z = (np.arange(nz) - (nz - 1) / 2) * g["voxel"]
     half = min(z.max() / 2, case["shapes"][0].get("half_height", np.inf) - 0.5)
-    return np.asarray(volume[:, :, np.abs(z) <= max(half, g["voxel"])], np.float64).mean(axis=2)
+    return np.asarray(volume[np.abs(z) <= max(half, g["voxel"])], np.float64).mean(axis=0)
 
 
 def score_volume(volume: np.ndarray, case: dict, truth_mu: dict[str, float]) -> dict:
-    """Image metrics of a ``(nx, ny, nz)`` volume against a case in one gauge."""
+    """Image metrics of a ``(nz, ny, nx)`` volume against a case in one gauge."""
     image = slab(volume, case)
     x, y = coordinates(case)
     owner = _owned(case, x, y)

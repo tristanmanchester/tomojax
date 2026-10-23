@@ -20,7 +20,7 @@ NeXus output); ``render`` uses the isolated gVXR environment
 
     uv run --no-sync python bench/phantoms/chip_package.py build OUT_DIR
 
-Volumes are attenuation in mm^-1 at the beam energy, ``(x, y, z)`` order.
+Volumes are attenuation in mm^-1 at the beam energy, ``(z, y, x)`` order.
 """
 
 from __future__ import annotations
@@ -282,10 +282,10 @@ def _truth_volume(meshes: Path, grid: Any, table: dict[str, dict[str, float]]) -
     origin = tuple(grid_volume_origin(grid))
     spacing = (grid.vx, grid.vy, grid.vz)
     mu = _effective(table, "mu_mm")
-    volume = np.zeros((grid.nx, grid.ny, grid.nz))
+    volume = np.zeros((grid.nz, grid.ny, grid.nx))
     for name in MATERIALS:
         fraction = occupancy(
-            read_stl(meshes / f"{name}.stl"), (grid.nx, grid.ny, grid.nz), spacing, origin
+            read_stl(meshes / f"{name}.stl"), (grid.nz, grid.ny, grid.nx), spacing, origin
         )
         volume += mu[name] * fraction
     return volume.astype(np.float32)

@@ -41,6 +41,7 @@ def occupancy(
 ) -> np.ndarray:
     """Return the fraction of each voxel inside the mesh.
 
+    ``shape`` is `(nz, ny, nx)`; ``spacing`` and ``origin`` are physical xyz.
     ``origin`` is the centre of voxel (0, 0, 0). Vertical rays through
     ``supersample`` x ``supersample`` sub-columns of each voxel record where
     they cross the surface; the inside intervals between successive crossings
@@ -48,7 +49,7 @@ def occupancy(
     irrational fraction of a sub-voxel so they never pass exactly through mesh
     vertices or edges.
     """
-    nx, ny, nz = shape
+    nz, ny, nx = shape
     s = int(supersample)
     step = np.asarray(spacing, np.float64) / s
     jitter = np.array([np.sqrt(2) - 1, np.sqrt(3) - 1.5]) * 1e-4 * step[:2]
@@ -80,7 +81,7 @@ def occupancy(
         ii, jj = np.nonzero(inside)
         for i, j, value in zip(ii + i0, jj + j0, z[inside], strict=True):
             hits[i * ys.size + j].append(float(value))
-    fine = np.zeros((xs.size, ys.size, nz))
+    fine = np.zeros((nz, ys.size, xs.size))
     for column, crossings in enumerate(hits):
         if not crossings:
             continue
@@ -90,5 +91,5 @@ def occupancy(
         i, j = divmod(column, ys.size)
         for z0, z1 in zip(crossings[0::2], crossings[1::2], strict=True):
             overlap = np.minimum(z_edges[1:], z1) - np.maximum(z_edges[:-1], z0)
-            fine[i, j] += np.maximum(overlap, 0.0) / spacing[2]
-    return fine.reshape(nx, s, ny, s, nz).mean(axis=(1, 3))
+            fine[:, j, i] += np.maximum(overlap, 0.0) / spacing[2]
+    return fine.reshape(nz, ny, s, nx, s).mean(axis=(2, 4))

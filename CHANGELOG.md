@@ -5,6 +5,17 @@
 Removed `BeamHardening.recorded` and `--beam-hardening recorded`: vendor settings
 are retained unapplied; use `BeamHardening.from_polynomial` for an explicit curve.
 
+Breaking: all volume arrays and saved volumes use `(z, y, x)` order, including
+reconstructions, projectors, support masks and warm starts. Migrate an existing
+Python volume with `volume.transpose(2, 1, 0)`. `Grid(nx, ny, nz)` arguments and
+projection order `(view, v, u)` are unchanged. Volume output-order options and
+the expert volume-axis conversion helpers have been removed; external files
+with declared axis orders are normalized by their readers.
+
+Reusable `tj.Projector` caches matched forward/adjoint programs and accepts
+squeezed `(ny, nx)` volumes and `(view, u)` sinograms for single slices. `Scan`
+and file loading accept sinograms and keep a singleton detector-row axis.
+
 Lossless slab stores can share a bounded CUDA byte pool with host-memory
 fallback. Snapshots retain their payloads, and streamed FISTA keeps the
 caller-selected storage for its image and momentum.

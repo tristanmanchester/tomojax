@@ -19,7 +19,7 @@ def _stored_dataset():
         image_key=np.asarray([0, 0], np.int32),
         grid=tj.Grid(3, 4, 2, 0.9, 1.1, 0.8),
         detector=tj.Detector(5, 3, 0.8, 0.85),
-        volume=np.ones((3, 4, 2), np.float32),
+        volume=np.ones((2, 4, 3), np.float32),
         align_params=np.zeros((2, 6), np.float32),
         angle_offset_deg=np.asarray([0.031415926535, -0.271828182846]),
         geometry_calibration={"source": "stored calibration"},
@@ -29,7 +29,6 @@ def _stored_dataset():
         source_probe="x-ray",
         sample_name="original sample",
         frame="detector",
-        volume_axes_order="yxz",
     )
     dataset = ProjectionDataset.from_nxtomo(
         LoadedNXTomo(projections=np.zeros((2, 3, 5), np.float32), metadata=metadata)
@@ -43,7 +42,7 @@ def _stored_dataset():
 def test_metadata_uses_current_owned_arrays_and_preserves_scanner_fields(method, arrays, fortran):
     dataset, stored = _stored_dataset()
     dataset.angles = np.asarray([-31.123456789, 311.234567891])
-    dataset.volume = np.arange(24, dtype=np.float32).reshape(3, 4, 2) if arrays else None
+    dataset.volume = np.arange(24, dtype=np.float32).reshape(2, 4, 3) if arrays else None
     if fortran and arrays:
         dataset.volume = np.asfortranarray(dataset.volume)
     dataset.align_params = np.full((2, 6), 0.1, np.float32) if arrays else None
@@ -74,7 +73,6 @@ def test_metadata_uses_current_owned_arrays_and_preserves_scanner_fields(method,
         "source_type",
         "source_probe",
         "frame",
-        "volume_axes_order",
         "geometry_calibration",
         "simulation_artefacts",
     ):
@@ -89,7 +87,7 @@ def test_metadata_uses_current_owned_arrays_and_preserves_scanner_fields(method,
     assert "new" not in dataset.geometry_metadata
     assert "new" not in dataset.align_gauge
     assert "new" not in dataset.misalign_spec
-    np.testing.assert_array_equal(stored.volume, np.ones((3, 4, 2)))
+    np.testing.assert_array_equal(stored.volume, np.ones((2, 4, 3)))
 
 
 @pytest.mark.parametrize("suffix", [".npz", ".nxs"])
@@ -103,7 +101,7 @@ def test_resaved_reconstruction_uses_edited_volume_and_keeps_known_image(tmp_pat
         if kind == "parallel"
         else tj.ConeGeometry(grid, detector, angles, tj.ConeBeam(20, 34), tilt_deg=27)
     )
-    truth = np.random.default_rng(7).uniform(0.1, 1, (4, 5, 3)).astype(np.float32)
+    truth = np.random.default_rng(7).uniform(0.1, 1, (3, 5, 4)).astype(np.float32)
     data = tj.project(geometry, truth)
     config = CGLSConfig(iterations=200, rtol=1e-8)
     reconstructed = tj.reconstruct(tj.Scan(data, geometry), "cgls", config=config)

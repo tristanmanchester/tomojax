@@ -31,7 +31,7 @@ Attenuation is the total linear attenuation coefficient with coherent
 scattering at 30 keV (xraylib 4.3 ``CS_Total_CP``, the counterpart of the NIST
 XCOM total with coherent scattering) for the mineral densities given; clay is
 kaolinite at 55% solid fraction (45% air-filled microporosity). Pores are dry
-(air, 0). Volumes are attenuation in mm^-1, ``(x, y, z)`` order.
+(air, 0). Volumes are attenuation in mm^-1, ``(z, y, x)`` order.
 
     python bench/phantoms/porous_rock.py --n 256 --preview /tmp/porous_rock.png
 """
@@ -413,7 +413,7 @@ class Crack:
         ranges = [grid.index_range(c - reach, c + reach) for c in self.centre]
         c = grid.centres()
         axes = [c[i0:i1] for i0, i1 in ranges]
-        x, y, z = np.meshgrid(*axes, indexing="ij")
+        z, y, x = np.meshgrid(*axes[::-1], indexing="ij")
         p = np.stack([x, y, z], -1) - self.centre
         across = p @ self.normal
         in_plane = p - across[..., None] * self.normal
@@ -427,7 +427,7 @@ class Crack:
         r = np.linalg.norm(in_plane, axis=-1)
         half = 0.5 * self.aperture * np.sqrt(np.clip(1 - (r / self.radius) ** 2, 0, 1))
         fraction = slab_fraction(across - wave, self.normal, -half, half, grid.voxel)
-        region = tuple(slice(i0, i1) for i0, i1 in ranges)
+        region = tuple(slice(i0, i1) for i0, i1 in ranges[::-1])
         volume[region] *= (1.0 - fraction).astype(np.float32)
 
 

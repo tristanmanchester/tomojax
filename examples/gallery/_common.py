@@ -23,7 +23,7 @@ CACHE = ROOT / ".artifacts" / "figures" / "phantoms"
 
 def phantom(name: str, n: int) -> tuple[np.ndarray, dict[str, Any]]:
     """Return the ``name`` phantom at ``n`` voxels per side, building it once."""
-    path = CACHE / f"{name}-{n}.npz"
+    path = CACHE / f"{name}-{n}-zyx.npz"
     if path.exists():
         with np.load(path) as data:
             return data["volume"], json.loads(str(data["meta"]))
@@ -71,8 +71,8 @@ def style() -> None:
 
 
 def panel(ax: Any, image: np.ndarray, title: str, vmin: float, vmax: float) -> None:
-    """Show a slice ``image`` (first index along x) without axes."""
-    ax.imshow(np.asarray(image).T, origin="lower", vmin=vmin, vmax=vmax)
+    """Show a slice ``image`` (rows, columns) without axes."""
+    ax.imshow(np.asarray(image), origin="lower", vmin=vmin, vmax=vmax)
     ax.set_title(title)
     ax.set_axis_off()
 

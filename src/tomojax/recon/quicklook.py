@@ -17,15 +17,15 @@ type PathLike = str | Path
 def extract_central_slice(volume: np.ndarray | jax.Array) -> np.ndarray:
     """Return a display-oriented central reconstruction slice.
 
-    Reconstruction volumes use internal ``xyz`` order. PNG images use row/column
-    order, so the returned slice is transposed to display as ``y, x``.
+    Reconstruction volumes use ``(z, y, x)`` order. PNG images use row/column
+    order, so the returned slice displays as ``(y, x)``.
     Only the selected plane of a device volume is transferred to the host.
     """
     arr = volume if hasattr(volume, "shape") else np.asarray(volume)
     if arr.ndim == 2:
-        return np.asarray(arr).T
+        return np.asarray(arr)
     if arr.ndim == 3:
-        return np.asarray(arr[:, :, arr.shape[2] // 2]).T
+        return np.asarray(arr[arr.shape[0] // 2])
     raise ValueError(f"quicklook expects a 2D image or 3D volume, got shape {arr.shape}")
 
 

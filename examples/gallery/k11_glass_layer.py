@@ -50,7 +50,7 @@ def slice_figure(volume: np.ndarray | Array, grid: tj.Grid, output: Path) -> Non
             stop = np.minimum(stop, np.ceil(((1000, 1000, 230) - origin) / pitch).astype(int))
         selection = [slice(int(a), int(b)) for a, b in zip(first, stop, strict=True)]
         selection[axis] = int(indices[axis])
-        cuts.append(np.asarray(volume[tuple(selection)]))
+        cuts.append(np.asarray(volume[tuple(selection[::-1])]))
         horizontal, vertical = [k for k in range(3) if k != axis]
         lower = origin + (first - 0.5) * pitch
         upper = origin + (stop - 0.5) * pitch
@@ -68,7 +68,7 @@ def slice_figure(volume: np.ndarray | Array, grid: tj.Grid, output: Path) -> Non
         horizontal, vertical = [k for k in range(3) if k != axis]
         plane = "xyz"[horizontal] + "xyz"[vertical]
         coordinate = origin[axis] + indices[axis] * pitch[axis]
-        ax.imshow(cut.T, origin="lower", extent=extent, vmin=low, vmax=high)
+        ax.imshow(cut, origin="lower", extent=extent, vmin=low, vmax=high)
         ax.set_title(f"{plane} · {'xyz'[axis]} = {coordinate:.1f} µm")
         x = extent[0] + 0.06 * (extent[1] - extent[0])
         y = extent[2] + 0.09 * (extent[3] - extent[2])

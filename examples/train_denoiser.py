@@ -78,7 +78,7 @@ class Denoiser(nn.Module):
         return activation_bytes > memory_bytes // 4
 
     def forward(self, volume: torch.Tensor) -> torch.Tensor:
-        slices = volume.permute(2, 0, 1).unsqueeze(1).contiguous(memory_format=torch.channels_last)
+        slices = volume.unsqueeze(1).contiguous(memory_format=torch.channels_last)
         batch = self._slice_batch_size(slices)
         apply_layers: Callable[[torch.Tensor], torch.Tensor] = self.layers
         if self._checkpoint_layers(slices):
@@ -93,7 +93,7 @@ class Denoiser(nn.Module):
                 if batch == slices.shape[0]
                 else torch.cat([apply_layers(part) for part in slices.split(batch)])
             )
-        return (slices + residual).squeeze(1).permute(1, 2, 0).contiguous()
+        return (slices + residual).squeeze(1).contiguous()
 
 
 def split_views(scan: tj.Scan) -> tuple[tj.Scan, tj.Scan, tj.Scan]:

@@ -30,8 +30,8 @@ def main() -> None:
 
     mid = args.size // 2
     slices = [
-        (truth[:, :, mid].T, volume[:, :, mid].T, "x", "y"),
-        (truth[:, mid, :].T, volume[:, mid, :].T, "x", "z"),
+        (truth[mid], volume[mid], "x", "y"),
+        (truth[:, mid, :], volume[:, mid, :], "x", "z"),
     ]
     vmin, vmax = float(min(truth.min(), volume.min())), float(max(truth.max(), volume.max()))
     error_max = max(float(np.abs(reference - recon).max()) for reference, recon, _, _ in slices)

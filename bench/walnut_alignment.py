@@ -96,17 +96,19 @@ def _figures(out: Path, volumes: dict[str, np.ndarray], summary: dict[str, Any])
         "aligned": "TomoJAX-aligned geometry",
         "corrected": "Authors' corrected geometry",
     }
-    n = volumes["reference"].shape[0]
+    nz, ny, _nx = volumes["reference"].shape
     peak = float(np.percentile(volumes["reference"], 99.9))
     fig, axes = plt.subplots(2, 4, figsize=(13, 6.8), constrained_layout=True)
     for col, key in enumerate(names):
         title = names[key]
         if key != "reference":
             title += f"\nerror {summary[key]['relative_l2_in_walnut']:.3f}"
-        axes[0, col].imshow(np.rot90(volumes[key][:, n // 2, :]), cmap="gray", vmin=0, vmax=peak)
+        axes[0, col].imshow(
+            volumes[key][:, ny // 2, :], origin="lower", cmap="gray", vmin=0, vmax=peak
+        )
         axes[0, col].set_title(title)
         axes[1, col].imshow(
-            np.rot90(volumes[key][:, :, n // 2 + 60]), cmap="gray", vmin=0, vmax=peak
+            volumes[key][nz // 2 + 60], origin="lower", cmap="gray", vmin=0, vmax=peak
         )
     for ax in axes.flat:
         ax.set_xticks([]), ax.set_yticks([])
@@ -172,9 +174,9 @@ def _save(
 
 
 def _central(volume: np.ndarray) -> dict[str, np.ndarray]:
-    """The three central orthogonal slices of an ``(x, y, z)`` volume."""
-    x, y, z = (n // 2 for n in volume.shape)
-    return {"xz": volume[:, y, :], "yz": volume[x], "xy": volume[..., z]}
+    """The three central orthogonal slices of an ``(z, y, x)`` volume."""
+    z, y, x = (n // 2 for n in volume.shape)
+    return {"xz": volume[:, y, :], "yz": volume[:, :, x], "xy": volume[z]}
 
 
 def _timed_alignment(

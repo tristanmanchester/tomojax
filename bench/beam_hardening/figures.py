@@ -19,9 +19,9 @@ def save(
     title: str,
     window: tuple[float, float] | None = None,
 ) -> None:
-    """Write ``reference`` and ``images`` (``[x, y]``, same units) and their radial profiles.
+    """Write ``reference`` and ``images`` (``[y, x]``, same units) and their radial profiles.
 
-    ``centre`` is in pixel indices, ``pitch`` the pixel size in mm and ``window``
+    ``centre`` is in physical x, y pixel indices, ``pitch`` the pixel size in mm and ``window``
     the grey range (by default the reference's 0.5th to 99.5th percentile).
     """
     import matplotlib
@@ -33,10 +33,10 @@ def save(
     low, high = np.percentile(reference, [0.5, 99.5]) if window is None else window
     fig, axes = plt.subplots(1, len(panels) + 1, figsize=(3.0 * (len(panels) + 1), 3.3))
     for ax, (name, image) in zip(axes, panels.items(), strict=False):
-        ax.imshow(image.T, origin="lower", cmap="gray", vmin=low, vmax=high)
+        ax.imshow(image, origin="lower", cmap="gray", vmin=low, vmax=high)
         ax.set_title(name, fontsize=9)
         ax.set_axis_off()
-    x, y = np.meshgrid(*(np.arange(n) for n in reference.shape), indexing="ij")
+    y, x = np.meshgrid(*(np.arange(n) for n in reference.shape), indexing="ij")
     ring = np.floor(np.hypot(x - centre[0], y - centre[1])).astype(int)
     count = np.maximum(np.bincount(ring.ravel()), 1)
     radius = np.arange(count.size) * pitch

@@ -64,8 +64,8 @@ def main() -> None:
     grid = fig.add_gridspec(3, 3, height_ratios=(1, 1, 0.62), hspace=0.12, wspace=0.04)
     top = 1.2
     rows = (
-        ("solder balls", lambda v: v[:, :, 10]),
-        ("die and traces", lambda v: v[:, :, 50]),
+        ("solder balls", lambda v: v[10]),
+        ("die and traces", lambda v: v[50]),
     )
     columns = (
         ("Phantom (voxelised meshes)", truth),

@@ -68,10 +68,10 @@ def main() -> None:
         (f"CGLS from FDK, {relative_error(cgls, truth, mask):.3f}", cgls),
     )
     # The xy slice is the top skin, the solid plane with the largest cone angle.
-    skin = N // 2 + int(np.argmax(truth[:, :, N // 2 :].mean(axis=(0, 1))))
+    skin = N // 2 + int(np.argmax(truth[N // 2 :].mean(axis=(1, 2))))
     for (title, volume), (xz_ax, xy_ax) in zip(columns, axes.T, strict=True):
         panel(xz_ax, volume[:, N // 2, :], title, 0.0, top)
-        panel(xy_ax, volume[:, :, skin], "", 0.0, top)
+        panel(xy_ax, volume[skin], "", 0.0, top)
     for ax, (label, _) in zip(axes[:, 0], rows, strict=True):
         ax.text(-0.04, 0.5, label, transform=ax.transAxes, rotation=90, ha="right", va="center")
     fig.suptitle(

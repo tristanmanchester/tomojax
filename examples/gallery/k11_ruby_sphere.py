@@ -52,14 +52,14 @@ def slice_figure(volume: np.ndarray | Array, grid: tj.Grid, output: Path) -> Non
     for axis in (2, 1, 0):
         selection = [slice(int(a), int(b)) for a, b in zip(first, stop, strict=True)]
         selection[axis] = int(indices[axis])
-        cuts.append(np.asarray(volume[tuple(selection)]))
+        cuts.append(np.asarray(volume[tuple(selection[::-1])]))
     low, high = np.percentile(np.concatenate([cut.ravel() for cut in cuts]), (1, 99.5))
     style()
     fig, axes = plt.subplots(1, 3, figsize=(10, 4.5), layout="constrained")
     for ax, cut, axis in zip(axes, cuts, (2, 1, 0), strict=True):
         horizontal, vertical = [k for k in range(3) if k != axis]
         extent = [lower[horizontal], upper[horizontal], lower[vertical], upper[vertical]]
-        ax.imshow(cut.T, origin="lower", extent=extent, vmin=low, vmax=high)
+        ax.imshow(cut, origin="lower", extent=extent, vmin=low, vmax=high)
         coordinate = origin[axis] + indices[axis] * pitch[axis]
         plane = "xyz"[horizontal] + "xyz"[vertical]
         ax.set_title(f"{plane} · {'xyz'[axis]} = {coordinate:.1f} µm")

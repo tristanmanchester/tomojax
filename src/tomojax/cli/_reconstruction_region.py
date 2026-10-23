@@ -44,9 +44,9 @@ def region_grid(scan: Scan, *, roi: str, grid: tuple[int, int, int] | None) -> t
 
 
 def cylinder_support(grid: Grid, detector: Detector) -> np.ndarray:
-    """``(nx, ny, nz)``: 1 inside the cylinder every view sees, 0 outside."""
-    inside = np.asarray(cylindrical_mask_xy(grid, detector), np.float32)[:, :, None]
-    return np.broadcast_to(inside, (grid.nx, grid.ny, grid.nz)).copy()
+    """``(nz, ny, nx)``: 1 inside the cylinder every view sees, 0 outside."""
+    inside = np.asarray(cylindrical_mask_xy(grid, detector), np.float32)[None]
+    return np.broadcast_to(inside, (grid.nz, grid.ny, grid.nx)).copy()
 
 
 def zero_outside_cylinder(
@@ -82,7 +82,7 @@ def _roi_grid(grid: Grid, detector: Detector, *, is_parallel: bool, roi_mode: st
     """The grid ``roi_mode`` asks for; ``auto`` crops only when the detector sees less."""
     if roi_mode == "auto":
         roi = compute_roi(grid, detector, crop_y_to_u=is_parallel)
-        if (roi.nx_roi, roi.ny_roi, roi.nz_roi) == (grid.nx, grid.ny, grid.nz):
+        if (roi.nx_roi, roi.ny_roi, roi.nz_roi) == (grid.nz, grid.ny, grid.nx):
             return grid
         if is_parallel:
             return grid_from_detector_fov_slices(grid, detector, crop_y_to_u=True)

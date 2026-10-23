@@ -203,3 +203,28 @@ def test_large_fp32_image_scores_do_not_depend_on_c_or_fortran_storage(walnut):
     second = walnut.compare(np.asfortranarray(actual), np.asfortranarray(reference))
     assert first["relative_l2"] == pytest.approx(expected, rel=1e-13)
     assert second == pytest.approx(first, rel=1e-13)
+
+
+@pytest.mark.parametrize(
+    ("module", "function"), [("walnut_alignment", "_central"), ("walnut_collection", "_slices")]
+)
+def test_preview_planes_preserve_physical_axes(monkeypatch, module, function):
+    import importlib
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "bench"))
+    volume = np.arange(105).reshape(3, 5, 7)
+    planes = getattr(importlib.import_module(module), function)(volume)
+    for name, expected in {"xy": volume[1], "xz": volume[:, 2], "yz": volume[:, :, 3]}.items():
+        np.testing.assert_array_equal(planes[name], expected)
+
+
+def test_registered_volume_reports_physical_xyz_translation(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "bench"))
+    from walnut_collection import _registered
+
+    volume = np.zeros((7, 9, 11))
+    volume[2, 4, 4] = 1
+    target = np.roll(volume, (1, -1, 2), axis=(0, 1, 2))
+    shift, moved = _registered(volume, target)
+    np.testing.assert_allclose(shift, [2, -1, 1], atol=1e-14)
+    np.testing.assert_allclose(moved, target, atol=1e-14)

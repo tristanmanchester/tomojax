@@ -11,9 +11,9 @@ def sphere(nx: int, ny: int, nz: int, *, size: float = 0.5, value: float = 1.0) 
     The sphere diameter is ``size * min(nx, ny, nz)`` so that ``size`` matches the
     semantics of :func:`cube` (whose side length uses the same scale). The sphere is
     centered in the volume and clamped to fit. Returns float32 array of shape
-    ``(nx, ny, nz)``.
+    ``(nz, ny, nx)``.
     """
-    X = np.zeros((nx, ny, nz), dtype=np.float32)
+    X = np.zeros((nz, ny, nx), dtype=np.float32)
     # diameter matches cube's "size" scale; radius is half that in voxels
     diam = max(1.0, float(size) * float(min(nx, ny, nz)))
     r = 0.5 * diam
@@ -22,7 +22,7 @@ def sphere(nx: int, ny: int, nz: int, *, size: float = 0.5, value: float = 1.0) 
     ys = np.arange(ny, dtype=np.float32) - cy
     zs = np.arange(nz, dtype=np.float32) - cz
     # Compute squared distance grid lazily via broadcasting
-    dist2 = (xs[:, None, None] ** 2) + (ys[None, :, None] ** 2) + (zs[None, None, :] ** 2)
+    dist2 = (xs[None, None, :] ** 2) + (ys[None, :, None] ** 2) + (zs[:, None, None] ** 2)
     mask = dist2 <= (r * r)
     X[mask] = float(value)
     return X
@@ -33,15 +33,15 @@ def cube(
 ) -> np.ndarray:
     """Axis-aligned cube in a zero background with side length = size * min(nx,ny,nz).
 
-    Centered in the volume. Returns float32 array of shape (nx, ny, nz).
+    Centered in the volume. Returns float32 array of shape (nz, ny, nx).
     """
     del seed
-    x = np.zeros((nx, ny, nz), dtype=np.float32)
+    x = np.zeros((nz, ny, nx), dtype=np.float32)
     s = int(max(1, round(size * min(nx, ny, nz))))
     sx = (nx - s) // 2
     sy = (ny - s) // 2
     sz = (nz - s) // 2
-    x[sx : sx + s, sy : sy + s, sz : sz + s] = value
+    x[sz : sz + s, sy : sy + s, sx : sx + s] = value
     return x
 
 
@@ -61,7 +61,7 @@ def rotated_centered_cube(
     - ``size`` is side length as a fraction of ``min(nx, ny, nz)`` (matches :func:`cube`).
     - If ``angles`` is None, sample rx, ry, rz uniformly in [-pi, pi] using ``seed``.
     """
-    vol = np.zeros((nx, ny, nz), dtype=np.float32)
+    vol = np.zeros((nz, ny, nx), dtype=np.float32)
     side = int(max(1, round(float(size) * float(min(nx, ny, nz)))))
     cx, cy, cz = (nx - 1) / 2.0, (ny - 1) / 2.0, (nz - 1) / 2.0
     if angles is None:
@@ -76,10 +76,10 @@ def rotated_centered_cube(
 def blobs(nx: int, ny: int, nz: int, *, n_blobs: int = 5, seed: int | None = 0) -> np.ndarray:
     """Random Gaussian blobs normalized to [0, 1]. Deterministic with seed.
 
-    Returns float32 array (nx, ny, nz).
+    Returns float32 array (nz, ny, nx).
     """
     rng = np.random.default_rng(seed)
-    X = np.zeros((nx, ny, nz), dtype=np.float32)
+    X = np.zeros((nz, ny, nx), dtype=np.float32)
     for _ in range(n_blobs):
         cx = rng.uniform(0.2 * nx, 0.8 * nx)
         cy = rng.uniform(0.2 * ny, 0.8 * ny)
@@ -91,7 +91,7 @@ def blobs(nx: int, ny: int, nz: int, *, n_blobs: int = 5, seed: int | None = 0) 
         gx = np.exp(-((np.arange(nx) - cx) ** 2) / (2 * sx * sx))
         gy = np.exp(-((np.arange(ny) - cy) ** 2) / (2 * sy * sy))
         gz = np.exp(-((np.arange(nz) - cz) ** 2) / (2 * sz * sz))
-        G = amp * np.outer(gx, gy).reshape(nx, ny, 1) * gz.reshape(1, 1, nz)
+        G = amp * (gx[None, None, :] * gy[None, :, None]) * gz[:, None, None]
         X += G.astype(np.float32)
     # Normalize to [0,1]
     X = X - X.min()
@@ -105,7 +105,7 @@ def shepp_logan_3d(nx: int, ny: int, nz: int) -> np.ndarray:
 
     Not a strict reference, but adequate for testing filters and reconstruction.
     """
-    X = np.zeros((nx, ny, nz), dtype=np.float32)
+    X = np.zeros((nz, ny, nx), dtype=np.float32)
     cx, cy, cz = (nx - 1) / 2.0, (ny - 1) / 2.0, (nz - 1) / 2.0
 
     def add_ellipsoid(
@@ -118,7 +118,7 @@ def shepp_logan_3d(nx: int, ny: int, nz: int) -> np.ndarray:
         xs = (np.arange(nx) - (cx + ox)) / ax
         ys = (np.arange(ny) - (cy + oy)) / ay
         zs = (np.arange(nz) - (cz + oz)) / az
-        E = ((xs[:, None, None] ** 2) + (ys[None, :, None] ** 2) + (zs[None, None, :] ** 2)) <= 1.0
+        E = ((xs[None, None, :] ** 2) + (ys[None, :, None] ** 2) + (zs[:, None, None] ** 2)) <= 1.0
         X[E] += value
 
     add_ellipsoid((0.69 * nx / 2, 0.92 * ny / 2, 0.9 * nz / 2), (0, 0, 0), 1.0)
@@ -158,7 +158,7 @@ def _add_rotated_cube_soft(
     edge_softness: float = 1.0,
 ) -> None:
     """Add a softly edged rotated cube into vol by ROI evaluation (no SciPy)."""
-    nx, ny, nz = vol.shape
+    nz, ny, nx = vol.shape
     cx, cy, cz = center
     R = _rotation_matrix_3d(angles)
     half = size / 2.0
@@ -186,7 +186,7 @@ def _add_rotated_cube_soft(
     xs = np.arange(bb_min[0], bb_max[0] + 1)
     ys = np.arange(bb_min[1], bb_max[1] + 1)
     zs = np.arange(bb_min[2], bb_max[2] + 1)
-    X, Y, Z = np.meshgrid(xs, ys, zs, indexing="ij")
+    Z, Y, X = np.meshgrid(zs, ys, xs, indexing="ij")
     P = np.stack([(X - cx), (Y - cy), (Z - cz)], axis=0).reshape(3, -1)
     Q = (R.T @ P).reshape(3, *X.shape)
     # Soft inside mask via distance to faces
@@ -195,7 +195,7 @@ def _add_rotated_cube_soft(
     dz = np.maximum(0.0, np.abs(Q[2]) - (half - 0.5))
     dist = np.sqrt(dx * dx + dy * dy + dz * dz)
     alpha = np.clip(1.0 - dist / max(edge_softness, 1e-6), 0.0, 1.0).astype(np.float32)
-    sub = vol[xs.min() : xs.max() + 1, ys.min() : ys.max() + 1, zs.min() : zs.max() + 1]
+    sub = vol[zs.min() : zs.max() + 1, ys.min() : ys.max() + 1, xs.min() : xs.max() + 1]
     np.maximum(sub, (value * alpha).astype(np.float32), out=sub)
 
 
@@ -257,7 +257,7 @@ def _rasterize_spheres_python_roi(vol: np.ndarray, params: np.ndarray) -> None:
     if params.size == 0:
         return
 
-    nx, ny, nz = vol.shape
+    nz, ny, nx = vol.shape
     for cx, cy, cz, radius, value in np.asarray(params, dtype=np.float64):
         x0, x1 = _sphere_bounds_1d(float(cx), float(radius), nx)
         y0, y1 = _sphere_bounds_1d(float(cy), float(radius), ny)
@@ -268,12 +268,12 @@ def _rasterize_spheres_python_roi(vol: np.ndarray, params: np.ndarray) -> None:
         xs = np.arange(x0, x1 + 1, dtype=np.int64)
         ys = np.arange(y0, y1 + 1, dtype=np.int64)
         zs = np.arange(z0, z1 + 1, dtype=np.int64)
-        X, Y, Z = np.meshgrid(xs, ys, zs, indexing="ij")
+        Z, Y, X = np.meshgrid(zs, ys, xs, indexing="ij")
         dist = np.sqrt((X - cx) ** 2 + (Y - cy) ** 2 + (Z - cz) ** 2)
         mask = dist <= radius
         if not np.any(mask):
             continue
-        sub = vol[x0 : x1 + 1, y0 : y1 + 1, z0 : z1 + 1]
+        sub = vol[z0 : z1 + 1, y0 : y1 + 1, x0 : x1 + 1]
         sub[mask] = np.maximum(sub[mask], value)
 
 
@@ -324,7 +324,7 @@ def random_cubes_spheres(
 
     Ensures objects fit within FOV if `use_inscribed_fov=True`.
     """
-    vol = np.zeros((nx, ny, nz), dtype=np.float32)
+    vol = np.zeros((nz, ny, nx), dtype=np.float32)
     rng = np.random.default_rng(seed)
 
     # Cubes
@@ -391,8 +391,8 @@ def lamino_disk(
 ) -> np.ndarray:
     """Random cubes+spheres phantom constrained to a thin central slab.
 
-    Sample-frame convention: the reconstructed/object volume is in (x, y, z)
-    coordinates, and the nominal rotation axis is the +z axis. The thin slab is
+    Sample-frame convention: the reconstructed/object volume uses (z, y, x)
+    array order, and the nominal rotation axis is the +z axis. The thin slab is
     therefore orthogonal to +z, i.e., confined to the central few z-slices.
     """
     ratio = float(np.clip(thickness_ratio, 0.0, 1.0))
@@ -420,7 +420,7 @@ def lamino_disk(
     half_thickness = max(0.5, nz_thin * 0.5)
     zs = np.arange(nz, dtype=np.float32)
     mask_z = np.abs(zs - cz) <= half_thickness
-    vol[:, :, ~mask_z] = 0.0
+    vol[~mask_z] = 0.0
 
     vmax = float(vol.max())
     if vmax > 0:

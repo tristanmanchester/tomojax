@@ -73,10 +73,10 @@ def make_case(case: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
         for ox in offsets:
             for oy in offsets:
                 for oz in offsets:
-                    y, z = np.meshgrid(
-                        origin + np.arange(n) + oy, origin + np.arange(n) + oz, indexing="ij"
+                    y, x = np.meshgrid(
+                        origin + np.arange(n) + oy, origin + np.arange(n) + ox, indexing="ij"
                     )
-                    p = np.stack([np.full_like(y, origin + i + ox), y, z], -1)
+                    p = np.stack([x, y, np.full_like(y, origin + i + oz)], -1)
                     for amp, c, m in ellipsoids:
                         d = p - c
                         acc += amp * (np.einsum("...i,ij,...j->...", d, m, d) <= 1)
@@ -218,7 +218,7 @@ def run_astra(
     vol_geom = astra.create_vol_geom(n, n, n, lo, hi, lo, hi, lo, hi)
     vectors = astra_vectors(case)
     proj_geom = astra.create_proj_geom("cone_vec", case["nv"], case["nu"], vectors)
-    avol = np.ascontiguousarray(volume.transpose(2, 1, 0))
+    avol = np.ascontiguousarray(volume)
     sino = np.ascontiguousarray(data.transpose(1, 0, 2))
     out = np.empty((case["nv"], views, case["nu"]), np.float32)
     back = np.empty_like(avol)
@@ -272,7 +272,7 @@ def run_astra(
             "library": "astra",
             "operation": "fdk",
             "seconds": t_fdk,
-            "error": relative(rec.transpose(2, 1, 0), volume),
+            "error": relative(rec, volume),
         },
         {
             "library": "astra",
@@ -295,7 +295,7 @@ def run_tigre(
     from tigre import algorithms
 
     geo, angles = tigre_geometry(case)
-    tvol = np.ascontiguousarray(volume.transpose(2, 1, 0))
+    tvol = np.ascontiguousarray(volume)
     records = []
     for method in ("interpolated", "Siddon"):
         fp, t = best(lambda m=method: tigre.Ax(tvol, geo, angles, projection_type=m), repeats)
@@ -315,7 +315,7 @@ def run_tigre(
             "library": "tigre",
             "operation": "fdk",
             "seconds": t,
-            "error": relative(rec.transpose(2, 1, 0), volume),
+            "error": relative(rec, volume),
         }
     )
     return records

@@ -58,3 +58,33 @@ def test_tilted_pose_maps_camera_rays_with_a_proper_rotation(generator):
     np.testing.assert_allclose(r @ r.T, np.eye(3), atol=1e-15)
     np.testing.assert_allclose(np.linalg.det(r), 1.0, atol=1e-15)
     assert abs(r[1, 2]) > 0.1
+
+
+def test_material_reference_is_sampled_in_zyx_order(generator, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    class CoordinatesChecked(Exception):
+        pass
+
+    def check(_renderer, coordinates):
+        np.testing.assert_array_equal(coordinates[0, 1, 3], [18.0, -6.0, -18.0])
+        raise CoordinatesChecked
+
+    renderer = SimpleNamespace(
+        **{
+            name: lambda *args: None
+            for name in (
+                "createNewContext",
+                "useParallelBeam",
+                "disablePoissonNoise",
+                "setDetectorNumberOfPixels",
+                "setDetectorPixelSize",
+                "destroy",
+            )
+        }
+    )
+    monkeypatch.setitem(sys.modules, "gvxrPython3", SimpleNamespace(gvxr=renderer))
+    monkeypatch.setattr(generator, "add_materials", check)
+    with pytest.raises(CoordinatesChecked):
+        generator.generate(4, 1, 0.0, 100.0, 7)

@@ -262,7 +262,7 @@ import tomojax as tj
 proj_geom = astra.create_proj_geom("cone_vec", rows, cols, vectors)
 vol_geom = astra.create_vol_geom(501, 501, 501)  # with its window set as usual
 scan = tj.Scan.from_astra(data, proj_geom, vol_geom)
-volume = tj.reconstruct(scan).volume              # (x, y, z): ASTRA's (z, y, x) transposed
+volume = tj.reconstruct(scan).volume              # (z, y, x), shared with ASTRA
 data, proj_geom, vol_geom = scan.to_astra()      # and back
 ```
 

@@ -30,7 +30,7 @@ scattering at 100 keV (xraylib 4.3 ``CS_Total_CP``, the counterpart of the
 NIST XCOM total with coherent scattering): Ti-6Al-4V (Ti 90, Al 6, V 4 wt%) at
 4.43 g/cm^3 and tungsten at 19.3. 100 keV is about the mean energy of a 190
 kVp tungsten spectrum behind 1 mm of copper. Air is 0. Volumes are attenuation
-in mm^-1, ``(x, y, z)`` order.
+in mm^-1, ``(z, y, x)`` order.
 
     python bench/phantoms/lattice_part.py --n 256 --preview /tmp/lattice_part.png
 """

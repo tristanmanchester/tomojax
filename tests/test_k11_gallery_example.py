@@ -16,7 +16,7 @@ def test_ruby_gallery_preserves_region_and_labels_scale(monkeypatch, tmp_path):
     assert (initial.nx, initial.ny, initial.nz) == (160, 160, 135)
     assert initial.vx == 8.64
     grid = gallery.tj.Grid(552, 552, 192, 8.64, 8.64, 8.64)
-    volume = np.broadcast_to(np.arange(grid.nx)[:, None, None], (grid.nx, grid.ny, grid.nz))
+    volume = np.broadcast_to(np.arange(grid.nx)[None, None, :], (grid.nz, grid.ny, grid.nx))
     figures = []
     monkeypatch.setattr(gallery, "save", lambda fig, path: figures.append(fig))
     gallery.slice_figure(volume, grid, tmp_path / "ruby.png")
@@ -40,7 +40,7 @@ def test_layer_gallery_uses_world_slice_coordinate_and_enlarges_cross_sections(
     import k11_glass_layer as gallery
 
     grid = gallery.tj.Grid(384, 384, 64, 8.64, 8.64, 8.64, vol_center=(0, 0, 17.28))
-    volume = np.broadcast_to(np.arange(grid.nz)[None, None, :], (grid.nx, grid.ny, grid.nz))
+    volume = np.broadcast_to(np.arange(grid.nz)[:, None, None], (grid.nz, grid.ny, grid.nx))
     figures = []
     monkeypatch.setattr(gallery, "save", lambda fig, path: figures.append(fig))
     gallery.slice_figure(volume, grid, tmp_path / "layer.png")
