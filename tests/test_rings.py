@@ -122,6 +122,38 @@ def test_unsorted_geometry_view_count_is_checked() -> None:
         Rings().apply(jnp.zeros((1, 1, N), jnp.float32))
 
 
+@pytest.mark.parametrize("closing", [False, True])
+def test_full_turn_fit_preserves_view_order_including_closing_phase(closing: bool) -> None:
+    q = _errors(_sinogram(360, 180)).astype(np.float32)
+    if closing:
+        q = np.concatenate([q, q[:1]])
+    angles = 2.0 * np.arange(len(q))
+    base = _geometry(360, 180)
+    order = np.random.default_rng(481).permutation(len(q))
+    geometry = tj.ParallelGeometry(base.grid, base.detector, angles)
+    permuted = tj.ParallelGeometry(base.grid, base.detector, angles[order])
+    fixed = np.asarray(Rings(geometry).apply(jnp.asarray(q[:, None])))
+    shuffled = np.asarray(Rings(permuted).apply(jnp.asarray(q[order, None])))
+    np.testing.assert_array_equal(shuffled[np.argsort(order)], fixed)
+
+
+@pytest.mark.parametrize("origin", [-40.0, 0.0, 20.0])
+def test_wrapped_closing_phase_pairs_unequal_observations(origin: float) -> None:
+    clean = _sinogram(360, 180)
+    q = _errors(np.concatenate([clean, clean[:1]])).astype(np.float32)
+    angles = origin + 2.0 * np.arange(len(q))
+    base = _geometry(360, 180)
+    geometry = tj.ParallelGeometry(base.grid, base.detector, angles)
+    wrapped = tj.ParallelGeometry(base.grid, base.detector, angles % 360)
+    assert Rings(geometry).mirror_axis == Rings(wrapped).mirror_axis == 127.5
+    fixed = np.asarray(Rings(geometry).apply(jnp.asarray(q[:, None])))
+    np.testing.assert_array_equal(Rings(wrapped).apply(jnp.asarray(q[:, None])), fixed)
+    swapped = np.arange(len(q))
+    swapped[[0, -1]] = swapped[[-1, 0]]
+    changed = np.asarray(Rings(wrapped).apply(jnp.asarray(q[swapped, None])))
+    np.testing.assert_array_equal(changed[swapped], fixed)
+
+
 @pytest.mark.parametrize("angles", [np.arange(-40, 41, 4), np.array([-135, -45, 45, 135])])
 def test_angular_phase_wrap_does_not_change_correction(angles: np.ndarray) -> None:
     clean = _sinogram(360.0, 360)[angles.astype(int) % 360]

@@ -24,13 +24,15 @@ streamed-row workflows; detector binning averages the corrected line integrals.
 
 `Rings(geometry)`, also available as `preprocess --rings`, fits each detector
 column's offset and transmission-dependent response. Stationary parallel full
-turns use view-sorted adaptive references, correct large stripes (Vo, Atwood and
-Drakopoulos 2018) and broad rings, and retain their mirror-symmetric part only
-as far as the antisymmetric part supports it. Other scans use unsorted local
+turns use unsorted adaptive references with cyclic independent-view instruments,
+correct large stripes (Vo, Atwood and Drakopoulos 2018) and broad rings, and use
+local reflection-aware multiscale statistics to retain the mirror-symmetric
+response supported by its antisymmetric part. Other scans use unsorted local
 references with independent-view instruments and spectral regularisation by
 angular covariance and object power, reducing the bias on ring-free scans.
 Built-in angular geometries supply ordering and interpolation within each
-trajectory; output view order is preserved.
+trajectory; output view order is preserved. Stuck-column fitting centres measured
+variation without inventing variance in view-constant data.
 
 Breaking: Nikon scans load in the right-handed frame CIL's Nikon reader uses
 (panel origin top-right, angles `180 - InitialAngle - AngularStep * view`), so

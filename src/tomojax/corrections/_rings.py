@@ -1,8 +1,8 @@
 """Detector-response correction with geometric or statistical separation from the object.
 
-Each column reports ``q + a + b (1 - exp(-q))``. Parallel full turns use sorted
-neighbouring-column references and opposed-ray redundancy. Other scans use
-unsorted local references, independent-view instruments and spectral regularisation.
+Each column reports ``q + a + b (1 - exp(-q))``. Independent-view regressions
+fit neighbouring-column references. Parallel full turns use opposed-ray parity;
+other scans use angular covariance and a spatial scene-power prior.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from tomojax.geometry import (
 )
 
 from ._records import Correction
+from ._ring_parity import regularize
 from ._steps import Domain, Step, bitonic_median
 
 WINDOWS = (30, 20, 14, 9, 6)
@@ -49,10 +50,14 @@ def _shifts(x: jax.Array, half: int) -> list[jax.Array]:
 
 
 def _correlate(x: jax.Array, kernel: np.ndarray) -> jax.Array:
-    out = jnp.zeros_like(x)
-    for k, shifted in zip(kernel, _shifts(x, len(kernel) // 2), strict=True):
-        if k != 0.0:
-            out = out + float(k) * shifted
+    """Apply a symmetric stencil, accumulating reflected samples together."""
+    half = len(kernel) // 2
+    shifted = _shifts(x, half)
+    out = float(kernel[half]) * x
+    for j in range(1, half + 1):
+        k = float((kernel[half - j] + kernel[half + j]) * 0.5)
+        if k:
+            out = out + k * (shifted[half - j] + shifted[half + j])
     return out
 
 
@@ -70,17 +75,18 @@ def _weighted_quadratic(
     Offsets are scaled to [-1, 1] and neighbours taken relative to the column's own value, then
     the 3x3 normal equations are solved by Cholesky, so float32 keeps the local variation's digits.
     """
-    u = np.arange(-window, window + 1, dtype=np.float64) / window
-    keep = np.abs(u) > guard / window + 1e-12
+    values_shifted, weights_shifted = _shifts(values, window), _shifts(weights, window)
     s = [jnp.zeros_like(values) for _ in range(5)]
     t = [jnp.zeros_like(values) for _ in range(3)]
-    for uj, kj, sw, sv in zip(
-        u, keep, _shifts(weights, window), _shifts(values, window), strict=True
-    ):
-        if kj:
-            delta = sw * (sv - values)
-            s = [s[m] + float(uj**m) * sw for m in range(5)]
-            t = [t[m] + float(uj**m) * delta for m in range(3)]
+    # Pair the even/odd moments too: tiny asymmetric residuals otherwise steer
+    # Tukey weights very differently in nearly flat, reflected neighbourhoods.
+    for j in range(guard + 1, window + 1):
+        u = j / window
+        left, right = weights_shifted[window - j], weights_shifted[window + j]
+        dl = left * (values_shifted[window - j] - values)
+        dr = right * (values_shifted[window + j] - values)
+        s = [s[k] + u**k * (right + left if k % 2 == 0 else right - left) for k in range(5)]
+        t = [t[k] + u**k * (dr + dl if k % 2 == 0 else dr - dl) for k in range(3)]
     l00 = jnp.sqrt(s[0])
     l10, l20 = s[1] / l00, s[2] / l00
     l11 = jnp.sqrt(s[2] - l10 * l10)
@@ -94,11 +100,11 @@ def _weighted_quadratic(
 
 
 def _reference(ranked: jax.Array, gamma: float = 2.0, local: int = 64) -> jax.Array:
-    """The adaptive reference for view-sorted line integrals (ranks, columns).
+    """The adaptive spatial reference for rows of line integrals.
 
     It starts from the local quadratic through +-30 columns and moves toward the +-20, 14, 9 and 6
-    ones only as far as each differs from it by more than ``gamma`` times its noise at that rank
-    and place, so roughness of the object's sorted values (an edge turning at some radius) is
+    ones only as far as each differs from it by more than ``gamma`` times its noise at that view
+    and place, so roughness of the object's values (an edge turning at some radius) is
     followed rather than turned into a column correction. Neighbours are Tukey-weighted by their
     misfit to the +-6 quadratic so that a defective column does not steer them.
     """
@@ -266,15 +272,20 @@ def _fill(q: jax.Array, window: int = 30) -> jax.Array:
     side, and a column whose neighbours never vary is taken as working (slope 1).
     """
     ranked = jnp.sort(q, axis=0)
+    # Measure variation relative to an observation before centring. Subtracting
+    # rounded absolute means fabricates variance in view-constant columns.
+    centered = ranked - ranked[:1]
+    centered = centered - centered.mean(0)
     slopes = []
     for side in (-1, 1):
         foot = np.zeros(2 * window + 1, bool)
         foot[window + side * np.arange(2, window + 1)] = True
         rc = _median(ranked, foot)
+        rc = rc - rc[:1]
         rc = rc - rc.mean(0)
         spread = (rc * rc).sum(0)
         prior = 1e-3 * jnp.median(spread) + jnp.finfo(q.dtype).tiny
-        slopes.append(((rc * (ranked - ranked.mean(0))).sum(0) + prior) / (spread + prior))
+        slopes.append(((rc * centered).sum(0) + prior) / (spread + prior))
     weight = jnp.clip(jnp.maximum(*slopes) / jnp.median(jnp.maximum(*slopes)), 0.0, 1.0)
     good = weight > 0.5
     n = q.shape[1]
@@ -287,36 +298,6 @@ def _fill(q: jax.Array, window: int = 30) -> jax.Array:
     filled = q[:, lo] + frac * (q[:, hi] - q[:, lo])
     usable = (~jnp.all(good)) & (jnp.sum(good) >= 2)
     return jnp.where(usable, weight * q + (1 - weight) * filled, q)
-
-
-def _mirror(profile: jax.Array, axis: float, keep_even: str, bands: int = 24) -> jax.Array:
-    """Keep a per-column profile's odd part about ``axis`` and its even part band by band.
-
-    The odd part is pure detector error on a parallel full turn. The even part is kept by the odd
-    part's share of the power (``"wiener"``) or whole unless its power beats the odd part's by
-    more than a 95% F test allows (``"significance"``).
-    """
-    from scipy.stats import f as fisher
-
-    n = profile.shape[0]
-    c = np.arange(n)
-    u = np.flatnonzero((2 * axis - c >= 0) & (2 * axis - c <= n - 1) & (c >= axis))
-    if u.size < 8:
-        return profile
-    m = (2 * axis - u).astype(int)
-    even, odd = 0.5 * (profile[u] + profile[m]), 0.5 * (profile[u] - profile[m])
-    fe, fo = jnp.fft.rfft(even), jnp.fft.rfft(odd)
-    edges = np.unique(np.geomspace(1, fe.shape[0], bands).astype(int))
-    gains = [jnp.ones(fe.shape[0] - int(edges[-1]), profile.dtype)]
-    for lo, hi in reversed(list(zip(np.r_[0, edges[:-1]], edges, strict=True))):
-        pe = jnp.maximum(jnp.sum(jnp.abs(fe[lo:hi]) ** 2), jnp.finfo(profile.dtype).tiny)
-        scale = (
-            1.0 if keep_even == "wiener" else float(fisher.ppf(0.95, 2 * (hi - lo), 2 * (hi - lo)))
-        )
-        gain = jnp.minimum(scale * jnp.sum(jnp.abs(fo[lo:hi]) ** 2) / pe, 1.0)
-        gains.insert(0, jnp.full(hi - lo, gain, profile.dtype))
-    kept = jnp.fft.irfft(fe * jnp.concatenate(gains), n=even.shape[0]).astype(profile.dtype)
-    return profile.at[u].set(kept + odd).at[m].set(kept - odd)
 
 
 def _large_stripes(q: jax.Array, window: int = 100, ratio: float = 3.0) -> jax.Array:
@@ -354,21 +335,27 @@ def _large_stripes(q: jax.Array, window: int = 100, ratio: float = 3.0) -> jax.A
     return q - (weight * (alpha + beta * xm))[None, :]
 
 
-def _row(q: jax.Array, axis: float, passes: int = 2, window: int = 100) -> jax.Array:
-    out = _fill(q)
-    out = _large_stripes(out, window)
-    for _ in range(passes):
-        ranked = jnp.sort(out, axis=0)
-        alpha, beta, xm = _fit(ranked, _reference(ranked))
-        level = _mirror(alpha + beta * xm, axis, "significance")
-        beta = _mirror(beta, axis, "significance")
-        alpha = level - beta * xm
-        out = _invert(out, alpha[None, :], beta[None, :])
+def _row(
+    q: jax.Array,
+    axis: float,
+    neighbours: jax.Array,
+    weights: jax.Array,
+    *,
+    closing: bool,
+) -> jax.Array:
+    """Full-turn fits without sorting away the spatial smoothness at the axis."""
+    out = _large_stripes(_fill(q))
+    for _ in range(2):
+        fitted = jnp.concatenate([0.5 * (out[:1] + out[-1:]), out[1:-1]]) if closing else out
+        level, beta, xm, *_ = _fit_unsorted(fitted, _reference(fitted), neighbours, weights)
+        level = regularize(level, axis, "significance")
+        beta = regularize(beta, axis, "significance")
+        out = _invert(out, level - beta * xm, beta)
     ranked = jnp.sort(out, axis=0)
-    alpha, beta, xm = _fit(ranked, _correlate(ranked, _quadratic_taps(window, 1)))
-    level = _mirror(alpha + beta * xm, axis, "wiener")
-    beta = _mirror(beta, axis, "wiener")
-    return _invert(out, (level - beta * xm)[None, :], beta[None, :])
+    alpha, beta, xm = _fit(ranked, _correlate(ranked, _quadratic_taps(100, 1)))
+    level = regularize(alpha + beta * xm, axis, "wiener")
+    beta = regularize(beta, axis, "wiener")
+    return _invert(out, level - beta * xm, beta)
 
 
 @dataclass(frozen=True)
@@ -377,6 +364,7 @@ class _ViewPlan:
     neighbours: tuple[tuple[int, int], ...]
     weights: tuple[tuple[float, float], ...]
     groups: tuple[int, ...]
+    closing: bool = False
 
 
 def _angular_order(angles: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -395,7 +383,36 @@ def _angular_order(angles: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return indices, np.mod(phase[indices] - ordered[cut], 360) + ordered[cut]
 
 
-def _view_plan(geometry: object) -> _ViewPlan | None:
+def _periodic_order(angles: np.ndarray) -> tuple[np.ndarray, np.ndarray, bool] | None:
+    """A uniform full turn, with a repeated closing phase paired across its cut.
+
+    Eligibility and fine-fit ordering share this convention, including modulo
+    angle labels. Explicit multi-turn acquisitions retain their noncyclic route.
+    """
+    size = len(angles)
+    if size < 8 or np.ptp(angles) > 360 + 180 / (size - 1):
+        return None
+    phase = np.mod(angles, 360)
+    order = np.argsort(phase, kind="stable")
+    gaps = np.diff(np.r_[phase[order], phase[order[0]] + 360])
+    short = np.flatnonzero(gaps < 180 / (size - 1))
+    closing = len(short) == 1
+    if len(short) > 1:
+        return None
+    spacing = 360 / (size - int(closing))
+    ordinary = np.delete(gaps, short)
+    if not np.all(np.abs(ordinary - spacing) <= 0.1 * spacing):
+        return None
+    if closing:
+        order = np.roll(order, -int(short[0]))
+        order = np.r_[order[:1], order[2:], order[1:2]]
+    unwrapped = np.mod(phase[order] - phase[order[0]], 360) + phase[order[0]]
+    if closing:
+        unwrapped[-1] += 360
+    return order, unwrapped, closing
+
+
+def _view_plan(geometry: object, *, cyclic: bool = False) -> _ViewPlan | None:
     """Angular neighbours within each fixed trajectory, never between cone segments."""
     if isinstance(geometry, ConeSegments):
         segments = geometry.segments
@@ -407,47 +424,70 @@ def _view_plan(geometry: object) -> _ViewPlan | None:
         return None
     order, neighbours, weights, groups = [], [], [], []
     offset = 0
+    closing = False
     for segment in segments:
         angles = np.asarray(segment.angles, np.float64)
         size = len(angles)
         if size < 2:
             raise ValueError("Rings needs at least two views per trajectory")
-        indices, angles = _angular_order(angles)
-        i = np.arange(size)
-        lo, hi = np.maximum(i - 1, 0), np.minimum(i + 1, size - 1)
-        lo[0], hi[-1] = hi[0], lo[-1]
-        gap = angles[hi] - angles[lo]
-        weight = np.divide(angles[hi] - angles, gap, out=np.full(size, 0.5), where=gap != 0)
+        if cyclic:
+            periodic = _periodic_order(angles)
+            assert periodic is not None
+            indices, angles, closing = periodic
+        else:
+            indices, angles = _angular_order(angles)
         order.extend(int(j + offset) for j in indices)
+        if cyclic and closing:
+            # A repeated closing phase is one observation for the spatial fit,
+            # not an extra angular weight or its own independent instrument.
+            angles = np.r_[0.5 * (angles[0] + angles[-1] - 360), angles[1:-1]]
+            size -= 1
+        i = np.arange(size)
+        if cyclic:
+            lo, hi = (i - 1) % size, (i + 1) % size
+            left, right = (angles - angles[lo]) % 360, (angles[hi] - angles) % 360
+            weight = right / (left + right)
+        else:
+            lo, hi = np.maximum(i - 1, 0), np.minimum(i + 1, size - 1)
+            lo[0], hi[-1] = hi[0], lo[-1]
+            gap = angles[hi] - angles[lo]
+            weight = np.divide(angles[hi] - angles, gap, out=np.full(size, 0.5), where=gap != 0)
         neighbours.extend((int(a + offset), int(b + offset)) for a, b in zip(lo, hi, strict=True))
         weights.extend((float(w), float(1 - w)) for w in weight)
         groups.append(size)
         offset += size
-    return _ViewPlan(tuple(order), tuple(neighbours), tuple(weights), tuple(groups))
+    return _ViewPlan(tuple(order), tuple(neighbours), tuple(weights), tuple(groups), bool(closing))
 
 
-@partial(jax.jit, static_argnames=("axis", "groups"))
+@partial(jax.jit, static_argnames=("axis", "groups", "closing"))
 def correct_rings(
     batch: jax.Array,
     axis: float | None = None,
     neighbours: jax.Array | None = None,
     weights: jax.Array | None = None,
     groups: tuple[int, ...] = (),
+    *,
+    closing: bool = False,
 ) -> jax.Array:
     """Correct every detector row of a ``(views, rows, columns)`` batch of line integrals."""
-    if axis is not None:
-        rows = jax.lax.map(lambda q: _row(q, axis), jnp.swapaxes(batch, 0, 1))
-        return jnp.swapaxes(rows, 0, 1)
     if neighbours is None or weights is None:
         size = batch.shape[0]
         if size < 2:
             raise ValueError("Rings needs at least two views")
         i = np.arange(size)
-        lo, hi = np.maximum(i - 1, 0), np.minimum(i + 1, size - 1)
-        lo[0], hi[-1] = hi[0], lo[-1]
+        if axis is None:
+            lo, hi = np.maximum(i - 1, 0), np.minimum(i + 1, size - 1)
+            lo[0], hi[-1] = hi[0], lo[-1]
+        else:
+            lo, hi = (i - 1) % size, (i + 1) % size
         neighbours = jnp.asarray(np.stack([lo, hi], axis=1), jnp.int32)
         weights = jnp.full((size, 2), 0.5, batch.dtype)
         groups = (size,)
+    if axis is not None:
+        rows = jax.lax.map(
+            lambda q: _row(q, axis, neighbours, weights, closing=closing), jnp.swapaxes(batch, 0, 1)
+        )
+        return jnp.swapaxes(rows, 0, 1)
     rows = jax.lax.map(
         lambda q: _unsorted_row(q, neighbours, weights, groups), jnp.swapaxes(batch, 0, 1)
     )
@@ -461,13 +501,7 @@ def mirror_axis(geometry: object) -> float | None:
     """
     if type(geometry) is not ParallelGeometry:
         return None
-    angles = np.sort(np.asarray(geometry.angles, np.float64))
-    steps = np.diff(angles)
-    if angles.size < 8 or not np.all(np.abs(steps - steps.mean()) <= 0.1 * steps.mean()):
-        return None
-    # one turn, with or without a last view repeating the first angle
-    cover = angles[-1] - angles[0] + steps.mean()
-    if not 360.0 - 0.5 * steps.mean() <= cover <= 360.0 + 1.5 * steps.mean():
+    if _periodic_order(np.asarray(geometry.angles, np.float64)) is None:
         return None
     detector = geometry.detector
     column = detector.nu / 2.0 - 0.5 - float(detector.center[0]) / float(detector.du)
@@ -486,21 +520,25 @@ class Rings(Step):
     their neighbours.
 
     On a stationary parallel-beam scan over one evenly sampled full turn,
-    each detector row's values are sorted over views
-    (Vo, Atwood and Drakopoulos 2018, Opt. Express 26, 28396, algorithm 3), and
-    at every rank a column is compared with a reference built from its
-    neighbours: the local quadratic through 30 columns either side, narrowed
-    toward 6 where the sample's own sorted values change faster than that, so
-    that sample edges are not mistaken for stripes. Every column and its
-    mirror about the rotation axis then see the same lines, so the odd part of
-    the fitted errors is pure detector error: large stripes are detected and
-    corrected first (algorithms 4 and 5 of the same paper, on the flagged
-    columns only), the fine fit keeps the errors' even part only as far as the
-    odd part supports it, and a last pass over 100 columns either side removes
-    broad rings the same way. An even error profile on its own is
-    indistinguishable from a rotationally symmetric sample, so what is kept of
-    it rests on the odd part showing detector errors at that scale. The axis
-    used, or none, is recorded.
+    each view is compared with a local quadratic through 30 columns either
+    side, narrowed toward 6 where the object changes faster. Independent
+    neighbouring views provide the instrument for the response fit. Keeping
+    these references unsorted preserves their spatial smoothness at the axis.
+    The fine fits use cyclic angular neighbours and average a repeated closing
+    phase. Large stripes are detected first using the sorted-column procedure
+    of Vo, Atwood and Drakopoulos (2018, Opt. Express 26, 28396, algorithms 4
+    and 5); a last sorted fit over 100 columns either side addresses broad rings.
+
+    Opposed columns see the same lines over a full turn. Their fitted odd
+    component therefore supplies a stationary detector-field spectrum; the
+    even component is regularised locally in an undecimated multiscale frame,
+    accounting for correlation between reflected neighbours. Fine corrections
+    use per-scale simultaneous significance and broad corrections a Wiener gain.
+    The variance and effective degrees are estimated, not a calibrated
+    scan-wide confidence bound. DC power is inferred from the lowest measured
+    odd-frequency band. Purely even detector errors and rotationally symmetric
+    object structure remain ambiguous, especially at broad scales; this is
+    not a no-change guarantee. The axis used, or none, is recorded.
 
     Otherwise, each unsorted view is compared with a quadratic through six
     neighbouring columns on either side. Independent neighbouring views supply
@@ -555,9 +593,7 @@ class Rings(Step):
         object.__setattr__(self, "_axis", axis)
         if axis is not None and isinstance(self.geometry, ParallelGeometry):
             object.__setattr__(self, "_columns", int(self.geometry.detector.nu))
-        if axis is None:
-            plan = _view_plan(self.geometry)
-            object.__setattr__(self, "_plan", plan)
+        object.__setattr__(self, "_plan", _view_plan(self.geometry, cyclic=axis is not None))
 
     @property
     def mirror_axis(self) -> float | None:
@@ -615,8 +651,10 @@ class Rings(Step):
         order = jnp.asarray(plan.order, jnp.int32)
         out = correct_rings(
             batch[order],
+            axis=self._axis,
             neighbours=jnp.asarray(plan.neighbours, jnp.int32),
             weights=jnp.asarray(plan.weights, batch.dtype),
             groups=plan.groups,
+            closing=plan.closing,
         )
         return out[jnp.asarray(np.argsort(plan.order), jnp.int32)]
