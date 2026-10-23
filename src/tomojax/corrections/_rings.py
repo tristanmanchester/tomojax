@@ -1,24 +1,28 @@
-"""Ring correction from each detector column's response, fitted on the view-sorted sinogram.
+"""Detector-response correction with geometric or statistical separation from the object.
 
-Each column ``c`` of a detector row is modelled as reporting ``q + a_c + b_c (1 - exp(-q))`` for
-the true line integral ``q``: an offset and a transmission-dependent error. Sorting a column's
-values over the views lines up equal ranks of neighbouring columns (Vo, Atwood and Drakopoulos
-2018, Opt. Express 26, 28396, algorithm 3), so at every rank a column can be compared with a
-reference built from its neighbours, and ``a_c, b_c`` fitted to the rank differences and inverted
-exactly. Two passes.
+Each column reports ``q + a + b (1 - exp(-q))``. Parallel full turns use sorted
+neighbouring-column references and opposed-ray redundancy. Other scans use
+unsorted local references, independent-view instruments and spectral regularisation.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import lru_cache, partial
+from itertools import pairwise
 from typing import ClassVar
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.geometry import ParallelGeometry
+from tomojax.geometry import (
+    ConeGeometry,
+    ConeSegments,
+    LaminographyGeometry,
+    ParallelGeometry,
+    RotationAxisGeometry,
+)
 
 from ._records import Correction
 from ._steps import Domain, Step, bitonic_median
@@ -150,6 +154,110 @@ def _invert(q: jax.Array, alpha: jax.Array, beta: jax.Array) -> jax.Array:
     return p
 
 
+def _fit_unsorted(
+    q: jax.Array, ref: jax.Array, neighbours: jax.Array, weights: jax.Array
+) -> tuple[jax.Array, ...]:
+    """Response contrasts and their influence, using independent neighbouring-view noise.
+
+    Regressing on the noisy spatial reference itself correlates predictor and error.
+    The angular interpolation is an instrument, including distinct endpoint views.
+    """
+    instrument = (ref[neighbours] * weights[:, :, None]).sum(1)
+    x, z = -jnp.expm1(-ref), -jnp.expm1(-instrument)
+    w = jnp.exp(-jnp.minimum(instrument, 50.0))
+    d, sw = q - ref, w.sum(0)
+    xm, zm, level = (w * x).sum(0) / sw, (w * z).sum(0) / sw, (w * d).sum(0) / sw
+    xc, zc = x - xm, z - zm
+    denominator = jnp.maximum((w * xc * zc).sum(0), 0) + 1e-4 * sw
+    beta = jnp.maximum((w * zc * (d - level)).sum(0) / denominator, -0.5)
+    residual = d - level - beta * xc
+    scene_level = (w * q).sum(0) / sw
+    scene_slope = (w * zc * (q - scene_level)).sum(0) / denominator
+    return (
+        level,
+        beta,
+        xm,
+        w * residual / sw,
+        w * zc * residual / denominator,
+        scene_level,
+        scene_slope,
+    )
+
+
+def _angular_variance(influence: jax.Array, groups: tuple[int, ...]) -> jax.Array:
+    """Bartlett sandwich spectral variance, without correlating separate trajectories.
+
+    All overlapping windows avoid a privileged block origin. The finite-sample
+    factor restores the iid variance removed by centring each trajectory.
+    """
+    variance = jnp.zeros(influence.shape[1] // 2 + 1, influence.dtype)
+    offset = 0
+    for size in groups:
+        part = influence[offset : offset + size]
+        offset += size
+        length = max(1, int(np.sqrt(size)))
+        centered = part - part.mean(0, keepdims=True)
+        integrated = jnp.cumsum(jnp.pad(centered, ((length, length - 1), (0, 0))), axis=0)
+        windows = integrated[length:] - integrated[:-length]
+        power = jnp.abs(jnp.fft.rfft(windows, axis=1)) ** 2
+        effective = size - length + (length * length - 1) / (3 * size)
+        variance = variance + power.sum(0) / length * size / max(effective, 1)
+    return variance
+
+
+def _response_posterior(
+    profile: jax.Array,
+    influence: jax.Array,
+    scene: jax.Array,
+    taps: np.ndarray,
+    groups: tuple[int, ...],
+) -> jax.Array:
+    """Regularise a local response contrast by angular noise and spatial scene power.
+
+    The local quadratic measures a high-pass contrast, not the response itself.
+    Its transfer function is a local approximation for the weighted fit. A white
+    detector-field prior supplies its Wiener inverse, while the unfiltered scene
+    spectrum protects stationary object structure that angular variance cannot see.
+    The separation is statistical: sufficiently fine object structure remains
+    indistinguishable from a detector defect without geometric redundancy.
+    """
+    variance = _angular_variance(influence, groups)
+    spectrum = jnp.fft.rfft(profile)
+    power = jnp.abs(spectrum) ** 2
+    scene_power = jnp.abs(jnp.fft.rfft(scene - scene.mean())) ** 2
+    half = len(taps) // 2
+    frequency = np.fft.rfftfreq(profile.size)
+    response = jnp.asarray(
+        1 - np.cos(2 * np.pi * frequency[:, None] * np.arange(-half, half + 1)) @ taps,
+        profile.dtype,
+    )
+    h2 = response * response
+    prior = jnp.maximum(jnp.sum(h2 * (power - variance)) / jnp.sum(h2 * h2), 0)
+    edges = np.unique(np.r_[0, np.geomspace(1, len(power), 25).astype(int)])
+    gains = []
+    for lo, hi in pairwise(edges):
+        h = response[lo:hi]
+        object_power = jnp.maximum(scene_power[lo:hi].mean() - prior, 0)
+        gains.append(prior * h / ((prior + object_power) * h * h + variance[lo:hi].mean() + 1e-20))
+    gain = jnp.concatenate(gains).at[0].set(0)
+    return jnp.fft.irfft(spectrum * gain, n=profile.size).astype(profile.dtype)
+
+
+def _unsorted_row(
+    q: jax.Array, neighbours: jax.Array, weights: jax.Array, groups: tuple[int, ...]
+) -> jax.Array:
+    out = _fill(q)
+    taps = _quadratic_taps(6, 0)
+    for _ in range(2):
+        level, beta, xm, il, ib, ml, mb = _fit_unsorted(
+            out, _correlate(out, taps), neighbours, weights
+        )
+        level = _response_posterior(level, il, ml, taps, groups)
+        beta = jnp.maximum(_response_posterior(beta, ib, mb, taps, groups), -0.5)
+        out = _invert(out, level - beta * xm, beta)
+    return out
+
+
 def _fill(q: jax.Array, window: int = 30) -> jax.Array:
     """Columns that do not follow the scene, blended into their neighbours' interpolation.
 
@@ -246,20 +354,16 @@ def _large_stripes(q: jax.Array, window: int = 100, ratio: float = 3.0) -> jax.A
     return q - (weight * (alpha + beta * xm))[None, :]
 
 
-def _row(q: jax.Array, axis: float | None, passes: int = 2, window: int = 100) -> jax.Array:
+def _row(q: jax.Array, axis: float, passes: int = 2, window: int = 100) -> jax.Array:
     out = _fill(q)
-    if axis is not None:
-        out = _large_stripes(out, window)
+    out = _large_stripes(out, window)
     for _ in range(passes):
         ranked = jnp.sort(out, axis=0)
         alpha, beta, xm = _fit(ranked, _reference(ranked))
-        if axis is not None:
-            level = _mirror(alpha + beta * xm, axis, "significance")
-            beta = _mirror(beta, axis, "significance")
-            alpha = level - beta * xm
+        level = _mirror(alpha + beta * xm, axis, "significance")
+        beta = _mirror(beta, axis, "significance")
+        alpha = level - beta * xm
         out = _invert(out, alpha[None, :], beta[None, :])
-    if axis is None:
-        return out
     ranked = jnp.sort(out, axis=0)
     alpha, beta, xm = _fit(ranked, _correlate(ranked, _quadratic_taps(window, 1)))
     level = _mirror(alpha + beta * xm, axis, "wiener")
@@ -267,10 +371,86 @@ def _row(q: jax.Array, axis: float | None, passes: int = 2, window: int = 100) -
     return _invert(out, (level - beta * xm)[None, :], beta[None, :])
 
 
-@partial(jax.jit, static_argnames=("axis",))
-def correct_rings(batch: jax.Array, axis: float | None = None) -> jax.Array:
+@dataclass(frozen=True)
+class _ViewPlan:
+    order: tuple[int, ...]
+    neighbours: tuple[tuple[int, int], ...]
+    weights: tuple[tuple[float, float], ...]
+    groups: tuple[int, ...]
+
+
+def _angular_order(angles: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Order a single turn across the phase wrap, retaining explicit multi-turn labels."""
+    if np.ptp(angles) >= 360:
+        indices = np.argsort(angles, kind="stable")
+        return indices, angles[indices]
+    phase = np.mod(angles, 360)
+    indices = np.argsort(phase, kind="stable")
+    ordered = phase[indices]
+    # Cut the circle at the largest unsampled arc, not at the arbitrary zero of
+    # the angle labels. A tie favours the smallest phase for deterministic order.
+    gaps = np.diff(np.r_[ordered[-1] - 360, ordered])
+    cut = int(np.argmax(gaps))
+    indices = np.roll(indices, -cut)
+    return indices, np.mod(phase[indices] - ordered[cut], 360) + ordered[cut]
+
+
+def _view_plan(geometry: object) -> _ViewPlan | None:
+    """Angular neighbours within each fixed trajectory, never between cone segments."""
+    if isinstance(geometry, ConeSegments):
+        segments = geometry.segments
+    elif isinstance(
+        geometry, ParallelGeometry | ConeGeometry | LaminographyGeometry | RotationAxisGeometry
+    ):
+        segments = (geometry,)
+    else:
+        return None
+    order, neighbours, weights, groups = [], [], [], []
+    offset = 0
+    for segment in segments:
+        angles = np.asarray(segment.angles, np.float64)
+        size = len(angles)
+        if size < 2:
+            raise ValueError("Rings needs at least two views per trajectory")
+        indices, angles = _angular_order(angles)
+        i = np.arange(size)
+        lo, hi = np.maximum(i - 1, 0), np.minimum(i + 1, size - 1)
+        lo[0], hi[-1] = hi[0], lo[-1]
+        gap = angles[hi] - angles[lo]
+        weight = np.divide(angles[hi] - angles, gap, out=np.full(size, 0.5), where=gap != 0)
+        order.extend(int(j + offset) for j in indices)
+        neighbours.extend((int(a + offset), int(b + offset)) for a, b in zip(lo, hi, strict=True))
+        weights.extend((float(w), float(1 - w)) for w in weight)
+        groups.append(size)
+        offset += size
+    return _ViewPlan(tuple(order), tuple(neighbours), tuple(weights), tuple(groups))
+
+
+@partial(jax.jit, static_argnames=("axis", "groups"))
+def correct_rings(
+    batch: jax.Array,
+    axis: float | None = None,
+    neighbours: jax.Array | None = None,
+    weights: jax.Array | None = None,
+    groups: tuple[int, ...] = (),
+) -> jax.Array:
     """Correct every detector row of a ``(views, rows, columns)`` batch of line integrals."""
-    rows = jax.lax.map(lambda q: _row(q, axis), jnp.swapaxes(batch, 0, 1))
+    if axis is not None:
+        rows = jax.lax.map(lambda q: _row(q, axis), jnp.swapaxes(batch, 0, 1))
+        return jnp.swapaxes(rows, 0, 1)
+    if neighbours is None or weights is None:
+        size = batch.shape[0]
+        if size < 2:
+            raise ValueError("Rings needs at least two views")
+        i = np.arange(size)
+        lo, hi = np.maximum(i - 1, 0), np.minimum(i + 1, size - 1)
+        lo[0], hi[-1] = hi[0], lo[-1]
+        neighbours = jnp.asarray(np.stack([lo, hi], axis=1), jnp.int32)
+        weights = jnp.full((size, 2), 0.5, batch.dtype)
+        groups = (size,)
+    rows = jax.lax.map(
+        lambda q: _unsorted_row(q, neighbours, weights, groups), jnp.swapaxes(batch, 0, 1)
+    )
     return jnp.swapaxes(rows, 0, 1)
 
 
@@ -301,17 +481,17 @@ class Rings(Step):
     A column whose gain or response the flat field does not describe reports
     ``q + a + b (1 - exp(-q))`` instead of the line integral ``q``: a stripe in
     the sinogram, a ring in the volume, stronger where the sample absorbs more
-    when ``b`` is not zero. Each detector row's values are sorted over views
+    when ``b`` is not zero. The fitted response is inverted in two passes;
+    columns that do not follow the scene (stuck pixels) are first filled from
+    their neighbours.
+
+    On a stationary parallel-beam scan over one evenly sampled full turn,
+    each detector row's values are sorted over views
     (Vo, Atwood and Drakopoulos 2018, Opt. Express 26, 28396, algorithm 3), and
     at every rank a column is compared with a reference built from its
     neighbours: the local quadratic through 30 columns either side, narrowed
     toward 6 where the sample's own sorted values change faster than that, so
-    that sample edges are not mistaken for stripes. ``a`` and ``b`` are fitted
-    to the differences and inverted exactly, in two passes; columns that do not
-    follow the scene (stuck pixels) are first filled from their neighbours.
-
-    Given the scan's ``geometry``, the step checks whether it is a stationary
-    parallel-beam scan over one evenly sampled full turn. Every column and its
+    that sample edges are not mistaken for stripes. Every column and its
     mirror about the rotation axis then see the same lines, so the odd part of
     the fitted errors is pure detector error: large stripes are detected and
     corrected first (algorithms 4 and 5 of the same paper, on the flagged
@@ -322,16 +502,31 @@ class Rings(Step):
     it rests on the odd part showing detector errors at that scale. The axis
     used, or none, is recorded.
 
-    Otherwise (no geometry, half turns, cone beam), a defect wider than about
-    twelve columns is followed like sample structure and left, and on a scan
-    without rings the correction still changes the image slightly, most where
-    the sample has sharp edges: use it when rings are present.
+    Otherwise, each unsorted view is compared with a quadratic through six
+    neighbouring columns on either side. Independent neighbouring views supply
+    an instrument for the response fit, avoiding correlation between reference
+    noise and regression error. Angular covariance and the unfiltered scene's
+    spatial power regularise the local response contrast before inversion.
+    Smooth object structure is retained rather than interpreted as calibration
+    error. This is a statistical separation, not a no-change guarantee: fine
+    stationary object structure and broad detector errors can be ambiguous.
+
+    Built-in angular geometries order the views by angle within each trajectory;
+    single turns are unwrapped across the largest unsampled arc, explicit
+    multi-turn angle labels are retained, and cone segments are kept separate.
+    Without such geometry, views must follow a continuous acquisition trajectory.
+    At least two views per trajectory are needed. Output view order is preserved.
 
     Parameters
     ----------
     geometry : object, optional
         The scan's geometry, with the detector the data were recorded on.
         Default is None.
+
+    Raises
+    ------
+    ValueError
+        If a geometry trajectory contains fewer than two views.
 
     Examples
     --------
@@ -353,12 +548,16 @@ class Rings(Step):
     # what the geometry decides, compared and hashed so compiled kernels are not shared
     _axis: float | None = field(default=None, init=False, repr=False)
     _columns: int | None = field(default=None, init=False, repr=False)
+    _plan: _ViewPlan | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         axis = mirror_axis(self.geometry)
         object.__setattr__(self, "_axis", axis)
         if axis is not None and isinstance(self.geometry, ParallelGeometry):
             object.__setattr__(self, "_columns", int(self.geometry.detector.nu))
+        if axis is None:
+            plan = _view_plan(self.geometry)
+            object.__setattr__(self, "_plan", plan)
 
     @property
     def mirror_axis(self) -> float | None:
@@ -399,10 +598,25 @@ class Rings(Step):
         Raises
         ------
         ValueError
-            If the geometry's detector is not as wide as the data.
+            If the geometry's detector is not as wide as the data, the view
+            count differs, or fewer than two views are supplied.
         """
         if self._columns is not None and self._columns != batch.shape[2]:
             raise ValueError(
                 f"Rings geometry has {self._columns} detector columns, the data {batch.shape[2]}"
             )
-        return correct_rings(batch, self._axis)
+        if self._plan is None:
+            return correct_rings(batch, self._axis)
+        plan = self._plan
+        if len(plan.order) != batch.shape[0]:
+            raise ValueError(
+                f"Rings geometry has {len(plan.order)} views, the data {batch.shape[0]}"
+            )
+        order = jnp.asarray(plan.order, jnp.int32)
+        out = correct_rings(
+            batch[order],
+            neighbours=jnp.asarray(plan.neighbours, jnp.int32),
+            weights=jnp.asarray(plan.weights, batch.dtype),
+            groups=plan.groups,
+        )
+        return out[jnp.asarray(np.argsort(plan.order), jnp.int32)]

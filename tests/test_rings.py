@@ -4,6 +4,7 @@ import pytest
 
 import tomojax as tj
 from tomojax.corrections import Rings
+from tomojax.geometry import ConeSegments
 
 N = 256
 
@@ -74,3 +75,65 @@ def test_scan_corrected_records_the_step() -> None:
     scan = tj.Scan(_errors(_sinogram(180.0, 180))[:, None].astype(np.float32), geometry)
     out = scan.corrected(Rings())
     assert [c.name for c in out.corrections][-1] == "rings"
+
+
+@pytest.mark.parametrize("geometry", [None, _geometry(180.0, 180)])
+def test_unsorted_fit_preserves_smooth_ring_free_data(geometry: object) -> None:
+    clean = _sinogram(180.0, 180).astype(np.float32)
+    fixed = np.asarray(Rings(geometry).apply(jnp.asarray(clean[:, None])))[:, 0]
+    assert np.linalg.norm(fixed - clean) < 1e-5 * np.linalg.norm(clean)
+
+
+@pytest.mark.parametrize("segmented", [False, True])
+def test_irregular_view_order_and_separate_trajectories(segmented: bool) -> None:
+    rng = np.random.default_rng(19)
+    selected = np.sort(rng.choice(180, 100, replace=False))
+    angles = selected.astype(float)
+    base = _geometry(180.0, 180)
+    q = _errors(_sinogram(180.0, 180)[selected]).astype(np.float32)
+
+    def geometry(a: np.ndarray) -> object:
+        if not segmented:
+            return tj.ParallelGeometry(base.grid, base.detector, a)
+        return ConeSegments(
+            tuple(
+                tj.ConeGeometry(
+                    base.grid, base.detector, a, tj.ConeBeam(100.0, 200.0, source_height=h)
+                )
+                for h in (0.0, 5.0)
+            )
+        )
+
+    order = rng.permutation(len(angles))
+    if segmented:
+        q = np.concatenate([q, 0.7 * q])
+        order = np.concatenate([order, order + len(angles)])
+    fixed = np.asarray(Rings(geometry(angles)).apply(jnp.asarray(q[:, None])))
+    shuffled = Rings(geometry(angles[order[: len(angles)]])).apply(jnp.asarray(q[order, None]))
+    np.testing.assert_array_equal(fixed, np.asarray(shuffled)[np.argsort(order)])
+
+
+def test_unsorted_geometry_view_count_is_checked() -> None:
+    with pytest.raises(ValueError, match="views"):
+        Rings(_geometry(180.0, 180)).apply(jnp.zeros((179, 1, N), jnp.float32))
+    with pytest.raises(ValueError, match="two views"):
+        Rings(_geometry(180.0, 1))
+    with pytest.raises(ValueError, match="two views"):
+        Rings().apply(jnp.zeros((1, 1, N), jnp.float32))
+
+
+@pytest.mark.parametrize("angles", [np.arange(-40, 41, 4), np.array([-135, -45, 45, 135])])
+def test_angular_phase_wrap_does_not_change_correction(angles: np.ndarray) -> None:
+    clean = _sinogram(360.0, 360)[angles.astype(int) % 360]
+    measured = jnp.asarray(_errors(clean)[:, None], jnp.float32)
+    base = _geometry(180.0, 180)
+
+    def corrected(a: np.ndarray, data: jnp.ndarray) -> np.ndarray:
+        geometry = tj.ParallelGeometry(base.grid, base.detector, a)
+        return np.asarray(Rings(geometry).apply(data))
+
+    fixed = corrected(angles, measured)
+    np.testing.assert_array_equal(fixed, corrected(angles % 360, measured))
+    order = np.random.default_rng(17).permutation(len(angles))
+    shuffled = corrected((angles % 360)[order], measured[order])
+    np.testing.assert_array_equal(fixed, shuffled[np.argsort(order)])

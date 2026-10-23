@@ -40,7 +40,7 @@ Steps, each a frozen dataclass of its settings:
 | `RadialDistortion(center, coefficients)` | transmission | calibrated backward radial polynomial in zero-based `(column, row)` pixels, as in Algotom; bilinear, on normalised transmission before the log | Python only |
 | `Paganin(delta_beta, distance, energy_kev, pixel_size)` | transmission | single-material phase retrieval; distance and pixel size at the sample in metres, energy in keV | `--paganin DELTA_BETA,DISTANCE,ENERGY_KEV,PIXEL` (expert) |
 | `Stripes(width=9, varying=False)` | line integrals | constant pixel offsets, or selected intensity-dependent responses with `varying=True` | `--stripes WIDTH` (constant offsets) |
-| `Rings(geometry=None)` | line integrals | each column's offset and transmission-dependent response, fitted on the view-sorted sinogram; on a parallel full turn also large and broad rings | `--rings` |
+| `Rings(geometry=None)` | line integrals | each column's offset and transmission-dependent response, separated from object structure statistically or by full-turn parallel geometry | `--rings` |
 | `RejectViews(z=6.0, neighbours=5, min_jump=0.05)` | line integrals | drops views whose median jumps from their neighbours', and their geometry | `--reject-views [Z]` |
 | `BeamHardening(rates, weights, energy_kev=None)` | line integrals | single-material linearisation, see below | `--beam-hardening recorded` |
 
@@ -64,8 +64,9 @@ sharp moving edges can cause false detections. Selected dead pixels receive
 only the neighbouring mean; their missing angular information is not recovered.
 
 `Rings` models each detector column as reporting `q + a + b (1 - exp(-q))`
-and fits `a` and `b` against a reference built from the neighbouring columns at
-each rank of the view-sorted row, then inverts the model exactly (two passes).
+and fits `a` and `b` against a reference built from the neighbouring columns,
+then inverts the model (two passes). For a stationary parallel full turn,
+the reference compares equal ranks of the view-sorted row.
 The reference narrows from 30 columns either side toward 6 where the sample's
 own sorted values change faster, so sample edges are not taken for stripes;
 stuck columns are filled from their neighbours first. Given the scan's geometry,
@@ -76,9 +77,13 @@ as in Vo, Atwood and Drakopoulos 2018, algorithms 4 and 5) and broad rings are
 corrected too, each kept only as far as that odd part supports. The record says
 which axis was used, if any. The CLI binds `--rings` to the selected and cropped
 acquisition geometry and applies it before view rejection and detector binning.
-Otherwise defects wider than about twelve columns
-are left, and a scan without rings is still changed slightly; use it when rings
-are present.
+Otherwise it uses unsorted local quadratics, independent neighbouring-view
+instruments and spectral regularisation by angular covariance and object power.
+Built-in angular geometries supply the view ordering and angular interpolation
+weights within each trajectory; cone segments stay separate. Without such
+geometry, supply views in continuous acquisition order. At least two views per
+trajectory are required. This separation is statistical: fine stationary object
+structure can still resemble detector errors, and broad defects can be left.
 
 ## Beam hardening
 
