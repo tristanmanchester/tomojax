@@ -46,12 +46,15 @@ def native(
     iterations: int = 1,
     initial: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Run ASTRA FDK, CGLS or nonnegative SIRT, returning a host volume."""
+    """Run ASTRA FDK, CGLS or nonnegative SIRT without changing the initial volume."""
     import astra
 
     pg = astra.create_proj_geom("cone_vec", data.shape[1], data.shape[2], vectors)
     shape = (vg["GridSliceCount"], vg["GridRowCount"], vg["GridColCount"])
-    out = np.zeros(shape, np.float32) if initial is None else np.ascontiguousarray(initial)
+    # ASTRA writes its linked output, including when initial is already contiguous.
+    out = (
+        np.zeros(shape, np.float32) if initial is None else np.array(initial, copy=True, order="C")
+    )
     with ExitStack() as cleanup:
         sid = astra.data3d.link("-sino", pg, np.ascontiguousarray(data.transpose(1, 0, 2)))
         cleanup.callback(astra.data3d.delete, sid)

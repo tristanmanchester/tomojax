@@ -100,7 +100,9 @@ def test_bounded_cgls_matches_native_astra(iterations, resident):
     vg = volume_geometry(tj.Grid(17, 15, 13, 0.8, 0.9, 0.9, vol_center=(0.2, 0.7, -0.2)))
     data = rng.uniform(0.01, 1, (23, 21, 27)).astype(np.float32)
     initial = rng.uniform(0.001, 0.02, (13, 15, 17)).astype(np.float32)
+    saved_initial = initial.copy()
     expected = native(data, vectors, vg, method="cgls", iterations=iterations, initial=initial)
+    np.testing.assert_array_equal(initial, saved_initial)
     pool_bytes = cp.get_default_memory_pool().total_bytes()
     for batch in (7, 23):
         with Operators(

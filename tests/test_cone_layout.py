@@ -27,7 +27,7 @@ def test_cone_volume_indices_follow_physical_zyx_axes(backend):
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("tilt", [0, 60])
-def test_native_cone_projection_and_subset_updates_match_reference(tilt):
+def test_native_cone_projection_and_subset_batching(tilt):
     if not cone.use_cuda_cone():
         pytest.skip("requires CUDA cone kernels")
     grid = tj.Grid(23, 19, 17, 0.8, 1.1, 0.9, vol_center=(0.2, -0.1, 0.3))
@@ -51,7 +51,11 @@ def test_native_cone_projection_and_subset_updates_match_reference(tilt):
     config = SIRTConfig(iterations=2, subsets=3, views_per_batch=8)
     updated = sirt(geometry, grid, detector, images, config=config)[0]
     coeff = cone.cone_coefficients(geometry.poses(), grid, detector, geometry.beam)
-    expected = jax.jit(lambda x: cone.cone_project(x, coeff, grid, detector, backend="jax"))(volume)
-    reference = sirt(geometry, grid, detector, images, config=replace(config, backend="jax"))[0]
+    expected = jax.jit(lambda x: cone.cone_project(x, coeff, grid, detector, backend="cuda"))(
+        volume
+    )
+    reference = sirt(geometry, grid, detector, images, config=replace(config, views_per_batch=16))[
+        0
+    ]
     np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=1e-5)
     np.testing.assert_allclose(updated, reference, rtol=2e-5, atol=1e-5)

@@ -225,10 +225,11 @@ def test_cuda_forward_pose_and_volume_ad_match_reference(distance):
     )
     nominal = stack_view_poses(geometry, 3)
     rng = np.random.default_rng(892)
-    volume = jnp.asarray(rng.uniform(-0.1, 1.1, (5, 6, 7)), jnp.float32)
+    # Preserve the physical random field across the volume-axis convention.
+    volume = jnp.asarray(rng.uniform(-0.1, 1.1, (7, 6, 5)).transpose(2, 1, 0).copy(), jnp.float32)
     params = jnp.asarray(rng.normal(0, 0.02, (3, 6)), jnp.float32)
     tangent = jnp.asarray(rng.normal(0, 0.1, params.shape), jnp.float32)
-    dvolume = jnp.asarray(rng.normal(size=volume.shape), jnp.float32)
+    dvolume = jnp.asarray(rng.normal(size=(7, 6, 5)).transpose(2, 1, 0).copy(), jnp.float32)
     cotangent = jnp.asarray(rng.normal(size=(3, 7, 9)), jnp.float32)
 
     def coefficients(p):
