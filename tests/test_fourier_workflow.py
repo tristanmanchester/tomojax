@@ -40,8 +40,8 @@ def test_fourier_workflow_preserves_geometry_and_recovers_independent_gaussian(b
     np.testing.assert_array_equal(actual.volume, expected)
     x = (np.arange(grid.nx) - (grid.nx - 1) / 2) + 0.4
     y = (np.arange(grid.ny) - (grid.ny - 1) / 2) - 0.3
-    truth = np.exp(-0.5 * ((x[:, None] - 1.2) ** 2 + (y[None, :] + 0.8) ** 2) / 9)
-    assert np.linalg.norm(actual.volume[:, :, 0] - truth) / np.linalg.norm(truth) < 0.02
+    truth = np.exp(-0.5 * ((x[None, :] - 1.2) ** 2 + (y[:, None] + 0.8) ** 2) / 9)
+    assert np.linalg.norm(actual.volume[0] - truth) / np.linalg.norm(truth) < 0.02
 
 
 @pytest.mark.parametrize("options", [{"filter": "ramp"}, {"iterations": 1}, {"warm_start": False}])

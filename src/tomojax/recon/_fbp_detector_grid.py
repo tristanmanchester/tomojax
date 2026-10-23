@@ -75,7 +75,7 @@ def _bp_batch_sum(
         bp = _bp_one_jit(T, grid, detector, F, det_grid=det_grid)
         return accum + bp, None
 
-    init = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+    init = jnp.zeros((grid.nz, grid.ny, grid.nx), dtype=jnp.float32)
     acc_chunk, _ = jax.lax.scan(body, init, (T_chunk, filt_chunk))
     return acc_chunk
 
@@ -138,7 +138,7 @@ def _run_fbp_fast_path(
             )
             return accum + acc_chunk, None
 
-        init = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+        init = jnp.zeros((grid.nz, grid.ny, grid.nx), dtype=jnp.float32)
         acc, _ = jax.lax.scan(body, init, (T_chunks_in, filt_chunks))
         return acc
 
@@ -158,7 +158,7 @@ def _run_fbp_with_backoff(
 ) -> jnp.ndarray:
     """Fallback path that retries smaller chunks after OOM without skipping views."""
     n_views, nv, nu = map(int, proj.shape)
-    acc = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+    acc = jnp.zeros((grid.nz, grid.ny, grid.nx), dtype=jnp.float32)
     rfft_filter = rfft_filter_array(filter, nu, float(detector.du), proj.dtype)
     b = int(batch_size)
     s = 0
