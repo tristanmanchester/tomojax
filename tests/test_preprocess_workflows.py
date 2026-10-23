@@ -144,7 +144,8 @@ def test_views_and_a_detector_block(tmp_path: Path) -> None:
     assert _preprocess(tmp_path / "raw.nxs", "-o", out, "--force", "--select-views", "0:3") == 1
 
 
-def test_steps_from_the_command_line(tmp_path: Path) -> None:
+@pytest.mark.parametrize("rings", [False, True])
+def test_steps_from_the_command_line(tmp_path: Path, rings: bool) -> None:
     views, nv, nu = 40, 3, 64
     u = np.arange(nu)[None, None, :]
     centre = 32 + 12 * np.sin(np.linspace(0, 2 * np.pi, views))[:, None, None]
@@ -157,10 +158,13 @@ def test_steps_from_the_command_line(tmp_path: Path) -> None:
     write_angle_csv(tmp_path / "angles.csv", list(np.linspace(0.0, 360.0, views, endpoint=False)))
     out = tmp_path / "scan.nxs"
     assert _preprocess(tmp_path / "frames", "-o", out, "--darks", 0, "--flats", 1000, "--angles", tmp_path / "angles.csv",
-                       "--zingers", "--stripes", 9,
+                       "--zingers", "--stripes", 9, *(["--rings"] if rings else []),
                        "--reject-views", "--config", _detector_config(tmp_path, nu=nu, nv=nv)) == 0  # fmt: skip
     scan = tj.load(out)
     names = [c.name for c in scan.corrections]
+    if rings:
+        assert scan.corrections[3].settings == {"mirror_axis": (nu - 1) / 2}
+        names.remove("rings")
     assert names == ["flat_dark", "zingers", "log", "reject_views", "stripes"]
     assert np.isfinite(np.asarray(scan.projections)).all()
 

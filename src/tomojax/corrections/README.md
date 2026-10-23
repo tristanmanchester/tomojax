@@ -40,7 +40,7 @@ Steps, each a frozen dataclass of its settings:
 | `RadialDistortion(center, coefficients)` | transmission | calibrated backward radial polynomial in zero-based `(column, row)` pixels, as in Algotom; bilinear, on normalised transmission before the log | Python only |
 | `Paganin(delta_beta, distance, energy_kev, pixel_size)` | transmission | single-material phase retrieval; distance and pixel size at the sample in metres, energy in keV | `--paganin DELTA_BETA,DISTANCE,ENERGY_KEV,PIXEL` (expert) |
 | `Stripes(width=9, varying=False)` | line integrals | constant pixel offsets, or selected intensity-dependent responses with `varying=True` | `--stripes WIDTH` (constant offsets) |
-| `Rings(geometry=None)` | line integrals | each column's offset and transmission-dependent response, fitted on the view-sorted sinogram; on a parallel full turn also large and broad rings | Python only |
+| `Rings(geometry=None)` | line integrals | each column's offset and transmission-dependent response, fitted on the view-sorted sinogram; on a parallel full turn also large and broad rings | `--rings` |
 | `RejectViews(z=6.0, neighbours=5, min_jump=0.05)` | line integrals | drops views whose median jumps from their neighbours', and their geometry | `--reject-views [Z]` |
 | `BeamHardening(rates, weights, energy_kev=None)` | line integrals | single-material linearisation, see below | `--beam-hardening recorded` |
 
@@ -74,7 +74,9 @@ turn: mirror columns about the rotation axis then see the same lines, the odd
 part of the fitted errors is pure detector error, and large stripes (detected
 as in Vo, Atwood and Drakopoulos 2018, algorithms 4 and 5) and broad rings are
 corrected too, each kept only as far as that odd part supports. The record says
-which axis was used, if any. Otherwise defects wider than about twelve columns
+which axis was used, if any. The CLI binds `--rings` to the selected and cropped
+acquisition geometry and applies it before view rejection and detector binning.
+Otherwise defects wider than about twelve columns
 are left, and a scan without rings is still changed slightly; use it when rings
 are present.
 

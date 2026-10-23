@@ -31,6 +31,7 @@ _PUBLIC = (
     "--reject-views",
     "--zingers",
     "--stripes",
+    "--rings",
     "--beam-hardening",
     "--preview",
 )
@@ -103,6 +104,11 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         metavar="WIDTH",
         help="Remove rings: each pixel's offset against a median over WIDTH columns (e.g. 9)",
+    )
+    _ = parser.add_argument(
+        "--rings",
+        action="store_true",
+        help="Correct pixel gain and response errors using the acquisition geometry",
     )
     _ = parser.add_argument(
         "--beam-hardening",
@@ -253,6 +259,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             frames = frames.selected(view_ranges(select, frames.views))
         if crop is not None:
             frames = frames.cropped(*detector_block(crop))
+        if args.rings:
+            from tomojax.corrections import Rings
+
+            # Fit the selected native views before rejection changes their geometry.
+            steps.insert(0, Rings(frames.geometry))
         scan = frames.corrected(
             *steps,
             epsilon=cast("float", args.epsilon),

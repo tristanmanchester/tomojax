@@ -125,6 +125,7 @@ _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
         "--reject-views": "the RejectViews step",
         "--zingers": "the Zingers step",
         "--stripes": "the Stripes step",
+        "--rings": "the Rings step",
         "--beam-hardening": "the BeamHardening step",
         "--preview": "file output",
     },
