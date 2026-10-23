@@ -83,7 +83,7 @@ def solve(
     poses: jax.Array,
     out: np.ndarray | None = None,
 ) -> tuple[np.ndarray, dict[str, object]]:
-    """Run validated CGLS settings with host volumes, in ``out`` or a Fortran-ordered volume."""
+    """Run validated CGLS settings with host volumes, in ``out`` or a C-ordered volume."""
     projections = host_projections(projections, "cgls")
     problem = cone_problem(
         geometry, grid, detector, projections, model=model, backend=backend, poses=poses,
@@ -104,10 +104,10 @@ class _HostCGLS:
         self.problem, self.cfg = problem, cfg
         self.plan, self.sweep, self.xp = problem.plan, problem.sweep, problem.engine.xp
         grid = self.plan.grid
-        shape = (grid.nx, grid.ny, grid.nz)
+        shape = (grid.nz, grid.ny, grid.nx)
         data = problem.data
         self.zero = initial is None
-        self.x = fill(validate_host_arrays(data, out, shape, "cgls", order="F"), initial)
+        self.x = fill(validate_host_arrays(data, out, shape, "cgls", order="C"), initial)
         work = [host_volume(shape, scratch_directory(out)) for _ in range(3)]
         self.X, self.G, self.D, self.W = (problem.volume(a) for a in (self.x, *work))
         self.views = np.arange(data.shape[0])
@@ -120,8 +120,8 @@ class _HostCGLS:
         """Slab ``k`` with the next plane above (and, with ``below``, the one below)."""
         (z0, z1), nz = self.plan.planes(k), self.plan.grid.nz
         parts = [halo(z0 - 1)] if below and z0 > 0 else []
-        parts += [centre[:, :, : z1 - z0]] + ([halo(z1)] if z1 < nz else [])
-        return self.xp.concatenate(parts, axis=2)
+        parts += [centre[: z1 - z0, :, :]] + ([halo(z1)] if z1 < nz else [])
+        return self.xp.concatenate(parts, axis=0)
 
     def smoothing(
         self, k: int, centre: Any, halo: Callable[[int], Any], *, absolute: bool = False
@@ -134,20 +134,20 @@ class _HostCGLS:
         applied = gradient_normal(block, spacing, absolute_weights=absolute, xp=self.xp)
         z0, z1 = self.plan.planes(k)
         low = int(z0 > 0)
-        return self.smooth2 * applied[:, :, low : low + z1 - z0]
+        return self.smooth2 * applied[low : low + z1 - z0, :, :]
 
     def edges(self, k: int, centre: Any, halo: Callable[[int], Any]) -> float:
         """``||D d||²`` over the edges from slab ``k``'s planes, the z edge above included."""
         grid, (z0, z1) = self.plan.grid, self.plan.planes(k)
-        planes = centre[:, :, : z1 - z0]
+        planes = centre[: z1 - z0, :, :]
         total = sum(
             self.total(self.xp.diff(planes, axis=axis) / step)
-            for axis, step in ((0, grid.vx), (1, grid.vy))
+            for axis, step in ((2, grid.vx), (1, grid.vy))
             if planes.shape[axis] > 1
         )
         block = self._block(k, centre, halo, below=False)
-        if block.shape[2] > 1:
-            total += self.total(self.xp.diff(block, axis=2) / grid.vz)
+        if block.shape[0] > 1:
+            total += self.total(self.xp.diff(block, axis=0) / grid.vz)
         return total
 
     def gradient(self) -> tuple[float, float]:
@@ -162,20 +162,20 @@ class _HostCGLS:
 
         def sink(k: int, accumulated: tuple[Any, ...], sources: tuple[Any, ...]) -> None:
             z0, z1 = plan.planes(k)
-            value = accumulated[0][:, :, : z1 - z0]
+            value = accumulated[0][: z1 - z0, :, :]
             if not self.zero:
                 sources = sources or (self.X.get(z0, z1),)
             if self.smooth2 and sources:
                 value -= self.smoothing(k, sources[0], self.iterate_plane)
             if self.damp2 and sources:
-                current = sources[0][:, :, : z1 - z0]
+                current = sources[0][: z1 - z0, :, :]
                 current *= self.damp2
                 value -= current
             stats["gamma"] += self.total(value)
             previous = self.G.view(z0, z1)
             previous -= value
             stats["gap"] += self.total(previous)
-            self.G.put(z0, z1, value, scratch=previous.T)
+            self.G.put(z0, z1, value)
 
         self.sweep.run(
             self.views, source=source, finish=finish, sink=sink,
@@ -193,12 +193,12 @@ class _HostCGLS:
 
         def sink(k: int, accumulated: tuple[Any, ...], sources: tuple[Any, ...]) -> None:
             z0, z1 = plan.planes(k)
-            cancellation = accumulated[0][:, :, : z1 - z0]
+            cancellation = accumulated[0][: z1 - z0, :, :]
             sources = sources or (self.X.get(z0, z1),)
             if self.smooth2:
                 cancellation += self.smoothing(k, sources[0], self.iterate_plane, absolute=True)
             if self.damp2:
-                current = xp.abs(sources[0][:, :, : z1 - z0])
+                current = xp.abs(sources[0][: z1 - z0, :, :])
                 current *= self.damp2
                 cancellation += current
             cancellation *= np.float32(8 * _EPS)
@@ -253,12 +253,12 @@ class _HostCGLS:
             value, direction = accumulated[0], (sources or (self.D.get(*plan.planes(k)),))[0]
             if self.smooth2:
                 z0, z1 = plan.planes(k)
-                value[:, :, : z1 - z0] += self.smoothing(k, direction, halo)
+                value[: z1 - z0, :, :] += self.smoothing(k, direction, halo)
                 self.edge_energy += self.edges(k, direction, halo)
             if self.damp2:
                 direction *= self.damp2
                 value += direction
-            self.W.put(*plan.planes(k), value, scratch=direction)
+            self.W.put(*plan.planes(k), value)
 
         self.sweep.run(
             self.views, source=source, finish=finish, sink=sink,

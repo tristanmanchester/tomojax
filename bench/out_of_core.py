@@ -102,7 +102,7 @@ def _cuo(args: argparse.Namespace, record: dict, memory: _Memory) -> None:
     path = Path(args.scratch) / "volume.npy"
     path.parent.mkdir(parents=True, exist_ok=True)
     volume = np.lib.format.open_memmap(
-        path, "w+", np.float32, (grid.nx, grid.ny, grid.nz), fortran_order=True
+        path, "w+", np.float32, (grid.nz, grid.ny, grid.nx), fortran_order=False
     )
     try:
         with corrected_row_source(
@@ -119,9 +119,9 @@ def _cuo(args: argparse.Namespace, record: dict, memory: _Memory) -> None:
         record["disk"] = {key: after[key] - disk[key] for key in disk}
         record["info"] = {k: v for k, v in info.items() if isinstance(v, int | float | bool)}
         record["grid"] = [grid.nx, grid.ny, grid.nz]
-        record["central_plane_mean"] = float(np.mean(volume[:, :, grid.nz // 2]))
+        record["central_plane_mean"] = float(np.mean(volume[grid.nz // 2]))
         if args.planes:  # (a yz plane would read a page per voxel)
-            np.savez(args.planes, xy=volume[:, :, grid.nz // 2], xz=volume[:, grid.ny // 2])
+            np.savez(args.planes, xy=volume[grid.nz // 2], xz=volume[:, grid.ny // 2])
     finally:
         del volume
         path.unlink(missing_ok=True)
@@ -140,17 +140,17 @@ def _sphere_planes(size: int, z0: int, z1: int) -> np.ndarray:
     """Planes ``[z0, z1)`` of the spheres sampled at voxel centres, each only in its box."""
     axis = np.arange(size, dtype=np.float32) - (size - 1) / 2
     z = np.arange(z0, z1, dtype=np.float32) - (size - 1) / 2
-    out = np.zeros((size, size, z1 - z0), np.float32)
+    out = np.zeros((z1 - z0, size, size), np.float32)
     for centre, radius, value in zip(*_spheres(size), strict=True):
         lo = np.searchsorted(axis, centre - radius)
         hi = np.searchsorted(axis, centre + radius, side="right")
         zl, zh = np.searchsorted(z, centre[2] - radius), np.searchsorted(z, centre[2] + radius)
         inside = (
-            (axis[lo[0] : hi[0], None, None] - centre[0]) ** 2
+            (axis[None, None, lo[0] : hi[0]] - centre[0]) ** 2
             + (axis[None, lo[1] : hi[1], None] - centre[1]) ** 2
-            + (z[None, None, zl:zh] - centre[2]) ** 2
+            + (z[zl:zh, None, None] - centre[2]) ** 2
         ) < radius**2
-        out[lo[0] : hi[0], lo[1] : hi[1], zl:zh] += np.float32(value) * inside
+        out[zl:zh, lo[1] : hi[1], lo[0] : hi[0]] += np.float32(value) * inside
     return out
 
 
@@ -189,7 +189,7 @@ def _synthetic(args: argparse.Namespace, record: dict, memory: _Memory) -> None:
         path = Path(args.scratch) / "volume.npy"
         path.parent.mkdir(parents=True, exist_ok=True)
         shape = (size, size, size)
-        out = np.lib.format.open_memmap(path, "w+", np.float32, shape, fortran_order=True)
+        out = np.lib.format.open_memmap(path, "w+", np.float32, shape, fortran_order=False)
     try:
         start, disk = time.perf_counter(), _disk()
         if args.method == "cgls":
@@ -206,7 +206,7 @@ def _synthetic(args: argparse.Namespace, record: dict, memory: _Memory) -> None:
         error = norm = 0.0
         for z0 in range(0, size, 64):
             truth = _sphere_planes(size, z0, min(size, z0 + 64))
-            error += float(np.sum((np.asarray(volume[:, :, z0 : z0 + 64]) - truth) ** 2))
+            error += float(np.sum((np.asarray(volume[z0 : z0 + 64]) - truth) ** 2))
             norm += float(np.sum(truth.astype(np.float64) ** 2))
         record["relative_image_error"] = (error / norm) ** 0.5
     finally:

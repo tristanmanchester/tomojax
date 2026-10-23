@@ -10,11 +10,11 @@ import pytest
 import tomojax as tj
 from tomojax.recon import SPDHGConfig, spdhg_tv
 
-SHAPE = (3, 2, 2)
+SHAPE = (2, 2, 3)
 
 
 def _problem():
-    grid = tj.Grid(*SHAPE, 0.8, 1.1, 1.3)
+    grid = tj.Grid(*SHAPE[::-1], 0.8, 1.1, 1.3)
     detector = tj.Detector(5, 4, 0.7, 0.9, (0.17, -0.23))
     geometry = tj.ParallelGeometry(grid, detector, [13.0, 71.0, 127.0])
     initial = np.linspace(-0.4, 0.8, 12).astype(np.float32).reshape(SHAPE)

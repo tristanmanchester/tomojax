@@ -108,7 +108,7 @@ def cgls_multires(
         Positive iteration budget at each level. Default is ``(32, 16)``;
         overrides config.iterations.
     init_x : array-like or None, optional
-        Initial volume of shape ``(nx, ny, nz)``; None starts from zero.
+        Initial volume of shape ``(nz, ny, nx)``; None starts from zero.
     config : CGLSConfig or None, optional
         Solver settings. None uses CGLSConfig defaults.
     det_grid : tuple of array-like or None, optional
@@ -118,7 +118,7 @@ def cgls_multires(
     Returns
     -------
     volume : jax.Array or numpy.ndarray
-        Float32 reconstruction of shape ``(nx, ny, nz)``.
+        Float32 reconstruction of shape ``(nz, ny, nx)``.
     info : dict
         Solver diagnostics and effective work; a small residual or iteration
         count does not establish reconstruction accuracy.
@@ -161,7 +161,7 @@ def cgls_multires(
         coarse_grid = scale_grid(grid, factor)
         coarse_detector = scale_detector(detector, factor)
         if volume is not None:
-            volume = upsample_volume(volume, 1, (coarse_grid.nx, coarse_grid.ny, coarse_grid.nz))
+            volume = upsample_volume(volume, 1, (coarse_grid.nz, coarse_grid.ny, coarse_grid.nx))
         coordinates = None
         if det_grid is not None:
             u, v = det_grid

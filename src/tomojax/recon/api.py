@@ -267,14 +267,14 @@ def reconstruct_arrays(
     warm_start : bool, optional
         Start iterative reconstruction from FBP or FDK. Default is False.
     out : numpy.ndarray or None, optional
-        Writable float32 ``(nx, ny, nz)`` host storage for FBP/FDK, Fourier, or
+        Writable float32 ``(nz, ny, nx)`` host storage for FBP/FDK, Fourier, or
         cone-beam CGLS, SIRT and MLEM. None lets the method select storage;
         other methods do not accept out.
 
     Returns
     -------
     volume : jax.Array or numpy.ndarray
-        Reconstruction of shape ``(nx, ny, nz)``; uses out itself if supplied.
+        Reconstruction of shape ``(nz, ny, nx)``; uses out itself if supplied.
     record : dict
         Configuration used, solver diagnostics and any host-slab or warm-start flags.
 
@@ -350,7 +350,7 @@ def _iterative_result(
                     from tomojax.core.validation import validate_volume
 
                     validate_volume(support, grid, context="sirt", name="support")
-                support = jnp.broadcast_to(jnp.asarray(support, bool), (grid.nx, grid.ny, grid.nz))
+                support = jnp.broadcast_to(jnp.asarray(support, bool), (grid.nz, grid.ny, grid.nx))
 
             solver = None
             if method == "sirt":

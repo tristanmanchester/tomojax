@@ -118,7 +118,7 @@ def upload_host_slabs(
     if device.platform != "gpu":
         output = np.empty(shape, np.float32)
         for first, values in slabs:
-            output[:, :, first : first + values.shape[2]] = values
+            output[first : first + values.shape[0]] = values
             del values
         return jax.device_put(output, device)
     import cupy as cp
@@ -128,10 +128,9 @@ def upload_host_slabs(
         target = cp.from_dlpack(result)
         stream = cp.cuda.get_current_stream()
         for first, values in slabs:
-            width = values.shape[2] * 4
-            cp.cuda.runtime.memcpy2DAsync(
-                target.data.ptr + first * 4, shape[2] * 4,
-                values.ctypes.data, width, width, shape[0] * shape[1],
+            cp.cuda.runtime.memcpyAsync(
+                target.data.ptr + first * shape[1] * shape[2] * 4,
+                values.ctypes.data, values.nbytes,
                 cp.cuda.runtime.memcpyHostToDevice, stream.ptr,
             )  # fmt: skip
             stream.synchronize()

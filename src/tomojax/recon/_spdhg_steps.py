@@ -98,7 +98,7 @@ def _reference_block_norm_squared(
     ray_integrator: str,
 ) -> jnp.ndarray:
     blocks = (poses.shape[0] + batch_size - 1) // batch_size
-    initial = jnp.ones((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+    initial = jnp.ones((grid.nz, grid.ny, grid.nx), dtype=jnp.float32)
 
     def bound(block: jnp.ndarray, largest: jnp.ndarray) -> jnp.ndarray:
         start = jnp.minimum(block * batch_size, poses.shape[0] - batch_size)
@@ -142,7 +142,7 @@ def _batched_norm_squared(
     batch = max(1, min(views_per_batch, n))
     blocks = (n + batch - 1) // batch
     project, backproject = chunk_operators(poses, grid, detector, backend, batch, model)
-    shape = (grid.nx, grid.ny, grid.nz)
+    shape = (grid.nz, grid.ny, grid.nx)
 
     def bound(block: jnp.ndarray, largest: jnp.ndarray) -> jnp.ndarray:
         start = block * batch
@@ -175,7 +175,7 @@ def resolve_spdhg_step_sizes(
     projector: tuple[str | ConeModel, str] | None = None,
 ) -> SPDHGStepSizes:
     grad_norm = (
-        float(np.sqrt(gradient_norm_squared((grid.nx, grid.ny, grid.nz))))
+        float(np.sqrt(gradient_norm_squared((grid.nz, grid.ny, grid.nx))))
         if config.tv_weight > 0
         else 0.0
     )

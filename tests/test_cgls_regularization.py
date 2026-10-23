@@ -17,7 +17,7 @@ from tomojax.recon import CGLSConfig, cgls
 def edge_matrix(shape, spacing):
     rows = []
     for index in np.ndindex(shape):
-        for axis, step in enumerate(spacing):
+        for axis, step in zip((2, 1, 0), spacing, strict=True):
             neighbor = list(index)
             neighbor[axis] += 1
             if neighbor[axis] < shape[axis]:
@@ -70,7 +70,7 @@ def test_gradient_regularized_cgls_matches_dense_augmented_system(
     if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
     shape, spacing = (3, 2, 2), (0.8, 1.2, 0.7)
-    grid = Grid(*shape, *spacing)
+    grid = Grid(*shape[::-1], *spacing)
     detector = Detector(5, 4, 0.7, 1.1, (0.13, -0.29))
     geometry = LaminographyGeometry(grid, detector, [13, 49, 83, 122, 161], tilt_deg=23)
     poses = jnp.asarray([geometry.pose_for_view(i) for i in range(5)])

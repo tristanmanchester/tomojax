@@ -220,4 +220,4 @@ class ViewBatches:
         )
 
     def zeros_volume(self) -> jax.Array:
-        return jnp.zeros((self.grid.nx, self.grid.ny, self.grid.nz), dtype=jnp.float32)
+        return jnp.zeros((self.grid.nz, self.grid.ny, self.grid.nx), dtype=jnp.float32)

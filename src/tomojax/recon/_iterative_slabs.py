@@ -74,8 +74,8 @@ def iterative_slabs[T](
             local_detector = replace(detector, nv=count, center=(detector.center[0], 0.0))
             local_geometry = ParallelGeometry(local_grid, local_detector, geometry.angles)
             support = config.support
-            if support is not None and np.ndim(support) > 0 and np.shape(support)[-1] != 1:
-                support = support[..., start:stop]
+            if support is not None and np.ndim(support) == 3 and np.shape(support)[0] != 1:
+                support = support[start:stop]
             result, info = reconstruct_arrays(
                 method,
                 local_geometry,

@@ -58,7 +58,7 @@ def solve(
         from .fbp import FBPConfig
 
         # Before planning the sweeps: XLA keeps the device memory FDK has used.
-        x = validate_host_arrays(data, out, (grid.nx, grid.ny, grid.nz), "mlem", order="F")
+        x = validate_host_arrays(data, out, (grid.nz, grid.ny, grid.nx), "mlem", order="C")
         fbp_start(geometry, grid, detector, data, config=FBPConfig(), det_grid=None, out=x)
     problem = cone_problem(
         geometry, grid, detector, data, model=model, backend=backend, poses=poses,
@@ -82,7 +82,7 @@ def solve(
     em.volume.close()
     for z0 in range(0, grid.nz, problem.plan.depth):
         z1 = min(grid.nz, z0 + problem.plan.depth)
-        x[:, :, z0:z1] *= xp.asarray(np.unpackbits(em.seen[:, :, z0:z1], axis=0, count=grid.nx))
+        x[z0:z1, :, :] *= xp.asarray(np.unpackbits(em.seen[z0:z1, :, :], axis=2, count=grid.nx))
         release_planes(x, z0, z1)
     record = {"host_volume": not problem.on_device, "slices_per_batch": problem.plan.depth}
     return problem.result(x), record
@@ -91,12 +91,12 @@ def solve(
 def _constrain(x: Any, support: Any, depth: int, *, nonnegative: bool, xp: Any) -> None:
     """Clip a warm start at zero and zero voxels outside the support; check the start."""
     mask = None if support is None else np.broadcast_to(np.asarray(support, bool), x.shape)
-    for z0 in range(0, x.shape[2], depth):
-        planes = x[:, :, z0 : z0 + depth]
+    for z0 in range(0, x.shape[0], depth):
+        planes = x[z0 : z0 + depth, :, :]
         if nonnegative:
             xp.maximum(planes, 0, out=planes)
         if mask is not None:
-            planes[~xp.asarray(mask[:, :, z0 : z0 + depth])] = 0
+            planes[~xp.asarray(mask[z0 : z0 + depth, :, :])] = 0
         if not bool(xp.isfinite(planes).all()) or float(xp.min(planes)) < 0:
             raise ValueError("mlem: initial volume must be finite and nonnegative")
         release_planes(x, z0, z0 + depth)
@@ -109,7 +109,7 @@ class _HostEM:
         self.problem, self.plan, self.xp = problem, problem.plan, problem.engine.xp
         self.volume, self.updating = problem.volume(x), updating
         grid = self.plan.grid
-        self.seen = np.zeros(((grid.nx + 7) // 8, grid.ny, grid.nz), np.uint8, order="F")
+        self.seen = np.zeros((grid.nz, grid.ny, (grid.nx + 7) // 8), np.uint8, order="C")
 
     def source(self, k: int) -> tuple[Any, ...]:
         retain = not self.problem.keep
@@ -126,14 +126,14 @@ class _HostEM:
     def sink(self, k: int, accumulated: tuple[Any, ...], sources: tuple[Any, ...]) -> None:
         """Multiply slab ``k`` by its correction; unseen voxels keep their values until masked."""
         xp, (z0, z1) = self.xp, self.plan.planes(k)
-        norm = accumulated[-1][:, :, : z1 - z0]
+        norm = accumulated[-1][: z1 - z0, :, :]
         visible = norm > 0
         visible = visible.get() if hasattr(visible, "get") else visible
-        self.seen[:, :, z0:z1] |= np.packbits(visible, axis=0)
+        self.seen[z0:z1, :, :] |= np.packbits(visible, axis=2)
         if self.updating:
-            updated = accumulated[0][:, :, : z1 - z0]
+            updated = accumulated[0][: z1 - z0, :, :]
             norm[norm <= 0] = xp.inf
             updated /= norm
             updated[xp.isinf(norm)] = 1
-            updated *= (sources or (self.volume.view(z0, z1),))[0][:, :, : z1 - z0]
-            self.volume.put(z0, z1, updated, scratch=accumulated[1])
+            updated *= (sources or (self.volume.view(z0, z1),))[0][: z1 - z0, :, :]
+            self.volume.put(z0, z1, updated)

@@ -67,7 +67,7 @@ def axial_slabs(
         return None
     fitting = max(1, int(0.5 * free / per_row))
     depth = 2 ** (fitting.bit_length() - 1)
-    output = np.empty((grid.nx, grid.ny, grid.nz), np.float32)
+    output = np.empty((grid.nz, grid.ny, grid.nx), np.float32)
     info = {}
     for start in range(0, grid.nz, depth):
         stop = min(start + depth, grid.nz)
@@ -82,10 +82,10 @@ def axial_slabs(
         volume, info = solve(
             local_geometry,
             data[:, start:stop, :],
-            None if initial is None else initial[:, :, start:stop],
-            None if support is None else support[:, :, start:stop],
+            None if initial is None else initial[start:stop, :, :],
+            None if support is None else support[start:stop, :, :],
         )
-        output[:, :, start:stop] = np.asarray(volume)
+        output[start:stop, :, :] = np.asarray(volume)
         # Do not retain the previous device slab while allocating the next.
         del volume
     return output, {**info, "host_slabs": True, "slices_per_batch": depth}

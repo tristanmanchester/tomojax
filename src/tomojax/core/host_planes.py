@@ -46,7 +46,7 @@ class HostPlaneOperator:
     ) -> None:
         self.coefficients = jnp.asarray(coefficients, dtype=jnp.float32)
         self.region = region
-        self.shape = (region.grid.nx, region.grid.ny, region.grid.nz)
+        self.shape = (region.grid.nz, region.grid.ny, region.grid.nx)
         self.slab_depth = slab_depth
         self.detector_bytes = detector_bytes
         if detector_bytes < region.image_shape[0] * region.image_shape[1] * 4:
@@ -61,8 +61,8 @@ class HostPlaneOperator:
 
     def slabs(self) -> Iterator[tuple[int, int]]:
         """Yield disjoint [first, last) z-plane intervals."""
-        for first in range(0, self.shape[2], self.slab_depth):
-            yield first, min(first + self.slab_depth, self.shape[2])
+        for first in range(0, self.shape[0], self.slab_depth):
+            yield first, min(first + self.slab_depth, self.shape[0])
 
     def put(self, value: np.ndarray) -> jax.Array:
         """Copy a host array to an owned, C-contiguous FP32 device buffer.
@@ -82,16 +82,16 @@ class HostPlaneOperator:
         One xy plane is the minimum window. Support is applied in those same
         windows, without materializing a whole masked device-sized host slab.
         """
-        shape = (*self.shape[:2], last - first)
+        shape = (last - first, *self.shape[1:])
         self.host_to_device_bytes += 4 * shape[0] * shape[1] * shape[2]
-        depth = max(1, (64 << 20) // (4 * shape[0] * shape[1]))
+        depth = max(1, (64 << 20) // (4 * shape[1] * shape[2]))
 
         def parts() -> Iterator[tuple[int, np.ndarray]]:
             for begin in range(first, last, depth):
                 end = min(last, begin + depth)
-                value = volume[:, :, begin:end]
+                value = volume[begin:end, :, :]
                 if support is not None:
-                    value = value * support[:, :, begin:end]
+                    value = value * support[begin:end, :, :]
                 yield begin - first, np.asarray(value, np.float32, order="C")
                 del value
 
@@ -175,7 +175,7 @@ class HostPlaneOperator:
         try:
             for first, last in self.slabs():
                 region = self._region(first)
-                accumulator = jnp.zeros((*self.shape[:2], last - first), jnp.float32)
+                accumulator = jnp.zeros((last - first, *self.shape[1:]), jnp.float32)
                 if resident is not None:
                     accumulator = _add_transpose(
                         self.coefficients, resident, accumulator, region=region

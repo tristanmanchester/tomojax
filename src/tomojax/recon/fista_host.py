@@ -29,10 +29,10 @@ class _Pair:
         self.x, self.shape = x, x.shape
         self._difference = SlabStore(x.shape, depth=x.depth, storage=x.storage)
 
-    def __getitem__(self, key: tuple[slice, slice, slice | int]) -> np.ndarray:
+    def __getitem__(self, key: tuple[slice | int, slice, slice]) -> np.ndarray:
         z = self.x[key]
-        words = z.reshape(-1, order="F").view(np.uint32)
-        words ^= self._difference[key].reshape(-1, order="F").view(np.uint32)
+        words = z.reshape(-1, order="C").view(np.uint32)
+        words ^= self._difference[key].reshape(-1, order="C").view(np.uint32)
         return z
 
     def write(self, first: int, last: int, x: np.ndarray, z: np.ndarray) -> None:
@@ -44,7 +44,7 @@ class _Pair:
 @partial(jax.jit, static_argnames=("offset", "length", "cfg"))
 def _tile_value(halo: jax.Array, *, offset: int, length: int, cfg: FistaCoreConfig) -> jax.Array:
     gx, gy, gz = grad3(halo)
-    squared = (gx * gx + gy * gy + gz * gz)[:, :, offset : offset + length]
+    squared = (gx * gx + gy * gy + gz * gz)[offset : offset + length, :, :]
     if cfg.regulariser == "huber_tv":
         norm = jnp.sqrt(jnp.maximum(squared, jnp.finfo(halo.dtype).tiny))
         value = jnp.where(
@@ -70,12 +70,12 @@ def _update(
     length: int,
     cfg: FistaCoreConfig,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
-    z = halo[:, :, offset : offset + length]
+    z = halo[offset : offset + length, :, :]
     if support is not None:
         gradient *= support
     if cfg.tv_weight:
         gradient += (
-            cfg.tv_weight * huber_tv_grad(halo, cfg.huber_delta)[:, :, offset : offset + length]
+            cfg.tv_weight * huber_tv_grad(halo, cfg.huber_delta)[offset : offset + length, :, :]
         )
     project = partial(
         project_box,
@@ -127,17 +127,17 @@ def _advance(
     regulariser = 0.0
     old_boundary = None
     for first, last, gradient in operator.transpose_slabs(residual):
-        lo, hi = max(0, first - 1), min(z.shape[2], last + 1)
-        halo = np.array(z[:, :, lo:hi], order="C")
+        lo, hi = max(0, first - 1), min(z.shape[0], last + 1)
+        halo = np.array(z[lo:hi, :, :], order="C")
         # z is overwritten in place. Preserve the old left halo for the next slab.
         if old_boundary is not None:
-            halo[:, :, 0] = old_boundary
-        old_boundary = np.array(z[:, :, last - 1], order="C")
+            halo[0, :, :] = old_boundary
+        old_boundary = np.array(z[last - 1, :, :], order="C")
         halo_device = operator.put(halo)
-        support_device = None if support is None else operator.put(support[:, :, first:last])
+        support_device = None if support is None else operator.put(support[first:last, :, :])
         new_x, new_z, value = _update(
             gradient,
-            operator.put(x[:, :, first:last]),
+            operator.put(x[first:last, :, :]),
             halo_device,
             support_device,
             jnp.float32(cfg.lipschitz),
@@ -149,8 +149,8 @@ def _advance(
         if isinstance(z, _Pair):
             z.write(first, last, operator.get(new_x), operator.get(new_z))
         else:
-            operator.get_into(new_x, x[:, :, first:last])
-            operator.get_into(new_z, z[:, :, first:last])
+            operator.get_into(new_x, x[first:last, :, :])
+            operator.get_into(new_z, z[first:last, :, :])
         regulariser += float(value)
         new_x.delete()
         new_z.delete()
@@ -171,7 +171,7 @@ def fista_tv_core_host(
     """Run the array-core FISTA recurrence using two private host images.
 
     The input image and projections are borrowed and never modified. The result
-    image is a Fortran-contiguous NumPy array, or a :class:`SlabStore` for a
+    image is a C-contiguous NumPy array, or a :class:`SlabStore` for a
     store ``initial``, whose iterates then stay in lossless stores coded against
     the same fixed reference as ``initial``; diagnostics are small JAX arrays.
     Only volume slabs and bounded detector groups are placed on the device.
@@ -199,7 +199,7 @@ def fista_tv_core_host(
             storage=initial.storage,
         )
         if isinstance(initial, SlabStore)
-        else np.empty(operator.shape, np.float32, order="F")
+        else np.empty(operator.shape, np.float32, order="C")
     )
     project = partial(
         project_box,
@@ -208,13 +208,13 @@ def fista_tv_core_host(
         upper_bound=cfg.upper_bound,
     )
     for first, last in operator.slabs():
-        tile = operator.put(initial[:, :, first:last])
+        tile = operator.put(initial[first:last, :, :])
         if isinstance(x, SlabStore):
             x.write(first, last, operator.get(project(tile)))
         else:
-            operator.get_into(project(tile), x[:, :, first:last])
+            operator.get_into(project(tile), x[first:last, :, :])
         tile.delete()
-    z = _Pair(x) if isinstance(x, SlabStore) else x.copy(order="F")
+    z = _Pair(x) if isinstance(x, SlabStore) else x.copy(order="C")
     prediction = np.empty(operator.projection_shape, np.float32)
     history = np.zeros(cfg.iterations, np.float32)
     last_data, t = np.float32(0), np.float32(1)
@@ -246,7 +246,7 @@ def fista_tv_core_host(
     regulariser = 0.0
     if cfg.compute_final_regulariser_value:
         for first, last in operator.slabs():
-            halo = operator.put(x[:, :, first : min(last + 1, x.shape[2])])
+            halo = operator.put(x[first : min(last + 1, x.shape[0]), :, :])
             regulariser += float(_tile_value(halo, offset=0, length=last - first, cfg=cfg))
             halo.delete()
     return FistaCoreResult(

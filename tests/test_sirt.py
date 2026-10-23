@@ -48,7 +48,7 @@ def test_streamed_columns_reserve_workspace_and_preserve_other_paths(
     grid, detector = tj.Grid(3, 3, 2, 1, 1, 1), tj.Detector(5, 4, 1, 1)
     data = np.ones((8, 4, 5), np.float32)
     cfg = SIRTConfig(
-        iterations=iterations, subsets=8, support=np.ones((3, 3, 2)) if masked else None
+        iterations=iterations, subsets=8, support=np.ones((2, 3, 3)) if masked else None
     )
     initial, stream, cache = module._storage(
         jnp.asarray(data) if device_data else data,
@@ -99,7 +99,7 @@ def test_sirt_dense_updates_with_bounds_support_and_tail(
                 ),
             )
         )
-    shape = (3, 3, 2)
+    shape = (2, 3, 3)
     # Assemble A one column at a time, independent of the solver and transpose.
     basis = np.eye(18, dtype=np.float32).reshape((18, *shape))
     matrix = np.stack([np.asarray(tj.project(geometry, x)).ravel() for x in basis], axis=1)
@@ -155,7 +155,7 @@ def test_sirt_dense_updates_with_bounds_support_and_tail(
 def test_public_sirt_converges_on_consistent_data(subsets):
     grid = tj.Grid(5, 5, 1, 1, 1, 1)
     geometry = tj.ParallelGeometry(grid, tj.Detector(9, 1, 1, 1), np.arange(0, 180, 10))
-    truth = jnp.zeros((5, 5, 1)).at[1:4, 1:4, :].set(1)
+    truth = jnp.zeros((1, 5, 5)).at[:, 1:4, 1:4].set(1)
     data = np.asarray(tj.project(geometry, truth))
     result = tj.reconstruct(
         tj.Scan(data, geometry),
@@ -175,7 +175,7 @@ def test_axial_memory_slabs_preserve_the_full_constrained_solve(monkeypatch, sub
     detector = tj.Detector(7, 3, 0.9, 1.3, (0.1, 0.7))
     geometry = tj.ParallelGeometry(grid, detector, np.arange(0, 180, 20))
     rng = np.random.default_rng(42)
-    truth = rng.uniform(size=(5, 4, 3)).astype(np.float32)
+    truth = rng.uniform(size=(3, 4, 5)).astype(np.float32)
     data = np.asarray(tj.project(geometry, truth))
     cfg = SIRTConfig(
         iterations=5,
@@ -206,7 +206,7 @@ def test_axial_slabs_release_each_result_before_solving_the_next(monkeypatch):
 
     def solve(local, *_):
         assert not previous or previous[-1]() is None
-        volume = np.ones((3, 3, local.grid.nz), np.float32)
+        volume = np.ones((local.grid.nz, 3, 3), np.float32)
         previous.append(weakref.ref(volume))
         return volume, {}
 
@@ -233,7 +233,7 @@ def test_host_columns_belong_to_the_workflow_not_the_slab_or_next_scan(monkeypat
     module = importlib.import_module("tomojax.recon.sirt")
     grid = tj.Grid(7, 5, 5, 0.8, 1.1, 1.0)
     detector = tj.Detector(9, 5, 0.9, 1.0)
-    truth = np.random.default_rng(17).uniform(size=(7, 5, 5)).astype(np.float32)
+    truth = np.random.default_rng(17).uniform(size=(5, 5, 7)).astype(np.float32)
     cfg = SIRTConfig(iterations=2, subsets=3, support=truth > 0.3, upper_bound=0.9)
     monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: 10000)
     original = module._axial_column

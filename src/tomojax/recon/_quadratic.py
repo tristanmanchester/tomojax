@@ -24,7 +24,8 @@ def regularization_normal(
 def gradient_energy(volume: jax.Array, spacing: tuple[float, float, float]) -> jax.Array:
     """Return ||D x||²; D contains adjacent differences divided by voxel spacing."""
     return sum(
-        jnp.sum((jnp.diff(volume, axis=axis) / step) ** 2) for axis, step in enumerate(spacing)
+        jnp.sum((jnp.diff(volume, axis=axis) / step) ** 2)
+        for axis, step in zip((2, 1, 0), spacing, strict=True)
     )
 
 
@@ -42,7 +43,7 @@ def gradient_normal(
     ``xp`` is the array module of ``volume`` (JAX by default, or NumPy or CuPy).
     """
     result = xp.zeros_like(volume)
-    for axis, step in enumerate(spacing):
+    for axis, step in zip((2, 1, 0), spacing, strict=True):
         if volume.shape[axis] == 1:
             continue
         if absolute_weights:

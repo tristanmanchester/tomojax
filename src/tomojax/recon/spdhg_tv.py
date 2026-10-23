@@ -350,7 +350,7 @@ def _initial_spdhg_state(
     cfg = runtime.config
     x0 = runtime.init_x
     if x0 is None:
-        x0 = jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
+        x0 = jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32)
     x0 = _proj_pos_support(x0, runtime.support, nonnegative=cfg.nonnegative)
     tv_zero = jnp.zeros_like(x0) if cfg.tv_weight > 0 else jnp.zeros((0,), jnp.float32)
     return _SPDHGScanState(
@@ -407,10 +407,10 @@ def _prepare_spdhg_runtime(
     validate_spdhg_weights(weights)
     validate_optional_broadcastable_shape(
         cfg.support,
-        (grid.nx, grid.ny, grid.nz),
+        (grid.nz, grid.ny, grid.nx),
         context="spdhg_tv support",
         name="support",
-        fix="use a support mask broadcastable to shape (grid.nx, grid.ny, grid.nz).",
+        fix="use a support mask broadcastable to shape (grid.nz, grid.ny, grid.nx).",
     )
     if init_x is not None:
         validate_volume(init_x, grid, context="spdhg_tv init_x", name="init_x")
@@ -753,7 +753,7 @@ def spdhg_tv(
         Real, nonnegative weights matching the projection shape; zero excludes
         unmeasured samples. None weights all samples equally.
     init_x : array-like or None, optional
-        Initial volume of shape ``(nx, ny, nz)``; None starts from zero.
+        Initial volume of shape ``(nz, ny, nx)``; None starts from zero.
     config : SPDHGConfig or None, optional
         Solver settings. None uses SPDHGConfig defaults.
     callback : callable or None, optional
@@ -765,7 +765,7 @@ def spdhg_tv(
     Returns
     -------
     volume : jax.Array
-        Float32 reconstruction of shape ``(nx, ny, nz)``.
+        Float32 reconstruction of shape ``(nz, ny, nx)``.
     info : dict
         Solver diagnostics and effective work; a small residual or iteration
         count does not establish reconstruction accuracy.
@@ -783,7 +783,7 @@ def spdhg_tv(
     >>> grid = tj.Grid(4, 4, 1, 1.0, 1.0, 1.0)
     >>> detector = tj.Detector(4, 1, 1.0, 1.0)
     >>> geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 8, endpoint=False))
-    >>> data = project(geometry, np.ones((4, 4, 1), np.float32))
+    >>> data = project(geometry, np.ones((1, 4, 4), np.float32))
     >>> volume, info = spdhg_tv(
     ...     geometry,
     ...     geometry.grid,
@@ -792,7 +792,7 @@ def spdhg_tv(
     ...     config=SPDHGConfig(iterations=1),
     ... )
     >>> volume.shape
-    (4, 4, 1)
+    (1, 4, 4)
     """
     runtime = _prepare_spdhg_runtime(
         geometry,

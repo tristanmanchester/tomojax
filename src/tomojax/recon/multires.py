@@ -81,7 +81,7 @@ def fista_multires(
         if x_init is not None:
             # Upsample previous x to current level as initialization
             f_up = prev_factor // lvl["factor"]
-            x0 = upsample_volume(x_init, f_up, (g.nx, g.ny, g.nz))
+            x0 = upsample_volume(x_init, f_up, (g.nz, g.ny, g.nx))
         else:
             x0 = None
         x_lvl, info = fista_tv(
@@ -102,7 +102,7 @@ def fista_multires(
 
     # Upsample to finest resolution if the last processed level is still coarse.
     if prev_factor != 1:
-        x_final = upsample_volume(x_init, prev_factor, (grid.nx, grid.ny, grid.nz))
+        x_final = upsample_volume(x_init, prev_factor, (grid.nz, grid.ny, grid.nx))
     else:
         x_final = x_init
 

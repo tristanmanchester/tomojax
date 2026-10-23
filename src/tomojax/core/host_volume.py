@@ -1,6 +1,6 @@
 """Host volumes larger than the device, and larger than memory, accessed a z slab at a time.
 
-Volumes are Fortran-ordered ``(nx, ny, nz)`` FP32 arrays, so a slab of whole
+Volumes are C-ordered ``(nz, ny, nx)`` FP32 arrays, so a slab of whole
 z planes is one contiguous block; work volumes can be anonymous files beside
 a memory-mapped output. Pages of mapped volumes are released after each slab,
 so a volume larger than memory never stays resident.
@@ -27,14 +27,14 @@ def scratch_directory(array: np.ndarray | None) -> Path | None:
 
 
 def host_volume(shape: tuple[int, int, int], directory: Path | None = None) -> np.ndarray:
-    """A zeroed Fortran-ordered FP32 work volume: in memory, or a temporary file in ``directory``.
+    """A zeroed C-ordered FP32 work volume: in memory, or a temporary file in ``directory``.
 
     The temporary file has no name and is removed when the array is released.
     """
     if directory is None:
-        return np.zeros(shape, np.float32, order="F")
+        return np.zeros(shape, np.float32, order="C")
     with tempfile.NamedTemporaryFile(dir=directory) as handle:
-        array = np.memmap(handle.name, np.float32, "w+", shape=shape, order="F")
+        array = np.memmap(handle.name, np.float32, "w+", shape=shape, order="C")
         descriptor = os.open(handle.name, os.O_RDWR)
     # The descriptor keeps the unlinked file open for slab reads and writes.
     _DESCRIPTORS[id(array)] = descriptor
@@ -43,13 +43,13 @@ def host_volume(shape: tuple[int, int, int], directory: Path | None = None) -> n
 
 
 def slab_file(array: np.ndarray) -> tuple[int, int] | None:
-    """A new descriptor for a Fortran-ordered memmap's file, and the offset of its first byte.
+    """A new descriptor for a C-ordered memmap's file, and the offset of its first byte.
 
     None for arrays that are not memory-mapped files. The caller closes the descriptor.
     """
     mapping = getattr(array, "_mmap", None)
     kept, name = _DESCRIPTORS.get(id(array)), getattr(array, "filename", None)
-    if mapping is None or not array.flags.f_contiguous:
+    if mapping is None or not array.flags.c_contiguous:
         return None
     if kept is not None:
         descriptor = os.dup(kept)
@@ -105,11 +105,11 @@ def release(array: np.ndarray, start: int = 0, stop: int | None = None) -> None:
 
 
 def release_planes(array: np.ndarray, z0: int, z1: int) -> None:
-    """:func:`release` the z planes ``[z0, z1)`` of a Fortran-ordered memmap."""
+    """:func:`release` the z planes ``[z0, z1)`` of a C-ordered memmap."""
     mapping = getattr(array, "_mmap", None)
-    if mapping is None or not array.flags.f_contiguous:
+    if mapping is None or not array.flags.c_contiguous:
         return
-    planes = array[:, :, z0:z1]
+    planes = array[z0:z1, :, :]
     first = planes.ctypes.data - np.frombuffer(mapping, np.uint8).ctypes.data
     release(array, first, first + planes.nbytes)
 
@@ -123,12 +123,12 @@ def fill(target: Any, initial: Any, *, depth: int = 32) -> Any:
     """
     if isinstance(initial, np.ndarray) and np.shares_memory(initial, target):
         return target
-    for z0 in range(0, target.shape[2], depth):
-        z1 = min(target.shape[2], z0 + depth)
+    for z0 in range(0, target.shape[0], depth):
+        z1 = min(target.shape[0], z0 + depth)
         if initial is None or np.ndim(initial) == 0:
-            target[:, :, z0:z1] = initial or 0
+            target[z0:z1, :, :] = initial or 0
         else:
-            target[:, :, z0:z1] = initial[:, :, z0:z1]
+            target[z0:z1, :, :] = initial[z0:z1, :, :]
             release_planes(initial, z0, z1)
         release_planes(target, z0, z1)
     return target
@@ -177,7 +177,7 @@ type _Block = tuple[SlabPayload, bool]  # payload and whether it is compressed
 
 
 class SlabSource(Protocol):
-    """A fixed FP32 ``(nx, ny, nz)`` volume read a slab of z planes at a time."""
+    """A fixed FP32 ``(nz, ny, nx)`` volume read a slab of z planes at a time."""
 
     @property
     def shape(self) -> tuple[int, int, int]:
@@ -190,7 +190,7 @@ class SlabSource(Protocol):
 
 
 class SlabStore:
-    """An owned FP32 ``(nx, ny, nz)`` volume held as lossless blocks of ``depth`` z planes.
+    """An owned FP32 ``(nz, ny, nx)`` volume held as lossless blocks of ``depth`` z planes.
 
     Each block keeps the XOR of its FP32 words with ``reference`` (a fixed
     source of the same shape, such as another store or a volume computed plane
@@ -198,8 +198,8 @@ class SlabStore:
     byte shuffle when that is smaller, so every word, NaN payloads and -0
     included, reads back exactly. Blocks equal to the reference are not stored.
     Stored blocks are immutable: :meth:`copy` shares them and writes replace
-    them, so a copy is a cheap snapshot. Reads return new Fortran-ordered arrays
-    and writes copy their input. ``store[:, :, z0:z1]`` reads and assigns whole
+    them, so a copy is a cheap snapshot. Reads return new C-ordered arrays
+    and writes copy their input. ``store[z0:z1, :, :]`` reads and assigns whole
     planes; nothing converts the whole volume implicitly, and :meth:`materialize`
     does so on request. ``storage`` holds the encoded bytes of written blocks
     (private anonymous memory by default).
@@ -218,7 +218,7 @@ class SlabStore:
         self.shape = (int(shape[0]), int(shape[1]), int(shape[2]))
         self.depth, self.reference = depth, reference
         self.storage: PayloadStorage = storage or MEMORY_STORAGE
-        self._blocks: list[_Block | None] = [None] * -(-shape[2] // depth)
+        self._blocks: list[_Block | None] = [None] * -(-shape[0] // depth)
 
     dtype = np.dtype(np.float32)
 
@@ -263,91 +263,91 @@ class SlabStore:
         return result
 
     def read(self, z0: int, z1: int) -> np.ndarray:
-        """Planes ``[z0, z1)`` as a new Fortran-ordered array."""
-        out = np.empty((*self.shape[:2], z1 - z0), np.float32, order="F")
+        """Planes ``[z0, z1)`` as a new C-ordered array."""
+        out = np.empty((z1 - z0, *self.shape[1:]), np.float32, order="C")
         for k in range(z0 // self.depth, -(-z1 // self.depth)):
-            b0, b1 = k * self.depth, min(self.shape[2], (k + 1) * self.depth)
+            b0, b1 = k * self.depth, min(self.shape[0], (k + 1) * self.depth)
             lo, hi = max(z0, b0), min(z1, b1)
-            out[:, :, lo - z0 : hi - z0] = self._block(k)[:, :, lo - b0 : hi - b0]
+            out[lo - z0 : hi - z0, :, :] = self._block(k)[lo - b0 : hi - b0, :, :]
         return out
 
     def write(self, z0: int, z1: int, values: Any) -> None:
         """Store ``values`` as planes ``[z0, z1)``; ``values`` is copied, not kept."""
         values = np.asarray(values, np.float32)
         for k in range(z0 // self.depth, -(-z1 // self.depth)):
-            b0, b1 = k * self.depth, min(self.shape[2], (k + 1) * self.depth)
+            b0, b1 = k * self.depth, min(self.shape[0], (k + 1) * self.depth)
             lo, hi = max(z0, b0), min(z1, b1)
             if lo == b0 and hi == b1:
-                block = np.asfortranarray(values[:, :, lo - z0 : hi - z0])
+                block = np.ascontiguousarray(values[lo - z0 : hi - z0, :, :])
             else:
                 block = self._block(k)
-                block[:, :, lo - b0 : hi - b0] = values[:, :, lo - z0 : hi - z0]
+                block[lo - b0 : hi - b0, :, :] = values[lo - z0 : hi - z0, :, :]
             self._blocks[k] = self._encode(block, b0, b1)
 
     def materialize(self, out: np.ndarray | None = None, *, consume: bool = False) -> np.ndarray:
-        """The whole volume, in ``out`` or a new Fortran-ordered array.
+        """The whole volume, in ``out`` or a new C-ordered array.
 
         With ``consume`` each block is released once copied, so the peak stays
         near the dense volume; the store is then empty and must not be used.
         Copies keep their blocks.
         """
         if out is None:
-            out = np.empty(self.shape, np.float32, order="F")
-        for k, z0 in enumerate(range(0, self.shape[2], self.depth)):
-            z1 = min(self.shape[2], z0 + self.depth)
-            out[:, :, z0:z1] = self.read(z0, z1)
+            out = np.empty(self.shape, np.float32, order="C")
+        for k, z0 in enumerate(range(0, self.shape[0], self.depth)):
+            z1 = min(self.shape[0], z0 + self.depth)
+            out[z0:z1, :, :] = self.read(z0, z1)
             if consume:
                 self._blocks[k] = None
         if consume:
             self._blocks, self.reference = [], None
         return out
 
-    def __getitem__(self, key: tuple[slice, slice, slice | int]) -> np.ndarray:
+    def __getitem__(self, key: tuple[slice | int, slice, slice]) -> np.ndarray:
         z0, z1 = self._planes(key)
         planes = self.read(z0, z1)
-        return planes[:, :, 0] if isinstance(key[2], int | np.integer) else planes
+        return planes[0, :, :] if isinstance(key[0], int | np.integer) else planes
 
-    def __setitem__(self, key: tuple[slice, slice, slice | int], values: Any) -> None:
+    def __setitem__(self, key: tuple[slice | int, slice, slice], values: Any) -> None:
         z0, z1 = self._planes(key)
         values = np.asarray(values, np.float32)
-        self.write(z0, z1, values[:, :, None] if values.ndim == 2 else values)
+        self.write(z0, z1, values[None, :, :] if values.ndim == 2 else values)
 
     def _planes(self, key: Any) -> tuple[int, int]:
         whole = slice(None)
-        if not (isinstance(key, tuple) and len(key) == 3 and key[0] == whole == key[1]):
-            raise IndexError("SlabStore is indexed by whole planes: store[:, :, z0:z1]")
-        if isinstance(key[2], int | np.integer):
-            z = range(self.shape[2])[key[2]]
+        if not (isinstance(key, tuple) and len(key) == 3 and key[1] == whole == key[2]):
+            raise IndexError("SlabStore is indexed by whole planes: store[z0:z1, :, :]")
+        if isinstance(key[0], int | np.integer):
+            z = range(self.shape[0])[key[0]]
             return z, z + 1
-        z0, z1, step = key[2].indices(self.shape[2])
+        z0, z1, step = key[0].indices(self.shape[0])
         if step != 1:
             raise IndexError("SlabStore reads contiguous planes")
         return z0, max(z0, z1)
 
     def _block(self, k: int) -> np.ndarray:
-        b0, b1 = k * self.depth, min(self.shape[2], (k + 1) * self.depth)
-        shape = (*self.shape[:2], b1 - b0)
+        b0, b1 = k * self.depth, min(self.shape[0], (k + 1) * self.depth)
+        shape = (b1 - b0, *self.shape[1:])
         stored = self._blocks[k]
         payload = None if stored is None else stored[0].read()
         if stored is None or payload is None:
-            block = np.zeros(shape, np.float32, order="F")
+            block = np.zeros(shape, np.float32, order="C")
         elif stored[1]:
             import imagecodecs
 
-            block = np.empty(shape, np.float32, order="F")
-            flat = block.reshape(-1, order="F").view(np.uint8)
+            block = np.empty(shape, np.float32, order="C")
+            flat = block.reshape(-1, order="C").view(np.uint8)
             imagecodecs.blosc2_decode(payload, out=memoryview(flat), numthreads=4)
         else:
-            block = np.array(payload.view(np.float32).reshape(shape, order="F"), order="F")
+            block = np.array(payload.view(np.float32).reshape(shape, order="C"), order="C")
         if self.reference is not None:
-            words = block.reshape(-1, order="F").view(np.uint32)
-            words ^= self.reference.read(b0, b1).reshape(-1, order="F").view(np.uint32)
+            words = block.reshape(-1, order="C").view(np.uint32)
+            words ^= self.reference.read(b0, b1).reshape(-1, order="C").view(np.uint32)
         return block
 
     def _encode(self, block: np.ndarray, b0: int, b1: int) -> _Block | None:
-        words = np.array(block.reshape(-1, order="F").view(np.uint32))
+        words = np.array(block.reshape(-1, order="C").view(np.uint32))
         if self.reference is not None:
-            words ^= self.reference.read(b0, b1).reshape(-1, order="F").view(np.uint32)
+            words ^= self.reference.read(b0, b1).reshape(-1, order="C").view(np.uint32)
         if not words.any():
             return None
         import imagecodecs

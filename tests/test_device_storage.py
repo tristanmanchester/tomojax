@@ -60,7 +60,7 @@ def test_growth_and_payload_lifetime_outlive_owner(device):
 
 @pytest.mark.parametrize("compressed", [False, True])
 def test_shared_slab_snapshots_fallback_spill_and_extent_reuse(device, tmp_path, compressed):
-    shape = (9, 7, 5)
+    shape = (5, 7, 9)
     rng = np.random.default_rng(4)
     words = rng.integers(0, 2**32, shape, dtype=np.uint32)
     if compressed:
@@ -79,7 +79,7 @@ def test_shared_slab_snapshots_fallback_spill_and_extent_reuse(device, tmp_path,
     assert storage.used == budget == fallback.resident_nbytes
     original.write(0, 5, np.zeros(shape, np.float32))
     assert storage.used == budget
-    np.testing.assert_array_equal(snapshot.read(1, 4).view(np.uint32), words[:, :, 1:4])
+    np.testing.assert_array_equal(snapshot.read(1, 4).view(np.uint32), words[1:4])
     del snapshot
     gc.collect()
     assert storage.used == 0 and fallback.resident_nbytes == budget
@@ -101,7 +101,7 @@ def test_fista_preserves_shared_storage_and_exact_host_result(device):
     grid, detector = Grid(4, 5, 3, 0.7, 0.8, 1.2), Detector(7, 5, 0.9, 0.8)
     backend = "cuda" if device.platform == "gpu" else "jax"
     rng = np.random.default_rng(61)
-    initial = rng.uniform(-0.1, 0.7, (4, 5, 3)).astype(np.float32)
+    initial = rng.uniform(-0.1, 0.7, (3, 5, 4)).astype(np.float32)
     data = rng.uniform(0, 2, (3, 5, 7)).astype(np.float32)
     storage = DeviceStorage(device, 4096)
     stored = SlabStore(initial.shape, depth=2, storage=storage)

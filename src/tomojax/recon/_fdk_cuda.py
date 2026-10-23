@@ -136,10 +136,10 @@ extern "C" __global__ void fdk_backproject(
     }
     if (valid) {
         if (*peak > 0.f) scale2 *= *peak / HALF_PEAK;
-        long base = ((long)ix * ny + iy) * nz;
+        long base = (long)iy * nx + ix;
         #pragma unroll
         for (int j = 0; j < RUN; ++j)
-            if (iz0 + 32 * j < nz) vol[base + iz0 + 32 * j] += acc[j] * scale2;
+            if (iz0 + 32 * j < nz) vol[base + (long)(iz0 + 32 * j) * ny * nx] += acc[j] * scale2;
     }
 }
 """
@@ -314,7 +314,7 @@ def backproject_cuda(
     # pixels, so every view's image aligns alike.
     pitch = -(-(_LEAD + detector.nv) // _LEAD) * _LEAD
     shapes = (
-        jax.ShapeDtypeStruct((grid.nx, grid.ny, grid.nz), jnp.float32),
+        jax.ShapeDtypeStruct((grid.nz, grid.ny, grid.nx), jnp.float32),
         jax.ShapeDtypeStruct((views, width, pitch), jnp.float16),
     )
     launch = partial(_launch, grid=grid, det=detector, scale=float(scale))

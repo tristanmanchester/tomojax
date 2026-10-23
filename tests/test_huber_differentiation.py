@@ -262,7 +262,7 @@ def test_box_constrained_tv_proximal_is_the_joint_minimizer():
         ParallelGeometry(grid, detector, [0.0]),
         grid,
         detector,
-        x[:, 0, :].T[None].copy(),
+        x[:, 0, :][None].copy(),
         config=FistaConfig(
             iterations=1, lipschitz=1, tv_weight=lam, tv_prox_iterations=500, nonnegative=True
         ),

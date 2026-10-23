@@ -40,7 +40,7 @@ def test_host_fista_matches_array_core(backend, depth, iterations, interpolation
     grid, detector = Grid(4, 5, 3, 0.7, 0.8, 1.2), Detector(7, 5, 0.9, 0.8)
     poses = stack_view_poses(LaminographyGeometry(grid, detector, [13, 97, 208], tilt_deg=35), 3)
     coefficients = plane_coefficients(poses, grid, detector)
-    initial = np.asarray(rng.uniform(-0.1, 0.7, (4, 5, 3)), np.float32)
+    initial = np.asarray(rng.uniform(-0.1, 0.7, (3, 5, 4)), np.float32)
     data = np.asarray(rng.uniform(0, 2, (3, 5, 7)), np.float32)
     original, original_data = initial.copy(), data.copy()
     support_shape = {"scalar": (), "broadcast": (1, 5, 1)}.get(supported, initial.shape)
@@ -87,8 +87,9 @@ def test_host_fista_matches_array_core(backend, depth, iterations, interpolation
     stored = SlabStore(initial.shape, depth=2, reference=reference, storage=_Storage())
     stored[:, :, :] = initial
     kept = fista_tv_core_host(operator, stored, projections=data, cfg=cfg, view_weights=weights)
-    np.testing.assert_array_equal(kept.x.materialize(), actual.x)  # the same arithmetic
-    np.testing.assert_array_equal(kept.loss, actual.loss)
+    # JAX's GPU scatter-add order need not repeat bit-exactly.
+    np.testing.assert_allclose(kept.x.materialize(), actual.x, rtol=4e-6, atol=3e-6)
+    np.testing.assert_allclose(kept.loss, actual.loss, rtol=4e-6, atol=3e-6)
     np.testing.assert_array_equal(stored.materialize(), initial)
     assert kept.x.reference is reference  # no chain of references across calls
     assert kept.x.storage is stored.storage
@@ -98,7 +99,7 @@ def test_host_fista_matches_array_core(backend, depth, iterations, interpolation
         )
     np.testing.assert_array_equal(initial, original)
     np.testing.assert_array_equal(data, original_data)
-    assert actual.x.flags.f_contiguous
+    assert actual.x.flags.c_contiguous
     assert int(actual.effective_iterations) == iterations
     assert operator.host_to_device_bytes > 0 and operator.device_to_host_bytes > 0
     if iterations == 0:
@@ -143,15 +144,17 @@ def test_host_plane_transfers_own_buffers_and_preserve_strided_padding():
 
 @pytest.mark.parametrize("masked", [False, True])
 def test_volume_upload_reads_bounded_owned_plane_windows(masked):
-    shape = (2049, 4096, 3)  # An xy plane exceeds half the host window budget.
-    region = PlaneRegion(grid=Grid(*shape, 1, 1, 1), detector=Detector(1, 1, 1, 1), backend="jax")
+    shape = (3, 4096, 2049)  # An xy plane exceeds half the host window budget.
+    region = PlaneRegion(
+        grid=Grid(*shape[::-1], 1, 1, 1), detector=Detector(1, 1, 1, 1), backend="jax"
+    )
     operator = HostPlaneOperator(jnp.zeros((1, 14)), region=region, slab_depth=3, detector_bytes=4)
     read = []
-    buffer = np.empty((*shape[:2], 1), np.float32)
+    buffer = np.empty((1, *shape[1:]), np.float32)
 
     class Source:
         def __getitem__(self, index):
-            first, last = index[2].start, index[2].stop
+            first, last = index[0].start, index[0].stop
             assert last - first == 1
             read.append(first)
             buffer.fill(first + 1)
@@ -161,7 +164,7 @@ def test_volume_upload_reads_bounded_owned_plane_windows(masked):
     value = operator.put_volume(Source(), 0, 3, support)
     buffer.fill(-17)
     expected = np.arange(1, 4, dtype=np.float32) * (0.5 if masked else 1)
-    np.testing.assert_array_equal(np.asarray(value[0, 0]), expected)
-    np.testing.assert_array_equal(np.asarray(value[-1, -1]), expected)
+    np.testing.assert_array_equal(np.asarray(value[:, 0, 0]), expected)
+    np.testing.assert_array_equal(np.asarray(value[:, -1, -1]), expected)
     assert read == [0, 1, 2]
     assert operator.host_to_device_bytes == 4 * np.prod(shape)

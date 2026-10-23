@@ -167,7 +167,7 @@ def _solve(
     select = subset_operators(
         poses, grid, detector, det_grid, backend, batch, model, subsets, stream=stream
     )
-    shape = (grid.nx, grid.ny, grid.nz)
+    shape = (grid.nz, grid.ny, grid.nx)
     normalization = select
     normal_rows = detector.nv
     normal_shape = shape
@@ -179,7 +179,7 @@ def _solve(
         normalization = subset_operators(
             poses, normal_grid, normal_detector, None, backend, batch, model, subsets
         )
-        normal_rows, normal_shape = 1, (grid.nx, grid.ny, 1)
+        normal_rows, normal_shape = 1, (1, grid.ny, grid.nx)
     mask = jnp.ones(shape, jnp.float32) if support is None else (support != 0).astype(jnp.float32)
 
     def constrain(x: jax.Array) -> jax.Array:
@@ -219,7 +219,7 @@ def _solve(
             column = _inverse(norm)
         else:
             column = (
-                jax.device_put(host_columns[index], column_device)[:, :, None]
+                jax.device_put(host_columns[index], column_device)[None, :, :]
                 if host_columns is not None
                 else column_weights(index)
                 if columns is None
@@ -331,7 +331,7 @@ def sirt(
     to fit in device memory. Cone-beam solves whose working set exceeds the
     device, or given ``out``, update the volume a z slab at a time; it stays
     on the device when it fits beside that sweep, and otherwise in host memory
-    as a Fortran-ordered NumPy volume (``out`` if given).
+    as a C-ordered NumPy volume (``out`` if given).
 
     Parameters
     ----------
@@ -344,20 +344,20 @@ def sirt(
     projections : array-like
         Measured line integrals with shape ``(views, detector.nv, detector.nu)``.
     init_x : array-like or None, optional
-        Initial volume of shape ``(nx, ny, nz)``; None starts from zero.
+        Initial volume of shape ``(nz, ny, nx)``; None starts from zero.
     config : SIRTConfig or None, optional
         Solver settings. None uses SIRTConfig defaults.
     det_grid : tuple of array-like or None, optional
         Explicit detector-coordinate arrays ``(u, v)``, each of shape ``(nv, nu)``.
         None uses the canonical detector grid.
     out : numpy.ndarray or None, optional
-        Writable float32 ``(nx, ny, nz)`` host storage for a cone-beam result,
+        Writable float32 ``(nz, ny, nx)`` host storage for a cone-beam result,
         including a memmap; it must not overlap the projections.
 
     Returns
     -------
     volume : jax.Array or numpy.ndarray
-        Float32 reconstruction of shape ``(nx, ny, nz)``.
+        Float32 reconstruction of shape ``(nz, ny, nx)``.
     info : dict
         Solver diagnostics and effective work; a small residual or iteration
         count does not establish reconstruction accuracy.
@@ -375,7 +375,7 @@ def sirt(
     >>> grid = tj.Grid(4, 4, 1, 1.0, 1.0, 1.0)
     >>> detector = tj.Detector(4, 1, 1.0, 1.0)
     >>> geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 8, endpoint=False))
-    >>> data = project(geometry, np.ones((4, 4, 1), np.float32))
+    >>> data = project(geometry, np.ones((1, 4, 4), np.float32))
     >>> volume, info = sirt(
     ...     geometry,
     ...     geometry.grid,
@@ -384,7 +384,7 @@ def sirt(
     ...     config=SIRTConfig(iterations=1),
     ... )
     >>> volume.shape
-    (4, 4, 1)
+    (1, 4, 4)
     """
     return SIRTCall().solve(
         geometry, grid, detector, projections, init_x=init_x, config=config, det_grid=det_grid,
@@ -415,7 +415,7 @@ def _axial_column(
     select = subset_operators(poses, grid, detector, None, backend, batch, model, subsets)
     _, adjoint, _ = select(index)
     count = (poses.shape[0] + subsets - 1) // subsets
-    return _inverse(adjoint(jnp.ones((count, 1, detector.nu), jnp.float32)))[:, :, 0]
+    return _inverse(adjoint(jnp.ones((count, 1, detector.nu), jnp.float32)))[0]
 
 
 class SIRTCall:
@@ -548,7 +548,7 @@ class SIRTCall:
             device = next(iter(poses.devices()))
             column_device = jax.sharding.SingleDeviceSharding(device)
             if self.columns is None:
-                maps = np.empty((subsets, grid.nx, grid.ny), np.float32)
+                maps = np.empty((subsets, grid.ny, grid.nx), np.float32)
                 for index in range(subsets):
                     maps[index] = np.asarray(
                         _axial_column(

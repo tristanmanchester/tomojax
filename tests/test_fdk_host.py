@@ -47,13 +47,13 @@ def test_host_slabs_preserve_zero_extension_beyond_measured_rows(backend, z_cent
         np.testing.assert_array_equal(actual, 0.0)
     else:
         assert np.max(np.abs(reference)) > 0.0
-        np.testing.assert_array_equal(actual[:, :, [0, -1]], 0.0)
+        np.testing.assert_array_equal(actual[[0, -1]], 0.0)
 
 
 @pytest.mark.parametrize("depth", [0, -1, 1.5, 2.0, True, np.bool_(True), "2"])
 def test_host_slabs_reject_invalid_depth_without_writing(depth):
     geometry, grid, detector, data = scan()
-    out = np.full((grid.nx, grid.ny, grid.nz), 91.0, np.float32)
+    out = np.full((grid.nz, grid.ny, grid.nx), 91.0, np.float32)
     with pytest.raises(ValueError, match="fdk_host.*slices_per_batch"):
         fdk_host(
             geometry,
@@ -70,7 +70,7 @@ def test_host_slabs_reject_invalid_depth_without_writing(depth):
 def test_host_slabs_reject_nonfinite_angles_without_writing(angle):
     geometry, grid, detector, data = scan()
     geometry = replace(geometry, angles=[angle, *geometry.angles[1:]])
-    out = np.full((grid.nx, grid.ny, grid.nz), 91.0, np.float32)
+    out = np.full((grid.nz, grid.ny, grid.nx), 91.0, np.float32)
     with pytest.raises(ValueError, match="finite rotation angle"):
         fdk_host(geometry, grid, detector, data, out=out)
     np.testing.assert_array_equal(out, 91.0)
@@ -79,11 +79,11 @@ def test_host_slabs_reject_nonfinite_angles_without_writing(angle):
 @pytest.mark.parametrize("invalid", ["dtype", "shape", "readonly", "device_input", "complex"])
 def test_host_slabs_reject_invalid_storage_before_writing(invalid):
     geometry, grid, detector, data = scan()
-    out = np.full((grid.nx, grid.ny, grid.nz), 91.0, np.float32)
+    out = np.full((grid.nz, grid.ny, grid.nx), 91.0, np.float32)
     if invalid == "dtype":
         out = out.astype(np.float64)
     elif invalid == "shape":
-        out = out[:, :, :-1]
+        out = out[:-1]
     elif invalid == "readonly":
         out.flags.writeable = False
     elif invalid == "device_input":
@@ -98,7 +98,7 @@ def test_host_slabs_reject_invalid_storage_before_writing(invalid):
 @pytest.mark.parametrize("mapping", [False, True])
 def test_host_slabs_reject_overlapping_storage_before_writing(tmp_path, mapping):
     geometry, grid, detector, data = scan()
-    shape = (grid.nx, grid.ny, grid.nz)
+    shape = (grid.nz, grid.ny, grid.nx)
     if mapping:
         path = tmp_path / "same.bin"
         data = np.memmap(path, mode="w+", dtype=np.float32, shape=data.shape)
@@ -134,7 +134,7 @@ def test_host_slabs_validate_grid_before_allocating_or_writing(invalid):
 @pytest.mark.parametrize("layout", ["allocated", "C", "F", "reversed"])
 def test_host_slabs_preserve_writable_output(layout, backend):
     geometry, grid, detector, data = scan()
-    shape = (grid.nx, grid.ny, grid.nz)
+    shape = (grid.nz, grid.ny, grid.nx)
     out = np.empty(shape, np.float32, order="C" if layout == "C" else "F")
     if layout == "allocated":
         out = None
@@ -150,7 +150,7 @@ def test_host_slabs_preserve_writable_output(layout, backend):
         config=FDKHostConfig(slices_per_batch=np.int64(2), fdk=cfg),
         out=out,
     )
-    assert result.flags.f_contiguous if out is None else result is out
+    assert result.flags.c_contiguous if out is None else result is out
     np.testing.assert_allclose(result, reference, atol=3e-6)
 
 
@@ -181,7 +181,7 @@ def test_host_slabs_recover_independent_gaussian_attenuation(backend, length_sca
             zip((n, n, nz), (grid.vx, grid.vy, grid.vz), strict=True)
         )
     ]
-    coordinates = np.meshgrid(*axes, indexing="ij")
+    coordinates = np.meshgrid(*axes[::-1], indexing="ij")[::-1]
     truth = np.exp(-0.5 * sum(axis**2 for axis in coordinates) / sigma**2)
     actual = fdk_host(
         geometry,
@@ -259,7 +259,7 @@ def test_cuda_fdk_waits_for_queued_kernel_when_event_record_fails(monkeypatch):
     coeff = cp.asarray(
         np.asarray(cone.cone_coefficients(geometry.poses(), grid, detector, geometry.beam))
     )
-    target = cp.zeros((grid.nx, grid.ny, grid.nz), cp.float32)
+    target = cp.zeros((grid.nz, grid.ny, grid.nx), cp.float32)
     images = cp.asarray(np.swapaxes(data, 1, 2))
     half = cp.empty((len(data), detector.nu, 2 * module._LEAD), cp.float16)
     # The injected launch uses a separate nonblocking stream; finish input
@@ -396,7 +396,7 @@ def test_per_view_arrangements_use_global_quadrature_and_physical_cosines(backen
     from tomojax.geometry import ConeSegments
 
     geometry, grid, detector, data = scan(nz=17)
-    parts, expected = [], np.zeros((grid.nx, grid.ny, grid.nz), np.float32)
+    parts, expected = [], np.zeros((grid.nz, grid.ny, grid.nx), np.float32)
     cfg = FDKConfig(backend=backend, views_per_batch=3)
     for index, angle in enumerate(geometry.angles):
         own = replace(detector, center=(0.3 * np.sin(angle), 0.2 * index))
