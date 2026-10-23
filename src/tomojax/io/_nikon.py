@@ -42,17 +42,18 @@ def _parameters(path: Path) -> dict[str, str]:
 
 
 def _beam_hardening(file: Path, params: dict[str, str]) -> dict[str, object] | None:
-    """CT Pro's linearisation ``sum_n CoefXn q^n`` (lowest power first) and the tube settings.
+    """Record CT Pro coefficients (lowest power first) and tube settings, unapplied.
 
+    Their vendor intensity domain and scaling are not specified by this reader.
     The preset index comes from the ``.ctprofile.xml`` beside the scan, when present.
     """
     keys = [f"CoefX{n}" for n in range(5)]
-    if not all(params.get(key, "").strip() for key in keys):
-        return None
-    record: dict[str, object] = {
-        "vendor": "nikon",
-        "coefficients": [float(params[key]) for key in keys],
-    }
+    record: dict[str, object] = {"vendor": "nikon"}
+    if all(params.get(key, "").strip() for key in keys):
+        record["coefficients"] = [float(params[key]) for key in keys]
+    for key in ("Scale", "Scaling"):
+        if params.get(key, "").strip():
+            record[key.lower()] = float(params[key])
     lut = params.get("BeamHardeningLUTFile", "").strip()
     if lut:
         record["lut"] = lut
@@ -70,7 +71,7 @@ def _beam_hardening(file: Path, params: dict[str, str]) -> dict[str, object] | N
     material = params.get("Filter_Material", "").strip()
     if material and material.lower() != "none":
         record["filter"] = [material, float(params.get("Filter_ThicknessMM") or 0.0)]
-    return record
+    return record if len(record) > 1 else None
 
 
 def _number(params: dict[str, str], key: str, default: float | None = None) -> float:
@@ -234,6 +235,9 @@ def _nikon_record(
         "ingest_source": "nikon_xtekct",
         "nikon_xtekct": {
             "path": str(file),
+            # Keep vendor scaling/filter settings without guessing their units
+            # or applying them as detector calibration.
+            "parameters": params,
             "white_level": white,
             "projection_count": views,
             "volume": {
