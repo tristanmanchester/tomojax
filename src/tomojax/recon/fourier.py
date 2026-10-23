@@ -140,7 +140,8 @@ def fourier_reconstruct(
     require_parallel_beam(geometry, "fourier_reconstruct")
     cfg = FourierConfig() if config is None else config
     backend = resolve_fourier_backend(cfg.backend)
-    shape = validate_grid(grid, "fourier_reconstruct grid")[::-1]
+    nx, ny, nz = validate_grid(grid, "fourier_reconstruct grid")
+    shape = (nz, ny, nx)
     nviews, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fourier_reconstruct projections"
     )
