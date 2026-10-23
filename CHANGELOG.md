@@ -29,6 +29,18 @@ angular covariance and object power, reducing the bias on ring-free scans.
 Built-in angular geometries supply ordering and interpolation within each
 trajectory; output view order is preserved.
 
+Breaking: Nikon scans load in the right-handed frame CIL's Nikon reader uses
+(panel origin top-right, angles `180 - InitialAngle - AngularStep * view`), so
+reconstructions are no longer mirror images. Angles come from `InitialAngle` and
+`AngularStep` only; `.ang` and `_ctdata.txt` files are not read, and measured
+angles are passed as `angles=`. The scan keeps the full `.xtekct` parameters and
+CT Pro's beam hardening coefficients, `Scale` and `Scaling`, unapplied.
+
+Bliss scans take each view's angle from the measured rotation series rather
+than a scalar motor position. PyHST EDF scans read their geometry and input
+series from the `.par` file. An HDF5 dataset holding one sinogram loads lazily
+as a one-row stack.
+
 Flat-field correction interpolates statistically unmeasured interior pixels in
 transmission from the same view's neighbouring columns, instead of inserting air
 stripes. Stable low-gain pixels and unilluminated detector margins are unchanged.
