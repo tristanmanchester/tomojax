@@ -429,8 +429,8 @@ def load_alignment_checkpoint(path: str | os.PathLike[str]) -> AlignmentCheckpoi
     Raises
     ------
     CheckpointError
-        If the header cannot be read or is malformed. Malformed arrays raise
-        CheckpointError when accessed.
+        If the header cannot be read, is malformed, or uses another schema.
+        Malformed arrays raise CheckpointError when accessed.
     """
     z = None
     try:
@@ -453,6 +453,7 @@ def load_alignment_checkpoint(path: str | os.PathLike[str]) -> AlignmentCheckpoi
         outer_stats = _load_json_scalar(z["outer_stats_json"], field="outer_stats_json")
         if not isinstance(metadata, dict):
             raise CheckpointError("corrupt checkpoint: metadata_json must contain an object")
+        _validate_kind_and_schema(metadata)
         if not isinstance(outer_stats, list):
             raise CheckpointError("corrupt checkpoint: outer_stats_json must contain a list")
 

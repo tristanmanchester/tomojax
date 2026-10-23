@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pytest
 
@@ -117,7 +119,7 @@ def test_alignment_params_schema_uses_current_identifier() -> None:
 
 
 @pytest.mark.parametrize("schema", [2, 4])
-def test_checkpoints_from_an_older_schema_do_not_resume(schema) -> None:
+def test_checkpoints_from_an_older_schema_do_not_load_or_resume(schema, tmp_path) -> None:
     metadata = alignment_checkpoint_metadata(_run(), _state())
     checkpoint = AlignmentCheckpoint(
         x=np.zeros((4, 3, 2), dtype=np.float32),
@@ -129,6 +131,17 @@ def test_checkpoints_from_an_older_schema_do_not_resume(schema) -> None:
     )
     with pytest.raises(CheckpointError, match=f"schema version {schema} predates this version"):
         validate_alignment_checkpoint(checkpoint, metadata)
+    path = tmp_path / "old.npz"
+    np.savez(
+        path,
+        x=checkpoint.x,
+        pose_params=checkpoint.pose_params,
+        loss_history=[],
+        metadata_json=json.dumps(checkpoint.metadata),
+        outer_stats_json="[]",
+    )
+    with pytest.raises(CheckpointError, match=f"schema version {schema} predates this version"):
+        align_api.load_alignment_checkpoint(path)
     checkpoint.metadata["schema_version"] = 99
     with pytest.raises(CheckpointError, match="unsupported schema version 99"):
         validate_alignment_checkpoint(checkpoint, metadata)
