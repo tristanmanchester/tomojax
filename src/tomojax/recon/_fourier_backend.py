@@ -106,34 +106,34 @@ class _Geometry:
         self.projection_phase = xp.asarray(phase, dtype=complex_dtype)
         self.deapod = xp.asarray(deapod, dtype=real)
         self.table = xp.asarray(table, dtype=real)
-        px, py = self.shape
-        qy = py // 2 + 1
+        py, px = self.shape
+        qx = px // 2 + 1
         self.coordinates = self._coordinates(angles)
-        self.x_boundary = None
-        stop = qy - 1 if py % 2 == 0 else qy
-        if px % 2 == 0 and grid.vx > detector.du and stop > 1:
-            # At x Nyquist, -kx maps to the same stored bin. If its line is
+        self.y_boundary = None
+        stop = qx - 1 if px % 2 == 0 else qx
+        if py % 2 == 0 and grid.vy > detector.du and stop > 1:
+            # At y Nyquist, -ky maps to the same stored bin. If its line is
             # inside the detector's disk, conjugate symmetry needs the missing
-            # opposite-y sample, not just conjugation of the current sample.
+            # opposite-x sample, not just conjugation of the current sample.
             coordinates = self._coordinates(angles, mirror=True)
-            self.x_boundary = (coordinates, stop)
+            self.y_boundary = (coordinates, stop)
         if self.cuda:
             self.kernel = interpolation_kernel(
-                x_boundary=self.x_boundary is not None, repeats=self.groups is not None
+                y_boundary=self.y_boundary is not None, repeats=self.groups is not None
             )
 
     def _coordinates(self, angles, *, mirror=False):
         if self.cuda:
             return self._cuda_coordinates(angles, mirror=mirror)
         xp, grid, detector = self.xp, self.grid, self.detector
-        px, py = self.shape
-        fx = xp.fft.fftfreq(px, d=grid.vx)[:, None]
-        # Retain the full transform's negative y Nyquist frequency, including
-        # the opposite-y samples needed at the x boundary of an anisotropic grid.
-        fy = xp.fft.fftfreq(py, d=grid.vy)[None, : py // 2 + 1]
+        py, px = self.shape
+        fy = xp.fft.fftfreq(py, d=grid.vy)[:, None]
+        # Retain the full transform's negative x Nyquist frequency, including
+        # the opposite-x samples needed at the y boundary of an anisotropic grid.
+        fx = xp.fft.fftfreq(px, d=grid.vx)[None, : px // 2 + 1]
         if mirror:
-            stop = py // 2 if py % 2 == 0 else py // 2 + 1
-            fx, fy = fx[px // 2 : px // 2 + 1], -fy[:, 1:stop]
+            stop = px // 2 if px % 2 == 0 else px // 2 + 1
+            fy, fx = fy[py // 2 : py // 2 + 1], -fx[:, 1:stop]
         real = xp.float32 if self.cuda else xp.float64
         complex_dtype = xp.complex64 if self.cuda else xp.complex128
         radial = xp.sqrt(fx * fx + fy * fy) * (self.nfft * detector.du)
@@ -151,7 +151,7 @@ class _Geometry:
         ).astype(complex_dtype)
         ox, oy, _ = grid_volume_origin(grid)
         phase = xp.exp(
-            2j * np.pi * (fx * (ox - self.crop[0] * grid.vx) + fy * (oy - self.crop[1] * grid.vy))
+            2j * np.pi * (fx * (ox - self.crop[1] * grid.vx) + fy * (oy - self.crop[0] * grid.vy))
         ).astype(complex_dtype)
         return angle, radial.astype(real), phase, detector_phase
 
@@ -159,9 +159,9 @@ class _Geometry:
         from ._fourier_cuda import coordinates_kernel
 
         xp, grid, detector = self.xp, self.grid, self.detector
-        px, py = self.shape
-        stop = py // 2 if py % 2 == 0 else py // 2 + 1
-        shape = (1, stop - 1) if mirror else (px, py // 2 + 1)
+        py, px = self.shape
+        stop = px // 2 if px % 2 == 0 else px // 2 + 1
+        shape = (1, stop - 1) if mirror else (py, px // 2 + 1)
         arrays = (
             xp.empty(shape, xp.float64),
             xp.empty(shape, xp.float32),
@@ -185,8 +185,8 @@ class _Geometry:
                 np.int32(mirror),
                 np.float64(grid.vx),
                 np.float64(grid.vy),
-                np.float64(ox - self.crop[0] * grid.vx),
-                np.float64(oy - self.crop[1] * grid.vy),
+                np.float64(ox - self.crop[1] * grid.vx),
+                np.float64(oy - self.crop[0] * grid.vy),
                 np.float64(detector.du),
                 np.float64(detector.center[0]),
                 np.int32(self.nfft),
@@ -250,7 +250,6 @@ class FourierPlan:
         backend,
         *,
         async_transfers=False,
-        transpose_download=False,
         shifts=None,
     ) -> None:
         self.cuda = backend == "cupy"
@@ -264,7 +263,6 @@ class FourierPlan:
         else:
             xp = np
         self.xp = xp
-        self.transpose_download = transpose_download
         self.grid, self.detector = grid, detector
         self.source_views, self.depth = nviews, depth
         self.upload = self.compute = self.download = None
@@ -304,17 +302,17 @@ class FourierPlan:
                     from ._fourier_cuda import interpolation_kernel
 
                     self.kernel = interpolation_kernel(
-                        x_boundary=geometry.x_boundary is not None,
+                        y_boundary=geometry.y_boundary is not None,
                         repeats=self.groups is not None,
                         translated=True,
                     )
                 self.mass_kernel = geometry.mass_kernel
                 self.row_mass = xp.empty((depth, nviews), dtype=xp.float64)
-            px, py = self.shape
-            qy = py // 2 + 1
+            py, px = self.shape
+            qx = px // 2 + 1
             dtype = xp.complex64 if self.cuda else xp.complex128
-            self.frequencies = xp.empty((depth, px, qy), dtype=dtype)
-            self.x_boundary = geometry.x_boundary
+            self.frequencies = xp.empty((depth, py, qx), dtype=dtype)
+            self.y_boundary = geometry.y_boundary
             if self.cuda:
                 from cupy.cuda import cufft
 
@@ -325,9 +323,9 @@ class FourierPlan:
                 self.inverse_direction = cuda_fft.CUFFT_INVERSE
                 self.inverse_plan = cuda_fft.PlanNd(
                     self.shape,
-                    (px, qy),
+                    (py, qx),
                     1,
-                    px * qy,
+                    py * qx,
                     self.shape,
                     1,
                     px * py,
@@ -335,7 +333,7 @@ class FourierPlan:
                     depth,
                     "C",
                     2,
-                    py,
+                    px,
                 )
 
     def _interpolate_cuda(self, spectrum):
@@ -367,8 +365,8 @@ class FourierPlan:
         )
         if self.shifts is not None:
             args += (self.shifts,)
-        if self.x_boundary is not None:
-            coordinates, stop = self.x_boundary
+        if self.y_boundary is not None:
+            coordinates, stop = self.y_boundary
             args += (
                 *coordinates,
                 np.int64(self.shape[0] // 2 * output.shape[2]),
@@ -412,8 +410,8 @@ class FourierPlan:
                 self.shifts,
             )
             self.frequencies[:, 0, 0] = mass
-            if self.x_boundary is not None:
-                coordinates, stop = self.x_boundary
+            if self.y_boundary is not None:
+                coordinates, stop = self.y_boundary
                 mirror = interpolate_numpy(
                     spectrum,
                     *coordinates,
@@ -429,7 +427,7 @@ class FourierPlan:
         # Interpolation has consumed the projection FFT. Its storage can now
         # serve the Cartesian FFT on this same compute stream.
         del spectrum
-        cx, cy = self.crop
+        cy, cx = self.crop
         normalization = 1
         if self.cuda:
             # cuFFT may destroy the input; the next slab overwrites every
@@ -442,9 +440,7 @@ class FourierPlan:
         # Keep fixed FFT batches, but do not materialize or transfer padded output.
         # Dense scalar arithmetic needs no sparse-operand dispatch or its imports.
         scale = 1.0 / (self.grid.vx * self.grid.vy * normalization)
-        output = xp.multiply(volume[:count, cx : cx + self.grid.nx, cy : cy + self.grid.ny], scale)
-        # Match plane-contiguous Fortran xyz storage before the device-to-host copy.
-        return xp.ascontiguousarray(output.swapaxes(1, 2)) if self.transpose_download else output
+        return xp.multiply(volume[:count, cy : cy + self.grid.ny, cx : cx + self.grid.nx], scale)
 
     def reconstruct(self, host, *, count: int) -> np.ndarray:
         xp = self.xp

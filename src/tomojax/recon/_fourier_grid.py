@@ -62,7 +62,7 @@ def transform_grid(grid: Grid, detector: Detector) -> tuple[tuple[int, int], tup
     origin = grid_volume_origin(grid)
     shape, crop = [], []
     for count, spacing, first in zip(
-        (grid.nx, grid.ny), (grid.vx, grid.vy), origin[:2], strict=True
+        (grid.ny, grid.nx), (grid.vy, grid.vx), (origin[1], origin[0]), strict=True
     ):
         lo = min(0, math.floor((-radius - first) / spacing))
         hi = max(count - 1, math.ceil((radius - first) / spacing))

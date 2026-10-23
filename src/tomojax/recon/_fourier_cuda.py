@@ -93,7 +93,7 @@ extern "C" __global__ void polar(
     #ifdef TRANSLATED_VIEWS
     , const float* shifts
     #endif
-    #ifdef FUSE_X_BOUNDARY
+    #ifdef FUSE_Y_BOUNDARY
     , const double* mirror_angle, const float* mirror_radial,
     const float2* mirror_phase, const float2* mirror_detector,
     long long row_offset, int stop
@@ -117,12 +117,12 @@ extern "C" __global__ void polar(
         }
     }
     if (m >= count) return;
-    #ifdef FUSE_X_BOUNDARY
-    // The x Nyquist bin also represents -kx. Average the missing opposite-y
+    #ifdef FUSE_Y_BOUNDARY
+    // The y Nyquist bin also represents -ky. Average the missing opposite-x
     // value before storing it, preserving real(ifft2)'s Hermitian projection.
     // One non-unrolled loop shares the interpolation body between both samples.
-    long long y = m - row_offset;
-    int samples = y > 0 && y < stop ? 2 : 1;
+    long long x = m - row_offset;
+    int samples = x > 0 && x < stop ? 2 : 1;
     float2 value = make_float2(0, 0);
     #pragma unroll 1
     for (int pass = 0; pass < samples; pass++) {
@@ -130,7 +130,7 @@ extern "C" __global__ void polar(
         float2 current = polar_value(
             spectrum, opposite ? mirror_angle : angle, opposite ? mirror_radial : radial,
             opposite ? mirror_phase : phase, opposite ? mirror_detector : detector_phase,
-            opposite ? y - 1 : m, z, nviews, nsource, groups, nr, nfft, qr, qi, table, flipped
+            opposite ? x - 1 : m, z, nviews, nsource, groups, nr, nfft, qr, qi, table, flipped
             #ifdef TRANSLATED_VIEWS
             , shifts
             #endif
@@ -175,12 +175,12 @@ extern "C" __global__ void mass_deapod(
 
 
 @functools.lru_cache(maxsize=8)
-def interpolation_kernel(*, x_boundary=False, repeats=False, translated=False):
+def interpolation_kernel(*, y_boundary=False, repeats=False, translated=False):
     import cupy
 
     options = (
         ("--fmad=false",)
-        + (("-DFUSE_X_BOUNDARY",) if x_boundary else ())
+        + (("-DFUSE_Y_BOUNDARY",) if y_boundary else ())
         + (("-DGROUP_REPEATS",) if repeats else ())
         + (("-DTRANSLATED_VIEWS",) if translated else ())
     )
@@ -205,12 +205,12 @@ extern "C" __global__ void coordinates(
     long long m = (long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (m >= count) return;
     const double pi = 3.1415926535897932384626433832795;
-    int qy = py / 2 + 1;
-    int ix = mirror ? px / 2 : m / qy;
-    int iy = mirror ? m + 1 : m % qy;
+    int qx = px / 2 + 1;
+    int iy = mirror ? py / 2 : m / qx;
+    int ix = mirror ? m + 1 : m % qx;
     double fx = (ix < (px + 1) / 2 ? ix : ix - px) / (px * vx);
     double fy = (iy < (py + 1) / 2 ? iy : iy - py) / (py * vy);
-    if (mirror) fy = -fy;
+    if (mirror) fx = -fx;
     double r = sqrt(fx * fx + fy * fy) * (nfft * du);
     double a = fmod(atan2(-fy, fx) - first_angle, 2 * pi);
     if (a < 0) a += 2 * pi;
