@@ -65,6 +65,17 @@ def test_tv_operators_preserve_adjoint_and_prox_invariants() -> None:
     assert float(jnp.max(dual_norm)) <= 0.25 + 1e-6
 
 
+def test_tv_components_follow_physical_axes_in_zyx_storage() -> None:
+    z, y, x = jnp.indices((3, 4, 5), dtype=jnp.float32)
+    gx, gy, gz = grad3(7 * z + 3 * y + 2 * x)
+    np.testing.assert_array_equal(gx[:, :, :-1], 2)
+    np.testing.assert_array_equal(gy[:, :-1], 3)
+    np.testing.assert_array_equal(gz[:-1], 7)
+    np.testing.assert_array_equal(gx[:, :, -1], 0)
+    np.testing.assert_array_equal(gy[:, -1], 0)
+    np.testing.assert_array_equal(gz[-1], 0)
+
+
 def test_spdhg_one_iteration_smoke_is_finite_and_positive() -> None:
     grid = Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0)
     detector = Detector(nu=2, nv=2, du=1.0, dv=1.0)

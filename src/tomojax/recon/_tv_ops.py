@@ -15,16 +15,16 @@ if TYPE_CHECKING:
 
 def grad3(u: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     dx = jnp.concatenate(
-        [jnp.diff(u, axis=0), jnp.zeros((1, u.shape[1], u.shape[2]), u.dtype)],
-        axis=0,
+        [jnp.diff(u, axis=2), jnp.zeros((u.shape[0], u.shape[1], 1), u.dtype)],
+        axis=2,
     )
     dy = jnp.concatenate(
         [jnp.diff(u, axis=1), jnp.zeros((u.shape[0], 1, u.shape[2]), u.dtype)],
         axis=1,
     )
     dz = jnp.concatenate(
-        [jnp.diff(u, axis=2), jnp.zeros((u.shape[0], u.shape[1], 1), u.dtype)],
-        axis=2,
+        [jnp.diff(u, axis=0), jnp.zeros((1, u.shape[1], u.shape[2]), u.dtype)],
+        axis=0,
     )
     return dx, dy, dz
 
@@ -40,15 +40,15 @@ def gradient_norm_squared(shape: tuple[int, ...]) -> float:
 
 def div3(px: jnp.ndarray, py: jnp.ndarray, pz: jnp.ndarray) -> jnp.ndarray:
     """Discrete divergence matching the TV updates: ``div3 = -grad3*``."""
-    if px.shape[0] == 1:
+    if px.shape[2] == 1:
         dx = jnp.zeros_like(px)
     else:
-        first_x = px[0:1, :, :]
-        if px.shape[0] > 2:
-            mid_x = px[1:-1, :, :] - px[0:-2, :, :]
-            dx = jnp.concatenate([first_x, mid_x, -px[-2:-1, :, :]], axis=0)
+        first_x = px[:, :, 0:1]
+        if px.shape[2] > 2:
+            mid_x = px[:, :, 1:-1] - px[:, :, 0:-2]
+            dx = jnp.concatenate([first_x, mid_x, -px[:, :, -2:-1]], axis=2)
         else:
-            dx = jnp.concatenate([first_x, -px[-2:-1, :, :]], axis=0)
+            dx = jnp.concatenate([first_x, -px[:, :, -2:-1]], axis=2)
 
     if py.shape[1] == 1:
         dy = jnp.zeros_like(py)
@@ -60,15 +60,15 @@ def div3(px: jnp.ndarray, py: jnp.ndarray, pz: jnp.ndarray) -> jnp.ndarray:
         else:
             dy = jnp.concatenate([first_y, -py[:, -2:-1, :]], axis=1)
 
-    if pz.shape[2] == 1:
+    if pz.shape[0] == 1:
         dz = jnp.zeros_like(pz)
     else:
-        first_z = pz[:, :, 0:1]
-        if pz.shape[2] > 2:
-            mid_z = pz[:, :, 1:-1] - pz[:, :, 0:-2]
-            dz = jnp.concatenate([first_z, mid_z, -pz[:, :, -2:-1]], axis=2)
+        first_z = pz[0:1, :, :]
+        if pz.shape[0] > 2:
+            mid_z = pz[1:-1, :, :] - pz[0:-2, :, :]
+            dz = jnp.concatenate([first_z, mid_z, -pz[-2:-1, :, :]], axis=0)
         else:
-            dz = jnp.concatenate([first_z, -pz[:, :, -2:-1]], axis=2)
+            dz = jnp.concatenate([first_z, -pz[-2:-1, :, :]], axis=0)
     return dx + dy + dz
 
 
