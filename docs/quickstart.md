@@ -43,6 +43,14 @@ single-image EDF projections with SPEC `.info` or XML acquisition metadata.
 `PixelSize` records the effective pitch in micrometres, but the scan range alone
 does not establish the starting angle or a calibrated rotation centre.
 
+For EDF acquisitions described by PyHST, pass the parameter file explicitly:
+`tj.load_frames("scan.par").corrected()`. It supplies the indexed EDF series,
+angles, detector pitch and rotation axis, reconstruction region, and dark/flat
+schedule. A directory search does not choose a `.par` file over other acquisition
+metadata. This route requires raw, single-image EDFs with fixed axial parallel
+geometry; multi-frame, cone, helical, binning and distortion-correction modes
+are not supported.
+
 `tj.load_frames("raw_bliss.h5", detector=...)` reads a basic, half-turn or full-turn
 Bliss sequence, including its flats/darks and recorded angular positions. Select
 among several sequences with `data_path="1.1"`. Effective sample pixels and
@@ -50,6 +58,10 @@ recorded distances are retained in millimetres; neither reader substitutes a
 centred detector for missing axis calibration. Missing virtual detector pixels
 and mismatched EDF dimensions are errors. Helical and multi-volume Bliss
 sequences are not yet supported.
+
+`tj.load_frames` keeps HDF5 single-row sinograms stored as `(view, u)` lazy,
+presenting them as `(view, 1, u)`. Corrected `Scan` projections retain that
+singleton detector-row axis.
 
 ## Correct raw detector frames
 

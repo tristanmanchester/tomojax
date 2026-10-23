@@ -163,8 +163,10 @@ See [`alignment-guide.md`](alignment-guide.md) to choose an alignment mode.
 ESRF raw Bliss and SPEC EDF metadata do not establish a calibrated detector
 centre: it must be estimated from data or supplied. SPEC scan range alone also
 needs explicit `angles=`; accumulated darks without `DARK_N` need `darks=`.
-Available raw Bliss/EDF real samples are incomplete; complete-workflow coverage
-currently comes from ESRF NXtomo exports, not those native layouts.
+An explicit PyHST `.par` supplies its own angles and rotation axis, but only
+raw single-image EDFs with fixed axial parallel geometry are supported. PyHST
+multi-frame, cone, helical, binning and distortion modes are rejected. Every
+projection and calibration file named by the selected input must be available.
 
 HDF5 virtual detector stacks require all referenced pixel files and mapped
 regions to be present; missing sources are errors, not zero-filled exposures.

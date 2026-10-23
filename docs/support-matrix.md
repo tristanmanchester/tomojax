@@ -75,6 +75,7 @@ pitches below are normalised to millimetres.
 |---|---|---|
 | ESRF raw Bliss step sequence | Sequence-owned detector blocks, image keys and flat positions; external/virtual pixel links checked | Unit-labelled angular commands before raw motors; `technique/optic/sample_pixel_size`; distances from `technique/scan`; missing axial centre is estimated or supplied |
 | ESRF SPEC EDF | Ordered EDF files, reference files, accumulated darks divided by recorded `DARK_N` | `.info`/XML `PixelSize` and propagation `Distance`; caller supplies `angles=` (range alone has no origin), and `detector=` if needed |
+| ESRF PyHST EDF | Explicit `.par` input; inclusive indexed file range and interval, dark/flat schedules | Recorded angles, detector pitch/axis and reconstruction region; raw single-image EDFs with fixed axial parallel geometry |
 | External NXtomo (including ESRF exports) | A group declaring `NXtomo`, with `instrument/detector/data` and `image_key`; the entry name is unrestricted | `sample/rotation_angle` (or `sample/transformations/rotation_angle`), recorded angular units; detector `x_pixel_size`/`y_pixel_size` with length units |
 | Data Exchange (including PSI TOMCAT and Elettra SYRMEP TomoBank exports) | `/exchange/data`, `data_white`, `data_dark`, or interleaved `image_key` | `/exchange/theta`; `/measurement/instrument/detector/actual_pixel_size_x` and `_y` with `unit`/`units` when present; sample/source/beamline labels are retained |
 
@@ -85,13 +86,18 @@ This support does not establish support for every native TOMCAT/SYRMEP layout.
 Real-file coverage includes ESRF NXtomo converted by nxtomomill, TOMCAT/SYRMEP
 Data Exchange, Diamond I12 HDF5 and K11 GDA, Nikon TIFF acquisitions, Zeiss TXRM,
 SkyScan logs/TIFFs, Diamond I13 compressed TIFF folders with explicit calibration,
-and TomoJAX NPZ/NXtomo round trips. Available raw Bliss/EDF
-samples are incomplete and are rejected; a complete raw Bliss/EDF workflow and
-native TOMCAT GigaFRoST are not established by those checks.
+and TomoJAX NPZ/NXtomo round trips. Native EDF/Bliss inputs must include every
+file named by the selected sequence or parameter file: missing inputs are errors.
+These checks do not establish support for native TOMCAT GigaFRoST.
 Missing calibration does not disable content recognition: supply `flats=` (frames
 or one level) and `darks=`. NXtomo/Data Exchange angular fields use their
 format-defined degree convention when units are absent; generic motor datasets
 without units require explicit `angles=`.
+
+HDF5 `(view, u)` sinograms retain lazy frame access and are presented with a
+singleton row as `(view, 1, u)`, including during NXtomo inspection/validation.
+PyHST multi-frame, cone, helical, binning and distortion modes are rejected;
+pass a `.par` explicitly rather than relying on directory discovery to choose it.
 
 SkyScan logs supply distances, camera pitch/binning, optional resize and the
 vertical optical-axis line, but not a calibrated horizontal centre. Supply
@@ -110,6 +116,9 @@ fields; its axis requires either the recorded modern offset/roll/tilt or both
 legacy COR endpoints. Vendor reconstruction dimensions, pitches and ROI offsets
 remain source metadata, not an applied reconstruction region: TomoJAX uses its
 field-of-view grid unless the caller supplies `grid=`.
+Both TIFF axes and the rotation/calibration signs are normalized together.
+Default angles use `InitialAngle` and `AngularStep`, not `.ang` or `_ctdata.txt`;
+an explicit `angles=` schedule must be in TomoJAX's object-angle frame.
 
 ## Numerical and accelerator scope
 

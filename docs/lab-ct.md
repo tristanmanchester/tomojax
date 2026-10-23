@@ -11,9 +11,10 @@ calls are at the end.
 
 A Nikon (X-Tek) scan is an `.xtekct` parameter file beside its projection
 TIFFs. `tomojax preprocess` reads the source and detector distances, the detector
-pixels and offsets, the reconstruction volume, the white level and the angles
-(from `<Name>_ctdata.txt` when present), and `tomojax inspect` describes and checks
-the result. Only TIFFs named `<Name>` plus the input separator and a number are
+pixels and offsets, vendor reconstruction metadata, the white level and nominal
+angles from `InitialAngle` and `AngularStep`; `.ang` and `_ctdata.txt` sidecars
+are not used. `tomojax inspect` describes and checks the result.
+Only TIFFs named `<Name>` plus the input separator and a number are
 projections; flat fields, thumbnails and reconstructions sharing the prefix are
 skipped. If a directory holds several parameter files, name the intended
 calibration file explicitly. The examples choose zero dark level; use that
@@ -25,13 +26,16 @@ uv run --no-sync tomojax inspect scan.nxs
 ```
 
 Projections become line integrals, `-log((I - D) / (WhiteLevel - D))`, with
-image rows flipped so that the detector's v axis points up.
+both TIFF rows and columns reversed from Nikon's top-right panel origin.
+Rotation angles and horizontal calibration offsets are converted consistently
+into TomoJAX's detector and object-angle frame.
 Lengths stay in the scanner's units, millimetres for Nikon. The calibrated
 rotation axis is read from `ObjectOffsetX`, `ObjectRoll` and `ObjectTilt`, or
 the older `CentreOfRotationTop/Bottom` detector-plane offsets. The declared
 view count excludes an extra closing frame on a full turn, with a warning.
-Confirm handedness on a known sample; explicit `angles=` in `load_frames`
-can replace the recorded stage convention.
+Supply a measured schedule through explicit `angles=` in `load_frames`
+(or `--angles` in preprocessing), already expressed in TomoJAX's object-angle
+frame rather than the vendor's stage convention.
 
 Zeiss Xradia projection acquisitions can be corrected directly, without a TIFF
 export; see the [Zeiss preview](#zeiss-xradia-preview) below. For scanners without
