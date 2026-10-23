@@ -98,7 +98,11 @@ def test_edf_acquisition_metadata_calibration_and_lazy_windows(tmp_path, capsys)
         tj.load_frames(tmp_path)
 
 
-def test_bliss_raw_sequence_units_keys_and_virtual_pixels(tmp_path, capsys):
+@pytest.mark.parametrize(
+    "rotation_path",
+    ["measurement/calc_hrsrot", "measurement/hrsrot", "instrument/hrsrot/value"],
+)
+def test_bliss_raw_sequence_units_keys_and_virtual_pixels(tmp_path, capsys, rotation_path):
     path = tmp_path / "renamed.bin"
     with h5py.File(path, "w") as file:
         file.attrs["default"] = "1.1"
@@ -120,12 +124,10 @@ def test_bliss_raw_sequence_units_keys_and_virtual_pixels(tmp_path, capsys):
             entry = file.create_group(f"{i}.1")
             entry["technique/image_key"] = key
             entry["measurement/camera"] = np.full((2, 3, 5), value, np.uint16)
-            entry["measurement/calc_hrsrot"] = np.array([0, np.pi / 4]) + (
-                np.pi / 2 if i == 6 else 0
-            )
-            entry["measurement/calc_hrsrot"].attrs["units"] = "radian"
-            entry["instrument/positioners/hrsrot"] = [12345, 54321]
-            entry["instrument/positioners/hrsrot"].attrs["units"] = "channel"
+            entry[rotation_path] = np.array([0, np.pi / 4]) + (np.pi / 2 if i == 6 else 0)
+            entry[rotation_path].attrs["units"] = "radian"
+            entry["instrument/positioners/hrsrot"] = 12345
+            entry["instrument/positioners/hrsrot"].attrs["units"] = "degree"
         file["broken_link"] = h5py.ExternalLink("absent.h5", "/entry")
     with h5py.File(tmp_path / "pixels.h5", "w") as file:
         file["data"] = np.full((2, 3, 5), 60, np.float32)
@@ -152,7 +154,7 @@ def test_bliss_raw_sequence_units_keys_and_virtual_pixels(tmp_path, capsys):
     assert meta["source_sample_distance"] == 145000
     with h5py.File(path, "a") as file:
         for view in (4, 6):
-            del file[f"{view}.1/measurement/calc_hrsrot"]
+            del file[f"{view}.1/{rotation_path}"]
     with pytest.raises(ValueError, match="angles="):
         tj.load_frames(path, detector=detector)
     tj.load_frames(path, detector=detector, angles=[0, -45, -90, -135])
