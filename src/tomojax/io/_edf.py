@@ -18,6 +18,9 @@ _TYPES = {
     "SignedInteger": "i4",
     "FloatValue": "f4",
     "DoubleValue": "f8",
+    # PyHST exports use the shorter floating-point type names.
+    "Float": "f4",
+    "Double": "f8",
     "UnsignedLong": "u4",
     "SignedLong": "i4",
     "Unsigned64": "u8",

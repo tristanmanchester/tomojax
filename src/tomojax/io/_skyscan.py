@@ -83,11 +83,14 @@ def read_skyscan(path: Path, *, data_path: str | None = None) -> RawAcquisition 
     Supported exports have acquisition-time geometric and flat-field corrections
     enabled. Counts are interpreted in corrected pixel coordinates; camera
     aspect/rotation and random-movement settings are retained as provenance,
-    not reapplied. Native-resolution grains controls gave no consistent roll
-    preference, and detector aspect was confounded with the object z scale;
-    this convention is not a vendor calibration certificate. Detector v points
-    up, opposite TIFF rows. Lengths are mm; the log's image pixel size is the
-    reconstruction voxel size at the object, not the detector pitch.
+    not reapplied. Detector v points up, opposite TIFF rows. Lengths are mm;
+    the log's image pixel size is the reconstruction voxel size at the object,
+    not the detector pitch. Camera pitch, binning, resize and optical-axis line
+    remain partial metadata: the optical-axis line does not specify the
+    horizontal rotation axis. A complete ``detector=`` must be supplied when
+    loading these logs. Flat-field correction does not establish the incident
+    white level or dark offset; supply ``flats=`` and ``darks=`` explicitly.
+    Storage bit depth is not an intensity calibration.
     """
     found = _acquisition_log(path)
     if found is None:

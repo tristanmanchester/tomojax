@@ -258,7 +258,7 @@ def test_scan_corrected_refuses_steps_before_the_log(tmp_path: Path) -> None:
 
 
 def test_a_nikon_scan_is_corrected_with_its_white_level(tmp_path: Path) -> None:
-    image = np.asarray([[30000, 30000], [15000, 15000]], np.uint16)  # top row first
+    image = np.asarray([[30000, 24000], [15000, 12000]], np.uint16)  # top-right first
     for i in range(2):
         iio.imwrite(tmp_path / f"part_{i + 1:04d}.tif", image)
     (tmp_path / "part.xtekct").write_text(
@@ -269,11 +269,11 @@ def test_a_nikon_scan_is_corrected_with_its_white_level(tmp_path: Path) -> None:
     frames = tj.load_frames(tmp_path / "part.xtekct", darks=0)
     assert not isinstance(frames.counts, np.ndarray) and frames.counts.dtype == np.uint16
     window = frames.cropped(slice(0, 1), slice(0, 1)).selected([1])
-    np.testing.assert_array_equal(np.asarray(window.counts), [[[15000]]])
+    np.testing.assert_array_equal(np.asarray(window.counts), [[[12000]]])
     scan = frames.corrected()
-    # Detector v points up: the image's bottom row is the scan's first.
+    # Nikon's top-right origin reverses both detector axes, including lazy crops.
     np.testing.assert_allclose(
-        np.asarray(scan.projections)[0, :, 0], -np.log([0.25, 0.5]), rtol=1e-6
+        np.asarray(scan.projections)[0, :, 0], -np.log([0.2, 0.4]), rtol=1e-6
     )
     assert scan.corrections[0] == Correction(
         "flat_dark", {"white_level": 60000.0, "darks": 1}, {"pixels_without_light": 0}
@@ -281,9 +281,9 @@ def test_a_nikon_scan_is_corrected_with_its_white_level(tmp_path: Path) -> None:
     assert type(scan.geometry).__name__ == "ConeGeometry"
 
 
-@pytest.mark.parametrize("measured", [False, True])
-def test_nikon_import_takes_its_own_angles_and_numbered_projections(
-    tmp_path: Path, measured: bool
+@pytest.mark.parametrize("sidecar", [False, True])
+def test_nikon_import_uses_nominal_angles_and_numbered_projections(
+    tmp_path: Path, sidecar: bool
 ) -> None:
     for view, level in [(10, 250), (2, 500)]:
         iio.imwrite(tmp_path / f"part_{view}.tif", np.full((2, 3), level, np.uint16))
@@ -296,17 +296,15 @@ def test_nikon_import_takes_its_own_angles_and_numbered_projections(
         "DetectorPixelSizeY=0.1\nWhiteLevel=1000\nInitialAngle=5\nAngularStep=90\n"
     )
     (tmp_path / "another_ctdata.txt").write_text("Projection Angle\n1 -60\n2 -30\n")
-    if measured:
+    if sidecar:
         (tmp_path / "part_ctdata.txt").write_text("Projection Angle\n10 97\n2 7\n")
     frames = tj.load_frames(path, darks=0)
     np.testing.assert_array_equal(np.asarray(frames.counts)[:, 0, 0], [500, 250])
-    np.testing.assert_array_equal(frames.geometry.angles, [7, 97] if measured else [5, 95])
+    np.testing.assert_array_equal(frames.geometry.angles, [175, 85])
 
-    # A partial measured sidecar cannot silently become a nominal uniform scan.
-    (tmp_path / "part_ctdata.txt").write_text("Projection Angle\n1 7\n")
-    with pytest.raises(ValueError, match="angles="):
-        tj.load_frames(path, darks=0)
-    (tmp_path / "part_ctdata.txt").unlink()
+    # A measured schedule is explicit, already in TomoJAX's object-angle frame.
+    chosen = tj.load_frames(path, darks=0, angles=[3, 99])
+    np.testing.assert_array_equal(chosen.geometry.angles, [3, 99])
     text = path.read_text()
     for field, argument in {
         "InitialAngle": "angles=",
@@ -800,10 +798,10 @@ def test_nikon_calibrated_axis_and_closing_turn_are_physical_metadata(
     frames = tj.load_frames(path, darks=0)
     geometry = frames.geometry
     assert frames.counts.shape == (2, 4, 6)  # closing frame is not a third view
-    np.testing.assert_array_equal(geometry.angles, [0, 180])
+    np.testing.assert_array_equal(geometry.angles, [180, 0])
     axis = geometry.rotation_axis()
     if modern:
-        assert geometry.beam.axis_offset == 0.3  # already object-plane millimetres
+        assert geometry.beam.axis_offset == -0.3  # already object-plane millimetres
         np.testing.assert_allclose(axis, [0, 0.5, np.sqrt(3) / 2], atol=1e-12)
     else:
         # Project two points on the physical rotation axis to the panel's ends:
@@ -813,7 +811,7 @@ def test_nikon_calibrated_axis_and_closing_turn_are_physical_metadata(
             z = detector_height / (2 * axis[2])
             point = np.asarray(geometry.pose_for_view(0)) @ [0, 0, z, 1]
             hit = source + 2 * (point[:3] - source)
-            np.testing.assert_allclose(hit[[0, 2]], [expected_cor, detector_height], atol=1e-12)
+            np.testing.assert_allclose(hit[[0, 2]], [-expected_cor, detector_height], atol=1e-12)
 
     # Vendor reconstruction ROIs do not change acquisition rays or our FOV grid.
     path.write_text(
@@ -882,3 +880,42 @@ def test_only_detector_derived_output_grids_follow_crop_and_bin(tmp_path, explic
         assert scan.grid == frames.geometry.grid.resampled((4, 4, 3))
     else:
         assert scan.grid == tj.Grid(3, 3, 2, 2, 2, 2, vol_center=(0, 0, 1))
+
+
+def test_nikon_rays_match_cil_frame_with_tilt_and_offset_panel(tmp_path):
+    from scipy.spatial.transform import Rotation
+
+    from tomojax.geometry.api import view_frames
+
+    image = np.arange(24, dtype=np.uint16).reshape(4, 6)
+    for i in range(3):
+        iio.imwrite(tmp_path / f"part_{i + 1:04d}.tif", image)
+    path = tmp_path / "part.xtekct"
+    path.write_text(
+        "[XTekCT]\nName=part\nSrcToObject=10\nSrcToDetector=20\n"
+        "DetectorPixelSizeX=.5\nDetectorPixelSizeY=.7\nDetectorOffsetX=.8\n"
+        "DetectorOffsetY=-.4\nObjectOffsetX=.3\nObjectRoll=20\nObjectTilt=15\n"
+        "InitialAngle=7\nAngularStep=53\nWhiteLevel=1000\n"
+    )
+    frames = tj.load_frames(path, darks=0)
+    np.testing.assert_array_equal(np.asarray(frames.counts)[0], image[::-1, ::-1])
+    # Independent CIL NikonDataReader + convert_geometry_to_astra_vec_3D:
+    # align the physical axis to z, the centre ray to +y, then rotate by -theta.
+    axis = (
+        Rotation.from_euler("x", -15, degrees=True) * Rotation.from_euler("y", 20, degrees=True)
+    ).apply([0, 0, 1])
+    w = np.array([[0, 0, -axis[0]], [0, 0, -axis[1]], [axis[0], axis[1], 0]])
+    align = np.eye(3) + w + w @ w / (1 + axis[2])
+    direction = align @ [-0.8, 20, -0.4]
+    alpha = np.arctan2(direction[0], direction[1])
+    aligned = Rotation.from_euler("z", alpha).as_matrix() @ align
+    base = np.array([[0.3, -10, 0], [-0.5, 10, -0.4], [0.5, 0, 0], [0, 0, 0.7]])
+    expected = np.stack(
+        [
+            (
+                Rotation.from_euler("z", angle - 180, degrees=True).as_matrix() @ aligned @ base.T
+            ).T.ravel()
+            for angle in [7, 60, 113]
+        ]
+    )  # bases already account for reversing both raw TIFF axes
+    np.testing.assert_allclose(view_frames(frames.geometry), expected, rtol=2e-7, atol=2e-6)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import h5py
 import numpy as np
@@ -141,32 +141,47 @@ def _detector_stack(entry: Any, detector_name: str | None) -> Hdf5Frames:
     return Hdf5Frames.open(str(data.file.filename), data.name)
 
 
+def _rotation_series(data: Any, n: int) -> np.ndarray | None:
+    """A scan-start position is not a measured multi-frame angular series."""
+    if not isinstance(data, h5py.Dataset):
+        return None
+    data = cast(Any, data)  # h5py stubs omit Dataset.name.
+    angles = np.asarray(data[()], np.float64)
+    if angles.shape != (n,) and not (n == 1 and angles.ndim == 0):
+        return None
+    unit = _text(data.attrs.get("unit", data.attrs.get("units", ""))).lower()
+    if unit in ("", "channel"):
+        # Encoder channels and unlabelled motors have no established degree
+        # scale; leave angles incomplete for a caller override.
+        return None
+    if unit in ("rad", "radian", "radians"):
+        angles = np.rad2deg(angles)
+    elif unit not in ("degree", "degrees", "deg"):
+        raise ValueError(f"{data.name}: unsupported rotation unit {unit!r}")
+    return angles.reshape(n).astype(np.float32)
+
+
 def _angles(entry: Any, root: Any, n: int) -> np.ndarray:
     declared = np.atleast_1d(_value(root, "technique/tomoconfig/rotation", []))
     names = tuple(_text(v) for v in declared) or _ROTATIONS
     # Prefer converted commands across all locations before considering motors.
     # A static positioner or raw channel must not hide a measured angular series.
     for name in (*("calc_" + v for v in names), *names):
-        for prefix in ("instrument/positioners", "", "measurement"):
-            path = f"{prefix}/{name}".strip("/")
+        for path in (
+            f"instrument/positioners/{name}",
+            name,
+            f"measurement/{name}",
+            f"instrument/{name}/data",
+            f"instrument/{name}/value",
+        ):
             if path not in entry:
                 continue
-            data = entry[path]
-            angles = np.asarray(data[()], np.float64)
-            if angles.size not in (1, n):
+            angles = _rotation_series(entry[path], n)
+            if angles is None:
                 continue
-            unit = _text(data.attrs.get("unit", data.attrs.get("units", ""))).lower()
-            if unit in ("", "channel"):
-                # Encoder channels and unlabelled motors have no established
-                # degree scale; leave angles incomplete for a caller override.
-                continue
-            if unit in ("rad", "radian", "radians"):
-                angles = np.rad2deg(angles)
-            elif unit not in ("degree", "degrees", "deg"):
-                raise ValueError(f"{data.name}: unsupported rotation unit {unit!r}")
             if bool(_value(root, "technique/tomoconfig/rotation_is_clockwise", False)):
                 angles = -angles
-            return np.broadcast_to(angles, (n,)).astype(np.float32)
+            return angles
     return np.empty(0, np.float32)
 
 

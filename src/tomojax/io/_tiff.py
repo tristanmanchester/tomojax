@@ -110,14 +110,17 @@ class TiffFrames(FrameStack):
     page_shape: tuple[int, int]
     segment_rows: tuple[int, ...]
     flip_rows: bool = False
+    flip_cols: bool = False
 
     @classmethod
     def open(cls, path: Path | str) -> TiffFrames:
         return cls.from_files(tiff_files(Path(path)))
 
     @classmethod
-    def from_files(cls, files: Sequence[Path], *, flip_rows: bool = False) -> TiffFrames:
-        """Read only the selected headers, in metadata order, optionally with v up."""
+    def from_files(
+        cls, files: Sequence[Path], *, flip_rows: bool = False, flip_cols: bool = False
+    ) -> TiffFrames:
+        """Read selected headers in metadata order, orienting both detector axes lazily."""
         files = [file.absolute() for file in files]  # independent of later cwd changes
         if not files:
             raise ValueError("no TIFF files selected")
@@ -158,6 +161,7 @@ class TiffFrames(FrameStack):
             rows=shape[0],
             cols=shape[1],
             flip_rows=flip_rows,
+            flip_cols=flip_cols,
         )
 
     @property
@@ -173,6 +177,9 @@ class TiffFrames(FrameStack):
         if self.flip_rows:
             start, stop, _ = rows.indices(self.page_shape[0])
             rows = slice(self.page_shape[0] - stop, self.page_shape[0] - start)
+        if self.flip_cols:
+            start, stop, _ = cols.indices(self.page_shape[1])
+            cols = slice(self.page_shape[1] - stop, self.page_shape[1] - start)
         window = (rows, cols)
         for file, group in groupby(enumerate(indices), key=lambda item: self.pages[item[1]][0]):
             # Keep the same bounded read-ahead for sparse windows; large segment
@@ -191,7 +198,9 @@ class TiffFrames(FrameStack):
                             file, mode="r", dtype=dtype, offset=offset, shape=self.page_shape
                         )
                         image = pixels[window]
-                    out[destination] = image[::-1] if self.flip_rows else image
+                    out[destination] = image[
+                        :: -1 if self.flip_rows else 1, :: -1 if self.flip_cols else 1
+                    ]
         return out
 
 

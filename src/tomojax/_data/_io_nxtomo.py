@@ -537,8 +537,8 @@ def _required_entry_issues(f: h5py.File, e: h5py.Group) -> tuple[list[str], str 
     n_views = None
     if "instrument/detector/data" in e:
         d = e["instrument/detector/data"]
-        if d.ndim != 3:
-            issues.append("instrument/detector/data must be 3D (n_views, nv, nu)")
+        if d.ndim not in (2, 3):
+            issues.append("instrument/detector/data must be (n_views, nu) or (n_views, nv, nu)")
         else:
             n_views = d.shape[0]
     return issues, angle_path, n_views

@@ -20,6 +20,7 @@ from tomojax.io import (
 )
 from tomojax.io.api import (
     convert_dataset,
+    inspect_dataset,
     load_nxtomo,
     locate_frames,
     projection_stats,
@@ -337,15 +338,26 @@ def test_copy_metadata_copies_array_backed_fields(tmp_path: Path) -> None:
     assert not np.shares_memory(loaded_copy.angle_offset_deg, loaded.metadata.angle_offset_deg)
 
 
-def test_noncontiguous_lazy_frame_reads_match_cropped_numpy_runs(tmp_path: Path) -> None:
+@pytest.mark.parametrize("single_row", [False, True])
+@pytest.mark.parametrize("compression", [None, "gzip"])
+def test_noncontiguous_lazy_frame_reads_match_cropped_numpy_runs(
+    tmp_path: Path, single_row: bool, compression: str | None
+) -> None:
     path = tmp_path / "frames.h5"
     values = np.arange(9 * 7 * 11).reshape(9, 7, 11).astype(np.uint16)
+    values = values[:, :1, :] if single_row else values
+    stored = values[:, 0, :] if single_row else values
+    rows = slice(0, 1) if single_row else slice(1, 7)
     with h5py.File(path, "w") as handle:
-        handle.create_dataset("/exchange/data", data=values, chunks=(1, 7, 11))
-    stack = locate_frames(str(path)).stack.window(slice(1, 7), slice(2, 10))
+        handle.create_dataset("/scan/data", data=stored, chunks=True, compression=compression)
+    stack = locate_frames(str(path)).stack.window(rows, slice(2, 10))
     indices = np.asarray([0, 1, 3, 5, 6, 7])
     result = stack[indices]
-    np.testing.assert_array_equal(result, values[indices, 1:7, 2:10])
+    np.testing.assert_array_equal(result, values[indices, rows, 2:10])
+    np.testing.assert_array_equal(stack[2:4], values[2:4, rows, 2:10])
+    np.testing.assert_array_equal(stack[-1], values[-1, rows, 2:10])
+    assert stack[:0].shape == (0, stack.rows, stack.cols)
+    assert inspect_dataset(path)["projection"]["shape"] == list(values.shape)
     assert result.dtype == values.dtype
 
 

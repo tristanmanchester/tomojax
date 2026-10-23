@@ -66,6 +66,12 @@ def test_degree_angles_and_missing_units_keep_their_values(tmp_path, units):
             angles.attrs["units"] = units
     np.testing.assert_array_equal(load_dataset(path).angles, dataset.angles)
     np.testing.assert_array_equal(locate_frames(str(path)).angles, dataset.angles)
+    with h5py.File(path, "a") as handle:
+        group = handle["entry/instrument/detector"]
+        sinogram = group["data"][:, 0, :]
+        del group["data"]
+        group["data"] = sinogram
+    assert validate_nxtomo(str(path))["issues"] == []
 
 
 @pytest.mark.parametrize("raw", [False, True])

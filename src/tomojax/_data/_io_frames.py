@@ -55,7 +55,7 @@ def _check_virtual(data: Any, checked: set[tuple[str, str]] | None = None) -> No
 
 @dataclass(frozen=True)
 class Hdf5Frames(FrameStack):
-    """Frames ``frames`` of the 3-D dataset ``dataset`` in ``path``, read on indexing.
+    """Frames ``frames`` of ``dataset`` in ``path``, read on indexing.
 
     It holds no open file: each read opens the file, reads the frames asked for
     and closes it, so it outlives the call that made it and is safe to read
@@ -63,6 +63,8 @@ class Hdf5Frames(FrameStack):
     (``stack[a:b]`` reads frames a to b of this stack) and returns NumPy arrays
     in the file's dtype; :meth:`frames_at` and :meth:`window` narrow the stack
     without reading.
+    A stored sinogram ``(view, u)`` has one detector row: reads expose the
+    same ``(view, v, u)`` shape as a three-dimensional stack.
     """
 
     path: str
@@ -76,9 +78,10 @@ class Hdf5Frames(FrameStack):
         path = str(Path(path).absolute())  # later reads must not depend on the working directory
         with h5py.File(path, "r") as file:
             data = file[dataset]
-            if not isinstance(data, h5py.Dataset) or data.ndim != 3:
-                raise ValueError(f"{path}:{dataset} is not a 3-D stack of frames")
-            n, rows, cols = (int(s) for s in data.shape)
+            if not isinstance(data, h5py.Dataset) or data.ndim not in (2, 3):
+                raise ValueError(f"{path}:{dataset} is not a 2-D sinogram or 3-D stack of frames")
+            n, cols = int(data.shape[0]), int(data.shape[-1])
+            rows = 1 if data.ndim == 2 else int(data.shape[1])
             layout = cast(Any, data)  # h5py's typing omits the storage layout
             _check_virtual(layout)
             # Unfiltered data supports direct reads of partial chunks. __getitem__
@@ -104,17 +107,23 @@ class Hdf5Frames(FrameStack):
             data: Any = file[self.dataset]
             if indices.size == 0:
                 return np.empty((0, self.rows, self.cols), self.dtype)
+            detector = (cols,) if data.ndim == 2 else (rows, cols)
             first, last = int(indices[0]), int(indices[-1]) + 1
             if last - first == indices.size:  # contiguous: one hyperslab
-                return np.asarray(data[first:last, rows, cols])
+                return np.asarray(data[(slice(first, last), *detector)]).reshape(
+                    indices.size, self.rows, self.cols
+                )
             # h5py fancy indexing is far slower than reading each run of frames.
             out = np.empty((indices.size, self.rows, self.cols), self.dtype)
+            # The singleton row is only a view of the destination allocation;
+            # read_direct still addresses the stored dataset's physical rank.
+            destination_array = out[:, 0, :] if data.ndim == 2 else out
             starts = np.concatenate(([0], np.flatnonzero(np.diff(indices) > 1) + 1))
             stops = np.concatenate((starts[1:], [indices.size]))
             for start, stop in zip(starts, stops, strict=True):
-                source = (slice(int(indices[start]), int(indices[stop - 1]) + 1), rows, cols)
-                destination = (slice(int(start), int(stop)), slice(None), slice(None))
-                data.read_direct(out, source_sel=source, dest_sel=destination)
+                source = (slice(int(indices[start]), int(indices[stop - 1]) + 1), *detector)
+                destination = (slice(int(start), int(stop)), *(slice(None),) * len(detector))
+                data.read_direct(destination_array, source_sel=source, dest_sel=destination)
             return out
 
 
@@ -142,7 +151,7 @@ def _gda_paths(file: h5py.File) -> tuple[str, str, str] | None:
         prefix = f"/{name}"
         data = f"{prefix}/imaging/data"
         stack = _dataset(file, data)
-        if stack is None or stack.ndim != 3:
+        if stack is None or stack.ndim not in (2, 3):
             continue
         key = next(
             (
@@ -266,7 +275,7 @@ def locate_frames(
     """Find the stack of frames in an HDF5 file, and its ``image_key`` and angles.
 
     Each is read from the path given, else the NXtomo (or Data Exchange) path,
-    else the file's only dataset of that name (``data`` of three dimensions,
+    else the file's only dataset of that name (``data`` of two or three dimensions,
     ``image_key``, ``rotation_angle``) with one entry per frame. A uniquely
     named key or angle dataset with the wrong shape is rejected, not
     treated as missing. Flats and darks kept beside the frames
@@ -304,7 +313,7 @@ def locate_frames(
         gda = _gda_paths(file) if where is None else None
         where = where or (gda[0] if gda is not None else None)
         gda = gda if gda is not None and where == gda[0] else None
-        where = where or _only(file, "data", lambda d: len(d.shape) == 3, path)
+        where = where or _only(file, "data", lambda d: len(d.shape) in (2, 3), path)
         stack = None if where is None else _dataset(file, where)
         if data_path is not None and stack is None:
             raise KeyError(f"{path} has no dataset {data_path!r}")

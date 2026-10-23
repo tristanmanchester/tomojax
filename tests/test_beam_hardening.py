@@ -56,7 +56,8 @@ def test_spectrum_curves_use_the_material_attenuation() -> None:
     assert BeamHardening.from_spectrum([50.0], [1.0], "H2O", energy_kev=50.0).rates == (1.0,)
 
 
-def test_nikon_records_its_linearisation_and_recorded_applies_it(tmp_path) -> None:
+@pytest.mark.parametrize("polynomial", [True, False])
+def test_nikon_records_unapplied_hardening_and_tube_settings(tmp_path, polynomial) -> None:
     import imageio.v3 as iio
 
     for i in range(2):
@@ -65,20 +66,20 @@ def test_nikon_records_its_linearisation_and_recorded_applies_it(tmp_path) -> No
         "[XTekCT]\nName=part\nSrcToObject=12\nSrcToDetector=18\nDetectorPixelSizeX=0.1\n"
         "DetectorPixelSizeY=0.1\nDetectorOffsetX=0\nDetectorOffsetY=0\nCentreOfRotationTop=0\n"
         "CentreOfRotationBottom=0\nWhiteLevel=60000\nInitialAngle=0\nAngularStep=90\n"
-        "CoefX4=0\nCoefX3=0\nCoefX2=0.25\nCoefX1=0.75\nCoefX0=0\n[Xrays]\nXraykV=100\n"
+        "CoefX4=0\nCoefX3=0\nCoefX2=0.25\nCoefX1=0.75\nCoefX0=0\nScale=139\nScaling=1000\n"
+        "[Xrays]\nXraykV=100\n"
     )
+    if not polynomial:
+        path = tmp_path / "part.xtekct"
+        path.write_text(path.read_text().replace("CoefX1=0.75", "CoefX1="))
     (tmp_path / "part.ctprofile.xml").write_text(
         "<a><BeamHardeningPreset>2</BeamHardeningPreset></a>"
     )
     scan = tj.load_frames(tmp_path / "part.xtekct", darks=0).corrected()
+    assert scan.source.geometry_metadata["nikon_xtekct"]["parameters"]["Scale"] == "139"
     settings = scan.source.geometry_metadata["beam_hardening"]
     assert settings == {
-        "vendor": "nikon", "coefficients": [0, 0.75, 0.25, 0, 0], "preset": 2, "kv": 100.0
+        "vendor": "nikon", "scale": 139, "scaling": 1000, "preset": 2, "kv": 100.0,
+        **({"coefficients": [0, 0.75, 0.25, 0, 0]} if polynomial else {}),
     }  # fmt: skip
-    q = float(np.max(scan.projections))
-    step = BeamHardening.recorded(scan)
-    preset = 0.75 * q + 0.25 * q**2
-    assert step.inverse(q) == pytest.approx(preset / 0.75, rel=2e-3)  # in unit initial slope
-    settings["vendor"] = "zeiss"
-    with pytest.raises(ValueError, match="not published"):
-        BeamHardening.recorded(scan)
+    np.testing.assert_allclose(scan.projections, -np.log(20000 / 60000), rtol=1e-6)

@@ -243,11 +243,14 @@ def _projection_report(path: str | None, dataset: _ProjectionStack | None) -> Pr
                 "inf_count": None,
             },
         }
-    if dataset.ndim != 3:
-        raise ValueError(f"projection dataset must be 3D (n_views, nv, nu), got {dataset.shape}")
+    if dataset.ndim not in (2, 3):
+        raise ValueError(
+            f"projection dataset must be (view, u) or (view, v, u), got {dataset.shape}"
+        )
 
     stats, nonfinite = projection_stats(dataset)
-    n_views, nv, nu = (int(v) for v in dataset.shape)
+    n_views, nu = int(dataset.shape[0]), int(dataset.shape[-1])
+    nv = 1 if dataset.ndim == 2 else int(dataset.shape[1])
     return {
         "found": True,
         "path": path,

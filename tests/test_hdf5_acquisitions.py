@@ -9,13 +9,17 @@ from tomojax.io.api import read_acquisition
 
 
 @pytest.mark.parametrize("recorded", [False, True])
-def test_data_exchange_preserves_syrmep_units_and_accepts_only_explicit_center(tmp_path, recorded):
+@pytest.mark.parametrize("single_row", [False, True])
+def test_data_exchange_preserves_syrmep_units_and_accepts_only_explicit_center(
+    tmp_path, recorded, single_row
+):
     path = tmp_path / "renamed.bin"
+    shape = (4,) if single_row else (3, 4)
     with h5py.File(path, "w") as file:
-        file["exchange/data"] = np.full((2, 3, 4), 52, np.uint16)
+        file["exchange/data"] = np.full((2, *shape), 52, np.uint16)
         if recorded:
-            file["exchange/data_white"] = np.full((2, 3, 4), 100, np.uint16)
-            file["exchange/data_dark"] = np.full((1, 3, 4), 4, np.uint16)
+            file["exchange/data_white"] = np.full((2, *shape), 100, np.uint16)
+            file["exchange/data_dark"] = np.full((1, *shape), 4, np.uint16)
         file["exchange/theta"] = [0.0, 90.0]
         file["measurement/instrument/source/beamline"] = "Syrmep"
         file["measurement/sample/name"] = "sample"
@@ -31,11 +35,12 @@ def test_data_exchange_preserves_syrmep_units_and_accepts_only_explicit_center(t
     assert meta["beamline"] == "Syrmep" and meta["length_unit"] == "mm"
     with pytest.raises(ValueError, match="detector=|flats="):
         tj.load_frames(path)
-    detector = tj.Detector(4, 3, 0.00204, 0.00306, (0.001, -0.002))
+    detector = tj.Detector(4, 1 if single_row else 3, 0.00204, 0.00306, (0.001, -0.002))
     scan = tj.load_frames(
         path, detector=detector, **({} if recorded else {"flats": 100, "darks": 4})
     ).corrected()
     assert scan.detector == detector
+    assert scan.projections.shape == (2, detector.nv, 4) and scan.grid.nz == detector.nv
     np.testing.assert_allclose(scan.projections, np.log(2), atol=1e-7)
 
 
