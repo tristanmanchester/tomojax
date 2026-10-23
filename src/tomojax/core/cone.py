@@ -353,6 +353,7 @@ def forward_into(out: Any, coeff: Any, volume: Any, *, grid: Grid, det: Detector
 
     The arrays are CuPy arrays (or CUDA buffers) on the current device;
     ``volume`` is C-ordered ``(nz, ny, nx)``.
+    Nearby source directions share view packets; separated directions use spatial packets.
     """
     import cupy as cp
 
@@ -361,12 +362,15 @@ def forward_into(out: Any, coeff: Any, volume: Any, *, grid: Grid, det: Detector
         cp.asarray(coeff), cp.asarray(volume), cp.asarray(out),
         np.int32(grid.nx), np.int32(grid.ny), np.int32(grid.nz),
         np.int32(det.nu), np.int32(det.nv),
-        np.float32(grid.vx), np.float32(grid.vy), np.float32(grid.vz),
+        np.float32(grid.vx), np.float32(grid.vy), np.float32(grid.vz), np.int32(views),
     )  # fmt: skip
-    # Views vary fastest, rows slowest: the blocks running at once cover one band
-    # of rows (one slab of the volume) in many views, which then shares the L2.
-    cuda_module().get_function("cone_forward")(
-        (views, -(-det.nu // 32), -(-det.nv // 16)), (512,), args
+    suffix = "" if grid.nx * grid.ny * grid.nz <= 2**32 else "64"
+    module = cuda_module()
+    module.get_function("cone_forward_dense" + suffix)(
+        (-(-views // 8), -(-det.nu // 8), -(-det.nv // 4)), (256,), args
+    )
+    module.get_function("cone_forward_sparse" + suffix)(
+        (views, -(-det.nu // 16), -(-det.nv // 16)), (256,), args
     )
 
 

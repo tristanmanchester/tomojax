@@ -1,7 +1,5 @@
 // CUDA kernels for cone-beam Joseph projection; see tomojax/core/cone.py.
 #define NC 25
-#define GU 32
-#define GV 16
 #define TB 64
 #define TC 64
 #define ULEN 112
@@ -61,8 +59,6 @@ __device__ __forceinline__ float path_w(float r0, float r1, float r2, float ra,
     return sqrtf(px * px + py * py + pz * pz) / fabsf(ra);
 }
 
-// Per-ray Joseph sum for one pixel, any view.
-// The smallest and largest of a value over the (whole) warp.
 __device__ __forceinline__ int warp_min(int x) {
     for (int o = 16; o; o >>= 1) x = min(x, __shfl_xor_sync(0xffffffffu, x, o));
     return x;
@@ -72,10 +68,58 @@ __device__ __forceinline__ int warp_max(int x) {
     return x;
 }
 
+
+// Source directions are already expressed in voxel-index coordinates. This
+// direction-spread heuristic selects scheduling, not any ray or interpolation.
+__device__ __forceinline__ float packet_dot(float3 a, float3 b) {
+    return __fadd_rn(__fadd_rn(__fmul_rn(a.x, b.x), __fmul_rn(a.y, b.y)),
+                     __fmul_rn(a.z, b.z));
+}
+__device__ __forceinline__ float3 packet_source(
+    const float* c, float3 centre)
+{
+    return make_float3(__fsub_rn(c[0], centre.x), __fsub_rn(c[1], centre.y),
+                       __fsub_rn(c[2], centre.z));
+}
+__device__ __forceinline__ bool dense_view_packet(
+    const float* coeff, int first, int nviews, int nx, int ny, int nz)
+{
+    int last = min(first + 8, nviews);
+    // A mostly empty cross-view warp cannot amortize its unused view lanes.
+    if (last - first < 4) return false;
+    float3 centre = make_float3(__fmul_rn((float)(nx - 1), .5f),
+                               __fmul_rn((float)(ny - 1), .5f),
+                               __fmul_rn((float)(nz - 1), .5f));
+    float extent = (float)max(nx, max(ny, nz));
+    float extent2 = __fmul_rn(extent, extent);
+    float3 before = packet_source(coeff + (long)first * NC, centre);
+    float before2 = packet_dot(before, before);
+    for (int view = first + 1; view < last; ++view) {
+        float3 next = packet_source(coeff + (long)view * NC, centre);
+        float next2 = packet_dot(next, next);
+        float3 cross = make_float3(
+            __fsub_rn(__fmul_rn(before.y, next.z), __fmul_rn(before.z, next.y)),
+            __fsub_rn(__fmul_rn(before.z, next.x), __fmul_rn(before.x, next.z)),
+            __fsub_rn(__fmul_rn(before.x, next.y), __fmul_rn(before.y, next.x)));
+        // Adjacent directions drift at most eight voxels over the grid extent.
+        // Explicit rounding makes this SAME predicate identical in both grids.
+        float spread = __fmul_rn(packet_dot(cross, cross), extent2);
+        float limit = __fmul_rn(64.f, __fmul_rn(before2, next2));
+        if (!(packet_dot(before, next) > 0.f && spread <= limit)) return false;
+        before = next;
+        before2 = next2;
+    }
+    return true;
+}
+
+namespace dense_packets {
+constexpr int GU = 8, GV = 4;
+// Per-ray Joseph sum for one pixel, any view.
+// The smallest and largest of a value over the (whole) warp.
 // Planes k0..k1 of a ray, stepped by the warp through first..last (see ray_sum): plane
 // k lies sa apart, in-plane axes b and c sb and sc. Axis 0 marches contiguously;
 // the other axes have contiguous in-plane x taps.
-template <bool AXIS_X>
+template <typename Offset, bool AXIS_X>
 __device__ __forceinline__ float plane_sum(
     const float* __restrict__ vol, int k0, int k1, int first, int last, float Sa, float Sb,
     float Sc, float inv, float rb, float rc, int nb, int nc, long sa, long sb, long sc = 1)
@@ -83,8 +127,11 @@ __device__ __forceinline__ float plane_sum(
     if constexpr (AXIS_X) sa = 1;
     else sb = 1;
     float sum = 0.f;
-    const float* plane = vol + (long)first * sa;
-    for (int k = first; k <= last; ++k, plane += sa) {
+    int pm = AXIS_X ? min(8, (int)sb & -(int)sb) - 1 : 0;
+    int phase = threadIdx.x & pm;
+    Offset plane = (Offset)(first - phase) * (Offset)sa;
+    for (int step = first; step <= last + pm; ++step, plane += (Offset)sa) {
+        int k = step - phase;
         if (k < k0 || k > k1) continue;
         // Same reciprocal, multiply and FMA sequence as plane_adjoint.
         float t = __fmul_rn(__fsub_rn((float)k, Sa), inv);
@@ -95,12 +142,12 @@ __device__ __forceinline__ float plane_sum(
         float wb1 = fb - fb0, wc1 = fc - fc0, wb0 = 1.f - wb1, wc0 = 1.f - wc1;
         bool b0in = (unsigned)b0 < (unsigned)nb, b1in = (unsigned)(b0 + 1) < (unsigned)nb;
         bool c0in = (unsigned)c0 < (unsigned)nc, c1in = (unsigned)(c0 + 1) < (unsigned)nc;
-        const float* p = plane + (long)b0 * sb + (long)c0 * sc;
+        Offset p = plane + (Offset)b0 * (Offset)sb + (Offset)c0 * (Offset)sc;
         float s0 = 0.f, s1 = 0.f;
-        if (b0in && c0in) s0 = __ldg(p) * wc0;
-        if (b0in && c1in) s0 += __ldg(p + sc) * wc1;
-        if (b1in && c0in) s1 = __ldg(p + sb) * wc0;
-        if (b1in && c1in) s1 += __ldg(p + sb + sc) * wc1;
+        if (b0in && c0in) s0 = __ldg(vol + p) * wc0;
+        if (b0in && c1in) s0 += __ldg(vol + (Offset)(p + (Offset)sc)) * wc1;
+        if (b1in && c0in) s1 = __ldg(vol + (Offset)(p + (Offset)sb)) * wc0;
+        if (b1in && c1in) s1 += __ldg(vol + (Offset)(p + (Offset)sb + (Offset)sc)) * wc1;
         sum += wb0 * s0 + wb1 * s1;
     }
     return sum;
@@ -110,6 +157,7 @@ __device__ __forceinline__ float plane_sum(
 // step through the planes together, each sampling only its own ray's planes: rays
 // entering through the volume's top or bottom start at different planes, and lanes
 // left on different planes would not share cache lines.
+template <typename Offset>
 __device__ float ray_sum(const float* __restrict__ vol, const float* c, float fu, float fv,
                          int nx, int ny, int nz, bool live)
 {
@@ -133,15 +181,328 @@ __device__ float ray_sum(const float* __restrict__ vol, const float* c, float fu
     int k0 = max((int)floorf(lo), 0), k1 = min((int)ceilf(hi), na - 1);
     if (!live) { k0 = na; k1 = -1; }
     int first = warp_min(k0), last = warp_max(k1);
-    if (a == 0) return plane_sum<true>(vol, k0, k1, first, last, Sa, Sb, Sc, inv, rb, rc, nb, nc, sa, sb, sc);
-    return plane_sum<false>(vol, k0, k1, first, last, Sa, Sb, Sc, inv, rb, rc, nb, nc, sa, sb, sc);
+    if (a == 0) return plane_sum<Offset, true>(vol, k0, k1, first, last, Sa, Sb, Sc, inv, rb, rc, nb, nc, sa, sb, sc);
+    return plane_sum<Offset, false>(vol, k0, k1, first, last, Sa, Sb, Sc, inv, rb, rc, nb, nc, sa, sb, sc);
+}
+
+template <typename Offset>
+__device__ float register_ray_sum(const float* __restrict__ vol,const float* c,float fu,float fv,
+    int nx,int ny,int nz,bool live)
+{
+    float r0,r1,r2;ray_of(c,fu,fv,r0,r1,r2);
+    int a=ray_axis(r0,r1,r2);
+    if(!__all_sync(0xffffffffu,!live || a==0))return ray_sum<Offset>(vol,c,fu,fv,nx,ny,nz,live);
+    float inv=__frcp_rn(r0),rb=r1,rc=r2;
+    float lo=-1e30f,hi=1e30f;
+    float slope=rb*inv,base=c[1]-c[0]*slope;
+    if(fabsf(slope)<1e-12f){if(base<=-1.f || base>=(float)ny)live=false;}
+    else{float k1=(-1.f-base)/slope,k2=((float)ny-base)/slope;
+        lo=fmaxf(lo,fminf(k1,k2));hi=fminf(hi,fmaxf(k1,k2));}
+    slope=rc*inv;base=c[2]-c[0]*slope;
+    if(fabsf(slope)<1e-12f){if(base<=-1.f || base>=(float)nz)live=false;}
+    else{float k1=(-1.f-base)/slope,k2=((float)nz-base)/slope;
+        lo=fmaxf(lo,fminf(k1,k2));hi=fminf(hi,fmaxf(k1,k2));}
+    int k0=max((int)floorf(lo),0),k1=min((int)ceilf(hi),nx-1);
+    if(!live){k0=nx;k1=-1;}
+    constexpr int GROUP=1;
+    int lane=threadIdx.x%GROUP;
+    constexpr unsigned mask=0xffffffffu;
+    float inverses[GROUP],rbs[GROUP],rcs[GROUP];
+    float sas[GROUP],sbs[GROUP],scs[GROUP];
+    int lower[GROUP],upper[GROUP];
+    #pragma unroll
+    for(int p=0;p<GROUP;++p){
+        inverses[p]=__shfl_sync(mask,inv,p,GROUP);
+        sas[p]=__shfl_sync(mask,c[0],p,GROUP);
+        sbs[p]=__shfl_sync(mask,c[1],p,GROUP);
+        scs[p]=__shfl_sync(mask,c[2],p,GROUP);
+        rbs[p]=__shfl_sync(mask,rb,p,GROUP);
+        rcs[p]=__shfl_sync(mask,rc,p,GROUP);
+        lower[p]=__shfl_sync(mask,k0,p,GROUP);
+        upper[p]=__shfl_sync(mask,k1,p,GROUP);
+    }
+    int first=warp_min(k0),last=warp_max(k1);
+    float sum=0.f;
+    int pm=min(8,nx & -nx)-1;
+    for(int base=first;base<=last+pm;base+=GROUP){
+        float values[GROUP];
+        #pragma unroll
+        for(int p=0;p<GROUP;++p){
+            // p is the destination ray owner, lane is its sample producer.
+            int owner=(threadIdx.x/GROUP)*GROUP+p;
+            int k=base+lane-(owner & pm);
+            float value=0.f;
+            if(k>=lower[p] && k<=upper[p]){
+                float t=__fmul_rn(__fsub_rn((float)k,sas[p]),inverses[p]);
+                float fb=__fmaf_rn(t,rbs[p],sbs[p]),fc=__fmaf_rn(t,rcs[p],scs[p]);
+                float fb0=floorf(fb),fc0=floorf(fc);
+                int b0=(int)fb0,c0=(int)fc0;
+                float wb1=fb-fb0,wc1=fc-fc0,wb0=1.f-wb1,wc0=1.f-wc1;
+                bool b0in=(unsigned)b0<(unsigned)ny,b1in=(unsigned)(b0+1)<(unsigned)ny;
+                bool c0in=(unsigned)c0<(unsigned)nz,c1in=(unsigned)(c0+1)<(unsigned)nz;
+                Offset point=((Offset)c0*(Offset)ny+(Offset)b0)*(Offset)nx+(Offset)k;
+                float s0=0.f,s1=0.f;
+                if(b0in && c0in)s0=__ldg(vol+point)*wc0;
+                if(b0in && c1in)s0+=__ldg(vol+(Offset)(point+(Offset)nx*(Offset)ny))*wc1;
+                if(b1in && c0in)s1=__ldg(vol+(Offset)(point+(Offset)nx))*wc0;
+                if(b1in && c1in)s1+=__ldg(vol+(Offset)(point+(Offset)nx+(Offset)nx*(Offset)ny))*wc1;
+                value=wb0*s0+wb1*s1;
+            }
+            values[p]=value;
+        }
+        // Transpose the GROUP x GROUP sample/ray matrix in registers.
+        // Each butterfly exchanges one register bit with its lane bit.
+        #pragma unroll
+        for(int bit=1;bit<GROUP;bit<<=1){
+            #pragma unroll
+            for(int p=0;p<GROUP;++p)if(!(p&bit)){
+                float send=(lane&bit)?values[p]:values[p|bit];
+                float receive=__shfl_xor_sync(mask,send,bit,GROUP);
+                if(lane&bit)values[p]=receive;else values[p|bit]=receive;
+            }
+        }
+        #pragma unroll
+        for(int q=0;q<GROUP;++q)sum=__fadd_rn(sum,values[q]);
+    }
+    return sum;
+}
+
+// Align packet centers only by relabelling which original pixel each lane owns.
+// Projection arithmetic in the sampler remains untouched.
+__device__ __forceinline__ void projected_center(const float* c, int nx, int ny, int nz,
+    float& u, float& v)
+{
+    float dx=.5f*(nx-1)-c[0],dy=.5f*(ny-1)-c[1],dz=.5f*(nz-1)-c[2];
+    float den=c[13]*dx+c[14]*dy+c[15]*dz;
+    float lam=c[16]/den;
+    u=c[23]+lam*(c[17]*dx+c[18]*dy+c[19]*dz);
+    v=c[24]+lam*(c[20]*dx+c[21]*dy+c[22]*dz);
+}
+__device__ __forceinline__ int pixel_shift(float own,float anchor,int size)
+{
+    float delta=own-anchor;
+    // A center on the source plane gives no useful scheduling proposal.
+    // Zero is still an ordinary bijective pixel relabelling.
+    return isfinite(delta)?(int)rintf(remainderf(delta,(float)size)):0;
+}
+__device__ __forceinline__ int wrap_pixel(int pixel,int shift,int size)
+{
+    int result=pixel+shift;
+    if(result<0)result+=size;
+    if(result>=size)result-=size;
+    return result;
+}
+
+// Every subgroup owns matched center-relative pixels across consecutive views.
+template <typename Offset>
+__device__ __forceinline__ void cone_forward_body(
+    const float* __restrict__ coeff, const float* __restrict__ vol, float* __restrict__ out,
+    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz, int nviews)
+{
+    if (!dense_view_packet(coeff, blockIdx.x * 8, nviews, nx, ny, nz)) return;
+    constexpr int GROUP=8;
+    int firstview=blockIdx.x*GROUP;
+    int view=firstview+threadIdx.x%GROUP;
+    const float* cfirst=coeff+(long)firstview*NC;
+    const float* c=coeff+(long)min(view,nviews-1)*NC;
+    // One uniform pixel orientation for every view in this tile; each ray still
+    // derives its true major axis and source independently in the helper.
+    float cr0,cr1,cr2;
+    ray_of(cfirst,(float)(blockIdx.y*GU+GU/2),
+        (float)(blockIdx.z*GV+GV/2),cr0,cr1,cr2);
+    int a=ray_axis(cr0,cr1,cr2),fast=a==0?1:0;
+    float ratio=__fdividef(SEL(fast,cr0,cr1,cr2),SEL(a,cr0,cr1,cr2));
+    float du=comp(cfirst+6,fast)-ratio*comp(cfirst+6,a);
+    float dv=comp(cfirst+9,fast)-ratio*comp(cfirst+9,a);
+    bool ufast=fabsf(du)>fabsf(dv);
+    int ray=threadIdx.x/GROUP;
+    int u=blockIdx.y*GU+(ufast?ray%GU:ray/GV);
+    int v=blockIdx.z*GV+(ufast?ray/GU:ray%GV);
+    bool live=view<nviews && u<nu && v<nv;
+    float anchoru,anchorv,ownu,ownv;
+    projected_center(cfirst,nx,ny,nz,anchoru,anchorv);
+    projected_center(c,nx,ny,nz,ownu,ownv);
+    u=wrap_pixel(u,pixel_shift(ownu,anchoru,nu),nu);
+    v=wrap_pixel(v,pixel_shift(ownv,anchorv,nv),nv);
+    float fu=(float)u,fv=(float)v;
+    // All lanes, including dead final-view producers, participate in the vote
+    // and every collective. The vote and fallback have no CTA barriers.
+    float sum=register_ray_sum<Offset>(vol,c,fu,fv,nx,ny,nz,live);
+    if(!live)return;
+    float r0,r1,r2;ray_of(c,fu,fv,r0,r1,r2);
+    float ra=SEL(ray_axis(r0,r1,r2),r0,r1,r2);
+    out[((long)view*nv+v)*nu+u]=sum*path_w(r0,r1,r2,ra,sx,sy,sz);
+}
+
+extern "C" __global__ void __launch_bounds__(GU * GV * 8) cone_forward_dense(
+    const float* __restrict__ coeff, const float* __restrict__ vol, float* __restrict__ out,
+    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz, int nviews)
+{
+    cone_forward_body<unsigned>(coeff,vol,out,nx,ny,nz,nu,nv,sx,sy,sz,nviews);
+}
+
+extern "C" __global__ void __launch_bounds__(GU * GV * 8) cone_forward_dense64(
+    const float* __restrict__ coeff, const float* __restrict__ vol, float* __restrict__ out,
+    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz, int nviews)
+{
+    cone_forward_body<unsigned long long>(coeff,vol,out,nx,ny,nz,nu,nv,sx,sy,sz,nviews);
+}
+
+} // namespace dense_packets
+
+
+namespace sparse_packets {
+constexpr int GU = 16, GV = 16;
+// Per-ray Joseph sum for one pixel, any view.
+// The smallest and largest of a value over the (whole) warp.
+// Planes k0..k1 of a ray, stepped by the warp through first..last (see ray_sum): plane
+// k lies sa apart, in-plane axes b and c sb and sc. Axis 0 marches contiguously;
+// the other axes have contiguous in-plane x taps.
+template <typename Offset, bool AXIS_X>
+__device__ __forceinline__ float plane_sum(
+    const float* __restrict__ vol, int k0, int k1, int first, int last, float Sa, float Sb,
+    float Sc, float inv, float rb, float rc, int nb, int nc, long sa, long sb, long sc = 1)
+{
+    if constexpr (AXIS_X) sa = 1;
+    else sb = 1;
+    float sum = 0.f;
+    Offset plane = (Offset)first * (Offset)sa;
+    for (int k = first; k <= last; ++k, plane += (Offset)sa) {
+        if (k < k0 || k > k1) continue;
+        // Same reciprocal, multiply and FMA sequence as plane_adjoint.
+        float t = __fmul_rn(__fsub_rn((float)k, Sa), inv);
+        float fb = __fmaf_rn(t, rb, Sb), fc = __fmaf_rn(t, rc, Sc);
+        float fb0 = floorf(fb), fc0 = floorf(fc);
+        int b0 = (int)fb0, c0 = (int)fc0;
+        // The same weights as plane_adjoint's.
+        float wb1 = fb - fb0, wc1 = fc - fc0, wb0 = 1.f - wb1, wc0 = 1.f - wc1;
+        bool b0in = (unsigned)b0 < (unsigned)nb, b1in = (unsigned)(b0 + 1) < (unsigned)nb;
+        bool c0in = (unsigned)c0 < (unsigned)nc, c1in = (unsigned)(c0 + 1) < (unsigned)nc;
+        Offset p = plane + (Offset)b0 * (Offset)sb + (Offset)c0 * (Offset)sc;
+        float s0 = 0.f, s1 = 0.f;
+        if (b0in && c0in) s0 = __ldg(vol + p) * wc0;
+        if (b0in && c1in) s0 += __ldg(vol + (Offset)(p + (Offset)sc)) * wc1;
+        if (b1in && c0in) s1 = __ldg(vol + (Offset)(p + (Offset)sb)) * wc0;
+        if (b1in && c1in) s1 += __ldg(vol + (Offset)(p + (Offset)sb + (Offset)sc)) * wc1;
+        sum += wb0 * s0 + wb1 * s1;
+    }
+    return sum;
+}
+
+// Called by every lane of a warp (``live`` false for lanes without a ray). The lanes
+// step through the planes together, each sampling only its own ray's planes: rays
+// entering through the volume's top or bottom start at different planes, and lanes
+// left on different planes would not share cache lines.
+template <typename Offset>
+__device__ float ray_sum(const float* __restrict__ vol, const float* c, float fu, float fv,
+                         int nx, int ny, int nz, bool live)
+{
+    float r0, r1, r2; ray_of(c, fu, fv, r0, r1, r2);
+    int a = ray_axis(r0, r1, r2), b = a == 0 ? 1 : 0, cc = a == 2 ? 1 : 2;
+    int na = SEL(a, nx, ny, nz), nb = SEL(b, nx, ny, nz), nc = SEL(cc, nx, ny, nz);
+    long s0 = 1, s1 = nx, s2 = (long)nx * ny;
+    long sa = SEL(a, s0, s1, s2), sb = SEL(b, s0, s1, s2), sc = SEL(cc, s0, s1, s2);
+    float ra = SEL(a, r0, r1, r2), rb = SEL(b, r0, r1, r2), rc = SEL(cc, r0, r1, r2);
+    float Sa = c[a], Sb = c[b], Sc = c[cc];
+    float inv = __frcp_rn(ra);
+    float lo = -1e30f, hi = 1e30f;
+    float slope = rb * inv, base = Sb - Sa * slope;
+    if (fabsf(slope) < 1e-12f) { if (base <= -1.f || base >= (float)nb) live = false; }
+    else { float k1 = (-1.f - base) / slope, k2 = ((float)nb - base) / slope;
+           lo = fmaxf(lo, fminf(k1, k2)); hi = fminf(hi, fmaxf(k1, k2)); }
+    slope = rc * inv; base = Sc - Sa * slope;
+    if (fabsf(slope) < 1e-12f) { if (base <= -1.f || base >= (float)nc) live = false; }
+    else { float k1 = (-1.f - base) / slope, k2 = ((float)nc - base) / slope;
+           lo = fmaxf(lo, fminf(k1, k2)); hi = fminf(hi, fmaxf(k1, k2)); }
+    int k0 = max((int)floorf(lo), 0), k1 = min((int)ceilf(hi), na - 1);
+    if (!live) { k0 = na; k1 = -1; }
+    int first = warp_min(k0), last = warp_max(k1);
+    if (a == 0) return plane_sum<Offset, true>(vol, k0, k1, first, last, Sa, Sb, Sc, inv, rb, rc, nb, nc, sa, sb, sc);
+    return plane_sum<Offset, false>(vol, k0, k1, first, last, Sa, Sb, Sc, inv, rb, rc, nb, nc, sa, sb, sc);
+}
+
+template <typename Offset>
+__device__ float register_ray_sum(const float* __restrict__ vol,const float* c,float fu,float fv,
+    int nx,int ny,int nz,bool live)
+{
+    float r0,r1,r2;ray_of(c,fu,fv,r0,r1,r2);
+    int a=ray_axis(r0,r1,r2);
+    if(!__syncthreads_and(!live || a==0))return ray_sum<Offset>(vol,c,fu,fv,nx,ny,nz,live);
+    float inv=__frcp_rn(r0),rb=r1,rc=r2;
+    float lo=-1e30f,hi=1e30f;
+    float slope=rb*inv,base=c[1]-c[0]*slope;
+    if(fabsf(slope)<1e-12f){if(base<=-1.f || base>=(float)ny)live=false;}
+    else{float k1=(-1.f-base)/slope,k2=((float)ny-base)/slope;
+        lo=fmaxf(lo,fminf(k1,k2));hi=fminf(hi,fmaxf(k1,k2));}
+    slope=rc*inv;base=c[2]-c[0]*slope;
+    if(fabsf(slope)<1e-12f){if(base<=-1.f || base>=(float)nz)live=false;}
+    else{float k1=(-1.f-base)/slope,k2=((float)nz-base)/slope;
+        lo=fmaxf(lo,fminf(k1,k2));hi=fminf(hi,fmaxf(k1,k2));}
+    int k0=max((int)floorf(lo),0),k1=min((int)ceilf(hi),nx-1);
+    if(!live){k0=nx;k1=-1;}
+    constexpr int GROUP=8;
+    int lane=threadIdx.x%GROUP;
+    constexpr unsigned mask=0xffffffffu;
+    float inverses[GROUP],rbs[GROUP],rcs[GROUP];
+    int lower[GROUP],upper[GROUP];
+    #pragma unroll
+    for(int p=0;p<GROUP;++p){
+        inverses[p]=__shfl_sync(mask,inv,p,GROUP);
+        rbs[p]=__shfl_sync(mask,rb,p,GROUP);
+        rcs[p]=__shfl_sync(mask,rc,p,GROUP);
+        lower[p]=__shfl_sync(mask,k0,p,GROUP);
+        upper[p]=__shfl_sync(mask,k1,p,GROUP);
+    }
+    int first=warp_min(k0),last=warp_max(k1);
+    float sum=0.f;
+    for(int base=first;base<=last;base+=GROUP){
+        int k=base+lane;
+        float values[GROUP];
+        #pragma unroll
+        for(int p=0;p<GROUP;++p){
+            float value=0.f;
+            if(k>=lower[p] && k<=upper[p]){
+                float t=__fmul_rn(__fsub_rn((float)k,c[0]),inverses[p]);
+                float fb=__fmaf_rn(t,rbs[p],c[1]),fc=__fmaf_rn(t,rcs[p],c[2]);
+                float fb0=floorf(fb),fc0=floorf(fc);
+                int b0=(int)fb0,c0=(int)fc0;
+                float wb1=fb-fb0,wc1=fc-fc0,wb0=1.f-wb1,wc0=1.f-wc1;
+                bool b0in=(unsigned)b0<(unsigned)ny,b1in=(unsigned)(b0+1)<(unsigned)ny;
+                bool c0in=(unsigned)c0<(unsigned)nz,c1in=(unsigned)(c0+1)<(unsigned)nz;
+                Offset point=((Offset)c0*(Offset)ny+(Offset)b0)*(Offset)nx+(Offset)k;
+                float s0=0.f,s1=0.f;
+                if(b0in && c0in)s0=__ldg(vol+point)*wc0;
+                if(b0in && c1in)s0+=__ldg(vol+(Offset)(point+(Offset)nx*(Offset)ny))*wc1;
+                if(b1in && c0in)s1=__ldg(vol+(Offset)(point+(Offset)nx))*wc0;
+                if(b1in && c1in)s1+=__ldg(vol+(Offset)(point+(Offset)nx+(Offset)nx*(Offset)ny))*wc1;
+                value=wb0*s0+wb1*s1;
+            }
+            values[p]=value;
+        }
+        // Transpose the GROUP x GROUP sample/ray matrix in registers.
+        // Each butterfly exchanges one register bit with its lane bit.
+        #pragma unroll
+        for(int bit=1;bit<GROUP;bit<<=1){
+            #pragma unroll
+            for(int p=0;p<GROUP;++p)if(!(p&bit)){
+                float send=(lane&bit)?values[p]:values[p|bit];
+                float receive=__shfl_xor_sync(mask,send,bit,GROUP);
+                if(lane&bit)values[p]=receive;else values[p|bit]=receive;
+            }
+        }
+        #pragma unroll
+        for(int q=0;q<GROUP;++q)sum=__fadd_rn(sum,values[q]);
+    }
+    return sum;
 }
 
 // One ray per thread: grid (views, u tiles, v tiles); out (view, v, u).
-extern "C" __global__ void __launch_bounds__(GU * GV) cone_forward(
+template <typename Offset>
+__device__ __forceinline__ void cone_forward_body(
     const float* __restrict__ coeff, const float* __restrict__ vol, float* __restrict__ out,
-    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz)
+    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz, int nviews)
 {
+    if (dense_view_packet(coeff, (blockIdx.x / 8) * 8, nviews, nx, ny, nz)) return;
     int view = blockIdx.x;
     const float* c = coeff + (long)view * NC;
     // Coalesce along the fastest available physical in-plane axis. Its
@@ -154,11 +515,20 @@ extern "C" __global__ void __launch_bounds__(GU * GV) cone_forward(
     float du = comp(c + 6, fast) - ratio * comp(c + 6, a);
     float dv = comp(c + 9, fast) - ratio * comp(c + 9, a);
     bool ufast = fabsf(du) > fabsf(dv);
-    int u = blockIdx.y * GU + (ufast ? threadIdx.x % GU : threadIdx.x / GV);
-    int v = blockIdx.z * GV + (ufast ? threadIdx.x / GU : threadIdx.x % GV);
+    constexpr int GROUP=8;
+    int ray=threadIdx.x;
+    if(a==0){
+        constexpr int FAST_RAYS=32/GROUP;
+        int width=ufast?GU:GV,warp=threadIdx.x/32;
+        int fast=(warp%(width/FAST_RAYS))*FAST_RAYS+(threadIdx.x%32)/GROUP;
+        int slow=(warp/(width/FAST_RAYS))*GROUP+threadIdx.x%GROUP;
+        ray=slow*width+fast;
+    }
+    int u = blockIdx.y * GU + (ufast ? ray % GU : ray / GV);
+    int v = blockIdx.z * GV + (ufast ? ray / GU : ray % GV);
     bool live = u < nu && v < nv;
     float fu = (float)u, fv = (float)v;
-    float sum = ray_sum(vol, c, fu, fv, nx, ny, nz, live);
+    float sum = a==0?register_ray_sum<Offset>(vol,c,fu,fv,nx,ny,nz,live):ray_sum<Offset>(vol,c,fu,fv,nx,ny,nz,live);
     if (!live) return;
     float r0, r1, r2; ray_of(c, fu, fv, r0, r1, r2);
     float ra = SEL(ray_axis(r0, r1, r2), r0, r1, r2);
@@ -166,6 +536,22 @@ extern "C" __global__ void __launch_bounds__(GU * GV) cone_forward(
     // stride costs little, and no transposed copy of the projections is needed.
     out[((long)view * nv + v) * nu + u] = sum * path_w(r0, r1, r2, ra, sx, sy, sz);
 }
+
+extern "C" __global__ void __launch_bounds__(GU * GV) cone_forward_sparse(
+    const float* __restrict__ coeff, const float* __restrict__ vol, float* __restrict__ out,
+    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz, int nviews)
+{
+    cone_forward_body<unsigned>(coeff,vol,out,nx,ny,nz,nu,nv,sx,sy,sz,nviews);
+}
+
+extern "C" __global__ void __launch_bounds__(GU * GV) cone_forward_sparse64(
+    const float* __restrict__ coeff, const float* __restrict__ vol, float* __restrict__ out,
+    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz, int nviews)
+{
+    cone_forward_body<unsigned long long>(coeff,vol,out,nx,ny,nz,nu,nv,sx,sy,sz,nviews);
+}
+
+} // namespace sparse_packets
 
 // Uniform-volume row normalization: exact boundary taps, counted interior planes.
 
