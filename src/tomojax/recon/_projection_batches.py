@@ -16,7 +16,6 @@ from tomojax.core.cone import (
     ConeModel,
     cone_project,
     cone_project_ones,
-    prepare_cone_projection,
 )
 from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
 
@@ -150,20 +149,6 @@ class ViewBatches:
 
     def projector(self, volume: jax.Array) -> Callable[[jax.Array, jax.Array], jax.Array]:
         """Bind a logical projection's volume, sharing preparation across its batches."""
-        if (
-            isinstance(self.model, ConeModel)
-            and self.cone_backend == "cuda"
-            and self.model.forward_workspace_bytes(self.grid, self.n, self.detector)
-        ):
-            from tomojax.backends import device_free_memory_bytes
-
-            workspace = self.model.forward_workspace_bytes(self.grid, self.n, self.detector)
-            free = device_free_memory_bytes()
-            # Planning happens during tracing, never from a device-valued branch.
-            # Leave room for iterative state; under pressure use the original pair.
-            if free is not None and workspace <= free // 8:
-                project = prepare_cone_projection(volume, self.grid, self.detector)
-                return lambda start, _batch: project(self._coefficients(start))
         return lambda start, batch: self.project(volume, start, batch)
 
     def backproject(
