@@ -52,7 +52,7 @@ def prepare_forward_project_views_T_cuda_state(
         T_stack,
         grid,
         detector,
-        jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32),
+        jnp.zeros((grid.nz, grid.ny, grid.nx), dtype=jnp.float32),
         step_size=step_size,
         n_steps=n_steps,
         gather_dtype=gather_dtype,

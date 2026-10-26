@@ -64,7 +64,7 @@ __device__ void ray_integral(const float* cf, const float* volume, const float* 
                     }
                     float weight = .5f * length * ((w[0][0]*w[0][1])*w[0][2]
                                                   + (w[1][0]*w[1][1])*w[1][2]);
-                    long position = ((long)x * ny + y) * nz + z;
+                    long position = ((long)z * ny + y) * nx + x;
                     if (MODE == 1) {
                         if (valid && weight != 0.f) atomicAdd(output+position, weight*ray_value);
                     } else {

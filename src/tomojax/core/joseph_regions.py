@@ -111,7 +111,7 @@ class PlaneRegion:
 
 
 def _forward(coefficients: jax.Array, volume: jax.Array, region: PlaneRegion) -> jax.Array:
-    shape = volume.shape
+    shape = volume.shape[::-1]
     u, v = jnp.meshgrid(
         jnp.arange(region.image_shape[1]) + region.detector_origin[1],
         jnp.arange(region.image_shape[0]) + region.detector_origin[0],
@@ -141,9 +141,9 @@ def _forward(coefficients: jax.Array, volume: jax.Array, region: PlaneRegion) ->
                     & (iz < shape[2])
                 )
                 value = volume[
-                    jnp.clip(ix, 0, shape[0] - 1),
-                    jnp.clip(iy, 0, shape[1] - 1),
                     jnp.clip(iz, 0, shape[2] - 1),
+                    jnp.clip(iy, 0, shape[1] - 1),
+                    jnp.clip(ix, 0, shape[0] - 1),
                 ]
                 return jnp.where(valid, value, 0.0)
 

@@ -7,7 +7,7 @@ constexpr int sample_unroll = UNROLL;
 
 __device__ float read_sample(const STORAGE* x, int a, int b, int c) {
     if ((unsigned)a>=NX || (unsigned)b>=NY || (unsigned)c>=NZ) return 0.f;
-    return (float)x[((long)a*NY+b)*NZ+c];
+    return (float)x[((long)c*NY+b)*NX+a];
 }
 __device__ float sample(const STORAGE* x, float a, float b, float c) {
     int ia=(int)floorf(a),ib=(int)floorf(b),ic=(int)floorf(c);
@@ -37,7 +37,7 @@ __device__ void scatter(float* out,float val,float a,float b,float c) {
                 int i=ia+da,j=ib+db,k=ic+dc;
                 float weight=((da?wa:1-wa)*(db?wb:1-wb))*(dc?wc:1-wc);
                 if ((unsigned)i<NX && (unsigned)j<NY && (unsigned)k<NZ && weight!=0.f)
-                    atomicAdd(out+((long)i*NY+j)*NZ+k,val*weight);
+                    atomicAdd(out+((long)k*NY+j)*NX+i,val*weight);
             }
         }
     }

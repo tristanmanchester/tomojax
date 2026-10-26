@@ -38,16 +38,16 @@ def test_region_submatrix_and_columns(backend, interpolation, absolute, origin, 
         interpolation=interpolation,
         absolute_weights=absolute,
     )
-    tile = jnp.asarray(rng.normal(size=shape), jnp.float32)
-    index = tuple(slice(o, o + n) for o, n in zip(origin, shape, strict=True))
-    full = jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32).at[index].set(tile)
+    tile = jnp.asarray(rng.normal(size=shape[::-1]), jnp.float32)
+    index = tuple(slice(o, o + n) for o, n in zip(origin, shape, strict=True))[::-1]
+    full = jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32).at[index].set(tile)
     kwargs = dict(backend=backend, interpolation=interpolation, absolute_weights=absolute)
     expected = forward_project_planes(coefficients, full, grid, detector, **kwargs)[:, 2:7, 3:10]
     np.testing.assert_allclose(region.project(coefficients, tile), expected, rtol=3e-5, atol=2e-5)
     images = jnp.asarray(rng.normal(size=expected.shape), jnp.float32)
     padded = jnp.zeros((4, detector.nv, detector.nu), jnp.float32).at[:, 2:7, 3:10].set(images)
     expected_at = sum_backproject_planes(coefficients, padded, grid, detector, **kwargs)[index]
-    initial = jnp.asarray(rng.normal(size=shape), jnp.float32)
+    initial = jnp.asarray(rng.normal(size=shape[::-1]), jnp.float32)
     transpose = region.transpose(coefficients, images, accumulate=initial)
     np.testing.assert_allclose(transpose, initial + expected_at, rtol=3e-5, atol=2e-5)
     tangent = jnp.asarray(rng.normal(0, 0.02, (4, 2, 14)), jnp.float32).at[:, :, 0].set(0)
@@ -94,6 +94,8 @@ def test_partial_blocks_outside_detector_field(interpolation):
             grid=grid, detector=detector, backend="cuda",
             volume_origin=origin, interpolation=interpolation,
         )  # fmt: skip
-        actual = region.transpose(coefficients, images, accumulate=jnp.zeros(shape, jnp.float32))
-        index = tuple(slice(o, o + n) for o, n in zip(origin, shape, strict=True))
+        actual = region.transpose(
+            coefficients, images, accumulate=jnp.zeros(shape[::-1], jnp.float32)
+        )
+        index = tuple(slice(o, o + n) for o, n in zip(origin, shape, strict=True))[::-1]
         np.testing.assert_allclose(actual, full[index], rtol=3e-6, atol=2e-6)

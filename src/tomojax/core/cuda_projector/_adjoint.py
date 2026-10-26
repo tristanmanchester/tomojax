@@ -170,7 +170,7 @@ def _backproject_cuda(
     )
     init = jnp.zeros((int(nx) * int(ny) * int(nz),), dtype=jnp.float32)
     out = call(jnp.asarray(poses, dtype=jnp.float32), images, init)
-    return out.reshape((int(nx), int(ny), int(nz)))
+    return out.reshape((int(nz), int(ny), int(nx)))
 
 
 def sum_backproject_views_T_cuda(

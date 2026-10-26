@@ -18,7 +18,7 @@ def test_public_joseph_matches_physical_matrix_and_loss_derivative(backend, inte
         pytest.skip("requires CUDA")
     g, d, poses = problem()
     rng = np.random.default_rng(10)
-    x = jnp.asarray(rng.normal(size=(g.nx, g.ny, g.nz)), jnp.float32)
+    x = jnp.asarray(rng.normal(size=(g.nz, g.ny, g.nx)), jnp.float32)
     y = jnp.asarray(rng.normal(size=(len(poses), d.nv, d.nu)), jnp.float32)
     poses = jnp.asarray(poses)
     a = matrix(np.asarray(poses), g, d, interpolation)
@@ -60,7 +60,7 @@ def test_public_joseph_matches_physical_matrix_and_loss_derivative(backend, inte
 @pytest.mark.parametrize("interpolation", ["linear", "cubic"])
 def test_reference_supports_second_volume_derivatives(interpolation):
     g, d, poses = problem()
-    x = jnp.ones((g.nx, g.ny, g.nz), jnp.float32)
+    x = jnp.ones((g.nz, g.ny, g.nx), jnp.float32)
     direction = jnp.linspace(-1, 1, x.size).reshape(x.shape)
 
     def gradient(v):
@@ -94,7 +94,7 @@ def test_reference_supports_second_volume_derivatives(interpolation):
 )
 def test_public_projection_rejects_invalid_static_inputs(bad):
     g, d, poses = problem()
-    volume = np.zeros((g.nx, g.ny, g.nz), np.float32)
+    volume = np.zeros((g.nz, g.ny, g.nx), np.float32)
     backend = "jax"
     if bad == "volume_shape":
         volume = volume[:, :, :-1]
@@ -124,7 +124,7 @@ def test_public_loss_rejects_invalid_target(bad):
     y = np.zeros((6, d.nv, d.nu), np.float32)
     y = y[:5] if bad == "shape" else y.astype(np.complex64)
     with pytest.raises(ValueError, match="target must be real with shape"):
-        joseph_l2_value_and_grad(np.zeros((g.nx, g.ny, g.nz)), poses, y, g, d)
+        joseph_l2_value_and_grad(np.zeros((g.nz, g.ny, g.nx)), poses, y, g, d)
 
 
 def test_explicit_cuda_never_silently_falls_back():
@@ -132,13 +132,13 @@ def test_explicit_cuda_never_silently_falls_back():
         pytest.skip("requires CPU to test explicit CUDA rejection")
     g, d, poses = problem()
     with pytest.raises(ValueError, match="requires an NVIDIA CUDA"):
-        project_joseph(np.zeros((g.nx, g.ny, g.nz)), poses, g, d, backend="cuda")
+        project_joseph(np.zeros((g.nz, g.ny, g.nx)), poses, g, d, backend="cuda")
 
 
 @pytest.mark.parametrize("interpolation", ["nearest", "CUBIC", "automatic"])
 def test_invalid_interpolation_is_rejected(interpolation):
     g, d, poses = problem()
-    x = np.zeros((g.nx, g.ny, g.nz), np.float32)
+    x = np.zeros((g.nz, g.ny, g.nx), np.float32)
     y = np.zeros((len(poses), d.nv, d.nu), np.float32)
     with pytest.raises(ValueError, match="interpolation"):
         project_joseph(x, poses, g, d, interpolation=interpolation)

@@ -262,8 +262,8 @@ def _projector_traversal_state(
 
 
 @jax.jit
-def _flat_index(ix, iy, iz, _nx, ny, nz):
-    return ix * (ny * nz) + iy * nz + iz
+def _flat_index(ix, iy, iz, nx, ny, _nz):
+    return iz * (ny * nx) + iy * nx + ix
 
 
 @jax.jit
@@ -320,7 +320,7 @@ def _trilinear_scatter_add(acc_flat, ray_vals, ix_f, iy_f, iz_f, nx, ny, nz):
             * jnp.where(oz == 0, 1.0 - wz, wz)
         )
         inb = (ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny) & (iz >= 0) & (iz < nz)
-        idx = jnp.where(inb, ix * (ny * nz) + iy * nz + iz, acc_flat.size)
+        idx = jnp.where(inb, iz * (ny * nx) + iy * nx + ix, acc_flat.size)
         return acc_flat.at[idx.ravel()].add((weight * ray_vals).ravel(), mode="drop")
     # Keep the transpose's per-corner casts for the mixed-precision contract.
     scatter = jax.linear_transpose(
@@ -602,7 +602,7 @@ def _backproject_rays(
         length=n_steps,
         unroll=unroll or 1,
     )
-    return carry_final[0].astype(jnp.float32).reshape((nx, ny, nz))
+    return carry_final[0].astype(jnp.float32).reshape((nz, ny, nx))
 
 
 def backproject_view_T(

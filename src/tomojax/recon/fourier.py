@@ -15,7 +15,7 @@ from tomojax.geometry import ParallelGeometry, grid_volume_origin
 from ._fourier_backend import FourierPlan, fourier_slab_depth, is_cuda_oom, resolve_fourier_backend
 from ._fourier_grid import sample_projection_rows, sorted_half_turn
 from ._fourier_rows import ProjectionRows, prepare_projection_rows
-from ._host_arrays import validate_host_arrays
+from ._host_arrays import empty_host_array, validate_host_arrays
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -46,6 +46,8 @@ class FourierConfig:
     row preparation, device transfers, FFT execution and output writes, retaining
     at most two pending device slabs. A bounded cache retains immutable
     geometry arrays; each call owns its working buffers.
+    Host transfer buffers use exact-sized pinned allocations. Upload staging is
+    reused after its copy completes; returned output slabs keep independent storage.
     Fractional detector rows are interpolated on CUDA from at most two measured
     source rows per requested slice; entire projection stacks are not uploaded.
 
@@ -89,8 +91,9 @@ def fourier_reconstruct(
     artifacts; no amplitude fitting, clipping or truncation correction is applied.
 
     Input and output stay in NumPy arrays or memmaps, with float32 output in
-    ``(nx, ny, nz)`` order. New outputs are C-contiguous for downstream volume
-    operations; supplied output storage is preserved.
+    ``(nz, ny, nx)`` order. New outputs are C-contiguous for downstream volume
+    operations, backed by owned demand-paged host storage; supplied output storage
+    is preserved.
     Their storage must not overlap. Completed slabs are
     written immediately, so a later failure may leave partial output. Input
     storage must remain unchanged during the call. This routine is not
@@ -101,7 +104,7 @@ def fourier_reconstruct(
     geometry : Geometry
         Scan geometry, including view angles and any per-view poses.
     grid : Grid
-        Reconstruction grid in ``(x, y, z)`` order, with physical voxel spacing.
+        Reconstruction grid with named physical dimensions and voxel spacing.
     detector : Detector
         Detector dimensions and placement in the same length unit as the grid.
     projections : array-like
@@ -109,13 +112,13 @@ def fourier_reconstruct(
     config : FourierConfig or None, optional
         Solver settings. None uses FourierConfig defaults.
     out : numpy.ndarray or None, optional
-        Writable float32 host storage of shape ``(nx, ny, nz)``, including a memmap.
+        Writable float32 host storage of shape ``(nz, ny, nx)``, including a memmap.
         Must not overlap input storage. None allocates a new output.
 
     Returns
     -------
     numpy.ndarray
-        Float32 reconstruction of shape ``(nx, ny, nz)``. Returns out itself when supplied.
+        Float32 reconstruction of shape ``(nz, ny, nx)``. Returns out itself when supplied.
 
     Raises
     ------
@@ -132,15 +135,16 @@ def fourier_reconstruct(
     >>> grid = tj.Grid(4, 4, 1, 1.0, 1.0, 1.0)
     >>> detector = tj.Detector(4, 1, 1.0, 1.0)
     >>> geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 8, endpoint=False))
-    >>> data = project(geometry, np.ones((4, 4, 1), np.float32))
+    >>> data = project(geometry, np.ones((1, 4, 4), np.float32))
     >>> volume = fourier_reconstruct(geometry, geometry.grid, geometry.detector, np.asarray(data))
     >>> volume.shape
-    (4, 4, 1)
+    (1, 4, 4)
     """
     require_parallel_beam(geometry, "fourier_reconstruct")
     cfg = FourierConfig() if config is None else config
     backend = resolve_fourier_backend(cfg.backend)
-    shape = validate_grid(grid, "fourier_reconstruct grid")
+    nx, ny, nz = validate_grid(grid, "fourier_reconstruct grid")
+    shape = (nz, ny, nx)
     nviews, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fourier_reconstruct projections"
     )
@@ -150,8 +154,9 @@ def fourier_reconstruct(
     order, flipped, angles = sorted_half_turn(np.asarray(geometry.angles))
     plan_detector, shifts, positions = _sampling_coordinates(geometry, grid, detector, order)
     depth = fourier_slab_depth(grid, plan_detector, cfg.slices_per_batch, backend)
-    output = validate_host_arrays(projections, out, shape, "fourier_reconstruct")
-    transpose_download = backend == "cupy" and output.flags.f_contiguous
+    output = validate_host_arrays(
+        projections, out, shape, "fourier_reconstruct", allocate=empty_host_array
+    )
     host_bytes = 4 * (grid.nx * grid.ny * grid.nz + nviews * detector.nu * grid.nz)
 
     def prepare(start: int) -> np.ndarray | ProjectionRows:
@@ -162,8 +167,7 @@ def fourier_reconstruct(
         stop = min(start + depth, grid.nz)
         if not np.isfinite(volume).all():
             raise ValueError("fourier_reconstruct: reconstructed slab must be finite in FP32")
-        axes = (2, 1, 0) if transpose_download else (1, 2, 0)
-        output[:, :, start:stop] = volume.transpose(axes)
+        output[start:stop] = volume
 
     while True:
         try:
@@ -179,7 +183,6 @@ def fourier_reconstruct(
                 depth,
                 backend,
                 async_transfers=overlap,
-                transpose_download=transpose_download,
                 shifts=shifts,
             )
             if overlap:
@@ -296,7 +299,9 @@ def _run_host_pipeline(
         try:
             for start in range(0, nz, depth):
                 try:
+                    assert prepared is not None
                     data = prepared.result()
+                    prepared = None
                 except BaseException:
                     # A later invalid input must still commit completed slabs.
                     for first, job in pending:
@@ -307,6 +312,7 @@ def _run_host_pipeline(
                 if stop < nz:
                     prepared = reader.submit(prepare, stop)
                 pending.append((start, plan.enqueue(data, count=stop - start)))
+                del data
                 if len(pending) >= 2:
                     finish(*pending.pop(0))
             for first, job in pending:

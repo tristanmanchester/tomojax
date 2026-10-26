@@ -10,9 +10,9 @@ extern "C" __global__ void joseph_gather(
     long run = (long)blockIdx.x * blockDim.x + threadIdx.x;
     int runs_z = (nz + R - 1) / R;
     bool valid = run < (long)nx * ny * runs_z;
-    int ix = valid ? run / ((long)ny * runs_z) : 0;
-    int iy = valid ? (run / runs_z) % ny : 0;
-    int iz0 = valid ? R * (int)(run % runs_z) : 0;
+    int ix = valid ? run % nx : 0;
+    int iy = valid ? (run / nx) % ny : 0;
+    int iz0 = valid ? R * (int)(run / ((long)nx * ny)) : 0;
     float total[R];
     #pragma unroll
     for (int j = 0; j < R; ++j) total[j] = 0.f;
@@ -35,9 +35,9 @@ extern "C" __global__ void joseph_gather(
         }
     }
     if (valid) {
-        long base = ((long)ix * ny + iy) * nz + iz0;
+        long base = ((long)iz0 * ny + iy) * nx + ix;
         #pragma unroll
         for (int j = 0; j < R; ++j)
-            if (iz0 + j < nz) out[base + j] = initial[base+j] + total[j];
+            if (iz0 + j < nz) out[base + (long)j*nx*ny] = initial[base + (long)j*nx*ny] + total[j];
     }
 }

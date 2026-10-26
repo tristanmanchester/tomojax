@@ -33,7 +33,7 @@ from tomojax.recon import FourierConfig, fourier_reconstruct
 g, d = Grid(4, 4, 1, 1, 1, 1), Detector(4, 1, 1, 1)
 x = fourier_reconstruct(ParallelGeometry(g, d, [0., 90.]), g, d,
     np.zeros((2, 1, 4), np.float32), config=FourierConfig(backend='{backend}'),
-    out=np.empty((4, 4, 1), np.float32))
+    out=np.empty((1, 4, 4), np.float32))
 assert 'jax' not in sys.modules and np.all(x == 0)
 assert 'cupyx.scipy.fft' not in sys.modules
 assert 'cupyx.scipy.sparse' not in sys.modules
@@ -121,7 +121,7 @@ def test_fractional_pipeline_commits_completed_slabs_before_late_invalid_neighbo
     angles = np.linspace(0, 180, 17, endpoint=False)
     data, _ = physical_gaussian(grid, detector, angles)
     data[:, -1] = np.nan
-    out = np.full((grid.nx, grid.ny, grid.nz), np.nan, np.float32)
+    out = np.full((grid.nz, grid.ny, grid.nx), np.nan, np.float32)
     monkeypatch.setattr(implementation, "_HOST_PIPELINE_MIN_BYTES", 0)
     with pytest.raises(ValueError, match="sampled projection rows must be finite"):
         fourier_reconstruct(
@@ -132,8 +132,8 @@ def test_fractional_pipeline_commits_completed_slabs_before_late_invalid_neighbo
             config=FourierConfig(backend="cupy", slices_per_batch=4),
             out=out,
         )
-    assert np.isfinite(out[:, :, :12]).all()
-    assert np.isnan(out[:, :, 12]).all()
+    assert np.isfinite(out[:12]).all()
+    assert np.isnan(out[12]).all()
 
 
 @pytest.mark.parametrize("dtype", [np.float32, np.float64, np.int16])
@@ -357,7 +357,7 @@ def test_host_pipeline_matches_sequential_with_partial_slabs(monkeypatch, tmp_pa
             fortran_order=storage == "mapped_F",
         )
     elif storage == "strided":
-        out = np.empty((grid.nx * 2, grid.ny, grid.nz), dtype=np.float32)[::2]
+        out = np.empty((grid.nz * 2, grid.ny, grid.nx), dtype=np.float32)[::2]
     else:
         out = np.empty_like(expected)
     monkeypatch.setattr(implementation, "_HOST_PIPELINE_MIN_BYTES", 0)
@@ -379,7 +379,7 @@ def test_host_pipeline_finishes_completed_slabs_before_late_input_error(monkeypa
     angles = np.linspace(0, 180, 17, endpoint=False, dtype=np.float32)
     data, _ = physical_gaussian(grid, detector, angles)
     data[:, -1, :] = np.nan
-    out = np.full((grid.nx, grid.ny, grid.nz), np.nan, dtype=np.float32)
+    out = np.full((grid.nz, grid.ny, grid.nx), np.nan, dtype=np.float32)
     monkeypatch.setattr(implementation, "_HOST_PIPELINE_MIN_BYTES", 0)
     with pytest.raises(ValueError, match="sampled projection rows must be finite"):
         fourier_reconstruct(
@@ -390,8 +390,8 @@ def test_host_pipeline_finishes_completed_slabs_before_late_input_error(monkeypa
             config=FourierConfig(backend="cupy", slices_per_batch=4),
             out=out,
         )
-    assert np.isfinite(out[:, :, :12]).all()
-    assert np.isnan(out[:, :, 12]).all()
+    assert np.isfinite(out[:12]).all()
+    assert np.isnan(out[12]).all()
 
 
 @pytest.fixture(params=BACKENDS)
@@ -416,7 +416,7 @@ def physical_gaussian(grid, detector, angles, length_scale=1.0):
             strict=True,
         )
     ]
-    x, y, z = np.meshgrid(*coords, indexing="ij", sparse=True)
+    z, y, x = np.meshgrid(*coords[::-1], indexing="ij", sparse=True)
     truth = np.exp(
         -0.5
         * (
@@ -604,7 +604,10 @@ def test_detector_rows_zero_extend_and_ignore_unused_nonfinite_samples(row_grid)
     np.testing.assert_array_equal(rows[:, 0, 0], [0, 0, 3, 5, 7, 0, 0])
 
 
-def test_unmeasured_axial_slices_are_zero(backend):
+def test_unmeasured_axial_slices_are_zero(backend, monkeypatch):
+    import tomojax.recon.fourier as implementation
+
+    monkeypatch.setattr(implementation, "_HOST_PIPELINE_MIN_BYTES", 0)
     grid = Grid(9, 7, 5, 1.0, 1.0, 1.0)
     detector = Detector(9, 1, 1.0, 1.0)
     geometry = ParallelGeometry(grid, detector, np.arange(10) * 18)
@@ -612,8 +615,8 @@ def test_unmeasured_axial_slices_are_zero(backend):
     actual = fourier_reconstruct(
         geometry, grid, detector, data, config=FourierConfig(slices_per_batch=3, backend=backend)
     )
-    np.testing.assert_array_equal(actual[:, :, [0, 1, 3, 4]], 0)
-    assert np.linalg.norm(actual[:, :, 2]) > 0
+    np.testing.assert_array_equal(actual[[0, 1, 3, 4]], 0)
+    assert np.linalg.norm(actual[2]) > 0
 
 
 @pytest.mark.parametrize("invalid", [np.nan, np.inf, 1e300])
@@ -621,7 +624,7 @@ def test_nonfinite_sampled_rows_rejected_before_output_written(invalid):
     grid, detector, geometry, data, _ = scan()
     data = data.astype(np.float64)
     data[0, 3, 1] = invalid
-    output = np.full((grid.nx, grid.ny, grid.nz), 123, dtype=np.float32)
+    output = np.full((grid.nz, grid.ny, grid.nx), 123, dtype=np.float32)
     with np.errstate(over="ignore"), pytest.raises(ValueError, match="finite in FP32"):
         fourier_reconstruct(geometry, grid, detector, data, out=output)
     np.testing.assert_array_equal(output, 123)
@@ -632,7 +635,7 @@ def test_memmap_output_and_batch_size_independence(tmp_path, backend):
     source = np.memmap(tmp_path / "source.bin", dtype=np.float32, mode="w+", shape=data.shape)
     source[:] = data
     target = np.memmap(
-        tmp_path / "target.bin", dtype=np.float32, mode="w+", shape=(grid.nx, grid.ny, grid.nz)
+        tmp_path / "target.bin", dtype=np.float32, mode="w+", shape=(grid.nz, grid.ny, grid.nx)
     )
     actual = fourier_reconstruct(
         geometry,
@@ -657,10 +660,10 @@ def test_overlapping_storage_rejected_before_writing(tmp_path, mapped):
     geometry = ParallelGeometry(grid, detector, np.arange(5) * 36)
     if mapped:
         data = np.memmap(tmp_path / "same.bin", mode="w+", dtype=np.float32, shape=(5, 4, 3))
-        out = np.memmap(tmp_path / "same.bin", mode="r+", dtype=np.float32, shape=data.shape)
+        out = np.memmap(tmp_path / "same.bin", mode="r+", dtype=np.float32, shape=(3, 4, 5))
     else:
         data = np.ones((5, 4, 3), dtype=np.float32)
-        out = data.view()
+        out = data.reshape(3, 4, 5)
     data[:] = 123
     with pytest.raises(ValueError, match="overlap|separate files"):
         fourier_reconstruct(geometry, grid, detector, data, out=out)
@@ -682,7 +685,7 @@ def test_overlapping_storage_rejected_before_writing(tmp_path, mapped):
 )
 def test_invalid_inputs_rejected_before_output_written(invalid):
     grid, detector, geometry, data, _ = scan()
-    out = np.full((grid.nx, grid.ny, grid.nz), 123, dtype=np.float32)
+    out = np.full((grid.nz, grid.ny, grid.nx), 123, dtype=np.float32)
     config = FourierConfig()
     if invalid == "nonfinite":
         angles = np.asarray(geometry.angles).copy()
@@ -821,14 +824,14 @@ def dense_full_spectrum_reference(grid, detector, angles, data):
     values[:, 0, 0] = raw.astype(np.float64).sum(axis=-1).mean(axis=-1) * detector.du
     full = np.fft.ifft2(values, axes=(-2, -1)).real / (grid.vx * grid.vy)
     cropped = full[:, crop[0] : crop[0] + grid.nx, crop[1] : crop[1] + grid.ny]
-    return cropped.transpose(1, 2, 0).astype(np.float32)
+    return cropped.swapaxes(1, 2).astype(np.float32)
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
 @pytest.mark.parametrize("ny", [11, 13])
 @pytest.mark.parametrize("vx", [0.35, 1.3])
 def test_signed_profiles_match_a_dense_full_spectrum_reconstruction(backend, ny, vx):
-    # Signed rows have power at the x Nyquist bin, which a half-plane transform
+    # Signed rows have power at both Nyquist boundaries, which a half-plane transform
     # must project to a real image as the full transform does.
     if backend == "cupy":
         pytest.importorskip("cupy")

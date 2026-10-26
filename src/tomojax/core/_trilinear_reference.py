@@ -40,14 +40,14 @@ def _integrate_cell(volume, base, direction, current, length, derivatives):
                     jnp.where(offsets == 1, fraction, 1 - fraction) for fraction in fractions
                 ]
                 valid = jnp.all(
-                    (loc >= 0) & (loc < jnp.array(volume.shape, jnp.int32)[:, None]), axis=0
+                    (loc >= 0) & (loc < jnp.array(volume.shape[::-1], jnp.int32)[:, None]), axis=0
                 )
                 sample = jnp.where(
                     valid,
                     volume[
-                        jnp.clip(loc[0], 0, volume.shape[0] - 1),
+                        jnp.clip(loc[2], 0, volume.shape[0] - 1),
                         jnp.clip(loc[1], 0, volume.shape[1] - 1),
-                        jnp.clip(loc[2], 0, volume.shape[2] - 1),
+                        jnp.clip(loc[0], 0, volume.shape[2] - 1),
                     ],
                     0,
                 )
@@ -88,8 +88,8 @@ def integrate(pose, grid, detector, volume, det_grid, *, derivatives=False):
     moving = jnp.abs(direction) > 1e-12
     safe_direction = jnp.where(moving, direction, 1)
     lower = (-1 - base) / safe_direction
-    upper = (jnp.array(volume.shape, jnp.int32)[:, None] - base) / safe_direction
-    inside = (base >= -1) & (base <= jnp.array(volume.shape, jnp.int32)[:, None])
+    upper = (jnp.array(volume.shape[::-1], jnp.int32)[:, None] - base) / safe_direction
+    inside = (base >= -1) & (base <= jnp.array(volume.shape[::-1], jnp.int32)[:, None])
     first = jnp.where(moving, jnp.minimum(lower, upper), jnp.where(inside, -jnp.inf, jnp.inf))
     last = jnp.where(moving, jnp.maximum(lower, upper), jnp.where(inside, jnp.inf, -jnp.inf))
     entry, t_exit = jnp.max(first, axis=0), jnp.min(last, axis=0)

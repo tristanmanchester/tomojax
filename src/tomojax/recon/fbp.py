@@ -111,7 +111,7 @@ def validate_fbp_geometry(
     geometry: Geometry, grid: Grid, detector: Detector, scale: float | None, context: str
 ) -> tuple[int, int, int]:
     """Check the grid, placement, scale and angles before reading projections or poses."""
-    shape = validate_grid(grid, f"{context} grid")
+    nx, ny, nz = validate_grid(grid, f"{context} grid")
     if scale is not None and not math.isfinite(scale):
         raise ValueError(f"{context}: scale must be finite")
     if not np.isfinite([*grid_volume_origin(grid), *detector.center]).all():
@@ -119,7 +119,7 @@ def validate_fbp_geometry(
     thetas = getattr(geometry, "angles", None)
     if thetas is not None and not np.isfinite(np.asarray(thetas)).all():
         raise ValueError(f"{context}: angles must be finite")
-    return shape
+    return nz, ny, nx
 
 
 def _bilinear_detector(image: jnp.ndarray, u: jnp.ndarray, v: jnp.ndarray) -> jnp.ndarray:
@@ -145,9 +145,9 @@ def _backproject_voxels_jax(
 ) -> jnp.ndarray:
     """Sum views at each voxel centre's detector position, for any rigid poses."""
     ox, oy, oz = grid_volume_origin(grid)
-    x = (jnp.arange(grid.nx, dtype=jnp.float32) * grid.vx + ox)[:, None, None]
+    x = (jnp.arange(grid.nx, dtype=jnp.float32) * grid.vx + ox)[None, None, :]
     y = (jnp.arange(grid.ny, dtype=jnp.float32) * grid.vy + oy)[None, :, None]
-    z = (jnp.arange(grid.nz, dtype=jnp.float32) * grid.vz + oz)[None, None, :]
+    z = (jnp.arange(grid.nz, dtype=jnp.float32) * grid.vz + oz)[:, None, None]
     cu, cv = detector.center
 
     def body(
@@ -161,7 +161,7 @@ def _backproject_voxels_jax(
         v = (world_z - cv) / detector.dv + ((detector.nv - 1) % 2) / 2.0
         return accum + _bilinear_detector(image, u, v), None
 
-    init = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+    init = jnp.zeros((grid.nz, grid.ny, grid.nx), dtype=jnp.float32)
     return jax.lax.scan(body, init, (poses, filtered))[0]
 
 
@@ -313,7 +313,7 @@ def _run_fbp_streamed(
         0,
         (n + b - 1) // b,
         step,
-        jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32),
+        jnp.zeros((grid.nz, grid.ny, grid.nx), dtype=jnp.float32),
     )
 
 
@@ -506,7 +506,7 @@ def _fbp_from_host(
             ]
         return tuple(jax.device_put(np.asarray(a, np.float32)) for a in arrays)
 
-    accum = jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
+    accum = jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32)
     pending = batch(0)
     for start in range(0, n, b):
         current = pending
@@ -568,7 +568,7 @@ def run_parallel_fbp_direct_cuda(
     Returns
     -------
     jax.Array
-        Unscaled float32 backprojection of shape ``(nx, ny, nz)``. Angular
+        Unscaled float32 backprojection of shape ``(nz, ny, nx)``. Angular
         quadrature weights have not been applied.
 
     Raises
@@ -798,7 +798,7 @@ def fbp(
     Cone-beam geometries are reconstructed with :func:`tomojax.recon.fdk.fdk`
     using the same filter; ``backend="cuda"`` selects its CUDA kernel.
 
-    Projections: (n_views, nv, nu) -> attenuation volume (nx, ny, nz).
+    Projections: (n_views, nv, nu) -> attenuation volume (nz, ny, nx).
     The rotation axis, arc and angular spacing are fitted from the view poses,
     so tilted (laminography) axes, partial or full turns and irregular angles
     are weighted exactly on every measured frequency. Repeated directions
@@ -816,7 +816,7 @@ def fbp(
     geometry : Geometry
         Scan geometry, including view angles and any per-view poses.
     grid : Grid
-        Reconstruction grid in ``(x, y, z)`` order, with physical voxel spacing.
+        Reconstruction grid with named physical dimensions and voxel spacing.
     detector : Detector
         Detector dimensions and placement in the same length unit as the grid.
     projections : array-like
@@ -830,7 +830,7 @@ def fbp(
     Returns
     -------
     jax.Array
-        Float32 reconstruction of shape ``(nx, ny, nz)``.
+        Float32 reconstruction of shape ``(nz, ny, nx)``.
 
     Raises
     ------
@@ -845,10 +845,10 @@ def fbp(
     >>> grid = tj.Grid(4, 4, 1, 1.0, 1.0, 1.0)
     >>> detector = tj.Detector(4, 1, 1.0, 1.0)
     >>> geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 8, endpoint=False))
-    >>> data = project(geometry, np.ones((4, 4, 1), np.float32))
+    >>> data = project(geometry, np.ones((1, 4, 4), np.float32))
     >>> volume = fbp(geometry, geometry.grid, geometry.detector, np.asarray(data))
     >>> volume.shape
-    (4, 4, 1)
+    (1, 4, 4)
     """
     cfg = FBPConfig() if config is None else config
     if cfg.backend not in ("auto", "jax", "cuda"):

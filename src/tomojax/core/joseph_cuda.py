@@ -23,11 +23,11 @@ class JosephCUDA:
         import cupy as cp
 
         self.cp = cp
-        self.shape = (grid.nx, grid.ny, grid.nz)
+        self.shape = (grid.nz, grid.ny, grid.nx)
         self.image_shape = (len(poses), detector.nv, detector.nu)
         self.batch = min(int(views_per_batch), len(poses))
         self.coeff = cp.asarray(coefficients(poses, grid, detector, xp=np))
-        self.args = tuple(np.int32(n) for n in (*self.shape, detector.nu, detector.nv))
+        self.args = tuple(np.int32(n) for n in (*self.shape[::-1], detector.nu, detector.nv))
         self.forward_kernel = forward_kernel(narrow=grid.nx * grid.ny * grid.nz < 2**31)
         self.gather_kernel = gather_kernel()
 
@@ -37,7 +37,7 @@ class JosephCUDA:
         volume = cp.ascontiguousarray(volume, dtype=cp.float32)
         n, nv, nu = self.image_shape
         out = cp.empty(self.image_shape, cp.float32)
-        tiles = -(-nu // 8) * -(-nv // 16)
+        tiles = -(-nu // 128) * nv
         # Interleave nearby views for volume-cache reuse; a flat grid avoids
         # CUDA's grid.y limit for large detectors.
         for first in range(0, n, 64):
@@ -59,7 +59,7 @@ class JosephCUDA:
         """Apply the exact transpose, using bounded per-batch detector scratch."""
         cp = self.cp
         out = cp.zeros(self.shape, cp.float32)
-        nx, ny, nz = self.shape
+        nz, ny, nx = self.shape
         runs = nx * ny * -(-nz // RUN)
         for first in range(0, self.image_shape[0], self.batch):
             stop = min(first + self.batch, self.image_shape[0])

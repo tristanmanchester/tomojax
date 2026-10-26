@@ -106,9 +106,9 @@ def forward_jax(
                 )
                 valid = (k < na) & (b >= 0) & (b < nb) & (c >= 0) & (c < nc)
                 value = volume[
-                    jnp.clip(ix, 0, shape[0] - 1),
-                    jnp.clip(iy, 0, shape[1] - 1),
                     jnp.clip(iz, 0, shape[2] - 1),
+                    jnp.clip(iy, 0, shape[1] - 1),
+                    jnp.clip(ix, 0, shape[0] - 1),
                 ]
                 return jnp.where(valid, value, 0.0)
 
@@ -150,7 +150,7 @@ def adjoint_jax(
     absolute_weights: bool = False,
 ) -> jax.Array:
     """Reference transpose; ``absolute_weights`` selects abs(A).T for bounds."""
-    zero = jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
+    zero = jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32)
     return jax.linear_transpose(
         lambda x: forward_jax(
             coefficients,

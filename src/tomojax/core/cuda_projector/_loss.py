@@ -173,7 +173,7 @@ def forward_project_loss_and_grad_T_cuda(
         weights_arr,
         grad_init,
     )
-    return jnp.sum(partial_loss, dtype=jnp.float32), grad_flat.reshape((int(nx), int(ny), int(nz)))
+    return jnp.sum(partial_loss, dtype=jnp.float32), grad_flat.reshape((int(nz), int(ny), int(nx)))
 
 
 @functools.lru_cache(maxsize=32)

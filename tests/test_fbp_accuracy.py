@@ -47,7 +47,7 @@ def test_fbp_reconstructs_analytic_gaussian_in_physical_units(spacing: float, nu
     projections = jnp.asarray(np.broadcast_to(profile, (n_views, 1, nu)), dtype=jnp.float32)
     expected = np.exp(-(x[:, None] ** 2 + x[None, :] ** 2) / (2.0 * sigma**2))
 
-    actual = np.asarray(fbp(geometry, grid, detector, projections))[:, :, 0]
+    actual = np.asarray(fbp(geometry, grid, detector, projections))[0]
 
     nrmse = np.linalg.norm(actual - expected) / np.linalg.norm(expected)
     assert nrmse < 0.01
@@ -87,11 +87,11 @@ def test_fbp_keeps_filtered_tails_at_shifted_volume_corners(
     weights = np.deg2rad([31.0, 58.5, 86.0])
     if backend == "helper":
         weights = np.full(3, np.pi / len(angles))
-    expected = np.zeros((9, 7), dtype=np.float64)
+    expected = np.zeros((7, 9), dtype=np.float64)
     outside_samples = 0
     for angle, row, view_weight in zip(angles, data[:, 0], weights, strict=True):
         radians = np.deg2rad(float(angle))
-        u = np.cos(radians) * x[:, None] - np.sin(radians) * y[None, :]
+        u = np.cos(radians) * x[None, :] - np.sin(radians) * y[:, None]
         if backend == "helper":
             u += 2.2
         pixel = (u - 0.27) / 0.7 + (nu - 1) / 2
@@ -113,10 +113,10 @@ def test_fbp_keeps_filtered_tails_at_shifted_volume_corners(
         poses[:, 0, 3] = 2.2
         actual = np.asarray(
             run_parallel_fbp_direct_cuda(poses, data, grid=grid, detector=detector, filter="ramp")
-        )[:, :, 0] * (np.pi / len(angles))
+        )[0] * (np.pi / len(angles))
     else:
         actual = np.asarray(fbp(geometry, grid, detector, data, config=FBPConfig(backend=backend)))[
-            :, :, 0
+            0
         ]
     np.testing.assert_allclose(actual, expected, rtol=4e-5, atol=2e-6)
 
@@ -323,8 +323,8 @@ def test_fbp_tiles_recover_independent_off_axis_gaussian(vz, n, nz, nu):
     profile = np.sqrt(2 * np.pi) * sx * sy / np.sqrt(variance[:, None])
     profile = profile * np.exp(-0.5 * (u[None, :] - mean[:, None]) ** 2 / variance[:, None])
     data = (profile[:, None, :] * np.exp(-0.5 * (v / sz) ** 2)[None, :, None]).astype(np.float32)
-    truth = np.exp(-0.5 * (((x[:, None] - 100) / sx) ** 2 + ((y[None, :] + 70) / sy) ** 2))
-    truth = truth[:, :, None] * np.exp(-0.5 * (z / sz) ** 2)[None, None, :]
+    truth = np.exp(-0.5 * (((x[None, :] - 100) / sx) ** 2 + ((y[:, None] + 70) / sy) ** 2))
+    truth = truth[None, :, :] * np.exp(-0.5 * (z / sz) ** 2)[:, None, None]
     actual = np.asarray(fbp(geometry, grid, detector, data))
     assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.008
 
@@ -371,8 +371,8 @@ def test_fbp_interpolation_preserves_physical_fractions_under_zero_padding(
             (grid.nx, grid.ny, grid.nz), (grid.vx, grid.vy, grid.vz), grid.vol_center, strict=True
         )
     ]
-    xyz = np.stack(np.meshgrid(*coordinates, indexing="ij"))
-    expected = np.zeros((grid.nx, grid.ny, grid.nz))
+    xyz = np.stack(np.meshgrid(*coordinates[::-1], indexing="ij")[::-1])
+    expected = np.zeros((grid.nz, grid.ny, grid.nx))
     for pose, image in zip(poses, filtered, strict=True):
         world = np.einsum("ij,jxyz->ixyz", pose[:3, :3].astype(np.float64), xyz)
         world += pose[:3, 3, None, None, None]
@@ -432,7 +432,7 @@ def test_cuda_fbp_partial_blocks_and_accumulation(mode, run, nz, first_row):
         poses = poses.at[:, 0, 2].set(0.02).at[:, 2, 0].set(-0.02)
     rng = np.random.default_rng(18)
     filtered = jnp.asarray(rng.normal(size=(129, 20, 11)), dtype=jnp.float32)
-    offset = jnp.asarray(rng.normal(size=(17, 9, nz)), dtype=jnp.float32)
+    offset = jnp.asarray(rng.normal(size=(nz, 9, 17)), dtype=jnp.float32)
     expected = jax.jit(
         lambda rows: _backproject_voxels_jax(poses, rows, grid=grid, detector=detector)
     )(filtered)

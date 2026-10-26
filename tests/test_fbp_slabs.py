@@ -39,14 +39,14 @@ def test_owned_fbp_slabs_keep_measured_rows_and_physical_geometry(kind, backend)
 
     with closing(reconstruct_slabs("fbp", geometry, grid, detector, read, config=cfg)) as output:
         collected = list(output)
-    actual = np.concatenate([item.volume for item in collected], axis=2)
+    actual = np.concatenate([item.volume for item in collected], axis=0)
     np.testing.assert_allclose(actual, expected, atol=4e-6, rtol=5e-5)
     assert collected[-1].stop == grid.nz
     assert max(item.stop - item.start for item in collected) <= 8
     for item in collected:
         assert item.context == (item.rows.start, item.rows.stop)
         np.testing.assert_array_equal(item.projections, data[:, item.rows])
-        assert item.volume.dtype == np.float32 and item.volume.flags.f_contiguous
+        assert item.volume.dtype == np.float32 and item.volume.flags.c_contiguous
 
 
 @pytest.mark.parametrize("backend", BACKENDS)

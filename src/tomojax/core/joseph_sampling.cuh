@@ -13,7 +13,7 @@ __device__ __forceinline__ float joseph_sample(
     int ix = a == 0 ? k : (a == 1 ? c : b);
     int iy = a == 0 ? b : (a == 1 ? k : c);
     int iz = a == 0 ? c : (a == 1 ? b : k);
-    return x[((long)ix * ny + iy) * nz + iz];
+    return x[((long)iz * ny + iy) * nx + ix];
 }
 
 __device__ __forceinline__ void joseph_cubic_weights(float t, float* w, float* d) {

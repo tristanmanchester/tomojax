@@ -58,7 +58,7 @@ def columns(
                         grid.nx,
                         grid.ny,
                         grid.nz,
-                        *volume.shape,
+                        *volume.shape[::-1],
                         *region.volume_origin,
                         nu,
                         nv,
@@ -89,8 +89,8 @@ def adjoint(
     views, nv, nu = images.shape
     v0, u0 = region.detector_origin
     shape = initial.shape
-    run = min(shape[-1], 4)
-    runs = shape[0] * shape[1] * (-(-shape[2] // run))
+    run = min(shape[0], 4)
+    runs = shape[2] * shape[1] * (-(-shape[0] // run))
     text = source(
         "region",
         CUBIC=int(region.interpolation == "cubic"),
@@ -117,7 +117,7 @@ def adjoint(
                     np.int32,
                     (
                         views,
-                        *shape,
+                        *shape[::-1],
                         *region.volume_origin,
                         region.detector.nu,
                         region.detector.nv,

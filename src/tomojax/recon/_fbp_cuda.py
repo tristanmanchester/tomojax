@@ -17,7 +17,7 @@ _SOURCE = r"""
 __device__ __forceinline__ float sample(
     const float* image, int u, int v, int nu, int nv) {
     return (unsigned)u < (unsigned)nu && (unsigned)v < (unsigned)nv
-        ? image[(long)u * nv + v] : 0.f;
+        ? image[(long)v * nu + u] : 0.f;
 }
 
 extern "C" __global__ void backproject(
@@ -33,7 +33,7 @@ extern "C" __global__ void backproject(
     #pragma unroll
     for (int j = 0; j < RUN; ++j) {
         long index = first + j * blockDim.x;
-        int iz = index % nz, iy = (index / nz) % ny, ix = index / ((long)ny * nz);
+        int ix = index % nx, iy = (index / nx) % ny, iz = index / ((long)ny * nx);
         x[j] = (float)ix * vx + ox;
         y[j] = (float)iy * vy + oy;
         z[j] = (float)iz * vz + oz;
@@ -93,60 +93,47 @@ extern "C" __global__ void backproject(
 }
 """
 
-_VECTOR_SOURCE = r"""
-extern "C" __global__ void backproject_vec4(
-    const float* __restrict__ poses, const float4* __restrict__ images,
-    const float4* initial, float4* out, int nviews)
+_AXIAL_SOURCE = r"""
+// Threads span contiguous x; each shares one u interpolation across a z run.
+extern "C" __global__ void backproject_axial(
+    const float* __restrict__ poses, const float* __restrict__ images,
+    const float* initial, float* out, int nviews)
 {
     __shared__ float cf[32 * 16];
-    constexpr int R = (RUN+3)/4;
-    long count = (long)nx * ny * (nz/4);
-    long first = (long)blockIdx.x * blockDim.x * R + threadIdx.x;
-    float x[R], y[R], total[R][4] = {};
-    int iv[R];
-    #pragma unroll
-    for (int j = 0; j < R; ++j) {
-        long index = first + j * blockDim.x;
-        int iz = index % (nz/4), iy = (index / (nz/4)) % ny, ix = index / ((long)ny * (nz/4));
-        x[j] = (float)ix * vx + ox;
-        y[j] = (float)iy * vy + oy;
-        iv[j] = FIRST_ROW/4 + iz;
-    }
+    long xy = (long)blockIdx.x * blockDim.x + threadIdx.x;
+    long plane = (long)nx * ny;
+    int ix = xy % nx, iy = xy / nx, z = blockIdx.y * RUN;
+    float x = (float)ix * vx + ox, y = (float)iy * vy + oy;
+    float total[RUN] = {};
     for (int start = 0; start < nviews; start += 32) {
         __syncthreads();
         for (int i = threadIdx.x; i < 32 * 16; i += blockDim.x)
             cf[i] = start * 16 + i < nviews * 16 ? poses[start * 16 + i] : 0.f;
         __syncthreads();
-        int stop = min(32, nviews-start);
-        for (int view = 0; view < stop; ++view) {
+        for (int view = 0; view < min(32, nviews - start); ++view) {
             const float* p = cf + view * 16;
-            const float4* image = images + (long)(start+view)*nu*(nv/4);
+            float wx = (p[0] * x + p[1] * y) + p[3];
+            float u = (wx - cu) * (1.f / du) + (float)((nu - 1) % 2) * .5f;
+            float lower = floorf(u), wu = u - lower;
+            int iu = (int)lower + (nu - 1) / 2;
+            const float* image = images + (long)(start + view) * nu * nv;
             #pragma unroll
-            for (int j = 0; j < R; ++j) {
-                float wx = (p[0]*x[j] + p[1]*y[j]) + p[3];
-                float u = (wx-cu)*(1.f/du) + (float)((nu-1)%2)*.5f;
-                float lower=floorf(u), wu=u-lower;
-                int iu=(int)lower+(nu-1)/2, v=iv[j];
-                float4 a = {}, b = {};
-                if ((unsigned)v < nv/4) {
-                    if ((unsigned)iu < nu) a=image[(long)iu*(nv/4)+v];
-                    if ((unsigned)(iu+1) < nu) b=image[(long)(iu+1)*(nv/4)+v];
+            for (int j = 0; j < RUN; ++j) {
+                int v = FIRST_ROW + z + j;
+                float a = 0.f, b = 0.f;
+                if ((unsigned)v < nv) {
+                    if ((unsigned)iu < nu) a = image[(long)v * nu + iu];
+                    if ((unsigned)(iu + 1) < nu) b = image[(long)v * nu + iu + 1];
                 }
-                total[j][0] += a.x*(1.f-wu)+b.x*wu;
-                total[j][1] += a.y*(1.f-wu)+b.y*wu;
-                total[j][2] += a.z*(1.f-wu)+b.z*wu;
-                total[j][3] += a.w*(1.f-wu)+b.w*wu;
+                total[j] += a * (1.f - wu) + b * wu;
             }
         }
     }
-    #pragma unroll
-    for (int j = 0; j < R; ++j) {
-        long index=first+j*blockDim.x;
-        if (index<count) {
-            float4 a = {};
-            if (ACCUMULATE) a=initial[index];
-            out[index]=make_float4(total[j][0]+a.x,total[j][1]+a.y,
-                                   total[j][2]+a.z,total[j][3]+a.w);
+    if (xy < plane) {
+        #pragma unroll
+        for (int j = 0; j < RUN; ++j) {
+            long index = (long)(z + j) * plane + xy;
+            if (z + j < nz) out[index] = total[j] + (ACCUMULATE ? initial[index] : 0.f);
         }
     }
 }
@@ -155,7 +142,7 @@ extern "C" __global__ void backproject_vec4(
 
 @cache
 def _source(
-    grid: Grid, detector: Detector, mode: int, run: int, *, accumulate: bool, vector: bool
+    grid: Grid, detector: Detector, mode: int, run: int, *, accumulate: bool, axial: bool
 ) -> str:
     integers = {"nx": grid.nx, "ny": grid.ny, "nz": grid.nz, "nu": detector.nu, "nv": detector.nv}
     ox, oy, oz = grid_volume_origin(grid)
@@ -180,18 +167,20 @@ def _source(
         constants
         + f"#define MODE {mode}\n#define RUN {run}\n#define ACCUMULATE {int(accumulate)}\n"
         + f"#define FIRST_ROW {first_row}\n"
-        + (_VECTOR_SOURCE if vector else _SOURCE)
+        + (_AXIAL_SOURCE if axial else _SOURCE)
     )
 
 
-def _launch(context, out, poses, images, *initial: Any, grid, detector, mode, run, vector):
+def _launch(context, out, poses, images, *initial: Any, grid, detector, mode, run, axial):
     count = grid.nx * grid.ny * grid.nz
     launch_kernel(
-        _source(grid, detector, mode, run, accumulate=bool(initial), vector=vector),
-        "backproject_vec4" if vector else "backproject",
+        _source(grid, detector, mode, run, accumulate=bool(initial), axial=axial),
+        "backproject_axial" if axial else "backproject",
         options=("--fmad=false",),
         stream=context.stream,
-        grid=(-(-count // (128 * (4 * -(-run // 4) if vector else run))),),
+        grid=(-(-(grid.nx * grid.ny) // 128), -(-grid.nz // run))
+        if axial
+        else (-(-count // (128 * run)),),
         block=(128,),
         arguments=(poses, images, initial[0] if initial else out, out, np.int32(poses.shape[0])),
     )
@@ -211,24 +200,17 @@ def backproject_filtered_cuda(
     mode = {"integer": 0, "fixed": 1, "general": 2}[z_mode]
     first = (grid_volume_origin(grid)[2] - detector.center[1]) / detector.dv
     first += (detector.nv - 1) / 2
-    vector = (
-        mode == 0
-        and grid.nz % 4 == 0
-        and detector.nv % 4 == 0
-        and grid.vz == detector.dv
-        and abs(first - round(first)) <= 1e-5
-        and round(first) % 4 == 0
-    )
+    axial = mode == 0 and grid.vz == detector.dv and abs(first - round(first)) <= 1e-5
     if run is None:
         run = 16 if mode == 0 and grid.nx * grid.ny * grid.nz >= 16 * 1024**2 else 4
-    shape = (grid.nx, grid.ny, grid.nz)
+    shape = (grid.nz, grid.ny, grid.nx)
     call = buffer_callback(
-        partial(_launch, grid=grid, detector=detector, mode=mode, run=run, vector=vector),
+        partial(_launch, grid=grid, detector=detector, mode=mode, run=run, axial=axial),
         jax.ShapeDtypeStruct(shape, jnp.float32),
         input_output_aliases={2: 0} if accumulate is not None else {},
         vmap_method="sequential",
     )
-    operands = [poses, filtered.transpose(0, 2, 1)]
+    operands = [poses, filtered]
     if accumulate is not None:
         operands.append(accumulate)
     return call(*operands)

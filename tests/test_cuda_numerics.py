@@ -40,7 +40,7 @@ def test_partial_detector_tiles_match_reference(
     )
     poses = jnp.asarray([geometry.pose_for_view(i) for i in range(2)], dtype=jnp.float32)
     rng = np.random.default_rng(731)
-    volume = jnp.asarray(rng.normal(size=(6, 5, 3)), dtype=jnp.float32)
+    volume = jnp.asarray(rng.normal(size=(3, 5, 6)), dtype=jnp.float32)
     target = jnp.asarray(rng.normal(size=(2, 7, 9)), dtype=jnp.float32)
     options = cuda.CudaProjectorOptions(
         interpret=interpret,
@@ -87,7 +87,7 @@ def test_auto_variant_preserves_small_geometry_effects(interpret: bool, near_int
         detector = Detector(4, 1001, 1.0, 1.000009, (0.0, 0.0045))
     pose = jnp.asarray(pose)
     volume = jnp.asarray(
-        np.random.default_rng(17).normal(size=(grid.nx, grid.ny, grid.nz)), dtype=jnp.float32
+        np.random.default_rng(17).normal(size=(grid.nz, grid.ny, grid.nx)), dtype=jnp.float32
     )
     options = cuda.CudaProjectorOptions(
         interpret=interpret, step_size=0.8, tile_shape=(4, 4), num_warps=1
@@ -115,7 +115,7 @@ def test_sampler_zero_extension_matches_scipy(interpret, shape, dtype, integer_z
         axes[2] = [-2, -1, 0, 1, 2, shape[2] - 1, shape[2], shape[2] + 1]
     coords = np.asarray(np.meshgrid(*axes, indexing="ij"), dtype=np.float32).reshape(3, -1)
     active = np.arange(coords.shape[1]) % 11 != 0
-    volume = jnp.asarray(np.random.default_rng(271).normal(size=shape), dtype=dtype)
+    volume = jnp.asarray(np.random.default_rng(271).normal(size=shape[::-1]), dtype=dtype)
 
     count = coords.shape[1]
     params = dict(zip(("nx", "ny", "nz"), shape, strict=True))
@@ -137,7 +137,7 @@ def test_sampler_zero_extension_matches_scipy(interpret, shape, dtype, integer_z
     )
     actual = sampled_run(jnp.zeros((1, 1)), volume, mode=0, params=params, state=state).ravel()
     expected = map_coordinates(
-        np.asarray(volume, dtype=np.float32), coords, order=1, mode="grid-constant", cval=0
+        np.asarray(volume, dtype=np.float32), coords[::-1], order=1, mode="grid-constant", cval=0
     )
     np.testing.assert_allclose(actual, np.where(active, expected, 0), rtol=2e-6, atol=2e-7)
 
@@ -155,7 +155,7 @@ def test_weighted_fused_loss_gradient_matches_autodiff(interpret, layout, unroll
     poses = poses.at[1, :3, 3].set(jnp.array([0.2, -0.3, 0.4]))
     poses = poses.at[2, 0, 3].set(100.0)  # Entire view misses the volume.
     rng = np.random.default_rng(641)
-    volume = jnp.asarray(rng.normal(size=(5, 4, 3)), dtype=jnp.float32)
+    volume = jnp.asarray(rng.normal(size=(3, 4, 5)), dtype=jnp.float32)
     target = jnp.asarray(rng.normal(size=(3, 5, 7)), dtype=jnp.float32)
     weights = jnp.array([0.5, 1.7, 0.8], dtype=jnp.float32)[:, None, None]
 
@@ -195,7 +195,7 @@ def test_empty_ray_tiles_produce_zero_projection(interpret, state_mode, unroll) 
     grid = Grid(3, 4, 2, 0.8, 1.1, 1.3)
     detector = Detector(5, 3, 0.7, 1.2)
     pose = jnp.eye(4, dtype=jnp.float32).at[0, 3].set(100.0)
-    volume = jnp.ones((3, 4, 2), dtype=jnp.float32)
+    volume = jnp.ones((2, 4, 3), dtype=jnp.float32)
     options = cuda.CudaProjectorOptions(
         interpret=interpret,
         state_mode=state_mode,
@@ -226,7 +226,7 @@ def test_backprojection_replays_shifted_detector_rays(interpret, layout, unroll)
     pose = jnp.asarray(geometry.pose_for_view(0), dtype=jnp.float32)
     pose = pose.at[:3, 3].set(jnp.array([0.2, -0.3, 0.4]))
     image = jnp.asarray(np.random.default_rng(641).normal(size=(5, 7)), dtype=jnp.float32)
-    volume = jnp.zeros((5, 4, 3), dtype=jnp.float32)
+    volume = jnp.zeros((3, 4, 5), dtype=jnp.float32)
     expected = jax.jit(
         jax.grad(
             lambda x: jnp.vdot(
@@ -252,7 +252,7 @@ def test_backprojection_replays_shifted_detector_rays(interpret, layout, unroll)
 def test_prepared_stack_reuses_launch_without_capturing_ray_arrays(caplog) -> None:
     grid, detector = Grid(4, 4, 3, 1, 1, 1), Detector(5, 3, 1, 1)
     pose = jnp.eye(4, dtype=jnp.float32)
-    volume = jnp.arange(48, dtype=jnp.float32).reshape(4, 4, 3)
+    volume = jnp.arange(48, dtype=jnp.float32).reshape(3, 4, 4)
     options = cuda.CudaProjectorOptions(interpret=True, tile_shape=(2, 4), num_warps=1)
     bound = cuda.bind_forward_project_views_T_cuda(pose[None], grid, detector, options=options)
     # The first CUDA trace lazily registers a JAX tracing context.
@@ -275,7 +275,7 @@ def test_prepared_stack_reuses_launch_without_capturing_ray_arrays(caplog) -> No
 def test_inline_launch_reuses_compilation_with_new_poses(kind, caplog) -> None:
     grid, detector = Grid(4, 4, 3, 1, 1, 1), Detector(5, 3, 1, 1)
     poses = jnp.broadcast_to(jnp.eye(4, dtype=jnp.float32), (2, 4, 4))
-    volume = jnp.arange(48, dtype=jnp.float32).reshape(4, 4, 3)
+    volume = jnp.arange(48, dtype=jnp.float32).reshape(3, 4, 4)
     target = jnp.ones((2, 3, 5), dtype=jnp.float32)
     options = cuda.CudaProjectorOptions(interpret=True, tile_shape=(2, 4), num_warps=1)
 
@@ -309,7 +309,7 @@ def test_sampled_cuda_accumulates_without_mutating_initial(mode) -> None:
         pytest.skip("requires a CUDA GPU")
     grid, detector = Grid(4, 3, 2, 1, 1, 1), Detector(5, 3, 1, 1)
     poses = jnp.eye(4, dtype=jnp.float32)[None]
-    volume = jnp.arange(24, dtype=jnp.float32).reshape(4, 3, 2) / 24
+    volume = jnp.arange(24, dtype=jnp.float32).reshape(2, 3, 4) / 24
     target = jnp.ones((1, 3, 5), jnp.float32)
     initial = jnp.full((24,), 2.3, jnp.float32)
     params = dict(

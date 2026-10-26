@@ -18,10 +18,11 @@ from tomojax.backends.api import is_oom_error
 from tomojax.core.devices import as_devices
 from tomojax.core.geometry.cone import require_parallel_beam
 from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.host_transfer import copy_to_host, upload_host
 from tomojax.core.validation import validate_detector, validate_projection_stack
 from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
 
-from ._host_arrays import ProjectionRows, validate_host_arrays
+from ._host_arrays import ProjectionRows, empty_host_array, validate_host_arrays
 from .fbp import (
     FBPConfig,
     _fbp_from_host,  # pyright: ignore[reportPrivateUsage]
@@ -47,7 +48,7 @@ class FBPHostConfig:
     device array, which stays resident and is sliced there. For built-in parallel
     geometry, a slab is ``slices_per_batch`` axial (z) slices with only the
     detector rows they need (balanced slabs of at most 16 when ``None``). For
-    laminography and other geometry, a slab is ``slices_per_batch`` x-slices;
+    laminography and other geometry, a slab is ``slices_per_batch`` z-slices;
     every view batch passes through the device once per slab. ``None`` sizes
     slabs to about half of the free device memory, so a volume that fits is
     reconstructed in one pass.
@@ -143,16 +144,17 @@ def _stage_rows(
         return window
     device = next(iter(devices))
     free = device_free_memory_bytes(device=device) or 0
-    return jax.device_put(window[:], device) if size <= free // 4 else window
-
-
-def _host_volume(volume: jax.Array, target: np.ndarray) -> np.ndarray:
-    """Download in the caller's contiguous order without a CPU transpose copy."""
-    if target.flags.f_contiguous:
-        # A device-side transpose gives contiguous zyx host storage. Its xyz
-        # view can then be copied directly into an axial Fortran-order slab.
-        return np.asarray(jnp.transpose(volume, (2, 1, 0))).transpose(2, 1, 0)
-    return np.asarray(volume)
+    if size > free // 4:
+        return window
+    stop = window.start + window.rows
+    # Regular row windows copy directly; only conversion or zero extension
+    # needs a private packed source. No full-stack staging is retained.
+    host = (
+        window.projections[:, window.start : stop]
+        if window.start >= 0 and stop <= window.projections.shape[1]
+        else window[:]
+    )
+    return upload_host(np.asarray(host, dtype=np.float32), device)
 
 
 class _VolumeWriter:
@@ -166,19 +168,16 @@ class _VolumeWriter:
         return self
 
     def __call__(self, volume: jax.Array, target: np.ndarray, count: int) -> None:
+        def store() -> None:
+            # The closure owns the device slab until its synchronous copy ends;
+            # no array-sized JAX host mirror outlives that transfer.
+            copy_to_host(volume[:count], target)
+
         if self.pool is None:
-            target[...] = _host_volume(volume, target)[:, :, :count]
+            store()
             return
         if self.pending is not None:
             self.pending.result()
-        packed = target.flags.f_contiguous
-        value = jnp.transpose(volume, (2, 1, 0)) if packed else volume
-        value.copy_to_host_async()
-
-        def store() -> None:
-            host = np.asarray(value)
-            target[...] = (host.transpose(2, 1, 0) if packed else host)[:, :, :count]
-
         self.pending = self.pool.submit(store)
 
     def __exit__(self, *args: object) -> None:
@@ -216,15 +215,15 @@ def fbp_host(
     """Reconstruct without storing the full volume or projections on the device.
 
     Accept NumPy arrays, including memmaps, or device arrays and return a float32
-    NumPy array. Automatically allocated axial output uses Fortran order for
-    contiguous xy-planes; general geometry uses C order for contiguous x-slabs.
+    NumPy array. Automatically allocated output uses C order with contiguous
+    axial (z) slabs in owned demand-paged host storage.
     ``out`` may be a writable memmap. Writes complete before returning, but
     a later failure can leave a partially written output. Input storage must
     remain unchanged until the call finishes. This host-returning routine is
     not differentiable. Use :func:`fbp` for device-resident output.
 
     Every geometry ``fbp`` accepts is supported, with the same exact weights:
-    laminography and posed scans reconstruct in x-slabs, built-in parallel
+    laminography and posed scans reconstruct in axial slabs, built-in parallel
     scans in axial slabs that read only the detector rows they need.
     Anisotropic spacing, detector offsets and shifted volume origins are
     supported. Filter tails use the same zero-extended measurement model as
@@ -235,7 +234,7 @@ def fbp_host(
     geometry : Geometry
         Scan geometry, including view angles and any per-view poses.
     grid : Grid
-        Reconstruction grid in ``(x, y, z)`` order, with physical voxel spacing.
+        Reconstruction grid with named physical dimensions and voxel spacing.
     detector : Detector
         Detector dimensions and placement in the same length unit as the grid.
     projections : array-like
@@ -243,13 +242,13 @@ def fbp_host(
     config : FBPHostConfig or None, optional
         Solver settings. None uses FBPHostConfig defaults.
     out : numpy.ndarray or None, optional
-        Writable float32 host storage of shape ``(nx, ny, nz)``, including a memmap.
+        Writable float32 host storage of shape ``(nz, ny, nx)``, including a memmap.
         Must not overlap input storage. None allocates a new output.
 
     Returns
     -------
     numpy.ndarray
-        Float32 reconstruction of shape ``(nx, ny, nz)``. Returns out itself when supplied.
+        Float32 reconstruction of shape ``(nz, ny, nx)``. Returns out itself when supplied.
 
     Raises
     ------
@@ -284,7 +283,9 @@ def fbp_host(
     local_grid, local_detector, first, step, integer = _slab_layout(grid, detector, depth)
     rows = local_detector.nv
     ramp = rfft_filter_array(cfg.filter, local_detector.nu, detector.du, jnp.float32)
-    output = validate_host_arrays(projections, out, shape, device_input=True, order="F")
+    output = validate_host_arrays(
+        projections, out, shape, device_input=True, allocate=empty_host_array
+    )
     host_poses = np.asarray(poses, np.float32)
     params = np.zeros((n_views, 6), np.float32)
     slab_bytes = 4 * grid.nx * grid.ny * depth
@@ -325,8 +326,9 @@ def fbp_host(
             )
             count = min(depth, grid.nz - start)
             # Only one previous slab can remain pending while this slab computes.
-            target = output[:, :, start : start + count]
+            target = output[start : start + count]
             write(volume, target, count)
+            del volume
     return output
 
 
@@ -341,8 +343,10 @@ def _general_slabs(
     slices: int | None,
     views: int,
 ) -> np.ndarray:
-    """Reconstruct x-slabs, streaming every view batch once per slab."""
-    output = validate_host_arrays(projections, out, (grid.nx, grid.ny, grid.nz), device_input=True)
+    """Reconstruct z-slabs, streaming every view batch once per slab."""
+    output = validate_host_arrays(
+        projections, out, (grid.nz, grid.ny, grid.nx), device_input=True, allocate=empty_host_array
+    )
     view_scale, params, arc_length, separable = _view_weights(poses, cfg.scale)
     host_poses = np.asarray(poses, np.float32)
     detector_f = _filter_detector(grid, detector, host_poses, pad_v=not separable)
@@ -353,14 +357,14 @@ def _general_slabs(
         rows = 1 if separable else _fft_length(detector_f.nv)
         workspace = 16 * batch * max(rows, detector_f.nv) * (spectrum.shape[0] + detector_f.nu)
         free = _output_memory(projections, poses) or 2**30
-        slices = max(1, (free // 2 - workspace) // (4 * grid.ny * grid.nz))
-    depth = min(slices, grid.nx)
+        slices = max(1, (free // 2 - workspace) // (4 * grid.nx * grid.ny))
+    depth = min(slices, grid.nz)
     ox, oy, oz = grid_volume_origin(grid)
     start = 0
-    while start < grid.nx:
-        count = min(depth, grid.nx - start)
+    while start < grid.nz:
+        count = min(depth, grid.nz - start)
         # Keep the slab shape fixed at this depth, including the padded tail.
-        slab = replace(grid, nx=depth, vol_origin=(ox + start * grid.vx, oy, oz), vol_center=None)
+        slab = replace(grid, nz=depth, vol_origin=(ox, oy, oz + start * grid.vz), vol_center=None)
         volume = None
         try:
             volume = _fbp_from_host(
@@ -378,7 +382,7 @@ def _general_slabs(
                 check_finite=True,
             )
             target = output[start : start + count]
-            target[...] = _host_volume(volume, target)[:count]
+            copy_to_host(volume[:count], target)
         except Exception as error:
             if not is_oom_error(error):
                 raise
@@ -486,7 +490,7 @@ def fbp_slabs[T](
 
 def _finish[T](item: tuple[ReconstructionSlab[T], jax.Array]) -> ReconstructionSlab[T]:
     slab, packed = item
-    slab.volume = np.asarray(packed).transpose(2, 1, 0)
+    slab.volume = np.asarray(packed)
     if not np.isfinite(slab.volume).all():
         raise ValueError("FBP reconstruction must be finite in FP32")
     return slab
@@ -539,7 +543,7 @@ def _run_slabs[T](
                 check_finite=True,
                 cache_filtered=backend == "cuda" and integer,
             )
-            packed = jnp.transpose(volume[:, :, : stop - at], (2, 1, 0))
+            packed = volume[: stop - at]
             packed.copy_to_host_async()
             slab = ReconstructionSlab(
                 at, stop, slice(source_start, source_stop), data, np.empty(0), context

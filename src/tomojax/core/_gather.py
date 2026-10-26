@@ -30,7 +30,7 @@ def resolve_gather_target(gather_dtype: str) -> jnp.dtype:
 
 
 def prepare_volume_for_gather(volume: jnp.ndarray, gather_dtype: str) -> jnp.ndarray:
-    """Cast gather samples and flatten the volume in x-y-z storage order."""
+    """Cast gather samples and flatten the volume in (z, y, x) storage order."""
     target = resolve_gather_target(gather_dtype)
     vol_cast = volume if volume.dtype == target else volume.astype(target)
     return jnp.ravel(vol_cast, order="C")

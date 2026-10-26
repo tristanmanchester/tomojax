@@ -71,7 +71,7 @@ def matrix(poses, g, d, interpolation="linear"):
                             idx[b] = ib + db
                             idx[c] = ic + dc
                             if all(0 <= i < n for i, n in zip(idx, shape, strict=False)):
-                                out[row, np.ravel_multi_index(idx, shape)] += (
+                                out[row, np.ravel_multi_index(idx[::-1], shape[::-1])] += (
                                     (
                                         (wb if db else 1 - wb)
                                         if interpolation == "linear"
@@ -124,7 +124,7 @@ def test_absolute_cubic_sensitivity_bounds_the_signed_physical_normal(backend):
             coeff, weights**2 * projected, grid, detector, **options
         )
 
-    projected, bound = sensitivity(jnp.ones((5, 3, 7), jnp.float32))
+    projected, bound = sensitivity(jnp.ones((7, 3, 5), jnp.float32))
     expected_projection = np.abs(a).sum(axis=1)
     expected_bound = np.abs(a).T @ (weights.ravel() ** 2 * expected_projection)
     np.testing.assert_allclose(projected.ravel(), expected_projection, rtol=2e-5, atol=2e-6)
@@ -146,7 +146,7 @@ def test_uniform_cuda_projection_keeps_rounded_boundary_and_plane_sums(nz):
     grid = replace(grid, nx=23, ny=17, nz=nz, vol_origin=(-5.1, -2.3, -3.7))
     detector = replace(detector, nu=31, nv=23)
     coeff = plane_coefficients(jnp.asarray(poses), grid, detector)
-    expected = forward_cuda(coeff, jnp.ones((23, 17, nz), jnp.float32), grid, detector)
+    expected = forward_cuda(coeff, jnp.ones((nz, 17, 23), jnp.float32), grid, detector)
     actual = jax.jit(lambda c: cuda.project_ones_cuda(c, grid, detector))(coeff)
     np.testing.assert_allclose(actual, expected, rtol=3e-6, atol=1e-6)
     np.testing.assert_array_equal(np.asarray(actual) == 0, np.asarray(expected) == 0)
@@ -166,7 +166,7 @@ def test_plane_operators_match_independent_physical_ray_matrix(
     grid, detector, poses = problem(voxel, spacing)
     expected = matrix(poses, grid, detector, interpolation)
     rng = np.random.default_rng(37)
-    volume = jnp.asarray(rng.normal(size=(5, 3, 4)), jnp.float32)
+    volume = jnp.asarray(rng.normal(size=(4, 3, 5)), jnp.float32)
     images = jnp.asarray(rng.normal(size=(6, 7, 9)), jnp.float32)
     coefficients = plane_coefficients(jnp.asarray(poses), grid, detector)
     fp, bp = (forward_cuda, adjoint_cuda) if backend == "cuda" else (forward_jax, adjoint_jax)
@@ -185,6 +185,16 @@ def test_plane_operators_match_independent_physical_ray_matrix(
     if backend == "cuda":
         # The gather transpose has no floating-point atomics or scheduling-dependent sum.
         np.testing.assert_array_equal(adjoint(images), backprojected)
+        if interpolation == "linear":
+            import cupy as cp
+
+            from tomojax.core.joseph_cuda import JosephCUDA
+
+            plan = JosephCUDA(poses, grid, detector, views_per_batch=4)
+            np.testing.assert_allclose(plan.forward(cp.asarray(volume)).get(), projected, atol=2e-6)
+            np.testing.assert_allclose(
+                plan.adjoint(cp.asarray(images)).get(), backprojected, rtol=2e-5, atol=2e-6
+            )
 
 
 @pytest.mark.parametrize("warm_start", [False, True])
@@ -204,7 +214,7 @@ def test_plane_cgls_matches_independent_damped_system_with_tail_batch(
 
     rng = np.random.default_rng(14)
     data = rng.normal(size=(6, 7, 9)).astype(np.float32)
-    initial = rng.normal(size=(5, 3, 4)).astype(np.float32) if warm_start else None
+    initial = rng.normal(size=(4, 3, 5)).astype(np.float32) if warm_start else None
     damping = 0.3
     expected = np.linalg.lstsq(
         np.concatenate([reference, damping * np.eye(60)]),
@@ -258,7 +268,7 @@ def test_changing_poses_switches_plane_axes_without_recompiling(backend):
     if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
     grid, detector, poses = problem()
-    volume = jnp.asarray(np.random.default_rng(39).normal(size=(5, 3, 4)), jnp.float32)
+    volume = jnp.asarray(np.random.default_rng(39).normal(size=(4, 3, 5)), jnp.float32)
     projector = forward_cuda if backend == "cuda" else forward_jax
     project = jax.jit(
         lambda t, x: projector(plane_coefficients(t, grid, detector), x, grid, detector)
@@ -289,7 +299,7 @@ def test_long_oblique_planes_and_gather_bounds_agree_with_autodiff(spacing, inte
     _, _, poses = problem()
     coeff = plane_coefficients(jnp.asarray(poses), grid, detector)
     rng = np.random.default_rng(400)
-    volume = jnp.asarray(rng.normal(size=(129, 127, 5)), jnp.float32)
+    volume = jnp.asarray(rng.normal(size=(5, 127, 129)), jnp.float32)
     images = jnp.asarray(rng.normal(size=(6, 17, 151)), jnp.float32)
     reference_forward = jax.jit(
         lambda x: forward_jax(coeff, x, grid, detector, interpolation=interpolation)
@@ -464,7 +474,7 @@ def test_cuda_gather_matches_reference_transpose_and_accumulates(nz, voxel, spac
     coeff = plane_coefficients(jnp.asarray(poses), g, d)
     rng = np.random.default_rng(nz)
     images = jnp.asarray(rng.normal(size=(len(poses), d.nv, d.nu)), jnp.float32)
-    start = jnp.asarray(rng.normal(size=(g.nx, g.ny, g.nz)), jnp.float32)
+    start = jnp.asarray(rng.normal(size=(g.nz, g.ny, g.nx)), jnp.float32)
     expected = adjoint_jax(coeff, images, g, d)
     swapped = jnp.transpose(images, (0, 2, 1))
     actual = jax.jit(lambda c, y, x: cuda.gather_transpose_cuda(c, y, g, d, x))(
@@ -472,7 +482,7 @@ def test_cuda_gather_matches_reference_transpose_and_accumulates(nz, voxel, spac
     )
     np.testing.assert_allclose(actual - start, expected, rtol=2e-5, atol=2e-5)
     # The forward projection and this gather are matched transposes.
-    volume = jnp.asarray(rng.normal(size=(g.nx, g.ny, g.nz)), jnp.float32)
+    volume = jnp.asarray(rng.normal(size=(g.nz, g.ny, g.nx)), jnp.float32)
     lhs = float(jnp.vdot(forward_cuda(coeff, volume, g, d), images))
     rhs = float(jnp.vdot(volume, cuda.gather_transpose_cuda(coeff, swapped, g, d)))
     assert abs(lhs - rhs) <= 1e-5 * max(abs(lhs), 1.0)
@@ -497,7 +507,7 @@ def test_gather_clipped_to_small_shifted_detector_matches_physical_matrix(
     coeff = plane_coefficients(jnp.asarray(poses), grid, detector)
     rng = np.random.default_rng(73)
     images = rng.normal(size=(3, 3, 5)).astype(np.float32)
-    initial = rng.normal(size=(5, 3, 4)).astype(np.float32)
+    initial = rng.normal(size=(4, 3, 5)).astype(np.float32)
     actual = adjoint_cuda(
         coeff,
         jnp.asarray(images),
@@ -528,7 +538,7 @@ def test_explicit_singleton_detector_keeps_physical_matrix_and_transpose(pixels,
     expected = matrix(poses, grid, detector)
     coeff = plane_coefficients(jnp.asarray(poses), grid, detector, (uu, vv))
     rng = np.random.default_rng(296)
-    volume = jnp.asarray(rng.uniform(0.1, 1, (3, 4, 2)), jnp.float32)
+    volume = jnp.asarray(rng.uniform(0.1, 1, (2, 4, 3)), jnp.float32)
     images = jnp.asarray(rng.normal(size=(3, detector.nv, detector.nu)), jnp.float32)
     actual = forward_cuda(coeff, volume, grid, detector)
     np.testing.assert_allclose(actual.ravel(), expected @ volume.ravel(), rtol=2e-5, atol=3e-6)
@@ -571,7 +581,7 @@ def test_axial_cuda_pair_matches_physical_matrix_near_axis(
     expected = matrix(poses, g, d, interpolation)
     coeff = plane_coefficients(jnp.asarray(poses), g, d)
     rng = np.random.default_rng(72)
-    volume = jnp.asarray(rng.normal(size=(7, 6, nz)), jnp.float32)
+    volume = jnp.asarray(rng.normal(size=(nz, 6, 7)), jnp.float32)
     data = jnp.asarray(rng.normal(size=(len(poses), d.nv, 9)), jnp.float32)
     fp = jax.jit(lambda x: forward_cuda(coeff, x, g, d, interpolation=interpolation))
     bp = jax.jit(lambda y: adjoint_cuda(coeff, y, g, d, interpolation=interpolation))
@@ -609,10 +619,10 @@ def test_axial_cuda_keeps_positive_footprint_edge(angle, point, monkeypatch):
     pose = ParallelGeometry(grid, detector, [angle]).pose_for_view(0)
     coeff = plane_coefficients(jnp.asarray([pose]), grid, detector)
     ray = (0, 0, 188 if angle == 8 else 190)
-    x = jnp.zeros((256, 256, 8), jnp.float32).at[point].set(1)
+    x = jnp.zeros((8, 256, 256), jnp.float32).at[point[::-1]].set(1)
     y = jnp.zeros((1, 8, 256), jnp.float32).at[ray].set(1)
     fp = jax.jit(lambda x: forward_cuda(coeff, x, grid, detector))(x)[ray]
-    bp = jax.jit(lambda y: adjoint_cuda(coeff, y, grid, detector))(y)[point]
+    bp = jax.jit(lambda y: adjoint_cuda(coeff, y, grid, detector))(y)[point[::-1]]
     assert fp > 1e-5
     np.testing.assert_allclose(bp, fp, rtol=1e-6, atol=1e-9)
 
@@ -631,7 +641,7 @@ def test_batched_cubic_transpose_executes_only_each_geometry_branch(monkeypatch)
     coeff = jax.vmap(lambda p: plane_coefficients(p, grid, detector))(jnp.asarray(poses))
     rng = np.random.default_rng(741)
     data = rng.normal(size=(3, 2, 5, 7)).astype(np.float32)
-    initial = rng.normal(size=(3, 5, 6, 3)).astype(np.float32)
+    initial = rng.normal(size=(3, 3, 6, 5)).astype(np.float32)
     calls = []
     launch = axial._transpose_launch
 
@@ -648,7 +658,7 @@ def test_batched_cubic_transpose_executes_only_each_geometry_branch(monkeypatch)
     actual = np.asarray(execute(coeff, jnp.asarray(data), jnp.asarray(initial)))
     expected = np.stack(
         [
-            (matrix(p, grid, detector, "cubic").T @ y.ravel()).reshape(5, 6, 3) + x
+            (matrix(p, grid, detector, "cubic").T @ y.ravel()).reshape(3, 6, 5) + x
             for p, y, x in zip(poses, data, initial, strict=True)
         ]
     )

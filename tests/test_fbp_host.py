@@ -46,7 +46,7 @@ def test_host_slabs_match_full_physical_reconstruction(kind, depth, backend):
     )
     assert isinstance(actual, np.ndarray)
     assert actual.dtype == np.float32
-    assert actual.flags.f_contiguous
+    assert actual.flags.c_contiguous
     np.testing.assert_allclose(actual, reference, atol=4e-6, rtol=5e-5)
 
 
@@ -98,7 +98,7 @@ def test_automatic_axial_slabs_balance_tail_work_without_increasing_storage(
         del poses, args
         local_grid = kwargs["grid"]
         calls.append((local_grid, projections.shape))
-        return np.full((local_grid.nx, local_grid.ny, local_grid.nz), len(calls), np.float32)
+        return jax.numpy.full((local_grid.nz, local_grid.ny, local_grid.nx), len(calls), np.float32)
 
     monkeypatch.setattr(module, "_fbp_from_host", record)
     actual = fbp_host(
@@ -110,7 +110,7 @@ def test_automatic_axial_slabs_balance_tail_work_without_increasing_storage(
     assert len({slab for slab, _ in calls}) == 1
     if requested is None:
         assert depth <= 16 and len(calls) == (nz + 15) // 16
-    expected = np.broadcast_to(1 + np.arange(nz) // depth, actual.shape)
+    expected = np.broadcast_to((1 + np.arange(nz) // depth)[:, None, None], actual.shape)
     np.testing.assert_array_equal(actual, expected)
 
 
@@ -140,10 +140,13 @@ def test_host_slabs_read_and_convert_only_bounded_view_batches():
 @pytest.mark.gpu
 @pytest.mark.parametrize("kind", ["integer", "fractional", "outside"])
 @pytest.mark.parametrize("free", [0, 2**30])
-def test_axial_cuda_staging_respects_memory_and_physical_rows(monkeypatch, kind, free):
+@pytest.mark.parametrize("dtype", [np.float32, np.float64, np.int16])
+def test_axial_cuda_staging_respects_memory_and_physical_rows(monkeypatch, kind, free, dtype):
     grid, detector, geometry, data = scan(kind)
     geometry = replace(geometry, angles=np.linspace(0, 180, 20, endpoint=False))
-    data = np.tile(data, (4, 1, 1))
+    data = np.tile(data, (4, 1, 1)).astype(dtype)[:, :, ::-1]
+    data.flags.writeable = False
+    saved = data.copy()
     expected = np.asarray(fbp(geometry, grid, detector, data, config=FBPConfig(backend="jax")))
     module = importlib.import_module("tomojax.recon.fbp_host")
     original, seen = module._fbp_from_host, []
@@ -157,6 +160,7 @@ def test_axial_cuda_staging_respects_memory_and_physical_rows(monkeypatch, kind,
     cfg = FBPHostConfig(slices_per_batch=4, views_per_batch=3)
     actual = fbp_host(geometry, grid, detector, data, config=cfg)
     assert seen == [bool(free)] * 3
+    np.testing.assert_array_equal(data, saved)
     np.testing.assert_allclose(actual, expected, atol=4e-6, rtol=5e-5)
 
 
@@ -219,7 +223,7 @@ def test_host_slabs_check_a_nonfinite_tail_batch_before_writing(invalid):
     grid, detector, geometry, data = scan()
     data = data.astype(np.float64)
     data[-1] = invalid
-    out = np.full((grid.nx, grid.ny, grid.nz), 91.0, dtype=np.float32)
+    out = np.full((grid.nz, grid.ny, grid.nx), 91.0, dtype=np.float32)
     with np.errstate(over="ignore"), pytest.raises(ValueError, match="finite in FP32"):
         fbp_host(
             geometry,
@@ -237,7 +241,7 @@ def test_host_slabs_write_memmap_and_preserve_custom_scale(tmp_path):
     source = np.memmap(tmp_path / "data.bin", mode="w+", dtype=np.float32, shape=data.shape)
     source[:] = data
     target = np.memmap(
-        tmp_path / "volume.bin", mode="w+", dtype=np.float32, shape=(grid.nx, grid.ny, grid.nz)
+        tmp_path / "volume.bin", mode="w+", dtype=np.float32, shape=(grid.nz, grid.ny, grid.nx)
     )
     cfg = FBPHostConfig(slices_per_batch=4, views_per_batch=2, scale=0.27, filter="hann")
     result = fbp_host(geometry, grid, detector, source, config=cfg, out=target)
@@ -258,10 +262,10 @@ def test_host_slabs_reject_overlapping_output_before_writing(tmp_path, mapping):
     if mapping != "array":
         path = tmp_path / "same.bin"
         data = np.memmap(path, mode="w+", dtype=np.float32, shape=(5, 4, 3))
-        out = np.memmap(path, mode="r+", dtype=np.float32, shape=data.shape)
+        out = np.memmap(path, mode="r+", dtype=np.float32, shape=(3, 4, 5))
     else:
         data = np.ones((5, 4, 3), dtype=np.float32)
-        out = data.view()
+        out = data.reshape(3, 4, 5)
     if mapping == "buffer":
         data, out = (np.asarray(memoryview(array)) for array in (data, out))
     data[:] = 1
@@ -318,7 +322,7 @@ def test_host_slabs_reject_nonfinite_samples(tilted):
 @pytest.mark.parametrize("invalid", ["dtype", "shape", "readonly"])
 def test_host_slabs_reject_incompatible_storage(invalid):
     grid, detector, geometry, data = scan()
-    out = np.empty((grid.nx, grid.ny, grid.nz), dtype=np.float32)
+    out = np.empty((grid.nz, grid.ny, grid.nx), dtype=np.float32)
     if invalid == "dtype":
         out = out.astype(np.float64)
     elif invalid == "shape":
@@ -371,7 +375,10 @@ def test_host_slabs_recover_independent_gaussian_attenuation(length_scale):
     axial = np.exp(-0.5 * (z / (1.1 * length_scale)) ** 2)
     profile = np.sqrt(2 * np.pi) * sigma * np.exp(-0.5 * (x / sigma) ** 2)
     data = np.broadcast_to(axial[:, None] * profile, (views, nz, n)).astype(np.float32)
-    truth = np.exp(-0.5 * (x[:, None, None] ** 2 + x[None, :, None] ** 2) / sigma**2) * axial
+    truth = (
+        np.exp(-0.5 * (x[None, :, None] ** 2 + x[None, None, :] ** 2) / sigma**2)
+        * axial[:, None, None]
+    )
     actual = fbp_host(
         geometry,
         grid,
@@ -440,14 +447,14 @@ def test_general_slabs_release_outputs_and_retry_only_unfinished_slab(monkeypatc
     cfg = FBPHostConfig(slices_per_batch=4, views_per_batch=4)
     expected = fbp_host(geometry, grid, detector, data, config=cfg)
     original, calls, previous = module._fbp_from_host, [], [lambda: None]
-    origin = module.grid_volume_origin(grid)[0]
+    origin = module.grid_volume_origin(grid)[2]
 
     def bounded(*args, **kwargs):
         assert previous[0]() is None, "a completed device slab is still retained"
         local, batch = kwargs["grid"], kwargs["batch_size"]
-        start = round((module.grid_volume_origin(local)[0] - origin) / grid.vx)
-        calls.append((start, local.nx, batch))
-        if start and (local.nx > 1 or batch > 1):
+        start = round((module.grid_volume_origin(local)[2] - origin) / grid.vz)
+        calls.append((start, local.nz, batch))
+        if start and (local.nz > 1 or batch > 1):
             raise RuntimeError("RESOURCE_EXHAUSTED: simulated device allocation failure")
         value = original(*args, **kwargs)
         previous[0] = weakref.ref(value)
@@ -456,5 +463,5 @@ def test_general_slabs_release_outputs_and_retry_only_unfinished_slab(monkeypatc
     monkeypatch.setattr(module, "_fbp_from_host", bounded)
     actual = fbp_host(geometry, grid, detector, data, config=cfg)
     assert calls[:5] == [(0, 4, 4), (4, 4, 4), (4, 2, 4), (4, 1, 4), (4, 1, 2)]
-    assert calls[5:] == [(start, 1, 1) for start in range(4, grid.nx)]
+    assert calls[5:] == [(start, 1, 1) for start in range(4, grid.nz)]
     np.testing.assert_allclose(actual, expected, atol=4e-6, rtol=5e-5)

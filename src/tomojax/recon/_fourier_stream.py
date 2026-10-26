@@ -42,7 +42,7 @@ def _source_rows(positions: np.ndarray, rows: int) -> tuple[int, int]:
 
 def _finish[T](item: tuple[ReconstructionSlab[T], PendingSlab]) -> ReconstructionSlab[T]:
     slab, pending = item
-    slab.volume = pending.wait().transpose(2, 1, 0)
+    slab.volume = pending.wait()
     if not np.isfinite(slab.volume).all():
         raise ValueError("fourier reconstruction must be finite in FP32")
     return slab
@@ -115,7 +115,6 @@ def fourier_slabs[T](
                 depth,
                 backend,
                 async_transfers=backend == "cupy",
-                transpose_download=True,
             )
             with closing(_run_plan(plan, read, order, positions, start)) as completed:
                 for slab in completed:
@@ -160,7 +159,7 @@ def _run_plan[T](
                 raw = sample_projection_rows(np.asarray(data), order, requested - first)
                 if stop - at < plan.depth:
                     raw = np.pad(raw, ((0, plan.depth - (stop - at)), (0, 0), (0, 0)))
-                slab.volume = plan.reconstruct(raw, count=stop - at).transpose(2, 1, 0)
+                slab.volume = plan.reconstruct(raw, count=stop - at)
                 if not np.isfinite(slab.volume).all():
                     raise ValueError("fourier reconstruction must be finite in FP32")
                 yield slab

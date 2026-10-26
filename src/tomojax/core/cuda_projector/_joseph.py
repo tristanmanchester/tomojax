@@ -38,7 +38,7 @@ def forward_cuda(
     validate_interpolation(interpolation)
     if interpolation == "linear" and use_cuda_gather(grid, axial=True):
         threads = 32 if detector.nv == 1 else 128
-        tile_v = min(16, 1 << (detector.nv.bit_length() - 1))
+        tile_v = 1
         text = generic.source(
             "forward",
             INDEX_TYPE="int" if grid.nx * grid.ny * grid.nz < 2**31 else "long",
@@ -76,7 +76,7 @@ def adjoint_cuda(
 ) -> jax.Array:
     """Add the matched transpose to an initializer without scattered atomics."""
     validate_interpolation(interpolation)
-    shape = (grid.nx, grid.ny, grid.nz)
+    shape = (grid.nz, grid.ny, grid.nx)
     initial = jnp.zeros(shape, jnp.float32) if accumulate is None else accumulate
 
     def fallback(args):

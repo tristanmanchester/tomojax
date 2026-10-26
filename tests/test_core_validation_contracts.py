@@ -57,7 +57,7 @@ def test_core_validation_errors_include_context_expected_shape_and_fix() -> None
 
     message = str(excinfo.value)
     assert "ctx: volume has incompatible shape" in message
-    assert "expected (nx, ny, nz)=(2, 3, 4) from grid" in message
+    assert "expected (nz, ny, nx)=(4, 3, 2) from grid" in message
     assert "Likely fix:" in message
 
 

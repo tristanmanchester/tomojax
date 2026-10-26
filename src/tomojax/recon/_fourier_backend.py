@@ -15,6 +15,7 @@ from tomojax.geometry import Detector, Grid, grid_volume_origin
 
 from ._fourier_grid import interpolate_numpy, next_fast_len, radial_coefficients, transform_grid
 from ._fourier_rows import ProjectionRows, interpolate_projection_rows
+from ._pinned import PinnedPool
 
 
 def resolve_fourier_backend(backend: str) -> Literal["numpy", "cupy"]:
@@ -106,34 +107,34 @@ class _Geometry:
         self.projection_phase = xp.asarray(phase, dtype=complex_dtype)
         self.deapod = xp.asarray(deapod, dtype=real)
         self.table = xp.asarray(table, dtype=real)
-        px, py = self.shape
-        qy = py // 2 + 1
+        py, px = self.shape
+        qx = px // 2 + 1
         self.coordinates = self._coordinates(angles)
-        self.x_boundary = None
-        stop = qy - 1 if py % 2 == 0 else qy
-        if px % 2 == 0 and grid.vx > detector.du and stop > 1:
-            # At x Nyquist, -kx maps to the same stored bin. If its line is
+        self.y_boundary = None
+        stop = qx - 1 if px % 2 == 0 else qx
+        if py % 2 == 0 and grid.vy > detector.du and stop > 1:
+            # At y Nyquist, -ky maps to the same stored bin. If its line is
             # inside the detector's disk, conjugate symmetry needs the missing
-            # opposite-y sample, not just conjugation of the current sample.
+            # opposite-x sample, not just conjugation of the current sample.
             coordinates = self._coordinates(angles, mirror=True)
-            self.x_boundary = (coordinates, stop)
+            self.y_boundary = (coordinates, stop)
         if self.cuda:
             self.kernel = interpolation_kernel(
-                x_boundary=self.x_boundary is not None, repeats=self.groups is not None
+                y_boundary=self.y_boundary is not None, repeats=self.groups is not None
             )
 
     def _coordinates(self, angles, *, mirror=False):
         if self.cuda:
             return self._cuda_coordinates(angles, mirror=mirror)
         xp, grid, detector = self.xp, self.grid, self.detector
-        px, py = self.shape
-        fx = xp.fft.fftfreq(px, d=grid.vx)[:, None]
-        # Retain the full transform's negative y Nyquist frequency, including
-        # the opposite-y samples needed at the x boundary of an anisotropic grid.
-        fy = xp.fft.fftfreq(py, d=grid.vy)[None, : py // 2 + 1]
+        py, px = self.shape
+        fy = xp.fft.fftfreq(py, d=grid.vy)[:, None]
+        # Retain the full transform's negative x Nyquist frequency, including
+        # the opposite-x samples needed at the y boundary of an anisotropic grid.
+        fx = xp.fft.fftfreq(px, d=grid.vx)[None, : px // 2 + 1]
         if mirror:
-            stop = py // 2 if py % 2 == 0 else py // 2 + 1
-            fx, fy = fx[px // 2 : px // 2 + 1], -fy[:, 1:stop]
+            stop = px // 2 if px % 2 == 0 else px // 2 + 1
+            fy, fx = fy[py // 2 : py // 2 + 1], -fx[:, 1:stop]
         real = xp.float32 if self.cuda else xp.float64
         complex_dtype = xp.complex64 if self.cuda else xp.complex128
         radial = xp.sqrt(fx * fx + fy * fy) * (self.nfft * detector.du)
@@ -151,7 +152,7 @@ class _Geometry:
         ).astype(complex_dtype)
         ox, oy, _ = grid_volume_origin(grid)
         phase = xp.exp(
-            2j * np.pi * (fx * (ox - self.crop[0] * grid.vx) + fy * (oy - self.crop[1] * grid.vy))
+            2j * np.pi * (fx * (ox - self.crop[1] * grid.vx) + fy * (oy - self.crop[0] * grid.vy))
         ).astype(complex_dtype)
         return angle, radial.astype(real), phase, detector_phase
 
@@ -159,9 +160,9 @@ class _Geometry:
         from ._fourier_cuda import coordinates_kernel
 
         xp, grid, detector = self.xp, self.grid, self.detector
-        px, py = self.shape
-        stop = py // 2 if py % 2 == 0 else py // 2 + 1
-        shape = (1, stop - 1) if mirror else (px, py // 2 + 1)
+        py, px = self.shape
+        stop = px // 2 if px % 2 == 0 else px // 2 + 1
+        shape = (1, stop - 1) if mirror else (py, px // 2 + 1)
         arrays = (
             xp.empty(shape, xp.float64),
             xp.empty(shape, xp.float32),
@@ -185,8 +186,8 @@ class _Geometry:
                 np.int32(mirror),
                 np.float64(grid.vx),
                 np.float64(grid.vy),
-                np.float64(ox - self.crop[0] * grid.vx),
-                np.float64(oy - self.crop[1] * grid.vy),
+                np.float64(ox - self.crop[1] * grid.vx),
+                np.float64(oy - self.crop[0] * grid.vy),
                 np.float64(detector.du),
                 np.float64(detector.center[0]),
                 np.int32(self.nfft),
@@ -209,6 +210,20 @@ def _cached_geometry(grid, detector, nviews, flipped, angles, device) -> tuple[_
     return geometry, ready
 
 
+def _plan_geometry(grid, detector, nviews, flipped, angles, backend):
+    """Acquire immutable geometry and make its initialization visible to this stream."""
+    shape, _ = transform_grid(grid, detector)
+    if backend == "cupy" and shape[0] * shape[1] <= 131072:
+        import cupy
+
+        geometry, ready = _cached_geometry(
+            grid, detector, nviews, tuple(map(int, flipped)), angles, cupy.cuda.runtime.getDevice()
+        )
+        cupy.cuda.get_current_stream().wait_event(ready)
+        return geometry
+    return _Geometry(grid, detector, nviews, flipped, angles, backend)
+
+
 _STREAMS_LOCK = Lock()
 
 
@@ -225,6 +240,29 @@ def _transfer_streams(device):
     # lru_cache alone can create duplicate queues on simultaneous first calls.
     with _STREAMS_LOCK:
         return _cached_transfer_streams(device)
+
+
+def _inverse_fft_plan(shape, depth):
+    """Own the batched C2R workspace rather than a global-cache allocation."""
+    from cupy.cuda import cufft
+
+    cuda_fft = cast("Any", cufft)
+    py, px = shape
+    qx = px // 2 + 1
+    return cuda_fft.CUFFT_INVERSE, cuda_fft.PlanNd(
+        shape,
+        (py, qx),
+        1,
+        py * qx,
+        shape,
+        1,
+        px * py,
+        cuda_fft.CUFFT_C2R,
+        depth,
+        "C",
+        2,
+        px,
+    )
 
 
 @dataclass
@@ -250,10 +288,10 @@ class FourierPlan:
         backend,
         *,
         async_transfers=False,
-        transpose_download=False,
         shifts=None,
     ) -> None:
         self.cuda = backend == "cupy"
+        cuda = None
         if self.cuda:
             try:
                 import cupy as xp
@@ -261,33 +299,25 @@ class FourierPlan:
                 raise ImportError(
                     "fourier_reconstruct: backend='cupy' requires tomojax[fourier-cuda12]"
                 ) from exc
+            cuda = xp.cuda
         else:
             xp = np
         self.xp = xp
-        self.transpose_download = transpose_download
         self.grid, self.detector = grid, detector
         self.source_views, self.depth = nviews, depth
         self.upload = self.compute = self.download = None
-        if self.cuda and async_transfers:
-            self.upload, self.compute, self.download = _transfer_streams(
-                xp.cuda.runtime.getDevice()
+        self._pinned = None
+        self._upload_slot = None
+        self._last_uploaded = None
+        if cuda is not None and async_transfers:
+            self.upload, self.compute, self.download = _transfer_streams(cuda.runtime.getDevice())
+            self._pinned = PinnedPool(
+                lambda size: cuda.PinnedMemoryPointer(cuda.PinnedMemory(size), 0)
             )
         # Construct geometry on the compute stream too, so its temporary
         # allocations can be reused by the FFT rather than held in another arena.
         with self.compute if self.compute is not None else nullcontext():
-            shape, _ = transform_grid(grid, detector)
-            if self.cuda and shape[0] * shape[1] <= 131072:
-                geometry, ready = _cached_geometry(
-                    grid,
-                    detector,
-                    nviews,
-                    tuple(map(int, flipped)),
-                    angles,
-                    xp.cuda.runtime.getDevice(),
-                )
-                xp.cuda.get_current_stream().wait_event(ready)
-            else:
-                geometry = _Geometry(grid, detector, nviews, flipped, angles, backend)
+            geometry = _plan_geometry(grid, detector, nviews, flipped, angles, backend)
             self.shifts = None if shifts is None else xp.asarray(shifts, dtype=xp.float32)
             self.nviews = geometry.nviews
             self.groups, self.device_groups = geometry.groups, geometry.device_groups
@@ -304,39 +334,19 @@ class FourierPlan:
                     from ._fourier_cuda import interpolation_kernel
 
                     self.kernel = interpolation_kernel(
-                        x_boundary=geometry.x_boundary is not None,
+                        y_boundary=geometry.y_boundary is not None,
                         repeats=self.groups is not None,
                         translated=True,
                     )
                 self.mass_kernel = geometry.mass_kernel
                 self.row_mass = xp.empty((depth, nviews), dtype=xp.float64)
-            px, py = self.shape
-            qy = py // 2 + 1
+            py, px = self.shape
+            qx = px // 2 + 1
             dtype = xp.complex64 if self.cuda else xp.complex128
-            self.frequencies = xp.empty((depth, px, qy), dtype=dtype)
-            self.x_boundary = geometry.x_boundary
+            self.frequencies = xp.empty((depth, py, qx), dtype=dtype)
+            self.y_boundary = geometry.y_boundary
             if self.cuda:
-                from cupy.cuda import cufft
-
-                # Own this batched contiguous C2R workspace, not a global-cache
-                # entry that could prevent a smaller retry from fitting. Calling
-                # cuFFT directly also avoids importing SciPy's FFT adapter.
-                cuda_fft = cast("Any", cufft)
-                self.inverse_direction = cuda_fft.CUFFT_INVERSE
-                self.inverse_plan = cuda_fft.PlanNd(
-                    self.shape,
-                    (px, qy),
-                    1,
-                    px * qy,
-                    self.shape,
-                    1,
-                    px * py,
-                    cuda_fft.CUFFT_C2R,
-                    depth,
-                    "C",
-                    2,
-                    py,
-                )
+                self.inverse_direction, self.inverse_plan = _inverse_fft_plan(self.shape, depth)
 
     def _interpolate_cuda(self, spectrum):
         output = self.frequencies
@@ -367,8 +377,8 @@ class FourierPlan:
         )
         if self.shifts is not None:
             args += (self.shifts,)
-        if self.x_boundary is not None:
-            coordinates, stop = self.x_boundary
+        if self.y_boundary is not None:
+            coordinates, stop = self.y_boundary
             args += (
                 *coordinates,
                 np.int64(self.shape[0] // 2 * output.shape[2]),
@@ -412,8 +422,8 @@ class FourierPlan:
                 self.shifts,
             )
             self.frequencies[:, 0, 0] = mass
-            if self.x_boundary is not None:
-                coordinates, stop = self.x_boundary
+            if self.y_boundary is not None:
+                coordinates, stop = self.y_boundary
                 mirror = interpolate_numpy(
                     spectrum,
                     *coordinates,
@@ -429,7 +439,7 @@ class FourierPlan:
         # Interpolation has consumed the projection FFT. Its storage can now
         # serve the Cartesian FFT on this same compute stream.
         del spectrum
-        cx, cy = self.crop
+        cy, cx = self.crop
         normalization = 1
         if self.cuda:
             # cuFFT may destroy the input; the next slab overwrites every
@@ -442,9 +452,7 @@ class FourierPlan:
         # Keep fixed FFT batches, but do not materialize or transfer padded output.
         # Dense scalar arithmetic needs no sparse-operand dispatch or its imports.
         scale = 1.0 / (self.grid.vx * self.grid.vy * normalization)
-        output = xp.multiply(volume[:count, cx : cx + self.grid.nx, cy : cy + self.grid.ny], scale)
-        # Match plane-contiguous Fortran xyz storage before the device-to-host copy.
-        return xp.ascontiguousarray(output.swapaxes(1, 2)) if self.transpose_download else output
+        return xp.multiply(volume[:count, cy : cy + self.grid.ny, cx : cx + self.grid.nx], scale)
 
     def reconstruct(self, host, *, count: int) -> np.ndarray:
         xp = self.xp
@@ -457,22 +465,40 @@ class FourierPlan:
             else:
                 raw = xp.array(host, dtype=self.deapod.dtype, copy=True)
             volume = self._compute_volume(raw, count)
-            return xp.asnumpy(volume) if self.cuda else volume.astype(np.float32)
+            if self.cuda:
+                import cupy
+
+                return cupy.asnumpy(volume)
+            return volume.astype(np.float32)
 
     def enqueue(self, host, *, count: int) -> PendingSlab:
-        xp = self.xp
+        import cupy as xp
+
         assert self.upload is not None
         assert self.compute is not None
         assert self.download is not None
         samples = host.samples if isinstance(host, ProjectionRows) else host
-        host_storage = xp.cuda.alloc_pinned_memory(samples.size * 4)
-        staged = np.ndarray(samples.shape, dtype=np.float32, buffer=host_storage)
+        assert self._pinned is not None
+        # Reuse one upload slot after its H2D event, without waiting for compute
+        # or download. PendingSlab retains retired slots if a larger slab grows it.
+        if self._last_uploaded is not None:
+            self._last_uploaded.synchronize()
+        if self._upload_slot is None or self._upload_slot.size < samples.size:
+            memory = xp.cuda.PinnedMemoryPointer(xp.cuda.PinnedMemory(samples.size * 4), 0)
+            self._upload_slot = np.ndarray((samples.size,), dtype=np.float32, buffer=memory)
+        staged = self._upload_slot[: samples.size].reshape(samples.shape)
         np.copyto(staged, samples)
         try:
             with self.upload:
-                source = xp.asarray(staged)
+                source = xp.empty(staged.shape, dtype=xp.float32)
+                # We own staged through the copy event. CuPy's asarray watch
+                # list would retain the last pinned upload after the plan dies.
+                # Fully zero-extended slabs have no measured rows to transfer.
+                if staged.nbytes:
+                    source.data.copy_from_host_async(staged.ctypes.data, staged.nbytes, self.upload)
                 uploaded = xp.cuda.Event()
                 uploaded.record()
+                self._last_uploaded = uploaded
             self.compute.wait_event(uploaded)
             with self.compute:
                 owners = ()
@@ -482,8 +508,7 @@ class FourierPlan:
                 volume = self._compute_volume(raw, count)
                 computed = xp.cuda.Event()
                 computed.record()
-            output_storage = xp.cuda.alloc_pinned_memory(volume.size * 4)
-            output = np.ndarray(volume.shape, dtype=np.float32, buffer=output_storage)
+            output = self._pinned.empty(volume.shape)
             self.download.wait_event(computed)
             with self.download:
                 volume.get(out=output, stream=self.download, blocking=False)
@@ -495,13 +520,15 @@ class FourierPlan:
                 output,
                 downloaded,
                 (
-                    host,
-                    host_storage,
+                    *(
+                        (host.lower, host.upper, host.fraction)
+                        if isinstance(host, ProjectionRows)
+                        else ()
+                    ),
                     staged,
                     source,
                     raw,
                     volume,
-                    output_storage,
                     uploaded,
                     computed,
                     *owners,
@@ -543,16 +570,14 @@ class FourierPlan:
                 volume = self._compute_volume(raw, len(positions))
                 computed = xp.cuda.Event()
                 computed.record()
-            storage = xp.cuda.alloc_pinned_memory(volume.size * 4)
-            host = np.ndarray(volume.shape, np.float32, buffer=storage)
+            assert self._pinned is not None
+            host = self._pinned.empty(volume.shape)
             self.download.wait_event(computed)
             with self.download:
                 volume.get(out=host, stream=self.download, blocking=False)
                 downloaded = xp.cuda.Event()
                 downloaded.record()
-            return PendingSlab(
-                host, downloaded, (data, source, raw, volume, storage, computed, *metadata)
-            )
+            return PendingSlab(host, downloaded, (data, source, raw, volume, computed, *metadata))
         except BaseException:
             self.synchronize()
             raise

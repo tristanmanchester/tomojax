@@ -233,17 +233,18 @@ def validate_volume(
     name: str = "volume",
 ) -> tuple[int, int, int]:
     """Validate a reconstruction volume against grid dimensions."""
-    expected_shape = validate_grid(grid, context)
+    dimensions = validate_grid(grid, context)
+    expected_shape = dimensions[::-1]
     actual_shape = _shape_of(volume)
     if actual_shape != expected_shape:
         _raise_shape_error(
             context,
             name,
-            expected=f"(nx, ny, nz)={expected_shape} from grid",
+            expected=f"(nz, ny, nx)={expected_shape} from grid",
             actual=actual_shape,
             fix="use a volume/init_x/support array generated for the same reconstruction grid.",
         )
-    return expected_shape
+    return dimensions
 
 
 def validate_detector_image(
