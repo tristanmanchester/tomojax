@@ -80,13 +80,11 @@ else:
         t = time.perf_counter()
         x = fista(data.copy(), geo, angles, iters, tviter=20, tvlambda=lam, verbose=False)
         dt = time.perf_counter() - t
-        results.append(("tigre fista", lam, err(np.ascontiguousarray(x.transpose(2, 1, 0))), dt))
+        results.append(("tigre fista", lam, err(np.ascontiguousarray(x)), dt))
     for alpha in [float(v) for v in os.environ.get("TIGRE_ALPHAS", "0.002,0.02").split(",")]:
         t = time.perf_counter()
         x = asd_pocs(data.copy(), geo, angles, iters, alpha=alpha, verbose=False)
         dt = time.perf_counter() - t
-        results.append(
-            ("tigre asd_pocs", alpha, err(np.ascontiguousarray(x.transpose(2, 1, 0))), dt)
-        )
+        results.append(("tigre asd_pocs", alpha, err(np.ascontiguousarray(x)), dt))
 for name, param, e, dt in results:
     print(f"{size} {name:22s} param {param:<6} relL2 {e:.4f}  {dt:.2f}s", flush=True)

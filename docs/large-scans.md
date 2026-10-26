@@ -50,7 +50,7 @@ import tomojax as tj
 scan = tj.load("scan.nxs")
 grid = scan.grid
 volume = np.lib.format.open_memmap(
-    "volume.npy", mode="w+", dtype=np.float32, shape=(grid.nx, grid.ny, grid.nz)
+    "volume.npy", mode="w+", dtype=np.float32, shape=(grid.nz, grid.ny, grid.nx)
 )
 recon = tj.reconstruct(scan, "fbp", out=volume)
 volume.flush()
@@ -77,20 +77,15 @@ import tomojax as tj
 scan = tj.load("corrected-lamino.nxs")
 grid = scan.grid
 volume = np.lib.format.open_memmap(
-    "volume.npy", mode="w+", dtype=np.float32, shape=(grid.nx, grid.ny, grid.nz)
+    "volume.npy", mode="w+", dtype=np.float32, shape=(grid.nz, grid.ny, grid.nx)
 )
 recon = tj.reconstruct(scan, "fbp", filter="ramp", out=volume)
 volume.flush()
 ```
 
 Built-in parallel scans use balanced axial slabs of at most 16 slices, reading
-only the detector rows they need. Automatically allocated axial host output uses
-Fortran order for contiguous xy-planes; laminography keeps C order for x-slabs.
-For large disk-backed axial FBP output, pass
-`fortran_order=True` to `open_memmap`: contiguous xy-planes avoid repeatedly
-dirtying pages across the whole file as successive z-slabs are written. This
-changes storage order, not the volume's `(x, y, z)` shape or coordinates.
-Keep the default C order for laminography's x-slabs.
+only the detector rows they need. Host outputs use C-ordered `(z, y, x)`
+arrays, so xy-planes are contiguous. Use the default C order for memmaps too.
 
 Laminography and posed scans use x-slabs,
 each streaming and refiltering every view; those slabs use about half the free
@@ -104,7 +99,7 @@ Input and output must not overlap, and public `out=` does not support explicit d
 `method="fourier"` also accepts `out=` for axial parallel scans. These storage
 choices do not make raw-frame correction out of core: `frames.corrected()`
 still returns a complete corrected projection stack in host memory.
-Axial F-order output can overlap one slab download/write with the next
+Axial output can overlap one slab download/write with the next
 computation when spare device memory permits. All writes finish before return;
 a failure can leave a partly written volume. A 1024³ laminography volume takes about
 [37 s on an 8 GB laptop GPU](measurements.md#scans-larger-than-the-gpu).
@@ -135,11 +130,11 @@ frames = tj.load_frames("raw.nxs")
 grid = frames.geometry.grid
 volume = np.lib.format.open_memmap(
     "volume.npy", mode="w+", dtype=np.float32,
-    shape=(grid.nx, grid.ny, grid.nz), fortran_order=True,
+    shape=(grid.nz, grid.ny, grid.nx),
 )
 with tj.reconstruct_slabs(frames, "fbp", corrections=[Stripes(), Stripes(51, varying=True)]) as slabs:
     for z_slice, block in slabs:
-        volume[:, :, z_slice] = block.volume
+        volume[z_slice] = block.volume
 volume.flush()
 ```
 

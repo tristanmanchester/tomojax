@@ -241,7 +241,7 @@ def test_radian_file_recovers_the_same_volume_and_pose_geometry(tmp_path):
     detector = tj.Detector(8, 5, 0.9, 1.2, (0.17, -0.23))
     angles = np.linspace(-17, 163, 18, endpoint=False)
     geometry = tj.ParallelGeometry(grid, detector, angles)
-    truth = np.random.default_rng(6).uniform(size=(5, 4, 3)).astype(np.float32)
+    truth = np.random.default_rng(6).uniform(size=(3, 4, 5)).astype(np.float32)
     scan = tj.Scan(np.asarray(tj.project(geometry, truth)), geometry)
     path = tmp_path / "radians.nxs"
     tj.save(path, scan)

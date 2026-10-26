@@ -279,7 +279,7 @@ def _native_refinement(native: Scan, working_detector, coarse, grid: Grid | None
         detector,
         cast("Any", scan.projections),
         config=config,
-        init_x=upsample_volume(coarse.volume, 1, (grid.nx, grid.ny, grid.nz)),
+        init_x=upsample_volume(coarse.volume, 1, (grid.nz, grid.ny, grid.nx)),
         init_pose_params=coarse.scan.poses,
     )
     return replace(

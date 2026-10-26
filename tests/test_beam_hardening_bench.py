@@ -71,7 +71,7 @@ def _phantom(bench, values, rod=2.0):
     }
     fractions = bench["score"].fractions(case)
     image = sum(f * values[s["material"]] for f, s in zip(fractions, case["shapes"], strict=True))
-    return case, np.repeat(image[:, :, None], 4, axis=2)
+    return case, np.repeat(image[None], 4, axis=0)
 
 
 def test_true_image_scores_zero_and_errors_are_measured(bench):
@@ -82,9 +82,9 @@ def test_true_image_scores_zero_and_errors_are_measured(bench):
     assert abs(exact["cupping"]) < 1e-6 and abs(exact["dark_band"]) < 1e-6
     assert all(abs(r) < 0.01 for r in exact["radius"].values())
     x, y = score.coordinates(case)
-    owner = volume[:, :, 0] == truth["water"]
-    cupped = volume - 0.002 * (1 - (x**2 + y**2) / 144)[:, :, None] * owner[:, :, None]
-    streak = cupped - 0.004 * ((np.abs(y) < 1) & (np.abs(x) < 3))[:, :, None] * owner[:, :, None]
+    owner = volume[0] == truth["water"]
+    cupped = volume - 0.002 * (1 - (x**2 + y**2) / 144)[None] * owner[None]
+    streak = cupped - 0.004 * ((np.abs(y) < 1) & (np.abs(x) < 3))[None] * owner[None]
     measured = score.score_volume(streak, case, truth)
     assert measured["cupping"] > 0.05 and measured["mu"]["water"]["bias"] < 0
     assert -0.25 < measured["dark_band"] < -0.15  # the streak is 20 % of water

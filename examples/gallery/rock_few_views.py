@@ -68,20 +68,20 @@ def main() -> None:
     style()
     centres = np.arange(N) - N / 2 + 0.5
     core = np.hypot(*np.meshgrid(centres, centres, indexing="ij")) < 0.44 * N
-    mask = np.broadcast_to(core[..., None], truth.shape)
+    mask = np.broadcast_to(core[None], truth.shape)
     z, top = N // 2, 0.55
-    zoom = (slice(N // 2, N // 2 + 80), slice(N // 2 - 70, N // 2 + 10))
+    zoom = (slice(N // 2 - 70, N // 2 + 10), slice(N // 2, N // 2 + 80))
     fig, axes = plt.subplots(2, 4, figsize=(9.0, 4.9), gridspec_kw={"height_ratios": (1, 1)})
     columns = [("Phantom", truth)] + [
         (f"{name}, error {relative_error(np.asarray(v), truth, mask):.3f}", np.asarray(v))
         for name, v in results.items()
     ]
     for (title, volume), (top_ax, bottom_ax) in zip(columns, axes.T, strict=True):
-        image = volume[:, :, z]
+        image = volume[z]
         panel(top_ax, image, title, 0.0, top)
         top_ax.add_patch(
             plt.Rectangle(
-                (zoom[0].start, zoom[1].start), 80, 80, fill=False, color="tab:orange", lw=0.8
+                (zoom[1].start, zoom[0].start), 80, 80, fill=False, color="tab:orange", lw=0.8
             )
         )
         panel(bottom_ax, image[zoom], "", 0.0, top)

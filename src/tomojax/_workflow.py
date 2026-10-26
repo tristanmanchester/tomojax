@@ -180,7 +180,7 @@ def project(
     geometry : ScanGeometry
         Per-view geometry defining the matched projector.
     volume : numpy.ndarray or jax.Array
-        Volume in (z, y, x) order, or (y, x) for a single slice.
+        Volume in (z, y, x) order.
     grid : Grid or None, optional
         Voxel grid; None uses the geometry's grid.
     devices : jax.Device or sequence of jax.Device or None, optional
@@ -231,8 +231,7 @@ def backproject(
     Returns
     -------
     jax.Array
-        Adjoint volume, shape (grid.nz, grid.ny, grid.nx);
-        single-slice 2D input returns (grid.ny, grid.nx).
+        Adjoint volume, shape (grid.nz, grid.ny, grid.nx).
 
     Raises
     ------
@@ -302,8 +301,8 @@ def reconstruct(
     ``mlem`` is linear Poisson MLEM/OSEM, not transmission counts (``MLEMConfig``).
     ``warm_start`` uses FBP/FDK for least squares; ``grid`` overrides the scan's output grid.
 
-    ``out`` is a writable float32 array or memmap of shape ``(grid.nx, grid.ny,
-    grid.nz)`` for ``fbp``, ``fourier``, and ``cgls``, ``sirt`` and ``mlem`` on
+    ``out`` is a writable float32 array or memmap of shape ``(grid.nz, grid.ny,
+    grid.nx)`` for ``fbp``, ``fourier``, and ``cgls``, ``sirt`` and ``mlem`` on
     cone beams: the volume is made in host slabs straight into it and returned
     as ``volume``. It must not overlap the scan, and a later failure can leave
     it partly written. Cone CGLS, SIRT and MLEM also use host slabs on their

@@ -192,7 +192,7 @@ def solve_tomojax(
     if method in {"tomojax_multires_cgls_cuda", "tomojax_multires_joseph_cgls_cuda"}:
         from tomojax.recon import CGLSConfig, cgls_multires
 
-        factors, budgets = multires_schedule((case.grid.nx, case.grid.ny, case.grid.nz), iterations)
+        factors, budgets = multires_schedule((case.grid.nz, case.grid.ny, case.grid.nx), iterations)
         result, info = cgls_multires(
             geometry,
             case.grid,
@@ -273,7 +273,7 @@ def solve_tomojax(
 
 
 def solve_astra(case: Any, iterations: int, method: str) -> tuple[Any, dict]:
-    """Include native layout conversion, geometry, allocation, transfers and cleanup."""
+    """Include projection conversion, geometry, allocation, transfers and cleanup."""
     import astra
     from direct_reconstruction import astra_geometries
     import numpy as np
@@ -290,7 +290,7 @@ def solve_astra(case: Any, iterations: int, method: str) -> tuple[Any, dict]:
         volume, _ = astra_fbp3d(case)
         # Native CGLS3D_CUDA requires float32 host data, unlike direct_BP.
         # Include the required download/upload handoff in complete workflow cost.
-        initial = np.ascontiguousarray(volume.transpose(2, 1, 0))
+        initial = np.ascontiguousarray(volume)
 
     data_ids = []
     algorithm_id = None
@@ -307,7 +307,7 @@ def solve_astra(case: Any, iterations: int, method: str) -> tuple[Any, dict]:
         config["ReconstructionDataId"] = volume_id
         algorithm_id = astra.algorithm.create(config)
         astra.algorithm.run(algorithm_id, iterations=iterations)
-        volume = np.ascontiguousarray(astra.data3d.get(volume_id).transpose(2, 1, 0))
+        volume = np.ascontiguousarray(astra.data3d.get(volume_id))
         return volume, {
             "backend": algorithm,
             "regulariser": "none",
@@ -345,7 +345,7 @@ def solve_tigre(case: Any, iterations: int, method: str = "tigre_cgls") -> tuple
         if method == "tigre_fbp"
         else cgls(case.analytic.copy(), geo, angles, iterations, verbose=False)
     )
-    return np.ascontiguousarray(result.transpose(2, 1, 0)), {
+    return np.ascontiguousarray(result), {
         "backend": "TIGRE_FBP" if method == "tigre_fbp" else "CGLS_Siddon_matched",
         "regulariser": "none",
         "positivity": False,

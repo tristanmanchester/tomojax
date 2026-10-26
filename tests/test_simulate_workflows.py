@@ -176,3 +176,15 @@ def test_simulate_to_file_writes_loadable_dataset(
     assert loaded.volume.shape == (2, 2, 2)
     assert loaded.grid is not None
     assert loaded.detector is not None
+
+
+@pytest.mark.parametrize(
+    "phantom", ["sphere", "cube", "shepp", "blobs", "random_shapes", "lamino_disk"]
+)
+def test_phantoms_use_non_cubic_zyx_arrays(phantom):
+    config = SimConfig(nx=15, ny=13, nz=11, nu=15, nv=11, n_views=2, phantom=phantom)
+    volume = np.asarray(make_phantom(config))
+    assert volume.shape == (11, 13, 15)
+    assert volume.flags.c_contiguous
+    if phantom == "lamino_disk":
+        assert not volume[:4].any() and not volume[7:].any()

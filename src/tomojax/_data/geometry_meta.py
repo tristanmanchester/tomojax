@@ -66,7 +66,7 @@ def _volume_shape_nxyz(volume_shape: Sequence[int] | None) -> tuple[int, int, in
     dims = tuple(int(v) for v in volume_shape)
     if len(dims) != 3:
         raise ValueError(f"volume_shape must provide exactly 3 dims, got {dims!r}")
-    return dims
+    return dims[2], dims[1], dims[0]
 
 
 def normalize_geometry_type(geometry_type: str | None) -> str:

@@ -6,8 +6,7 @@ the geometry classes `ParallelGeometry`, `LaminographyGeometry`,
 such as `compute_roi`, `grid_from_detector_fov` and `cylindrical_mask_xy`.
 
 `tomojax.geometry.api` holds the expert helpers alignment, IO and the solvers
-build on: volume axis order constants and `transpose_volume`, calibration
-state (`CalibrationState`, `GeometryState`, `validate_calibration_gauges`),
+build on: calibration state (`CalibrationState`, `GeometryState`, `validate_calibration_gauges`),
 axis poses and detector grids.
 
 Import from these two modules, not from private implementation files.

@@ -110,7 +110,7 @@ def run_astra(case: dict[str, Any], volume: np.ndarray, data: np.ndarray, gpus: 
         alg = astra.algorithm.create(cfg)
         try:
             astra.algorithm.run(alg, iterations)
-            return astra.data3d.get(rid).transpose(2, 1, 0)
+            return astra.data3d.get(rid)
         finally:
             astra.algorithm.delete(alg)
             astra.data3d.delete([sid, rid])
@@ -120,7 +120,7 @@ def run_astra(case: dict[str, Any], volume: np.ndarray, data: np.ndarray, gpus: 
 
     # Every call converts layouts and allocates its output, as the others' do.
     def forward() -> np.ndarray:
-        avol = np.ascontiguousarray(volume.transpose(2, 1, 0))  # ASTRA's (z, y, x) volumes
+        avol = np.ascontiguousarray(volume)  # ASTRA's (z, y, x) volumes
         out = np.empty((case["nv"], case["views"], case["nu"]), np.float32)
         return astra.projector3d.direct_FP(projector, avol, out=out).transpose(1, 0, 2)
 
@@ -165,16 +165,16 @@ def run_tigre(case: dict[str, Any], volume: np.ndarray, data: np.ndarray, gpus: 
             "residual_norms": residuals.tolist(),
             "projector": "Siddon forward, matched backprojection",
         }
-        return alg.getres().transpose(2, 1, 0), info
+        return alg.getres(), info
 
     def tvol() -> np.ndarray:
-        return np.ascontiguousarray(volume.transpose(2, 1, 0))
+        return np.ascontiguousarray(volume)
 
     return {
         "forward": lambda: (tigre.Ax(tvol(), geo, angles, "interpolated", gpuids=ids), {}),
         "forward_siddon": lambda: (tigre.Ax(tvol(), geo, angles, "Siddon", gpuids=ids), {}),
         "backproject": lambda: (tigre.Atb(data, geo, angles, "matched", gpuids=ids), {}),
-        "fdk": lambda: (algorithms.fdk(data, geo, angles, gpuids=ids).transpose(2, 1, 0), {}),
+        "fdk": lambda: (algorithms.fdk(data, geo, angles, gpuids=ids), {}),
         "cgls": cgls,
     }
 

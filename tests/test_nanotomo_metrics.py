@@ -101,7 +101,7 @@ def test_half_data_pipeline_preserves_pose_corrections_and_physical_spacing():
     import tomojax as tj
     from tomojax.recon import FBPConfig
 
-    grid, detector = tj.Grid(12, 12, 8, 0.7, 0.7, 0.7), tj.Detector(12, 8, 0.7, 0.7)
+    grid, detector = tj.Grid(12, 12, 8, 0.5, 0.7, 0.9), tj.Detector(12, 8, 0.7, 0.9)
     angles = np.array([0.0, 90.0, 45.0, 135.0, 22.5, 112.5, 67.5, 157.5])
     rng = np.random.default_rng(172)
     poses = np.zeros((len(angles), 6), dtype=np.float32)
@@ -111,18 +111,18 @@ def test_half_data_pipeline_preserves_pose_corrections_and_physical_spacing():
         tj.ParallelGeometry(grid, detector, angles),
     ).with_poses(poses)
     config = FBPConfig(backend="jax")
-    region = (slice(None), slice(None), slice(1, -1))
+    region = (slice(1, -1), slice(None), slice(None))
     result = half_dataset_fsc(scan, config=config, taper=0, region=region)
     expected = [
         np.asarray(tj.reconstruct(scan.selected(ix), "fbp", config=config).volume)[region]
         for ix in ([0, 1, 2, 3], [4, 5, 6, 7])
     ]
-    direct = fourier_shell_correlation(*expected, spacing=(0.7, 0.7, 0.7), taper=0)
+    direct = fourier_shell_correlation(*expected, spacing=(0.9, 0.7, 0.5), taper=0)
     np.testing.assert_allclose(result["correlation"], direct["correlation"])
     np.testing.assert_array_equal(result["halves"], [[0, 1, 2, 3], [4, 5, 6, 7]])
-    assert result["grid_shape"] == [12, 12, 8]
-    assert result["scored_shape"] == [12, 12, 6]
-    assert result["region"] == [[None, None, None], [None, None, None], [1, -1, None]]
+    assert result["grid_shape"] == [8, 12, 12]
+    assert result["scored_shape"] == [6, 12, 12]
+    assert result["region"] == [[1, -1, None], [None, None, None], [None, None, None]]
 
 
 def test_repeated_angle_observations_never_leak_into_both_fsc_halves():
@@ -141,7 +141,7 @@ def test_half_data_releases_spatial_volumes_before_fft(monkeypatch):
     rng = np.random.default_rng(25)
 
     def reconstruct(*args, **kwargs):
-        volume = rng.normal(size=(7, 8, 9)).astype(np.float32)
+        volume = rng.normal(size=(9, 8, 7)).astype(np.float32)
         references.append(weakref.ref(volume))
         return SimpleNamespace(volume=volume)
 
@@ -158,4 +158,4 @@ def test_half_data_releases_spatial_volumes_before_fft(monkeypatch):
         grid=SimpleNamespace(nx=7, ny=8, nz=9, vx=1, vy=1, vz=1),
         selected=lambda _: None,
     )
-    metrics.half_dataset_fsc(scan, region=(slice(None), slice(None), slice(1, -1)))
+    metrics.half_dataset_fsc(scan, region=(slice(1, -1), slice(None), slice(None)))

@@ -99,7 +99,7 @@ def compare(image: np.ndarray, reference: np.ndarray, segmentation: np.ndarray) 
     low_z = ratio[(masks["filler"] | masks["light"]) & solid]
     low_z = np.clip(low_z / np.median(low_z), 0.0, 3.0)
     result["low_z_spread"] = float(np.sqrt(np.mean((low_z - 1) ** 2)))
-    x, y = np.meshgrid(np.arange(image.shape[0]), np.arange(image.shape[1]), indexing="ij")
+    y, x = np.meshgrid(np.arange(image.shape[0]), np.arange(image.shape[1]), indexing="ij")
     wall = segmentation == d2.WALL
     cx, cy = x[wall].mean(), y[wall].mean()
     rho, phi = np.hypot(x - cx, y - cy), np.arctan2(y - cy, x - cx)
@@ -127,7 +127,7 @@ def run(
     """
     records = []
     for slice_id in chosen or d2.slices(split):
-        reference = methods.uncorrected(_frames(slice_id, 2), METADATA[2]).volume[:, :, 0]
+        reference = methods.uncorrected(_frames(slice_id, 2), METADATA[2]).volume[0]
         segmentation = d2.segmentation(slice_id)
         frames = _frames(slice_id, 3)
         first = any(slice_id in r for r in d2.FIRST_DETECTOR)
@@ -141,7 +141,7 @@ def run(
             except Exception as error:  # truth-only controls, or a failing method
                 record[name] = {"error": f"{type(error).__name__}: {error}"}
                 continue
-            image = np.asarray(result.volume)[:, :, 0]
+            image = np.asarray(result.volume)[0]
             record[name] = {
                 "seconds": time.perf_counter() - start,
                 **compare(image, reference, segmentation),
@@ -151,7 +151,7 @@ def run(
         print(record, flush=True)
         if figures is not None:
             figures.mkdir(parents=True, exist_ok=True)
-            x, y = np.nonzero(segmentation == d2.WALL)
+            y, x = np.nonzero(segmentation == d2.WALL)
             title = f"2DeteCT slice {slice_id}: 60 kV methods against 90 kV filtered"
             plots.save(
                 figures / f"{record['case']}.png",

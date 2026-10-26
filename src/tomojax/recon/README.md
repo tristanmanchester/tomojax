@@ -63,7 +63,7 @@ from tomojax.recon import FBPHostConfig, fbp_host
 volume = fbp_host(
     geometry, grid, detector, projections_numpy,
     config=FBPHostConfig(slices_per_batch=16, views_per_batch=32),
-    out=output_memmap,  # optional writable FP32 array, shape (grid.nx, grid.ny, grid.nz)
+    out=output_memmap,  # optional writable FP32 array, shape (grid.nz, grid.ny, grid.nx)
 )
 ```
 
@@ -247,14 +247,14 @@ and its normal image), reading the measurements only for its initial and
 recomputed residuals. SIRT, OS-SART and OSEM update one volume a slab at a
 time, once per subset: it stays on the device when it fits there beside the
 sweep (the result is then a JAX array), and otherwise in host memory. Host
-results are Fortran-ordered NumPy volumes, or `out` itself:
+results are C-ordered `(z, y, x)` NumPy volumes, or `out` itself:
 
 ```python
 import numpy as np
 from tomojax.recon import SIRTConfig, sirt
 
 out = np.lib.format.open_memmap(
-    "volume.npy", "w+", np.float32, (grid.nx, grid.ny, grid.nz), fortran_order=True
+    "volume.npy", "w+", np.float32, (grid.nz, grid.ny, grid.nx)
 )
 volume, info = sirt(
     geometry, grid, detector, projections, config=SIRTConfig(subsets=8), out=out

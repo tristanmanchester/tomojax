@@ -30,7 +30,7 @@ def run_case(size: int, repeats: int) -> dict:
     pose[:3, :3] = Rotation.from_euler("xyz", [17, 11, 43], degrees=True).as_matrix()
     pose[:3, 3] = [0.13, -0.31, 0.53]
     pose = jnp.asarray(pose)
-    volume = jnp.asarray(rng.normal(size=(size, size, 5)), dtype=jnp.float32)
+    volume = jnp.asarray(rng.normal(size=(5, size, size)), dtype=jnp.float32)
     data = jnp.asarray(rng.normal(size=(7, size)), dtype=jnp.float32)
     forward = jax.jit(
         lambda x: forward_project_view_T(

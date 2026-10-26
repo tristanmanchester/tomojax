@@ -164,12 +164,12 @@ def main() -> None:
     print(json.dumps(timings, indent=2))
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        nx, ny, nz = volume.shape
+        nz, ny, nx = volume.shape
         quantity = "delta" if timings["value_unit"] == "delta" else "phase_per_pixel"
         slices = {
-            f"{quantity}_xy": volume[:, :, nz // 2],
+            f"{quantity}_xy": volume[nz // 2],
             f"{quantity}_xz": volume[:, ny // 2, :],
-            f"{quantity}_yz": volume[nx // 2, :, :],
+            f"{quantity}_yz": volume[:, :, nx // 2],
         }
         np.savez_compressed(
             args.output,

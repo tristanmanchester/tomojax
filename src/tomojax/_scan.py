@@ -61,6 +61,7 @@ class Scan:
     ----------
     projections : numpy.ndarray or jax.Array
         Line integrals, not intensities, shaped (views, rows, columns).
+        A single-row sinogram (views, columns) is stored with a singleton row.
     geometry : ScanGeometry
         Per-view geometry carrying the reconstruction grid and detector.
     name : str, optional
@@ -191,6 +192,8 @@ class Scan:
         )
 
     def __post_init__(self) -> None:
+        if self.projections.ndim == 2:
+            object.__setattr__(self, "projections", self.projections[:, None, :])
         check_shape("Scan: projections", self.projections.shape, self.geometry)
 
     @property
@@ -297,8 +300,8 @@ class Scan:
         ``proj_geom`` is a ``cone`` or ``cone_vec`` geometry and ``vol_geom`` a
         3-D volume geometry, as ``astra.create_proj_geom`` and
         ``astra.create_vol_geom`` make them. The scan's grid is the ASTRA
-        volume, and its volumes are ASTRA's ``(z, y, x)`` arrays transposed to
-        ``(x, y, z)``. The fitted circular orbit is the scan's geometry; any
+        volume, and both libraries use ``(z, y, x)`` volume arrays. The fitted
+        circular orbit is the scan's geometry; any
         departure from it (tilts, wobble, per-view corrections) becomes
         :attr:`poses`. ASTRA turns the source and detector about the object
         and TomoJAX the object, so :attr:`angles` run the other way.
@@ -405,8 +408,8 @@ class Scan:
     def to_astra(self) -> tuple[np.ndarray, dict[str, Any], dict[str, Any]]:
         """Export projections and cone-beam geometry for ASTRA.
 
-        The inverse of :meth:`from_astra`, for cone-beam scans; transpose a
-        volume ``(x, y, z) -> (z, y, x)`` to use it with ASTRA.
+        The inverse of :meth:`from_astra`, for cone-beam scans. Both libraries
+        use ``(z, y, x)`` volume arrays.
 
         Returns
         -------
@@ -721,14 +724,14 @@ def with_grid(scan: Scan, grid: Grid) -> Scan:
 class Reconstruction:
     """A reconstructed volume, the scan it came from and how it was made.
 
-    ``volume`` is ``(nx, ny, nz)`` on :attr:`grid`, in the reciprocal of the
+    ``volume`` is ``(nz, ny, nx)`` on :attr:`grid`, in the reciprocal of the
     geometry's length unit (a NumPy or JAX array; ``np.asarray`` gives NumPy).
     ``info`` records the method's settings.
 
     Parameters
     ----------
     volume : numpy.ndarray or jax.Array
-        Volume in (x, y, z) order and reciprocal geometry-length units.
+        Volume in (z, y, x) order and reciprocal geometry-length units.
     scan : Scan
         Input scan, including the output grid and any inferred geometry.
     method : str
@@ -767,7 +770,7 @@ class Alignment:
     Parameters
     ----------
     volume : numpy.ndarray or jax.Array
-        Reconstruction used by the alignment, in (x, y, z) order.
+        Reconstruction used by the alignment, in (z, y, x) order.
     scan : Scan
         Scan with estimated geometry and per-view corrections applied.
     poses : numpy.ndarray

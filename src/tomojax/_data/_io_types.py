@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, TypedDict
 import numpy as np
 
 from tomojax.core.geometry.base import Detector, DetectorDict, Grid, GridDict
-from tomojax.geometry.api import DISK_VOLUME_AXES
 
 from ._io_frames import Hdf5Frames
 
@@ -70,7 +69,7 @@ class NXTomoMetadata:
     geometry_meta : dict or None, optional
         Additional geometry and acquisition metadata.
     volume : numpy.ndarray, jax.Array or None, optional
-        Reconstructed volume in internal (x, y, z) order.
+        Reconstructed volume in (z, y, x) order.
     align_params : numpy.ndarray or None, optional
         Saved per-view alignment parameters.
     align_gauge : dict or None, optional
@@ -93,8 +92,6 @@ class NXTomoMetadata:
         Radiation source type.
     source_probe : str or None, optional
         Probe label; defaults to x-ray.
-    volume_axes_order : str, optional
-        Axis permutation for on-disk volume storage; defaults to zyx.
     """
 
     angles: np.ndarray | None = None
@@ -115,7 +112,6 @@ class NXTomoMetadata:
     source_name: str | None = "TomoJAX source"
     source_type: str | None = None
     source_probe: str | None = "x-ray"
-    volume_axes_order: str = DISK_VOLUME_AXES
 
     @classmethod
     def from_dataset(cls, data: Mapping[str, DatasetValue]) -> NXTomoMetadata:
@@ -144,18 +140,6 @@ class NXTomoMetadata:
                 source_probe = source_info.get("probe")
 
         geometry_type = data.get("geometry_type")
-        volume_axes_order = data.get("volume_axes_order")
-        disk_volume_axes_order = data.get("disk_volume_axes_order")
-        if volume_axes_order is None and disk_volume_axes_order in {
-            "xyz",
-            "xzy",
-            "yxz",
-            "yzx",
-            "zxy",
-            "zyx",
-            "unknown",
-        }:
-            volume_axes_order = disk_volume_axes_order
         return cls(
             angles=_copy_array_metadata(data.get("angles")),
             image_key=_copy_array_metadata(data.get("image_key")),
@@ -175,9 +159,6 @@ class NXTomoMetadata:
             source_name=None if source_name is None else str(source_name),
             source_type=None if source_type is None else str(source_type),
             source_probe=None if source_probe is None else str(source_probe),
-            volume_axes_order=(
-                DISK_VOLUME_AXES if volume_axes_order is None else str(volume_axes_order)
-            ),
         )
 
 
@@ -382,4 +363,7 @@ class ValidationReport(TypedDict):
 
 def _frames_or_array(value: object) -> np.ndarray | Hdf5Frames:
     """Lazily read frames as they are; anything else as an array."""
-    return value if isinstance(value, Hdf5Frames) else np.asarray(value)
+    if isinstance(value, Hdf5Frames):
+        return value
+    array = np.asarray(value)
+    return array[:, None, :] if array.ndim == 2 else array

@@ -39,7 +39,7 @@ supersampled. Attenuation is the total linear attenuation coefficient with
 coherent scattering at 80 keV, monochromatic, as on a high-energy synchrotron
 beamline or as the effective energy of a filtered 160 to 180 kVp lab source
 (xraylib 4.3 ``CS_Total_CP``, the counterpart of the NIST XCOM total with
-coherent scattering). Volumes are attenuation in mm^-1, ``(x, y, z)`` order.
+coherent scattering). Volumes are attenuation in mm^-1, ``(z, y, x)`` order.
 
     python bench/phantoms/battery.py --n 256 --preview /tmp/battery.png
 """
@@ -161,7 +161,7 @@ def winding_fractions(grid: Grid) -> list[np.ndarray]:
     the pixel footprint.
     """
     c = grid.centres()
-    x, y = np.meshgrid(c, c, indexing="ij")
+    y, x = np.meshgrid(c, c, indexing="ij")
     r, phi = _polar(x, y)
     cos, sin = np.abs(np.cos(phi)), np.abs(np.sin(phi))
     widths = grid.voxel * np.stack([cos, sin, np.zeros_like(cos)], -1)
@@ -249,7 +249,7 @@ def particle_fraction(grid: Grid, seed: int) -> np.ndarray:
 
         ixy, wxy = axis(-CAN_OUT, CAN_OUT)
         iz, wz = axis(edges[0], top)
-        cx, cy = np.meshgrid(ixy, ixy, indexing="ij")
+        cy, cx = np.meshgrid(ixy, ixy, indexing="ij")
         radius_xy = np.hypot(cx + shift + 0.5, cy + shift + 0.5) * PARTICLE_CELL
         inside = (radius_xy > 1.0) & (radius_xy < 3.75)  # where cathode coating can be
         count = int(np.count_nonzero(inside))
@@ -270,17 +270,18 @@ def particle_fraction(grid: Grid, seed: int) -> np.ndarray:
             radius = (
                 np.float32(0.0030 / PARTICLE_CELL) + np.float32(0.0033 / PARTICLE_CELL) * draw[1]
             )
-            volume = np.zeros((*inside.shape, draw.shape[2]), np.float32)
-            volume[inside] = np.where(draw[0] < 0.9, np.float32(4 / 3 * np.pi) * radius**3, 0)
+            volume = np.zeros((draw.shape[2], *inside.shape), np.float32)
+            x, y = np.nonzero(inside.T)  # Keep the seeded physical cell enumeration.
+            volume[:, y, x] = np.where(draw[0] < 0.9, np.float32(4 / 3 * np.pi) * radius**3, 0).T
             rows = np.flatnonzero(wz[:, zs].sum(axis=1) > 0)
             k0, k1 = rows[0], rows[-1] + 1
-            part = np.tensordot(wxy, volume, axes=(1, 0))
+            part = np.tensordot(volume, wxy.T, axes=(2, 0))
             part = np.tensordot(wxy, part, axes=(1, 1)).transpose(1, 0, 2)
-            return k0, part @ wz[k0:k1, zs].T
+            return k0, np.tensordot(wz[k0:k1, zs], part, axes=(1, 0))
 
         with ThreadPoolExecutor(workers()) as pool:
             for k0, block in pool.map(chunk, range(0, iz.size, depth)):
-                out[:, :, k0 : k0 + block.shape[2]] += scale * block
+                out[k0 : k0 + block.shape[0]] += scale * block
     return out
 
 
@@ -429,12 +430,12 @@ def battery(n: int = 256, *, seed: int = 0) -> tuple[np.ndarray, dict[str, Any]]
     fractions = winding_fractions(grid)
     volume = np.zeros((n, n, n), np.float32)
     for layer, area in zip(LAYERS, fractions, strict=True):
-        volume += (mu[layer.material] * area)[:, :, None].astype(np.float32) * _z_fraction(
+        volume += (mu[layer.material] * area)[None].astype(np.float32) * _z_fraction(
             grid, layer.top
-        )[None, None, :].astype(np.float32)
+        )[:, None, None].astype(np.float32)
 
-    coating = (fractions[CATHODE_LAYERS[0]] + fractions[CATHODE_LAYERS[1]])[:, :, None]
-    coating = coating * _z_fraction(grid, Z_CATHODE)[None, None, :]
+    coating = (fractions[CATHODE_LAYERS[0]] + fractions[CATHODE_LAYERS[1]])[None]
+    coating = coating * _z_fraction(grid, Z_CATHODE)[:, None, None]
     volume += ((mu[NMC] - mu[CATHODE]) * coating * particle_fraction(grid, seed)).astype(np.float32)
 
     voxelise(hardware, grid, mu, fine=4, under=volume)

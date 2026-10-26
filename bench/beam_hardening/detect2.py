@@ -97,12 +97,12 @@ def geometry(slice_id: int, *, center_shift: float | None = None) -> object:
 
 
 def orient(image: np.ndarray) -> np.ndarray:
-    """Map a published ``(row, column)`` image to TomoJAX ``(x, y)`` indexing."""
-    return np.asarray(image)[::-1].T
+    """Map a published ``(row, column)`` image to TomoJAX ``(y, x)`` indexing."""
+    return np.asarray(image)[::-1]
 
 
 def segmentation(slice_id: int) -> np.ndarray:
-    """Published four-class segmentation of the mode 2 image, in ``(x, y)`` indexing."""
+    """Published four-class segmentation of the mode 2 image, in ``(y, x)`` indexing."""
     import tifffile
 
     path = DATA / "reference" / f"slice{slice_id:05d}" / "mode2" / "segmentation.tif"
@@ -110,7 +110,7 @@ def segmentation(slice_id: int) -> np.ndarray:
 
 
 def published(slice_id: int, mode: int) -> np.ndarray:
-    """Published reconstruction in ``(x, y)`` indexing, in units of mm^-1."""
+    """Published reconstruction in ``(y, x)`` indexing, in units of mm^-1."""
     import tifffile
 
     path = DATA / "reference" / f"slice{slice_id:05d}" / f"mode{mode}" / "reconstruction.tif"

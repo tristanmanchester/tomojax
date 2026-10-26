@@ -7,7 +7,7 @@
     "tomojax.io": 7,
     "tomojax.alignment": 6,
     "tomojax.datasets": 13,
-    "tomojax.geometry.api": 18,
+    "tomojax.geometry.api": 12,
     "tomojax.recon.api": 7,
     "tomojax.io.api": 20,
     "tomojax.alignment.api": 72
@@ -44,7 +44,6 @@
     "src/tomojax/core/cuda_projector/_loss.py::forward_project_residual_sse_T_cuda": 119,
     "src/tomojax/core/cuda_projector/_stack_bind.py::forward_project_views_T_cuda": 101,
     "src/tomojax/core/cuda_projector/_stack_state.py::prepare_forward_project_views_T_cuda_state": 109,
-    "src/tomojax/datasets/_impl/simulate.py::simulate": 115,
     "src/tomojax/recon/_cgls_jax.py::_solve": 165,
     "src/tomojax/recon/_cgls_jax.py::_solve_streamed": 112,
     "src/tomojax/recon/_cgls_jax.py::cgls": 105,
@@ -56,7 +55,7 @@
   },
   "suppressions": {
     "noqa": 8,
-    "type: ignore": 32,
+    "type: ignore": 31,
     "pyright: ignore": 12
   },
   "complex_functions": [
@@ -80,8 +79,6 @@
     "src/tomojax/core/_logging.py::PLR0911::format_duration",
     "src/tomojax/datasets/_impl/artefacts.py::C901::apply_simulation_artefacts",
     "src/tomojax/datasets/_impl/artefacts.py::PLR0915::apply_simulation_artefacts",
-    "src/tomojax/datasets/_impl/simulate.py::C901::simulate",
-    "src/tomojax/datasets/_impl/simulate.py::PLR0915::simulate",
     "src/tomojax/recon/cgls_multires.py::C901::cgls_multires",
     "src/tomojax/recon/fista_tv.py::C901::grad_data_term",
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline",

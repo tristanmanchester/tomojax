@@ -190,9 +190,8 @@ def fetch(n: int, url: str, *, every: int, reference: bool) -> dict[str, Any]:
     if reference:
         prefix = f"{root}/Reconstructions/full_AGD_50_"
         names = sorted(name for name in archive.members if name.startswith(prefix))
-        zyx = np.stack([np.asarray(iio.imread(b, extension=".tiff"), np.float32)
+        truth = np.stack([np.asarray(iio.imread(b, extension=".tiff"), np.float32)
                         for b in archive.read_all(names)])  # fmt: skip
-        truth = np.transpose(zyx, (2, 1, 0))
     return {
         "data": data,
         "vectors": {name: np.concatenate(v) for name, v in vectors.items()},
@@ -258,13 +257,13 @@ def evaluate(n: int, fetched: dict[str, Any], args: argparse.Namespace) -> dict[
 
 
 def _slices(volume: np.ndarray) -> dict[str, np.ndarray]:
-    """The three central orthogonal slices of an ``(x, y, z)`` volume."""
-    x, y, z = (size // 2 for size in volume.shape)
-    return {"xz": volume[:, y, :], "yz": volume[x, :, :], "xy": volume[:, :, z]}
+    """The three central orthogonal slices of an ``(z, y, x)`` volume."""
+    z, y, x = (size // 2 for size in volume.shape)
+    return {"xz": volume[:, y, :], "yz": volume[:, :, x], "xy": volume[z]}
 
 
 def _registered(volume: np.ndarray, target: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """The shift (voxels) best moving ``volume`` onto ``target``, and the moved volume.
+    """The physical xyz shift (voxels) moving ``volume`` onto ``target``, and moved volume.
 
     The peak of their cross-correlation, refined to a fraction of a voxel by a
     parabola through its neighbours along each axis.
@@ -283,7 +282,7 @@ def _registered(volume: np.ndarray, target: np.ndarray) -> tuple[np.ndarray, np.
         curvature = below - 2 * at + above
         fraction = 0.5 * (below - above) / curvature if curvature < 0 else 0.0
         shift[axis] = (index + size // 2) % size - size // 2 + fraction
-    return shift, ndimage.shift(volume, shift, order=3, mode="constant")
+    return shift[::-1], ndimage.shift(volume, shift, order=3, mode="constant")
 
 
 def _save_slices(path: Path, volumes: dict[str, np.ndarray], poses: dict[str, np.ndarray]) -> None:
@@ -308,7 +307,7 @@ def _preview(path: Path, volumes: dict[str, np.ndarray]) -> None:
         slices = _slices(volume)
         for row, plane in enumerate(("xz", "xy")):
             ax = axes[row, col]
-            ax.imshow(np.rot90(slices[plane]), cmap="gray", vmin=0, vmax=peak)
+            ax.imshow(slices[plane], origin="lower", cmap="gray", vmin=0, vmax=peak)
             ax.set_xticks([]), ax.set_yticks([])
         axes[0, col].set_title(name if name == "reference" else f"{name} geometry")
     axes[0, 0].set_ylabel("vertical slice")

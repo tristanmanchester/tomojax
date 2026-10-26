@@ -175,7 +175,7 @@ def test_external_fixture_and_geometry_never_import_jax_or_cuda(tmp_path):
         detector=json.dumps(dict(nu=7, nv=5, du=0.7, dv=1.1, det_center=[0.27, -0.31])),
         poses=poses,
         angles=np.array([0, 90], np.float32),
-        truth=np.zeros((5, 4, 3), np.float32),
+        truth=np.zeros((3, 4, 5), np.float32),
         data=np.ones((2, 5, 7), np.float32),
     )
     # A fresh process is essential: the pytest process already imports JAX.

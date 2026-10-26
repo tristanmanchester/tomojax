@@ -101,12 +101,12 @@ def walnut(names: list[str], figures: Path | None = None) -> list[dict]:
         record[name]["scaled_in_walnut"] = float(np.linalg.norm(v * scale - t) / np.linalg.norm(t))
         record[name]["scale"] = float(scale)
         record[name] |= {"peak_rss_gb": _peak_gb()}
-        images[name] = scale * volume[:, :, volume.shape[2] // 2]
+        images[name] = scale * volume[volume.shape[0] // 2]
         del result
     if figures is not None:
         figures.mkdir(parents=True, exist_ok=True)
-        middle = truth[:, :, truth.shape[2] // 2]
-        centre = ((middle.shape[0] - 1) / 2, (middle.shape[1] - 1) / 2)
+        middle = truth[truth.shape[0] // 2]
+        centre = ((middle.shape[1] - 1) / 2, (middle.shape[0] - 1) / 2)
         title = "Walnut 1, central slice; each image times its best scale to the reference"
         plots.save(figures / "walnut1.png", middle, images, centre, 0.1, title)
     return [record]

@@ -76,10 +76,12 @@ def test_region_from_independent_layers_retains_object_and_context(
         np.meshgrid(
             *[
                 (np.arange(n) - (n - 1) / 2) + center
-                for n, center in zip((grid.nx, grid.ny, grid.nz), grid.vol_center, strict=True)
+                for n, center in zip(
+                    (grid.nz, grid.ny, grid.nx), grid.vol_center[::-1], strict=True
+                )
             ],
             indexing="ij",
-        ),
+        )[::-1],
         -1,
     )
     truth = np.zeros(xyz.shape[:-1], np.float32)
@@ -144,7 +146,7 @@ def test_shallow_region_coarsens_a_fixed_physical_survey(monkeypatch) -> None:
     monkeypatch.setattr("tomojax._region.device_free_memory_bytes", lambda **kw: 2**20)
     monkeypatch.setattr(
         "tomojax._region.reconstruct_arrays",
-        lambda method, geometry, grid, *args: (np.zeros((grid.nx, grid.ny, grid.nz)), {}),
+        lambda method, geometry, grid, *args: (np.zeros((grid.nz, grid.ny, grid.nx)), {}),
     )
     estimate = tj.estimate_region(scan)
     grid = estimate.grid

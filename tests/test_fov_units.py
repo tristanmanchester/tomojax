@@ -48,7 +48,7 @@ def test_cylindrical_mask_matches_independent_world_coordinates_at_any_unit(scal
     x = np.arange(grid.nx) - (grid.nx - 1) / 2 + center[0]
     y = (np.arange(grid.ny) - (grid.ny - 1) / 2) * grid.vy + center[1]
     radius = (detector.nu - 1) * detector.du / 2 - abs(detector.center[0])
-    expected = np.hypot(x[:, None], y[None, :]) <= radius
+    expected = np.hypot(x[None, :], y[:, None]) <= radius
     scaled_grid, scaled_detector = _scale(grid, detector, scale)
     np.testing.assert_array_equal(cylindrical_mask_xy(scaled_grid, scaled_detector), expected)
 

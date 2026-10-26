@@ -225,19 +225,8 @@ def test_cylindrical_mask_xy_uses_grid_world_coordinates() -> None:
     )
 
     assert not np.array_equal(shifted_mask, centered_mask)
-    assert shifted_mask[0, 5]
+    assert shifted_mask[5, 0]
     assert not shifted_mask[5, 5]
-
-
-def test_disk_axis_inference_preserves_ambiguity_and_missing_metadata():
-    from tomojax.geometry.api import infer_disk_axes
-
-    grid = {"nx": 3, "ny": 5, "nz": 7}
-    assert infer_disk_axes((3, 5, 7), grid) == "xyz"
-    assert infer_disk_axes((7, 5, 3), grid) == "zyx"
-    assert infer_disk_axes((3, 5, 3), {**grid, "nz": 3}) is None
-    assert infer_disk_axes((3, 5), grid) is None
-    assert infer_disk_axes((3, 5, 7), None) is None
 
 
 @pytest.mark.parametrize(

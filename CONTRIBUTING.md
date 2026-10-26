@@ -54,7 +54,7 @@ import passing is not enough to establish that the wheel works.
 - Import application code through public module roots or `.api` facades. Keep
   CLI orchestration separate from numerical implementation and honor the
   [import contracts](.importlinter).
-- Keep geometry explicit: Python volumes are `(x, y, z)`, projections are
+- Keep geometry explicit: Python volumes are `(z, y, x)`, projections are
   `(view, v, u)`, and voxel/detector lengths use consistent physical units.
   Document parameter frames and units at API boundaries.
 - Preserve matched forward/adjoint semantics. Test numerical changes against

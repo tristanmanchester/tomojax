@@ -153,10 +153,8 @@ def _focus_evidence(scan: Scan, voxel_budget: float) -> _Evidence:
     )
     xy = (np.arange(grid.nx) - (grid.nx - 1) / 2) * grid.vx
     disk = xy[:, None] ** 2 + xy[None, :] ** 2 < (d.nu * d.du / 4) ** 2
-    gradient = np.gradient(volume, grid.vx, axis=0) ** 2 + np.gradient(volume, grid.vy, axis=1) ** 2
-    energy = gaussian_filter1d(
-        np.sum(gradient * disk[..., None], axis=(0, 1), dtype=np.float64), 0.5
-    )
+    gradient = np.gradient(volume, grid.vx, axis=2) ** 2 + np.gradient(volume, grid.vy, axis=1) ** 2
+    energy = gaussian_filter1d(np.sum(gradient * disk[None], axis=(1, 2), dtype=np.float64), 0.5)
     z = (np.arange(grid.nz) - (grid.nz - 1) / 2) * grid.vz
     k = int(np.argmax(energy))
     lo = hi = k
@@ -187,7 +185,7 @@ def _score_supports(scan: Scan, evidence: _Evidence) -> list[_Score]:
         return a - gaussian_filter(a, sigma)
 
     target_hp = high(target)
-    zeros = jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
+    zeros = jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32)
 
     def forward(x: jax.Array) -> jax.Array:
         return project(fit.geometry, x, grid=grid)
@@ -223,7 +221,7 @@ def _score_supports(scan: Scan, evidence: _Evidence) -> list[_Score]:
             else (np.abs(z - center) <= width / 2).astype(np.float32)
         )
         started = time.perf_counter()
-        prediction = np.asarray(validate(solve(jnp.asarray(mask[None, None]))))
+        prediction = np.asarray(validate(solve(jnp.asarray(mask[:, None, None]))))
         mse = np.mean((prediction - target) ** 2, axis=(1, 2), dtype=np.float64)
         hp_mse = np.mean((high(prediction) - target_hp) ** 2, axis=(1, 2), dtype=np.float64)
         records.append(

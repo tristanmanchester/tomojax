@@ -139,7 +139,7 @@ an explicit `angles=` schedule must be in TomoJAX's object-angle frame.
 | Cone-beam geometry | `ConeGeometry`: point source and flat detector with offsets, roll, pitch and yaw, a laterally offset (`axis_offset`), tilted or arbitrary axis, any per-view poses; Joseph sampling of diverging rays with a matched transpose; JAX reference (differentiable in volume and poses) and CUDA kernels (CuPy); CGLS, FISTA-TV, SPDHG-TV and FDK (full turns, offset-detector full turns, Parker-weighted short scans); `tomojax simulate`, `tomojax import` and saved datasets. Fan beam is a one-row cone detector |
 | Real GPU validation | CUDA on RTX 4070 Laptop (Ada); CPU reference mode is tested separately |
 
-Volumes use `(x, y, z)` array order and projections use `(view, v, u)`. Voxel and
+Volumes use `(z, y, x)` array order and projections use `(view, v, u)`. Voxel and
 detector spacings must use consistent physical length units. Forward projection
 integrates over physical ray length. FBP returns attenuation in the volume's
 units; its backprojection normalisation differs from the Euclidean transpose

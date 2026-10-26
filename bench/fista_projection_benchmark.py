@@ -148,7 +148,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--volume-shape",
         default="",
-        help="Override sampled volume shape as nx,ny,nz for one custom case.",
+        help="Override sampled volume shape as nz,ny,nx for one custom case.",
     )
     parser.add_argument(
         "--detector-shape",
@@ -284,7 +284,7 @@ def make_gpu_target_specs(rng: np.random.Generator) -> list[CaseSpec]:
     cases = [
         ("gpu_target_64_det64_views32", (64, 64, 64), (64, 64), 32, 4, 25),
         ("gpu_target_64_det96_views48", (64, 64, 64), (96, 96), 48, 4, 25),
-        ("gpu_target_80x64x64_det80x64_views48", (80, 64, 64), (80, 64), 48, 4, 25),
+        ("gpu_target_64x64x80_det80x64_views48", (64, 64, 80), (80, 64), 48, 4, 25),
     ]
     specs = []
     for case_id, volume_shape, detector_shape, n_views, views_per_batch, fista_iters in cases:
@@ -333,16 +333,16 @@ def make_spec(
     rng: np.random.Generator,
     suite: str,
 ) -> CaseSpec:
-    small_shapes = [(8, 8, 8), (9, 8, 7), (10, 8, 9)]
-    medium_shapes = [(16, 16, 16), (18, 16, 14), (20, 18, 16)]
+    small_shapes = [(8, 8, 8), (7, 8, 9), (9, 8, 10)]
+    medium_shapes = [(16, 16, 16), (14, 16, 18), (16, 18, 20)]
     if suite == "accelerator":
-        medium_shapes = [(32, 32, 32), (40, 32, 28), (48, 32, 40)]
+        medium_shapes = [(32, 32, 32), (28, 32, 40), (40, 32, 48)]
     if family in {"canonical_medium", "weighted_medium", "support_medium"}:
         volume_shape = medium_shapes[int(rng.integers(0, len(medium_shapes)))]
         n_views = int(rng.choice([8, 11, 16, 23]))
         detector_shape = tuple(int(v) for v in rng.choice([(16, 16), (18, 22), (24, 20)]))
     elif family == "odd_shape":
-        volume_shape = tuple(int(v) for v in rng.choice([(7, 9, 11), (11, 9, 7), (13, 10, 9)]))
+        volume_shape = tuple(int(v) for v in rng.choice([(11, 9, 7), (7, 9, 11), (9, 10, 13)]))
         detector_shape = tuple(int(v) for v in rng.choice([(9, 11), (13, 9), (11, 15)]))
         n_views = int(rng.choice([5, 7, 9]))
     else:
@@ -390,9 +390,9 @@ def make_spec(
 
 def materialize_case(spec: CaseSpec, rng: np.random.Generator) -> CaseData:
     grid = Grid(
-        nx=spec.volume_shape[0],
+        nx=spec.volume_shape[2],
         ny=spec.volume_shape[1],
-        nz=spec.volume_shape[2],
+        nz=spec.volume_shape[0],
         vx=spec.voxel_size[0],
         vy=spec.voxel_size[1],
         vz=spec.voxel_size[2],
@@ -522,7 +522,7 @@ def random_phantom(
     if profile == "gpu_target_double_plus30":
         return random_gpu_target_phantom(shape, rng)
 
-    nx, ny, nz = shape
+    nz, ny, nx = shape
     min_dim = min(shape)
     min_size = max(2, round(min_dim * 0.18))
     max_size = max(min_size + 1, round(min_dim * 0.55))
@@ -568,7 +568,7 @@ def random_gpu_target_phantom(
     shape: tuple[int, int, int],
     rng: np.random.Generator,
 ) -> np.ndarray:
-    nx, ny, nz = shape
+    nz, ny, nx = shape
     scale = min(shape) / 64.0
     last_volume = np.zeros(shape, dtype=np.float32)
     for _ in range(12):
@@ -609,16 +609,16 @@ def normalize_phantom(volume: np.ndarray) -> np.ndarray:
 
 def phantom_is_readable(volume: np.ndarray) -> bool:
     occupied = volume > 0.02
-    best_slice_occupancy = float(np.max(np.mean(occupied, axis=(0, 1))))
-    mip_occupancy = float(np.mean(np.max(occupied, axis=2)))
+    best_slice_occupancy = float(np.max(np.mean(occupied, axis=(1, 2))))
+    mip_occupancy = float(np.mean(np.max(occupied, axis=0)))
     return 0.008 <= best_slice_occupancy <= 0.22 and 0.035 <= mip_occupancy <= 0.35
 
 
 def random_support(shape: tuple[int, int, int], rng: np.random.Generator) -> np.ndarray:
-    nx, ny, nz = shape
-    x = np.linspace(-1.0, 1.0, nx, dtype=np.float32)[:, None, None]
+    nz, ny, nx = shape
+    x = np.linspace(-1.0, 1.0, nx, dtype=np.float32)[None, None, :]
     y = np.linspace(-1.0, 1.0, ny, dtype=np.float32)[None, :, None]
-    z = np.linspace(-1.0, 1.0, nz, dtype=np.float32)[None, None, :]
+    z = np.linspace(-1.0, 1.0, nz, dtype=np.float32)[:, None, None]
     radii = rng.uniform(0.62, 0.98, size=3).astype(np.float32)
     support = ((x / radii[0]) ** 2 + (y / radii[1]) ** 2 + (z / radii[2]) ** 2) <= 1.0
     return support.astype(np.float32)
@@ -1141,9 +1141,9 @@ def write_slice_png(
     )
     fista_residual = fista_pred - data.target
     panels = [
-        (f"truth z={z_slice}", np.asarray(data.truth_volume[:, :, z_slice])),
-        (f"fista z={z_slice}", np.asarray(fista_volume[:, :, z_slice])),
-        (f"candidate grad z={z_slice}", np.asarray(grad[:, :, z_slice])),
+        (f"truth z={z_slice}", np.asarray(data.truth_volume[z_slice])),
+        (f"fista z={z_slice}", np.asarray(fista_volume[z_slice])),
+        (f"candidate grad z={z_slice}", np.asarray(grad[z_slice])),
         (f"target view={target_view}", np.asarray(data.target[target_view])),
         (f"fista pred view={target_view}", np.asarray(fista_pred[target_view])),
         (f"fista residual view={target_view}", np.asarray(fista_residual[target_view])),
@@ -1155,7 +1155,7 @@ def write_slice_png(
         return
     fig, axes = plt.subplots(2, 3, figsize=(9, 6), constrained_layout=True)
     for axis, (title, image) in zip(axes.flat, panels, strict=True):
-        axis.imshow(image.T if image.ndim == 2 else image, cmap="viridis", origin="lower")
+        axis.imshow(image, cmap="viridis", origin="lower")
         axis.set_title(title)
         axis.set_xticks([])
         axis.set_yticks([])
@@ -1197,7 +1197,7 @@ def write_slice_png_pillow(
 
 def most_informative_z_slice(volume: jnp.ndarray) -> int:
     array = np.asarray(volume)
-    energy = np.sum(np.abs(array), axis=(0, 1))
+    energy = np.sum(np.abs(array), axis=(1, 2))
     return int(np.argmax(energy))
 
 

@@ -15,7 +15,7 @@ lying inside a planar slab.
 
 Labels index the attenuation table; :data:`KEEP` marks samples that leave an
 existing volume unchanged, so a sampler can overlay one feature on another.
-Volumes are ``(x, y, z)`` with voxel centres at ``(i + 0.5) * voxel - fov / 2``.
+Volumes are ``(z, y, x)`` with voxel centres at ``(i + 0.5) * voxel - fov / 2``.
 """
 
 from __future__ import annotations
@@ -131,11 +131,11 @@ def voxelise(
 
     def slab(k: int) -> None:
         zs = c[k : min(k + planes, k1)]
-        x, y, z = np.meshgrid(xs, ys, zs, indexing="ij")
+        z, y, x = np.meshgrid(zs, ys, xs, indexing="ij")
         centres = np.stack([x.ravel(), y.ravel(), z.ravel()], -1)
         value, keep = sample_voxels(sample, centres, grid.voxel, mu, fine=fine, reach=reach)
-        shape = (xs.size, ys.size, zs.size)
-        region = (slice(i0, i1), slice(j0, j1), slice(k, k + zs.size))
+        shape = (zs.size, ys.size, xs.size)
+        region = (slice(k, k + zs.size), slice(j0, j1), slice(i0, i1))
         value = value.reshape(shape)
         if under is not None:
             value = value + keep.reshape(shape) * out[region]
@@ -162,7 +162,7 @@ def sample_where(
     """
     index = np.flatnonzero(mask)
     c = grid.centres()
-    i, j, k = np.unravel_index(index, mask.shape)
+    k, j, i = np.unravel_index(index, mask.shape)
     value = np.zeros(index.size)
     keep = np.zeros(index.size)
     step = max(1, (1 << 20) // max(fine, 1) ** 3)
@@ -312,7 +312,7 @@ def preview(
 
     def plane(name: str, position: float) -> np.ndarray:
         k = int(np.clip(np.floor((position + half) / grid.voxel), 0, n - 1))
-        return volume[:, :, k].T if name == "xy" else volume[:, k, :].T
+        return volume[k] if name == "xy" else volume[:, k, :]
 
     name, position, window = zoom
     panels = [

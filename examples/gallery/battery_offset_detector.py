@@ -67,7 +67,7 @@ def main() -> None:
     style()
     centres = (np.arange(N) - N / 2 + 0.5) * fov / N
     x, y = np.meshgrid(centres, centres, indexing="ij")
-    mask = np.broadcast_to((np.hypot(x, y) < 4.3)[..., None], truth.shape)
+    mask = np.broadcast_to((np.hypot(x, y) < 4.3)[None], truth.shape)
     z, top = N // 2 - N // 8, 0.3
     fig, axes = plt.subplots(2, 3, figsize=(7.2, 5.2))
     columns = (
@@ -82,7 +82,7 @@ def main() -> None:
         ),
     )
     for (title, volume), (xy_ax, xz_ax) in zip(columns, axes.T, strict=True):
-        panel(xy_ax, volume[:, :, z], title, 0.0, top)
+        panel(xy_ax, volume[z], title, 0.0, top)
         panel(xz_ax, volume[:, N // 2, :], "", 0.0, top)
     # Rays through the disc round the axis reach the offset detector twice a turn.
     axes[0, 2].add_patch(

@@ -163,13 +163,8 @@ def test_nxtomo_loader_does_not_synthesize_grid_from_volume_only(tmp_path: Path)
         tomojax = entry.create_group("processing").create_group("tomojax")
         tomojax.create_dataset("volume", data=np.zeros((5, 6, 7), dtype=np.float32))
 
-    loaded = load_nxtomo(str(path))
-
-    assert loaded.volume is not None
-    assert loaded.grid is None
-    assert loaded.volume_axes_order == "unknown"
-    assert loaded.disk_volume_axes_order == "unknown"
-    assert loaded.volume_axes_source == "heuristic"
+    with pytest.raises(ValueError, match="volume axis order is unknown"):
+        load_nxtomo(str(path))
 
 
 def test_nxtomo_loader_marks_equal_xz_volume_axes_ambiguous(tmp_path: Path) -> None:
@@ -193,78 +188,8 @@ def test_nxtomo_loader_marks_equal_xz_volume_axes_ambiguous(tmp_path: Path) -> N
         tomojax = entry.create_group("processing").create_group("tomojax")
         tomojax.create_dataset("volume", data=np.zeros((5, 6, 5), dtype=np.float32))
 
-    loaded = load_nxtomo(str(path))
-
-    assert loaded.volume is not None
-    assert loaded.grid == grid.to_dict()
-    assert loaded.volume.shape == (5, 6, 5)
-    assert loaded.volume_axes_order == "unknown"
-    assert loaded.disk_volume_axes_order == "unknown"
-    assert loaded.volume_axes_source == "heuristic"
-
-
-def test_saving_unknown_axis_volume_reports_actionable_error(tmp_path: Path) -> None:
-    path = tmp_path / "missing_axes.nxs"
-    out_path = tmp_path / "out.nxs"
-    with h5py.File(path, "w") as handle:
-        entry = handle.create_group("entry")
-        entry.attrs["definition"] = "NXtomo"
-        detector = entry.create_group("instrument").create_group("detector")
-        detector.create_dataset("data", data=np.zeros((2, 3, 4), dtype=np.float32))
-        detector.create_dataset("image_key", data=np.zeros((2,), dtype=np.int32))
-        sample = entry.create_group("sample")
-        sample.create_dataset("name", data="fixture")
-        transformations = sample.create_group("transformations")
-        rotation_angle = transformations.create_dataset(
-            "rotation_angle",
-            data=np.asarray([0.0, 90.0], dtype=np.float32),
-        )
-        rotation_angle.attrs["units"] = "degree"
-        tomojax = entry.create_group("processing").create_group("tomojax")
-        tomojax.create_dataset("volume", data=np.zeros((5, 6, 7), dtype=np.float32))
-
-    loaded = load_nxtomo(str(path))
-
-    with pytest.raises(ValueError, match="Set metadata.volume_axes_order before saving"):
-        save_nxtomo(
-            out_path,
-            projections=loaded.projections,
-            metadata=loaded.copy_metadata(),
-        )
-
-
-def test_unknown_axis_in_place_save_preserves_existing_volume(tmp_path: Path) -> None:
-    path = tmp_path / "missing_axes.nxs"
-    original_volume = np.arange(5 * 6 * 7, dtype=np.float32).reshape(5, 6, 7)
-    with h5py.File(path, "w") as handle:
-        entry = handle.create_group("entry")
-        entry.attrs["definition"] = "NXtomo"
-        detector = entry.create_group("instrument").create_group("detector")
-        detector.create_dataset("data", data=np.zeros((2, 3, 4), dtype=np.float32))
-        detector.create_dataset("image_key", data=np.zeros((2,), dtype=np.int32))
-        sample = entry.create_group("sample")
-        sample.create_dataset("name", data="fixture")
-        transformations = sample.create_group("transformations")
-        rotation_angle = transformations.create_dataset(
-            "rotation_angle",
-            data=np.asarray([0.0, 90.0], dtype=np.float32),
-        )
-        rotation_angle.attrs["units"] = "degree"
-        tomojax = entry.create_group("processing").create_group("tomojax")
-        tomojax.create_dataset("volume", data=original_volume)
-
-    loaded = load_nxtomo(str(path))
-
-    with pytest.raises(ValueError, match="Set metadata.volume_axes_order before saving"):
-        save_nxtomo(
-            path,
-            projections=loaded.projections,
-            metadata=loaded.copy_metadata(),
-        )
-
-    with h5py.File(path, "r") as handle:
-        saved_volume = handle["entry/processing/tomojax/volume"][:]
-    np.testing.assert_array_equal(saved_volume, original_volume)
+    with pytest.raises(ValueError, match="volume axis order is unknown"):
+        load_nxtomo(str(path))
 
 
 def test_copy_metadata_preserves_disk_volume_axes_order(tmp_path: Path) -> None:
@@ -285,21 +210,6 @@ def test_copy_metadata_preserves_disk_volume_axes_order(tmp_path: Path) -> None:
 
     resaved = load_nxtomo(str(resaved_path))
     assert resaved.disk_volume_axes_order == "zyx"
-
-
-def test_copy_metadata_preserves_user_volume_axes_order_change(tmp_path: Path) -> None:
-    original_path = tmp_path / "original.nxs"
-    dataset = make_projection_dataset()
-    dataset.volume = np.arange(2 * 3 * 4, dtype=np.float32).reshape(2, 3, 4)
-
-    save_dataset(original_path, dataset)
-    loaded = load_nxtomo(str(original_path))
-    assert loaded.disk_volume_axes_order == "zyx"
-
-    loaded.metadata.volume_axes_order = "xyz"
-    copied = loaded.copy_metadata()
-
-    assert copied.volume_axes_order == "xyz"
 
 
 def test_copy_metadata_copies_array_backed_fields(tmp_path: Path) -> None:
@@ -477,4 +387,54 @@ def test_a_volume_is_written_in_tiles_without_a_transposed_copy(
         dataset.volume = stored
         save_dataset(path, dataset)
         np.testing.assert_array_equal(load_nxtomo(str(path)).volume, volume)
-        assert h5py.File(path, "r")["/entry/processing/tomojax/volume"].shape == (60, 50, 40)
+        assert h5py.File(path, "r")["/entry/processing/tomojax/volume"].shape == volume.shape
+
+
+@pytest.mark.parametrize("axes", ["xyz", "xzy", "yxz", "yzx", "zxy", "zyx"])
+def test_external_volume_axes_are_normalized_and_saved_as_zyx(tmp_path, axes):
+    path, copied = tmp_path / "external.nxs", tmp_path / "copy.nxs"
+    volume = np.arange(60, dtype=np.float32).reshape(3, 4, 5)
+    dataset = make_projection_dataset(grid=Grid(5, 4, 3, 1, 1, 1))
+    dataset.volume = volume
+    save_dataset(path, dataset)
+    with h5py.File(path, "r+") as file:
+        group = file["entry/processing/tomojax"]
+        del group["volume"]
+        group.create_dataset("volume", data=volume.transpose(tuple("zyx".index(a) for a in axes)))
+        group.attrs["volume_axes_order"] = axes
+    loaded = load_dataset(path)
+    np.testing.assert_array_equal(loaded.volume, volume)
+    assert loaded.volume.flags.c_contiguous
+    save_dataset(copied, loaded)
+    with h5py.File(copied) as file:
+        group = file["entry/processing/tomojax"]
+        assert group.attrs["volume_axes_order"] == "zyx"
+        np.testing.assert_array_equal(group["volume"], volume)
+
+
+def test_geometry_volume_shape_is_zyx_but_grid_override_remains_xyz():
+    from tomojax.io import build_geometry_from_dataset_metadata
+
+    meta = {"detector": Detector(8, 5, 0.9, 1.2).to_dict(), "angles": [0.0, 90.0]}
+    inferred, _, _ = build_geometry_from_dataset_metadata(meta, volume_shape=(3, 4, 5))
+    explicit, _, _ = build_geometry_from_dataset_metadata(meta, grid_override=(5, 4, 3))
+    assert inferred == explicit and (inferred.nx, inferred.ny, inferred.nz) == (5, 4, 3)
+
+
+def test_single_sinogram_npz_load_infers_one_slice_and_saves_fixed_rank(tmp_path):
+    import tomojax as tj
+
+    data = np.arange(30, dtype=np.float32).reshape(3, 10)
+    source, target = tmp_path / "slice.npz", tmp_path / "slice.nxs"
+    np.savez(
+        source,
+        projections=data,
+        thetas_deg=[0.0, 60.0, 120.0],
+        detector=Detector(10, 1, 0.7, 0.9).to_dict(),
+    )
+    scan = tj.load(source)
+    assert (scan.grid.nx, scan.grid.ny, scan.grid.nz) == (10, 10, 1)
+    np.testing.assert_array_equal(scan.projections, data[:, None])
+    tj.save(target, scan)
+    assert not validate_dataset(target)["issues"]
+    np.testing.assert_array_equal(tj.load(target).projections, scan.projections)

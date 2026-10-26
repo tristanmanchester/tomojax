@@ -92,7 +92,7 @@ def build_geometry_from_dataset_metadata(
     poses : bool, optional
         Apply saved per-view alignment and angle corrections; defaults to False.
     volume_shape : sequence of int or None, optional
-        Fallback (nx, ny, nz) dimensions when no grid is recorded.
+        Fallback (nz, ny, nx) array dimensions when no grid is recorded.
 
     Returns
     -------
@@ -132,7 +132,7 @@ class ProjectionDataset:
     angles : numpy.ndarray
         One rotation angle per view, in degrees.
     volume : numpy.ndarray, jax.Array or None, optional
-        Reconstructed volume in (x, y, z) order, when present.
+        Reconstructed volume in (z, y, x) order, when present.
     detector : Detector or None, optional
         Detector pixel counts, pitches and physical centre.
     grid : Grid or None, optional

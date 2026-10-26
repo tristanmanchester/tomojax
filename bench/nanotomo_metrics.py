@@ -332,7 +332,7 @@ def half_dataset_fsc(
 
     Per-view poses are preserved. Both candidates must use identical ``method``,
     ``config``, ``region`` and grid; no image registration, clipping or fitted
-    amplitude is applied to improve FSC. A region is in volume ``(x,y,z)`` axes
+    amplitude is applied to improve FSC. A region is in volume ``(z,y,x)`` axes
     and must use unit strides. Full volumes are discarded after scoring; only
     scalar timings, split indices and FSC arrays are returned. Each spatial
     volume is released before transforming the next half. Timing includes
@@ -348,7 +348,7 @@ def half_dataset_fsc(
     start = time.perf_counter()
     halves = interleaved_views(scan.angles)
     grid = scan.grid
-    shape = (grid.nx, grid.ny, grid.nz)
+    shape = (grid.nz, grid.ny, grid.nx)
     spectra, times = [], []
     # Keep the first spectrum, not its spatial volume, while making the second.
     # The ROI may be a view of a much larger volume; release that backing array
@@ -363,13 +363,13 @@ def half_dataset_fsc(
         spectra.append(fft.rfftn(windowed, workers=-1))
         del windowed
     result = _fsc_from_spectra(
-        spectra[0], spectra[1], shape, (grid.vx, grid.vy, grid.vz), taper, shell_width
+        spectra[0], spectra[1], shape, (grid.vz, grid.vy, grid.vx), taper, shell_width
     )
     return {
         **result,
         "halves": [indices.tolist() for indices in halves],
         "method": method,
-        "grid_shape": [grid.nx, grid.ny, grid.nz],
+        "grid_shape": [grid.nz, grid.ny, grid.nx],
         "region": None if region is None else [[s.start, s.stop, s.step] for s in region],
         "scored_shape": list(shape),
         "reconstruction_seconds": times,

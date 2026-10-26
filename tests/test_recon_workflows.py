@@ -157,7 +157,7 @@ def test_fista_reconstruction_smoke_is_finite() -> None:
 
 def test_reconstruction_volume_roundtrips_through_dataset_contract(tmp_path: Path) -> None:
     path = tmp_path / "recon.nxs"
-    volume = np.arange(4 * 4 * 2, dtype=np.float32).reshape(4, 4, 2)
+    volume = np.arange(4 * 4 * 2, dtype=np.float32).reshape(2, 4, 4)
     dataset = ProjectionDataset(
         projections=np.ones((2, 2, 4), dtype=np.float32),
         angles=np.asarray([0.0, 90.0], dtype=np.float32),
@@ -230,7 +230,7 @@ def test_public_warm_start_retains_arrangements_then_applies_the_solver_constrai
     def filter_part(part, grid, own_detector, data, *, config, det_grid=None):
         assert grid == segments.grid and det_grid is None
         captured.append((part, own_detector, data.copy(), config))
-        return jnp.full((grid.nx, grid.ny, grid.nz), -4.0 if len(captured) == 1 else 1.0)
+        return jnp.full((grid.nz, grid.ny, grid.nx), -4.0 if len(captured) == 1 else 1.0)
 
     def solve(_geometry, _grid, _detector, _data, *, init_x, **_kwargs):
         return init_x, {"initial_image_test": True}
@@ -275,7 +275,7 @@ def test_segmented_start_matches_individual_fdk_with_all_pose_corrections(monkey
     )
     weights = view_weights(geometry, segments.detector, len(data))
     offset = 0
-    expected = np.zeros((5, 4, 3), np.float32)
+    expected = np.zeros((3, 4, 5), np.float32)
     for segment in segments.segments:
         n = len(segment.angles)
         own = _CorrectedGeometry(segment, poses[offset : offset + n], frame)
@@ -351,7 +351,7 @@ def test_quicklook_transfers_only_the_central_slice_of_a_device_volume():
     from tomojax.recon.quicklook import extract_central_slice
 
     class Volume:
-        shape, ndim = (7, 6, 5), 3
+        shape, ndim = (5, 6, 7), 3
 
         def __init__(self):
             self.selections = []
@@ -361,11 +361,11 @@ def test_quicklook_transfers_only_the_central_slice_of_a_device_volume():
 
         def __getitem__(self, selection):
             self.selections.append(selection)
-            return np.arange(42, dtype=np.float32).reshape(7, 6)
+            return np.arange(42, dtype=np.float32).reshape(6, 7)
 
     volume = Volume()
     assert extract_central_slice(volume).shape == (6, 7)
-    assert volume.selections == [(slice(None), slice(None), 2)]
+    assert volume.selections == [2]
 
 
 @pytest.mark.numerical
@@ -374,12 +374,12 @@ def test_iterative_axial_slabs_bound_the_warm_initializer(monkeypatch, method):
     grid = Grid(8, 9, 5, 0.8, 1.1, 1.3, vol_origin=(1.3, -2.7, 2.5 - 4 * 1.3 / 2))
     detector = Detector(12, 5, 0.8, 1.3, (0.2, 2.5))
     geometry = ParallelGeometry(grid, detector, np.linspace(0, 180, 31, endpoint=False))
-    truth = np.random.default_rng(17).uniform(size=(8, 9, 5)).astype(np.float32)
+    truth = np.random.default_rng(17).uniform(size=(5, 9, 8)).astype(np.float32)
     scan = tj.Scan(np.asarray(tj.project(geometry, truth)), geometry)
-    support = np.ones((8, 9, 5), bool)
-    support[0] = False
+    support = np.ones((5, 9, 8), bool)
+    support[:, :, 0] = False
     settings = (
-        {"support": support[:, :, :1]}
+        {"support": support[:1]}
         if method == "mlem"
         else {
             "support": support,

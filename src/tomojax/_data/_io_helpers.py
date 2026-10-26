@@ -8,8 +8,6 @@ from typing import cast
 import h5py
 import numpy as np
 
-from tomojax.geometry.api import VOLUME_AXES_ATTR
-
 from ._io_acquisition import ROTATION_ANGLE_PATHS, angles_in_degrees, checked_image_key
 from ._io_types import JsonObject, LoadedDataset, SourceInfo
 from .geometry_meta import normalize_geometry_type
@@ -247,7 +245,7 @@ def _load_processing_metadata(
         return None, None
 
     volume_raw = tomojax_grp["volume"][...] if "volume" in tomojax_grp else None
-    volume_axes_attr = _attr_to_str(tomojax_grp.attrs.get(VOLUME_AXES_ATTR))
+    volume_axes_attr = _attr_to_str(tomojax_grp.attrs.get("volume_axes_order"))
 
     frame_attr = tomojax_grp.attrs.get("frame")
     if frame_attr is not None:

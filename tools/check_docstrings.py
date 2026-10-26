@@ -64,11 +64,6 @@ PUBLIC_DATA = {
     ),
     "tomojax.alignment.api.PoseTranslationFrame": "Translation frame: object or detector.",
     "tomojax.alignment.api.QualityTier": "Alignment quality profile: fast or reference.",
-    "tomojax.geometry.api.DISK_VOLUME_AXES": "Default on-disk volume axis order, zyx.",
-    "tomojax.geometry.api.INTERNAL_VOLUME_AXES": "Internal Python volume axis order, xyz.",
-    "tomojax.geometry.api.VOLUME_AXES_ATTR": (
-        "File attribute recording volume axis order: volume_axes_order."
-    ),
 }
 
 
