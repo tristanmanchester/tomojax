@@ -246,9 +246,9 @@ def plan_slabs(
 
 
 class HostVolume:
-    """Slab access to a host ``(nx, ny, nz)`` array, preferably Fortran ordered.
+    """Slab access to a host ``(nz, ny, nx)`` array, preferably C ordered.
 
-    In Fortran order a slab is one contiguous block, which also suits
+    In C order a slab is one contiguous block, which also suits
     memory-mapped files, whose touched pages are released after each access.
     A file-backed volume is read ahead (:meth:`prefetch`) and written behind
     by one worker thread, so its disk traffic overlaps device work; reads and
@@ -267,21 +267,21 @@ class HostVolume:
         self._held: dict[tuple[int, int], np.ndarray] = {}
 
     def _read(self, z0: int, z1: int) -> np.ndarray:
-        nx, ny, _ = self.array.shape
+        _, ny, nx = self.array.shape
         if self._file is not None:  # one large read, not page faults
             block = np.empty((z1 - z0, ny, nx), np.float32)
             read_at(self._file[0], block, self._file[1] + z0 * nx * ny * 4, drop=True)
             return block
-        block = np.ascontiguousarray(self.array[:, :, z0:z1].T)
+        block = np.ascontiguousarray(self.array[z0:z1, :, :])
         release_planes(self.array, z0, z1)
         return block
 
     def _write(self, z0: int, z1: int, block: np.ndarray) -> None:
-        nx, ny, _ = self.array.shape
+        _, ny, nx = self.array.shape
         if self._file is not None:  # whole pages are not read before they are written
             write_at(self._file[0], block, self._file[1] + z0 * nx * ny * 4, drop=True)
             return
-        self.array[:, :, z0:z1].T[...] = block
+        self.array[z0:z1, :, :][...] = block
         release_planes(self.array, z0, z1)
 
     def prefetch(self, z0: int, z1: int) -> None:
@@ -301,11 +301,11 @@ class HostVolume:
             self._file = None
 
     def view(self, z0: int, z1: int) -> Any:
-        """Planes ``[z0, z1)`` on the device as a strided ``(nx, ny, z1 - z0)`` view.
+        """Planes ``[z0, z1)`` on the device as a contiguous ``(z1 - z0, ny, nx)`` array.
 
         It holds one copy of the slab, for elementwise use; kernels need :meth:`get`.
         """
-        return self.engine.upload(self._block(z0, z1)).transpose(2, 1, 0)
+        return self.engine.upload(self._block(z0, z1))
 
     def _block(self, z0: int, z1: int) -> np.ndarray:
         """Host planes ``[z0, z1)`` as a contiguous ``(z, y, x)`` block, held or read."""
@@ -324,34 +324,23 @@ class HostVolume:
         block = self._block(z0, z1)
         if retain:
             self._held[z0, z1] = block
-        return self.kernel(self.engine.upload(block).transpose(2, 1, 0))
+        return self.kernel(self.engine.upload(block))
 
     def kernel(self, value: Any) -> Any:
         """A device slab view in kernel layout, zero-padded to the slab depth."""
         xp = self.engine.xp
         volume = xp.ascontiguousarray(value)
-        if volume.shape[2] < self.depth and isinstance(self.engine, JaxEngine):
-            volume = xp.pad(volume, ((0, 0), (0, 0), (0, self.depth - volume.shape[2])))
+        if volume.shape[0] < self.depth and isinstance(self.engine, JaxEngine):
+            volume = xp.pad(volume, ((0, self.depth - volume.shape[0]), (0, 0), (0, 0)))
         return volume
 
-    def put(self, z0: int, z1: int, value: Any, scratch: Any = None) -> None:
-        """Store the first ``z1 - z0`` planes of a device slab.
-
-        ``scratch``, a contiguous device array of at least the slab's size whose
-        contents are no longer needed, holds the host-ordered copy.
-        """
+    def put(self, z0: int, z1: int, value: Any) -> None:
+        """Store the first ``z1 - z0`` planes of a contiguous device slab."""
         for key in [key for key in self._held if key[0] < z1 and z0 < key[1]]:
             del self._held[key]
-        xp = self.engine.xp
-        planes = value[:, :, : z1 - z0].transpose(2, 1, 0)
-        if scratch is None:
-            planes = xp.ascontiguousarray(planes)
-        else:
-            buffer = scratch.reshape(-1)[: planes.size].reshape(planes.shape)
-            buffer[...] = planes
-            planes = buffer
+        planes = self.engine.xp.ascontiguousarray(value[: z1 - z0])
         if self._worker is None:
-            self.engine.download(planes, self.array[:, :, z0:z1].T)
+            self.engine.download(planes, self.array[z0:z1, :, :])
             return
         for start, stop in [key for key in self._reads if key[0] < z1 and z0 < key[1]]:
             del self._reads[start, stop]  # read before this write: stale
@@ -363,21 +352,20 @@ class HostVolume:
 
 
 class DeviceVolume(HostVolume):
-    """Slab access to a volume kept on the device in kernel layout ``(nx, ny, nz)``."""
+    """Slab access to a volume kept on the device in kernel layout ``(nz, ny, nx)``."""
 
     def view(self, z0: int, z1: int) -> Any:
         """A writable copy of planes ``[z0, z1)``."""
-        return self.array[:, :, z0:z1].copy()
+        return self.array[z0:z1, :, :].copy()
 
     def get(self, z0: int, z1: int, *, retain: bool = False) -> Any:
         """A contiguous copy of planes ``[z0, z1)``; copies are cheap, so none is held."""
         del retain
         return self.view(z0, z1)
 
-    def put(self, z0: int, z1: int, value: Any, scratch: Any = None) -> None:
-        """Store the first ``z1 - z0`` planes of a device slab; no scratch is needed."""
-        del scratch
-        self.array[:, :, z0:z1] = value[:, :, : z1 - z0]
+    def put(self, z0: int, z1: int, value: Any) -> None:
+        """Store the first ``z1 - z0`` planes of a device slab."""
+        self.array[z0:z1, :, :] = value[: z1 - z0, :, :]
 
 
 @dataclass(frozen=True)
@@ -527,7 +515,7 @@ class _Ring:
         xp, plan, (first, stop) = self.xp, self.plan, self.plan.windows[k]
         z0, z1 = plan.planes(k)
         depth = plan.depth if isinstance(self.engine, JaxEngine) else z1 - z0
-        shape = (plan.grid.nx, plan.grid.ny, depth)
+        shape = (depth, plan.grid.ny, plan.grid.nx)
         accumulate = tuple(xp.zeros(shape, xp.float32) for _ in range(count + ones))
         coeff = self.sweep.slab_coefficients(k)
         for b0, b1, batch in self.batches if accumulate else ():
@@ -624,11 +612,11 @@ class ConeProblem:
         a zero start is not written to host storage.
         """
         grid = self.plan.grid
-        shape = (grid.nx, grid.ny, grid.nz)
+        shape = (grid.nz, grid.ny, grid.nx)
         if out is not None or not self.on_device:
             # A row reader holds no storage that could overlap ``out``.
             data = np.empty(0, np.float32) if isinstance(self.data, RowReader) else self.data
-            target = validate_host_arrays(data, out, shape, context, order="F")
+            target = validate_host_arrays(data, out, shape, context, order="C")
             if initial is None and written:
                 return target
             return fill(target, None if initial is None else np.asarray(initial))
@@ -636,13 +624,13 @@ class ConeProblem:
         target = xp.zeros(shape, xp.float32)
         if initial is not None:
             for z0, z1 in map(self.plan.planes, range(self.plan.count)):
-                target[:, :, z0:z1] = xp.asarray(np.asarray(initial[:, :, z0:z1], np.float32))
+                target[z0:z1] = xp.asarray(np.asarray(initial[z0:z1], np.float32))
         return target
 
     def work(self, out: np.ndarray | None) -> Any:
         """A zeroed work volume beside the iterate: device, file beside ``out``, or host."""
         grid = self.plan.grid
-        shape = (grid.nx, grid.ny, grid.nz)
+        shape = (grid.nz, grid.ny, grid.nx)
         if self.on_device and out is None:
             return self.engine.xp.zeros(shape, self.engine.xp.float32)
         return host_volume(shape, scratch_directory(out))

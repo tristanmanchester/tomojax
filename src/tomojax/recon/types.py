@@ -27,7 +27,7 @@ class ReconstructionSlab[T]:
     projections : numpy.ndarray or jax.Array
         Retained source projections for the measured row interval.
     volume : numpy.ndarray
-        Owned float32 reconstruction with shape ``(nx, ny, stop - start)``.
+        Owned float32 reconstruction with shape ``(stop - start, ny, nx)``.
     context : object
         Opaque producer context retained until output completes.
     """

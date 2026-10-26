@@ -62,7 +62,7 @@ def _bounds(grid: Grid, detector: Detector, runtime: FistaRuntime) -> jax.Array:
         return positive_normal_bound(
             lambda x: forward(x) * valid,
             lambda y: adjoint(y * valid),
-            (grid.nx, grid.ny, grid.nz),
+            (grid.nz, grid.ny, grid.nx),
             iterations=1,
         )
 
@@ -111,7 +111,7 @@ def _initialize(grid, detector, data, runtime):
     limits = _bounds(grid, detector, runtime)
     limits.block_until_ready()
     x = (
-        jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
+        jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32)
         if initial is None
         else jnp.maximum(initial, 0)
     )

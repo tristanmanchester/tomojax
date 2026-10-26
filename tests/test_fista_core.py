@@ -55,7 +55,7 @@ def test_core_one_voxel_reconstruction_preserves_physical_length_units(override)
 def _diagnostic_problem(iterations, *, final_data, iteration_loss):
     grid, detector = Grid(2, 2, 1, 0.8, 1.1, 1.0), Detector(3, 1, 0.7, 1.0)
     poses = jnp.eye(4, dtype=jnp.float32)[None]
-    initial = jnp.asarray([0.2, 0.8, 1.3, 0.6]).reshape(2, 2, 1)
+    initial = jnp.asarray([0.2, 0.8, 1.3, 0.6]).reshape(1, 2, 2)
     data = jnp.asarray([0.7, 1.0, 0.4]).reshape(1, 1, 3)
     cfg = FistaCoreConfig(
         iterations=iterations,
@@ -132,7 +132,7 @@ def test_core_rejects_nonsmooth_tv_instead_of_solving_an_unregularized_problem()
         T_all=jnp.eye(4)[None],
         grid=Grid(2, 1, 1, 1.0, 1.0, 1.0),
         detector=Detector(2, 1, 1.0, 1.0),
-        volume=jnp.asarray([0.0, 1.0]).reshape(2, 1, 1),
+        volume=jnp.asarray([0.0, 1.0]).reshape(1, 1, 2),
         det_grid=None,
         projections=jnp.asarray([[[0.0, 1.0]]]),
         cfg=cfg,
@@ -140,7 +140,7 @@ def test_core_rejects_nonsmooth_tv_instead_of_solving_an_unregularized_problem()
     np.testing.assert_allclose(objective, 0.2, rtol=1e-6)
     with pytest.raises(ValueError, match="huber_tv or tv_weight=0"):
         fista_tv_core_arrays(
-            x0=jnp.zeros((2, 1, 1)),
+            x0=jnp.zeros((1, 1, 2)),
             T_all=jnp.eye(4)[None],
             det_grid=None,
             projections=jnp.asarray([[[0.0, 1.0]]]),

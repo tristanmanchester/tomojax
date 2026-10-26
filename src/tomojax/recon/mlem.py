@@ -183,7 +183,7 @@ def _solve(
         sensitivity, _ = poisson_operators(
             poses, normal_grid, normal_detector, None, backend, batch_size, model, indices, valid
         )
-    shape = (grid.nx, grid.ny, grid.nz)
+    shape = (grid.nz, grid.ny, grid.nx)
     x = jnp.ones(shape, jnp.float32) if initial is None else initial
     if support is not None:
         x = jnp.where(support, x, 0.0)
@@ -250,7 +250,7 @@ def _run_device(
     iterations, subsets, batch = map(
         operator.index, (config.iterations, config.subsets, config.views_per_batch)
     )
-    shape = (grid.nx, grid.ny, grid.nz)
+    shape = (grid.nz, grid.ny, grid.nx)
     n = projections.shape[0]
     support = (
         None
@@ -338,20 +338,20 @@ def mlem(
         Nonnegative linear Poisson measurements (not raw transmission counts),
         with shape ``(views, detector.nv, detector.nu)``.
     init_x : array-like or None, optional
-        Initial volume of shape ``(nx, ny, nz)``; None starts from one in observed support.
+        Initial volume of shape ``(nz, ny, nx)``; None starts from one in observed support.
     config : MLEMConfig or None, optional
         Solver settings. None uses MLEMConfig defaults.
     det_grid : tuple of array-like or None, optional
         Explicit detector-coordinate arrays ``(u, v)``, each of shape ``(nv, nu)``.
         None uses the canonical detector grid.
     out : numpy.ndarray or None, optional
-        Writable float32 ``(nx, ny, nz)`` host storage for a cone-beam result,
+        Writable float32 ``(nz, ny, nx)`` host storage for a cone-beam result,
         including a memmap; it must not overlap the projections.
 
     Returns
     -------
     volume : jax.Array or numpy.ndarray
-        Float32 reconstruction of shape ``(nx, ny, nz)``, host-owned when the
+        Float32 reconstruction of shape ``(nz, ny, nx)``, host-owned when the
         cone solver workspace does not fit the device.
     info : dict
         Solver diagnostics and effective work; a small residual or iteration
@@ -370,7 +370,7 @@ def mlem(
     >>> grid = tj.Grid(4, 4, 1, 1.0, 1.0, 1.0)
     >>> detector = tj.Detector(4, 1, 1.0, 1.0)
     >>> geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 8, endpoint=False))
-    >>> data = project(geometry, np.ones((4, 4, 1), np.float32))
+    >>> data = project(geometry, np.ones((1, 4, 4), np.float32))
     >>> volume, info = mlem(
     ...     geometry,
     ...     geometry.grid,
@@ -379,7 +379,7 @@ def mlem(
     ...     config=MLEMConfig(iterations=1),
     ... )
     >>> volume.shape
-    (4, 4, 1)
+    (1, 4, 4)
     """
     return run_mlem(
         geometry, projections, grid=grid, detector=detector, init_x=init_x,

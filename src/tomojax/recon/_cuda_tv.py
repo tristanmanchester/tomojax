@@ -29,11 +29,11 @@ extern "C" __global__ void primal(
     INDEX t=(INDEX)blockIdx.x*blockDim.x+threadIdx.x;
     INDEX n=(INDEX)nx*ny*nz;
     if(t>=n)return;
-    int iz=t%nz, iy=(t/nz)%ny, ix=t/((INDEX)ny*nz);
+    int ix=t%nx, iy=(t/nx)%ny, iz=t/((INDEX)ny*nx);
     float dx=0.f, dy=0.f, dz=0.f;
-    if(nx>1) dx=ix==0?px[t]:(ix==nx-1?-px[t-(INDEX)ny*nz]:px[t]-px[t-(INDEX)ny*nz]);
-    if(ny>1) dy=iy==0?py[t]:(iy==ny-1?-py[t-nz]:py[t]-py[t-nz]);
-    if(nz>1) dz=iz==0?pz[t]:(iz==nz-1?-pz[t-1]:pz[t]-pz[t-1]);
+    if(nx>1) dx=ix==0?px[t]:(ix==nx-1?-px[t-1]:px[t]-px[t-1]);
+    if(ny>1) dy=iy==0?py[t]:(iy==ny-1?-py[t-nx]:py[t]-py[t-nx]);
+    if(nz>1) dz=iz==0?pz[t]:(iz==nz-1?-pz[t-(INDEX)ny*nx]:pz[t]-pz[t-(INDEX)ny*nx]);
     u[t]=clipped(x[t]+((dx+dy)+dz),lo,hi);
 }
 extern "C" __global__ void dual(
@@ -43,11 +43,11 @@ extern "C" __global__ void dual(
     INDEX t=(INDEX)blockIdx.x*blockDim.x+threadIdx.x;
     INDEX n=(INDEX)nx*ny*nz;
     if(t>=n)return;
-    int iz=t%nz, iy=(t/nz)%ny, ix=t/((INDEX)ny*nz);
+    int ix=t%nx, iy=(t/nx)%ny, iz=t/((INDEX)ny*nx);
     float v=u[t];
-    float gx=ix+1<nx?u[t+(INDEX)ny*nz]-v:0.f;
-    float gy=iy+1<ny?u[t+nz]-v:0.f;
-    float gz=iz+1<nz?u[t+1]-v:0.f;
+    float gx=ix+1<nx?u[t+1]-v:0.f;
+    float gy=iy+1<ny?u[t+nx]-v:0.f;
+    float gz=iz+1<nz?u[t+(INDEX)ny*nx]-v:0.f;
     float x=px[t]+tau*gx, y=py[t]+tau*gy, z=pz[t]+tau*gz;
     float radius=fmaxf(lam[0],0.f);
     float scale=fmaxf(fmaxf(fmaxf(fabsf(x),fabsf(y)),fabsf(z)),radius);
@@ -93,7 +93,7 @@ def _iterate(
     x, duals, primal, out, lam, *, kernels, iterations: int, tau: float, lower: float, upper: float
 ) -> None:
     primal_kernel, dual_kernel = kernels
-    dims = tuple(np.int32(size) for size in x.shape)
+    dims = tuple(np.int32(size) for size in reversed(x.shape))
     blocks = (-(-x.size // 256),)
     for _ in range(iterations):
         primal_kernel(blocks, (256,), (x, *duals, primal, *dims, lower, upper))

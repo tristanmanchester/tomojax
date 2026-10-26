@@ -38,7 +38,7 @@ def _geometry(kind):
 
 
 def _data(geometry, seed=1):
-    truth = np.random.default_rng(seed).random((5, 4, 9), np.float32)
+    truth = np.random.default_rng(seed).random((9, 4, 5), np.float32)
     return np.asarray(tj.project(geometry, truth), np.float32)
 
 
@@ -71,9 +71,9 @@ def test_slab_sweep_is_the_matched_normal_operator(kind, depth, host):
         geometry, GRID, DETECTOR, _data(geometry), model=model, backend=backend, poses=poses,
         batch=3, channels=1,
     )  # fmt: skip
-    direction = np.random.default_rng(2).random((5, 4, 9), np.float32)
-    source = problem.volume(np.asfortranarray(direction))
-    applied = np.zeros_like(direction, order="F")
+    direction = np.random.default_rng(2).random((9, 4, 5), np.float32)
+    source = problem.volume(np.ascontiguousarray(direction))
+    applied = np.zeros_like(direction, order="C")
     target, energy = problem.volume(applied), []
 
     def finish(batch, first, stop, rows):
@@ -97,7 +97,7 @@ def test_slab_sweep_is_the_matched_normal_operator(kind, depth, host):
 def test_host_cgls_matches_streamed_normal_equations(host):
     geometry = _geometry("cone")
     data = _data(geometry)
-    start = np.random.default_rng(3).random((5, 4, 9), np.float32)
+    start = np.random.default_rng(3).random((9, 4, 5), np.float32)
     cases = [
         (CGLSConfig(iterations=6, rtol=0), None),
         (CGLSConfig(iterations=4, rtol=0, damping=0.7), start),
@@ -133,7 +133,7 @@ def test_host_cgls_matches_streamed_normal_equations(host):
     "config",
     [
         SIRTConfig(iterations=3, subsets=3, lower_bound=0.0, upper_bound=0.9),
-        SIRTConfig(iterations=3, support=np.arange(180).reshape(5, 4, 9) % 7 > 0),
+        SIRTConfig(iterations=3, support=np.arange(180).reshape(9, 4, 5) % 7 > 0),
         SIRTConfig(iterations=4, acceleration=True, relaxation=0.9),
     ],
 )
@@ -152,7 +152,7 @@ def test_public_reconstruction_returns_host_volume(host):
     host(4)
     scan = tj.Scan(_data(_geometry("cone")), _geometry("cone"))
     result = tj.reconstruct(scan, "cgls", iterations=2)
-    assert isinstance(result.volume, np.ndarray) and result.volume.flags.f_contiguous
+    assert isinstance(result.volume, np.ndarray) and result.volume.flags.c_contiguous
     assert result.info["host_slabs"] and result.info["effective_iterations"] == 2
 
 
@@ -162,7 +162,7 @@ def test_memmapped_out_holds_iterate_and_work_volumes_are_unnamed(tmp_path, host
     expected = tj.reconstruct(scan, "cgls", iterations=3).volume
     host(4)
     out = np.lib.format.open_memmap(
-        tmp_path / "x.npy", "w+", np.float32, (5, 4, 9), fortran_order=True
+        tmp_path / "x.npy", "w+", np.float32, (9, 4, 5), fortran_order=False
     )
     result = tj.reconstruct(scan, "cgls", iterations=3, out=out)
     assert result.volume is out and [p.name for p in tmp_path.iterdir()] == ["x.npy"]
@@ -190,9 +190,9 @@ def test_memmapped_out_holds_iterate_and_work_volumes_are_unnamed(tmp_path, host
 def test_host_volume_storage_fills_checks_and_unlinks_work_files(tmp_path):
     host_volume = import_module("tomojax.core.host_volume")
     named = np.lib.format.open_memmap(
-        tmp_path / "v.npy", "w+", np.float32, (3, 2, 70), fortran_order=True
+        tmp_path / "v.npy", "w+", np.float32, (70, 2, 3), fortran_order=False
     )
-    work = host_volume.host_volume((3, 2, 70), host_volume.scratch_directory(named))
+    work = host_volume.host_volume((70, 2, 3), host_volume.scratch_directory(named))
     host_volume.fill(work, 1.5)
     host_volume.fill(named, work)
     assert isinstance(work, np.memmap) and [p.name for p in tmp_path.iterdir()] == ["v.npy"]
@@ -204,7 +204,7 @@ def test_host_volume_storage_fills_checks_and_unlinks_work_files(tmp_path):
         back = np.empty_like(block)
         host_volume.read_at(descriptor, back, first + 5 * 24, drop=True)
         os.close(descriptor)
-        np.testing.assert_array_equal(np.asarray(array[:, :, 5:7]).T, back)
+        np.testing.assert_array_equal(np.asarray(array[5:7, :, :]), back)
         np.testing.assert_array_equal(back, block)
     data = np.ones((20, 2, 2), np.float32)
     host_volume.check_rows(data, "test", nonnegative=True)
@@ -216,10 +216,36 @@ def test_host_volume_storage_fills_checks_and_unlinks_work_files(tmp_path):
         host_volume.check_rows(data, "test")
 
 
+@pytest.mark.parametrize("layout", ["C", "F", "mapped"])
+def test_host_volume_transfers_leading_slabs_and_short_tail(tmp_path, layout):
+    shape = (9, 4, 5)
+    values = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    output = (
+        np.memmap(tmp_path / "volume.bin", mode="w+", dtype=np.float32, shape=shape)
+        if layout == "mapped"
+        else np.empty(shape, np.float32, order=layout)
+    )
+    output[:] = values
+    engine = _cone_slabs.engine_for(GRID, DETECTOR, "cuda" if use_cuda_cone() else "jax")
+    volume = _cone_slabs.HostVolume(output, engine, depth=4)
+    try:
+        for first in range(0, shape[0], 4):
+            stop = min(first + 4, shape[0])
+            volume.prefetch(first, stop)
+            block = volume.get(first, stop)
+            actual = np.empty((stop - first, *shape[1:]), np.float32)
+            engine.download(block[: stop - first], actual)
+            np.testing.assert_array_equal(actual, values[first:stop])
+            volume.put(first, stop, block + 1)
+    finally:
+        volume.close()
+    np.testing.assert_array_equal(output, values + 1)
+
+
 def test_slab_store_keeps_every_word_and_shares_blocks():
     host_volume = import_module("tomojax.core.host_volume")
-    words = np.random.default_rng(3).integers(0, 2**32, (5, 3, 11), dtype=np.uint32)
-    words[0, 0, :3] = [0x7FC00001, 0x80000000, 0]  # a NaN payload, -0, +0
+    words = np.random.default_rng(3).integers(0, 2**32, (11, 3, 5), dtype=np.uint32)
+    words[:3, 0, 0] = [0x7FC00001, 0x80000000, 0]  # a NaN payload, -0, +0
     values = words.view(np.float32)
     store = host_volume.SlabStore(values.shape, depth=4)
     store[:, :, :] = values
@@ -228,9 +254,9 @@ def test_slab_store_keeps_every_word_and_shares_blocks():
     np.testing.assert_array_equal(snapshot.materialize().view(np.uint32), words)
     coded = host_volume.SlabStore(values.shape, depth=3, reference=snapshot)
     assert coded.encoded_nbytes == 0 and coded.nbytes == values.nbytes
-    coded[:, :, 4:9] = store[:, :, 4:9]
+    coded[4:9, :, :] = store[4:9, :, :]
     expected = values.copy()
-    expected[:, :, 4:9] = store[:, :, 4:9]
+    expected[4:9, :, :] = store[4:9, :, :]
     np.testing.assert_array_equal(coded.materialize().view(np.uint32), expected.view(np.uint32))
     dense = coded.copy().materialize(consume=True)  # the copy is emptied, coded is kept
     np.testing.assert_array_equal(dense, coded.materialize())
@@ -239,7 +265,7 @@ def test_slab_store_keeps_every_word_and_shares_blocks():
         shape = values.shape
 
         def read(self, z0, z1):
-            return np.asfortranarray(values[:, :, z0:z1] * np.float32(0.5))
+            return np.ascontiguousarray(values[z0:z1, :, :] * np.float32(0.5))
 
     computed = host_volume.SlabStore(values.shape, depth=4, reference=Halves())
     computed[:, :, :] = values
@@ -250,7 +276,7 @@ def test_slab_store_keeps_every_word_and_shares_blocks():
 
 def test_slab_store_spills_blocks_to_an_unnamed_file(tmp_path):
     host_volume = import_module("tomojax.core.host_volume")
-    values = np.random.default_rng(4).standard_normal((6, 4, 10)).astype(np.float32)
+    values = np.random.default_rng(4).standard_normal((10, 4, 6)).astype(np.float32)
     store = host_volume.SlabStore(values.shape, depth=3)
     store[:, :, :] = values
     before = store.copy()
@@ -258,11 +284,11 @@ def test_slab_store_spills_blocks_to_an_unnamed_file(tmp_path):
     assert store.resident_nbytes == 0 and store.encoded_nbytes == before.resident_nbytes > 0
     assert list(tmp_path.iterdir()) == []  # the file has no name
     after = store.copy()
-    store[:, :, 2:4] = np.zeros((6, 4, 2), np.float32)  # back in memory
+    store[2:4, :, :] = np.zeros((2, 4, 6), np.float32)  # back in memory
     for kept in (before, after):
         np.testing.assert_array_equal(kept.materialize(), values)
     expected = values.copy()
-    expected[:, :, 2:4] = 0
+    expected[2:4, :, :] = 0
     np.testing.assert_array_equal(store.materialize(), expected)
 
 
@@ -282,7 +308,7 @@ def test_slab_store_puts_its_payloads_in_the_given_storage(tmp_path):
             self.payloads.append(payload)
             return payload
 
-    values = np.random.default_rng(5).standard_normal((4, 3, 7)).astype(np.float32)
+    values = np.random.default_rng(5).standard_normal((7, 3, 4)).astype(np.float32)
     storage = Storage()
     store = host_volume.SlabStore(values.shape, depth=3, storage=storage)
     store[:, :, :] = values

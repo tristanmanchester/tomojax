@@ -172,7 +172,7 @@ def test_huber_fista_step_uses_exact_finite_grid_gradient_norm(voxels):
         grid,
         detector,
         data.reshape(1, 1, voxels),
-        init_x=jnp.asarray(initial.reshape(voxels, 1, 1)),
+        init_x=jnp.asarray(initial.reshape(1, 1, voxels)),
         config=FistaConfig(
             iterations=1,
             tv_weight=0.2,

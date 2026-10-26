@@ -309,10 +309,10 @@ def grad_data_term(  # noqa: PLR0915
     validate_volume(x, grid, context="grad_data_term", name="x")
     validate_optional_broadcastable_shape(
         vol_mask,
-        (grid.nx, grid.ny, grid.nz),
+        (grid.nz, grid.ny, grid.nx),
         context="grad_data_term support",
         name="vol_mask",
-        fix="use a volume mask broadcastable to shape (grid.nx, grid.ny, grid.nz).",
+        fix="use a volume mask broadcastable to shape (grid.nz, grid.ny, grid.nx).",
     )
     if T_all is None:
         T_all = stack_view_poses(geometry, n_views)
@@ -469,17 +469,17 @@ def power_method_L(
     )
     validate_optional_broadcastable_shape(
         vol_mask,
-        (grid.nx, grid.ny, grid.nz),
+        (grid.nz, grid.ny, grid.nx),
         context="power_method_L support",
         name="vol_mask",
-        fix="use a volume mask broadcastable to shape (grid.nx, grid.ny, grid.nz).",
+        fix="use a volume mask broadcastable to shape (grid.nz, grid.ny, grid.nx).",
     )
     if T_all is None:
         T_all = stack_view_poses(geometry, n_views)
     validate_pose_stack(T_all, n_views, context="power_method_L geometry")
     batch_size = 1 if grad_mode == "stream" else chunk_size(n_views, views_per_batch, default=1)
     if initial is None:
-        initial = jnp.ones((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+        initial = jnp.ones((grid.nz, grid.ny, grid.nx), dtype=jnp.float32)
     return float(
         estimate_normal_norm(
             T_all,
@@ -532,10 +532,10 @@ def _prepare_fista_runtime(
     )
     validate_optional_broadcastable_shape(
         volume_mask,
-        (grid.nx, grid.ny, grid.nz),
+        (grid.nz, grid.ny, grid.nx),
         context="fista_tv support",
         name="support",
-        fix="use a support mask broadcastable to shape (grid.nx, grid.ny, grid.nz).",
+        fix="use a support mask broadcastable to shape (grid.nz, grid.ny, grid.nx).",
     )
     if init_x is not None:
         validate_volume(init_x, grid, context="fista_tv init_x", name="init_x")
@@ -565,7 +565,7 @@ def _prepare_fista_runtime(
     if lipschitz is None and projector is None:
         # The gradient at zero is minus the backprojected data: start from it.
         at_zero, _ = grad_data_term(
-            geometry, grid, detector, projections, jnp.zeros((grid.nx, grid.ny, grid.nz)),
+            geometry, grid, detector, projections, jnp.zeros((grid.nz, grid.ny, grid.nx)),
             views_per_batch=cfg.views_per_batch, projector_unroll=cfg.projector_unroll,
             checkpoint_projector=cfg.checkpoint_projector, gather_dtype=cfg.gather_dtype,
             grad_mode="stream", T_all=poses, vol_mask=volume_mask, det_grid=det_grid,
@@ -645,7 +645,7 @@ def _batched_projector(
 
 def huber_tv_lipschitz(tv_weight: float, huber_delta: float, grid: Grid) -> float:
     """The Lipschitz constant of ``tv_weight`` times Huber-TV's gradient on ``grid``."""
-    shape = (grid.nx, grid.ny, grid.nz)
+    shape = (grid.nz, grid.ny, grid.nx)
     return float(tv_weight) * gradient_norm_squared(shape) / float(huber_delta)
 
 
@@ -714,7 +714,7 @@ def _initial_fista_state(grid: Grid, runtime: FistaRuntime) -> FistaScanState:
     """Build the feasible start and empty diagnostics inside the compiled solve."""
     x0 = runtime.x0
     if x0 is None:
-        x0 = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+        x0 = jnp.zeros((grid.nz, grid.ny, grid.nx), dtype=jnp.float32)
     x0 = _feasible_volume(x0, runtime)
     return FistaScanState(
         x=x0,
@@ -902,7 +902,7 @@ def fista_tv(
     projections : array-like
         Measured line integrals with shape ``(views, detector.nv, detector.nu)``.
     init_x : array-like or None, optional
-        Initial volume of shape ``(nx, ny, nz)``; None starts from zero.
+        Initial volume of shape ``(nz, ny, nx)``; None starts from zero.
     config : FistaConfig or None, optional
         Solver settings. None uses FistaConfig defaults.
     callback : callable or None, optional
@@ -914,7 +914,7 @@ def fista_tv(
     Returns
     -------
     volume : jax.Array
-        Float32 reconstruction of shape ``(nx, ny, nz)``.
+        Float32 reconstruction of shape ``(nz, ny, nx)``.
     info : dict
         Solver diagnostics and effective work; a small residual or iteration
         count does not establish reconstruction accuracy.
@@ -932,7 +932,7 @@ def fista_tv(
     >>> grid = tj.Grid(4, 4, 1, 1.0, 1.0, 1.0)
     >>> detector = tj.Detector(4, 1, 1.0, 1.0)
     >>> geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 8, endpoint=False))
-    >>> data = project(geometry, np.ones((4, 4, 1), np.float32))
+    >>> data = project(geometry, np.ones((1, 4, 4), np.float32))
     >>> volume, info = fista_tv(
     ...     geometry,
     ...     geometry.grid,
@@ -941,7 +941,7 @@ def fista_tv(
     ...     config=FistaConfig(iterations=1),
     ... )
     >>> volume.shape
-    (4, 4, 1)
+    (1, 4, 4)
     """
     runtime = _prepare_fista_runtime(
         geometry,

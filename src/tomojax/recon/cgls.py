@@ -166,7 +166,7 @@ def cgls(
 
     Cone-beam volumes whose working set exceeds the device, or given ``out``,
     are solved with their volumes in host memory, streamed through the device
-    in z slabs; the result is then a Fortran-ordered NumPy volume (``out``
+    in z slabs; the result is then a C-ordered NumPy volume (``out``
     itself if given). With a memory-mapped ``out``, the three work volumes
     are temporary files in its directory.
 
@@ -181,20 +181,20 @@ def cgls(
     projections : array-like
         Measured line integrals with shape ``(views, detector.nv, detector.nu)``.
     init_x : array-like or None, optional
-        Initial volume of shape ``(nx, ny, nz)``; None starts from zero.
+        Initial volume of shape ``(nz, ny, nx)``; None starts from zero.
     config : CGLSConfig or None, optional
         Solver settings. None uses CGLSConfig defaults.
     det_grid : tuple of array-like or None, optional
         Explicit detector-coordinate arrays ``(u, v)``, each of shape ``(nv, nu)``.
         None uses the canonical detector grid.
     out : numpy.ndarray or None, optional
-        Writable float32 ``(nx, ny, nz)`` host storage for a cone-beam result,
+        Writable float32 ``(nz, ny, nx)`` host storage for a cone-beam result,
         including a memmap; it must not overlap the projections.
 
     Returns
     -------
     volume : jax.Array or numpy.ndarray
-        Float32 reconstruction of shape ``(nx, ny, nz)``.
+        Float32 reconstruction of shape ``(nz, ny, nx)``.
     info : dict
         Solver diagnostics and effective work; a small residual or iteration
         count does not establish reconstruction accuracy.
@@ -212,7 +212,7 @@ def cgls(
     >>> grid = tj.Grid(4, 4, 1, 1.0, 1.0, 1.0)
     >>> detector = tj.Detector(4, 1, 1.0, 1.0)
     >>> geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 8, endpoint=False))
-    >>> data = project(geometry, np.ones((4, 4, 1), np.float32))
+    >>> data = project(geometry, np.ones((1, 4, 4), np.float32))
     >>> volume, info = cgls(
     ...     geometry,
     ...     geometry.grid,
@@ -221,7 +221,7 @@ def cgls(
     ...     config=CGLSConfig(iterations=1),
     ... )
     >>> volume.shape
-    (4, 4, 1)
+    (1, 4, 4)
     """
     cfg = CGLSConfig() if config is None else config
     iterations, batch = operator.index(cfg.iterations), operator.index(cfg.views_per_batch)

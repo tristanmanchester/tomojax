@@ -63,7 +63,7 @@ def _checked_inputs(
 ) -> tuple[jax.Array, jax.Array]:
     # Check inputs inside the solve: separate eager checks would each compile.
     if initial is None:
-        initial = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+        initial = jnp.zeros((grid.nz, grid.ny, grid.nx), dtype=jnp.float32)
     finite = (
         jnp.all(jnp.isfinite(data)) & jnp.all(jnp.isfinite(poses)) & jnp.all(jnp.isfinite(initial))
     )
@@ -282,7 +282,7 @@ def _solve_streamed(
     normal, exact = normal_equation_operators(
         poses, grid, detector, backend, batch_size, model, joseph_interpolation
     )
-    x0 = jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32) if initial is None else initial
+    x0 = jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32) if initial is None else initial
     damp2 = damping * damping
     spacing = (grid.vx, grid.vy, grid.vz)
     penalty = partial(

@@ -33,7 +33,7 @@ def problem(request):
                 ),
             )
         )
-    basis = np.eye(12, dtype=np.float32).reshape(12, 3, 2, 2)
+    basis = np.eye(12, dtype=np.float32).reshape(12, 2, 2, 3)
     # Assemble only forwards; NumPy's dense transpose supplies an independent
     # reference for all normalizations and multiplicative subset updates.
     matrix = np.stack([np.asarray(tj.project(geometry, x)).ravel() for x in basis], axis=1)
@@ -45,7 +45,7 @@ def problem(request):
 @pytest.mark.parametrize("batch", [2, 4])
 def test_mlem_dense_subset_updates_with_support(problem, subsets, batch):
     grid, detector, geometry, matrix = problem
-    support = np.ones((3, 2, 2), bool)
+    support = np.ones((2, 2, 3), bool)
     support[0] = False
     truth = np.linspace(0.2, 1.1, 12) * support.ravel()
     data = matrix @ truth
@@ -64,7 +64,7 @@ def test_mlem_dense_subset_updates_with_support(problem, subsets, batch):
         grid,
         detector,
         data.reshape(5, 4, 5),
-        init_x=np.full((3, 2, 2), 0.7, np.float32),
+        init_x=np.full((2, 2, 3), 0.7, np.float32),
         config=MLEMConfig(iterations=3, subsets=subsets, support=support, views_per_batch=batch),
     )
     np.testing.assert_allclose(np.asarray(volume).ravel(), expected, rtol=2e-5, atol=2e-6)
@@ -113,7 +113,9 @@ def test_unobserved_activity_is_zero_not_the_initial_constant(subsets):
         init_x=np.full((3, 1, 3), 7, np.float32),
         config=MLEMConfig(iterations=100, subsets=subsets),
     )  # fmt: skip
-    np.testing.assert_allclose(np.asarray(volume), [[[0, 2, 0]]] * 3, atol=1e-5)
+    np.testing.assert_allclose(
+        np.asarray(volume), np.asarray([[[0, 2, 0]]] * 3).transpose(2, 1, 0), atol=1e-5
+    )
 
 
 @pytest.mark.numerical
@@ -128,7 +130,7 @@ def test_uncached_sensitivities_preserve_visibility_and_updates(monkeypatch):
             patch.setattr(module, "_SENSITIVITY_CACHE_BYTES", 0)
             patch.setattr(module, "device_free_memory_bytes", lambda: 0)
             actual = tj.reconstruct(tj.Scan(data, geometry), "mlem", config=config).volume
-        np.testing.assert_array_equal(np.asarray(actual)[:, :, [0, 2]], 0)
+        np.testing.assert_array_equal(np.asarray(actual)[[0, 2]], 0)
         np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=2e-6)
 
 
@@ -185,7 +187,7 @@ def test_single_plane_sensitivities_match_full_axial_norms(monkeypatch):
     grid = Grid(5, 4, 3, 0.8, 1.1, 1.3, vol_origin=(1.3, -2.7, 2.5 - 2 * 1.3 / 2))
     detector = Detector(8, 3, 0.8, 1.3, (0.2, 2.5))
     geometry = tj.ParallelGeometry(grid, detector, [11, 89, 141, 63, 122])
-    truth = rng.uniform(0.1, 1, (5, 4, 3)).astype(np.float32)
+    truth = rng.uniform(0.1, 1, (3, 4, 5)).astype(np.float32)
     scan = tj.Scan(np.asarray(tj.project(geometry, truth)), geometry)
     support = rng.uniform(size=truth.shape) > 0.3
     for iterations in (0, 3):
@@ -228,9 +230,9 @@ def test_host_cone_updates_match_dense_transpose_without_consuming_inputs(
     grid, detector, geometry, matrix = problem
     if not isinstance(geometry, ConeSegments):
         pytest.skip("coupled volume partition is for cone geometry")
-    support = np.ones((3, 2, 2), bool)
+    support = np.ones((2, 2, 3), bool)
     support[0] = False
-    initial = np.full((3, 2, 2), 0.7, np.float32)
+    initial = np.full((2, 2, 3), 0.7, np.float32)
     initial[0] = np.nan  # excluded values must not enter the likelihood
     data = (matrix @ np.linspace(0.2, 1.1, 12)).reshape(5, 4, 5).astype(dtype)
     for iterations in (0, 2):
@@ -256,7 +258,7 @@ def test_host_cone_updates_match_dense_transpose_without_consuming_inputs(
             config=MLEMConfig(iterations=iterations, subsets=3, support=support, views_per_batch=2),
         )
         assert isinstance(volume, np.ndarray) and info["host_volume"]
-        assert volume.flags.f_contiguous
+        assert volume.flags.c_contiguous
         np.testing.assert_allclose(volume.ravel(), expected, rtol=2e-5, atol=2e-6)
     assert np.isnan(initial[0]).all()
     np.testing.assert_array_equal(initial[1:], np.float32(0.7))
@@ -280,7 +282,7 @@ def test_host_cone_warm_start_fills_out_before_em(monkeypatch, tmp_path):
     start = np.maximum(fdk_host(geometry, grid, detector, data), 0)
     expected, _ = mlem(geometry, grid, detector, data, init_x=start, config=cfg)
     out = np.lib.format.open_memmap(
-        tmp_path / "x.npy", "w+", np.float32, (7, 5, 9), fortran_order=True
+        tmp_path / "x.npy", "w+", np.float32, (9, 5, 7), fortran_order=False
     )
     monkeypatch.setattr(import_module("tomojax.recon._cone_slabs"), "slab_depth", lambda *_: 2)
     actual = tj.reconstruct(tj.Scan(data, geometry), "mlem", config=cfg, warm_start=True, out=out)

@@ -45,7 +45,7 @@ def test_raw_slabs_match_corrected_scan_and_remain_reconstructible(tmp_path, met
     expected = tj.reconstruct(frames.corrected(step), method, grid=grid, config=cfg).volume
     with tj.reconstruct_slabs(frames, method, grid=grid, corrections=[step], config=cfg) as slabs:
         collected = list(slabs)
-    actual = np.concatenate([item.volume for _, item in collected], axis=2)
+    actual = np.concatenate([item.volume for _, item in collected], axis=0)
     np.testing.assert_allclose(actual, expected, rtol=3e-5, atol=2e-6)
     for section, item in collected:
         origin = grid_volume_origin(item.grid)
@@ -89,8 +89,8 @@ def test_iterative_slabs_preserve_updates_masks_and_ownership(method, backend, w
     geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 13))
     raw = np.random.default_rng(3).uniform(100, 800, (13, 11, 17)).astype(np.float32)
     frames = tj.Frames(raw, geometry, white_level=1000)
-    support = np.ones((13, 15, 11), bool)
-    support[0, :, ::2] = False
+    support = np.ones((11, 15, 13), bool)
+    support[::2, :, 0] = False
     settings = dict(iterations=2, subsets=3, support=support, backend=backend)
     cfg = (
         SIRTConfig(lower_bound=0, upper_bound=0.5, **settings)
@@ -100,7 +100,7 @@ def test_iterative_slabs_preserve_updates_masks_and_ownership(method, backend, w
     expected = tj.reconstruct(frames.corrected(), method, config=cfg, warm_start=warm_start)
     with tj.reconstruct_slabs(frames, method, config=cfg, warm_start=warm_start) as slabs:
         collected = list(slabs)
-    actual = np.concatenate([item.volume for _, item in collected], axis=2)
+    actual = np.concatenate([item.volume for _, item in collected], axis=0)
     np.testing.assert_allclose(actual, expected.volume, rtol=2e-5, atol=1e-6)
     assert len(collected) > 1
     assert np.count_nonzero(actual[~support]) == 0
@@ -192,7 +192,7 @@ def test_cone_raw_slabs_preserve_acquisition_weights_and_owned_rows(backend):
         collected = list(slabs)
     assert len(collected) == 2
     assert max(shape[1] for shape in requests) < detector.nv
-    actual = np.concatenate([r.volume for _, r in collected], axis=2)
+    actual = np.concatenate([r.volume for _, r in collected], axis=0)
     if backend == "jax":
         np.testing.assert_allclose(actual, expected, rtol=3e-5, atol=2e-6)
     else:

@@ -40,7 +40,7 @@ def solve(
     bounds: tuple[float, float],
     out: np.ndarray | None = None,
 ) -> tuple[np.ndarray, dict[str, object]]:
-    """Run validated SIRT settings with a host volume, in ``out`` or a Fortran-ordered volume."""
+    """Run validated SIRT settings with a host volume, in ``out`` or a C-ordered volume."""
     projections = host_projections(projections, "sirt")
     problem = cone_problem(
         geometry, grid, detector, projections, model=model, backend=backend, poses=poses,
@@ -96,7 +96,7 @@ class _HostSIRT:
     ) -> None:
         self.problem, self.plan, self.xp = problem, problem.plan, problem.engine.xp
         grid = self.plan.grid
-        shape = (grid.nx, grid.ny, grid.nz)
+        shape = (grid.nz, grid.ny, grid.nx)
         self.lower, self.upper = (np.float32(b) for b in bounds)
         # A zero start is neither stored nor projected: the first sweep writes every voxel.
         self.zero = initial is None and self.lower <= 0 <= self.upper
@@ -110,11 +110,11 @@ class _HostSIRT:
         constrained = (bounded or self.support is not None) and not self.zero
         for k in range(self.plan.count if constrained else 0):
             z0, z1 = self.plan.planes(k)
-            planes = self.x[:, :, z0:z1]
+            planes = self.x[z0:z1, :, :]
             if bounded:
                 xp.clip(planes, self.lower, self.upper, out=planes)
             if self.support is not None:
-                planes[~xp.asarray(self.support[:, :, z0:z1])] = 0
+                planes[~xp.asarray(self.support[z0:z1, :, :])] = 0
             release_planes(self.x, z0, z1)
         self.volume = problem.volume(self.x)
         self.point = self.volume
@@ -145,8 +145,8 @@ class _HostSIRT:
         if self.support is None:
             return ()
         z0, z1 = self.plan.planes(k)
-        mask = np.ascontiguousarray(self.support[:, :, z0:z1].T, np.float32)
-        return (self.point.kernel(self.problem.engine.upload(mask).T),)
+        mask = np.ascontiguousarray(self.support[z0:z1, :, :], np.float32)
+        return (self.point.kernel(self.problem.engine.upload(mask)),)
 
     def finish(self, batch: Batch, first: int, stop: int, rows: tuple[Any, ...]) -> None:
         """Rows become ``R (y - A x)`` with ``R = 1 / (A support)``; zero sums weigh zero."""
@@ -165,19 +165,19 @@ class _HostSIRT:
         xp, (z0, z1) = self.xp, self.plan.planes(k)
         if not sources:  # unkept slabs are fetched again
             sources = (None if self.zero else self.point.view(z0, z1), *self._support(k))
-        updated, norm = (a[:, :, : z1 - z0] for a in accumulated)
+        updated, norm = (a[: z1 - z0, :, :] for a in accumulated)
         norm[norm <= 0] = xp.inf  # zero column sums give zero weight
         updated /= norm
         updated *= self.relaxation
         if sources[0] is not None:
-            updated += sources[0][:, :, : z1 - z0]
+            updated += sources[0][: z1 - z0, :, :]
         xp.clip(updated, self.lower, self.upper, out=updated)
         if self.support is not None:
-            updated *= sources[1][:, :, : z1 - z0]
+            updated *= sources[1][: z1 - z0, :, :]
         previous = None
         if self.accelerated:
             previous = xp.zeros_like(updated) if self.zero else self.volume.view(z0, z1)
-        self.volume.put(z0, z1, updated, scratch=accumulated[1])
+        self.volume.put(z0, z1, updated)
         if previous is not None:
             # updated + momentum (updated - previous), in the uploaded buffer
             previous -= updated

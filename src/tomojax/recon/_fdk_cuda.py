@@ -81,9 +81,9 @@ extern "C" __global__ void fdk_backproject(
 {
     __shared__ float cf[32 * NC];
     int lane = threadIdx.x & 31, wid = threadIdx.x >> 5;
-    int groups = (nz + 32 * RUN - 1) / (32 * RUN), tiles_y = (ny + TY - 1) / TY;
+    int groups = (nz + 32 * RUN - 1) / (32 * RUN), tiles_x = (nx + TX - 1) / TX;
     int tile = blockIdx.x / groups, group = blockIdx.x % groups;
-    int ix = (tile / tiles_y) * TX + wid / TY, iy = (tile % tiles_y) * TY + wid % TY;
+    int ix = (tile % tiles_x) * TX + wid / TY, iy = (tile / tiles_x) * TY + wid % TY;
     bool valid = ix < nx && iy < ny;
     if (!valid) ix = iy = 0;
     int iz0 = 32 * RUN * group + lane;
@@ -134,12 +134,25 @@ extern "C" __global__ void fdk_backproject(
             }
         }
     }
-    if (valid) {
-        if (*peak > 0.f) scale2 *= *peak / HALF_PEAK;
-        long base = ((long)ix * ny + iy) * nz;
-        #pragma unroll
-        for (int j = 0; j < RUN; ++j)
-            if (iz0 + 32 * j < nz) vol[base + iz0 + 32 * j] += acc[j] * scale2;
+    // Coefficients are dead: reuse their buffer to exchange z-contiguous
+    // texture accumulators for x-contiguous output. Padding avoids bank aliasing.
+    // TX * TY * 33 floats fit within the coefficient buffer. Every thread,
+    // including invalid boundary columns, participates in this exchange.
+    if (*peak > 0.f) scale2 *= *peak / HALF_PEAK;
+    int ox = (tile % tiles_x) * TX + threadIdx.x % TX;
+    int oy = (tile / tiles_x) * TY + (threadIdx.x / TX) % TY;
+    int oz = 32 * RUN * group + threadIdx.x / (TX * TY);
+    int read_warp = (threadIdx.x % TX) * TY + (threadIdx.x / TX) % TY;
+    int read_lane = threadIdx.x / (TX * TY);
+    for (int j = 0; j < runs; ++j) {
+        __syncthreads();
+        cf[wid * 33 + lane] = acc[j];
+        __syncthreads();
+        int z = oz + 32 * j;
+        if (ox < nx && oy < ny && z < nz) {
+            long index = ((long)z * ny + oy) * nx + ox;
+            vol[index] += cf[read_warp * 33 + read_lane] * scale2;
+        }
     }
 }
 """
@@ -314,7 +327,7 @@ def backproject_cuda(
     # pixels, so every view's image aligns alike.
     pitch = -(-(_LEAD + detector.nv) // _LEAD) * _LEAD
     shapes = (
-        jax.ShapeDtypeStruct((grid.nx, grid.ny, grid.nz), jnp.float32),
+        jax.ShapeDtypeStruct((grid.nz, grid.ny, grid.nx), jnp.float32),
         jax.ShapeDtypeStruct((views, width, pitch), jnp.float16),
     )
     launch = partial(_launch, grid=grid, det=detector, scale=float(scale))

@@ -119,3 +119,22 @@ def test_download_broadcasts_without_modifying_host_padding():
     copy_to_host(source, target[:, 0])
     np.testing.assert_array_equal(target[:, 0], np.broadcast_to(np.arange(5), (3, 5)))
     np.testing.assert_array_equal(target[:, 1], -1)
+
+
+def test_leading_axis_slab_upload_owns_partial_final_plane_block():
+    from tomojax.core.host_transfer import upload_host_slabs
+
+    shape = (7, 3, 5)
+    words = np.arange(np.prod(shape), dtype=np.uint32).reshape(shape) + 0x3F800000
+    words[3, 1, :3] = [0x7FC1ABCD, 0x80000000, 0]
+    source = words.view(np.float32)
+
+    def slabs():
+        for first in range(0, shape[0], 3):
+            yield first, source[first : first + 3]
+
+    actual = upload_host_slabs(shape, slabs(), jax.devices()[0])
+    source.fill(0)
+    expected = np.arange(np.prod(shape), dtype=np.uint32).reshape(shape) + 0x3F800000
+    expected[3, 1, :3] = [0x7FC1ABCD, 0x80000000, 0]
+    np.testing.assert_array_equal(np.asarray(actual).view(np.uint32), expected)

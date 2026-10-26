@@ -158,7 +158,7 @@ def _binned_rows(
 
 
 def _fov_mask(geometry: ConeGeometry, grid: Grid, detector: Detector) -> np.ndarray:
-    """``(nx, ny)`` mask of the voxels inside the cylinder every view sees."""
+    """``(ny, nx)`` mask of the voxels inside the cylinder every view sees."""
     beam = geometry.beam
     # A full turn sees the circle reached by the detector edge farther from the axis.
     axis = float(beam.axis_offset) * beam.magnification - float(detector.center[0])
@@ -171,17 +171,17 @@ def _fov_mask(geometry: ConeGeometry, grid: Grid, detector: Detector) -> np.ndar
     origin = np.asarray(grid_volume_origin(grid))
     x = origin[0] + np.arange(grid.nx) * grid.vx - float(beam.axis_offset)
     y = origin[1] + np.arange(grid.ny) * grid.vy
-    return (x[:, None] ** 2 + y[None, :] ** 2) <= radius**2
+    return (x[None, :] ** 2 + y[:, None] ** 2) <= radius**2
 
 
 @jax.jit
 def _sharpness(volume: jax.Array, mask: jax.Array) -> jax.Array:
     """Mean squared in-plane gradient of a slab inside ``mask``."""
-    gx = volume[1:, :-1, :] - volume[:-1, :-1, :]
-    gy = volume[:-1, 1:, :] - volume[:-1, :-1, :]
-    inside = (mask[1:, :-1] & mask[:-1, 1:] & mask[:-1, :-1])[:, :, None]
+    gx = volume[:, :-1, 1:] - volume[:, :-1, :-1]
+    gy = volume[:, 1:, :-1] - volume[:, :-1, :-1]
+    inside = (mask[1:, :-1] & mask[:-1, 1:] & mask[:-1, :-1])[None, :, :]
     energy = jnp.where(inside, gx * gx + gy * gy, 0.0)
-    return jnp.sum(energy) / jnp.maximum(jnp.sum(inside) * volume.shape[2], 1)
+    return jnp.sum(energy) / jnp.maximum(jnp.sum(inside) * volume.shape[0], 1)
 
 
 def _thickness(grid: Grid, cfg: ConeAxisConfig) -> int:

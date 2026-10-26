@@ -302,8 +302,8 @@ def _backproject_jax(
     out: jax.Array,
 ) -> jax.Array:
     """Voxel-driven backprojection of filtered ``(views, nv, nu)`` images."""
-    index = [jnp.arange(n, dtype=jnp.float32) for n in (grid.nx, grid.ny, grid.nz)]
-    qx, qy, qz = jnp.meshgrid(*index, indexing="ij")
+    index = [jnp.arange(n, dtype=jnp.float32) for n in (grid.nz, grid.ny, grid.nx)]
+    qz, qy, qx = jnp.meshgrid(*index, indexing="ij")
 
     def step(total: jax.Array, view: tuple[jax.Array, jax.Array]) -> tuple[jax.Array, None]:
         image, c = view
@@ -546,7 +546,7 @@ def _backproject_filtered(
     n_views = int(filtered.shape[0])
     coeff = prep.coefficients(geometry, grid, detector, stack_view_poses(geometry, n_views))
     detector = prep.virtual(detector)
-    out = jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
+    out = jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32)
     for start in range(0, n_views, prep.batch):
         stop = min(start + prep.batch, n_views)
         out = _backproject_batch(
@@ -564,7 +564,7 @@ def fdk(
     *,
     config: FDKConfig | None = None,
 ) -> jax.Array:
-    """Reconstruct a cone-beam scan with FDK; returns an ``(nx, ny, nz)`` volume.
+    """Reconstruct a cone-beam scan with FDK; returns an ``(nz, ny, nx)`` volume.
 
     ``projections`` are ``(views, nv, nu)`` line integrals; NumPy and memmap
     stacks stream to the device ``views_per_batch`` views at a time. Full turns
@@ -590,7 +590,7 @@ def fdk(
     Returns
     -------
     jax.Array
-        Float32 reconstruction of shape ``(nx, ny, nz)``.
+        Float32 reconstruction of shape ``(nz, ny, nx)``.
 
     Raises
     ------
@@ -628,7 +628,7 @@ def _accumulate(
         """The weighted backprojection of ``views``, on ``device`` (JAX's default for None)."""
         here = prep.on(device, views)
         share = jax.device_put(coeff[views.start : views.stop], device)
-        out = jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32, device=device)
+        out = jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32, device=device)
         target = next(iter(out.devices()))
         starts = list(range(0, len(views), prep.batch))
 
@@ -827,8 +827,8 @@ def fdk_slabs[T](
                 _window_coefficients(coeff, r0, start),
                 None,
             )
-            owned = np.empty((grid.nx, grid.ny, stop - start), np.float32, order="F")
-            copy_to_host(volume.T, owned.T)
+            owned = np.empty((stop - start, grid.ny, grid.nx), np.float32, order="C")
+            copy_to_host(volume, owned)
             del volume
             yield ReconstructionSlab(start, stop, slice(r0, r1), projections, owned, context)
             del projections, owned, context
@@ -845,7 +845,7 @@ def fdk_host(
 ) -> np.ndarray:
     """FDK with host input and output, reconstructed in z slabs on the device.
 
-    Accepts NumPy arrays and memmaps; ``out`` may be a writable ``(nx, ny, nz)``
+    Accepts NumPy arrays and memmaps; ``out`` may be a writable ``(nz, ny, nx)``
     FP32 memmap. Each slab filters a bounded band containing the rows it projects
     onto in any calibrated view, so projections and volume can both exceed device
     memory. With several ``config.fdk.devices``, each device
@@ -870,13 +870,13 @@ def fdk_host(
     config : FDKHostConfig or None, optional
         Solver settings. None uses FDKHostConfig defaults.
     out : numpy.ndarray or None, optional
-        Writable float32 host storage of shape ``(nx, ny, nz)``, including a memmap.
-        Must not overlap input storage. None allocates a new Fortran-order output.
+        Writable float32 host storage of shape ``(nz, ny, nx)``, including a memmap.
+        Must not overlap input storage. None allocates a new C-order output.
 
     Returns
     -------
     numpy.ndarray
-        Float32 reconstruction of shape ``(nx, ny, nz)``. Returns out itself when supplied.
+        Float32 reconstruction of shape ``(nz, ny, nx)``. Returns out itself when supplied.
 
     Raises
     ------
@@ -900,12 +900,12 @@ def fdk_host(
             ) from error
         if depth < 1:
             raise ValueError("fdk_host: slices_per_batch must be a positive integer or None")
-    shape = validate_grid(grid, "fdk_host grid")
+    nx, ny, nz = validate_grid(grid, "fdk_host grid")
     n_views, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fdk_host projections"
     )
     ordered_arc(grouped_angles(geometry, n_views)[0])
-    result = validate_host_arrays(projections, out, shape, "fdk_host", order="F")
+    result = validate_host_arrays(projections, out, (nz, ny, nx), "fdk_host", order="C")
     if depth is None:
         free = device_free_memory_bytes() or 2 * 1024**3
         depth = max(1, int(free // (3 * max(1, 4 * grid.nx * grid.ny))))
@@ -985,7 +985,7 @@ class _Slabs:
             pending.result()
 
     def store(self, z0: int, z1: int, volume: jax.Array) -> None:
-        copy_to_host(volume, self.result[:, :, z0:z1])
+        copy_to_host(volume, self.result[z0:z1])
 
 
 class _RowView:

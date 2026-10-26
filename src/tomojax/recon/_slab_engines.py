@@ -97,7 +97,7 @@ class CudaEngine:
         from tomojax.core.cone import forward_into
 
         out = self.xp.empty((coeff.shape[0], rows, self.detector.nu), self.xp.float32)
-        forward_into(out, coeff, volume, grid=self._grid(volume.shape[2]), det=self._detector(rows))
+        forward_into(out, coeff, volume, grid=self._grid(volume.shape[0]), det=self._detector(rows))
         return out
 
     def transpose(
@@ -105,7 +105,7 @@ class CudaEngine:
     ) -> tuple[Any, ...]:
         from tomojax.core.cone import adjoint_into, adjoint_pair_into
 
-        grid = self._grid(accumulate[0].shape[2])
+        grid = self._grid(accumulate[0].shape[0])
         detector = self._detector(images[0].shape[1])
         if len(images) == 1:
             adjoint_into(accumulate[0], coeff, images[0], accumulate[0], grid=grid, det=detector)
@@ -172,13 +172,13 @@ class JaxEngine:
         out[...] = array
 
     def project(self, volume: np.ndarray, coeff: np.ndarray, rows: int) -> np.ndarray:
-        shapes = self._shapes(volume.shape[2], rows)
+        shapes = self._shapes(volume.shape[0], rows)
         return np.array(_project(volume, coeff, **shapes))
 
     def transpose(
         self, images: tuple[np.ndarray, ...], coeff: np.ndarray, accumulate: tuple[np.ndarray, ...]
     ) -> tuple[np.ndarray, ...]:
-        shapes = self._shapes(accumulate[0].shape[2], images[0].shape[1])
+        shapes = self._shapes(accumulate[0].shape[0], images[0].shape[1])
         if len(images) == 1:
             results = (_transpose(images[0], coeff, accumulate[0], **shapes),)
         else:

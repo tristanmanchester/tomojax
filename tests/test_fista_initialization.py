@@ -23,13 +23,13 @@ def test_ordered_start_tail_and_full_refinement_match_dense_quadratic(shuffled):
     poses = jnp.asarray([geometry.pose_for_view(i) for i in range(19)])
 
     def forward(x):
-        return project_joseph(x.reshape(5, 4, 2), poses, grid, detector, backend="jax")
+        return project_joseph(x.reshape(2, 4, 5), poses, grid, detector, backend="jax")
 
     # The independently written optimizer, not this matrix, is the oracle here.
     matrix = np.asarray(jax.jit(jax.jacfwd(forward))(jnp.zeros(40))).reshape(-1, 40)
     rng = np.random.default_rng(13)
     data = (matrix @ rng.uniform(0, 1, 40) + rng.normal(0, 0.01, matrix.shape[0])).reshape(19, 3, 7)
-    initial = rng.uniform(0, 0.1, (5, 4, 2)).astype(np.float32)
+    initial = rng.uniform(0, 0.1, (2, 4, 5)).astype(np.float32)
     blocks = [
         matrix.reshape(19, 21, 40)[np.argsort(angles)][i::4].reshape(-1, 40).astype(float)
         for i in range(4)
@@ -74,7 +74,7 @@ def test_ordered_start_tail_and_full_refinement_match_dense_quadratic(shuffled):
         {"tv_weight": 0.1},
         {"iterations": 0},
         {"stream_projections": True},
-        {"support": jnp.ones((2, 2, 1))},
+        {"support": jnp.ones((1, 2, 2))},
         {"projector_model": "ray"},
     ],
 )
@@ -104,7 +104,7 @@ def test_volume_larger_than_data_preserves_owned_start_and_final_state(early):
     geometry = LaminographyGeometry(grid, detector, np.linspace(180, 0, 31), tilt_deg=27)
     rng = np.random.default_rng(614)
     data = jnp.asarray(rng.uniform(size=(31, 6, 8)).astype(np.float32))
-    initial = jnp.asarray(rng.uniform(0, 0.1, (16, 16, 8)).astype(np.float32))
+    initial = jnp.asarray(rng.uniform(0, 0.1, (8, 16, 16)).astype(np.float32))
     before = np.asarray(initial).copy()
     config = FistaConfig(
         iterations=5,
@@ -162,7 +162,7 @@ def test_owned_zero_start_preserves_norm_first_step_and_stopping(steps, early):
         geometry, grid, detector, data, init_x=None, config=config, det_grid=None
     )
     assert module.use_owned_fista(grid, data, runtime)
-    assert not module.use_owned_fista(grid, data, replace(runtime, x0=jnp.zeros((16, 16, 8))))
+    assert not module.use_owned_fista(grid, data, replace(runtime, x0=jnp.zeros((8, 16, 16))))
     expected, limit = module._run_fista_scan(grid, detector, data, runtime)
     actual, info = fista_tv(geometry, grid, detector, data, config=config)
     np.testing.assert_allclose(actual, expected.x, rtol=3e-5, atol=2e-7)

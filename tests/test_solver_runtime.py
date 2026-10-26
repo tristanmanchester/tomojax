@@ -34,8 +34,8 @@ from tomojax.recon._projection import normal_operator_norm, projection_operators
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("weight_scale", [1, 1e-13, 1e-30])
 def test_spdhg_small_weights_preserve_the_dense_weighted_minimizer(stream, weight_scale):
-    shape = (2, 1, 1)
-    grid = Grid(*shape, 0.8, 1.1, 1.3)
+    shape = (1, 1, 2)
+    grid = Grid(*shape[::-1], 0.8, 1.1, 1.3)
     detector = Detector(4, 3, 0.7, 0.9, (0.17, -0.23))
     geometry = ParallelGeometry(grid, detector, [13.0, 71.0, 127.0])
     poses = jnp.asarray([geometry.pose_for_view(i) for i in range(3)], dtype=jnp.float32)
@@ -80,8 +80,8 @@ def test_spdhg_small_weights_preserve_the_dense_weighted_minimizer(stream, weigh
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("device_weights", [False, True])
 def test_spdhg_zero_weight_mask_recovers_dense_weighted_solution(tilted, stream, device_weights):
-    shape = (2, 1, 1)
-    grid = Grid(*shape, 0.8, 1.1, 1.3)
+    shape = (1, 1, 2)
+    grid = Grid(*shape[::-1], 0.8, 1.1, 1.3)
     detector = Detector(4, 3, 0.7, 0.9, (0.17, -0.23))
     angles = [13.0, 71.0, 127.0]
     geometry = (
@@ -384,7 +384,7 @@ def test_spdhg_partial_steps_match_dense_first_update_and_preserve_each_override
 @pytest.mark.parametrize("regulariser", ["tv", "huber_tv"])
 def test_spdhg_partial_tv_step_controls_dense_primal_update(model, regulariser):
     shape = (2, 3, 2)
-    grid = Grid(*shape, 0.8, 1.1, 1.3)
+    grid = Grid(*shape[::-1], 0.8, 1.1, 1.3)
     detector = Detector(4, 3, 0.9, 1.2, (0.17, -0.23))
     geometry = LaminographyGeometry(grid, detector, [13.0, 68.0, 142.0], tilt_deg=30)
     poses = jnp.asarray([geometry.pose_for_view(i) for i in range(3)])
@@ -434,19 +434,19 @@ def test_batched_normal_norm_matches_dense_scaled_spectrum():
     # Physical length units and an unnormalised start must not change the estimate.
     scale, start_scale = 1e-4, 1e3
     matrix = jnp.asarray([[1.0, 0.3], [0.3, 2.0]], dtype=jnp.float32) * scale
-    support = jnp.asarray([0.4, 1.0]).reshape(2, 1, 1)
+    support = jnp.asarray([0.4, 1.0]).reshape(1, 1, 2)
 
     def forward(x):
         return matrix @ x.ravel()
 
     def adjoint(y):
-        return (matrix.T @ y).reshape(2, 1, 1)
+        return (matrix.T @ y).reshape(1, 1, 2)
 
     actual = jax.jit(
         lambda start: normal_operator_norm(
-            forward, adjoint, (2, 1, 1), iterations=30, mask=support, start=start
+            forward, adjoint, (1, 1, 2), iterations=30, mask=support, start=start
         )
-    )(jnp.full((2, 1, 1), start_scale))
+    )(jnp.full((1, 1, 2), start_scale))
     expected = np.linalg.norm(np.asarray(matrix, np.float64) * np.asarray(support).ravel(), 2) ** 2
     np.testing.assert_allclose(actual, expected, rtol=3e-6)
 
@@ -457,7 +457,7 @@ def test_spdhg_disabled_tv_cannot_corrupt_finite_data_diagnostics(regulariser, s
     scale = 1e-4
     grid, detector = Grid(2, 1, 1, scale, scale, scale), Detector(2, 1, scale, scale)
     geometry = ParallelGeometry(grid, detector, [0.0])
-    initial = np.array([0.0, 1e20], dtype=np.float32).reshape(2, 1, 1)
+    initial = np.array([0.0, 1e20], dtype=np.float32).reshape(1, 1, 2)
     data = (initial.ravel() * np.float32(scale)).reshape(1, 1, 2)
     actual, info = spdhg_tv(
         geometry,
@@ -492,7 +492,7 @@ def _three_view_problem():
 @pytest.mark.parametrize(("stream", "missing"), [(False, np.nan), (True, -np.inf)])
 def test_spdhg_masked_invalid_data_preserve_solution_and_diagnostics(stream, missing):
     grid, detector, geometry = _three_view_problem()
-    truth = np.asarray([0.2, 1.0], np.float32).reshape(2, 1, 1)
+    truth = np.asarray([0.2, 1.0], np.float32).reshape(1, 1, 2)
     data = np.array(tj.project(geometry, truth))
     weights = np.linspace(0.3, 1.7, data.size).astype(np.float32).reshape(data.shape)
     weights.reshape(-1)[::4] = 0.0
@@ -518,7 +518,7 @@ def test_spdhg_masked_invalid_data_preserve_solution_and_diagnostics(stream, mis
 @pytest.mark.parametrize("stream", [False, True])
 def test_spdhg_all_missing_data_preserve_finite_warm_start(stream):
     grid, detector, geometry = _three_view_problem()
-    initial = np.asarray([0.2, 1.0], dtype=np.float32).reshape(2, 1, 1)
+    initial = np.asarray([0.2, 1.0], dtype=np.float32).reshape(1, 1, 2)
     actual, info = spdhg_tv(
         geometry,
         grid,
@@ -573,7 +573,7 @@ def test_fista_disabled_tv_does_not_evaluate_regulariser(monkeypatch, regularise
     module = importlib.import_module("tomojax.recon.fista_tv")
     grid, detector = Grid(2, 1, 1, 1.0, 1.0, 1.0), Detector(2, 1, 1.0, 1.0)
     geometry = ParallelGeometry(grid, detector, [0.0])
-    initial = np.asarray([0.25, 0.75], dtype=np.float32).reshape(2, 1, 1)
+    initial = np.asarray([0.25, 0.75], dtype=np.float32).reshape(1, 1, 2)
     data = initial.reshape(1, 1, 2)
 
     def disabled(*_args):
@@ -624,7 +624,7 @@ def test_spdhg_segmented_cone_batches_follow_dense_individual_arrangements(batch
     columns = [
         np.concatenate(
             [
-                np.asarray(tj.project(segment, basis.reshape(3, 2, 2))).reshape(-1)
+                np.asarray(tj.project(segment, basis.reshape(2, 2, 3))).reshape(-1)
                 for segment in segments
             ]
         )
@@ -712,8 +712,8 @@ def test_spdhg_automatic_steps_stay_stable_when_one_view_measures_the_volume():
 @pytest.mark.numerical
 @pytest.mark.parametrize("regulariser", ["tv", "huber_tv"])
 def test_spdhg_tv_trajectory_matches_dense_primal_dual_reference(regulariser):
-    shape = (2, 2, 1)
-    grid = Grid(*shape, 0.8, 1.1, 1.3)
+    shape = (1, 2, 2)
+    grid = Grid(*shape[::-1], 0.8, 1.1, 1.3)
     detector = Detector(4, 3, 0.7, 0.9, (0.17, -0.23))
     geometry = LaminographyGeometry(grid, detector, [13, 71, 127, 193, 241], tilt_deg=25)
     columns = [np.asarray(tj.project(geometry, b.reshape(shape))).ravel() for b in np.eye(4)]
@@ -785,8 +785,8 @@ def test_spdhg_tv_trajectory_matches_dense_primal_dual_reference(regulariser):
 
 @pytest.mark.numerical
 def test_spdhg_automatic_norm_bounds_every_block_scaled_by_its_probability():
-    shape = (2, 1, 1)
-    grid = Grid(*shape, 0.8, 1.1, 1.3)
+    shape = (1, 1, 2)
+    grid = Grid(*shape[::-1], 0.8, 1.1, 1.3)
     detector = Detector(4, 3, 0.7, 0.9, (0.17, -0.23))
     geometry = ConeGeometry(
         grid, detector, [13, 71, 127, 193, 241], ConeBeam(7, 12, detector_roll_deg=13), tilt_deg=23
@@ -823,7 +823,7 @@ def test_spdhg_runs_with_global_x64_and_returns_fp32():
             detector,
             data,
             weights=weights,
-            init_x=np.asarray([-1.0, 3.0], np.float32).reshape(2, 1, 1),
+            init_x=np.asarray([-1.0, 3.0], np.float32).reshape(1, 1, 2),
             config=SPDHGConfig(
                 iterations=1500,
                 tv_weight=lam,

@@ -30,8 +30,8 @@ def test_tv_solver_reduces_residual_and_recovers_phantom(
         else ParallelGeometry(grid, detector, angles)
     )
     poses = jnp.asarray([geometry.pose_for_view(i) for i in range(16)], dtype=jnp.float32)
-    x, y, z = jnp.meshgrid(
-        jnp.arange(12) - 5.5, jnp.arange(12) - 5.5, jnp.arange(5) - 2, indexing="ij"
+    z, y, x = jnp.meshgrid(
+        jnp.arange(5) - 2, jnp.arange(12) - 5.5, jnp.arange(12) - 5.5, indexing="ij"
     )
     truth = jnp.exp(-((x / 2.3) ** 2 + (y / 1.7) ** 2 + (z / 1.5) ** 2) / 2)
     project = jax.jit(projection_operators(poses, grid, detector, None, "jax", 16, model)[0])
@@ -82,8 +82,8 @@ def test_tv_solver_reduces_residual_and_recovers_phantom(
 @pytest.mark.parametrize("regulariser", ["tv", "huber_tv"])
 @pytest.mark.parametrize("solver", ["fista", "spdhg"])
 def test_tv_reconstruction_small_signal_scales_match_dense_solution(stream, regulariser, solver):
-    shape = (2, 1, 1)
-    grid = Grid(*shape, 0.8, 1.1, 1.3)
+    shape = (1, 1, 2)
+    grid = Grid(*shape[::-1], 0.8, 1.1, 1.3)
     detector = Detector(4, 3, 0.7, 0.9, (0.17, -0.23))
     geometry = ParallelGeometry(grid, detector, [13.0, 71.0, 127.0])
     poses = jnp.asarray([geometry.pose_for_view(i) for i in range(3)], dtype=jnp.float32)

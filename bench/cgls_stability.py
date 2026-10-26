@@ -27,7 +27,9 @@ def problem() -> tuple[Grid, Detector, LaminographyGeometry, np.ndarray]:
 
     def project(flat: jax.Array) -> jax.Array:
         return jax.vmap(
-            lambda t: forward_project_view_T(t, grid, detector, flat.reshape((3, 2, 2)))
+            lambda t: forward_project_view_T(
+                t, grid, detector, flat.reshape((2, 2, 3)), ray_integrator="joseph"
+            )
         )(poses).ravel()
 
     matrix = np.asarray(jax.jacfwd(project)(jnp.zeros(12))).astype(np.float64)
@@ -60,6 +62,7 @@ def run(backends: list[str], seeds: int) -> list[dict[str, Any]]:
                         rtol=1e-7,
                         damping=damping,
                         views_per_batch=3,
+                        projector_model="joseph",
                         backend=backend,
                     ),
                 )

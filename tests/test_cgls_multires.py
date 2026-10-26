@@ -20,7 +20,7 @@ def problem():
     grid = Grid(5, 3, 3, 0.8, 1.1, 1.3, vol_origin=(-1.7, -0.9, -1.1))
     detector = Detector(9, 7, 0.7, 1.2, (0.17, -0.23))
     geometry = LaminographyGeometry(grid, detector, np.asarray([13, 49, 83, 122, 161]), tilt_deg=23)
-    truth = np.random.default_rng(12).uniform(-0.3, 1.7, size=(5, 3, 3)).astype(np.float32)
+    truth = np.random.default_rng(12).uniform(-0.3, 1.7, size=(3, 3, 5)).astype(np.float32)
     return grid, detector, geometry, truth
 
 
@@ -99,7 +99,7 @@ def test_multires_gradient_penalty_solves_the_same_physical_fine_objective():
         backend="jax",
     )
     expected, _ = cgls(geometry, grid, detector, data, config=config)
-    basis = np.eye(45).reshape(5, 3, 3, 45)
+    basis = np.eye(45).reshape(3, 3, 5, 45)
     poses = jnp.asarray([geometry.pose_for_view(i) for i in range(5)])
     matrix = (
         np.asarray(
@@ -113,7 +113,7 @@ def test_multires_gradient_penalty_solves_the_same_physical_fine_objective():
     differences = np.concatenate(
         [
             (np.diff(basis, axis=axis) / step).reshape(-1, 45)
-            for axis, step in enumerate((grid.vx, grid.vy, grid.vz))
+            for axis, step in zip((2, 1, 0), (grid.vx, grid.vy, grid.vz), strict=True)
         ]
     )
     augmented = np.concatenate([matrix, 0.2 * np.eye(45), 0.7 * differences])
@@ -170,7 +170,7 @@ def test_breakdown_at_coarse_level_cannot_be_hidden_by_fine_solve(monkeypatch):
 
     def fail(geometry, grid, *args, **kwargs):
         calls.append(grid)
-        return jnp.zeros((grid.nx, grid.ny, grid.nz)), {"termination": "numerical_breakdown"}
+        return jnp.zeros((grid.nz, grid.ny, grid.nx)), {"termination": "numerical_breakdown"}
 
     monkeypatch.setattr(module, "cgls", fail)
     grid, detector, geometry, _ = problem()

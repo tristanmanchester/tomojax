@@ -54,7 +54,7 @@ def first_gradient(
         runtime.poses, grid, detector, None, backend, batch, model, split=split
     )
     lipschitz = normal_operator_norm(
-        forward, adjoint, (grid.nx, grid.ny, grid.nz), iterations=int(cfg.power_iterations),
+        forward, adjoint, (grid.nz, grid.ny, grid.nx), iterations=int(cfg.power_iterations),
         mask=mask, start=power_start(gradient),
     )  # fmt: skip
     c = runtime.constraints
@@ -132,7 +132,7 @@ def ordered_start(
     n, subsets = runtime.poses.shape[0], cfg.initial_subsets
     nominal, data = ordered_data(data, runtime)
     count = (n + subsets - 1) // subsets
-    shape = (grid.nx, grid.ny, grid.nz)
+    shape = (grid.nz, grid.ny, grid.nx)
     indices = jnp.arange(subsets)[:, None] + subsets * jnp.arange(count)[None, :]
     valid = (indices < n)[:, :, None, None]
     if n % subsets:
