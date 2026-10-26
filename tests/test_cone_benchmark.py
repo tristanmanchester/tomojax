@@ -60,9 +60,9 @@ def test_subset_normalization_storage_preserves_dense_updates(method, policy):
                 expected *= np.divide(update, norm, out=np.ones_like(norm), where=norm > 0)
     if method == "osem":
         expected[-1] = 0
-    initial = np.full(ops.shape[::-1], 0.01, np.float32)
+    initial = np.full(ops.shape, 0.01, np.float32)
     actual = ordered_subsets(ops, initial, method=method, iterations=2, norms=policy)
-    np.testing.assert_allclose(actual.transpose(2, 1, 0).ravel(), expected, rtol=2e-6, atol=2e-7)
+    np.testing.assert_allclose(actual.ravel(), expected, rtol=2e-6, atol=2e-7)
 
 
 @pytest.mark.parametrize("resident", [False, True])
@@ -71,7 +71,7 @@ def test_bounded_cgls_matches_dense_least_squares(resident):
     matrix = np.concatenate(ops.matrices).astype(np.float64)
     data = np.concatenate([d.ravel() for d in ops.data]).astype(np.float64)
     expected = np.linalg.lstsq(matrix, data, rcond=None)[0]
-    actual = cgls(ops, None, iterations=20, resident_residual=resident).transpose(2, 1, 0).ravel()
+    actual = cgls(ops, None, iterations=20, resident_residual=resident).ravel()
     np.testing.assert_allclose(actual, expected, rtol=1e-4, atol=2e-6)
 
 
@@ -99,8 +99,10 @@ def test_bounded_cgls_matches_native_astra(iterations, resident):
     vectors = pg["Vectors"]
     vg = volume_geometry(tj.Grid(17, 15, 13, 0.8, 0.9, 0.9, vol_center=(0.2, 0.7, -0.2)))
     data = rng.uniform(0.01, 1, (23, 21, 27)).astype(np.float32)
-    initial = rng.uniform(0.001, 0.02, (17, 15, 13)).astype(np.float32)
+    initial = rng.uniform(0.001, 0.02, (13, 15, 17)).astype(np.float32)
+    saved_initial = initial.copy()
     expected = native(data, vectors, vg, method="cgls", iterations=iterations, initial=initial)
+    np.testing.assert_array_equal(initial, saved_initial)
     pool_bytes = cp.get_default_memory_pool().total_bytes()
     for batch in (7, 23):
         with Operators(

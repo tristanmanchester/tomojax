@@ -82,7 +82,7 @@ def load_orbit(
 
 
 def reference(walnut: Path, name: str = "full_AGD_50") -> np.ndarray | None:
-    """A published reconstruction as an ``(x, y, z)`` array, if present.
+    """A published reconstruction as an ``(z, y, x)`` array, if present.
 
     ``full_AGD_50`` is the three-orbit reference; ``fdk_posN`` the authors'
     ASTRA FDK of orbit N.
@@ -90,8 +90,7 @@ def reference(walnut: Path, name: str = "full_AGD_50") -> np.ndarray | None:
     files = sorted((walnut / "Reconstructions").glob(f"{name}_*.tiff"))
     if not files:
         return None
-    zyx = np.stack([np.asarray(iio.imread(f), np.float32) for f in files])
-    return np.transpose(zyx, (2, 1, 0))
+    return np.stack([np.asarray(iio.imread(f), np.float32) for f in files])
 
 
 def volume_geometry(voxels_per_mm: int = 10) -> dict[str, Any]:
@@ -142,7 +141,7 @@ def astra_reconstruct(
     method: str,
     iterations: int,
 ) -> np.ndarray:
-    """ASTRA FDK, CGLS3D_CUDA, or the reference's accelerated NNLS, as ``(x, y, z)``."""
+    """ASTRA FDK, CGLS3D_CUDA, or the reference's accelerated NNLS, as ``(z, y, x)``."""
     import astra
 
     proj_geom = astra.create_proj_geom(
@@ -163,7 +162,7 @@ def astra_reconstruct(
             volume = _astra_agd(operator, np.ascontiguousarray(data), iterations).reshape(shape)
         finally:
             astra.projector.delete(projector)
-        return np.transpose(volume, (2, 1, 0))
+        return volume
     volume = np.zeros(shape, np.float32)
     with ExitStack() as cleanup:
         volume_id = astra.data3d.link("-vol", geometry, volume)
@@ -175,7 +174,7 @@ def astra_reconstruct(
         algorithm = astra.algorithm.create(config)
         cleanup.callback(astra.algorithm.delete, algorithm)
         astra.algorithm.run(algorithm, 1 if method == "fbp" else iterations)
-    return np.transpose(volume, (2, 1, 0))
+    return volume
 
 
 def _start_gpu_runtimes(*, tomojax: bool, astra: bool) -> None:

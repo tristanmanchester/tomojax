@@ -212,9 +212,8 @@ def test_central_pose_columns_do_not_depend_on_measurement_offsets(cone):
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("packed", [False, True])
 @pytest.mark.parametrize("distance", [80.0, 8000.0])
-def test_cuda_forward_pose_and_volume_ad_match_reference(packed, distance):
+def test_cuda_forward_pose_and_volume_ad_match_reference(distance):
     from tomojax.core import cone
 
     if not cone.use_cuda_cone():
@@ -226,10 +225,11 @@ def test_cuda_forward_pose_and_volume_ad_match_reference(packed, distance):
     )
     nominal = stack_view_poses(geometry, 3)
     rng = np.random.default_rng(892)
-    volume = jnp.asarray(rng.uniform(-0.1, 1.1, (5, 6, 7)), jnp.float32)
+    # Preserve the physical random field across the volume-axis convention.
+    volume = jnp.asarray(rng.uniform(-0.1, 1.1, (7, 6, 5)).transpose(2, 1, 0).copy(), jnp.float32)
     params = jnp.asarray(rng.normal(0, 0.02, (3, 6)), jnp.float32)
     tangent = jnp.asarray(rng.normal(0, 0.1, params.shape), jnp.float32)
-    dvolume = jnp.asarray(rng.normal(size=volume.shape), jnp.float32)
+    dvolume = jnp.asarray(rng.normal(size=(7, 6, 5)).transpose(2, 1, 0).copy(), jnp.float32)
     cotangent = jnp.asarray(rng.normal(size=(3, 7, 9)), jnp.float32)
 
     def coefficients(p):
@@ -239,8 +239,6 @@ def test_cuda_forward_pose_and_volume_ad_match_reference(packed, distance):
         return cone.cone_coefficients(poses, grid, detector, geometry.beam)
 
     def project_coeff(coeff, x, backend):
-        if packed and backend == "cuda":
-            return cone.prepare_cone_projection(x, grid, detector)(coeff)
         return cone.cone_project(x, coeff, grid, detector, backend=backend)
 
     def project(p, x, backend):

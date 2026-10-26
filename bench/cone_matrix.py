@@ -146,9 +146,9 @@ def image_difference(volume: np.ndarray, reference: np.ndarray) -> dict[str, flo
     if volume.shape != reference.shape:
         raise ValueError("Image comparison needs identical physical grids and shapes")
     energy = norm = maximum = 0.0
-    for start in range(0, volume.shape[2], 8):
-        truth = np.asarray(reference[:, :, start : start + 8], np.float64)
-        difference = np.asarray(volume[:, :, start : start + 8], np.float64) - truth
+    for start in range(0, volume.shape[0], 8):
+        truth = np.asarray(reference[start : start + 8], np.float64)
+        difference = np.asarray(volume[start : start + 8], np.float64) - truth
         energy += float(np.sum(difference * difference))
         norm += float(np.sum(truth * truth))
         maximum = max(maximum, float(np.max(np.abs(difference))))
@@ -169,7 +169,7 @@ def common_fit(
     groups = [slice(i, min(i + 64, len(measured))) for i in range(0, len(measured), 64)]
     energy = norm = 0.0
     with Operators(measured, vectors, volume_geometry(grid), groups) as ops:
-        image = ops.upload(volume.transpose(2, 1, 0).copy())
+        image = ops.upload(np.ascontiguousarray(volume))
         for part in ops.parts:
             predicted = ops.download(ops.forward(image, part)).transpose(1, 0, 2)
             truth = measured[part[0]]

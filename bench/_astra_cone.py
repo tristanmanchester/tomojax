@@ -2,7 +2,7 @@
 
 These are explicit FP32 recurrences over ASTRA's native CUDA projectors. They
 are not timings of ASTRA's named algorithms; :func:`native` supplies those.
-Volumes use ASTRA's (z, y, x) layout internally and (x, y, z) at the boundary.
+Volumes use (z, y, x), matching ASTRA's native layout.
 """
 
 from __future__ import annotations
@@ -46,12 +46,15 @@ def native(
     iterations: int = 1,
     initial: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Run ASTRA FDK, CGLS or nonnegative SIRT, returning a host volume."""
+    """Run ASTRA FDK, CGLS or nonnegative SIRT without changing the initial volume."""
     import astra
 
     pg = astra.create_proj_geom("cone_vec", data.shape[1], data.shape[2], vectors)
     shape = (vg["GridSliceCount"], vg["GridRowCount"], vg["GridColCount"])
-    out = np.zeros(shape, np.float32) if initial is None else initial.transpose(2, 1, 0).copy()
+    # ASTRA writes its linked output, including when initial is already contiguous.
+    out = (
+        np.zeros(shape, np.float32) if initial is None else np.array(initial, copy=True, order="C")
+    )
     with ExitStack() as cleanup:
         sid = astra.data3d.link("-sino", pg, np.ascontiguousarray(data.transpose(1, 0, 2)))
         cleanup.callback(astra.data3d.delete, sid)
@@ -66,7 +69,7 @@ def native(
         aid = astra.algorithm.create(cfg)
         cleanup.callback(astra.algorithm.delete, aid)
         astra.algorithm.run(aid, iterations)
-    return out.transpose(2, 1, 0)
+    return out
 
 
 class Operators(ExitStack):
@@ -141,7 +144,7 @@ def cgls(
     x = (
         cp.zeros(ops.shape, cp.float32)
         if initial is None
-        else ops.upload(initial.transpose(2, 1, 0).copy())
+        else ops.upload(np.ascontiguousarray(initial))
     )
     scratch, gradient, residual = cp.empty_like(x), cp.zeros_like(x), []
     for part in ops.parts:
@@ -177,7 +180,7 @@ def cgls(
         direction *= gamma_new / gamma
         direction += gradient
         gamma = gamma_new
-    return ops.download(x).transpose(2, 1, 0)
+    return ops.download(x)
 
 
 def ordered_subsets(
@@ -193,7 +196,7 @@ def ordered_subsets(
     x = (
         cp.full(ops.shape, int(method == "osem"), cp.float32)
         if initial is None
-        else cp.maximum(ops.upload(initial.transpose(2, 1, 0).copy()), 0)
+        else cp.maximum(ops.upload(np.ascontiguousarray(initial)), 0)
     )
     correction, columns, rows = cp.empty_like(x), [], []
     seen = cp.zeros(ops.shape, cp.bool_) if method == "osem" else None
@@ -238,4 +241,4 @@ def ordered_subsets(
             del measured, predicted, norm
     if seen is not None:
         x *= seen
-    return ops.download(x).transpose(2, 1, 0)
+    return ops.download(x)

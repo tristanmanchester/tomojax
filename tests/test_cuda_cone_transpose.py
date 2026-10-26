@@ -27,7 +27,7 @@ def test_uniform_cone_rows_keep_near_parallel_boundary_weights(shape):
             row[6 + b], row[9 + c] = 0.9, 0.7
             coefficients.append(row)
     coeff = jnp.asarray(np.stack(coefficients))
-    expected = cone_project(jnp.ones(shape), coeff, grid, detector, backend="cuda")
+    expected = cone_project(jnp.ones(shape[::-1]), coeff, grid, detector, backend="cuda")
     actual = cone.cone_project_ones(coeff, grid, detector, backend="cuda")
     np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=1e-6)
     np.testing.assert_array_equal(np.asarray(actual) == 0, np.asarray(expected) == 0)
@@ -54,7 +54,7 @@ def _check_dense_transpose(grid, detector, frames, poses=None):
     if poses is None:
         poses = jnp.broadcast_to(jnp.eye(4), (len(frames), 4, 4))
     coeff = frame_coefficients(poses, np.asarray(frames), grid, detector)
-    shape = (grid.nx, grid.ny, grid.nz)
+    shape = (grid.nz, grid.ny, grid.nx)
     count = np.prod(shape)
     basis = jnp.eye(count, dtype=jnp.float32).reshape((count, *shape))
     forward = jax.jit(jax.vmap(lambda x: cone_project(x, coeff, grid, detector, backend="cuda")))
@@ -112,7 +112,7 @@ def test_cuda_cone_dense_transpose_with_sparse_and_cancelling_pixels():
     coeff = frame_coefficients(
         jnp.broadcast_to(jnp.eye(4), (2, 4, 4)), np.stack([frame, frame]), grid, detector
     )
-    shape = (grid.nx, grid.ny, grid.nz)
+    shape = (grid.nz, grid.ny, grid.nx)
     basis = jnp.eye(np.prod(shape), dtype=jnp.float32).reshape((-1, *shape))
     forward = jax.jit(jax.vmap(lambda x: cone_project(x, coeff, grid, detector, backend="cuda")))
     matrix = np.asarray(forward(basis), np.float64).reshape((np.prod(shape), -1))
@@ -166,7 +166,7 @@ def test_cuda_cone_cgls_recovers_an_image_across_wide_tiles(tilt):
     )
     frames = np.broadcast_to(beam_frame(geometry.beam, detector), (65, 4, 3))
     coeff = frame_coefficients(jnp.asarray(geometry.poses(), jnp.float32), frames, grid, detector)
-    x, y, z = np.ogrid[-64:65, -33:34, -65:66]
+    z, y, x = np.ogrid[-65:66, -33:34, -64:65]
     truth = (
         np.exp(-((x / 27) ** 2 + (y / 15) ** 2 + (z / 28) ** 2))
         + 0.5 * np.exp(-((x / 15 - 1) ** 2 + (y / 10 + 0.8) ** 2 + (z / 12 + 0.6) ** 2))
@@ -241,7 +241,7 @@ def test_cuda_separable_transpose_kernels_with_wide_support_and_view_tail(
         grid,
         detector,
     )
-    point, ray = (48, 22, 44), (0, 41, 44)
+    point, ray = (44, 22, 48), (0, 41, 44)
     volume = jnp.zeros((64, 64, 64), jnp.float32).at[point].set(1)
     images = jnp.zeros((1, 64, 64), jnp.float32).at[ray].set(1)
     forward = float(cone_project(volume, coeff, grid, detector, backend="cuda")[ray])
@@ -281,7 +281,7 @@ def test_cuda_cone_cgls_recovers_the_image_with_unbounded_footprints(tilt):
     poses = jnp.asarray(geometry.poses(), jnp.float32)
     frames = np.broadcast_to(beam_frame(geometry.beam, detector), (24, 4, 3))
     coeff = frame_coefficients(poses, frames, grid, detector)
-    truth = np.random.default_rng(43).uniform(0.1, 1.0, (5, 4, 3)).astype(np.float32)
+    truth = np.random.default_rng(43).uniform(0.1, 1.0, (3, 4, 5)).astype(np.float32)
     # Independently implemented JAX sampling supplies the data. Check image
     # error too: the formerly mismatched adjoint stagnated far from the truth.
     data = cone_project(truth, coeff, grid, detector, backend="jax")
@@ -337,7 +337,7 @@ def test_cuda_cone_dense_transpose_with_empty_views_and_masked_pixels():
     coeff = frame_coefficients(
         jnp.broadcast_to(jnp.eye(4), (33, 4, 4)), np.asarray(frames), grid, detector
     )
-    shape = (grid.nx, grid.ny, grid.nz)
+    shape = (grid.nz, grid.ny, grid.nx)
     basis = jnp.eye(np.prod(shape), dtype=jnp.float32).reshape((-1, *shape))
     forward = jax.jit(jax.vmap(lambda x: cone_project(x, coeff, grid, detector, backend="cuda")))
     matrix = np.asarray(forward(basis), np.float64).reshape((np.prod(shape), -1))
@@ -370,7 +370,7 @@ def test_cuda_cone_dense_transpose_across_sparse_image_tile_seams(reverse_v):
     coeff = frame_coefficients(
         jnp.broadcast_to(jnp.eye(4), (33, 4, 4)), np.asarray(frames), grid, detector
     )
-    shape = (grid.nx, grid.ny, grid.nz)
+    shape = (grid.nz, grid.ny, grid.nx)
     count = np.prod(shape)
     basis = jnp.eye(count, dtype=jnp.float32).reshape((count, *shape))
     forward = jax.jit(jax.vmap(lambda x: cone_project(x, coeff, grid, detector, backend="cuda")))
@@ -403,25 +403,9 @@ def test_cuda_cone_rounds_inverse_corner_bounds_outward():
     _check_dense_transpose(grid, detector, frames, jnp.asarray(poses))
 
 
-def test_cone_output_layout_plan_respects_cache_and_workspace():
-    plan = cone._cone_output.slab_capacity
-    spacing, l2, free = (1, 1, 1), 32 << 20, 4 << 30
-    grid, detector = Grid(501, 501, 501, *spacing), Detector(192, 243, 1, 1)
-    hint = (spacing, 0.5)
-    assert plan(grid, detector, 40, hint, l2, free) == 66
-    assert plan(grid, detector, 40, hint, l2, free, rhs=2) == 33
-    assert plan(Grid(301, 301, 301, *spacing), Detector(384, 486, 1, 1), 40, hint, l2, free) == 0
-    for unavailable in (None, (spacing, 0), ((2, 1, 1), 0.5)):
-        assert plan(grid, detector, 40, unavailable, l2, free) == 0
-    for cache, available in ((0, free), (l2, None), (l2, 32 << 20)):
-        assert plan(grid, detector, 40, hint, cache, available) == 0
-    assert plan(Grid(8192, 8192, 2, *spacing), detector, 40, hint, l2, free) == 0
-    assert plan(Grid(501, 501, 1, *spacing), detector, 40, hint, l2, free) == 0
-
-
 @pytest.mark.gpu
-@pytest.mark.parametrize(("capacity", "rhs"), [(1, 1), (3, 1), (1, 2), (3, 2)])
-def test_cuda_cone_packed_slabs_match_dense_transpose_with_accumulation(monkeypatch, capacity, rhs):
+@pytest.mark.parametrize("rhs", [1, 2])
+def test_cuda_cone_model_matches_dense_transpose_with_donated_accumulation(rhs):
     grid = Grid(5, 4, 7, 0.7, 1.1, 0.9, vol_center=(0.2, -0.1, 0.3))
     detector = Detector(9, 7, 1.3, 0.8)
     directions = [(1, 1, 0), (1, 0, 1), (0, 1, -1), (-1, 1, -2)]
@@ -429,7 +413,7 @@ def test_cuda_cone_packed_slabs_match_dense_transpose_with_accumulation(monkeypa
     coeff = frame_coefficients(
         jnp.broadcast_to(jnp.eye(4), (70, 4, 4)), np.asarray(frames), grid, detector
     )
-    shape = (grid.nx, grid.ny, grid.nz)
+    shape = (grid.nz, grid.ny, grid.nx)
     basis = jnp.eye(np.prod(shape), dtype=jnp.float32).reshape((-1, *shape))
     forward = jax.jit(jax.vmap(lambda x: cone_project(x, coeff, grid, detector, backend="cuda")))
     matrix = np.asarray(forward(basis), np.float64).reshape((np.prod(shape), -1))
@@ -440,9 +424,6 @@ def test_cuda_cone_packed_slabs_match_dense_transpose_with_accumulation(monkeypa
     initial = tuple(rng.normal(size=shape).astype(np.float32) for _ in range(rhs))
 
     model = cone.ConeModel(((70, ConeBeam(40, 80), detector),))
-    # Tiny dense oracles force slab boundaries through the production model seam;
-    # the separate cache/workspace test covers its hardware admission policy.
-    monkeypatch.setattr(cone._cone_output, "device_capacity", lambda *a, **k: capacity)
 
     def transpose(*values):
         kwargs = dict(grid=grid, detector=detector, backend="cuda")

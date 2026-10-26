@@ -23,7 +23,7 @@ def test_two_transposes_match_dense_basis_with_mixed_views_and_chunk_tail(backen
     poses[::2] = poses[::2] @ rotation
     frames = np.broadcast_to(beam_frame(geometry.beam, detector), (33, 4, 3))
     coeff = frame_coefficients(jnp.asarray(poses), frames, grid, detector)
-    shape = (grid.nx, grid.ny, grid.nz)
+    shape = (grid.nz, grid.ny, grid.nx)
     basis = jnp.eye(np.prod(shape), dtype=jnp.float32).reshape((-1, *shape))
     forward = jax.jit(jax.vmap(lambda x: cone_project(x, coeff, grid, detector, backend=backend)))
     matrix = np.asarray(forward(basis), np.float64).reshape((np.prod(shape), -1))
@@ -50,7 +50,7 @@ def test_uncached_sirt_preserves_masked_subset_updates(monkeypatch, backend):
     geometry = tj.ConeGeometry(
         grid, detector, np.linspace(0, 180, 7), tj.ConeBeam(30, 50), tilt_deg=23
     )
-    truth = np.random.default_rng(46).uniform(size=(5, 4, 3)).astype(np.float32)
+    truth = np.random.default_rng(46).uniform(size=(3, 4, 5)).astype(np.float32)
     data = np.asarray(tj.project(geometry, truth))
     cfg = SIRTConfig(
         iterations=3,
@@ -65,3 +65,42 @@ def test_uncached_sirt_preserves_masked_subset_updates(monkeypatch, backend):
     monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: 1)
     paired, _ = sirt(geometry, grid, detector, data, init_x=truth * 0.1, config=cfg)
     np.testing.assert_allclose(paired, cached, rtol=3e-6, atol=3e-6)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize(
+    ("nz", "dv", "negative_v"), [(33, 0.4, False), (65, 1.0, True), (67, 5.0, False)]
+)
+def test_paired_separable_transpose_preserves_each_rhs_across_tile_tails(nz, dv, negative_v):
+    from tomojax.core.cone import cone_backproject, cone_model
+    from tomojax.geometry import stack_view_poses
+
+    grid = tj.Grid(13, 11, nz, 0.9, 1.1, 1.0)
+    detector = tj.Detector(103, 89, 1.2, dv, (0.4, -0.3))
+    geometry = tj.ConeGeometry(
+        grid, detector, np.linspace(0, 360, 33, endpoint=False), tj.ConeBeam(300, 450)
+    )
+    frames = cone_model(geometry).frames(33).copy()
+    if negative_v:
+        frames[:, 2, :] *= -1
+    coeff = frame_coefficients(stack_view_poses(geometry, 33), frames, grid, detector)
+    rng = np.random.default_rng(1733)
+    images = rng.normal(size=(2, 33, detector.nv, detector.nu)).astype(np.float32)
+    images[0, :, : detector.nv // 3] = 0
+    images[1, :, 2 * detector.nv // 3 :] = 0
+    initial = rng.normal(size=(2, nz, grid.ny, grid.nx)).astype(np.float32)
+    saved_images, saved_initial = images.copy(), initial.copy()
+    actual = cone_backproject_pair(
+        tuple(images), coeff, grid, detector, backend="cuda", accumulate=tuple(initial)
+    )
+    for channel in (0, 1):
+        expected = np.asarray(
+            cone_backproject(
+                images[channel], coeff, grid, detector, backend="cuda", accumulate=initial[channel]
+            )
+        )
+        delta = np.asarray(actual[channel]) - expected
+        assert np.linalg.norm(delta) <= 1e-6 * np.linalg.norm(expected)
+        assert np.max(np.abs(delta)) <= 1e-6 * np.max(np.abs(expected))
+    np.testing.assert_array_equal(images, saved_images)
+    np.testing.assert_array_equal(initial, saved_initial)
