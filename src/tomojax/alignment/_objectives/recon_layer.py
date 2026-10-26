@@ -130,7 +130,7 @@ class ReconLayer:
         """Run a reconstruction layer for an alignment state."""
         effective = apply_alignment_state(self.base, state)
         x0 = (
-            jnp.zeros((self.grid.nx, self.grid.ny, self.grid.nz), dtype=jnp.float32)
+            jnp.zeros((self.grid.nz, self.grid.ny, self.grid.nx), dtype=jnp.float32)
             if init_x is None
             else jnp.asarray(init_x, dtype=jnp.float32)
         )

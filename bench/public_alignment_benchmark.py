@@ -82,11 +82,11 @@ def verify(volume: np.ndarray, parameters: np.ndarray, fixture: dict[str, Any]) 
     shape = fixture["truth"].shape
     spacing = np.array([grid.vx, grid.vy, grid.vz])
     origin = np.array(grid_volume_origin(grid))
-    points = np.indices(shape).reshape(3, -1).T * spacing + origin
+    points = np.indices(shape)[::-1].reshape(3, -1).T * spacing + origin
     estimate_points = points @ gauge[:3, :3].T + gauge[:3, 3]
     indices = ((estimate_points - origin) / spacing).T
     aligned_volume = map_coordinates(
-        volume, indices, order=1, mode="grid-constant", prefilter=False
+        volume, indices[::-1], order=1, mode="grid-constant", prefilter=False
     )
     reference = fixture["truth"].astype(np.float64).ravel()
     relative_l2 = float(np.linalg.norm(aligned_volume - reference) / np.linalg.norm(reference))
@@ -149,11 +149,14 @@ def generate_fixture(
         else ParallelGeometry(grid, detector, angles)
     )
     nominal = np.asarray([geometry.pose_for_view(i) for i in range(views)])
-    shape = (grid.nx, grid.ny, grid.nz)
-    field = gaussian_filter(rng.normal(size=shape), sigma=1.8, mode="constant")
+    shape = (grid.nz, grid.ny, grid.nx)
+    field = np.empty(shape, np.float64)
+    for x in range(grid.nx):
+        field[:, :, x] = rng.normal(size=(grid.ny, grid.nz)).T
+    field = gaussian_filter(field, sigma=1.8, mode="constant", axes=(2, 1, 0))
     field = np.exp(0.7 * field / np.std(field))
     normalized = np.stack(
-        np.meshgrid(*[np.linspace(-1, 1, n) for n in shape], indexing="ij"), axis=-1
+        np.meshgrid(*[np.linspace(-1, 1, n) for n in shape], indexing="ij")[::-1], axis=-1
     )
     support = np.maximum(1 - np.sum((normalized / 0.82) ** 2, axis=-1), 0) ** 2
     volume = field * support
@@ -241,7 +244,7 @@ def generate_analytic_fixture(
         for _ in range(24)
     ]
     origin = np.asarray(grid_volume_origin(grid))
-    shape = (grid.nx, grid.ny, grid.nz)
+    shape = (grid.nz, grid.ny, grid.nx)
     volume = _sample_volume(shape, np.array([grid.vx, grid.vy, grid.vz]), origin, blobs, [])
     parameters = np.concatenate(
         [

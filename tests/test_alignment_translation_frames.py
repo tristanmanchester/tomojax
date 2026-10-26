@@ -203,8 +203,8 @@ def test_public_alignment_and_checkpoint_keep_detector_frame_at_ninety_degrees(
     if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("requires the CUDA CUDA reconstruction path")
     geometry, grid, detector = _geometry(12, kind, np.array([17.0, 90.0, 143.0], np.float32))
-    volume = jnp.zeros((grid.nx, grid.ny, grid.nz)).at[3:8, 3:7, 1:4].set(1)
-    volume = volume.at[7:9, 5:7, 3:5].set(0.6)
+    volume = jnp.zeros((grid.nz, grid.ny, grid.nx)).at[1:4, 3:7, 3:8].set(1)
+    volume = volume.at[3:5, 5:7, 7:9].set(0.6)
     nominal = stack_view_poses(geometry, 3)
     truth = np.array(
         [[0, 0, 0, 0.12, -0.07], [0, 0, 0, -0.09, 0.13], [0, 0, 0, 0.1, 0.08]], np.float32
@@ -335,7 +335,7 @@ def test_train_fold_preserves_represented_degree_metadata(monkeypatch):
 
     def fake_reconstruct(actual_geometry, actual_grid, actual_detector, data, **kwargs):
         observed.append(np.asarray(actual_geometry.geometry.angles))
-        return jnp.zeros((5, 4, 3)), {}
+        return jnp.zeros((3, 4, 5)), {}
 
     monkeypatch.setattr(fold_recon, "fista_tv", fake_reconstruct)
     state = AlignmentState.zeros(n_views=3).replace(
@@ -440,7 +440,7 @@ def test_shift_search_recovers_large_view_shifts(kind):
     angles = np.linspace(0.0, 180.0 if kind == "parallel" else 360.0, 40, endpoint=False)
     geometry, grid, detector = _geometry(32, kind, angles.astype(np.float32))
     c = (np.arange(32) - 15.5) / 32
-    x, y, z = np.meshgrid(c, c, c, indexing="ij")
+    z, y, x = np.meshgrid(c, c, c, indexing="ij")
     volume = np.zeros((32, 32, 32), np.float32)
     for (cx, cy, cz), r in [((0.1, -0.1, 0.05), 0.12), ((-0.12, 0.08, -0.1), 0.08)]:
         volume += np.exp(-((x - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2) / (2 * r * r))
@@ -585,7 +585,7 @@ def test_reprojection_seed_recovers_a_detector_centre_offset(kind):
     angles = np.linspace(0.0, 180.0 if kind == "parallel" else 360.0, 48, endpoint=False)
     geometry, grid, detector = _geometry(32, kind, angles.astype(np.float32))
     c = (np.arange(32) - 15.5) / 32
-    x, y, z = np.meshgrid(c, c, c, indexing="ij")
+    z, y, x = np.meshgrid(c, c, c, indexing="ij")
     volume = np.zeros((32, 32, 32), np.float32)
     for (cx, cy, cz), r in [((0.12, -0.08, 0.05), 0.1), ((-0.1, 0.1, -0.08), 0.07)]:
         volume += np.exp(-((x - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2) / (2 * r * r))
@@ -612,7 +612,7 @@ def test_reprojection_seed_recovers_a_detector_centre_offset_in_a_segmented_cone
         )
     )
     c = (np.arange(16) - 7.5) / 16
-    x, y, z = np.meshgrid(c, c, c, indexing="ij")
+    z, y, x = np.meshgrid(c, c, c, indexing="ij")
     volume = np.zeros((16, 16, 16), np.float32)
     for (cx, cy, cz), r in [((0.12, -0.08, 0.05), 0.1), ((-0.1, 0.1, -0.08), 0.07)]:
         volume += np.exp(-((x - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2) / (2 * r * r))
@@ -638,14 +638,14 @@ def test_cor_alignment_finds_the_axis_of_a_parallel_scan(turn, wide):
     size = 96 if wide else n
     grid = Grid(size, size, rows, 1.0, 1.0, 1.0)
     c = np.arange(size) - (size - 1) / 2
-    x, y = np.meshgrid(c, c, indexing="ij")
+    y, x = np.meshgrid(c, c, indexing="ij")
     rng = np.random.default_rng(4)
     plane = np.zeros((size, size), np.float32)
     for cx, cy, r in zip(
         *rng.uniform(-0.4 * size, 0.4 * size, (2, 12)), rng.uniform(2, 6, 12), strict=False
     ):
         plane += np.exp(-((x - cx) ** 2 + (y - cy) ** 2) / (2 * r * r)).astype(np.float32)
-    volume = np.repeat(plane[:, :, None], rows, axis=2)
+    volume = np.repeat(plane[None, :, :], rows, axis=0)
     true = ParallelGeometry(grid, Detector(n, rows, 1.0, 1.0, (centre, 0.0)), angles)
     data = np.asarray(tj.project(true, volume))
     scan = tj.Scan(data, ParallelGeometry(grid, Detector(n, rows, 1.0, 1.0), angles))
@@ -664,8 +664,8 @@ def test_least_motion_moves_a_constant_u_shift_into_the_detector_centre(kind):
     params[:, 3] = -1.5 + nominal[:, 0, :3] @ np.asarray([0.7, -0.4, 0.3])
     params[:, 4] = rng.normal(0.0, 0.2, angles.size)
     # A smooth object well inside the grid, so moving it loses nothing.
-    index = np.indices((grid.nx, grid.ny, grid.nz), np.float64)
-    shape = np.array([grid.nx, grid.ny, grid.nz])[:, None, None, None]
+    index = np.indices((grid.nz, grid.ny, grid.nx), np.float64)
+    shape = np.array([grid.nz, grid.ny, grid.nx])[:, None, None, None]
     volume = np.exp(-0.5 * np.sum(((index - (shape - 1) / 2) / (shape / 8)) ** 2, axis=0))
     volume = volume.astype(np.float32)
 
@@ -720,8 +720,8 @@ def test_saved_alignment_is_reapplied_in_its_translation_frame(frame):
 def test_cor_then_pose_reports_the_constant_detector_shift_as_the_centre():
     angles = np.linspace(0.0, 360.0, 8, endpoint=False).astype(np.float32)
     geometry, grid, detector = _geometry(12, "parallel", angles)
-    volume = jnp.zeros((grid.nx, grid.ny, grid.nz)).at[3:8, 3:7, 2:9].set(1)
-    volume = volume.at[7:9, 5:7, 4:6].set(0.6)
+    volume = jnp.zeros((grid.nz, grid.ny, grid.nx)).at[2:9, 3:7, 3:8].set(1)
+    volume = volume.at[4:6, 5:7, 7:9].set(0.6)
     offset, motion = 0.3, 0.1 * np.sin(np.deg2rad(3 * angles))
     poses = np.asarray(stack_view_poses(geometry, angles.size)).copy()
     poses[:, 0, 3] += motion - offset  # a detector offset c shifts images by -c
@@ -772,7 +772,7 @@ def cone_proposal_case(request):
     )
     geometry = first if request.param == "tilted" else ConeSegments((first, second))
     poses = stack_view_poses(geometry, len(geometry.angles))
-    volume = jnp.asarray(np.random.default_rng(92).uniform(0.1, 1, (9, 8, 7)), jnp.float32)
+    volume = jnp.asarray(np.random.default_rng(92).uniform(0.1, 1, (7, 8, 9)), jnp.float32)
     model = cone_model(geometry, detector)
     assert model is not None
     frames = jnp.asarray(model.frames(len(poses)))
@@ -946,7 +946,7 @@ def test_cone_shift_search_removes_a_rigid_shift_in_each_arrangement(
     )
     shifts /= [detector.du, detector.dv]
     monkeypatch.setattr(
-        _prealign, "_quick_reconstruction", lambda *args: jnp.zeros((grid.nx, grid.ny, grid.nz))
+        _prealign, "_quick_reconstruction", lambda *args: jnp.zeros((grid.nz, grid.ny, grid.nx))
     )
     monkeypatch.setattr(
         _prealign, "reprojector", lambda *args: lambda views, volume: targets[views]

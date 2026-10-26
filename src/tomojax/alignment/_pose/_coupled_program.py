@@ -324,7 +324,7 @@ def _geometric_projectors(spec, arrays, masked, *, absolute_weights):
             ), None
 
         value = jax.lax.scan(
-            add, jnp.zeros((spec.grid.nx, spec.grid.ny, spec.grid.nz), jnp.float32), (t, y)
+            add, jnp.zeros((spec.grid.nz, spec.grid.ny, spec.grid.nx), jnp.float32), (t, y)
         )[0]
         return _finish_adjoint(value, masked, None, accumulate)
 
@@ -502,7 +502,7 @@ def _build_program(
     # end at the last view; ``valid`` marks its views not seen before.
     size = min(n_views, _VIEWS_PER_BATCH)
     count = -(-n_views // size)
-    volume_zeros = jnp.zeros((spec.grid.nx, spec.grid.ny, spec.grid.nz), jnp.float32)
+    volume_zeros = jnp.zeros((spec.grid.nz, spec.grid.ny, spec.grid.nx), jnp.float32)
 
     def take(a, start):
         return jax.lax.dynamic_slice_in_dim(a, start, size)

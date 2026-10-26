@@ -13,7 +13,7 @@ from tomojax.alignment import api as alignment
 def test_seeded_alignment_resumes_and_keeps_a_completed_run(tmp_path, early_stop):
     grid, detector = tj.Grid(4, 5, 3, 1, 1, 1), tj.Detector(9, 7, 1, 1)
     geometry = tj.LaminographyGeometry(grid, detector, np.arange(8) * 45, tilt_deg=32)
-    truth = np.random.default_rng(43).uniform(0, 1, (4, 5, 3)).astype(np.float32)
+    truth = np.random.default_rng(43).uniform(0, 1, (3, 5, 4)).astype(np.float32)
     data = tj.project(geometry, truth)
     config = alignment.AlignConfig(
         quality="reference",

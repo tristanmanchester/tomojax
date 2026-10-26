@@ -179,7 +179,9 @@ def apply_to_volume(volume: np.ndarray | jax.Array, grid: Grid, gauge: Gauge) ->
     matrix = np.eye(4)
     matrix[:3, :3] = gauge.rotation * spacing[None, :] / spacing[:, None]
     matrix[:3, 3] = (gauge.rotation @ origin + gauge.shift - origin) / spacing
-    return affine_resample(volume, matrix)
+    # Geometry vectors are xyz; the resampler indexes the zyx array.
+    order = [2, 1, 0, 3]
+    return affine_resample(volume, matrix[np.ix_(order, order)])
 
 
 # Moving the volume a voxel or more may push this fraction of the object past the
@@ -259,7 +261,7 @@ def least_motion_estimate(
     Parameters
     ----------
     volume : array-like
-        Reconstructed volume in (x, y, z) order.
+        Reconstructed volume in (z, y, x) order.
     params : array-like
         Per-view pose table with five or six columns in radians and physical lengths.
     nominal : array-like

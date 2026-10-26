@@ -158,9 +158,9 @@ def _final_multires_volume(
     grid: Grid,
 ) -> jnp.ndarray:
     if x_init is None:
-        return jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+        return jnp.zeros((grid.nz, grid.ny, grid.nx), dtype=jnp.float32)
     if prev_factor is not None and prev_factor != 1:
-        return upsample_volume(x_init, prev_factor, (grid.nx, grid.ny, grid.nz))
+        return upsample_volume(x_init, prev_factor, (grid.nz, grid.ny, grid.nx))
     return x_init
 
 
@@ -566,7 +566,7 @@ def _level_initial_volume(
     return upsample_volume(
         x_init,
         prev_factor // level["factor"],
-        (level_grid.nx, level_grid.ny, level_grid.nz),
+        (level_grid.nz, level_grid.ny, level_grid.nx),
     )
 
 

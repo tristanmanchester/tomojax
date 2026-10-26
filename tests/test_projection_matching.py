@@ -28,8 +28,8 @@ def test_public_matching_recovers_motion_without_resampling_input():
     from tomojax.alignment import ProjectionMatchingConfig
 
     n, nu, nv = 48, 64, 48
-    x, y, z = np.meshgrid(np.arange(nu), np.arange(nu), np.arange(nv), indexing="ij")
-    volume = np.zeros((nu, nu, nv), np.float32)
+    z, y, x = np.meshgrid(np.arange(nv), np.arange(nu), np.arange(nu), indexing="ij")
+    volume = np.zeros((nv, nu, nu), np.float32)
     for cx, cy, cz, radius in [(22, 27, 16, 5), (39, 26, 28, 7), (31, 40, 32, 4)]:
         volume += np.exp(-((x - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2) / (2 * radius**2)).astype(
             np.float32

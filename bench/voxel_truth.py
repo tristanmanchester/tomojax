@@ -26,7 +26,7 @@ def voxel_line_integrals(
     spacing: ArrayLike,
     origin: ArrayLike,
 ) -> np.ndarray:
-    """Integrate complete rays ``base + t * direction`` in physical units."""
+    """Integrate a zyx field along ``base + t * direction``; coordinates are xyz."""
     volume = np.asarray(volume, dtype=np.float64)
     bases = np.asarray(bases, dtype=np.float64).reshape(-1, 3)
     direction = np.asarray(direction, dtype=np.float64)
@@ -41,7 +41,7 @@ def voxel_line_integrals(
     if origin.shape != (3,) or not np.isfinite(origin).all() or not np.isfinite(bases).all():
         raise ValueError("ray bases and volume origin must be finite 3D coordinates")
     lower = origin - spacing
-    upper = origin + np.asarray(volume.shape) * spacing
+    upper = origin + np.asarray(volume.shape[::-1]) * spacing
     near, far = np.full(len(bases), -np.inf), np.full(len(bases), np.inf)
     valid = np.ones(len(bases), dtype=bool)
     knots = []
@@ -49,7 +49,7 @@ def voxel_line_integrals(
         if abs(direction[axis]) < 1e-14 * np.linalg.norm(direction):
             valid &= (bases[:, axis] >= lower[axis]) & (bases[:, axis] <= upper[axis])
             continue
-        planes = origin[axis] + np.arange(-1, volume.shape[axis] + 1) * spacing[axis]
+        planes = origin[axis] + np.arange(-1, volume.shape[2 - axis] + 1) * spacing[axis]
         crossing = (planes[None, :] - bases[:, axis, None]) / direction[axis]
         knots.append(crossing)
         near = np.maximum(near, np.minimum(crossing[:, 0], crossing[:, -1]))
@@ -64,7 +64,7 @@ def voxel_line_integrals(
         position = bases[:, None, :] + (midpoint + node * half_width)[..., None] * direction
         indices = ((position - origin) / spacing).reshape(-1, 3).T
         value = map_coordinates(
-            volume, indices, order=1, mode="grid-constant", cval=0, prefilter=False
+            volume, indices[::-1], order=1, mode="grid-constant", cval=0, prefilter=False
         )
         total += np.sum(value.reshape(midpoint.shape) * half_width, axis=1)
     return total * np.linalg.norm(direction)

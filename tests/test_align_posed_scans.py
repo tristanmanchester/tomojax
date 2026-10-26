@@ -18,7 +18,7 @@ from tomojax.geometry import stack_view_poses
 
 def _phantom(n: int) -> np.ndarray:
     c = (np.arange(n) - (n - 1) / 2) / (n / 6)
-    x, y, z = np.meshgrid(c, c, c, indexing="ij")
+    z, y, x = np.meshgrid(c, c, c, indexing="ij")
     volume = np.exp(-((x - 0.6) ** 2 + (y + 0.3) ** 2 + (z - 0.4) ** 2) * 1.5)
     volume += 0.8 * ((x**2 + y**2 + (z + 0.8) ** 2) < 0.3)
     volume += 0.5 * (np.abs(z - 1.2) < 0.15) * ((x**2 + y**2) < 2)

@@ -145,7 +145,7 @@ def fixture(
     pad = round(size * margin)
     g = replace(g, nx=g.nx + 2 * pad, ny=g.ny + 2 * pad, nz=g.nz + 2 * pad)
     volume = _sample_volume(
-        (g.nx, g.ny, g.nz),
+        (g.nz, g.ny, g.nx),
         np.array([g.vx, g.vy, g.vz]),
         np.array(grid_volume_origin(g)),
         [(a, extent * c, 1 / (extent * s) ** 2) for a, c, s in gaussians],

@@ -161,7 +161,7 @@ def _prepare_align_setup(
     x = (
         jnp.asarray(init_x, dtype=jnp.float32)
         if init_x is not None
-        else jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+        else jnp.zeros((grid.nz, grid.ny, grid.nx), dtype=jnp.float32)
     )
     pose_params = (
         jnp.asarray(init_pose_params, dtype=jnp.float32)

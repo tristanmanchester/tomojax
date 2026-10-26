@@ -69,7 +69,7 @@ def align(
     config : AlignConfig or None, optional
         Expert solver settings. None uses AlignConfig defaults.
     init_x : array-like or None, optional
-        Initial volume of shape ``(nx, ny, nz)``. None initializes reconstruction.
+        Initial volume of shape ``(nz, ny, nx)``. None initializes reconstruction.
     init_pose_params : array-like or None, optional
         Initial pose corrections in radians and physical length units, with
         columns ``(alpha, beta, phi, dx, dz[, dy])``. None starts from zero.
@@ -87,7 +87,7 @@ def align(
     Returns
     -------
     volume : jax.Array
-        Reconstructed volume in ``(x, y, z)`` order, in the returned motion gauge.
+        Reconstructed volume in ``(z, y, x)`` order, in the returned motion gauge.
     pose_params : jax.Array
         Per-view corrections with columns ``(alpha, beta, phi, dx, dz, dy)``.
         Angles are radians, translations physical lengths in the configured frame.
@@ -176,7 +176,7 @@ def align_multires(
     Returns
     -------
     volume : jax.Array
-        Reconstructed volume in ``(x, y, z)`` order, in the returned motion gauge.
+        Reconstructed volume in ``(z, y, x)`` order, in the returned motion gauge.
     pose_params : jax.Array
         Per-view corrections with columns ``(alpha, beta, phi, dx, dz, dy)``.
         Angles are radians, translations physical lengths in the configured frame.
@@ -198,7 +198,7 @@ def align_multires(
     >>> grid = tj.Grid(4, 4, 2, 1.0, 1.0, 1.0)
     >>> detector = tj.Detector(4, 2, 1.0, 1.0)
     >>> geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 8, endpoint=False))
-    >>> data = project(geometry, jnp.ones((4, 4, 2)))
+    >>> data = project(geometry, jnp.ones((2, 4, 4)))
     >>> config = AlignConfig(quality="reference", outer_iterations=1, iterations=1)
     >>> volume, poses, info = align_multires(
     ...     geometry,
@@ -209,7 +209,7 @@ def align_multires(
     ...     config=config,
     ... )
     >>> volume.shape
-    (4, 4, 2)
+    (2, 4, 4)
     """
     return _align_multires(
         geometry,

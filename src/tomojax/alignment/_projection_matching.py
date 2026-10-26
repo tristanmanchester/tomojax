@@ -222,7 +222,7 @@ def _horizontal_fit(
     )
     sparse = ParallelGeometry(grid, detector, sparse.angles)
     measured = jnp.asarray(resample_rows(samples, width))
-    ones = jnp.ones((grid.nx, grid.ny, grid.nz), jnp.float32)
+    ones = jnp.ones((grid.nz, grid.ny, grid.nx), jnp.float32)
     bound = float(jnp.max(backproject(sparse, project(sparse, ones))))
     del ones
     plan = alignment_plan("pose", grid, freeze=("alpha", "beta", "phi", "dz"), levels=(1,))

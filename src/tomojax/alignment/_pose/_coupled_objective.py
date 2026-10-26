@@ -100,7 +100,7 @@ def _check_device_memory(arrays: CoupledArrays, spec: CoupledSpec) -> Callable |
     if _MEMORY_MARGIN * (13 * volume + sinograms * sinogram) < available:
         return None
     p = jax.ShapeDtypeStruct((int(arrays.poses.shape[0]), POSE_WIDTH), jnp.float32)
-    x = jax.ShapeDtypeStruct((grid.nx, grid.ny, grid.nz), jnp.float32)
+    x = jax.ShapeDtypeStruct((grid.nz, grid.ny, grid.nx), jnp.float32)
     compiled = run_update.lower(arrays, p, x, spec=spec).compile()
     analysis = compiled.memory_analysis()
     if analysis is None:

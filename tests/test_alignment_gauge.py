@@ -108,7 +108,7 @@ def test_zero_seed_volume_skips_resampling_but_keeps_the_pose_gauge(monkeypatch)
 def test_the_moved_volume_and_poses_predict_the_same_data(kind):
     geometry, grid, nominal = _scan(kind)
     centres = (np.arange(grid.nx) - (grid.nx - 1) / 2) / 3.0  # compact: ~0 at the edges
-    x, y, z = np.meshgrid(centres, centres, centres, indexing="ij")
+    z, y, x = np.meshgrid(centres, centres, centres, indexing="ij")
     volume = np.exp(-((x - 0.4) ** 2 + (y + 0.3) ** 2 / 2 + z**2 / 3)).astype(np.float32)
     params, gauge = _params(len(nominal)), _gauge()
     moved = apply_to_poses(params, nominal, gauge, translation_frame="detector")
@@ -194,7 +194,7 @@ def test_align_returns_the_least_motion_estimate_and_the_detector_centre():
         keep=("dy",),
     )
     centres = (np.arange(size) - (size - 1) / 2) / 3.0
-    x, y, z = np.meshgrid(centres, centres, centres, indexing="ij")
+    z, y, x = np.meshgrid(centres, centres, centres, indexing="ij")
     volume = (
         np.exp(-((x - 0.5) ** 2 + y**2 + (z + 0.4) ** 2))
         + 0.5 * np.exp(-((x + 0.8) ** 2 + (y - 0.6) ** 2 + z**2 / 2))
@@ -225,7 +225,7 @@ def test_object_frame_gauge_keeps_all_visible_translation_components(kind, publi
     params[:, :3] += np.array([0.03, -0.04, 0.05], np.float32)
     params[:, 3:] += np.array([0.5, 0.3, -0.2], np.float32)
     c = (np.arange(grid.nx) - (grid.nx - 1) / 2) / 3.0
-    x, y, z = np.meshgrid(c, c, c, indexing="ij")
+    z, y, x = np.meshgrid(c, c, c, indexing="ij")
     volume = np.exp(-((x - 0.4) ** 2 + (y + 0.3) ** 2 / 2 + z**2 / 3)).astype(np.float32)
     active = ("alpha", "beta", "phi", "dx", "dz", "dy")
     if public:
@@ -278,7 +278,7 @@ def test_object_frame_gauge_keeps_all_visible_translation_components(kind, publi
     )
     # Continuous Gaussian evaluated at G's physical coordinates is independent
     # of the library's image resampler; finite voxel interpolation is expected.
-    coordinates = np.stack(np.meshgrid(c * 3, c * 3, c * 3, indexing="ij"), axis=-1)
+    coordinates = np.stack([x * 3, y * 3, z * 3], axis=-1)
     gx, gy, gz = np.moveaxis((coordinates @ gauge.rotation.T + gauge.shift) / 3, -1, 0)
     expected = np.exp(-((gx - 0.4) ** 2 + (gy + 0.3) ** 2 / 2 + gz**2 / 3))
     assert np.linalg.norm(moved_volume - expected) / np.linalg.norm(expected) < 0.025
@@ -324,3 +324,15 @@ def test_gauge_constraint_svd_bounds_storage_without_losing_free_directions(
     # still allow both a rigid x shift and, when enabled, a detector-u offset.
     np.testing.assert_allclose(moved[:, 3], 0, atol=2e-6)
     np.testing.assert_array_equal(moved[:, 4:], params[:, 4:])
+
+
+@pytest.mark.parametrize("axis", range(3))
+def test_physical_gauge_translation_moves_the_matching_zyx_axis(axis):
+    grid = tj.Grid(7, 6, 5, 0.7, 1.1, 1.3, vol_origin=(-2, 3, -4))
+    volume = np.zeros((5, 6, 7), np.float32)
+    volume[2, 3, 4] = 1
+    shift = np.eye(3)[axis] * (grid.vx, grid.vy, grid.vz)
+    expected = np.roll(volume, -1, axis=2 - axis)
+    np.testing.assert_allclose(
+        apply_to_volume(volume, grid, Gauge(np.eye(3), shift)), expected, atol=1e-6
+    )

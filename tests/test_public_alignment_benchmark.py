@@ -81,3 +81,16 @@ def test_free_voxel_fixture_and_verifier_keep_errors_visible(
     bad_volume = case["truth"].copy()
     bad_volume.flat[0] = np.nan
     assert not benchmark.verify(bad_volume, case["truth_params"], case)["accepted"]
+
+
+@pytest.mark.parametrize("axis", range(3))
+def test_independent_integrator_uses_zyx_field_and_xyz_rays(benchmark, axis):
+    integrator = importlib.import_module("voxel_truth").voxel_line_integrals
+    field = np.arange(24).reshape(2, 3, 4)
+    indices = [1, 1, 2]
+    indices[2 - axis] = slice(None)
+    expected = field[tuple(indices)].sum() * [0.7, 1.1, 1.3][axis]
+    actual = integrator(
+        field, [[1.4, 1.1, 1.3]], np.eye(3)[axis], spacing=[0.7, 1.1, 1.3], origin=[0, 0, 0]
+    )
+    np.testing.assert_allclose(actual, expected, atol=1e-12)

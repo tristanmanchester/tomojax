@@ -55,13 +55,13 @@ def solve_coupled_normal(
         volume, pose = r
         fft = placement.fft
         scale = xp.sqrt(inverse_diagonal[0])
-        nx, ny, _ = volume.shape
+        _, ny, nx = volume.shape
         fx = fft.fftfreq(nx).astype(volume.dtype)[:, None]
         fy = fft.rfftfreq(ny).astype(volume.dtype)[None, :]
         ramp = xp.sqrt(fx * fx + fy * fy + 1 / (nx * ny))
         ramp = ramp / (1 + volume_ramp * (nx * ny) ** 0.5 * ramp)
-        spectrum = fft.rfft2(scale * volume, axes=(0, 1))
-        filtered = xp.asarray(fft.irfft2(spectrum * ramp[:, :, None], s=(nx, ny), axes=(0, 1)))
+        spectrum = fft.rfft2(scale * volume, axes=(2, 1))
+        filtered = xp.asarray(fft.irfft2(spectrum * ramp.T[None, :, :], s=(nx, ny), axes=(2, 1)))
         return scale * filtered, pose * inverse_diagonal[1]
 
     z0 = precondition(residual)
