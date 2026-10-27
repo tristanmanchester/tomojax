@@ -29,7 +29,8 @@ measurement = model.simulate(
 )
 ```
 
-`gain_change` is the sample/calibration sensitivity ratio; `offset_change` is the
+`gain_change` is the sample/calibration photon-rate ratio (optical throughput
+or quantum efficiency, not electronic conversion gain); `offset_change` is the
 sample minus calibration dark offset in counts. Both can be per-pixel fields or
 vary by view. The model draws sample counts and finite flat/dark averages before
 normalizing and taking the logarithm. Static sensitivity shared by sample and
@@ -44,6 +45,7 @@ counts. Compare these with the input line integrals to separate systematic
 response changes, reference error and sample noise.
 
 This independent-pixel noise model does not model spatially correlated noise or
-temporal illumination drift, and matching flat noise does not establish realistic
+temporal illumination drift or sparse transient contamination (the ESRF flat
+noise-tail test fails), and matching flat noise RMS does not establish realistic
 sample-ring statistics. Use independent projection data to test reconstruction
 accuracy; the detector model does not prescribe a projector.

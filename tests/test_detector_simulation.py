@@ -47,3 +47,8 @@ def test_calibration_and_single_dark_requires_explicit_noise():
     with pytest.raises(ValueError, match="two darks"):
         DetectorModel.from_flats(flat, dark[:1])
     assert DetectorModel.from_flats(flat, dark[:1], read_noise=3).read_noise == 3
+
+
+def test_negative_conversion_gain_is_not_a_noiseless_model():
+    with pytest.raises(ValueError, match="photon_gain must be nonnegative"):
+        DetectorModel(signal=np.ones((2, 3)), dark=np.zeros((2, 3)), photon_gain=-1, read_noise=0)

@@ -64,6 +64,10 @@ class DetectorModel:
     photon_gain: float
     read_noise: float
 
+    def __post_init__(self) -> None:
+        if self.photon_gain < 0:
+            raise ValueError("photon_gain must be nonnegative counts per detected photon.")
+
     @classmethod
     def from_flats(
         cls, flats: ArrayLike, darks: ArrayLike, *, read_noise: float | None = None
@@ -131,8 +135,10 @@ class DetectorModel:
         seed : int
             Reproducible seed for independent sample, flat and dark draws.
         gain_change : array_like, optional
-            Positive sample/calibration sensitivity ratio, broadcastable to
-            (view, row, column). One means unchanged sensitivity.
+            Positive sample/calibration photon-rate ratio (optical throughput or
+            quantum efficiency), broadcastable to (view, row, column). One
+            means unchanged response. Counts per detected photon stays fixed;
+            this is not a change in electronic conversion gain.
         offset_change : array_like, optional
             Sample minus calibration dark offset in counts, broadcastable to
             (view, row, column). Zero means unchanged offset.

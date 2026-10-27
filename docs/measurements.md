@@ -1191,3 +1191,44 @@ uses the same model to simulate and reconstruct: it shows the API, not
 accuracy. The [historical DIAD laminography images](../images/README.md#historical-real-data-illustrations)
 show qualitative use on real data; their raw scan and configuration are not
 bundled, so they cannot be reproduced.
+
+## Calibrated detector count noise
+
+`tomojax.datasets.DetectorModel` estimates effective photon gain and read noise
+from repeated flats/darks and draws Poisson/read noise before flat correction.
+The following **T2 held-out-flat** check calibrates on the first temporal half
+and evaluates independent adjacent-frame differences in the second half. It
+measures noise, not reconstruction accuracy or complete ring realism.
+
+On 2026-10-27, commit `d341041d`, seed 705, the first/repeated calls generated
+100 flat exposures on a 16-row cut. Both observed and generated log differences
+used the same column high-pass (Gaussian sigma 8, 32-column edge exclusion).
+
+| Scan and training rows | Simulated/observed RMS | Adjacent-row correlation error | First/repeated draw (s) |
+|---|---:|---:|---:|
+| I13 159815, 1080:1096, columns 441:1869 | 0.9601 | -0.0093 | 0.146/0.147 |
+| I12 3339629, 1048:1064, all columns | 1.0020 | -0.0079 | 0.901/0.527 |
+| ESRF bamboo reduced, 262:278, all columns | 1.0022 | -0.0413 | 0.067/0.065 |
+
+All pass the frozen RMS-within-20% and correlation-error-within-0.1 thresholds.
+An equally calibrated independent Gaussian baseline also passes; these data do
+not require a more complicated spatial noise model at those tolerances. ESRF
+has one dark frame: its read noise is explicitly assumed zero, not measured.
+The effective gain can absorb unseparated noise under that assumption.
+
+Command: `LAB_ARTIFACTS=artifacts/agent05-count-statistics JAX_PLATFORMS=cpu uv run
+--no-sync python shared/agent05-detector/count_statistics.py` in lab run
+`tomojax-20261027a`. The combined run used 623 MiB peak host RSS and no GPU memory;
+draw times exclude imports and reference loading. Finite-flat noise generates
+persistent row-specific errors, but sample-ring statistics and blind-judge
+indistinguishability remain unmeasured for this model.
+
+A stricter tail check on the same frozen split (commit `808d5903`, seed 705,
+`shared/agent05-detector/noise_tails.py`) divides pixels into five first-half
+signal quintiles. RMS ratios remain within 20% for every group, but ESRF's
+excess-kurtosis discrepancy is 0.269–4.804, exceeding the 0.5 gate in four of
+five groups. I12 and I13 pass all five groups, with maximum discrepancies
+0.022 and 0.395. ESRF contains 16 training and 17 held-out pair differences
+above six predicted standard deviations, at disjoint pixel locations. The
+model therefore fails ESRF's tail-distribution test despite matching its RMS;
+sparse transient contamination is not represented by its Poisson/read model.
