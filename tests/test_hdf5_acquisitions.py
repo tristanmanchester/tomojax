@@ -96,15 +96,20 @@ def test_external_nxtomo_checks_nested_virtual_pixels(tmp_path):
         tj.load_frames(path, detector=detector)
 
 
-@pytest.mark.parametrize("nested", [False, True, "parent_definition", "external_entry"])
+@pytest.mark.parametrize(
+    "nested", [False, True, "parent_definition", "external_entry", "external_nested"]
+)
 def test_linked_nxtomo_float_keys_preserve_pixels_and_calibration(tmp_path, nested):
     path, pixels = tmp_path / "scan.nxs", tmp_path / "pixels.h5"
     values = np.asarray([1, 101, 51, 76, 101], np.uint16)[:, None, None]
     with h5py.File(pixels, "w") as file:
         file["pixels"] = values
-    entry = "/entry/tomo" if nested in (True, "parent_definition") else "/entry"
+    entry = "/entry/tomo" if nested in (True, "parent_definition", "external_nested") else "/entry"
     with h5py.File(path, "w") as file:
-        file[("/entry" if nested == "parent_definition" else entry) + "/definition"] = "NXtomo"
+        file[
+            ("/entry" if nested in ("parent_definition", "external_nested") else entry)
+            + "/definition"
+        ] = "NXtomo"
         for suffix in ("/instrument/detector/data", "/data/data"):
             file[entry + suffix] = h5py.ExternalLink(pixels.name, "/pixels")
         file[entry + "/instrument/detector/image_key"] = [2.0, 1.0, 0.0, 0.0, 1.0]
@@ -113,12 +118,25 @@ def test_linked_nxtomo_float_keys_preserve_pixels_and_calibration(tmp_path, nest
             file.create_dataset(
                 entry + f"/instrument/detector/{axis}_pixel_size", data=np.nan
             ).attrs["units"] = "m"
-    if nested == "external_entry":
+    with h5py.File(path, "a") as file:
+        file[entry + "/back"] = h5py.SoftLink("/entry")
+    if nested in ("external_entry", "external_nested"):
         master = tmp_path / "master.nxs"
         with h5py.File(master, "w") as file:
             file["entry"] = h5py.ExternalLink(path.name, "/entry")
         path = master
-    located = locate_frames(str(path))
+    located = locate_frames(
+        str(path),
+        **(
+            {
+                "data_path": entry + "/instrument/detector/data",
+                "image_key_path": entry + "/instrument/detector/image_key",
+                "angles_path": entry + "/sample/rotation_angle",
+            }
+            if nested == "external_nested"
+            else {}
+        ),
+    )
     np.testing.assert_array_equal(located.stack[:], values)
     np.testing.assert_array_equal(located.image_key, [2, 1, 0, 0, 1])
     assert located.angles is not None

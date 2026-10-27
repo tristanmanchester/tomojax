@@ -7,7 +7,7 @@ In particular, pixel pitch does not establish the rotation-axis position.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import h5py
 import numpy as np
@@ -50,29 +50,32 @@ def _length(file: Any, path: str) -> float | None:
 
 
 def _entries(file: Any) -> list[str]:
-    """Acquisition containers under an NXtomo application definition."""
+    """Acquisition containers under local or externally linked NXtomo entries."""
     definitions: list[str] = []
     containers: list[str] = []
+    seen = set()
 
-    def visit(name: str) -> None:
-        group = file.get(name)
-        if not isinstance(group, h5py.Group):
-            return
-        entry = cast(Any, group)  # h5py stubs omit dataset scalar indexing.
+    def visit(name: str, entry: Any, *, inherited: bool) -> None:
         definition = entry.get("definition")
         label = definition[()] if definition is not None else entry.attrs.get("definition", "")
-        if _text(label) == "NXtomo":
-            definitions.append("/" + name)
-        # An NXsubentry may inherit the application definition from its parent.
-        if "instrument/detector" in entry:
-            containers.append("/" + name)
+        declared = _text(label) == "NXtomo"
+        scope = inherited or declared
+        identity = (entry.id, scope)
+        if identity in seen:
+            return
+        seen.add(identity)
+        if declared:
+            definitions.append(name)
+        if scope and "instrument/detector" in entry:
+            containers.append(name)
+        # HDF5's visit methods do not descend external groups. Resolve them
+        # explicitly; object identity prevents soft/external link cycles.
+        for child_name, child in entry.items():
+            if isinstance(child, h5py.Group):
+                visit(name + "/" + child_name, child, inherited=scope)
 
-    file.visit_links(visit)
-    return [
-        parent
-        for parent in containers
-        if any(parent == entry or parent.startswith(entry + "/") for entry in definitions)
-    ] or definitions
+    visit("", file, inherited=False)
+    return containers or definitions
 
 
 def _layout(file: Any, data_path: str | None) -> tuple[str, str, str, str] | None:
