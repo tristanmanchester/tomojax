@@ -656,8 +656,10 @@ def estimate_center(scan: Scan) -> Scan:
     full scan's centre rather than copying the preview's. Needs corrected
     projections of an unposed axial :class:`ParallelGeometry` with usable
     near-opposite views (within two degrees). The estimate uses row-wise
-    gradient correlations and can be ambiguous for repetitive structure; check the image. Source
-    provenance, when present, records the inferred centre without changing the input.
+    gradient correlations and can be ambiguous for repetitive structure. Source
+    metadata, when present, records pair offsets, conditional uncertainty,
+    alternative matches and row trends without changing the input. Physical centre and sample motion
+    are aliases; conditional matching intervals do not cover motion.
 
     Parameters
     ----------
@@ -680,9 +682,23 @@ def estimate_center(scan: Scan) -> Scan:
     >>> scan = tj.estimate_center(tj.load("scan.nxs"))  # doctest: +SKIP
     >>> recon = tj.reconstruct(scan)  # doctest: +SKIP
     """
-    from tomojax.alignment.api import estimate_center as estimate_geometry_center
+    return _estimate_center(scan)[0]
 
-    geometry = estimate_geometry_center(cast("Geometry", scan.geometry), scan.projections)
+
+def _estimate_center(scan: Scan) -> tuple[Scan, dict[str, object]]:
+    """Share bounded centre estimation and its report without copying a scan."""
+    from tomojax.alignment.api import estimate_center_report
+
+    report = estimate_center_report(cast("Geometry", scan.geometry), scan.projections)
+    geometry = report.geometry
+    calibration: dict[str, object] = {
+        "status": "estimated",
+        "method": "opposite_view_correlation",
+        "diagnostics": report.to_dict(),
+        "input": list(scan.detector.center),
+        "output": list(geometry.detector.center),
+        "unit": "geometry_length",
+    }
     source = scan.source
     if source is not None:
         source = replace(
@@ -690,16 +706,10 @@ def estimate_center(scan: Scan) -> Scan:
             geometry_metadata={
                 **source.geometry_metadata,
                 "detector_center_status": "inferred",
-                "detector_center_calibration": {
-                    "status": "estimated",
-                    "method": "opposite_view_correlation",
-                    "input": list(scan.detector.center),
-                    "output": list(geometry.detector.center),
-                    "unit": "geometry_length",
-                },
+                "detector_center_calibration": calibration,
             },
         )
-    return replace(scan, geometry=geometry, source=source)
+    return replace(scan, geometry=geometry, source=source), calibration
 
 
 def align(
@@ -942,8 +952,18 @@ def _align_automatically(scan: Scan, *, grid: Grid | None = None) -> Alignment:
         "unit": "geometry_length",
     }
     try:
-        scan = estimate_center(scan)
-        center.update(status="estimated", output=list(scan.detector.center))
+        scan, calibration = _estimate_center(scan)
+        center.update(calibration)
+        diagnostics = cast("dict[str, Any]", calibration["diagnostics"])
+        probability = diagnostics["consistency_pvalue"]
+        if probability is not None and probability < 0.01:
+            automatic.update(
+                status="limited",
+                reasons=[
+                    "Pair centres differ beyond conditional matching errors; inspect diagnostics "
+                    "for motion or model mismatch. Pair intervals do not cover those effects."
+                ],
+            )
     except ValueError as exc:
         center.update(status="failed", reason=str(exc))
         automatic.update(status="limited", reasons=[str(exc)])

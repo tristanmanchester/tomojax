@@ -797,6 +797,34 @@ of centre after injected ±0.25, ±0.5 and ±1 px shifts (T1):
 These errors test shift equivariance, not absolute centre accuracy. Motion,
 truncation and competing correlation peaks can bias a single centre estimate.
 
+`alignment.api.estimate_center_report` retains the weighted view-pair constraints,
+conditional 90% matching intervals, other correlation peaks and apparent
+row-centre slope. The uncertainty uses eight detector-column blocks, an observed
+cross-Hessian and leverage correction; it does not claim a physical-centre
+interval under arbitrary motion. Pair disagreement is reported separately.
+The automatic workflow saves these diagnostics and reports conditional
+inconsistency without replacing it by independent per-view poses.
+
+On 2026-10-27 (`c7879013`), 64 real rows gave centre-change p95 errors
+0.00422 px on Elettra 00024 and 0.00284 px on I13 159815. The report took
+0.218/0.216 s and 3.40/3.23 s cold/warm on corrected inputs; cumulative peak
+host memory was 350/666 MiB, GPU memory zero. Command:
+`OPENBLAS_NUM_THREADS=1 JAX_PLATFORMS=cpu uv run --no-sync python
+../../shared/agent03/full_rows.py`. I13 used rows 300:1860 and columns 441:1872;
+both scans sampled 64 evenly spaced rows. I13 pair centres ranged from
+−3.76 to +0.59 px, with 1.75 px scatter and conditional standard errors
+0.049–0.287 px. These conflicting pairs do not define one physical centre.
+Elettra's 50.800 px estimate and conditional interval [49.235, 52.366] px
+include the TomoBank 51.5 px centre convention (T3 agreement, not accuracy).
+
+Independent analytic Gaussian line integrals with Poisson counts, seed 304,
+100 pairs per category, gave conditional 90% coverage 93% dense, 100% sparse,
+91% low contrast and 91% truncated. Their p95 location errors were
+0.0103/0.0152/0.0861/0.0088 px. Command: `OPENBLAS_NUM_THREADS=1
+JAX_PLATFORMS=cpu uv run --no-sync python
+../../shared/agent03/production_coverage.py`. This calibration excludes wrong
+matching modes, axis tilt and sample motion; it is not whole-scan coverage.
+
 
 | Mode and scan | Result |
 |---|---|

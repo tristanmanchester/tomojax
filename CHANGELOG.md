@@ -21,6 +21,10 @@ concentrating them in one sector because of small encoder-angle variations.
 A one-pixel derivative bandwidth suppresses near-Nyquist noise, and the
 correlation is Fourier-interpolated before selecting its global peak, rather
 than refining only the largest integer-lag sample.
+Centre reports retain opposing-view constraints, conditional detector-band
+uncertainty, alternative matches and row-centre trends. Fits use overlapping
+support; automatic alignment reports inconsistent pair centres instead of
+presenting them as one unqualified calibration.
 
 Whole-row transmission corrections run before the logarithm in batched and
 streamed-row workflows; detector binning averages the corrected line integrals.

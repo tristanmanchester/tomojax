@@ -63,6 +63,7 @@ def test_estimate_center_returns_the_scan_with_its_physical_centre():
     scan, true_u, truth = _scan()
     result = tj.estimate_center(scan)
     assert result.projections is scan.projections
+    assert result.source is None
     assert result.grid is scan.grid
     assert result.detector.center[1] == scan.detector.center[1]
     assert abs(result.detector.center[0] - true_u) <= 0.3 * scan.detector.du
@@ -125,6 +126,7 @@ def test_auto_alignment_records_center_and_resolves_only_its_limitation(monkeypa
     assert info["reasons"] == ["rings"] and info["status"] == "limited"
     center = info["center_estimation"]
     assert center["input"] == list(scan.detector.center) and center["status"] == "estimated"
+    assert center["diagnostics"]["pairs"][0]["conditional_sigma_px"] >= 0
     assert abs(center["output"][0] - true_u) <= 0.3 * scan.detector.du
 
 
@@ -188,3 +190,39 @@ def test_center_resolves_subpixel_peaks_of_sharp_analytic_projections():
             ]
         )[:, None]
         assert abs(estimate_center(geometry, data).detector.center[0] - center) < 0.001
+
+
+def test_center_report_keeps_opposing_constraints_and_exposes_motion():
+    from scipy.ndimage import shift
+
+    from tomojax.alignment.api import estimate_center_report
+
+    scan, truth, _ = _scan(views=360, span=360)
+    data = scan.projections.copy()
+    for i in range(len(data)):
+        data[i] = shift(data[i], (0, 2 if i % 180 < 90 else -2), order=3)
+    report = estimate_center_report(scan.geometry, data)
+    assert len(report.pairs) == 16
+    assert report.pair_scatter_px > 1.5
+    assert report.consistency_pvalue < 0.01
+    assert abs(report.geometry.detector.center[0] - truth) < 0.1
+    assert all(abs(sum(w for _, w in p.first) - 1) < 1e-10 for p in report.pairs)
+    assert all(abs(sum(w for _, w in p.second) - 1) < 1e-10 for p in report.pairs)
+    assert len(report.to_dict()["pairs"]) == 16
+
+
+def test_center_report_measures_row_trend_and_conditional_interval():
+    from scipy.ndimage import shift
+
+    from tomojax.alignment.api import estimate_center_report
+
+    scan, truth, _ = _scan(views=360, span=360)
+    data = scan.projections.copy()
+    for row in range(data.shape[1]):
+        data[:, row] = shift(data[:, row], (0, 0.03 * (row - 3.5)), order=3)
+    data += np.random.default_rng(304).normal(0, 0.01, data.shape)
+    report = estimate_center_report(scan.geometry, data)
+    assert abs(report.row_slope_px_per_row + 0.03) < 0.003
+    assert abs(report.geometry.detector.center[0] - truth) < 0.03
+    assert all(p.sigma_px > 0 for p in report.pairs)
+    assert all(p.interval90_px[0] < p.offset_px < p.interval90_px[1] for p in report.pairs)

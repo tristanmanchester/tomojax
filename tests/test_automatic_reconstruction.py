@@ -69,10 +69,15 @@ def test_automatic_center_provenance_failure_and_saved_reuse(status, monkeypatch
         meta["detector_center_status"] = "not_recorded"
     record = ProjectionDataset(scan.projections, angles, geometry_metadata=meta)
     scan = replace(scan, source=record)
-    estimate = Mock(return_value=replace(geometry, detector=replace(detector, center=(-2.2, 0))))
+    estimate = Mock(
+        return_value=Mock(
+            geometry=replace(geometry, detector=replace(detector, center=(-2.2, 0))),
+            to_dict=dict,
+        )
+    )
     if status == "failed":
         estimate.side_effect = ValueError("no usable half-turn")
-    monkeypatch.setattr(alignment, "estimate_center", estimate)
+    monkeypatch.setattr(alignment, "estimate_center_report", estimate)
     tj.reconstruct(scan, "fourier")
     assert estimate.call_count == 0
     actual = tj.reconstruct(scan)

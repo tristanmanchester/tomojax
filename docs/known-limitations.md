@@ -45,6 +45,12 @@ listed with how to check a result in the
 
 ## Data and geometry boundaries
 
+- Projection-only centre reports apply to axial parallel scans. Pair intervals
+  describe a selected rigid matching mode, not ambiguous peaks or sample motion;
+  opposing shifts determine sums, not individual per-view motion. Row-centre
+  slope is an apparent detector trend, not a calibrated three-dimensional axis
+  tilt. Use the pair diagnostics when automatic alignment reports disagreement.
+
 - TIFF `import` packages data; it does not apply flat/dark correction or a log.
   Reconstruction expects line integrals (log attenuation).
 - `tomojax preprocess` of generic TIFF frames requires a `detector` table in
